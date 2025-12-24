@@ -1,0 +1,6 @@
+[submodule "deps/graylib"]
+	path = deps/graylib
+	url = git@gitlab.com:copyleft-games/graylib.git
+[submodule "deps/yaml-glib.git"]
+	path = deps/yaml-glib.git
+	url = git@gitlab.com:copyleft-games/yaml-glib.git
