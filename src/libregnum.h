@@ -34,6 +34,20 @@
 #include "core/lrg-data-loader.h"
 #include "core/lrg-asset-manager.h"
 
+/* Graphics module */
+#include "graphics/lrg-drawable.h"
+#include "graphics/lrg-window.h"
+#include "graphics/lrg-grl-window.h"
+#include "graphics/lrg-camera.h"
+#include "graphics/lrg-camera2d.h"
+#include "graphics/lrg-camera3d.h"
+#include "graphics/lrg-camera-isometric.h"
+#include "graphics/lrg-camera-topdown.h"
+#include "graphics/lrg-camera-sideon.h"
+#include "graphics/lrg-camera-firstperson.h"
+#include "graphics/lrg-camera-thirdperson.h"
+#include "graphics/lrg-renderer.h"
+
 /* ECS module */
 #include "ecs/lrg-component.h"
 #include "ecs/lrg-game-object.h"

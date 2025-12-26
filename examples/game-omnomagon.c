@@ -840,7 +840,7 @@ pac_maze_render (PacMaze *self)
 		GrlVector3 *wall;
 
 		wall = &g_array_index (self->walls, GrlVector3, i);
-		grl_draw_cube (wall, 1.0f, 1.0f, 1.0f, wall_color);
+		grl_draw_cube (wall, 1.0f, 0.25f, 1.0f, wall_color);
 	}
 
 	/* Draw pellets */
@@ -1052,26 +1052,18 @@ check_entity_collision (GrlVector3 *pos1,
 }
 
 static void
-setup_camera (GrlCamera3D *camera,
-              PacPlayer   *player)
+setup_camera (LrgCameraIsometric *camera,
+              PacPlayer          *player)
 {
-	gfloat cam_x;
-	gfloat cam_y;
-	gfloat cam_z;
-
-	/* Follow player from above and behind */
-	cam_x = player->position->x;
-	cam_y = 20.0f;
-	cam_z = player->position->z + 15.0f;
-
-	grl_camera3d_set_position_xyz (camera, cam_x, cam_y, cam_z);
-	grl_camera3d_set_target (camera, player->position);
-	grl_camera3d_set_fovy (camera, 45.0f);
+	/* Focus camera on player position using isometric view */
+	lrg_camera_isometric_focus_on (camera,
+	                                player->position->x,
+	                                player->position->y,
+	                                player->position->z);
 }
 
 static void
-render_ui (PacGame   *game,
-           GrlWindow *window)
+render_ui (PacGame *game)
 {
 	g_autofree gchar   *score_text = NULL;
 	g_autofree gchar   *lives_text = NULL;
@@ -1462,25 +1454,35 @@ int
 main (int   argc,
       char *argv[])
 {
-	g_autoptr(GError)      error = NULL;
-	LrgEngine             *engine;
-	LrgRegistry           *registry;
-	LrgDataLoader         *loader;
-	g_autoptr(PacGame)     game = NULL;
-	g_autoptr(PacMaze)     maze = NULL;
-	g_autoptr(PacPlayer)   player = NULL;
-	g_autoptr(GrlWindow)   window = NULL;
-	g_autoptr(GrlCamera3D) camera = NULL;
-	g_autoptr(GrlColor)    bg_color = NULL;
-	guint                  i;
+	g_autoptr(GError)        error = NULL;
+	LrgEngine               *engine;
+	LrgRegistry             *registry;
+	LrgDataLoader           *loader;
+	LrgRenderer             *renderer;
+	g_autoptr(PacGame)       game = NULL;
+	g_autoptr(PacMaze)       maze = NULL;
+	g_autoptr(PacPlayer)     player = NULL;
+	g_autoptr(LrgGrlWindow)  window = NULL;
+	g_autoptr(LrgCameraIsometric) camera = NULL;
+	g_autoptr(GrlColor)      bg_color = NULL;
+	guint                    i;
 
-	/* Initialize engine */
+	/* Create window first (before engine startup for graphics) */
+	window = lrg_grl_window_new (800, 600, "3D Omnomagon - Libregnum Example");
+	lrg_window_set_target_fps (LRG_WINDOW (window), 60);
+
+	/* Initialize engine with window */
 	engine = lrg_engine_get_default ();
+	lrg_engine_set_window (engine, LRG_WINDOW (window));
+
 	if (!lrg_engine_startup (engine, &error))
 	{
 		g_error ("Failed to start engine: %s", error->message);
 		return 1;
 	}
+
+	/* Get renderer (created automatically when window was set) */
+	renderer = lrg_engine_get_renderer (engine);
 
 	/* Register custom types */
 	registry = lrg_engine_get_registry (engine);
@@ -1542,18 +1544,20 @@ main (int   argc,
 	/* Count total pellets */
 	game->total_pellets = maze->pellets->len;
 
-	/* Create window and camera */
-	window = grl_window_new (800, 600, "3D Omnomagon - Libregnum Example");
-	grl_window_set_target_fps (window, 60);
-	camera = grl_camera3d_new ();
+	/* Create isometric camera and set on renderer */
+	camera = lrg_camera_isometric_new ();
+	lrg_camera_isometric_set_tile_width (camera, 1.0f);   /* Match maze tile_size */
+	lrg_camera_isometric_set_tile_height (camera, 0.5f);
+	lrg_camera_isometric_set_zoom (camera, 0.05f);        /* Zoom out to see more maze */
+	lrg_renderer_set_camera (renderer, LRG_CAMERA (camera));
 	bg_color = grl_color_new (0, 0, 0, 255);
 
 	/* Main game loop */
-	while (!grl_window_should_close (window))
+	while (!lrg_window_should_close (LRG_WINDOW (window)))
 	{
 		gfloat delta;
 
-		delta = grl_window_get_frame_time (window);
+		delta = lrg_window_get_frame_time (LRG_WINDOW (window));
 
 		/* Update */
 		if (game->state == GAME_STATE_PLAYING)
@@ -1567,19 +1571,24 @@ main (int   argc,
 			pac_game_reset (game);
 		}
 
-		/* Render */
-		grl_window_begin_drawing (window);
-		grl_window_clear_background (window, bg_color);
+		/* Render using new graphics system */
+		lrg_renderer_begin_frame (renderer);
+		lrg_renderer_clear (renderer, bg_color);
 
+		/* Update camera position */
 		setup_camera (camera, game->player);
 
-		grl_camera3d_begin (camera);
+		/* Render world layer (with camera transform) */
+		lrg_renderer_begin_layer (renderer, LRG_RENDER_LAYER_WORLD);
 		pac_game_render (game);
-		grl_camera3d_end (camera);
+		lrg_renderer_end_layer (renderer);
 
-		render_ui (game, window);
+		/* Render UI layer (no camera transform) */
+		lrg_renderer_begin_layer (renderer, LRG_RENDER_LAYER_UI);
+		render_ui (game);
+		lrg_renderer_end_layer (renderer);
 
-		grl_window_end_drawing (window);
+		lrg_renderer_end_frame (renderer);
 	}
 
 	/* Cleanup */

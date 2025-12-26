@@ -186,6 +186,51 @@ LRG_AVAILABLE_IN_ALL
 LrgAssetManager * lrg_engine_get_asset_manager (LrgEngine *self);
 
 /* ==========================================================================
+ * Graphics Subsystem Access
+ * ========================================================================== */
+
+/**
+ * lrg_engine_set_window:
+ * @self: an #LrgEngine
+ * @window: (transfer none) (nullable): the window to use for rendering
+ *
+ * Sets the window for the engine.
+ *
+ * When a window is set, a renderer is automatically created.
+ * Pass %NULL to disconnect the window and destroy the renderer.
+ *
+ * Note: The window must be set before calling lrg_engine_startup()
+ * if you need graphics. The engine supports headless mode (no window).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_engine_set_window (LrgEngine *self,
+                            LrgWindow *window);
+
+/**
+ * lrg_engine_get_window:
+ * @self: an #LrgEngine
+ *
+ * Gets the engine's window.
+ *
+ * Returns: (transfer none) (nullable): The #LrgWindow, or %NULL if headless
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWindow * lrg_engine_get_window (LrgEngine *self);
+
+/**
+ * lrg_engine_get_renderer:
+ * @self: an #LrgEngine
+ *
+ * Gets the engine's renderer.
+ *
+ * The renderer is automatically created when a window is set.
+ *
+ * Returns: (transfer none) (nullable): The #LrgRenderer, or %NULL if headless
+ */
+LRG_AVAILABLE_IN_ALL
+LrgRenderer * lrg_engine_get_renderer (LrgEngine *self);
+
+/* ==========================================================================
  * Version Functions (implementations from lrg-version.h.in)
  * ========================================================================== */
 

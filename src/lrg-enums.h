@@ -1053,6 +1053,50 @@ GType lrg_net_message_type_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_NET_MESSAGE_TYPE (lrg_net_message_type_get_type ())
 
 /* ==========================================================================
+ * Graphics System
+ * ========================================================================== */
+
+/**
+ * LrgRenderLayer:
+ * @LRG_RENDER_LAYER_BACKGROUND: Sky, far background elements
+ * @LRG_RENDER_LAYER_WORLD: Main 3D/2D world content
+ * @LRG_RENDER_LAYER_EFFECTS: Particles, visual effects
+ * @LRG_RENDER_LAYER_UI: 2D UI overlay
+ * @LRG_RENDER_LAYER_DEBUG: Debug overlays and information
+ *
+ * Render layers for organizing draw order.
+ */
+typedef enum
+{
+    LRG_RENDER_LAYER_BACKGROUND,
+    LRG_RENDER_LAYER_WORLD,
+    LRG_RENDER_LAYER_EFFECTS,
+    LRG_RENDER_LAYER_UI,
+    LRG_RENDER_LAYER_DEBUG
+} LrgRenderLayer;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_render_layer_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_RENDER_LAYER (lrg_render_layer_get_type ())
+
+/**
+ * LrgProjectionType:
+ * @LRG_PROJECTION_PERSPECTIVE: Perspective projection (3D depth)
+ * @LRG_PROJECTION_ORTHOGRAPHIC: Orthographic projection (no depth distortion)
+ *
+ * Camera projection types.
+ */
+typedef enum
+{
+    LRG_PROJECTION_PERSPECTIVE,
+    LRG_PROJECTION_ORTHOGRAPHIC
+} LrgProjectionType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_projection_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PROJECTION_TYPE (lrg_projection_type_get_type ())
+
+/* ==========================================================================
  * 3D World System
  * ========================================================================== */
 

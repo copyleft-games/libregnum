@@ -34,6 +34,18 @@ PUBLIC_HEADERS := \
 	src/core/lrg-registry.h \
 	src/core/lrg-data-loader.h \
 	src/core/lrg-asset-manager.h \
+	src/graphics/lrg-drawable.h \
+	src/graphics/lrg-window.h \
+	src/graphics/lrg-grl-window.h \
+	src/graphics/lrg-camera.h \
+	src/graphics/lrg-camera2d.h \
+	src/graphics/lrg-camera3d.h \
+	src/graphics/lrg-camera-isometric.h \
+	src/graphics/lrg-camera-topdown.h \
+	src/graphics/lrg-camera-sideon.h \
+	src/graphics/lrg-camera-firstperson.h \
+	src/graphics/lrg-camera-thirdperson.h \
+	src/graphics/lrg-renderer.h \
 	src/ecs/lrg-component.h \
 	src/ecs/lrg-game-object.h \
 	src/ecs/lrg-world.h \
@@ -127,6 +139,18 @@ SOURCES := \
 	src/core/lrg-registry.c \
 	src/core/lrg-data-loader.c \
 	src/core/lrg-asset-manager.c \
+	src/graphics/lrg-drawable.c \
+	src/graphics/lrg-window.c \
+	src/graphics/lrg-grl-window.c \
+	src/graphics/lrg-camera.c \
+	src/graphics/lrg-camera2d.c \
+	src/graphics/lrg-camera3d.c \
+	src/graphics/lrg-camera-isometric.c \
+	src/graphics/lrg-camera-topdown.c \
+	src/graphics/lrg-camera-sideon.c \
+	src/graphics/lrg-camera-firstperson.c \
+	src/graphics/lrg-camera-thirdperson.c \
+	src/graphics/lrg-renderer.c \
 	src/ecs/lrg-component.c \
 	src/ecs/lrg-game-object.c \
 	src/ecs/lrg-world.c \
@@ -391,6 +415,7 @@ install: lib $(BUILDDIR)/$(PC_FILE)
 	@$(MKDIR_P) $(DESTDIR)$(LIBDIR)
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/core
+	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/components
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/input
@@ -423,6 +448,18 @@ endif
 	$(INSTALL_DATA) src/core/lrg-registry.h $(DESTDIR)$(INCLUDEDIR)/libregnum/core/
 	$(INSTALL_DATA) src/core/lrg-data-loader.h $(DESTDIR)$(INCLUDEDIR)/libregnum/core/
 	$(INSTALL_DATA) src/core/lrg-asset-manager.h $(DESTDIR)$(INCLUDEDIR)/libregnum/core/
+	$(INSTALL_DATA) src/graphics/lrg-drawable.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-window.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-grl-window.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-camera.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-camera2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-camera3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-camera-isometric.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-camera-topdown.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-camera-sideon.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-camera-firstperson.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-camera-thirdperson.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-renderer.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
 	$(INSTALL_DATA) src/ecs/lrg-component.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/
 	$(INSTALL_DATA) src/ecs/lrg-game-object.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/
 	$(INSTALL_DATA) src/ecs/lrg-world.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/
@@ -552,6 +589,67 @@ $(OBJDIR)/src/core/lrg-data-loader.o: src/core/lrg-data-loader.c src/core/lrg-da
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/core/lrg-asset-manager.o: src/core/lrg-asset-manager.c src/core/lrg-asset-manager.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# Graphics module
+$(OBJDIR)/src/graphics/lrg-drawable.o: src/graphics/lrg-drawable.c src/graphics/lrg-drawable.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-window.o: src/graphics/lrg-window.c src/graphics/lrg-window.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-grl-window.o: src/graphics/lrg-grl-window.c src/graphics/lrg-grl-window.h src/graphics/lrg-window.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-camera.o: src/graphics/lrg-camera.c src/graphics/lrg-camera.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-camera2d.o: src/graphics/lrg-camera2d.c src/graphics/lrg-camera2d.h src/graphics/lrg-camera.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-camera3d.o: src/graphics/lrg-camera3d.c src/graphics/lrg-camera3d.h src/graphics/lrg-camera.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-camera-isometric.o: src/graphics/lrg-camera-isometric.c src/graphics/lrg-camera-isometric.h src/graphics/lrg-camera3d.h src/graphics/lrg-camera.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-camera-topdown.o: src/graphics/lrg-camera-topdown.c src/graphics/lrg-camera-topdown.h src/graphics/lrg-camera2d.h src/graphics/lrg-camera.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-camera-sideon.o: src/graphics/lrg-camera-sideon.c src/graphics/lrg-camera-sideon.h src/graphics/lrg-camera2d.h src/graphics/lrg-camera.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-camera-firstperson.o: src/graphics/lrg-camera-firstperson.c src/graphics/lrg-camera-firstperson.h src/graphics/lrg-camera3d.h src/graphics/lrg-camera.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-camera-thirdperson.o: src/graphics/lrg-camera-thirdperson.c src/graphics/lrg-camera-thirdperson.h src/graphics/lrg-camera3d.h src/graphics/lrg-camera.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-renderer.o: src/graphics/lrg-renderer.c src/graphics/lrg-renderer.h src/graphics/lrg-window.h src/graphics/lrg-camera.h src/graphics/lrg-drawable.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

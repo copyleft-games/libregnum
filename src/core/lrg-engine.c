@@ -16,6 +16,8 @@
 #include "lrg-data-loader.h"
 #include "lrg-asset-manager.h"
 #include "../lrg-log.h"
+#include "../graphics/lrg-window.h"
+#include "../graphics/lrg-renderer.h"
 
 typedef struct
 {
@@ -23,6 +25,8 @@ typedef struct
     LrgRegistry      *registry;
     LrgDataLoader    *data_loader;
     LrgAssetManager  *asset_manager;
+    LrgWindow        *window;
+    LrgRenderer      *renderer;
 } LrgEnginePrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgEngine, lrg_engine, G_TYPE_OBJECT)
@@ -79,6 +83,10 @@ lrg_engine_real_shutdown (LrgEngine *self)
 
     lrg_debug (LRG_LOG_DOMAIN_CORE, "Engine shutdown");
 
+    /* Clean up graphics subsystems */
+    g_clear_object (&priv->renderer);
+    /* Note: We don't clear the window here - user manages window lifecycle */
+
     /* Clean up subsystems */
     g_clear_object (&priv->asset_manager);
     g_clear_object (&priv->data_loader);
@@ -112,6 +120,11 @@ lrg_engine_finalize (GObject *object)
         lrg_engine_shutdown (self);
     }
 
+    /* Clean up graphics */
+    g_clear_object (&priv->renderer);
+    g_clear_object (&priv->window);
+
+    /* Clean up subsystems */
     g_clear_object (&priv->asset_manager);
     g_clear_object (&priv->data_loader);
     g_clear_object (&priv->registry);
@@ -245,6 +258,8 @@ lrg_engine_init (LrgEngine *self)
     priv->registry = NULL;
     priv->data_loader = NULL;
     priv->asset_manager = NULL;
+    priv->window = NULL;
+    priv->renderer = NULL;
 }
 
 /* ==========================================================================
@@ -492,6 +507,91 @@ lrg_engine_get_asset_manager (LrgEngine *self)
     priv = lrg_engine_get_instance_private (self);
 
     return priv->asset_manager;
+}
+
+/* ==========================================================================
+ * Graphics Subsystem Access
+ * ========================================================================== */
+
+/**
+ * lrg_engine_set_window:
+ * @self: an #LrgEngine
+ * @window: (transfer none) (nullable): the window to use for rendering
+ *
+ * Sets the window for the engine. When a window is set, a renderer
+ * is automatically created. Pass %NULL to disconnect the window.
+ */
+void
+lrg_engine_set_window (LrgEngine *self,
+                       LrgWindow *window)
+{
+    LrgEnginePrivate *priv;
+
+    g_return_if_fail (LRG_IS_ENGINE (self));
+    g_return_if_fail (window == NULL || LRG_IS_WINDOW (window));
+
+    priv = lrg_engine_get_instance_private (self);
+
+    /* Same window, nothing to do */
+    if (priv->window == window)
+        return;
+
+    /* Clean up existing renderer */
+    g_clear_object (&priv->renderer);
+    g_clear_object (&priv->window);
+
+    /* Set new window and create renderer */
+    if (window != NULL)
+    {
+        priv->window = g_object_ref (window);
+        priv->renderer = lrg_renderer_new (window);
+
+        lrg_debug (LRG_LOG_DOMAIN_CORE, "Window and renderer created");
+    }
+    else
+    {
+        lrg_debug (LRG_LOG_DOMAIN_CORE, "Window disconnected, running headless");
+    }
+}
+
+/**
+ * lrg_engine_get_window:
+ * @self: an #LrgEngine
+ *
+ * Gets the engine's window.
+ *
+ * Returns: (transfer none) (nullable): The #LrgWindow, or %NULL if headless
+ */
+LrgWindow *
+lrg_engine_get_window (LrgEngine *self)
+{
+    LrgEnginePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ENGINE (self), NULL);
+
+    priv = lrg_engine_get_instance_private (self);
+
+    return priv->window;
+}
+
+/**
+ * lrg_engine_get_renderer:
+ * @self: an #LrgEngine
+ *
+ * Gets the engine's renderer.
+ *
+ * Returns: (transfer none) (nullable): The #LrgRenderer, or %NULL if headless
+ */
+LrgRenderer *
+lrg_engine_get_renderer (LrgEngine *self)
+{
+    LrgEnginePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ENGINE (self), NULL);
+
+    priv = lrg_engine_get_instance_private (self);
+
+    return priv->renderer;
 }
 
 /* ==========================================================================

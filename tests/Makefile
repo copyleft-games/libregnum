@@ -59,6 +59,7 @@ TEST_SOURCES := \
 	test-registry.c \
 	test-data-loader.c \
 	test-asset-manager.c \
+	test-graphics.c \
 	test-ecs.c \
 	test-input.c \
 	test-ui.c \

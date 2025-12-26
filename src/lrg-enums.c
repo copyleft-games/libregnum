@@ -1072,6 +1072,53 @@ lrg_net_message_type_get_type (void)
 }
 
 /* ==========================================================================
+ * Graphics System GTypes
+ * ========================================================================== */
+
+GType
+lrg_render_layer_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_RENDER_LAYER_BACKGROUND, "LRG_RENDER_LAYER_BACKGROUND", "background" },
+            { LRG_RENDER_LAYER_WORLD, "LRG_RENDER_LAYER_WORLD", "world" },
+            { LRG_RENDER_LAYER_EFFECTS, "LRG_RENDER_LAYER_EFFECTS", "effects" },
+            { LRG_RENDER_LAYER_UI, "LRG_RENDER_LAYER_UI", "ui" },
+            { LRG_RENDER_LAYER_DEBUG, "LRG_RENDER_LAYER_DEBUG", "debug" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgRenderLayer"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_projection_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PROJECTION_PERSPECTIVE, "LRG_PROJECTION_PERSPECTIVE", "perspective" },
+            { LRG_PROJECTION_ORTHOGRAPHIC, "LRG_PROJECTION_ORTHOGRAPHIC", "orthographic" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgProjectionType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
  * 3D World GTypes
  * ========================================================================== */
 

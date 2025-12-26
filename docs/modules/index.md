@@ -19,6 +19,18 @@ Essential engine systems completed in Phase 0:
 - **[LrgDataLoader](core/data-loader.md)** - YAML file loading with GObject deserialization
 - **[LrgAssetManager](core/asset-manager.md)** - Asset caching with mod overlay support
 
+### [Graphics Module](graphics/index.md) - Window and Rendering
+
+Window management, cameras, and rendering abstractions:
+
+- **[LrgDrawable](graphics/index.md#lrgdrawable)** - Interface for renderable objects
+- **[LrgWindow](graphics/index.md#lrgwindow)** - Abstract window base class
+- **[LrgGrlWindow](graphics/index.md#lrggrlwindow)** - Graylib window implementation
+- **[LrgCamera](graphics/index.md#lrgcamera)** - Abstract camera base class
+- **[LrgCamera2D](graphics/index.md#lrgcamera2d)** - 2D camera for top-down/side-scrolling
+- **[LrgCamera3D](graphics/index.md#lrgcamera3d)** - 3D camera for 3D games
+- **[LrgRenderer](graphics/index.md#lrgrenderer)** - Render management and layer system
+
 ## Planned Modules
 
 ### Phase 1: Basic Game Systems
@@ -93,6 +105,7 @@ Phase 0   core/ (engine, registry, loader, assets)
 | Module | Phase | Status | Key Types |
 |--------|-------|--------|-----------|
 | Core | 0 | Complete | Engine, Registry, DataLoader, AssetManager |
+| Graphics | 0 | Complete | Window, GrlWindow, Camera, Camera2D, Camera3D, Renderer, Drawable |
 | ECS | 1 | Planned | GameObject, Component, World |
 | Input | 1 | Planned | InputMap, InputAction, InputBinding |
 | UI | 1 | Planned | Widget, Container, Button, Label |

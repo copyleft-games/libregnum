@@ -240,6 +240,57 @@ typedef struct _LrgNetServer  LrgNetServer;
 typedef struct _LrgNetClient  LrgNetClient;
 
 /* ==========================================================================
+ * Graphics Module
+ * ========================================================================== */
+
+/* LrgDrawable is an interface - only interface typedef needed */
+typedef struct _LrgDrawable           LrgDrawable;
+typedef struct _LrgDrawableInterface  LrgDrawableInterface;
+
+/* LrgWindow is a derivable type */
+typedef struct _LrgWindow       LrgWindow;
+typedef struct _LrgWindowClass  LrgWindowClass;
+
+/* LrgGrlWindow is a final type - no Class forward declaration needed */
+typedef struct _LrgGrlWindow       LrgGrlWindow;
+
+/* LrgCamera is a derivable type */
+typedef struct _LrgCamera       LrgCamera;
+typedef struct _LrgCameraClass  LrgCameraClass;
+
+/* LrgCamera2D is a derivable type */
+typedef struct _LrgCamera2D       LrgCamera2D;
+typedef struct _LrgCamera2DClass  LrgCamera2DClass;
+
+/* LrgCamera3D is a derivable type */
+typedef struct _LrgCamera3D       LrgCamera3D;
+typedef struct _LrgCamera3DClass  LrgCamera3DClass;
+
+/* LrgCameraIsometric is a derivable type (inherits from LrgCamera3D) */
+typedef struct _LrgCameraIsometric       LrgCameraIsometric;
+typedef struct _LrgCameraIsometricClass  LrgCameraIsometricClass;
+
+/* LrgCameraTopDown is a derivable type (inherits from LrgCamera2D) */
+typedef struct _LrgCameraTopDown       LrgCameraTopDown;
+typedef struct _LrgCameraTopDownClass  LrgCameraTopDownClass;
+
+/* LrgCameraSideOn is a derivable type (inherits from LrgCamera2D) */
+typedef struct _LrgCameraSideOn       LrgCameraSideOn;
+typedef struct _LrgCameraSideOnClass  LrgCameraSideOnClass;
+
+/* LrgCameraFirstPerson is a derivable type (inherits from LrgCamera3D) */
+typedef struct _LrgCameraFirstPerson       LrgCameraFirstPerson;
+typedef struct _LrgCameraFirstPersonClass  LrgCameraFirstPersonClass;
+
+/* LrgCameraThirdPerson is a derivable type (inherits from LrgCamera3D) */
+typedef struct _LrgCameraThirdPerson       LrgCameraThirdPerson;
+typedef struct _LrgCameraThirdPersonClass  LrgCameraThirdPersonClass;
+
+/* LrgRenderer is a derivable type */
+typedef struct _LrgRenderer       LrgRenderer;
+typedef struct _LrgRendererClass  LrgRendererClass;
+
+/* ==========================================================================
  * 3D World Module
  * ========================================================================== */
 
