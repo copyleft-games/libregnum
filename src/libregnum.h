@@ -58,9 +58,25 @@
 #include "ecs/components/lrg-animator-component.h"
 
 /* Input module */
+#include "input/lrg-input.h"
+#include "input/lrg-input-manager.h"
+#include "input/lrg-input-keyboard.h"
+#include "input/lrg-input-mouse.h"
+#include "input/lrg-input-gamepad.h"
+#include "input/lrg-input-mock.h"
+#include "input/lrg-input-software.h"
 #include "input/lrg-input-binding.h"
 #include "input/lrg-input-action.h"
 #include "input/lrg-input-map.h"
+
+/* Shapes module */
+#include "shapes/lrg-shape.h"
+#include "shapes/lrg-shape2d.h"
+#include "shapes/lrg-shape3d.h"
+#include "shapes/lrg-sphere3d.h"
+#include "shapes/lrg-cube3d.h"
+#include "shapes/lrg-line3d.h"
+#include "shapes/lrg-text2d.h"
 
 /* UI module */
 #include "ui/lrg-ui-event.h"

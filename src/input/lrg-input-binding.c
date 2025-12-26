@@ -12,6 +12,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_INPUT
 
 #include "lrg-input-binding.h"
+#include "lrg-input-manager.h"
 #include "../lrg-log.h"
 
 /* ==========================================================================
@@ -50,22 +51,25 @@ G_DEFINE_BOXED_TYPE (LrgInputBinding, lrg_input_binding,
 static gboolean
 check_modifiers (LrgInputModifiers required)
 {
-    gboolean shift_ok;
-    gboolean ctrl_ok;
-    gboolean alt_ok;
+    LrgInputManager *input;
+    gboolean         shift_ok;
+    gboolean         ctrl_ok;
+    gboolean         alt_ok;
+
+    input = lrg_input_manager_get_default ();
 
     /* If no modifiers required, or specific modifier is required and held */
     shift_ok = !(required & LRG_INPUT_MODIFIER_SHIFT) ||
-               grl_input_is_key_down (GRL_KEY_LEFT_SHIFT) ||
-               grl_input_is_key_down (GRL_KEY_RIGHT_SHIFT);
+               lrg_input_manager_is_key_down (input, GRL_KEY_LEFT_SHIFT) ||
+               lrg_input_manager_is_key_down (input, GRL_KEY_RIGHT_SHIFT);
 
     ctrl_ok = !(required & LRG_INPUT_MODIFIER_CTRL) ||
-              grl_input_is_key_down (GRL_KEY_LEFT_CONTROL) ||
-              grl_input_is_key_down (GRL_KEY_RIGHT_CONTROL);
+              lrg_input_manager_is_key_down (input, GRL_KEY_LEFT_CONTROL) ||
+              lrg_input_manager_is_key_down (input, GRL_KEY_RIGHT_CONTROL);
 
     alt_ok = !(required & LRG_INPUT_MODIFIER_ALT) ||
-             grl_input_is_key_down (GRL_KEY_LEFT_ALT) ||
-             grl_input_is_key_down (GRL_KEY_RIGHT_ALT);
+             lrg_input_manager_is_key_down (input, GRL_KEY_LEFT_ALT) ||
+             lrg_input_manager_is_key_down (input, GRL_KEY_RIGHT_ALT);
 
     return shift_ok && ctrl_ok && alt_ok;
 }
@@ -551,10 +555,12 @@ lrg_input_binding_get_positive (const LrgInputBinding *self)
 gboolean
 lrg_input_binding_is_pressed (const LrgInputBinding *self)
 {
-    unsigned char result;
-    gfloat        axis_value;
+    LrgInputManager *input;
+    gfloat           axis_value;
 
     g_return_val_if_fail (self != NULL, FALSE);
+
+    input = lrg_input_manager_get_default ();
 
     switch (self->type)
     {
@@ -563,21 +569,20 @@ lrg_input_binding_is_pressed (const LrgInputBinding *self)
         {
             return FALSE;
         }
-        result = grl_input_is_key_pressed (self->input.key);
-        return result != 0;
+        return lrg_input_manager_is_key_pressed (input, self->input.key);
 
     case LRG_INPUT_BINDING_MOUSE_BUTTON:
         if (!check_modifiers (self->modifiers))
         {
             return FALSE;
         }
-        result = grl_input_is_mouse_button_pressed (self->input.mouse_button);
-        return result != 0;
+        return lrg_input_manager_is_mouse_button_pressed (input,
+                                                          self->input.mouse_button);
 
     case LRG_INPUT_BINDING_GAMEPAD_BUTTON:
-        result = grl_input_is_gamepad_button_pressed (self->gamepad,
-                                                      self->input.gamepad_button);
-        return result != 0;
+        return lrg_input_manager_is_gamepad_button_pressed (input,
+                                                            self->gamepad,
+                                                            self->input.gamepad_button);
 
     case LRG_INPUT_BINDING_GAMEPAD_AXIS:
         /*
@@ -585,8 +590,9 @@ lrg_input_binding_is_pressed (const LrgInputBinding *self)
          * previous state. Return TRUE if currently past threshold.
          * TODO: Consider adding state tracking for proper press detection.
          */
-        axis_value = grl_input_get_gamepad_axis_movement (self->gamepad,
-                                                          self->input.axis.axis);
+        axis_value = lrg_input_manager_get_gamepad_axis (input,
+                                                         self->gamepad,
+                                                         self->input.axis.axis);
         if (self->input.axis.positive)
         {
             return axis_value >= self->input.axis.threshold;
@@ -612,10 +618,12 @@ lrg_input_binding_is_pressed (const LrgInputBinding *self)
 gboolean
 lrg_input_binding_is_down (const LrgInputBinding *self)
 {
-    unsigned char result;
-    gfloat        axis_value;
+    LrgInputManager *input;
+    gfloat           axis_value;
 
     g_return_val_if_fail (self != NULL, FALSE);
+
+    input = lrg_input_manager_get_default ();
 
     switch (self->type)
     {
@@ -624,25 +632,25 @@ lrg_input_binding_is_down (const LrgInputBinding *self)
         {
             return FALSE;
         }
-        result = grl_input_is_key_down (self->input.key);
-        return result != 0;
+        return lrg_input_manager_is_key_down (input, self->input.key);
 
     case LRG_INPUT_BINDING_MOUSE_BUTTON:
         if (!check_modifiers (self->modifiers))
         {
             return FALSE;
         }
-        result = grl_input_is_mouse_button_down (self->input.mouse_button);
-        return result != 0;
+        return lrg_input_manager_is_mouse_button_down (input,
+                                                       self->input.mouse_button);
 
     case LRG_INPUT_BINDING_GAMEPAD_BUTTON:
-        result = grl_input_is_gamepad_button_down (self->gamepad,
-                                                   self->input.gamepad_button);
-        return result != 0;
+        return lrg_input_manager_is_gamepad_button_down (input,
+                                                         self->gamepad,
+                                                         self->input.gamepad_button);
 
     case LRG_INPUT_BINDING_GAMEPAD_AXIS:
-        axis_value = grl_input_get_gamepad_axis_movement (self->gamepad,
-                                                          self->input.axis.axis);
+        axis_value = lrg_input_manager_get_gamepad_axis (input,
+                                                         self->gamepad,
+                                                         self->input.axis.axis);
         if (self->input.axis.positive)
         {
             return axis_value >= self->input.axis.threshold;
@@ -668,33 +676,35 @@ lrg_input_binding_is_down (const LrgInputBinding *self)
 gboolean
 lrg_input_binding_is_released (const LrgInputBinding *self)
 {
-    unsigned char result;
-    gfloat        axis_value;
+    LrgInputManager *input;
+    gfloat           axis_value;
 
     g_return_val_if_fail (self != NULL, FALSE);
+
+    input = lrg_input_manager_get_default ();
 
     switch (self->type)
     {
     case LRG_INPUT_BINDING_KEYBOARD:
-        result = grl_input_is_key_released (self->input.key);
-        return result != 0;
+        return lrg_input_manager_is_key_released (input, self->input.key);
 
     case LRG_INPUT_BINDING_MOUSE_BUTTON:
-        result = grl_input_is_mouse_button_released (self->input.mouse_button);
-        return result != 0;
+        return lrg_input_manager_is_mouse_button_released (input,
+                                                           self->input.mouse_button);
 
     case LRG_INPUT_BINDING_GAMEPAD_BUTTON:
-        result = grl_input_is_gamepad_button_released (self->gamepad,
-                                                       self->input.gamepad_button);
-        return result != 0;
+        return lrg_input_manager_is_gamepad_button_released (input,
+                                                             self->gamepad,
+                                                             self->input.gamepad_button);
 
     case LRG_INPUT_BINDING_GAMEPAD_AXIS:
         /*
          * For axes, check if we're below threshold (released).
          * TODO: Proper release detection needs state tracking.
          */
-        axis_value = grl_input_get_gamepad_axis_movement (self->gamepad,
-                                                          self->input.axis.axis);
+        axis_value = lrg_input_manager_get_gamepad_axis (input,
+                                                         self->gamepad,
+                                                         self->input.axis.axis);
         if (self->input.axis.positive)
         {
             return axis_value < self->input.axis.threshold;
@@ -722,12 +732,16 @@ lrg_input_binding_is_released (const LrgInputBinding *self)
 gfloat
 lrg_input_binding_get_axis_value (const LrgInputBinding *self)
 {
+    LrgInputManager *input;
+
     g_return_val_if_fail (self != NULL, 0.0f);
 
     if (self->type == LRG_INPUT_BINDING_GAMEPAD_AXIS)
     {
-        return grl_input_get_gamepad_axis_movement (self->gamepad,
-                                                    self->input.axis.axis);
+        input = lrg_input_manager_get_default ();
+        return lrg_input_manager_get_gamepad_axis (input,
+                                                   self->gamepad,
+                                                   self->input.axis.axis);
     }
 
     /* For digital inputs, return 1.0 if down, 0.0 otherwise */

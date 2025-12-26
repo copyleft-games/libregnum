@@ -53,9 +53,23 @@ PUBLIC_HEADERS := \
 	src/ecs/components/lrg-collider-component.h \
 	src/ecs/components/lrg-transform-component.h \
 	src/ecs/components/lrg-animator-component.h \
+	src/input/lrg-input.h \
+	src/input/lrg-input-manager.h \
+	src/input/lrg-input-keyboard.h \
+	src/input/lrg-input-mouse.h \
+	src/input/lrg-input-gamepad.h \
+	src/input/lrg-input-mock.h \
+	src/input/lrg-input-software.h \
 	src/input/lrg-input-binding.h \
 	src/input/lrg-input-action.h \
 	src/input/lrg-input-map.h \
+	src/shapes/lrg-shape.h \
+	src/shapes/lrg-shape2d.h \
+	src/shapes/lrg-shape3d.h \
+	src/shapes/lrg-sphere3d.h \
+	src/shapes/lrg-cube3d.h \
+	src/shapes/lrg-line3d.h \
+	src/shapes/lrg-text2d.h \
 	src/ui/lrg-ui-event.h \
 	src/ui/lrg-widget.h \
 	src/ui/lrg-container.h \
@@ -158,9 +172,23 @@ SOURCES := \
 	src/ecs/components/lrg-collider-component.c \
 	src/ecs/components/lrg-transform-component.c \
 	src/ecs/components/lrg-animator-component.c \
+	src/input/lrg-input.c \
+	src/input/lrg-input-manager.c \
+	src/input/lrg-input-keyboard.c \
+	src/input/lrg-input-mouse.c \
+	src/input/lrg-input-gamepad.c \
+	src/input/lrg-input-mock.c \
+	src/input/lrg-input-software.c \
 	src/input/lrg-input-binding.c \
 	src/input/lrg-input-action.c \
 	src/input/lrg-input-map.c \
+	src/shapes/lrg-shape.c \
+	src/shapes/lrg-shape2d.c \
+	src/shapes/lrg-shape3d.c \
+	src/shapes/lrg-sphere3d.c \
+	src/shapes/lrg-cube3d.c \
+	src/shapes/lrg-line3d.c \
+	src/shapes/lrg-text2d.c \
 	src/ui/lrg-ui-event.c \
 	src/ui/lrg-widget.c \
 	src/ui/lrg-container.c \
@@ -419,6 +447,7 @@ install: lib $(BUILDDIR)/$(PC_FILE)
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/components
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/input
+	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/ui
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/inventory
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/debug
@@ -467,9 +496,23 @@ endif
 	$(INSTALL_DATA) src/ecs/components/lrg-collider-component.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/components/
 	$(INSTALL_DATA) src/ecs/components/lrg-transform-component.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/components/
 	$(INSTALL_DATA) src/ecs/components/lrg-animator-component.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/components/
+	$(INSTALL_DATA) src/input/lrg-input.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
+	$(INSTALL_DATA) src/input/lrg-input-manager.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
+	$(INSTALL_DATA) src/input/lrg-input-keyboard.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
+	$(INSTALL_DATA) src/input/lrg-input-mouse.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
+	$(INSTALL_DATA) src/input/lrg-input-gamepad.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
+	$(INSTALL_DATA) src/input/lrg-input-mock.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
+	$(INSTALL_DATA) src/input/lrg-input-software.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
 	$(INSTALL_DATA) src/input/lrg-input-binding.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
 	$(INSTALL_DATA) src/input/lrg-input-action.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
 	$(INSTALL_DATA) src/input/lrg-input-map.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
+	$(INSTALL_DATA) src/shapes/lrg-shape.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
+	$(INSTALL_DATA) src/shapes/lrg-shape2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
+	$(INSTALL_DATA) src/shapes/lrg-shape3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
+	$(INSTALL_DATA) src/shapes/lrg-sphere3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
+	$(INSTALL_DATA) src/shapes/lrg-cube3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
+	$(INSTALL_DATA) src/shapes/lrg-line3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
+	$(INSTALL_DATA) src/shapes/lrg-text2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
 	$(INSTALL_DATA) src/ui/lrg-ui-event.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
 	$(INSTALL_DATA) src/ui/lrg-widget.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
 	$(INSTALL_DATA) src/ui/lrg-container.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
@@ -691,7 +734,42 @@ $(OBJDIR)/src/ecs/components/lrg-animator-component.o: src/ecs/components/lrg-an
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 # Input module
-$(OBJDIR)/src/input/lrg-input-binding.o: src/input/lrg-input-binding.c src/input/lrg-input-binding.h
+$(OBJDIR)/src/input/lrg-input.o: src/input/lrg-input.c src/input/lrg-input.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/input/lrg-input-manager.o: src/input/lrg-input-manager.c src/input/lrg-input-manager.h src/input/lrg-input.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/input/lrg-input-keyboard.o: src/input/lrg-input-keyboard.c src/input/lrg-input-keyboard.h src/input/lrg-input.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/input/lrg-input-mouse.o: src/input/lrg-input-mouse.c src/input/lrg-input-mouse.h src/input/lrg-input.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/input/lrg-input-gamepad.o: src/input/lrg-input-gamepad.c src/input/lrg-input-gamepad.h src/input/lrg-input.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/input/lrg-input-mock.o: src/input/lrg-input-mock.c src/input/lrg-input-mock.h src/input/lrg-input.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/input/lrg-input-software.o: src/input/lrg-input-software.c src/input/lrg-input-software.h src/input/lrg-input.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/input/lrg-input-binding.o: src/input/lrg-input-binding.c src/input/lrg-input-binding.h src/input/lrg-input-manager.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
@@ -702,6 +780,42 @@ $(OBJDIR)/src/input/lrg-input-action.o: src/input/lrg-input-action.c src/input/l
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/input/lrg-input-map.o: src/input/lrg-input-map.c src/input/lrg-input-map.h src/input/lrg-input-action.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# Shapes module
+$(OBJDIR)/src/shapes/lrg-shape.o: src/shapes/lrg-shape.c src/shapes/lrg-shape.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-shape2d.o: src/shapes/lrg-shape2d.c src/shapes/lrg-shape2d.h src/shapes/lrg-shape.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-shape3d.o: src/shapes/lrg-shape3d.c src/shapes/lrg-shape3d.h src/shapes/lrg-shape.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-sphere3d.o: src/shapes/lrg-sphere3d.c src/shapes/lrg-sphere3d.h src/shapes/lrg-shape3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-cube3d.o: src/shapes/lrg-cube3d.c src/shapes/lrg-cube3d.h src/shapes/lrg-shape3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-line3d.o: src/shapes/lrg-line3d.c src/shapes/lrg-line3d.h src/shapes/lrg-shape3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-text2d.o: src/shapes/lrg-text2d.c src/shapes/lrg-text2d.h src/shapes/lrg-shape2d.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

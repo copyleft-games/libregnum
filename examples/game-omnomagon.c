@@ -842,16 +842,20 @@ pac_maze_render (PacMaze *self)
 	pellet_color = grl_color_new (255, 255, 255, 255);
 	power_color = grl_color_new (255, 255, 0, 255);
 
-	/* Draw walls */
+	/* Draw walls using LrgCube3D */
 	for (i = 0; i < self->walls->len; i++)
 	{
-		GrlVector3 *wall;
+		g_autoptr(LrgCube3D) cube = NULL;
+		GrlVector3          *wall;
 
 		wall = &g_array_index (self->walls, GrlVector3, i);
-		grl_draw_cube (wall, 1.0f, 0.25f, 1.0f, wall_color);
+		cube = lrg_cube3d_new_full (wall->x, wall->y, wall->z,
+		                            1.0f, 0.25f, 1.0f,
+		                            wall_color);
+		lrg_drawable_draw (LRG_DRAWABLE (cube), 0.0f);
 	}
 
-	/* Draw pellets */
+	/* Draw pellets using LrgSphere3D */
 	for (i = 0; i < self->pellets->len; i++)
 	{
 		PacPellet *pellet;
@@ -860,13 +864,19 @@ pac_maze_render (PacMaze *self)
 
 		if (!pellet->collected)
 		{
-			gfloat    radius;
-			GrlColor *color;
+			g_autoptr(LrgSphere3D) sphere = NULL;
+			gfloat                 radius;
+			GrlColor              *color;
 
 			radius = pellet->is_power_pellet ? 0.3f : 0.15f;
 			color = pellet->is_power_pellet ? power_color : pellet_color;
 
-			grl_draw_sphere (pellet->position, radius, color);
+			sphere = lrg_sphere3d_new_full (pellet->position->x,
+			                                pellet->position->y,
+			                                pellet->position->z,
+			                                radius,
+			                                color);
+			lrg_drawable_draw (LRG_DRAWABLE (sphere), 0.0f);
 		}
 	}
 
@@ -1065,11 +1075,13 @@ update_camera (CameraMode              mode,
                LrgCameraThirdPerson   *cam_tp,
                LrgCameraFirstPerson   *cam_fp,
                PacPlayer              *player,
+               LrgInputManager        *input_manager,
                gfloat                  delta_time)
 {
-	g_autoptr(GrlVector2) mouse_delta = NULL;
+	gfloat mouse_dx = 0.0f;
+	gfloat mouse_dy = 0.0f;
 
-	mouse_delta = grl_input_get_mouse_delta ();
+	lrg_input_manager_get_mouse_delta (input_manager, &mouse_dx, &mouse_dy);
 
 	switch (mode)
 	{
@@ -1081,7 +1093,7 @@ update_camera (CameraMode              mode,
 		break;
 
 	case CAMERA_MODE_THIRDPERSON:
-		lrg_camera_thirdperson_orbit (cam_tp, mouse_delta->x, mouse_delta->y);
+		lrg_camera_thirdperson_orbit (cam_tp, mouse_dx, mouse_dy);
 		lrg_camera_thirdperson_follow (cam_tp,
 		                               player->position->x,
 		                               player->position->y,
@@ -1090,7 +1102,7 @@ update_camera (CameraMode              mode,
 		break;
 
 	case CAMERA_MODE_FIRSTPERSON:
-		lrg_camera_firstperson_rotate (cam_fp, mouse_delta->x, mouse_delta->y);
+		lrg_camera_firstperson_rotate (cam_fp, mouse_dx, mouse_dy);
 		lrg_camera_firstperson_set_body_position (cam_fp,
 		                                          player->position->x,
 		                                          player->position->y,
@@ -1105,33 +1117,51 @@ update_camera (CameraMode              mode,
 static void
 render_ui (PacGame *game)
 {
-	g_autofree gchar   *score_text = NULL;
-	g_autofree gchar   *lives_text = NULL;
-	g_autoptr(GrlColor) white = NULL;
+	g_autofree gchar     *score_text = NULL;
+	g_autofree gchar     *lives_text = NULL;
+	g_autoptr(GrlColor)   white = NULL;
+	g_autoptr(LrgText2D)  score_label = NULL;
+	g_autoptr(LrgText2D)  lives_label = NULL;
 
 	white = grl_color_new (255, 255, 255, 255);
 
 	score_text = g_strdup_printf ("Score: %d", game->player->score);
 	lives_text = g_strdup_printf ("Lives: %d", game->player->lives);
 
-	grl_draw_text (score_text, 10, 10, 20, white);
-	grl_draw_text (lives_text, 10, 35, 20, white);
+	/* Draw UI text using LrgText2D */
+	score_label = lrg_text2d_new_full (10.0f, 10.0f, score_text, 20.0f, white);
+	lrg_drawable_draw (LRG_DRAWABLE (score_label), 0.0f);
+
+	lives_label = lrg_text2d_new_full (10.0f, 35.0f, lives_text, 20.0f, white);
+	lrg_drawable_draw (LRG_DRAWABLE (lives_label), 0.0f);
 
 	if (game->state == GAME_STATE_WIN)
 	{
-		grl_draw_text ("YOU WIN! Press R to restart", 200, 300, 40, white);
+		g_autoptr(LrgText2D) win_label = NULL;
+
+		win_label = lrg_text2d_new_full (200.0f, 300.0f,
+		                                 "YOU WIN! Press R to restart",
+		                                 40.0f, white);
+		lrg_drawable_draw (LRG_DRAWABLE (win_label), 0.0f);
 	}
 	else if (game->state == GAME_STATE_LOSE)
 	{
-		grl_draw_text ("GAME OVER! Press R to restart", 180, 300, 40, white);
+		g_autoptr(LrgText2D) lose_label = NULL;
+
+		lose_label = lrg_text2d_new_full (180.0f, 300.0f,
+		                                  "GAME OVER! Press R to restart",
+		                                  40.0f, white);
+		lrg_drawable_draw (LRG_DRAWABLE (lose_label), 0.0f);
 	}
 
 	if (game->player->power_mode)
 	{
-		g_autofree gchar *power_text;
+		g_autofree gchar     *power_text = NULL;
+		g_autoptr(LrgText2D)  power_label = NULL;
 
 		power_text = g_strdup_printf ("POWER MODE: %.1f", game->player->power_time);
-		grl_draw_text (power_text, 10, 60, 20, white);
+		power_label = lrg_text2d_new_full (10.0f, 60.0f, power_text, 20.0f, white);
+		lrg_drawable_draw (LRG_DRAWABLE (power_label), 0.0f);
 	}
 }
 
@@ -1140,9 +1170,10 @@ render_ui (PacGame *game)
  * ========================================================================== */
 
 static void
-pac_player_update (PacPlayer *self,
-                   PacMaze   *maze,
-                   gfloat     delta)
+pac_player_update (PacPlayer       *self,
+                   PacMaze         *maze,
+                   LrgInputManager *input_manager,
+                   gfloat           delta)
 {
 	g_autoptr(GrlVector3) input_dir = NULL;
 	g_autoptr(GrlVector3) new_pos = NULL;
@@ -1152,14 +1183,14 @@ pac_player_update (PacPlayer *self,
 
 	input_dir = grl_vector3_new (0.0f, 0.0f, 0.0f);
 
-	/* Get input direction */
-	if (grl_input_is_key_down (GRL_KEY_W))
+	/* Get input direction via LrgInputManager */
+	if (lrg_input_manager_is_key_down (input_manager, GRL_KEY_W))
 		input_dir->z -= 1.0f;
-	if (grl_input_is_key_down (GRL_KEY_S))
+	if (lrg_input_manager_is_key_down (input_manager, GRL_KEY_S))
 		input_dir->z += 1.0f;
-	if (grl_input_is_key_down (GRL_KEY_A))
+	if (lrg_input_manager_is_key_down (input_manager, GRL_KEY_A))
 		input_dir->x -= 1.0f;
-	if (grl_input_is_key_down (GRL_KEY_D))
+	if (lrg_input_manager_is_key_down (input_manager, GRL_KEY_D))
 		input_dir->x += 1.0f;
 
 	/* Normalize and apply speed */
@@ -1200,27 +1231,35 @@ pac_player_update (PacPlayer *self,
 static void
 pac_player_render (PacPlayer *self)
 {
-	g_autoptr(GrlColor) color = NULL;
+	g_autoptr(GrlColor)   color = NULL;
+	g_autoptr(LrgSphere3D) sphere = NULL;
 
 	color = grl_color_new (255, 255, 0, 255);
 
-	/* Draw as sphere */
-	grl_draw_sphere (self->position, 0.4f, color);
+	/* Draw player as sphere using LrgSphere3D */
+	sphere = lrg_sphere3d_new_full (self->position->x,
+	                                self->position->y,
+	                                self->position->z,
+	                                0.4f,
+	                                color);
+	lrg_drawable_draw (LRG_DRAWABLE (sphere), 0.0f);
 
 	/* Draw direction indicator */
 	if (sqrtf (self->direction->x * self->direction->x +
 	           self->direction->z * self->direction->z) > 0.01f)
 	{
-		g_autoptr(GrlVector3) front_pos = NULL;
-		g_autoptr(GrlColor)   line_color = NULL;
-
-		front_pos = grl_vector3_new (
-			self->position->x + self->direction->x * 0.6f,
-			self->position->y,
-			self->position->z + self->direction->z * 0.6f);
+		g_autoptr(GrlColor)  line_color = NULL;
+		g_autoptr(LrgLine3D) line = NULL;
 
 		line_color = grl_color_new (255, 0, 0, 255);
-		grl_draw_line_3d (self->position, front_pos, line_color);
+		line = lrg_line3d_new_full (self->position->x,
+		                            self->position->y,
+		                            self->position->z,
+		                            self->position->x + self->direction->x * 0.6f,
+		                            self->position->y,
+		                            self->position->z + self->direction->z * 0.6f,
+		                            line_color);
+		lrg_drawable_draw (LRG_DRAWABLE (line), 0.0f);
 	}
 }
 
@@ -1299,7 +1338,8 @@ pac_ghost_update (PacGhost  *self,
 static void
 pac_ghost_render (PacGhost *self)
 {
-	g_autoptr(GrlColor) render_color = NULL;
+	g_autoptr(GrlColor)    render_color = NULL;
+	g_autoptr(LrgSphere3D) sphere = NULL;
 
 	/* If frightened, make blue */
 	if (self->state == GHOST_STATE_FRIGHTENED)
@@ -1315,8 +1355,13 @@ pac_ghost_render (PacGhost *self)
 		render_color = grl_color_copy (self->color);
 	}
 
-	/* Draw as sphere */
-	grl_draw_sphere (self->position, 0.4f, render_color);
+	/* Draw ghost as sphere using LrgSphere3D */
+	sphere = lrg_sphere3d_new_full (self->position->x,
+	                                self->position->y,
+	                                self->position->z,
+	                                0.4f,
+	                                render_color);
+	lrg_drawable_draw (LRG_DRAWABLE (sphere), 0.0f);
 }
 
 static void
@@ -1404,13 +1449,14 @@ pac_game_check_collisions (PacGame *self)
 }
 
 static void
-pac_game_update (PacGame *self,
-                 gfloat   delta)
+pac_game_update (PacGame         *self,
+                 LrgInputManager *input_manager,
+                 gfloat           delta)
 {
 	guint i;
 
 	/* Update player */
-	pac_player_update (self->player, self->maze, delta);
+	pac_player_update (self->player, self->maze, input_manager, delta);
 
 	/* Update ghosts */
 	for (i = 0; i < self->ghosts->len; i++)
@@ -1499,6 +1545,7 @@ main (int   argc,
 	LrgRegistry             *registry;
 	LrgDataLoader           *loader;
 	LrgRenderer             *renderer;
+	LrgInputManager         *input_manager;
 	g_autoptr(PacGame)       game = NULL;
 	g_autoptr(PacMaze)       maze = NULL;
 	g_autoptr(PacPlayer)     player = NULL;
@@ -1526,6 +1573,9 @@ main (int   argc,
 
 	/* Get renderer (created automatically when window was set) */
 	renderer = lrg_engine_get_renderer (engine);
+
+	/* Get input manager */
+	input_manager = lrg_input_manager_get_default ();
 
 	/* Register custom types */
 	registry = lrg_engine_get_registry (engine);
@@ -1612,20 +1662,23 @@ main (int   argc,
 
 		delta = lrg_window_get_frame_time (LRG_WINDOW (window));
 
+		/* Poll input */
+		lrg_input_manager_poll (input_manager);
+
 		/* Update */
 		if (game->state == GAME_STATE_PLAYING)
 		{
-			pac_game_update (game, delta);
+			pac_game_update (game, input_manager, delta);
 		}
 
 		/* Reset on R key */
-		if (grl_input_is_key_pressed (GRL_KEY_R))
+		if (lrg_input_manager_is_key_pressed (input_manager, GRL_KEY_R))
 		{
 			pac_game_reset (game);
 		}
 
 		/* Cycle camera mode with C key */
-		if (grl_input_is_key_pressed (GRL_KEY_C))
+		if (lrg_input_manager_is_key_pressed (input_manager, GRL_KEY_C))
 		{
 			camera_mode = (camera_mode + 1) % CAMERA_MODE_COUNT;
 
@@ -1657,7 +1710,7 @@ main (int   argc,
 
 		/* Update camera position */
 		update_camera (camera_mode, camera_iso, camera_tp, camera_fp,
-		               game->player, delta);
+		               game->player, input_manager, delta);
 
 		/* Render world layer (with camera transform) */
 		lrg_renderer_begin_layer (renderer, LRG_RENDER_LAYER_WORLD);

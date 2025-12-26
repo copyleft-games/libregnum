@@ -71,6 +71,28 @@ typedef struct _LrgInputActionClass  LrgInputActionClass;
 typedef struct _LrgInputMap       LrgInputMap;
 typedef struct _LrgInputMapClass  LrgInputMapClass;
 
+/* LrgInput is a derivable type */
+typedef struct _LrgInput       LrgInput;
+typedef struct _LrgInputClass  LrgInputClass;
+
+/* LrgInputManager is a final type - no Class forward declaration needed */
+typedef struct _LrgInputManager  LrgInputManager;
+
+/* LrgInputKeyboard is a final type - no Class forward declaration needed */
+typedef struct _LrgInputKeyboard  LrgInputKeyboard;
+
+/* LrgInputMouse is a final type - no Class forward declaration needed */
+typedef struct _LrgInputMouse  LrgInputMouse;
+
+/* LrgInputGamepad is a final type - no Class forward declaration needed */
+typedef struct _LrgInputGamepad  LrgInputGamepad;
+
+/* LrgInputMock is a final type - no Class forward declaration needed */
+typedef struct _LrgInputMock  LrgInputMock;
+
+/* LrgInputSoftware is a final type - no Class forward declaration needed */
+typedef struct _LrgInputSoftware  LrgInputSoftware;
+
 /* ==========================================================================
  * UI Module
  * ========================================================================== */
@@ -289,6 +311,34 @@ typedef struct _LrgCameraThirdPersonClass  LrgCameraThirdPersonClass;
 /* LrgRenderer is a derivable type */
 typedef struct _LrgRenderer       LrgRenderer;
 typedef struct _LrgRendererClass  LrgRendererClass;
+
+/* ==========================================================================
+ * Shapes Module
+ * ========================================================================== */
+
+/* LrgShape is a derivable type (abstract base) */
+typedef struct _LrgShape       LrgShape;
+typedef struct _LrgShapeClass  LrgShapeClass;
+
+/* LrgShape2D is a derivable type (abstract, for 2D shapes) */
+typedef struct _LrgShape2D       LrgShape2D;
+typedef struct _LrgShape2DClass  LrgShape2DClass;
+
+/* LrgShape3D is a derivable type (abstract, for 3D shapes) */
+typedef struct _LrgShape3D       LrgShape3D;
+typedef struct _LrgShape3DClass  LrgShape3DClass;
+
+/* LrgSphere3D is a final type - no Class forward declaration needed */
+typedef struct _LrgSphere3D  LrgSphere3D;
+
+/* LrgCube3D is a final type - no Class forward declaration needed */
+typedef struct _LrgCube3D  LrgCube3D;
+
+/* LrgLine3D is a final type - no Class forward declaration needed */
+typedef struct _LrgLine3D  LrgLine3D;
+
+/* LrgText2D is a final type - no Class forward declaration needed */
+typedef struct _LrgText2D  LrgText2D;
 
 /* ==========================================================================
  * 3D World Module
