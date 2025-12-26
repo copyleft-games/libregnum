@@ -1,117 +1,175 @@
-# Libregnum Documentation
+---
+title: Libregnum Documentation
+layout: landing
+---
 
-Welcome to the Libregnum documentation. Libregnum is a GObject-based game engine library providing high-level systems for game development.
+# Libregnum Game Engine
 
-## Getting Started
+Libregnum is a GObject-based game engine library built on top of [graylib](https://github.com/graylib/graylib) (raylib GObject wrapper) and [yaml-glib](https://gitlab.com/GNOME/yaml-glib) (YAML parsing with GObject serialization). It provides high-level game systems with a focus on data-driven design, extensibility, and modding support.
 
-- [Building](building.md) - How to build and install Libregnum
-- [Quick Start](quickstart.md) - Get up and running quickly
+## Quick Navigation
 
-## Core Concepts
+- **[Getting Started](quickstart.md)** - Install and run your first program
+- **[Architecture Overview](architecture.md)** - Understand the system design
+- **[Core Concepts](concepts/index.md)** - Learn key game development concepts
+- **[Module Documentation](modules/index.md)** - Detailed API reference
+- **[API Classes Index](api/classes.md)** - All classes and types
+- **[Building](building.md)** - Build and installation instructions
 
-### Engine Singleton
+## Key Features
 
-The `LrgEngine` is the central hub for all engine subsystems. It manages the lifecycle of the engine and provides access to all other systems.
+### Core Systems
+- **Engine Singleton** - Central hub managing all subsystems
+- **Type Registry** - Data-driven type mapping for YAML deserialization
+- **Data Loader** - Load and deserialize YAML files to GObjects
+- **Asset Manager** - Unified texture, font, sound, and music loading with caching
+
+### Game Systems (Planned Phases)
+- **ECS** - Entity-Component-System architecture for flexible gameplay
+- **Input** - Keyboard, mouse, and gamepad input handling
+- **UI** - Complete widget system with theming support
+- **Tilemap** - 2D tilemap rendering and collision
+- **Dialog** - Branching dialogue trees with conditions
+- **Inventory** - Item management and equipment systems
+- **Quest** - Quest definitions, objectives, and tracking
+- **Save** - Game save/load serialization
+- **Audio** - Sound effects and music management
+
+### Advanced Features
+- **AI** - Behavior trees, blackboards, and state machines
+- **Pathfinding** - A* navigation grid and smooth path following
+- **Physics** - 2D/3D rigid body simulation and collision
+- **3D World** - 3D level support with portals and sectors
+- **Networking** - Multiplayer networking (client/server)
+- **Debug Tools** - Profiling, console, overlay, and inspector
+- **Modding** - Complete mod system with dependencies
+- **Localization** - Multi-language support with CLDR plural rules
+
+## Getting Started Quickly
+
+### Installation
+
+```bash
+# Build from source
+make DEBUG=1
+make test
+make install PREFIX=$HOME/.local
+```
+
+### Minimal Example
 
 ```c
-LrgEngine *engine = lrg_engine_get_default ();
-lrg_engine_startup (engine, &error);
+#include <libregnum.h>
+#include <glib.h>
 
-/* Game loop */
-while (lrg_engine_is_running (engine))
+int
+main (int argc, char *argv[])
 {
-    lrg_engine_update (engine, delta_time);
-}
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine;
 
-lrg_engine_shutdown (engine);
+    /* Get the engine singleton */
+    engine = lrg_engine_get_default ();
+
+    /* Start the engine */
+    if (!lrg_engine_startup (engine, &error))
+    {
+        g_warning ("Failed to start engine: %s", error->message);
+        return 1;
+    }
+
+    /* Game loop */
+    while (lrg_engine_is_running (engine))
+    {
+        lrg_engine_update (engine, 0.016f); /* 60 FPS */
+    }
+
+    /* Shutdown */
+    lrg_engine_shutdown (engine);
+
+    return 0;
+}
+```
+
+See the [Quickstart Guide](quickstart.md) for more detailed examples.
+
+## Core Concepts Overview
+
+### Data-Driven Design
+
+Libregnum heavily leverages YAML for configuration and data. The Registry and DataLoader work together to enable fully data-driven gameplay:
+
+```yaml
+# player.yaml
+type: player
+name: "Hero"
+health: 100
+mana: 50
 ```
 
 ### Type Registry
 
-The `LrgRegistry` maps string names to GTypes, enabling data-driven object creation:
+The Registry maps string names to GTypes, enabling YAML files to reference types without hardcoding:
 
 ```c
 LrgRegistry *registry = lrg_engine_get_registry (engine);
-
-/* Register your types */
 lrg_registry_register (registry, "player", MY_TYPE_PLAYER);
-lrg_registry_register (registry, "enemy", MY_TYPE_ENEMY);
 
-/* Create objects by name */
-GObject *player = lrg_registry_create (registry, "player",
-                                       "name", "Hero",
-                                       NULL);
+/* Now load from YAML */
+LrgDataLoader *loader = lrg_engine_get_data_loader (engine);
+GObject *player = lrg_data_loader_load_file (loader, "player.yaml", &error);
 ```
 
-### Data Loader
+### Asset Management
 
-The `LrgDataLoader` loads GObjects from YAML files:
+The Asset Manager provides unified access to game assets with caching and mod overlay support:
 
 ```c
-LrgDataLoader *loader = lrg_engine_get_data_loader (engine);
+LrgAssetManager *manager = lrg_engine_get_asset_manager (engine);
 
-/* Load a single file */
-GObject *obj = lrg_data_loader_load_file (loader, "data/player.yaml", &error);
+/* Add search paths (mods have higher priority) */
+lrg_asset_manager_add_search_path (manager, "base/assets/");
+lrg_asset_manager_add_search_path (manager, "mods/my-mod/assets/");
 
-/* Load all files in a directory */
-GList *objects = lrg_data_loader_load_directory (loader, "data/entities/",
-                                                 TRUE, &error);
+/* Load assets (searches in reverse priority order) */
+GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.png", &error);
 ```
 
-YAML format:
-```yaml
-type: player
-name: "Hero"
-health: 100
-speed: 5.0
+## Documentation Structure
+
+### For Users
+- [Quickstart Guide](quickstart.md) - Get up and running quickly
+- [Core Concepts](concepts/index.md) - Understand how the engine works
+- [Module Documentation](modules/index.md) - Detailed guides for each module
+
+### For Developers
+- [Architecture Overview](architecture.md) - System design and patterns
+- [API Reference](api/classes.md) - Complete class documentation
+- [Error Handling](concepts/error-handling.md) - Error patterns and recovery
+
+## Module Structure
+
 ```
-
-## API Reference
-
-### Core Module
-
-| Type | Description |
-|------|-------------|
-| `LrgEngine` | Engine singleton managing all subsystems |
-| `LrgRegistry` | Type registry for data-driven instantiation |
-| `LrgDataLoader` | YAML file loading with type resolution |
-
-### Enumerations
-
-| Enum | Description |
-|------|-------------|
-| `LrgEngineState` | Engine lifecycle states |
-| `LrgEngineError` | Engine error codes |
-| `LrgDataLoaderError` | Data loader error codes |
-
-## Planned Modules
-
-The following modules are planned for future releases:
-
-### Phase 1
-- **ECS** - Entity-Component-System with `LrgGameObject` and `LrgComponent`
-- **Input** - Rebindable input actions and mappings
-- **UI** - Widget-based UI framework
-- **Tilemap** - 2D tile-based maps
-
-### Phase 2
-- **Dialog** - Branching dialog trees
-- **Inventory** - Item definitions and equipment
-- **Quest** - Quest objectives and tracking
-- **Save** - Serialization and save management
-- **Audio** - Sound and music management
-
-### Phase 3
-- **AI** - Behavior trees
-- **Pathfinding** - A* on navigation grids
-- **Physics** - Rigid body physics
-- **I18N** - Localization
-- **Net** - Client/server networking
-- **World3D** - 3D level systems
-
-### Phase 4
-- **Debug** - Console, inspector, profiler
-- **Mod** - Mod loading with dependencies
+libregnum/
+├── core/           # Engine, Registry, DataLoader, AssetManager (DONE)
+├── ecs/            # Entity-Component-System (Phase 1)
+├── input/          # Input handling (Phase 1)
+├── ui/             # User interface widgets (Phase 1)
+├── tilemap/        # 2D tilemap support (Phase 1)
+├── dialog/         # Dialogue system (Phase 2)
+├── inventory/      # Inventory and equipment (Phase 2)
+├── quest/          # Quest management (Phase 2)
+├── save/           # Save/load system (Phase 2)
+├── audio/          # Sound and music (Phase 2)
+├── ai/             # AI and behavior trees (Phase 3)
+├── pathfinding/    # Navigation and pathfinding (Phase 3)
+├── physics/        # Physics simulation (Phase 3)
+├── i18n/           # Internationalization (Phase 3)
+├── debug/          # Debug tools (Phase 4)
+├── net/            # Networking (Phase 3)
+├── world3d/        # 3D world support (Phase 3)
+└── mod/            # Modding system (Phase 4)
+```
 
 ## Language Bindings
 
@@ -130,9 +188,13 @@ from gi.repository import Libregnum
 
 engine = Libregnum.Engine.get_default()
 engine.startup()
-# ...
+# Game loop here...
 engine.shutdown()
 ```
+
+## Contributing
+
+Libregnum is an AGPL-3.0-or-later project. Contributions are welcome!
 
 ## License
 
