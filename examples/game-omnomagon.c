@@ -38,6 +38,14 @@ typedef enum
 	GAME_STATE_PAUSED
 } GameState;
 
+typedef enum
+{
+	CAMERA_MODE_ISOMETRIC,
+	CAMERA_MODE_THIRDPERSON,
+	CAMERA_MODE_FIRSTPERSON,
+	CAMERA_MODE_COUNT
+} CameraMode;
+
 /* =============================================================================
  * FORWARD DECLARATIONS
  * ========================================================================== */
@@ -1052,14 +1060,46 @@ check_entity_collision (GrlVector3 *pos1,
 }
 
 static void
-setup_camera (LrgCameraIsometric *camera,
-              PacPlayer          *player)
+update_camera (CameraMode              mode,
+               LrgCameraIsometric     *cam_iso,
+               LrgCameraThirdPerson   *cam_tp,
+               LrgCameraFirstPerson   *cam_fp,
+               PacPlayer              *player,
+               gfloat                  delta_time)
 {
-	/* Focus camera on player position using isometric view */
-	lrg_camera_isometric_focus_on (camera,
-	                                player->position->x,
-	                                player->position->y,
-	                                player->position->z);
+	g_autoptr(GrlVector2) mouse_delta = NULL;
+
+	mouse_delta = grl_input_get_mouse_delta ();
+
+	switch (mode)
+	{
+	case CAMERA_MODE_ISOMETRIC:
+		lrg_camera_isometric_focus_on (cam_iso,
+		                               player->position->x,
+		                               player->position->y,
+		                               player->position->z);
+		break;
+
+	case CAMERA_MODE_THIRDPERSON:
+		lrg_camera_thirdperson_orbit (cam_tp, mouse_delta->x, mouse_delta->y);
+		lrg_camera_thirdperson_follow (cam_tp,
+		                               player->position->x,
+		                               player->position->y,
+		                               player->position->z,
+		                               delta_time);
+		break;
+
+	case CAMERA_MODE_FIRSTPERSON:
+		lrg_camera_firstperson_rotate (cam_fp, mouse_delta->x, mouse_delta->y);
+		lrg_camera_firstperson_set_body_position (cam_fp,
+		                                          player->position->x,
+		                                          player->position->y,
+		                                          player->position->z);
+		break;
+
+	default:
+		break;
+	}
 }
 
 static void
@@ -1462,10 +1502,13 @@ main (int   argc,
 	g_autoptr(PacGame)       game = NULL;
 	g_autoptr(PacMaze)       maze = NULL;
 	g_autoptr(PacPlayer)     player = NULL;
-	g_autoptr(LrgGrlWindow)  window = NULL;
-	g_autoptr(LrgCameraIsometric) camera = NULL;
-	g_autoptr(GrlColor)      bg_color = NULL;
-	guint                    i;
+	g_autoptr(LrgGrlWindow)       window = NULL;
+	g_autoptr(LrgCameraIsometric) camera_iso = NULL;
+	g_autoptr(LrgCameraThirdPerson) camera_tp = NULL;
+	g_autoptr(LrgCameraFirstPerson) camera_fp = NULL;
+	CameraMode                    camera_mode = CAMERA_MODE_ISOMETRIC;
+	g_autoptr(GrlColor)           bg_color = NULL;
+	guint                         i;
 
 	/* Create window first (before engine startup for graphics) */
 	window = lrg_grl_window_new (800, 600, "3D Omnomagon - Libregnum Example");
@@ -1544,12 +1587,22 @@ main (int   argc,
 	/* Count total pellets */
 	game->total_pellets = maze->pellets->len;
 
-	/* Create isometric camera and set on renderer */
-	camera = lrg_camera_isometric_new ();
-	lrg_camera_isometric_set_tile_width (camera, 1.0f);   /* Match maze tile_size */
-	lrg_camera_isometric_set_tile_height (camera, 0.5f);
-	lrg_camera_isometric_set_zoom (camera, 0.05f);        /* Zoom out to see more maze */
-	lrg_renderer_set_camera (renderer, LRG_CAMERA (camera));
+	/* Create all three cameras */
+	camera_iso = lrg_camera_isometric_new ();
+	lrg_camera_isometric_set_tile_width (camera_iso, 1.0f);
+	lrg_camera_isometric_set_tile_height (camera_iso, 0.5f);
+	lrg_camera_isometric_set_zoom (camera_iso, 0.05f);
+
+	camera_tp = lrg_camera_thirdperson_new ();
+	lrg_camera_thirdperson_set_distance (camera_tp, 8.0f);
+	lrg_camera_thirdperson_set_pitch (camera_tp, 35.0f);
+	lrg_camera_thirdperson_set_height_offset (camera_tp, 0.5f);
+
+	camera_fp = lrg_camera_firstperson_new ();
+	lrg_camera_firstperson_set_eye_height (camera_fp, 0.5f);
+
+	/* Set initial camera (isometric) on renderer */
+	lrg_renderer_set_camera (renderer, LRG_CAMERA (camera_iso));
 	bg_color = grl_color_new (0, 0, 0, 255);
 
 	/* Main game loop */
@@ -1571,12 +1624,40 @@ main (int   argc,
 			pac_game_reset (game);
 		}
 
+		/* Cycle camera mode with C key */
+		if (grl_input_is_key_pressed (GRL_KEY_C))
+		{
+			camera_mode = (camera_mode + 1) % CAMERA_MODE_COUNT;
+
+			/* Update renderer's active camera */
+			switch (camera_mode)
+			{
+			case CAMERA_MODE_ISOMETRIC:
+				lrg_renderer_set_camera (renderer, LRG_CAMERA (camera_iso));
+				break;
+			case CAMERA_MODE_THIRDPERSON:
+				lrg_renderer_set_camera (renderer, LRG_CAMERA (camera_tp));
+				/* Snap to player on switch */
+				lrg_camera_thirdperson_snap_to_target (camera_tp,
+				                                       game->player->position->x,
+				                                       game->player->position->y,
+				                                       game->player->position->z);
+				break;
+			case CAMERA_MODE_FIRSTPERSON:
+				lrg_renderer_set_camera (renderer, LRG_CAMERA (camera_fp));
+				break;
+			default:
+				break;
+			}
+		}
+
 		/* Render using new graphics system */
 		lrg_renderer_begin_frame (renderer);
 		lrg_renderer_clear (renderer, bg_color);
 
 		/* Update camera position */
-		setup_camera (camera, game->player);
+		update_camera (camera_mode, camera_iso, camera_tp, camera_fp,
+		               game->player, delta);
 
 		/* Render world layer (with camera transform) */
 		lrg_renderer_begin_layer (renderer, LRG_RENDER_LAYER_WORLD);
