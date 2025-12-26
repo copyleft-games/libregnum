@@ -1,6 +1,7 @@
 # Build artifacts
 build/
 tests/build/
+examples/build/
 
 # Generated source files (from .in templates)
 src/lrg-version.h

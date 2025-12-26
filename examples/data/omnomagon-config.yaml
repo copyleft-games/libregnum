@@ -1,0 +1,30 @@
+# omnomagon-config.yaml
+#
+# Omnomagon game configuration
+
+type: pac-game-config
+
+player:
+  speed: 3.0
+  lives: 3
+  power-duration: 10.0
+
+ghosts:
+  - color: { r: 255, g: 0, b: 0, a: 255 }      # Red (Blinky)
+    speed: 2.5
+  - color: { r: 255, g: 184, b: 255, a: 255 }  # Pink (Pinky)
+    speed: 2.5
+  - color: { r: 0, g: 255, b: 255, a: 255 }    # Cyan (Inky)
+    speed: 2.5
+  - color: { r: 255, g: 184, b: 82, a: 255 }   # Orange (Clyde)
+    speed: 2.5
+
+scoring:
+  pellet: 10
+  power-pellet: 50
+  ghost: 200
+
+camera:
+  distance: 30.0
+  height: 35.0
+  angle: 60.0

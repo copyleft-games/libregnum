@@ -93,6 +93,10 @@ main (int argc, char *argv[])
 
 See the [Quickstart Guide](quickstart.md) for more detailed examples.
 
+## Complete Examples
+
+- **[3D Omnomagon](examples/omnomagon.md)** - A complete playable 3D Omnomagon game demonstrating data-driven design, type registration, YAML loading, 3D rendering, collision detection, and simple AI
+
 ## Core Concepts Overview
 
 ### Data-Driven Design
