@@ -1,0 +1,22 @@
+/* config.h
+ *
+ * Copyright 2025 Zach Podbielniak
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Build configuration for Libregnum.
+ * This file is generated from config.h.in during build.
+ * This is an internal header and should not be installed.
+ */
+
+#pragma once
+
+/* Package information */
+#define PACKAGE_NAME "libregnum"
+#define PACKAGE_VERSION "@VERSION@"
+#define PACKAGE_STRING "libregnum @VERSION@"
+
+/* Version numbers */
+#define LRG_COMPILED_VERSION_MAJOR @VERSION_MAJOR@
+#define LRG_COMPILED_VERSION_MINOR @VERSION_MINOR@
+#define LRG_COMPILED_VERSION_MICRO @VERSION_MICRO@

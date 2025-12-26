@@ -1,0 +1,137 @@
+/* lrg-version.h
+ *
+ * Copyright 2025 Zach Podbielniak
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Version information for Libregnum.
+ * This file is generated from lrg-version.h.in during build.
+ */
+
+#pragma once
+
+#if !defined(LIBREGNUM_INSIDE) && !defined(LIBREGNUM_COMPILATION)
+#error "Only <libregnum.h> can be included directly."
+#endif
+
+#include <glib.h>
+
+G_BEGIN_DECLS
+
+/**
+ * LRG_VERSION_MAJOR:
+ *
+ * The major version number of Libregnum.
+ */
+#define LRG_VERSION_MAJOR (@VERSION_MAJOR@)
+
+/**
+ * LRG_VERSION_MINOR:
+ *
+ * The minor version number of Libregnum.
+ */
+#define LRG_VERSION_MINOR (@VERSION_MINOR@)
+
+/**
+ * LRG_VERSION_MICRO:
+ *
+ * The micro version number of Libregnum.
+ */
+#define LRG_VERSION_MICRO (@VERSION_MICRO@)
+
+/**
+ * LRG_VERSION_STRING:
+ *
+ * The version of Libregnum as a string.
+ */
+#define LRG_VERSION_STRING "@VERSION@"
+
+/**
+ * LRG_API_VERSION:
+ *
+ * The API version of Libregnum.
+ */
+#define LRG_API_VERSION (@API_VERSION@)
+
+/**
+ * LRG_API_VERSION_STRING:
+ *
+ * The API version of Libregnum as a string.
+ */
+#define LRG_API_VERSION_STRING "@API_VERSION@"
+
+/**
+ * LRG_CHECK_VERSION:
+ * @major: major version to check
+ * @minor: minor version to check
+ * @micro: micro version to check
+ *
+ * Checks if the version of Libregnum is at least the specified version.
+ *
+ * Returns: %TRUE if the version is at least the specified version
+ */
+#define LRG_CHECK_VERSION(major, minor, micro) \
+    (LRG_VERSION_MAJOR > (major) || \
+     (LRG_VERSION_MAJOR == (major) && LRG_VERSION_MINOR > (minor)) || \
+     (LRG_VERSION_MAJOR == (major) && LRG_VERSION_MINOR == (minor) && \
+      LRG_VERSION_MICRO >= (micro)))
+
+/**
+ * LRG_AVAILABLE_IN_ALL:
+ *
+ * Marks a function as available in all versions of Libregnum.
+ * Used for GObject Introspection to export symbols.
+ */
+#if defined(LIBREGNUM_COMPILATION)
+#  define LRG_AVAILABLE_IN_ALL __attribute__((visibility("default")))
+#else
+#  define LRG_AVAILABLE_IN_ALL
+#endif
+
+/**
+ * lrg_get_major_version:
+ *
+ * Gets the major version of the Libregnum library at runtime.
+ *
+ * Returns: The major version
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_get_major_version (void);
+
+/**
+ * lrg_get_minor_version:
+ *
+ * Gets the minor version of the Libregnum library at runtime.
+ *
+ * Returns: The minor version
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_get_minor_version (void);
+
+/**
+ * lrg_get_micro_version:
+ *
+ * Gets the micro version of the Libregnum library at runtime.
+ *
+ * Returns: The micro version
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_get_micro_version (void);
+
+/**
+ * lrg_check_version:
+ * @required_major: the required major version
+ * @required_minor: the required minor version
+ * @required_micro: the required micro version
+ *
+ * Checks at runtime if the Libregnum library is at least the
+ * specified version.
+ *
+ * Returns: %TRUE if the version is compatible
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_check_version (guint required_major,
+                            guint required_minor,
+                            guint required_micro);
+
+G_END_DECLS
