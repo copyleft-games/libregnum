@@ -27,7 +27,8 @@ sudo dnf install \
     gobject-introspection-devel \
     libdex-devel \
     libyaml-devel \
-    json-glib-devel
+    json-glib-devel \
+    luajit-devel
 ```
 
 ### Submodule Dependencies
