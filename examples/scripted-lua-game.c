@@ -1,0 +1,547 @@
+/* scripted-lua-game.c
+ *
+ * Copyright 2025 Zach Podbielniak
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Example demonstrating the Lua scripting system in libregnum.
+ *
+ * This example shows:
+ * - Creating a scripting context
+ * - Loading Lua scripts
+ * - Registering C functions callable from Lua
+ * - Using update hooks for per-frame game logic
+ * - Passing data between C and Lua
+ *
+ * Controls:
+ *   SPACE/ENTER - Spawn a new ball from Lua
+ *   R           - Reset all balls
+ *   ESC         - Quit
+ */
+
+#include <libregnum.h>
+#include <graylib.h>
+#include <math.h>
+
+/* =============================================================================
+ * Constants
+ * ========================================================================== */
+
+#define WINDOW_WIDTH   800
+#define WINDOW_HEIGHT  600
+#define MAX_BALLS      100
+
+/* =============================================================================
+ * Ball Structure
+ *
+ * Simple bouncing ball managed by Lua.
+ * ========================================================================== */
+
+typedef struct
+{
+    gfloat x, y;
+    gfloat vx, vy;
+    gfloat radius;
+    guint8 r, g, b;
+    gboolean active;
+} Ball;
+
+static Ball balls[MAX_BALLS];
+static gint  ball_count = 0;
+
+/* =============================================================================
+ * C Functions Exposed to Lua
+ * ========================================================================== */
+
+/**
+ * spawn_ball:
+ *
+ * C function callable from Lua to spawn a new ball.
+ * Lua signature: spawn_ball(x, y, vx, vy, radius, r, g, b) -> ball_index
+ */
+static gboolean
+spawn_ball (LrgScripting  *scripting,
+            guint          n_args,
+            const GValue  *args,
+            GValue        *return_value,
+            gpointer       user_data,
+            GError       **error)
+{
+    gfloat x, y, vx, vy, radius;
+    gint   r, g, b;
+    gint   i;
+
+    if (n_args < 8)
+    {
+        g_set_error (error,
+                     LRG_SCRIPTING_ERROR,
+                     LRG_SCRIPTING_ERROR_FAILED,
+                     "spawn_ball requires 8 arguments: x, y, vx, vy, radius, r, g, b");
+        return FALSE;
+    }
+
+    /* Extract arguments - Lua numbers come as INT64 or DOUBLE */
+    x = (gfloat)(G_VALUE_HOLDS_DOUBLE (&args[0]) ?
+                 g_value_get_double (&args[0]) :
+                 g_value_get_int64 (&args[0]));
+    y = (gfloat)(G_VALUE_HOLDS_DOUBLE (&args[1]) ?
+                 g_value_get_double (&args[1]) :
+                 g_value_get_int64 (&args[1]));
+    vx = (gfloat)(G_VALUE_HOLDS_DOUBLE (&args[2]) ?
+                  g_value_get_double (&args[2]) :
+                  g_value_get_int64 (&args[2]));
+    vy = (gfloat)(G_VALUE_HOLDS_DOUBLE (&args[3]) ?
+                  g_value_get_double (&args[3]) :
+                  g_value_get_int64 (&args[3]));
+    radius = (gfloat)(G_VALUE_HOLDS_DOUBLE (&args[4]) ?
+                      g_value_get_double (&args[4]) :
+                      g_value_get_int64 (&args[4]));
+    r = (gint)(G_VALUE_HOLDS_DOUBLE (&args[5]) ?
+               g_value_get_double (&args[5]) :
+               g_value_get_int64 (&args[5]));
+    g = (gint)(G_VALUE_HOLDS_DOUBLE (&args[6]) ?
+               g_value_get_double (&args[6]) :
+               g_value_get_int64 (&args[6]));
+    b = (gint)(G_VALUE_HOLDS_DOUBLE (&args[7]) ?
+               g_value_get_double (&args[7]) :
+               g_value_get_int64 (&args[7]));
+
+    /* Find an inactive slot */
+    for (i = 0; i < MAX_BALLS; i++)
+    {
+        if (!balls[i].active)
+        {
+            balls[i].x = x;
+            balls[i].y = y;
+            balls[i].vx = vx;
+            balls[i].vy = vy;
+            balls[i].radius = radius;
+            balls[i].r = (guint8)CLAMP (r, 0, 255);
+            balls[i].g = (guint8)CLAMP (g, 0, 255);
+            balls[i].b = (guint8)CLAMP (b, 0, 255);
+            balls[i].active = TRUE;
+            ball_count++;
+
+            g_value_init (return_value, G_TYPE_INT);
+            g_value_set_int (return_value, i);
+            return TRUE;
+        }
+    }
+
+    /* No slots available */
+    g_value_init (return_value, G_TYPE_INT);
+    g_value_set_int (return_value, -1);
+    return TRUE;
+}
+
+/**
+ * get_ball_count:
+ *
+ * Returns the current number of active balls.
+ * Lua signature: get_ball_count() -> count
+ */
+static gboolean
+get_ball_count (LrgScripting  *scripting,
+                guint          n_args,
+                const GValue  *args,
+                GValue        *return_value,
+                gpointer       user_data,
+                GError       **error)
+{
+    g_value_init (return_value, G_TYPE_INT);
+    g_value_set_int (return_value, ball_count);
+    return TRUE;
+}
+
+/**
+ * clear_balls:
+ *
+ * Removes all balls.
+ * Lua signature: clear_balls()
+ */
+static gboolean
+clear_balls (LrgScripting  *scripting,
+             guint          n_args,
+             const GValue  *args,
+             GValue        *return_value,
+             gpointer       user_data,
+             GError       **error)
+{
+    gint i;
+
+    for (i = 0; i < MAX_BALLS; i++)
+    {
+        balls[i].active = FALSE;
+    }
+    ball_count = 0;
+
+    return TRUE;
+}
+
+/**
+ * get_screen_size:
+ *
+ * Returns the screen width.
+ * Lua signature: get_screen_size() -> width
+ */
+static gboolean
+get_screen_size (LrgScripting  *scripting,
+                 guint          n_args,
+                 const GValue  *args,
+                 GValue        *return_value,
+                 gpointer       user_data,
+                 GError       **error)
+{
+    g_value_init (return_value, G_TYPE_INT);
+    g_value_set_int (return_value, WINDOW_WIDTH);
+    return TRUE;
+}
+
+/**
+ * get_screen_height:
+ *
+ * Returns the screen height.
+ */
+static gboolean
+get_screen_height (LrgScripting  *scripting,
+                   guint          n_args,
+                   const GValue  *args,
+                   GValue        *return_value,
+                   gpointer       user_data,
+                   GError       **error)
+{
+    g_value_init (return_value, G_TYPE_INT);
+    g_value_set_int (return_value, WINDOW_HEIGHT);
+    return TRUE;
+}
+
+/* =============================================================================
+ * Lua Script
+ *
+ * This script is embedded for simplicity. In a real game, you'd load
+ * this from a file using lrg_scripting_load_file().
+ * ========================================================================== */
+
+static const gchar *LUA_GAME_SCRIPT =
+    "-- Scripted Game Logic\n"
+    "-- This Lua code controls the bouncing balls\n"
+    "\n"
+    "-- Configuration\n"
+    "local GRAVITY = 500\n"
+    "local BOUNCE_DAMPENING = 0.8\n"
+    "local SPAWN_SPEED = 300\n"
+    "\n"
+    "-- Ball state (mirrors C state for physics)\n"
+    "local ball_velocities = {}\n"
+    "\n"
+    "-- Initialize\n"
+    "function game_init()\n"
+    "    Log.info('Lua game script initialized!')\n"
+    "    Log.info('Press SPACE to spawn balls, R to reset')\n"
+    "    \n"
+    "    -- Spawn a few initial balls\n"
+    "    for i = 1, 5 do\n"
+    "        spawn_random_ball()\n"
+    "    end\n"
+    "end\n"
+    "\n"
+    "-- Spawn a ball at a random position with random color\n"
+    "function spawn_random_ball()\n"
+    "    local width = get_screen_size()\n"
+    "    local height = get_screen_height()\n"
+    "    \n"
+    "    local x = math.random(50, width - 50)\n"
+    "    local y = math.random(50, height / 2)\n"
+    "    local vx = math.random(-SPAWN_SPEED, SPAWN_SPEED)\n"
+    "    local vy = math.random(-100, 100)\n"
+    "    local radius = math.random(10, 30)\n"
+    "    local r = math.random(50, 255)\n"
+    "    local g = math.random(50, 255)\n"
+    "    local b = math.random(50, 255)\n"
+    "    \n"
+    "    local idx = spawn_ball(x, y, vx, vy, radius, r, g, b)\n"
+    "    if idx >= 0 then\n"
+    "        ball_velocities[idx] = {vx = vx, vy = vy}\n"
+    "        Log.debug('Spawned ball ' .. idx .. ' at (' .. x .. ', ' .. y .. ')')\n"
+    "    else\n"
+    "        Log.warning('Could not spawn ball - max reached!')\n"
+    "    end\n"
+    "    \n"
+    "    return idx\n"
+    "end\n"
+    "\n"
+    "-- Called when user presses SPACE\n"
+    "function on_spawn_key()\n"
+    "    spawn_random_ball()\n"
+    "    local count = get_ball_count()\n"
+    "    Log.info('Ball count: ' .. count)\n"
+    "end\n"
+    "\n"
+    "-- Called when user presses R\n"
+    "function on_reset_key()\n"
+    "    clear_balls()\n"
+    "    ball_velocities = {}\n"
+    "    Log.info('All balls cleared!')\n"
+    "    \n"
+    "    -- Spawn initial balls again\n"
+    "    for i = 1, 5 do\n"
+    "        spawn_random_ball()\n"
+    "    end\n"
+    "end\n"
+    "\n"
+    "-- Per-frame update (registered as update hook)\n"
+    "function game_update(delta)\n"
+    "    -- Physics is handled in C for this example\n"
+    "    -- But Lua could do additional game logic here\n"
+    "end\n"
+    "\n"
+    "-- Call init on load\n"
+    "game_init()\n";
+
+/* =============================================================================
+ * Physics Update (C-side)
+ *
+ * Updates ball positions with gravity and bouncing.
+ * ========================================================================== */
+
+static void
+update_physics (gfloat delta)
+{
+    gint   i;
+    gfloat gravity = 500.0f;
+    gfloat dampening = 0.8f;
+
+    for (i = 0; i < MAX_BALLS; i++)
+    {
+        if (!balls[i].active)
+            continue;
+
+        /* Apply gravity */
+        balls[i].vy += gravity * delta;
+
+        /* Update position */
+        balls[i].x += balls[i].vx * delta;
+        balls[i].y += balls[i].vy * delta;
+
+        /* Bounce off walls */
+        if (balls[i].x - balls[i].radius < 0)
+        {
+            balls[i].x = balls[i].radius;
+            balls[i].vx = -balls[i].vx * dampening;
+        }
+        else if (balls[i].x + balls[i].radius > WINDOW_WIDTH)
+        {
+            balls[i].x = WINDOW_WIDTH - balls[i].radius;
+            balls[i].vx = -balls[i].vx * dampening;
+        }
+
+        /* Bounce off floor/ceiling */
+        if (balls[i].y - balls[i].radius < 0)
+        {
+            balls[i].y = balls[i].radius;
+            balls[i].vy = -balls[i].vy * dampening;
+        }
+        else if (balls[i].y + balls[i].radius > WINDOW_HEIGHT)
+        {
+            balls[i].y = WINDOW_HEIGHT - balls[i].radius;
+            balls[i].vy = -balls[i].vy * dampening;
+        }
+    }
+}
+
+/* =============================================================================
+ * Main
+ * ========================================================================== */
+
+int
+main (int   argc,
+      char *argv[])
+{
+    g_autoptr(LrgScriptingLua) scripting = NULL;
+    g_autoptr(LrgGrlWindow) window = NULL;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GrlColor) bg_color = NULL;
+    g_autoptr(GrlColor) white_color = NULL;
+    g_autoptr(GrlColor) gray_color = NULL;
+    LrgEngine *engine = NULL;
+    LrgInputManager *input_manager = NULL;
+    GrlWindow *grl_window = NULL;
+    gint i;
+
+    /* Create window first */
+    window = lrg_grl_window_new (WINDOW_WIDTH, WINDOW_HEIGHT,
+                                 "Scripted Game - Bouncing Balls");
+    lrg_window_set_target_fps (LRG_WINDOW (window), 60);
+
+    /* Get the underlying GrlWindow for drawing */
+    grl_window = lrg_grl_window_get_grl_window (window);
+
+    /* Initialize engine with window */
+    engine = lrg_engine_get_default ();
+    lrg_engine_set_window (engine, LRG_WINDOW (window));
+
+    if (!lrg_engine_startup (engine, &error))
+    {
+        g_printerr ("Failed to start engine: %s\n", error->message);
+        return 1;
+    }
+
+    /* Get input manager */
+    input_manager = lrg_input_manager_get_default ();
+
+    /* Create scripting context */
+    scripting = lrg_scripting_lua_new ();
+
+    /* Attach scripting to engine */
+    lrg_engine_set_scripting (engine, LRG_SCRIPTING (scripting));
+
+    /* Register C functions that Lua can call */
+    lrg_scripting_register_function (LRG_SCRIPTING (scripting),
+                                     "spawn_ball",
+                                     spawn_ball,
+                                     NULL,
+                                     &error);
+    if (error != NULL)
+    {
+        g_printerr ("Failed to register spawn_ball: %s\n", error->message);
+        return 1;
+    }
+
+    lrg_scripting_register_function (LRG_SCRIPTING (scripting),
+                                     "get_ball_count",
+                                     get_ball_count,
+                                     NULL,
+                                     &error);
+
+    lrg_scripting_register_function (LRG_SCRIPTING (scripting),
+                                     "clear_balls",
+                                     clear_balls,
+                                     NULL,
+                                     &error);
+
+    lrg_scripting_register_function (LRG_SCRIPTING (scripting),
+                                     "get_screen_size",
+                                     get_screen_size,
+                                     NULL,
+                                     &error);
+
+    lrg_scripting_register_function (LRG_SCRIPTING (scripting),
+                                     "get_screen_height",
+                                     get_screen_height,
+                                     NULL,
+                                     &error);
+
+    /* Load the Lua game script */
+    if (!lrg_scripting_load_string (LRG_SCRIPTING (scripting),
+                                    "game.lua",
+                                    LUA_GAME_SCRIPT,
+                                    &error))
+    {
+        g_printerr ("Failed to load Lua script: %s\n", error->message);
+        return 1;
+    }
+
+    /* Register the update hook */
+    lrg_scripting_lua_register_update_hook (scripting, "game_update");
+
+    /* Initialize balls array */
+    for (i = 0; i < MAX_BALLS; i++)
+    {
+        balls[i].active = FALSE;
+    }
+
+    /* Create reusable colors */
+    bg_color = grl_color_new (30, 30, 40, 255);
+    white_color = grl_color_new (255, 255, 255, 255);
+    gray_color = grl_color_new (150, 150, 150, 255);
+
+    g_print ("Scripted Game Example\n");
+    g_print ("======================\n");
+    g_print ("Controls:\n");
+    g_print ("  SPACE/ENTER - Spawn a new ball\n");
+    g_print ("  R           - Reset all balls\n");
+    g_print ("  ESC         - Quit\n\n");
+
+    /* Main loop */
+    while (!lrg_window_should_close (LRG_WINDOW (window)))
+    {
+        gfloat delta;
+
+        delta = lrg_window_get_frame_time (LRG_WINDOW (window));
+
+        /* Poll input */
+        lrg_input_manager_poll (input_manager);
+
+        /* Handle input */
+        if (lrg_input_manager_is_key_pressed (input_manager, GRL_KEY_SPACE) ||
+            lrg_input_manager_is_key_pressed (input_manager, GRL_KEY_ENTER))
+        {
+            /* Call Lua function to spawn ball */
+            lrg_scripting_call_function (LRG_SCRIPTING (scripting),
+                                         "on_spawn_key",
+                                         NULL,
+                                         0,
+                                         NULL,
+                                         NULL);
+        }
+
+        if (lrg_input_manager_is_key_pressed (input_manager, GRL_KEY_R))
+        {
+            /* Call Lua function to reset */
+            lrg_scripting_call_function (LRG_SCRIPTING (scripting),
+                                         "on_reset_key",
+                                         NULL,
+                                         0,
+                                         NULL,
+                                         NULL);
+        }
+
+        if (lrg_input_manager_is_key_pressed (input_manager, GRL_KEY_ESCAPE))
+        {
+            break;
+        }
+
+        /* Update physics (C-side) */
+        update_physics (delta);
+
+        /* Update engine (calls Lua update hooks) */
+        lrg_engine_update (engine, delta);
+
+        /* Render using graylib direct drawing */
+        grl_window_begin_drawing (grl_window);
+        grl_draw_clear_background (bg_color);
+
+        /* Draw all active balls */
+        for (i = 0; i < MAX_BALLS; i++)
+        {
+            if (balls[i].active)
+            {
+                g_autoptr(GrlColor) ball_color = NULL;
+
+                ball_color = grl_color_new (balls[i].r, balls[i].g,
+                                            balls[i].b, 255);
+                grl_draw_circle ((gint)balls[i].x, (gint)balls[i].y,
+                                 balls[i].radius, ball_color);
+            }
+        }
+
+        /* Draw ball count */
+        {
+            g_autofree gchar *text = NULL;
+
+            text = g_strdup_printf ("Balls: %d", ball_count);
+            grl_draw_text (text, 10, 10, 20, white_color);
+        }
+
+        /* Draw instructions */
+        grl_draw_text ("SPACE/ENTER: spawn | R: reset | ESC: quit",
+                       10, WINDOW_HEIGHT - 30, 16, gray_color);
+
+        grl_window_end_drawing (grl_window);
+    }
+
+    /* Shutdown */
+    lrg_engine_shutdown (engine);
+
+    return 0;
+}

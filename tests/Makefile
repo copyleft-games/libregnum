@@ -48,6 +48,7 @@ TEST_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
 TEST_LIBS := -l$(LIB_NAME)
 TEST_LIBS += -lgraylib -lyaml-glib
 TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1)
+TEST_LIBS += $(PYTHON_LIBS)
 
 # =============================================================================
 # Test Sources
@@ -79,7 +80,8 @@ TEST_SOURCES := \
 	test-world3d.c \
 	test-scene.c \
 	test-primitives.c \
-	test-scripting.c
+	test-scripting.c \
+	test-scripting-python.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))

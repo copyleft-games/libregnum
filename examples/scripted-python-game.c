@@ -1,20 +1,20 @@
-/* scripted-game.c
+/* scripted-python-game.c
  *
  * Copyright 2025 Zach Podbielniak
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Example demonstrating the Lua scripting system in libregnum.
+ * Example demonstrating the Python scripting system in libregnum.
  *
  * This example shows:
- * - Creating a scripting context
- * - Loading Lua scripts
- * - Registering C functions callable from Lua
+ * - Creating a Python scripting context
+ * - Loading Python scripts
+ * - Registering C functions callable from Python
  * - Using update hooks for per-frame game logic
- * - Passing data between C and Lua
+ * - Passing data between C and Python
  *
  * Controls:
- *   SPACE/ENTER - Spawn a new ball from Lua
+ *   SPACE/ENTER - Spawn a new ball from Python
  *   R           - Reset all balls
  *   ESC         - Quit
  */
@@ -34,7 +34,7 @@
 /* =============================================================================
  * Ball Structure
  *
- * Simple bouncing ball managed by Lua.
+ * Simple bouncing ball managed by Python.
  * ========================================================================== */
 
 typedef struct
@@ -50,14 +50,14 @@ static Ball balls[MAX_BALLS];
 static gint  ball_count = 0;
 
 /* =============================================================================
- * C Functions Exposed to Lua
+ * C Functions Exposed to Python
  * ========================================================================== */
 
 /**
  * spawn_ball:
  *
- * C function callable from Lua to spawn a new ball.
- * Lua signature: spawn_ball(x, y, vx, vy, radius, r, g, b) -> ball_index
+ * C function callable from Python to spawn a new ball.
+ * Python signature: spawn_ball(x, y, vx, vy, radius, r, g, b) -> ball_index
  */
 static gboolean
 spawn_ball (LrgScripting  *scripting,
@@ -80,7 +80,7 @@ spawn_ball (LrgScripting  *scripting,
         return FALSE;
     }
 
-    /* Extract arguments - Lua numbers come as INT64 or DOUBLE */
+    /* Extract arguments - Python numbers come as INT64 or DOUBLE */
     x = (gfloat)(G_VALUE_HOLDS_DOUBLE (&args[0]) ?
                  g_value_get_double (&args[0]) :
                  g_value_get_int64 (&args[0]));
@@ -138,7 +138,7 @@ spawn_ball (LrgScripting  *scripting,
  * get_ball_count:
  *
  * Returns the current number of active balls.
- * Lua signature: get_ball_count() -> count
+ * Python signature: get_ball_count() -> count
  */
 static gboolean
 get_ball_count (LrgScripting  *scripting,
@@ -157,7 +157,7 @@ get_ball_count (LrgScripting  *scripting,
  * clear_balls:
  *
  * Removes all balls.
- * Lua signature: clear_balls()
+ * Python signature: clear_balls()
  */
 static gboolean
 clear_balls (LrgScripting  *scripting,
@@ -182,7 +182,7 @@ clear_balls (LrgScripting  *scripting,
  * get_screen_size:
  *
  * Returns the screen width.
- * Lua signature: get_screen_size() -> width
+ * Python signature: get_screen_size() -> width
  */
 static gboolean
 get_screen_size (LrgScripting  *scripting,
@@ -216,86 +216,84 @@ get_screen_height (LrgScripting  *scripting,
 }
 
 /* =============================================================================
- * Lua Script
+ * Python Script
  *
  * This script is embedded for simplicity. In a real game, you'd load
  * this from a file using lrg_scripting_load_file().
  * ========================================================================== */
 
-static const gchar *LUA_GAME_SCRIPT =
-    "-- Scripted Game Logic\n"
-    "-- This Lua code controls the bouncing balls\n"
+static const gchar *PYTHON_GAME_SCRIPT =
+    "# Scripted Game Logic\n"
+    "# This Python code controls the bouncing balls\n"
+    "import random\n"
     "\n"
-    "-- Configuration\n"
-    "local GRAVITY = 500\n"
-    "local BOUNCE_DAMPENING = 0.8\n"
-    "local SPAWN_SPEED = 300\n"
+    "# Configuration\n"
+    "GRAVITY = 500\n"
+    "BOUNCE_DAMPENING = 0.8\n"
+    "SPAWN_SPEED = 300\n"
     "\n"
-    "-- Ball state (mirrors C state for physics)\n"
-    "local ball_velocities = {}\n"
+    "# Ball state (mirrors C state for physics)\n"
+    "ball_velocities = {}\n"
     "\n"
-    "-- Initialize\n"
-    "function game_init()\n"
-    "    Log.info('Lua game script initialized!')\n"
+    "def game_init():\n"
+    "    \"\"\"Initialize the game.\"\"\"\n"
+    "    Log.info('Python game script initialized!')\n"
     "    Log.info('Press SPACE to spawn balls, R to reset')\n"
     "    \n"
-    "    -- Spawn a few initial balls\n"
-    "    for i = 1, 5 do\n"
+    "    # Spawn a few initial balls\n"
+    "    for i in range(5):\n"
     "        spawn_random_ball()\n"
-    "    end\n"
-    "end\n"
     "\n"
-    "-- Spawn a ball at a random position with random color\n"
-    "function spawn_random_ball()\n"
-    "    local width = get_screen_size()\n"
-    "    local height = get_screen_height()\n"
+    "def spawn_random_ball():\n"
+    "    \"\"\"Spawn a ball at a random position with random color.\"\"\"\n"
+    "    global ball_velocities\n"
     "    \n"
-    "    local x = math.random(50, width - 50)\n"
-    "    local y = math.random(50, height / 2)\n"
-    "    local vx = math.random(-SPAWN_SPEED, SPAWN_SPEED)\n"
-    "    local vy = math.random(-100, 100)\n"
-    "    local radius = math.random(10, 30)\n"
-    "    local r = math.random(50, 255)\n"
-    "    local g = math.random(50, 255)\n"
-    "    local b = math.random(50, 255)\n"
+    "    width = get_screen_size()\n"
+    "    height = get_screen_height()\n"
     "    \n"
-    "    local idx = spawn_ball(x, y, vx, vy, radius, r, g, b)\n"
-    "    if idx >= 0 then\n"
-    "        ball_velocities[idx] = {vx = vx, vy = vy}\n"
-    "        Log.debug('Spawned ball ' .. idx .. ' at (' .. x .. ', ' .. y .. ')')\n"
-    "    else\n"
+    "    x = random.randint(50, width - 50)\n"
+    "    y = random.randint(50, height // 2)\n"
+    "    vx = random.randint(-SPAWN_SPEED, SPAWN_SPEED)\n"
+    "    vy = random.randint(-100, 100)\n"
+    "    radius = random.randint(10, 30)\n"
+    "    r = random.randint(50, 255)\n"
+    "    g = random.randint(50, 255)\n"
+    "    b = random.randint(50, 255)\n"
+    "    \n"
+    "    idx = spawn_ball(x, y, vx, vy, radius, r, g, b)\n"
+    "    if idx >= 0:\n"
+    "        ball_velocities[idx] = {'vx': vx, 'vy': vy}\n"
+    "        Log.debug(f'Spawned ball {idx} at ({x}, {y})')\n"
+    "    else:\n"
     "        Log.warning('Could not spawn ball - max reached!')\n"
-    "    end\n"
     "    \n"
     "    return idx\n"
-    "end\n"
     "\n"
-    "-- Called when user presses SPACE\n"
-    "function on_spawn_key()\n"
+    "def on_spawn_key():\n"
+    "    \"\"\"Called when user presses SPACE.\"\"\"\n"
     "    spawn_random_ball()\n"
-    "    local count = get_ball_count()\n"
-    "    Log.info('Ball count: ' .. count)\n"
-    "end\n"
+    "    count = get_ball_count()\n"
+    "    Log.info(f'Ball count: {count}')\n"
     "\n"
-    "-- Called when user presses R\n"
-    "function on_reset_key()\n"
+    "def on_reset_key():\n"
+    "    \"\"\"Called when user presses R.\"\"\"\n"
+    "    global ball_velocities\n"
+    "    \n"
     "    clear_balls()\n"
     "    ball_velocities = {}\n"
     "    Log.info('All balls cleared!')\n"
     "    \n"
-    "    -- Spawn initial balls again\n"
-    "    for i = 1, 5 do\n"
+    "    # Spawn initial balls again\n"
+    "    for i in range(5):\n"
     "        spawn_random_ball()\n"
-    "    end\n"
-    "end\n"
     "\n"
-    "-- Per-frame update (registered as update hook)\n"
-    "function game_update(delta)\n"
-    "    -- Physics is handled in C for this example\n"
-    "    -- But Lua could do additional game logic here\n"
-    "end\n"
+    "def game_update(delta):\n"
+    "    \"\"\"Per-frame update (registered as update hook).\"\"\"\n"
+    "    # Physics is handled in C for this example\n"
+    "    # But Python could do additional game logic here\n"
+    "    pass\n"
     "\n"
-    "-- Call init on load\n"
+    "# Call init on load\n"
     "game_init()\n";
 
 /* =============================================================================
@@ -357,7 +355,7 @@ int
 main (int   argc,
       char *argv[])
 {
-    g_autoptr(LrgScriptingLua) scripting = NULL;
+    g_autoptr(LrgScriptingPython) scripting = NULL;
     g_autoptr(LrgGrlWindow) window = NULL;
     g_autoptr(GError) error = NULL;
     g_autoptr(GrlColor) bg_color = NULL;
@@ -370,7 +368,7 @@ main (int   argc,
 
     /* Create window first */
     window = lrg_grl_window_new (WINDOW_WIDTH, WINDOW_HEIGHT,
-                                 "Scripted Game - Bouncing Balls");
+                                 "Scripted Game (Python) - Bouncing Balls");
     lrg_window_set_target_fps (LRG_WINDOW (window), 60);
 
     /* Get the underlying GrlWindow for drawing */
@@ -389,13 +387,13 @@ main (int   argc,
     /* Get input manager */
     input_manager = lrg_input_manager_get_default ();
 
-    /* Create scripting context */
-    scripting = lrg_scripting_lua_new ();
+    /* Create Python scripting context */
+    scripting = lrg_scripting_python_new ();
 
     /* Attach scripting to engine */
     lrg_engine_set_scripting (engine, LRG_SCRIPTING (scripting));
 
-    /* Register C functions that Lua can call */
+    /* Register C functions that Python can call */
     lrg_scripting_register_function (LRG_SCRIPTING (scripting),
                                      "spawn_ball",
                                      spawn_ball,
@@ -431,18 +429,18 @@ main (int   argc,
                                      NULL,
                                      &error);
 
-    /* Load the Lua game script */
+    /* Load the Python game script */
     if (!lrg_scripting_load_string (LRG_SCRIPTING (scripting),
-                                    "game.lua",
-                                    LUA_GAME_SCRIPT,
+                                    "game.py",
+                                    PYTHON_GAME_SCRIPT,
                                     &error))
     {
-        g_printerr ("Failed to load Lua script: %s\n", error->message);
+        g_printerr ("Failed to load Python script: %s\n", error->message);
         return 1;
     }
 
     /* Register the update hook */
-    lrg_scripting_lua_register_update_hook (scripting, "game_update");
+    lrg_scripting_python_register_update_hook (scripting, "game_update");
 
     /* Initialize balls array */
     for (i = 0; i < MAX_BALLS; i++)
@@ -455,8 +453,8 @@ main (int   argc,
     white_color = grl_color_new (255, 255, 255, 255);
     gray_color = grl_color_new (150, 150, 150, 255);
 
-    g_print ("Scripted Game Example\n");
-    g_print ("======================\n");
+    g_print ("Scripted Game Example (Python)\n");
+    g_print ("==============================\n");
     g_print ("Controls:\n");
     g_print ("  SPACE/ENTER - Spawn a new ball\n");
     g_print ("  R           - Reset all balls\n");
@@ -476,7 +474,7 @@ main (int   argc,
         if (lrg_input_manager_is_key_pressed (input_manager, GRL_KEY_SPACE) ||
             lrg_input_manager_is_key_pressed (input_manager, GRL_KEY_ENTER))
         {
-            /* Call Lua function to spawn ball */
+            /* Call Python function to spawn ball */
             lrg_scripting_call_function (LRG_SCRIPTING (scripting),
                                          "on_spawn_key",
                                          NULL,
@@ -487,7 +485,7 @@ main (int   argc,
 
         if (lrg_input_manager_is_key_pressed (input_manager, GRL_KEY_R))
         {
-            /* Call Lua function to reset */
+            /* Call Python function to reset */
             lrg_scripting_call_function (LRG_SCRIPTING (scripting),
                                          "on_reset_key",
                                          NULL,
@@ -504,7 +502,7 @@ main (int   argc,
         /* Update physics (C-side) */
         update_physics (delta);
 
-        /* Update engine (calls Lua update hooks) */
+        /* Update engine (calls Python update hooks) */
         lrg_engine_update (engine, delta);
 
         /* Render using graylib direct drawing */

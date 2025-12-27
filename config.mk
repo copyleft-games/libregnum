@@ -227,9 +227,13 @@ YAML_LIBS := $(shell $(PKG_CONFIG) --libs yaml-0.1)
 LUAJIT_CFLAGS := $(shell $(PKG_CONFIG) --cflags luajit)
 LUAJIT_LIBS := $(shell $(PKG_CONFIG) --libs luajit)
 
+# Python 3 (for scripting) - use python3-embed for embedding
+PYTHON_CFLAGS := $(shell $(PKG_CONFIG) --cflags python3-embed)
+PYTHON_LIBS := $(shell $(PKG_CONFIG) --libs python3-embed)
+
 # Combined dependency flags (use -isystem to suppress warnings from deps)
-DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(LUAJIT_CFLAGS)
-DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(LUAJIT_LIBS)
+DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS)
+DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS)
 
 # Graylib and yaml-glib (built from submodules)
 GRAYLIB_CFLAGS := -I$(GRAYLIB_DIR)/src

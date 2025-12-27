@@ -28,7 +28,8 @@ sudo dnf install \
     libdex-devel \
     libyaml-devel \
     json-glib-devel \
-    luajit-devel
+    luajit-devel \
+    python3-devel
 ```
 
 ### Submodule Dependencies
