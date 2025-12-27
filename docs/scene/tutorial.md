@@ -90,6 +90,11 @@ entities:
 
 ## Part 2: Loading the Scene in C
 
+> **Note:** Use `LrgSceneSerializerBlender` for Blender-exported scenes.
+> It automatically converts from Blender's Z-up coordinate system to
+> raylib's Y-up system. For generic YAML scenes without coordinate
+> conversion, use the base `LrgSceneSerializerYaml` class.
+
 ### Step 1: Basic Scene Loading
 
 ```c
@@ -99,12 +104,12 @@ entities:
 int
 main (int argc, char *argv[])
 {
-    g_autoptr(LrgSceneSerializerYaml) serializer = NULL;
-    g_autoptr(LrgScene)               scene = NULL;
-    g_autoptr(GError)                 error = NULL;
+    g_autoptr(LrgSceneSerializerBlender) serializer = NULL;
+    g_autoptr(LrgScene)                  scene = NULL;
+    g_autoptr(GError)                    error = NULL;
 
-    /* Create YAML serializer */
-    serializer = lrg_scene_serializer_yaml_new ();
+    /* Create Blender YAML serializer (handles Z-up to Y-up conversion) */
+    serializer = lrg_scene_serializer_blender_new ();
 
     /* Load the scene file */
     scene = lrg_scene_serializer_load_from_file (
@@ -423,18 +428,18 @@ render_shapes (GameState *state)
 int
 main (int argc, char *argv[])
 {
-    g_autoptr(LrgSceneSerializerYaml) serializer = NULL;
-    g_autoptr(LrgScene)               scene = NULL;
-    g_autoptr(GError)                 error = NULL;
-    g_autoptr(GrlWindow)              window = NULL;
-    g_autoptr(GrlCamera3D)            camera = NULL;
-    GameState                         state = { 0 };
+    g_autoptr(LrgSceneSerializerBlender) serializer = NULL;
+    g_autoptr(LrgScene)                  scene = NULL;
+    g_autoptr(GError)                    error = NULL;
+    g_autoptr(GrlWindow)                 window = NULL;
+    g_autoptr(GrlCamera3D)               camera = NULL;
+    GameState                            state = { 0 };
 
     /* Initialize graylib */
     grl_init ();
 
-    /* Load scene */
-    serializer = lrg_scene_serializer_yaml_new ();
+    /* Load scene (Blender serializer handles coordinate conversion) */
+    serializer = lrg_scene_serializer_blender_new ();
     scene = lrg_scene_serializer_load_from_file (
         LRG_SCENE_SERIALIZER (serializer),
         "assets/lamp_post.yaml",
@@ -590,11 +595,11 @@ Here's a complete example that loads a scene, displays it, and allows saving mod
 #include <graylib.h>
 
 typedef struct {
-    LrgScene                 *scene;
-    LrgSceneSerializerYaml   *serializer;
-    GPtrArray                *shapes;
-    GrlCamera3D              *camera;
-    gboolean                  modified;
+    LrgScene                   *scene;
+    LrgSceneSerializerBlender  *serializer;
+    GPtrArray                  *shapes;
+    GrlCamera3D                *camera;
+    gboolean                    modified;
 } SceneViewer;
 
 static LrgShape3D *
@@ -678,7 +683,7 @@ main (int argc, char *argv[])
     scene_path = argv[1];
 
     grl_init ();
-    viewer.serializer = lrg_scene_serializer_yaml_new ();
+    viewer.serializer = lrg_scene_serializer_blender_new ();
     viewer_load (&viewer, scene_path);
 
     g_autoptr(GrlWindow) window = grl_window_new (1024, 768, "Scene Viewer");

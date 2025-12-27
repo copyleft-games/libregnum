@@ -189,6 +189,7 @@
 #include "scene/lrg-scene.h"
 #include "scene/lrg-scene-serializer.h"
 #include "scene/lrg-scene-serializer-yaml.h"
+#include "scene/lrg-scene-serializer-blender.h"
 
 /* Mod module */
 #include "mod/lrg-mod-manifest.h"

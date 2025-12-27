@@ -29,7 +29,8 @@ LrgScene
 | `LrgSceneObject` | Individual primitive shape with transform and material |
 | `LrgMaterial3D` | PBR material properties (color, roughness, metallic, emission) |
 | `LrgSceneSerializer` | Interface for loading/saving scenes |
-| `LrgSceneSerializerYaml` | YAML format implementation |
+| `LrgSceneSerializerYaml` | Derivable YAML format base class |
+| `LrgSceneSerializerBlender` | Blender-specific YAML with Z-up → Y-up conversion |
 
 ### Primitive Types
 
@@ -104,9 +105,13 @@ The scene module is designed to work with YAML exports from Blender. A typical w
 
 1. Create your scene in Blender using standard primitives
 2. Export using the Blender YAML exporter addon
-3. Load the YAML in libregnum using `LrgSceneSerializerYaml`
+3. Load the YAML in libregnum using `LrgSceneSerializerBlender`
 4. Iterate entities and objects to create game objects
 5. Modify and save back to YAML if needed
+
+> **Note:** `LrgSceneSerializerBlender` automatically converts from Blender's Z-up
+> coordinate system to raylib's Y-up system. For generic YAML scenes without
+> coordinate conversion, use the base `LrgSceneSerializerYaml` class.
 
 See [Tutorial](tutorial.md) for a step-by-step guide.
 

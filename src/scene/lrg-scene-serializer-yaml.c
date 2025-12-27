@@ -4,7 +4,8 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * YAML implementation of the scene serializer.
+ * Base YAML implementation of the scene serializer.
+ * Subclasses can override coordinate conversion for different source formats.
  */
 
 #include "lrg-scene-serializer-yaml.h"
@@ -12,22 +13,62 @@
 #include <gio/gio.h>
 
 /**
- * LrgSceneSerializerYaml:
+ * LrgSceneSerializerYamlPrivate:
  *
- * YAML serializer for LrgScene objects. Supports the Blender YAML
- * export format with full precision preservation for lossless round-trips.
+ * Private data for YAML serializer instances.
  */
-struct _LrgSceneSerializerYaml
+typedef struct
 {
-	GObject parent_instance;
-};
+	gpointer _reserved;
+} LrgSceneSerializerYamlPrivate;
 
 static void lrg_scene_serializer_iface_init (LrgSceneSerializerInterface *iface);
 
-G_DEFINE_FINAL_TYPE_WITH_CODE (LrgSceneSerializerYaml, lrg_scene_serializer_yaml,
-                               G_TYPE_OBJECT,
-                               G_IMPLEMENT_INTERFACE (LRG_TYPE_SCENE_SERIALIZER,
-                                                      lrg_scene_serializer_iface_init))
+G_DEFINE_TYPE_WITH_CODE (LrgSceneSerializerYaml, lrg_scene_serializer_yaml,
+                         G_TYPE_OBJECT,
+                         G_ADD_PRIVATE (LrgSceneSerializerYaml)
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_SCENE_SERIALIZER,
+                                                lrg_scene_serializer_iface_init))
+
+/* ==========================================================================
+ * Default Virtual Method Implementations
+ * ========================================================================== */
+
+/*
+ * Default convert_position: identity (no conversion).
+ */
+static GrlVector3 *
+lrg_scene_serializer_yaml_real_convert_position (LrgSceneSerializerYaml *self,
+                                                  gfloat                  x,
+                                                  gfloat                  y,
+                                                  gfloat                  z)
+{
+	return grl_vector3_new (x, y, z);
+}
+
+/*
+ * Default convert_rotation: identity (no conversion).
+ */
+static GrlVector3 *
+lrg_scene_serializer_yaml_real_convert_rotation (LrgSceneSerializerYaml *self,
+                                                  gfloat                  x,
+                                                  gfloat                  y,
+                                                  gfloat                  z)
+{
+	return grl_vector3_new (x, y, z);
+}
+
+/*
+ * Default convert_scale: identity (no conversion).
+ */
+static GrlVector3 *
+lrg_scene_serializer_yaml_real_convert_scale (LrgSceneSerializerYaml *self,
+                                               gfloat                  x,
+                                               gfloat                  y,
+                                               gfloat                  z)
+{
+	return grl_vector3_new (x, y, z);
+}
 
 /* ==========================================================================
  * Helper Functions - Parsing
@@ -98,61 +139,27 @@ primitive_type_to_string (LrgPrimitiveType type)
 }
 
 /*
- * Parse a vector from a YAML sequence [x, y, z].
+ * Parse raw vector components from a YAML sequence [x, y, z].
  */
-static GrlVector3 *
-parse_vector3 (YamlSequence *seq)
+static void
+parse_vector3_components (YamlSequence *seq,
+                          gfloat       *out_x,
+                          gfloat       *out_y,
+                          gfloat       *out_z)
 {
-	gdouble x = 0.0, y = 0.0, z = 0.0;
+	*out_x = 0.0f;
+	*out_y = 0.0f;
+	*out_z = 0.0f;
 
 	if (seq == NULL)
-		return grl_vector3_new (0.0f, 0.0f, 0.0f);
+		return;
 
 	if (yaml_sequence_get_length (seq) >= 1)
-		x = yaml_sequence_get_double_element (seq, 0);
+		*out_x = (gfloat)yaml_sequence_get_double_element (seq, 0);
 	if (yaml_sequence_get_length (seq) >= 2)
-		y = yaml_sequence_get_double_element (seq, 1);
+		*out_y = (gfloat)yaml_sequence_get_double_element (seq, 1);
 	if (yaml_sequence_get_length (seq) >= 3)
-		z = yaml_sequence_get_double_element (seq, 2);
-
-	return grl_vector3_new ((gfloat)x, (gfloat)y, (gfloat)z);
-}
-
-/*
- * Convert position from Blender Z-up to raylib Y-up.
- * Blender (X, Y, Z) → raylib (X, Z, -Y)
- */
-static GrlVector3 *
-parse_position (YamlSequence *seq)
-{
-	g_autoptr(GrlVector3) blender = parse_vector3 (seq);
-
-	return grl_vector3_new (blender->x, blender->z, -blender->y);
-}
-
-/*
- * Convert rotation from Blender Z-up to raylib Y-up.
- * Blender (X, Y, Z) → raylib (X, Z, -Y)
- */
-static GrlVector3 *
-parse_rotation (YamlSequence *seq)
-{
-	g_autoptr(GrlVector3) blender = parse_vector3 (seq);
-
-	return grl_vector3_new (blender->x, blender->z, -blender->y);
-}
-
-/*
- * Convert scale from Blender Z-up to raylib Y-up.
- * Blender (X, Y, Z) → raylib (X, Z, Y)
- * Note: No negation for scale since it's magnitude only.
- */
-static GrlVector3 *
-parse_scale (YamlSequence *seq)
-{
-	g_autoptr(GrlVector3) blender = parse_vector3 (seq);
-
-	return grl_vector3_new (blender->x, blender->z, blender->y);
+		*out_z = (gfloat)yaml_sequence_get_double_element (seq, 2);
 }
 
 /*
@@ -300,25 +307,31 @@ parse_params (LrgSceneObject *obj,
 
 /*
  * Parse a single scene object from YAML mapping.
+ * Uses the serializer's virtual methods for coordinate conversion.
  */
 static LrgSceneObject *
-parse_scene_object (YamlMapping *obj_map)
+parse_scene_object (LrgSceneSerializerYaml *self,
+                    YamlMapping            *obj_map)
 {
-	LrgSceneObject          *obj;
-	const gchar             *name;
-	const gchar             *primitive_str;
-	LrgPrimitiveType         primitive;
-	YamlNode                *node;
-	YamlMapping             *transform_map;
-	YamlMapping             *material_map;
-	YamlMapping             *params_map;
-	g_autoptr(GrlVector3)    location = NULL;
-	g_autoptr(GrlVector3)    rotation = NULL;
-	g_autoptr(GrlVector3)    scale = NULL;
-	g_autoptr(LrgMaterial3D) material = NULL;
+	LrgSceneSerializerYamlClass *klass;
+	LrgSceneObject              *obj;
+	const gchar                 *name;
+	const gchar                 *primitive_str;
+	LrgPrimitiveType             primitive;
+	YamlNode                    *node;
+	YamlMapping                 *transform_map;
+	YamlMapping                 *material_map;
+	YamlMapping                 *params_map;
+	g_autoptr(GrlVector3)        location = NULL;
+	g_autoptr(GrlVector3)        rotation = NULL;
+	g_autoptr(GrlVector3)        scale = NULL;
+	g_autoptr(LrgMaterial3D)     material = NULL;
+	gfloat                       x, y, z;
 
 	if (obj_map == NULL)
 		return NULL;
+
+	klass = LRG_SCENE_SERIALIZER_YAML_GET_CLASS (self);
 
 	/* Get name */
 	name = yaml_mapping_get_string_member (obj_map, "name");
@@ -335,27 +348,30 @@ parse_scene_object (YamlMapping *obj_map)
 	{
 		transform_map = yaml_node_get_mapping (node);
 
-		/* Location - convert from Blender Z-up to raylib Y-up */
+		/* Location - use virtual method for conversion */
 		node = yaml_mapping_get_member (transform_map, "location");
 		if (node != NULL && yaml_node_get_node_type (node) == YAML_NODE_SEQUENCE)
 		{
-			location = parse_position (yaml_node_get_sequence (node));
+			parse_vector3_components (yaml_node_get_sequence (node), &x, &y, &z);
+			location = klass->convert_position (self, x, y, z);
 			lrg_scene_object_set_location (obj, location);
 		}
 
-		/* Rotation - convert from Blender Z-up to raylib Y-up */
+		/* Rotation - use virtual method for conversion */
 		node = yaml_mapping_get_member (transform_map, "rotation");
 		if (node != NULL && yaml_node_get_node_type (node) == YAML_NODE_SEQUENCE)
 		{
-			rotation = parse_rotation (yaml_node_get_sequence (node));
+			parse_vector3_components (yaml_node_get_sequence (node), &x, &y, &z);
+			rotation = klass->convert_rotation (self, x, y, z);
 			lrg_scene_object_set_rotation (obj, rotation);
 		}
 
-		/* Scale - convert from Blender Z-up to raylib Y-up */
+		/* Scale - use virtual method for conversion */
 		node = yaml_mapping_get_member (transform_map, "scale");
 		if (node != NULL && yaml_node_get_node_type (node) == YAML_NODE_SEQUENCE)
 		{
-			scale = parse_scale (yaml_node_get_sequence (node));
+			parse_vector3_components (yaml_node_get_sequence (node), &x, &y, &z);
+			scale = klass->convert_scale (self, x, y, z);
 			lrg_scene_object_set_scale (obj, scale);
 		}
 	}
@@ -384,8 +400,9 @@ parse_scene_object (YamlMapping *obj_map)
  * Parse a scene entity from YAML mapping.
  */
 static LrgSceneEntity *
-parse_scene_entity (const gchar *entity_name,
-                    YamlMapping *entity_map)
+parse_scene_entity (LrgSceneSerializerYaml *self,
+                    const gchar            *entity_name,
+                    YamlMapping            *entity_map)
 {
 	LrgSceneEntity *entity;
 	YamlNode       *objects_node;
@@ -414,7 +431,7 @@ parse_scene_entity (const gchar *entity_name,
 		if (yaml_node_get_node_type (obj_node) != YAML_NODE_MAPPING)
 			continue;
 
-		obj = parse_scene_object (yaml_node_get_mapping (obj_node));
+		obj = parse_scene_object (self, yaml_node_get_mapping (obj_node));
 		if (obj != NULL)
 			lrg_scene_entity_add_object (entity, obj);
 	}
@@ -426,8 +443,9 @@ parse_scene_entity (const gchar *entity_name,
  * Parse scene from YAML root node.
  */
 static LrgScene *
-parse_scene_from_root (YamlNode  *root,
-                       GError   **error)
+parse_scene_from_root (LrgSceneSerializerYaml *self,
+                       YamlNode               *root,
+                       GError                **error)
 {
 	LrgScene    *scene = NULL;
 	YamlMapping *root_map;
@@ -487,7 +505,7 @@ parse_scene_from_root (YamlNode  *root,
 		if (yaml_node_get_node_type (entity_node) != YAML_NODE_MAPPING)
 			continue;
 
-		entity = parse_scene_entity (entity_name, yaml_node_get_mapping (entity_node));
+		entity = parse_scene_entity (self, entity_name, yaml_node_get_mapping (entity_node));
 		lrg_scene_add_entity (scene, entity);
 	}
 
@@ -746,13 +764,14 @@ build_scene_yaml (LrgScene *scene)
  * ========================================================================== */
 
 static LrgScene *
-lrg_scene_serializer_yaml_load_from_file (LrgSceneSerializer  *serializer,
-                                          const gchar         *path,
-                                          GError             **error)
+lrg_scene_serializer_yaml_load_from_file_impl (LrgSceneSerializer  *serializer,
+                                               const gchar         *path,
+                                               GError             **error)
 {
-	g_autoptr(YamlParser) parser = NULL;
-	YamlNode             *root;
-	LrgScene             *scene;
+	LrgSceneSerializerYaml *self = LRG_SCENE_SERIALIZER_YAML (serializer);
+	g_autoptr(YamlParser)   parser = NULL;
+	YamlNode               *root;
+	LrgScene               *scene;
 
 	parser = yaml_parser_new ();
 
@@ -769,19 +788,20 @@ lrg_scene_serializer_yaml_load_from_file (LrgSceneSerializer  *serializer,
 		return NULL;
 	}
 
-	scene = parse_scene_from_root (root, error);
+	scene = parse_scene_from_root (self, root, error);
 	return scene;
 }
 
 static LrgScene *
-lrg_scene_serializer_yaml_load_from_data (LrgSceneSerializer  *serializer,
-                                          const gchar         *data,
-                                          gssize               length,
-                                          GError             **error)
+lrg_scene_serializer_yaml_load_from_data_impl (LrgSceneSerializer  *serializer,
+                                               const gchar         *data,
+                                               gssize               length,
+                                               GError             **error)
 {
-	g_autoptr(YamlParser) parser = NULL;
-	YamlNode             *root;
-	LrgScene             *scene;
+	LrgSceneSerializerYaml *self = LRG_SCENE_SERIALIZER_YAML (serializer);
+	g_autoptr(YamlParser)   parser = NULL;
+	YamlNode               *root;
+	LrgScene               *scene;
 
 	parser = yaml_parser_new ();
 
@@ -798,15 +818,15 @@ lrg_scene_serializer_yaml_load_from_data (LrgSceneSerializer  *serializer,
 		return NULL;
 	}
 
-	scene = parse_scene_from_root (root, error);
+	scene = parse_scene_from_root (self, root, error);
 	return scene;
 }
 
 static gboolean
-lrg_scene_serializer_yaml_save_to_file (LrgSceneSerializer  *serializer,
-                                        LrgScene            *scene,
-                                        const gchar         *path,
-                                        GError             **error)
+lrg_scene_serializer_yaml_save_to_file_impl (LrgSceneSerializer  *serializer,
+                                             LrgScene            *scene,
+                                             const gchar         *path,
+                                             GError             **error)
 {
 	g_autoptr(YamlNode)      root = NULL;
 	g_autoptr(YamlDocument)  doc = NULL;
@@ -829,9 +849,9 @@ lrg_scene_serializer_yaml_save_to_file (LrgSceneSerializer  *serializer,
 }
 
 static gchar *
-lrg_scene_serializer_yaml_save_to_data (LrgSceneSerializer *serializer,
-                                        LrgScene           *scene,
-                                        gsize              *length)
+lrg_scene_serializer_yaml_save_to_data_impl (LrgSceneSerializer *serializer,
+                                             LrgScene           *scene,
+                                             gsize              *length)
 {
 	g_autoptr(YamlNode)      root = NULL;
 	g_autoptr(YamlDocument)  doc = NULL;
@@ -848,10 +868,10 @@ lrg_scene_serializer_yaml_save_to_data (LrgSceneSerializer *serializer,
 static void
 lrg_scene_serializer_iface_init (LrgSceneSerializerInterface *iface)
 {
-	iface->load_from_file = lrg_scene_serializer_yaml_load_from_file;
-	iface->load_from_data = lrg_scene_serializer_yaml_load_from_data;
-	iface->save_to_file   = lrg_scene_serializer_yaml_save_to_file;
-	iface->save_to_data   = lrg_scene_serializer_yaml_save_to_data;
+	iface->load_from_file = lrg_scene_serializer_yaml_load_from_file_impl;
+	iface->load_from_data = lrg_scene_serializer_yaml_load_from_data_impl;
+	iface->save_to_file   = lrg_scene_serializer_yaml_save_to_file_impl;
+	iface->save_to_data   = lrg_scene_serializer_yaml_save_to_data_impl;
 }
 
 /* ==========================================================================
@@ -861,7 +881,10 @@ lrg_scene_serializer_iface_init (LrgSceneSerializerInterface *iface)
 static void
 lrg_scene_serializer_yaml_class_init (LrgSceneSerializerYamlClass *klass)
 {
-	/* Nothing special needed */
+	/* Set default virtual method implementations */
+	klass->convert_position = lrg_scene_serializer_yaml_real_convert_position;
+	klass->convert_rotation = lrg_scene_serializer_yaml_real_convert_rotation;
+	klass->convert_scale    = lrg_scene_serializer_yaml_real_convert_scale;
 }
 
 static void
@@ -877,7 +900,9 @@ lrg_scene_serializer_yaml_init (LrgSceneSerializerYaml *self)
 /**
  * lrg_scene_serializer_yaml_new:
  *
- * Creates a new #LrgSceneSerializerYaml.
+ * Creates a new #LrgSceneSerializerYaml with no coordinate conversion.
+ *
+ * For Blender scenes, use #LrgSceneSerializerBlender instead.
  *
  * Returns: (transfer full): A new #LrgSceneSerializerYaml
  */

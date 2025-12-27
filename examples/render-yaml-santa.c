@@ -5,7 +5,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * Example demonstrating how to load and render a Blender-exported
- * YAML scene file using libregnum's scene module.
+ * YAML scene file using libregnum's scene module with the
+ * LrgSceneSerializerBlender class for automatic coordinate conversion.
  */
 
 #include <libregnum.h>
@@ -233,9 +234,9 @@ int
 main (int   argc,
       char *argv[])
 {
-	g_autoptr(GError)                   error = NULL;
-	g_autoptr(LrgSceneSerializerYaml)   serializer = NULL;
-	g_autoptr(LrgScene)                 scene = NULL;
+	g_autoptr(GError)                     error = NULL;
+	g_autoptr(LrgSceneSerializerBlender)  serializer = NULL;
+	g_autoptr(LrgScene)                   scene = NULL;
 	g_autoptr(GPtrArray)                shapes = NULL;
 	LrgEngine                          *engine;
 	LrgRenderer                        *renderer;
@@ -264,8 +265,8 @@ main (int   argc,
 	/* Get renderer */
 	renderer = lrg_engine_get_renderer (engine);
 
-	/* Load YAML scene */
-	serializer = lrg_scene_serializer_yaml_new ();
+	/* Load YAML scene using Blender serializer (handles Z-up to Y-up conversion) */
+	serializer = lrg_scene_serializer_blender_new ();
 	scene = lrg_scene_serializer_load_from_file (
 		LRG_SCENE_SERIALIZER (serializer),
 		"data/santa_sleigh_scene.yaml",

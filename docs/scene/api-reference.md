@@ -517,15 +517,49 @@ Serializes a scene to a string.
 
 ## LrgSceneSerializerYaml
 
-YAML format serializer implementation.
+Derivable YAML format serializer base class.
+
+This is a derivable class that subclasses can override to provide custom
+coordinate conversion. The default implementation performs no conversion
+(identity transform).
 
 ### Type Information
 
 ```c
 #define LRG_TYPE_SCENE_SERIALIZER_YAML (lrg_scene_serializer_yaml_get_type ())
-G_DECLARE_FINAL_TYPE (LrgSceneSerializerYaml, lrg_scene_serializer_yaml,
-                      LRG, SCENE_SERIALIZER_YAML, GObject)
+G_DECLARE_DERIVABLE_TYPE (LrgSceneSerializerYaml, lrg_scene_serializer_yaml,
+                          LRG, SCENE_SERIALIZER_YAML, GObject)
 ```
+
+### Class Structure
+
+```c
+struct _LrgSceneSerializerYamlClass
+{
+    GObjectClass parent_class;
+
+    /* Virtual methods for coordinate conversion */
+    GrlVector3 * (*convert_position) (LrgSceneSerializerYaml *self,
+                                      gfloat x, gfloat y, gfloat z);
+    GrlVector3 * (*convert_rotation) (LrgSceneSerializerYaml *self,
+                                      gfloat x, gfloat y, gfloat z);
+    GrlVector3 * (*convert_scale)    (LrgSceneSerializerYaml *self,
+                                      gfloat x, gfloat y, gfloat z);
+
+    gpointer _reserved[4];
+};
+```
+
+### Virtual Methods
+
+Subclasses can override these methods to convert coordinates from the
+source coordinate system to the target (raylib Y-up) system.
+
+| Method | Default Behavior |
+|--------|------------------|
+| `convert_position` | Identity: returns `(x, y, z)` unchanged |
+| `convert_rotation` | Identity: returns `(x, y, z)` unchanged |
+| `convert_scale` | Identity: returns `(x, y, z)` unchanged |
 
 ### Constructors
 
@@ -535,9 +569,70 @@ G_DECLARE_FINAL_TYPE (LrgSceneSerializerYaml, lrg_scene_serializer_yaml,
 LrgSceneSerializerYaml * lrg_scene_serializer_yaml_new (void);
 ```
 
-Creates a new YAML serializer.
+Creates a new YAML serializer with no coordinate conversion.
+
+For Blender scenes, use `LrgSceneSerializerBlender` instead.
 
 **Returns:** (transfer full): A new `LrgSceneSerializerYaml`
+
+---
+
+## LrgSceneSerializerBlender
+
+Blender-specific YAML serializer with automatic coordinate conversion.
+
+This serializer handles YAML scene files exported from Blender, converting
+from Blender's Z-up right-handed coordinate system to raylib's Y-up
+right-handed coordinate system.
+
+### Type Information
+
+```c
+#define LRG_TYPE_SCENE_SERIALIZER_BLENDER (lrg_scene_serializer_blender_get_type ())
+G_DECLARE_FINAL_TYPE (LrgSceneSerializerBlender, lrg_scene_serializer_blender,
+                      LRG, SCENE_SERIALIZER_BLENDER, LrgSceneSerializerYaml)
+```
+
+### Coordinate Conversion
+
+Converts from Blender's Z-up coordinate system to raylib's Y-up system:
+
+| Vector Type | Blender (X, Y, Z) | raylib |
+|-------------|-------------------|--------|
+| Position | (X, Y, Z) | (X, Z, -Y) |
+| Rotation | (X, Y, Z) | (X, Z, -Y) |
+| Scale | (X, Y, Z) | (X, Z, Y) |
+
+### Constructors
+
+#### lrg_scene_serializer_blender_new
+
+```c
+LrgSceneSerializerBlender * lrg_scene_serializer_blender_new (void);
+```
+
+Creates a new Blender YAML serializer.
+
+**Returns:** (transfer full): A new `LrgSceneSerializerBlender`
+
+### Usage
+
+```c
+g_autoptr(LrgSceneSerializerBlender) serializer = NULL;
+g_autoptr(LrgScene) scene = NULL;
+g_autoptr(GError) error = NULL;
+
+serializer = lrg_scene_serializer_blender_new ();
+scene = lrg_scene_serializer_load_from_file (
+    LRG_SCENE_SERIALIZER (serializer),
+    "blender_scene.yaml",
+    &error);
+
+if (scene == NULL)
+{
+    g_printerr ("Failed to load: %s\n", error->message);
+}
+```
 
 ---
 
