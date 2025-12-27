@@ -1163,4 +1163,95 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_octree_node_type_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_OCTREE_NODE_TYPE (lrg_octree_node_type_get_type ())
 
+/* ==========================================================================
+ * Scene System
+ * ========================================================================== */
+
+/**
+ * LRG_SCENE_ERROR:
+ *
+ * Error domain for scene system errors.
+ */
+#define LRG_SCENE_ERROR (lrg_scene_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_scene_error_quark (void);
+
+/**
+ * LrgSceneError:
+ * @LRG_SCENE_ERROR_FAILED: Generic failure
+ * @LRG_SCENE_ERROR_IO: I/O error (file not found, permission denied)
+ * @LRG_SCENE_ERROR_PARSE: YAML parsing error
+ * @LRG_SCENE_ERROR_INVALID_FORMAT: Invalid scene file format
+ * @LRG_SCENE_ERROR_UNKNOWN_PRIMITIVE: Unknown primitive type
+ * @LRG_SCENE_ERROR_MISSING_FIELD: Required field missing
+ *
+ * Error codes for the scene system.
+ */
+typedef enum
+{
+    LRG_SCENE_ERROR_FAILED,
+    LRG_SCENE_ERROR_IO,
+    LRG_SCENE_ERROR_PARSE,
+    LRG_SCENE_ERROR_INVALID_FORMAT,
+    LRG_SCENE_ERROR_UNKNOWN_PRIMITIVE,
+    LRG_SCENE_ERROR_MISSING_FIELD
+} LrgSceneError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_scene_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SCENE_ERROR (lrg_scene_error_get_type ())
+
+/**
+ * LrgPrimitiveType:
+ * @LRG_PRIMITIVE_PLANE: Flat plane (size parameter)
+ * @LRG_PRIMITIVE_CUBE: Box/cube (width, height, depth)
+ * @LRG_PRIMITIVE_CIRCLE: 2D circle in 3D space (vertices, radius, fill_type)
+ * @LRG_PRIMITIVE_UV_SPHERE: UV sphere (segments, rings, radius)
+ * @LRG_PRIMITIVE_ICO_SPHERE: Icosphere (subdivisions, radius)
+ * @LRG_PRIMITIVE_CYLINDER: Cylinder (vertices, radius, depth, cap_ends)
+ * @LRG_PRIMITIVE_CONE: Cone (vertices, radius1, radius2, depth)
+ * @LRG_PRIMITIVE_TORUS: Torus (major_segments, minor_segments, major_radius, minor_radius)
+ * @LRG_PRIMITIVE_GRID: Grid plane (x_subdivisions, y_subdivisions, size)
+ *
+ * Blender primitive types for scene objects.
+ * These correspond to Blender 5.x mesh primitive types.
+ */
+typedef enum
+{
+    LRG_PRIMITIVE_PLANE,
+    LRG_PRIMITIVE_CUBE,
+    LRG_PRIMITIVE_CIRCLE,
+    LRG_PRIMITIVE_UV_SPHERE,
+    LRG_PRIMITIVE_ICO_SPHERE,
+    LRG_PRIMITIVE_CYLINDER,
+    LRG_PRIMITIVE_CONE,
+    LRG_PRIMITIVE_TORUS,
+    LRG_PRIMITIVE_GRID
+} LrgPrimitiveType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_primitive_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PRIMITIVE_TYPE (lrg_primitive_type_get_type ())
+
+/**
+ * LrgCircleFillType:
+ * @LRG_CIRCLE_FILL_NOTHING: No fill (outline only)
+ * @LRG_CIRCLE_FILL_NGON: N-gon fill
+ * @LRG_CIRCLE_FILL_TRIFAN: Triangle fan fill
+ *
+ * Fill types for circle primitives.
+ * Corresponds to Blender's circle primitive fill options.
+ */
+typedef enum
+{
+    LRG_CIRCLE_FILL_NOTHING,
+    LRG_CIRCLE_FILL_NGON,
+    LRG_CIRCLE_FILL_TRIFAN
+} LrgCircleFillType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_circle_fill_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CIRCLE_FILL_TYPE (lrg_circle_fill_type_get_type ())
+
 G_END_DECLS

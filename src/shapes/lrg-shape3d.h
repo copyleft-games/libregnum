@@ -142,4 +142,163 @@ LRG_AVAILABLE_IN_ALL
 void lrg_shape3d_set_wireframe (LrgShape3D *self,
                                 gboolean    wireframe);
 
+/* ==========================================================================
+ * Rotation Properties
+ * ========================================================================== */
+
+/**
+ * lrg_shape3d_get_rotation:
+ * @self: an #LrgShape3D
+ *
+ * Gets the shape's rotation as Euler angles in radians.
+ *
+ * Returns: (transfer none): The rotation vector (x=pitch, y=yaw, z=roll)
+ */
+LRG_AVAILABLE_IN_ALL
+GrlVector3 * lrg_shape3d_get_rotation (LrgShape3D *self);
+
+/**
+ * lrg_shape3d_set_rotation:
+ * @self: an #LrgShape3D
+ * @rotation: (transfer none): the rotation to set (Euler angles in radians)
+ *
+ * Sets the shape's rotation using a vector of Euler angles.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_set_rotation (LrgShape3D *self,
+                               GrlVector3 *rotation);
+
+/**
+ * lrg_shape3d_set_rotation_xyz:
+ * @self: an #LrgShape3D
+ * @rx: the X rotation (pitch) in radians
+ * @ry: the Y rotation (yaw) in radians
+ * @rz: the Z rotation (roll) in radians
+ *
+ * Sets the shape's rotation using individual Euler angles in radians.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_set_rotation_xyz (LrgShape3D *self,
+                                   gfloat      rx,
+                                   gfloat      ry,
+                                   gfloat      rz);
+
+/**
+ * lrg_shape3d_get_rotation_x:
+ * @self: an #LrgShape3D
+ *
+ * Gets the shape's X rotation (pitch) in radians.
+ *
+ * Returns: The X rotation in radians
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_shape3d_get_rotation_x (LrgShape3D *self);
+
+/**
+ * lrg_shape3d_get_rotation_y:
+ * @self: an #LrgShape3D
+ *
+ * Gets the shape's Y rotation (yaw) in radians.
+ *
+ * Returns: The Y rotation in radians
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_shape3d_get_rotation_y (LrgShape3D *self);
+
+/**
+ * lrg_shape3d_get_rotation_z:
+ * @self: an #LrgShape3D
+ *
+ * Gets the shape's Z rotation (roll) in radians.
+ *
+ * Returns: The Z rotation in radians
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_shape3d_get_rotation_z (LrgShape3D *self);
+
+/* ==========================================================================
+ * Scale Properties
+ * ========================================================================== */
+
+/**
+ * lrg_shape3d_get_scale:
+ * @self: an #LrgShape3D
+ *
+ * Gets the shape's scale factors.
+ *
+ * Returns: (transfer none): The scale vector
+ */
+LRG_AVAILABLE_IN_ALL
+GrlVector3 * lrg_shape3d_get_scale (LrgShape3D *self);
+
+/**
+ * lrg_shape3d_set_scale:
+ * @self: an #LrgShape3D
+ * @scale: (transfer none): the scale to set
+ *
+ * Sets the shape's scale using a vector.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_set_scale (LrgShape3D *self,
+                            GrlVector3 *scale);
+
+/**
+ * lrg_shape3d_set_scale_xyz:
+ * @self: an #LrgShape3D
+ * @sx: the X scale factor
+ * @sy: the Y scale factor
+ * @sz: the Z scale factor
+ *
+ * Sets the shape's scale using individual factors.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_set_scale_xyz (LrgShape3D *self,
+                                gfloat      sx,
+                                gfloat      sy,
+                                gfloat      sz);
+
+/**
+ * lrg_shape3d_set_scale_uniform:
+ * @self: an #LrgShape3D
+ * @scale: the uniform scale factor
+ *
+ * Sets the shape's scale uniformly on all axes.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_set_scale_uniform (LrgShape3D *self,
+                                    gfloat      scale);
+
+/**
+ * lrg_shape3d_get_scale_x:
+ * @self: an #LrgShape3D
+ *
+ * Gets the shape's X scale factor.
+ *
+ * Returns: The X scale factor
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_shape3d_get_scale_x (LrgShape3D *self);
+
+/**
+ * lrg_shape3d_get_scale_y:
+ * @self: an #LrgShape3D
+ *
+ * Gets the shape's Y scale factor.
+ *
+ * Returns: The Y scale factor
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_shape3d_get_scale_y (LrgShape3D *self);
+
+/**
+ * lrg_shape3d_get_scale_z:
+ * @self: an #LrgShape3D
+ *
+ * Gets the shape's Z scale factor.
+ *
+ * Returns: The Z scale factor
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_shape3d_get_scale_z (LrgShape3D *self);
+
 G_END_DECLS

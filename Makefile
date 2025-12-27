@@ -70,6 +70,13 @@ PUBLIC_HEADERS := \
 	src/shapes/lrg-cube3d.h \
 	src/shapes/lrg-line3d.h \
 	src/shapes/lrg-text2d.h \
+	src/shapes/lrg-cylinder3d.h \
+	src/shapes/lrg-cone3d.h \
+	src/shapes/lrg-plane3d.h \
+	src/shapes/lrg-grid3d.h \
+	src/shapes/lrg-circle3d.h \
+	src/shapes/lrg-torus3d.h \
+	src/shapes/lrg-icosphere3d.h \
 	src/ui/lrg-ui-event.h \
 	src/ui/lrg-widget.h \
 	src/ui/lrg-container.h \
@@ -144,7 +151,13 @@ PUBLIC_HEADERS := \
 	src/world3d/lrg-portal.h \
 	src/world3d/lrg-sector.h \
 	src/world3d/lrg-level3d.h \
-	src/world3d/lrg-portal-system.h
+	src/world3d/lrg-portal-system.h \
+	src/scene/lrg-material3d.h \
+	src/scene/lrg-scene-object.h \
+	src/scene/lrg-scene-entity.h \
+	src/scene/lrg-scene.h \
+	src/scene/lrg-scene-serializer.h \
+	src/scene/lrg-scene-serializer-yaml.h
 
 # Source files
 SOURCES := \
@@ -189,6 +202,13 @@ SOURCES := \
 	src/shapes/lrg-cube3d.c \
 	src/shapes/lrg-line3d.c \
 	src/shapes/lrg-text2d.c \
+	src/shapes/lrg-cylinder3d.c \
+	src/shapes/lrg-cone3d.c \
+	src/shapes/lrg-plane3d.c \
+	src/shapes/lrg-grid3d.c \
+	src/shapes/lrg-circle3d.c \
+	src/shapes/lrg-torus3d.c \
+	src/shapes/lrg-icosphere3d.c \
 	src/ui/lrg-ui-event.c \
 	src/ui/lrg-widget.c \
 	src/ui/lrg-container.c \
@@ -263,7 +283,13 @@ SOURCES := \
 	src/world3d/lrg-portal.c \
 	src/world3d/lrg-sector.c \
 	src/world3d/lrg-level3d.c \
-	src/world3d/lrg-portal-system.c
+	src/world3d/lrg-portal-system.c \
+	src/scene/lrg-material3d.c \
+	src/scene/lrg-scene-object.c \
+	src/scene/lrg-scene-entity.c \
+	src/scene/lrg-scene.c \
+	src/scene/lrg-scene-serializer.c \
+	src/scene/lrg-scene-serializer-yaml.c
 
 # Object files
 OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(SOURCES))
@@ -453,6 +479,7 @@ install: lib $(BUILDDIR)/$(PC_FILE)
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/debug
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/net
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d
+	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/scene
 	@$(MKDIR_P) $(DESTDIR)$(PKGCONFIGDIR)
 ifeq ($(BUILD_GIR),1)
 	@$(MKDIR_P) $(DESTDIR)$(GIRDIR)
@@ -549,6 +576,12 @@ endif
 	$(INSTALL_DATA) src/world3d/lrg-sector.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
 	$(INSTALL_DATA) src/world3d/lrg-level3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
 	$(INSTALL_DATA) src/world3d/lrg-portal-system.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
+	$(INSTALL_DATA) src/scene/lrg-material3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
+	$(INSTALL_DATA) src/scene/lrg-scene-object.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
+	$(INSTALL_DATA) src/scene/lrg-scene-entity.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
+	$(INSTALL_DATA) src/scene/lrg-scene.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
+	$(INSTALL_DATA) src/scene/lrg-scene-serializer.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
+	$(INSTALL_DATA) src/scene/lrg-scene-serializer-yaml.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
 	# Install pkg-config
 	$(INSTALL_DATA) $(BUILDDIR)/$(PC_FILE) $(DESTDIR)$(PKGCONFIGDIR)/
 	# Install GIR
@@ -820,6 +853,41 @@ $(OBJDIR)/src/shapes/lrg-text2d.o: src/shapes/lrg-text2d.c src/shapes/lrg-text2d
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
+$(OBJDIR)/src/shapes/lrg-cylinder3d.o: src/shapes/lrg-cylinder3d.c src/shapes/lrg-cylinder3d.h src/shapes/lrg-shape3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-cone3d.o: src/shapes/lrg-cone3d.c src/shapes/lrg-cone3d.h src/shapes/lrg-shape3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-plane3d.o: src/shapes/lrg-plane3d.c src/shapes/lrg-plane3d.h src/shapes/lrg-shape3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-grid3d.o: src/shapes/lrg-grid3d.c src/shapes/lrg-grid3d.h src/shapes/lrg-shape3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-circle3d.o: src/shapes/lrg-circle3d.c src/shapes/lrg-circle3d.h src/shapes/lrg-shape3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-torus3d.o: src/shapes/lrg-torus3d.c src/shapes/lrg-torus3d.h src/shapes/lrg-shape3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-icosphere3d.o: src/shapes/lrg-icosphere3d.c src/shapes/lrg-icosphere3d.h src/shapes/lrg-shape3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
 # UI module
 $(OBJDIR)/src/ui/lrg-ui-event.o: src/ui/lrg-ui-event.c src/ui/lrg-ui-event.h
 	@$(MKDIR_P) $(dir $@)
@@ -970,6 +1038,37 @@ $(OBJDIR)/src/world3d/lrg-level3d.o: src/world3d/lrg-level3d.c src/world3d/lrg-l
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/world3d/lrg-portal-system.o: src/world3d/lrg-portal-system.c src/world3d/lrg-portal-system.h src/world3d/lrg-portal.h src/world3d/lrg-sector.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# Scene module
+$(OBJDIR)/src/scene/lrg-material3d.o: src/scene/lrg-material3d.c src/scene/lrg-material3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scene/lrg-scene-object.o: src/scene/lrg-scene-object.c src/scene/lrg-scene-object.h src/scene/lrg-material3d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scene/lrg-scene-entity.o: src/scene/lrg-scene-entity.c src/scene/lrg-scene-entity.h src/scene/lrg-scene-object.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scene/lrg-scene.o: src/scene/lrg-scene.c src/scene/lrg-scene.h src/scene/lrg-scene-entity.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scene/lrg-scene-serializer.o: src/scene/lrg-scene-serializer.c src/scene/lrg-scene-serializer.h src/scene/lrg-scene.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scene/lrg-scene-serializer-yaml.o: src/scene/lrg-scene-serializer-yaml.c src/scene/lrg-scene-serializer-yaml.h src/scene/lrg-scene-serializer.h src/scene/lrg-scene.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

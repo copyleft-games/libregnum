@@ -1,0 +1,8089 @@
+scene:
+  name: santa_sleigh_scene
+  exported_from: Blender 5.0.1
+  export_date: "2025-12-27T00:17:40.606747"
+entities:
+  arm:
+    objects:
+      - name: left
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.5
+            - 0.3
+            - 1.4
+          rotation:
+            - 0.0
+            - 0.5
+            - 0.3
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 0.0
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.5
+          radius: 0.11999999827683039
+          vertices: 32
+      - name: right
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.5
+            - 0.3
+            - 1.4
+          rotation:
+            - 0.0
+            - -0.5
+            - -0.3
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 0.0
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.5
+          radius: 0.11999999827683039
+          vertices: 32
+  belt:
+    objects:
+      - name: buckle
+        primitive: primitive_cube
+        transform:
+          location:
+            - 0.0
+            - 0.72
+            - 1.2
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.2
+            - 0.3
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 0.85
+            - 0.2
+            - 1.0
+          roughness: 0.4
+          metallic: 0.8
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size:
+            - 1.0
+            - 1.0
+            - 1.0
+  boot:
+    objects:
+      - name: left
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.2
+            - -0.35
+            - 0.75
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.2
+            - 0.8
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1543
+          segments: 32
+          rings: 16
+      - name: right
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.2
+            - -0.35
+            - 0.75
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.2
+            - 0.8
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1543
+          segments: 32
+          rings: 16
+  eye:
+    objects:
+      - name: left
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.08
+            - 0.55
+            - 2.08
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.04
+          segments: 32
+          rings: 16
+      - name: right
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.08
+            - 0.55
+            - 2.08
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.04
+          segments: 32
+          rings: 16
+  gold:
+    objects:
+      - name: back_trim
+        primitive: primitive_cube
+        transform:
+          location:
+            - 0.0
+            - 1.1
+            - 1.5
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.15
+            - 0.05
+            - 0.08
+        material:
+          color:
+            - 1.0
+            - 0.85
+            - 0.2
+            - 1.0
+          roughness: 0.4
+          metallic: 0.8
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size:
+            - 1.0
+            - 1.0
+            - 1.0
+      - name: trim
+        primitive: primitive_cube
+        transform:
+          location:
+            - 0.0
+            - 0.0
+            - 0.85
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.25
+            - 2.6
+            - 0.05
+        material:
+          color:
+            - 1.0
+            - 0.85
+            - 0.2
+            - 1.0
+          roughness: 0.4
+          metallic: 0.8
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size:
+            - 1.0
+            - 1.0
+            - 1.0
+  harness:
+    objects:
+      - name: bar_back
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.3
+            - -2.8
+            - 0.55
+          rotation:
+            - 0.0
+            - 1.5708
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.15
+            - 0.08
+            - 0.03
+            - 1.0
+          roughness: 0.6
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.399999976158142
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: bar_front
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.3
+            - -5.0
+            - 0.55
+          rotation:
+            - 0.0
+            - 1.5708
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.15
+            - 0.08
+            - 0.03
+            - 1.0
+          roughness: 0.6
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.399999976158142
+          radius: 0.014999999784603799
+          vertices: 32
+  hat:
+    objects:
+      - name: pompom
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.0
+            - 0.3
+            - 2.7
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1
+          segments: 32
+          rings: 16
+      - name: trim
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.0
+            - 0.3
+            - 2.2
+          rotation:
+            - 0.0
+            - -0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.3400000177834359
+          vertices: 32
+  leg:
+    objects:
+      - name: left
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.2
+            - -0.1
+            - 0.95
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 0.0
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.12999999720167793
+          vertices: 32
+      - name: right
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.2
+            - -0.1
+            - 0.95
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 0.0
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.12999999720167793
+          vertices: 32
+  mitten:
+    objects:
+      - name: left
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.72
+            - 0.15
+            - 1.2
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1
+          segments: 32
+          rings: 16
+      - name: right
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.72
+            - 0.15
+            - 1.2
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1
+          segments: 32
+          rings: 16
+  rein:
+    objects:
+      - name: left
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.3
+            - -2.0
+            - 0.5
+          rotation:
+            - 1.3963
+            - 0.0
+            - -0.0873
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.15
+            - 0.08
+            - 0.03
+            - 1.0
+          roughness: 0.6
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 2.5
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: right
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.9
+            - -2.0
+            - 0.5
+          rotation:
+            - 1.3963
+            - 0.0
+            - 0.0873
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.15
+            - 0.08
+            - 0.03
+            - 1.0
+          roughness: 0.6
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 2.5
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: rudolph
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.3
+            - -4.8
+            - 0.5
+          rotation:
+            - 1.4835
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.15
+            - 0.08
+            - 0.03
+            - 1.0
+          roughness: 0.6
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 2.0
+          radius: 0.014999999784603799
+          vertices: 32
+  reindeer1:
+    objects:
+      - name: antler_l
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.82
+            - -5.45
+            - 0.98
+          rotation:
+            - 0.3
+            - 0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_l.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.82
+            - -5.45
+            - 0.98
+          rotation:
+            - 0.3
+            - 0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_lb
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.78
+            - -5.42
+            - 1.05
+          rotation:
+            - -0.2
+            - 0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_lb.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.78
+            - -5.42
+            - 1.05
+          rotation:
+            - -0.2
+            - 0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_r
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.98
+            - -5.45
+            - 0.98
+          rotation:
+            - 0.3
+            - -0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_r.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.98
+            - -5.45
+            - 0.98
+          rotation:
+            - 0.3
+            - -0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_rb
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.02
+            - -5.42
+            - 1.05
+          rotation:
+            - -0.2
+            - -0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_rb.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.02
+            - -5.42
+            - 1.05
+          rotation:
+            - -0.2
+            - -0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: body
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.9
+            - -5.0
+            - 0.6
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.7
+            - 1.3
+            - 0.8
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.4179
+          segments: 32
+          rings: 16
+      - name: ear_l
+        primitive: primitive_cone
+        transform:
+          location:
+            - -0.8
+            - -5.48
+            - 0.88
+          rotation:
+            - 0.5
+            - 0.3
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.04000000015438766
+          radius2: 0.010000000038596916
+          vertices: 32
+      - name: ear_r
+        primitive: primitive_cone
+        transform:
+          location:
+            - -1.0
+            - -5.48
+            - 0.88
+          rotation:
+            - 0.5
+            - -0.3
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.04000000015438766
+          radius2: 0.010000000038596916
+          vertices: 32
+      - name: eye_l
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.84
+            - -5.6
+            - 0.82
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.025
+          segments: 32
+          rings: 16
+      - name: eye_r
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.96
+            - -5.6
+            - 0.82
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.025
+          segments: 32
+          rings: 16
+      - name: head
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.9
+            - -5.55
+            - 0.75
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.1
+            - 0.9
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1768
+          segments: 32
+          rings: 16
+      - name: hoof
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.8
+            - -5.25
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.001
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -1.0
+            - -5.25
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.002
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.8
+            - -4.75
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.003
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -1.0
+            - -4.75
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_0
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.8
+            - -5.25
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_1
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -1.0
+            - -5.25
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_2
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.8
+            - -4.75
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_3
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -1.0
+            - -4.75
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: leg_bl
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.8
+            - -4.75
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_bl.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.8
+            - -4.75
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_br
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.0
+            - -4.75
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_br.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.0
+            - -4.75
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fl
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.8
+            - -5.25
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fl.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.8
+            - -5.25
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fr
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.0
+            - -5.25
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fr.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.0
+            - -5.25
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: nose
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.9
+            - -5.78
+            - 0.72
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.03
+          segments: 32
+          rings: 16
+      - name: snout
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.9
+            - -5.72
+            - 0.7
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.2
+            - 0.7
+        material:
+          color:
+            - 0.7
+            - 0.55
+            - 0.4
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1067
+          segments: 32
+          rings: 16
+      - name: tail
+        primitive: primitive_cone
+        transform:
+          location:
+            - -0.9
+            - -4.58
+            - 0.7
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.8
+            - 0.8
+            - 0.8
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.050000002305300086
+          radius2: 0.02000000007719383
+          vertices: 32
+      - name: tail.001
+        primitive: primitive_cone
+        transform:
+          location:
+            - -0.9
+            - -4.58
+            - 0.7
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.7
+            - 0.55
+            - 0.4
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.050000002305300086
+          radius2: 0.02000000007719383
+          vertices: 32
+  reindeer2:
+    objects:
+      - name: antler_l
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.38
+            - -5.45
+            - 0.98
+          rotation:
+            - 0.3
+            - 0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_l.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.38
+            - -5.45
+            - 0.98
+          rotation:
+            - 0.3
+            - 0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_lb
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.42
+            - -5.42
+            - 1.05
+          rotation:
+            - -0.2
+            - 0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_lb.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.42
+            - -5.42
+            - 1.05
+          rotation:
+            - -0.2
+            - 0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_r
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.22
+            - -5.45
+            - 0.98
+          rotation:
+            - 0.3
+            - -0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_r.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.22
+            - -5.45
+            - 0.98
+          rotation:
+            - 0.3
+            - -0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_rb
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.18
+            - -5.42
+            - 1.05
+          rotation:
+            - -0.2
+            - -0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_rb.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.18
+            - -5.42
+            - 1.05
+          rotation:
+            - -0.2
+            - -0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: body
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.3
+            - -5.0
+            - 0.6
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.7
+            - 1.3
+            - 0.8
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.4179
+          segments: 32
+          rings: 16
+      - name: ear_l
+        primitive: primitive_cone
+        transform:
+          location:
+            - 0.4
+            - -5.48
+            - 0.88
+          rotation:
+            - 0.5
+            - 0.3
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.04000000015438766
+          radius2: 0.010000000038596916
+          vertices: 32
+      - name: ear_r
+        primitive: primitive_cone
+        transform:
+          location:
+            - 0.2
+            - -5.48
+            - 0.88
+          rotation:
+            - 0.5
+            - -0.3
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.04000000015438766
+          radius2: 0.010000000038596916
+          vertices: 32
+      - name: eye_l
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.36
+            - -5.6
+            - 0.82
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.025
+          segments: 32
+          rings: 16
+      - name: eye_r
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.24
+            - -5.6
+            - 0.82
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.025
+          segments: 32
+          rings: 16
+      - name: head
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.3
+            - -5.55
+            - 0.75
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.1
+            - 0.9
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1768
+          segments: 32
+          rings: 16
+      - name: hoof
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.4
+            - -5.25
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.001
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.2
+            - -5.25
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.002
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.4
+            - -4.75
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.003
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.2
+            - -4.75
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_0
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.4
+            - -5.25
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_1
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.2
+            - -5.25
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_2
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.4
+            - -4.75
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_3
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.2
+            - -4.75
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: leg_bl
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.4
+            - -4.75
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_bl.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.4
+            - -4.75
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_br
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.2
+            - -4.75
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_br.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.2
+            - -4.75
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fl
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.4
+            - -5.25
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fl.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.4
+            - -5.25
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fr
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.2
+            - -5.25
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fr.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.2
+            - -5.25
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: nose
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.3
+            - -5.78
+            - 0.72
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.03
+          segments: 32
+          rings: 16
+      - name: snout
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.3
+            - -5.72
+            - 0.7
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.2
+            - 0.7
+        material:
+          color:
+            - 0.7
+            - 0.55
+            - 0.4
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1067
+          segments: 32
+          rings: 16
+      - name: tail
+        primitive: primitive_cone
+        transform:
+          location:
+            - 0.3
+            - -4.58
+            - 0.7
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.8
+            - 0.8
+            - 0.8
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.050000002305300086
+          radius2: 0.02000000007719383
+          vertices: 32
+      - name: tail.001
+        primitive: primitive_cone
+        transform:
+          location:
+            - 0.3
+            - -4.58
+            - 0.7
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.7
+            - 0.55
+            - 0.4
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.050000002305300086
+          radius2: 0.02000000007719383
+          vertices: 32
+  reindeer3:
+    objects:
+      - name: antler_l
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.82
+            - -3.25
+            - 0.98
+          rotation:
+            - 0.3
+            - 0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_l.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.82
+            - -3.25
+            - 0.98
+          rotation:
+            - 0.3
+            - 0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_lb
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.78
+            - -3.22
+            - 1.05
+          rotation:
+            - -0.2
+            - 0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_lb.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.78
+            - -3.22
+            - 1.05
+          rotation:
+            - -0.2
+            - 0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_r
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.98
+            - -3.25
+            - 0.98
+          rotation:
+            - 0.3
+            - -0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_r.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.98
+            - -3.25
+            - 0.98
+          rotation:
+            - 0.3
+            - -0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_rb
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.02
+            - -3.22
+            - 1.05
+          rotation:
+            - -0.2
+            - -0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_rb.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.02
+            - -3.22
+            - 1.05
+          rotation:
+            - -0.2
+            - -0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: body
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.9
+            - -2.8
+            - 0.6
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.7
+            - 1.3
+            - 0.8
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.4179
+          segments: 32
+          rings: 16
+      - name: ear_l
+        primitive: primitive_cone
+        transform:
+          location:
+            - -0.8
+            - -3.28
+            - 0.88
+          rotation:
+            - 0.5
+            - 0.3
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.04000000015438766
+          radius2: 0.010000000038596916
+          vertices: 32
+      - name: ear_r
+        primitive: primitive_cone
+        transform:
+          location:
+            - -1.0
+            - -3.28
+            - 0.88
+          rotation:
+            - 0.5
+            - -0.3
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.04000000015438766
+          radius2: 0.010000000038596916
+          vertices: 32
+      - name: eye_l
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.84
+            - -3.4
+            - 0.82
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.025
+          segments: 32
+          rings: 16
+      - name: eye_r
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.96
+            - -3.4
+            - 0.82
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.025
+          segments: 32
+          rings: 16
+      - name: head
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.9
+            - -3.35
+            - 0.75
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.1
+            - 0.9
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1768
+          segments: 32
+          rings: 16
+      - name: hoof
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.8
+            - -3.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.001
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -1.0
+            - -3.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.002
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.8
+            - -2.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.003
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -1.0
+            - -2.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_0
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.8
+            - -3.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_1
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -1.0
+            - -3.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_2
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.8
+            - -2.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_3
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -1.0
+            - -2.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: leg_bl
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.8
+            - -2.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_bl.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.8
+            - -2.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_br
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.0
+            - -2.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_br.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.0
+            - -2.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fl
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.8
+            - -3.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fl.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.8
+            - -3.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fr
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.0
+            - -3.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fr.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -1.0
+            - -3.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: nose
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.9
+            - -3.58
+            - 0.72
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.03
+          segments: 32
+          rings: 16
+      - name: snout
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.9
+            - -3.52
+            - 0.7
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.2
+            - 0.7
+        material:
+          color:
+            - 0.7
+            - 0.55
+            - 0.4
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1067
+          segments: 32
+          rings: 16
+      - name: tail
+        primitive: primitive_cone
+        transform:
+          location:
+            - -0.9
+            - -2.38
+            - 0.7
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.8
+            - 0.8
+            - 0.8
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.050000002305300086
+          radius2: 0.02000000007719383
+          vertices: 32
+      - name: tail.001
+        primitive: primitive_cone
+        transform:
+          location:
+            - -0.9
+            - -2.38
+            - 0.7
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.7
+            - 0.55
+            - 0.4
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.050000002305300086
+          radius2: 0.02000000007719383
+          vertices: 32
+  reindeer4:
+    objects:
+      - name: antler_l
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.38
+            - -3.25
+            - 0.98
+          rotation:
+            - 0.3
+            - 0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_l.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.38
+            - -3.25
+            - 0.98
+          rotation:
+            - 0.3
+            - 0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_lb
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.42
+            - -3.22
+            - 1.05
+          rotation:
+            - -0.2
+            - 0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_lb.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.42
+            - -3.22
+            - 1.05
+          rotation:
+            - -0.2
+            - 0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_r
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.22
+            - -3.25
+            - 0.98
+          rotation:
+            - 0.3
+            - -0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_r.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.22
+            - -3.25
+            - 0.98
+          rotation:
+            - 0.3
+            - -0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_rb
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.18
+            - -3.22
+            - 1.05
+          rotation:
+            - -0.2
+            - -0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_rb.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.18
+            - -3.22
+            - 1.05
+          rotation:
+            - -0.2
+            - -0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: body
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.3
+            - -2.8
+            - 0.6
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.7
+            - 1.3
+            - 0.8
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.4179
+          segments: 32
+          rings: 16
+      - name: ear_l
+        primitive: primitive_cone
+        transform:
+          location:
+            - 0.4
+            - -3.28
+            - 0.88
+          rotation:
+            - 0.5
+            - 0.3
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.04000000015438766
+          radius2: 0.010000000038596916
+          vertices: 32
+      - name: ear_r
+        primitive: primitive_cone
+        transform:
+          location:
+            - 0.2
+            - -3.28
+            - 0.88
+          rotation:
+            - 0.5
+            - -0.3
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.04000000015438766
+          radius2: 0.010000000038596916
+          vertices: 32
+      - name: eye_l
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.36
+            - -3.4
+            - 0.82
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.025
+          segments: 32
+          rings: 16
+      - name: eye_r
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.24
+            - -3.4
+            - 0.82
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.025
+          segments: 32
+          rings: 16
+      - name: head
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.3
+            - -3.35
+            - 0.75
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.1
+            - 0.9
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1768
+          segments: 32
+          rings: 16
+      - name: hoof
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.4
+            - -3.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.001
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.2
+            - -3.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.002
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.4
+            - -2.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.003
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.2
+            - -2.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_0
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.4
+            - -3.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_1
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.2
+            - -3.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_2
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.4
+            - -2.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_3
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.2
+            - -2.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: leg_bl
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.4
+            - -2.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_bl.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.4
+            - -2.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_br
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.2
+            - -2.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_br.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.2
+            - -2.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fl
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.4
+            - -3.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fl.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.4
+            - -3.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fr
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.2
+            - -3.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fr.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.2
+            - -3.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: nose
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.3
+            - -3.58
+            - 0.72
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.03
+          segments: 32
+          rings: 16
+      - name: snout
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.3
+            - -3.52
+            - 0.7
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.2
+            - 0.7
+        material:
+          color:
+            - 0.7
+            - 0.55
+            - 0.4
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1067
+          segments: 32
+          rings: 16
+      - name: tail
+        primitive: primitive_cone
+        transform:
+          location:
+            - 0.3
+            - -2.38
+            - 0.7
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.8
+            - 0.8
+            - 0.8
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.050000002305300086
+          radius2: 0.02000000007719383
+          vertices: 32
+      - name: tail.001
+        primitive: primitive_cone
+        transform:
+          location:
+            - 0.3
+            - -2.38
+            - 0.7
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.7
+            - 0.55
+            - 0.4
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.050000002305300086
+          radius2: 0.02000000007719383
+          vertices: 32
+  rudolph:
+    objects:
+      - name: antler_l
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.22
+            - -7.75
+            - 0.98
+          rotation:
+            - 0.3
+            - 0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_l.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.22
+            - -7.75
+            - 0.98
+          rotation:
+            - 0.3
+            - 0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_lb
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.18
+            - -7.72
+            - 1.05
+          rotation:
+            - -0.2
+            - 0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_lb.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.18
+            - -7.72
+            - 1.05
+          rotation:
+            - -0.2
+            - 0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_r
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.38
+            - -7.75
+            - 0.98
+          rotation:
+            - 0.3
+            - -0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_r.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.38
+            - -7.75
+            - 0.98
+          rotation:
+            - 0.3
+            - -0.4
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.25
+          radius: 0.02000000007719383
+          vertices: 32
+      - name: antler_rb
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.42
+            - -7.72
+            - 1.05
+          rotation:
+            - -0.2
+            - -0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: antler_rb.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.42
+            - -7.72
+            - 1.05
+          rotation:
+            - -0.2
+            - -0.8
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.25
+            - 0.18
+            - 0.12
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius: 0.014999999784603799
+          vertices: 32
+      - name: body
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.3
+            - -7.3
+            - 0.6
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.7
+            - 1.3
+            - 0.8
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.4179
+          segments: 32
+          rings: 16
+      - name: ear_l
+        primitive: primitive_cone
+        transform:
+          location:
+            - -0.2
+            - -7.78
+            - 0.88
+          rotation:
+            - 0.5
+            - 0.3
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.04000000015438766
+          radius2: 0.010000000038596916
+          vertices: 32
+      - name: ear_r
+        primitive: primitive_cone
+        transform:
+          location:
+            - -0.4
+            - -7.78
+            - 0.88
+          rotation:
+            - 0.5
+            - -0.3
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.04000000015438766
+          radius2: 0.010000000038596916
+          vertices: 32
+      - name: eye_l
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.24
+            - -7.9
+            - 0.82
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.025
+          segments: 32
+          rings: 16
+      - name: eye_r
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.36
+            - -7.9
+            - 0.82
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.025
+          segments: 32
+          rings: 16
+      - name: head
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.3
+            - -7.85
+            - 0.75
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.1
+            - 0.9
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1768
+          segments: 32
+          rings: 16
+      - name: hoof
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.2
+            - -7.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.001
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.4
+            - -7.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.002
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.2
+            - -7.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof.003
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.4
+            - -7.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_0
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.2
+            - -7.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_1
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.4
+            - -7.55
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_2
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.2
+            - -7.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: hoof_3
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.4
+            - -7.05
+            - 0.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.2
+            - 0.6
+        material:
+          color:
+            - 0.05
+            - 0.05
+            - 0.05
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.0579
+          segments: 32
+          rings: 16
+      - name: leg_bl
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.2
+            - -7.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_bl.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.2
+            - -7.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_br
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.4
+            - -7.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_br.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.4
+            - -7.05
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fl
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.2
+            - -7.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fl.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.2
+            - -7.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fr
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.4
+            - -7.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: leg_fr.001
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -0.4
+            - -7.55
+            - 0.25
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.45
+            - 0.28
+            - 0.15
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.4000000059604645
+          radius: 0.04000000015438766
+          vertices: 32
+      - name: nose
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.3
+            - -8.08
+            - 0.72
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 2.5
+            - 2.5
+            - 2.5
+        material:
+          color:
+            - 1.0
+            - 0.1
+            - 0.1
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 0.2
+            - 0.1
+            - 1.0
+          emission_strength: 5.0
+        params:
+          radius: 0.03
+          segments: 32
+          rings: 16
+      - name: snout
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -0.3
+            - -8.02
+            - 0.7
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 1.2
+            - 0.7
+        material:
+          color:
+            - 0.7
+            - 0.55
+            - 0.4
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.1067
+          segments: 32
+          rings: 16
+      - name: tail
+        primitive: primitive_cone
+        transform:
+          location:
+            - -0.3
+            - -6.88
+            - 0.7
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.8
+            - 0.8
+            - 0.8
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.050000002305300086
+          radius2: 0.02000000007719383
+          vertices: 32
+      - name: tail.001
+        primitive: primitive_cone
+        transform:
+          location:
+            - -0.3
+            - -6.88
+            - 0.7
+          rotation:
+            - 1.2
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.7
+            - 0.55
+            - 0.4
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius1: 0.050000002305300086
+          radius2: 0.02000000007719383
+          vertices: 32
+  runner:
+    objects:
+      - name: curve_l
+        primitive: primitive_cube
+        transform:
+          location:
+            - -0.9
+            - -1.6
+            - 0.4
+          rotation:
+            - 0.8
+            - 0.0
+            - 0.0
+          scale:
+            - 0.08
+            - 0.5
+            - 0.15
+        material:
+          color:
+            - 0.4
+            - 0.2
+            - 0.05
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size:
+            - 1.0
+            - 1.0
+            - 1.0
+      - name: curve_r
+        primitive: primitive_cube
+        transform:
+          location:
+            - 0.9
+            - -1.6
+            - 0.4
+          rotation:
+            - 0.8
+            - 0.0
+            - 0.0
+          scale:
+            - 0.08
+            - 0.5
+            - 0.15
+        material:
+          color:
+            - 0.4
+            - 0.2
+            - 0.05
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size:
+            - 1.0
+            - 1.0
+            - 1.0
+      - name: left
+        primitive: primitive_cube
+        transform:
+          location:
+            - -0.9
+            - 0.0
+            - 0.15
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.08
+            - 3.0
+            - 0.15
+        material:
+          color:
+            - 0.4
+            - 0.2
+            - 0.05
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size:
+            - 1.0
+            - 1.0
+            - 1.0
+      - name: right
+        primitive: primitive_cube
+        transform:
+          location:
+            - 0.9
+            - 0.0
+            - 0.15
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.08
+            - 3.0
+            - 0.15
+        material:
+          color:
+            - 0.4
+            - 0.2
+            - 0.05
+            - 1.0
+          roughness: 0.7
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size:
+            - 1.0
+            - 1.0
+            - 1.0
+  santa:
+    objects:
+      - name: beard
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.0
+            - 0.55
+            - 1.85
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 0.8
+            - 0.4
+            - 0.6
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.2933
+          segments: 32
+          rings: 16
+      - name: belt
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 0.0
+            - 0.3
+            - 1.2
+          rotation:
+            - 1.57
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.10000000149011612
+          radius: 0.4700000182206609
+          vertices: 32
+      - name: body
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.0
+            - 0.3
+            - 1.35
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 0.9
+            - 1.1
+        material:
+          color:
+            - 1.0
+            - 0.0
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.495
+          segments: 32
+          rings: 16
+      - name: hat
+        primitive: primitive_cone
+        transform:
+          location:
+            - 0.0
+            - 0.3
+            - 2.45
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 0.0
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.5
+          radius1: 0.3200000012351013
+          radius2: 0.0
+          vertices: 32
+      - name: head
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.0
+            - 0.3
+            - 2.0
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 0.75
+            - 0.55
+            - 1.0
+          roughness: 0.6
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.28
+          segments: 32
+          rings: 16
+      - name: nose
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 0.0
+            - 0.58
+            - 1.98
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 0.0
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.05
+          segments: 32
+          rings: 16
+  sleigh:
+    objects:
+      - name: back
+        primitive: primitive_cube
+        transform:
+          location:
+            - 0.0
+            - 1.1
+            - 1.1
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.1
+            - 0.15
+            - 0.7
+        material:
+          color:
+            - 1.0
+            - 0.0
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size:
+            - 1.0
+            - 1.0
+            - 1.0
+      - name: body
+        primitive: primitive_cube
+        transform:
+          location:
+            - 0.0
+            - 0.0
+            - 0.6
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.2
+            - 2.5
+            - 0.4
+        material:
+          color:
+            - 1.0
+            - 0.0
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size:
+            - 1.0
+            - 1.0
+            - 1.0
+      - name: front
+        primitive: primitive_cube
+        transform:
+          location:
+            - 0.0
+            - -1.4
+            - 0.9
+          rotation:
+            - 0.4
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 0.3
+            - 0.5
+        material:
+          color:
+            - 1.0
+            - 0.0
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size:
+            - 1.0
+            - 1.0
+            - 1.0
+  snowman1:
+    objects:
+      - name: bottom
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 3.5
+            - -2.0
+            - 0.4
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.4
+          segments: 32
+          rings: 16
+      - name: button_0
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 3.5
+            - -1.736
+            - 0.84
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.032
+          segments: 32
+          rings: 16
+      - name: button_1
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 3.5
+            - -1.736
+            - 0.96
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.032
+          segments: 32
+          rings: 16
+      - name: button_2
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 3.5
+            - -1.736
+            - 1.08
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.032
+          segments: 32
+          rings: 16
+      - name: eye_l
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 3.564
+            - -1.84
+            - 1.48
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.032
+          segments: 32
+          rings: 16
+      - name: eye_r
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 3.436
+            - -1.84
+            - 1.48
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.032
+          segments: 32
+          rings: 16
+      - name: head
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 3.5
+            - -2.0
+            - 1.4
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.2
+          segments: 32
+          rings: 16
+      - name: middle
+        primitive: primitive_sphere
+        transform:
+          location:
+            - 3.5
+            - -2.0
+            - 0.96
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.28
+          segments: 32
+          rings: 16
+      - name: nose
+        primitive: primitive_cone
+        transform:
+          location:
+            - 3.5
+            - -1.8
+            - 1.4
+          rotation:
+            - 1.57
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 0.5
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.1599999964237213
+          radius1: 0.04000000015438766
+          radius2: 0.0
+          vertices: 32
+  snowman2:
+    objects:
+      - name: bottom
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -3.0
+            - -4.0
+            - 0.3
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.3
+          segments: 32
+          rings: 16
+      - name: button_0
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -3.0
+            - -3.802
+            - 0.63
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.024
+          segments: 32
+          rings: 16
+      - name: button_1
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -3.0
+            - -3.802
+            - 0.72
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.024
+          segments: 32
+          rings: 16
+      - name: button_2
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -3.0
+            - -3.802
+            - 0.81
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.024
+          segments: 32
+          rings: 16
+      - name: eye_l
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -2.952
+            - -3.88
+            - 1.11
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.024
+          segments: 32
+          rings: 16
+      - name: eye_r
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -3.048
+            - -3.88
+            - 1.11
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.01
+            - 0.01
+            - 0.01
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.024
+          segments: 32
+          rings: 16
+      - name: head
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -3.0
+            - -4.0
+            - 1.05
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.15
+          segments: 32
+          rings: 16
+      - name: middle
+        primitive: primitive_sphere
+        transform:
+          location:
+            - -3.0
+            - -4.0
+            - 0.72
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          radius: 0.21
+          segments: 32
+          rings: 16
+      - name: nose
+        primitive: primitive_cone
+        transform:
+          location:
+            - -3.0
+            - -3.85
+            - 1.05
+          rotation:
+            - 1.57
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 1.0
+            - 0.5
+            - 0.0
+            - 1.0
+          roughness: 0.5
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.11999999731779099
+          radius1: 0.029999999569207597
+          radius2: 0.0
+          vertices: 32
+  tree1:
+    objects:
+      - name: foliage1
+        primitive: primitive_cone
+        transform:
+          location:
+            - 5.0
+            - 2.0
+            - 1.29
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.5
+          radius1: 1.350000023841858
+          radius2: 0.050000002305300086
+          vertices: 32
+      - name: foliage2
+        primitive: primitive_cone
+        transform:
+          location:
+            - 5.0
+            - 2.0
+            - 2.04
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.350000023841858
+          radius1: 1.0499999764359491
+          radius2: 0.050000002305300086
+          vertices: 32
+      - name: foliage3
+        primitive: primitive_cone
+        transform:
+          location:
+            - 5.0
+            - 2.0
+            - 2.79
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.2000000476837158
+          radius1: 0.7500000067736258
+          radius2: 0.0
+          vertices: 32
+      - name: trunk
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 5.0
+            - 2.0
+            - 0.45
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.3
+            - 0.18
+            - 0.1
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.8999999761581421
+          radius: 0.23999999655366078
+          vertices: 32
+  tree2:
+    objects:
+      - name: foliage1
+        primitive: primitive_cone
+        transform:
+          location:
+            - -4.0
+            - 1.5
+            - 1.075
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.25
+          radius1: 1.125
+          radius2: 0.050000002305300086
+          vertices: 32
+      - name: foliage2
+        primitive: primitive_cone
+        transform:
+          location:
+            - -4.0
+            - 1.5
+            - 1.7
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.125
+          radius1: 0.8750000166351493
+          radius2: 0.050000002305300086
+          vertices: 32
+      - name: foliage3
+        primitive: primitive_cone
+        transform:
+          location:
+            - -4.0
+            - 1.5
+            - 2.325
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.0
+          radius1: 0.6250000059121987
+          radius2: 0.0
+          vertices: 32
+      - name: trunk
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -4.0
+            - 1.5
+            - 0.375
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.3
+            - 0.18
+            - 0.1
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.75
+          radius: 0.20000000922120034
+          vertices: 32
+  tree3:
+    objects:
+      - name: foliage1
+        primitive: primitive_cone
+        transform:
+          location:
+            - 4.5
+            - -5.0
+            - 0.86
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.0
+          radius1: 0.8999999761581421
+          radius2: 0.050000002305300086
+          vertices: 32
+      - name: foliage2
+        primitive: primitive_cone
+        transform:
+          location:
+            - 4.5
+            - -5.0
+            - 1.36
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.8999999761581421
+          radius1: 0.699999988079071
+          radius2: 0.050000002305300086
+          vertices: 32
+      - name: foliage3
+        primitive: primitive_cone
+        transform:
+          location:
+            - 4.5
+            - -5.0
+            - 1.86
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.800000011920929
+          radius1: 0.5
+          radius2: 0.0
+          vertices: 32
+      - name: trunk
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 4.5
+            - -5.0
+            - 0.3
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.3
+            - 0.18
+            - 0.1
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.6000000238418579
+          radius: 0.16000000061755065
+          vertices: 32
+  tree4:
+    objects:
+      - name: foliage1
+        primitive: primitive_cone
+        transform:
+          location:
+            - -5.0
+            - -7.0
+            - 1.505
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.75
+          radius1: 1.5750000968873916
+          radius2: 0.050000002305300086
+          vertices: 32
+      - name: foliage2
+        primitive: primitive_cone
+        transform:
+          location:
+            - -5.0
+            - -7.0
+            - 2.38
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.5750000476837158
+          radius1: 1.2250000276246191
+          radius2: 0.050000002305300086
+          vertices: 32
+      - name: foliage3
+        primitive: primitive_cone
+        transform:
+          location:
+            - -5.0
+            - -7.0
+            - 3.255
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.399999976158142
+          radius1: 0.8750000166351493
+          radius2: 0.0
+          vertices: 32
+      - name: trunk
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - -5.0
+            - -7.0
+            - 0.525
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.3
+            - 0.18
+            - 0.1
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.0499999523162842
+          radius: 0.2800000069764667
+          vertices: 32
+  tree5:
+    objects:
+      - name: foliage1
+        primitive: primitive_cone
+        transform:
+          location:
+            - 6.0
+            - -1.0
+            - 0.946
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 1.100000023841858
+          radius1: 0.9900000221735248
+          radius2: 0.050000002305300086
+          vertices: 32
+      - name: foliage2
+        primitive: primitive_cone
+        transform:
+          location:
+            - 6.0
+            - -1.0
+            - 1.496
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.9900000095367432
+          radius1: 0.769999994408444
+          radius2: 0.050000002305300086
+          vertices: 32
+      - name: foliage3
+        primitive: primitive_cone
+        transform:
+          location:
+            - 6.0
+            - -1.0
+            - 2.046
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.1
+            - 0.35
+            - 0.15
+            - 1.0
+          roughness: 0.8
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.8799999952316284
+          radius1: 0.5500000200899449
+          radius2: 0.0
+          vertices: 32
+      - name: trunk
+        primitive: primitive_cylinder
+        transform:
+          location:
+            - 6.0
+            - -1.0
+            - 0.33
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.3
+            - 0.18
+            - 0.1
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          depth: 0.6600000262260437
+          radius: 0.1760000008872729
+          vertices: 32
+  _ungrouped:
+    objects:
+      - name: ground
+        primitive: primitive_plane
+        transform:
+          location:
+            - 0.0
+            - 0.0
+            - 0.0
+          rotation:
+            - 0.0
+            - 0.0
+            - 0.0
+          scale:
+            - 1.0
+            - 1.0
+            - 1.0
+        material:
+          color:
+            - 0.85
+            - 0.9
+            - 1.0
+            - 1.0
+          roughness: 0.9
+          metallic: 0.0
+          emission_color:
+            - 1.0
+            - 1.0
+            - 1.0
+            - 1.0
+          emission_strength: 0.0
+        params:
+          size: 20.0

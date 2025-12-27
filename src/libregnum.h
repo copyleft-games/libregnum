@@ -77,6 +77,13 @@
 #include "shapes/lrg-cube3d.h"
 #include "shapes/lrg-line3d.h"
 #include "shapes/lrg-text2d.h"
+#include "shapes/lrg-cylinder3d.h"
+#include "shapes/lrg-cone3d.h"
+#include "shapes/lrg-plane3d.h"
+#include "shapes/lrg-grid3d.h"
+#include "shapes/lrg-circle3d.h"
+#include "shapes/lrg-torus3d.h"
+#include "shapes/lrg-icosphere3d.h"
 
 /* UI module */
 #include "ui/lrg-ui-event.h"
@@ -174,6 +181,14 @@
 #include "world3d/lrg-sector.h"
 #include "world3d/lrg-level3d.h"
 #include "world3d/lrg-portal-system.h"
+
+/* Scene module */
+#include "scene/lrg-material3d.h"
+#include "scene/lrg-scene-object.h"
+#include "scene/lrg-scene-entity.h"
+#include "scene/lrg-scene.h"
+#include "scene/lrg-scene-serializer.h"
+#include "scene/lrg-scene-serializer-yaml.h"
 
 /* Mod module */
 #include "mod/lrg-mod-manifest.h"

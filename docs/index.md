@@ -13,6 +13,7 @@ Libregnum is a GObject-based game engine library built on top of [graylib](https
 - **[Architecture Overview](architecture.md)** - Understand the system design
 - **[Core Concepts](concepts/index.md)** - Learn key game development concepts
 - **[Module Documentation](modules/index.md)** - Detailed API reference
+- **[Scene Module](scene/overview.md)** - Blender scene import/export system
 - **[API Classes Index](api/classes.md)** - All classes and types
 - **[Building](building.md)** - Build and installation instructions
 
@@ -23,6 +24,7 @@ Libregnum is a GObject-based game engine library built on top of [graylib](https
 - **Type Registry** - Data-driven type mapping for YAML deserialization
 - **Data Loader** - Load and deserialize YAML files to GObjects
 - **Asset Manager** - Unified texture, font, sound, and music loading with caching
+- **Scene Module** - Blender scene import/export with full primitive support
 
 ### Game Systems (Planned Phases)
 - **ECS** - Entity-Component-System architecture for flexible gameplay
@@ -156,6 +158,8 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 ```
 libregnum/
 ├── core/           # Engine, Registry, DataLoader, AssetManager (DONE)
+├── scene/          # Blender scene import/export, primitives (DONE)
+├── shapes/         # 3D primitive shapes (DONE)
 ├── ecs/            # Entity-Component-System (Phase 1)
 ├── input/          # Input handling (Phase 1)
 ├── ui/             # User interface widgets (Phase 1)

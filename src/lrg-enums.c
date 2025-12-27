@@ -1187,3 +1187,92 @@ lrg_octree_node_type_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * Scene System Quarks and GTypes
+ * ========================================================================== */
+
+/**
+ * lrg_scene_error_quark:
+ *
+ * Gets the error quark for scene errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_scene_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-scene-error-quark");
+}
+
+GType
+lrg_scene_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SCENE_ERROR_FAILED, "LRG_SCENE_ERROR_FAILED", "failed" },
+            { LRG_SCENE_ERROR_IO, "LRG_SCENE_ERROR_IO", "io" },
+            { LRG_SCENE_ERROR_PARSE, "LRG_SCENE_ERROR_PARSE", "parse" },
+            { LRG_SCENE_ERROR_INVALID_FORMAT, "LRG_SCENE_ERROR_INVALID_FORMAT", "invalid-format" },
+            { LRG_SCENE_ERROR_UNKNOWN_PRIMITIVE, "LRG_SCENE_ERROR_UNKNOWN_PRIMITIVE", "unknown-primitive" },
+            { LRG_SCENE_ERROR_MISSING_FIELD, "LRG_SCENE_ERROR_MISSING_FIELD", "missing-field" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgSceneError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_primitive_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PRIMITIVE_PLANE, "LRG_PRIMITIVE_PLANE", "plane" },
+            { LRG_PRIMITIVE_CUBE, "LRG_PRIMITIVE_CUBE", "cube" },
+            { LRG_PRIMITIVE_CIRCLE, "LRG_PRIMITIVE_CIRCLE", "circle" },
+            { LRG_PRIMITIVE_UV_SPHERE, "LRG_PRIMITIVE_UV_SPHERE", "uv-sphere" },
+            { LRG_PRIMITIVE_ICO_SPHERE, "LRG_PRIMITIVE_ICO_SPHERE", "ico-sphere" },
+            { LRG_PRIMITIVE_CYLINDER, "LRG_PRIMITIVE_CYLINDER", "cylinder" },
+            { LRG_PRIMITIVE_CONE, "LRG_PRIMITIVE_CONE", "cone" },
+            { LRG_PRIMITIVE_TORUS, "LRG_PRIMITIVE_TORUS", "torus" },
+            { LRG_PRIMITIVE_GRID, "LRG_PRIMITIVE_GRID", "grid" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPrimitiveType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_circle_fill_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CIRCLE_FILL_NOTHING, "LRG_CIRCLE_FILL_NOTHING", "nothing" },
+            { LRG_CIRCLE_FILL_NGON, "LRG_CIRCLE_FILL_NGON", "ngon" },
+            { LRG_CIRCLE_FILL_TRIFAN, "LRG_CIRCLE_FILL_TRIFAN", "trifan" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCircleFillType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

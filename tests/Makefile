@@ -76,7 +76,9 @@ TEST_SOURCES := \
 	test-debug.c \
 	test-mod.c \
 	test-net.c \
-	test-world3d.c
+	test-world3d.c \
+	test-scene.c \
+	test-primitives.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))

@@ -9,6 +9,12 @@
 
 #include "lrg-cube3d.h"
 
+#include <rlgl.h>
+
+#ifndef RAD2DEG
+#define RAD2DEG (180.0f / 3.14159265358979323846f)
+#endif
+
 /**
  * LrgCube3D:
  *
@@ -47,14 +53,27 @@ static void
 lrg_cube3d_draw (LrgShape *shape,
                  gfloat    delta)
 {
-	LrgCube3D   *self     = LRG_CUBE3D (shape);
-	GrlVector3  *position = lrg_shape3d_get_position (LRG_SHAPE3D (self));
-	GrlColor    *color    = lrg_shape_get_color (shape);
-	gboolean     wireframe = lrg_shape3d_get_wireframe (LRG_SHAPE3D (self));
+	LrgCube3D             *self = LRG_CUBE3D (shape);
+	GrlVector3            *pos  = lrg_shape3d_get_position (LRG_SHAPE3D (self));
+	GrlVector3            *rot  = lrg_shape3d_get_rotation (LRG_SHAPE3D (self));
+	GrlVector3            *scl  = lrg_shape3d_get_scale (LRG_SHAPE3D (self));
+	GrlColor              *color = lrg_shape_get_color (shape);
+	gboolean               wireframe = lrg_shape3d_get_wireframe (LRG_SHAPE3D (self));
+	g_autoptr(GrlVector3)  origin = grl_vector3_new (0.0f, 0.0f, 0.0f);
 
+	rlPushMatrix ();
+
+	/* Apply transforms: translate, rotate (XYZ order), scale */
+	rlTranslatef (pos->x, pos->y, pos->z);
+	rlRotatef (rot->x * RAD2DEG, 1.0f, 0.0f, 0.0f);
+	rlRotatef (rot->y * RAD2DEG, 0.0f, 1.0f, 0.0f);
+	rlRotatef (rot->z * RAD2DEG, 0.0f, 0.0f, 1.0f);
+	rlScalef (scl->x, scl->y, scl->z);
+
+	/* Draw at origin (position handled by matrix) */
 	if (wireframe)
 	{
-		grl_draw_cube_wires (position,
+		grl_draw_cube_wires (origin,
 		                     self->width,
 		                     self->height,
 		                     self->depth,
@@ -62,12 +81,14 @@ lrg_cube3d_draw (LrgShape *shape,
 	}
 	else
 	{
-		grl_draw_cube (position,
+		grl_draw_cube (origin,
 		               self->width,
 		               self->height,
 		               self->depth,
 		               color);
 	}
+
+	rlPopMatrix ();
 }
 
 /* ==========================================================================
