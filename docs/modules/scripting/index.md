@@ -79,6 +79,7 @@ main (int argc, char *argv[])
 | `LrgScripting` | Abstract base class for scripting backends |
 | `LrgScriptingLua` | LuaJIT scripting implementation |
 | `LrgScriptingPython` | Python 3.12+ scripting implementation |
+| `LrgScriptable` | Interface for custom script exposure (opt-in) |
 
 ## Feature Comparison
 
@@ -180,9 +181,43 @@ while (lrg_engine_is_running (engine))
 }
 ```
 
+## GObject Exposure
+
+By default, all GObjects exposed to scripts have their properties accessible based on `GParamSpec` flags:
+
+| GParamSpec Flag | Script Access |
+|-----------------|---------------|
+| `G_PARAM_READABLE` | Property can be read |
+| `G_PARAM_WRITABLE` | Property can be written |
+
+```lua
+-- Lua: access GObject properties directly
+local player = get_player()
+print(player.name)        -- Read property
+player.health = 100       -- Write property
+```
+
+### Custom Script Exposure (LrgScriptable)
+
+For advanced use cases, implement the `LrgScriptable` interface to:
+
+- **Expose custom methods** beyond simple property access
+- **Control property visibility** (read-only, hidden from scripts)
+- **Receive lifecycle callbacks** when entering/leaving script contexts
+
+```lua
+-- With LrgScriptable, objects can expose methods
+local damage = player:attack(enemy)    -- Custom method
+player:heal(25)                        -- Another method
+-- player.internal_state               -- Hidden property (nil or error)
+```
+
+See [LrgScriptable](scriptable.md) for complete documentation.
+
 ## See Also
 
 - [LrgScripting](scripting.md) - Abstract base class documentation
 - [LrgScriptingLua](scripting-lua.md) - Lua implementation details
 - [LrgScriptingPython](scripting-python.md) - Python implementation details
+- [LrgScriptable](scriptable.md) - Custom script exposure interface
 - [Scripting Examples](../../examples/scripting-basics.md) - Comprehensive usage examples
