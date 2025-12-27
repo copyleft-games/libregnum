@@ -12,6 +12,13 @@
 #include <graylib.h>
 #include <math.h>
 
+/* Camera modes */
+typedef enum
+{
+	CAMERA_MODE_THIRDPERSON,
+	CAMERA_MODE_ISOMETRIC
+} CameraMode;
+
 /* =============================================================================
  * SHAPE CONVERSION
  * ========================================================================== */
@@ -233,9 +240,11 @@ main (int   argc,
 	LrgEngine                          *engine;
 	LrgRenderer                        *renderer;
 	g_autoptr(LrgGrlWindow)             window = NULL;
-	g_autoptr(LrgCameraThirdPerson)     camera = NULL;
+	g_autoptr(LrgCameraThirdPerson)     camera_tp = NULL;
+	g_autoptr(LrgCameraIsometric)       camera_iso = NULL;
 	g_autoptr(GrlColor)                 bg_color = NULL;
 	gfloat                              camera_angle = 0.0f;
+	CameraMode                          camera_mode = CAMERA_MODE_THIRDPERSON;
 	guint                               i;
 
 	/* Create window first */
@@ -278,13 +287,19 @@ main (int   argc,
 	g_print ("Created %u shapes\n", shapes->len);
 
 	/* Create third-person camera for viewing */
-	camera = lrg_camera_thirdperson_new ();
-	lrg_camera_thirdperson_set_distance (camera, 30.0f);
-	lrg_camera_thirdperson_set_pitch (camera, 40.0f);
-	lrg_camera_thirdperson_set_height_offset (camera, 3.0f);
-	lrg_camera_thirdperson_snap_to_target (camera, 0.0f, 1.0f, 0.0f);
+	camera_tp = lrg_camera_thirdperson_new ();
+	lrg_camera_thirdperson_set_distance (camera_tp, 30.0f);
+	lrg_camera_thirdperson_set_pitch (camera_tp, 40.0f);
+	lrg_camera_thirdperson_set_height_offset (camera_tp, 3.0f);
+	lrg_camera_thirdperson_snap_to_target (camera_tp, 0.0f, 1.0f, 0.0f);
 
-	lrg_renderer_set_camera (renderer, LRG_CAMERA (camera));
+	/* Create isometric camera */
+	camera_iso = lrg_camera_isometric_new ();
+	lrg_camera_isometric_set_zoom (camera_iso, 0.05f);
+	lrg_camera_isometric_focus_on (camera_iso, 0.0f, 1.0f, 0.0f);
+
+	/* Start with third-person camera */
+	lrg_renderer_set_camera (renderer, LRG_CAMERA (camera_tp));
 	bg_color = grl_color_new (40, 44, 52, 255);
 
 	/* Main render loop */
@@ -294,10 +309,29 @@ main (int   argc,
 
 		delta = lrg_window_get_frame_time (LRG_WINDOW (window));
 
-		/* Auto-rotate camera around the scene */
-		camera_angle += delta * 0.3f;
-		lrg_camera_thirdperson_set_yaw (camera, camera_angle * (180.0f / G_PI));
-		lrg_camera_thirdperson_follow (camera, 0.0f, 1.0f, 0.0f, delta);
+		/* Handle camera switching with 'C' key */
+		if (grl_input_is_key_pressed (GRL_KEY_C))
+		{
+			if (camera_mode == CAMERA_MODE_THIRDPERSON)
+			{
+				camera_mode = CAMERA_MODE_ISOMETRIC;
+				lrg_renderer_set_camera (renderer, LRG_CAMERA (camera_iso));
+			}
+			else
+			{
+				camera_mode = CAMERA_MODE_THIRDPERSON;
+				lrg_renderer_set_camera (renderer, LRG_CAMERA (camera_tp));
+			}
+		}
+
+		/* Update camera based on mode */
+		if (camera_mode == CAMERA_MODE_THIRDPERSON)
+		{
+			/* Auto-rotate third-person camera around the scene */
+			camera_angle += delta * 0.3f;
+			lrg_camera_thirdperson_set_yaw (camera_tp, camera_angle * (180.0f / G_PI));
+			lrg_camera_thirdperson_follow (camera_tp, 0.0f, 1.0f, 0.0f, delta);
+		}
 
 		/* Render */
 		lrg_renderer_begin_frame (renderer);
@@ -320,11 +354,16 @@ main (int   argc,
 		lrg_renderer_begin_layer (renderer, LRG_RENDER_LAYER_UI);
 		{
 			g_autoptr(GrlColor)  white = NULL;
+			g_autoptr(GrlColor)  gray = NULL;
 			g_autoptr(LrgText2D) title = NULL;
 			g_autoptr(LrgText2D) info = NULL;
+			g_autoptr(LrgText2D) camera_info = NULL;
+			g_autoptr(LrgText2D) controls = NULL;
 			g_autofree gchar    *info_text = NULL;
+			const gchar         *camera_name = NULL;
 
 			white = grl_color_new (255, 255, 255, 255);
+			gray = grl_color_new (180, 180, 180, 255);
 
 			title = lrg_text2d_new_full (10.0f, 10.0f,
 			                             "Santa Sleigh Scene (YAML Renderer)",
@@ -336,6 +375,19 @@ main (int   argc,
 			                             shapes->len);
 			info = lrg_text2d_new_full (10.0f, 40.0f, info_text, 18.0f, white);
 			lrg_drawable_draw (LRG_DRAWABLE (info), delta);
+
+			/* Show current camera mode */
+			camera_name = (camera_mode == CAMERA_MODE_THIRDPERSON)
+			              ? "Third-Person (rotating)"
+			              : "Isometric";
+			camera_info = lrg_text2d_new_full (10.0f, 65.0f, camera_name, 18.0f, white);
+			lrg_drawable_draw (LRG_DRAWABLE (camera_info), delta);
+
+			/* Show controls */
+			controls = lrg_text2d_new_full (10.0f, 90.0f,
+			                                "Press 'C' to switch camera",
+			                                16.0f, gray);
+			lrg_drawable_draw (LRG_DRAWABLE (controls), delta);
 		}
 		lrg_renderer_end_layer (renderer);
 
