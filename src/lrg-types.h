@@ -434,4 +434,15 @@ typedef struct _LrgCommandProviderInterface  LrgCommandProviderInterface;
 typedef struct _LrgLocaleProvider           LrgLocaleProvider;
 typedef struct _LrgLocaleProviderInterface  LrgLocaleProviderInterface;
 
+/* ==========================================================================
+ * Scripting Module
+ * ========================================================================== */
+
+/* LrgScripting is a derivable type (abstract base class) */
+typedef struct _LrgScripting       LrgScripting;
+typedef struct _LrgScriptingClass  LrgScriptingClass;
+
+/* LrgScriptingLua is a final type - no Class forward declaration needed */
+typedef struct _LrgScriptingLua  LrgScriptingLua;
+
 G_END_DECLS

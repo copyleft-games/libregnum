@@ -1256,4 +1256,43 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_circle_fill_type_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_CIRCLE_FILL_TYPE (lrg_circle_fill_type_get_type ())
 
+/* ==========================================================================
+ * Scripting System
+ * ========================================================================== */
+
+/**
+ * LRG_SCRIPTING_ERROR:
+ *
+ * Error domain for scripting system errors.
+ */
+#define LRG_SCRIPTING_ERROR (lrg_scripting_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_scripting_error_quark (void);
+
+/**
+ * LrgScriptingError:
+ * @LRG_SCRIPTING_ERROR_FAILED: Generic failure
+ * @LRG_SCRIPTING_ERROR_LOAD: Script loading failed
+ * @LRG_SCRIPTING_ERROR_SYNTAX: Script syntax error
+ * @LRG_SCRIPTING_ERROR_RUNTIME: Runtime error during script execution
+ * @LRG_SCRIPTING_ERROR_TYPE: Type conversion or mismatch error
+ * @LRG_SCRIPTING_ERROR_NOT_FOUND: Function or variable not found
+ *
+ * Error codes for the scripting system.
+ */
+typedef enum
+{
+    LRG_SCRIPTING_ERROR_FAILED,
+    LRG_SCRIPTING_ERROR_LOAD,
+    LRG_SCRIPTING_ERROR_SYNTAX,
+    LRG_SCRIPTING_ERROR_RUNTIME,
+    LRG_SCRIPTING_ERROR_TYPE,
+    LRG_SCRIPTING_ERROR_NOT_FOUND
+} LrgScriptingError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_scripting_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SCRIPTING_ERROR (lrg_scripting_error_get_type ())
+
 G_END_DECLS

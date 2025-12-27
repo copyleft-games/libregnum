@@ -200,4 +200,8 @@
 #include "mod/lrg-modable.h"
 #include "mod/lrg-providers.h"
 
+/* Scripting module */
+#include "scripting/lrg-scripting.h"
+#include "scripting/lrg-scripting-lua.h"
+
 #undef LIBREGNUM_INSIDE

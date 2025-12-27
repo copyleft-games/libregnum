@@ -159,7 +159,9 @@ PUBLIC_HEADERS := \
 	src/scene/lrg-scene-serializer.h \
 	src/scene/lrg-scene-serializer-yaml.h \
 	src/scene/lrg-scene-serializer-blender.h \
-	src/scene/lrg-mesh-data.h
+	src/scene/lrg-mesh-data.h \
+	src/scripting/lrg-scripting.h \
+	src/scripting/lrg-scripting-lua.h
 
 # Source files
 SOURCES := \
@@ -293,7 +295,11 @@ SOURCES := \
 	src/scene/lrg-scene-serializer.c \
 	src/scene/lrg-scene-serializer-yaml.c \
 	src/scene/lrg-scene-serializer-blender.c \
-	src/scene/lrg-mesh-data.c
+	src/scene/lrg-mesh-data.c \
+	src/scripting/lrg-scripting.c \
+	src/scripting/lrg-scripting-lua.c \
+	src/scripting/lrg-lua-bridge.c \
+	src/scripting/lrg-lua-api.c
 
 # Object files
 OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(SOURCES))
@@ -484,6 +490,7 @@ install: lib $(BUILDDIR)/$(PC_FILE)
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/net
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/scene
+	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting
 	@$(MKDIR_P) $(DESTDIR)$(PKGCONFIGDIR)
 ifeq ($(BUILD_GIR),1)
 	@$(MKDIR_P) $(DESTDIR)$(GIRDIR)
@@ -588,6 +595,8 @@ endif
 	$(INSTALL_DATA) src/scene/lrg-scene-serializer-yaml.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
 	$(INSTALL_DATA) src/scene/lrg-scene-serializer-blender.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
 	$(INSTALL_DATA) src/scene/lrg-mesh-data.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
+	$(INSTALL_DATA) src/scripting/lrg-scripting.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
+	$(INSTALL_DATA) src/scripting/lrg-scripting-lua.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
 	# Install pkg-config
 	$(INSTALL_DATA) $(BUILDDIR)/$(PC_FILE) $(DESTDIR)$(PKGCONFIGDIR)/
 	# Install GIR
@@ -1085,6 +1094,27 @@ $(OBJDIR)/src/scene/lrg-scene-serializer-blender.o: src/scene/lrg-scene-serializ
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/scene/lrg-mesh-data.o: src/scene/lrg-mesh-data.c src/scene/lrg-mesh-data.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# Scripting module
+$(OBJDIR)/src/scripting/lrg-scripting.o: src/scripting/lrg-scripting.c src/scripting/lrg-scripting.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scripting/lrg-scripting-lua.o: src/scripting/lrg-scripting-lua.c src/scripting/lrg-scripting-lua.h src/scripting/lrg-scripting-lua-private.h src/scripting/lrg-lua-bridge.h src/scripting/lrg-lua-api.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scripting/lrg-lua-bridge.o: src/scripting/lrg-lua-bridge.c src/scripting/lrg-lua-bridge.h src/scripting/lrg-scripting-lua-private.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scripting/lrg-lua-api.o: src/scripting/lrg-lua-api.c src/scripting/lrg-lua-api.h src/scripting/lrg-lua-bridge.h src/scripting/lrg-scripting-lua-private.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

@@ -223,9 +223,13 @@ JSON_LIBS := $(shell $(PKG_CONFIG) --libs json-glib-1.0)
 YAML_CFLAGS := $(shell $(PKG_CONFIG) --cflags yaml-0.1)
 YAML_LIBS := $(shell $(PKG_CONFIG) --libs yaml-0.1)
 
+# LuaJIT (for scripting)
+LUAJIT_CFLAGS := $(shell $(PKG_CONFIG) --cflags luajit)
+LUAJIT_LIBS := $(shell $(PKG_CONFIG) --libs luajit)
+
 # Combined dependency flags (use -isystem to suppress warnings from deps)
-DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS)
-DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS)
+DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(LUAJIT_CFLAGS)
+DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(LUAJIT_LIBS)
 
 # Graylib and yaml-glib (built from submodules)
 GRAYLIB_CFLAGS := -I$(GRAYLIB_DIR)/src

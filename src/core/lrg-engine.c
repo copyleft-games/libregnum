@@ -18,6 +18,8 @@
 #include "../lrg-log.h"
 #include "../graphics/lrg-window.h"
 #include "../graphics/lrg-renderer.h"
+#include "../scripting/lrg-scripting.h"
+#include "../scripting/lrg-scripting-lua.h"
 
 typedef struct
 {
@@ -25,6 +27,7 @@ typedef struct
     LrgRegistry      *registry;
     LrgDataLoader    *data_loader;
     LrgAssetManager  *asset_manager;
+    LrgScripting     *scripting;
     LrgWindow        *window;
     LrgRenderer      *renderer;
 } LrgEnginePrivate;
@@ -83,6 +86,9 @@ lrg_engine_real_shutdown (LrgEngine *self)
 
     lrg_debug (LRG_LOG_DOMAIN_CORE, "Engine shutdown");
 
+    /* Clean up scripting first (may reference other subsystems) */
+    g_clear_object (&priv->scripting);
+
     /* Clean up graphics subsystems */
     g_clear_object (&priv->renderer);
     /* Note: We don't clear the window here - user manages window lifecycle */
@@ -99,8 +105,13 @@ static void
 lrg_engine_real_update (LrgEngine *self,
                         gfloat     delta)
 {
-    /* Base implementation does nothing */
-    /* Subclasses can override to add custom update logic */
+    LrgEnginePrivate *priv = lrg_engine_get_instance_private (self);
+
+    /* Call scripting update hooks if scripting is attached */
+    if (priv->scripting != NULL && LRG_IS_SCRIPTING_LUA (priv->scripting))
+    {
+        lrg_scripting_lua_update (LRG_SCRIPTING_LUA (priv->scripting), delta);
+    }
 }
 
 /* ==========================================================================
@@ -119,6 +130,9 @@ lrg_engine_finalize (GObject *object)
     {
         lrg_engine_shutdown (self);
     }
+
+    /* Clean up scripting */
+    g_clear_object (&priv->scripting);
 
     /* Clean up graphics */
     g_clear_object (&priv->renderer);
@@ -258,6 +272,7 @@ lrg_engine_init (LrgEngine *self)
     priv->registry = NULL;
     priv->data_loader = NULL;
     priv->asset_manager = NULL;
+    priv->scripting = NULL;
     priv->window = NULL;
     priv->renderer = NULL;
 }
@@ -507,6 +522,74 @@ lrg_engine_get_asset_manager (LrgEngine *self)
     priv = lrg_engine_get_instance_private (self);
 
     return priv->asset_manager;
+}
+
+/**
+ * lrg_engine_get_scripting:
+ * @self: an #LrgEngine
+ *
+ * Gets the engine's scripting subsystem.
+ *
+ * Returns: (transfer none) (nullable): The #LrgScripting, or %NULL if not set
+ */
+LrgScripting *
+lrg_engine_get_scripting (LrgEngine *self)
+{
+    LrgEnginePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ENGINE (self), NULL);
+
+    priv = lrg_engine_get_instance_private (self);
+
+    return priv->scripting;
+}
+
+/**
+ * lrg_engine_set_scripting:
+ * @self: an #LrgEngine
+ * @scripting: (transfer none) (nullable): the scripting subsystem to use
+ *
+ * Sets the scripting subsystem for the engine.
+ *
+ * If the scripting is an #LrgScriptingLua instance, it is automatically
+ * connected to the engine's registry for type lookups.
+ */
+void
+lrg_engine_set_scripting (LrgEngine    *self,
+                          LrgScripting *scripting)
+{
+    LrgEnginePrivate *priv;
+
+    g_return_if_fail (LRG_IS_ENGINE (self));
+    g_return_if_fail (scripting == NULL || LRG_IS_SCRIPTING (scripting));
+
+    priv = lrg_engine_get_instance_private (self);
+
+    /* Same scripting, nothing to do */
+    if (priv->scripting == scripting)
+        return;
+
+    /* Clear existing scripting */
+    g_clear_object (&priv->scripting);
+
+    /* Set new scripting and connect to registry */
+    if (scripting != NULL)
+    {
+        priv->scripting = g_object_ref (scripting);
+
+        /* If it's a Lua scripting instance, connect to the registry */
+        if (LRG_IS_SCRIPTING_LUA (scripting) && priv->registry != NULL)
+        {
+            lrg_scripting_lua_set_registry (LRG_SCRIPTING_LUA (scripting),
+                                            priv->registry);
+        }
+
+        lrg_debug (LRG_LOG_DOMAIN_CORE, "Scripting subsystem attached");
+    }
+    else
+    {
+        lrg_debug (LRG_LOG_DOMAIN_CORE, "Scripting subsystem detached");
+    }
 }
 
 /* ==========================================================================

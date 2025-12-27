@@ -185,6 +185,33 @@ LrgDataLoader * lrg_engine_get_data_loader (LrgEngine *self);
 LRG_AVAILABLE_IN_ALL
 LrgAssetManager * lrg_engine_get_asset_manager (LrgEngine *self);
 
+/**
+ * lrg_engine_get_scripting:
+ * @self: an #LrgEngine
+ *
+ * Gets the engine's scripting subsystem.
+ *
+ * The scripting subsystem provides Lua scripting support for game logic.
+ *
+ * Returns: (transfer none) (nullable): The #LrgScripting, or %NULL if not set
+ */
+LRG_AVAILABLE_IN_ALL
+LrgScripting * lrg_engine_get_scripting (LrgEngine *self);
+
+/**
+ * lrg_engine_set_scripting:
+ * @self: an #LrgEngine
+ * @scripting: (transfer none) (nullable): the scripting subsystem to use
+ *
+ * Sets the scripting subsystem for the engine.
+ *
+ * If the scripting is an #LrgScriptingLua instance, it is automatically
+ * connected to the engine's registry for type lookups.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_engine_set_scripting (LrgEngine    *self,
+                               LrgScripting *scripting);
+
 /* ==========================================================================
  * Graphics Subsystem Access
  * ========================================================================== */

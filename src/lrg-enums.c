@@ -1276,3 +1276,44 @@ lrg_circle_fill_type_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * Scripting System Quarks and GTypes
+ * ========================================================================== */
+
+/**
+ * lrg_scripting_error_quark:
+ *
+ * Gets the error quark for scripting errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_scripting_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-scripting-error-quark");
+}
+
+GType
+lrg_scripting_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SCRIPTING_ERROR_FAILED, "LRG_SCRIPTING_ERROR_FAILED", "failed" },
+            { LRG_SCRIPTING_ERROR_LOAD, "LRG_SCRIPTING_ERROR_LOAD", "load" },
+            { LRG_SCRIPTING_ERROR_SYNTAX, "LRG_SCRIPTING_ERROR_SYNTAX", "syntax" },
+            { LRG_SCRIPTING_ERROR_RUNTIME, "LRG_SCRIPTING_ERROR_RUNTIME", "runtime" },
+            { LRG_SCRIPTING_ERROR_TYPE, "LRG_SCRIPTING_ERROR_TYPE", "type" },
+            { LRG_SCRIPTING_ERROR_NOT_FOUND, "LRG_SCRIPTING_ERROR_NOT_FOUND", "not-found" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgScriptingError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

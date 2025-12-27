@@ -49,6 +49,7 @@ G_BEGIN_DECLS
 #define LRG_LOG_DOMAIN_WORLD3D    "Libregnum-World3D"
 #define LRG_LOG_DOMAIN_DEBUG      "Libregnum-Debug"
 #define LRG_LOG_DOMAIN_MOD        "Libregnum-Mod"
+#define LRG_LOG_DOMAIN_SCRIPTING  "Libregnum-Scripting"
 
 /* ==========================================================================
  * Logging Macros

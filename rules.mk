@@ -161,6 +161,7 @@ check-deps:
 	@$(PKG_CONFIG) --exists libdex-1 || (echo "Missing: libdex-devel" && exit 1)
 	@$(PKG_CONFIG) --exists json-glib-1.0 || (echo "Missing: json-glib-devel" && exit 1)
 	@$(PKG_CONFIG) --exists yaml-0.1 || (echo "Missing: libyaml-devel" && exit 1)
+	@$(PKG_CONFIG) --exists luajit || (echo "Missing: luajit-devel" && exit 1)
 ifeq ($(BUILD_GIR),1)
 	@which $(GIR_SCANNER) > /dev/null || (echo "Missing: gobject-introspection-devel" && exit 1)
 endif
