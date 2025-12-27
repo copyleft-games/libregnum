@@ -357,6 +357,26 @@ typedef struct _LrgLevel3D       LrgLevel3D;
 typedef struct _LrgPortalSystem  LrgPortalSystem;
 
 /* ==========================================================================
+ * Scene Module
+ * ========================================================================== */
+
+/* Boxed type - no class typedef */
+typedef struct _LrgMeshData  LrgMeshData;
+
+/* Final types - no class typedef needed */
+typedef struct _LrgSceneObject    LrgSceneObject;
+typedef struct _LrgSceneEntity    LrgSceneEntity;
+typedef struct _LrgScene          LrgScene;
+typedef struct _LrgMaterial3D     LrgMaterial3D;
+
+/* Derivable types */
+typedef struct _LrgSceneSerializer       LrgSceneSerializer;
+typedef struct _LrgSceneSerializerClass  LrgSceneSerializerClass;
+
+typedef struct _LrgSceneSerializerYaml       LrgSceneSerializerYaml;
+typedef struct _LrgSceneSerializerYamlClass  LrgSceneSerializerYamlClass;
+
+/* ==========================================================================
  * Debug Module
  * ========================================================================== */
 

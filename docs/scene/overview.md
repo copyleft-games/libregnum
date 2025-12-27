@@ -17,7 +17,8 @@ LrgScene
                 ├── Transform (location, rotation, scale)
                 ├── Primitive Type
                 ├── Material (LrgMaterial3D)
-                └── Parameters (GHashTable)
+                ├── Parameters (GHashTable)
+                └── Mesh Data (LrgMeshData, for custom meshes)
 ```
 
 ### Core Types
@@ -28,13 +29,14 @@ LrgScene
 | `LrgSceneEntity` | Groups related objects (e.g., a character with multiple parts) |
 | `LrgSceneObject` | Individual primitive shape with transform and material |
 | `LrgMaterial3D` | PBR material properties (color, roughness, metallic, emission) |
+| `LrgMeshData` | Custom mesh geometry (vertices, faces) for `LRG_PRIMITIVE_MESH` |
 | `LrgSceneSerializer` | Interface for loading/saving scenes |
 | `LrgSceneSerializerYaml` | Derivable YAML format base class |
 | `LrgSceneSerializerBlender` | Blender-specific YAML with Z-up → Y-up conversion |
 
 ### Primitive Types
 
-The scene system supports all standard Blender primitives:
+The scene system supports all standard Blender primitives plus custom mesh geometry:
 
 | Enum Value | Blender Type | Libregnum Shape |
 |------------|--------------|-----------------|
@@ -47,6 +49,7 @@ The scene system supports all standard Blender primitives:
 | `LRG_PRIMITIVE_CONE` | Cone | `LrgCone3D` |
 | `LRG_PRIMITIVE_TORUS` | Torus | `LrgTorus3D` |
 | `LRG_PRIMITIVE_GRID` | Grid | `LrgGrid3D` |
+| `LRG_PRIMITIVE_MESH` | Custom Mesh | N/A (uses `LrgMeshData`) |
 
 ## Transform Hierarchy
 

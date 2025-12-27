@@ -96,8 +96,20 @@ struct _LrgSceneSerializerYamlClass
 	                               gfloat                  y,
 	                               gfloat                  z);
 
+	/**
+	 * should_reverse_face_winding:
+	 * @self: the serializer
+	 *
+	 * Returns whether face winding order should be reversed when
+	 * parsing mesh data. This is needed when coordinate conversion
+	 * mirrors the geometry (e.g., Blender Z-up to raylib Y-up).
+	 *
+	 * Returns: %TRUE if face indices should be stored in reverse order
+	 */
+	gboolean (*should_reverse_face_winding) (LrgSceneSerializerYaml *self);
+
 	/*< private >*/
-	gpointer _reserved[4];
+	gpointer _reserved[3];
 };
 
 /**

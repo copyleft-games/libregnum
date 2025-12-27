@@ -93,6 +93,7 @@ Each object represents a single primitive with its transform, material, and para
 | `primitive_cone` | `LRG_PRIMITIVE_CONE` |
 | `primitive_torus` | `LRG_PRIMITIVE_TORUS` |
 | `primitive_grid` | `LRG_PRIMITIVE_GRID` |
+| `primitive_mesh` | `LRG_PRIMITIVE_MESH` |
 
 ### Transform
 
@@ -273,6 +274,88 @@ params:
 | `x_subdivisions` | int | 10 | X divisions |
 | `y_subdivisions` | int | 10 | Y divisions |
 | `size` | float | 1.0 | Grid spacing |
+
+### Mesh (Custom Geometry)
+
+Custom mesh geometry with explicit vertex and face data. Used for complex shapes that cannot be represented by standard primitives.
+
+```yaml
+primitive: primitive_mesh
+params:
+  mesh_data:
+    vertices:
+      - [0.0, 0.0, 0.0]
+      - [1.0, 0.0, 0.0]
+      - [1.0, 1.0, 0.0]
+      - [0.0, 1.0, 0.0]
+    faces:
+      - [0, 1, 2, 3]  # Quad face (4 vertices)
+      - [0, 2, 3]     # Triangle face (3 vertices)
+    smooth: true
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `mesh_data` | mapping | Container for mesh geometry |
+| `mesh_data.vertices` | array | Array of `[x, y, z]` vertex positions |
+| `mesh_data.faces` | array | Array of face definitions (vertex index arrays) |
+| `mesh_data.smooth` | bool | Enable smooth shading (default: false) |
+
+#### Vertex Data
+
+Vertices are specified as an array of 3D coordinates:
+
+```yaml
+vertices:
+  - [0.0, 0.0, 0.0]   # vertex 0
+  - [1.0, 0.0, 0.0]   # vertex 1
+  - [0.5, 1.0, 0.0]   # vertex 2
+```
+
+Coordinates use Blender's Z-up coordinate system. The serializer automatically converts to raylib's Y-up system when loading.
+
+#### Face Data
+
+Faces are specified as arrays of vertex indices. Faces can be triangles (3 vertices), quads (4 vertices), or n-gons (5+ vertices):
+
+```yaml
+faces:
+  - [0, 1, 2]         # Triangle
+  - [0, 1, 2, 3]      # Quad
+  - [0, 1, 2, 3, 4]   # Pentagon (n-gon)
+```
+
+**Triangulation:** Quads and n-gons are automatically triangulated on load using fan triangulation. This works correctly for convex polygons exported from Blender.
+
+#### Example: Custom Pyramid
+
+```yaml
+- name: "pyramid"
+  primitive: primitive_mesh
+  transform:
+    location: [0.0, 0.0, 0.0]
+    rotation: [0.0, 0.0, 0.0]
+    scale: [1.0, 1.0, 1.0]
+  material:
+    color: [0.8, 0.6, 0.2, 1.0]
+    roughness: 0.5
+    metallic: 0.0
+  params:
+    mesh_data:
+      vertices:
+        - [-1.0, -1.0, 0.0]   # base corner 0
+        - [1.0, -1.0, 0.0]    # base corner 1
+        - [1.0, 1.0, 0.0]     # base corner 2
+        - [-1.0, 1.0, 0.0]    # base corner 3
+        - [0.0, 0.0, 2.0]     # apex
+      faces:
+        - [0, 1, 2, 3]  # base (quad)
+        - [0, 1, 4]     # side triangle
+        - [1, 2, 4]     # side triangle
+        - [2, 3, 4]     # side triangle
+        - [3, 0, 4]     # side triangle
+      smooth: false
+```
 
 ## Complete Example
 

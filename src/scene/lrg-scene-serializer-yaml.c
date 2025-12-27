@@ -9,6 +9,7 @@
  */
 
 #include "lrg-scene-serializer-yaml.h"
+#include "lrg-mesh-data.h"
 #include <yaml-glib.h>
 #include <gio/gio.h>
 
@@ -70,6 +71,17 @@ lrg_scene_serializer_yaml_real_convert_scale (LrgSceneSerializerYaml *self,
 	return grl_vector3_new (x, y, z);
 }
 
+/*
+ * Default should_reverse_face_winding: no reversal needed.
+ * Subclasses that mirror geometry during coordinate conversion
+ * should override this to return TRUE.
+ */
+static gboolean
+lrg_scene_serializer_yaml_real_should_reverse_face_winding (LrgSceneSerializerYaml *self)
+{
+	return FALSE;
+}
+
 /* ==========================================================================
  * Helper Functions - Parsing
  * ========================================================================== */
@@ -103,6 +115,8 @@ parse_primitive_type (const gchar *str)
 		return LRG_PRIMITIVE_TORUS;
 	if (g_str_equal (str, "primitive_grid"))
 		return LRG_PRIMITIVE_GRID;
+	if (g_str_equal (str, "primitive_mesh"))
+		return LRG_PRIMITIVE_MESH;
 
 	return LRG_PRIMITIVE_CUBE;
 }
@@ -133,6 +147,8 @@ primitive_type_to_string (LrgPrimitiveType type)
 		return "primitive_torus";
 	case LRG_PRIMITIVE_GRID:
 		return "primitive_grid";
+	case LRG_PRIMITIVE_MESH:
+		return "primitive_mesh";
 	default:
 		return "primitive_cube";
 	}
@@ -244,12 +260,139 @@ parse_material (YamlMapping *material_map)
 }
 
 /*
+ * Parse mesh_data from YAML mapping.
+ * Converts vertex positions using the serializer's coordinate conversion.
+ * Format:
+ *   mesh_data:
+ *     vertices: [[x, y, z], ...]
+ *     faces: [[v0, v1, v2, ...], ...]  # Can be 3, 4, or n vertices
+ *     smooth: boolean
+ */
+static LrgMeshData *
+parse_mesh_data (LrgSceneSerializerYaml *self,
+                 YamlMapping            *mesh_data_map)
+{
+	LrgSceneSerializerYamlClass *klass;
+	LrgMeshData  *mesh_data;
+	YamlNode     *node;
+	YamlSequence *vertices_seq;
+	YamlSequence *faces_seq;
+	guint         i, j;
+	guint         n_verts, n_faces;
+	gfloat       *vertices;
+	GArray       *face_array;
+	gboolean      smooth;
+
+	if (mesh_data_map == NULL)
+		return NULL;
+
+	klass = LRG_SCENE_SERIALIZER_YAML_GET_CLASS (self);
+	mesh_data = lrg_mesh_data_new ();
+
+	/* Parse vertices array */
+	node = yaml_mapping_get_member (mesh_data_map, "vertices");
+	if (node != NULL && yaml_node_get_node_type (node) == YAML_NODE_SEQUENCE)
+	{
+		vertices_seq = yaml_node_get_sequence (node);
+		n_verts = yaml_sequence_get_length (vertices_seq);
+		vertices = g_new (gfloat, n_verts * 3);
+
+		for (i = 0; i < n_verts; i++)
+		{
+			YamlNode     *vert_node;
+			YamlSequence *vert_seq;
+			gfloat        x, y, z;
+			g_autoptr(GrlVector3) converted = NULL;
+
+			vert_node = yaml_sequence_get_element (vertices_seq, i);
+			if (yaml_node_get_node_type (vert_node) != YAML_NODE_SEQUENCE)
+				continue;
+
+			vert_seq = yaml_node_get_sequence (vert_node);
+			parse_vector3_components (vert_seq, &x, &y, &z);
+
+			/* Apply coordinate conversion via virtual method */
+			converted = klass->convert_position (self, x, y, z);
+
+			vertices[i * 3 + 0] = converted->x;
+			vertices[i * 3 + 1] = converted->y;
+			vertices[i * 3 + 2] = converted->z;
+		}
+
+		lrg_mesh_data_set_vertices (mesh_data, vertices, n_verts);
+		g_free (vertices);
+	}
+
+	/* Parse faces array */
+	node = yaml_mapping_get_member (mesh_data_map, "faces");
+	if (node != NULL && yaml_node_get_node_type (node) == YAML_NODE_SEQUENCE)
+	{
+		faces_seq = yaml_node_get_sequence (node);
+		n_faces = yaml_sequence_get_length (faces_seq);
+		face_array = g_array_new (FALSE, FALSE, sizeof (gint));
+
+		for (i = 0; i < n_faces; i++)
+		{
+			YamlNode     *face_node;
+			YamlSequence *face_seq;
+			guint         face_len;
+			gint          vertex_count;
+
+			face_node = yaml_sequence_get_element (faces_seq, i);
+			if (yaml_node_get_node_type (face_node) != YAML_NODE_SEQUENCE)
+				continue;
+
+			face_seq = yaml_node_get_sequence (face_node);
+			face_len = yaml_sequence_get_length (face_seq);
+
+			if (face_len < 3)
+				continue;  /* Skip degenerate faces */
+
+			/* Store face vertex count first, then indices */
+			vertex_count = (gint)face_len;
+			g_array_append_val (face_array, vertex_count);
+
+			/* Read indices in normal order */
+			for (j = 0; j < face_len; j++)
+			{
+				gint idx = (gint)yaml_sequence_get_int_element (face_seq, j);
+				g_array_append_val (face_array, idx);
+			}
+		}
+
+		lrg_mesh_data_set_faces (mesh_data,
+		                          (gint *)face_array->data,
+		                          n_faces,
+		                          face_array->len);
+		g_array_free (face_array, TRUE);
+	}
+
+	/* Parse smooth flag */
+	smooth = FALSE;
+	if (yaml_mapping_has_member (mesh_data_map, "smooth"))
+		smooth = yaml_mapping_get_boolean_member (mesh_data_map, "smooth");
+	lrg_mesh_data_set_smooth (mesh_data, smooth);
+
+	/*
+	 * Set reverse winding flag based on serializer's coordinate conversion.
+	 * When coordinate conversion mirrors geometry (e.g., Blender Z-up to
+	 * raylib Y-up with Y-negation), face winding must be reversed during
+	 * triangulation to maintain correct face orientation.
+	 */
+	lrg_mesh_data_set_reverse_winding (mesh_data,
+	                                    klass->should_reverse_face_winding (self));
+
+	return mesh_data;
+}
+
+/*
  * Parse primitive parameters from YAML mapping.
  * Determines type by attempting to parse as each type.
  */
 static void
-parse_params (LrgSceneObject *obj,
-              YamlMapping    *params_map)
+parse_params (LrgSceneSerializerYaml *self,
+              LrgSceneObject         *obj,
+              YamlMapping            *params_map)
 {
 	GList       *members;
 	GList       *iter;
@@ -299,6 +442,15 @@ parse_params (LrgSceneObject *obj,
 				                                  (gfloat)yaml_node_get_double (node));
 			}
 			/* Skip string values for now */
+		}
+		else if (ntype == YAML_NODE_MAPPING && g_str_equal (name, "mesh_data"))
+		{
+			/* Handle mesh_data as a special case */
+			g_autoptr(LrgMeshData) mesh_data = NULL;
+
+			mesh_data = parse_mesh_data (self, yaml_node_get_mapping (node));
+			if (mesh_data != NULL)
+				lrg_scene_object_set_mesh_data (obj, mesh_data);
 		}
 	}
 
@@ -390,7 +542,7 @@ parse_scene_object (LrgSceneSerializerYaml *self,
 	if (node != NULL && yaml_node_get_node_type (node) == YAML_NODE_MAPPING)
 	{
 		params_map = yaml_node_get_mapping (node);
-		parse_params (obj, params_map);
+		parse_params (self, obj, params_map);
 	}
 
 	return obj;
@@ -653,6 +805,61 @@ build_params_mapping (LrgSceneObject *obj)
 	}
 
 	g_list_free (names);
+
+	/* Handle mesh_data if present */
+	{
+		LrgMeshData *mesh_data = lrg_scene_object_get_mesh_data (obj);
+
+		if (mesh_data != NULL && !lrg_mesh_data_is_empty (mesh_data))
+		{
+			g_autoptr(YamlMapping)  mesh_data_map = yaml_mapping_new ();
+			g_autoptr(YamlSequence) vertices_seq = yaml_sequence_new ();
+			g_autoptr(YamlSequence) faces_seq = yaml_sequence_new ();
+			const gfloat           *vertices;
+			const gint             *faces;
+			guint                   n_vertices, n_faces, total_indices;
+			guint                   i, pos;
+
+			/* Build vertices array */
+			vertices = lrg_mesh_data_get_vertices (mesh_data, &n_vertices);
+			for (i = 0; i < n_vertices; i++)
+			{
+				g_autoptr(YamlSequence) vert_seq = yaml_sequence_new ();
+
+				yaml_sequence_add_double_element (vert_seq,
+				                                   (gdouble)vertices[i * 3 + 0]);
+				yaml_sequence_add_double_element (vert_seq,
+				                                   (gdouble)vertices[i * 3 + 1]);
+				yaml_sequence_add_double_element (vert_seq,
+				                                   (gdouble)vertices[i * 3 + 2]);
+				yaml_sequence_add_sequence_element (vertices_seq, vert_seq);
+			}
+
+			/* Build faces array */
+			faces = lrg_mesh_data_get_faces (mesh_data, &n_faces, &total_indices);
+			pos = 0;
+			for (i = 0; i < n_faces && pos < total_indices; i++)
+			{
+				g_autoptr(YamlSequence) face_seq = yaml_sequence_new ();
+				gint                    vert_count = faces[pos++];
+				gint                    j;
+
+				for (j = 0; j < vert_count && pos < total_indices; j++)
+				{
+					yaml_sequence_add_int_element (face_seq, (gint64)faces[pos++]);
+				}
+				yaml_sequence_add_sequence_element (faces_seq, face_seq);
+			}
+
+			yaml_mapping_set_sequence_member (mesh_data_map, "vertices", vertices_seq);
+			yaml_mapping_set_sequence_member (mesh_data_map, "faces", faces_seq);
+			yaml_mapping_set_boolean_member (mesh_data_map, "smooth",
+			                                  lrg_mesh_data_get_smooth (mesh_data));
+
+			yaml_mapping_set_mapping_member (map, "mesh_data", mesh_data_map);
+		}
+	}
+
 	return map;
 }
 
@@ -885,6 +1092,7 @@ lrg_scene_serializer_yaml_class_init (LrgSceneSerializerYamlClass *klass)
 	klass->convert_position = lrg_scene_serializer_yaml_real_convert_position;
 	klass->convert_rotation = lrg_scene_serializer_yaml_real_convert_rotation;
 	klass->convert_scale    = lrg_scene_serializer_yaml_real_convert_scale;
+	klass->should_reverse_face_winding = lrg_scene_serializer_yaml_real_should_reverse_face_winding;
 }
 
 static void

@@ -158,7 +158,8 @@ PUBLIC_HEADERS := \
 	src/scene/lrg-scene.h \
 	src/scene/lrg-scene-serializer.h \
 	src/scene/lrg-scene-serializer-yaml.h \
-	src/scene/lrg-scene-serializer-blender.h
+	src/scene/lrg-scene-serializer-blender.h \
+	src/scene/lrg-mesh-data.h
 
 # Source files
 SOURCES := \
@@ -291,7 +292,8 @@ SOURCES := \
 	src/scene/lrg-scene.c \
 	src/scene/lrg-scene-serializer.c \
 	src/scene/lrg-scene-serializer-yaml.c \
-	src/scene/lrg-scene-serializer-blender.c
+	src/scene/lrg-scene-serializer-blender.c \
+	src/scene/lrg-mesh-data.c
 
 # Object files
 OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(SOURCES))
@@ -585,6 +587,7 @@ endif
 	$(INSTALL_DATA) src/scene/lrg-scene-serializer.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
 	$(INSTALL_DATA) src/scene/lrg-scene-serializer-yaml.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
 	$(INSTALL_DATA) src/scene/lrg-scene-serializer-blender.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
+	$(INSTALL_DATA) src/scene/lrg-mesh-data.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
 	# Install pkg-config
 	$(INSTALL_DATA) $(BUILDDIR)/$(PC_FILE) $(DESTDIR)$(PKGCONFIGDIR)/
 	# Install GIR
@@ -1077,6 +1080,11 @@ $(OBJDIR)/src/scene/lrg-scene-serializer-yaml.o: src/scene/lrg-scene-serializer-
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/scene/lrg-scene-serializer-blender.o: src/scene/lrg-scene-serializer-blender.c src/scene/lrg-scene-serializer-blender.h src/scene/lrg-scene-serializer-yaml.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scene/lrg-mesh-data.o: src/scene/lrg-mesh-data.c src/scene/lrg-mesh-data.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

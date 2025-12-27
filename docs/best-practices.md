@@ -9,6 +9,7 @@ This document outlines design patterns and best practices discovered while build
 - [Code Organization](#code-organization)
 - [Common Patterns](#common-patterns)
 - [Pitfalls to Avoid](#pitfalls-to-avoid)
+- [3D Mesh Handling](#3d-mesh-handling)
 
 ---
 
@@ -634,6 +635,115 @@ my_helper_function (MyType *self)
 
 ---
 
+## 3D Mesh Handling
+
+### Coordinate System Conversions and Face Winding
+
+When converting between coordinate systems that mirror geometry (e.g., Blender Z-up `(X, Y, Z)` to raylib Y-up `(X, Z, -Y)`), face winding order must be reversed to maintain correct surface orientation. However, **where** you reverse winding matters critically.
+
+**Wrong approach**: Reverse face indices at parse time
+
+```c
+/* DON'T DO THIS - breaks fan triangulation */
+for (j = face_len; j > 0; j--)
+{
+    gint idx = yaml_sequence_get_int_element (face_seq, j - 1);
+    g_array_append_val (face_array, idx);
+}
+/* Turns [v0, v1, v2, v3] into [v3, v2, v1, v0] */
+```
+
+**Correct approach**: Swap triangle indices during triangulation
+
+```c
+/* DO THIS - preserves mesh topology */
+for (j = 1; j < n_verts - 1; j++)
+{
+    indices[idx++] = (guint16)v0;  /* Fan pivot stays the same */
+    if (reverse_winding)
+    {
+        /* Swap last two indices to reverse winding */
+        indices[idx++] = (guint16)faces[pos + j + 1];
+        indices[idx++] = (guint16)faces[pos + j];
+    }
+    else
+    {
+        indices[idx++] = (guint16)faces[pos + j];
+        indices[idx++] = (guint16)faces[pos + j + 1];
+    }
+}
+/* Turns (v0, v1, v2) into (v0, v2, v1) */
+```
+
+**Why it matters**: Fan triangulation uses the first vertex as the pivot point. Reversing the face array changes which vertex is the pivot, creating entirely different (often degenerate) geometry.
+
+**Example**:
+- Original face `[0, 1, 2, 3]` → triangles: `(0,1,2), (0,2,3)`
+- Reversed `[3, 2, 1, 0]` → triangles: `(3,2,1), (3,1,0)` ← Wrong topology!
+- Correct winding swap → triangles: `(0,2,1), (0,3,2)` ← Same topology, reversed orientation
+
+**Implementation pattern**: Store a `reverse_winding` flag in your mesh data structure, set it during parsing based on the source coordinate system, and read it during triangulation.
+
+### Memory Management with GrlModel and GrlMesh
+
+raylib's `LoadModelFromMesh()` performs a **shallow copy** - both the source mesh and the resulting model share the same vertex data pointers. This has important implications for GObject memory management.
+
+**Problem**: If you free the source `GrlMesh` after creating a `GrlModel`, the model's vertex data becomes invalid.
+
+**Symptoms**:
+- Blank renders (geometry uploads, then immediately unloads)
+- "Unloaded vertex array data from VRAM" appearing right after upload
+- Double-free crashes on cleanup
+
+**Solution**: `GrlModel` now refs the source mesh internally (fixed in graylib). You can safely unref the mesh after model creation:
+
+```c
+GrlMesh  *mesh;
+GrlModel *model;
+
+mesh = grl_mesh_new_custom (vertices, n_vertices, NULL, indices, n_indices);
+model = grl_model_new_from_mesh (mesh);
+g_object_unref (mesh);  /* Safe - model refs the mesh internally */
+
+return model;
+```
+
+**General principle**: When a library does shallow copies, either:
+1. The wrapper library should ref the source (preferred)
+2. The caller must keep the source alive for the lifetime of the copy
+
+### Debugging Blank or Incorrect Renders
+
+When mesh geometry doesn't render correctly:
+
+1. **Add debug output** to confirm data is loading:
+   ```c
+   g_print ("Loaded %u vertices, %u faces\n", n_vertices, n_faces);
+   g_print ("Created %u mesh models\n", mesh_models->len);
+   ```
+
+2. **Check for premature deallocation** - look for "Unloaded vertex array data" appearing immediately after "Mesh uploaded successfully"
+
+3. **Bisect the problem** - temporarily disable transformations:
+   ```c
+   /* Test without winding reversal */
+   reverse_winding = FALSE;  /* If this fixes it, winding logic is wrong */
+   ```
+
+4. **Test with known-working data** - try a simple cube to isolate coordinate conversion issues from mesh data issues
+
+5. **Verify coordinate transformations** - ensure the transform is applied consistently:
+   ```c
+   /* Blender Z-up to raylib Y-up */
+   out_x = in_x;
+   out_y = in_z;      /* Blender Z becomes raylib Y */
+   out_z = -in_y;     /* Blender Y becomes negative raylib Z */
+   ```
+
+**Reference**: See `examples/render-yaml-taco-truck.c` for a working implementation of mesh loading with proper winding reversal and memory management.
+
+---
+
 ## Summary
 
 **Key Takeaways**:
@@ -645,5 +755,8 @@ my_helper_function (MyType *self)
 5. **One type per entity** - modular design with clear responsibilities
 6. **Use GLib memory helpers** - `g_autoptr`, `g_clear_pointer`, `g_steal_pointer`
 7. **Follow consistent structure** - makes code easier to understand and maintain
+8. **Reverse winding at triangulation time** - not at parse time, to preserve fan triangulation topology
 
-**Reference Implementation**: See `examples/game-omnomagon.c` for a complete working example demonstrating all these patterns.
+**Reference Implementations**:
+- `examples/game-omnomagon.c` - Data-driven game with ASCII layouts
+- `examples/render-yaml-taco-truck.c` - 3D mesh loading with coordinate conversion

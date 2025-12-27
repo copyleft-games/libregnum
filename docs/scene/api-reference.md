@@ -359,6 +359,194 @@ gboolean lrg_scene_object_get_param_bool (LrgSceneObject *self,
                                           gboolean default_value);
 ```
 
+### Mesh Data
+
+For `LRG_PRIMITIVE_MESH` objects, custom geometry is stored via `LrgMeshData`:
+
+```c
+void lrg_scene_object_set_mesh_data (LrgSceneObject *self,
+                                     LrgMeshData *mesh_data);
+
+LrgMeshData * lrg_scene_object_get_mesh_data (LrgSceneObject *self);
+```
+
+The mesh data is copied when set and owned by the scene object.
+
+---
+
+## LrgMeshData
+
+GBoxed type for storing custom mesh geometry (vertices, faces, smooth shading).
+
+### Type Information
+
+```c
+#define LRG_TYPE_MESH_DATA (lrg_mesh_data_get_type ())
+```
+
+This is a boxed type (not a GObject). Use `lrg_mesh_data_copy()` and `lrg_mesh_data_free()` for memory management.
+
+### Constructors
+
+#### lrg_mesh_data_new
+
+```c
+LrgMeshData * lrg_mesh_data_new (void);
+```
+
+Creates a new empty mesh data structure.
+
+**Returns:** A new `LrgMeshData`. Free with `lrg_mesh_data_free()`.
+
+#### lrg_mesh_data_copy
+
+```c
+LrgMeshData * lrg_mesh_data_copy (const LrgMeshData *self);
+```
+
+Creates a deep copy of the mesh data.
+
+**Returns:** A copy of `self`. Free with `lrg_mesh_data_free()`.
+
+#### lrg_mesh_data_free
+
+```c
+void lrg_mesh_data_free (LrgMeshData *self);
+```
+
+Frees mesh data and all associated memory.
+
+### Vertices
+
+#### lrg_mesh_data_set_vertices
+
+```c
+void lrg_mesh_data_set_vertices (LrgMeshData *self,
+                                  const gfloat *vertices,
+                                  guint n_vertices);
+```
+
+Sets vertex positions. The array is copied.
+
+**Parameters:**
+- `self`: An `LrgMeshData`
+- `vertices`: Flat array of coordinates `[x0,y0,z0, x1,y1,z1, ...]`
+- `n_vertices`: Number of vertices (array has `n_vertices * 3` floats)
+
+#### lrg_mesh_data_get_vertices
+
+```c
+const gfloat * lrg_mesh_data_get_vertices (const LrgMeshData *self,
+                                            guint *n_vertices);
+```
+
+Gets vertex positions.
+
+**Parameters:**
+- `self`: An `LrgMeshData`
+- `n_vertices`: (out) (optional): Location for vertex count
+
+**Returns:** (transfer none) (nullable): The vertex array, or NULL if empty
+
+#### lrg_mesh_data_get_n_vertices
+
+```c
+guint lrg_mesh_data_get_n_vertices (const LrgMeshData *self);
+```
+
+Gets the number of vertices.
+
+### Faces
+
+#### lrg_mesh_data_set_faces
+
+```c
+void lrg_mesh_data_set_faces (LrgMeshData *self,
+                               const gint *faces,
+                               guint n_faces,
+                               guint total_indices);
+```
+
+Sets face data. The array is copied.
+
+**Parameters:**
+- `self`: An `LrgMeshData`
+- `faces`: Face data in format `[n0, v0, v1, ..., n1, v0, v1, ...]`
+- `n_faces`: Number of faces
+- `total_indices`: Total length of the faces array
+
+**Face Format:** Each face starts with a vertex count `n`, followed by `n` vertex indices. For example:
+- Triangle: `[3, 0, 1, 2]`
+- Quad: `[4, 0, 1, 2, 3]`
+- Pentagon: `[5, 0, 1, 2, 3, 4]`
+
+#### lrg_mesh_data_get_faces
+
+```c
+const gint * lrg_mesh_data_get_faces (const LrgMeshData *self,
+                                       guint *n_faces,
+                                       guint *total_indices);
+```
+
+Gets face data.
+
+**Parameters:**
+- `self`: An `LrgMeshData`
+- `n_faces`: (out) (optional): Location for face count
+- `total_indices`: (out) (optional): Location for total array length
+
+**Returns:** (transfer none) (nullable): The face array, or NULL if empty
+
+#### lrg_mesh_data_get_n_faces
+
+```c
+guint lrg_mesh_data_get_n_faces (const LrgMeshData *self);
+```
+
+Gets the number of faces.
+
+### Smooth Shading
+
+#### lrg_mesh_data_set_smooth
+
+```c
+void lrg_mesh_data_set_smooth (LrgMeshData *self, gboolean smooth);
+```
+
+Sets the smooth shading flag.
+
+#### lrg_mesh_data_get_smooth
+
+```c
+gboolean lrg_mesh_data_get_smooth (const LrgMeshData *self);
+```
+
+Gets the smooth shading flag.
+
+### Example Usage
+
+```c
+/* Create mesh data for a triangle */
+LrgMeshData *mesh = lrg_mesh_data_new ();
+
+gfloat vertices[] = {
+    0.0f, 0.0f, 0.0f,
+    1.0f, 0.0f, 0.0f,
+    0.5f, 1.0f, 0.0f
+};
+lrg_mesh_data_set_vertices (mesh, vertices, 3);
+
+gint faces[] = { 3, 0, 1, 2 };  /* One triangle face */
+lrg_mesh_data_set_faces (mesh, faces, 1, 4);
+
+lrg_mesh_data_set_smooth (mesh, TRUE);
+
+/* Attach to scene object */
+g_autoptr(LrgSceneObject) obj = lrg_scene_object_new ("custom", LRG_PRIMITIVE_MESH);
+lrg_scene_object_set_mesh_data (obj, mesh);
+lrg_mesh_data_free (mesh);
+```
+
 ---
 
 ## LrgMaterial3D
@@ -650,7 +838,8 @@ typedef enum {
     LRG_PRIMITIVE_CYLINDER,
     LRG_PRIMITIVE_CONE,
     LRG_PRIMITIVE_TORUS,
-    LRG_PRIMITIVE_GRID
+    LRG_PRIMITIVE_GRID,
+    LRG_PRIMITIVE_MESH       /* Custom mesh from vertex/face data */
 } LrgPrimitiveType;
 ```
 

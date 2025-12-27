@@ -531,6 +531,158 @@ test_serializer_yaml_load_invalid (void)
 }
 
 /* ==========================================================================
+ * Test Cases - LrgMeshData
+ * ========================================================================== */
+
+static void
+test_mesh_data_new (void)
+{
+    LrgMeshData *mesh_data;
+
+    mesh_data = lrg_mesh_data_new ();
+
+    g_assert_nonnull (mesh_data);
+    g_assert_cmpuint (lrg_mesh_data_get_n_vertices (mesh_data), ==, 0);
+    g_assert_cmpuint (lrg_mesh_data_get_n_faces (mesh_data), ==, 0);
+    g_assert_false (lrg_mesh_data_get_smooth (mesh_data));
+
+    lrg_mesh_data_free (mesh_data);
+}
+
+static void
+test_mesh_data_vertices (void)
+{
+    LrgMeshData    *mesh_data;
+    const gfloat   *vertices;
+    guint           n_vertices;
+    /* Triangle: 3 vertices * 3 floats each = 9 floats */
+    gfloat          test_verts[] = {
+        0.0f, 0.0f, 0.0f,
+        1.0f, 0.0f, 0.0f,
+        0.5f, 1.0f, 0.0f
+    };
+
+    mesh_data = lrg_mesh_data_new ();
+
+    lrg_mesh_data_set_vertices (mesh_data, test_verts, 3);
+
+    vertices = lrg_mesh_data_get_vertices (mesh_data, &n_vertices);
+
+    g_assert_nonnull (vertices);
+    g_assert_cmpuint (n_vertices, ==, 3);
+    g_assert_cmpfloat_with_epsilon (vertices[0], 0.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (vertices[3], 1.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (vertices[7], 1.0f, 0.001f);
+
+    lrg_mesh_data_free (mesh_data);
+}
+
+static void
+test_mesh_data_faces (void)
+{
+    LrgMeshData *mesh_data;
+    const gint  *faces;
+    guint        n_faces;
+    guint        total_indices;
+    /* One quad face: [4, 0, 1, 2, 3] */
+    gint         test_faces[] = { 4, 0, 1, 2, 3 };
+
+    mesh_data = lrg_mesh_data_new ();
+
+    lrg_mesh_data_set_faces (mesh_data, test_faces, 1, 5);
+
+    faces = lrg_mesh_data_get_faces (mesh_data, &n_faces, &total_indices);
+
+    g_assert_nonnull (faces);
+    g_assert_cmpuint (n_faces, ==, 1);
+    g_assert_cmpuint (total_indices, ==, 5);
+    g_assert_cmpint (faces[0], ==, 4);   /* vertex count */
+    g_assert_cmpint (faces[1], ==, 0);   /* v0 */
+    g_assert_cmpint (faces[4], ==, 3);   /* v3 */
+
+    lrg_mesh_data_free (mesh_data);
+}
+
+static void
+test_mesh_data_smooth (void)
+{
+    LrgMeshData *mesh_data;
+
+    mesh_data = lrg_mesh_data_new ();
+
+    g_assert_false (lrg_mesh_data_get_smooth (mesh_data));
+
+    lrg_mesh_data_set_smooth (mesh_data, TRUE);
+
+    g_assert_true (lrg_mesh_data_get_smooth (mesh_data));
+
+    lrg_mesh_data_free (mesh_data);
+}
+
+static void
+test_mesh_data_copy (void)
+{
+    LrgMeshData    *mesh_data;
+    LrgMeshData    *copied;
+    const gfloat   *vertices;
+    guint           n_vertices;
+    gfloat          test_verts[] = { 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f };
+    gint            test_faces[] = { 3, 0, 1, 2 };
+
+    mesh_data = lrg_mesh_data_new ();
+    lrg_mesh_data_set_vertices (mesh_data, test_verts, 2);
+    lrg_mesh_data_set_faces (mesh_data, test_faces, 1, 4);
+    lrg_mesh_data_set_smooth (mesh_data, TRUE);
+
+    copied = lrg_mesh_data_copy (mesh_data);
+
+    g_assert_nonnull (copied);
+    g_assert_true (copied != mesh_data);  /* Different pointer */
+
+    g_assert_cmpuint (lrg_mesh_data_get_n_vertices (copied), ==, 2);
+    g_assert_cmpuint (lrg_mesh_data_get_n_faces (copied), ==, 1);
+    g_assert_true (lrg_mesh_data_get_smooth (copied));
+
+    vertices = lrg_mesh_data_get_vertices (copied, &n_vertices);
+    g_assert_cmpfloat_with_epsilon (vertices[0], 1.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (vertices[4], 5.0f, 0.001f);
+
+    lrg_mesh_data_free (mesh_data);
+    lrg_mesh_data_free (copied);
+}
+
+static void
+test_scene_object_mesh_data (SceneFixture *fixture,
+                             gconstpointer user_data)
+{
+    g_autoptr(LrgSceneObject) mesh_object = NULL;
+    LrgMeshData              *mesh_data;
+    LrgMeshData              *retrieved;
+    gfloat                    test_verts[] = { 0.0f, 0.0f, 0.0f,
+                                               1.0f, 0.0f, 0.0f,
+                                               0.0f, 1.0f, 0.0f };
+    gint                      test_faces[] = { 3, 0, 1, 2 };
+
+    mesh_object = lrg_scene_object_new ("custom-mesh", LRG_PRIMITIVE_MESH);
+    g_assert_cmpint (lrg_scene_object_get_primitive (mesh_object),
+                     ==, LRG_PRIMITIVE_MESH);
+
+    mesh_data = lrg_mesh_data_new ();
+    lrg_mesh_data_set_vertices (mesh_data, test_verts, 3);
+    lrg_mesh_data_set_faces (mesh_data, test_faces, 1, 4);
+    lrg_mesh_data_set_smooth (mesh_data, TRUE);
+
+    lrg_scene_object_set_mesh_data (mesh_object, mesh_data);
+    lrg_mesh_data_free (mesh_data);
+
+    retrieved = lrg_scene_object_get_mesh_data (mesh_object);
+    g_assert_nonnull (retrieved);
+    g_assert_cmpuint (lrg_mesh_data_get_n_vertices (retrieved), ==, 3);
+    g_assert_cmpuint (lrg_mesh_data_get_n_faces (retrieved), ==, 1);
+    g_assert_true (lrg_mesh_data_get_smooth (retrieved));
+}
+
+/* ==========================================================================
  * Test Cases - Primitive Types Enum
  * ========================================================================== */
 
@@ -547,6 +699,7 @@ test_primitive_type_enum (void)
     g_assert_cmpint (LRG_PRIMITIVE_CONE, ==, 6);
     g_assert_cmpint (LRG_PRIMITIVE_TORUS, ==, 7);
     g_assert_cmpint (LRG_PRIMITIVE_GRID, ==, 8);
+    g_assert_cmpint (LRG_PRIMITIVE_MESH, ==, 9);
 }
 
 static void
@@ -685,6 +838,19 @@ main (int   argc,
     g_test_add_func ("/scene/serializer-yaml/new", test_serializer_yaml_new);
     g_test_add_func ("/scene/serializer-yaml/roundtrip", test_serializer_yaml_roundtrip);
     g_test_add_func ("/scene/serializer-yaml/load-invalid", test_serializer_yaml_load_invalid);
+
+    /* LrgMeshData */
+    g_test_add_func ("/scene/mesh-data/new", test_mesh_data_new);
+    g_test_add_func ("/scene/mesh-data/vertices", test_mesh_data_vertices);
+    g_test_add_func ("/scene/mesh-data/faces", test_mesh_data_faces);
+    g_test_add_func ("/scene/mesh-data/smooth", test_mesh_data_smooth);
+    g_test_add_func ("/scene/mesh-data/copy", test_mesh_data_copy);
+
+    g_test_add ("/scene/object/mesh-data",
+                SceneFixture, NULL,
+                scene_fixture_set_up,
+                test_scene_object_mesh_data,
+                scene_fixture_tear_down);
 
     /* Enums */
     g_test_add_func ("/scene/enums/primitive-type", test_primitive_type_enum);

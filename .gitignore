@@ -19,6 +19,9 @@ deps/yaml-glib.git/build/
 *.gir
 *.typelib
 
+# g-ir-scanner temporary files
+g-ir-cpp-*.c
+
 # Editor/IDE files
 *.swp
 *.swo

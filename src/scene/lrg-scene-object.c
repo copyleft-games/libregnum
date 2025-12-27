@@ -8,6 +8,7 @@
  */
 
 #include "lrg-scene-object.h"
+#include "lrg-mesh-data.h"
 
 /**
  * LrgSceneObject:
@@ -27,6 +28,7 @@ struct _LrgSceneObject
 	GrlVector3      *scale;
 	LrgMaterial3D   *material;
 	GHashTable      *params;     /* gchar* -> GValue* */
+	LrgMeshData     *mesh_data;  /* Custom mesh vertex/face data */
 };
 
 G_DEFINE_FINAL_TYPE (LrgSceneObject, lrg_scene_object, G_TYPE_OBJECT)
@@ -73,6 +75,7 @@ lrg_scene_object_finalize (GObject *object)
 	g_clear_pointer (&self->scale, grl_vector3_free);
 	g_clear_object (&self->material);
 	g_clear_pointer (&self->params, g_hash_table_unref);
+	g_clear_pointer (&self->mesh_data, lrg_mesh_data_free);
 
 	G_OBJECT_CLASS (lrg_scene_object_parent_class)->finalize (object);
 }
@@ -183,7 +186,7 @@ lrg_scene_object_class_init (LrgSceneObjectClass *klass)
 		                  "Primitive",
 		                  "Primitive type",
 		                  LRG_PRIMITIVE_PLANE,
-		                  LRG_PRIMITIVE_GRID,
+		                  LRG_PRIMITIVE_MESH,
 		                  LRG_PRIMITIVE_CUBE,
 		                  G_PARAM_READWRITE |
 		                  G_PARAM_CONSTRUCT |
@@ -255,6 +258,7 @@ lrg_scene_object_init (LrgSceneObject *self)
 	self->material  = lrg_material3d_new ();
 	self->params    = g_hash_table_new_full (g_str_hash, g_str_equal,
 	                                         g_free, free_gvalue);
+	self->mesh_data = NULL;
 }
 
 /* ==========================================================================
@@ -767,4 +771,44 @@ lrg_scene_object_get_param_names (LrgSceneObject *self)
 	g_return_val_if_fail (LRG_IS_SCENE_OBJECT (self), NULL);
 
 	return g_hash_table_get_keys (self->params);
+}
+
+/* ==========================================================================
+ * Mesh Data Accessors
+ * ========================================================================== */
+
+/**
+ * lrg_scene_object_set_mesh_data:
+ * @self: an #LrgSceneObject
+ * @mesh_data: (transfer none) (nullable): The mesh data
+ *
+ * Sets the custom mesh data for primitive_mesh type objects.
+ * The data is copied.
+ */
+void
+lrg_scene_object_set_mesh_data (LrgSceneObject *self,
+                                LrgMeshData    *mesh_data)
+{
+	g_return_if_fail (LRG_IS_SCENE_OBJECT (self));
+
+	g_clear_pointer (&self->mesh_data, lrg_mesh_data_free);
+
+	if (mesh_data != NULL)
+		self->mesh_data = lrg_mesh_data_copy (mesh_data);
+}
+
+/**
+ * lrg_scene_object_get_mesh_data:
+ * @self: an #LrgSceneObject
+ *
+ * Gets the custom mesh data.
+ *
+ * Returns: (transfer none) (nullable): The mesh data, or %NULL
+ */
+LrgMeshData *
+lrg_scene_object_get_mesh_data (LrgSceneObject *self)
+{
+	g_return_val_if_fail (LRG_IS_SCENE_OBJECT (self), NULL);
+
+	return self->mesh_data;
 }

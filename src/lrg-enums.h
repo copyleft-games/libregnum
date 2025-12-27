@@ -1213,6 +1213,7 @@ GType lrg_scene_error_get_type (void) G_GNUC_CONST;
  * @LRG_PRIMITIVE_CONE: Cone (vertices, radius1, radius2, depth)
  * @LRG_PRIMITIVE_TORUS: Torus (major_segments, minor_segments, major_radius, minor_radius)
  * @LRG_PRIMITIVE_GRID: Grid plane (x_subdivisions, y_subdivisions, size)
+ * @LRG_PRIMITIVE_MESH: Custom mesh from vertex/face data (mesh_data parameter)
  *
  * Blender primitive types for scene objects.
  * These correspond to Blender 5.x mesh primitive types.
@@ -1227,7 +1228,8 @@ typedef enum
     LRG_PRIMITIVE_CYLINDER,
     LRG_PRIMITIVE_CONE,
     LRG_PRIMITIVE_TORUS,
-    LRG_PRIMITIVE_GRID
+    LRG_PRIMITIVE_GRID,
+    LRG_PRIMITIVE_MESH
 } LrgPrimitiveType;
 
 LRG_AVAILABLE_IN_ALL

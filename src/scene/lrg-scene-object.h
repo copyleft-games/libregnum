@@ -349,4 +349,31 @@ gboolean lrg_scene_object_has_param (LrgSceneObject *self,
 LRG_AVAILABLE_IN_ALL
 GList * lrg_scene_object_get_param_names (LrgSceneObject *self);
 
+/* ==========================================================================
+ * Mesh Data
+ * ========================================================================== */
+
+/**
+ * lrg_scene_object_set_mesh_data:
+ * @self: an #LrgSceneObject
+ * @mesh_data: (transfer none) (nullable): The mesh data
+ *
+ * Sets the custom mesh data for primitive_mesh type objects.
+ * The data is copied.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_scene_object_set_mesh_data (LrgSceneObject *self,
+                                     LrgMeshData    *mesh_data);
+
+/**
+ * lrg_scene_object_get_mesh_data:
+ * @self: an #LrgSceneObject
+ *
+ * Gets the custom mesh data.
+ *
+ * Returns: (transfer none) (nullable): The mesh data, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMeshData * lrg_scene_object_get_mesh_data (LrgSceneObject *self);
+
 G_END_DECLS

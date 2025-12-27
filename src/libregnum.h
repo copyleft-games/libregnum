@@ -183,6 +183,7 @@
 #include "world3d/lrg-portal-system.h"
 
 /* Scene module */
+#include "scene/lrg-mesh-data.h"
 #include "scene/lrg-material3d.h"
 #include "scene/lrg-scene-object.h"
 #include "scene/lrg-scene-entity.h"

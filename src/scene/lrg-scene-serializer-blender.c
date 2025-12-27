@@ -110,6 +110,27 @@ lrg_scene_serializer_blender_convert_scale (LrgSceneSerializerYaml *yaml_self,
 	return grl_vector3_new (x, z, y);
 }
 
+/**
+ * lrg_scene_serializer_blender_should_reverse_face_winding:
+ * @self: the serializer
+ *
+ * Returns TRUE because the Blender coordinate conversion includes
+ * a negation (Y -> -Y) which mirrors geometry and requires face
+ * winding reversal for correct rendering.
+ *
+ * Returns: %TRUE
+ */
+static gboolean
+lrg_scene_serializer_blender_should_reverse_face_winding (LrgSceneSerializerYaml *yaml_self)
+{
+	/*
+	 * The coordinate conversion (X, Y, Z) -> (X, Z, -Y) mirrors
+	 * geometry due to the negation. This inverts face winding,
+	 * so we reverse indices to compensate.
+	 */
+	return TRUE;
+}
+
 /* =============================================================================
  * GObject Implementation
  * ========================================================================== */
@@ -125,6 +146,9 @@ lrg_scene_serializer_blender_class_init (LrgSceneSerializerBlenderClass *klass)
 	yaml_class->convert_position = lrg_scene_serializer_blender_convert_position;
 	yaml_class->convert_rotation = lrg_scene_serializer_blender_convert_rotation;
 	yaml_class->convert_scale    = lrg_scene_serializer_blender_convert_scale;
+
+	/* Enable face winding reversal to compensate for mirrored geometry */
+	yaml_class->should_reverse_face_winding = lrg_scene_serializer_blender_should_reverse_face_winding;
 }
 
 static void
