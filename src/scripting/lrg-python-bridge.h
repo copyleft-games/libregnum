@@ -140,6 +140,16 @@ gboolean lrg_python_is_gobject (PyObject *obj);
  */
 gboolean lrg_python_register_gobject_type (void);
 
+/**
+ * lrg_python_register_bound_method_type:
+ *
+ * Registers the BoundMethod type with Python.
+ * This must be called once before LrgScriptable methods are used.
+ *
+ * Returns: %TRUE on success, %FALSE on error
+ */
+gboolean lrg_python_register_bound_method_type (void);
+
 /* ==========================================================================
  * Error Handling
  * ========================================================================== */

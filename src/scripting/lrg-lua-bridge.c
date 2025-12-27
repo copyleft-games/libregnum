@@ -12,6 +12,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_SCRIPTING
 
 #include "lrg-lua-bridge.h"
+#include "lrg-scriptable.h"
 #include "../lrg-log.h"
 
 #include <lua.h>
@@ -26,11 +27,12 @@
  * Forward Declarations
  * ========================================================================== */
 
-static int gobject_index    (lua_State *L);
-static int gobject_newindex (lua_State *L);
-static int gobject_gc       (lua_State *L);
-static int gobject_tostring (lua_State *L);
-static int gobject_connect  (lua_State *L);
+static int gobject_index        (lua_State *L);
+static int gobject_newindex     (lua_State *L);
+static int gobject_gc           (lua_State *L);
+static int gobject_tostring     (lua_State *L);
+static int gobject_connect      (lua_State *L);
+static int gobject_script_call  (lua_State *L);
 
 /* ==========================================================================
  * GValue <-> Lua Conversion
@@ -478,6 +480,7 @@ lrg_lua_is_gobject (lua_State *L,
 /*
  * __index metamethod for GObject userdata.
  * Handles property access and method lookup.
+ * Supports LrgScriptable custom methods and access control.
  */
 static int
 gobject_index (lua_State *L)
@@ -503,13 +506,52 @@ gobject_index (lua_State *L)
         return 1;
     }
 
+    /*
+     * Check for LrgScriptable custom methods.
+     * These take priority over properties with the same name.
+     */
+    if (LRG_IS_SCRIPTABLE (object))
+    {
+        const LrgScriptMethod *method;
+
+        method = lrg_scriptable_find_method (LRG_SCRIPTABLE (object), key);
+        if (method != NULL)
+        {
+            /*
+             * Return a closure that captures the method pointer.
+             * The closure will invoke the method when called.
+             */
+            lua_pushlightuserdata (L, (gpointer)method);
+            lua_pushvalue (L, 1);  /* Push the object */
+            lua_pushcclosure (L, gobject_script_call, 2);
+            return 1;
+        }
+    }
+
     /* Look for a property */
     klass = G_OBJECT_GET_CLASS (object);
     pspec = g_object_class_find_property (klass, key);
 
     if (pspec != NULL)
     {
-        GValue value = G_VALUE_INIT;
+        GValue               value = G_VALUE_INIT;
+        LrgScriptAccessFlags access_flags;
+
+        /*
+         * Check access control if object implements LrgScriptable.
+         * Default behavior allows reading if G_PARAM_READABLE is set.
+         */
+        if (LRG_IS_SCRIPTABLE (object))
+        {
+            access_flags = lrg_scriptable_get_property_access (
+                LRG_SCRIPTABLE (object), key);
+
+            if (!(access_flags & LRG_SCRIPT_ACCESS_READ))
+            {
+                return luaL_error (L, "Property '%s' is not script-readable",
+                                   key);
+            }
+        }
 
         g_value_init (&value, pspec->value_type);
         g_object_get_property (object, key, &value);
@@ -528,6 +570,7 @@ gobject_index (lua_State *L)
 /*
  * __newindex metamethod for GObject userdata.
  * Handles property assignment.
+ * Supports LrgScriptable access control.
  */
 static int
 gobject_newindex (lua_State *L)
@@ -556,7 +599,23 @@ gobject_newindex (lua_State *L)
                            key, G_OBJECT_TYPE_NAME (object));
     }
 
-    if (!(pspec->flags & G_PARAM_WRITABLE))
+    /*
+     * Check access control if object implements LrgScriptable.
+     * This takes precedence over G_PARAM_WRITABLE check.
+     */
+    if (LRG_IS_SCRIPTABLE (object))
+    {
+        LrgScriptAccessFlags access_flags;
+
+        access_flags = lrg_scriptable_get_property_access (
+            LRG_SCRIPTABLE (object), key);
+
+        if (!(access_flags & LRG_SCRIPT_ACCESS_WRITE))
+        {
+            return luaL_error (L, "Property '%s' is not script-writable", key);
+        }
+    }
+    else if (!(pspec->flags & G_PARAM_WRITABLE))
     {
         return luaL_error (L, "Property '%s' is read-only", key);
     }
@@ -651,6 +710,127 @@ gobject_connect (lua_State *L)
 
     lua_pushinteger (L, (lua_Integer)handler_id);
     return 1;
+}
+
+/*
+ * Closure for invoking LrgScriptable methods.
+ * Upvalue 1: lightuserdata pointer to LrgScriptMethod
+ * Upvalue 2: the GObject userdata
+ *
+ * Usage: object:method_name(arg1, arg2, ...)
+ */
+static int
+gobject_script_call (lua_State *L)
+{
+    const LrgScriptMethod *method;
+    GObject               *object;
+    GValue                *args;
+    GValue                 return_value = G_VALUE_INIT;
+    g_autoptr(GError)      error = NULL;
+    gint                   n_args;
+    gint                   arg_offset = 0;
+    gint                   i;
+    gboolean               success;
+
+    /* Get the method from upvalue 1 */
+    method = (const LrgScriptMethod *)lua_touserdata (L, lua_upvalueindex (1));
+    if (method == NULL)
+    {
+        return luaL_error (L, "Invalid script method");
+    }
+
+    /* Get the object from upvalue 2 */
+    object = lrg_lua_to_gobject (L, lua_upvalueindex (2));
+    if (object == NULL)
+    {
+        return luaL_error (L, "Invalid GObject for method call");
+    }
+
+    /*
+     * Get the number of arguments.
+     * When using object:method() syntax, Lua passes self as the first argument.
+     * Since we already have the object from the upvalue, we skip the first
+     * argument if it's the same object (the implicit self from : syntax).
+     */
+    n_args = lua_gettop (L);
+    if (n_args > 0 && lua_isuserdata (L, 1))
+    {
+        GObject *first_arg = lrg_lua_to_gobject (L, 1);
+        if (first_arg == object)
+        {
+            /* Skip the implicit self argument */
+            arg_offset = 1;
+            n_args -= 1;
+        }
+    }
+
+    /* Check argument count if method specifies exact count */
+    if (method->n_params >= 0 && n_args != method->n_params)
+    {
+        return luaL_error (L, "Method '%s' expects %d arguments, got %d",
+                           method->name, method->n_params, n_args);
+    }
+
+    /* Convert Lua arguments to GValues */
+    if (n_args > 0)
+    {
+        args = g_new0 (GValue, n_args);
+
+        for (i = 0; i < n_args; i++)
+        {
+            if (!lrg_lua_to_gvalue (L, i + 1 + arg_offset, &args[i]))
+            {
+                /* Clean up already converted values */
+                gint j;
+                for (j = 0; j < i; j++)
+                {
+                    g_value_unset (&args[j]);
+                }
+                g_free (args);
+                return luaL_error (L, "Cannot convert argument %d for method '%s'",
+                                   i + 1, method->name);
+            }
+        }
+    }
+    else
+    {
+        args = NULL;
+    }
+
+    /* Invoke the method */
+    success = method->func (LRG_SCRIPTABLE (object),
+                            (guint)n_args,
+                            args,
+                            &return_value,
+                            &error);
+
+    /* Clean up arguments */
+    if (args != NULL)
+    {
+        for (i = 0; i < n_args; i++)
+        {
+            g_value_unset (&args[i]);
+        }
+        g_free (args);
+    }
+
+    if (!success)
+    {
+        const gchar *msg;
+
+        msg = (error != NULL) ? error->message : "Unknown error";
+        return luaL_error (L, "Method '%s' failed: %s", method->name, msg);
+    }
+
+    /* Push return value if present */
+    if (G_IS_VALUE (&return_value))
+    {
+        lrg_lua_push_gvalue (L, &return_value);
+        g_value_unset (&return_value);
+        return 1;
+    }
+
+    return 0;
 }
 
 /* ==========================================================================

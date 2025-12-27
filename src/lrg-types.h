@@ -445,4 +445,14 @@ typedef struct _LrgScriptingClass  LrgScriptingClass;
 /* LrgScriptingLua is a final type - no Class forward declaration needed */
 typedef struct _LrgScriptingLua  LrgScriptingLua;
 
+/* LrgScriptingPython is a final type - no Class forward declaration needed */
+typedef struct _LrgScriptingPython  LrgScriptingPython;
+
+/* LrgScriptable is an interface for custom script exposure */
+typedef struct _LrgScriptable           LrgScriptable;
+typedef struct _LrgScriptableInterface  LrgScriptableInterface;
+
+/* LrgScriptMethod is a boxed type for method descriptors */
+typedef struct _LrgScriptMethod  LrgScriptMethod;
+
 G_END_DECLS

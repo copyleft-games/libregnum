@@ -13,6 +13,7 @@
 
 #include "lrg-python-bridge.h"
 #include "lrg-scripting-python-private.h"
+#include "lrg-scriptable.h"
 #include "../lrg-log.h"
 
 /* ==========================================================================
@@ -24,6 +25,34 @@ static int        gobject_wrapper_setattro (PyObject *self, PyObject *name, PyOb
 static void       gobject_wrapper_dealloc (PyObject *self);
 static PyObject * gobject_wrapper_repr (PyObject *self);
 static PyObject * gobject_wrapper_connect (PyObject *self, PyObject *args);
+
+/* BoundMethod for LrgScriptable methods */
+static void       bound_method_dealloc (PyObject *self);
+static PyObject * bound_method_call (PyObject *self, PyObject *args, PyObject *kwargs);
+static PyObject * bound_method_repr (PyObject *self);
+
+/* ==========================================================================
+ * BoundMethod Type (for LrgScriptable methods)
+ * ========================================================================== */
+
+typedef struct {
+    PyObject_HEAD
+    GObject               *gobject;        /* The wrapped GObject (borrowed ref) */
+    const LrgScriptMethod *method;         /* The script method descriptor */
+    PyObject              *wrapper_ref;    /* Reference to wrapper to prevent GC */
+} BoundMethodObject;
+
+static PyTypeObject BoundMethodType = {
+    PyVarObject_HEAD_INIT (NULL, 0)
+    .tp_name = "libregnum.BoundMethod",
+    .tp_doc = "Bound method for LrgScriptable objects",
+    .tp_basicsize = sizeof (BoundMethodObject),
+    .tp_itemsize = 0,
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_dealloc = bound_method_dealloc,
+    .tp_call = bound_method_call,
+    .tp_repr = bound_method_repr,
+};
 
 /* ==========================================================================
  * GObject Wrapper Type Definition
@@ -616,17 +645,22 @@ gobject_wrapper_repr (PyObject *self)
                                  (void *)wrapper->gobject);
 }
 
+/*
+ * Gets an attribute from a GObject wrapper.
+ * Supports LrgScriptable methods and property access control.
+ */
 static PyObject *
 gobject_wrapper_getattro (PyObject *self, PyObject *name)
 {
-    GObjectWrapper *wrapper = (GObjectWrapper *)self;
-    GObjectClass   *klass;
-    GParamSpec     *pspec;
-    const char     *attr_name;
-    GValue          value = G_VALUE_INIT;
-    PyObject       *result;
+    GObjectWrapper        *wrapper = (GObjectWrapper *)self;
+    GObjectClass          *klass;
+    GParamSpec            *pspec;
+    const char            *attr_name;
+    g_autofree gchar      *dash_name = NULL;
+    GValue                 value = G_VALUE_INIT;
+    PyObject              *result;
 
-    /* Check for internal attributes first */
+    /* Check for internal attributes first (like 'connect') */
     result = PyObject_GenericGetAttr (self, name);
     if (result != NULL || !PyErr_ExceptionMatches (PyExc_AttributeError))
     {
@@ -646,6 +680,36 @@ gobject_wrapper_getattro (PyObject *self, PyObject *name)
         return NULL;
     }
 
+    /*
+     * Check for LrgScriptable custom methods.
+     * These take priority over properties with the same name.
+     */
+    if (LRG_IS_SCRIPTABLE (wrapper->gobject))
+    {
+        const LrgScriptMethod *method;
+
+        method = lrg_scriptable_find_method (LRG_SCRIPTABLE (wrapper->gobject),
+                                              attr_name);
+        if (method != NULL)
+        {
+            BoundMethodObject *bound;
+
+            /* Create a bound method object */
+            bound = PyObject_New (BoundMethodObject, &BoundMethodType);
+            if (bound == NULL)
+            {
+                return NULL;
+            }
+
+            bound->gobject = wrapper->gobject;
+            bound->method = method;
+            bound->wrapper_ref = self;
+            Py_INCREF (self);
+
+            return (PyObject *)bound;
+        }
+    }
+
     /* Look for property */
     klass = G_OBJECT_GET_CLASS (wrapper->gobject);
     pspec = g_object_class_find_property (klass, attr_name);
@@ -653,8 +717,9 @@ gobject_wrapper_getattro (PyObject *self, PyObject *name)
     if (pspec == NULL)
     {
         /* Try converting underscores to dashes */
-        g_autofree gchar *dash_name = g_strdup (attr_name);
         gchar *p;
+
+        dash_name = g_strdup (attr_name);
         for (p = dash_name; *p; p++)
         {
             if (*p == '_')
@@ -665,6 +730,26 @@ gobject_wrapper_getattro (PyObject *self, PyObject *name)
 
     if (pspec != NULL)
     {
+        /*
+         * Check access control if object implements LrgScriptable.
+         * Default behavior allows reading if G_PARAM_READABLE is set.
+         */
+        if (LRG_IS_SCRIPTABLE (wrapper->gobject))
+        {
+            LrgScriptAccessFlags access_flags;
+
+            access_flags = lrg_scriptable_get_property_access (
+                LRG_SCRIPTABLE (wrapper->gobject), pspec->name);
+
+            if (!(access_flags & LRG_SCRIPT_ACCESS_READ))
+            {
+                PyErr_Format (PyExc_AttributeError,
+                              "Property '%s' is not script-readable",
+                              attr_name);
+                return NULL;
+            }
+        }
+
         g_value_init (&value, pspec->value_type);
         g_object_get_property (wrapper->gobject, pspec->name, &value);
         result = lrg_python_from_gvalue (&value);
@@ -679,14 +764,19 @@ gobject_wrapper_getattro (PyObject *self, PyObject *name)
     return NULL;
 }
 
+/*
+ * Sets an attribute on a GObject wrapper.
+ * Supports LrgScriptable property access control.
+ */
 static int
 gobject_wrapper_setattro (PyObject *self, PyObject *name, PyObject *value)
 {
-    GObjectWrapper *wrapper = (GObjectWrapper *)self;
-    GObjectClass   *klass;
-    GParamSpec     *pspec;
-    const char     *attr_name;
-    GValue          gval = G_VALUE_INIT;
+    GObjectWrapper   *wrapper = (GObjectWrapper *)self;
+    GObjectClass     *klass;
+    GParamSpec       *pspec;
+    const char       *attr_name;
+    g_autofree gchar *dash_name = NULL;
+    GValue            gval = G_VALUE_INIT;
 
     if (wrapper->gobject == NULL)
     {
@@ -707,8 +797,9 @@ gobject_wrapper_setattro (PyObject *self, PyObject *name, PyObject *value)
     if (pspec == NULL)
     {
         /* Try converting underscores to dashes */
-        g_autofree gchar *dash_name = g_strdup (attr_name);
         gchar *p;
+
+        dash_name = g_strdup (attr_name);
         for (p = dash_name; *p; p++)
         {
             if (*p == '_')
@@ -726,7 +817,26 @@ gobject_wrapper_setattro (PyObject *self, PyObject *name, PyObject *value)
         return -1;
     }
 
-    if (!(pspec->flags & G_PARAM_WRITABLE))
+    /*
+     * Check access control if object implements LrgScriptable.
+     * This takes precedence over G_PARAM_WRITABLE check.
+     */
+    if (LRG_IS_SCRIPTABLE (wrapper->gobject))
+    {
+        LrgScriptAccessFlags access_flags;
+
+        access_flags = lrg_scriptable_get_property_access (
+            LRG_SCRIPTABLE (wrapper->gobject), pspec->name);
+
+        if (!(access_flags & LRG_SCRIPT_ACCESS_WRITE))
+        {
+            PyErr_Format (PyExc_AttributeError,
+                          "Property '%s' is not script-writable",
+                          attr_name);
+            return -1;
+        }
+    }
+    else if (!(pspec->flags & G_PARAM_WRITABLE))
     {
         PyErr_Format (PyExc_AttributeError,
                       "Property '%s' is not writable",
@@ -856,4 +966,163 @@ lrg_python_get_error_message (void)
     Py_XDECREF (traceback);
 
     return msg;
+}
+
+/* ==========================================================================
+ * BoundMethod Implementation (for LrgScriptable methods)
+ * ========================================================================== */
+
+static void
+bound_method_dealloc (PyObject *self)
+{
+    BoundMethodObject *bound = (BoundMethodObject *)self;
+
+    Py_XDECREF (bound->wrapper_ref);
+    bound->gobject = NULL;
+    bound->method = NULL;
+
+    Py_TYPE (self)->tp_free (self);
+}
+
+static PyObject *
+bound_method_repr (PyObject *self)
+{
+    BoundMethodObject *bound = (BoundMethodObject *)self;
+
+    if (bound->gobject == NULL || bound->method == NULL)
+    {
+        return PyUnicode_FromString ("<BoundMethod (invalid)>");
+    }
+
+    return PyUnicode_FromFormat ("<BoundMethod %s.%s>",
+                                 G_OBJECT_TYPE_NAME (bound->gobject),
+                                 bound->method->name);
+}
+
+/*
+ * Invokes an LrgScriptable method from Python.
+ */
+static PyObject *
+bound_method_call (PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    BoundMethodObject     *bound = (BoundMethodObject *)self;
+    const LrgScriptMethod *method;
+    GObject               *gobject;
+    GValue                *gargs;
+    GValue                 return_value = G_VALUE_INIT;
+    g_autoptr(GError)      error = NULL;
+    Py_ssize_t             n_args;
+    Py_ssize_t             i;
+    gboolean               success;
+    PyObject              *result;
+
+    (void)kwargs;  /* Unused for now */
+
+    if (bound->gobject == NULL || bound->method == NULL)
+    {
+        PyErr_SetString (PyExc_RuntimeError, "BoundMethod is invalid");
+        return NULL;
+    }
+
+    gobject = bound->gobject;
+    method = bound->method;
+
+    /* Get argument count */
+    n_args = PyTuple_Size (args);
+
+    /* Check argument count if method specifies exact count */
+    if (method->n_params >= 0 && n_args != method->n_params)
+    {
+        PyErr_Format (PyExc_TypeError,
+                      "%s() takes %d arguments (%zd given)",
+                      method->name, method->n_params, n_args);
+        return NULL;
+    }
+
+    /* Convert Python arguments to GValues */
+    if (n_args > 0)
+    {
+        gargs = g_new0 (GValue, n_args);
+
+        for (i = 0; i < n_args; i++)
+        {
+            PyObject *arg = PyTuple_GetItem (args, i);
+
+            if (!lrg_python_to_gvalue (arg, &gargs[i]))
+            {
+                /* Clean up already converted values */
+                Py_ssize_t j;
+
+                for (j = 0; j < i; j++)
+                {
+                    g_value_unset (&gargs[j]);
+                }
+                g_free (gargs);
+
+                PyErr_Format (PyExc_TypeError,
+                              "Cannot convert argument %zd for method '%s'",
+                              i + 1, method->name);
+                return NULL;
+            }
+        }
+    }
+    else
+    {
+        gargs = NULL;
+    }
+
+    /* Invoke the method */
+    success = method->func (LRG_SCRIPTABLE (gobject),
+                            (guint)n_args,
+                            gargs,
+                            &return_value,
+                            &error);
+
+    /* Clean up arguments */
+    if (gargs != NULL)
+    {
+        for (i = 0; i < n_args; i++)
+        {
+            g_value_unset (&gargs[i]);
+        }
+        g_free (gargs);
+    }
+
+    if (!success)
+    {
+        const gchar *msg;
+
+        msg = (error != NULL) ? error->message : "Unknown error";
+        PyErr_Format (PyExc_RuntimeError,
+                      "Method '%s' failed: %s",
+                      method->name, msg);
+        return NULL;
+    }
+
+    /* Return the result */
+    if (G_IS_VALUE (&return_value))
+    {
+        result = lrg_python_from_gvalue (&return_value);
+        g_value_unset (&return_value);
+        return result;
+    }
+
+    Py_RETURN_NONE;
+}
+
+/**
+ * lrg_python_register_bound_method_type:
+ *
+ * Registers the BoundMethod type with Python.
+ *
+ * Returns: %TRUE on success, %FALSE on error
+ */
+gboolean
+lrg_python_register_bound_method_type (void)
+{
+    if (PyType_Ready (&BoundMethodType) < 0)
+    {
+        return FALSE;
+    }
+    return TRUE;
 }

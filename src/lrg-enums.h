@@ -1295,4 +1295,29 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_scripting_error_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_SCRIPTING_ERROR (lrg_scripting_error_get_type ())
 
+/**
+ * LrgScriptAccessFlags:
+ * @LRG_SCRIPT_ACCESS_NONE: No script access (property hidden)
+ * @LRG_SCRIPT_ACCESS_READ: Property is readable from scripts
+ * @LRG_SCRIPT_ACCESS_WRITE: Property is writable from scripts
+ * @LRG_SCRIPT_ACCESS_READWRITE: Full read/write access from scripts
+ *
+ * Flags controlling script access to GObject properties.
+ *
+ * Objects implementing #LrgScriptable can return these flags from
+ * their get_property_access() implementation to control what scripts
+ * can do with each property.
+ */
+typedef enum /*< flags >*/
+{
+    LRG_SCRIPT_ACCESS_NONE      = 0,
+    LRG_SCRIPT_ACCESS_READ      = 1 << 0,
+    LRG_SCRIPT_ACCESS_WRITE     = 1 << 1,
+    LRG_SCRIPT_ACCESS_READWRITE = (LRG_SCRIPT_ACCESS_READ | LRG_SCRIPT_ACCESS_WRITE)
+} LrgScriptAccessFlags;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_script_access_flags_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SCRIPT_ACCESS_FLAGS (lrg_script_access_flags_get_type ())
+
 G_END_DECLS

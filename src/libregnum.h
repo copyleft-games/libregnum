@@ -202,6 +202,7 @@
 
 /* Scripting module */
 #include "scripting/lrg-scripting.h"
+#include "scripting/lrg-scriptable.h"
 #include "scripting/lrg-scripting-lua.h"
 #include "scripting/lrg-scripting-python.h"
 

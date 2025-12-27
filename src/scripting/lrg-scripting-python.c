@@ -67,6 +67,13 @@ ensure_python_initialized (LrgScriptingPython *self)
         return FALSE;
     }
 
+    /* Register BoundMethod type for LrgScriptable methods */
+    if (!lrg_python_register_bound_method_type ())
+    {
+        lrg_error (LRG_LOG_DOMAIN_SCRIPTING, "Failed to register BoundMethod type");
+        return FALSE;
+    }
+
     /* Get __main__ module */
     self->main_module = PyImport_AddModule ("__main__");
     if (self->main_module == NULL)

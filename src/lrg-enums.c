@@ -1317,3 +1317,25 @@ lrg_scripting_error_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+GType
+lrg_script_access_flags_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GFlagsValue values[] = {
+            { LRG_SCRIPT_ACCESS_NONE, "LRG_SCRIPT_ACCESS_NONE", "none" },
+            { LRG_SCRIPT_ACCESS_READ, "LRG_SCRIPT_ACCESS_READ", "read" },
+            { LRG_SCRIPT_ACCESS_WRITE, "LRG_SCRIPT_ACCESS_WRITE", "write" },
+            { LRG_SCRIPT_ACCESS_READWRITE, "LRG_SCRIPT_ACCESS_READWRITE", "readwrite" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_flags_register_static (g_intern_static_string ("LrgScriptAccessFlags"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

@@ -298,6 +298,7 @@ SOURCES := \
 	src/scene/lrg-scene-serializer-blender.c \
 	src/scene/lrg-mesh-data.c \
 	src/scripting/lrg-scripting.c \
+	src/scripting/lrg-scriptable.c \
 	src/scripting/lrg-scripting-lua.c \
 	src/scripting/lrg-lua-bridge.c \
 	src/scripting/lrg-lua-api.c \
@@ -1105,6 +1106,11 @@ $(OBJDIR)/src/scene/lrg-mesh-data.o: src/scene/lrg-mesh-data.c src/scene/lrg-mes
 
 # Scripting module
 $(OBJDIR)/src/scripting/lrg-scripting.o: src/scripting/lrg-scripting.c src/scripting/lrg-scripting.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scripting/lrg-scriptable.o: src/scripting/lrg-scriptable.c src/scripting/lrg-scriptable.h src/scripting/lrg-scripting.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
