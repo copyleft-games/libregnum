@@ -28,7 +28,7 @@ EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
 EXAMPLE_LIBS := -l$(LIB_NAME) -lgraylib -lyaml-glib -lm
 EXAMPLE_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1)
 
-EXAMPLES := game-omnomagon render-yaml-santa render-yaml-taco-truck
+EXAMPLES := game-omnomagon game-taco-racing render-yaml-santa render-yaml-taco-truck
 
 EXAMPLE_BINARIES := $(patsubst %,$(EXAMPLES_BUILDDIR)/%,$(EXAMPLES))
 
@@ -37,6 +37,10 @@ EXAMPLE_BINARIES := $(patsubst %,$(EXAMPLES_BUILDDIR)/%,$(EXAMPLES))
 all: $(EXAMPLE_BINARIES)
 
 $(EXAMPLES_BUILDDIR)/game-omnomagon: game-omnomagon.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/game-taco-racing: game-taco-racing.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

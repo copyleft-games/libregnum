@@ -10,6 +10,7 @@ This document outlines design patterns and best practices discovered while build
 - [Common Patterns](#common-patterns)
 - [Pitfalls to Avoid](#pitfalls-to-avoid)
 - [3D Mesh Handling](#3d-mesh-handling)
+- [Hierarchical Entity Transforms](#hierarchical-entity-transforms)
 
 ---
 
@@ -744,6 +745,96 @@ When mesh geometry doesn't render correctly:
 
 ---
 
+## Hierarchical Entity Transforms
+
+When an entity consists of multiple mesh parts (e.g., a vehicle with body, wheels, and accessories), all parts must rotate and translate together as a unified object. Using `grl_model_draw_ex()` directly applies rotation around each mesh's own position, causing parts to spin independently instead of moving as one unit.
+
+### The Problem
+
+**Wrong approach**: Manually rotating mesh positions with sin/cos, then drawing with no rotation:
+
+```c
+/* This doesn't work - meshes stay world-aligned */
+cos_r = cosf (vehicle_rotation);
+sin_r = sinf (vehicle_rotation);
+rotated_x = local_x * cos_r - local_z * sin_r;
+rotated_z = local_x * sin_r + local_z * cos_r;
+
+/* Mesh orbits correctly but doesn't rotate WITH the vehicle */
+grl_model_draw_ex (model, rotated_pos, axis, 0.0f, scale, color);
+```
+
+**Wrong approach**: Passing vehicle rotation to each mesh:
+
+```c
+/* This doesn't work - each mesh spins around its own center */
+grl_model_draw_ex (model, world_pos, axis, vehicle_rotation, scale, color);
+```
+
+### The Solution: Matrix Stack
+
+Use raylib's OpenGL-style matrix stack to set up a parent transform before drawing child meshes. The matrix stack applies transforms hierarchically, so all meshes share the same rotation applied at the parent (vehicle) center.
+
+**Include rlgl.h**:
+```c
+#include <rlgl.h>
+```
+
+**Wrap mesh drawing with matrix operations**:
+```c
+/* Set up parent transform (vehicle) */
+rlPushMatrix ();
+rlTranslatef (vehicle.x, vehicle.y, vehicle.z);
+rlRotatef (vehicle.rotation_y * (180.0f / G_PI), 0.0f, 1.0f, 0.0f);
+
+/* Draw all mesh parts at their LOCAL positions */
+for (i = 0; i < mesh_models->len; i++)
+{
+    MeshModelEntry *entry = g_ptr_array_index (mesh_models, i);
+
+    /* Position is relative to vehicle center, no rotation needed */
+    pos = grl_vector3_new (entry->position->x,
+                           entry->position->y,
+                           entry->position->z);
+
+    grl_model_draw_ex (entry->model, pos, rot_axis, 0.0f,
+                       entry->scale, entry->color);
+}
+
+/* Restore previous matrix state */
+rlPopMatrix ();
+```
+
+### Transform Order
+
+The matrix stack applies transforms in reverse order of the function calls:
+
+1. `rlTranslatef()` - Move to vehicle world position
+2. `rlRotatef()` - Rotate around that point (the vehicle center)
+3. Each mesh drawn at local position
+
+**Result**: Mesh vertices are first positioned locally, then rotated around the vehicle center, then translated to world space. All meshes share the same parent rotation, so they move as one unit.
+
+### Key Functions
+
+| Function | Purpose |
+|----------|---------|
+| `rlPushMatrix()` | Save current matrix state to stack |
+| `rlPopMatrix()` | Restore previous matrix state |
+| `rlTranslatef(x, y, z)` | Translate by (x, y, z) |
+| `rlRotatef(angle, x, y, z)` | Rotate by `angle` degrees around axis (x, y, z) |
+| `rlScalef(x, y, z)` | Scale by (x, y, z) |
+
+### When to Use
+
+- Multi-mesh entities (vehicles, characters, complex objects)
+- Parent-child relationships (turret on tank, weapon on character)
+- Any case where multiple objects must transform together
+
+**Reference**: See `examples/game-taco-racing.c` for a racing game using this pattern, and `deps/graylib/deps/raylib/examples/models/models_rlgl_solar_system.c` for raylib's solar system example demonstrating orbital transforms.
+
+---
+
 ## Summary
 
 **Key Takeaways**:
@@ -756,7 +847,9 @@ When mesh geometry doesn't render correctly:
 6. **Use GLib memory helpers** - `g_autoptr`, `g_clear_pointer`, `g_steal_pointer`
 7. **Follow consistent structure** - makes code easier to understand and maintain
 8. **Reverse winding at triangulation time** - not at parse time, to preserve fan triangulation topology
+9. **Use matrix stack for multi-mesh entities** - `rlPushMatrix`/`rlPopMatrix` to rotate parts as one unit
 
 **Reference Implementations**:
 - `examples/game-omnomagon.c` - Data-driven game with ASCII layouts
 - `examples/render-yaml-taco-truck.c` - 3D mesh loading with coordinate conversion
+- `examples/game-taco-racing.c` - Multi-mesh entity transforms with matrix stack
