@@ -38,6 +38,101 @@ G_DEFINE_TYPE (LrgScriptingPyGObject, lrg_scripting_pygobject, LRG_TYPE_SCRIPTIN
 static gboolean g_python_initialized = FALSE;
 
 /* ==========================================================================
+ * C Function Wrapper for Python
+ *
+ * This wrapper allows registered C functions to be called from Python.
+ * ========================================================================== */
+
+/**
+ * pygobject_c_function_wrapper:
+ *
+ * Python function that wraps a registered C function.
+ * Uses a PyCapsule to store the RegisteredCFunctionGI pointer.
+ */
+static PyObject *
+pygobject_c_function_wrapper (PyObject *capsule,
+                              PyObject *args)
+{
+    RegisteredCFunctionGI *reg;
+    GValue                *gargs = NULL;
+    GValue                 return_value = G_VALUE_INIT;
+    g_autoptr(GError)      error = NULL;
+    Py_ssize_t             n_args;
+    Py_ssize_t             i;
+    gboolean               success;
+    PyObject              *result = NULL;
+
+    /* Get the registered function data from capsule */
+    reg = (RegisteredCFunctionGI *)PyCapsule_GetPointer (capsule,
+                                                          "RegisteredCFunctionGI");
+    if (reg == NULL || reg->func == NULL)
+    {
+        PyErr_SetString (PyExc_RuntimeError, "Invalid C function registration");
+        return NULL;
+    }
+
+    /* Get arguments */
+    n_args = PyTuple_Size (args);
+
+    if (n_args > 0)
+    {
+        gargs = g_new0 (GValue, n_args);
+
+        for (i = 0; i < n_args; i++)
+        {
+            PyObject *arg = PyTuple_GetItem (args, i);
+            if (!lrg_python_to_gvalue (arg, &gargs[i]))
+            {
+                Py_ssize_t j;
+                for (j = 0; j < i; j++)
+                {
+                    g_value_unset (&gargs[j]);
+                }
+                g_free (gargs);
+                PyErr_Format (PyExc_TypeError, "Cannot convert argument %zd", i + 1);
+                return NULL;
+            }
+        }
+    }
+
+    /* Call the C function */
+    success = reg->func (LRG_SCRIPTING (reg->scripting),
+                         (guint)n_args,
+                         gargs,
+                         &return_value,
+                         reg->user_data,
+                         &error);
+
+    /* Clean up arguments */
+    for (i = 0; i < n_args; i++)
+    {
+        g_value_unset (&gargs[i]);
+    }
+    g_free (gargs);
+
+    if (!success)
+    {
+        const gchar *msg = error ? error->message : "Unknown error";
+        PyErr_SetString (PyExc_RuntimeError, msg);
+        return NULL;
+    }
+
+    /* Convert return value */
+    if (G_VALUE_TYPE (&return_value) != G_TYPE_INVALID)
+    {
+        result = lrg_python_from_gvalue (&return_value);
+        g_value_unset (&return_value);
+    }
+
+    if (result == NULL)
+    {
+        Py_RETURN_NONE;
+    }
+
+    return result;
+}
+
+/* ==========================================================================
  * LrgScriptingGI Virtual Method Implementations
  * ========================================================================== */
 
@@ -214,8 +309,18 @@ lrg_scripting_pygobject_expose_typelib (LrgScriptingGI  *gi_self,
     }
     Py_DECREF (result);
 
-    /* Import the module from gi.repository */
-    module = PyObject_GetAttrString (self->gi_repository, namespace_);
+    /*
+     * Import the module from gi.repository using PyImport_ImportModule.
+     * gi.repository uses lazy loading, so we can't use GetAttrString.
+     * We need to import "gi.repository.Namespace" as a full module path.
+     */
+    {
+        g_autofree gchar *full_module_name = NULL;
+
+        full_module_name = g_strdup_printf ("gi.repository.%s", namespace_);
+        module = PyImport_ImportModule (full_module_name);
+    }
+
     if (module == NULL)
     {
         g_autofree gchar *msg = lrg_python_get_error_message ();
@@ -638,8 +743,12 @@ lrg_scripting_pygobject_register_function (LrgScripting           *scripting,
                                            gpointer                user_data,
                                            GError                **error)
 {
+    LrgScriptingPyGObject   *self = LRG_SCRIPTING_PYGOBJECT (scripting);
     LrgScriptingGI          *gi_self = LRG_SCRIPTING_GI (scripting);
     RegisteredCFunctionGI   *reg;
+    PyObject                *capsule;
+    PyObject                *py_func;
+    static PyMethodDef       method_def = {"", NULL, METH_VARARGS, NULL};
 
     g_return_val_if_fail (name != NULL, FALSE);
     g_return_val_if_fail (func != NULL, FALSE);
@@ -666,11 +775,38 @@ lrg_scripting_pygobject_register_function (LrgScripting           *scripting,
         return FALSE;
     }
 
-    /*
-     * For PyGObject, we would ideally create a Python wrapper that calls back to C.
-     * For now, we use the same pattern as LrgScriptingPython with PyCapsule.
-     * This could be enhanced to use proper GI-based callbacks in the future.
-     */
+    /* Create a PyCapsule to hold the registration data */
+    capsule = PyCapsule_New (reg, "RegisteredCFunctionGI", NULL);
+    if (capsule == NULL)
+    {
+        g_set_error (error,
+                     LRG_SCRIPTING_ERROR,
+                     LRG_SCRIPTING_ERROR_FAILED,
+                     "Failed to create capsule for '%s'",
+                     name);
+        return FALSE;
+    }
+
+    /* Create a Python function */
+    method_def.ml_name = name;
+    method_def.ml_meth = (PyCFunction)pygobject_c_function_wrapper;
+
+    py_func = PyCFunction_New (&method_def, capsule);
+    Py_DECREF (capsule);
+
+    if (py_func == NULL)
+    {
+        g_set_error (error,
+                     LRG_SCRIPTING_ERROR,
+                     LRG_SCRIPTING_ERROR_FAILED,
+                     "Failed to create Python function for '%s'",
+                     name);
+        return FALSE;
+    }
+
+    /* Set as global */
+    PyDict_SetItemString (self->main_dict, name, py_func);
+    Py_DECREF (py_func);
 
     lrg_debug (LRG_LOG_DOMAIN_SCRIPTING, "Registered C function: %s", name);
 

@@ -16,7 +16,7 @@ EXAMPLE_CFLAGS := $(COMMON_CFLAGS) $(WARN_CFLAGS)
 EXAMPLE_CFLAGS += -I../src
 EXAMPLE_CFLAGS += -I$(GRAYLIB_DIR)/src
 EXAMPLE_CFLAGS += -I$(YAMLGLIB_DIR)/src
-EXAMPLE_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 libdex-1)
+EXAMPLE_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 libdex-1 gobject-introspection-1.0)
 
 EXAMPLE_LDFLAGS := -L../$(LIBOUTDIR)
 EXAMPLE_LDFLAGS += -L$(GRAYLIB_DIR)/build/lib
@@ -28,7 +28,7 @@ EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
 EXAMPLE_LIBS := -l$(LIB_NAME) -lgraylib -lyaml-glib -lm
 EXAMPLE_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1)
 
-EXAMPLES := game-omnomagon game-taco-racing render-yaml-santa render-yaml-taco-truck scripted-lua-game scripted-python-game
+EXAMPLES := game-omnomagon game-taco-racing render-yaml-santa render-yaml-taco-truck scripted-lua-game scripted-python-game scripted-python-gobject-game
 
 EXAMPLE_BINARIES := $(patsubst %,$(EXAMPLES_BUILDDIR)/%,$(EXAMPLES))
 
@@ -57,6 +57,10 @@ $(EXAMPLES_BUILDDIR)/scripted-lua-game: scripted-lua-game.c | $(EXAMPLES_BUILDDI
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/scripted-python-game: scripted-python-game.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/scripted-python-gobject-game: scripted-python-gobject-game.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
