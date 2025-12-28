@@ -207,5 +207,6 @@
 #include "scripting/lrg-scripting-gi.h"
 #include "scripting/lrg-scripting-python.h"
 #include "scripting/lrg-scripting-pygobject.h"
+#include "scripting/lrg-scripting-gjs.h"
 
 #undef LIBREGNUM_INSIDE

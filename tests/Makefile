@@ -48,7 +48,7 @@ TEST_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
 TEST_LIBS := -l$(LIB_NAME)
 TEST_LIBS += -lgraylib -lyaml-glib
 TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 gobject-introspection-1.0)
-TEST_LIBS += $(PYTHON_LIBS)
+TEST_LIBS += $(PYTHON_LIBS) $(GJS_LIBS)
 
 # =============================================================================
 # Test Sources
@@ -83,7 +83,8 @@ TEST_SOURCES := \
 	test-scripting.c \
 	test-scripting-python.c \
 	test-scripting-gi.c \
-	test-scripting-pygobject.c
+	test-scripting-pygobject.c \
+	test-scripting-gjs.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))

@@ -9,8 +9,9 @@ Libregnum provides multiple scripting backends:
 - **Lua** (LuaJIT) - Lightweight, fast, ideal for game scripting
 - **Python** (CPython 3.12+) - Rich ecosystem, familiar syntax
 - **PyGObject** (Python + GI) - Full GObject Introspection access from Python
+- **Gjs** (GNOME JavaScript) - Full GObject Introspection access from JavaScript
 
-All backends implement the same abstract interface (`LrgScripting`), making them interchangeable at the API level. GI-based backends (PyGObject) additionally inherit from `LrgScriptingGI` for typelib and object exposure support.
+All backends implement the same abstract interface (`LrgScripting`), making them interchangeable at the API level. GI-based backends (PyGObject, Gjs) additionally inherit from `LrgScriptingGI` for typelib and object exposure support.
 
 ### Key Features
 
@@ -82,27 +83,28 @@ main (int argc, char *argv[])
 | `LrgScriptingLua` | LuaJIT scripting implementation |
 | `LrgScriptingPython` | Python 3.12+ scripting implementation (direct C API) |
 | `LrgScriptingPyGObject` | Python with PyGObject (native GI bindings) |
+| `LrgScriptingGjs` | JavaScript with Gjs (native GI bindings) |
 | `LrgScriptable` | Interface for custom script exposure (opt-in) |
 
 ## Feature Comparison
 
-| Feature | Lua | Python | PyGObject |
-|---------|-----|--------|-----------|
-| Performance | Excellent (LuaJIT) | Good | Good |
-| Memory footprint | Small | Moderate | Larger |
-| Standard library | Minimal | Extensive | Extensive |
-| Package ecosystem | Moderate | Vast | Vast + GI libs |
-| Syntax familiarity | Unique | Widely known | Widely known |
-| Update hooks | Yes | Yes | Yes |
-| Registry integration | Yes | Yes | Yes |
-| Engine access | Yes | Yes | Yes |
-| Native GI bindings | No | No | Yes |
-| Import Libregnum types | No | No | Yes |
-| Use Gtk/Gio from scripts | No | No | Yes |
+| Feature | Lua | Python | PyGObject | Gjs |
+|---------|-----|--------|-----------|-----|
+| Performance | Excellent (LuaJIT) | Good | Good | Good |
+| Memory footprint | Small | Moderate | Larger | Moderate |
+| Standard library | Minimal | Extensive | Extensive | Moderate |
+| Package ecosystem | Moderate | Vast | Vast + GI libs | npm + GI libs |
+| Syntax familiarity | Unique | Widely known | Widely known | Widely known |
+| Update hooks | Yes | Yes | Yes | Yes |
+| Registry integration | Yes | Yes | Yes | Yes |
+| Engine access | Yes | Yes | Yes | Yes |
+| Native GI bindings | No | No | Yes | Yes |
+| Import Libregnum types | No | No | Yes | Yes |
+| Use Gtk/Gio from scripts | No | No | Yes | Yes |
 
 ## Built-in API
 
-All backends expose the same global objects (Log, Registry, Engine). PyGObject additionally provides native access to GI types via `from gi.repository import Libregnum`.
+All backends expose the same global objects (Log, Registry, Engine). GI-based backends (PyGObject, Gjs) additionally provide native access to GI types via `from gi.repository import Libregnum` (Python) or `imports.gi.Libregnum` (JavaScript).
 
 ### Log
 
@@ -227,5 +229,6 @@ See [LrgScriptable](scriptable.md) for complete documentation.
 - [LrgScriptingLua](scripting-lua.md) - Lua implementation details
 - [LrgScriptingPython](scripting-python.md) - Python implementation details
 - [LrgScriptingPyGObject](scripting-pygobject.md) - PyGObject implementation details
+- [LrgScriptingGjs](scripting-gjs.md) - Gjs (GNOME JavaScript) implementation details
 - [LrgScriptable](scriptable.md) - Custom script exposure interface
 - [Scripting Examples](../../examples/scripting-basics.md) - Comprehensive usage examples

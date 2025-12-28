@@ -235,9 +235,13 @@ PYTHON_LIBS := $(shell $(PKG_CONFIG) --libs python3-embed)
 GI_RUNTIME_CFLAGS := $(shell $(PKG_CONFIG) --cflags gobject-introspection-1.0)
 GI_RUNTIME_LIBS := $(shell $(PKG_CONFIG) --libs gobject-introspection-1.0)
 
+# Gjs (GNOME JavaScript) for scripting
+GJS_CFLAGS := $(shell $(PKG_CONFIG) --cflags gjs-1.0)
+GJS_LIBS := $(shell $(PKG_CONFIG) --libs gjs-1.0)
+
 # Combined dependency flags (use -isystem to suppress warnings from deps)
-DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS)
-DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS)
+DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS)
+DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS)
 
 # Graylib and yaml-glib (built from submodules)
 GRAYLIB_CFLAGS := -I$(GRAYLIB_DIR)/src

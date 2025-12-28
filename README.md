@@ -29,7 +29,8 @@ sudo dnf install \
     libyaml-devel \
     json-glib-devel \
     luajit-devel \
-    python3-devel
+    python3-devel \
+    gjs-devel
 ```
 
 ### Submodule Dependencies

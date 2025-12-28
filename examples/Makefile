@@ -28,7 +28,7 @@ EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
 EXAMPLE_LIBS := -l$(LIB_NAME) -lgraylib -lyaml-glib -lm
 EXAMPLE_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1)
 
-EXAMPLES := game-omnomagon game-taco-racing render-yaml-santa render-yaml-taco-truck scripted-lua-game scripted-python-game scripted-python-gobject-game
+EXAMPLES := game-omnomagon game-taco-racing render-yaml-santa render-yaml-taco-truck scripted-lua-game scripted-python-game scripted-python-gobject-game scripted-gjs-game
 
 EXAMPLE_BINARIES := $(patsubst %,$(EXAMPLES_BUILDDIR)/%,$(EXAMPLES))
 
@@ -61,6 +61,10 @@ $(EXAMPLES_BUILDDIR)/scripted-python-game: scripted-python-game.c | $(EXAMPLES_B
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/scripted-python-gobject-game: scripted-python-gobject-game.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/scripted-gjs-game: scripted-gjs-game.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
