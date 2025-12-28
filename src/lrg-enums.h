@@ -1214,9 +1214,11 @@ GType lrg_scene_error_get_type (void) G_GNUC_CONST;
  * @LRG_PRIMITIVE_TORUS: Torus (major_segments, minor_segments, major_radius, minor_radius)
  * @LRG_PRIMITIVE_GRID: Grid plane (x_subdivisions, y_subdivisions, size)
  * @LRG_PRIMITIVE_MESH: Custom mesh from vertex/face data (mesh_data parameter)
+ * @LRG_PRIMITIVE_RECTANGLE_2D: 2D rectangle (width, height, filled)
+ * @LRG_PRIMITIVE_CIRCLE_2D: 2D circle (radius, filled)
  *
- * Blender primitive types for scene objects.
- * These correspond to Blender 5.x mesh primitive types.
+ * Primitive types for scene objects.
+ * Includes 3D primitives (Blender-compatible) and 2D shapes.
  */
 typedef enum
 {
@@ -1229,7 +1231,9 @@ typedef enum
     LRG_PRIMITIVE_CONE,
     LRG_PRIMITIVE_TORUS,
     LRG_PRIMITIVE_GRID,
-    LRG_PRIMITIVE_MESH
+    LRG_PRIMITIVE_MESH,
+    LRG_PRIMITIVE_RECTANGLE_2D,
+    LRG_PRIMITIVE_CIRCLE_2D
 } LrgPrimitiveType;
 
 LRG_AVAILABLE_IN_ALL

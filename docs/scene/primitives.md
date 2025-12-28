@@ -1,13 +1,17 @@
-# 3D Primitive Shapes Reference
+# Primitive Shapes Reference
 
-This document describes all 3D primitive shapes available in libregnum, including their properties, Blender equivalents, and usage examples.
+This document describes all primitive shapes available in libregnum, including their properties, Blender equivalents, and usage examples.
 
 ## Shape Hierarchy
 
-All 3D shapes inherit from a common hierarchy:
+All shapes inherit from a common hierarchy:
 
 ```
 LrgShape (abstract)
+├── LrgShape2D (abstract)
+│   ├── LrgText2D
+│   ├── LrgRectangle2D
+│   └── LrgCircle2D
 └── LrgShape3D (abstract)
     ├── LrgPlane3D
     ├── LrgCube3D
@@ -502,4 +506,130 @@ lrg_shape3d_set_position (shape, loc);
 LrgMaterial3D *mat = lrg_scene_object_get_material (obj);
 GrlColor *color = lrg_material3d_get_color_grl (mat);
 lrg_shape_set_color (LRG_SHAPE (shape), color);
+```
+
+---
+
+## 2D Primitive Shapes
+
+The following 2D shapes are available for screen-space rendering (UI, HUD, etc.).
+
+### Common Properties (LrgShape2D)
+
+All 2D shapes inherit these properties:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `x` | gfloat | Screen X position |
+| `y` | gfloat | Screen Y position |
+| `color` | GrlColor* | Shape color |
+| `visible` | gboolean | Whether to render |
+| `z-index` | gint | Draw order (higher = on top) |
+
+---
+
+## LrgRectangle2D
+
+A 2D rectangle shape with support for filled/outline modes and rounded corners.
+
+### Properties
+
+| Property | Type | Default | Range | Description |
+|----------|------|---------|-------|-------------|
+| `width` | gfloat | 1.0 | >= 0 | Rectangle width in pixels |
+| `height` | gfloat | 1.0 | >= 0 | Rectangle height in pixels |
+| `filled` | gboolean | TRUE | - | Filled or outline mode |
+| `line-thickness` | gfloat | 1.0 | >= 0 | Outline thickness |
+| `corner-radius` | gfloat | 0.0 | >= 0 | Rounded corner radius |
+
+### Constructors
+
+```c
+LrgRectangle2D * lrg_rectangle2d_new (void);
+
+LrgRectangle2D * lrg_rectangle2d_new_at (gfloat x, gfloat y,
+                                          gfloat width, gfloat height);
+
+LrgRectangle2D * lrg_rectangle2d_new_full (gfloat x, gfloat y,
+                                            gfloat width, gfloat height,
+                                            GrlColor *color);
+```
+
+### Example
+
+```c
+/* HUD panel background */
+g_autoptr(GrlColor) bg = grl_color_new (32, 32, 32, 200);
+g_autoptr(LrgRectangle2D) panel = lrg_rectangle2d_new_full (
+    10.0f, 10.0f, 200.0f, 150.0f, bg
+);
+lrg_drawable_draw (LRG_DRAWABLE (panel), delta);
+
+/* Outlined button with rounded corners */
+g_autoptr(LrgRectangle2D) button = lrg_rectangle2d_new_at (50.0f, 50.0f, 100.0f, 40.0f);
+lrg_rectangle2d_set_filled (button, FALSE);
+lrg_rectangle2d_set_line_thickness (button, 2.0f);
+lrg_rectangle2d_set_corner_radius (button, 5.0f);
+```
+
+### YAML
+
+```yaml
+primitive: primitive_rectangle_2d
+params:
+  width: 100.0
+  height: 50.0
+  filled: true
+  line_thickness: 1.0
+  corner_radius: 0.0
+```
+
+---
+
+## LrgCircle2D
+
+A 2D circle shape with support for filled/outline modes.
+
+### Properties
+
+| Property | Type | Default | Range | Description |
+|----------|------|---------|-------|-------------|
+| `radius` | gfloat | 1.0 | >= 0 | Circle radius in pixels |
+| `filled` | gboolean | TRUE | - | Filled or outline mode |
+
+### Constructors
+
+```c
+LrgCircle2D * lrg_circle2d_new (void);
+
+LrgCircle2D * lrg_circle2d_new_at (gfloat x, gfloat y, gfloat radius);
+
+LrgCircle2D * lrg_circle2d_new_full (gfloat x, gfloat y,
+                                      gfloat radius,
+                                      GrlColor *color);
+```
+
+### Example
+
+```c
+/* Draw a ball */
+g_autoptr(GrlColor) red = grl_color_new (255, 64, 64, 255);
+g_autoptr(LrgCircle2D) ball = lrg_circle2d_new_full (
+    ball_x, ball_y, 20.0f, red
+);
+lrg_drawable_draw (LRG_DRAWABLE (ball), delta);
+
+/* Draw a ring (outline) */
+g_autoptr(LrgCircle2D) ring = lrg_circle2d_new_at (center_x, center_y, 50.0f);
+lrg_circle2d_set_filled (ring, FALSE);
+lrg_drawable_draw (LRG_DRAWABLE (ring), delta);
+```
+
+### YAML
+
+```yaml
+primitive: primitive_circle_2d
+params:
+  radius: 25.0
+  filled: true
 ```

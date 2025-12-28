@@ -9,6 +9,8 @@ LrgShape (abstract, implements LrgDrawable)
     |
     +-- LrgShape2D (abstract, screen-space)
     |     +-- LrgText2D (final)
+    |     +-- LrgRectangle2D (final)
+    |     +-- LrgCircle2D (final)
     |
     +-- LrgShape3D (abstract, world-space)
           +-- LrgSphere3D (final)
@@ -193,6 +195,93 @@ lrg_drawable_draw (LRG_DRAWABLE (fps_text), delta);
 /* Update text dynamically */
 g_autofree gchar *new_text = g_strdup_printf ("FPS: %d", current_fps);
 lrg_text2d_set_text (fps_text, new_text);
+```
+
+### LrgRectangle2D
+
+A 2D rectangle shape with support for filled/outline modes and rounded corners.
+
+**Properties:**
+- `width` (gfloat) - Rectangle width in pixels (default 1.0)
+- `height` (gfloat) - Rectangle height in pixels (default 1.0)
+- `filled` (gboolean) - Whether the rectangle is filled (default TRUE)
+- `line-thickness` (gfloat) - Line thickness for outline mode (default 1.0)
+- `corner-radius` (gfloat) - Corner radius for rounded rectangles (default 0.0)
+
+**Construction:**
+```c
+LrgRectangle2D *lrg_rectangle2d_new      (void);
+LrgRectangle2D *lrg_rectangle2d_new_at   (gfloat x, gfloat y, gfloat width, gfloat height);
+LrgRectangle2D *lrg_rectangle2d_new_full (gfloat x, gfloat y, gfloat width, gfloat height, GrlColor *color);
+```
+
+**Property Accessors:**
+```c
+gfloat   lrg_rectangle2d_get_width          (LrgRectangle2D *self);
+void     lrg_rectangle2d_set_width          (LrgRectangle2D *self, gfloat width);
+gfloat   lrg_rectangle2d_get_height         (LrgRectangle2D *self);
+void     lrg_rectangle2d_set_height         (LrgRectangle2D *self, gfloat height);
+gboolean lrg_rectangle2d_get_filled         (LrgRectangle2D *self);
+void     lrg_rectangle2d_set_filled         (LrgRectangle2D *self, gboolean filled);
+gfloat   lrg_rectangle2d_get_line_thickness (LrgRectangle2D *self);
+void     lrg_rectangle2d_set_line_thickness (LrgRectangle2D *self, gfloat thickness);
+gfloat   lrg_rectangle2d_get_corner_radius  (LrgRectangle2D *self);
+void     lrg_rectangle2d_set_corner_radius  (LrgRectangle2D *self, gfloat radius);
+```
+
+**Example:**
+```c
+/* Solid rectangle for HUD background */
+g_autoptr(LrgRectangle2D) panel = lrg_rectangle2d_new_full (
+    10.0f, 10.0f, 200.0f, 100.0f, bg_color
+);
+lrg_drawable_draw (LRG_DRAWABLE (panel), delta);
+
+/* Outlined rectangle with rounded corners */
+g_autoptr(LrgRectangle2D) button = lrg_rectangle2d_new_at (50.0f, 50.0f, 120.0f, 40.0f);
+lrg_rectangle2d_set_filled (button, FALSE);
+lrg_rectangle2d_set_line_thickness (button, 2.0f);
+lrg_rectangle2d_set_corner_radius (button, 8.0f);
+lrg_shape_set_color (LRG_SHAPE (button), border_color);
+lrg_drawable_draw (LRG_DRAWABLE (button), delta);
+```
+
+### LrgCircle2D
+
+A 2D circle shape with support for filled/outline modes.
+
+**Properties:**
+- `radius` (gfloat) - Circle radius in pixels (default 1.0)
+- `filled` (gboolean) - Whether the circle is filled (default TRUE)
+
+**Construction:**
+```c
+LrgCircle2D *lrg_circle2d_new      (void);
+LrgCircle2D *lrg_circle2d_new_at   (gfloat x, gfloat y, gfloat radius);
+LrgCircle2D *lrg_circle2d_new_full (gfloat x, gfloat y, gfloat radius, GrlColor *color);
+```
+
+**Property Accessors:**
+```c
+gfloat   lrg_circle2d_get_radius (LrgCircle2D *self);
+void     lrg_circle2d_set_radius (LrgCircle2D *self, gfloat radius);
+gboolean lrg_circle2d_get_filled (LrgCircle2D *self);
+void     lrg_circle2d_set_filled (LrgCircle2D *self, gboolean filled);
+```
+
+**Example:**
+```c
+/* Draw a ball at position */
+g_autoptr(LrgCircle2D) ball = lrg_circle2d_new_full (
+    ball_x, ball_y, ball_radius, ball_color
+);
+lrg_drawable_draw (LRG_DRAWABLE (ball), delta);
+
+/* Draw a ring (outline only) */
+g_autoptr(LrgCircle2D) ring = lrg_circle2d_new_at (center_x, center_y, 50.0f);
+lrg_circle2d_set_filled (ring, FALSE);
+lrg_shape_set_color (LRG_SHAPE (ring), ring_color);
+lrg_drawable_draw (LRG_DRAWABLE (ring), delta);
 ```
 
 ## Usage with LrgDrawable

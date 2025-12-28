@@ -817,7 +817,10 @@ render_hud (TacoVehicle *v,
 	bg_color = grl_color_new (0, 0, 0, 180);
 
 	/* Background panel */
-	grl_draw_rectangle (5, 5, 220, 180, bg_color);
+	{
+		g_autoptr(LrgRectangle2D) panel = lrg_rectangle2d_new_full (5.0f, 5.0f, 220.0f, 180.0f, bg_color);
+		lrg_drawable_draw (LRG_DRAWABLE (panel), delta);
+	}
 
 	/* Speed */
 	speed_str = g_strdup_printf ("Speed: %.1f", fabsf (v->speed));
@@ -863,7 +866,10 @@ render_hud (TacoVehicle *v,
 	lrg_drawable_draw (LRG_DRAWABLE (boost_label), delta);
 
 	/* Boost bar background */
-	grl_draw_rectangle (75, 140, 100, 16, gray);
+	{
+		g_autoptr(LrgRectangle2D) bar_bg = lrg_rectangle2d_new_full (75.0f, 140.0f, 100.0f, 16.0f, gray);
+		lrg_drawable_draw (LRG_DRAWABLE (bar_bg), delta);
+	}
 
 	/* Boost bar fill */
 	boost_width = v->boost_fuel * 100.0f;
@@ -874,7 +880,10 @@ render_hud (TacoVehicle *v,
 	else
 		boost_color = grl_color_new (255, 50, 50, 255);
 
-	grl_draw_rectangle (75, 140, (gint)boost_width, 16, boost_color);
+	{
+		g_autoptr(LrgRectangle2D) bar_fill = lrg_rectangle2d_new_full (75.0f, 140.0f, boost_width, 16.0f, boost_color);
+		lrg_drawable_draw (LRG_DRAWABLE (bar_fill), delta);
+	}
 
 	/* Controls hint */
 	controls_label = lrg_text2d_new_full (15.0f, 165.0f,

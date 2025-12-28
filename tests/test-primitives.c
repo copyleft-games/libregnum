@@ -4,8 +4,8 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Unit tests for new 3D primitive shapes: Cylinder, Cone, Plane, Grid,
- * Circle, Torus, and IcoSphere.
+ * Unit tests for primitive shapes: 3D shapes (Cylinder, Cone, Plane, Grid,
+ * Circle, Torus, IcoSphere) and 2D shapes (Rectangle2D, Circle2D).
  */
 
 #include <glib.h>
@@ -399,6 +399,174 @@ test_shape_color (void)
 }
 
 /* ==========================================================================
+ * Test Cases - LrgRectangle2D
+ * ========================================================================== */
+
+static void
+test_rectangle2d_new (void)
+{
+    g_autoptr(LrgRectangle2D) rect = NULL;
+
+    rect = lrg_rectangle2d_new ();
+
+    g_assert_nonnull (rect);
+    g_assert_true (LRG_IS_RECTANGLE2D (rect));
+    g_assert_true (LRG_IS_SHAPE2D (rect));
+    g_assert_true (LRG_IS_SHAPE (rect));
+}
+
+static void
+test_rectangle2d_new_at (void)
+{
+    g_autoptr(LrgRectangle2D) rect = NULL;
+
+    rect = lrg_rectangle2d_new_at (100.0f, 200.0f, 50.0f, 30.0f);
+
+    g_assert_nonnull (rect);
+    g_assert_cmpfloat_with_epsilon (lrg_shape2d_get_x (LRG_SHAPE2D (rect)), 100.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (lrg_shape2d_get_y (LRG_SHAPE2D (rect)), 200.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (lrg_rectangle2d_get_width (rect), 50.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (lrg_rectangle2d_get_height (rect), 30.0f, 0.001f);
+}
+
+static void
+test_rectangle2d_new_full (void)
+{
+    g_autoptr(LrgRectangle2D) rect = NULL;
+    g_autoptr(GrlColor)       color = NULL;
+
+    color = grl_color_new (255, 128, 0, 255);
+    rect = lrg_rectangle2d_new_full (10.0f, 20.0f, 100.0f, 80.0f, color);
+
+    g_assert_nonnull (rect);
+    g_assert_cmpfloat_with_epsilon (lrg_rectangle2d_get_width (rect), 100.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (lrg_rectangle2d_get_height (rect), 80.0f, 0.001f);
+}
+
+static void
+test_rectangle2d_properties (void)
+{
+    g_autoptr(LrgRectangle2D) rect = NULL;
+
+    rect = lrg_rectangle2d_new ();
+
+    /* Test width */
+    lrg_rectangle2d_set_width (rect, 150.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_rectangle2d_get_width (rect), 150.0f, 0.001f);
+
+    /* Test height */
+    lrg_rectangle2d_set_height (rect, 100.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_rectangle2d_get_height (rect), 100.0f, 0.001f);
+
+    /* Test filled */
+    g_assert_true (lrg_rectangle2d_get_filled (rect)); /* Default TRUE */
+    lrg_rectangle2d_set_filled (rect, FALSE);
+    g_assert_false (lrg_rectangle2d_get_filled (rect));
+
+    /* Test line thickness */
+    lrg_rectangle2d_set_line_thickness (rect, 3.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_rectangle2d_get_line_thickness (rect), 3.0f, 0.001f);
+
+    /* Test corner radius */
+    lrg_rectangle2d_set_corner_radius (rect, 10.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_rectangle2d_get_corner_radius (rect), 10.0f, 0.001f);
+}
+
+/* ==========================================================================
+ * Test Cases - LrgCircle2D
+ * ========================================================================== */
+
+static void
+test_circle2d_new (void)
+{
+    g_autoptr(LrgCircle2D) circle = NULL;
+
+    circle = lrg_circle2d_new ();
+
+    g_assert_nonnull (circle);
+    g_assert_true (LRG_IS_CIRCLE2D (circle));
+    g_assert_true (LRG_IS_SHAPE2D (circle));
+    g_assert_true (LRG_IS_SHAPE (circle));
+}
+
+static void
+test_circle2d_new_at (void)
+{
+    g_autoptr(LrgCircle2D) circle = NULL;
+
+    circle = lrg_circle2d_new_at (150.0f, 250.0f, 25.0f);
+
+    g_assert_nonnull (circle);
+    g_assert_cmpfloat_with_epsilon (lrg_shape2d_get_x (LRG_SHAPE2D (circle)), 150.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (lrg_shape2d_get_y (LRG_SHAPE2D (circle)), 250.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (lrg_circle2d_get_radius (circle), 25.0f, 0.001f);
+}
+
+static void
+test_circle2d_new_full (void)
+{
+    g_autoptr(LrgCircle2D) circle = NULL;
+    g_autoptr(GrlColor)    color = NULL;
+
+    color = grl_color_new (0, 255, 128, 255);
+    circle = lrg_circle2d_new_full (50.0f, 75.0f, 30.0f, color);
+
+    g_assert_nonnull (circle);
+    g_assert_cmpfloat_with_epsilon (lrg_circle2d_get_radius (circle), 30.0f, 0.001f);
+}
+
+static void
+test_circle2d_properties (void)
+{
+    g_autoptr(LrgCircle2D) circle = NULL;
+
+    circle = lrg_circle2d_new ();
+
+    /* Test radius */
+    lrg_circle2d_set_radius (circle, 50.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_circle2d_get_radius (circle), 50.0f, 0.001f);
+
+    /* Test filled */
+    g_assert_true (lrg_circle2d_get_filled (circle)); /* Default TRUE */
+    lrg_circle2d_set_filled (circle, FALSE);
+    g_assert_false (lrg_circle2d_get_filled (circle));
+}
+
+/* ==========================================================================
+ * Test Cases - Shape2D Base Properties
+ * ========================================================================== */
+
+static void
+test_shape2d_position (void)
+{
+    g_autoptr(LrgRectangle2D) shape = NULL;
+
+    shape = lrg_rectangle2d_new ();
+
+    lrg_shape2d_set_x (LRG_SHAPE2D (shape), 100.0f);
+    lrg_shape2d_set_y (LRG_SHAPE2D (shape), 200.0f);
+
+    g_assert_cmpfloat_with_epsilon (lrg_shape2d_get_x (LRG_SHAPE2D (shape)), 100.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (lrg_shape2d_get_y (LRG_SHAPE2D (shape)), 200.0f, 0.001f);
+}
+
+static void
+test_shape2d_color (void)
+{
+    g_autoptr(LrgCircle2D) shape = NULL;
+    g_autoptr(GrlColor)    color = NULL;
+    GrlColor              *retrieved;
+
+    shape = lrg_circle2d_new ();
+    color = grl_color_new (128, 64, 192, 255);
+
+    lrg_shape_set_color (LRG_SHAPE (shape), color);
+
+    retrieved = lrg_shape_get_color (LRG_SHAPE (shape));
+    g_assert_nonnull (retrieved);
+}
+
+/* ==========================================================================
  * Main
  * ========================================================================== */
 
@@ -447,6 +615,22 @@ main (int   argc,
     g_test_add_func ("/primitives/shape3d/position", test_shape3d_position);
     g_test_add_func ("/primitives/shape3d/wireframe", test_shape3d_wireframe);
     g_test_add_func ("/primitives/shape/color", test_shape_color);
+
+    /* LrgRectangle2D */
+    g_test_add_func ("/primitives/rectangle2d/new", test_rectangle2d_new);
+    g_test_add_func ("/primitives/rectangle2d/new-at", test_rectangle2d_new_at);
+    g_test_add_func ("/primitives/rectangle2d/new-full", test_rectangle2d_new_full);
+    g_test_add_func ("/primitives/rectangle2d/properties", test_rectangle2d_properties);
+
+    /* LrgCircle2D */
+    g_test_add_func ("/primitives/circle2d/new", test_circle2d_new);
+    g_test_add_func ("/primitives/circle2d/new-at", test_circle2d_new_at);
+    g_test_add_func ("/primitives/circle2d/new-full", test_circle2d_new_full);
+    g_test_add_func ("/primitives/circle2d/properties", test_circle2d_properties);
+
+    /* Shape2D base class tests */
+    g_test_add_func ("/primitives/shape2d/position", test_shape2d_position);
+    g_test_add_func ("/primitives/shape2d/color", test_shape2d_color);
 
     return g_test_run ();
 }

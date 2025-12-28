@@ -517,25 +517,35 @@ main (int   argc,
             if (balls[i].active)
             {
                 g_autoptr(GrlColor) ball_color = NULL;
+                g_autoptr(LrgCircle2D) circle = NULL;
 
                 ball_color = grl_color_new (balls[i].r, balls[i].g,
                                             balls[i].b, 255);
-                grl_draw_circle ((gint)balls[i].x, (gint)balls[i].y,
-                                 balls[i].radius, ball_color);
+                circle = lrg_circle2d_new_full (balls[i].x, balls[i].y,
+                                                balls[i].radius, ball_color);
+                lrg_drawable_draw (LRG_DRAWABLE (circle), delta);
             }
         }
 
         /* Draw ball count */
         {
             g_autofree gchar *text = NULL;
+            g_autoptr(LrgText2D) count_label = NULL;
 
             text = g_strdup_printf ("Balls: %d", ball_count);
-            grl_draw_text (text, 10, 10, 20, white_color);
+            count_label = lrg_text2d_new_full (10.0f, 10.0f, text, 20.0f, white_color);
+            lrg_drawable_draw (LRG_DRAWABLE (count_label), delta);
         }
 
         /* Draw instructions */
-        grl_draw_text ("SPACE/ENTER: spawn | R: reset | ESC: quit",
-                       10, WINDOW_HEIGHT - 30, 16, gray_color);
+        {
+            g_autoptr(LrgText2D) hint_label = NULL;
+
+            hint_label = lrg_text2d_new_full (10.0f, (gfloat)(WINDOW_HEIGHT - 30),
+                                              "SPACE/ENTER: spawn | R: reset | ESC: quit",
+                                              16.0f, gray_color);
+            lrg_drawable_draw (LRG_DRAWABLE (hint_label), delta);
+        }
 
         grl_window_end_drawing (grl_window);
     }

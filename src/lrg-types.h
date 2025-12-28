@@ -340,6 +340,12 @@ typedef struct _LrgLine3D  LrgLine3D;
 /* LrgText2D is a final type - no Class forward declaration needed */
 typedef struct _LrgText2D  LrgText2D;
 
+/* LrgRectangle2D is a final type - no Class forward declaration needed */
+typedef struct _LrgRectangle2D  LrgRectangle2D;
+
+/* LrgCircle2D is a final type - no Class forward declaration needed */
+typedef struct _LrgCircle2D  LrgCircle2D;
+
 /* ==========================================================================
  * 3D World Module
  * ========================================================================== */

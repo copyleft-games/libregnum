@@ -117,6 +117,10 @@ parse_primitive_type (const gchar *str)
 		return LRG_PRIMITIVE_GRID;
 	if (g_str_equal (str, "primitive_mesh"))
 		return LRG_PRIMITIVE_MESH;
+	if (g_str_equal (str, "primitive_rectangle_2d"))
+		return LRG_PRIMITIVE_RECTANGLE_2D;
+	if (g_str_equal (str, "primitive_circle_2d"))
+		return LRG_PRIMITIVE_CIRCLE_2D;
 
 	return LRG_PRIMITIVE_CUBE;
 }
@@ -149,6 +153,10 @@ primitive_type_to_string (LrgPrimitiveType type)
 		return "primitive_grid";
 	case LRG_PRIMITIVE_MESH:
 		return "primitive_mesh";
+	case LRG_PRIMITIVE_RECTANGLE_2D:
+		return "primitive_rectangle_2d";
+	case LRG_PRIMITIVE_CIRCLE_2D:
+		return "primitive_circle_2d";
 	default:
 		return "primitive_cube";
 	}

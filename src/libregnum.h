@@ -77,6 +77,8 @@
 #include "shapes/lrg-cube3d.h"
 #include "shapes/lrg-line3d.h"
 #include "shapes/lrg-text2d.h"
+#include "shapes/lrg-rectangle2d.h"
+#include "shapes/lrg-circle2d.h"
 #include "shapes/lrg-cylinder3d.h"
 #include "shapes/lrg-cone3d.h"
 #include "shapes/lrg-plane3d.h"

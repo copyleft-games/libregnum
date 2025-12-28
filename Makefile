@@ -70,6 +70,8 @@ PUBLIC_HEADERS := \
 	src/shapes/lrg-cube3d.h \
 	src/shapes/lrg-line3d.h \
 	src/shapes/lrg-text2d.h \
+	src/shapes/lrg-rectangle2d.h \
+	src/shapes/lrg-circle2d.h \
 	src/shapes/lrg-cylinder3d.h \
 	src/shapes/lrg-cone3d.h \
 	src/shapes/lrg-plane3d.h \
@@ -210,6 +212,8 @@ SOURCES := \
 	src/shapes/lrg-cube3d.c \
 	src/shapes/lrg-line3d.c \
 	src/shapes/lrg-text2d.c \
+	src/shapes/lrg-rectangle2d.c \
+	src/shapes/lrg-circle2d.c \
 	src/shapes/lrg-cylinder3d.c \
 	src/shapes/lrg-cone3d.c \
 	src/shapes/lrg-plane3d.c \
@@ -562,6 +566,8 @@ endif
 	$(INSTALL_DATA) src/shapes/lrg-cube3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
 	$(INSTALL_DATA) src/shapes/lrg-line3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
 	$(INSTALL_DATA) src/shapes/lrg-text2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
+	$(INSTALL_DATA) src/shapes/lrg-rectangle2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
+	$(INSTALL_DATA) src/shapes/lrg-circle2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
 	$(INSTALL_DATA) src/ui/lrg-ui-event.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
 	$(INSTALL_DATA) src/ui/lrg-widget.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
 	$(INSTALL_DATA) src/ui/lrg-container.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
@@ -879,6 +885,16 @@ $(OBJDIR)/src/shapes/lrg-line3d.o: src/shapes/lrg-line3d.c src/shapes/lrg-line3d
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/shapes/lrg-text2d.o: src/shapes/lrg-text2d.c src/shapes/lrg-text2d.h src/shapes/lrg-shape2d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-rectangle2d.o: src/shapes/lrg-rectangle2d.c src/shapes/lrg-rectangle2d.h src/shapes/lrg-shape2d.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/shapes/lrg-circle2d.o: src/shapes/lrg-circle2d.c src/shapes/lrg-circle2d.h src/shapes/lrg-shape2d.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
