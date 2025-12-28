@@ -231,9 +231,13 @@ LUAJIT_LIBS := $(shell $(PKG_CONFIG) --libs luajit)
 PYTHON_CFLAGS := $(shell $(PKG_CONFIG) --cflags python3-embed)
 PYTHON_LIBS := $(shell $(PKG_CONFIG) --libs python3-embed)
 
+# GObject Introspection runtime (for GI-based scripting languages)
+GI_RUNTIME_CFLAGS := $(shell $(PKG_CONFIG) --cflags gobject-introspection-1.0)
+GI_RUNTIME_LIBS := $(shell $(PKG_CONFIG) --libs gobject-introspection-1.0)
+
 # Combined dependency flags (use -isystem to suppress warnings from deps)
-DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS)
-DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS)
+DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS)
+DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS)
 
 # Graylib and yaml-glib (built from submodules)
 GRAYLIB_CFLAGS := -I$(GRAYLIB_DIR)/src
@@ -304,10 +308,12 @@ GIR_SCANNER_FLAGS := \
     --pkg=gobject-2.0 \
     --pkg=gio-2.0 \
     --pkg=libdex-1 \
+    --pkg=gobject-introspection-1.0 \
     --include=GLib-2.0 \
     --include=GObject-2.0 \
     --include=Gio-2.0 \
     --include=Dex-1 \
+    --include=GIRepository-2.0 \
     -I$(CURDIR)/src \
     -I$(GRAYLIB_DIR)/src \
     -I$(YAMLGLIB_DIR)/src \

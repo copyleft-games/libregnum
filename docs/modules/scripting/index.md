@@ -4,12 +4,13 @@
 
 The Scripting module enables game logic to be written in dynamic languages rather than compiled C code. This allows for rapid iteration, modding support, and runtime flexibility.
 
-Libregnum provides two scripting backends:
+Libregnum provides multiple scripting backends:
 
 - **Lua** (LuaJIT) - Lightweight, fast, ideal for game scripting
 - **Python** (CPython 3.12+) - Rich ecosystem, familiar syntax
+- **PyGObject** (Python + GI) - Full GObject Introspection access from Python
 
-Both backends implement the same abstract interface (`LrgScripting`), making them interchangeable at the API level.
+All backends implement the same abstract interface (`LrgScripting`), making them interchangeable at the API level. GI-based backends (PyGObject) additionally inherit from `LrgScriptingGI` for typelib and object exposure support.
 
 ### Key Features
 
@@ -77,26 +78,31 @@ main (int argc, char *argv[])
 | Type | Description |
 |------|-------------|
 | `LrgScripting` | Abstract base class for scripting backends |
+| `LrgScriptingGI` | Abstract base for GObject Introspection backends |
 | `LrgScriptingLua` | LuaJIT scripting implementation |
-| `LrgScriptingPython` | Python 3.12+ scripting implementation |
+| `LrgScriptingPython` | Python 3.12+ scripting implementation (direct C API) |
+| `LrgScriptingPyGObject` | Python with PyGObject (native GI bindings) |
 | `LrgScriptable` | Interface for custom script exposure (opt-in) |
 
 ## Feature Comparison
 
-| Feature | Lua | Python |
-|---------|-----|--------|
-| Performance | Excellent (LuaJIT) | Good |
-| Memory footprint | Small | Larger |
-| Standard library | Minimal | Extensive |
-| Package ecosystem | Moderate | Vast |
-| Syntax familiarity | Unique | Widely known |
-| Update hooks | Yes | Yes |
-| Registry integration | Yes | Yes |
-| Engine access | Yes | Yes |
+| Feature | Lua | Python | PyGObject |
+|---------|-----|--------|-----------|
+| Performance | Excellent (LuaJIT) | Good | Good |
+| Memory footprint | Small | Moderate | Larger |
+| Standard library | Minimal | Extensive | Extensive |
+| Package ecosystem | Moderate | Vast | Vast + GI libs |
+| Syntax familiarity | Unique | Widely known | Widely known |
+| Update hooks | Yes | Yes | Yes |
+| Registry integration | Yes | Yes | Yes |
+| Engine access | Yes | Yes | Yes |
+| Native GI bindings | No | No | Yes |
+| Import Libregnum types | No | No | Yes |
+| Use Gtk/Gio from scripts | No | No | Yes |
 
 ## Built-in API
 
-Both backends expose the same global objects:
+All backends expose the same global objects (Log, Registry, Engine). PyGObject additionally provides native access to GI types via `from gi.repository import Libregnum`.
 
 ### Log
 
@@ -217,7 +223,9 @@ See [LrgScriptable](scriptable.md) for complete documentation.
 ## See Also
 
 - [LrgScripting](scripting.md) - Abstract base class documentation
+- [LrgScriptingGI](scripting-gi.md) - GI base class for introspection backends
 - [LrgScriptingLua](scripting-lua.md) - Lua implementation details
 - [LrgScriptingPython](scripting-python.md) - Python implementation details
+- [LrgScriptingPyGObject](scripting-pygobject.md) - PyGObject implementation details
 - [LrgScriptable](scriptable.md) - Custom script exposure interface
 - [Scripting Examples](../../examples/scripting-basics.md) - Comprehensive usage examples

@@ -445,8 +445,15 @@ typedef struct _LrgScriptingClass  LrgScriptingClass;
 /* LrgScriptingLua is a final type - no Class forward declaration needed */
 typedef struct _LrgScriptingLua  LrgScriptingLua;
 
+/* LrgScriptingGI is a derivable type (intermediate base for GI-based languages) */
+typedef struct _LrgScriptingGI       LrgScriptingGI;
+typedef struct _LrgScriptingGIClass  LrgScriptingGIClass;
+
 /* LrgScriptingPython is a final type - no Class forward declaration needed */
 typedef struct _LrgScriptingPython  LrgScriptingPython;
+
+/* LrgScriptingPyGObject is a final type - no Class forward declaration needed */
+typedef struct _LrgScriptingPyGObject  LrgScriptingPyGObject;
 
 /* LrgScriptable is an interface for custom script exposure */
 typedef struct _LrgScriptable           LrgScriptable;

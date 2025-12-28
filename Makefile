@@ -162,7 +162,9 @@ PUBLIC_HEADERS := \
 	src/scene/lrg-mesh-data.h \
 	src/scripting/lrg-scripting.h \
 	src/scripting/lrg-scripting-lua.h \
-	src/scripting/lrg-scripting-python.h
+	src/scripting/lrg-scripting-gi.h \
+	src/scripting/lrg-scripting-python.h \
+	src/scripting/lrg-scripting-pygobject.h
 
 # Source files
 SOURCES := \
@@ -302,9 +304,11 @@ SOURCES := \
 	src/scripting/lrg-scripting-lua.c \
 	src/scripting/lrg-lua-bridge.c \
 	src/scripting/lrg-lua-api.c \
+	src/scripting/lrg-scripting-gi.c \
 	src/scripting/lrg-scripting-python.c \
 	src/scripting/lrg-python-bridge.c \
-	src/scripting/lrg-python-api.c
+	src/scripting/lrg-python-api.c \
+	src/scripting/lrg-scripting-pygobject.c
 
 # Object files
 OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(SOURCES))
@@ -602,7 +606,9 @@ endif
 	$(INSTALL_DATA) src/scene/lrg-mesh-data.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
 	$(INSTALL_DATA) src/scripting/lrg-scripting.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
 	$(INSTALL_DATA) src/scripting/lrg-scripting-lua.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
+	$(INSTALL_DATA) src/scripting/lrg-scripting-gi.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
 	$(INSTALL_DATA) src/scripting/lrg-scripting-python.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
+	$(INSTALL_DATA) src/scripting/lrg-scripting-pygobject.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
 	# Install pkg-config
 	$(INSTALL_DATA) $(BUILDDIR)/$(PC_FILE) $(DESTDIR)$(PKGCONFIGDIR)/
 	# Install GIR
@@ -1130,6 +1136,11 @@ $(OBJDIR)/src/scripting/lrg-lua-api.o: src/scripting/lrg-lua-api.c src/scripting
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
+$(OBJDIR)/src/scripting/lrg-scripting-gi.o: src/scripting/lrg-scripting-gi.c src/scripting/lrg-scripting-gi.h src/scripting/lrg-scripting-gi-private.h src/scripting/lrg-scripting.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
 $(OBJDIR)/src/scripting/lrg-scripting-python.o: src/scripting/lrg-scripting-python.c src/scripting/lrg-scripting-python.h src/scripting/lrg-scripting-python-private.h src/scripting/lrg-python-bridge.h src/scripting/lrg-python-api.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
@@ -1141,6 +1152,11 @@ $(OBJDIR)/src/scripting/lrg-python-bridge.o: src/scripting/lrg-python-bridge.c s
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/scripting/lrg-python-api.o: src/scripting/lrg-python-api.c src/scripting/lrg-python-api.h src/scripting/lrg-python-bridge.h src/scripting/lrg-scripting-python-private.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/scripting/lrg-scripting-pygobject.o: src/scripting/lrg-scripting-pygobject.c src/scripting/lrg-scripting-pygobject.h src/scripting/lrg-scripting-gi.h src/scripting/lrg-scripting-gi-private.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

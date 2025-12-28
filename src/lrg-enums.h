@@ -1278,6 +1278,8 @@ GQuark lrg_scripting_error_quark (void);
  * @LRG_SCRIPTING_ERROR_RUNTIME: Runtime error during script execution
  * @LRG_SCRIPTING_ERROR_TYPE: Type conversion or mismatch error
  * @LRG_SCRIPTING_ERROR_NOT_FOUND: Function or variable not found
+ * @LRG_SCRIPTING_ERROR_GI_FAILED: GObject Introspection operation failed
+ * @LRG_SCRIPTING_ERROR_TYPELIB_NOT_FOUND: Typelib not found
  *
  * Error codes for the scripting system.
  */
@@ -1288,7 +1290,9 @@ typedef enum
     LRG_SCRIPTING_ERROR_SYNTAX,
     LRG_SCRIPTING_ERROR_RUNTIME,
     LRG_SCRIPTING_ERROR_TYPE,
-    LRG_SCRIPTING_ERROR_NOT_FOUND
+    LRG_SCRIPTING_ERROR_NOT_FOUND,
+    LRG_SCRIPTING_ERROR_GI_FAILED,
+    LRG_SCRIPTING_ERROR_TYPELIB_NOT_FOUND
 } LrgScriptingError;
 
 LRG_AVAILABLE_IN_ALL

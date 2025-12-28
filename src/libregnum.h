@@ -204,6 +204,8 @@
 #include "scripting/lrg-scripting.h"
 #include "scripting/lrg-scriptable.h"
 #include "scripting/lrg-scripting-lua.h"
+#include "scripting/lrg-scripting-gi.h"
 #include "scripting/lrg-scripting-python.h"
+#include "scripting/lrg-scripting-pygobject.h"
 
 #undef LIBREGNUM_INSIDE

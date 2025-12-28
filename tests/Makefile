@@ -30,7 +30,7 @@ LIBREGNUM_STATIC := ../$(LIBOUTDIR)/$(LIB_STATIC)
 TEST_CFLAGS := $(COMMON_CFLAGS) $(WARN_CFLAGS)
 TEST_CFLAGS += -I../src
 TEST_CFLAGS += -DLIBREGNUM_COMPILATION
-TEST_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 libdex-1 json-glib-1.0)
+TEST_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 libdex-1 json-glib-1.0 gobject-introspection-1.0)
 
 # Add dependency include paths
 TEST_CFLAGS += -I$(GRAYLIB_DIR)/src
@@ -47,7 +47,7 @@ TEST_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
 # Test libraries
 TEST_LIBS := -l$(LIB_NAME)
 TEST_LIBS += -lgraylib -lyaml-glib
-TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1)
+TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 gobject-introspection-1.0)
 TEST_LIBS += $(PYTHON_LIBS)
 
 # =============================================================================
@@ -81,7 +81,9 @@ TEST_SOURCES := \
 	test-scene.c \
 	test-primitives.c \
 	test-scripting.c \
-	test-scripting-python.c
+	test-scripting-python.c \
+	test-scripting-gi.c \
+	test-scripting-pygobject.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))
