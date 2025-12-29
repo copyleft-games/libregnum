@@ -570,6 +570,7 @@ lrg_asset_manager_load_music (LrgAssetManager  *self,
     return klass->load_music (self, name, error);
 }
 
+#ifdef LRG_HAS_LIBDEX
 /* ==========================================================================
  * Async Loading - Data Structures
  * ========================================================================== */
@@ -781,6 +782,7 @@ lrg_asset_manager_load_music_async (LrgAssetManager *self,
                                 data,
                                 (GDestroyNotify)load_asset_data_free);
 }
+#endif /* LRG_HAS_LIBDEX */
 
 /* ==========================================================================
  * Public API - Cache Management

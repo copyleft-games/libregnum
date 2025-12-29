@@ -15,7 +15,9 @@
 
 #include <glib-object.h>
 #include <gio/gio.h>
+#ifdef LRG_HAS_LIBDEX
 #include <libdex.h>
+#endif
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
@@ -62,6 +64,7 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_net_client_connect (LrgNetClient  *self,
                                  GError       **error);
 
+#ifdef LRG_HAS_LIBDEX
 /**
  * lrg_net_client_connect_async:
  * @self: an #LrgNetClient
@@ -72,6 +75,7 @@ gboolean lrg_net_client_connect (LrgNetClient  *self,
  */
 LRG_AVAILABLE_IN_ALL
 DexFuture * lrg_net_client_connect_async (LrgNetClient *self);
+#endif /* LRG_HAS_LIBDEX */
 
 /**
  * lrg_net_client_disconnect:
@@ -171,6 +175,7 @@ gboolean lrg_net_client_send (LrgNetClient   *self,
                               LrgNetMessage  *message,
                               GError        **error);
 
+#ifdef LRG_HAS_LIBDEX
 /**
  * lrg_net_client_send_async:
  * @self: an #LrgNetClient
@@ -183,6 +188,7 @@ gboolean lrg_net_client_send (LrgNetClient   *self,
 LRG_AVAILABLE_IN_ALL
 DexFuture * lrg_net_client_send_async (LrgNetClient  *self,
                                        LrgNetMessage *message);
+#endif /* LRG_HAS_LIBDEX */
 
 /* ==========================================================================
  * Update

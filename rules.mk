@@ -135,6 +135,8 @@ help:
 	@echo "  UBSAN=1         Enable UndefinedBehaviorSanitizer (requires DEBUG=1)"
 	@echo "  ENABLE_TRACE=1  Enable trace logging at compile time"
 	@echo "  PREFIX=/path    Set installation prefix"
+	@echo "  WINDOWS=1       Cross-compile for Windows x64 (mingw64)"
+	@echo "  STEAM=1         Enable Steam SDK integration (opt-in)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make                    # Release build"
@@ -142,12 +144,18 @@ help:
 	@echo "  make DEBUG=1 ASAN=1     # Debug with AddressSanitizer"
 	@echo "  make test               # Build and run tests"
 	@echo "  make install PREFIX=/opt/libregnum"
+	@echo "  make WINDOWS=1          # Cross-compile for Windows"
+	@echo "  make STEAM=1            # Build with Steam SDK support"
 	@echo ""
 	@echo "Build Configuration:"
-	@echo "  Platform:     $(PLATFORM)"
-	@echo "  C Standard:   $(CSTD)"
-	@echo "  Debug:        $(DEBUG)"
-	@echo "  Build Dir:    $(BUILDDIR)"
+	@echo "  Host Platform:    $(PLATFORM)"
+	@echo "  Target Platform:  $(TARGET_PLATFORM)"
+	@echo "  C Standard:       $(CSTD)"
+	@echo "  Debug:            $(DEBUG)"
+	@echo "  Build Dir:        $(BUILDDIR)"
+ifneq ($(CROSS),)
+	@echo "  Cross Compiler:   $(CROSS)"
+endif
 
 # =============================================================================
 # Dependency Checks
@@ -155,17 +163,26 @@ help:
 
 .PHONY: check-deps
 check-deps:
+ifeq ($(TARGET_PLATFORM),windows)
+	@$(PKG_CONFIG) --exists glib-2.0 || (echo "Missing: mingw64-glib2" && exit 1)
+	@$(PKG_CONFIG) --exists gobject-2.0 || (echo "Missing: mingw64-glib2" && exit 1)
+	@$(PKG_CONFIG) --exists gio-2.0 || (echo "Missing: mingw64-glib2" && exit 1)
+	@$(PKG_CONFIG) --exists json-glib-1.0 || (echo "Missing: mingw64-json-glib" && exit 1)
+	@$(PKG_CONFIG) --exists yaml-0.1 || echo "Note: mingw64-libyaml not found (will use bundled yaml-glib)"
+	$(call print_status,"Windows cross-compile dependencies found")
+else
 	@$(PKG_CONFIG) --exists glib-2.0 || (echo "Missing: glib2-devel" && exit 1)
 	@$(PKG_CONFIG) --exists gobject-2.0 || (echo "Missing: glib2-devel" && exit 1)
 	@$(PKG_CONFIG) --exists gio-2.0 || (echo "Missing: glib2-devel" && exit 1)
 	@$(PKG_CONFIG) --exists libdex-1 || (echo "Missing: libdex-devel" && exit 1)
 	@$(PKG_CONFIG) --exists json-glib-1.0 || (echo "Missing: json-glib-devel" && exit 1)
 	@$(PKG_CONFIG) --exists yaml-0.1 || (echo "Missing: libyaml-devel" && exit 1)
-	@$(PKG_CONFIG) --exists luajit || (echo "Missing: luajit-devel" && exit 1)
+	@$(PKG_CONFIG) --exists luajit || echo "Note: luajit-devel not found (scripting optional)"
 ifeq ($(BUILD_GIR),1)
 	@which $(GIR_SCANNER) > /dev/null || (echo "Missing: gobject-introspection-devel" && exit 1)
 endif
 	$(call print_status,"All dependencies found")
+endif
 
 # =============================================================================
 # Version Info Target

@@ -19,7 +19,9 @@
 
 #include <glib-object.h>
 #include <gio/gio.h>
+#ifdef LRG_HAS_LIBDEX
 #include <libdex.h>
+#endif
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
@@ -204,6 +206,7 @@ GList * lrg_data_loader_load_files (LrgDataLoader   *self,
                                     const gchar    **paths,
                                     GError         **error);
 
+#ifdef LRG_HAS_LIBDEX
 /* ==========================================================================
  * Asynchronous Loading (libdex futures)
  * ========================================================================== */
@@ -249,6 +252,7 @@ LRG_AVAILABLE_IN_ALL
 DexFuture * lrg_data_loader_load_directory_async (LrgDataLoader *self,
                                                   const gchar   *directory,
                                                   gboolean       recursive);
+#endif /* LRG_HAS_LIBDEX */
 
 /* ==========================================================================
  * Utility

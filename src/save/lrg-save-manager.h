@@ -17,7 +17,9 @@
 #endif
 
 #include <glib-object.h>
+#ifdef LRG_HAS_LIBDEX
 #include <libdex.h>
+#endif
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
@@ -184,6 +186,7 @@ gboolean lrg_save_manager_load (LrgSaveManager  *self,
                                 const gchar     *slot_name,
                                 GError         **error);
 
+#ifdef LRG_HAS_LIBDEX
 /* ==========================================================================
  * Asynchronous Save/Load
  * ========================================================================== */
@@ -213,6 +216,7 @@ DexFuture * lrg_save_manager_save_async (LrgSaveManager *self,
 LRG_AVAILABLE_IN_ALL
 DexFuture * lrg_save_manager_load_async (LrgSaveManager *self,
                                          const gchar    *slot_name);
+#endif /* LRG_HAS_LIBDEX */
 
 /* ==========================================================================
  * Save Slot Management

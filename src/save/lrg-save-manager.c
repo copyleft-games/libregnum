@@ -612,6 +612,7 @@ lrg_save_manager_load (LrgSaveManager  *self,
     return success;
 }
 
+#ifdef LRG_HAS_LIBDEX
 /* ==========================================================================
  * Asynchronous Save/Load
  * ========================================================================== */
@@ -721,6 +722,7 @@ lrg_save_manager_load_async (LrgSaveManager *self,
                                 data,
                                 async_save_load_data_free);
 }
+#endif /* LRG_HAS_LIBDEX */
 
 /* ==========================================================================
  * Save Slot Management

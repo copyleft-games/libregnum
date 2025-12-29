@@ -438,6 +438,32 @@ lrg_item_type_get_type (void)
 }
 
 /* ==========================================================================
+ * Accessibility GTypes
+ * ========================================================================== */
+
+GType
+lrg_colorblind_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_COLORBLIND_NONE, "LRG_COLORBLIND_NONE", "none" },
+            { LRG_COLORBLIND_DEUTERANOPIA, "LRG_COLORBLIND_DEUTERANOPIA", "deuteranopia" },
+            { LRG_COLORBLIND_PROTANOPIA, "LRG_COLORBLIND_PROTANOPIA", "protanopia" },
+            { LRG_COLORBLIND_TRITANOPIA, "LRG_COLORBLIND_TRITANOPIA", "tritanopia" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgColorblindMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
  * UI GTypes
  * ========================================================================== */
 

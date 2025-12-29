@@ -15,7 +15,9 @@
 
 #include <glib-object.h>
 #include <gio/gio.h>
+#ifdef LRG_HAS_LIBDEX
 #include <libdex.h>
+#endif
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
@@ -226,6 +228,7 @@ gboolean lrg_net_server_broadcast (LrgNetServer   *self,
                                    LrgNetMessage  *message,
                                    GError        **error);
 
+#ifdef LRG_HAS_LIBDEX
 /**
  * lrg_net_server_send_async:
  * @self: an #LrgNetServer
@@ -240,6 +243,7 @@ LRG_AVAILABLE_IN_ALL
 DexFuture * lrg_net_server_send_async (LrgNetServer  *self,
                                        guint32        peer_id,
                                        LrgNetMessage *message);
+#endif /* LRG_HAS_LIBDEX */
 
 /* ==========================================================================
  * Update

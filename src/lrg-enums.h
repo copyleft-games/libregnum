@@ -427,6 +427,31 @@ GType lrg_item_type_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_ITEM_TYPE (lrg_item_type_get_type ())
 
 /* ==========================================================================
+ * Accessibility Types
+ * ========================================================================== */
+
+/**
+ * LrgColorblindMode:
+ * @LRG_COLORBLIND_NONE: No colorblind filter
+ * @LRG_COLORBLIND_DEUTERANOPIA: Red-green (deutan) colorblind mode
+ * @LRG_COLORBLIND_PROTANOPIA: Red-green (protan) colorblind mode
+ * @LRG_COLORBLIND_TRITANOPIA: Blue-yellow colorblind mode
+ *
+ * Colorblind accessibility modes.
+ */
+typedef enum
+{
+    LRG_COLORBLIND_NONE = 0,
+    LRG_COLORBLIND_DEUTERANOPIA,
+    LRG_COLORBLIND_PROTANOPIA,
+    LRG_COLORBLIND_TRITANOPIA
+} LrgColorblindMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_colorblind_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_COLORBLIND_MODE (lrg_colorblind_mode_get_type ())
+
+/* ==========================================================================
  * UI Types
  * ========================================================================== */
 

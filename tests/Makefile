@@ -84,7 +84,12 @@ TEST_SOURCES := \
 	test-scripting-python.c \
 	test-scripting-gi.c \
 	test-scripting-pygobject.c \
-	test-scripting-gjs.c
+	test-scripting-gjs.c \
+	test-settings.c \
+	test-gamestate.c \
+	test-crash.c \
+	test-accessibility.c \
+	test-steam.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))

@@ -19,7 +19,9 @@
 #include "../graphics/lrg-window.h"
 #include "../graphics/lrg-renderer.h"
 #include "../scripting/lrg-scripting.h"
+#ifdef LRG_HAS_LUAJIT
 #include "../scripting/lrg-scripting-lua.h"
+#endif
 
 typedef struct
 {
@@ -105,6 +107,7 @@ static void
 lrg_engine_real_update (LrgEngine *self,
                         gfloat     delta)
 {
+#ifdef LRG_HAS_LUAJIT
     LrgEnginePrivate *priv = lrg_engine_get_instance_private (self);
 
     /* Call scripting update hooks if scripting is attached */
@@ -112,6 +115,10 @@ lrg_engine_real_update (LrgEngine *self,
     {
         lrg_scripting_lua_update (LRG_SCRIPTING_LUA (priv->scripting), delta);
     }
+#else
+    (void)self;
+    (void)delta;
+#endif
 }
 
 /* ==========================================================================
@@ -578,11 +585,13 @@ lrg_engine_set_scripting (LrgEngine    *self,
         priv->scripting = g_object_ref (scripting);
 
         /* If it's a Lua scripting instance, connect to the registry */
+#ifdef LRG_HAS_LUAJIT
         if (LRG_IS_SCRIPTING_LUA (scripting) && priv->registry != NULL)
         {
             lrg_scripting_lua_set_registry (LRG_SCRIPTING_LUA (scripting),
                                             priv->registry);
         }
+#endif
 
         lrg_debug (LRG_LOG_DOMAIN_CORE, "Scripting subsystem attached");
     }

@@ -19,7 +19,9 @@
 
 #include <glib-object.h>
 #include <gio/gio.h>
+#ifdef LRG_HAS_LIBDEX
 #include <libdex.h>
+#endif
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
@@ -210,6 +212,7 @@ GrlMusic * lrg_asset_manager_load_music (LrgAssetManager  *self,
                                          const gchar      *name,
                                          GError          **error);
 
+#ifdef LRG_HAS_LIBDEX
 /* ==========================================================================
  * Asynchronous Loading
  * ========================================================================== */
@@ -267,6 +270,7 @@ DexFuture * lrg_asset_manager_load_sound_async (LrgAssetManager *self,
 LRG_AVAILABLE_IN_ALL
 DexFuture * lrg_asset_manager_load_music_async (LrgAssetManager *self,
                                                 const gchar     *name);
+#endif /* LRG_HAS_LIBDEX */
 
 /* ==========================================================================
  * Cache Management

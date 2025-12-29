@@ -163,11 +163,24 @@ PUBLIC_HEADERS := \
 	src/scene/lrg-scene-serializer-blender.h \
 	src/scene/lrg-mesh-data.h \
 	src/scripting/lrg-scripting.h \
-	src/scripting/lrg-scripting-lua.h \
-	src/scripting/lrg-scripting-gi.h \
-	src/scripting/lrg-scripting-python.h \
-	src/scripting/lrg-scripting-pygobject.h \
-	src/scripting/lrg-scripting-gjs.h
+	src/settings/lrg-settings-group.h \
+	src/settings/lrg-graphics-settings.h \
+	src/settings/lrg-audio-settings.h \
+	src/settings/lrg-settings.h \
+	src/gamestate/lrg-game-state.h \
+	src/gamestate/lrg-game-state-manager.h \
+	src/crash/lrg-crash-dialog.h \
+	src/crash/lrg-crash-dialog-terminal.h \
+	src/crash/lrg-crash-reporter.h \
+	src/accessibility/lrg-color-filter.h \
+	src/accessibility/lrg-accessibility-settings.h \
+	src/steam/lrg-steam-service.h \
+	src/steam/lrg-steam-stub.h \
+	src/steam/lrg-steam-client.h \
+	src/steam/lrg-steam-achievements.h \
+	src/steam/lrg-steam-cloud.h \
+	src/steam/lrg-steam-stats.h \
+	src/steam/lrg-steam-presence.h
 
 # Source files
 SOURCES := \
@@ -306,15 +319,59 @@ SOURCES := \
 	src/scene/lrg-mesh-data.c \
 	src/scripting/lrg-scripting.c \
 	src/scripting/lrg-scriptable.c \
+	src/settings/lrg-settings-group.c \
+	src/settings/lrg-graphics-settings.c \
+	src/settings/lrg-audio-settings.c \
+	src/settings/lrg-settings.c \
+	src/gamestate/lrg-game-state.c \
+	src/gamestate/lrg-game-state-manager.c \
+	src/crash/lrg-crash-dialog.c \
+	src/crash/lrg-crash-dialog-terminal.c \
+	src/crash/lrg-crash-reporter.c \
+	src/accessibility/lrg-color-filter.c \
+	src/accessibility/lrg-accessibility-settings.c \
+	src/steam/lrg-steam-service.c \
+	src/steam/lrg-steam-stub.c \
+	src/steam/lrg-steam-client.c \
+	src/steam/lrg-steam-achievements.c \
+	src/steam/lrg-steam-cloud.c \
+	src/steam/lrg-steam-stats.c \
+	src/steam/lrg-steam-presence.c
+
+# Conditional scripting backends
+ifeq ($(HAS_LUAJIT),1)
+PUBLIC_HEADERS += \
+	src/scripting/lrg-scripting-lua.h
+SOURCES += \
 	src/scripting/lrg-scripting-lua.c \
 	src/scripting/lrg-lua-bridge.c \
-	src/scripting/lrg-lua-api.c \
-	src/scripting/lrg-scripting-gi.c \
+	src/scripting/lrg-lua-api.c
+endif
+
+ifeq ($(HAS_PYTHON),1)
+PUBLIC_HEADERS += \
+	src/scripting/lrg-scripting-python.h \
+	src/scripting/lrg-scripting-pygobject.h
+SOURCES += \
 	src/scripting/lrg-scripting-python.c \
 	src/scripting/lrg-python-bridge.c \
 	src/scripting/lrg-python-api.c \
-	src/scripting/lrg-scripting-pygobject.c \
+	src/scripting/lrg-scripting-pygobject.c
+endif
+
+ifeq ($(HAS_GI),1)
+PUBLIC_HEADERS += \
+	src/scripting/lrg-scripting-gi.h
+SOURCES += \
+	src/scripting/lrg-scripting-gi.c
+endif
+
+ifeq ($(HAS_GJS),1)
+PUBLIC_HEADERS += \
+	src/scripting/lrg-scripting-gjs.h
+SOURCES += \
 	src/scripting/lrg-scripting-gjs.c
+endif
 
 # Object files
 OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(SOURCES))
@@ -330,11 +387,28 @@ GENERATED_HEADERS := src/lrg-version.h src/config.h
 generate: $(GENERATED_HEADERS)
 
 # =============================================================================
+# Platform Marker (auto-clean on platform switch)
+# =============================================================================
+
+PLATFORM_MARKER := $(BUILDDIR)/.platform-marker
+
+.PHONY: platform-check
+platform-check:
+	@$(MKDIR_P) $(BUILDDIR)
+	@if [ -f "$(PLATFORM_MARKER)" ] && \
+	   [ "$$(cat $(PLATFORM_MARKER))" != "$(TARGET_PLATFORM)" ]; then \
+		echo "Platform changed from $$(cat $(PLATFORM_MARKER)) to $(TARGET_PLATFORM), cleaning..."; \
+		$(RMDIR) $(OBJDIR); \
+		$(RMDIR) $(LIBOUTDIR); \
+	fi
+	@echo "$(TARGET_PLATFORM)" > $(PLATFORM_MARKER)
+
+# =============================================================================
 # Default Target
 # =============================================================================
 
 # Use recursive make to ensure generate completes before lib starts
-all: check-deps deps generate
+all: check-deps platform-check deps generate
 	@$(MAKE) --no-print-directory _lib
 ifeq ($(BUILD_GIR),1)
 	@$(MAKE) --no-print-directory gir
@@ -352,16 +426,27 @@ _lib: lib-static lib-shared
 
 deps: deps-graylib deps-yamlglib
 
+# Pass cross-compilation settings to dependencies
+ifeq ($(TARGET_PLATFORM),windows)
+    GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/graylib.dll
+    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/yaml-glib.dll
+    DEP_BUILD_FLAGS := WINDOWS=1
+else
+    GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/libgraylib.so
+    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/libyaml-glib.so
+    DEP_BUILD_FLAGS :=
+endif
+
 deps-graylib:
-	@if [ ! -f "$(GRAYLIB_DIR)/build/lib/libgraylib.so" ]; then \
-		$(call print_status,"Building graylib..."); \
-		$(MAKE) -C $(GRAYLIB_DIR); \
+	@if [ ! -f "$(GRAYLIB_LIB)" ]; then \
+		$(call print_status,"Building graylib ($(TARGET_PLATFORM))..."); \
+		$(MAKE) -C $(GRAYLIB_DIR) $(DEP_BUILD_FLAGS); \
 	fi
 
 deps-yamlglib:
-	@if [ ! -f "$(YAMLGLIB_DIR)/build/libyaml-glib.so" ]; then \
-		$(call print_status,"Building yaml-glib..."); \
-		$(MAKE) -C $(YAMLGLIB_DIR); \
+	@if [ ! -f "$(YAMLGLIB_LIB)" ]; then \
+		$(call print_status,"Building yaml-glib ($(TARGET_PLATFORM))..."); \
+		$(MAKE) -C $(YAMLGLIB_DIR) $(DEP_BUILD_FLAGS); \
 	fi
 
 deps-clean:
@@ -386,12 +471,19 @@ $(LIBOUTDIR)/$(LIB_STATIC): $(OBJECTS) | $(LIBOUTDIR)
 	@$(AR) rcs $@ $(OBJECTS)
 	@$(RANLIB) $@
 
-# Shared library
+# Shared library (platform-specific build)
+ifeq ($(TARGET_PLATFORM),windows)
+$(LIBOUTDIR)/$(LIB_SHARED): $(OBJECTS) | $(LIBOUTDIR)
+	$(call print_link,$(LIB_SHARED))
+	@$(CC) $(LIB_LDFLAGS) -o $(LIBOUTDIR)/$(LIB_SHARED) $(OBJECTS) $(ALL_LIBS)
+	@echo "Built: $(LIB_SHARED) and $(LIB_IMPORT)"
+else
 $(LIBOUTDIR)/$(LIB_SHARED): $(OBJECTS) | $(LIBOUTDIR)
 	$(call print_link,$(LIB_SHARED))
 	@$(CC) $(LIB_LDFLAGS) -o $(LIBOUTDIR)/$(LIB_SHARED_VERSION) $(OBJECTS) $(ALL_LIBS)
 	@cd $(LIBOUTDIR) && ln -sf $(LIB_SHARED_VERSION) $(LIB_SHARED_SONAME)
 	@cd $(LIBOUTDIR) && ln -sf $(LIB_SHARED_SONAME) $(LIB_SHARED)
+endif
 
 # =============================================================================
 # Generated Files
@@ -453,7 +545,12 @@ $(GIROUTDIR)/$(TYPELIB_NAME): $(GIROUTDIR)/$(GIR_NAME)
 # =============================================================================
 
 test tests check: lib
-ifeq ($(BUILD_TESTS),1)
+ifeq ($(TARGET_PLATFORM),windows)
+	$(call print_warning,"Cross-compiled tests cannot be run on Linux.")
+	$(call print_info,"Use Wine or copy to Windows to run tests.")
+	$(call print_status,"Building tests only...")
+	@$(MAKE) -C tests
+else ifeq ($(BUILD_TESTS),1)
 	$(call print_status,"Building and running tests...")
 	@$(MAKE) -C tests run
 else
@@ -489,6 +586,14 @@ endif
 # =============================================================================
 
 install: lib $(BUILDDIR)/$(PC_FILE)
+ifeq ($(TARGET_PLATFORM),windows)
+	$(call print_warning,"Install target is for native Linux builds only.")
+	$(call print_info,"For Windows, copy the DLL and headers manually:")
+	$(call print_info,"  DLL: $(LIBOUTDIR)/$(LIB_SHARED)")
+	$(call print_info,"  Import lib: $(LIBOUTDIR)/$(LIB_IMPORT)")
+	$(call print_info,"  Headers: src/*.h src/*/*.h")
+	@exit 0
+else
 	$(call print_status,"Installing to $(PREFIX)...")
 	# Create directories
 	@$(MKDIR_P) $(DESTDIR)$(LIBDIR)
@@ -626,6 +731,8 @@ ifeq ($(BUILD_GIR),1)
 	$(INSTALL_DATA) $(GIROUTDIR)/$(TYPELIB_NAME) $(DESTDIR)$(TYPELIBDIR)/
 endif
 	$(call print_status,"Installation complete!")
+endif
+# End of ifeq ($(TARGET_PLATFORM),windows) else block
 
 uninstall:
 	$(call print_status,"Uninstalling from $(PREFIX)...")
@@ -1184,6 +1291,80 @@ $(OBJDIR)/src/scripting/lrg-scripting-gjs.o: src/scripting/lrg-scripting-gjs.c s
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# Game State module
+$(OBJDIR)/src/gamestate/lrg-game-state.o: src/gamestate/lrg-game-state.c src/gamestate/lrg-game-state.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/gamestate/lrg-game-state-manager.o: src/gamestate/lrg-game-state-manager.c src/gamestate/lrg-game-state-manager.h src/gamestate/lrg-game-state.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# Crash module
+$(OBJDIR)/src/crash/lrg-crash-dialog.o: src/crash/lrg-crash-dialog.c src/crash/lrg-crash-dialog.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/crash/lrg-crash-dialog-terminal.o: src/crash/lrg-crash-dialog-terminal.c src/crash/lrg-crash-dialog-terminal.h src/crash/lrg-crash-dialog.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/crash/lrg-crash-reporter.o: src/crash/lrg-crash-reporter.c src/crash/lrg-crash-reporter.h src/crash/lrg-crash-dialog.h src/crash/lrg-crash-dialog-terminal.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# Accessibility module
+$(OBJDIR)/src/accessibility/lrg-color-filter.o: src/accessibility/lrg-color-filter.c src/accessibility/lrg-color-filter.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/accessibility/lrg-accessibility-settings.o: src/accessibility/lrg-accessibility-settings.c src/accessibility/lrg-accessibility-settings.h src/accessibility/lrg-color-filter.h src/settings/lrg-settings-group.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# Steam module
+$(OBJDIR)/src/steam/lrg-steam-service.o: src/steam/lrg-steam-service.c src/steam/lrg-steam-service.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/steam/lrg-steam-stub.o: src/steam/lrg-steam-stub.c src/steam/lrg-steam-stub.h src/steam/lrg-steam-service.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/steam/lrg-steam-client.o: src/steam/lrg-steam-client.c src/steam/lrg-steam-client.h src/steam/lrg-steam-service.h src/steam/lrg-steam-types.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/steam/lrg-steam-achievements.o: src/steam/lrg-steam-achievements.c src/steam/lrg-steam-achievements.h src/steam/lrg-steam-client.h src/steam/lrg-steam-types.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/steam/lrg-steam-cloud.o: src/steam/lrg-steam-cloud.c src/steam/lrg-steam-cloud.h src/steam/lrg-steam-client.h src/steam/lrg-steam-types.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/steam/lrg-steam-stats.o: src/steam/lrg-steam-stats.c src/steam/lrg-steam-stats.h src/steam/lrg-steam-client.h src/steam/lrg-steam-types.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/steam/lrg-steam-presence.o: src/steam/lrg-steam-presence.c src/steam/lrg-steam-presence.h src/steam/lrg-steam-client.h src/steam/lrg-steam-types.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
 
 # =============================================================================
 # Phony Targets

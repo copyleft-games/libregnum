@@ -377,6 +377,7 @@ lrg_net_client_connect (LrgNetClient  *self,
     return TRUE;
 }
 
+#ifdef LRG_HAS_LIBDEX
 /**
  * lrg_net_client_connect_async:
  * @self: an #LrgNetClient
@@ -404,6 +405,7 @@ lrg_net_client_connect_async (LrgNetClient *self)
     else
         return dex_future_new_for_error (g_steal_pointer (&error));
 }
+#endif /* LRG_HAS_LIBDEX */
 
 /**
  * lrg_net_client_disconnect:
@@ -589,6 +591,7 @@ lrg_net_client_send (LrgNetClient   *self,
     return TRUE;
 }
 
+#ifdef LRG_HAS_LIBDEX
 /**
  * lrg_net_client_send_async:
  * @self: an #LrgNetClient
@@ -619,6 +622,7 @@ lrg_net_client_send_async (LrgNetClient  *self,
     else
         return dex_future_new_for_error (g_steal_pointer (&error));
 }
+#endif /* LRG_HAS_LIBDEX */
 
 /**
  * lrg_net_client_poll:

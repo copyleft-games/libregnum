@@ -677,6 +677,7 @@ lrg_data_loader_load_files (LrgDataLoader   *self,
     return g_list_reverse (objects);
 }
 
+#ifdef LRG_HAS_LIBDEX
 /* ==========================================================================
  * Async Loading - Private Data Structures
  * ========================================================================== */
@@ -872,6 +873,7 @@ lrg_data_loader_load_directory_async (LrgDataLoader *self,
                                 data,
                                 (GDestroyNotify)load_directory_data_free);
 }
+#endif /* LRG_HAS_LIBDEX */
 
 /* ==========================================================================
  * Public API - Utility

@@ -299,6 +299,10 @@ lrg_save_game_new_from_file (const gchar  *path,
     }
 
     self = lrg_save_game_new (slot_name);
+    if (self == NULL)
+    {
+        return NULL;
+    }
     self->path = g_strdup (path);
 
     /* Read metadata from the context */

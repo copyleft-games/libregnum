@@ -817,6 +817,7 @@ lrg_net_server_broadcast (LrgNetServer   *self,
     return success;
 }
 
+#ifdef LRG_HAS_LIBDEX
 /**
  * lrg_net_server_send_async:
  * @self: an #LrgNetServer
@@ -849,6 +850,7 @@ lrg_net_server_send_async (LrgNetServer  *self,
     else
         return dex_future_new_for_error (g_steal_pointer (&error));
 }
+#endif /* LRG_HAS_LIBDEX */
 
 /**
  * lrg_net_server_poll:

@@ -4,3 +4,6 @@
 [submodule "deps/yaml-glib.git"]
 	path = deps/yaml-glib.git
 	url = git@gitlab.com:copyleft-games/yaml-glib.git
+[submodule "deps/steamworks_sdk"]
+	path = deps/steamworks_sdk
+	url = https://github.com/rlabrecque/SteamworksSDK.git

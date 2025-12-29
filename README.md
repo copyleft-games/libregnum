@@ -63,11 +63,44 @@ This will:
 
 ```bash
 make DEBUG=1        # Debug build with symbols
+make WINDOWS=1      # Cross-compile for Windows (MinGW-w64)
+make STEAM=1        # Build with Steam SDK support
 make test           # Build and run unit tests
 make examples       # Build example programs
 make install        # Install to /usr/local (or set PREFIX=)
 make help           # Show all available targets
 ```
+
+### Cross-Compilation
+
+Build for Windows from Linux using MinGW:
+
+```bash
+# Install MinGW (Fedora)
+sudo dnf install mingw64-gcc mingw64-glib2 mingw64-pkg-config
+
+# Build for Windows
+make WINDOWS=1
+
+# Build for Windows with Steam
+make WINDOWS=1 STEAM=1
+```
+
+See [docs/cross-compile.md](docs/cross-compile.md) for details.
+
+### Steam Integration
+
+Steam support is opt-in and requires the Steamworks SDK:
+
+```bash
+# Initialize submodules (includes Steamworks SDK)
+git submodule update --init --recursive
+
+# Build with Steam support
+make STEAM=1
+```
+
+See [docs/modules/steam/index.md](docs/modules/steam/index.md) for details.
 
 ### Configuration
 
@@ -162,7 +195,28 @@ engine.shutdown()
 - **LrgRegistry** - Maps type names to GTypes for data-driven instantiation
 - **LrgDataLoader** - Loads GObjects from YAML files
 
-### Planned Modules
+### Modules
+
+#### Core Systems
+
+| Module | Description |
+|--------|-------------|
+| Engine | Central singleton managing all subsystems |
+| Registry | Maps type names to GTypes for data-driven instantiation |
+| DataLoader | Loads GObjects from YAML files |
+| AssetManager | Texture, font, sound, and music caching |
+
+#### Phase 1 - Steam Ready (Implemented)
+
+| Module | Description | Documentation |
+|--------|-------------|---------------|
+| Settings | Game settings with YAML persistence | [docs/modules/settings](docs/modules/settings/index.md) |
+| GameState | Game state stack (menus, gameplay, pause) | [docs/modules/gamestate](docs/modules/gamestate/index.md) |
+| Crash | Signal handling and crash reporting | [docs/modules/crash](docs/modules/crash/index.md) |
+| Accessibility | Colorblind modes, subtitles, motor assists | [docs/modules/accessibility](docs/modules/accessibility/index.md) |
+| Steam | Achievements, cloud saves, stats, presence | [docs/modules/steam](docs/modules/steam/index.md) |
+
+#### Game Systems
 
 | Module | Description |
 |--------|-------------|

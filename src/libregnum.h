@@ -205,10 +205,46 @@
 /* Scripting module */
 #include "scripting/lrg-scripting.h"
 #include "scripting/lrg-scriptable.h"
+#ifdef LRG_HAS_LUAJIT
 #include "scripting/lrg-scripting-lua.h"
+#endif
+#ifdef LRG_HAS_GI
 #include "scripting/lrg-scripting-gi.h"
+#endif
+#ifdef LRG_HAS_PYTHON
 #include "scripting/lrg-scripting-python.h"
 #include "scripting/lrg-scripting-pygobject.h"
+#endif
+#ifdef LRG_HAS_GJS
 #include "scripting/lrg-scripting-gjs.h"
+#endif
+
+/* Settings module (Phase 1) */
+#include "settings/lrg-settings-group.h"
+#include "settings/lrg-graphics-settings.h"
+#include "settings/lrg-audio-settings.h"
+#include "settings/lrg-settings.h"
+
+/* Game State module (Phase 1) */
+#include "gamestate/lrg-game-state.h"
+#include "gamestate/lrg-game-state-manager.h"
+
+/* Crash module (Phase 1) */
+#include "crash/lrg-crash-dialog.h"
+#include "crash/lrg-crash-dialog-terminal.h"
+#include "crash/lrg-crash-reporter.h"
+
+/* Accessibility module (Phase 1) */
+#include "accessibility/lrg-color-filter.h"
+#include "accessibility/lrg-accessibility-settings.h"
+
+/* Steam module (Phase 1) - conditionally included */
+#include "steam/lrg-steam-service.h"
+#include "steam/lrg-steam-stub.h"
+#include "steam/lrg-steam-client.h"
+#include "steam/lrg-steam-achievements.h"
+#include "steam/lrg-steam-cloud.h"
+#include "steam/lrg-steam-stats.h"
+#include "steam/lrg-steam-presence.h"
 
 #undef LIBREGNUM_INSIDE
