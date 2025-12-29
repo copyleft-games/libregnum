@@ -11,7 +11,6 @@
 #include <glib-object.h>
 
 #ifndef LIBREGNUM_COMPILATION
-#define LIBREGNUM_COMPILATION
 #endif
 #include "lrg-enums.h"
 #include "quest/lrg-quest-objective.h"

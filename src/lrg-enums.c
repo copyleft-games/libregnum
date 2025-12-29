@@ -1365,3 +1365,355 @@ lrg_script_access_flags_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * Economy System Quarks and GTypes (Phase 2)
+ * ========================================================================== */
+
+/**
+ * lrg_economy_error_quark:
+ *
+ * Gets the error quark for economy errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_economy_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-economy-error-quark");
+}
+
+GType
+lrg_economy_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ECONOMY_ERROR_FAILED, "LRG_ECONOMY_ERROR_FAILED", "failed" },
+            { LRG_ECONOMY_ERROR_INSUFFICIENT, "LRG_ECONOMY_ERROR_INSUFFICIENT", "insufficient" },
+            { LRG_ECONOMY_ERROR_INVALID_RESOURCE, "LRG_ECONOMY_ERROR_INVALID_RESOURCE", "invalid-resource" },
+            { LRG_ECONOMY_ERROR_INVALID_RECIPE, "LRG_ECONOMY_ERROR_INVALID_RECIPE", "invalid-recipe" },
+            { LRG_ECONOMY_ERROR_PRODUCTION_FAILED, "LRG_ECONOMY_ERROR_PRODUCTION_FAILED", "production-failed" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgEconomyError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_resource_category_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_RESOURCE_CATEGORY_CURRENCY, "LRG_RESOURCE_CATEGORY_CURRENCY", "currency" },
+            { LRG_RESOURCE_CATEGORY_MATERIAL, "LRG_RESOURCE_CATEGORY_MATERIAL", "material" },
+            { LRG_RESOURCE_CATEGORY_FOOD, "LRG_RESOURCE_CATEGORY_FOOD", "food" },
+            { LRG_RESOURCE_CATEGORY_ENERGY, "LRG_RESOURCE_CATEGORY_ENERGY", "energy" },
+            { LRG_RESOURCE_CATEGORY_POPULATION, "LRG_RESOURCE_CATEGORY_POPULATION", "population" },
+            { LRG_RESOURCE_CATEGORY_RESEARCH, "LRG_RESOURCE_CATEGORY_RESEARCH", "research" },
+            { LRG_RESOURCE_CATEGORY_CUSTOM, "LRG_RESOURCE_CATEGORY_CUSTOM", "custom" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgResourceCategory"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Building System Quarks and GTypes (Phase 2)
+ * ========================================================================== */
+
+/**
+ * lrg_building_error_quark:
+ *
+ * Gets the error quark for building errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_building_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-building-error-quark");
+}
+
+GType
+lrg_building_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_BUILDING_ERROR_FAILED, "LRG_BUILDING_ERROR_FAILED", "failed" },
+            { LRG_BUILDING_ERROR_INVALID_POSITION, "LRG_BUILDING_ERROR_INVALID_POSITION", "invalid-position" },
+            { LRG_BUILDING_ERROR_AREA_BLOCKED, "LRG_BUILDING_ERROR_AREA_BLOCKED", "area-blocked" },
+            { LRG_BUILDING_ERROR_INVALID_TERRAIN, "LRG_BUILDING_ERROR_INVALID_TERRAIN", "invalid-terrain" },
+            { LRG_BUILDING_ERROR_INSUFFICIENT_RESOURCES, "LRG_BUILDING_ERROR_INSUFFICIENT_RESOURCES", "insufficient-resources" },
+            { LRG_BUILDING_ERROR_MAX_LEVEL, "LRG_BUILDING_ERROR_MAX_LEVEL", "max-level" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgBuildingError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_building_category_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_BUILDING_CATEGORY_PRODUCTION, "LRG_BUILDING_CATEGORY_PRODUCTION", "production" },
+            { LRG_BUILDING_CATEGORY_RESIDENTIAL, "LRG_BUILDING_CATEGORY_RESIDENTIAL", "residential" },
+            { LRG_BUILDING_CATEGORY_COMMERCIAL, "LRG_BUILDING_CATEGORY_COMMERCIAL", "commercial" },
+            { LRG_BUILDING_CATEGORY_INFRASTRUCTURE, "LRG_BUILDING_CATEGORY_INFRASTRUCTURE", "infrastructure" },
+            { LRG_BUILDING_CATEGORY_DECORATION, "LRG_BUILDING_CATEGORY_DECORATION", "decoration" },
+            { LRG_BUILDING_CATEGORY_SPECIAL, "LRG_BUILDING_CATEGORY_SPECIAL", "special" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgBuildingCategory"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_rotation_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ROTATION_0, "LRG_ROTATION_0", "0" },
+            { LRG_ROTATION_90, "LRG_ROTATION_90", "90" },
+            { LRG_ROTATION_180, "LRG_ROTATION_180", "180" },
+            { LRG_ROTATION_270, "LRG_ROTATION_270", "270" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgRotation"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_terrain_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GFlagsValue values[] = {
+            { LRG_TERRAIN_NONE, "LRG_TERRAIN_NONE", "none" },
+            { LRG_TERRAIN_GRASS, "LRG_TERRAIN_GRASS", "grass" },
+            { LRG_TERRAIN_DIRT, "LRG_TERRAIN_DIRT", "dirt" },
+            { LRG_TERRAIN_SAND, "LRG_TERRAIN_SAND", "sand" },
+            { LRG_TERRAIN_WATER, "LRG_TERRAIN_WATER", "water" },
+            { LRG_TERRAIN_ROCK, "LRG_TERRAIN_ROCK", "rock" },
+            { LRG_TERRAIN_ROAD, "LRG_TERRAIN_ROAD", "road" },
+            { LRG_TERRAIN_SNOW, "LRG_TERRAIN_SNOW", "snow" },
+            { LRG_TERRAIN_MUD, "LRG_TERRAIN_MUD", "mud" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_flags_register_static (g_intern_static_string ("LrgTerrainType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Vehicle System Quarks and GTypes (Phase 2)
+ * ========================================================================== */
+
+/**
+ * lrg_vehicle_error_quark:
+ *
+ * Gets the error quark for vehicle errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_vehicle_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-vehicle-error-quark");
+}
+
+GType
+lrg_vehicle_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_VEHICLE_ERROR_FAILED, "LRG_VEHICLE_ERROR_FAILED", "failed" },
+            { LRG_VEHICLE_ERROR_NO_WHEELS, "LRG_VEHICLE_ERROR_NO_WHEELS", "no-wheels" },
+            { LRG_VEHICLE_ERROR_INVALID_ROAD, "LRG_VEHICLE_ERROR_INVALID_ROAD", "invalid-road" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgVehicleError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_vehicle_camera_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_VEHICLE_CAMERA_FOLLOW, "LRG_VEHICLE_CAMERA_FOLLOW", "follow" },
+            { LRG_VEHICLE_CAMERA_HOOD, "LRG_VEHICLE_CAMERA_HOOD", "hood" },
+            { LRG_VEHICLE_CAMERA_COCKPIT, "LRG_VEHICLE_CAMERA_COCKPIT", "cockpit" },
+            { LRG_VEHICLE_CAMERA_FREE, "LRG_VEHICLE_CAMERA_FREE", "free" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgVehicleCameraMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_traffic_behavior_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TRAFFIC_BEHAVIOR_CALM, "LRG_TRAFFIC_BEHAVIOR_CALM", "calm" },
+            { LRG_TRAFFIC_BEHAVIOR_NORMAL, "LRG_TRAFFIC_BEHAVIOR_NORMAL", "normal" },
+            { LRG_TRAFFIC_BEHAVIOR_AGGRESSIVE, "LRG_TRAFFIC_BEHAVIOR_AGGRESSIVE", "aggressive" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTrafficBehavior"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_road_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ROAD_TYPE_HIGHWAY, "LRG_ROAD_TYPE_HIGHWAY", "highway" },
+            { LRG_ROAD_TYPE_MAIN, "LRG_ROAD_TYPE_MAIN", "main" },
+            { LRG_ROAD_TYPE_STREET, "LRG_ROAD_TYPE_STREET", "street" },
+            { LRG_ROAD_TYPE_ALLEY, "LRG_ROAD_TYPE_ALLEY", "alley" },
+            { LRG_ROAD_TYPE_DIRT, "LRG_ROAD_TYPE_DIRT", "dirt" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgRoadType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Idle Game System GTypes (Phase 2)
+ * ========================================================================== */
+
+GType
+lrg_big_number_format_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_BIG_NUMBER_FORMAT_SHORT, "LRG_BIG_NUMBER_FORMAT_SHORT", "short" },
+            { LRG_BIG_NUMBER_FORMAT_SCIENTIFIC, "LRG_BIG_NUMBER_FORMAT_SCIENTIFIC", "scientific" },
+            { LRG_BIG_NUMBER_FORMAT_FULL, "LRG_BIG_NUMBER_FORMAT_FULL", "full" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgBigNumberFormat"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_automation_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_AUTOMATION_MODE_CLICK, "LRG_AUTOMATION_MODE_CLICK", "click" },
+            { LRG_AUTOMATION_MODE_BUY_ONE, "LRG_AUTOMATION_MODE_BUY_ONE", "buy-one" },
+            { LRG_AUTOMATION_MODE_BUY_MAX, "LRG_AUTOMATION_MODE_BUY_MAX", "buy-max" },
+            { LRG_AUTOMATION_MODE_UPGRADE, "LRG_AUTOMATION_MODE_UPGRADE", "upgrade" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAutomationMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_milestone_condition_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_MILESTONE_CONDITION_REACH, "LRG_MILESTONE_CONDITION_REACH", "reach" },
+            { LRG_MILESTONE_CONDITION_ACCUMULATE, "LRG_MILESTONE_CONDITION_ACCUMULATE", "accumulate" },
+            { LRG_MILESTONE_CONDITION_COUNT, "LRG_MILESTONE_CONDITION_COUNT", "count" },
+            { LRG_MILESTONE_CONDITION_PRESTIGE, "LRG_MILESTONE_CONDITION_PRESTIGE", "prestige" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgMilestoneCondition"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

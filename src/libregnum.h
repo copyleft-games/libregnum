@@ -247,4 +247,40 @@
 #include "steam/lrg-steam-stats.h"
 #include "steam/lrg-steam-presence.h"
 
+/* Economy module (Phase 2) */
+#include "economy/lrg-resource.h"
+#include "economy/lrg-resource-pool.h"
+#include "economy/lrg-production-recipe.h"
+#include "economy/lrg-producer.h"
+#include "economy/lrg-consumer.h"
+#include "economy/lrg-market.h"
+#include "economy/lrg-economy-manager.h"
+#include "economy/lrg-offline-calculator.h"
+
+/* Idle module (Phase 2) */
+#include "idle/lrg-big-number.h"
+#include "idle/lrg-milestone.h"
+#include "idle/lrg-idle-calculator.h"
+#include "idle/lrg-prestige.h"
+#include "idle/lrg-unlock-tree.h"
+#include "idle/lrg-automation.h"
+
+/* Building module (Phase 2) */
+#include "building/lrg-building-def.h"
+#include "building/lrg-building-instance.h"
+#include "building/lrg-build-grid.h"
+#include "building/lrg-placement-system.h"
+#include "building/lrg-placement-ghost.h"
+#include "building/lrg-building-ui.h"
+
+/* Vehicle module (Phase 2) */
+#include "vehicle/lrg-wheel.h"
+#include "vehicle/lrg-vehicle.h"
+#include "vehicle/lrg-vehicle-controller.h"
+#include "vehicle/lrg-vehicle-camera.h"
+#include "vehicle/lrg-vehicle-audio.h"
+#include "vehicle/lrg-road.h"
+#include "vehicle/lrg-road-network.h"
+#include "vehicle/lrg-traffic-agent.h"
+
 #undef LIBREGNUM_INSIDE

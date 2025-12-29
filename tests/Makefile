@@ -89,7 +89,11 @@ TEST_SOURCES := \
 	test-gamestate.c \
 	test-crash.c \
 	test-accessibility.c \
-	test-steam.c
+	test-steam.c \
+	test-economy.c \
+	test-idle.c \
+	test-building.c \
+	test-vehicle.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))

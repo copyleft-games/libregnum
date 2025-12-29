@@ -10,7 +10,6 @@
 #include <glib.h>
 
 #ifndef LIBREGNUM_COMPILATION
-#define LIBREGNUM_COMPILATION
 #endif
 #include "dialog/lrg-dialog-response.h"
 #include "dialog/lrg-dialog-node.h"

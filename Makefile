@@ -180,7 +180,35 @@ PUBLIC_HEADERS := \
 	src/steam/lrg-steam-achievements.h \
 	src/steam/lrg-steam-cloud.h \
 	src/steam/lrg-steam-stats.h \
-	src/steam/lrg-steam-presence.h
+	src/steam/lrg-steam-presence.h \
+	src/economy/lrg-resource.h \
+	src/economy/lrg-resource-pool.h \
+	src/economy/lrg-production-recipe.h \
+	src/economy/lrg-producer.h \
+	src/economy/lrg-consumer.h \
+	src/economy/lrg-market.h \
+	src/economy/lrg-economy-manager.h \
+	src/economy/lrg-offline-calculator.h \
+	src/idle/lrg-big-number.h \
+	src/idle/lrg-milestone.h \
+	src/idle/lrg-idle-calculator.h \
+	src/idle/lrg-prestige.h \
+	src/idle/lrg-unlock-tree.h \
+	src/idle/lrg-automation.h \
+	src/building/lrg-building-def.h \
+	src/building/lrg-building-instance.h \
+	src/building/lrg-build-grid.h \
+	src/building/lrg-placement-system.h \
+	src/building/lrg-placement-ghost.h \
+	src/building/lrg-building-ui.h \
+	src/vehicle/lrg-wheel.h \
+	src/vehicle/lrg-vehicle.h \
+	src/vehicle/lrg-vehicle-controller.h \
+	src/vehicle/lrg-vehicle-camera.h \
+	src/vehicle/lrg-vehicle-audio.h \
+	src/vehicle/lrg-road.h \
+	src/vehicle/lrg-road-network.h \
+	src/vehicle/lrg-traffic-agent.h
 
 # Source files
 SOURCES := \
@@ -336,7 +364,35 @@ SOURCES := \
 	src/steam/lrg-steam-achievements.c \
 	src/steam/lrg-steam-cloud.c \
 	src/steam/lrg-steam-stats.c \
-	src/steam/lrg-steam-presence.c
+	src/steam/lrg-steam-presence.c \
+	src/economy/lrg-resource.c \
+	src/economy/lrg-resource-pool.c \
+	src/economy/lrg-production-recipe.c \
+	src/economy/lrg-producer.c \
+	src/economy/lrg-consumer.c \
+	src/economy/lrg-market.c \
+	src/economy/lrg-economy-manager.c \
+	src/economy/lrg-offline-calculator.c \
+	src/idle/lrg-big-number.c \
+	src/idle/lrg-milestone.c \
+	src/idle/lrg-idle-calculator.c \
+	src/idle/lrg-prestige.c \
+	src/idle/lrg-unlock-tree.c \
+	src/idle/lrg-automation.c \
+	src/building/lrg-building-def.c \
+	src/building/lrg-building-instance.c \
+	src/building/lrg-build-grid.c \
+	src/building/lrg-placement-system.c \
+	src/building/lrg-placement-ghost.c \
+	src/building/lrg-building-ui.c \
+	src/vehicle/lrg-wheel.c \
+	src/vehicle/lrg-vehicle.c \
+	src/vehicle/lrg-vehicle-controller.c \
+	src/vehicle/lrg-vehicle-camera.c \
+	src/vehicle/lrg-vehicle-audio.c \
+	src/vehicle/lrg-road.c \
+	src/vehicle/lrg-road-network.c \
+	src/vehicle/lrg-traffic-agent.c
 
 # Conditional scripting backends
 ifeq ($(HAS_LUAJIT),1)

@@ -50,6 +50,10 @@ G_BEGIN_DECLS
 #define LRG_LOG_DOMAIN_DEBUG      "Libregnum-Debug"
 #define LRG_LOG_DOMAIN_MOD        "Libregnum-Mod"
 #define LRG_LOG_DOMAIN_SCRIPTING  "Libregnum-Scripting"
+#define LRG_LOG_DOMAIN_ECONOMY    "Libregnum-Economy"
+#define LRG_LOG_DOMAIN_IDLE       "Libregnum-Idle"
+#define LRG_LOG_DOMAIN_BUILDING   "Libregnum-Building"
+#define LRG_LOG_DOMAIN_VEHICLE    "Libregnum-Vehicle"
 
 /* ==========================================================================
  * Logging Macros

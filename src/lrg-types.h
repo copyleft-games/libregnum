@@ -468,4 +468,116 @@ typedef struct _LrgScriptableInterface  LrgScriptableInterface;
 /* LrgScriptMethod is a boxed type for method descriptors */
 typedef struct _LrgScriptMethod  LrgScriptMethod;
 
+/* ==========================================================================
+ * Economy Module (Phase 2)
+ * ========================================================================== */
+
+/* LrgResource is a derivable type */
+typedef struct _LrgResource       LrgResource;
+typedef struct _LrgResourceClass  LrgResourceClass;
+
+/* LrgResourcePool is a final type - no Class forward declaration needed */
+typedef struct _LrgResourcePool  LrgResourcePool;
+
+/* LrgProductionRecipe is a final type - no Class forward declaration needed */
+typedef struct _LrgProductionRecipe  LrgProductionRecipe;
+
+/* LrgProducer is a derivable component type */
+typedef struct _LrgProducer       LrgProducer;
+typedef struct _LrgProducerClass  LrgProducerClass;
+
+/* LrgConsumer is a derivable component type */
+typedef struct _LrgConsumer       LrgConsumer;
+typedef struct _LrgConsumerClass  LrgConsumerClass;
+
+/* LrgMarket is a final type - no Class forward declaration needed */
+typedef struct _LrgMarket  LrgMarket;
+
+/* LrgEconomyManager is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgEconomyManager  LrgEconomyManager;
+
+/* LrgOfflineCalculator is a final type - no Class forward declaration needed */
+typedef struct _LrgOfflineCalculator  LrgOfflineCalculator;
+
+/* ==========================================================================
+ * Idle Game Module (Phase 2)
+ * ========================================================================== */
+
+/* LrgBigNumber is a boxed type - no class typedef */
+typedef struct _LrgBigNumber  LrgBigNumber;
+
+/* LrgIdleCalculator is a final type - no Class forward declaration needed */
+typedef struct _LrgIdleCalculator  LrgIdleCalculator;
+
+/* LrgPrestige is a derivable type */
+typedef struct _LrgPrestige       LrgPrestige;
+typedef struct _LrgPrestigeClass  LrgPrestigeClass;
+
+/* LrgUnlockTree is a final type - no Class forward declaration needed */
+typedef struct _LrgUnlockTree  LrgUnlockTree;
+
+/* LrgMilestone is a boxed type - no class typedef */
+typedef struct _LrgMilestone  LrgMilestone;
+
+/* LrgAutomation is a final type - no Class forward declaration needed */
+typedef struct _LrgAutomation  LrgAutomation;
+
+/* ==========================================================================
+ * Building Module (Phase 2)
+ * ========================================================================== */
+
+/* LrgBuildingDef is a derivable type */
+typedef struct _LrgBuildingDef       LrgBuildingDef;
+typedef struct _LrgBuildingDefClass  LrgBuildingDefClass;
+
+/* LrgBuildingInstance is a derivable type */
+typedef struct _LrgBuildingInstance       LrgBuildingInstance;
+typedef struct _LrgBuildingInstanceClass  LrgBuildingInstanceClass;
+
+/* LrgBuildCell is a boxed type - no class typedef */
+typedef struct _LrgBuildCell  LrgBuildCell;
+
+/* LrgBuildGrid is a final type - no Class forward declaration needed */
+typedef struct _LrgBuildGrid  LrgBuildGrid;
+
+/* LrgPlacementSystem is a final type - no Class forward declaration needed */
+typedef struct _LrgPlacementSystem  LrgPlacementSystem;
+
+/* LrgPlacementGhost is a final type (implements LrgDrawable) - no Class forward declaration needed */
+typedef struct _LrgPlacementGhost  LrgPlacementGhost;
+
+/* LrgBuildingUI is a final type (extends LrgContainer) - no Class forward declaration needed */
+typedef struct _LrgBuildingUI  LrgBuildingUI;
+
+/* ==========================================================================
+ * Vehicle Module (Phase 2)
+ * ========================================================================== */
+
+/* LrgVehicle is a derivable type */
+typedef struct _LrgVehicle       LrgVehicle;
+typedef struct _LrgVehicleClass  LrgVehicleClass;
+
+/* LrgVehicleController is a final type - no Class forward declaration needed */
+typedef struct _LrgVehicleController  LrgVehicleController;
+
+/* LrgWheel is a boxed type - no class typedef */
+typedef struct _LrgWheel  LrgWheel;
+
+/* LrgVehicleCamera is a derivable type (extends LrgCamera3D) */
+typedef struct _LrgVehicleCamera       LrgVehicleCamera;
+typedef struct _LrgVehicleCameraClass  LrgVehicleCameraClass;
+
+/* LrgVehicleAudio is a final type - no Class forward declaration needed */
+typedef struct _LrgVehicleAudio  LrgVehicleAudio;
+
+/* LrgTrafficAgent is a derivable type */
+typedef struct _LrgTrafficAgent       LrgTrafficAgent;
+typedef struct _LrgTrafficAgentClass  LrgTrafficAgentClass;
+
+/* LrgRoad is a boxed type - no class typedef */
+typedef struct _LrgRoad  LrgRoad;
+
+/* LrgRoadNetwork is a final type - no Class forward declaration needed */
+typedef struct _LrgRoadNetwork  LrgRoadNetwork;
+
 G_END_DECLS

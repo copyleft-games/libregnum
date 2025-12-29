@@ -1353,4 +1353,380 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_script_access_flags_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_SCRIPT_ACCESS_FLAGS (lrg_script_access_flags_get_type ())
 
+/* ==========================================================================
+ * Economy System (Phase 2)
+ * ========================================================================== */
+
+/**
+ * LRG_ECONOMY_ERROR:
+ *
+ * Error domain for economy system errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_ECONOMY_ERROR (lrg_economy_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_economy_error_quark (void);
+
+/**
+ * LrgEconomyError:
+ * @LRG_ECONOMY_ERROR_FAILED: Generic failure
+ * @LRG_ECONOMY_ERROR_INSUFFICIENT: Insufficient resources
+ * @LRG_ECONOMY_ERROR_INVALID_RESOURCE: Invalid resource reference
+ * @LRG_ECONOMY_ERROR_INVALID_RECIPE: Invalid recipe reference
+ * @LRG_ECONOMY_ERROR_PRODUCTION_FAILED: Production failed
+ *
+ * Error codes for the economy system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ECONOMY_ERROR_FAILED,
+    LRG_ECONOMY_ERROR_INSUFFICIENT,
+    LRG_ECONOMY_ERROR_INVALID_RESOURCE,
+    LRG_ECONOMY_ERROR_INVALID_RECIPE,
+    LRG_ECONOMY_ERROR_PRODUCTION_FAILED
+} LrgEconomyError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_economy_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ECONOMY_ERROR (lrg_economy_error_get_type ())
+
+/**
+ * LrgResourceCategory:
+ * @LRG_RESOURCE_CATEGORY_CURRENCY: Monetary currency (gold, coins, credits)
+ * @LRG_RESOURCE_CATEGORY_MATERIAL: Raw or crafting materials
+ * @LRG_RESOURCE_CATEGORY_FOOD: Food and consumables
+ * @LRG_RESOURCE_CATEGORY_ENERGY: Energy, fuel, power
+ * @LRG_RESOURCE_CATEGORY_POPULATION: Population, workers, units
+ * @LRG_RESOURCE_CATEGORY_RESEARCH: Research points, science
+ * @LRG_RESOURCE_CATEGORY_CUSTOM: Custom user-defined category
+ *
+ * Categories for resource types in the economy system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_RESOURCE_CATEGORY_CURRENCY,
+    LRG_RESOURCE_CATEGORY_MATERIAL,
+    LRG_RESOURCE_CATEGORY_FOOD,
+    LRG_RESOURCE_CATEGORY_ENERGY,
+    LRG_RESOURCE_CATEGORY_POPULATION,
+    LRG_RESOURCE_CATEGORY_RESEARCH,
+    LRG_RESOURCE_CATEGORY_CUSTOM
+} LrgResourceCategory;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_resource_category_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_RESOURCE_CATEGORY (lrg_resource_category_get_type ())
+
+/* ==========================================================================
+ * Building System (Phase 2)
+ * ========================================================================== */
+
+/**
+ * LRG_BUILDING_ERROR:
+ *
+ * Error domain for building system errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_BUILDING_ERROR (lrg_building_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_building_error_quark (void);
+
+/**
+ * LrgBuildingError:
+ * @LRG_BUILDING_ERROR_FAILED: Generic failure
+ * @LRG_BUILDING_ERROR_INVALID_POSITION: Invalid placement position
+ * @LRG_BUILDING_ERROR_AREA_BLOCKED: Placement area is blocked
+ * @LRG_BUILDING_ERROR_INVALID_TERRAIN: Terrain type not allowed
+ * @LRG_BUILDING_ERROR_INSUFFICIENT_RESOURCES: Not enough resources to build
+ * @LRG_BUILDING_ERROR_MAX_LEVEL: Building is already at maximum level
+ *
+ * Error codes for the building system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_BUILDING_ERROR_FAILED,
+    LRG_BUILDING_ERROR_INVALID_POSITION,
+    LRG_BUILDING_ERROR_AREA_BLOCKED,
+    LRG_BUILDING_ERROR_INVALID_TERRAIN,
+    LRG_BUILDING_ERROR_INSUFFICIENT_RESOURCES,
+    LRG_BUILDING_ERROR_MAX_LEVEL
+} LrgBuildingError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_building_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_BUILDING_ERROR (lrg_building_error_get_type ())
+
+/**
+ * LrgBuildingCategory:
+ * @LRG_BUILDING_CATEGORY_PRODUCTION: Production buildings (factories, farms)
+ * @LRG_BUILDING_CATEGORY_RESIDENTIAL: Residential buildings (houses, apartments)
+ * @LRG_BUILDING_CATEGORY_COMMERCIAL: Commercial buildings (shops, markets)
+ * @LRG_BUILDING_CATEGORY_INFRASTRUCTURE: Infrastructure (roads, power, water)
+ * @LRG_BUILDING_CATEGORY_DECORATION: Decorative buildings (parks, statues)
+ * @LRG_BUILDING_CATEGORY_SPECIAL: Special buildings (unique, story-related)
+ *
+ * Categories for building types.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_BUILDING_CATEGORY_PRODUCTION,
+    LRG_BUILDING_CATEGORY_RESIDENTIAL,
+    LRG_BUILDING_CATEGORY_COMMERCIAL,
+    LRG_BUILDING_CATEGORY_INFRASTRUCTURE,
+    LRG_BUILDING_CATEGORY_DECORATION,
+    LRG_BUILDING_CATEGORY_SPECIAL
+} LrgBuildingCategory;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_building_category_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_BUILDING_CATEGORY (lrg_building_category_get_type ())
+
+/**
+ * LrgRotation:
+ * @LRG_ROTATION_0: No rotation (0 degrees)
+ * @LRG_ROTATION_90: 90 degrees clockwise
+ * @LRG_ROTATION_180: 180 degrees
+ * @LRG_ROTATION_270: 270 degrees clockwise (90 counter-clockwise)
+ *
+ * Rotation angles for building placement.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ROTATION_0   = 0,
+    LRG_ROTATION_90  = 90,
+    LRG_ROTATION_180 = 180,
+    LRG_ROTATION_270 = 270
+} LrgRotation;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_rotation_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ROTATION (lrg_rotation_get_type ())
+
+/**
+ * LrgTerrainType:
+ * @LRG_TERRAIN_NONE: No terrain (void)
+ * @LRG_TERRAIN_GRASS: Grass terrain
+ * @LRG_TERRAIN_DIRT: Dirt/earth terrain
+ * @LRG_TERRAIN_SAND: Sand terrain
+ * @LRG_TERRAIN_WATER: Water terrain
+ * @LRG_TERRAIN_ROCK: Rock/stone terrain
+ * @LRG_TERRAIN_ROAD: Road/paved terrain
+ * @LRG_TERRAIN_SNOW: Snow terrain
+ * @LRG_TERRAIN_MUD: Mud terrain
+ * @LRG_TERRAIN_ANY: All terrain types
+ *
+ * Terrain types for building placement validation.
+ * These are flags and can be combined.
+ *
+ * Since: 1.0
+ */
+typedef enum /*< flags >*/
+{
+    LRG_TERRAIN_NONE  = 0,
+    LRG_TERRAIN_GRASS = 1 << 0,
+    LRG_TERRAIN_DIRT  = 1 << 1,
+    LRG_TERRAIN_SAND  = 1 << 2,
+    LRG_TERRAIN_WATER = 1 << 3,
+    LRG_TERRAIN_ROCK  = 1 << 4,
+    LRG_TERRAIN_ROAD  = 1 << 5,
+    LRG_TERRAIN_SNOW  = 1 << 6,
+    LRG_TERRAIN_MUD   = 1 << 7,
+    LRG_TERRAIN_ANY   = 0xFF
+} LrgTerrainType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_terrain_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TERRAIN_TYPE (lrg_terrain_type_get_type ())
+
+/* ==========================================================================
+ * Vehicle System (Phase 2)
+ * ========================================================================== */
+
+/**
+ * LRG_VEHICLE_ERROR:
+ *
+ * Error domain for vehicle system errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_VEHICLE_ERROR (lrg_vehicle_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_vehicle_error_quark (void);
+
+/**
+ * LrgVehicleError:
+ * @LRG_VEHICLE_ERROR_FAILED: Generic failure
+ * @LRG_VEHICLE_ERROR_NO_WHEELS: Vehicle has no wheels attached
+ * @LRG_VEHICLE_ERROR_INVALID_ROAD: Invalid road reference
+ *
+ * Error codes for the vehicle system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_VEHICLE_ERROR_FAILED,
+    LRG_VEHICLE_ERROR_NO_WHEELS,
+    LRG_VEHICLE_ERROR_INVALID_ROAD
+} LrgVehicleError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_vehicle_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VEHICLE_ERROR (lrg_vehicle_error_get_type ())
+
+/**
+ * LrgVehicleCameraMode:
+ * @LRG_VEHICLE_CAMERA_FOLLOW: Third-person follow camera
+ * @LRG_VEHICLE_CAMERA_HOOD: Hood/bonnet camera
+ * @LRG_VEHICLE_CAMERA_COCKPIT: First-person cockpit view
+ * @LRG_VEHICLE_CAMERA_FREE: Free look around vehicle
+ *
+ * Camera modes for vehicle cameras.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_VEHICLE_CAMERA_FOLLOW,
+    LRG_VEHICLE_CAMERA_HOOD,
+    LRG_VEHICLE_CAMERA_COCKPIT,
+    LRG_VEHICLE_CAMERA_FREE
+} LrgVehicleCameraMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_vehicle_camera_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VEHICLE_CAMERA_MODE (lrg_vehicle_camera_mode_get_type ())
+
+/**
+ * LrgTrafficBehavior:
+ * @LRG_TRAFFIC_BEHAVIOR_CALM: Slow, cautious driving
+ * @LRG_TRAFFIC_BEHAVIOR_NORMAL: Normal traffic behavior
+ * @LRG_TRAFFIC_BEHAVIOR_AGGRESSIVE: Fast, aggressive driving
+ *
+ * Driving behavior for AI traffic agents.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TRAFFIC_BEHAVIOR_CALM,
+    LRG_TRAFFIC_BEHAVIOR_NORMAL,
+    LRG_TRAFFIC_BEHAVIOR_AGGRESSIVE
+} LrgTrafficBehavior;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_traffic_behavior_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TRAFFIC_BEHAVIOR (lrg_traffic_behavior_get_type ())
+
+/**
+ * LrgRoadType:
+ * @LRG_ROAD_TYPE_HIGHWAY: High-speed highway
+ * @LRG_ROAD_TYPE_MAIN: Main road/avenue
+ * @LRG_ROAD_TYPE_STREET: Regular street
+ * @LRG_ROAD_TYPE_ALLEY: Narrow alley
+ * @LRG_ROAD_TYPE_DIRT: Unpaved dirt road
+ *
+ * Types of roads in a road network.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ROAD_TYPE_HIGHWAY,
+    LRG_ROAD_TYPE_MAIN,
+    LRG_ROAD_TYPE_STREET,
+    LRG_ROAD_TYPE_ALLEY,
+    LRG_ROAD_TYPE_DIRT
+} LrgRoadType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_road_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ROAD_TYPE (lrg_road_type_get_type ())
+
+/* ==========================================================================
+ * Idle Game System (Phase 2)
+ * ========================================================================== */
+
+/**
+ * LrgBigNumberFormat:
+ * @LRG_BIG_NUMBER_FORMAT_SHORT: Short format (1.5M, 2.3B, 4.7T)
+ * @LRG_BIG_NUMBER_FORMAT_SCIENTIFIC: Scientific notation (1.5e6)
+ * @LRG_BIG_NUMBER_FORMAT_FULL: Full number with separators (1,500,000)
+ *
+ * Formatting options for big numbers.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_BIG_NUMBER_FORMAT_SHORT,
+    LRG_BIG_NUMBER_FORMAT_SCIENTIFIC,
+    LRG_BIG_NUMBER_FORMAT_FULL
+} LrgBigNumberFormat;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_big_number_format_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_BIG_NUMBER_FORMAT (lrg_big_number_format_get_type ())
+
+/**
+ * LrgAutomationMode:
+ * @LRG_AUTOMATION_MODE_CLICK: Auto-click (trigger action)
+ * @LRG_AUTOMATION_MODE_BUY_ONE: Auto-buy one unit
+ * @LRG_AUTOMATION_MODE_BUY_MAX: Auto-buy maximum affordable
+ * @LRG_AUTOMATION_MODE_UPGRADE: Auto-upgrade when available
+ *
+ * Modes for idle game automation.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_AUTOMATION_MODE_CLICK,
+    LRG_AUTOMATION_MODE_BUY_ONE,
+    LRG_AUTOMATION_MODE_BUY_MAX,
+    LRG_AUTOMATION_MODE_UPGRADE
+} LrgAutomationMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_automation_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_AUTOMATION_MODE (lrg_automation_mode_get_type ())
+
+/**
+ * LrgMilestoneCondition:
+ * @LRG_MILESTONE_CONDITION_REACH: Reach a target value
+ * @LRG_MILESTONE_CONDITION_ACCUMULATE: Accumulate total over time
+ * @LRG_MILESTONE_CONDITION_COUNT: Count occurrences
+ * @LRG_MILESTONE_CONDITION_PRESTIGE: Prestige a certain number of times
+ *
+ * Conditions for milestone achievement.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_MILESTONE_CONDITION_REACH,
+    LRG_MILESTONE_CONDITION_ACCUMULATE,
+    LRG_MILESTONE_CONDITION_COUNT,
+    LRG_MILESTONE_CONDITION_PRESTIGE
+} LrgMilestoneCondition;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_milestone_condition_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_MILESTONE_CONDITION (lrg_milestone_condition_get_type ())
+
 G_END_DECLS
