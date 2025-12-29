@@ -34,7 +34,7 @@ struct _LrgAccessibilitySettings
     LrgSettingsGroup  parent_instance;
 
     /* Visual */
-    LrgColorblindMode colorblind_mode;
+    LrgColorblindType colorblind_type;
     gboolean          high_contrast;
     gfloat            ui_scale;
     gboolean          reduce_motion;
@@ -68,7 +68,7 @@ enum
 {
     PROP_0,
     /* Visual */
-    PROP_COLORBLIND_MODE,
+    PROP_COLORBLIND_TYPE,
     PROP_HIGH_CONTRAST,
     PROP_UI_SCALE,
     PROP_REDUCE_MOTION,
@@ -107,7 +107,7 @@ lrg_accessibility_settings_reset (LrgSettingsGroup *group)
     LrgAccessibilitySettings *self = LRG_ACCESSIBILITY_SETTINGS (group);
 
     /* Visual defaults */
-    self->colorblind_mode = LRG_COLORBLIND_NONE;
+    self->colorblind_type = LRG_COLORBLIND_NONE;
     self->high_contrast = FALSE;
     self->ui_scale = 1.0f;
     self->reduce_motion = FALSE;
@@ -155,7 +155,7 @@ lrg_accessibility_settings_serialize (LrgSettingsGroup  *group,
 
     /* Visual */
     g_variant_builder_add (&builder, "{sv}", "colorblind-mode",
-                           g_variant_new_int32 (self->colorblind_mode));
+                           g_variant_new_int32 (self->colorblind_type));
     g_variant_builder_add (&builder, "{sv}", "high-contrast",
                            g_variant_new_boolean (self->high_contrast));
     g_variant_builder_add (&builder, "{sv}", "ui-scale",
@@ -221,7 +221,7 @@ lrg_accessibility_settings_deserialize (LrgSettingsGroup  *group,
     value = g_variant_lookup_value (data, "colorblind-mode", G_VARIANT_TYPE_INT32);
     if (value)
     {
-        self->colorblind_mode = g_variant_get_int32 (value);
+        self->colorblind_type = g_variant_get_int32 (value);
         g_variant_unref (value);
     }
 
@@ -361,8 +361,8 @@ lrg_accessibility_settings_set_property (GObject      *object,
 
     switch (prop_id)
     {
-    case PROP_COLORBLIND_MODE:
-        lrg_accessibility_settings_set_colorblind_mode (self, g_value_get_enum (value));
+    case PROP_COLORBLIND_TYPE:
+        lrg_accessibility_settings_set_colorblind_type (self, g_value_get_enum (value));
         break;
     case PROP_HIGH_CONTRAST:
         lrg_accessibility_settings_set_high_contrast (self, g_value_get_boolean (value));
@@ -431,8 +431,8 @@ lrg_accessibility_settings_get_property (GObject    *object,
 
     switch (prop_id)
     {
-    case PROP_COLORBLIND_MODE:
-        g_value_set_enum (value, self->colorblind_mode);
+    case PROP_COLORBLIND_TYPE:
+        g_value_set_enum (value, self->colorblind_type);
         break;
     case PROP_HIGH_CONTRAST:
         g_value_set_boolean (value, self->high_contrast);
@@ -507,11 +507,11 @@ lrg_accessibility_settings_class_init (LrgAccessibilitySettingsClass *klass)
     group_class->deserialize = lrg_accessibility_settings_deserialize;
 
     /* Visual properties */
-    properties[PROP_COLORBLIND_MODE] =
-        g_param_spec_enum ("colorblind-mode",
-                           "Colorblind Mode",
-                           "Colorblind accessibility mode",
-                           LRG_TYPE_COLORBLIND_MODE,
+    properties[PROP_COLORBLIND_TYPE] =
+        g_param_spec_enum ("colorblind-type",
+                           "Colorblind Type",
+                           "Colorblind accessibility filter type",
+                           LRG_TYPE_COLORBLIND_TYPE,
                            LRG_COLORBLIND_NONE,
                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
@@ -657,23 +657,23 @@ lrg_accessibility_settings_new (void)
 
 /* Visual getters/setters */
 
-LrgColorblindMode
-lrg_accessibility_settings_get_colorblind_mode (LrgAccessibilitySettings *self)
+LrgColorblindType
+lrg_accessibility_settings_get_colorblind_type (LrgAccessibilitySettings *self)
 {
     g_return_val_if_fail (LRG_IS_ACCESSIBILITY_SETTINGS (self), LRG_COLORBLIND_NONE);
-    return self->colorblind_mode;
+    return self->colorblind_type;
 }
 
 void
-lrg_accessibility_settings_set_colorblind_mode (LrgAccessibilitySettings *self,
-                                                LrgColorblindMode         mode)
+lrg_accessibility_settings_set_colorblind_type (LrgAccessibilitySettings *self,
+                                                LrgColorblindType         type)
 {
     g_return_if_fail (LRG_IS_ACCESSIBILITY_SETTINGS (self));
-    if (self->colorblind_mode != mode)
+    if (self->colorblind_type != type)
     {
-        self->colorblind_mode = mode;
+        self->colorblind_type = type;
         lrg_settings_group_mark_dirty (LRG_SETTINGS_GROUP (self));
-        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLORBLIND_MODE]);
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLORBLIND_TYPE]);
     }
 }
 

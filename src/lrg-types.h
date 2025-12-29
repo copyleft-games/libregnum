@@ -580,4 +580,161 @@ typedef struct _LrgRoad  LrgRoad;
 /* LrgRoadNetwork is a final type - no Class forward declaration needed */
 typedef struct _LrgRoadNetwork  LrgRoadNetwork;
 
+/* ==========================================================================
+ * Particles Module (Phase 3)
+ * ========================================================================== */
+
+/* LrgParticle is a boxed type - no class typedef */
+typedef struct _LrgParticle  LrgParticle;
+
+/* LrgParticlePool is a final type - no Class forward declaration needed */
+typedef struct _LrgParticlePool  LrgParticlePool;
+
+/* LrgParticleEmitter is a derivable type */
+typedef struct _LrgParticleEmitter       LrgParticleEmitter;
+typedef struct _LrgParticleEmitterClass  LrgParticleEmitterClass;
+
+/* LrgParticleForce is a derivable type (abstract base) */
+typedef struct _LrgParticleForce       LrgParticleForce;
+typedef struct _LrgParticleForceClass  LrgParticleForceClass;
+
+/* Force subclasses - all final types */
+typedef struct _LrgParticleGravity       LrgParticleGravity;
+typedef struct _LrgParticleWind          LrgParticleWind;
+typedef struct _LrgParticleAttractor     LrgParticleAttractor;
+typedef struct _LrgParticleTurbulence    LrgParticleTurbulence;
+
+/* LrgParticleBackend is an interface */
+typedef struct _LrgParticleBackend           LrgParticleBackend;
+typedef struct _LrgParticleBackendInterface  LrgParticleBackendInterface;
+
+/* Backend implementations - final types */
+typedef struct _LrgParticleBackendCPU  LrgParticleBackendCPU;
+typedef struct _LrgParticleBackendGPU  LrgParticleBackendGPU;
+
+/* LrgParticleSystem is a derivable type */
+typedef struct _LrgParticleSystem       LrgParticleSystem;
+typedef struct _LrgParticleSystemClass  LrgParticleSystemClass;
+
+/* ==========================================================================
+ * Post-Processing Module (Phase 3)
+ * ========================================================================== */
+
+/* LrgPostEffect is a derivable type (abstract base) */
+typedef struct _LrgPostEffect       LrgPostEffect;
+typedef struct _LrgPostEffectClass  LrgPostEffectClass;
+
+/* LrgPostProcessor is a derivable type */
+typedef struct _LrgPostProcessor       LrgPostProcessor;
+typedef struct _LrgPostProcessorClass  LrgPostProcessorClass;
+
+/* Post-processing effects - all final types */
+typedef struct _LrgBloom            LrgBloom;
+typedef struct _LrgColorGrade       LrgColorGrade;
+typedef struct _LrgVignette         LrgVignette;
+typedef struct _LrgMotionBlur       LrgMotionBlur;
+typedef struct _LrgDOF              LrgDOF;
+typedef struct _LrgScreenShake      LrgScreenShake;
+typedef struct _LrgColorblindFilter LrgColorblindFilter;
+typedef struct _LrgFXAA             LrgFXAA;
+typedef struct _LrgFilmGrain        LrgFilmGrain;
+
+/* ==========================================================================
+ * Animation Module (Phase 3)
+ * ========================================================================== */
+
+/* Boxed types - no class typedef */
+typedef struct _LrgBonePose           LrgBonePose;
+typedef struct _LrgAnimationKeyframe  LrgAnimationKeyframe;
+typedef struct _LrgAnimationEvent     LrgAnimationEvent;
+
+/* LrgBone is a final type - no Class forward declaration needed */
+typedef struct _LrgBone  LrgBone;
+
+/* LrgSkeleton is a derivable type */
+typedef struct _LrgSkeleton       LrgSkeleton;
+typedef struct _LrgSkeletonClass  LrgSkeletonClass;
+
+/* LrgAnimationClip is a derivable type */
+typedef struct _LrgAnimationClip       LrgAnimationClip;
+typedef struct _LrgAnimationClipClass  LrgAnimationClipClass;
+
+/* LrgAnimator is a derivable type */
+typedef struct _LrgAnimator       LrgAnimator;
+typedef struct _LrgAnimatorClass  LrgAnimatorClass;
+
+/* LrgAnimationState is a derivable type */
+typedef struct _LrgAnimationState       LrgAnimationState;
+typedef struct _LrgAnimationStateClass  LrgAnimationStateClass;
+
+/* LrgAnimationTransition is a final type - no Class forward declaration needed */
+typedef struct _LrgAnimationTransition  LrgAnimationTransition;
+
+/* LrgAnimationStateMachine is a derivable type */
+typedef struct _LrgAnimationStateMachine       LrgAnimationStateMachine;
+typedef struct _LrgAnimationStateMachineClass  LrgAnimationStateMachineClass;
+
+/* LrgAnimationLayer is a final type - no Class forward declaration needed */
+typedef struct _LrgAnimationLayer  LrgAnimationLayer;
+
+/* LrgBlendTree is a derivable type */
+typedef struct _LrgBlendTree       LrgBlendTree;
+typedef struct _LrgBlendTreeClass  LrgBlendTreeClass;
+
+/* LrgIKChain is a final type - no Class forward declaration needed */
+typedef struct _LrgIKChain  LrgIKChain;
+
+/* LrgIKSolver is a derivable type (abstract base) */
+typedef struct _LrgIKSolver       LrgIKSolver;
+typedef struct _LrgIKSolverClass  LrgIKSolverClass;
+
+/* IK solver implementations - final types */
+typedef struct _LrgIKSolverFABRIK   LrgIKSolverFABRIK;
+typedef struct _LrgIKSolverCCD      LrgIKSolverCCD;
+typedef struct _LrgIKSolverTwoBone  LrgIKSolverTwoBone;
+typedef struct _LrgIKSolverLookAt   LrgIKSolverLookAt;
+
+/* ==========================================================================
+ * Rich Text Module (Phase 3)
+ * ========================================================================== */
+
+/* LrgFontManager is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgFontManager  LrgFontManager;
+
+/* LrgSDFFont is a final type - no Class forward declaration needed */
+typedef struct _LrgSDFFont  LrgSDFFont;
+
+/* LrgFontStack is a final type - no Class forward declaration needed */
+typedef struct _LrgFontStack  LrgFontStack;
+
+/* LrgTextSpan is a boxed type - no class typedef */
+typedef struct _LrgTextSpan  LrgTextSpan;
+
+/* LrgRichText is a derivable type */
+typedef struct _LrgRichText       LrgRichText;
+typedef struct _LrgRichTextClass  LrgRichTextClass;
+
+/* LrgTextEffect is a derivable type */
+typedef struct _LrgTextEffect       LrgTextEffect;
+typedef struct _LrgTextEffectClass  LrgTextEffectClass;
+
+/* LrgTextLayout is a final type (internal) - no Class forward declaration needed */
+typedef struct _LrgTextLayout  LrgTextLayout;
+
+/* ==========================================================================
+ * Video Playback Module (Phase 3)
+ * ========================================================================== */
+
+/* LrgVideoPlayer is a final type - no Class forward declaration needed */
+typedef struct _LrgVideoPlayer  LrgVideoPlayer;
+
+/* LrgVideoTexture is a final type - no Class forward declaration needed */
+typedef struct _LrgVideoTexture  LrgVideoTexture;
+
+/* LrgVideoSubtitles is a final type - no Class forward declaration needed */
+typedef struct _LrgVideoSubtitles  LrgVideoSubtitles;
+
+/* LrgVideoSubtitleTrack is a final type - no Class forward declaration needed */
+typedef struct _LrgVideoSubtitleTrack  LrgVideoSubtitleTrack;
+
 G_END_DECLS

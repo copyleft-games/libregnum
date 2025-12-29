@@ -22,7 +22,7 @@ G_BEGIN_DECLS
 LRG_AVAILABLE_IN_ALL
 G_DECLARE_FINAL_TYPE (LrgAccessibilitySettings, lrg_accessibility_settings, LRG, ACCESSIBILITY_SETTINGS, LrgSettingsGroup)
 
-/* LrgColorblindMode is defined in lrg-enums.h */
+/* LrgColorblindType is defined in lrg-enums.h */
 
 /**
  * lrg_accessibility_settings_new:
@@ -38,28 +38,28 @@ lrg_accessibility_settings_new (void);
 /* Visual */
 
 /**
- * lrg_accessibility_settings_get_colorblind_mode:
+ * lrg_accessibility_settings_get_colorblind_type:
  * @self: an #LrgAccessibilitySettings
  *
- * Gets the colorblind mode.
+ * Gets the colorblind filter type.
  *
- * Returns: The current #LrgColorblindMode
+ * Returns: The current #LrgColorblindType
  */
 LRG_AVAILABLE_IN_ALL
-LrgColorblindMode
-lrg_accessibility_settings_get_colorblind_mode (LrgAccessibilitySettings *self);
+LrgColorblindType
+lrg_accessibility_settings_get_colorblind_type (LrgAccessibilitySettings *self);
 
 /**
- * lrg_accessibility_settings_set_colorblind_mode:
+ * lrg_accessibility_settings_set_colorblind_type:
  * @self: an #LrgAccessibilitySettings
- * @mode: the #LrgColorblindMode to set
+ * @type: the #LrgColorblindType to set
  *
- * Sets the colorblind mode.
+ * Sets the colorblind filter type.
  */
 LRG_AVAILABLE_IN_ALL
 void
-lrg_accessibility_settings_set_colorblind_mode (LrgAccessibilitySettings *self,
-                                                LrgColorblindMode         mode);
+lrg_accessibility_settings_set_colorblind_type (LrgAccessibilitySettings *self,
+                                                LrgColorblindType         type);
 
 /**
  * lrg_accessibility_settings_get_high_contrast:

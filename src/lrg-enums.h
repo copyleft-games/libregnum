@@ -431,20 +431,39 @@ GType lrg_item_type_get_type (void) G_GNUC_CONST;
  * ========================================================================== */
 
 /**
- * LrgColorblindMode:
+ * LrgColorblindType:
  * @LRG_COLORBLIND_NONE: No colorblind filter
- * @LRG_COLORBLIND_DEUTERANOPIA: Red-green (deutan) colorblind mode
- * @LRG_COLORBLIND_PROTANOPIA: Red-green (protan) colorblind mode
- * @LRG_COLORBLIND_TRITANOPIA: Blue-yellow colorblind mode
+ * @LRG_COLORBLIND_DEUTERANOPIA: Red-green (deutan) colorblindness
+ * @LRG_COLORBLIND_PROTANOPIA: Red-green (protan) colorblindness
+ * @LRG_COLORBLIND_TRITANOPIA: Blue-yellow colorblindness
+ * @LRG_COLORBLIND_ACHROMATOPSIA: Total color blindness
  *
- * Colorblind accessibility modes.
+ * Types of colorblindness for accessibility filters.
  */
 typedef enum
 {
     LRG_COLORBLIND_NONE = 0,
     LRG_COLORBLIND_DEUTERANOPIA,
     LRG_COLORBLIND_PROTANOPIA,
-    LRG_COLORBLIND_TRITANOPIA
+    LRG_COLORBLIND_TRITANOPIA,
+    LRG_COLORBLIND_ACHROMATOPSIA
+} LrgColorblindType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_colorblind_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_COLORBLIND_TYPE (lrg_colorblind_type_get_type ())
+
+/**
+ * LrgColorblindMode:
+ * @LRG_COLORBLIND_MODE_SIMULATE: Simulate what colorblind users see
+ * @LRG_COLORBLIND_MODE_CORRECT: Correct colors to improve visibility
+ *
+ * Colorblind filter operating modes.
+ */
+typedef enum
+{
+    LRG_COLORBLIND_MODE_SIMULATE = 0,
+    LRG_COLORBLIND_MODE_CORRECT
 } LrgColorblindMode;
 
 LRG_AVAILABLE_IN_ALL
@@ -1728,5 +1747,672 @@ typedef enum
 LRG_AVAILABLE_IN_ALL
 GType lrg_milestone_condition_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_MILESTONE_CONDITION (lrg_milestone_condition_get_type ())
+
+/* ==========================================================================
+ * Particle System (Phase 3)
+ * ========================================================================== */
+
+/**
+ * LRG_PARTICLE_ERROR:
+ *
+ * Error domain for particle system errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_PARTICLE_ERROR (lrg_particle_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_particle_error_quark (void);
+
+/**
+ * LrgParticleError:
+ * @LRG_PARTICLE_ERROR_FAILED: Generic failure
+ * @LRG_PARTICLE_ERROR_POOL_EXHAUSTED: Particle pool is exhausted
+ * @LRG_PARTICLE_ERROR_GPU_NOT_AVAILABLE: GPU compute not available
+ * @LRG_PARTICLE_ERROR_SHADER_COMPILE: Shader compilation failed
+ *
+ * Error codes for the particle system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_PARTICLE_ERROR_FAILED,
+    LRG_PARTICLE_ERROR_POOL_EXHAUSTED,
+    LRG_PARTICLE_ERROR_GPU_NOT_AVAILABLE,
+    LRG_PARTICLE_ERROR_SHADER_COMPILE
+} LrgParticleError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_particle_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PARTICLE_ERROR (lrg_particle_error_get_type ())
+
+/**
+ * LrgEmissionShape:
+ * @LRG_EMISSION_SHAPE_POINT: Emit from a single point
+ * @LRG_EMISSION_SHAPE_CIRCLE: Emit from a circle (2D) or sphere surface
+ * @LRG_EMISSION_SHAPE_RECTANGLE: Emit from a rectangular area
+ * @LRG_EMISSION_SHAPE_CONE: Emit in a cone direction
+ * @LRG_EMISSION_SHAPE_MESH: Emit from mesh surface vertices
+ *
+ * Emission shape types for particle emitters.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_EMISSION_SHAPE_POINT,
+    LRG_EMISSION_SHAPE_CIRCLE,
+    LRG_EMISSION_SHAPE_RECTANGLE,
+    LRG_EMISSION_SHAPE_CONE,
+    LRG_EMISSION_SHAPE_MESH
+} LrgEmissionShape;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_emission_shape_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_EMISSION_SHAPE (lrg_emission_shape_get_type ())
+
+/**
+ * LrgParticleRenderMode:
+ * @LRG_PARTICLE_RENDER_BILLBOARD: Camera-facing billboard
+ * @LRG_PARTICLE_RENDER_STRETCHED_BILLBOARD: Stretched along velocity
+ * @LRG_PARTICLE_RENDER_TRAIL: Trail/ribbon rendering
+ * @LRG_PARTICLE_RENDER_MESH: Mesh instance rendering
+ *
+ * Render modes for particles.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_PARTICLE_RENDER_BILLBOARD,
+    LRG_PARTICLE_RENDER_STRETCHED_BILLBOARD,
+    LRG_PARTICLE_RENDER_TRAIL,
+    LRG_PARTICLE_RENDER_MESH
+} LrgParticleRenderMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_particle_render_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PARTICLE_RENDER_MODE (lrg_particle_render_mode_get_type ())
+
+/**
+ * LrgParticleBackendType:
+ * @LRG_PARTICLE_BACKEND_CPU: CPU-based simulation
+ * @LRG_PARTICLE_BACKEND_GPU: GPU compute shader simulation
+ *
+ * Backend types for particle simulation.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_PARTICLE_BACKEND_CPU,
+    LRG_PARTICLE_BACKEND_GPU
+} LrgParticleBackendType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_particle_backend_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PARTICLE_BACKEND_TYPE (lrg_particle_backend_type_get_type ())
+
+/**
+ * LrgParticleBlendMode:
+ * @LRG_PARTICLE_BLEND_ADDITIVE: Additive blending (fire, glow)
+ * @LRG_PARTICLE_BLEND_ALPHA: Standard alpha blending
+ * @LRG_PARTICLE_BLEND_MULTIPLY: Multiply blending (shadows)
+ *
+ * Blend modes for particle rendering.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_PARTICLE_BLEND_ADDITIVE,
+    LRG_PARTICLE_BLEND_ALPHA,
+    LRG_PARTICLE_BLEND_MULTIPLY
+} LrgParticleBlendMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_particle_blend_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PARTICLE_BLEND_MODE (lrg_particle_blend_mode_get_type ())
+
+/**
+ * LrgPoolGrowPolicy:
+ * @LRG_POOL_GROW_NONE: Pool does not grow; fails when exhausted
+ * @LRG_POOL_GROW_DOUBLE: Double capacity when exhausted
+ * @LRG_POOL_GROW_LINEAR: Add fixed increment when exhausted
+ * @LRG_POOL_GROW_RECYCLE: Recycle oldest alive item when exhausted
+ *
+ * Growth policy for object pools.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_POOL_GROW_NONE,
+    LRG_POOL_GROW_DOUBLE,
+    LRG_POOL_GROW_LINEAR,
+    LRG_POOL_GROW_RECYCLE
+} LrgPoolGrowPolicy;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_pool_grow_policy_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_POOL_GROW_POLICY (lrg_pool_grow_policy_get_type ())
+
+/* ==========================================================================
+ * Post-Processing System (Phase 3)
+ * ========================================================================== */
+
+/**
+ * LRG_POSTPROCESS_ERROR:
+ *
+ * Error domain for post-processing system errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_POSTPROCESS_ERROR (lrg_postprocess_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_postprocess_error_quark (void);
+
+/**
+ * LrgPostProcessError:
+ * @LRG_POSTPROCESS_ERROR_FAILED: Generic failure
+ * @LRG_POSTPROCESS_ERROR_SHADER_COMPILE: Shader compilation failed
+ * @LRG_POSTPROCESS_ERROR_TEXTURE_LOAD: Texture loading failed (e.g., LUT)
+ * @LRG_POSTPROCESS_ERROR_FRAMEBUFFER: Framebuffer creation failed
+ *
+ * Error codes for the post-processing system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_POSTPROCESS_ERROR_FAILED,
+    LRG_POSTPROCESS_ERROR_SHADER_COMPILE,
+    LRG_POSTPROCESS_ERROR_TEXTURE_LOAD,
+    LRG_POSTPROCESS_ERROR_FRAMEBUFFER
+} LrgPostProcessError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_postprocess_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_POSTPROCESS_ERROR (lrg_postprocess_error_get_type ())
+
+/**
+ * LrgFxaaQuality:
+ * @LRG_FXAA_QUALITY_LOW: Low quality (fastest)
+ * @LRG_FXAA_QUALITY_MEDIUM: Medium quality
+ * @LRG_FXAA_QUALITY_HIGH: High quality
+ * @LRG_FXAA_QUALITY_ULTRA: Ultra quality (slowest)
+ *
+ * Quality presets for FXAA anti-aliasing.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_FXAA_QUALITY_LOW,
+    LRG_FXAA_QUALITY_MEDIUM,
+    LRG_FXAA_QUALITY_HIGH,
+    LRG_FXAA_QUALITY_ULTRA
+} LrgFxaaQuality;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_fxaa_quality_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_FXAA_QUALITY (lrg_fxaa_quality_get_type ())
+
+/**
+ * LrgBokehShape:
+ * @LRG_BOKEH_CIRCLE: Circular bokeh
+ * @LRG_BOKEH_HEXAGON: Hexagonal bokeh
+ * @LRG_BOKEH_OCTAGON: Octagonal bokeh
+ *
+ * Bokeh shapes for depth of field effect.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_BOKEH_CIRCLE,
+    LRG_BOKEH_HEXAGON,
+    LRG_BOKEH_OCTAGON
+} LrgBokehShape;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_bokeh_shape_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_BOKEH_SHAPE (lrg_bokeh_shape_get_type ())
+
+/* ==========================================================================
+ * Animation System (Phase 3)
+ * ========================================================================== */
+
+/**
+ * LRG_ANIMATION_ERROR:
+ *
+ * Error domain for animation system errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_ANIMATION_ERROR (lrg_animation_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_animation_error_quark (void);
+
+/**
+ * LrgAnimationError:
+ * @LRG_ANIMATION_ERROR_FAILED: Generic failure
+ * @LRG_ANIMATION_ERROR_CLIP_NOT_FOUND: Animation clip not found
+ * @LRG_ANIMATION_ERROR_STATE_NOT_FOUND: State not found in state machine
+ * @LRG_ANIMATION_ERROR_INVALID_TRANSITION: Invalid transition definition
+ * @LRG_ANIMATION_ERROR_BONE_NOT_FOUND: Bone not found in skeleton
+ * @LRG_ANIMATION_ERROR_IK_FAILED: Inverse kinematics solve failed
+ *
+ * Error codes for the animation system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ANIMATION_ERROR_FAILED,
+    LRG_ANIMATION_ERROR_CLIP_NOT_FOUND,
+    LRG_ANIMATION_ERROR_STATE_NOT_FOUND,
+    LRG_ANIMATION_ERROR_INVALID_TRANSITION,
+    LRG_ANIMATION_ERROR_BONE_NOT_FOUND,
+    LRG_ANIMATION_ERROR_IK_FAILED
+} LrgAnimationError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_animation_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ANIMATION_ERROR (lrg_animation_error_get_type ())
+
+/**
+ * LrgAnimationLoopMode:
+ * @LRG_ANIMATION_LOOP_NONE: Play once and stop
+ * @LRG_ANIMATION_LOOP_REPEAT: Loop from start when finished
+ * @LRG_ANIMATION_LOOP_PINGPONG: Play forward then reverse
+ * @LRG_ANIMATION_LOOP_CLAMP_FOREVER: Stop at last frame
+ *
+ * Animation clip loop modes.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ANIMATION_LOOP_NONE,
+    LRG_ANIMATION_LOOP_REPEAT,
+    LRG_ANIMATION_LOOP_PINGPONG,
+    LRG_ANIMATION_LOOP_CLAMP_FOREVER
+} LrgAnimationLoopMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_animation_loop_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ANIMATION_LOOP_MODE (lrg_animation_loop_mode_get_type ())
+
+/**
+ * LrgAnimatorState:
+ * @LRG_ANIMATOR_STOPPED: Not playing
+ * @LRG_ANIMATOR_PLAYING: Playing animation
+ * @LRG_ANIMATOR_PAUSED: Playback paused
+ *
+ * Animator playback states.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ANIMATOR_STOPPED,
+    LRG_ANIMATOR_PLAYING,
+    LRG_ANIMATOR_PAUSED
+} LrgAnimatorState;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_animator_state_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ANIMATOR_STATE (lrg_animator_state_get_type ())
+
+/**
+ * LrgBlendType:
+ * @LRG_BLEND_TYPE_1D: 1D threshold-based blending
+ * @LRG_BLEND_TYPE_2D_SIMPLE: Simple 2D directional blending
+ * @LRG_BLEND_TYPE_2D_FREEFORM: Freeform 2D blending with cartesian positions
+ * @LRG_BLEND_TYPE_DIRECT: Direct blend with explicit weights
+ *
+ * Blend tree types for animation blending.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_BLEND_TYPE_1D,
+    LRG_BLEND_TYPE_2D_SIMPLE,
+    LRG_BLEND_TYPE_2D_FREEFORM,
+    LRG_BLEND_TYPE_DIRECT
+} LrgBlendType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_blend_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_BLEND_TYPE (lrg_blend_type_get_type ())
+
+/**
+ * LrgAnimationParameterType:
+ * @LRG_ANIM_PARAM_FLOAT: Floating point parameter
+ * @LRG_ANIM_PARAM_INT: Integer parameter
+ * @LRG_ANIM_PARAM_BOOL: Boolean parameter
+ * @LRG_ANIM_PARAM_TRIGGER: One-shot trigger (auto-resets)
+ *
+ * Types of animation state machine parameters.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ANIM_PARAM_FLOAT,
+    LRG_ANIM_PARAM_INT,
+    LRG_ANIM_PARAM_BOOL,
+    LRG_ANIM_PARAM_TRIGGER
+} LrgAnimationParameterType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_animation_parameter_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ANIMATION_PARAMETER_TYPE (lrg_animation_parameter_type_get_type ())
+
+/**
+ * LrgLayerBlendMode:
+ * @LRG_LAYER_BLEND_OVERRIDE: Override lower layers
+ * @LRG_LAYER_BLEND_ADDITIVE: Add to lower layers
+ *
+ * Blending modes for animation layers.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_LAYER_BLEND_OVERRIDE,
+    LRG_LAYER_BLEND_ADDITIVE
+} LrgLayerBlendMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_layer_blend_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_LAYER_BLEND_MODE (lrg_layer_blend_mode_get_type ())
+
+/**
+ * LrgTransitionInterruptionSource:
+ * @LRG_TRANSITION_INTERRUPT_NONE: Cannot be interrupted
+ * @LRG_TRANSITION_INTERRUPT_CURRENT: Current state can interrupt
+ * @LRG_TRANSITION_INTERRUPT_NEXT: Next state can interrupt
+ * @LRG_TRANSITION_INTERRUPT_BOTH: Both states can interrupt
+ *
+ * Sources that can interrupt a transition.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TRANSITION_INTERRUPT_NONE,
+    LRG_TRANSITION_INTERRUPT_CURRENT,
+    LRG_TRANSITION_INTERRUPT_NEXT,
+    LRG_TRANSITION_INTERRUPT_BOTH
+} LrgTransitionInterruptionSource;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_transition_interruption_source_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TRANSITION_INTERRUPTION_SOURCE (lrg_transition_interruption_source_get_type ())
+
+/**
+ * LrgConditionComparison:
+ * @LRG_CONDITION_EQUALS: Equal to value
+ * @LRG_CONDITION_NOT_EQUALS: Not equal to value
+ * @LRG_CONDITION_GREATER: Greater than value
+ * @LRG_CONDITION_LESS: Less than value
+ * @LRG_CONDITION_GREATER_EQUAL: Greater than or equal
+ * @LRG_CONDITION_LESS_EQUAL: Less than or equal
+ *
+ * Comparison operators for transition conditions.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CONDITION_EQUALS,
+    LRG_CONDITION_NOT_EQUALS,
+    LRG_CONDITION_GREATER,
+    LRG_CONDITION_LESS,
+    LRG_CONDITION_GREATER_EQUAL,
+    LRG_CONDITION_LESS_EQUAL
+} LrgConditionComparison;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_condition_comparison_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CONDITION_COMPARISON (lrg_condition_comparison_get_type ())
+
+/**
+ * LrgIKSolverType:
+ * @LRG_IK_TYPE_FABRIK: Forward And Backward Reaching IK
+ * @LRG_IK_TYPE_CCD: Cyclic Coordinate Descent
+ * @LRG_IK_TYPE_TWO_BONE: Analytic two-bone solver
+ * @LRG_IK_TYPE_LOOK_AT: Look-at rotation solver
+ *
+ * Inverse kinematics solver types.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_IK_TYPE_FABRIK,
+    LRG_IK_TYPE_CCD,
+    LRG_IK_TYPE_TWO_BONE,
+    LRG_IK_TYPE_LOOK_AT
+} LrgIKSolverType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_ik_solver_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_IK_SOLVER_TYPE (lrg_ik_solver_type_get_type ())
+
+/* ==========================================================================
+ * Rich Text System (Phase 3)
+ * ========================================================================== */
+
+/**
+ * LRG_TEXT_ERROR:
+ *
+ * Error domain for rich text system errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_TEXT_ERROR (lrg_text_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_text_error_quark (void);
+
+/**
+ * LrgTextError:
+ * @LRG_TEXT_ERROR_FAILED: Generic failure
+ * @LRG_TEXT_ERROR_FONT_LOAD: Font loading failed
+ * @LRG_TEXT_ERROR_INVALID_MARKUP: Invalid markup syntax
+ * @LRG_TEXT_ERROR_SHADER_COMPILE: SDF shader compilation failed
+ *
+ * Error codes for the rich text system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TEXT_ERROR_FAILED,
+    LRG_TEXT_ERROR_FONT_LOAD,
+    LRG_TEXT_ERROR_INVALID_MARKUP,
+    LRG_TEXT_ERROR_SHADER_COMPILE
+} LrgTextError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_text_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXT_ERROR (lrg_text_error_get_type ())
+
+/**
+ * LrgTextStyle:
+ * @LRG_TEXT_STYLE_NONE: No style
+ * @LRG_TEXT_STYLE_BOLD: Bold text
+ * @LRG_TEXT_STYLE_ITALIC: Italic text
+ * @LRG_TEXT_STYLE_UNDERLINE: Underlined text
+ * @LRG_TEXT_STYLE_STRIKETHROUGH: Strikethrough text
+ *
+ * Text style flags for rich text formatting.
+ *
+ * Since: 1.0
+ */
+typedef enum /*< flags >*/
+{
+    LRG_TEXT_STYLE_NONE          = 0,
+    LRG_TEXT_STYLE_BOLD          = 1 << 0,
+    LRG_TEXT_STYLE_ITALIC        = 1 << 1,
+    LRG_TEXT_STYLE_UNDERLINE     = 1 << 2,
+    LRG_TEXT_STYLE_STRIKETHROUGH = 1 << 3
+} LrgTextStyle;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_text_style_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXT_STYLE (lrg_text_style_get_type ())
+
+/**
+ * LrgTextEffectType:
+ * @LRG_TEXT_EFFECT_NONE: No effect
+ * @LRG_TEXT_EFFECT_SHAKE: Random position jitter
+ * @LRG_TEXT_EFFECT_WAVE: Sine wave vertical motion
+ * @LRG_TEXT_EFFECT_RAINBOW: Cycling rainbow colors
+ * @LRG_TEXT_EFFECT_TYPEWRITER: Progressive character reveal
+ * @LRG_TEXT_EFFECT_FADE_IN: Alpha fade in
+ * @LRG_TEXT_EFFECT_PULSE: Scale pulsing
+ * @LRG_TEXT_EFFECT_CUSTOM: User-defined effect
+ *
+ * Types of animated text effects.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TEXT_EFFECT_NONE,
+    LRG_TEXT_EFFECT_SHAKE,
+    LRG_TEXT_EFFECT_WAVE,
+    LRG_TEXT_EFFECT_RAINBOW,
+    LRG_TEXT_EFFECT_TYPEWRITER,
+    LRG_TEXT_EFFECT_FADE_IN,
+    LRG_TEXT_EFFECT_PULSE,
+    LRG_TEXT_EFFECT_CUSTOM
+} LrgTextEffectType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_text_effect_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXT_EFFECT_TYPE (lrg_text_effect_type_get_type ())
+
+/**
+ * LrgTextDirection:
+ * @LRG_TEXT_DIRECTION_LTR: Left-to-right text
+ * @LRG_TEXT_DIRECTION_RTL: Right-to-left text
+ * @LRG_TEXT_DIRECTION_AUTO: Auto-detect from content
+ *
+ * Text direction for bidirectional text support.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TEXT_DIRECTION_LTR,
+    LRG_TEXT_DIRECTION_RTL,
+    LRG_TEXT_DIRECTION_AUTO
+} LrgTextDirection;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_text_direction_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXT_DIRECTION (lrg_text_direction_get_type ())
+
+/* ==========================================================================
+ * Video Playback System (Phase 3)
+ * ========================================================================== */
+
+/**
+ * LRG_VIDEO_ERROR:
+ *
+ * Error domain for video playback errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_VIDEO_ERROR (lrg_video_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_video_error_quark (void);
+
+/**
+ * LrgVideoError:
+ * @LRG_VIDEO_ERROR_NONE: No error
+ * @LRG_VIDEO_ERROR_FAILED: Generic failure
+ * @LRG_VIDEO_ERROR_NOT_FOUND: Video file not found
+ * @LRG_VIDEO_ERROR_FORMAT: Unsupported format
+ * @LRG_VIDEO_ERROR_CODEC: Codec not available
+ * @LRG_VIDEO_ERROR_DECODE: Decode error
+ * @LRG_VIDEO_ERROR_SEEK: Seek operation failed
+ * @LRG_VIDEO_ERROR_AUDIO: Audio stream error
+ *
+ * Error codes for the video playback system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_VIDEO_ERROR_NONE,
+    LRG_VIDEO_ERROR_FAILED,
+    LRG_VIDEO_ERROR_NOT_FOUND,
+    LRG_VIDEO_ERROR_FORMAT,
+    LRG_VIDEO_ERROR_CODEC,
+    LRG_VIDEO_ERROR_DECODE,
+    LRG_VIDEO_ERROR_SEEK,
+    LRG_VIDEO_ERROR_AUDIO
+} LrgVideoError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_video_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VIDEO_ERROR (lrg_video_error_get_type ())
+
+/**
+ * LrgVideoState:
+ * @LRG_VIDEO_STATE_STOPPED: Not playing, position at 0
+ * @LRG_VIDEO_STATE_LOADING: File is being opened
+ * @LRG_VIDEO_STATE_PLAYING: Actively playing
+ * @LRG_VIDEO_STATE_PAUSED: Paused at current position
+ * @LRG_VIDEO_STATE_FINISHED: Reached end of video
+ * @LRG_VIDEO_STATE_ERROR: Error occurred
+ *
+ * Video player states.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_VIDEO_STATE_STOPPED,
+    LRG_VIDEO_STATE_LOADING,
+    LRG_VIDEO_STATE_PLAYING,
+    LRG_VIDEO_STATE_PAUSED,
+    LRG_VIDEO_STATE_FINISHED,
+    LRG_VIDEO_STATE_ERROR
+} LrgVideoState;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_video_state_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VIDEO_STATE (lrg_video_state_get_type ())
+
+/**
+ * LrgSubtitlePosition:
+ * @LRG_SUBTITLE_POSITION_BOTTOM: Subtitles at bottom of video
+ * @LRG_SUBTITLE_POSITION_TOP: Subtitles at top of video
+ *
+ * Subtitle positioning.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_SUBTITLE_POSITION_BOTTOM,
+    LRG_SUBTITLE_POSITION_TOP
+} LrgSubtitlePosition;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_subtitle_position_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SUBTITLE_POSITION (lrg_subtitle_position_get_type ())
 
 G_END_DECLS

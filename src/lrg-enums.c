@@ -442,7 +442,7 @@ lrg_item_type_get_type (void)
  * ========================================================================== */
 
 GType
-lrg_colorblind_mode_get_type (void)
+lrg_colorblind_type_get_type (void)
 {
     static volatile gsize g_define_type_id__volatile = 0;
 
@@ -453,6 +453,27 @@ lrg_colorblind_mode_get_type (void)
             { LRG_COLORBLIND_DEUTERANOPIA, "LRG_COLORBLIND_DEUTERANOPIA", "deuteranopia" },
             { LRG_COLORBLIND_PROTANOPIA, "LRG_COLORBLIND_PROTANOPIA", "protanopia" },
             { LRG_COLORBLIND_TRITANOPIA, "LRG_COLORBLIND_TRITANOPIA", "tritanopia" },
+            { LRG_COLORBLIND_ACHROMATOPSIA, "LRG_COLORBLIND_ACHROMATOPSIA", "achromatopsia" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgColorblindType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_colorblind_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_COLORBLIND_MODE_SIMULATE, "LRG_COLORBLIND_MODE_SIMULATE", "simulate" },
+            { LRG_COLORBLIND_MODE_CORRECT, "LRG_COLORBLIND_MODE_CORRECT", "correct" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
@@ -1712,6 +1733,646 @@ lrg_milestone_condition_get_type (void)
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgMilestoneCondition"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Particle System Quarks and GTypes (Phase 3)
+ * ========================================================================== */
+
+/**
+ * lrg_particle_error_quark:
+ *
+ * Gets the error quark for particle system errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_particle_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-particle-error-quark");
+}
+
+GType
+lrg_particle_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PARTICLE_ERROR_FAILED, "LRG_PARTICLE_ERROR_FAILED", "failed" },
+            { LRG_PARTICLE_ERROR_POOL_EXHAUSTED, "LRG_PARTICLE_ERROR_POOL_EXHAUSTED", "pool-exhausted" },
+            { LRG_PARTICLE_ERROR_GPU_NOT_AVAILABLE, "LRG_PARTICLE_ERROR_GPU_NOT_AVAILABLE", "gpu-not-available" },
+            { LRG_PARTICLE_ERROR_SHADER_COMPILE, "LRG_PARTICLE_ERROR_SHADER_COMPILE", "shader-compile" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgParticleError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_emission_shape_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_EMISSION_SHAPE_POINT, "LRG_EMISSION_SHAPE_POINT", "point" },
+            { LRG_EMISSION_SHAPE_CIRCLE, "LRG_EMISSION_SHAPE_CIRCLE", "circle" },
+            { LRG_EMISSION_SHAPE_RECTANGLE, "LRG_EMISSION_SHAPE_RECTANGLE", "rectangle" },
+            { LRG_EMISSION_SHAPE_CONE, "LRG_EMISSION_SHAPE_CONE", "cone" },
+            { LRG_EMISSION_SHAPE_MESH, "LRG_EMISSION_SHAPE_MESH", "mesh" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgEmissionShape"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_particle_render_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PARTICLE_RENDER_BILLBOARD, "LRG_PARTICLE_RENDER_BILLBOARD", "billboard" },
+            { LRG_PARTICLE_RENDER_STRETCHED_BILLBOARD, "LRG_PARTICLE_RENDER_STRETCHED_BILLBOARD", "stretched-billboard" },
+            { LRG_PARTICLE_RENDER_TRAIL, "LRG_PARTICLE_RENDER_TRAIL", "trail" },
+            { LRG_PARTICLE_RENDER_MESH, "LRG_PARTICLE_RENDER_MESH", "mesh" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgParticleRenderMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_particle_backend_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PARTICLE_BACKEND_CPU, "LRG_PARTICLE_BACKEND_CPU", "cpu" },
+            { LRG_PARTICLE_BACKEND_GPU, "LRG_PARTICLE_BACKEND_GPU", "gpu" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgParticleBackendType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_particle_blend_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PARTICLE_BLEND_ADDITIVE, "LRG_PARTICLE_BLEND_ADDITIVE", "additive" },
+            { LRG_PARTICLE_BLEND_ALPHA, "LRG_PARTICLE_BLEND_ALPHA", "alpha" },
+            { LRG_PARTICLE_BLEND_MULTIPLY, "LRG_PARTICLE_BLEND_MULTIPLY", "multiply" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgParticleBlendMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_pool_grow_policy_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_POOL_GROW_NONE, "LRG_POOL_GROW_NONE", "none" },
+            { LRG_POOL_GROW_DOUBLE, "LRG_POOL_GROW_DOUBLE", "double" },
+            { LRG_POOL_GROW_LINEAR, "LRG_POOL_GROW_LINEAR", "linear" },
+            { LRG_POOL_GROW_RECYCLE, "LRG_POOL_GROW_RECYCLE", "recycle" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPoolGrowPolicy"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Post-Processing System Quarks and GTypes (Phase 3)
+ * ========================================================================== */
+
+/**
+ * lrg_postprocess_error_quark:
+ *
+ * Gets the error quark for post-processing errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_postprocess_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-postprocess-error-quark");
+}
+
+GType
+lrg_postprocess_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_POSTPROCESS_ERROR_FAILED, "LRG_POSTPROCESS_ERROR_FAILED", "failed" },
+            { LRG_POSTPROCESS_ERROR_SHADER_COMPILE, "LRG_POSTPROCESS_ERROR_SHADER_COMPILE", "shader-compile" },
+            { LRG_POSTPROCESS_ERROR_TEXTURE_LOAD, "LRG_POSTPROCESS_ERROR_TEXTURE_LOAD", "texture-load" },
+            { LRG_POSTPROCESS_ERROR_FRAMEBUFFER, "LRG_POSTPROCESS_ERROR_FRAMEBUFFER", "framebuffer" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPostProcessError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_fxaa_quality_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_FXAA_QUALITY_LOW, "LRG_FXAA_QUALITY_LOW", "low" },
+            { LRG_FXAA_QUALITY_MEDIUM, "LRG_FXAA_QUALITY_MEDIUM", "medium" },
+            { LRG_FXAA_QUALITY_HIGH, "LRG_FXAA_QUALITY_HIGH", "high" },
+            { LRG_FXAA_QUALITY_ULTRA, "LRG_FXAA_QUALITY_ULTRA", "ultra" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgFxaaQuality"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_bokeh_shape_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_BOKEH_CIRCLE, "LRG_BOKEH_CIRCLE", "circle" },
+            { LRG_BOKEH_HEXAGON, "LRG_BOKEH_HEXAGON", "hexagon" },
+            { LRG_BOKEH_OCTAGON, "LRG_BOKEH_OCTAGON", "octagon" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgBokehShape"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Animation System Quarks and GTypes (Phase 3)
+ * ========================================================================== */
+
+/**
+ * lrg_animation_error_quark:
+ *
+ * Gets the error quark for animation errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_animation_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-animation-error-quark");
+}
+
+GType
+lrg_animation_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ANIMATION_ERROR_FAILED, "LRG_ANIMATION_ERROR_FAILED", "failed" },
+            { LRG_ANIMATION_ERROR_CLIP_NOT_FOUND, "LRG_ANIMATION_ERROR_CLIP_NOT_FOUND", "clip-not-found" },
+            { LRG_ANIMATION_ERROR_STATE_NOT_FOUND, "LRG_ANIMATION_ERROR_STATE_NOT_FOUND", "state-not-found" },
+            { LRG_ANIMATION_ERROR_INVALID_TRANSITION, "LRG_ANIMATION_ERROR_INVALID_TRANSITION", "invalid-transition" },
+            { LRG_ANIMATION_ERROR_BONE_NOT_FOUND, "LRG_ANIMATION_ERROR_BONE_NOT_FOUND", "bone-not-found" },
+            { LRG_ANIMATION_ERROR_IK_FAILED, "LRG_ANIMATION_ERROR_IK_FAILED", "ik-failed" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAnimationError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_animation_loop_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ANIMATION_LOOP_NONE, "LRG_ANIMATION_LOOP_NONE", "none" },
+            { LRG_ANIMATION_LOOP_REPEAT, "LRG_ANIMATION_LOOP_REPEAT", "repeat" },
+            { LRG_ANIMATION_LOOP_PINGPONG, "LRG_ANIMATION_LOOP_PINGPONG", "pingpong" },
+            { LRG_ANIMATION_LOOP_CLAMP_FOREVER, "LRG_ANIMATION_LOOP_CLAMP_FOREVER", "clamp-forever" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAnimationLoopMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_animator_state_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ANIMATOR_STOPPED, "LRG_ANIMATOR_STOPPED", "stopped" },
+            { LRG_ANIMATOR_PLAYING, "LRG_ANIMATOR_PLAYING", "playing" },
+            { LRG_ANIMATOR_PAUSED, "LRG_ANIMATOR_PAUSED", "paused" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAnimatorState"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_blend_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_BLEND_TYPE_1D, "LRG_BLEND_TYPE_1D", "1d" },
+            { LRG_BLEND_TYPE_2D_SIMPLE, "LRG_BLEND_TYPE_2D_SIMPLE", "2d-simple" },
+            { LRG_BLEND_TYPE_2D_FREEFORM, "LRG_BLEND_TYPE_2D_FREEFORM", "2d-freeform" },
+            { LRG_BLEND_TYPE_DIRECT, "LRG_BLEND_TYPE_DIRECT", "direct" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgBlendType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_animation_parameter_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ANIM_PARAM_FLOAT, "LRG_ANIM_PARAM_FLOAT", "float" },
+            { LRG_ANIM_PARAM_INT, "LRG_ANIM_PARAM_INT", "int" },
+            { LRG_ANIM_PARAM_BOOL, "LRG_ANIM_PARAM_BOOL", "bool" },
+            { LRG_ANIM_PARAM_TRIGGER, "LRG_ANIM_PARAM_TRIGGER", "trigger" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAnimationParameterType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_layer_blend_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_LAYER_BLEND_OVERRIDE, "LRG_LAYER_BLEND_OVERRIDE", "override" },
+            { LRG_LAYER_BLEND_ADDITIVE, "LRG_LAYER_BLEND_ADDITIVE", "additive" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgLayerBlendMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_transition_interruption_source_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TRANSITION_INTERRUPT_NONE, "LRG_TRANSITION_INTERRUPT_NONE", "none" },
+            { LRG_TRANSITION_INTERRUPT_CURRENT, "LRG_TRANSITION_INTERRUPT_CURRENT", "current" },
+            { LRG_TRANSITION_INTERRUPT_NEXT, "LRG_TRANSITION_INTERRUPT_NEXT", "next" },
+            { LRG_TRANSITION_INTERRUPT_BOTH, "LRG_TRANSITION_INTERRUPT_BOTH", "both" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTransitionInterruptionSource"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_condition_comparison_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CONDITION_EQUALS, "LRG_CONDITION_EQUALS", "equals" },
+            { LRG_CONDITION_NOT_EQUALS, "LRG_CONDITION_NOT_EQUALS", "not-equals" },
+            { LRG_CONDITION_GREATER, "LRG_CONDITION_GREATER", "greater" },
+            { LRG_CONDITION_LESS, "LRG_CONDITION_LESS", "less" },
+            { LRG_CONDITION_GREATER_EQUAL, "LRG_CONDITION_GREATER_EQUAL", "greater-equal" },
+            { LRG_CONDITION_LESS_EQUAL, "LRG_CONDITION_LESS_EQUAL", "less-equal" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgConditionComparison"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_ik_solver_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_IK_TYPE_FABRIK, "LRG_IK_TYPE_FABRIK", "fabrik" },
+            { LRG_IK_TYPE_CCD, "LRG_IK_TYPE_CCD", "ccd" },
+            { LRG_IK_TYPE_TWO_BONE, "LRG_IK_TYPE_TWO_BONE", "two-bone" },
+            { LRG_IK_TYPE_LOOK_AT, "LRG_IK_TYPE_LOOK_AT", "look-at" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgIKSolverType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Rich Text System Quarks and GTypes (Phase 3)
+ * ========================================================================== */
+
+/**
+ * lrg_text_error_quark:
+ *
+ * Gets the error quark for rich text errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_text_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-text-error-quark");
+}
+
+GType
+lrg_text_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TEXT_ERROR_FAILED, "LRG_TEXT_ERROR_FAILED", "failed" },
+            { LRG_TEXT_ERROR_FONT_LOAD, "LRG_TEXT_ERROR_FONT_LOAD", "font-load" },
+            { LRG_TEXT_ERROR_INVALID_MARKUP, "LRG_TEXT_ERROR_INVALID_MARKUP", "invalid-markup" },
+            { LRG_TEXT_ERROR_SHADER_COMPILE, "LRG_TEXT_ERROR_SHADER_COMPILE", "shader-compile" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTextError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_text_style_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GFlagsValue values[] = {
+            { LRG_TEXT_STYLE_NONE, "LRG_TEXT_STYLE_NONE", "none" },
+            { LRG_TEXT_STYLE_BOLD, "LRG_TEXT_STYLE_BOLD", "bold" },
+            { LRG_TEXT_STYLE_ITALIC, "LRG_TEXT_STYLE_ITALIC", "italic" },
+            { LRG_TEXT_STYLE_UNDERLINE, "LRG_TEXT_STYLE_UNDERLINE", "underline" },
+            { LRG_TEXT_STYLE_STRIKETHROUGH, "LRG_TEXT_STYLE_STRIKETHROUGH", "strikethrough" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_flags_register_static (g_intern_static_string ("LrgTextStyle"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_text_effect_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TEXT_EFFECT_NONE, "LRG_TEXT_EFFECT_NONE", "none" },
+            { LRG_TEXT_EFFECT_SHAKE, "LRG_TEXT_EFFECT_SHAKE", "shake" },
+            { LRG_TEXT_EFFECT_WAVE, "LRG_TEXT_EFFECT_WAVE", "wave" },
+            { LRG_TEXT_EFFECT_RAINBOW, "LRG_TEXT_EFFECT_RAINBOW", "rainbow" },
+            { LRG_TEXT_EFFECT_TYPEWRITER, "LRG_TEXT_EFFECT_TYPEWRITER", "typewriter" },
+            { LRG_TEXT_EFFECT_FADE_IN, "LRG_TEXT_EFFECT_FADE_IN", "fade-in" },
+            { LRG_TEXT_EFFECT_PULSE, "LRG_TEXT_EFFECT_PULSE", "pulse" },
+            { LRG_TEXT_EFFECT_CUSTOM, "LRG_TEXT_EFFECT_CUSTOM", "custom" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTextEffectType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_text_direction_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TEXT_DIRECTION_LTR, "LRG_TEXT_DIRECTION_LTR", "ltr" },
+            { LRG_TEXT_DIRECTION_RTL, "LRG_TEXT_DIRECTION_RTL", "rtl" },
+            { LRG_TEXT_DIRECTION_AUTO, "LRG_TEXT_DIRECTION_AUTO", "auto" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTextDirection"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Video Playback Quarks and GTypes (Phase 3)
+ * ========================================================================== */
+
+/**
+ * lrg_video_error_quark:
+ *
+ * Gets the error quark for video playback errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_video_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-video-error-quark");
+}
+
+GType
+lrg_video_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_VIDEO_ERROR_FAILED, "LRG_VIDEO_ERROR_FAILED", "failed" },
+            { LRG_VIDEO_ERROR_NOT_FOUND, "LRG_VIDEO_ERROR_NOT_FOUND", "not-found" },
+            { LRG_VIDEO_ERROR_FORMAT, "LRG_VIDEO_ERROR_FORMAT", "format" },
+            { LRG_VIDEO_ERROR_CODEC, "LRG_VIDEO_ERROR_CODEC", "codec" },
+            { LRG_VIDEO_ERROR_DECODE, "LRG_VIDEO_ERROR_DECODE", "decode" },
+            { LRG_VIDEO_ERROR_SEEK, "LRG_VIDEO_ERROR_SEEK", "seek" },
+            { LRG_VIDEO_ERROR_AUDIO, "LRG_VIDEO_ERROR_AUDIO", "audio" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgVideoError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_video_state_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_VIDEO_STATE_STOPPED, "LRG_VIDEO_STATE_STOPPED", "stopped" },
+            { LRG_VIDEO_STATE_LOADING, "LRG_VIDEO_STATE_LOADING", "loading" },
+            { LRG_VIDEO_STATE_PLAYING, "LRG_VIDEO_STATE_PLAYING", "playing" },
+            { LRG_VIDEO_STATE_PAUSED, "LRG_VIDEO_STATE_PAUSED", "paused" },
+            { LRG_VIDEO_STATE_FINISHED, "LRG_VIDEO_STATE_FINISHED", "finished" },
+            { LRG_VIDEO_STATE_ERROR, "LRG_VIDEO_STATE_ERROR", "error" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgVideoState"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_subtitle_position_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SUBTITLE_POSITION_BOTTOM, "LRG_SUBTITLE_POSITION_BOTTOM", "bottom" },
+            { LRG_SUBTITLE_POSITION_TOP, "LRG_SUBTITLE_POSITION_TOP", "top" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgSubtitlePosition"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
 

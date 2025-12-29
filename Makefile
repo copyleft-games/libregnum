@@ -208,7 +208,43 @@ PUBLIC_HEADERS := \
 	src/vehicle/lrg-vehicle-audio.h \
 	src/vehicle/lrg-road.h \
 	src/vehicle/lrg-road-network.h \
-	src/vehicle/lrg-traffic-agent.h
+	src/vehicle/lrg-traffic-agent.h \
+	src/particles/lrg-particle.h \
+	src/particles/lrg-particle-pool.h \
+	src/particles/lrg-particle-emitter.h \
+	src/particles/lrg-particle-force.h \
+	src/particles/lrg-particle-system.h \
+	src/postprocess/lrg-post-effect.h \
+	src/postprocess/lrg-post-processor.h \
+	src/postprocess/effects/lrg-vignette.h \
+	src/postprocess/effects/lrg-bloom.h \
+	src/postprocess/effects/lrg-film-grain.h \
+	src/postprocess/effects/lrg-screen-shake.h \
+	src/postprocess/effects/lrg-colorblind-filter.h \
+	src/postprocess/effects/lrg-color-grade.h \
+	src/postprocess/effects/lrg-fxaa.h \
+	src/animation/lrg-bone-pose.h \
+	src/animation/lrg-bone.h \
+	src/animation/lrg-skeleton.h \
+	src/animation/lrg-animation-keyframe.h \
+	src/animation/lrg-animation-event.h \
+	src/animation/lrg-animation-clip.h \
+	src/animation/lrg-animator.h \
+	src/animation/lrg-animation-state.h \
+	src/animation/lrg-animation-transition.h \
+	src/animation/lrg-animation-state-machine.h \
+	src/animation/lrg-blend-tree.h \
+	src/animation/lrg-animation-layer.h \
+	src/animation/lrg-ik-chain.h \
+	src/animation/lrg-ik-solver.h \
+	src/text/lrg-text-span.h \
+	src/text/lrg-text-effect.h \
+	src/text/lrg-font-manager.h \
+	src/text/lrg-rich-text.h \
+	src/video/lrg-video-texture.h \
+	src/video/lrg-video-subtitle-track.h \
+	src/video/lrg-video-subtitles.h \
+	src/video/lrg-video-player.h
 
 # Source files
 SOURCES := \
@@ -392,7 +428,43 @@ SOURCES := \
 	src/vehicle/lrg-vehicle-audio.c \
 	src/vehicle/lrg-road.c \
 	src/vehicle/lrg-road-network.c \
-	src/vehicle/lrg-traffic-agent.c
+	src/vehicle/lrg-traffic-agent.c \
+	src/particles/lrg-particle.c \
+	src/particles/lrg-particle-pool.c \
+	src/particles/lrg-particle-emitter.c \
+	src/particles/lrg-particle-force.c \
+	src/particles/lrg-particle-system.c \
+	src/postprocess/lrg-post-effect.c \
+	src/postprocess/lrg-post-processor.c \
+	src/postprocess/effects/lrg-vignette.c \
+	src/postprocess/effects/lrg-bloom.c \
+	src/postprocess/effects/lrg-film-grain.c \
+	src/postprocess/effects/lrg-screen-shake.c \
+	src/postprocess/effects/lrg-colorblind-filter.c \
+	src/postprocess/effects/lrg-color-grade.c \
+	src/postprocess/effects/lrg-fxaa.c \
+	src/animation/lrg-bone-pose.c \
+	src/animation/lrg-bone.c \
+	src/animation/lrg-skeleton.c \
+	src/animation/lrg-animation-keyframe.c \
+	src/animation/lrg-animation-event.c \
+	src/animation/lrg-animation-clip.c \
+	src/animation/lrg-animator.c \
+	src/animation/lrg-animation-state.c \
+	src/animation/lrg-animation-transition.c \
+	src/animation/lrg-animation-state-machine.c \
+	src/animation/lrg-blend-tree.c \
+	src/animation/lrg-animation-layer.c \
+	src/animation/lrg-ik-chain.c \
+	src/animation/lrg-ik-solver.c \
+	src/text/lrg-text-span.c \
+	src/text/lrg-text-effect.c \
+	src/text/lrg-font-manager.c \
+	src/text/lrg-rich-text.c \
+	src/video/lrg-video-texture.c \
+	src/video/lrg-video-subtitle-track.c \
+	src/video/lrg-video-subtitles.c \
+	src/video/lrg-video-player.c
 
 # Conditional scripting backends
 ifeq ($(HAS_LUAJIT),1)

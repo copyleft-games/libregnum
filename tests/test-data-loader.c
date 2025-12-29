@@ -476,9 +476,12 @@ test_data_loader_load_directory (LoaderFixture *fixture,
     g_assert_cmpuint (count, ==, 3);
 
     /* Verify all objects are entities */
-    for (GList *l = objects; l != NULL; l = l->next)
     {
-        g_assert_true (TEST_IS_ENTITY (l->data));
+        GList *l;
+        for (l = objects; l != NULL; l = l->next)
+        {
+            g_assert_true (TEST_IS_ENTITY (l->data));
+        }
     }
 
     g_list_free_full (objects, g_object_unref);

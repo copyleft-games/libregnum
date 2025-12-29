@@ -283,4 +283,50 @@
 #include "vehicle/lrg-road-network.h"
 #include "vehicle/lrg-traffic-agent.h"
 
+/* Particles module (Phase 3) */
+#include "particles/lrg-particle.h"
+#include "particles/lrg-particle-pool.h"
+#include "particles/lrg-particle-emitter.h"
+#include "particles/lrg-particle-force.h"
+#include "particles/lrg-particle-system.h"
+
+/* Post-Processing module (Phase 3) */
+#include "postprocess/lrg-post-effect.h"
+#include "postprocess/lrg-post-processor.h"
+#include "postprocess/effects/lrg-vignette.h"
+#include "postprocess/effects/lrg-bloom.h"
+#include "postprocess/effects/lrg-film-grain.h"
+#include "postprocess/effects/lrg-screen-shake.h"
+#include "postprocess/effects/lrg-colorblind-filter.h"
+#include "postprocess/effects/lrg-color-grade.h"
+#include "postprocess/effects/lrg-fxaa.h"
+
+/* Animation module (Phase 3) */
+#include "animation/lrg-bone-pose.h"
+#include "animation/lrg-bone.h"
+#include "animation/lrg-skeleton.h"
+#include "animation/lrg-animation-keyframe.h"
+#include "animation/lrg-animation-event.h"
+#include "animation/lrg-animation-clip.h"
+#include "animation/lrg-animator.h"
+#include "animation/lrg-animation-state.h"
+#include "animation/lrg-animation-transition.h"
+#include "animation/lrg-animation-state-machine.h"
+#include "animation/lrg-blend-tree.h"
+#include "animation/lrg-animation-layer.h"
+#include "animation/lrg-ik-chain.h"
+#include "animation/lrg-ik-solver.h"
+
+/* Rich Text module (Phase 3) */
+#include "text/lrg-text-span.h"
+#include "text/lrg-text-effect.h"
+#include "text/lrg-font-manager.h"
+#include "text/lrg-rich-text.h"
+
+/* Video Playback module (Phase 3) */
+#include "video/lrg-video-texture.h"
+#include "video/lrg-video-subtitle-track.h"
+#include "video/lrg-video-subtitles.h"
+#include "video/lrg-video-player.h"
+
 #undef LIBREGNUM_INSIDE

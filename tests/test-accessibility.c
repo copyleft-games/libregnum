@@ -70,28 +70,28 @@ static void
 test_accessibility_colorblind_mode (AccessibilityFixture *fixture,
                                     gconstpointer         user_data)
 {
-    LrgColorblindMode mode;
+    LrgColorblindType type;
 
     /* Default should be NONE */
-    mode = lrg_accessibility_settings_get_colorblind_mode (fixture->settings);
-    g_assert_cmpint (mode, ==, LRG_COLORBLIND_NONE);
+    type = lrg_accessibility_settings_get_colorblind_type (fixture->settings);
+    g_assert_cmpint (type, ==, LRG_COLORBLIND_NONE);
 
-    /* Test all modes */
-    lrg_accessibility_settings_set_colorblind_mode (fixture->settings, LRG_COLORBLIND_DEUTERANOPIA);
-    mode = lrg_accessibility_settings_get_colorblind_mode (fixture->settings);
-    g_assert_cmpint (mode, ==, LRG_COLORBLIND_DEUTERANOPIA);
+    /* Test all types */
+    lrg_accessibility_settings_set_colorblind_type (fixture->settings, LRG_COLORBLIND_DEUTERANOPIA);
+    type = lrg_accessibility_settings_get_colorblind_type (fixture->settings);
+    g_assert_cmpint (type, ==, LRG_COLORBLIND_DEUTERANOPIA);
 
-    lrg_accessibility_settings_set_colorblind_mode (fixture->settings, LRG_COLORBLIND_PROTANOPIA);
-    mode = lrg_accessibility_settings_get_colorblind_mode (fixture->settings);
-    g_assert_cmpint (mode, ==, LRG_COLORBLIND_PROTANOPIA);
+    lrg_accessibility_settings_set_colorblind_type (fixture->settings, LRG_COLORBLIND_PROTANOPIA);
+    type = lrg_accessibility_settings_get_colorblind_type (fixture->settings);
+    g_assert_cmpint (type, ==, LRG_COLORBLIND_PROTANOPIA);
 
-    lrg_accessibility_settings_set_colorblind_mode (fixture->settings, LRG_COLORBLIND_TRITANOPIA);
-    mode = lrg_accessibility_settings_get_colorblind_mode (fixture->settings);
-    g_assert_cmpint (mode, ==, LRG_COLORBLIND_TRITANOPIA);
+    lrg_accessibility_settings_set_colorblind_type (fixture->settings, LRG_COLORBLIND_TRITANOPIA);
+    type = lrg_accessibility_settings_get_colorblind_type (fixture->settings);
+    g_assert_cmpint (type, ==, LRG_COLORBLIND_TRITANOPIA);
 
-    lrg_accessibility_settings_set_colorblind_mode (fixture->settings, LRG_COLORBLIND_NONE);
-    mode = lrg_accessibility_settings_get_colorblind_mode (fixture->settings);
-    g_assert_cmpint (mode, ==, LRG_COLORBLIND_NONE);
+    lrg_accessibility_settings_set_colorblind_type (fixture->settings, LRG_COLORBLIND_NONE);
+    type = lrg_accessibility_settings_get_colorblind_type (fixture->settings);
+    g_assert_cmpint (type, ==, LRG_COLORBLIND_NONE);
 }
 
 static void
@@ -411,7 +411,7 @@ test_accessibility_serialize (AccessibilityFixture *fixture,
     g_autoptr(GError)   error = NULL;
 
     /* Set some values */
-    lrg_accessibility_settings_set_colorblind_mode (fixture->settings, LRG_COLORBLIND_DEUTERANOPIA);
+    lrg_accessibility_settings_set_colorblind_type (fixture->settings, LRG_COLORBLIND_DEUTERANOPIA);
     lrg_accessibility_settings_set_ui_scale (fixture->settings, 1.5f);
     lrg_accessibility_settings_set_subtitles_enabled (fixture->settings, TRUE);
     lrg_accessibility_settings_set_auto_aim (fixture->settings, TRUE);
@@ -448,7 +448,7 @@ test_accessibility_deserialize (AccessibilityFixture *fixture,
     g_assert_no_error (error);
 
     /* Verify values were loaded */
-    g_assert_cmpint (lrg_accessibility_settings_get_colorblind_mode (fixture->settings),
+    g_assert_cmpint (lrg_accessibility_settings_get_colorblind_type (fixture->settings),
                      ==, LRG_COLORBLIND_TRITANOPIA);
     g_assert_true (lrg_accessibility_settings_get_high_contrast (fixture->settings));
     g_assert_cmpfloat_with_epsilon (lrg_accessibility_settings_get_ui_scale (fixture->settings),
@@ -465,7 +465,7 @@ test_accessibility_reset (AccessibilityFixture *fixture,
                           gconstpointer         user_data)
 {
     /* Modify all settings */
-    lrg_accessibility_settings_set_colorblind_mode (fixture->settings, LRG_COLORBLIND_PROTANOPIA);
+    lrg_accessibility_settings_set_colorblind_type (fixture->settings, LRG_COLORBLIND_PROTANOPIA);
     lrg_accessibility_settings_set_high_contrast (fixture->settings, TRUE);
     lrg_accessibility_settings_set_ui_scale (fixture->settings, 2.0f);
     lrg_accessibility_settings_set_subtitles_enabled (fixture->settings, TRUE);
@@ -475,7 +475,7 @@ test_accessibility_reset (AccessibilityFixture *fixture,
     lrg_settings_group_reset (LRG_SETTINGS_GROUP (fixture->settings));
 
     /* Verify defaults */
-    g_assert_cmpint (lrg_accessibility_settings_get_colorblind_mode (fixture->settings),
+    g_assert_cmpint (lrg_accessibility_settings_get_colorblind_type (fixture->settings),
                      ==, LRG_COLORBLIND_NONE);
     g_assert_false (lrg_accessibility_settings_get_high_contrast (fixture->settings));
     g_assert_cmpfloat_with_epsilon (lrg_accessibility_settings_get_ui_scale (fixture->settings),

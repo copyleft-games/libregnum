@@ -31,18 +31,64 @@ Window management, cameras, and rendering abstractions:
 - **[LrgCamera3D](graphics/index.md#lrgcamera3d)** - 3D camera for 3D games
 - **[LrgRenderer](graphics/index.md#lrgrenderer)** - Render management and layer system
 
+### [Particles Module](particles/index.md) - Particle Systems
+
+GPU-efficient particle effects:
+
+- **[LrgParticle](particles/particle.md)** - Individual particle state
+- **[LrgParticlePool](particles/pool.md)** - Memory-efficient particle storage
+- **[LrgParticleEmitter](particles/emitter.md)** - Particle spawning with shapes
+- **[LrgParticleForce](particles/forces.md)** - Gravity, wind, attractors, turbulence
+- **[LrgParticleSystem](particles/system.md)** - Complete particle effect system
+
+### [Post-Processing Module](postprocess/index.md) - Visual Effects
+
+Screen-space effects pipeline:
+
+- **[LrgPostEffect](postprocess/post-effect.md)** - Base effect class
+- **[LrgPostProcessor](postprocess/post-processor.md)** - Effect chain manager
+- **[Effects](postprocess/effects.md)** - Bloom, vignette, color grade, FXAA, film grain, screen shake
+- **[Accessibility](postprocess/accessibility.md)** - Colorblind simulation and correction
+
+### [Animation Module](animation/index.md) - Skeletal Animation
+
+Complete skeletal animation system:
+
+- **[LrgSkeleton](animation/skeleton.md)** - Bone hierarchy and poses
+- **[LrgAnimationClip](animation/clip.md)** - Keyframe animation data
+- **[LrgAnimator](animation/animator.md)** - Simple playback with crossfading
+- **[LrgAnimationStateMachine](animation/state-machine.md)** - Parameter-driven state machine
+- **[LrgBlendTree](animation/blend-tree.md)** - 1D/2D parametric blending
+- **[LrgAnimationLayer](animation/layers.md)** - Layered animation with bone masks
+- **[LrgIKSolver](animation/ik-solver.md)** - FABRIK, CCD, two-bone, look-at
+
+### [Rich Text Module](text/index.md) - Styled Text
+
+BBCode-style text markup:
+
+- **[LrgFontManager](text/font-manager.md)** - Font loading and caching
+- **[LrgRichText](text/rich-text.md)** - Markup parsing and rendering
+- **[Markup Reference](text/markup-reference.md)** - Tag documentation
+- **[LrgTextEffect](text/effects.md)** - Shake, wave, rainbow, typewriter effects
+
+### [Video Module](video/index.md) - Video Playback
+
+FFmpeg-based video playback:
+
+- **[LrgVideoPlayer](video/video-player.md)** - Video playback with audio
+- **[Subtitles](video/subtitles.md)** - SRT/VTT subtitle support
+- **[FFmpeg Setup](video/ffmpeg-setup.md)** - Dependency installation
+
 ## Planned Modules
 
-### Phase 1: Basic Game Systems
-
-Planned for development:
+### Phase 1: Basic Game Systems (Implemented, docs pending)
 
 - **ECS Module** - Entity-Component-System architecture
 - **Input Module** - Keyboard, mouse, gamepad handling
 - **UI Module** - Widget system with theming
 - **Tilemap Module** - 2D tile-based map rendering
 
-### Phase 2: Content and Gameplay
+### Phase 2: Content and Gameplay (Implemented, docs pending)
 
 - **Dialog Module** - Branching dialogue trees
 - **Inventory Module** - Item management and equipment
@@ -50,7 +96,7 @@ Planned for development:
 - **Save Module** - Save/load serialization
 - **Audio Module** - Sound effects and music
 
-### Phase 3: Advanced Systems
+### Phase 3: Advanced Systems (Partial)
 
 - **AI Module** - Behavior trees and decision making
 - **Pathfinding Module** - A* navigation and path smoothing
@@ -106,23 +152,28 @@ Phase 0   core/ (engine, registry, loader, assets)
 |--------|-------|--------|-----------|
 | Core | 0 | Complete | Engine, Registry, DataLoader, AssetManager |
 | Graphics | 0 | Complete | Window, GrlWindow, Camera, Camera2D, Camera3D, Renderer, Drawable |
-| ECS | 1 | Planned | GameObject, Component, World |
-| Input | 1 | Planned | InputMap, InputAction, InputBinding |
-| UI | 1 | Planned | Widget, Container, Button, Label |
-| Tilemap | 1 | Planned | Tileset, Tilemap, TilemapLayer |
-| Dialog | 2 | Planned | DialogTree, DialogNode, DialogRunner |
-| Inventory | 2 | Planned | ItemDef, ItemStack, Inventory, Equipment |
-| Quest | 2 | Planned | QuestDef, QuestInstance, QuestLog |
-| Save | 2 | Planned | SaveGame, SaveManager, SaveContext |
-| Audio | 2 | Planned | SoundBank, MusicTrack, AudioManager |
-| AI | 3 | Planned | BehaviorTree, BTNode, Blackboard |
-| Pathfinding | 3 | Planned | NavGrid, Pathfinder, Path |
-| Physics | 3 | Planned | RigidBody, PhysicsWorld, CollisionInfo |
-| I18N | 3 | Planned | Locale, Localization |
-| Networking | 3 | Planned | NetPeer, NetServer, NetClient |
-| 3D World | 3 | Planned | Level3D, Portal, PortalSystem |
-| Debug | 4 | Planned | Profiler, DebugConsole, DebugOverlay, Inspector |
-| Mod | 4 | Planned | Mod, ModManager, ModManifest, ModLoader |
+| Particles | 3 | Complete | Particle, ParticlePool, ParticleEmitter, ParticleForce, ParticleSystem |
+| PostProcess | 3 | Complete | PostEffect, PostProcessor, Bloom, Vignette, ColorGrade, FXAA |
+| Animation | 3 | Complete | Skeleton, Bone, AnimationClip, Animator, StateMachine, BlendTree, IKSolver |
+| Text | 3 | Complete | FontManager, RichText, TextSpan, TextEffect |
+| Video | 3 | Complete | VideoPlayer, VideoTexture, SubtitleTrack, VideoSubtitles |
+| ECS | 1 | Implemented | GameObject, Component, World |
+| Input | 1 | Implemented | InputMap, InputAction, InputBinding |
+| UI | 1 | Implemented | Widget, Container, Button, Label |
+| Tilemap | 1 | Implemented | Tileset, Tilemap, TilemapLayer |
+| Dialog | 2 | Implemented | DialogTree, DialogNode, DialogRunner |
+| Inventory | 2 | Implemented | ItemDef, ItemStack, Inventory, Equipment |
+| Quest | 2 | Implemented | QuestDef, QuestInstance, QuestLog |
+| Save | 2 | Implemented | SaveGame, SaveManager, SaveContext |
+| Audio | 2 | Implemented | SoundBank, MusicTrack, AudioManager |
+| AI | 3 | Implemented | BehaviorTree, BTNode, Blackboard |
+| Pathfinding | 3 | Implemented | NavGrid, Pathfinder, Path |
+| Physics | 3 | Implemented | RigidBody, PhysicsWorld, CollisionInfo |
+| I18N | 3 | Implemented | Locale, Localization |
+| Networking | 3 | Implemented | NetPeer, NetServer, NetClient |
+| 3D World | 3 | Implemented | Level3D, Portal, PortalSystem |
+| Debug | 4 | Implemented | Profiler, DebugConsole, DebugOverlay, Inspector |
+| Mod | 4 | Implemented | Mod, ModManager, ModManifest, ModLoader |
 
 ## Building with Multiple Modules
 

@@ -94,7 +94,12 @@ TEST_SOURCES := \
 	test-economy.c \
 	test-idle.c \
 	test-building.c \
-	test-vehicle.c
+	test-vehicle.c \
+	test-particles.c \
+	test-postprocess.c \
+	test-animation.c \
+	test-text.c \
+	test-video.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))
