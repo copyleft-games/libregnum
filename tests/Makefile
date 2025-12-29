@@ -27,13 +27,14 @@ LIBREGNUM_LIB := ../$(LIBOUTDIR)/$(LIB_SHARED)
 LIBREGNUM_STATIC := ../$(LIBOUTDIR)/$(LIB_STATIC)
 
 # Test CFLAGS
-TEST_CFLAGS := $(COMMON_CFLAGS) $(WARN_CFLAGS)
+TEST_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS)
 TEST_CFLAGS += -I../src
 TEST_CFLAGS += -DLIBREGNUM_COMPILATION
 TEST_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 libdex-1 json-glib-1.0 gobject-introspection-1.0)
 
 # Add dependency include paths
 TEST_CFLAGS += -I$(GRAYLIB_DIR)/src
+TEST_CFLAGS += -I$(GRAYLIB_DIR)/deps/raylib/src
 TEST_CFLAGS += -I$(YAMLGLIB_DIR)/src
 
 # Test LDFLAGS
