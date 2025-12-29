@@ -19,6 +19,9 @@ struct _LrgAudioManager
     /* Sound banks */
     GHashTable     *banks;          /* gchar* -> LrgSoundBank* */
 
+    /* Procedural audio sources */
+    GHashTable     *procedural;     /* gchar* -> LrgProceduralAudio* */
+
     /* Music */
     LrgMusicTrack  *current_music;
     LrgMusicTrack  *next_music;     /* For crossfading */
@@ -73,6 +76,7 @@ lrg_audio_manager_finalize (GObject *object)
     LrgAudioManager *self = LRG_AUDIO_MANAGER (object);
 
     g_clear_pointer (&self->banks, g_hash_table_unref);
+    g_clear_pointer (&self->procedural, g_hash_table_unref);
     g_clear_object (&self->current_music);
     g_clear_object (&self->next_music);
 
@@ -262,6 +266,11 @@ lrg_audio_manager_init (LrgAudioManager *self)
                                           g_free,
                                           g_object_unref);
 
+    self->procedural = g_hash_table_new_full (g_str_hash,
+                                               g_str_equal,
+                                               g_free,
+                                               g_object_unref);
+
     self->volume_master = 1.0f;
     self->volume_sfx = 1.0f;
     self->volume_music = 1.0f;
@@ -355,6 +364,16 @@ update_music_volume (LrgAudioManager *self)
  * Update
  * ========================================================================== */
 
+/* Helper to update all procedural audio sources */
+static void
+update_procedural_foreach (gpointer key     G_GNUC_UNUSED,
+                           gpointer value,
+                           gpointer user_data G_GNUC_UNUSED)
+{
+    LrgProceduralAudio *audio = LRG_PROCEDURAL_AUDIO (value);
+    lrg_procedural_audio_update (audio);
+}
+
 /**
  * lrg_audio_manager_update:
  * @self: the audio manager
@@ -379,6 +398,9 @@ lrg_audio_manager_update (LrgAudioManager *self)
     /* Update next music (for crossfading) */
     if (self->next_music != NULL)
         lrg_music_track_update (self->next_music);
+
+    /* Update all procedural audio sources */
+    g_hash_table_foreach (self->procedural, update_procedural_foreach, NULL);
 
     /* Handle crossfading */
     if (self->crossfading && self->current_music != NULL && self->next_music != NULL)
@@ -1132,4 +1154,177 @@ lrg_audio_manager_get_muted (LrgAudioManager *self)
     g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
 
     return self->muted;
+}
+
+/* ==========================================================================
+ * Procedural Audio Management
+ * ========================================================================== */
+
+/**
+ * lrg_audio_manager_add_procedural:
+ * @self: the audio manager
+ * @name: a unique name for the procedural audio
+ * @audio: the procedural audio source to add
+ *
+ * Registers a procedural audio source with the manager.
+ */
+void
+lrg_audio_manager_add_procedural (LrgAudioManager    *self,
+                                   const gchar        *name,
+                                   LrgProceduralAudio *audio)
+{
+    g_return_if_fail (LRG_IS_AUDIO_MANAGER (self));
+    g_return_if_fail (name != NULL);
+    g_return_if_fail (LRG_IS_PROCEDURAL_AUDIO (audio));
+
+    /* Set the name on the audio if not already set */
+    if (lrg_procedural_audio_get_name (audio) == NULL)
+        lrg_procedural_audio_set_name (audio, name);
+
+    g_hash_table_insert (self->procedural,
+                         g_strdup (name),
+                         g_object_ref (audio));
+
+    lrg_log_debug ("Added procedural audio '%s'", name);
+}
+
+/**
+ * lrg_audio_manager_remove_procedural:
+ * @self: the audio manager
+ * @name: the name of the procedural audio to remove
+ *
+ * Removes a procedural audio source from the manager.
+ *
+ * Returns: %TRUE if the source was found and removed
+ */
+gboolean
+lrg_audio_manager_remove_procedural (LrgAudioManager *self,
+                                      const gchar     *name)
+{
+    LrgProceduralAudio *audio;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+
+    /* Stop the audio if playing before removing */
+    audio = g_hash_table_lookup (self->procedural, name);
+    if (audio != NULL && lrg_procedural_audio_is_playing (audio))
+    {
+        lrg_procedural_audio_stop (audio);
+    }
+
+    return g_hash_table_remove (self->procedural, name);
+}
+
+/**
+ * lrg_audio_manager_get_procedural:
+ * @self: the audio manager
+ * @name: the name of the procedural audio
+ *
+ * Gets a registered procedural audio source by name.
+ *
+ * Returns: (transfer none) (nullable): the procedural audio, or %NULL if not found
+ */
+LrgProceduralAudio *
+lrg_audio_manager_get_procedural (LrgAudioManager *self,
+                                   const gchar     *name)
+{
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+
+    return g_hash_table_lookup (self->procedural, name);
+}
+
+/**
+ * lrg_audio_manager_get_procedural_names:
+ * @self: the audio manager
+ *
+ * Gets a list of all registered procedural audio names.
+ *
+ * Returns: (transfer container) (element-type utf8): list of names
+ */
+GList *
+lrg_audio_manager_get_procedural_names (LrgAudioManager *self)
+{
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), NULL);
+
+    return g_hash_table_get_keys (self->procedural);
+}
+
+/**
+ * lrg_audio_manager_play_procedural:
+ * @self: the audio manager
+ * @name: the name of the procedural audio to play
+ *
+ * Starts playing a registered procedural audio source.
+ *
+ * Returns: %TRUE if the source was found and started
+ */
+gboolean
+lrg_audio_manager_play_procedural (LrgAudioManager *self,
+                                    const gchar     *name)
+{
+    LrgProceduralAudio *audio;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+
+    audio = lrg_audio_manager_get_procedural (self, name);
+    if (audio == NULL)
+    {
+        lrg_log_warning ("Procedural audio '%s' not found", name);
+        return FALSE;
+    }
+
+    lrg_procedural_audio_play (audio);
+    return TRUE;
+}
+
+/**
+ * lrg_audio_manager_stop_procedural:
+ * @self: the audio manager
+ * @name: the name of the procedural audio to stop
+ *
+ * Stops a playing procedural audio source.
+ *
+ * Returns: %TRUE if the source was found and stopped
+ */
+gboolean
+lrg_audio_manager_stop_procedural (LrgAudioManager *self,
+                                    const gchar     *name)
+{
+    LrgProceduralAudio *audio;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+
+    audio = lrg_audio_manager_get_procedural (self, name);
+    if (audio == NULL)
+        return FALSE;
+
+    lrg_procedural_audio_stop (audio);
+    return TRUE;
+}
+
+static void
+stop_procedural_foreach (gpointer key     G_GNUC_UNUSED,
+                         gpointer value,
+                         gpointer user_data G_GNUC_UNUSED)
+{
+    LrgProceduralAudio *audio = LRG_PROCEDURAL_AUDIO (value);
+    lrg_procedural_audio_stop (audio);
+}
+
+/**
+ * lrg_audio_manager_stop_all_procedural:
+ * @self: the audio manager
+ *
+ * Stops all playing procedural audio sources.
+ */
+void
+lrg_audio_manager_stop_all_procedural (LrgAudioManager *self)
+{
+    g_return_if_fail (LRG_IS_AUDIO_MANAGER (self));
+
+    g_hash_table_foreach (self->procedural, stop_procedural_foreach, NULL);
 }

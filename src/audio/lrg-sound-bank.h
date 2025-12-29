@@ -149,6 +149,90 @@ gboolean lrg_sound_bank_load (LrgSoundBank  *self,
                               GError       **error);
 
 /**
+ * lrg_sound_bank_add_from_wave:
+ * @self: a #LrgSoundBank
+ * @name: the sound name
+ * @wave: the wave data to convert to a sound
+ *
+ * Adds a sound created from wave data.
+ *
+ * The wave data is converted to a GrlSound and added to the bank.
+ * This is useful when working with procedurally generated audio
+ * or audio loaded from custom sources.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_sound_bank_add_from_wave (LrgSoundBank *self,
+                                        const gchar  *name,
+                                        LrgWaveData  *wave);
+
+/**
+ * lrg_sound_bank_load_from_memory:
+ * @self: a #LrgSoundBank
+ * @name: the sound name
+ * @file_type: file type extension (e.g., ".wav", ".ogg")
+ * @data: (array length=data_size): audio file data in memory
+ * @data_size: size of @data in bytes
+ * @error: (optional): return location for a #GError
+ *
+ * Loads a sound from a memory buffer containing audio file data.
+ *
+ * The @file_type parameter specifies the audio format. It should be
+ * a file extension including the dot (e.g., ".wav", ".ogg", ".mp3").
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_sound_bank_load_from_memory (LrgSoundBank  *self,
+                                           const gchar   *name,
+                                           const gchar   *file_type,
+                                           const guint8  *data,
+                                           gsize          data_size,
+                                           GError       **error);
+
+/**
+ * lrg_sound_bank_load_from_resource:
+ * @self: a #LrgSoundBank
+ * @name: the sound name
+ * @pack: the resource pack to load from
+ * @resource_name: the name of the resource in the pack
+ * @error: (optional): return location for a #GError
+ *
+ * Loads a sound from a resource pack (rres file).
+ *
+ * Requires the resource pack to have a central directory for
+ * name-based lookups.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_sound_bank_load_from_resource (LrgSoundBank  *self,
+                                             const gchar   *name,
+                                             LrgAssetPack  *pack,
+                                             const gchar   *resource_name,
+                                             GError       **error);
+
+/**
+ * lrg_sound_bank_add_alias:
+ * @self: a #LrgSoundBank
+ * @alias: the alias name
+ * @source: the source sound name to alias
+ *
+ * Creates an alias for an existing sound in the bank.
+ *
+ * The alias points to the same underlying GrlSound as the source.
+ * This is useful for providing multiple names for the same sound
+ * effect (e.g., "hit" and "damage" pointing to the same sound).
+ *
+ * Returns: %TRUE if the source sound exists and alias was created
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_sound_bank_add_alias (LrgSoundBank *self,
+                                    const gchar  *alias,
+                                    const gchar  *source);
+
+/**
  * lrg_sound_bank_remove:
  * @self: a #LrgSoundBank
  * @name: the sound name to remove

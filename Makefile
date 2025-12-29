@@ -34,6 +34,7 @@ PUBLIC_HEADERS := \
 	src/core/lrg-registry.h \
 	src/core/lrg-data-loader.h \
 	src/core/lrg-asset-manager.h \
+	src/core/lrg-asset-pack.h \
 	src/graphics/lrg-drawable.h \
 	src/graphics/lrg-window.h \
 	src/graphics/lrg-grl-window.h \
@@ -113,6 +114,8 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-sound-bank.h \
 	src/audio/lrg-music-track.h \
 	src/audio/lrg-audio-manager.h \
+	src/audio/lrg-wave-data.h \
+	src/audio/lrg-procedural-audio.h \
 	src/inventory/lrg-item-def.h \
 	src/inventory/lrg-item-stack.h \
 	src/inventory/lrg-inventory.h \
@@ -302,6 +305,7 @@ SOURCES := \
 	src/core/lrg-registry.c \
 	src/core/lrg-data-loader.c \
 	src/core/lrg-asset-manager.c \
+	src/core/lrg-asset-pack.c \
 	src/graphics/lrg-drawable.c \
 	src/graphics/lrg-window.c \
 	src/graphics/lrg-grl-window.c \
@@ -381,6 +385,8 @@ SOURCES := \
 	src/audio/lrg-sound-bank.c \
 	src/audio/lrg-music-track.c \
 	src/audio/lrg-audio-manager.c \
+	src/audio/lrg-wave-data.c \
+	src/audio/lrg-procedural-audio.c \
 	src/inventory/lrg-item-def.c \
 	src/inventory/lrg-item-stack.c \
 	src/inventory/lrg-inventory.c \

@@ -226,4 +226,54 @@ LRG_AVAILABLE_IN_ALL
 void lrg_camera3d_set_projection (LrgCamera3D       *self,
                                   LrgProjectionType  projection);
 
+/* ==========================================================================
+ * Orientation (Quaternion)
+ * ========================================================================== */
+
+/**
+ * lrg_camera3d_get_orientation:
+ * @self: an #LrgCamera3D
+ *
+ * Gets the camera orientation as a quaternion.
+ *
+ * The orientation is computed from the camera's look direction
+ * (position to target) and up vector.
+ *
+ * Returns: (transfer full): A new #GrlQuaternion with the camera orientation
+ */
+LRG_AVAILABLE_IN_ALL
+GrlQuaternion * lrg_camera3d_get_orientation (LrgCamera3D *self);
+
+/**
+ * lrg_camera3d_set_orientation:
+ * @self: an #LrgCamera3D
+ * @quaternion: The orientation quaternion
+ *
+ * Sets the camera orientation from a quaternion.
+ *
+ * This updates the camera's target position and up vector based on
+ * the orientation while keeping the camera position unchanged.
+ * The camera will look in the forward direction defined by the quaternion.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_camera3d_set_orientation (LrgCamera3D       *self,
+                                   const GrlQuaternion *quaternion);
+
+/**
+ * lrg_camera3d_slerp_to:
+ * @self: an #LrgCamera3D
+ * @target: Target orientation quaternion
+ * @amount: Interpolation amount (0.0 to 1.0)
+ *
+ * Spherically interpolates the camera orientation toward the target.
+ *
+ * Uses SLERP (spherical linear interpolation) for smooth camera
+ * rotation transitions that maintain constant angular velocity.
+ * This is useful for smooth camera movement and cinematics.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_camera3d_slerp_to (LrgCamera3D         *self,
+                            const GrlQuaternion *target,
+                            gfloat               amount);
+
 G_END_DECLS

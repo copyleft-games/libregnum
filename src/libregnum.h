@@ -33,6 +33,7 @@
 #include "core/lrg-registry.h"
 #include "core/lrg-data-loader.h"
 #include "core/lrg-asset-manager.h"
+#include "core/lrg-asset-pack.h"
 
 /* Graphics module */
 #include "graphics/lrg-drawable.h"
@@ -132,6 +133,8 @@
 #include "audio/lrg-sound-bank.h"
 #include "audio/lrg-music-track.h"
 #include "audio/lrg-audio-manager.h"
+#include "audio/lrg-wave-data.h"
+#include "audio/lrg-procedural-audio.h"
 
 /* Inventory module */
 #include "inventory/lrg-item-def.h"

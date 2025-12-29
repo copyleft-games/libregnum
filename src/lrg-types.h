@@ -33,6 +33,9 @@ typedef struct _LrgDataLoader       LrgDataLoader;
 typedef struct _LrgAssetManager       LrgAssetManager;
 typedef struct _LrgAssetManagerClass  LrgAssetManagerClass;
 
+/* LrgAssetPack is a final type - no Class forward declaration needed */
+typedef struct _LrgAssetPack       LrgAssetPack;
+
 /* ==========================================================================
  * ECS Module
  * ========================================================================== */
@@ -197,6 +200,11 @@ typedef struct _LrgSaveManager       LrgSaveManager;
 typedef struct _LrgSoundBank       LrgSoundBank;
 typedef struct _LrgMusicTrack      LrgMusicTrack;
 typedef struct _LrgAudioManager    LrgAudioManager;
+typedef struct _LrgWaveData        LrgWaveData;
+
+/* LrgProceduralAudio is a derivable type */
+typedef struct _LrgProceduralAudio       LrgProceduralAudio;
+typedef struct _LrgProceduralAudioClass  LrgProceduralAudioClass;
 
 /* ==========================================================================
  * AI Module

@@ -25,6 +25,7 @@
 #include "../lrg-types.h"
 #include "lrg-sound-bank.h"
 #include "lrg-music-track.h"
+#include "lrg-procedural-audio.h"
 
 G_BEGIN_DECLS
 
@@ -410,5 +411,103 @@ void lrg_audio_manager_set_muted (LrgAudioManager *self,
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_audio_manager_get_muted (LrgAudioManager *self);
+
+/* ==========================================================================
+ * Procedural Audio Management
+ * ========================================================================== */
+
+/**
+ * lrg_audio_manager_add_procedural:
+ * @self: the audio manager
+ * @name: a unique name for the procedural audio
+ * @audio: the procedural audio source to add
+ *
+ * Registers a procedural audio source with the manager.
+ *
+ * Once registered, the audio manager's update() method will
+ * automatically call update() on the procedural audio source
+ * to keep it generating samples while playing.
+ *
+ * The audio source is referenced and will be unreferenced when
+ * removed or when the manager is finalized.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_manager_add_procedural (LrgAudioManager    *self,
+                                        const gchar        *name,
+                                        LrgProceduralAudio *audio);
+
+/**
+ * lrg_audio_manager_remove_procedural:
+ * @self: the audio manager
+ * @name: the name of the procedural audio to remove
+ *
+ * Removes a procedural audio source from the manager.
+ *
+ * The audio is stopped if playing before being removed.
+ *
+ * Returns: %TRUE if the source was found and removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_audio_manager_remove_procedural (LrgAudioManager *self,
+                                               const gchar     *name);
+
+/**
+ * lrg_audio_manager_get_procedural:
+ * @self: the audio manager
+ * @name: the name of the procedural audio
+ *
+ * Gets a registered procedural audio source by name.
+ *
+ * Returns: (transfer none) (nullable): the procedural audio, or %NULL if not found
+ */
+LRG_AVAILABLE_IN_ALL
+LrgProceduralAudio * lrg_audio_manager_get_procedural (LrgAudioManager *self,
+                                                        const gchar     *name);
+
+/**
+ * lrg_audio_manager_get_procedural_names:
+ * @self: the audio manager
+ *
+ * Gets a list of all registered procedural audio names.
+ *
+ * Returns: (transfer container) (element-type utf8): list of names
+ */
+LRG_AVAILABLE_IN_ALL
+GList * lrg_audio_manager_get_procedural_names (LrgAudioManager *self);
+
+/**
+ * lrg_audio_manager_play_procedural:
+ * @self: the audio manager
+ * @name: the name of the procedural audio to play
+ *
+ * Starts playing a registered procedural audio source.
+ *
+ * Returns: %TRUE if the source was found and started
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_audio_manager_play_procedural (LrgAudioManager *self,
+                                             const gchar     *name);
+
+/**
+ * lrg_audio_manager_stop_procedural:
+ * @self: the audio manager
+ * @name: the name of the procedural audio to stop
+ *
+ * Stops a playing procedural audio source.
+ *
+ * Returns: %TRUE if the source was found and stopped
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_audio_manager_stop_procedural (LrgAudioManager *self,
+                                             const gchar     *name);
+
+/**
+ * lrg_audio_manager_stop_all_procedural:
+ * @self: the audio manager
+ *
+ * Stops all playing procedural audio sources.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_manager_stop_all_procedural (LrgAudioManager *self);
 
 G_END_DECLS

@@ -50,6 +50,7 @@ TEST_LIBS := -l$(LIB_NAME)
 TEST_LIBS += -lgraylib -lyaml-glib
 TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 gobject-introspection-1.0)
 TEST_LIBS += $(PYTHON_LIBS) $(GJS_LIBS)
+TEST_LIBS += -lm
 
 # =============================================================================
 # Test Sources
@@ -106,7 +107,10 @@ TEST_SOURCES := \
 	test-atlas.c \
 	test-tutorial.c \
 	test-weather.c \
-	test-lighting.c
+	test-lighting.c \
+	test-wave-data.c \
+	test-procedural-audio.c \
+	test-asset-pack.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))

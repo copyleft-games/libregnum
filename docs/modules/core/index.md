@@ -17,6 +17,7 @@ The Core module provides:
 - **[LrgRegistry](registry.md)** - Type mapping for data-driven design
 - **[LrgDataLoader](data-loader.md)** - YAML deserialization with GObject integration
 - **[LrgAssetManager](asset-manager.md)** - Asset caching with mod overlay support
+- **[LrgAssetPack](asset-pack.md)** - Resource pack (rres) loading and management
 
 ## Essential Concepts
 
@@ -84,6 +85,7 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 | `LrgRegistry` | Type registry | No |
 | `LrgDataLoader` | YAML loader | No |
 | `LrgAssetManager` | Asset manager | Yes |
+| `LrgAssetPack` | Resource pack loader | No |
 
 ## Enumerations
 
@@ -93,6 +95,7 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 | `LrgEngineError` | FAILED, INIT, STATE | Engine errors |
 | `LrgDataLoaderError` | FAILED, IO, PARSE, TYPE, PROPERTY | Data loader errors |
 | `LrgAssetManagerError` | NOT_FOUND, LOAD_FAILED, INVALID_TYPE | Asset manager errors |
+| `LrgAssetPackError` | FILE_NOT_FOUND, INVALID_FORMAT, RESOURCE_NOT_FOUND, LOAD_FAILED, DECRYPT_FAILED | Asset pack errors |
 
 ## Quick Start
 
@@ -295,6 +298,7 @@ if (!lrg_engine_startup (engine, &error))
 - **[LrgRegistry](registry.md)** - Registry operations
 - **[LrgDataLoader](data-loader.md)** - Data loading
 - **[LrgAssetManager](asset-manager.md)** - Asset management
+- **[LrgAssetPack](asset-pack.md)** - Resource pack loading
 
 ## Concepts
 

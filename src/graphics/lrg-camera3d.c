@@ -10,6 +10,11 @@
 #include "config.h"
 #include "lrg-camera3d.h"
 
+#include <math.h>
+#include <string.h>
+#include <raylib.h>
+#include <raymath.h>
+
 /**
  * SECTION:lrg-camera3d
  * @title: LrgCamera3D
@@ -617,4 +622,222 @@ lrg_camera3d_set_projection (LrgCamera3D       *self,
 	priv->projection = projection;
 
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PROJECTION]);
+}
+
+/* ==========================================================================
+ * Quaternion Orientation API
+ * ========================================================================== */
+
+/**
+ * lrg_camera3d_get_orientation:
+ * @self: an #LrgCamera3D
+ *
+ * Gets the camera orientation as a quaternion.
+ *
+ * The orientation is computed from the camera's look direction
+ * (position to target) and up vector.
+ *
+ * Returns: (transfer full): A new #GrlQuaternion with the camera orientation
+ */
+GrlQuaternion *
+lrg_camera3d_get_orientation (LrgCamera3D *self)
+{
+	LrgCamera3DPrivate   *priv;
+	g_autoptr(GrlVector3) forward = NULL;
+	g_autoptr(GrlVector3) right = NULL;
+	g_autoptr(GrlVector3) up = NULL;
+	g_autoptr(GrlVector3) up_input = NULL;
+	gfloat                forward_x;
+	gfloat                forward_y;
+	gfloat                forward_z;
+	gfloat                len;
+	gfloat                trace;
+	gfloat                s;
+	gfloat                qw;
+	gfloat                qx;
+	gfloat                qy;
+	gfloat                qz;
+
+	g_return_val_if_fail (LRG_IS_CAMERA3D (self), NULL);
+
+	priv = lrg_camera3d_get_instance_private (self);
+
+	/*
+	 * Calculate forward direction (normalized)
+	 */
+	forward_x = priv->target_x - priv->position_x;
+	forward_y = priv->target_y - priv->position_y;
+	forward_z = priv->target_z - priv->position_z;
+
+	len = sqrtf (forward_x * forward_x + forward_y * forward_y + forward_z * forward_z);
+	if (len < 0.0001f)
+	{
+		/* Camera at target - return identity */
+		return grl_quaternion_new_identity ();
+	}
+
+	forward_x /= len;
+	forward_y /= len;
+	forward_z /= len;
+
+	forward = grl_vector3_new (forward_x, forward_y, forward_z);
+	up_input = grl_vector3_new (priv->up_x, priv->up_y, priv->up_z);
+
+	/*
+	 * Calculate right vector: right = forward x up
+	 */
+	right = grl_vector3_cross (forward, up_input);
+	right = grl_vector3_normalize (right);
+
+	/*
+	 * Recalculate up: up = right x forward
+	 */
+	up = grl_vector3_cross (right, forward);
+
+	/*
+	 * Build rotation matrix and extract quaternion.
+	 * Matrix columns are: right, up, -forward
+	 * Using the standard rotation matrix to quaternion conversion.
+	 */
+	trace = right->x + up->y + (-forward_z);
+
+	if (trace > 0.0f)
+	{
+		s = sqrtf (trace + 1.0f) * 2.0f;
+		qw = 0.25f * s;
+		qx = (up->z - (-forward_y)) / s;
+		qy = ((-forward_x) - right->z) / s;
+		qz = (right->y - up->x) / s;
+	}
+	else if (right->x > up->y && right->x > (-forward_z))
+	{
+		s = sqrtf (1.0f + right->x - up->y - (-forward_z)) * 2.0f;
+		qw = (up->z - (-forward_y)) / s;
+		qx = 0.25f * s;
+		qy = (right->y + up->x) / s;
+		qz = ((-forward_x) + right->z) / s;
+	}
+	else if (up->y > (-forward_z))
+	{
+		s = sqrtf (1.0f + up->y - right->x - (-forward_z)) * 2.0f;
+		qw = ((-forward_x) - right->z) / s;
+		qx = (right->y + up->x) / s;
+		qy = 0.25f * s;
+		qz = (up->z + (-forward_y)) / s;
+	}
+	else
+	{
+		s = sqrtf (1.0f + (-forward_z) - right->x - up->y) * 2.0f;
+		qw = (right->y - up->x) / s;
+		qx = ((-forward_x) + right->z) / s;
+		qy = (up->z + (-forward_y)) / s;
+		qz = 0.25f * s;
+	}
+
+	return grl_quaternion_new (qx, qy, qz, qw);
+}
+
+/**
+ * lrg_camera3d_set_orientation:
+ * @self: an #LrgCamera3D
+ * @quaternion: The orientation quaternion
+ *
+ * Sets the camera orientation from a quaternion.
+ *
+ * This updates the camera's target position and up vector based on
+ * the orientation while keeping the camera position unchanged.
+ */
+void
+lrg_camera3d_set_orientation (LrgCamera3D         *self,
+                              const GrlQuaternion *quaternion)
+{
+	LrgCamera3DPrivate    *priv;
+	g_autoptr(GrlMatrix)   rot_matrix = NULL;
+	g_autoptr(GrlVector3)  forward = NULL;
+	g_autoptr(GrlVector3)  up = NULL;
+	g_autoptr(GrlVector3)  default_forward = NULL;
+	g_autoptr(GrlVector3)  default_up = NULL;
+
+	g_return_if_fail (LRG_IS_CAMERA3D (self));
+	g_return_if_fail (quaternion != NULL);
+
+	priv = lrg_camera3d_get_instance_private (self);
+
+	/*
+	 * Default camera looks down -Z with Y up.
+	 * We transform these vectors by the quaternion rotation.
+	 */
+	default_forward = grl_vector3_new (0.0f, 0.0f, -1.0f);
+	default_up = grl_vector3_new (0.0f, 1.0f, 0.0f);
+
+	/* Convert quaternion to rotation matrix */
+	rot_matrix = grl_quaternion_to_matrix (quaternion);
+
+	/*
+	 * Transform forward and up vectors using raylib's Vector3Transform.
+	 * We convert between GrlVector3 (boxed type) and raylib's Vector3.
+	 */
+	{
+		Vector3 rl_forward = { default_forward->x, default_forward->y, default_forward->z };
+		Vector3 rl_up = { default_up->x, default_up->y, default_up->z };
+		Matrix rl_matrix;
+		Vector3 result_forward;
+		Vector3 result_up;
+
+		/* Copy GrlMatrix to raylib Matrix */
+		memcpy (&rl_matrix, rot_matrix, sizeof (Matrix));
+
+		result_forward = Vector3Transform (rl_forward, rl_matrix);
+		result_up = Vector3Transform (rl_up, rl_matrix);
+
+		forward = grl_vector3_new (result_forward.x, result_forward.y, result_forward.z);
+		up = grl_vector3_new (result_up.x, result_up.y, result_up.z);
+	}
+
+	/* Set target = position + forward */
+	priv->target_x = priv->position_x + forward->x;
+	priv->target_y = priv->position_y + forward->y;
+	priv->target_z = priv->position_z + forward->z;
+
+	/* Set up vector */
+	priv->up_x = up->x;
+	priv->up_y = up->y;
+	priv->up_z = up->z;
+
+	/* Notify property changes */
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TARGET_X]);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TARGET_Y]);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TARGET_Z]);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_UP_X]);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_UP_Y]);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_UP_Z]);
+}
+
+/**
+ * lrg_camera3d_slerp_to:
+ * @self: an #LrgCamera3D
+ * @target: Target orientation quaternion
+ * @amount: Interpolation amount (0.0 to 1.0)
+ *
+ * Spherically interpolates the camera orientation toward the target.
+ */
+void
+lrg_camera3d_slerp_to (LrgCamera3D         *self,
+                       const GrlQuaternion *target,
+                       gfloat               amount)
+{
+	g_autoptr(GrlQuaternion) current = NULL;
+	g_autoptr(GrlQuaternion) result = NULL;
+
+	g_return_if_fail (LRG_IS_CAMERA3D (self));
+	g_return_if_fail (target != NULL);
+
+	/* Get current orientation */
+	current = lrg_camera3d_get_orientation (self);
+
+	/* Perform spherical interpolation */
+	result = grl_quaternion_slerp (current, target, amount);
+
+	/* Apply interpolated orientation */
+	lrg_camera3d_set_orientation (self, result);
 }

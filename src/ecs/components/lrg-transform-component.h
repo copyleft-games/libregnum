@@ -370,4 +370,70 @@ void         lrg_transform_component_look_at                (LrgTransformCompone
 LRG_AVAILABLE_IN_ALL
 void         lrg_transform_component_sync_to_entity         (LrgTransformComponent *self);
 
+/*
+ * 3D Rotation (Quaternion)
+ */
+
+/**
+ * lrg_transform_component_get_rotation_quaternion:
+ * @self: an #LrgTransformComponent
+ *
+ * Gets the local rotation as a quaternion.
+ *
+ * For 2D transforms, this returns a quaternion representing
+ * rotation around the Z axis.
+ *
+ * Returns: (transfer full): A new #GrlQuaternion with the local rotation
+ */
+LRG_AVAILABLE_IN_ALL
+GrlQuaternion * lrg_transform_component_get_rotation_quaternion (LrgTransformComponent *self);
+
+/**
+ * lrg_transform_component_set_rotation_quaternion:
+ * @self: an #LrgTransformComponent
+ * @quaternion: The rotation quaternion
+ *
+ * Sets the local rotation from a quaternion.
+ *
+ * The quaternion is converted to Euler angles internally.
+ * For 2D transforms, only the Z rotation (roll) component is used.
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_set_rotation_quaternion (LrgTransformComponent *self,
+                                                               const GrlQuaternion   *quaternion);
+
+/**
+ * lrg_transform_component_set_rotation_euler:
+ * @self: an #LrgTransformComponent
+ * @pitch: Rotation around X axis in radians
+ * @yaw: Rotation around Y axis in radians
+ * @roll: Rotation around Z axis in radians
+ *
+ * Sets the local rotation from Euler angles.
+ *
+ * For 2D transforms, only the roll (Z rotation) is used and is
+ * converted to degrees for internal storage.
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_set_rotation_euler      (LrgTransformComponent *self,
+                                                               gfloat                 pitch,
+                                                               gfloat                 yaw,
+                                                               gfloat                 roll);
+
+/**
+ * lrg_transform_component_slerp_rotation:
+ * @self: an #LrgTransformComponent
+ * @target: Target rotation quaternion
+ * @amount: Interpolation amount (0.0 to 1.0)
+ *
+ * Spherically interpolates the local rotation toward the target.
+ *
+ * Uses SLERP (spherical linear interpolation) for smooth rotation
+ * transitions that maintain constant angular velocity.
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_slerp_rotation          (LrgTransformComponent *self,
+                                                               const GrlQuaternion   *target,
+                                                               gfloat                 amount);
+
 G_END_DECLS

@@ -464,6 +464,170 @@ test_audio_manager_update (AudioFixture *fixture,
 }
 
 /* ==========================================================================
+ * LrgSoundBank New Methods Tests
+ * ========================================================================== */
+
+static void
+test_sound_bank_add_alias (AudioFixture *fixture,
+                            gconstpointer user_data)
+{
+    gboolean result;
+
+    (void)user_data;
+
+    /* Adding alias without source should fail */
+    result = lrg_sound_bank_add_alias (fixture->bank, "jump_sfx", "jump");
+    g_assert_false (result);  /* Source doesn't exist */
+}
+
+static void
+test_sound_bank_add_from_wave (void)
+{
+    g_autoptr(LrgSoundBank) bank = NULL;
+    g_autoptr(LrgWaveData)  wave = NULL;
+    gboolean                result;
+
+    bank = lrg_sound_bank_new ("wave-bank");
+    wave = lrg_wave_data_new_procedural (44100, 1, 0.5f);
+
+    g_assert_nonnull (bank);
+    g_assert_nonnull (wave);
+
+    result = lrg_sound_bank_add_from_wave (bank, "beep", wave);
+
+    /* This may fail without audio hardware, but should not crash */
+    if (result)
+    {
+        g_assert_true (lrg_sound_bank_contains (bank, "beep"));
+    }
+}
+
+/* ==========================================================================
+ * LrgAudioManager Procedural Audio Tests
+ * ========================================================================== */
+
+static void
+test_audio_manager_procedural_add (AudioFixture *fixture,
+                                    gconstpointer user_data)
+{
+    g_autoptr(LrgProceduralAudio) audio = NULL;
+    LrgProceduralAudio           *retrieved;
+
+    (void)user_data;
+
+    audio = lrg_procedural_audio_new (44100, 1);
+    g_assert_nonnull (audio);
+
+    /* Add procedural audio */
+    lrg_audio_manager_add_procedural (fixture->manager, "test-synth", audio);
+
+    /* Retrieve it */
+    retrieved = lrg_audio_manager_get_procedural (fixture->manager, "test-synth");
+    g_assert_nonnull (retrieved);
+    g_assert_true (retrieved == audio);
+
+    /* Clean up */
+    lrg_audio_manager_remove_procedural (fixture->manager, "test-synth");
+}
+
+static void
+test_audio_manager_procedural_remove (AudioFixture *fixture,
+                                       gconstpointer user_data)
+{
+    g_autoptr(LrgProceduralAudio) audio = NULL;
+    gboolean                      result;
+
+    (void)user_data;
+
+    audio = lrg_procedural_audio_new (44100, 1);
+    lrg_audio_manager_add_procedural (fixture->manager, "temp-synth", audio);
+
+    result = lrg_audio_manager_remove_procedural (fixture->manager, "temp-synth");
+    g_assert_true (result);
+
+    g_assert_null (lrg_audio_manager_get_procedural (fixture->manager, "temp-synth"));
+
+    /* Removing non-existent should return FALSE */
+    result = lrg_audio_manager_remove_procedural (fixture->manager, "nonexistent");
+    g_assert_false (result);
+}
+
+static void
+test_audio_manager_procedural_get_names (AudioFixture *fixture,
+                                          gconstpointer user_data)
+{
+    g_autoptr(LrgProceduralAudio) audio1 = NULL;
+    g_autoptr(LrgProceduralAudio) audio2 = NULL;
+    g_autoptr(GList)              names = NULL;
+
+    (void)user_data;
+
+    audio1 = lrg_procedural_audio_new (44100, 1);
+    audio2 = lrg_procedural_audio_new (44100, 2);
+
+    lrg_audio_manager_add_procedural (fixture->manager, "synth-a", audio1);
+    lrg_audio_manager_add_procedural (fixture->manager, "synth-b", audio2);
+
+    names = lrg_audio_manager_get_procedural_names (fixture->manager);
+    g_assert_cmpuint (g_list_length (names), >=, 2);
+
+    /* Clean up */
+    lrg_audio_manager_remove_procedural (fixture->manager, "synth-a");
+    lrg_audio_manager_remove_procedural (fixture->manager, "synth-b");
+}
+
+static void
+test_audio_manager_procedural_play_stop (AudioFixture *fixture,
+                                          gconstpointer user_data)
+{
+    g_autoptr(LrgProceduralAudio) audio = NULL;
+    gboolean                      result;
+
+    (void)user_data;
+
+    audio = lrg_procedural_audio_new (44100, 1);
+    lrg_audio_manager_add_procedural (fixture->manager, "play-test", audio);
+
+    /* Play may fail without audio hardware */
+    result = lrg_audio_manager_play_procedural (fixture->manager, "play-test");
+    /* Don't assert on result - depends on audio hardware */
+
+    /* Stop should work regardless */
+    result = lrg_audio_manager_stop_procedural (fixture->manager, "play-test");
+    /* May return FALSE if wasn't playing */
+
+    /* Stop non-existent should return FALSE */
+    result = lrg_audio_manager_stop_procedural (fixture->manager, "nonexistent");
+    g_assert_false (result);
+
+    /* Clean up */
+    lrg_audio_manager_remove_procedural (fixture->manager, "play-test");
+}
+
+static void
+test_audio_manager_procedural_stop_all (AudioFixture *fixture,
+                                         gconstpointer user_data)
+{
+    g_autoptr(LrgProceduralAudio) audio1 = NULL;
+    g_autoptr(LrgProceduralAudio) audio2 = NULL;
+
+    (void)user_data;
+
+    audio1 = lrg_procedural_audio_new (44100, 1);
+    audio2 = lrg_procedural_audio_new (44100, 1);
+
+    lrg_audio_manager_add_procedural (fixture->manager, "stop-all-1", audio1);
+    lrg_audio_manager_add_procedural (fixture->manager, "stop-all-2", audio2);
+
+    /* Should not crash */
+    lrg_audio_manager_stop_all_procedural (fixture->manager);
+
+    /* Clean up */
+    lrg_audio_manager_remove_procedural (fixture->manager, "stop-all-1");
+    lrg_audio_manager_remove_procedural (fixture->manager, "stop-all-2");
+}
+
+/* ==========================================================================
  * Main
  * ========================================================================== */
 
@@ -521,6 +685,23 @@ main (int   argc,
                 audio_fixture_set_up, test_audio_manager_stop_all, audio_fixture_tear_down);
     g_test_add ("/audio/manager/update", AudioFixture, NULL,
                 audio_fixture_set_up, test_audio_manager_update, audio_fixture_tear_down);
+
+    /* Sound bank new methods */
+    g_test_add ("/audio/sound-bank/add-alias", AudioFixture, NULL,
+                audio_fixture_set_up, test_sound_bank_add_alias, audio_fixture_tear_down);
+    g_test_add_func ("/audio/sound-bank/add-from-wave", test_sound_bank_add_from_wave);
+
+    /* Audio manager procedural audio */
+    g_test_add ("/audio/manager/procedural-add", AudioFixture, NULL,
+                audio_fixture_set_up, test_audio_manager_procedural_add, audio_fixture_tear_down);
+    g_test_add ("/audio/manager/procedural-remove", AudioFixture, NULL,
+                audio_fixture_set_up, test_audio_manager_procedural_remove, audio_fixture_tear_down);
+    g_test_add ("/audio/manager/procedural-get-names", AudioFixture, NULL,
+                audio_fixture_set_up, test_audio_manager_procedural_get_names, audio_fixture_tear_down);
+    g_test_add ("/audio/manager/procedural-play-stop", AudioFixture, NULL,
+                audio_fixture_set_up, test_audio_manager_procedural_play_stop, audio_fixture_tear_down);
+    g_test_add ("/audio/manager/procedural-stop-all", AudioFixture, NULL,
+                audio_fixture_set_up, test_audio_manager_procedural_stop_all, audio_fixture_tear_down);
 
     return g_test_run ();
 }

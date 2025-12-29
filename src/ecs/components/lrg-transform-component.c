@@ -1010,3 +1010,128 @@ lrg_transform_component_sync_to_entity (LrgTransformComponent *self)
     /* GrlEntity has uniform scale, use average */
     grl_entity_set_scale (GRL_ENTITY (owner), (world_scale->x + world_scale->y) / 2.0f);
 }
+
+/* ==========================================================================
+ * Public API - 3D Rotation (Quaternion)
+ * ========================================================================== */
+
+/**
+ * lrg_transform_component_get_rotation_quaternion:
+ * @self: an #LrgTransformComponent
+ *
+ * Gets the local rotation as a quaternion.
+ *
+ * For 2D transforms, this returns a quaternion representing
+ * rotation around the Z axis.
+ *
+ * Returns: (transfer full): A new #GrlQuaternion with the local rotation
+ */
+GrlQuaternion *
+lrg_transform_component_get_rotation_quaternion (LrgTransformComponent *self)
+{
+    LrgTransformComponentPrivate *priv;
+    gfloat                        rad;
+
+    g_return_val_if_fail (LRG_IS_TRANSFORM_COMPONENT (self), NULL);
+
+    priv = lrg_transform_component_get_instance_private (self);
+
+    /*
+     * Convert 2D rotation (around Z) to quaternion.
+     * For rotation around Z axis: q = (0, 0, sin(angle/2), cos(angle/2))
+     */
+    rad = deg_to_rad (priv->local_rotation);
+    return grl_quaternion_new (0.0f, 0.0f, sinf (rad / 2.0f), cosf (rad / 2.0f));
+}
+
+/**
+ * lrg_transform_component_set_rotation_quaternion:
+ * @self: an #LrgTransformComponent
+ * @quaternion: The rotation quaternion
+ *
+ * Sets the local rotation from a quaternion.
+ *
+ * The quaternion is converted to Euler angles internally.
+ * For 2D transforms, only the Z rotation (roll) component is used.
+ */
+void
+lrg_transform_component_set_rotation_quaternion (LrgTransformComponent *self,
+                                                 const GrlQuaternion   *quaternion)
+{
+    gfloat pitch;
+    gfloat yaw;
+    gfloat roll;
+
+    g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
+    g_return_if_fail (quaternion != NULL);
+
+    /* Extract Euler angles from quaternion */
+    grl_quaternion_to_euler (quaternion, &pitch, &yaw, &roll);
+
+    /* For 2D, use roll (Z rotation) converted to degrees */
+    lrg_transform_component_set_local_rotation (self, roll * (180.0f / G_PI));
+}
+
+/**
+ * lrg_transform_component_set_rotation_euler:
+ * @self: an #LrgTransformComponent
+ * @pitch: Rotation around X axis in radians
+ * @yaw: Rotation around Y axis in radians
+ * @roll: Rotation around Z axis in radians
+ *
+ * Sets the local rotation from Euler angles.
+ *
+ * For 2D transforms, only the roll (Z rotation) is used and is
+ * converted to degrees for internal storage.
+ */
+void
+lrg_transform_component_set_rotation_euler (LrgTransformComponent *self,
+                                            gfloat                 pitch,
+                                            gfloat                 yaw,
+                                            gfloat                 roll)
+{
+    g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
+
+    /* Suppress unused parameter warnings - pitch and yaw are ignored for 2D */
+    (void)pitch;
+    (void)yaw;
+
+    /* For 2D, use roll (Z rotation) converted to degrees */
+    lrg_transform_component_set_local_rotation (self, roll * (180.0f / G_PI));
+}
+
+/**
+ * lrg_transform_component_slerp_rotation:
+ * @self: an #LrgTransformComponent
+ * @target: Target rotation quaternion
+ * @amount: Interpolation amount (0.0 to 1.0)
+ *
+ * Spherically interpolates the local rotation toward the target.
+ *
+ * Uses SLERP (spherical linear interpolation) for smooth rotation
+ * transitions that maintain constant angular velocity.
+ */
+void
+lrg_transform_component_slerp_rotation (LrgTransformComponent *self,
+                                        const GrlQuaternion   *target,
+                                        gfloat                 amount)
+{
+    g_autoptr(GrlQuaternion) current = NULL;
+    g_autoptr(GrlQuaternion) result = NULL;
+    gfloat                   pitch;
+    gfloat                   yaw;
+    gfloat                   roll;
+
+    g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
+    g_return_if_fail (target != NULL);
+
+    /* Get current rotation as quaternion */
+    current = lrg_transform_component_get_rotation_quaternion (self);
+
+    /* Perform spherical interpolation */
+    result = grl_quaternion_slerp (current, target, amount);
+
+    /* Extract roll angle and set */
+    grl_quaternion_to_euler (result, &pitch, &yaw, &roll);
+    lrg_transform_component_set_local_rotation (self, roll * (180.0f / G_PI));
+}

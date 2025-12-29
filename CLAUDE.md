@@ -25,16 +25,63 @@ libregnum/
 │   ├── lrg-types.h           # Forward declarations
 │   ├── lrg-enums.h/.c        # Enumerations with GType
 │   ├── lrg-log.h             # Logging macros
-│   └── core/                 # Core module
-│       ├── lrg-engine.h/.c   # Engine singleton
-│       ├── lrg-registry.h/.c # GType registry
-│       └── lrg-data-loader.h/.c  # YAML data loading
+│   ├── core/                 # Core systems
+│   │   ├── lrg-engine.h/.c
+│   │   ├── lrg-registry.h/.c
+│   │   ├── lrg-data-loader.h/.c
+│   │   ├── lrg-asset-manager.h/.c
+│   │   └── lrg-asset-pack.h/.c   # Resource pack loading
+│   ├── audio/                # Audio systems
+│   │   ├── lrg-audio-manager.h/.c
+│   │   ├── lrg-sound-bank.h/.c
+│   │   ├── lrg-wave-data.h/.c        # Wave data wrapper
+│   │   └── lrg-procedural-audio.h/.c # Procedural synthesis
+│   ├── graphics/             # Graphics and rendering
+│   │   ├── lrg-camera3d.h/.c
+│   │   └── lrg-renderer.h/.c
+│   ├── ecs/                  # Entity Component System
+│   │   ├── lrg-world.h/.c
+│   │   ├── lrg-entity.h/.c
+│   │   └── components/
+│   │       └── lrg-transform-component.h/.c
+│   ├── input/                # Input handling
+│   ├── ui/                   # UI widgets
+│   ├── tilemap/              # 2D tilemap system
+│   ├── dialog/               # Dialog/conversation system
+│   ├── inventory/            # Inventory management
+│   ├── quest/                # Quest tracking
+│   ├── save/                 # Save/load system
+│   ├── ai/                   # AI behaviors
+│   ├── pathfinding/          # A* and navigation
+│   ├── physics/              # Physics simulation
+│   ├── i18n/                 # Internationalization
+│   ├── net/                  # Networking
+│   ├── world3d/              # 3D world management
+│   ├── scene/                # Scene graph
+│   ├── mod/                  # Mod system
+│   ├── debug/                # Debug tools
+│   ├── scripting/            # Python/GJS scripting
+│   ├── economy/              # Economy/trading
+│   ├── building/             # Building placement
+│   ├── vehicle/              # Vehicle system
+│   ├── idle/                 # Idle game mechanics
+│   ├── particles/            # Particle effects
+│   ├── postprocess/          # Post-processing
+│   ├── animation/            # Animation system
+│   ├── text/                 # Text rendering
+│   ├── video/                # Video playback
+│   ├── tween/                # Tweening/easing
+│   ├── transition/           # Scene transitions
+│   ├── trigger2d/            # 2D trigger zones
+│   ├── atlas/                # Texture atlases
+│   ├── tutorial/             # Tutorial system
+│   ├── weather/              # Weather effects
+│   └── lighting/             # Lighting system
 ├── tests/
 │   ├── Makefile
-│   ├── test-engine.c
-│   ├── test-registry.c
-│   └── test-data-loader.c
+│   └── test-*.c              # One test file per module
 └── docs/
+    └── modules/              # Per-module documentation
 ```
 
 ## Build Commands
@@ -214,6 +261,102 @@ DexFuture *future = lrg_data_loader_load_file_async (loader, path);
 /* Use dex_await() in fibers or dex_future_then() for callbacks */
 ```
 
+### Procedural Audio (Synthesis)
+
+```c
+/* Create a custom synthesizer by subclassing LrgProceduralAudio */
+G_DECLARE_FINAL_TYPE (MySynth, my_synth, MY, SYNTH, LrgProceduralAudio)
+
+static void
+my_synth_generate (LrgProceduralAudio *self,
+                   gfloat             *buffer,
+                   gint                frame_count)
+{
+    MySynth *synth = MY_SYNTH (self);
+    guint channels = lrg_procedural_audio_get_channels (self);
+    guint sample_rate = lrg_procedural_audio_get_sample_rate (self);
+
+    for (gint i = 0; i < frame_count; i++)
+    {
+        gfloat sample = sinf (synth->phase * 2.0f * G_PI);
+        synth->phase += synth->frequency / sample_rate;
+        if (synth->phase >= 1.0f) synth->phase -= 1.0f;
+
+        for (guint c = 0; c < channels; c++)
+            buffer[i * channels + c] = sample;
+    }
+}
+
+/* In class_init, override the generate vfunc */
+static void
+my_synth_class_init (MySynthClass *klass)
+{
+    LrgProceduralAudioClass *audio_class = LRG_PROCEDURAL_AUDIO_CLASS (klass);
+    audio_class->generate = my_synth_generate;
+}
+
+/* Usage */
+LrgProceduralAudio *synth = g_object_new (MY_TYPE_SYNTH,
+                                           "sample-rate", 44100,
+                                           "channels", 2,
+                                           NULL);
+lrg_procedural_audio_play (synth);
+/* Call lrg_procedural_audio_update() each frame */
+```
+
+### Wave Data (Audio Samples)
+
+```c
+/* Load from file */
+LrgWaveData *wave = lrg_wave_data_new_from_file ("sound.wav", &error);
+
+/* Create procedural (empty buffer for synthesis) */
+LrgWaveData *wave = lrg_wave_data_new_procedural (44100, 2, 1.0f);
+
+/* Manipulate */
+LrgWaveData *cropped = lrg_wave_data_crop (wave, 0.0f, 0.5f);
+LrgWaveData *resampled = lrg_wave_data_resample (wave, 22050);
+
+/* Convert to playable sound */
+GrlSound *sound = lrg_wave_data_to_sound (wave);
+```
+
+### Asset Packs (Resource Bundles)
+
+```c
+/* Load a resource pack */
+LrgAssetPack *pack = lrg_asset_pack_new ("assets.rres", &error);
+
+/* Load encrypted pack */
+LrgAssetPack *pack = lrg_asset_pack_new_encrypted ("assets.rres", "password", &error);
+
+/* Load resources */
+GrlTexture *tex = lrg_asset_pack_load_texture (pack, "player.png", &error);
+GrlSound *sfx = lrg_asset_pack_load_sound (pack, "jump.wav", &error);
+LrgWaveData *wave = lrg_asset_pack_load_wave (pack, "ambient.wav", &error);
+
+/* Check contents */
+if (lrg_asset_pack_contains (pack, "config.yaml"))
+{
+    GObject *obj = lrg_asset_pack_load_object (pack, "config.yaml", loader, &error);
+}
+```
+
+### Quaternion Rotations (3D)
+
+```c
+/* Use GrlQuaternion directly from graylib */
+GrlQuaternion *quat = grl_quaternion_from_euler (pitch, yaw, roll);
+
+/* Camera orientation */
+lrg_camera3d_set_orientation (camera, quat);
+lrg_camera3d_slerp_to (camera, target_quat, 0.1f);
+
+/* Transform component */
+lrg_transform_component_set_rotation_quaternion (transform, quat);
+lrg_transform_component_slerp_rotation (transform, target, amount);
+```
+
 ## Testing
 
 Tests use GLib testing framework:
@@ -237,6 +380,65 @@ int main (int argc, char *argv[])
 ```
 
 Run with: `make test`
+
+### Headless Environment Testing
+
+For tests that require display or audio (graphics, procedural audio), use skip macros:
+
+```c
+/* Skip if no display available (CI/headless) */
+#define SKIP_IF_NO_DISPLAY() \
+    do { \
+        if (g_getenv ("DISPLAY") == NULL && g_getenv ("WAYLAND_DISPLAY") == NULL) \
+        { \
+            g_test_skip ("No display available (headless environment)"); \
+            return; \
+        } \
+    } while (0)
+
+/* Skip if resource creation failed (e.g., no audio device) */
+#define SKIP_IF_NULL(ptr) \
+    do { \
+        if ((ptr) == NULL) \
+        { \
+            g_test_skip ("Resource not available"); \
+            return; \
+        } \
+    } while (0)
+
+static void
+test_procedural_audio_new (void)
+{
+    g_autoptr(LrgProceduralAudio) audio = NULL;
+
+    SKIP_IF_NO_DISPLAY ();
+
+    audio = lrg_procedural_audio_new (44100, 1);
+    SKIP_IF_NULL (audio);
+
+    g_assert_cmpuint (lrg_procedural_audio_get_sample_rate (audio), ==, 44100);
+}
+```
+
+### Warning Levels in Tests
+
+GTest treats `g_warning()` as fatal by default. For expected failure paths that return FALSE/NULL, use `lrg_debug` instead of `lrg_warning` to avoid test failures:
+
+```c
+/* Good - use debug for expected failures */
+if (sound == NULL)
+{
+    lrg_log_debug ("Failed to convert wave - audio device unavailable");
+    return FALSE;
+}
+
+/* Bad - warning becomes fatal in tests */
+if (sound == NULL)
+{
+    lrg_log_warning ("Failed to convert wave");  /* Test fails! */
+    return FALSE;
+}
+```
 
 ## Logging
 
@@ -270,32 +472,68 @@ if (!lrg_engine_startup (engine, &error))
 Error domains:
 - `LRG_ENGINE_ERROR` - Engine errors
 - `LRG_DATA_LOADER_ERROR` - Data loading errors
+- `LRG_ASSET_PACK_ERROR` - Asset pack loading errors
 - `LRG_MOD_ERROR` - Mod system errors
+- `LRG_SAVE_ERROR` - Save/load errors
+- `LRG_NET_ERROR` - Network errors
 
 ## Files to Reference for Patterns
 
 | Pattern | File |
 |---------|------|
 | Derivable GObject with signals | `src/core/lrg-engine.h/.c` |
+| Derivable GObject with virtual method | `src/audio/lrg-procedural-audio.h/.c` |
 | Final GObject with properties | `src/core/lrg-registry.h/.c` |
+| GObject wrapper for graylib type | `src/audio/lrg-wave-data.h/.c` |
+| Resource pack loading | `src/core/lrg-asset-pack.h/.c` |
 | Async with libdex | `src/core/lrg-data-loader.c` |
-| GTest usage | `tests/test-registry.c` |
+| Quaternion/3D rotation | `src/graphics/lrg-camera3d.h/.c` |
+| ECS transform component | `src/ecs/components/lrg-transform-component.h/.c` |
+| GTest with fixtures | `tests/test-registry.c` |
+| Headless-safe tests | `tests/test-procedural-audio.c` |
 | Build system | `Makefile`, `config.mk`, `rules.mk` |
 | graylib patterns | `deps/graylib/src/scene/grl-entity.h` |
 | yaml-glib patterns | `deps/yaml-glib.git/src/yaml-gobject.h` |
 
-## Implementation Phases
+## Implementation Status
 
-Current status: **Phase 0 (Foundation)** complete.
+The library is feature-complete with all major systems implemented:
 
-- [x] Build system (Makefile, config.mk, rules.mk)
-- [x] Core module (Engine, Registry, DataLoader)
-- [x] Logging system
-- [x] Unit tests
-- [x] Documentation
+### Core Systems
+- [x] Engine singleton, Registry, DataLoader, AssetManager
+- [x] Asset packs (rres format with encryption support)
+- [x] Logging, error handling, versioning
 
-Next phases:
-- Phase 1: ECS, Input, UI, Tilemap
-- Phase 2: Dialog, Inventory, Quest, Save, Audio
-- Phase 3: AI, Pathfinding, Physics, I18N, Net, World3D
-- Phase 4: Debug tools, Mod system
+### Audio
+- [x] AudioManager, SoundBank, MusicPlayer
+- [x] WaveData (loading, manipulation, conversion)
+- [x] ProceduralAudio (real-time synthesis with virtual generate())
+
+### Graphics & 3D
+- [x] Camera3D with quaternion orientation
+- [x] Renderer, Scene graph, Materials
+- [x] Particles, Post-processing, Lighting
+- [x] Weather effects, Video playback
+
+### ECS & Components
+- [x] World, Entity, Component system
+- [x] TransformComponent with quaternion rotation
+- [x] SpriteComponent, PhysicsComponent, etc.
+
+### Game Systems
+- [x] Input handling, UI widgets
+- [x] Tilemap, Dialog, Inventory, Quest
+- [x] Save/Load, AI, Pathfinding
+- [x] Economy, Building, Vehicle, Idle mechanics
+- [x] Trigger2D, Tutorial, Atlas
+
+### Infrastructure
+- [x] Animation, Tween, Transition systems
+- [x] I18N, Networking, Scripting (Python/GJS)
+- [x] Mod system, Debug tools, Accessibility
+- [x] Steam integration
+
+### Testing
+- [x] 60+ test files covering all modules
+- [x] Headless environment support (skip macros)
+- [x] GTest with TAP output

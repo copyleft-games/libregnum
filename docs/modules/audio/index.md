@@ -4,11 +4,13 @@ The Audio module provides centralized audio management for games, including soun
 
 ## Overview
 
-The Audio module consists of three core classes:
+The Audio module consists of these core classes:
 
 - **LrgAudioManager** - Singleton manager for all game audio
 - **LrgSoundBank** - Organized collection of sound effects
 - **LrgMusicTrack** - Music with optional custom loop points
+- **LrgWaveData** - Raw wave data manipulation
+- **LrgProceduralAudio** - Real-time procedural audio generation
 
 ## Key Features
 
@@ -20,6 +22,8 @@ The Audio module consists of three core classes:
 - **Playback control** - Play, stop, pause, resume, seek
 - **Volume management** - Per-channel and global volume control
 - **Singleton manager** - Easy access from anywhere in game
+- **Wave data** - Load, manipulate, crop, resample, and export audio
+- **Procedural audio** - Create custom synthesizers and sound generators
 
 ## Quick Start
 
@@ -130,3 +134,5 @@ See the individual class documentation:
 - [LrgAudioManager](audio-manager.md) - Audio system manager
 - [LrgSoundBank](sound-bank.md) - Sound effect collection
 - [LrgMusicTrack](music-track.md) - Music playback control
+- [LrgWaveData](wave-data.md) - Raw wave data manipulation
+- [LrgProceduralAudio](procedural-audio.md) - Real-time audio generation

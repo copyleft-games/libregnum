@@ -9,6 +9,8 @@
 
 #include "config.h"
 #include "lrg-sound-bank.h"
+#include "lrg-wave-data.h"
+#include "../core/lrg-asset-pack.h"
 #include "../lrg-log.h"
 
 #include <yaml-glib.h>
@@ -444,6 +446,156 @@ lrg_sound_bank_load (LrgSoundBank  *self,
         return FALSE;
 
     lrg_sound_bank_add (self, name, sound);
+    return TRUE;
+}
+
+/**
+ * lrg_sound_bank_add_from_wave:
+ * @self: a #LrgSoundBank
+ * @name: the sound name
+ * @wave: the wave data to convert to a sound
+ *
+ * Adds a sound created from wave data.
+ *
+ * Returns: %TRUE on success
+ */
+gboolean
+lrg_sound_bank_add_from_wave (LrgSoundBank *self,
+                               const gchar  *name,
+                               LrgWaveData  *wave)
+{
+    GrlSound *sound;
+
+    g_return_val_if_fail (LRG_IS_SOUND_BANK (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+    g_return_val_if_fail (LRG_IS_WAVE_DATA (wave), FALSE);
+
+    if (!lrg_wave_data_is_valid (wave))
+    {
+        lrg_log_debug ("Cannot add invalid wave data as sound '%s'", name);
+        return FALSE;
+    }
+
+    sound = lrg_wave_data_to_sound (wave);
+    if (sound == NULL)
+    {
+        lrg_log_debug ("Failed to convert wave data to sound '%s'", name);
+        return FALSE;
+    }
+
+    lrg_sound_bank_add (self, name, sound);
+    g_object_unref (sound);
+
+    return TRUE;
+}
+
+/**
+ * lrg_sound_bank_load_from_memory:
+ * @self: a #LrgSoundBank
+ * @name: the sound name
+ * @file_type: file type extension (e.g., ".wav", ".ogg")
+ * @data: (array length=data_size): audio file data in memory
+ * @data_size: size of @data in bytes
+ * @error: (optional): return location for a #GError
+ *
+ * Loads a sound from a memory buffer containing audio file data.
+ *
+ * Returns: %TRUE on success
+ */
+gboolean
+lrg_sound_bank_load_from_memory (LrgSoundBank  *self,
+                                  const gchar   *name,
+                                  const gchar   *file_type,
+                                  const guint8  *data,
+                                  gsize          data_size,
+                                  GError       **error)
+{
+    g_autoptr(GrlSound) sound = NULL;
+
+    g_return_val_if_fail (LRG_IS_SOUND_BANK (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+    g_return_val_if_fail (file_type != NULL, FALSE);
+    g_return_val_if_fail (data != NULL, FALSE);
+    g_return_val_if_fail (data_size > 0, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    sound = grl_sound_new_from_memory (file_type, data, data_size, error);
+    if (sound == NULL)
+        return FALSE;
+
+    lrg_sound_bank_add (self, name, sound);
+    return TRUE;
+}
+
+/**
+ * lrg_sound_bank_load_from_resource:
+ * @self: a #LrgSoundBank
+ * @name: the sound name
+ * @pack: the resource pack to load from
+ * @resource_name: the name of the resource in the pack
+ * @error: (optional): return location for a #GError
+ *
+ * Loads a sound from a resource pack (rres file).
+ *
+ * Returns: %TRUE on success
+ */
+gboolean
+lrg_sound_bank_load_from_resource (LrgSoundBank  *self,
+                                    const gchar   *name,
+                                    LrgAssetPack  *pack,
+                                    const gchar   *resource_name,
+                                    GError       **error)
+{
+    g_autoptr(GrlSound) sound = NULL;
+
+    g_return_val_if_fail (LRG_IS_SOUND_BANK (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+    g_return_val_if_fail (LRG_IS_ASSET_PACK (pack), FALSE);
+    g_return_val_if_fail (resource_name != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    sound = lrg_asset_pack_load_sound (pack, resource_name, error);
+    if (sound == NULL)
+        return FALSE;
+
+    lrg_sound_bank_add (self, name, sound);
+    return TRUE;
+}
+
+/**
+ * lrg_sound_bank_add_alias:
+ * @self: a #LrgSoundBank
+ * @alias: the alias name
+ * @source: the source sound name to alias
+ *
+ * Creates an alias for an existing sound in the bank.
+ *
+ * Returns: %TRUE if the source sound exists and alias was created
+ */
+gboolean
+lrg_sound_bank_add_alias (LrgSoundBank *self,
+                           const gchar  *alias,
+                           const gchar  *source)
+{
+    GrlSound *sound;
+
+    g_return_val_if_fail (LRG_IS_SOUND_BANK (self), FALSE);
+    g_return_val_if_fail (alias != NULL, FALSE);
+    g_return_val_if_fail (source != NULL, FALSE);
+
+    sound = lrg_sound_bank_get (self, source);
+    if (sound == NULL)
+    {
+        lrg_log_debug ("Cannot create alias '%s': source sound '%s' not found",
+                       alias, source);
+        return FALSE;
+    }
+
+    /* Add the same sound under a different name */
+    lrg_sound_bank_add (self, alias, sound);
+
+    lrg_log_debug ("Created alias '%s' -> '%s' in bank '%s'",
+                  alias, source, self->name);
     return TRUE;
 }
 
