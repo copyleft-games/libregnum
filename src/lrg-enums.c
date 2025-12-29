@@ -2378,3 +2378,533 @@ lrg_subtitle_position_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * Tutorial System Enums
+ * ========================================================================== */
+
+GType
+lrg_tutorial_step_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TUTORIAL_STEP_TEXT, "LRG_TUTORIAL_STEP_TEXT", "text" },
+            { LRG_TUTORIAL_STEP_HIGHLIGHT, "LRG_TUTORIAL_STEP_HIGHLIGHT", "highlight" },
+            { LRG_TUTORIAL_STEP_INPUT, "LRG_TUTORIAL_STEP_INPUT", "input" },
+            { LRG_TUTORIAL_STEP_CONDITION, "LRG_TUTORIAL_STEP_CONDITION", "condition" },
+            { LRG_TUTORIAL_STEP_DELAY, "LRG_TUTORIAL_STEP_DELAY", "delay" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTutorialStepType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_tutorial_state_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TUTORIAL_STATE_INACTIVE, "LRG_TUTORIAL_STATE_INACTIVE", "inactive" },
+            { LRG_TUTORIAL_STATE_ACTIVE, "LRG_TUTORIAL_STATE_ACTIVE", "active" },
+            { LRG_TUTORIAL_STATE_PAUSED, "LRG_TUTORIAL_STATE_PAUSED", "paused" },
+            { LRG_TUTORIAL_STATE_COMPLETED, "LRG_TUTORIAL_STATE_COMPLETED", "completed" },
+            { LRG_TUTORIAL_STATE_SKIPPED, "LRG_TUTORIAL_STATE_SKIPPED", "skipped" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTutorialState"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_highlight_style_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_HIGHLIGHT_STYLE_OUTLINE, "LRG_HIGHLIGHT_STYLE_OUTLINE", "outline" },
+            { LRG_HIGHLIGHT_STYLE_GLOW, "LRG_HIGHLIGHT_STYLE_GLOW", "glow" },
+            { LRG_HIGHLIGHT_STYLE_DARKEN_OTHERS, "LRG_HIGHLIGHT_STYLE_DARKEN_OTHERS", "darken-others" },
+            { LRG_HIGHLIGHT_STYLE_SPOTLIGHT, "LRG_HIGHLIGHT_STYLE_SPOTLIGHT", "spotlight" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgHighlightStyle"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_arrow_direction_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ARROW_DIRECTION_UP, "LRG_ARROW_DIRECTION_UP", "up" },
+            { LRG_ARROW_DIRECTION_DOWN, "LRG_ARROW_DIRECTION_DOWN", "down" },
+            { LRG_ARROW_DIRECTION_LEFT, "LRG_ARROW_DIRECTION_LEFT", "left" },
+            { LRG_ARROW_DIRECTION_RIGHT, "LRG_ARROW_DIRECTION_RIGHT", "right" },
+            { LRG_ARROW_DIRECTION_AUTO, "LRG_ARROW_DIRECTION_AUTO", "auto" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgArrowDirection"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_input_device_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_INPUT_DEVICE_KEYBOARD, "LRG_INPUT_DEVICE_KEYBOARD", "keyboard" },
+            { LRG_INPUT_DEVICE_MOUSE, "LRG_INPUT_DEVICE_MOUSE", "mouse" },
+            { LRG_INPUT_DEVICE_GAMEPAD, "LRG_INPUT_DEVICE_GAMEPAD", "gamepad" },
+            { LRG_INPUT_DEVICE_TOUCH, "LRG_INPUT_DEVICE_TOUCH", "touch" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgInputDeviceType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_gamepad_style_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_GAMEPAD_STYLE_XBOX, "LRG_GAMEPAD_STYLE_XBOX", "xbox" },
+            { LRG_GAMEPAD_STYLE_PLAYSTATION, "LRG_GAMEPAD_STYLE_PLAYSTATION", "playstation" },
+            { LRG_GAMEPAD_STYLE_NINTENDO, "LRG_GAMEPAD_STYLE_NINTENDO", "nintendo" },
+            { LRG_GAMEPAD_STYLE_GENERIC, "LRG_GAMEPAD_STYLE_GENERIC", "generic" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgGamepadStyle"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Phase 4: Tween System Enums
+ * ========================================================================== */
+
+GType
+lrg_easing_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_EASING_LINEAR, "LRG_EASING_LINEAR", "linear" },
+            { LRG_EASING_EASE_IN_QUAD, "LRG_EASING_EASE_IN_QUAD", "ease-in-quad" },
+            { LRG_EASING_EASE_OUT_QUAD, "LRG_EASING_EASE_OUT_QUAD", "ease-out-quad" },
+            { LRG_EASING_EASE_IN_OUT_QUAD, "LRG_EASING_EASE_IN_OUT_QUAD", "ease-in-out-quad" },
+            { LRG_EASING_EASE_IN_CUBIC, "LRG_EASING_EASE_IN_CUBIC", "ease-in-cubic" },
+            { LRG_EASING_EASE_OUT_CUBIC, "LRG_EASING_EASE_OUT_CUBIC", "ease-out-cubic" },
+            { LRG_EASING_EASE_IN_OUT_CUBIC, "LRG_EASING_EASE_IN_OUT_CUBIC", "ease-in-out-cubic" },
+            { LRG_EASING_EASE_IN_QUART, "LRG_EASING_EASE_IN_QUART", "ease-in-quart" },
+            { LRG_EASING_EASE_OUT_QUART, "LRG_EASING_EASE_OUT_QUART", "ease-out-quart" },
+            { LRG_EASING_EASE_IN_OUT_QUART, "LRG_EASING_EASE_IN_OUT_QUART", "ease-in-out-quart" },
+            { LRG_EASING_EASE_IN_QUINT, "LRG_EASING_EASE_IN_QUINT", "ease-in-quint" },
+            { LRG_EASING_EASE_OUT_QUINT, "LRG_EASING_EASE_OUT_QUINT", "ease-out-quint" },
+            { LRG_EASING_EASE_IN_OUT_QUINT, "LRG_EASING_EASE_IN_OUT_QUINT", "ease-in-out-quint" },
+            { LRG_EASING_EASE_IN_SINE, "LRG_EASING_EASE_IN_SINE", "ease-in-sine" },
+            { LRG_EASING_EASE_OUT_SINE, "LRG_EASING_EASE_OUT_SINE", "ease-out-sine" },
+            { LRG_EASING_EASE_IN_OUT_SINE, "LRG_EASING_EASE_IN_OUT_SINE", "ease-in-out-sine" },
+            { LRG_EASING_EASE_IN_EXPO, "LRG_EASING_EASE_IN_EXPO", "ease-in-expo" },
+            { LRG_EASING_EASE_OUT_EXPO, "LRG_EASING_EASE_OUT_EXPO", "ease-out-expo" },
+            { LRG_EASING_EASE_IN_OUT_EXPO, "LRG_EASING_EASE_IN_OUT_EXPO", "ease-in-out-expo" },
+            { LRG_EASING_EASE_IN_CIRC, "LRG_EASING_EASE_IN_CIRC", "ease-in-circ" },
+            { LRG_EASING_EASE_OUT_CIRC, "LRG_EASING_EASE_OUT_CIRC", "ease-out-circ" },
+            { LRG_EASING_EASE_IN_OUT_CIRC, "LRG_EASING_EASE_IN_OUT_CIRC", "ease-in-out-circ" },
+            { LRG_EASING_EASE_IN_BACK, "LRG_EASING_EASE_IN_BACK", "ease-in-back" },
+            { LRG_EASING_EASE_OUT_BACK, "LRG_EASING_EASE_OUT_BACK", "ease-out-back" },
+            { LRG_EASING_EASE_IN_OUT_BACK, "LRG_EASING_EASE_IN_OUT_BACK", "ease-in-out-back" },
+            { LRG_EASING_EASE_IN_ELASTIC, "LRG_EASING_EASE_IN_ELASTIC", "ease-in-elastic" },
+            { LRG_EASING_EASE_OUT_ELASTIC, "LRG_EASING_EASE_OUT_ELASTIC", "ease-out-elastic" },
+            { LRG_EASING_EASE_IN_OUT_ELASTIC, "LRG_EASING_EASE_IN_OUT_ELASTIC", "ease-in-out-elastic" },
+            { LRG_EASING_EASE_IN_BOUNCE, "LRG_EASING_EASE_IN_BOUNCE", "ease-in-bounce" },
+            { LRG_EASING_EASE_OUT_BOUNCE, "LRG_EASING_EASE_OUT_BOUNCE", "ease-out-bounce" },
+            { LRG_EASING_EASE_IN_OUT_BOUNCE, "LRG_EASING_EASE_IN_OUT_BOUNCE", "ease-in-out-bounce" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgEasingType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_tween_loop_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TWEEN_LOOP_RESTART, "LRG_TWEEN_LOOP_RESTART", "restart" },
+            { LRG_TWEEN_LOOP_PING_PONG, "LRG_TWEEN_LOOP_PING_PONG", "ping-pong" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTweenLoopMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_tween_state_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TWEEN_STATE_IDLE, "LRG_TWEEN_STATE_IDLE", "idle" },
+            { LRG_TWEEN_STATE_RUNNING, "LRG_TWEEN_STATE_RUNNING", "running" },
+            { LRG_TWEEN_STATE_PAUSED, "LRG_TWEEN_STATE_PAUSED", "paused" },
+            { LRG_TWEEN_STATE_FINISHED, "LRG_TWEEN_STATE_FINISHED", "finished" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTweenState"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Phase 4: Transition System Enums
+ * ========================================================================== */
+
+GType
+lrg_transition_state_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TRANSITION_STATE_IDLE, "LRG_TRANSITION_STATE_IDLE", "idle" },
+            { LRG_TRANSITION_STATE_OUT, "LRG_TRANSITION_STATE_OUT", "out" },
+            { LRG_TRANSITION_STATE_HOLD, "LRG_TRANSITION_STATE_HOLD", "hold" },
+            { LRG_TRANSITION_STATE_IN, "LRG_TRANSITION_STATE_IN", "in" },
+            { LRG_TRANSITION_STATE_COMPLETE, "LRG_TRANSITION_STATE_COMPLETE", "complete" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTransitionState"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_transition_direction_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TRANSITION_DIRECTION_LEFT, "LRG_TRANSITION_DIRECTION_LEFT", "left" },
+            { LRG_TRANSITION_DIRECTION_RIGHT, "LRG_TRANSITION_DIRECTION_RIGHT", "right" },
+            { LRG_TRANSITION_DIRECTION_UP, "LRG_TRANSITION_DIRECTION_UP", "up" },
+            { LRG_TRANSITION_DIRECTION_DOWN, "LRG_TRANSITION_DIRECTION_DOWN", "down" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTransitionDirection"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_slide_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SLIDE_MODE_PUSH, "LRG_SLIDE_MODE_PUSH", "push" },
+            { LRG_SLIDE_MODE_COVER, "LRG_SLIDE_MODE_COVER", "cover" },
+            { LRG_SLIDE_MODE_REVEAL, "LRG_SLIDE_MODE_REVEAL", "reveal" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgSlideMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_zoom_direction_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ZOOM_DIRECTION_IN, "LRG_ZOOM_DIRECTION_IN", "in" },
+            { LRG_ZOOM_DIRECTION_OUT, "LRG_ZOOM_DIRECTION_OUT", "out" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgZoomDirection"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Phase 4: Trigger2D System Enums
+ * ========================================================================== */
+
+GType
+lrg_trigger2d_shape_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TRIGGER2D_SHAPE_RECTANGLE, "LRG_TRIGGER2D_SHAPE_RECTANGLE", "rectangle" },
+            { LRG_TRIGGER2D_SHAPE_CIRCLE, "LRG_TRIGGER2D_SHAPE_CIRCLE", "circle" },
+            { LRG_TRIGGER2D_SHAPE_POLYGON, "LRG_TRIGGER2D_SHAPE_POLYGON", "polygon" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTrigger2DShape"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_trigger2d_event_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TRIGGER2D_EVENT_ENTER, "LRG_TRIGGER2D_EVENT_ENTER", "enter" },
+            { LRG_TRIGGER2D_EVENT_STAY, "LRG_TRIGGER2D_EVENT_STAY", "stay" },
+            { LRG_TRIGGER2D_EVENT_EXIT, "LRG_TRIGGER2D_EVENT_EXIT", "exit" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTrigger2DEventType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Phase 4: Atlas System Enums
+ * ========================================================================== */
+
+GType
+lrg_sprite_sheet_format_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SPRITE_SHEET_FORMAT_GRID, "LRG_SPRITE_SHEET_FORMAT_GRID", "grid" },
+            { LRG_SPRITE_SHEET_FORMAT_ASEPRITE, "LRG_SPRITE_SHEET_FORMAT_ASEPRITE", "aseprite" },
+            { LRG_SPRITE_SHEET_FORMAT_TEXTUREPACKER, "LRG_SPRITE_SHEET_FORMAT_TEXTUREPACKER", "texturepacker" },
+            { LRG_SPRITE_SHEET_FORMAT_LIBREGNUM, "LRG_SPRITE_SHEET_FORMAT_LIBREGNUM", "libregnum" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgSpriteSheetFormat"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_atlas_pack_method_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ATLAS_PACK_METHOD_SHELF, "LRG_ATLAS_PACK_METHOD_SHELF", "shelf" },
+            { LRG_ATLAS_PACK_METHOD_MAXRECTS, "LRG_ATLAS_PACK_METHOD_MAXRECTS", "maxrects" },
+            { LRG_ATLAS_PACK_METHOD_GUILLOTINE, "LRG_ATLAS_PACK_METHOD_GUILLOTINE", "guillotine" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAtlasPackMethod"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_nine_slice_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_NINE_SLICE_MODE_STRETCH, "LRG_NINE_SLICE_MODE_STRETCH", "stretch" },
+            { LRG_NINE_SLICE_MODE_TILE, "LRG_NINE_SLICE_MODE_TILE", "tile" },
+            { LRG_NINE_SLICE_MODE_TILE_FIT, "LRG_NINE_SLICE_MODE_TILE_FIT", "tile-fit" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgNineSliceMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Phase 4: Weather System Enums
+ * ========================================================================== */
+
+GType
+lrg_fog_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_FOG_TYPE_UNIFORM, "LRG_FOG_TYPE_UNIFORM", "uniform" },
+            { LRG_FOG_TYPE_LINEAR, "LRG_FOG_TYPE_LINEAR", "linear" },
+            { LRG_FOG_TYPE_EXPONENTIAL, "LRG_FOG_TYPE_EXPONENTIAL", "exponential" },
+            { LRG_FOG_TYPE_HEIGHT, "LRG_FOG_TYPE_HEIGHT", "height" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgFogType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Phase 4: Lighting System Enums
+ * ========================================================================== */
+
+GType
+lrg_light_falloff_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_LIGHT_FALLOFF_NONE, "LRG_LIGHT_FALLOFF_NONE", "none" },
+            { LRG_LIGHT_FALLOFF_LINEAR, "LRG_LIGHT_FALLOFF_LINEAR", "linear" },
+            { LRG_LIGHT_FALLOFF_QUADRATIC, "LRG_LIGHT_FALLOFF_QUADRATIC", "quadratic" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgLightFalloff"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_light_blend_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_LIGHT_BLEND_MULTIPLY, "LRG_LIGHT_BLEND_MULTIPLY", "multiply" },
+            { LRG_LIGHT_BLEND_ADDITIVE, "LRG_LIGHT_BLEND_ADDITIVE", "additive" },
+            { LRG_LIGHT_BLEND_SOFT, "LRG_LIGHT_BLEND_SOFT", "soft" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgLightBlendMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_shadow_method_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SHADOW_METHOD_RAY_CAST, "LRG_SHADOW_METHOD_RAY_CAST", "ray-cast" },
+            { LRG_SHADOW_METHOD_GEOMETRY, "LRG_SHADOW_METHOD_GEOMETRY", "geometry" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgShadowMethod"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

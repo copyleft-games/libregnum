@@ -11,7 +11,7 @@ This document outlines the features needed to make libregnum ready for publishin
 
 ## Current State
 
-Libregnum has **23 implemented modules**:
+Libregnum has **30 implemented modules**:
 
 | Category | Modules |
 |----------|---------|
@@ -37,6 +37,13 @@ Libregnum has **23 implemented modules**:
 | Scripting | Lua, Python, PyGObject, Gjs backends |
 | Debug | Profiler, DebugConsole, DebugOverlay, Inspector |
 | Shapes | 2D and 3D primitives |
+| Tween | Easing, Tween, TweenGroup, TweenSequence, TweenParallel, TweenManager |
+| Transition | Fade, Wipe, Dissolve, Slide, Zoom, Shader transitions |
+| Trigger2D | TriggerRect, TriggerCircle, TriggerPolygon, TriggerEvent, TriggerManager |
+| Atlas | AtlasRegion, TextureAtlas, SpriteSheet, NineSlice, AtlasPacker |
+| Tutorial | TutorialStep, Tutorial, TutorialManager, Highlight, InputPrompt, TooltipArrow |
+| Weather | Rain, Snow, Fog, Lightning, Weather, DayNightCycle, WeatherManager |
+| Lighting | Light2D, PointLight2D, SpotLight2D, DirectionalLight2D, ShadowMap, Lightmap, LightProbe, LightingManager |
 
 ---
 
@@ -485,12 +492,13 @@ For cutscenes, trailers, tutorials.
 
 ---
 
-## Phase 4: Complete Experience
+## Phase 4: Complete Experience ✅ COMPLETE
 
 **Priority**: MEDIUM
+**Status**: **COMPLETE** (All 7 modules implemented)
 **Description**: Features for a polished, complete game.
 
-### 4.1 Tweening/Easing Library
+### 4.1 Tweening/Easing Library ✅
 
 **Module**: `src/tween/`
 
@@ -512,7 +520,7 @@ For cutscenes, trailers, tutorials.
 
 ---
 
-### 4.2 Scene Transitions
+### 4.2 Scene Transitions ✅
 
 **Module**: `src/transition/`
 
@@ -535,7 +543,9 @@ For cutscenes, trailers, tutorials.
 
 ---
 
-### 4.3 2D Trigger System
+### 4.3 2D Trigger System ✅
+
+**Module**: `src/trigger2d/`
 
 Extend world3d triggers to 2D.
 
@@ -554,7 +564,9 @@ Extend world3d triggers to 2D.
 
 ---
 
-### 4.4 Texture Atlas / Sprite Sheet Tools
+### 4.4 Texture Atlas / Sprite Sheet Tools ✅
+
+**Module**: `src/atlas/`
 
 | Feature | Description |
 |---------|-------------|
@@ -573,7 +585,7 @@ Extend world3d triggers to 2D.
 
 ---
 
-### 4.5 Tutorial System
+### 4.5 Tutorial System ✅
 
 **Module**: `src/tutorial/`
 
@@ -596,7 +608,7 @@ Extend world3d triggers to 2D.
 
 ---
 
-### 4.6 Weather System
+### 4.6 Weather System ✅
 
 **Module**: `src/weather/`
 
@@ -622,7 +634,9 @@ Extend world3d triggers to 2D.
 
 ---
 
-### 4.7 Lighting Improvements
+### 4.7 2D Lighting System ✅
+
+**Module**: `src/lighting/`
 
 | Feature | Description |
 |---------|-------------|
@@ -635,10 +649,15 @@ Extend world3d triggers to 2D.
 
 | Class | Description |
 |-------|-------------|
-| `LrgLight2D` | 2D light source |
-| `LrgShadowMap` | Shadow map renderer |
-| `LrgLightmap` | Baked lightmap |
-| `LrgLightProbe` | Light probe |
+| `LrgLight2D` | Base 2D light source (derivable) |
+| `LrgPointLight2D` | Radial point light with flicker support |
+| `LrgSpotLight2D` | Directional cone light |
+| `LrgDirectionalLight2D` | Sun-like directional light |
+| `LrgShadowCaster` | Interface for shadow-casting objects |
+| `LrgShadowMap` | Shadow texture renderer |
+| `LrgLightmap` | Baked static lighting |
+| `LrgLightProbe` | Ambient light sampling |
+| `LrgLightingManager` | Lighting system controller |
 
 ---
 

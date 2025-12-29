@@ -79,6 +79,79 @@ FFmpeg-based video playback:
 - **[Subtitles](video/subtitles.md)** - SRT/VTT subtitle support
 - **[FFmpeg Setup](video/ffmpeg-setup.md)** - Dependency installation
 
+### [Tween Module](tween/index.md) - Property Animation
+
+Smooth property animation with easing:
+
+- **[LrgEasing](tween/index.md#easing-functions)** - 30+ easing functions
+- **[LrgTween](tween/index.md#quick-start)** - Single property animation
+- **[LrgTweenSequence](tween/index.md#sequences-and-parallel)** - Chain tweens together
+- **[LrgTweenParallel](tween/index.md#sequences-and-parallel)** - Run tweens simultaneously
+- **[LrgTweenManager](tween/index.md#quick-start)** - Active tween coordinator
+
+### [Transition Module](transition/index.md) - Scene Transitions
+
+Smooth scene changes:
+
+- **[LrgTransition](transition/index.md)** - Base transition class
+- **[LrgFadeTransition](transition/index.md#fade-transition)** - Fade to/from color
+- **[LrgWipeTransition](transition/index.md#wipe-transition)** - Directional wipe
+- **[LrgDissolveTransition](transition/index.md#dissolve-transition)** - Noise dissolve
+- **[LrgSlideTransition](transition/index.md#slide-transition)** - Push/cover/reveal
+- **[LrgTransitionManager](transition/index.md)** - Transition coordinator
+
+### [2D Trigger Module](trigger2d/index.md) - Area Triggers
+
+Event-based trigger zones:
+
+- **[LrgTrigger2D](trigger2d/index.md)** - Base trigger class
+- **[LrgTriggerRect](trigger2d/index.md#rectangle-trigger)** - Rectangle triggers
+- **[LrgTriggerCircle](trigger2d/index.md#circle-trigger)** - Circle triggers
+- **[LrgTriggerPolygon](trigger2d/index.md#polygon-trigger)** - Polygon triggers
+- **[LrgTriggerManager](trigger2d/index.md)** - Trigger coordinator
+
+### [Atlas Module](atlas/index.md) - Texture Atlases
+
+Texture packing and sprite sheets:
+
+- **[LrgTextureAtlas](atlas/index.md#texture-atlas)** - Packed texture atlas
+- **[LrgSpriteSheet](atlas/index.md#sprite-sheet)** - Animation sprite sheets
+- **[LrgNineSlice](atlas/index.md#nine-slice-9-patch)** - Scalable UI sprites
+- **[LrgAtlasPacker](atlas/index.md#atlas-packer-build-tool)** - Build-time packer
+
+### [Tutorial Module](tutorial/index.md) - Player Onboarding
+
+Guided tutorials and hints:
+
+- **[LrgTutorial](tutorial/index.md)** - Tutorial sequence
+- **[LrgTutorialStep](tutorial/index.md#tutorial-steps)** - Individual instruction step
+- **[LrgTutorialManager](tutorial/index.md)** - Tutorial coordinator
+- **[LrgHighlight](tutorial/index.md#highlight-effects)** - UI element highlighting
+- **[LrgInputPrompt](tutorial/index.md#input-prompts)** - Device-aware input hints
+
+### [Weather Module](weather/index.md) - Dynamic Weather
+
+Atmospheric weather effects:
+
+- **[LrgRain](weather/index.md#rain)** - Rain particle effect
+- **[LrgSnow](weather/index.md#snow)** - Snow particle effect
+- **[LrgFog](weather/index.md#fog)** - Screen-space fog
+- **[LrgLightning](weather/index.md#lightning)** - Lightning flashes
+- **[LrgDayNightCycle](weather/index.md#daynight-cycle)** - Time-of-day system
+- **[LrgWeatherManager](weather/index.md)** - Weather coordinator
+
+### [2D Lighting Module](lighting/index.md) - Dynamic Lighting
+
+2D lights and shadows:
+
+- **[LrgLight2D](lighting/index.md)** - Base light class
+- **[LrgPointLight2D](lighting/index.md#point-light)** - Radial point lights
+- **[LrgSpotLight2D](lighting/index.md#spot-light)** - Directional cone lights
+- **[LrgDirectionalLight2D](lighting/index.md#directional-light)** - Sun-like lights
+- **[LrgShadowMap](lighting/index.md#shadow-map)** - Shadow rendering
+- **[LrgLightmap](lighting/index.md#baked-lighting-lightmaps)** - Baked lighting
+- **[LrgLightingManager](lighting/index.md)** - Lighting coordinator
+
 ## Planned Modules
 
 ### Phase 1: Basic Game Systems (Implemented, docs pending)
@@ -174,6 +247,13 @@ Phase 0   core/ (engine, registry, loader, assets)
 | 3D World | 3 | Implemented | Level3D, Portal, PortalSystem |
 | Debug | 4 | Implemented | Profiler, DebugConsole, DebugOverlay, Inspector |
 | Mod | 4 | Implemented | Mod, ModManager, ModManifest, ModLoader |
+| Tween | 4 | Complete | Easing, Tween, TweenSequence, TweenParallel, TweenManager |
+| Transition | 4 | Complete | FadeTransition, WipeTransition, DissolveTransition, TransitionManager |
+| Trigger2D | 4 | Complete | TriggerRect, TriggerCircle, TriggerPolygon, TriggerManager |
+| Atlas | 4 | Complete | TextureAtlas, SpriteSheet, NineSlice, AtlasPacker |
+| Tutorial | 4 | Complete | Tutorial, TutorialStep, TutorialManager, Highlight, InputPrompt |
+| Weather | 4 | Complete | Rain, Snow, Fog, Lightning, DayNightCycle, WeatherManager |
+| Lighting | 4 | Complete | PointLight2D, SpotLight2D, DirectionalLight2D, ShadowMap, LightingManager |
 
 ## Building with Multiple Modules
 

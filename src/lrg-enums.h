@@ -2415,4 +2415,574 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_subtitle_position_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_SUBTITLE_POSITION (lrg_subtitle_position_get_type ())
 
+/* ==========================================================================
+ * Tween Module (Phase 4)
+ * ========================================================================== */
+
+/**
+ * LrgEasingType:
+ * @LRG_EASING_LINEAR: Linear interpolation (no easing)
+ * @LRG_EASING_EASE_IN_QUAD: Quadratic ease-in
+ * @LRG_EASING_EASE_OUT_QUAD: Quadratic ease-out
+ * @LRG_EASING_EASE_IN_OUT_QUAD: Quadratic ease-in-out
+ * @LRG_EASING_EASE_IN_CUBIC: Cubic ease-in
+ * @LRG_EASING_EASE_OUT_CUBIC: Cubic ease-out
+ * @LRG_EASING_EASE_IN_OUT_CUBIC: Cubic ease-in-out
+ * @LRG_EASING_EASE_IN_QUART: Quartic ease-in
+ * @LRG_EASING_EASE_OUT_QUART: Quartic ease-out
+ * @LRG_EASING_EASE_IN_OUT_QUART: Quartic ease-in-out
+ * @LRG_EASING_EASE_IN_QUINT: Quintic ease-in
+ * @LRG_EASING_EASE_OUT_QUINT: Quintic ease-out
+ * @LRG_EASING_EASE_IN_OUT_QUINT: Quintic ease-in-out
+ * @LRG_EASING_EASE_IN_SINE: Sinusoidal ease-in
+ * @LRG_EASING_EASE_OUT_SINE: Sinusoidal ease-out
+ * @LRG_EASING_EASE_IN_OUT_SINE: Sinusoidal ease-in-out
+ * @LRG_EASING_EASE_IN_EXPO: Exponential ease-in
+ * @LRG_EASING_EASE_OUT_EXPO: Exponential ease-out
+ * @LRG_EASING_EASE_IN_OUT_EXPO: Exponential ease-in-out
+ * @LRG_EASING_EASE_IN_CIRC: Circular ease-in
+ * @LRG_EASING_EASE_OUT_CIRC: Circular ease-out
+ * @LRG_EASING_EASE_IN_OUT_CIRC: Circular ease-in-out
+ * @LRG_EASING_EASE_IN_BACK: Back ease-in (overshoots)
+ * @LRG_EASING_EASE_OUT_BACK: Back ease-out (overshoots)
+ * @LRG_EASING_EASE_IN_OUT_BACK: Back ease-in-out (overshoots)
+ * @LRG_EASING_EASE_IN_ELASTIC: Elastic ease-in
+ * @LRG_EASING_EASE_OUT_ELASTIC: Elastic ease-out
+ * @LRG_EASING_EASE_IN_OUT_ELASTIC: Elastic ease-in-out
+ * @LRG_EASING_EASE_IN_BOUNCE: Bounce ease-in
+ * @LRG_EASING_EASE_OUT_BOUNCE: Bounce ease-out
+ * @LRG_EASING_EASE_IN_OUT_BOUNCE: Bounce ease-in-out
+ *
+ * Easing function types for animation interpolation.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_EASING_LINEAR,
+    LRG_EASING_EASE_IN_QUAD,
+    LRG_EASING_EASE_OUT_QUAD,
+    LRG_EASING_EASE_IN_OUT_QUAD,
+    LRG_EASING_EASE_IN_CUBIC,
+    LRG_EASING_EASE_OUT_CUBIC,
+    LRG_EASING_EASE_IN_OUT_CUBIC,
+    LRG_EASING_EASE_IN_QUART,
+    LRG_EASING_EASE_OUT_QUART,
+    LRG_EASING_EASE_IN_OUT_QUART,
+    LRG_EASING_EASE_IN_QUINT,
+    LRG_EASING_EASE_OUT_QUINT,
+    LRG_EASING_EASE_IN_OUT_QUINT,
+    LRG_EASING_EASE_IN_SINE,
+    LRG_EASING_EASE_OUT_SINE,
+    LRG_EASING_EASE_IN_OUT_SINE,
+    LRG_EASING_EASE_IN_EXPO,
+    LRG_EASING_EASE_OUT_EXPO,
+    LRG_EASING_EASE_IN_OUT_EXPO,
+    LRG_EASING_EASE_IN_CIRC,
+    LRG_EASING_EASE_OUT_CIRC,
+    LRG_EASING_EASE_IN_OUT_CIRC,
+    LRG_EASING_EASE_IN_BACK,
+    LRG_EASING_EASE_OUT_BACK,
+    LRG_EASING_EASE_IN_OUT_BACK,
+    LRG_EASING_EASE_IN_ELASTIC,
+    LRG_EASING_EASE_OUT_ELASTIC,
+    LRG_EASING_EASE_IN_OUT_ELASTIC,
+    LRG_EASING_EASE_IN_BOUNCE,
+    LRG_EASING_EASE_OUT_BOUNCE,
+    LRG_EASING_EASE_IN_OUT_BOUNCE
+} LrgEasingType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_easing_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_EASING_TYPE (lrg_easing_type_get_type ())
+
+/**
+ * LrgTweenLoopMode:
+ * @LRG_TWEEN_LOOP_RESTART: Jump back to start after completing
+ * @LRG_TWEEN_LOOP_PING_PONG: Reverse direction at each end
+ *
+ * Loop behavior for tweens.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TWEEN_LOOP_RESTART,
+    LRG_TWEEN_LOOP_PING_PONG
+} LrgTweenLoopMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_tween_loop_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TWEEN_LOOP_MODE (lrg_tween_loop_mode_get_type ())
+
+/**
+ * LrgTweenState:
+ * @LRG_TWEEN_STATE_IDLE: Tween not started
+ * @LRG_TWEEN_STATE_RUNNING: Tween is actively playing
+ * @LRG_TWEEN_STATE_PAUSED: Tween is paused
+ * @LRG_TWEEN_STATE_FINISHED: Tween has completed
+ *
+ * Current state of a tween.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TWEEN_STATE_IDLE,
+    LRG_TWEEN_STATE_RUNNING,
+    LRG_TWEEN_STATE_PAUSED,
+    LRG_TWEEN_STATE_FINISHED
+} LrgTweenState;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_tween_state_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TWEEN_STATE (lrg_tween_state_get_type ())
+
+/* ==========================================================================
+ * Scene Transition Enumerations (Phase 4)
+ * ========================================================================== */
+
+/**
+ * LrgTransitionState:
+ * @LRG_TRANSITION_STATE_IDLE: Not currently transitioning
+ * @LRG_TRANSITION_STATE_OUT: Transitioning out from current scene
+ * @LRG_TRANSITION_STATE_HOLD: Holding at midpoint (scene switch happens here)
+ * @LRG_TRANSITION_STATE_IN: Transitioning in to new scene
+ * @LRG_TRANSITION_STATE_COMPLETE: Transition has completed
+ *
+ * States for scene transitions.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TRANSITION_STATE_IDLE,
+    LRG_TRANSITION_STATE_OUT,
+    LRG_TRANSITION_STATE_HOLD,
+    LRG_TRANSITION_STATE_IN,
+    LRG_TRANSITION_STATE_COMPLETE
+} LrgTransitionState;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_transition_state_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TRANSITION_STATE (lrg_transition_state_get_type ())
+
+/**
+ * LrgTransitionDirection:
+ * @LRG_TRANSITION_DIRECTION_LEFT: Left direction
+ * @LRG_TRANSITION_DIRECTION_RIGHT: Right direction
+ * @LRG_TRANSITION_DIRECTION_UP: Up direction
+ * @LRG_TRANSITION_DIRECTION_DOWN: Down direction
+ *
+ * Direction for directional transitions (wipe, slide).
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TRANSITION_DIRECTION_LEFT,
+    LRG_TRANSITION_DIRECTION_RIGHT,
+    LRG_TRANSITION_DIRECTION_UP,
+    LRG_TRANSITION_DIRECTION_DOWN
+} LrgTransitionDirection;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_transition_direction_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TRANSITION_DIRECTION (lrg_transition_direction_get_type ())
+
+/**
+ * LrgSlideMode:
+ * @LRG_SLIDE_MODE_PUSH: New scene pushes old scene
+ * @LRG_SLIDE_MODE_COVER: New scene slides over old scene
+ * @LRG_SLIDE_MODE_REVEAL: Old scene slides away revealing new scene
+ *
+ * Slide modes for slide transitions.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_SLIDE_MODE_PUSH,
+    LRG_SLIDE_MODE_COVER,
+    LRG_SLIDE_MODE_REVEAL
+} LrgSlideMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_slide_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SLIDE_MODE (lrg_slide_mode_get_type ())
+
+/**
+ * LrgZoomDirection:
+ * @LRG_ZOOM_DIRECTION_IN: Zoom in effect
+ * @LRG_ZOOM_DIRECTION_OUT: Zoom out effect
+ *
+ * Zoom direction for zoom transitions.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ZOOM_DIRECTION_IN,
+    LRG_ZOOM_DIRECTION_OUT
+} LrgZoomDirection;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_zoom_direction_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ZOOM_DIRECTION (lrg_zoom_direction_get_type ())
+
+/* ==========================================================================
+ * 2D Trigger System Enumerations (Phase 4)
+ * ========================================================================== */
+
+/**
+ * LrgTrigger2DShape:
+ * @LRG_TRIGGER2D_SHAPE_RECTANGLE: Rectangular trigger zone
+ * @LRG_TRIGGER2D_SHAPE_CIRCLE: Circular trigger zone
+ * @LRG_TRIGGER2D_SHAPE_POLYGON: Arbitrary polygon trigger zone
+ *
+ * Shape types for 2D triggers.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TRIGGER2D_SHAPE_RECTANGLE,
+    LRG_TRIGGER2D_SHAPE_CIRCLE,
+    LRG_TRIGGER2D_SHAPE_POLYGON
+} LrgTrigger2DShape;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_trigger2d_shape_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TRIGGER2D_SHAPE (lrg_trigger2d_shape_get_type ())
+
+/**
+ * LrgTrigger2DEventType:
+ * @LRG_TRIGGER2D_EVENT_ENTER: Entity entered the trigger zone
+ * @LRG_TRIGGER2D_EVENT_STAY: Entity remains inside the trigger zone
+ * @LRG_TRIGGER2D_EVENT_EXIT: Entity exited the trigger zone
+ *
+ * Event types for 2D trigger interactions.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TRIGGER2D_EVENT_ENTER,
+    LRG_TRIGGER2D_EVENT_STAY,
+    LRG_TRIGGER2D_EVENT_EXIT
+} LrgTrigger2DEventType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_trigger2d_event_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TRIGGER2D_EVENT_TYPE (lrg_trigger2d_event_type_get_type ())
+
+/* ==========================================================================
+ * Texture Atlas / Sprite Sheet Enums
+ * ========================================================================== */
+
+/**
+ * LrgSpriteSheetFormat:
+ * @LRG_SPRITE_SHEET_FORMAT_GRID: Regular grid layout (columns x rows)
+ * @LRG_SPRITE_SHEET_FORMAT_ASEPRITE: Aseprite JSON format
+ * @LRG_SPRITE_SHEET_FORMAT_TEXTUREPACKER: TexturePacker JSON format
+ * @LRG_SPRITE_SHEET_FORMAT_LIBREGNUM: Native Libregnum YAML format
+ *
+ * Supported sprite sheet data formats.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_SPRITE_SHEET_FORMAT_GRID,
+    LRG_SPRITE_SHEET_FORMAT_ASEPRITE,
+    LRG_SPRITE_SHEET_FORMAT_TEXTUREPACKER,
+    LRG_SPRITE_SHEET_FORMAT_LIBREGNUM
+} LrgSpriteSheetFormat;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_sprite_sheet_format_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SPRITE_SHEET_FORMAT (lrg_sprite_sheet_format_get_type ())
+
+/**
+ * LrgAtlasPackMethod:
+ * @LRG_ATLAS_PACK_METHOD_SHELF: Shelf/row-based packing
+ * @LRG_ATLAS_PACK_METHOD_MAXRECTS: MaxRects algorithm
+ * @LRG_ATLAS_PACK_METHOD_GUILLOTINE: Guillotine algorithm
+ *
+ * Packing algorithms for atlas generation.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ATLAS_PACK_METHOD_SHELF,
+    LRG_ATLAS_PACK_METHOD_MAXRECTS,
+    LRG_ATLAS_PACK_METHOD_GUILLOTINE
+} LrgAtlasPackMethod;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_atlas_pack_method_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ATLAS_PACK_METHOD (lrg_atlas_pack_method_get_type ())
+
+/**
+ * LrgNineSliceMode:
+ * @LRG_NINE_SLICE_MODE_STRETCH: Stretch center and edges
+ * @LRG_NINE_SLICE_MODE_TILE: Tile center and edges
+ * @LRG_NINE_SLICE_MODE_TILE_FIT: Tile and fit to size (clipping if needed)
+ *
+ * Rendering modes for nine-slice sprites.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_NINE_SLICE_MODE_STRETCH,
+    LRG_NINE_SLICE_MODE_TILE,
+    LRG_NINE_SLICE_MODE_TILE_FIT
+} LrgNineSliceMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_nine_slice_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_NINE_SLICE_MODE (lrg_nine_slice_mode_get_type ())
+
+/* ==========================================================================
+ * Tutorial System Enums (Phase 4)
+ * ========================================================================== */
+
+/**
+ * LrgTutorialStepType:
+ * @LRG_TUTORIAL_STEP_TEXT: Display text/dialog
+ * @LRG_TUTORIAL_STEP_HIGHLIGHT: Highlight a UI element
+ * @LRG_TUTORIAL_STEP_INPUT: Wait for specific input
+ * @LRG_TUTORIAL_STEP_CONDITION: Wait for condition to be met
+ * @LRG_TUTORIAL_STEP_DELAY: Wait for a time delay
+ *
+ * Types of tutorial steps.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TUTORIAL_STEP_TEXT,
+    LRG_TUTORIAL_STEP_HIGHLIGHT,
+    LRG_TUTORIAL_STEP_INPUT,
+    LRG_TUTORIAL_STEP_CONDITION,
+    LRG_TUTORIAL_STEP_DELAY
+} LrgTutorialStepType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_tutorial_step_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TUTORIAL_STEP_TYPE (lrg_tutorial_step_type_get_type ())
+
+/**
+ * LrgTutorialState:
+ * @LRG_TUTORIAL_STATE_INACTIVE: Tutorial not started
+ * @LRG_TUTORIAL_STATE_ACTIVE: Tutorial is running
+ * @LRG_TUTORIAL_STATE_PAUSED: Tutorial is paused
+ * @LRG_TUTORIAL_STATE_COMPLETED: Tutorial finished successfully
+ * @LRG_TUTORIAL_STATE_SKIPPED: Tutorial was skipped by user
+ *
+ * State of a tutorial.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TUTORIAL_STATE_INACTIVE,
+    LRG_TUTORIAL_STATE_ACTIVE,
+    LRG_TUTORIAL_STATE_PAUSED,
+    LRG_TUTORIAL_STATE_COMPLETED,
+    LRG_TUTORIAL_STATE_SKIPPED
+} LrgTutorialState;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_tutorial_state_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TUTORIAL_STATE (lrg_tutorial_state_get_type ())
+
+/**
+ * LrgHighlightStyle:
+ * @LRG_HIGHLIGHT_STYLE_OUTLINE: Draw outline around target
+ * @LRG_HIGHLIGHT_STYLE_GLOW: Glowing effect around target
+ * @LRG_HIGHLIGHT_STYLE_DARKEN_OTHERS: Darken everything except target
+ * @LRG_HIGHLIGHT_STYLE_SPOTLIGHT: Spotlight effect on target
+ *
+ * Visual styles for highlighting tutorial targets.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_HIGHLIGHT_STYLE_OUTLINE,
+    LRG_HIGHLIGHT_STYLE_GLOW,
+    LRG_HIGHLIGHT_STYLE_DARKEN_OTHERS,
+    LRG_HIGHLIGHT_STYLE_SPOTLIGHT
+} LrgHighlightStyle;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_highlight_style_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_HIGHLIGHT_STYLE (lrg_highlight_style_get_type ())
+
+/**
+ * LrgArrowDirection:
+ * @LRG_ARROW_DIRECTION_UP: Arrow points up
+ * @LRG_ARROW_DIRECTION_DOWN: Arrow points down
+ * @LRG_ARROW_DIRECTION_LEFT: Arrow points left
+ * @LRG_ARROW_DIRECTION_RIGHT: Arrow points right
+ * @LRG_ARROW_DIRECTION_AUTO: Automatically determine best direction
+ *
+ * Direction for tooltip arrows.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ARROW_DIRECTION_UP,
+    LRG_ARROW_DIRECTION_DOWN,
+    LRG_ARROW_DIRECTION_LEFT,
+    LRG_ARROW_DIRECTION_RIGHT,
+    LRG_ARROW_DIRECTION_AUTO
+} LrgArrowDirection;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_arrow_direction_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ARROW_DIRECTION (lrg_arrow_direction_get_type ())
+
+/**
+ * LrgInputDeviceType:
+ * @LRG_INPUT_DEVICE_KEYBOARD: Keyboard input device
+ * @LRG_INPUT_DEVICE_MOUSE: Mouse input device
+ * @LRG_INPUT_DEVICE_GAMEPAD: Gamepad/controller input device
+ * @LRG_INPUT_DEVICE_TOUCH: Touch input device
+ *
+ * Types of input devices for input prompt display.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_INPUT_DEVICE_KEYBOARD,
+    LRG_INPUT_DEVICE_MOUSE,
+    LRG_INPUT_DEVICE_GAMEPAD,
+    LRG_INPUT_DEVICE_TOUCH
+} LrgInputDeviceType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_input_device_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_INPUT_DEVICE_TYPE (lrg_input_device_type_get_type ())
+
+/**
+ * LrgGamepadStyle:
+ * @LRG_GAMEPAD_STYLE_XBOX: Xbox-style button labels (A, B, X, Y)
+ * @LRG_GAMEPAD_STYLE_PLAYSTATION: PlayStation-style labels (Cross, Circle, Square, Triangle)
+ * @LRG_GAMEPAD_STYLE_NINTENDO: Nintendo-style labels (A, B, X, Y - different layout)
+ * @LRG_GAMEPAD_STYLE_GENERIC: Generic gamepad labels (1, 2, 3, 4)
+ *
+ * Gamepad button label styles for input prompts.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_GAMEPAD_STYLE_XBOX,
+    LRG_GAMEPAD_STYLE_PLAYSTATION,
+    LRG_GAMEPAD_STYLE_NINTENDO,
+    LRG_GAMEPAD_STYLE_GENERIC
+} LrgGamepadStyle;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_gamepad_style_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_GAMEPAD_STYLE (lrg_gamepad_style_get_type ())
+
+/*
+ * Weather Module Enums
+ */
+
+/**
+ * LrgFogType:
+ * @LRG_FOG_TYPE_UNIFORM: Uniform fog density
+ * @LRG_FOG_TYPE_LINEAR: Linear fog based on distance
+ * @LRG_FOG_TYPE_EXPONENTIAL: Exponential fog falloff
+ * @LRG_FOG_TYPE_HEIGHT: Height-based fog
+ *
+ * Types of fog rendering.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_FOG_TYPE_UNIFORM,
+    LRG_FOG_TYPE_LINEAR,
+    LRG_FOG_TYPE_EXPONENTIAL,
+    LRG_FOG_TYPE_HEIGHT
+} LrgFogType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_fog_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_FOG_TYPE (lrg_fog_type_get_type ())
+
+/*
+ * Lighting Module Enums
+ */
+
+/**
+ * LrgLightFalloff:
+ * @LRG_LIGHT_FALLOFF_NONE: No falloff (constant intensity)
+ * @LRG_LIGHT_FALLOFF_LINEAR: Linear falloff with distance
+ * @LRG_LIGHT_FALLOFF_QUADRATIC: Quadratic (realistic) falloff
+ *
+ * Light intensity falloff types.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_LIGHT_FALLOFF_NONE,
+    LRG_LIGHT_FALLOFF_LINEAR,
+    LRG_LIGHT_FALLOFF_QUADRATIC
+} LrgLightFalloff;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_light_falloff_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_LIGHT_FALLOFF (lrg_light_falloff_get_type ())
+
+/**
+ * LrgLightBlendMode:
+ * @LRG_LIGHT_BLEND_MULTIPLY: Multiply with scene color
+ * @LRG_LIGHT_BLEND_ADDITIVE: Add to scene color
+ * @LRG_LIGHT_BLEND_SOFT: Soft light blending
+ *
+ * Light blending modes.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_LIGHT_BLEND_MULTIPLY,
+    LRG_LIGHT_BLEND_ADDITIVE,
+    LRG_LIGHT_BLEND_SOFT
+} LrgLightBlendMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_light_blend_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_LIGHT_BLEND_MODE (lrg_light_blend_mode_get_type ())
+
+/**
+ * LrgShadowMethod:
+ * @LRG_SHADOW_METHOD_RAY_CAST: Ray-casting shadows (CPU)
+ * @LRG_SHADOW_METHOD_GEOMETRY: Shadow volume geometry (GPU)
+ *
+ * Shadow calculation methods.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_SHADOW_METHOD_RAY_CAST,
+    LRG_SHADOW_METHOD_GEOMETRY
+} LrgShadowMethod;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_shadow_method_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SHADOW_METHOD (lrg_shadow_method_get_type ())
+
 G_END_DECLS

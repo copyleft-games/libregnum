@@ -329,4 +329,67 @@
 #include "video/lrg-video-subtitles.h"
 #include "video/lrg-video-player.h"
 
+/* Tween module (Phase 4) */
+#include "tween/lrg-easing.h"
+#include "tween/lrg-tween-base.h"
+#include "tween/lrg-tween.h"
+#include "tween/lrg-tween-group.h"
+#include "tween/lrg-tween-sequence.h"
+#include "tween/lrg-tween-parallel.h"
+#include "tween/lrg-tween-manager.h"
+
+/* Transition module (Phase 4) */
+#include "transition/lrg-transition.h"
+#include "transition/lrg-fade-transition.h"
+#include "transition/lrg-wipe-transition.h"
+#include "transition/lrg-dissolve-transition.h"
+#include "transition/lrg-slide-transition.h"
+#include "transition/lrg-zoom-transition.h"
+#include "transition/lrg-shader-transition.h"
+#include "transition/lrg-transition-manager.h"
+
+/* Trigger2D module (Phase 4) */
+#include "trigger2d/lrg-trigger2d.h"
+#include "trigger2d/lrg-trigger-rect.h"
+#include "trigger2d/lrg-trigger-circle.h"
+#include "trigger2d/lrg-trigger-polygon.h"
+#include "trigger2d/lrg-trigger-event.h"
+#include "trigger2d/lrg-trigger-manager.h"
+
+/* Atlas module (Phase 4) */
+#include "atlas/lrg-atlas-region.h"
+#include "atlas/lrg-texture-atlas.h"
+#include "atlas/lrg-sprite-sheet.h"
+#include "atlas/lrg-nine-slice.h"
+#include "atlas/lrg-atlas-packer.h"
+
+/* Tutorial module (Phase 4) */
+#include "tutorial/lrg-tutorial-step.h"
+#include "tutorial/lrg-tutorial.h"
+#include "tutorial/lrg-tutorial-manager.h"
+#include "tutorial/lrg-highlight.h"
+#include "tutorial/lrg-input-prompt.h"
+#include "tutorial/lrg-tooltip-arrow.h"
+
+/* Weather module (Phase 4) */
+#include "weather/lrg-weather-effect.h"
+#include "weather/lrg-rain.h"
+#include "weather/lrg-snow.h"
+#include "weather/lrg-fog.h"
+#include "weather/lrg-lightning.h"
+#include "weather/lrg-weather.h"
+#include "weather/lrg-day-night-cycle.h"
+#include "weather/lrg-weather-manager.h"
+
+/* Lighting module (Phase 4) */
+#include "lighting/lrg-shadow-caster.h"
+#include "lighting/lrg-light2d.h"
+#include "lighting/lrg-point-light2d.h"
+#include "lighting/lrg-spot-light2d.h"
+#include "lighting/lrg-directional-light2d.h"
+#include "lighting/lrg-shadow-map.h"
+#include "lighting/lrg-lightmap.h"
+#include "lighting/lrg-light-probe.h"
+#include "lighting/lrg-lighting-manager.h"
+
 #undef LIBREGNUM_INSIDE

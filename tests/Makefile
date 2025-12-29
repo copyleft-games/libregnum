@@ -99,7 +99,14 @@ TEST_SOURCES := \
 	test-postprocess.c \
 	test-animation.c \
 	test-text.c \
-	test-video.c
+	test-video.c \
+	test-tween.c \
+	test-transition.c \
+	test-trigger2d.c \
+	test-atlas.c \
+	test-tutorial.c \
+	test-weather.c \
+	test-lighting.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))

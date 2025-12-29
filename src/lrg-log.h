@@ -54,6 +54,13 @@ G_BEGIN_DECLS
 #define LRG_LOG_DOMAIN_IDLE       "Libregnum-Idle"
 #define LRG_LOG_DOMAIN_BUILDING   "Libregnum-Building"
 #define LRG_LOG_DOMAIN_VEHICLE    "Libregnum-Vehicle"
+#define LRG_LOG_DOMAIN_TWEEN      "Libregnum-Tween"
+#define LRG_LOG_DOMAIN_TRANSITION "Libregnum-Transition"
+#define LRG_LOG_DOMAIN_TRIGGER2D  "Libregnum-Trigger2D"
+#define LRG_LOG_DOMAIN_ATLAS      "Libregnum-Atlas"
+#define LRG_LOG_DOMAIN_TUTORIAL   "Libregnum-Tutorial"
+#define LRG_LOG_DOMAIN_WEATHER    "Libregnum-Weather"
+#define LRG_LOG_DOMAIN_LIGHTING   "Libregnum-Lighting"
 
 /* ==========================================================================
  * Logging Macros

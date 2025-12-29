@@ -244,7 +244,56 @@ PUBLIC_HEADERS := \
 	src/video/lrg-video-texture.h \
 	src/video/lrg-video-subtitle-track.h \
 	src/video/lrg-video-subtitles.h \
-	src/video/lrg-video-player.h
+	src/video/lrg-video-player.h \
+	src/tween/lrg-easing.h \
+	src/tween/lrg-tween-base.h \
+	src/tween/lrg-tween.h \
+	src/tween/lrg-tween-group.h \
+	src/tween/lrg-tween-sequence.h \
+	src/tween/lrg-tween-parallel.h \
+	src/tween/lrg-tween-manager.h \
+	src/transition/lrg-transition.h \
+	src/transition/lrg-fade-transition.h \
+	src/transition/lrg-wipe-transition.h \
+	src/transition/lrg-dissolve-transition.h \
+	src/transition/lrg-slide-transition.h \
+	src/transition/lrg-zoom-transition.h \
+	src/transition/lrg-shader-transition.h \
+	src/transition/lrg-transition-manager.h \
+	src/trigger2d/lrg-trigger2d.h \
+	src/trigger2d/lrg-trigger-rect.h \
+	src/trigger2d/lrg-trigger-circle.h \
+	src/trigger2d/lrg-trigger-polygon.h \
+	src/trigger2d/lrg-trigger-event.h \
+	src/trigger2d/lrg-trigger-manager.h \
+	src/atlas/lrg-atlas-region.h \
+	src/atlas/lrg-texture-atlas.h \
+	src/atlas/lrg-sprite-sheet.h \
+	src/atlas/lrg-nine-slice.h \
+	src/atlas/lrg-atlas-packer.h \
+	src/tutorial/lrg-tutorial-step.h \
+	src/tutorial/lrg-tutorial.h \
+	src/tutorial/lrg-tutorial-manager.h \
+	src/tutorial/lrg-highlight.h \
+	src/tutorial/lrg-input-prompt.h \
+	src/tutorial/lrg-tooltip-arrow.h \
+	src/weather/lrg-weather-effect.h \
+	src/weather/lrg-rain.h \
+	src/weather/lrg-snow.h \
+	src/weather/lrg-fog.h \
+	src/weather/lrg-lightning.h \
+	src/weather/lrg-weather.h \
+	src/weather/lrg-day-night-cycle.h \
+	src/weather/lrg-weather-manager.h \
+	src/lighting/lrg-shadow-caster.h \
+	src/lighting/lrg-light2d.h \
+	src/lighting/lrg-point-light2d.h \
+	src/lighting/lrg-spot-light2d.h \
+	src/lighting/lrg-directional-light2d.h \
+	src/lighting/lrg-shadow-map.h \
+	src/lighting/lrg-lightmap.h \
+	src/lighting/lrg-light-probe.h \
+	src/lighting/lrg-lighting-manager.h
 
 # Source files
 SOURCES := \
@@ -464,7 +513,56 @@ SOURCES := \
 	src/video/lrg-video-texture.c \
 	src/video/lrg-video-subtitle-track.c \
 	src/video/lrg-video-subtitles.c \
-	src/video/lrg-video-player.c
+	src/video/lrg-video-player.c \
+	src/tween/lrg-easing.c \
+	src/tween/lrg-tween-base.c \
+	src/tween/lrg-tween.c \
+	src/tween/lrg-tween-group.c \
+	src/tween/lrg-tween-sequence.c \
+	src/tween/lrg-tween-parallel.c \
+	src/tween/lrg-tween-manager.c \
+	src/transition/lrg-transition.c \
+	src/transition/lrg-fade-transition.c \
+	src/transition/lrg-wipe-transition.c \
+	src/transition/lrg-dissolve-transition.c \
+	src/transition/lrg-slide-transition.c \
+	src/transition/lrg-zoom-transition.c \
+	src/transition/lrg-shader-transition.c \
+	src/transition/lrg-transition-manager.c \
+	src/trigger2d/lrg-trigger2d.c \
+	src/trigger2d/lrg-trigger-rect.c \
+	src/trigger2d/lrg-trigger-circle.c \
+	src/trigger2d/lrg-trigger-polygon.c \
+	src/trigger2d/lrg-trigger-event.c \
+	src/trigger2d/lrg-trigger-manager.c \
+	src/atlas/lrg-atlas-region.c \
+	src/atlas/lrg-texture-atlas.c \
+	src/atlas/lrg-sprite-sheet.c \
+	src/atlas/lrg-nine-slice.c \
+	src/atlas/lrg-atlas-packer.c \
+	src/tutorial/lrg-tutorial-step.c \
+	src/tutorial/lrg-tutorial.c \
+	src/tutorial/lrg-tutorial-manager.c \
+	src/tutorial/lrg-highlight.c \
+	src/tutorial/lrg-input-prompt.c \
+	src/tutorial/lrg-tooltip-arrow.c \
+	src/weather/lrg-weather-effect.c \
+	src/weather/lrg-rain.c \
+	src/weather/lrg-snow.c \
+	src/weather/lrg-fog.c \
+	src/weather/lrg-lightning.c \
+	src/weather/lrg-weather.c \
+	src/weather/lrg-day-night-cycle.c \
+	src/weather/lrg-weather-manager.c \
+	src/lighting/lrg-shadow-caster.c \
+	src/lighting/lrg-light2d.c \
+	src/lighting/lrg-point-light2d.c \
+	src/lighting/lrg-spot-light2d.c \
+	src/lighting/lrg-directional-light2d.c \
+	src/lighting/lrg-shadow-map.c \
+	src/lighting/lrg-lightmap.c \
+	src/lighting/lrg-light-probe.c \
+	src/lighting/lrg-lighting-manager.c
 
 # Conditional scripting backends
 ifeq ($(HAS_LUAJIT),1)

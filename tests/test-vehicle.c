@@ -226,6 +226,7 @@ test_vehicle_update (VehicleFixture *fixture,
 {
     gfloat speed_before;
     gfloat speed_after;
+    gint i;
 
     (void)user_data;
 
@@ -237,7 +238,7 @@ test_vehicle_update (VehicleFixture *fixture,
     lrg_vehicle_set_throttle (fixture->vehicle, 1.0f);
 
     /* Simulate some frames */
-    for (gint i = 0; i < 60; i++)
+    for (i = 0; i < 60; i++)
         lrg_vehicle_update (fixture->vehicle, 0.016f);
 
     speed_after = lrg_vehicle_get_speed (fixture->vehicle);
