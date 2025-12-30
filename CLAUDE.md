@@ -203,6 +203,110 @@ g_clear_pointer (&self->name, g_free);
 return g_steal_pointer (&object);
 ```
 
+## CRITICAL: GBoxed Types vs GObjects (graylib)
+
+**This is the most common source of crashes.** Graylib uses GBoxed types for lightweight value types, NOT GObjects. Using `g_object_unref()` on them causes segfaults.
+
+### GBoxed Types from graylib
+
+These types use `*_free()` functions, NOT `g_object_unref()`:
+
+| Type | Free Function | Autoptr Cleanup |
+|------|---------------|-----------------|
+| `GrlColor` | `grl_color_free()` | `g_autoptr(GrlColor)` |
+| `GrlVector2` | `grl_vector2_free()` | `g_autoptr(GrlVector2)` |
+| `GrlVector3` | `grl_vector3_free()` | `g_autoptr(GrlVector3)` |
+| `GrlVector4` | `grl_vector4_free()` | `g_autoptr(GrlVector4)` |
+| `GrlRectangle` | `grl_rectangle_free()` | `g_autoptr(GrlRectangle)` |
+| `GrlMatrix` | `grl_matrix_free()` | `g_autoptr(GrlMatrix)` |
+| `GrlQuaternion` | `grl_quaternion_free()` | `g_autoptr(GrlQuaternion)` |
+
+### Correct Usage
+
+```c
+/* CORRECT - using g_autoptr (recommended) */
+g_autoptr(GrlColor) color = grl_color_new (255, 100, 100, 255);
+grl_draw_rectangle (x, y, w, h, color);
+/* Automatically freed when scope exits */
+
+/* CORRECT - manual free */
+GrlColor *color = grl_color_new (255, 100, 100, 255);
+grl_draw_rectangle (x, y, w, h, color);
+grl_color_free (color);
+
+/* CORRECT - clearing a pointer */
+g_clear_pointer (&self->cached_color, grl_color_free);
+```
+
+### WRONG Usage (causes segfault)
+
+```c
+/* WRONG - GrlColor is NOT a GObject! */
+GrlColor *color = grl_color_new (255, 100, 100, 255);
+g_object_unref (color);  /* SEGFAULT! */
+
+/* WRONG - g_clear_object is for GObjects only */
+g_clear_object (&self->cached_color);  /* SEGFAULT! */
+```
+
+### GObjects from graylib (use g_object_unref)
+
+These ARE proper GObjects:
+
+| Type | Use |
+|------|-----|
+| `GrlWindow` | `g_object_unref()` / `g_autoptr(GrlWindow)` |
+| `GrlTexture` | `g_object_unref()` / `g_autoptr(GrlTexture)` |
+| `GrlSound` | `g_object_unref()` / `g_autoptr(GrlSound)` |
+| `GrlFont` | `g_object_unref()` / `g_autoptr(GrlFont)` |
+| `GrlImage` | `g_object_unref()` / `g_autoptr(GrlImage)` |
+
+### How to Tell the Difference
+
+Check the header file:
+- **GBoxed**: Uses `G_DEFINE_BOXED_TYPE` and has `*_copy()` / `*_free()` functions
+- **GObject**: Uses `G_DECLARE_*_TYPE` macros
+
+## Transfer Semantics (Ownership)
+
+The `(transfer full)` annotation means the function takes ownership. **Do NOT unref after calling.**
+
+### Common Mistake
+
+```c
+/* WRONG - double-free! */
+LrgGameState *state = g_object_new (MY_TYPE_STATE, NULL);
+lrg_game_state_manager_push (manager, state);  /* Takes ownership */
+g_object_unref (state);  /* CRASH - already owned by manager */
+
+/* CORRECT */
+LrgGameState *state = g_object_new (MY_TYPE_STATE, NULL);
+lrg_game_state_manager_push (manager, state);  /* Takes ownership, done */
+```
+
+### Functions with `(transfer full)` Parameters
+
+| Function | Parameter | Notes |
+|----------|-----------|-------|
+| `lrg_game_state_manager_push()` | `state` | Manager takes ownership |
+| `lrg_game_state_manager_replace()` | `state` | Manager takes ownership |
+| `g_ptr_array_add()` with free func | element | Array takes ownership |
+
+### Reading Transfer Annotations
+
+```c
+/**
+ * @state: (transfer full): the state to push  <-- Caller gives up ownership
+ */
+void lrg_game_state_manager_push (LrgGameStateManager *self,
+                                   LrgGameState        *state);
+
+/**
+ * Returns: (transfer full): A new object  <-- Caller receives ownership
+ */
+GrlColor *grl_color_new (guint8 r, guint8 g, guint8 b, guint8 a);
+```
+
 ## GObject Introspection Annotations
 
 All public API must include gtk-doc comments with GIR annotations:
