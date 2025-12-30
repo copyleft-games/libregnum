@@ -75,7 +75,7 @@ BUILD_DOCS ?= 0
 
 # Paths to submodule dependencies (use PROJECT_ROOT for consistency across subdirs)
 GRAYLIB_DIR ?= $(PROJECT_ROOT)/deps/graylib
-YAMLGLIB_DIR ?= $(PROJECT_ROOT)/deps/yaml-glib.git
+YAMLGLIB_DIR ?= $(PROJECT_ROOT)/deps/yaml-glib
 
 # =============================================================================
 # Debug Configuration

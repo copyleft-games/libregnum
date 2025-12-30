@@ -17,7 +17,7 @@ libregnum/
 ├── CLAUDE.md                 # This file (AI context)
 ├── deps/
 │   ├── graylib/              # GObject wrapper for raylib
-│   └── yaml-glib.git/        # YAML parsing library
+│   └── yaml-glib/            # YAML parsing library
 ├── src/
 │   ├── libregnum.h           # Master include header
 │   ├── lrg-version.h.in      # Version template

@@ -9,7 +9,7 @@ src/config.h
 
 # Dependency build outputs (submodules have their own builds)
 deps/graylib/build/
-deps/yaml-glib.git/build/
+deps/yaml-glib/build/
 
 # Compiled files (safety net for files outside build/)
 *.o

@@ -92,14 +92,14 @@ From the `examples/` directory:
 
 ```bash
 cd examples
-LD_LIBRARY_PATH=../build/release/lib:../deps/graylib/build/lib:../deps/yaml-glib.git/build/lib:$LD_LIBRARY_PATH \
+LD_LIBRARY_PATH=../build/release/lib:../deps/graylib/build/lib:../deps/yaml-glib/build/lib:$LD_LIBRARY_PATH \
   ../build/release/examples/game-omnomagon
 ```
 
 Or from the project root:
 
 ```bash
-LD_LIBRARY_PATH=./build/release/lib:./deps/graylib/build/lib:./deps/yaml-glib.git/build/lib:$LD_LIBRARY_PATH \
+LD_LIBRARY_PATH=./build/release/lib:./deps/graylib/build/lib:./deps/yaml-glib/build/lib:$LD_LIBRARY_PATH \
   ./build/release/examples/game-omnomagon
 ```
 

@@ -96,7 +96,7 @@ The `CROSS` variable sets the toolchain prefix for:
 wine ./build/release/tests/test-registry.exe
 
 # Run with library path
-WINEPATH="./build/release/lib;./deps/graylib/build/lib;./deps/yaml-glib.git/build" \
+WINEPATH="./build/release/lib;./deps/graylib/build/lib;./deps/yaml-glib/build" \
     wine ./build/release/examples/hello.exe
 ```
 
@@ -105,7 +105,7 @@ WINEPATH="./build/release/lib;./deps/graylib/build/lib;./deps/yaml-glib.git/buil
 Copy the following to your Windows machine:
 - `build/release/lib/regnum.dll`
 - `deps/graylib/build/lib/graylib.dll`
-- `deps/yaml-glib.git/build/yaml-glib.dll`
+- `deps/yaml-glib/build/yaml-glib.dll`
 - `deps/steamworks_sdk/sdk/redistributable_bin/win64/steam_api64.dll` (if STEAM=1)
 - Your executable
 
@@ -159,7 +159,7 @@ cp build/release/bin/mygame.exe "$DIST_DIR/"
 # Copy library DLLs
 cp build/release/lib/regnum.dll "$DIST_DIR/"
 cp deps/graylib/build/lib/graylib.dll "$DIST_DIR/"
-cp deps/yaml-glib.git/build/yaml-glib.dll "$DIST_DIR/"
+cp deps/yaml-glib/build/yaml-glib.dll "$DIST_DIR/"
 
 # Copy MinGW runtime DLLs
 MINGW_BIN="/usr/x86_64-w64-mingw32/sys-root/mingw/bin"
