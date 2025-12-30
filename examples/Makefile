@@ -51,7 +51,7 @@ ifeq ($(TARGET_PLATFORM),windows)
 endif
 
 # Base examples (always built)
-EXAMPLES := game-omnomagon game-taco-racing game-chocolate-chip-clicker render-yaml-santa render-yaml-taco-truck
+EXAMPLES := game-omnomagon game-taco-racing game-chocolate-chip-clicker game-tuktuk-derby render-yaml-santa render-yaml-taco-truck
 
 # Scripted examples only on native Linux (scripting backends not available on Windows)
 ifneq ($(TARGET_PLATFORM),windows)
@@ -102,6 +102,10 @@ $(EXAMPLES_BUILDDIR)/game-taco-racing$(EXE_EXT): game-taco-racing.c | $(EXAMPLES
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/game-chocolate-chip-clicker$(EXE_EXT): game-chocolate-chip-clicker.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/game-tuktuk-derby$(EXE_EXT): game-tuktuk-derby.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
