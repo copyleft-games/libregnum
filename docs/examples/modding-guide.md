@@ -403,3 +403,5 @@ my_mod_init(LrgModable *self, LrgEngine *engine, GError **error)
 - [LrgModManager](../modules/mod/mod-manager.md) - Mod management
 - [Provider Interfaces](../modules/mod/providers.md) - Content providers
 - [LrgModable](../modules/mod/modable.md) - Mod interface
+- [DLC Store Demo](dlc-store.md) - DLC ownership verification and store integration
+- [Native DLC Example](native-dlc.md) - GModule-based native code DLCs

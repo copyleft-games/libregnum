@@ -1,0 +1,31 @@
+# map-desert-arena/mod.yaml
+#
+# Sample map pack DLC manifest for the DLC Store Demo.
+
+id: map-desert-arena
+name: "Desert Arena Map"
+version: "1.0.0"
+author: "Demo Games"
+description: "Battle in the scorching Desert Arena! A new PvP map with sandstorms and hidden oases."
+
+dlc:
+  type: map
+  steam_app_id: 12350
+  store_id: "desert-arena-map"
+  price: "$3.99"
+  currency: "USD"
+  min_game_version: "1.3.0"
+  release_date: "2025-04-01"
+
+  ownership:
+    method: manifest
+
+  trial:
+    enabled: false
+
+map:
+  biome_type: "desert"
+  map_ids:
+    - "map-desert-arena-small"
+    - "map-desert-arena-large"
+    - "map-desert-oasis"

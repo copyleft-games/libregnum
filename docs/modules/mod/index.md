@@ -151,7 +151,9 @@ for (GList *l = item_defs; l; l = l->next) {
 
 ## Examples
 
-- [Modding Guide](../../examples/modding-guide.md) - Complete walkthrough
+- [Modding Guide](../../examples/modding-guide.md) - Complete mod creation walkthrough
+- [DLC Store Demo](../../examples/dlc-store.md) - DLC ownership, trials, and store integration
+- [Native DLC Example](../../examples/native-dlc.md) - GModule-based native code DLCs
 
 ## Mod States
 

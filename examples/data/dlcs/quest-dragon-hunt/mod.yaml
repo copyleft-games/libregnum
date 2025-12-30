@@ -1,0 +1,39 @@
+# quest-dragon-hunt/mod.yaml
+#
+# Sample quest pack DLC manifest for the DLC Store Demo.
+
+id: quest-dragon-hunt
+name: "Dragon Hunt Quests"
+version: "1.0.0"
+author: "Demo Games"
+description: "Embark on an epic questline to hunt the legendary dragons! 8 challenging quests with unique rewards."
+
+dlc:
+  type: quest
+  steam_app_id: 12347
+  store_id: "dragon-hunt-quests"
+  price: "$7.99"
+  currency: "USD"
+  min_game_version: "1.2.0"
+  release_date: "2025-02-10"
+
+  ownership:
+    method: manifest
+
+  trial:
+    enabled: true
+    content_ids:
+      - "quest-dragon-rumors"
+      - "quest-first-sighting"
+
+quest:
+  estimated_hours: 6
+  quest_ids:
+    - "quest-dragon-rumors"
+    - "quest-first-sighting"
+    - "quest-scale-collector"
+    - "quest-dragon-lair"
+    - "quest-fire-breath"
+    - "quest-ice-dragon"
+    - "quest-elder-dragon"
+    - "quest-dragon-slayer"

@@ -977,6 +977,93 @@ GType lrg_mod_priority_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_MOD_PRIORITY (lrg_mod_priority_get_type ())
 
 /* ==========================================================================
+ * DLC System
+ * ========================================================================== */
+
+/**
+ * LRG_DLC_ERROR:
+ *
+ * Error domain for DLC errors.
+ */
+#define LRG_DLC_ERROR (lrg_dlc_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_dlc_error_quark (void);
+
+/**
+ * LrgDlcError:
+ * @LRG_DLC_ERROR_FAILED: Generic failure
+ * @LRG_DLC_ERROR_NOT_OWNED: DLC is not owned by the user
+ * @LRG_DLC_ERROR_VERIFICATION_FAILED: Ownership verification failed
+ * @LRG_DLC_ERROR_INVALID_LICENSE: License file is invalid or corrupted
+ * @LRG_DLC_ERROR_STEAM_UNAVAILABLE: Steam client is not available
+ * @LRG_DLC_ERROR_CONTENT_GATED: Content is gated (trial mode)
+ *
+ * Error codes for the DLC system.
+ */
+typedef enum
+{
+    LRG_DLC_ERROR_FAILED,
+    LRG_DLC_ERROR_NOT_OWNED,
+    LRG_DLC_ERROR_VERIFICATION_FAILED,
+    LRG_DLC_ERROR_INVALID_LICENSE,
+    LRG_DLC_ERROR_STEAM_UNAVAILABLE,
+    LRG_DLC_ERROR_CONTENT_GATED
+} LrgDlcError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_dlc_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DLC_ERROR (lrg_dlc_error_get_type ())
+
+/**
+ * LrgDlcType:
+ * @LRG_DLC_TYPE_EXPANSION: Full expansion pack with new areas and content
+ * @LRG_DLC_TYPE_COSMETIC: Cosmetic items (skins, effects, visual changes)
+ * @LRG_DLC_TYPE_QUEST: Quest pack with new storylines
+ * @LRG_DLC_TYPE_ITEM: Item pack with new equipment/items
+ * @LRG_DLC_TYPE_CHARACTER: Character pack (playable characters or companions)
+ * @LRG_DLC_TYPE_MAP: Map pack with new levels/areas
+ *
+ * Type of DLC content.
+ */
+typedef enum
+{
+    LRG_DLC_TYPE_EXPANSION,
+    LRG_DLC_TYPE_COSMETIC,
+    LRG_DLC_TYPE_QUEST,
+    LRG_DLC_TYPE_ITEM,
+    LRG_DLC_TYPE_CHARACTER,
+    LRG_DLC_TYPE_MAP
+} LrgDlcType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_dlc_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DLC_TYPE (lrg_dlc_type_get_type ())
+
+/**
+ * LrgDlcOwnershipState:
+ * @LRG_DLC_OWNERSHIP_UNKNOWN: Ownership not yet verified
+ * @LRG_DLC_OWNERSHIP_NOT_OWNED: User does not own the DLC
+ * @LRG_DLC_OWNERSHIP_OWNED: User owns the DLC
+ * @LRG_DLC_OWNERSHIP_TRIAL: User has trial access to the DLC
+ * @LRG_DLC_OWNERSHIP_ERROR: Error occurred during verification
+ *
+ * Ownership state of a DLC.
+ */
+typedef enum
+{
+    LRG_DLC_OWNERSHIP_UNKNOWN,
+    LRG_DLC_OWNERSHIP_NOT_OWNED,
+    LRG_DLC_OWNERSHIP_OWNED,
+    LRG_DLC_OWNERSHIP_TRIAL,
+    LRG_DLC_OWNERSHIP_ERROR
+} LrgDlcOwnershipState;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_dlc_ownership_state_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DLC_OWNERSHIP_STATE (lrg_dlc_ownership_state_get_type ())
+
+/* ==========================================================================
  * Equipment System
  * ========================================================================== */
 

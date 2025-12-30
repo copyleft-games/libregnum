@@ -1,0 +1,35 @@
+# item-starter-bundle/mod.yaml
+#
+# Sample item pack DLC manifest for the DLC Store Demo.
+
+id: item-starter-bundle
+name: "Starter Item Bundle"
+version: "1.0.0"
+author: "Demo Games"
+description: "Get a head start with this bundle of useful items! Includes weapons, potions, and gold."
+
+dlc:
+  type: item
+  steam_app_id: 12348
+  store_id: "starter-bundle"
+  price: "$2.99"
+  currency: "USD"
+  min_game_version: "1.0.0"
+  release_date: "2025-01-01"
+
+  ownership:
+    method: manifest
+
+  trial:
+    enabled: false
+
+item:
+  item_ids:
+    - "item-steel-sword"
+    - "item-leather-shield"
+    - "item-health-potion-x5"
+    - "item-mana-potion-x5"
+    - "item-gold-500"
+  equipment_slots:
+    - "weapon"
+    - "offhand"

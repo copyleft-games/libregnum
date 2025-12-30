@@ -118,6 +118,18 @@ struct _LrgModManifest
     /* Paths */
     gchar         *data_path;
     gchar         *entry_point;
+
+    /* DLC information */
+    gboolean       is_dlc;
+    LrgDlcType     dlc_type;
+    guint32        steam_app_id;
+    gchar         *store_id;
+    gchar         *price_string;
+    GDateTime     *release_date;
+    gchar         *min_game_version;
+    gchar         *ownership_method;
+    gboolean       trial_enabled;
+    GPtrArray     *trial_content_ids;  /* gchar* */
 };
 
 #pragma GCC visibility push(default)
@@ -145,6 +157,14 @@ lrg_mod_manifest_finalize (GObject *object)
     g_ptr_array_unref (self->load_after);
     g_ptr_array_unref (self->load_before);
 
+    /* DLC fields */
+    g_free (self->store_id);
+    g_free (self->price_string);
+    g_clear_pointer (&self->release_date, g_date_time_unref);
+    g_free (self->min_game_version);
+    g_free (self->ownership_method);
+    g_clear_pointer (&self->trial_content_ids, g_ptr_array_unref);
+
     G_OBJECT_CLASS (lrg_mod_manifest_parent_class)->finalize (object);
 }
 
@@ -166,6 +186,11 @@ lrg_mod_manifest_init (LrgModManifest *self)
         (GDestroyNotify)lrg_mod_dependency_free);
     self->load_after = g_ptr_array_new_with_free_func (g_free);
     self->load_before = g_ptr_array_new_with_free_func (g_free);
+
+    /* DLC defaults */
+    self->is_dlc = FALSE;
+    self->dlc_type = LRG_DLC_TYPE_EXPANSION;
+    self->trial_content_ids = g_ptr_array_new_with_free_func (g_free);
 }
 
 /* ==========================================================================
@@ -345,6 +370,95 @@ parse_manifest_yaml (LrgModManifest *manifest,
             YamlNode *item = yaml_sequence_get_element (order_seq, i);
             if (yaml_node_get_node_type (item) == YAML_NODE_SCALAR)
                 lrg_mod_manifest_add_load_before (manifest, yaml_node_get_string (item));
+        }
+    }
+
+    /* DLC section */
+    node = yaml_mapping_get_member (root_map, "dlc");
+    if (node != NULL && yaml_node_get_node_type (node) == YAML_NODE_MAPPING)
+    {
+        YamlMapping *dlc_map = yaml_node_get_mapping (node);
+        YamlNode *dlc_node;
+
+        manifest->is_dlc = TRUE;
+
+        /* DLC type */
+        dlc_node = yaml_mapping_get_member (dlc_map, "type");
+        if (dlc_node != NULL && yaml_node_get_node_type (dlc_node) == YAML_NODE_SCALAR)
+        {
+            const gchar *dlc_type_str = yaml_node_get_string (dlc_node);
+            if (g_strcmp0 (dlc_type_str, "expansion") == 0)
+                manifest->dlc_type = LRG_DLC_TYPE_EXPANSION;
+            else if (g_strcmp0 (dlc_type_str, "cosmetic") == 0)
+                manifest->dlc_type = LRG_DLC_TYPE_COSMETIC;
+            else if (g_strcmp0 (dlc_type_str, "quest") == 0)
+                manifest->dlc_type = LRG_DLC_TYPE_QUEST;
+            else if (g_strcmp0 (dlc_type_str, "item") == 0)
+                manifest->dlc_type = LRG_DLC_TYPE_ITEM;
+            else if (g_strcmp0 (dlc_type_str, "character") == 0)
+                manifest->dlc_type = LRG_DLC_TYPE_CHARACTER;
+            else if (g_strcmp0 (dlc_type_str, "map") == 0)
+                manifest->dlc_type = LRG_DLC_TYPE_MAP;
+        }
+
+        /* Steam App ID */
+        dlc_node = yaml_mapping_get_member (dlc_map, "steam_app_id");
+        if (dlc_node != NULL && yaml_node_get_node_type (dlc_node) == YAML_NODE_SCALAR)
+            manifest->steam_app_id = (guint32)g_ascii_strtoull (yaml_node_get_string (dlc_node), NULL, 10);
+
+        /* Store ID */
+        dlc_node = yaml_mapping_get_member (dlc_map, "store_id");
+        if (dlc_node != NULL && yaml_node_get_node_type (dlc_node) == YAML_NODE_SCALAR)
+            manifest->store_id = g_strdup (yaml_node_get_string (dlc_node));
+
+        /* Price string */
+        dlc_node = yaml_mapping_get_member (dlc_map, "price");
+        if (dlc_node != NULL && yaml_node_get_node_type (dlc_node) == YAML_NODE_SCALAR)
+            manifest->price_string = g_strdup (yaml_node_get_string (dlc_node));
+
+        /* Release date */
+        dlc_node = yaml_mapping_get_member (dlc_map, "release_date");
+        if (dlc_node != NULL && yaml_node_get_node_type (dlc_node) == YAML_NODE_SCALAR)
+        {
+            const gchar *date_str = yaml_node_get_string (dlc_node);
+            manifest->release_date = g_date_time_new_from_iso8601 (date_str, NULL);
+        }
+
+        /* Minimum game version */
+        dlc_node = yaml_mapping_get_member (dlc_map, "min_game_version");
+        if (dlc_node != NULL && yaml_node_get_node_type (dlc_node) == YAML_NODE_SCALAR)
+            manifest->min_game_version = g_strdup (yaml_node_get_string (dlc_node));
+
+        /* Ownership method */
+        dlc_node = yaml_mapping_get_member (dlc_map, "ownership_method");
+        if (dlc_node != NULL && yaml_node_get_node_type (dlc_node) == YAML_NODE_SCALAR)
+            manifest->ownership_method = g_strdup (yaml_node_get_string (dlc_node));
+
+        /* Trial configuration */
+        dlc_node = yaml_mapping_get_member (dlc_map, "trial");
+        if (dlc_node != NULL && yaml_node_get_node_type (dlc_node) == YAML_NODE_MAPPING)
+        {
+            YamlMapping *trial_map = yaml_node_get_mapping (dlc_node);
+            YamlNode *trial_item;
+
+            trial_item = yaml_mapping_get_member (trial_map, "enabled");
+            if (trial_item != NULL && yaml_node_get_node_type (trial_item) == YAML_NODE_SCALAR)
+                manifest->trial_enabled = g_strcmp0 (yaml_node_get_string (trial_item), "true") == 0;
+
+            trial_item = yaml_mapping_get_member (trial_map, "content_ids");
+            if (trial_item != NULL && yaml_node_get_node_type (trial_item) == YAML_NODE_SEQUENCE)
+            {
+                YamlSequence *content_seq = yaml_node_get_sequence (trial_item);
+                guint len = yaml_sequence_get_length (content_seq);
+
+                for (i = 0; i < len; i++)
+                {
+                    YamlNode *content_node = yaml_sequence_get_element (content_seq, i);
+                    if (yaml_node_get_node_type (content_node) == YAML_NODE_SCALAR)
+                        g_ptr_array_add (manifest->trial_content_ids,
+                                        g_strdup (yaml_node_get_string (content_node)));
+                }
+            }
         }
     }
 
@@ -612,6 +726,170 @@ lrg_mod_manifest_set_entry_point (LrgModManifest *self,
 }
 
 /* ==========================================================================
+ * DLC Information
+ * ========================================================================== */
+
+gboolean
+lrg_mod_manifest_is_dlc (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), FALSE);
+    return self->is_dlc;
+}
+
+void
+lrg_mod_manifest_set_is_dlc (LrgModManifest *self,
+                              gboolean        is_dlc)
+{
+    g_return_if_fail (LRG_IS_MOD_MANIFEST (self));
+    self->is_dlc = is_dlc;
+}
+
+LrgDlcType
+lrg_mod_manifest_get_dlc_type (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), LRG_DLC_TYPE_EXPANSION);
+    return self->dlc_type;
+}
+
+void
+lrg_mod_manifest_set_dlc_type (LrgModManifest *self,
+                                LrgDlcType      dlc_type)
+{
+    g_return_if_fail (LRG_IS_MOD_MANIFEST (self));
+    self->dlc_type = dlc_type;
+}
+
+guint32
+lrg_mod_manifest_get_steam_app_id (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), 0);
+    return self->steam_app_id;
+}
+
+void
+lrg_mod_manifest_set_steam_app_id (LrgModManifest *self,
+                                    guint32         app_id)
+{
+    g_return_if_fail (LRG_IS_MOD_MANIFEST (self));
+    self->steam_app_id = app_id;
+}
+
+const gchar *
+lrg_mod_manifest_get_store_id (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), NULL);
+    return self->store_id;
+}
+
+void
+lrg_mod_manifest_set_store_id (LrgModManifest *self,
+                                const gchar    *store_id)
+{
+    g_return_if_fail (LRG_IS_MOD_MANIFEST (self));
+    g_free (self->store_id);
+    self->store_id = g_strdup (store_id);
+}
+
+const gchar *
+lrg_mod_manifest_get_price_string (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), NULL);
+    return self->price_string;
+}
+
+void
+lrg_mod_manifest_set_price_string (LrgModManifest *self,
+                                    const gchar    *price)
+{
+    g_return_if_fail (LRG_IS_MOD_MANIFEST (self));
+    g_free (self->price_string);
+    self->price_string = g_strdup (price);
+}
+
+GDateTime *
+lrg_mod_manifest_get_release_date (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), NULL);
+    return self->release_date;
+}
+
+void
+lrg_mod_manifest_set_release_date (LrgModManifest *self,
+                                    GDateTime      *date)
+{
+    g_return_if_fail (LRG_IS_MOD_MANIFEST (self));
+
+    g_clear_pointer (&self->release_date, g_date_time_unref);
+
+    if (date != NULL)
+        self->release_date = g_date_time_ref (date);
+}
+
+const gchar *
+lrg_mod_manifest_get_min_game_version (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), NULL);
+    return self->min_game_version;
+}
+
+void
+lrg_mod_manifest_set_min_game_version (LrgModManifest *self,
+                                        const gchar    *version)
+{
+    g_return_if_fail (LRG_IS_MOD_MANIFEST (self));
+    g_free (self->min_game_version);
+    self->min_game_version = g_strdup (version);
+}
+
+const gchar *
+lrg_mod_manifest_get_ownership_method (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), NULL);
+    return self->ownership_method;
+}
+
+void
+lrg_mod_manifest_set_ownership_method (LrgModManifest *self,
+                                        const gchar    *method)
+{
+    g_return_if_fail (LRG_IS_MOD_MANIFEST (self));
+    g_free (self->ownership_method);
+    self->ownership_method = g_strdup (method);
+}
+
+gboolean
+lrg_mod_manifest_get_trial_enabled (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), FALSE);
+    return self->trial_enabled;
+}
+
+void
+lrg_mod_manifest_set_trial_enabled (LrgModManifest *self,
+                                     gboolean        enabled)
+{
+    g_return_if_fail (LRG_IS_MOD_MANIFEST (self));
+    self->trial_enabled = enabled;
+}
+
+GPtrArray *
+lrg_mod_manifest_get_trial_content_ids (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), NULL);
+    return self->trial_content_ids;
+}
+
+void
+lrg_mod_manifest_add_trial_content_id (LrgModManifest *self,
+                                        const gchar    *content_id)
+{
+    g_return_if_fail (LRG_IS_MOD_MANIFEST (self));
+    g_return_if_fail (content_id != NULL);
+
+    g_ptr_array_add (self->trial_content_ids, g_strdup (content_id));
+}
+
+/* ==========================================================================
  * Serialization
  * ========================================================================== */
 
@@ -729,6 +1007,74 @@ lrg_mod_manifest_save_to_file (LrgModManifest  *self,
         {
             g_string_append_printf (yaml, "  - %s\n",
                                     (const gchar *)g_ptr_array_index (self->load_before, i));
+        }
+    }
+
+    /* DLC section */
+    if (self->is_dlc)
+    {
+        g_string_append (yaml, "dlc:\n");
+
+        /* DLC type */
+        switch (self->dlc_type)
+        {
+        case LRG_DLC_TYPE_EXPANSION:
+            g_string_append (yaml, "  type: expansion\n");
+            break;
+        case LRG_DLC_TYPE_COSMETIC:
+            g_string_append (yaml, "  type: cosmetic\n");
+            break;
+        case LRG_DLC_TYPE_QUEST:
+            g_string_append (yaml, "  type: quest\n");
+            break;
+        case LRG_DLC_TYPE_ITEM:
+            g_string_append (yaml, "  type: item\n");
+            break;
+        case LRG_DLC_TYPE_CHARACTER:
+            g_string_append (yaml, "  type: character\n");
+            break;
+        case LRG_DLC_TYPE_MAP:
+            g_string_append (yaml, "  type: map\n");
+            break;
+        }
+
+        if (self->steam_app_id != 0)
+            g_string_append_printf (yaml, "  steam_app_id: %u\n", self->steam_app_id);
+
+        if (self->store_id != NULL)
+            g_string_append_printf (yaml, "  store_id: %s\n", self->store_id);
+
+        if (self->price_string != NULL)
+            g_string_append_printf (yaml, "  price: %s\n", self->price_string);
+
+        if (self->release_date != NULL)
+        {
+            g_autofree gchar *date_str = g_date_time_format_iso8601 (self->release_date);
+            g_string_append_printf (yaml, "  release_date: %s\n", date_str);
+        }
+
+        if (self->min_game_version != NULL)
+            g_string_append_printf (yaml, "  min_game_version: %s\n", self->min_game_version);
+
+        if (self->ownership_method != NULL)
+            g_string_append_printf (yaml, "  ownership_method: %s\n", self->ownership_method);
+
+        /* Trial section */
+        if (self->trial_enabled || self->trial_content_ids->len > 0)
+        {
+            g_string_append (yaml, "  trial:\n");
+            g_string_append_printf (yaml, "    enabled: %s\n",
+                                    self->trial_enabled ? "true" : "false");
+
+            if (self->trial_content_ids->len > 0)
+            {
+                g_string_append (yaml, "    content_ids:\n");
+                for (i = 0; i < self->trial_content_ids->len; i++)
+                {
+                    g_string_append_printf (yaml, "      - %s\n",
+                                            (const gchar *)g_ptr_array_index (self->trial_content_ids, i));
+                }
+            }
         }
     }
 

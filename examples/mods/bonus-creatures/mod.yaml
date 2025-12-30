@@ -1,0 +1,36 @@
+# bonus-creatures/mod.yaml
+#
+# Native DLC manifest for the Creature Collector demo.
+# This DLC adds 2 bonus creatures to the game via GModule loading.
+
+id: bonus-creatures
+name: "Bonus Creatures Pack"
+version: "1.0.0"
+type: native
+author: "Demo Games"
+description: "Adds 2 bonus creatures to the game: Golden Slime and Shadow Beast!"
+
+# Path to the shared library (relative to mod directory)
+entry_point: "lib/libbonuscreatures.so"
+
+dlc:
+  type: expansion
+  store_id: "bonus-creatures-pack"
+  price: "$2.99"
+  currency: "USD"
+  min_game_version: "1.0.0"
+  release_date: "2025-01-01"
+
+  ownership:
+    method: manifest
+
+  trial:
+    enabled: false
+
+creatures:
+  - id: "golden-slime"
+    name: "Golden Slime"
+    description: "A rare slime that glitters with gold!"
+  - id: "shadow-beast"
+    name: "Shadow Beast"
+    description: "A mysterious creature from the shadow realm."

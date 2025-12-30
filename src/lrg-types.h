@@ -406,9 +406,28 @@ typedef struct _LrgInspector      LrgInspector;
 
 /* Final types - no class typedef needed */
 typedef struct _LrgModManifest  LrgModManifest;
+
+/* LrgMod is a derivable type */
 typedef struct _LrgMod          LrgMod;
+typedef struct _LrgModClass     LrgModClass;
+
 typedef struct _LrgModLoader    LrgModLoader;
 typedef struct _LrgModManager   LrgModManager;
+
+/* DLC types - LrgDlc is derivable */
+typedef struct _LrgDlc                    LrgDlc;
+typedef struct _LrgDlcClass               LrgDlcClass;
+typedef struct _LrgDlcOwnership           LrgDlcOwnership;
+typedef struct _LrgDlcOwnershipInterface  LrgDlcOwnershipInterface;
+typedef struct _LrgDlcOwnershipSteam      LrgDlcOwnershipSteam;
+typedef struct _LrgDlcOwnershipLicense    LrgDlcOwnershipLicense;
+typedef struct _LrgDlcOwnershipManifest   LrgDlcOwnershipManifest;
+typedef struct _LrgExpansionPack          LrgExpansionPack;
+typedef struct _LrgCosmeticPack           LrgCosmeticPack;
+typedef struct _LrgQuestPack              LrgQuestPack;
+typedef struct _LrgItemPack               LrgItemPack;
+typedef struct _LrgCharacterPack          LrgCharacterPack;
+typedef struct _LrgMapPack                LrgMapPack;
 
 /* Boxed types */
 typedef struct _LrgSemver          LrgSemver;
@@ -794,6 +813,17 @@ typedef struct _LrgPhotoCameraController  LrgPhotoCameraController;
 
 /* LrgPhotoMode is a final type (singleton) - no Class forward declaration needed */
 typedef struct _LrgPhotoMode  LrgPhotoMode;
+
+/* ==========================================================================
+ * Steam Module Types
+ * ========================================================================== */
+
+/* LrgSteamService is an interface */
+typedef struct _LrgSteamService           LrgSteamService;
+typedef struct _LrgSteamServiceInterface  LrgSteamServiceInterface;
+
+/* LrgSteamClient is a final type - no Class forward declaration needed */
+typedef struct _LrgSteamClient  LrgSteamClient;
 
 /* ==========================================================================
  * Steam Workshop Module (Phase 5)

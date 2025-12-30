@@ -145,6 +145,17 @@ PUBLIC_HEADERS := \
 	src/mod/lrg-mod-manager.h \
 	src/mod/lrg-modable.h \
 	src/mod/lrg-providers.h \
+	src/dlc/lrg-dlc-ownership.h \
+	src/dlc/lrg-dlc-ownership-steam.h \
+	src/dlc/lrg-dlc-ownership-license.h \
+	src/dlc/lrg-dlc-ownership-manifest.h \
+	src/dlc/lrg-dlc.h \
+	src/dlc/lrg-expansion-pack.h \
+	src/dlc/lrg-cosmetic-pack.h \
+	src/dlc/lrg-quest-pack.h \
+	src/dlc/lrg-item-pack.h \
+	src/dlc/lrg-character-pack.h \
+	src/dlc/lrg-map-pack.h \
 	src/net/lrg-net-message.h \
 	src/net/lrg-net-peer.h \
 	src/net/lrg-net-server.h \
@@ -436,6 +447,17 @@ SOURCES := \
 	src/mod/lrg-mod-manager.c \
 	src/mod/lrg-modable.c \
 	src/mod/lrg-providers.c \
+	src/dlc/lrg-dlc-ownership.c \
+	src/dlc/lrg-dlc-ownership-steam.c \
+	src/dlc/lrg-dlc-ownership-license.c \
+	src/dlc/lrg-dlc-ownership-manifest.c \
+	src/dlc/lrg-dlc.c \
+	src/dlc/lrg-expansion-pack.c \
+	src/dlc/lrg-cosmetic-pack.c \
+	src/dlc/lrg-quest-pack.c \
+	src/dlc/lrg-item-pack.c \
+	src/dlc/lrg-character-pack.c \
+	src/dlc/lrg-map-pack.c \
 	src/net/lrg-net-message.c \
 	src/net/lrg-net-peer.c \
 	src/net/lrg-net-server.c \

@@ -1,0 +1,36 @@
+# expansion-dark-realm/mod.yaml
+#
+# Sample expansion pack DLC manifest for the DLC Store Demo.
+
+id: expansion-dark-realm
+name: "The Dark Realm Expansion"
+version: "1.0.0"
+author: "Demo Games"
+description: "A massive expansion featuring a new campaign, 10 additional levels, and the mysterious Dark Realm to explore."
+
+dlc:
+  type: expansion
+  steam_app_id: 12345
+  store_id: "dark-realm-expansion"
+  price: "$14.99"
+  currency: "USD"
+  min_game_version: "1.0.0"
+  release_date: "2025-03-15"
+
+  ownership:
+    method: manifest
+
+  trial:
+    enabled: true
+    content_ids:
+      - "dark-realm-entrance"
+      - "tutorial-shadow-magic"
+
+expansion:
+  campaign_name: "The Dark Realm"
+  level_cap_increase: 10
+  new_areas:
+    - "dark-realm-entrance"
+    - "shadow-castle"
+    - "void-citadel"
+    - "throne-of-darkness"

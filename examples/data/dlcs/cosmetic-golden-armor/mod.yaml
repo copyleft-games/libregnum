@@ -1,0 +1,35 @@
+# cosmetic-golden-armor/mod.yaml
+#
+# Sample cosmetic pack DLC manifest for the DLC Store Demo.
+
+id: cosmetic-golden-armor
+name: "Golden Armor Set"
+version: "1.0.0"
+author: "Demo Games"
+description: "Shine bright with this legendary golden armor set! Includes helmet, chestplate, gauntlets, and boots."
+
+dlc:
+  type: cosmetic
+  steam_app_id: 12346
+  store_id: "golden-armor-set"
+  price: "$4.99"
+  currency: "USD"
+  min_game_version: "1.0.0"
+  release_date: "2025-01-20"
+
+  ownership:
+    method: manifest
+
+  trial:
+    enabled: false
+
+cosmetic:
+  preview_image: "golden_armor_preview.png"
+  skin_ids:
+    - "skin-golden-helmet"
+    - "skin-golden-chestplate"
+    - "skin-golden-gauntlets"
+    - "skin-golden-boots"
+  effect_ids:
+    - "effect-golden-glow"
+    - "effect-sparkle-trail"

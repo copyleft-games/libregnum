@@ -27,7 +27,39 @@ G_BEGIN_DECLS
 #define LRG_TYPE_MOD (lrg_mod_get_type ())
 
 LRG_AVAILABLE_IN_ALL
-G_DECLARE_FINAL_TYPE (LrgMod, lrg_mod, LRG, MOD, GObject)
+G_DECLARE_DERIVABLE_TYPE (LrgMod, lrg_mod, LRG, MOD, GObject)
+
+/**
+ * LrgModClass:
+ * @parent_class: The parent class
+ * @load: Virtual method to load the mod. Subclasses can override
+ *        to add additional loading behavior. Chain up to parent.
+ * @unload: Virtual method to unload the mod. Subclasses can override
+ *          to add additional unloading behavior. Chain up to parent.
+ * @can_load: Virtual method to check if mod can be loaded.
+ *            Subclasses can override to add pre-load validation.
+ * @get_display_info: Virtual method to get display information.
+ *                    Subclasses can override to provide additional info.
+ *
+ * The class structure for #LrgMod.
+ */
+struct _LrgModClass
+{
+    GObjectClass parent_class;
+
+    /*< public >*/
+
+    /* Virtual methods for subclasses */
+    gboolean (* load)             (LrgMod   *self,
+                                   GError  **error);
+    void     (* unload)           (LrgMod   *self);
+    gboolean (* can_load)         (LrgMod   *self,
+                                   GError  **error);
+    gchar *  (* get_display_info) (LrgMod   *self);
+
+    /*< private >*/
+    gpointer _reserved[8];
+};
 
 /* ==========================================================================
  * Construction
@@ -210,5 +242,35 @@ LRG_AVAILABLE_IN_ALL
 GPtrArray *        lrg_mod_list_files            (LrgMod      *self,
                                                   const gchar *subdir,
                                                   const gchar *pattern);
+
+/* ==========================================================================
+ * Virtual Method Wrappers
+ * ========================================================================== */
+
+/**
+ * lrg_mod_can_load:
+ * @self: a #LrgMod
+ * @error: (nullable): return location for error
+ *
+ * Checks if the mod can be loaded. Subclasses can override this
+ * to add additional validation (e.g., DLC ownership verification).
+ *
+ * Returns: %TRUE if the mod can be loaded
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean           lrg_mod_can_load              (LrgMod   *self,
+                                                  GError  **error);
+
+/**
+ * lrg_mod_get_display_info:
+ * @self: a #LrgMod
+ *
+ * Gets a human-readable display string for the mod.
+ * Subclasses can override this to provide additional information.
+ *
+ * Returns: (transfer full): a display string, free with g_free()
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *            lrg_mod_get_display_info      (LrgMod *self);
 
 G_END_DECLS

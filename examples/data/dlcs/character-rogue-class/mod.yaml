@@ -1,0 +1,33 @@
+# character-rogue-class/mod.yaml
+#
+# Sample character pack DLC manifest for the DLC Store Demo.
+
+id: character-rogue-class
+name: "Rogue Class"
+version: "1.0.0"
+author: "Demo Games"
+description: "Unlock the Rogue class! Master stealth, daggers, and deadly poisons to defeat your enemies."
+
+dlc:
+  type: character
+  steam_app_id: 12349
+  store_id: "rogue-class"
+  price: "$9.99"
+  currency: "USD"
+  min_game_version: "1.1.0"
+  release_date: "2025-02-01"
+
+  ownership:
+    method: manifest
+
+  trial:
+    enabled: true
+    content_ids:
+      - "character-rogue-trial"
+
+character:
+  is_playable: true
+  is_companion: false
+  character_ids:
+    - "character-rogue"
+    - "character-rogue-trial"

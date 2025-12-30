@@ -1001,6 +1001,87 @@ lrg_mod_priority_get_type (void)
 }
 
 /* ==========================================================================
+ * DLC System
+ * ========================================================================== */
+
+GQuark
+lrg_dlc_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-dlc-error-quark");
+}
+
+GType
+lrg_dlc_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_DLC_ERROR_FAILED, "LRG_DLC_ERROR_FAILED", "failed" },
+            { LRG_DLC_ERROR_NOT_OWNED, "LRG_DLC_ERROR_NOT_OWNED", "not-owned" },
+            { LRG_DLC_ERROR_VERIFICATION_FAILED, "LRG_DLC_ERROR_VERIFICATION_FAILED", "verification-failed" },
+            { LRG_DLC_ERROR_INVALID_LICENSE, "LRG_DLC_ERROR_INVALID_LICENSE", "invalid-license" },
+            { LRG_DLC_ERROR_STEAM_UNAVAILABLE, "LRG_DLC_ERROR_STEAM_UNAVAILABLE", "steam-unavailable" },
+            { LRG_DLC_ERROR_CONTENT_GATED, "LRG_DLC_ERROR_CONTENT_GATED", "content-gated" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgDlcError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_dlc_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_DLC_TYPE_EXPANSION, "LRG_DLC_TYPE_EXPANSION", "expansion" },
+            { LRG_DLC_TYPE_COSMETIC, "LRG_DLC_TYPE_COSMETIC", "cosmetic" },
+            { LRG_DLC_TYPE_QUEST, "LRG_DLC_TYPE_QUEST", "quest" },
+            { LRG_DLC_TYPE_ITEM, "LRG_DLC_TYPE_ITEM", "item" },
+            { LRG_DLC_TYPE_CHARACTER, "LRG_DLC_TYPE_CHARACTER", "character" },
+            { LRG_DLC_TYPE_MAP, "LRG_DLC_TYPE_MAP", "map" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgDlcType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_dlc_ownership_state_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_DLC_OWNERSHIP_UNKNOWN, "LRG_DLC_OWNERSHIP_UNKNOWN", "unknown" },
+            { LRG_DLC_OWNERSHIP_NOT_OWNED, "LRG_DLC_OWNERSHIP_NOT_OWNED", "not-owned" },
+            { LRG_DLC_OWNERSHIP_OWNED, "LRG_DLC_OWNERSHIP_OWNED", "owned" },
+            { LRG_DLC_OWNERSHIP_TRIAL, "LRG_DLC_OWNERSHIP_TRIAL", "trial" },
+            { LRG_DLC_OWNERSHIP_ERROR, "LRG_DLC_OWNERSHIP_ERROR", "error" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgDlcOwnershipState"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
  * Equipment System
  * ========================================================================== */
 

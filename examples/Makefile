@@ -52,7 +52,8 @@ endif
 
 # Base examples (always built)
 EXAMPLES := game-omnomagon game-taco-racing game-chocolate-chip-clicker game-tuktuk-derby render-yaml-santa render-yaml-taco-truck
-EXAMPLES += game-settings-demo game-micro-tycoon game-effects-gallery game-dungeon-torch game-meta-arcade
+EXAMPLES += game-settings-demo game-micro-tycoon game-effects-gallery game-dungeon-torch game-meta-arcade game-dlc-store
+EXAMPLES += game-creature-collector
 
 # Scripted examples only on native Linux (scripting backends not available on Windows)
 ifneq ($(TARGET_PLATFORM),windows)
@@ -64,7 +65,7 @@ EXAMPLE_BINARIES := $(patsubst %,$(EXAMPLES_BUILDDIR)/%$(EXE_EXT),$(EXAMPLES))
 # MinGW sysroot for Windows DLLs
 MINGW_BIN := /usr/x86_64-w64-mingw32/sys-root/mingw/bin
 
-.PHONY: all clean copy-dlls
+.PHONY: all clean copy-dlls mods
 
 ifeq ($(TARGET_PLATFORM),windows)
 all: $(EXAMPLE_BINARIES) copy-dlls
@@ -138,6 +139,15 @@ $(EXAMPLES_BUILDDIR)/game-meta-arcade$(EXE_EXT): game-meta-arcade.c | $(EXAMPLES
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
+$(EXAMPLES_BUILDDIR)/game-dlc-store$(EXE_EXT): game-dlc-store.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+# Creature Collector needs --export-dynamic so native mods can call game functions
+$(EXAMPLES_BUILDDIR)/game-creature-collector$(EXE_EXT): game-creature-collector.c creature-registry.h | $(EXAMPLES_BUILDDIR) mods
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -Wl,--export-dynamic -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
 $(EXAMPLES_BUILDDIR)/scripted-lua-game$(EXE_EXT): scripted-lua-game.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
@@ -154,6 +164,32 @@ $(EXAMPLES_BUILDDIR)/scripted-gjs-game$(EXE_EXT): scripted-gjs-game.c | $(EXAMPL
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
+# Native mod shared libraries (Linux only)
+MODS_DIR := mods
+BONUS_CREATURES_MOD := $(MODS_DIR)/bonus-creatures/lib/libbonuscreatures.so
+
+# Flags for building shared libraries
+MOD_CFLAGS := $(EXAMPLE_CFLAGS) -fPIC
+MOD_LDFLAGS := -shared -L../$(LIBOUTDIR) -L$(GRAYLIB_DIR)/build/lib -L$(YAMLGLIB_DIR)/build
+MOD_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../../../../$(LIBOUTDIR)'
+MOD_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../../../../$(GRAYLIB_DIR)/build/lib'
+MOD_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../../../../$(YAMLGLIB_DIR)/build'
+MOD_LIBS := -l$(LIB_NAME) $(GLIB_LIBS)
+
+# Build all mods
+ifneq ($(TARGET_PLATFORM),windows)
+mods: $(BONUS_CREATURES_MOD)
+else
+mods:
+	@echo "Native mods not supported on Windows"
+endif
+
+# Bonus Creatures mod shared library
+$(BONUS_CREATURES_MOD): $(MODS_DIR)/bonus-creatures/lib/libbonuscreatures.c creature-registry.h
+	$(call print_compile,$<)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(MOD_CFLAGS) -o $@ $< $(MOD_LDFLAGS) $(MOD_LIBS)
+
 $(EXAMPLES_BUILDDIR):
 	@$(MKDIR_P) $@
 
@@ -161,4 +197,5 @@ clean:
 	$(call print_status,"Cleaning examples...")
 	@$(RM) $(EXAMPLE_BINARIES)
 	@$(RM) $(EXAMPLES_BUILDDIR)/*.dll
+	@$(RM) $(BONUS_CREATURES_MOD)
 	@if [ -d "$(EXAMPLES_BUILDDIR)" ]; then rmdir --ignore-fail-on-non-empty "$(EXAMPLES_BUILDDIR)"; fi

@@ -11,6 +11,7 @@
 #include "lrg-mod-manager.h"
 #include "lrg-modable.h"
 #include "lrg-providers.h"
+#include "../dlc/lrg-dlc.h"
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_MOD
 #include "../lrg-log.h"
@@ -863,6 +864,140 @@ lrg_mod_manager_collect_scenes (LrgModManager *self)
 
             scenes = lrg_scene_provider_get_scenes (LRG_SCENE_PROVIDER (mod));
             result = g_list_concat (result, scenes);
+        }
+    }
+
+    return result;
+}
+
+/* ==========================================================================
+ * DLC Queries
+ * ========================================================================== */
+
+GPtrArray *
+lrg_mod_manager_get_dlcs (LrgModManager *self)
+{
+    GPtrArray *dlcs;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_MOD_MANAGER (self), NULL);
+
+    dlcs = g_ptr_array_new_with_free_func (g_object_unref);
+
+    for (i = 0; i < self->all_mods->len; i++)
+    {
+        LrgMod *mod = g_ptr_array_index (self->all_mods, i);
+
+        if (LRG_IS_DLC (mod))
+            g_ptr_array_add (dlcs, g_object_ref (mod));
+    }
+
+    return dlcs;
+}
+
+LrgDlc *
+lrg_mod_manager_get_dlc (LrgModManager *self,
+                          const gchar   *dlc_id)
+{
+    LrgMod *mod;
+
+    g_return_val_if_fail (LRG_IS_MOD_MANAGER (self), NULL);
+    g_return_val_if_fail (dlc_id != NULL, NULL);
+
+    mod = lrg_mod_manager_get_mod (self, dlc_id);
+
+    if (mod != NULL && LRG_IS_DLC (mod))
+        return LRG_DLC (mod);
+
+    return NULL;
+}
+
+GPtrArray *
+lrg_mod_manager_get_owned_dlcs (LrgModManager *self)
+{
+    GPtrArray *owned;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_MOD_MANAGER (self), NULL);
+
+    owned = g_ptr_array_new_with_free_func (g_object_unref);
+
+    for (i = 0; i < self->all_mods->len; i++)
+    {
+        LrgMod *mod = g_ptr_array_index (self->all_mods, i);
+
+        if (LRG_IS_DLC (mod))
+        {
+            LrgDlc *dlc = LRG_DLC (mod);
+
+            if (lrg_dlc_is_owned (dlc))
+                g_ptr_array_add (owned, g_object_ref (dlc));
+        }
+    }
+
+    return owned;
+}
+
+guint
+lrg_mod_manager_verify_all_dlc_ownership (LrgModManager  *self,
+                                           GError        **error)
+{
+    guint owned_count;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_MOD_MANAGER (self), 0);
+
+    owned_count = 0;
+
+    for (i = 0; i < self->all_mods->len; i++)
+    {
+        LrgMod *mod = g_ptr_array_index (self->all_mods, i);
+
+        if (LRG_IS_DLC (mod))
+        {
+            LrgDlc *dlc = LRG_DLC (mod);
+            LrgDlcOwnershipState state;
+            g_autoptr(GError) local_error = NULL;
+
+            state = lrg_dlc_verify_ownership (dlc, &local_error);
+
+            if (state == LRG_DLC_OWNERSHIP_OWNED)
+                owned_count++;
+            else if (state == LRG_DLC_OWNERSHIP_ERROR && local_error != NULL)
+            {
+                lrg_warning (LRG_LOG_DOMAIN_MOD,
+                             "Failed to verify ownership for DLC %s: %s",
+                             lrg_mod_get_id (mod), local_error->message);
+            }
+        }
+    }
+
+    lrg_debug (LRG_LOG_DOMAIN_MOD, "Verified DLC ownership: %u owned", owned_count);
+
+    return owned_count;
+}
+
+GPtrArray *
+lrg_mod_manager_get_dlcs_by_type (LrgModManager *self,
+                                   LrgDlcType     dlc_type)
+{
+    GPtrArray *result;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_MOD_MANAGER (self), NULL);
+
+    result = g_ptr_array_new_with_free_func (g_object_unref);
+
+    for (i = 0; i < self->all_mods->len; i++)
+    {
+        LrgMod *mod = g_ptr_array_index (self->all_mods, i);
+
+        if (LRG_IS_DLC (mod))
+        {
+            LrgDlc *dlc = LRG_DLC (mod);
+
+            if (lrg_dlc_get_dlc_type (dlc) == dlc_type)
+                g_ptr_array_add (result, g_object_ref (dlc));
         }
     }
 

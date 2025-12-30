@@ -247,6 +247,7 @@ Phase 0   core/ (engine, registry, loader, assets)
 | 3D World | 3 | Implemented | Level3D, Portal, PortalSystem |
 | Debug | 4 | Implemented | Profiler, DebugConsole, DebugOverlay, Inspector |
 | Mod | 4 | Implemented | Mod, ModManager, ModManifest, ModLoader |
+| DLC | 4 | Complete | LrgDlc, LrgDlcOwnership, ExpansionPack, QuestPack, ItemPack, etc. |
 | Tween | 4 | Complete | Easing, Tween, TweenSequence, TweenParallel, TweenManager |
 | Transition | 4 | Complete | FadeTransition, WipeTransition, DissolveTransition, TransitionManager |
 | Trigger2D | 4 | Complete | TriggerRect, TriggerCircle, TriggerPolygon, TriggerManager |

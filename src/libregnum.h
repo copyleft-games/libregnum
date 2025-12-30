@@ -205,6 +205,19 @@
 #include "mod/lrg-modable.h"
 #include "mod/lrg-providers.h"
 
+/* DLC module */
+#include "dlc/lrg-dlc-ownership.h"
+#include "dlc/lrg-dlc-ownership-steam.h"
+#include "dlc/lrg-dlc-ownership-license.h"
+#include "dlc/lrg-dlc-ownership-manifest.h"
+#include "dlc/lrg-dlc.h"
+#include "dlc/lrg-expansion-pack.h"
+#include "dlc/lrg-cosmetic-pack.h"
+#include "dlc/lrg-quest-pack.h"
+#include "dlc/lrg-item-pack.h"
+#include "dlc/lrg-character-pack.h"
+#include "dlc/lrg-map-pack.h"
+
 /* Scripting module */
 #include "scripting/lrg-scripting.h"
 #include "scripting/lrg-scriptable.h"

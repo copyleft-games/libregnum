@@ -116,6 +116,7 @@ TEST_SOURCES := \
 	test-photomode.c \
 	test-workshop.c \
 	test-demo.c \
+	test-dlc.c \
 	test-vr.c
 
 # Test executables

@@ -367,4 +367,79 @@ GList *            lrg_mod_manager_collect_locales (LrgModManager *self);
 LRG_AVAILABLE_IN_ALL
 GList *            lrg_mod_manager_collect_scenes (LrgModManager *self);
 
+/* ==========================================================================
+ * DLC Queries
+ * ========================================================================== */
+
+/**
+ * lrg_mod_manager_get_dlcs:
+ * @self: a #LrgModManager
+ *
+ * Gets all discovered DLCs (mods that are DLC type).
+ *
+ * Returns: (transfer full) (element-type LrgDlc): array of #LrgDlc
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *        lrg_mod_manager_get_dlcs       (LrgModManager *self);
+
+/**
+ * lrg_mod_manager_get_dlc:
+ * @self: a #LrgModManager
+ * @dlc_id: the DLC ID
+ *
+ * Gets a DLC by ID.
+ *
+ * Returns: (transfer none) (nullable): the #LrgDlc, or %NULL if not found
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDlc *           lrg_mod_manager_get_dlc        (LrgModManager *self,
+                                                   const gchar   *dlc_id);
+
+/**
+ * lrg_mod_manager_get_owned_dlcs:
+ * @self: a #LrgModManager
+ *
+ * Gets all DLCs that are owned by the user.
+ *
+ * Returns: (transfer full) (element-type LrgDlc): array of owned #LrgDlc
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *        lrg_mod_manager_get_owned_dlcs (LrgModManager *self);
+
+/**
+ * lrg_mod_manager_verify_all_dlc_ownership:
+ * @self: a #LrgModManager
+ * @error: (nullable): return location for error
+ *
+ * Verifies ownership of all DLCs.
+ *
+ * Returns: number of DLCs that are owned
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint              lrg_mod_manager_verify_all_dlc_ownership (LrgModManager  *self,
+                                                             GError        **error);
+
+/**
+ * lrg_mod_manager_get_dlcs_by_type:
+ * @self: a #LrgModManager
+ * @dlc_type: the DLC type to filter by
+ *
+ * Gets all DLCs of a specific type.
+ *
+ * Returns: (transfer full) (element-type LrgDlc): array of matching #LrgDlc
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *        lrg_mod_manager_get_dlcs_by_type (LrgModManager *self,
+                                                      LrgDlcType     dlc_type);
+
 G_END_DECLS
