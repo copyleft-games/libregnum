@@ -76,7 +76,12 @@ libregnum/
 │   ├── atlas/                # Texture atlases
 │   ├── tutorial/             # Tutorial system
 │   ├── weather/              # Weather effects
-│   └── lighting/             # Lighting system
+│   ├── lighting/             # Lighting system
+│   ├── analytics/            # Analytics/telemetry
+│   ├── achievement/          # Local achievements
+│   ├── photomode/            # Photo mode
+│   ├── demo/                 # Demo support
+│   └── vr/                   # VR support
 ├── tests/
 │   ├── Makefile
 │   └── test-*.c              # One test file per module
@@ -476,6 +481,12 @@ Error domains:
 - `LRG_MOD_ERROR` - Mod system errors
 - `LRG_SAVE_ERROR` - Save/load errors
 - `LRG_NET_ERROR` - Network errors
+- `LRG_ANALYTICS_ERROR` - Analytics errors
+- `LRG_ACHIEVEMENT_ERROR` - Achievement errors
+- `LRG_PHOTO_MODE_ERROR` - Photo mode errors
+- `LRG_WORKSHOP_ERROR` - Steam Workshop errors
+- `LRG_DEMO_ERROR` - Demo mode errors
+- `LRG_VR_ERROR` - VR errors
 
 ## Files to Reference for Patterns
 
@@ -494,6 +505,11 @@ Error domains:
 | Build system | `Makefile`, `config.mk`, `rules.mk` |
 | graylib patterns | `deps/graylib/src/scene/grl-entity.h` |
 | yaml-glib patterns | `deps/yaml-glib.git/src/yaml-gobject.h` |
+| Interface definition | `src/vr/lrg-vr-service.h/.c` |
+| Singleton manager | `src/analytics/lrg-analytics.h/.c` |
+| Derivable achievement | `src/achievement/lrg-achievement.h/.c` |
+| GObject interface impl | `src/demo/lrg-demo-gatable.h/.c` |
+| Steam Workshop integration | `src/steam/lrg-workshop-manager.h/.c` |
 
 ## Implementation Status
 
@@ -531,9 +547,16 @@ The library is feature-complete with all major systems implemented:
 - [x] Animation, Tween, Transition systems
 - [x] I18N, Networking, Scripting (Python/GJS)
 - [x] Mod system, Debug tools, Accessibility
-- [x] Steam integration
+- [x] Steam integration (achievements, cloud, workshop)
+
+### Platform & Enhancements
+- [x] Analytics with GDPR consent and abstract backends
+- [x] Local achievement system with progress tracking
+- [x] Photo mode with free camera and screenshot capture
+- [x] Demo support with content gating and time limits
+- [x] VR support with abstract backend interface
 
 ### Testing
-- [x] 60+ test files covering all modules
+- [x] 65+ test files covering all modules
 - [x] Headless environment support (skip macros)
 - [x] GTest with TAP output

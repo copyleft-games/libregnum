@@ -2908,3 +2908,418 @@ lrg_shadow_method_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * Analytics Module (Phase 5)
+ * ========================================================================== */
+
+/**
+ * lrg_analytics_error_quark:
+ *
+ * Gets the error quark for analytics errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_analytics_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-analytics-error-quark");
+}
+
+GType
+lrg_analytics_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ANALYTICS_ERROR_FAILED, "LRG_ANALYTICS_ERROR_FAILED", "failed" },
+            { LRG_ANALYTICS_ERROR_NETWORK, "LRG_ANALYTICS_ERROR_NETWORK", "network" },
+            { LRG_ANALYTICS_ERROR_CONSENT, "LRG_ANALYTICS_ERROR_CONSENT", "consent" },
+            { LRG_ANALYTICS_ERROR_DISABLED, "LRG_ANALYTICS_ERROR_DISABLED", "disabled" },
+            { LRG_ANALYTICS_ERROR_BACKEND, "LRG_ANALYTICS_ERROR_BACKEND", "backend" },
+            { LRG_ANALYTICS_ERROR_SERIALIZE, "LRG_ANALYTICS_ERROR_SERIALIZE", "serialize" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAnalyticsError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_analytics_format_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ANALYTICS_FORMAT_JSON, "LRG_ANALYTICS_FORMAT_JSON", "json" },
+            { LRG_ANALYTICS_FORMAT_YAML, "LRG_ANALYTICS_FORMAT_YAML", "yaml" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAnalyticsFormat"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Achievement Module (Phase 5)
+ * ========================================================================== */
+
+/**
+ * lrg_achievement_error_quark:
+ *
+ * Gets the error quark for achievement errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_achievement_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-achievement-error-quark");
+}
+
+GType
+lrg_achievement_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ACHIEVEMENT_ERROR_FAILED, "LRG_ACHIEVEMENT_ERROR_FAILED", "failed" },
+            { LRG_ACHIEVEMENT_ERROR_NOT_FOUND, "LRG_ACHIEVEMENT_ERROR_NOT_FOUND", "not-found" },
+            { LRG_ACHIEVEMENT_ERROR_ALREADY_UNLOCKED, "LRG_ACHIEVEMENT_ERROR_ALREADY_UNLOCKED", "already-unlocked" },
+            { LRG_ACHIEVEMENT_ERROR_SAVE, "LRG_ACHIEVEMENT_ERROR_SAVE", "save" },
+            { LRG_ACHIEVEMENT_ERROR_LOAD, "LRG_ACHIEVEMENT_ERROR_LOAD", "load" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAchievementError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_notification_position_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_NOTIFICATION_POSITION_TOP_LEFT, "LRG_NOTIFICATION_POSITION_TOP_LEFT", "top-left" },
+            { LRG_NOTIFICATION_POSITION_TOP_CENTER, "LRG_NOTIFICATION_POSITION_TOP_CENTER", "top-center" },
+            { LRG_NOTIFICATION_POSITION_TOP_RIGHT, "LRG_NOTIFICATION_POSITION_TOP_RIGHT", "top-right" },
+            { LRG_NOTIFICATION_POSITION_BOTTOM_LEFT, "LRG_NOTIFICATION_POSITION_BOTTOM_LEFT", "bottom-left" },
+            { LRG_NOTIFICATION_POSITION_BOTTOM_CENTER, "LRG_NOTIFICATION_POSITION_BOTTOM_CENTER", "bottom-center" },
+            { LRG_NOTIFICATION_POSITION_BOTTOM_RIGHT, "LRG_NOTIFICATION_POSITION_BOTTOM_RIGHT", "bottom-right" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgNotificationPosition"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Photo Mode Module (Phase 5)
+ * ========================================================================== */
+
+/**
+ * lrg_photo_mode_error_quark:
+ *
+ * Gets the error quark for photo mode errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_photo_mode_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-photo-mode-error-quark");
+}
+
+GType
+lrg_photo_mode_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PHOTO_MODE_ERROR_FAILED, "LRG_PHOTO_MODE_ERROR_FAILED", "failed" },
+            { LRG_PHOTO_MODE_ERROR_CAPTURE, "LRG_PHOTO_MODE_ERROR_CAPTURE", "capture" },
+            { LRG_PHOTO_MODE_ERROR_SAVE, "LRG_PHOTO_MODE_ERROR_SAVE", "save" },
+            { LRG_PHOTO_MODE_ERROR_INVALID_FORMAT, "LRG_PHOTO_MODE_ERROR_INVALID_FORMAT", "invalid-format" },
+            { LRG_PHOTO_MODE_ERROR_ALREADY_ACTIVE, "LRG_PHOTO_MODE_ERROR_ALREADY_ACTIVE", "already-active" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPhotoModeError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_screenshot_format_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SCREENSHOT_FORMAT_PNG, "LRG_SCREENSHOT_FORMAT_PNG", "png" },
+            { LRG_SCREENSHOT_FORMAT_JPG, "LRG_SCREENSHOT_FORMAT_JPG", "jpg" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgScreenshotFormat"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Steam Workshop Module (Phase 5)
+ * ========================================================================== */
+
+GQuark
+lrg_workshop_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-workshop-error-quark");
+}
+
+GType
+lrg_workshop_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_WORKSHOP_ERROR_FAILED, "LRG_WORKSHOP_ERROR_FAILED", "failed" },
+            { LRG_WORKSHOP_ERROR_NOT_AVAILABLE, "LRG_WORKSHOP_ERROR_NOT_AVAILABLE", "not-available" },
+            { LRG_WORKSHOP_ERROR_QUERY, "LRG_WORKSHOP_ERROR_QUERY", "query" },
+            { LRG_WORKSHOP_ERROR_SUBSCRIBE, "LRG_WORKSHOP_ERROR_SUBSCRIBE", "subscribe" },
+            { LRG_WORKSHOP_ERROR_DOWNLOAD, "LRG_WORKSHOP_ERROR_DOWNLOAD", "download" },
+            { LRG_WORKSHOP_ERROR_UPDATE, "LRG_WORKSHOP_ERROR_UPDATE", "update" },
+            { LRG_WORKSHOP_ERROR_CREATE, "LRG_WORKSHOP_ERROR_CREATE", "create" },
+            { LRG_WORKSHOP_ERROR_DELETE, "LRG_WORKSHOP_ERROR_DELETE", "delete" },
+            { LRG_WORKSHOP_ERROR_BUSY, "LRG_WORKSHOP_ERROR_BUSY", "busy" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgWorkshopError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ============================================================================
+ * Demo Module Enums
+ * ========================================================================== */
+
+GType
+lrg_demo_end_reason_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_DEMO_END_REASON_TIME_LIMIT, "LRG_DEMO_END_REASON_TIME_LIMIT", "time-limit" },
+            { LRG_DEMO_END_REASON_CONTENT_COMPLETE, "LRG_DEMO_END_REASON_CONTENT_COMPLETE", "content-complete" },
+            { LRG_DEMO_END_REASON_MANUAL, "LRG_DEMO_END_REASON_MANUAL", "manual" },
+            { LRG_DEMO_END_REASON_UPGRADED, "LRG_DEMO_END_REASON_UPGRADED", "upgraded" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgDemoEndReason"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GQuark
+lrg_demo_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-demo-error-quark");
+}
+
+GType
+lrg_demo_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_DEMO_ERROR_FAILED, "LRG_DEMO_ERROR_FAILED", "failed" },
+            { LRG_DEMO_ERROR_CONTENT_GATED, "LRG_DEMO_ERROR_CONTENT_GATED", "content-gated" },
+            { LRG_DEMO_ERROR_TIME_EXPIRED, "LRG_DEMO_ERROR_TIME_EXPIRED", "time-expired" },
+            { LRG_DEMO_ERROR_SAVE_LOCKED, "LRG_DEMO_ERROR_SAVE_LOCKED", "save-locked" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgDemoError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ============================================================================
+ * VR Module Enums
+ * ========================================================================== */
+
+GType
+lrg_vr_eye_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_VR_EYE_LEFT, "LRG_VR_EYE_LEFT", "left" },
+            { LRG_VR_EYE_RIGHT, "LRG_VR_EYE_RIGHT", "right" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgVREye"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_vr_hand_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_VR_HAND_LEFT, "LRG_VR_HAND_LEFT", "left" },
+            { LRG_VR_HAND_RIGHT, "LRG_VR_HAND_RIGHT", "right" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgVRHand"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_vr_controller_button_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GFlagsValue values[] = {
+            { LRG_VR_CONTROLLER_BUTTON_SYSTEM, "LRG_VR_CONTROLLER_BUTTON_SYSTEM", "system" },
+            { LRG_VR_CONTROLLER_BUTTON_MENU, "LRG_VR_CONTROLLER_BUTTON_MENU", "menu" },
+            { LRG_VR_CONTROLLER_BUTTON_GRIP, "LRG_VR_CONTROLLER_BUTTON_GRIP", "grip" },
+            { LRG_VR_CONTROLLER_BUTTON_TRIGGER, "LRG_VR_CONTROLLER_BUTTON_TRIGGER", "trigger" },
+            { LRG_VR_CONTROLLER_BUTTON_TOUCHPAD, "LRG_VR_CONTROLLER_BUTTON_TOUCHPAD", "touchpad" },
+            { LRG_VR_CONTROLLER_BUTTON_THUMBSTICK, "LRG_VR_CONTROLLER_BUTTON_THUMBSTICK", "thumbstick" },
+            { LRG_VR_CONTROLLER_BUTTON_A, "LRG_VR_CONTROLLER_BUTTON_A", "a" },
+            { LRG_VR_CONTROLLER_BUTTON_B, "LRG_VR_CONTROLLER_BUTTON_B", "b" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_flags_register_static (g_intern_static_string ("LrgVRControllerButton"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_vr_turn_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_VR_TURN_MODE_SMOOTH, "LRG_VR_TURN_MODE_SMOOTH", "smooth" },
+            { LRG_VR_TURN_MODE_SNAP, "LRG_VR_TURN_MODE_SNAP", "snap" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgVRTurnMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_vr_locomotion_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_VR_LOCOMOTION_SMOOTH, "LRG_VR_LOCOMOTION_SMOOTH", "smooth" },
+            { LRG_VR_LOCOMOTION_TELEPORT, "LRG_VR_LOCOMOTION_TELEPORT", "teleport" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgVRLocomotionMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GQuark
+lrg_vr_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-vr-error-quark");
+}
+
+GType
+lrg_vr_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_VR_ERROR_FAILED, "LRG_VR_ERROR_FAILED", "failed" },
+            { LRG_VR_ERROR_NOT_AVAILABLE, "LRG_VR_ERROR_NOT_AVAILABLE", "not-available" },
+            { LRG_VR_ERROR_HMD_NOT_FOUND, "LRG_VR_ERROR_HMD_NOT_FOUND", "hmd-not-found" },
+            { LRG_VR_ERROR_COMPOSITOR, "LRG_VR_ERROR_COMPOSITOR", "compositor" },
+            { LRG_VR_ERROR_TRACKING, "LRG_VR_ERROR_TRACKING", "tracking" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgVRError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

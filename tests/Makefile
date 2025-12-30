@@ -110,7 +110,13 @@ TEST_SOURCES := \
 	test-lighting.c \
 	test-wave-data.c \
 	test-procedural-audio.c \
-	test-asset-pack.c
+	test-asset-pack.c \
+	test-analytics.c \
+	test-achievement.c \
+	test-photomode.c \
+	test-workshop.c \
+	test-demo.c \
+	test-vr.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))

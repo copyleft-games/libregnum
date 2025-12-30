@@ -290,6 +290,10 @@ GLIB_LIBS := $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 gmodule-2
 JSON_CFLAGS := $(shell $(PKG_CONFIG) --cflags json-glib-1.0)
 JSON_LIBS := $(shell $(PKG_CONFIG) --libs json-glib-1.0)
 
+# libsoup3 (for HTTP analytics backend, required)
+SOUP_CFLAGS := $(shell $(PKG_CONFIG) --cflags libsoup-3.0)
+SOUP_LIBS := $(shell $(PKG_CONFIG) --libs libsoup-3.0)
+
 # libyaml (for yaml-glib, required)
 YAML_CFLAGS := $(shell $(PKG_CONFIG) --cflags yaml-0.1)
 YAML_LIBS := $(shell $(PKG_CONFIG) --libs yaml-0.1)
@@ -370,8 +374,8 @@ else
 endif
 
 # Combined dependency flags (use -isystem to suppress warnings from deps)
-DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS)
-DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS)
+DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS)
+DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS)
 
 # Graylib and yaml-glib (built from submodules)
 # Also include raylib headers for rlgl.h etc.

@@ -745,4 +745,95 @@ typedef struct _LrgVideoSubtitles  LrgVideoSubtitles;
 /* LrgVideoSubtitleTrack is a final type - no Class forward declaration needed */
 typedef struct _LrgVideoSubtitleTrack  LrgVideoSubtitleTrack;
 
+/* ==========================================================================
+ * Analytics Module (Phase 5)
+ * ========================================================================== */
+
+/* LrgAnalyticsEvent is a final type - no Class forward declaration needed */
+typedef struct _LrgAnalyticsEvent  LrgAnalyticsEvent;
+
+/* LrgConsent is a final type - no Class forward declaration needed */
+typedef struct _LrgConsent  LrgConsent;
+
+/* LrgAnalyticsBackend is a derivable type */
+typedef struct _LrgAnalyticsBackend       LrgAnalyticsBackend;
+typedef struct _LrgAnalyticsBackendClass  LrgAnalyticsBackendClass;
+
+/* LrgAnalyticsBackendHttp is a final type - no Class forward declaration needed */
+typedef struct _LrgAnalyticsBackendHttp  LrgAnalyticsBackendHttp;
+
+/* LrgAnalytics is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgAnalytics  LrgAnalytics;
+
+/* ==========================================================================
+ * Achievement Module (Phase 5)
+ * ========================================================================== */
+
+/* LrgAchievementProgress is a boxed type - no class typedef */
+typedef struct _LrgAchievementProgress  LrgAchievementProgress;
+
+/* LrgAchievement is a derivable type */
+typedef struct _LrgAchievement       LrgAchievement;
+typedef struct _LrgAchievementClass  LrgAchievementClass;
+
+/* LrgAchievementManager is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgAchievementManager  LrgAchievementManager;
+
+/* LrgAchievementNotification is a final type - no Class forward declaration needed */
+typedef struct _LrgAchievementNotification  LrgAchievementNotification;
+
+/* ==========================================================================
+ * Photo Mode Module (Phase 5)
+ * ========================================================================== */
+
+/* LrgScreenshot is a final type - no Class forward declaration needed */
+typedef struct _LrgScreenshot  LrgScreenshot;
+
+/* LrgPhotoCameraController is a final type - no Class forward declaration needed */
+typedef struct _LrgPhotoCameraController  LrgPhotoCameraController;
+
+/* LrgPhotoMode is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgPhotoMode  LrgPhotoMode;
+
+/* ==========================================================================
+ * Steam Workshop Module (Phase 5)
+ * ========================================================================== */
+
+/* LrgWorkshopItem is a final type - no Class forward declaration needed */
+typedef struct _LrgWorkshopItem  LrgWorkshopItem;
+
+/* LrgWorkshopQuery is a final type - no Class forward declaration needed */
+typedef struct _LrgWorkshopQuery  LrgWorkshopQuery;
+
+/* LrgWorkshopManager is a final type - no Class forward declaration needed */
+typedef struct _LrgWorkshopManager  LrgWorkshopManager;
+
+/* ============================================================================
+ * Demo Module Types
+ * ========================================================================== */
+
+/* LrgDemoGatable is an interface */
+typedef struct _LrgDemoGatable           LrgDemoGatable;
+typedef struct _LrgDemoGatableInterface  LrgDemoGatableInterface;
+
+/* LrgDemoManager is a final type - no Class forward declaration needed */
+typedef struct _LrgDemoManager  LrgDemoManager;
+
+/* ============================================================================
+ * VR Module Types
+ * ========================================================================== */
+
+/* LrgVRService is an interface */
+typedef struct _LrgVRService           LrgVRService;
+typedef struct _LrgVRServiceInterface  LrgVRServiceInterface;
+
+/* LrgVRStub is a final type - no Class forward declaration needed */
+typedef struct _LrgVRStub  LrgVRStub;
+
+/* LrgVRController is a final type - no Class forward declaration needed */
+typedef struct _LrgVRController  LrgVRController;
+
+/* LrgVRComfortSettings is a final type - no Class forward declaration needed */
+typedef struct _LrgVRComfortSettings  LrgVRComfortSettings;
+
 G_END_DECLS

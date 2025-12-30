@@ -2985,4 +2985,437 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_shadow_method_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_SHADOW_METHOD (lrg_shadow_method_get_type ())
 
+/* ==========================================================================
+ * Analytics Module (Phase 5)
+ * ========================================================================== */
+
+/**
+ * LRG_ANALYTICS_ERROR:
+ *
+ * Error domain for analytics errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_ANALYTICS_ERROR (lrg_analytics_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_analytics_error_quark (void);
+
+/**
+ * LrgAnalyticsError:
+ * @LRG_ANALYTICS_ERROR_FAILED: Generic failure
+ * @LRG_ANALYTICS_ERROR_NETWORK: Network error (connection failed, timeout)
+ * @LRG_ANALYTICS_ERROR_CONSENT: Consent not granted
+ * @LRG_ANALYTICS_ERROR_DISABLED: Analytics disabled
+ * @LRG_ANALYTICS_ERROR_BACKEND: Backend error
+ * @LRG_ANALYTICS_ERROR_SERIALIZE: Serialization error
+ *
+ * Error codes for the analytics system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ANALYTICS_ERROR_FAILED,
+    LRG_ANALYTICS_ERROR_NETWORK,
+    LRG_ANALYTICS_ERROR_CONSENT,
+    LRG_ANALYTICS_ERROR_DISABLED,
+    LRG_ANALYTICS_ERROR_BACKEND,
+    LRG_ANALYTICS_ERROR_SERIALIZE
+} LrgAnalyticsError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_analytics_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ANALYTICS_ERROR (lrg_analytics_error_get_type ())
+
+/**
+ * LrgAnalyticsFormat:
+ * @LRG_ANALYTICS_FORMAT_JSON: JSON payload format
+ * @LRG_ANALYTICS_FORMAT_YAML: YAML payload format
+ *
+ * Payload formats for analytics events.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ANALYTICS_FORMAT_JSON,
+    LRG_ANALYTICS_FORMAT_YAML
+} LrgAnalyticsFormat;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_analytics_format_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ANALYTICS_FORMAT (lrg_analytics_format_get_type ())
+
+/* ==========================================================================
+ * Achievement Module (Phase 5)
+ * ========================================================================== */
+
+/**
+ * LRG_ACHIEVEMENT_ERROR:
+ *
+ * Error domain for achievement errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_ACHIEVEMENT_ERROR (lrg_achievement_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_achievement_error_quark (void);
+
+/**
+ * LrgAchievementError:
+ * @LRG_ACHIEVEMENT_ERROR_FAILED: Generic failure
+ * @LRG_ACHIEVEMENT_ERROR_NOT_FOUND: Achievement not found
+ * @LRG_ACHIEVEMENT_ERROR_ALREADY_UNLOCKED: Achievement already unlocked
+ * @LRG_ACHIEVEMENT_ERROR_SAVE: Save operation failed
+ * @LRG_ACHIEVEMENT_ERROR_LOAD: Load operation failed
+ *
+ * Error codes for the achievement system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ACHIEVEMENT_ERROR_FAILED,
+    LRG_ACHIEVEMENT_ERROR_NOT_FOUND,
+    LRG_ACHIEVEMENT_ERROR_ALREADY_UNLOCKED,
+    LRG_ACHIEVEMENT_ERROR_SAVE,
+    LRG_ACHIEVEMENT_ERROR_LOAD
+} LrgAchievementError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_achievement_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ACHIEVEMENT_ERROR (lrg_achievement_error_get_type ())
+
+/**
+ * LrgNotificationPosition:
+ * @LRG_NOTIFICATION_POSITION_TOP_LEFT: Top-left corner
+ * @LRG_NOTIFICATION_POSITION_TOP_CENTER: Top center
+ * @LRG_NOTIFICATION_POSITION_TOP_RIGHT: Top-right corner
+ * @LRG_NOTIFICATION_POSITION_BOTTOM_LEFT: Bottom-left corner
+ * @LRG_NOTIFICATION_POSITION_BOTTOM_CENTER: Bottom center
+ * @LRG_NOTIFICATION_POSITION_BOTTOM_RIGHT: Bottom-right corner
+ *
+ * Screen position for notifications.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_NOTIFICATION_POSITION_TOP_LEFT,
+    LRG_NOTIFICATION_POSITION_TOP_CENTER,
+    LRG_NOTIFICATION_POSITION_TOP_RIGHT,
+    LRG_NOTIFICATION_POSITION_BOTTOM_LEFT,
+    LRG_NOTIFICATION_POSITION_BOTTOM_CENTER,
+    LRG_NOTIFICATION_POSITION_BOTTOM_RIGHT
+} LrgNotificationPosition;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_notification_position_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_NOTIFICATION_POSITION (lrg_notification_position_get_type ())
+
+/* ==========================================================================
+ * Photo Mode Module (Phase 5)
+ * ========================================================================== */
+
+/**
+ * LRG_PHOTO_MODE_ERROR:
+ *
+ * Error domain for photo mode errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_PHOTO_MODE_ERROR (lrg_photo_mode_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_photo_mode_error_quark (void);
+
+/**
+ * LrgPhotoModeError:
+ * @LRG_PHOTO_MODE_ERROR_FAILED: Generic failure
+ * @LRG_PHOTO_MODE_ERROR_CAPTURE: Screenshot capture failed
+ * @LRG_PHOTO_MODE_ERROR_SAVE: Screenshot save failed
+ * @LRG_PHOTO_MODE_ERROR_INVALID_FORMAT: Invalid image format
+ * @LRG_PHOTO_MODE_ERROR_ALREADY_ACTIVE: Photo mode already active
+ *
+ * Error codes for the photo mode system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_PHOTO_MODE_ERROR_FAILED,
+    LRG_PHOTO_MODE_ERROR_CAPTURE,
+    LRG_PHOTO_MODE_ERROR_SAVE,
+    LRG_PHOTO_MODE_ERROR_INVALID_FORMAT,
+    LRG_PHOTO_MODE_ERROR_ALREADY_ACTIVE
+} LrgPhotoModeError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_photo_mode_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PHOTO_MODE_ERROR (lrg_photo_mode_error_get_type ())
+
+/**
+ * LrgScreenshotFormat:
+ * @LRG_SCREENSHOT_FORMAT_PNG: Save as PNG (lossless)
+ * @LRG_SCREENSHOT_FORMAT_JPG: Save as JPG (lossy)
+ *
+ * Image format for screenshots.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_SCREENSHOT_FORMAT_PNG,
+    LRG_SCREENSHOT_FORMAT_JPG
+} LrgScreenshotFormat;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_screenshot_format_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SCREENSHOT_FORMAT (lrg_screenshot_format_get_type ())
+
+/* ==========================================================================
+ * Steam Workshop Module (Phase 5)
+ * ========================================================================== */
+
+/**
+ * LRG_WORKSHOP_ERROR:
+ *
+ * Error domain for Workshop errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_WORKSHOP_ERROR (lrg_workshop_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_workshop_error_quark (void);
+
+/**
+ * LrgWorkshopError:
+ * @LRG_WORKSHOP_ERROR_FAILED: Generic failure
+ * @LRG_WORKSHOP_ERROR_NOT_AVAILABLE: Workshop not available
+ * @LRG_WORKSHOP_ERROR_QUERY: Query failed
+ * @LRG_WORKSHOP_ERROR_SUBSCRIBE: Subscription failed
+ * @LRG_WORKSHOP_ERROR_DOWNLOAD: Download failed
+ * @LRG_WORKSHOP_ERROR_UPDATE: Update failed
+ * @LRG_WORKSHOP_ERROR_CREATE: Item creation failed
+ * @LRG_WORKSHOP_ERROR_DELETE: Item deletion failed
+ * @LRG_WORKSHOP_ERROR_BUSY: Operation already in progress
+ *
+ * Error codes for the Workshop system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_WORKSHOP_ERROR_FAILED,
+    LRG_WORKSHOP_ERROR_NOT_AVAILABLE,
+    LRG_WORKSHOP_ERROR_QUERY,
+    LRG_WORKSHOP_ERROR_SUBSCRIBE,
+    LRG_WORKSHOP_ERROR_DOWNLOAD,
+    LRG_WORKSHOP_ERROR_UPDATE,
+    LRG_WORKSHOP_ERROR_CREATE,
+    LRG_WORKSHOP_ERROR_DELETE,
+    LRG_WORKSHOP_ERROR_BUSY
+} LrgWorkshopError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_workshop_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_WORKSHOP_ERROR (lrg_workshop_error_get_type ())
+
+/* ============================================================================
+ * Demo Module Enums
+ * ========================================================================== */
+
+/**
+ * LrgDemoEndReason:
+ * @LRG_DEMO_END_REASON_TIME_LIMIT: Demo time limit reached
+ * @LRG_DEMO_END_REASON_CONTENT_COMPLETE: Demo content completed
+ * @LRG_DEMO_END_REASON_MANUAL: User manually ended demo
+ * @LRG_DEMO_END_REASON_UPGRADED: User upgraded to full version
+ *
+ * Reasons why a demo session ended.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_DEMO_END_REASON_TIME_LIMIT,
+    LRG_DEMO_END_REASON_CONTENT_COMPLETE,
+    LRG_DEMO_END_REASON_MANUAL,
+    LRG_DEMO_END_REASON_UPGRADED
+} LrgDemoEndReason;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_demo_end_reason_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DEMO_END_REASON (lrg_demo_end_reason_get_type ())
+
+/**
+ * LrgDemoError:
+ * @LRG_DEMO_ERROR_FAILED: Generic demo error
+ * @LRG_DEMO_ERROR_CONTENT_GATED: Content is gated in demo mode
+ * @LRG_DEMO_ERROR_TIME_EXPIRED: Demo time has expired
+ * @LRG_DEMO_ERROR_SAVE_LOCKED: Demo saves cannot be used in full version
+ *
+ * Error codes for the Demo system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_DEMO_ERROR_FAILED,
+    LRG_DEMO_ERROR_CONTENT_GATED,
+    LRG_DEMO_ERROR_TIME_EXPIRED,
+    LRG_DEMO_ERROR_SAVE_LOCKED
+} LrgDemoError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_demo_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DEMO_ERROR (lrg_demo_error_get_type ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_demo_error_quark (void);
+#define LRG_DEMO_ERROR (lrg_demo_error_quark ())
+
+/* ============================================================================
+ * VR Module Enums
+ * ========================================================================== */
+
+/**
+ * LrgVREye:
+ * @LRG_VR_EYE_LEFT: Left eye
+ * @LRG_VR_EYE_RIGHT: Right eye
+ *
+ * VR eye identifiers for stereo rendering.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_VR_EYE_LEFT,
+    LRG_VR_EYE_RIGHT
+} LrgVREye;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_vr_eye_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VR_EYE (lrg_vr_eye_get_type ())
+
+/**
+ * LrgVRHand:
+ * @LRG_VR_HAND_LEFT: Left hand controller
+ * @LRG_VR_HAND_RIGHT: Right hand controller
+ *
+ * VR hand identifiers for motion controllers.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_VR_HAND_LEFT,
+    LRG_VR_HAND_RIGHT
+} LrgVRHand;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_vr_hand_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VR_HAND (lrg_vr_hand_get_type ())
+
+/**
+ * LrgVRControllerButton:
+ * @LRG_VR_CONTROLLER_BUTTON_SYSTEM: System/dashboard button
+ * @LRG_VR_CONTROLLER_BUTTON_MENU: Menu button
+ * @LRG_VR_CONTROLLER_BUTTON_GRIP: Grip button
+ * @LRG_VR_CONTROLLER_BUTTON_TRIGGER: Trigger button
+ * @LRG_VR_CONTROLLER_BUTTON_TOUCHPAD: Touchpad click
+ * @LRG_VR_CONTROLLER_BUTTON_THUMBSTICK: Thumbstick click
+ * @LRG_VR_CONTROLLER_BUTTON_A: A button (where present)
+ * @LRG_VR_CONTROLLER_BUTTON_B: B button (where present)
+ *
+ * VR controller button flags.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_VR_CONTROLLER_BUTTON_SYSTEM     = (1 << 0),
+    LRG_VR_CONTROLLER_BUTTON_MENU       = (1 << 1),
+    LRG_VR_CONTROLLER_BUTTON_GRIP       = (1 << 2),
+    LRG_VR_CONTROLLER_BUTTON_TRIGGER    = (1 << 3),
+    LRG_VR_CONTROLLER_BUTTON_TOUCHPAD   = (1 << 4),
+    LRG_VR_CONTROLLER_BUTTON_THUMBSTICK = (1 << 5),
+    LRG_VR_CONTROLLER_BUTTON_A          = (1 << 6),
+    LRG_VR_CONTROLLER_BUTTON_B          = (1 << 7)
+} LrgVRControllerButton;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_vr_controller_button_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VR_CONTROLLER_BUTTON (lrg_vr_controller_button_get_type ())
+
+/**
+ * LrgVRTurnMode:
+ * @LRG_VR_TURN_MODE_SMOOTH: Smooth turning
+ * @LRG_VR_TURN_MODE_SNAP: Snap turning (comfort)
+ *
+ * VR turning modes for comfort.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_VR_TURN_MODE_SMOOTH,
+    LRG_VR_TURN_MODE_SNAP
+} LrgVRTurnMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_vr_turn_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VR_TURN_MODE (lrg_vr_turn_mode_get_type ())
+
+/**
+ * LrgVRLocomotionMode:
+ * @LRG_VR_LOCOMOTION_SMOOTH: Smooth locomotion
+ * @LRG_VR_LOCOMOTION_TELEPORT: Teleport locomotion (comfort)
+ *
+ * VR locomotion modes for comfort.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_VR_LOCOMOTION_SMOOTH,
+    LRG_VR_LOCOMOTION_TELEPORT
+} LrgVRLocomotionMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_vr_locomotion_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VR_LOCOMOTION_MODE (lrg_vr_locomotion_mode_get_type ())
+
+/**
+ * LrgVRError:
+ * @LRG_VR_ERROR_FAILED: Generic VR error
+ * @LRG_VR_ERROR_NOT_AVAILABLE: VR runtime not available
+ * @LRG_VR_ERROR_HMD_NOT_FOUND: HMD not detected
+ * @LRG_VR_ERROR_COMPOSITOR: Compositor error
+ * @LRG_VR_ERROR_TRACKING: Tracking error
+ *
+ * Error codes for the VR system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_VR_ERROR_FAILED,
+    LRG_VR_ERROR_NOT_AVAILABLE,
+    LRG_VR_ERROR_HMD_NOT_FOUND,
+    LRG_VR_ERROR_COMPOSITOR,
+    LRG_VR_ERROR_TRACKING
+} LrgVRError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_vr_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VR_ERROR (lrg_vr_error_get_type ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_vr_error_quark (void);
+#define LRG_VR_ERROR (lrg_vr_error_quark ())
+
 G_END_DECLS

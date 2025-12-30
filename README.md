@@ -205,16 +205,9 @@ engine.shutdown()
 | Registry | Maps type names to GTypes for data-driven instantiation |
 | DataLoader | Loads GObjects from YAML files |
 | AssetManager | Texture, font, sound, and music caching |
-
-#### Phase 1 - Steam Ready (Implemented)
-
-| Module | Description | Documentation |
-|--------|-------------|---------------|
-| Settings | Game settings with YAML persistence | [docs/modules/settings](docs/modules/settings/index.md) |
-| GameState | Game state stack (menus, gameplay, pause) | [docs/modules/gamestate](docs/modules/gamestate/index.md) |
-| Crash | Signal handling and crash reporting | [docs/modules/crash](docs/modules/crash/index.md) |
-| Accessibility | Colorblind modes, subtitles, motor assists | [docs/modules/accessibility](docs/modules/accessibility/index.md) |
-| Steam | Achievements, cloud saves, stats, presence | [docs/modules/steam](docs/modules/steam/index.md) |
+| Settings | Game settings with YAML persistence |
+| GameState | Game state stack (menus, gameplay, pause) |
+| Crash | Signal handling and crash reporting |
 
 #### Game Systems
 
@@ -237,6 +230,19 @@ engine.shutdown()
 | World3D | 3D level loading and spatial optimization |
 | Debug | Console, inspector, and profiler |
 | Mod | Mod loading with dependency resolution |
+
+#### Platform & Integration
+
+| Module | Description |
+|--------|-------------|
+| Accessibility | Colorblind modes, subtitles, motor assists |
+| Steam | Achievements, cloud saves, stats, rich presence |
+| Workshop | Steam Workshop integration for mod distribution |
+| Analytics | Privacy-first telemetry with GDPR consent |
+| Achievement | Local achievement system with progress tracking |
+| Photo Mode | Screenshot capture with free camera controls |
+| Demo | Demo mode with content gating and time limits |
+| VR | Virtual reality support with abstract backend |
 
 ## Testing
 

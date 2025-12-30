@@ -249,6 +249,9 @@
 #include "steam/lrg-steam-cloud.h"
 #include "steam/lrg-steam-stats.h"
 #include "steam/lrg-steam-presence.h"
+#include "steam/lrg-workshop-item.h"
+#include "steam/lrg-workshop-query.h"
+#include "steam/lrg-workshop-manager.h"
 
 /* Economy module (Phase 2) */
 #include "economy/lrg-resource.h"
@@ -394,5 +397,32 @@
 #include "lighting/lrg-lightmap.h"
 #include "lighting/lrg-light-probe.h"
 #include "lighting/lrg-lighting-manager.h"
+
+/* Analytics module (Phase 5) */
+#include "analytics/lrg-analytics-event.h"
+#include "analytics/lrg-consent.h"
+#include "analytics/lrg-analytics-backend.h"
+#include "analytics/lrg-analytics-backend-http.h"
+#include "analytics/lrg-analytics.h"
+
+/* Achievement module (Phase 5) */
+#include "achievement/lrg-achievement-progress.h"
+#include "achievement/lrg-achievement.h"
+#include "achievement/lrg-achievement-manager.h"
+#include "achievement/lrg-achievement-notification.h"
+
+/* Photo Mode module (Phase 5) */
+#include "photomode/lrg-screenshot.h"
+#include "photomode/lrg-photo-camera-controller.h"
+#include "photomode/lrg-photo-mode.h"
+
+/* Demo module (Phase 5) */
+#include "demo/lrg-demo-gatable.h"
+#include "demo/lrg-demo-manager.h"
+
+/* VR module (Phase 5) */
+#include "vr/lrg-vr-service.h"
+#include "vr/lrg-vr-stub.h"
+#include "vr/lrg-vr-comfort.h"
 
 #undef LIBREGNUM_INSIDE

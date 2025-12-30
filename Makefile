@@ -184,6 +184,9 @@ PUBLIC_HEADERS := \
 	src/steam/lrg-steam-cloud.h \
 	src/steam/lrg-steam-stats.h \
 	src/steam/lrg-steam-presence.h \
+	src/steam/lrg-workshop-item.h \
+	src/steam/lrg-workshop-query.h \
+	src/steam/lrg-workshop-manager.h \
 	src/economy/lrg-resource.h \
 	src/economy/lrg-resource-pool.h \
 	src/economy/lrg-production-recipe.h \
@@ -296,7 +299,24 @@ PUBLIC_HEADERS := \
 	src/lighting/lrg-shadow-map.h \
 	src/lighting/lrg-lightmap.h \
 	src/lighting/lrg-light-probe.h \
-	src/lighting/lrg-lighting-manager.h
+	src/lighting/lrg-lighting-manager.h \
+	src/analytics/lrg-analytics-event.h \
+	src/analytics/lrg-consent.h \
+	src/analytics/lrg-analytics-backend.h \
+	src/analytics/lrg-analytics-backend-http.h \
+	src/analytics/lrg-analytics.h \
+	src/achievement/lrg-achievement-progress.h \
+	src/achievement/lrg-achievement.h \
+	src/achievement/lrg-achievement-manager.h \
+	src/achievement/lrg-achievement-notification.h \
+	src/photomode/lrg-screenshot.h \
+	src/photomode/lrg-photo-camera-controller.h \
+	src/photomode/lrg-photo-mode.h \
+	src/demo/lrg-demo-gatable.h \
+	src/demo/lrg-demo-manager.h \
+	src/vr/lrg-vr-service.h \
+	src/vr/lrg-vr-stub.h \
+	src/vr/lrg-vr-comfort.h
 
 # Source files
 SOURCES := \
@@ -456,6 +476,9 @@ SOURCES := \
 	src/steam/lrg-steam-cloud.c \
 	src/steam/lrg-steam-stats.c \
 	src/steam/lrg-steam-presence.c \
+	src/steam/lrg-workshop-item.c \
+	src/steam/lrg-workshop-query.c \
+	src/steam/lrg-workshop-manager.c \
 	src/economy/lrg-resource.c \
 	src/economy/lrg-resource-pool.c \
 	src/economy/lrg-production-recipe.c \
@@ -568,7 +591,24 @@ SOURCES := \
 	src/lighting/lrg-shadow-map.c \
 	src/lighting/lrg-lightmap.c \
 	src/lighting/lrg-light-probe.c \
-	src/lighting/lrg-lighting-manager.c
+	src/lighting/lrg-lighting-manager.c \
+	src/analytics/lrg-analytics-event.c \
+	src/analytics/lrg-consent.c \
+	src/analytics/lrg-analytics-backend.c \
+	src/analytics/lrg-analytics-backend-http.c \
+	src/analytics/lrg-analytics.c \
+	src/achievement/lrg-achievement-progress.c \
+	src/achievement/lrg-achievement.c \
+	src/achievement/lrg-achievement-manager.c \
+	src/achievement/lrg-achievement-notification.c \
+	src/photomode/lrg-screenshot.c \
+	src/photomode/lrg-photo-camera-controller.c \
+	src/photomode/lrg-photo-mode.c \
+	src/demo/lrg-demo-gatable.c \
+	src/demo/lrg-demo-manager.c \
+	src/vr/lrg-vr-service.c \
+	src/vr/lrg-vr-stub.c \
+	src/vr/lrg-vr-comfort.c
 
 # Conditional scripting backends
 ifeq ($(HAS_LUAJIT),1)
@@ -1594,6 +1634,21 @@ $(OBJDIR)/src/steam/lrg-steam-stats.o: src/steam/lrg-steam-stats.c src/steam/lrg
 	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/steam/lrg-steam-presence.o: src/steam/lrg-steam-presence.c src/steam/lrg-steam-presence.h src/steam/lrg-steam-client.h src/steam/lrg-steam-types.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/steam/lrg-workshop-item.o: src/steam/lrg-workshop-item.c src/steam/lrg-workshop-item.h src/steam/lrg-steam-types.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/steam/lrg-workshop-query.o: src/steam/lrg-workshop-query.c src/steam/lrg-workshop-query.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/steam/lrg-workshop-manager.o: src/steam/lrg-workshop-manager.c src/steam/lrg-workshop-manager.h src/steam/lrg-workshop-item.h src/steam/lrg-workshop-query.h src/steam/lrg-steam-types.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) $(STEAM_CFLAGS) -c -o $@ $<

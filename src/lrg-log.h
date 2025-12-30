@@ -61,6 +61,12 @@ G_BEGIN_DECLS
 #define LRG_LOG_DOMAIN_TUTORIAL   "Libregnum-Tutorial"
 #define LRG_LOG_DOMAIN_WEATHER    "Libregnum-Weather"
 #define LRG_LOG_DOMAIN_LIGHTING   "Libregnum-Lighting"
+#define LRG_LOG_DOMAIN_ANALYTICS  "Libregnum-Analytics"
+#define LRG_LOG_DOMAIN_ACHIEVEMENT "Libregnum-Achievement"
+#define LRG_LOG_DOMAIN_PHOTOMODE  "Libregnum-PhotoMode"
+#define LRG_LOG_DOMAIN_STEAM      "Libregnum-Steam"
+#define LRG_LOG_DOMAIN_DEMO       "Libregnum-Demo"
+#define LRG_LOG_DOMAIN_VR         "Libregnum-VR"
 
 /* ==========================================================================
  * Logging Macros
