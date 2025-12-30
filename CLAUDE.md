@@ -15,76 +15,87 @@ libregnum/
 ├── libregnum.pc.in           # pkg-config template
 ├── README.md                 # Build instructions
 ├── CLAUDE.md                 # This file (AI context)
+├── ROADMAP.md                # Development history and feature planning
 ├── deps/
 │   ├── graylib/              # GObject wrapper for raylib
 │   └── yaml-glib/            # YAML parsing library
-├── src/
+├── src/                      # 55+ modules, 310+ header files
 │   ├── libregnum.h           # Master include header
 │   ├── lrg-version.h.in      # Version template
 │   ├── config.h.in           # Internal config template
-│   ├── lrg-types.h           # Forward declarations
+│   ├── lrg-types.h           # Forward declarations (all types)
 │   ├── lrg-enums.h/.c        # Enumerations with GType
 │   ├── lrg-log.h             # Logging macros
-│   ├── core/                 # Core systems
-│   │   ├── lrg-engine.h/.c
-│   │   ├── lrg-registry.h/.c
-│   │   ├── lrg-data-loader.h/.c
-│   │   ├── lrg-asset-manager.h/.c
-│   │   └── lrg-asset-pack.h/.c   # Resource pack loading
-│   ├── audio/                # Audio systems
-│   │   ├── lrg-audio-manager.h/.c
-│   │   ├── lrg-sound-bank.h/.c
-│   │   ├── lrg-wave-data.h/.c        # Wave data wrapper
-│   │   └── lrg-procedural-audio.h/.c # Procedural synthesis
-│   ├── graphics/             # Graphics and rendering
-│   │   ├── lrg-camera3d.h/.c
-│   │   └── lrg-renderer.h/.c
-│   ├── ecs/                  # Entity Component System
-│   │   ├── lrg-world.h/.c
-│   │   ├── lrg-entity.h/.c
-│   │   └── components/
-│   │       └── lrg-transform-component.h/.c
-│   ├── input/                # Input handling
-│   ├── ui/                   # UI widgets
-│   ├── tilemap/              # 2D tilemap system
-│   ├── dialog/               # Dialog/conversation system
-│   ├── inventory/            # Inventory management
-│   ├── quest/                # Quest tracking
-│   ├── save/                 # Save/load system
-│   ├── ai/                   # AI behaviors
-│   ├── pathfinding/          # A* and navigation
-│   ├── physics/              # Physics simulation
-│   ├── i18n/                 # Internationalization
-│   ├── net/                  # Networking
-│   ├── world3d/              # 3D world management
-│   ├── scene/                # Scene graph
-│   ├── mod/                  # Mod system
-│   ├── debug/                # Debug tools
-│   ├── scripting/            # Python/GJS scripting
-│   ├── economy/              # Economy/trading
-│   ├── building/             # Building placement
-│   ├── vehicle/              # Vehicle system
-│   ├── idle/                 # Idle game mechanics
-│   ├── particles/            # Particle effects
-│   ├── postprocess/          # Post-processing
-│   ├── animation/            # Animation system
-│   ├── text/                 # Text rendering
-│   ├── video/                # Video playback
-│   ├── tween/                # Tweening/easing
-│   ├── transition/           # Scene transitions
-│   ├── trigger2d/            # 2D trigger zones
-│   ├── atlas/                # Texture atlases
-│   ├── tutorial/             # Tutorial system
-│   ├── weather/              # Weather effects
-│   ├── lighting/             # Lighting system
-│   ├── analytics/            # Analytics/telemetry
-│   ├── achievement/          # Local achievements
-│   ├── photomode/            # Photo mode
-│   ├── demo/                 # Demo support
-│   └── vr/                   # VR support
+│   │
+│   │ # Core Systems
+│   ├── core/                 # Engine, Registry, DataLoader, AssetManager, AssetPack
+│   ├── ecs/                  # World, GameObject, Component + transform/sprite/collider/animator
+│   ├── graphics/             # Window, Renderer, Camera (7 types), Drawable interface
+│   ├── input/                # Keyboard, Mouse, Gamepad, InputMap/Action/Binding
+│   ├── audio/                # AudioManager, SoundBank, MusicTrack, WaveData, ProceduralAudio
+│   │
+│   │ # Game Systems
+│   ├── ui/                   # 8 widgets, 3 layouts, Theme, Canvas
+│   ├── tilemap/              # Tileset, TilemapLayer, Tilemap
+│   ├── dialog/               # DialogNode, DialogTree, DialogRunner
+│   ├── quest/                # QuestDef, QuestObjective, QuestInstance, QuestLog
+│   ├── inventory/            # ItemDef, ItemStack, Inventory, Equipment
+│   ├── save/                 # Saveable interface, SaveContext, SaveGame, SaveManager
+│   ├── ai/                   # BehaviorTree, Blackboard, BTNode hierarchy
+│   ├── pathfinding/          # NavGrid, NavCell, Path, Pathfinder (A*)
+│   ├── physics/              # PhysicsWorld, RigidBody, CollisionInfo
+│   │
+│   │ # Genre-Specific
+│   ├── economy/              # Resource, ResourcePool, Producer, Consumer, Market, EconomyManager
+│   ├── building/             # BuildingDef, BuildingInstance, PlacementSystem, BuildGrid
+│   ├── vehicle/              # Vehicle, VehicleController, Wheel, TrafficAgent, Road, RoadNetwork
+│   ├── idle/                 # IdleCalculator, BigNumber, Prestige, UnlockTree, Automation
+│   │
+│   │ # Visual Effects
+│   ├── particles/            # ParticleEmitter, Particle, ParticleSystem, ParticleForce
+│   ├── postprocess/          # PostProcessor, PostEffect, Bloom, ColorGrade, FXAA
+│   ├── lighting/             # Light2D, PointLight2D, SpotLight2D, DirectionalLight2D, ShadowMap
+│   ├── weather/              # Rain, Snow, Fog, Lightning, Weather, DayNightCycle
+│   │
+│   │ # Animation & Transitions
+│   ├── animation/            # Skeleton, Bone, AnimationClip, Animator, StateMachine, IKSolver
+│   ├── tween/                # Easing, Tween, TweenGroup, TweenSequence, TweenParallel
+│   ├── transition/           # Fade, Wipe, Dissolve, Slide, Zoom, Shader transitions
+│   │
+│   │ # Content & UI
+│   ├── text/                 # RichText, TextSpan, TextEffect, FontManager
+│   ├── video/                # VideoPlayer, VideoTexture, VideoSubtitles
+│   ├── atlas/                # AtlasRegion, TextureAtlas, SpriteSheet, NineSlice, AtlasPacker
+│   ├── tutorial/             # TutorialStep, Tutorial, TutorialManager, Highlight, InputPrompt
+│   ├── trigger2d/            # TriggerRect, TriggerCircle, TriggerPolygon, TriggerManager
+│   │
+│   │ # Infrastructure
+│   ├── i18n/                 # Locale, Localization
+│   ├── net/                  # NetMessage, NetPeer, NetServer, NetClient
+│   ├── world3d/              # Level3D, Octree, Sector, Portal, Trigger3D, SpawnPoint3D
+│   ├── scene/                # Scene, SceneObject, SceneSerializer interface
+│   ├── mod/                  # ModManifest, Mod, ModLoader, Modable interface, Providers
+│   ├── debug/                # Profiler, DebugConsole, DebugOverlay, Inspector
+│   ├── scripting/            # Lua, Python, PyGObject, Gjs backends, Scriptable interface
+│   ├── shapes/               # Shape, Shape2D, Shape3D primitives
+│   │
+│   │ # Platform Integration
+│   ├── steam/                # SteamService, SteamClient, Achievements, Cloud, Workshop, Leaderboards
+│   ├── settings/             # Settings, GraphicsSettings, AudioSettings, ControlSettings
+│   ├── accessibility/        # ColorFilter, SubtitleManager, ScreenReader
+│   ├── crash/                # CrashReporter, CrashDialog
+│   ├── gamestate/            # GameState, GameStateManager, MainMenu, PauseMenu, LoadingScreen
+│   │
+│   │ # Enhancements
+│   ├── analytics/            # Analytics, AnalyticsEvent, Consent, AnalyticsBackend
+│   ├── achievement/          # Achievement, AchievementProgress, AchievementManager, Notification
+│   ├── photomode/            # Screenshot, PhotoCameraController, PhotoMode
+│   ├── demo/                 # DemoGatable interface, DemoManager
+│   └── vr/                   # VRService interface, VRStub, VRComfort
+│
 ├── tests/
 │   ├── Makefile
-│   └── test-*.c              # One test file per module
+│   └── test-*.c              # 70+ test files covering all modules
 └── docs/
     └── modules/              # Per-module documentation
 ```
@@ -362,6 +373,332 @@ lrg_transform_component_set_rotation_quaternion (transform, quat);
 lrg_transform_component_slerp_rotation (transform, target, amount);
 ```
 
+## Architecture Overview
+
+Libregnum uses a layered GObject architecture with three primary patterns:
+
+1. **Interfaces** (`G_DECLARE_INTERFACE`) - Implement for custom backends/plugins
+2. **Derivable Types** (`G_DECLARE_DERIVABLE_TYPE`) - Subclass for custom game behavior
+3. **Final Types** (`G_DECLARE_FINAL_TYPE`) - Use directly as data containers/managers
+
+### GObject Interfaces
+
+Interfaces define contracts for pluggable implementations. Implement these when you need custom backends or behavior.
+
+| Interface | Location | Purpose | Key Methods |
+|-----------|----------|---------|-------------|
+| `LrgVRService` | `src/vr/lrg-vr-service.h` | VR backend abstraction | `initialize`, `shutdown`, `poll_events`, `get_hmd_pose`, `submit_frame` |
+| `LrgSteamService` | `src/steam/lrg-steam-service.h` | Steam SDK abstraction | `init`, `shutdown`, `run_callbacks`, `is_available` |
+| `LrgSaveable` | `src/save/lrg-saveable.h` | Save/load persistence | `get_save_id`, `save`, `load` |
+| `LrgModable` | `src/mod/lrg-modable.h` | Mod lifecycle hooks | `mod_init`, `mod_shutdown`, `mod_get_info` |
+| `LrgScriptable` | `src/scripting/lrg-scriptable.h` | Script exposure control | `get_script_methods`, `get_property_access` |
+| `LrgDrawable` | `src/graphics/lrg-drawable.h` | Rendering interface | `draw`, `get_bounds` |
+| `LrgShadowCaster` | `src/lighting/lrg-shadow-caster.h` | 2D shadow casting | `get_edges`, `is_opaque`, `get_shadow_opacity` |
+| `LrgDemoGatable` | `src/demo/lrg-demo-gatable.h` | Demo content gating | `get_content_id`, `is_demo_content`, `get_unlock_message` |
+| `LrgSceneSerializer` | `src/scene/lrg-scene-serializer.h` | Scene format handlers | `load_from_file`, `save_to_file` |
+
+**Content Provider Interfaces** (`src/mod/lrg-providers.h`) - For mods providing content:
+
+| Interface | Purpose |
+|-----------|---------|
+| `LrgEntityProvider` | Provide custom entity GTypes |
+| `LrgItemProvider` | Provide item definitions |
+| `LrgSceneProvider` | Provide scene objects |
+| `LrgDialogProvider` | Provide dialog trees |
+| `LrgQuestProvider` | Provide quest definitions |
+| `LrgAIProvider` | Provide behavior tree node GTypes |
+| `LrgCommandProvider` | Provide console commands |
+| `LrgLocaleProvider` | Provide localization data |
+
+### Derivable Type Hierarchies
+
+These are base classes designed for subclassing. Override virtual methods to customize behavior.
+
+```
+GObject
+│
+├── LrgWidget (src/ui/lrg-widget.h)
+│   │   vfuncs: draw(), measure(), handle_event()
+│   └── LrgContainer (src/ui/lrg-container.h)
+│           vfunc: layout_children()
+│
+├── LrgComponent (src/ecs/lrg-component.h)
+│       vfuncs: attached(), detached(), update(delta)
+│
+├── LrgBTNode (src/ai/lrg-bt-node.h)
+│   │   vfuncs: tick(blackboard, delta), reset(), abort()
+│   ├── LrgBTComposite (src/ai/lrg-bt-composite.h)
+│   └── LrgBTDecorator (src/ai/lrg-bt-decorator.h)
+│
+├── LrgCamera (src/graphics/lrg-camera.h)
+│   │   vfuncs: begin(), end(), world_to_screen(), screen_to_world()
+│   ├── LrgCamera2D (src/graphics/lrg-camera2d.h)
+│   └── LrgCamera3D (src/graphics/lrg-camera3d.h)
+│
+├── LrgLight2D (src/lighting/lrg-light2d.h)
+│       vfuncs: render(), is_visible(), update(delta), calculate_shadows()
+│
+├── LrgWeatherEffect (src/weather/lrg-weather-effect.h)
+│       vfuncs: activate(), deactivate(), update(delta), render(), set_intensity()
+│
+├── LrgTransition (src/transition/lrg-transition.h)
+│       vfuncs: initialize(), start(), update(delta), render(), reset()
+│
+├── LrgPostEffect (src/postprocess/lrg-post-effect.h)
+│       vfuncs: initialize(), shutdown(), apply(), resize(), get_name()
+│
+├── LrgTrigger2D (src/trigger2d/lrg-trigger2d.h)
+│       vfuncs: test_point(), get_bounds(), get_shape()
+│
+├── LrgTweenBase (src/tween/lrg-tween-base.h)
+│       vfuncs: start(), stop(), pause(), resume(), update(delta), reset()
+│
+├── LrgAnalyticsBackend (src/analytics/lrg-analytics-backend.h)
+│       vfuncs: send_event(), flush(), is_enabled()
+│
+├── LrgProceduralAudio (src/audio/lrg-procedural-audio.h)
+│       vfunc: generate(buffer, frame_count)
+│
+├── LrgAchievement (src/achievement/lrg-achievement.h)
+│       vfuncs: check_unlock(), on_unlocked()
+│
+├── LrgShape (src/shapes/lrg-shape.h)
+│   ├── LrgShape2D (src/shapes/lrg-shape2d.h)
+│   └── LrgShape3D (src/shapes/lrg-shape3d.h)
+│
+├── LrgGameState (src/gamestate/lrg-game-state.h)
+│       vfuncs: enter(), exit(), update(delta)
+│
+└── LrgIKSolver (src/animation/lrg-ik-solver.h)
+        vfunc: solve()
+```
+
+### Singleton Managers
+
+Access via `*_get_default()`. These are application-wide managers.
+
+| Manager | Location | Access Function | Purpose |
+|---------|----------|-----------------|---------|
+| `LrgEngine` | `src/core/` | `lrg_engine_get_default()` | Central engine hub, subsystem coordination |
+| `LrgAudioManager` | `src/audio/` | `lrg_audio_manager_get_default()` | Audio playback, volume channels |
+| `LrgInputManager` | `src/input/` | `lrg_input_manager_get_default()` | Keyboard, mouse, gamepad input |
+| `LrgTheme` | `src/ui/` | `lrg_theme_get_default()` | UI theming and styling |
+| `LrgSaveManager` | `src/save/` | `lrg_save_manager_get_default()` | Save/load game management |
+| `LrgModManager` | `src/mod/` | `lrg_mod_manager_get_default()` | Mod loading and lifecycle |
+| `LrgEconomyManager` | `src/economy/` | `lrg_economy_manager_get_default()` | Economy/trading simulation |
+| `LrgLocalization` | `src/i18n/` | `lrg_localization_get_default()` | I18N and localization |
+| `LrgTweenManager` | `src/tween/` | `lrg_tween_manager_get_default()` | Tween update coordination |
+| `LrgTransitionManager` | `src/transition/` | `lrg_transition_manager_get_default()` | Scene transitions |
+| `LrgWeatherManager` | `src/weather/` | `lrg_weather_manager_get_default()` | Weather effects, day/night |
+| `LrgLightingManager` | `src/lighting/` | `lrg_lighting_manager_get_default()` | 2D lighting system |
+| `LrgTriggerManager` | `src/trigger2d/` | `lrg_trigger_manager_get_default()` | 2D trigger zones |
+| `LrgAchievementManager` | `src/achievement/` | `lrg_achievement_manager_get_default()` | Local achievements |
+| `LrgAnalytics` | `src/analytics/` | `lrg_analytics_get_default()` | Event tracking, telemetry |
+| `LrgConsent` | `src/analytics/` | `lrg_consent_get_default()` | GDPR consent management |
+| `LrgPhotoMode` | `src/photomode/` | `lrg_photo_mode_get_default()` | Photo mode, screenshots |
+| `LrgDemoManager` | `src/demo/` | `lrg_demo_manager_get_default()` | Demo content gating |
+| `LrgFontManager` | `src/text/` | `lrg_font_manager_get_default()` | Font loading, fallbacks |
+| `LrgProfiler` | `src/debug/` | `lrg_profiler_get_default()` | Performance profiling |
+| `LrgDebugConsole` | `src/debug/` | `lrg_debug_console_get_default()` | Debug command console |
+| `LrgDebugOverlay` | `src/debug/` | `lrg_debug_overlay_get_default()` | Debug visualization |
+| `LrgInspector` | `src/debug/` | `lrg_inspector_get_default()` | Object inspection |
+| `LrgCrashReporter` | `src/crash/` | `lrg_crash_reporter_get_default()` | Crash capture/reporting |
+| `LrgTutorialManager` | `src/tutorial/` | `lrg_tutorial_manager_get_default()` | Tutorial progression |
+
+## When to Subclass
+
+### Custom UI Widgets
+
+Subclass `LrgWidget` or `LrgContainer`:
+
+```c
+G_DECLARE_FINAL_TYPE (MyWidget, my_widget, MY, WIDGET, LrgWidget)
+
+static void
+my_widget_draw (LrgWidget *widget)
+{
+    /* Custom rendering */
+}
+
+static void
+my_widget_class_init (MyWidgetClass *klass)
+{
+    LrgWidgetClass *widget_class = LRG_WIDGET_CLASS (klass);
+    widget_class->draw = my_widget_draw;
+}
+```
+
+### Custom ECS Components
+
+Subclass `LrgComponent`:
+
+```c
+G_DECLARE_FINAL_TYPE (HealthComponent, health_component, GAME, HEALTH_COMPONENT, LrgComponent)
+
+static void
+health_component_update (LrgComponent *component, gfloat delta)
+{
+    HealthComponent *self = GAME_HEALTH_COMPONENT (component);
+    /* Regeneration, poison damage, etc. */
+}
+
+static void
+health_component_class_init (HealthComponentClass *klass)
+{
+    LrgComponentClass *comp_class = LRG_COMPONENT_CLASS (klass);
+    comp_class->update = health_component_update;
+}
+```
+
+### Custom AI Behaviors
+
+Subclass `LrgBTNode` (or `LrgBTLeaf` for actions):
+
+```c
+static LrgBTStatus
+patrol_node_tick (LrgBTNode *node, LrgBlackboard *bb, gfloat delta)
+{
+    /* Check patrol waypoints, move agent */
+    return LRG_BT_STATUS_RUNNING;
+}
+```
+
+### Custom Audio Synthesis
+
+Subclass `LrgProceduralAudio`:
+
+```c
+static void
+synth_generate (LrgProceduralAudio *audio, gfloat *buffer, gint frames)
+{
+    /* Fill buffer with generated samples */
+}
+```
+
+### Custom Post-Processing Effects
+
+Subclass `LrgPostEffect`:
+
+```c
+static void
+sepia_effect_apply (LrgPostEffect *effect)
+{
+    /* Apply sepia shader to render target */
+}
+```
+
+### Custom Weather Effects
+
+Subclass `LrgWeatherEffect`:
+
+```c
+static void
+sandstorm_render (LrgWeatherEffect *effect)
+{
+    /* Render sand particles */
+}
+```
+
+### Custom Achievements
+
+Subclass `LrgAchievement` for complex unlock conditions:
+
+```c
+static gboolean
+speedrun_check_unlock (LrgAchievement *achievement)
+{
+    /* Check if level completed under time limit */
+    return elapsed_time < 300.0f;
+}
+```
+
+## When to Implement Interfaces
+
+### LrgSaveable - For Persistent State
+
+Implement on objects that need save/load support:
+
+```c
+static const gchar *
+my_object_get_save_id (LrgSaveable *saveable)
+{
+    return "my-unique-id";
+}
+
+static gboolean
+my_object_save (LrgSaveable *saveable, LrgSaveContext *ctx, GError **error)
+{
+    MyObject *self = MY_OBJECT (saveable);
+    lrg_save_context_write_int (ctx, "health", self->health);
+    return TRUE;
+}
+
+static gboolean
+my_object_load (LrgSaveable *saveable, LrgSaveContext *ctx, GError **error)
+{
+    MyObject *self = MY_OBJECT (saveable);
+    self->health = lrg_save_context_read_int (ctx, "health");
+    return TRUE;
+}
+```
+
+### LrgModable - For Mod Entry Points
+
+Implement as your mod's main class:
+
+```c
+static void
+my_mod_init (LrgModable *modable, LrgEngine *engine)
+{
+    LrgRegistry *registry = lrg_engine_get_registry (engine);
+    lrg_registry_register (registry, "custom-enemy", MY_TYPE_ENEMY);
+}
+```
+
+### LrgDrawable - For Custom Renderables
+
+Implement on objects that draw themselves:
+
+```c
+static void
+my_entity_draw (LrgDrawable *drawable)
+{
+    MyEntity *self = MY_ENTITY (drawable);
+    grl_draw_texture (self->texture, self->x, self->y, WHITE);
+}
+```
+
+### LrgShadowCaster - For 2D Shadow Casting
+
+Implement on objects that cast shadows:
+
+```c
+static GPtrArray *
+wall_get_edges (LrgShadowCaster *caster)
+{
+    /* Return array of LrgEdge representing shadow-casting edges */
+}
+```
+
+### LrgDemoGatable - For Demo Content Gating
+
+Implement on content that should be restricted in demo mode:
+
+```c
+static const gchar *
+level_get_content_id (LrgDemoGatable *gatable)
+{
+    return "level-5";  /* Unique content identifier */
+}
+
+static gboolean
+level_is_demo_content (LrgDemoGatable *gatable)
+{
+    Level *self = GAME_LEVEL (gatable);
+    return self->level_number <= 3;  /* First 3 levels in demo */
+}
+```
+
 ## Testing
 
 Tests use GLib testing framework:
@@ -490,73 +827,139 @@ Error domains:
 
 ## Files to Reference for Patterns
 
+### GObject Patterns
+
 | Pattern | File |
 |---------|------|
 | Derivable GObject with signals | `src/core/lrg-engine.h/.c` |
 | Derivable GObject with virtual method | `src/audio/lrg-procedural-audio.h/.c` |
 | Final GObject with properties | `src/core/lrg-registry.h/.c` |
 | GObject wrapper for graylib type | `src/audio/lrg-wave-data.h/.c` |
+| Interface definition (`G_DECLARE_INTERFACE`) | `src/vr/lrg-vr-service.h/.c` |
+| Interface implementation | `src/vr/lrg-vr-stub.h/.c` |
+| Multiple interfaces on one class | `src/achievement/lrg-achievement-manager.c` |
+| Singleton manager pattern | `src/analytics/lrg-analytics.h/.c` |
+
+### Architecture Patterns
+
+| Pattern | File |
+|---------|------|
+| Widget hierarchy (UI) | `src/ui/lrg-widget.h`, `src/ui/lrg-container.h` |
+| Component hierarchy (ECS) | `src/ecs/lrg-component.h` |
+| Behavior tree nodes (AI) | `src/ai/lrg-bt-node.h`, `src/ai/lrg-bt-composite.h` |
+| Camera hierarchy | `src/graphics/lrg-camera.h`, `src/graphics/lrg-camera3d.h` |
+| Effect base classes | `src/postprocess/lrg-post-effect.h`, `src/weather/lrg-weather-effect.h` |
+| Transition base class | `src/transition/lrg-transition.h` |
+| Trigger base class | `src/trigger2d/lrg-trigger2d.h` |
+| Backend abstraction | `src/analytics/lrg-analytics-backend.h` |
+
+### System Patterns
+
+| Pattern | File |
+|---------|------|
 | Resource pack loading | `src/core/lrg-asset-pack.h/.c` |
 | Async with libdex | `src/core/lrg-data-loader.c` |
 | Quaternion/3D rotation | `src/graphics/lrg-camera3d.h/.c` |
 | ECS transform component | `src/ecs/components/lrg-transform-component.h/.c` |
+| Content gating (demo) | `src/demo/lrg-demo-gatable.h/.c` |
+| GDPR consent handling | `src/analytics/lrg-consent.h/.c` |
+| Mod provider interfaces | `src/mod/lrg-providers.h` |
+| Steam integration | `src/steam/lrg-steam-client.h/.c` |
+
+### Testing Patterns
+
+| Pattern | File |
+|---------|------|
 | GTest with fixtures | `tests/test-registry.c` |
 | Headless-safe tests | `tests/test-procedural-audio.c` |
-| Build system | `Makefile`, `config.mk`, `rules.mk` |
+| Skip macros for CI | `tests/test-graphics.c` |
+
+### Build System
+
+| Pattern | File |
+|---------|------|
+| Root Makefile | `Makefile` |
+| Build configuration | `config.mk` |
+| Build rules and helpers | `rules.mk` |
+| pkg-config template | `libregnum.pc.in` |
+
+### Dependencies
+
+| Pattern | File |
+|---------|------|
 | graylib patterns | `deps/graylib/src/scene/grl-entity.h` |
-| yaml-glib patterns | `deps/yaml-glib.git/src/yaml-gobject.h` |
-| Interface definition | `src/vr/lrg-vr-service.h/.c` |
-| Singleton manager | `src/analytics/lrg-analytics.h/.c` |
-| Derivable achievement | `src/achievement/lrg-achievement.h/.c` |
-| GObject interface impl | `src/demo/lrg-demo-gatable.h/.c` |
-| Steam Workshop integration | `src/steam/lrg-workshop-manager.h/.c` |
+| yaml-glib patterns | `deps/yaml-glib/src/yaml-gobject.h` |
 
 ## Implementation Status
 
-The library is feature-complete with all major systems implemented:
+The library is feature-complete and ready for commercial game development.
+
+### Library Statistics
+
+| Metric | Count |
+|--------|-------|
+| Modules | 55+ |
+| Header files | 310+ |
+| GObject interfaces | 18 |
+| Derivable types | 76 |
+| Singleton managers | 25 |
+| Final types | 182+ |
+| Test files | 70+ |
 
 ### Core Systems
-- [x] Engine singleton, Registry, DataLoader, AssetManager
-- [x] Asset packs (rres format with encryption support)
-- [x] Logging, error handling, versioning
+- [x] Engine singleton, Registry, DataLoader, AssetManager, AssetPack
+- [x] Settings/Options system (Graphics, Audio, Controls, Gameplay)
+- [x] Game state management (GameState, MainMenu, PauseMenu, LoadingScreen)
+- [x] Crash reporting (CrashReporter, CrashDialog)
 
-### Audio
-- [x] AudioManager, SoundBank, MusicPlayer
-- [x] WaveData (loading, manipulation, conversion)
-- [x] ProceduralAudio (real-time synthesis with virtual generate())
+### Graphics & Rendering
+- [x] Window, Renderer, Camera hierarchy (7 camera types)
+- [x] Particle system (ParticleEmitter, ParticleSystem, ParticleForce)
+- [x] Post-processing pipeline (PostProcessor, PostEffect, Bloom, ColorGrade, FXAA)
+- [x] 2D lighting system (Light2D, PointLight2D, SpotLight2D, ShadowMap, Lightmap)
+- [x] Weather system (Rain, Snow, Fog, Lightning, DayNightCycle, WeatherManager)
+- [x] Video playback (VideoPlayer, VideoTexture, VideoSubtitles)
 
-### Graphics & 3D
-- [x] Camera3D with quaternion orientation
-- [x] Renderer, Scene graph, Materials
-- [x] Particles, Post-processing, Lighting
-- [x] Weather effects, Video playback
-
-### ECS & Components
-- [x] World, Entity, Component system
-- [x] TransformComponent with quaternion rotation
-- [x] SpriteComponent, PhysicsComponent, etc.
+### Animation & Effects
+- [x] Animation state machine (Skeleton, Animator, AnimationStateMachine, IKSolver)
+- [x] Tweening/easing (Easing, Tween, TweenSequence, TweenParallel, TweenManager)
+- [x] Scene transitions (Fade, Wipe, Dissolve, Slide, Zoom, Shader transitions)
 
 ### Game Systems
-- [x] Input handling, UI widgets
-- [x] Tilemap, Dialog, Inventory, Quest
-- [x] Save/Load, AI, Pathfinding
-- [x] Economy, Building, Vehicle, Idle mechanics
-- [x] Trigger2D, Tutorial, Atlas
+- [x] ECS (World, GameObject, Component, Transform, Sprite, Collider, Animator)
+- [x] Input handling (Keyboard, Mouse, Gamepad, InputMap/Action/Binding)
+- [x] UI widgets (8 widgets, 3 layouts, Theme, Canvas)
+- [x] Tilemap, Dialog, Inventory, Quest systems
+- [x] Save/Load, AI (Behavior Trees), Pathfinding (A*)
+- [x] 2D trigger system (TriggerRect, TriggerCircle, TriggerPolygon, TriggerManager)
+- [x] Tutorial system (TutorialStep, Tutorial, TutorialManager, Highlight)
+- [x] Texture atlas / sprite sheet tools (AtlasPacker, SpriteSheet, NineSlice)
+
+### Genre-Specific Systems
+- [x] Economy/Resource system (Resource, Producer, Consumer, Market, EconomyManager)
+- [x] Building/Placement system (BuildingDef, PlacementSystem, BuildGrid)
+- [x] Vehicle/Driving system (Vehicle, VehicleController, Wheel, TrafficAgent, Road)
+- [x] Idle game support (IdleCalculator, BigNumber, Prestige, UnlockTree, Automation)
+
+### Platform Integration
+- [x] Steam SDK integration (SteamClient, Cloud, Achievements, Leaderboards, Workshop)
+- [x] Analytics/telemetry (Analytics, AnalyticsEvent, Consent, AnalyticsBackend)
+- [x] Local achievement system (Achievement, AchievementProgress, AchievementManager)
+- [x] Photo mode (Screenshot, PhotoCameraController, PhotoMode)
+- [x] Demo support (DemoGatable interface, DemoManager)
+- [x] VR support (VRService interface, VRStub, VRComfort)
+- [x] Accessibility features (colorblind modes, screen reader, subtitle manager)
+- [x] Windows cross-compilation support
 
 ### Infrastructure
-- [x] Animation, Tween, Transition systems
-- [x] I18N, Networking, Scripting (Python/GJS)
-- [x] Mod system, Debug tools, Accessibility
-- [x] Steam integration (achievements, cloud, workshop)
-
-### Platform & Enhancements
-- [x] Analytics with GDPR consent and abstract backends
-- [x] Local achievement system with progress tracking
-- [x] Photo mode with free camera and screenshot capture
-- [x] Demo support with content gating and time limits
-- [x] VR support with abstract backend interface
+- [x] I18N/Localization, Networking (NetServer, NetClient)
+- [x] Mod system (ModManifest, Mod, ModLoader, ModManager, Provider interfaces)
+- [x] Scripting (Python, GJS backends)
+- [x] Debug tools (Profiler, DebugConsole, DebugOverlay, Inspector)
+- [x] Rich text / font improvements (RichText, TextEffect, FontManager)
 
 ### Testing
-- [x] 65+ test files covering all modules
-- [x] Headless environment support (skip macros)
+- [x] 70+ test files covering all modules
+- [x] Headless environment support (SKIP_IF_NO_DISPLAY macro)
 - [x] GTest with TAP output
+- [x] CI-friendly skip macros for hardware-dependent tests
