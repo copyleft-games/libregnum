@@ -292,9 +292,32 @@ gfloat lrg_input_binding_get_axis_value (const LrgInputBinding *self);
  *
  * Gets a human-readable string representation of this binding.
  *
+ * For gamepad bindings, uses Xbox-style button names (A, B, X, Y, LB, etc.).
+ * Use lrg_input_binding_to_display_string() for controller-specific names.
+ *
  * Returns: (transfer full): A newly allocated string
  */
 LRG_AVAILABLE_IN_ALL
 gchar * lrg_input_binding_to_string (const LrgInputBinding *self);
+
+/**
+ * lrg_input_binding_to_display_string:
+ * @self: an #LrgInputBinding
+ * @gamepad_type: the controller type for button/axis names
+ *
+ * Gets a human-readable string using controller-specific button names.
+ *
+ * For keyboard/mouse bindings, this is identical to lrg_input_binding_to_string().
+ * For gamepad bindings, uses the appropriate names for the controller type:
+ * - Xbox: A, B, X, Y, LB, RB, etc.
+ * - PlayStation: Cross, Circle, Square, Triangle, L1, R1, etc.
+ * - Switch: B, A, Y, X, L, R, ZL, ZR, etc.
+ * - Steam Deck: A, B, X, Y, L1, R1, Steam, etc.
+ *
+ * Returns: (transfer full): A newly allocated string
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_input_binding_to_display_string (const LrgInputBinding *self,
+                                              LrgGamepadType         gamepad_type);
 
 G_END_DECLS

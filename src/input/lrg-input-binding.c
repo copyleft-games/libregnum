@@ -13,6 +13,7 @@
 
 #include "lrg-input-binding.h"
 #include "lrg-input-manager.h"
+#include "lrg-input-gamepad.h"
 #include "../lrg-log.h"
 
 /* ==========================================================================
@@ -803,6 +804,75 @@ lrg_input_binding_to_string (const LrgInputBinding *self)
         g_string_append_printf (str, "Gamepad%d %s%s",
                                 self->gamepad,
                                 gamepad_axis_to_string (self->input.axis.axis),
+                                self->input.axis.positive ? "+" : "-");
+        break;
+    }
+
+    return g_string_free (str, FALSE);
+}
+
+/**
+ * lrg_input_binding_to_display_string:
+ * @self: an #LrgInputBinding
+ * @gamepad_type: the controller type for button/axis names
+ *
+ * Gets a human-readable string using controller-specific button names.
+ *
+ * For keyboard/mouse bindings, this is identical to lrg_input_binding_to_string().
+ * For gamepad bindings, uses the appropriate names for the controller type.
+ *
+ * Returns: (transfer full): A newly allocated string
+ */
+gchar *
+lrg_input_binding_to_display_string (const LrgInputBinding *self,
+                                      LrgGamepadType         gamepad_type)
+{
+    GString     *str;
+    const gchar *button_name;
+    const gchar *axis_name;
+
+    g_return_val_if_fail (self != NULL, NULL);
+
+    str = g_string_new (NULL);
+
+    /* Add modifiers prefix */
+    if (self->modifiers & LRG_INPUT_MODIFIER_CTRL)
+    {
+        g_string_append (str, "Ctrl+");
+    }
+    if (self->modifiers & LRG_INPUT_MODIFIER_ALT)
+    {
+        g_string_append (str, "Alt+");
+    }
+    if (self->modifiers & LRG_INPUT_MODIFIER_SHIFT)
+    {
+        g_string_append (str, "Shift+");
+    }
+
+    switch (self->type)
+    {
+    case LRG_INPUT_BINDING_KEYBOARD:
+        g_string_append (str, key_to_string (self->input.key));
+        break;
+
+    case LRG_INPUT_BINDING_MOUSE_BUTTON:
+        g_string_append (str, mouse_button_to_string (self->input.mouse_button));
+        break;
+
+    case LRG_INPUT_BINDING_GAMEPAD_BUTTON:
+        button_name = lrg_input_gamepad_get_button_display_name_for_type (
+            self->input.gamepad_button, gamepad_type);
+        g_string_append_printf (str, "Gamepad%d %s",
+                                self->gamepad,
+                                button_name);
+        break;
+
+    case LRG_INPUT_BINDING_GAMEPAD_AXIS:
+        axis_name = lrg_input_gamepad_get_axis_display_name_for_type (
+            self->input.axis.axis, gamepad_type);
+        g_string_append_printf (str, "Gamepad%d %s%s",
+                                self->gamepad,
+                                axis_name,
                                 self->input.axis.positive ? "+" : "-");
         break;
     }

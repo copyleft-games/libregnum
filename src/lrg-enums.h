@@ -225,6 +225,32 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_input_modifiers_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_INPUT_MODIFIERS (lrg_input_modifiers_get_type ())
 
+/**
+ * LrgGamepadType:
+ * @LRG_GAMEPAD_TYPE_UNKNOWN: Unknown or undetected controller
+ * @LRG_GAMEPAD_TYPE_XBOX: Xbox controller (360, One, Series X|S)
+ * @LRG_GAMEPAD_TYPE_PLAYSTATION: PlayStation controller (DS4, DualSense)
+ * @LRG_GAMEPAD_TYPE_SWITCH: Nintendo Switch controller (Pro, Joy-Con)
+ * @LRG_GAMEPAD_TYPE_STEAM_DECK: Steam Deck controller
+ * @LRG_GAMEPAD_TYPE_GENERIC: Generic/unrecognized controller (uses Xbox names)
+ *
+ * The type of gamepad controller connected. Used for displaying
+ * controller-specific button names in UI prompts.
+ */
+typedef enum
+{
+    LRG_GAMEPAD_TYPE_UNKNOWN,
+    LRG_GAMEPAD_TYPE_XBOX,
+    LRG_GAMEPAD_TYPE_PLAYSTATION,
+    LRG_GAMEPAD_TYPE_SWITCH,
+    LRG_GAMEPAD_TYPE_STEAM_DECK,
+    LRG_GAMEPAD_TYPE_GENERIC
+} LrgGamepadType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_gamepad_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_GAMEPAD_TYPE (lrg_gamepad_type_get_type ())
+
 /* ==========================================================================
  * Dialog System
  * ========================================================================== */

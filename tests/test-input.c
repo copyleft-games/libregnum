@@ -666,6 +666,335 @@ test_map_load_clears_existing (MapFixture    *fixture,
 }
 
 /* ==========================================================================
+ * Test Fixtures - Gamepad
+ * ========================================================================== */
+
+typedef struct
+{
+    LrgInputGamepad *gamepad;
+} GamepadFixture;
+
+static void
+gamepad_fixture_set_up (GamepadFixture *fixture,
+                        gconstpointer   user_data)
+{
+    fixture->gamepad = LRG_INPUT_GAMEPAD (lrg_input_gamepad_new ());
+    g_assert_nonnull (fixture->gamepad);
+}
+
+static void
+gamepad_fixture_tear_down (GamepadFixture *fixture,
+                           gconstpointer   user_data)
+{
+    g_clear_object (&fixture->gamepad);
+}
+
+/* ==========================================================================
+ * Test Cases - Gamepad Type Detection
+ * ========================================================================== */
+
+static void
+test_gamepad_button_name_xbox (void)
+{
+    const gchar *name;
+
+    /* Test Xbox button names */
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN, LRG_GAMEPAD_TYPE_XBOX);
+    g_assert_cmpstr (name, ==, "A");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, LRG_GAMEPAD_TYPE_XBOX);
+    g_assert_cmpstr (name, ==, "B");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_LEFT, LRG_GAMEPAD_TYPE_XBOX);
+    g_assert_cmpstr (name, ==, "X");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_UP, LRG_GAMEPAD_TYPE_XBOX);
+    g_assert_cmpstr (name, ==, "Y");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_LEFT_TRIGGER_1, LRG_GAMEPAD_TYPE_XBOX);
+    g_assert_cmpstr (name, ==, "LB");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_MIDDLE, LRG_GAMEPAD_TYPE_XBOX);
+    g_assert_cmpstr (name, ==, "Guide");
+}
+
+static void
+test_gamepad_button_name_playstation (void)
+{
+    const gchar *name;
+
+    /* Test PlayStation button names */
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN, LRG_GAMEPAD_TYPE_PLAYSTATION);
+    g_assert_cmpstr (name, ==, "Cross");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, LRG_GAMEPAD_TYPE_PLAYSTATION);
+    g_assert_cmpstr (name, ==, "Circle");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_LEFT, LRG_GAMEPAD_TYPE_PLAYSTATION);
+    g_assert_cmpstr (name, ==, "Square");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_UP, LRG_GAMEPAD_TYPE_PLAYSTATION);
+    g_assert_cmpstr (name, ==, "Triangle");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_LEFT_TRIGGER_1, LRG_GAMEPAD_TYPE_PLAYSTATION);
+    g_assert_cmpstr (name, ==, "L1");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_MIDDLE, LRG_GAMEPAD_TYPE_PLAYSTATION);
+    g_assert_cmpstr (name, ==, "PS");
+}
+
+static void
+test_gamepad_button_name_switch (void)
+{
+    const gchar *name;
+
+    /* Test Nintendo Switch button names (note: A/B and X/Y are swapped) */
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN, LRG_GAMEPAD_TYPE_SWITCH);
+    g_assert_cmpstr (name, ==, "B");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, LRG_GAMEPAD_TYPE_SWITCH);
+    g_assert_cmpstr (name, ==, "A");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_LEFT_TRIGGER_2, LRG_GAMEPAD_TYPE_SWITCH);
+    g_assert_cmpstr (name, ==, "ZL");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_MIDDLE, LRG_GAMEPAD_TYPE_SWITCH);
+    g_assert_cmpstr (name, ==, "Home");
+}
+
+static void
+test_gamepad_button_name_steam_deck (void)
+{
+    const gchar *name;
+
+    /* Test Steam Deck button names */
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN, LRG_GAMEPAD_TYPE_STEAM_DECK);
+    g_assert_cmpstr (name, ==, "A");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_MIDDLE, LRG_GAMEPAD_TYPE_STEAM_DECK);
+    g_assert_cmpstr (name, ==, "Steam");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_LEFT_TRIGGER_1, LRG_GAMEPAD_TYPE_STEAM_DECK);
+    g_assert_cmpstr (name, ==, "L1");
+}
+
+static void
+test_gamepad_button_name_generic (void)
+{
+    const gchar *name;
+
+    /* Generic should use Xbox names */
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN, LRG_GAMEPAD_TYPE_GENERIC);
+    g_assert_cmpstr (name, ==, "A");
+
+    name = lrg_input_gamepad_get_button_display_name_for_type (
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN, LRG_GAMEPAD_TYPE_UNKNOWN);
+    g_assert_cmpstr (name, ==, "A");
+}
+
+static void
+test_gamepad_axis_name_xbox (void)
+{
+    const gchar *name;
+
+    name = lrg_input_gamepad_get_axis_display_name_for_type (
+        GRL_GAMEPAD_AXIS_LEFT_X, LRG_GAMEPAD_TYPE_XBOX);
+    g_assert_cmpstr (name, ==, "Left Stick X");
+
+    name = lrg_input_gamepad_get_axis_display_name_for_type (
+        GRL_GAMEPAD_AXIS_LEFT_TRIGGER, LRG_GAMEPAD_TYPE_XBOX);
+    g_assert_cmpstr (name, ==, "LT");
+}
+
+static void
+test_gamepad_axis_name_playstation (void)
+{
+    const gchar *name;
+
+    name = lrg_input_gamepad_get_axis_display_name_for_type (
+        GRL_GAMEPAD_AXIS_LEFT_X, LRG_GAMEPAD_TYPE_PLAYSTATION);
+    g_assert_cmpstr (name, ==, "Left Stick X");
+
+    name = lrg_input_gamepad_get_axis_display_name_for_type (
+        GRL_GAMEPAD_AXIS_LEFT_TRIGGER, LRG_GAMEPAD_TYPE_PLAYSTATION);
+    g_assert_cmpstr (name, ==, "L2");
+}
+
+static void
+test_gamepad_axis_name_switch (void)
+{
+    const gchar *name;
+
+    name = lrg_input_gamepad_get_axis_display_name_for_type (
+        GRL_GAMEPAD_AXIS_LEFT_TRIGGER, LRG_GAMEPAD_TYPE_SWITCH);
+    g_assert_cmpstr (name, ==, "ZL");
+
+    name = lrg_input_gamepad_get_axis_display_name_for_type (
+        GRL_GAMEPAD_AXIS_RIGHT_TRIGGER, LRG_GAMEPAD_TYPE_SWITCH);
+    g_assert_cmpstr (name, ==, "ZR");
+}
+
+/* ==========================================================================
+ * Test Cases - Gamepad Dead Zone
+ * ========================================================================== */
+
+static void
+test_gamepad_dead_zone_default (GamepadFixture *fixture,
+                                gconstpointer   user_data)
+{
+    gfloat dead_zone;
+
+    dead_zone = lrg_input_gamepad_get_dead_zone (fixture->gamepad);
+    g_assert_cmpfloat_with_epsilon (dead_zone, 0.1f, 0.0001f);
+}
+
+static void
+test_gamepad_dead_zone_set_get (GamepadFixture *fixture,
+                                gconstpointer   user_data)
+{
+    lrg_input_gamepad_set_dead_zone (fixture->gamepad, 0.25f);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_input_gamepad_get_dead_zone (fixture->gamepad), 0.25f, 0.0001f);
+
+    lrg_input_gamepad_set_dead_zone (fixture->gamepad, 0.0f);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_input_gamepad_get_dead_zone (fixture->gamepad), 0.0f, 0.0001f);
+}
+
+static void
+test_gamepad_dead_zone_clamp (GamepadFixture *fixture,
+                              gconstpointer   user_data)
+{
+    /* Values should be clamped to 0.0-1.0 */
+    lrg_input_gamepad_set_dead_zone (fixture->gamepad, -0.5f);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_input_gamepad_get_dead_zone (fixture->gamepad), 0.0f, 0.0001f);
+
+    lrg_input_gamepad_set_dead_zone (fixture->gamepad, 1.5f);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_input_gamepad_get_dead_zone (fixture->gamepad), 1.0f, 0.0001f);
+}
+
+static void
+test_gamepad_dead_zone_property (GamepadFixture *fixture,
+                                 gconstpointer   user_data)
+{
+    gfloat dead_zone;
+
+    /* Test GObject property access */
+    g_object_set (fixture->gamepad, "dead-zone", 0.3f, NULL);
+    g_object_get (fixture->gamepad, "dead-zone", &dead_zone, NULL);
+
+    g_assert_cmpfloat_with_epsilon (dead_zone, 0.3f, 0.0001f);
+}
+
+/* ==========================================================================
+ * Test Cases - Binding Display String
+ * ========================================================================== */
+
+static void
+test_binding_display_string_xbox (void)
+{
+    LrgInputBinding  *binding;
+    g_autofree gchar *str = NULL;
+
+    binding = lrg_input_binding_new_gamepad_button (0, GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+    str = lrg_input_binding_to_display_string (binding, LRG_GAMEPAD_TYPE_XBOX);
+
+    g_assert_nonnull (str);
+    g_assert_true (strstr (str, "Gamepad0") != NULL);
+    g_assert_true (strstr (str, "A") != NULL);
+
+    lrg_input_binding_free (binding);
+}
+
+static void
+test_binding_display_string_playstation (void)
+{
+    LrgInputBinding  *binding;
+    g_autofree gchar *str = NULL;
+
+    binding = lrg_input_binding_new_gamepad_button (0, GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+    str = lrg_input_binding_to_display_string (binding, LRG_GAMEPAD_TYPE_PLAYSTATION);
+
+    g_assert_nonnull (str);
+    g_assert_true (strstr (str, "Gamepad0") != NULL);
+    g_assert_true (strstr (str, "Cross") != NULL);
+
+    lrg_input_binding_free (binding);
+}
+
+static void
+test_binding_display_string_switch (void)
+{
+    LrgInputBinding  *binding;
+    g_autofree gchar *str = NULL;
+
+    binding = lrg_input_binding_new_gamepad_button (0, GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+    str = lrg_input_binding_to_display_string (binding, LRG_GAMEPAD_TYPE_SWITCH);
+
+    g_assert_nonnull (str);
+    g_assert_true (strstr (str, "Gamepad0") != NULL);
+    g_assert_true (strstr (str, "B") != NULL);
+
+    lrg_input_binding_free (binding);
+}
+
+static void
+test_binding_display_string_keyboard_unchanged (void)
+{
+    LrgInputBinding  *binding;
+    g_autofree gchar *str1 = NULL;
+    g_autofree gchar *str2 = NULL;
+
+    binding = lrg_input_binding_new_keyboard (GRL_KEY_SPACE, LRG_INPUT_MODIFIER_NONE);
+
+    str1 = lrg_input_binding_to_string (binding);
+    str2 = lrg_input_binding_to_display_string (binding, LRG_GAMEPAD_TYPE_PLAYSTATION);
+
+    /* For keyboard, both should be identical */
+    g_assert_cmpstr (str1, ==, str2);
+
+    lrg_input_binding_free (binding);
+}
+
+static void
+test_binding_display_string_axis (void)
+{
+    LrgInputBinding  *binding;
+    g_autofree gchar *str = NULL;
+
+    binding = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_TRIGGER, 0.5f, TRUE);
+    str = lrg_input_binding_to_display_string (binding, LRG_GAMEPAD_TYPE_PLAYSTATION);
+
+    g_assert_nonnull (str);
+    g_assert_true (strstr (str, "L2") != NULL);
+    g_assert_true (strstr (str, "+") != NULL);
+
+    lrg_input_binding_free (binding);
+}
+
+/* ==========================================================================
  * Main
  * ========================================================================== */
 
@@ -784,6 +1113,50 @@ main (int   argc,
                 map_fixture_set_up,
                 test_map_load_clears_existing,
                 map_fixture_tear_down);
+
+    /* Gamepad Button Name Tests */
+    g_test_add_func ("/input/gamepad/button-name-xbox", test_gamepad_button_name_xbox);
+    g_test_add_func ("/input/gamepad/button-name-playstation", test_gamepad_button_name_playstation);
+    g_test_add_func ("/input/gamepad/button-name-switch", test_gamepad_button_name_switch);
+    g_test_add_func ("/input/gamepad/button-name-steam-deck", test_gamepad_button_name_steam_deck);
+    g_test_add_func ("/input/gamepad/button-name-generic", test_gamepad_button_name_generic);
+
+    /* Gamepad Axis Name Tests */
+    g_test_add_func ("/input/gamepad/axis-name-xbox", test_gamepad_axis_name_xbox);
+    g_test_add_func ("/input/gamepad/axis-name-playstation", test_gamepad_axis_name_playstation);
+    g_test_add_func ("/input/gamepad/axis-name-switch", test_gamepad_axis_name_switch);
+
+    /* Gamepad Dead Zone Tests */
+    g_test_add ("/input/gamepad/dead-zone-default",
+                GamepadFixture, NULL,
+                gamepad_fixture_set_up,
+                test_gamepad_dead_zone_default,
+                gamepad_fixture_tear_down);
+
+    g_test_add ("/input/gamepad/dead-zone-set-get",
+                GamepadFixture, NULL,
+                gamepad_fixture_set_up,
+                test_gamepad_dead_zone_set_get,
+                gamepad_fixture_tear_down);
+
+    g_test_add ("/input/gamepad/dead-zone-clamp",
+                GamepadFixture, NULL,
+                gamepad_fixture_set_up,
+                test_gamepad_dead_zone_clamp,
+                gamepad_fixture_tear_down);
+
+    g_test_add ("/input/gamepad/dead-zone-property",
+                GamepadFixture, NULL,
+                gamepad_fixture_set_up,
+                test_gamepad_dead_zone_property,
+                gamepad_fixture_tear_down);
+
+    /* Binding Display String Tests */
+    g_test_add_func ("/input/binding/display-string-xbox", test_binding_display_string_xbox);
+    g_test_add_func ("/input/binding/display-string-playstation", test_binding_display_string_playstation);
+    g_test_add_func ("/input/binding/display-string-switch", test_binding_display_string_switch);
+    g_test_add_func ("/input/binding/display-string-keyboard-unchanged", test_binding_display_string_keyboard_unchanged);
+    g_test_add_func ("/input/binding/display-string-axis", test_binding_display_string_axis);
 
     return g_test_run ();
 }

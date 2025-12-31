@@ -333,6 +333,30 @@ lrg_input_modifiers_get_type (void)
     return g_define_type_id__volatile;
 }
 
+GType
+lrg_gamepad_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_GAMEPAD_TYPE_UNKNOWN, "LRG_GAMEPAD_TYPE_UNKNOWN", "unknown" },
+            { LRG_GAMEPAD_TYPE_XBOX, "LRG_GAMEPAD_TYPE_XBOX", "xbox" },
+            { LRG_GAMEPAD_TYPE_PLAYSTATION, "LRG_GAMEPAD_TYPE_PLAYSTATION", "playstation" },
+            { LRG_GAMEPAD_TYPE_SWITCH, "LRG_GAMEPAD_TYPE_SWITCH", "switch" },
+            { LRG_GAMEPAD_TYPE_STEAM_DECK, "LRG_GAMEPAD_TYPE_STEAM_DECK", "steam-deck" },
+            { LRG_GAMEPAD_TYPE_GENERIC, "LRG_GAMEPAD_TYPE_GENERIC", "generic" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgGamepadType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
 /* ==========================================================================
  * Behavior Tree GTypes
  * ========================================================================== */
