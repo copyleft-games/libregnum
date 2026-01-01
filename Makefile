@@ -327,7 +327,56 @@ PUBLIC_HEADERS := \
 	src/demo/lrg-demo-manager.h \
 	src/vr/lrg-vr-service.h \
 	src/vr/lrg-vr-stub.h \
-	src/vr/lrg-vr-comfort.h
+	src/vr/lrg-vr-comfort.h \
+	src/deckbuilder/lrg-card-def.h \
+	src/deckbuilder/lrg-card-instance.h \
+	src/deckbuilder/lrg-card-pile.h \
+	src/deckbuilder/lrg-hand.h \
+	src/deckbuilder/lrg-deck-def.h \
+	src/deckbuilder/lrg-deck-instance.h \
+	src/deckbuilder/lrg-deck-builder.h \
+	src/deckbuilder/lrg-card-effect.h \
+	src/deckbuilder/lrg-card-effect-executor.h \
+	src/deckbuilder/lrg-card-effect-registry.h \
+	src/deckbuilder/lrg-effect-stack.h \
+	src/deckbuilder/lrg-card-event.h \
+	src/deckbuilder/lrg-trigger-listener.h \
+	src/deckbuilder/lrg-event-bus.h \
+	src/deckbuilder/lrg-card-keyword.h \
+	src/deckbuilder/lrg-card-keyword-def.h \
+	src/deckbuilder/lrg-card-keyword-registry.h \
+	src/deckbuilder/lrg-synergy.h \
+	src/deckbuilder/lrg-status-effect-def.h \
+	src/deckbuilder/lrg-status-effect-instance.h \
+	src/deckbuilder/lrg-status-effect-registry.h \
+	src/deckbuilder/lrg-relic-def.h \
+	src/deckbuilder/lrg-relic-instance.h \
+	src/deckbuilder/lrg-relic-registry.h \
+	src/deckbuilder/lrg-potion-def.h \
+	src/deckbuilder/lrg-potion-instance.h \
+	src/deckbuilder/lrg-combatant.h \
+	src/deckbuilder/lrg-combat-rules.h \
+	src/deckbuilder/lrg-enemy-intent.h \
+	src/deckbuilder/lrg-enemy-def.h \
+	src/deckbuilder/lrg-enemy-instance.h \
+	src/deckbuilder/lrg-player-combatant.h \
+	src/deckbuilder/lrg-combat-context.h \
+	src/deckbuilder/lrg-combat-manager.h \
+	src/deckbuilder/lrg-map-node.h \
+	src/deckbuilder/lrg-run-map.h \
+	src/deckbuilder/lrg-run.h \
+	src/deckbuilder/lrg-run-manager.h \
+	src/deckbuilder/lrg-scoring-rules.h \
+	src/deckbuilder/lrg-scoring-hand.h \
+	src/deckbuilder/lrg-scoring-context.h \
+	src/deckbuilder/lrg-joker-def.h \
+	src/deckbuilder/lrg-joker-instance.h \
+	src/deckbuilder/lrg-scoring-manager.h \
+	src/deckbuilder/lrg-character-def.h \
+	src/deckbuilder/lrg-player-profile.h \
+	src/deckbuilder/lrg-unlock-def.h \
+	src/deckbuilder/lrg-ascension.h \
+	src/deckbuilder/lrg-deckbuilder-manager.h
 
 # Source files
 SOURCES := \
@@ -630,7 +679,56 @@ SOURCES := \
 	src/demo/lrg-demo-manager.c \
 	src/vr/lrg-vr-service.c \
 	src/vr/lrg-vr-stub.c \
-	src/vr/lrg-vr-comfort.c
+	src/vr/lrg-vr-comfort.c \
+	src/deckbuilder/lrg-card-def.c \
+	src/deckbuilder/lrg-card-instance.c \
+	src/deckbuilder/lrg-card-pile.c \
+	src/deckbuilder/lrg-hand.c \
+	src/deckbuilder/lrg-deck-def.c \
+	src/deckbuilder/lrg-deck-instance.c \
+	src/deckbuilder/lrg-deck-builder.c \
+	src/deckbuilder/lrg-card-effect.c \
+	src/deckbuilder/lrg-card-effect-executor.c \
+	src/deckbuilder/lrg-card-effect-registry.c \
+	src/deckbuilder/lrg-effect-stack.c \
+	src/deckbuilder/lrg-card-event.c \
+	src/deckbuilder/lrg-trigger-listener.c \
+	src/deckbuilder/lrg-event-bus.c \
+	src/deckbuilder/lrg-card-keyword.c \
+	src/deckbuilder/lrg-card-keyword-def.c \
+	src/deckbuilder/lrg-card-keyword-registry.c \
+	src/deckbuilder/lrg-synergy.c \
+	src/deckbuilder/lrg-status-effect-def.c \
+	src/deckbuilder/lrg-status-effect-instance.c \
+	src/deckbuilder/lrg-status-effect-registry.c \
+	src/deckbuilder/lrg-relic-def.c \
+	src/deckbuilder/lrg-relic-instance.c \
+	src/deckbuilder/lrg-relic-registry.c \
+	src/deckbuilder/lrg-potion-def.c \
+	src/deckbuilder/lrg-potion-instance.c \
+	src/deckbuilder/lrg-combatant.c \
+	src/deckbuilder/lrg-combat-rules.c \
+	src/deckbuilder/lrg-enemy-intent.c \
+	src/deckbuilder/lrg-enemy-def.c \
+	src/deckbuilder/lrg-enemy-instance.c \
+	src/deckbuilder/lrg-player-combatant.c \
+	src/deckbuilder/lrg-combat-context.c \
+	src/deckbuilder/lrg-combat-manager.c \
+	src/deckbuilder/lrg-map-node.c \
+	src/deckbuilder/lrg-run-map.c \
+	src/deckbuilder/lrg-run.c \
+	src/deckbuilder/lrg-run-manager.c \
+	src/deckbuilder/lrg-scoring-rules.c \
+	src/deckbuilder/lrg-scoring-hand.c \
+	src/deckbuilder/lrg-scoring-context.c \
+	src/deckbuilder/lrg-joker-def.c \
+	src/deckbuilder/lrg-joker-instance.c \
+	src/deckbuilder/lrg-scoring-manager.c \
+	src/deckbuilder/lrg-character-def.c \
+	src/deckbuilder/lrg-player-profile.c \
+	src/deckbuilder/lrg-unlock-def.c \
+	src/deckbuilder/lrg-ascension.c \
+	src/deckbuilder/lrg-deckbuilder-manager.c
 
 # Conditional scripting backends
 ifeq ($(HAS_LUAJIT),1)

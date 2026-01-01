@@ -3531,4 +3531,912 @@ LRG_AVAILABLE_IN_ALL
 GQuark lrg_vr_error_quark (void);
 #define LRG_VR_ERROR (lrg_vr_error_quark ())
 
+/* ==========================================================================
+ * Deckbuilder Module
+ * ========================================================================== */
+
+/**
+ * LRG_DECKBUILDER_ERROR:
+ *
+ * Error domain for deckbuilder errors.
+ */
+#define LRG_DECKBUILDER_ERROR (lrg_deckbuilder_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_deckbuilder_error_quark (void);
+
+/**
+ * LrgDeckbuilderError:
+ * @LRG_DECKBUILDER_ERROR_FAILED: Generic failure
+ * @LRG_DECKBUILDER_ERROR_INSUFFICIENT_ENERGY: Not enough energy to play card
+ * @LRG_DECKBUILDER_ERROR_CARD_UNPLAYABLE: Card cannot be played (condition not met)
+ * @LRG_DECKBUILDER_ERROR_INVALID_TARGET: Invalid target for card effect
+ * @LRG_DECKBUILDER_ERROR_COMBAT_NOT_ACTIVE: Combat not in active phase
+ * @LRG_DECKBUILDER_ERROR_DECK_EMPTY: No cards in deck
+ * @LRG_DECKBUILDER_ERROR_HAND_FULL: Hand is at maximum capacity
+ * @LRG_DECKBUILDER_ERROR_INVALID_ZONE: Invalid card zone operation
+ * @LRG_DECKBUILDER_ERROR_DECK_TOO_SMALL: Deck has fewer cards than minimum
+ * @LRG_DECKBUILDER_ERROR_DECK_TOO_LARGE: Deck has more cards than maximum
+ * @LRG_DECKBUILDER_ERROR_CARD_NOT_ALLOWED: Card type not allowed in deck
+ * @LRG_DECKBUILDER_ERROR_CARD_BANNED: Card is banned from deck
+ * @LRG_DECKBUILDER_ERROR_CARD_LIMIT_EXCEEDED: Too many copies of card
+ * @LRG_DECKBUILDER_ERROR_EXECUTOR_NOT_FOUND: Effect executor not registered
+ *
+ * Error codes for the deckbuilder system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_DECKBUILDER_ERROR_FAILED,
+    LRG_DECKBUILDER_ERROR_INSUFFICIENT_ENERGY,
+    LRG_DECKBUILDER_ERROR_CARD_UNPLAYABLE,
+    LRG_DECKBUILDER_ERROR_INVALID_TARGET,
+    LRG_DECKBUILDER_ERROR_COMBAT_NOT_ACTIVE,
+    LRG_DECKBUILDER_ERROR_DECK_EMPTY,
+    LRG_DECKBUILDER_ERROR_HAND_FULL,
+    LRG_DECKBUILDER_ERROR_INVALID_ZONE,
+    LRG_DECKBUILDER_ERROR_DECK_TOO_SMALL,
+    LRG_DECKBUILDER_ERROR_DECK_TOO_LARGE,
+    LRG_DECKBUILDER_ERROR_CARD_NOT_ALLOWED,
+    LRG_DECKBUILDER_ERROR_CARD_BANNED,
+    LRG_DECKBUILDER_ERROR_CARD_LIMIT_EXCEEDED,
+    LRG_DECKBUILDER_ERROR_EXECUTOR_NOT_FOUND
+} LrgDeckbuilderError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_deckbuilder_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DECKBUILDER_ERROR (lrg_deckbuilder_error_get_type ())
+
+/**
+ * LrgCardType:
+ * @LRG_CARD_TYPE_ATTACK: Attack card - deals damage
+ * @LRG_CARD_TYPE_SKILL: Skill card - provides utility/defense
+ * @LRG_CARD_TYPE_POWER: Power card - persistent effect for combat
+ * @LRG_CARD_TYPE_STATUS: Status card - negative card added to deck
+ * @LRG_CARD_TYPE_CURSE: Curse card - permanent negative card
+ *
+ * The type of a card, determining its behavior and visual style.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CARD_TYPE_ATTACK,
+    LRG_CARD_TYPE_SKILL,
+    LRG_CARD_TYPE_POWER,
+    LRG_CARD_TYPE_STATUS,
+    LRG_CARD_TYPE_CURSE
+} LrgCardType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_TYPE (lrg_card_type_get_type ())
+
+/**
+ * LrgCardRarity:
+ * @LRG_CARD_RARITY_STARTER: Starter deck card
+ * @LRG_CARD_RARITY_COMMON: Common card (higher drop rate)
+ * @LRG_CARD_RARITY_UNCOMMON: Uncommon card (medium drop rate)
+ * @LRG_CARD_RARITY_RARE: Rare card (low drop rate)
+ * @LRG_CARD_RARITY_SPECIAL: Special card (not in normal pools)
+ *
+ * The rarity of a card, affecting drop rates and visual styling.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CARD_RARITY_STARTER,
+    LRG_CARD_RARITY_COMMON,
+    LRG_CARD_RARITY_UNCOMMON,
+    LRG_CARD_RARITY_RARE,
+    LRG_CARD_RARITY_SPECIAL
+} LrgCardRarity;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_rarity_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_RARITY (lrg_card_rarity_get_type ())
+
+/**
+ * LrgCardTargetType:
+ * @LRG_CARD_TARGET_NONE: No target required
+ * @LRG_CARD_TARGET_SELF: Targets self (player)
+ * @LRG_CARD_TARGET_SINGLE_ENEMY: Requires selecting one enemy
+ * @LRG_CARD_TARGET_ALL_ENEMIES: Affects all enemies
+ * @LRG_CARD_TARGET_RANDOM_ENEMY: Affects a random enemy
+ *
+ * Target type for card effects.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CARD_TARGET_NONE,
+    LRG_CARD_TARGET_SELF,
+    LRG_CARD_TARGET_SINGLE_ENEMY,
+    LRG_CARD_TARGET_ALL_ENEMIES,
+    LRG_CARD_TARGET_RANDOM_ENEMY
+} LrgCardTargetType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_target_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_TARGET_TYPE (lrg_card_target_type_get_type ())
+
+/**
+ * LrgPilePosition:
+ * @LRG_PILE_POSITION_TOP: Top of the pile (drawn first)
+ * @LRG_PILE_POSITION_BOTTOM: Bottom of the pile (drawn last)
+ * @LRG_PILE_POSITION_RANDOM: Random position in pile
+ *
+ * Position for adding cards to a pile.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_PILE_POSITION_TOP,
+    LRG_PILE_POSITION_BOTTOM,
+    LRG_PILE_POSITION_RANDOM
+} LrgPilePosition;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_pile_position_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PILE_POSITION (lrg_pile_position_get_type ())
+
+/**
+ * LrgCardZone:
+ * @LRG_ZONE_DRAW: Draw pile
+ * @LRG_ZONE_HAND: Player's hand
+ * @LRG_ZONE_DISCARD: Discard pile
+ * @LRG_ZONE_EXHAUST: Exhaust pile (removed for combat)
+ * @LRG_ZONE_PLAYED: Currently being played
+ * @LRG_ZONE_LIMBO: Temporarily removed (e.g., during scry)
+ *
+ * Zone where a card currently resides.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ZONE_DRAW,
+    LRG_ZONE_HAND,
+    LRG_ZONE_DISCARD,
+    LRG_ZONE_EXHAUST,
+    LRG_ZONE_PLAYED,
+    LRG_ZONE_LIMBO
+} LrgCardZone;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_zone_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_ZONE (lrg_card_zone_get_type ())
+
+/**
+ * LrgCardUpgradeTier:
+ * @LRG_CARD_UPGRADE_TIER_BASE: Base unupgraded card
+ * @LRG_CARD_UPGRADE_TIER_PLUS: First upgrade (+)
+ * @LRG_CARD_UPGRADE_TIER_PLUS_PLUS: Second upgrade (++)
+ * @LRG_CARD_UPGRADE_TIER_ULTIMATE: Maximum upgrade level
+ *
+ * Upgrade tier for card instances.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CARD_UPGRADE_TIER_BASE,
+    LRG_CARD_UPGRADE_TIER_PLUS,
+    LRG_CARD_UPGRADE_TIER_PLUS_PLUS,
+    LRG_CARD_UPGRADE_TIER_ULTIMATE
+} LrgCardUpgradeTier;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_upgrade_tier_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_UPGRADE_TIER (lrg_card_upgrade_tier_get_type ())
+
+/**
+ * LrgCardKeyword:
+ * @LRG_CARD_KEYWORD_NONE: No keywords
+ * @LRG_CARD_KEYWORD_INNATE: Drawn first at start of combat
+ * @LRG_CARD_KEYWORD_RETAIN: Not discarded at end of turn
+ * @LRG_CARD_KEYWORD_EXHAUST: Removed from deck when played
+ * @LRG_CARD_KEYWORD_ETHEREAL: Exhausted if in hand at end of turn
+ * @LRG_CARD_KEYWORD_UNPLAYABLE: Cannot be played
+ * @LRG_CARD_KEYWORD_X_COST: Cost equals remaining energy
+ * @LRG_CARD_KEYWORD_FRAGILE: Destroyed when discarded
+ * @LRG_CARD_KEYWORD_FLEETING: Exhausted at end of turn if not played
+ *
+ * Keywords that modify card behavior (flags).
+ *
+ * Since: 1.0
+ */
+typedef enum /*< flags >*/
+{
+    LRG_CARD_KEYWORD_NONE       = 0,
+    LRG_CARD_KEYWORD_INNATE     = 1 << 0,
+    LRG_CARD_KEYWORD_RETAIN     = 1 << 1,
+    LRG_CARD_KEYWORD_EXHAUST    = 1 << 2,
+    LRG_CARD_KEYWORD_ETHEREAL   = 1 << 3,
+    LRG_CARD_KEYWORD_UNPLAYABLE = 1 << 4,
+    LRG_CARD_KEYWORD_X_COST     = 1 << 5,
+    LRG_CARD_KEYWORD_FRAGILE    = 1 << 6,
+    LRG_CARD_KEYWORD_FLEETING   = 1 << 7
+} LrgCardKeyword;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_keyword_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_KEYWORD (lrg_card_keyword_get_type ())
+
+/**
+ * LrgEffectFlags:
+ * @LRG_EFFECT_FLAG_NONE: No special flags
+ * @LRG_EFFECT_FLAG_UNBLOCKABLE: Cannot be blocked
+ * @LRG_EFFECT_FLAG_PIERCING: Partially ignores block
+ * @LRG_EFFECT_FLAG_TRUE_DAMAGE: Ignores all modifiers
+ * @LRG_EFFECT_FLAG_HP_LOSS: Direct HP loss (ignores block)
+ * @LRG_EFFECT_FLAG_LIFESTEAL: Heals attacker for damage dealt
+ * @LRG_EFFECT_FLAG_AOE: Affects all targets
+ * @LRG_EFFECT_FLAG_DELAYED: Effect is delayed to end of turn
+ *
+ * Flags modifying how effects are applied.
+ *
+ * Since: 1.0
+ */
+typedef enum /*< flags >*/
+{
+    LRG_EFFECT_FLAG_NONE        = 0,
+    LRG_EFFECT_FLAG_UNBLOCKABLE = 1 << 0,
+    LRG_EFFECT_FLAG_PIERCING    = 1 << 1,
+    LRG_EFFECT_FLAG_TRUE_DAMAGE = 1 << 2,
+    LRG_EFFECT_FLAG_HP_LOSS     = 1 << 3,
+    LRG_EFFECT_FLAG_LIFESTEAL   = 1 << 4,
+    LRG_EFFECT_FLAG_AOE         = 1 << 5,
+    LRG_EFFECT_FLAG_DELAYED     = 1 << 6
+} LrgEffectFlags;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_effect_flags_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_EFFECT_FLAGS (lrg_effect_flags_get_type ())
+
+/**
+ * LrgCombatPhase:
+ * @LRG_COMBAT_PHASE_SETUP: Combat initialization
+ * @LRG_COMBAT_PHASE_PLAYER_START: Player turn start
+ * @LRG_COMBAT_PHASE_PLAYER_PLAY: Player can play cards
+ * @LRG_COMBAT_PHASE_PLAYER_END: Player turn end
+ * @LRG_COMBAT_PHASE_ENEMY_TURN: Enemies executing intents
+ * @LRG_COMBAT_PHASE_FINISHED: Combat has ended
+ *
+ * Current phase of combat.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_COMBAT_PHASE_SETUP,
+    LRG_COMBAT_PHASE_PLAYER_START,
+    LRG_COMBAT_PHASE_PLAYER_PLAY,
+    LRG_COMBAT_PHASE_PLAYER_END,
+    LRG_COMBAT_PHASE_ENEMY_TURN,
+    LRG_COMBAT_PHASE_FINISHED
+} LrgCombatPhase;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_combat_phase_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_COMBAT_PHASE (lrg_combat_phase_get_type ())
+
+/**
+ * LrgIntentType:
+ * @LRG_INTENT_UNKNOWN: Unknown intent
+ * @LRG_INTENT_ATTACK: Will deal damage
+ * @LRG_INTENT_DEFEND: Will gain block
+ * @LRG_INTENT_BUFF: Will buff self
+ * @LRG_INTENT_DEBUFF: Will debuff player
+ * @LRG_INTENT_ATTACK_BUFF: Will attack and buff
+ * @LRG_INTENT_ATTACK_DEBUFF: Will attack and debuff
+ * @LRG_INTENT_STRONG_DEBUFF: Powerful debuff
+ * @LRG_INTENT_ESCAPE: Will flee combat
+ * @LRG_INTENT_SLEEP: Sleeping/inactive
+ * @LRG_INTENT_STUN: Stunned/skipping turn
+ *
+ * Enemy intent types for visual display.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_INTENT_UNKNOWN,
+    LRG_INTENT_ATTACK,
+    LRG_INTENT_DEFEND,
+    LRG_INTENT_BUFF,
+    LRG_INTENT_DEBUFF,
+    LRG_INTENT_ATTACK_BUFF,
+    LRG_INTENT_ATTACK_DEBUFF,
+    LRG_INTENT_STRONG_DEBUFF,
+    LRG_INTENT_ESCAPE,
+    LRG_INTENT_SLEEP,
+    LRG_INTENT_STUN
+} LrgIntentType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_intent_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_INTENT_TYPE (lrg_intent_type_get_type ())
+
+/**
+ * LrgStatusType:
+ * @LRG_STATUS_TYPE_BUFF: Positive effect
+ * @LRG_STATUS_TYPE_DEBUFF: Negative effect
+ * @LRG_STATUS_TYPE_NEUTRAL: Neutral effect
+ *
+ * Category of a status effect.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_STATUS_TYPE_BUFF,
+    LRG_STATUS_TYPE_DEBUFF,
+    LRG_STATUS_TYPE_NEUTRAL
+} LrgStatusType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_status_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_STATUS_TYPE (lrg_status_type_get_type ())
+
+/**
+ * LrgStatusDuration:
+ * @LRG_STATUS_DURATION_COMBAT: Lasts entire combat
+ * @LRG_STATUS_DURATION_TURN: Counts down each turn
+ * @LRG_STATUS_DURATION_ATTACK: Counts down on attack
+ * @LRG_STATUS_DURATION_PERMANENT: Never expires
+ *
+ * How a status effect's duration is tracked.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_STATUS_DURATION_COMBAT,
+    LRG_STATUS_DURATION_TURN,
+    LRG_STATUS_DURATION_ATTACK,
+    LRG_STATUS_DURATION_PERMANENT
+} LrgStatusDuration;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_status_duration_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_STATUS_DURATION (lrg_status_duration_get_type ())
+
+/**
+ * LrgRelicRarity:
+ * @LRG_RELIC_RARITY_STARTER: Starting character relic
+ * @LRG_RELIC_RARITY_COMMON: Common relic
+ * @LRG_RELIC_RARITY_UNCOMMON: Uncommon relic
+ * @LRG_RELIC_RARITY_RARE: Rare relic
+ * @LRG_RELIC_RARITY_BOSS: Boss reward relic
+ * @LRG_RELIC_RARITY_EVENT: Event-only relic
+ * @LRG_RELIC_RARITY_SHOP: Shop-only relic
+ * @LRG_RELIC_RARITY_SPECIAL: Special/unique relic
+ *
+ * Rarity tier for relics.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_RELIC_RARITY_STARTER,
+    LRG_RELIC_RARITY_COMMON,
+    LRG_RELIC_RARITY_UNCOMMON,
+    LRG_RELIC_RARITY_RARE,
+    LRG_RELIC_RARITY_BOSS,
+    LRG_RELIC_RARITY_EVENT,
+    LRG_RELIC_RARITY_SHOP,
+    LRG_RELIC_RARITY_SPECIAL
+} LrgRelicRarity;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_relic_rarity_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_RELIC_RARITY (lrg_relic_rarity_get_type ())
+
+/**
+ * LrgMapNodeType:
+ * @LRG_MAP_NODE_COMBAT: Normal combat encounter
+ * @LRG_MAP_NODE_ELITE: Elite combat encounter
+ * @LRG_MAP_NODE_BOSS: Boss combat encounter
+ * @LRG_MAP_NODE_EVENT: Random event
+ * @LRG_MAP_NODE_SHOP: Shop
+ * @LRG_MAP_NODE_REST: Rest site (heal/upgrade)
+ * @LRG_MAP_NODE_TREASURE: Treasure room
+ * @LRG_MAP_NODE_MYSTERY: Unknown/mystery node
+ *
+ * Type of node on the run map.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_MAP_NODE_COMBAT,
+    LRG_MAP_NODE_ELITE,
+    LRG_MAP_NODE_BOSS,
+    LRG_MAP_NODE_EVENT,
+    LRG_MAP_NODE_SHOP,
+    LRG_MAP_NODE_REST,
+    LRG_MAP_NODE_TREASURE,
+    LRG_MAP_NODE_MYSTERY
+} LrgMapNodeType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_map_node_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_MAP_NODE_TYPE (lrg_map_node_type_get_type ())
+
+/**
+ * LrgCardEventType:
+ * @LRG_CARD_EVENT_COMBAT_START: Combat has started
+ * @LRG_CARD_EVENT_COMBAT_END: Combat has ended
+ * @LRG_CARD_EVENT_TURN_START: Turn has started
+ * @LRG_CARD_EVENT_TURN_END: Turn has ended
+ * @LRG_CARD_EVENT_CARD_DRAWN: A card was drawn
+ * @LRG_CARD_EVENT_CARD_PLAYED: A card was played
+ * @LRG_CARD_EVENT_CARD_DISCARDED: A card was discarded
+ * @LRG_CARD_EVENT_CARD_EXHAUSTED: A card was exhausted
+ * @LRG_CARD_EVENT_DAMAGE_DEALT: Damage was dealt
+ * @LRG_CARD_EVENT_DAMAGE_RECEIVED: Damage was received
+ * @LRG_CARD_EVENT_BLOCK_GAINED: Block was gained
+ * @LRG_CARD_EVENT_HEAL: Healing occurred
+ * @LRG_CARD_EVENT_STATUS_APPLIED: Status effect applied
+ * @LRG_CARD_EVENT_STATUS_REMOVED: Status effect removed
+ * @LRG_CARD_EVENT_ENERGY_GAINED: Energy was gained
+ * @LRG_CARD_EVENT_SHUFFLE: Deck was shuffled
+ * @LRG_CARD_EVENT_ENEMY_DIED: An enemy died
+ * @LRG_CARD_EVENT_RELIC_TRIGGERED: A relic triggered
+ *
+ * Types of events in the deckbuilder event bus.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CARD_EVENT_COMBAT_START,
+    LRG_CARD_EVENT_COMBAT_END,
+    LRG_CARD_EVENT_TURN_START,
+    LRG_CARD_EVENT_TURN_END,
+    LRG_CARD_EVENT_CARD_DRAWN,
+    LRG_CARD_EVENT_CARD_PLAYED,
+    LRG_CARD_EVENT_CARD_DISCARDED,
+    LRG_CARD_EVENT_CARD_EXHAUSTED,
+    LRG_CARD_EVENT_DAMAGE_DEALT,
+    LRG_CARD_EVENT_DAMAGE_RECEIVED,
+    LRG_CARD_EVENT_BLOCK_GAINED,
+    LRG_CARD_EVENT_HEAL,
+    LRG_CARD_EVENT_STATUS_APPLIED,
+    LRG_CARD_EVENT_STATUS_REMOVED,
+    LRG_CARD_EVENT_ENERGY_GAINED,
+    LRG_CARD_EVENT_SHUFFLE,
+    LRG_CARD_EVENT_ENEMY_DIED,
+    LRG_CARD_EVENT_RELIC_TRIGGERED
+} LrgCardEventType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_event_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_EVENT_TYPE (lrg_card_event_type_get_type ())
+
+/**
+ * LrgHandType:
+ * @LRG_HAND_TYPE_NONE: No valid hand
+ * @LRG_HAND_TYPE_HIGH_CARD: High card
+ * @LRG_HAND_TYPE_PAIR: One pair
+ * @LRG_HAND_TYPE_TWO_PAIR: Two pair
+ * @LRG_HAND_TYPE_THREE_OF_A_KIND: Three of a kind
+ * @LRG_HAND_TYPE_STRAIGHT: Straight
+ * @LRG_HAND_TYPE_FLUSH: Flush
+ * @LRG_HAND_TYPE_FULL_HOUSE: Full house
+ * @LRG_HAND_TYPE_FOUR_OF_A_KIND: Four of a kind
+ * @LRG_HAND_TYPE_STRAIGHT_FLUSH: Straight flush
+ * @LRG_HAND_TYPE_ROYAL_FLUSH: Royal flush
+ * @LRG_HAND_TYPE_FIVE_OF_A_KIND: Five of a kind (requires wild)
+ * @LRG_HAND_TYPE_FLUSH_HOUSE: Flush full house (Balatro special)
+ * @LRG_HAND_TYPE_FLUSH_FIVE: Flush five of a kind (Balatro special)
+ *
+ * Poker hand types for scoring deckbuilders (Balatro-style).
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_HAND_TYPE_NONE,
+    LRG_HAND_TYPE_HIGH_CARD,
+    LRG_HAND_TYPE_PAIR,
+    LRG_HAND_TYPE_TWO_PAIR,
+    LRG_HAND_TYPE_THREE_OF_A_KIND,
+    LRG_HAND_TYPE_STRAIGHT,
+    LRG_HAND_TYPE_FLUSH,
+    LRG_HAND_TYPE_FULL_HOUSE,
+    LRG_HAND_TYPE_FOUR_OF_A_KIND,
+    LRG_HAND_TYPE_STRAIGHT_FLUSH,
+    LRG_HAND_TYPE_ROYAL_FLUSH,
+    LRG_HAND_TYPE_FIVE_OF_A_KIND,
+    LRG_HAND_TYPE_FLUSH_HOUSE,
+    LRG_HAND_TYPE_FLUSH_FIVE
+} LrgHandType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_hand_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_HAND_TYPE (lrg_hand_type_get_type ())
+
+/**
+ * LrgCardSuit:
+ * @LRG_CARD_SUIT_NONE: No suit (for non-poker cards)
+ * @LRG_CARD_SUIT_SPADES: Spades
+ * @LRG_CARD_SUIT_HEARTS: Hearts
+ * @LRG_CARD_SUIT_DIAMONDS: Diamonds
+ * @LRG_CARD_SUIT_CLUBS: Clubs
+ *
+ * Playing card suits for scoring deckbuilders.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CARD_SUIT_NONE,
+    LRG_CARD_SUIT_SPADES,
+    LRG_CARD_SUIT_HEARTS,
+    LRG_CARD_SUIT_DIAMONDS,
+    LRG_CARD_SUIT_CLUBS
+} LrgCardSuit;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_suit_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_SUIT (lrg_card_suit_get_type ())
+
+/**
+ * LrgCardRank:
+ * @LRG_CARD_RANK_NONE: No rank
+ * @LRG_CARD_RANK_ACE: Ace (value 1 or 14)
+ * @LRG_CARD_RANK_TWO: Two
+ * @LRG_CARD_RANK_THREE: Three
+ * @LRG_CARD_RANK_FOUR: Four
+ * @LRG_CARD_RANK_FIVE: Five
+ * @LRG_CARD_RANK_SIX: Six
+ * @LRG_CARD_RANK_SEVEN: Seven
+ * @LRG_CARD_RANK_EIGHT: Eight
+ * @LRG_CARD_RANK_NINE: Nine
+ * @LRG_CARD_RANK_TEN: Ten
+ * @LRG_CARD_RANK_JACK: Jack
+ * @LRG_CARD_RANK_QUEEN: Queen
+ * @LRG_CARD_RANK_KING: King
+ *
+ * Playing card ranks for scoring deckbuilders.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CARD_RANK_NONE,
+    LRG_CARD_RANK_ACE,
+    LRG_CARD_RANK_TWO,
+    LRG_CARD_RANK_THREE,
+    LRG_CARD_RANK_FOUR,
+    LRG_CARD_RANK_FIVE,
+    LRG_CARD_RANK_SIX,
+    LRG_CARD_RANK_SEVEN,
+    LRG_CARD_RANK_EIGHT,
+    LRG_CARD_RANK_NINE,
+    LRG_CARD_RANK_TEN,
+    LRG_CARD_RANK_JACK,
+    LRG_CARD_RANK_QUEEN,
+    LRG_CARD_RANK_KING
+} LrgCardRank;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_rank_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_RANK (lrg_card_rank_get_type ())
+
+/**
+ * LrgEnemyType:
+ * @LRG_ENEMY_TYPE_NORMAL: Normal enemy
+ * @LRG_ENEMY_TYPE_ELITE: Elite enemy (stronger, better rewards)
+ * @LRG_ENEMY_TYPE_BOSS: Boss enemy (end of act)
+ * @LRG_ENEMY_TYPE_MINION: Minion (summoned by other enemies)
+ *
+ * Classification of enemy types.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ENEMY_TYPE_NORMAL,
+    LRG_ENEMY_TYPE_ELITE,
+    LRG_ENEMY_TYPE_BOSS,
+    LRG_ENEMY_TYPE_MINION
+} LrgEnemyType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_enemy_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ENEMY_TYPE (lrg_enemy_type_get_type ())
+
+/**
+ * LrgCombatResult:
+ * @LRG_COMBAT_RESULT_IN_PROGRESS: Combat is ongoing
+ * @LRG_COMBAT_RESULT_VICTORY: Player won
+ * @LRG_COMBAT_RESULT_DEFEAT: Player lost
+ * @LRG_COMBAT_RESULT_ESCAPE: Combat ended by escape
+ *
+ * Result of a combat encounter.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_COMBAT_RESULT_IN_PROGRESS,
+    LRG_COMBAT_RESULT_VICTORY,
+    LRG_COMBAT_RESULT_DEFEAT,
+    LRG_COMBAT_RESULT_ESCAPE
+} LrgCombatResult;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_combat_result_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_COMBAT_RESULT (lrg_combat_result_get_type ())
+
+/**
+ * LrgRunState:
+ * @LRG_RUN_STATE_NOT_STARTED: Run has not started yet
+ * @LRG_RUN_STATE_MAP: Player is on the map selecting a node
+ * @LRG_RUN_STATE_COMBAT: Player is in combat
+ * @LRG_RUN_STATE_EVENT: Player is in an event
+ * @LRG_RUN_STATE_SHOP: Player is in the shop
+ * @LRG_RUN_STATE_REST: Player is at a rest site
+ * @LRG_RUN_STATE_TREASURE: Player is at a treasure room
+ * @LRG_RUN_STATE_CARD_REWARD: Player is selecting a card reward
+ * @LRG_RUN_STATE_BOSS_RELIC: Player is selecting a boss relic
+ * @LRG_RUN_STATE_VICTORY: Run completed successfully
+ * @LRG_RUN_STATE_DEFEAT: Player was defeated
+ *
+ * Current state of a deckbuilder run.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_RUN_STATE_NOT_STARTED,
+    LRG_RUN_STATE_MAP,
+    LRG_RUN_STATE_COMBAT,
+    LRG_RUN_STATE_EVENT,
+    LRG_RUN_STATE_SHOP,
+    LRG_RUN_STATE_REST,
+    LRG_RUN_STATE_TREASURE,
+    LRG_RUN_STATE_CARD_REWARD,
+    LRG_RUN_STATE_BOSS_RELIC,
+    LRG_RUN_STATE_VICTORY,
+    LRG_RUN_STATE_DEFEAT
+} LrgRunState;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_run_state_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_RUN_STATE (lrg_run_state_get_type ())
+
+/**
+ * LrgCardEnhancement:
+ * @LRG_CARD_ENHANCEMENT_NONE: No enhancement
+ * @LRG_CARD_ENHANCEMENT_BONUS: +30 chips
+ * @LRG_CARD_ENHANCEMENT_MULT: +4 mult
+ * @LRG_CARD_ENHANCEMENT_WILD: Counts as all suits
+ * @LRG_CARD_ENHANCEMENT_GLASS: x2 mult, may break
+ * @LRG_CARD_ENHANCEMENT_STEEL: x1.5 mult when held
+ * @LRG_CARD_ENHANCEMENT_STONE: +50 chips, no rank/suit
+ * @LRG_CARD_ENHANCEMENT_GOLD: +3 money when held at end of round
+ * @LRG_CARD_ENHANCEMENT_LUCKY: 1 in 5 chance for +20 mult or money
+ *
+ * Enhancement types for scoring cards (Balatro-style).
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CARD_ENHANCEMENT_NONE,
+    LRG_CARD_ENHANCEMENT_BONUS,
+    LRG_CARD_ENHANCEMENT_MULT,
+    LRG_CARD_ENHANCEMENT_WILD,
+    LRG_CARD_ENHANCEMENT_GLASS,
+    LRG_CARD_ENHANCEMENT_STEEL,
+    LRG_CARD_ENHANCEMENT_STONE,
+    LRG_CARD_ENHANCEMENT_GOLD,
+    LRG_CARD_ENHANCEMENT_LUCKY
+} LrgCardEnhancement;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_enhancement_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_ENHANCEMENT (lrg_card_enhancement_get_type ())
+
+/**
+ * LrgCardSeal:
+ * @LRG_CARD_SEAL_NONE: No seal
+ * @LRG_CARD_SEAL_GOLD: Creates money when played
+ * @LRG_CARD_SEAL_RED: Retriggered
+ * @LRG_CARD_SEAL_BLUE: Creates a Planet card when held at end of round
+ * @LRG_CARD_SEAL_PURPLE: Creates a Tarot card when discarded
+ *
+ * Seal types for scoring cards (Balatro-style).
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CARD_SEAL_NONE,
+    LRG_CARD_SEAL_GOLD,
+    LRG_CARD_SEAL_RED,
+    LRG_CARD_SEAL_BLUE,
+    LRG_CARD_SEAL_PURPLE
+} LrgCardSeal;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_card_seal_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CARD_SEAL (lrg_card_seal_get_type ())
+
+/**
+ * LrgJokerRarity:
+ * @LRG_JOKER_RARITY_COMMON: Common joker
+ * @LRG_JOKER_RARITY_UNCOMMON: Uncommon joker
+ * @LRG_JOKER_RARITY_RARE: Rare joker
+ * @LRG_JOKER_RARITY_LEGENDARY: Legendary joker
+ *
+ * Rarity levels for jokers (Balatro-style).
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_JOKER_RARITY_COMMON,
+    LRG_JOKER_RARITY_UNCOMMON,
+    LRG_JOKER_RARITY_RARE,
+    LRG_JOKER_RARITY_LEGENDARY
+} LrgJokerRarity;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_joker_rarity_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_JOKER_RARITY (lrg_joker_rarity_get_type ())
+
+/**
+ * LrgJokerEdition:
+ * @LRG_JOKER_EDITION_BASE: No special edition
+ * @LRG_JOKER_EDITION_FOIL: +50 chips
+ * @LRG_JOKER_EDITION_HOLOGRAPHIC: +10 mult
+ * @LRG_JOKER_EDITION_POLYCHROME: x1.5 mult
+ * @LRG_JOKER_EDITION_NEGATIVE: +1 joker slot
+ *
+ * Edition types for jokers (Balatro-style).
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_JOKER_EDITION_BASE,
+    LRG_JOKER_EDITION_FOIL,
+    LRG_JOKER_EDITION_HOLOGRAPHIC,
+    LRG_JOKER_EDITION_POLYCHROME,
+    LRG_JOKER_EDITION_NEGATIVE
+} LrgJokerEdition;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_joker_edition_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_JOKER_EDITION (lrg_joker_edition_get_type ())
+
+/**
+ * LrgScoringPhase:
+ * @LRG_SCORING_PHASE_SETUP: Setting up the round
+ * @LRG_SCORING_PHASE_DRAW: Drawing cards
+ * @LRG_SCORING_PHASE_SELECT: Selecting cards to play
+ * @LRG_SCORING_PHASE_SCORE: Scoring the selected cards
+ * @LRG_SCORING_PHASE_DISCARD: Discarding cards
+ * @LRG_SCORING_PHASE_SHOP: Shopping between rounds
+ * @LRG_SCORING_PHASE_FINISHED: Round/game finished
+ *
+ * Phases in a scoring deckbuilder round.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_SCORING_PHASE_SETUP,
+    LRG_SCORING_PHASE_DRAW,
+    LRG_SCORING_PHASE_SELECT,
+    LRG_SCORING_PHASE_SCORE,
+    LRG_SCORING_PHASE_DISCARD,
+    LRG_SCORING_PHASE_SHOP,
+    LRG_SCORING_PHASE_FINISHED
+} LrgScoringPhase;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_scoring_phase_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SCORING_PHASE (lrg_scoring_phase_get_type ())
+
+/* --- Phase 7: Meta-Progression --- */
+
+/**
+ * LrgAscensionModifier:
+ * @LRG_ASCENSION_MODIFIER_NONE: No modifiers
+ * @LRG_ASCENSION_MODIFIER_ENEMY_HP: Enemies have increased HP
+ * @LRG_ASCENSION_MODIFIER_ENEMY_DAMAGE: Enemies deal more damage
+ * @LRG_ASCENSION_MODIFIER_LESS_GOLD: Start with less gold
+ * @LRG_ASCENSION_MODIFIER_LESS_HEALING: Healing is less effective
+ * @LRG_ASCENSION_MODIFIER_HARDER_ELITES: Elite enemies are stronger
+ * @LRG_ASCENSION_MODIFIER_HARDER_BOSSES: Boss enemies are stronger
+ * @LRG_ASCENSION_MODIFIER_CURSES: Start with curse cards
+ * @LRG_ASCENSION_MODIFIER_LESS_POTIONS: Fewer potion slots
+ * @LRG_ASCENSION_MODIFIER_DECK_RESTRICTIONS: Deck building restrictions
+ * @LRG_ASCENSION_MODIFIER_TIME_LIMIT: Time limits on turns/decisions
+ *
+ * Flags for ascension challenge modifiers.
+ *
+ * Since: 1.0
+ */
+typedef enum /*< flags >*/
+{
+    LRG_ASCENSION_MODIFIER_NONE             = 0,
+    LRG_ASCENSION_MODIFIER_ENEMY_HP         = 1 << 0,
+    LRG_ASCENSION_MODIFIER_ENEMY_DAMAGE     = 1 << 1,
+    LRG_ASCENSION_MODIFIER_LESS_GOLD        = 1 << 2,
+    LRG_ASCENSION_MODIFIER_LESS_HEALING     = 1 << 3,
+    LRG_ASCENSION_MODIFIER_HARDER_ELITES    = 1 << 4,
+    LRG_ASCENSION_MODIFIER_HARDER_BOSSES    = 1 << 5,
+    LRG_ASCENSION_MODIFIER_CURSES           = 1 << 6,
+    LRG_ASCENSION_MODIFIER_LESS_POTIONS     = 1 << 7,
+    LRG_ASCENSION_MODIFIER_DECK_RESTRICTIONS = 1 << 8,
+    LRG_ASCENSION_MODIFIER_TIME_LIMIT       = 1 << 9
+} LrgAscensionModifier;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_ascension_modifier_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ASCENSION_MODIFIER (lrg_ascension_modifier_get_type ())
+
+/**
+ * LrgUnlockType:
+ * @LRG_UNLOCK_TYPE_CHARACTER: Unlock a playable character
+ * @LRG_UNLOCK_TYPE_CARD: Unlock a card for card pools
+ * @LRG_UNLOCK_TYPE_RELIC: Unlock a relic for relic pools
+ * @LRG_UNLOCK_TYPE_POTION: Unlock a potion type
+ * @LRG_UNLOCK_TYPE_JOKER: Unlock a joker for scoring mode
+ * @LRG_UNLOCK_TYPE_ASCENSION: Unlock next ascension level
+ * @LRG_UNLOCK_TYPE_COSMETIC: Unlock a cosmetic item
+ * @LRG_UNLOCK_TYPE_CHALLENGE: Unlock a challenge mode
+ *
+ * Types of unlockable content.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_UNLOCK_TYPE_CHARACTER,
+    LRG_UNLOCK_TYPE_CARD,
+    LRG_UNLOCK_TYPE_RELIC,
+    LRG_UNLOCK_TYPE_POTION,
+    LRG_UNLOCK_TYPE_JOKER,
+    LRG_UNLOCK_TYPE_ASCENSION,
+    LRG_UNLOCK_TYPE_COSMETIC,
+    LRG_UNLOCK_TYPE_CHALLENGE
+} LrgUnlockType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_unlock_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_UNLOCK_TYPE (lrg_unlock_type_get_type ())
+
+/**
+ * LrgUnlockStatus:
+ * @LRG_UNLOCK_STATUS_LOCKED: Content is locked
+ * @LRG_UNLOCK_STATUS_UNLOCKED: Content is unlocked
+ * @LRG_UNLOCK_STATUS_NEW: Content is newly unlocked (not yet seen)
+ *
+ * Status of unlockable content.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_UNLOCK_STATUS_LOCKED,
+    LRG_UNLOCK_STATUS_UNLOCKED,
+    LRG_UNLOCK_STATUS_NEW
+} LrgUnlockStatus;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_unlock_status_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_UNLOCK_STATUS (lrg_unlock_status_get_type ())
+
 G_END_DECLS

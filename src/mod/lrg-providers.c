@@ -437,3 +437,270 @@ lrg_locale_provider_get_locales (LrgLocaleProvider *self)
 
     return iface->get_locales (self);
 }
+
+/* ==========================================================================
+ * LrgCardProvider Interface
+ * ========================================================================== */
+
+#pragma GCC visibility push(default)
+G_DEFINE_INTERFACE (LrgCardProvider, lrg_card_provider, G_TYPE_OBJECT)
+#pragma GCC visibility pop
+
+static void
+lrg_card_provider_default_init (LrgCardProviderInterface *iface)
+{
+    /* Default implementation - all methods return NULL by default */
+}
+
+/**
+ * lrg_card_provider_get_card_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets card definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgCardDef) (nullable): list of #LrgCardDef
+ */
+GList *
+lrg_card_provider_get_card_defs (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_card_defs == NULL)
+        return NULL;
+
+    return iface->get_card_defs (self);
+}
+
+/**
+ * lrg_card_provider_get_deck_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets deck definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgDeckDef) (nullable): list of #LrgDeckDef
+ */
+GList *
+lrg_card_provider_get_deck_defs (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_deck_defs == NULL)
+        return NULL;
+
+    return iface->get_deck_defs (self);
+}
+
+/**
+ * lrg_card_provider_get_relic_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets relic definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgRelicDef) (nullable): list of #LrgRelicDef
+ */
+GList *
+lrg_card_provider_get_relic_defs (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_relic_defs == NULL)
+        return NULL;
+
+    return iface->get_relic_defs (self);
+}
+
+/**
+ * lrg_card_provider_get_potion_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets potion definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgPotionDef) (nullable): list of #LrgPotionDef
+ */
+GList *
+lrg_card_provider_get_potion_defs (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_potion_defs == NULL)
+        return NULL;
+
+    return iface->get_potion_defs (self);
+}
+
+/**
+ * lrg_card_provider_get_enemy_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets enemy definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgEnemyDef) (nullable): list of #LrgEnemyDef
+ */
+GList *
+lrg_card_provider_get_enemy_defs (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_enemy_defs == NULL)
+        return NULL;
+
+    return iface->get_enemy_defs (self);
+}
+
+/**
+ * lrg_card_provider_get_event_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets random event definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgEventDef) (nullable): list of #LrgEventDef
+ */
+GList *
+lrg_card_provider_get_event_defs (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_event_defs == NULL)
+        return NULL;
+
+    return iface->get_event_defs (self);
+}
+
+/**
+ * lrg_card_provider_get_joker_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets joker definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgJokerDef) (nullable): list of #LrgJokerDef
+ */
+GList *
+lrg_card_provider_get_joker_defs (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_joker_defs == NULL)
+        return NULL;
+
+    return iface->get_joker_defs (self);
+}
+
+/**
+ * lrg_card_provider_get_effect_executors:
+ * @self: an #LrgCardProvider
+ *
+ * Gets effect executor GTypes provided by this mod.
+ *
+ * Returns: (transfer container) (element-type GType) (nullable): list of GTypes
+ */
+GList *
+lrg_card_provider_get_effect_executors (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_effect_executors == NULL)
+        return NULL;
+
+    return iface->get_effect_executors (self);
+}
+
+/**
+ * lrg_card_provider_get_status_effect_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets status effect definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgStatusEffectDef) (nullable): list of #LrgStatusEffectDef
+ */
+GList *
+lrg_card_provider_get_status_effect_defs (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_status_effect_defs == NULL)
+        return NULL;
+
+    return iface->get_status_effect_defs (self);
+}
+
+/**
+ * lrg_card_provider_get_keyword_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets keyword definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgCardKeywordDef) (nullable): list of #LrgCardKeywordDef
+ */
+GList *
+lrg_card_provider_get_keyword_defs (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_keyword_defs == NULL)
+        return NULL;
+
+    return iface->get_keyword_defs (self);
+}
+
+/**
+ * lrg_card_provider_get_character_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets character definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgCharacterDef) (nullable): list of #LrgCharacterDef
+ */
+GList *
+lrg_card_provider_get_character_defs (LrgCardProvider *self)
+{
+    LrgCardProviderInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_CARD_PROVIDER (self), NULL);
+
+    iface = LRG_CARD_PROVIDER_GET_IFACE (self);
+
+    if (iface->get_character_defs == NULL)
+        return NULL;
+
+    return iface->get_character_defs (self);
+}

@@ -54,6 +54,7 @@ endif
 EXAMPLES := game-omnomagon game-taco-racing game-chocolate-chip-clicker game-tuktuk-derby render-yaml-santa render-yaml-taco-truck
 EXAMPLES += game-settings-demo game-micro-tycoon game-effects-gallery game-dungeon-torch game-meta-arcade game-dlc-store
 EXAMPLES += game-creature-collector game-vr-demo
+EXAMPLES += game-deckbuilder-combat game-deckbuilder-poker
 
 # Scripted examples only on native Linux (scripting backends not available on Windows)
 ifneq ($(TARGET_PLATFORM),windows)
@@ -144,6 +145,14 @@ $(EXAMPLES_BUILDDIR)/game-dlc-store$(EXE_EXT): game-dlc-store.c | $(EXAMPLES_BUI
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/game-vr-demo$(EXE_EXT): game-vr-demo.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/game-deckbuilder-combat$(EXE_EXT): game-deckbuilder-combat.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/game-deckbuilder-poker$(EXE_EXT): game-deckbuilder-poker.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

@@ -117,7 +117,8 @@ TEST_SOURCES := \
 	test-workshop.c \
 	test-demo.c \
 	test-dlc.c \
-	test-vr.c
+	test-vr.c \
+	test-deckbuilder.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))

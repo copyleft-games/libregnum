@@ -37,3 +37,6 @@ g-ir-cpp-*.c
 
 # clangd cache files for lsp
 .cache/
+
+# ignore mcp config
+.mcp.json

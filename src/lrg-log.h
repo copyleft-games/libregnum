@@ -67,6 +67,7 @@ G_BEGIN_DECLS
 #define LRG_LOG_DOMAIN_STEAM      "Libregnum-Steam"
 #define LRG_LOG_DOMAIN_DEMO       "Libregnum-Demo"
 #define LRG_LOG_DOMAIN_VR         "Libregnum-VR"
+#define LRG_LOG_DOMAIN_DECKBUILDER "Libregnum-Deckbuilder"
 
 /* ==========================================================================
  * Logging Macros

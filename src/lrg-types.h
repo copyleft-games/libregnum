@@ -866,4 +866,205 @@ typedef struct _LrgVRController  LrgVRController;
 /* LrgVRComfortSettings is a final type - no Class forward declaration needed */
 typedef struct _LrgVRComfortSettings  LrgVRComfortSettings;
 
+/* ==========================================================================
+ * Deckbuilder Module
+ * ========================================================================== */
+
+/* LrgCardDef is a derivable type */
+typedef struct _LrgCardDef       LrgCardDef;
+typedef struct _LrgCardDefClass  LrgCardDefClass;
+
+/* LrgCardInstance is a final type - no Class forward declaration needed */
+typedef struct _LrgCardInstance  LrgCardInstance;
+
+/* LrgCardPile is a final type - no Class forward declaration needed */
+typedef struct _LrgCardPile  LrgCardPile;
+
+/* LrgCardHand is a final type - no Class forward declaration needed */
+typedef struct _LrgCardHand  LrgCardHand;
+
+/* LrgZone is a final type - no Class forward declaration needed */
+typedef struct _LrgZone  LrgZone;
+
+/* LrgDeckDef is a derivable type */
+typedef struct _LrgDeckDef       LrgDeckDef;
+typedef struct _LrgDeckDefClass  LrgDeckDefClass;
+
+/* LrgDeckCardEntry is a boxed type - no class typedef */
+typedef struct _LrgDeckCardEntry  LrgDeckCardEntry;
+
+/* LrgDeckInstance is a final type - no Class forward declaration needed */
+typedef struct _LrgDeckInstance  LrgDeckInstance;
+
+/* LrgDeckBuilder is a final type - no Class forward declaration needed */
+typedef struct _LrgDeckBuilder  LrgDeckBuilder;
+
+/* LrgCardEffect is a boxed type - no class typedef */
+typedef struct _LrgCardEffect  LrgCardEffect;
+
+/* LrgCardEffectExecutor is an interface */
+typedef struct _LrgCardEffectExecutor           LrgCardEffectExecutor;
+typedef struct _LrgCardEffectExecutorInterface  LrgCardEffectExecutorInterface;
+
+/* LrgCardEffectRegistry is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgCardEffectRegistry  LrgCardEffectRegistry;
+
+/* LrgEffectStack is a final type - no Class forward declaration needed */
+typedef struct _LrgEffectStack  LrgEffectStack;
+
+/* LrgCardEvent is a boxed type - no class typedef */
+typedef struct _LrgCardEvent  LrgCardEvent;
+
+/* LrgTriggerListener is an interface */
+typedef struct _LrgTriggerListener           LrgTriggerListener;
+typedef struct _LrgTriggerListenerInterface  LrgTriggerListenerInterface;
+
+/* LrgCardEventBus is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgCardEventBus  LrgCardEventBus;
+
+/* LrgCardKeywordDef is a derivable type */
+typedef struct _LrgCardKeywordDef       LrgCardKeywordDef;
+typedef struct _LrgCardKeywordDefClass  LrgCardKeywordDefClass;
+
+/* LrgCardKeywordRegistry is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgCardKeywordRegistry  LrgCardKeywordRegistry;
+
+/* LrgSynergy is a derivable type */
+typedef struct _LrgSynergy       LrgSynergy;
+typedef struct _LrgSynergyClass  LrgSynergyClass;
+
+/* LrgStatusEffectDef is a derivable type */
+typedef struct _LrgStatusEffectDef       LrgStatusEffectDef;
+typedef struct _LrgStatusEffectDefClass  LrgStatusEffectDefClass;
+
+/* LrgStatusEffectInstance is a boxed type - no class typedef */
+typedef struct _LrgStatusEffectInstance  LrgStatusEffectInstance;
+
+/* LrgStatusEffectRegistry is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgStatusEffectRegistry  LrgStatusEffectRegistry;
+
+/* LrgRelicDef is a derivable type */
+typedef struct _LrgRelicDef       LrgRelicDef;
+typedef struct _LrgRelicDefClass  LrgRelicDefClass;
+
+/* LrgRelicInstance is a final type - no Class forward declaration needed */
+typedef struct _LrgRelicInstance  LrgRelicInstance;
+
+/* LrgRelicRegistry is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgRelicRegistry  LrgRelicRegistry;
+
+/* LrgPotionDef is a derivable type */
+typedef struct _LrgPotionDef       LrgPotionDef;
+typedef struct _LrgPotionDefClass  LrgPotionDefClass;
+
+/* LrgPotionInstance is a final type - no Class forward declaration needed */
+typedef struct _LrgPotionInstance  LrgPotionInstance;
+
+/* LrgCombatant is an interface */
+typedef struct _LrgCombatant           LrgCombatant;
+typedef struct _LrgCombatantInterface  LrgCombatantInterface;
+
+/* LrgCombatRules is an interface */
+typedef struct _LrgCombatRules           LrgCombatRules;
+typedef struct _LrgCombatRulesInterface  LrgCombatRulesInterface;
+
+/* LrgPlayerCombatant is a final type - no Class forward declaration needed */
+typedef struct _LrgPlayerCombatant  LrgPlayerCombatant;
+
+/* LrgEnemyDef is a derivable type */
+typedef struct _LrgEnemyDef       LrgEnemyDef;
+typedef struct _LrgEnemyDefClass  LrgEnemyDefClass;
+
+/* LrgEnemyInstance is a final type - no Class forward declaration needed */
+typedef struct _LrgEnemyInstance  LrgEnemyInstance;
+
+/* LrgEnemyIntent is a final type - no Class forward declaration needed */
+typedef struct _LrgEnemyIntent  LrgEnemyIntent;
+
+/* LrgCombatContext is a final type - no Class forward declaration needed */
+typedef struct _LrgCombatContext  LrgCombatContext;
+
+/* LrgCombatManager is a derivable type */
+typedef struct _LrgCombatManager       LrgCombatManager;
+typedef struct _LrgCombatManagerClass  LrgCombatManagerClass;
+
+/* LrgRun is a final type - no Class forward declaration needed */
+typedef struct _LrgRun  LrgRun;
+
+/* LrgRunConfig is a derivable type */
+typedef struct _LrgRunConfig       LrgRunConfig;
+typedef struct _LrgRunConfigClass  LrgRunConfigClass;
+
+/* LrgMapNode is a final type - no Class forward declaration needed */
+typedef struct _LrgMapNode  LrgMapNode;
+
+/* LrgRunMap is a final type - no Class forward declaration needed */
+typedef struct _LrgRunMap  LrgRunMap;
+
+/* LrgRunManager is a final type - no Class forward declaration needed */
+typedef struct _LrgRunManager  LrgRunManager;
+
+/* LrgMapGenerator is a derivable type */
+typedef struct _LrgMapGenerator       LrgMapGenerator;
+typedef struct _LrgMapGeneratorClass  LrgMapGeneratorClass;
+
+/* LrgEncounterPool is a final type - no Class forward declaration needed */
+typedef struct _LrgEncounterPool  LrgEncounterPool;
+
+/* LrgCardPool is a final type - no Class forward declaration needed */
+typedef struct _LrgCardPool  LrgCardPool;
+
+/* LrgRewardScreen is a final type - no Class forward declaration needed */
+typedef struct _LrgRewardScreen  LrgRewardScreen;
+
+/* LrgShop is a final type - no Class forward declaration needed */
+typedef struct _LrgShop  LrgShop;
+
+/* LrgEventDef is a derivable type */
+typedef struct _LrgEventDef       LrgEventDef;
+typedef struct _LrgEventDefClass  LrgEventDefClass;
+
+/* Scoring System (Balatro-style) */
+
+/* LrgScoringHand is a derivable type */
+typedef struct _LrgScoringHand       LrgScoringHand;
+typedef struct _LrgScoringHandClass  LrgScoringHandClass;
+
+/* LrgScoringContext is a final type - no Class forward declaration needed */
+typedef struct _LrgScoringContext  LrgScoringContext;
+
+/* LrgScoringRules is an interface */
+typedef struct _LrgScoringRules           LrgScoringRules;
+typedef struct _LrgScoringRulesInterface  LrgScoringRulesInterface;
+
+/* LrgJokerDef is a derivable type */
+typedef struct _LrgJokerDef       LrgJokerDef;
+typedef struct _LrgJokerDefClass  LrgJokerDefClass;
+
+/* LrgJokerInstance is a final type - no Class forward declaration needed */
+typedef struct _LrgJokerInstance  LrgJokerInstance;
+
+/* LrgScoringManager is a derivable type */
+typedef struct _LrgScoringManager       LrgScoringManager;
+typedef struct _LrgScoringManagerClass  LrgScoringManagerClass;
+
+/* Meta-Progression */
+
+/* LrgCharacterDef is a derivable type */
+typedef struct _LrgCharacterDef       LrgCharacterDef;
+typedef struct _LrgCharacterDefClass  LrgCharacterDefClass;
+
+/* LrgPlayerProfile is a final type - no Class forward declaration needed */
+typedef struct _LrgPlayerProfile  LrgPlayerProfile;
+
+/* LrgUnlockDef is a derivable type */
+typedef struct _LrgUnlockDef       LrgUnlockDef;
+typedef struct _LrgUnlockDefClass  LrgUnlockDefClass;
+
+/* LrgAscension is a final type - no Class forward declaration needed */
+typedef struct _LrgAscension  LrgAscension;
+
+/* LrgDeckbuilderManager is a final type (singleton) - no Class forward declaration needed */
+typedef struct _LrgDeckbuilderManager  LrgDeckbuilderManager;
+
 G_END_DECLS

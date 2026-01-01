@@ -3428,3 +3428,780 @@ lrg_vr_error_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* =============================================================================
+ * Deckbuilder Enums
+ * =============================================================================
+ */
+
+GType
+lrg_card_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CARD_TYPE_ATTACK, "LRG_CARD_TYPE_ATTACK", "attack" },
+            { LRG_CARD_TYPE_SKILL, "LRG_CARD_TYPE_SKILL", "skill" },
+            { LRG_CARD_TYPE_POWER, "LRG_CARD_TYPE_POWER", "power" },
+            { LRG_CARD_TYPE_STATUS, "LRG_CARD_TYPE_STATUS", "status" },
+            { LRG_CARD_TYPE_CURSE, "LRG_CARD_TYPE_CURSE", "curse" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCardType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_card_rarity_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CARD_RARITY_STARTER, "LRG_CARD_RARITY_STARTER", "starter" },
+            { LRG_CARD_RARITY_COMMON, "LRG_CARD_RARITY_COMMON", "common" },
+            { LRG_CARD_RARITY_UNCOMMON, "LRG_CARD_RARITY_UNCOMMON", "uncommon" },
+            { LRG_CARD_RARITY_RARE, "LRG_CARD_RARITY_RARE", "rare" },
+            { LRG_CARD_RARITY_SPECIAL, "LRG_CARD_RARITY_SPECIAL", "special" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCardRarity"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_card_target_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CARD_TARGET_NONE, "LRG_CARD_TARGET_NONE", "none" },
+            { LRG_CARD_TARGET_SELF, "LRG_CARD_TARGET_SELF", "self" },
+            { LRG_CARD_TARGET_SINGLE_ENEMY, "LRG_CARD_TARGET_SINGLE_ENEMY", "single-enemy" },
+            { LRG_CARD_TARGET_ALL_ENEMIES, "LRG_CARD_TARGET_ALL_ENEMIES", "all-enemies" },
+            { LRG_CARD_TARGET_RANDOM_ENEMY, "LRG_CARD_TARGET_RANDOM_ENEMY", "random-enemy" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCardTargetType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_pile_position_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PILE_POSITION_TOP, "LRG_PILE_POSITION_TOP", "top" },
+            { LRG_PILE_POSITION_BOTTOM, "LRG_PILE_POSITION_BOTTOM", "bottom" },
+            { LRG_PILE_POSITION_RANDOM, "LRG_PILE_POSITION_RANDOM", "random" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPilePosition"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_card_zone_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ZONE_DRAW, "LRG_ZONE_DRAW", "draw" },
+            { LRG_ZONE_HAND, "LRG_ZONE_HAND", "hand" },
+            { LRG_ZONE_DISCARD, "LRG_ZONE_DISCARD", "discard" },
+            { LRG_ZONE_EXHAUST, "LRG_ZONE_EXHAUST", "exhaust" },
+            { LRG_ZONE_PLAYED, "LRG_ZONE_PLAYED", "played" },
+            { LRG_ZONE_LIMBO, "LRG_ZONE_LIMBO", "limbo" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCardZone"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_card_upgrade_tier_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CARD_UPGRADE_TIER_BASE, "LRG_CARD_UPGRADE_TIER_BASE", "base" },
+            { LRG_CARD_UPGRADE_TIER_PLUS, "LRG_CARD_UPGRADE_TIER_PLUS", "plus" },
+            { LRG_CARD_UPGRADE_TIER_PLUS_PLUS, "LRG_CARD_UPGRADE_TIER_PLUS_PLUS", "plus-plus" },
+            { LRG_CARD_UPGRADE_TIER_ULTIMATE, "LRG_CARD_UPGRADE_TIER_ULTIMATE", "ultimate" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCardUpgradeTier"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_card_keyword_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GFlagsValue values[] = {
+            { LRG_CARD_KEYWORD_NONE, "LRG_CARD_KEYWORD_NONE", "none" },
+            { LRG_CARD_KEYWORD_INNATE, "LRG_CARD_KEYWORD_INNATE", "innate" },
+            { LRG_CARD_KEYWORD_RETAIN, "LRG_CARD_KEYWORD_RETAIN", "retain" },
+            { LRG_CARD_KEYWORD_EXHAUST, "LRG_CARD_KEYWORD_EXHAUST", "exhaust" },
+            { LRG_CARD_KEYWORD_ETHEREAL, "LRG_CARD_KEYWORD_ETHEREAL", "ethereal" },
+            { LRG_CARD_KEYWORD_UNPLAYABLE, "LRG_CARD_KEYWORD_UNPLAYABLE", "unplayable" },
+            { LRG_CARD_KEYWORD_X_COST, "LRG_CARD_KEYWORD_X_COST", "x-cost" },
+            { LRG_CARD_KEYWORD_FRAGILE, "LRG_CARD_KEYWORD_FRAGILE", "fragile" },
+            { LRG_CARD_KEYWORD_FLEETING, "LRG_CARD_KEYWORD_FLEETING", "fleeting" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_flags_register_static (g_intern_static_string ("LrgCardKeyword"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_card_suit_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CARD_SUIT_NONE, "LRG_CARD_SUIT_NONE", "none" },
+            { LRG_CARD_SUIT_SPADES, "LRG_CARD_SUIT_SPADES", "spades" },
+            { LRG_CARD_SUIT_HEARTS, "LRG_CARD_SUIT_HEARTS", "hearts" },
+            { LRG_CARD_SUIT_DIAMONDS, "LRG_CARD_SUIT_DIAMONDS", "diamonds" },
+            { LRG_CARD_SUIT_CLUBS, "LRG_CARD_SUIT_CLUBS", "clubs" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCardSuit"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_card_rank_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CARD_RANK_NONE, "LRG_CARD_RANK_NONE", "none" },
+            { LRG_CARD_RANK_ACE, "LRG_CARD_RANK_ACE", "ace" },
+            { LRG_CARD_RANK_TWO, "LRG_CARD_RANK_TWO", "two" },
+            { LRG_CARD_RANK_THREE, "LRG_CARD_RANK_THREE", "three" },
+            { LRG_CARD_RANK_FOUR, "LRG_CARD_RANK_FOUR", "four" },
+            { LRG_CARD_RANK_FIVE, "LRG_CARD_RANK_FIVE", "five" },
+            { LRG_CARD_RANK_SIX, "LRG_CARD_RANK_SIX", "six" },
+            { LRG_CARD_RANK_SEVEN, "LRG_CARD_RANK_SEVEN", "seven" },
+            { LRG_CARD_RANK_EIGHT, "LRG_CARD_RANK_EIGHT", "eight" },
+            { LRG_CARD_RANK_NINE, "LRG_CARD_RANK_NINE", "nine" },
+            { LRG_CARD_RANK_TEN, "LRG_CARD_RANK_TEN", "ten" },
+            { LRG_CARD_RANK_JACK, "LRG_CARD_RANK_JACK", "jack" },
+            { LRG_CARD_RANK_QUEEN, "LRG_CARD_RANK_QUEEN", "queen" },
+            { LRG_CARD_RANK_KING, "LRG_CARD_RANK_KING", "king" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCardRank"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GQuark
+lrg_deckbuilder_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-deckbuilder-error-quark");
+}
+
+GType
+lrg_deckbuilder_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_DECKBUILDER_ERROR_FAILED, "LRG_DECKBUILDER_ERROR_FAILED", "failed" },
+            { LRG_DECKBUILDER_ERROR_INSUFFICIENT_ENERGY, "LRG_DECKBUILDER_ERROR_INSUFFICIENT_ENERGY", "insufficient-energy" },
+            { LRG_DECKBUILDER_ERROR_CARD_UNPLAYABLE, "LRG_DECKBUILDER_ERROR_CARD_UNPLAYABLE", "card-unplayable" },
+            { LRG_DECKBUILDER_ERROR_INVALID_TARGET, "LRG_DECKBUILDER_ERROR_INVALID_TARGET", "invalid-target" },
+            { LRG_DECKBUILDER_ERROR_COMBAT_NOT_ACTIVE, "LRG_DECKBUILDER_ERROR_COMBAT_NOT_ACTIVE", "combat-not-active" },
+            { LRG_DECKBUILDER_ERROR_DECK_EMPTY, "LRG_DECKBUILDER_ERROR_DECK_EMPTY", "deck-empty" },
+            { LRG_DECKBUILDER_ERROR_HAND_FULL, "LRG_DECKBUILDER_ERROR_HAND_FULL", "hand-full" },
+            { LRG_DECKBUILDER_ERROR_INVALID_ZONE, "LRG_DECKBUILDER_ERROR_INVALID_ZONE", "invalid-zone" },
+            { LRG_DECKBUILDER_ERROR_DECK_TOO_SMALL, "LRG_DECKBUILDER_ERROR_DECK_TOO_SMALL", "deck-too-small" },
+            { LRG_DECKBUILDER_ERROR_DECK_TOO_LARGE, "LRG_DECKBUILDER_ERROR_DECK_TOO_LARGE", "deck-too-large" },
+            { LRG_DECKBUILDER_ERROR_CARD_NOT_ALLOWED, "LRG_DECKBUILDER_ERROR_CARD_NOT_ALLOWED", "card-not-allowed" },
+            { LRG_DECKBUILDER_ERROR_CARD_BANNED, "LRG_DECKBUILDER_ERROR_CARD_BANNED", "card-banned" },
+            { LRG_DECKBUILDER_ERROR_CARD_LIMIT_EXCEEDED, "LRG_DECKBUILDER_ERROR_CARD_LIMIT_EXCEEDED", "card-limit-exceeded" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgDeckbuilderError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_effect_flags_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GFlagsValue values[] = {
+            { LRG_EFFECT_FLAG_NONE, "LRG_EFFECT_FLAG_NONE", "none" },
+            { LRG_EFFECT_FLAG_UNBLOCKABLE, "LRG_EFFECT_FLAG_UNBLOCKABLE", "unblockable" },
+            { LRG_EFFECT_FLAG_PIERCING, "LRG_EFFECT_FLAG_PIERCING", "piercing" },
+            { LRG_EFFECT_FLAG_TRUE_DAMAGE, "LRG_EFFECT_FLAG_TRUE_DAMAGE", "true-damage" },
+            { LRG_EFFECT_FLAG_HP_LOSS, "LRG_EFFECT_FLAG_HP_LOSS", "hp-loss" },
+            { LRG_EFFECT_FLAG_LIFESTEAL, "LRG_EFFECT_FLAG_LIFESTEAL", "lifesteal" },
+            { LRG_EFFECT_FLAG_AOE, "LRG_EFFECT_FLAG_AOE", "aoe" },
+            { LRG_EFFECT_FLAG_DELAYED, "LRG_EFFECT_FLAG_DELAYED", "delayed" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_flags_register_static (g_intern_static_string ("LrgEffectFlags"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_combat_phase_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_COMBAT_PHASE_SETUP, "LRG_COMBAT_PHASE_SETUP", "setup" },
+            { LRG_COMBAT_PHASE_PLAYER_START, "LRG_COMBAT_PHASE_PLAYER_START", "player-start" },
+            { LRG_COMBAT_PHASE_PLAYER_PLAY, "LRG_COMBAT_PHASE_PLAYER_PLAY", "player-play" },
+            { LRG_COMBAT_PHASE_PLAYER_END, "LRG_COMBAT_PHASE_PLAYER_END", "player-end" },
+            { LRG_COMBAT_PHASE_ENEMY_TURN, "LRG_COMBAT_PHASE_ENEMY_TURN", "enemy-turn" },
+            { LRG_COMBAT_PHASE_FINISHED, "LRG_COMBAT_PHASE_FINISHED", "finished" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCombatPhase"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_intent_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_INTENT_UNKNOWN, "LRG_INTENT_UNKNOWN", "unknown" },
+            { LRG_INTENT_ATTACK, "LRG_INTENT_ATTACK", "attack" },
+            { LRG_INTENT_DEFEND, "LRG_INTENT_DEFEND", "defend" },
+            { LRG_INTENT_BUFF, "LRG_INTENT_BUFF", "buff" },
+            { LRG_INTENT_DEBUFF, "LRG_INTENT_DEBUFF", "debuff" },
+            { LRG_INTENT_ATTACK_BUFF, "LRG_INTENT_ATTACK_BUFF", "attack-buff" },
+            { LRG_INTENT_ATTACK_DEBUFF, "LRG_INTENT_ATTACK_DEBUFF", "attack-debuff" },
+            { LRG_INTENT_STRONG_DEBUFF, "LRG_INTENT_STRONG_DEBUFF", "strong-debuff" },
+            { LRG_INTENT_ESCAPE, "LRG_INTENT_ESCAPE", "escape" },
+            { LRG_INTENT_SLEEP, "LRG_INTENT_SLEEP", "sleep" },
+            { LRG_INTENT_STUN, "LRG_INTENT_STUN", "stun" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgIntentType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_status_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_STATUS_TYPE_BUFF, "LRG_STATUS_TYPE_BUFF", "buff" },
+            { LRG_STATUS_TYPE_DEBUFF, "LRG_STATUS_TYPE_DEBUFF", "debuff" },
+            { LRG_STATUS_TYPE_NEUTRAL, "LRG_STATUS_TYPE_NEUTRAL", "neutral" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgStatusType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_status_duration_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_STATUS_DURATION_COMBAT, "LRG_STATUS_DURATION_COMBAT", "combat" },
+            { LRG_STATUS_DURATION_TURN, "LRG_STATUS_DURATION_TURN", "turn" },
+            { LRG_STATUS_DURATION_ATTACK, "LRG_STATUS_DURATION_ATTACK", "attack" },
+            { LRG_STATUS_DURATION_PERMANENT, "LRG_STATUS_DURATION_PERMANENT", "permanent" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgStatusDuration"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_relic_rarity_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_RELIC_RARITY_STARTER, "LRG_RELIC_RARITY_STARTER", "starter" },
+            { LRG_RELIC_RARITY_COMMON, "LRG_RELIC_RARITY_COMMON", "common" },
+            { LRG_RELIC_RARITY_UNCOMMON, "LRG_RELIC_RARITY_UNCOMMON", "uncommon" },
+            { LRG_RELIC_RARITY_RARE, "LRG_RELIC_RARITY_RARE", "rare" },
+            { LRG_RELIC_RARITY_BOSS, "LRG_RELIC_RARITY_BOSS", "boss" },
+            { LRG_RELIC_RARITY_EVENT, "LRG_RELIC_RARITY_EVENT", "event" },
+            { LRG_RELIC_RARITY_SHOP, "LRG_RELIC_RARITY_SHOP", "shop" },
+            { LRG_RELIC_RARITY_SPECIAL, "LRG_RELIC_RARITY_SPECIAL", "special" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgRelicRarity"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_map_node_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_MAP_NODE_COMBAT, "LRG_MAP_NODE_COMBAT", "combat" },
+            { LRG_MAP_NODE_ELITE, "LRG_MAP_NODE_ELITE", "elite" },
+            { LRG_MAP_NODE_BOSS, "LRG_MAP_NODE_BOSS", "boss" },
+            { LRG_MAP_NODE_EVENT, "LRG_MAP_NODE_EVENT", "event" },
+            { LRG_MAP_NODE_SHOP, "LRG_MAP_NODE_SHOP", "shop" },
+            { LRG_MAP_NODE_REST, "LRG_MAP_NODE_REST", "rest" },
+            { LRG_MAP_NODE_TREASURE, "LRG_MAP_NODE_TREASURE", "treasure" },
+            { LRG_MAP_NODE_MYSTERY, "LRG_MAP_NODE_MYSTERY", "mystery" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgMapNodeType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_card_event_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CARD_EVENT_COMBAT_START, "LRG_CARD_EVENT_COMBAT_START", "combat-start" },
+            { LRG_CARD_EVENT_COMBAT_END, "LRG_CARD_EVENT_COMBAT_END", "combat-end" },
+            { LRG_CARD_EVENT_TURN_START, "LRG_CARD_EVENT_TURN_START", "turn-start" },
+            { LRG_CARD_EVENT_TURN_END, "LRG_CARD_EVENT_TURN_END", "turn-end" },
+            { LRG_CARD_EVENT_CARD_DRAWN, "LRG_CARD_EVENT_CARD_DRAWN", "card-drawn" },
+            { LRG_CARD_EVENT_CARD_PLAYED, "LRG_CARD_EVENT_CARD_PLAYED", "card-played" },
+            { LRG_CARD_EVENT_CARD_DISCARDED, "LRG_CARD_EVENT_CARD_DISCARDED", "card-discarded" },
+            { LRG_CARD_EVENT_CARD_EXHAUSTED, "LRG_CARD_EVENT_CARD_EXHAUSTED", "card-exhausted" },
+            { LRG_CARD_EVENT_DAMAGE_DEALT, "LRG_CARD_EVENT_DAMAGE_DEALT", "damage-dealt" },
+            { LRG_CARD_EVENT_DAMAGE_RECEIVED, "LRG_CARD_EVENT_DAMAGE_RECEIVED", "damage-received" },
+            { LRG_CARD_EVENT_BLOCK_GAINED, "LRG_CARD_EVENT_BLOCK_GAINED", "block-gained" },
+            { LRG_CARD_EVENT_HEAL, "LRG_CARD_EVENT_HEAL", "heal" },
+            { LRG_CARD_EVENT_STATUS_APPLIED, "LRG_CARD_EVENT_STATUS_APPLIED", "status-applied" },
+            { LRG_CARD_EVENT_STATUS_REMOVED, "LRG_CARD_EVENT_STATUS_REMOVED", "status-removed" },
+            { LRG_CARD_EVENT_ENERGY_GAINED, "LRG_CARD_EVENT_ENERGY_GAINED", "energy-gained" },
+            { LRG_CARD_EVENT_SHUFFLE, "LRG_CARD_EVENT_SHUFFLE", "shuffle" },
+            { LRG_CARD_EVENT_ENEMY_DIED, "LRG_CARD_EVENT_ENEMY_DIED", "enemy-died" },
+            { LRG_CARD_EVENT_RELIC_TRIGGERED, "LRG_CARD_EVENT_RELIC_TRIGGERED", "relic-triggered" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCardEventType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_hand_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_HAND_TYPE_NONE, "LRG_HAND_TYPE_NONE", "none" },
+            { LRG_HAND_TYPE_HIGH_CARD, "LRG_HAND_TYPE_HIGH_CARD", "high-card" },
+            { LRG_HAND_TYPE_PAIR, "LRG_HAND_TYPE_PAIR", "pair" },
+            { LRG_HAND_TYPE_TWO_PAIR, "LRG_HAND_TYPE_TWO_PAIR", "two-pair" },
+            { LRG_HAND_TYPE_THREE_OF_A_KIND, "LRG_HAND_TYPE_THREE_OF_A_KIND", "three-of-a-kind" },
+            { LRG_HAND_TYPE_STRAIGHT, "LRG_HAND_TYPE_STRAIGHT", "straight" },
+            { LRG_HAND_TYPE_FLUSH, "LRG_HAND_TYPE_FLUSH", "flush" },
+            { LRG_HAND_TYPE_FULL_HOUSE, "LRG_HAND_TYPE_FULL_HOUSE", "full-house" },
+            { LRG_HAND_TYPE_FOUR_OF_A_KIND, "LRG_HAND_TYPE_FOUR_OF_A_KIND", "four-of-a-kind" },
+            { LRG_HAND_TYPE_STRAIGHT_FLUSH, "LRG_HAND_TYPE_STRAIGHT_FLUSH", "straight-flush" },
+            { LRG_HAND_TYPE_ROYAL_FLUSH, "LRG_HAND_TYPE_ROYAL_FLUSH", "royal-flush" },
+            { LRG_HAND_TYPE_FIVE_OF_A_KIND, "LRG_HAND_TYPE_FIVE_OF_A_KIND", "five-of-a-kind" },
+            { LRG_HAND_TYPE_FLUSH_HOUSE, "LRG_HAND_TYPE_FLUSH_HOUSE", "flush-house" },
+            { LRG_HAND_TYPE_FLUSH_FIVE, "LRG_HAND_TYPE_FLUSH_FIVE", "flush-five" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgHandType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_enemy_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ENEMY_TYPE_NORMAL, "LRG_ENEMY_TYPE_NORMAL", "normal" },
+            { LRG_ENEMY_TYPE_ELITE, "LRG_ENEMY_TYPE_ELITE", "elite" },
+            { LRG_ENEMY_TYPE_BOSS, "LRG_ENEMY_TYPE_BOSS", "boss" },
+            { LRG_ENEMY_TYPE_MINION, "LRG_ENEMY_TYPE_MINION", "minion" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgEnemyType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_combat_result_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_COMBAT_RESULT_IN_PROGRESS, "LRG_COMBAT_RESULT_IN_PROGRESS", "in-progress" },
+            { LRG_COMBAT_RESULT_VICTORY, "LRG_COMBAT_RESULT_VICTORY", "victory" },
+            { LRG_COMBAT_RESULT_DEFEAT, "LRG_COMBAT_RESULT_DEFEAT", "defeat" },
+            { LRG_COMBAT_RESULT_ESCAPE, "LRG_COMBAT_RESULT_ESCAPE", "escape" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCombatResult"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_run_state_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_RUN_STATE_NOT_STARTED, "LRG_RUN_STATE_NOT_STARTED", "not-started" },
+            { LRG_RUN_STATE_MAP, "LRG_RUN_STATE_MAP", "map" },
+            { LRG_RUN_STATE_COMBAT, "LRG_RUN_STATE_COMBAT", "combat" },
+            { LRG_RUN_STATE_EVENT, "LRG_RUN_STATE_EVENT", "event" },
+            { LRG_RUN_STATE_SHOP, "LRG_RUN_STATE_SHOP", "shop" },
+            { LRG_RUN_STATE_REST, "LRG_RUN_STATE_REST", "rest" },
+            { LRG_RUN_STATE_TREASURE, "LRG_RUN_STATE_TREASURE", "treasure" },
+            { LRG_RUN_STATE_CARD_REWARD, "LRG_RUN_STATE_CARD_REWARD", "card-reward" },
+            { LRG_RUN_STATE_BOSS_RELIC, "LRG_RUN_STATE_BOSS_RELIC", "boss-relic" },
+            { LRG_RUN_STATE_VICTORY, "LRG_RUN_STATE_VICTORY", "victory" },
+            { LRG_RUN_STATE_DEFEAT, "LRG_RUN_STATE_DEFEAT", "defeat" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgRunState"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Scoring System Module (Phase 6.6)
+ * ========================================================================== */
+
+GType
+lrg_card_enhancement_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CARD_ENHANCEMENT_NONE, "LRG_CARD_ENHANCEMENT_NONE", "none" },
+            { LRG_CARD_ENHANCEMENT_BONUS, "LRG_CARD_ENHANCEMENT_BONUS", "bonus" },
+            { LRG_CARD_ENHANCEMENT_MULT, "LRG_CARD_ENHANCEMENT_MULT", "mult" },
+            { LRG_CARD_ENHANCEMENT_WILD, "LRG_CARD_ENHANCEMENT_WILD", "wild" },
+            { LRG_CARD_ENHANCEMENT_GLASS, "LRG_CARD_ENHANCEMENT_GLASS", "glass" },
+            { LRG_CARD_ENHANCEMENT_STEEL, "LRG_CARD_ENHANCEMENT_STEEL", "steel" },
+            { LRG_CARD_ENHANCEMENT_STONE, "LRG_CARD_ENHANCEMENT_STONE", "stone" },
+            { LRG_CARD_ENHANCEMENT_GOLD, "LRG_CARD_ENHANCEMENT_GOLD", "gold" },
+            { LRG_CARD_ENHANCEMENT_LUCKY, "LRG_CARD_ENHANCEMENT_LUCKY", "lucky" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCardEnhancement"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_card_seal_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CARD_SEAL_NONE, "LRG_CARD_SEAL_NONE", "none" },
+            { LRG_CARD_SEAL_GOLD, "LRG_CARD_SEAL_GOLD", "gold" },
+            { LRG_CARD_SEAL_RED, "LRG_CARD_SEAL_RED", "red" },
+            { LRG_CARD_SEAL_BLUE, "LRG_CARD_SEAL_BLUE", "blue" },
+            { LRG_CARD_SEAL_PURPLE, "LRG_CARD_SEAL_PURPLE", "purple" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCardSeal"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_joker_rarity_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_JOKER_RARITY_COMMON, "LRG_JOKER_RARITY_COMMON", "common" },
+            { LRG_JOKER_RARITY_UNCOMMON, "LRG_JOKER_RARITY_UNCOMMON", "uncommon" },
+            { LRG_JOKER_RARITY_RARE, "LRG_JOKER_RARITY_RARE", "rare" },
+            { LRG_JOKER_RARITY_LEGENDARY, "LRG_JOKER_RARITY_LEGENDARY", "legendary" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgJokerRarity"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_joker_edition_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_JOKER_EDITION_BASE, "LRG_JOKER_EDITION_BASE", "base" },
+            { LRG_JOKER_EDITION_FOIL, "LRG_JOKER_EDITION_FOIL", "foil" },
+            { LRG_JOKER_EDITION_HOLOGRAPHIC, "LRG_JOKER_EDITION_HOLOGRAPHIC", "holographic" },
+            { LRG_JOKER_EDITION_POLYCHROME, "LRG_JOKER_EDITION_POLYCHROME", "polychrome" },
+            { LRG_JOKER_EDITION_NEGATIVE, "LRG_JOKER_EDITION_NEGATIVE", "negative" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgJokerEdition"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_scoring_phase_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SCORING_PHASE_SETUP, "LRG_SCORING_PHASE_SETUP", "setup" },
+            { LRG_SCORING_PHASE_DRAW, "LRG_SCORING_PHASE_DRAW", "draw" },
+            { LRG_SCORING_PHASE_SELECT, "LRG_SCORING_PHASE_SELECT", "select" },
+            { LRG_SCORING_PHASE_SCORE, "LRG_SCORING_PHASE_SCORE", "score" },
+            { LRG_SCORING_PHASE_DISCARD, "LRG_SCORING_PHASE_DISCARD", "discard" },
+            { LRG_SCORING_PHASE_SHOP, "LRG_SCORING_PHASE_SHOP", "shop" },
+            { LRG_SCORING_PHASE_FINISHED, "LRG_SCORING_PHASE_FINISHED", "finished" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgScoringPhase"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* --- Phase 7: Meta-Progression --- */
+
+GType
+lrg_ascension_modifier_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GFlagsValue values[] = {
+            { LRG_ASCENSION_MODIFIER_NONE, "LRG_ASCENSION_MODIFIER_NONE", "none" },
+            { LRG_ASCENSION_MODIFIER_ENEMY_HP, "LRG_ASCENSION_MODIFIER_ENEMY_HP", "enemy-hp" },
+            { LRG_ASCENSION_MODIFIER_ENEMY_DAMAGE, "LRG_ASCENSION_MODIFIER_ENEMY_DAMAGE", "enemy-damage" },
+            { LRG_ASCENSION_MODIFIER_LESS_GOLD, "LRG_ASCENSION_MODIFIER_LESS_GOLD", "less-gold" },
+            { LRG_ASCENSION_MODIFIER_LESS_HEALING, "LRG_ASCENSION_MODIFIER_LESS_HEALING", "less-healing" },
+            { LRG_ASCENSION_MODIFIER_HARDER_ELITES, "LRG_ASCENSION_MODIFIER_HARDER_ELITES", "harder-elites" },
+            { LRG_ASCENSION_MODIFIER_HARDER_BOSSES, "LRG_ASCENSION_MODIFIER_HARDER_BOSSES", "harder-bosses" },
+            { LRG_ASCENSION_MODIFIER_CURSES, "LRG_ASCENSION_MODIFIER_CURSES", "curses" },
+            { LRG_ASCENSION_MODIFIER_LESS_POTIONS, "LRG_ASCENSION_MODIFIER_LESS_POTIONS", "less-potions" },
+            { LRG_ASCENSION_MODIFIER_DECK_RESTRICTIONS, "LRG_ASCENSION_MODIFIER_DECK_RESTRICTIONS", "deck-restrictions" },
+            { LRG_ASCENSION_MODIFIER_TIME_LIMIT, "LRG_ASCENSION_MODIFIER_TIME_LIMIT", "time-limit" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_flags_register_static (g_intern_static_string ("LrgAscensionModifier"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_unlock_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_UNLOCK_TYPE_CHARACTER, "LRG_UNLOCK_TYPE_CHARACTER", "character" },
+            { LRG_UNLOCK_TYPE_CARD, "LRG_UNLOCK_TYPE_CARD", "card" },
+            { LRG_UNLOCK_TYPE_RELIC, "LRG_UNLOCK_TYPE_RELIC", "relic" },
+            { LRG_UNLOCK_TYPE_POTION, "LRG_UNLOCK_TYPE_POTION", "potion" },
+            { LRG_UNLOCK_TYPE_JOKER, "LRG_UNLOCK_TYPE_JOKER", "joker" },
+            { LRG_UNLOCK_TYPE_ASCENSION, "LRG_UNLOCK_TYPE_ASCENSION", "ascension" },
+            { LRG_UNLOCK_TYPE_COSMETIC, "LRG_UNLOCK_TYPE_COSMETIC", "cosmetic" },
+            { LRG_UNLOCK_TYPE_CHALLENGE, "LRG_UNLOCK_TYPE_CHALLENGE", "challenge" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgUnlockType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_unlock_status_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_UNLOCK_STATUS_LOCKED, "LRG_UNLOCK_STATUS_LOCKED", "locked" },
+            { LRG_UNLOCK_STATUS_UNLOCKED, "LRG_UNLOCK_STATUS_UNLOCKED", "unlocked" },
+            { LRG_UNLOCK_STATUS_NEW, "LRG_UNLOCK_STATUS_NEW", "new" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgUnlockStatus"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

@@ -462,4 +462,271 @@ struct _LrgLocaleProviderInterface
 LRG_AVAILABLE_IN_ALL
 GList *lrg_locale_provider_get_locales (LrgLocaleProvider *self);
 
+/* ==========================================================================
+ * LrgCardProvider Interface
+ * ========================================================================== */
+
+#define LRG_TYPE_CARD_PROVIDER (lrg_card_provider_get_type ())
+
+LRG_AVAILABLE_IN_ALL
+G_DECLARE_INTERFACE (LrgCardProvider, lrg_card_provider, LRG, CARD_PROVIDER, GObject)
+
+/**
+ * LrgCardProviderInterface:
+ * @g_iface: parent interface
+ * @get_card_defs: returns card definitions
+ * @get_deck_defs: returns deck definitions
+ * @get_relic_defs: returns relic definitions
+ * @get_potion_defs: returns potion definitions
+ * @get_enemy_defs: returns enemy definitions
+ * @get_event_defs: returns random event definitions
+ * @get_joker_defs: returns joker definitions
+ * @get_effect_executors: returns effect executor GTypes
+ * @get_status_effect_defs: returns status effect definitions
+ * @get_keyword_defs: returns keyword definitions
+ * @get_character_defs: returns character definitions
+ *
+ * Interface for providing deckbuilder content.
+ *
+ * This comprehensive interface allows mods to provide all types of
+ * deckbuilder content including cards, relics, enemies, and more.
+ *
+ * Since: 1.0
+ */
+struct _LrgCardProviderInterface
+{
+    GTypeInterface g_iface;
+
+    /**
+     * LrgCardProviderInterface::get_card_defs:
+     * @self: the provider
+     *
+     * Gets the card definitions provided by this mod.
+     *
+     * Returns: (transfer container) (element-type LrgCardDef) (nullable): list of card defs
+     */
+    GList * (*get_card_defs) (LrgCardProvider *self);
+
+    /**
+     * LrgCardProviderInterface::get_deck_defs:
+     * @self: the provider
+     *
+     * Gets the deck definitions provided by this mod.
+     *
+     * Returns: (transfer container) (element-type LrgDeckDef) (nullable): list of deck defs
+     */
+    GList * (*get_deck_defs) (LrgCardProvider *self);
+
+    /**
+     * LrgCardProviderInterface::get_relic_defs:
+     * @self: the provider
+     *
+     * Gets the relic definitions provided by this mod.
+     *
+     * Returns: (transfer container) (element-type LrgRelicDef) (nullable): list of relic defs
+     */
+    GList * (*get_relic_defs) (LrgCardProvider *self);
+
+    /**
+     * LrgCardProviderInterface::get_potion_defs:
+     * @self: the provider
+     *
+     * Gets the potion definitions provided by this mod.
+     *
+     * Returns: (transfer container) (element-type LrgPotionDef) (nullable): list of potion defs
+     */
+    GList * (*get_potion_defs) (LrgCardProvider *self);
+
+    /**
+     * LrgCardProviderInterface::get_enemy_defs:
+     * @self: the provider
+     *
+     * Gets the enemy definitions provided by this mod.
+     *
+     * Returns: (transfer container) (element-type LrgEnemyDef) (nullable): list of enemy defs
+     */
+    GList * (*get_enemy_defs) (LrgCardProvider *self);
+
+    /**
+     * LrgCardProviderInterface::get_event_defs:
+     * @self: the provider
+     *
+     * Gets the random event definitions provided by this mod.
+     *
+     * Returns: (transfer container) (element-type LrgEventDef) (nullable): list of event defs
+     */
+    GList * (*get_event_defs) (LrgCardProvider *self);
+
+    /**
+     * LrgCardProviderInterface::get_joker_defs:
+     * @self: the provider
+     *
+     * Gets the joker definitions provided by this mod.
+     *
+     * Returns: (transfer container) (element-type LrgJokerDef) (nullable): list of joker defs
+     */
+    GList * (*get_joker_defs) (LrgCardProvider *self);
+
+    /**
+     * LrgCardProviderInterface::get_effect_executors:
+     * @self: the provider
+     *
+     * Gets the effect executor GTypes provided by this mod.
+     *
+     * Returns: (transfer container) (element-type GType) (nullable): list of GTypes
+     */
+    GList * (*get_effect_executors) (LrgCardProvider *self);
+
+    /**
+     * LrgCardProviderInterface::get_status_effect_defs:
+     * @self: the provider
+     *
+     * Gets the status effect definitions provided by this mod.
+     *
+     * Returns: (transfer container) (element-type LrgStatusEffectDef) (nullable): list of status defs
+     */
+    GList * (*get_status_effect_defs) (LrgCardProvider *self);
+
+    /**
+     * LrgCardProviderInterface::get_keyword_defs:
+     * @self: the provider
+     *
+     * Gets the keyword definitions provided by this mod.
+     *
+     * Returns: (transfer container) (element-type LrgCardKeywordDef) (nullable): list of keyword defs
+     */
+    GList * (*get_keyword_defs) (LrgCardProvider *self);
+
+    /**
+     * LrgCardProviderInterface::get_character_defs:
+     * @self: the provider
+     *
+     * Gets the character definitions provided by this mod.
+     *
+     * Returns: (transfer container) (element-type LrgCharacterDef) (nullable): list of character defs
+     */
+    GList * (*get_character_defs) (LrgCardProvider *self);
+};
+
+/**
+ * lrg_card_provider_get_card_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets card definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgCardDef) (nullable): list of #LrgCardDef
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_card_defs (LrgCardProvider *self);
+
+/**
+ * lrg_card_provider_get_deck_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets deck definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgDeckDef) (nullable): list of #LrgDeckDef
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_deck_defs (LrgCardProvider *self);
+
+/**
+ * lrg_card_provider_get_relic_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets relic definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgRelicDef) (nullable): list of #LrgRelicDef
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_relic_defs (LrgCardProvider *self);
+
+/**
+ * lrg_card_provider_get_potion_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets potion definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgPotionDef) (nullable): list of #LrgPotionDef
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_potion_defs (LrgCardProvider *self);
+
+/**
+ * lrg_card_provider_get_enemy_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets enemy definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgEnemyDef) (nullable): list of #LrgEnemyDef
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_enemy_defs (LrgCardProvider *self);
+
+/**
+ * lrg_card_provider_get_event_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets random event definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgEventDef) (nullable): list of #LrgEventDef
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_event_defs (LrgCardProvider *self);
+
+/**
+ * lrg_card_provider_get_joker_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets joker definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgJokerDef) (nullable): list of #LrgJokerDef
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_joker_defs (LrgCardProvider *self);
+
+/**
+ * lrg_card_provider_get_effect_executors:
+ * @self: an #LrgCardProvider
+ *
+ * Gets effect executor GTypes provided by this mod.
+ *
+ * Returns: (transfer container) (element-type GType) (nullable): list of GTypes
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_effect_executors (LrgCardProvider *self);
+
+/**
+ * lrg_card_provider_get_status_effect_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets status effect definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgStatusEffectDef) (nullable): list of #LrgStatusEffectDef
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_status_effect_defs (LrgCardProvider *self);
+
+/**
+ * lrg_card_provider_get_keyword_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets keyword definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgCardKeywordDef) (nullable): list of #LrgCardKeywordDef
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_keyword_defs (LrgCardProvider *self);
+
+/**
+ * lrg_card_provider_get_character_defs:
+ * @self: an #LrgCardProvider
+ *
+ * Gets character definitions provided by this mod.
+ *
+ * Returns: (transfer container) (element-type LrgCharacterDef) (nullable): list of #LrgCharacterDef
+ */
+LRG_AVAILABLE_IN_ALL
+GList *lrg_card_provider_get_character_defs (LrgCardProvider *self);
+
 G_END_DECLS
