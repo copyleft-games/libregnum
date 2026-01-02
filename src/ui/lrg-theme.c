@@ -11,6 +11,7 @@
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_UI
 #include "../lrg-log.h"
+#include "../text/lrg-font-manager.h"
 
 /* ==========================================================================
  * Private Structure
@@ -91,6 +92,7 @@ static GParamSpec *properties[N_PROPS];
  * ========================================================================== */
 
 static LrgTheme *default_theme = NULL;
+static gboolean  font_init_attempted = FALSE;
 
 /* ==========================================================================
  * Default Theme Values
@@ -990,7 +992,9 @@ lrg_theme_set_success_color (LrgTheme       *self,
  * lrg_theme_get_default_font:
  * @self: an #LrgTheme
  *
- * Gets the default font.
+ * Gets the default font. If no font has been set and fonts have not
+ * been initialized, this will attempt to initialize the font manager
+ * and load system fonts automatically.
  *
  * Returns: (transfer none) (nullable): The default font
  */
@@ -998,6 +1002,29 @@ GrlFont *
 lrg_theme_get_default_font (LrgTheme *self)
 {
     g_return_val_if_fail (LRG_IS_THEME (self), NULL);
+
+    /* Lazy initialization: if no font set, try to initialize font manager */
+    if (self->default_font == NULL && !font_init_attempted)
+    {
+        LrgFontManager *font_mgr;
+
+        font_init_attempted = TRUE;
+        font_mgr = lrg_font_manager_get_default ();
+
+        if (lrg_font_manager_initialize (font_mgr, NULL))
+        {
+            GrlFont *font;
+
+            font = lrg_font_manager_get_default_font (font_mgr);
+            if (font != NULL)
+            {
+                self->default_font = g_object_ref (font);
+                lrg_debug (LRG_LOG_DOMAIN_UI,
+                           "Lazy-initialized default font from font manager");
+            }
+        }
+    }
+
     return self->default_font;
 }
 

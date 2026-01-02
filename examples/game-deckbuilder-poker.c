@@ -87,6 +87,27 @@ struct _DemoPokerGame
     gfloat             score_anim_timer;
     gchar             *message;
     gfloat             message_timer;
+
+    /* UI Labels - reusable for text rendering */
+    LrgLabel           *label_round;
+    LrgLabel           *label_score;
+    LrgLabel           *label_target;
+    LrgLabel           *label_hands;
+    LrgLabel           *label_discards;
+    LrgLabel           *label_breakdown;
+    LrgLabel           *label_last_hand;
+    LrgLabel           *label_preview;
+    LrgLabel           *label_play_button;
+    LrgLabel           *label_discard_button;
+    LrgLabel           *label_state;
+    LrgLabel           *label_state_info;
+    LrgLabel           *label_message;
+    LrgLabel           *label_instructions1;
+    LrgLabel           *label_instructions2;
+
+    /* Pool of reusable labels for cards/jokers */
+    GPtrArray          *label_pool;
+    guint               label_pool_index;
 };
 
 G_DEFINE_TYPE (DemoPokerGame, demo_poker_game, G_TYPE_OBJECT)
@@ -106,6 +127,55 @@ static void demo_poker_game_set_message (DemoPokerGame *self, const gchar *msg);
 static const gchar * demo_poker_game_get_hand_name (LrgHandType type);
 
 /*
+ * draw_label:
+ *
+ * Helper to configure and draw a label in one call.
+ */
+static void
+draw_label (LrgLabel       *label,
+            const gchar    *text,
+            gfloat          x,
+            gfloat          y,
+            gfloat          font_size,
+            const GrlColor *color)
+{
+    lrg_label_set_text (label, text);
+    lrg_widget_set_position (LRG_WIDGET (label), x, y);
+    lrg_label_set_font_size (label, font_size);
+    lrg_label_set_color (label, color);
+    lrg_widget_draw (LRG_WIDGET (label));
+}
+
+/*
+ * get_pool_label:
+ *
+ * Get a label from the reusable pool.
+ */
+static LrgLabel *
+get_pool_label (DemoPokerGame *self)
+{
+    LrgLabel *label;
+
+    if (self->label_pool_index >= self->label_pool->len)
+        return g_ptr_array_index (self->label_pool, self->label_pool->len - 1);
+
+    label = g_ptr_array_index (self->label_pool, self->label_pool_index);
+    self->label_pool_index++;
+    return label;
+}
+
+/*
+ * reset_label_pool:
+ *
+ * Reset the pool index at the start of each draw frame.
+ */
+static void
+reset_label_pool (DemoPokerGame *self)
+{
+    self->label_pool_index = 0;
+}
+
+/*
  * demo_poker_game_dispose:
  *
  * Clean up references when the game object is disposed.
@@ -123,6 +193,24 @@ demo_poker_game_dispose (GObject *object)
     g_clear_pointer (&self->joker_defs, g_ptr_array_unref);
     g_clear_pointer (&self->jokers, g_ptr_array_unref);
     g_clear_pointer (&self->message, g_free);
+
+    /* Clean up UI labels */
+    g_clear_object (&self->label_round);
+    g_clear_object (&self->label_score);
+    g_clear_object (&self->label_target);
+    g_clear_object (&self->label_hands);
+    g_clear_object (&self->label_discards);
+    g_clear_object (&self->label_breakdown);
+    g_clear_object (&self->label_last_hand);
+    g_clear_object (&self->label_preview);
+    g_clear_object (&self->label_play_button);
+    g_clear_object (&self->label_discard_button);
+    g_clear_object (&self->label_state);
+    g_clear_object (&self->label_state_info);
+    g_clear_object (&self->label_message);
+    g_clear_object (&self->label_instructions1);
+    g_clear_object (&self->label_instructions2);
+    g_clear_pointer (&self->label_pool, g_ptr_array_unref);
 
     G_OBJECT_CLASS (demo_poker_game_parent_class)->dispose (object);
 }
@@ -147,6 +235,8 @@ demo_poker_game_class_init (DemoPokerGameClass *klass)
 static void
 demo_poker_game_init (DemoPokerGame *self)
 {
+    guint i;
+
     self->scoring_manager = lrg_scoring_manager_new ();
     self->hand = lrg_hand_new_with_size (MAX_HAND_SIZE);
     self->all_card_defs = g_ptr_array_new_with_free_func (g_object_unref);
@@ -161,6 +251,31 @@ demo_poker_game_init (DemoPokerGame *self)
     self->score_anim_timer = 0.0f;
     self->message = NULL;
     self->message_timer = 0.0f;
+
+    /* Create UI labels for fixed text elements */
+    self->label_round = lrg_label_new (NULL);
+    self->label_score = lrg_label_new (NULL);
+    self->label_target = lrg_label_new (NULL);
+    self->label_hands = lrg_label_new (NULL);
+    self->label_discards = lrg_label_new (NULL);
+    self->label_breakdown = lrg_label_new (NULL);
+    self->label_last_hand = lrg_label_new (NULL);
+    self->label_preview = lrg_label_new (NULL);
+    self->label_play_button = lrg_label_new (NULL);
+    self->label_discard_button = lrg_label_new (NULL);
+    self->label_state = lrg_label_new (NULL);
+    self->label_state_info = lrg_label_new (NULL);
+    self->label_message = lrg_label_new (NULL);
+    self->label_instructions1 = lrg_label_new (NULL);
+    self->label_instructions2 = lrg_label_new (NULL);
+
+    /* Create pool of reusable labels for cards/jokers (50 should be plenty) */
+    self->label_pool = g_ptr_array_new_with_free_func (g_object_unref);
+    for (i = 0; i < 50; i++)
+    {
+        g_ptr_array_add (self->label_pool, lrg_label_new (NULL));
+    }
+    self->label_pool_index = 0;
 }
 
 /*
@@ -808,15 +923,15 @@ demo_poker_game_draw_card (DemoPokerGame   *self,
     text_color = grl_color_new (40, 40, 40, 255);
 
     /* Draw rank in corner */
-    grl_draw_text (rank_str, x + 5, y + 5, 18, suit_color);
+    draw_label (get_pool_label (self), rank_str, x + 5, y + 5, 18, suit_color);
 
     /* Draw suit character */
     suit_str = g_strdup_printf ("%c", demo_poker_game_get_suit_char (suit));
-    grl_draw_text (suit_str, x + 5, y + 25, 14, suit_color);
+    draw_label (get_pool_label (self), suit_str, x + 5, y + 25, 14, suit_color);
 
     /* Draw chip value at bottom */
     chip_str = g_strdup_printf ("+%d", chip_value);
-    grl_draw_text (chip_str, x + CARD_WIDTH / 2 - 10, y + CARD_HEIGHT - 20, 12, text_color);
+    draw_label (get_pool_label (self), chip_str, x + CARD_WIDTH / 2 - 10, y + CARD_HEIGHT - 20, 12, text_color);
 }
 
 /*
@@ -848,8 +963,8 @@ demo_poker_game_draw_joker (DemoPokerGame    *self,
     grl_draw_rectangle (x, y, JOKER_WIDTH, JOKER_HEIGHT, bg_color);
     grl_draw_rectangle_lines (x, y, JOKER_WIDTH, JOKER_HEIGHT, border_color);
 
-    grl_draw_text (name, x + 5, y + 10, 12, text_color);
-    grl_draw_text (desc, x + 5, y + 40, 14, text_color);
+    draw_label (get_pool_label (self), name, x + 5, y + 10, 12, text_color);
+    draw_label (get_pool_label (self), desc, x + 5, y + 40, 14, text_color);
 }
 
 /*
@@ -891,21 +1006,24 @@ demo_poker_game_draw (DemoPokerGame *self)
 
     grl_draw_clear_background (bg_color);
 
+    /* Reset label pool at the start of each frame */
+    reset_label_pool (self);
+
     /* Draw header info */
     round_str = g_strdup_printf ("Round %d", self->round);
-    grl_draw_text (round_str, 20, 15, 24, text_color);
+    draw_label (self->label_round, round_str, 20, 15, 24, text_color);
 
     score_str = g_strdup_printf ("Score: %lld", (long long)self->current_score);
-    grl_draw_text (score_str, 20, 45, 20, score_color);
+    draw_label (self->label_score, score_str, 20, 45, 20, score_color);
 
     target_str = g_strdup_printf ("Target: %lld", (long long)self->target_score);
-    grl_draw_text (target_str, 200, 45, 20, target_color);
+    draw_label (self->label_target, target_str, 200, 45, 20, target_color);
 
     hands_str = g_strdup_printf ("Hands: %d", self->hands_remaining);
-    grl_draw_text (hands_str, WINDOW_WIDTH - 150, 15, 18, info_color);
+    draw_label (self->label_hands, hands_str, WINDOW_WIDTH - 150, 15, 18, info_color);
 
     discards_str = g_strdup_printf ("Discards: %d", self->discards_remaining);
-    grl_draw_text (discards_str, WINDOW_WIDTH - 150, 40, 18, info_color);
+    draw_label (self->label_discards, discards_str, WINDOW_WIDTH - 150, 40, 18, info_color);
 
     /* Draw jokers */
     {
@@ -931,14 +1049,14 @@ demo_poker_game_draw (DemoPokerGame *self)
             (long long)self->last_mult,
             (long long)self->last_score);
 
-        grl_draw_text (breakdown, WINDOW_WIDTH / 2 - 150, 250, 22, hand_type_color);
+        draw_label (self->label_breakdown, breakdown, WINDOW_WIDTH / 2 - 150, 250, 22, hand_type_color);
     }
     else if (self->last_hand_type != LRG_HAND_TYPE_NONE)
     {
         const gchar *hand_name = demo_poker_game_get_hand_name (self->last_hand_type);
         g_autofree gchar *last_str = g_strdup_printf ("Last: %s (+%lld)",
             hand_name, (long long)self->last_score);
-        grl_draw_text (last_str, WINDOW_WIDTH / 2 - 100, 250, 18, info_color);
+        draw_label (self->label_last_hand, last_str, WINDOW_WIDTH / 2 - 100, 250, 18, info_color);
     }
 
     /* Draw preview if cards selected */
@@ -951,7 +1069,7 @@ demo_poker_game_draw (DemoPokerGame *self)
             const gchar *preview_name = demo_poker_game_get_hand_name (preview_type);
 
             g_autofree gchar *preview_str = g_strdup_printf ("Preview: %s", preview_name);
-            grl_draw_text (preview_str, WINDOW_WIDTH / 2 - 80, 290, 16, info_color);
+            draw_label (self->label_preview, preview_str, WINDOW_WIDTH / 2 - 80, 290, 16, info_color);
         }
     }
 
@@ -967,7 +1085,7 @@ demo_poker_game_draw (DemoPokerGame *self)
                 ? (self->hovered_play_button ? button_hover : button_color)
                 : button_disabled;
             grl_draw_rectangle (play_x, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT, btn_color);
-            grl_draw_text ("Play Hand", play_x + 20, BUTTON_Y + 12, 18, text_color);
+            draw_label (self->label_play_button, "Play Hand", play_x + 20, BUTTON_Y + 12, 18, text_color);
         }
 
         /* Discard button */
@@ -976,7 +1094,7 @@ demo_poker_game_draw (DemoPokerGame *self)
                 ? (self->hovered_discard_button ? button_hover : button_color)
                 : button_disabled;
             grl_draw_rectangle (discard_x, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT, btn_color);
-            grl_draw_text ("Discard", discard_x + 30, BUTTON_Y + 12, 18, text_color);
+            draw_label (self->label_discard_button, "Discard", discard_x + 30, BUTTON_Y + 12, 18, text_color);
         }
     }
 
@@ -998,8 +1116,8 @@ demo_poker_game_draw (DemoPokerGame *self)
         g_autoptr(GrlColor) win_text = grl_color_new (255, 255, 100, 255);
 
         grl_draw_rectangle (WINDOW_WIDTH / 2 - 150, 320, 300, 100, overlay);
-        grl_draw_text ("ROUND COMPLETE!", WINDOW_WIDTH / 2 - 100, 345, 24, win_text);
-        grl_draw_text ("Click to continue", WINDOW_WIDTH / 2 - 80, 380, 16, text_color);
+        draw_label (self->label_state, "ROUND COMPLETE!", WINDOW_WIDTH / 2 - 100, 345, 24, win_text);
+        draw_label (self->label_state_info, "Click to continue", WINDOW_WIDTH / 2 - 80, 380, 16, text_color);
     }
     else if (self->game_state == GAME_STATE_ROUND_LOSE)
     {
@@ -1007,23 +1125,25 @@ demo_poker_game_draw (DemoPokerGame *self)
         g_autoptr(GrlColor) lose_text = grl_color_new (255, 100, 100, 255);
 
         grl_draw_rectangle (WINDOW_WIDTH / 2 - 150, 320, 300, 100, overlay);
-        grl_draw_text ("ROUND FAILED!", WINDOW_WIDTH / 2 - 85, 345, 24, lose_text);
-        grl_draw_text ("Click to restart", WINDOW_WIDTH / 2 - 70, 380, 16, text_color);
+        draw_label (self->label_state, "ROUND FAILED!", WINDOW_WIDTH / 2 - 85, 345, 24, lose_text);
+        draw_label (self->label_state_info, "Click to restart", WINDOW_WIDTH / 2 - 70, 380, 16, text_color);
     }
 
     /* Draw message */
     if (self->message != NULL && self->message_timer > 0.0f)
     {
-        grl_draw_text (self->message, 20, WINDOW_HEIGHT - 30, 16, msg_color);
+        draw_label (self->label_message, self->message, 20, WINDOW_HEIGHT - 30, 16, msg_color);
     }
 
     /* Draw instructions */
     {
         g_autoptr(GrlColor) instr_color = grl_color_new (150, 150, 150, 255);
-        grl_draw_text ("Click cards to select (max 5), then Play Hand or Discard",
-                       20, WINDOW_HEIGHT - 55, 12, instr_color);
-        grl_draw_text ("Score chips x mult to reach target before running out of hands",
-                       20, WINDOW_HEIGHT - 40, 12, instr_color);
+        draw_label (self->label_instructions1,
+                    "Click cards to select (max 5), then Play Hand or Discard",
+                    20, WINDOW_HEIGHT - 55, 12, instr_color);
+        draw_label (self->label_instructions2,
+                    "Score chips x mult to reach target before running out of hands",
+                    20, WINDOW_HEIGHT - 40, 12, instr_color);
     }
 }
 

@@ -19,6 +19,8 @@
 #include "../graphics/lrg-window.h"
 #include "../graphics/lrg-renderer.h"
 #include "../scripting/lrg-scripting.h"
+#include "../text/lrg-font-manager.h"
+#include "../ui/lrg-theme.h"
 #ifdef LRG_HAS_LUAJIT
 #include "../scripting/lrg-scripting-lua.h"
 #endif
@@ -77,6 +79,27 @@ lrg_engine_real_startup (LrgEngine *self)
 
     /* Connect data loader to registry */
     lrg_data_loader_set_registry (priv->data_loader, priv->registry);
+
+    /* Initialize font manager if we have a window (graphics mode) */
+    if (priv->window != NULL)
+    {
+        LrgFontManager *font_mgr;
+        LrgTheme       *theme;
+
+        font_mgr = lrg_font_manager_get_default ();
+        if (lrg_font_manager_initialize (font_mgr, NULL))
+        {
+            GrlFont *default_font;
+
+            default_font = lrg_font_manager_get_default_font (font_mgr);
+            if (default_font != NULL)
+            {
+                theme = lrg_theme_get_default ();
+                lrg_theme_set_default_font (theme, default_font);
+                lrg_debug (LRG_LOG_DOMAIN_CORE, "Default font set in theme");
+            }
+        }
+    }
 
     priv->state = LRG_ENGINE_STATE_RUNNING;
 }

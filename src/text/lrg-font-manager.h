@@ -14,6 +14,7 @@
 #endif
 
 #include <glib-object.h>
+#include <graylib.h>
 #include "../lrg-version.h"
 
 G_BEGIN_DECLS
@@ -32,6 +33,50 @@ G_DECLARE_FINAL_TYPE (LrgFontManager, lrg_font_manager, LRG, FONT_MANAGER, GObje
  */
 LRG_AVAILABLE_IN_ALL
 LrgFontManager *    lrg_font_manager_get_default        (void);
+
+/**
+ * lrg_font_manager_initialize:
+ * @self: A #LrgFontManager
+ * @error: (nullable): Return location for error
+ *
+ * Initializes the font manager by searching for system fonts.
+ * This is called automatically during engine startup if a window exists.
+ *
+ * On Linux, searches for Liberation Sans, Noto Sans, or DejaVu Sans.
+ * On Windows, searches for Segoe UI, Arial, or Verdana.
+ *
+ * Loads the first available font at multiple sizes (12, 16, 24) for
+ * ui-small, ui-normal, and ui-large presets.
+ *
+ * Returns: %TRUE if at least one font was loaded, %FALSE otherwise
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_font_manager_initialize         (LrgFontManager *self,
+                                                         GError        **error);
+
+/**
+ * lrg_font_manager_get_font:
+ * @self: A #LrgFontManager
+ * @name: (nullable): Font name, or %NULL for default
+ *
+ * Gets a loaded font by name.
+ *
+ * Returns: (transfer none) (nullable): The #GrlFont, or %NULL if not found
+ */
+LRG_AVAILABLE_IN_ALL
+GrlFont *           lrg_font_manager_get_font           (LrgFontManager *self,
+                                                         const gchar    *name);
+
+/**
+ * lrg_font_manager_get_default_font:
+ * @self: A #LrgFontManager
+ *
+ * Gets the default font object.
+ *
+ * Returns: (transfer none) (nullable): The default #GrlFont
+ */
+LRG_AVAILABLE_IN_ALL
+GrlFont *           lrg_font_manager_get_default_font   (LrgFontManager *self);
 
 /**
  * lrg_font_manager_load_font:

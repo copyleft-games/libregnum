@@ -84,28 +84,74 @@ lrg_theme_set_success_color(theme, &success);
 
 ## Typography
 
-### Font
+### Automatic Font Loading
+
+The theme lazily initializes fonts from `LrgFontManager` on first access. When you call `lrg_theme_get_default_font()`, the theme:
+
+1. Checks if a font was explicitly set via `lrg_theme_set_default_font()`
+2. If not, calls `lrg_font_manager_initialize()` to detect system fonts
+3. Returns the font manager's default font (typically Liberation Sans, Noto Sans, or DejaVu Sans)
+4. Falls back to `NULL` if no system fonts found (widgets use raylib's bitmap font)
 
 ```c
-GrlFont *font = grl_font_load("assets/fonts/Roboto.ttf");
-lrg_theme_set_default_font(theme, font);
+LrgTheme *theme = lrg_theme_get_default ();
 
-/* Query font */
-GrlFont *current = lrg_theme_get_default_font(theme);
+/* This triggers automatic system font detection */
+GrlFont *font = lrg_theme_get_default_font (theme);
+
+if (font != NULL)
+{
+    /* Using system font (Liberation Sans, etc.) */
+}
+else
+{
+    /* No system fonts found - widgets fall back to raylib default */
+}
+```
+
+### Setting a Custom Font
+
+Override the auto-detected font with your own:
+
+```c
+LrgFontManager *fonts = lrg_font_manager_get_default ();
+lrg_font_manager_load_font (fonts, "my-font", "assets/fonts/Roboto.ttf", 16, NULL);
+
+GrlFont *font = lrg_font_manager_get_font (fonts, "my-font");
+lrg_theme_set_default_font (theme, font);
 ```
 
 ### Font Sizes
 
 ```c
-lrg_theme_set_font_size_small(theme, 12.0f);
-lrg_theme_set_font_size_normal(theme, 16.0f);
-lrg_theme_set_font_size_large(theme, 24.0f);
+lrg_theme_set_font_size_small (theme, 12.0f);
+lrg_theme_set_font_size_normal (theme, 16.0f);
+lrg_theme_set_font_size_large (theme, 24.0f);
 
 /* Query sizes */
-gfloat small = lrg_theme_get_font_size_small(theme);
-gfloat normal = lrg_theme_get_font_size_normal(theme);
-gfloat large = lrg_theme_get_font_size_large(theme);
+gfloat small = lrg_theme_get_font_size_small (theme);
+gfloat normal = lrg_theme_get_font_size_normal (theme);
+gfloat large = lrg_theme_get_font_size_large (theme);
 ```
+
+### Font Manager Integration
+
+The theme integrates with `LrgFontManager` for system font detection:
+
+```c
+/* Font manager auto-loads these on initialization */
+/* ui-small  (12px) */
+/* ui-normal (16px) - set as default */
+/* ui-large  (24px) */
+
+LrgFontManager *fonts = lrg_font_manager_get_default ();
+
+/* Access specific sizes */
+GrlFont *small = lrg_font_manager_get_font (fonts, "ui-small");
+GrlFont *large = lrg_font_manager_get_font (fonts, "ui-large");
+```
+
+See [Font Manager](../text/font-manager.md) for details on system font paths and debugging.
 
 ## Spacing
 
@@ -318,8 +364,12 @@ void apply_retro_theme(void)
 - Custom themes can be created for testing or multiple themes
 - Colors are mutable - changes affect all widgets using them
 - Spacing values are in pixels
+- Fonts are lazy-loaded from `LrgFontManager` on first access to `lrg_theme_get_default_font()`
+- System fonts (Liberation Sans, Noto Sans, DejaVu Sans) are auto-detected
 
 ## Related
 
 - [Widget](widget.md) - Widget system
 - [UI Module Overview](index.md) - Complete UI documentation
+- [Font Manager](../text/font-manager.md) - Font loading and system font detection
+- [Label Widget](widgets/label.md) - Text display widget using theme fonts

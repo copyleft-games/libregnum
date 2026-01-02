@@ -75,6 +75,20 @@ struct _DemoCombatGame
     /* Enemy turn animation */
     gint                current_enemy_action;
     gfloat              enemy_action_timer;
+
+    /* UI Labels - reusable for text rendering */
+    LrgLabel           *label_energy;
+    LrgLabel           *label_hp;
+    LrgLabel           *label_block;
+    LrgLabel           *label_message;
+    LrgLabel           *label_instructions1;
+    LrgLabel           *label_instructions2;
+    LrgLabel           *label_state;
+    LrgLabel           *label_button;
+
+    /* Pool of reusable labels for cards/enemies */
+    GPtrArray          *label_pool;
+    guint               label_pool_index;
 };
 
 G_DEFINE_TYPE (DemoCombatGame, demo_combat_game, G_TYPE_OBJECT)
@@ -89,6 +103,60 @@ static void demo_combat_game_update (DemoCombatGame *self, gfloat delta);
 static void demo_combat_game_set_message (DemoCombatGame *self, const gchar *msg);
 static void demo_combat_game_start_enemy_turn (DemoCombatGame *self);
 static void demo_combat_game_check_combat_end (DemoCombatGame *self);
+
+/*
+ * draw_label:
+ *
+ * Update a label's properties and draw it.
+ */
+static void
+draw_label (LrgLabel       *label,
+            const gchar    *text,
+            gfloat          x,
+            gfloat          y,
+            gfloat          font_size,
+            const GrlColor *color)
+{
+    lrg_label_set_text (label, text);
+    lrg_widget_set_position (LRG_WIDGET (label), x, y);
+    lrg_label_set_font_size (label, font_size);
+    lrg_label_set_color (label, color);
+    lrg_widget_draw (LRG_WIDGET (label));
+}
+
+/*
+ * get_pool_label:
+ *
+ * Get a label from the pool for temporary text rendering.
+ * Pool resets at the start of each frame.
+ */
+static LrgLabel *
+get_pool_label (DemoCombatGame *self)
+{
+    LrgLabel *label;
+
+    if (self->label_pool_index >= self->label_pool->len)
+    {
+        /* Pool exhausted, return the last one (shouldn't happen) */
+        return g_ptr_array_index (self->label_pool, self->label_pool->len - 1);
+    }
+
+    label = g_ptr_array_index (self->label_pool, self->label_pool_index);
+    self->label_pool_index++;
+
+    return label;
+}
+
+/*
+ * reset_label_pool:
+ *
+ * Reset the label pool index for a new frame.
+ */
+static void
+reset_label_pool (DemoCombatGame *self)
+{
+    self->label_pool_index = 0;
+}
 
 /*
  * demo_combat_game_dispose:
@@ -106,6 +174,17 @@ demo_combat_game_dispose (GObject *object)
     g_clear_pointer (&self->card_defs, g_ptr_array_unref);
     g_clear_pointer (&self->enemy_defs, g_ptr_array_unref);
     g_clear_pointer (&self->message, g_free);
+
+    /* Clean up labels */
+    g_clear_object (&self->label_energy);
+    g_clear_object (&self->label_hp);
+    g_clear_object (&self->label_block);
+    g_clear_object (&self->label_message);
+    g_clear_object (&self->label_instructions1);
+    g_clear_object (&self->label_instructions2);
+    g_clear_object (&self->label_state);
+    g_clear_object (&self->label_button);
+    g_clear_pointer (&self->label_pool, g_ptr_array_unref);
 
     G_OBJECT_CLASS (demo_combat_game_parent_class)->dispose (object);
 }
@@ -130,6 +209,8 @@ demo_combat_game_class_init (DemoCombatGameClass *klass)
 static void
 demo_combat_game_init (DemoCombatGame *self)
 {
+    guint i;
+
     self->combat_manager = lrg_combat_manager_new ();
     self->card_defs = g_ptr_array_new_with_free_func (g_object_unref);
     self->enemy_defs = g_ptr_array_new_with_free_func (g_object_unref);
@@ -141,6 +222,24 @@ demo_combat_game_init (DemoCombatGame *self)
     self->message_timer = 0.0f;
     self->current_enemy_action = 0;
     self->enemy_action_timer = 0.0f;
+
+    /* Create UI labels */
+    self->label_energy = lrg_label_new (NULL);
+    self->label_hp = lrg_label_new (NULL);
+    self->label_block = lrg_label_new (NULL);
+    self->label_message = lrg_label_new (NULL);
+    self->label_instructions1 = lrg_label_new (NULL);
+    self->label_instructions2 = lrg_label_new (NULL);
+    self->label_state = lrg_label_new (NULL);
+    self->label_button = lrg_label_new (NULL);
+
+    /* Create pool of reusable labels for cards and enemies */
+    self->label_pool = g_ptr_array_new_with_free_func (g_object_unref);
+    for (i = 0; i < 50; i++)
+    {
+        g_ptr_array_add (self->label_pool, lrg_label_new (NULL));
+    }
+    self->label_pool_index = 0;
 }
 
 /*
@@ -763,17 +862,17 @@ demo_combat_game_draw_card (DemoCombatGame  *self,
     grl_draw_rectangle_lines (x, y, CARD_WIDTH, CARD_HEIGHT, border_color);
 
     /* Draw card name */
-    grl_draw_text (name, x + 5, y + 10, 14, text_color);
+    draw_label (get_pool_label (self), name, (gfloat)(x + 5), (gfloat)(y + 10), 14.0f, text_color);
 
     /* Draw energy cost */
     cost_str = g_strdup_printf ("%d", cost);
-    grl_draw_text (cost_str, x + CARD_WIDTH - 20, y + 5, 18, cost_color);
+    draw_label (get_pool_label (self), cost_str, (gfloat)(x + CARD_WIDTH - 20), (gfloat)(y + 5), 18.0f, cost_color);
 
     /* Draw card type indicator */
     if (card_type == LRG_CARD_TYPE_ATTACK)
-        grl_draw_text ("ATK", x + 5, y + CARD_HEIGHT - 25, 12, text_color);
+        draw_label (get_pool_label (self), "ATK", (gfloat)(x + 5), (gfloat)(y + CARD_HEIGHT - 25), 12.0f, text_color);
     else if (card_type == LRG_CARD_TYPE_SKILL)
-        grl_draw_text ("SKL", x + 5, y + CARD_HEIGHT - 25, 12, text_color);
+        draw_label (get_pool_label (self), "SKL", (gfloat)(x + 5), (gfloat)(y + CARD_HEIGHT - 25), 12.0f, text_color);
 }
 
 /*
@@ -817,7 +916,7 @@ demo_combat_game_draw_enemy (DemoCombatGame   *self,
         dead_color = grl_color_new (60, 60, 60, 200);
         grl_draw_rectangle (x, y, ENEMY_WIDTH, ENEMY_HEIGHT, dead_color);
         text_color = grl_color_new (150, 150, 150, 255);
-        grl_draw_text ("DEAD", x + 25, y + 50, 16, text_color);
+        draw_label (get_pool_label (self), "DEAD", (gfloat)(x + 25), (gfloat)(y + 50), 16.0f, text_color);
         return;
     }
 
@@ -836,17 +935,17 @@ demo_combat_game_draw_enemy (DemoCombatGame   *self,
     grl_draw_rectangle_lines (x, y, ENEMY_WIDTH, ENEMY_HEIGHT, border_color);
 
     /* Draw name */
-    grl_draw_text (name, x + 5, y + 5, 14, text_color);
+    draw_label (get_pool_label (self), name, (gfloat)(x + 5), (gfloat)(y + 5), 14.0f, text_color);
 
     /* Draw HP */
     hp_str = g_strdup_printf ("HP: %d/%d", current_hp, max_hp);
-    grl_draw_text (hp_str, x + 5, y + 30, 12, hp_color);
+    draw_label (get_pool_label (self), hp_str, (gfloat)(x + 5), (gfloat)(y + 30), 12.0f, hp_color);
 
     /* Draw Block if any */
     if (block > 0)
     {
         block_str = g_strdup_printf ("Block: %d", block);
-        grl_draw_text (block_str, x + 5, y + 50, 12, block_color);
+        draw_label (get_pool_label (self), block_str, (gfloat)(x + 5), (gfloat)(y + 50), 12.0f, block_color);
     }
 
     /* Draw intent */
@@ -873,7 +972,7 @@ demo_combat_game_draw_enemy (DemoCombatGame   *self,
             intent_str = g_strdup ("???");
         }
 
-        grl_draw_text (intent_str, x + 5, y + ENEMY_HEIGHT - 25, 14, text_color);
+        draw_label (get_pool_label (self), intent_str, (gfloat)(x + 5), (gfloat)(y + ENEMY_HEIGHT - 25), 14.0f, text_color);
     }
 }
 
@@ -904,6 +1003,9 @@ demo_combat_game_draw (DemoCombatGame *self)
     g_autofree gchar *hp_str = NULL;
     g_autofree gchar *block_str = NULL;
 
+    /* Reset label pool for this frame */
+    reset_label_pool (self);
+
     bg_color = grl_color_new (30, 30, 40, 255);
     text_color = grl_color_new (255, 255, 255, 255);
     energy_color = grl_color_new (255, 200, 100, 255);
@@ -922,15 +1024,15 @@ demo_combat_game_draw (DemoCombatGame *self)
     block = lrg_combatant_get_block (LRG_COMBATANT (self->player));
 
     energy_str = g_strdup_printf ("Energy: %d/3", energy);
-    grl_draw_text (energy_str, 20, 15, 20, energy_color);
+    draw_label (self->label_energy, energy_str, 20.0f, 15.0f, 20.0f, energy_color);
 
     hp_str = g_strdup_printf ("HP: %d/%d", current_hp, max_hp);
-    grl_draw_text (hp_str, 20, 40, 20, hp_color);
+    draw_label (self->label_hp, hp_str, 20.0f, 40.0f, 20.0f, hp_color);
 
     if (block > 0)
     {
         block_str = g_strdup_printf ("Block: %d", block);
-        grl_draw_text (block_str, 180, 40, 20, block_color);
+        draw_label (self->label_block, block_str, 180.0f, 40.0f, 20.0f, block_color);
     }
 
     /* Draw enemies */
@@ -950,7 +1052,7 @@ demo_combat_game_draw (DemoCombatGame *self)
 
         grl_draw_rectangle (button_x, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT,
                             self->hovered_button ? button_hover : button_color);
-        grl_draw_text ("End Turn", button_x + 20, BUTTON_Y + 10, 18, text_color);
+        draw_label (self->label_button, "End Turn", (gfloat)(button_x + 20), (gfloat)(BUTTON_Y + 10), 18.0f, text_color);
     }
 
     /* Draw cards in hand */
@@ -973,34 +1075,34 @@ demo_combat_game_draw (DemoCombatGame *self)
     /* Draw state indicator */
     if (self->ui_state == UI_STATE_ENEMY_TURN)
     {
-        grl_draw_text ("ENEMY TURN", WINDOW_WIDTH / 2 - 60, 300, 24, text_color);
+        draw_label (self->label_state, "ENEMY TURN", (gfloat)(WINDOW_WIDTH / 2 - 60), 300.0f, 24.0f, text_color);
     }
     else if (self->ui_state == UI_STATE_SELECT_TARGET)
     {
-        grl_draw_text ("SELECT TARGET", WINDOW_WIDTH / 2 - 70, 300, 20, energy_color);
+        draw_label (self->label_state, "SELECT TARGET", (gfloat)(WINDOW_WIDTH / 2 - 70), 300.0f, 20.0f, energy_color);
     }
     else if (self->ui_state == UI_STATE_VICTORY)
     {
         g_autoptr(GrlColor) victory = grl_color_new (100, 255, 100, 255);
-        grl_draw_text ("VICTORY!", WINDOW_WIDTH / 2 - 60, 280, 32, victory);
+        draw_label (self->label_state, "VICTORY!", (gfloat)(WINDOW_WIDTH / 2 - 60), 280.0f, 32.0f, victory);
     }
     else if (self->ui_state == UI_STATE_DEFEAT)
     {
         g_autoptr(GrlColor) defeat = grl_color_new (255, 80, 80, 255);
-        grl_draw_text ("DEFEAT!", WINDOW_WIDTH / 2 - 50, 280, 32, defeat);
+        draw_label (self->label_state, "DEFEAT!", (gfloat)(WINDOW_WIDTH / 2 - 50), 280.0f, 32.0f, defeat);
     }
 
     /* Draw message */
     if (self->message != NULL && self->message_timer > 0.0f)
     {
-        grl_draw_text (self->message, 20, WINDOW_HEIGHT - 30, 16, msg_color);
+        draw_label (self->label_message, self->message, 20.0f, (gfloat)(WINDOW_HEIGHT - 30), 16.0f, msg_color);
     }
 
     /* Draw instructions */
     {
         g_autoptr(GrlColor) instr_color = grl_color_new (150, 150, 150, 255);
-        grl_draw_text ("Click cards to select, click enemies to attack", 20, WINDOW_HEIGHT - 55, 12, instr_color);
-        grl_draw_text ("Right-click to cancel, click End Turn when done", 20, WINDOW_HEIGHT - 40, 12, instr_color);
+        draw_label (self->label_instructions1, "Click cards to select, click enemies to attack", 20.0f, (gfloat)(WINDOW_HEIGHT - 55), 12.0f, instr_color);
+        draw_label (self->label_instructions2, "Right-click to cancel, click End Turn when done", 20.0f, (gfloat)(WINDOW_HEIGHT - 40), 12.0f, instr_color);
     }
 }
 

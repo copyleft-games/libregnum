@@ -12,6 +12,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_UI
 
 #include "lrg-label.h"
+#include "lrg-theme.h"
 #include "../lrg-log.h"
 
 /* ==========================================================================
@@ -56,6 +57,7 @@ lrg_label_draw (LrgWidget *widget)
 {
     LrgLabel              *self = LRG_LABEL (widget);
     g_autoptr(GrlVector2)  pos = NULL;
+    GrlFont               *font_to_use;
     gfloat                 text_width;
 
     if (self->text == NULL || self->text[0] == '\0')
@@ -66,19 +68,30 @@ lrg_label_draw (LrgWidget *widget)
     pos = grl_vector2_new (lrg_widget_get_world_x (widget),
                            lrg_widget_get_world_y (widget));
 
+    /* Determine which font to use: widget font -> theme font -> raylib default */
+    if (self->font != NULL)
+    {
+        font_to_use = self->font;
+    }
+    else
+    {
+        LrgTheme *theme = lrg_theme_get_default ();
+        font_to_use = lrg_theme_get_default_font (theme);
+    }
+
     /* Handle text alignment */
     if (self->alignment != LRG_TEXT_ALIGN_LEFT)
     {
-        if (self->font != NULL)
+        if (font_to_use != NULL)
         {
             g_autoptr(GrlVector2) measured = NULL;
-            measured = grl_font_measure_text (self->font, self->text,
+            measured = grl_font_measure_text (font_to_use, self->text,
                                               self->font_size, 1.0f);
             text_width = measured->x;
         }
         else
         {
-            /* Estimate for default font */
+            /* Estimate for raylib default font */
             text_width = (gfloat)g_utf8_strlen (self->text, -1) * (self->font_size * 0.6f);
         }
 
@@ -92,13 +105,15 @@ lrg_label_draw (LrgWidget *widget)
         }
     }
 
-    if (self->font != NULL)
+    /* Draw with font or fallback to raylib default */
+    if (font_to_use != NULL)
     {
-        grl_draw_text_ex (self->font, self->text, pos,
+        grl_draw_text_ex (font_to_use, self->text, pos,
                           self->font_size, 1.0f, &self->color);
     }
     else
     {
+        /* Last resort: raylib default bitmap font */
         grl_draw_text (self->text, (gint)pos->x, (gint)pos->y,
                        (gint)self->font_size, &self->color);
     }
@@ -111,6 +126,7 @@ lrg_label_measure (LrgWidget *widget,
 {
     LrgLabel              *self = LRG_LABEL (widget);
     g_autoptr(GrlVector2)  size = NULL;
+    GrlFont               *font_to_use;
 
     if (self->text == NULL || self->text[0] == '\0')
     {
@@ -125,14 +141,25 @@ lrg_label_measure (LrgWidget *widget,
         return;
     }
 
+    /* Determine which font to use: widget font -> theme font -> fallback estimate */
     if (self->font != NULL)
     {
-        size = grl_font_measure_text (self->font, self->text,
+        font_to_use = self->font;
+    }
+    else
+    {
+        LrgTheme *theme = lrg_theme_get_default ();
+        font_to_use = lrg_theme_get_default_font (theme);
+    }
+
+    if (font_to_use != NULL)
+    {
+        size = grl_font_measure_text (font_to_use, self->text,
                                       self->font_size, 1.0f);
     }
     else
     {
-        /* Estimate for default font */
+        /* Estimate for raylib default font */
         size = grl_vector2_new ((gfloat)g_utf8_strlen (self->text, -1) * (self->font_size * 0.6f),
                                 self->font_size);
     }

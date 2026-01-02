@@ -68,6 +68,7 @@ G_BEGIN_DECLS
 #define LRG_LOG_DOMAIN_DEMO       "Libregnum-Demo"
 #define LRG_LOG_DOMAIN_VR         "Libregnum-VR"
 #define LRG_LOG_DOMAIN_DECKBUILDER "Libregnum-Deckbuilder"
+#define LRG_LOG_DOMAIN_TEXT       "Libregnum-Text"
 
 /* ==========================================================================
  * Logging Macros
