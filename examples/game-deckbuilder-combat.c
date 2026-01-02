@@ -15,22 +15,22 @@
 #include <libregnum.h>
 #include <graylib.h>
 
-/* Window dimensions */
-#define WINDOW_WIDTH  800
-#define WINDOW_HEIGHT 600
+/* Window dimensions (1440p) */
+#define WINDOW_WIDTH  2560
+#define WINDOW_HEIGHT 1440
 
-/* Layout constants */
-#define CARD_WIDTH      100
-#define CARD_HEIGHT     140
-#define CARD_SPACING    15
-#define CARD_Y          440
-#define ENEMY_WIDTH     100
-#define ENEMY_HEIGHT    120
-#define ENEMY_SPACING   30
-#define ENEMY_Y         100
-#define BUTTON_WIDTH    120
-#define BUTTON_HEIGHT   40
-#define BUTTON_Y        350
+/* Layout constants (2.5x scale for 1440p) */
+#define CARD_WIDTH      250
+#define CARD_HEIGHT     350
+#define CARD_SPACING    38
+#define CARD_Y          1100
+#define ENEMY_WIDTH     250
+#define ENEMY_HEIGHT    300
+#define ENEMY_SPACING   75
+#define ENEMY_Y         250
+#define BUTTON_WIDTH    300
+#define BUTTON_HEIGHT   100
+#define BUTTON_Y        875
 
 /* UI state */
 typedef enum {
@@ -579,9 +579,9 @@ demo_combat_game_handle_input (DemoCombatGame *self)
 
         /* Raise selected/hovered cards */
         if (lrg_hand_is_selected (self->hand, card))
-            card_y -= 30;
+            card_y -= 75;
         else if ((gint)i == self->hovered_card)
-            card_y -= 10;
+            card_y -= 25;
 
         if (point_in_rect (mx, my, card_x, card_y, CARD_WIDTH, CARD_HEIGHT))
         {
@@ -862,17 +862,17 @@ demo_combat_game_draw_card (DemoCombatGame  *self,
     grl_draw_rectangle_lines (x, y, CARD_WIDTH, CARD_HEIGHT, border_color);
 
     /* Draw card name */
-    draw_label (get_pool_label (self), name, (gfloat)(x + 5), (gfloat)(y + 10), 14.0f, text_color);
+    draw_label (get_pool_label (self), name, (gfloat)(x + 12), (gfloat)(y + 25), 35.0f, text_color);
 
     /* Draw energy cost */
     cost_str = g_strdup_printf ("%d", cost);
-    draw_label (get_pool_label (self), cost_str, (gfloat)(x + CARD_WIDTH - 20), (gfloat)(y + 5), 18.0f, cost_color);
+    draw_label (get_pool_label (self), cost_str, (gfloat)(x + CARD_WIDTH - 50), (gfloat)(y + 12), 45.0f, cost_color);
 
     /* Draw card type indicator */
     if (card_type == LRG_CARD_TYPE_ATTACK)
-        draw_label (get_pool_label (self), "ATK", (gfloat)(x + 5), (gfloat)(y + CARD_HEIGHT - 25), 12.0f, text_color);
+        draw_label (get_pool_label (self), "ATK", (gfloat)(x + 12), (gfloat)(y + CARD_HEIGHT - 62), 30.0f, text_color);
     else if (card_type == LRG_CARD_TYPE_SKILL)
-        draw_label (get_pool_label (self), "SKL", (gfloat)(x + 5), (gfloat)(y + CARD_HEIGHT - 25), 12.0f, text_color);
+        draw_label (get_pool_label (self), "SKL", (gfloat)(x + 12), (gfloat)(y + CARD_HEIGHT - 62), 30.0f, text_color);
 }
 
 /*
@@ -916,7 +916,7 @@ demo_combat_game_draw_enemy (DemoCombatGame   *self,
         dead_color = grl_color_new (60, 60, 60, 200);
         grl_draw_rectangle (x, y, ENEMY_WIDTH, ENEMY_HEIGHT, dead_color);
         text_color = grl_color_new (150, 150, 150, 255);
-        draw_label (get_pool_label (self), "DEAD", (gfloat)(x + 25), (gfloat)(y + 50), 16.0f, text_color);
+        draw_label (get_pool_label (self), "DEAD", (gfloat)(x + 62), (gfloat)(y + 125), 40.0f, text_color);
         return;
     }
 
@@ -935,17 +935,17 @@ demo_combat_game_draw_enemy (DemoCombatGame   *self,
     grl_draw_rectangle_lines (x, y, ENEMY_WIDTH, ENEMY_HEIGHT, border_color);
 
     /* Draw name */
-    draw_label (get_pool_label (self), name, (gfloat)(x + 5), (gfloat)(y + 5), 14.0f, text_color);
+    draw_label (get_pool_label (self), name, (gfloat)(x + 12), (gfloat)(y + 12), 35.0f, text_color);
 
     /* Draw HP */
     hp_str = g_strdup_printf ("HP: %d/%d", current_hp, max_hp);
-    draw_label (get_pool_label (self), hp_str, (gfloat)(x + 5), (gfloat)(y + 30), 12.0f, hp_color);
+    draw_label (get_pool_label (self), hp_str, (gfloat)(x + 12), (gfloat)(y + 75), 30.0f, hp_color);
 
     /* Draw Block if any */
     if (block > 0)
     {
         block_str = g_strdup_printf ("Block: %d", block);
-        draw_label (get_pool_label (self), block_str, (gfloat)(x + 5), (gfloat)(y + 50), 12.0f, block_color);
+        draw_label (get_pool_label (self), block_str, (gfloat)(x + 12), (gfloat)(y + 125), 30.0f, block_color);
     }
 
     /* Draw intent */
@@ -972,7 +972,7 @@ demo_combat_game_draw_enemy (DemoCombatGame   *self,
             intent_str = g_strdup ("???");
         }
 
-        draw_label (get_pool_label (self), intent_str, (gfloat)(x + 5), (gfloat)(y + ENEMY_HEIGHT - 25), 14.0f, text_color);
+        draw_label (get_pool_label (self), intent_str, (gfloat)(x + 12), (gfloat)(y + ENEMY_HEIGHT - 62), 35.0f, text_color);
     }
 }
 
@@ -1024,15 +1024,15 @@ demo_combat_game_draw (DemoCombatGame *self)
     block = lrg_combatant_get_block (LRG_COMBATANT (self->player));
 
     energy_str = g_strdup_printf ("Energy: %d/3", energy);
-    draw_label (self->label_energy, energy_str, 20.0f, 15.0f, 20.0f, energy_color);
+    draw_label (self->label_energy, energy_str, 50.0f, 37.0f, 50.0f, energy_color);
 
     hp_str = g_strdup_printf ("HP: %d/%d", current_hp, max_hp);
-    draw_label (self->label_hp, hp_str, 20.0f, 40.0f, 20.0f, hp_color);
+    draw_label (self->label_hp, hp_str, 50.0f, 100.0f, 50.0f, hp_color);
 
     if (block > 0)
     {
         block_str = g_strdup_printf ("Block: %d", block);
-        draw_label (self->label_block, block_str, 180.0f, 40.0f, 20.0f, block_color);
+        draw_label (self->label_block, block_str, 450.0f, 100.0f, 50.0f, block_color);
     }
 
     /* Draw enemies */
@@ -1052,7 +1052,7 @@ demo_combat_game_draw (DemoCombatGame *self)
 
         grl_draw_rectangle (button_x, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT,
                             self->hovered_button ? button_hover : button_color);
-        draw_label (self->label_button, "End Turn", (gfloat)(button_x + 20), (gfloat)(BUTTON_Y + 10), 18.0f, text_color);
+        draw_label (self->label_button, "End Turn", (gfloat)(button_x + 50), (gfloat)(BUTTON_Y + 25), 45.0f, text_color);
     }
 
     /* Draw cards in hand */
@@ -1075,34 +1075,34 @@ demo_combat_game_draw (DemoCombatGame *self)
     /* Draw state indicator */
     if (self->ui_state == UI_STATE_ENEMY_TURN)
     {
-        draw_label (self->label_state, "ENEMY TURN", (gfloat)(WINDOW_WIDTH / 2 - 60), 300.0f, 24.0f, text_color);
+        draw_label (self->label_state, "ENEMY TURN", (gfloat)(WINDOW_WIDTH / 2 - 150), 750.0f, 60.0f, text_color);
     }
     else if (self->ui_state == UI_STATE_SELECT_TARGET)
     {
-        draw_label (self->label_state, "SELECT TARGET", (gfloat)(WINDOW_WIDTH / 2 - 70), 300.0f, 20.0f, energy_color);
+        draw_label (self->label_state, "SELECT TARGET", (gfloat)(WINDOW_WIDTH / 2 - 175), 750.0f, 50.0f, energy_color);
     }
     else if (self->ui_state == UI_STATE_VICTORY)
     {
         g_autoptr(GrlColor) victory = grl_color_new (100, 255, 100, 255);
-        draw_label (self->label_state, "VICTORY!", (gfloat)(WINDOW_WIDTH / 2 - 60), 280.0f, 32.0f, victory);
+        draw_label (self->label_state, "VICTORY!", (gfloat)(WINDOW_WIDTH / 2 - 150), 700.0f, 80.0f, victory);
     }
     else if (self->ui_state == UI_STATE_DEFEAT)
     {
         g_autoptr(GrlColor) defeat = grl_color_new (255, 80, 80, 255);
-        draw_label (self->label_state, "DEFEAT!", (gfloat)(WINDOW_WIDTH / 2 - 50), 280.0f, 32.0f, defeat);
+        draw_label (self->label_state, "DEFEAT!", (gfloat)(WINDOW_WIDTH / 2 - 125), 700.0f, 80.0f, defeat);
     }
 
     /* Draw message */
     if (self->message != NULL && self->message_timer > 0.0f)
     {
-        draw_label (self->label_message, self->message, 20.0f, (gfloat)(WINDOW_HEIGHT - 30), 16.0f, msg_color);
+        draw_label (self->label_message, self->message, 50.0f, 650.0f, 40.0f, msg_color);
     }
 
     /* Draw instructions */
     {
         g_autoptr(GrlColor) instr_color = grl_color_new (150, 150, 150, 255);
-        draw_label (self->label_instructions1, "Click cards to select, click enemies to attack", 20.0f, (gfloat)(WINDOW_HEIGHT - 55), 12.0f, instr_color);
-        draw_label (self->label_instructions2, "Right-click to cancel, click End Turn when done", 20.0f, (gfloat)(WINDOW_HEIGHT - 40), 12.0f, instr_color);
+        draw_label (self->label_instructions1, "Click cards to select, click enemies to attack", 50.0f, 700.0f, 30.0f, instr_color);
+        draw_label (self->label_instructions2, "Right-click to cancel, click End Turn when done", 50.0f, 740.0f, 30.0f, instr_color);
     }
 }
 
