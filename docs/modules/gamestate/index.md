@@ -228,6 +228,7 @@ lrg_game_state_manager_push (manager, overlay);
 | `pause()` | Another state pushed on top | No (default: no-op) |
 | `resume()` | State above popped | No (default: no-op) |
 | `update(delta)` | Each frame (if not blocked) | Yes |
+| `update_safe(delta, error)` | Each frame with error reporting | No (default: calls update) |
 | `draw()` | Each frame (if visible) | Yes |
 | `handle_input(event)` | Input event received | No (default: no-op) |
 
@@ -268,3 +269,90 @@ lrg_game_state_manager_push (manager, overlay);
                    │ State Destroyed │
                    └─────────────────┘
 ```
+
+## Safe Update with Error Handling
+
+The `update_safe()` virtual method provides error reporting for update operations. This is useful for states that perform operations that can fail (loading resources, network operations, etc.).
+
+### Default Behavior
+
+By default, `update_safe()` delegates to the regular `update()` method and returns `TRUE`:
+
+```c
+/* Default implementation (you don't need to implement this) */
+static gboolean
+lrg_game_state_real_update_safe (LrgGameState  *self,
+                                  gdouble        delta,
+                                  GError       **error)
+{
+    lrg_game_state_update (self, delta);
+    return TRUE;
+}
+```
+
+### Implementing update_safe()
+
+Override `update_safe()` when your state needs error reporting:
+
+```c
+static gboolean
+my_network_state_update_safe (LrgGameState  *state,
+                               gdouble        delta,
+                               GError       **error)
+{
+    MyNetworkState *self = MY_NETWORK_STATE (state);
+
+    /* Try to process network data */
+    if (!process_network_messages (self, error))
+    {
+        /* Error is already set by process_network_messages */
+        return FALSE;
+    }
+
+    /* Update game logic */
+    update_game_world (self, delta);
+
+    return TRUE;
+}
+
+static void
+my_network_state_class_init (MyNetworkStateClass *klass)
+{
+    LrgGameStateClass *state_class = LRG_GAME_STATE_CLASS (klass);
+
+    state_class->enter = my_network_state_enter;
+    state_class->exit = my_network_state_exit;
+    state_class->update = my_network_state_update;        /* Regular update */
+    state_class->update_safe = my_network_state_update_safe;  /* Safe update */
+    state_class->draw = my_network_state_draw;
+}
+```
+
+### Using update_safe() from the Manager
+
+The game state manager can use `update_safe()` to detect and handle errors:
+
+```c
+g_autoptr(GError) error = NULL;
+LrgGameState *current = lrg_game_state_manager_get_current (manager);
+
+if (!lrg_game_state_update_safe (current, delta, &error))
+{
+    g_warning ("State update failed: %s", error->message);
+
+    /* Handle error - maybe transition to error state */
+    LrgGameState *error_state = my_error_state_new (error->message);
+    lrg_game_state_manager_replace (manager, error_state);
+}
+```
+
+### When to Use update_safe()
+
+Use `update_safe()` when your state:
+
+- Loads resources dynamically during updates
+- Communicates with network services
+- Processes external data that could be malformed
+- Needs to report recoverable errors to the game loop
+
+For simple states without failure modes, just implement `update()` - the default `update_safe()` will delegate to it automatically.

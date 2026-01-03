@@ -14,7 +14,7 @@ struct _LrgEventBus
 {
     GObject    parent_instance;
 
-    GPtrArray *listeners;       /* Array of LrgTriggerListener */
+    GPtrArray *listeners;       /* Array of LrgEventListener */
     gboolean   listeners_dirty; /* TRUE if needs re-sorting */
 };
 
@@ -95,7 +95,7 @@ lrg_event_bus_class_init (LrgEventBusClass *klass)
                       0,
                       NULL, NULL, NULL,
                       G_TYPE_NONE, 1,
-                      LRG_TYPE_CARD_EVENT);
+                      LRG_TYPE_EVENT);
 
     /**
      * LrgEventBus::event-cancelled:
@@ -114,8 +114,8 @@ lrg_event_bus_class_init (LrgEventBusClass *klass)
                       0,
                       NULL, NULL, NULL,
                       G_TYPE_NONE, 2,
-                      LRG_TYPE_CARD_EVENT,
-                      LRG_TYPE_TRIGGER_LISTENER);
+                      LRG_TYPE_EVENT,
+                      LRG_TYPE_EVENT_LISTENER);
 }
 
 static void
@@ -132,7 +132,7 @@ lrg_event_bus_init (LrgEventBus *self)
 /**
  * lrg_event_bus_new:
  *
- * Creates a new event bus. Use this for isolated combat contexts
+ * Creates a new event bus. Use this for isolated contexts
  * rather than the global singleton.
  *
  * Returns: (transfer full): a new #LrgEventBus
@@ -153,10 +153,10 @@ lrg_event_bus_new (void)
 static gint
 compare_listener_priority (gconstpointer a, gconstpointer b)
 {
-    LrgTriggerListener *listener_a = *(LrgTriggerListener **)a;
-    LrgTriggerListener *listener_b = *(LrgTriggerListener **)b;
-    gint priority_a = lrg_trigger_listener_get_priority (listener_a);
-    gint priority_b = lrg_trigger_listener_get_priority (listener_b);
+    LrgEventListener *listener_a = *(LrgEventListener **)a;
+    LrgEventListener *listener_b = *(LrgEventListener **)b;
+    gint priority_a = lrg_event_listener_get_priority (listener_a);
+    gint priority_b = lrg_event_listener_get_priority (listener_b);
 
     /* Descending order (higher priority first) */
     return priority_b - priority_a;
@@ -181,17 +181,17 @@ ensure_sorted (LrgEventBus *self)
  * @self: an #LrgEventBus
  * @listener: (transfer none): the listener to register
  *
- * Registers a trigger listener with the event bus. The listener
+ * Registers an event listener with the event bus. The listener
  * will be notified of matching events.
  *
  * Since: 1.0
  */
 void
-lrg_event_bus_register (LrgEventBus        *self,
-                        LrgTriggerListener *listener)
+lrg_event_bus_register (LrgEventBus      *self,
+                        LrgEventListener *listener)
 {
     g_return_if_fail (LRG_IS_EVENT_BUS (self));
-    g_return_if_fail (LRG_IS_TRIGGER_LISTENER (listener));
+    g_return_if_fail (LRG_IS_EVENT_LISTENER (listener));
 
     g_ptr_array_add (self->listeners, g_object_ref (listener));
     self->listeners_dirty = TRUE;
@@ -202,16 +202,16 @@ lrg_event_bus_register (LrgEventBus        *self,
  * @self: an #LrgEventBus
  * @listener: the listener to unregister
  *
- * Unregisters a trigger listener from the event bus.
+ * Unregisters an event listener from the event bus.
  *
  * Since: 1.0
  */
 void
-lrg_event_bus_unregister (LrgEventBus        *self,
-                          LrgTriggerListener *listener)
+lrg_event_bus_unregister (LrgEventBus      *self,
+                          LrgEventListener *listener)
 {
     g_return_if_fail (LRG_IS_EVENT_BUS (self));
-    g_return_if_fail (LRG_IS_TRIGGER_LISTENER (listener));
+    g_return_if_fail (LRG_IS_EVENT_LISTENER (listener));
 
     g_ptr_array_remove (self->listeners, listener);
 }
@@ -219,31 +219,31 @@ lrg_event_bus_unregister (LrgEventBus        *self,
 /**
  * lrg_event_bus_unregister_by_id:
  * @self: an #LrgEventBus
- * @trigger_id: the trigger ID to unregister
+ * @listener_id: the listener ID to unregister
  *
- * Unregisters all listeners with the given trigger ID.
+ * Unregisters all listeners with the given ID.
  *
  * Since: 1.0
  */
 void
 lrg_event_bus_unregister_by_id (LrgEventBus *self,
-                                const gchar *trigger_id)
+                                const gchar *listener_id)
 {
     guint i;
 
     g_return_if_fail (LRG_IS_EVENT_BUS (self));
-    g_return_if_fail (trigger_id != NULL);
+    g_return_if_fail (listener_id != NULL);
 
     /* Iterate in reverse to safely remove during iteration */
     for (i = self->listeners->len; i > 0; i--)
     {
-        LrgTriggerListener *listener;
+        LrgEventListener *listener;
         const gchar *id;
 
         listener = g_ptr_array_index (self->listeners, i - 1);
-        id = lrg_trigger_listener_get_trigger_id (listener);
+        id = lrg_event_listener_get_id (listener);
 
-        if (g_strcmp0 (id, trigger_id) == 0)
+        if (g_strcmp0 (id, listener_id) == 0)
             g_ptr_array_remove_index (self->listeners, i - 1);
     }
 }
@@ -289,56 +289,52 @@ lrg_event_bus_get_listener_count (LrgEventBus *self)
 /**
  * lrg_event_bus_emit:
  * @self: an #LrgEventBus
- * @event: (transfer full): the event to emit
- * @context: (nullable): the combat/game context
+ * @event: (transfer none): the event to emit
+ * @context: (nullable): optional context data
  *
  * Emits an event to all registered listeners. Listeners are notified
  * in priority order (highest first). If a listener cancels the event,
  * subsequent listeners are not notified.
- *
- * The event bus takes ownership of the event and frees it after dispatch.
  *
  * Returns: %TRUE if the event completed (not cancelled), %FALSE if cancelled
  *
  * Since: 1.0
  */
 gboolean
-lrg_event_bus_emit (LrgEventBus  *self,
-                    LrgCardEvent *event,
-                    gpointer      context)
+lrg_event_bus_emit (LrgEventBus *self,
+                    LrgEvent    *event,
+                    gpointer     context)
 {
-    LrgCardEventType event_type;
     guint64 event_mask;
     guint i;
     gboolean result;
 
     g_return_val_if_fail (LRG_IS_EVENT_BUS (self), TRUE);
-    g_return_val_if_fail (event != NULL, TRUE);
+    g_return_val_if_fail (LRG_IS_EVENT (event), TRUE);
 
     ensure_sorted (self);
 
-    event_type = lrg_card_event_get_event_type (event);
-    event_mask = lrg_trigger_listener_event_type_to_mask (event_type);
+    event_mask = lrg_event_get_type_mask (event);
     result = TRUE;
 
     /* Dispatch to all matching listeners in priority order */
     for (i = 0; i < self->listeners->len; i++)
     {
-        LrgTriggerListener *listener;
+        LrgEventListener *listener;
         guint64 listener_mask;
 
         listener = g_ptr_array_index (self->listeners, i);
-        listener_mask = lrg_trigger_listener_get_event_mask (listener);
+        listener_mask = lrg_event_listener_get_event_mask (listener);
 
         /* Skip if listener doesn't care about this event type */
         if ((listener_mask & event_mask) == 0)
             continue;
 
         /* Notify the listener */
-        if (!lrg_trigger_listener_on_event (listener, event, context))
+        if (!lrg_event_listener_on_event (listener, event, context))
         {
             /* Listener cancelled the event */
-            lrg_card_event_cancel (event);
+            lrg_event_cancel (event);
             g_signal_emit (self, signals[SIGNAL_EVENT_CANCELLED], 0,
                            event, listener);
             result = FALSE;
@@ -346,7 +342,7 @@ lrg_event_bus_emit (LrgEventBus  *self,
         }
 
         /* Check if event was cancelled during processing */
-        if (lrg_card_event_is_cancelled (event))
+        if (lrg_event_is_cancelled (event))
         {
             g_signal_emit (self, signals[SIGNAL_EVENT_CANCELLED], 0,
                            event, listener);
@@ -356,34 +352,6 @@ lrg_event_bus_emit (LrgEventBus  *self,
     }
 
     g_signal_emit (self, signals[SIGNAL_EVENT_EMITTED], 0, event);
-    lrg_card_event_free (event);
 
     return result;
-}
-
-/**
- * lrg_event_bus_emit_copy:
- * @self: an #LrgEventBus
- * @event: (transfer none): the event to emit (copied)
- * @context: (nullable): the combat/game context
- *
- * Emits a copy of an event to all registered listeners. The original
- * event is not modified.
- *
- * Returns: %TRUE if the event completed (not cancelled), %FALSE if cancelled
- *
- * Since: 1.0
- */
-gboolean
-lrg_event_bus_emit_copy (LrgEventBus  *self,
-                         LrgCardEvent *event,
-                         gpointer      context)
-{
-    LrgCardEvent *copy;
-
-    g_return_val_if_fail (LRG_IS_EVENT_BUS (self), TRUE);
-    g_return_val_if_fail (event != NULL, TRUE);
-
-    copy = lrg_card_event_copy (event);
-    return lrg_event_bus_emit (self, copy, context);
 }

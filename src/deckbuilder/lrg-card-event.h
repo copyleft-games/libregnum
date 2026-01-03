@@ -9,6 +9,9 @@
  * Events are emitted during gameplay and can be listened to by
  * trigger listeners (relics, powers, status effects). Each event
  * carries contextual data about what happened.
+ *
+ * LrgCardEvent implements the LrgEvent interface, allowing it to
+ * be used with the generic event bus system.
  */
 
 #pragma once
@@ -20,15 +23,19 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-enums.h"
+#include "../core/lrg-event.h"
 
 G_BEGIN_DECLS
 
 #define LRG_TYPE_CARD_EVENT (lrg_card_event_get_type ())
 
+LRG_AVAILABLE_IN_ALL
+G_DECLARE_FINAL_TYPE (LrgCardEvent, lrg_card_event, LRG, CARD_EVENT, GObject)
+
 /**
  * LrgCardEvent:
  *
- * A data container for game events.
+ * A GObject-based data container for game events.
  *
  * Events carry information about gameplay occurrences:
  * - event_type: The type of event (LrgCardEventType)
@@ -39,12 +46,10 @@ G_BEGIN_DECLS
  * - turn: The turn number when the event occurred
  * - cancelled: Whether the event was cancelled by a listener
  *
+ * Implements: #LrgEvent
+ *
  * Since: 1.0
  */
-typedef struct _LrgCardEvent LrgCardEvent;
-
-LRG_AVAILABLE_IN_ALL
-GType lrg_card_event_get_type (void) G_GNUC_CONST;
 
 /* ==========================================================================
  * Constructors
@@ -67,7 +72,7 @@ LrgCardEvent * lrg_card_event_new (LrgCardEventType event_type);
  * lrg_card_event_copy:
  * @event: a #LrgCardEvent
  *
- * Creates a copy of the event.
+ * Creates a copy of the event with all the same property values.
  *
  * Returns: (transfer full): a copy of @event
  *
@@ -77,17 +82,17 @@ LRG_AVAILABLE_IN_ALL
 LrgCardEvent * lrg_card_event_copy (LrgCardEvent *event);
 
 /**
- * lrg_card_event_free:
- * @event: a #LrgCardEvent
+ * lrg_card_event_get_event_type_mask:
+ * @event_type: the event type
  *
- * Frees the event.
+ * Converts an event type to a bitmask value.
+ *
+ * Returns: the bitmask for this event type
  *
  * Since: 1.0
  */
 LRG_AVAILABLE_IN_ALL
-void lrg_card_event_free (LrgCardEvent *event);
-
-G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgCardEvent, lrg_card_event_free)
+guint64 lrg_card_event_get_event_type_mask (LrgCardEventType event_type);
 
 /* ==========================================================================
  * Convenience Constructors

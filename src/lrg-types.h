@@ -36,6 +36,15 @@ typedef struct _LrgAssetManagerClass  LrgAssetManagerClass;
 /* LrgAssetPack is a final type - no Class forward declaration needed */
 typedef struct _LrgAssetPack       LrgAssetPack;
 
+/* Event system interfaces */
+typedef struct _LrgEvent                  LrgEvent;
+typedef struct _LrgEventInterface         LrgEventInterface;
+typedef struct _LrgEventListener          LrgEventListener;
+typedef struct _LrgEventListenerInterface LrgEventListenerInterface;
+
+/* LrgEventBus is a final type - no Class forward declaration needed */
+typedef struct _LrgEventBus  LrgEventBus;
+
 /* ==========================================================================
  * ECS Module
  * ========================================================================== */
@@ -124,6 +133,7 @@ typedef struct _LrgImage       LrgImage;
 typedef struct _LrgVBox        LrgVBox;
 typedef struct _LrgHBox        LrgHBox;
 typedef struct _LrgGrid        LrgGrid;
+typedef struct _LrgTabView     LrgTabView;
 
 /* ==========================================================================
  * Tilemap Module
@@ -912,15 +922,12 @@ typedef struct _LrgCardEffectRegistry  LrgCardEffectRegistry;
 /* LrgEffectStack is a final type - no Class forward declaration needed */
 typedef struct _LrgEffectStack  LrgEffectStack;
 
-/* LrgCardEvent is a boxed type - no class typedef */
+/* LrgCardEvent is a final GObject type implementing LrgEvent */
 typedef struct _LrgCardEvent  LrgCardEvent;
 
-/* LrgTriggerListener is an interface */
+/* LrgTriggerListener is an interface extending LrgEventListener */
 typedef struct _LrgTriggerListener           LrgTriggerListener;
 typedef struct _LrgTriggerListenerInterface  LrgTriggerListenerInterface;
-
-/* LrgCardEventBus is a final type (singleton) - no Class forward declaration needed */
-typedef struct _LrgCardEventBus  LrgCardEventBus;
 
 /* LrgCardKeywordDef is a derivable type */
 typedef struct _LrgCardKeywordDef       LrgCardKeywordDef;
@@ -1066,5 +1073,119 @@ typedef struct _LrgAscension  LrgAscension;
 
 /* LrgDeckbuilderManager is a final type (singleton) - no Class forward declaration needed */
 typedef struct _LrgDeckbuilderManager  LrgDeckbuilderManager;
+
+/* ==========================================================================
+ * Template Module
+ * ========================================================================== */
+
+/* LrgGameTemplate is a derivable type */
+typedef struct _LrgGameTemplate       LrgGameTemplate;
+typedef struct _LrgGameTemplateClass  LrgGameTemplateClass;
+
+/* LrgInputBuffer is an opaque struct (not GObject) */
+typedef struct _LrgInputBuffer  LrgInputBuffer;
+
+/* Template Menu States (derivable types) */
+typedef struct _LrgTemplateMainMenuState        LrgTemplateMainMenuState;
+typedef struct _LrgTemplateMainMenuStateClass   LrgTemplateMainMenuStateClass;
+typedef struct _LrgTemplatePauseMenuState       LrgTemplatePauseMenuState;
+typedef struct _LrgTemplatePauseMenuStateClass  LrgTemplatePauseMenuStateClass;
+typedef struct _LrgTemplateSettingsMenuState       LrgTemplateSettingsMenuState;
+typedef struct _LrgTemplateSettingsMenuStateClass  LrgTemplateSettingsMenuStateClass;
+typedef struct _LrgTemplateLoadingState         LrgTemplateLoadingState;
+typedef struct _LrgTemplateLoadingStateClass    LrgTemplateLoadingStateClass;
+typedef struct _LrgTemplateErrorState           LrgTemplateErrorState;
+typedef struct _LrgTemplateErrorStateClass      LrgTemplateErrorStateClass;
+typedef struct _LrgTemplateConfirmationState       LrgTemplateConfirmationState;
+typedef struct _LrgTemplateConfirmationStateClass  LrgTemplateConfirmationStateClass;
+typedef struct _LrgTemplateStatistics               LrgTemplateStatistics;
+typedef struct _LrgDailyRewardState                 LrgDailyRewardState;
+typedef struct _LrgTemplateDailyRewards             LrgTemplateDailyRewards;
+typedef struct _LrgTemplateDailyRewardsInterface    LrgTemplateDailyRewardsInterface;
+typedef struct _LrgTemplateDifficulty               LrgTemplateDifficulty;
+typedef struct _LrgTemplateDifficultyInterface      LrgTemplateDifficultyInterface;
+
+/* Genre-Specific Template Interfaces (Phase 3) */
+
+/* LrgIdleMixin is an interface for idle game functionality */
+typedef struct _LrgIdleMixin           LrgIdleMixin;
+typedef struct _LrgIdleMixinInterface  LrgIdleMixinInterface;
+
+/* LrgIdleTemplate is a derivable type */
+typedef struct _LrgIdleTemplate       LrgIdleTemplate;
+typedef struct _LrgIdleTemplateClass  LrgIdleTemplateClass;
+
+/* LrgDeckMixin is an interface for deckbuilder game functionality */
+typedef struct _LrgDeckMixin           LrgDeckMixin;
+typedef struct _LrgDeckMixinInterface  LrgDeckMixinInterface;
+
+/* LrgDeckbuilderTemplate is a derivable type */
+typedef struct _LrgDeckbuilderTemplate       LrgDeckbuilderTemplate;
+typedef struct _LrgDeckbuilderTemplateClass  LrgDeckbuilderTemplateClass;
+
+/* LrgDeckbuilderCombatTemplate is a final type - no Class forward declaration needed */
+typedef struct _LrgDeckbuilderCombatTemplate  LrgDeckbuilderCombatTemplate;
+
+/* LrgDeckbuilderPokerTemplate is a final type - no Class forward declaration needed */
+typedef struct _LrgDeckbuilderPokerTemplate  LrgDeckbuilderPokerTemplate;
+
+/* Object Pooling System (Phase 3.5) */
+
+/* LrgPoolable is an interface for poolable objects */
+typedef struct _LrgPoolable           LrgPoolable;
+typedef struct _LrgPoolableInterface  LrgPoolableInterface;
+
+/* LrgObjectPool is a final type */
+typedef struct _LrgObjectPool  LrgObjectPool;
+
+/* LrgTemplateScalable is an interface */
+typedef struct _LrgTemplateScalable           LrgTemplateScalable;
+typedef struct _LrgTemplateScalableInterface  LrgTemplateScalableInterface;
+
+/* LrgGame2DTemplate is a derivable type */
+typedef struct _LrgGame2DTemplate       LrgGame2DTemplate;
+typedef struct _LrgGame2DTemplateClass  LrgGame2DTemplateClass;
+
+/* LrgGame3DTemplate is a derivable type */
+typedef struct _LrgGame3DTemplate       LrgGame3DTemplate;
+typedef struct _LrgGame3DTemplateClass  LrgGame3DTemplateClass;
+
+/* LrgShooter2DTemplate is a derivable type */
+typedef struct _LrgShooter2DTemplate       LrgShooter2DTemplate;
+typedef struct _LrgShooter2DTemplateClass  LrgShooter2DTemplateClass;
+
+/* LrgTwinStickTemplate is a final type */
+typedef struct _LrgTwinStickTemplate  LrgTwinStickTemplate;
+
+/* LrgShmupTemplate is a final type */
+typedef struct _LrgShmupTemplate  LrgShmupTemplate;
+
+/* LrgPlatformerTemplate is a derivable type */
+typedef struct _LrgPlatformerTemplate       LrgPlatformerTemplate;
+typedef struct _LrgPlatformerTemplateClass  LrgPlatformerTemplateClass;
+
+/* LrgTopDownTemplate is a derivable type */
+typedef struct _LrgTopDownTemplate       LrgTopDownTemplate;
+typedef struct _LrgTopDownTemplateClass  LrgTopDownTemplateClass;
+
+/* LrgTycoonTemplate is a derivable type */
+typedef struct _LrgTycoonTemplate       LrgTycoonTemplate;
+typedef struct _LrgTycoonTemplateClass  LrgTycoonTemplateClass;
+
+/* LrgRacing2DTemplate is a derivable type */
+typedef struct _LrgRacing2DTemplate       LrgRacing2DTemplate;
+typedef struct _LrgRacing2DTemplateClass  LrgRacing2DTemplateClass;
+
+/* LrgFPSTemplate is a derivable type */
+typedef struct _LrgFPSTemplate       LrgFPSTemplate;
+typedef struct _LrgFPSTemplateClass  LrgFPSTemplateClass;
+
+/* LrgThirdPersonTemplate is a derivable type */
+typedef struct _LrgThirdPersonTemplate       LrgThirdPersonTemplate;
+typedef struct _LrgThirdPersonTemplateClass  LrgThirdPersonTemplateClass;
+
+/* LrgRacing3DTemplate is a derivable type */
+typedef struct _LrgRacing3DTemplate       LrgRacing3DTemplate;
+typedef struct _LrgRacing3DTemplateClass  LrgRacing3DTemplateClass;
 
 G_END_DECLS

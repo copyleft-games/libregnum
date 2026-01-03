@@ -5,12 +5,18 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * LrgCardEvent - Event data container implementation.
+ *
+ * LrgCardEvent is a GObject that implements the LrgEvent interface,
+ * allowing it to be used with the generic event bus system.
  */
 
 #include "lrg-card-event.h"
+#include "../core/lrg-event.h"
 
 struct _LrgCardEvent
 {
+    GObject           parent_instance;
+
     LrgCardEventType  event_type;
     gpointer          source;
     gpointer          target;
@@ -22,8 +28,78 @@ struct _LrgCardEvent
     gboolean          cancelled;
 };
 
-G_DEFINE_BOXED_TYPE (LrgCardEvent, lrg_card_event,
-                     lrg_card_event_copy, lrg_card_event_free)
+/* ==========================================================================
+ * LrgEvent Interface Implementation
+ * ========================================================================== */
+
+static guint64
+lrg_card_event_event_get_type_mask (LrgEvent *event)
+{
+    LrgCardEvent *self = LRG_CARD_EVENT (event);
+    return lrg_card_event_get_event_type_mask (self->event_type);
+}
+
+static gboolean
+lrg_card_event_event_is_cancelled (LrgEvent *event)
+{
+    LrgCardEvent *self = LRG_CARD_EVENT (event);
+    return self->cancelled;
+}
+
+static void
+lrg_card_event_event_cancel (LrgEvent *event)
+{
+    LrgCardEvent *self = LRG_CARD_EVENT (event);
+    self->cancelled = TRUE;
+}
+
+static void
+lrg_card_event_event_iface_init (LrgEventInterface *iface)
+{
+    iface->get_type_mask = lrg_card_event_event_get_type_mask;
+    iface->is_cancelled = lrg_card_event_event_is_cancelled;
+    iface->cancel = lrg_card_event_event_cancel;
+}
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgCardEvent, lrg_card_event, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_EVENT,
+                                                      lrg_card_event_event_iface_init))
+
+/* ==========================================================================
+ * GObject Implementation
+ * ========================================================================== */
+
+static void
+lrg_card_event_finalize (GObject *object)
+{
+    LrgCardEvent *self = LRG_CARD_EVENT (object);
+
+    g_clear_pointer (&self->status_id, g_free);
+
+    G_OBJECT_CLASS (lrg_card_event_parent_class)->finalize (object);
+}
+
+static void
+lrg_card_event_class_init (LrgCardEventClass *klass)
+{
+    GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+    object_class->finalize = lrg_card_event_finalize;
+}
+
+static void
+lrg_card_event_init (LrgCardEvent *self)
+{
+    self->event_type = LRG_CARD_EVENT_COMBAT_START;
+    self->source = NULL;
+    self->target = NULL;
+    self->card = NULL;
+    self->amount = 0;
+    self->turn = 0;
+    self->flags = LRG_EFFECT_FLAG_NONE;
+    self->status_id = NULL;
+    self->cancelled = FALSE;
+}
 
 /* ==========================================================================
  * Constructors
@@ -44,16 +120,8 @@ lrg_card_event_new (LrgCardEventType event_type)
 {
     LrgCardEvent *event;
 
-    event = g_new0 (LrgCardEvent, 1);
+    event = g_object_new (LRG_TYPE_CARD_EVENT, NULL);
     event->event_type = event_type;
-    event->source = NULL;
-    event->target = NULL;
-    event->card = NULL;
-    event->amount = 0;
-    event->turn = 0;
-    event->flags = LRG_EFFECT_FLAG_NONE;
-    event->status_id = NULL;
-    event->cancelled = FALSE;
 
     return event;
 }
@@ -62,7 +130,7 @@ lrg_card_event_new (LrgCardEventType event_type)
  * lrg_card_event_copy:
  * @event: a #LrgCardEvent
  *
- * Creates a copy of the event.
+ * Creates a copy of the event with all the same property values.
  *
  * Returns: (transfer full): a copy of @event
  *
@@ -73,7 +141,7 @@ lrg_card_event_copy (LrgCardEvent *event)
 {
     LrgCardEvent *copy;
 
-    g_return_val_if_fail (event != NULL, NULL);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), NULL);
 
     copy = lrg_card_event_new (event->event_type);
     copy->source = event->source;
@@ -89,21 +157,19 @@ lrg_card_event_copy (LrgCardEvent *event)
 }
 
 /**
- * lrg_card_event_free:
- * @event: a #LrgCardEvent
+ * lrg_card_event_get_event_type_mask:
+ * @event_type: the event type
  *
- * Frees the event and all associated data.
+ * Converts an event type to a bitmask value.
+ *
+ * Returns: the bitmask for this event type
  *
  * Since: 1.0
  */
-void
-lrg_card_event_free (LrgCardEvent *event)
+guint64
+lrg_card_event_get_event_type_mask (LrgCardEventType event_type)
 {
-    if (event == NULL)
-        return;
-
-    g_free (event->status_id);
-    g_free (event);
+    return (guint64)1 << event_type;
 }
 
 /* ==========================================================================
@@ -280,7 +346,7 @@ lrg_card_event_new_status (LrgCardEventType  event_type,
 LrgCardEventType
 lrg_card_event_get_event_type (LrgCardEvent *event)
 {
-    g_return_val_if_fail (event != NULL, LRG_CARD_EVENT_COMBAT_START);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), LRG_CARD_EVENT_COMBAT_START);
     return event->event_type;
 }
 
@@ -297,7 +363,7 @@ lrg_card_event_get_event_type (LrgCardEvent *event)
 gpointer
 lrg_card_event_get_source (LrgCardEvent *event)
 {
-    g_return_val_if_fail (event != NULL, NULL);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), NULL);
     return event->source;
 }
 
@@ -314,7 +380,7 @@ void
 lrg_card_event_set_source (LrgCardEvent *event,
                            gpointer      source)
 {
-    g_return_if_fail (event != NULL);
+    g_return_if_fail (LRG_IS_CARD_EVENT (event));
     event->source = source;
 }
 
@@ -331,7 +397,7 @@ lrg_card_event_set_source (LrgCardEvent *event,
 gpointer
 lrg_card_event_get_target (LrgCardEvent *event)
 {
-    g_return_val_if_fail (event != NULL, NULL);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), NULL);
     return event->target;
 }
 
@@ -348,7 +414,7 @@ void
 lrg_card_event_set_target (LrgCardEvent *event,
                            gpointer      target)
 {
-    g_return_if_fail (event != NULL);
+    g_return_if_fail (LRG_IS_CARD_EVENT (event));
     event->target = target;
 }
 
@@ -365,7 +431,7 @@ lrg_card_event_set_target (LrgCardEvent *event,
 gpointer
 lrg_card_event_get_card (LrgCardEvent *event)
 {
-    g_return_val_if_fail (event != NULL, NULL);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), NULL);
     return event->card;
 }
 
@@ -382,7 +448,7 @@ void
 lrg_card_event_set_card (LrgCardEvent *event,
                          gpointer      card)
 {
-    g_return_if_fail (event != NULL);
+    g_return_if_fail (LRG_IS_CARD_EVENT (event));
     event->card = card;
 }
 
@@ -399,7 +465,7 @@ lrg_card_event_set_card (LrgCardEvent *event,
 gint
 lrg_card_event_get_amount (LrgCardEvent *event)
 {
-    g_return_val_if_fail (event != NULL, 0);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), 0);
     return event->amount;
 }
 
@@ -416,7 +482,7 @@ void
 lrg_card_event_set_amount (LrgCardEvent *event,
                            gint          amount)
 {
-    g_return_if_fail (event != NULL);
+    g_return_if_fail (LRG_IS_CARD_EVENT (event));
     event->amount = amount;
 }
 
@@ -433,7 +499,7 @@ lrg_card_event_set_amount (LrgCardEvent *event,
 guint
 lrg_card_event_get_turn (LrgCardEvent *event)
 {
-    g_return_val_if_fail (event != NULL, 0);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), 0);
     return event->turn;
 }
 
@@ -450,7 +516,7 @@ void
 lrg_card_event_set_turn (LrgCardEvent *event,
                          guint         turn)
 {
-    g_return_if_fail (event != NULL);
+    g_return_if_fail (LRG_IS_CARD_EVENT (event));
     event->turn = turn;
 }
 
@@ -467,7 +533,7 @@ lrg_card_event_set_turn (LrgCardEvent *event,
 LrgEffectFlags
 lrg_card_event_get_flags (LrgCardEvent *event)
 {
-    g_return_val_if_fail (event != NULL, LRG_EFFECT_FLAG_NONE);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), LRG_EFFECT_FLAG_NONE);
     return event->flags;
 }
 
@@ -484,7 +550,7 @@ void
 lrg_card_event_set_flags (LrgCardEvent   *event,
                           LrgEffectFlags  flags)
 {
-    g_return_if_fail (event != NULL);
+    g_return_if_fail (LRG_IS_CARD_EVENT (event));
     event->flags = flags;
 }
 
@@ -501,7 +567,7 @@ lrg_card_event_set_flags (LrgCardEvent   *event,
 const gchar *
 lrg_card_event_get_status_id (LrgCardEvent *event)
 {
-    g_return_val_if_fail (event != NULL, NULL);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), NULL);
     return event->status_id;
 }
 
@@ -518,7 +584,7 @@ void
 lrg_card_event_set_status_id (LrgCardEvent *event,
                               const gchar  *status_id)
 {
-    g_return_if_fail (event != NULL);
+    g_return_if_fail (LRG_IS_CARD_EVENT (event));
 
     g_free (event->status_id);
     event->status_id = g_strdup (status_id);
@@ -541,7 +607,7 @@ lrg_card_event_set_status_id (LrgCardEvent *event,
 gboolean
 lrg_card_event_is_cancelled (LrgCardEvent *event)
 {
-    g_return_val_if_fail (event != NULL, FALSE);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), FALSE);
     return event->cancelled;
 }
 
@@ -557,6 +623,6 @@ lrg_card_event_is_cancelled (LrgCardEvent *event)
 void
 lrg_card_event_cancel (LrgCardEvent *event)
 {
-    g_return_if_fail (event != NULL);
+    g_return_if_fail (LRG_IS_CARD_EVENT (event));
     event->cancelled = TRUE;
 }

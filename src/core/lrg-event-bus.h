@@ -6,9 +6,12 @@
  *
  * LrgEventBus - Central event dispatch system.
  *
- * The event bus manages trigger listeners and dispatches game events
- * to all registered listeners in priority order. Listeners can modify
- * events or cancel them entirely.
+ * The event bus manages event listeners and dispatches events to all
+ * registered listeners in priority order. Listeners can modify events
+ * or cancel them entirely.
+ *
+ * This is a generic event bus that works with any object implementing
+ * the LrgEvent and LrgEventListener interfaces.
  */
 
 #pragma once
@@ -19,9 +22,8 @@
 
 #include <glib-object.h>
 #include "../lrg-version.h"
-#include "../lrg-enums.h"
-#include "lrg-card-event.h"
-#include "lrg-trigger-listener.h"
+#include "lrg-event.h"
+#include "lrg-event-listener.h"
 
 G_BEGIN_DECLS
 
@@ -53,7 +55,7 @@ LrgEventBus * lrg_event_bus_get_default (void);
 /**
  * lrg_event_bus_new:
  *
- * Creates a new event bus. Use this for isolated combat contexts
+ * Creates a new event bus. Use this for isolated contexts
  * rather than the global singleton.
  *
  * Returns: (transfer full): a new #LrgEventBus
@@ -72,40 +74,40 @@ LrgEventBus * lrg_event_bus_new (void);
  * @self: an #LrgEventBus
  * @listener: (transfer none): the listener to register
  *
- * Registers a trigger listener with the event bus. The listener
+ * Registers an event listener with the event bus. The listener
  * will be notified of matching events.
  *
  * Since: 1.0
  */
 LRG_AVAILABLE_IN_ALL
-void lrg_event_bus_register (LrgEventBus        *self,
-                             LrgTriggerListener *listener);
+void lrg_event_bus_register (LrgEventBus      *self,
+                             LrgEventListener *listener);
 
 /**
  * lrg_event_bus_unregister:
  * @self: an #LrgEventBus
  * @listener: the listener to unregister
  *
- * Unregisters a trigger listener from the event bus.
+ * Unregisters an event listener from the event bus.
  *
  * Since: 1.0
  */
 LRG_AVAILABLE_IN_ALL
-void lrg_event_bus_unregister (LrgEventBus        *self,
-                               LrgTriggerListener *listener);
+void lrg_event_bus_unregister (LrgEventBus      *self,
+                               LrgEventListener *listener);
 
 /**
  * lrg_event_bus_unregister_by_id:
  * @self: an #LrgEventBus
- * @trigger_id: the trigger ID to unregister
+ * @listener_id: the listener ID to unregister
  *
- * Unregisters all listeners with the given trigger ID.
+ * Unregisters all listeners with the given ID.
  *
  * Since: 1.0
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_event_bus_unregister_by_id (LrgEventBus *self,
-                                     const gchar *trigger_id);
+                                     const gchar *listener_id);
 
 /**
  * lrg_event_bus_clear:
@@ -138,40 +140,20 @@ guint lrg_event_bus_get_listener_count (LrgEventBus *self);
 /**
  * lrg_event_bus_emit:
  * @self: an #LrgEventBus
- * @event: (transfer full): the event to emit
- * @context: (nullable): the combat/game context
+ * @event: (transfer none): the event to emit
+ * @context: (nullable): optional context data
  *
  * Emits an event to all registered listeners. Listeners are notified
  * in priority order (highest first). If a listener cancels the event,
  * subsequent listeners are not notified.
  *
- * The event bus takes ownership of the event and frees it after dispatch.
- *
  * Returns: %TRUE if the event completed (not cancelled), %FALSE if cancelled
  *
  * Since: 1.0
  */
 LRG_AVAILABLE_IN_ALL
-gboolean lrg_event_bus_emit (LrgEventBus  *self,
-                             LrgCardEvent *event,
-                             gpointer      context);
-
-/**
- * lrg_event_bus_emit_copy:
- * @self: an #LrgEventBus
- * @event: (transfer none): the event to emit (copied)
- * @context: (nullable): the combat/game context
- *
- * Emits a copy of an event to all registered listeners. The original
- * event is not modified.
- *
- * Returns: %TRUE if the event completed (not cancelled), %FALSE if cancelled
- *
- * Since: 1.0
- */
-LRG_AVAILABLE_IN_ALL
-gboolean lrg_event_bus_emit_copy (LrgEventBus  *self,
-                                  LrgCardEvent *event,
-                                  gpointer      context);
+gboolean lrg_event_bus_emit (LrgEventBus *self,
+                             LrgEvent    *event,
+                             gpointer     context);
 
 G_END_DECLS

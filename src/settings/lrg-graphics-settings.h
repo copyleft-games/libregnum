@@ -11,6 +11,7 @@
 
 #include "lrg-settings-group.h"
 #include "../lrg-version.h"
+#include "../lrg-enums.h"
 
 G_BEGIN_DECLS
 
@@ -19,20 +20,7 @@ G_BEGIN_DECLS
 LRG_AVAILABLE_IN_ALL
 G_DECLARE_FINAL_TYPE (LrgGraphicsSettings, lrg_graphics_settings, LRG, GRAPHICS_SETTINGS, LrgSettingsGroup)
 
-/**
- * LrgFullscreenMode:
- * @LRG_FULLSCREEN_WINDOWED: Regular windowed mode
- * @LRG_FULLSCREEN_FULLSCREEN: Exclusive fullscreen
- * @LRG_FULLSCREEN_BORDERLESS: Borderless windowed (fake fullscreen)
- *
- * Display fullscreen modes.
- */
-typedef enum
-{
-    LRG_FULLSCREEN_WINDOWED = 0,
-    LRG_FULLSCREEN_FULLSCREEN,
-    LRG_FULLSCREEN_BORDERLESS
-} LrgFullscreenMode;
+/* LrgFullscreenMode is defined in lrg-enums.h */
 
 /**
  * LrgQualityPreset:

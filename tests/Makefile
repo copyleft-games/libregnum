@@ -118,7 +118,16 @@ TEST_SOURCES := \
 	test-demo.c \
 	test-dlc.c \
 	test-vr.c \
-	test-deckbuilder.c
+	test-deckbuilder.c \
+	test-object-pool.c \
+	test-template-2d.c \
+	test-template-3d.c \
+	test-template.c \
+	test-input-buffer.c \
+	test-template-states.c \
+	test-template-engagement.c \
+	test-template-idle.c \
+	test-template-deckbuilder.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))

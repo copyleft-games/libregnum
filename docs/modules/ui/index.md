@@ -85,6 +85,7 @@ void game_update(void)
 - **LrgHBox** - Horizontal box layout
 - **LrgGrid** - Grid layout with configurable columns
 - **LrgPanel** - Styled container with background and border
+- **LrgTabView** - Tabbed container with switchable content panels
 
 ### Widgets
 
@@ -445,6 +446,7 @@ g_autoptr(LrgCanvas) create_main_menu(void)
 - `lrg-vbox.h` - Vertical layout
 - `lrg-hbox.h` - Horizontal layout
 - `lrg-grid.h` - Grid layout
+- `lrg-tab-view.h` - Tabbed container
 
 ### Widgets
 
@@ -460,6 +462,7 @@ g_autoptr(LrgCanvas) create_main_menu(void)
 
 - See [Widget Documentation](widget.md) for widget basics
 - See [Container Documentation](container.md) for layout
+- See [Tab View](tab-view.md) for tabbed interfaces
 - See [UI Events](ui-event.md) for event handling
 - See [Theming](theme.md) for styling
 - See [UI Basics Example](../examples/ui-basics.md) for complete sample

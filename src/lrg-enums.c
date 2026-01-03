@@ -4205,3 +4205,164 @@ lrg_unlock_status_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * UI System - Tab View
+ * ========================================================================== */
+
+GType
+lrg_tab_position_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TAB_POSITION_TOP, "LRG_TAB_POSITION_TOP", "top" },
+            { LRG_TAB_POSITION_BOTTOM, "LRG_TAB_POSITION_BOTTOM", "bottom" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTabPosition"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * Template System
+ * ========================================================================== */
+
+GType
+lrg_template_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TEMPLATE_ERROR_FAILED, "LRG_TEMPLATE_ERROR_FAILED", "failed" },
+            { LRG_TEMPLATE_ERROR_INIT, "LRG_TEMPLATE_ERROR_INIT", "init" },
+            { LRG_TEMPLATE_ERROR_INVALID_STATE, "LRG_TEMPLATE_ERROR_INVALID_STATE", "invalid-state" },
+            { LRG_TEMPLATE_ERROR_SAVE, "LRG_TEMPLATE_ERROR_SAVE", "save" },
+            { LRG_TEMPLATE_ERROR_LOAD, "LRG_TEMPLATE_ERROR_LOAD", "load" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTemplateError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_fullscreen_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_FULLSCREEN_WINDOWED, "LRG_FULLSCREEN_WINDOWED", "windowed" },
+            { LRG_FULLSCREEN_FULLSCREEN, "LRG_FULLSCREEN_FULLSCREEN", "fullscreen" },
+            { LRG_FULLSCREEN_BORDERLESS, "LRG_FULLSCREEN_BORDERLESS", "borderless" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgFullscreenMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_scaling_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SCALING_MODE_STRETCH, "LRG_SCALING_MODE_STRETCH", "stretch" },
+            { LRG_SCALING_MODE_LETTERBOX, "LRG_SCALING_MODE_LETTERBOX", "letterbox" },
+            { LRG_SCALING_MODE_PILLARBOX, "LRG_SCALING_MODE_PILLARBOX", "pillarbox" },
+            { LRG_SCALING_MODE_CROP, "LRG_SCALING_MODE_CROP", "crop" },
+            { LRG_SCALING_MODE_PIXEL_PERFECT, "LRG_SCALING_MODE_PIXEL_PERFECT", "pixel-perfect" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgScalingMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_pool_growth_policy_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_POOL_GROWTH_FIXED, "LRG_POOL_GROWTH_FIXED", "fixed" },
+            { LRG_POOL_GROWTH_LINEAR, "LRG_POOL_GROWTH_LINEAR", "linear" },
+            { LRG_POOL_GROWTH_DOUBLE, "LRG_POOL_GROWTH_DOUBLE", "double" },
+            { LRG_POOL_GROWTH_EXPONENTIAL, "LRG_POOL_GROWTH_EXPONENTIAL", "exponential" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPoolGrowthPolicy"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_input_context_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_INPUT_CONTEXT_GAMEPLAY, "LRG_INPUT_CONTEXT_GAMEPLAY", "gameplay" },
+            { LRG_INPUT_CONTEXT_MENU, "LRG_INPUT_CONTEXT_MENU", "menu" },
+            { LRG_INPUT_CONTEXT_DIALOG, "LRG_INPUT_CONTEXT_DIALOG", "dialog" },
+            { LRG_INPUT_CONTEXT_CUTSCENE, "LRG_INPUT_CONTEXT_CUTSCENE", "cutscene" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgInputContext"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_auto_save_trigger_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_AUTO_SAVE_TRIGGER_NONE, "LRG_AUTO_SAVE_TRIGGER_NONE", "none" },
+            { LRG_AUTO_SAVE_TRIGGER_INTERVAL, "LRG_AUTO_SAVE_TRIGGER_INTERVAL", "interval" },
+            { LRG_AUTO_SAVE_TRIGGER_EVENT, "LRG_AUTO_SAVE_TRIGGER_EVENT", "event" },
+            { LRG_AUTO_SAVE_TRIGGER_BOTH, "LRG_AUTO_SAVE_TRIGGER_BOTH", "both" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAutoSaveTrigger"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

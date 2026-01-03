@@ -152,6 +152,23 @@ Atmospheric weather effects:
 - **[LrgLightmap](lighting/index.md#baked-lighting-lightmaps)** - Baked lighting
 - **[LrgLightingManager](lighting/index.md)** - Lighting coordinator
 
+### [Template Module](template/index.md) - Ready-to-Use Menu States & Engagement
+
+Pre-built game state implementations:
+
+- **[LrgTemplateMainMenuState](template/index.md#main-menu-state)** - Title screen with buttons
+- **[LrgTemplatePauseMenuState](template/index.md#pause-menu-state)** - Pause overlay with audio ducking
+- **[LrgTemplateSettingsMenuState](template/index.md#settings-menu-state)** - Tabbed settings interface
+- **[LrgTemplateLoadingState](template/index.md#loading-state)** - Loading screen with progress
+- **[LrgTemplateErrorState](template/index.md#error-state)** - Error recovery screen
+- **[LrgTemplateConfirmationState](template/index.md#confirmation-state)** - Modal confirmation dialog
+
+Engagement systems for player retention:
+
+- **[LrgTemplateStatistics](template/index.md#statistics-tracking)** - Game statistics tracking
+- **[LrgTemplateDailyRewards](template/index.md#daily-rewards-interface)** - Daily login rewards with streaks
+- **[LrgTemplateDifficulty](template/index.md#dynamic-difficulty-interface)** - Dynamic difficulty adjustment
+
 ## Planned Modules
 
 ### Phase 1: Basic Game Systems (Implemented, docs pending)
@@ -255,6 +272,7 @@ Phase 0   core/ (engine, registry, loader, assets)
 | Tutorial | 4 | Complete | Tutorial, TutorialStep, TutorialManager, Highlight, InputPrompt |
 | Weather | 4 | Complete | Rain, Snow, Fog, Lightning, DayNightCycle, WeatherManager |
 | Lighting | 4 | Complete | PointLight2D, SpotLight2D, DirectionalLight2D, ShadowMap, LightingManager |
+| Template | 4 | Complete | MainMenuState, PauseMenuState, SettingsMenuState, LoadingState, ErrorState, ConfirmationState, Statistics, DailyRewards, Difficulty |
 
 ## Building with Multiple Modules
 

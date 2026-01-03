@@ -91,7 +91,10 @@ libregnum/
 │   ├── achievement/          # Achievement, AchievementProgress, AchievementManager, Notification
 │   ├── photomode/            # Screenshot, PhotoCameraController, PhotoMode
 │   ├── demo/                 # DemoGatable interface, DemoManager
-│   └── vr/                   # VRService interface, VRStub, VRComfort
+│   ├── vr/                   # VRService interface, VRStub, VRComfort
+│   │
+│   │ # Game Templates
+│   └── template/             # Genre-specific game templates with ready-to-use game loops
 │
 ├── tests/
 │   ├── Makefile
@@ -994,6 +997,136 @@ Error domains:
 | graylib patterns | `deps/graylib/src/scene/grl-entity.h` |
 | yaml-glib patterns | `deps/yaml-glib/src/yaml-gobject.h` |
 
+## Template System
+
+The template module provides ready-to-use game loop implementations for common game genres. Templates handle window creation, input setup, camera management, physics, and rendering so developers can focus on game-specific logic.
+
+### Template Hierarchy
+
+```
+LrgGameTemplate (base)
+├── LrgGame2DTemplate (virtual resolution, 2D camera)
+│   ├── LrgShooter2DTemplate (derivable - projectiles, health)
+│   │   ├── LrgTwinStickTemplate (final - dual analog)
+│   │   └── LrgShmupTemplate (final - scrolling shooter)
+│   ├── LrgPlatformerTemplate (derivable - gravity, jumping)
+│   ├── LrgTopDownTemplate (derivable - 4/8-way movement)
+│   ├── LrgTycoonTemplate (derivable - grid building)
+│   └── LrgRacing2DTemplate (derivable - top-down racing)
+│
+├── LrgGame3DTemplate (3D camera, mouse look)
+│   ├── LrgFPSTemplate (derivable - WASD + mouse look)
+│   ├── LrgThirdPersonTemplate (derivable - orbit camera)
+│   └── LrgRacing3DTemplate (derivable - 3D racing)
+│
+├── LrgDeckbuilderTemplate (derivable - card game base)
+│   ├── LrgDeckbuilderCombatTemplate (final - Slay the Spire-style)
+│   └── LrgDeckbuilderPokerTemplate (final - Balatro-style)
+│
+└── LrgIdleTemplate (derivable - offline progress, prestige)
+```
+
+### Quick Start - Creating a Game
+
+```c
+/* Minimal platformer using template */
+#include <libregnum.h>
+
+int
+main (int argc, char *argv[])
+{
+    g_autoptr(LrgPlatformerTemplate) game = NULL;
+
+    game = g_object_new (LRG_TYPE_PLATFORMER_TEMPLATE,
+                          "title", "My Platformer",
+                          "virtual-width", 320,
+                          "virtual-height", 240,
+                          "gravity", 980.0f,
+                          "jump-height", 64.0f,
+                          NULL);
+
+    return lrg_game_template_run (LRG_GAME_TEMPLATE (game), argc, argv);
+}
+```
+
+### Subclassing Templates
+
+Templates are designed for subclassing to add custom behavior:
+
+```c
+G_DECLARE_FINAL_TYPE (MyGame, my_game, MY, GAME, LrgPlatformerTemplate)
+
+static void
+my_game_on_landed (LrgPlatformerTemplate *platformer)
+{
+    /* Play landing sound */
+    play_sound ("land.wav");
+}
+
+static void
+my_game_draw_world (LrgGame2DTemplate *template)
+{
+    MyGame *self = MY_GAME (template);
+
+    /* Draw tilemap, player, enemies */
+    draw_tilemap (self->tilemap);
+    draw_player (self);
+}
+
+static void
+my_game_class_init (MyGameClass *klass)
+{
+    LrgPlatformerTemplateClass *platform_class;
+    LrgGame2DTemplateClass *template_class;
+
+    platform_class = LRG_PLATFORMER_TEMPLATE_CLASS (klass);
+    platform_class->on_landed = my_game_on_landed;
+
+    template_class = LRG_GAME_2D_TEMPLATE_CLASS (klass);
+    template_class->draw_world = my_game_draw_world;
+}
+```
+
+### Template Key Features
+
+| Template | Key Features |
+|----------|--------------|
+| `LrgGame2DTemplate` | Virtual resolution, letterboxing, 2D camera follow |
+| `LrgPlatformerTemplate` | Gravity, jump, coyote time, wall slide/jump |
+| `LrgTopDownTemplate` | 4-way/8-way movement, dash, stamina |
+| `LrgShooter2DTemplate` | Projectiles, health, waves, score |
+| `LrgTycoonTemplate` | Grid building, panning, time speed |
+| `LrgRacing2DTemplate` | Vehicle physics, laps, checkpoints, boost |
+| `LrgGame3DTemplate` | 3D camera, mouse look, pitch limits |
+| `LrgFPSTemplate` | WASD movement, sprint, jump, weapons |
+| `LrgThirdPersonTemplate` | Orbit camera, aim modes, dodge, stamina |
+| `LrgRacing3DTemplate` | 3D vehicle physics, camera modes |
+| `LrgDeckbuilderTemplate` | Deck, hand, discard, energy, turns |
+| `LrgIdleTemplate` | Offline progress, prestige, automation |
+
+### Template Virtual Methods
+
+All templates provide virtual methods for customization:
+
+```c
+struct _LrgGame2DTemplateClass
+{
+    LrgGameTemplateClass parent_class;
+
+    void (*draw_background) (LrgGame2DTemplate *self);
+    void (*draw_world)      (LrgGame2DTemplate *self);
+    void (*draw_ui)         (LrgGame2DTemplate *self);
+    void (*update_camera)   (LrgGame2DTemplate *self, gdouble delta);
+
+    gpointer _reserved[8];
+};
+```
+
+### Related Documentation
+
+- Full template documentation: `docs/modules/template/index.md`
+- Example games: `examples/game-*.c`
+
 ## Implementation Status
 
 The library is feature-complete and ready for commercial game development.
@@ -1044,6 +1177,9 @@ The library is feature-complete and ready for commercial game development.
 - [x] Building/Placement system (BuildingDef, PlacementSystem, BuildGrid)
 - [x] Vehicle/Driving system (Vehicle, VehicleController, Wheel, TrafficAgent, Road)
 - [x] Idle game support (IdleCalculator, BigNumber, Prestige, UnlockTree, Automation)
+- [x] Game templates (2D: Platformer, TopDown, Shooter, Shmup, Tycoon, Racing)
+- [x] Game templates (3D: FPS, ThirdPerson, Racing3D)
+- [x] Deckbuilder templates (Combat, Poker variants)
 
 ### Platform Integration
 - [x] Steam SDK integration (SteamClient, Cloud, Achievements, Leaderboards, Workshop)

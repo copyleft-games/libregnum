@@ -18,6 +18,7 @@ The Core module provides:
 - **[LrgDataLoader](data-loader.md)** - YAML deserialization with GObject integration
 - **[LrgAssetManager](asset-manager.md)** - Asset caching with mod overlay support
 - **[LrgAssetPack](asset-pack.md)** - Resource pack (rres) loading and management
+- **[LrgEventBus](event-bus.md)** - Priority-based publish/subscribe event system
 
 ## Essential Concepts
 
@@ -86,6 +87,9 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 | `LrgDataLoader` | YAML loader | No |
 | `LrgAssetManager` | Asset manager | Yes |
 | `LrgAssetPack` | Resource pack loader | No |
+| `LrgEventBus` | Event dispatcher | No |
+| `LrgEvent` | Event interface | Interface |
+| `LrgEventListener` | Listener interface | Interface |
 
 ## Enumerations
 
@@ -299,6 +303,7 @@ if (!lrg_engine_startup (engine, &error))
 - **[LrgDataLoader](data-loader.md)** - Data loading
 - **[LrgAssetManager](asset-manager.md)** - Asset management
 - **[LrgAssetPack](asset-pack.md)** - Resource pack loading
+- **[LrgEventBus](event-bus.md)** - Event system (LrgEvent, LrgEventListener, LrgEventBus)
 
 ## Concepts
 

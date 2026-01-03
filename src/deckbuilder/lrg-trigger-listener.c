@@ -5,11 +5,16 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * LrgTriggerListener - Interface implementation.
+ *
+ * LrgTriggerListener extends LrgEventListener with deckbuilder-specific
+ * event handling. Any object implementing LrgTriggerListener can be
+ * registered with the generic LrgEventBus.
  */
 
 #include "lrg-trigger-listener.h"
+#include "../core/lrg-event.h"
 
-G_DEFINE_INTERFACE (LrgTriggerListener, lrg_trigger_listener, G_TYPE_OBJECT)
+G_DEFINE_INTERFACE (LrgTriggerListener, lrg_trigger_listener, LRG_TYPE_EVENT_LISTENER)
 
 /* ==========================================================================
  * Default Implementations
@@ -145,7 +150,7 @@ lrg_trigger_listener_on_event (LrgTriggerListener *self,
     LrgTriggerListenerInterface *iface;
 
     g_return_val_if_fail (LRG_IS_TRIGGER_LISTENER (self), TRUE);
-    g_return_val_if_fail (event != NULL, TRUE);
+    g_return_val_if_fail (LRG_IS_CARD_EVENT (event), TRUE);
 
     iface = LRG_TRIGGER_LISTENER_GET_IFACE (self);
     g_return_val_if_fail (iface->on_event != NULL, TRUE);

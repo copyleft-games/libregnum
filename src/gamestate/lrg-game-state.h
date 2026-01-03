@@ -112,8 +112,26 @@ struct _LrgGameStateClass
     gboolean (*handle_input) (LrgGameState *self,
                               gpointer      event);
 
+    /**
+     * LrgGameStateClass::update_safe:
+     * @self: an #LrgGameState
+     * @delta: time since last frame in seconds
+     * @error: (nullable): return location for error
+     *
+     * Called each frame to update game logic with error reporting.
+     * If not implemented, falls back to calling update().
+     * Default implementation calls update() and returns %TRUE.
+     *
+     * Returns: %TRUE on success, %FALSE on error
+     *
+     * Since: 1.0
+     */
+    gboolean (*update_safe) (LrgGameState  *self,
+                             gdouble        delta,
+                             GError       **error);
+
     /*< private >*/
-    gpointer _reserved[8];
+    gpointer _reserved[7];
 };
 
 /**
@@ -191,6 +209,25 @@ LRG_AVAILABLE_IN_ALL
 gboolean
 lrg_game_state_handle_input (LrgGameState *self,
                              gpointer      event);
+
+/**
+ * lrg_game_state_update_safe:
+ * @self: an #LrgGameState
+ * @delta: time since last frame in seconds
+ * @error: (nullable): return location for error
+ *
+ * Updates game logic with error handling. If the state does not
+ * implement this method, falls back to regular update().
+ *
+ * Returns: %TRUE on success, %FALSE on error
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_game_state_update_safe (LrgGameState  *self,
+                            gdouble        delta,
+                            GError       **error);
 
 /**
  * lrg_game_state_get_name:

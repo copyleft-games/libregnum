@@ -2467,14 +2467,14 @@ static void
 test_event_bus_emit_no_listeners (void)
 {
     g_autoptr(LrgEventBus) bus = NULL;
-    LrgCardEvent *event = NULL;
+    g_autoptr(LrgCardEvent) event = NULL;
     gboolean result;
 
     bus = lrg_event_bus_new ();
     event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
 
     /* Emit with no listeners should succeed */
-    result = lrg_event_bus_emit (bus, event, NULL);
+    result = lrg_event_bus_emit (bus, LRG_EVENT (event), NULL);
     g_assert_true (result);
 }
 

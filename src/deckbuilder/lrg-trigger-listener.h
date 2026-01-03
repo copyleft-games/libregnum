@@ -20,6 +20,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-enums.h"
+#include "../core/lrg-event-listener.h"
 #include "lrg-card-event.h"
 
 G_BEGIN_DECLS
@@ -27,7 +28,7 @@ G_BEGIN_DECLS
 #define LRG_TYPE_TRIGGER_LISTENER (lrg_trigger_listener_get_type ())
 
 LRG_AVAILABLE_IN_ALL
-G_DECLARE_INTERFACE (LrgTriggerListener, lrg_trigger_listener, LRG, TRIGGER_LISTENER, GObject)
+G_DECLARE_INTERFACE (LrgTriggerListener, lrg_trigger_listener, LRG, TRIGGER_LISTENER, LrgEventListener)
 
 /**
  * LrgTriggerListenerInterface:

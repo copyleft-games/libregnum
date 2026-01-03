@@ -4439,4 +4439,183 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_unlock_status_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_UNLOCK_STATUS (lrg_unlock_status_get_type ())
 
+/* ==========================================================================
+ * UI System - Tab View
+ * ========================================================================== */
+
+/**
+ * LrgTabPosition:
+ * @LRG_TAB_POSITION_TOP: Tabs displayed at top of content
+ * @LRG_TAB_POSITION_BOTTOM: Tabs displayed at bottom of content
+ *
+ * Position of tab bar in a tab view widget.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TAB_POSITION_TOP,
+    LRG_TAB_POSITION_BOTTOM
+} LrgTabPosition;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_tab_position_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TAB_POSITION (lrg_tab_position_get_type ())
+
+/* ==========================================================================
+ * Template System
+ * ========================================================================== */
+
+/**
+ * LRG_TEMPLATE_ERROR:
+ *
+ * Error domain for game template errors.
+ *
+ * Since: 1.0
+ */
+#define LRG_TEMPLATE_ERROR (lrg_template_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_template_error_quark (void);
+
+/**
+ * LrgTemplateError:
+ * @LRG_TEMPLATE_ERROR_FAILED: Generic failure
+ * @LRG_TEMPLATE_ERROR_INIT: Initialization error
+ * @LRG_TEMPLATE_ERROR_INVALID_STATE: Invalid state error
+ * @LRG_TEMPLATE_ERROR_SAVE: Save operation failed
+ * @LRG_TEMPLATE_ERROR_LOAD: Load operation failed
+ *
+ * Error codes for the game template system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_TEMPLATE_ERROR_FAILED,
+    LRG_TEMPLATE_ERROR_INIT,
+    LRG_TEMPLATE_ERROR_INVALID_STATE,
+    LRG_TEMPLATE_ERROR_SAVE,
+    LRG_TEMPLATE_ERROR_LOAD
+} LrgTemplateError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_template_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEMPLATE_ERROR (lrg_template_error_get_type ())
+
+/**
+ * LrgFullscreenMode:
+ * @LRG_FULLSCREEN_WINDOWED: Regular windowed mode
+ * @LRG_FULLSCREEN_FULLSCREEN: Exclusive fullscreen
+ * @LRG_FULLSCREEN_BORDERLESS: Borderless windowed (fake fullscreen)
+ *
+ * Window fullscreen modes.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_FULLSCREEN_WINDOWED = 0,
+    LRG_FULLSCREEN_FULLSCREEN,
+    LRG_FULLSCREEN_BORDERLESS
+} LrgFullscreenMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_fullscreen_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_FULLSCREEN_MODE (lrg_fullscreen_mode_get_type ())
+
+/**
+ * LrgScalingMode:
+ * @LRG_SCALING_MODE_STRETCH: Stretch to fill (may distort)
+ * @LRG_SCALING_MODE_LETTERBOX: Maintain aspect ratio with black bars
+ * @LRG_SCALING_MODE_PILLARBOX: Maintain aspect ratio with side bars
+ * @LRG_SCALING_MODE_CROP: Fill and crop excess
+ * @LRG_SCALING_MODE_PIXEL_PERFECT: Integer scaling only
+ *
+ * Resolution scaling modes for 2D games.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_SCALING_MODE_STRETCH,
+    LRG_SCALING_MODE_LETTERBOX,
+    LRG_SCALING_MODE_PILLARBOX,
+    LRG_SCALING_MODE_CROP,
+    LRG_SCALING_MODE_PIXEL_PERFECT
+} LrgScalingMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_scaling_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SCALING_MODE (lrg_scaling_mode_get_type ())
+
+/**
+ * LrgPoolGrowthPolicy:
+ * @LRG_POOL_GROWTH_FIXED: Never grow, return NULL if exhausted
+ * @LRG_POOL_GROWTH_LINEAR: Grow by initial size
+ * @LRG_POOL_GROWTH_DOUBLE: Double capacity
+ * @LRG_POOL_GROWTH_EXPONENTIAL: 1.5x capacity
+ *
+ * Growth policies for object pools.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_POOL_GROWTH_FIXED,
+    LRG_POOL_GROWTH_LINEAR,
+    LRG_POOL_GROWTH_DOUBLE,
+    LRG_POOL_GROWTH_EXPONENTIAL
+} LrgPoolGrowthPolicy;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_pool_growth_policy_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_POOL_GROWTH_POLICY (lrg_pool_growth_policy_get_type ())
+
+/**
+ * LrgInputContext:
+ * @LRG_INPUT_CONTEXT_GAMEPLAY: Normal gameplay input
+ * @LRG_INPUT_CONTEXT_MENU: Menu navigation input
+ * @LRG_INPUT_CONTEXT_DIALOG: Dialog/text input
+ * @LRG_INPUT_CONTEXT_CUTSCENE: Cutscene (limited input)
+ *
+ * Input context for input buffering system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_INPUT_CONTEXT_GAMEPLAY,
+    LRG_INPUT_CONTEXT_MENU,
+    LRG_INPUT_CONTEXT_DIALOG,
+    LRG_INPUT_CONTEXT_CUTSCENE
+} LrgInputContext;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_input_context_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_INPUT_CONTEXT (lrg_input_context_get_type ())
+
+/**
+ * LrgAutoSaveTrigger:
+ * @LRG_AUTO_SAVE_TRIGGER_NONE: No automatic saves
+ * @LRG_AUTO_SAVE_TRIGGER_INTERVAL: Save at regular intervals
+ * @LRG_AUTO_SAVE_TRIGGER_EVENT: Save on specific events
+ * @LRG_AUTO_SAVE_TRIGGER_BOTH: Both interval and event triggered
+ *
+ * Auto-save trigger conditions.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_AUTO_SAVE_TRIGGER_NONE,
+    LRG_AUTO_SAVE_TRIGGER_INTERVAL,
+    LRG_AUTO_SAVE_TRIGGER_EVENT,
+    LRG_AUTO_SAVE_TRIGGER_BOTH
+} LrgAutoSaveTrigger;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_auto_save_trigger_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_AUTO_SAVE_TRIGGER (lrg_auto_save_trigger_get_type ())
+
 G_END_DECLS

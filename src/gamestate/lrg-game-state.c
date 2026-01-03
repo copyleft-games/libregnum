@@ -73,6 +73,16 @@ lrg_game_state_real_handle_input (LrgGameState *self,
     return FALSE;
 }
 
+static gboolean
+lrg_game_state_real_update_safe (LrgGameState  *self,
+                                 gdouble        delta,
+                                 GError       **error)
+{
+    /* Default implementation delegates to regular update(), no error possible */
+    lrg_game_state_update (self, delta);
+    return TRUE;
+}
+
 static void
 lrg_game_state_set_property (GObject      *object,
                              guint         prop_id,
@@ -147,6 +157,7 @@ lrg_game_state_class_init (LrgGameStateClass *klass)
     klass->pause = lrg_game_state_real_pause;
     klass->resume = lrg_game_state_real_resume;
     klass->handle_input = lrg_game_state_real_handle_input;
+    klass->update_safe = lrg_game_state_real_update_safe;
 
     /**
      * LrgGameState:name:
@@ -342,6 +353,41 @@ lrg_game_state_handle_input (LrgGameState *self,
         return klass->handle_input (self, event);
 
     return FALSE;
+}
+
+/**
+ * lrg_game_state_update_safe:
+ * @self: an #LrgGameState
+ * @delta: time since last frame in seconds
+ * @error: (nullable): return location for error
+ *
+ * Updates game logic with error handling. If the state does not
+ * implement this method, falls back to regular update().
+ *
+ * Returns: %TRUE on success, %FALSE on error
+ *
+ * Since: 1.0
+ */
+gboolean
+lrg_game_state_update_safe (LrgGameState  *self,
+                            gdouble        delta,
+                            GError       **error)
+{
+    LrgGameStateClass *klass;
+
+    g_return_val_if_fail (LRG_IS_GAME_STATE (self), FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    klass = LRG_GAME_STATE_GET_CLASS (self);
+
+    if (klass->update_safe != NULL)
+    {
+        return klass->update_safe (self, delta, error);
+    }
+
+    /* Fallback if somehow NULL (shouldn't happen with default) */
+    lrg_game_state_update (self, delta);
+    return TRUE;
 }
 
 /**

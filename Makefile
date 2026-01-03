@@ -35,6 +35,9 @@ PUBLIC_HEADERS := \
 	src/core/lrg-data-loader.h \
 	src/core/lrg-asset-manager.h \
 	src/core/lrg-asset-pack.h \
+	src/core/lrg-event.h \
+	src/core/lrg-event-listener.h \
+	src/core/lrg-event-bus.h \
 	src/graphics/lrg-drawable.h \
 	src/graphics/lrg-window.h \
 	src/graphics/lrg-grl-window.h \
@@ -89,6 +92,7 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-vbox.h \
 	src/ui/lrg-hbox.h \
 	src/ui/lrg-grid.h \
+	src/ui/lrg-tab-view.h \
 	src/ui/lrg-canvas.h \
 	src/ui/lrg-checkbox.h \
 	src/ui/lrg-progress-bar.h \
@@ -328,6 +332,39 @@ PUBLIC_HEADERS := \
 	src/vr/lrg-vr-service.h \
 	src/vr/lrg-vr-stub.h \
 	src/vr/lrg-vr-comfort.h \
+	src/template/lrg-game-template.h \
+	src/template/lrg-input-buffer.h \
+	src/template/states/lrg-template-main-menu-state.h \
+	src/template/states/lrg-template-pause-menu-state.h \
+	src/template/states/lrg-template-settings-menu-state.h \
+	src/template/states/lrg-template-loading-state.h \
+	src/template/states/lrg-template-error-state.h \
+	src/template/states/lrg-template-confirmation-state.h \
+	src/template/lrg-template-statistics.h \
+	src/template/lrg-template-daily-rewards.h \
+	src/template/lrg-template-difficulty.h \
+	src/template/lrg-idle-mixin.h \
+	src/template/lrg-idle-template.h \
+	src/template/lrg-deck-mixin.h \
+	src/template/lrg-deckbuilder-template.h \
+	src/template/lrg-deckbuilder-combat-template.h \
+	src/template/lrg-deckbuilder-poker-template.h \
+	src/template/lrg-poolable.h \
+	src/template/lrg-object-pool.h \
+	src/template/lrg-template-scalable.h \
+	src/template/lrg-game-2d-template.h \
+	src/template/lrg-game-3d-template.h \
+	src/template/lrg-shooter-2d-template.h \
+	src/template/lrg-shooter-2d-template-private.h \
+	src/template/lrg-twin-stick-template.h \
+	src/template/lrg-shmup-template.h \
+	src/template/lrg-platformer-template.h \
+	src/template/lrg-top-down-template.h \
+	src/template/lrg-tycoon-template.h \
+	src/template/lrg-racing-2d-template.h \
+	src/template/lrg-fps-template.h \
+	src/template/lrg-third-person-template.h \
+	src/template/lrg-racing-3d-template.h \
 	src/deckbuilder/lrg-card-def.h \
 	src/deckbuilder/lrg-card-instance.h \
 	src/deckbuilder/lrg-card-pile.h \
@@ -341,7 +378,6 @@ PUBLIC_HEADERS := \
 	src/deckbuilder/lrg-effect-stack.h \
 	src/deckbuilder/lrg-card-event.h \
 	src/deckbuilder/lrg-trigger-listener.h \
-	src/deckbuilder/lrg-event-bus.h \
 	src/deckbuilder/lrg-card-keyword.h \
 	src/deckbuilder/lrg-card-keyword-def.h \
 	src/deckbuilder/lrg-card-keyword-registry.h \
@@ -386,6 +422,9 @@ SOURCES := \
 	src/core/lrg-data-loader.c \
 	src/core/lrg-asset-manager.c \
 	src/core/lrg-asset-pack.c \
+	src/core/lrg-event.c \
+	src/core/lrg-event-listener.c \
+	src/core/lrg-event-bus.c \
 	src/graphics/lrg-drawable.c \
 	src/graphics/lrg-window.c \
 	src/graphics/lrg-grl-window.c \
@@ -440,6 +479,7 @@ SOURCES := \
 	src/ui/lrg-vbox.c \
 	src/ui/lrg-hbox.c \
 	src/ui/lrg-grid.c \
+	src/ui/lrg-tab-view.c \
 	src/ui/lrg-canvas.c \
 	src/ui/lrg-checkbox.c \
 	src/ui/lrg-progress-bar.c \
@@ -680,6 +720,38 @@ SOURCES := \
 	src/vr/lrg-vr-service.c \
 	src/vr/lrg-vr-stub.c \
 	src/vr/lrg-vr-comfort.c \
+	src/template/lrg-game-template.c \
+	src/template/lrg-input-buffer.c \
+	src/template/states/lrg-template-main-menu-state.c \
+	src/template/states/lrg-template-pause-menu-state.c \
+	src/template/states/lrg-template-settings-menu-state.c \
+	src/template/states/lrg-template-loading-state.c \
+	src/template/states/lrg-template-error-state.c \
+	src/template/states/lrg-template-confirmation-state.c \
+	src/template/lrg-template-statistics.c \
+	src/template/lrg-template-daily-rewards.c \
+	src/template/lrg-template-difficulty.c \
+	src/template/lrg-idle-mixin.c \
+	src/template/lrg-idle-template.c \
+	src/template/lrg-deck-mixin.c \
+	src/template/lrg-deckbuilder-template.c \
+	src/template/lrg-deckbuilder-combat-template.c \
+	src/template/lrg-deckbuilder-poker-template.c \
+	src/template/lrg-poolable.c \
+	src/template/lrg-object-pool.c \
+	src/template/lrg-template-scalable.c \
+	src/template/lrg-game-2d-template.c \
+	src/template/lrg-game-3d-template.c \
+	src/template/lrg-shooter-2d-template.c \
+	src/template/lrg-twin-stick-template.c \
+	src/template/lrg-shmup-template.c \
+	src/template/lrg-platformer-template.c \
+	src/template/lrg-top-down-template.c \
+	src/template/lrg-tycoon-template.c \
+	src/template/lrg-racing-2d-template.c \
+	src/template/lrg-fps-template.c \
+	src/template/lrg-third-person-template.c \
+	src/template/lrg-racing-3d-template.c \
 	src/deckbuilder/lrg-card-def.c \
 	src/deckbuilder/lrg-card-instance.c \
 	src/deckbuilder/lrg-card-pile.c \
@@ -693,7 +765,6 @@ SOURCES := \
 	src/deckbuilder/lrg-effect-stack.c \
 	src/deckbuilder/lrg-card-event.c \
 	src/deckbuilder/lrg-trigger-listener.c \
-	src/deckbuilder/lrg-event-bus.c \
 	src/deckbuilder/lrg-card-keyword.c \
 	src/deckbuilder/lrg-card-keyword-def.c \
 	src/deckbuilder/lrg-card-keyword-registry.c \
@@ -1074,6 +1145,7 @@ endif
 	$(INSTALL_DATA) src/ui/lrg-vbox.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
 	$(INSTALL_DATA) src/ui/lrg-hbox.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
 	$(INSTALL_DATA) src/ui/lrg-grid.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
+	$(INSTALL_DATA) src/ui/lrg-tab-view.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
 	$(INSTALL_DATA) src/ui/lrg-canvas.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
 	$(INSTALL_DATA) src/ui/lrg-checkbox.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
 	$(INSTALL_DATA) src/ui/lrg-progress-bar.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
@@ -1475,6 +1547,11 @@ $(OBJDIR)/src/ui/lrg-hbox.o: src/ui/lrg-hbox.c src/ui/lrg-hbox.h src/ui/lrg-cont
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/ui/lrg-grid.o: src/ui/lrg-grid.c src/ui/lrg-grid.h src/ui/lrg-container.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/ui/lrg-tab-view.o: src/ui/lrg-tab-view.c src/ui/lrg-tab-view.h src/ui/lrg-container.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
