@@ -453,10 +453,6 @@ lrg_racing_3d_template_real_update_vehicle (LrgRacing3DTemplate *self,
     {
         priv->is_grounded = FALSE;
     }
-
-    /* Update race time */
-    priv->race_time += (gfloat)delta;
-    priv->lap_time += (gfloat)delta;
 }
 
 static void
@@ -714,7 +710,7 @@ lrg_racing_3d_template_real_draw_minimap (LrgRacing3DTemplate *self)
     center_y = y + size / 2;
     scale = 1.0f;  /* World units to minimap pixels */
 
-    player_x = center_x + (gint)(priv->vehicle_x * scale);
+    player_x = center_x - (gint)(priv->vehicle_x * scale);
     player_y = center_y - (gint)(priv->vehicle_z * scale);
 
     /* Clamp to minimap bounds */
@@ -731,7 +727,7 @@ lrg_racing_3d_template_real_draw_minimap (LrgRacing3DTemplate *self)
 
         rot_rad = priv->vehicle_rotation * (gfloat)(G_PI / 180.0);
         dir_x = player_x + (gint)(sinf (rot_rad) * 8);
-        dir_y = player_y - (gint)(cosf (rot_rad) * 8);
+        dir_y = player_y + (gint)(cosf (rot_rad) * 8);
 
         DrawLine (player_x, player_y, dir_x, dir_y, YELLOW);
     }
@@ -883,6 +879,13 @@ lrg_racing_3d_template_update_camera (LrgGame3DTemplate *self,
     /* Update vehicle */
     if (klass->update_vehicle != NULL)
         klass->update_vehicle (racing_self, delta);
+
+    /* Update race timing (always runs, even if update_vehicle is overridden) */
+    if (priv->race_state == LRG_RACING_3D_RACE_STATE_RACING)
+    {
+        priv->race_time += (gfloat)delta;
+        priv->lap_time += (gfloat)delta;
+    }
 
     /* Check checkpoints */
     if (priv->race_state == LRG_RACING_3D_RACE_STATE_RACING)
@@ -1475,6 +1478,18 @@ lrg_racing_3d_template_get_speed (LrgRacing3DTemplate *self)
     return priv->speed;
 }
 
+void
+lrg_racing_3d_template_set_speed (LrgRacing3DTemplate *self,
+                                   gfloat               speed)
+{
+    LrgRacing3DTemplatePrivate *priv;
+
+    g_return_if_fail (LRG_IS_RACING_3D_TEMPLATE (self));
+
+    priv = lrg_racing_3d_template_get_instance_private (self);
+    priv->speed = speed;
+}
+
 gfloat
 lrg_racing_3d_template_get_max_speed (LrgRacing3DTemplate *self)
 {
@@ -1913,6 +1928,7 @@ lrg_racing_3d_template_reach_checkpoint (LrgRacing3DTemplate *self,
     LrgRacing3DTemplatePrivate *priv;
     LrgRacing3DTemplateClass *klass;
     gint expected_checkpoint;
+    gint previous_checkpoint;
 
     g_return_if_fail (LRG_IS_RACING_3D_TEMPLATE (self));
 
@@ -1925,6 +1941,8 @@ lrg_racing_3d_template_reach_checkpoint (LrgRacing3DTemplate *self,
     if (checkpoint != expected_checkpoint)
         return;  /* Wrong checkpoint */
 
+    /* Save previous checkpoint before updating */
+    previous_checkpoint = priv->current_checkpoint;
     priv->current_checkpoint = checkpoint;
 
     if (klass->on_checkpoint_reached != NULL)
@@ -1932,8 +1950,12 @@ lrg_racing_3d_template_reach_checkpoint (LrgRacing3DTemplate *self,
 
     g_signal_emit (self, signals[SIGNAL_CHECKPOINT_REACHED], 0, checkpoint);
 
-    /* Check for lap completion */
-    if (checkpoint == 0 && priv->current_lap > 0)
+    /*
+     * Check for lap completion.
+     * A lap is complete when we return to checkpoint 0 after passing
+     * through all other checkpoints (i.e., we came from the last checkpoint).
+     */
+    if (checkpoint == 0 && previous_checkpoint == priv->total_checkpoints - 1)
     {
         /* Completed a lap */
         gfloat lap_time;

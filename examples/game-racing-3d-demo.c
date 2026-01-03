@@ -355,19 +355,28 @@ create_checkpoints (RacingDemo *self)
     g_autoptr(GrlColor) gate_color = grl_color_new (100, 200, 255, 255);
     gint i;
 
-    /* Checkpoint positions */
+    /*
+     * Checkpoint positions - ordered for counter-clockwise circuit.
+     * Vehicle starts at bottom-right facing left, circuit goes: left -> top -> right -> bottom.
+     * Lap completes when returning to CP0 (left) after hitting CP3 (bottom).
+     */
+
+    /* CP0: Left side (first checkpoint after starting) */
     self->checkpoints[0].x = -(TRACK_WIDTH / 2.0f) + (TRACK_LANE_WIDTH / 2.0f);
     self->checkpoints[0].z = 0.0f;
     self->checkpoints[0].radius = TRACK_LANE_WIDTH;
 
+    /* CP1: Top side */
     self->checkpoints[1].x = 0.0f;
     self->checkpoints[1].z = (TRACK_HEIGHT / 2.0f) - (TRACK_LANE_WIDTH / 2.0f);
     self->checkpoints[1].radius = TRACK_LANE_WIDTH;
 
+    /* CP2: Right side */
     self->checkpoints[2].x = (TRACK_WIDTH / 2.0f) - (TRACK_LANE_WIDTH / 2.0f);
     self->checkpoints[2].z = 0.0f;
     self->checkpoints[2].radius = TRACK_LANE_WIDTH;
 
+    /* CP3: Bottom side (start/finish area) */
     self->checkpoints[3].x = 0.0f;
     self->checkpoints[3].z = -(TRACK_HEIGHT / 2.0f) + (TRACK_LANE_WIDTH / 2.0f);
     self->checkpoints[3].radius = TRACK_LANE_WIDTH;
@@ -385,12 +394,14 @@ create_checkpoints (RacingDemo *self)
 
         if (i == 0 || i == 2)
         {
+            /* Left/right sides - gate spans X axis (perpendicular to Z travel) */
             left_post = lrg_cube3d_new_at (cp->x - post_offset, 2.0f, cp->z, 0.3f, 4.0f, 0.3f);
             right_post = lrg_cube3d_new_at (cp->x + post_offset, 2.0f, cp->z, 0.3f, 4.0f, 0.3f);
             top_bar = lrg_cube3d_new_at (cp->x, 4.0f, cp->z, post_offset * 2.0f, 0.3f, 0.3f);
         }
         else
         {
+            /* Top/bottom sides - gate spans Z axis (perpendicular to X travel) */
             left_post = lrg_cube3d_new_at (cp->x, 2.0f, cp->z - post_offset, 0.3f, 4.0f, 0.3f);
             right_post = lrg_cube3d_new_at (cp->x, 2.0f, cp->z + post_offset, 0.3f, 4.0f, 0.3f);
             top_bar = lrg_cube3d_new_at (cp->x, 4.0f, cp->z, 0.3f, 0.3f, post_offset * 2.0f);
@@ -478,7 +489,7 @@ reset_vehicle (RacingDemo *self)
 {
     gfloat start_x = (TRACK_WIDTH / 2.0f) - (TRACK_LANE_WIDTH / 2.0f);
     gfloat start_z = -(TRACK_HEIGHT / 2.0f) + (TRACK_LANE_WIDTH / 2.0f);
-    gfloat start_rot = 90.0f;  /* Face left */
+    gfloat start_rot = 90.0f;  /* Face left (counter-clockwise travel) */
 
     lrg_racing_3d_template_set_position (LRG_RACING_3D_TEMPLATE (self),
                                           start_x, 0.0f, start_z);
@@ -505,14 +516,18 @@ racing_demo_check_checkpoints (LrgRacing3DTemplate *template)
 {
     RacingDemo *self = RACING_DEMO (template);
     gfloat      px, py, pz;
-    gint        next_cp;
+    gint        current_cp, next_cp, total_cp;
     gfloat      dx, dz, dist_sq;
     Checkpoint *cp;
 
     lrg_racing_3d_template_get_position (template, &px, &py, &pz);
-    next_cp = lrg_racing_3d_template_get_current_checkpoint (template);
+    current_cp = lrg_racing_3d_template_get_current_checkpoint (template);
+    total_cp = lrg_racing_3d_template_get_total_checkpoints (template);
 
-    /* Check sequential checkpoint */
+    /* Calculate the next expected checkpoint */
+    next_cp = (current_cp + 1) % total_cp;
+
+    /* Check if we've reached the next checkpoint */
     cp = &self->checkpoints[next_cp];
     dx = px - cp->x;
     dz = pz - cp->z;
@@ -650,9 +665,7 @@ racing_demo_update_vehicle (LrgRacing3DTemplate *template, gdouble delta)
     py = self->jump_height;
 
     lrg_racing_3d_template_set_position (template, px, py, pz);
-
-    /* Store speed in template (need to set via internal mechanism) */
-    /* Note: The template manages speed internally, this is for display */
+    lrg_racing_3d_template_set_speed (template, speed);
 }
 
 /* ========================================================================== */

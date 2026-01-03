@@ -323,6 +323,18 @@ LRG_AVAILABLE_IN_ALL
 gfloat lrg_racing_3d_template_get_speed (LrgRacing3DTemplate *self);
 
 /**
+ * lrg_racing_3d_template_set_speed:
+ * @self: a #LrgRacing3DTemplate
+ * @speed: speed in units per second
+ *
+ * Sets the current vehicle speed. Use this when overriding the
+ * update_vehicle virtual method to persist speed changes.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_racing_3d_template_set_speed (LrgRacing3DTemplate *self,
+                                       gfloat               speed);
+
+/**
  * lrg_racing_3d_template_get_max_speed:
  * @self: a #LrgRacing3DTemplate
  *
