@@ -9,8 +9,18 @@
 include ../config.mk
 include ../rules.mk
 
+# Static linking mode (for shipping games)
+# Usage: make STATIC=1
+STATIC ?= 0
+
 EXAMPLES_BUILDDIR := $(BUILDDIR)/examples
 LIBREGNUM_LIB := ../$(LIBOUTDIR)/$(LIB_SHARED)
+
+# Static library paths
+LIBREGNUM_STATIC := ../$(LIBOUTDIR)/$(LIB_STATIC)
+GRAYLIB_STATIC := $(GRAYLIB_DIR)/build/lib/libgraylib.a
+YAMLGLIB_STATIC := $(YAMLGLIB_DIR)/build/libyaml-glib.a
+RAYLIB_STATIC := $(GRAYLIB_DIR)/deps/raylib/src/libraylib.a
 
 EXAMPLE_CFLAGS := $(COMMON_CFLAGS) $(WARN_CFLAGS) $(OPT_CFLAGS)
 EXAMPLE_CFLAGS += -I../src
@@ -33,21 +43,74 @@ else
     endif
 endif
 
-EXAMPLE_LDFLAGS := -L../$(LIBOUTDIR)
-EXAMPLE_LDFLAGS += -L$(GRAYLIB_DIR)/build/lib
-EXAMPLE_LDFLAGS += -L$(YAMLGLIB_DIR)/build
-ifeq ($(TARGET_PLATFORM),windows)
-    # Windows: no rpath, DLLs must be in PATH or same directory
-else
-    EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(LIBOUTDIR)'
-    EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(GRAYLIB_DIR)/build/lib'
-    EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
+# Static linking: use pkg-config --static for full static builds
+ifeq ($(STATIC),1)
+    STATIC_GLIB_LIBS := $(shell $(PKG_CONFIG) --static --libs glib-2.0 gobject-2.0 gio-2.0 gmodule-2.0)
+    STATIC_JSON_LIBS := $(shell $(PKG_CONFIG) --static --libs json-glib-1.0)
+    STATIC_YAML_LIBS := $(shell $(PKG_CONFIG) --static --libs yaml-0.1)
+    STATIC_SOUP_LIBS := $(shell $(PKG_CONFIG) --static --libs libsoup-3.0)
+    ifneq ($(TARGET_PLATFORM),windows)
+        ifneq ($(shell $(PKG_CONFIG) --exists libdex-1 2>/dev/null && echo yes),)
+            STATIC_DEX_LIBS := $(shell $(PKG_CONFIG) --static --libs libdex-1)
+        endif
+        # Optional scripting backends (compiled into libregnum if available)
+        ifneq ($(shell $(PKG_CONFIG) --exists luajit 2>/dev/null && echo yes),)
+            STATIC_LUAJIT_LIBS := $(shell $(PKG_CONFIG) --static --libs luajit)
+        endif
+        ifneq ($(shell $(PKG_CONFIG) --exists python3-embed 2>/dev/null && echo yes),)
+            STATIC_PYTHON_LIBS := $(shell $(PKG_CONFIG) --static --libs python3-embed)
+        endif
+        ifneq ($(shell $(PKG_CONFIG) --exists gjs-1.0 2>/dev/null && echo yes),)
+            STATIC_GJS_LIBS := $(shell $(PKG_CONFIG) --static --libs gjs-1.0)
+        endif
+        ifneq ($(shell $(PKG_CONFIG) --exists gobject-introspection-1.0 2>/dev/null && echo yes),)
+            STATIC_GI_LIBS := $(shell $(PKG_CONFIG) --static --libs gobject-introspection-1.0)
+        endif
+    endif
 endif
 
-EXAMPLE_LIBS := -l$(LIB_NAME) -lgraylib -lyaml-glib -lm
-EXAMPLE_LIBS += $(GLIB_LIBS) $(EXAMPLE_OPT_LIBS)
-ifeq ($(TARGET_PLATFORM),windows)
+ifeq ($(STATIC),1)
+    # Static linking: no library paths needed, link .a files directly
+    EXAMPLE_LDFLAGS :=
+    ifeq ($(TARGET_PLATFORM),windows)
+        EXAMPLE_LDFLAGS += -static
+    else
+        EXAMPLE_LDFLAGS += -static-libgcc
+    endif
+else
+    # Dynamic linking (original behavior)
+    EXAMPLE_LDFLAGS := -L../$(LIBOUTDIR)
+    EXAMPLE_LDFLAGS += -L$(GRAYLIB_DIR)/build/lib
+    EXAMPLE_LDFLAGS += -L$(YAMLGLIB_DIR)/build
+    ifeq ($(TARGET_PLATFORM),windows)
+        # Windows: no rpath, DLLs must be in PATH or same directory
+    else
+        EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(LIBOUTDIR)'
+        EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(GRAYLIB_DIR)/build/lib'
+        EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
+    endif
+endif
+
+ifeq ($(STATIC),1)
+    # Static linking: link .a files directly in dependency order
+    # Allow multiple definitions for inline math functions from raylib/raymath.h
+    EXAMPLE_LIBS := -Wl,--allow-multiple-definition
+    EXAMPLE_LIBS += $(LIBREGNUM_STATIC)
+    EXAMPLE_LIBS += $(GRAYLIB_STATIC)
+    EXAMPLE_LIBS += $(YAMLGLIB_STATIC)
+    EXAMPLE_LIBS += $(RAYLIB_STATIC)
+    # System libraries (static via pkg-config)
+    EXAMPLE_LIBS += $(STATIC_GLIB_LIBS) $(STATIC_JSON_LIBS) $(STATIC_YAML_LIBS) $(STATIC_SOUP_LIBS) $(STATIC_DEX_LIBS)
+    EXAMPLE_LIBS += $(STATIC_LUAJIT_LIBS) $(STATIC_PYTHON_LIBS) $(STATIC_GJS_LIBS) $(STATIC_GI_LIBS)
+    EXAMPLE_LIBS += -lm
     EXAMPLE_LIBS += $(PLATFORM_LIBS)
+else
+    # Dynamic linking (original behavior)
+    EXAMPLE_LIBS := -l$(LIB_NAME) -lgraylib -lyaml-glib -lm
+    EXAMPLE_LIBS += $(GLIB_LIBS) $(EXAMPLE_OPT_LIBS)
+    ifeq ($(TARGET_PLATFORM),windows)
+        EXAMPLE_LIBS += $(PLATFORM_LIBS)
+    endif
 endif
 
 # Base examples (always built)
@@ -71,9 +134,14 @@ MINGW_BIN := /usr/x86_64-w64-mingw32/sys-root/mingw/bin
 .PHONY: all clean copy-dlls mods
 
 ifeq ($(TARGET_PLATFORM),windows)
-all: $(EXAMPLE_BINARIES) copy-dlls
+    ifeq ($(STATIC),1)
+        # Static builds don't need DLLs
+        all: $(EXAMPLE_BINARIES)
+    else
+        all: $(EXAMPLE_BINARIES) copy-dlls
+    endif
 else
-all: $(EXAMPLE_BINARIES)
+    all: $(EXAMPLE_BINARIES)
 endif
 
 # Copy required DLLs for Windows builds
