@@ -208,6 +208,11 @@ on_window_size_changed (LrgGameTemplate *template,
     self = LRG_GAME_2D_TEMPLATE (template);
     priv = lrg_game_2d_template_get_instance_private (self);
 
+    /* Mark resize as pending - actual window size may lag on Wayland/X11 */
+    priv->resize_pending = TRUE;
+    priv->requested_window_width = width;
+    priv->requested_window_height = height;
+
     /* Skip if size unchanged */
     if (width == priv->last_window_width &&
         height == priv->last_window_height)
@@ -239,12 +244,26 @@ template_check_resolution_change (LrgGame2DTemplate *self)
 
     priv = lrg_game_2d_template_get_instance_private (self);
 
-    /* Get window size from parent template */
+    /* Get actual window size from raylib */
     lrg_game_template_get_window_size (LRG_GAME_TEMPLATE (self), &width, &height);
 
     if (width == 0 || height == 0)
         return;
 
+    /* Handle pending resize - don't overwrite until actual matches requested */
+    if (priv->resize_pending)
+    {
+        if (width == priv->requested_window_width &&
+            height == priv->requested_window_height)
+        {
+            /* Resize complete - clear pending flag */
+            priv->resize_pending = FALSE;
+        }
+        /* While pending, don't overwrite last_window with stale actual size */
+        return;
+    }
+
+    /* Normal case: detect external resize (user dragging window, etc.) */
     if (width == priv->last_window_width && height == priv->last_window_height)
         return;
 

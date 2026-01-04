@@ -54,6 +54,11 @@ typedef struct _LrgGame2DTemplatePrivate
     gint last_window_width;
     gint last_window_height;
 
+    /* Pending resize tracking (for async window managers) */
+    gboolean resize_pending;
+    gint     requested_window_width;
+    gint     requested_window_height;
+
     /* Camera */
     LrgCamera2D *camera;
     gboolean camera_owned;   /* TRUE if we created it */

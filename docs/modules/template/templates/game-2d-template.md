@@ -194,6 +194,17 @@ my_game_on_resolution_changed (LrgGame2DTemplate *template,
 This works correctly for both programmatic resizes and user-initiated window
 resizes (dragging window borders, fullscreen toggle, etc.).
 
+### Asynchronous Resize Handling
+
+On Wayland and some X11 window managers, window resize operations are asynchronous.
+The template automatically handles this by tracking pending resize requests and
+avoiding race conditions between the requested size and the actual window size
+reported by the display server.
+
+This means you can safely change resolution in settings menus without worrying
+about timing issues - the scaling will be correct once the window manager applies
+the resize.
+
 ## Camera
 
 ### Access Camera
