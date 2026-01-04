@@ -150,6 +150,13 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 - [Core Concepts](concepts/index.md) - Understand how the engine works
 - [Module Documentation](modules/index.md) - Detailed guides for each module
 
+### Guides
+- [Custom Components](guides/custom-components.md) - Creating custom ECS components
+- [Creating Mods](guides/creating-mods.md) - Building game modifications
+- [Extending UI](guides/extending-ui.md) - Custom UI widgets
+- [Implementing Saveable](guides/implementing-saveable.md) - Save/load support
+- [Template Best Practices](guides/template-best-practices.md) - Coordinate spaces, async resize, common pitfalls
+
 ### For Developers
 - [Architecture Overview](architecture.md) - System design and patterns
 - [API Reference](api/classes.md) - Complete class documentation

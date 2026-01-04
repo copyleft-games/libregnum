@@ -60,6 +60,12 @@ Complete working examples:
 | [Deckbuilder](examples/deckbuilder.md) | Roguelike card combat |
 | [Platformer](examples/platformer.md) | 2D platformer with wall mechanics |
 
+### Guides
+
+| Guide | Description |
+|-------|-------------|
+| [Best Practices](../../guides/template-best-practices.md) | Coordinate spaces, async resize, common pitfalls |
+
 ---
 
 ## Overview
