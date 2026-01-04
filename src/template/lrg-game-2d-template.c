@@ -1123,6 +1123,11 @@ lrg_game_2d_template_set_virtual_width (LrgGame2DTemplate *self,
     priv->virtual_width = width;
     priv->render_target_valid = FALSE;  /* Force recreation */
 
+    /* Update scaling to match new virtual resolution */
+    lrg_game_2d_template_update_scaling (self,
+                                          priv->last_window_width,
+                                          priv->last_window_height);
+
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VIRTUAL_WIDTH]);
 }
 
@@ -1153,6 +1158,11 @@ lrg_game_2d_template_set_virtual_height (LrgGame2DTemplate *self,
 
     priv->virtual_height = height;
     priv->render_target_valid = FALSE;  /* Force recreation */
+
+    /* Update scaling to match new virtual resolution */
+    lrg_game_2d_template_update_scaling (self,
+                                          priv->last_window_width,
+                                          priv->last_window_height);
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VIRTUAL_HEIGHT]);
 }

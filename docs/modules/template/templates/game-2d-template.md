@@ -121,6 +121,24 @@ gint vw = lrg_game_2d_template_get_virtual_width (template);
 gint vh = lrg_game_2d_template_get_virtual_height (template);
 ```
 
+### Runtime Resolution Changes
+
+Virtual resolution can be changed at runtime. The scaling factors are automatically
+recalculated when you call any of the setter functions:
+
+```c
+/* Change virtual resolution at runtime */
+lrg_game_2d_template_set_virtual_resolution (template, 1920, 1080);
+/* Scaling updates immediately - no additional action needed */
+
+/* Also works with individual setters */
+lrg_game_2d_template_set_virtual_width (template, 640);
+lrg_game_2d_template_set_virtual_height (template, 360);
+```
+
+This is useful for games that support multiple virtual resolutions (e.g., a quality
+setting that changes render resolution), or for dynamic resolution scaling.
+
 ## Scaling Modes
 
 ```c
