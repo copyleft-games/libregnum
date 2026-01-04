@@ -120,6 +120,7 @@ EXAMPLES += game-creature-collector game-vr-demo
 EXAMPLES += game-deckbuilder-combat game-deckbuilder-poker
 EXAMPLES += game-platformer-demo game-fps-demo
 EXAMPLES += game-third-person-demo game-top-down-demo game-twin-stick-demo game-shmup-demo game-racing-3d-demo
+EXAMPLES += example-chart-2d example-chart-3d
 
 # Scripted examples only on native Linux (scripting backends not available on Windows)
 ifneq ($(TARGET_PLATFORM),windows)
@@ -251,6 +252,14 @@ $(EXAMPLES_BUILDDIR)/game-shmup-demo$(EXE_EXT): game-shmup-demo.c | $(EXAMPLES_B
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/game-racing-3d-demo$(EXE_EXT): game-racing-3d-demo.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/example-chart-2d$(EXE_EXT): example-chart-2d.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/example-chart-3d$(EXE_EXT): example-chart-3d.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

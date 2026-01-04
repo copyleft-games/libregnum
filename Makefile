@@ -413,7 +413,29 @@ PUBLIC_HEADERS := \
 	src/deckbuilder/lrg-player-profile.h \
 	src/deckbuilder/lrg-unlock-def.h \
 	src/deckbuilder/lrg-ascension.h \
-	src/deckbuilder/lrg-deckbuilder-manager.h
+	src/deckbuilder/lrg-deckbuilder-manager.h \
+	src/chart/lrg-chart-enums.h \
+	src/chart/lrg-chart-data-point.h \
+	src/chart/lrg-chart-axis-config.h \
+	src/chart/lrg-chart-hit-info.h \
+	src/chart/lrg-chart-data-series.h \
+	src/chart/lrg-chart-legend.h \
+	src/chart/lrg-chart-tooltip.h \
+	src/chart/lrg-chart-color-scale.h \
+	src/chart/lrg-chart.h \
+	src/chart/lrg-chart2d.h \
+	src/chart/lrg-chart3d.h \
+	src/chart/lrg-bar-chart2d.h \
+	src/chart/lrg-line-chart2d.h \
+	src/chart/lrg-pie-chart2d.h \
+	src/chart/lrg-area-chart2d.h \
+	src/chart/lrg-scatter-chart2d.h \
+	src/chart/lrg-radar-chart2d.h \
+	src/chart/lrg-candlestick-chart2d.h \
+	src/chart/lrg-gauge-chart2d.h \
+	src/chart/lrg-heatmap-chart2d.h \
+	src/chart/lrg-histogram-chart2d.h \
+	src/chart/lrg-bar-chart3d.h
 
 # Source files
 SOURCES := \
@@ -801,7 +823,29 @@ SOURCES := \
 	src/deckbuilder/lrg-player-profile.c \
 	src/deckbuilder/lrg-unlock-def.c \
 	src/deckbuilder/lrg-ascension.c \
-	src/deckbuilder/lrg-deckbuilder-manager.c
+	src/deckbuilder/lrg-deckbuilder-manager.c \
+	src/chart/lrg-chart-enums.c \
+	src/chart/lrg-chart-data-point.c \
+	src/chart/lrg-chart-axis-config.c \
+	src/chart/lrg-chart-hit-info.c \
+	src/chart/lrg-chart-data-series.c \
+	src/chart/lrg-chart-legend.c \
+	src/chart/lrg-chart-tooltip.c \
+	src/chart/lrg-chart-color-scale.c \
+	src/chart/lrg-chart.c \
+	src/chart/lrg-chart2d.c \
+	src/chart/lrg-chart3d.c \
+	src/chart/lrg-bar-chart2d.c \
+	src/chart/lrg-line-chart2d.c \
+	src/chart/lrg-pie-chart2d.c \
+	src/chart/lrg-area-chart2d.c \
+	src/chart/lrg-scatter-chart2d.c \
+	src/chart/lrg-radar-chart2d.c \
+	src/chart/lrg-candlestick-chart2d.c \
+	src/chart/lrg-gauge-chart2d.c \
+	src/chart/lrg-heatmap-chart2d.c \
+	src/chart/lrg-histogram-chart2d.c \
+	src/chart/lrg-bar-chart3d.c
 
 # Conditional scripting backends
 ifeq ($(HAS_LUAJIT),1)

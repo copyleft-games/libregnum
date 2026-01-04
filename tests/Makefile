@@ -127,7 +127,8 @@ TEST_SOURCES := \
 	test-template-states.c \
 	test-template-engagement.c \
 	test-template-idle.c \
-	test-template-deckbuilder.c
+	test-template-deckbuilder.c \
+	test-chart.c
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))
