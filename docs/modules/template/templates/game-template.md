@@ -307,6 +307,10 @@ gfloat render_x = prev_x + (curr_x - prev_x) * alpha;
 
 ## Window Properties
 
+These functions are available once the window is created, which occurs before `pre_startup()`.
+This means you can safely call these functions from `pre_startup()`, `post_startup()`, and
+during the main game loop.
+
 ```c
 /* Get/set title */
 const gchar *title = lrg_game_template_get_title (template);

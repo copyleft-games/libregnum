@@ -2199,8 +2199,8 @@ lrg_game_template_set_title (LrgGameTemplate *self,
     g_free (priv->title);
     priv->title = g_strdup (title);
 
-    /* Update window title if running */
-    if (priv->is_running && priv->window != NULL)
+    /* Update window title if window exists */
+    if (priv->window != NULL)
     {
         lrg_window_set_title (priv->window, title);
     }
@@ -2227,7 +2227,7 @@ lrg_game_template_get_window_size (LrgGameTemplate *self,
 
     priv = lrg_game_template_get_instance_private (self);
 
-    if (priv->is_running && priv->window != NULL)
+    if (priv->window != NULL)
     {
         if (width != NULL)
             *width = lrg_window_get_width (priv->window);
@@ -2272,8 +2272,8 @@ lrg_game_template_set_window_size (LrgGameTemplate *self,
     priv->window_width = width;
     priv->window_height = height;
 
-    /* If running, apply to actual window */
-    if (priv->is_running && priv->window != NULL)
+    /* If window exists, apply to actual window */
+    if (priv->window != NULL)
     {
         raw_window = lrg_grl_window_get_grl_window (LRG_GRL_WINDOW (priv->window));
         grl_window_set_size (raw_window, width, height);
@@ -2301,7 +2301,7 @@ lrg_game_template_toggle_fullscreen (LrgGameTemplate *self)
 
     priv = lrg_game_template_get_instance_private (self);
 
-    if (priv->is_running && priv->window != NULL)
+    if (priv->window != NULL)
         lrg_grl_window_toggle_fullscreen (LRG_GRL_WINDOW (priv->window));
 }
 
@@ -2325,7 +2325,7 @@ lrg_game_template_is_fullscreen (LrgGameTemplate *self)
 
     priv = lrg_game_template_get_instance_private (self);
 
-    if (!priv->is_running || priv->window == NULL)
+    if (priv->window == NULL)
         return FALSE;
 
     raw_window = lrg_grl_window_get_grl_window (LRG_GRL_WINDOW (priv->window));
