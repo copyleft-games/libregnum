@@ -345,6 +345,7 @@ PUBLIC_HEADERS := \
 	src/template/lrg-template-difficulty.h \
 	src/template/lrg-idle-mixin.h \
 	src/template/lrg-idle-template.h \
+	src/template/lrg-idle-2d-template.h \
 	src/template/lrg-deck-mixin.h \
 	src/template/lrg-deckbuilder-template.h \
 	src/template/lrg-deckbuilder-combat-template.h \
@@ -733,6 +734,7 @@ SOURCES := \
 	src/template/lrg-template-difficulty.c \
 	src/template/lrg-idle-mixin.c \
 	src/template/lrg-idle-template.c \
+	src/template/lrg-idle-2d-template.c \
 	src/template/lrg-deck-mixin.c \
 	src/template/lrg-deckbuilder-template.c \
 	src/template/lrg-deckbuilder-combat-template.c \

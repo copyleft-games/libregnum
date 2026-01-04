@@ -456,6 +456,7 @@
 #include "template/lrg-template-difficulty.h"
 #include "template/lrg-idle-mixin.h"
 #include "template/lrg-idle-template.h"
+#include "template/lrg-idle-2d-template.h"
 #include "template/lrg-deck-mixin.h"
 #include "template/lrg-deckbuilder-template.h"
 #include "template/lrg-deckbuilder-combat-template.h"

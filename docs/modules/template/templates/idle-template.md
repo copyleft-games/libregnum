@@ -6,8 +6,14 @@
 
 ```
 LrgGameTemplate
-└── LrgIdleTemplate (derivable)
+├── LrgIdleTemplate (derivable)
+│
+└── LrgGame2DTemplate
+    └── LrgIdle2DTemplate (derivable)
 ```
+
+Use `LrgIdleTemplate` for simple idle games. Use `LrgIdle2DTemplate` when you need
+virtual resolution scaling (see [LrgIdle2DTemplate](#lrgidle2dtemplate) section below).
 
 ## Features
 
@@ -278,8 +284,124 @@ G_DEFINE_TYPE_WITH_CODE (MyState, my_state, LRG_TYPE_GAME_STATE,
     G_IMPLEMENT_INTERFACE (LRG_TYPE_IDLE_MIXIN, my_state_idle_mixin_init))
 ```
 
+## LrgIdle2DTemplate
+
+For 2D idle games that need virtual resolution scaling, use `LrgIdle2DTemplate` instead
+of `LrgIdleTemplate`. This template extends `LrgGame2DTemplate` and implements the
+`LrgIdleMixin` interface, combining all 2D and idle features.
+
+### When to Use LrgIdle2DTemplate
+
+Use `LrgIdle2DTemplate` when your idle game:
+- Needs virtual resolution scaling (design at 1280x720, scale to any window size)
+- Uses letterbox/pillarbox scaling modes
+- Requires pixel-perfect rendering for pixel art
+- Needs programmatic window resizing that updates the viewport
+- Uses 2D camera features (follow, deadzone, bounds)
+
+### Quick Start
+
+```c
+#define MY_TYPE_GAME (my_game_get_type ())
+G_DECLARE_FINAL_TYPE (MyGame, my_game, MY, GAME, LrgIdle2DTemplate)
+
+struct _MyGame
+{
+    LrgIdle2DTemplate parent_instance;
+    LrgBigNumber     *currency;
+};
+
+G_DEFINE_TYPE (MyGame, my_game, LRG_TYPE_IDLE_2D_TEMPLATE)
+
+static void
+my_game_configure (LrgGameTemplate *template)
+{
+    LRG_GAME_TEMPLATE_CLASS (my_game_parent_class)->configure (template);
+
+    g_object_set (template,
+                  "title", "2D Idle Game",
+                  "window-width", 1280,
+                  "window-height", 720,
+                  NULL);
+
+    /* Configure 2D scaling */
+    lrg_game_2d_template_set_virtual_resolution (
+        LRG_GAME_2D_TEMPLATE (template), 1280, 720);
+    lrg_game_2d_template_set_scaling_mode (
+        LRG_GAME_2D_TEMPLATE (template), LRG_SCALING_MODE_LETTERBOX);
+
+    /* Configure idle settings (same API as LrgIdleTemplate) */
+    lrg_idle_2d_template_set_offline_efficiency (
+        LRG_IDLE_2D_TEMPLATE (template), 0.5);
+    lrg_idle_2d_template_set_max_offline_hours (
+        LRG_IDLE_2D_TEMPLATE (template), 24.0);
+}
+
+static void
+my_game_draw_world (LrgGame2DTemplate *template)
+{
+    MyGame *self = MY_GAME (template);
+    /* Draw game visuals using virtual resolution coordinates */
+    draw_background ();
+    draw_ui_elements (self);
+}
+
+static void
+my_game_class_init (MyGameClass *klass)
+{
+    LrgGameTemplateClass *template_class = LRG_GAME_TEMPLATE_CLASS (klass);
+    LrgGame2DTemplateClass *template_2d_class = LRG_GAME_2D_TEMPLATE_CLASS (klass);
+
+    template_class->configure = my_game_configure;
+    template_2d_class->draw_world = my_game_draw_world;
+}
+```
+
+### Inherited Features
+
+`LrgIdle2DTemplate` inherits:
+
+**From LrgGame2DTemplate:**
+- Virtual resolution with automatic scaling
+- Multiple scaling modes (letterbox, stretch, pixel-perfect)
+- Integrated 2D camera with follow, deadzone, and smoothing
+- Coordinate transformation between virtual and screen space
+- Programmatic window resize with viewport updates
+
+**From LrgIdleMixin (same as LrgIdleTemplate):**
+- Offline progress calculation
+- Prestige system
+- Auto-save with snapshots
+- Big number formatting
+- Generator management
+
+### API Compatibility
+
+`LrgIdle2DTemplate` provides the same idle API as `LrgIdleTemplate`:
+
+```c
+/* All these work identically */
+lrg_idle_2d_template_get_idle_calculator (template);
+lrg_idle_2d_template_get_prestige (template);
+lrg_idle_2d_template_set_offline_efficiency (template, 0.5);
+lrg_idle_2d_template_set_max_offline_hours (template, 24.0);
+lrg_idle_2d_template_add_generator (template, "cursor", 0.1);
+lrg_idle_2d_template_try_prestige (template, currency);
+```
+
+Plus all 2D features:
+
+```c
+/* 2D template features */
+lrg_game_2d_template_set_virtual_resolution (LRG_GAME_2D_TEMPLATE (template), 1280, 720);
+lrg_game_2d_template_set_scaling_mode (LRG_GAME_2D_TEMPLATE (template), mode);
+lrg_game_2d_template_screen_to_virtual (LRG_GAME_2D_TEMPLATE (template), ...);
+lrg_game_template_set_window_size (LRG_GAME_TEMPLATE (template), 1920, 1080);
+```
+
 ## Related Documentation
 
 - [LrgGameTemplate](game-template.md) - Base template features
+- [LrgGame2DTemplate](game-2d-template.md) - 2D template with virtual resolution
 - [Engagement Systems](../systems/engagement.md) - Statistics and daily rewards
 - [Idle Game Example](../examples/idle-game.md) - Complete example
