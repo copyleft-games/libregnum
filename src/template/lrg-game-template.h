@@ -687,6 +687,50 @@ lrg_game_template_get_window_size (LrgGameTemplate *self,
                                    gint            *height);
 
 /**
+ * lrg_game_template_set_window_size:
+ * @self: an #LrgGameTemplate
+ * @width: the new window width in pixels
+ * @height: the new window height in pixels
+ *
+ * Sets the window size. This only works in windowed mode when
+ * the game is running.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_game_template_set_window_size (LrgGameTemplate *self,
+                                   gint             width,
+                                   gint             height);
+
+/**
+ * lrg_game_template_toggle_fullscreen:
+ * @self: an #LrgGameTemplate
+ *
+ * Toggles fullscreen mode. In fullscreen, the window uses
+ * the monitor's native resolution.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_game_template_toggle_fullscreen (LrgGameTemplate *self);
+
+/**
+ * lrg_game_template_is_fullscreen:
+ * @self: an #LrgGameTemplate
+ *
+ * Checks if the window is in fullscreen mode.
+ *
+ * Returns: %TRUE if fullscreen
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_game_template_is_fullscreen (LrgGameTemplate *self);
+
+/**
  * lrg_game_template_has_focus:
  * @self: an #LrgGameTemplate
  *

@@ -2216,6 +2216,92 @@ lrg_game_template_get_window_size (LrgGameTemplate *self,
 }
 
 /**
+ * lrg_game_template_set_window_size:
+ * @self: an #LrgGameTemplate
+ * @width: the new window width in pixels
+ * @height: the new window height in pixels
+ *
+ * Sets the window size. This only works in windowed mode when
+ * the game is running.
+ *
+ * Since: 1.0
+ */
+void
+lrg_game_template_set_window_size (LrgGameTemplate *self,
+                                   gint             width,
+                                   gint             height)
+{
+    LrgGameTemplatePrivate *priv;
+    GrlWindow *raw_window;
+
+    g_return_if_fail (LRG_IS_GAME_TEMPLATE (self));
+    g_return_if_fail (width > 0);
+    g_return_if_fail (height > 0);
+
+    priv = lrg_game_template_get_instance_private (self);
+
+    /* Update stored config values */
+    priv->window_width = width;
+    priv->window_height = height;
+
+    /* If running, apply to actual window */
+    if (priv->is_running && priv->window != NULL)
+    {
+        raw_window = lrg_grl_window_get_grl_window (LRG_GRL_WINDOW (priv->window));
+        grl_window_set_size (raw_window, width, height);
+    }
+}
+
+/**
+ * lrg_game_template_toggle_fullscreen:
+ * @self: an #LrgGameTemplate
+ *
+ * Toggles fullscreen mode. In fullscreen, the window uses
+ * the monitor's native resolution.
+ *
+ * Since: 1.0
+ */
+void
+lrg_game_template_toggle_fullscreen (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv;
+
+    g_return_if_fail (LRG_IS_GAME_TEMPLATE (self));
+
+    priv = lrg_game_template_get_instance_private (self);
+
+    if (priv->is_running && priv->window != NULL)
+        lrg_grl_window_toggle_fullscreen (LRG_GRL_WINDOW (priv->window));
+}
+
+/**
+ * lrg_game_template_is_fullscreen:
+ * @self: an #LrgGameTemplate
+ *
+ * Checks if the window is in fullscreen mode.
+ *
+ * Returns: %TRUE if fullscreen
+ *
+ * Since: 1.0
+ */
+gboolean
+lrg_game_template_is_fullscreen (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv;
+    GrlWindow *raw_window;
+
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), FALSE);
+
+    priv = lrg_game_template_get_instance_private (self);
+
+    if (!priv->is_running || priv->window == NULL)
+        return FALSE;
+
+    raw_window = lrg_grl_window_get_grl_window (LRG_GRL_WINDOW (priv->window));
+    return grl_window_is_fullscreen (raw_window);
+}
+
+/**
  * lrg_game_template_has_focus:
  * @self: an #LrgGameTemplate
  *

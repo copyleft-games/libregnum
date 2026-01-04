@@ -140,6 +140,41 @@ test_game_template_window_size_null_params (void)
     lrg_game_template_get_window_size (template, NULL, NULL);
 }
 
+static void
+test_game_template_set_window_size (void)
+{
+    g_autoptr(LrgGameTemplate) template = NULL;
+    gint width;
+    gint height;
+
+    /* Test without running - should update config values */
+    template = g_object_new (LRG_TYPE_GAME_TEMPLATE,
+                              "window-width", 800,
+                              "window-height", 600,
+                              NULL);
+    g_assert_nonnull (template);
+
+    lrg_game_template_set_window_size (template, 1920, 1080);
+    lrg_game_template_get_window_size (template, &width, &height);
+
+    g_assert_cmpint (width, ==, 1920);
+    g_assert_cmpint (height, ==, 1080);
+}
+
+static void
+test_game_template_is_fullscreen (void)
+{
+    g_autoptr(LrgGameTemplate) template = NULL;
+    gboolean fullscreen;
+
+    template = lrg_game_template_new ();
+    g_assert_nonnull (template);
+
+    /* Before running, should return FALSE */
+    fullscreen = lrg_game_template_is_fullscreen (template);
+    g_assert_false (fullscreen);
+}
+
 /* ==========================================================================
  * Test Cases - LrgGameTemplate Time Scale
  * ========================================================================== */
@@ -567,6 +602,10 @@ main (int   argc,
                      test_game_template_window_size);
     g_test_add_func ("/template/base/window-size-null-params",
                      test_game_template_window_size_null_params);
+    g_test_add_func ("/template/base/set-window-size",
+                     test_game_template_set_window_size);
+    g_test_add_func ("/template/base/is-fullscreen",
+                     test_game_template_is_fullscreen);
 
     /* Time scale tests */
     g_test_add_func ("/template/base/time-scale/default",
