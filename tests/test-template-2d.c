@@ -109,6 +109,56 @@ test_game_2d_template_virtual_resolution_set_both (void)
     g_assert_cmpint (lrg_game_2d_template_get_virtual_height (template), ==, 480);
 }
 
+static void
+test_game_2d_template_virtual_resolution_runtime_change (void)
+{
+    g_autoptr(LrgGame2DTemplate) template = NULL;
+
+    template = lrg_game_2d_template_new ();
+    g_assert_nonnull (template);
+
+    /* Set initial virtual resolution */
+    lrg_game_2d_template_set_virtual_resolution (template, 1280, 720);
+
+    g_assert_cmpint (lrg_game_2d_template_get_virtual_width (template), ==, 1280);
+    g_assert_cmpint (lrg_game_2d_template_get_virtual_height (template), ==, 720);
+
+    /* Change virtual resolution at runtime (tests the update_scaling fix) */
+    lrg_game_2d_template_set_virtual_resolution (template, 1920, 1080);
+
+    /* Should update correctly */
+    g_assert_cmpint (lrg_game_2d_template_get_virtual_width (template), ==, 1920);
+    g_assert_cmpint (lrg_game_2d_template_get_virtual_height (template), ==, 1080);
+
+    /* Change back - multiple changes should work */
+    lrg_game_2d_template_set_virtual_resolution (template, 640, 360);
+
+    g_assert_cmpint (lrg_game_2d_template_get_virtual_width (template), ==, 640);
+    g_assert_cmpint (lrg_game_2d_template_get_virtual_height (template), ==, 360);
+}
+
+static void
+test_game_2d_template_virtual_resolution_individual_setters (void)
+{
+    g_autoptr(LrgGame2DTemplate) template = NULL;
+
+    template = lrg_game_2d_template_new ();
+    g_assert_nonnull (template);
+
+    /* Set initial resolution */
+    lrg_game_2d_template_set_virtual_resolution (template, 1280, 720);
+
+    /* Change only width (tests individual setter with update_scaling) */
+    lrg_game_2d_template_set_virtual_width (template, 1920);
+    g_assert_cmpint (lrg_game_2d_template_get_virtual_width (template), ==, 1920);
+    g_assert_cmpint (lrg_game_2d_template_get_virtual_height (template), ==, 720);
+
+    /* Change only height (tests individual setter with update_scaling) */
+    lrg_game_2d_template_set_virtual_height (template, 1080);
+    g_assert_cmpint (lrg_game_2d_template_get_virtual_width (template), ==, 1920);
+    g_assert_cmpint (lrg_game_2d_template_get_virtual_height (template), ==, 1080);
+}
+
 /* ==========================================================================
  * Test Cases - LrgGame2DTemplate Scaling Mode
  * ========================================================================== */
@@ -558,6 +608,10 @@ main (int   argc,
                       test_game_2d_template_virtual_resolution_set);
     g_test_add_func ("/template/2d/virtual-resolution/set-both",
                       test_game_2d_template_virtual_resolution_set_both);
+    g_test_add_func ("/template/2d/virtual-resolution/runtime-change",
+                      test_game_2d_template_virtual_resolution_runtime_change);
+    g_test_add_func ("/template/2d/virtual-resolution/individual-setters",
+                      test_game_2d_template_virtual_resolution_individual_setters);
 
     /* LrgGame2DTemplate Scaling */
     g_test_add_func ("/template/2d/scaling-mode", test_game_2d_template_scaling_mode);
