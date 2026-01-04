@@ -316,9 +316,42 @@ lrg_game_template_set_title (template, "New Title");
 gint width, height;
 lrg_game_template_get_window_size (template, &width, &height);
 
+/* Set window size (windowed mode only) */
+lrg_game_template_set_window_size (template, 1920, 1080);
+
+/* Fullscreen */
+lrg_game_template_toggle_fullscreen (template);
+gboolean fs = lrg_game_template_is_fullscreen (template);
+
 /* Check focus */
 gboolean focused = lrg_game_template_has_focus (template);
 ```
+
+## Signals
+
+### window-size-changed
+
+```c
+void
+on_window_size_changed (LrgGameTemplate *template,
+                        gint             width,
+                        gint             height,
+                        gpointer         user_data)
+{
+    /* Respond to programmatic window resize */
+}
+
+g_signal_connect (template, "window-size-changed",
+                  G_CALLBACK (on_window_size_changed), NULL);
+```
+
+Emitted when `lrg_game_template_set_window_size()` is called. This signal fires
+immediately, before the window system has processed the resize. Use this for
+internal state updates that need to happen synchronously with the resize request.
+
+**Note:** For actual window size changes (including user-initiated resizes),
+query the window size in your frame update or use 2D template's `resolution-changed`
+signal which handles both cases.
 
 ## Related Documentation
 

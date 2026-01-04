@@ -196,6 +196,40 @@ lrg_game_2d_template_ensure_render_target (LrgGame2DTemplate *self)
 }
 
 static void
+on_window_size_changed (LrgGameTemplate *template,
+                        gint             width,
+                        gint             height,
+                        gpointer         user_data)
+{
+    LrgGame2DTemplate *self;
+    LrgGame2DTemplatePrivate *priv;
+    LrgGame2DTemplateClass *klass;
+
+    self = LRG_GAME_2D_TEMPLATE (template);
+    priv = lrg_game_2d_template_get_instance_private (self);
+
+    /* Skip if size unchanged */
+    if (width == priv->last_window_width &&
+        height == priv->last_window_height)
+        return;
+
+    /* Update cached size */
+    priv->last_window_width = width;
+    priv->last_window_height = height;
+
+    /* Recalculate scaling */
+    lrg_game_2d_template_update_scaling (self, width, height);
+
+    /* Call virtual method */
+    klass = LRG_GAME_2D_TEMPLATE_GET_CLASS (self);
+    if (klass->on_resolution_changed != NULL)
+        klass->on_resolution_changed (self, width, height);
+
+    /* Emit resolution-changed signal */
+    g_signal_emit (self, signals[SIGNAL_RESOLUTION_CHANGED], 0, width, height);
+}
+
+static void
 template_check_resolution_change (LrgGame2DTemplate *self)
 {
     LrgGame2DTemplatePrivate *priv;
@@ -821,6 +855,20 @@ lrg_game_2d_template_set_property (GObject      *object,
 }
 
 /* ==========================================================================
+ * Object Constructed
+ * ========================================================================== */
+
+static void
+lrg_game_2d_template_constructed (GObject *object)
+{
+    G_OBJECT_CLASS (lrg_game_2d_template_parent_class)->constructed (object);
+
+    /* Connect to parent's window-size-changed signal */
+    g_signal_connect (object, "window-size-changed",
+                      G_CALLBACK (on_window_size_changed), NULL);
+}
+
+/* ==========================================================================
  * Class Initialization
  * ========================================================================== */
 
@@ -833,6 +881,7 @@ lrg_game_2d_template_class_init (LrgGame2DTemplateClass *klass)
     object_class = G_OBJECT_CLASS (klass);
     template_class = LRG_GAME_TEMPLATE_CLASS (klass);
 
+    object_class->constructed = lrg_game_2d_template_constructed;
     object_class->finalize = lrg_game_2d_template_finalize;
     object_class->get_property = lrg_game_2d_template_get_property;
     object_class->set_property = lrg_game_2d_template_set_property;

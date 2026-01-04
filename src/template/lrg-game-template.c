@@ -89,6 +89,15 @@ enum
 
 static GParamSpec *properties[N_PROPS];
 
+/* Signal IDs */
+enum
+{
+    SIGNAL_WINDOW_SIZE_CHANGED,
+    N_SIGNALS
+};
+
+static guint signals[N_SIGNALS];
+
 G_DEFINE_TYPE_WITH_PRIVATE (LrgGameTemplate, lrg_game_template, G_TYPE_OBJECT)
 
 /* ========================================================================== */
@@ -1351,6 +1360,25 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
                           G_PARAM_CONSTRUCT);
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
+
+    /**
+     * LrgGameTemplate::window-size-changed:
+     * @self: the template
+     * @width: new window width in pixels
+     * @height: new window height in pixels
+     *
+     * Emitted when lrg_game_template_set_window_size() is called.
+     * This allows subclasses to respond immediately without waiting
+     * for the window system to report the change.
+     */
+    signals[SIGNAL_WINDOW_SIZE_CHANGED] =
+        g_signal_new ("window-size-changed",
+                      G_TYPE_FROM_CLASS (klass),
+                      G_SIGNAL_RUN_LAST,
+                      0,  /* No class handler offset */
+                      NULL, NULL, NULL,
+                      G_TYPE_NONE, 2,
+                      G_TYPE_INT, G_TYPE_INT);
 }
 
 static void
@@ -2250,6 +2278,9 @@ lrg_game_template_set_window_size (LrgGameTemplate *self,
         raw_window = lrg_grl_window_get_grl_window (LRG_GRL_WINDOW (priv->window));
         grl_window_set_size (raw_window, width, height);
     }
+
+    /* Emit signal so subclasses can update immediately */
+    g_signal_emit (self, signals[SIGNAL_WINDOW_SIZE_CHANGED], 0, width, height);
 }
 
 /**

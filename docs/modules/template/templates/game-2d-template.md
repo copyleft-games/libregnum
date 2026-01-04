@@ -152,6 +152,30 @@ g_autoptr(GrlColor) color = grl_color_new (20, 20, 30, 255);
 lrg_game_2d_template_set_letterbox_color (template, color);
 ```
 
+## Programmatic Window Resize
+
+When using `lrg_game_template_set_window_size()` to resize the window at runtime,
+the 2D template automatically recalculates scaling and emits the `resolution-changed`
+signal:
+
+```c
+/* Resize window - viewport updates immediately */
+lrg_game_template_set_window_size (LRG_GAME_TEMPLATE (template), 1920, 1080);
+
+/* Handle resize in subclass (optional) */
+static void
+my_game_on_resolution_changed (LrgGame2DTemplate *template,
+                                gint               width,
+                                gint               height)
+{
+    /* Recalculate UI layouts if needed */
+    update_ui_layout (width, height);
+}
+```
+
+This works correctly for both programmatic resizes and user-initiated window
+resizes (dragging window borders, fullscreen toggle, etc.).
+
 ## Camera
 
 ### Access Camera
