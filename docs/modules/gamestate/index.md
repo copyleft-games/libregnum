@@ -201,6 +201,39 @@ lrg_game_state_manager_push (manager, overlay);
 /* Both overlay AND gameplay will update and draw */
 ```
 
+## Frame Safety
+
+States pushed or replaced during `update()` or `draw()` will NOT receive those callbacks in the same frame. Their `enter()` callback runs immediately, but `update()` and `draw()` are deferred to the next frame.
+
+This prevents race conditions where both states process the same input:
+
+```c
+static void
+my_gameplay_update (LrgGameState *state,
+                    gdouble       delta)
+{
+    if (is_key_pressed (KEY_ESCAPE))
+    {
+        /* Push pause menu - it won't see ESC this frame.
+         * Without this guarantee, the pause menu would also
+         * see ESC pressed and immediately pop itself! */
+        LrgGameState *pause = my_pause_menu_new ();
+        lrg_game_state_manager_push (get_manager (), pause);
+    }
+}
+```
+
+### Lifecycle Timing
+
+| Callback | When Called |
+|----------|-------------|
+| `enter()` | Immediately when pushed |
+| `update()` | Next frame onwards |
+| `draw()` | Next frame onwards |
+| `exit()` | Immediately when popped |
+
+This ensures states have a clean "first frame" without inheriting input from the pushing state.
+
 ## API Reference
 
 ### LrgGameStateManager

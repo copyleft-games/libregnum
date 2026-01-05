@@ -490,6 +490,151 @@ test_manager_draw_transparent_states (GameStateFixture *fixture,
 }
 
 /* ==========================================================================
+ * Mock Game State That Pushes During Update (for frame-safety tests)
+ *
+ * This state pushes a new state during its update() to test that the
+ * newly pushed state doesn't receive update() in the same frame.
+ * ========================================================================== */
+
+#define TEST_TYPE_PUSHING_STATE (test_pushing_state_get_type ())
+G_DECLARE_FINAL_TYPE (TestPushingState, test_pushing_state, TEST, PUSHING_STATE, LrgGameState)
+
+struct _TestPushingState
+{
+    LrgGameState         parent_instance;
+
+    LrgGameStateManager *manager;       /* Manager to push to */
+    gboolean             should_push;   /* Whether to push on next update */
+    gint                 update_count;
+};
+
+G_DEFINE_TYPE (TestPushingState, test_pushing_state, LRG_TYPE_GAME_STATE)
+
+static void
+test_pushing_state_enter (LrgGameState *state)
+{
+    /* No-op for testing */
+}
+
+static void
+test_pushing_state_exit (LrgGameState *state)
+{
+    /* No-op for testing */
+}
+
+static void
+test_pushing_state_draw (LrgGameState *state)
+{
+    /* No-op for testing */
+}
+
+static void
+test_pushing_state_update (LrgGameState *state,
+                           gdouble       delta)
+{
+    TestPushingState *self = TEST_PUSHING_STATE (state);
+
+    self->update_count++;
+
+    if (self->should_push && self->manager != NULL)
+    {
+        TestGameState *new_state;
+
+        /* Push a new state during our update */
+        new_state = test_game_state_new ("PushedState");
+        lrg_game_state_manager_push (self->manager, LRG_GAME_STATE (new_state));
+
+        /* Only push once */
+        self->should_push = FALSE;
+    }
+}
+
+static void
+test_pushing_state_class_init (TestPushingStateClass *klass)
+{
+    LrgGameStateClass *state_class = LRG_GAME_STATE_CLASS (klass);
+
+    state_class->enter  = test_pushing_state_enter;
+    state_class->exit   = test_pushing_state_exit;
+    state_class->update = test_pushing_state_update;
+    state_class->draw   = test_pushing_state_draw;
+}
+
+static void
+test_pushing_state_init (TestPushingState *self)
+{
+    self->manager = NULL;
+    self->should_push = FALSE;
+    self->update_count = 0;
+}
+
+static TestPushingState *
+test_pushing_state_new (const gchar         *name,
+                        LrgGameStateManager *manager)
+{
+    TestPushingState *state;
+
+    state = g_object_new (TEST_TYPE_PUSHING_STATE, NULL);
+    lrg_game_state_set_name (LRG_GAME_STATE (state), name);
+    state->manager = manager;  /* Weak ref, manager outlives state in tests */
+
+    return state;
+}
+
+/* ==========================================================================
+ * Test Cases - Frame Safety (Push During Update)
+ * ========================================================================== */
+
+static void
+test_manager_push_during_update_deferred (GameStateFixture *fixture,
+                                          gconstpointer     user_data)
+{
+    TestPushingState *pushing_state;
+    LrgGameState     *pushed_state;
+    TestGameState    *pushed_test_state;
+
+    /*
+     * This test verifies that states pushed during update() do NOT
+     * receive an update() call in the same frame.
+     *
+     * Bug scenario (before fix):
+     * 1. State A sees ESC pressed -> pushes pause menu (State B)
+     * 2. State B's update runs same frame -> also sees ESC -> pops itself
+     * 3. Result: Pause menu appears and immediately disappears
+     */
+
+    pushing_state = test_pushing_state_new ("PushingState", fixture->manager);
+    pushing_state->should_push = TRUE;
+
+    lrg_game_state_manager_push (fixture->manager, LRG_GAME_STATE (pushing_state));
+
+    g_assert_cmpuint (lrg_game_state_manager_get_state_count (fixture->manager), ==, 1);
+
+    /* Update - this should push a new state but NOT update it */
+    lrg_game_state_manager_update (fixture->manager, 0.016);
+
+    /* Now we should have 2 states */
+    g_assert_cmpuint (lrg_game_state_manager_get_state_count (fixture->manager), ==, 2);
+
+    /* The pushing state should have been updated once */
+    g_assert_cmpint (pushing_state->update_count, ==, 1);
+
+    /* The pushed state should NOT have been updated in the same frame */
+    pushed_state = lrg_game_state_manager_get_current (fixture->manager);
+    pushed_test_state = TEST_GAME_STATE (pushed_state);
+    g_assert_cmpint (pushed_test_state->update_count, ==, 0);
+
+    /*
+     * A second update should now update the pushed state.
+     * The pushing_state won't be updated because the pushed state
+     * is blocking by default.
+     */
+    lrg_game_state_manager_update (fixture->manager, 0.016);
+    g_assert_cmpint (pushed_test_state->update_count, ==, 1);
+    g_assert_cmpint (pushing_state->update_count, ==, 1);  /* Still 1, blocked */
+}
+
+/* ==========================================================================
  * Test Cases - Non-blocking State Updates
  * ========================================================================== */
 
@@ -615,6 +760,13 @@ main (int   argc,
                 GameStateFixture, NULL,
                 gamestate_fixture_set_up,
                 test_manager_update_non_blocking_states,
+                gamestate_fixture_tear_down);
+
+    /* Frame Safety */
+    g_test_add ("/gamestate/manager/push-during-update-deferred",
+                GameStateFixture, NULL,
+                gamestate_fixture_set_up,
+                test_manager_push_during_update_deferred,
                 gamestate_fixture_tear_down);
 
     return g_test_run ();

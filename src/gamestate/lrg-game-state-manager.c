@@ -303,6 +303,7 @@ lrg_game_state_manager_update (LrgGameStateManager *self,
 {
     guint i;
     guint start_index;
+    guint end_index;
 
     g_return_if_fail (LRG_IS_GAME_STATE_MANAGER (self));
 
@@ -324,8 +325,15 @@ lrg_game_state_manager_update (LrgGameStateManager *self,
         }
     }
 
-    /* Update from start_index to top */
-    for (i = start_index; i < self->states->len; i++)
+    /*
+     * Snapshot length before iterating - states pushed during update()
+     * won't be updated until next frame. This prevents race conditions
+     * where both old and new states process the same input.
+     */
+    end_index = self->states->len;
+
+    /* Update from start_index to end_index (snapshot, not live len) */
+    for (i = start_index; i < end_index; i++)
     {
         LrgGameState *state = g_ptr_array_index (self->states, i);
         lrg_game_state_update (state, delta);
@@ -346,6 +354,7 @@ lrg_game_state_manager_draw (LrgGameStateManager *self)
 {
     guint i;
     guint start_index;
+    guint end_index;
 
     g_return_if_fail (LRG_IS_GAME_STATE_MANAGER (self));
 
@@ -365,8 +374,14 @@ lrg_game_state_manager_draw (LrgGameStateManager *self)
             break;
     }
 
-    /* Draw from start_index to top */
-    for (i = start_index; i < self->states->len; i++)
+    /*
+     * Snapshot length before iterating - states pushed during draw()
+     * won't be drawn until next frame.
+     */
+    end_index = self->states->len;
+
+    /* Draw from start_index to end_index (snapshot, not live len) */
+    for (i = start_index; i < end_index; i++)
     {
         LrgGameState *state = g_ptr_array_index (self->states, i);
         lrg_game_state_draw (state);
