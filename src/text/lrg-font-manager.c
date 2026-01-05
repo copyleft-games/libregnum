@@ -199,15 +199,34 @@ gboolean
 lrg_font_manager_initialize (LrgFontManager  *self,
                              GError         **error)
 {
+    return lrg_font_manager_initialize_with_sizes (self,
+                                                   FONT_SIZE_SMALL,
+                                                   FONT_SIZE_NORMAL,
+                                                   FONT_SIZE_LARGE,
+                                                   error);
+}
+
+gboolean
+lrg_font_manager_initialize_with_sizes (LrgFontManager  *self,
+                                        gint             size_small,
+                                        gint             size_normal,
+                                        gint             size_large,
+                                        GError         **error)
+{
     g_autofree gchar *font_path = NULL;
     gboolean          success = FALSE;
 
     g_return_val_if_fail (LRG_IS_FONT_MANAGER (self), FALSE);
+    g_return_val_if_fail (size_small > 0, FALSE);
+    g_return_val_if_fail (size_normal > 0, FALSE);
+    g_return_val_if_fail (size_large > 0, FALSE);
 
     if (self->initialized)
         return TRUE;
 
-    lrg_info (LRG_LOG_DOMAIN_TEXT, "Initializing font manager");
+    lrg_info (LRG_LOG_DOMAIN_TEXT,
+              "Initializing font manager with sizes %d/%d/%d",
+              size_small, size_normal, size_large);
 
     /* Find a system font */
     font_path = find_system_font ();
@@ -222,19 +241,19 @@ lrg_font_manager_initialize (LrgFontManager  *self,
 
     /* Load font at multiple sizes for UI presets */
     if (lrg_font_manager_load_font (self, "ui-small", font_path,
-                                    FONT_SIZE_SMALL, NULL))
+                                    size_small, NULL))
     {
         success = TRUE;
     }
 
     if (lrg_font_manager_load_font (self, "ui-normal", font_path,
-                                    FONT_SIZE_NORMAL, NULL))
+                                    size_normal, NULL))
     {
         success = TRUE;
     }
 
     if (lrg_font_manager_load_font (self, "ui-large", font_path,
-                                    FONT_SIZE_LARGE, NULL))
+                                    size_large, NULL))
     {
         success = TRUE;
     }

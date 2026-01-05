@@ -55,6 +55,33 @@ gboolean            lrg_font_manager_initialize         (LrgFontManager *self,
                                                          GError        **error);
 
 /**
+ * lrg_font_manager_initialize_with_sizes:
+ * @self: A #LrgFontManager
+ * @size_small: Font size for ui-small preset (must be > 0)
+ * @size_normal: Font size for ui-normal preset (must be > 0)
+ * @size_large: Font size for ui-large preset (must be > 0)
+ * @error: (nullable): Return location for error
+ *
+ * Initializes the font manager with custom font sizes.
+ *
+ * This function allows specifying custom sizes for the ui-small,
+ * ui-normal, and ui-large font presets. Use this for high-DPI displays
+ * or games that need non-default font sizes.
+ *
+ * Searches for system fonts (Liberation Sans, Noto Sans, DejaVu Sans on Linux;
+ * Segoe UI, Arial, Verdana on Windows) and loads the first found at the
+ * specified sizes.
+ *
+ * Returns: %TRUE if at least one font was loaded, %FALSE otherwise
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_font_manager_initialize_with_sizes (LrgFontManager *self,
+                                                            gint            size_small,
+                                                            gint            size_normal,
+                                                            gint            size_large,
+                                                            GError        **error);
+
+/**
  * lrg_font_manager_get_font:
  * @self: A #LrgFontManager
  * @name: (nullable): Font name, or %NULL for default

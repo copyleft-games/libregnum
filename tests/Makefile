@@ -100,6 +100,7 @@ TEST_SOURCES := \
 	test-postprocess.c \
 	test-animation.c \
 	test-text.c \
+	test-font-manager.c \
 	test-video.c \
 	test-tween.c \
 	test-transition.c \

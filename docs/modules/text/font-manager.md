@@ -163,6 +163,29 @@ if (!lrg_font_manager_initialize (fonts, &error))
 }
 ```
 
+### Custom Font Sizes
+
+For high-DPI displays or custom UI scaling, use `lrg_font_manager_initialize_with_sizes()`:
+
+```c
+LrgFontManager *fonts = lrg_font_manager_get_default ();
+g_autoptr(GError) error = NULL;
+
+/* Double the default sizes for a 2x HiDPI display */
+if (!lrg_font_manager_initialize_with_sizes (fonts, 24, 32, 48, &error))
+{
+    g_warning ("Font init failed: %s", error->message);
+}
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `size_small` | 12 | Size for `ui-small` font |
+| `size_normal` | 16 | Size for `ui-normal` font (default) |
+| `size_large` | 24 | Size for `ui-large` font |
+
+**Note:** Call this before `lrg_engine_startup()` if you want custom sizes. The engine calls `lrg_font_manager_initialize()` (with default sizes) during startup.
+
 ### Automatic Font Names
 
 After initialization, these fonts are available (if a system font was found):
