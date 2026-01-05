@@ -347,7 +347,7 @@ libyaml-devel json-glib-devel
 ### Submodules
 
 - `deps/graylib/` - Raylib GObject wrapper
-- `deps/yaml-glib.git/` - YAML parsing library
+- `deps/yaml-glib/` - YAML parsing library
 
 ## Key Type Patterns
 
