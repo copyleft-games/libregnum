@@ -217,8 +217,8 @@ lrg_chart_real_animate_to_data (LrgChart              *self,
     lrg_tween_set_to_float (priv->active_tween, 1.0f);
     lrg_tween_base_set_easing (LRG_TWEEN_BASE (priv->active_tween), LRG_EASING_EASE_OUT_QUAD);
 
-    /* Connect to finished signal */
-    g_signal_connect (priv->active_tween, "finished",
+    /* Connect to completed signal */
+    g_signal_connect (priv->active_tween, "completed",
                       G_CALLBACK (on_animation_finished), self);
 
     /* Start the tween - it will be updated manually in the chart's update */
