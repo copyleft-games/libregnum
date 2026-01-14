@@ -7,3 +7,6 @@
 [submodule "deps/steamworks_sdk"]
 	path = deps/steamworks_sdk
 	url = https://github.com/rlabrecque/SteamworksSDK.git
+[submodule "deps/mcp-glib"]
+	path = deps/mcp-glib
+	url = git@gitlab.com:copyleft-games/mcp-glib.git
