@@ -131,6 +131,21 @@ TEST_SOURCES := \
 	test-template-deckbuilder.c \
 	test-chart.c
 
+# MCP test sources (conditional on MCP=1)
+ifeq ($(MCP),1)
+TEST_SOURCES += \
+	test-mcp-server.c \
+	test-mcp-tools.c \
+	test-mcp-resources.c
+
+TEST_CFLAGS += $(MCP_CFLAGS)
+TEST_CFLAGS += $(shell pkg-config --cflags libsoup-3.0)
+TEST_LDFLAGS += -L$(MCP_GLIB_DIR)/build
+TEST_LDFLAGS += -Wl,-rpath,$(MCP_GLIB_DIR)/build
+TEST_LIBS += $(MCP_LIBS)
+TEST_LIBS += $(shell pkg-config --libs libsoup-3.0)
+endif
+
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))
 
@@ -142,11 +157,18 @@ TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))
 
 all: $(TEST_BINARIES)
 
+# MCP library path (conditional)
+ifeq ($(MCP),1)
+MCP_LD_PATH := $(MCP_GLIB_DIR)/build:
+else
+MCP_LD_PATH :=
+endif
+
 run: all
 	$(call print_status,"Running tests...")
 	@failed=0; \
 	for test in $(TEST_BINARIES); do \
-		LD_LIBRARY_PATH="../$(LIBOUTDIR):$(GRAYLIB_DIR)/build/lib:$(YAMLGLIB_DIR)/build:$$LD_LIBRARY_PATH" \
+		LD_LIBRARY_PATH="$(MCP_LD_PATH)../$(LIBOUTDIR):$(GRAYLIB_DIR)/build/lib:$(YAMLGLIB_DIR)/build:$$LD_LIBRARY_PATH" \
 		G_TEST_SRCDIR="$(shell pwd)" \
 		$$test --tap || failed=1; \
 	done; \

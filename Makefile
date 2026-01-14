@@ -882,6 +882,43 @@ SOURCES += \
 	src/scripting/lrg-scripting-gjs.c
 endif
 
+# MCP server support (conditional on MCP=1)
+ifeq ($(MCP),1)
+PUBLIC_HEADERS += \
+	src/mcp/lrg-mcp.h \
+	src/mcp/lrg-mcp-enums.h \
+	src/mcp/lrg-mcp-tool-provider.h \
+	src/mcp/lrg-mcp-resource-provider.h \
+	src/mcp/lrg-mcp-tool-group.h \
+	src/mcp/lrg-mcp-resource-group.h \
+	src/mcp/lrg-mcp-server.h \
+	src/mcp/tools/lrg-mcp-input-tools.h \
+	src/mcp/tools/lrg-mcp-screenshot-tools.h \
+	src/mcp/tools/lrg-mcp-engine-tools.h \
+	src/mcp/tools/lrg-mcp-ecs-tools.h \
+	src/mcp/tools/lrg-mcp-save-tools.h \
+	src/mcp/tools/lrg-mcp-debug-tools.h \
+	src/mcp/resources/lrg-mcp-engine-resources.h \
+	src/mcp/resources/lrg-mcp-ecs-resources.h \
+	src/mcp/resources/lrg-mcp-screenshot-resources.h
+SOURCES += \
+	src/mcp/lrg-mcp-enums.c \
+	src/mcp/lrg-mcp-tool-provider.c \
+	src/mcp/lrg-mcp-resource-provider.c \
+	src/mcp/lrg-mcp-tool-group.c \
+	src/mcp/lrg-mcp-resource-group.c \
+	src/mcp/lrg-mcp-server.c \
+	src/mcp/tools/lrg-mcp-input-tools.c \
+	src/mcp/tools/lrg-mcp-screenshot-tools.c \
+	src/mcp/tools/lrg-mcp-engine-tools.c \
+	src/mcp/tools/lrg-mcp-ecs-tools.c \
+	src/mcp/tools/lrg-mcp-save-tools.c \
+	src/mcp/tools/lrg-mcp-debug-tools.c \
+	src/mcp/resources/lrg-mcp-engine-resources.c \
+	src/mcp/resources/lrg-mcp-ecs-resources.c \
+	src/mcp/resources/lrg-mcp-screenshot-resources.c
+endif
+
 # Object files
 OBJECTS := $(patsubst %.c,$(OBJDIR)/%.o,$(SOURCES))
 DEPENDS := $(patsubst %.c,$(OBJDIR)/%.d,$(SOURCES))
@@ -931,9 +968,12 @@ _lib: lib-static lib-shared
 # Dependencies (Submodules)
 # =============================================================================
 
-.PHONY: deps deps-graylib deps-yamlglib
+.PHONY: deps deps-graylib deps-yamlglib deps-mcp
 
 deps: deps-graylib deps-yamlglib
+ifeq ($(MCP),1)
+deps: deps-mcp
+endif
 
 # Pass cross-compilation settings to dependencies
 ifeq ($(TARGET_PLATFORM),windows)
@@ -958,9 +998,26 @@ deps-yamlglib:
 		$(MAKE) -C $(YAMLGLIB_DIR) $(DEP_BUILD_FLAGS); \
 	fi
 
+ifeq ($(MCP),1)
+ifeq ($(TARGET_PLATFORM),windows)
+    MCP_GLIB_LIB := $(MCP_GLIB_DIR)/build/mcp-glib.dll
+else
+    MCP_GLIB_LIB := $(MCP_GLIB_DIR)/build/libmcp-glib.so
+endif
+
+deps-mcp:
+	@if [ ! -f "$(MCP_GLIB_LIB)" ]; then \
+		$(call print_status,"Building mcp-glib ($(TARGET_PLATFORM))..."); \
+		$(MAKE) -C $(MCP_GLIB_DIR) $(DEP_BUILD_FLAGS); \
+	fi
+endif
+
 deps-clean:
 	$(MAKE) -C $(GRAYLIB_DIR) clean
 	$(MAKE) -C $(YAMLGLIB_DIR) clean
+ifeq ($(MCP),1)
+	$(MAKE) -C $(MCP_GLIB_DIR) clean
+endif
 
 # =============================================================================
 # Library Targets
@@ -1034,6 +1091,13 @@ $(BUILDDIR)/$(PC_FILE): libregnum.pc.in config.mk | $(BUILDDIR)
 
 gir: $(GIROUTDIR)/$(GIR_NAME) $(GIROUTDIR)/$(TYPELIB_NAME)
 
+# MCP library path for GIR (conditional)
+ifeq ($(MCP),1)
+MCP_GIR_LIB_PATH := --library-path=$(MCP_GLIB_DIR)/build
+else
+MCP_GIR_LIB_PATH :=
+endif
+
 $(GIROUTDIR)/$(GIR_NAME): $(LIBOUTDIR)/$(LIB_SHARED) $(PUBLIC_HEADERS) $(SOURCES) | $(GIROUTDIR)
 	$(call print_gir,$(GIR_NAME))
 	@$(GIR_SCANNER) $(GIR_SCANNER_FLAGS) \
@@ -1041,6 +1105,7 @@ $(GIROUTDIR)/$(GIR_NAME): $(LIBOUTDIR)/$(LIB_SHARED) $(PUBLIC_HEADERS) $(SOURCES
 		--library-path=$(LIBOUTDIR) \
 		--library-path=$(GRAYLIB_DIR)/build/lib \
 		--library-path=$(YAMLGLIB_DIR)/build \
+		$(MCP_GIR_LIB_PATH) \
 		--output=$@ \
 		$(PUBLIC_HEADERS) $(SOURCES)
 

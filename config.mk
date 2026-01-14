@@ -229,6 +229,35 @@ else
 endif
 
 # =============================================================================
+# MCP Support (Opt-In) - For AI-assisted debugging
+# =============================================================================
+#
+# Usage: make MCP=1
+#
+# Requires: mcp-glib in deps/mcp-glib
+# Enables: MCP server for Claude Code / AI debugging integration
+#
+# Features:
+#   - Input injection (keyboard, mouse, gamepad)
+#   - Screenshot capture (base64 PNG)
+#   - Engine state inspection
+#   - ECS/World manipulation
+#   - Save/Load triggering
+#
+# Note: HTTP transport requires libsoup-3.0 (already a dependency)
+
+MCP ?= 0
+
+ifeq ($(MCP),1)
+    MCP_GLIB_DIR := $(PROJECT_ROOT)/deps/mcp-glib
+    MCP_CFLAGS := -I$(MCP_GLIB_DIR)/src -DLRG_ENABLE_MCP=1
+    MCP_LIBS := -L$(MCP_GLIB_DIR)/build -lmcp-glib-1.0
+else
+    MCP_CFLAGS :=
+    MCP_LIBS :=
+endif
+
+# =============================================================================
 # Library Names (Platform-Specific)
 # =============================================================================
 
@@ -449,6 +478,7 @@ LIB_CFLAGS += -isystem $(YAMLGLIB_DIR)/src
 LIB_CFLAGS += $(subst -I,-isystem ,$(DEP_CFLAGS))
 LIB_CFLAGS += -I$(CURDIR)/src
 LIB_CFLAGS += $(STEAM_CFLAGS)
+LIB_CFLAGS += $(MCP_CFLAGS)
 
 # Library link flags (use platform-specific flags)
 LIB_LDFLAGS := $(LIB_LDFLAGS_PLATFORM)
@@ -465,6 +495,7 @@ else
     ALL_LIBS += -L$(YAMLGLIB_DIR)/build -lyaml-glib
 endif
 ALL_LIBS += $(STEAM_LIBS)
+ALL_LIBS += $(MCP_LIBS)
 
 # =============================================================================
 # GIR Scanner Flags
@@ -481,11 +512,13 @@ GIR_SCANNER_FLAGS := \
     --pkg=gobject-2.0 \
     --pkg=gio-2.0 \
     --pkg=libdex-1 \
+    --pkg=json-glib-1.0 \
     --pkg=gobject-introspection-1.0 \
     --include=GLib-2.0 \
     --include=GObject-2.0 \
     --include=Gio-2.0 \
     --include=Dex-1 \
+    --include=Json-1.0 \
     --include=GIRepository-2.0 \
     -DLIBREGNUM_COMPILATION \
     -I$(CURDIR)/src \
@@ -493,6 +526,14 @@ GIR_SCANNER_FLAGS := \
     -I$(YAMLGLIB_DIR)/src \
     --add-include-path=$(GRAYLIB_DIR)/build/release/gir \
     --add-include-path=$(YAMLGLIB_DIR)/build/release/gir
+
+# MCP GIR additions (when MCP=1)
+ifeq ($(MCP),1)
+GIR_SCANNER_FLAGS += \
+    -I$(MCP_GLIB_DIR)/src \
+    --pkg=libsoup-3.0 \
+    -DLRG_ENABLE_MCP=1
+endif
 
 GIR_COMPILER_FLAGS := \
     --includedir=$(GRAYLIB_DIR)/build/release/gir \

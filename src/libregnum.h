@@ -561,4 +561,9 @@
 #include "chart/lrg-surface-chart3d.h"
 #include "chart/lrg-scatter-chart3d.h"
 
+/* MCP module (optional, build with MCP=1) */
+#ifdef LRG_ENABLE_MCP
+#include "mcp/lrg-mcp.h"
+#endif
+
 #undef LIBREGNUM_INSIDE
