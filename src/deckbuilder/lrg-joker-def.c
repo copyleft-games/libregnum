@@ -82,7 +82,34 @@ lrg_joker_def_real_can_trigger (LrgJokerDef       *self,
             return FALSE;
     }
 
-    /* TODO: Check required suit on scoring cards */
+    /* Check required suit on scoring cards.
+     * If the joker requires a specific suit, at least one scoring card
+     * must match that suit for the joker to trigger.
+     */
+    if (priv->required_suit != LRG_CARD_SUIT_NONE)
+    {
+        GPtrArray *scoring_cards;
+        gboolean suit_found = FALSE;
+        guint i;
+
+        scoring_cards = lrg_scoring_context_get_scoring_cards (ctx);
+        if (scoring_cards != NULL)
+        {
+            for (i = 0; i < scoring_cards->len; i++)
+            {
+                LrgCardInstance *card = g_ptr_array_index (scoring_cards, i);
+                LrgCardDef *def = lrg_card_instance_get_def (card);
+                if (lrg_card_def_get_suit (def) == priv->required_suit)
+                {
+                    suit_found = TRUE;
+                    break;
+                }
+            }
+        }
+
+        if (!suit_found)
+            return FALSE;
+    }
 
     return TRUE;
 }

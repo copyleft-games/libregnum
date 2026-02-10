@@ -6,6 +6,8 @@
  */
 
 #include "lrg-player-combatant.h"
+#include "lrg-status-effect-registry.h"
+#include "lrg-status-effect-def.h"
 #include "../lrg-log.h"
 
 /* Simple status tracking structure (internal use only) */
@@ -315,15 +317,25 @@ lrg_player_combatant_apply_status_impl (LrgCombatant *combatant,
     if (stacks <= 0)
         return FALSE;
 
-    /* Check artifact (blocks debuffs) */
+    /* Check artifact (blocks debuffs).
+     * Artifact only blocks debuffs -- buffs should pass through.
+     */
     if (lrg_combatant_has_status (combatant, "artifact"))
     {
-        /* TODO: check if status is a debuff */
-        lrg_combatant_remove_status_stacks (combatant, "artifact", 1);
-        lrg_debug (LRG_LOG_DOMAIN_DECKBUILDER,
-                   "Artifact blocked status '%s' on player",
-                   status_id);
-        return FALSE;
+        LrgStatusEffectRegistry *registry;
+        LrgStatusEffectDef *def;
+
+        registry = lrg_status_effect_registry_get_default ();
+        def = lrg_status_effect_registry_lookup (registry, status_id);
+
+        if (def != NULL && lrg_status_effect_def_is_debuff (def))
+        {
+            lrg_combatant_remove_status_stacks (combatant, "artifact", 1);
+            lrg_debug (LRG_LOG_DOMAIN_DECKBUILDER,
+                       "Artifact blocked debuff '%s' on player",
+                       status_id);
+            return FALSE;
+        }
     }
 
     entry = g_hash_table_lookup (self->statuses, status_id);

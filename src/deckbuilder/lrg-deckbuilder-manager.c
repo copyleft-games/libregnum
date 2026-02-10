@@ -11,7 +11,11 @@
 #include "lrg-unlock-def.h"
 #include "lrg-ascension.h"
 #include "lrg-run.h"
+#include "../save/lrg-save-context.h"
+#include "../save/lrg-saveable.h"
 #include "../lrg-log.h"
+
+#include <gio/gio.h>
 
 /**
  * LrgDeckbuilderManager:
@@ -767,11 +771,39 @@ gboolean
 lrg_deckbuilder_manager_save (LrgDeckbuilderManager  *self,
                                GError                **error)
 {
+    g_autoptr(LrgSaveContext) context = NULL;
+    g_autofree gchar *save_path = NULL;
+
     g_return_val_if_fail (LRG_IS_DECKBUILDER_MANAGER (self), FALSE);
 
-    /* TODO: Implement actual save to file */
-    /* For now, just mark as clean */
+    /* Create save context and serialize profile via LrgSaveable interface */
+    context = lrg_save_context_new_for_save ();
+
+    if (!lrg_saveable_save (LRG_SAVEABLE (self->profile), context, error))
+        return FALSE;
+
+    /* Write to profile save file in user data directory */
+    save_path = g_build_filename (g_get_user_data_dir (),
+                                  "libregnum", "profile.sav", NULL);
+
+    /* Ensure the directory exists */
+    {
+        g_autofree gchar *dir = NULL;
+
+        dir = g_path_get_dirname (save_path);
+        if (g_mkdir_with_parents (dir, 0755) != 0)
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                         "Failed to create save directory: %s", dir);
+            return FALSE;
+        }
+    }
+
+    if (!lrg_save_context_to_file (context, save_path, error))
+        return FALSE;
+
     lrg_player_profile_mark_clean (self->profile);
+    lrg_info (LRG_LOG_DOMAIN_DECKBUILDER, "Profile saved to: %s", save_path);
 
     return TRUE;
 }
@@ -791,8 +823,33 @@ gboolean
 lrg_deckbuilder_manager_load (LrgDeckbuilderManager  *self,
                                GError                **error)
 {
+    g_autoptr(LrgSaveContext) context = NULL;
+    g_autofree gchar *save_path = NULL;
+
     g_return_val_if_fail (LRG_IS_DECKBUILDER_MANAGER (self), FALSE);
 
-    /* TODO: Implement actual load from file */
+    /* Build path to profile save file */
+    save_path = g_build_filename (g_get_user_data_dir (),
+                                  "libregnum", "profile.sav", NULL);
+
+    /* If no save file exists, silently succeed with defaults */
+    if (!g_file_test (save_path, G_FILE_TEST_EXISTS))
+    {
+        lrg_info (LRG_LOG_DOMAIN_DECKBUILDER,
+                  "No profile save file found at: %s", save_path);
+        return TRUE;
+    }
+
+    /* Load save context from file */
+    context = lrg_save_context_new_from_file (save_path, error);
+    if (context == NULL)
+        return FALSE;
+
+    /* Deserialize profile via LrgSaveable interface */
+    if (!lrg_saveable_load (LRG_SAVEABLE (self->profile), context, error))
+        return FALSE;
+
+    lrg_info (LRG_LOG_DOMAIN_DECKBUILDER, "Profile loaded from: %s", save_path);
+
     return TRUE;
 }

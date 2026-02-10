@@ -105,12 +105,19 @@ apply_joker_scoring (LrgDeckbuilderPokerTemplate *self)
     /* Set jokers in scoring context for triggering */
     lrg_scoring_context_set_jokers (self->scoring_context, self->jokers);
 
-    /*
-     * TODO: Apply joker effects
-     * This would iterate through jokers and call their scoring hooks.
-     * For now, joker effects should be applied by game-specific logic.
+    /* Iterate through jokers, check if each can trigger in the current
+     * scoring context, and apply its effect if so.
      */
-    (void)i;
+    for (i = 0; i < self->jokers->len; i++)
+    {
+        LrgJokerInstance *joker = g_ptr_array_index (self->jokers, i);
+        LrgJokerDef *def = lrg_joker_instance_get_def (joker);
+
+        if (lrg_joker_def_can_trigger (def, self->scoring_context, joker))
+        {
+            lrg_joker_def_apply_effect (def, self->scoring_context, joker);
+        }
+    }
 }
 
 /* ==========================================================================

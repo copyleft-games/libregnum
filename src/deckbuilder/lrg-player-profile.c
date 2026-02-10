@@ -6,6 +6,7 @@
  */
 
 #include "lrg-player-profile.h"
+#include "../save/lrg-save-context.h"
 #include "../lrg-log.h"
 
 /**
@@ -121,10 +122,104 @@ lrg_player_profile_save_impl (LrgSaveable    *saveable,
                               LrgSaveContext *context,
                               GError        **error)
 {
-    /* TODO: Implement full save/load with LrgSaveContext */
     LrgPlayerProfile *self;
+    GHashTableIter    iter;
+    gpointer          key;
+    gpointer          value;
+    gint              i;
 
     self = LRG_PLAYER_PROFILE (saveable);
+
+    /* Profile info section */
+    lrg_save_context_begin_section (context, "profile");
+    lrg_save_context_write_string (context, "name", self->name);
+    lrg_save_context_write_int (context, "total-playtime", self->total_playtime);
+    lrg_save_context_write_int (context, "global-high-score", self->global_high_score);
+    lrg_save_context_end_section (context);
+
+    /*
+     * Unlocks section: one sub-section per unlock type.
+     * Each type stores a comma-separated list of IDs in "_keys" and
+     * individual status values for each ID.
+     */
+    lrg_save_context_begin_section (context, "unlocks");
+    for (i = 0; i < 8; i++)
+    {
+        g_autofree gchar *type_key = NULL;
+        GString *keys_csv;
+
+        type_key = g_strdup_printf ("type-%d", i);
+        lrg_save_context_begin_section (context, type_key);
+
+        /* Build CSV of all IDs for this type so we can iterate on load */
+        keys_csv = g_string_new (NULL);
+        g_hash_table_iter_init (&iter, self->unlocks[i]);
+        while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+            UnlockEntry *entry = (UnlockEntry *)value;
+
+            if (keys_csv->len > 0)
+                g_string_append_c (keys_csv, ',');
+            g_string_append (keys_csv, (const gchar *)key);
+
+            lrg_save_context_write_int (context, (const gchar *)key,
+                                        (gint64)entry->status);
+        }
+        lrg_save_context_write_string (context, "_keys", keys_csv->str);
+        g_string_free (keys_csv, TRUE);
+
+        lrg_save_context_end_section (context);
+    }
+    lrg_save_context_end_section (context);
+
+    /* Character progress section with key tracking */
+    lrg_save_context_begin_section (context, "characters");
+    {
+        GString *char_keys;
+
+        char_keys = g_string_new (NULL);
+        g_hash_table_iter_init (&iter, self->character_progress);
+        while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+            CharacterProgress *progress = (CharacterProgress *)value;
+
+            if (char_keys->len > 0)
+                g_string_append_c (char_keys, ',');
+            g_string_append (char_keys, (const gchar *)key);
+
+            lrg_save_context_begin_section (context, (const gchar *)key);
+            lrg_save_context_write_int (context, "wins", progress->wins);
+            lrg_save_context_write_int (context, "runs", progress->runs);
+            lrg_save_context_write_int (context, "max-ascension", progress->max_ascension);
+            lrg_save_context_write_int (context, "high-score", progress->high_score);
+            lrg_save_context_end_section (context);
+        }
+        lrg_save_context_write_string (context, "_keys", char_keys->str);
+        g_string_free (char_keys, TRUE);
+    }
+    lrg_save_context_end_section (context);
+
+    /* Statistics section with key tracking */
+    lrg_save_context_begin_section (context, "statistics");
+    {
+        GString *stat_keys;
+
+        stat_keys = g_string_new (NULL);
+        g_hash_table_iter_init (&iter, self->statistics);
+        while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+            if (stat_keys->len > 0)
+                g_string_append_c (stat_keys, ',');
+            g_string_append (stat_keys, (const gchar *)key);
+
+            lrg_save_context_write_int (context, (const gchar *)key,
+                                        (gint64)GPOINTER_TO_SIZE (value));
+        }
+        lrg_save_context_write_string (context, "_keys", stat_keys->str);
+        g_string_free (stat_keys, TRUE);
+    }
+    lrg_save_context_end_section (context);
+
     self->dirty = FALSE;
 
     return TRUE;
@@ -135,7 +230,138 @@ lrg_player_profile_load_impl (LrgSaveable    *saveable,
                               LrgSaveContext *context,
                               GError        **error)
 {
-    /* TODO: Implement full save/load with LrgSaveContext */
+    LrgPlayerProfile *self;
+    gint              i;
+
+    self = LRG_PLAYER_PROFILE (saveable);
+
+    /* Load profile info */
+    if (lrg_save_context_enter_section (context, "profile"))
+    {
+        const gchar *name;
+
+        name = lrg_save_context_read_string (context, "name", "Player");
+        g_clear_pointer (&self->name, g_free);
+        self->name = g_strdup (name);
+
+        self->total_playtime = lrg_save_context_read_int (context, "total-playtime", 0);
+        self->global_high_score = lrg_save_context_read_int (context, "global-high-score", 0);
+
+        lrg_save_context_leave_section (context);
+    }
+
+    /* Load unlocks */
+    if (lrg_save_context_enter_section (context, "unlocks"))
+    {
+        for (i = 0; i < 8; i++)
+        {
+            g_autofree gchar *type_key = NULL;
+
+            type_key = g_strdup_printf ("type-%d", i);
+
+            /* Clear existing entries for this type */
+            g_hash_table_remove_all (self->unlocks[i]);
+
+            if (lrg_save_context_enter_section (context, type_key))
+            {
+                const gchar *keys_csv;
+
+                keys_csv = lrg_save_context_read_string (context, "_keys", "");
+                if (keys_csv != NULL && keys_csv[0] != '\0')
+                {
+                    g_auto(GStrv) ids = NULL;
+                    gint j;
+
+                    ids = g_strsplit (keys_csv, ",", -1);
+                    for (j = 0; ids[j] != NULL; j++)
+                    {
+                        UnlockEntry *entry;
+                        gint64       status;
+
+                        status = lrg_save_context_read_int (context, ids[j], 0);
+                        entry = g_new0 (UnlockEntry, 1);
+                        entry->status = (LrgUnlockStatus)status;
+                        g_hash_table_insert (self->unlocks[i],
+                                             g_strdup (ids[j]),
+                                             entry);
+                    }
+                }
+
+                lrg_save_context_leave_section (context);
+            }
+        }
+
+        lrg_save_context_leave_section (context);
+    }
+
+    /* Load character progress */
+    if (lrg_save_context_enter_section (context, "characters"))
+    {
+        const gchar *keys_csv;
+
+        g_hash_table_remove_all (self->character_progress);
+
+        keys_csv = lrg_save_context_read_string (context, "_keys", "");
+        if (keys_csv != NULL && keys_csv[0] != '\0')
+        {
+            g_auto(GStrv) ids = NULL;
+            gint j;
+
+            ids = g_strsplit (keys_csv, ",", -1);
+            for (j = 0; ids[j] != NULL; j++)
+            {
+                if (lrg_save_context_enter_section (context, ids[j]))
+                {
+                    CharacterProgress *progress;
+
+                    progress = g_new0 (CharacterProgress, 1);
+                    progress->wins = (gint)lrg_save_context_read_int (context, "wins", 0);
+                    progress->runs = (gint)lrg_save_context_read_int (context, "runs", 0);
+                    progress->max_ascension = (gint)lrg_save_context_read_int (context, "max-ascension", 0);
+                    progress->high_score = lrg_save_context_read_int (context, "high-score", 0);
+
+                    g_hash_table_insert (self->character_progress,
+                                         g_strdup (ids[j]),
+                                         progress);
+
+                    lrg_save_context_leave_section (context);
+                }
+            }
+        }
+
+        lrg_save_context_leave_section (context);
+    }
+
+    /* Load statistics */
+    if (lrg_save_context_enter_section (context, "statistics"))
+    {
+        const gchar *keys_csv;
+
+        g_hash_table_remove_all (self->statistics);
+
+        keys_csv = lrg_save_context_read_string (context, "_keys", "");
+        if (keys_csv != NULL && keys_csv[0] != '\0')
+        {
+            g_auto(GStrv) ids = NULL;
+            gint j;
+
+            ids = g_strsplit (keys_csv, ",", -1);
+            for (j = 0; ids[j] != NULL; j++)
+            {
+                gint64 val;
+
+                val = lrg_save_context_read_int (context, ids[j], 0);
+                g_hash_table_insert (self->statistics,
+                                     g_strdup (ids[j]),
+                                     GSIZE_TO_POINTER ((gsize)val));
+            }
+        }
+
+        lrg_save_context_leave_section (context);
+    }
+
+    self->dirty = FALSE;
+
     return TRUE;
 }
 

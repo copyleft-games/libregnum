@@ -286,7 +286,19 @@ count_ranks_and_suits (LrgScoringHand *self)
         if (suit > 0 && suit <= 4)
             priv->suit_counts[suit]++;
 
-        /* TODO: Check for wild card enhancement */
+        /* Check for wild card enhancement.
+         * Wild cards count for all suits, making flushes easier to form.
+         */
+        if (lrg_card_def_has_tag (def, "wild"))
+        {
+            gint s;
+            priv->has_wild = TRUE;
+            for (s = 1; s <= 4; s++)
+            {
+                if (s != (gint)suit)
+                    priv->suit_counts[s]++;
+            }
+        }
     }
 }
 

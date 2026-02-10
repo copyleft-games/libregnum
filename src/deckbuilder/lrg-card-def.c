@@ -6,6 +6,10 @@
  */
 
 #include "lrg-card-def.h"
+#include "lrg-card-effect.h"
+#include "lrg-effect-stack.h"
+#include "lrg-card-effect-registry.h"
+#include "lrg-combat-context.h"
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_DECKBUILDER
 #include "../lrg-log.h"
@@ -72,20 +76,33 @@ lrg_card_def_real_on_play (LrgCardDef       *self,
     guint i;
 
     /*
-     * Default on_play: Execute all effects in order.
-     * In a full implementation, effects would be pushed to the effect stack
-     * and resolved. For now, we just iterate and log.
+     * Default on_play: Push all effects to the effect stack and resolve.
+     * Effects are pushed in order, then the stack resolves them all
+     * respecting priority and ordering rules.
      */
-    for (i = 0; i < priv->effects->len; i++)
+    if (ctx != NULL && priv->effects->len > 0)
     {
-        LrgCardEffect *effect = g_ptr_array_index (priv->effects, i);
+        LrgCardEffectRegistry *registry;
+        g_autoptr(LrgEffectStack) stack = NULL;
+        g_autoptr(GError) error = NULL;
 
-        /*
-         * TODO: Push effect to effect stack and resolve.
-         * For now, effects are placeholder - actual implementation
-         * will call lrg_effect_stack_push() and lrg_effect_stack_resolve_all().
-         */
-        (void)effect;
+        /* Create a local effect stack to resolve this card's effects */
+        registry = lrg_card_effect_registry_get_default ();
+        stack = lrg_effect_stack_new (registry);
+
+        for (i = 0; i < priv->effects->len; i++)
+        {
+            LrgCardEffect *effect = g_ptr_array_index (priv->effects, i);
+            lrg_effect_stack_push_effect (stack, effect, self, target);
+        }
+
+        if (!lrg_effect_stack_resolve_all (stack, ctx, &error))
+        {
+            lrg_warning (LRG_LOG_DOMAIN,
+                         "Failed to resolve effects for card '%s': %s",
+                         priv->id, error->message);
+            return FALSE;
+        }
     }
 
     lrg_log_debug ("Card '%s' played with %u effects",
@@ -154,17 +171,29 @@ lrg_card_def_real_can_play (LrgCardDef       *self,
     if (ctx == NULL)
         return TRUE;
 
-    /*
-     * TODO: Add energy check when LrgCombatContext is implemented:
-     * gint cost = lrg_card_def_calculate_cost (self, ctx);
-     * if (lrg_combat_context_get_energy (ctx) < cost)
-     *     return FALSE;
-     *
-     * TODO: Add target check:
-     * if (priv->target_type == LRG_CARD_TARGET_SINGLE_ENEMY)
-     *     if (lrg_combat_context_get_enemy_count (ctx) == 0)
-     *         return FALSE;
-     */
+    /* Check if player has enough energy to play this card */
+    {
+        gint cost;
+
+        cost = lrg_card_def_calculate_cost (self, ctx);
+        if (lrg_combat_context_get_energy (ctx) < cost)
+        {
+            lrg_log_debug ("Card '%s' unplayable: insufficient energy (%d < %d)",
+                           priv->id, lrg_combat_context_get_energy (ctx), cost);
+            return FALSE;
+        }
+    }
+
+    /* Check target requirements */
+    if (priv->target_type == LRG_CARD_TARGET_SINGLE_ENEMY)
+    {
+        if (lrg_combat_context_get_enemy_count (ctx) == 0)
+        {
+            lrg_log_debug ("Card '%s' unplayable: no enemies to target",
+                           priv->id);
+            return FALSE;
+        }
+    }
 
     return TRUE;
 }
@@ -182,26 +211,20 @@ lrg_card_def_real_calculate_cost (LrgCardDef       *self,
      * 2. Otherwise, use base cost (modified by context if available)
      */
 
-    /* X-cost handling */
+    /* X-cost cards consume all remaining energy */
     if (priv->keywords & LRG_CARD_KEYWORD_X_COST)
     {
         if (ctx != NULL)
-        {
-            /*
-             * TODO: Return remaining energy when context implemented:
-             * return lrg_combat_context_get_energy (ctx);
-             */
-        }
+            return lrg_combat_context_get_energy (ctx);
+
         return 0;
     }
 
     cost = priv->base_cost;
 
     /*
-     * Apply cost modifiers from combat context.
-     * TODO: When context implemented:
-     * if (ctx != NULL)
-     *     cost = lrg_combat_context_modify_card_cost (ctx, self, cost);
+     * Cost modifiers from status effects, relics, etc. would be
+     * applied here via the combat context when those systems are added.
      */
 
     return MAX (0, cost);
@@ -215,14 +238,92 @@ lrg_card_def_real_get_tooltip (LrgCardDef       *self,
 
     /*
      * Default tooltip: Return description with variable substitution.
-     * TODO: Implement variable substitution (e.g., {damage} -> "6")
-     * when effect system is complete.
+     * Scans for {key} patterns in the description and replaces them
+     * with the corresponding effect parameter values.
+     *
+     * Example: "Deal {damage} damage" with effect param damage=6
+     *          becomes "Deal 6 damage"
      */
 
     if (priv->description == NULL)
         return NULL;
 
-    return g_strdup (priv->description);
+    /* If no effects or no placeholders, return as-is */
+    if (priv->effects->len == 0 || strchr (priv->description, '{') == NULL)
+        return g_strdup (priv->description);
+
+    {
+        GString *result;
+        const gchar *p;
+
+        result = g_string_new (NULL);
+        p = priv->description;
+
+        while (*p != '\0')
+        {
+            if (*p == '{')
+            {
+                const gchar *start;
+                const gchar *end;
+
+                start = p + 1;
+                end = strchr (start, '}');
+
+                if (end != NULL)
+                {
+                    g_autofree gchar *key = NULL;
+                    gboolean found;
+                    guint i;
+
+                    key = g_strndup (start, (gsize)(end - start));
+                    found = FALSE;
+
+                    /*
+                     * Search effects for a matching parameter.
+                     * First match wins.
+                     */
+                    for (i = 0; i < priv->effects->len; i++)
+                    {
+                        LrgCardEffect *effect;
+                        gint value;
+
+                        effect = g_ptr_array_index (priv->effects, i);
+                        value = lrg_card_effect_get_param_int (effect, key, G_MININT);
+
+                        if (value != G_MININT)
+                        {
+                            g_string_append_printf (result, "%d", value);
+                            found = TRUE;
+                            break;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        /* No match, keep original placeholder */
+                        g_string_append_c (result, '{');
+                        g_string_append (result, key);
+                        g_string_append_c (result, '}');
+                    }
+
+                    p = end + 1;
+                }
+                else
+                {
+                    /* No closing brace, output literally */
+                    g_string_append_c (result, *p);
+                    p++;
+                }
+            }
+            else
+            {
+                g_string_append_c (result, *p);
+                p++;
+            }
+        }
+
+        return g_string_free (result, FALSE);
+    }
 }
 
 static void

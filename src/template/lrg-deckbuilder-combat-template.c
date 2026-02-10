@@ -1070,11 +1070,8 @@ lrg_deckbuilder_combat_template_process_enemy_turns (LrgDeckbuilderCombatTemplat
     enemy = g_ptr_array_index (enemies, self->current_enemy_index);
     if (lrg_combatant_is_alive (LRG_COMBATANT (enemy)))
     {
-        /*
-         * TODO: Enemy AI integration
-         * For now, enemies don't take actions automatically.
-         * Game-specific logic should call the enemy's action.
-         */
+        /* Execute the enemy's current intent (attack, buff, debuff, etc.) */
+        lrg_enemy_instance_execute_intent (enemy, self->combat_context);
     }
 
     self->current_enemy_index++;
