@@ -11,6 +11,8 @@
 #include "../tween/lrg-easing.h"
 #include "../lrg-log.h"
 
+#include <graylib.h>
+
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_TRANSITION
 
 /**
@@ -191,28 +193,61 @@ lrg_zoom_transition_render (LrgTransition *transition,
         break;
     }
 
-    (void) current_scale;
-    (void) alpha;
-    (void) old_scene_texture;
-    (void) new_scene_texture;
-    (void) width;
-    (void) height;
-
     /*
-     * TODO: Integrate with graylib rendering
-     *
-     * The zoom effect involves:
-     * 1. Apply scale transform centered on (center_x * width, center_y * height)
-     * 2. Draw appropriate scene texture with transform
-     * 3. Draw color overlay with alpha
+     * Apply zoom transform centered on (center_x * width, center_y * height)
+     * and draw the appropriate scene texture, then overlay with alpha.
      *
      * Matrix operations:
-     *   translate(center_x * width, center_y * height)
-     *   scale(current_scale, current_scale)
-     *   translate(-center_x * width, -center_y * height)
-     *   draw_scene_texture()
-     *   draw_color_overlay(alpha)
+     *   1. Translate so zoom center is at origin
+     *   2. Scale by current_scale
+     *   3. Translate back
      */
+    {
+        guint scene_tex;
+        gfloat cx;
+        gfloat cy;
+
+        scene_tex = 0;
+        cx = self->center_x * (gfloat) width;
+        cy = self->center_y * (gfloat) height;
+
+        if (state == LRG_TRANSITION_STATE_OUT && old_scene_texture != 0)
+            scene_tex = old_scene_texture;
+        else if (state == LRG_TRANSITION_STATE_IN && new_scene_texture != 0)
+            scene_tex = new_scene_texture;
+
+        /* Draw scene with zoom transform */
+        if (scene_tex != 0 && current_scale > 0.0f)
+        {
+            grl_rlgl_push_matrix ();
+
+            /* Translate to zoom center, scale, translate back */
+            grl_rlgl_translatef (cx, cy, 0.0f);
+            grl_rlgl_scalef (current_scale, current_scale, 1.0f);
+            grl_rlgl_translatef (-cx, -cy, 0.0f);
+
+            grl_rlgl_enable_texture (scene_tex);
+            grl_rlgl_begin (GRL_RLGL_QUADS);
+                grl_rlgl_color4ub (255, 255, 255, 255);
+                grl_rlgl_tex_coord2f (0.0f, 1.0f); grl_rlgl_vertex2f (0.0f, 0.0f);
+                grl_rlgl_tex_coord2f (0.0f, 0.0f); grl_rlgl_vertex2f (0.0f, (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) width, (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) width, 0.0f);
+            grl_rlgl_end ();
+            grl_rlgl_disable_texture ();
+
+            grl_rlgl_pop_matrix ();
+        }
+
+        /* Draw color overlay with alpha */
+        if (alpha > 0.0f)
+        {
+            GrlColor overlay;
+
+            overlay = grl_color_init (0, 0, 0, (guint8)(alpha * 255.0f));
+            grl_draw_rectangle (0, 0, (gint) width, (gint) height, &overlay);
+        }
+    }
 }
 
 static void

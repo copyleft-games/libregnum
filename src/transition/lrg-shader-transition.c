@@ -11,6 +11,8 @@
 #include "../tween/lrg-easing.h"
 #include "../lrg-log.h"
 
+#include <graylib.h>
+
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_TRANSITION
 
 /**
@@ -88,9 +90,9 @@ struct _LrgShaderTransition
 {
     LrgTransition parent_instance;
 
-    gchar     *fragment_source;
-    gboolean   shader_loaded;
-    guint      shader_id;  /* Placeholder for actual shader handle */
+    gchar      *fragment_source;
+    gboolean    shader_loaded;
+    GrlShader  *shader;
 
     /* Custom uniforms */
     GHashTable *uniforms;
@@ -156,10 +158,13 @@ lrg_shader_transition_initialize (LrgTransition  *transition,
     (void) width;
     (void) height;
 
-    /*
-     * TODO: Compile shader here using graylib shader API
-     * self->shader_id = grl_load_shader_from_memory (NULL, self->fragment_source);
-     */
+    /* Compile shader from stored fragment source */
+    self->shader = grl_shader_new_from_memory (NULL, self->fragment_source, error);
+    if (self->shader == NULL)
+    {
+        lrg_warning (LRG_LOG_DOMAIN_TRANSITION, "Failed to compile custom shader");
+        return FALSE;
+    }
 
     lrg_debug (LRG_LOG_DOMAIN_TRANSITION, "Shader transition initialized (viewport: %ux%u)", width, height);
 
@@ -173,12 +178,8 @@ lrg_shader_transition_shutdown (LrgTransition *transition)
 
     self = LRG_SHADER_TRANSITION (transition);
 
-    /*
-     * TODO: Unload shader
-     * if (self->shader_id != 0)
-     *     grl_unload_shader (self->shader_id);
-     */
-    self->shader_id = 0;
+    /* Unload the compiled shader */
+    g_clear_object (&self->shader);
 
     lrg_debug (LRG_LOG_DOMAIN_TRANSITION, "Shader transition shutdown");
 }
@@ -234,45 +235,83 @@ lrg_shader_transition_render (LrgTransition *transition,
         break;
     }
 
-    (void) old_scene_texture;
-    (void) new_scene_texture;
-    (void) width;
-    (void) height;
-    (void) self;
-    (void) overall_progress;
-    (void) phase_progress;
-    (void) phase_int;
+    if (self->shader == NULL)
+        return;
 
-    /*
-     * TODO: Integrate with graylib shader rendering
-     *
-     * grl_begin_shader_mode (self->shader_id);
-     *
-     * // Set built-in uniforms
-     * grl_set_shader_value (self->shader_id, "u_progress", &overall_progress, SHADER_UNIFORM_FLOAT);
-     * grl_set_shader_value (self->shader_id, "u_phase", &phase_int, SHADER_UNIFORM_INT);
-     * grl_set_shader_value (self->shader_id, "u_phase_progress", &phase_progress, SHADER_UNIFORM_FLOAT);
-     * float resolution[2] = { (float)width, (float)height };
-     * grl_set_shader_value (self->shader_id, "u_resolution", resolution, SHADER_UNIFORM_VEC2);
-     *
-     * // Set scene textures
-     * grl_set_shader_value_texture (self->shader_id, "u_old_scene", old_scene_texture);
-     * grl_set_shader_value_texture (self->shader_id, "u_new_scene", new_scene_texture);
-     *
-     * // Set custom uniforms
-     * GHashTableIter iter;
-     * gpointer key, value;
-     * g_hash_table_iter_init (&iter, self->uniforms);
-     * while (g_hash_table_iter_next (&iter, &key, &value)) {
-     *     ShaderUniform *u = value;
-     *     // Set uniform based on type...
-     * }
-     *
-     * // Draw fullscreen quad
-     * grl_draw_rectangle (0, 0, width, height, GRL_WHITE);
-     *
-     * grl_end_shader_mode ();
-     */
+    {
+        gint loc_progress;
+        gint loc_phase;
+        gint loc_phase_progress;
+        gint loc_resolution;
+        gint loc_old_scene;
+        gint loc_new_scene;
+        GHashTableIter iter;
+        gpointer key;
+        gpointer value;
+        GrlColor white;
+
+        /* Get built-in uniform locations */
+        loc_progress = grl_shader_get_location (self->shader, "u_progress");
+        loc_phase = grl_shader_get_location (self->shader, "u_phase");
+        loc_phase_progress = grl_shader_get_location (self->shader, "u_phase_progress");
+        loc_resolution = grl_shader_get_location (self->shader, "u_resolution");
+        loc_old_scene = grl_shader_get_location (self->shader, "u_old_scene");
+        loc_new_scene = grl_shader_get_location (self->shader, "u_new_scene");
+
+        grl_shader_begin (self->shader);
+
+        /* Set built-in uniforms */
+        grl_shader_set_value_float (self->shader, loc_progress, overall_progress);
+        grl_shader_set_value_int (self->shader, loc_phase, phase_int);
+        grl_shader_set_value_float (self->shader, loc_phase_progress, phase_progress);
+        grl_shader_set_value_vec2 (self->shader, loc_resolution, (gfloat) width, (gfloat) height);
+
+        /* Set scene textures using low-level sampler API for raw texture IDs */
+        if (loc_old_scene >= 0)
+            grl_rlgl_set_uniform_sampler (loc_old_scene, old_scene_texture);
+        if (loc_new_scene >= 0)
+            grl_rlgl_set_uniform_sampler (loc_new_scene, new_scene_texture);
+
+        /* Set custom uniforms from the hash table */
+        g_hash_table_iter_init (&iter, self->uniforms);
+        while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+            ShaderUniform *u;
+            gint loc;
+
+            u = (ShaderUniform *) value;
+            loc = grl_shader_get_location (self->shader, u->name);
+            if (loc < 0)
+                continue;
+
+            switch (u->type)
+            {
+            case 0: /* float */
+                grl_shader_set_value_float (self->shader, loc, u->values[0]);
+                break;
+            case 1: /* vec2 */
+                grl_shader_set_value_vec2 (self->shader, loc, u->values[0], u->values[1]);
+                break;
+            case 2: /* vec3 */
+                grl_shader_set_value_vec3 (self->shader, loc, u->values[0], u->values[1], u->values[2]);
+                break;
+            case 3: /* vec4 */
+                grl_shader_set_value_vec4 (self->shader, loc, u->values[0], u->values[1], u->values[2], u->values[3]);
+                break;
+            case 4: /* int */
+                grl_shader_set_value_int (self->shader, loc, u->int_value);
+                break;
+            default:
+                break;
+            }
+        }
+
+        /* Draw fullscreen quad */
+        white = grl_color_init (255, 255, 255, 255);
+        grl_draw_rectangle (0, 0, (gint) width, (gint) height, &white);
+
+        grl_shader_end (self->shader);
+    }
 }
 
 static void
@@ -363,7 +402,7 @@ lrg_shader_transition_init (LrgShaderTransition *self)
 {
     self->fragment_source = NULL;
     self->shader_loaded = FALSE;
-    self->shader_id = 0;
+    self->shader = NULL;
     self->uniforms = g_hash_table_new_full (g_str_hash, g_str_equal,
                                             NULL, shader_uniform_free);
 }

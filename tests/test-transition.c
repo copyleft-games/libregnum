@@ -274,6 +274,132 @@ test_shader_transition_load_source (TransitionFixture *fixture,
     g_assert_true (lrg_shader_transition_is_shader_loaded (shader));
 }
 
+static void
+test_shader_transition_uniforms (TransitionFixture *fixture,
+                                  gconstpointer      user_data)
+{
+    g_autoptr(LrgShaderTransition) shader = NULL;
+    g_autoptr(GError) error = NULL;
+    const gchar *source = "void main() { gl_FragColor = vec4(1.0); }";
+
+    (void) fixture;
+    (void) user_data;
+
+    shader = lrg_shader_transition_new ();
+    lrg_shader_transition_load_from_source (shader, source, &error);
+    g_assert_no_error (error);
+
+    /* These should not crash - setting uniforms before shader compilation */
+    lrg_shader_transition_set_uniform_float (shader, "u_test_float", 1.5f);
+    lrg_shader_transition_set_uniform_int (shader, "u_test_int", 42);
+    lrg_shader_transition_set_uniform_vec2 (shader, "u_test_vec2", 1.0f, 2.0f);
+    lrg_shader_transition_set_uniform_vec3 (shader, "u_test_vec3", 1.0f, 2.0f, 3.0f);
+    lrg_shader_transition_set_uniform_vec4 (shader, "u_test_vec4", 1.0f, 2.0f, 3.0f, 4.0f);
+
+    g_assert_true (lrg_shader_transition_is_shader_loaded (shader));
+}
+
+static void
+test_zoom_transition_properties (TransitionFixture *fixture,
+                                  gconstpointer      user_data)
+{
+    g_autoptr(LrgZoomTransition) zoom = NULL;
+
+    (void) fixture;
+    (void) user_data;
+
+    zoom = lrg_zoom_transition_new_with_direction (LRG_ZOOM_DIRECTION_OUT);
+    g_assert_cmpint (lrg_zoom_transition_get_direction (zoom), ==, LRG_ZOOM_DIRECTION_OUT);
+
+    /* Test scale clamping */
+    lrg_zoom_transition_set_scale (zoom, 5.0f);
+    g_assert_cmpfloat (lrg_zoom_transition_get_scale (zoom), ==, 5.0f);
+
+    /* Test center clamping */
+    lrg_zoom_transition_set_center (zoom, 0.0f, 1.0f);
+    g_assert_cmpfloat (lrg_zoom_transition_get_center_x (zoom), ==, 0.0f);
+    g_assert_cmpfloat (lrg_zoom_transition_get_center_y (zoom), ==, 1.0f);
+}
+
+static void
+test_slide_transition_modes (TransitionFixture *fixture,
+                              gconstpointer      user_data)
+{
+    g_autoptr(LrgSlideTransition) slide = NULL;
+
+    (void) fixture;
+    (void) user_data;
+
+    slide = lrg_slide_transition_new ();
+
+    /* Test all modes */
+    lrg_slide_transition_set_mode (slide, LRG_SLIDE_MODE_COVER);
+    g_assert_cmpint (lrg_slide_transition_get_mode (slide), ==, LRG_SLIDE_MODE_COVER);
+
+    lrg_slide_transition_set_mode (slide, LRG_SLIDE_MODE_REVEAL);
+    g_assert_cmpint (lrg_slide_transition_get_mode (slide), ==, LRG_SLIDE_MODE_REVEAL);
+
+    lrg_slide_transition_set_mode (slide, LRG_SLIDE_MODE_PUSH);
+    g_assert_cmpint (lrg_slide_transition_get_mode (slide), ==, LRG_SLIDE_MODE_PUSH);
+
+    /* Test all directions */
+    lrg_slide_transition_set_direction (slide, LRG_TRANSITION_DIRECTION_RIGHT);
+    g_assert_cmpint (lrg_slide_transition_get_direction (slide), ==, LRG_TRANSITION_DIRECTION_RIGHT);
+
+    lrg_slide_transition_set_direction (slide, LRG_TRANSITION_DIRECTION_UP);
+    g_assert_cmpint (lrg_slide_transition_get_direction (slide), ==, LRG_TRANSITION_DIRECTION_UP);
+
+    lrg_slide_transition_set_direction (slide, LRG_TRANSITION_DIRECTION_DOWN);
+    g_assert_cmpint (lrg_slide_transition_get_direction (slide), ==, LRG_TRANSITION_DIRECTION_DOWN);
+}
+
+static void
+test_dissolve_transition_properties (TransitionFixture *fixture,
+                                      gconstpointer      user_data)
+{
+    g_autoptr(LrgDissolveTransition) dissolve = NULL;
+
+    (void) fixture;
+    (void) user_data;
+
+    dissolve = lrg_dissolve_transition_new ();
+
+    /* Test noise scale */
+    lrg_dissolve_transition_set_noise_scale (dissolve, 16.0f);
+    g_assert_cmpfloat (lrg_dissolve_transition_get_noise_scale (dissolve), ==, 16.0f);
+
+    /* Test edge width */
+    lrg_dissolve_transition_set_edge_width (dissolve, 0.1f);
+    g_assert_cmpfloat (lrg_dissolve_transition_get_edge_width (dissolve), ==, 0.1f);
+
+    /* Test seed */
+    lrg_dissolve_transition_set_seed (dissolve, 12345);
+    g_assert_cmpuint (lrg_dissolve_transition_get_seed (dissolve), ==, 12345);
+}
+
+static void
+test_wipe_transition_softness (TransitionFixture *fixture,
+                                gconstpointer      user_data)
+{
+    g_autoptr(LrgWipeTransition) wipe = NULL;
+
+    (void) fixture;
+    (void) user_data;
+
+    wipe = lrg_wipe_transition_new ();
+
+    /* Test softness setting */
+    lrg_wipe_transition_set_softness (wipe, 0.5f);
+    g_assert_cmpfloat (lrg_wipe_transition_get_softness (wipe), ==, 0.5f);
+
+    /* Test all directions */
+    lrg_wipe_transition_set_direction (wipe, LRG_TRANSITION_DIRECTION_RIGHT);
+    g_assert_cmpint (lrg_wipe_transition_get_direction (wipe), ==, LRG_TRANSITION_DIRECTION_RIGHT);
+
+    lrg_wipe_transition_set_direction (wipe, LRG_TRANSITION_DIRECTION_DOWN);
+    g_assert_cmpint (lrg_wipe_transition_get_direction (wipe), ==, LRG_TRANSITION_DIRECTION_DOWN);
+}
+
 /* ==========================================================================
  * Transition State Tests
  * ========================================================================== */
@@ -722,6 +848,37 @@ main (int   argc,
                 TransitionFixture, NULL,
                 transition_fixture_set_up,
                 test_shader_transition_load_source,
+                transition_fixture_tear_down);
+
+    g_test_add ("/transition/shader/uniforms",
+                TransitionFixture, NULL,
+                transition_fixture_set_up,
+                test_shader_transition_uniforms,
+                transition_fixture_tear_down);
+
+    /* Extended property tests */
+    g_test_add ("/transition/zoom/properties",
+                TransitionFixture, NULL,
+                transition_fixture_set_up,
+                test_zoom_transition_properties,
+                transition_fixture_tear_down);
+
+    g_test_add ("/transition/slide/modes",
+                TransitionFixture, NULL,
+                transition_fixture_set_up,
+                test_slide_transition_modes,
+                transition_fixture_tear_down);
+
+    g_test_add ("/transition/dissolve/properties",
+                TransitionFixture, NULL,
+                transition_fixture_set_up,
+                test_dissolve_transition_properties,
+                transition_fixture_tear_down);
+
+    g_test_add ("/transition/wipe/softness",
+                TransitionFixture, NULL,
+                transition_fixture_set_up,
+                test_wipe_transition_softness,
                 transition_fixture_tear_down);
 
     /* State tests */

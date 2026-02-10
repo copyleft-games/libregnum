@@ -11,6 +11,8 @@
 #include "../tween/lrg-easing.h"
 #include "../lrg-log.h"
 
+#include <graylib.h>
+
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_TRANSITION
 
 /**
@@ -189,28 +191,46 @@ lrg_fade_transition_render (LrgTransition *transition,
      *   - Draw rectangle with color (r,g,b,alpha*255)
      */
 
-    (void) self;
-    (void) alpha;
-    (void) old_scene_texture;
-    (void) new_scene_texture;
-    (void) width;
-    (void) height;
-
     /*
-     * TODO: Integrate with graylib rendering when graphics subsystem is ready.
-     * For now, this serves as the interface that transition managers will use.
-     *
-     * Example integration:
-     *
-     * GrlColor fade_color = { self->red, self->green, self->blue, (guint8)(alpha * 255) };
-     *
-     * if (state == LRG_TRANSITION_STATE_OUT)
-     *     grl_draw_texture (old_scene_texture, 0, 0, GRL_WHITE);
-     * else if (state == LRG_TRANSITION_STATE_IN)
-     *     grl_draw_texture (new_scene_texture, 0, 0, GRL_WHITE);
-     *
-     * grl_draw_rectangle (0, 0, width, height, fade_color);
+     * Draw scene texture as a fullscreen quad using rlgl,
+     * then overlay a colored rectangle with the fade alpha.
      */
+    if (state == LRG_TRANSITION_STATE_OUT && old_scene_texture != 0)
+    {
+        /* Draw old scene */
+        grl_rlgl_enable_texture (old_scene_texture);
+        grl_rlgl_begin (GRL_RLGL_QUADS);
+            grl_rlgl_color4ub (255, 255, 255, 255);
+            grl_rlgl_tex_coord2f (0.0f, 1.0f); grl_rlgl_vertex2f (0.0f, 0.0f);
+            grl_rlgl_tex_coord2f (0.0f, 0.0f); grl_rlgl_vertex2f (0.0f, (gfloat) height);
+            grl_rlgl_tex_coord2f (1.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) width, (gfloat) height);
+            grl_rlgl_tex_coord2f (1.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) width, 0.0f);
+        grl_rlgl_end ();
+        grl_rlgl_disable_texture ();
+    }
+    else if (state == LRG_TRANSITION_STATE_IN && new_scene_texture != 0)
+    {
+        /* Draw new scene */
+        grl_rlgl_enable_texture (new_scene_texture);
+        grl_rlgl_begin (GRL_RLGL_QUADS);
+            grl_rlgl_color4ub (255, 255, 255, 255);
+            grl_rlgl_tex_coord2f (0.0f, 1.0f); grl_rlgl_vertex2f (0.0f, 0.0f);
+            grl_rlgl_tex_coord2f (0.0f, 0.0f); grl_rlgl_vertex2f (0.0f, (gfloat) height);
+            grl_rlgl_tex_coord2f (1.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) width, (gfloat) height);
+            grl_rlgl_tex_coord2f (1.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) width, 0.0f);
+        grl_rlgl_end ();
+        grl_rlgl_disable_texture ();
+    }
+
+    /* Draw fade color overlay */
+    if (alpha > 0.0f)
+    {
+        GrlColor overlay;
+
+        overlay = grl_color_init (self->red, self->green, self->blue,
+                                  (guint8)(alpha * 255.0f));
+        grl_draw_rectangle (0, 0, (gint) width, (gint) height, &overlay);
+    }
 }
 
 static void

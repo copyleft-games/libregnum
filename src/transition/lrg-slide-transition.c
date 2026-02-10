@@ -11,6 +11,8 @@
 #include "../tween/lrg-easing.h"
 #include "../lrg-log.h"
 
+#include <graylib.h>
+
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_TRANSITION
 
 /**
@@ -262,28 +264,80 @@ lrg_slide_transition_render (LrgTransition *transition,
         break;
     }
 
-    (void) old_x;
-    (void) old_y;
-    (void) new_x;
-    (void) new_y;
-    (void) old_scene_texture;
-    (void) new_scene_texture;
-
     /*
-     * TODO: Integrate with graylib rendering
+     * Draw the two scene textures at their calculated offsets.
      *
-     * For REVEAL mode, draw new scene first (behind):
-     *   grl_draw_texture_ex (new_scene_texture, new_x, new_y, ...);
-     *   grl_draw_texture_ex (old_scene_texture, old_x, old_y, ...);
-     *
-     * For COVER mode, draw old scene first (behind):
-     *   grl_draw_texture_ex (old_scene_texture, old_x, old_y, ...);
-     *   grl_draw_texture_ex (new_scene_texture, new_x, new_y, ...);
-     *
-     * For PUSH mode, order doesn't matter (no overlap):
-     *   grl_draw_texture_ex (old_scene_texture, old_x, old_y, ...);
-     *   grl_draw_texture_ex (new_scene_texture, new_x, new_y, ...);
+     * Layer ordering depends on slide mode:
+     * - REVEAL: new scene first (behind), old scene on top (slides away)
+     * - COVER: old scene first (behind), new scene on top (slides over)
+     * - PUSH: no overlap, order doesn't matter
      */
+
+    if (self->mode == LRG_SLIDE_MODE_REVEAL)
+    {
+        /* Draw new scene behind (stationary at 0,0) */
+        if (new_scene_texture != 0)
+        {
+            grl_rlgl_enable_texture (new_scene_texture);
+            grl_rlgl_begin (GRL_RLGL_QUADS);
+                grl_rlgl_color4ub (255, 255, 255, 255);
+                grl_rlgl_tex_coord2f (0.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) new_x, (gfloat) new_y);
+                grl_rlgl_tex_coord2f (0.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) new_x, (gfloat) new_y + (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) new_x + (gfloat) width, (gfloat) new_y + (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) new_x + (gfloat) width, (gfloat) new_y);
+            grl_rlgl_end ();
+            grl_rlgl_disable_texture ();
+        }
+
+        /* Draw old scene on top (slides away) */
+        if (old_scene_texture != 0)
+        {
+            grl_rlgl_enable_texture (old_scene_texture);
+            grl_rlgl_begin (GRL_RLGL_QUADS);
+                grl_rlgl_color4ub (255, 255, 255, 255);
+                grl_rlgl_tex_coord2f (0.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) old_x, (gfloat) old_y);
+                grl_rlgl_tex_coord2f (0.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) old_x, (gfloat) old_y + (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) old_x + (gfloat) width, (gfloat) old_y + (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) old_x + (gfloat) width, (gfloat) old_y);
+            grl_rlgl_end ();
+            grl_rlgl_disable_texture ();
+        }
+    }
+    else
+    {
+        /*
+         * COVER: old scene behind, new scene slides over.
+         * PUSH: both move together, no overlap, same draw order works.
+         */
+
+        /* Draw old scene (behind or moving) */
+        if (old_scene_texture != 0)
+        {
+            grl_rlgl_enable_texture (old_scene_texture);
+            grl_rlgl_begin (GRL_RLGL_QUADS);
+                grl_rlgl_color4ub (255, 255, 255, 255);
+                grl_rlgl_tex_coord2f (0.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) old_x, (gfloat) old_y);
+                grl_rlgl_tex_coord2f (0.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) old_x, (gfloat) old_y + (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) old_x + (gfloat) width, (gfloat) old_y + (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) old_x + (gfloat) width, (gfloat) old_y);
+            grl_rlgl_end ();
+            grl_rlgl_disable_texture ();
+        }
+
+        /* Draw new scene (on top or moving) */
+        if (new_scene_texture != 0)
+        {
+            grl_rlgl_enable_texture (new_scene_texture);
+            grl_rlgl_begin (GRL_RLGL_QUADS);
+                grl_rlgl_color4ub (255, 255, 255, 255);
+                grl_rlgl_tex_coord2f (0.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) new_x, (gfloat) new_y);
+                grl_rlgl_tex_coord2f (0.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) new_x, (gfloat) new_y + (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) new_x + (gfloat) width, (gfloat) new_y + (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) new_x + (gfloat) width, (gfloat) new_y);
+            grl_rlgl_end ();
+            grl_rlgl_disable_texture ();
+        }
+    }
 }
 
 static void

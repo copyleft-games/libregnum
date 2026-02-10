@@ -11,6 +11,8 @@
 #include "../tween/lrg-easing.h"
 #include "../lrg-log.h"
 
+#include <graylib.h>
+
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_TRANSITION
 
 /**
@@ -175,30 +177,122 @@ lrg_wipe_transition_render (LrgTransition *transition,
         break;
     }
 
-    (void) self;
-    (void) wipe_position;
-    (void) old_scene_texture;
-    (void) new_scene_texture;
-    (void) width;
-    (void) height;
-
     /*
-     * TODO: Integrate with graylib rendering
+     * Render the wipe by using scissor clipping.
      *
-     * The wipe is rendered by drawing a scissored rectangle:
+     * During OUT: draw old scene in uncovered area, solid color in wiped area
+     * During HOLD: solid color fills the entire screen
+     * During IN: draw new scene in revealed area, solid color in covered area
      *
-     * For horizontal wipes (LEFT/RIGHT):
-     *   - Calculate x position based on wipe_position and width
-     *   - Draw appropriate scene, clipped to visible portion
-     *   - Draw solid color in wiped portion
-     *
-     * For vertical wipes (UP/DOWN):
-     *   - Calculate y position based on wipe_position and height
-     *   - Draw appropriate scene, clipped to visible portion
-     *   - Draw solid color in wiped portion
-     *
-     * The softness is applied as a gradient at the wipe edge.
+     * The wipe position determines the boundary.
      */
+    if (state == LRG_TRANSITION_STATE_HOLD)
+    {
+        /* Solid black fill during hold */
+        GrlColor black;
+
+        black = grl_color_init (0, 0, 0, 255);
+        grl_draw_rectangle (0, 0, (gint) width, (gint) height, &black);
+        return;
+    }
+
+    {
+        guint scene_tex;
+        gint wipe_px;
+        gint sx, sy, sw, sh;   /* scissor for scene visible area */
+        gint cx, cy, cw, ch;   /* rect for covered/solid color area */
+        GrlColor solid;
+
+        scene_tex = (state == LRG_TRANSITION_STATE_OUT) ? old_scene_texture : new_scene_texture;
+        solid = grl_color_init (0, 0, 0, 255);
+
+        /* Calculate wipe boundary and scissor regions */
+        switch (self->direction)
+        {
+        case LRG_TRANSITION_DIRECTION_LEFT:
+            wipe_px = (gint)(wipe_position * (gfloat) width);
+            if (state == LRG_TRANSITION_STATE_OUT)
+            {
+                /* Scene visible on right, solid on left */
+                sx = wipe_px; sy = 0; sw = (gint) width - wipe_px; sh = (gint) height;
+                cx = 0; cy = 0; cw = wipe_px; ch = (gint) height;
+            }
+            else
+            {
+                /* Scene revealed from left, solid on right */
+                sx = 0; sy = 0; sw = wipe_px; sh = (gint) height;
+                cx = wipe_px; cy = 0; cw = (gint) width - wipe_px; ch = (gint) height;
+            }
+            break;
+
+        case LRG_TRANSITION_DIRECTION_RIGHT:
+            wipe_px = (gint)(wipe_position * (gfloat) width);
+            if (state == LRG_TRANSITION_STATE_OUT)
+            {
+                /* Scene visible on left, solid on right */
+                sx = 0; sy = 0; sw = (gint) width - wipe_px; sh = (gint) height;
+                cx = (gint) width - wipe_px; cy = 0; cw = wipe_px; ch = (gint) height;
+            }
+            else
+            {
+                /* Scene revealed from right, solid on left */
+                sx = (gint) width - wipe_px; sy = 0; sw = wipe_px; sh = (gint) height;
+                cx = 0; cy = 0; cw = (gint) width - wipe_px; ch = (gint) height;
+            }
+            break;
+
+        case LRG_TRANSITION_DIRECTION_UP:
+            wipe_px = (gint)(wipe_position * (gfloat) height);
+            if (state == LRG_TRANSITION_STATE_OUT)
+            {
+                sx = 0; sy = wipe_px; sw = (gint) width; sh = (gint) height - wipe_px;
+                cx = 0; cy = 0; cw = (gint) width; ch = wipe_px;
+            }
+            else
+            {
+                sx = 0; sy = 0; sw = (gint) width; sh = wipe_px;
+                cx = 0; cy = wipe_px; cw = (gint) width; ch = (gint) height - wipe_px;
+            }
+            break;
+
+        case LRG_TRANSITION_DIRECTION_DOWN:
+        default:
+            wipe_px = (gint)(wipe_position * (gfloat) height);
+            if (state == LRG_TRANSITION_STATE_OUT)
+            {
+                sx = 0; sy = 0; sw = (gint) width; sh = (gint) height - wipe_px;
+                cx = 0; cy = (gint) height - wipe_px; cw = (gint) width; ch = wipe_px;
+            }
+            else
+            {
+                sx = 0; sy = (gint) height - wipe_px; sw = (gint) width; sh = wipe_px;
+                cx = 0; cy = 0; cw = (gint) width; ch = (gint) height - wipe_px;
+            }
+            break;
+        }
+
+        /* Draw solid color in wiped area */
+        if (cw > 0 && ch > 0)
+            grl_draw_rectangle (cx, cy, cw, ch, &solid);
+
+        /* Draw scene in visible area using scissor clip */
+        if (sw > 0 && sh > 0 && scene_tex != 0)
+        {
+            grl_draw_begin_scissor_mode (sx, sy, sw, sh);
+
+            grl_rlgl_enable_texture (scene_tex);
+            grl_rlgl_begin (GRL_RLGL_QUADS);
+                grl_rlgl_color4ub (255, 255, 255, 255);
+                grl_rlgl_tex_coord2f (0.0f, 1.0f); grl_rlgl_vertex2f (0.0f, 0.0f);
+                grl_rlgl_tex_coord2f (0.0f, 0.0f); grl_rlgl_vertex2f (0.0f, (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) width, (gfloat) height);
+                grl_rlgl_tex_coord2f (1.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) width, 0.0f);
+            grl_rlgl_end ();
+            grl_rlgl_disable_texture ();
+
+            grl_draw_end_scissor_mode ();
+        }
+    }
 }
 
 static void

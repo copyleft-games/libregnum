@@ -11,6 +11,8 @@
 #include "../tween/lrg-easing.h"
 #include "../lrg-log.h"
 
+#include <graylib.h>
+
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_TRANSITION
 
 /**
@@ -56,7 +58,57 @@ struct _LrgDissolveTransition
     guint8 edge_r;
     guint8 edge_g;
     guint8 edge_b;
+
+    /* Compiled dissolve shader */
+    GrlShader *shader;
 };
+
+/*
+ * Built-in fragment shader for dissolve effect.
+ * Uses a hash-based noise function to create the dissolve pattern.
+ */
+static const gchar *dissolve_fragment_shader =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "out vec4 finalColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform float u_threshold;\n"
+    "uniform float u_noise_scale;\n"
+    "uniform float u_seed;\n"
+    "uniform float u_edge_width;\n"
+    "uniform vec3 u_edge_color;\n"
+    "\n"
+    "/* Hash-based noise function */\n"
+    "float hash(vec2 p) {\n"
+    "    vec3 p3 = fract(vec3(p.xyx) * 0.1031);\n"
+    "    p3 += dot(p3, p3.yzx + 33.33);\n"
+    "    return fract((p3.x + p3.y) * p3.z);\n"
+    "}\n"
+    "\n"
+    "float noise(vec2 uv) {\n"
+    "    vec2 i = floor(uv);\n"
+    "    vec2 f = fract(uv);\n"
+    "    f = f * f * (3.0 - 2.0 * f);\n"
+    "    float a = hash(i + vec2(0.0, 0.0));\n"
+    "    float b = hash(i + vec2(1.0, 0.0));\n"
+    "    float c = hash(i + vec2(0.0, 1.0));\n"
+    "    float d = hash(i + vec2(1.0, 1.0));\n"
+    "    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);\n"
+    "}\n"
+    "\n"
+    "void main() {\n"
+    "    vec4 scene_color = texture(texture0, fragTexCoord) * fragColor;\n"
+    "    float n = noise(fragTexCoord * u_noise_scale + vec2(u_seed));\n"
+    "    if (n < u_threshold - u_edge_width) {\n"
+    "        discard;\n"
+    "    } else if (n < u_threshold && u_edge_width > 0.0) {\n"
+    "        float t = (u_threshold - n) / u_edge_width;\n"
+    "        finalColor = mix(scene_color, vec4(u_edge_color, 1.0), t);\n"
+    "    } else {\n"
+    "        finalColor = scene_color;\n"
+    "    }\n"
+    "}\n";
 
 enum
 {
@@ -84,10 +136,20 @@ lrg_dissolve_transition_initialize (LrgTransition  *transition,
                                     guint           height,
                                     GError        **error)
 {
-    (void) transition;
+    LrgDissolveTransition *self;
+
+    self = LRG_DISSOLVE_TRANSITION (transition);
+
     (void) width;
     (void) height;
-    (void) error;
+
+    /* Compile the built-in dissolve shader */
+    self->shader = grl_shader_new_from_memory (NULL, dissolve_fragment_shader, error);
+    if (self->shader == NULL)
+    {
+        lrg_warning (LRG_LOG_DOMAIN_TRANSITION, "Failed to compile dissolve shader");
+        return FALSE;
+    }
 
     lrg_debug (LRG_LOG_DOMAIN_TRANSITION, "Dissolve transition initialized (viewport: %ux%u)", width, height);
 
@@ -97,7 +159,11 @@ lrg_dissolve_transition_initialize (LrgTransition  *transition,
 static void
 lrg_dissolve_transition_shutdown (LrgTransition *transition)
 {
-    (void) transition;
+    LrgDissolveTransition *self;
+
+    self = LRG_DISSOLVE_TRANSITION (transition);
+
+    g_clear_object (&self->shader);
 
     lrg_debug (LRG_LOG_DOMAIN_TRANSITION, "Dissolve transition shutdown");
 }
@@ -180,35 +246,69 @@ lrg_dissolve_transition_render (LrgTransition *transition,
         break;
     }
 
-    (void) self;
-    (void) threshold;
-    (void) old_scene_texture;
-    (void) new_scene_texture;
-    (void) width;
-    (void) height;
-
     /*
-     * TODO: Integrate with graylib shader rendering
-     *
-     * The dissolve effect is typically done with a shader that:
-     * 1. Samples a noise texture (or generates procedural noise)
-     * 2. Compares noise value to threshold
-     * 3. If noise < threshold, show dissolve color
-     * 4. If noise is near threshold (within edge_width), blend edge color
-     * 5. Otherwise show scene texture
-     *
-     * Fragment shader pseudocode:
-     *
-     * float noise = sample_noise(uv, seed, noise_scale);
-     * if (noise < threshold - edge_width) {
-     *     fragColor = dissolve_color;
-     * } else if (noise < threshold) {
-     *     float t = (threshold - noise) / edge_width;
-     *     fragColor = mix(scene_color, edge_color, t);
-     * } else {
-     *     fragColor = scene_color;
-     * }
+     * Render using the dissolve shader.
+     * The shader uses procedural noise to determine which pixels
+     * are dissolved based on the threshold.
      */
+    {
+        guint scene_tex;
+        gint loc_threshold;
+        gint loc_noise_scale;
+        gint loc_seed;
+        gint loc_edge_width;
+        gint loc_edge_color;
+
+        scene_tex = 0;
+
+        if (state == LRG_TRANSITION_STATE_OUT && old_scene_texture != 0)
+            scene_tex = old_scene_texture;
+        else if (state == LRG_TRANSITION_STATE_IN && new_scene_texture != 0)
+            scene_tex = new_scene_texture;
+        else if (state == LRG_TRANSITION_STATE_HOLD)
+        {
+            /* Solid black during hold */
+            GrlColor black;
+
+            black = grl_color_init (0, 0, 0, 255);
+            grl_draw_rectangle (0, 0, (gint) width, (gint) height, &black);
+            return;
+        }
+
+        if (scene_tex == 0 || self->shader == NULL)
+            return;
+
+        /* Set shader uniforms */
+        loc_threshold = grl_shader_get_location (self->shader, "u_threshold");
+        loc_noise_scale = grl_shader_get_location (self->shader, "u_noise_scale");
+        loc_seed = grl_shader_get_location (self->shader, "u_seed");
+        loc_edge_width = grl_shader_get_location (self->shader, "u_edge_width");
+        loc_edge_color = grl_shader_get_location (self->shader, "u_edge_color");
+
+        grl_shader_begin (self->shader);
+
+        grl_shader_set_value_float (self->shader, loc_threshold, threshold);
+        grl_shader_set_value_float (self->shader, loc_noise_scale, self->noise_scale);
+        grl_shader_set_value_float (self->shader, loc_seed, (gfloat) self->active_seed);
+        grl_shader_set_value_float (self->shader, loc_edge_width, self->edge_width);
+        grl_shader_set_value_vec3 (self->shader, loc_edge_color,
+                                   (gfloat) self->edge_r / 255.0f,
+                                   (gfloat) self->edge_g / 255.0f,
+                                   (gfloat) self->edge_b / 255.0f);
+
+        /* Draw scene texture as fullscreen quad through the shader */
+        grl_rlgl_enable_texture (scene_tex);
+        grl_rlgl_begin (GRL_RLGL_QUADS);
+            grl_rlgl_color4ub (255, 255, 255, 255);
+            grl_rlgl_tex_coord2f (0.0f, 1.0f); grl_rlgl_vertex2f (0.0f, 0.0f);
+            grl_rlgl_tex_coord2f (0.0f, 0.0f); grl_rlgl_vertex2f (0.0f, (gfloat) height);
+            grl_rlgl_tex_coord2f (1.0f, 0.0f); grl_rlgl_vertex2f ((gfloat) width, (gfloat) height);
+            grl_rlgl_tex_coord2f (1.0f, 1.0f); grl_rlgl_vertex2f ((gfloat) width, 0.0f);
+        grl_rlgl_end ();
+        grl_rlgl_disable_texture ();
+
+        grl_shader_end (self->shader);
+    }
 }
 
 static void
