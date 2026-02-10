@@ -8,6 +8,10 @@
 
 #include "lrg-graphics-settings.h"
 #include <gio/gio.h>
+#include <graylib.h>
+#include "../core/lrg-engine.h"
+#include "../graphics/lrg-window.h"
+#include "../graphics/lrg-grl-window.h"
 
 /**
  * SECTION:lrg-graphics-settings
@@ -165,12 +169,80 @@ apply_quality_preset_internal (LrgGraphicsSettings *self,
 static void
 lrg_graphics_settings_apply (LrgSettingsGroup *group)
 {
+    LrgGraphicsSettings *self = LRG_GRAPHICS_SETTINGS (group);
+    LrgEngine    *engine;
+    LrgWindow    *window;
+    GrlWindow    *grl_window;
+    gboolean      is_fullscreen;
+
+    engine = lrg_engine_get_default ();
+    if (engine == NULL)
+    {
+        g_debug ("LrgGraphicsSettings: no engine available, skipping apply");
+        return;
+    }
+
+    window = lrg_engine_get_window (engine);
+    if (window == NULL)
+    {
+        g_debug ("LrgGraphicsSettings: no window available, skipping apply");
+        return;
+    }
+
+    /* Apply FPS limit via LrgWindow */
+    lrg_window_set_target_fps (window, self->fps_limit);
+
     /*
-     * TODO: Apply settings to the renderer/engine.
-     * This would integrate with graylib/engine systems.
-     * For now, just log that we would apply.
+     * Apply graylib-specific settings if the window is the graylib backend.
+     * These require access to the underlying GrlWindow.
      */
-    g_debug ("LrgGraphicsSettings: apply() called - would apply to renderer");
+    if (!LRG_IS_GRL_WINDOW (window))
+    {
+        g_debug ("LrgGraphicsSettings: window is not LrgGrlWindow, "
+                 "skipping graylib-specific settings");
+        return;
+    }
+
+    grl_window = lrg_grl_window_get_grl_window (LRG_GRL_WINDOW (window));
+    if (grl_window == NULL)
+        return;
+
+    /* Apply resolution */
+    grl_window_set_size (grl_window, self->width, self->height);
+
+    /* Apply vsync */
+    lrg_grl_window_set_vsync (LRG_GRL_WINDOW (window), self->vsync);
+
+    /*
+     * Apply fullscreen mode.
+     * graylib exposes toggle functions, so we compare the current state
+     * and toggle only when needed.
+     */
+    is_fullscreen = grl_window_is_fullscreen (grl_window);
+
+    switch (self->fullscreen_mode)
+    {
+    case LRG_FULLSCREEN_WINDOWED:
+        if (is_fullscreen)
+            grl_window_toggle_fullscreen (grl_window);
+        break;
+
+    case LRG_FULLSCREEN_FULLSCREEN:
+        if (!is_fullscreen)
+            grl_window_toggle_fullscreen (grl_window);
+        break;
+
+    case LRG_FULLSCREEN_BORDERLESS:
+        /* Ensure not in exclusive fullscreen first */
+        if (is_fullscreen)
+            grl_window_toggle_fullscreen (grl_window);
+        grl_window_toggle_borderless (grl_window);
+        break;
+    }
+
+    g_debug ("LrgGraphicsSettings: applied %dx%d, fps=%d, vsync=%s, fullscreen=%d",
+             self->width, self->height, self->fps_limit,
+             self->vsync ? "on" : "off", self->fullscreen_mode);
 }
 
 static void

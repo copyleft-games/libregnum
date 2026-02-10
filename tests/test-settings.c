@@ -474,6 +474,215 @@ test_settings_is_dirty (SettingsFixture *fixture,
 }
 
 /* ==========================================================================
+ * Test Cases - Apply Methods
+ * ========================================================================== */
+
+/*
+ * Test that graphics apply() gracefully handles the case where no engine
+ * is running. In unit tests there is no LrgEngine singleton, so the apply
+ * function should return without crashing.
+ */
+static void
+test_graphics_settings_apply_no_engine (SettingsFixture *fixture,
+                                        gconstpointer    user_data)
+{
+    LrgGraphicsSettings *graphics;
+
+    graphics = lrg_settings_get_graphics (fixture->settings);
+
+    /* Configure some non-default values */
+    lrg_graphics_settings_set_resolution (graphics, 2560, 1440);
+    lrg_graphics_settings_set_vsync (graphics, FALSE);
+    lrg_graphics_settings_set_fps_limit (graphics, 144);
+    lrg_graphics_settings_set_fullscreen_mode (graphics, LRG_FULLSCREEN_FULLSCREEN);
+
+    /* Apply should not crash even without an engine */
+    lrg_settings_group_apply (LRG_SETTINGS_GROUP (graphics));
+
+    /* Settings values should be unchanged after apply */
+    g_assert_cmpint (lrg_graphics_settings_get_fps_limit (graphics), ==, 144);
+    g_assert_false (lrg_graphics_settings_get_vsync (graphics));
+}
+
+/*
+ * Test that audio apply() gracefully handles the case where no audio manager
+ * is running. In unit tests there is no LrgAudioManager singleton, so the
+ * apply function should return without crashing.
+ */
+static void
+test_audio_settings_apply_no_engine (SettingsFixture *fixture,
+                                     gconstpointer    user_data)
+{
+    LrgAudioSettings *audio;
+
+    audio = lrg_settings_get_audio (fixture->settings);
+
+    /* Configure some non-default values */
+    lrg_audio_settings_set_master_volume (audio, 0.5);
+    lrg_audio_settings_set_music_volume (audio, 0.3);
+    lrg_audio_settings_set_sfx_volume (audio, 0.8);
+    lrg_audio_settings_set_voice_volume (audio, 0.7);
+    lrg_audio_settings_set_muted (audio, TRUE);
+
+    /* Apply should not crash even without an audio manager */
+    lrg_settings_group_apply (LRG_SETTINGS_GROUP (audio));
+
+    /* Settings values should be unchanged after apply */
+    g_assert_cmpfloat_with_epsilon (lrg_audio_settings_get_master_volume (audio),
+                                    0.5, 0.001);
+    g_assert_true (lrg_audio_settings_get_muted (audio));
+}
+
+/*
+ * Test that lrg_settings_apply_all() calls apply on all groups without
+ * crashing, even when no engine or audio subsystems are initialized.
+ */
+static void
+test_settings_apply_all_no_engine (SettingsFixture *fixture,
+                                   gconstpointer    user_data)
+{
+    LrgGraphicsSettings *graphics;
+    LrgAudioSettings    *audio;
+    gint                 width;
+    gint                 height;
+
+    graphics = lrg_settings_get_graphics (fixture->settings);
+    audio = lrg_settings_get_audio (fixture->settings);
+
+    /* Set values on both groups */
+    lrg_graphics_settings_set_resolution (graphics, 1280, 720);
+    lrg_graphics_settings_set_fps_limit (graphics, 60);
+    lrg_audio_settings_set_master_volume (audio, 0.9);
+
+    /* Apply all should not crash */
+    lrg_settings_apply_all (fixture->settings);
+
+    /* Verify values are still intact after apply_all */
+    lrg_graphics_settings_get_resolution (graphics, &width, &height);
+    g_assert_cmpint (width, ==, 1280);
+    g_assert_cmpint (height, ==, 720);
+    g_assert_cmpint (lrg_graphics_settings_get_fps_limit (graphics), ==, 60);
+    g_assert_cmpfloat_with_epsilon (lrg_audio_settings_get_master_volume (audio),
+                                    0.9, 0.001);
+}
+
+/*
+ * Test that quality presets correctly configure individual settings,
+ * and that changing an individual setting switches to Custom preset.
+ */
+static void
+test_graphics_quality_presets (SettingsFixture *fixture,
+                               gconstpointer    user_data)
+{
+    LrgGraphicsSettings *graphics;
+
+    graphics = lrg_settings_get_graphics (fixture->settings);
+
+    /* Apply Low preset */
+    lrg_graphics_settings_set_quality_preset (graphics, LRG_QUALITY_LOW);
+    g_assert_cmpint (lrg_graphics_settings_get_quality_preset (graphics),
+                     ==, LRG_QUALITY_LOW);
+    g_assert_cmpint (lrg_graphics_settings_get_anti_aliasing (graphics),
+                     ==, LRG_AA_NONE);
+    g_assert_cmpint (lrg_graphics_settings_get_texture_quality (graphics),
+                     ==, 0);
+    g_assert_false (lrg_graphics_settings_get_bloom_enabled (graphics));
+
+    /* Apply Ultra preset */
+    lrg_graphics_settings_set_quality_preset (graphics, LRG_QUALITY_ULTRA);
+    g_assert_cmpint (lrg_graphics_settings_get_quality_preset (graphics),
+                     ==, LRG_QUALITY_ULTRA);
+    g_assert_cmpint (lrg_graphics_settings_get_anti_aliasing (graphics),
+                     ==, LRG_AA_MSAA_4X);
+    g_assert_cmpint (lrg_graphics_settings_get_texture_quality (graphics),
+                     ==, 3);
+    g_assert_true (lrg_graphics_settings_get_bloom_enabled (graphics));
+    g_assert_true (lrg_graphics_settings_get_motion_blur_enabled (graphics));
+
+    /* Changing an individual setting should switch to Custom */
+    lrg_graphics_settings_set_bloom_enabled (graphics, FALSE);
+    g_assert_cmpint (lrg_graphics_settings_get_quality_preset (graphics),
+                     ==, LRG_QUALITY_CUSTOM);
+}
+
+/*
+ * Test audio volume clamping at boundaries.
+ */
+static void
+test_audio_settings_volume_clamping (SettingsFixture *fixture,
+                                     gconstpointer    user_data)
+{
+    LrgAudioSettings *audio;
+
+    audio = lrg_settings_get_audio (fixture->settings);
+
+    /* Values below 0.0 should clamp to 0.0 */
+    lrg_audio_settings_set_master_volume (audio, -0.5);
+    g_assert_cmpfloat_with_epsilon (lrg_audio_settings_get_master_volume (audio),
+                                    0.0, 0.001);
+
+    /* Values above 1.0 should clamp to 1.0 */
+    lrg_audio_settings_set_master_volume (audio, 2.0);
+    g_assert_cmpfloat_with_epsilon (lrg_audio_settings_get_master_volume (audio),
+                                    1.0, 0.001);
+
+    /* Values within range should remain unchanged */
+    lrg_audio_settings_set_sfx_volume (audio, 0.42);
+    g_assert_cmpfloat_with_epsilon (lrg_audio_settings_get_sfx_volume (audio),
+                                    0.42, 0.001);
+}
+
+/*
+ * Test audio device string property.
+ */
+static void
+test_audio_settings_device (SettingsFixture *fixture,
+                            gconstpointer    user_data)
+{
+    LrgAudioSettings *audio;
+
+    audio = lrg_settings_get_audio (fixture->settings);
+
+    /* Default should be NULL */
+    g_assert_null (lrg_audio_settings_get_audio_device (audio));
+
+    /* Set a device name */
+    lrg_audio_settings_set_audio_device (audio, "HDMI Output");
+    g_assert_cmpstr (lrg_audio_settings_get_audio_device (audio),
+                     ==, "HDMI Output");
+
+    /* Reset to NULL */
+    lrg_audio_settings_set_audio_device (audio, NULL);
+    g_assert_null (lrg_audio_settings_get_audio_device (audio));
+}
+
+/*
+ * Test graphics resolution clamping at boundaries.
+ */
+static void
+test_graphics_settings_resolution_clamping (SettingsFixture *fixture,
+                                            gconstpointer    user_data)
+{
+    LrgGraphicsSettings *graphics;
+    gint                 width;
+    gint                 height;
+
+    graphics = lrg_settings_get_graphics (fixture->settings);
+
+    /* Below minimum should clamp to 320x240 */
+    lrg_graphics_settings_set_resolution (graphics, 100, 50);
+    lrg_graphics_settings_get_resolution (graphics, &width, &height);
+    g_assert_cmpint (width, ==, 320);
+    g_assert_cmpint (height, ==, 240);
+
+    /* Above maximum should clamp to 7680x4320 */
+    lrg_graphics_settings_set_resolution (graphics, 10000, 8000);
+    lrg_graphics_settings_get_resolution (graphics, &width, &height);
+    g_assert_cmpint (width, ==, 7680);
+    g_assert_cmpint (height, ==, 4320);
+}
+
+/* ==========================================================================
  * Main
  * ========================================================================== */
 
@@ -600,6 +809,53 @@ main (int   argc,
                 SettingsFixture, NULL,
                 settings_fixture_set_up,
                 test_settings_is_dirty,
+                settings_fixture_tear_down);
+
+    /* Apply Methods */
+    g_test_add ("/settings/graphics/apply-no-engine",
+                SettingsFixture, NULL,
+                settings_fixture_set_up,
+                test_graphics_settings_apply_no_engine,
+                settings_fixture_tear_down);
+
+    g_test_add ("/settings/audio/apply-no-engine",
+                SettingsFixture, NULL,
+                settings_fixture_set_up,
+                test_audio_settings_apply_no_engine,
+                settings_fixture_tear_down);
+
+    g_test_add ("/settings/apply-all-no-engine",
+                SettingsFixture, NULL,
+                settings_fixture_set_up,
+                test_settings_apply_all_no_engine,
+                settings_fixture_tear_down);
+
+    /* Quality Presets */
+    g_test_add ("/settings/graphics/quality-presets",
+                SettingsFixture, NULL,
+                settings_fixture_set_up,
+                test_graphics_quality_presets,
+                settings_fixture_tear_down);
+
+    /* Volume Clamping */
+    g_test_add ("/settings/audio/volume-clamping",
+                SettingsFixture, NULL,
+                settings_fixture_set_up,
+                test_audio_settings_volume_clamping,
+                settings_fixture_tear_down);
+
+    /* Audio Device */
+    g_test_add ("/settings/audio/device",
+                SettingsFixture, NULL,
+                settings_fixture_set_up,
+                test_audio_settings_device,
+                settings_fixture_tear_down);
+
+    /* Resolution Clamping */
+    g_test_add ("/settings/graphics/resolution-clamping",
+                SettingsFixture, NULL,
+                settings_fixture_set_up,
+                test_graphics_settings_resolution_clamping,
                 settings_fixture_tear_down);
 
     return g_test_run ();

@@ -8,6 +8,7 @@
 
 #include "lrg-audio-settings.h"
 #include <gio/gio.h>
+#include "../audio/lrg-audio-manager.h"
 
 /**
  * SECTION:lrg-audio-settings
@@ -81,11 +82,33 @@ emit_changed (LrgAudioSettings *self,
 static void
 lrg_audio_settings_apply (LrgSettingsGroup *group)
 {
+    LrgAudioSettings *self = LRG_AUDIO_SETTINGS (group);
+    LrgAudioManager  *audio;
+
+    audio = lrg_audio_manager_get_default ();
+    if (audio == NULL)
+    {
+        g_debug ("LrgAudioSettings: no audio manager available, skipping apply");
+        return;
+    }
+
+    /* Apply mute state */
+    lrg_audio_manager_set_muted (audio, self->muted);
+
     /*
-     * TODO: Apply settings to the audio system.
-     * This would integrate with graylib audio systems.
+     * Apply per-channel volumes.
+     * The audio manager handles master/channel mixing internally.
      */
-    g_debug ("LrgAudioSettings: apply() called - would apply to audio system");
+    lrg_audio_manager_set_master_volume (audio, (gfloat) self->master_volume);
+    lrg_audio_manager_set_music_volume (audio, (gfloat) self->music_volume);
+    lrg_audio_manager_set_sfx_volume (audio, (gfloat) self->sfx_volume);
+    lrg_audio_manager_set_voice_volume (audio, (gfloat) self->voice_volume);
+
+    g_debug ("LrgAudioSettings: applied master=%.2f, music=%.2f, "
+             "sfx=%.2f, voice=%.2f, muted=%s",
+             self->master_volume, self->music_volume,
+             self->sfx_volume, self->voice_volume,
+             self->muted ? "yes" : "no");
 }
 
 static void
