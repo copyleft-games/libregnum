@@ -89,6 +89,13 @@ else
         EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(GRAYLIB_DIR)/build/lib'
         EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
     endif
+    ifeq ($(MCP),1)
+        EXAMPLE_LDFLAGS += -L$(MCP_GLIB_DIR)/build
+        ifneq ($(TARGET_PLATFORM),windows)
+            EXAMPLE_LDFLAGS += -Wl,-rpath-link,$(MCP_GLIB_DIR)/build
+            EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(MCP_GLIB_DIR)/build'
+        endif
+    endif
 endif
 
 ifeq ($(STATIC),1)
@@ -121,6 +128,7 @@ EXAMPLES += game-deckbuilder-combat game-deckbuilder-poker
 EXAMPLES += game-platformer-demo game-fps-demo
 EXAMPLES += game-third-person-demo game-top-down-demo game-twin-stick-demo game-shmup-demo game-racing-3d-demo
 EXAMPLES += example-chart-2d example-chart-3d
+EXAMPLES += game-chair-simulator
 
 # Scripted examples only on native Linux (scripting backends not available on Windows)
 ifneq ($(TARGET_PLATFORM),windows)
@@ -260,6 +268,10 @@ $(EXAMPLES_BUILDDIR)/example-chart-2d$(EXE_EXT): example-chart-2d.c | $(EXAMPLES
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/example-chart-3d$(EXE_EXT): example-chart-3d.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/game-chair-simulator$(EXE_EXT): game-chair-simulator.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
