@@ -11,6 +11,8 @@
 
 #include "lrg-tutorial.h"
 
+#include <yaml-glib.h>
+
 struct _LrgTutorial
 {
     GObject parent_instance;
@@ -395,12 +397,207 @@ LrgTutorial *
 lrg_tutorial_new_from_file (const gchar  *path,
                             GError      **error)
 {
+    g_autoptr(YamlParser) parser = NULL;
+    YamlNode *root;
+    YamlMapping *mapping;
+    const gchar *id;
+    const gchar *name;
+    const gchar *description;
+    LrgTutorial *self;
+
     g_return_val_if_fail (path != NULL, NULL);
 
-    /* TODO: Implement YAML loading with yaml-glib */
-    g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-                 "YAML loading not yet implemented");
-    return NULL;
+    /* Parse the YAML file */
+    parser = yaml_parser_new ();
+    if (!yaml_parser_load_from_file (parser, path, error))
+        return NULL;
+
+    root = yaml_parser_get_root (parser);
+    if (root == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Empty tutorial file: %s", path);
+        return NULL;
+    }
+
+    mapping = yaml_node_get_mapping (root);
+    if (mapping == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Tutorial root must be a mapping: %s", path);
+        return NULL;
+    }
+
+    /* Get required fields */
+    id = yaml_mapping_get_string_member (mapping, "id");
+    if (id == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Tutorial missing 'id' field: %s", path);
+        return NULL;
+    }
+
+    name = yaml_mapping_get_string_member (mapping, "name");
+    if (name == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Tutorial missing 'name' field: %s", path);
+        return NULL;
+    }
+
+    /* Create tutorial */
+    self = lrg_tutorial_new (id, name);
+
+    /* Optional description */
+    description = yaml_mapping_get_string_member (mapping, "description");
+    if (description != NULL)
+        lrg_tutorial_set_description (self, description);
+
+    /* Optional flags */
+    if (yaml_mapping_has_member (mapping, "repeatable"))
+        lrg_tutorial_set_repeatable (self, yaml_mapping_get_boolean_member (mapping, "repeatable"));
+
+    if (yaml_mapping_has_member (mapping, "skippable"))
+        lrg_tutorial_set_skippable (self, yaml_mapping_get_boolean_member (mapping, "skippable"));
+
+    /* Load steps */
+    if (yaml_mapping_has_member (mapping, "steps"))
+    {
+        YamlSequence *steps_seq;
+        guint i;
+        guint n_steps;
+
+        steps_seq = yaml_mapping_get_sequence_member (mapping, "steps");
+        if (steps_seq != NULL)
+        {
+            n_steps = yaml_sequence_get_length (steps_seq);
+            for (i = 0; i < n_steps; i++)
+            {
+                YamlMapping *step_map;
+                const gchar *type_str;
+                const gchar *step_id;
+                LrgTutorialStep *step;
+
+                step_map = yaml_sequence_get_mapping_element (steps_seq, i);
+                if (step_map == NULL)
+                    continue;
+
+                type_str = yaml_mapping_get_string_member (step_map, "type");
+                if (type_str == NULL)
+                    continue;
+
+                /* Create step based on type */
+                step = NULL;
+                if (g_strcmp0 (type_str, "text") == 0)
+                {
+                    const gchar *text;
+                    const gchar *speaker;
+
+                    text = yaml_mapping_get_string_member (step_map, "text");
+                    speaker = yaml_mapping_get_string_member (step_map, "speaker");
+                    step = lrg_tutorial_step_new_text (text, speaker);
+                }
+                else if (g_strcmp0 (type_str, "highlight") == 0)
+                {
+                    const gchar *target;
+                    const gchar *style_str;
+                    LrgHighlightStyle style;
+
+                    target = yaml_mapping_get_string_member (step_map, "target_id");
+                    style = LRG_HIGHLIGHT_STYLE_OUTLINE;
+
+                    style_str = yaml_mapping_get_string_member (step_map, "highlight_style");
+                    if (style_str != NULL)
+                    {
+                        if (g_strcmp0 (style_str, "glow") == 0)
+                            style = LRG_HIGHLIGHT_STYLE_GLOW;
+                        else if (g_strcmp0 (style_str, "darken_others") == 0)
+                            style = LRG_HIGHLIGHT_STYLE_DARKEN_OTHERS;
+                        else if (g_strcmp0 (style_str, "spotlight") == 0)
+                            style = LRG_HIGHLIGHT_STYLE_SPOTLIGHT;
+                    }
+
+                    step = lrg_tutorial_step_new_highlight (target, style);
+                }
+                else if (g_strcmp0 (type_str, "input") == 0)
+                {
+                    const gchar *action;
+                    gboolean prompt;
+
+                    action = yaml_mapping_get_string_member (step_map, "action_name");
+                    prompt = FALSE;
+                    if (yaml_mapping_has_member (step_map, "show_prompt"))
+                        prompt = yaml_mapping_get_boolean_member (step_map, "show_prompt");
+
+                    step = lrg_tutorial_step_new_input (action, prompt);
+                }
+                else if (g_strcmp0 (type_str, "condition") == 0)
+                {
+                    const gchar *cond_id;
+
+                    cond_id = yaml_mapping_get_string_member (step_map, "condition_id");
+                    step = lrg_tutorial_step_new_condition (cond_id);
+                }
+                else if (g_strcmp0 (type_str, "delay") == 0)
+                {
+                    gfloat dur;
+
+                    dur = (gfloat) yaml_mapping_get_double_member (step_map, "duration");
+                    step = lrg_tutorial_step_new_delay (dur);
+                }
+
+                if (step == NULL)
+                    continue;
+
+                /* Set common properties */
+                step_id = yaml_mapping_get_string_member (step_map, "id");
+                if (step_id != NULL)
+                    lrg_tutorial_step_set_id (step, step_id);
+
+                if (yaml_mapping_has_member (step_map, "can_skip"))
+                    lrg_tutorial_step_set_can_skip (step, yaml_mapping_get_boolean_member (step_map, "can_skip"));
+
+                if (yaml_mapping_has_member (step_map, "blocks_input"))
+                    lrg_tutorial_step_set_blocks_input (step, yaml_mapping_get_boolean_member (step_map, "blocks_input"));
+
+                if (yaml_mapping_has_member (step_map, "auto_advance"))
+                    lrg_tutorial_step_set_auto_advance (step, yaml_mapping_get_boolean_member (step_map, "auto_advance"));
+
+                if (yaml_mapping_has_member (step_map, "position_x") &&
+                    yaml_mapping_has_member (step_map, "position_y"))
+                {
+                    lrg_tutorial_step_set_position (step,
+                        (gfloat) yaml_mapping_get_double_member (step_map, "position_x"),
+                        (gfloat) yaml_mapping_get_double_member (step_map, "position_y"));
+                }
+
+                if (yaml_mapping_has_member (step_map, "arrow_direction"))
+                {
+                    const gchar *arrow_str;
+
+                    arrow_str = yaml_mapping_get_string_member (step_map, "arrow_direction");
+                    if (arrow_str != NULL)
+                    {
+                        if (g_strcmp0 (arrow_str, "up") == 0)
+                            lrg_tutorial_step_set_arrow_direction (step, LRG_ARROW_DIRECTION_UP);
+                        else if (g_strcmp0 (arrow_str, "down") == 0)
+                            lrg_tutorial_step_set_arrow_direction (step, LRG_ARROW_DIRECTION_DOWN);
+                        else if (g_strcmp0 (arrow_str, "left") == 0)
+                            lrg_tutorial_step_set_arrow_direction (step, LRG_ARROW_DIRECTION_LEFT);
+                        else if (g_strcmp0 (arrow_str, "right") == 0)
+                            lrg_tutorial_step_set_arrow_direction (step, LRG_ARROW_DIRECTION_RIGHT);
+                        else
+                            lrg_tutorial_step_set_arrow_direction (step, LRG_ARROW_DIRECTION_AUTO);
+                    }
+                }
+
+                lrg_tutorial_add_step (self, step);
+                lrg_tutorial_step_free (step);
+            }
+        }
+    }
+
+    return self;
 }
 
 /**
@@ -1156,11 +1353,202 @@ lrg_tutorial_save_to_file (LrgTutorial  *self,
                            const gchar  *path,
                            GError      **error)
 {
+    g_autoptr(YamlBuilder) builder = NULL;
+    g_autoptr(YamlGenerator) generator = NULL;
+    YamlDocument *doc;
+    gchar *yaml_str;
+    gboolean ret;
+    guint i;
+
     g_return_val_if_fail (LRG_IS_TUTORIAL (self), FALSE);
     g_return_val_if_fail (path != NULL, FALSE);
 
-    /* TODO: Implement YAML saving with yaml-glib */
-    g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-                 "YAML saving not yet implemented");
-    return FALSE;
+    builder = yaml_builder_new ();
+
+    /* Build root mapping */
+    yaml_builder_begin_mapping (builder);
+
+    yaml_builder_set_member_name (builder, "id");
+    yaml_builder_add_string_value (builder, self->id != NULL ? self->id : "");
+
+    yaml_builder_set_member_name (builder, "name");
+    yaml_builder_add_string_value (builder, self->name != NULL ? self->name : "");
+
+    if (self->description != NULL)
+    {
+        yaml_builder_set_member_name (builder, "description");
+        yaml_builder_add_string_value (builder, self->description);
+    }
+
+    yaml_builder_set_member_name (builder, "repeatable");
+    yaml_builder_add_boolean_value (builder, self->repeatable);
+
+    yaml_builder_set_member_name (builder, "skippable");
+    yaml_builder_add_boolean_value (builder, self->skippable);
+
+    /* Steps sequence */
+    yaml_builder_set_member_name (builder, "steps");
+    yaml_builder_begin_sequence (builder);
+
+    for (i = 0; i < self->steps->len; i++)
+    {
+        LrgTutorialStep *step;
+        LrgTutorialStepType step_type;
+        const gchar *step_id;
+        gfloat pos_x, pos_y;
+
+        step = (LrgTutorialStep *) g_ptr_array_index (self->steps, i);
+        step_type = lrg_tutorial_step_get_step_type (step);
+
+        yaml_builder_begin_mapping (builder);
+
+        /* Step ID */
+        step_id = lrg_tutorial_step_get_id (step);
+        if (step_id != NULL)
+        {
+            yaml_builder_set_member_name (builder, "id");
+            yaml_builder_add_string_value (builder, step_id);
+        }
+
+        /* Type and type-specific data */
+        yaml_builder_set_member_name (builder, "type");
+        switch (step_type)
+        {
+        case LRG_TUTORIAL_STEP_TEXT:
+            yaml_builder_add_string_value (builder, "text");
+
+            if (lrg_tutorial_step_get_text (step) != NULL)
+            {
+                yaml_builder_set_member_name (builder, "text");
+                yaml_builder_add_string_value (builder, lrg_tutorial_step_get_text (step));
+            }
+
+            if (lrg_tutorial_step_get_speaker (step) != NULL)
+            {
+                yaml_builder_set_member_name (builder, "speaker");
+                yaml_builder_add_string_value (builder, lrg_tutorial_step_get_speaker (step));
+            }
+            break;
+
+        case LRG_TUTORIAL_STEP_HIGHLIGHT:
+            yaml_builder_add_string_value (builder, "highlight");
+
+            if (lrg_tutorial_step_get_target_id (step) != NULL)
+            {
+                yaml_builder_set_member_name (builder, "target_id");
+                yaml_builder_add_string_value (builder, lrg_tutorial_step_get_target_id (step));
+            }
+
+            yaml_builder_set_member_name (builder, "highlight_style");
+            switch (lrg_tutorial_step_get_highlight_style (step))
+            {
+            case LRG_HIGHLIGHT_STYLE_GLOW:
+                yaml_builder_add_string_value (builder, "glow");
+                break;
+            case LRG_HIGHLIGHT_STYLE_DARKEN_OTHERS:
+                yaml_builder_add_string_value (builder, "darken_others");
+                break;
+            case LRG_HIGHLIGHT_STYLE_SPOTLIGHT:
+                yaml_builder_add_string_value (builder, "spotlight");
+                break;
+            default:
+                yaml_builder_add_string_value (builder, "outline");
+                break;
+            }
+            break;
+
+        case LRG_TUTORIAL_STEP_INPUT:
+            yaml_builder_add_string_value (builder, "input");
+
+            if (lrg_tutorial_step_get_action_name (step) != NULL)
+            {
+                yaml_builder_set_member_name (builder, "action_name");
+                yaml_builder_add_string_value (builder, lrg_tutorial_step_get_action_name (step));
+            }
+
+            yaml_builder_set_member_name (builder, "show_prompt");
+            yaml_builder_add_boolean_value (builder, lrg_tutorial_step_get_show_prompt (step));
+            break;
+
+        case LRG_TUTORIAL_STEP_CONDITION:
+            yaml_builder_add_string_value (builder, "condition");
+
+            if (lrg_tutorial_step_get_condition_id (step) != NULL)
+            {
+                yaml_builder_set_member_name (builder, "condition_id");
+                yaml_builder_add_string_value (builder, lrg_tutorial_step_get_condition_id (step));
+            }
+            break;
+
+        case LRG_TUTORIAL_STEP_DELAY:
+            yaml_builder_add_string_value (builder, "delay");
+
+            yaml_builder_set_member_name (builder, "duration");
+            yaml_builder_add_double_value (builder, (gdouble) lrg_tutorial_step_get_duration (step));
+            break;
+        }
+
+        /* Common properties */
+        yaml_builder_set_member_name (builder, "can_skip");
+        yaml_builder_add_boolean_value (builder, lrg_tutorial_step_get_can_skip (step));
+
+        yaml_builder_set_member_name (builder, "blocks_input");
+        yaml_builder_add_boolean_value (builder, lrg_tutorial_step_get_blocks_input (step));
+
+        yaml_builder_set_member_name (builder, "auto_advance");
+        yaml_builder_add_boolean_value (builder, lrg_tutorial_step_get_auto_advance (step));
+
+        lrg_tutorial_step_get_position (step, &pos_x, &pos_y);
+        yaml_builder_set_member_name (builder, "position_x");
+        yaml_builder_add_double_value (builder, (gdouble) pos_x);
+
+        yaml_builder_set_member_name (builder, "position_y");
+        yaml_builder_add_double_value (builder, (gdouble) pos_y);
+
+        /* Arrow direction */
+        yaml_builder_set_member_name (builder, "arrow_direction");
+        switch (lrg_tutorial_step_get_arrow_direction (step))
+        {
+        case LRG_ARROW_DIRECTION_UP:
+            yaml_builder_add_string_value (builder, "up");
+            break;
+        case LRG_ARROW_DIRECTION_DOWN:
+            yaml_builder_add_string_value (builder, "down");
+            break;
+        case LRG_ARROW_DIRECTION_LEFT:
+            yaml_builder_add_string_value (builder, "left");
+            break;
+        case LRG_ARROW_DIRECTION_RIGHT:
+            yaml_builder_add_string_value (builder, "right");
+            break;
+        default:
+            yaml_builder_add_string_value (builder, "auto");
+            break;
+        }
+
+        yaml_builder_end_mapping (builder);  /* step */
+    }
+
+    yaml_builder_end_sequence (builder);  /* steps */
+    yaml_builder_end_mapping (builder);  /* root */
+
+    doc = yaml_builder_get_document (builder);
+    if (doc == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                     "Failed to build YAML document for tutorial");
+        return FALSE;
+    }
+
+    generator = yaml_generator_new ();
+    yaml_generator_set_document (generator, doc);
+    yaml_str = yaml_generator_to_data (generator, NULL, error);
+
+    if (yaml_str == NULL)
+        return FALSE;
+
+    ret = g_file_set_contents (path, yaml_str, -1, error);
+    g_free (yaml_str);
+
+    return ret;
 }

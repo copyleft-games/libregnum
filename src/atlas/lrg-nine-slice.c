@@ -12,6 +12,7 @@
 #include "lrg-nine-slice.h"
 
 #include <math.h>
+#include <yaml-glib.h>
 
 struct _LrgNineSlice
 {
@@ -287,12 +288,95 @@ LrgNineSlice *
 lrg_nine_slice_new_from_file (const gchar  *path,
                               GError      **error)
 {
+    g_autoptr(YamlParser) parser = NULL;
+    YamlNode *root;
+    YamlMapping *mapping;
+    YamlMapping *region_map;
+    const gchar *name;
+    const gchar *mode_str;
+    LrgNineSliceMode mode;
+    LrgAtlasRegion *region;
+    LrgNineSlice *self;
+
     g_return_val_if_fail (path != NULL, NULL);
 
-    /* TODO: Implement YAML loading with yaml-glib */
-    g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-                 "YAML loading not yet implemented");
-    return NULL;
+    /* Parse the YAML file */
+    parser = yaml_parser_new ();
+    if (!yaml_parser_load_from_file (parser, path, error))
+        return NULL;
+
+    root = yaml_parser_get_root (parser);
+    if (root == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Empty nine-slice file: %s", path);
+        return NULL;
+    }
+
+    mapping = yaml_node_get_mapping (root);
+    if (mapping == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Nine-slice root must be a mapping: %s", path);
+        return NULL;
+    }
+
+    /* Get required 'name' field */
+    name = yaml_mapping_get_string_member (mapping, "name");
+    if (name == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Nine-slice missing 'name' field: %s", path);
+        return NULL;
+    }
+
+    /* Parse mode (defaults to stretch) */
+    mode = LRG_NINE_SLICE_MODE_STRETCH;
+    mode_str = yaml_mapping_get_string_member (mapping, "mode");
+    if (mode_str != NULL)
+    {
+        if (g_strcmp0 (mode_str, "tile") == 0)
+            mode = LRG_NINE_SLICE_MODE_TILE;
+        else if (g_strcmp0 (mode_str, "tile_fit") == 0)
+            mode = LRG_NINE_SLICE_MODE_TILE_FIT;
+    }
+
+    /* Parse source_region if present */
+    region = NULL;
+    if (yaml_mapping_has_member (mapping, "source_region"))
+    {
+        const gchar *region_name;
+        gint rx, ry, rw, rh;
+
+        region_map = yaml_mapping_get_mapping_member (mapping, "source_region");
+        if (region_map != NULL)
+        {
+            region_name = yaml_mapping_get_string_member (region_map, "name");
+            rx = (gint) yaml_mapping_get_int_member (region_map, "x");
+            ry = (gint) yaml_mapping_get_int_member (region_map, "y");
+            rw = (gint) yaml_mapping_get_int_member (region_map, "width");
+            rh = (gint) yaml_mapping_get_int_member (region_map, "height");
+
+            region = lrg_atlas_region_new (region_name, rx, ry, rw, rh);
+        }
+    }
+
+    /* Create the nine-slice */
+    self = lrg_nine_slice_new_from_region (
+        name,
+        region,
+        (gint) yaml_mapping_get_int_member (mapping, "border_left"),
+        (gint) yaml_mapping_get_int_member (mapping, "border_right"),
+        (gint) yaml_mapping_get_int_member (mapping, "border_top"),
+        (gint) yaml_mapping_get_int_member (mapping, "border_bottom")
+    );
+
+    lrg_nine_slice_set_mode (self, mode);
+
+    if (region != NULL)
+        lrg_atlas_region_free (region);
+
+    return self;
 }
 
 /**
@@ -970,11 +1054,99 @@ lrg_nine_slice_save_to_file (LrgNineSlice  *self,
                              const gchar   *path,
                              GError       **error)
 {
+    g_autoptr(YamlBuilder) builder = NULL;
+    g_autoptr(YamlGenerator) generator = NULL;
+    YamlDocument *doc;
+    gchar *yaml_str;
+    gboolean ret;
+
     g_return_val_if_fail (LRG_IS_NINE_SLICE (self), FALSE);
     g_return_val_if_fail (path != NULL, FALSE);
 
-    /* TODO: Implement YAML saving with yaml-glib */
-    g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-                 "YAML saving not yet implemented");
-    return FALSE;
+    builder = yaml_builder_new ();
+
+    /* Build root mapping */
+    yaml_builder_begin_mapping (builder);
+
+    yaml_builder_set_member_name (builder, "name");
+    yaml_builder_add_string_value (builder, self->name != NULL ? self->name : "");
+
+    /* Mode */
+    yaml_builder_set_member_name (builder, "mode");
+    switch (self->mode)
+    {
+    case LRG_NINE_SLICE_MODE_TILE:
+        yaml_builder_add_string_value (builder, "tile");
+        break;
+    case LRG_NINE_SLICE_MODE_TILE_FIT:
+        yaml_builder_add_string_value (builder, "tile_fit");
+        break;
+    default:
+        yaml_builder_add_string_value (builder, "stretch");
+        break;
+    }
+
+    /* Borders */
+    yaml_builder_set_member_name (builder, "border_left");
+    yaml_builder_add_int_value (builder, self->border_left);
+
+    yaml_builder_set_member_name (builder, "border_right");
+    yaml_builder_add_int_value (builder, self->border_right);
+
+    yaml_builder_set_member_name (builder, "border_top");
+    yaml_builder_add_int_value (builder, self->border_top);
+
+    yaml_builder_set_member_name (builder, "border_bottom");
+    yaml_builder_add_int_value (builder, self->border_bottom);
+
+    /* Source region */
+    if (self->source_region != NULL)
+    {
+        yaml_builder_set_member_name (builder, "source_region");
+        yaml_builder_begin_mapping (builder);
+
+        yaml_builder_set_member_name (builder, "name");
+        yaml_builder_add_string_value (builder,
+            lrg_atlas_region_get_name (self->source_region));
+
+        yaml_builder_set_member_name (builder, "x");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_x (self->source_region));
+
+        yaml_builder_set_member_name (builder, "y");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_y (self->source_region));
+
+        yaml_builder_set_member_name (builder, "width");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_width (self->source_region));
+
+        yaml_builder_set_member_name (builder, "height");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_height (self->source_region));
+
+        yaml_builder_end_mapping (builder);  /* source_region */
+    }
+
+    yaml_builder_end_mapping (builder);  /* root */
+
+    doc = yaml_builder_get_document (builder);
+    if (doc == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                     "Failed to build YAML document for nine-slice");
+        return FALSE;
+    }
+
+    generator = yaml_generator_new ();
+    yaml_generator_set_document (generator, doc);
+    yaml_str = yaml_generator_to_data (generator, NULL, error);
+
+    if (yaml_str == NULL)
+        return FALSE;
+
+    ret = g_file_set_contents (path, yaml_str, -1, error);
+    g_free (yaml_str);
+
+    return ret;
 }

@@ -14,7 +14,9 @@
 #include "../src/atlas/lrg-atlas-packer.h"
 
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <math.h>
+#include <unistd.h>
 
 /* ========================================================================== */
 /*                           Atlas Region Tests                               */
@@ -832,6 +834,188 @@ test_atlas_packer_no_power_of_two (PackerFixture *fixture,
 }
 
 /* ========================================================================== */
+/*                         YAML Serialization Tests                           */
+/* ========================================================================== */
+
+static void
+test_nine_slice_yaml_roundtrip (void)
+{
+    g_autofree gchar *tmp_path = NULL;
+    g_autoptr(GError) error = NULL;
+    LrgAtlasRegion *region;
+    LrgNineSlice *slice;
+    LrgNineSlice *loaded;
+    const LrgAtlasRegion *loaded_region;
+    gboolean saved;
+    gint fd;
+
+    /* Create a nine-slice */
+    region = lrg_atlas_region_new ("button_bg", 10, 20, 200, 100);
+    slice = lrg_nine_slice_new_from_region ("test_button", region, 8, 12, 6, 10);
+    lrg_nine_slice_set_mode (slice, LRG_NINE_SLICE_MODE_TILE);
+    lrg_atlas_region_free (region);
+
+    /* Save to temp file */
+    fd = g_file_open_tmp ("test_nine_slice_XXXXXX.yaml", &tmp_path, &error);
+    g_assert_no_error (error);
+    close (fd);
+
+    saved = lrg_nine_slice_save_to_file (slice, tmp_path, &error);
+    g_assert_no_error (error);
+    g_assert_true (saved);
+
+    /* Load back */
+    loaded = lrg_nine_slice_new_from_file (tmp_path, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (loaded);
+
+    /* Verify data roundtrip */
+    g_assert_cmpstr (lrg_nine_slice_get_name (loaded), ==, "test_button");
+    g_assert_cmpint (lrg_nine_slice_get_mode (loaded), ==, LRG_NINE_SLICE_MODE_TILE);
+    g_assert_cmpint (lrg_nine_slice_get_border_left (loaded), ==, 8);
+    g_assert_cmpint (lrg_nine_slice_get_border_right (loaded), ==, 12);
+    g_assert_cmpint (lrg_nine_slice_get_border_top (loaded), ==, 6);
+    g_assert_cmpint (lrg_nine_slice_get_border_bottom (loaded), ==, 10);
+
+    loaded_region = lrg_nine_slice_get_source_region (loaded);
+    g_assert_nonnull (loaded_region);
+    g_assert_cmpstr (lrg_atlas_region_get_name (loaded_region), ==, "button_bg");
+    g_assert_cmpint (lrg_atlas_region_get_x (loaded_region), ==, 10);
+    g_assert_cmpint (lrg_atlas_region_get_y (loaded_region), ==, 20);
+    g_assert_cmpint (lrg_atlas_region_get_width (loaded_region), ==, 200);
+    g_assert_cmpint (lrg_atlas_region_get_height (loaded_region), ==, 100);
+
+    g_object_unref (loaded);
+    g_object_unref (slice);
+    g_unlink (tmp_path);
+}
+
+static void
+test_texture_atlas_yaml_roundtrip (void)
+{
+    g_autofree gchar *tmp_path = NULL;
+    g_autoptr(GError) error = NULL;
+    LrgTextureAtlas *atlas;
+    LrgTextureAtlas *loaded;
+    LrgAtlasRegion *loaded_region;
+    gboolean saved;
+    gint fd;
+
+    /* Create a texture atlas */
+    atlas = lrg_texture_atlas_new ("test_atlas");
+    lrg_texture_atlas_set_texture_path (atlas, "textures/sprites.png");
+    lrg_texture_atlas_set_size (atlas, 512, 256);
+    lrg_texture_atlas_add_region_rect (atlas, "hero_idle", 0, 0, 32, 64);
+    lrg_texture_atlas_add_region_rect (atlas, "hero_walk", 32, 0, 32, 64);
+    lrg_texture_atlas_add_region_rect (atlas, "coin", 64, 0, 16, 16);
+
+    /* Save to temp file */
+    fd = g_file_open_tmp ("test_atlas_XXXXXX.yaml", &tmp_path, &error);
+    g_assert_no_error (error);
+    close (fd);
+
+    saved = lrg_texture_atlas_save_to_file (atlas, tmp_path, &error);
+    g_assert_no_error (error);
+    g_assert_true (saved);
+
+    /* Load back */
+    loaded = lrg_texture_atlas_new_from_file (tmp_path, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (loaded);
+
+    /* Verify data roundtrip */
+    g_assert_cmpstr (lrg_texture_atlas_get_name (loaded), ==, "test_atlas");
+    g_assert_cmpstr (lrg_texture_atlas_get_texture_path (loaded), ==, "textures/sprites.png");
+    g_assert_cmpint (lrg_texture_atlas_get_width (loaded), ==, 512);
+    g_assert_cmpint (lrg_texture_atlas_get_height (loaded), ==, 256);
+    g_assert_cmpuint (lrg_texture_atlas_get_region_count (loaded), ==, 3);
+
+    /* Verify individual regions */
+    loaded_region = lrg_texture_atlas_get_region (loaded, "hero_idle");
+    g_assert_nonnull (loaded_region);
+    g_assert_cmpint (lrg_atlas_region_get_x (loaded_region), ==, 0);
+    g_assert_cmpint (lrg_atlas_region_get_y (loaded_region), ==, 0);
+    g_assert_cmpint (lrg_atlas_region_get_width (loaded_region), ==, 32);
+    g_assert_cmpint (lrg_atlas_region_get_height (loaded_region), ==, 64);
+
+    loaded_region = lrg_texture_atlas_get_region (loaded, "coin");
+    g_assert_nonnull (loaded_region);
+    g_assert_cmpint (lrg_atlas_region_get_width (loaded_region), ==, 16);
+    g_assert_cmpint (lrg_atlas_region_get_height (loaded_region), ==, 16);
+
+    g_object_unref (loaded);
+    g_object_unref (atlas);
+    g_unlink (tmp_path);
+}
+
+static void
+test_sprite_sheet_yaml_roundtrip (void)
+{
+    g_autofree gchar *tmp_path = NULL;
+    g_autoptr(GError) error = NULL;
+    LrgSpriteSheet *sheet;
+    LrgSpriteSheet *loaded;
+    LrgAtlasRegion *loaded_frame;
+    guint indices[] = { 0, 1, 2, 3 };
+    gboolean saved;
+    gint fd;
+
+    /* Create a sprite sheet with frames and animations */
+    sheet = lrg_sprite_sheet_new ("hero_sheet");
+    lrg_sprite_sheet_set_texture_path (sheet, "textures/hero.png");
+    lrg_sprite_sheet_set_texture_size (sheet, 256, 128);
+    lrg_sprite_sheet_set_format (sheet, LRG_SPRITE_SHEET_FORMAT_LIBREGNUM);
+
+    lrg_sprite_sheet_add_frame_rect (sheet, "idle_0", 0, 0, 32, 64);
+    lrg_sprite_sheet_add_frame_rect (sheet, "idle_1", 32, 0, 32, 64);
+    lrg_sprite_sheet_add_frame_rect (sheet, "walk_0", 64, 0, 32, 64);
+    lrg_sprite_sheet_add_frame_rect (sheet, "walk_1", 96, 0, 32, 64);
+
+    lrg_sprite_sheet_define_animation_frames (sheet, "idle", indices, 2, 0.5f, TRUE);
+    lrg_sprite_sheet_define_animation (sheet, "walk", 2, 3, 0.25f, TRUE);
+
+    /* Save to temp file */
+    fd = g_file_open_tmp ("test_spritesheet_XXXXXX.yaml", &tmp_path, &error);
+    g_assert_no_error (error);
+    close (fd);
+
+    saved = lrg_sprite_sheet_save_to_file (sheet, tmp_path, &error);
+    g_assert_no_error (error);
+    g_assert_true (saved);
+
+    /* Load back */
+    loaded = lrg_sprite_sheet_new_from_file (tmp_path, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (loaded);
+
+    /* Verify data roundtrip */
+    g_assert_cmpstr (lrg_sprite_sheet_get_name (loaded), ==, "hero_sheet");
+    g_assert_cmpstr (lrg_sprite_sheet_get_texture_path (loaded), ==, "textures/hero.png");
+    g_assert_cmpint (lrg_sprite_sheet_get_texture_width (loaded), ==, 256);
+    g_assert_cmpint (lrg_sprite_sheet_get_texture_height (loaded), ==, 128);
+    g_assert_cmpint (lrg_sprite_sheet_get_format (loaded), ==, LRG_SPRITE_SHEET_FORMAT_LIBREGNUM);
+    g_assert_cmpuint (lrg_sprite_sheet_get_frame_count (loaded), ==, 4);
+
+    /* Verify frames */
+    loaded_frame = lrg_sprite_sheet_get_frame (loaded, 0);
+    g_assert_nonnull (loaded_frame);
+    g_assert_cmpstr (lrg_atlas_region_get_name (loaded_frame), ==, "idle_0");
+    g_assert_cmpint (lrg_atlas_region_get_x (loaded_frame), ==, 0);
+
+    loaded_frame = lrg_sprite_sheet_get_frame (loaded, 2);
+    g_assert_cmpstr (lrg_atlas_region_get_name (loaded_frame), ==, "walk_0");
+    g_assert_cmpint (lrg_atlas_region_get_x (loaded_frame), ==, 64);
+
+    /* Verify animations */
+    g_assert_true (lrg_sprite_sheet_has_animation (loaded, "idle"));
+    g_assert_true (lrg_sprite_sheet_has_animation (loaded, "walk"));
+
+    g_object_unref (loaded);
+    g_object_unref (sheet);
+    g_unlink (tmp_path);
+}
+
+/* ========================================================================== */
 /*                              Main Entry                                    */
 /* ========================================================================== */
 
@@ -897,6 +1081,11 @@ main (int argc, char *argv[])
                 nine_slice_fixture_set_up, test_nine_slice_get_patch_rect, nine_slice_fixture_tear_down);
     g_test_add ("/atlas/nine_slice/calculate_dest_rects", NineSliceFixture, NULL,
                 nine_slice_fixture_set_up, test_nine_slice_calculate_dest_rects, nine_slice_fixture_tear_down);
+
+    /* YAML Serialization tests */
+    g_test_add_func ("/atlas/nine_slice/yaml_roundtrip", test_nine_slice_yaml_roundtrip);
+    g_test_add_func ("/atlas/texture/yaml_roundtrip", test_texture_atlas_yaml_roundtrip);
+    g_test_add_func ("/atlas/sprite_sheet/yaml_roundtrip", test_sprite_sheet_yaml_roundtrip);
 
     /* Atlas Packer tests */
     g_test_add_func ("/atlas/packer/new", test_atlas_packer_new);

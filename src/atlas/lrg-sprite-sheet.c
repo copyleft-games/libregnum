@@ -11,6 +11,8 @@
 
 #include "lrg-sprite-sheet.h"
 
+#include <yaml-glib.h>
+
 /**
  * LrgAnimationDef:
  *
@@ -345,12 +347,186 @@ LrgSpriteSheet *
 lrg_sprite_sheet_new_from_file (const gchar  *path,
                                 GError      **error)
 {
+    g_autoptr(YamlParser) parser = NULL;
+    YamlNode *root;
+    YamlMapping *mapping;
+    const gchar *name;
+    const gchar *texture_path;
+    const gchar *format_str;
+    LrgSpriteSheet *self;
+
     g_return_val_if_fail (path != NULL, NULL);
 
-    /* TODO: Implement YAML loading with yaml-glib */
-    g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-                 "YAML loading not yet implemented");
-    return NULL;
+    /* Parse the YAML file */
+    parser = yaml_parser_new ();
+    if (!yaml_parser_load_from_file (parser, path, error))
+        return NULL;
+
+    root = yaml_parser_get_root (parser);
+    if (root == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Empty sprite sheet file: %s", path);
+        return NULL;
+    }
+
+    mapping = yaml_node_get_mapping (root);
+    if (mapping == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Sprite sheet root must be a mapping: %s", path);
+        return NULL;
+    }
+
+    /* Get required 'name' field */
+    name = yaml_mapping_get_string_member (mapping, "name");
+    if (name == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Sprite sheet missing 'name' field: %s", path);
+        return NULL;
+    }
+
+    /* Create sprite sheet */
+    self = lrg_sprite_sheet_new (name);
+
+    /* Texture path */
+    texture_path = yaml_mapping_get_string_member (mapping, "texture_path");
+    if (texture_path != NULL)
+        lrg_sprite_sheet_set_texture_path (self, texture_path);
+
+    /* Texture dimensions */
+    if (yaml_mapping_has_member (mapping, "texture_width"))
+        lrg_sprite_sheet_set_texture_width (self, (gint) yaml_mapping_get_int_member (mapping, "texture_width"));
+
+    if (yaml_mapping_has_member (mapping, "texture_height"))
+        lrg_sprite_sheet_set_texture_height (self, (gint) yaml_mapping_get_int_member (mapping, "texture_height"));
+
+    /* Format */
+    format_str = yaml_mapping_get_string_member (mapping, "format");
+    if (format_str != NULL)
+    {
+        if (g_strcmp0 (format_str, "grid") == 0)
+            lrg_sprite_sheet_set_format (self, LRG_SPRITE_SHEET_FORMAT_GRID);
+        else if (g_strcmp0 (format_str, "aseprite") == 0)
+            lrg_sprite_sheet_set_format (self, LRG_SPRITE_SHEET_FORMAT_ASEPRITE);
+        else if (g_strcmp0 (format_str, "texturepacker") == 0)
+            lrg_sprite_sheet_set_format (self, LRG_SPRITE_SHEET_FORMAT_TEXTUREPACKER);
+        else if (g_strcmp0 (format_str, "libregnum") == 0)
+            lrg_sprite_sheet_set_format (self, LRG_SPRITE_SHEET_FORMAT_LIBREGNUM);
+    }
+
+    /* Load frames */
+    if (yaml_mapping_has_member (mapping, "frames"))
+    {
+        YamlSequence *frames_seq;
+        guint i;
+        guint n_frames;
+
+        frames_seq = yaml_mapping_get_sequence_member (mapping, "frames");
+        if (frames_seq != NULL)
+        {
+            n_frames = yaml_sequence_get_length (frames_seq);
+            for (i = 0; i < n_frames; i++)
+            {
+                YamlMapping *frame_map;
+                const gchar *frame_name;
+                gint fx, fy, fw, fh;
+
+                frame_map = yaml_sequence_get_mapping_element (frames_seq, i);
+                if (frame_map == NULL)
+                    continue;
+
+                frame_name = yaml_mapping_get_string_member (frame_map, "name");
+                fx = (gint) yaml_mapping_get_int_member (frame_map, "x");
+                fy = (gint) yaml_mapping_get_int_member (frame_map, "y");
+                fw = (gint) yaml_mapping_get_int_member (frame_map, "width");
+                fh = (gint) yaml_mapping_get_int_member (frame_map, "height");
+
+                lrg_sprite_sheet_add_frame_rect (self, frame_name, fx, fy, fw, fh);
+            }
+        }
+    }
+
+    /* Load animations */
+    if (yaml_mapping_has_member (mapping, "animations"))
+    {
+        YamlSequence *anims_seq;
+        guint i;
+        guint n_anims;
+
+        anims_seq = yaml_mapping_get_sequence_member (mapping, "animations");
+        if (anims_seq != NULL)
+        {
+            n_anims = yaml_sequence_get_length (anims_seq);
+            for (i = 0; i < n_anims; i++)
+            {
+                YamlMapping *anim_map;
+                const gchar *anim_name;
+                gfloat frame_duration;
+                gboolean loop;
+
+                anim_map = yaml_sequence_get_mapping_element (anims_seq, i);
+                if (anim_map == NULL)
+                    continue;
+
+                anim_name = yaml_mapping_get_string_member (anim_map, "name");
+                if (anim_name == NULL)
+                    continue;
+
+                frame_duration = (gfloat) yaml_mapping_get_double_member (anim_map, "frame_duration");
+                loop = yaml_mapping_get_boolean_member (anim_map, "loop");
+
+                /* Load frame indices */
+                if (yaml_mapping_has_member (anim_map, "frame_indices"))
+                {
+                    YamlSequence *indices_seq;
+                    guint j;
+                    guint n_indices;
+                    guint *frame_indices;
+
+                    indices_seq = yaml_mapping_get_sequence_member (anim_map, "frame_indices");
+                    if (indices_seq != NULL)
+                    {
+                        n_indices = yaml_sequence_get_length (indices_seq);
+                        frame_indices = g_new (guint, n_indices);
+                        for (j = 0; j < n_indices; j++)
+                        {
+                            frame_indices[j] = (guint) yaml_sequence_get_int_element (indices_seq, j);
+                        }
+
+                        lrg_sprite_sheet_define_animation_frames (
+                            self, anim_name, frame_indices, n_indices,
+                            frame_duration, loop
+                        );
+
+                        g_free (frame_indices);
+                    }
+                }
+                else if (yaml_mapping_has_member (anim_map, "start_frame") &&
+                         yaml_mapping_has_member (anim_map, "end_frame"))
+                {
+                    /* Range-based animation definition */
+                    guint start_frame;
+                    guint end_frame;
+
+                    start_frame = (guint) yaml_mapping_get_int_member (anim_map, "start_frame");
+                    end_frame = (guint) yaml_mapping_get_int_member (anim_map, "end_frame");
+
+                    lrg_sprite_sheet_define_animation (
+                        self, anim_name, start_frame, end_frame,
+                        frame_duration, loop
+                    );
+                }
+            }
+        }
+    }
+
+    /* Recalculate UVs if we have texture dimensions */
+    if (self->texture_width > 0 && self->texture_height > 0)
+        lrg_sprite_sheet_recalculate_uvs (self);
+
+    return self;
 }
 
 /**
@@ -1140,11 +1316,150 @@ lrg_sprite_sheet_save_to_file (LrgSpriteSheet  *self,
                                const gchar     *path,
                                GError         **error)
 {
+    g_autoptr(YamlBuilder) builder = NULL;
+    g_autoptr(YamlGenerator) generator = NULL;
+    YamlDocument *doc;
+    GHashTableIter iter;
+    gpointer value;
+    LrgAnimationDef *anim_def;
+    gchar *yaml_str;
+    gboolean ret;
+    guint i;
+
     g_return_val_if_fail (LRG_IS_SPRITE_SHEET (self), FALSE);
     g_return_val_if_fail (path != NULL, FALSE);
 
-    /* TODO: Implement YAML saving with yaml-glib */
-    g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-                 "YAML saving not yet implemented");
-    return FALSE;
+    builder = yaml_builder_new ();
+
+    /* Build root mapping */
+    yaml_builder_begin_mapping (builder);
+
+    yaml_builder_set_member_name (builder, "name");
+    yaml_builder_add_string_value (builder, self->name != NULL ? self->name : "");
+
+    if (self->texture_path != NULL)
+    {
+        yaml_builder_set_member_name (builder, "texture_path");
+        yaml_builder_add_string_value (builder, self->texture_path);
+    }
+
+    yaml_builder_set_member_name (builder, "texture_width");
+    yaml_builder_add_int_value (builder, self->texture_width);
+
+    yaml_builder_set_member_name (builder, "texture_height");
+    yaml_builder_add_int_value (builder, self->texture_height);
+
+    /* Format */
+    yaml_builder_set_member_name (builder, "format");
+    switch (self->format)
+    {
+    case LRG_SPRITE_SHEET_FORMAT_ASEPRITE:
+        yaml_builder_add_string_value (builder, "aseprite");
+        break;
+    case LRG_SPRITE_SHEET_FORMAT_TEXTUREPACKER:
+        yaml_builder_add_string_value (builder, "texturepacker");
+        break;
+    case LRG_SPRITE_SHEET_FORMAT_LIBREGNUM:
+        yaml_builder_add_string_value (builder, "libregnum");
+        break;
+    default:
+        yaml_builder_add_string_value (builder, "grid");
+        break;
+    }
+
+    /* Frames sequence */
+    yaml_builder_set_member_name (builder, "frames");
+    yaml_builder_begin_sequence (builder);
+
+    for (i = 0; i < self->frames->len; i++)
+    {
+        LrgAtlasRegion *frame;
+
+        frame = (LrgAtlasRegion *) g_ptr_array_index (self->frames, i);
+
+        yaml_builder_begin_mapping (builder);
+
+        yaml_builder_set_member_name (builder, "name");
+        yaml_builder_add_string_value (builder,
+            lrg_atlas_region_get_name (frame));
+
+        yaml_builder_set_member_name (builder, "x");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_x (frame));
+
+        yaml_builder_set_member_name (builder, "y");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_y (frame));
+
+        yaml_builder_set_member_name (builder, "width");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_width (frame));
+
+        yaml_builder_set_member_name (builder, "height");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_height (frame));
+
+        yaml_builder_end_mapping (builder);  /* frame */
+    }
+
+    yaml_builder_end_sequence (builder);  /* frames */
+
+    /* Animations sequence */
+    yaml_builder_set_member_name (builder, "animations");
+    yaml_builder_begin_sequence (builder);
+
+    g_hash_table_iter_init (&iter, self->animations);
+    while (g_hash_table_iter_next (&iter, NULL, &value))
+    {
+        guint j;
+
+        anim_def = (LrgAnimationDef *) value;
+
+        yaml_builder_begin_mapping (builder);
+
+        yaml_builder_set_member_name (builder, "name");
+        yaml_builder_add_string_value (builder, anim_def->name);
+
+        yaml_builder_set_member_name (builder, "frame_duration");
+        yaml_builder_add_double_value (builder, (gdouble) anim_def->frame_duration);
+
+        yaml_builder_set_member_name (builder, "loop");
+        yaml_builder_add_boolean_value (builder, anim_def->loop);
+
+        /* Frame indices */
+        yaml_builder_set_member_name (builder, "frame_indices");
+        yaml_builder_begin_sequence (builder);
+
+        for (j = 0; j < anim_def->frame_indices->len; j++)
+        {
+            yaml_builder_add_int_value (builder,
+                g_array_index (anim_def->frame_indices, guint, j));
+        }
+
+        yaml_builder_end_sequence (builder);  /* frame_indices */
+        yaml_builder_end_mapping (builder);  /* animation */
+    }
+
+    yaml_builder_end_sequence (builder);  /* animations */
+    yaml_builder_end_mapping (builder);  /* root */
+
+    doc = yaml_builder_get_document (builder);
+    if (doc == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                     "Failed to build YAML document for sprite sheet");
+        return FALSE;
+    }
+
+    generator = yaml_generator_new ();
+    yaml_generator_set_document (generator, doc);
+    yaml_str = yaml_generator_to_data (generator, NULL, error);
+
+    if (yaml_str == NULL)
+        return FALSE;
+
+    ret = g_file_set_contents (path, yaml_str, -1, error);
+    g_free (yaml_str);
+
+    return ret;
 }

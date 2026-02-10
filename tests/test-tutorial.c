@@ -15,7 +15,9 @@
 #include "../src/tutorial/lrg-tooltip-arrow.h"
 
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <math.h>
+#include <unistd.h>
 
 /* ========================================================================== */
 /*                          Tutorial Step Tests                               */
@@ -1023,6 +1025,123 @@ test_tooltip_arrow_animation (TooltipArrowFixture *fixture,
 }
 
 /* ========================================================================== */
+/*                       YAML Serialization Tests                             */
+/* ========================================================================== */
+
+static void
+test_tutorial_yaml_roundtrip (void)
+{
+    g_autofree gchar *tmp_path = NULL;
+    g_autoptr(GError) error = NULL;
+    LrgTutorial *tutorial;
+    LrgTutorial *loaded;
+    LrgTutorialStep *step;
+    LrgTutorialStep *loaded_step;
+    gboolean saved;
+    gint fd;
+
+    /* Create a tutorial with various step types */
+    tutorial = lrg_tutorial_new ("tut_intro", "Introduction Tutorial");
+    lrg_tutorial_set_description (tutorial, "Learn the basics of the game");
+    lrg_tutorial_set_repeatable (tutorial, TRUE);
+    lrg_tutorial_set_skippable (tutorial, TRUE);
+
+    /* Add a text step */
+    step = lrg_tutorial_step_new_text ("Welcome to the game!", "Narrator");
+    lrg_tutorial_step_set_id (step, "step_welcome");
+    lrg_tutorial_step_set_can_skip (step, FALSE);
+    lrg_tutorial_step_set_arrow_direction (step, LRG_ARROW_DIRECTION_DOWN);
+    lrg_tutorial_add_step (tutorial, step);
+    lrg_tutorial_step_free (step);
+
+    /* Add a highlight step */
+    step = lrg_tutorial_step_new_highlight ("inventory_button", LRG_HIGHLIGHT_STYLE_GLOW);
+    lrg_tutorial_step_set_id (step, "step_highlight");
+    lrg_tutorial_step_set_blocks_input (step, TRUE);
+    lrg_tutorial_add_step (tutorial, step);
+    lrg_tutorial_step_free (step);
+
+    /* Add an input step */
+    step = lrg_tutorial_step_new_input ("open_inventory", TRUE);
+    lrg_tutorial_step_set_id (step, "step_input");
+    lrg_tutorial_add_step (tutorial, step);
+    lrg_tutorial_step_free (step);
+
+    /* Add a delay step */
+    step = lrg_tutorial_step_new_delay (2.5f);
+    lrg_tutorial_step_set_id (step, "step_delay");
+    lrg_tutorial_step_set_auto_advance (step, TRUE);
+    lrg_tutorial_add_step (tutorial, step);
+    lrg_tutorial_step_free (step);
+
+    /* Add a condition step */
+    step = lrg_tutorial_step_new_condition ("has_picked_up_item");
+    lrg_tutorial_step_set_id (step, "step_condition");
+    lrg_tutorial_add_step (tutorial, step);
+    lrg_tutorial_step_free (step);
+
+    /* Save to temp file */
+    fd = g_file_open_tmp ("test_tutorial_XXXXXX.yaml", &tmp_path, &error);
+    g_assert_no_error (error);
+    close (fd);
+
+    saved = lrg_tutorial_save_to_file (tutorial, tmp_path, &error);
+    g_assert_no_error (error);
+    g_assert_true (saved);
+
+    /* Load back */
+    loaded = lrg_tutorial_new_from_file (tmp_path, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (loaded);
+
+    /* Verify data roundtrip */
+    g_assert_cmpstr (lrg_tutorial_get_id (loaded), ==, "tut_intro");
+    g_assert_cmpstr (lrg_tutorial_get_name (loaded), ==, "Introduction Tutorial");
+    g_assert_cmpstr (lrg_tutorial_get_description (loaded), ==, "Learn the basics of the game");
+    g_assert_true (lrg_tutorial_is_repeatable (loaded));
+    g_assert_true (lrg_tutorial_is_skippable (loaded));
+    g_assert_cmpuint (lrg_tutorial_get_step_count (loaded), ==, 5);
+
+    /* Verify text step */
+    loaded_step = lrg_tutorial_get_step (loaded, 0);
+    g_assert_nonnull (loaded_step);
+    g_assert_cmpint (lrg_tutorial_step_get_step_type (loaded_step), ==, LRG_TUTORIAL_STEP_TEXT);
+    g_assert_cmpstr (lrg_tutorial_step_get_id (loaded_step), ==, "step_welcome");
+    g_assert_cmpstr (lrg_tutorial_step_get_text (loaded_step), ==, "Welcome to the game!");
+    g_assert_cmpstr (lrg_tutorial_step_get_speaker (loaded_step), ==, "Narrator");
+    g_assert_false (lrg_tutorial_step_get_can_skip (loaded_step));
+    g_assert_cmpint (lrg_tutorial_step_get_arrow_direction (loaded_step), ==, LRG_ARROW_DIRECTION_DOWN);
+
+    /* Verify highlight step */
+    loaded_step = lrg_tutorial_get_step (loaded, 1);
+    g_assert_cmpint (lrg_tutorial_step_get_step_type (loaded_step), ==, LRG_TUTORIAL_STEP_HIGHLIGHT);
+    g_assert_cmpstr (lrg_tutorial_step_get_target_id (loaded_step), ==, "inventory_button");
+    g_assert_cmpint (lrg_tutorial_step_get_highlight_style (loaded_step), ==, LRG_HIGHLIGHT_STYLE_GLOW);
+    g_assert_true (lrg_tutorial_step_get_blocks_input (loaded_step));
+
+    /* Verify input step */
+    loaded_step = lrg_tutorial_get_step (loaded, 2);
+    g_assert_cmpint (lrg_tutorial_step_get_step_type (loaded_step), ==, LRG_TUTORIAL_STEP_INPUT);
+    g_assert_cmpstr (lrg_tutorial_step_get_action_name (loaded_step), ==, "open_inventory");
+    g_assert_true (lrg_tutorial_step_get_show_prompt (loaded_step));
+
+    /* Verify delay step */
+    loaded_step = lrg_tutorial_get_step (loaded, 3);
+    g_assert_cmpint (lrg_tutorial_step_get_step_type (loaded_step), ==, LRG_TUTORIAL_STEP_DELAY);
+    g_assert_cmpfloat_with_epsilon (lrg_tutorial_step_get_duration (loaded_step), 2.5f, 0.01f);
+    g_assert_true (lrg_tutorial_step_get_auto_advance (loaded_step));
+
+    /* Verify condition step */
+    loaded_step = lrg_tutorial_get_step (loaded, 4);
+    g_assert_cmpint (lrg_tutorial_step_get_step_type (loaded_step), ==, LRG_TUTORIAL_STEP_CONDITION);
+    g_assert_cmpstr (lrg_tutorial_step_get_condition_id (loaded_step), ==, "has_picked_up_item");
+
+    g_object_unref (loaded);
+    g_object_unref (tutorial);
+    g_unlink (tmp_path);
+}
+
+/* ========================================================================== */
 /*                              Main Entry                                    */
 /* ========================================================================== */
 
@@ -1073,6 +1192,9 @@ main (int argc, char *argv[])
                 tutorial_fixture_set_up, test_tutorial_go_to_step, tutorial_fixture_tear_down);
     g_test_add ("/tutorial/tutorial/reset", TutorialFixture, NULL,
                 tutorial_fixture_set_up, test_tutorial_reset, tutorial_fixture_tear_down);
+
+    /* YAML Serialization tests */
+    g_test_add_func ("/tutorial/tutorial/yaml_roundtrip", test_tutorial_yaml_roundtrip);
 
     /* Tutorial Manager tests */
     g_test_add_func ("/tutorial/manager/new", test_tutorial_manager_new);

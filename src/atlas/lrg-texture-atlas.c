@@ -13,6 +13,8 @@
 
 #include "lrg-texture-atlas.h"
 
+#include <yaml-glib.h>
+
 /**
  * LrgTextureAtlas:
  *
@@ -256,12 +258,97 @@ LrgTextureAtlas *
 lrg_texture_atlas_new_from_file (const gchar  *path,
                                  GError      **error)
 {
-    /* TODO: Implement YAML loading using yaml-glib */
-    g_set_error (error,
-                 G_IO_ERROR,
-                 G_IO_ERROR_NOT_SUPPORTED,
-                 "Atlas file loading not yet implemented");
-    return NULL;
+    g_autoptr(YamlParser) parser = NULL;
+    YamlNode *root;
+    YamlMapping *mapping;
+    const gchar *name;
+    const gchar *texture_path;
+    LrgTextureAtlas *self;
+
+    g_return_val_if_fail (path != NULL, NULL);
+
+    /* Parse the YAML file */
+    parser = yaml_parser_new ();
+    if (!yaml_parser_load_from_file (parser, path, error))
+        return NULL;
+
+    root = yaml_parser_get_root (parser);
+    if (root == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Empty atlas file: %s", path);
+        return NULL;
+    }
+
+    mapping = yaml_node_get_mapping (root);
+    if (mapping == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Atlas root must be a mapping: %s", path);
+        return NULL;
+    }
+
+    /* Get required 'name' field */
+    name = yaml_mapping_get_string_member (mapping, "name");
+    if (name == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Atlas missing 'name' field: %s", path);
+        return NULL;
+    }
+
+    /* Create atlas */
+    self = lrg_texture_atlas_new (name);
+
+    /* Texture path */
+    texture_path = yaml_mapping_get_string_member (mapping, "texture_path");
+    if (texture_path != NULL)
+        lrg_texture_atlas_set_texture_path (self, texture_path);
+
+    /* Dimensions */
+    if (yaml_mapping_has_member (mapping, "width"))
+        lrg_texture_atlas_set_width (self, (gint) yaml_mapping_get_int_member (mapping, "width"));
+
+    if (yaml_mapping_has_member (mapping, "height"))
+        lrg_texture_atlas_set_height (self, (gint) yaml_mapping_get_int_member (mapping, "height"));
+
+    /* Load regions */
+    if (yaml_mapping_has_member (mapping, "regions"))
+    {
+        YamlSequence *regions_seq;
+        guint i;
+        guint n_regions;
+
+        regions_seq = yaml_mapping_get_sequence_member (mapping, "regions");
+        if (regions_seq != NULL)
+        {
+            n_regions = yaml_sequence_get_length (regions_seq);
+            for (i = 0; i < n_regions; i++)
+            {
+                YamlMapping *region_map;
+                const gchar *region_name;
+                gint rx, ry, rw, rh;
+
+                region_map = yaml_sequence_get_mapping_element (regions_seq, i);
+                if (region_map == NULL)
+                    continue;
+
+                region_name = yaml_mapping_get_string_member (region_map, "name");
+                rx = (gint) yaml_mapping_get_int_member (region_map, "x");
+                ry = (gint) yaml_mapping_get_int_member (region_map, "y");
+                rw = (gint) yaml_mapping_get_int_member (region_map, "width");
+                rh = (gint) yaml_mapping_get_int_member (region_map, "height");
+
+                lrg_texture_atlas_add_region_rect (self, region_name, rx, ry, rw, rh);
+            }
+        }
+    }
+
+    /* Recalculate UVs if we have atlas dimensions */
+    if (self->width > 0 && self->height > 0)
+        lrg_texture_atlas_recalculate_uvs (self);
+
+    return self;
 }
 
 /**
@@ -663,10 +750,92 @@ lrg_texture_atlas_save_to_file (LrgTextureAtlas  *self,
                                 const gchar      *path,
                                 GError          **error)
 {
-    /* TODO: Implement YAML saving using yaml-glib */
-    g_set_error (error,
-                 G_IO_ERROR,
-                 G_IO_ERROR_NOT_SUPPORTED,
-                 "Atlas file saving not yet implemented");
-    return FALSE;
+    g_autoptr(YamlBuilder) builder = NULL;
+    g_autoptr(YamlGenerator) generator = NULL;
+    YamlDocument *doc;
+    GHashTableIter iter;
+    gpointer value;
+    LrgAtlasRegion *region;
+    gchar *yaml_str;
+    gboolean ret;
+
+    g_return_val_if_fail (LRG_IS_TEXTURE_ATLAS (self), FALSE);
+    g_return_val_if_fail (path != NULL, FALSE);
+
+    builder = yaml_builder_new ();
+
+    /* Build root mapping */
+    yaml_builder_begin_mapping (builder);
+
+    yaml_builder_set_member_name (builder, "name");
+    yaml_builder_add_string_value (builder, self->name != NULL ? self->name : "");
+
+    if (self->texture_path != NULL)
+    {
+        yaml_builder_set_member_name (builder, "texture_path");
+        yaml_builder_add_string_value (builder, self->texture_path);
+    }
+
+    yaml_builder_set_member_name (builder, "width");
+    yaml_builder_add_int_value (builder, self->width);
+
+    yaml_builder_set_member_name (builder, "height");
+    yaml_builder_add_int_value (builder, self->height);
+
+    /* Regions sequence */
+    yaml_builder_set_member_name (builder, "regions");
+    yaml_builder_begin_sequence (builder);
+
+    g_hash_table_iter_init (&iter, self->regions);
+    while (g_hash_table_iter_next (&iter, NULL, &value))
+    {
+        region = (LrgAtlasRegion *) value;
+
+        yaml_builder_begin_mapping (builder);
+
+        yaml_builder_set_member_name (builder, "name");
+        yaml_builder_add_string_value (builder,
+            lrg_atlas_region_get_name (region));
+
+        yaml_builder_set_member_name (builder, "x");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_x (region));
+
+        yaml_builder_set_member_name (builder, "y");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_y (region));
+
+        yaml_builder_set_member_name (builder, "width");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_width (region));
+
+        yaml_builder_set_member_name (builder, "height");
+        yaml_builder_add_int_value (builder,
+            lrg_atlas_region_get_height (region));
+
+        yaml_builder_end_mapping (builder);  /* region */
+    }
+
+    yaml_builder_end_sequence (builder);  /* regions */
+    yaml_builder_end_mapping (builder);  /* root */
+
+    doc = yaml_builder_get_document (builder);
+    if (doc == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                     "Failed to build YAML document for atlas");
+        return FALSE;
+    }
+
+    generator = yaml_generator_new ();
+    yaml_generator_set_document (generator, doc);
+    yaml_str = yaml_generator_to_data (generator, NULL, error);
+
+    if (yaml_str == NULL)
+        return FALSE;
+
+    ret = g_file_set_contents (path, yaml_str, -1, error);
+    g_free (yaml_str);
+
+    return ret;
 }
