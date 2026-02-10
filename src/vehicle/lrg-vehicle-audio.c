@@ -10,6 +10,9 @@
 #include <math.h>
 
 #include "lrg-vehicle-audio.h"
+#include "../audio/lrg-audio-manager.h"
+#include "../audio/lrg-sound-bank.h"
+#include <graylib.h>
 
 /* Default values */
 #define DEFAULT_MIN_PITCH       0.8f
@@ -232,6 +235,48 @@ lrg_vehicle_audio_init (LrgVehicleAudio *self)
 }
 
 /*
+ * Helper to resolve a sound_id to a GrlSound from the audio manager.
+ * Sound IDs use the format "bank_name:sound_name". If no colon is
+ * present, "vehicle" is used as the default bank name.
+ *
+ * Returns: (transfer none) (nullable): The GrlSound, or NULL if not found
+ */
+static GrlSound *
+resolve_sound (const gchar *sound_id)
+{
+    LrgAudioManager *audio;
+    LrgSoundBank    *bank;
+    const gchar     *colon;
+    g_autofree gchar *bank_name = NULL;
+    const gchar     *sound_name;
+
+    if (sound_id == NULL)
+        return NULL;
+
+    audio = lrg_audio_manager_get_default ();
+    if (audio == NULL)
+        return NULL;
+
+    colon = strchr (sound_id, ':');
+    if (colon != NULL)
+    {
+        bank_name = g_strndup (sound_id, (gsize)(colon - sound_id));
+        sound_name = colon + 1;
+    }
+    else
+    {
+        bank_name = g_strdup ("vehicle");
+        sound_name = sound_id;
+    }
+
+    bank = lrg_audio_manager_get_bank (audio, bank_name);
+    if (bank == NULL)
+        return NULL;
+
+    return lrg_sound_bank_get (bank, sound_name);
+}
+
+/*
  * Public API
  */
 
@@ -382,15 +427,17 @@ lrg_vehicle_audio_start (LrgVehicleAudio *self)
     self->is_playing = TRUE;
     self->smoothed_rpm = self->idle_rpm;
 
-    /*
-     * TODO: Integrate with LrgAudioManager to start engine loop
-     *
-     * if (self->engine_sound_id != NULL)
-     * {
-     *     LrgAudioManager *audio = lrg_engine_get_audio_manager (...);
-     *     lrg_audio_manager_play_looped (audio, self->engine_sound_id, ...);
-     * }
-     */
+    /* Start the engine loop sound at idle pitch */
+    if (self->engine_sound_id != NULL)
+    {
+        GrlSound *sound = resolve_sound (self->engine_sound_id);
+        if (sound != NULL)
+        {
+            grl_sound_set_volume (sound, self->master_volume * self->engine_volume);
+            grl_sound_set_pitch (sound, self->min_pitch);
+            grl_sound_play (sound);
+        }
+    }
 }
 
 void
@@ -404,9 +451,27 @@ lrg_vehicle_audio_stop (LrgVehicleAudio *self)
     self->is_playing = FALSE;
     self->horn_playing = FALSE;
 
-    /*
-     * TODO: Integrate with LrgAudioManager to stop sounds
-     */
+    /* Stop all vehicle sounds */
+    if (self->engine_sound_id != NULL)
+    {
+        GrlSound *sound = resolve_sound (self->engine_sound_id);
+        if (sound != NULL)
+            grl_sound_stop (sound);
+    }
+
+    if (self->tire_screech_sound_id != NULL)
+    {
+        GrlSound *sound = resolve_sound (self->tire_screech_sound_id);
+        if (sound != NULL)
+            grl_sound_stop (sound);
+    }
+
+    if (self->horn_sound_id != NULL)
+    {
+        GrlSound *sound = resolve_sound (self->horn_sound_id);
+        if (sound != NULL)
+            grl_sound_stop (sound);
+    }
 }
 
 gboolean
@@ -427,16 +492,17 @@ lrg_vehicle_audio_play_horn (LrgVehicleAudio *self)
 
     self->horn_playing = TRUE;
 
-    /*
-     * TODO: Integrate with LrgAudioManager
-     *
-     * if (self->horn_sound_id != NULL)
-     * {
-     *     gfloat volume = self->master_volume * self->effects_volume;
-     *     LrgAudioManager *audio = lrg_engine_get_audio_manager (...);
-     *     lrg_audio_manager_play (audio, self->horn_sound_id, volume);
-     * }
-     */
+    /* Play horn sound with effects volume */
+    if (self->horn_sound_id != NULL)
+    {
+        GrlSound *sound = resolve_sound (self->horn_sound_id);
+        if (sound != NULL)
+        {
+            grl_sound_set_volume (sound,
+                                  self->master_volume * self->effects_volume);
+            grl_sound_play (sound);
+        }
+    }
 }
 
 void
@@ -446,9 +512,13 @@ lrg_vehicle_audio_stop_horn (LrgVehicleAudio *self)
 
     self->horn_playing = FALSE;
 
-    /*
-     * TODO: Stop horn sound
-     */
+    /* Stop the horn sound */
+    if (self->horn_sound_id != NULL)
+    {
+        GrlSound *sound = resolve_sound (self->horn_sound_id);
+        if (sound != NULL)
+            grl_sound_stop (sound);
+    }
 }
 
 void
@@ -457,17 +527,18 @@ lrg_vehicle_audio_play_collision (LrgVehicleAudio *self,
 {
     g_return_if_fail (LRG_IS_VEHICLE_AUDIO (self));
 
-    /*
-     * TODO: Integrate with LrgAudioManager
-     *
-     * if (self->collision_sound_id != NULL)
-     * {
-     *     gfloat volume = self->master_volume * self->effects_volume * intensity;
-     *     LrgAudioManager *audio = lrg_engine_get_audio_manager (...);
-     *     lrg_audio_manager_play (audio, self->collision_sound_id, volume);
-     * }
-     */
-    (void)intensity;
+    /* Play collision sound scaled by intensity */
+    if (self->collision_sound_id != NULL)
+    {
+        GrlSound *sound = resolve_sound (self->collision_sound_id);
+        if (sound != NULL)
+        {
+            gfloat volume = self->master_volume * self->effects_volume *
+                            CLAMP (intensity, 0.0f, 1.0f);
+            grl_sound_set_volume (sound, volume);
+            grl_sound_play_multi (sound);
+        }
+    }
 }
 
 void
@@ -505,17 +576,17 @@ lrg_vehicle_audio_update (LrgVehicleAudio *self,
     /* Smooth pitch changes */
     self->current_engine_pitch += (target_pitch - self->current_engine_pitch) * 10.0f * delta;
 
-    /*
-     * TODO: Update engine sound pitch
-     *
-     * if (self->engine_sound_id != NULL)
-     * {
-     *     gfloat volume = self->master_volume * self->engine_volume;
-     *     LrgAudioManager *audio = lrg_engine_get_audio_manager (...);
-     *     lrg_audio_manager_set_pitch (audio, ..., self->current_engine_pitch);
-     *     lrg_audio_manager_set_volume (audio, ..., volume);
-     * }
-     */
+    /* Update engine sound pitch and volume */
+    if (self->engine_sound_id != NULL)
+    {
+        GrlSound *engine_snd = resolve_sound (self->engine_sound_id);
+        if (engine_snd != NULL)
+        {
+            grl_sound_set_pitch (engine_snd, self->current_engine_pitch);
+            grl_sound_set_volume (engine_snd,
+                                  self->master_volume * self->engine_volume);
+        }
+    }
 
     /*
      * Update tire screech based on wheel slip
@@ -550,21 +621,25 @@ lrg_vehicle_audio_update (LrgVehicleAudio *self,
     /* Smooth screech volume */
     self->current_screech_volume += (target_screech - self->current_screech_volume) * 8.0f * delta;
 
-    /*
-     * TODO: Update tire screech sound
-     *
-     * if (self->tire_screech_sound_id != NULL)
-     * {
-     *     gfloat volume = self->master_volume * self->effects_volume *
-     *                     self->current_screech_volume;
-     *     if (volume > 0.01f)
-     *     {
-     *         // Start or update screech sound
-     *     }
-     *     else
-     *     {
-     *         // Stop screech sound
-     *     }
-     * }
-     */
+    /* Update tire screech sound volume */
+    if (self->tire_screech_sound_id != NULL)
+    {
+        GrlSound *screech_snd = resolve_sound (self->tire_screech_sound_id);
+        if (screech_snd != NULL)
+        {
+            gfloat screech_vol = self->master_volume * self->effects_volume *
+                                 self->current_screech_volume;
+            if (screech_vol > 0.01f)
+            {
+                grl_sound_set_volume (screech_snd, screech_vol);
+                if (!grl_sound_is_playing (screech_snd))
+                    grl_sound_play (screech_snd);
+            }
+            else
+            {
+                if (grl_sound_is_playing (screech_snd))
+                    grl_sound_stop (screech_snd);
+            }
+        }
+    }
 }

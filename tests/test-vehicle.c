@@ -756,6 +756,102 @@ test_vehicle_audio_playback (void)
     g_object_unref (audio);
 }
 
+/*
+ * Test that sound configuration can be set and that playback methods
+ * gracefully handle the case where no audio manager / sound banks are
+ * loaded (which is the case in unit tests).
+ */
+static void
+test_vehicle_audio_sound_config (void)
+{
+    LrgVehicleAudio *audio;
+
+    audio = lrg_vehicle_audio_new ();
+
+    /* Set sound IDs */
+    lrg_vehicle_audio_set_engine_sound (audio, "vehicle:engine_loop");
+    lrg_vehicle_audio_set_tire_screech_sound (audio, "vehicle:screech");
+    lrg_vehicle_audio_set_horn_sound (audio, "vehicle:horn");
+    lrg_vehicle_audio_set_collision_sound (audio, "vehicle:crash");
+
+    /* Start/stop should not crash even without audio system */
+    lrg_vehicle_audio_start (audio);
+    g_assert_true (lrg_vehicle_audio_is_playing (audio));
+
+    lrg_vehicle_audio_stop (audio);
+    g_assert_false (lrg_vehicle_audio_is_playing (audio));
+
+    g_object_unref (audio);
+}
+
+/*
+ * Test horn play/stop methods with sound IDs configured but no audio
+ * manager available.
+ */
+static void
+test_vehicle_audio_horn (void)
+{
+    LrgVehicleAudio *audio;
+
+    audio = lrg_vehicle_audio_new ();
+    lrg_vehicle_audio_set_horn_sound (audio, "vehicle:horn");
+
+    /* Play horn should not crash without audio manager */
+    lrg_vehicle_audio_play_horn (audio);
+
+    /* Stop horn should not crash */
+    lrg_vehicle_audio_stop_horn (audio);
+
+    g_object_unref (audio);
+}
+
+/*
+ * Test collision sound with varying intensity.
+ */
+static void
+test_vehicle_audio_collision (void)
+{
+    LrgVehicleAudio *audio;
+
+    audio = lrg_vehicle_audio_new ();
+    lrg_vehicle_audio_set_collision_sound (audio, "vehicle:crash");
+
+    /* Should not crash without audio manager */
+    lrg_vehicle_audio_play_collision (audio, 0.5f);
+    lrg_vehicle_audio_play_collision (audio, 1.0f);
+    lrg_vehicle_audio_play_collision (audio, 0.0f);
+
+    g_object_unref (audio);
+}
+
+/*
+ * Test engine pitch and RPM range configuration.
+ */
+static void
+test_vehicle_audio_engine_tuning (void)
+{
+    LrgVehicleAudio *audio;
+
+    audio = lrg_vehicle_audio_new ();
+
+    /* Set pitch range */
+    lrg_vehicle_audio_set_engine_pitch_range (audio, 0.5f, 3.0f);
+
+    /* Set RPM range */
+    lrg_vehicle_audio_set_engine_rpm_range (audio, 600.0f, 8000.0f);
+
+    /* Volume controls */
+    lrg_vehicle_audio_set_engine_volume (audio, 0.7f);
+    lrg_vehicle_audio_set_effects_volume (audio, 0.9f);
+
+    /* Start and immediately stop should work */
+    lrg_vehicle_audio_set_engine_sound (audio, "vehicle:engine");
+    lrg_vehicle_audio_start (audio);
+    lrg_vehicle_audio_stop (audio);
+
+    g_object_unref (audio);
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -830,6 +926,10 @@ main (int   argc,
     g_test_add_func ("/vehicle/audio/new", test_vehicle_audio_new);
     g_test_add_func ("/vehicle/audio/volume", test_vehicle_audio_volume);
     g_test_add_func ("/vehicle/audio/playback", test_vehicle_audio_playback);
+    g_test_add_func ("/vehicle/audio/sound-config", test_vehicle_audio_sound_config);
+    g_test_add_func ("/vehicle/audio/horn", test_vehicle_audio_horn);
+    g_test_add_func ("/vehicle/audio/collision", test_vehicle_audio_collision);
+    g_test_add_func ("/vehicle/audio/engine-tuning", test_vehicle_audio_engine_tuning);
 
     return g_test_run ();
 }
