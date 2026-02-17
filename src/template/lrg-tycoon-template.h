@@ -647,6 +647,38 @@ LRG_AVAILABLE_IN_ALL
 void lrg_tycoon_template_set_edge_pan_margin (LrgTycoonTemplate *self,
                                               gint               margin);
 
+/**
+ * lrg_tycoon_template_set_camera_position:
+ * @self: a #LrgTycoonTemplate
+ * @x: world x coordinate
+ * @y: world y coordinate
+ *
+ * Sets the camera position directly. Useful for centering
+ * the camera on a specific world location at game start.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_tycoon_template_set_camera_position (LrgTycoonTemplate *self,
+                                               gfloat             x,
+                                               gfloat             y);
+
+/**
+ * lrg_tycoon_template_set_camera_bounds:
+ * @self: a #LrgTycoonTemplate
+ * @min_x: minimum camera x position (world coordinates)
+ * @min_y: minimum camera y position (world coordinates)
+ * @max_x: maximum camera x position (world coordinates)
+ * @max_y: maximum camera y position (world coordinates)
+ *
+ * Sets camera panning bounds. Once set, the camera position is
+ * clamped to the given rectangle after every pan operation.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_tycoon_template_set_camera_bounds (LrgTycoonTemplate *self,
+                                             gfloat             min_x,
+                                             gfloat             min_y,
+                                             gfloat             max_x,
+                                             gfloat             max_y);
+
 /* ==========================================================================
  * Resources (Basic Tracking)
  * ========================================================================== */

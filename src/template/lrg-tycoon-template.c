@@ -60,6 +60,13 @@ typedef struct
     /* Camera position for pan */
     gfloat camera_x;
     gfloat camera_y;
+
+    /* Camera bounds (clamped after panning) */
+    gboolean camera_bounds_enabled;
+    gfloat camera_min_x;
+    gfloat camera_min_y;
+    gfloat camera_max_x;
+    gfloat camera_max_y;
 } LrgTycoonTemplatePrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgTycoonTemplate, lrg_tycoon_template,
@@ -336,6 +343,23 @@ lrg_tycoon_template_real_draw_resources_hud (LrgTycoonTemplate *self)
  * Overridden Parent Virtual Methods
  * ========================================================================== */
 
+/*
+ * update_camera: Override the 2D template's camera-follow logic with a no-op.
+ *
+ * The tycoon template manages its own camera panning (WASD, arrows, edge pan)
+ * in pre_update and applies camera_x/camera_y directly to the camera target.
+ * The parent's update_camera would fight this by lerping toward its own
+ * camera_target (default 0,0), effectively undoing our positioning.
+ */
+static void
+lrg_tycoon_template_update_camera (LrgGame2DTemplate *template,
+                                    gdouble            delta)
+{
+    (void) template;
+    (void) delta;
+    /* Intentionally empty — camera is managed in pre_update */
+}
+
 static void
 lrg_tycoon_template_pre_update (LrgGameTemplate *template,
                                 gdouble          delta)
@@ -438,6 +462,13 @@ lrg_tycoon_template_pre_update (LrgGameTemplate *template,
 
         priv->camera_x += pan_x * priv->pan_speed * (gfloat)delta / priv->current_zoom;
         priv->camera_y += pan_y * priv->pan_speed * (gfloat)delta / priv->current_zoom;
+    }
+
+    /* Clamp camera to bounds if enabled */
+    if (priv->camera_bounds_enabled)
+    {
+        priv->camera_x = CLAMP (priv->camera_x, priv->camera_min_x, priv->camera_max_x);
+        priv->camera_y = CLAMP (priv->camera_y, priv->camera_min_y, priv->camera_max_y);
     }
 
     /* Mouse wheel zoom */
@@ -640,6 +671,7 @@ lrg_tycoon_template_class_init (LrgTycoonTemplateClass *klass)
 
     /* Override parent virtuals */
     template_class->pre_update = lrg_tycoon_template_pre_update;
+    template_2d_class->update_camera = lrg_tycoon_template_update_camera;
     template_2d_class->draw_world = lrg_tycoon_template_draw_world;
     template_2d_class->draw_ui = lrg_tycoon_template_draw_ui;
 
@@ -814,6 +846,12 @@ lrg_tycoon_template_init (LrgTycoonTemplate *self)
 
     priv->camera_x = 0.0f;
     priv->camera_y = 0.0f;
+
+    priv->camera_bounds_enabled = FALSE;
+    priv->camera_min_x = 0.0f;
+    priv->camera_min_y = 0.0f;
+    priv->camera_max_x = 0.0f;
+    priv->camera_max_y = 0.0f;
 }
 
 /* ==========================================================================
@@ -1288,6 +1326,46 @@ lrg_tycoon_template_set_edge_pan_margin (LrgTycoonTemplate *self,
 
     priv = lrg_tycoon_template_get_instance_private (self);
     priv->edge_pan_margin = MAX (margin, 0);
+}
+
+void
+lrg_tycoon_template_set_camera_position (LrgTycoonTemplate *self,
+                                          gfloat             x,
+                                          gfloat             y)
+{
+    LrgTycoonTemplatePrivate *priv;
+
+    g_return_if_fail (LRG_IS_TYCOON_TEMPLATE (self));
+
+    priv = lrg_tycoon_template_get_instance_private (self);
+    priv->camera_x = x;
+    priv->camera_y = y;
+}
+
+/*
+ * lrg_tycoon_template_set_camera_bounds:
+ *
+ * Sets the camera panning bounds. When enabled, the camera position
+ * is clamped to the given rectangle after every pan operation,
+ * preventing the camera from leaving the world area.
+ */
+void
+lrg_tycoon_template_set_camera_bounds (LrgTycoonTemplate *self,
+                                        gfloat             min_x,
+                                        gfloat             min_y,
+                                        gfloat             max_x,
+                                        gfloat             max_y)
+{
+    LrgTycoonTemplatePrivate *priv;
+
+    g_return_if_fail (LRG_IS_TYCOON_TEMPLATE (self));
+
+    priv = lrg_tycoon_template_get_instance_private (self);
+    priv->camera_bounds_enabled = TRUE;
+    priv->camera_min_x = min_x;
+    priv->camera_min_y = min_y;
+    priv->camera_max_x = max_x;
+    priv->camera_max_y = max_y;
 }
 
 gint64
