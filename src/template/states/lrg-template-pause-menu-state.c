@@ -579,13 +579,15 @@ lrg_template_pause_menu_state_update (LrgGameState *state,
     if (priv->canvas == NULL)
         return;
 
-    /* Handle keyboard/gamepad navigation */
+    /* Handle keyboard/gamepad navigation (arrows + vim j/k) */
     if (grl_input_is_key_pressed (GRL_KEY_DOWN) ||
+        grl_input_is_key_pressed (GRL_KEY_J) ||
         grl_input_is_gamepad_button_pressed (0, GRL_GAMEPAD_BUTTON_LEFT_FACE_DOWN))
     {
         navigate_menu (self, 1);
     }
     else if (grl_input_is_key_pressed (GRL_KEY_UP) ||
+             grl_input_is_key_pressed (GRL_KEY_K) ||
              grl_input_is_gamepad_button_pressed (0, GRL_GAMEPAD_BUTTON_LEFT_FACE_UP))
     {
         navigate_menu (self, -1);

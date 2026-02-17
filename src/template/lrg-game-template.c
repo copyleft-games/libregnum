@@ -725,6 +725,10 @@ lrg_game_template_finalize (GObject *object)
         priv->signal_handlers = NULL;
     }
 
+    /* Disconnect window from engine before releasing it */
+    if (priv->engine != NULL && priv->window != NULL)
+        lrg_engine_set_window (priv->engine, NULL);
+
     /* Unref owned subsystems */
     g_clear_object (&priv->window);
     g_clear_object (&priv->state_manager);
@@ -1565,6 +1569,9 @@ lrg_game_template_run (LrgGameTemplate *self,
     }
 
     priv->window = LRG_WINDOW (grl_win);
+
+    /* Register window with engine so template states can find it */
+    lrg_engine_set_window (priv->engine, priv->window);
 
     /* Configure window via raw GrlWindow for features not in LrgWindow */
     raw_window = lrg_grl_window_get_grl_window (grl_win);

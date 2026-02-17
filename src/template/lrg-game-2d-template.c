@@ -670,14 +670,14 @@ lrg_game_2d_template_pre_draw (LrgGameTemplate *self)
     if (priv->camera != NULL)
         lrg_camera_begin (LRG_CAMERA (priv->camera));
 
-    /* Draw world layer (with camera) - before game states */
+    /* Draw world layer (with camera) */
     if (klass->draw_world != NULL)
         klass->draw_world (template);
 
-    /*
-     * NOTE: Game states draw after this (via state manager).
-     * Camera is still active, so they draw in world space.
-     */
+    /* End camera so game states draw in virtual screen space.
+     * World-space content belongs in draw_world; states are UI overlays. */
+    if (priv->camera != NULL)
+        lrg_camera_end (LRG_CAMERA (priv->camera));
 }
 
 static void
@@ -697,11 +697,9 @@ lrg_game_2d_template_post_draw (LrgGameTemplate *self)
     klass = LRG_GAME_2D_TEMPLATE_GET_CLASS (template);
     priv = lrg_game_2d_template_get_instance_private (template);
 
-    /* End camera transform */
-    if (priv->camera != NULL)
-        lrg_camera_end (LRG_CAMERA (priv->camera));
+    /* Camera already ended in pre_draw after draw_world */
 
-    /* Draw UI layer (no camera) */
+    /* Draw UI layer (no camera, virtual screen space) */
     if (klass->draw_ui != NULL)
         klass->draw_ui (template);
 

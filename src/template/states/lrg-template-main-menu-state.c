@@ -185,15 +185,19 @@ update_button_selection (LrgTemplateMainMenuState *self)
 
         if ((gint)i == priv->selected_index)
         {
-            /* Highlight selected button */
-            g_autoptr(GrlColor) hover_color = grl_color_new (100, 150, 255, 255);
-            lrg_button_set_normal_color (btn, hover_color);
+            /* Highlight selected: bright bg + white text */
+            g_autoptr(GrlColor) sel_bg = grl_color_new (60, 120, 220, 255);
+            g_autoptr(GrlColor) sel_text = grl_color_new (255, 255, 255, 255);
+            lrg_button_set_normal_color (btn, sel_bg);
+            lrg_button_set_text_color (btn, sel_text);
         }
         else
         {
-            /* Normal state */
-            g_autoptr(GrlColor) normal_color = grl_color_new (80, 80, 80, 255);
-            lrg_button_set_normal_color (btn, normal_color);
+            /* Dim unselected: transparent bg + muted text */
+            g_autoptr(GrlColor) dim_bg = grl_color_new (40, 40, 45, 180);
+            g_autoptr(GrlColor) dim_text = grl_color_new (140, 140, 140, 255);
+            lrg_button_set_normal_color (btn, dim_bg);
+            lrg_button_set_text_color (btn, dim_text);
         }
     }
 }
@@ -670,13 +674,15 @@ lrg_template_main_menu_state_update (LrgGameState *state,
     if (priv->canvas == NULL)
         return;
 
-    /* Handle keyboard/gamepad navigation */
+    /* Handle keyboard/gamepad navigation (arrows + vim j/k) */
     if (grl_input_is_key_pressed (GRL_KEY_DOWN) ||
+        grl_input_is_key_pressed (GRL_KEY_J) ||
         grl_input_is_gamepad_button_pressed (0, GRL_GAMEPAD_BUTTON_LEFT_FACE_DOWN))
     {
         navigate_menu (self, 1);
     }
     else if (grl_input_is_key_pressed (GRL_KEY_UP) ||
+             grl_input_is_key_pressed (GRL_KEY_K) ||
              grl_input_is_gamepad_button_pressed (0, GRL_GAMEPAD_BUTTON_LEFT_FACE_UP))
     {
         navigate_menu (self, -1);
