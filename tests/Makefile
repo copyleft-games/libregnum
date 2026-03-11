@@ -39,15 +39,10 @@ TEST_CFLAGS += -I$(YAMLGLIB_DIR)/src
 
 # Test LDFLAGS
 TEST_LDFLAGS := -L../$(LIBOUTDIR)
-TEST_LDFLAGS += -L$(GRAYLIB_DIR)/build/lib
-TEST_LDFLAGS += -L$(YAMLGLIB_DIR)/build
 TEST_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(LIBOUTDIR)'
-TEST_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(GRAYLIB_DIR)/build/lib'
-TEST_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
 
-# Test libraries
+# Test libraries (graylib and yaml-glib are embedded in libregnum)
 TEST_LIBS := -l$(LIB_NAME)
-TEST_LIBS += -lgraylib -lyaml-glib
 TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 gobject-introspection-1.0)
 TEST_LIBS += $(PYTHON_LIBS) $(GJS_LIBS)
 TEST_LIBS += -lm
@@ -168,7 +163,7 @@ run: all
 	$(call print_status,"Running tests...")
 	@failed=0; \
 	for test in $(TEST_BINARIES); do \
-		LD_LIBRARY_PATH="$(MCP_LD_PATH)../$(LIBOUTDIR):$(GRAYLIB_DIR)/build/lib:$(YAMLGLIB_DIR)/build:$$LD_LIBRARY_PATH" \
+		LD_LIBRARY_PATH="$(MCP_LD_PATH)../$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
 		G_TEST_SRCDIR="$(shell pwd)" \
 		$$test --tap || failed=1; \
 	done; \

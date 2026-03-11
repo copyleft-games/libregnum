@@ -981,8 +981,8 @@ ifeq ($(TARGET_PLATFORM),windows)
     YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/yaml-glib.dll
     DEP_BUILD_FLAGS := WINDOWS=1
 else
-    GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/libgraylib.so
-    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/libyaml-glib.so
+    GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/libgraylib.a
+    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/libyaml-glib.a
     DEP_BUILD_FLAGS :=
 endif
 
@@ -1031,10 +1031,13 @@ lib-static: $(LIBOUTDIR)/$(LIB_STATIC)
 
 lib-shared: $(LIBOUTDIR)/$(LIB_SHARED)
 
-# Static library
+# Static library (merges graylib and yaml-glib archives on Unix)
 $(LIBOUTDIR)/$(LIB_STATIC): $(OBJECTS) | $(LIBOUTDIR)
 	$(call print_archive,$(LIB_STATIC))
 	@$(AR) rcs $@ $(OBJECTS)
+ifneq ($(TARGET_PLATFORM),windows)
+	@printf "OPEN $@\nADDLIB $(GRAYLIB_STATIC)\nADDLIB $(RAYLIB_STATIC)\nADDLIB $(YAMLGLIB_STATIC)\nSAVE\nEND\n" | $(AR) -M
+endif
 	@$(RANLIB) $@
 
 # Shared library (platform-specific build)
@@ -1103,8 +1106,6 @@ $(GIROUTDIR)/$(GIR_NAME): $(LIBOUTDIR)/$(LIB_SHARED) $(PUBLIC_HEADERS) $(SOURCES
 	@$(GIR_SCANNER) $(GIR_SCANNER_FLAGS) \
 		--library=$(LIB_NAME) \
 		--library-path=$(LIBOUTDIR) \
-		--library-path=$(GRAYLIB_DIR)/build/lib \
-		--library-path=$(YAMLGLIB_DIR)/build \
 		$(MCP_GIR_LIB_PATH) \
 		--output=$@ \
 		$(PUBLIC_HEADERS) $(SOURCES)

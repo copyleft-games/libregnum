@@ -411,6 +411,11 @@ DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(LU
 GRAYLIB_CFLAGS := -I$(GRAYLIB_DIR)/src -I$(GRAYLIB_DIR)/deps/raylib/src
 YAMLGLIB_CFLAGS := -I$(YAMLGLIB_DIR)/src
 
+# Static archives for embedding graylib, raylib, and yaml-glib into libregnum
+GRAYLIB_STATIC  := $(GRAYLIB_DIR)/build/lib/libgraylib.a
+RAYLIB_STATIC   := $(GRAYLIB_DIR)/deps/raylib/src/libraylib.a
+YAMLGLIB_STATIC := $(YAMLGLIB_DIR)/build/libyaml-glib.a
+
 # =============================================================================
 # Composite Flags
 # =============================================================================
@@ -486,13 +491,19 @@ LIB_LDFLAGS := $(LIB_LDFLAGS_PLATFORM)
 # All libraries to link (include platform-specific libs)
 ALL_LIBS := $(DEP_LIBS) $(PLATFORM_LIBS) $(SANITIZER_LIBS)
 ifeq ($(TARGET_PLATFORM),windows)
-    # For Windows, link against import libraries for DLLs
+    # Windows: link against import libraries for DLLs
     # Note: libregnum.dll requires graylib.dll and yaml-glib.dll at runtime
     ALL_LIBS += -L$(GRAYLIB_DIR)/build/lib -lgraylib
     ALL_LIBS += -L$(YAMLGLIB_DIR)/build -lyaml-glib
 else
-    ALL_LIBS += -L$(GRAYLIB_DIR)/build/lib -lgraylib
-    ALL_LIBS += -L$(YAMLGLIB_DIR)/build -lyaml-glib
+    # Unix: embed graylib, raylib, and yaml-glib directly into libregnum (self-contained).
+    # --whole-archive ensures all graylib/yaml-glib symbols are included.
+    # raylib is linked normally (not --whole-archive) to avoid pulling in its entire
+    # rcore.o, but --allow-multiple-definition is needed because raylib's inline math
+    # functions (Vector2*, Matrix*, etc.) get compiled into both libregnum's .o files
+    # (via raymath.h includes) and into rcore.o -- all definitions are identical.
+    ALL_LIBS += -Wl,--whole-archive $(GRAYLIB_STATIC) $(YAMLGLIB_STATIC) -Wl,--no-whole-archive
+    ALL_LIBS += -Wl,--allow-multiple-definition $(RAYLIB_STATIC)
 endif
 ALL_LIBS += $(STEAM_LIBS)
 ALL_LIBS += $(MCP_LIBS)

@@ -78,21 +78,17 @@ ifeq ($(STATIC),1)
         EXAMPLE_LDFLAGS += -static-libgcc
     endif
 else
-    # Dynamic linking (original behavior)
-    EXAMPLE_LDFLAGS := -L../$(LIBOUTDIR)
-    EXAMPLE_LDFLAGS += -L$(GRAYLIB_DIR)/build/lib
-    EXAMPLE_LDFLAGS += -L$(YAMLGLIB_DIR)/build
+    # Default: statically link libregnum (graylib/raylib/yaml-glib already embedded).
+    # System libraries (glib, etc.) remain dynamic.
+    EXAMPLE_LDFLAGS :=
     ifeq ($(TARGET_PLATFORM),windows)
-        # Windows: no rpath, DLLs must be in PATH or same directory
-    else
-        EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(LIBOUTDIR)'
-        EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(GRAYLIB_DIR)/build/lib'
-        EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(YAMLGLIB_DIR)/build'
+        # Windows: graylib/yaml-glib are still separate DLLs
+        EXAMPLE_LDFLAGS += -L$(GRAYLIB_DIR)/build/lib
+        EXAMPLE_LDFLAGS += -L$(YAMLGLIB_DIR)/build
     endif
     ifeq ($(MCP),1)
         EXAMPLE_LDFLAGS += -L$(MCP_GLIB_DIR)/build
         ifneq ($(TARGET_PLATFORM),windows)
-            EXAMPLE_LDFLAGS += -Wl,-rpath-link,$(MCP_GLIB_DIR)/build
             EXAMPLE_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(MCP_GLIB_DIR)/build'
         endif
     endif
@@ -112,11 +108,19 @@ ifeq ($(STATIC),1)
     EXAMPLE_LIBS += -lm
     EXAMPLE_LIBS += $(PLATFORM_LIBS)
 else
-    # Dynamic linking (original behavior)
-    EXAMPLE_LIBS := -l$(LIB_NAME) -lgraylib -lyaml-glib -lm
-    EXAMPLE_LIBS += $(GLIB_LIBS) $(EXAMPLE_OPT_LIBS)
+    # Default: statically link libregnum; system libs stay dynamic.
+    # --allow-multiple-definition handles raylib inline math compiled into both
+    # libregnum's objects and the example's translation unit via raymath.h.
+    # DEP_LIBS covers all system deps libregnum was compiled against
+    # (glib, dex, json-glib, libyaml, libsoup, luajit, python, gjs, gi).
+    EXAMPLE_LIBS := -Wl,--allow-multiple-definition
+    EXAMPLE_LIBS += $(LIBREGNUM_STATIC)
+    EXAMPLE_LIBS += $(DEP_LIBS)
+    EXAMPLE_LIBS += $(PLATFORM_LIBS)
+    EXAMPLE_LIBS += $(EXAMPLE_OPT_LIBS)
     ifeq ($(TARGET_PLATFORM),windows)
-        EXAMPLE_LIBS += $(PLATFORM_LIBS)
+        # Windows: graylib/yaml-glib are still separate DLLs
+        EXAMPLE_LIBS += -lgraylib -lyaml-glib
     endif
 endif
 
@@ -302,10 +306,8 @@ BONUS_CREATURES_MOD := $(MODS_DIR)/bonus-creatures/lib/libbonuscreatures.so
 
 # Flags for building shared libraries
 MOD_CFLAGS := $(EXAMPLE_CFLAGS) -fPIC
-MOD_LDFLAGS := -shared -L../$(LIBOUTDIR) -L$(GRAYLIB_DIR)/build/lib -L$(YAMLGLIB_DIR)/build
+MOD_LDFLAGS := -shared -L../$(LIBOUTDIR)
 MOD_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../../../../$(LIBOUTDIR)'
-MOD_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../../../../$(GRAYLIB_DIR)/build/lib'
-MOD_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../../../../$(YAMLGLIB_DIR)/build'
 MOD_LIBS := -l$(LIB_NAME) $(GLIB_LIBS)
 
 # Build all mods
