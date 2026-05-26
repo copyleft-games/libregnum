@@ -441,7 +441,6 @@ lrg_rich_text_real_draw (LrgRichText *text,
         gfloat span_font_size;
         guint8 r, g, b, a;
         const gchar *ch;
-        guint char_idx;
 
         span = g_ptr_array_index (priv->spans, i);
         effect = g_ptr_array_index (priv->effects, i);
@@ -449,7 +448,6 @@ lrg_rich_text_real_draw (LrgRichText *text,
         span_font_size = lrg_text_span_get_font_size (span) * priv->font_size;
         lrg_text_span_get_color (span, &r, &g, &b, &a);
 
-        char_idx = 0;
         for (ch = span_text; *ch != '\0'; ch = g_utf8_next_char (ch))
         {
             gunichar uc;
@@ -467,7 +465,6 @@ lrg_rich_text_real_draw (LrgRichText *text,
                 cursor_x = x;
                 cursor_y += span_font_size * priv->line_spacing;
                 global_char_index++;
-                char_idx++;
                 continue;
             }
 
@@ -512,7 +509,6 @@ lrg_rich_text_real_draw (LrgRichText *text,
             }
 
             global_char_index++;
-            char_idx++;
         }
     }
 }

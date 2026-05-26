@@ -377,12 +377,13 @@ lrg_bt_parallel_tick (LrgBTNode     *node,
     guint i;
     guint success_count = 0;
     guint failure_count = 0;
-    guint running_count = 0;
 
     if (children->len == 0)
         return LRG_BT_STATUS_SUCCESS;
 
-    /* Tick all children */
+    /* Tick all children -- running count is implied by
+     * (children->len - success_count - failure_count), so we don't
+     * track it explicitly (was tripping -Wunused-but-set-variable). */
     for (i = 0; i < children->len; i++)
     {
         LrgBTNode *child = g_ptr_array_index (children, i);
@@ -399,9 +400,6 @@ lrg_bt_parallel_tick (LrgBTNode     *node,
             break;
 
         case LRG_BT_STATUS_RUNNING:
-            running_count++;
-            break;
-
         default:
             break;
         }
