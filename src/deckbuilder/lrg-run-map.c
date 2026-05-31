@@ -269,7 +269,6 @@ lrg_run_map_generate (LrgRunMap *self,
     gint row;
     gint col;
     gint num_nodes;
-    guint node_idx = 0;
 
     g_return_if_fail (LRG_IS_RUN_MAP (self));
     g_return_if_fail (num_rows > 0);
@@ -314,8 +313,6 @@ lrg_run_map_generate (LrgRunMap *self,
             /* Track boss node */
             if (node_type == LRG_MAP_NODE_BOSS)
                 self->boss_node = node;
-
-            node_idx++;
         }
 
         g_ptr_array_add (self->rows, row_nodes);

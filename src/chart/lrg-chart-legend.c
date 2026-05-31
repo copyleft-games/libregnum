@@ -922,7 +922,6 @@ lrg_chart_legend_hit_test (LrgChartLegend *self,
     gfloat current_x;
     gfloat current_y;
     guint i;
-    gint visible_index;
 
     g_return_val_if_fail (LRG_IS_CHART_LEGEND (self), -1);
 
@@ -934,7 +933,6 @@ lrg_chart_legend_hit_test (LrgChartLegend *self,
     item_height = MAX (self->symbol_size, (gfloat)self->font_size);
     current_x = legend_x + self->padding;
     current_y = legend_y + self->padding;
-    visible_index = 0;
 
     for (i = 0; i < series->len; i++)
     {
@@ -975,8 +973,6 @@ lrg_chart_legend_hit_test (LrgChartLegend *self,
             }
             current_y += item_height + self->item_spacing;
         }
-
-        visible_index++;
     }
 
     return -1;

@@ -134,9 +134,18 @@ EXAMPLES += game-third-person-demo game-top-down-demo game-twin-stick-demo game-
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
 
-# Scripted examples only on native Linux (scripting backends not available on Windows)
+# Scripted examples: native Linux only, and only for backends that are actually
+# available (their headers in <libregnum.h> are gated on the same LRG_HAS_* flags).
 ifneq ($(TARGET_PLATFORM),windows)
-    EXAMPLES += scripted-lua-game scripted-python-game scripted-python-gobject-game scripted-gjs-game
+    ifeq ($(HAS_LUAJIT),1)
+        EXAMPLES += scripted-lua-game
+    endif
+    ifeq ($(HAS_PYTHON),1)
+        EXAMPLES += scripted-python-game scripted-python-gobject-game
+    endif
+    ifeq ($(HAS_GJS),1)
+        EXAMPLES += scripted-gjs-game
+    endif
 endif
 
 EXAMPLE_BINARIES := $(patsubst %,$(EXAMPLES_BUILDDIR)/%$(EXE_EXT),$(EXAMPLES))
