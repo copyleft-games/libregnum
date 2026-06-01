@@ -1,0 +1,134 @@
+* Signals Reference
+:PROPERTIES:
+:CUSTOM_ID: signals-reference
+:END:
+Complete list of GObject signals by type and module.
+
+** World3D Module
+:PROPERTIES:
+:CUSTOM_ID: world3d-module
+:END:
+*** LrgLevel3D
+:PROPERTIES:
+:CUSTOM_ID: lrglevel3d
+:END:
+| Signal            | Parameters | Description                  |
+|-------------------+------------+------------------------------|
+| (none documented) | -          | No signals currently defined |
+
+*** LrgPortalSystem
+:PROPERTIES:
+:CUSTOM_ID: lrgportalsystem
+:END:
+| Signal             | Parameters | Description                         |
+|--------------------+------------+-------------------------------------|
+| visibility-changed | (void)     | Emitted when visible sectors change |
+
+*** LrgOctree
+:PROPERTIES:
+:CUSTOM_ID: lrgoctree
+:END:
+| Signal            | Parameters | Description                  |
+|-------------------+------------+------------------------------|
+| (none documented) | -          | No signals currently defined |
+
+** Mod System Module
+:PROPERTIES:
+:CUSTOM_ID: mod-system-module
+:END:
+*** LrgModManager
+:PROPERTIES:
+:CUSTOM_ID: lrgmodmanager
+:END:
+| Signal         | Parameters                     | Description                         |
+|----------------+--------------------------------+-------------------------------------|
+| mod-discovered | (gpointer mod)                 | Emitted when a mod is discovered    |
+| mod-loaded     | (gpointer mod)                 | Emitted when a mod finishes loading |
+| mod-unloaded   | (gpointer mod)                 | Emitted when a mod is unloaded      |
+| mod-error      | (gpointer mod, gpointer error) | Emitted when a mod fails to load    |
+
+*** LrgMod
+:PROPERTIES:
+:CUSTOM_ID: lrgmod
+:END:
+| Signal        | Parameters       | Description                    |
+|---------------+------------------+--------------------------------|
+| state-changed | (gint new_state) | Emitted when mod state changes |
+
+*** LrgModLoader
+:PROPERTIES:
+:CUSTOM_ID: lrgmodloader
+:END:
+| Signal            | Parameters | Description                  |
+|-------------------+------------+------------------------------|
+| (none documented) | -          | No signals currently defined |
+
+** Core Module
+:PROPERTIES:
+:CUSTOM_ID: core-module
+:END:
+*** LrgEngine
+:PROPERTIES:
+:CUSTOM_ID: lrgengine
+:END:
+| Signal           | Parameters          | Description                    |
+|------------------+---------------------+--------------------------------|
+| startup-complete | (void)              | Emitted after engine startup   |
+| shutdown-begin   | (void)              | Emitted before engine shutdown |
+| update           | (gfloat delta_time) | Emitted on each frame update   |
+| frame-complete   | (void)              | Emitted after frame processing |
+
+*** LrgRegistry
+:PROPERTIES:
+:CUSTOM_ID: lrgregistry
+:END:
+| Signal          | Parameters                         | Description                  |
+|-----------------+------------------------------------+------------------------------|
+| type-registered | (GType type, gpointer description) | Emitted when type registered |
+
+** Signal Usage
+:PROPERTIES:
+:CUSTOM_ID: signal-usage
+:END:
+*** Connecting to a Signal
+:PROPERTIES:
+:CUSTOM_ID: connecting-to-a-signal
+:END:
+#+begin_src C
+g_signal_connect(object, "signal-name", G_CALLBACK(callback_function), user_data);
+#+end_src
+
+*** Example: Mod Manager Signals
+:PROPERTIES:
+:CUSTOM_ID: example-mod-manager-signals
+:END:
+#+begin_src C
+static void
+on_mod_loaded(LrgModManager *manager, gpointer mod, gpointer user_data)
+{
+    g_print("Mod loaded!\n");
+}
+
+g_signal_connect(mod_mgr, "mod-loaded", G_CALLBACK(on_mod_loaded), NULL);
+#+end_src
+
+*** Example: Engine Signals
+:PROPERTIES:
+:CUSTOM_ID: example-engine-signals
+:END:
+#+begin_src C
+static void
+on_engine_update(LrgEngine *engine, gfloat delta_time, gpointer user_data)
+{
+    g_print("Update: %.2f ms\n", delta_time * 1000);
+}
+
+g_signal_connect(engine, "update", G_CALLBACK(on_engine_update), NULL);
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:properties.org][Properties]] - GObject properties
+- [[file:error-codes.org][Error Codes]] - Error enumerations

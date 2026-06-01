@@ -1,0 +1,264 @@
+* LrgSector
+:PROPERTIES:
+:CUSTOM_ID: lrgsector
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgSector= represents a convex region of space in a portal-based visibility system. Each sector contains references to portals that connect to other sectors.
+
+** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information
+:END:
+- *Type Name*: =LrgSector=
+- *Type ID*: =LRG_TYPE_SECTOR=
+- *Type Category*: Boxed Type (immutable value type)
+- *Base Type*: None (value type)
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_sector_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_new
+:END:
+#+begin_src C
+LrgSector *lrg_sector_new(const gchar *id, const LrgBoundingBox3D *bounds);
+#+end_src
+
+Creates a new sector.
+
+*Example:*
+
+#+begin_src C
+g_autoptr(LrgBoundingBox3D) bounds = lrg_bounding_box3d_new(-100, -50, -100, 100, 50, 100);
+g_autoptr(LrgSector) sector = lrg_sector_new("hallway_1", bounds);
+#+end_src
+
+*** lrg_sector_new_box
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_new_box
+:END:
+#+begin_src C
+LrgSector *lrg_sector_new_box(const gchar *id, gfloat min_x, gfloat min_y, gfloat min_z,
+                              gfloat max_x, gfloat max_y, gfloat max_z);
+#+end_src
+
+Creates a sector from box coordinates.
+
+*** lrg_sector_copy
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_copy
+:END:
+#+begin_src C
+LrgSector *lrg_sector_copy(const LrgSector *self);
+#+end_src
+
+Creates a copy (nullable safe).
+
+*** lrg_sector_free
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_free
+:END:
+#+begin_src C
+void lrg_sector_free(LrgSector *self);
+#+end_src
+
+Frees a sector (nullable safe).
+
+*Use with =g_autoptr(LrgSector)= for automatic cleanup.*
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+*** lrg_sector_get_id
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_get_id
+:END:
+#+begin_src C
+const gchar *lrg_sector_get_id(const LrgSector *self);
+#+end_src
+
+Gets the sector identifier.
+
+*** lrg_sector_get_bounds
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_get_bounds
+:END:
+#+begin_src C
+LrgBoundingBox3D *lrg_sector_get_bounds(const LrgSector *self);
+#+end_src
+
+Gets the sector bounds.
+
+*** lrg_sector_get_center
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_get_center
+:END:
+#+begin_src C
+GrlVector3 *lrg_sector_get_center(const LrgSector *self);
+#+end_src
+
+Gets the center point of the sector.
+
+** Portal Connections
+:PROPERTIES:
+:CUSTOM_ID: portal-connections
+:END:
+*** lrg_sector_add_portal
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_add_portal
+:END:
+#+begin_src C
+void lrg_sector_add_portal(LrgSector *self, const gchar *portal_id);
+#+end_src
+
+Adds a portal connection to this sector.
+
+*Parameters:*
+
+- =portal_id= - ID of the portal to connect
+
+*** lrg_sector_remove_portal
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_remove_portal
+:END:
+#+begin_src C
+gboolean lrg_sector_remove_portal(LrgSector *self, const gchar *portal_id);
+#+end_src
+
+Removes a portal connection.
+
+*Returns:* =TRUE= if found and removed
+
+*** lrg_sector_has_portal
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_has_portal
+:END:
+#+begin_src C
+gboolean lrg_sector_has_portal(const LrgSector *self, const gchar *portal_id);
+#+end_src
+
+Checks if this sector has a specific portal.
+
+*** lrg_sector_get_portal_ids
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_get_portal_ids
+:END:
+#+begin_src C
+GPtrArray *lrg_sector_get_portal_ids(const LrgSector *self);
+#+end_src
+
+Gets all connected portal IDs.
+
+*Returns:* (transfer container) (element-type utf8) Portal ID list
+
+*** lrg_sector_get_portal_count
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_get_portal_count
+:END:
+#+begin_src C
+guint lrg_sector_get_portal_count(const LrgSector *self);
+#+end_src
+
+Gets the number of connected portals.
+
+*Example:*
+
+#+begin_src C
+g_autoptr(LrgSector) sector = lrg_portal_system_get_sector(portal_sys, "room1");
+if (sector) {
+    guint portal_count = lrg_sector_get_portal_count(sector);
+    g_print("Room has %u portals\n", portal_count);
+}
+#+end_src
+
+** Visibility
+:PROPERTIES:
+:CUSTOM_ID: visibility
+:END:
+*** lrg_sector_is_visible
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_is_visible
+:END:
+#+begin_src C
+gboolean lrg_sector_is_visible(const LrgSector *self);
+#+end_src
+
+Gets the visibility flag. Set by portal system during visibility determination.
+
+*** lrg_sector_set_visible
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_set_visible
+:END:
+#+begin_src C
+void lrg_sector_set_visible(LrgSector *self, gboolean visible);
+#+end_src
+
+Sets the visibility flag (typically called by portal system).
+
+** Geometric Tests
+:PROPERTIES:
+:CUSTOM_ID: geometric-tests
+:END:
+*** lrg_sector_contains_point
+:PROPERTIES:
+:CUSTOM_ID: lrg_sector_contains_point
+:END:
+#+begin_src C
+gboolean lrg_sector_contains_point(const LrgSector *self, const GrlVector3 *point);
+gboolean lrg_sector_contains_point_xyz(const LrgSector *self, gfloat x, gfloat y, gfloat z);
+#+end_src
+
+Tests if a point is inside the sector bounds.
+
+*Example:*
+
+#+begin_src C
+g_autoptr(GrlVector3) player_pos = get_player_position();
+const LrgSector *current = lrg_portal_system_find_sector_at(portal_sys, player_pos);
+if (current && lrg_sector_contains_point(current, player_pos))
+    g_print("Player confirmed in sector: %s\n", lrg_sector_get_id(current));
+#+end_src
+
+** Example Usage
+:PROPERTIES:
+:CUSTOM_ID: example-usage
+:END:
+#+begin_src C
+/* Create two sectors in a simple map */
+g_autoptr(LrgBoundingBox3D) room1_bounds = lrg_bounding_box3d_new(-100, 0, -100, 0, 100, 100);
+g_autoptr(LrgBoundingBox3D) room2_bounds = lrg_bounding_box3d_new(0, 0, -100, 100, 100, 100);
+
+g_autoptr(LrgSector) room1 = lrg_sector_new("room1", room1_bounds);
+g_autoptr(LrgSector) room2 = lrg_sector_new("room2", room2_bounds);
+
+/* Connect with portal */
+lrg_sector_add_portal(room1, "door_1_2");
+lrg_sector_add_portal(room2, "door_1_2");
+
+/* Add to portal system */
+g_autoptr(LrgPortalSystem) portal_sys = lrg_portal_system_new();
+lrg_portal_system_add_sector(portal_sys, room1);
+lrg_portal_system_add_sector(portal_sys, room2);
+
+/* Check portals */
+g_print("Room1 has %u portals\n", lrg_sector_get_portal_count(room1));
+g_autoptr(GPtrArray) portal_ids = lrg_sector_get_portal_ids(room1);
+for (guint i = 0; i < portal_ids->len; i++) {
+    const gchar *portal_id = g_ptr_array_index(portal_ids, i);
+    g_print("  Portal: %s\n", portal_id);
+}
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:portal-system.org][LrgPortalSystem]] - Uses sectors
+- [[file:portal.org][LrgPortal]] - Portal connections
+- [[file:bounding-box3d.org][LrgBoundingBox3D]] - Sector bounds

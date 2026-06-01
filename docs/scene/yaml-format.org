@@ -1,0 +1,473 @@
+* YAML Scene Format Reference
+:PROPERTIES:
+:CUSTOM_ID: yaml-scene-format-reference
+:END:
+This document describes the YAML format used for scene serialization in libregnum, designed for compatibility with Blender exports.
+
+** Format Overview
+:PROPERTIES:
+:CUSTOM_ID: format-overview
+:END:
+#+begin_src yaml
+scene:
+  name: "scene_name"
+  exported_from: "Blender 5.0.1"
+  export_date: "2025-12-26T22:51:15.268597"
+
+entities:
+  entity_name:
+    objects:
+      - name: "part_name"
+        primitive: "primitive_cylinder"
+        transform:
+          location: [x, y, z]
+          rotation: [rx, ry, rz]
+          scale: [sx, sy, sz]
+        material:
+          color: [r, g, b, a]
+          roughness: 0.5
+          metallic: 0.0
+          emission_color: [r, g, b, a]
+          emission_strength: 0.0
+        params:
+          radius: 1.0
+          depth: 2.0
+          vertices: 32
+#+end_src
+
+** Scene Metadata
+:PROPERTIES:
+:CUSTOM_ID: scene-metadata
+:END:
+The =scene= section contains optional metadata:
+
+| Field           | Type   | Description                                |
+|-----------------+--------+--------------------------------------------|
+| =name=          | string | Scene name/identifier                      |
+| =exported_from= | string | Source application (e.g., "Blender 5.0.1") |
+| =export_date=   | string | ISO 8601 timestamp                         |
+
+#+begin_src yaml
+scene:
+  name: "santa_sleigh"
+  exported_from: "Blender 5.0.1"
+  export_date: "2025-12-26T22:51:15.268597"
+#+end_src
+
+** Entities
+:PROPERTIES:
+:CUSTOM_ID: entities
+:END:
+Entities are named groups of objects. Each entity is a key under the =entities= mapping:
+
+#+begin_src yaml
+entities:
+  santa:
+    objects:
+      - name: "body"
+        # ...
+      - name: "head"
+        # ...
+  sleigh:
+    objects:
+      - name: "base"
+        # ...
+#+end_src
+
+** Objects
+:PROPERTIES:
+:CUSTOM_ID: objects
+:END:
+Each object represents a single primitive with its transform, material, and parameters.
+
+*** Object Fields
+:PROPERTIES:
+:CUSTOM_ID: object-fields
+:END:
+| Field       | Required | Description                   |
+|-------------+----------+-------------------------------|
+| =name=      | Yes      | Object/part name              |
+| =primitive= | Yes      | Primitive type string         |
+| =transform= | No       | Location, rotation, scale     |
+| =material=  | No       | PBR material properties       |
+| =params=    | No       | Primitive-specific parameters |
+
+*** Primitive Types
+:PROPERTIES:
+:CUSTOM_ID: primitive-types
+:END:
+| String Value           | Enum                       |
+|------------------------+----------------------------|
+| =primitive_plane=      | =LRG_PRIMITIVE_PLANE=      |
+| =primitive_cube=       | =LRG_PRIMITIVE_CUBE=       |
+| =primitive_circle=     | =LRG_PRIMITIVE_CIRCLE=     |
+| =primitive_uv_sphere=  | =LRG_PRIMITIVE_UV_SPHERE=  |
+| =primitive_ico_sphere= | =LRG_PRIMITIVE_ICO_SPHERE= |
+| =primitive_cylinder=   | =LRG_PRIMITIVE_CYLINDER=   |
+| =primitive_cone=       | =LRG_PRIMITIVE_CONE=       |
+| =primitive_torus=      | =LRG_PRIMITIVE_TORUS=      |
+| =primitive_grid=       | =LRG_PRIMITIVE_GRID=       |
+| =primitive_mesh=       | =LRG_PRIMITIVE_MESH=       |
+
+*** Transform
+:PROPERTIES:
+:CUSTOM_ID: transform
+:END:
+All transform values use Blender's coordinate system (Z-up, right-handed).
+
+#+begin_src yaml
+transform:
+  location: [1.0, 2.0, 3.0]      # X, Y, Z position
+  rotation: [0.0, 0.0, 1.5708]   # Euler angles in radians (X, Y, Z)
+  scale: [1.0, 1.0, 1.0]         # Scale factors
+#+end_src
+
+Default values if omitted:
+
+- =location=: =[0.0, 0.0, 0.0]=
+- =rotation=: =[0.0, 0.0, 0.0]=
+- =scale=: =[1.0, 1.0, 1.0]=
+
+*** Material
+:PROPERTIES:
+:CUSTOM_ID: material
+:END:
+PBR material properties with physically-based values:
+
+#+begin_src yaml
+material:
+  color: [0.8, 0.2, 0.1, 1.0]           # RGBA (0.0-1.0)
+  roughness: 0.5                         # 0.0 = smooth, 1.0 = rough
+  metallic: 0.0                          # 0.0 = dielectric, 1.0 = metal
+  emission_color: [0.0, 0.0, 0.0, 1.0]  # Emission RGBA
+  emission_strength: 0.0                 # Emission multiplier
+#+end_src
+
+Default values if omitted:
+
+- =color=: =[0.8, 0.8, 0.8, 1.0]= (light gray)
+- =roughness=: =0.5=
+- =metallic=: =0.0=
+- =emission_color=: =[0.0, 0.0, 0.0, 1.0]=
+- =emission_strength=: =0.0=
+
+** Primitive Parameters
+:PROPERTIES:
+:CUSTOM_ID: primitive-parameters
+:END:
+Each primitive type has specific parameters.
+
+*** Plane
+:PROPERTIES:
+:CUSTOM_ID: plane
+:END:
+#+begin_src yaml
+primitive: primitive_plane
+params:
+  size: 2.0  # Width and length (square)
+#+end_src
+
+| Parameter | Type  | Default | Description      |
+|-----------+-------+---------+------------------|
+| =size=    | float | 2.0     | Plane dimensions |
+
+*** Cube
+:PROPERTIES:
+:CUSTOM_ID: cube
+:END:
+#+begin_src yaml
+primitive: primitive_cube
+params:
+  size: 2.0  # Edge length
+#+end_src
+
+| Parameter | Type  | Default | Description      |
+|-----------+-------+---------+------------------|
+| =size=    | float | 2.0     | Cube edge length |
+
+*** Circle
+:PROPERTIES:
+:CUSTOM_ID: circle
+:END:
+#+begin_src yaml
+primitive: primitive_circle
+params:
+  vertices: 32
+  radius: 1.0
+  fill_type: "ngon"  # "nothing", "ngon", or "trifan"
+#+end_src
+
+| Parameter   | Type   | Default | Description        |
+|-------------+--------+---------+--------------------|
+| =vertices=  | int    | 32      | Number of vertices |
+| =radius=    | float  | 1.0     | Circle radius      |
+| =fill_type= | string | "ngon"  | Fill mode          |
+
+*** UV Sphere
+:PROPERTIES:
+:CUSTOM_ID: uv-sphere
+:END:
+#+begin_src yaml
+primitive: primitive_uv_sphere
+params:
+  segments: 32
+  ring_count: 16
+  radius: 1.0
+#+end_src
+
+| Parameter    | Type  | Default | Description        |
+|--------------+-------+---------+--------------------|
+| =segments=   | int   | 32      | Longitude segments |
+| =ring_count= | int   | 16      | Latitude rings     |
+| =radius=     | float | 1.0     | Sphere radius      |
+
+*** Ico Sphere
+:PROPERTIES:
+:CUSTOM_ID: ico-sphere
+:END:
+#+begin_src yaml
+primitive: primitive_ico_sphere
+params:
+  subdivisions: 2
+  radius: 1.0
+#+end_src
+
+| Parameter      | Type  | Default | Description             |
+|----------------+-------+---------+-------------------------|
+| =subdivisions= | int   | 2       | Subdivision level (1-6) |
+| =radius=       | float | 1.0     | Sphere radius           |
+
+*** Cylinder
+:PROPERTIES:
+:CUSTOM_ID: cylinder
+:END:
+#+begin_src yaml
+primitive: primitive_cylinder
+params:
+  vertices: 32
+  radius: 1.0
+  depth: 2.0
+  cap_ends: true
+#+end_src
+
+| Parameter  | Type  | Default | Description     |
+|------------+-------+---------+-----------------|
+| =vertices= | int   | 32      | Number of sides |
+| =radius=   | float | 1.0     | Cylinder radius |
+| =depth=    | float | 2.0     | Cylinder height |
+| =cap_ends= | bool  | true    | Draw end caps   |
+
+*** Cone
+:PROPERTIES:
+:CUSTOM_ID: cone
+:END:
+#+begin_src yaml
+primitive: primitive_cone
+params:
+  vertices: 32
+  radius1: 1.0   # Bottom radius
+  radius2: 0.0   # Top radius (0 = point)
+  depth: 2.0
+#+end_src
+
+| Parameter  | Type  | Default | Description     |
+|------------+-------+---------+-----------------|
+| =vertices= | int   | 32      | Number of sides |
+| =radius1=  | float | 1.0     | Bottom radius   |
+| =radius2=  | float | 0.0     | Top radius      |
+| =depth=    | float | 2.0     | Cone height     |
+
+*** Torus
+:PROPERTIES:
+:CUSTOM_ID: torus
+:END:
+#+begin_src yaml
+primitive: primitive_torus
+params:
+  major_segments: 48
+  minor_segments: 12
+  major_radius: 1.0
+  minor_radius: 0.25
+#+end_src
+
+| Parameter        | Type  | Default | Description            |
+|------------------+-------+---------+------------------------|
+| =major_segments= | int   | 48      | Ring segments          |
+| =minor_segments= | int   | 12      | Cross-section segments |
+| =major_radius=   | float | 1.0     | Ring radius            |
+| =minor_radius=   | float | 0.25    | Tube radius            |
+
+*** Grid
+:PROPERTIES:
+:CUSTOM_ID: grid
+:END:
+#+begin_src yaml
+primitive: primitive_grid
+params:
+  x_subdivisions: 10
+  y_subdivisions: 10
+  size: 1.0
+#+end_src
+
+| Parameter        | Type  | Default | Description  |
+|------------------+-------+---------+--------------|
+| =x_subdivisions= | int   | 10      | X divisions  |
+| =y_subdivisions= | int   | 10      | Y divisions  |
+| =size=           | float | 1.0     | Grid spacing |
+
+*** Mesh (Custom Geometry)
+:PROPERTIES:
+:CUSTOM_ID: mesh-custom-geometry
+:END:
+Custom mesh geometry with explicit vertex and face data. Used for complex shapes that cannot be represented by standard primitives.
+
+#+begin_src yaml
+primitive: primitive_mesh
+params:
+  mesh_data:
+    vertices:
+      - [0.0, 0.0, 0.0]
+      - [1.0, 0.0, 0.0]
+      - [1.0, 1.0, 0.0]
+      - [0.0, 1.0, 0.0]
+    faces:
+      - [0, 1, 2, 3]  # Quad face (4 vertices)
+      - [0, 2, 3]     # Triangle face (3 vertices)
+    smooth: true
+#+end_src
+
+| Parameter            | Type    | Description                                     |
+|----------------------+---------+-------------------------------------------------|
+| =mesh_data=          | mapping | Container for mesh geometry                     |
+| =mesh_data.vertices= | array   | Array of =[x, y, z]= vertex positions           |
+| =mesh_data.faces=    | array   | Array of face definitions (vertex index arrays) |
+| =mesh_data.smooth=   | bool    | Enable smooth shading (default: false)          |
+
+**** Vertex Data
+:PROPERTIES:
+:CUSTOM_ID: vertex-data
+:END:
+Vertices are specified as an array of 3D coordinates:
+
+#+begin_src yaml
+vertices:
+  - [0.0, 0.0, 0.0]   # vertex 0
+  - [1.0, 0.0, 0.0]   # vertex 1
+  - [0.5, 1.0, 0.0]   # vertex 2
+#+end_src
+
+Coordinates use Blender's Z-up coordinate system. The serializer automatically converts to raylib's Y-up system when loading.
+
+**** Face Data
+:PROPERTIES:
+:CUSTOM_ID: face-data
+:END:
+Faces are specified as arrays of vertex indices. Faces can be triangles (3 vertices), quads (4 vertices), or n-gons (5+ vertices):
+
+#+begin_src yaml
+faces:
+  - [0, 1, 2]         # Triangle
+  - [0, 1, 2, 3]      # Quad
+  - [0, 1, 2, 3, 4]   # Pentagon (n-gon)
+#+end_src
+
+*Triangulation:* Quads and n-gons are automatically triangulated on load using fan triangulation. This works correctly for convex polygons exported from Blender.
+
+**** Example: Custom Pyramid
+:PROPERTIES:
+:CUSTOM_ID: example-custom-pyramid
+:END:
+#+begin_src yaml
+- name: "pyramid"
+  primitive: primitive_mesh
+  transform:
+    location: [0.0, 0.0, 0.0]
+    rotation: [0.0, 0.0, 0.0]
+    scale: [1.0, 1.0, 1.0]
+  material:
+    color: [0.8, 0.6, 0.2, 1.0]
+    roughness: 0.5
+    metallic: 0.0
+  params:
+    mesh_data:
+      vertices:
+        - [-1.0, -1.0, 0.0]   # base corner 0
+        - [1.0, -1.0, 0.0]    # base corner 1
+        - [1.0, 1.0, 0.0]     # base corner 2
+        - [-1.0, 1.0, 0.0]    # base corner 3
+        - [0.0, 0.0, 2.0]     # apex
+      faces:
+        - [0, 1, 2, 3]  # base (quad)
+        - [0, 1, 4]     # side triangle
+        - [1, 2, 4]     # side triangle
+        - [2, 3, 4]     # side triangle
+        - [3, 0, 4]     # side triangle
+      smooth: false
+#+end_src
+
+** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src yaml
+scene:
+  name: "example_scene"
+  exported_from: "Blender 5.0.1"
+  export_date: "2025-12-26T12:00:00.000000"
+
+entities:
+  lamp_post:
+    objects:
+      - name: "pole"
+        primitive: primitive_cylinder
+        transform:
+          location: [0.0, 0.0, 1.0]
+          rotation: [0.0, 0.0, 0.0]
+          scale: [1.0, 1.0, 1.0]
+        material:
+          color: [0.3, 0.3, 0.3, 1.0]
+          roughness: 0.7
+          metallic: 0.9
+        params:
+          radius: 0.1
+          depth: 2.0
+          vertices: 16
+
+      - name: "lamp"
+        primitive: primitive_ico_sphere
+        transform:
+          location: [0.0, 0.0, 2.2]
+          rotation: [0.0, 0.0, 0.0]
+          scale: [1.0, 1.0, 1.0]
+        material:
+          color: [1.0, 0.9, 0.7, 1.0]
+          roughness: 0.3
+          metallic: 0.0
+          emission_color: [1.0, 0.9, 0.7, 1.0]
+          emission_strength: 5.0
+        params:
+          radius: 0.2
+          subdivisions: 2
+#+end_src
+
+** Float Precision
+:PROPERTIES:
+:CUSTOM_ID: float-precision
+:END:
+For lossless round-trips, the YAML serializer uses =%.17g= format for floating-point values. This preserves the exact binary representation of IEEE 754 double-precision floats.
+
+#+begin_src yaml
+# High-precision values are preserved exactly
+location: [1.2345678901234567, 0.0, -3.141592653589793]
+#+end_src
+
+** Notes
+:PROPERTIES:
+:CUSTOM_ID: notes
+:END:
+- All arrays use YAML flow style: =[1.0, 2.0, 3.0]=
+- Boolean values: =true= / =false=
+- String values may be quoted or unquoted
+- Comments are supported but not preserved on round-trip
+- Entity order is not guaranteed (hash table storage)
+- Object order within entities is preserved (array storage)

@@ -1,0 +1,436 @@
+* Input Map
+:PROPERTIES:
+:CUSTOM_ID: input-map
+:END:
+An =LrgInputMap= is a container for input actions with YAML serialization support. It manages all actions for your game and allows players to save and load their custom control schemes.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+An input map:
+
+- Contains multiple named actions
+- Can be saved to and loaded from YAML files
+- Provides convenience methods to query actions by name
+- Supports persistence for user control remapping
+
+** Creating an Input Map
+:PROPERTIES:
+:CUSTOM_ID: creating-an-input-map
+:END:
+#+begin_src C
+g_autoptr(LrgInputMap) input_map = lrg_input_map_new();
+#+end_src
+
+** Adding Actions
+:PROPERTIES:
+:CUSTOM_ID: adding-actions
+:END:
+#+begin_src C
+g_autoptr(LrgInputMap) input_map = lrg_input_map_new();
+
+/* Create an action */
+g_autoptr(LrgInputAction) jump = lrg_input_action_new("jump");
+
+/* Add bindings to it */
+LrgInputBinding *space = lrg_input_binding_new_keyboard(GRL_KEY_SPACE,
+                                                        LRG_INPUT_MODIFIER_NONE);
+lrg_input_action_add_binding(jump, space);
+lrg_input_binding_free(space);
+
+/* Add action to map (map takes ownership) */
+lrg_input_map_add_action(input_map, jump);
+
+/* g_autoptr will clean up jump when it goes out of scope */
+#+end_src
+
+** Querying Actions
+:PROPERTIES:
+:CUSTOM_ID: querying-actions
+:END:
+*** Existence Check
+:PROPERTIES:
+:CUSTOM_ID: existence-check
+:END:
+#+begin_src C
+if (lrg_input_map_has_action(input_map, "jump"))
+{
+    g_message("Jump action exists");
+}
+#+end_src
+
+*** Getting an Action
+:PROPERTIES:
+:CUSTOM_ID: getting-an-action
+:END:
+#+begin_src C
+LrgInputAction *jump = lrg_input_map_get_action(input_map, "jump");
+if (jump != NULL)
+{
+    g_message("Found jump action");
+}
+else
+{
+    g_message("Jump action not found");
+}
+#+end_src
+
+*** Getting All Actions
+:PROPERTIES:
+:CUSTOM_ID: getting-all-actions
+:END:
+#+begin_src C
+GList *actions = lrg_input_map_get_actions(input_map);
+g_message("Map has %u actions", g_list_length(actions));
+
+for (GList *iter = actions; iter; iter = iter->next)
+{
+    LrgInputAction *action = LRG_INPUT_ACTION(iter->data);
+    g_message("  - %s", lrg_input_action_get_name(action));
+}
+
+g_list_free(actions);  /* Free the list, not the actions */
+#+end_src
+
+*** Getting Action Count
+:PROPERTIES:
+:CUSTOM_ID: getting-action-count
+:END:
+#+begin_src C
+guint count = lrg_input_map_get_action_count(input_map);
+g_message("Map contains %u actions", count);
+#+end_src
+
+** Removing Actions
+:PROPERTIES:
+:CUSTOM_ID: removing-actions
+:END:
+#+begin_src C
+/* Remove specific action by name */
+lrg_input_map_remove_action(input_map, "jump");
+
+/* Clear all actions */
+lrg_input_map_clear(input_map);
+#+end_src
+
+** Convenience State Queries
+:PROPERTIES:
+:CUSTOM_ID: convenience-state-queries
+:END:
+The map provides shortcut methods to query action states by name:
+
+*** Pressed
+:PROPERTIES:
+:CUSTOM_ID: pressed
+:END:
+#+begin_src C
+if (lrg_input_map_is_pressed(input_map, "jump"))
+{
+    player_jump();
+}
+#+end_src
+
+*** Down
+:PROPERTIES:
+:CUSTOM_ID: down
+:END:
+#+begin_src C
+if (lrg_input_map_is_down(input_map, "attack"))
+{
+    play_attack_animation();
+}
+#+end_src
+
+*** Released
+:PROPERTIES:
+:CUSTOM_ID: released
+:END:
+#+begin_src C
+if (lrg_input_map_is_released(input_map, "attack"))
+{
+    stop_attack_animation();
+}
+#+end_src
+
+*** Value
+:PROPERTIES:
+:CUSTOM_ID: value
+:END:
+#+begin_src C
+gfloat move_x = lrg_input_map_get_value(input_map, "move_right") -
+                lrg_input_map_get_value(input_map, "move_left");
+
+player_x += move_x * player_speed;
+#+end_src
+
+Note: If the action doesn't exist, these return FALSE or 0.0.
+
+** Saving and Loading
+:PROPERTIES:
+:CUSTOM_ID: saving-and-loading
+:END:
+*** Saving to File
+:PROPERTIES:
+:CUSTOM_ID: saving-to-file
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+
+if (!lrg_input_map_save_to_file(input_map, "config/controls.yaml", &error))
+{
+    g_warning("Failed to save controls: %s", error->message);
+}
+#+end_src
+
+*** Loading from File
+:PROPERTIES:
+:CUSTOM_ID: loading-from-file
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgInputMap) loaded_map = lrg_input_map_new();
+
+if (!lrg_input_map_load_from_file(loaded_map, "config/controls.yaml", &error))
+{
+    g_warning("Failed to load controls: %s", error->message);
+    /* Use default map instead */
+}
+else
+{
+    g_message("Controls loaded successfully");
+}
+#+end_src
+
+*** Clear on Load
+:PROPERTIES:
+:CUSTOM_ID: clear-on-load
+:END:
+Loading a file *clears* any existing actions in the map:
+
+#+begin_src C
+g_autoptr(LrgInputMap) map = lrg_input_map_new();
+
+/* Add default actions */
+g_autoptr(LrgInputAction) jump = lrg_input_action_new("jump");
+/* ... add bindings ... */
+lrg_input_map_add_action(map, jump);
+
+g_message("Before: %u actions", lrg_input_map_get_action_count(map));
+
+/* Load user's config - this clears the map first */
+g_autoptr(GError) error = NULL;
+lrg_input_map_load_from_file(map, "config/user_controls.yaml", &error);
+
+g_message("After: %u actions", lrg_input_map_get_action_count(map));
+/* The default actions are gone, replaced by loaded ones */
+#+end_src
+
+** YAML Format
+:PROPERTIES:
+:CUSTOM_ID: yaml-format
+:END:
+Input maps serialize to human-readable YAML:
+
+#+begin_src yaml
+actions:
+  - name: jump
+    bindings:
+      - type: keyboard
+        key: SPACE
+        modifiers: NONE
+      - type: gamepad_button
+        gamepad: 0
+        button: A
+
+  - name: attack
+    bindings:
+      - type: keyboard
+        key: Z
+        modifiers: NONE
+      - type: gamepad_button
+        gamepad: 0
+        button: X
+
+  - name: move_right
+    bindings:
+      - type: keyboard
+        key: D
+        modifiers: NONE
+      - type: gamepad_axis
+        gamepad: 0
+        axis: LEFT_X
+        threshold: 0.2
+        positive: true
+
+  - name: move_left
+    bindings:
+      - type: keyboard
+        key: A
+        modifiers: NONE
+      - type: gamepad_axis
+        gamepad: 0
+        axis: LEFT_X
+        threshold: 0.2
+        positive: false
+#+end_src
+
+** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src C
+void setup_input_map(LrgInputMap *map)
+{
+    /* Create and bind jump action */
+    g_autoptr(LrgInputAction) jump = lrg_input_action_new("jump");
+
+    LrgInputBinding *jump_space = lrg_input_binding_new_keyboard(
+        GRL_KEY_SPACE,
+        LRG_INPUT_MODIFIER_NONE
+    );
+    lrg_input_action_add_binding(jump, jump_space);
+
+    LrgInputBinding *jump_gamepad = lrg_input_binding_new_gamepad_button(
+        0,
+        GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN
+    );
+    lrg_input_action_add_binding(jump, jump_gamepad);
+
+    lrg_input_binding_free(jump_space);
+    lrg_input_binding_free(jump_gamepad);
+
+    lrg_input_map_add_action(map, jump);
+
+    /* Create movement actions */
+    const gchar *movement_keys[] = {
+        "move_left",  "move_right",  "move_up",  "move_down"
+    };
+    GrlKey keys[] = {
+        GRL_KEY_A,     GRL_KEY_D,      GRL_KEY_W,  GRL_KEY_S
+    };
+    GrlGamepadAxis axes[] = {
+        GRL_GAMEPAD_AXIS_LEFT_X,   /* left negative */
+        GRL_GAMEPAD_AXIS_LEFT_X,   /* right positive */
+        GRL_GAMEPAD_AXIS_LEFT_Y,   /* up negative */
+        GRL_GAMEPAD_AXIS_LEFT_Y,   /* down positive */
+    };
+    gboolean positives[] = {
+        FALSE,  TRUE,  FALSE,  TRUE
+    };
+
+    for (guint i = 0; i < G_N_ELEMENTS(movement_keys); i++)
+    {
+        g_autoptr(LrgInputAction) action = lrg_input_action_new(movement_keys[i]);
+
+        LrgInputBinding *key_binding = lrg_input_binding_new_keyboard(
+            keys[i],
+            LRG_INPUT_MODIFIER_NONE
+        );
+        lrg_input_action_add_binding(action, key_binding);
+
+        LrgInputBinding *axis_binding = lrg_input_binding_new_gamepad_axis(
+            0,
+            axes[i],
+            0.2f,
+            positives[i]
+        );
+        lrg_input_action_add_binding(action, axis_binding);
+
+        lrg_input_binding_free(key_binding);
+        lrg_input_binding_free(axis_binding);
+
+        lrg_input_map_add_action(map, action);
+    }
+}
+
+void game_init(void)
+{
+    g_autoptr(LrgInputMap) input_map = lrg_input_map_new();
+    g_autoptr(GError) error = NULL;
+
+    /* Try to load user's config */
+    if (!lrg_input_map_load_from_file(input_map,
+                                      "config/controls.yaml", &error))
+    {
+        g_message("No saved controls, using defaults");
+        setup_input_map(input_map);
+
+        /* Save defaults for next time */
+        lrg_input_map_save_to_file(input_map, "config/controls.yaml", &error);
+    }
+
+    /* Use the map in game */
+    game->input_map = g_steal_pointer(&input_map);
+}
+
+void game_update(void)
+{
+    /* Query input using the map */
+    if (lrg_input_map_is_pressed(game->input_map, "jump"))
+    {
+        player_jump();
+    }
+
+    gfloat move_x = lrg_input_map_get_value(game->input_map, "move_right") -
+                    lrg_input_map_get_value(game->input_map, "move_left");
+
+    player_move(move_x * player_speed);
+}
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+*** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+- =lrg_input_map_new()= - Create a new input map
+
+*** Action Management
+:PROPERTIES:
+:CUSTOM_ID: action-management
+:END:
+- =lrg_input_map_add_action(LrgInputMap *self, LrgInputAction *action)= - Add action
+- =lrg_input_map_remove_action(LrgInputMap *self, const gchar *name)= - Remove by name
+- =lrg_input_map_get_action(LrgInputMap *self, const gchar *name)= - Get by name
+- =lrg_input_map_has_action(LrgInputMap *self, const gchar *name)= - Check existence
+- =lrg_input_map_get_actions(LrgInputMap *self)= - Get all actions
+- =lrg_input_map_get_action_count(LrgInputMap *self)= - Get action count
+- =lrg_input_map_clear(LrgInputMap *self)= - Remove all actions
+
+*** Convenience State Queries
+:PROPERTIES:
+:CUSTOM_ID: convenience-state-queries-1
+:END:
+- =lrg_input_map_is_pressed(LrgInputMap *self, const gchar *action_name)=
+- =lrg_input_map_is_down(LrgInputMap *self, const gchar *action_name)=
+- =lrg_input_map_is_released(LrgInputMap *self, const gchar *action_name)=
+- =lrg_input_map_get_value(LrgInputMap *self, const gchar *action_name)=
+
+*** Serialization
+:PROPERTIES:
+:CUSTOM_ID: serialization
+:END:
+- =lrg_input_map_save_to_file(LrgInputMap *self, const gchar *path, GError **error)=
+- =lrg_input_map_load_from_file(LrgInputMap *self, const gchar *path, GError **error)=
+
+** Notes
+:PROPERTIES:
+:CUSTOM_ID: notes
+:END:
+- Input maps are reference-counted GObjects
+- Loading clears existing actions
+- File paths are relative to the current working directory (usually the game directory)
+- YAML files are human-editable for manual control customization
+- Convenience queries return safe defaults if action doesn't exist
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: related
+:END:
+- [[file:input-action.org][Input Action]] - Individual action with bindings
+- [[file:input-binding.org][Input Binding]] - Single physical input
+- [[file:index.org][Input Module Overview]] - Complete module documentation

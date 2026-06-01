@@ -1,0 +1,462 @@
+* LrgWorld
+:PROPERTIES:
+:CUSTOM_ID: lrgworld
+:END:
+World container for game objects.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgWorld= provides a container for managing game objects in a scene. It wraps graylib's =GrlScene= and provides game-object-centric APIs for adding, removing, and finding objects.
+
+A world manages:
+
+- Collection of game objects
+- Active/paused state for update control
+- Object updates and rendering
+- Tag-based object lookup
+- Integration with graylib's scene system
+
+** Basic Usage
+:PROPERTIES:
+:CUSTOM_ID: basic-usage
+:END:
+*** Creating a World
+:PROPERTIES:
+:CUSTOM_ID: creating-a-world
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+g_autoptr(LrgWorld) world = lrg_world_new ();
+
+/* World is active and not paused by default */
+g_assert_true (lrg_world_get_active (world));
+g_assert_false (lrg_world_get_paused (world));
+#+end_src
+
+*** Managing Objects
+:PROPERTIES:
+:CUSTOM_ID: managing-objects
+:END:
+#+begin_src C
+/* Create and add objects */
+g_autoptr(LrgGameObject) player = lrg_game_object_new_at (100.0f, 150.0f);
+grl_entity_set_tag (GRL_ENTITY (player), "player");
+lrg_world_add_object (world, player);
+
+g_autoptr(LrgGameObject) enemy = lrg_game_object_new_at (200.0f, 150.0f);
+grl_entity_set_tag (GRL_ENTITY (enemy), "enemy");
+lrg_world_add_object (world, enemy);
+
+/* Get object count */
+guint count = lrg_world_get_object_count (world);
+g_assert_cmpuint (count, ==, 2);
+
+/* Get all objects */
+GList *objects = lrg_world_get_objects (world);
+for (GList *iter = objects; iter != NULL; iter = iter->next)
+{
+    LrgGameObject *obj = LRG_GAME_OBJECT (iter->data);
+    /* Process object */
+}
+g_list_free (objects);
+
+/* Remove specific object */
+lrg_world_remove_object (world, enemy);
+
+/* Clear all objects */
+lrg_world_clear (world);
+#+end_src
+
+*** Finding Objects
+:PROPERTIES:
+:CUSTOM_ID: finding-objects
+:END:
+#+begin_src C
+/* Find by tag (first match) */
+LrgGameObject *player = lrg_world_find_by_tag (world, "player");
+if (player != NULL)
+{
+    gfloat x = grl_entity_get_x (GRL_ENTITY (player));
+    gfloat y = grl_entity_get_y (GRL_ENTITY (player));
+}
+
+/* Find all with tag */
+GList *enemies = lrg_world_find_all_by_tag (world, "enemy");
+for (GList *iter = enemies; iter != NULL; iter = iter->next)
+{
+    LrgGameObject *enemy = LRG_GAME_OBJECT (iter->data);
+    /* Process enemy */
+}
+g_list_free (enemies);
+#+end_src
+
+*** Game Loop Integration
+:PROPERTIES:
+:CUSTOM_ID: game-loop-integration
+:END:
+#+begin_src C
+while (game_running)
+{
+    /* Update world (updates all active objects and their components) */
+    lrg_world_update (world, delta_time);
+
+    /* Draw world (draws all visible objects) */
+    lrg_world_draw (world);
+
+    /* Input handling, collision detection, etc. */
+}
+#+end_src
+
+*** World State Control
+:PROPERTIES:
+:CUSTOM_ID: world-state-control
+:END:
+#+begin_src C
+/* Pause world (draws but doesn't update) */
+lrg_world_set_paused (world, TRUE);
+
+/* Unpause */
+lrg_world_set_paused (world, FALSE);
+
+/* Disable world (no updates or draws) */
+lrg_world_set_active (world, FALSE);
+
+/* Re-enable */
+lrg_world_set_active (world, TRUE);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+*** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+#+begin_src C
+LrgWorld * lrg_world_new (void);
+#+end_src
+
+Creates a new empty world. World is active and not paused by default.
+
+Returns: (transfer full) A new =LrgWorld=
+
+*** Game Object Management
+:PROPERTIES:
+:CUSTOM_ID: game-object-management
+:END:
+#+begin_src C
+void lrg_world_add_object (LrgWorld *self, LrgGameObject *object);
+#+end_src
+
+Adds a game object to this world. The world takes a reference to the object.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+- =object= - (transfer none) the game object to add
+
+#+begin_src C
+void lrg_world_remove_object (LrgWorld *self, LrgGameObject *object);
+#+end_src
+
+Removes a game object from this world. The world releases its reference to the object.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+- =object= - the game object to remove
+
+#+begin_src C
+void lrg_world_clear (LrgWorld *self);
+#+end_src
+
+Removes all game objects from this world.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+
+#+begin_src C
+GList * lrg_world_get_objects (LrgWorld *self);
+#+end_src
+
+Gets a list of all game objects in this world.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+
+Returns: (transfer container) (element-type LrgGameObject) List of objects (must be freed with =g_list_free()=)
+
+#+begin_src C
+guint lrg_world_get_object_count (LrgWorld *self);
+#+end_src
+
+Gets the number of game objects in this world.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+
+Returns: The number of objects
+
+*** Object Lookup
+:PROPERTIES:
+:CUSTOM_ID: object-lookup
+:END:
+#+begin_src C
+LrgGameObject * lrg_world_find_by_tag (LrgWorld *self, const gchar *tag);
+#+end_src
+
+Finds the first game object with the specified tag.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+- =tag= - the tag to search for
+
+Returns: (transfer none) (nullable) The game object, or =NULL= if not found
+
+#+begin_src C
+GList * lrg_world_find_all_by_tag (LrgWorld *self, const gchar *tag);
+#+end_src
+
+Finds all game objects with the specified tag.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+- =tag= - the tag to search for
+
+Returns: (transfer container) (element-type LrgGameObject) List of matching objects
+
+*** Frame Processing
+:PROPERTIES:
+:CUSTOM_ID: frame-processing
+:END:
+#+begin_src C
+void lrg_world_update (LrgWorld *self, gfloat delta);
+#+end_src
+
+Updates all game objects in the world. Only active objects are updated. If the world is paused, no objects are updated.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+- =delta= - time elapsed since last frame in seconds
+
+Update order:
+
+1. If world is not active, nothing happens
+2. If world is not paused, all enabled components are updated
+3. Updates propagate from world to objects to components
+
+#+begin_src C
+void lrg_world_draw (LrgWorld *self);
+#+end_src
+
+Draws all visible game objects in the world. Objects are drawn in z-index order (lowest first).
+
+Parameters:
+
+- =self= - an =LrgWorld=
+
+*** graylib Integration
+:PROPERTIES:
+:CUSTOM_ID: graylib-integration
+:END:
+#+begin_src C
+GrlScene * lrg_world_get_scene (LrgWorld *self);
+#+end_src
+
+Gets the underlying graylib scene. This can be used to access graylib-specific features or to add non-game-object entities to the scene.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+
+Returns: (transfer none) The =GrlScene=
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+#+begin_src C
+gboolean lrg_world_get_active (LrgWorld *self);
+#+end_src
+
+Gets whether the world is active.
+
+Returns: =TRUE= if the world is active
+
+#+begin_src C
+void lrg_world_set_active (LrgWorld *self, gboolean active);
+#+end_src
+
+Sets whether the world is active. Inactive worlds do not update or draw their objects.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+- =active= - whether the world should be active
+
+#+begin_src C
+gboolean lrg_world_get_paused (LrgWorld *self);
+#+end_src
+
+Gets whether the world is paused.
+
+Returns: =TRUE= if the world is paused
+
+#+begin_src C
+void lrg_world_set_paused (LrgWorld *self, gboolean paused);
+#+end_src
+
+Sets whether the world is paused. Paused worlds still draw their objects but do not update them.
+
+Parameters:
+
+- =self= - an =LrgWorld=
+- =paused= - whether the world should be paused
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties-1
+:END:
+| Property | Type       | Access | Default | Description                         |
+|----------+------------+--------+---------+-------------------------------------|
+| =active= | =gboolean= | RW     | =TRUE=  | Whether the world updates and draws |
+| =paused= | =gboolean= | RW     | =FALSE= | Whether the world is paused         |
+
+** Update and Draw Lifecycle
+:PROPERTIES:
+:CUSTOM_ID: update-and-draw-lifecycle
+:END:
+*** Active/Paused States
+:PROPERTIES:
+:CUSTOM_ID: activepaused-states
+:END:
+| State              | Update | Draw |
+|--------------------+--------+------|
+| Active, Not Paused | Yes    | Yes  |
+| Active, Paused     | No     | Yes  |
+| Inactive           | No     | No   |
+
+*** Per-Frame Sequence
+:PROPERTIES:
+:CUSTOM_ID: per-frame-sequence
+:END:
+#+begin_example
+while (running)
+{
+    1. lrg_world_update(world, delta)
+       - If inactive: skip
+       - If not paused: update all enabled objects
+         - Object update (from GrlEntity)
+         - Component update for each enabled component
+
+    2. lrg_world_draw(world)
+       - Draw all visible objects (z-index order)
+       - Objects inherit GrlEntity rendering
+
+    3. Collision detection, input, game logic
+}
+#+end_example
+
+** Implementation Notes
+:PROPERTIES:
+:CUSTOM_ID: implementation-notes
+:END:
+*** Object References
+:PROPERTIES:
+:CUSTOM_ID: object-references
+:END:
+The world maintains references to all contained objects. Objects are freed when:
+
+1. Explicitly removed via =lrg_world_remove_object()=
+2. World is destroyed
+3. All external references are released
+
+*** Tag-Based Lookup
+:PROPERTIES:
+:CUSTOM_ID: tag-based-lookup
+:END:
+Tags are inherited from =GrlEntity=. Each object can have one tag. Lookups are O(n) - for frequent lookups, cache the returned object reference.
+
+*** Scene Access
+:PROPERTIES:
+:CUSTOM_ID: scene-access
+:END:
+=lrg_world_get_scene()= returns the underlying =GrlScene=. This allows:
+
+- Direct access to graylib rendering systems
+- Adding non-game-object entities
+- Custom rendering passes
+
+#+begin_src C
+GrlScene *scene = lrg_world_get_scene (world);
+/* Use graylib scene API if needed */
+#+end_src
+
+*** Performance Considerations
+:PROPERTIES:
+:CUSTOM_ID: performance-considerations
+:END:
+For worlds with many objects:
+
+- Prefer =lrg_world_find_by_tag()= for single lookups
+- Cache component references on objects
+- Disable objects/components when not needed
+- Use layers/masks on colliders to reduce collision checks
+
+** Example: Multi-World Game
+:PROPERTIES:
+:CUSTOM_ID: example-multi-world-game
+:END:
+#+begin_src C
+/* Game state with multiple worlds */
+typedef struct
+{
+    LrgWorld *main_world;      /* Gameplay */
+    LrgWorld *ui_world;        /* UI overlays */
+    LrgWorld *background_world; /* Parallax background */
+} GameState;
+
+/* Update all worlds */
+void
+game_update (GameState *state, gfloat delta)
+{
+    lrg_world_update (state->background_world, delta);
+    lrg_world_update (state->main_world, delta);
+    lrg_world_update (state->ui_world, delta);  /* UI typically paused */
+}
+
+/* Draw all worlds */
+void
+game_draw (GameState *state)
+{
+    lrg_world_draw (state->background_world);
+    lrg_world_draw (state->main_world);
+    lrg_world_draw (state->ui_world);
+}
+#+end_src
+
+** Related Types
+:PROPERTIES:
+:CUSTOM_ID: related-types
+:END:
+- [[file:game-object.org][LrgGameObject]] - Entity container
+- [[file:component.org][LrgComponent]] - Base component class
+- =GrlScene= - Underlying graylib scene
+- =GrlEntity= - Base class for game objects
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:index.org][ECS Overview]] - Module overview
+- [[../examples/ecs-basics.md][ECS Examples]] - Comprehensive examples

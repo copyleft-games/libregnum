@@ -1,0 +1,249 @@
+* LrgOctree
+:PROPERTIES:
+:CUSTOM_ID: lrgoctree
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgOctree= is a spatial data structure that partitions 3D space into 8 sub-regions recursively. It enables efficient spatial queries by eliminating branches that don't contain the query region.
+
+** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information
+:END:
+- *Type Name*: =LrgOctree=
+- *Type ID*: =LRG_TYPE_OCTREE=
+- *Base Class*: =GObject=
+- *Final Type*: Yes
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_octree_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_new
+:END:
+#+begin_src C
+LrgOctree *lrg_octree_new(const LrgBoundingBox3D *bounds);
+#+end_src
+
+Creates a new octree with default settings (max_depth=8, max_objects=16).
+
+*** lrg_octree_new_with_depth
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_new_with_depth
+:END:
+#+begin_src C
+LrgOctree *lrg_octree_new_with_depth(const LrgBoundingBox3D *bounds, guint max_depth);
+#+end_src
+
+Creates a new octree with specified maximum depth.
+
+*Parameters:*
+
+- =max_depth= - Maximum subdivision levels (typical: 6-10)
+
+** Object Management
+:PROPERTIES:
+:CUSTOM_ID: object-management
+:END:
+*** lrg_octree_insert
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_insert
+:END:
+#+begin_src C
+gboolean lrg_octree_insert(LrgOctree *self, gpointer object, const LrgBoundingBox3D *bounds);
+#+end_src
+
+Inserts an object with its bounding box.
+
+*Returns:* =TRUE= if inserted successfully
+
+*** lrg_octree_remove
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_remove
+:END:
+#+begin_src C
+gboolean lrg_octree_remove(LrgOctree *self, gpointer object);
+#+end_src
+
+Removes an object.
+
+*Returns:* =TRUE= if found and removed
+
+*** lrg_octree_update
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_update
+:END:
+#+begin_src C
+gboolean lrg_octree_update(LrgOctree *self, gpointer object, const LrgBoundingBox3D *new_bounds);
+#+end_src
+
+Updates an object's position. Removes and re-inserts the object.
+
+*** lrg_octree_clear
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_clear
+:END:
+#+begin_src C
+void lrg_octree_clear(LrgOctree *self);
+#+end_src
+
+Removes all objects.
+
+** Spatial Queries
+:PROPERTIES:
+:CUSTOM_ID: spatial-queries
+:END:
+*** lrg_octree_query_box
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_query_box
+:END:
+#+begin_src C
+GPtrArray *lrg_octree_query_box(LrgOctree *self, const LrgBoundingBox3D *query);
+#+end_src
+
+Finds all objects intersecting a bounding box.
+
+*Returns:* (transfer container) (element-type gpointer) Results
+
+*** lrg_octree_query_sphere
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_query_sphere
+:END:
+#+begin_src C
+GPtrArray *lrg_octree_query_sphere(LrgOctree *self, const GrlVector3 *center, gfloat radius);
+#+end_src
+
+Finds all objects intersecting a sphere.
+
+*Performance:* Faster than box queries in many cases.
+
+*** lrg_octree_query_point
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_query_point
+:END:
+#+begin_src C
+GPtrArray *lrg_octree_query_point(LrgOctree *self, const GrlVector3 *point);
+#+end_src
+
+Finds all objects containing a point.
+
+*** lrg_octree_query_nearest
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_query_nearest
+:END:
+#+begin_src C
+gpointer lrg_octree_query_nearest(LrgOctree *self, const GrlVector3 *point);
+#+end_src
+
+Finds the nearest object to a point.
+
+*Returns:* (transfer none) (nullable) The nearest object
+
+** Properties and Configuration
+:PROPERTIES:
+:CUSTOM_ID: properties-and-configuration
+:END:
+*** lrg_octree_get_bounds
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_get_bounds
+:END:
+#+begin_src C
+LrgBoundingBox3D *lrg_octree_get_bounds(LrgOctree *self);
+#+end_src
+
+Gets the world bounds.
+
+*** lrg_octree_get_object_count
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_get_object_count
+:END:
+#+begin_src C
+guint lrg_octree_get_object_count(LrgOctree *self);
+#+end_src
+
+Gets total number of objects.
+
+*** lrg_octree_get_node_count
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_get_node_count
+:END:
+#+begin_src C
+guint lrg_octree_get_node_count(LrgOctree *self);
+#+end_src
+
+Gets number of nodes in the tree.
+
+*** lrg_octree_get_max_depth / lrg_octree_set_max_depth
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_get_max_depth--lrg_octree_set_max_depth
+:END:
+#+begin_src C
+guint lrg_octree_get_max_depth(LrgOctree *self);
+void lrg_octree_set_max_depth(LrgOctree *self, guint max_depth);
+#+end_src
+
+Gets/sets maximum subdivision depth. Only affects future insertions.
+
+*** lrg_octree_get_max_objects_per_node / lrg_octree_set_max_objects_per_node
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_get_max_objects_per_node--lrg_octree_set_max_objects_per_node
+:END:
+#+begin_src C
+guint lrg_octree_get_max_objects_per_node(LrgOctree *self);
+void lrg_octree_set_max_objects_per_node(LrgOctree *self, guint max_objects);
+#+end_src
+
+Gets/sets threshold for node subdivision.
+
+*** lrg_octree_rebuild
+:PROPERTIES:
+:CUSTOM_ID: lrg_octree_rebuild
+:END:
+#+begin_src C
+void lrg_octree_rebuild(LrgOctree *self);
+#+end_src
+
+Rebuilds the entire tree. Call after changing max_depth or max_objects.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgBoundingBox3D) bounds = lrg_bounding_box3d_new(-1000, -1000, -1000, 1000, 1000, 1000);
+g_autoptr(LrgOctree) tree = lrg_octree_new_with_depth(bounds, 8);
+
+/* Insert objects */
+for (int i = 0; i < 100; i++) {
+    g_autoptr(LrgBoundingBox3D) obj_bounds = lrg_bounding_box3d_new(i*10, i*10, i*10, i*10+5, i*10+5, i*10+5);
+    lrg_octree_insert(tree, &objects[i], obj_bounds);
+}
+
+/* Query nearby objects */
+g_autoptr(GrlVector3) center = g_new(GrlVector3, 1);
+center->x = 500; center->y = 500; center->z = 500;
+g_autoptr(GPtrArray) nearby = lrg_octree_query_sphere(tree, center, 100.0f);
+g_print("Found %u nearby objects\n", nearby->len);
+#+end_src
+
+** Performance Tuning
+:PROPERTIES:
+:CUSTOM_ID: performance-tuning
+:END:
+| Setting     | Impact                     | Typical Range |
+|-------------+----------------------------+---------------|
+| max_depth   | Balance depth vs queries   | 6-10          |
+| max_objects | Node subdivision threshold | 8-32          |
+
+Lower max_depth = faster updates, slower queries. Higher max_depth = slower updates, faster queries.
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:level3d.org][LrgLevel3D]] - Uses octree internally
+- [[file:bounding-box3d.org][LrgBoundingBox3D]] - Bounding box type

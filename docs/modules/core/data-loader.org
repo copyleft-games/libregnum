@@ -1,0 +1,114 @@
+* LrgDataLoader
+:PROPERTIES:
+:CUSTOM_ID: lrgdataloader
+:END:
+YAML file deserialization with GObject integration.
+
+#+begin_quote
+*[[../../index.md][Home]]* > *[[../index.md][Modules]]* > *[[file:index.org][Core]]* > LrgDataLoader
+
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+LrgDataLoader loads GObjects from YAML files using the Registry for type resolution:
+
+#+begin_src yaml
+# player.yaml
+type: player
+name: "Hero"
+health: 100
+#+end_src
+
+#+begin_src C
+GObject *obj = lrg_data_loader_load_file (loader, "player.yaml", &error);
+#+end_src
+
+See [[../../concepts/data-loading.md][Data Loading Concept]] for detailed information.
+
+** Key Methods
+:PROPERTIES:
+:CUSTOM_ID: key-methods
+:END:
+*** Single File Loading
+:PROPERTIES:
+:CUSTOM_ID: single-file-loading
+:END:
+- =lrg_data_loader_load_file()= - Load from file path
+- =lrg_data_loader_load_gfile()= - Load from GFile
+- =lrg_data_loader_load_data()= - Load from YAML string
+- =lrg_data_loader_load_typed()= - Load as specific type
+
+*** Batch Loading
+:PROPERTIES:
+:CUSTOM_ID: batch-loading
+:END:
+- =lrg_data_loader_load_directory()= - Load all YAML files from directory
+- =lrg_data_loader_load_files()= - Load multiple specific files
+
+*** Async Loading
+:PROPERTIES:
+:CUSTOM_ID: async-loading
+:END:
+- =lrg_data_loader_load_file_async()= - Async single file
+- =lrg_data_loader_load_gfile_async()= - Async GFile
+- =lrg_data_loader_load_directory_async()= - Async directory
+
+*** Configuration
+:PROPERTIES:
+:CUSTOM_ID: configuration
+:END:
+- =lrg_data_loader_set_registry()= - Set type registry
+- =lrg_data_loader_get_registry()= - Get type registry
+- =lrg_data_loader_set_type_field_name()= - Set "type" field name
+- =lrg_data_loader_get_type_field_name()= - Get "type" field name
+- =lrg_data_loader_set_file_extensions()= - Set recognized extensions
+- =lrg_data_loader_get_file_extensions()= - Get recognized extensions
+
+** Complete API Reference
+:PROPERTIES:
+:CUSTOM_ID: complete-api-reference
+:END:
+See =/var/home/zach/Source/Projects/libregnum/src/core/lrg-data-loader.h= for full function signatures.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+int main ()
+{
+    g_autoptr(GError) error = NULL;
+    LrgDataLoader *loader = lrg_data_loader_new ();
+
+    /* Setup registry for type resolution */
+    LrgRegistry *registry = lrg_registry_new ();
+    lrg_registry_register (registry, "player", MY_TYPE_PLAYER);
+    lrg_data_loader_set_registry (loader, registry);
+
+    /* Load single file */
+    GObject *obj = lrg_data_loader_load_file (loader, "player.yaml", &error);
+
+    if (obj)
+    {
+        g_print ("Loaded %s\n", G_OBJECT_TYPE_NAME (obj));
+        g_object_unref (obj);
+    }
+
+    g_object_unref (registry);
+    g_object_unref (loader);
+    return 0;
+}
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[../../concepts/data-loading.md][Data Loading Concept]]
+- [[file:registry.org][Type Registry]]
+- [[file:engine.org][LrgEngine]]

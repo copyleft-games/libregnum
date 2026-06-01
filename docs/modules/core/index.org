@@ -1,0 +1,440 @@
+* Core Module Documentation
+:PROPERTIES:
+:CUSTOM_ID: core-module-documentation
+:END:
+The Core module contains the fundamental engine systems that all games built with Libregnum use.
+
+#+begin_quote
+*[[../../index.md][Home]]* > *[[../index.md][Modules]]* > Core
+
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+The Core module provides:
+
+- *[[file:engine.org][LrgEngine]]* - Singleton engine managing all subsystems
+- *[[file:registry.org][LrgRegistry]]* - Type mapping for data-driven design
+- *[[file:data-loader.org][LrgDataLoader]]* - YAML deserialization with GObject integration
+- *[[file:asset-manager.org][LrgAssetManager]]* - Asset caching with mod overlay support
+- *[[file:asset-pack.org][LrgAssetPack]]* - Resource pack (rres) loading and management
+- *[[file:event-bus.org][LrgEventBus]]* - Priority-based publish/subscribe event system
+
+** Essential Concepts
+:PROPERTIES:
+:CUSTOM_ID: essential-concepts
+:END:
+*** Engine Lifecycle
+:PROPERTIES:
+:CUSTOM_ID: engine-lifecycle
+:END:
+The engine follows a state machine:
+
+#+begin_example
+UNINITIALIZED → INITIALIZING → RUNNING ↔ RUNNING → SHUTTING_DOWN → TERMINATED
+                 (startup)              (updates)    (shutdown)
+#+end_example
+
+Every game must follow this pattern:
+
+#+begin_src C
+LrgEngine *engine = lrg_engine_get_default ();
+lrg_engine_startup (engine, &error);        /* Initialize */
+while (lrg_engine_is_running (engine))
+    lrg_engine_update (engine, delta_time); /* Run game loop */
+lrg_engine_shutdown (engine);                /* Cleanup */
+#+end_src
+
+*** Data-Driven Design
+:PROPERTIES:
+:CUSTOM_ID: data-driven-design
+:END:
+Use YAML files for all game data:
+
+#+begin_src yaml
+# entities/player.yaml
+type: player
+name: "Hero"
+health: 100
+equipment:
+  - iron-sword
+  - leather-armor
+#+end_src
+
+The DataLoader deserializes this to a GObject using the Registry:
+
+#+begin_src C
+/* Register type */
+lrg_registry_register (registry, "player", GAME_TYPE_PLAYER);
+
+/* Load from YAML */
+GObject *player = lrg_data_loader_load_file (loader, "entities/player.yaml", &error);
+#+end_src
+
+*** Asset Management
+:PROPERTIES:
+:CUSTOM_ID: asset-management
+:END:
+Unified asset loading with caching and mod overlay:
+
+#+begin_src C
+/* Add search paths */
+lrg_asset_manager_add_search_path (manager, "base/assets/");
+lrg_asset_manager_add_search_path (manager, "mods/my-mod/assets/");
+
+/* Load asset - searches in reverse priority order */
+GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.png", &error);
+#+end_src
+
+** Core Types
+:PROPERTIES:
+:CUSTOM_ID: core-types
+:END:
+| Type               | Description          | Derivable |
+|--------------------+----------------------+-----------|
+| =LrgEngine=        | Engine singleton     | Yes       |
+| =LrgRegistry=      | Type registry        | No        |
+| =LrgDataLoader=    | YAML loader          | No        |
+| =LrgAssetManager=  | Asset manager        | Yes       |
+| =LrgAssetPack=     | Resource pack loader | No        |
+| =LrgEventBus=      | Event dispatcher     | No        |
+| =LrgEvent=         | Event interface      | Interface |
+| =LrgEventListener= | Listener interface   | Interface |
+
+** Enumerations
+:PROPERTIES:
+:CUSTOM_ID: enumerations
+:END:
+| Enum                   | Values                                                                          | Description          |
+|------------------------+---------------------------------------------------------------------------------+----------------------|
+| =LrgEngineState=       | UNINITIALIZED, INITIALIZING, RUNNING, PAUSED, SHUTTING_DOWN, TERMINATED         | Engine state         |
+| =LrgEngineError=       | FAILED, INIT, STATE                                                             | Engine errors        |
+| =LrgDataLoaderError=   | FAILED, IO, PARSE, TYPE, PROPERTY                                               | Data loader errors   |
+| =LrgAssetManagerError= | NOT_FOUND, LOAD_FAILED, INVALID_TYPE                                            | Asset manager errors |
+| =LrgAssetPackError=    | FILE_NOT_FOUND, INVALID_FORMAT, RESOURCE_NOT_FOUND, LOAD_FAILED, DECRYPT_FAILED | Asset pack errors    |
+
+** Quick Start
+:PROPERTIES:
+:CUSTOM_ID: quick-start
+:END:
+*** Minimal Setup
+:PROPERTIES:
+:CUSTOM_ID: minimal-setup
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+int main ()
+{
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine = lrg_engine_get_default ();
+
+    if (!lrg_engine_startup (engine, &error))
+    {
+        g_error ("Startup failed: %s", error->message);
+    }
+
+    /* Use engine here */
+
+    lrg_engine_shutdown (engine);
+    return 0;
+}
+#+end_src
+
+*** Game Loop
+:PROPERTIES:
+:CUSTOM_ID: game-loop
+:END:
+#+begin_src C
+int main ()
+{
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine = lrg_engine_get_default ();
+
+    lrg_engine_startup (engine, &error);
+
+    /* Game loop */
+    while (lrg_engine_is_running (engine))
+    {
+        lrg_engine_update (engine, 0.016f); /* 60 FPS */
+    }
+
+    lrg_engine_shutdown (engine);
+    return 0;
+}
+#+end_src
+
+*** Loading Game Data
+:PROPERTIES:
+:CUSTOM_ID: loading-game-data
+:END:
+#+begin_src C
+int main ()
+{
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine = lrg_engine_get_default ();
+
+    lrg_engine_startup (engine, &error);
+
+    /* Get subsystems */
+    LrgRegistry *registry = lrg_engine_get_registry (engine);
+    LrgDataLoader *loader = lrg_engine_get_data_loader (engine);
+
+    /* Register types */
+    lrg_registry_register (registry, "player", MY_TYPE_PLAYER);
+    lrg_registry_register (registry, "enemy", MY_TYPE_ENEMY);
+
+    /* Connect registry to loader */
+    lrg_data_loader_set_registry (loader, registry);
+
+    /* Load game data */
+    GList *entities = lrg_data_loader_load_directory (loader, "data/entities/", FALSE, &error);
+    g_print ("Loaded %u entities\n", g_list_length (entities));
+
+    lrg_engine_shutdown (engine);
+    return 0;
+}
+#+end_src
+
+** Type Reference
+:PROPERTIES:
+:CUSTOM_ID: type-reference
+:END:
+*** LrgEngine
+:PROPERTIES:
+:CUSTOM_ID: lrgengine
+:END:
+The central engine singleton.
+
+- *Methods*: [[file:engine.org][See engine.md]]
+- *Signals*: startup, shutdown, pre-update, post-update
+- *Derivable*: Yes (for custom engines)
+
+Key methods:
+
+- =lrg_engine_get_default()= - Get singleton
+- =lrg_engine_startup()= - Initialize
+- =lrg_engine_update()= - Process one frame
+- =lrg_engine_shutdown()= - Cleanup
+- =lrg_engine_get_state()= - Current state
+- =lrg_engine_is_running()= - Check if running
+
+*** LrgRegistry
+:PROPERTIES:
+:CUSTOM_ID: lrgregistry
+:END:
+Maps type names to GTypes.
+
+- *Methods*: [[file:registry.org][See registry.md]]
+- *Final Type*: Cannot subclass
+
+Key methods:
+
+- =lrg_registry_new()= - Create registry
+- =lrg_registry_register()= - Register type
+- =lrg_registry_lookup()= - Get type by name
+- =lrg_registry_create()= - Create object by name
+
+*** LrgDataLoader
+:PROPERTIES:
+:CUSTOM_ID: lrgdataloader
+:END:
+Deserializes YAML to GObjects.
+
+- *Methods*: [[file:data-loader.org][See data-loader.md]]
+- *Final Type*: Cannot subclass
+
+Key methods:
+
+- =lrg_data_loader_new()= - Create loader
+- =lrg_data_loader_set_registry()= - Set type registry
+- =lrg_data_loader_load_file()= - Load single file
+- =lrg_data_loader_load_directory()= - Load directory
+
+*** LrgAssetManager
+:PROPERTIES:
+:CUSTOM_ID: lrgassetmanager
+:END:
+Loads and caches game assets.
+
+- *Methods*: [[file:asset-manager.org][See asset-manager.md]]
+- *Derivable*: Yes (for custom asset loading)
+
+Key methods:
+
+- =lrg_asset_manager_new()= - Create manager
+- =lrg_asset_manager_add_search_path()= - Add asset location
+- =lrg_asset_manager_load_texture()= - Load texture
+- =lrg_asset_manager_load_font()= - Load font
+
+** API Overview
+:PROPERTIES:
+:CUSTOM_ID: api-overview
+:END:
+*** Singleton Access
+:PROPERTIES:
+:CUSTOM_ID: singleton-access
+:END:
+#+begin_src C
+LrgEngine *engine = lrg_engine_get_default ();
+LrgRegistry *registry = lrg_engine_get_registry (engine);
+LrgDataLoader *loader = lrg_engine_get_data_loader (engine);
+LrgAssetManager *manager = lrg_engine_get_asset_manager (engine);
+#+end_src
+
+*** Lifecycle
+:PROPERTIES:
+:CUSTOM_ID: lifecycle
+:END:
+#+begin_src C
+lrg_engine_startup (engine, &error);
+lrg_engine_update (engine, delta_time);
+lrg_engine_shutdown (engine);
+#+end_src
+
+*** Type Registration
+:PROPERTIES:
+:CUSTOM_ID: type-registration
+:END:
+#+begin_src C
+lrg_registry_register (registry, "type-name", G_TYPE);
+GObject *obj = lrg_registry_create (registry, "type-name", NULL);
+#+end_src
+
+*** Data Loading
+:PROPERTIES:
+:CUSTOM_ID: data-loading
+:END:
+#+begin_src C
+GObject *obj = lrg_data_loader_load_file (loader, "file.yaml", &error);
+GList *objects = lrg_data_loader_load_directory (loader, "dir/", TRUE, &error);
+#+end_src
+
+*** Asset Loading
+:PROPERTIES:
+:CUSTOM_ID: asset-loading
+:END:
+#+begin_src C
+GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.png", &error);
+GrlFont *font = lrg_asset_manager_load_font (manager, "fonts/main.ttf", 16, &error);
+#+end_src
+
+** Error Handling
+:PROPERTIES:
+:CUSTOM_ID: error-handling
+:END:
+All error-returning functions document their error domain:
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+
+if (!lrg_engine_startup (engine, &error))
+{
+    if (error->domain == LRG_ENGINE_ERROR)
+    {
+        switch (error->code)
+        {
+        case LRG_ENGINE_ERROR_STATE:
+            g_warning ("Already started");
+            break;
+        /* ... */
+        }
+    }
+    return 1;
+}
+#+end_src
+
+** Detailed Documentation
+:PROPERTIES:
+:CUSTOM_ID: detailed-documentation
+:END:
+- *[[file:engine.org][LrgEngine]]* - Complete engine API
+- *[[file:registry.org][LrgRegistry]]* - Registry operations
+- *[[file:data-loader.org][LrgDataLoader]]* - Data loading
+- *[[file:asset-manager.org][LrgAssetManager]]* - Asset management
+- *[[file:asset-pack.org][LrgAssetPack]]* - Resource pack loading
+- *[[file:event-bus.org][LrgEventBus]]* - Event system (LrgEvent, LrgEventListener, LrgEventBus)
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- *[[../../concepts/engine-lifecycle.md][Engine Lifecycle]]* - Startup/shutdown patterns
+- *[[../../concepts/type-registry.md][Type Registry]]* - Registration and creation
+- *[[../../concepts/data-loading.md][Data Loading]]* - YAML deserialization
+- *[[../../concepts/error-handling.md][Error Handling]]* - GError patterns
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+int
+main (int argc, char *argv[])
+{
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine;
+    LrgRegistry *registry;
+    LrgDataLoader *loader;
+    g_autoptr(GObject) obj = NULL;
+
+    /* Get engine */
+    engine = lrg_engine_get_default ();
+
+    /* Startup */
+    if (!lrg_engine_startup (engine, &error))
+    {
+        g_error ("Startup failed: %s", error->message);
+    }
+
+    /* Get subsystems */
+    registry = lrg_engine_get_registry (engine);
+    loader = lrg_engine_get_data_loader (engine);
+
+    /* Register type */
+    lrg_registry_register (registry, "player", GAME_TYPE_PLAYER);
+
+    /* Setup loader */
+    lrg_data_loader_set_registry (loader, registry);
+
+    /* Load from YAML */
+    obj = lrg_data_loader_load_file (loader, "player.yaml", &error);
+
+    if (obj)
+    {
+        g_print ("Loaded %s\n", G_OBJECT_TYPE_NAME (obj));
+    }
+    else
+    {
+        g_warning ("Failed to load: %s", error->message);
+    }
+
+    /* Game loop */
+    for (int frame = 0; frame < 100; frame++)
+    {
+        lrg_engine_update (engine, 0.016f);
+    }
+
+    /* Shutdown */
+    lrg_engine_shutdown (engine);
+
+    return 0;
+}
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[../../quickstart.md][Quickstart Guide]]
+- [[../../architecture.md][Architecture Overview]]
+- [[../../concepts/index.md][Concepts]]
+- [[../index.md][Module Index]]

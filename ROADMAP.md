@@ -183,7 +183,7 @@ Given everything is data-driven via YAML, a file-watcher that hot-reloads defini
 
 ## Documentation Gaps
 
-- `docs/modules/ui/ui-event.md:356` — Canvas Documentation link is a TODO placeholder
+- `docs/modules/ui/ui-event.org:356` — Canvas Documentation link is a TODO placeholder
 - `LrgSettingsGroup` base class has unimplemented `apply()`, `reset()`, `get_group_name()` virtual methods (`src/settings/lrg-settings-group.c:51, 58, 65`)
 
 ---

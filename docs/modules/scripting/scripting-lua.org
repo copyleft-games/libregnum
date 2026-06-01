@@ -1,0 +1,336 @@
+* LrgScriptingLua
+:PROPERTIES:
+:CUSTOM_ID: lrgscriptinglua
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgScriptingLua= is the LuaJIT scripting backend. It provides a fast, lightweight scripting environment ideal for game logic and modding.
+
+*Requirements:* LuaJIT 2.1+ (via =luajit= pkg-config)
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_scripting_lua_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_new
+:END:
+#+begin_src C
+LrgScriptingLua *
+lrg_scripting_lua_new (void);
+#+end_src
+
+Creates a new LuaJIT scripting context with standard libraries loaded.
+
+*Example:*
+
+#+begin_src C
+g_autoptr(LrgScriptingLua) scripting = lrg_scripting_lua_new ();
+
+/* Execute Lua code */
+lrg_scripting_load_string (LRG_SCRIPTING (scripting),
+                           "hello",
+                           "print('Hello from Lua!')",
+                           NULL);
+#+end_src
+
+** Registry Integration
+:PROPERTIES:
+:CUSTOM_ID: registry-integration
+:END:
+*** lrg_scripting_lua_set_registry
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_set_registry
+:END:
+#+begin_src C
+void
+lrg_scripting_lua_set_registry (LrgScriptingLua *self,
+                                LrgRegistry     *registry);
+#+end_src
+
+Sets the registry for type lookups, enabling object creation from Lua.
+
+*** lrg_scripting_lua_get_registry
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_get_registry
+:END:
+#+begin_src C
+LrgRegistry *
+lrg_scripting_lua_get_registry (LrgScriptingLua *self);
+#+end_src
+
+Gets the current registry, or NULL if not set.
+
+*Example:*
+
+#+begin_src C
+LrgRegistry *registry = lrg_engine_get_registry (engine);
+lrg_scripting_lua_set_registry (scripting, registry);
+
+/* Now Lua can create objects */
+lrg_scripting_load_string (LRG_SCRIPTING (scripting), "create",
+    "local player = Registry:create('player', { name = 'Hero' })",
+    NULL);
+#+end_src
+
+** Search Paths
+:PROPERTIES:
+:CUSTOM_ID: search-paths
+:END:
+*** lrg_scripting_lua_add_search_path
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_add_search_path
+:END:
+#+begin_src C
+void
+lrg_scripting_lua_add_search_path (LrgScriptingLua *self,
+                                   const gchar     *path);
+#+end_src
+
+Adds a directory to =package.path=, enabling =require()= to find modules.
+
+*** lrg_scripting_lua_clear_search_paths
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_clear_search_paths
+:END:
+#+begin_src C
+void
+lrg_scripting_lua_clear_search_paths (LrgScriptingLua *self);
+#+end_src
+
+Removes all custom search paths.
+
+*Example:*
+
+#+begin_src C
+/* Add mod script directory */
+lrg_scripting_lua_add_search_path (scripting, "mods/mymod/scripts");
+
+/* Now scripts can use require */
+lrg_scripting_load_string (LRG_SCRIPTING (scripting), "init",
+    "local utils = require('utils')",  /* Loads mods/mymod/scripts/utils.lua */
+    NULL);
+#+end_src
+
+** Update Hooks
+:PROPERTIES:
+:CUSTOM_ID: update-hooks
+:END:
+Update hooks are Lua functions called every frame. Use them for game loop integration.
+
+*** lrg_scripting_lua_register_update_hook
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_register_update_hook
+:END:
+#+begin_src C
+void
+lrg_scripting_lua_register_update_hook (LrgScriptingLua *self,
+                                        const gchar     *func_name);
+#+end_src
+
+Register a Lua function to be called each frame.
+
+*** lrg_scripting_lua_unregister_update_hook
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_unregister_update_hook
+:END:
+#+begin_src C
+gboolean
+lrg_scripting_lua_unregister_update_hook (LrgScriptingLua *self,
+                                          const gchar     *func_name);
+#+end_src
+
+Remove an update hook.
+
+*** lrg_scripting_lua_clear_update_hooks
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_clear_update_hooks
+:END:
+#+begin_src C
+void
+lrg_scripting_lua_clear_update_hooks (LrgScriptingLua *self);
+#+end_src
+
+Remove all update hooks.
+
+*** lrg_scripting_lua_update
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_update
+:END:
+#+begin_src C
+void
+lrg_scripting_lua_update (LrgScriptingLua *self,
+                          gfloat           delta);
+#+end_src
+
+Call all registered update hooks with the delta time.
+
+*Example:*
+
+#+begin_src C
+/* Define update function in Lua */
+lrg_scripting_load_string (LRG_SCRIPTING (scripting), "game",
+    "player_x = 0\n"
+    "function game_update(delta)\n"
+    "    player_x = player_x + 100 * delta  -- Move 100 units/second\n"
+    "end",
+    NULL);
+
+/* Register the hook */
+lrg_scripting_lua_register_update_hook (scripting, "game_update");
+
+/* In game loop */
+while (running)
+{
+    gfloat delta = /* calculate delta time */;
+    lrg_scripting_lua_update (scripting, delta);
+    /* ... render, etc ... */
+}
+#+end_src
+
+** Engine Access
+:PROPERTIES:
+:CUSTOM_ID: engine-access
+:END:
+*** lrg_scripting_lua_set_engine
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_set_engine
+:END:
+#+begin_src C
+void
+lrg_scripting_lua_set_engine (LrgScriptingLua *self,
+                              LrgEngine       *engine);
+#+end_src
+
+Exposes the engine to Lua as the =Engine= global.
+
+*** lrg_scripting_lua_get_engine
+:PROPERTIES:
+:CUSTOM_ID: lrg_scripting_lua_get_engine
+:END:
+#+begin_src C
+LrgEngine *
+lrg_scripting_lua_get_engine (LrgScriptingLua *self);
+#+end_src
+
+Gets the current engine, or NULL if not set.
+
+** Lua API Reference
+:PROPERTIES:
+:CUSTOM_ID: lua-api-reference
+:END:
+*** Log
+:PROPERTIES:
+:CUSTOM_ID: log
+:END:
+#+begin_src lua
+Log:debug(message)   -- Debug level logging
+Log:info(message)    -- Info level logging
+Log:warning(message) -- Warning level logging
+Log:error(message)   -- Error level logging
+#+end_src
+
+*** Registry
+:PROPERTIES:
+:CUSTOM_ID: registry
+:END:
+#+begin_src lua
+-- Create an object with properties
+local obj = Registry:create("type-name", { prop1 = value1, prop2 = value2 })
+
+-- Check if a type is registered
+local exists = Registry:is_registered("type-name")
+
+-- Get all registered type names
+local types = Registry:get_types()
+#+end_src
+
+*** Engine
+:PROPERTIES:
+:CUSTOM_ID: engine
+:END:
+#+begin_src lua
+-- Access engine subsystems
+local registry = Engine.registry
+local assets = Engine.asset_manager
+local loader = Engine.data_loader
+
+-- Check engine state
+local state = Engine.state
+local running = Engine.is_running
+#+end_src
+
+*** GObject Properties
+:PROPERTIES:
+:CUSTOM_ID: gobject-properties
+:END:
+GObjects returned from C or created via Registry have automatic property access:
+
+#+begin_src lua
+local player = Registry:create("player", { name = "Hero" })
+
+-- Read property
+print(player.name)  -- "Hero"
+
+-- Write property
+player.health = 100
+#+end_src
+
+** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+int
+main (int argc, char *argv[])
+{
+    g_autoptr(LrgEngine) engine = lrg_engine_get_default ();
+    g_autoptr(LrgScriptingLua) scripting = lrg_scripting_lua_new ();
+    g_autoptr(GError) error = NULL;
+
+    /* Connect to engine */
+    lrg_scripting_lua_set_engine (scripting, engine);
+    lrg_scripting_lua_set_registry (scripting, lrg_engine_get_registry (engine));
+    lrg_engine_set_scripting (engine, LRG_SCRIPTING (scripting));
+
+    /* Add script search path */
+    lrg_scripting_lua_add_search_path (scripting, "scripts");
+
+    /* Load main script */
+    if (!lrg_scripting_load_file (LRG_SCRIPTING (scripting),
+                                  "scripts/main.lua",
+                                  &error))
+    {
+        g_printerr ("Script error: %s\n", error->message);
+        return 1;
+    }
+
+    /* Register update hook */
+    lrg_scripting_lua_register_update_hook (scripting, "game_update");
+
+    /* Game loop */
+    lrg_engine_startup (engine, NULL);
+    while (lrg_engine_is_running (engine))
+    {
+        gfloat delta = 0.016f;
+        lrg_scripting_lua_update (scripting, delta);
+        lrg_engine_update (engine, delta);
+    }
+    lrg_engine_shutdown (engine);
+
+    return 0;
+}
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:scripting.org][LrgScripting]] - Base class API
+- [[file:scripting-python.org][LrgScriptingPython]] - Python alternative
+- [[../../examples/scripting-basics.md][Scripting Examples]] - More examples

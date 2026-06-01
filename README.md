@@ -86,7 +86,7 @@ make WINDOWS=1
 make WINDOWS=1 STEAM=1
 ```
 
-See [docs/cross-compile.md](docs/cross-compile.md) for details.
+See [docs/cross-compile.org](docs/cross-compile.org) for details.
 
 ### Steam Integration
 
@@ -100,7 +100,7 @@ git submodule update --init --recursive
 make STEAM=1
 ```
 
-See [docs/modules/steam/index.md](docs/modules/steam/index.md) for details.
+See [docs/modules/steam/index.org](docs/modules/steam/index.org) for details.
 
 ### Configuration
 

@@ -1,0 +1,500 @@
+* Engine Lifecycle
+:PROPERTIES:
+:CUSTOM_ID: engine-lifecycle
+:END:
+The LrgEngine manages the complete lifecycle of a Libregnum application. Understanding this lifecycle is fundamental to building games with Libregnum.
+
+#+begin_quote
+*[[../../index.md][Home]]* > *[[file:index.org][Concepts]]* > Engine Lifecycle
+
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+The engine follows a strict state machine:
+
+#+begin_example
+UNINITIALIZED
+    ↓ startup()
+INITIALIZING
+    ↓
+RUNNING
+    ↑ ↓ (update loop)
+    update()
+    ↓
+SHUTTING_DOWN
+    ↓
+TERMINATED
+#+end_example
+
+The =LrgEngineState= enum defines these states:
+
+#+begin_src C
+typedef enum
+{
+    LRG_ENGINE_STATE_UNINITIALIZED,  /* Initial state */
+    LRG_ENGINE_STATE_INITIALIZING,   /* During startup */
+    LRG_ENGINE_STATE_RUNNING,        /* Ready for game loop */
+    LRG_ENGINE_STATE_PAUSED,         /* Paused (future) */
+    LRG_ENGINE_STATE_SHUTTING_DOWN,  /* During shutdown */
+    LRG_ENGINE_STATE_TERMINATED      /* After shutdown */
+} LrgEngineState;
+#+end_src
+
+** Engine Singleton
+:PROPERTIES:
+:CUSTOM_ID: engine-singleton
+:END:
+The engine is a singleton - there is only one instance:
+
+#+begin_src C
+/* Always returns the same instance */
+LrgEngine *engine1 = lrg_engine_get_default ();
+LrgEngine *engine2 = lrg_engine_get_default ();
+g_assert (engine1 == engine2);
+#+end_src
+
+This design simplifies subsystem access and ensures consistent state.
+
+** Startup Process
+:PROPERTIES:
+:CUSTOM_ID: startup-process
+:END:
+*** The startup() Method
+:PROPERTIES:
+:CUSTOM_ID: the-startup-method
+:END:
+Starting the engine initializes all subsystems:
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+gboolean result = lrg_engine_startup (engine, &error);
+
+if (!result)
+{
+    /* Handle startup error */
+    g_warning ("Startup failed: %s", error->message);
+    return 1;
+}
+#+end_src
+
+*** Startup Sequence
+:PROPERTIES:
+:CUSTOM_ID: startup-sequence
+:END:
+During startup:
+
+1. Engine moves to =INITIALIZING= state
+2. All subsystems are initialized:
+   - Registry (type mapping)
+   - DataLoader (YAML loading)
+   - AssetManager (asset caching)
+   - Future systems (ECS, Physics, etc.)
+3. Builtin types are registered
+4. Engine moves to =RUNNING= state
+5. "startup" signal is emitted
+
+*** Startup Errors
+:PROPERTIES:
+:CUSTOM_ID: startup-errors
+:END:
+Startup can fail for various reasons. Common errors include:
+
+#+begin_src C
+/* LRG_ENGINE_ERROR domain with codes: */
+LRG_ENGINE_ERROR_FAILED,      /* Generic failure */
+LRG_ENGINE_ERROR_INIT,        /* Initialization error */
+LRG_ENGINE_ERROR_STATE        /* Invalid state (double startup) */
+#+end_src
+
+Example error handling:
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+
+if (!lrg_engine_startup (engine, &error))
+{
+    if (error->domain == LRG_ENGINE_ERROR)
+    {
+        switch (error->code)
+        {
+        case LRG_ENGINE_ERROR_INIT:
+            g_warning ("Failed to initialize subsystems");
+            break;
+        case LRG_ENGINE_ERROR_STATE:
+            g_warning ("Engine already started");
+            break;
+        default:
+            g_warning ("Unknown error: %s", error->message);
+        }
+    }
+    return 1;
+}
+#+end_src
+
+*** Pre-initialization Checks
+:PROPERTIES:
+:CUSTOM_ID: pre-initialization-checks
+:END:
+Before starting, verify the engine state:
+
+#+begin_src C
+LrgEngineState state = lrg_engine_get_state (engine);
+
+if (state != LRG_ENGINE_STATE_UNINITIALIZED &&
+    state != LRG_ENGINE_STATE_TERMINATED)
+{
+    g_warning ("Engine is in state %d, cannot start", state);
+    return 1;
+}
+#+end_src
+
+** Game Loop
+:PROPERTIES:
+:CUSTOM_ID: game-loop
+:END:
+Once started, the engine runs the game loop:
+
+#+begin_src C
+while (lrg_engine_is_running (engine))
+{
+    /* Calculate delta time */
+    gfloat delta_time = calculate_frame_time ();
+
+    /* Update engine and all systems */
+    lrg_engine_update (engine, delta_time);
+
+    /* Render your game */
+    render_frame ();
+}
+#+end_src
+
+*** The update() Method
+:PROPERTIES:
+:CUSTOM_ID: the-update-method
+:END:
+Update is called once per frame:
+
+#+begin_src C
+void lrg_engine_update (LrgEngine *self,
+                        gfloat     delta)
+#+end_src
+
+Where:
+
+- =self= is the engine
+- =delta= is time since last frame in seconds
+
+*** Update Signals
+:PROPERTIES:
+:CUSTOM_ID: update-signals
+:END:
+During each update, two signals are emitted:
+
+#+begin_src C
+static void on_pre_update (LrgEngine *engine, gfloat delta, gpointer user_data)
+{
+    /* Called before engine systems update */
+}
+
+static void on_post_update (LrgEngine *engine, gfloat delta, gpointer user_data)
+{
+    /* Called after engine systems update */
+}
+
+/* Connect them */
+g_signal_connect (engine, "pre-update", G_CALLBACK (on_pre_update), NULL);
+g_signal_connect (engine, "post-update", G_CALLBACK (on_post_update), NULL);
+
+/* During update: pre-update → system updates → post-update */
+lrg_engine_update (engine, 0.016f);  /* ~60 FPS */
+#+end_src
+
+*** Game Loop Pattern
+:PROPERTIES:
+:CUSTOM_ID: game-loop-pattern
+:END:
+Common game loop pattern:
+
+#+begin_src C
+static gboolean running = TRUE;
+
+static gboolean
+on_timeout (gpointer user_data)
+{
+    LrgEngine *engine = (LrgEngine *)user_data;
+
+    lrg_engine_update (engine, 0.016f);
+
+    return running;  /* Continue if TRUE, stop if FALSE */
+}
+
+int main ()
+{
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine = lrg_engine_get_default ();
+
+    lrg_engine_startup (engine, &error);
+
+    /* Setup periodic update */
+    g_timeout_add (16, on_timeout, engine);  /* 16ms ~= 60fps */
+
+    /* Run main loop */
+    g_main_loop_run (g_main_loop_new (NULL, FALSE));
+
+    running = FALSE;
+    lrg_engine_shutdown (engine);
+
+    return 0;
+}
+#+end_src
+
+** Shutdown Process
+:PROPERTIES:
+:CUSTOM_ID: shutdown-process
+:END:
+*** The shutdown() Method
+:PROPERTIES:
+:CUSTOM_ID: the-shutdown-method
+:END:
+Cleanly shutdown the engine:
+
+#+begin_src C
+lrg_engine_shutdown (engine);
+#+end_src
+
+Shutdown is always successful - no error checking needed.
+
+*** Shutdown Sequence
+:PROPERTIES:
+:CUSTOM_ID: shutdown-sequence
+:END:
+During shutdown:
+
+1. Engine moves to =SHUTTING_DOWN= state
+2. All subsystems are shut down
+3. Resources are freed
+4. Engine moves to =TERMINATED= state
+5. "shutdown" signal is emitted
+
+*** Shutdown Example
+:PROPERTIES:
+:CUSTOM_ID: shutdown-example
+:END:
+#+begin_src C
+int main ()
+{
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine = lrg_engine_get_default ();
+
+    if (!lrg_engine_startup (engine, &error))
+    {
+        g_error ("Startup failed: %s", error->message);
+    }
+
+    /* Game loop */
+    for (int i = 0; i < 100; i++)
+    {
+        lrg_engine_update (engine, 0.016f);
+    }
+
+    /* Always shutdown before exit */
+    lrg_engine_shutdown (engine);
+
+    return 0;
+}
+#+end_src
+
+*** Restart After Shutdown
+:PROPERTIES:
+:CUSTOM_ID: restart-after-shutdown
+:END:
+After shutdown, the engine can be restarted:
+
+#+begin_src C
+/* First run */
+lrg_engine_startup (engine, &error);
+/* ... */
+lrg_engine_shutdown (engine);
+
+/* Can restart */
+lrg_engine_startup (engine, &error);  /* OK */
+/* ... */
+lrg_engine_shutdown (engine);
+#+end_src
+
+But not from RUNNING state:
+
+#+begin_src C
+lrg_engine_startup (engine, &error);
+lrg_engine_startup (engine, &error);  /* ERROR: LRG_ENGINE_ERROR_STATE */
+#+end_src
+
+** Subsystem Access
+:PROPERTIES:
+:CUSTOM_ID: subsystem-access
+:END:
+Subsystems are available only after startup:
+
+#+begin_src C
+LrgRegistry *registry = lrg_engine_get_registry (engine);      /* NULL before startup */
+LrgDataLoader *loader = lrg_engine_get_data_loader (engine);  /* NULL before startup */
+LrgAssetManager *manager = lrg_engine_get_asset_manager (engine);  /* NULL before startup */
+#+end_src
+
+Safe pattern:
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+LrgEngine *engine = lrg_engine_get_default ();
+
+if (!lrg_engine_startup (engine, &error))
+{
+    g_error ("Startup failed: %s", error->message);
+}
+
+/* Now safe to use subsystems */
+LrgRegistry *registry = lrg_engine_get_registry (engine);
+g_assert_nonnull (registry);
+#+end_src
+
+** State Checking
+:PROPERTIES:
+:CUSTOM_ID: state-checking
+:END:
+Check the current engine state:
+
+#+begin_src C
+LrgEngineState state = lrg_engine_get_state (engine);
+
+/* Is it running? */
+if (lrg_engine_is_running (engine))
+{
+    /* Safe to call update */
+}
+
+/* Explicit check */
+if (state == LRG_ENGINE_STATE_RUNNING)
+{
+    /* ... */
+}
+#+end_src
+
+** Signals Reference
+:PROPERTIES:
+:CUSTOM_ID: signals-reference
+:END:
+*** startup signal
+:PROPERTIES:
+:CUSTOM_ID: startup-signal
+:END:
+#+begin_src C
+void user_function (LrgEngine *engine,
+                    gpointer   user_data);
+#+end_src
+
+Emitted when engine transitions to RUNNING.
+
+*** shutdown signal
+:PROPERTIES:
+:CUSTOM_ID: shutdown-signal
+:END:
+#+begin_src C
+void user_function (LrgEngine *engine,
+                    gpointer   user_data);
+#+end_src
+
+Emitted when engine transitions to TERMINATED.
+
+*** pre-update signal
+:PROPERTIES:
+:CUSTOM_ID: pre-update-signal
+:END:
+#+begin_src C
+void user_function (LrgEngine *engine,
+                    gfloat     delta,
+                    gpointer   user_data);
+#+end_src
+
+Emitted before engine update. Delta is frame time in seconds.
+
+*** post-update signal
+:PROPERTIES:
+:CUSTOM_ID: post-update-signal
+:END:
+#+begin_src C
+void user_function (LrgEngine *engine,
+                    gfloat     delta,
+                    gpointer   user_data);
+#+end_src
+
+Emitted after engine update.
+
+** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+#include <glib.h>
+
+static void
+on_startup (LrgEngine *engine, gpointer user_data)
+{
+    g_print ("Engine started\n");
+}
+
+static void
+on_shutdown (LrgEngine *engine, gpointer user_data)
+{
+    g_print ("Engine stopped\n");
+}
+
+static void
+on_update (LrgEngine *engine, gfloat delta, gpointer user_data)
+{
+    static guint frame = 0;
+    g_print ("Frame %u (delta=%.3fs)\n", frame++, delta);
+}
+
+int
+main (int argc, char *argv[])
+{
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine;
+
+    engine = lrg_engine_get_default ();
+
+    /* Connect lifecycle signals */
+    g_signal_connect (engine, "startup", G_CALLBACK (on_startup), NULL);
+    g_signal_connect (engine, "shutdown", G_CALLBACK (on_shutdown), NULL);
+    g_signal_connect (engine, "pre-update", G_CALLBACK (on_update), NULL);
+
+    /* Startup */
+    if (!lrg_engine_startup (engine, &error))
+    {
+        g_error ("Startup failed: %s", error->message);
+    }
+
+    /* Run 10 frames */
+    for (int i = 0; i < 10; i++)
+    {
+        lrg_engine_update (engine, 0.016f);
+    }
+
+    /* Shutdown */
+    lrg_engine_shutdown (engine);
+
+    return 0;
+}
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[../modules/core/engine.md][LrgEngine Documentation]] - Full API
+- [[../architecture.md][Architecture Overview]] - System design
+- [[../quickstart.md][Quickstart Guide]] - Getting started

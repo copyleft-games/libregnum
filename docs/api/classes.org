@@ -1,0 +1,87 @@
+* Libregnum Classes
+:PROPERTIES:
+:CUSTOM_ID: libregnum-classes
+:END:
+Complete index of all classes and derivable types in Libregnum.
+
+#+begin_quote
+*[[../index.md][Home]]* > API > Classes
+
+#+end_quote
+
+** Core Module (Phase 0 - Complete)
+:PROPERTIES:
+:CUSTOM_ID: core-module-phase-0---complete
+:END:
+*** Engine
+:PROPERTIES:
+:CUSTOM_ID: engine
+:END:
+- *[[../modules/core/engine.md][LrgEngine]]* - Central engine singleton (Derivable)
+
+*** Type System
+:PROPERTIES:
+:CUSTOM_ID: type-system
+:END:
+- *[[../modules/core/registry.md][LrgRegistry]]* - Type registry (Final)
+
+*** Data Loading
+:PROPERTIES:
+:CUSTOM_ID: data-loading
+:END:
+- *[[../modules/core/data-loader.md][LrgDataLoader]]* - YAML deserialization (Final)
+
+*** Asset Management
+:PROPERTIES:
+:CUSTOM_ID: asset-management
+:END:
+- *[[../modules/core/asset-manager.md][LrgAssetManager]]* - Asset caching and loading (Derivable)
+
+** Planned: ECS Module (Phase 1)
+:PROPERTIES:
+:CUSTOM_ID: planned-ecs-module-phase-1
+:END:
+- LrgGameObject - Game entity
+- LrgComponent - Base component (Derivable)
+- LrgTransformComponent - Position/rotation/scale
+- LrgSpriteComponent - Graphics rendering
+- LrgColliderComponent - Collision detection
+- LrgAnimatorComponent - Animation playback
+- LrgWorld - Entity container
+
+** Planned: Input Module (Phase 1)
+:PROPERTIES:
+:CUSTOM_ID: planned-input-module-phase-1
+:END:
+- LrgInputMap - Input action mapping
+- LrgInputAction - Input action
+- LrgInputBinding - Input key binding
+
+** Planned: UI Module (Phase 1)
+:PROPERTIES:
+:CUSTOM_ID: planned-ui-module-phase-1
+:END:
+- LrgWidget - Base widget (Derivable)
+- LrgContainer - Widget container
+- LrgLabel - Text label
+- LrgButton - Clickable button
+- LrgPanel - Panel widget
+- LrgCheckbox - Checkbox control
+- LrgSlider - Slider control
+- LrgProgressBar - Progress bar
+- LrgTextInput - Text input field
+- LrgImage - Image widget
+- LrgVBox - Vertical layout
+- LrgHBox - Horizontal layout
+- LrgGrid - Grid layout
+- LrgCanvas - Custom drawing canvas
+- LrgTheme - UI theme
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:interfaces.org][API Interfaces Index]]
+- [[file:enumerations.org][API Enumerations Index]]
+- [[../modules/core/index.md][Core Module]]
+- [[../modules/index.md][Module Index]]

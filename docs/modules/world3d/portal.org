@@ -1,0 +1,255 @@
+* LrgPortal
+:PROPERTIES:
+:CUSTOM_ID: lrgportal
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgPortal= represents an opening between two sectors in a portal-based visibility system. Portals define the connection points through which visibility can be traversed.
+
+** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information
+:END:
+- *Type Name*: =LrgPortal=
+- *Type ID*: =LRG_TYPE_PORTAL=
+- *Type Category*: Boxed Type (immutable value type)
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_portal_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_new
+:END:
+#+begin_src C
+LrgPortal *lrg_portal_new(const gchar *id, const LrgBoundingBox3D *bounds,
+                          const gchar *sector_a, const gchar *sector_b);
+#+end_src
+
+Creates a new portal connecting two sectors.
+
+*Parameters:*
+
+- =id= - Unique identifier
+- =bounds= - (transfer none) Portal opening area
+- =sector_a= - ID of first sector
+- =sector_b= - ID of second sector
+
+*Example:*
+
+#+begin_src C
+g_autoptr(LrgBoundingBox3D) door = lrg_bounding_box3d_new(-2, -40, -10, 2, 40, 10);
+g_autoptr(LrgPortal) portal = lrg_portal_new("door_1", door, "hallway", "bedroom");
+#+end_src
+
+*** lrg_portal_new_with_normal
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_new_with_normal
+:END:
+#+begin_src C
+LrgPortal *lrg_portal_new_with_normal(const gchar *id, const LrgBoundingBox3D *bounds,
+                                      const gchar *sector_a, const gchar *sector_b,
+                                      const GrlVector3 *normal);
+#+end_src
+
+Creates a portal with explicit normal direction for visibility culling.
+
+*** lrg_portal_copy
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_copy
+:END:
+#+begin_src C
+LrgPortal *lrg_portal_copy(const LrgPortal *self);
+#+end_src
+
+Creates a copy (nullable safe).
+
+*** lrg_portal_free
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_free
+:END:
+#+begin_src C
+void lrg_portal_free(LrgPortal *self);
+#+end_src
+
+Frees a portal (nullable safe).
+
+*Use with =g_autoptr(LrgPortal)= for automatic cleanup.*
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+*** lrg_portal_get_id
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_get_id
+:END:
+#+begin_src C
+const gchar *lrg_portal_get_id(const LrgPortal *self);
+#+end_src
+
+Gets the portal identifier.
+
+*** lrg_portal_get_bounds
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_get_bounds
+:END:
+#+begin_src C
+LrgBoundingBox3D *lrg_portal_get_bounds(const LrgPortal *self);
+#+end_src
+
+Gets the portal opening bounds.
+
+*** lrg_portal_get_center
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_get_center
+:END:
+#+begin_src C
+GrlVector3 *lrg_portal_get_center(const LrgPortal *self);
+#+end_src
+
+Gets the center point of the portal.
+
+** Sector Connections
+:PROPERTIES:
+:CUSTOM_ID: sector-connections
+:END:
+*** lrg_portal_get_sector_a / lrg_portal_get_sector_b
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_get_sector_a--lrg_portal_get_sector_b
+:END:
+#+begin_src C
+const gchar *lrg_portal_get_sector_a(const LrgPortal *self);
+const gchar *lrg_portal_get_sector_b(const LrgPortal *self);
+#+end_src
+
+Gets the IDs of the two connected sectors.
+
+*** lrg_portal_get_other_sector
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_get_other_sector
+:END:
+#+begin_src C
+const gchar *lrg_portal_get_other_sector(const LrgPortal *self, const gchar *from_sector);
+#+end_src
+
+Gets the sector on the other side of the portal.
+
+*Parameters:*
+
+- =from_sector= - The sector you're coming from
+
+*Returns:* (transfer none) (nullable) Other sector ID, or NULL if not connected
+
+*Example:*
+
+#+begin_src C
+const gchar *next_sector = lrg_portal_get_other_sector(portal, "hallway");
+g_print("Portal leads to: %s\n", next_sector); /* Prints "bedroom" */
+#+end_src
+
+*** lrg_portal_connects_sector
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_connects_sector
+:END:
+#+begin_src C
+gboolean lrg_portal_connects_sector(const LrgPortal *self, const gchar *sector_id);
+#+end_src
+
+Checks if the portal connects to a given sector.
+
+** Normal and Visibility
+:PROPERTIES:
+:CUSTOM_ID: normal-and-visibility
+:END:
+*** lrg_portal_get_normal
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_get_normal
+:END:
+#+begin_src C
+GrlVector3 *lrg_portal_get_normal(const LrgPortal *self);
+#+end_src
+
+Gets the portal normal (facing direction).
+
+*** lrg_portal_set_normal
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_set_normal
+:END:
+#+begin_src C
+void lrg_portal_set_normal(LrgPortal *self, const GrlVector3 *normal);
+#+end_src
+
+Sets the portal normal direction.
+
+*** lrg_portal_is_visible_from
+:PROPERTIES:
+:CUSTOM_ID: lrg_portal_is_visible_from
+:END:
+#+begin_src C
+gboolean lrg_portal_is_visible_from(const LrgPortal *self, const GrlVector3 *point);
+#+end_src
+
+Checks if the portal is visible from a point (faces toward it).
+
+The portal's normal should point from sector_a toward sector_b.
+
+*Example:*
+
+#+begin_src C
+g_autoptr(GrlVector3) camera_pos = get_camera_position();
+if (lrg_portal_is_visible_from(portal, camera_pos))
+    g_print("Portal faces camera\n");
+#+end_src
+
+** Example Usage
+:PROPERTIES:
+:CUSTOM_ID: example-usage
+:END:
+#+begin_src C
+/* Create portal between two rooms */
+g_autoptr(LrgBoundingBox3D) door_bounds = lrg_bounding_box3d_new(-1.5f, -30, -5, 1.5f, 30, 5);
+g_autoptr(LrgPortal) door = lrg_portal_new("main_door", door_bounds, "lobby", "office");
+
+/* Set normal pointing from lobby into office */
+g_autoptr(GrlVector3) normal = g_new(GrlVector3, 1);
+normal->x = 1; normal->y = 0; normal->z = 0;
+lrg_portal_set_normal(door, normal);
+
+/* Add to portal system */
+g_autoptr(LrgPortalSystem) portal_sys = lrg_portal_system_new();
+lrg_portal_system_add_portal(portal_sys, door);
+
+/* Check connectivity */
+if (lrg_portal_connects_sector(door, "lobby")) {
+    g_print("Door connects to lobby\n");
+    const gchar *other = lrg_portal_get_other_sector(door, "lobby");
+    g_print("Other side: %s\n", other); /* Prints "office" */
+}
+
+/* Test visibility from a point */
+g_autoptr(GrlVector3) test_point = g_new(GrlVector3, 1);
+test_point->x = -10; test_point->y = 0; test_point->z = 0;
+if (lrg_portal_is_visible_from(door, test_point))
+    g_print("Door faces the test point\n");
+#+end_src
+
+** Portal Design Notes
+:PROPERTIES:
+:CUSTOM_ID: portal-design-notes
+:END:
+1. *Bidirectional*: Portals connect two sectors bidirectionally
+2. *Normal Convention*: Normal typically points from sector_a to sector_b
+3. *Backface Culling*: Use normal to reject portals facing away from viewer
+4. *Overlap*: Portal opening area should overlap with sector boundaries
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:portal-system.org][LrgPortalSystem]] - Portal container
+- [[file:sector.org][LrgSector]] - Connected sectors
+- [[file:bounding-box3d.org][LrgBoundingBox3D]] - Portal bounds

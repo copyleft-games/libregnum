@@ -1,0 +1,452 @@
+* LrgDialogNode - Dialog Tree Node
+:PROPERTIES:
+:CUSTOM_ID: lrgdialognode---dialog-tree-node
+:END:
+A single point in a conversation with speaker information, text content, response options, and conditions/effects. Nodes can be linked together to form branching conversations.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Derivable GObject Class* - Can be subclassed for custom behaviors
+- *Type ID* - =LRG_TYPE_DIALOG_NODE=
+- *GIR Name* - =Libregnum.DialogNode=
+
+** Virtual Methods
+:PROPERTIES:
+:CUSTOM_ID: virtual-methods
+:END:
+*** get_display_text()
+:PROPERTIES:
+:CUSTOM_ID: get_display_text
+:END:
+#+begin_src C
+const gchar * (*get_display_text) (LrgDialogNode *self);
+#+end_src
+
+Gets the display text, potentially localized. Subclasses can override to provide localization.
+
+*** evaluate_conditions()
+:PROPERTIES:
+:CUSTOM_ID: evaluate_conditions
+:END:
+#+begin_src C
+gboolean (*evaluate_conditions) (LrgDialogNode *self,
+                                 GHashTable    *context);
+#+end_src
+
+Checks if node conditions are met. Can be overridden for custom condition logic.
+
+*** apply_effects()
+:PROPERTIES:
+:CUSTOM_ID: apply_effects
+:END:
+#+begin_src C
+void (*apply_effects) (LrgDialogNode *self,
+                       GHashTable    *context);
+#+end_src
+
+Applies node effects to context. Can be overridden for custom effect handling.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_dialog_node_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_new
+:END:
+#+begin_src C
+LrgDialogNode * lrg_dialog_node_new (const gchar *id);
+#+end_src
+
+Creates a new dialog node.
+
+*Parameters:*
+
+- =id= - Unique identifier for the node
+
+*Returns:* A new =LrgDialogNode= (transfer full)
+
+** Identification
+:PROPERTIES:
+:CUSTOM_ID: identification
+:END:
+*** lrg_dialog_node_get_id()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_get_id
+:END:
+#+begin_src C
+const gchar * lrg_dialog_node_get_id (LrgDialogNode *self);
+#+end_src
+
+Gets the node identifier.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+
+*Returns:* The node ID (transfer none)
+
+** Speaker
+:PROPERTIES:
+:CUSTOM_ID: speaker
+:END:
+*** lrg_dialog_node_get_speaker()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_get_speaker
+:END:
+#+begin_src C
+const gchar * lrg_dialog_node_get_speaker (LrgDialogNode *self);
+#+end_src
+
+Gets the speaker for this node (NPC name, etc).
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+
+*Returns:* The speaker name (transfer none, nullable)
+
+*** lrg_dialog_node_set_speaker()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_set_speaker
+:END:
+#+begin_src C
+void lrg_dialog_node_set_speaker (LrgDialogNode *self,
+                                  const gchar   *speaker);
+#+end_src
+
+Sets the speaker for this node.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+- =speaker= - Speaker name (nullable)
+
+** Text Content
+:PROPERTIES:
+:CUSTOM_ID: text-content
+:END:
+*** lrg_dialog_node_get_text()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_get_text
+:END:
+#+begin_src C
+const gchar * lrg_dialog_node_get_text (LrgDialogNode *self);
+#+end_src
+
+Gets the raw text content.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+
+*Returns:* The node text (transfer none, nullable)
+
+*** lrg_dialog_node_set_text()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_set_text
+:END:
+#+begin_src C
+void lrg_dialog_node_set_text (LrgDialogNode *self,
+                               const gchar   *text);
+#+end_src
+
+Sets the text content.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+- =text= - Text content (nullable)
+
+*** lrg_dialog_node_get_display_text()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_get_display_text
+:END:
+#+begin_src C
+const gchar * lrg_dialog_node_get_display_text (LrgDialogNode *self);
+#+end_src
+
+Gets the display text, potentially localized. Subclasses can override this to provide localization.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+
+*Returns:* The display text (transfer none, nullable)
+
+** Navigation
+:PROPERTIES:
+:CUSTOM_ID: navigation
+:END:
+*** lrg_dialog_node_get_next_node_id()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_get_next_node_id
+:END:
+#+begin_src C
+const gchar * lrg_dialog_node_get_next_node_id (LrgDialogNode *self);
+#+end_src
+
+Gets the default next node ID for auto-advance.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+
+*Returns:* The next node ID (transfer none, nullable)
+
+*** lrg_dialog_node_set_next_node_id()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_set_next_node_id
+:END:
+#+begin_src C
+void lrg_dialog_node_set_next_node_id (LrgDialogNode *self,
+                                       const gchar   *next_node_id);
+#+end_src
+
+Sets the default next node ID.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+- =next_node_id= - Next node ID (nullable)
+
+** Responses
+:PROPERTIES:
+:CUSTOM_ID: responses
+:END:
+*** lrg_dialog_node_add_response()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_add_response
+:END:
+#+begin_src C
+void lrg_dialog_node_add_response (LrgDialogNode     *self,
+                                   LrgDialogResponse *response);
+#+end_src
+
+Adds a response option to this node.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+- =response= - Response to add (transfer full)
+
+*** lrg_dialog_node_get_responses()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_get_responses
+:END:
+#+begin_src C
+GPtrArray * lrg_dialog_node_get_responses (LrgDialogNode *self);
+#+end_src
+
+Gets all responses for this node.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+
+*Returns:* Array of =LrgDialogResponse= (element-type, transfer none)
+
+*** lrg_dialog_node_get_response_count()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_get_response_count
+:END:
+#+begin_src C
+guint lrg_dialog_node_get_response_count (LrgDialogNode *self);
+#+end_src
+
+Gets the number of responses.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+
+*Returns:* Response count
+
+*** lrg_dialog_node_get_response()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_get_response
+:END:
+#+begin_src C
+LrgDialogResponse * lrg_dialog_node_get_response (LrgDialogNode *self,
+                                                  guint          index);
+#+end_src
+
+Gets a response by index.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+- =index= - Response index
+
+*Returns:* The response (transfer none, nullable) - =NULL= if out of bounds
+
+** Conditions
+:PROPERTIES:
+:CUSTOM_ID: conditions
+:END:
+*** lrg_dialog_node_add_condition()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_add_condition
+:END:
+#+begin_src C
+void lrg_dialog_node_add_condition (LrgDialogNode *self,
+                                    const gchar   *condition);
+#+end_src
+
+Adds a condition that must be met to show this node.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+- =condition= - Condition expression (e.g., "has_sword", "level >= 10")
+
+*** lrg_dialog_node_get_conditions()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_get_conditions
+:END:
+#+begin_src C
+GPtrArray * lrg_dialog_node_get_conditions (LrgDialogNode *self);
+#+end_src
+
+Gets all conditions.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+
+*Returns:* Array of condition strings (element-type utf8, transfer none)
+
+*** lrg_dialog_node_evaluate_conditions()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_evaluate_conditions
+:END:
+#+begin_src C
+gboolean lrg_dialog_node_evaluate_conditions (LrgDialogNode *self,
+                                              GHashTable    *context);
+#+end_src
+
+Evaluates whether all conditions are met.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+- =context= - Variable context for evaluation (nullable)
+
+*Returns:* =TRUE= if all conditions pass
+
+** Effects
+:PROPERTIES:
+:CUSTOM_ID: effects
+:END:
+*** lrg_dialog_node_add_effect()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_add_effect
+:END:
+#+begin_src C
+void lrg_dialog_node_add_effect (LrgDialogNode *self,
+                                 const gchar   *effect);
+#+end_src
+
+Adds an effect to trigger when entering this node.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+- =effect= - Effect expression (e.g., "give_item:sword", "set_flag:defeated_boss")
+
+*** lrg_dialog_node_get_effects()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_get_effects
+:END:
+#+begin_src C
+GPtrArray * lrg_dialog_node_get_effects (LrgDialogNode *self);
+#+end_src
+
+Gets all effects.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+
+*Returns:* Array of effect strings (element-type utf8, transfer none)
+
+*** lrg_dialog_node_apply_effects()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_apply_effects
+:END:
+#+begin_src C
+void lrg_dialog_node_apply_effects (LrgDialogNode *self,
+                                    GHashTable    *context);
+#+end_src
+
+Applies all effects to the context.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+- =context= - Variable context for effects (nullable)
+
+** Terminal Nodes
+:PROPERTIES:
+:CUSTOM_ID: terminal-nodes
+:END:
+*** lrg_dialog_node_is_terminal()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_node_is_terminal
+:END:
+#+begin_src C
+gboolean lrg_dialog_node_is_terminal (LrgDialogNode *self);
+#+end_src
+
+Checks if this node ends the dialog. A node is terminal if it has no next_node_id and no responses.
+
+*Parameters:*
+
+- =self= - An =LrgDialogNode=
+
+*Returns:* =TRUE= if this is a terminal node
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* Create a dialog node */
+g_autoptr(LrgDialogNode) node = lrg_dialog_node_new("welcome");
+lrg_dialog_node_set_speaker(node, "Village Elder");
+lrg_dialog_node_set_text(node, "Welcome to our village, stranger!");
+
+/* Add a condition - only show if player level >= 5 */
+lrg_dialog_node_add_condition(node, "level >= 5");
+
+/* Add an effect - mark this dialogue as seen */
+lrg_dialog_node_add_effect(node, "set_flag:talked_to_elder");
+
+/* Add response options */
+g_autoptr(LrgDialogResponse) accept = lrg_dialog_response_new(
+    "accept", "I'm honored to help", "quest_start"
+);
+lrg_dialog_node_add_response(node, accept);
+
+g_autoptr(LrgDialogResponse) decline = lrg_dialog_response_new(
+    "decline", "Maybe later", "end"
+);
+lrg_dialog_node_add_response(node, decline);
+
+/* Evaluate conditions */
+g_autoptr(GHashTable) context = g_hash_table_new(g_str_hash, g_str_equal);
+g_hash_table_insert(context, "level", "10");
+if (lrg_dialog_node_evaluate_conditions(node, context)) {
+    g_print("Node conditions met\n");
+}
+
+/* Apply effects */
+lrg_dialog_node_apply_effects(node, context);
+
+/* Check if terminal */
+if (lrg_dialog_node_is_terminal(node)) {
+    g_print("This node ends the dialogue\n");
+}
+#+end_src

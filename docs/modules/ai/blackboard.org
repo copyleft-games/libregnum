@@ -1,0 +1,524 @@
+* LrgBlackboard
+:PROPERTIES:
+:CUSTOM_ID: lrgblackboard
+:END:
+A final GObject that serves as a shared key-value data store for behavior tree communication and state management.
+
+** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information
+:END:
+- *Type Name*: =LrgBlackboard=
+- *Type ID*: =LRG_TYPE_BLACKBOARD=
+- *Category*: Final GObject (cannot be subclassed)
+- *Header*: =lrg-blackboard.h=
+
+** Description
+:PROPERTIES:
+:CUSTOM_ID: description
+:END:
+=LrgBlackboard= is a type-safe dictionary that stores arbitrary data accessible to all nodes in a behavior tree. Key features:
+
+- *Type Safety*: Separate methods for different data types
+- *Default Values*: Return sensible defaults when keys don't exist
+- *Reference Counting*: Automatically manages GObject references
+- *Key Management*: Query and manipulate stored keys
+- *Multiple Types*: int, float, bool, string, object, pointer
+
+** Creating a Blackboard
+:PROPERTIES:
+:CUSTOM_ID: creating-a-blackboard
+:END:
+*** lrg_blackboard_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_new
+:END:
+#+begin_src C
+LrgBlackboard *
+lrg_blackboard_new (void)
+#+end_src
+
+Creates a new empty blackboard.
+
+*Returns:* (transfer full) A new =LrgBlackboard=
+
+*Example:*
+
+#+begin_src C
+g_autoptr(LrgBlackboard) bb = lrg_blackboard_new();
+#+end_src
+
+** Integer Values
+:PROPERTIES:
+:CUSTOM_ID: integer-values
+:END:
+*** lrg_blackboard_set_int()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_set_int
+:END:
+#+begin_src C
+void
+lrg_blackboard_set_int (LrgBlackboard *self,
+                        const gchar   *key,
+                        gint           value)
+#+end_src
+
+Sets an integer value.
+
+*Parameters:*
+
+- =key=: Key name
+- =value=: Integer value
+
+*Example:*
+
+#+begin_src C
+lrg_blackboard_set_int(bb, "health", 100);
+lrg_blackboard_set_int(bb, "ammunition", 30);
+#+end_src
+
+*** lrg_blackboard_get_int()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_get_int
+:END:
+#+begin_src C
+gint
+lrg_blackboard_get_int (LrgBlackboard *self,
+                        const gchar   *key,
+                        gint           default_value)
+#+end_src
+
+Gets an integer value.
+
+*Parameters:*
+
+- =key=: Key name
+- =default_value=: Value to return if key doesn't exist
+
+*Returns:* Integer value or default if not found
+
+*Example:*
+
+#+begin_src C
+gint health = lrg_blackboard_get_int(bb, "health", 100);
+gint ammo = lrg_blackboard_get_int(bb, "ammunition", 0);
+#+end_src
+
+** Float Values
+:PROPERTIES:
+:CUSTOM_ID: float-values
+:END:
+*** lrg_blackboard_set_float()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_set_float
+:END:
+#+begin_src C
+void
+lrg_blackboard_set_float (LrgBlackboard *self,
+                          const gchar   *key,
+                          gfloat         value)
+#+end_src
+
+Sets a float value.
+
+*Example:*
+
+#+begin_src C
+lrg_blackboard_set_float(bb, "speed", 5.5f);
+lrg_blackboard_set_float(bb, "patrol_radius", 25.0f);
+#+end_src
+
+*** lrg_blackboard_get_float()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_get_float
+:END:
+#+begin_src C
+gfloat
+lrg_blackboard_get_float (LrgBlackboard *self,
+                          const gchar   *key,
+                          gfloat         default_value)
+#+end_src
+
+Gets a float value.
+
+*Parameters:*
+
+- =key=: Key name
+- =default_value=: Default if key not found
+
+*Returns:* Float value or default
+
+*Example:*
+
+#+begin_src C
+gfloat speed = lrg_blackboard_get_float(bb, "speed", 3.0f);
+#+end_src
+
+** Boolean Values
+:PROPERTIES:
+:CUSTOM_ID: boolean-values
+:END:
+*** lrg_blackboard_set_bool()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_set_bool
+:END:
+#+begin_src C
+void
+lrg_blackboard_set_bool (LrgBlackboard *self,
+                         const gchar   *key,
+                         gboolean       value)
+#+end_src
+
+Sets a boolean value.
+
+*Example:*
+
+#+begin_src C
+lrg_blackboard_set_bool(bb, "in_combat", TRUE);
+lrg_blackboard_set_bool(bb, "can_see_player", FALSE);
+#+end_src
+
+*** lrg_blackboard_get_bool()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_get_bool
+:END:
+#+begin_src C
+gboolean
+lrg_blackboard_get_bool (LrgBlackboard *self,
+                         const gchar   *key,
+                         gboolean       default_value)
+#+end_src
+
+Gets a boolean value.
+
+*Example:*
+
+#+begin_src C
+if (lrg_blackboard_get_bool(bb, "in_combat", FALSE)) {
+    /* Execute combat behavior */
+}
+#+end_src
+
+** String Values
+:PROPERTIES:
+:CUSTOM_ID: string-values
+:END:
+*** lrg_blackboard_set_string()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_set_string
+:END:
+#+begin_src C
+void
+lrg_blackboard_set_string (LrgBlackboard *self,
+                           const gchar   *key,
+                           const gchar   *value)
+#+end_src
+
+Sets a string value. Pass NULL to unset.
+
+*Example:*
+
+#+begin_src C
+lrg_blackboard_set_string(bb, "target_name", "enemy1");
+lrg_blackboard_set_string(bb, "current_state", "patrolling");
+#+end_src
+
+*** lrg_blackboard_get_string()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_get_string
+:END:
+#+begin_src C
+const gchar *
+lrg_blackboard_get_string (LrgBlackboard *self,
+                           const gchar   *key)
+#+end_src
+
+Gets a string value.
+
+*Returns:* (transfer none) (nullable) String or NULL if not found
+
+*Example:*
+
+#+begin_src C
+const gchar *target = lrg_blackboard_get_string(bb, "target_name");
+if (target != NULL) {
+    g_print("Target: %s\n", target);
+}
+#+end_src
+
+** Object Values
+:PROPERTIES:
+:CUSTOM_ID: object-values
+:END:
+*** lrg_blackboard_set_object()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_set_object
+:END:
+#+begin_src C
+void
+lrg_blackboard_set_object (LrgBlackboard *self,
+                           const gchar   *key,
+                           GObject       *object)
+#+end_src
+
+Stores a GObject reference. The blackboard takes a reference.
+
+*Example:*
+
+#+begin_src C
+LrgNavGrid *grid = /* ... */;
+lrg_blackboard_set_object(bb, "nav_grid", G_OBJECT(grid));
+#+end_src
+
+*** lrg_blackboard_get_object()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_get_object
+:END:
+#+begin_src C
+GObject *
+lrg_blackboard_get_object (LrgBlackboard *self,
+                           const gchar   *key)
+#+end_src
+
+Gets a GObject reference.
+
+*Returns:* (transfer none) (nullable) Object or NULL if not found
+
+*Example:*
+
+#+begin_src C
+GObject *obj = lrg_blackboard_get_object(bb, "nav_grid");
+if (obj != NULL) {
+    LrgNavGrid *grid = LRG_NAV_GRID(obj);
+    /* Use grid */
+}
+#+end_src
+
+** Pointer Values
+:PROPERTIES:
+:CUSTOM_ID: pointer-values
+:END:
+*** lrg_blackboard_set_pointer()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_set_pointer
+:END:
+#+begin_src C
+void
+lrg_blackboard_set_pointer (LrgBlackboard  *self,
+                            const gchar    *key,
+                            gpointer        pointer,
+                            GDestroyNotify  destroy)
+#+end_src
+
+Stores an arbitrary pointer with optional cleanup.
+
+*Parameters:*
+
+- =key=: Key name
+- =pointer=: Pointer to store (NULL to unset)
+- =destroy=: Cleanup function (NULL if none needed)
+
+*Example:*
+
+#+begin_src C
+typedef struct {
+    gint x, y;
+    gfloat health;
+} Enemy;
+
+Enemy *enemy = g_new(Enemy, 1);
+enemy->x = 50;
+enemy->y = 50;
+enemy->health = 100.0f;
+
+lrg_blackboard_set_pointer(bb, "target_enemy", enemy, g_free);
+#+end_src
+
+*** lrg_blackboard_get_pointer()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_get_pointer
+:END:
+#+begin_src C
+gpointer
+lrg_blackboard_get_pointer (LrgBlackboard *self,
+                            const gchar   *key)
+#+end_src
+
+Gets a pointer value.
+
+*Returns:* (nullable) Pointer or NULL if not found
+
+*Example:*
+
+#+begin_src C
+Enemy *target = lrg_blackboard_get_pointer(bb, "target_enemy");
+if (target != NULL) {
+    g_print("Target at (%d, %d)\n", target->x, target->y);
+}
+#+end_src
+
+** Key Management
+:PROPERTIES:
+:CUSTOM_ID: key-management
+:END:
+*** lrg_blackboard_has_key()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_has_key
+:END:
+#+begin_src C
+gboolean
+lrg_blackboard_has_key (LrgBlackboard *self,
+                        const gchar   *key)
+#+end_src
+
+Checks if a key exists.
+
+*Returns:* =TRUE= if key is present
+
+*Example:*
+
+#+begin_src C
+if (lrg_blackboard_has_key(bb, "target_enemy")) {
+    /* We have a target */
+}
+#+end_src
+
+*** lrg_blackboard_remove()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_remove
+:END:
+#+begin_src C
+gboolean
+lrg_blackboard_remove (LrgBlackboard *self,
+                       const gchar   *key)
+#+end_src
+
+Removes a key and its value.
+
+*Returns:* =TRUE= if key was removed, =FALSE= if not found
+
+*Example:*
+
+#+begin_src C
+if (lrg_blackboard_remove(bb, "target_enemy")) {
+    g_print("Target removed\n");
+}
+#+end_src
+
+*** lrg_blackboard_get_keys()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_get_keys
+:END:
+#+begin_src C
+GList *
+lrg_blackboard_get_keys (LrgBlackboard *self)
+#+end_src
+
+Gets all keys in the blackboard.
+
+*Returns:* (transfer container) (element-type utf8) List of key names
+
+*Note:* Must call =g_list_free()= on the returned list
+
+*Example:*
+
+#+begin_src C
+GList *keys = lrg_blackboard_get_keys(bb);
+for (GList *iter = keys; iter != NULL; iter = iter->next) {
+    const gchar *key = (const gchar *)iter->data;
+    g_print("Key: %s\n", key);
+}
+g_list_free(keys);
+#+end_src
+
+** Clear and Reset
+:PROPERTIES:
+:CUSTOM_ID: clear-and-reset
+:END:
+*** lrg_blackboard_clear()
+:PROPERTIES:
+:CUSTOM_ID: lrg_blackboard_clear
+:END:
+#+begin_src C
+void
+lrg_blackboard_clear (LrgBlackboard *self)
+#+end_src
+
+Removes all entries from the blackboard.
+
+*Example:*
+
+#+begin_src C
+/* Reset for new level */
+lrg_blackboard_clear(bb);
+#+end_src
+
+** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src C
+#include <glib.h>
+#include <libregnum.h>
+
+int main(void) {
+    g_autoptr(LrgBlackboard) bb = lrg_blackboard_new();
+
+    /* Store various types of data */
+    lrg_blackboard_set_int(bb, "health", 100);
+    lrg_blackboard_set_float(bb, "speed", 5.5f);
+    lrg_blackboard_set_bool(bb, "in_combat", TRUE);
+    lrg_blackboard_set_string(bb, "state", "attacking");
+
+    /* Retrieve and verify */
+    g_assert_cmpint(lrg_blackboard_get_int(bb, "health", 0), ==, 100);
+    g_assert_cmpfloat_with_epsilon(
+        lrg_blackboard_get_float(bb, "speed", 0.0f), 5.5f, 0.001f);
+    g_assert_true(lrg_blackboard_get_bool(bb, "in_combat", FALSE));
+    g_assert_cmpstr(lrg_blackboard_get_string(bb, "state"), ==, "attacking");
+
+    /* Check keys */
+    g_assert_true(lrg_blackboard_has_key(bb, "health"));
+    g_assert_false(lrg_blackboard_has_key(bb, "nonexistent"));
+
+    /* Get all keys */
+    GList *keys = lrg_blackboard_get_keys(bb);
+    g_print("Blackboard contains %u keys\n", g_list_length(keys));
+    g_list_free(keys);
+
+    /* Remove a key */
+    g_assert_true(lrg_blackboard_remove(bb, "health"));
+    g_assert_false(lrg_blackboard_has_key(bb, "health"));
+
+    /* Clear all */
+    lrg_blackboard_clear(bb);
+    g_assert_cmpuint(g_list_length(lrg_blackboard_get_keys(bb)), ==, 0);
+
+    return 0;
+}
+#+end_src
+
+** Usage in Behavior Trees
+:PROPERTIES:
+:CUSTOM_ID: usage-in-behavior-trees
+:END:
+The blackboard is typically obtained from a behavior tree and used to share state:
+
+#+begin_src C
+LrgBehaviorTree *tree = lrg_behavior_tree_new();
+LrgBlackboard *bb = lrg_behavior_tree_get_blackboard(tree);
+
+/* Set initial state */
+lrg_blackboard_set_int(bb, "health", 100);
+lrg_blackboard_set_bool(bb, "player_visible", FALSE);
+
+/* Nodes access the same blackboard during execution */
+#+end_src
+
+** Related Types
+:PROPERTIES:
+:CUSTOM_ID: related-types
+:END:
+- [[file:behavior-tree.org][LrgBehaviorTree]] - Contains the blackboard
+- [[file:bt-node.org][LrgBTNode]] - Nodes receive blackboard parameter
+- [[file:bt-leaf.org][LrgBTLeaf]] - Leaf nodes read/write blackboard

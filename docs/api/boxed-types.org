@@ -1,0 +1,85 @@
+* Libregnum Boxed Types
+:PROPERTIES:
+:CUSTOM_ID: libregnum-boxed-types
+:END:
+Index of all boxed types (lightweight value types) in Libregnum.
+
+#+begin_quote
+*[[../index.md][Home]]* > API > Boxed Types
+
+#+end_quote
+
+Boxed types are reference-counted value types used for small immutable data structures.
+
+** Core Module
+:PROPERTIES:
+:CUSTOM_ID: core-module
+:END:
+/No boxed types in Core module/
+
+** Planned Boxed Types
+:PROPERTIES:
+:CUSTOM_ID: planned-boxed-types
+:END:
+*** Navigation (Phase 3)
+:PROPERTIES:
+:CUSTOM_ID: navigation-phase-3
+:END:
+- *LrgNavCell* - Navigation grid cell
+- *LrgPath* - Path waypoints
+
+*** Dialogs (Phase 2)
+:PROPERTIES:
+:CUSTOM_ID: dialogs-phase-2
+:END:
+- *LrgDialogResponse* - Dialog choice response
+
+*** Quests (Phase 2)
+:PROPERTIES:
+:CUSTOM_ID: quests-phase-2
+:END:
+- *LrgQuestObjective* - Quest objective
+
+*** Networking (Phase 3)
+:PROPERTIES:
+:CUSTOM_ID: networking-phase-3
+:END:
+- *LrgNetMessage* - Network message
+
+*** 3D World (Phase 3)
+:PROPERTIES:
+:CUSTOM_ID: 3d-world-phase-3
+:END:
+- *LrgBoundingBox3D* - 3D bounding box
+- *LrgSpawnPoint3D* - 3D spawn point
+- *LrgTrigger3D* - 3D trigger volume
+- *LrgPortal* - Portal between sectors
+- *LrgSector* - 3D sector
+
+*** Mod System (Phase 4)
+:PROPERTIES:
+:CUSTOM_ID: mod-system-phase-4
+:END:
+- *LrgSemver* - Semantic version (major.minor.patch)
+- *LrgConsoleCommand* - Console command
+
+** Characteristics
+:PROPERTIES:
+:CUSTOM_ID: characteristics
+:END:
+Boxed types are:
+
+- *Value semantics* - Copied on assignment
+- *Reference counted* - Memory managed automatically
+- *Immutable* - Cannot be modified after creation
+- *Small* - Fit in cache lines
+- *Fast* - No indirection or heap allocation
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:classes.org][API Classes Index]]
+- [[file:interfaces.org][API Interfaces Index]]
+- [[file:enumerations.org][API Enumerations Index]]
+- [[../modules/core/index.md][Core Module]]

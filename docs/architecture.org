@@ -1,0 +1,497 @@
+* Libregnum Architecture Overview
+:PROPERTIES:
+:CUSTOM_ID: libregnum-architecture-overview
+:END:
+Libregnum is designed around principles of modularity, extensibility, and data-driven design. This document describes the high-level architecture and design patterns.
+
+#+begin_quote
+*[[file:index.org][Home]]* > Architecture
+
+#+end_quote
+
+** Design Philosophy
+:PROPERTIES:
+:CUSTOM_ID: design-philosophy
+:END:
+*** 1. Data-Driven Design
+:PROPERTIES:
+:CUSTOM_ID: 1-data-driven-design
+:END:
+Configuration and game data are expressed in YAML, not hardcoded. The Registry and DataLoader enable fully data-driven object creation:
+
+- *Registry*: Maps string names to GTypes
+- *DataLoader*: Deserializes YAML to GObjects using the Registry
+- *Result*: Game content exists in YAML files, not code
+
+*** 2. GObject Foundation
+:PROPERTIES:
+:CUSTOM_ID: 2-gobject-foundation
+:END:
+All public APIs use GObject:
+
+- *Type Safety*: GType system provides runtime type checking
+- *Properties*: Automatic property bindings and validation
+- *Signals*: Event-driven communication between systems
+- *Introspection*: Language bindings via GObject Introspection
+
+*** 3. Modular Architecture
+:PROPERTIES:
+:CUSTOM_ID: 3-modular-architecture
+:END:
+The engine is split into independent modules:
+
+#+begin_example
+libregnum/
+├── core/       # Engine, Registry, DataLoader, AssetManager
+├── ecs/        # Entity-Component-System
+├── input/      # Input handling
+├── ui/         # Widget system
+├── tilemap/    # 2D tilemaps
+├── audio/      # Sound/music
+├── physics/    # Physics simulation
+├── ai/         # Behavior trees
+├── mod/        # Mod loading
+└── ...
+#+end_example
+
+Each module is:
+
+- *Independent*: Can be used standalone
+- *Layered*: Higher modules depend on lower modules
+- *Testable*: Unit tests for each module
+- *Extensible*: Virtual methods for customization
+
+*** 4. Error Handling
+:PROPERTIES:
+:CUSTOM_ID: 4-error-handling
+:END:
+GError pattern throughout:
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+
+if (!lrg_engine_startup (engine, &error))
+{
+    /* Handle specific error */
+    if (error->domain == LRG_ENGINE_ERROR)
+    {
+        switch (error->code)
+        {
+        case LRG_ENGINE_ERROR_INIT:
+            /* Handle initialization error */
+            break;
+        /* ... */
+        }
+    }
+}
+#+end_src
+
+Error domains per module:
+
+- =LRG_ENGINE_ERROR= - Engine errors
+- =LRG_DATA_LOADER_ERROR= - Data loading errors
+- =LRG_ASSET_MANAGER_ERROR= - Asset loading errors
+- =LRG_MOD_ERROR= - Mod system errors
+
+** Core Module Architecture
+:PROPERTIES:
+:CUSTOM_ID: core-module-architecture
+:END:
+*** Engine Singleton
+:PROPERTIES:
+:CUSTOM_ID: engine-singleton
+:END:
+The Engine is the central hub:
+
+#+begin_example
+LrgEngine (singleton)
+    |
+    ├── LrgRegistry (type mapping)
+    ├── LrgDataLoader (YAML loading)
+    ├── LrgAssetManager (asset caching)
+    └── [future subsystems]
+#+end_example
+
+*Lifecycle*:
+
+#+begin_example
+UNINITIALIZED
+    ↓ startup()
+INITIALIZING
+    ↓
+RUNNING
+    ↑ ↓ (update loop)
+    update()
+    ↓
+PAUSED (future)
+    ↓ shutdown()
+SHUTTING_DOWN
+    ↓
+TERMINATED
+#+end_example
+
+*Key Signals*:
+
+- =startup= - Emitted when engine starts
+- =shutdown= - Emitted when engine stops
+- =pre-update= - Before frame update
+- =post-update= - After frame update
+
+*** Registry Pattern
+:PROPERTIES:
+:CUSTOM_ID: registry-pattern
+:END:
+The Registry enables data-driven type creation:
+
+#+begin_src C
+/* Registration (during setup) */
+LrgRegistry *registry = lrg_engine_get_registry (engine);
+lrg_registry_register (registry, "player", MY_TYPE_PLAYER);
+lrg_registry_register (registry, "enemy", MY_TYPE_ENEMY);
+
+/* Creation (from YAML or code) */
+GObject *player = lrg_registry_create (registry, "player",
+                                       "name", "Hero",
+                                       NULL);
+#+end_src
+
+*Benefits*:
+
+- Decouples type references from code
+- Enables mods to override types
+- Type registration is optional (can create without registry)
+- Bulk enumeration via =lrg_registry_foreach()=
+
+*** DataLoader Pattern
+:PROPERTIES:
+:CUSTOM_ID: dataloader-pattern
+:END:
+The DataLoader deserializes YAML to GObjects:
+
+#+begin_src yaml
+# player.yaml
+type: player
+name: "Hero"
+health: 100
+#+end_src
+
+#+begin_src C
+/* Load single file */
+GObject *obj = lrg_data_loader_load_file (loader, "player.yaml", &error);
+
+/* Load directory */
+GList *objects = lrg_data_loader_load_directory (loader, "data/", TRUE, &error);
+
+/* Load async */
+DexFuture *future = lrg_data_loader_load_file_async (loader, "player.yaml");
+#+end_src
+
+*Features*:
+
+- Integrates with Registry for type lookup
+- Supports sync and async loading
+- Batch loading from directories
+- Customizable type field name
+- Extensible file extensions
+
+*** Asset Manager Pattern
+:PROPERTIES:
+:CUSTOM_ID: asset-manager-pattern
+:END:
+The Asset Manager provides caching with mod overlay:
+
+#+begin_src C
+/* Setup search paths (last = highest priority) */
+LrgAssetManager *manager = lrg_engine_get_asset_manager (engine);
+lrg_asset_manager_add_search_path (manager, "base/assets/");
+lrg_asset_manager_add_search_path (manager, "mods/my-mod/");
+
+/* Load (searches in reverse priority) */
+GrlTexture *tex = lrg_asset_manager_load_texture (manager, "sprites/player.png", &error);
+#+end_src
+
+*Design*:
+
+- Multiple search paths with priority
+- Automatic caching (returns cached on second load)
+- Mod overlay: later paths override earlier
+- Separate caches per asset type
+- Manual unload capability
+
+** Module Dependency Graph
+:PROPERTIES:
+:CUSTOM_ID: module-dependency-graph
+:END:
+#+begin_example
+       mod/         (mod system)
+       |
+┌──────┴────────────────────────┐
+|                               |
+debug/   (debug tools)      game modules (ECS, UI, etc.)
+|                               |
+└──────────────┬────────────────┘
+               |
+        core module (engine, registry, loader, assets)
+        |
+    glib/gobject
+    |
+    graylib (raylib bindings)
+    yaml-glib (YAML support)
+    libdex (async/futures)
+#+end_example
+
+*Layering*:
+
+- *Layer 0* (Dependencies): glib, gobject, graylib, yaml-glib, libdex
+- *Layer 1* (Core): LrgEngine, LrgRegistry, LrgDataLoader, LrgAssetManager
+- *Layer 2* (Game Systems): ECS, Input, UI, Tilemap, Audio, Physics, AI, etc.
+- *Layer 3* (Advanced): Mod system, Debug tools (depend on Layer 2)
+
+** Key Design Patterns
+:PROPERTIES:
+:CUSTOM_ID: key-design-patterns
+:END:
+*** 1. Singleton Pattern (Engine)
+:PROPERTIES:
+:CUSTOM_ID: 1-singleton-pattern-engine
+:END:
+Only one engine instance:
+
+#+begin_src C
+/* Always returns same instance */
+LrgEngine *engine1 = lrg_engine_get_default ();
+LrgEngine *engine2 = lrg_engine_get_default ();
+g_assert (engine1 == engine2);
+#+end_src
+
+*** 2. Registry Pattern (Type Mapping)
+:PROPERTIES:
+:CUSTOM_ID: 2-registry-pattern-type-mapping
+:END:
+Map strings to GTypes:
+
+#+begin_src C
+lrg_registry_register (registry, "player", MY_TYPE_PLAYER);
+GType type = lrg_registry_lookup (registry, "player");
+GObject *obj = lrg_registry_create (registry, "player", NULL);
+#+end_src
+
+*** 3. Factory Pattern (DataLoader)
+:PROPERTIES:
+:CUSTOM_ID: 3-factory-pattern-dataloader
+:END:
+Create objects from structured data:
+
+#+begin_src C
+/* YAML defines structure */
+GObject *obj = lrg_data_loader_load_file (loader, "config.yaml", &error);
+#+end_src
+
+*** 4. Strategy Pattern (Extensibility)
+:PROPERTIES:
+:CUSTOM_ID: 4-strategy-pattern-extensibility
+:END:
+Virtual methods for custom behavior:
+
+#+begin_src C
+/* Base class */
+struct _LrgAssetManagerClass
+{
+    GObjectClass parent_class;
+    GrlTexture * (*load_texture) (LrgAssetManager *self, ...);
+    /* ... */
+};
+
+/* Subclass overrides */
+class MyAssetManager extends LrgAssetManager
+{
+    /* Custom texture loading logic */
+}
+#+end_src
+
+*** 5. Observer Pattern (Signals)
+:PROPERTIES:
+:CUSTOM_ID: 5-observer-pattern-signals
+:END:
+Event-driven communication:
+
+#+begin_src C
+g_signal_connect (engine, "pre-update",
+                  G_CALLBACK (my_update_handler), user_data);
+#+end_src
+
+** Memory Management
+:PROPERTIES:
+:CUSTOM_ID: memory-management
+:END:
+*** Automatic Cleanup
+:PROPERTIES:
+:CUSTOM_ID: automatic-cleanup
+:END:
+Use =g_autoptr()= and =g_autofree=:
+
+#+begin_src C
+g_autoptr(GObject) object = g_object_new (MY_TYPE, NULL);
+g_autofree gchar *str = g_strdup ("value");
+/* Automatically freed on scope exit */
+#+end_src
+
+*** Reference Counting
+:PROPERTIES:
+:CUSTOM_ID: reference-counting
+:END:
+All GObjects use reference counting:
+
+#+begin_src C
+/* Caller owns reference */
+GObject *obj = lrg_registry_create (registry, "player", NULL);
+/* ... */
+g_object_unref (obj);  /* or use g_autoptr */
+#+end_src
+
+*** Transfer Semantics
+:PROPERTIES:
+:CUSTOM_ID: transfer-semantics
+:END:
+All functions document ownership:
+
+- =(transfer full)= - Caller owns returned value
+- =(transfer none)= - Caller doesn't own value (don't unref)
+- =(nullable)= - Can return NULL
+
+#+begin_src C
+/* These return (transfer full) - caller owns */
+GObject *obj = lrg_data_loader_load_file (...);
+LrgRegistry *registry = lrg_registry_new ();
+
+/* These return (transfer none) - caller doesn't own */
+LrgRegistry *registry = lrg_engine_get_registry (engine);
+#+end_src
+
+** Async/Await Pattern
+:PROPERTIES:
+:CUSTOM_ID: asyncawait-pattern
+:END:
+Using libdex for futures:
+
+#+begin_src C
+#include <libdex.h>
+
+DexFuture *future = lrg_data_loader_load_file_async (loader, "player.yaml");
+
+/* Option 1: Use in fiber */
+DexFuture *fiber = dex_future_new_fiber (async_callback);
+
+/* Option 2: Use then() callback */
+dex_future_then (future, on_loaded, NULL, NULL);
+#+end_src
+
+** Logging
+:PROPERTIES:
+:CUSTOM_ID: logging
+:END:
+Per-module log domains:
+
+#+begin_src C
+#define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_CORE
+
+lrg_debug (LRG_LOG_DOMAIN_CORE, "Debug: %s", value);
+lrg_info (LRG_LOG_DOMAIN_CORE, "Info message");
+lrg_warning (LRG_LOG_DOMAIN_CORE, "Warning: %d", code);
+#+end_src
+
+Enable debug output:
+
+#+begin_src sh
+G_MESSAGES_DEBUG=Libregnum-Core ./myapp
+#+end_src
+
+** Configuration
+:PROPERTIES:
+:CUSTOM_ID: configuration
+:END:
+Build system uses standard autoconf-style variables:
+
+#+begin_src sh
+make DEBUG=1              # Debug build (-g3 -O0)
+make install PREFIX=...  # Custom install prefix
+make install LIBDIR=...  # Custom library directory
+make test                # Run unit tests
+#+end_src
+
+Package configuration:
+
+#+begin_src sh
+pkg-config --modversion libregnum
+pkg-config --cflags --libs libregnum
+#+end_src
+
+** Extension Points
+:PROPERTIES:
+:CUSTOM_ID: extension-points
+:END:
+*** Engine Subclassing
+:PROPERTIES:
+:CUSTOM_ID: engine-subclassing
+:END:
+Subclass LrgEngine to customize behavior:
+
+#+begin_src C
+struct _MyEngineClass
+{
+    LrgEngineClass parent_class;
+
+    /* Override virtual methods */
+};
+
+/* Override startup, shutdown, update */
+#+end_src
+
+*** Asset Manager Subclassing
+:PROPERTIES:
+:CUSTOM_ID: asset-manager-subclassing
+:END:
+Provide custom asset loading:
+
+#+begin_src C
+GrlTexture *
+my_asset_manager_load_texture (LrgAssetManager *self,
+                               const gchar     *name,
+                               GError         **error)
+{
+    /* Custom loading logic */
+}
+#+end_src
+
+*** Registry Customization
+:PROPERTIES:
+:CUSTOM_ID: registry-customization
+:END:
+Override type lookups before loading:
+
+#+begin_src C
+lrg_registry_register (registry, "player", MY_TYPE_CUSTOM_PLAYER);
+/* Now all YAML "type: player" will create custom type */
+#+end_src
+
+** Thread Safety
+:PROPERTIES:
+:CUSTOM_ID: thread-safety
+:END:
+Libregnum is *NOT thread-safe* by default:
+
+- All operations must happen in the main thread
+- Engine is not designed for multi-threaded access
+- Use libdex for concurrent operations within main loop
+
+Future modules (networking, etc.) will handle their own threading.
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:concepts/engine-lifecycle.org][Engine Lifecycle Concept]] - Detailed lifecycle explanation
+- [[file:concepts/type-registry.org][Type Registry Concept]] - Registry deep dive
+- [[file:concepts/data-loading.org][Data Loading Concept]] - DataLoader deep dive
+- [[file:concepts/error-handling.org][Error Handling Concept]] - GError patterns
+- [[file:modules/core/index.org][Core Module Documentation]] - Full API reference

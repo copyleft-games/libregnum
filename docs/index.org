@@ -1,0 +1,264 @@
+* Libregnum Game Engine
+:PROPERTIES:
+:CUSTOM_ID: libregnum-game-engine
+:END:
+Libregnum is a GObject-based game engine library built on top of [[https://github.com/graylib/graylib][graylib]] (raylib GObject wrapper) and [[https://gitlab.com/GNOME/yaml-glib][yaml-glib]] (YAML parsing with GObject serialization). It provides high-level game systems with a focus on data-driven design, extensibility, and modding support.
+
+** Quick Navigation
+:PROPERTIES:
+:CUSTOM_ID: quick-navigation
+:END:
+- *[[file:quickstart.org][Getting Started]]* - Install and run your first program
+- *[[file:architecture.org][Architecture Overview]]* - Understand the system design
+- *[[file:concepts/index.org][Core Concepts]]* - Learn key game development concepts
+- *[[file:modules/index.org][Module Documentation]]* - Detailed API reference
+- *[[file:scene/overview.org][Scene Module]]* - Blender scene import/export system
+- *[[file:api/classes.org][API Classes Index]]* - All classes and types
+- *[[file:building.org][Building]]* - Build and installation instructions
+
+** Key Features
+:PROPERTIES:
+:CUSTOM_ID: key-features
+:END:
+*** Core Systems
+:PROPERTIES:
+:CUSTOM_ID: core-systems
+:END:
+- *Engine Singleton* - Central hub managing all subsystems
+- *Type Registry* - Data-driven type mapping for YAML deserialization
+- *Data Loader* - Load and deserialize YAML files to GObjects
+- *Asset Manager* - Unified texture, font, sound, and music loading with caching
+- *Scene Module* - Blender scene import/export with full primitive support
+
+*** Game Systems (Planned Phases)
+:PROPERTIES:
+:CUSTOM_ID: game-systems-planned-phases
+:END:
+- *ECS* - Entity-Component-System architecture for flexible gameplay
+- *Input* - Keyboard, mouse, and gamepad input handling
+- *UI* - Complete widget system with theming support
+- *Tilemap* - 2D tilemap rendering and collision
+- *Dialog* - Branching dialogue trees with conditions
+- *Inventory* - Item management and equipment systems
+- *Quest* - Quest definitions, objectives, and tracking
+- *Save* - Game save/load serialization
+- *Audio* - Sound effects and music management
+
+*** Advanced Features
+:PROPERTIES:
+:CUSTOM_ID: advanced-features
+:END:
+- *AI* - Behavior trees, blackboards, and state machines
+- *Pathfinding* - A* navigation grid and smooth path following
+- *Physics* - 2D/3D rigid body simulation and collision
+- *3D World* - 3D level support with portals and sectors
+- *Networking* - Multiplayer networking (client/server)
+- *Debug Tools* - Profiling, console, overlay, and inspector
+- *Modding* - Complete mod system with dependencies
+- *Localization* - Multi-language support with CLDR plural rules
+
+** Getting Started Quickly
+:PROPERTIES:
+:CUSTOM_ID: getting-started-quickly
+:END:
+*** Installation
+:PROPERTIES:
+:CUSTOM_ID: installation
+:END:
+#+begin_src sh
+# Build from source
+make DEBUG=1
+make test
+make install PREFIX=$HOME/.local
+#+end_src
+
+*** Minimal Example
+:PROPERTIES:
+:CUSTOM_ID: minimal-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+#include <glib.h>
+
+int
+main (int argc, char *argv[])
+{
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine;
+
+    /* Get the engine singleton */
+    engine = lrg_engine_get_default ();
+
+    /* Start the engine */
+    if (!lrg_engine_startup (engine, &error))
+    {
+        g_warning ("Failed to start engine: %s", error->message);
+        return 1;
+    }
+
+    /* Game loop */
+    while (lrg_engine_is_running (engine))
+    {
+        lrg_engine_update (engine, 0.016f); /* 60 FPS */
+    }
+
+    /* Shutdown */
+    lrg_engine_shutdown (engine);
+
+    return 0;
+}
+#+end_src
+
+See the [[file:quickstart.org][Quickstart Guide]] for more detailed examples.
+
+** Complete Examples
+:PROPERTIES:
+:CUSTOM_ID: complete-examples
+:END:
+- *[[file:examples/omnomagon.org][3D Omnomagon]]* - A complete playable 3D Omnomagon game demonstrating data-driven design, type registration, YAML loading, 3D rendering, collision detection, and simple AI
+- *[[file:examples/dlc-store.org][DLC Store Demo]]* - DLC ownership verification, content gating, trial support, and store integration
+- *[[file:examples/native-dlc.org][Native DLC Example]]* - Loading native GModule shared libraries as DLC content
+
+** Core Concepts Overview
+:PROPERTIES:
+:CUSTOM_ID: core-concepts-overview
+:END:
+*** Data-Driven Design
+:PROPERTIES:
+:CUSTOM_ID: data-driven-design
+:END:
+Libregnum heavily leverages YAML for configuration and data. The Registry and DataLoader work together to enable fully data-driven gameplay:
+
+#+begin_src yaml
+# player.yaml
+type: player
+name: "Hero"
+health: 100
+mana: 50
+#+end_src
+
+*** Type Registry
+:PROPERTIES:
+:CUSTOM_ID: type-registry
+:END:
+The Registry maps string names to GTypes, enabling YAML files to reference types without hardcoding:
+
+#+begin_src C
+LrgRegistry *registry = lrg_engine_get_registry (engine);
+lrg_registry_register (registry, "player", MY_TYPE_PLAYER);
+
+/* Now load from YAML */
+LrgDataLoader *loader = lrg_engine_get_data_loader (engine);
+GObject *player = lrg_data_loader_load_file (loader, "player.yaml", &error);
+#+end_src
+
+*** Asset Management
+:PROPERTIES:
+:CUSTOM_ID: asset-management
+:END:
+The Asset Manager provides unified access to game assets with caching and mod overlay support:
+
+#+begin_src C
+LrgAssetManager *manager = lrg_engine_get_asset_manager (engine);
+
+/* Add search paths (mods have higher priority) */
+lrg_asset_manager_add_search_path (manager, "base/assets/");
+lrg_asset_manager_add_search_path (manager, "mods/my-mod/assets/");
+
+/* Load assets (searches in reverse priority order) */
+GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.png", &error);
+#+end_src
+
+** Documentation Structure
+:PROPERTIES:
+:CUSTOM_ID: documentation-structure
+:END:
+*** For Users
+:PROPERTIES:
+:CUSTOM_ID: for-users
+:END:
+- [[file:quickstart.org][Quickstart Guide]] - Get up and running quickly
+- [[file:concepts/index.org][Core Concepts]] - Understand how the engine works
+- [[file:modules/index.org][Module Documentation]] - Detailed guides for each module
+
+*** Guides
+:PROPERTIES:
+:CUSTOM_ID: guides
+:END:
+- [[file:guides/custom-components.org][Custom Components]] - Creating custom ECS components
+- [[file:guides/creating-mods.org][Creating Mods]] - Building game modifications
+- [[file:guides/extending-ui.org][Extending UI]] - Custom UI widgets
+- [[file:guides/implementing-saveable.org][Implementing Saveable]] - Save/load support
+- [[file:guides/template-best-practices.org][Template Best Practices]] - Coordinate spaces, async resize, common pitfalls
+
+*** For Developers
+:PROPERTIES:
+:CUSTOM_ID: for-developers
+:END:
+- [[file:architecture.org][Architecture Overview]] - System design and patterns
+- [[file:api/classes.org][API Reference]] - Complete class documentation
+- [[file:concepts/error-handling.org][Error Handling]] - Error patterns and recovery
+
+** Module Structure
+:PROPERTIES:
+:CUSTOM_ID: module-structure
+:END:
+#+begin_example
+libregnum/
+├── core/           # Engine, Registry, DataLoader, AssetManager (DONE)
+├── scene/          # Blender scene import/export, primitives (DONE)
+├── shapes/         # 3D primitive shapes (DONE)
+├── ecs/            # Entity-Component-System (Phase 1)
+├── input/          # Input handling (Phase 1)
+├── ui/             # User interface widgets (Phase 1)
+├── tilemap/        # 2D tilemap support (Phase 1)
+├── dialog/         # Dialogue system (Phase 2)
+├── inventory/      # Inventory and equipment (Phase 2)
+├── quest/          # Quest management (Phase 2)
+├── save/           # Save/load system (Phase 2)
+├── audio/          # Sound and music (Phase 2)
+├── ai/             # AI and behavior trees (Phase 3)
+├── pathfinding/    # Navigation and pathfinding (Phase 3)
+├── physics/        # Physics simulation (Phase 3)
+├── i18n/           # Internationalization (Phase 3)
+├── debug/          # Debug tools (Phase 4)
+├── net/            # Networking (Phase 3)
+├── world3d/        # 3D world support (Phase 3)
+└── mod/            # Modding system (Phase 4)
+#+end_example
+
+** Language Bindings
+:PROPERTIES:
+:CUSTOM_ID: language-bindings
+:END:
+Libregnum generates GObject Introspection (GIR) files, enabling use from:
+
+- *Python* via PyGObject
+- *JavaScript* via GJS
+- *Vala* native support
+- *Lua* via lgi
+
+Example (Python):
+
+#+begin_src python
+import gi
+gi.require_version('Libregnum', '1')
+from gi.repository import Libregnum
+
+engine = Libregnum.Engine.get_default()
+engine.startup()
+# Game loop here...
+engine.shutdown()
+#+end_src
+
+** Contributing
+:PROPERTIES:
+:CUSTOM_ID: contributing
+:END:
+Libregnum is an AGPL-3.0-or-later project. Contributions are welcome!
+
+** License
+:PROPERTIES:
+:CUSTOM_ID: license
+:END:
+Libregnum is licensed under the *GNU Affero General Public License v3.0 or later* (AGPL-3.0-or-later).

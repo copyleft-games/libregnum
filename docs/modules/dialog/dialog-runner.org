@@ -1,0 +1,413 @@
+* LrgDialogRunner - Dialog Flow Manager
+:PROPERTIES:
+:CUSTOM_ID: lrgdialogrunner---dialog-flow-manager
+:END:
+Manages the flow of conversation during gameplay. Tracks the current node, filters available responses based on conditions, and evaluates effects. One runner handles one active conversation at a time.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject Class* - Cannot be subclassed
+- *Type ID* - =LRG_TYPE_DIALOG_RUNNER=
+- *GIR Name* - =Libregnum.DialogRunner=
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_dialog_runner_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_new
+:END:
+#+begin_src C
+LrgDialogRunner * lrg_dialog_runner_new (void);
+#+end_src
+
+Creates a new dialog runner.
+
+*Parameters:* None
+
+*Returns:* A new =LrgDialogRunner= (transfer full)
+
+** Tree Management
+:PROPERTIES:
+:CUSTOM_ID: tree-management
+:END:
+*** lrg_dialog_runner_get_tree()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_get_tree
+:END:
+#+begin_src C
+LrgDialogTree * lrg_dialog_runner_get_tree (LrgDialogRunner *self);
+#+end_src
+
+Gets the current dialog tree.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+
+*Returns:* The current tree (transfer none, nullable)
+
+*** lrg_dialog_runner_set_tree()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_set_tree
+:END:
+#+begin_src C
+void lrg_dialog_runner_set_tree (LrgDialogRunner *self,
+                                 LrgDialogTree   *tree);
+#+end_src
+
+Sets the dialog tree for this runner.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+- =tree= - Dialog tree to set (nullable)
+
+** Current Node
+:PROPERTIES:
+:CUSTOM_ID: current-node
+:END:
+*** lrg_dialog_runner_get_current_node()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_get_current_node
+:END:
+#+begin_src C
+LrgDialogNode * lrg_dialog_runner_get_current_node (LrgDialogRunner *self);
+#+end_src
+
+Gets the current dialog node.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+
+*Returns:* The current node (transfer none, nullable)
+
+** Starting Dialogs
+:PROPERTIES:
+:CUSTOM_ID: starting-dialogs
+:END:
+*** lrg_dialog_runner_start()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_start
+:END:
+#+begin_src C
+gboolean lrg_dialog_runner_start (LrgDialogRunner  *self,
+                                  GError          **error);
+#+end_src
+
+Starts the dialog from the tree's start node.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+- =error= - (optional) Return location for error
+
+*Returns:* =TRUE= on success
+
+*** lrg_dialog_runner_start_at()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_start_at
+:END:
+#+begin_src C
+gboolean lrg_dialog_runner_start_at (LrgDialogRunner  *self,
+                                     const gchar      *node_id,
+                                     GError          **error);
+#+end_src
+
+Starts the dialog at a specific node.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+- =node_id= - Node ID to start at
+- =error= - (optional) Return location for error
+
+*Returns:* =TRUE= on success
+
+** Navigation
+:PROPERTIES:
+:CUSTOM_ID: navigation
+:END:
+*** lrg_dialog_runner_advance()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_advance
+:END:
+#+begin_src C
+gboolean lrg_dialog_runner_advance (LrgDialogRunner  *self,
+                                    GError          **error);
+#+end_src
+
+Advances to the next node if auto-advance is set (next_node_id).
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+- =error= - (optional) Return location for error
+
+*Returns:* =TRUE= if advanced, =FALSE= if at a choice or terminal node
+
+*** lrg_dialog_runner_select_response()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_select_response
+:END:
+#+begin_src C
+gboolean lrg_dialog_runner_select_response (LrgDialogRunner  *self,
+                                            guint             index,
+                                            GError          **error);
+#+end_src
+
+Selects a response by index and advances to its target node.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+- =index= - Response index
+- =error= - (optional) Return location for error
+
+*Returns:* =TRUE= on success
+
+** Status Queries
+:PROPERTIES:
+:CUSTOM_ID: status-queries
+:END:
+*** lrg_dialog_runner_is_active()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_is_active
+:END:
+#+begin_src C
+gboolean lrg_dialog_runner_is_active (LrgDialogRunner *self);
+#+end_src
+
+Checks if a dialog is currently active.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+
+*Returns:* =TRUE= if active
+
+*** lrg_dialog_runner_is_at_choice()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_is_at_choice
+:END:
+#+begin_src C
+gboolean lrg_dialog_runner_is_at_choice (LrgDialogRunner *self);
+#+end_src
+
+Checks if at a node that requires a response selection.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+
+*Returns:* =TRUE= if at a choice node
+
+** Stopping
+:PROPERTIES:
+:CUSTOM_ID: stopping
+:END:
+*** lrg_dialog_runner_stop()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_stop
+:END:
+#+begin_src C
+void lrg_dialog_runner_stop (LrgDialogRunner *self);
+#+end_src
+
+Stops the current dialog.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+
+** Response Filtering
+:PROPERTIES:
+:CUSTOM_ID: response-filtering
+:END:
+*** lrg_dialog_runner_get_available_responses()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_get_available_responses
+:END:
+#+begin_src C
+GPtrArray * lrg_dialog_runner_get_available_responses (LrgDialogRunner *self);
+#+end_src
+
+Gets available responses for the current node. Only returns responses whose conditions pass.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+
+*Returns:* Array of =LrgDialogResponse= (element-type, transfer container)
+
+** Context Variables
+:PROPERTIES:
+:CUSTOM_ID: context-variables
+:END:
+*** lrg_dialog_runner_get_context()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_get_context
+:END:
+#+begin_src C
+GHashTable * lrg_dialog_runner_get_context (LrgDialogRunner *self);
+#+end_src
+
+Gets the variable context for conditions and effects.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+
+*Returns:* The context hash table (transfer none)
+
+*** lrg_dialog_runner_set_variable()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_set_variable
+:END:
+#+begin_src C
+void lrg_dialog_runner_set_variable (LrgDialogRunner *self,
+                                     const gchar     *key,
+                                     const gchar     *value);
+#+end_src
+
+Sets a variable in the context.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+- =key= - Variable name
+- =value= - Variable value
+
+*** lrg_dialog_runner_get_variable()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_runner_get_variable
+:END:
+#+begin_src C
+const gchar * lrg_dialog_runner_get_variable (LrgDialogRunner *self,
+                                              const gchar     *key);
+#+end_src
+
+Gets a variable from the context.
+
+*Parameters:*
+
+- =self= - An =LrgDialogRunner=
+- =key= - Variable name
+
+*Returns:* Variable value (transfer none, nullable)
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* Create and setup runner */
+g_autoptr(LrgDialogRunner) runner = lrg_dialog_runner_new();
+lrg_dialog_runner_set_tree(runner, tree);
+
+/* Set game state variables */
+lrg_dialog_runner_set_variable(runner, "player_level", "10");
+lrg_dialog_runner_set_variable(runner, "has_sword", "true");
+lrg_dialog_runner_set_variable(runner, "gold", "500");
+
+/* Start dialog */
+if (!lrg_dialog_runner_start(runner, NULL)) {
+    g_warning("Failed to start dialog\n");
+    return;
+}
+
+/* Main dialog loop */
+while (lrg_dialog_runner_is_active(runner)) {
+    LrgDialogNode *node = lrg_dialog_runner_get_current_node(runner);
+    if (!node) break;
+
+    /* Display node text */
+    const gchar *speaker = lrg_dialog_node_get_speaker(node);
+    const gchar *text = lrg_dialog_node_get_display_text(node);
+
+    if (speaker) {
+        g_print("%s: %s\n", speaker, text);
+    } else {
+        g_print("%s\n", text);
+    }
+
+    /* Check if this is a choice node */
+    if (lrg_dialog_runner_is_at_choice(runner)) {
+        /* Get available responses */
+        GPtrArray *responses = lrg_dialog_runner_get_available_responses(runner);
+
+        /* Display responses */
+        for (guint i = 0; i < responses->len; i++) {
+            LrgDialogResponse *resp = g_ptr_array_index(responses, i);
+            g_print("[%u] %s\n", i, lrg_dialog_response_get_text(resp));
+        }
+
+        /* Get player choice */
+        guint choice = get_player_input();
+
+        /* Select response */
+        if (!lrg_dialog_runner_select_response(runner, choice, NULL)) {
+            g_warning("Failed to select response\n");
+            break;
+        }
+    } else {
+        /* Try auto-advance */
+        if (!lrg_dialog_runner_advance(runner, NULL)) {
+            /* Terminal node - dialog ends */
+            break;
+        }
+    }
+}
+
+lrg_dialog_runner_stop(runner);
+g_print("Dialog ended\n");
+#+end_src
+
+** Game Loop Integration
+:PROPERTIES:
+:CUSTOM_ID: game-loop-integration
+:END:
+#+begin_src C
+/* Setup */
+g_autoptr(LrgDialogRunner) dialog = lrg_dialog_runner_new();
+gboolean dialog_active = FALSE;
+
+/* Game loop */
+while (game_running) {
+    if (!dialog_active && player_activated_npc) {
+        LrgDialogTree *npc_dialog = get_npc_dialog_tree(npc);
+        lrg_dialog_runner_set_tree(dialog, npc_dialog);
+        lrg_dialog_runner_start(dialog, NULL);
+        dialog_active = TRUE;
+    }
+
+    if (dialog_active) {
+        if (lrg_dialog_runner_is_at_choice(dialog)) {
+            /* Show UI choices, handle player input */
+            if (player_selected_response) {
+                guint choice = player_response_index;
+                lrg_dialog_runner_select_response(dialog, choice, NULL);
+            }
+        } else {
+            /* Auto-advance on button press */
+            if (player_pressed_continue) {
+                if (!lrg_dialog_runner_advance(dialog, NULL)) {
+                    dialog_active = FALSE;
+                }
+            }
+        }
+
+        /* Draw current dialog node */
+        LrgDialogNode *node = lrg_dialog_runner_get_current_node(dialog);
+        if (node) {
+            draw_dialog_ui(node, dialog);
+        }
+    }
+
+    render_frame();
+}
+#+end_src

@@ -1,0 +1,333 @@
+* LrgModable Interface
+:PROPERTIES:
+:CUSTOM_ID: lrgmodable-interface
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgModable= is the base interface that mods should implement to integrate with the engine lifecycle. It provides hooks for initialization, shutdown, and metadata access.
+
+** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information
+:END:
+- *Type Name*: =LrgModable=
+- *Type ID*: =LRG_TYPE_MODABLE=
+- *Type Category*: Interface (glib interface)
+- *Base Type*: =GObject=
+
+** Interface Definition
+:PROPERTIES:
+:CUSTOM_ID: interface-definition
+:END:
+#+begin_src C
+struct _LrgModableInterface
+{
+    GTypeInterface g_iface;
+
+    gboolean       (*mod_init)      (LrgModable  *self,
+                                     LrgEngine   *engine,
+                                     GError     **error);
+    void           (*mod_shutdown)  (LrgModable *self);
+    LrgModManifest *(*mod_get_info) (LrgModable *self);
+};
+#+end_src
+
+** Methods
+:PROPERTIES:
+:CUSTOM_ID: methods
+:END:
+*** lrg_modable_init
+:PROPERTIES:
+:CUSTOM_ID: lrg_modable_init
+:END:
+#+begin_src C
+gboolean lrg_modable_init(LrgModable *self, LrgEngine *engine, GError **error);
+#+end_src
+
+Initializes the mod with the engine.
+
+Called when the mod is being loaded. This is where mods should:
+
+- Register content providers
+- Create custom types
+- Initialize subsystems
+- Connect to engine signals
+
+*Parameters:*
+
+- =engine= - The engine instance (for accessing registries, etc.)
+- =error= - (nullable) Return location for error
+
+*Returns:* =TRUE= on success
+
+*Implementation Example:*
+
+#+begin_src C
+static gboolean
+my_mod_init(LrgModable *self, LrgEngine *engine, GError **error)
+{
+    MyMod *mod = MY_MOD(self);
+
+    /* Register custom entity types */
+    LrgRegistry *registry = lrg_engine_get_registry(engine);
+    lrg_registry_register(registry, "my_entity", MY_TYPE_ENTITY);
+
+    /* Initialize subsystems */
+    mod->item_system = my_item_system_new();
+
+    g_print("MyMod initialized\n");
+    return TRUE;
+}
+#+end_src
+
+*** lrg_modable_shutdown
+:PROPERTIES:
+:CUSTOM_ID: lrg_modable_shutdown
+:END:
+#+begin_src C
+void lrg_modable_shutdown(LrgModable *self);
+#+end_src
+
+Shuts down the mod.
+
+Called when the mod is being unloaded. This is where mods should:
+
+- Clean up resources
+- Disconnect from signals
+- Save state if needed
+
+*Implementation Example:*
+
+#+begin_src C
+static void
+my_mod_shutdown(LrgModable *self)
+{
+    MyMod *mod = MY_MOD(self);
+
+    /* Clean up */
+    g_clear_object(&mod->item_system);
+
+    g_print("MyMod shut down\n");
+}
+#+end_src
+
+*** lrg_modable_get_info
+:PROPERTIES:
+:CUSTOM_ID: lrg_modable_get_info
+:END:
+#+begin_src C
+LrgModManifest *lrg_modable_get_info(LrgModable *self);
+#+end_src
+
+Gets the mod's manifest.
+
+*Returns:* (transfer none) (nullable) The mod manifest
+
+*Implementation Example:*
+
+#+begin_src C
+static LrgModManifest *
+my_mod_get_info(LrgModable *self)
+{
+    MyMod *mod = MY_MOD(self);
+    return mod->manifest;  /* Should be non-NULL */
+}
+#+end_src
+
+** Implementing a Modable
+:PROPERTIES:
+:CUSTOM_ID: implementing-a-modable
+:END:
+*** 1. Define the Type
+:PROPERTIES:
+:CUSTOM_ID: 1-define-the-type
+:END:
+#+begin_src C
+#define MY_TYPE_MOD (my_mod_get_type())
+G_DECLARE_FINAL_TYPE(MyMod, my_mod, MY, MOD, GObject)
+
+struct _MyMod {
+    GObject parent;
+    LrgModManifest *manifest;
+    MyItemSystem *item_system;
+};
+#+end_src
+
+*** 2. Implement the Interface
+:PROPERTIES:
+:CUSTOM_ID: 2-implement-the-interface
+:END:
+#+begin_src C
+static void
+my_modable_interface_init(LrgModableInterface *iface)
+{
+    iface->mod_init = my_mod_init;
+    iface->mod_shutdown = my_mod_shutdown;
+    iface->mod_get_info = my_mod_get_info;
+}
+
+G_DEFINE_TYPE_WITH_CODE(
+    MyMod, my_mod, G_TYPE_OBJECT,
+    G_IMPLEMENT_INTERFACE(LRG_TYPE_MODABLE, my_modable_interface_init)
+)
+#+end_src
+
+*** 3. Implement Virtual Functions
+:PROPERTIES:
+:CUSTOM_ID: 3-implement-virtual-functions
+:END:
+#+begin_src C
+static gboolean
+my_mod_init(LrgModable *self, LrgEngine *engine, GError **error)
+{
+    MyMod *mod = MY_MOD(self);
+    /* Initialize mod */
+    return TRUE;
+}
+
+static void
+my_mod_shutdown(LrgModable *self)
+{
+    MyMod *mod = MY_MOD(self);
+    /* Shutdown mod */
+}
+
+static LrgModManifest *
+my_mod_get_info(LrgModable *self)
+{
+    MyMod *mod = MY_MOD(self);
+    return mod->manifest;
+}
+#+end_src
+
+*** 4. Implement glib-class-init
+:PROPERTIES:
+:CUSTOM_ID: 4-implement-glib-class-init
+:END:
+#+begin_src C
+static void
+my_mod_class_init(MyModClass *class)
+{
+    GObjectClass *object_class = G_OBJECT_CLASS(class);
+    object_class->finalize = my_mod_finalize;
+}
+
+static void
+my_mod_init(MyMod *self)
+{
+    self->manifest = NULL;
+    self->item_system = NULL;
+}
+#+end_src
+
+** Provider Interfaces
+:PROPERTIES:
+:CUSTOM_ID: provider-interfaces
+:END:
+Most mods will also implement one or more provider interfaces:
+
+#+begin_src C
+static void
+my_mod_entity_provider_init(LrgEntityProviderInterface *iface)
+{
+    iface->get_entity_types = my_mod_get_entity_types;
+}
+
+G_DEFINE_TYPE_WITH_CODE(
+    MyMod, my_mod, G_TYPE_OBJECT,
+    G_IMPLEMENT_INTERFACE(LRG_TYPE_MODABLE, my_modable_interface_init)
+    G_IMPLEMENT_INTERFACE(LRG_TYPE_ENTITY_PROVIDER, my_mod_entity_provider_init)
+)
+#+end_src
+
+** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+#define MY_TYPE_MOD (my_mod_get_type())
+G_DECLARE_FINAL_TYPE(MyMod, my_mod, MY, MOD, GObject)
+
+struct _MyMod {
+    GObject parent;
+    LrgModManifest *manifest;
+};
+
+G_DEFINE_TYPE_WITH_CODE(
+    MyMod, my_mod, G_TYPE_OBJECT,
+    G_IMPLEMENT_INTERFACE(LRG_TYPE_MODABLE, my_modable_interface_init)
+)
+
+static gboolean
+my_mod_init(LrgModable *self, LrgEngine *engine, GError **error)
+{
+    MyMod *mod = MY_MOD(self);
+    g_print("MyMod init\n");
+    return TRUE;
+}
+
+static void
+my_mod_shutdown(LrgModable *self)
+{
+    MyMod *mod = MY_MOD(self);
+    g_print("MyMod shutdown\n");
+}
+
+static LrgModManifest *
+my_mod_get_info(LrgModable *self)
+{
+    MyMod *mod = MY_MOD(self);
+    return mod->manifest;
+}
+
+static void
+my_modable_interface_init(LrgModableInterface *iface)
+{
+    iface->mod_init = my_mod_init;
+    iface->mod_shutdown = my_mod_shutdown;
+    iface->mod_get_info = my_mod_get_info;
+}
+
+static void
+my_mod_class_init(MyModClass *class)
+{
+}
+
+static void
+my_mod_init_instance(MyMod *self)
+{
+    self->manifest = NULL;
+}
+
+MyMod *
+my_mod_new(LrgModManifest *manifest)
+{
+    MyMod *mod = g_object_new(MY_TYPE_MOD, NULL);
+    mod->manifest = g_object_ref(manifest);
+    return mod;
+}
+#+end_src
+
+** Lifecycle
+:PROPERTIES:
+:CUSTOM_ID: lifecycle
+:END:
+The typical mod lifecycle is:
+
+1. *Discovery* - Mod found via manifest
+2. *Construction* - Mod instance created
+3. *Initialization* - =lrg_modable_init()= called
+4. *Active* - Mod provides content via providers
+5. *Shutdown* - =lrg_modable_shutdown()= called
+6. *Destruction* - Mod object freed
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:mod-manager.org][LrgModManager]] - Manages modable instances
+- [[file:providers.org][Providers]] - Content provider interfaces

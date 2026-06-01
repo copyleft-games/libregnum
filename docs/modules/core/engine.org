@@ -1,0 +1,578 @@
+* LrgEngine
+:PROPERTIES:
+:CUSTOM_ID: lrgengine
+:END:
+The central hub for all engine subsystems. LrgEngine manages the complete lifecycle of a Libregnum application from startup through shutdown.
+
+#+begin_quote
+*[[../../index.md][Home]]* > *[[../index.md][Modules]]* > *[[file:index.org][Core]]* > LrgEngine
+
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+LrgEngine is a singleton that:
+
+- Manages engine state (startup, running, shutdown)
+- Coordinates all subsystems (registry, data loader, asset manager)
+- Provides game loop integration via update()
+- Emits signals for lifecycle events
+
+The engine is *derivable* - subclasses can override virtual methods to customize behavior.
+
+** Key Concepts
+:PROPERTIES:
+:CUSTOM_ID: key-concepts
+:END:
+*** Singleton Pattern
+:PROPERTIES:
+:CUSTOM_ID: singleton-pattern
+:END:
+Only one instance exists per process:
+
+#+begin_src C
+LrgEngine *engine1 = lrg_engine_get_default ();
+LrgEngine *engine2 = lrg_engine_get_default ();
+g_assert (engine1 == engine2);  /* Same instance */
+#+end_src
+
+*** State Management
+:PROPERTIES:
+:CUSTOM_ID: state-management
+:END:
+Engine follows strict state machine:
+
+#+begin_example
+UNINITIALIZED
+    ↓ startup()
+INITIALIZING
+    ↓
+RUNNING
+    ↓ update()
+    (loop)
+    ↓
+SHUTTING_DOWN
+    ↓
+TERMINATED
+#+end_example
+
+*** Subsystem Access
+:PROPERTIES:
+:CUSTOM_ID: subsystem-access
+:END:
+Get other subsystems from engine:
+
+#+begin_src C
+LrgRegistry *registry = lrg_engine_get_registry (engine);
+LrgDataLoader *loader = lrg_engine_get_data_loader (engine);
+LrgAssetManager *manager = lrg_engine_get_asset_manager (engine);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+*** Singleton Access
+:PROPERTIES:
+:CUSTOM_ID: singleton-access
+:END:
+**** lrg_engine_get_default()
+:PROPERTIES:
+:CUSTOM_ID: lrg_engine_get_default
+:END:
+#+begin_src C
+LrgEngine *
+lrg_engine_get_default (void)
+#+end_src
+
+Gets the default engine instance. Creates it if it doesn't exist.
+
+*Returns*: (transfer none) The default LrgEngine instance
+
+*Example*:
+
+#+begin_src C
+LrgEngine *engine = lrg_engine_get_default ();
+#+end_src
+
+*** Lifecycle Methods
+:PROPERTIES:
+:CUSTOM_ID: lifecycle-methods
+:END:
+**** lrg_engine_startup()
+:PROPERTIES:
+:CUSTOM_ID: lrg_engine_startup
+:END:
+#+begin_src C
+gboolean
+lrg_engine_startup (LrgEngine  *self,
+                    GError    **error)
+#+end_src
+
+Starts up the engine and all subsystems.
+
+Must be called before using the engine. Initializes:
+
+- Registry (type mapping)
+- DataLoader (YAML loading)
+- AssetManager (asset caching)
+- All future subsystems
+
+*Parameters*:
+
+- =self= - The engine
+- =error= - (nullable) return location for error
+
+*Returns*: TRUE on success, FALSE on error
+
+*Errors*: LRG_ENGINE_ERROR
+
+- =LRG_ENGINE_ERROR_INIT= - Initialization failed
+- =LRG_ENGINE_ERROR_STATE= - Already started (double startup)
+
+*Example*:
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+if (!lrg_engine_startup (engine, &error))
+{
+    g_warning ("Startup failed: %s", error->message);
+    return 1;
+}
+#+end_src
+
+**** lrg_engine_shutdown()
+:PROPERTIES:
+:CUSTOM_ID: lrg_engine_shutdown
+:END:
+#+begin_src C
+void
+lrg_engine_shutdown (LrgEngine *self)
+#+end_src
+
+Shuts down the engine and all subsystems.
+
+After calling this, the engine cannot be used until startup() is called again. Always succeeds - no error checking needed.
+
+*Parameters*:
+
+- =self= - The engine
+
+*Example*:
+
+#+begin_src C
+lrg_engine_shutdown (engine);
+#+end_src
+
+**** lrg_engine_update()
+:PROPERTIES:
+:CUSTOM_ID: lrg_engine_update
+:END:
+#+begin_src C
+void
+lrg_engine_update (LrgEngine *self,
+                   gfloat     delta)
+#+end_src
+
+Updates the engine for one frame.
+
+Should be called from the game loop to update all engine systems. Emits pre-update and post-update signals.
+
+Does nothing if engine is not running (safe to call anytime).
+
+*Parameters*:
+
+- =self= - The engine
+- =delta= - Time since last frame in seconds
+
+*Example*:
+
+#+begin_src C
+while (lrg_engine_is_running (engine))
+{
+    lrg_engine_update (engine, 0.016f);  /* 60 FPS */
+}
+#+end_src
+
+*** State Queries
+:PROPERTIES:
+:CUSTOM_ID: state-queries
+:END:
+**** lrg_engine_get_state()
+:PROPERTIES:
+:CUSTOM_ID: lrg_engine_get_state
+:END:
+#+begin_src C
+LrgEngineState
+lrg_engine_get_state (LrgEngine *self)
+#+end_src
+
+Gets the current engine state.
+
+*Parameters*:
+
+- =self= - The engine
+
+*Returns*: The current LrgEngineState
+
+*Example*:
+
+#+begin_src C
+LrgEngineState state = lrg_engine_get_state (engine);
+
+if (state == LRG_ENGINE_STATE_RUNNING)
+{
+    /* Safe to use engine */
+}
+#+end_src
+
+**** lrg_engine_is_running()
+:PROPERTIES:
+:CUSTOM_ID: lrg_engine_is_running
+:END:
+#+begin_src C
+gboolean
+lrg_engine_is_running (LrgEngine *self)
+#+end_src
+
+Checks if the engine is in the running state.
+
+*Parameters*:
+
+- =self= - The engine
+
+*Returns*: TRUE if the engine is running
+
+*Example*:
+
+#+begin_src C
+while (lrg_engine_is_running (engine))
+{
+    lrg_engine_update (engine, delta_time);
+}
+#+end_src
+
+*** Subsystem Access
+:PROPERTIES:
+:CUSTOM_ID: subsystem-access-1
+:END:
+**** lrg_engine_get_registry()
+:PROPERTIES:
+:CUSTOM_ID: lrg_engine_get_registry
+:END:
+#+begin_src C
+LrgRegistry *
+lrg_engine_get_registry (LrgEngine *self)
+#+end_src
+
+Gets the engine's type registry.
+
+The registry maps string names to GTypes for data-driven instantiation.
+
+Returns NULL before startup.
+
+*Parameters*:
+
+- =self= - The engine
+
+*Returns*: (transfer none) The LrgRegistry
+
+*Example*:
+
+#+begin_src C
+LrgRegistry *registry = lrg_engine_get_registry (engine);
+g_assert_nonnull (registry);
+#+end_src
+
+**** lrg_engine_get_data_loader()
+:PROPERTIES:
+:CUSTOM_ID: lrg_engine_get_data_loader
+:END:
+#+begin_src C
+LrgDataLoader *
+lrg_engine_get_data_loader (LrgEngine *self)
+#+end_src
+
+Gets the engine's data loader.
+
+The data loader handles loading YAML files and converting them to GObjects.
+
+Returns NULL before startup.
+
+*Parameters*:
+
+- =self= - The engine
+
+*Returns*: (transfer none) The LrgDataLoader
+
+*Example*:
+
+#+begin_src C
+LrgDataLoader *loader = lrg_engine_get_data_loader (engine);
+GObject *obj = lrg_data_loader_load_file (loader, "data.yaml", &error);
+#+end_src
+
+**** lrg_engine_get_asset_manager()
+:PROPERTIES:
+:CUSTOM_ID: lrg_engine_get_asset_manager
+:END:
+#+begin_src C
+LrgAssetManager *
+lrg_engine_get_asset_manager (LrgEngine *self)
+#+end_src
+
+Gets the engine's asset manager.
+
+The asset manager handles loading and caching of game assets (textures, fonts, sounds, music) with mod overlay support.
+
+Returns NULL before startup.
+
+*Parameters*:
+
+- =self= - The engine
+
+*Returns*: (transfer none) The LrgAssetManager
+
+*Example*:
+
+#+begin_src C
+LrgAssetManager *manager = lrg_engine_get_asset_manager (engine);
+GrlTexture *tex = lrg_asset_manager_load_texture (manager, "sprite.png", &error);
+#+end_src
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+*** "startup"
+:PROPERTIES:
+:CUSTOM_ID: startup
+:END:
+#+begin_src C
+void user_function (LrgEngine *engine,
+                    gpointer   user_data)
+#+end_src
+
+Emitted when the engine transitions to RUNNING state (end of startup).
+
+*Parameters*:
+
+- =engine= - The engine
+- =user_data= - User-provided data
+
+*Example*:
+
+#+begin_src C
+g_signal_connect (engine, "startup",
+                  G_CALLBACK (on_engine_startup), NULL);
+#+end_src
+
+*** "shutdown"
+:PROPERTIES:
+:CUSTOM_ID: shutdown
+:END:
+#+begin_src C
+void user_function (LrgEngine *engine,
+                    gpointer   user_data)
+#+end_src
+
+Emitted when the engine transitions to TERMINATED state (end of shutdown).
+
+*Parameters*:
+
+- =engine= - The engine
+- =user_data= - User-provided data
+
+*Example*:
+
+#+begin_src C
+g_signal_connect (engine, "shutdown",
+                  G_CALLBACK (on_engine_shutdown), NULL);
+#+end_src
+
+*** "pre-update"
+:PROPERTIES:
+:CUSTOM_ID: pre-update
+:END:
+#+begin_src C
+void user_function (LrgEngine *engine,
+                    gfloat     delta,
+                    gpointer   user_data)
+#+end_src
+
+Emitted before engine systems update each frame.
+
+*Parameters*:
+
+- =engine= - The engine
+- =delta= - Frame time in seconds
+- =user_data= - User-provided data
+
+*Example*:
+
+#+begin_src C
+g_signal_connect (engine, "pre-update",
+                  G_CALLBACK (on_pre_update), NULL);
+#+end_src
+
+*** "post-update"
+:PROPERTIES:
+:CUSTOM_ID: post-update
+:END:
+#+begin_src C
+void user_function (LrgEngine *engine,
+                    gfloat     delta,
+                    gpointer   user_data)
+#+end_src
+
+Emitted after engine systems update each frame.
+
+*Parameters*:
+
+- =engine= - The engine
+- =delta= - Frame time in seconds
+- =user_data= - User-provided data
+
+*Example*:
+
+#+begin_src C
+g_signal_connect (engine, "post-update",
+                  G_CALLBACK (on_post_update), NULL);
+#+end_src
+
+** Virtual Methods
+:PROPERTIES:
+:CUSTOM_ID: virtual-methods
+:END:
+Subclasses can override these methods:
+
+#+begin_src C
+struct _LrgEngineClass
+{
+    GObjectClass parent_class;
+
+    /* Virtual methods */
+    void (*startup)  (LrgEngine *self);
+    void (*shutdown) (LrgEngine *self);
+    void (*update)   (LrgEngine *self, gfloat delta);
+
+    gpointer _reserved[8];  /* ABI stability */
+};
+#+end_src
+
+*** Overriding
+:PROPERTIES:
+:CUSTOM_ID: overriding
+:END:
+#+begin_src C
+static void
+my_engine_update (LrgEngine *engine,
+                  gfloat     delta)
+{
+    /* Custom update logic */
+
+    /* Call parent implementation */
+    LRG_ENGINE_CLASS (my_engine_parent_class)->update (engine, delta);
+}
+#+end_src
+
+** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+#include <glib.h>
+
+static void
+on_startup (LrgEngine *engine, gpointer user_data)
+{
+    g_print ("Engine started\n");
+}
+
+static void
+on_update (LrgEngine *engine, gfloat delta, gpointer user_data)
+{
+    static guint frames = 0;
+    g_print ("Frame %u (delta=%.3fs)\n", frames++, delta);
+}
+
+static void
+on_shutdown (LrgEngine *engine, gpointer user_data)
+{
+    g_print ("Engine stopped\n");
+}
+
+int
+main (int argc, char *argv[])
+{
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine = lrg_engine_get_default ();
+
+    /* Connect signals */
+    g_signal_connect (engine, "startup", G_CALLBACK (on_startup), NULL);
+    g_signal_connect (engine, "pre-update", G_CALLBACK (on_update), NULL);
+    g_signal_connect (engine, "shutdown", G_CALLBACK (on_shutdown), NULL);
+
+    /* Startup */
+    if (!lrg_engine_startup (engine, &error))
+    {
+        g_error ("Failed: %s", error->message);
+    }
+
+    /* Run 60 frames */
+    for (int i = 0; i < 60; i++)
+    {
+        lrg_engine_update (engine, 0.016f);
+    }
+
+    /* Shutdown */
+    lrg_engine_shutdown (engine);
+
+    return 0;
+}
+#+end_src
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+*** LRG_ENGINE_ERROR
+:PROPERTIES:
+:CUSTOM_ID: lrg_engine_error
+:END:
+#+begin_src C
+LRG_ENGINE_ERROR_FAILED   /* Generic failure */
+LRG_ENGINE_ERROR_INIT     /* Initialization failed */
+LRG_ENGINE_ERROR_STATE    /* Invalid state */
+#+end_src
+
+Get error details:
+
+#+begin_src C
+if (!lrg_engine_startup (engine, &error))
+{
+    if (error->domain == LRG_ENGINE_ERROR)
+    {
+        switch (error->code)
+        {
+        case LRG_ENGINE_ERROR_STATE:
+            g_warning ("Already started");
+            break;
+        default:
+            g_warning ("Startup error: %s", error->message);
+        }
+    }
+    return 1;
+}
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[../../concepts/engine-lifecycle.md][Engine Lifecycle Concept]] - Detailed lifecycle explanation
+- [[file:index.org][Core Module]] - Module overview
+- [[../../quickstart.md][Quickstart Guide]] - Getting started

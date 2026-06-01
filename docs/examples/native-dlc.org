@@ -1,0 +1,427 @@
+* Native DLC Example (GModule Loading)
+:PROPERTIES:
+:CUSTOM_ID: native-dlc-example-gmodule-loading
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+The =game-creature-collector= example demonstrates loading native shared libraries (=.so= files) as DLC content using GModule. This is the most powerful type of mod, allowing DLCs to execute native code and directly integrate with the game's systems.
+
+** Running the Example
+:PROPERTIES:
+:CUSTOM_ID: running-the-example
+:END:
+#+begin_src sh
+cd examples
+
+# Build the game and native mod
+make game-creature-collector
+
+# Run WITH mods (shows 5 creatures: 3 base + 2 DLC)
+./build/release/examples/game-creature-collector
+
+# Run WITHOUT mods (shows 3 base creatures only)
+./build/release/examples/game-creature-collector --no-mods
+#+end_src
+
+** Features Demonstrated
+:PROPERTIES:
+:CUSTOM_ID: features-demonstrated
+:END:
+| Feature              | Description                                         |
+|----------------------+-----------------------------------------------------|
+| GModule Loading      | Loading =.so= shared libraries at runtime           |
+| Symbol Export        | Main executable exports functions for DLC to call   |
+| Entry Points         | =lrg_mod_init()= and =lrg_mod_shutdown()= functions |
+| Content Registration | DLC registering content with the game's systems     |
+| Visual Difference    | Clear before/after comparison with =--no-mods=      |
+
+** Controls
+:PROPERTIES:
+:CUSTOM_ID: controls
+:END:
+| Key | Action                         |
+|-----+--------------------------------|
+| M   | Toggle mod information overlay |
+| R   | Respawn all creatures          |
+| ESC | Exit                           |
+
+** Architecture
+:PROPERTIES:
+:CUSTOM_ID: architecture
+:END:
+*** Symbol Visibility Pattern
+:PROPERTIES:
+:CUSTOM_ID: symbol-visibility-pattern
+:END:
+The native DLC pattern requires careful symbol management:
+
+1. *Main Game* exports registration functions with =G_MODULE_EXPORT=
+2. *Main Game* is linked with =-Wl,--export-dynamic= to expose symbols
+3. *DLC* declares functions as =extern= and calls them at runtime
+4. *GModule* resolves symbols when the shared library loads
+
+#+begin_example
+┌─────────────────────┐         ┌─────────────────────┐
+│   Main Executable   │         │   DLC Shared Lib    │
+│                     │         │  (libbonuscreatures)│
+│  register_creature  │◄────────│  lrg_mod_init()     │
+│  get_creature_types │         │  lrg_mod_shutdown() │
+│                     │         │                     │
+│  -Wl,--export-      │         │  -shared -fPIC      │
+│   dynamic           │         │                     │
+└─────────────────────┘         └─────────────────────┘
+#+end_example
+
+** File Structure
+:PROPERTIES:
+:CUSTOM_ID: file-structure
+:END:
+#+begin_example
+examples/
+├── game-creature-collector.c    # Main game source
+├── creature-registry.h          # Shared API header
+├── Makefile                     # Build rules
+└── mods/
+    └── bonus-creatures/
+        ├── mod.yaml             # DLC manifest
+        └── lib/
+            └── libbonuscreatures.c   # Native DLC source
+            └── libbonuscreatures.so  # Built shared library
+#+end_example
+
+** DLC Manifest
+:PROPERTIES:
+:CUSTOM_ID: dlc-manifest
+:END:
+Native DLCs use =type: native= and specify an =entry_point=:
+
+#+begin_src yaml
+# mods/bonus-creatures/mod.yaml
+id: bonus-creatures
+name: "Bonus Creatures Pack"
+version: "1.0.0"
+type: native
+author: "Demo Games"
+description: "Adds 2 bonus creatures to the game!"
+
+# Path to shared library (relative to mod directory)
+entry_point: "lib/libbonuscreatures.so"
+
+dlc:
+  type: expansion
+  store_id: "bonus-creatures-pack"
+  price: "$2.99"
+  currency: "USD"
+
+  ownership:
+    method: manifest
+#+end_src
+
+** Shared API Header
+:PROPERTIES:
+:CUSTOM_ID: shared-api-header
+:END:
+Both the game and DLC include a shared header defining the registration API:
+
+#+begin_src C
+/* creature-registry.h */
+#ifndef CREATURE_REGISTRY_H
+#define CREATURE_REGISTRY_H
+
+#include <glib.h>
+#include <gmodule.h>
+
+G_BEGIN_DECLS
+
+typedef struct
+{
+    gchar    *name;
+    guint8    r, g, b;    /* Color */
+    gfloat    speed;      /* Movement speed multiplier */
+    gboolean  from_mod;   /* TRUE if added by mod */
+} CreatureType;
+
+/* Exported by main game, called by DLC */
+G_MODULE_EXPORT void
+register_creature_type (const gchar *name,
+                        guint8       r,
+                        guint8       g,
+                        guint8       b,
+                        gfloat       speed,
+                        gboolean     from_mod);
+
+G_MODULE_EXPORT GPtrArray *
+get_creature_types (void);
+
+G_END_DECLS
+
+#endif /* CREATURE_REGISTRY_H */
+#+end_src
+
+** Main Game Implementation
+:PROPERTIES:
+:CUSTOM_ID: main-game-implementation
+:END:
+*** Exporting Registration Function
+:PROPERTIES:
+:CUSTOM_ID: exporting-registration-function
+:END:
+#+begin_src C
+/* In game-creature-collector.c */
+
+/* Global creature registry */
+static GPtrArray *g_creature_types = NULL;
+
+/* Exported function - DLC calls this to register creatures */
+G_MODULE_EXPORT void
+register_creature_type (const gchar *name,
+                        guint8       r,
+                        guint8       g,
+                        guint8       b,
+                        gfloat       speed,
+                        gboolean     from_mod)
+{
+    CreatureType *type = g_new0 (CreatureType, 1);
+    type->name = g_strdup (name);
+    type->r = r;
+    type->g = g;
+    type->b = b;
+    type->speed = speed;
+    type->from_mod = from_mod;
+
+    g_ptr_array_add (g_creature_types, type);
+
+    g_print ("Registered creature: %s (%s)\n",
+             name, from_mod ? "DLC" : "base");
+}
+#+end_src
+
+*** Loading Mods
+:PROPERTIES:
+:CUSTOM_ID: loading-mods
+:END:
+#+begin_src C
+static void
+load_mods (void)
+{
+    g_autoptr(LrgModManager) mod_manager = lrg_mod_manager_new ();
+    g_autoptr(GError) error = NULL;
+
+    /* Set mod search path */
+    lrg_mod_manager_add_search_path (mod_manager, "mods");
+
+    /* Discover mods */
+    if (!lrg_mod_manager_discover (mod_manager, &error))
+    {
+        g_warning ("Discovery failed: %s", error->message);
+        return;
+    }
+
+    /* Load all discovered mods - this calls lrg_mod_init() */
+    if (!lrg_mod_manager_load_all (mod_manager, &error))
+    {
+        g_warning ("Load failed: %s", error->message);
+    }
+
+    /* Check what loaded */
+    GPtrArray *mods = lrg_mod_manager_get_loaded_mods (mod_manager);
+    g_print ("Loaded %u mod(s)\n", mods->len);
+}
+#+end_src
+
+** Native DLC Implementation
+:PROPERTIES:
+:CUSTOM_ID: native-dlc-implementation
+:END:
+*** Entry Point Functions
+:PROPERTIES:
+:CUSTOM_ID: entry-point-functions
+:END:
+#+begin_src C
+/* libbonuscreatures.c */
+#include <glib.h>
+#include <gmodule.h>
+#include <libregnum.h>
+#include "../../../creature-registry.h"
+
+/* Forward declarations for exported functions */
+G_MODULE_EXPORT gboolean
+lrg_mod_init (LrgMod   *mod,
+              gpointer *user_data);
+
+G_MODULE_EXPORT void
+lrg_mod_shutdown (LrgMod  *mod,
+                  gpointer user_data);
+
+/**
+ * lrg_mod_init:
+ * @mod: The LrgMod instance
+ * @user_data: (out): Optional user data to store
+ *
+ * Called when the mod is loaded.
+ *
+ * Returns: TRUE on success, FALSE on failure
+ */
+G_MODULE_EXPORT gboolean
+lrg_mod_init (LrgMod   *mod,
+              gpointer *user_data)
+{
+    g_print ("Bonus Creatures Pack Initializing...\n");
+
+    /* Register bonus creatures with the game */
+    register_creature_type ("Golden Slime", 255, 215, 0, 2.5f, TRUE);
+    register_creature_type ("Shadow Beast", 128, 0, 200, 3.0f, TRUE);
+
+    g_print ("Bonus Creatures Pack loaded!\n");
+
+    *user_data = NULL;
+    return TRUE;
+}
+
+/**
+ * lrg_mod_shutdown:
+ * @mod: The LrgMod instance
+ * @user_data: User data from init
+ *
+ * Called when the mod is unloaded.
+ */
+G_MODULE_EXPORT void
+lrg_mod_shutdown (LrgMod  *mod,
+                  gpointer user_data)
+{
+    g_print ("Bonus Creatures Pack unloaded.\n");
+}
+#+end_src
+
+** Build System
+:PROPERTIES:
+:CUSTOM_ID: build-system
+:END:
+*** Main Game Build Rule
+:PROPERTIES:
+:CUSTOM_ID: main-game-build-rule
+:END:
+The key is =-Wl,--export-dynamic= to export symbols:
+
+#+begin_src makefile
+# Build game with exported symbols for DLC to call
+$(EXAMPLES_BUILDDIR)/game-creature-collector: game-creature-collector.c creature-registry.h | mods
+    $(CC) $(CFLAGS) -Wl,--export-dynamic -o $@ $< $(LDFLAGS) $(LIBS)
+#+end_src
+
+*** Native Mod Build Rule
+:PROPERTIES:
+:CUSTOM_ID: native-mod-build-rule
+:END:
+#+begin_src makefile
+# Flags for building shared libraries
+MOD_CFLAGS := $(CFLAGS) -fPIC
+MOD_LDFLAGS := -shared $(LDFLAGS)
+
+# Build the native mod shared library
+mods/bonus-creatures/lib/libbonuscreatures.so: mods/bonus-creatures/lib/libbonuscreatures.c creature-registry.h
+    $(CC) $(MOD_CFLAGS) -o $@ $< $(MOD_LDFLAGS) $(LIBS)
+#+end_src
+
+** Expected Output
+:PROPERTIES:
+:CUSTOM_ID: expected-output
+:END:
+*** With Mods (default)
+:PROPERTIES:
+:CUSTOM_ID: with-mods-default
+:END:
+#+begin_example
+=== Registering base creatures ===
+Registered creature: Red Blob (base)
+Registered creature: Blue Blob (base)
+Registered creature: Green Blob (base)
+=== Loading mods ===
+Searching for mods in: /path/to/examples/mods
+=== Bonus Creatures Pack Initializing ===
+Registered creature: Golden Slime (DLC)
+Registered creature: Shadow Beast (DLC)
+Bonus Creatures Pack loaded successfully!
+Loaded 1 mod(s):
+  - Bonus Creatures Pack v1.0.0
+=== Spawning creatures ===
+=== Starting game loop ===
+Total creatures: 5 (3 base + 2 DLC)
+#+end_example
+
+*** Without Mods (=--no-mods=)
+:PROPERTIES:
+:CUSTOM_ID: without-mods---no-mods
+:END:
+#+begin_example
+=== Registering base creatures ===
+Registered creature: Red Blob (base)
+Registered creature: Blue Blob (base)
+Registered creature: Green Blob (base)
+=== Loading mods ===
+Mod loading disabled (--no-mods)
+=== Spawning creatures ===
+=== Starting game loop ===
+Total creatures: 3 (3 base + 0 DLC)
+#+end_example
+
+** Visual Comparison
+:PROPERTIES:
+:CUSTOM_ID: visual-comparison
+:END:
+| Without DLC            | With DLC                       |
+|------------------------+--------------------------------|
+| 3 creatures bouncing   | 5 creatures bouncing           |
+| Status: "NO MODS"      | Status: "DLC LOADED"           |
+| White outlines only    | Gold outlines on DLC creatures |
+| Count: "3 (base only)" | Count: "5 (3 base + 2 DLC)"    |
+
+** Common Issues
+:PROPERTIES:
+:CUSTOM_ID: common-issues
+:END:
+*** Symbol Not Found
+:PROPERTIES:
+:CUSTOM_ID: symbol-not-found
+:END:
+If the DLC fails to find =register_creature_type=:
+
+1. Ensure main executable is linked with =-Wl,--export-dynamic=
+2. Verify =G_MODULE_EXPORT= macro on exported functions
+3. Check that the function signature matches exactly
+
+*** GModule Load Failed
+:PROPERTIES:
+:CUSTOM_ID: gmodule-load-failed
+:END:
+If =g_module_open()= fails:
+
+1. Check the shared library path in =entry_point=
+2. Verify library dependencies with =ldd libbonuscreatures.so=
+3. Ensure =LD_LIBRARY_PATH= includes required libraries
+
+*** Missing Prototype Warning
+:PROPERTIES:
+:CUSTOM_ID: missing-prototype-warning
+:END:
+Native mod functions need forward declarations:
+
+#+begin_src C
+/* Add forward declarations before the implementation */
+G_MODULE_EXPORT gboolean
+lrg_mod_init (LrgMod *mod, gpointer *user_data);
+
+G_MODULE_EXPORT void
+lrg_mod_shutdown (LrgMod *mod, gpointer user_data);
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:dlc-store.org][DLC Store Example]] - DLC ownership and store integration
+- [[file:modding-guide.org][Modding Guide]] - Creating content mods
+- [[../modules/mod/mod.md][LrgMod]] - Mod object reference
+- [[../modules/mod/mod-manifest.md][LrgModManifest]] - Manifest format

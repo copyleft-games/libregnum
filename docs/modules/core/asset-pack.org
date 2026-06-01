@@ -1,0 +1,306 @@
+* LrgAssetPack
+:PROPERTIES:
+:CUSTOM_ID: lrgassetpack
+:END:
+Resource pack management for loading assets from rres files.
+
+#+begin_quote
+*[[../../index.md][Home]]* > *[[../index.md][Modules]]* > *[[file:index.org][Core]]* > LrgAssetPack
+
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+LrgAssetPack wraps graylib's GrlResourcePack, providing a GObject wrapper with game-specific features like typed asset loading and integration with the data loading system.
+
+The rres format is a raylib resource format that supports:
+
+- Multiple asset types (textures, sounds, music, raw data)
+- Optional central directory for name-based lookups
+- Compression and encryption support
+
+#+begin_src C
+/* Load a resource pack */
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgAssetPack) pack = lrg_asset_pack_new ("assets.rres", &error);
+if (pack == NULL) {
+    g_warning ("Failed: %s", error->message);
+    return;
+}
+
+/* Check contents */
+if (lrg_asset_pack_has_directory (pack)) {
+    g_print ("Pack has %u resources\n", lrg_asset_pack_get_resource_count (pack));
+}
+
+/* Load assets */
+g_autoptr(GrlTexture) tex = lrg_asset_pack_load_texture (pack, "player.png", &error);
+g_autoptr(GrlSound) sound = lrg_asset_pack_load_sound (pack, "jump.wav", &error);
+#+end_src
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** From File
+:PROPERTIES:
+:CUSTOM_ID: from-file
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgAssetPack) pack = lrg_asset_pack_new ("game_assets.rres", &error);
+if (pack == NULL) {
+    g_warning ("Failed to open pack: %s", error->message);
+}
+#+end_src
+
+*** Encrypted Pack
+:PROPERTIES:
+:CUSTOM_ID: encrypted-pack
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgAssetPack) pack = lrg_asset_pack_new_encrypted (
+    "protected_assets.rres",
+    "my_secret_password",
+    &error
+);
+#+end_src
+
+** Key Methods
+:PROPERTIES:
+:CUSTOM_ID: key-methods
+:END:
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Method                                | Returns         | Description               |
+|---------------------------------------+-----------------+---------------------------|
+| =lrg_asset_pack_get_filename()=       | =const gchar *= | Pack file path            |
+| =lrg_asset_pack_get_resource_count()= | =guint=         | Number of resource chunks |
+| =lrg_asset_pack_get_version()=        | =guint=         | rres format version       |
+| =lrg_asset_pack_has_directory()=      | =gboolean=      | Has central directory     |
+
+*** Directory Access
+:PROPERTIES:
+:CUSTOM_ID: directory-access
+:END:
+Requires the pack to have a central directory:
+
+#+begin_src C
+/* List all resources */
+g_autoptr(GList) names = lrg_asset_pack_list_resources (pack);
+for (GList *l = names; l != NULL; l = l->next) {
+    g_print ("Resource: %s\n", (gchar *)l->data);
+}
+g_list_free_full (names, g_free);
+
+/* Check existence */
+if (lrg_asset_pack_contains (pack, "sprites/player.png")) {
+    /* Resource exists */
+}
+
+/* Get ID for name */
+guint32 id = lrg_asset_pack_get_id (pack, "sprites/player.png");
+
+/* Get name for ID */
+g_autofree gchar *name = lrg_asset_pack_get_name (pack, id);
+#+end_src
+
+*** Typed Asset Loading
+:PROPERTIES:
+:CUSTOM_ID: typed-asset-loading
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+
+/* Load texture */
+GrlTexture *texture = lrg_asset_pack_load_texture (pack, "player.png", &error);
+
+/* Load sound */
+GrlSound *sound = lrg_asset_pack_load_sound (pack, "jump.wav", &error);
+
+/* Load wave data (for manipulation) */
+LrgWaveData *wave = lrg_asset_pack_load_wave (pack, "explosion.wav", &error);
+
+/* Load music (streamed from pack) */
+GrlMusic *music = lrg_asset_pack_load_music (pack, "background.ogg", &error);
+#+end_src
+
+*** Raw Data Loading
+:PROPERTIES:
+:CUSTOM_ID: raw-data-loading
+:END:
+#+begin_src C
+gsize size;
+g_autofree guint8 *data = lrg_asset_pack_load_raw (pack, "config.yaml", &size, &error);
+if (data) {
+    /* Process raw data */
+}
+
+/* Or by ID */
+guint32 id = lrg_asset_pack_get_id (pack, "config.yaml");
+g_autofree guint8 *data2 = lrg_asset_pack_load_raw_by_id (pack, id, &size, &error);
+#+end_src
+
+*** GObject Loading
+:PROPERTIES:
+:CUSTOM_ID: gobject-loading
+:END:
+Load GObjects from YAML resources in the pack:
+
+#+begin_src C
+LrgDataLoader *loader = lrg_engine_get_data_loader (engine);
+
+g_autoptr(GObject) obj = lrg_asset_pack_load_object (
+    pack, "entities/player.yaml", loader, &error
+);
+if (obj) {
+    g_print ("Loaded: %s\n", G_OBJECT_TYPE_NAME (obj));
+}
+#+end_src
+
+*** Access Underlying
+:PROPERTIES:
+:CUSTOM_ID: access-underlying
+:END:
+#+begin_src C
+/* Get the wrapped GrlResourcePack */
+GrlResourcePack *grl_pack = lrg_asset_pack_get_resource_pack (pack);
+#+end_src
+
+** Error Handling
+:PROPERTIES:
+:CUSTOM_ID: error-handling
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgAssetPack) pack = lrg_asset_pack_new ("missing.rres", &error);
+
+if (pack == NULL) {
+    if (error->domain == LRG_ASSET_PACK_ERROR) {
+        switch (error->code) {
+        case LRG_ASSET_PACK_ERROR_FILE_NOT_FOUND:
+            g_print ("File not found\n");
+            break;
+        case LRG_ASSET_PACK_ERROR_INVALID_FORMAT:
+            g_print ("Invalid rres format\n");
+            break;
+        case LRG_ASSET_PACK_ERROR_DECRYPT_FAILED:
+            g_print ("Wrong password\n");
+            break;
+        }
+    }
+}
+#+end_src
+
+Error codes:
+
+- =LRG_ASSET_PACK_ERROR_FILE_NOT_FOUND= - File could not be opened
+- =LRG_ASSET_PACK_ERROR_INVALID_FORMAT= - Invalid rres file format
+- =LRG_ASSET_PACK_ERROR_RESOURCE_NOT_FOUND= - Resource not found in pack
+- =LRG_ASSET_PACK_ERROR_LOAD_FAILED= - Failed to load resource
+- =LRG_ASSET_PACK_ERROR_DECRYPT_FAILED= - Failed to decrypt resource
+
+** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+static void
+load_game_assets (LrgEngine *engine)
+{
+    g_autoptr(GError) error = NULL;
+
+    /* Open the main asset pack */
+    g_autoptr(LrgAssetPack) pack = lrg_asset_pack_new ("game.rres", &error);
+    if (pack == NULL) {
+        g_warning ("Failed to open asset pack: %s", error->message);
+        return;
+    }
+
+    g_print ("Opened pack: %s\n", lrg_asset_pack_get_filename (pack));
+    g_print ("Resources: %u\n", lrg_asset_pack_get_resource_count (pack));
+
+    /* Check for central directory */
+    if (!lrg_asset_pack_has_directory (pack)) {
+        g_warning ("Pack has no directory, cannot use name-based loading");
+        return;
+    }
+
+    /* List all resources */
+    g_autoptr(GList) resources = lrg_asset_pack_list_resources (pack);
+    for (GList *l = resources; l != NULL; l = l->next) {
+        g_print ("  - %s\n", (gchar *)l->data);
+    }
+
+    /* Load specific assets */
+    g_autoptr(GrlTexture) player_tex = lrg_asset_pack_load_texture (
+        pack, "sprites/player.png", &error
+    );
+    if (player_tex == NULL) {
+        g_warning ("Failed to load player texture: %s", error->message);
+    }
+
+    /* Load wave data for procedural manipulation */
+    g_autoptr(LrgWaveData) explosion = lrg_asset_pack_load_wave (
+        pack, "sounds/explosion.wav", &error
+    );
+    if (explosion) {
+        /* Modify and use */
+        g_autoptr(LrgWaveData) pitched = lrg_wave_data_resample (explosion, 22050);
+        /* ... */
+    }
+
+    /* Load game objects from YAML in pack */
+    LrgDataLoader *loader = lrg_engine_get_data_loader (engine);
+    g_autoptr(GObject) player = lrg_asset_pack_load_object (
+        pack, "entities/player.yaml", loader, &error
+    );
+}
+
+int main (void)
+{
+    g_autoptr(GError) error = NULL;
+    LrgEngine *engine = lrg_engine_get_default ();
+
+    if (!lrg_engine_startup (engine, &error)) {
+        g_error ("Startup failed: %s", error->message);
+    }
+
+    load_game_assets (engine);
+
+    lrg_engine_shutdown (engine);
+    return 0;
+}
+#+end_src
+
+** Using with LrgAssetManager
+:PROPERTIES:
+:CUSTOM_ID: using-with-lrgassetmanager
+:END:
+LrgAssetPack can be registered with LrgAssetManager for unified asset loading:
+
+#+begin_src C
+LrgAssetManager *manager = lrg_engine_get_asset_manager (engine);
+
+/* Load pack and register */
+g_autoptr(LrgAssetPack) pack = lrg_asset_pack_new ("dlc.rres", &error);
+lrg_asset_manager_add_pack (manager, "dlc", pack);
+
+/* Now assets can be loaded through the manager */
+GrlTexture *tex = lrg_asset_manager_load_texture (manager, "dlc:player.png", &error);
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:asset-manager.org][LrgAssetManager]] - Asset caching and management
+- [[file:data-loader.org][LrgDataLoader]] - YAML object loading
+- [[../audio/wave-data.md][LrgWaveData]] - Wave data manipulation

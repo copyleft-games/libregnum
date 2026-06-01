@@ -1,0 +1,60 @@
+* VBox (Vertical Box) Widget
+:PROPERTIES:
+:CUSTOM_ID: vbox-vertical-box-widget
+:END:
+Layout container that stacks children vertically.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: creation
+:END:
+#+begin_src C
+g_autoptr(LrgVBox) vbox = lrg_vbox_new();
+lrg_container_set_spacing(LRG_CONTAINER(vbox), 10);
+lrg_container_set_padding(LRG_CONTAINER(vbox), 5);
+lrg_container_add_child(container, LRG_WIDGET(vbox));
+#+end_src
+
+** Adding Children
+:PROPERTIES:
+:CUSTOM_ID: adding-children
+:END:
+#+begin_src C
+g_autoptr(LrgLabel) title = lrg_label_new("Settings");
+g_autoptr(LrgSlider) volume = lrg_slider_new();
+g_autoptr(LrgButton) ok = lrg_button_new("OK");
+
+lrg_container_add_child(LRG_CONTAINER(vbox), LRG_WIDGET(title));
+lrg_container_add_child(LRG_CONTAINER(vbox), LRG_WIDGET(volume));
+lrg_container_add_child(LRG_CONTAINER(vbox), LRG_WIDGET(ok));
+
+/* Children stack vertically from top to bottom */
+#+end_src
+
+** Homogeneous Layout
+:PROPERTIES:
+:CUSTOM_ID: homogeneous-layout
+:END:
+#+begin_src C
+/* All children get equal height */
+lrg_vbox_set_homogeneous(vbox, TRUE);
+
+/* Variable heights */
+lrg_vbox_set_homogeneous(vbox, FALSE);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+- =lrg_vbox_new()=
+- =lrg_vbox_get_homogeneous/set_homogeneous=
+- (inherits from Container: add_child, spacing, padding, etc.)
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: related
+:END:
+- [[file:hbox.org][HBox]]
+- [[../container.md][Container]]
+- [[../index.md][UI Module Overview]]

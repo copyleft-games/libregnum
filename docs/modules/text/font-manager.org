@@ -1,0 +1,467 @@
+* Font Manager
+:PROPERTIES:
+:CUSTOM_ID: font-manager
+:END:
+=LrgFontManager= is a singleton that handles font loading, caching, and provides access to loaded fonts.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+#+begin_src C
+#define LRG_TYPE_FONT_MANAGER (lrg_font_manager_get_type ())
+G_DECLARE_FINAL_TYPE (LrgFontManager, lrg_font_manager, LRG, FONT_MANAGER, GObject)
+#+end_src
+
+** Singleton Access
+:PROPERTIES:
+:CUSTOM_ID: singleton-access
+:END:
+#+begin_src C
+LrgFontManager *lrg_font_manager_get_default (void);
+#+end_src
+
+Returns the singleton instance. The manager is created on first access.
+
+** Font Loading
+:PROPERTIES:
+:CUSTOM_ID: font-loading
+:END:
+#+begin_src C
+gboolean lrg_font_manager_load (LrgFontManager *self,
+                                 const gchar    *name,
+                                 const gchar    *path,
+                                 gint            size);
+
+gboolean lrg_font_manager_load_from_memory (LrgFontManager *self,
+                                             const gchar    *name,
+                                             const guint8   *data,
+                                             gsize           size,
+                                             gint            font_size);
+#+end_src
+
+** Font Retrieval
+:PROPERTIES:
+:CUSTOM_ID: font-retrieval
+:END:
+#+begin_src C
+GrlFont *lrg_font_manager_get (LrgFontManager *self, const gchar *name);
+GrlFont *lrg_font_manager_get_default_font (LrgFontManager *self);
+#+end_src
+
+** Management
+:PROPERTIES:
+:CUSTOM_ID: management
+:END:
+#+begin_src C
+void lrg_font_manager_unload (LrgFontManager *self, const gchar *name);
+void lrg_font_manager_clear (LrgFontManager *self);
+gboolean lrg_font_manager_has (LrgFontManager *self, const gchar *name);
+GList *lrg_font_manager_get_names (LrgFontManager *self);
+#+end_src
+
+** Default Font
+:PROPERTIES:
+:CUSTOM_ID: default-font
+:END:
+#+begin_src C
+void lrg_font_manager_set_default_name (LrgFontManager *self, const gchar *name);
+const gchar *lrg_font_manager_get_default_name (LrgFontManager *self);
+#+end_src
+
+--------------
+
+** Example: Basic Usage
+:PROPERTIES:
+:CUSTOM_ID: example-basic-usage
+:END:
+#+begin_src C
+LrgFontManager *fonts = lrg_font_manager_get_default ();
+
+/* Load fonts */
+lrg_font_manager_load (fonts, "ui", "fonts/roboto.ttf", 18);
+lrg_font_manager_load (fonts, "title", "fonts/roboto-bold.ttf", 32);
+lrg_font_manager_load (fonts, "mono", "fonts/firacode.ttf", 14);
+
+/* Set default */
+lrg_font_manager_set_default_name (fonts, "ui");
+
+/* Retrieve font */
+GrlFont *font = lrg_font_manager_get (fonts, "title");
+#+end_src
+
+--------------
+
+** Example: Multiple Sizes
+:PROPERTIES:
+:CUSTOM_ID: example-multiple-sizes
+:END:
+Load the same font at different sizes for different purposes:
+
+#+begin_src C
+LrgFontManager *fonts = lrg_font_manager_get_default ();
+
+/* Same font, different sizes */
+lrg_font_manager_load (fonts, "body", "fonts/roboto.ttf", 16);
+lrg_font_manager_load (fonts, "heading", "fonts/roboto.ttf", 24);
+lrg_font_manager_load (fonts, "title", "fonts/roboto.ttf", 48);
+
+/* Use in rich text */
+g_autoptr(LrgRichText) text = lrg_rich_text_new ();
+lrg_rich_text_set_font_name (text, "heading");
+lrg_rich_text_set_markup (text, "Chapter 1");
+#+end_src
+
+--------------
+
+** Example: Embedded Fonts
+:PROPERTIES:
+:CUSTOM_ID: example-embedded-fonts
+:END:
+Load fonts from embedded resources:
+
+#+begin_src C
+#include "embedded_fonts.h"  /* Generated resource file */
+
+LrgFontManager *fonts = lrg_font_manager_get_default ();
+
+/* Load from memory */
+lrg_font_manager_load_from_memory (fonts, "ui",
+                                    embedded_roboto_ttf,
+                                    embedded_roboto_ttf_len,
+                                    18);
+#+end_src
+
+--------------
+
+** Font Caching
+:PROPERTIES:
+:CUSTOM_ID: font-caching
+:END:
+The font manager caches loaded fonts by name. Calling =lrg_font_manager_load()= with the same name will:
+
+1. *Same path/size*: Return success (no-op)
+2. *Different path/size*: Unload old font, load new one
+
+To check if a font is already loaded:
+
+#+begin_src C
+if (!lrg_font_manager_has (fonts, "ui"))
+{
+    lrg_font_manager_load (fonts, "ui", "fonts/roboto.ttf", 18);
+}
+#+end_src
+
+--------------
+
+** Cleanup
+:PROPERTIES:
+:CUSTOM_ID: cleanup
+:END:
+Fonts are automatically cleaned up when the manager is finalized. For manual cleanup:
+
+#+begin_src C
+/* Unload specific font */
+lrg_font_manager_unload (fonts, "temp_font");
+
+/* Unload all fonts */
+lrg_font_manager_clear (fonts);
+#+end_src
+
+--------------
+
+** Automatic System Font Detection
+:PROPERTIES:
+:CUSTOM_ID: automatic-system-font-detection
+:END:
+When =lrg_font_manager_initialize()= is called (typically via =LrgTheme=), the manager automatically searches for common system fonts and loads them at preset sizes.
+
+*** Initialization
+:PROPERTIES:
+:CUSTOM_ID: initialization
+:END:
+#+begin_src C
+LrgFontManager *fonts = lrg_font_manager_get_default ();
+g_autoptr(GError) error = NULL;
+
+if (!lrg_font_manager_initialize (fonts, &error))
+{
+    /* Not fatal - raylib's default bitmap font is used as fallback */
+    g_warning ("Font init failed: %s", error->message);
+}
+#+end_src
+
+*** Custom Font Sizes
+:PROPERTIES:
+:CUSTOM_ID: custom-font-sizes
+:END:
+For high-DPI displays or custom UI scaling, use =lrg_font_manager_initialize_with_sizes()=:
+
+#+begin_src C
+LrgFontManager *fonts = lrg_font_manager_get_default ();
+g_autoptr(GError) error = NULL;
+
+/* Double the default sizes for a 2x HiDPI display */
+if (!lrg_font_manager_initialize_with_sizes (fonts, 24, 32, 48, &error))
+{
+    g_warning ("Font init failed: %s", error->message);
+}
+#+end_src
+
+| Parameter     | Default | Description                         |
+|---------------+---------+-------------------------------------|
+| =size_small=  | 12      | Size for =ui-small= font            |
+| =size_normal= | 16      | Size for =ui-normal= font (default) |
+| =size_large=  | 24      | Size for =ui-large= font            |
+
+*Note:* Call this before =lrg_engine_startup()= if you want custom sizes. The engine calls =lrg_font_manager_initialize()= (with default sizes) during startup.
+
+*** Automatic Font Names
+:PROPERTIES:
+:CUSTOM_ID: automatic-font-names
+:END:
+After initialization, these fonts are available (if a system font was found):
+
+| Name        | Size | Purpose                          |
+|-------------+------+----------------------------------|
+| =ui-small=  | 12px | Small UI text, tooltips          |
+| =ui-normal= | 16px | Default UI text (set as default) |
+| =ui-large=  | 24px | Headers, titles                  |
+
+#+begin_src C
+/* Get the auto-loaded default font */
+GrlFont *font = lrg_font_manager_get_default_font (fonts);
+
+/* Or by name */
+GrlFont *small = lrg_font_manager_get_font (fonts, "ui-small");
+GrlFont *large = lrg_font_manager_get_font (fonts, "ui-large");
+#+end_src
+
+--------------
+
+** System Font Search Paths
+:PROPERTIES:
+:CUSTOM_ID: system-font-search-paths
+:END:
+The manager searches platform-specific paths for common fonts.
+
+*** Linux
+:PROPERTIES:
+:CUSTOM_ID: linux
+:END:
+Search paths (in order):
+
+#+begin_example
+/usr/share/fonts/liberation-sans-fonts    # Fedora
+/usr/share/fonts/liberation-sans          # Debian/Ubuntu
+/usr/share/fonts/truetype/liberation      # Debian/Ubuntu alternative
+/usr/share/fonts/google-noto-vf           # Fedora Noto variable fonts
+/usr/share/fonts/google-noto              # Other distros
+/usr/share/fonts/truetype/noto            # Debian/Ubuntu
+/usr/share/fonts/dejavu-sans-fonts        # Fedora DejaVu
+/usr/share/fonts/truetype/dejavu          # Debian/Ubuntu
+/usr/share/fonts/TTF                      # Arch Linux
+/usr/share/fonts/liberation               # Generic
+/usr/share/fonts/noto                     # Generic
+#+end_example
+
+Font filenames searched:
+
+#+begin_example
+LiberationSans-Regular.ttf
+NotoSans-Regular.ttf
+DejaVuSans.ttf
+#+end_example
+
+*** Windows
+:PROPERTIES:
+:CUSTOM_ID: windows
+:END:
+Search path:
+
+#+begin_example
+C:/Windows/Fonts
+#+end_example
+
+Font filenames searched:
+
+#+begin_example
+segoeui.ttf     # Segoe UI (preferred)
+arial.ttf       # Arial
+verdana.ttf     # Verdana
+#+end_example
+
+--------------
+
+** Font Fallback Chain
+:PROPERTIES:
+:CUSTOM_ID: font-fallback-chain
+:END:
+When rendering text, libregnum uses a fallback chain:
+
+1. *Widget-specific font* - Set via =lrg_label_set_font()=
+2. *Theme default font* - From =lrg_theme_get_default_font()=
+3. *raylib default* - Built-in bitmap font (last resort)
+
+*** LrgLabel Example
+:PROPERTIES:
+:CUSTOM_ID: lrglabel-example
+:END:
+#+begin_src C
+g_autoptr(LrgLabel) label = lrg_label_new ("Hello World");
+
+/* Option 1: Use theme default (automatic) */
+/* No font set - uses theme's default font */
+
+/* Option 2: Use a specific loaded font */
+GrlFont *custom = lrg_font_manager_get_font (fonts, "my-custom");
+lrg_label_set_font (label, custom);
+
+/* Option 3: Let it fall back to raylib default */
+/* If no fonts are loaded, raylib's bitmap font is used */
+#+end_src
+
+*** LrgTheme Integration
+:PROPERTIES:
+:CUSTOM_ID: lrgtheme-integration
+:END:
+=LrgTheme= lazy-initializes the font manager when first accessed:
+
+#+begin_src C
+LrgTheme *theme = lrg_theme_get_default ();
+
+/* This triggers font manager initialization if not already done */
+GrlFont *font = lrg_theme_get_default_font (theme);
+
+/* Returns NULL if no system fonts found - widgets fall back to raylib */
+if (font == NULL)
+{
+    g_message ("Using raylib default font");
+}
+#+end_src
+
+--------------
+
+** Adding Custom Font Paths
+:PROPERTIES:
+:CUSTOM_ID: adding-custom-font-paths
+:END:
+If your distribution uses different font paths, you have two options:
+
+*** Option 1: Load Fonts Explicitly
+:PROPERTIES:
+:CUSTOM_ID: option-1-load-fonts-explicitly
+:END:
+Skip auto-detection and load fonts yourself:
+
+#+begin_src C
+LrgFontManager *fonts = lrg_font_manager_get_default ();
+
+/* Load from your known path */
+lrg_font_manager_load_font (fonts, "ui-normal",
+                            "/custom/path/MyFont.ttf",
+                            16, NULL);
+
+/* Set as default */
+lrg_font_manager_set_default_font_name (fonts, "ui-normal");
+#+end_src
+
+*** Option 2: Modify Source (for engine developers)
+:PROPERTIES:
+:CUSTOM_ID: option-2-modify-source-for-engine-developers
+:END:
+Edit =src/text/lrg-font-manager.c= and add paths to =FONT_SEARCH_PATHS=:
+
+#+begin_src C
+static const gchar * const FONT_SEARCH_PATHS[] = {
+    "/your/custom/font/path",        /* Add your path here */
+    "/usr/share/fonts/liberation-sans-fonts",
+    /* ... existing paths ... */
+    NULL
+};
+#+end_src
+
+Add font filenames to =FONT_CANDIDATES= if needed:
+
+#+begin_src C
+static const gchar * const FONT_CANDIDATES[] = {
+    "YourFont-Regular.ttf",          /* Add your font here */
+    "LiberationSans-Regular.ttf",
+    /* ... existing fonts ... */
+    NULL
+};
+#+end_src
+
+--------------
+
+** Debugging Font Loading
+:PROPERTIES:
+:CUSTOM_ID: debugging-font-loading
+:END:
+Enable debug output to see font detection:
+
+#+begin_src sh
+G_MESSAGES_DEBUG=Libregnum-Text ./your-game
+#+end_src
+
+Example output:
+
+#+begin_example
+Libregnum-Text-INFO: Initializing font manager
+Libregnum-Text-DEBUG: Found system font: /usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf
+Libregnum-Text-DEBUG: Loaded font 'ui-small' from ... (size 12)
+Libregnum-Text-DEBUG: Loaded font 'ui-normal' from ... (size 16)
+Libregnum-Text-DEBUG: Loaded font 'ui-large' from ... (size 24)
+Libregnum-Text-INFO: Font manager initialized with /usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf
+#+end_example
+
+If you see "No system fonts found, using raylib default", check:
+
+1. Font packages are installed (=liberation-sans-fonts= on Fedora, =fonts-liberation= on Debian/Ubuntu)
+2. Font paths match your distribution
+3. Font files exist at expected locations
+
+*** Finding Fonts on Your System
+:PROPERTIES:
+:CUSTOM_ID: finding-fonts-on-your-system
+:END:
+#+begin_src sh
+# Find Liberation Sans
+find /usr/share/fonts -name "LiberationSans*.ttf" 2>/dev/null
+
+# List all TrueType fonts
+fc-list : file | grep -i "\.ttf"
+
+# Check specific font
+fc-match "Liberation Sans"
+#+end_src
+
+--------------
+
+** Common Font Packages
+:PROPERTIES:
+:CUSTOM_ID: common-font-packages
+:END:
+*** Fedora
+:PROPERTIES:
+:CUSTOM_ID: fedora
+:END:
+#+begin_src sh
+sudo dnf install liberation-sans-fonts google-noto-sans-fonts dejavu-sans-fonts
+#+end_src
+
+*** Debian/Ubuntu
+:PROPERTIES:
+:CUSTOM_ID: debianubuntu
+:END:
+#+begin_src sh
+sudo apt install fonts-liberation fonts-noto fonts-dejavu
+#+end_src
+
+*** Arch Linux
+:PROPERTIES:
+:CUSTOM_ID: arch-linux
+:END:
+#+begin_src sh
+sudo pacman -S ttf-liberation noto-fonts ttf-dejavu
+#+end_src

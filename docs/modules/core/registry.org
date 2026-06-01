@@ -1,0 +1,103 @@
+* LrgRegistry
+:PROPERTIES:
+:CUSTOM_ID: lrgregistry
+:END:
+Type registry mapping string names to GTypes for data-driven object instantiation.
+
+#+begin_quote
+*[[../../index.md][Home]]* > *[[../index.md][Modules]]* > *[[file:index.org][Core]]* > LrgRegistry
+
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+LrgRegistry enables fully data-driven gameplay by mapping readable type names to GTypes:
+
+#+begin_src C
+lrg_registry_register (registry, "player", MY_TYPE_PLAYER);
+GObject *player = lrg_registry_create (registry, "player", NULL);
+#+end_src
+
+See [[../../concepts/type-registry.md][Type Registry Concept]] for detailed information.
+
+** Key Methods
+:PROPERTIES:
+:CUSTOM_ID: key-methods
+:END:
+*** Registration
+:PROPERTIES:
+:CUSTOM_ID: registration
+:END:
+- =lrg_registry_register()= - Register a type
+- =lrg_registry_unregister()= - Remove a registration
+- =lrg_registry_is_registered()= - Check if type is registered
+
+*** Lookup
+:PROPERTIES:
+:CUSTOM_ID: lookup
+:END:
+- =lrg_registry_lookup()= - Get GType from name
+- =lrg_registry_lookup_name()= - Get name from GType
+
+*** Creation
+:PROPERTIES:
+:CUSTOM_ID: creation
+:END:
+- =lrg_registry_create()= - Create object by name
+- =lrg_registry_create_with_properties()= - Create with properties
+
+*** Enumeration
+:PROPERTIES:
+:CUSTOM_ID: enumeration
+:END:
+- =lrg_registry_get_names()= - List all names
+- =lrg_registry_get_count()= - Count of registrations
+- =lrg_registry_foreach()= - Iterate registrations
+
+*** Management
+:PROPERTIES:
+:CUSTOM_ID: management
+:END:
+- =lrg_registry_clear()= - Remove all registrations
+- =lrg_registry_register_builtin()= - Register built-in types
+
+** Complete API Reference
+:PROPERTIES:
+:CUSTOM_ID: complete-api-reference
+:END:
+See =/var/home/zach/Source/Projects/libregnum/src/core/lrg-registry.h= for full function signatures.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+int main ()
+{
+    LrgRegistry *registry = lrg_registry_new ();
+
+    /* Register types */
+    lrg_registry_register (registry, "player", MY_TYPE_PLAYER);
+
+    /* Create by name */
+    GObject *obj = lrg_registry_create (registry, "player",
+                                        "name", "Hero",
+                                        NULL);
+
+    g_object_unref (obj);
+    g_object_unref (registry);
+    return 0;
+}
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[../../concepts/type-registry.md][Type Registry Concept]]
+- [[file:engine.org][LrgEngine]]
+- [[file:data-loader.org][LrgDataLoader]]

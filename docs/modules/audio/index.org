@@ -1,0 +1,156 @@
+* Audio Module
+:PROPERTIES:
+:CUSTOM_ID: audio-module
+:END:
+The Audio module provides centralized audio management for games, including sound effects and music playback with volume control, crossfading, and sound banking.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+The Audio module consists of these core classes:
+
+- *LrgAudioManager* - Singleton manager for all game audio
+- *LrgSoundBank* - Organized collection of sound effects
+- *LrgMusicTrack* - Music with optional custom loop points
+- *LrgWaveData* - Raw wave data manipulation
+- *LrgProceduralAudio* - Real-time procedural audio generation
+
+** Key Features
+:PROPERTIES:
+:CUSTOM_ID: key-features
+:END:
+- *Sound banking* - Organize sounds by category (UI, player, enemy, etc.)
+- *Multiple channels* - Separate volume control for master, SFX, music, voice
+- *Music crossfading* - Smooth transitions between tracks
+- *Custom loop points* - Set specific loop regions in tracks
+- *Manifests* - Load sound banks from YAML files
+- *Playback control* - Play, stop, pause, resume, seek
+- *Volume management* - Per-channel and global volume control
+- *Singleton manager* - Easy access from anywhere in game
+- *Wave data* - Load, manipulate, crop, resample, and export audio
+- *Procedural audio* - Create custom synthesizers and sound generators
+
+** Quick Start
+:PROPERTIES:
+:CUSTOM_ID: quick-start
+:END:
+#+begin_src C
+/* Get audio manager */
+LrgAudioManager *audio = lrg_audio_manager_get_default();
+
+/* Create sound bank */
+g_autoptr(LrgSoundBank) sfx = lrg_sound_bank_new("ui");
+lrg_sound_bank_set_base_path(sfx, "assets/sounds/ui/");
+lrg_sound_bank_load(sfx, "click", "click.wav", NULL);
+lrg_sound_bank_load(sfx, "error", "error.wav", NULL);
+
+/* Add bank to manager */
+lrg_audio_manager_add_bank(audio, sfx);
+
+/* Play sound */
+lrg_audio_manager_play_sound(audio, "ui", "click");
+
+/* Load and play music */
+g_autoptr(LrgMusicTrack) music = lrg_music_track_new_from_file(
+    "assets/music/boss_theme.ogg",
+    NULL
+);
+lrg_music_track_set_looping(music, TRUE);
+lrg_audio_manager_play_music(audio, music);
+
+/* Control volume */
+lrg_audio_manager_set_master_volume(audio, 0.8);
+lrg_audio_manager_set_music_volume(audio, 0.6);
+lrg_audio_manager_set_sfx_volume(audio, 0.9);
+
+/* In game loop */
+lrg_audio_manager_update(audio);
+#+end_src
+
+** Sound Banking
+:PROPERTIES:
+:CUSTOM_ID: sound-banking
+:END:
+Organize sounds into logical groups via manifests:
+
+#+begin_src yaml
+# assets/sounds/player.yaml
+name: player
+base_path: assets/sounds/player/
+sounds:
+  jump: jump.wav
+  land: land.ogg
+  hurt: hurt.wav
+  pickup: item_pickup.wav
+#+end_src
+
+Load the bank:
+
+#+begin_src C
+if (lrg_audio_manager_load_bank(audio, "assets/sounds/player.yaml", NULL)) {
+    lrg_audio_manager_play_sound(audio, "player", "jump");
+}
+#+end_src
+
+** Music Crossfading
+:PROPERTIES:
+:CUSTOM_ID: music-crossfading
+:END:
+Smooth transitions between tracks:
+
+#+begin_src C
+g_autoptr(LrgMusicTrack) boss_music = lrg_music_track_new_from_file(
+    "assets/music/boss_battle.ogg", NULL
+);
+
+/* Crossfade over 2 seconds */
+lrg_audio_manager_crossfade_to(audio, boss_music, 2.0);
+#+end_src
+
+** Volume Channels
+:PROPERTIES:
+:CUSTOM_ID: volume-channels
+:END:
+Control audio independently:
+
+#+begin_src C
+/* Settings menu */
+lrg_audio_manager_set_master_volume(audio, master_slider);
+lrg_audio_manager_set_music_volume(audio, music_slider);
+lrg_audio_manager_set_sfx_volume(audio, sfx_slider);
+lrg_audio_manager_set_voice_volume(audio, voice_slider);
+
+/* Pause all audio */
+lrg_audio_manager_set_muted(audio, TRUE);
+#+end_src
+
+** Music Loop Points
+:PROPERTIES:
+:CUSTOM_ID: music-loop-points
+:END:
+Set custom loop regions:
+
+#+begin_src C
+g_autoptr(LrgMusicTrack) track = lrg_music_track_new_from_file(
+    "boss_music.ogg", NULL
+);
+
+/* Loop from 30 seconds to 120 seconds */
+lrg_music_track_set_loop_points(track, 30.0, 120.0);
+lrg_music_track_set_looping(track, TRUE);
+
+lrg_audio_manager_play_music(audio, track);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+See the individual class documentation:
+
+- [[file:audio-manager.org][LrgAudioManager]] - Audio system manager
+- [[file:sound-bank.org][LrgSoundBank]] - Sound effect collection
+- [[file:music-track.org][LrgMusicTrack]] - Music playback control
+- [[file:wave-data.org][LrgWaveData]] - Raw wave data manipulation
+- [[file:procedural-audio.org][LrgProceduralAudio]] - Real-time audio generation

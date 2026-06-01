@@ -1,0 +1,82 @@
+* Canvas Widget
+:PROPERTIES:
+:CUSTOM_ID: canvas-widget
+:END:
+Root container for the UI system. Handles rendering and input dispatch.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: creation
+:END:
+#+begin_src C
+g_autoptr(LrgCanvas) canvas = lrg_canvas_new();
+lrg_widget_set_size(LRG_WIDGET(canvas), 1280, 720);
+#+end_src
+
+** Rendering
+:PROPERTIES:
+:CUSTOM_ID: rendering
+:END:
+#+begin_src C
+void game_update(void)
+{
+    /* Process input and dispatch to widgets */
+    lrg_canvas_handle_input(canvas);
+
+    /* Draw entire widget tree */
+    lrg_canvas_render(canvas);
+}
+#+end_src
+
+** Adding Widgets
+:PROPERTIES:
+:CUSTOM_ID: adding-widgets
+:END:
+#+begin_src C
+g_autoptr(LrgPanel) main_panel = lrg_panel_new();
+lrg_widget_set_position(LRG_WIDGET(main_panel), 150, 100);
+lrg_widget_set_size(LRG_WIDGET(main_panel), 500, 400);
+lrg_container_add_child(LRG_CONTAINER(canvas), LRG_WIDGET(main_panel));
+#+end_src
+
+** Hit Testing
+:PROPERTIES:
+:CUSTOM_ID: hit-testing
+:END:
+#+begin_src C
+/* Find widget at screen position */
+LrgWidget *widget = lrg_canvas_widget_at_point(canvas, mouse_x, mouse_y);
+if (widget != NULL)
+{
+    g_message("Clicked on widget");
+}
+#+end_src
+
+** Focus Management
+:PROPERTIES:
+:CUSTOM_ID: focus-management
+:END:
+#+begin_src C
+lrg_canvas_set_focused_widget(canvas, LRG_WIDGET(text_input));
+LrgWidget *focused = lrg_canvas_get_focused_widget(canvas);
+
+LrgWidget *hovered = lrg_canvas_get_hovered_widget(canvas);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+- =lrg_canvas_new()=
+- =lrg_canvas_render(LrgCanvas *self)=
+- =lrg_canvas_handle_input(LrgCanvas *self)=
+- =lrg_canvas_widget_at_point(LrgCanvas *self, gfloat x, gfloat y)=
+- =lrg_canvas_get_focused_widget/set_focused_widget=
+- =lrg_canvas_get_hovered_widget(LrgCanvas *self)=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: related
+:END:
+- [[../container.md][Container]]
+- [[../index.md][UI Module Overview]]

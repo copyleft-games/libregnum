@@ -1,0 +1,311 @@
+* LrgTrigger3D
+:PROPERTIES:
+:CUSTOM_ID: lrgtrigger3d
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgTrigger3D= defines interactive volumes that fire events when entities enter or interact with them. Triggers are used for quest objectives, area transitions, hazard zones, and other gameplay mechanics.
+
+** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information
+:END:
+- *Type Name*: =LrgTrigger3D=
+- *Type ID*: =LRG_TYPE_TRIGGER3D=
+- *Type Category*: Boxed Type (immutable value type)
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_trigger3d_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_new
+:END:
+#+begin_src C
+LrgTrigger3D *lrg_trigger3d_new(const gchar *id, const LrgBoundingBox3D *bounds,
+                                LrgTriggerType trigger_type);
+#+end_src
+
+Creates a new trigger.
+
+*Parameters:*
+
+- =trigger_type= - Type: VOLUME, INTERACTION, DAMAGE, WATER, etc.
+
+*Example:*
+
+#+begin_src C
+g_autoptr(LrgBoundingBox3D) bounds = lrg_bounding_box3d_new(10, 10, 10, 20, 20, 20);
+g_autoptr(LrgTrigger3D) trigger = lrg_trigger3d_new("exit_zone", bounds, LRG_TRIGGER_TYPE_VOLUME);
+#+end_src
+
+*** lrg_trigger3d_new_box
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_new_box
+:END:
+#+begin_src C
+LrgTrigger3D *lrg_trigger3d_new_box(const gchar *id, gfloat min_x, gfloat min_y, gfloat min_z,
+                                    gfloat max_x, gfloat max_y, gfloat max_z,
+                                    LrgTriggerType trigger_type);
+#+end_src
+
+Creates a trigger from box coordinates.
+
+*** lrg_trigger3d_copy
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_copy
+:END:
+#+begin_src C
+LrgTrigger3D *lrg_trigger3d_copy(const LrgTrigger3D *self);
+#+end_src
+
+Creates a copy (nullable safe).
+
+*** lrg_trigger3d_free
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_free
+:END:
+#+begin_src C
+void lrg_trigger3d_free(LrgTrigger3D *self);
+#+end_src
+
+Frees a trigger (nullable safe).
+
+*Use with =g_autoptr(LrgTrigger3D)= for automatic cleanup.*
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+*** lrg_trigger3d_get_id
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_get_id
+:END:
+#+begin_src C
+const gchar *lrg_trigger3d_get_id(const LrgTrigger3D *self);
+#+end_src
+
+Gets the trigger identifier.
+
+*** lrg_trigger3d_get_bounds
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_get_bounds
+:END:
+#+begin_src C
+LrgBoundingBox3D *lrg_trigger3d_get_bounds(const LrgTrigger3D *self);
+#+end_src
+
+Gets the trigger volume bounds.
+
+*** lrg_trigger3d_get_trigger_type
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_get_trigger_type
+:END:
+#+begin_src C
+LrgTriggerType lrg_trigger3d_get_trigger_type(const LrgTrigger3D *self);
+#+end_src
+
+Gets the trigger type.
+
+*Possible Values:*
+
+- =LRG_TRIGGER_TYPE_VOLUME= - Fired by entering volume
+- =LRG_TRIGGER_TYPE_INTERACTION= - Requires player interaction
+- =LRG_TRIGGER_TYPE_DAMAGE= - Damage zone
+- =LRG_TRIGGER_TYPE_WATER= - Water/liquid volume
+- =LRG_TRIGGER_TYPE_PORTAL= - Level transition
+- =LRG_TRIGGER_TYPE_SCRIPT= - Custom script trigger
+
+** Control
+:PROPERTIES:
+:CUSTOM_ID: control
+:END:
+*** lrg_trigger3d_is_enabled / lrg_trigger3d_set_enabled
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_is_enabled--lrg_trigger3d_set_enabled
+:END:
+#+begin_src C
+gboolean lrg_trigger3d_is_enabled(const LrgTrigger3D *self);
+void lrg_trigger3d_set_enabled(LrgTrigger3D *self, gboolean enabled);
+#+end_src
+
+Gets/sets whether the trigger is active.
+
+*Example:*
+
+#+begin_src C
+g_autoptr(LrgTrigger3D) trap = lrg_trigger3d_new("spike_trap", bounds, LRG_TRIGGER_TYPE_DAMAGE);
+lrg_trigger3d_set_enabled(trap, TRUE);
+
+if (lrg_trigger3d_is_enabled(trap))
+    g_print("Trap is active\n");
+#+end_src
+
+*** lrg_trigger3d_is_one_shot / lrg_trigger3d_set_one_shot
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_is_one_shot--lrg_trigger3d_set_one_shot
+:END:
+#+begin_src C
+gboolean lrg_trigger3d_is_one_shot(const LrgTrigger3D *self);
+void lrg_trigger3d_set_one_shot(LrgTrigger3D *self, gboolean one_shot);
+#+end_src
+
+Gets/sets one-shot mode (disables after first trigger).
+
+*Example:*
+
+#+begin_src C
+g_autoptr(LrgTrigger3D) chest = lrg_trigger3d_new("treasure_chest", bounds, LRG_TRIGGER_TYPE_INTERACTION);
+lrg_trigger3d_set_one_shot(chest, TRUE);  /* Only open once */
+#+end_src
+
+** Target and Event
+:PROPERTIES:
+:CUSTOM_ID: target-and-event
+:END:
+*** lrg_trigger3d_get_target_id / lrg_trigger3d_set_target_id
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_get_target_id--lrg_trigger3d_set_target_id
+:END:
+#+begin_src C
+const gchar *lrg_trigger3d_get_target_id(const LrgTrigger3D *self);
+void lrg_trigger3d_set_target_id(LrgTrigger3D *self, const gchar *target_id);
+#+end_src
+
+Gets/sets the target ID (entity or event to activate).
+
+*Example:*
+
+#+begin_src C
+g_autoptr(LrgTrigger3D) trigger = lrg_trigger3d_new("quest_trigger", bounds, LRG_TRIGGER_TYPE_VOLUME);
+lrg_trigger3d_set_target_id(trigger, "start_quest_1");
+
+const gchar *target = lrg_trigger3d_get_target_id(trigger);
+g_print("Trigger targets: %s\n", target);
+#+end_src
+
+** Testing
+:PROPERTIES:
+:CUSTOM_ID: testing
+:END:
+*** lrg_trigger3d_test_point
+:PROPERTIES:
+:CUSTOM_ID: lrg_trigger3d_test_point
+:END:
+#+begin_src C
+gboolean lrg_trigger3d_test_point(const LrgTrigger3D *self, const GrlVector3 *point);
+gboolean lrg_trigger3d_test_point_xyz(const LrgTrigger3D *self, gfloat x, gfloat y, gfloat z);
+#+end_src
+
+Tests if a point is inside the trigger volume.
+
+Only returns TRUE if trigger is enabled.
+
+*Example:*
+
+#+begin_src C
+g_autoptr(GrlVector3) player_pos = get_player_position();
+const LrgTrigger3D *water = lrg_level3d_get_trigger(level, "lake_1");
+
+if (lrg_trigger3d_test_point(water, player_pos)) {
+    apply_water_effect(player);
+    play_splash_sound();
+}
+#+end_src
+
+** Example Usage
+:PROPERTIES:
+:CUSTOM_ID: example-usage
+:END:
+*** Quest Trigger
+:PROPERTIES:
+:CUSTOM_ID: quest-trigger
+:END:
+#+begin_src C
+g_autoptr(LrgBoundingBox3D) bounds = lrg_bounding_box3d_new(100, 0, 100, 120, 30, 120);
+g_autoptr(LrgTrigger3D) quest_trigger = lrg_trigger3d_new("npc_meetup", bounds, LRG_TRIGGER_TYPE_VOLUME);
+lrg_trigger3d_set_target_id(quest_trigger, "meet_npc_quest");
+lrg_trigger3d_set_one_shot(quest_trigger, TRUE);  /* Only once */
+lrg_level3d_add_trigger(level, quest_trigger);
+#+end_src
+
+*** Damage Zone
+:PROPERTIES:
+:CUSTOM_ID: damage-zone
+:END:
+#+begin_src C
+g_autoptr(LrgBoundingBox3D) lava_bounds = lrg_bounding_box3d_new(0, 0, 0, 50, 10, 50);
+g_autoptr(LrgTrigger3D) lava = lrg_trigger3d_new("lava_pit", lava_bounds, LRG_TRIGGER_TYPE_DAMAGE);
+lrg_trigger3d_set_target_id(lava, "10");  /* 10 damage per frame */
+lrg_level3d_add_trigger(level, lava);
+#+end_src
+
+*** Game Loop Integration
+:PROPERTIES:
+:CUSTOM_ID: game-loop-integration
+:END:
+#+begin_src C
+/* In main game loop */
+g_autoptr(GrlVector3) player_pos = get_player_position();
+g_autoptr(GPtrArray) active_triggers = lrg_level3d_check_triggers(level, player_pos);
+
+for (guint i = 0; i < active_triggers->len; i++) {
+    LrgTrigger3D *trigger = g_ptr_array_index(active_triggers, i);
+    const gchar *trigger_id = lrg_trigger3d_get_id(trigger);
+    const gchar *target = lrg_trigger3d_get_target_id(trigger);
+    LrgTriggerType type = lrg_trigger3d_get_trigger_type(trigger);
+
+    g_print("Activated trigger: %s -> %s\n", trigger_id, target);
+
+    switch (type) {
+        case LRG_TRIGGER_TYPE_DAMAGE:
+            damage_player(atoi(target));
+            break;
+        case LRG_TRIGGER_TYPE_PORTAL:
+            transition_to_level(target);
+            break;
+        case LRG_TRIGGER_TYPE_VOLUME:
+            activate_event(target);
+            break;
+        default:
+            break;
+    }
+
+    /* Disable one-shot triggers after activation */
+    if (lrg_trigger3d_is_one_shot(trigger))
+        lrg_trigger3d_set_enabled(trigger, FALSE);
+}
+#+end_src
+
+** Common Trigger Types
+:PROPERTIES:
+:CUSTOM_ID: common-trigger-types
+:END:
+| Type        | Use Case           | Target Format   |
+|-------------+--------------------+-----------------|
+| VOLUME      | Area entry         | Event ID        |
+| INTERACTION | Player interaction | Quest/event ID  |
+| DAMAGE      | Hazard zone        | Damage amount   |
+| WATER       | Swimming zone      | Effect name     |
+| PORTAL      | Level transition   | Level ID        |
+| SCRIPT      | Custom logic       | Script function |
+
+** Performance Tips
+:PROPERTIES:
+:CUSTOM_ID: performance-tips
+:END:
+1. Only check triggers for active entities
+2. Use spatial queries (=lrg_level3d_check_triggers=) for efficiency
+3. Disable triggers after one-shot activation
+4. Consider trigger volume size (smaller is faster)
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:level3d.org][LrgLevel3D]] - Contains triggers
+- [[file:bounding-box3d.org][LrgBoundingBox3D]] - Trigger bounds
+- [[file:spawn-point3d.org][LrgSpawnPoint3D]] - May trigger spawning

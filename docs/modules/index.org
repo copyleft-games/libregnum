@@ -1,0 +1,392 @@
+* Libregnum Modules
+:PROPERTIES:
+:CUSTOM_ID: libregnum-modules
+:END:
+Complete documentation for all Libregnum game engine modules and systems.
+
+#+begin_quote
+*[[../index.md][Home]]* > Modules
+
+#+end_quote
+
+** Completed Modules
+:PROPERTIES:
+:CUSTOM_ID: completed-modules
+:END:
+*** [[file:core/index.org][Core Module]] - Foundation
+:PROPERTIES:
+:CUSTOM_ID: core-module---foundation
+:END:
+Essential engine systems completed in Phase 0:
+
+- *[[file:core/engine.org][LrgEngine]]* - Central engine singleton managing lifecycle and subsystems
+- *[[file:core/registry.org][LrgRegistry]]* - Type registry for data-driven object creation
+- *[[file:core/data-loader.org][LrgDataLoader]]* - YAML file loading with GObject deserialization
+- *[[file:core/asset-manager.org][LrgAssetManager]]* - Asset caching with mod overlay support
+
+*** [[file:graphics/index.org][Graphics Module]] - Window and Rendering
+:PROPERTIES:
+:CUSTOM_ID: graphics-module---window-and-rendering
+:END:
+Window management, cameras, and rendering abstractions:
+
+- *[[file:graphics/index.org#lrgdrawable][LrgDrawable]]* - Interface for renderable objects
+- *[[file:graphics/index.org#lrgwindow][LrgWindow]]* - Abstract window base class
+- *[[file:graphics/index.org#lrggrlwindow][LrgGrlWindow]]* - Graylib window implementation
+- *[[file:graphics/index.org#lrgcamera][LrgCamera]]* - Abstract camera base class
+- *[[file:graphics/index.org#lrgcamera2d][LrgCamera2D]]* - 2D camera for top-down/side-scrolling
+- *[[file:graphics/index.org#lrgcamera3d][LrgCamera3D]]* - 3D camera for 3D games
+- *[[file:graphics/index.org#lrgrenderer][LrgRenderer]]* - Render management and layer system
+
+*** [[file:particles/index.org][Particles Module]] - Particle Systems
+:PROPERTIES:
+:CUSTOM_ID: particles-module---particle-systems
+:END:
+GPU-efficient particle effects:
+
+- *[[file:particles/particle.org][LrgParticle]]* - Individual particle state
+- *[[file:particles/pool.org][LrgParticlePool]]* - Memory-efficient particle storage
+- *[[file:particles/emitter.org][LrgParticleEmitter]]* - Particle spawning with shapes
+- *[[file:particles/forces.org][LrgParticleForce]]* - Gravity, wind, attractors, turbulence
+- *[[file:particles/system.org][LrgParticleSystem]]* - Complete particle effect system
+
+*** [[file:postprocess/index.org][Post-Processing Module]] - Visual Effects
+:PROPERTIES:
+:CUSTOM_ID: post-processing-module---visual-effects
+:END:
+Screen-space effects pipeline:
+
+- *[[file:postprocess/post-effect.org][LrgPostEffect]]* - Base effect class
+- *[[file:postprocess/post-processor.org][LrgPostProcessor]]* - Effect chain manager
+- *[[file:postprocess/effects.org][Effects]]* - Bloom, vignette, color grade, FXAA, film grain, screen shake
+- *[[file:postprocess/accessibility.org][Accessibility]]* - Colorblind simulation and correction
+
+*** [[file:animation/index.org][Animation Module]] - Skeletal Animation
+:PROPERTIES:
+:CUSTOM_ID: animation-module---skeletal-animation
+:END:
+Complete skeletal animation system:
+
+- *[[file:animation/skeleton.org][LrgSkeleton]]* - Bone hierarchy and poses
+- *[[file:animation/clip.org][LrgAnimationClip]]* - Keyframe animation data
+- *[[file:animation/animator.org][LrgAnimator]]* - Simple playback with crossfading
+- *[[file:animation/state-machine.org][LrgAnimationStateMachine]]* - Parameter-driven state machine
+- *[[file:animation/blend-tree.org][LrgBlendTree]]* - 1D/2D parametric blending
+- *[[file:animation/layers.org][LrgAnimationLayer]]* - Layered animation with bone masks
+- *[[file:animation/ik-solver.org][LrgIKSolver]]* - FABRIK, CCD, two-bone, look-at
+
+*** [[file:text/index.org][Rich Text Module]] - Styled Text
+:PROPERTIES:
+:CUSTOM_ID: rich-text-module---styled-text
+:END:
+BBCode-style text markup:
+
+- *[[file:text/font-manager.org][LrgFontManager]]* - Font loading and caching
+- *[[file:text/rich-text.org][LrgRichText]]* - Markup parsing and rendering
+- *[[file:text/markup-reference.org][Markup Reference]]* - Tag documentation
+- *[[file:text/effects.org][LrgTextEffect]]* - Shake, wave, rainbow, typewriter effects
+
+*** [[file:video/index.org][Video Module]] - Video Playback
+:PROPERTIES:
+:CUSTOM_ID: video-module---video-playback
+:END:
+FFmpeg-based video playback:
+
+- *[[file:video/video-player.org][LrgVideoPlayer]]* - Video playback with audio
+- *[[file:video/subtitles.org][Subtitles]]* - SRT/VTT subtitle support
+- *[[file:video/ffmpeg-setup.org][FFmpeg Setup]]* - Dependency installation
+
+*** [[file:tween/index.org][Tween Module]] - Property Animation
+:PROPERTIES:
+:CUSTOM_ID: tween-module---property-animation
+:END:
+Smooth property animation with easing:
+
+- *[[file:tween/index.org#easing-functions][LrgEasing]]* - 30+ easing functions
+- *[[file:tween/index.org#quick-start][LrgTween]]* - Single property animation
+- *[[file:tween/index.org#sequences-and-parallel][LrgTweenSequence]]* - Chain tweens together
+- *[[file:tween/index.org#sequences-and-parallel][LrgTweenParallel]]* - Run tweens simultaneously
+- *[[file:tween/index.org#quick-start][LrgTweenManager]]* - Active tween coordinator
+
+*** [[file:transition/index.org][Transition Module]] - Scene Transitions
+:PROPERTIES:
+:CUSTOM_ID: transition-module---scene-transitions
+:END:
+Smooth scene changes:
+
+- *[[file:transition/index.org][LrgTransition]]* - Base transition class
+- *[[file:transition/index.org#fade-transition][LrgFadeTransition]]* - Fade to/from color
+- *[[file:transition/index.org#wipe-transition][LrgWipeTransition]]* - Directional wipe
+- *[[file:transition/index.org#dissolve-transition][LrgDissolveTransition]]* - Noise dissolve
+- *[[file:transition/index.org#slide-transition][LrgSlideTransition]]* - Push/cover/reveal
+- *[[file:transition/index.org][LrgTransitionManager]]* - Transition coordinator
+
+*** [[file:trigger2d/index.org][2D Trigger Module]] - Area Triggers
+:PROPERTIES:
+:CUSTOM_ID: 2d-trigger-module---area-triggers
+:END:
+Event-based trigger zones:
+
+- *[[file:trigger2d/index.org][LrgTrigger2D]]* - Base trigger class
+- *[[file:trigger2d/index.org#rectangle-trigger][LrgTriggerRect]]* - Rectangle triggers
+- *[[file:trigger2d/index.org#circle-trigger][LrgTriggerCircle]]* - Circle triggers
+- *[[file:trigger2d/index.org#polygon-trigger][LrgTriggerPolygon]]* - Polygon triggers
+- *[[file:trigger2d/index.org][LrgTriggerManager]]* - Trigger coordinator
+
+*** [[file:atlas/index.org][Atlas Module]] - Texture Atlases
+:PROPERTIES:
+:CUSTOM_ID: atlas-module---texture-atlases
+:END:
+Texture packing and sprite sheets:
+
+- *[[file:atlas/index.org#texture-atlas][LrgTextureAtlas]]* - Packed texture atlas
+- *[[file:atlas/index.org#sprite-sheet][LrgSpriteSheet]]* - Animation sprite sheets
+- *[[file:atlas/index.org#nine-slice-9-patch][LrgNineSlice]]* - Scalable UI sprites
+- *[[file:atlas/index.org#atlas-packer-build-tool][LrgAtlasPacker]]* - Build-time packer
+
+*** [[file:tutorial/index.org][Tutorial Module]] - Player Onboarding
+:PROPERTIES:
+:CUSTOM_ID: tutorial-module---player-onboarding
+:END:
+Guided tutorials and hints:
+
+- *[[file:tutorial/index.org][LrgTutorial]]* - Tutorial sequence
+- *[[file:tutorial/index.org#tutorial-steps][LrgTutorialStep]]* - Individual instruction step
+- *[[file:tutorial/index.org][LrgTutorialManager]]* - Tutorial coordinator
+- *[[file:tutorial/index.org#highlight-effects][LrgHighlight]]* - UI element highlighting
+- *[[file:tutorial/index.org#input-prompts][LrgInputPrompt]]* - Device-aware input hints
+
+*** [[file:weather/index.org][Weather Module]] - Dynamic Weather
+:PROPERTIES:
+:CUSTOM_ID: weather-module---dynamic-weather
+:END:
+Atmospheric weather effects:
+
+- *[[file:weather/index.org#rain][LrgRain]]* - Rain particle effect
+- *[[file:weather/index.org#snow][LrgSnow]]* - Snow particle effect
+- *[[file:weather/index.org#fog][LrgFog]]* - Screen-space fog
+- *[[file:weather/index.org#lightning][LrgLightning]]* - Lightning flashes
+- *[[file:weather/index.org#daynight-cycle][LrgDayNightCycle]]* - Time-of-day system
+- *[[file:weather/index.org][LrgWeatherManager]]* - Weather coordinator
+
+*** [[file:lighting/index.org][2D Lighting Module]] - Dynamic Lighting
+:PROPERTIES:
+:CUSTOM_ID: 2d-lighting-module---dynamic-lighting
+:END:
+2D lights and shadows:
+
+- *[[file:lighting/index.org][LrgLight2D]]* - Base light class
+- *[[file:lighting/index.org#point-light][LrgPointLight2D]]* - Radial point lights
+- *[[file:lighting/index.org#spot-light][LrgSpotLight2D]]* - Directional cone lights
+- *[[file:lighting/index.org#directional-light][LrgDirectionalLight2D]]* - Sun-like lights
+- *[[file:lighting/index.org#shadow-map][LrgShadowMap]]* - Shadow rendering
+- *[[file:lighting/index.org#baked-lighting-lightmaps][LrgLightmap]]* - Baked lighting
+- *[[file:lighting/index.org][LrgLightingManager]]* - Lighting coordinator
+
+*** [[file:template/index.org][Template Module]] - Ready-to-Use Menu States & Engagement
+:PROPERTIES:
+:CUSTOM_ID: template-module---ready-to-use-menu-states--engagement
+:END:
+Pre-built game state implementations:
+
+- *[[file:template/index.org#main-menu-state][LrgTemplateMainMenuState]]* - Title screen with buttons
+- *[[file:template/index.org#pause-menu-state][LrgTemplatePauseMenuState]]* - Pause overlay with audio ducking
+- *[[file:template/index.org#settings-menu-state][LrgTemplateSettingsMenuState]]* - Tabbed settings interface
+- *[[file:template/index.org#loading-state][LrgTemplateLoadingState]]* - Loading screen with progress
+- *[[file:template/index.org#error-state][LrgTemplateErrorState]]* - Error recovery screen
+- *[[file:template/index.org#confirmation-state][LrgTemplateConfirmationState]]* - Modal confirmation dialog
+
+Engagement systems for player retention:
+
+- *[[file:template/index.org#statistics-tracking][LrgTemplateStatistics]]* - Game statistics tracking
+- *[[file:template/index.org#daily-rewards-interface][LrgTemplateDailyRewards]]* - Daily login rewards with streaks
+- *[[file:template/index.org#dynamic-difficulty-interface][LrgTemplateDifficulty]]* - Dynamic difficulty adjustment
+
+** Planned Modules
+:PROPERTIES:
+:CUSTOM_ID: planned-modules
+:END:
+*** Phase 1: Basic Game Systems (Implemented, docs pending)
+:PROPERTIES:
+:CUSTOM_ID: phase-1-basic-game-systems-implemented-docs-pending
+:END:
+- *ECS Module* - Entity-Component-System architecture
+- *Input Module* - Keyboard, mouse, gamepad handling
+- *UI Module* - Widget system with theming
+- *Tilemap Module* - 2D tile-based map rendering
+
+*** Phase 2: Content and Gameplay (Implemented, docs pending)
+:PROPERTIES:
+:CUSTOM_ID: phase-2-content-and-gameplay-implemented-docs-pending
+:END:
+- *Dialog Module* - Branching dialogue trees
+- *Inventory Module* - Item management and equipment
+- *Quest Module* - Quest objectives and tracking
+- *Save Module* - Save/load serialization
+- *Audio Module* - Sound effects and music
+
+*** Phase 3: Advanced Systems (Partial)
+:PROPERTIES:
+:CUSTOM_ID: phase-3-advanced-systems-partial
+:END:
+- *AI Module* - Behavior trees and decision making
+- *Pathfinding Module* - A* navigation and path smoothing
+- *Physics Module* - 2D/3D rigid body simulation
+- *I18N Module* - Localization and translations
+- *Networking Module* - Client/server multiplayer
+
+*** Phase 4: Engine Tools
+:PROPERTIES:
+:CUSTOM_ID: phase-4-engine-tools
+:END:
+- *Debug Module* - Profiler, console, inspector, overlay
+- *Mod Module* - Complete modding system with dependencies
+- *3D World Module* - 3D level support with portals and sectors
+
+** Module Architecture
+:PROPERTIES:
+:CUSTOM_ID: module-architecture
+:END:
+#+begin_example
+Phase 4   mod/           debug/
+          |              |
+Phase 3   ai/  pathfinding/  physics/  i18n/  net/  world3d/
+          |              |              |      |     |
+Phase 2   dialog/  inventory/  quest/  save/  audio/
+          |              |              |      |
+Phase 1   ecs/      input/        ui/      tilemap/
+          |              |              |
+Phase 0   core/ (engine, registry, loader, assets)
+          |
+          glib/gobject/graylib/yaml-glib/libdex
+#+end_example
+
+** Quick Links
+:PROPERTIES:
+:CUSTOM_ID: quick-links
+:END:
+*** For Game Developers
+:PROPERTIES:
+:CUSTOM_ID: for-game-developers
+:END:
+- *[[../quickstart.md][Quickstart Guide]]* - Get started immediately
+- *[[file:core/index.org][Core Module]]* - Essential APIs you'll use first
+- *[[../concepts/index.md][Concepts]]* - Understand design patterns
+
+*** For Advanced Users
+:PROPERTIES:
+:CUSTOM_ID: for-advanced-users
+:END:
+- *[[../architecture.md][Architecture Overview]]* - System design
+- *[[../api/classes.md][API Classes Index]]* - Complete type reference
+- *[[../concepts/error-handling.md][Error Handling]]* - Error patterns
+
+*** For System Design
+:PROPERTIES:
+:CUSTOM_ID: for-system-design
+:END:
+- *[[#module-architecture][Module Dependency Graph]]* - How modules relate
+- *[[../concepts/engine-lifecycle.md][Engine Lifecycle]]* - Engine startup/shutdown
+- *[[../concepts/type-registry.md][Type Registry]]* - Data-driven design
+
+** Module Status
+:PROPERTIES:
+:CUSTOM_ID: module-status
+:END:
+| Module      | Phase | Status      | Key Types                                                                                                                           |
+|-------------+-------+-------------+-------------------------------------------------------------------------------------------------------------------------------------|
+| Core        | 0     | Complete    | Engine, Registry, DataLoader, AssetManager                                                                                          |
+| Graphics    | 0     | Complete    | Window, GrlWindow, Camera, Camera2D, Camera3D, Renderer, Drawable                                                                   |
+| Particles   | 3     | Complete    | Particle, ParticlePool, ParticleEmitter, ParticleForce, ParticleSystem                                                              |
+| PostProcess | 3     | Complete    | PostEffect, PostProcessor, Bloom, Vignette, ColorGrade, FXAA                                                                        |
+| Animation   | 3     | Complete    | Skeleton, Bone, AnimationClip, Animator, StateMachine, BlendTree, IKSolver                                                          |
+| Text        | 3     | Complete    | FontManager, RichText, TextSpan, TextEffect                                                                                         |
+| Video       | 3     | Complete    | VideoPlayer, VideoTexture, SubtitleTrack, VideoSubtitles                                                                            |
+| ECS         | 1     | Implemented | GameObject, Component, World                                                                                                        |
+| Input       | 1     | Implemented | InputMap, InputAction, InputBinding                                                                                                 |
+| UI          | 1     | Implemented | Widget, Container, Button, Label                                                                                                    |
+| Tilemap     | 1     | Implemented | Tileset, Tilemap, TilemapLayer                                                                                                      |
+| Dialog      | 2     | Implemented | DialogTree, DialogNode, DialogRunner                                                                                                |
+| Inventory   | 2     | Implemented | ItemDef, ItemStack, Inventory, Equipment                                                                                            |
+| Quest       | 2     | Implemented | QuestDef, QuestInstance, QuestLog                                                                                                   |
+| Save        | 2     | Implemented | SaveGame, SaveManager, SaveContext                                                                                                  |
+| Audio       | 2     | Implemented | SoundBank, MusicTrack, AudioManager                                                                                                 |
+| AI          | 3     | Implemented | BehaviorTree, BTNode, Blackboard                                                                                                    |
+| Pathfinding | 3     | Implemented | NavGrid, Pathfinder, Path                                                                                                           |
+| Physics     | 3     | Implemented | RigidBody, PhysicsWorld, CollisionInfo                                                                                              |
+| I18N        | 3     | Implemented | Locale, Localization                                                                                                                |
+| Networking  | 3     | Implemented | NetPeer, NetServer, NetClient                                                                                                       |
+| 3D World    | 3     | Implemented | Level3D, Portal, PortalSystem                                                                                                       |
+| Debug       | 4     | Implemented | Profiler, DebugConsole, DebugOverlay, Inspector                                                                                     |
+| Mod         | 4     | Implemented | Mod, ModManager, ModManifest, ModLoader                                                                                             |
+| DLC         | 4     | Complete    | LrgDlc, LrgDlcOwnership, ExpansionPack, QuestPack, ItemPack, etc.                                                                   |
+| Tween       | 4     | Complete    | Easing, Tween, TweenSequence, TweenParallel, TweenManager                                                                           |
+| Transition  | 4     | Complete    | FadeTransition, WipeTransition, DissolveTransition, TransitionManager                                                               |
+| Trigger2D   | 4     | Complete    | TriggerRect, TriggerCircle, TriggerPolygon, TriggerManager                                                                          |
+| Atlas       | 4     | Complete    | TextureAtlas, SpriteSheet, NineSlice, AtlasPacker                                                                                   |
+| Tutorial    | 4     | Complete    | Tutorial, TutorialStep, TutorialManager, Highlight, InputPrompt                                                                     |
+| Weather     | 4     | Complete    | Rain, Snow, Fog, Lightning, DayNightCycle, WeatherManager                                                                           |
+| Lighting    | 4     | Complete    | PointLight2D, SpotLight2D, DirectionalLight2D, ShadowMap, LightingManager                                                           |
+| Template    | 4     | Complete    | MainMenuState, PauseMenuState, SettingsMenuState, LoadingState, ErrorState, ConfirmationState, Statistics, DailyRewards, Difficulty |
+
+** Building with Multiple Modules
+:PROPERTIES:
+:CUSTOM_ID: building-with-multiple-modules
+:END:
+Once available, use modules in concert:
+
+#+begin_src C
+/* Core: Setup engine */
+LrgEngine *engine = lrg_engine_get_default ();
+lrg_engine_startup (engine, &error);
+
+/* ECS: Create game world */
+LrgWorld *world = lrg_world_new ();
+
+/* Input: Handle player input */
+LrgInputMap *input = lrg_engine_get_input_map (engine);
+
+/* Tilemap: Load level */
+LrgTilemap *map = lrg_data_loader_load_file (loader, "level1.yaml", &error);
+
+/* Physics: Simulate */
+LrgPhysicsWorld *physics = lrg_world_get_physics (world);
+
+/* Audio: Play sounds */
+LrgAudioManager *audio = lrg_engine_get_audio_manager (engine);
+
+/* Save: Persist game state */
+LrgSaveManager *save = lrg_engine_get_save_manager (engine);
+#+end_src
+
+** Module Guidelines
+:PROPERTIES:
+:CUSTOM_ID: module-guidelines
+:END:
+*** For Users
+:PROPERTIES:
+:CUSTOM_ID: for-users
+:END:
+- Master the Core module first
+- Use DataLoader for YAML-based game data
+- Use the Registry for type management
+- Understand module dependencies before using
+
+*** For Contributors
+:PROPERTIES:
+:CUSTOM_ID: for-contributors
+:END:
+- Keep modules independent where possible
+- Document virtual methods for extension
+- Follow GObject conventions
+- Write unit tests for new code
+- Update documentation with API changes
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- *[[file:core/index.org][Core Module]]* - Start here
+- *[[../quickstart.md][Quickstart Guide]]* - Getting started
+- *[[../architecture.md][Architecture Overview]]* - System design
+- *[[../../CONTRIBUTING.md][Contributing Guide]]* - How to help

@@ -1,0 +1,364 @@
+* Provider Interfaces
+:PROPERTIES:
+:CUSTOM_ID: provider-interfaces
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+Provider interfaces allow mods to contribute specific types of content to the engine. Multiple providers can be implemented by a single mod.
+
+** LrgEntityProvider
+:PROPERTIES:
+:CUSTOM_ID: lrgentityprovider
+:END:
+Provides custom entity types (characters, enemies, objects).
+
+*** Interface
+:PROPERTIES:
+:CUSTOM_ID: interface
+:END:
+#+begin_src C
+struct _LrgEntityProviderInterface
+{
+    GTypeInterface g_iface;
+    GList * (*get_entity_types) (LrgEntityProvider *self);
+};
+#+end_src
+
+*** lrg_entity_provider_get_entity_types
+:PROPERTIES:
+:CUSTOM_ID: lrg_entity_provider_get_entity_types
+:END:
+#+begin_src C
+GList *lrg_entity_provider_get_entity_types(LrgEntityProvider *self);
+#+end_src
+
+Gets entity GTypes provided by this mod.
+
+*Returns:* (transfer container) (element-type GType) List of entity GTypes
+
+*Implementation:*
+
+#+begin_src C
+static GList *
+my_mod_get_entity_types(LrgEntityProvider *self)
+{
+    GList *types = NULL;
+    types = g_list_append(types, GINT_TO_POINTER(MY_TYPE_PLAYER));
+    types = g_list_append(types, GINT_TO_POINTER(MY_TYPE_MONSTER));
+    return types;
+}
+#+end_src
+
+** LrgItemProvider
+:PROPERTIES:
+:CUSTOM_ID: lrgitemprovider
+:END:
+Provides item definitions (equipment, consumables, etc.).
+
+*** Interface
+:PROPERTIES:
+:CUSTOM_ID: interface-1
+:END:
+#+begin_src C
+struct _LrgItemProviderInterface
+{
+    GTypeInterface g_iface;
+    GList * (*get_item_defs) (LrgItemProvider *self);
+};
+#+end_src
+
+*** lrg_item_provider_get_item_defs
+:PROPERTIES:
+:CUSTOM_ID: lrg_item_provider_get_item_defs
+:END:
+#+begin_src C
+GList *lrg_item_provider_get_item_defs(LrgItemProvider *self);
+#+end_src
+
+Gets item definitions.
+
+*Returns:* (transfer container) (element-type LrgItemDef) Item definitions
+
+** LrgSceneProvider
+:PROPERTIES:
+:CUSTOM_ID: lrgsceneprovider
+:END:
+Provides game scenes (graylib GrlScene objects).
+
+*** Interface
+:PROPERTIES:
+:CUSTOM_ID: interface-2
+:END:
+#+begin_src C
+struct _LrgSceneProviderInterface
+{
+    GTypeInterface g_iface;
+    GList * (*get_scenes) (LrgSceneProvider *self);
+};
+#+end_src
+
+*** lrg_scene_provider_get_scenes
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_provider_get_scenes
+:END:
+#+begin_src C
+GList *lrg_scene_provider_get_scenes(LrgSceneProvider *self);
+#+end_src
+
+Gets scenes provided by this mod.
+
+*Returns:* (transfer container) (element-type GObject) List of GrlScene
+
+** LrgDialogProvider
+:PROPERTIES:
+:CUSTOM_ID: lrgdialogprovider
+:END:
+Provides dialog trees for NPC conversations.
+
+*** Interface
+:PROPERTIES:
+:CUSTOM_ID: interface-3
+:END:
+#+begin_src C
+struct _LrgDialogProviderInterface
+{
+    GTypeInterface g_iface;
+    GList * (*get_dialog_trees) (LrgDialogProvider *self);
+};
+#+end_src
+
+*** lrg_dialog_provider_get_dialog_trees
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_provider_get_dialog_trees
+:END:
+#+begin_src C
+GList *lrg_dialog_provider_get_dialog_trees(LrgDialogProvider *self);
+#+end_src
+
+Gets dialog trees.
+
+*Returns:* (transfer container) (element-type LrgDialogTree) Dialog trees
+
+** LrgQuestProvider
+:PROPERTIES:
+:CUSTOM_ID: lrgquestprovider
+:END:
+Provides quest definitions and objectives.
+
+*** Interface
+:PROPERTIES:
+:CUSTOM_ID: interface-4
+:END:
+#+begin_src C
+struct _LrgQuestProviderInterface
+{
+    GTypeInterface g_iface;
+    GList * (*get_quest_defs) (LrgQuestProvider *self);
+};
+#+end_src
+
+*** lrg_quest_provider_get_quest_defs
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_provider_get_quest_defs
+:END:
+#+begin_src C
+GList *lrg_quest_provider_get_quest_defs(LrgQuestProvider *self);
+#+end_src
+
+Gets quest definitions.
+
+*Returns:* (transfer container) (element-type LrgQuestDef) Quest definitions
+
+** LrgAIProvider
+:PROPERTIES:
+:CUSTOM_ID: lrgaiprovider
+:END:
+Provides custom behavior tree node types for AI.
+
+*** Interface
+:PROPERTIES:
+:CUSTOM_ID: interface-5
+:END:
+#+begin_src C
+struct _LrgAIProviderInterface
+{
+    GTypeInterface g_iface;
+    GList * (*get_bt_node_types) (LrgAIProvider *self);
+};
+#+end_src
+
+*** lrg_ai_provider_get_bt_node_types
+:PROPERTIES:
+:CUSTOM_ID: lrg_ai_provider_get_bt_node_types
+:END:
+#+begin_src C
+GList *lrg_ai_provider_get_bt_node_types(LrgAIProvider *self);
+#+end_src
+
+Gets behavior tree node GTypes.
+
+*Returns:* (transfer container) (element-type GType) Node GTypes
+
+** LrgCommandProvider
+:PROPERTIES:
+:CUSTOM_ID: lrgcommandprovider
+:END:
+Provides debug console commands.
+
+*** Interface
+:PROPERTIES:
+:CUSTOM_ID: interface-6
+:END:
+#+begin_src C
+struct _LrgCommandProviderInterface
+{
+    GTypeInterface g_iface;
+    GList * (*get_commands) (LrgCommandProvider *self);
+};
+#+end_src
+
+*** lrg_command_provider_get_commands
+:PROPERTIES:
+:CUSTOM_ID: lrg_command_provider_get_commands
+:END:
+#+begin_src C
+GList *lrg_command_provider_get_commands(LrgCommandProvider *self);
+#+end_src
+
+Gets console commands.
+
+*Returns:* (transfer container) (element-type LrgConsoleCommand) Commands
+
+*** LrgConsoleCommand (Boxed Type)
+:PROPERTIES:
+:CUSTOM_ID: lrgconsolecommand-boxed-type
+:END:
+#+begin_src C
+LrgConsoleCommand *lrg_console_command_new(const gchar *name, const gchar *description,
+                                           LrgConsoleCommandFunc callback,
+                                           gpointer user_data, GDestroyNotify destroy);
+#+end_src
+
+Creates a console command.
+
+*Example:*
+
+#+begin_src C
+static gchar *
+my_command_handler(LrgDebugConsole *console, guint argc, const gchar **argv, gpointer user_data)
+{
+    return g_strdup("Command executed\n");
+}
+
+LrgConsoleCommand *cmd = lrg_console_command_new(
+    "mycommand",
+    "Does something amazing",
+    my_command_handler,
+    NULL,
+    NULL
+);
+#+end_src
+
+** LrgLocaleProvider
+:PROPERTIES:
+:CUSTOM_ID: lrglocaleprovider
+:END:
+Provides localization data (translations).
+
+*** Interface
+:PROPERTIES:
+:CUSTOM_ID: interface-7
+:END:
+#+begin_src C
+struct _LrgLocaleProviderInterface
+{
+    GTypeInterface g_iface;
+    GList * (*get_locales) (LrgLocaleProvider *self);
+};
+#+end_src
+
+*** lrg_locale_provider_get_locales
+:PROPERTIES:
+:CUSTOM_ID: lrg_locale_provider_get_locales
+:END:
+#+begin_src C
+GList *lrg_locale_provider_get_locales(LrgLocaleProvider *self);
+#+end_src
+
+Gets locales.
+
+*Returns:* (transfer container) (element-type LrgLocale) Locales
+
+** Multi-Provider Example
+:PROPERTIES:
+:CUSTOM_ID: multi-provider-example
+:END:
+A mod implementing multiple providers:
+
+#+begin_src C
+#define MY_TYPE_MOD (my_mod_get_type())
+G_DECLARE_FINAL_TYPE(MyMod, my_mod, MY, MOD, GObject)
+
+static GList *
+my_mod_get_entity_types(LrgEntityProvider *self)
+{
+    GList *types = NULL;
+    types = g_list_append(types, GINT_TO_POINTER(MY_TYPE_CUSTOM_PLAYER));
+    return types;
+}
+
+static GList *
+my_mod_get_item_defs(LrgItemProvider *self)
+{
+    GList *items = NULL;
+    items = g_list_append(items, my_item_def_new("sword", "Golden Sword"));
+    return items;
+}
+
+static void
+my_entity_provider_init(LrgEntityProviderInterface *iface)
+{
+    iface->get_entity_types = my_mod_get_entity_types;
+}
+
+static void
+my_item_provider_init(LrgItemProviderInterface *iface)
+{
+    iface->get_item_defs = my_mod_get_item_defs;
+}
+
+G_DEFINE_TYPE_WITH_CODE(
+    MyMod, my_mod, G_TYPE_OBJECT,
+    G_IMPLEMENT_INTERFACE(LRG_TYPE_MODABLE, my_modable_interface_init)
+    G_IMPLEMENT_INTERFACE(LRG_TYPE_ENTITY_PROVIDER, my_entity_provider_init)
+    G_IMPLEMENT_INTERFACE(LRG_TYPE_ITEM_PROVIDER, my_item_provider_init)
+)
+#+end_src
+
+** Loading Provider Content
+:PROPERTIES:
+:CUSTOM_ID: loading-provider-content
+:END:
+#+begin_src C
+/* In game initialization */
+g_autoptr(GList) entity_types = lrg_mod_manager_collect_entity_types(mod_mgr);
+for (GList *l = entity_types; l; l = l->next) {
+    GType entity_type = GPOINTER_TO_INT(l->data);
+    register_entity_type(entity_type);
+}
+
+g_autoptr(GList) items = lrg_mod_manager_collect_item_defs(mod_mgr);
+for (GList *l = items; l; l = l->next) {
+    LrgItemDef *item = l->data;
+    add_to_item_database(item);
+}
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:modable.org][LrgModable]] - Base interface
+- [[file:mod-manager.org][LrgModManager]] - Collects provider content

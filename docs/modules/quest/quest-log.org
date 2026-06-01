@@ -1,0 +1,325 @@
+* LrgQuestLog - Quest Journal Manager
+:PROPERTIES:
+:CUSTOM_ID: lrgquestlog---quest-journal-manager
+:END:
+Container for managing active, completed, and failed quests. Tracks quest instances and supports quest tracking for HUD display.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject Class* - Cannot be subclassed
+- *Type ID* - =LRG_TYPE_QUEST_LOG=
+- *GIR Name* - =Libregnum.QuestLog=
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_quest_log_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_new
+:END:
+#+begin_src C
+LrgQuestLog * lrg_quest_log_new (void);
+#+end_src
+
+Creates a new quest log.
+
+*Parameters:* None
+
+*Returns:* A new =LrgQuestLog= (transfer full)
+
+** Quest Management
+:PROPERTIES:
+:CUSTOM_ID: quest-management
+:END:
+*** lrg_quest_log_start_quest()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_start_quest
+:END:
+#+begin_src C
+LrgQuestInstance * lrg_quest_log_start_quest (LrgQuestLog *self,
+                                              LrgQuestDef *quest_def);
+#+end_src
+
+Starts a new quest from a definition. Creates an instance and adds it to the active quests.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_def= - Quest definition to start
+
+*Returns:* The quest instance (transfer none, nullable) - =NULL= on failure
+
+*** lrg_quest_log_get_quest()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_get_quest
+:END:
+#+begin_src C
+LrgQuestInstance * lrg_quest_log_get_quest (LrgQuestLog *self,
+                                            const gchar *quest_id);
+#+end_src
+
+Gets a quest instance by its definition ID.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_id= - Quest definition ID
+
+*Returns:* The quest instance (transfer none, nullable)
+
+** Quest Lists
+:PROPERTIES:
+:CUSTOM_ID: quest-lists
+:END:
+*** lrg_quest_log_get_active_quests()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_get_active_quests
+:END:
+#+begin_src C
+GList * lrg_quest_log_get_active_quests (LrgQuestLog *self);
+#+end_src
+
+Gets all active quests.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+
+*Returns:* List of active quest instances (element-type, transfer container)
+
+*** lrg_quest_log_get_completed_quests()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_get_completed_quests
+:END:
+#+begin_src C
+GList * lrg_quest_log_get_completed_quests (LrgQuestLog *self);
+#+end_src
+
+Gets all completed quests.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+
+*Returns:* List of completed quest instances (element-type, transfer container)
+
+** Quest Status Checks
+:PROPERTIES:
+:CUSTOM_ID: quest-status-checks
+:END:
+*** lrg_quest_log_is_quest_completed()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_is_quest_completed
+:END:
+#+begin_src C
+gboolean lrg_quest_log_is_quest_completed (LrgQuestLog *self,
+                                           const gchar *quest_id);
+#+end_src
+
+Checks if a quest has been completed.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_id= - Quest definition ID
+
+*Returns:* =TRUE= if completed
+
+*** lrg_quest_log_is_quest_active()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_is_quest_active
+:END:
+#+begin_src C
+gboolean lrg_quest_log_is_quest_active (LrgQuestLog *self,
+                                        const gchar *quest_id);
+#+end_src
+
+Checks if a quest is currently active.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_id= - Quest definition ID
+
+*Returns:* =TRUE= if active
+
+** Quest Tracking (HUD Display)
+:PROPERTIES:
+:CUSTOM_ID: quest-tracking-hud-display
+:END:
+*** lrg_quest_log_get_tracked_quest()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_get_tracked_quest
+:END:
+#+begin_src C
+LrgQuestInstance * lrg_quest_log_get_tracked_quest (LrgQuestLog *self);
+#+end_src
+
+Gets the currently tracked quest for HUD display.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+
+*Returns:* The tracked quest (transfer none, nullable)
+
+*** lrg_quest_log_set_tracked_quest()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_set_tracked_quest
+:END:
+#+begin_src C
+void lrg_quest_log_set_tracked_quest (LrgQuestLog      *self,
+                                      LrgQuestInstance *quest);
+#+end_src
+
+Sets the currently tracked quest.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest= - Quest to track (nullable)
+
+*** lrg_quest_log_track_quest()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_track_quest
+:END:
+#+begin_src C
+gboolean lrg_quest_log_track_quest (LrgQuestLog *self,
+                                    const gchar *quest_id);
+#+end_src
+
+Tracks a quest by its ID.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_id= - Quest definition ID to track
+
+*Returns:* =TRUE= if quest was found and tracked
+
+** Quest Abandonment
+:PROPERTIES:
+:CUSTOM_ID: quest-abandonment
+:END:
+*** lrg_quest_log_abandon_quest()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_abandon_quest
+:END:
+#+begin_src C
+gboolean lrg_quest_log_abandon_quest (LrgQuestLog *self,
+                                      const gchar *quest_id);
+#+end_src
+
+Abandons an active quest.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_id= - Quest definition ID
+
+*Returns:* =TRUE= if quest was abandoned
+
+** Counts
+:PROPERTIES:
+:CUSTOM_ID: counts
+:END:
+*** lrg_quest_log_get_active_count()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_get_active_count
+:END:
+#+begin_src C
+guint lrg_quest_log_get_active_count (LrgQuestLog *self);
+#+end_src
+
+Gets the number of active quests.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+
+*Returns:* Active quest count
+
+*** lrg_quest_log_get_completed_count()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_get_completed_count
+:END:
+#+begin_src C
+guint lrg_quest_log_get_completed_count (LrgQuestLog *self);
+#+end_src
+
+Gets the number of completed quests.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+
+*Returns:* Completed quest count
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* Create quest log */
+g_autoptr(LrgQuestLog) journal = lrg_quest_log_new();
+
+/* NPC offers a quest */
+g_autoptr(LrgQuestDef) dragon_quest = load_quest_def("slay_dragon");
+LrgQuestInstance *instance = lrg_quest_log_start_quest(journal, dragon_quest);
+if (instance) {
+    g_print("Quest accepted: %s\n", lrg_quest_def_get_name(dragon_quest));
+}
+
+/* Player tracks this quest for HUD */
+lrg_quest_log_track_quest(journal, "slay_dragon");
+
+/* Later, display tracked quest on HUD */
+LrgQuestInstance *tracked = lrg_quest_log_get_tracked_quest(journal);
+if (tracked) {
+    LrgQuestObjective *obj = lrg_quest_instance_get_current_objective(tracked);
+    if (obj) {
+        g_print("Objective: %s\n", lrg_quest_objective_get_description(obj));
+    }
+}
+
+/* Check if quest is active */
+if (lrg_quest_log_is_quest_active(journal, "collect_herbs")) {
+    g_print("Herb gathering is still in progress\n");
+}
+
+/* Player completes a quest */
+LrgQuestInstance *completed_quest = lrg_quest_log_get_quest(journal, "collect_herbs");
+if (completed_quest) {
+    lrg_quest_instance_complete(completed_quest);
+
+    if (lrg_quest_log_is_quest_completed(journal, "collect_herbs")) {
+        g_print("Herb quest finished!\n");
+    }
+}
+
+/* View all active quests */
+GList *active = lrg_quest_log_get_active_quests(journal);
+g_print("Active quests (%d):\n", lrg_quest_log_get_active_count(journal));
+for (GList *l = active; l != NULL; l = l->next) {
+    LrgQuestInstance *q = l->data;
+    LrgQuestDef *def = lrg_quest_instance_get_quest_def(q);
+    g_print("  - %s\n", lrg_quest_def_get_name(def));
+}
+g_list_free(active);
+
+/* View all completed quests */
+GList *completed = lrg_quest_log_get_completed_quests(journal);
+g_print("Completed quests (%d):\n", lrg_quest_log_get_completed_count(journal));
+for (GList *l = completed; l != NULL; l = l->next) {
+    LrgQuestInstance *q = l->data;
+    LrgQuestDef *def = lrg_quest_instance_get_quest_def(q);
+    g_print("  - %s\n", lrg_quest_def_get_name(def));
+}
+g_list_free(completed);
+
+/* Player gives up */
+lrg_quest_log_abandon_quest(journal, "boring_fetch_quest");
+#+end_src

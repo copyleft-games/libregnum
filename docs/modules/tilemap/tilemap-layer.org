@@ -1,0 +1,460 @@
+* LrgTilemapLayer - Single Tilemap Layer
+:PROPERTIES:
+:CUSTOM_ID: lrgtilemaplayer---single-tilemap-layer
+:END:
+A single layer of tile data for a tilemap. Represents a 2D grid of tile IDs with rendering and collision properties.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject Class* - Cannot be subclassed
+- *Type ID* - =LRG_TYPE_TILEMAP_LAYER=
+- *GIR Name* - =Libregnum.TilemapLayer=
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+*** LRG_TILEMAP_EMPTY_TILE
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_empty_tile
+:END:
+#+begin_src C
+#define LRG_TILEMAP_EMPTY_TILE (0)
+#+end_src
+
+Special tile ID value indicating an empty/transparent tile. This value (0) is reserved and should not be used for actual tiles.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_tilemap_layer_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_new
+:END:
+#+begin_src C
+LrgTilemapLayer * lrg_tilemap_layer_new (guint width,
+                                         guint height);
+#+end_src
+
+Creates a new tilemap layer with all tiles initialized to =LRG_TILEMAP_EMPTY_TILE= (0).
+
+*Parameters:*
+
+- =width= - The layer width in tiles
+- =height= - The layer height in tiles
+
+*Returns:* A new =LrgTilemapLayer= (transfer full)
+
+** Dimensions
+:PROPERTIES:
+:CUSTOM_ID: dimensions
+:END:
+*** lrg_tilemap_layer_get_width()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_get_width
+:END:
+#+begin_src C
+guint lrg_tilemap_layer_get_width (LrgTilemapLayer *self);
+#+end_src
+
+Gets the layer width in tiles.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+
+*Returns:* The width
+
+*** lrg_tilemap_layer_get_height()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_get_height
+:END:
+#+begin_src C
+guint lrg_tilemap_layer_get_height (LrgTilemapLayer *self);
+#+end_src
+
+Gets the layer height in tiles.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+
+*Returns:* The height
+
+** Tile Access
+:PROPERTIES:
+:CUSTOM_ID: tile-access
+:END:
+*** lrg_tilemap_layer_get_tile()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_get_tile
+:END:
+#+begin_src C
+guint lrg_tilemap_layer_get_tile (LrgTilemapLayer *self,
+                                  guint            x,
+                                  guint            y);
+#+end_src
+
+Gets the tile ID at the specified position.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =x= - The tile X coordinate
+- =y= - The tile Y coordinate
+
+*Returns:* The tile ID, or =LRG_TILEMAP_EMPTY_TILE= if out of bounds
+
+*** lrg_tilemap_layer_set_tile()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_set_tile
+:END:
+#+begin_src C
+void lrg_tilemap_layer_set_tile (LrgTilemapLayer *self,
+                                 guint            x,
+                                 guint            y,
+                                 guint            tile_id);
+#+end_src
+
+Sets the tile ID at the specified position. Does nothing if coordinates are out of bounds.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =x= - The tile X coordinate
+- =y= - The tile Y coordinate
+- =tile_id= - The tile ID to set
+
+*** lrg_tilemap_layer_fill()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_fill
+:END:
+#+begin_src C
+void lrg_tilemap_layer_fill (LrgTilemapLayer *self,
+                             guint            tile_id);
+#+end_src
+
+Fills the entire layer with the specified tile ID.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =tile_id= - The tile ID to fill with
+
+*** lrg_tilemap_layer_fill_rect()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_fill_rect
+:END:
+#+begin_src C
+void lrg_tilemap_layer_fill_rect (LrgTilemapLayer *self,
+                                  guint            x,
+                                  guint            y,
+                                  guint            width,
+                                  guint            height,
+                                  guint            tile_id);
+#+end_src
+
+Fills a rectangular region with the specified tile ID. Coordinates are clamped to layer bounds.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =x= - The starting X coordinate
+- =y= - The starting Y coordinate
+- =width= - The rectangle width in tiles
+- =height= - The rectangle height in tiles
+- =tile_id= - The tile ID to fill with
+
+*** lrg_tilemap_layer_clear()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_clear
+:END:
+#+begin_src C
+void lrg_tilemap_layer_clear (LrgTilemapLayer *self);
+#+end_src
+
+Clears the layer by setting all tiles to =LRG_TILEMAP_EMPTY_TILE=.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+
+** Layer Properties
+:PROPERTIES:
+:CUSTOM_ID: layer-properties
+:END:
+*** lrg_tilemap_layer_get_visible()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_get_visible
+:END:
+#+begin_src C
+gboolean lrg_tilemap_layer_get_visible (LrgTilemapLayer *self);
+#+end_src
+
+Gets whether the layer is visible.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+
+*Returns:* =TRUE= if visible
+
+*** lrg_tilemap_layer_set_visible()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_set_visible
+:END:
+#+begin_src C
+void lrg_tilemap_layer_set_visible (LrgTilemapLayer *self,
+                                    gboolean         visible);
+#+end_src
+
+Sets whether the layer is visible.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =visible= - Whether the layer is visible
+
+*** lrg_tilemap_layer_get_collision_enabled()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_get_collision_enabled
+:END:
+#+begin_src C
+gboolean lrg_tilemap_layer_get_collision_enabled (LrgTilemapLayer *self);
+#+end_src
+
+Gets whether collision detection is enabled for this layer.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+
+*Returns:* =TRUE= if collision is enabled
+
+*** lrg_tilemap_layer_set_collision_enabled()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_set_collision_enabled
+:END:
+#+begin_src C
+void lrg_tilemap_layer_set_collision_enabled (LrgTilemapLayer *self,
+                                              gboolean         enabled);
+#+end_src
+
+Sets whether collision detection is enabled for this layer.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =enabled= - Whether collision is enabled
+
+** Parallax and Visual Effects
+:PROPERTIES:
+:CUSTOM_ID: parallax-and-visual-effects
+:END:
+*** lrg_tilemap_layer_get_parallax_x()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_get_parallax_x
+:END:
+#+begin_src C
+gfloat lrg_tilemap_layer_get_parallax_x (LrgTilemapLayer *self);
+#+end_src
+
+Gets the horizontal parallax factor. 1.0 = normal scrolling, 0.5 = half speed, 0.0 = stationary.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+
+*Returns:* The parallax factor
+
+*** lrg_tilemap_layer_set_parallax_x()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_set_parallax_x
+:END:
+#+begin_src C
+void lrg_tilemap_layer_set_parallax_x (LrgTilemapLayer *self,
+                                       gfloat           parallax);
+#+end_src
+
+Sets the horizontal parallax factor.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =parallax= - The parallax factor
+
+*** lrg_tilemap_layer_get_parallax_y()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_get_parallax_y
+:END:
+#+begin_src C
+gfloat lrg_tilemap_layer_get_parallax_y (LrgTilemapLayer *self);
+#+end_src
+
+Gets the vertical parallax factor.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+
+*Returns:* The parallax factor
+
+*** lrg_tilemap_layer_set_parallax_y()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_set_parallax_y
+:END:
+#+begin_src C
+void lrg_tilemap_layer_set_parallax_y (LrgTilemapLayer *self,
+                                       gfloat           parallax);
+#+end_src
+
+Sets the vertical parallax factor.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =parallax= - The parallax factor
+
+*** lrg_tilemap_layer_get_opacity()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_get_opacity
+:END:
+#+begin_src C
+gfloat lrg_tilemap_layer_get_opacity (LrgTilemapLayer *self);
+#+end_src
+
+Gets the layer opacity (0.0 = transparent, 1.0 = opaque).
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+
+*Returns:* The opacity value
+
+*** lrg_tilemap_layer_set_opacity()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_set_opacity
+:END:
+#+begin_src C
+void lrg_tilemap_layer_set_opacity (LrgTilemapLayer *self,
+                                    gfloat           opacity);
+#+end_src
+
+Sets the layer opacity.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =opacity= - The opacity value (0.0 to 1.0)
+
+*** lrg_tilemap_layer_get_name()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_get_name
+:END:
+#+begin_src C
+const gchar * lrg_tilemap_layer_get_name (LrgTilemapLayer *self);
+#+end_src
+
+Gets the layer name.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+
+*Returns:* The layer name (transfer none, nullable)
+
+*** lrg_tilemap_layer_set_name()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_set_name
+:END:
+#+begin_src C
+void lrg_tilemap_layer_set_name (LrgTilemapLayer *self,
+                                 const gchar     *name);
+#+end_src
+
+Sets the layer name.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =name= - The layer name (nullable)
+
+** Tile Data Access
+:PROPERTIES:
+:CUSTOM_ID: tile-data-access
+:END:
+*** lrg_tilemap_layer_get_tiles()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_get_tiles
+:END:
+#+begin_src C
+const guint * lrg_tilemap_layer_get_tiles (LrgTilemapLayer *self,
+                                           gsize           *out_len);
+#+end_src
+
+Gets direct access to the tile data array. The array is stored in row-major order (y * width + x).
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =out_len= - (out optional) Return location for tile count
+
+*Returns:* The tile data (array, transfer none)
+
+*** lrg_tilemap_layer_set_tiles()
+:PROPERTIES:
+:CUSTOM_ID: lrg_tilemap_layer_set_tiles
+:END:
+#+begin_src C
+gboolean lrg_tilemap_layer_set_tiles (LrgTilemapLayer *self,
+                                      const guint     *tiles,
+                                      gsize            len);
+#+end_src
+
+Sets all tile data from an array. The array must contain exactly width * height elements in row-major order.
+
+*Parameters:*
+
+- =self= - An =LrgTilemapLayer=
+- =tiles= - The tile data to copy (array)
+- =len= - The number of tiles (must match width * height)
+
+*Returns:* =TRUE= if successful, =FALSE= if @len is incorrect
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* Create a layer */
+g_autoptr(LrgTilemapLayer) layer = lrg_tilemap_layer_new(100, 100);
+lrg_tilemap_layer_set_name(layer, "ground");
+
+/* Fill with default tile */
+lrg_tilemap_layer_fill(layer, 1);
+
+/* Set specific tiles */
+lrg_tilemap_layer_set_tile(layer, 10, 10, 5);
+lrg_tilemap_layer_set_tile(layer, 11, 10, 6);
+
+/* Enable collision detection */
+lrg_tilemap_layer_set_collision_enabled(layer, TRUE);
+
+/* Set parallax for depth effect */
+lrg_tilemap_layer_set_parallax_x(layer, 0.8);
+lrg_tilemap_layer_set_parallax_y(layer, 0.8);
+
+/* Set opacity for transparency effect */
+lrg_tilemap_layer_set_opacity(layer, 0.9);
+
+/* Fill a rectangular region */
+lrg_tilemap_layer_fill_rect(layer, 20, 20, 10, 10, 2);
+
+/* Get tile count */
+gsize count = 0;
+const guint *tiles = lrg_tilemap_layer_get_tiles(layer, &count);
+g_print("Layer has %zu tiles\n", count);
+#+end_src

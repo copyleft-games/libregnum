@@ -1,0 +1,288 @@
+* LrgQuestInstance - Active Quest Instance
+:PROPERTIES:
+:CUSTOM_ID: lrgquestinstance---active-quest-instance
+:END:
+An active instance of a quest that tracks player progress. Created from a =LrgQuestDef=, it maintains the current state, stage index, and objective progress. One instance per active quest in the player's journal.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject Class* - Cannot be subclassed
+- *Type ID* - =LRG_TYPE_QUEST_INSTANCE=
+- *GIR Name* - =Libregnum.QuestInstance=
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_quest_instance_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_new
+:END:
+#+begin_src C
+LrgQuestInstance * lrg_quest_instance_new (LrgQuestDef *quest_def);
+#+end_src
+
+Creates a new quest instance from a definition.
+
+*Parameters:*
+
+- =quest_def= - The quest definition
+
+*Returns:* A new =LrgQuestInstance= (transfer full)
+
+** Definition Access
+:PROPERTIES:
+:CUSTOM_ID: definition-access
+:END:
+*** lrg_quest_instance_get_quest_def()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_get_quest_def
+:END:
+#+begin_src C
+LrgQuestDef * lrg_quest_instance_get_quest_def (LrgQuestInstance *self);
+#+end_src
+
+Gets the quest definition.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+
+*Returns:* The quest definition (transfer none)
+
+** Quest State
+:PROPERTIES:
+:CUSTOM_ID: quest-state
+:END:
+*** lrg_quest_instance_get_state()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_get_state
+:END:
+#+begin_src C
+LrgQuestState lrg_quest_instance_get_state (LrgQuestInstance *self);
+#+end_src
+
+Gets the current quest state.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+
+*Returns:* The quest state (ACTIVE, COMPLETE, FAILED, ABANDONED)
+
+*** lrg_quest_instance_set_state()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_set_state
+:END:
+#+begin_src C
+void lrg_quest_instance_set_state (LrgQuestInstance *self,
+                                   LrgQuestState     state);
+#+end_src
+
+Sets the quest state.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+- =state= - New state
+
+** Stage Progress
+:PROPERTIES:
+:CUSTOM_ID: stage-progress
+:END:
+*** lrg_quest_instance_get_current_stage()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_get_current_stage
+:END:
+#+begin_src C
+guint lrg_quest_instance_get_current_stage (LrgQuestInstance *self);
+#+end_src
+
+Gets the current stage index.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+
+*Returns:* Current stage index
+
+*** lrg_quest_instance_get_current_objective()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_get_current_objective
+:END:
+#+begin_src C
+LrgQuestObjective * lrg_quest_instance_get_current_objective (LrgQuestInstance *self);
+#+end_src
+
+Gets the current stage objective with progress.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+
+*Returns:* Current objective (transfer none, nullable) - =NULL= if complete
+
+** Progress Updates
+:PROPERTIES:
+:CUSTOM_ID: progress-updates
+:END:
+*** lrg_quest_instance_update_progress()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_update_progress
+:END:
+#+begin_src C
+gboolean lrg_quest_instance_update_progress (LrgQuestInstance      *self,
+                                             LrgQuestObjectiveType  objective_type,
+                                             const gchar           *target_id,
+                                             guint                  amount);
+#+end_src
+
+Updates progress for matching objectives. Automatically advances stages when objectives complete.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+- =objective_type= - Type of objective to update
+- =target_id= - (nullable) Target entity/item ID
+- =amount= - Amount to add
+
+*Returns:* =TRUE= if progress was updated
+
+*** lrg_quest_instance_advance_stage()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_advance_stage
+:END:
+#+begin_src C
+gboolean lrg_quest_instance_advance_stage (LrgQuestInstance *self);
+#+end_src
+
+Advances to the next stage if current objective is complete.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+
+*Returns:* =TRUE= if advanced
+
+** Completion/Failure
+:PROPERTIES:
+:CUSTOM_ID: completionfailure
+:END:
+*** lrg_quest_instance_complete()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_complete
+:END:
+#+begin_src C
+void lrg_quest_instance_complete (LrgQuestInstance *self);
+#+end_src
+
+Marks the quest as complete.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+
+*** lrg_quest_instance_fail()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_fail
+:END:
+#+begin_src C
+void lrg_quest_instance_fail (LrgQuestInstance *self);
+#+end_src
+
+Marks the quest as failed.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+
+*** lrg_quest_instance_is_complete()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_is_complete
+:END:
+#+begin_src C
+gboolean lrg_quest_instance_is_complete (LrgQuestInstance *self);
+#+end_src
+
+Checks if the quest is complete.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+
+*Returns:* =TRUE= if complete
+
+** Overall Progress
+:PROPERTIES:
+:CUSTOM_ID: overall-progress
+:END:
+*** lrg_quest_instance_get_progress()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_get_progress
+:END:
+#+begin_src C
+gdouble lrg_quest_instance_get_progress (LrgQuestInstance *self);
+#+end_src
+
+Gets overall quest progress (0.0 to 1.0). Calculated from current stage and objective progress.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+
+*Returns:* Progress fraction
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* Create quest instance from definition */
+g_autoptr(LrgQuestDef) def = load_quest_definition("slay_dragon");
+g_autoptr(LrgQuestInstance) quest = lrg_quest_instance_new(def);
+
+/* In game loop - track player actions */
+if (player_killed_enemy("dragon_boss")) {
+    lrg_quest_instance_update_progress(
+        quest,
+        LRG_QUEST_OBJECTIVE_TYPE_KILL,
+        "dragon_boss",
+        1
+    );
+}
+
+if (player_collected_item("dragon_scales")) {
+    lrg_quest_instance_update_progress(
+        quest,
+        LRG_QUEST_OBJECTIVE_TYPE_COLLECT,
+        "dragon_scales",
+        1
+    );
+}
+
+/* Check current objective */
+LrgQuestObjective *obj = lrg_quest_instance_get_current_objective(quest);
+if (obj) {
+    g_print("Current objective: %s (%.1f%%)\n",
+            lrg_quest_objective_get_description(obj),
+            lrg_quest_objective_get_progress(obj) * 100.0);
+}
+
+/* Check overall progress */
+g_print("Quest progress: %.1f%%\n",
+        lrg_quest_instance_get_progress(quest) * 100.0);
+
+/* Check completion */
+if (lrg_quest_instance_is_complete(quest)) {
+    lrg_quest_instance_complete(quest);
+    g_print("Quest complete!\n");
+    apply_rewards(quest);
+}
+
+/* Or failure */
+if (player_gave_up) {
+    lrg_quest_instance_fail(quest);
+}
+#+end_src

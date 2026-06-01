@@ -1,0 +1,269 @@
+* FFmpeg Setup
+:PROPERTIES:
+:CUSTOM_ID: ffmpeg-setup
+:END:
+The video module requires FFmpeg for decoding. This guide covers installation and configuration.
+
+** Required Libraries
+:PROPERTIES:
+:CUSTOM_ID: required-libraries
+:END:
+| Library         | Purpose                             |
+|-----------------+-------------------------------------|
+| =libavformat=   | Container parsing (MP4, WebM, etc.) |
+| =libavcodec=    | Video/audio decoding                |
+| =libavutil=     | Utility functions                   |
+| =libswscale=    | Pixel format conversion             |
+| =libswresample= | Audio resampling                    |
+
+** Installation
+:PROPERTIES:
+:CUSTOM_ID: installation
+:END:
+*** Fedora
+:PROPERTIES:
+:CUSTOM_ID: fedora
+:END:
+#+begin_src sh
+sudo dnf install ffmpeg-libs ffmpeg-devel
+#+end_src
+
+*** Ubuntu/Debian
+:PROPERTIES:
+:CUSTOM_ID: ubuntudebian
+:END:
+#+begin_src sh
+sudo apt install libavformat-dev libavcodec-dev libavutil-dev \
+                 libswscale-dev libswresample-dev
+#+end_src
+
+*** Arch Linux
+:PROPERTIES:
+:CUSTOM_ID: arch-linux
+:END:
+#+begin_src sh
+sudo pacman -S ffmpeg
+#+end_src
+
+*** Building from Source
+:PROPERTIES:
+:CUSTOM_ID: building-from-source
+:END:
+#+begin_src sh
+git clone https://git.ffmpeg.org/ffmpeg.git
+cd ffmpeg
+./configure --enable-shared --enable-gpl --enable-libx264 --enable-libvpx
+make -j$(nproc)
+sudo make install
+#+end_src
+
+** Codec Support
+:PROPERTIES:
+:CUSTOM_ID: codec-support
+:END:
+*** Common Codecs
+:PROPERTIES:
+:CUSTOM_ID: common-codecs
+:END:
+| Codec      | Library   | Notes                     |
+|------------+-----------+---------------------------|
+| H.264      | libx264   | Most common video codec   |
+| H.265/HEVC | libx265   | Newer, better compression |
+| VP8/VP9    | libvpx    | WebM format               |
+| AAC        | Native    | Common audio codec        |
+| MP3        | Native    | Audio codec               |
+| Vorbis     | libvorbis | OGG audio                 |
+| Opus       | libopus   | Modern audio codec        |
+
+*** Check Available Codecs
+:PROPERTIES:
+:CUSTOM_ID: check-available-codecs
+:END:
+#+begin_src sh
+ffmpeg -codecs | grep -E "(h264|hevc|vp[89]|aac|mp3)"
+#+end_src
+
+** Build Configuration
+:PROPERTIES:
+:CUSTOM_ID: build-configuration
+:END:
+*** pkg-config
+:PROPERTIES:
+:CUSTOM_ID: pkg-config
+:END:
+Libregnum uses pkg-config to find FFmpeg:
+
+#+begin_src makefile
+FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil libswscale libswresample)
+FFMPEG_LIBS := $(shell pkg-config --libs libavformat libavcodec libavutil libswscale libswresample)
+#+end_src
+
+*** Verifying Installation
+:PROPERTIES:
+:CUSTOM_ID: verifying-installation
+:END:
+#+begin_src sh
+pkg-config --modversion libavformat
+pkg-config --modversion libavcodec
+#+end_src
+
+** Optional: Hardware Acceleration
+:PROPERTIES:
+:CUSTOM_ID: optional-hardware-acceleration
+:END:
+*** VAAPI (Linux/Intel/AMD)
+:PROPERTIES:
+:CUSTOM_ID: vaapi-linuxintelamd
+:END:
+#+begin_src sh
+# Fedora
+sudo dnf install ffmpeg-libs libva-devel
+
+# Check VAAPI support
+vainfo
+#+end_src
+
+*** NVENC/NVDEC (NVIDIA)
+:PROPERTIES:
+:CUSTOM_ID: nvencnvdec-nvidia
+:END:
+#+begin_src sh
+# Install NVIDIA drivers with CUDA
+# FFmpeg must be compiled with --enable-nvenc --enable-cuda
+#+end_src
+
+*** VideoToolbox (macOS)
+:PROPERTIES:
+:CUSTOM_ID: videotoolbox-macos
+:END:
+Built into macOS, no additional setup needed.
+
+** Minimum Versions
+:PROPERTIES:
+:CUSTOM_ID: minimum-versions
+:END:
+| Library       | Minimum Version |
+|---------------+-----------------|
+| libavformat   | 58.0            |
+| libavcodec    | 58.0            |
+| libavutil     | 56.0            |
+| libswscale    | 5.0             |
+| libswresample | 3.0             |
+
+Check versions:
+
+#+begin_src sh
+ffmpeg -version
+#+end_src
+
+** Troubleshooting
+:PROPERTIES:
+:CUSTOM_ID: troubleshooting
+:END:
+*** "Codec not found"
+:PROPERTIES:
+:CUSTOM_ID: codec-not-found
+:END:
+Install the required codec library:
+
+#+begin_src sh
+# H.264 support
+sudo dnf install x264-libs
+
+# VP9 support
+sudo dnf install libvpx
+#+end_src
+
+*** "Format not recognized"
+:PROPERTIES:
+:CUSTOM_ID: format-not-recognized
+:END:
+Ensure container format is supported:
+
+#+begin_src sh
+ffmpeg -formats | grep -i mp4
+#+end_src
+
+*** Performance Issues
+:PROPERTIES:
+:CUSTOM_ID: performance-issues
+:END:
+1. *Enable hardware acceleration* if available
+2. *Use appropriate resolution* - scale down 4K videos if not needed
+3. *Pre-decode* - convert videos to a simpler format during asset build
+
+*** Audio Not Playing
+:PROPERTIES:
+:CUSTOM_ID: audio-not-playing
+:END:
+Check audio device configuration:
+
+#+begin_src sh
+# List audio devices
+aplay -l
+
+# Test with FFmpeg directly
+ffplay -nodisp audio.mp3
+#+end_src
+
+** Video Format Recommendations
+:PROPERTIES:
+:CUSTOM_ID: video-format-recommendations
+:END:
+For games, use these settings for best compatibility:
+
+*** Cutscenes
+:PROPERTIES:
+:CUSTOM_ID: cutscenes
+:END:
+#+begin_src sh
+ffmpeg -i input.mov \
+    -c:v libx264 -preset medium -crf 23 \
+    -c:a aac -b:a 192k \
+    -movflags +faststart \
+    output.mp4
+#+end_src
+
+*** Background Videos (Loop)
+:PROPERTIES:
+:CUSTOM_ID: background-videos-loop
+:END:
+#+begin_src sh
+ffmpeg -i input.mov \
+    -c:v libvpx-vp9 -crf 30 -b:v 0 \
+    -c:a libopus -b:a 128k \
+    output.webm
+#+end_src
+
+*** Small UI Videos
+:PROPERTIES:
+:CUSTOM_ID: small-ui-videos
+:END:
+#+begin_src sh
+ffmpeg -i input.mov \
+    -c:v libx264 -preset fast -crf 28 \
+    -vf scale=640:-2 \
+    -an \
+    output.mp4
+#+end_src
+
+** Conditional Compilation
+:PROPERTIES:
+:CUSTOM_ID: conditional-compilation
+:END:
+The video module can be disabled if FFmpeg is not available:
+
+#+begin_src makefile
+ifeq ($(HAVE_FFMPEG),1)
+    MODULES += video
+    CFLAGS += -DLRG_HAVE_VIDEO
+endif
+#+end_src
+
+In code:
+
+#+begin_src C
+#ifdef LRG_HAVE_VIDEO
+#include <libregnum/video/lrg-video-player.h>
+#endif
+#+end_src

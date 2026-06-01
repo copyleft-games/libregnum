@@ -1,0 +1,155 @@
+* LrgModLoader
+:PROPERTIES:
+:CUSTOM_ID: lrgmodloader
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgModLoader= handles filesystem scanning and mod manifest parsing. It discovers mods and loads individual mod instances.
+
+** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information
+:END:
+- *Type Name*: =LrgModLoader=
+- *Type ID*: =LRG_TYPE_MOD_LOADER=
+- *Base Class*: =GObject=
+- *Final Type*: Yes
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_mod_loader_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_loader_new
+:END:
+#+begin_src C
+LrgModLoader *lrg_mod_loader_new(void);
+#+end_src
+
+Creates a new mod loader.
+
+*Returns:* (transfer full) A new loader
+
+** Search Paths
+:PROPERTIES:
+:CUSTOM_ID: search-paths
+:END:
+*** lrg_mod_loader_add_search_path
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_loader_add_search_path
+:END:
+#+begin_src C
+void lrg_mod_loader_add_search_path(LrgModLoader *self, const gchar *path);
+#+end_src
+
+Adds a directory to search for mods.
+
+*** lrg_mod_loader_get_search_paths
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_loader_get_search_paths
+:END:
+#+begin_src C
+GPtrArray *lrg_mod_loader_get_search_paths(LrgModLoader *self);
+#+end_src
+
+Gets all search paths.
+
+*Returns:* (transfer none) (element-type utf8) Path list
+
+*** lrg_mod_loader_clear_search_paths
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_loader_clear_search_paths
+:END:
+#+begin_src C
+void lrg_mod_loader_clear_search_paths(LrgModLoader *self);
+#+end_src
+
+Removes all search paths.
+
+** Configuration
+:PROPERTIES:
+:CUSTOM_ID: configuration
+:END:
+*** lrg_mod_loader_get_manifest_filename / lrg_mod_loader_set_manifest_filename
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_loader_get_manifest_filename--lrg_mod_loader_set_manifest_filename
+:END:
+#+begin_src C
+const gchar *lrg_mod_loader_get_manifest_filename(LrgModLoader *self);
+void lrg_mod_loader_set_manifest_filename(LrgModLoader *self, const gchar *filename);
+#+end_src
+
+Gets/sets the manifest filename (default: "mod.yaml").
+
+*Example:*
+
+#+begin_src C
+lrg_mod_loader_set_manifest_filename(loader, "modinfo.yaml");
+#+end_src
+
+** Discovery
+:PROPERTIES:
+:CUSTOM_ID: discovery
+:END:
+*** lrg_mod_loader_discover
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_loader_discover
+:END:
+#+begin_src C
+GPtrArray *lrg_mod_loader_discover(LrgModLoader *self, GError **error);
+#+end_src
+
+Discovers mods in all search paths.
+
+*Returns:* (transfer full) (element-type LrgMod) Discovered mods
+
+*** lrg_mod_loader_discover_at
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_loader_discover_at
+:END:
+#+begin_src C
+GPtrArray *lrg_mod_loader_discover_at(LrgModLoader *self, const gchar *path, GError **error);
+#+end_src
+
+Discovers mods at a specific path.
+
+*Returns:* (transfer full) (element-type LrgMod) Mods at path
+
+** Loading
+:PROPERTIES:
+:CUSTOM_ID: loading
+:END:
+*** lrg_mod_loader_load_mod
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_loader_load_mod
+:END:
+#+begin_src C
+LrgMod *lrg_mod_loader_load_mod(LrgModLoader *self, const gchar *path, GError **error);
+#+end_src
+
+Loads a single mod from a directory.
+
+*Parameters:*
+
+- =path= - Path to mod directory containing manifest
+
+*Returns:* (transfer full) (nullable) Loaded mod, or NULL on error
+
+*Example:*
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgMod) mod = lrg_mod_loader_load_mod(loader, "/path/to/my_mod", &error);
+if (!mod)
+    g_print("Failed to load mod: %s\n", error->message);
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:mod-manager.org][LrgModManager]] - Uses loader
+- [[file:mod.org][LrgMod]] - Loaded mod representation

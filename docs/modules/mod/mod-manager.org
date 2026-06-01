@@ -1,0 +1,404 @@
+* LrgModManager
+:PROPERTIES:
+:CUSTOM_ID: lrgmodmanager
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgModManager= is the central orchestrator for mod lifecycle management. It handles discovery, dependency resolution, load ordering, and provides access to mod content through provider queries.
+
+** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information
+:END:
+- *Type Name*: =LrgModManager=
+- *Type ID*: =LRG_TYPE_MOD_MANAGER=
+- *Base Class*: =GObject=
+- *Final Type*: Yes
+- *Singleton*: Yes (default instance)
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_mod_manager_get_default
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_get_default
+:END:
+#+begin_src C
+LrgModManager *lrg_mod_manager_get_default(void);
+#+end_src
+
+Gets the default (singleton) mod manager instance.
+
+*Returns:* (transfer none) The default manager
+
+*** lrg_mod_manager_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_new
+:END:
+#+begin_src C
+LrgModManager *lrg_mod_manager_new(void);
+#+end_src
+
+Creates a new mod manager instance.
+
+*Returns:* (transfer full) A new manager
+
+** Configuration
+:PROPERTIES:
+:CUSTOM_ID: configuration
+:END:
+*** lrg_mod_manager_add_search_path
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_add_search_path
+:END:
+#+begin_src C
+void lrg_mod_manager_add_search_path(LrgModManager *self, const gchar *path);
+#+end_src
+
+Adds a directory to search for mods.
+
+*Example:*
+
+#+begin_src C
+g_autoptr(LrgModManager) mgr = lrg_mod_manager_get_default();
+lrg_mod_manager_add_search_path(mgr, "/opt/libregnum/mods");
+lrg_mod_manager_add_search_path(mgr, g_build_filename(g_get_user_data_dir(), "libregnum/mods", NULL));
+#+end_src
+
+*** lrg_mod_manager_get_loader
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_get_loader
+:END:
+#+begin_src C
+LrgModLoader *lrg_mod_manager_get_loader(LrgModManager *self);
+#+end_src
+
+Gets the underlying mod loader for advanced configuration.
+
+*Returns:* (transfer none) The mod loader
+
+** Discovery and Loading
+:PROPERTIES:
+:CUSTOM_ID: discovery-and-loading
+:END:
+*** lrg_mod_manager_discover
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_discover
+:END:
+#+begin_src C
+guint lrg_mod_manager_discover(LrgModManager *self, GError **error);
+#+end_src
+
+Discovers mods in all search paths.
+
+*Returns:* Number of mods discovered
+
+*** lrg_mod_manager_load_all
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_load_all
+:END:
+#+begin_src C
+gboolean lrg_mod_manager_load_all(LrgModManager *self, GError **error);
+#+end_src
+
+Loads all discovered enabled mods in dependency order.
+
+*Returns:* =TRUE= if all required mods loaded successfully
+
+*Example:*
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+if (!lrg_mod_manager_load_all(mgr, &error)) {
+    g_warning("Mod loading failed: %s", error->message);
+    return FALSE;
+}
+#+end_src
+
+*** lrg_mod_manager_unload_all
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_unload_all
+:END:
+#+begin_src C
+void lrg_mod_manager_unload_all(LrgModManager *self);
+#+end_src
+
+Unloads all mods in reverse load order.
+
+*** lrg_mod_manager_reload
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_reload
+:END:
+#+begin_src C
+gboolean lrg_mod_manager_reload(LrgModManager *self, GError **error);
+#+end_src
+
+Reloads all mods (unload then load).
+
+** Mod Queries
+:PROPERTIES:
+:CUSTOM_ID: mod-queries
+:END:
+*** lrg_mod_manager_get_mods
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_get_mods
+:END:
+#+begin_src C
+GPtrArray *lrg_mod_manager_get_mods(LrgModManager *self);
+#+end_src
+
+Gets all discovered mods.
+
+*Returns:* (transfer none) (element-type LrgMod) Array of mods
+
+*** lrg_mod_manager_get_loaded_mods
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_get_loaded_mods
+:END:
+#+begin_src C
+GPtrArray *lrg_mod_manager_get_loaded_mods(LrgModManager *self);
+#+end_src
+
+Gets all loaded mods in load order.
+
+*Returns:* (transfer none) (element-type LrgMod) Loaded mods in order
+
+*** lrg_mod_manager_get_mod
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_get_mod
+:END:
+#+begin_src C
+LrgMod *lrg_mod_manager_get_mod(LrgModManager *self, const gchar *mod_id);
+#+end_src
+
+Gets a mod by ID.
+
+*Returns:* (transfer none) (nullable) The mod, or NULL
+
+*** lrg_mod_manager_has_mod
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_has_mod
+:END:
+#+begin_src C
+gboolean lrg_mod_manager_has_mod(LrgModManager *self, const gchar *mod_id);
+#+end_src
+
+Checks if a mod is discovered.
+
+*** lrg_mod_manager_is_mod_loaded
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_is_mod_loaded
+:END:
+#+begin_src C
+gboolean lrg_mod_manager_is_mod_loaded(LrgModManager *self, const gchar *mod_id);
+#+end_src
+
+Checks if a mod is loaded.
+
+** Mod Control
+:PROPERTIES:
+:CUSTOM_ID: mod-control
+:END:
+*** lrg_mod_manager_enable_mod / lrg_mod_manager_disable_mod
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_enable_mod--lrg_mod_manager_disable_mod
+:END:
+#+begin_src C
+gboolean lrg_mod_manager_enable_mod(LrgModManager *self, const gchar *mod_id);
+gboolean lrg_mod_manager_disable_mod(LrgModManager *self, const gchar *mod_id);
+#+end_src
+
+Enables/disables a mod. Must call before loading.
+
+*Returns:* =TRUE= if mod found
+
+** Load Order
+:PROPERTIES:
+:CUSTOM_ID: load-order
+:END:
+*** lrg_mod_manager_get_load_order
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_get_load_order
+:END:
+#+begin_src C
+GPtrArray *lrg_mod_manager_get_load_order(LrgModManager *self);
+#+end_src
+
+Gets the computed load order.
+
+*Returns:* (transfer full) (element-type utf8) Mod IDs in order
+
+*** lrg_mod_manager_check_dependencies
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_check_dependencies
+:END:
+#+begin_src C
+gboolean lrg_mod_manager_check_dependencies(LrgModManager *self, LrgMod *mod, GError **error);
+#+end_src
+
+Checks if all dependencies for a mod are satisfied.
+
+*Returns:* =TRUE= if dependencies met
+
+** Resource Resolution
+:PROPERTIES:
+:CUSTOM_ID: resource-resolution
+:END:
+*** lrg_mod_manager_resolve_path
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_resolve_path
+:END:
+#+begin_src C
+gchar *lrg_mod_manager_resolve_path(LrgModManager *self, const gchar *path);
+#+end_src
+
+Resolves a path, checking loaded mods in reverse order (most recent wins).
+
+Allows mods to override base game resources.
+
+*Returns:* (transfer full) (nullable) Absolute path to resource
+
+*Example:*
+
+#+begin_src C
+gchar *resolved = lrg_mod_manager_resolve_path(mgr, "models/player.obj");
+if (resolved) {
+    load_model(resolved);
+    g_free(resolved);
+}
+#+end_src
+
+** Provider Collection
+:PROPERTIES:
+:CUSTOM_ID: provider-collection
+:END:
+*** lrg_mod_manager_collect_entity_types
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_collect_entity_types
+:END:
+#+begin_src C
+GList *lrg_mod_manager_collect_entity_types(LrgModManager *self);
+#+end_src
+
+Collects entity types from all mods implementing =LrgEntityProvider=.
+
+*Returns:* (transfer container) (element-type GType) List of GTypes
+
+*** lrg_mod_manager_collect_item_defs
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_collect_item_defs
+:END:
+#+begin_src C
+GList *lrg_mod_manager_collect_item_defs(LrgModManager *self);
+#+end_src
+
+Collects item definitions from =LrgItemProvider= mods.
+
+*Returns:* (transfer container) (element-type LrgItemDef) Item list
+
+*** lrg_mod_manager_collect_dialog_trees
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_collect_dialog_trees
+:END:
+#+begin_src C
+GList *lrg_mod_manager_collect_dialog_trees(LrgModManager *self);
+#+end_src
+
+Collects dialog trees from =LrgDialogProvider= mods.
+
+*** lrg_mod_manager_collect_quest_defs
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_collect_quest_defs
+:END:
+#+begin_src C
+GList *lrg_mod_manager_collect_quest_defs(LrgModManager *self);
+#+end_src
+
+Collects quest definitions from =LrgQuestProvider= mods.
+
+*** lrg_mod_manager_collect_bt_node_types
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_collect_bt_node_types
+:END:
+#+begin_src C
+GList *lrg_mod_manager_collect_bt_node_types(LrgModManager *self);
+#+end_src
+
+Collects behavior tree node types from =LrgAIProvider= mods.
+
+*** lrg_mod_manager_collect_commands
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_collect_commands
+:END:
+#+begin_src C
+GList *lrg_mod_manager_collect_commands(LrgModManager *self);
+#+end_src
+
+Collects console commands from =LrgCommandProvider= mods.
+
+*** lrg_mod_manager_collect_locales
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_collect_locales
+:END:
+#+begin_src C
+GList *lrg_mod_manager_collect_locales(LrgModManager *self);
+#+end_src
+
+Collects locales from =LrgLocaleProvider= mods.
+
+*** lrg_mod_manager_collect_scenes
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_collect_scenes
+:END:
+#+begin_src C
+GList *lrg_mod_manager_collect_scenes(LrgModManager *self);
+#+end_src
+
+Collects scenes from =LrgSceneProvider= mods.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* Initialize mod system */
+g_autoptr(LrgModManager) mgr = lrg_mod_manager_get_default();
+lrg_mod_manager_add_search_path(mgr, "mods/");
+
+/* Discover */
+guint count = lrg_mod_manager_discover(mgr, NULL);
+g_print("Found %u mods\n", count);
+
+/* Show discovered mods */
+g_autoptr(GPtrArray) mods = lrg_mod_manager_get_mods(mgr);
+for (guint i = 0; i < mods->len; i++) {
+    LrgMod *mod = g_ptr_array_index(mods, i);
+    g_print("  - %s (%s)\n", lrg_mod_get_id(mod), lrg_mod_get_state(mod) ? "loaded" : "not loaded");
+}
+
+/* Load */
+g_autoptr(GError) error = NULL;
+if (lrg_mod_manager_load_all(mgr, &error)) {
+    g_print("All mods loaded\n");
+} else {
+    g_print("Load error: %s\n", error->message);
+}
+
+/* Register content from providers */
+g_autoptr(GList) entities = lrg_mod_manager_collect_entity_types(mgr);
+for (GList *l = entities; l; l = l->next) {
+    GType entity_type = GPOINTER_TO_INT(l->data);
+    register_entity_type(entity_type);
+}
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:mod-loader.org][LrgModLoader]] - Discovery
+- [[file:mod.org][LrgMod]] - Individual mods
+- [[file:modable.org][LrgModable]] - Mod interface

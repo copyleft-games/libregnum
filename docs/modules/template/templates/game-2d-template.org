@@ -1,0 +1,415 @@
+* LrgGame2DTemplate
+:PROPERTIES:
+:CUSTOM_ID: lrggame2dtemplate
+:END:
+=LrgGame2DTemplate= extends =LrgGameTemplate= with 2D-specific features including virtual resolution scaling, integrated 2D camera, and layered rendering.
+
+** Inheritance Hierarchy
+:PROPERTIES:
+:CUSTOM_ID: inheritance-hierarchy
+:END:
+#+begin_example
+LrgGameTemplate
+└── LrgGame2DTemplate (derivable)
+    ├── LrgPlatformerTemplate
+    ├── LrgTopDownTemplate
+    ├── LrgShooter2DTemplate
+    │   ├── LrgTwinStickTemplate
+    │   └── LrgShmupTemplate
+    ├── LrgRacing2DTemplate
+    └── LrgTycoonTemplate
+#+end_example
+
+** Features
+:PROPERTIES:
+:CUSTOM_ID: features
+:END:
+- Virtual resolution with automatic scaling
+- Multiple scaling modes (letterbox, stretch, pixel-perfect)
+- Integrated 2D camera with follow, deadzone, and smoothing
+- Layered rendering (background, world, UI)
+- Coordinate transformation between virtual and screen space
+- Camera bounds for level constraints
+
+** Quick Start
+:PROPERTIES:
+:CUSTOM_ID: quick-start
+:END:
+#+begin_src C
+#define MY_TYPE_GAME (my_game_get_type ())
+G_DECLARE_FINAL_TYPE (MyGame, my_game, MY, GAME, LrgGame2DTemplate)
+
+struct _MyGame
+{
+    LrgGame2DTemplate parent_instance;
+};
+
+G_DEFINE_TYPE (MyGame, my_game, LRG_TYPE_GAME_2D_TEMPLATE)
+
+static void
+my_game_configure (LrgGameTemplate *template)
+{
+    LrgGame2DTemplate *template_2d = LRG_GAME_2D_TEMPLATE (template);
+
+    g_object_set (template,
+                  "title", "My 2D Game",
+                  "window-width", 1280,
+                  "window-height", 720,
+                  NULL);
+
+    /* Set virtual resolution (design resolution) */
+    lrg_game_2d_template_set_virtual_resolution (template_2d, 320, 180);
+    lrg_game_2d_template_set_scaling_mode (template_2d, LRG_SCALING_MODE_LETTERBOX);
+    lrg_game_2d_template_set_pixel_perfect (template_2d, TRUE);
+}
+
+static void
+my_game_draw_world (LrgGame2DTemplate *template)
+{
+    /* Draw game entities in world space */
+    draw_tilemap ();
+    draw_entities ();
+}
+
+static void
+my_game_draw_ui (LrgGame2DTemplate *template)
+{
+    /* Draw HUD in virtual resolution space */
+    draw_health_bar (10, 10);
+    draw_score (300, 10);
+}
+
+static void
+my_game_class_init (MyGameClass *klass)
+{
+    LrgGameTemplateClass *template_class = LRG_GAME_TEMPLATE_CLASS (klass);
+    LrgGame2DTemplateClass *template_2d_class = LRG_GAME_2D_TEMPLATE_CLASS (klass);
+
+    template_class->configure = my_game_configure;
+    template_2d_class->draw_world = my_game_draw_world;
+    template_2d_class->draw_ui = my_game_draw_ui;
+}
+#+end_src
+
+** Virtual Methods
+:PROPERTIES:
+:CUSTOM_ID: virtual-methods
+:END:
+#+begin_src C
+/* Called when window resolution changes */
+void (*on_resolution_changed) (LrgGame2DTemplate *self,
+                               gint               new_width,
+                               gint               new_height);
+
+/* Renders background layer (before camera transform) */
+void (*draw_background) (LrgGame2DTemplate *self);
+
+/* Renders world layer (with camera transform) */
+void (*draw_world) (LrgGame2DTemplate *self);
+
+/* Renders UI layer (screen-space, after camera) */
+void (*draw_ui) (LrgGame2DTemplate *self);
+
+/* Updates camera each frame */
+void (*update_camera) (LrgGame2DTemplate *self, gdouble delta);
+#+end_src
+
+** Virtual Resolution
+:PROPERTIES:
+:CUSTOM_ID: virtual-resolution
+:END:
+Virtual resolution lets you design at a fixed resolution and scale to any window size.
+
+#+begin_src C
+/* Set design resolution */
+lrg_game_2d_template_set_virtual_resolution (template, 320, 180);
+
+/* Or set individually */
+lrg_game_2d_template_set_virtual_width (template, 320);
+lrg_game_2d_template_set_virtual_height (template, 180);
+
+/* Query current virtual resolution */
+gint vw = lrg_game_2d_template_get_virtual_width (template);
+gint vh = lrg_game_2d_template_get_virtual_height (template);
+#+end_src
+
+*** Runtime Resolution Changes
+:PROPERTIES:
+:CUSTOM_ID: runtime-resolution-changes
+:END:
+Virtual resolution can be changed at runtime. The scaling factors are automatically
+recalculated when you call any of the setter functions:
+
+#+begin_src C
+/* Change virtual resolution at runtime */
+lrg_game_2d_template_set_virtual_resolution (template, 1920, 1080);
+/* Scaling updates immediately - no additional action needed */
+
+/* Also works with individual setters */
+lrg_game_2d_template_set_virtual_width (template, 640);
+lrg_game_2d_template_set_virtual_height (template, 360);
+#+end_src
+
+This is useful for games that support multiple virtual resolutions (e.g., a quality
+setting that changes render resolution), or for dynamic resolution scaling.
+
+** Scaling Modes
+:PROPERTIES:
+:CUSTOM_ID: scaling-modes
+:END:
+#+begin_src C
+typedef enum {
+    LRG_SCALING_MODE_LETTERBOX,     /* Maintain aspect, add bars */
+    LRG_SCALING_MODE_STRETCH,       /* Stretch to fill (distorts) */
+    LRG_SCALING_MODE_CROP,          /* Fill and crop excess */
+    LRG_SCALING_MODE_INTEGER,       /* Integer scaling only */
+} LrgScalingMode;
+
+lrg_game_2d_template_set_scaling_mode (template, LRG_SCALING_MODE_LETTERBOX);
+LrgScalingMode mode = lrg_game_2d_template_get_scaling_mode (template);
+#+end_src
+
+*** Pixel Perfect Mode
+:PROPERTIES:
+:CUSTOM_ID: pixel-perfect-mode
+:END:
+For pixel art games, enable integer scaling to avoid sub-pixel artifacts:
+
+#+begin_src C
+lrg_game_2d_template_set_pixel_perfect (template, TRUE);
+gboolean pp = lrg_game_2d_template_get_pixel_perfect (template);
+#+end_src
+
+*** Letterbox Color
+:PROPERTIES:
+:CUSTOM_ID: letterbox-color
+:END:
+#+begin_src C
+/* Set color for letterbox/pillarbox bars */
+g_autoptr(GrlColor) color = grl_color_new (20, 20, 30, 255);
+lrg_game_2d_template_set_letterbox_color (template, color);
+#+end_src
+
+** Programmatic Window Resize
+:PROPERTIES:
+:CUSTOM_ID: programmatic-window-resize
+:END:
+When using =lrg_game_template_set_window_size()= to resize the window at runtime,
+the 2D template automatically recalculates scaling and emits the =resolution-changed=
+signal:
+
+#+begin_src C
+/* Resize window - viewport updates immediately */
+lrg_game_template_set_window_size (LRG_GAME_TEMPLATE (template), 1920, 1080);
+
+/* Handle resize in subclass (optional) */
+static void
+my_game_on_resolution_changed (LrgGame2DTemplate *template,
+                                gint               width,
+                                gint               height)
+{
+    /* Recalculate UI layouts if needed */
+    update_ui_layout (width, height);
+}
+#+end_src
+
+This works correctly for both programmatic resizes and user-initiated window
+resizes (dragging window borders, fullscreen toggle, etc.).
+
+*** Asynchronous Resize Handling
+:PROPERTIES:
+:CUSTOM_ID: asynchronous-resize-handling
+:END:
+On Wayland and some X11 window managers, window resize operations are asynchronous.
+The template automatically handles this by tracking pending resize requests and
+avoiding race conditions between the requested size and the actual window size
+reported by the display server.
+
+This means you can safely change resolution in settings menus without worrying
+about timing issues - the scaling will be correct once the window manager applies
+the resize.
+
+** Camera
+:PROPERTIES:
+:CUSTOM_ID: camera
+:END:
+*** Access Camera
+:PROPERTIES:
+:CUSTOM_ID: access-camera
+:END:
+#+begin_src C
+LrgCamera2D *camera = lrg_game_2d_template_get_camera (template);
+
+/* Set custom camera */
+lrg_game_2d_template_set_camera (template, my_camera);
+
+/* Reset to default camera */
+lrg_game_2d_template_set_camera (template, NULL);
+#+end_src
+
+*** Camera Follow
+:PROPERTIES:
+:CUSTOM_ID: camera-follow
+:END:
+#+begin_src C
+/* Set target position (camera follows smoothly) */
+lrg_game_2d_template_set_camera_target (template, player_x, player_y);
+
+/* Configure smoothing (0.0 = instant, higher = slower) */
+lrg_game_2d_template_set_camera_smoothing (template, 0.15f);
+gfloat smoothing = lrg_game_2d_template_get_camera_smoothing (template);
+#+end_src
+
+*** Camera Deadzone
+:PROPERTIES:
+:CUSTOM_ID: camera-deadzone
+:END:
+The camera won't move while the target is within the deadzone.
+
+#+begin_src C
+/* Set deadzone size in virtual pixels */
+lrg_game_2d_template_set_camera_deadzone (template, 64.0f, 48.0f);
+
+/* Query deadzone */
+gfloat dz_w, dz_h;
+lrg_game_2d_template_get_camera_deadzone (template, &dz_w, &dz_h);
+#+end_src
+
+*** Camera Bounds
+:PROPERTIES:
+:CUSTOM_ID: camera-bounds
+:END:
+Constrain camera to level boundaries:
+
+#+begin_src C
+/* Set world bounds (camera won't show areas outside) */
+lrg_game_2d_template_set_camera_bounds (template,
+                                         0.0f, 0.0f,          /* min x, y */
+                                         level_width, level_height);  /* max x, y */
+
+/* Remove bounds (unlimited scrolling) */
+lrg_game_2d_template_clear_camera_bounds (template);
+#+end_src
+
+** Coordinate Transformation
+:PROPERTIES:
+:CUSTOM_ID: coordinate-transformation
+:END:
+*** World to Screen
+:PROPERTIES:
+:CUSTOM_ID: world-to-screen
+:END:
+#+begin_src C
+/* Convert world position to screen position */
+gfloat screen_x, screen_y;
+lrg_game_2d_template_world_to_screen (template,
+                                       entity_x, entity_y,
+                                       &screen_x, &screen_y);
+#+end_src
+
+*** Screen to World
+:PROPERTIES:
+:CUSTOM_ID: screen-to-world
+:END:
+#+begin_src C
+/* Convert mouse click to world position */
+gfloat world_x, world_y;
+lrg_game_2d_template_screen_to_world (template,
+                                       mouse_x, mouse_y,
+                                       &world_x, &world_y);
+#+end_src
+
+*** Virtual to Screen (UI)
+:PROPERTIES:
+:CUSTOM_ID: virtual-to-screen-ui
+:END:
+#+begin_src C
+/* Convert virtual resolution coords to screen coords */
+gfloat screen_x, screen_y;
+lrg_game_2d_template_virtual_to_screen (template,
+                                         ui_x, ui_y,
+                                         &screen_x, &screen_y);
+#+end_src
+
+*** Screen to Virtual (UI)
+:PROPERTIES:
+:CUSTOM_ID: screen-to-virtual-ui
+:END:
+#+begin_src C
+/* Convert screen coords to virtual resolution coords */
+gfloat virtual_x, virtual_y;
+lrg_game_2d_template_screen_to_virtual (template,
+                                         screen_x, screen_y,
+                                         &virtual_x, &virtual_y);
+#+end_src
+
+** Render Target
+:PROPERTIES:
+:CUSTOM_ID: render-target
+:END:
+Access the internal render texture for post-processing:
+
+#+begin_src C
+GrlRenderTexture *rt = lrg_game_2d_template_get_render_texture (template);
+
+/* Use for custom post-processing in post_draw */
+static void
+my_game_post_draw (LrgGameTemplate *template)
+{
+    GrlRenderTexture *rt = lrg_game_2d_template_get_render_texture (
+        LRG_GAME_2D_TEMPLATE (template));
+
+    /* Apply shader to render texture */
+    apply_crt_shader (rt);
+}
+#+end_src
+
+** Rendering Order
+:PROPERTIES:
+:CUSTOM_ID: rendering-order
+:END:
+The default rendering pipeline:
+
+1. Begin render to virtual resolution texture
+2. Clear with background color
+3. =draw_background()= - Static backgrounds, parallax (no camera)
+4. Begin camera transform
+5. =draw_world()= - Game entities, tilemaps (with camera)
+6. End camera transform
+7. =draw_ui()= - HUD, menus (screen-space)
+8. End render to texture
+9. Scale texture to window with letterboxing
+
+** Example: Parallax Background
+:PROPERTIES:
+:CUSTOM_ID: example-parallax-background
+:END:
+#+begin_src C
+static void
+my_game_draw_background (LrgGame2DTemplate *template)
+{
+    MyGame *self = MY_GAME (template);
+    LrgCamera2D *camera = lrg_game_2d_template_get_camera (template);
+
+    gfloat cam_x, cam_y;
+    lrg_camera2d_get_target (camera, &cam_x, &cam_y);
+
+    /* Far layer (slow parallax) */
+    draw_texture (self->bg_far, -cam_x * 0.1f, -cam_y * 0.1f);
+
+    /* Mid layer */
+    draw_texture (self->bg_mid, -cam_x * 0.3f, -cam_y * 0.3f);
+
+    /* Near layer (faster parallax) */
+    draw_texture (self->bg_near, -cam_x * 0.6f, -cam_y * 0.6f);
+}
+#+end_src
+
+** Related Documentation
+:PROPERTIES:
+:CUSTOM_ID: related-documentation
+:END:
+- [[file:game-template.org][LrgGameTemplate]] - Base template features
+- [[file:platformer-template.org][LrgPlatformerTemplate]] - 2D platformer physics
+- [[file:top-down-template.org][LrgTopDownTemplate]] - Top-down movement
+- [[file:shooter-template.org][LrgShooter2DTemplate]] - 2D shooter mechanics

@@ -1,0 +1,67 @@
+* Libregnum Interfaces
+:PROPERTIES:
+:CUSTOM_ID: libregnum-interfaces
+:END:
+Index of all interfaces (abstract types) in Libregnum.
+
+#+begin_quote
+*[[../index.md][Home]]* > API > Interfaces
+
+#+end_quote
+
+** Core Module
+:PROPERTIES:
+:CUSTOM_ID: core-module
+:END:
+/No interfaces in Core module/
+
+** Planned Interfaces
+:PROPERTIES:
+:CUSTOM_ID: planned-interfaces
+:END:
+*** Saveable Interface (Phase 2)
+:PROPERTIES:
+:CUSTOM_ID: saveable-interface-phase-2
+:END:
+*LrgSaveable* - Objects that can be saved/loaded
+
+Methods:
+
+- =save()= - Serialize object
+- =load()= - Deserialize object
+
+Used by: Any object that needs persistence
+
+*** Modable Interface (Phase 4)
+:PROPERTIES:
+:CUSTOM_ID: modable-interface-phase-4
+:END:
+*LrgModable* - Objects that can be extended by mods
+
+Methods:
+
+- =on_mod_load()= - Called when mod loads
+- =on_mod_unload()= - Called when mod unloads
+
+Used by: Engine, systems, objects
+
+*** Provider Interfaces (Extensibility)
+:PROPERTIES:
+:CUSTOM_ID: provider-interfaces-extensibility
+:END:
+*LrgEntityProvider* - Provides custom entities
+*LrgItemProvider* - Provides custom items
+*LrgSceneProvider* - Provides custom scenes
+*LrgDialogProvider* - Provides custom dialogues
+*LrgQuestProvider* - Provides custom quests
+*LrgAIProvider* - Provides custom AI
+*LrgCommandProvider* - Provides custom commands
+*LrgLocaleProvider* - Provides custom locales
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:classes.org][API Classes Index]]
+- [[file:enumerations.org][API Enumerations Index]]
+- [[../modules/core/index.md][Core Module]]

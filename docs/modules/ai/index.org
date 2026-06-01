@@ -1,0 +1,226 @@
+* AI Module
+:PROPERTIES:
+:CUSTOM_ID: ai-module
+:END:
+The AI module provides a flexible behavior tree framework for implementing game AI decision-making systems. It supports both simple and complex AI behaviors through a hierarchical composition of nodes.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+The module is built around six core components:
+
+- *LrgBlackboard*: Shared data store for behavior tree state and communication
+- *LrgBehaviorTree*: The top-level behavior tree container and executor
+- *LrgBTNode*: Base class for all behavior tree nodes
+- *LrgBTComposite*: Parent nodes that contain children (Sequence, Selector, Parallel)
+- *LrgBTDecorator*: Wrapper nodes that modify child behavior (Inverter, Repeater, etc.)
+- *LrgBTLeaf*: Terminal nodes that perform actions (Action, Condition, Wait)
+
+** Key Concepts
+:PROPERTIES:
+:CUSTOM_ID: key-concepts
+:END:
+*** Status Flow
+:PROPERTIES:
+:CUSTOM_ID: status-flow
+:END:
+Each node execution returns one of three statuses:
+
+- *SUCCESS*: Task completed successfully
+- *FAILURE*: Task failed
+- *RUNNING*: Task is ongoing, needs more ticks
+
+*** Behavior Tree Execution
+:PROPERTIES:
+:CUSTOM_ID: behavior-tree-execution
+:END:
+Trees are executed by repeatedly calling =tick()= with a delta time. Each tick:
+
+1. Updates the root node
+2. Root recursively updates its children
+3. Composite nodes control child execution based on their logic
+4. Leaf nodes perform actual work
+
+*** Blackboard
+:PROPERTIES:
+:CUSTOM_ID: blackboard
+:END:
+The blackboard is a shared key-value store accessible to all nodes:
+
+- *Type-Safe*: Separate getters/setters for int, float, bool, string, object, pointer
+- *Default Values*: Return defaults when keys don't exist
+- *Ownership*: Handles object reference counting
+
+** Basic Usage
+:PROPERTIES:
+:CUSTOM_ID: basic-usage
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+/* Action function */
+static LrgBTStatus
+move_action(LrgBlackboard *blackboard, gfloat delta_time, gpointer user_data)
+{
+    (void)blackboard;
+    (void)delta_time;
+    (void)user_data;
+
+    g_print("Moving...\n");
+    return LRG_BT_STATUS_SUCCESS;
+}
+
+/* Condition function */
+static gboolean
+is_enemy_visible(LrgBlackboard *blackboard, gpointer user_data)
+{
+    (void)user_data;
+    gint enemies_seen = lrg_blackboard_get_int(blackboard, "enemies_seen", 0);
+    return enemies_seen > 0;
+}
+
+int main(void) {
+    /* Create behavior tree */
+    LrgBehaviorTree *tree = lrg_behavior_tree_new();
+    LrgBlackboard *bb = lrg_behavior_tree_get_blackboard(tree);
+
+    /* Create a simple sequence: check for enemy, then move */
+    LrgBTSequence *sequence = lrg_bt_sequence_new();
+    LrgBTCondition *condition = lrg_bt_condition_new_simple(is_enemy_visible);
+    LrgBTAction *action = lrg_bt_action_new_simple(move_action);
+
+    lrg_bt_composite_add_child(LRG_BT_COMPOSITE(sequence), LRG_BT_NODE(condition));
+    lrg_bt_composite_add_child(LRG_BT_COMPOSITE(sequence), LRG_BT_NODE(action));
+
+    lrg_behavior_tree_set_root(tree, LRG_BT_NODE(sequence));
+
+    /* Execute tree */
+    lrg_blackboard_set_int(bb, "enemies_seen", 1);
+    LrgBTStatus status = lrg_behavior_tree_tick(tree, 0.016f);
+
+    g_print("Tree status: %d\n", status);
+
+    g_object_unref(sequence);
+    g_object_unref(condition);
+    g_object_unref(action);
+    g_object_unref(tree);
+
+    return 0;
+}
+#+end_src
+
+** Module Structure
+:PROPERTIES:
+:CUSTOM_ID: module-structure
+:END:
+#+begin_example
+ai/
+├── lrg-blackboard.h/.c           # Shared data store
+├── lrg-behavior-tree.h/.c        # Tree container
+├── lrg-bt-node.h/.c              # Base node class
+├── lrg-bt-composite.h/.c         # Parent nodes
+├── lrg-bt-decorator.h/.c         # Wrapper nodes
+└── lrg-bt-leaf.h/.c              # Terminal nodes
+#+end_example
+
+** Node Types
+:PROPERTIES:
+:CUSTOM_ID: node-types
+:END:
+*** Composite Nodes
+:PROPERTIES:
+:CUSTOM_ID: composite-nodes
+:END:
+Control the execution of multiple children:
+
+- *Sequence*: Runs children in order until one fails
+- *Selector*: Runs children in order until one succeeds
+- *Parallel*: Runs all children simultaneously
+
+*** Leaf Nodes
+:PROPERTIES:
+:CUSTOM_ID: leaf-nodes
+:END:
+Perform actual work:
+
+- *Action*: Executes a function that performs game logic
+- *Condition*: Tests a boolean condition
+- *Wait*: Pauses for a specified duration
+
+*** Decorator Nodes
+:PROPERTIES:
+:CUSTOM_ID: decorator-nodes
+:END:
+Modify child behavior:
+
+- *Inverter*: Inverts SUCCESS to FAILURE and vice versa
+- *Succeeder*: Always returns SUCCESS regardless of child result
+- *Failer*: Always returns FAILURE regardless of child result
+- *Repeater*: Repeats child N times
+
+** Documentation
+:PROPERTIES:
+:CUSTOM_ID: documentation
+:END:
+- [[file:blackboard.org][LrgBlackboard]] - Shared data storage
+- [[file:behavior-tree.org][LrgBehaviorTree]] - Tree container and executor
+- [[file:bt-node.org][LrgBTNode]] - Base node class
+- [[file:bt-composite.org][LrgBTComposite]] - Composite nodes (Sequence, Selector, Parallel)
+- [[file:bt-decorator.org][LrgBTDecorator]] - Decorator nodes (Inverter, Repeater, etc.)
+- [[file:bt-leaf.org][LrgBTLeaf]] - Leaf nodes (Action, Condition, Wait)
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+For complete working examples, see the [[../examples/behavior-trees.md][AI Examples]].
+
+** Common Patterns
+:PROPERTIES:
+:CUSTOM_ID: common-patterns
+:END:
+*** Fallback Pattern (Selector)
+:PROPERTIES:
+:CUSTOM_ID: fallback-pattern-selector
+:END:
+Try multiple options in priority order:
+
+#+begin_src C
+LrgBTSelector *selector = lrg_bt_selector_new();
+lrg_bt_composite_add_child(selector, attack_action);      /* Try attack first */
+lrg_bt_composite_add_child(selector, run_action);         /* Fallback to run */
+#+end_src
+
+*** Guard Pattern (Sequence + Condition)
+:PROPERTIES:
+:CUSTOM_ID: guard-pattern-sequence--condition
+:END:
+Only execute action if condition is true:
+
+#+begin_src C
+LrgBTSequence *sequence = lrg_bt_sequence_new();
+lrg_bt_composite_add_child(sequence, enemy_in_range_cond);
+lrg_bt_composite_add_child(sequence, attack_action);
+#+end_src
+
+*** Repeat Until Success (Repeater)
+:PROPERTIES:
+:CUSTOM_ID: repeat-until-success-repeater
+:END:
+Keep trying an action until it succeeds:
+
+#+begin_src C
+LrgBTRepeater *repeater = lrg_bt_repeater_new(action, 0);  /* 0 = infinite */
+#+end_src
+
+*** Negate Condition (Inverter)
+:PROPERTIES:
+:CUSTOM_ID: negate-condition-inverter
+:END:
+Flip a condition's result:
+
+#+begin_src C
+LrgBTInverter *inverter = lrg_bt_inverter_new(enemy_visible_cond);
+/* Now succeeds when enemy is NOT visible */
+#+end_src

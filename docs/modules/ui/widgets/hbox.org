@@ -1,0 +1,59 @@
+* HBox (Horizontal Box) Widget
+:PROPERTIES:
+:CUSTOM_ID: hbox-horizontal-box-widget
+:END:
+Layout container that stacks children horizontally.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: creation
+:END:
+#+begin_src C
+g_autoptr(LrgHBox) hbox = lrg_hbox_new();
+lrg_container_set_spacing(LRG_CONTAINER(hbox), 10);
+lrg_container_add_child(container, LRG_WIDGET(hbox));
+#+end_src
+
+** Adding Children
+:PROPERTIES:
+:CUSTOM_ID: adding-children
+:END:
+#+begin_src C
+g_autoptr(LrgButton) ok = lrg_button_new("OK");
+g_autoptr(LrgButton) cancel = lrg_button_new("Cancel");
+g_autoptr(LrgButton) help = lrg_button_new("Help");
+
+lrg_container_add_child(LRG_CONTAINER(hbox), LRG_WIDGET(ok));
+lrg_container_add_child(LRG_CONTAINER(hbox), LRG_WIDGET(cancel));
+lrg_container_add_child(LRG_CONTAINER(hbox), LRG_WIDGET(help));
+
+/* Children arrange left to right */
+#+end_src
+
+** Homogeneous Layout
+:PROPERTIES:
+:CUSTOM_ID: homogeneous-layout
+:END:
+#+begin_src C
+/* All children get equal width */
+lrg_hbox_set_homogeneous(hbox, TRUE);
+
+/* Variable widths */
+lrg_hbox_set_homogeneous(hbox, FALSE);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+- =lrg_hbox_new()=
+- =lrg_hbox_get_homogeneous/set_homogeneous=
+- (inherits from Container: add_child, spacing, padding, etc.)
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: related
+:END:
+- [[file:vbox.org][VBox]]
+- [[../container.md][Container]]
+- [[../index.md][UI Module Overview]]

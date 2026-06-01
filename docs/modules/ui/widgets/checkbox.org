@@ -1,0 +1,69 @@
+* Checkbox Widget
+:PROPERTIES:
+:CUSTOM_ID: checkbox-widget
+:END:
+Toggle checkbox with optional label and customizable appearance.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: creation
+:END:
+#+begin_src C
+g_autoptr(LrgCheckbox) chk = lrg_checkbox_new("Enable Sound");
+lrg_container_add_child(container, LRG_WIDGET(chk));
+#+end_src
+
+** State
+:PROPERTIES:
+:CUSTOM_ID: state
+:END:
+#+begin_src C
+lrg_checkbox_set_checked(chk, TRUE);
+gboolean checked = lrg_checkbox_get_checked(chk);
+
+lrg_checkbox_toggle(chk);  /* Toggle state */
+#+end_src
+
+** Label
+:PROPERTIES:
+:CUSTOM_ID: label
+:END:
+#+begin_src C
+lrg_checkbox_set_label(chk, "Enable feature");
+const gchar *label = lrg_checkbox_get_label(chk);
+#+end_src
+
+** Appearance
+:PROPERTIES:
+:CUSTOM_ID: appearance
+:END:
+#+begin_src C
+lrg_checkbox_set_box_size(chk, 16.0f);
+lrg_checkbox_set_spacing(chk, 5.0f);  /* Between box and label */
+
+lrg_checkbox_set_box_color(chk, &box_color);
+lrg_checkbox_set_check_color(chk, &check_color);
+lrg_checkbox_set_text_color(chk, &text_color);
+lrg_checkbox_set_font_size(chk, 14.0f);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+- =lrg_checkbox_new(const gchar *label)=
+- =lrg_checkbox_get_checked(LrgCheckbox *self)=
+- =lrg_checkbox_set_checked(LrgCheckbox *self, gboolean checked)=
+- =lrg_checkbox_toggle(LrgCheckbox *self)=
+- =lrg_checkbox_get_label(LrgCheckbox *self)=
+- =lrg_checkbox_set_label(LrgCheckbox *self, const gchar *label)=
+- =lrg_checkbox_get_box_size(LrgCheckbox *self)=
+- =lrg_checkbox_set_box_size(LrgCheckbox *self, gfloat size)=
+- =lrg_checkbox_get_spacing(LrgCheckbox *self)=
+- =lrg_checkbox_set_spacing(LrgCheckbox *self, gfloat spacing)=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: related
+:END:
+- [[../index.md][UI Widgets Overview]]

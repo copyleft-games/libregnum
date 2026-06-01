@@ -1124,7 +1124,7 @@ struct _LrgGame2DTemplateClass
 
 ### Related Documentation
 
-- Full template documentation: `docs/modules/template/index.md`
+- Full template documentation: `docs/modules/template/index.org`
 - Example games: `examples/game-*.c`
 
 ## Implementation Status

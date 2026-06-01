@@ -1,0 +1,1074 @@
+* Scene Module API Reference
+:PROPERTIES:
+:CUSTOM_ID: scene-module-api-reference
+:END:
+Complete API documentation for the libregnum scene module.
+
+** LrgScene
+:PROPERTIES:
+:CUSTOM_ID: lrgscene
+:END:
+Root container for scene data.
+
+*** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information
+:END:
+#+begin_src C
+#define LRG_TYPE_SCENE (lrg_scene_get_type ())
+G_DECLARE_FINAL_TYPE (LrgScene, lrg_scene, LRG, SCENE, GObject)
+#+end_src
+
+*** Constructors
+:PROPERTIES:
+:CUSTOM_ID: constructors
+:END:
+**** lrg_scene_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_new
+:END:
+#+begin_src C
+LrgScene * lrg_scene_new (const gchar *name);
+#+end_src
+
+Creates a new empty scene.
+
+*Parameters:*
+
+- =name=: Scene name (may be NULL)
+
+*Returns:* (transfer full): A new =LrgScene=
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+**** name
+:PROPERTIES:
+:CUSTOM_ID: name
+:END:
+#+begin_src C
+const gchar * lrg_scene_get_name (LrgScene *self);
+void lrg_scene_set_name (LrgScene *self, const gchar *name);
+#+end_src
+
+Scene name/identifier.
+
+**** exported_from
+:PROPERTIES:
+:CUSTOM_ID: exported_from
+:END:
+#+begin_src C
+const gchar * lrg_scene_get_exported_from (LrgScene *self);
+void lrg_scene_set_exported_from (LrgScene *self, const gchar *exported_from);
+#+end_src
+
+Source application string (e.g., "Blender 5.0.1").
+
+**** export_date
+:PROPERTIES:
+:CUSTOM_ID: export_date
+:END:
+#+begin_src C
+GDateTime * lrg_scene_get_export_date (LrgScene *self);
+void lrg_scene_set_export_date (LrgScene *self, GDateTime *date);
+#+end_src
+
+Export timestamp.
+
+*** Entity Management
+:PROPERTIES:
+:CUSTOM_ID: entity-management
+:END:
+**** lrg_scene_add_entity
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_add_entity
+:END:
+#+begin_src C
+void lrg_scene_add_entity (LrgScene *self, LrgSceneEntity *entity);
+#+end_src
+
+Adds an entity to the scene. The entity's name is used as the key.
+
+*Parameters:*
+
+- =self=: A =LrgScene=
+- =entity=: (transfer none): The entity to add
+
+**** lrg_scene_get_entity
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_get_entity
+:END:
+#+begin_src C
+LrgSceneEntity * lrg_scene_get_entity (LrgScene *self, const gchar *name);
+#+end_src
+
+Retrieves an entity by name.
+
+*Parameters:*
+
+- =self=: A =LrgScene=
+- =name=: Entity name
+
+*Returns:* (transfer none) (nullable): The entity, or NULL if not found
+
+**** lrg_scene_get_entity_names
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_get_entity_names
+:END:
+#+begin_src C
+GList * lrg_scene_get_entity_names (LrgScene *self);
+#+end_src
+
+Gets a list of all entity names.
+
+*Returns:* (transfer container) (element-type utf8): List of entity names. Free with =g_list_free()=.
+
+**** lrg_scene_get_entity_count
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_get_entity_count
+:END:
+#+begin_src C
+guint lrg_scene_get_entity_count (LrgScene *self);
+#+end_src
+
+Gets the number of entities in the scene.
+
+*Returns:* Entity count
+
+**** lrg_scene_foreach_entity
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_foreach_entity
+:END:
+#+begin_src C
+typedef void (*LrgSceneEntityFunc) (const gchar *name,
+                                    LrgSceneEntity *entity,
+                                    gpointer user_data);
+
+void lrg_scene_foreach_entity (LrgScene *self,
+                               LrgSceneEntityFunc func,
+                               gpointer user_data);
+#+end_src
+
+Iterates over all entities in the scene.
+
+--------------
+
+** LrgSceneEntity
+:PROPERTIES:
+:CUSTOM_ID: lrgsceneentity
+:END:
+Groups related scene objects.
+
+*** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information-1
+:END:
+#+begin_src C
+#define LRG_TYPE_SCENE_ENTITY (lrg_scene_entity_get_type ())
+G_DECLARE_FINAL_TYPE (LrgSceneEntity, lrg_scene_entity, LRG, SCENE_ENTITY, GObject)
+#+end_src
+
+*** Constructors
+:PROPERTIES:
+:CUSTOM_ID: constructors-1
+:END:
+**** lrg_scene_entity_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_entity_new
+:END:
+#+begin_src C
+LrgSceneEntity * lrg_scene_entity_new (const gchar *name);
+#+end_src
+
+Creates a new entity.
+
+*Parameters:*
+
+- =name=: Entity name
+
+*Returns:* (transfer full): A new =LrgSceneEntity=
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties-1
+:END:
+**** name
+:PROPERTIES:
+:CUSTOM_ID: name-1
+:END:
+#+begin_src C
+const gchar * lrg_scene_entity_get_name (LrgSceneEntity *self);
+void lrg_scene_entity_set_name (LrgSceneEntity *self, const gchar *name);
+#+end_src
+
+Entity name/identifier.
+
+*** Transform
+:PROPERTIES:
+:CUSTOM_ID: transform
+:END:
+**** lrg_scene_entity_get_location / set_location
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_entity_get_location--set_location
+:END:
+#+begin_src C
+GrlVector3 * lrg_scene_entity_get_location (LrgSceneEntity *self);
+void lrg_scene_entity_set_location (LrgSceneEntity *self, GrlVector3 *location);
+void lrg_scene_entity_set_location_xyz (LrgSceneEntity *self,
+                                        gfloat x, gfloat y, gfloat z);
+#+end_src
+
+Entity world position.
+
+**** lrg_scene_entity_get_rotation / set_rotation
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_entity_get_rotation--set_rotation
+:END:
+#+begin_src C
+GrlVector3 * lrg_scene_entity_get_rotation (LrgSceneEntity *self);
+void lrg_scene_entity_set_rotation (LrgSceneEntity *self, GrlVector3 *rotation);
+void lrg_scene_entity_set_rotation_xyz (LrgSceneEntity *self,
+                                        gfloat rx, gfloat ry, gfloat rz);
+#+end_src
+
+Entity rotation (Euler angles in radians).
+
+**** lrg_scene_entity_get_scale / set_scale
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_entity_get_scale--set_scale
+:END:
+#+begin_src C
+GrlVector3 * lrg_scene_entity_get_scale (LrgSceneEntity *self);
+void lrg_scene_entity_set_scale (LrgSceneEntity *self, GrlVector3 *scale);
+void lrg_scene_entity_set_scale_xyz (LrgSceneEntity *self,
+                                     gfloat sx, gfloat sy, gfloat sz);
+#+end_src
+
+Entity scale factors.
+
+*** Object Management
+:PROPERTIES:
+:CUSTOM_ID: object-management
+:END:
+**** lrg_scene_entity_add_object
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_entity_add_object
+:END:
+#+begin_src C
+void lrg_scene_entity_add_object (LrgSceneEntity *self, LrgSceneObject *object);
+#+end_src
+
+Adds an object to the entity.
+
+*Parameters:*
+
+- =self=: A =LrgSceneEntity=
+- =object=: (transfer none): The object to add
+
+**** lrg_scene_entity_get_objects
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_entity_get_objects
+:END:
+#+begin_src C
+GPtrArray * lrg_scene_entity_get_objects (LrgSceneEntity *self);
+#+end_src
+
+Gets the array of objects.
+
+*Returns:* (transfer none) (element-type LrgSceneObject): Object array
+
+**** lrg_scene_entity_find_object
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_entity_find_object
+:END:
+#+begin_src C
+LrgSceneObject * lrg_scene_entity_find_object (LrgSceneEntity *self,
+                                               const gchar *name);
+#+end_src
+
+Finds an object by name.
+
+*Returns:* (transfer none) (nullable): The object, or NULL if not found
+
+**** lrg_scene_entity_remove_object
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_entity_remove_object
+:END:
+#+begin_src C
+gboolean lrg_scene_entity_remove_object (LrgSceneEntity *self,
+                                         LrgSceneObject *object);
+#+end_src
+
+Removes an object from the entity.
+
+*Returns:* TRUE if the object was found and removed
+
+--------------
+
+** LrgSceneObject
+:PROPERTIES:
+:CUSTOM_ID: lrgsceneobject
+:END:
+Individual primitive with transform, material, and parameters.
+
+*** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information-2
+:END:
+#+begin_src C
+#define LRG_TYPE_SCENE_OBJECT (lrg_scene_object_get_type ())
+G_DECLARE_FINAL_TYPE (LrgSceneObject, lrg_scene_object, LRG, SCENE_OBJECT, GObject)
+#+end_src
+
+*** Constructors
+:PROPERTIES:
+:CUSTOM_ID: constructors-2
+:END:
+**** lrg_scene_object_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_object_new
+:END:
+#+begin_src C
+LrgSceneObject * lrg_scene_object_new (const gchar *name,
+                                       LrgPrimitiveType primitive);
+#+end_src
+
+Creates a new scene object.
+
+*Parameters:*
+
+- =name=: Object name
+- =primitive=: Primitive type
+
+*Returns:* (transfer full): A new =LrgSceneObject=
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties-2
+:END:
+**** name
+:PROPERTIES:
+:CUSTOM_ID: name-2
+:END:
+#+begin_src C
+const gchar * lrg_scene_object_get_name (LrgSceneObject *self);
+void lrg_scene_object_set_name (LrgSceneObject *self, const gchar *name);
+#+end_src
+
+Object name/identifier.
+
+**** primitive
+:PROPERTIES:
+:CUSTOM_ID: primitive
+:END:
+#+begin_src C
+LrgPrimitiveType lrg_scene_object_get_primitive (LrgSceneObject *self);
+void lrg_scene_object_set_primitive (LrgSceneObject *self,
+                                     LrgPrimitiveType primitive);
+#+end_src
+
+Primitive type enum.
+
+*** Transform
+:PROPERTIES:
+:CUSTOM_ID: transform-1
+:END:
+Same pattern as =LrgSceneEntity=:
+
+#+begin_src C
+GrlVector3 * lrg_scene_object_get_location (LrgSceneObject *self);
+void lrg_scene_object_set_location_xyz (LrgSceneObject *self,
+                                        gfloat x, gfloat y, gfloat z);
+
+GrlVector3 * lrg_scene_object_get_rotation (LrgSceneObject *self);
+void lrg_scene_object_set_rotation_xyz (LrgSceneObject *self,
+                                        gfloat rx, gfloat ry, gfloat rz);
+
+GrlVector3 * lrg_scene_object_get_scale (LrgSceneObject *self);
+void lrg_scene_object_set_scale_xyz (LrgSceneObject *self,
+                                     gfloat sx, gfloat sy, gfloat sz);
+#+end_src
+
+*** Material
+:PROPERTIES:
+:CUSTOM_ID: material
+:END:
+**** lrg_scene_object_get_material / set_material
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_object_get_material--set_material
+:END:
+#+begin_src C
+LrgMaterial3D * lrg_scene_object_get_material (LrgSceneObject *self);
+void lrg_scene_object_set_material (LrgSceneObject *self, LrgMaterial3D *material);
+#+end_src
+
+Object's PBR material.
+
+*** Parameters
+:PROPERTIES:
+:CUSTOM_ID: parameters
+:END:
+Parameters store primitive-specific values (radius, vertices, etc.).
+
+**** Float Parameters
+:PROPERTIES:
+:CUSTOM_ID: float-parameters
+:END:
+#+begin_src C
+void lrg_scene_object_set_param_float (LrgSceneObject *self,
+                                       const gchar *name,
+                                       gfloat value);
+
+gfloat lrg_scene_object_get_param_float (LrgSceneObject *self,
+                                         const gchar *name,
+                                         gfloat default_value);
+#+end_src
+
+**** Integer Parameters
+:PROPERTIES:
+:CUSTOM_ID: integer-parameters
+:END:
+#+begin_src C
+void lrg_scene_object_set_param_int (LrgSceneObject *self,
+                                     const gchar *name,
+                                     gint value);
+
+gint lrg_scene_object_get_param_int (LrgSceneObject *self,
+                                     const gchar *name,
+                                     gint default_value);
+#+end_src
+
+**** Boolean Parameters
+:PROPERTIES:
+:CUSTOM_ID: boolean-parameters
+:END:
+#+begin_src C
+void lrg_scene_object_set_param_bool (LrgSceneObject *self,
+                                      const gchar *name,
+                                      gboolean value);
+
+gboolean lrg_scene_object_get_param_bool (LrgSceneObject *self,
+                                          const gchar *name,
+                                          gboolean default_value);
+#+end_src
+
+*** Mesh Data
+:PROPERTIES:
+:CUSTOM_ID: mesh-data
+:END:
+For =LRG_PRIMITIVE_MESH= objects, custom geometry is stored via =LrgMeshData=:
+
+#+begin_src C
+void lrg_scene_object_set_mesh_data (LrgSceneObject *self,
+                                     LrgMeshData *mesh_data);
+
+LrgMeshData * lrg_scene_object_get_mesh_data (LrgSceneObject *self);
+#+end_src
+
+The mesh data is copied when set and owned by the scene object.
+
+--------------
+
+** LrgMeshData
+:PROPERTIES:
+:CUSTOM_ID: lrgmeshdata
+:END:
+GBoxed type for storing custom mesh geometry (vertices, faces, smooth shading).
+
+*** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information-3
+:END:
+#+begin_src C
+#define LRG_TYPE_MESH_DATA (lrg_mesh_data_get_type ())
+#+end_src
+
+This is a boxed type (not a GObject). Use =lrg_mesh_data_copy()= and =lrg_mesh_data_free()= for memory management.
+
+*** Constructors
+:PROPERTIES:
+:CUSTOM_ID: constructors-3
+:END:
+**** lrg_mesh_data_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_new
+:END:
+#+begin_src C
+LrgMeshData * lrg_mesh_data_new (void);
+#+end_src
+
+Creates a new empty mesh data structure.
+
+*Returns:* A new =LrgMeshData=. Free with =lrg_mesh_data_free()=.
+
+**** lrg_mesh_data_copy
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_copy
+:END:
+#+begin_src C
+LrgMeshData * lrg_mesh_data_copy (const LrgMeshData *self);
+#+end_src
+
+Creates a deep copy of the mesh data.
+
+*Returns:* A copy of =self=. Free with =lrg_mesh_data_free()=.
+
+**** lrg_mesh_data_free
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_free
+:END:
+#+begin_src C
+void lrg_mesh_data_free (LrgMeshData *self);
+#+end_src
+
+Frees mesh data and all associated memory.
+
+*** Vertices
+:PROPERTIES:
+:CUSTOM_ID: vertices
+:END:
+**** lrg_mesh_data_set_vertices
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_set_vertices
+:END:
+#+begin_src C
+void lrg_mesh_data_set_vertices (LrgMeshData *self,
+                                  const gfloat *vertices,
+                                  guint n_vertices);
+#+end_src
+
+Sets vertex positions. The array is copied.
+
+*Parameters:*
+
+- =self=: An =LrgMeshData=
+- =vertices=: Flat array of coordinates =[x0,y0,z0, x1,y1,z1, ...]=
+- =n_vertices=: Number of vertices (array has =n_vertices * 3= floats)
+
+**** lrg_mesh_data_get_vertices
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_get_vertices
+:END:
+#+begin_src C
+const gfloat * lrg_mesh_data_get_vertices (const LrgMeshData *self,
+                                            guint *n_vertices);
+#+end_src
+
+Gets vertex positions.
+
+*Parameters:*
+
+- =self=: An =LrgMeshData=
+- =n_vertices=: (out) (optional): Location for vertex count
+
+*Returns:* (transfer none) (nullable): The vertex array, or NULL if empty
+
+**** lrg_mesh_data_get_n_vertices
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_get_n_vertices
+:END:
+#+begin_src C
+guint lrg_mesh_data_get_n_vertices (const LrgMeshData *self);
+#+end_src
+
+Gets the number of vertices.
+
+*** Faces
+:PROPERTIES:
+:CUSTOM_ID: faces
+:END:
+**** lrg_mesh_data_set_faces
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_set_faces
+:END:
+#+begin_src C
+void lrg_mesh_data_set_faces (LrgMeshData *self,
+                               const gint *faces,
+                               guint n_faces,
+                               guint total_indices);
+#+end_src
+
+Sets face data. The array is copied.
+
+*Parameters:*
+
+- =self=: An =LrgMeshData=
+- =faces=: Face data in format =[n0, v0, v1, ..., n1, v0, v1, ...]=
+- =n_faces=: Number of faces
+- =total_indices=: Total length of the faces array
+
+*Face Format:* Each face starts with a vertex count =n=, followed by =n= vertex indices. For example:
+
+- Triangle: =[3, 0, 1, 2]=
+- Quad: =[4, 0, 1, 2, 3]=
+- Pentagon: =[5, 0, 1, 2, 3, 4]=
+
+**** lrg_mesh_data_get_faces
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_get_faces
+:END:
+#+begin_src C
+const gint * lrg_mesh_data_get_faces (const LrgMeshData *self,
+                                       guint *n_faces,
+                                       guint *total_indices);
+#+end_src
+
+Gets face data.
+
+*Parameters:*
+
+- =self=: An =LrgMeshData=
+- =n_faces=: (out) (optional): Location for face count
+- =total_indices=: (out) (optional): Location for total array length
+
+*Returns:* (transfer none) (nullable): The face array, or NULL if empty
+
+**** lrg_mesh_data_get_n_faces
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_get_n_faces
+:END:
+#+begin_src C
+guint lrg_mesh_data_get_n_faces (const LrgMeshData *self);
+#+end_src
+
+Gets the number of faces.
+
+*** Smooth Shading
+:PROPERTIES:
+:CUSTOM_ID: smooth-shading
+:END:
+**** lrg_mesh_data_set_smooth
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_set_smooth
+:END:
+#+begin_src C
+void lrg_mesh_data_set_smooth (LrgMeshData *self, gboolean smooth);
+#+end_src
+
+Sets the smooth shading flag.
+
+**** lrg_mesh_data_get_smooth
+:PROPERTIES:
+:CUSTOM_ID: lrg_mesh_data_get_smooth
+:END:
+#+begin_src C
+gboolean lrg_mesh_data_get_smooth (const LrgMeshData *self);
+#+end_src
+
+Gets the smooth shading flag.
+
+*** Example Usage
+:PROPERTIES:
+:CUSTOM_ID: example-usage
+:END:
+#+begin_src C
+/* Create mesh data for a triangle */
+LrgMeshData *mesh = lrg_mesh_data_new ();
+
+gfloat vertices[] = {
+    0.0f, 0.0f, 0.0f,
+    1.0f, 0.0f, 0.0f,
+    0.5f, 1.0f, 0.0f
+};
+lrg_mesh_data_set_vertices (mesh, vertices, 3);
+
+gint faces[] = { 3, 0, 1, 2 };  /* One triangle face */
+lrg_mesh_data_set_faces (mesh, faces, 1, 4);
+
+lrg_mesh_data_set_smooth (mesh, TRUE);
+
+/* Attach to scene object */
+g_autoptr(LrgSceneObject) obj = lrg_scene_object_new ("custom", LRG_PRIMITIVE_MESH);
+lrg_scene_object_set_mesh_data (obj, mesh);
+lrg_mesh_data_free (mesh);
+#+end_src
+
+--------------
+
+** LrgMaterial3D
+:PROPERTIES:
+:CUSTOM_ID: lrgmaterial3d
+:END:
+PBR material properties.
+
+*** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information-4
+:END:
+#+begin_src C
+#define LRG_TYPE_MATERIAL3D (lrg_material3d_get_type ())
+G_DECLARE_FINAL_TYPE (LrgMaterial3D, lrg_material3d, LRG, MATERIAL3D, GObject)
+#+end_src
+
+*** Constructors
+:PROPERTIES:
+:CUSTOM_ID: constructors-4
+:END:
+**** lrg_material3d_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_material3d_new
+:END:
+#+begin_src C
+LrgMaterial3D * lrg_material3d_new (void);
+#+end_src
+
+Creates a new material with default values.
+
+*Returns:* (transfer full): A new =LrgMaterial3D=
+
+*** Color
+:PROPERTIES:
+:CUSTOM_ID: color
+:END:
+#+begin_src C
+void lrg_material3d_set_color (LrgMaterial3D *self,
+                               gfloat r, gfloat g, gfloat b, gfloat a);
+
+void lrg_material3d_get_color (LrgMaterial3D *self,
+                               gfloat *r, gfloat *g, gfloat *b, gfloat *a);
+
+GrlColor * lrg_material3d_get_color_grl (LrgMaterial3D *self);
+#+end_src
+
+Base color (RGBA, 0.0-1.0).
+
+*** Roughness
+:PROPERTIES:
+:CUSTOM_ID: roughness
+:END:
+#+begin_src C
+void lrg_material3d_set_roughness (LrgMaterial3D *self, gfloat roughness);
+gfloat lrg_material3d_get_roughness (LrgMaterial3D *self);
+#+end_src
+
+Surface roughness (0.0 = smooth/mirror, 1.0 = rough/diffuse).
+
+*** Metallic
+:PROPERTIES:
+:CUSTOM_ID: metallic
+:END:
+#+begin_src C
+void lrg_material3d_set_metallic (LrgMaterial3D *self, gfloat metallic);
+gfloat lrg_material3d_get_metallic (LrgMaterial3D *self);
+#+end_src
+
+Metallic factor (0.0 = dielectric, 1.0 = pure metal).
+
+*** Emission
+:PROPERTIES:
+:CUSTOM_ID: emission
+:END:
+#+begin_src C
+void lrg_material3d_set_emission_color (LrgMaterial3D *self,
+                                        gfloat r, gfloat g, gfloat b, gfloat a);
+
+void lrg_material3d_get_emission_color (LrgMaterial3D *self,
+                                        gfloat *r, gfloat *g, gfloat *b, gfloat *a);
+
+void lrg_material3d_set_emission_strength (LrgMaterial3D *self, gfloat strength);
+gfloat lrg_material3d_get_emission_strength (LrgMaterial3D *self);
+#+end_src
+
+Emission/glow properties.
+
+--------------
+
+** LrgSceneSerializer
+:PROPERTIES:
+:CUSTOM_ID: lrgsceneserializer
+:END:
+Interface for scene serialization.
+
+*** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information-5
+:END:
+#+begin_src C
+#define LRG_TYPE_SCENE_SERIALIZER (lrg_scene_serializer_get_type ())
+G_DECLARE_INTERFACE (LrgSceneSerializer, lrg_scene_serializer,
+                     LRG, SCENE_SERIALIZER, GObject)
+#+end_src
+
+*** Interface Methods
+:PROPERTIES:
+:CUSTOM_ID: interface-methods
+:END:
+**** lrg_scene_serializer_load_from_file
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_serializer_load_from_file
+:END:
+#+begin_src C
+LrgScene * lrg_scene_serializer_load_from_file (LrgSceneSerializer *self,
+                                                const gchar *path,
+                                                GError **error);
+#+end_src
+
+Loads a scene from a file.
+
+*Parameters:*
+
+- =self=: A =LrgSceneSerializer=
+- =path=: File path
+- =error=: (nullable): Return location for errors
+
+*Returns:* (transfer full) (nullable): The loaded scene, or NULL on error
+
+**** lrg_scene_serializer_load_from_data
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_serializer_load_from_data
+:END:
+#+begin_src C
+LrgScene * lrg_scene_serializer_load_from_data (LrgSceneSerializer *self,
+                                                const gchar *data,
+                                                gssize length,
+                                                GError **error);
+#+end_src
+
+Loads a scene from string data.
+
+*Parameters:*
+
+- =self=: A =LrgSceneSerializer=
+- =data=: String data
+- =length=: Data length, or -1 for NUL-terminated
+- =error=: (nullable): Return location for errors
+
+*Returns:* (transfer full) (nullable): The loaded scene, or NULL on error
+
+**** lrg_scene_serializer_save_to_file
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_serializer_save_to_file
+:END:
+#+begin_src C
+gboolean lrg_scene_serializer_save_to_file (LrgSceneSerializer *self,
+                                            LrgScene *scene,
+                                            const gchar *path,
+                                            GError **error);
+#+end_src
+
+Saves a scene to a file.
+
+*Returns:* TRUE on success
+
+**** lrg_scene_serializer_save_to_data
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_serializer_save_to_data
+:END:
+#+begin_src C
+gchar * lrg_scene_serializer_save_to_data (LrgSceneSerializer *self,
+                                           LrgScene *scene,
+                                           gsize *length);
+#+end_src
+
+Serializes a scene to a string.
+
+*Parameters:*
+
+- =self=: A =LrgSceneSerializer=
+- =scene=: The scene to serialize
+- =length=: (out) (nullable): Return location for string length
+
+*Returns:* (transfer full): Serialized data string
+
+--------------
+
+** LrgSceneSerializerYaml
+:PROPERTIES:
+:CUSTOM_ID: lrgsceneserializeryaml
+:END:
+Derivable YAML format serializer base class.
+
+This is a derivable class that subclasses can override to provide custom
+coordinate conversion. The default implementation performs no conversion
+(identity transform).
+
+*** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information-6
+:END:
+#+begin_src C
+#define LRG_TYPE_SCENE_SERIALIZER_YAML (lrg_scene_serializer_yaml_get_type ())
+G_DECLARE_DERIVABLE_TYPE (LrgSceneSerializerYaml, lrg_scene_serializer_yaml,
+                          LRG, SCENE_SERIALIZER_YAML, GObject)
+#+end_src
+
+*** Class Structure
+:PROPERTIES:
+:CUSTOM_ID: class-structure
+:END:
+#+begin_src C
+struct _LrgSceneSerializerYamlClass
+{
+    GObjectClass parent_class;
+
+    /* Virtual methods for coordinate conversion */
+    GrlVector3 * (*convert_position) (LrgSceneSerializerYaml *self,
+                                      gfloat x, gfloat y, gfloat z);
+    GrlVector3 * (*convert_rotation) (LrgSceneSerializerYaml *self,
+                                      gfloat x, gfloat y, gfloat z);
+    GrlVector3 * (*convert_scale)    (LrgSceneSerializerYaml *self,
+                                      gfloat x, gfloat y, gfloat z);
+
+    gpointer _reserved[4];
+};
+#+end_src
+
+*** Virtual Methods
+:PROPERTIES:
+:CUSTOM_ID: virtual-methods
+:END:
+Subclasses can override these methods to convert coordinates from the
+source coordinate system to the target (raylib Y-up) system.
+
+| Method             | Default Behavior                        |
+|--------------------+-----------------------------------------|
+| =convert_position= | Identity: returns =(x, y, z)= unchanged |
+| =convert_rotation= | Identity: returns =(x, y, z)= unchanged |
+| =convert_scale=    | Identity: returns =(x, y, z)= unchanged |
+
+*** Constructors
+:PROPERTIES:
+:CUSTOM_ID: constructors-5
+:END:
+**** lrg_scene_serializer_yaml_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_serializer_yaml_new
+:END:
+#+begin_src C
+LrgSceneSerializerYaml * lrg_scene_serializer_yaml_new (void);
+#+end_src
+
+Creates a new YAML serializer with no coordinate conversion.
+
+For Blender scenes, use =LrgSceneSerializerBlender= instead.
+
+*Returns:* (transfer full): A new =LrgSceneSerializerYaml=
+
+--------------
+
+** LrgSceneSerializerBlender
+:PROPERTIES:
+:CUSTOM_ID: lrgsceneserializerblender
+:END:
+Blender-specific YAML serializer with automatic coordinate conversion.
+
+This serializer handles YAML scene files exported from Blender, converting
+from Blender's Z-up right-handed coordinate system to raylib's Y-up
+right-handed coordinate system.
+
+*** Type Information
+:PROPERTIES:
+:CUSTOM_ID: type-information-7
+:END:
+#+begin_src C
+#define LRG_TYPE_SCENE_SERIALIZER_BLENDER (lrg_scene_serializer_blender_get_type ())
+G_DECLARE_FINAL_TYPE (LrgSceneSerializerBlender, lrg_scene_serializer_blender,
+                      LRG, SCENE_SERIALIZER_BLENDER, LrgSceneSerializerYaml)
+#+end_src
+
+*** Coordinate Conversion
+:PROPERTIES:
+:CUSTOM_ID: coordinate-conversion
+:END:
+Converts from Blender's Z-up coordinate system to raylib's Y-up system:
+
+| Vector Type | Blender (X, Y, Z) | raylib     |
+|-------------+-------------------+------------|
+| Position    | (X, Y, Z)         | (X, Z, -Y) |
+| Rotation    | (X, Y, Z)         | (X, Z, -Y) |
+| Scale       | (X, Y, Z)         | (X, Z, Y)  |
+
+*** Constructors
+:PROPERTIES:
+:CUSTOM_ID: constructors-6
+:END:
+**** lrg_scene_serializer_blender_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_serializer_blender_new
+:END:
+#+begin_src C
+LrgSceneSerializerBlender * lrg_scene_serializer_blender_new (void);
+#+end_src
+
+Creates a new Blender YAML serializer.
+
+*Returns:* (transfer full): A new =LrgSceneSerializerBlender=
+
+*** Usage
+:PROPERTIES:
+:CUSTOM_ID: usage
+:END:
+#+begin_src C
+g_autoptr(LrgSceneSerializerBlender) serializer = NULL;
+g_autoptr(LrgScene) scene = NULL;
+g_autoptr(GError) error = NULL;
+
+serializer = lrg_scene_serializer_blender_new ();
+scene = lrg_scene_serializer_load_from_file (
+    LRG_SCENE_SERIALIZER (serializer),
+    "blender_scene.yaml",
+    &error);
+
+if (scene == NULL)
+{
+    g_printerr ("Failed to load: %s\n", error->message);
+}
+#+end_src
+
+--------------
+
+** Enumerations
+:PROPERTIES:
+:CUSTOM_ID: enumerations
+:END:
+*** LrgPrimitiveType
+:PROPERTIES:
+:CUSTOM_ID: lrgprimitivetype
+:END:
+#+begin_src C
+typedef enum {
+    LRG_PRIMITIVE_PLANE,
+    LRG_PRIMITIVE_CUBE,
+    LRG_PRIMITIVE_CIRCLE,
+    LRG_PRIMITIVE_UV_SPHERE,
+    LRG_PRIMITIVE_ICO_SPHERE,
+    LRG_PRIMITIVE_CYLINDER,
+    LRG_PRIMITIVE_CONE,
+    LRG_PRIMITIVE_TORUS,
+    LRG_PRIMITIVE_GRID,
+    LRG_PRIMITIVE_MESH       /* Custom mesh from vertex/face data */
+} LrgPrimitiveType;
+#+end_src
+
+*** LrgCircleFillType
+:PROPERTIES:
+:CUSTOM_ID: lrgcirclefilltype
+:END:
+#+begin_src C
+typedef enum {
+    LRG_CIRCLE_FILL_NOTHING,
+    LRG_CIRCLE_FILL_NGON,
+    LRG_CIRCLE_FILL_TRIFAN
+} LrgCircleFillType;
+#+end_src
+
+--------------
+
+** Error Domains
+:PROPERTIES:
+:CUSTOM_ID: error-domains
+:END:
+*** LRG_SCENE_ERROR
+:PROPERTIES:
+:CUSTOM_ID: lrg_scene_error
+:END:
+#+begin_src C
+#define LRG_SCENE_ERROR (lrg_scene_error_quark ())
+
+typedef enum {
+    LRG_SCENE_ERROR_FAILED,
+    LRG_SCENE_ERROR_PARSE,
+    LRG_SCENE_ERROR_INVALID_FORMAT
+} LrgSceneError;
+#+end_src

@@ -1,0 +1,121 @@
+* Video Playback Module
+:PROPERTIES:
+:CUSTOM_ID: video-playback-module
+:END:
+The video module provides FFmpeg-based video playback with subtitle support.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+#+begin_example
+┌─────────────────────────────────────────────────────────┐
+│                    LrgVideoPlayer                       │
+│  ┌──────────────┐  ┌────────────────┐  ┌─────────────┐ │
+│  │ Video Stream │  │  Audio Stream  │  │  Subtitles  │ │
+│  │   (FFmpeg)   │  │   (FFmpeg)     │  │ (SRT/VTT)   │ │
+│  └──────┬───────┘  └───────┬────────┘  └──────┬──────┘ │
+│         ↓                  ↓                  ↓        │
+│  ┌──────────────┐  ┌────────────────┐  ┌─────────────┐ │
+│  │ VideoTexture │  │  Audio Output  │  │ Subtitle    │ │
+│  │   (RGBA)     │  │                │  │  Renderer   │ │
+│  └──────────────┘  └────────────────┘  └─────────────┘ │
+└─────────────────────────────────────────────────────────┘
+#+end_example
+
+** Key Components
+:PROPERTIES:
+:CUSTOM_ID: key-components
+:END:
+| Type                    | Description                             |
+|-------------------------+-----------------------------------------|
+| =LrgVideoPlayer=        | Main video player with state management |
+| =LrgVideoTexture=       | RGBA texture buffer for video frames    |
+| =LrgVideoSubtitleTrack= | Collection of subtitle cues             |
+| =LrgVideoSubtitles=     | Subtitle rendering                      |
+| =LrgSubtitleCue=        | Single subtitle entry (GBoxed)          |
+
+** Quick Start
+:PROPERTIES:
+:CUSTOM_ID: quick-start
+:END:
+#+begin_src C
+#include <libregnum/video/lrg-video-player.h>
+
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgVideoPlayer) player = lrg_video_player_new ();
+
+/* Open video file */
+if (!lrg_video_player_open (player, "video/intro.mp4", &error))
+{
+    g_warning ("Failed to open video: %s", error->message);
+    return;
+}
+
+/* Load subtitles */
+lrg_video_player_load_subtitles (player, "video/intro.srt", NULL);
+
+/* Start playback */
+lrg_video_player_play (player);
+
+/* In game loop */
+void
+update (gfloat delta_time)
+{
+    lrg_video_player_update (player, delta_time);
+}
+
+void
+draw (void)
+{
+    lrg_video_player_draw (player, 0, 0, 800, 600);
+}
+#+end_src
+
+** Video States
+:PROPERTIES:
+:CUSTOM_ID: video-states
+:END:
+#+begin_example
+┌─────────┐  open()   ┌─────────┐  ready   ┌─────────┐
+│ STOPPED │ ───────→  │ LOADING │ ───────→ │ STOPPED │
+└─────────┘           └─────────┘          └────┬────┘
+     ↑                                          │ play()
+     │ stop()                                   ↓
+     │                ┌─────────┐          ┌─────────┐
+     └────────────────│ PAUSED  │ ←───────→│ PLAYING │
+                      └─────────┘ pause()  └────┬────┘
+                           ↑                    │ end
+                           │                    ↓
+                      ┌─────────┐          ┌──────────┐
+                      │  ERROR  │          │ FINISHED │
+                      └─────────┘          └──────────┘
+#+end_example
+
+** Supported Formats
+:PROPERTIES:
+:CUSTOM_ID: supported-formats
+:END:
+| Format | Video Codecs | Audio Codecs |
+|--------+--------------+--------------|
+| MP4    | H.264, H.265 | AAC, MP3     |
+| WebM   | VP8, VP9     | Vorbis, Opus |
+| OGV    | Theora       | Vorbis       |
+| AVI    | Various      | Various      |
+
+** Subtitle Formats
+:PROPERTIES:
+:CUSTOM_ID: subtitle-formats
+:END:
+| Format | Extension | Notes                     |
+|--------+-----------+---------------------------|
+| SubRip | =.srt=    | Most common format        |
+| WebVTT | =.vtt=    | Web standard with styling |
+
+** Documentation
+:PROPERTIES:
+:CUSTOM_ID: documentation
+:END:
+- [[file:video-player.org][Video Player]] - Playback control and rendering
+- [[file:subtitles.org][Subtitles]] - Subtitle tracks and rendering
+- [[file:ffmpeg-setup.org][FFmpeg Setup]] - Dependency installation

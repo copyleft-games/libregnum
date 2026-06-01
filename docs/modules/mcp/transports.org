@@ -1,0 +1,301 @@
+* MCP Transports
+:PROPERTIES:
+:CUSTOM_ID: mcp-transports
+:END:
+Libregnum's MCP server supports multiple transport modes for different use cases. The server can be configured to use stdio, HTTP, or both transports simultaneously.
+
+** Transport Types
+:PROPERTIES:
+:CUSTOM_ID: transport-types
+:END:
+| Type  | Enum Value                | Use Case                                |
+|-------+---------------------------+-----------------------------------------|
+| Stdio | =LRG_MCP_TRANSPORT_STDIO= | Claude Code integration, local AI tools |
+| HTTP  | =LRG_MCP_TRANSPORT_HTTP=  | Network clients, web dashboards         |
+| Both  | =LRG_MCP_TRANSPORT_BOTH=  | Maximum flexibility                     |
+
+** Architecture
+:PROPERTIES:
+:CUSTOM_ID: architecture
+:END:
+Since mcp-glib's =McpServer= only supports one transport at a time, the =LRG_MCP_TRANSPORT_BOTH= mode creates two internal =McpServer= instances:
+
+#+begin_example
+LrgMcpServer (singleton)
+├── McpServer *stdio_server     (when STDIO or BOTH)
+│   └── McpStdioTransport
+├── McpServer *http_server      (when HTTP or BOTH)
+│   └── McpHttpServerTransport
+└── Tool/Resource providers registered to BOTH servers
+#+end_example
+
+This ensures all registered tools and resources are available on both transports.
+
+** Stdio Transport (Default)
+:PROPERTIES:
+:CUSTOM_ID: stdio-transport-default
+:END:
+Best for Claude Code and local AI tool integration. Uses stdin/stdout for JSON-RPC communication.
+
+#+begin_src C
+LrgMcpServer *mcp = lrg_mcp_server_get_default ();
+
+/* Stdio is the default - no configuration needed */
+lrg_mcp_server_register_default_providers (mcp);
+
+g_autoptr(GError) error = NULL;
+if (!lrg_mcp_server_start (mcp, &error))
+{
+    g_warning ("MCP start failed: %s", error->message);
+}
+#+end_src
+
+*** Claude Code Configuration
+:PROPERTIES:
+:CUSTOM_ID: claude-code-configuration
+:END:
+Configure Claude Code to spawn your game with MCP:
+
+#+begin_src json
+{
+  "mcpServers": {
+    "my-game": {
+      "command": "/path/to/my-game",
+      "args": ["--mcp-server"]
+    }
+  }
+}
+#+end_src
+
+** HTTP Transport
+:PROPERTIES:
+:CUSTOM_ID: http-transport
+:END:
+Enables network access to MCP tools and resources. Uses HTTP POST for requests and Server-Sent Events (SSE) for responses.
+
+#+begin_src C
+LrgMcpServer *mcp = lrg_mcp_server_get_default ();
+
+/* Switch to HTTP transport */
+lrg_mcp_server_set_transport_type (mcp, LRG_MCP_TRANSPORT_HTTP);
+lrg_mcp_server_set_http_port (mcp, 8080);
+
+lrg_mcp_server_register_default_providers (mcp);
+
+g_autoptr(GError) error = NULL;
+if (!lrg_mcp_server_start (mcp, &error))
+{
+    g_warning ("MCP start failed: %s", error->message);
+}
+
+/* Query actual port (useful when port=0 for auto-assign) */
+guint port = lrg_mcp_server_get_actual_http_port (mcp);
+g_print ("MCP HTTP server listening on port %u\n", port);
+#+end_src
+
+*** HTTP Endpoints
+:PROPERTIES:
+:CUSTOM_ID: http-endpoints
+:END:
+| Method | Path   | Description                      |
+|--------+--------+----------------------------------|
+| POST   | =/=    | Send JSON-RPC requests           |
+| GET    | =/sse= | Server-Sent Events for responses |
+
+*** Host Binding
+:PROPERTIES:
+:CUSTOM_ID: host-binding
+:END:
+By default, the HTTP server binds to all interfaces. To restrict to localhost:
+
+#+begin_src C
+lrg_mcp_server_set_http_host (mcp, "127.0.0.1");
+#+end_src
+
+*** Auto-Assigned Port
+:PROPERTIES:
+:CUSTOM_ID: auto-assigned-port
+:END:
+Set port to 0 for the OS to assign an available port:
+
+#+begin_src C
+lrg_mcp_server_set_http_port (mcp, 0);
+lrg_mcp_server_start (mcp, NULL);
+
+/* Get the actual assigned port */
+guint port = lrg_mcp_server_get_actual_http_port (mcp);
+#+end_src
+
+** HTTP Authentication
+:PROPERTIES:
+:CUSTOM_ID: http-authentication
+:END:
+Optional Bearer token authentication protects the HTTP transport:
+
+#+begin_src C
+lrg_mcp_server_set_http_auth (mcp, TRUE, "your-secret-token");
+#+end_src
+
+Clients must include the =Authorization= header:
+
+#+begin_example
+Authorization: Bearer your-secret-token
+#+end_example
+
+Requests without valid authentication will receive a 401 Unauthorized response.
+
+*** Security Recommendations
+:PROPERTIES:
+:CUSTOM_ID: security-recommendations
+:END:
+1. *Always use authentication* when exposing HTTP transport on non-localhost
+2. *Generate random tokens* for production use
+3. *Use HTTPS* when available (configure via libsoup/GTlsCertificate)
+4. *Bind to localhost* when only local access is needed
+
+** Both Transports
+:PROPERTIES:
+:CUSTOM_ID: both-transports
+:END:
+Run stdio and HTTP simultaneously for maximum flexibility:
+
+#+begin_src C
+LrgMcpServer *mcp = lrg_mcp_server_get_default ();
+
+/* Enable both transports */
+lrg_mcp_server_set_transport_type (mcp, LRG_MCP_TRANSPORT_BOTH);
+
+/* Configure HTTP */
+lrg_mcp_server_set_http_port (mcp, 8080);
+lrg_mcp_server_set_http_auth (mcp, TRUE, "secret-token");
+
+lrg_mcp_server_register_default_providers (mcp);
+
+g_autoptr(GError) error = NULL;
+if (!lrg_mcp_server_start (mcp, &error))
+{
+    g_warning ("MCP start failed: %s", error->message);
+}
+#+end_src
+
+This allows:
+
+- Claude Code to connect via stdio (process spawning)
+- Web dashboards/tools to connect via HTTP
+- Remote debugging while running locally
+- Multiple clients to access the same game instance
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+*** Transport Configuration
+:PROPERTIES:
+:CUSTOM_ID: transport-configuration
+:END:
+| Function                              | Description                       |
+|---------------------------------------+-----------------------------------|
+| =lrg_mcp_server_get_transport_type()= | Get current transport mode        |
+| =lrg_mcp_server_set_transport_type()= | Set transport mode (before start) |
+
+*** HTTP Configuration
+:PROPERTIES:
+:CUSTOM_ID: http-configuration
+:END:
+| Function                                | Description                                |
+|-----------------------------------------+--------------------------------------------|
+| =lrg_mcp_server_get_http_port()=        | Get configured HTTP port                   |
+| =lrg_mcp_server_set_http_port()=        | Set HTTP listen port (before start)        |
+| =lrg_mcp_server_get_http_host()=        | Get HTTP bind address                      |
+| =lrg_mcp_server_set_http_host()=        | Set HTTP bind address (before start)       |
+| =lrg_mcp_server_set_http_auth()=        | Configure Bearer token auth (before start) |
+| =lrg_mcp_server_get_actual_http_port()= | Get actual port (after start)              |
+
+*** GObject Properties
+:PROPERTIES:
+:CUSTOM_ID: gobject-properties
+:END:
+| Property         | Type                  | Default | Description               |
+|------------------+-----------------------+---------+---------------------------|
+| =transport-type= | =LrgMcpTransportType= | =STDIO= | Which transport(s) to use |
+| =http-port=      | =guint=               | =8080=  | HTTP server port          |
+| =http-host=      | =gchar*=              | =NULL=  | HTTP bind address         |
+
+** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+#ifdef LRG_ENABLE_MCP
+
+static void
+setup_mcp_server (void)
+{
+    g_autoptr(GError) error = NULL;
+    LrgMcpServer *mcp;
+
+    mcp = lrg_mcp_server_get_default ();
+
+    /* Use both transports for maximum flexibility */
+    lrg_mcp_server_set_transport_type (mcp, LRG_MCP_TRANSPORT_BOTH);
+
+    /* Configure HTTP transport */
+    lrg_mcp_server_set_http_port (mcp, 8080);
+    lrg_mcp_server_set_http_host (mcp, "127.0.0.1");  /* localhost only */
+    lrg_mcp_server_set_http_auth (mcp, TRUE, g_getenv ("MCP_TOKEN"));
+
+    /* Register all built-in tools and resources */
+    lrg_mcp_server_register_default_providers (mcp);
+
+    /* Start the server */
+    if (!lrg_mcp_server_start (mcp, &error))
+    {
+        g_warning ("Failed to start MCP server: %s", error->message);
+        return;
+    }
+
+    g_print ("MCP stdio transport: ready\n");
+    g_print ("MCP HTTP transport: http://127.0.0.1:%u\n",
+             lrg_mcp_server_get_actual_http_port (mcp));
+}
+
+#endif /* LRG_ENABLE_MCP */
+#+end_src
+
+** Troubleshooting
+:PROPERTIES:
+:CUSTOM_ID: troubleshooting
+:END:
+*** HTTP Transport Not Starting
+:PROPERTIES:
+:CUSTOM_ID: http-transport-not-starting
+:END:
+1. Check if port is already in use
+2. Verify host binding is valid
+3. Check logs for specific errors
+
+*** Authentication Failures
+:PROPERTIES:
+:CUSTOM_ID: authentication-failures
+:END:
+1. Ensure token matches exactly (case-sensitive)
+2. Check =Authorization= header format: =Bearer <token>=
+3. Verify auth is enabled before start
+
+*** Stdio Transport Issues
+:PROPERTIES:
+:CUSTOM_ID: stdio-transport-issues
+:END:
+1. Ensure game is spawned correctly by Claude Code
+2. Check stdin/stdout are not redirected elsewhere
+3. Verify no other process is reading stdin
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:index.org][MCP Module Index]] - Module overview
+- [[file:architecture.org][Architecture]] - Type hierarchy and design
+- [[file:claude-code-integration.org][Claude Code Integration]] - Setup guide

@@ -28,7 +28,7 @@ cd examples
 
 | Example | Description | Documentation |
 |---------|-------------|---------------|
-| `game-omnomagon` | 3D Omnomagon game with data-driven design | [docs](../docs/examples/omnomagon.md) |
+| `game-omnomagon` | 3D Omnomagon game with data-driven design | [docs](../docs/examples/omnomagon.org) |
 | `game-taco-racing` | Simple racing game | - |
 | `game-chocolate-chip-clicker` | Clicker/idle game demo | - |
 | `game-tuktuk-derby` | Vehicle physics demo | - |
@@ -42,17 +42,17 @@ cd examples
 
 | Example | Description | Documentation |
 |---------|-------------|---------------|
-| `game-dlc-store` | DLC ownership, trials, store integration | [docs](../docs/examples/dlc-store.md) |
-| `game-creature-collector` | Native GModule DLC loading | [docs](../docs/examples/native-dlc.md) |
+| `game-dlc-store` | DLC ownership, trials, store integration | [docs](../docs/examples/dlc-store.org) |
+| `game-creature-collector` | Native GModule DLC loading | [docs](../docs/examples/native-dlc.org) |
 
 ### Scripting
 
 | Example | Description | Documentation |
 |---------|-------------|---------------|
-| `scripted-lua-game` | Lua scripting backend | [docs](../docs/examples/scripting-basics.md) |
-| `scripted-python-game` | Python scripting backend | [docs](../docs/examples/scripting-basics.md) |
-| `scripted-python-gobject-game` | PyGObject scripting | [docs](../docs/examples/scripting-basics.md) |
-| `scripted-gjs-game` | GJS (JavaScript) scripting | [docs](../docs/examples/scripting-basics.md) |
+| `scripted-lua-game` | Lua scripting backend | [docs](../docs/examples/scripting-basics.org) |
+| `scripted-python-game` | Python scripting backend | [docs](../docs/examples/scripting-basics.org) |
+| `scripted-python-gobject-game` | PyGObject scripting | [docs](../docs/examples/scripting-basics.org) |
+| `scripted-gjs-game` | GJS (JavaScript) scripting | [docs](../docs/examples/scripting-basics.org) |
 
 ### Asset Rendering
 

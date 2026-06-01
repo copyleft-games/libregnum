@@ -1,0 +1,344 @@
+* LrgDialogTree - Dialog Tree Container
+:PROPERTIES:
+:CUSTOM_ID: lrgdialogtree---dialog-tree-container
+:END:
+A complete dialogue tree containing interconnected dialog nodes. Manages the structure of a conversation and provides node lookup and validation.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject Class* - Cannot be subclassed
+- *Type ID* - =LRG_TYPE_DIALOG_TREE=
+- *GIR Name* - =Libregnum.DialogTree=
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_dialog_tree_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_new
+:END:
+#+begin_src C
+LrgDialogTree * lrg_dialog_tree_new (const gchar *id);
+#+end_src
+
+Creates a new dialog tree.
+
+*Parameters:*
+
+- =id= - Unique identifier for the tree
+
+*Returns:* A new =LrgDialogTree= (transfer full)
+
+** Identification
+:PROPERTIES:
+:CUSTOM_ID: identification
+:END:
+*** lrg_dialog_tree_get_id()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_get_id
+:END:
+#+begin_src C
+const gchar * lrg_dialog_tree_get_id (LrgDialogTree *self);
+#+end_src
+
+Gets the tree identifier.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+
+*Returns:* The tree ID (transfer none)
+
+** Starting Point
+:PROPERTIES:
+:CUSTOM_ID: starting-point
+:END:
+*** lrg_dialog_tree_get_start_node_id()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_get_start_node_id
+:END:
+#+begin_src C
+const gchar * lrg_dialog_tree_get_start_node_id (LrgDialogTree *self);
+#+end_src
+
+Gets the starting node ID.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+
+*Returns:* The start node ID (transfer none, nullable)
+
+*** lrg_dialog_tree_set_start_node_id()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_set_start_node_id
+:END:
+#+begin_src C
+void lrg_dialog_tree_set_start_node_id (LrgDialogTree *self,
+                                        const gchar   *start_node_id);
+#+end_src
+
+Sets the starting node ID.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+- =start_node_id= - Start node ID (nullable)
+
+** Node Management
+:PROPERTIES:
+:CUSTOM_ID: node-management
+:END:
+*** lrg_dialog_tree_add_node()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_add_node
+:END:
+#+begin_src C
+void lrg_dialog_tree_add_node (LrgDialogTree *self,
+                               LrgDialogNode *node);
+#+end_src
+
+Adds a node to the tree. If a node with the same ID already exists, it will be replaced.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+- =node= - Node to add (transfer full)
+
+*** lrg_dialog_tree_get_node()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_get_node
+:END:
+#+begin_src C
+LrgDialogNode * lrg_dialog_tree_get_node (LrgDialogTree *self,
+                                          const gchar   *node_id);
+#+end_src
+
+Gets a node by ID.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+- =node_id= - Node identifier
+
+*Returns:* The node (transfer none, nullable) - =NULL= if not found
+
+*** lrg_dialog_tree_get_start_node()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_get_start_node
+:END:
+#+begin_src C
+LrgDialogNode * lrg_dialog_tree_get_start_node (LrgDialogTree *self);
+#+end_src
+
+Gets the starting node.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+
+*Returns:* The start node (transfer none, nullable) - =NULL= if not set
+
+*** lrg_dialog_tree_remove_node()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_remove_node
+:END:
+#+begin_src C
+gboolean lrg_dialog_tree_remove_node (LrgDialogTree *self,
+                                      const gchar   *node_id);
+#+end_src
+
+Removes a node from the tree.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+- =node_id= - Node identifier
+
+*Returns:* =TRUE= if the node was removed
+
+*** lrg_dialog_tree_get_node_count()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_get_node_count
+:END:
+#+begin_src C
+guint lrg_dialog_tree_get_node_count (LrgDialogTree *self);
+#+end_src
+
+Gets the number of nodes in the tree.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+
+*Returns:* Node count
+
+*** lrg_dialog_tree_get_node_ids()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_get_node_ids
+:END:
+#+begin_src C
+GList * lrg_dialog_tree_get_node_ids (LrgDialogTree *self);
+#+end_src
+
+Gets all node IDs in the tree.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+
+*Returns:* List of node IDs (element-type utf8, transfer container)
+
+** Metadata
+:PROPERTIES:
+:CUSTOM_ID: metadata
+:END:
+*** lrg_dialog_tree_get_title()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_get_title
+:END:
+#+begin_src C
+const gchar * lrg_dialog_tree_get_title (LrgDialogTree *self);
+#+end_src
+
+Gets the tree title.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+
+*Returns:* The title (transfer none, nullable)
+
+*** lrg_dialog_tree_set_title()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_set_title
+:END:
+#+begin_src C
+void lrg_dialog_tree_set_title (LrgDialogTree *self,
+                                const gchar   *title);
+#+end_src
+
+Sets the tree title.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+- =title= - Tree title (nullable)
+
+*** lrg_dialog_tree_get_description()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_get_description
+:END:
+#+begin_src C
+const gchar * lrg_dialog_tree_get_description (LrgDialogTree *self);
+#+end_src
+
+Gets the tree description.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+
+*Returns:* The description (transfer none, nullable)
+
+*** lrg_dialog_tree_set_description()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_set_description
+:END:
+#+begin_src C
+void lrg_dialog_tree_set_description (LrgDialogTree *self,
+                                      const gchar   *description);
+#+end_src
+
+Sets the tree description.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+- =description= - Tree description (nullable)
+
+** Validation
+:PROPERTIES:
+:CUSTOM_ID: validation
+:END:
+*** lrg_dialog_tree_validate()
+:PROPERTIES:
+:CUSTOM_ID: lrg_dialog_tree_validate
+:END:
+#+begin_src C
+gboolean lrg_dialog_tree_validate (LrgDialogTree  *self,
+                                   GError        **error);
+#+end_src
+
+Validates the dialog tree structure. Checks that all node references are valid and there are no orphan nodes.
+
+*Parameters:*
+
+- =self= - An =LrgDialogTree=
+- =error= - (optional) Return location for error
+
+*Returns:* =TRUE= if the tree is valid
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* Create a dialogue tree */
+g_autoptr(LrgDialogTree) tree = lrg_dialog_tree_new("merchant_greeting");
+lrg_dialog_tree_set_title(tree, "Merchant Greeting");
+lrg_dialog_tree_set_description(tree, "Initial conversation with the town merchant");
+lrg_dialog_tree_set_start_node_id(tree, "greeting");
+
+/* Create and add nodes */
+g_autoptr(LrgDialogNode) greeting = lrg_dialog_node_new("greeting");
+lrg_dialog_node_set_speaker(greeting, "Merchant");
+lrg_dialog_node_set_text(greeting, "Welcome to my shop!");
+lrg_dialog_node_set_next_node_id(greeting, "browse");
+lrg_dialog_tree_add_node(tree, greeting);
+
+g_autoptr(LrgDialogNode) browse = lrg_dialog_node_new("browse");
+lrg_dialog_node_set_speaker(browse, "Merchant");
+lrg_dialog_node_set_text(browse, "Feel free to look around.");
+g_autoptr(LrgDialogResponse) shop = lrg_dialog_response_new(
+    "shop", "Show me your wares", "shopping"
+);
+lrg_dialog_node_add_response(browse, shop);
+lrg_dialog_tree_add_node(tree, browse);
+
+g_autoptr(LrgDialogNode) shopping = lrg_dialog_node_new("shopping");
+lrg_dialog_node_set_speaker(shopping, "Merchant");
+lrg_dialog_node_set_text(shopping, "Here's what I have...");
+lrg_dialog_tree_add_node(tree, shopping);
+
+/* Validate tree */
+g_autoptr(GError) error = NULL;
+if (!lrg_dialog_tree_validate(tree, &error)) {
+    g_warning("Tree validation failed: %s\n", error->message);
+}
+
+/* Get node count */
+g_print("Tree has %u nodes\n", lrg_dialog_tree_get_node_count(tree));
+
+/* Get node IDs */
+GList *ids = lrg_dialog_tree_get_node_ids(tree);
+for (GList *l = ids; l != NULL; l = l->next) {
+    g_print("Node: %s\n", (const gchar *)l->data);
+}
+g_list_free(ids);
+
+/* Get start node */
+LrgDialogNode *start = lrg_dialog_tree_get_start_node(tree);
+if (start) {
+    g_print("Start node: %s\n", lrg_dialog_node_get_text(start));
+}
+
+/* Retrieve node by ID */
+LrgDialogNode *shopping_node = lrg_dialog_tree_get_node(tree, "shopping");
+if (shopping_node) {
+    g_print("Found shopping node\n");
+}
+#+end_src

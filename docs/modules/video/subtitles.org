@@ -1,0 +1,395 @@
+* Subtitles
+:PROPERTIES:
+:CUSTOM_ID: subtitles
+:END:
+The subtitle system consists of =LrgSubtitleCue=, =LrgVideoSubtitleTrack=, and =LrgVideoSubtitles= for loading, storing, and rendering subtitles.
+
+** Subtitle Cue
+:PROPERTIES:
+:CUSTOM_ID: subtitle-cue
+:END:
+=LrgSubtitleCue= is a GBoxed type representing a single subtitle entry.
+
+#+begin_src C
+#define LRG_TYPE_SUBTITLE_CUE (lrg_subtitle_cue_get_type ())
+#+end_src
+
+*** Creation
+:PROPERTIES:
+:CUSTOM_ID: creation
+:END:
+#+begin_src C
+LrgSubtitleCue *lrg_subtitle_cue_new (gdouble      start_time,
+                                       gdouble      end_time,
+                                       const gchar *text);
+
+LrgSubtitleCue *lrg_subtitle_cue_copy (const LrgSubtitleCue *cue);
+void lrg_subtitle_cue_free (LrgSubtitleCue *cue);
+#+end_src
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+#+begin_src C
+gdouble lrg_subtitle_cue_get_start_time (const LrgSubtitleCue *cue);
+gdouble lrg_subtitle_cue_get_end_time (const LrgSubtitleCue *cue);
+const gchar *lrg_subtitle_cue_get_text (const LrgSubtitleCue *cue);
+#+end_src
+
+*** Time Check
+:PROPERTIES:
+:CUSTOM_ID: time-check
+:END:
+#+begin_src C
+gboolean lrg_subtitle_cue_contains_time (const LrgSubtitleCue *cue,
+                                          gdouble               time);
+#+end_src
+
+--------------
+
+** Subtitle Track
+:PROPERTIES:
+:CUSTOM_ID: subtitle-track
+:END:
+=LrgVideoSubtitleTrack= manages a collection of cues.
+
+#+begin_src C
+#define LRG_TYPE_VIDEO_SUBTITLE_TRACK (lrg_video_subtitle_track_get_type ())
+G_DECLARE_FINAL_TYPE (LrgVideoSubtitleTrack, lrg_video_subtitle_track,
+                      LRG, VIDEO_SUBTITLE_TRACK, GObject)
+#+end_src
+
+*** Creation
+:PROPERTIES:
+:CUSTOM_ID: creation-1
+:END:
+#+begin_src C
+LrgVideoSubtitleTrack *lrg_video_subtitle_track_new (void);
+#+end_src
+
+*** Loading Files
+:PROPERTIES:
+:CUSTOM_ID: loading-files
+:END:
+#+begin_src C
+gboolean lrg_video_subtitle_track_load_srt (LrgVideoSubtitleTrack  *track,
+                                             const gchar            *path,
+                                             GError                **error);
+
+gboolean lrg_video_subtitle_track_load_vtt (LrgVideoSubtitleTrack  *track,
+                                             const gchar            *path,
+                                             GError                **error);
+
+gboolean lrg_video_subtitle_track_load_data (LrgVideoSubtitleTrack  *track,
+                                              const gchar            *data,
+                                              const gchar            *format,
+                                              GError                **error);
+#+end_src
+
+*** Cue Management
+:PROPERTIES:
+:CUSTOM_ID: cue-management
+:END:
+#+begin_src C
+void lrg_video_subtitle_track_add_cue (LrgVideoSubtitleTrack *track,
+                                        LrgSubtitleCue        *cue);
+
+void lrg_video_subtitle_track_clear (LrgVideoSubtitleTrack *track);
+
+guint lrg_video_subtitle_track_get_cue_count (LrgVideoSubtitleTrack *track);
+
+const LrgSubtitleCue *lrg_video_subtitle_track_get_cue (LrgVideoSubtitleTrack *track,
+                                                         guint                  index);
+#+end_src
+
+*** Time-Based Queries
+:PROPERTIES:
+:CUSTOM_ID: time-based-queries
+:END:
+#+begin_src C
+gchar *lrg_video_subtitle_track_get_text_at (LrgVideoSubtitleTrack *track,
+                                              gdouble                time);
+
+GPtrArray *lrg_video_subtitle_track_get_cues_at (LrgVideoSubtitleTrack *track,
+                                                  gdouble                time);
+
+gdouble lrg_video_subtitle_track_get_duration (LrgVideoSubtitleTrack *track);
+#+end_src
+
+*** Language
+:PROPERTIES:
+:CUSTOM_ID: language
+:END:
+#+begin_src C
+void lrg_video_subtitle_track_set_language (LrgVideoSubtitleTrack *track,
+                                             const gchar           *language);
+
+const gchar *lrg_video_subtitle_track_get_language (LrgVideoSubtitleTrack *track);
+#+end_src
+
+--------------
+
+** Subtitle Renderer
+:PROPERTIES:
+:CUSTOM_ID: subtitle-renderer
+:END:
+=LrgVideoSubtitles= renders subtitle text on screen.
+
+#+begin_src C
+#define LRG_TYPE_VIDEO_SUBTITLES (lrg_video_subtitles_get_type ())
+G_DECLARE_FINAL_TYPE (LrgVideoSubtitles, lrg_video_subtitles, LRG, VIDEO_SUBTITLES, GObject)
+#+end_src
+
+*** Creation
+:PROPERTIES:
+:CUSTOM_ID: creation-2
+:END:
+#+begin_src C
+LrgVideoSubtitles *lrg_video_subtitles_new (void);
+#+end_src
+
+*** Track
+:PROPERTIES:
+:CUSTOM_ID: track
+:END:
+#+begin_src C
+void lrg_video_subtitles_set_track (LrgVideoSubtitles     *subtitles,
+                                     LrgVideoSubtitleTrack *track);
+
+LrgVideoSubtitleTrack *lrg_video_subtitles_get_track (LrgVideoSubtitles *subtitles);
+#+end_src
+
+*** Visibility
+:PROPERTIES:
+:CUSTOM_ID: visibility
+:END:
+#+begin_src C
+void lrg_video_subtitles_set_visible (LrgVideoSubtitles *subtitles, gboolean visible);
+gboolean lrg_video_subtitles_get_visible (LrgVideoSubtitles *subtitles);
+#+end_src
+
+*** Position
+:PROPERTIES:
+:CUSTOM_ID: position
+:END:
+#+begin_src C
+typedef enum {
+    LRG_SUBTITLE_POSITION_BOTTOM,  /* Subtitles at bottom of video */
+    LRG_SUBTITLE_POSITION_TOP      /* Subtitles at top of video */
+} LrgSubtitlePosition;
+
+void lrg_video_subtitles_set_position (LrgVideoSubtitles   *subtitles,
+                                        LrgSubtitlePosition  position);
+
+LrgSubtitlePosition lrg_video_subtitles_get_position (LrgVideoSubtitles *subtitles);
+#+end_src
+
+*** Appearance
+:PROPERTIES:
+:CUSTOM_ID: appearance
+:END:
+#+begin_src C
+void lrg_video_subtitles_set_font_size (LrgVideoSubtitles *subtitles, gfloat size);
+gfloat lrg_video_subtitles_get_font_size (LrgVideoSubtitles *subtitles);
+
+void lrg_video_subtitles_set_color (LrgVideoSubtitles *subtitles,
+                                     guint8 r, guint8 g, guint8 b, guint8 a);
+
+void lrg_video_subtitles_get_color (LrgVideoSubtitles *subtitles,
+                                     guint8 *r, guint8 *g, guint8 *b, guint8 *a);
+
+void lrg_video_subtitles_set_background (LrgVideoSubtitles *subtitles, gboolean enabled);
+gboolean lrg_video_subtitles_get_background (LrgVideoSubtitles *subtitles);
+
+void lrg_video_subtitles_set_margin (LrgVideoSubtitles *subtitles, gfloat margin);
+gfloat lrg_video_subtitles_get_margin (LrgVideoSubtitles *subtitles);
+#+end_src
+
+*** Update and Draw
+:PROPERTIES:
+:CUSTOM_ID: update-and-draw
+:END:
+#+begin_src C
+void lrg_video_subtitles_update (LrgVideoSubtitles *subtitles, gdouble time);
+
+const gchar *lrg_video_subtitles_get_current_text (LrgVideoSubtitles *subtitles);
+
+void lrg_video_subtitles_draw (LrgVideoSubtitles *subtitles,
+                                gint               screen_width,
+                                gint               screen_height);
+#+end_src
+
+--------------
+
+** Example: Loading SRT File
+:PROPERTIES:
+:CUSTOM_ID: example-loading-srt-file
+:END:
+#+begin_src C
+g_autoptr(LrgVideoSubtitleTrack) track = lrg_video_subtitle_track_new ();
+g_autoptr(GError) error = NULL;
+
+if (!lrg_video_subtitle_track_load_srt (track, "dialog.srt", &error))
+{
+    g_warning ("Failed to load subtitles: %s", error->message);
+}
+else
+{
+    g_print ("Loaded %u cues\n",
+             lrg_video_subtitle_track_get_cue_count (track));
+}
+#+end_src
+
+--------------
+
+** Example: Programmatic Cues
+:PROPERTIES:
+:CUSTOM_ID: example-programmatic-cues
+:END:
+#+begin_src C
+g_autoptr(LrgVideoSubtitleTrack) track = lrg_video_subtitle_track_new ();
+
+/* Add cues manually */
+lrg_video_subtitle_track_add_cue (track,
+    lrg_subtitle_cue_new (0.0, 3.0, "Welcome to the game!"));
+
+lrg_video_subtitle_track_add_cue (track,
+    lrg_subtitle_cue_new (3.5, 6.0, "Press any key to continue..."));
+
+lrg_video_subtitle_track_add_cue (track,
+    lrg_subtitle_cue_new (6.5, 10.0, "Good luck, adventurer!"));
+#+end_src
+
+--------------
+
+** Example: Multiple Languages
+:PROPERTIES:
+:CUSTOM_ID: example-multiple-languages
+:END:
+#+begin_src C
+typedef struct {
+    gchar *code;
+    LrgVideoSubtitleTrack *track;
+} SubtitleLanguage;
+
+GPtrArray *languages;  /* Array of SubtitleLanguage */
+LrgVideoSubtitleTrack *current_track;
+
+void
+load_subtitles (void)
+{
+    languages = g_ptr_array_new ();
+
+    /* Load English */
+    LrgVideoSubtitleTrack *en = lrg_video_subtitle_track_new ();
+    lrg_video_subtitle_track_load_srt (en, "subs/video_en.srt", NULL);
+    lrg_video_subtitle_track_set_language (en, "en");
+
+    /* Load Spanish */
+    LrgVideoSubtitleTrack *es = lrg_video_subtitle_track_new ();
+    lrg_video_subtitle_track_load_srt (es, "subs/video_es.srt", NULL);
+    lrg_video_subtitle_track_set_language (es, "es");
+
+    /* Set default */
+    current_track = en;
+}
+
+void
+switch_language (const gchar *code)
+{
+    for (guint i = 0; i < languages->len; i++)
+    {
+        SubtitleLanguage *lang = g_ptr_array_index (languages, i);
+        if (g_strcmp0 (lang->code, code) == 0)
+        {
+            current_track = lang->track;
+            lrg_video_subtitles_set_track (subtitles, current_track);
+            break;
+        }
+    }
+}
+#+end_src
+
+--------------
+
+** Example: Styled Subtitles
+:PROPERTIES:
+:CUSTOM_ID: example-styled-subtitles
+:END:
+#+begin_src C
+LrgVideoSubtitles *subs = lrg_video_subtitles_new ();
+
+/* Yellow text with black background */
+lrg_video_subtitles_set_color (subs, 255, 255, 0, 255);
+lrg_video_subtitles_set_background (subs, TRUE);
+lrg_video_subtitles_set_font_size (subs, 28.0f);
+lrg_video_subtitles_set_position (subs, LRG_SUBTITLE_POSITION_BOTTOM);
+lrg_video_subtitles_set_margin (subs, 40.0f);
+lrg_video_subtitles_set_visible (subs, TRUE);
+#+end_src
+
+--------------
+
+** SRT Format Reference
+:PROPERTIES:
+:CUSTOM_ID: srt-format-reference
+:END:
+#+begin_example
+1
+00:00:01,000 --> 00:00:04,000
+First subtitle line.
+Can have multiple lines.
+
+2
+00:00:05,500 --> 00:00:08,000
+Second subtitle.
+#+end_example
+
+- *Cue number*: Sequential integer (ignored but required)
+- *Timing*: =HH:MM:SS,mmm --> HH:MM:SS,mmm=
+- *Text*: One or more lines of text
+- *Separator*: Empty line between cues
+
+--------------
+
+** WebVTT Format Reference
+:PROPERTIES:
+:CUSTOM_ID: webvtt-format-reference
+:END:
+#+begin_example
+WEBVTT
+
+00:00:01.000 --> 00:00:04.000
+First subtitle line.
+Can have multiple lines.
+
+00:00:05.500 --> 00:00:08.000
+Second subtitle.
+#+end_example
+
+- *Header*: Must start with =WEBVTT=
+- *Timing*: =HH:MM:SS.mmm --> HH:MM:SS.mmm= (dot instead of comma)
+- *Cue IDs*: Optional (can omit numbers)
+- *Styling*: VTT supports styling tags (parsed but currently ignored)
+
+--------------
+
+** Overlapping Cues
+:PROPERTIES:
+:CUSTOM_ID: overlapping-cues
+:END:
+Multiple cues can be active at the same time:
+
+#+begin_src C
+gdouble current_time = 5.0;
+
+/* Get all active cues */
+g_autoptr(GPtrArray) cues = lrg_video_subtitle_track_get_cues_at (track, current_time);
+
+for (guint i = 0; i < cues->len; i++)
+{
+    const LrgSubtitleCue *cue = g_ptr_array_index (cues, i);
+    g_print ("Active: %s\n", lrg_subtitle_cue_get_text (cue));
+}
+#+end_src

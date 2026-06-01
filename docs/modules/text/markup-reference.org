@@ -1,0 +1,350 @@
+* Markup Reference
+:PROPERTIES:
+:CUSTOM_ID: markup-reference
+:END:
+Complete reference for BBCode-style markup tags supported by =LrgRichText=.
+
+** Style Tags
+:PROPERTIES:
+:CUSTOM_ID: style-tags
+:END:
+*** Bold: =[b]=
+:PROPERTIES:
+:CUSTOM_ID: bold-b
+:END:
+Makes text bold.
+
+#+begin_example
+[b]Bold text[/b]
+#+end_example
+
+*** Italic: =[i]=
+:PROPERTIES:
+:CUSTOM_ID: italic-i
+:END:
+Makes text italic.
+
+#+begin_example
+[i]Italic text[/i]
+#+end_example
+
+*** Underline: =[u]=
+:PROPERTIES:
+:CUSTOM_ID: underline-u
+:END:
+Underlines text.
+
+#+begin_example
+[u]Underlined text[/u]
+#+end_example
+
+*** Strikethrough: =[s]=
+:PROPERTIES:
+:CUSTOM_ID: strikethrough-s
+:END:
+Strikes through text.
+
+#+begin_example
+[s]Crossed out[/s]
+#+end_example
+
+--------------
+
+** Color Tag: =[color]=
+:PROPERTIES:
+:CUSTOM_ID: color-tag-color
+:END:
+Changes text color.
+
+*** Hex Format
+:PROPERTIES:
+:CUSTOM_ID: hex-format
+:END:
+#+begin_example
+[color=#FF0000]Red[/color]
+[color=#0F0]Green (short)[/color]
+[color=#0000FF]Blue[/color]
+#+end_example
+
+*** Named Colors
+:PROPERTIES:
+:CUSTOM_ID: named-colors
+:END:
+#+begin_example
+[color=red]Red[/color]
+[color=green]Green[/color]
+[color=blue]Blue[/color]
+[color=yellow]Yellow[/color]
+[color=white]White[/color]
+[color=black]Black[/color]
+[color=gray]Gray[/color]
+[color=orange]Orange[/color]
+[color=purple]Purple[/color]
+[color=pink]Pink[/color]
+[color=cyan]Cyan[/color]
+#+end_example
+
+*** RGBA Format
+:PROPERTIES:
+:CUSTOM_ID: rgba-format
+:END:
+#+begin_example
+[color=#FF000080]Semi-transparent red[/color]
+#+end_example
+
+--------------
+
+** Size Tag: =[size]=
+:PROPERTIES:
+:CUSTOM_ID: size-tag-size
+:END:
+Scales the font size. Value is a multiplier of the base font size.
+
+#+begin_example
+[size=0.5]Half size[/size]
+[size=1.0]Normal size[/size]
+[size=1.5]1.5x size[/size]
+[size=2.0]Double size[/size]
+#+end_example
+
+--------------
+
+** Effect Tags
+:PROPERTIES:
+:CUSTOM_ID: effect-tags
+:END:
+*** Shake: =[shake]=
+:PROPERTIES:
+:CUSTOM_ID: shake-shake
+:END:
+Characters shake randomly.
+
+#+begin_example
+[shake]Shaky text![/shake]
+#+end_example
+
+Parameters:
+
+- =intensity= - Shake magnitude (default: 2.0)
+- =speed= - Shake frequency (default: 20.0)
+
+#+begin_example
+[shake intensity=5.0 speed=30.0]More intense![/shake]
+#+end_example
+
+*** Wave: =[wave]=
+:PROPERTIES:
+:CUSTOM_ID: wave-wave
+:END:
+Characters move in a wave pattern.
+
+#+begin_example
+[wave]Wavy text~[/wave]
+#+end_example
+
+Parameters:
+
+- =amplitude= - Wave height (default: 3.0)
+- =frequency= - Wave frequency (default: 4.0)
+- =speed= - Animation speed (default: 5.0)
+
+#+begin_example
+[wave amplitude=5.0 frequency=2.0]Big slow wave[/wave]
+#+end_example
+
+*** Rainbow: =[rainbow]=
+:PROPERTIES:
+:CUSTOM_ID: rainbow-rainbow
+:END:
+Characters cycle through rainbow colors.
+
+#+begin_example
+[rainbow]Colorful text![/rainbow]
+#+end_example
+
+Parameters:
+
+- =speed= - Color cycling speed (default: 2.0)
+- =saturation= - Color saturation 0-1 (default: 1.0)
+
+#+begin_example
+[rainbow speed=5.0]Fast rainbow[/rainbow]
+#+end_example
+
+*** Typewriter: =[typewriter]=
+:PROPERTIES:
+:CUSTOM_ID: typewriter-typewriter
+:END:
+Characters appear one at a time.
+
+#+begin_example
+[typewriter]Revealing text...[/typewriter]
+#+end_example
+
+Parameters:
+
+- =speed= - Characters per second (default: 20.0)
+- =delay= - Initial delay in seconds (default: 0.0)
+
+#+begin_example
+[typewriter speed=10.0 delay=0.5]Slow reveal after delay[/typewriter]
+#+end_example
+
+*** Pulse: =[pulse]=
+:PROPERTIES:
+:CUSTOM_ID: pulse-pulse
+:END:
+Text scales up and down rhythmically.
+
+#+begin_example
+[pulse]Pulsing![/pulse]
+#+end_example
+
+Parameters:
+
+- =min_scale= - Minimum scale (default: 0.9)
+- =max_scale= - Maximum scale (default: 1.1)
+- =speed= - Pulse frequency (default: 3.0)
+
+#+begin_example
+[pulse min_scale=0.8 max_scale=1.2]Big pulse[/pulse]
+#+end_example
+
+*** Fade In: =[fadein]=
+:PROPERTIES:
+:CUSTOM_ID: fade-in-fadein
+:END:
+Text fades in from transparent.
+
+#+begin_example
+[fadein]Fading in...[/fadein]
+#+end_example
+
+Parameters:
+
+- =duration= - Fade duration in seconds (default: 1.0)
+- =delay= - Delay before starting (default: 0.0)
+
+#+begin_example
+[fadein duration=2.0]Slow fade[/fadein]
+#+end_example
+
+--------------
+
+** Nesting Tags
+:PROPERTIES:
+:CUSTOM_ID: nesting-tags
+:END:
+Tags can be nested for combined effects:
+
+#+begin_example
+[b][i]Bold and italic[/i][/b]
+[color=#FF0000][b]Bold red[/b][/color]
+[rainbow][wave]Rainbow wave[/wave][/rainbow]
+[size=2.0][shake]Big shaky[/shake][/size]
+#+end_example
+
+*** Nesting Order
+:PROPERTIES:
+:CUSTOM_ID: nesting-order
+:END:
+Tags apply from inside out:
+
+#+begin_example
+[b][color=#FF0000]text[/color][/b]
+#+end_example
+
+Result: Bold, red text
+
+--------------
+
+** Escaping
+:PROPERTIES:
+:CUSTOM_ID: escaping
+:END:
+Use =[[= to output a literal =[=:
+
+#+begin_example
+Use [[b]] for bold text
+#+end_example
+
+Output: =Use [b] for bold text=
+
+--------------
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Dialog Box
+:PROPERTIES:
+:CUSTOM_ID: dialog-box
+:END:
+#+begin_example
+[color=#FFD700][b]NPC Name:[/b][/color] Hello, traveler!
+Would you like to [color=#00FF00]accept[/color] this quest?
+#+end_example
+
+*** Warning Message
+:PROPERTIES:
+:CUSTOM_ID: warning-message
+:END:
+#+begin_example
+[shake][color=#FF0000][b]WARNING![/b][/color][/shake]
+Low health!
+#+end_example
+
+*** Title Screen
+:PROPERTIES:
+:CUSTOM_ID: title-screen
+:END:
+#+begin_example
+[rainbow][wave][size=2.0]ADVENTURE QUEST[/size][/wave][/rainbow]
+
+[fadein delay=1.0]Press START to begin[/fadein]
+#+end_example
+
+*** Typewriter Dialog
+:PROPERTIES:
+:CUSTOM_ID: typewriter-dialog
+:END:
+#+begin_example
+[typewriter speed=25.0]The ancient door slowly creaks open,
+revealing a [color=#8844FF]mysterious chamber[/color]
+filled with [shake]untold treasures[/shake]...[/typewriter]
+#+end_example
+
+*** Item Description
+:PROPERTIES:
+:CUSTOM_ID: item-description
+:END:
+#+begin_example
+[b]Legendary Sword[/b]
+[color=#FFD700]★★★★★[/color]
+
+[i]A blade forged in dragon fire.[/i]
+
+[color=#00FF00]+50 Attack[/color]
+[color=#FF4444]+25% Critical[/color]
+#+end_example
+
+--------------
+
+** Tag Summary
+:PROPERTIES:
+:CUSTOM_ID: tag-summary
+:END:
+| Tag            | Parameters                  | Description      |
+|----------------+-----------------------------+------------------|
+| =[b]=          | -                           | Bold             |
+| =[i]=          | -                           | Italic           |
+| =[u]=          | -                           | Underline        |
+| =[s]=          | -                           | Strikethrough    |
+| =[color=X]=    | hex, name                   | Text color       |
+| =[size=X]=     | float                       | Size multiplier  |
+| =[shake]=      | intensity, speed            | Random shake     |
+| =[wave]=       | amplitude, frequency, speed | Sine wave motion |
+| =[rainbow]=    | speed, saturation           | Color cycling    |
+| =[typewriter]= | speed, delay                | Character reveal |
+| =[pulse]=      | min_scale, max_scale, speed | Scale animation  |
+| =[fadein]=     | duration, delay             | Alpha fade in    |
