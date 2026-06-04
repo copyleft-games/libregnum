@@ -270,6 +270,26 @@ Check the header file:
 - **GBoxed**: Uses `G_DEFINE_BOXED_TYPE` and has `*_copy()` / `*_free()` functions
 - **GObject**: Uses `G_DECLARE_*_TYPE` macros
 
+## Image Drawing (graylib `GrlImage`)
+
+For CPU-side image generation (sprites, procedural textures, headless asset
+baking) use graylib's `GrlImage` software rasterizer. Key points:
+
+- **Headless text works**: `grl_image_draw_text()` falls back to an embedded
+  bitmap font when no window exists; `grl_image_draw_text_bitmap()` always uses
+  it. (raylib's raw `ImageDrawText` crashes without a GL context.)
+- **Rich primitives**: `grl_image_draw_line_ex` (thick), `circle_lines`,
+  `ellipse`/`ellipse_lines`, `triangle`/`triangle_lines`, `polygon`, `polyline`,
+  `bezier`, `gradient_rect`, `gradient_radial`, `flood_fill`.
+- **Blend modes / clip / AA**: `grl_image_set_blend_mode()` (`GRL_IMAGE_BLEND_ADD`
+  for glow, etc.), `grl_image_set_clip_rect()`, `grl_image_set_antialias()`.
+  Default blend mode is `REPLACE` (overwrite); non-REPLACE needs an RGBA8 image.
+- **`grl_image_draw_image()` tint is nullable** (`NULL` = no tint / white).
+- **Resize to a new image**: `grl_image_resized()` / `grl_image_scaled_nearest()`.
+- **Animated export**: `GrlGifWriter` writes multi-frame GIFs.
+
+See `deps/graylib/docs/api/graphics.md` for the full API.
+
 ## Transfer Semantics (Ownership)
 
 The `(transfer full)` annotation means the function takes ownership. **Do NOT unref after calling.**
