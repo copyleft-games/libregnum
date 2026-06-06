@@ -32,7 +32,7 @@ typedef struct _LrgGameTemplatePrivate
     /* Engine coordination (NOT owned - it's a singleton) */
     LrgEngine           *engine;
 
-    /* Window (owned) */
+    /* Window (borrowed from the host; not owned) */
     LrgWindow           *window;
 
     /* Owned subsystems */

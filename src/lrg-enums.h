@@ -965,6 +965,8 @@ GType lrg_mod_state_get_type (void) G_GNUC_CONST;
  * @LRG_MOD_TYPE_DATA: Data-only mod (assets, configs, translations)
  * @LRG_MOD_TYPE_SCRIPT: Script mod (Lua or other scripting)
  * @LRG_MOD_TYPE_NATIVE: Native plugin (shared library)
+ * @LRG_MOD_TYPE_GAME: Native game module - a loadable top-level game
+ *   (a `.so` exporting the game-module entry symbol; see #LrgLoadedGame)
  *
  * Type of mod.
  */
@@ -972,7 +974,8 @@ typedef enum
 {
     LRG_MOD_TYPE_DATA,
     LRG_MOD_TYPE_SCRIPT,
-    LRG_MOD_TYPE_NATIVE
+    LRG_MOD_TYPE_NATIVE,
+    LRG_MOD_TYPE_GAME
 } LrgModType;
 
 LRG_AVAILABLE_IN_ALL

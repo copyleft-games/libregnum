@@ -71,6 +71,7 @@ G_BEGIN_DECLS
 #define LRG_LOG_DOMAIN_TEXT       "Libregnum-Text"
 #define LRG_LOG_DOMAIN_TEMPLATE   "Libregnum-Template"
 #define LRG_LOG_DOMAIN_MCP        "Libregnum-MCP"
+#define LRG_LOG_DOMAIN_GAMEMODULE "Libregnum-GameModule"
 
 /* ==========================================================================
  * Logging Macros

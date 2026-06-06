@@ -28,6 +28,7 @@
 typedef struct
 {
     LrgEngineState    state;
+    guint             startup_count;   /* Refcount so hosts can share one engine */
     LrgRegistry      *registry;
     LrgDataLoader    *data_loader;
     LrgAssetManager  *asset_manager;
@@ -349,6 +350,16 @@ lrg_engine_startup (LrgEngine  *self,
 
     priv = lrg_engine_get_instance_private (self);
 
+    /* Refcounted startup: if the engine is already up (e.g. a host started it
+     * and a loaded game's host also requests startup), just take a reference
+     * and report success. Real teardown happens on the last matching shutdown. */
+    if (priv->state == LRG_ENGINE_STATE_RUNNING ||
+        priv->state == LRG_ENGINE_STATE_PAUSED)
+    {
+        priv->startup_count++;
+        return TRUE;
+    }
+
     if (priv->state != LRG_ENGINE_STATE_UNINITIALIZED &&
         priv->state != LRG_ENGINE_STATE_TERMINATED)
     {
@@ -372,6 +383,8 @@ lrg_engine_startup (LrgEngine  *self,
     g_signal_emit (self, signals[SIGNAL_STARTUP], 0);
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STATE]);
+
+    priv->startup_count = 1;
 
     lrg_info (LRG_LOG_DOMAIN_CORE, "Libregnum engine v%s started", LRG_VERSION_STRING);
 
@@ -399,6 +412,14 @@ lrg_engine_shutdown (LrgEngine *self)
     {
         return;
     }
+
+    /* Refcounted shutdown: only tear down on the last matching shutdown. */
+    if (priv->startup_count > 1)
+    {
+        priv->startup_count--;
+        return;
+    }
+    priv->startup_count = 0;
 
     priv->state = LRG_ENGINE_STATE_SHUTTING_DOWN;
 

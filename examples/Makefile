@@ -153,7 +153,7 @@ EXAMPLE_BINARIES := $(patsubst %,$(EXAMPLES_BUILDDIR)/%$(EXE_EXT),$(EXAMPLES))
 # MinGW sysroot for Windows DLLs
 MINGW_BIN := /usr/x86_64-w64-mingw32/sys-root/mingw/bin
 
-.PHONY: all clean copy-dlls mods
+.PHONY: all clean copy-dlls mods game-modules
 
 ifeq ($(TARGET_PLATFORM),windows)
     ifeq ($(STATIC),1)
@@ -333,6 +333,37 @@ $(BONUS_CREATURES_MOD): $(MODS_DIR)/bonus-creatures/lib/libbonuscreatures.c crea
 	@$(MKDIR_P) $(dir $@)
 	@$(CC) $(MOD_CFLAGS) -o $@ $< $(MOD_LDFLAGS) $(MOD_LIBS)
 
+# =============================================================================
+# Game modules (.so) - a game built as a loadable module (LRG_DEFINE_GAME_MODULE)
+# =============================================================================
+
+GAME_MODULES_DIR := $(EXAMPLES_BUILDDIR)/modules
+FPS_GAME_MODULE := $(GAME_MODULES_DIR)/libfpsdemo.so
+
+# Reuse the example include/flags, add PIC + -DLRG_GAME_BUILD_MODULE (so the
+# LRG_DEFINE_GAME_MODULE macro emits the exported entry symbol, not a main()),
+# and export only that symbol. The module is deliberately NOT linked against
+# libregnum: its libregnum symbols are left undefined and resolve at load time
+# from whatever host loads it -- the shim's libregnum.so, or an embedding host
+# that links libregnum statically and exports its symbols (e.g. emacs built with
+# --export-dynamic). This keeps exactly one copy of the engine/GType registry in
+# the process regardless of how the host links libregnum.
+GM_CFLAGS := $(EXAMPLE_CFLAGS) $(GAME_MODULE_CFLAGS)
+GM_LDFLAGS := $(GAME_MODULE_LDFLAGS) -Wl,--version-script=$(GAME_MODULE_MAP)
+GM_LIBS := $(GLIB_LIBS)
+
+ifneq ($(TARGET_PLATFORM),windows)
+game-modules: $(FPS_GAME_MODULE)
+else
+game-modules:
+	@echo "Game modules not supported on Windows"
+endif
+
+$(FPS_GAME_MODULE): game-fps-demo.c
+	$(call print_compile,$<)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(GM_CFLAGS) -o $@ $< $(GM_LDFLAGS) $(GM_LIBS)
+
 $(EXAMPLES_BUILDDIR):
 	@$(MKDIR_P) $@
 
@@ -341,4 +372,6 @@ clean:
 	@$(RM) $(EXAMPLE_BINARIES)
 	@$(RM) $(EXAMPLES_BUILDDIR)/*.dll
 	@$(RM) $(BONUS_CREATURES_MOD)
+	@$(RM) $(FPS_GAME_MODULE)
+	@if [ -d "$(GAME_MODULES_DIR)" ]; then rmdir --ignore-fail-on-non-empty "$(GAME_MODULES_DIR)"; fi
 	@if [ -d "$(EXAMPLES_BUILDDIR)" ]; then rmdir --ignore-fail-on-non-empty "$(EXAMPLES_BUILDDIR)"; fi

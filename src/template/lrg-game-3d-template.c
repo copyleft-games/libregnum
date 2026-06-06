@@ -13,7 +13,9 @@
 #include "lrg-game-3d-template.h"
 #include "lrg-game-3d-template-private.h"
 #include "../lrg-log.h"
+#include "../core/lrg-engine.h"
 #include "../graphics/lrg-window.h"
+#include "../graphics/lrg-grl-window.h"
 
 #include <graylib.h>
 #include <raylib.h>
@@ -849,14 +851,24 @@ lrg_game_3d_template_set_mouse_look_enabled (LrgGame3DTemplate *self,
 
     priv->mouse_look_enabled = enabled;
 
-    /* Lock/unlock cursor */
-    if (enabled)
+    /* Lock/unlock the cursor on the game's own window. When the game is hosted
+     * without an LrgWindow (e.g. embedded in an editor or cmacs), there is no
+     * window to grab, so this is a safe no-op -- crucially, an embedded game
+     * must NOT capture the host application's real cursor. */
     {
-        grl_window_disable_cursor (NULL);
-    }
-    else
-    {
-        grl_window_enable_cursor (NULL);
+        LrgWindow *window;
+
+        window = lrg_game_template_get_window (LRG_GAME_TEMPLATE (self));
+
+        if (window != NULL && LRG_IS_GRL_WINDOW (window))
+        {
+            GrlWindow *raw = lrg_grl_window_get_grl_window (LRG_GRL_WINDOW (window));
+
+            if (enabled)
+                grl_window_disable_cursor (raw);
+            else
+                grl_window_enable_cursor (raw);
+        }
     }
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MOUSE_LOOK_ENABLED]);

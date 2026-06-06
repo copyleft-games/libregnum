@@ -991,6 +991,7 @@ lrg_mod_type_get_type (void)
             { LRG_MOD_TYPE_DATA, "LRG_MOD_TYPE_DATA", "data" },
             { LRG_MOD_TYPE_SCRIPT, "LRG_MOD_TYPE_SCRIPT", "script" },
             { LRG_MOD_TYPE_NATIVE, "LRG_MOD_TYPE_NATIVE", "native" },
+            { LRG_MOD_TYPE_GAME, "LRG_MOD_TYPE_GAME", "game" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =

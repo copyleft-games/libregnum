@@ -1188,4 +1188,18 @@ typedef struct _LrgThirdPersonTemplateClass  LrgThirdPersonTemplateClass;
 typedef struct _LrgRacing3DTemplate       LrgRacing3DTemplate;
 typedef struct _LrgRacing3DTemplateClass  LrgRacing3DTemplateClass;
 
+/* ==========================================================================
+ * Game Module Module
+ * ========================================================================== */
+
+/* LrgGameHost is an interface */
+typedef struct _LrgGameHost          LrgGameHost;
+typedef struct _LrgGameHostInterface LrgGameHostInterface;
+
+/* LrgStandaloneHost is a final type - no Class forward declaration needed */
+typedef struct _LrgStandaloneHost    LrgStandaloneHost;
+
+/* LrgLoadedGame is a final type - no Class forward declaration needed */
+typedef struct _LrgLoadedGame        LrgLoadedGame;
+
 G_END_DECLS

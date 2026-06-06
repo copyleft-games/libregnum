@@ -147,6 +147,18 @@ VISIBILITY_CFLAGS := -fvisibility=hidden
 PIC_CFLAGS := -fPIC
 
 # =============================================================================
+# Game Module Flags
+# =============================================================================
+
+# Flags for building a libregnum game as a loadable module (.so). A game's
+# main translation unit uses LRG_DEFINE_GAME_MODULE; building it with
+# -DLRG_GAME_BUILD_MODULE emits the exported entry symbol instead of a main().
+# The version script keeps everything but that entry symbol module-local.
+GAME_MODULE_MAP := $(PROJECT_ROOT)/build-aux/lrg-game-module.map
+GAME_MODULE_CFLAGS := $(PIC_CFLAGS) -DLRG_GAME_BUILD_MODULE=1
+GAME_MODULE_LDFLAGS := -shared
+
+# =============================================================================
 # Platform Detection
 # =============================================================================
 

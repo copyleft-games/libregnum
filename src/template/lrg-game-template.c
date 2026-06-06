@@ -24,6 +24,9 @@
 #include "../audio/lrg-sound-bank.h"
 #include "../postprocess/effects/lrg-screen-shake.h"
 #include "../graphics/lrg-grl-window.h"
+#include "../graphics/lrg-window.h"
+#include "../gamemodule/lrg-game-host.h"
+#include "../gamemodule/lrg-standalone-host.h"
 
 #include <graylib.h>
 #include <math.h>
@@ -348,19 +351,21 @@ template_handle_global_input_default (LrgGameTemplate *self)
     return FALSE;
 }
 
-static void
-template_frame (LrgGameTemplate *self)
+void
+lrg_game_template_update (LrgGameTemplate *self,
+                          gdouble          delta)
 {
     LrgGameTemplatePrivate *priv;
     LrgGameTemplateClass *klass;
     gdouble raw_delta;
-    gdouble delta;
+
+    g_return_if_fail (LRG_IS_GAME_TEMPLATE (self));
 
     priv = lrg_game_template_get_instance_private (self);
     klass = LRG_GAME_TEMPLATE_GET_CLASS (self);
 
-    /* Get raw delta, clamp to max */
-    raw_delta = (gdouble)lrg_window_get_frame_time (priv->window);
+    /* The host supplies the raw delta; clamp it to the configured max. */
+    raw_delta = delta;
     delta = CLAMP (raw_delta, 0.0, priv->max_frame_time);
 
     /* Log frame drops if configured */
@@ -470,23 +475,7 @@ template_frame (LrgGameTemplate *self)
         }
     }
 
-    /* Render */
-    lrg_window_begin_frame (priv->window);
-
-    if (priv->background_color != NULL)
-        lrg_window_clear (priv->window, priv->background_color);
-
-    if (klass->pre_draw != NULL)
-        klass->pre_draw (self);
-
-    lrg_game_state_manager_draw (priv->state_manager);
-
-    if (klass->post_draw != NULL)
-        klass->post_draw (self);
-
-    lrg_window_end_frame (priv->window);
-
-    /* Auto-save check */
+    /* Auto-save check (post-simulation, independent of rendering cadence) */
     if (priv->enable_auto_save && !priv->is_paused)
     {
         priv->auto_save_timer += delta;
@@ -510,6 +499,28 @@ template_frame (LrgGameTemplate *self)
 
     /* Audio update */
     lrg_audio_manager_update (lrg_audio_manager_get_default ());
+}
+
+void
+lrg_game_template_render (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv;
+    LrgGameTemplateClass *klass;
+
+    g_return_if_fail (LRG_IS_GAME_TEMPLATE (self));
+
+    priv = lrg_game_template_get_instance_private (self);
+    klass = LRG_GAME_TEMPLATE_GET_CLASS (self);
+
+    /* The host has already bound (and optionally cleared) the render target;
+     * we only issue the game's draw calls here. */
+    if (klass->pre_draw != NULL)
+        klass->pre_draw (self);
+
+    lrg_game_state_manager_draw (priv->state_manager);
+
+    if (klass->post_draw != NULL)
+        klass->post_draw (self);
 }
 
 /* ========================================================================== */
@@ -725,12 +736,11 @@ lrg_game_template_finalize (GObject *object)
         priv->signal_handlers = NULL;
     }
 
-    /* Disconnect window from engine before releasing it */
-    if (priv->engine != NULL && priv->window != NULL)
-        lrg_engine_set_window (priv->engine, NULL);
+    /* The window is owned by the host; the template only borrows a reference.
+     * The host disconnects it from the engine during its own teardown. */
+    g_clear_object (&priv->window);
 
     /* Unref owned subsystems */
-    g_clear_object (&priv->window);
     g_clear_object (&priv->state_manager);
     g_clear_object (&priv->input_map);
     g_clear_object (&priv->settings);
@@ -1511,32 +1521,18 @@ lrg_game_template_new (void)
     return g_object_new (LRG_TYPE_GAME_TEMPLATE, NULL);
 }
 
-/**
- * lrg_game_template_run:
- * @self: an #LrgGameTemplate
- * @argc: argument count from main()
- * @argv: argument vector from main()
- *
- * Runs the game loop. This is the main entry point for template-based games.
- * Initializes all subsystems, runs the game loop, and cleans up on exit.
- *
- * Returns: exit code (0 for success)
- *
- * Since: 1.0
- */
-gint
-lrg_game_template_run (LrgGameTemplate *self,
-                       int              argc,
-                       char           **argv)
+gboolean
+lrg_game_template_startup (LrgGameTemplate  *self,
+                           LrgGameHost      *host,
+                           GError          **error)
 {
     LrgGameTemplatePrivate *priv;
     LrgGameTemplateClass *klass;
-    g_autoptr(GError) error = NULL;
-    LrgGrlWindow *grl_win;
-    GrlWindow *raw_window;
+    LrgWindow *host_window;
     LrgGameState *initial_state;
 
-    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), 1);
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), FALSE);
+    g_return_val_if_fail (LRG_IS_GAME_HOST (host), FALSE);
 
     priv = lrg_game_template_get_instance_private (self);
     klass = LRG_GAME_TEMPLATE_GET_CLASS (self);
@@ -1545,69 +1541,36 @@ lrg_game_template_run (LrgGameTemplate *self,
     if (klass->configure != NULL)
         klass->configure (self);
 
-    /* 2. Get engine singleton (NOT owned) */
-    priv->engine = lrg_engine_get_default ();
-
-    /* 3. Start engine */
-    if (!lrg_engine_startup (priv->engine, &error))
+    /* 2. Borrow the engine + window from the host. The host owns their
+     *    lifetime; a hosted game must not start or stop the engine, nor
+     *    create or destroy the window. */
+    priv->engine = lrg_game_host_get_engine (host);
+    if (priv->engine == NULL)
     {
-        lrg_warning (LRG_LOG_DOMAIN_TEMPLATE,
-                     "Engine startup failed: %s", error->message);
-        return 1;
+        g_set_error (error, LRG_ENGINE_ERROR, LRG_ENGINE_ERROR_STATE,
+                     "Game host returned no engine");
+        return FALSE;
     }
 
-    /* 4. Create window via LrgGrlWindow wrapper */
-    grl_win = lrg_grl_window_new (priv->window_width,
-                                  priv->window_height,
-                                  priv->title);
+    host_window = lrg_game_host_get_window (host);
+    if (host_window != NULL)
+        priv->window = g_object_ref (host_window);
 
-    if (grl_win == NULL)
-    {
-        lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Failed to create window");
-        lrg_engine_shutdown (priv->engine);
-        return 1;
-    }
-
-    priv->window = LRG_WINDOW (grl_win);
-
-    /* Register window with engine so template states can find it */
-    lrg_engine_set_window (priv->engine, priv->window);
-
-    /* Configure window via raw GrlWindow for features not in LrgWindow */
-    raw_window = lrg_grl_window_get_grl_window (grl_win);
-
-    lrg_window_set_target_fps (priv->window, priv->target_fps);
-
-    if (priv->vsync)
-        lrg_grl_window_set_vsync (grl_win, TRUE);
-
-    if (priv->allow_resize)
-        grl_window_set_state (raw_window, GRL_FLAG_WINDOW_RESIZABLE);
-
-    grl_window_set_min_size (raw_window, priv->min_width, priv->min_height);
-
-    /* Apply fullscreen mode */
-    if (priv->fullscreen_mode == LRG_FULLSCREEN_FULLSCREEN)
-        lrg_grl_window_toggle_fullscreen (grl_win);
-    else if (priv->fullscreen_mode == LRG_FULLSCREEN_BORDERLESS)
-        grl_window_toggle_borderless (raw_window);
-
-    /* 5. Initialize subsystems */
+    /* 3. Initialize subsystems */
     priv->state_manager = lrg_game_state_manager_new ();
     priv->input_map = lrg_input_map_new ();
     priv->event_bus = lrg_event_bus_new ();
     priv->settings = lrg_settings_new ();
 
-    /* 6. Create/get theme */
+    /* 4. Create/get theme */
     if (klass->create_theme != NULL)
         priv->theme = klass->create_theme (self);
     if (priv->theme == NULL)
         priv->theme = lrg_theme_get_default ();
 
-    /* 7. Load settings if configured */
+    /* 5. Load settings if configured */
     if (priv->enable_settings && priv->app_id != NULL)
     {
-        g_autoptr(GError) settings_error = NULL;
         g_autofree gchar *settings_path = NULL;
 
         settings_path = g_build_filename (g_get_user_config_dir (),
@@ -1619,11 +1582,11 @@ lrg_game_template_run (LrgGameTemplate *self,
         lrg_settings_load (priv->settings, settings_path, NULL);
     }
 
-    /* 8. Setup default input (vfunc) */
+    /* 6. Setup default input (vfunc) */
     if (klass->setup_default_input != NULL)
         klass->setup_default_input (self, priv->input_map);
 
-    /* 9. Register custom types */
+    /* 7. Register custom types */
     if (klass->register_types != NULL)
     {
         LrgRegistry *registry;
@@ -1632,11 +1595,11 @@ lrg_game_template_run (LrgGameTemplate *self,
         klass->register_types (self, registry);
     }
 
-    /* 10. Pre-startup hook (vfunc) */
+    /* 8. Pre-startup hook (vfunc) */
     if (klass->pre_startup != NULL)
         klass->pre_startup (self);
 
-    /* 11. Create and push initial state */
+    /* 9. Create and push initial state */
     initial_state = NULL;
     if (klass->create_initial_state != NULL)
         initial_state = klass->create_initial_state (self);
@@ -1651,29 +1614,47 @@ lrg_game_template_run (LrgGameTemplate *self,
                      "No initial state created - game will have no active state");
     }
 
-    /* 12. Post-startup hook (vfunc) */
+    /* 10. Post-startup hook (vfunc) */
     if (klass->post_startup != NULL)
         klass->post_startup (self);
 
     /* Mark as running */
     priv->is_running = TRUE;
-    priv->has_focus = grl_window_is_focused (raw_window);
+    if (priv->window != NULL)
+    {
+        GrlWindow *raw_window;
+
+        raw_window = lrg_grl_window_get_grl_window (LRG_GRL_WINDOW (priv->window));
+        priv->has_focus = grl_window_is_focused (raw_window);
+    }
+    else
+    {
+        /* Headless / embedded host without an LrgWindow: assume focused. */
+        priv->has_focus = TRUE;
+    }
     priv->gamepad_connected = grl_input_is_gamepad_available (0);
 
-    /* 13. Main loop */
-    while (!priv->should_quit && !lrg_window_should_close (priv->window))
-    {
-        template_frame (self);
-    }
+    return TRUE;
+}
 
-    /* Mark as not running */
+void
+lrg_game_template_shutdown_game (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv;
+    LrgGameTemplateClass *klass;
+
+    g_return_if_fail (LRG_IS_GAME_TEMPLATE (self));
+
+    priv = lrg_game_template_get_instance_private (self);
+    klass = LRG_GAME_TEMPLATE_GET_CLASS (self);
+
     priv->is_running = FALSE;
 
-    /* 14. Shutdown hook (vfunc) */
+    /* Shutdown hook (vfunc) */
     if (klass->shutdown != NULL)
         klass->shutdown (self);
 
-    /* 15. Save settings if configured */
+    /* Save settings if configured */
     if (priv->enable_settings && priv->app_id != NULL)
     {
         g_autofree gchar *settings_dir = NULL;
@@ -1692,15 +1673,126 @@ lrg_game_template_run (LrgGameTemplate *self,
         lrg_settings_save (priv->settings, settings_path, NULL);
     }
 
-    /* 16. Clear states */
-    lrg_game_state_manager_clear (priv->state_manager);
+    /* Clear states */
+    if (priv->state_manager != NULL)
+        lrg_game_state_manager_clear (priv->state_manager);
+}
 
-    /* 17. Shutdown engine */
-    lrg_engine_shutdown (priv->engine);
+gboolean
+lrg_game_template_should_quit (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv;
 
-    /* Window is auto-closed when unreferenced (g_autoptr) */
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), TRUE);
+
+    priv = lrg_game_template_get_instance_private (self);
+
+    if (priv->should_quit)
+        return TRUE;
+
+    if (priv->window != NULL && lrg_window_should_close (priv->window))
+        return TRUE;
+
+    return FALSE;
+}
+
+GrlColor *
+lrg_game_template_get_background_color (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), NULL);
+
+    priv = lrg_game_template_get_instance_private (self);
+
+    return priv->background_color;
+}
+
+LrgWindow *
+lrg_game_template_get_window (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), NULL);
+
+    priv = lrg_game_template_get_instance_private (self);
+
+    return priv->window;
+}
+
+gint
+lrg_game_run_standalone (LrgGameTemplate *self,
+                         int              argc,
+                         char           **argv)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(LrgStandaloneHost) host = NULL;
+
+    (void) argc;
+    (void) argv;
+
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), 1);
+
+    /* The standalone host starts the engine and creates + configures the
+     * window from this template's properties. */
+    host = lrg_standalone_host_new (self, &error);
+    if (host == NULL)
+    {
+        lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Standalone host init failed: %s",
+                     error != NULL ? error->message : "unknown error");
+        return 1;
+    }
+
+    if (!lrg_game_template_startup (self, LRG_GAME_HOST (host), &error))
+    {
+        lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Game startup failed: %s",
+                     error != NULL ? error->message : "unknown error");
+        lrg_standalone_host_teardown (host);
+        return 1;
+    }
+
+    /* Main loop: simulate, then present the frame through the host. */
+    while (!lrg_game_template_should_quit (self))
+    {
+        gdouble delta;
+
+        delta = lrg_game_host_get_frame_delta (LRG_GAME_HOST (host));
+
+        lrg_game_template_update (self, delta);
+
+        lrg_game_host_begin_frame (LRG_GAME_HOST (host));
+        lrg_game_host_clear (LRG_GAME_HOST (host),
+                             lrg_game_template_get_background_color (self));
+        lrg_game_template_render (self);
+        lrg_game_host_end_frame (LRG_GAME_HOST (host));
+    }
+
+    lrg_game_template_shutdown_game (self);
+    lrg_standalone_host_teardown (host);
 
     return 0;
+}
+
+/**
+ * lrg_game_template_run:
+ * @self: an #LrgGameTemplate
+ * @argc: argument count from main()
+ * @argv: argument vector from main()
+ *
+ * Runs the game loop. This is the main entry point for template-based games.
+ * Initializes all subsystems, runs the game loop, and cleans up on exit.
+ * Equivalent to lrg_game_run_standalone().
+ *
+ * Returns: exit code (0 for success)
+ *
+ * Since: 1.0
+ */
+gint
+lrg_game_template_run (LrgGameTemplate *self,
+                       int              argc,
+                       char           **argv)
+{
+    return lrg_game_run_standalone (self, argc, argv);
 }
 
 /**

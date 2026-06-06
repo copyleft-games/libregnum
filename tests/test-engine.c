@@ -32,8 +32,9 @@ static void
 engine_fixture_tear_down (EngineFixture *fixture,
                           gconstpointer  user_data)
 {
-    /* Shutdown if still running */
-    if (lrg_engine_is_running (fixture->engine))
+    /* Shutdown if still running. Drain the startup refcount so the shared
+     * singleton is fully reset between tests. */
+    while (lrg_engine_is_running (fixture->engine))
     {
         lrg_engine_shutdown (fixture->engine);
     }
@@ -115,23 +116,34 @@ test_engine_shutdown_state (EngineFixture *fixture,
 }
 
 static void
-test_engine_double_startup_fails (EngineFixture *fixture,
-                                  gconstpointer  user_data)
+test_engine_refcounted_startup (EngineFixture *fixture,
+                                gconstpointer  user_data)
 {
     g_autoptr(GError) error1 = NULL;
     g_autoptr(GError) error2 = NULL;
     gboolean          result1;
     gboolean          result2;
 
-    /* First startup should succeed */
+    /* First startup brings the engine up */
     result1 = lrg_engine_startup (fixture->engine, &error1);
     g_assert_no_error (error1);
     g_assert_true (result1);
+    g_assert_true (lrg_engine_is_running (fixture->engine));
 
-    /* Second startup should fail */
+    /* Second startup is refcounted: it succeeds without re-initializing, so a
+     * host can share one engine with a game it loads. */
     result2 = lrg_engine_startup (fixture->engine, &error2);
-    g_assert_false (result2);
-    g_assert_error (error2, LRG_ENGINE_ERROR, LRG_ENGINE_ERROR_STATE);
+    g_assert_no_error (error2);
+    g_assert_true (result2);
+    g_assert_true (lrg_engine_is_running (fixture->engine));
+
+    /* One shutdown only drops a reference; the engine stays running. */
+    lrg_engine_shutdown (fixture->engine);
+    g_assert_true (lrg_engine_is_running (fixture->engine));
+
+    /* The matching second shutdown actually tears it down. */
+    lrg_engine_shutdown (fixture->engine);
+    g_assert_false (lrg_engine_is_running (fixture->engine));
 }
 
 /* ==========================================================================
@@ -362,11 +374,11 @@ main (int   argc,
                 test_engine_shutdown_state,
                 engine_fixture_tear_down);
 
-    g_test_add ("/engine/state/double-startup",
+    g_test_add ("/engine/state/refcounted-startup",
                 EngineFixture,
                 NULL,
                 engine_fixture_set_up,
-                test_engine_double_startup_fails,
+                test_engine_refcounted_startup,
                 engine_fixture_tear_down);
 
     /* Subsystem tests */

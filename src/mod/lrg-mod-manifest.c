@@ -270,6 +270,8 @@ parse_manifest_yaml (LrgModManifest *manifest,
             manifest->type = LRG_MOD_TYPE_SCRIPT;
         else if (g_strcmp0 (type_str, "native") == 0)
             manifest->type = LRG_MOD_TYPE_NATIVE;
+        else if (g_strcmp0 (type_str, "game") == 0)
+            manifest->type = LRG_MOD_TYPE_GAME;
     }
 
     /* Priority */
@@ -933,6 +935,9 @@ lrg_mod_manifest_save_to_file (LrgModManifest  *self,
         break;
     case LRG_MOD_TYPE_NATIVE:
         g_string_append (yaml, "type: native\n");
+        break;
+    case LRG_MOD_TYPE_GAME:
+        g_string_append (yaml, "type: game\n");
         break;
     }
 

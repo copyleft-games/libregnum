@@ -149,6 +149,10 @@ PUBLIC_HEADERS := \
 	src/mod/lrg-mod-manager.h \
 	src/mod/lrg-modable.h \
 	src/mod/lrg-providers.h \
+	src/gamemodule/lrg-game-host.h \
+	src/gamemodule/lrg-standalone-host.h \
+	src/gamemodule/lrg-loaded-game.h \
+	src/gamemodule/lrg-game-module-macros.h \
 	src/dlc/lrg-dlc-ownership.h \
 	src/dlc/lrg-dlc-ownership-steam.h \
 	src/dlc/lrg-dlc-ownership-license.h \
@@ -559,6 +563,9 @@ SOURCES := \
 	src/mod/lrg-mod-manager.c \
 	src/mod/lrg-modable.c \
 	src/mod/lrg-providers.c \
+	src/gamemodule/lrg-game-host.c \
+	src/gamemodule/lrg-standalone-host.c \
+	src/gamemodule/lrg-loaded-game.c \
 	src/dlc/lrg-dlc-ownership.c \
 	src/dlc/lrg-dlc-ownership-steam.c \
 	src/dlc/lrg-dlc-ownership-license.c \
@@ -1143,6 +1150,37 @@ ifeq ($(BUILD_EXAMPLES),1)
 else
 	$(call print_warning,"Examples disabled (BUILD_EXAMPLES=0)")
 endif
+
+# =============================================================================
+# Launcher (generic game-module shim)
+# =============================================================================
+
+LAUNCHER_BIN := $(BUILDDIR)/lrg-launcher$(EXE_EXT)
+
+LAUNCHER_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -I src
+LAUNCHER_CFLAGS += -isystem $(GRAYLIB_DIR)/src
+LAUNCHER_CFLAGS += -isystem $(GRAYLIB_DIR)/deps/raylib/src
+LAUNCHER_CFLAGS += -isystem $(YAMLGLIB_DIR)/src
+# DEP_CFLAGS carries the optional-dependency include paths (libdex, json-glib,
+# etc.) that <libregnum.h> pulls in when those backends are enabled.
+LAUNCHER_CFLAGS += $(DEP_CFLAGS)
+
+# Link the shim against the SHARED libregnum so it and any module it loads share
+# one copy of the engine singleton, the GType registry, and raylib's globals.
+# --export-dynamic puts libregnum's symbols in the dynamic table so a host-
+# agnostic module (which does not link libregnum itself) resolves them here.
+LAUNCHER_LIBS := -L$(LIBOUTDIR) -l$(LIB_NAME)
+LAUNCHER_LIBS += -Wl,--export-dynamic
+LAUNCHER_LIBS += -Wl,-rpath,'$$ORIGIN/lib' -Wl,-rpath,'$$ORIGIN/../lib'
+LAUNCHER_LIBS += $(GLIB_LIBS) $(PLATFORM_LIBS)
+
+.PHONY: launcher
+launcher: lib-shared $(LAUNCHER_BIN)
+
+$(LAUNCHER_BIN): src/launcher/lrg-launcher.c $(LIBOUTDIR)/$(LIB_SHARED)
+	$(call print_link,lrg-launcher)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(LAUNCHER_CFLAGS) -o $@ $< $(LAUNCHER_LIBS)
 
 # =============================================================================
 # Documentation

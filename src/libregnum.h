@@ -209,6 +209,12 @@
 #include "mod/lrg-modable.h"
 #include "mod/lrg-providers.h"
 
+/* Game module - host abstraction, loader, and the dual-target entry macro */
+#include "gamemodule/lrg-game-host.h"
+#include "gamemodule/lrg-standalone-host.h"
+#include "gamemodule/lrg-loaded-game.h"
+#include "gamemodule/lrg-game-module-macros.h"
+
 /* DLC module */
 #include "dlc/lrg-dlc-ownership.h"
 #include "dlc/lrg-dlc-ownership-steam.h"

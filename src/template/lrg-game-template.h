@@ -23,6 +23,9 @@ typedef struct _LrgGameState LrgGameState;
 typedef struct _LrgEventBus LrgEventBus;
 typedef struct _LrgTheme LrgTheme;
 typedef struct _LrgRegistry LrgRegistry;
+typedef struct _LrgGameHost LrgGameHost;
+typedef struct _LrgWindow LrgWindow;
+typedef struct _GrlColor GrlColor;
 
 #define LRG_TYPE_GAME_TEMPLATE (lrg_game_template_get_type ())
 
@@ -167,6 +170,147 @@ gint
 lrg_game_template_run (LrgGameTemplate *self,
                        int              argc,
                        char           **argv);
+
+/**
+ * lrg_game_run_standalone:
+ * @self: an #LrgGameTemplate
+ * @argc: argument count from main()
+ * @argv: argument vector from main()
+ *
+ * Runs @self with a standalone host that owns a real window and the blocking
+ * main loop. This is what lrg_game_template_run() and the shim launcher call.
+ *
+ * Returns: exit code (0 for success)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_game_run_standalone (LrgGameTemplate *self,
+                         int              argc,
+                         char           **argv);
+
+/* ==========================================================================
+ * Host-Driven Lifecycle
+ *
+ * These let a host (the standalone shim, an editor, or an embedding
+ * application) drive a game frame-by-frame instead of calling the blocking
+ * lrg_game_template_run(). The host owns the window, the loop, and the engine
+ * lifetime; the game borrows them through #LrgGameHost.
+ * ========================================================================== */
+
+/**
+ * lrg_game_template_startup:
+ * @self: an #LrgGameTemplate
+ * @host: an #LrgGameHost providing the engine, window, and render target
+ * @error: (nullable): return location for error
+ *
+ * Configures the game and brings up its subsystems against @host. Does not
+ * create a window or start the engine (the host owns both). Push the initial
+ * state and run the startup hooks. Call once before the first
+ * lrg_game_template_update().
+ *
+ * Returns: %TRUE on success, %FALSE on error
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_game_template_startup (LrgGameTemplate  *self,
+                           LrgGameHost      *host,
+                           GError          **error);
+
+/**
+ * lrg_game_template_update:
+ * @self: an #LrgGameTemplate
+ * @delta: time since the previous frame, in seconds (supplied by the host)
+ *
+ * Advances the game one frame: fixed/variable timestep updates, game-feel
+ * systems, auto-save, and audio. Does not draw. Call once per frame between
+ * startup and shutdown.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_game_template_update (LrgGameTemplate *self,
+                          gdouble          delta);
+
+/**
+ * lrg_game_template_render:
+ * @self: an #LrgGameTemplate
+ *
+ * Issues the game's draw calls into the currently-bound render target. The
+ * host is responsible for binding/clearing/presenting the target around this
+ * call (e.g. BeginDrawing/EndDrawing or BeginTextureMode/EndTextureMode), so
+ * this function must not begin or end a frame itself.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_game_template_render (LrgGameTemplate *self);
+
+/**
+ * lrg_game_template_shutdown_game:
+ * @self: an #LrgGameTemplate
+ *
+ * Runs the shutdown hook, saves settings, and clears states. Does not shut the
+ * engine down or destroy the window (the host owns those). Call once after the
+ * final update.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_game_template_shutdown_game (LrgGameTemplate *self);
+
+/**
+ * lrg_game_template_should_quit:
+ * @self: an #LrgGameTemplate
+ *
+ * Checks whether the game has requested to quit (via
+ * lrg_game_template_quit()) or, when it has a window, whether the window
+ * should close.
+ *
+ * Returns: %TRUE if the host should stop driving the game
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_game_template_should_quit (LrgGameTemplate *self);
+
+/**
+ * lrg_game_template_get_background_color:
+ * @self: an #LrgGameTemplate
+ *
+ * Gets the configured background clear color, or %NULL if none is set.
+ *
+ * Returns: (transfer none) (nullable): the background #GrlColor
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GrlColor *
+lrg_game_template_get_background_color (LrgGameTemplate *self);
+
+/**
+ * lrg_game_template_get_window:
+ * @self: an #LrgGameTemplate
+ *
+ * Gets the window the game is rendering to, or %NULL when the game is hosted
+ * without an #LrgWindow (e.g. embedded in an editor or cmacs that renders to an
+ * offscreen target). Useful for window-only operations that must be skipped
+ * when embedded, such as grabbing the cursor.
+ *
+ * Returns: (transfer none) (nullable): the #LrgWindow, or %NULL
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWindow *
+lrg_game_template_get_window (LrgGameTemplate *self);
 
 /* ==========================================================================
  * Control

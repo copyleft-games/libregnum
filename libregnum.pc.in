@@ -3,6 +3,14 @@ exec_prefix=@EXEC_PREFIX@
 libdir=@LIBDIR@
 includedir=@INCLUDEDIR@
 
+# Flags for building a game as a loadable module (.so). A game's main
+# translation unit uses LRG_DEFINE_GAME_MODULE; compile with game_module_cflags
+# to emit the module entry symbol, link with game_module_ldflags, and run it
+# with the generic shim named by 'launcher'.
+game_module_cflags=-fPIC -DLRG_GAME_BUILD_MODULE=1
+game_module_ldflags=-shared
+launcher=lrg-launcher
+
 Name: Libregnum
 Description: GObject game engine built on graylib
 Version: @VERSION@

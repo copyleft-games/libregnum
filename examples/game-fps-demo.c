@@ -513,13 +513,10 @@ demo_fps_init (DemoFPS *self)
  * MAIN
  * ========================================================================== */
 
-int
-main (int    argc,
-      char **argv)
-{
-    g_autoptr(DemoFPS) game = NULL;
-
-    game = g_object_new (DEMO_TYPE_FPS, NULL);
-
-    return lrg_game_template_run (LRG_GAME_TEMPLATE (game), argc, argv);
-}
+/* Dual-target entry point. Builds either a standalone executable (default) or a
+ * loadable game module (compile the same source with -DLRG_GAME_BUILD_MODULE).
+ * The module can then be run by the lrg-launcher shim or any embedding host. */
+LRG_DEFINE_GAME_MODULE (DEMO_TYPE_FPS,
+                        "com.libregnum.examples.fps",
+                        "FPS Demo",
+                        "1.0.0")

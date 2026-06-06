@@ -1,0 +1,34 @@
+# game.yaml - manifest for the FPS demo packaged as a libregnum game module.
+#
+# Shares the LrgModManifest schema (so LrgModLoader/LrgModManager can discover
+# it) with a `type: game` discriminator plus game-specific sections. A shipped
+# game places this next to its `.so`; the lrg-launcher shim (or any embedding
+# host) resolves entry_point to the module and loads it.
+id: com.libregnum.examples.fps
+name: "FPS Demo"
+version: "1.0.0"
+type: game
+author: "Libregnum Examples"
+description: "First-person template demo, built as a dual-target game module."
+
+# The loadable module and the well-known entry symbol the loader resolves.
+entry_point: "libfpsdemo.so"
+entry_symbol: lrg_game_module_query
+
+# Compatibility gates checked at load time.
+requires:
+  libregnum: ">=0.1.0"
+  graylib: ">=1.0.0"
+
+# Capabilities a host inspects before deciding it can host the game.
+capabilities:
+  needs-3d: true
+  needs-audio: true
+  needs-gamepad: false
+  headless-ok: false
+
+# Default render target / window configuration (a host may override).
+window:
+  width: 1280
+  height: 720
+  title: "FPS Demo"

@@ -1,0 +1,11 @@
+/* Linker version script for libregnum game modules.
+ *
+ * A game module only needs to export the well-known entry symbol the loader
+ * resolves; everything else (including the game's own GObject machinery) stays
+ * local to the module. */
+LIBREGNUM_GAME_1 {
+    global:
+        lrg_game_module_query;
+    local:
+        *;
+};
