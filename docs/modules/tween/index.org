@@ -125,30 +125,93 @@ loop-count: 1
 loop-mode: restart
 #+end_src
 
+** Headless / offline rendering with easing
+:PROPERTIES:
+:CUSTOM_ID: headless-offline-rendering
+:END:
+=LrgTweenManager= is designed for live, clock-driven use only — it has no
+seek, rewind, or sample-at-time API.  For offline / headless work (baking
+frames to a =GrlImage= sequence, writing a =GrlGifWriter=, procedural asset
+generation) you drive time yourself with a plain loop.
+
+*** Two-value case — use =lrg_easing_interpolate= directly
+
+When you need to animate a single value between two endpoints, use the pure
+easing functions without creating any tween object:
+
+#+begin_src C
+#define N_FRAMES 60
+
+for (gint frame = 0; frame < N_FRAMES; frame++)
+{
+    gfloat t = (gfloat) frame / (gfloat)(N_FRAMES - 1); /* loop IS the clock */
+    gfloat x = lrg_easing_interpolate (LRG_EASING_EASE_IN_OUT_CUBIC,
+                                        x0, x1, t);
+    /* draw using x into a GrlImage, append to a GrlGifWriter, etc. */
+}
+#+end_src
+
+The loop variable is the only clock; no =LrgTweenManager= or =g_get_monotonic_time()=
+is required.
+
+*** Multi-key case — use =LrgKeyframeCurve=
+
+For animations that pass through more than two values, each segment with its
+own easing, use =LrgKeyframeCurve=.  It is a pure, clock-free =GObject= that
+stores keyframes sorted by normalized time and samples them on demand:
+
+#+begin_src C
+#define N_FRAMES 90
+
+g_autoptr (LrgKeyframeCurve) curve = lrg_keyframe_curve_new ();
+
+/* Three keys: start at 0, peak at 80 (ease-in), land at 0 (ease-out) */
+lrg_keyframe_curve_add_key (curve, 0.0f,  0.0f, LRG_EASING_EASE_IN_CUBIC);
+lrg_keyframe_curve_add_key (curve, 0.5f, 80.0f, LRG_EASING_EASE_OUT_CUBIC);
+lrg_keyframe_curve_add_key (curve, 1.0f,  0.0f, LRG_EASING_LINEAR);
+
+for (gint frame = 0; frame < N_FRAMES; frame++)
+{
+    gfloat t = (gfloat) frame / (gfloat)(N_FRAMES - 1);
+    gfloat y = lrg_keyframe_curve_sample (curve, t);
+    /* draw sprite at (x, y) into GrlImage, then append frame ... */
+}
+#+end_src
+
+Behaviour contracts for =lrg_keyframe_curve_sample()=:
+- Zero keys: returns 0.0 (with a g_return_val_if_fail warning).
+- One key: returns that key's value for all =t=.
+- =t= before the first key: clamped to the first key's value.
+- =t= after the last key: clamped to the last key's value.
+- =t= outside [0,1] follows the same clamping rules.
+- Duplicate-=t= keys: last =add_key= call at that time wins.
+
 ** Key Classes
 :PROPERTIES:
 :CUSTOM_ID: key-classes
 :END:
-| Class              | Description                     |
-|--------------------+---------------------------------|
-| =LrgEasing=        | Static easing function library  |
-| =LrgTweenBase=     | Abstract base (derivable)       |
-| =LrgTween=         | Single property tween           |
-| =LrgTweenGroup=    | Compound tween base (derivable) |
-| =LrgTweenSequence= | Sequential execution            |
-| =LrgTweenParallel= | Parallel execution              |
-| =LrgTweenManager=  | Active tween coordinator        |
+| Class                | Description                                    |
+|----------------------+------------------------------------------------|
+| =LrgEasing=          | Static easing function library                 |
+| =LrgTweenBase=       | Abstract base (derivable)                      |
+| =LrgTween=           | Single property tween                          |
+| =LrgTweenGroup=      | Compound tween base (derivable)                |
+| =LrgTweenSequence=   | Sequential execution                           |
+| =LrgTweenParallel=   | Parallel execution                             |
+| =LrgTweenManager=    | Active tween coordinator (live/interactive)    |
+| =LrgKeyframeCurve=   | Multi-keyframe sampler (headless/offline)       |
 
 ** Files
 :PROPERTIES:
 :CUSTOM_ID: files
 :END:
-| File                             | Description             |
-|----------------------------------+-------------------------|
-| =src/tween/lrg-easing.h=         | Easing function library |
-| =src/tween/lrg-tween-base.h=     | Abstract base class     |
-| =src/tween/lrg-tween.h=          | Single property tween   |
-| =src/tween/lrg-tween-group.h=    | Group base class        |
-| =src/tween/lrg-tween-sequence.h= | Sequential tweens       |
-| =src/tween/lrg-tween-parallel.h= | Parallel tweens         |
-| =src/tween/lrg-tween-manager.h=  | Tween manager           |
+| File                                | Description                        |
+|-------------------------------------+------------------------------------|
+| =src/tween/lrg-easing.h=            | Easing function library            |
+| =src/tween/lrg-tween-base.h=        | Abstract base class                |
+| =src/tween/lrg-tween.h=             | Single property tween              |
+| =src/tween/lrg-tween-group.h=       | Group base class                   |
+| =src/tween/lrg-tween-sequence.h=    | Sequential tweens                  |
+| =src/tween/lrg-tween-parallel.h=    | Parallel tweens                    |
+| =src/tween/lrg-tween-manager.h=     | Tween manager (live use)           |
+| =src/tween/lrg-keyframe-curve.h=    | Multi-keyframe sampler (headless)  |

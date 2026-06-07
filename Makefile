@@ -280,6 +280,7 @@ PUBLIC_HEADERS := \
 	src/tween/lrg-tween-sequence.h \
 	src/tween/lrg-tween-parallel.h \
 	src/tween/lrg-tween-manager.h \
+	src/tween/lrg-keyframe-curve.h \
 	src/transition/lrg-transition.h \
 	src/transition/lrg-fade-transition.h \
 	src/transition/lrg-wipe-transition.h \
@@ -696,6 +697,7 @@ SOURCES := \
 	src/tween/lrg-tween-sequence.c \
 	src/tween/lrg-tween-parallel.c \
 	src/tween/lrg-tween-manager.c \
+	src/tween/lrg-keyframe-curve.c \
 	src/transition/lrg-transition.c \
 	src/transition/lrg-fade-transition.c \
 	src/transition/lrg-wipe-transition.c \

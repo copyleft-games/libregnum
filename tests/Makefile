@@ -98,6 +98,7 @@ TEST_SOURCES := \
 	test-font-manager.c \
 	test-video.c \
 	test-tween.c \
+	test-keyframe-curve.c \
 	test-transition.c \
 	test-trigger2d.c \
 	test-atlas.c \

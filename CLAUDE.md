@@ -290,6 +290,10 @@ baking) use graylib's `GrlImage` software rasterizer. Key points:
 
 See `deps/graylib/docs/api/graphics.md` for the full API.
 
+## Headless / offline animation baking
+
+For driving frame values without a running game loop (e.g. baking to `GrlImage` / `GrlGifWriter`): use `lrg_easing_interpolate()` directly for two-value transitions, or `LrgKeyframeCurve` (`src/tween/lrg-keyframe-curve.h`) for multi-keyframe curves. The loop variable is the clock — do **not** use `LrgTweenManager`, which has no seek API and requires `lrg_tween_manager_update()` calls. See `docs/modules/tween/index.org` § "Headless / offline rendering with easing".
+
 ## Transfer Semantics (Ownership)
 
 The `(transfer full)` annotation means the function takes ownership. **Do NOT unref after calling.**

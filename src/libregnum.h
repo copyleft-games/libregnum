@@ -391,6 +391,7 @@
 #include "tween/lrg-tween-sequence.h"
 #include "tween/lrg-tween-parallel.h"
 #include "tween/lrg-tween-manager.h"
+#include "tween/lrg-keyframe-curve.h"
 
 /* Transition module (Phase 4) */
 #include "transition/lrg-transition.h"
