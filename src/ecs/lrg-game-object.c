@@ -39,8 +39,16 @@ lrg_game_object_update (GrlEntity *entity,
     LrgGameObjectPrivate *priv = lrg_game_object_get_instance_private (self);
     GList                *l;
 
-    /* Chain up to parent to handle any base entity update logic */
-    GRL_ENTITY_CLASS (lrg_game_object_parent_class)->update (entity, delta);
+    /* Chain up to parent to handle any base entity update logic.  GrlEntity
+     * does not always provide an `update' vfunc, so guard the dispatch -- an
+     * unconditional NULL vfunc call segfaults (e.g. ticking a world of plain
+     * instantiated objects in play-in-editor). */
+    {
+        GrlEntityClass *parent_class =
+            GRL_ENTITY_CLASS (lrg_game_object_parent_class);
+        if (parent_class->update != NULL)
+            parent_class->update (entity, delta);
+    }
 
     /* Update all components */
     for (l = priv->components; l != NULL; l = l->next)

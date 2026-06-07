@@ -57,6 +57,7 @@ PUBLIC_HEADERS := \
 	src/ecs/components/lrg-collider-component.h \
 	src/ecs/components/lrg-transform-component.h \
 	src/ecs/components/lrg-animator-component.h \
+	src/ecs/components/lrg-script-component.h \
 	src/input/lrg-input.h \
 	src/input/lrg-input-manager.h \
 	src/input/lrg-input-keyboard.h \
@@ -185,6 +186,8 @@ PUBLIC_HEADERS := \
 	src/scene/lrg-scene-serializer-blender.h \
 	src/scene/lrg-mesh-data.h \
 	src/scripting/lrg-scripting.h \
+	src/scripting/lrg-scripting-manager.h \
+	src/scripting/lrg-script-module.h \
 	src/settings/lrg-settings-group.h \
 	src/settings/lrg-graphics-settings.h \
 	src/settings/lrg-audio-settings.h \
@@ -471,6 +474,7 @@ SOURCES := \
 	src/ecs/components/lrg-collider-component.c \
 	src/ecs/components/lrg-transform-component.c \
 	src/ecs/components/lrg-animator-component.c \
+	src/ecs/components/lrg-script-component.c \
 	src/input/lrg-input.c \
 	src/input/lrg-input-manager.c \
 	src/input/lrg-input-keyboard.c \
@@ -599,6 +603,7 @@ SOURCES := \
 	src/scene/lrg-mesh-data.c \
 	src/scripting/lrg-scripting.c \
 	src/scripting/lrg-scriptable.c \
+	src/scripting/lrg-scripting-manager.c \
 	src/settings/lrg-settings-group.c \
 	src/settings/lrg-graphics-settings.c \
 	src/settings/lrg-audio-settings.c \
@@ -887,6 +892,55 @@ PUBLIC_HEADERS += \
 	src/scripting/lrg-scripting-gjs.h
 SOURCES += \
 	src/scripting/lrg-scripting-gjs.c
+endif
+
+ifeq ($(HAS_CRISPY),1)
+PUBLIC_HEADERS += \
+	src/scripting/lrg-scripting-crispy.h
+SOURCES += \
+	src/scripting/lrg-scripting-crispy.c
+endif
+
+# Editor / level authoring module (conditional on BUILD_EDITOR=1)
+ifeq ($(BUILD_EDITOR),1)
+PUBLIC_HEADERS += \
+	src/editor/lrg-component-desc.h \
+	src/editor/lrg-script-binding.h \
+	src/editor/lrg-node-visual.h \
+	src/editor/lrg-node.h \
+	src/editor/lrg-level.h \
+	src/editor/lrg-level-serializer.h \
+	src/editor/lrg-scene-import.h \
+	src/editor/lrg-level-instantiate.h \
+	src/editor/lrg-editor-command.h \
+	src/editor/lrg-editor-selection.h \
+	src/editor/lrg-editor.h \
+	src/editor/lrg-editor-host.h \
+	src/editor/lrg-asset-database.h \
+	src/editor/lrg-project.h \
+	src/editor/lrg-prefab.h
+SOURCES += \
+	src/editor/lrg-component-desc.c \
+	src/editor/lrg-script-binding.c \
+	src/editor/lrg-node-visual.c \
+	src/editor/lrg-node.c \
+	src/editor/lrg-level.c \
+	src/editor/lrg-level-serializer.c \
+	src/editor/lrg-scene-import.c \
+	src/editor/lrg-level-instantiate.c \
+	src/editor/lrg-editor-command.c \
+	src/editor/lrg-editor-selection.c \
+	src/editor/lrg-editor.c \
+	src/editor/lrg-editor-host.c \
+	src/editor/lrg-asset-database.c \
+	src/editor/lrg-project.c \
+	src/editor/lrg-prefab.c
+ifeq ($(BUILD_EDITOR_UI),1)
+PUBLIC_HEADERS += \
+	src/editor/ui/lrg-editor-app.h
+SOURCES += \
+	src/editor/ui/lrg-editor-app.c
+endif
 endif
 
 # MCP server support (conditional on MCP=1)

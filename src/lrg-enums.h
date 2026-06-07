@@ -4621,4 +4621,163 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_auto_save_trigger_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_AUTO_SAVE_TRIGGER (lrg_auto_save_trigger_get_type ())
 
+/* ==========================================================================
+ * Editor / Level System
+ * ========================================================================== */
+
+/**
+ * LRG_LEVEL_ERROR:
+ *
+ * Error domain for the level/editor document system.
+ *
+ * Since: 1.0
+ */
+#define LRG_LEVEL_ERROR (lrg_level_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_level_error_quark (void);
+
+/**
+ * LrgLevelError:
+ * @LRG_LEVEL_ERROR_FAILED: Generic failure
+ * @LRG_LEVEL_ERROR_IO: I/O error (file not found, permission denied, etc.)
+ * @LRG_LEVEL_ERROR_PARSE: Serialized data could not be parsed
+ * @LRG_LEVEL_ERROR_TYPE: Unknown or invalid type referenced
+ *
+ * Error codes for the level document system.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_LEVEL_ERROR_FAILED,
+    LRG_LEVEL_ERROR_IO,
+    LRG_LEVEL_ERROR_PARSE,
+    LRG_LEVEL_ERROR_TYPE
+} LrgLevelError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_level_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_LEVEL_ERROR (lrg_level_error_get_type ())
+
+/**
+ * LrgNodeVisualKind:
+ * @LRG_NODE_VISUAL_NONE: No visual (an empty/group node)
+ * @LRG_NODE_VISUAL_PRIMITIVE: A built-in primitive (#LrgPrimitiveType + material)
+ * @LRG_NODE_VISUAL_MESH_ASSET: An external mesh asset (gltf/obj/glb) by reference
+ * @LRG_NODE_VISUAL_SPRITE: A 2D sprite backed by a texture asset
+ * @LRG_NODE_VISUAL_TILEMAP: A 2D tilemap referencing a tileset asset
+ * @LRG_NODE_VISUAL_LIGHT: A light source
+ * @LRG_NODE_VISUAL_CAMERA: A camera
+ * @LRG_NODE_VISUAL_AUDIO_EMITTER: A positional audio emitter
+ * @LRG_NODE_VISUAL_PREFAB_INSTANCE: An instance of a saved prefab
+ *
+ * The kind of visual/content payload carried by an #LrgNode. This is the
+ * discriminator for the tagged #LrgNodeVisual payload and is what lets a
+ * single node tree describe both 2D and 3D scenes.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_NODE_VISUAL_NONE,
+    LRG_NODE_VISUAL_PRIMITIVE,
+    LRG_NODE_VISUAL_MESH_ASSET,
+    LRG_NODE_VISUAL_SPRITE,
+    LRG_NODE_VISUAL_TILEMAP,
+    LRG_NODE_VISUAL_LIGHT,
+    LRG_NODE_VISUAL_CAMERA,
+    LRG_NODE_VISUAL_AUDIO_EMITTER,
+    LRG_NODE_VISUAL_PREFAB_INSTANCE
+} LrgNodeVisualKind;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_node_visual_kind_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_NODE_VISUAL_KIND (lrg_node_visual_kind_get_type ())
+
+/**
+ * LrgScriptLanguage:
+ * @LRG_SCRIPT_LANGUAGE_NONE: No language / unset
+ * @LRG_SCRIPT_LANGUAGE_LUA: Lua (LuaJIT) scripting backend
+ * @LRG_SCRIPT_LANGUAGE_PYTHON: Python 3 scripting backend
+ * @LRG_SCRIPT_LANGUAGE_GJS: Gjs (GNOME JavaScript) scripting backend
+ * @LRG_SCRIPT_LANGUAGE_CRISPY: Crispy (compiled C) scripting backend
+ *
+ * The scripting language a script binding is authored in. Availability of a
+ * given backend at runtime depends on how libregnum was built; query
+ * #LrgScriptingManager for the compiled-in set.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_SCRIPT_LANGUAGE_NONE,
+    LRG_SCRIPT_LANGUAGE_LUA,
+    LRG_SCRIPT_LANGUAGE_PYTHON,
+    LRG_SCRIPT_LANGUAGE_GJS,
+    LRG_SCRIPT_LANGUAGE_CRISPY
+} LrgScriptLanguage;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_script_language_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SCRIPT_LANGUAGE (lrg_script_language_get_type ())
+
+/**
+ * LrgEditorTool:
+ * @LRG_EDITOR_TOOL_SELECT: Selection / no active manipulation gizmo
+ * @LRG_EDITOR_TOOL_TRANSLATE: Translate (move) gizmo
+ * @LRG_EDITOR_TOOL_ROTATE: Rotate gizmo
+ * @LRG_EDITOR_TOOL_SCALE: Scale gizmo
+ *
+ * The active manipulation tool in an #LrgEditor viewport.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_EDITOR_TOOL_SELECT,
+    LRG_EDITOR_TOOL_TRANSLATE,
+    LRG_EDITOR_TOOL_ROTATE,
+    LRG_EDITOR_TOOL_SCALE
+} LrgEditorTool;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_editor_tool_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_EDITOR_TOOL (lrg_editor_tool_get_type ())
+
+/**
+ * LrgAssetType:
+ * @LRG_ASSET_TYPE_UNKNOWN: unrecognized asset
+ * @LRG_ASSET_TYPE_TEXTURE: image/texture (png, jpg, tga, bmp)
+ * @LRG_ASSET_TYPE_MODEL: 3D mesh/model (gltf, glb, obj, fbx, ply)
+ * @LRG_ASSET_TYPE_AUDIO: sound/music (wav, ogg, flac, mp3)
+ * @LRG_ASSET_TYPE_FONT: font (ttf, otf)
+ * @LRG_ASSET_TYPE_SCRIPT: script source (lua, py, js, c)
+ * @LRG_ASSET_TYPE_LEVEL: editor level document (rlevel)
+ * @LRG_ASSET_TYPE_PREFAB: prefab (rprefab)
+ * @LRG_ASSET_TYPE_TILESET: tileset definition (tileset, tsx)
+ * @LRG_ASSET_TYPE_SCENE: scene geometry export (yaml/scene)
+ *
+ * The classified kind of a project asset, used by #LrgAssetDatabase.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_ASSET_TYPE_UNKNOWN,
+    LRG_ASSET_TYPE_TEXTURE,
+    LRG_ASSET_TYPE_MODEL,
+    LRG_ASSET_TYPE_AUDIO,
+    LRG_ASSET_TYPE_FONT,
+    LRG_ASSET_TYPE_SCRIPT,
+    LRG_ASSET_TYPE_LEVEL,
+    LRG_ASSET_TYPE_PREFAB,
+    LRG_ASSET_TYPE_TILESET,
+    LRG_ASSET_TYPE_SCENE
+} LrgAssetType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_asset_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ASSET_TYPE (lrg_asset_type_get_type ())
+
 G_END_DECLS

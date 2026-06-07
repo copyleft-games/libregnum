@@ -1,0 +1,276 @@
+* .rlevel YAML Format Reference
+:PROPERTIES:
+:CUSTOM_ID: rlevel-yaml-format-reference
+:END:
+This document describes the YAML format used by =LrgLevelSerializer= for =.rlevel=
+authoring documents. The =.rprefab= format is identical except that the top-level
+=type= is =prefab= and only one root node is serialized.
+
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > .rlevel Format
+
+#+end_quote
+
+** Format Overview
+:PROPERTIES:
+:CUSTOM_ID: format-overview
+:END:
+#+begin_src yaml
+type: level
+name: "my_level"
+default_view: 3d   # or "2d"
+nodes:
+  - name: "floor"
+    guid: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    is_2d: false
+    visible: true
+    locked: false
+    transform:
+      location: [0.0, 0.0, 0.0]
+      rotation: [0.0, 0.0, 0.0]
+      scale:    [1.0, 1.0, 1.0]
+    visual:
+      kind: primitive
+      primitive: primitive_cube
+      material:
+        color: [0.8, 0.8, 0.8, 1.0]
+        roughness: 0.5
+        metallic: 0.0
+    components:
+      - type: "health"
+        props:
+          max_hp: 100
+    scripts:
+      - language: lua
+        script: "scripts/floor.lua"
+        enabled: true
+    children: []
+#+end_src
+
+** Top-Level Fields
+:PROPERTIES:
+:CUSTOM_ID: top-level-fields
+:END:
+| Field | Type | Required | Description |
+|-------+------+----------+-------------|
+| =type= | string | Yes | Always ="level"= |
+| =name= | string | No | Level display name |
+| =default_view= | string | Yes | ="3d"= or ="2d"= (controls IDE viewport hint) |
+| =nodes= | sequence | Yes | Root-level node sequence (children of the implicit root) |
+
+** Node Fields
+:PROPERTIES:
+:CUSTOM_ID: node-fields
+:END:
+Each element in a =nodes:= or =children:= sequence has the following structure.
+
+*** Identity and Flags
+:PROPERTIES:
+:CUSTOM_ID: identity-and-flags
+:END:
+| Field | Type | Default | Description |
+|-------+------+---------+-------------|
+| =name= | string | — | Human-readable node name |
+| =guid= | string | — | Stable UUID (auto-generated on creation) |
+| =is_2d= | bool | =false= | 2D viewport/gizmo hint |
+| =visible= | bool | =true= | Visibility in editor viewport |
+| =locked= | bool | =false= | Locked against editing |
+
+*** Transform
+:PROPERTIES:
+:CUSTOM_ID: transform
+:END:
+#+begin_src yaml
+transform:
+  location: [x, y, z]  # float, default [0,0,0]
+  rotation: [rx, ry, rz]  # Euler radians, default [0,0,0]
+  scale:    [sx, sy, sz]  # default [1,1,1]
+#+end_src
+
+All three sub-keys are optional and default to identity values if omitted.
+
+*** Visual Payload
+:PROPERTIES:
+:CUSTOM_ID: visual-payload
+:END:
+The =visual:= mapping is optional. If absent the node is a group node with no
+visual representation.
+
+#+begin_src yaml
+visual:
+  kind: primitive          # see LrgNodeVisualKind nick values below
+  primitive: primitive_cube  # for kind=primitive; LrgPrimitiveType nick
+  asset: "models/door.glb"   # for asset-backed kinds (path or guid)
+  material:
+    color: [r, g, b, a]    # floats 0.0–1.0, default [0.8,0.8,0.8,1.0]
+    roughness: 0.5         # float 0.0–1.0
+    metallic: 0.0          # float 0.0–1.0
+  params:                  # typed parameter bag; keys are kind-specific
+    intensity: 2.5
+    fov: 60.0
+    segments: 32
+#+end_src
+
+**** =kind= values (=LrgNodeVisualKind= enum nicks)
+:PROPERTIES:
+:CUSTOM_ID: kind-values
+:END:
+| YAML string | Enum |
+|-------------+------|
+| =none= | =LRG_NODE_VISUAL_NONE= |
+| =primitive= | =LRG_NODE_VISUAL_PRIMITIVE= |
+| =mesh-asset= | =LRG_NODE_VISUAL_MESH_ASSET= |
+| =sprite= | =LRG_NODE_VISUAL_SPRITE= |
+| =tilemap= | =LRG_NODE_VISUAL_TILEMAP= |
+| =light= | =LRG_NODE_VISUAL_LIGHT= |
+| =camera= | =LRG_NODE_VISUAL_CAMERA= |
+| =audio-emitter= | =LRG_NODE_VISUAL_AUDIO_EMITTER= |
+| =prefab-instance= | =LRG_NODE_VISUAL_PREFAB_INSTANCE= |
+
+*** Components
+:PROPERTIES:
+:CUSTOM_ID: components
+:END:
+#+begin_src yaml
+components:
+  - type: "health"          # registry type name (string)
+    props:
+      max_hp: 100           # typed values; ints round-trip as int64
+      regen_rate: 0.5
+      invincible: false
+      tag: "player"
+  - type: "collider"
+    props:
+      shape: "box"
+      width: 2.0
+      height: 1.0
+#+end_src
+
+=props= is a mapping of property names to values. Integer values are preserved as
+=int64= typed YAML scalars; floating-point values are stored as floats. The
+serializer uses a heuristic: a YAML scalar without a decimal point is read back
+as =int64=.
+
+*** Scripts
+:PROPERTIES:
+:CUSTOM_ID: scripts
+:END:
+#+begin_src yaml
+scripts:
+  - language: lua       # see LrgScriptLanguage nick values below
+    script: "scripts/patrol.lua"
+    enabled: true
+  - language: python
+    script: "scripts/hud.py"
+    enabled: false
+#+end_src
+
+**** =language= values (=LrgScriptLanguage= enum nicks)
+:PROPERTIES:
+:CUSTOM_ID: language-values
+:END:
+| YAML string | Enum |
+|-------------+------|
+| =none= | =LRG_SCRIPT_LANGUAGE_NONE= |
+| =lua= | =LRG_SCRIPT_LANGUAGE_LUA= |
+| =python= | =LRG_SCRIPT_LANGUAGE_PYTHON= |
+| =gjs= | =LRG_SCRIPT_LANGUAGE_GJS= |
+| =crispy= | =LRG_SCRIPT_LANGUAGE_CRISPY= |
+
+*** Children
+:PROPERTIES:
+:CUSTOM_ID: children
+:END:
+#+begin_src yaml
+children:
+  - name: "leg_left"
+    guid: "..."
+    # ... same structure as a root node ...
+    children: []
+#+end_src
+
+=children:= is a recursive sequence of node mappings using the same schema. If a
+node has no children the key may be omitted entirely or set to an empty sequence.
+
+** Complete Example
+:PROPERTIES:
+:CUSTOM_ID: complete-example
+:END:
+#+begin_src yaml
+type: level
+name: "dungeon_entrance"
+default_view: 3d
+nodes:
+  - name: "floor_tile"
+    guid: "11111111-0000-0000-0000-000000000001"
+    is_2d: false
+    visible: true
+    locked: false
+    transform:
+      location: [0.0, 0.0, 0.0]
+      rotation: [0.0, 0.0, 0.0]
+      scale:    [4.0, 0.25, 4.0]
+    visual:
+      kind: primitive
+      primitive: primitive_cube
+      material:
+        color: [0.4, 0.35, 0.3, 1.0]
+        roughness: 0.8
+        metallic: 0.0
+    components:
+      - type: "collider"
+        props:
+          shape: "box"
+    scripts: []
+    children: []
+
+  - name: "torch_group"
+    guid: "22222222-0000-0000-0000-000000000001"
+    is_2d: false
+    visible: true
+    locked: false
+    transform:
+      location: [2.0, 1.5, 0.0]
+      rotation: [0.0, 0.0, 0.0]
+      scale:    [1.0, 1.0, 1.0]
+    children:
+      - name: "flame_light"
+        guid: "33333333-0000-0000-0000-000000000001"
+        is_2d: false
+        visible: true
+        locked: false
+        transform:
+          location: [0.0, 0.3, 0.0]
+          rotation: [0.0, 0.0, 0.0]
+          scale:    [1.0, 1.0, 1.0]
+        visual:
+          kind: light
+          params:
+            intensity: 3.0
+            range: 5.0
+        scripts:
+          - language: lua
+            script: "scripts/flicker.lua"
+            enabled: true
+#+end_src
+
+** Notes
+:PROPERTIES:
+:CUSTOM_ID: notes
+:END:
+- The =guid= field should be a UUID string; the serializer does not validate
+  format, but the editor generates RFC 4122 UUIDs.
+- Float values use standard YAML floating-point scalars.
+- Integer prop values in the =props= or =params= bags round-trip as =int64= (YAML
+  plain integers without decimal point).
+- The =.rprefab= format reuses this schema with =type: prefab= and a single root
+  node mapping.
+- Comments in YAML are supported when reading but are not preserved on write.
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:level-model.org][Level Model]] — the C types these fields map to
+- [[file:../scene/yaml-format.org][Scene YAML Format]] — =.yaml= scene format for Blender exports
+- [[file:prefabs.org][Prefabs]] — =.rprefab= files

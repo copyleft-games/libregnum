@@ -60,6 +60,7 @@
 #include "ecs/components/lrg-collider-component.h"
 #include "ecs/components/lrg-transform-component.h"
 #include "ecs/components/lrg-animator-component.h"
+#include "ecs/components/lrg-script-component.h"
 
 /* Input module */
 #include "input/lrg-input.h"
@@ -201,6 +202,28 @@
 #include "scene/lrg-scene-serializer-yaml.h"
 #include "scene/lrg-scene-serializer-blender.h"
 
+/* Editor / level authoring module */
+#ifdef LRG_BUILD_EDITOR
+#include "editor/lrg-component-desc.h"
+#include "editor/lrg-script-binding.h"
+#include "editor/lrg-node-visual.h"
+#include "editor/lrg-node.h"
+#include "editor/lrg-level.h"
+#include "editor/lrg-level-serializer.h"
+#include "editor/lrg-scene-import.h"
+#include "editor/lrg-level-instantiate.h"
+#include "editor/lrg-editor-command.h"
+#include "editor/lrg-editor-selection.h"
+#include "editor/lrg-editor.h"
+#include "editor/lrg-editor-host.h"
+#include "editor/lrg-asset-database.h"
+#include "editor/lrg-project.h"
+#include "editor/lrg-prefab.h"
+#ifdef LRG_BUILD_EDITOR_UI
+#include "editor/ui/lrg-editor-app.h"
+#endif
+#endif
+
 /* Mod module */
 #include "mod/lrg-mod-manifest.h"
 #include "mod/lrg-mod.h"
@@ -231,6 +254,8 @@
 /* Scripting module */
 #include "scripting/lrg-scripting.h"
 #include "scripting/lrg-scriptable.h"
+#include "scripting/lrg-scripting-manager.h"
+#include "scripting/lrg-script-module.h"
 #ifdef LRG_HAS_LUAJIT
 #include "scripting/lrg-scripting-lua.h"
 #endif

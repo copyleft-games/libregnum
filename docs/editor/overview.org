@@ -1,0 +1,120 @@
+* Editor Module Overview
+:PROPERTIES:
+:CUSTOM_ID: editor-module-overview
+:END:
+The editor module turns libregnum into an IDE-hostable authoring environment.
+It introduces a new, editor-centric authoring layer (=LrgLevel= / =LrgNode=) that
+sits above the existing runtime layers (=LrgScene= / =LrgWorld=) and is bridged to
+them via explicit bake and instantiate operations.
+
+#+begin_quote
+*[[file:../index.org][Home]]* > Editor Module
+
+#+end_quote
+
+** The Three-Layer Model
+:PROPERTIES:
+:CUSTOM_ID: the-three-layer-model
+:END:
+See [[file:../concepts/level-scene-world.org][Level, Scene, and World]] for a full explanation. In brief:
+
+| Layer | Type | Role |
+|-------+------+------|
+| Authoring | =LrgLevel= / =LrgNode= | Editable document; serialized to =.rlevel= |
+| Rendering | =LrgScene= | Baked geometry for viewport preview |
+| Simulation | =LrgWorld= | Runtime ECS instances for play-in-editor |
+
+The bridges are:
+
+- =lrg_level_to_scene(level)= — bakes primitive-visual nodes into an =LrgScene=
+  for geometry rendering. Non-destructive; does not modify the level.
+- =lrg_level_instantiate(level, world, engine, &err)= — populates an =LrgWorld=
+  with one =LrgGameObject= per node, materializing component descriptions via
+  the =LrgRegistry=.
+- =lrg_level_from_scene(scene)= — imports a Blender-exported =LrgScene= back into
+  an editable =LrgLevel=.
+
+** Authoring Layer in Detail
+:PROPERTIES:
+:CUSTOM_ID: authoring-layer-in-detail
+:END:
+The authoring layer is structured as a rooted node tree:
+
+#+begin_example
+LrgLevel
+└── root LrgNode (implicit, not serialized)
+    ├── LrgNode ("sky")           visual: NONE (group)
+    ├── LrgNode ("floor")         visual: PRIMITIVE (cube)  + LrgNodeVisual
+    │   ├── components: [LrgComponentDesc("collider")]
+    │   └── scripts:   [LrgScriptBinding(LUA, "floor.lua")]
+    └── LrgNode ("player_spawn")  visual: PREFAB_INSTANCE
+#+end_example
+
+- Every node carries a stable =guid=, a local TRS transform (always 3D;
+  2D nodes live at Z=0 with =is-2d= set), and ordered lists of component
+  descriptions and script bindings.
+- =LrgNodeVisual= is a tagged payload describing what the node looks like
+  (primitive, mesh asset, sprite, light, camera, audio emitter, prefab).
+- Component descriptions (=LrgComponentDesc=) are serializable type-name + prop
+  bag records. They are not live components; they are materialized by
+  =lrg_level_instantiate()= via the registry.
+- Script bindings (=LrgScriptBinding=) record a language + path and are
+  materialized as =LrgScriptComponent= instances at instantiation time.
+
+** Dual-Frontend Host Contract
+:PROPERTIES:
+:CUSTOM_ID: dual-frontend-host-contract
+:END:
+=LrgEditor= is host-agnostic: it does not own a window or render context. Instead,
+a host implements the =LrgEditorHost= GInterface to supply the engine, render
+target, frame timing, and injected input. Two frontends exist:
+
+*** cmacs / IDE host
+:PROPERTIES:
+:CUSTOM_ID: cmacs-ide-host
+:END:
+cmacs (the Emacs integration) allocates an Emacs buffer backed by a Cairo/pgtk
+surface and implements =LrgEditorHost= against that surface. It uses
+=LrgEditorSoftwareHost= as a concrete holder and calls
+=lrg_editor_host_request_redraw()= when Emacs schedules a repaint.
+
+*** Standalone engine-drawn editor
+:PROPERTIES:
+:CUSTOM_ID: standalone-engine-drawn-editor
+:END:
+The standalone editor opens its own =GrlWindow=, implements =LrgEditorHost= against
+the window's framebuffer, and runs its own event loop calling
+=lrg_editor_host_begin_frame()= / =lrg_editor_host_end_frame()= each tick.
+
+Both frontends target the same =LrgEditor= C API; all undo/redo, selection, and
+document operations are shared.
+
+** Build Configuration
+:PROPERTIES:
+:CUSTOM_ID: build-configuration
+:END:
+The editor subsystem is compiled when =-DLRG_BUILD_EDITOR= is defined (set via
+=BUILD_EDITOR ?= 1= in the Makefile). The Crispy scripting backend requires an
+additional =-DLRG_HAS_CRISPY= (=CRISPY=1=).
+
+#+begin_src sh
+# Build with editor and Crispy
+make BUILD_EDITOR=1 CRISPY=1
+
+# Build without editor (runtime-only)
+make BUILD_EDITOR=0
+#+end_src
+
+** Related Documentation
+:PROPERTIES:
+:CUSTOM_ID: related-documentation
+:END:
+- [[file:level-model.org][Level Model]] — LrgLevel / LrgNode / LrgNodeVisual in depth
+- [[file:yaml-format.org][.rlevel YAML Format]] — serialization schema
+- [[file:editor-runtime.org][Editor Runtime]] — LrgEditor, commands, undo/redo, host
+- [[file:prefabs.org][Prefabs]] — reusable node subtrees
+- [[file:projects-and-assets.org][Projects and Assets]] — LrgProject / LrgAssetDatabase
+- [[file:tutorial.org][Tutorial]] — build a level in C step by step
+- [[file:../concepts/level-scene-world.org][Level, Scene, and World]] — three-layer rationale
+- [[file:../modules/editor/index.org][Editor Module Reference]]
+- [[file:../modules/scripting/index.org][Scripting Manager Reference]]

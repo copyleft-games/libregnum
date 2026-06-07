@@ -69,6 +69,14 @@ BUILD_EXAMPLES ?= 1
 # Build documentation (requires gi-docgen)
 BUILD_DOCS ?= 0
 
+# Build the editor/level authoring module (src/editor/). Off-able for headless
+# or minimal builds; the rest of the engine builds without it.
+BUILD_EDITOR ?= 1
+
+# Build the standalone engine-drawn editor UI (src/editor/ui/, needs BUILD_EDITOR).
+# Off by default: embedded hosts (e.g. cmacs) provide their own panels.
+BUILD_EDITOR_UI ?= 0
+
 # =============================================================================
 # Dependency Paths
 # =============================================================================
@@ -414,9 +422,29 @@ else
     endif
 endif
 
+# Crispy (compiled-C) scripting backend (opt-in: CRISPY=1, native builds only)
+CRISPY ?= 0
+ifeq ($(TARGET_PLATFORM),windows)
+    CRISPY_CFLAGS :=
+    CRISPY_LIBS :=
+    HAS_CRISPY := 0
+else ifeq ($(CRISPY),1)
+    CRISPY_CFLAGS := $(shell $(PKG_CONFIG) --cflags crispy 2>/dev/null)
+    CRISPY_LIBS := $(shell $(PKG_CONFIG) --libs crispy 2>/dev/null)
+    ifneq ($(CRISPY_CFLAGS),)
+        HAS_CRISPY := 1
+    else
+        HAS_CRISPY := 0
+    endif
+else
+    CRISPY_CFLAGS :=
+    CRISPY_LIBS :=
+    HAS_CRISPY := 0
+endif
+
 # Combined dependency flags (use -isystem to suppress warnings from deps)
-DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS)
-DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS)
+DEP_CFLAGS := $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS) $(CRISPY_CFLAGS)
+DEP_LIBS := $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS) $(CRISPY_LIBS)
 
 # Graylib and yaml-glib (built from submodules)
 # Also include raylib headers for rlgl.h etc.
@@ -462,6 +490,15 @@ ifeq ($(HAS_GJS),1)
 endif
 ifeq ($(HAS_GI),1)
     OPT_CFLAGS += -DLRG_HAS_GI=1
+endif
+ifeq ($(BUILD_EDITOR),1)
+    OPT_CFLAGS += -DLRG_BUILD_EDITOR=1
+endif
+ifeq ($(HAS_CRISPY),1)
+    OPT_CFLAGS += -DLRG_HAS_CRISPY=1
+endif
+ifeq ($(BUILD_EDITOR_UI),1)
+    OPT_CFLAGS += -DLRG_BUILD_EDITOR_UI=1
 endif
 
 # Windows cross-compile marker

@@ -13,6 +13,21 @@ Complete documentation for all Libregnum game engine modules and systems.
 :PROPERTIES:
 :CUSTOM_ID: completed-modules
 :END:
+*** [[file:editor/index.org][Editor Module]] - Level Authoring and IDE Hosting
+:PROPERTIES:
+:CUSTOM_ID: editor-module---level-authoring-and-ide-hosting
+:END:
+Editor subsystem (=BUILD_EDITOR=1=): level document model, serialization, bake and
+instantiate bridges, editor runtime with undo/redo, project and asset management,
+prefabs. See [[file:../editor/overview.org][Editor Overview]] for the full guide.
+
+- *[[file:../editor/level-model.org][LrgLevel / LrgNode / LrgNodeVisual]]* - authoring document and node tree
+- *[[file:../editor/yaml-format.org][.rlevel Format]]* - YAML serialization schema
+- *[[file:../editor/editor-runtime.org][LrgEditor / Commands / Selection / Host]]* - editor runtime and embedding
+- *[[file:../editor/prefabs.org][Prefabs]]* - reusable saved node subtrees
+- *[[file:../editor/projects-and-assets.org][LrgProject / LrgAssetDatabase]]* - project manifest and asset scanning
+- *[[file:../editor/tutorial.org][Tutorial]]* - build a level in C step by step
+
 *** [[file:core/index.org][Core Module]] - Foundation
 :PROPERTIES:
 :CUSTOM_ID: core-module---foundation
@@ -242,6 +257,8 @@ Engagement systems for player retention:
 - *Debug Module* - Profiler, console, inspector, overlay
 - *Mod Module* - Complete modding system with dependencies
 - *3D World Module* - 3D level support with portals and sectors
+- *[[file:editor/index.org][Editor Module]]* - Level authoring, IDE hosting, bake/instantiate (=BUILD_EDITOR=1=)
+- *[[file:scripting/index.org#scripting-manager][Scripting Manager]]* - Backend enumeration, =LrgScriptComponent=, Crispy backend
 
 ** Module Architecture
 :PROPERTIES:
@@ -328,6 +345,8 @@ Phase 0   core/ (engine, registry, loader, assets)
 | Weather     | 4     | Complete    | Rain, Snow, Fog, Lightning, DayNightCycle, WeatherManager                                                                           |
 | Lighting    | 4     | Complete    | PointLight2D, SpotLight2D, DirectionalLight2D, ShadowMap, LightingManager                                                           |
 | Template    | 4     | Complete    | MainMenuState, PauseMenuState, SettingsMenuState, LoadingState, ErrorState, ConfirmationState, Statistics, DailyRewards, Difficulty |
+| Editor      | 4     | Complete    | Level, Node, NodeVisual, ComponentDesc, ScriptBinding, LevelSerializer, Editor, EditorCommand, EditorSelection, EditorHost, Project, AssetDatabase |
+| Scripting Manager | 4 | Complete  | ScriptingManager, ScriptComponent, ScriptingCrispy                                                                                  |
 
 ** Building with Multiple Modules
 :PROPERTIES:

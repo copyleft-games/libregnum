@@ -1,0 +1,167 @@
+* Projects and Assets
+:PROPERTIES:
+:CUSTOM_ID: projects-and-assets
+:END:
+This document covers =LrgProject= (the =project.ryaml= manifest) and
+=LrgAssetDatabase= / =LrgAssetEntry= (recursive asset discovery and classification).
+
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Projects and Assets
+
+#+end_quote
+
+** LrgProject
+:PROPERTIES:
+:CUSTOM_ID: lrgproject
+:END:
+=LrgProject= is a final GObject describing a game project on disk. It reads and
+writes a =project.ryaml= manifest in the project root directory. The manifest
+records:
+
+| Field | Property | Description |
+|-------+----------+-------------|
+| =name= | =lrg_project_get/set_name= | Display name |
+| =default_level= | =lrg_project_get/set_default_level= | Path to the startup =.rlevel= |
+| =asset_dirs= | =lrg_project_get_asset_dirs= / =add_asset_dir= | Relative asset directories |
+| =game_output= | =lrg_project_get/set_game_output= | Game module build output path |
+
+*** Opening and Saving
+:PROPERTIES:
+:CUSTOM_ID: opening-and-saving
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+
+/* Open an existing project */
+g_autoptr(LrgProject) project = lrg_project_open ("path/to/mygame/", &error);
+if (project == NULL)
+    g_error ("Cannot open project: %s", error->message);
+
+/* Create a new project */
+g_autoptr(LrgProject) project = lrg_project_new ("path/to/mygame/", "My Game");
+
+/* Modify and save */
+lrg_project_set_name (project, "My Game 2");
+lrg_project_set_default_level (project, "levels/start.rlevel");
+lrg_project_set_game_output   (project, "build/mygame.so");
+lrg_project_add_asset_dir (project, "assets/");
+lrg_project_add_asset_dir (project, "content/sprites/");
+
+gboolean ok = lrg_project_save (project, &error);
+#+end_src
+
+*** Building an Asset Database
+:PROPERTIES:
+:CUSTOM_ID: building-an-asset-database
+:END:
+=lrg_project_create_asset_database()= produces an =LrgAssetDatabase= pre-populated
+with the project's asset directories resolved against the project root. The
+database must be scanned before use:
+
+#+begin_src C
+g_autoptr(LrgAssetDatabase) db = lrg_project_create_asset_database (project);
+g_autoptr(GError) error = NULL;
+
+if (!lrg_asset_database_scan (db, &error))
+    g_warning ("Scan failed: %s", error->message);
+
+g_message ("Found %u assets", lrg_asset_database_get_count (db));
+#+end_src
+
+*** Manifest File
+:PROPERTIES:
+:CUSTOM_ID: manifest-file
+:END:
+The manifest file name is defined as =LRG_PROJECT_MANIFEST= (="project.ryaml"=).
+It is a YAML file at the project root:
+
+#+begin_src yaml
+name: "My Game"
+default_level: "levels/start.rlevel"
+game_output: "build/mygame.so"
+asset_dirs:
+  - "assets/"
+  - "content/sprites/"
+#+end_src
+
+** LrgAssetDatabase and LrgAssetEntry
+:PROPERTIES:
+:CUSTOM_ID: lrgassetdatabase-and-lrgassetentry
+:END:
+=LrgAssetDatabase= recursively scans one or more directories, classifies each
+regular file by extension into an =LrgAssetType=, and exposes the results as a
+list of =LrgAssetEntry= records. It backs the IDE asset browser.
+
+*** LrgAssetEntry
+:PROPERTIES:
+:CUSTOM_ID: lrgassetentry
+:END:
+Each entry has:
+
+| Accessor | Description |
+|----------+-------------|
+| =lrg_asset_entry_get_path= | Path relative to the asset search root |
+| =lrg_asset_entry_get_name= | Display name (typically the basename) |
+| =lrg_asset_entry_get_asset_type= | Classified =LrgAssetType= |
+| =lrg_asset_entry_get_guid= | Stable asset identifier |
+
+*** LrgAssetDatabase API
+:PROPERTIES:
+:CUSTOM_ID: lrgassetdatabase-api
+:END:
+#+begin_src C
+g_autoptr(LrgAssetDatabase) db = lrg_asset_database_new ();
+
+/* Add search directories */
+lrg_asset_database_add_search_dir (db, "/path/to/project/assets/");
+lrg_asset_database_add_search_dir (db, "/path/to/project/content/");
+
+/* Scan all directories (clears prior entries) */
+g_autoptr(GError) error = NULL;
+lrg_asset_database_scan (db, &error);
+
+/* Iterate all entries */
+guint n = lrg_asset_database_get_count (db);
+for (guint i = 0; i < n; i++)
+{
+    LrgAssetEntry *entry = lrg_asset_database_get_entry (db, i);
+    g_message ("%s  [%s]",
+               lrg_asset_entry_get_path (entry),
+               lrg_asset_entry_get_name (entry));
+}
+
+/* Access the whole array */
+GPtrArray *entries = lrg_asset_database_get_entries (db);  /* (transfer none) */
+
+/* Count by type */
+guint n_textures = lrg_asset_database_count_of_type (db, LRG_ASSET_TYPE_TEXTURE);
+
+/* Classify a path by extension (no scan needed) */
+LrgAssetType type = lrg_asset_database_classify ("door.glb");
+/* → LRG_ASSET_TYPE_MODEL */
+#+end_src
+
+*** LrgAssetType Classification
+:PROPERTIES:
+:CUSTOM_ID: lrgassettype-classification
+:END:
+| Enum | Extensions |
+|------+------------|
+| =LRG_ASSET_TYPE_UNKNOWN= | anything unrecognized |
+| =LRG_ASSET_TYPE_TEXTURE= | =.png=, =.jpg=, =.tga=, =.bmp= |
+| =LRG_ASSET_TYPE_MODEL= | =.gltf=, =.glb=, =.obj=, =.fbx=, =.ply= |
+| =LRG_ASSET_TYPE_AUDIO= | =.wav=, =.ogg=, =.flac=, =.mp3= |
+| =LRG_ASSET_TYPE_FONT= | =.ttf=, =.otf= |
+| =LRG_ASSET_TYPE_SCRIPT= | =.lua=, =.py=, =.js=, =.c= |
+| =LRG_ASSET_TYPE_LEVEL= | =.rlevel= |
+| =LRG_ASSET_TYPE_PREFAB= | =.rprefab= |
+| =LRG_ASSET_TYPE_TILESET= | =.tileset=, =.tsx= |
+| =LRG_ASSET_TYPE_SCENE= | =.yaml=, =.scene= |
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:yaml-format.org][.rlevel Format]] — level serialization
+- [[file:prefabs.org][Prefabs]] — =.rprefab= files
+- [[file:../modules/editor/index.org][Editor Module Reference]]

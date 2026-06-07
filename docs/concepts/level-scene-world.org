@@ -1,0 +1,130 @@
+* Level, Scene, and World: Three Layers
+:PROPERTIES:
+:CUSTOM_ID: level-scene-world
+:END:
+Libregnum separates authoring, rendering geometry, and runtime simulation into
+three distinct layers. Understanding why they are separate — and how they connect
+— prevents confusion when building editor tooling or game logic.
+
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:index.org][Concepts]]* > Level, Scene, and World
+
+#+end_quote
+
+** The Three Layers
+:PROPERTIES:
+:CUSTOM_ID: the-three-layers
+:END:
+#+begin_example
+  Author                     Build                      Run
+  ──────                     ─────                      ───
+  LrgLevel                ──────────►  LrgScene          (rendering geometry)
+  (editable document)     to_scene()
+                          ──────────►  LrgWorld          (ECS simulation)
+                          instantiate()
+#+end_example
+
+*** LrgLevel — authoring document
+:PROPERTIES:
+:CUSTOM_ID: lrglevel-authoring-document
+:END:
+=LrgLevel= is the serializable file you edit in the IDE. It owns a tree of
+=LrgNode= objects, each with a local TRS transform, flags, an optional visual
+payload (=LrgNodeVisual=), component descriptions (=LrgComponentDesc=), and
+script bindings (=LrgScriptBinding=). Nothing in =LrgLevel= renders or simulates;
+it is pure data. It round-trips to disk as a =.rlevel= YAML file.
+
+*** LrgScene — rendering geometry
+:PROPERTIES:
+:CUSTOM_ID: lrgscene-rendering-geometry
+:END:
+=LrgScene= is the Blender-import / rendering layer already present in libregnum
+before the editor was added. It holds named =LrgSceneEntity= groups, each
+containing one or more =LrgSceneObject= primitives with transforms and PBR
+materials. The renderer reads =LrgScene= and draws the geometry.
+
+=lrg_level_to_scene()= bakes a level into a scene by converting each node that
+carries a =LRG_NODE_VISUAL_PRIMITIVE= visual into an entity + object pair. This
+path is used for a lightweight geometry preview of the level.
+
+Note: the MVP bake does not compose nested group transforms into child world
+positions. Flat hierarchies (all authored nodes directly under root) bake
+exactly; multi-level nesting should be flattened before baking if precise
+placement is required.
+
+*** LrgWorld — ECS simulation
+:PROPERTIES:
+:CUSTOM_ID: lrgworld-ecs-simulation
+:END:
+=LrgWorld= is the runtime entity-component-system container (see
+[[file:ecs-pattern.org][ECS Pattern]]). It holds live =LrgGameObject= instances with attached
+=LrgComponent= objects.
+
+=lrg_level_instantiate()= populates a world from a level by creating one
+=LrgGameObject= per node and materializing the node's component descriptions via
+the =LrgRegistry=. This path is used for play-in-editor and for game startup.
+
+** Why Three Layers?
+:PROPERTIES:
+:CUSTOM_ID: why-three-layers
+:END:
+| Concern | Layer |
+|---------+-------|
+| Edit, undo/redo, serialize, share prefabs | =LrgLevel= + =LrgNode= |
+| Draw geometry during authoring or in-game | =LrgScene= |
+| Run game logic, physics, AI, scripting | =LrgWorld= |
+
+Keeping them separate means:
+
+- The editor can mutate nodes and re-bake geometry without touching live
+  simulation state.
+- A game can load a scene exported from Blender directly into an =LrgScene=
+  without the full authoring overhead of =LrgLevel=.
+- Play-in-editor instantiates a world from the current level without committing
+  to persistent state in the scene.
+
+** Typical Workflows
+:PROPERTIES:
+:CUSTOM_ID: typical-workflows
+:END:
+*** Editor workflow (IDE host)
+:PROPERTIES:
+:CUSTOM_ID: editor-workflow
+:END:
+1. Open or create a =.rlevel= via =LrgLevelSerializer=.
+2. Expose the node tree in a panel; mutate nodes through =LrgEditor= operations.
+3. On each change, call =lrg_level_to_scene()= and re-render the scene into the
+   editor viewport.
+4. On play, call =lrg_level_instantiate()= to populate a new =LrgWorld= and start
+   the game loop.
+
+*** Blender import workflow
+:PROPERTIES:
+:CUSTOM_ID: blender-import-workflow
+:END:
+1. Export a scene from Blender to YAML via =LrgSceneSerializerBlender=.
+2. Optionally convert to an editable level with =lrg_level_from_scene()=.
+3. Enrich with components, scripts, and prefabs in the IDE.
+4. Instantiate for runtime.
+
+*** Runtime-only workflow (no editor)
+:PROPERTIES:
+:CUSTOM_ID: runtime-only-workflow
+:END:
+For games that ship without the editor, load a =.rlevel= directly:
+
+#+begin_src C
+g_autoptr(LrgLevelSerializer) ser  = lrg_level_serializer_new ();
+g_autoptr(LrgLevel)           level = lrg_level_serializer_load_from_file (ser, "game.rlevel", &err);
+g_autoptr(LrgWorld)           world = lrg_world_new ();
+lrg_level_instantiate (level, world, NULL, &err);
+/* hand world to game loop */
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:ecs-pattern.org][ECS Pattern]] — world, entities, and components
+- [[file:../editor/overview.org][Editor Overview]] — the full authoring pipeline
+- [[file:../scene/overview.org][Scene Module]] — =LrgScene= and Blender integration

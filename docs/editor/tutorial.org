@@ -1,0 +1,243 @@
+* Tutorial: Build a Level in C
+:PROPERTIES:
+:CUSTOM_ID: tutorial-build-a-level-in-c
+:END:
+This tutorial walks through the full editor authoring pipeline in C: create a
+level, add nodes with visuals and components, save it to disk, bake a scene,
+and instantiate a runtime world.
+
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Tutorial
+
+#+end_quote
+
+** Step 1: Create a Level
+:PROPERTIES:
+:CUSTOM_ID: step-1-create-a-level
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+int
+main (int argc, char *argv[])
+{
+    g_autoptr(GError) error = NULL;
+
+    /* Create an empty level */
+    g_autoptr(LrgLevel) level = lrg_level_new ("tutorial_level");
+    lrg_level_set_default_2d (level, FALSE);  /* 3D viewport */
+
+    return 0;
+}
+#+end_src
+
+** Step 2: Add Nodes with Visuals
+:PROPERTIES:
+:CUSTOM_ID: step-2-add-nodes-with-visuals
+:END:
+#+begin_src C
+    /* --- Floor --- */
+    g_autoptr(LrgNode) floor = lrg_node_new ("floor");
+    lrg_node_set_location_xyz (floor, 0.0f, 0.0f, 0.0f);
+    lrg_node_set_scale_xyz    (floor, 8.0f, 0.25f, 8.0f);
+
+    g_autoptr(LrgNodeVisual) floor_vis = lrg_node_visual_new (LRG_NODE_VISUAL_PRIMITIVE);
+    lrg_node_visual_set_primitive (floor_vis, LRG_PRIMITIVE_CUBE);
+
+    g_autoptr(LrgMaterial3D) floor_mat = lrg_material3d_new ();
+    lrg_material3d_set_color (floor_mat, 0.45f, 0.40f, 0.35f, 1.0f);
+    lrg_material3d_set_roughness (floor_mat, 0.9f);
+    lrg_node_visual_set_material (floor_vis, floor_mat);
+
+    lrg_node_set_visual (floor, floor_vis);
+    lrg_level_add_node (level, floor, NULL);   /* NULL = under root */
+
+    /* --- Crate --- */
+    g_autoptr(LrgNode) crate = lrg_node_new ("crate_01");
+    lrg_node_set_location_xyz (crate, 2.0f, 0.5f, 1.0f);
+
+    g_autoptr(LrgNodeVisual) crate_vis = lrg_node_visual_new (LRG_NODE_VISUAL_PRIMITIVE);
+    lrg_node_visual_set_primitive (crate_vis, LRG_PRIMITIVE_CUBE);
+    lrg_node_set_visual (crate, crate_vis);
+
+    lrg_level_add_node (level, crate, NULL);
+#+end_src
+
+** Step 3: Add Component Descriptions
+:PROPERTIES:
+:CUSTOM_ID: step-3-add-component-descriptions
+:END:
+Component descriptions are serialized with the level and materialized at
+instantiation time. They require the type name to be registered in =LrgRegistry=
+before =lrg_level_instantiate()= is called.
+
+#+begin_src C
+    /* Collider on the floor */
+    g_autoptr(LrgComponentDesc) floor_col = lrg_component_desc_new ("collider");
+    lrg_component_desc_set_string (floor_col, "shape", "box");
+    lrg_node_add_component (floor, floor_col);
+
+    /* Health component on the crate */
+    g_autoptr(LrgComponentDesc) crate_hp = lrg_component_desc_new ("health");
+    lrg_component_desc_set_int    (crate_hp, "max_hp",    50);
+    lrg_component_desc_set_double (crate_hp, "regen_rate", 0.0);
+    lrg_node_add_component (crate, crate_hp);
+#+end_src
+
+** Step 4: Attach Script Bindings
+:PROPERTIES:
+:CUSTOM_ID: step-4-attach-script-bindings
+:END:
+#+begin_src C
+    g_autoptr(LrgScriptBinding) crate_script = lrg_script_binding_new (
+        LRG_SCRIPT_LANGUAGE_LUA, "scripts/crate.lua");
+    lrg_node_add_script (crate, crate_script);
+#+end_src
+
+** Step 5: Save to Disk
+:PROPERTIES:
+:CUSTOM_ID: step-5-save-to-disk
+:END:
+#+begin_src C
+    g_autoptr(LrgLevelSerializer) ser = lrg_level_serializer_new ();
+    g_autoptr(GError) save_err = NULL;
+
+    if (!lrg_level_serializer_save_to_file (ser, level, "tutorial.rlevel", &save_err))
+    {
+        g_error ("Save failed: %s", save_err->message);
+        return 1;
+    }
+    g_message ("Saved tutorial.rlevel");
+#+end_src
+
+** Step 6: Bake a Scene (Geometry Preview)
+:PROPERTIES:
+:CUSTOM_ID: step-6-bake-a-scene-geometry-preview
+:END:
+Baking converts the primitive-visual nodes into an =LrgScene= for geometry
+rendering. Nodes without a =PRIMITIVE= visual are skipped.
+
+#+begin_src C
+    g_autoptr(LrgScene) scene = lrg_level_to_scene (level);
+
+    /* scene now contains two entities: "floor" and "crate_01"
+       (keyed by their guids) */
+    g_message ("Scene has %u entities",
+               g_hash_table_size (lrg_scene_get_entities (scene)));
+#+end_src
+
+** Step 7: Instantiate for Play-in-Editor
+:PROPERTIES:
+:CUSTOM_ID: step-7-instantiate-for-play-in-editor
+:END:
+Instantiation populates an =LrgWorld= with live =LrgGameObject= instances. Component
+descriptions are resolved through the engine's =LrgRegistry=.
+
+#+begin_src C
+    LrgEngine *engine = lrg_engine_get_default ();
+    LrgRegistry *registry = lrg_engine_get_registry (engine);
+
+    /* Register component types before instantiation */
+    lrg_registry_register (registry, "collider", MY_TYPE_COLLIDER_COMPONENT);
+    lrg_registry_register (registry, "health",   MY_TYPE_HEALTH_COMPONENT);
+
+    g_autoptr(LrgWorld)  world     = lrg_world_new ();
+    g_autoptr(GError)    inst_err  = NULL;
+
+    if (!lrg_level_instantiate (level, world, engine, &inst_err))
+    {
+        g_error ("Instantiate failed: %s", inst_err->message);
+        return 1;
+    }
+
+    /* Run the game loop */
+    while (lrg_engine_is_running (engine))
+        lrg_world_update (world, 0.016f);
+
+    return 0;
+#+end_src
+
+** Step 8: Load Back from Disk
+:PROPERTIES:
+:CUSTOM_ID: step-8-load-back-from-disk
+:END:
+#+begin_src C
+    g_autoptr(LrgLevelSerializer) ser   = lrg_level_serializer_new ();
+    g_autoptr(GError)              err  = NULL;
+    g_autoptr(LrgLevel) loaded = lrg_level_serializer_load_from_file (
+        ser, "tutorial.rlevel", &err);
+    if (loaded == NULL)
+        g_error ("Load failed: %s", err->message);
+
+    g_message ("Level name: %s", lrg_level_get_name (loaded));
+#+end_src
+
+** Complete Program
+:PROPERTIES:
+:CUSTOM_ID: complete-program
+:END:
+The steps above assemble into a standalone C program:
+
+#+begin_src C
+#include <libregnum.h>
+
+int
+main (int argc, char *argv[])
+{
+    g_autoptr(GError) error = NULL;
+
+    /* Level */
+    g_autoptr(LrgLevel) level = lrg_level_new ("tutorial_level");
+    lrg_level_set_default_2d (level, FALSE);
+
+    /* Floor */
+    g_autoptr(LrgNode) floor = lrg_node_new ("floor");
+    lrg_node_set_scale_xyz (floor, 8.0f, 0.25f, 8.0f);
+    g_autoptr(LrgNodeVisual) fv = lrg_node_visual_new (LRG_NODE_VISUAL_PRIMITIVE);
+    lrg_node_visual_set_primitive (fv, LRG_PRIMITIVE_CUBE);
+    lrg_node_set_visual (floor, fv);
+    lrg_level_add_node  (level, floor, NULL);
+
+    /* Crate */
+    g_autoptr(LrgNode) crate = lrg_node_new ("crate_01");
+    lrg_node_set_location_xyz (crate, 2.0f, 0.5f, 1.0f);
+    g_autoptr(LrgNodeVisual) cv = lrg_node_visual_new (LRG_NODE_VISUAL_PRIMITIVE);
+    lrg_node_visual_set_primitive (cv, LRG_PRIMITIVE_CUBE);
+    lrg_node_set_visual (crate, cv);
+
+    g_autoptr(LrgComponentDesc) hp = lrg_component_desc_new ("health");
+    lrg_component_desc_set_int (hp, "max_hp", 50);
+    lrg_node_add_component (crate, hp);
+
+    g_autoptr(LrgScriptBinding) sb =
+        lrg_script_binding_new (LRG_SCRIPT_LANGUAGE_LUA, "scripts/crate.lua");
+    lrg_node_add_script (crate, sb);
+    lrg_level_add_node  (level, crate, NULL);
+
+    /* Save */
+    g_autoptr(LrgLevelSerializer) ser = lrg_level_serializer_new ();
+    if (!lrg_level_serializer_save_to_file (ser, level, "tutorial.rlevel", &error))
+        g_error ("Save: %s", error->message);
+
+    /* Bake */
+    g_autoptr(LrgScene) scene = lrg_level_to_scene (level);
+    (void) scene;  /* pass to renderer */
+
+    /* Instantiate */
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    if (!lrg_level_instantiate (level, world, NULL, &error))
+        g_error ("Instantiate: %s", error->message);
+
+    g_message ("Tutorial complete.");
+    return 0;
+}
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:level-model.org][Level Model]] — full API for =LrgLevel= / =LrgNode=
+- [[file:yaml-format.org][.rlevel Format]] — YAML schema reference
+- [[file:editor-runtime.org][Editor Runtime]] — =LrgEditor= and undo/redo
+- [[file:../concepts/level-scene-world.org][Level, Scene, and World]] — three-layer rationale

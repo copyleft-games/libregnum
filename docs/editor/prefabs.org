@@ -1,0 +1,126 @@
+* Prefabs
+:PROPERTIES:
+:CUSTOM_ID: prefabs
+:END:
+A prefab is a saved node subtree that can be cloned, placed in levels, and
+reloaded from disk. Prefabs enable reuse of authored content across levels
+without duplicating node data.
+
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Prefabs
+
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+Prefabs are implemented as free functions operating on =LrgNode= trees. There is
+no separate =LrgPrefab= class; a prefab is simply an =LrgNode= (with descendants)
+stored in a =.rprefab= file. The =.rprefab= format is the same YAML schema as
+=.rlevel= (see [[file:yaml-format.org][.rlevel Format]]) with =type: prefab= at the top level.
+
+** Cloning
+:PROPERTIES:
+:CUSTOM_ID: cloning
+:END:
+=lrg_prefab_clone()= deep-copies a node subtree and assigns fresh GUIDs to every
+copied node. The copy is parentless and not attached to any level.
+
+#+begin_src C
+LrgNode *original = /* a node in a level */;
+
+/* Deep copy with fresh guids — original is unchanged */
+g_autoptr(LrgNode) copy = lrg_prefab_clone (original);
+#+end_src
+
+** Saving and Loading
+:PROPERTIES:
+:CUSTOM_ID: saving-and-loading
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+
+/* Save a node subtree as a prefab */
+gboolean ok = lrg_prefab_save (node, "assets/prefabs/torch.rprefab", &error);
+if (!ok)
+    g_warning ("Save failed: %s", error->message);
+
+/* Load a prefab from disk */
+g_autoptr(LrgNode) prefab = lrg_prefab_load (
+    "assets/prefabs/torch.rprefab", &error);
+if (prefab == NULL)
+    g_warning ("Load failed: %s", error->message);
+#+end_src
+
+** Instantiation
+:PROPERTIES:
+:CUSTOM_ID: instantiation
+:END:
+=lrg_prefab_instantiate()= produces a fresh-GUID deep copy of a prefab ready to
+be placed in a level. Conceptually it is equivalent to =lrg_prefab_clone()= but
+is the canonical call path from editor code:
+
+#+begin_src C
+g_autoptr(LrgNode) prefab = lrg_prefab_load ("prefabs/torch.rprefab", &error);
+
+/* Each call produces a unique copy */
+g_autoptr(LrgNode) instance_a = lrg_prefab_instantiate (prefab);
+g_autoptr(LrgNode) instance_b = lrg_prefab_instantiate (prefab);
+
+/* Place the instance in a level */
+lrg_node_set_location_xyz (instance_a, 2.0f, 0.0f, 0.0f);
+lrg_level_add_node (level, instance_a, NULL);
+#+end_src
+
+** Workflow Example
+:PROPERTIES:
+:CUSTOM_ID: workflow-example
+:END:
+#+begin_src C
+/* 1. Author a torch node in a level */
+g_autoptr(LrgNode) torch = lrg_node_new ("torch");
+lrg_node_set_location_xyz (torch, 0.0f, 1.5f, 0.0f);
+
+g_autoptr(LrgNodeVisual) vis = lrg_node_visual_new (LRG_NODE_VISUAL_LIGHT);
+lrg_node_visual_set_param_double (vis, "intensity", 3.0);
+lrg_node_set_visual (torch, vis);
+
+g_autoptr(LrgScriptBinding) flicker =
+    lrg_script_binding_new (LRG_SCRIPT_LANGUAGE_LUA, "scripts/flicker.lua");
+lrg_node_add_script (torch, flicker);
+
+/* 2. Save it as a prefab */
+lrg_prefab_save (torch, "assets/prefabs/torch.rprefab", &error);
+
+/* 3. Later: place two instances in a different level */
+g_autoptr(LrgNode) pf = lrg_prefab_load ("assets/prefabs/torch.rprefab", &error);
+
+g_autoptr(LrgNode) inst1 = lrg_prefab_instantiate (pf);
+lrg_node_set_location_xyz (inst1, -3.0f, 1.5f, 2.0f);
+lrg_level_add_node (level2, inst1, NULL);
+
+g_autoptr(LrgNode) inst2 = lrg_prefab_instantiate (pf);
+lrg_node_set_location_xyz (inst2, 3.0f, 1.5f, 2.0f);
+lrg_level_add_node (level2, inst2, NULL);
+#+end_src
+
+** Notes
+:PROPERTIES:
+:CUSTOM_ID: notes
+:END:
+- =lrg_prefab_clone()= and =lrg_prefab_instantiate()= both assign fresh GUIDs.
+  After placement the instance is independent: future changes to the source
+  prefab file are not reflected in placed instances.
+- The =PREFAB_INSTANCE= visual kind (=LRG_NODE_VISUAL_PREFAB_INSTANCE=) stores the
+  asset reference to the =.rprefab= file and is used by the editor to show a
+  prefab placeholder. At instantiation time, the editor resolves it to a real
+  node subtree.
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:level-model.org][Level Model]] — =LrgNode= structure
+- [[file:yaml-format.org][.rlevel Format]] — shared schema for =.rprefab=
+- [[file:projects-and-assets.org][Projects and Assets]] — =LrgAssetType= classifies =.rprefab= files

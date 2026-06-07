@@ -77,6 +77,63 @@ Complete index of all classes and derivable types in Libregnum.
 - LrgCanvas - Custom drawing canvas
 - LrgTheme - UI theme
 
+** Editor Module (BUILD_EDITOR=1)
+:PROPERTIES:
+:CUSTOM_ID: editor-module-build-editor-1
+:END:
+*** Level Authoring
+:PROPERTIES:
+:CUSTOM_ID: level-authoring
+:END:
+- *LrgLevel* — serializable authoring document; owns the =LrgNode= tree (Final)
+- *LrgNode* — editable scene tree node; 2D/3D unified; transform + visual + components + scripts (Derivable)
+- *LrgNodeVisual* — tagged visual/content payload for a node (Final)
+- *LrgComponentDesc* — serializable component description: type name + typed prop bag (Final)
+- *LrgScriptBinding* — serializable script reference: language + path + enabled (Final)
+- *LrgLevelSerializer* — =.rlevel= / =.rprefab= YAML serializer (Final)
+
+*** Bridge Functions (free functions, no class)
+:PROPERTIES:
+:CUSTOM_ID: bridge-functions
+:END:
+- *lrg_level_to_scene* — bake primitive-visual nodes into an =LrgScene=
+- *lrg_level_instantiate* — populate an =LrgWorld= from a level
+- *lrg_level_from_scene* — import an =LrgScene= as an editable level
+
+*** Prefabs (free functions)
+:PROPERTIES:
+:CUSTOM_ID: prefabs
+:END:
+- *lrg_prefab_clone* — deep copy with fresh guids
+- *lrg_prefab_instantiate* — produce a placeable copy
+- *lrg_prefab_save* / *lrg_prefab_load* — round-trip to =.rprefab=
+
+*** Editor Runtime
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime
+:END:
+- *LrgEditor* — host-agnostic editor runtime; level document, selection, undo stack (Final)
+- *LrgEditorCommand* — discriminated undoable mutation (Final)
+- *LrgEditorSelection* — multi-select set with primary node; =changed= signal (Final)
+- *LrgEditorHost* — GInterface embedding contract (render target, camera, input)
+- *LrgEditorSoftwareHost* — concrete data-holding host implementation (Final)
+
+*** Projects and Assets
+:PROPERTIES:
+:CUSTOM_ID: projects-and-assets
+:END:
+- *LrgProject* — =project.ryaml= manifest; asset dirs; game output (Final)
+- *LrgAssetDatabase* — recursive asset scanner + classifier (Final)
+- *LrgAssetEntry* — single classified asset record (path, name, type, guid) (Final)
+
+** Scripting Manager
+:PROPERTIES:
+:CUSTOM_ID: scripting-manager
+:END:
+- *LrgScriptingManager* — singleton; enumerates backends, creates contexts (Final)
+- *LrgScriptComponent* — =LrgComponent= that loads and drives a script at play time (Final)
+- *LrgScriptingCrispy* — compiled-C backend via Crispy (Final; requires =CRISPY=1=)
+
 ** See Also
 :PROPERTIES:
 :CUSTOM_ID: see-also
@@ -85,3 +142,5 @@ Complete index of all classes and derivable types in Libregnum.
 - [[file:enumerations.org][API Enumerations Index]]
 - [[../modules/core/index.md][Core Module]]
 - [[../modules/index.md][Module Index]]
+- [[../modules/editor/index.org][Editor Module Reference]]
+- [[../modules/scripting/index.org][Scripting Module Reference]]

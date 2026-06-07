@@ -1,0 +1,285 @@
+* Editor Runtime
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime
+:END:
+This document covers =LrgEditor= (the host-agnostic editor runtime), the undo/redo
+command system (=LrgEditorCommand=), the selection model (=LrgEditorSelection=), and
+the host embedding contract (=LrgEditorHost= / =LrgEditorSoftwareHost=).
+
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Editor Runtime
+
+#+end_quote
+
+** LrgEditor
+:PROPERTIES:
+:CUSTOM_ID: lrgeditor
+:END:
+=LrgEditor= is a final GObject that owns the level document, the selection, and
+the undo/redo stacks. All mutations go through reversible commands so the full
+history participates in undo/redo. The editor emits a =changed= signal whenever
+any mutation is applied or undone.
+
+*** Creation and Document
+:PROPERTIES:
+:CUSTOM_ID: creation-and-document
+:END:
+#+begin_src C
+g_autoptr(LrgEditor) editor = lrg_editor_new ();
+
+/* Replace the active level (clears history and selection) */
+lrg_editor_set_level (editor, my_level);
+
+/* Load from disk (equivalent to set_level after deserializing) */
+g_autoptr(GError) error = NULL;
+lrg_editor_load_level (editor, "dungeon.rlevel", &error);
+
+/* Save */
+lrg_editor_save_level (editor, "dungeon.rlevel", &error);
+
+LrgLevel *level = lrg_editor_get_level (editor);  /* (transfer none) */
+#+end_src
+
+*** Mutating Operations
+:PROPERTIES:
+:CUSTOM_ID: mutating-operations
+:END:
+Each operation below pushes an undoable =LrgEditorCommand= onto the undo stack and
+emits the =changed= signal.
+
+#+begin_src C
+/* Add a node (also selects it) */
+g_autoptr(LrgNode) node = lrg_node_new ("crate");
+lrg_editor_add_node (editor, node, NULL);   /* NULL = under root */
+
+/* Delete a node */
+lrg_editor_delete_node (editor, node);
+
+/* Reparent */
+lrg_editor_reparent_node (editor, node, new_parent);
+
+/* Set full local transform in one command */
+const gfloat loc[3] = { 1.0f, 0.0f, 0.0f };
+const gfloat rot[3] = { 0.0f, 0.0f, 0.0f };
+const gfloat scl[3] = { 1.0f, 1.0f, 1.0f };
+lrg_editor_set_node_transform (editor, node, loc, rot, scl);
+
+/* Set a GObject property on a node (e.g. "name", "visible") */
+GValue name_val = G_VALUE_INIT;
+g_value_init (&name_val, G_TYPE_STRING);
+g_value_set_string (&name_val, "crate_01");
+lrg_editor_set_node_property (editor, node, "name", &name_val);
+g_value_unset (&name_val);
+#+end_src
+
+*** Selection
+:PROPERTIES:
+:CUSTOM_ID: selection
+:END:
+#+begin_src C
+/* Replace selection with one node */
+lrg_editor_select (editor, node, FALSE);
+
+/* Add to existing selection */
+lrg_editor_select (editor, other_node, TRUE);
+
+/* Clear selection */
+lrg_editor_select (editor, NULL, FALSE);
+
+/* Access the selection model directly */
+LrgEditorSelection *sel = lrg_editor_get_selection (editor);
+#+end_src
+
+*** Undo / Redo
+:PROPERTIES:
+:CUSTOM_ID: undo-redo
+:END:
+#+begin_src C
+if (lrg_editor_can_undo (editor))
+    lrg_editor_undo (editor);
+
+if (lrg_editor_can_redo (editor))
+    lrg_editor_redo (editor);
+#+end_src
+
+*** Tool and Snap
+:PROPERTIES:
+:CUSTOM_ID: tool-and-snap
+:END:
+The active tool determines which gizmo is drawn and which drag operations are
+sent to the editor. Snap increments of 0 disable snapping for that axis.
+
+#+begin_src C
+lrg_editor_set_tool (editor, LRG_EDITOR_TOOL_TRANSLATE);
+LrgEditorTool tool = lrg_editor_get_tool (editor);
+
+/* Enable translation snap of 0.5 units, disable rotation/scale snap */
+lrg_editor_set_snap (editor, 0.5, 0.0, 0.0);
+
+gdouble snap_t, snap_r, snap_s;
+lrg_editor_get_snap (editor, &snap_t, &snap_r, &snap_s);
+#+end_src
+
+**** LrgEditorTool values
+:PROPERTIES:
+:CUSTOM_ID: lrgeditortool-values
+:END:
+| Enum | Description |
+|------+-------------|
+| =LRG_EDITOR_TOOL_SELECT= | Selection mode; no active transform gizmo |
+| =LRG_EDITOR_TOOL_TRANSLATE= | Translate (move) gizmo |
+| =LRG_EDITOR_TOOL_ROTATE= | Rotate gizmo |
+| =LRG_EDITOR_TOOL_SCALE= | Scale gizmo |
+
+** LrgEditorCommand
+:PROPERTIES:
+:CUSTOM_ID: lrgeditorcommand
+:END:
+=LrgEditorCommand= is the discriminated undo record. =LrgEditor= creates commands
+internally; direct use is only needed when building a custom editor or when
+implementing merge coalescing for drag operations.
+
+*** LrgEditorCommandKind
+:PROPERTIES:
+:CUSTOM_ID: lrgeditorcommandkind
+:END:
+| Enum | Created by |
+|------+------------|
+| =LRG_EDITOR_CMD_TRANSFORM= | =lrg_editor_set_node_transform()= |
+| =LRG_EDITOR_CMD_SET_PROPERTY= | =lrg_editor_set_node_property()= |
+| =LRG_EDITOR_CMD_ADD_NODE= | =lrg_editor_add_node()= |
+| =LRG_EDITOR_CMD_DELETE_NODE= | =lrg_editor_delete_node()= |
+| =LRG_EDITOR_CMD_REPARENT= | =lrg_editor_reparent_node()= |
+
+*** Command Operations
+:PROPERTIES:
+:CUSTOM_ID: command-operations
+:END:
+#+begin_src C
+/* Apply and undo (called by LrgEditor internally) */
+lrg_editor_command_apply (cmd);
+lrg_editor_command_undo (cmd);
+
+/* Merge — folds a newer command's "after" state into an older one
+   (only works for same-kind, same-target TRANSFORM and SET_PROPERTY) */
+gboolean merged = lrg_editor_command_merge (old_cmd, new_cmd);
+
+/* Human-readable description for an undo menu */
+g_autofree gchar *desc = lrg_editor_command_describe (cmd);
+
+LrgEditorCommandKind kind = lrg_editor_command_get_kind (cmd);
+#+end_src
+
+*** Constructors (advanced use)
+:PROPERTIES:
+:CUSTOM_ID: constructors-advanced-use
+:END:
+#+begin_src C
+/* 9-float TRS arrays: [loc.x, loc.y, loc.z, rot.x, rot.y, rot.z, scl.x, scl.y, scl.z] */
+LrgEditorCommand *cmd = lrg_editor_command_new_transform (node, before_trs, after_trs);
+
+LrgEditorCommand *cmd = lrg_editor_command_new_set_property (
+    G_OBJECT (node), "visible", &before_val, &after_val);
+
+LrgEditorCommand *cmd = lrg_editor_command_new_add_node (level, node, parent);
+LrgEditorCommand *cmd = lrg_editor_command_new_delete_node (level, node, parent);
+LrgEditorCommand *cmd = lrg_editor_command_new_reparent (node, old_parent, new_parent);
+#+end_src
+
+** LrgEditorSelection
+:PROPERTIES:
+:CUSTOM_ID: lrgeditorselection
+:END:
+The selection model holds an ordered set of =LrgNode= objects with a distinguished
+primary (the most recently added node). It emits a =changed= signal when the set
+changes.
+
+#+begin_src C
+LrgEditorSelection *sel = lrg_editor_get_selection (editor);
+
+/* Modify */
+lrg_editor_selection_add     (sel, node);   /* adds and promotes to primary */
+lrg_editor_selection_set     (sel, node);   /* replace with single node */
+lrg_editor_selection_remove  (sel, node);   /* returns TRUE if removed */
+lrg_editor_selection_clear   (sel);
+
+/* Query */
+gboolean  has     = lrg_editor_selection_contains (sel, node);
+LrgNode  *primary = lrg_editor_selection_get_primary (sel);   /* (transfer none) */
+GPtrArray *nodes  = lrg_editor_selection_get_nodes (sel);     /* (transfer none) */
+guint      count  = lrg_editor_selection_get_count (sel);
+#+end_src
+
+** LrgEditorHost
+:PROPERTIES:
+:CUSTOM_ID: lrgeditorhost
+:END:
+=LrgEditorHost= is a GInterface that an IDE or standalone editor frontend must
+implement. It supplies the environment the editor runtime borrows for rendering
+and input.
+
+*** Interface Methods
+:PROPERTIES:
+:CUSTOM_ID: interface-methods
+:END:
+| Method | Description |
+|--------+-------------|
+| =get_engine= | Return the =LrgEngine= to borrow |
+| =get_render_size= | Return render-target pixel dimensions (=width=, =height=) |
+| =begin_frame= | Bind the render target / FBO |
+| =clear= | Clear the render target to =color= |
+| =end_frame= | Flush / unbind the render target |
+| =get_frame_delta= | Seconds since previous frame |
+| =get_input_source= | Return the injected software input, or =NULL= |
+| =get_viewport_camera= | Return the camera the editor renders through |
+| =is_2d_mode= | =TRUE= when the viewport is in 2D editing mode |
+| =request_redraw= | Ask the host to schedule another frame (event-driven hosts) |
+
+*** LrgEditorSoftwareHost
+:PROPERTIES:
+:CUSTOM_ID: lrgeditorsoftwarehost
+:END:
+=LrgEditorSoftwareHost= is a concrete final GObject that stores the borrowed
+environment. It is suited for IDE embedding (cmacs) and for tests.
+
+#+begin_src C
+/* Create a host backed by the default engine */
+g_autoptr(LrgEditorSoftwareHost) host =
+    lrg_editor_software_host_new (lrg_engine_get_default ());
+
+/* Configure the render target size */
+lrg_editor_software_host_set_render_size (host, 1280, 720);
+
+/* Supply a viewport camera */
+lrg_editor_software_host_set_viewport_camera (host, LRG_CAMERA (cam3d));
+
+/* Enable 2D mode */
+lrg_editor_software_host_set_2d_mode (host, FALSE);
+
+/* Inject software input (for tests or embedding) */
+lrg_editor_software_host_set_input_source (host, input_src);
+
+/* Update frame delta each tick */
+lrg_editor_software_host_set_frame_delta (host, 0.016);
+
+/* In tests: check how many redraws were requested */
+guint redraws = lrg_editor_software_host_get_redraw_count (host);
+#+end_src
+
+*** Embedding in cmacs
+:PROPERTIES:
+:CUSTOM_ID: embedding-in-cmacs
+:END:
+cmacs implements =LrgEditorHost= on a GObject that wraps an Emacs buffer's Cairo
+surface. On each Emacs redisplay tick it calls
+=lrg_editor_host_begin_frame()= / =lrg_editor_host_end_frame()=, and in response
+to input events it injects them via the software input source. When the engine
+calls =lrg_editor_host_request_redraw()=, cmacs schedules a redisplay.
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:level-model.org][Level Model]] — the document being edited
+- [[file:overview.org][Editor Overview]] — dual-frontend architecture
+- [[file:../modules/editor/index.org][Editor Module Reference]]

@@ -505,6 +505,15 @@ typedef struct _LrgScriptableInterface  LrgScriptableInterface;
 /* LrgScriptMethod is a boxed type for method descriptors */
 typedef struct _LrgScriptMethod  LrgScriptMethod;
 
+/* LrgScriptingManager is a final type - no Class forward declaration needed */
+typedef struct _LrgScriptingManager  LrgScriptingManager;
+
+/* LrgScriptingCrispy is a final type - no Class forward declaration needed */
+typedef struct _LrgScriptingCrispy  LrgScriptingCrispy;
+
+/* LrgScriptComponent is a final type - no Class forward declaration needed */
+typedef struct _LrgScriptComponent  LrgScriptComponent;
+
 /* ==========================================================================
  * Economy Module (Phase 2)
  * ========================================================================== */
@@ -1201,5 +1210,56 @@ typedef struct _LrgStandaloneHost    LrgStandaloneHost;
 
 /* LrgLoadedGame is a final type - no Class forward declaration needed */
 typedef struct _LrgLoadedGame        LrgLoadedGame;
+
+/* ==========================================================================
+ * Editor / Level Module
+ * ========================================================================== */
+
+/* LrgComponentDesc is a final type - no Class forward declaration needed */
+typedef struct _LrgComponentDesc  LrgComponentDesc;
+
+/* LrgScriptBinding is a final type - no Class forward declaration needed */
+typedef struct _LrgScriptBinding  LrgScriptBinding;
+
+/* LrgNodeVisual is a final type - no Class forward declaration needed */
+typedef struct _LrgNodeVisual  LrgNodeVisual;
+
+/* LrgNode is a derivable type */
+typedef struct _LrgNode       LrgNode;
+typedef struct _LrgNodeClass  LrgNodeClass;
+
+/* LrgLevel is a final type - no Class forward declaration needed */
+typedef struct _LrgLevel  LrgLevel;
+
+/* LrgLevelSerializer is a final type - no Class forward declaration needed */
+typedef struct _LrgLevelSerializer  LrgLevelSerializer;
+
+/* LrgEditorCommand is a final type - no Class forward declaration needed */
+typedef struct _LrgEditorCommand  LrgEditorCommand;
+
+/* LrgEditorSelection is a final type - no Class forward declaration needed */
+typedef struct _LrgEditorSelection  LrgEditorSelection;
+
+/* LrgEditor is a final type - no Class forward declaration needed */
+typedef struct _LrgEditor  LrgEditor;
+
+/* LrgEditorHost is an interface */
+typedef struct _LrgEditorHost           LrgEditorHost;
+typedef struct _LrgEditorHostInterface  LrgEditorHostInterface;
+
+/* LrgEditorSoftwareHost is a final type - no Class forward declaration needed */
+typedef struct _LrgEditorSoftwareHost  LrgEditorSoftwareHost;
+
+/* LrgAssetEntry is a final type - no Class forward declaration needed */
+typedef struct _LrgAssetEntry  LrgAssetEntry;
+
+/* LrgAssetDatabase is a final type - no Class forward declaration needed */
+typedef struct _LrgAssetDatabase  LrgAssetDatabase;
+
+/* LrgProject is a final type - no Class forward declaration needed */
+typedef struct _LrgProject  LrgProject;
+
+/* LrgEditorApp is a final type - no Class forward declaration needed */
+typedef struct _LrgEditorApp  LrgEditorApp;
 
 G_END_DECLS

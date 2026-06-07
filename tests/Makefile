@@ -125,7 +125,8 @@ TEST_SOURCES := \
 	test-template-idle.c \
 	test-template-deckbuilder.c \
 	test-chart.c \
-	test-game-module.c
+	test-game-module.c \
+	test-editor.c
 
 # MCP test sources (conditional on MCP=1)
 ifeq ($(MCP),1)

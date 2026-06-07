@@ -13,6 +13,8 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - *[[file:concepts/index.org][Core Concepts]]* - Learn key game development concepts
 - *[[file:modules/index.org][Module Documentation]]* - Detailed API reference
 - *[[file:scene/overview.org][Scene Module]]* - Blender scene import/export system
+- *[[file:editor/overview.org][Editor Module]]* - Level authoring, IDE hosting, and bake/instantiate
+- *[[file:modules/scripting/index.org][Scripting Manager]]* - LrgScriptingManager, LrgScriptComponent, Crispy backend
 - *[[file:api/classes.org][API Classes Index]]* - All classes and types
 - *[[file:building.org][Building]]* - Build and installation instructions
 
@@ -56,6 +58,19 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - *Debug Tools* - Profiling, console, overlay, and inspector
 - *Modding* - Complete mod system with dependencies
 - *Localization* - Multi-language support with CLDR plural rules
+
+*** Editor and Level Authoring
+:PROPERTIES:
+:CUSTOM_ID: editor-and-level-authoring
+:END:
+- *[[file:editor/overview.org][Editor Module]]* - Level/Scene/World three-layer model; bake and instantiate
+- *Level Model* - =LrgLevel=, =LrgNode=, =LrgNodeVisual= authoring types
+- *=.rlevel= Format* - YAML serialization schema for levels and prefabs
+- *Prefabs* - Reusable saved node subtrees (=.rprefab=)
+- *Editor Runtime* - =LrgEditor=, undo/redo commands, =LrgEditorHost= embedding
+- *Projects and Assets* - =LrgProject= manifest, =LrgAssetDatabase= scanner
+- *Scripting Manager* - =LrgScriptingManager=, =LrgScriptComponent=, Crispy C backend
+- *Build flags* - =BUILD_EDITOR=1= for the editor subsystem; =CRISPY=1= for compiled-C scripts
 
 ** Getting Started Quickly
 :PROPERTIES:

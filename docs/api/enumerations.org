@@ -257,6 +257,54 @@ Complete index of all enumerations in Libregnum.
 
   - LOWEST, LOW, NORMAL, HIGH, HIGHEST
 
+** Editor Module (BUILD_EDITOR=1)
+:PROPERTIES:
+:CUSTOM_ID: editor-module
+:END:
+*** Level Error
+:PROPERTIES:
+:CUSTOM_ID: level-error
+:END:
+- *LrgLevelError* — =LRG_LEVEL_ERROR= domain
+
+  - FAILED, IO, PARSE, TYPE
+
+*** Node Visual
+:PROPERTIES:
+:CUSTOM_ID: node-visual
+:END:
+- *LrgNodeVisualKind* — visual payload discriminator
+
+  - NONE, PRIMITIVE, MESH_ASSET, SPRITE, TILEMAP, LIGHT, CAMERA, AUDIO_EMITTER, PREFAB_INSTANCE
+
+*** Scripting
+:PROPERTIES:
+:CUSTOM_ID: scripting
+:END:
+- *LrgScriptLanguage* — scripting backend selector
+
+  - NONE, LUA, PYTHON, GJS, CRISPY
+
+*** Editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+- *LrgEditorTool* — active manipulation gizmo
+
+  - SELECT, TRANSLATE, ROTATE, SCALE
+
+- *LrgEditorCommandKind* — undo record kind
+
+  - TRANSFORM, SET_PROPERTY, ADD_NODE, DELETE_NODE, REPARENT
+
+*** Assets
+:PROPERTIES:
+:CUSTOM_ID: assets
+:END:
+- *LrgAssetType* — classified asset kind for =LrgAssetDatabase=
+
+  - UNKNOWN, TEXTURE, MODEL, AUDIO, FONT, SCRIPT, LEVEL, PREFAB, TILESET, SCENE
+
 ** See Also
 :PROPERTIES:
 :CUSTOM_ID: see-also
@@ -265,3 +313,5 @@ Complete index of all enumerations in Libregnum.
 - [[file:interfaces.org][API Interfaces Index]]
 - [[file:boxed-types.org][API Boxed Types Index]]
 - [[../modules/core/index.md][Core Module]]
+- [[../modules/editor/index.org][Editor Module Reference]]
+- [[../modules/scripting/index.org][Scripting Module Reference]]

@@ -1,0 +1,149 @@
+* Editor Module Reference
+:PROPERTIES:
+:CUSTOM_ID: editor-module-reference
+:END:
+API reference for the editor and level-authoring subsystem.
+Requires =-DLRG_BUILD_EDITOR= (=BUILD_EDITOR ?= 1=).
+
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > Editor
+
+#+end_quote
+
+** Core Types
+:PROPERTIES:
+:CUSTOM_ID: core-types
+:END:
+| Type | Kind | Description |
+|------+------+-------------|
+| =LrgLevel= | Final | Serializable authoring document (=.rlevel= file) |
+| =LrgNode= | Derivable | Node in the editable scene tree; 2D/3D unified |
+| =LrgNodeVisual= | Final | Tagged visual payload for a node |
+| =LrgComponentDesc= | Final | Serializable component description (type name + props) |
+| =LrgScriptBinding= | Final | Serializable script reference (language + path) |
+| =LrgLevelSerializer= | Final | =.rlevel= / =.rprefab= YAML serializer |
+
+** Bridge Functions
+:PROPERTIES:
+:CUSTOM_ID: bridge-functions
+:END:
+| Function | Signature | Description |
+|----------+-----------+-------------|
+| =lrg_level_to_scene= | =LrgLevel *→ LrgScene *= | Bake primitive-visual nodes to =LrgScene= |
+| =lrg_level_instantiate= | =LrgLevel, LrgWorld, LrgEngine, GError **→ gboolean= | Populate =LrgWorld= from level |
+| =lrg_level_from_scene= | =LrgScene *→ LrgLevel *= | Import Blender scene as editable level |
+
+** Editor Runtime Types
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-types
+:END:
+| Type | Kind | Description |
+|------+------+-------------|
+| =LrgEditor= | Final | Host-agnostic editor runtime; owns level, selection, undo stack |
+| =LrgEditorCommand= | Final | Discriminated undoable mutation |
+| =LrgEditorSelection= | Final | Multi-select set with primary node |
+| =LrgEditorHost= | Interface | Embedding contract (render target, camera, input) |
+| =LrgEditorSoftwareHost= | Final | Concrete data-holding host implementation |
+
+** Project and Asset Types
+:PROPERTIES:
+:CUSTOM_ID: project-and-asset-types
+:END:
+| Type | Kind | Description |
+|------+------+-------------|
+| =LrgProject= | Final | =project.ryaml= manifest; asset dirs; game output |
+| =LrgAssetDatabase= | Final | Recursive asset scanner + classifier |
+| =LrgAssetEntry= | Final | Single classified asset record (path, name, type, guid) |
+
+** Prefab Functions
+:PROPERTIES:
+:CUSTOM_ID: prefab-functions
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_prefab_clone= | Deep copy of a node subtree with fresh guids |
+| =lrg_prefab_instantiate= | Produce a placeable copy of a prefab |
+| =lrg_prefab_save= | Save a node subtree as a =.rprefab= file |
+| =lrg_prefab_load= | Load a prefab from a =.rprefab= file |
+
+** Enumerations
+:PROPERTIES:
+:CUSTOM_ID: enumerations
+:END:
+| Enum | Values | Description |
+|------+--------+-------------|
+| =LrgNodeVisualKind= | NONE, PRIMITIVE, MESH_ASSET, SPRITE, TILEMAP, LIGHT, CAMERA, AUDIO_EMITTER, PREFAB_INSTANCE | Visual payload discriminator |
+| =LrgEditorTool= | SELECT, TRANSLATE, ROTATE, SCALE | Active manipulation gizmo |
+| =LrgEditorCommandKind= | TRANSFORM, SET_PROPERTY, ADD_NODE, DELETE_NODE, REPARENT | Undo record kind |
+| =LrgAssetType= | UNKNOWN, TEXTURE, MODEL, AUDIO, FONT, SCRIPT, LEVEL, PREFAB, TILESET, SCENE | Classified asset kind |
+| =LrgLevelError= | FAILED, IO, PARSE, TYPE | Error domain for level I/O |
+
+** LrgLevel Quick Reference
+:PROPERTIES:
+:CUSTOM_ID: lrglevel-quick-reference
+:END:
+#+begin_src C
+LrgLevel *  lrg_level_new                  (const gchar *name);
+const gchar *lrg_level_get_name             (LrgLevel *);
+void         lrg_level_set_name             (LrgLevel *, const gchar *name);
+gboolean     lrg_level_get_default_2d       (LrgLevel *);
+void         lrg_level_set_default_2d       (LrgLevel *, gboolean);
+LrgNode *    lrg_level_get_root             (LrgLevel *);
+void         lrg_level_add_node             (LrgLevel *, LrgNode *node, LrgNode *parent);
+gboolean     lrg_level_remove_node          (LrgLevel *, LrgNode *node);
+LrgNode *    lrg_level_find_node            (LrgLevel *, const gchar *guid);
+void         lrg_level_notify_node_changed  (LrgLevel *, LrgNode *node);
+/* Signals: node-added, node-removed, node-changed */
+#+end_src
+
+** LrgNode Quick Reference
+:PROPERTIES:
+:CUSTOM_ID: lrgnode-quick-reference
+:END:
+#+begin_src C
+LrgNode *   lrg_node_new               (const gchar *name);
+const gchar *lrg_node_get_name          (LrgNode *);
+void         lrg_node_set_name          (LrgNode *, const gchar *name);
+const gchar *lrg_node_get_guid          (LrgNode *);
+void         lrg_node_set_guid          (LrgNode *, const gchar *guid);
+gboolean     lrg_node_get_visible       (LrgNode *);
+void         lrg_node_set_visible       (LrgNode *, gboolean);
+gboolean     lrg_node_get_locked        (LrgNode *);
+void         lrg_node_set_locked        (LrgNode *, gboolean);
+gboolean     lrg_node_get_is_2d         (LrgNode *);
+void         lrg_node_set_is_2d         (LrgNode *, gboolean);
+GrlVector3 * lrg_node_get_location      (LrgNode *);
+void         lrg_node_set_location_xyz  (LrgNode *, gfloat x, gfloat y, gfloat z);
+GrlVector3 * lrg_node_get_rotation      (LrgNode *);
+void         lrg_node_set_rotation_xyz  (LrgNode *, gfloat rx, gfloat ry, gfloat rz);
+GrlVector3 * lrg_node_get_scale         (LrgNode *);
+void         lrg_node_set_scale_xyz     (LrgNode *, gfloat sx, gfloat sy, gfloat sz);
+LrgNode *    lrg_node_get_parent        (LrgNode *);
+void         lrg_node_add_child         (LrgNode *, LrgNode *child);
+gboolean     lrg_node_remove_child      (LrgNode *, LrgNode *child);
+GPtrArray *  lrg_node_get_children      (LrgNode *);
+guint        lrg_node_get_n_children    (LrgNode *);
+LrgNode *    lrg_node_find_by_guid      (LrgNode *, const gchar *guid);
+LrgNodeVisual *lrg_node_get_visual      (LrgNode *);
+void         lrg_node_set_visual        (LrgNode *, LrgNodeVisual *);
+void         lrg_node_add_component     (LrgNode *, LrgComponentDesc *);
+GPtrArray *  lrg_node_get_components    (LrgNode *);
+void         lrg_node_add_script        (LrgNode *, LrgScriptBinding *);
+GPtrArray *  lrg_node_get_scripts       (LrgNode *);
+void         lrg_node_instantiate       (LrgNode *, LrgGameObject *);
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../../editor/overview.org][Editor Overview]] — architecture and dual-frontend model
+- [[file:../../editor/level-model.org][Level Model]] — types in depth
+- [[file:../../editor/yaml-format.org][.rlevel Format]] — YAML schema
+- [[file:../../editor/editor-runtime.org][Editor Runtime]] — LrgEditor / commands / host
+- [[file:../../editor/prefabs.org][Prefabs]]
+- [[file:../../editor/projects-and-assets.org][Projects and Assets]]
+- [[file:../../editor/tutorial.org][Tutorial]]
+- [[file:../scripting/index.org][Scripting Manager Module]]
+- [[file:../../api/classes.org][API Classes Index]]
+- [[file:../../api/enumerations.org][API Enumerations Index]]

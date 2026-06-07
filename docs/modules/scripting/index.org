@@ -13,6 +13,10 @@ Libregnum provides multiple scripting backends:
 - *Lua* (LuaJIT) - Lightweight, fast, ideal for game scripting
 - *Python* (CPython 3.12+) - Rich ecosystem, familiar syntax
 - *PyGObject* (Python + GI) - Full GObject Introspection access from Python
+
+See [[#scripting-manager][Scripting Manager]] below for the editor-facing API that enumerates and
+creates backends dynamically. See [[#script-component][LrgScriptComponent]] for the runtime ECS
+component that attaches a script to a game object.
 - *Gjs* (GNOME JavaScript) - Full GObject Introspection access from JavaScript
 
 All backends implement the same abstract interface (=LrgScripting=), making them interchangeable at the API level. GI-based backends (PyGObject, Gjs) additionally inherit from =LrgScriptingGI= for typelib and object exposure support.
@@ -252,6 +256,173 @@ player:heal(25)                        -- Another method
 
 See [[file:scriptable.org][LrgScriptable]] for complete documentation.
 
+** Scripting Manager
+:PROPERTIES:
+:CUSTOM_ID: scripting-manager
+:END:
+=LrgScriptingManager= is a singleton (=lrg_scripting_manager_get_default()=) that
+enumerates the scripting backends compiled into the current build and creates
+contexts for them. It is used by the editor to offer per-language authoring and
+by =LrgScriptComponent= to create live contexts at play time.
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: scripting-manager-api
+:END:
+#+begin_src C
+LrgScriptingManager *mgr = lrg_scripting_manager_get_default ();
+
+/* Check availability */
+gboolean have_lua = lrg_scripting_manager_is_available (mgr, LRG_SCRIPT_LANGUAGE_LUA);
+
+/* Create a context */
+g_autoptr(LrgScripting) ctx =
+    lrg_scripting_manager_create_context (mgr, LRG_SCRIPT_LANGUAGE_LUA);
+/* Returns NULL if the language is unavailable */
+
+/* Human-readable name and canonical file extension */
+const gchar *name = lrg_scripting_manager_get_display_name (mgr, LRG_SCRIPT_LANGUAGE_LUA);
+const gchar *ext  = lrg_scripting_manager_get_extension     (mgr, LRG_SCRIPT_LANGUAGE_LUA);
+/* ext → "lua" */
+
+/* Enumerate all available backends */
+guint n = lrg_scripting_manager_get_available_count (mgr);
+
+guint n_langs = 0;
+LrgScriptLanguage *langs = lrg_scripting_manager_get_available (mgr, &n_langs);
+/* (transfer full): free with g_free() */
+g_free (langs);
+#+end_src
+
+*** LrgScriptLanguage
+:PROPERTIES:
+:CUSTOM_ID: lrgscriptlanguage
+:END:
+| Enum | String nick | Backend |
+|------+-------------+---------|
+| =LRG_SCRIPT_LANGUAGE_NONE= | =none= | no language / unset |
+| =LRG_SCRIPT_LANGUAGE_LUA= | =lua= | LuaJIT |
+| =LRG_SCRIPT_LANGUAGE_PYTHON= | =python= | CPython 3 |
+| =LRG_SCRIPT_LANGUAGE_GJS= | =gjs= | GNOME JavaScript |
+| =LRG_SCRIPT_LANGUAGE_CRISPY= | =crispy= | compiled C via Crispy |
+
+** LrgScriptComponent
+:PROPERTIES:
+:CUSTOM_ID: script-component
+:END:
+=LrgScriptComponent= is a final =LrgComponent= that binds a script to its owning
+game object at play time. It is created automatically by
+=lrg_level_instantiate()= for each =LrgScriptBinding= on a node. If the requested
+language is not compiled into the build the component is inert.
+
+*** Lifecycle
+:PROPERTIES:
+:CUSTOM_ID: script-component-lifecycle
+:END:
+When the component is attached (=LrgComponentClass::attached=):
+1. It asks =LrgScriptingManager= for a context in the configured language.
+2. It loads the script file via =lrg_scripting_load_file()=.
+3. It calls the =lrg_script_start= hook (if the language is available).
+
+Each frame (=LrgComponentClass::update=): calls =lrg_script_update= with the delta.
+
+When detached: calls =lrg_script_detach= and releases the context.
+
+*** Direct Construction
+:PROPERTIES:
+:CUSTOM_ID: script-component-construction
+:END:
+#+begin_src C
+g_autoptr(LrgScriptComponent) sc = lrg_script_component_new (
+    LRG_SCRIPT_LANGUAGE_LUA, "scripts/patrol.lua");
+
+lrg_script_component_set_language (sc, LRG_SCRIPT_LANGUAGE_LUA);
+lrg_script_component_set_script   (sc, "scripts/patrol.lua");
+
+LrgScriptLanguage lang = lrg_script_component_get_language (sc);
+const gchar *path       = lrg_script_component_get_script (sc);
+
+/* Live context — non-NULL only once component is attached and language is available */
+LrgScripting *ctx = lrg_script_component_get_context (sc);
+#+end_src
+
+** Script Authoring Contract (lrg-script-module.h)
+:PROPERTIES:
+:CUSTOM_ID: script-authoring-contract
+:END:
+A script is expected to provide three lifecycle hooks that =LrgScriptComponent=
+calls by name via =lrg_scripting_call_function()=:
+
+| Hook name | Signature | When called |
+|-----------+-----------+-------------|
+| =lrg_script_start= | =void ()= | once, when the script is attached |
+| =lrg_script_update= | =void (double delta)= | each frame |
+| =lrg_script_detach= | =void ()= | once, when the script is detached |
+
+For interpreted backends (Lua/Python/Gjs) these are global functions with the
+hook names. Example (Lua):
+
+#+begin_src lua
+function lrg_script_start()
+    Log:info("started")
+end
+
+function lrg_script_update(delta)
+    -- move the owner each frame
+end
+
+function lrg_script_detach()
+    Log:info("detached")
+end
+#+end_src
+
+For compiled (Crispy) backends, use the =LRG_DEFINE_SCRIPT= macro:
+
+#+begin_src C
+#include <libregnum.h>
+
+static void
+my_start (void)
+{
+    /* initialization */
+}
+
+static void
+my_update (double delta)
+{
+    /* per-frame logic */
+}
+
+static void
+my_detach (void)
+{
+    /* cleanup */
+}
+
+LRG_DEFINE_SCRIPT (my_start, my_update, my_detach)
+#+end_src
+
+The macro emits =G_MODULE_EXPORT= definitions of =lrg_script_start=,
+=lrg_script_update=, and =lrg_script_detach= that forward to the author's functions.
+
+** Crispy Backend (LrgScriptingCrispy)
+:PROPERTIES:
+:CUSTOM_ID: crispy-backend
+:END:
+=LrgScriptingCrispy= is a final =LrgScripting= subclass available when
+=-DLRG_HAS_CRISPY= is defined (=CRISPY=1=). Unlike interpreter backends, it maps
+=lrg_scripting_load_file()= / =lrg_scripting_load_string()= to "compile and run"
+via the Crispy embedded C-scripting library. Per-function call and global
+get/set operations are not part of Crispy's model and are reported as
+unsupported.
+
+#+begin_src C
+#ifdef LRG_HAS_CRISPY
+g_autoptr(LrgScriptingCrispy) ctx = lrg_scripting_crispy_new ();
+lrg_scripting_load_file (LRG_SCRIPTING (ctx), "scripts/enemy.c", &error);
+#endif
+#+end_src
+
 ** See Also
 :PROPERTIES:
 :CUSTOM_ID: see-also
@@ -263,4 +434,6 @@ See [[file:scriptable.org][LrgScriptable]] for complete documentation.
 - [[file:scripting-pygobject.org][LrgScriptingPyGObject]] - PyGObject implementation details
 - [[file:scripting-gjs.org][LrgScriptingGjs]] - Gjs (GNOME JavaScript) implementation details
 - [[file:scriptable.org][LrgScriptable]] - Custom script exposure interface
+- [[file:../../editor/level-model.org][Level Model]] - LrgScriptBinding authoring type
+- [[file:../editor/index.org][Editor Module Reference]] - editor integration
 - [[../../examples/scripting-basics.md][Scripting Examples]] - Comprehensive usage examples

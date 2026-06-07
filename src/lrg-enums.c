@@ -4367,3 +4367,142 @@ lrg_auto_save_trigger_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * Editor / Level System
+ * ========================================================================== */
+
+/**
+ * lrg_level_error_quark:
+ *
+ * Gets the error quark for the level/editor document system.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_level_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-level-error-quark");
+}
+
+GType
+lrg_level_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_LEVEL_ERROR_FAILED, "LRG_LEVEL_ERROR_FAILED", "failed" },
+            { LRG_LEVEL_ERROR_IO, "LRG_LEVEL_ERROR_IO", "io" },
+            { LRG_LEVEL_ERROR_PARSE, "LRG_LEVEL_ERROR_PARSE", "parse" },
+            { LRG_LEVEL_ERROR_TYPE, "LRG_LEVEL_ERROR_TYPE", "type" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgLevelError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_node_visual_kind_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_NODE_VISUAL_NONE, "LRG_NODE_VISUAL_NONE", "none" },
+            { LRG_NODE_VISUAL_PRIMITIVE, "LRG_NODE_VISUAL_PRIMITIVE", "primitive" },
+            { LRG_NODE_VISUAL_MESH_ASSET, "LRG_NODE_VISUAL_MESH_ASSET", "mesh-asset" },
+            { LRG_NODE_VISUAL_SPRITE, "LRG_NODE_VISUAL_SPRITE", "sprite" },
+            { LRG_NODE_VISUAL_TILEMAP, "LRG_NODE_VISUAL_TILEMAP", "tilemap" },
+            { LRG_NODE_VISUAL_LIGHT, "LRG_NODE_VISUAL_LIGHT", "light" },
+            { LRG_NODE_VISUAL_CAMERA, "LRG_NODE_VISUAL_CAMERA", "camera" },
+            { LRG_NODE_VISUAL_AUDIO_EMITTER, "LRG_NODE_VISUAL_AUDIO_EMITTER", "audio-emitter" },
+            { LRG_NODE_VISUAL_PREFAB_INSTANCE, "LRG_NODE_VISUAL_PREFAB_INSTANCE", "prefab-instance" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgNodeVisualKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_script_language_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SCRIPT_LANGUAGE_NONE, "LRG_SCRIPT_LANGUAGE_NONE", "none" },
+            { LRG_SCRIPT_LANGUAGE_LUA, "LRG_SCRIPT_LANGUAGE_LUA", "lua" },
+            { LRG_SCRIPT_LANGUAGE_PYTHON, "LRG_SCRIPT_LANGUAGE_PYTHON", "python" },
+            { LRG_SCRIPT_LANGUAGE_GJS, "LRG_SCRIPT_LANGUAGE_GJS", "gjs" },
+            { LRG_SCRIPT_LANGUAGE_CRISPY, "LRG_SCRIPT_LANGUAGE_CRISPY", "crispy" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgScriptLanguage"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_editor_tool_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_EDITOR_TOOL_SELECT, "LRG_EDITOR_TOOL_SELECT", "select" },
+            { LRG_EDITOR_TOOL_TRANSLATE, "LRG_EDITOR_TOOL_TRANSLATE", "translate" },
+            { LRG_EDITOR_TOOL_ROTATE, "LRG_EDITOR_TOOL_ROTATE", "rotate" },
+            { LRG_EDITOR_TOOL_SCALE, "LRG_EDITOR_TOOL_SCALE", "scale" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgEditorTool"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_asset_type_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ASSET_TYPE_UNKNOWN, "LRG_ASSET_TYPE_UNKNOWN", "unknown" },
+            { LRG_ASSET_TYPE_TEXTURE, "LRG_ASSET_TYPE_TEXTURE", "texture" },
+            { LRG_ASSET_TYPE_MODEL, "LRG_ASSET_TYPE_MODEL", "model" },
+            { LRG_ASSET_TYPE_AUDIO, "LRG_ASSET_TYPE_AUDIO", "audio" },
+            { LRG_ASSET_TYPE_FONT, "LRG_ASSET_TYPE_FONT", "font" },
+            { LRG_ASSET_TYPE_SCRIPT, "LRG_ASSET_TYPE_SCRIPT", "script" },
+            { LRG_ASSET_TYPE_LEVEL, "LRG_ASSET_TYPE_LEVEL", "level" },
+            { LRG_ASSET_TYPE_PREFAB, "LRG_ASSET_TYPE_PREFAB", "prefab" },
+            { LRG_ASSET_TYPE_TILESET, "LRG_ASSET_TYPE_TILESET", "tileset" },
+            { LRG_ASSET_TYPE_SCENE, "LRG_ASSET_TYPE_SCENE", "scene" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAssetType"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

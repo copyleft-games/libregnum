@@ -1,0 +1,335 @@
+* Level Model
+:PROPERTIES:
+:CUSTOM_ID: level-model
+:END:
+This document covers the three authoring types that form the editor document:
+=LrgLevel=, =LrgNode=, and =LrgNodeVisual=, plus the supporting record types
+=LrgComponentDesc= and =LrgScriptBinding=.
+
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Level Model
+
+#+end_quote
+
+** LrgLevel
+:PROPERTIES:
+:CUSTOM_ID: lrglevel
+:END:
+=LrgLevel= is a final GObject. It owns the entire authoring document: a name, a
+default view preference (2D or 3D), and a root =LrgNode= whose descendants form the
+editable scene tree. The root node itself is not serialized; only its children are
+written to and read from the =.rlevel= file.
+
+*** Construction and Properties
+:PROPERTIES:
+:CUSTOM_ID: construction-and-properties
+:END:
+#+begin_src C
+/* Create a new, empty level */
+g_autoptr(LrgLevel) level = lrg_level_new ("overworld");
+
+lrg_level_set_name (level, "Overworld");
+lrg_level_set_default_2d (level, FALSE);   /* default: 3D view */
+
+/* The root node is always present */
+LrgNode *root = lrg_level_get_root (level);  /* (transfer none) */
+#+end_src
+
+*** Node Management
+:PROPERTIES:
+:CUSTOM_ID: node-management
+:END:
+All structural mutations are performed through =LrgLevel=, not through the nodes
+directly, so the level can emit the appropriate signal.
+
+#+begin_src C
+g_autoptr(LrgNode) node = lrg_node_new ("floor");
+
+/* Add under root (parent = NULL) */
+lrg_level_add_node (level, node, NULL);
+
+/* Add under an existing node */
+lrg_level_add_node (level, child_node, node);
+
+/* Remove */
+lrg_level_remove_node (level, node);
+
+/* Find by guid anywhere in the tree */
+LrgNode *found = lrg_level_find_node (level, guid);  /* (transfer none) */
+
+/* Notify the host IDE that a node's properties changed */
+lrg_level_notify_node_changed (level, node);
+#+end_src
+
+*** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+| Signal | When emitted | Detail argument |
+|--------+-------------+-----------------|
+| =node-added= | after a node is inserted | the added =LrgNode= |
+| =node-removed= | after a node is detached | the removed =LrgNode= |
+| =node-changed= | when a node's data changes | the changed =LrgNode= |
+
+** LrgNode
+:PROPERTIES:
+:CUSTOM_ID: lrgnode
+:END:
+=LrgNode= is a derivable GObject. It is the single unifier of 2D and 3D authoring:
+the transform is always 3D; 2D nodes live at Z=0 with =is-2d= set as a viewport
+hint. Custom node kinds can subclass =LrgNode= and override the =instantiate= vfunc
+to build a custom runtime representation.
+
+*** Identity
+:PROPERTIES:
+:CUSTOM_ID: identity
+:END:
+Every node has a human-readable name and a stable, globally unique =guid= that
+persists across save/load cycles. The guid is auto-generated on =lrg_node_new()=
+and should not be changed except when loading from serialized data.
+
+#+begin_src C
+LrgNode *node = lrg_node_new ("torch");
+
+const gchar *name = lrg_node_get_name (node);
+const gchar *guid = lrg_node_get_guid (node);   /* e.g. "a1b2c3d4-..." */
+
+lrg_node_set_name (node, "wall_torch");
+/* lrg_node_set_guid() is only needed when loading from a .rlevel file */
+#+end_src
+
+*** Flags
+:PROPERTIES:
+:CUSTOM_ID: flags
+:END:
+| Property | Default | Description |
+|----------+---------+-------------|
+| =visible= | =TRUE= | node is rendered in the editor viewport |
+| =locked= | =FALSE= | node cannot be selected or mutated in the editor |
+| =is-2d= | =FALSE= | viewport gizmo and camera hint: treat as 2D |
+
+#+begin_src C
+lrg_node_set_visible (node, TRUE);
+lrg_node_set_locked (node, FALSE);
+lrg_node_set_is_2d (node, FALSE);
+#+end_src
+
+*** Transform
+:PROPERTIES:
+:CUSTOM_ID: transform
+:END:
+The local TRS transform uses =GrlVector3= boxed types (from graylib). Getters
+return borrowed references (=transfer none=); do not free them.
+
+#+begin_src C
+/* Set location / rotation / scale */
+lrg_node_set_location_xyz (node, 0.0f, 1.0f, 0.0f);
+lrg_node_set_rotation_xyz (node, 0.0f, 0.0f, 1.5708f);  /* 90 degrees */
+lrg_node_set_scale_xyz    (node, 1.0f, 1.0f, 1.0f);
+
+/* Read back (transfer none — do NOT free) */
+GrlVector3 *loc = lrg_node_get_location (node);
+GrlVector3 *rot = lrg_node_get_rotation (node);
+GrlVector3 *scl = lrg_node_get_scale    (node);
+#+end_src
+
+*** Parent / Children
+:PROPERTIES:
+:CUSTOM_ID: parent-children
+:END:
+The child list is ordered; =lrg_node_add_child()= appends.
+
+#+begin_src C
+lrg_node_add_child (parent, child);    /* takes a ref on child */
+lrg_node_remove_child (parent, child); /* returns TRUE if found */
+
+GPtrArray  *children = lrg_node_get_children (parent);  /* (transfer none) */
+guint       n        = lrg_node_get_n_children (parent);
+LrgNode    *par      = lrg_node_get_parent (child);      /* (transfer none) */
+
+/* Recursive search by guid */
+LrgNode *found = lrg_node_find_by_guid (root, guid);
+#+end_src
+
+*** Visual Payload
+:PROPERTIES:
+:CUSTOM_ID: visual-payload
+:END:
+A node optionally carries a single =LrgNodeVisual= describing how it looks.
+Setting it to =NULL= makes the node a pure group node.
+
+#+begin_src C
+g_autoptr(LrgNodeVisual) vis = lrg_node_visual_new (LRG_NODE_VISUAL_PRIMITIVE);
+/* configure the visual (see LrgNodeVisual section below) */
+lrg_node_set_visual (node, vis);
+
+LrgNodeVisual *v = lrg_node_get_visual (node);  /* (transfer none) */
+#+end_src
+
+*** Components and Scripts
+:PROPERTIES:
+:CUSTOM_ID: components-and-scripts
+:END:
+Components and scripts are stored as ordered lists of description records. They
+are materialized into live =LrgComponent= and =LrgScriptComponent= objects during
+=lrg_level_instantiate()=.
+
+#+begin_src C
+/* Attach a component description */
+g_autoptr(LrgComponentDesc) desc = lrg_component_desc_new ("health");
+lrg_component_desc_set_int (desc, "max_hp", 100);
+lrg_node_add_component (node, desc);
+
+/* Attach a script binding */
+g_autoptr(LrgScriptBinding) bind = lrg_script_binding_new (
+    LRG_SCRIPT_LANGUAGE_LUA, "scripts/enemy.lua");
+lrg_node_add_script (node, bind);
+
+/* Access the ordered arrays */
+GPtrArray *comps   = lrg_node_get_components (node);  /* (transfer none) */
+GPtrArray *scripts = lrg_node_get_scripts (node);     /* (transfer none) */
+#+end_src
+
+*** Instantiate Vfunc
+:PROPERTIES:
+:CUSTOM_ID: instantiate-vfunc
+:END:
+=lrg_node_instantiate()= is called by =lrg_level_instantiate()= for each node. The
+default implementation applies component descriptions to the game object. To add
+custom runtime behaviour, subclass =LrgNode= and override =LrgNodeClass::instantiate=:
+
+#+begin_src C
+static void
+my_node_instantiate (LrgNode       *self,
+                     LrgGameObject *object)
+{
+    /* Chain up: applies component descriptions */
+    LRG_NODE_CLASS (my_node_parent_class)->instantiate (self, object);
+
+    /* Add custom components or configure the game object */
+}
+#+end_src
+
+** LrgNodeVisual
+:PROPERTIES:
+:CUSTOM_ID: lrgnodevisual
+:END:
+=LrgNodeVisual= is a final GObject carrying the visual/content payload for a node.
+Its kind (=LrgNodeVisualKind=) determines which fields are meaningful.
+
+*** Kinds
+:PROPERTIES:
+:CUSTOM_ID: kinds
+:END:
+| Kind | Description | Key fields |
+|------+-------------+------------|
+| =LRG_NODE_VISUAL_NONE= | Group / empty node | — |
+| =LRG_NODE_VISUAL_PRIMITIVE= | Built-in geometry | =primitive=, =material=, =params= |
+| =LRG_NODE_VISUAL_MESH_ASSET= | External mesh (gltf/obj) | =asset=, =material= |
+| =LRG_NODE_VISUAL_SPRITE= | 2D texture sprite | =asset=, params |
+| =LRG_NODE_VISUAL_TILEMAP= | 2D tilemap | =asset=, params |
+| =LRG_NODE_VISUAL_LIGHT= | Light source | params (intensity, color, range) |
+| =LRG_NODE_VISUAL_CAMERA= | Camera | params (fov, near, far) |
+| =LRG_NODE_VISUAL_AUDIO_EMITTER= | Positional audio | =asset=, params (volume, radius) |
+| =LRG_NODE_VISUAL_PREFAB_INSTANCE= | Saved prefab | =asset= (path to =.rprefab=) |
+
+*** Construction and Common Operations
+:PROPERTIES:
+:CUSTOM_ID: construction-and-common-operations
+:END:
+#+begin_src C
+g_autoptr(LrgNodeVisual) vis = lrg_node_visual_new (LRG_NODE_VISUAL_PRIMITIVE);
+
+lrg_node_visual_set_kind (vis, LRG_NODE_VISUAL_PRIMITIVE);
+lrg_node_visual_set_primitive (vis, LRG_PRIMITIVE_CUBE);
+
+/* Material (used by PRIMITIVE and MESH_ASSET) */
+g_autoptr(LrgMaterial3D) mat = lrg_material3d_new ();
+lrg_material3d_set_color (mat, 0.8f, 0.2f, 0.1f, 1.0f);
+lrg_material3d_set_roughness (mat, 0.5f);
+lrg_material3d_set_metallic (mat, 0.0f);
+lrg_node_visual_set_material (vis, mat);
+
+/* Asset reference for asset-backed kinds */
+lrg_node_visual_set_asset (vis, "models/door.glb");
+
+/* Kind-specific parameters */
+lrg_node_visual_set_param_double (vis, "intensity", 2.5);
+gdouble intensity = lrg_node_visual_get_param_double (vis, "intensity", 1.0);
+
+/* Generic typed parameter (GValue) */
+GValue v = G_VALUE_INIT;
+g_value_init (&v, G_TYPE_INT);
+g_value_set_int (&v, 32);
+lrg_node_visual_set_param (vis, "segments", &v);
+g_value_unset (&v);
+
+const GValue *stored = lrg_node_visual_get_param (vis, "segments");  /* (transfer none) */
+
+/* Enumerate set parameters */
+g_autoptr(GList) names = lrg_node_visual_get_param_names (vis);  /* (transfer container) */
+#+end_src
+
+Note: =lrg_node_visual_get_param_double()= coerces any numeric =GValue= type to
+=gdouble=; use it when you do not know the exact type stored by the serializer.
+
+** LrgComponentDesc
+:PROPERTIES:
+:CUSTOM_ID: lrgcomponentdesc
+:END:
+=LrgComponentDesc= is a serializable record of a component to instantiate: a
+registry type name plus a bag of typed property values. It is data-only; no live
+=LrgComponent= is held.
+
+#+begin_src C
+g_autoptr(LrgComponentDesc) desc = lrg_component_desc_new ("health");
+
+/* Set properties by type */
+lrg_component_desc_set_int     (desc, "max_hp",    100);
+lrg_component_desc_set_double  (desc, "regen_rate", 0.5);
+lrg_component_desc_set_string  (desc, "tag",       "player");
+lrg_component_desc_set_boolean (desc, "invincible", FALSE);
+
+/* Generic typed access */
+GValue v = G_VALUE_INIT;
+g_value_init (&v, G_TYPE_INT);
+g_value_set_int (&v, 200);
+lrg_component_desc_set_value (desc, "max_hp", &v);
+g_value_unset (&v);
+
+const GValue *cur = lrg_component_desc_get_value (desc, "max_hp");
+
+/* Inspect */
+gboolean has = lrg_component_desc_has (desc, "max_hp");
+g_autoptr(GList) keys = lrg_component_desc_get_keys (desc);  /* (transfer container) */
+const gchar *type_name = lrg_component_desc_get_type_name (desc);
+#+end_src
+
+** LrgScriptBinding
+:PROPERTIES:
+:CUSTOM_ID: lrgscriptbinding
+:END:
+=LrgScriptBinding= records a script by language and path. It is data-only; the
+interpreter is created at instantiation time by =LrgScriptComponent=.
+
+#+begin_src C
+g_autoptr(LrgScriptBinding) bind =
+    lrg_script_binding_new (LRG_SCRIPT_LANGUAGE_LUA, "scripts/patrol.lua");
+
+lrg_script_binding_set_language (bind, LRG_SCRIPT_LANGUAGE_PYTHON);
+lrg_script_binding_set_script   (bind, "scripts/patrol.py");
+lrg_script_binding_set_enabled  (bind, TRUE);
+
+LrgScriptLanguage lang = lrg_script_binding_get_language (bind);
+const gchar *path       = lrg_script_binding_get_script (bind);
+gboolean     enabled    = lrg_script_binding_get_enabled (bind);
+#+end_src
+
+** See Also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:yaml-format.org][.rlevel YAML Format]] — how these types serialize
+- [[file:editor-runtime.org][Editor Runtime]] — mutating nodes through undo/redo commands
+- [[file:prefabs.org][Prefabs]] — saving and reusing node subtrees
+- [[file:../modules/editor/index.org][Editor Module Reference]]
