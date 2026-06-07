@@ -592,6 +592,11 @@ else
     # (its glib/gio/gmodule deps come from GLIB_LIBS).
     ifeq ($(HAS_CRISPY),1)
         ALL_LIBS += -Wl,--whole-archive $(CRISPY_STATIC) -Wl,--no-whole-archive
+        # crispy-repl.c pulls in readline; resolve those symbols here since the
+        # whole-archived crispy objects bring them into liblibregnum.  Without
+        # this the GIR scanner's executable link fails on undefined readline
+        # symbols (a shared-lib link tolerates them, an executable does not).
+        ALL_LIBS += $(shell $(PKG_CONFIG) --libs readline 2>/dev/null || echo -lreadline)
     endif
     ALL_LIBS += -Wl,--allow-multiple-definition $(RAYLIB_STATIC)
 endif
