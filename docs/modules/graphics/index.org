@@ -659,6 +659,56 @@ Render management.
 - *Signals*: frame-begin, frame-end, layer-render
 - *Type*: Derivable
 
+** Headless Image Drawing & GIF Export (graylib)
+:PROPERTIES:
+:CUSTOM_ID: headless-image-drawing
+:END:
+For CPU-side image generation with no window or GL context (procedural
+textures, sprite baking, offline animation), use graylib's =GrlImage=
+software rasterizer directly. This is the right tool for build-time asset
+generation and headless rendering pipelines.
+
+Capabilities (see =deps/graylib/docs/api/graphics.md= for the full API):
+
+- *Primitives*: =grl_image_draw_line_ex= (thick), =circle= / =circle_lines=,
+  =ellipse= / =ellipse_lines=, =triangle= / =triangle_lines=, =polygon=,
+  =polyline=, =bezier=, =gradient_rect=, =gradient_radial=, =flood_fill=.
+- *Drawing state*: =grl_image_set_blend_mode= (=GRL_IMAGE_BLEND_ADD= for glow,
+  etc.), =grl_image_set_clip_rect=, =grl_image_set_antialias=. The default
+  blend mode is =GRL_IMAGE_BLEND_REPLACE= (overwrite); non-REPLACE blending and
+  anti-aliasing require an R8G8B8A8 image.
+- *Headless text*: =grl_image_draw_text= falls back to an embedded bitmap font
+  when no window exists; =grl_image_draw_text_bitmap= always uses it.
+- *Animated export*: =GrlGifWriter= streams multi-frame GIFs (self-contained
+  encoder, no external tools required).
+
+#+begin_src C
+/* Bake a 2-frame pulsing dot into an animated GIF, fully headless. */
+g_autoptr(GError) error = NULL;
+GrlGifWriter *gif = grl_gif_writer_new ("pulse.gif", 64, 64, 0, &error);
+gint frame;
+
+for (frame = 0; frame < 2; frame++)
+  {
+    g_autoptr(GrlImage) img = grl_image_new_color (64, 64,
+                                                   grl_color_new (0, 0, 0, 255));
+    g_autoptr(GrlColor) dot = grl_color_new (255, 180, 60, 255);
+
+    grl_image_set_antialias (img, TRUE);
+    grl_image_draw_circle (img, 32, 32, frame == 0 ? 10 : 16, dot);
+    grl_gif_writer_add_frame (gif, img, 50 /* centiseconds */, &error);
+  }
+
+grl_gif_writer_close (gif, &error);
+#+end_src
+
+#+begin_quote
+*Note*: =GrlImage= and =GrlGifWriter= are graylib =GObject= types (use
+=g_object_unref= / =g_autoptr=), while =GrlColor= is a =GBoxed= value type
+(use =grl_color_free= / =g_autoptr=). See the CRITICAL section in
+=CLAUDE.md= on GBoxed vs GObject lifetimes.
+#+end_quote
+
 ** See Also
 :PROPERTIES:
 :CUSTOM_ID: see-also
