@@ -39,6 +39,10 @@ The following are included as git submodules in `deps/`:
 
 - **graylib** - GObject wrapper around raylib for rendering
 - **yaml-glib** - YAML parsing with GObject serialization
+- **crispy** - GLib-native compiled-C scripting backend for `LrgScript`
+  (built when `CRISPY=1`, the default; vendored so libregnum builds with its
+  own crispy and needs no system install). `CRISPY=0` disables it.
+- **mcp-glib** - MCP server support (built when `MCP=1`)
 
 Initialize submodules:
 

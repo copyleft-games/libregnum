@@ -84,6 +84,7 @@ BUILD_EDITOR_UI ?= 0
 # Paths to submodule dependencies (use PROJECT_ROOT for consistency across subdirs)
 GRAYLIB_DIR ?= $(PROJECT_ROOT)/deps/graylib
 YAMLGLIB_DIR ?= $(PROJECT_ROOT)/deps/yaml-glib
+CRISPY_DIR ?= $(PROJECT_ROOT)/deps/crispy
 
 # =============================================================================
 # Debug Configuration
@@ -407,6 +408,21 @@ else
     HAS_GI := 0
 endif
 
+# Python's pygobject bridge (lrg-scripting-pygobject.c) includes the GI
+# scripting base (girepository.h), so the Python backend requires the GI
+# runtime.  This gate runs after HAS_GI is known (the Python block above runs
+# before it).  Without GI (e.g. BUILD_GIR=0 and no GI_RUNTIME override) disable
+# Python so the build doesn't fail on girepository.h.  (Gjs is gated the same
+# way in its own block below.)  cmacs passes HAS_GI=1 + GI_RUNTIME_*, so both
+# stay enabled there.
+ifneq ($(HAS_GI),1)
+    ifeq ($(HAS_PYTHON),1)
+        PYTHON_CFLAGS :=
+        PYTHON_LIBS :=
+        HAS_PYTHON := 0
+    endif
+endif
+
 # Gjs (GNOME JavaScript) for scripting (optional, not for cross-compile)
 ifeq ($(TARGET_PLATFORM),windows)
     GJS_CFLAGS :=
@@ -415,25 +431,44 @@ ifeq ($(TARGET_PLATFORM),windows)
 else
     GJS_CFLAGS := $(shell $(PKG_CONFIG) --cflags gjs-1.0 2>/dev/null)
     GJS_LIBS := $(shell $(PKG_CONFIG) --libs gjs-1.0 2>/dev/null)
+    # The gjs backend (LrgScriptingGjs) extends LrgScriptingGI, which needs the
+    # GObject-Introspection runtime (girepository.h).  Require HAS_GI: without it
+    # (e.g. BUILD_GIR=0 without GI_RUNTIME flags) gjs cannot compile, so disable
+    # it rather than break the build when gjs-1.0 is installed but GI is not set.
     ifneq ($(GJS_CFLAGS),)
-        HAS_GJS := 1
+        ifeq ($(HAS_GI),1)
+            HAS_GJS := 1
+        else
+            GJS_CFLAGS :=
+            GJS_LIBS :=
+            HAS_GJS := 0
+        endif
     else
         HAS_GJS := 0
     endif
 endif
 
-# Crispy (compiled-C) scripting backend (opt-in: CRISPY=1, native builds only)
-CRISPY ?= 0
+# Crispy (compiled-C) scripting backend.  Vendored as the deps/crispy git
+# submodule and built by libregnum itself -- no system crispy / pkg-config
+# needed, so libregnum builds standalone with its own dependency.  On by
+# default (native only); CRISPY=0 disables it.  Gated on the submodule being
+# present so a checkout without it still builds (just without crispy).  Crispy's
+# own deps (glib/gobject/gio/gmodule) are already in GLIB_LIBS, and its static
+# archive is whole-archived via ALL_LIBS + bundled into liblibregnum.a, so
+# CRISPY_LIBS stays empty.
+CRISPY ?= 1
 ifeq ($(TARGET_PLATFORM),windows)
     CRISPY_CFLAGS :=
     CRISPY_LIBS :=
     HAS_CRISPY := 0
 else ifeq ($(CRISPY),1)
-    CRISPY_CFLAGS := $(shell $(PKG_CONFIG) --cflags crispy 2>/dev/null)
-    CRISPY_LIBS := $(shell $(PKG_CONFIG) --libs crispy 2>/dev/null)
-    ifneq ($(CRISPY_CFLAGS),)
+    ifneq ($(wildcard $(CRISPY_DIR)/src/crispy.h),)
+        CRISPY_CFLAGS := -I$(CRISPY_DIR)/src
+        CRISPY_LIBS :=
         HAS_CRISPY := 1
     else
+        CRISPY_CFLAGS :=
+        CRISPY_LIBS :=
         HAS_CRISPY := 0
     endif
 else
@@ -455,6 +490,7 @@ YAMLGLIB_CFLAGS := -I$(YAMLGLIB_DIR)/src
 GRAYLIB_STATIC  := $(GRAYLIB_DIR)/build/lib/libgraylib.a
 RAYLIB_STATIC   := $(GRAYLIB_DIR)/deps/raylib/src/libraylib.a
 YAMLGLIB_STATIC := $(YAMLGLIB_DIR)/build/libyaml-glib.a
+CRISPY_STATIC   := $(CRISPY_DIR)/build/release/libcrispy.a
 
 # =============================================================================
 # Composite Flags
@@ -552,6 +588,11 @@ else
     # functions (Vector2*, Matrix*, etc.) get compiled into both libregnum's .o files
     # (via raymath.h includes) and into rcore.o -- all definitions are identical.
     ALL_LIBS += -Wl,--whole-archive $(GRAYLIB_STATIC) $(YAMLGLIB_STATIC) -Wl,--no-whole-archive
+    # Vendored crispy: whole-archive its static lib so LrgScriptingCrispy resolves
+    # (its glib/gio/gmodule deps come from GLIB_LIBS).
+    ifeq ($(HAS_CRISPY),1)
+        ALL_LIBS += -Wl,--whole-archive $(CRISPY_STATIC) -Wl,--no-whole-archive
+    endif
     ALL_LIBS += -Wl,--allow-multiple-definition $(RAYLIB_STATIC)
 endif
 ALL_LIBS += $(STEAM_LIBS)
@@ -579,12 +620,11 @@ GIR_SCANNER_FLAGS := \
     --include=Gio-2.0 \
     --include=Dex-1 \
     --include=Json-1.0 \
-    --include=GIRepository-2.0 \
     -DLIBREGNUM_COMPILATION \
     -I$(CURDIR)/src \
     -I$(GRAYLIB_DIR)/src \
     -I$(YAMLGLIB_DIR)/src \
-    --add-include-path=$(GRAYLIB_DIR)/build/release/gir \
+    --add-include-path=$(GRAYLIB_DIR)/build/gir \
     --add-include-path=$(YAMLGLIB_DIR)/build/release/gir
 
 # MCP GIR additions (when MCP=1)
@@ -596,5 +636,5 @@ GIR_SCANNER_FLAGS += \
 endif
 
 GIR_COMPILER_FLAGS := \
-    --includedir=$(GRAYLIB_DIR)/build/release/gir \
+    --includedir=$(GRAYLIB_DIR)/build/gir \
     --includedir=$(YAMLGLIB_DIR)/build/release/gir

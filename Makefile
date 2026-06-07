@@ -1029,11 +1029,14 @@ _lib: lib-static lib-shared
 # Dependencies (Submodules)
 # =============================================================================
 
-.PHONY: deps deps-graylib deps-yamlglib deps-mcp
+.PHONY: deps deps-graylib deps-yamlglib deps-mcp deps-crispy
 
 deps: deps-graylib deps-yamlglib
 ifeq ($(MCP),1)
 deps: deps-mcp
+endif
+ifeq ($(HAS_CRISPY),1)
+deps: deps-crispy
 endif
 
 # Pass cross-compilation settings to dependencies
@@ -1057,6 +1060,15 @@ deps-yamlglib:
 	@if [ ! -f "$(YAMLGLIB_LIB)" ]; then \
 		$(call print_status,"Building yaml-glib ($(TARGET_PLATFORM))..."); \
 		$(MAKE) -C $(YAMLGLIB_DIR) $(DEP_BUILD_FLAGS); \
+	fi
+
+# Crispy: the vendored compiled-C scripting backend (deps/crispy submodule).
+# Built standalone here so libregnum is self-contained; its `lib' target
+# produces build/release/libcrispy.a.
+deps-crispy:
+	@if [ ! -f "$(CRISPY_STATIC)" ]; then \
+		$(call print_status,"Building crispy ($(TARGET_PLATFORM))..."); \
+		$(MAKE) -C $(CRISPY_DIR) lib; \
 	fi
 
 ifeq ($(MCP),1)
@@ -1092,12 +1104,17 @@ lib-static: $(LIBOUTDIR)/$(LIB_STATIC)
 
 lib-shared: $(LIBOUTDIR)/$(LIB_SHARED)
 
-# Static library (merges graylib and yaml-glib archives on Unix)
+# Static library (merges graylib, yaml-glib -- and vendored crispy -- on Unix)
+ifeq ($(HAS_CRISPY),1)
+_CRISPY_ADDLIB := ADDLIB $(CRISPY_STATIC)\n
+else
+_CRISPY_ADDLIB :=
+endif
 $(LIBOUTDIR)/$(LIB_STATIC): $(OBJECTS) | $(LIBOUTDIR)
 	$(call print_archive,$(LIB_STATIC))
 	@$(AR) rcs $@ $(OBJECTS)
 ifneq ($(TARGET_PLATFORM),windows)
-	@printf "OPEN $@\nADDLIB $(GRAYLIB_STATIC)\nADDLIB $(RAYLIB_STATIC)\nADDLIB $(YAMLGLIB_STATIC)\nSAVE\nEND\n" | $(AR) -M
+	@printf "OPEN $@\nADDLIB $(GRAYLIB_STATIC)\nADDLIB $(RAYLIB_STATIC)\nADDLIB $(YAMLGLIB_STATIC)\n$(_CRISPY_ADDLIB)SAVE\nEND\n" | $(AR) -M
 endif
 	@$(RANLIB) $@
 
@@ -1162,6 +1179,25 @@ else
 MCP_GIR_LIB_PATH :=
 endif
 
+# Exclude the internal GI scripting BRIDGES from the introspection scan.
+# lrg-scripting-{gi,pygobject,gjs}.{h,c} #include <girepository.h>, which would
+# make the Libregnum typelib depend on GIRepository-2.0 -- a namespace gjs /
+# PyGObject cannot resolve across the girepository->GLib transition, which breaks
+# `import Libregnum` from scripts.  These bridge classes (LrgScriptingGI /
+# PyGObject / Gjs) are internal plumbing for the python/gjs backends; script
+# authors use the editor types + the LrgScripting base / manager / component +
+# the LrgScriptLanguage enum, all of which remain introspectable.
+GIR_EXCLUDE := \
+	src/scripting/lrg-scripting-gi.h \
+	src/scripting/lrg-scripting-gi.c \
+	src/scripting/lrg-scripting-gi-private.h \
+	src/scripting/lrg-scripting-pygobject.h \
+	src/scripting/lrg-scripting-pygobject.c \
+	src/scripting/lrg-scripting-gjs.h \
+	src/scripting/lrg-scripting-gjs.c
+GIR_HEADERS := $(filter-out $(GIR_EXCLUDE),$(PUBLIC_HEADERS))
+GIR_SOURCES := $(filter-out $(GIR_EXCLUDE),$(SOURCES))
+
 $(GIROUTDIR)/$(GIR_NAME): $(LIBOUTDIR)/$(LIB_SHARED) $(PUBLIC_HEADERS) $(SOURCES) | $(GIROUTDIR)
 	$(call print_gir,$(GIR_NAME))
 	@$(GIR_SCANNER) $(GIR_SCANNER_FLAGS) \
@@ -1169,7 +1205,7 @@ $(GIROUTDIR)/$(GIR_NAME): $(LIBOUTDIR)/$(LIB_SHARED) $(PUBLIC_HEADERS) $(SOURCES
 		--library-path=$(LIBOUTDIR) \
 		$(MCP_GIR_LIB_PATH) \
 		--output=$@ \
-		$(PUBLIC_HEADERS) $(SOURCES)
+		$(GIR_HEADERS) $(GIR_SOURCES)
 
 $(GIROUTDIR)/$(TYPELIB_NAME): $(GIROUTDIR)/$(GIR_NAME)
 	$(call print_gir,$(TYPELIB_NAME))
@@ -2060,4 +2096,4 @@ $(OBJDIR)/src/steam/lrg-workshop-manager.o: src/steam/lrg-workshop-manager.c src
 
 .PHONY: all lib lib-static lib-shared gir test tests check examples docs
 .PHONY: install uninstall clean distclean debug-build generate
-.PHONY: deps deps-graylib deps-yamlglib deps-clean check-deps
+.PHONY: deps deps-graylib deps-yamlglib deps-crispy deps-clean check-deps
