@@ -10,3 +10,6 @@
 [submodule "deps/mcp-glib"]
 	path = deps/mcp-glib
 	url = git@gitlab.com:copyleft-games/mcp-glib.git
+[submodule "deps/crispy"]
+	path = deps/crispy
+	url = git@git-ssh.podbielniak.com:zachpodbielniak/crispy.git

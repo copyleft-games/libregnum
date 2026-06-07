@@ -134,6 +134,11 @@ EXAMPLES += game-third-person-demo game-top-down-demo game-twin-stick-demo game-
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
 
+# Editor standalone (only built when BUILD_EDITOR_UI=1)
+ifeq ($(BUILD_EDITOR_UI),1)
+EXAMPLES += editor-standalone
+endif
+
 # Scripted examples: native Linux only, and only for backends that are actually
 # available (their headers in <libregnum.h> are gated on the same LRG_HAS_* flags).
 ifneq ($(TARGET_PLATFORM),windows)
@@ -363,6 +368,10 @@ $(FPS_GAME_MODULE): game-fps-demo.c
 	$(call print_compile,$<)
 	@$(MKDIR_P) $(dir $@)
 	@$(CC) $(GM_CFLAGS) -o $@ $< $(GM_LDFLAGS) $(GM_LIBS)
+
+$(EXAMPLES_BUILDDIR)/editor-standalone$(EXE_EXT): editor-standalone.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR):
 	@$(MKDIR_P) $@
