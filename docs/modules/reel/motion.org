@@ -1,0 +1,166 @@
+* Motion — motion blur and path animation
+:PROPERTIES:
+:CUSTOM_ID: motion-motion-blur-path-animation
+:END:
+Two independent features support fluid, physical-feeling motion in Reel
+compositions: sub-frame motion blur and arc-length path animation.
+
+** Motion blur
+:PROPERTIES:
+:CUSTOM_ID: motion-blur
+:END:
+See [[file:rendering.org][rendering.org]] § "Motion blur" for the renderer-level API
+(=lrg_reel_renderer_set_motion_blur()=).  The notes below explain what motion
+blur does and does not affect in practice.
+
+Motion blur works by rendering each output frame as an average of =n= sub-frames
+equally spaced within the frame's time interval.  Anything that changes
+continuously as a function of the (fractional) frame number will be smeared:
+
+- Clip transforms set each frame with =set_x= / =set_y= / =set_rotation= etc.
+- Opacity animated with =lrg_reel_interpolate_clamped= or springs.
+- Spring positions evaluated at fractional frame values.
+
+Anything driven by an *integer* frame index is not smeared:
+
+- =LrgReelVideoClip= decoded frames (source frame is looked up at the nearest
+  integer index).
+- Sprite lookups from a texture atlas keyed by frame number.
+- Any value your callback computes from =lrg_reel_context_get_frame()= as an
+  integer and then maps to a discrete table.
+
+If you want a video clip to contribute to motion blur, animate its position
+or scale (transform) continuously — the transform smears even if the source
+frame does not.
+
+*** Pitfall: cost scales linearly
+
+Each additional sample doubles the effective number of rendered frames.
+Motion blur with 8 samples on a 300-frame composition at 1080p will take
+roughly 8× longer than without it.  Use it on final-quality renders; develop
+with samples = 1.
+
+** Path animation with GrlPath
+:PROPERTIES:
+:CUSTOM_ID: path-animation
+:END:
+=src/reel/lrg-reel-path.h= provides three free functions that work on graylib's
+=GrlPath= type.
+
+*** lrg_reel_path_length — arc length
+
+Returns the total arc length of a path (in pixels) by summing flattened segment
+lengths across all subpaths.
+
+#+begin_src c
+gdouble len = lrg_reel_path_length (path);
+#+end_src
+
+Use this to convert a desired screen-units-per-second speed to a normalised
+=t= increment per frame.
+
+*** lrg_reel_path_point_at — follow a path
+
+Returns the position and tangent angle at a normalised arc-length parameter
+=t= in [0, 1].
+
+#+begin_src c
+gboolean
+lrg_reel_path_point_at (GrlPath *path,
+                        gdouble  t,
+                        gdouble *out_x,
+                        gdouble *out_y,
+                        gdouble *out_angle);
+#+end_src
+
+=out_angle= is the tangent direction in radians, useful for orienting a moving
+object along the path.  Pass =NULL= for any output you do not need.
+
+#+begin_src c
+static void
+draw_rocket (LrgReelClip    *clip,
+             LrgReelContext *ctx,
+             LrgImageCanvas *canvas,
+             gpointer        user_data)
+{
+    GrlPath *path    = (GrlPath *) user_data;
+    gint     frame   = lrg_reel_context_get_frame (ctx);
+    gint     total   = lrg_reel_context_get_duration_in_frames (ctx);
+
+    /* Move at a constant speed along the path. */
+    gdouble t = (gdouble) frame / (gdouble) MAX (total - 1, 1);
+
+    gdouble x, y, angle;
+    if (lrg_reel_path_point_at (path, t, &x, &y, &angle))
+    {
+        lrg_reel_clip_set_x        (clip, x);
+        lrg_reel_clip_set_y        (clip, y);
+        lrg_reel_clip_set_rotation (clip, angle);
+    }
+}
+#+end_src
+
+*** lrg_reel_path_evolve — stroke reveal / draw-on
+
+Returns a new =GrlPath= containing only the first =t= fraction of the original
+path's arc length.  Animating =t= from 0 to 1 produces a progressive
+"draw-on" / stroke-reveal animation.
+
+#+begin_src c
+GrlPath *
+lrg_reel_path_evolve (GrlPath *path,
+                      gdouble  t);
+#+end_src
+
+#+begin_src c
+static void
+draw_signature (LrgReelClip    *clip,
+                LrgReelContext *ctx,
+                LrgImageCanvas *canvas,
+                gpointer        user_data)
+{
+    GrlPath  *full_path = (GrlPath *) user_data;
+    gint      frame     = lrg_reel_context_get_frame (ctx);
+    GrlImage *img       = lrg_image_canvas_get_image (canvas);
+
+    gdouble t = lrg_reel_interpolate_clamped ((gdouble) frame,
+                                               0.0, 60.0,
+                                               0.0, 1.0,
+                                               LRG_EASING_EASE_IN_OUT_QUAD);
+
+    g_autoptr(GrlPath) partial = lrg_reel_path_evolve (full_path, t);
+    if (partial != NULL)
+    {
+        GrlColor ink = { 255, 255, 255, 255 };
+        grl_image_draw_path (img, partial, &ink, 2);
+    }
+}
+#+end_src
+
+*** Pitfall: evolve allocates per frame
+
+=lrg_reel_path_evolve= returns =(transfer full)= — a new =GrlPath= object each
+call.  Use =g_autoptr(GrlPath)= or remember to call =g_object_unref()= at the
+end of the callback to avoid leaking a path per frame.
+
+** Constant-speed vs. eased motion along a path
+:PROPERTIES:
+:CUSTOM_ID: constant-speed-vs-eased
+:END:
+=lrg_reel_path_point_at()= takes a normalised arc-length =t=.  To move at a
+constant speed, advance =t= linearly.  To ease the motion, run =t= through an
+easing function first:
+
+#+begin_src c
+/* Constant speed. */
+gdouble t_const = (gdouble) frame / (gdouble) total_frames;
+
+/* Ease in/out. */
+gdouble t_eased = lrg_reel_interpolate_clamped ((gdouble) frame,
+                                                  0.0, (gdouble) total_frames,
+                                                  0.0, 1.0,
+                                                  LRG_EASING_EASE_IN_OUT_CUBIC);
+
+gdouble x, y;
+lrg_reel_path_point_at (path, t_eased, &x, &y, NULL);
+#+end_src

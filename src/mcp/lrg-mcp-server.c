@@ -18,6 +18,7 @@
 #include "tools/lrg-mcp-ecs-tools.h"
 #include "tools/lrg-mcp-save-tools.h"
 #include "tools/lrg-mcp-debug-tools.h"
+#include "tools/lrg-mcp-reel-tools.h"
 
 /* Resource groups */
 #include "resources/lrg-mcp-engine-resources.h"
@@ -978,11 +979,12 @@ lrg_mcp_server_register_default_providers (LrgMcpServer *self)
 	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_ecs_tools_new ()));
 	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_save_tools_new ()));
 	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_debug_tools_new ()));
+	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_reel_tools_new ()));
 
 	/* Register resource providers */
 	lrg_mcp_server_add_resource_provider (self, LRG_MCP_RESOURCE_PROVIDER (lrg_mcp_engine_resources_new ()));
 	lrg_mcp_server_add_resource_provider (self, LRG_MCP_RESOURCE_PROVIDER (lrg_mcp_ecs_resources_new ()));
 	lrg_mcp_server_add_resource_provider (self, LRG_MCP_RESOURCE_PROVIDER (lrg_mcp_screenshot_resources_new ()));
 
-	lrg_info (LRG_LOG_DOMAIN_MCP, "Registered 6 tool providers and 3 resource providers");
+	lrg_info (LRG_LOG_DOMAIN_MCP, "Registered 7 tool providers and 3 resource providers");
 }

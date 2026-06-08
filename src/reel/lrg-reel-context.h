@@ -131,6 +131,15 @@ LRG_AVAILABLE_IN_ALL
 gdouble
 lrg_reel_context_get_seconds (LrgReelContext *self);
 
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_context_set_subframe (LrgReelContext *self,
+                               gdouble         subframe);
+
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_reel_context_get_frame_exact (LrgReelContext *self);
+
 /**
  * lrg_reel_context_get_width:
  * @self: a #LrgReelContext

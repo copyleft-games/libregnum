@@ -1,0 +1,214 @@
+* Data-driven reels — YAML schema and loader
+:PROPERTIES:
+:CUSTOM_ID: data-driven-reels-yaml-schema
+:END:
+Reels can be defined entirely in YAML and loaded at runtime without writing any
+C code.  This is the primary authoring path for the =reel= CLI tool and for
+content pipelines that generate compositions programmatically.
+
+** Schema overview
+:PROPERTIES:
+:CUSTOM_ID: schema-overview
+:END:
+A YAML reel file describes one =LrgReel= object.  The top-level keys correspond
+to =LrgReel= properties; the =clips= key is a sequence of clip objects.
+
+#+begin_src yaml
+id: intro
+width: 1920
+height: 1080
+fps: 30
+duration-in-frames: 90
+clips:
+  - type: solid-clip
+    color: "#202830ff"
+  - type: gradient-clip
+    mode: linear
+    axis: vertical
+    start-color: "#0d1b2aff"
+    end-color: "#1b4f72ff"
+  - type: text-clip
+    text: "Welcome"
+    font-size: 72
+    text-x: 960
+    text-y: 440
+    align: center
+    from-frame: 5
+    duration-in-frames: 80
+#+end_src
+
+*** Top-level keys
+
+| Key                  | Type     | Description                                      |
+|----------------------+----------+--------------------------------------------------|
+| =id=                 | string   | Composition identifier (required)                |
+| =width=              | integer  | Frame width in pixels (required)                 |
+| =height=             | integer  | Frame height in pixels (required)                |
+| =fps=                | number   | Frames per second (required)                     |
+| =duration-in-frames= | integer  | Total frame count (required)                     |
+| =clips=              | sequence | Ordered list of clip objects (optional)          |
+
+*** Clip objects
+
+Each clip is a YAML mapping.  The =type= key names the clip type using the
+kebab-case registry name.  All remaining keys are GObject property names
+(kebab-case) for that clip type.
+
+| =type= value    | C type                  |
+|-----------------+-------------------------|
+| =solid-clip=    | =LrgReelSolidClip=      |
+| =gradient-clip= | =LrgReelGradientClip=   |
+| =image-clip=    | =LrgReelImageClip=      |
+| =text-clip=     | =LrgReelTextClip=       |
+| =shape-clip=    | =LrgReelShapeClip=      |
+| =caption-clip=  | =LrgReelCaptionClip=    |
+| =video-clip=    | =LrgReelVideoClip=      |
+
+*** Color strings
+
+=GrlColor= properties accept hex strings:
+
+- =#rrggbb= — opaque color (alpha 255).
+- =#rrggbbaa= — color with explicit alpha.
+
+Examples: =#ff0000= (red), =#20304080= (semi-transparent dark blue).
+
+*** Enum nicks
+
+Enum properties accept the lowercase nick of the enum value.  Examples:
+
+| Property           | Valid values                                  |
+|--------------------+-----------------------------------------------|
+| =fit=              | =fill=, =contain=, =cover=, =none=            |
+| =align=            | =left=, =center=, =right=                     |
+| =blend-mode=       | =normal=, =multiply=, =screen=, =add=, …      |
+| =kind= (shape)     | =rect=, =rounded-rect=, =circle=, =ellipse=, … |
+
+*** Base clip properties (all types)
+
+These GObject properties are inherited from =LrgReelClip= and available on
+every clip type:
+
+| Key                   | Type    | Description                              |
+|-----------------------+---------+------------------------------------------|
+| =from-frame=          | integer | First active frame (default 0)           |
+| =duration-in-frames=  | integer | Active length; =-1= for infinite         |
+| =opacity=             | number  | [0.0, 1.0]                               |
+| =visible=             | boolean | Hard visibility toggle                   |
+| =name=                | string  | Debugging label                          |
+
+** Loading a YAML reel
+:PROPERTIES:
+:CUSTOM_ID: loading-yaml
+:END:
+=lrg_reel_load_yaml()= loads a reel from a file path.  Pass =NULL= as the
+registry to use a temporary registry pre-populated with the built-in clip types.
+
+#+begin_src c
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgReel) reel =
+    lrg_reel_load_yaml ("assets/intro.yaml", NULL, &error);
+
+if (reel == NULL)
+{
+    g_printerr ("Failed to load reel: %s\n", error->message);
+    return 1;
+}
+
+g_autoptr(LrgReelRenderer) renderer = lrg_reel_renderer_new (reel);
+/* ... render ... */
+#+end_src
+
+To load from an in-memory string (useful for embedded assets or tests):
+
+#+begin_src c
+const gchar *yaml =
+    "id: test\n"
+    "width: 640\nheight: 360\nfps: 30\nduration-in-frames: 30\n"
+    "clips:\n"
+    "  - type: solid-clip\n"
+    "    color: \"#112233ff\"\n";
+
+g_autoptr(LrgReel) reel =
+    lrg_reel_load_yaml_string (yaml, NULL, &error);
+#+end_src
+
+** Registering types
+:PROPERTIES:
+:CUSTOM_ID: registering-types
+:END:
+=lrg_reel_register_types()= populates an =LrgRegistry= with the built-in clip
+types under their kebab-case names.  This is called automatically when =NULL= is
+passed as the registry; call it explicitly when you have a project-wide registry
+and also want custom clip types alongside the built-ins:
+
+#+begin_src c
+LrgRegistry *registry = lrg_engine_get_registry (engine);
+
+/* Register built-in clip types. */
+lrg_reel_register_types (registry);
+
+/* Register a project-specific clip. */
+lrg_registry_register (registry, "my-particle-clip", MY_TYPE_PARTICLE_CLIP);
+
+/* Now load a YAML that may reference both. */
+g_autoptr(LrgReel) reel =
+    lrg_reel_load_yaml ("cinematic.yaml", registry, &error);
+#+end_src
+
+** Complete example YAML
+:PROPERTIES:
+:CUSTOM_ID: complete-example-yaml
+:END:
+#+begin_src yaml
+id: score-screen
+width: 640
+height: 360
+fps: 30
+duration-in-frames: 120
+
+clips:
+  # Dark radial background
+  - type: gradient-clip
+    mode: radial
+    start-color: "#1a1a2eff"
+    end-color: "#05050fff"
+
+  # Score label — fades in over the first 20 frames
+  - type: text-clip
+    name: score-label
+    text: "SCORE"
+    font-size: 24
+    text-x: 320
+    text-y: 120
+    align: center
+    opacity: 1.0
+    from-frame: 0
+    duration-in-frames: 120
+
+  # Score value — large, centred
+  - type: text-clip
+    name: score-value
+    text: "99,999"
+    font-size: 64
+    text-x: 320
+    text-y: 160
+    align: center
+    from-frame: 10
+    duration-in-frames: 110
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Missing or unrecognised =type= values cause =lrg_reel_load_yaml()= to return
+  =NULL= with an error message naming the unknown type.  Call
+  =lrg_reel_register_types()= first or pass a registry that contains the type.
+- Hex color strings must include the =#= prefix and use lowercase hex digits.
+  The parser does not accept CSS named colors.
+- Enum nicks are case-sensitive lowercase (=contain=, not =Contain= or
+  =CONTAIN=).
+- YAML files loaded with =lrg_reel_load_yaml()= cannot yet embed effect chains
+  or transition series.  Attach effects and build series programmatically after
+  loading, or write a custom clip type that encapsulates them.

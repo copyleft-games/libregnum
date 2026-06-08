@@ -1,0 +1,190 @@
+* GPU capture — rendering engine output into a reel
+:PROPERTIES:
+:CUSTOM_ID: gpu-capture
+:END:
+=LrgReelGpuRenderer= bridges the engine's GPU drawing pipeline with the Reel
+export pipeline.  It opens a hidden OpenGL window and an off-screen framebuffer,
+invokes a draw callback for each frame, reads the result back to a =GrlImage=,
+and feeds it to any =LrgReelExporter= sink.
+
+Unlike the headless CPU renderer, the GPU renderer requires a display
+(Wayland or X11) to create an OpenGL context.  Always check availability before
+constructing one.
+
+** Availability check
+:PROPERTIES:
+:CUSTOM_ID: availability-check
+:END:
+#+begin_src c
+if (!lrg_reel_gpu_renderer_is_available ())
+{
+    g_print ("No display found — cannot use GPU renderer.\n");
+    /* Fall back to the CPU renderer or skip capture. */
+    return;
+}
+#+end_src
+
+=lrg_reel_gpu_renderer_is_available()= checks for the presence of a Wayland or
+X11 display environment variable.  A positive result does not guarantee that
+GPU context creation will succeed; construction may still fail (e.g. when
+headless Mesa is not installed).
+
+** Creating a GPU renderer
+:PROPERTIES:
+:CUSTOM_ID: creating-a-gpu-renderer
+:END:
+#+begin_src c
+g_autoptr(GError)             error = NULL;
+g_autoptr(LrgReelGpuRenderer) gpu   =
+    lrg_reel_gpu_renderer_new (1920,   /* width */
+                               1080,   /* height */
+                               30.0,   /* fps */
+                               150,    /* duration_in_frames */
+                               &error);
+
+if (gpu == NULL)
+{
+    g_printerr ("GPU renderer: %s\n", error->message);
+    return 1;
+}
+#+end_src
+
+** Providing the draw callback
+:PROPERTIES:
+:CUSTOM_ID: draw-callback
+:END:
+The =LrgReelGpuDrawFunc= is called once per frame inside an active off-screen
+framebuffer that has already been cleared.  Issue all engine draw calls (camera
+setup, drawable rendering, etc.) inside it.
+
+#+begin_src c
+typedef void (*LrgReelGpuDrawFunc) (LrgReelGpuRenderer *self,
+                                    gint                frame,
+                                    gpointer            user_data);
+#+end_src
+
+#+begin_src c
+static void
+draw_scene (LrgReelGpuRenderer *gpu,
+            gint                frame,
+            gpointer            user_data)
+{
+    MyScene *scene = (MyScene *) user_data;
+    gdouble  t     = frame / 30.0;
+
+    /* Update scene state for this frame. */
+    update_camera (scene->camera, t);
+
+    /* Draw using the engine's normal rendering path. */
+    lrg_renderer_begin (scene->renderer);
+    lrg_camera_begin   (scene->camera);
+    draw_world         (scene);
+    lrg_camera_end     (scene->camera);
+    lrg_renderer_end   (scene->renderer);
+}
+
+lrg_reel_gpu_renderer_set_draw_func (gpu, draw_scene, scene, NULL);
+#+end_src
+
+The callback *must* be deterministic: the same =frame= value must always
+produce the same visual output.  This ensures that parallel capture (if
+implemented) and repeated renders are identical.
+
+** Clearing color
+:PROPERTIES:
+:CUSTOM_ID: clearing-color
+:END:
+The framebuffer is cleared to a configurable color before each call to the draw
+callback.  The default is transparent black.
+
+#+begin_src c
+GrlColor dark_bg = { 10, 10, 20, 255 };
+lrg_reel_gpu_renderer_set_clear_color (gpu, &dark_bg);
+#+end_src
+
+** Capturing frames
+:PROPERTIES:
+:CUSTOM_ID: capturing-frames
+:END:
+*** Single frame
+
+#+begin_src c
+/* (transfer full) — caller owns the returned GrlImage. */
+g_autoptr(GrlImage) img = lrg_reel_gpu_renderer_capture_frame (gpu, 42);
+grl_image_export_to_file (img, "frame_42.png", NULL);
+#+end_src
+
+*** Full render to exporter
+
+Feed all captured frames to any =LrgReelExporter= — the same sinks used by the
+CPU path.
+
+#+begin_src c
+g_autoptr(LrgReelVideoExporter) vid =
+    lrg_reel_video_exporter_new ("scene.mp4", LRG_REEL_VIDEO_CODEC_H264);
+lrg_reel_video_exporter_set_crf (vid, 18);
+
+if (!lrg_reel_gpu_renderer_render_to_exporter (gpu,
+                                               LRG_REEL_EXPORTER (vid),
+                                               &error))
+{
+    g_printerr ("GPU render failed: %s\n", error->message);
+}
+#+end_src
+
+** Using GPU frames as image clips in a CPU reel
+:PROPERTIES:
+:CUSTOM_ID: gpu-frames-as-image-clips
+:END:
+A common workflow is to pre-capture a GPU scene into a sequence of =GrlImage=
+frames and then reference them as =LrgReelImageClip= objects inside a CPU reel.
+This lets you composite a 3D scene with CPU-rendered text and effects without
+any GPU involvement during the final composite pass.
+
+#+begin_src c
+gint total = lrg_reel_gpu_renderer_get_fps (gpu)
+             * duration_seconds;
+
+/* Pre-capture all frames into an array. */
+GPtrArray *frames = g_ptr_array_new_with_free_func (g_object_unref);
+for (gint f = 0; f < total; f++)
+{
+    GrlImage *img = lrg_reel_gpu_renderer_capture_frame (gpu, f);
+    if (img == NULL)
+        break;
+    g_ptr_array_add (frames, img);
+}
+
+/* Now build a CPU reel that references captured frames. */
+LrgReel *reel = lrg_reel_new ("composite", 1920, 1080, 30.0, total);
+
+for (gint f = 0; f < (gint) frames->len; f++)
+{
+    GrlImage *img = g_ptr_array_index (frames, f);
+    g_autoptr(LrgReelImageClip) clip =
+        lrg_reel_image_clip_new_from_image (img);
+    lrg_reel_clip_set_from_frame       (LRG_REEL_CLIP (clip), f);
+    lrg_reel_clip_set_duration_in_frames (LRG_REEL_CLIP (clip), 1);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (clip));
+}
+
+g_ptr_array_unref (frames);
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =LrgReelGpuRenderer= requires a display.  Always call
+  =lrg_reel_gpu_renderer_is_available()= before constructing one; never
+  construct it unconditionally in a CI or server environment.
+- The hidden GL window opened by the renderer counts against the process's
+  window limit on some platforms.  Destroy the renderer promptly when done.
+- =lrg_reel_gpu_renderer_capture_frame()= does a GPU readback (=glReadPixels=
+  equivalent), which is synchronous and expensive on large resolutions.  Avoid
+  calling it at interactive frame rates; it is intended for offline batch
+  capture.
+- The draw callback must not call into the =LrgReelGpuRenderer= itself
+  (no re-entrant captures).
+- Unlike the CPU renderer, the GPU renderer has no built-in motion blur.
+  Implement sub-frame accumulation manually in the draw callback if needed.

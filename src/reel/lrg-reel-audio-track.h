@@ -69,6 +69,32 @@ lrg_reel_audio_track_add (LrgReelAudioTrack *self,
                            gdouble            trim_end_sec);
 
 /**
+ * lrg_reel_audio_track_add_from_file:
+ * @self: a #LrgReelAudioTrack
+ * @path: (type filename): path to an audio file (wav/ogg/mp3/flac).
+ * @from_frame: composition frame at which the clip starts.
+ * @volume: linear volume scalar.
+ * @trim_start_sec: seconds into the file at which playback begins.
+ * @trim_end_sec: seconds at which playback ends (<= 0 for the full file).
+ * @error: (nullable): return location for a #GError.
+ *
+ * Loads an audio file and adds it to the track.
+ *
+ * Returns: %TRUE on success, %FALSE if the file could not be loaded
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_reel_audio_track_add_from_file (LrgReelAudioTrack *self,
+                                    const gchar       *path,
+                                    gint               from_frame,
+                                    gdouble            volume,
+                                    gdouble            trim_start_sec,
+                                    gdouble            trim_end_sec,
+                                    GError           **error);
+
+/**
  * lrg_reel_audio_track_mix:
  * @self: a #LrgReelAudioTrack
  * @sample_rate: output sample rate in Hz (must be > 0)

@@ -12,6 +12,7 @@
 #include "lrg-reel-context.h"
 #include "lrg-reel-exporter.h"
 #include "../graphics/lrg-image-canvas.h"
+#include <gio/gio.h>
 
 struct _LrgReelRenderer
 {
@@ -20,11 +21,12 @@ struct _LrgReelRenderer
     LrgReel        *reel;
     GrlColor        background;
     gboolean        has_background;
+    gint            motion_blur_samples;  /* 1 = off */
 
-    /* Reused render state (created lazily, sized to the reel). */
+    /* Reused render state (created lazily, sized to the reel).  Per-clip
+     * compositing (opacity/blend/transform) is handled by the clip dispatcher
+     * via the context's scratch pool. */
     LrgImageCanvas *canvas;
-    GrlLayer       *scratch_layer;
-    LrgImageCanvas *scratch_canvas;
     LrgReelContext *ctx;
 
     LrgReelProgressFunc progress_cb;
@@ -40,8 +42,6 @@ lrg_reel_renderer_dispose (GObject *object)
     LrgReelRenderer *self = LRG_REEL_RENDERER (object);
 
     g_clear_object (&self->canvas);
-    g_clear_object (&self->scratch_canvas);
-    g_clear_pointer (&self->scratch_layer, grl_layer_unref);
     g_clear_object (&self->ctx);
     g_clear_object (&self->reel);
 
@@ -72,6 +72,7 @@ static void
 lrg_reel_renderer_init (LrgReelRenderer *self)
 {
     self->has_background = FALSE;
+    self->motion_blur_samples = 1;
 }
 
 LrgReelRenderer *
@@ -104,6 +105,26 @@ lrg_reel_renderer_set_background (LrgReelRenderer *self,
     }
 }
 
+/**
+ * lrg_reel_renderer_set_motion_blur:
+ * @self: an #LrgReelRenderer
+ * @samples: sub-frame samples per output frame (1 disables motion blur).
+ *
+ * Enables motion blur by averaging @samples renders taken across each frame's
+ * exposure window.  Animations driven by seconds (e.g. interpolating on
+ * lrg_reel_context_get_seconds()) smear; integer-frame content does not.
+ *
+ * Since: 1.0
+ */
+void
+lrg_reel_renderer_set_motion_blur (LrgReelRenderer *self,
+                                   gint             samples)
+{
+    g_return_if_fail (LRG_IS_REEL_RENDERER (self));
+
+    self->motion_blur_samples = MAX (1, samples);
+}
+
 void
 lrg_reel_renderer_set_progress_callback (LrgReelRenderer     *self,
                                          LrgReelProgressFunc  callback,
@@ -120,7 +141,7 @@ lrg_reel_renderer_set_progress_callback (LrgReelRenderer     *self,
     self->progress_destroy = destroy;
 }
 
-/* Lazily create the reusable canvas, scratch layer and context. */
+/* Lazily create the reusable canvas and context. */
 static void
 reel_renderer_ensure_state (LrgReelRenderer *self)
 {
@@ -134,19 +155,16 @@ reel_renderer_ensure_state (LrgReelRenderer *self)
     h = lrg_reel_get_height (self->reel);
 
     self->canvas = lrg_image_canvas_new (w, h, NULL);
-    self->scratch_layer = grl_layer_new (w, h);
-    self->scratch_canvas =
-        lrg_image_canvas_new_for_image (grl_layer_get_image (self->scratch_layer));
     self->ctx = lrg_reel_context_new (0,
                                       lrg_reel_get_fps (self->reel),
                                       w, h,
                                       lrg_reel_get_duration_in_frames (self->reel));
 }
 
-/* Render one frame into the reusable canvas; returns the live canvas image. */
+/* Render one pass of @frame into the reusable canvas; returns the live image. */
 static GrlImage *
-reel_renderer_render_into_canvas (LrgReelRenderer *self,
-                                  gint             frame)
+reel_renderer_render_pass (LrgReelRenderer *self,
+                           gint             frame)
 {
     GrlColor   transparent = { 0, 0, 0, 0 };
     GrlImage  *canvas_image;
@@ -169,7 +187,6 @@ reel_renderer_render_into_canvas (LrgReelRenderer *self,
     for (i = 0; i < clips->len; i++)
     {
         LrgReelClip *clip = g_ptr_array_index (clips, i);
-        gdouble      opacity;
 
         if (!lrg_reel_clip_get_visible (clip))
             continue;
@@ -179,31 +196,78 @@ reel_renderer_render_into_canvas (LrgReelRenderer *self,
                                       lrg_reel_clip_get_from_frame (clip),
                                       lrg_reel_clip_get_duration_in_frames (clip));
 
+        /* The clip dispatcher applies opacity / blend / transform itself
+         * (compositing through the context's scratch pool when needed). */
         if (lrg_reel_context_is_active (self->ctx))
-        {
-            opacity = lrg_reel_clip_get_opacity (clip);
-
-            if (opacity >= 0.999)
-            {
-                /* Draw straight onto the shared canvas. */
-                lrg_reel_clip_render (clip, self->ctx, self->canvas);
-            }
-            else
-            {
-                /* Draw onto a transparent scratch layer, then composite the
-                 * whole layer over the canvas at reduced opacity. */
-                lrg_image_canvas_clear (self->scratch_canvas, &transparent);
-                lrg_reel_clip_render (clip, self->ctx, self->scratch_canvas);
-                grl_image_composite_layer (canvas_image, self->scratch_layer,
-                                           0, 0, GRL_LAYER_BLEND_NORMAL,
-                                           (gfloat) opacity);
-            }
-        }
+            lrg_reel_clip_render (clip, self->ctx, self->canvas);
 
         lrg_reel_context_pop_offset (self->ctx);
     }
 
     return canvas_image;
+}
+
+/* Render one frame, accumulating sub-frame passes when motion blur is on. */
+static GrlImage *
+reel_renderer_render_into_canvas (LrgReelRenderer *self,
+                                  gint             frame)
+{
+    GrlImage *image;
+    gdouble  *accum;
+    gint      n;
+    gint      k;
+    gint      w;
+    gint      h;
+    gint      x;
+    gint      y;
+
+    if (self->motion_blur_samples <= 1)
+        return reel_renderer_render_pass (self, frame);
+
+    reel_renderer_ensure_state (self);  /* self->ctx must exist before set_subframe */
+
+    n = self->motion_blur_samples;
+    w = lrg_reel_get_width (self->reel);
+    h = lrg_reel_get_height (self->reel);
+    accum = g_new0 (gdouble, (gsize) w * h * 4);
+    image = NULL;
+
+    /* Sweep the exposure window [frame, frame+1); time-based animation moves. */
+    for (k = 0; k < n; k++)
+    {
+        lrg_reel_context_set_subframe (self->ctx, (gdouble) k / (gdouble) n);
+        image = reel_renderer_render_pass (self, frame);
+
+        for (y = 0; y < h; y++)
+            for (x = 0; x < w; x++)
+            {
+                g_autoptr(GrlColor) c = grl_image_get_pixel (image, x, y);
+                gsize idx = ((gsize) y * w + x) * 4;
+
+                accum[idx] += c->r;
+                accum[idx + 1] += c->g;
+                accum[idx + 2] += c->b;
+                accum[idx + 3] += c->a;
+            }
+    }
+    lrg_reel_context_set_subframe (self->ctx, 0.0);
+
+    /* Write the averaged frame back into the (last pass's) canvas image. */
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++)
+        {
+            gsize    idx = ((gsize) y * w + x) * 4;
+            GrlColor c;
+
+            c.r = (guint8) (accum[idx] / n);
+            c.g = (guint8) (accum[idx + 1] / n);
+            c.b = (guint8) (accum[idx + 2] / n);
+            c.a = (guint8) (accum[idx + 3] / n);
+            grl_image_draw_pixel (image, x, y, &c);
+        }
+
+    g_free (accum);
+    return image;
 }
 
 GrlImage *
@@ -267,4 +331,245 @@ lrg_reel_renderer_render_to_exporter (LrgReelRenderer *self,
     }
 
     return lrg_reel_exporter_finish (exporter, error);
+}
+
+/**
+ * lrg_reel_renderer_render_still:
+ * @self: an #LrgReelRenderer
+ * @frame: the frame index to render.
+ * @path: (type filename): the output image path (format chosen by extension,
+ *   e.g. .png/.jpg).  PNG preserves the composition's alpha channel.
+ * @error: (nullable): return location for a #GError.
+ *
+ * Renders a single frame and writes it to an image file.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 1.0
+ */
+gboolean
+lrg_reel_renderer_render_still (LrgReelRenderer *self,
+                                gint             frame,
+                                const gchar     *path,
+                                GError         **error)
+{
+    g_autoptr(GrlImage) image = NULL;
+
+    g_return_val_if_fail (LRG_IS_REEL_RENDERER (self), FALSE);
+    g_return_val_if_fail (path != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    image = lrg_reel_renderer_render_frame (self, frame);
+    if (image == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                     "failed to render frame %d", frame);
+        return FALSE;
+    }
+
+    if (!grl_image_export (image, path))
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                     "failed to write still image to '%s'", path);
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+/**
+ * lrg_reel_renderer_render_range:
+ * @self: an #LrgReelRenderer
+ * @start_frame: first frame (inclusive, clamped to 0).
+ * @end_frame: last frame (exclusive, clamped to the reel length).
+ * @exporter: the #LrgReelExporter sink.
+ * @error: (nullable): return location for a #GError.
+ *
+ * Renders only the frames in [@start_frame, @end_frame) to @exporter.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 1.0
+ */
+gboolean
+lrg_reel_renderer_render_range (LrgReelRenderer *self,
+                                gint             start_frame,
+                                gint             end_frame,
+                                LrgReelExporter *exporter,
+                                GError         **error)
+{
+    gint total;
+    gint w;
+    gint h;
+    gint f;
+
+    g_return_val_if_fail (LRG_IS_REEL_RENDERER (self), FALSE);
+    g_return_val_if_fail (LRG_IS_REEL_EXPORTER (exporter), FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    total = lrg_reel_get_duration_in_frames (self->reel);
+    if (start_frame < 0)
+        start_frame = 0;
+    if (end_frame > total)
+        end_frame = total;
+    if (end_frame < start_frame)
+        end_frame = start_frame;
+
+    w = lrg_reel_get_width (self->reel);
+    h = lrg_reel_get_height (self->reel);
+
+    if (!lrg_reel_exporter_begin (exporter, w, h,
+                                  lrg_reel_get_fps (self->reel), error))
+        return FALSE;
+
+    for (f = start_frame; f < end_frame; f++)
+    {
+        GrlImage *image = reel_renderer_render_into_canvas (self, f);
+
+        if (!lrg_reel_exporter_add_frame (exporter, image, error))
+        {
+            lrg_reel_exporter_finish (exporter, NULL);
+            return FALSE;
+        }
+
+        if (self->progress_cb != NULL)
+            self->progress_cb ((guint) (f - start_frame),
+                               (guint) (end_frame - start_frame),
+                               self->progress_data);
+    }
+
+    return lrg_reel_exporter_finish (exporter, error);
+}
+
+typedef struct
+{
+    LrgReelRenderer *renderer;
+    gint             mod;       /* this worker renders frames mod, mod+n, ... */
+    gint             n;
+    gint             total;
+    GrlImage       **results;   /* shared; each worker writes disjoint indices */
+} ReelParallelWorker;
+
+static gpointer
+reel_parallel_worker (gpointer data)
+{
+    ReelParallelWorker *w = data;
+    gint                f;
+
+    for (f = w->mod; f < w->total; f += w->n)
+        w->results[f] = lrg_reel_renderer_render_frame (w->renderer, f);
+
+    return NULL;
+}
+
+/**
+ * lrg_reel_renderer_render_parallel:
+ * @self: an #LrgReelRenderer
+ * @n_threads: worker thread count, or 0 to use the CPU count.
+ * @exporter: the #LrgReelExporter sink.
+ * @error: (nullable): return location for a #GError.
+ *
+ * Renders every frame across @n_threads worker threads (each with its own
+ * canvas/context), then feeds the frames to @exporter strictly in order — so
+ * the output is identical to a sequential render.  Each frame is independent
+ * and deterministic, which is what makes this safe.  (Clips that share mutable
+ * state across threads — e.g. a video source's frame cache — are the exception
+ * and should be rendered sequentially.)
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 1.0
+ */
+gboolean
+lrg_reel_renderer_render_parallel (LrgReelRenderer *self,
+                                   gint             n_threads,
+                                   LrgReelExporter *exporter,
+                                   GError         **error)
+{
+    gint               total;
+    gint               w;
+    gint               h;
+    gint               f;
+    gint               t;
+    GrlImage         **results;
+    GThread          **threads;
+    LrgReelRenderer  **renderers;
+    ReelParallelWorker *workers;
+    gboolean           ok = TRUE;
+
+    g_return_val_if_fail (LRG_IS_REEL_RENDERER (self), FALSE);
+    g_return_val_if_fail (LRG_IS_REEL_EXPORTER (exporter), FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    total = lrg_reel_get_duration_in_frames (self->reel);
+    if (total <= 0)
+        return lrg_reel_exporter_begin (exporter, lrg_reel_get_width (self->reel),
+                                        lrg_reel_get_height (self->reel),
+                                        lrg_reel_get_fps (self->reel), error) &&
+               lrg_reel_exporter_finish (exporter, error);
+
+    if (n_threads < 1)
+        n_threads = (gint) g_get_num_processors ();
+    if (n_threads > total)
+        n_threads = total;
+    if (n_threads < 1)
+        n_threads = 1;
+
+    w = lrg_reel_get_width (self->reel);
+    h = lrg_reel_get_height (self->reel);
+
+    results = g_new0 (GrlImage *, total);
+    threads = g_new0 (GThread *, n_threads);
+    renderers = g_new0 (LrgReelRenderer *, n_threads);
+    workers = g_new0 (ReelParallelWorker, n_threads);
+
+    for (t = 0; t < n_threads; t++)
+    {
+        renderers[t] = lrg_reel_renderer_new (self->reel);
+        if (self->has_background)
+            lrg_reel_renderer_set_background (renderers[t], &self->background);
+
+        workers[t].renderer = renderers[t];
+        workers[t].mod = t;
+        workers[t].n = n_threads;
+        workers[t].total = total;
+        workers[t].results = results;
+        threads[t] = g_thread_new ("reel-render", reel_parallel_worker, &workers[t]);
+    }
+
+    for (t = 0; t < n_threads; t++)
+        g_thread_join (threads[t]);
+
+    /* Feed the rendered frames to the exporter strictly in order. */
+    if (!lrg_reel_exporter_begin (exporter, w, h,
+                                  lrg_reel_get_fps (self->reel), error))
+        ok = FALSE;
+
+    for (f = 0; ok && f < total; f++)
+    {
+        if (!lrg_reel_exporter_add_frame (exporter, results[f], error))
+        {
+            lrg_reel_exporter_finish (exporter, NULL);
+            ok = FALSE;
+            break;
+        }
+
+        if (self->progress_cb != NULL)
+            self->progress_cb ((guint) f, (guint) total, self->progress_data);
+    }
+
+    if (ok)
+        ok = lrg_reel_exporter_finish (exporter, error);
+
+    for (f = 0; f < total; f++)
+        g_clear_object (&results[f]);
+    for (t = 0; t < n_threads; t++)
+        g_object_unref (renderers[t]);
+
+    g_free (results);
+    g_free (threads);
+    g_free (renderers);
+    g_free (workers);
+
+    return ok;
 }

@@ -1,0 +1,198 @@
+* Media — video source and audio analysis
+:PROPERTIES:
+:CUSTOM_ID: media-video-source-audio-analysis
+:END:
+The Reel module can incorporate existing video files and perform per-frame audio
+analysis, enabling audiogram visualisers, reactive animations, and
+video-in-video compositions.  Both features depend on ffmpeg/ffprobe being
+available on the PATH at runtime.
+
+** LrgReelVideoSource — decoding a video file
+:PROPERTIES:
+:CUSTOM_ID: lrgReelVideoSource
+:END:
+=LrgReelVideoSource= probes a video file with ffprobe and decodes frames via an
+ffmpeg subprocess that outputs a PNG image stream.  Decoded frames are indexed
+and cached; sequential access (the reel renderer's normal pattern) re-decodes
+nothing.
+
+#+begin_src c
+g_autoptr(GError)             error  = NULL;
+g_autoptr(LrgReelVideoSource) source =
+    lrg_reel_video_source_new_from_file ("footage.mp4", &error);
+
+if (source == NULL)
+{
+    g_printerr ("Could not open source: %s\n", error->message);
+    return 1;
+}
+
+/* Metadata — available immediately after construction. */
+gint     w     = lrg_reel_video_source_get_width     (source);
+gint     h     = lrg_reel_video_source_get_height    (source);
+gdouble  fps   = lrg_reel_video_source_get_fps       (source);
+gdouble  dur   = lrg_reel_video_source_get_duration  (source);
+gboolean audio = lrg_reel_video_source_get_has_audio (source);
+
+/* Frame count forces a full decode on first call. */
+gint n = lrg_reel_video_source_get_frame_count (source);
+
+/* Fetch a specific frame (transfer none — valid until next get_frame call). */
+GrlImage *img = lrg_reel_video_source_get_frame (source, 42, &error);
+#+end_src
+
+*** Extracting audio from a video source
+
+#+begin_src c
+g_autoptr(LrgWaveData) wave =
+    lrg_reel_video_source_extract_audio (source, &error);
+
+/* wave is NULL if the file has no audio track. */
+#+end_src
+
+*** Availability check
+
+#+begin_src c
+if (!lrg_reel_video_source_is_ffmpeg_available ())
+{
+    g_print ("ffmpeg + ffprobe required for video sources.\n");
+}
+#+end_src
+
+*** Pitfall
+
+=lrg_reel_video_source_get_frame()= returns =(transfer none)=: the pointer is
+owned by the source and is only valid until the next call.  Copy the image
+with =grl_image_copy()= if you need it beyond that lifetime.
+
+** LrgReelVideoClip — placing a video source on the timeline
+:PROPERTIES:
+:CUSTOM_ID: lrgreelvideoclip
+:END:
+=LrgReelVideoClip= is an =LrgReelClip= subclass that maps the clip-local frame
+to a decoded frame from a =LrgReelVideoSource=, scaled to the composition
+frame with a configurable fit mode.
+
+#+begin_src c
+/* Construct from an existing source. */
+g_autoptr(LrgReelVideoClip) vclip =
+    lrg_reel_video_clip_new_from_source (source);
+
+/* Or directly from a file path. */
+g_autoptr(GError)           err   = NULL;
+g_autoptr(LrgReelVideoClip) vclip2 =
+    lrg_reel_video_clip_new_from_file ("b-roll.mp4", &err);
+
+/* Fit mode (see LrgReelFit — same semantics as LrgReelImageClip). */
+lrg_reel_video_clip_set_fit (vclip, LRG_REEL_FIT_COVER);
+
+/* Start decoding 2.5 seconds into the source. */
+lrg_reel_video_clip_set_trim_start (vclip, 2.5);
+
+/* Play at half speed. */
+lrg_reel_video_clip_set_playback_rate (vclip, 0.5);
+
+/* Loop back to the start when the source runs out. */
+lrg_reel_video_clip_set_loop (vclip, TRUE);
+
+lrg_reel_clip_set_duration_in_frames (LRG_REEL_CLIP (vclip), 90);
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (vclip));
+#+end_src
+
+*** How frame mapping works
+
+For each clip-local frame =f=, the video clip computes:
+
+#+begin_src
+source_time = (f / composition_fps) * playback_rate + trim_start
+source_frame = round (source_time * source_fps)
+#+end_src
+
+If =loop= is =TRUE= the source frame wraps modulo the source frame count;
+otherwise it is clamped to the last frame.
+
+*** Pitfall
+
+The video clip shares its =LrgReelVideoSource= with any other clips that
+reference the same source object.  Concurrent access from parallel rendering
+threads is safe because the source caches only the most-recently-decoded frame
+per thread — but two clips sharing one source that request different frames in
+the same render pass will each re-decode.  For that scenario, create a separate
+source per clip.
+
+** Audio analysis — FFT and waveform
+:PROPERTIES:
+:CUSTOM_ID: audio-analysis
+:END:
+The free functions in =lrg-reel-audio-analysis.h= compute per-frame analysis of
+an =LrgWaveData= object: FFT spectrum bins, down-sampled waveform, and RMS
+level.  All three down-mix multi-channel audio to mono before analysis.
+
+These are pure functions with no side effects; they are safe to call from
+parallel render threads.
+
+*** lrg_reel_audio_spectrum — FFT magnitude bins
+
+#+begin_src c
+gsize   out_count = 0;
+gfloat *bins =
+    lrg_reel_audio_spectrum (wave,        /* LrgWaveData */
+                              frame,       /* video frame index */
+                              30.0,        /* fps */
+                              64,          /* n_bins: frequency bins to return */
+                              4096,        /* window_size: audio samples */
+                              &out_count);
+
+/* bins is (transfer full) — free with g_free(). */
+if (bins != NULL)
+{
+    for (gsize i = 0; i < out_count; i++)
+        draw_bar (canvas, i, bins[i]);
+    g_free (bins);
+}
+#+end_src
+
+The window is centred on the audio sample corresponding to =frame=.  The
+result is the FFT magnitude for bins 0 … (N/2 − 1) where N is the next
+power-of-two ≥ =window_size=.
+
+*** lrg_reel_audio_waveform — down-sampled waveform
+
+#+begin_src c
+gsize   out_count = 0;
+gfloat *wf =
+    lrg_reel_audio_waveform (wave, frame, 30.0,
+                              0.1,    /* seconds of audio window */
+                              200,    /* n_samples: output resolution */
+                              &out_count);
+
+/* Values lie in [-1, 1]; draw a centred waveform. */
+for (gsize i = 0; i < out_count; i++)
+{
+    gint x    = (gint) (i * frame_width / out_count);
+    gint half = frame_height / 2;
+    gint y1   = half;
+    gint y2   = half + (gint) (wf[i] * half);
+    draw_line (canvas, x, y1, x, y2);
+}
+g_free (wf);
+#+end_src
+
+*** lrg_reel_audio_level — RMS level
+
+#+begin_src c
+/* Single value in [0, 1] for the audio window starting at frame. */
+gdouble level = lrg_reel_audio_level (wave, frame, 30.0, 0.05);
+
+/* Scale an element by audio loudness. */
+lrg_reel_clip_set_scale_x (clip, 0.8 + level * 0.4);
+lrg_reel_clip_set_scale_y (clip, 0.8 + level * 0.4);
+#+end_src
+
+*** Pitfall
+
+All three functions allocate their result on the heap (=lrg_reel_audio_spectrum=
+and =lrg_reel_audio_waveform= return =(transfer full)= arrays; free with
+=g_free()=).  =lrg_reel_audio_level= is the exception — it returns a plain
+=gdouble=.  Do not forget the =g_free()= call on the array results or you will
+leak per-frame.

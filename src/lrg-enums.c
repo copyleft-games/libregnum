@@ -4585,10 +4585,36 @@ lrg_reel_video_codec_get_type (void)
         static const GEnumValue values[] = {
             { LRG_REEL_VIDEO_CODEC_H264, "LRG_REEL_VIDEO_CODEC_H264", "h264" },
             { LRG_REEL_VIDEO_CODEC_VP9, "LRG_REEL_VIDEO_CODEC_VP9", "vp9" },
+            { LRG_REEL_VIDEO_CODEC_H265, "LRG_REEL_VIDEO_CODEC_H265", "h265" },
+            { LRG_REEL_VIDEO_CODEC_PRORES, "LRG_REEL_VIDEO_CODEC_PRORES", "prores" },
+            { LRG_REEL_VIDEO_CODEC_PRORES_ALPHA, "LRG_REEL_VIDEO_CODEC_PRORES_ALPHA", "prores-alpha" },
+            { LRG_REEL_VIDEO_CODEC_VP9_ALPHA, "LRG_REEL_VIDEO_CODEC_VP9_ALPHA", "vp9-alpha" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgReelVideoCodec"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_reel_audio_format_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_REEL_AUDIO_FORMAT_WAV, "LRG_REEL_AUDIO_FORMAT_WAV", "wav" },
+            { LRG_REEL_AUDIO_FORMAT_MP3, "LRG_REEL_AUDIO_FORMAT_MP3", "mp3" },
+            { LRG_REEL_AUDIO_FORMAT_AAC, "LRG_REEL_AUDIO_FORMAT_AAC", "aac" },
+            { LRG_REEL_AUDIO_FORMAT_FLAC, "LRG_REEL_AUDIO_FORMAT_FLAC", "flac" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgReelAudioFormat"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
 
@@ -4611,6 +4637,103 @@ lrg_reel_transition_direction_get_type (void)
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgReelTransitionDirection"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_reel_blend_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_REEL_BLEND_NORMAL, "LRG_REEL_BLEND_NORMAL", "normal" },
+            { LRG_REEL_BLEND_MULTIPLY, "LRG_REEL_BLEND_MULTIPLY", "multiply" },
+            { LRG_REEL_BLEND_SCREEN, "LRG_REEL_BLEND_SCREEN", "screen" },
+            { LRG_REEL_BLEND_OVERLAY, "LRG_REEL_BLEND_OVERLAY", "overlay" },
+            { LRG_REEL_BLEND_SOFT_LIGHT, "LRG_REEL_BLEND_SOFT_LIGHT", "soft-light" },
+            { LRG_REEL_BLEND_ADD, "LRG_REEL_BLEND_ADD", "add" },
+            { LRG_REEL_BLEND_COLOR_DODGE, "LRG_REEL_BLEND_COLOR_DODGE", "color-dodge" },
+            { LRG_REEL_BLEND_COLOR_BURN, "LRG_REEL_BLEND_COLOR_BURN", "color-burn" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgReelBlendMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_reel_fit_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_REEL_FIT_FILL, "LRG_REEL_FIT_FILL", "fill" },
+            { LRG_REEL_FIT_CONTAIN, "LRG_REEL_FIT_CONTAIN", "contain" },
+            { LRG_REEL_FIT_COVER, "LRG_REEL_FIT_COVER", "cover" },
+            { LRG_REEL_FIT_STRETCH, "LRG_REEL_FIT_STRETCH", "stretch" },
+            { LRG_REEL_FIT_NONE, "LRG_REEL_FIT_NONE", "none" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgReelFit"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_reel_shape_kind_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_REEL_SHAPE_RECT, "LRG_REEL_SHAPE_RECT", "rect" },
+            { LRG_REEL_SHAPE_ROUNDED_RECT, "LRG_REEL_SHAPE_ROUNDED_RECT", "rounded-rect" },
+            { LRG_REEL_SHAPE_CIRCLE, "LRG_REEL_SHAPE_CIRCLE", "circle" },
+            { LRG_REEL_SHAPE_ELLIPSE, "LRG_REEL_SHAPE_ELLIPSE", "ellipse" },
+            { LRG_REEL_SHAPE_TRIANGLE, "LRG_REEL_SHAPE_TRIANGLE", "triangle" },
+            { LRG_REEL_SHAPE_STAR, "LRG_REEL_SHAPE_STAR", "star" },
+            { LRG_REEL_SHAPE_LINE, "LRG_REEL_SHAPE_LINE", "line" },
+            { LRG_REEL_SHAPE_POLYGON, "LRG_REEL_SHAPE_POLYGON", "polygon" },
+            { LRG_REEL_SHAPE_PATH, "LRG_REEL_SHAPE_PATH", "path" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgReelShapeKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_reel_text_align_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_REEL_TEXT_ALIGN_LEFT, "LRG_REEL_TEXT_ALIGN_LEFT", "left" },
+            { LRG_REEL_TEXT_ALIGN_CENTER, "LRG_REEL_TEXT_ALIGN_CENTER", "center" },
+            { LRG_REEL_TEXT_ALIGN_RIGHT, "LRG_REEL_TEXT_ALIGN_RIGHT", "right" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgReelTextAlign"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
 

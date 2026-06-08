@@ -356,6 +356,34 @@ PUBLIC_HEADERS := \
 	src/reel/lrg-reel-slide-transition.h \
 	src/reel/lrg-reel-audio-track.h \
 	src/reel/lrg-reel-player.h \
+	src/reel/lrg-reel-solid-clip.h \
+	src/reel/lrg-reel-gradient-clip.h \
+	src/reel/lrg-reel-image-clip.h \
+	src/reel/lrg-reel-text-clip.h \
+	src/reel/lrg-reel-caption-clip.h \
+	src/reel/lrg-reel-shape-clip.h \
+	src/reel/lrg-reel-audio-analysis.h \
+	src/reel/lrg-reel-video-source.h \
+	src/reel/lrg-reel-video-clip.h \
+	src/reel/lrg-reel-effect.h \
+	src/reel/lrg-reel-blur-effect.h \
+	src/reel/lrg-reel-bloom-effect.h \
+	src/reel/lrg-reel-color-grade-effect.h \
+	src/reel/lrg-reel-vignette-effect.h \
+	src/reel/lrg-reel-grain-effect.h \
+	src/reel/lrg-reel-chroma-key-effect.h \
+	src/reel/lrg-reel-drop-shadow-effect.h \
+	src/reel/lrg-reel-light-leak-effect.h \
+	src/reel/lrg-reel-flip-transition.h \
+	src/reel/lrg-reel-clock-wipe-transition.h \
+	src/reel/lrg-reel-iris-transition.h \
+	src/reel/lrg-reel-push-transition.h \
+	src/reel/lrg-reel-zoom-transition.h \
+	src/reel/lrg-reel-transition-series.h \
+	src/reel/lrg-reel-audio-exporter.h \
+	src/reel/lrg-reel-loader.h \
+	src/reel/lrg-reel-gpu-renderer.h \
+	src/reel/lrg-reel-path.h \
 	src/demo/lrg-demo-gatable.h \
 	src/demo/lrg-demo-manager.h \
 	src/vr/lrg-vr-service.h \
@@ -794,6 +822,34 @@ SOURCES := \
 	src/reel/lrg-reel-slide-transition.c \
 	src/reel/lrg-reel-audio-track.c \
 	src/reel/lrg-reel-player.c \
+	src/reel/lrg-reel-solid-clip.c \
+	src/reel/lrg-reel-gradient-clip.c \
+	src/reel/lrg-reel-image-clip.c \
+	src/reel/lrg-reel-text-clip.c \
+	src/reel/lrg-reel-caption-clip.c \
+	src/reel/lrg-reel-shape-clip.c \
+	src/reel/lrg-reel-audio-analysis.c \
+	src/reel/lrg-reel-video-source.c \
+	src/reel/lrg-reel-video-clip.c \
+	src/reel/lrg-reel-effect.c \
+	src/reel/lrg-reel-blur-effect.c \
+	src/reel/lrg-reel-bloom-effect.c \
+	src/reel/lrg-reel-color-grade-effect.c \
+	src/reel/lrg-reel-vignette-effect.c \
+	src/reel/lrg-reel-grain-effect.c \
+	src/reel/lrg-reel-chroma-key-effect.c \
+	src/reel/lrg-reel-drop-shadow-effect.c \
+	src/reel/lrg-reel-light-leak-effect.c \
+	src/reel/lrg-reel-flip-transition.c \
+	src/reel/lrg-reel-clock-wipe-transition.c \
+	src/reel/lrg-reel-iris-transition.c \
+	src/reel/lrg-reel-push-transition.c \
+	src/reel/lrg-reel-zoom-transition.c \
+	src/reel/lrg-reel-transition-series.c \
+	src/reel/lrg-reel-audio-exporter.c \
+	src/reel/lrg-reel-loader.c \
+	src/reel/lrg-reel-gpu-renderer.c \
+	src/reel/lrg-reel-path.c \
 	src/demo/lrg-demo-gatable.c \
 	src/demo/lrg-demo-manager.c \
 	src/vr/lrg-vr-service.c \
@@ -1003,6 +1059,7 @@ PUBLIC_HEADERS += \
 	src/mcp/tools/lrg-mcp-ecs-tools.h \
 	src/mcp/tools/lrg-mcp-save-tools.h \
 	src/mcp/tools/lrg-mcp-debug-tools.h \
+	src/mcp/tools/lrg-mcp-reel-tools.h \
 	src/mcp/resources/lrg-mcp-engine-resources.h \
 	src/mcp/resources/lrg-mcp-ecs-resources.h \
 	src/mcp/resources/lrg-mcp-screenshot-resources.h
@@ -1019,6 +1076,7 @@ SOURCES += \
 	src/mcp/tools/lrg-mcp-ecs-tools.c \
 	src/mcp/tools/lrg-mcp-save-tools.c \
 	src/mcp/tools/lrg-mcp-debug-tools.c \
+	src/mcp/tools/lrg-mcp-reel-tools.c \
 	src/mcp/resources/lrg-mcp-engine-resources.c \
 	src/mcp/resources/lrg-mcp-ecs-resources.c \
 	src/mcp/resources/lrg-mcp-screenshot-resources.c
@@ -1315,6 +1373,30 @@ $(LAUNCHER_BIN): src/launcher/lrg-launcher.c $(LIBOUTDIR)/$(LIB_SHARED)
 	$(call print_link,lrg-launcher)
 	@$(MKDIR_P) $(dir $@)
 	@$(CC) $(LAUNCHER_CFLAGS) -o $@ $< $(LAUNCHER_LIBS)
+
+# =============================================================================
+# Reel CLI (renders YAML-defined reels to video/stills)
+# =============================================================================
+
+REEL_CLI_BIN := $(BUILDDIR)/reel$(EXE_EXT)
+
+REEL_CLI_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -I src
+REEL_CLI_CFLAGS += -isystem $(GRAYLIB_DIR)/src
+REEL_CLI_CFLAGS += -isystem $(GRAYLIB_DIR)/deps/raylib/src
+REEL_CLI_CFLAGS += -isystem $(YAMLGLIB_DIR)/src
+REEL_CLI_CFLAGS += $(DEP_CFLAGS)
+
+REEL_CLI_LIBS := -L$(LIBOUTDIR) -l$(LIB_NAME)
+REEL_CLI_LIBS += -Wl,-rpath,'$$ORIGIN/lib' -Wl,-rpath,'$$ORIGIN/../lib'
+REEL_CLI_LIBS += $(GLIB_LIBS) $(PLATFORM_LIBS)
+
+.PHONY: reel-cli
+reel-cli: lib-shared $(REEL_CLI_BIN)
+
+$(REEL_CLI_BIN): src/reel-cli/lrg-reel-cli.c $(LIBOUTDIR)/$(LIB_SHARED)
+	$(call print_link,reel)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(REEL_CLI_CFLAGS) -o $@ $< $(REEL_CLI_LIBS)
 
 # =============================================================================
 # Documentation

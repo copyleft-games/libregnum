@@ -1332,4 +1332,41 @@ typedef struct _LrgReelPlayer  LrgReelPlayer;
 /* LrgReelSpringConfig is a boxed value type */
 typedef struct _LrgReelSpringConfig  LrgReelSpringConfig;
 
+/* Reel content clips (final types deriving from LrgReelClip) */
+typedef struct _LrgReelImageClip     LrgReelImageClip;
+typedef struct _LrgReelTextClip      LrgReelTextClip;
+typedef struct _LrgReelShapeClip     LrgReelShapeClip;
+typedef struct _LrgReelSolidClip     LrgReelSolidClip;
+typedef struct _LrgReelGradientClip  LrgReelGradientClip;
+
+/* Reel media-in (video decode + clip) */
+typedef struct _LrgReelVideoSource   LrgReelVideoSource;
+typedef struct _LrgReelVideoClip     LrgReelVideoClip;
+
+/* Reel effects (derivable base + concretes) */
+typedef struct _LrgReelEffect             LrgReelEffect;
+typedef struct _LrgReelEffectClass        LrgReelEffectClass;
+typedef struct _LrgReelBlurEffect         LrgReelBlurEffect;
+typedef struct _LrgReelBloomEffect        LrgReelBloomEffect;
+typedef struct _LrgReelColorGradeEffect   LrgReelColorGradeEffect;
+typedef struct _LrgReelVignetteEffect     LrgReelVignetteEffect;
+typedef struct _LrgReelGrainEffect        LrgReelGrainEffect;
+typedef struct _LrgReelChromaKeyEffect    LrgReelChromaKeyEffect;
+typedef struct _LrgReelDropShadowEffect   LrgReelDropShadowEffect;
+typedef struct _LrgReelLightLeakEffect    LrgReelLightLeakEffect;
+
+/* Reel transition series + extra presentations */
+typedef struct _LrgReelTransitionSeries     LrgReelTransitionSeries;
+typedef struct _LrgReelFlipTransition       LrgReelFlipTransition;
+typedef struct _LrgReelClockWipeTransition  LrgReelClockWipeTransition;
+typedef struct _LrgReelIrisTransition       LrgReelIrisTransition;
+typedef struct _LrgReelPushTransition       LrgReelPushTransition;
+typedef struct _LrgReelZoomTransition       LrgReelZoomTransition;
+
+/* Reel output (audio exporter), captions, and engine-native GPU capture */
+typedef struct _LrgReelAudioExporter        LrgReelAudioExporter;
+typedef struct _LrgReelCaptionClip          LrgReelCaptionClip;
+typedef struct _LrgReelGpuRenderer          LrgReelGpuRenderer;
+typedef struct _LrgReelEngineClip           LrgReelEngineClip;
+
 G_END_DECLS

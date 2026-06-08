@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "lrg-reel-context.h"
+#include "lrg-reel-context-private.h"
 
 typedef struct
 {
@@ -19,13 +20,25 @@ struct _LrgReelContext
     GObject parent_instance;
 
     gint    absolute_frame;
+    gdouble subframe;        /* [0,1) fractional offset, for motion blur */
     gdouble fps;
     gint    width;
     gint    height;
     gint    duration_in_frames;
 
-    GArray *stack;  /* of LrgReelStackEntry */
+    GArray    *stack;         /* of LrgReelStackEntry */
+    GPtrArray *scratch_pool;  /* of LrgReelScratch*, lazily created */
 };
+
+static void
+reel_scratch_free (gpointer data)
+{
+    LrgReelScratch *s = data;
+
+    g_clear_object (&s->canvas);
+    g_clear_pointer (&s->layer, grl_layer_unref);
+    g_free (s);
+}
 
 G_DEFINE_FINAL_TYPE (LrgReelContext, lrg_reel_context, G_TYPE_OBJECT)
 
@@ -42,6 +55,7 @@ lrg_reel_context_finalize (GObject *object)
     LrgReelContext *self = LRG_REEL_CONTEXT (object);
 
     g_clear_pointer (&self->stack, g_array_unref);
+    g_clear_pointer (&self->scratch_pool, g_ptr_array_unref);
 
     G_OBJECT_CLASS (lrg_reel_context_parent_class)->finalize (object);
 }
@@ -130,7 +144,44 @@ lrg_reel_context_get_seconds (LrgReelContext *self)
 {
     g_return_val_if_fail (LRG_IS_REEL_CONTEXT (self), 0.0);
 
-    return (gdouble) lrg_reel_context_get_frame (self) / self->fps;
+    return ((gdouble) lrg_reel_context_get_frame (self) + self->subframe) / self->fps;
+}
+
+/**
+ * lrg_reel_context_set_subframe:
+ * @self: an #LrgReelContext
+ * @subframe: a fractional in-frame offset in [0,1).
+ *
+ * Sets the sub-frame phase used by lrg_reel_context_get_seconds() — the renderer
+ * sweeps this across a frame's exposure window to accumulate motion blur.
+ * Time-based animations (driven by get_seconds) follow it; integer-frame
+ * lookups (get_frame) do not.
+ *
+ * Since: 1.0
+ */
+void
+lrg_reel_context_set_subframe (LrgReelContext *self,
+                               gdouble         subframe)
+{
+    g_return_if_fail (LRG_IS_REEL_CONTEXT (self));
+
+    self->subframe = subframe;
+}
+
+/**
+ * lrg_reel_context_get_frame_exact:
+ * @self: an #LrgReelContext
+ *
+ * Returns: the clip-relative frame plus the current sub-frame phase
+ *
+ * Since: 1.0
+ */
+gdouble
+lrg_reel_context_get_frame_exact (LrgReelContext *self)
+{
+    g_return_val_if_fail (LRG_IS_REEL_CONTEXT (self), 0.0);
+
+    return (gdouble) lrg_reel_context_get_frame (self) + self->subframe;
 }
 
 gint
@@ -226,4 +277,61 @@ lrg_reel_context_test_window (LrgReelContext *self,
         return TRUE;
 
     return relative < duration_in_frames;
+}
+
+/* ==========================================================================
+ * Internal compositor scratch pool (see lrg-reel-context-private.h)
+ * ========================================================================== */
+
+LrgReelScratch *
+lrg_reel_context_acquire_scratch (LrgReelContext *self)
+{
+    GrlColor        transparent = { 0, 0, 0, 0 };
+    LrgReelScratch *scratch;
+    guint           i;
+
+    g_return_val_if_fail (LRG_IS_REEL_CONTEXT (self), NULL);
+
+    if (self->width <= 0 || self->height <= 0)
+        return NULL;
+
+    if (self->scratch_pool == NULL)
+        self->scratch_pool = g_ptr_array_new_with_free_func (reel_scratch_free);
+
+    scratch = NULL;
+    for (i = 0; i < self->scratch_pool->len; i++)
+    {
+        LrgReelScratch *s = g_ptr_array_index (self->scratch_pool, i);
+
+        if (!s->in_use)
+        {
+            scratch = s;
+            break;
+        }
+    }
+
+    if (scratch == NULL)
+    {
+        scratch = g_new0 (LrgReelScratch, 1);
+        scratch->layer = grl_layer_new (self->width, self->height);
+        scratch->canvas =
+            lrg_image_canvas_new_for_image (grl_layer_get_image (scratch->layer));
+        g_ptr_array_add (self->scratch_pool, scratch);
+    }
+
+    scratch->in_use = TRUE;
+    lrg_image_canvas_clear (scratch->canvas, &transparent);
+    lrg_image_canvas_reset_transform (scratch->canvas);
+
+    return scratch;
+}
+
+void
+lrg_reel_context_release_scratch (LrgReelContext *self,
+                                  LrgReelScratch *scratch)
+{
+    g_return_if_fail (LRG_IS_REEL_CONTEXT (self));
+
+    if (scratch != NULL)
+        scratch->in_use = FALSE;
 }

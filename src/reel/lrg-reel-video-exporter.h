@@ -78,6 +78,11 @@ void
 lrg_reel_video_exporter_set_crf (LrgReelVideoExporter *self,
                                  gint                  crf);
 
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_video_exporter_set_bitrate (LrgReelVideoExporter *self,
+                                     gint                  kbps);
+
 /**
  * lrg_reel_video_exporter_set_ffmpeg_path:
  * @self: a #LrgReelVideoExporter

@@ -153,6 +153,98 @@ lrg_reel_video_exporter_set_ffmpeg_path (vid, "/opt/ffmpeg/bin/ffmpeg");
 lrg_reel_video_exporter_set_ffmpeg_path (vid, NULL);
 #+end_src
 
+** New codecs — H.265, ProRes, and VP9 alpha
+:PROPERTIES:
+:CUSTOM_ID: new-codecs
+:END:
+The =LrgReelVideoCodec= enum gained four new entries that cover professional
+and alpha-channel workflows:
+
+| Codec                                | Container | Encoder        | Notes                                      |
+|--------------------------------------+-----------+----------------+--------------------------------------------|
+| =LRG_REEL_VIDEO_CODEC_H265=          | .mp4      | libx265        | Smaller files than H.264 at equivalent quality |
+| =LRG_REEL_VIDEO_CODEC_PRORES=        | .mov      | prores_ks      | Apple ProRes 422 for edit-ready delivery   |
+| =LRG_REEL_VIDEO_CODEC_PRORES_ALPHA=  | .mov      | prores_ks      | ProRes 4444 — preserves the alpha channel  |
+| =LRG_REEL_VIDEO_CODEC_VP9_ALPHA=     | .webm     | libvpx-vp9     | VP9 with yuva420p — alpha for the web      |
+
+The =*_ALPHA= codecs transmit the composition's transparency as a real alpha
+channel.  The renderer always produces RGBA8 internally; you only need to
+choose a codec that preserves it.
+
+#+begin_src c
+/* Export with alpha for compositing in a video editor. */
+g_autoptr(LrgReelVideoExporter) vid =
+    lrg_reel_video_exporter_new ("output.mov",
+                                  LRG_REEL_VIDEO_CODEC_PRORES_ALPHA);
+
+lrg_reel_renderer_render_to_exporter (renderer,
+                                       LRG_REEL_EXPORTER (vid),
+                                       &error);
+#+end_src
+
+** Bitrate control
+:PROPERTIES:
+:CUSTOM_ID: bitrate-control
+:END:
+In addition to CRF quality control, a target bitrate (in kbit/s) can be set.
+Setting bitrate takes precedence over CRF for codecs that support it.
+
+#+begin_src c
+/* Target 8 Mbit/s — useful for streaming delivery. */
+lrg_reel_video_exporter_set_bitrate (vid, 8000);
+#+end_src
+
+** Render a single still with LrgReelRenderer
+:PROPERTIES:
+:CUSTOM_ID: render-still
+:END:
+=lrg_reel_renderer_render_still()= renders a single frame and writes it
+directly to an image file.  It is a convenience wrapper around
+=render_frame()= + =grl_image_export_to_file()=, but keeps the exporter
+abstraction out of the way for quick single-frame use.
+
+#+begin_src c
+g_autoptr(LrgReelRenderer) renderer = lrg_reel_renderer_new (reel);
+g_autoptr(GError) error = NULL;
+
+if (!lrg_reel_renderer_render_still (renderer, 30, "preview.png", &error))
+{
+    g_printerr ("Still render failed: %s\n", error->message);
+    return 1;
+}
+#+end_src
+
+The output format is inferred from the file extension (=.png= → PNG, =.jpg=/=.jpeg= → JPEG).
+
+** LrgReelAudioExporter — audio-only output
+:PROPERTIES:
+:CUSTOM_ID: lrgreelaudioxporter
+:END:
+Write a mixed =LrgWaveData= to an audio file without rendering any video
+frames.  WAV is written in-process; MP3, AAC, and FLAC are transcoded via an
+ffmpeg subprocess.
+
+#+begin_src c
+g_autoptr(LrgWaveData) mix = lrg_reel_audio_track_mix (audio_track, &error);
+if (mix == NULL) { /* handle error */ }
+
+g_autoptr(LrgReelAudioExporter) ae =
+    lrg_reel_audio_exporter_new ("soundtrack.mp3", LRG_REEL_AUDIO_FORMAT_MP3);
+lrg_reel_audio_exporter_set_bitrate (ae, 256);  /* kbit/s */
+
+if (!lrg_reel_audio_exporter_export (ae, mix, &error))
+{
+    g_printerr ("Audio export failed: %s\n", error->message);
+}
+#+end_src
+
+| =LrgReelAudioFormat=            | File | Encoder        |
+|---------------------------------+------+----------------|
+| =LRG_REEL_AUDIO_FORMAT_WAV=     | .wav | in-process PCM |
+| =LRG_REEL_AUDIO_FORMAT_MP3=     | .mp3 | libmp3lame     |
+| =LRG_REEL_AUDIO_FORMAT_AAC=     | .m4a | AAC            |
+| =LRG_REEL_AUDIO_FORMAT_FLAC=    | .flac| FLAC lossless  |
+
 ** Pitfalls
 :PROPERTIES:
 :CUSTOM_ID: pitfalls
@@ -170,3 +262,9 @@ lrg_reel_video_exporter_set_ffmpeg_path (vid, NULL);
   If =add_frame()= fails mid-run, previously written frames remain on disk.
 - =LrgReelExporter= is derivable; you can implement a custom sink by subclassing
   it and overriding the =begin= / =add_frame= / =finish= vfuncs.
+- =LRG_REEL_VIDEO_CODEC_H265= requires =libx265= to be compiled into the system
+  ffmpeg.  ProRes and VP9-alpha similarly require =prores_ks= and =libvpx-vp9=.
+  Test with =lrg_reel_video_exporter_is_ffmpeg_available()= and check the codec
+  by attempting a short test encode if codec availability matters at runtime.
+- =lrg_reel_renderer_render_still()= infers the image format from the file
+  extension.  An unknown extension falls back to PNG.

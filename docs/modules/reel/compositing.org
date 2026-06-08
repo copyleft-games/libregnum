@@ -1,0 +1,291 @@
+* Compositing — layer pool and effect chain
+:PROPERTIES:
+:CUSTOM_ID: compositing-layer-pool-effect-chain
+:END:
+When a clip carries a non-identity transform, a non-normal blend mode, or at
+least one =LrgReelEffect=, the renderer routes it through a compositing path:
+the clip is rendered into a temporary off-screen layer, the effect chain is
+applied to that layer in order, and the result is blended onto the frame using
+the clip's opacity and blend mode.  Clips that have none of those properties set
+are rasterised directly onto the frame canvas with no extra allocation.
+
+The layer pool keeps a small cache of reusable off-screen buffers so that most
+frames allocate nothing.
+
+** LrgReelEffect — the filter base class
+:PROPERTIES:
+:CUSTOM_ID: lrgreeleffect
+:END:
+=LrgReelEffect= is a *derivable* GObject.  Concrete effects subclass it and
+override the =apply= vfunc, which receives the clip's composited =GrlImage=
+and may mutate it in place.
+
+#+begin_src c
+struct _LrgReelEffectClass
+{
+    GObjectClass parent_class;
+
+    void (*apply) (LrgReelEffect  *self,
+                   GrlImage       *image,
+                   LrgReelContext *ctx);
+
+    gpointer _reserved[8];
+};
+#+end_src
+
+Effects can be individually enabled or disabled without removing them from the
+chain:
+
+#+begin_src c
+lrg_reel_effect_set_enabled (effect, FALSE);  /* skip this pass */
+gboolean on = lrg_reel_effect_get_enabled (effect);
+#+end_src
+
+To attach effects to a clip see [[file:clips.org][clips.org]] § "Per-clip effects".
+
+** LrgReelBlurEffect — box blur
+:PROPERTIES:
+:CUSTOM_ID: lrgreelblureffect
+:END:
+Applies an isotropic box blur with a configurable pixel radius.  A radius ≤ 0
+is a no-op.
+
+| Property   | Accessor                              | Range   | Default |
+|------------+---------------------------------------+---------+---------|
+| =radius=   | =lrg_reel_blur_effect_set_radius()=   | ≥ 0 px  | —       |
+
+#+begin_src c
+g_autoptr(LrgReelBlurEffect) blur = lrg_reel_blur_effect_new (12);
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (blur));
+
+/* Animate the radius. */
+lrg_reel_blur_effect_set_radius (blur,
+    (gint) lrg_reel_interpolate_clamped ((gdouble) frame,
+                                          0.0, 20.0,
+                                          20.0, 0.0,
+                                          LRG_EASING_EASE_OUT_QUAD));
+#+end_src
+
+*** Pitfall
+
+Box blur is O(width × height × radius).  Very large radii on large clips can
+be slow; chain two passes with a smaller radius rather than one pass with a
+large radius if quality is not critical.
+
+** LrgReelBloomEffect — highlight glow
+:PROPERTIES:
+:CUSTOM_ID: lrgreelbloomeffect
+:END:
+Extracts pixels brighter than a luminance threshold, blurs them, and additively
+blends the result back over the original image.
+
+| Property      | Accessor                                 | Range     | Default |
+|---------------+------------------------------------------+-----------+---------|
+| =threshold=   | =lrg_reel_bloom_effect_set_threshold()=  | 0 – 255   | —       |
+| =blur_radius= | =lrg_reel_bloom_effect_set_blur_radius()=| > 0 px    | —       |
+| =intensity=   | =lrg_reel_bloom_effect_set_intensity()=  | 0.0 – 1.0 | —       |
+
+#+begin_src c
+/* Bright highlights (> 200) glow softly. */
+g_autoptr(LrgReelBloomEffect) bloom =
+    lrg_reel_bloom_effect_new (200,   /* threshold */
+                                8,    /* blur_radius */
+                                0.6); /* intensity */
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (bloom));
+#+end_src
+
+*** Pitfall
+
+Bloom makes a copy of the image before blurring.  It is more expensive than a
+plain blur of equivalent radius.
+
+** LrgReelColorGradeEffect — brightness / contrast / saturation
+:PROPERTIES:
+:CUSTOM_ID: lrgreelcolorgadeeffect
+:END:
+Per-pixel color grade applied in linear RGB.
+
+| Property      | Accessor                                         | Range      | Default |
+|---------------+--------------------------------------------------+------------+---------|
+| =brightness=  | =lrg_reel_color_grade_effect_set_brightness()=   | -1.0 – 1.0 | 0.0     |
+| =contrast=    | =lrg_reel_color_grade_effect_set_contrast()=     | 0.5 – 2.0  | 1.0     |
+| =saturation=  | =lrg_reel_color_grade_effect_set_saturation()=   | 0.0 – 2.0  | 1.0     |
+
+#+begin_src c
+g_autoptr(LrgReelColorGradeEffect) grade =
+    lrg_reel_color_grade_effect_new ();
+lrg_reel_color_grade_effect_set_brightness (grade, -0.1);  /* slightly dark */
+lrg_reel_color_grade_effect_set_contrast   (grade,  1.2);  /* boost contrast */
+lrg_reel_color_grade_effect_set_saturation (grade,  0.8);  /* desaturate a little */
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (grade));
+#+end_src
+
+Brightness is an additive offset to the [0, 1] channel values (0.0 = no change).
+Contrast pivots around 0.5 (1.0 = no change).  Saturation is a multiplier for
+the chroma component (1.0 = no change, 0.0 = greyscale, 2.0 = double chroma).
+
+** LrgReelVignetteEffect — dark-edge vignette
+:PROPERTIES:
+:CUSTOM_ID: lrgreelVignetteEffect
+:END:
+Applies a radial darkening from the frame centre outward, mimicking a
+lens-vignette.
+
+| Property    | Accessor                                     | Range     | Default |
+|-------------+----------------------------------------------+-----------+---------|
+| =intensity= | =lrg_reel_vignette_effect_set_intensity()=   | 0.0 – 1.0 | 0.5     |
+| =radius=    | =lrg_reel_vignette_effect_set_radius()=      | 0.0 – 1.0 | 0.6     |
+
+The =radius= is normalised: 0.0 darkens from the very centre, 1.0 starts
+darkening only at the extreme corner.  Values around 0.5 – 0.7 are typical.
+
+#+begin_src c
+g_autoptr(LrgReelVignetteEffect) vig =
+    lrg_reel_vignette_effect_new ();           /* defaults: 0.5 / 0.6 */
+lrg_reel_vignette_effect_set_intensity (vig, 0.7);
+lrg_reel_vignette_effect_set_radius    (vig, 0.55);
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (vig));
+#+end_src
+
+** LrgReelGrainEffect — animated film grain
+:PROPERTIES:
+:CUSTOM_ID: lrgreelgraineffect
+:END:
+Adds per-frame pseudo-random luminance noise that changes every frame,
+producing the look of film grain or sensor noise.  The noise is driven by the
+=LrgReelContext= frame number, so it is deterministic across render passes.
+
+| Property    | Accessor                                  | Range     | Default |
+|-------------+-------------------------------------------+-----------+---------|
+| =amount=    | =lrg_reel_grain_effect_set_amount()=      | 0.0 – 1.0 | 0.15    |
+| =frequency= | =lrg_reel_grain_effect_set_frequency()=   | > 0.0     | 1.0     |
+
+Higher =frequency= values produce finer-grained noise.
+
+#+begin_src c
+g_autoptr(LrgReelGrainEffect) grain = lrg_reel_grain_effect_new ();
+lrg_reel_grain_effect_set_amount    (grain, 0.1);   /* subtle */
+lrg_reel_grain_effect_set_frequency (grain, 2.0);   /* fine grain */
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (grain));
+#+end_src
+
+** LrgReelChromaKeyEffect — color keying
+:PROPERTIES:
+:CUSTOM_ID: lrgreelchromakeyeffect
+:END:
+Makes pixels whose color is within a configurable distance of a key color
+transparent.  The =smoothness= property controls a soft-edge transition zone
+around the hard =threshold= boundary.
+
+| Property      | Accessor                                         | Range     | Default |
+|---------------+--------------------------------------------------+-----------+---------|
+| =key_color=   | =lrg_reel_chroma_key_effect_set_key_color()=     | =GrlColor=| —       |
+| =threshold=   | =lrg_reel_chroma_key_effect_set_threshold()=     | 0.0 – 1.0 | 0.3     |
+| =smoothness=  | =lrg_reel_chroma_key_effect_set_smoothness()=    | 0.0 – 1.0 | 0.1     |
+
+#+begin_src c
+/* Key out a green background. */
+GrlColor green_screen = { 0, 220, 0, 255 };
+g_autoptr(LrgReelChromaKeyEffect) key =
+    lrg_reel_chroma_key_effect_new (&green_screen);
+lrg_reel_chroma_key_effect_set_threshold  (key, 0.35);
+lrg_reel_chroma_key_effect_set_smoothness (key, 0.15);
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (key));
+#+end_src
+
+*** Pitfall
+
+Chroma keying works best when the background color is far from any foreground
+color in RGB space.  Fringe spill from the key color onto foreground edges will
+remain visible; a second =LrgReelColorGradeEffect= pass to desaturate the green
+channel can help.
+
+** LrgReelDropShadowEffect — offset drop shadow
+:PROPERTIES:
+:CUSTOM_ID: lrgreeldropshadoweffect
+:END:
+Renders a blurred shadow offset copy of the clip behind the original pixels.
+
+| Property      | Accessor                                           | Range     | Default         |
+|---------------+----------------------------------------------------+-----------+-----------------|
+| =offset_x=    | =lrg_reel_drop_shadow_effect_set_offset_x()=       | any px    | 4               |
+| =offset_y=    | =lrg_reel_drop_shadow_effect_set_offset_y()=       | any px    | 4               |
+| =blur_radius= | =lrg_reel_drop_shadow_effect_set_blur_radius()=    | ≥ 0 px    | 6               |
+| =shadow_color=| =lrg_reel_drop_shadow_effect_set_shadow_color()=   | =GrlColor=| semi-transparent black |
+
+#+begin_src c
+g_autoptr(LrgReelDropShadowEffect) shadow =
+    lrg_reel_drop_shadow_effect_new ();       /* defaults */
+lrg_reel_drop_shadow_effect_set_offset_x    (shadow,  6);
+lrg_reel_drop_shadow_effect_set_offset_y    (shadow,  6);
+lrg_reel_drop_shadow_effect_set_blur_radius (shadow, 10);
+
+GrlColor sc = { 0, 0, 0, 160 };
+lrg_reel_drop_shadow_effect_set_shadow_color (shadow, &sc);
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (shadow));
+#+end_src
+
+A =blur_radius= of 0 produces a sharp, hard shadow.
+
+** LrgReelLightLeakEffect — warm radial glow
+:PROPERTIES:
+:CUSTOM_ID: lrgreellightleakeffect
+:END:
+Overlays an animated warm light-leak using additive blending driven by the
+frame number.  The glow position and shape shift gently over time for an
+organic look.
+
+| Property    | Accessor                                     | Range     | Default       |
+|-------------+----------------------------------------------+-----------+---------------|
+| =color=     | =lrg_reel_light_leak_effect_set_color()=     | =GrlColor=| warm orange   |
+| =intensity= | =lrg_reel_light_leak_effect_set_intensity()= | 0.0 – 1.0 | 0.25          |
+
+#+begin_src c
+g_autoptr(LrgReelLightLeakEffect) leak =
+    lrg_reel_light_leak_effect_new ();
+
+GrlColor warm = { 255, 200, 80, 255 };
+lrg_reel_light_leak_effect_set_color     (leak, &warm);
+lrg_reel_light_leak_effect_set_intensity (leak, 0.3);
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (leak));
+#+end_src
+
+** Chaining effects
+:PROPERTIES:
+:CUSTOM_ID: chaining-effects
+:END:
+Effects run in the order they were added.  The output of one effect is the
+input of the next.
+
+#+begin_src c
+/* Color grade first, then add vignette on top, then subtle grain. */
+g_autoptr(LrgReelColorGradeEffect) grade =
+    lrg_reel_color_grade_effect_new ();
+g_autoptr(LrgReelVignetteEffect) vig =
+    lrg_reel_vignette_effect_new ();
+g_autoptr(LrgReelGrainEffect) grain =
+    lrg_reel_grain_effect_new ();
+
+lrg_reel_color_grade_effect_set_contrast (grade, 1.15);
+lrg_reel_vignette_effect_set_intensity   (vig, 0.4);
+lrg_reel_grain_effect_set_amount         (grain, 0.08);
+
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (grade));
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (vig));
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (grain));
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Adding any effect forces the clip onto the compositing path even if the
+  effect is later disabled.  Remove all effects with =lrg_reel_clip_clear_effects()=
+  to return to direct rendering if effects are only conditionally needed.
+- The effect chain operates on the clip's own layer, not the full frame.  An
+  effect on a small text clip will not touch the background or other clips.
+- Effects mutate their =GrlImage= argument in place.  If you write a custom
+  effect subclass, do not retain the image pointer after =apply()= returns.
+- =LrgReelLightLeakEffect= uses the context frame number to animate itself.
+  Its appearance is therefore deterministic but changes per frame; keep this
+  in mind if you want a static look.

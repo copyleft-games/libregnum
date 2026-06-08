@@ -26,6 +26,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../lrg-enums.h"
 
 G_BEGIN_DECLS
 
@@ -168,5 +169,105 @@ LRG_AVAILABLE_IN_ALL
 void
 lrg_reel_clip_set_name (LrgReelClip *self,
                         const gchar *name);
+
+/* ==========================================================================
+ * Transform + blend (composited when non-default; see lrg_reel_clip_render)
+ * ========================================================================== */
+
+/**
+ * lrg_reel_clip_set_transform:
+ * @self: a #LrgReelClip
+ * @x: translation in pixels along X.
+ * @y: translation in pixels along Y.
+ * @scale_x: horizontal scale (1.0 = none).
+ * @scale_y: vertical scale (1.0 = none).
+ * @rotation: rotation in radians (clockwise).
+ *
+ * Convenience setter for the clip's affine transform.  Scale and rotation pivot
+ * about the anchor point (see lrg_reel_clip_set_anchor()).  A non-identity
+ * transform causes the clip to be composited through an off-screen layer.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_clip_set_transform (LrgReelClip *self,
+                             gdouble      x,
+                             gdouble      y,
+                             gdouble      scale_x,
+                             gdouble      scale_y,
+                             gdouble      rotation);
+
+/**
+ * lrg_reel_clip_set_anchor:
+ * @self: a #LrgReelClip
+ * @anchor_x: pivot X as a fraction of the frame width (0..1; default 0.5).
+ * @anchor_y: pivot Y as a fraction of the frame height (0..1; default 0.5).
+ *
+ * Sets the pivot (transform origin) for scale and rotation, expressed as a
+ * fraction of the frame.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_clip_set_anchor (LrgReelClip *self,
+                          gdouble      anchor_x,
+                          gdouble      anchor_y);
+
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_reel_clip_get_x (LrgReelClip *self);
+LRG_AVAILABLE_IN_ALL
+void    lrg_reel_clip_set_x (LrgReelClip *self, gdouble x);
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_reel_clip_get_y (LrgReelClip *self);
+LRG_AVAILABLE_IN_ALL
+void    lrg_reel_clip_set_y (LrgReelClip *self, gdouble y);
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_reel_clip_get_scale_x (LrgReelClip *self);
+LRG_AVAILABLE_IN_ALL
+void    lrg_reel_clip_set_scale_x (LrgReelClip *self, gdouble scale_x);
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_reel_clip_get_scale_y (LrgReelClip *self);
+LRG_AVAILABLE_IN_ALL
+void    lrg_reel_clip_set_scale_y (LrgReelClip *self, gdouble scale_y);
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_reel_clip_get_rotation (LrgReelClip *self);
+LRG_AVAILABLE_IN_ALL
+void    lrg_reel_clip_set_rotation (LrgReelClip *self, gdouble rotation);
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_reel_clip_get_anchor_x (LrgReelClip *self);
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_reel_clip_get_anchor_y (LrgReelClip *self);
+
+LRG_AVAILABLE_IN_ALL
+LrgReelBlendMode lrg_reel_clip_get_blend_mode (LrgReelClip *self);
+LRG_AVAILABLE_IN_ALL
+void             lrg_reel_clip_set_blend_mode (LrgReelClip      *self,
+                                               LrgReelBlendMode  blend_mode);
+
+/**
+ * lrg_reel_clip_add_effect:
+ * @self: a #LrgReelClip
+ * @effect: (transfer none): an #LrgReelEffect to apply to this clip.
+ *
+ * Appends @effect to the clip's effect chain.  Effects run, in order, on the
+ * clip's composited layer before it is blended onto the frame.  Adding an
+ * effect forces the clip onto the compositing path.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_clip_add_effect (LrgReelClip   *self,
+                          LrgReelEffect *effect);
+
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_reel_clip_get_n_effects (LrgReelClip *self);
+
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_clip_clear_effects (LrgReelClip *self);
 
 G_END_DECLS

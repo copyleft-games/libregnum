@@ -28,6 +28,20 @@ Shipped in v1:
 Future ideas: a named-reel registry + CLI renderer, motion blur via sub-frame
 accumulation, nested-clip opacity compositing, and YAML-defined compositions.
 
+### Reel v2 Feature Expansion (`src/reel/`)
+
+Shipped: content clips (solid, gradient, image, text, shape, caption, video),
+per-clip transform/blend/effect chain (blur, bloom, color-grade, vignette, grain,
+chroma-key, drop-shadow, light-leak), media input (`LrgReelVideoSource`/Clip +
+FFT audio analysis), five new transitions (flip, clock-wipe, iris, push, zoom)
+and `LrgReelTransitionSeries`, motion blur (`render_parallel`, `render_range`,
+`set_motion_blur`), GPU FBO capture (`LrgReelGpuRenderer`), new codecs
+(H.265/ProRes/ProRes-alpha/VP9-alpha) and audio-only exporter, OkLab color
+interpolation, bezier easing and noise, path animation (`lrg_reel_path_*`), YAML
+data-driven authoring (`lrg_reel_load_yaml` + schema), `reel` CLI tool
+(info/still/render, codec/crf/threads), and caption/transcription support
+(`LrgReelCaptionClip`, `lrg_reel_transcribe_audio`).  Docs in `docs/modules/reel/`.
+
 ## Immediate Priorities (Finish What's Started)
 
 These are partially-implemented features with explicit TODOs in the codebase.

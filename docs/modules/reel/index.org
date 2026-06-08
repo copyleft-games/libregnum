@@ -15,18 +15,26 @@ procedural video.
 :PROPERTIES:
 :CUSTOM_ID: conceptual-model
 :END:
-| Concept              | Type                   | Role                                                                        |
-|----------------------+------------------------+-----------------------------------------------------------------------------|
-| Composition          | =LrgReel=              | Registers id, resolution, fps, total duration, and the ordered clip stack   |
-| Current frame        | =LrgReelContext=       | Carries absolute frame + offset stack; clips read =get_frame()= from it     |
-| Timed layer          | =LrgReelClip=          | Draws itself onto a canvas for the current relative frame                   |
-| Time remapping       | =LrgReelSequence=      | Shifts, sequences, loops, or freezes time for a group of child clips        |
-| Animation verbs      | =lrg_reel_interpolate= / =lrg_reel_spring= | Pure functions mapping a frame number to a value    |
-| Frame engine         | =LrgReelRenderer=      | Clears the canvas, composites active clips in z-order, returns =GrlImage=   |
-| Output sink          | =LrgReelExporter=      | Abstract: GIF / image-sequence / MP4 concrete subclasses                    |
-| CPU crossfade        | =LrgReelTransition=    | Blends two =GrlImage= frames at a progress value (fade/wipe/dissolve/slide) |
-| Offline audio mix    | =LrgReelAudioTrack=    | Places timed wave clips on a timeline and mixes to =LrgWaveData=            |
-| Live preview         | =LrgReelPlayer=        | Opens a GPU window for interactive playback; the only windowed component     |
+| Concept              | Type                              | Role                                                                           |
+|----------------------+-----------------------------------+--------------------------------------------------------------------------------|
+| Composition          | =LrgReel=                         | Registers id, resolution, fps, total duration, and the ordered clip stack      |
+| Current frame        | =LrgReelContext=                  | Carries absolute frame + offset stack; clips read =get_frame()= from it        |
+| Timed layer          | =LrgReelClip=                     | Draws itself onto a canvas for the current relative frame                      |
+| Content clips        | =LrgReelSolidClip= et al.         | Ready-made clips: solid, gradient, image, text, shape, caption, video          |
+| Time remapping       | =LrgReelSequence=                 | Shifts, sequences, loops, or freezes time for a group of child clips           |
+| Clip chain           | =LrgReelTransitionSeries=         | Auto-sequences segments with overlapping transitions                           |
+| Animation verbs      | =lrg_reel_interpolate= / spring   | Pure functions mapping a frame number to a value (color, noise, bezier too)    |
+| Per-clip filter      | =LrgReelEffect=                   | Post-draw image filter: blur, bloom, grade, vignette, grain, key, shadow, leak |
+| Frame engine         | =LrgReelRenderer=                 | Clears the canvas, composites active clips, motion blur, parallel render       |
+| GPU capture          | =LrgReelGpuRenderer=              | GL framebuffer capture for engine-rendered scenes                              |
+| Output sink          | =LrgReelExporter=                 | Abstract: GIF / image-sequence / MP4 / audio-only concrete subclasses          |
+| CPU crossfade        | =LrgReelTransition=               | Blends two =GrlImage= frames at a progress value (9 types)                     |
+| Offline audio mix    | =LrgReelAudioTrack=               | Places timed wave clips on a timeline and mixes to =LrgWaveData=               |
+| Video source         | =LrgReelVideoSource=              | Decodes an existing video file; frames available on demand                     |
+| Audio analysis       | =lrg_reel_audio_spectrum= et al.  | Per-frame FFT spectrum, waveform, and RMS level                                |
+| Data-driven          | =lrg_reel_load_yaml=              | Builds an =LrgReel= from a YAML description file                               |
+| CLI                  | =reel= binary                     | info / still / render subcommands with codec and thread options                |
+| Live preview         | =LrgReelPlayer=                   | Opens a GPU window for interactive playback; the only windowed component       |
 
 ** Quick start
 :PROPERTIES:
@@ -118,59 +126,120 @@ Key points:
 :END:
 - [[file:composition.org][composition.org]] — =LrgReel=: id, dimensions, fps, duration, clip z-order, default props
 - [[file:timing.org][timing.org]] — =LrgReelContext= + =LrgReelSequence=: relative-frame model and all four modes
-- [[file:animation.org][animation.org]] — =lrg_reel_interpolate=, =lrg_reel_spring=, =LrgReelSpringConfig=
-- [[file:clips.org][clips.org]] — =LrgReelClip=: subclassing vs render-function authoring
-- [[file:rendering.org][rendering.org]] — =LrgReelRenderer=: offline loop, per-frame ownership, progress callback
-- [[file:exporters.org][exporters.org]] — GIF, image-sequence, and video (ffmpeg) exporters
-- [[file:transitions.org][transitions.org]] — CPU crossfades: fade, wipe, dissolve, slide
+- [[file:animation.org][animation.org]] — =lrg_reel_interpolate=, =lrg_reel_spring=, color interpolation (OkLab), bezier easing, noise/random
+- [[file:clips.org][clips.org]] — =LrgReelClip=: transform/blend/effects + solid/gradient/image/text/shape content clips
+- [[file:compositing.org][compositing.org]] — layer-pool compositor, =LrgReelEffect= chain: blur, bloom, color-grade, vignette, grain, chroma-key, drop-shadow, light-leak
+- [[file:media.org][media.org]] — =LrgReelVideoSource= / =LrgReelVideoClip= (decode/trim/rate/loop) + FFT audio analysis
+- [[file:rendering.org][rendering.org]] — =LrgReelRenderer=: offline loop, range/parallel render, motion blur, progress callback
+- [[file:exporters.org][exporters.org]] — GIF, image-sequence, video (H.264/H.265/ProRes/VP9/alpha), audio-only, =render_still=
+- [[file:transitions.org][transitions.org]] — CPU crossfades: fade, wipe, dissolve, slide + flip, clock-wipe, iris, push, zoom + =LrgReelTransitionSeries=
+- [[file:motion.org][motion.org]] — motion blur detail + =lrg_reel_path_length= / =point_at= / =evolve=
 - [[file:audio.org][audio.org]] — =LrgReelAudioTrack=: timed clips, offline mix, MP4 mux
+- [[file:data-yaml.org][data-yaml.org]] — YAML reel schema, =lrg_reel_load_yaml=, =lrg_reel_register_types=
+- [[file:cli.org][cli.org]] — =reel= command-line tool: =info= / =still= / =render=, codec options
+- [[file:captions.org][captions.org]] — =LrgReelCaptionClip= (SRT/VTT), styling, =lrg_reel_transcribe_audio=
+- [[file:gpu-capture.org][gpu-capture.org]] — =LrgReelGpuRenderer=: display-gated FBO capture, engine-as-layer
 - [[file:player.org][player.org]] — =LrgReelPlayer=: live preview window
 
 ** Key classes
 :PROPERTIES:
 :CUSTOM_ID: key-classes
 :END:
-| Class                        | Description                                     |
-|------------------------------+-------------------------------------------------|
-| =LrgReel=                    | Composition descriptor (final type)             |
-| =LrgReelContext=             | Per-frame state carrier (final type)            |
-| =LrgReelClip=                | Timed renderable layer (derivable)              |
-| =LrgReelSequence=            | Time-remapping group (final, extends clip)      |
-| =LrgReelRenderer=            | Headless frame compositor (final)               |
-| =LrgReelExporter=            | Abstract output sink (derivable)                |
-| =LrgReelGifExporter=         | Animated GIF writer (final)                     |
-| =LrgReelSeqExporter=         | Numbered image-sequence writer (final)          |
-| =LrgReelVideoExporter=       | ffmpeg-backed MP4/WebM writer (final)           |
-| =LrgReelTransition=          | CPU crossfade base (derivable)                  |
-| =LrgReelFadeTransition=      | Cross-fade (final)                              |
-| =LrgReelWipeTransition=      | Hard-edge wipe (final)                          |
-| =LrgReelDissolveTransition=  | Per-pixel dissolve (final)                      |
-| =LrgReelSlideTransition=     | Slide-in (final)                                |
-| =LrgReelAudioTrack=          | Offline audio timeline + mixer (final)          |
-| =LrgReelPlayer=              | Live preview window (final)                     |
+| Class                          | Description                                               |
+|--------------------------------+-----------------------------------------------------------|
+| =LrgReel=                      | Composition descriptor (final type)                       |
+| =LrgReelContext=               | Per-frame state carrier (final type)                      |
+| =LrgReelClip=                  | Timed renderable layer (derivable)                        |
+| =LrgReelSolidClip=             | Full-frame solid fill (final)                             |
+| =LrgReelGradientClip=          | Linear or radial gradient fill (final)                    |
+| =LrgReelImageClip=             | Static image layer (final)                                |
+| =LrgReelTextClip=              | Text block layer (final)                                  |
+| =LrgReelShapeClip=             | Vector shape layer (final)                                |
+| =LrgReelCaptionClip=           | Subtitle caption overlay (final)                          |
+| =LrgReelVideoClip=             | Decoded video source layer (final)                        |
+| =LrgReelVideoSource=           | ffmpeg-backed video decoder (final)                       |
+| =LrgReelSequence=              | Time-remapping group (final, extends clip)                |
+| =LrgReelTransitionSeries=      | Auto-sequenced clip chain with transitions (final)        |
+| =LrgReelEffect=                | Per-clip image filter base (derivable)                    |
+| =LrgReelBlurEffect=            | Box blur (final)                                          |
+| =LrgReelBloomEffect=           | Highlight glow (final)                                    |
+| =LrgReelColorGradeEffect=      | Brightness/contrast/saturation (final)                    |
+| =LrgReelVignetteEffect=        | Dark-edge vignette (final)                                |
+| =LrgReelGrainEffect=           | Animated film grain (final)                               |
+| =LrgReelChromaKeyEffect=       | Color-based transparency keying (final)                   |
+| =LrgReelDropShadowEffect=      | Offset drop shadow (final)                                |
+| =LrgReelLightLeakEffect=       | Warm radial light-leak overlay (final)                    |
+| =LrgReelRenderer=              | Headless frame compositor (final)                         |
+| =LrgReelGpuRenderer=           | GL framebuffer capture renderer (final)                   |
+| =LrgReelExporter=              | Abstract output sink (derivable)                          |
+| =LrgReelGifExporter=           | Animated GIF writer (final)                               |
+| =LrgReelSeqExporter=           | Numbered image-sequence writer (final)                    |
+| =LrgReelVideoExporter=         | ffmpeg-backed video writer (final)                        |
+| =LrgReelAudioExporter=         | Audio-only file writer (final)                            |
+| =LrgReelTransition=            | CPU crossfade base (derivable)                            |
+| =LrgReelFadeTransition=        | Cross-fade (final)                                        |
+| =LrgReelWipeTransition=        | Hard-edge wipe (final)                                    |
+| =LrgReelDissolveTransition=    | Per-pixel dissolve (final)                                |
+| =LrgReelSlideTransition=       | Slide-in (final)                                          |
+| =LrgReelFlipTransition=        | Card-flip (final)                                         |
+| =LrgReelClockWipeTransition=   | Angular sweep (final)                                     |
+| =LrgReelIrisTransition=        | Circular iris reveal (final)                              |
+| =LrgReelPushTransition=        | Simultaneous push (final)                                 |
+| =LrgReelZoomTransition=        | Centre zoom cross-fade (final)                            |
+| =LrgReelAudioTrack=            | Offline audio timeline + mixer (final)                    |
+| =LrgReelPlayer=                | Live preview window (final)                               |
 
 ** Files
 :PROPERTIES:
 :CUSTOM_ID: files
 :END:
-| File                                       | Description                       |
-|--------------------------------------------+-----------------------------------|
-| =src/reel/lrg-reel.h=                      | Composition type                  |
-| =src/reel/lrg-reel-context.h=              | Per-frame context                 |
-| =src/reel/lrg-reel-clip.h=                 | Clip base class                   |
-| =src/reel/lrg-reel-sequence.h=             | Time-remapping sequences          |
-| =src/reel/lrg-reel-anim.h=                 | Interpolate + spring              |
-| =src/reel/lrg-reel-renderer.h=             | Offline renderer                  |
-| =src/reel/lrg-reel-exporter.h=             | Abstract exporter base            |
-| =src/reel/lrg-reel-gif-exporter.h=         | Animated GIF sink                 |
-| =src/reel/lrg-reel-seq-exporter.h=         | Image sequence sink               |
-| =src/reel/lrg-reel-video-exporter.h=       | ffmpeg video sink                 |
-| =src/reel/lrg-reel-transition.h=           | Transition base class             |
-| =src/reel/lrg-reel-fade-transition.h=      | Cross-fade                        |
-| =src/reel/lrg-reel-wipe-transition.h=      | Hard-edge wipe                    |
-| =src/reel/lrg-reel-dissolve-transition.h=  | Per-pixel dissolve                |
-| =src/reel/lrg-reel-slide-transition.h=     | Slide-in                          |
-| =src/reel/lrg-reel-audio-track.h=          | Audio timeline + mixer            |
-| =src/reel/lrg-reel-player.h=              | Live preview window               |
-| =examples/reel-hello.c=                    | Minimal GIF example               |
-| =examples/reel-showcase.c=                 | Layers + audio + MP4 example      |
+| File                                          | Description                                 |
+|-----------------------------------------------+---------------------------------------------|
+| =src/reel/lrg-reel.h=                         | Composition type                            |
+| =src/reel/lrg-reel-context.h=                 | Per-frame context                           |
+| =src/reel/lrg-reel-clip.h=                    | Clip base class + transform/blend/effects   |
+| =src/reel/lrg-reel-solid-clip.h=              | Solid fill clip                             |
+| =src/reel/lrg-reel-gradient-clip.h=           | Gradient fill clip                          |
+| =src/reel/lrg-reel-image-clip.h=              | Static image clip                           |
+| =src/reel/lrg-reel-text-clip.h=               | Text block clip                             |
+| =src/reel/lrg-reel-shape-clip.h=              | Vector shape clip                           |
+| =src/reel/lrg-reel-caption-clip.h=            | Subtitle caption clip                       |
+| =src/reel/lrg-reel-video-source.h=            | ffmpeg video decoder                        |
+| =src/reel/lrg-reel-video-clip.h=              | Video layer clip                            |
+| =src/reel/lrg-reel-sequence.h=                | Time-remapping sequences                    |
+| =src/reel/lrg-reel-transition-series.h=       | Auto-sequenced clip chain                   |
+| =src/reel/lrg-reel-effect.h=                  | Effect base class                           |
+| =src/reel/lrg-reel-blur-effect.h=             | Box blur                                    |
+| =src/reel/lrg-reel-bloom-effect.h=            | Highlight bloom                             |
+| =src/reel/lrg-reel-color-grade-effect.h=      | Color grade                                 |
+| =src/reel/lrg-reel-vignette-effect.h=         | Vignette                                    |
+| =src/reel/lrg-reel-grain-effect.h=            | Film grain                                  |
+| =src/reel/lrg-reel-chroma-key-effect.h=       | Chroma key                                  |
+| =src/reel/lrg-reel-drop-shadow-effect.h=      | Drop shadow                                 |
+| =src/reel/lrg-reel-light-leak-effect.h=       | Light leak overlay                          |
+| =src/reel/lrg-reel-anim.h=                    | Interpolate + spring + color + noise        |
+| =src/reel/lrg-reel-path.h=                    | Path arc-length / point-at / evolve         |
+| =src/reel/lrg-reel-audio-analysis.h=          | FFT spectrum, waveform, RMS level           |
+| =src/reel/lrg-reel-renderer.h=                | Offline renderer + motion blur + parallel   |
+| =src/reel/lrg-reel-gpu-renderer.h=            | GL framebuffer capture renderer             |
+| =src/reel/lrg-reel-exporter.h=                | Abstract exporter base                      |
+| =src/reel/lrg-reel-gif-exporter.h=            | Animated GIF sink                           |
+| =src/reel/lrg-reel-seq-exporter.h=            | Image sequence sink                         |
+| =src/reel/lrg-reel-video-exporter.h=          | ffmpeg video sink (H.264/H.265/ProRes/VP9)  |
+| =src/reel/lrg-reel-audio-exporter.h=          | Audio-only sink                             |
+| =src/reel/lrg-reel-loader.h=                  | YAML reel loader                            |
+| =src/reel/lrg-reel-transition.h=              | Transition base class                       |
+| =src/reel/lrg-reel-fade-transition.h=         | Cross-fade                                  |
+| =src/reel/lrg-reel-wipe-transition.h=         | Hard-edge wipe                              |
+| =src/reel/lrg-reel-dissolve-transition.h=     | Per-pixel dissolve                          |
+| =src/reel/lrg-reel-slide-transition.h=        | Slide-in                                    |
+| =src/reel/lrg-reel-flip-transition.h=         | Card flip                                   |
+| =src/reel/lrg-reel-clock-wipe-transition.h=   | Angular sweep                               |
+| =src/reel/lrg-reel-iris-transition.h=         | Circular iris                               |
+| =src/reel/lrg-reel-push-transition.h=         | Simultaneous push                           |
+| =src/reel/lrg-reel-zoom-transition.h=         | Centre zoom                                 |
+| =src/reel/lrg-reel-audio-track.h=             | Audio timeline + mixer                      |
+| =src/reel/lrg-reel-player.h=                  | Live preview window                         |
+| =src/reel-cli/lrg-reel-cli.c=                 | =reel= command-line tool                    |
+| =examples/reel-hello.c=                       | Minimal GIF example                         |
+| =examples/reel-showcase.c=                    | Layers + audio + MP4 example                |

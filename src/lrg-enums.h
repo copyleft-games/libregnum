@@ -4859,20 +4859,52 @@ GType lrg_reel_image_format_get_type (void) G_GNUC_CONST;
  * LrgReelVideoCodec:
  * @LRG_REEL_VIDEO_CODEC_H264: H.264 video in an MP4 container (libx264).
  * @LRG_REEL_VIDEO_CODEC_VP9: VP9 video in a WebM container (libvpx-vp9).
+ * @LRG_REEL_VIDEO_CODEC_H265: H.265/HEVC video in an MP4 container (libx265).
+ * @LRG_REEL_VIDEO_CODEC_PRORES: Apple ProRes 422 in a MOV container (prores_ks).
+ * @LRG_REEL_VIDEO_CODEC_PRORES_ALPHA: ProRes 4444 with an alpha channel (MOV).
+ * @LRG_REEL_VIDEO_CODEC_VP9_ALPHA: VP9 with alpha (yuva420p) in a WebM container.
  *
- * Video codec/container selection for the ffmpeg-backed video exporter.
+ * Video codec/container selection for the ffmpeg-backed video exporter.  The
+ * `*_ALPHA` codecs preserve the composition's transparency.
  *
  * Since: 1.0
  */
 typedef enum
 {
     LRG_REEL_VIDEO_CODEC_H264,
-    LRG_REEL_VIDEO_CODEC_VP9
+    LRG_REEL_VIDEO_CODEC_VP9,
+    LRG_REEL_VIDEO_CODEC_H265,
+    LRG_REEL_VIDEO_CODEC_PRORES,
+    LRG_REEL_VIDEO_CODEC_PRORES_ALPHA,
+    LRG_REEL_VIDEO_CODEC_VP9_ALPHA
 } LrgReelVideoCodec;
 
 LRG_AVAILABLE_IN_ALL
 GType lrg_reel_video_codec_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_REEL_VIDEO_CODEC (lrg_reel_video_codec_get_type ())
+
+/**
+ * LrgReelAudioFormat:
+ * @LRG_REEL_AUDIO_FORMAT_WAV: uncompressed PCM WAV.
+ * @LRG_REEL_AUDIO_FORMAT_MP3: MP3 (libmp3lame).
+ * @LRG_REEL_AUDIO_FORMAT_AAC: AAC in an M4A container.
+ * @LRG_REEL_AUDIO_FORMAT_FLAC: FLAC lossless.
+ *
+ * Output format for the audio-only exporter.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_REEL_AUDIO_FORMAT_WAV,
+    LRG_REEL_AUDIO_FORMAT_MP3,
+    LRG_REEL_AUDIO_FORMAT_AAC,
+    LRG_REEL_AUDIO_FORMAT_FLAC
+} LrgReelAudioFormat;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reel_audio_format_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_REEL_AUDIO_FORMAT (lrg_reel_audio_format_get_type ())
 
 /**
  * LrgReelTransitionDirection:
@@ -4896,5 +4928,116 @@ typedef enum
 LRG_AVAILABLE_IN_ALL
 GType lrg_reel_transition_direction_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_REEL_TRANSITION_DIRECTION (lrg_reel_transition_direction_get_type ())
+
+/**
+ * LrgReelBlendMode:
+ * @LRG_REEL_BLEND_NORMAL: standard source-over compositing.
+ * @LRG_REEL_BLEND_MULTIPLY: multiply (darken).
+ * @LRG_REEL_BLEND_SCREEN: screen (lighten).
+ * @LRG_REEL_BLEND_OVERLAY: overlay (multiply + screen).
+ * @LRG_REEL_BLEND_SOFT_LIGHT: soft light.
+ * @LRG_REEL_BLEND_ADD: additive (linear dodge).
+ * @LRG_REEL_BLEND_COLOR_DODGE: color dodge.
+ * @LRG_REEL_BLEND_COLOR_BURN: color burn.
+ *
+ * Per-clip layer blend mode used when a reel clip is composited onto the frame.
+ * Maps onto graylib's #GrlLayerBlendMode.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_REEL_BLEND_NORMAL,
+    LRG_REEL_BLEND_MULTIPLY,
+    LRG_REEL_BLEND_SCREEN,
+    LRG_REEL_BLEND_OVERLAY,
+    LRG_REEL_BLEND_SOFT_LIGHT,
+    LRG_REEL_BLEND_ADD,
+    LRG_REEL_BLEND_COLOR_DODGE,
+    LRG_REEL_BLEND_COLOR_BURN
+} LrgReelBlendMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reel_blend_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_REEL_BLEND_MODE (lrg_reel_blend_mode_get_type ())
+
+/**
+ * LrgReelFit:
+ * @LRG_REEL_FIT_FILL: stretch to fill the box, ignoring aspect ratio.
+ * @LRG_REEL_FIT_CONTAIN: scale to fit inside the box (letterbox), keep aspect.
+ * @LRG_REEL_FIT_COVER: scale to cover the box (crop), keep aspect.
+ * @LRG_REEL_FIT_STRETCH: alias of fill.
+ * @LRG_REEL_FIT_NONE: draw at native size, top-left aligned.
+ *
+ * How an image or video is fitted into its destination box.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_REEL_FIT_FILL,
+    LRG_REEL_FIT_CONTAIN,
+    LRG_REEL_FIT_COVER,
+    LRG_REEL_FIT_STRETCH,
+    LRG_REEL_FIT_NONE
+} LrgReelFit;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reel_fit_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_REEL_FIT (lrg_reel_fit_get_type ())
+
+/**
+ * LrgReelShapeKind:
+ * @LRG_REEL_SHAPE_RECT: axis-aligned rectangle.
+ * @LRG_REEL_SHAPE_ROUNDED_RECT: rounded rectangle.
+ * @LRG_REEL_SHAPE_CIRCLE: circle.
+ * @LRG_REEL_SHAPE_ELLIPSE: ellipse.
+ * @LRG_REEL_SHAPE_TRIANGLE: triangle.
+ * @LRG_REEL_SHAPE_STAR: n-pointed star.
+ * @LRG_REEL_SHAPE_LINE: straight line.
+ * @LRG_REEL_SHAPE_POLYGON: arbitrary polygon.
+ * @LRG_REEL_SHAPE_PATH: arbitrary #GrlPath.
+ *
+ * The kind of shape drawn by an #LrgReelShapeClip.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_REEL_SHAPE_RECT,
+    LRG_REEL_SHAPE_ROUNDED_RECT,
+    LRG_REEL_SHAPE_CIRCLE,
+    LRG_REEL_SHAPE_ELLIPSE,
+    LRG_REEL_SHAPE_TRIANGLE,
+    LRG_REEL_SHAPE_STAR,
+    LRG_REEL_SHAPE_LINE,
+    LRG_REEL_SHAPE_POLYGON,
+    LRG_REEL_SHAPE_PATH
+} LrgReelShapeKind;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reel_shape_kind_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_REEL_SHAPE_KIND (lrg_reel_shape_kind_get_type ())
+
+/**
+ * LrgReelTextAlign:
+ * @LRG_REEL_TEXT_ALIGN_LEFT: left-aligned.
+ * @LRG_REEL_TEXT_ALIGN_CENTER: centered.
+ * @LRG_REEL_TEXT_ALIGN_RIGHT: right-aligned.
+ *
+ * Horizontal text alignment for an #LrgReelTextClip.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_REEL_TEXT_ALIGN_LEFT,
+    LRG_REEL_TEXT_ALIGN_CENTER,
+    LRG_REEL_TEXT_ALIGN_RIGHT
+} LrgReelTextAlign;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reel_text_align_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_REEL_TEXT_ALIGN (lrg_reel_text_align_get_type ())
 
 G_END_DECLS

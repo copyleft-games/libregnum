@@ -149,6 +149,76 @@ for (gint f = 0; f < total; f++)
 }
 #+end_src
 
+** Rendering a frame range
+:PROPERTIES:
+:CUSTOM_ID: rendering-a-frame-range
+:END:
+=lrg_reel_renderer_render_range()= renders a sub-range of frames and feeds them
+to an exporter.  Frame indices are half-open: =[start_frame, end_frame)=.
+
+#+begin_src c
+/* Render only the first 30 frames (0-based, exclusive end). */
+if (!lrg_reel_renderer_render_range (renderer, 0, 30,
+                                      LRG_REEL_EXPORTER (gif),
+                                      &error))
+{
+    g_printerr ("Range render failed: %s\n", error->message);
+}
+#+end_src
+
+Note that the exporter's own =begin()= / =finish()= are called once even for a
+partial range, so the output file will contain exactly =(end - start)= frames.
+
+** Parallel rendering
+:PROPERTIES:
+:CUSTOM_ID: parallel-rendering
+:END:
+=lrg_reel_renderer_render_parallel()= divides the frame range across
+=n_threads= CPU threads and writes the results to the exporter.  The output is
+deterministic and bit-identical to a sequential render because frames are
+collected in order before being handed to the exporter, regardless of which
+thread finished them first.
+
+#+begin_src c
+/* Use 4 threads; pass 0 to use all available CPUs. */
+if (!lrg_reel_renderer_render_parallel (renderer, 4,
+                                         LRG_REEL_EXPORTER (vid),
+                                         &error))
+{
+    g_printerr ("Parallel render failed: %s\n", error->message);
+}
+#+end_src
+
+The parallel renderer creates independent per-thread =LrgReelRenderer=
+instances sharing the same immutable =LrgReel= definition.  Because each frame
+is a pure function of its clip state and the frame index, there are no
+shared-state race conditions in the render path.  However, if your custom clip
+callbacks reach out to mutable global state (e.g. a random-number generator
+with side effects), those will race.  Use =lrg_reel_random()= and
+=lrg_reel_noise_*()= instead — both are stateless and thread-safe.
+
+** Motion blur
+:PROPERTIES:
+:CUSTOM_ID: motion-blur
+:END:
+=lrg_reel_renderer_set_motion_blur()= enables sub-frame accumulation.  The
+renderer renders =samples= sub-frames per output frame (equally spaced within
+the frame's time interval) and averages their pixels, producing natural motion
+blur on animated transforms and interpolated positions.
+
+#+begin_src c
+/* 8 samples per frame is a good starting point. */
+lrg_reel_renderer_set_motion_blur (renderer, 8);
+#+end_src
+
+Pass =0= or =1= to disable motion blur (the default: one sample per frame, no
+accumulation).  The render time scales linearly with the sample count.
+
+Motion blur smears anything that changes between sub-frames — animated clip
+position, scale, rotation, and opacity.  It does *not* smear content that is
+computed from integer frame numbers (e.g. a video source decoded at a fixed
+index, or per-frame sprite lookups).
+
 ** Pitfalls
 :PROPERTIES:
 :CUSTOM_ID: pitfalls
@@ -164,4 +234,9 @@ for (gint f = 0; f < total; f++)
   Allocate it on the stack (as a struct literal) or with =grl_color_new()= +
   =grl_color_free()=.
 - The renderer is not thread-safe.  All render calls must originate from the
-  same thread.
+  same thread.  Use =render_parallel()= when you need multi-threaded rendering.
+- =render_range()= uses half-open intervals: frame =end_frame= itself is not
+  rendered.  A range of (0, 30) produces 30 frames (0 … 29).
+- Motion blur with =samples > 1= multiplies render time proportionally; a
+  240-frame composition with 8 samples effectively renders 1920 frames
+  internally.

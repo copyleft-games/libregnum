@@ -19,15 +19,24 @@ Complete documentation for all Libregnum game engine modules and systems.
 :END:
 Declarative, code-driven video: define a composition of timed, animated layers,
 then render it frame-by-frame to GIF, an image sequence, or MP4/WebM.  Fully
-headless except for the optional live preview player.
+headless except for the optional live preview player.  v2 adds content clips,
+effects, media input, extended transitions, motion blur, parallel render, GPU
+capture, data-driven YAML authoring, and a command-line tool.
 
 - *[[file:reel/composition.org][LrgReel]]* - the composition (id, resolution, fps, duration, clip stack, props)
 - *[[file:reel/timing.org][LrgReelContext / LrgReelSequence]]* - the relative-frame model: shift, series, loop, freeze
-- *[[file:reel/animation.org][interpolate / spring]]* - range interpolation and spring physics
-- *[[file:reel/clips.org][LrgReelClip]]* - timed, opacity'd renderable layers (vfunc or callback)
-- *[[file:reel/rendering.org][LrgReelRenderer]]* - the offline frame-by-frame engine
-- *[[file:reel/exporters.org][LrgReelExporter]]* - GIF, image-sequence, and ffmpeg MP4/WebM output
-- *[[file:reel/transitions.org][LrgReelTransition]]* - CPU fade / wipe / dissolve / slide
+- *[[file:reel/animation.org][interpolate / spring / color / noise]]* - range interpolation, spring physics, OkLab color, bezier easing, noise
+- *[[file:reel/clips.org][LrgReelClip]]* - transform, blend modes, effects + solid / gradient / image / text / shape content clips
+- *[[file:reel/compositing.org][Effects]]* - per-clip filter chain: blur, bloom, color-grade, vignette, grain, chroma-key, drop-shadow, light-leak
+- *[[file:reel/media.org][Media]]* - video source decode, video clip (trim/rate/loop), FFT audio analysis
+- *[[file:reel/rendering.org][LrgReelRenderer]]* - offline frame-by-frame engine, render_range, render_parallel, motion blur
+- *[[file:reel/exporters.org][LrgReelExporter]]* - GIF, image-sequence, H.264/H.265/ProRes/VP9/alpha, audio-only, render_still
+- *[[file:reel/transitions.org][LrgReelTransition]]* - fade / wipe / dissolve / slide / flip / clock-wipe / iris / push / zoom + TransitionSeries
+- *[[file:reel/motion.org][Motion]]* - motion blur detail and path arc-length / point-at / evolve
+- *[[file:reel/data-yaml.org][Data-driven YAML]]* - schema, lrg_reel_load_yaml, lrg_reel_register_types
+- *[[file:reel/cli.org][CLI]]* - =reel= tool: info / still / render, codec selection, parallel threads
+- *[[file:reel/captions.org][Captions]]* - LrgReelCaptionClip (SRT/VTT), styling, speech transcription
+- *[[file:reel/gpu-capture.org][GPU capture]]* - LrgReelGpuRenderer: display-gated FBO capture, engine-as-layer
 - *[[file:reel/audio.org][LrgReelAudioTrack]]* - offline audio mixing and muxing
 - *[[file:reel/player.org][LrgReelPlayer]]* - interactive play/scrub preview window
 

@@ -1,0 +1,140 @@
+* Captions — subtitle tracks and speech transcription
+:PROPERTIES:
+:CUSTOM_ID: captions-subtitle-tracks
+:END:
+=LrgReelCaptionClip= is an =LrgReelClip= subclass that renders timed subtitle
+text onto each frame.  Cues can be loaded from an SRT or WebVTT file, or
+generated automatically from audio via a locally installed speech-recognition
+tool (=lrg_reel_transcribe_audio()=).
+
+** LrgReelCaptionClip
+:PROPERTIES:
+:CUSTOM_ID: lrgreelcaptionclip
+:END:
+The clip reads its active cue for the current composition time from an
+=LrgVideoSubtitleTrack= and renders it near the bottom of the frame.  If no
+cue is active for the current frame the clip draws nothing.
+
+*** Loading from an SRT or WebVTT file
+
+#+begin_src c
+g_autoptr(GError)             error = NULL;
+g_autoptr(LrgReelCaptionClip) captions =
+    lrg_reel_caption_clip_new_from_srt ("subtitles.srt", &error);
+
+if (captions == NULL)
+{
+    g_printerr ("Could not load subtitles: %s\n", error->message);
+    return 1;
+}
+
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (captions));
+#+end_src
+
+WebVTT files are loaded identically:
+
+#+begin_src c
+g_autoptr(LrgReelCaptionClip) captions =
+    lrg_reel_caption_clip_new_from_vtt ("subtitles.vtt", &error);
+#+end_src
+
+*** Constructing with an existing subtitle track
+
+#+begin_src c
+/* Create an empty clip and attach an existing LrgVideoSubtitleTrack. */
+g_autoptr(LrgReelCaptionClip) captions = lrg_reel_caption_clip_new ();
+lrg_reel_caption_clip_set_track (captions, track);
+#+end_src
+
+** Styling captions
+:PROPERTIES:
+:CUSTOM_ID: styling-captions
+:END:
+#+begin_src c
+/* Font size in pixels (uses the embedded bitmap font). */
+lrg_reel_caption_clip_set_font_size (captions, 28);
+
+/* Text color. */
+GrlColor white = { 255, 255, 255, 255 };
+lrg_reel_caption_clip_set_color (captions, &white);
+
+/* Horizontal alignment. */
+lrg_reel_caption_clip_set_align (captions, LRG_REEL_TEXT_ALIGN_CENTER);
+
+/* Distance from the bottom of the frame. */
+lrg_reel_caption_clip_set_margin_bottom (captions, 40);
+
+/* Draw a semi-transparent background box for readability. */
+lrg_reel_caption_clip_set_box (captions, TRUE);
+GrlColor box_bg = { 0, 0, 0, 160 };
+lrg_reel_caption_clip_set_box_color (captions, &box_bg);
+#+end_src
+
+The caption clip uses the embedded 8×8 bitmap font by default so it works
+fully headless.  For a larger or more stylised font, swap the clip for an
+=LrgReelTextClip= that you drive from the subtitle cues manually.
+
+** Speech transcription
+:PROPERTIES:
+:CUSTOM_ID: speech-transcription
+:END:
+=lrg_reel_transcribe_audio()= runs a locally installed speech-recognition
+command-line tool to produce an =LrgVideoSubtitleTrack= from an =LrgWaveData=
+object.  The function exports the audio to a temporary WAV file, invokes the
+tool, parses the resulting SRT output, and returns the track.
+
+Supported tools (probed in order): =whisper-cli=, =whisper-cpp=,
+=main= (legacy whisper.cpp name), =whisper= (upstream Python distribution).
+Check availability before calling:
+
+#+begin_src c
+if (!lrg_reel_is_whisper_available ())
+{
+    g_print ("No speech-recognition tool found — skipping transcription.\n");
+    /* Fall back to a hand-written SRT file. */
+}
+#+end_src
+
+*** Example: transcribe + attach captions
+
+#+begin_src c
+g_autoptr(GError) error = NULL;
+
+/* Extract audio from a video source. */
+g_autoptr(LrgWaveData) wave =
+    lrg_reel_video_source_extract_audio (source, &error);
+if (wave == NULL) { /* handle */ }
+
+/* Transcribe (blocking; may take seconds). */
+LrgVideoSubtitleTrack *track =
+    lrg_reel_transcribe_audio (wave, "en", &error);
+
+if (track != NULL)
+{
+    g_autoptr(LrgReelCaptionClip) captions =
+        lrg_reel_caption_clip_new ();
+    lrg_reel_caption_clip_set_track (captions, track);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (captions));
+    g_object_unref (track);
+}
+#+end_src
+
+Pass =NULL= as the language to let the tool auto-detect the language from the
+audio.  Pass a BCP-47 tag such as ="en"= or ="es"= to force a specific language.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- The bitmap font used by =LrgReelCaptionClip= is small (8×8 pixels per
+  character).  For larger text or custom fonts, use =LrgReelTextClip= instead.
+- =lrg_reel_transcribe_audio()= is blocking and synchronous.  For long audio
+  (> 1 minute) the call may take tens of seconds.  Run it before constructing
+  the renderer so the render itself is not delayed.
+- Transcription accuracy depends on the installed tool's model and configuration.
+  The function only parses SRT output; if the installed binary emits a different
+  format the result may be an empty track without an error.
+- =lrg_reel_transcribe_audio()= returns =(transfer full)=: you must call
+  =g_object_unref()= on the returned =LrgVideoSubtitleTrack= when done.
+- The caption clip renders nothing when no cue is active for the current frame;
+  it does not need to be made invisible manually between cues.

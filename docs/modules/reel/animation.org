@@ -179,6 +179,194 @@ gdouble opacity = lrg_reel_interpolate_clamped (frame, 0.0, 20.0,
                                                 LRG_EASING_EASE_OUT_CUBIC);
 #+end_src
 
+** lrg_reel_interpolate_color (perceptual color blending)
+:PROPERTIES:
+:CUSTOM_ID: lrg-reel-interpolate-color
+:END:
+Like =lrg_reel_interpolate= but for =GrlColor= values.  Adjacent color stops are
+blended in the OkLab perceptual color space so that the brightness and hue
+perceived by the viewer vary evenly across the transition — avoiding the muddy,
+desaturated mid-tones that occur when interpolating naively in linear RGB or
+sRGB.
+
+#+begin_src c
+gdouble
+lrg_reel_interpolate_color (gdouble             input,
+                            const gdouble      *input_range,
+                            gsize               n_input,
+                            const GrlColor     *colors,
+                            gsize               n_colors,
+                            LrgEasingType       easing,
+                            LrgReelExtrapolate  extrapolate_left,
+                            LrgReelExtrapolate  extrapolate_right);
+#+end_src
+
+Returns a =(transfer full)= =GrlColor *=.  Free it with =grl_color_free()= or
+use =g_autoptr(GrlColor)=.
+
+*** Two-stop convenience variant
+
+#+begin_src c
+GrlColor *
+lrg_reel_interpolate_color_clamped (gdouble         input,
+                                    gdouble         in_min,
+                                    gdouble         in_max,
+                                    const GrlColor *color_a,
+                                    const GrlColor *color_b,
+                                    LrgEasingType   easing);
+#+end_src
+
+*** Example: animated sky gradient
+
+#+begin_src c
+static void
+draw_sky (LrgReelClip    *clip,
+          LrgReelContext *ctx,
+          LrgImageCanvas *canvas,
+          gpointer        user_data)
+{
+    gint frame = lrg_reel_context_get_frame (ctx);
+
+    GrlColor dawn    = {  30,  20,  80, 255 };
+    GrlColor sunrise = { 240, 120,  40, 255 };
+    GrlColor noon    = {  80, 160, 240, 255 };
+
+    const gdouble stops[] = {  0.0, 30.0, 90.0 };
+    const GrlColor clrs[] = { dawn, sunrise, noon };
+
+    g_autoptr(GrlColor) sky =
+        lrg_reel_interpolate_color ((gdouble) frame,
+                                    stops, G_N_ELEMENTS (stops),
+                                    clrs,  G_N_ELEMENTS (clrs),
+                                    LRG_EASING_EASE_IN_OUT_SINE,
+                                    LRG_REEL_EXTRAPOLATE_CLAMP,
+                                    LRG_REEL_EXTRAPOLATE_CLAMP);
+
+    lrg_image_canvas_clear (canvas, sky);
+}
+#+end_src
+
+*** Pitfall
+
+=lrg_reel_interpolate_color= returns =(transfer full)=: you must free the
+returned =GrlColor *=.  A common mistake is to compare it with a raw struct.
+Always use =g_autoptr(GrlColor)= or call =grl_color_free()= explicitly.
+
+** lrg_reel_easing_bezier — custom cubic-bezier easing
+:PROPERTIES:
+:CUSTOM_ID: lrg-reel-easing-bezier
+:END:
+Evaluates a CSS-style cubic-bezier easing curve, identical in semantics to
+the CSS =cubic-bezier(x1,y1,x2,y2)= function.  This is useful when the named
+=LrgEasingType= values are not precise enough.
+
+#+begin_src c
+gdouble
+lrg_reel_easing_bezier (gdouble x1,
+                        gdouble y1,
+                        gdouble x2,
+                        gdouble y2,
+                        gdouble t);
+#+end_src
+
+=t= is a normalised progress in [0, 1].  The curve always passes through (0, 0)
+and (1, 1).  =bezier(0, 0, 1, 1, t) == t= (linear).
+
+#+begin_src c
+/* A "snappy" ease-out similar to Material Design. */
+gdouble eased = lrg_reel_easing_bezier (0.0, 0.0, 0.2, 1.0, raw_t);
+
+/* Apply it to a frame-based interpolation. */
+gdouble raw_t  = lrg_reel_interpolate_clamped ((gdouble) frame,
+                                                0.0, 30.0,
+                                                0.0, 1.0,
+                                                LRG_EASING_LINEAR);
+gdouble y = raw_t * 200.0;              /* linear position */
+gdouble y_eased = lrg_reel_easing_bezier (0.0, 0.0, 0.2, 1.0, raw_t)
+                  * 200.0;              /* snappy position */
+#+end_src
+
+*** Pitfall
+
+The =x1= and =x2= control points must lie in [0, 1] (they represent time
+fractions).  =y1= and =y2= have no such constraint; values outside [0, 1]
+produce overshoot/undershoot — this is intentional for bounce effects.
+
+** lrg_reel_random and lrg_reel_random_range — deterministic randomness
+:PROPERTIES:
+:CUSTOM_ID: lrg-reel-random
+:END:
+Deterministic pseudo-random values derived purely from a seed.  The same seed
+always produces the same value, making renders reproducible across runs.  Pass
+a compound key such as =(frame * 1000 + clip_index)= to get independent streams
+per clip and per frame.
+
+#+begin_src c
+gdouble lrg_reel_random       (guint64 seed);
+gdouble lrg_reel_random_range (guint64 seed, gdouble min, gdouble max);
+#+end_src
+
+#+begin_src c
+static void
+draw_starfield (LrgReelClip    *clip,
+                LrgReelContext *ctx,
+                LrgImageCanvas *canvas,
+                gpointer        user_data)
+{
+    gint     frame = lrg_reel_context_get_frame (ctx);
+    GrlImage *img  = lrg_image_canvas_get_image (canvas);
+
+    for (gint i = 0; i < 200; i++)
+    {
+        /* Position is fixed per star (seed = i); brightness flickers with frame. */
+        gdouble x = lrg_reel_random_range ((guint64) i * 2,       0.0, 640.0);
+        gdouble y = lrg_reel_random_range ((guint64) i * 2 + 1,   0.0, 360.0);
+        gdouble b = lrg_reel_random       ((guint64) frame * 300 + (guint64) i);
+
+        guint8 bright = (guint8) (b * 255.0);
+        GrlColor star = { bright, bright, bright, 255 };
+        grl_image_draw_pixel (img, (gint) x, (gint) y, &star);
+    }
+}
+#+end_src
+
+** lrg_reel_noise_1d / 2d / 3d — smooth value noise
+:PROPERTIES:
+:CUSTOM_ID: lrg-reel-noise
+:END:
+Smooth, deterministic value noise in [-1.0, 1.0].  Adjacent sample coordinates
+produce close results (the noise is continuous), making it ideal for organic
+motion such as camera shake, wobble, or atmospheric haze.
+
+#+begin_src c
+gdouble lrg_reel_noise_1d (gdouble x);
+gdouble lrg_reel_noise_2d (gdouble x, gdouble y);
+gdouble lrg_reel_noise_3d (gdouble x, gdouble y, gdouble z);
+#+end_src
+
+#+begin_src c
+static void
+draw_wobble (LrgReelClip    *clip,
+             LrgReelContext *ctx,
+             LrgImageCanvas *canvas,
+             gpointer        user_data)
+{
+    gint    frame = lrg_reel_context_get_frame (ctx);
+    gdouble t     = frame / 30.0;    /* convert frame to time in seconds */
+
+    /* Slow, organic X and Y jitter at different noise phases. */
+    gdouble jitter_x = lrg_reel_noise_1d (t * 0.8)         * 12.0;
+    gdouble jitter_y = lrg_reel_noise_1d (t * 0.8 + 100.0) * 12.0;
+
+    lrg_reel_clip_set_x (clip, 320.0 + jitter_x);
+    lrg_reel_clip_set_y (clip, 180.0 + jitter_y);
+}
+#+end_src
+
+Use =noise_2d= when you need a spatial field (e.g. per-pixel distortion) and
+=noise_3d= when you additionally want to animate the field over time by passing
+the frame as the Z dimension.
+
 ** Pitfalls
 :PROPERTIES:
 :CUSTOM_ID: pitfalls
@@ -195,3 +383,9 @@ gdouble opacity = lrg_reel_interpolate_clamped (frame, 0.0, 20.0,
 - These are pure functions — calling them multiple times with the same arguments
   always returns the same value.  Do not cache results across frames of a loop
   sequence; call them fresh each frame with the current relative frame.
+- =lrg_reel_interpolate_color= returns =(transfer full)=: free the returned
+  =GrlColor *= with =grl_color_free()=.  Do not call =g_object_unref()= on it
+  — =GrlColor= is a GBoxed type, not a GObject.
+- Noise functions are deterministic for a given coordinate, so they do not
+  change between render passes.  If you need per-run variation, offset the
+  coordinate by a fixed seed that you embed in the composition.

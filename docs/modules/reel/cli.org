@@ -1,0 +1,119 @@
+* The =reel= command-line tool
+:PROPERTIES:
+:CUSTOM_ID: the-reel-command-line-tool
+:END:
+The =reel= binary (=src/reel-cli/lrg-reel-cli.c=) is a thin front-end over
+=LrgReelRenderer= and the YAML loader.  It accepts a YAML reel file and can
+print metadata, render a single still frame, or render the full composition to
+a video or animated GIF.
+
+** Subcommands
+:PROPERTIES:
+:CUSTOM_ID: subcommands
+:END:
+#+begin_example
+reel info  <file.yaml>
+reel still [options] <file.yaml>
+reel render [options] <file.yaml>
+#+end_example
+
+** reel info
+:PROPERTIES:
+:CUSTOM_ID: reel-info
+:END:
+Prints the composition metadata to standard output without rendering any frames.
+
+#+begin_example
+$ reel info assets/intro.yaml
+id:     intro
+size:   1920 x 1080
+fps:    30
+frames: 90
+#+end_example
+
+** reel still
+:PROPERTIES:
+:CUSTOM_ID: reel-still
+:END:
+Renders a single frame to an image file.  Useful for generating thumbnails or
+checking keyframe composition without a full render.
+
+#+begin_example
+reel still [--output PATH] [--frame N] <file.yaml>
+#+end_example
+
+| Option                | Short | Default     | Description                         |
+|-----------------------+-------+-------------+-------------------------------------|
+| =--output PATH=       | =-o=  | =still.png= | Output image path                   |
+| =--frame N=           | =-f=  | 0           | Frame number to render              |
+
+#+begin_example
+$ reel still --output preview.png --frame 30 assets/intro.yaml
+wrote preview.png (frame 30)
+#+end_example
+
+The output format is inferred from the file extension: =.png= and =.jpg= /
+=.jpeg= are supported.
+
+** reel render
+:PROPERTIES:
+:CUSTOM_ID: reel-render
+:END:
+Renders all frames and writes them to a video file (via ffmpeg) or an animated
+GIF (in-process, no ffmpeg required).
+
+#+begin_example
+reel render [--output PATH] [--codec CODEC] [--crf N] [--threads N] <file.yaml>
+#+end_example
+
+| Option           | Short | Default     | Description                                                |
+|------------------+-------+-------------+------------------------------------------------------------|
+| =--output PATH=  | =-o=  | =out.mp4=   | Output file path                                           |
+| =--codec CODEC=  | =-c=  | =h264=      | Video codec (see table below)                             |
+| =--crf N=        |       | 23          | Encoder quality (lower = better; 0–51 for H.264)          |
+| =--threads N=    | =-t=  | 1           | Parallel render threads (0 = auto; 1 = sequential)        |
+
+When the output path ends in =.gif=, the GIF exporter is used automatically
+and =--codec= is ignored.
+
+*** Supported codecs
+
+| =--codec= value  | =LrgReelVideoCodec=               | Container | Notes                  |
+|------------------+-----------------------------------+-----------+------------------------|
+| =h264=           | =LRG_REEL_VIDEO_CODEC_H264=       | .mp4      | Default                |
+| =vp9=            | =LRG_REEL_VIDEO_CODEC_VP9=        | .webm     |                        |
+| =h265=           | =LRG_REEL_VIDEO_CODEC_H265=       | .mp4      | Requires libx265       |
+| =prores=         | =LRG_REEL_VIDEO_CODEC_PRORES=     | .mov      | ProRes 422             |
+| =prores-alpha=   | =LRG_REEL_VIDEO_CODEC_PRORES_ALPHA=| .mov     | ProRes 4444 with alpha |
+| =vp9-alpha=      | =LRG_REEL_VIDEO_CODEC_VP9_ALPHA=  | .webm     | VP9 yuva420p           |
+
+*** Examples
+
+#+begin_example
+# Render to animated GIF (no ffmpeg needed)
+$ reel render --output intro.gif assets/intro.yaml
+
+# Render to H.264 MP4 at high quality using 8 threads
+$ reel render --output intro.mp4 --codec h264 --crf 18 --threads 8 assets/intro.yaml
+
+# Render to ProRes with alpha channel
+$ reel render --output overlay.mov --codec prores-alpha assets/overlay.yaml
+
+# Render to WebM with VP9
+$ reel render --output intro.webm --codec vp9 assets/intro.yaml
+#+end_example
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- The =--codec= option has no effect when the output path ends in =.gif=.  The
+  GIF exporter is selected by extension regardless of any codec flag.
+- =reel render= requires ffmpeg on the PATH for video output.  If ffmpeg is not
+  found the command fails with an error message; use =.gif= output as a fallback
+  when ffmpeg is unavailable.
+- Passing =--threads 0= lets the tool select the number of threads
+  automatically (typically one per logical CPU).  Parallel rendering produces
+  bit-identical output to sequential rendering, but the per-frame order of
+  exporter calls is preserved so the output file is identical.
+- The =reel still= and =reel info= subcommands do not require ffmpeg.

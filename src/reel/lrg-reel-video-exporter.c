@@ -18,6 +18,7 @@ struct _LrgReelVideoExporter
     gchar             *path;
     LrgReelVideoCodec  codec;
     gint               crf;
+    gint               bitrate_kbps;  /* > 0 selects target bitrate over CRF */
     gchar             *ffmpeg_path;   /* override, or NULL to auto-discover */
     LrgWaveData       *audio;         /* optional, ref */
 
@@ -83,51 +84,92 @@ reel_video_build_argv (LrgReelVideoExporter *self,
     }
 
     /* Video codec selection. */
-    if (self->codec == LRG_REEL_VIDEO_CODEC_VP9)
     {
-        g_ptr_array_add (args, g_strdup ("-c:v"));
-        g_ptr_array_add (args, g_strdup ("libvpx-vp9"));
-        g_ptr_array_add (args, g_strdup ("-pix_fmt"));
-        g_ptr_array_add (args, g_strdup ("yuv420p"));
-        g_ptr_array_add (args, g_strdup ("-b:v"));
-        g_ptr_array_add (args, g_strdup ("0"));
-        g_ptr_array_add (args, g_strdup ("-crf"));
-        g_ptr_array_add (args, g_strdup_printf ("%d", self->crf));
-    }
-    else
-    {
-        g_ptr_array_add (args, g_strdup ("-c:v"));
-        g_ptr_array_add (args, g_strdup ("libx264"));
-        g_ptr_array_add (args, g_strdup ("-pix_fmt"));
-        g_ptr_array_add (args, g_strdup ("yuv420p"));
-        g_ptr_array_add (args, g_strdup ("-preset"));
-        g_ptr_array_add (args, g_strdup ("medium"));
-        g_ptr_array_add (args, g_strdup ("-crf"));
-        g_ptr_array_add (args, g_strdup_printf ("%d", self->crf));
-    }
+        const gchar *vcodec = "libx264";
+        const gchar *pix_fmt = "yuv420p";
+        gboolean     is_webm = FALSE;
+        gboolean     is_prores = FALSE;
+        gint         prores_profile = 3;
 
-    /* Audio codec + trim to the shorter stream when audio is present. */
-    if (self->temp_audio_path != NULL)
-    {
-        if (self->codec == LRG_REEL_VIDEO_CODEC_VP9)
+        switch (self->codec)
         {
-            g_ptr_array_add (args, g_strdup ("-c:a"));
-            g_ptr_array_add (args, g_strdup ("libopus"));
+        case LRG_REEL_VIDEO_CODEC_VP9:
+            vcodec = "libvpx-vp9"; pix_fmt = "yuv420p"; is_webm = TRUE;
+            break;
+        case LRG_REEL_VIDEO_CODEC_VP9_ALPHA:
+            vcodec = "libvpx-vp9"; pix_fmt = "yuva420p"; is_webm = TRUE;
+            break;
+        case LRG_REEL_VIDEO_CODEC_H265:
+            vcodec = "libx265"; pix_fmt = "yuv420p";
+            break;
+        case LRG_REEL_VIDEO_CODEC_PRORES:
+            vcodec = "prores_ks"; pix_fmt = "yuv422p10le";
+            is_prores = TRUE; prores_profile = 3;
+            break;
+        case LRG_REEL_VIDEO_CODEC_PRORES_ALPHA:
+            vcodec = "prores_ks"; pix_fmt = "yuva444p10le";
+            is_prores = TRUE; prores_profile = 4;
+            break;
+        case LRG_REEL_VIDEO_CODEC_H264:
+        default:
+            vcodec = "libx264"; pix_fmt = "yuv420p";
+            break;
+        }
+
+        g_ptr_array_add (args, g_strdup ("-c:v"));
+        g_ptr_array_add (args, g_strdup (vcodec));
+        g_ptr_array_add (args, g_strdup ("-pix_fmt"));
+        g_ptr_array_add (args, g_strdup (pix_fmt));
+
+        if (is_prores)
+        {
+            g_ptr_array_add (args, g_strdup ("-profile:v"));
+            g_ptr_array_add (args, g_strdup_printf ("%d", prores_profile));
+        }
+        else if (self->bitrate_kbps > 0)
+        {
+            g_ptr_array_add (args, g_strdup ("-b:v"));
+            g_ptr_array_add (args, g_strdup_printf ("%dk", self->bitrate_kbps));
         }
         else
         {
-            g_ptr_array_add (args, g_strdup ("-c:a"));
-            g_ptr_array_add (args, g_strdup ("aac"));
+            if (is_webm)
+            {
+                g_ptr_array_add (args, g_strdup ("-b:v"));
+                g_ptr_array_add (args, g_strdup ("0"));
+            }
+            else if (self->codec == LRG_REEL_VIDEO_CODEC_H264)
+            {
+                g_ptr_array_add (args, g_strdup ("-preset"));
+                g_ptr_array_add (args, g_strdup ("medium"));
+            }
+            g_ptr_array_add (args, g_strdup ("-crf"));
+            g_ptr_array_add (args, g_strdup_printf ("%d", self->crf));
         }
-        g_ptr_array_add (args, g_strdup ("-b:a"));
-        g_ptr_array_add (args, g_strdup ("192k"));
-        g_ptr_array_add (args, g_strdup ("-shortest"));
-    }
 
-    if (self->codec != LRG_REEL_VIDEO_CODEC_VP9)
-    {
-        g_ptr_array_add (args, g_strdup ("-movflags"));
-        g_ptr_array_add (args, g_strdup ("+faststart"));
+        /* H.265 in MP4 wants the hvc1 tag for QuickTime/Apple compatibility. */
+        if (self->codec == LRG_REEL_VIDEO_CODEC_H265)
+        {
+            g_ptr_array_add (args, g_strdup ("-tag:v"));
+            g_ptr_array_add (args, g_strdup ("hvc1"));
+        }
+
+        /* Audio codec + trim to the shorter stream when audio is present. */
+        if (self->temp_audio_path != NULL)
+        {
+            g_ptr_array_add (args, g_strdup ("-c:a"));
+            g_ptr_array_add (args, g_strdup (is_webm ? "libopus" : "aac"));
+            g_ptr_array_add (args, g_strdup ("-b:a"));
+            g_ptr_array_add (args, g_strdup ("192k"));
+            g_ptr_array_add (args, g_strdup ("-shortest"));
+        }
+
+        /* faststart relocates the moov atom for streaming (MP4/MOV only). */
+        if (!is_webm)
+        {
+            g_ptr_array_add (args, g_strdup ("-movflags"));
+            g_ptr_array_add (args, g_strdup ("+faststart"));
+        }
     }
 
     g_ptr_array_add (args, g_strdup (self->path));
@@ -376,6 +418,25 @@ lrg_reel_video_exporter_set_crf (LrgReelVideoExporter *self,
     g_return_if_fail (LRG_IS_REEL_VIDEO_EXPORTER (self));
 
     self->crf = crf;
+}
+
+/**
+ * lrg_reel_video_exporter_set_bitrate:
+ * @self: an #LrgReelVideoExporter
+ * @kbps: target video bitrate in kbit/s, or 0 to use CRF (the default).
+ *
+ * When non-zero, the exporter targets this average bitrate instead of using a
+ * constant quality (CRF).  Ignored for ProRes (which is profile-driven).
+ *
+ * Since: 1.0
+ */
+void
+lrg_reel_video_exporter_set_bitrate (LrgReelVideoExporter *self,
+                                     gint                  kbps)
+{
+    g_return_if_fail (LRG_IS_REEL_VIDEO_EXPORTER (self));
+
+    self->bitrate_kbps = kbps;
 }
 
 void

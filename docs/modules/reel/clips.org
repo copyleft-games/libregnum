@@ -164,7 +164,8 @@ or push/pop offsets.
 - Clip-level opacity (=lrg_reel_clip_set_opacity=) is applied by the renderer
   on the composed clip output.  In v1 this only affects top-level reel clips;
   nested children inside a sequence draw at full opacity and are composited as
-  a unit.
+  a unit.  As of v2, nested-clip opacity composites correctly through the
+  layer pool.
 - For headless text rendering use =grl_image_draw_text_bitmap()= rather than
   =grl_image_draw_text()=.  The default-font variant of =grl_image_draw_text()=
   may crash when called without a GL context; =grl_image_draw_text_bitmap()=
@@ -175,3 +176,283 @@ or push/pop offsets.
 - =lrg_reel_clip_is_active_at()= accepts parent-relative frames, not absolute
   frames.  When querying from outside a render context, pass an absolute frame
   only if the clip is a direct child of the reel (no intermediate sequence).
+
+** Per-clip transform
+:PROPERTIES:
+:CUSTOM_ID: per-clip-transform
+:END:
+Every =LrgReelClip= carries an optional affine transform applied to its layer
+before it is composited onto the frame.  Scale and rotation pivot about an
+anchor point expressed as a fraction of the frame dimensions.
+
+#+begin_src c
+/* Translate the clip 100 px right and scale it to 80 %. */
+lrg_reel_clip_set_transform (clip,
+                              100.0,  /* x */
+                              0.0,    /* y */
+                              0.8,    /* scale_x */
+                              0.8,    /* scale_y */
+                              0.0);   /* rotation (radians) */
+
+/* Move the pivot to the bottom-centre of the frame. */
+lrg_reel_clip_set_anchor (clip, 0.5, 1.0);
+
+/* Individual setters are also available. */
+lrg_reel_clip_set_x        (clip, 320.0);
+lrg_reel_clip_set_y        (clip, 180.0);
+lrg_reel_clip_set_scale_x  (clip, 1.5);
+lrg_reel_clip_set_scale_y  (clip, 1.5);
+lrg_reel_clip_set_rotation (clip, G_PI / 6.0);  /* 30° */
+#+end_src
+
+A non-identity transform forces the clip onto an off-screen compositing path;
+no extra cost is incurred for clips that remain at the identity (the default).
+
+*** Pitfall: anchor vs. position
+
+The anchor affects only scale and rotation; it is *not* subtracted from the
+position.  Translating a clip with =set_x= / =set_y= always moves it relative
+to the frame's (0, 0) origin regardless of the anchor setting.
+
+** Per-clip blend mode
+:PROPERTIES:
+:CUSTOM_ID: per-clip-blend-mode
+:END:
+By default clips are composited using standard source-over (=LRG_REEL_BLEND_NORMAL=).
+Alternative blend modes let you create glow, colour-burn, and other photographic
+layer effects on individual clips without touching the full composition.
+
+| Enum value                    | Effect                                    |
+|-------------------------------+-------------------------------------------|
+| =LRG_REEL_BLEND_NORMAL=       | Standard source-over (default)            |
+| =LRG_REEL_BLEND_MULTIPLY=     | Darken (multiply channel values)          |
+| =LRG_REEL_BLEND_SCREEN=       | Lighten (invert-multiply)                 |
+| =LRG_REEL_BLEND_OVERLAY=      | Multiply + screen depending on luminance  |
+| =LRG_REEL_BLEND_SOFT_LIGHT=   | Subtle contrast boost                     |
+| =LRG_REEL_BLEND_ADD=          | Additive / linear dodge (glow)            |
+| =LRG_REEL_BLEND_COLOR_DODGE=  | Strong lightening                         |
+| =LRG_REEL_BLEND_COLOR_BURN=   | Strong darkening                          |
+
+#+begin_src c
+/* Overlay a lens-flare image additively. */
+g_autoptr(LrgReelImageClip) flare =
+    lrg_reel_image_clip_new_from_file ("flare.png", &error);
+lrg_reel_clip_set_blend_mode (LRG_REEL_CLIP (flare), LRG_REEL_BLEND_ADD);
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (flare));
+#+end_src
+
+Using any mode other than =LRG_REEL_BLEND_NORMAL= forces the clip onto the
+compositing path (same cost as a non-identity transform).
+
+** Per-clip effects
+:PROPERTIES:
+:CUSTOM_ID: per-clip-effects
+:END:
+Effects are =LrgReelEffect= objects appended to a clip's effect chain with
+=lrg_reel_clip_add_effect()=.  They execute in order on the clip's composited
+off-screen layer before it is blended onto the frame.  See [[file:compositing.org][compositing.org]] for
+details on each concrete effect type.
+
+#+begin_src c
+g_autoptr(LrgReelBlurEffect) blur = lrg_reel_blur_effect_new (8);
+lrg_reel_clip_add_effect (clip, LRG_REEL_EFFECT (blur));
+
+/* Count and remove all effects. */
+guint n = lrg_reel_clip_get_n_effects (clip);
+lrg_reel_clip_clear_effects (clip);
+#+end_src
+
+The effect clip sees the clip's own pixels, not the full frame, so an effect
+on a small text clip does not degrade large regions of the frame.
+
+** LrgReelSolidClip — full-frame fill
+:PROPERTIES:
+:CUSTOM_ID: solid-clip
+:END:
+The simplest background layer: fills the entire canvas with a single opaque or
+semi-transparent color.  No subclassing, no render callback — just a color.
+
+#+begin_src c
+GrlColor bg = { 20, 24, 36, 255 };
+g_autoptr(LrgReelSolidClip) solid = lrg_reel_solid_clip_new (&bg);
+
+/* Update the fill color at any time. */
+GrlColor red = { 220, 40, 40, 255 };
+lrg_reel_solid_clip_set_color (solid, &red);
+
+lrg_reel_clip_set_duration_in_frames (LRG_REEL_CLIP (solid), 90);
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (solid));
+#+end_src
+
+*** Pitfall
+
+A =LrgReelSolidClip= clears the entire canvas on each frame it is active.  If
+you want a solid clip to cover only part of the frame, use =LrgReelShapeClip=
+with =LRG_REEL_SHAPE_RECT= instead.
+
+** LrgReelGradientClip — gradient fill
+:PROPERTIES:
+:CUSTOM_ID: gradient-clip
+:END:
+Fills the frame with a linear (horizontal or vertical) or radial gradient.
+
+#+begin_src c
+GrlColor top    = {  20,  20,  40, 255 };
+GrlColor bottom = { 100,  60, 140, 255 };
+
+/* Linear gradient from top to bottom. */
+g_autoptr(LrgReelGradientClip) grad =
+    lrg_reel_gradient_clip_new_linear (&top, &bottom,
+                                        GRL_GRADIENT_AXIS_VERTICAL);
+
+/* Radial gradient — inner bright, outer dark. */
+GrlColor inner = { 255, 200, 100, 255 };
+GrlColor outer = {  20,  10,   5, 255 };
+g_autoptr(LrgReelGradientClip) radial =
+    lrg_reel_gradient_clip_new_radial (&inner, &outer);
+
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (grad));
+#+end_src
+
+Colors can be updated after construction using
+=lrg_reel_gradient_clip_set_start_color()= and
+=lrg_reel_gradient_clip_set_end_color()=.  For a radial gradient "start" is
+the inner (centre) color and "end" is the outer (edge) color.
+
+** LrgReelImageClip — static image
+:PROPERTIES:
+:CUSTOM_ID: image-clip
+:END:
+Renders a static =GrlImage= onto the frame, optionally scaled to a destination
+box and tinted.
+
+#+begin_src c
+g_autoptr(GError)          err  = NULL;
+g_autoptr(LrgReelImageClip) img =
+    lrg_reel_image_clip_new_from_file ("logo.png", &err);
+
+/* Scale to fill a 640×360 sub-rectangle, preserving aspect ratio. */
+lrg_reel_image_clip_set_box (img, 0, 0, 640, 360);
+lrg_reel_image_clip_set_fit (img, LRG_REEL_FIT_CONTAIN);
+
+/* Optional tint (NULL = no tint). */
+GrlColor warm = { 255, 220, 160, 255 };
+lrg_reel_image_clip_set_tint (img, &warm);
+
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (img));
+#+end_src
+
+The fit modes mirror CSS =object-fit=:
+
+| =LrgReelFit=          | Behaviour                                          |
+|-----------------------+----------------------------------------------------|
+| =LRG_REEL_FIT_FILL=   | Stretch to fill box (ignore aspect ratio)          |
+| =LRG_REEL_FIT_CONTAIN=| Scale to fit inside box, letterbox if needed       |
+| =LRG_REEL_FIT_COVER=  | Scale to fill box, crop excess                     |
+| =LRG_REEL_FIT_NONE=   | Native size, top-left aligned                      |
+
+*** Pitfall
+
+=lrg_reel_image_clip_get_tint()= returns a =gboolean= (whether a tint is
+set), not a color pointer.  To read the current tint color, inspect the
+=LrgReelImageClip:tint= GObject property directly if needed.
+
+** LrgReelTextClip — text block
+:PROPERTIES:
+:CUSTOM_ID: text-clip
+:END:
+Renders a UTF-8 text block at a fixed position.  The default font is the
+embedded 8×8 bitmap font; a =GrlImageFont= can be supplied for display-quality
+output.
+
+#+begin_src c
+g_autoptr(LrgReelTextClip) label = lrg_reel_text_clip_new ("Score: 9999");
+
+GrlColor white = { 255, 255, 255, 255 };
+lrg_reel_text_clip_set_color  (label, &white);
+lrg_reel_text_clip_set_font_size (label, 48.0);
+lrg_reel_text_clip_set_text_x (label, 40);
+lrg_reel_text_clip_set_text_y (label, 30);
+lrg_reel_text_clip_set_align  (label, LRG_REEL_TEXT_ALIGN_LEFT);
+
+/* Optional word-wrap. */
+lrg_reel_text_clip_set_max_width (label, 560);
+lrg_reel_text_clip_set_line_height (label, 1.4);
+
+/* Drop shadow. */
+lrg_reel_text_clip_set_shadow (label, TRUE);
+GrlColor shadow = { 0, 0, 0, 200 };
+lrg_reel_text_clip_set_shadow_color  (label, &shadow);
+lrg_reel_text_clip_set_shadow_offset (label, 3, 3);
+
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (label));
+#+end_src
+
+To load a TTF/OTF font use =lrg_reel_text_clip_set_font_from_file()=.
+
+Layout helpers are also provided as free functions:
+
+#+begin_src c
+/* How big will the text be at 48 px? */
+gint tw, th;
+lrg_reel_measure_text (NULL, "Hello World", 48.0, &tw, &th);
+
+/* What font size fills an 800×100 box? */
+gdouble size = lrg_reel_fit_text (NULL, "Level Complete",
+                                   800, 100, 96.0);
+#+end_src
+
+Pass =NULL= as the font argument to both utilities to measure with the bitmap
+font.
+
+** LrgReelShapeClip — vector shapes
+:PROPERTIES:
+:CUSTOM_ID: shape-clip
+:END:
+Renders a filled and/or stroked shape every frame.  Supports nine shape kinds
+from =LrgReelShapeKind=: rect, rounded rect, circle, ellipse, triangle, star,
+line, polygon, and path.
+
+#+begin_src c
+/* A rounded rectangle. */
+g_autoptr(LrgReelShapeClip) box =
+    lrg_reel_shape_clip_new (LRG_REEL_SHAPE_ROUNDED_RECT);
+lrg_reel_shape_clip_set_shape_x      (box, 100);
+lrg_reel_shape_clip_set_shape_y      (box, 50);
+lrg_reel_shape_clip_set_shape_width  (box, 400);
+lrg_reel_shape_clip_set_shape_height (box, 200);
+lrg_reel_shape_clip_set_corner_radius (box, 16);
+
+GrlColor fill   = {  40,  60, 120, 200 };
+GrlColor stroke = { 100, 160, 255, 255 };
+lrg_reel_shape_clip_set_fill_color   (box, &fill);
+lrg_reel_shape_clip_set_stroke_color (box, &stroke);
+lrg_reel_shape_clip_set_stroke_width (box, 3);
+
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (box));
+
+/* Convenience constructors for common shapes. */
+g_autoptr(LrgReelShapeClip) rect =
+    lrg_reel_shape_clip_new_rect (10, 10, 200, 100);
+
+g_autoptr(LrgReelShapeClip) circle =
+    lrg_reel_shape_clip_new_circle (320, 180, 80);
+#+end_src
+
+For a polygon, supply a vertex array:
+
+#+begin_src c
+GrlVector2 pts[] = { {100,200}, {200,50}, {300,200} };
+g_autoptr(LrgReelShapeClip) tri =
+    lrg_reel_shape_clip_new (LRG_REEL_SHAPE_POLYGON);
+lrg_reel_shape_clip_set_points (tri, pts, G_N_ELEMENTS (pts));
+#+end_src
+
+For an arbitrary bezier/path use =LRG_REEL_SHAPE_PATH= and call
+=lrg_reel_shape_clip_set_path()=.  See [[file:motion.org][motion.org]] for path utilities.
+
+*** Pitfall
+
+Setting a fill color with =alpha = 0= draws nothing for the fill, but the
+stroke is drawn independently.  You can have a stroke-only shape by setting
+the fill alpha to 0 and the stroke width to a positive value.

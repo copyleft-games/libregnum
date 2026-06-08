@@ -198,6 +198,167 @@ my_iris_transition_class_init (MyIrisTransitionClass *klass)
 The =composite= vfunc receives the *eased* progress; the base class has already
 applied the easing curve before dispatching.
 
+** LrgReelFlipTransition — card flip
+:PROPERTIES:
+:CUSTOM_ID: lrgreelfliptransition
+:END:
+Simulates a flat card rotating about its central axis.  In the first half of
+the transition the outgoing frame shrinks on the flip axis to simulate the
+card turning away; in the second half the incoming frame grows back in.
+
+| Direction value                         | Axis of rotation       |
+|-----------------------------------------+------------------------|
+| =LRG_REEL_TRANSITION_DIRECTION_LEFT=    | Horizontal (Y axis)    |
+| =LRG_REEL_TRANSITION_DIRECTION_RIGHT=   | Horizontal (Y axis)    |
+| =LRG_REEL_TRANSITION_DIRECTION_UP=      | Vertical (X axis)      |
+| =LRG_REEL_TRANSITION_DIRECTION_DOWN=    | Vertical (X axis)      |
+
+#+begin_src c
+g_autoptr(LrgReelFlipTransition) flip =
+    lrg_reel_flip_transition_new (LRG_REEL_TRANSITION_DIRECTION_LEFT);
+
+lrg_reel_transition_composite (LRG_REEL_TRANSITION (flip),
+                                canvas, from, to, progress);
+#+end_src
+
+** LrgReelClockWipeTransition — angular sweep
+:PROPERTIES:
+:CUSTOM_ID: lrgreelclockwipetransition
+:END:
+Reveals the incoming frame through a clockwise angular sweep starting at the
+12 o'clock position.  The sweep is per-pixel: a pixel at angle θ (normalised
+to [0, 1) clockwise from straight up) switches from =from= to =to= when the
+eased progress exceeds θ.
+
+#+begin_src c
+g_autoptr(LrgReelClockWipeTransition) cw =
+    lrg_reel_clock_wipe_transition_new ();
+
+lrg_reel_transition_set_easing (LRG_REEL_TRANSITION (cw),
+                                 LRG_EASING_EASE_IN_OUT_QUAD);
+lrg_reel_transition_composite (LRG_REEL_TRANSITION (cw),
+                                canvas, from, to, progress);
+#+end_src
+
+** LrgReelIrisTransition — circular iris
+:PROPERTIES:
+:CUSTOM_ID: lrgreeliristry
+:END:
+Reveals the incoming frame through a circle that grows outward from the frame
+centre.  Set =inverse = TRUE= to run the effect in reverse (a circle of the
+outgoing frame closes inward instead).
+
+#+begin_src c
+g_autoptr(LrgReelIrisTransition) iris =
+    lrg_reel_iris_transition_new ();
+
+/* Close instead of open — useful for ending a scene. */
+lrg_reel_iris_transition_set_inverse (iris, TRUE);
+
+lrg_reel_transition_composite (LRG_REEL_TRANSITION (iris),
+                                canvas, from, to, progress);
+#+end_src
+
+** LrgReelPushTransition — simultaneous push
+:PROPERTIES:
+:CUSTOM_ID: lrgreelpushtransition
+:END:
+Both frames move together: =from= slides out of the canvas while =to= slides in
+from the opposite edge, maintaining a seamless contact line between them.  This
+differs from the slide transition where only the incoming frame moves.
+
+| Direction value                         | from exits toward ...  | to enters from ... |
+|-----------------------------------------+------------------------+--------------------|
+| =LRG_REEL_TRANSITION_DIRECTION_LEFT=    | Left                   | Right              |
+| =LRG_REEL_TRANSITION_DIRECTION_RIGHT=   | Right                  | Left               |
+| =LRG_REEL_TRANSITION_DIRECTION_UP=      | Top                    | Bottom             |
+| =LRG_REEL_TRANSITION_DIRECTION_DOWN=    | Bottom                 | Top                |
+
+#+begin_src c
+g_autoptr(LrgReelPushTransition) push =
+    lrg_reel_push_transition_new (LRG_REEL_TRANSITION_DIRECTION_LEFT);
+
+lrg_reel_transition_composite (LRG_REEL_TRANSITION (push),
+                                canvas, from, to, progress);
+#+end_src
+
+** LrgReelZoomTransition — centre zoom
+:PROPERTIES:
+:CUSTOM_ID: lrgreelzoomtransition
+:END:
+The incoming frame zooms in from 30 % of the frame size while simultaneously
+fading in over the outgoing frame.  At =progress = 0= the incoming frame is
+scaled to 30 % and fully transparent; at =progress = 1= it is at full size and
+full opacity.
+
+#+begin_src c
+g_autoptr(LrgReelZoomTransition) zoom =
+    lrg_reel_zoom_transition_new ();
+
+lrg_reel_transition_set_easing (LRG_REEL_TRANSITION (zoom),
+                                 LRG_EASING_EASE_OUT_CUBIC);
+lrg_reel_transition_composite (LRG_REEL_TRANSITION (zoom),
+                                canvas, from, to, progress);
+#+end_src
+
+** LrgReelTransitionSeries — auto-sequenced clip chain
+:PROPERTIES:
+:CUSTOM_ID: lrgreeltransitionseries
+:END:
+=LrgReelTransitionSeries= is itself an =LrgReelClip= that chains a sequence of
+segments with optional overlapping transitions between them.  It computes a
+unified timeline automatically: each transition overlaps the tail of the
+outgoing segment and the head of the incoming segment, shrinking the total
+duration by the transition length.
+
+#+begin_src c
+g_autoptr(LrgReelTransitionSeries) series =
+    lrg_reel_transition_series_new ();
+
+/* Segment A — 60 frames. */
+lrg_reel_transition_series_add (series,
+                                LRG_REEL_CLIP (clip_a),
+                                60);
+
+/* 15-frame cross-fade into B. */
+g_autoptr(LrgReelFadeTransition) fade = lrg_reel_fade_transition_new ();
+lrg_reel_transition_series_add_transition (series,
+                                           LRG_REEL_TRANSITION (fade),
+                                           15);
+
+/* Segment B — 90 frames. */
+lrg_reel_transition_series_add (series,
+                                LRG_REEL_CLIP (clip_b),
+                                90);
+
+/* 20-frame push into C. */
+g_autoptr(LrgReelPushTransition) push =
+    lrg_reel_push_transition_new (LRG_REEL_TRANSITION_DIRECTION_LEFT);
+lrg_reel_transition_series_add_transition (series,
+                                           LRG_REEL_TRANSITION (push),
+                                           20);
+
+/* Segment C — 45 frames. */
+lrg_reel_transition_series_add (series,
+                                LRG_REEL_CLIP (clip_c),
+                                45);
+
+/* Total = 60 + 90 + 45 - 15 - 20 = 160 frames. */
+guint total = lrg_reel_transition_series_get_total_frames (series);
+
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (series));
+#+end_src
+
+The series duration is also automatically written back to the clip's own
+=duration-in-frames= property, so parent containers see the correct length.
+
+*** Construction order
+
+Items must alternate: segment, optional transition, segment, optional
+transition, …  Calling =add_transition()= twice in a row (without an =add()=
+between them) is undefined.  Calling =add()= twice in a row creates a hard
+cut (no transition).
+
 ** Pitfalls
 :PROPERTIES:
 :CUSTOM_ID: pitfalls
@@ -213,3 +374,8 @@ applied the easing curve before dispatching.
   =DIRECTION_RIGHT= means the reveal grows rightward (from the left edge); for
   slide, =DIRECTION_RIGHT= means the incoming frame enters from the right edge
   (slides leftward into place).  Read the header comments if in doubt.
+- =LrgReelTransitionSeries= takes references to both clip and transition objects;
+  callers retain their own references and must not assume exclusive ownership.
+- The =get_total_frames()= return value changes whenever =add()= or
+  =add_transition()= is called.  Query it only after the series is fully
+  constructed.

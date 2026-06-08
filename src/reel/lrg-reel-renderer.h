@@ -126,6 +126,28 @@ lrg_reel_renderer_render_to_exporter (LrgReelRenderer *self,
                                       LrgReelExporter *exporter,
                                       GError         **error);
 
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_reel_renderer_render_still (LrgReelRenderer *self,
+                                gint             frame,
+                                const gchar     *path,
+                                GError         **error);
+
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_reel_renderer_render_range (LrgReelRenderer *self,
+                                gint             start_frame,
+                                gint             end_frame,
+                                LrgReelExporter *exporter,
+                                GError         **error);
+
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_reel_renderer_render_parallel (LrgReelRenderer *self,
+                                   gint             n_threads,
+                                   LrgReelExporter *exporter,
+                                   GError         **error);
+
 /**
  * lrg_reel_renderer_set_progress_callback:
  * @self: a #LrgReelRenderer
@@ -138,6 +160,11 @@ lrg_reel_renderer_render_to_exporter (LrgReelRenderer *self,
  *
  * Since: 1.0
  */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_renderer_set_motion_blur (LrgReelRenderer *self,
+                                   gint             samples);
+
 LRG_AVAILABLE_IN_ALL
 void
 lrg_reel_renderer_set_progress_callback (LrgReelRenderer     *self,

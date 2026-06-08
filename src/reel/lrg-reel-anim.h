@@ -18,6 +18,7 @@
 #endif
 
 #include <glib-object.h>
+#include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
@@ -206,5 +207,170 @@ LRG_AVAILABLE_IN_ALL
 guint
 lrg_reel_spring_duration_in_frames (gdouble                    fps,
                                     const LrgReelSpringConfig *config);
+
+/* ==========================================================================
+ * Color interpolation (perceptual, OkLab)
+ * ========================================================================== */
+
+/**
+ * lrg_reel_interpolate_color:
+ * @input: the input value (e.g. the current frame).
+ * @input_range: (array length=n_input): monotonically increasing breakpoints.
+ * @n_input: number of breakpoints (>= 2).
+ * @colors: (array length=n_colors): one #GrlColor per breakpoint.
+ * @n_colors: number of colors (must equal @n_input).
+ * @easing: easing applied within the active segment.
+ * @extrapolate_left: behaviour for @input below the range.
+ * @extrapolate_right: behaviour for @input above the range.
+ *
+ * Like lrg_reel_interpolate() but for colors, blending adjacent stops in OkLab
+ * for perceptually even transitions.
+ *
+ * Returns: (transfer full): the interpolated #GrlColor
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GrlColor *
+lrg_reel_interpolate_color (gdouble             input,
+                            const gdouble      *input_range,
+                            gsize               n_input,
+                            const GrlColor     *colors,
+                            gsize               n_colors,
+                            LrgEasingType       easing,
+                            LrgReelExtrapolate  extrapolate_left,
+                            LrgReelExtrapolate  extrapolate_right);
+
+/**
+ * lrg_reel_interpolate_color_clamped:
+ * @input: the input value.
+ * @in_min: start of the input range.
+ * @in_max: end of the input range.
+ * @color_a: color at @in_min.
+ * @color_b: color at @in_max.
+ * @easing: easing across the range.
+ *
+ * Two-stop OkLab color interpolation, clamped at both ends.
+ *
+ * Returns: (transfer full): the interpolated #GrlColor
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GrlColor *
+lrg_reel_interpolate_color_clamped (gdouble         input,
+                                    gdouble         in_min,
+                                    gdouble         in_max,
+                                    const GrlColor *color_a,
+                                    const GrlColor *color_b,
+                                    LrgEasingType   easing);
+
+/* ==========================================================================
+ * Cubic-bezier easing
+ * ========================================================================== */
+
+/**
+ * lrg_reel_easing_bezier:
+ * @x1: first control point X (0..1).
+ * @y1: first control point Y.
+ * @x2: second control point X (0..1).
+ * @y2: second control point Y.
+ * @t: normalized input (0..1).
+ *
+ * Evaluates a CSS-style cubic-bezier easing curve at @t (the curve passes
+ * through (0,0) and (1,1)).  bezier(0,0,1,1,t) == t (linear).
+ *
+ * Returns: the eased value
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_reel_easing_bezier (gdouble x1,
+                        gdouble y1,
+                        gdouble x2,
+                        gdouble y2,
+                        gdouble t);
+
+/* ==========================================================================
+ * Deterministic randomness + value noise
+ * ========================================================================== */
+
+/**
+ * lrg_reel_random:
+ * @seed: any 64-bit seed (e.g. frame number combined with a clip index).
+ *
+ * A deterministic, uniformly-distributed pseudo-random number in [0.0, 1.0)
+ * derived purely from @seed (same seed -> same value).  Use it instead of
+ * rand() so renders are reproducible.
+ *
+ * Returns: a value in [0.0, 1.0)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_reel_random (guint64 seed);
+
+/**
+ * lrg_reel_random_range:
+ * @seed: any 64-bit seed.
+ * @min: lower bound.
+ * @max: upper bound.
+ *
+ * Returns: a deterministic value in [@min, @max)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_reel_random_range (guint64 seed,
+                       gdouble min,
+                       gdouble max);
+
+/**
+ * lrg_reel_noise_1d:
+ * @x: sample coordinate.
+ *
+ * Smooth, deterministic 1D value noise in [-1.0, 1.0].  Adjacent @x values
+ * yield close results (continuous), ideal for organic motion.
+ *
+ * Returns: a value in [-1.0, 1.0]
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_reel_noise_1d (gdouble x);
+
+/**
+ * lrg_reel_noise_2d:
+ * @x: sample X coordinate.
+ * @y: sample Y coordinate.
+ *
+ * Returns: smooth 2D value noise in [-1.0, 1.0]
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_reel_noise_2d (gdouble x,
+                   gdouble y);
+
+/**
+ * lrg_reel_noise_3d:
+ * @x: sample X coordinate.
+ * @y: sample Y coordinate.
+ * @z: sample Z coordinate.
+ *
+ * Returns: smooth 3D value noise in [-1.0, 1.0]
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_reel_noise_3d (gdouble x,
+                   gdouble y,
+                   gdouble z);
 
 G_END_DECLS
