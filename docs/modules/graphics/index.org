@@ -27,6 +27,8 @@ The Graphics module provides:
 - *[[file:camera-firstperson.org][LrgCameraFirstPerson]]* - First-person camera with head bob
 - *[[file:camera-thirdperson.org][LrgCameraThirdPerson]]* - Third-person camera with orbit and collision avoidance
 - *[[file:renderer.org][LrgRenderer]]* - Render management and layer system
+- *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
+- *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
 
 ** Architecture
 :PROPERTIES:

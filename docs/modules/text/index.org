@@ -84,6 +84,7 @@ draw (void)
 :CUSTOM_ID: documentation
 :END:
 - [[file:font-manager.org][Font Manager]] - Font loading and caching
+- [[file:text-baker.org][Text Baker]] - Headless TTF/OTF text to image/texture/atlas
 - [[file:rich-text.org][Rich Text]] - Markup parsing and rendering
 - [[file:markup-reference.org][Markup Reference]] - Complete tag documentation
 - [[file:effects.org][Text Effects]] - Animated effect types

@@ -376,3 +376,71 @@ if (lrg_photo_mode_is_active (mode))
 
 5. *Support Multiple Formats*: Let players choose between PNG (lossless)
    and JPG (smaller files) based on their preference.
+
+* LrgGifRecorder
+:PROPERTIES:
+:CUSTOM_ID: gif-recorder
+:END:
+Records a sequence of frames to an animated GIF, with optional motion-blur via
+linear-light frame averaging. Built on graylib's =GrlGifWriter= and
+=GrlImageAccumulator=.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: gif-recorder-quick-start
+:END:
+#+begin_src C
+g_autoptr(GError)         error = NULL;
+g_autoptr(LrgGifRecorder) rec   =
+    lrg_gif_recorder_new ("out.gif", 320, 240, 12 /* fps */, &error);
+
+for (gint i = 0; i < n_frames; i++)
+{
+    g_autoptr(GrlImage) frame = render_game_frame (i);  /* a GrlImage */
+    lrg_gif_recorder_add_frame (rec, frame, NULL);
+}
+
+lrg_gif_recorder_finish (rec, &error);
+#+end_src
+
+Call =lrg_gif_recorder_set_quality (rec, TRUE, TRUE)= before the first frame for
+an adaptive (median-cut) palette with Floyd-Steinberg dithering; the default is
+the web-safe palette.
+
+** Motion blur
+:PROPERTIES:
+:CUSTOM_ID: gif-recorder-motion-blur
+:END:
+#+begin_src C
+lrg_gif_recorder_set_motion_blur (rec, 4);  /* 4 sub-frames per output frame */
+
+for (gint f = 0; f < n_frames; f++)
+{
+    lrg_gif_recorder_begin_frame (rec);
+    for (gint s = 0; s < 4; s++)
+    {
+        g_autoptr(GrlImage) sub = render_at_time (f, s);
+        lrg_gif_recorder_add_subframe (rec, sub);
+    }
+    lrg_gif_recorder_end_frame (rec, NULL);
+}
+lrg_gif_recorder_finish (rec, NULL);
+#+end_src
+
+** API summary
+:PROPERTIES:
+:CUSTOM_ID: gif-recorder-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_gif_recorder_new()= | Open a GIF for writing (fps -> per-frame delay) |
+| =lrg_gif_recorder_set_quality()= | Adaptive palette + dithering (before first frame) |
+| =lrg_gif_recorder_set_motion_blur()= | Sub-frames to average per output frame |
+| =lrg_gif_recorder_add_frame()= | Append a fully-rendered frame |
+| =lrg_gif_recorder_capture_frame()= | Capture the GL framebuffer (needs a window) |
+| =lrg_gif_recorder_begin_frame()= / =add_subframe()= / =end_frame()= | Motion-blur sub-frame flow |
+| =lrg_gif_recorder_finish()= | Write the trailer and close (idempotent) |
+| =lrg_gif_recorder_get_frame_count()= | Output frames appended so far |
+
+Errors use the =LRG_GIF_RECORDER_ERROR= domain (=FAILED=, =OPEN=, =WRITE=,
+=ALREADY_CLOSED=).

@@ -50,6 +50,8 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-camera-firstperson.h \
 	src/graphics/lrg-camera-thirdperson.h \
 	src/graphics/lrg-renderer.h \
+	src/graphics/lrg-image-canvas.h \
+	src/graphics/lrg-vector-image.h \
 	src/ecs/lrg-component.h \
 	src/ecs/lrg-game-object.h \
 	src/ecs/lrg-world.h \
@@ -268,6 +270,7 @@ PUBLIC_HEADERS := \
 	src/text/lrg-text-span.h \
 	src/text/lrg-text-effect.h \
 	src/text/lrg-font-manager.h \
+	src/text/lrg-text-baker.h \
 	src/text/lrg-rich-text.h \
 	src/video/lrg-video-texture.h \
 	src/video/lrg-video-subtitle-track.h \
@@ -335,6 +338,7 @@ PUBLIC_HEADERS := \
 	src/photomode/lrg-screenshot.h \
 	src/photomode/lrg-photo-camera-controller.h \
 	src/photomode/lrg-photo-mode.h \
+	src/photomode/lrg-gif-recorder.h \
 	src/demo/lrg-demo-gatable.h \
 	src/demo/lrg-demo-manager.h \
 	src/vr/lrg-vr-service.h \
@@ -468,6 +472,8 @@ SOURCES := \
 	src/graphics/lrg-camera-firstperson.c \
 	src/graphics/lrg-camera-thirdperson.c \
 	src/graphics/lrg-renderer.c \
+	src/graphics/lrg-image-canvas.c \
+	src/graphics/lrg-vector-image.c \
 	src/ecs/lrg-component.c \
 	src/ecs/lrg-game-object.c \
 	src/ecs/lrg-world.c \
@@ -685,6 +691,7 @@ SOURCES := \
 	src/text/lrg-text-span.c \
 	src/text/lrg-text-effect.c \
 	src/text/lrg-font-manager.c \
+	src/text/lrg-text-baker.c \
 	src/text/lrg-rich-text.c \
 	src/video/lrg-video-texture.c \
 	src/video/lrg-video-subtitle-track.c \
@@ -752,6 +759,7 @@ SOURCES := \
 	src/photomode/lrg-screenshot.c \
 	src/photomode/lrg-photo-camera-controller.c \
 	src/photomode/lrg-photo-mode.c \
+	src/photomode/lrg-gif-recorder.c \
 	src/demo/lrg-demo-gatable.c \
 	src/demo/lrg-demo-manager.c \
 	src/vr/lrg-vr-service.c \
@@ -1352,6 +1360,8 @@ endif
 	$(INSTALL_DATA) src/graphics/lrg-camera-firstperson.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
 	$(INSTALL_DATA) src/graphics/lrg-camera-thirdperson.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
 	$(INSTALL_DATA) src/graphics/lrg-renderer.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-image-canvas.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
+	$(INSTALL_DATA) src/graphics/lrg-vector-image.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
 	$(INSTALL_DATA) src/ecs/lrg-component.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/
 	$(INSTALL_DATA) src/ecs/lrg-game-object.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/
 	$(INSTALL_DATA) src/ecs/lrg-world.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/
@@ -1575,6 +1585,16 @@ $(OBJDIR)/src/graphics/lrg-camera-thirdperson.o: src/graphics/lrg-camera-thirdpe
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/graphics/lrg-renderer.o: src/graphics/lrg-renderer.c src/graphics/lrg-renderer.h src/graphics/lrg-window.h src/graphics/lrg-camera.h src/graphics/lrg-drawable.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-image-canvas.o: src/graphics/lrg-image-canvas.c src/graphics/lrg-image-canvas.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/graphics/lrg-vector-image.o: src/graphics/lrg-vector-image.c src/graphics/lrg-vector-image.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

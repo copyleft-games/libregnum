@@ -127,7 +127,11 @@ TEST_SOURCES := \
 	test-template-deckbuilder.c \
 	test-chart.c \
 	test-game-module.c \
-	test-editor.c
+	test-editor.c \
+	test-gif-recorder.c \
+	test-text-baker.c \
+	test-image-canvas.c \
+	test-vector-image.c
 
 # MCP test sources (conditional on MCP=1)
 ifeq ($(MCP),1)

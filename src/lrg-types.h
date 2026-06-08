@@ -330,6 +330,12 @@ typedef struct _LrgCameraThirdPersonClass  LrgCameraThirdPersonClass;
 typedef struct _LrgRenderer       LrgRenderer;
 typedef struct _LrgRendererClass  LrgRendererClass;
 
+/* LrgImageCanvas is a final type - no Class forward declaration needed */
+typedef struct _LrgImageCanvas    LrgImageCanvas;
+
+/* LrgVectorImage is a final type - no Class forward declaration needed */
+typedef struct _LrgVectorImage    LrgVectorImage;
+
 /* ==========================================================================
  * Shapes Module
  * ========================================================================== */
@@ -747,6 +753,9 @@ typedef struct _LrgIKSolverLookAt   LrgIKSolverLookAt;
 /* LrgFontManager is a final type (singleton) - no Class forward declaration needed */
 typedef struct _LrgFontManager  LrgFontManager;
 
+/* LrgTextBaker is a final type - no Class forward declaration needed */
+typedef struct _LrgTextBaker    LrgTextBaker;
+
 /* LrgSDFFont is a final type - no Class forward declaration needed */
 typedef struct _LrgSDFFont  LrgSDFFont;
 
@@ -832,6 +841,9 @@ typedef struct _LrgPhotoCameraController  LrgPhotoCameraController;
 
 /* LrgPhotoMode is a final type (singleton) - no Class forward declaration needed */
 typedef struct _LrgPhotoMode  LrgPhotoMode;
+
+/* LrgGifRecorder is a final type - no Class forward declaration needed */
+typedef struct _LrgGifRecorder  LrgGifRecorder;
 
 /* ==========================================================================
  * Steam Module Types

@@ -51,6 +51,8 @@
 #include "graphics/lrg-camera-firstperson.h"
 #include "graphics/lrg-camera-thirdperson.h"
 #include "graphics/lrg-renderer.h"
+#include "graphics/lrg-image-canvas.h"
+#include "graphics/lrg-vector-image.h"
 
 /* ECS module */
 #include "ecs/lrg-component.h"
@@ -375,6 +377,7 @@
 #include "text/lrg-text-span.h"
 #include "text/lrg-text-effect.h"
 #include "text/lrg-font-manager.h"
+#include "text/lrg-text-baker.h"
 #include "text/lrg-rich-text.h"
 
 /* Video Playback module (Phase 3) */
@@ -464,6 +467,7 @@
 #include "photomode/lrg-screenshot.h"
 #include "photomode/lrg-photo-camera-controller.h"
 #include "photomode/lrg-photo-mode.h"
+#include "photomode/lrg-gif-recorder.h"
 
 /* Demo module (Phase 5) */
 #include "demo/lrg-demo-gatable.h"

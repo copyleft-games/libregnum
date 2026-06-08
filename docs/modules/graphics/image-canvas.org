@@ -1,0 +1,71 @@
+* LrgImageCanvas
+:PROPERTIES:
+:CUSTOM_ID: lrg-image-canvas
+:END:
+
+CPU-side dynamic-texture canvas: wraps a =GrlImage= and exposes a clean,
+engine-level drawing / compositing / transform / blur API, then hands back a
+=GrlTexture= via =lrg_image_canvas_to_texture()=.
+
+** Overview
+
+=LrgImageCanvas= is a thin, ergonomic facade over graylib's software rasterizer
+for building textures procedurally without a GL context. It is useful for:
+
+- *Dye / tint systems* — recolour a silhouette procedurally
+- *Decals* — stamp blurred, alpha-composited art onto surfaces
+- *Drop shadows* — one call: =lrg_image_canvas_drop_shadow()=
+- *Procedural icons* — draw paths, gradients and text headlessly
+
+All drawing is on the CPU; only =to_texture()= needs a GL context.
+
+** Quick start
+
+#+begin_src C
+g_autoptr(LrgImageCanvas) canvas = lrg_image_canvas_new (64, 64, NULL); /* transparent */
+g_autoptr(GrlColor)       white  = grl_color_new (255, 255, 255, 255);
+
+lrg_image_canvas_set_antialias (canvas, TRUE);
+lrg_image_canvas_fill_circle (canvas, 32, 32, 20, white);
+
+/* Soft drop shadow behind the current content */
+g_autoptr(GrlColor) grey = grl_color_new (0, 0, 0, 180);
+lrg_image_canvas_drop_shadow (canvas,
+                              lrg_image_canvas_get_image (canvas),
+                              4, 4, 3, grey);
+
+g_autoptr(GrlTexture) tex = lrg_image_canvas_to_texture (canvas); /* needs GL */
+#+end_src
+
+** Transform stack
+
+=save= / =restore= push and pop the transform; =translate=, =scale=, =rotate=
+(radians) and =reset_transform= modify the current matrix. Geometry primitives
+(=fill_rect=, =fill_circle=, =fill_polygon=, =fill_path=, =stroke_path=,
+=stroke_circle=, =draw_line=) are transformed by the current matrix.
+
+#+begin_src C
+lrg_image_canvas_save (canvas);
+lrg_image_canvas_translate (canvas, 32.0f, 32.0f);
+lrg_image_canvas_rotate (canvas, 0.785f);          /* 45 deg */
+lrg_image_canvas_fill_rect (canvas, 0, 0, 8, 8, white);
+lrg_image_canvas_restore (canvas);
+#+end_src
+
+*Not transformed:* =draw_gradient_rect=, =draw_gradient_radial= and =draw_text=
+ignore the transform stack (the underlying graylib gradient/text primitives are
+not matrix-aware). =clear=, =composite=, =apply_mask= and =blur= are whole-image
+pixel operations and are transform-independent by design.
+
+** API summary
+
+| Group | Functions |
+|-------+-----------|
+| Construction | =new=, =new_for_image=, =get_image=, =to_texture= |
+| State | =set_blend_mode=, =set_blend_color_space=, =set_antialias=, =set_clip_rect= |
+| Transform | =save=, =restore=, =translate=, =scale=, =rotate=, =reset_transform= |
+| Draw | =clear=, =fill_circle=, =stroke_circle=, =fill_rect=, =draw_line=, =fill_polygon=, =fill_path=, =stroke_path=, =draw_text=, =draw_gradient_rect=, =draw_gradient_radial= |
+| Composite | =composite=, =apply_mask=, =blur=, =drop_shadow= |
+
+For anything not wrapped here, =lrg_image_canvas_get_image()= returns the
+underlying =GrlImage= (transfer none) for direct graylib calls.

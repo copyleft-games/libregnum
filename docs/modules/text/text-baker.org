@@ -1,0 +1,67 @@
+* Text Baker
+:PROPERTIES:
+:CUSTOM_ID: text-baker
+:END:
+
+=LrgTextBaker= rasterises TrueType/OpenType text onto CPU images, GPU textures,
+and glyph atlases with *no display or GL context required* for the image path.
+
+** Overview
+
+Unlike the GPU-only =LrgFontManager= / =GrlFont= path, =LrgTextBaker= is built
+on graylib's headless =GrlImageFont= (stb_truetype). It is meant for asset
+pipelines, offline/CI rendering, and baking pre-rendered text into textures or
+atlases. Glyph coverage is composited =SRC_OVER= onto the target, honouring its
+clip rectangle and colour space, with per-pixel anti-aliasing.
+
+=render_to_image=, =measure= and =bake_atlas= are fully headless. Only
+=render_to_texture= needs an active GL context (it uploads the baked image to
+the GPU).
+
+** Quick start
+
+#+begin_src C
+g_autoptr(GError)       error = NULL;
+g_autoptr(LrgTextBaker) baker =
+    lrg_text_baker_new_from_file ("/path/to/font.ttf", &error);
+
+/* CPU image, transparent background */
+g_autoptr(GrlColor) black = grl_color_new (0, 0, 0, 255);
+g_autoptr(GrlImage) img   =
+    lrg_text_baker_render_to_image (baker, "Hello", 32.0f, black, NULL);
+
+/* GPU texture (needs a GL context) */
+g_autoptr(GrlTexture) tex =
+    lrg_text_baker_render_to_texture (baker, "Hello", 32.0f, black, NULL);
+
+/* Bake a glyph atlas */
+GrlRectangle *regions = NULL;
+guint         n       = 0;
+g_autoptr(GrlImage) atlas =
+    lrg_text_baker_bake_atlas (baker, "ABCDE", 32.0f, black, 2, &regions, &n);
+g_free (regions);
+#+end_src
+
+** API summary
+
+| Function | Returns | Notes |
+|----------+---------+-------|
+| =lrg_text_baker_new_from_file()= | =LrgTextBaker *= | Loads a =GrlImageFont= from disk |
+| =lrg_text_baker_new_for_font()=  | =LrgTextBaker *= | Wraps an existing =GrlImageFont= (takes a ref) |
+| =lrg_text_baker_get_font()=      | =GrlImageFont *= | (transfer none) |
+| =lrg_text_baker_measure()=       | =gboolean=       | Multi-line; out params nullable |
+| =lrg_text_baker_render_to_image()=   | =GrlImage *=   | (transfer full); headless |
+| =lrg_text_baker_render_to_texture()= | =GrlTexture *= | (transfer full); needs a GL context |
+| =lrg_text_baker_bake_atlas()=    | =GrlImage *=     | Shelf-packed; skips glyphs the font lacks |
+
+** Errors
+
+Operations use the =LRG_TEXT_BAKER_ERROR= domain
+(=FAILED=, =FONT_LOAD=, =INVALID_SIZE=, =RENDER=).
+
+** Limitations
+
+Inherited from =GrlImageFont= / stb_truetype: minimal hinting (prefer >= 14px
+for crisp output), left-to-right only, one codepoint per glyph (no shaping,
+ligatures, or bidi). =bake_atlas= uses a simple left-to-right shelf packer with
+row wrapping at =LRG_TEXT_BAKER_ATLAS_MAX_WIDTH= (1024).

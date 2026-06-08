@@ -1,0 +1,59 @@
+* LrgVectorImage
+:PROPERTIES:
+:CUSTOM_ID: lrg-vector-image
+:END:
+
+Load an SVG vector asset and rasterise it to a =GrlImage= or =GrlTexture= at an
+arbitrary pixel size — for scalable icon / UI assets, backed by graylib's SVG
+parser and path rasteriser.
+
+** Overview
+
+=LrgVectorImage= parses an SVG (file or in-memory buffer) into a flat list of
+=GrlVectorShape=, determines the source coordinate space, and rasterises it on
+demand:
+
+- =lrg_vector_image_render()= — CPU rasterise to a =GrlImage=
+- =lrg_vector_image_render_to_texture()= — CPU rasterise then upload to a =GrlTexture= (needs a GL context)
+
+The source extent is taken from the SVG's declared canvas (=viewBox=, else
+=width=/=height= on the root =<svg>=), so author-intended margins are preserved.
+If the document declares no extent, the union bounding box of all shapes is used
+(tight crop).
+
+** Quick start
+
+#+begin_src C
+g_autoptr(GError)         error = NULL;
+g_autoptr(LrgVectorImage) vi    =
+    lrg_vector_image_new_from_file ("ui/icon.svg", &error);
+
+/* Rasterise to 64x64, transparent background, preserving aspect (letterboxed) */
+g_autoptr(GrlImage) img = lrg_vector_image_render (vi, 64, 64, NULL, TRUE);
+#+end_src
+
+** API summary
+
+| Function | Returns | Notes |
+|----------+---------+-------|
+| =lrg_vector_image_new_from_file()= | =LrgVectorImage *= | (transfer full, nullable) |
+| =lrg_vector_image_new_from_data()= | =LrgVectorImage *= | from an in-memory buffer |
+| =lrg_vector_image_get_source_size()= | =gboolean= | intrinsic extent (canvas or union bounds) |
+| =lrg_vector_image_get_shape_count()= | =guint= | number of parsed shapes |
+| =lrg_vector_image_render()= | =GrlImage *= | (transfer full); =preserve_aspect= letterboxes |
+| =lrg_vector_image_render_to_texture()= | =GrlTexture *= | (transfer full); needs a GL context |
+
+When =preserve_aspect= is =TRUE= the content is uniformly scaled and centred
+(letterboxed) within the target; when =FALSE= it is stretched to fill.
+
+** Errors
+
+Uses the =LRG_VECTOR_IMAGE_ERROR= domain (=FAILED=, =LOAD=, =RENDER=).
+
+** Supported SVG subset
+
+Inherited from graylib's SVG support: =<path>= (M/L/H/V/C/S/Q/T/Z, arcs
+approximated), =rect/circle/ellipse/line/polyline/polygon=, solid fill/stroke
+(hex / =rgb()= / named / =none=), opacity, stroke-width, fill-rule, and baked
+transforms. Gradients, patterns, filters, masks, =<text>=, CSS and =<use>= are
+skipped (see graylib's =docs/api/svg.md=).
