@@ -1308,22 +1308,10 @@ ifeq ($(TARGET_PLATFORM),windows)
 	@exit 0
 else
 	$(call print_status,"Installing to $(PREFIX)...")
-	# Create directories
+	# Create directories (per-module include subdirs are created by the
+	# header-install loop below, driven by $(PUBLIC_HEADERS)).
 	@$(MKDIR_P) $(DESTDIR)$(LIBDIR)
 	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/core
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/components
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/input
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/ui
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/inventory
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/debug
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/net
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/scene
-	@$(MKDIR_P) $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting
 	@$(MKDIR_P) $(DESTDIR)$(PKGCONFIGDIR)
 ifeq ($(BUILD_GIR),1)
 	@$(MKDIR_P) $(DESTDIR)$(GIRDIR)
@@ -1338,113 +1326,33 @@ ifeq ($(BUILD_SHARED),1)
 	cd $(DESTDIR)$(LIBDIR) && ln -sf $(LIB_SHARED_VERSION) $(LIB_SHARED_SONAME)
 	cd $(DESTDIR)$(LIBDIR) && ln -sf $(LIB_SHARED_SONAME) $(LIB_SHARED)
 endif
-	# Install headers
-	$(INSTALL_DATA) src/libregnum.h $(DESTDIR)$(INCLUDEDIR)/libregnum/
-	$(INSTALL_DATA) src/lrg-version.h $(DESTDIR)$(INCLUDEDIR)/libregnum/
-	$(INSTALL_DATA) src/lrg-types.h $(DESTDIR)$(INCLUDEDIR)/libregnum/
-	$(INSTALL_DATA) src/lrg-enums.h $(DESTDIR)$(INCLUDEDIR)/libregnum/
-	$(INSTALL_DATA) src/lrg-log.h $(DESTDIR)$(INCLUDEDIR)/libregnum/
-	$(INSTALL_DATA) src/core/lrg-engine.h $(DESTDIR)$(INCLUDEDIR)/libregnum/core/
-	$(INSTALL_DATA) src/core/lrg-registry.h $(DESTDIR)$(INCLUDEDIR)/libregnum/core/
-	$(INSTALL_DATA) src/core/lrg-data-loader.h $(DESTDIR)$(INCLUDEDIR)/libregnum/core/
-	$(INSTALL_DATA) src/core/lrg-asset-manager.h $(DESTDIR)$(INCLUDEDIR)/libregnum/core/
-	$(INSTALL_DATA) src/graphics/lrg-drawable.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-window.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-grl-window.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-camera.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-camera2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-camera3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-camera-isometric.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-camera-topdown.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-camera-sideon.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-camera-firstperson.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-camera-thirdperson.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-renderer.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-image-canvas.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/graphics/lrg-vector-image.h $(DESTDIR)$(INCLUDEDIR)/libregnum/graphics/
-	$(INSTALL_DATA) src/ecs/lrg-component.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/
-	$(INSTALL_DATA) src/ecs/lrg-game-object.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/
-	$(INSTALL_DATA) src/ecs/lrg-world.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/
-	$(INSTALL_DATA) src/ecs/components/lrg-sprite-component.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/components/
-	$(INSTALL_DATA) src/ecs/components/lrg-collider-component.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/components/
-	$(INSTALL_DATA) src/ecs/components/lrg-transform-component.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/components/
-	$(INSTALL_DATA) src/ecs/components/lrg-animator-component.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ecs/components/
-	$(INSTALL_DATA) src/input/lrg-input.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
-	$(INSTALL_DATA) src/input/lrg-input-manager.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
-	$(INSTALL_DATA) src/input/lrg-input-keyboard.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
-	$(INSTALL_DATA) src/input/lrg-input-mouse.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
-	$(INSTALL_DATA) src/input/lrg-input-gamepad.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
-	$(INSTALL_DATA) src/input/lrg-input-mock.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
-	$(INSTALL_DATA) src/input/lrg-input-software.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
-	$(INSTALL_DATA) src/input/lrg-input-binding.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
-	$(INSTALL_DATA) src/input/lrg-input-action.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
-	$(INSTALL_DATA) src/input/lrg-input-map.h $(DESTDIR)$(INCLUDEDIR)/libregnum/input/
-	$(INSTALL_DATA) src/shapes/lrg-shape.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
-	$(INSTALL_DATA) src/shapes/lrg-shape2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
-	$(INSTALL_DATA) src/shapes/lrg-shape3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
-	$(INSTALL_DATA) src/shapes/lrg-sphere3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
-	$(INSTALL_DATA) src/shapes/lrg-cube3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
-	$(INSTALL_DATA) src/shapes/lrg-line3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
-	$(INSTALL_DATA) src/shapes/lrg-text2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
-	$(INSTALL_DATA) src/shapes/lrg-rectangle2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
-	$(INSTALL_DATA) src/shapes/lrg-circle2d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/shapes/
-	$(INSTALL_DATA) src/ui/lrg-ui-event.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-widget.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-container.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-label.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-button.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-panel.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-vbox.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-hbox.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-grid.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-tab-view.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-canvas.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-checkbox.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-progress-bar.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-image.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-slider.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-text-input.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/ui/lrg-theme.h $(DESTDIR)$(INCLUDEDIR)/libregnum/ui/
-	$(INSTALL_DATA) src/inventory/lrg-item-def.h $(DESTDIR)$(INCLUDEDIR)/libregnum/inventory/
-	$(INSTALL_DATA) src/inventory/lrg-item-stack.h $(DESTDIR)$(INCLUDEDIR)/libregnum/inventory/
-	$(INSTALL_DATA) src/inventory/lrg-inventory.h $(DESTDIR)$(INCLUDEDIR)/libregnum/inventory/
-	$(INSTALL_DATA) src/inventory/lrg-equipment.h $(DESTDIR)$(INCLUDEDIR)/libregnum/inventory/
-	$(INSTALL_DATA) src/debug/lrg-profiler.h $(DESTDIR)$(INCLUDEDIR)/libregnum/debug/
-	$(INSTALL_DATA) src/debug/lrg-debug-console.h $(DESTDIR)$(INCLUDEDIR)/libregnum/debug/
-	$(INSTALL_DATA) src/debug/lrg-debug-overlay.h $(DESTDIR)$(INCLUDEDIR)/libregnum/debug/
-	$(INSTALL_DATA) src/debug/lrg-inspector.h $(DESTDIR)$(INCLUDEDIR)/libregnum/debug/
-	$(INSTALL_DATA) src/net/lrg-net-message.h $(DESTDIR)$(INCLUDEDIR)/libregnum/net/
-	$(INSTALL_DATA) src/net/lrg-net-peer.h $(DESTDIR)$(INCLUDEDIR)/libregnum/net/
-	$(INSTALL_DATA) src/net/lrg-net-server.h $(DESTDIR)$(INCLUDEDIR)/libregnum/net/
-	$(INSTALL_DATA) src/net/lrg-net-client.h $(DESTDIR)$(INCLUDEDIR)/libregnum/net/
-	$(INSTALL_DATA) src/world3d/lrg-bounding-box3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
-	$(INSTALL_DATA) src/world3d/lrg-spawn-point3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
-	$(INSTALL_DATA) src/world3d/lrg-trigger3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
-	$(INSTALL_DATA) src/world3d/lrg-octree.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
-	$(INSTALL_DATA) src/world3d/lrg-portal.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
-	$(INSTALL_DATA) src/world3d/lrg-sector.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
-	$(INSTALL_DATA) src/world3d/lrg-level3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
-	$(INSTALL_DATA) src/world3d/lrg-portal-system.h $(DESTDIR)$(INCLUDEDIR)/libregnum/world3d/
-	$(INSTALL_DATA) src/scene/lrg-material3d.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
-	$(INSTALL_DATA) src/scene/lrg-scene-object.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
-	$(INSTALL_DATA) src/scene/lrg-scene-entity.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
-	$(INSTALL_DATA) src/scene/lrg-scene.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
-	$(INSTALL_DATA) src/scene/lrg-scene-serializer.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
-	$(INSTALL_DATA) src/scene/lrg-scene-serializer-yaml.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
-	$(INSTALL_DATA) src/scene/lrg-scene-serializer-blender.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
-	$(INSTALL_DATA) src/scene/lrg-mesh-data.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scene/
-	$(INSTALL_DATA) src/scripting/lrg-scripting.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
-	$(INSTALL_DATA) src/scripting/lrg-scripting-lua.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
-	$(INSTALL_DATA) src/scripting/lrg-scripting-gi.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
-	$(INSTALL_DATA) src/scripting/lrg-scripting-python.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
-	$(INSTALL_DATA) src/scripting/lrg-scripting-pygobject.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
-	$(INSTALL_DATA) src/scripting/lrg-scripting-gjs.h $(DESTDIR)$(INCLUDEDIR)/libregnum/scripting/
+	# Install headers — every public header, driven by $(PUBLIC_HEADERS) so all
+	# modules are covered and the list stays correct as modules are added.
+	# Each header's destination mirrors its src/<module>/... path under the
+	# libregnum include dir; per-module subdirs are created on demand.
+	@for hdr in $(PUBLIC_HEADERS); do \
+		rel="$${hdr#src/}"; \
+		dest="$(DESTDIR)$(INCLUDEDIR)/libregnum/$$(dirname "$$rel")"; \
+		$(MKDIR_P) "$$dest"; \
+		$(INSTALL_DATA) "$$hdr" "$$dest/" || exit 1; \
+	done
 	# Install pkg-config
 	$(INSTALL_DATA) $(BUILDDIR)/$(PC_FILE) $(DESTDIR)$(PKGCONFIGDIR)/
 	# Install GIR
 ifeq ($(BUILD_GIR),1)
+	@$(MKDIR_P) $(DESTDIR)$(GIRDIR)
+	@$(MKDIR_P) $(DESTDIR)$(TYPELIBDIR)
 	$(INSTALL_DATA) $(GIROUTDIR)/$(GIR_NAME) $(DESTDIR)$(GIRDIR)/
 	$(INSTALL_DATA) $(GIROUTDIR)/$(TYPELIB_NAME) $(DESTDIR)$(TYPELIBDIR)/
+	# Libregnum-1.typelib has a hard <include name="Graylib" version="1">
+	# dependency, so it cannot be loaded by any binding unless Graylib-1.typelib
+	# is also on the GI search path. graylib is statically embedded into
+	# liblibregnum, so it is not installed otherwise — install its GIR/typelib
+	# here. (Calling graylib functions directly from a binding additionally
+	# needs libgraylib.so, which the self-contained build does not install; the
+	# typelib is required regardless for libregnum's own introspection to load.)
+	-$(INSTALL_DATA) $(GRAYLIB_DIR)/build/gir/Graylib-1.gir $(DESTDIR)$(GIRDIR)/
+	-$(INSTALL_DATA) $(GRAYLIB_DIR)/build/gir/Graylib-1.typelib $(DESTDIR)$(TYPELIBDIR)/
 endif
 	$(call print_status,"Installation complete!")
 endif
@@ -1461,6 +1369,8 @@ uninstall:
 ifeq ($(BUILD_GIR),1)
 	$(RM) $(DESTDIR)$(GIRDIR)/$(GIR_NAME)
 	$(RM) $(DESTDIR)$(TYPELIBDIR)/$(TYPELIB_NAME)
+	$(RM) $(DESTDIR)$(GIRDIR)/Graylib-1.gir
+	$(RM) $(DESTDIR)$(TYPELIBDIR)/Graylib-1.typelib
 endif
 
 # =============================================================================
