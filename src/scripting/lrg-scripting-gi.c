@@ -465,8 +465,11 @@ lrg_scripting_gi_init (LrgScriptingGI *self)
                                                      g_free, registered_func_free);
     priv->loaded_typelibs = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                     g_free, g_free);
-    priv->gi_repository = g_irepository_get_default ();
-    g_object_ref (priv->gi_repository);
+    /* GIRepository 3.0 (GLib >= 2.86): dup_default() returns an owned ref,
+     * released in finalize via g_clear_object().  Using the GLib-integrated
+     * GIRepository avoids a duplicate "GIRepository" GType registration when
+     * loaded alongside gjs / modern pygobject. */
+    priv->gi_repository = gi_repository_dup_default ();
     priv->interpreter_initialized = FALSE;
 }
 
@@ -804,7 +807,7 @@ lrg_scripting_gi_require_typelib (LrgScriptingGI  *self,
     }
 
     /* Load the typelib via GIRepository */
-    typelib = g_irepository_require (priv->gi_repository,
+    typelib = gi_repository_require (priv->gi_repository,
                                      namespace_,
                                      version,
                                      0,

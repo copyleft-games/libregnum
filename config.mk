@@ -395,8 +395,12 @@ endif
 
 # GObject Introspection runtime (only for native builds with GIR)
 ifeq ($(BUILD_GIR),1)
-    GI_RUNTIME_CFLAGS := $(shell $(PKG_CONFIG) --cflags gobject-introspection-1.0 2>/dev/null)
-    GI_RUNTIME_LIBS := $(shell $(PKG_CONFIG) --libs gobject-introspection-1.0 2>/dev/null)
+    # Use GLib's integrated GIRepository 3.0 (girepository-2.0), not the legacy
+    # libgirepository-1.0 (gobject-introspection-1.0).  On GLib >= 2.80 the two
+    # both register a "GIRepository" GType, so linking the legacy one alongside
+    # gjs / modern pygobject aborts with a duplicate-registration fatal.
+    GI_RUNTIME_CFLAGS := $(shell $(PKG_CONFIG) --cflags girepository-2.0 2>/dev/null)
+    GI_RUNTIME_LIBS := $(shell $(PKG_CONFIG) --libs girepository-2.0 2>/dev/null)
     ifneq ($(GI_RUNTIME_CFLAGS),)
         HAS_GI := 1
     else
@@ -619,7 +623,7 @@ GIR_SCANNER_FLAGS := \
     --pkg=gio-2.0 \
     --pkg=libdex-1 \
     --pkg=json-glib-1.0 \
-    --pkg=gobject-introspection-1.0 \
+    --pkg=girepository-2.0 \
     --include=GLib-2.0 \
     --include=GObject-2.0 \
     --include=Gio-2.0 \

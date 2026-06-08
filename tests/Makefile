@@ -30,7 +30,7 @@ LIBREGNUM_STATIC := ../$(LIBOUTDIR)/$(LIB_STATIC)
 TEST_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS)
 TEST_CFLAGS += -I../src
 TEST_CFLAGS += -DLIBREGNUM_COMPILATION
-TEST_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 libdex-1 json-glib-1.0 gobject-introspection-1.0)
+TEST_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 libdex-1 json-glib-1.0 girepository-2.0)
 
 # Add dependency include paths
 TEST_CFLAGS += -I$(GRAYLIB_DIR)/src
@@ -43,7 +43,7 @@ TEST_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(LIBOUTDIR)'
 
 # Test libraries (graylib and yaml-glib are embedded in libregnum)
 TEST_LIBS := -l$(LIB_NAME)
-TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 gobject-introspection-1.0)
+TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 girepository-2.0)
 TEST_LIBS += $(PYTHON_LIBS) $(GJS_LIBS)
 TEST_LIBS += -lm
 

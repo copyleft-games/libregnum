@@ -38,8 +38,8 @@ else
         EXAMPLE_CFLAGS += $(shell $(PKG_CONFIG) --cflags libdex-1)
         EXAMPLE_OPT_LIBS += $(shell $(PKG_CONFIG) --libs libdex-1)
     endif
-    ifneq ($(shell $(PKG_CONFIG) --exists gobject-introspection-1.0 2>/dev/null && echo yes),)
-        EXAMPLE_CFLAGS += $(shell $(PKG_CONFIG) --cflags gobject-introspection-1.0)
+    ifneq ($(shell $(PKG_CONFIG) --exists girepository-2.0 2>/dev/null && echo yes),)
+        EXAMPLE_CFLAGS += $(shell $(PKG_CONFIG) --cflags girepository-2.0)
     endif
 endif
 
@@ -63,8 +63,8 @@ ifeq ($(STATIC),1)
         ifneq ($(shell $(PKG_CONFIG) --exists gjs-1.0 2>/dev/null && echo yes),)
             STATIC_GJS_LIBS := $(shell $(PKG_CONFIG) --static --libs gjs-1.0)
         endif
-        ifneq ($(shell $(PKG_CONFIG) --exists gobject-introspection-1.0 2>/dev/null && echo yes),)
-            STATIC_GI_LIBS := $(shell $(PKG_CONFIG) --static --libs gobject-introspection-1.0)
+        ifneq ($(shell $(PKG_CONFIG) --exists girepository-2.0 2>/dev/null && echo yes),)
+            STATIC_GI_LIBS := $(shell $(PKG_CONFIG) --static --libs girepository-2.0)
         endif
     endif
 endif

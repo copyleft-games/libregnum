@@ -18,7 +18,7 @@
 #endif
 
 #include <glib-object.h>
-#include <girepository.h>
+#include <girepository/girepository.h>
 #include "lrg-scripting.h"
 #include "../core/lrg-registry.h"
 
