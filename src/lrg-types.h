@@ -1274,4 +1274,62 @@ typedef struct _LrgProject  LrgProject;
 /* LrgEditorApp is a final type - no Class forward declaration needed */
 typedef struct _LrgEditorApp  LrgEditorApp;
 
+/* ==========================================================================
+ * Reel Module (programmatic video creation)
+ * ========================================================================== */
+
+/* LrgReel is a final type - no Class forward declaration needed */
+typedef struct _LrgReel  LrgReel;
+
+/* LrgReelContext is a final type - no Class forward declaration needed */
+typedef struct _LrgReelContext  LrgReelContext;
+
+/* LrgReelClip is a derivable type */
+typedef struct _LrgReelClip       LrgReelClip;
+typedef struct _LrgReelClipClass  LrgReelClipClass;
+
+/* LrgReelSequence is a final type (derived from LrgReelClip) */
+typedef struct _LrgReelSequence  LrgReelSequence;
+
+/* LrgReelRenderer is a final type - no Class forward declaration needed */
+typedef struct _LrgReelRenderer  LrgReelRenderer;
+
+/* LrgReelExporter is a derivable type */
+typedef struct _LrgReelExporter       LrgReelExporter;
+typedef struct _LrgReelExporterClass  LrgReelExporterClass;
+
+/* LrgReelGifExporter is a final type - no Class forward declaration needed */
+typedef struct _LrgReelGifExporter  LrgReelGifExporter;
+
+/* LrgReelSeqExporter is a final type - no Class forward declaration needed */
+typedef struct _LrgReelSeqExporter  LrgReelSeqExporter;
+
+/* LrgReelVideoExporter is a final type - no Class forward declaration needed */
+typedef struct _LrgReelVideoExporter  LrgReelVideoExporter;
+
+/* LrgReelTransition is a derivable type */
+typedef struct _LrgReelTransition       LrgReelTransition;
+typedef struct _LrgReelTransitionClass  LrgReelTransitionClass;
+
+/* LrgReelFadeTransition is a final type - no Class forward declaration needed */
+typedef struct _LrgReelFadeTransition  LrgReelFadeTransition;
+
+/* LrgReelWipeTransition is a final type - no Class forward declaration needed */
+typedef struct _LrgReelWipeTransition  LrgReelWipeTransition;
+
+/* LrgReelDissolveTransition is a final type - no Class forward declaration needed */
+typedef struct _LrgReelDissolveTransition  LrgReelDissolveTransition;
+
+/* LrgReelSlideTransition is a final type - no Class forward declaration needed */
+typedef struct _LrgReelSlideTransition  LrgReelSlideTransition;
+
+/* LrgReelAudioTrack is a final type - no Class forward declaration needed */
+typedef struct _LrgReelAudioTrack  LrgReelAudioTrack;
+
+/* LrgReelPlayer is a final type - no Class forward declaration needed */
+typedef struct _LrgReelPlayer  LrgReelPlayer;
+
+/* LrgReelSpringConfig is a boxed value type */
+typedef struct _LrgReelSpringConfig  LrgReelSpringConfig;
+
 G_END_DECLS

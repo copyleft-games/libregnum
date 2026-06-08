@@ -13,6 +13,24 @@ Complete documentation for all Libregnum game engine modules and systems.
 :PROPERTIES:
 :CUSTOM_ID: completed-modules
 :END:
+*** [[file:reel/index.org][Reel Module]] - Programmatic Video Creation
+:PROPERTIES:
+:CUSTOM_ID: reel-module---programmatic-video-creation
+:END:
+Declarative, code-driven video: define a composition of timed, animated layers,
+then render it frame-by-frame to GIF, an image sequence, or MP4/WebM.  Fully
+headless except for the optional live preview player.
+
+- *[[file:reel/composition.org][LrgReel]]* - the composition (id, resolution, fps, duration, clip stack, props)
+- *[[file:reel/timing.org][LrgReelContext / LrgReelSequence]]* - the relative-frame model: shift, series, loop, freeze
+- *[[file:reel/animation.org][interpolate / spring]]* - range interpolation and spring physics
+- *[[file:reel/clips.org][LrgReelClip]]* - timed, opacity'd renderable layers (vfunc or callback)
+- *[[file:reel/rendering.org][LrgReelRenderer]]* - the offline frame-by-frame engine
+- *[[file:reel/exporters.org][LrgReelExporter]]* - GIF, image-sequence, and ffmpeg MP4/WebM output
+- *[[file:reel/transitions.org][LrgReelTransition]]* - CPU fade / wipe / dissolve / slide
+- *[[file:reel/audio.org][LrgReelAudioTrack]]* - offline audio mixing and muxing
+- *[[file:reel/player.org][LrgReelPlayer]]* - interactive play/scrub preview window
+
 *** [[file:editor/index.org][Editor Module]] - Level Authoring and IDE Hosting
 :PROPERTIES:
 :CUSTOM_ID: editor-module---level-authoring-and-ide-hosting

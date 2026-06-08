@@ -1,0 +1,167 @@
+* LrgReelRenderer — Offline rendering
+:PROPERTIES:
+:CUSTOM_ID: lrgreelrenderer-offline-rendering
+:END:
+=LrgReelRenderer= is the engine that turns a =LrgReel= definition into a stream
+of pixel frames.  It is entirely headless: it operates on a CPU =LrgImageCanvas=
+backed by graylib's software rasterizer and never opens a GPU context.  The
+only component in the Reel module that requires a display is =LrgReelPlayer=
+(see [[file:player.org][player.org]]).
+
+** Creating a renderer
+:PROPERTIES:
+:CUSTOM_ID: creating-a-renderer
+:END:
+#+begin_src c
+g_autoptr(LrgReelRenderer) renderer = lrg_reel_renderer_new (reel);
+#+end_src
+
+The renderer takes its own reference to =reel=; callers may unref their handle
+immediately.
+
+** Background color
+:PROPERTIES:
+:CUSTOM_ID: background-color
+:END:
+Before compositing clips for each frame, the renderer clears the canvas to a
+background color.  The default is transparent black.
+
+#+begin_src c
+GrlColor black = { 0, 0, 0, 255 };
+lrg_reel_renderer_set_background (renderer, &black);
+
+/* NULL = transparent clear (RGBA 0,0,0,0). */
+lrg_reel_renderer_set_background (renderer, NULL);
+#+end_src
+
+=GrlColor= is a GBoxed value type from graylib.  Do not call =g_object_unref()=
+on it.
+
+** Rendering a single frame
+:PROPERTIES:
+:CUSTOM_ID: rendering-single-frame
+:END:
+Use =render_frame= when you need a standalone image you own:
+
+#+begin_src c
+/* Returns (transfer full) — you must unref this GrlImage. */
+g_autoptr(GrlImage) img = lrg_reel_renderer_render_frame (renderer, 42);
+grl_image_export_to_file (img, "frame_42.png", &error);
+#+end_src
+
+Use =get_canvas_image= when feeding a tight loop that passes the frame onward
+without needing to copy it:
+
+#+begin_src c
+/* Returns (transfer none) — valid only until the next render call. */
+GrlImage *img = lrg_reel_renderer_get_canvas_image (renderer, frame);
+/* Use img immediately; do not store the pointer across frames. */
+#+end_src
+
+The difference matters in performance-critical loops: =render_frame= makes an
+extra allocation and copy per frame; =get_canvas_image= reuses the internal
+canvas buffer and avoids the copy at the cost of a shorter lifetime.
+
+** Full-reel export (the offline loop)
+:PROPERTIES:
+:CUSTOM_ID: full-reel-export
+:END:
+=lrg_reel_renderer_render_to_exporter()= is the preferred single-call API for
+producing a complete output file.  It calls =exporter.begin()= once, iterates
+frames 0 through =duration - 1= calling =exporter.add_frame()= per frame, then
+calls =exporter.finish()=.
+
+#+begin_src c
+g_autoptr(LrgReelGifExporter) gif =
+    lrg_reel_gif_exporter_new ("output.gif", &error);
+
+if (!lrg_reel_renderer_render_to_exporter (renderer,
+                                           LRG_REEL_EXPORTER (gif),
+                                           &error))
+{
+    g_printerr ("Render failed: %s\n", error->message);
+    return 1;
+}
+#+end_src
+
+The renderer is the sole driver of the context: it creates one
+=LrgReelContext=, advances it frame by frame, and calls each active top-level
+clip's render vfunc with the context's offset stack managed on their behalf.
+
+** Progress callback
+:PROPERTIES:
+:CUSTOM_ID: progress-callback
+:END:
+A =LrgReelProgressFunc= is invoked once per frame during
+=render_to_exporter()=, letting callers display progress or update a UI:
+
+#+begin_src c
+typedef void (*LrgReelProgressFunc) (guint    frame,
+                                     guint    total,
+                                     gpointer user_data);
+#+end_src
+
+#+begin_src c
+static void
+on_progress (guint frame, guint total, gpointer user_data)
+{
+    g_print ("\rRendering %u / %u ...", frame + 1, total);
+    fflush (stdout);
+}
+
+lrg_reel_renderer_set_progress_callback (renderer, on_progress, NULL, NULL);
+lrg_reel_renderer_render_to_exporter (renderer, LRG_REEL_EXPORTER (gif), &error);
+#+end_src
+
+Pass =NULL= to clear a previously set callback.  The =destroy= notifier (last
+parameter) is invoked when the renderer finalizes or when the callback is
+replaced.
+
+** Per-clip opacity compositing
+:PROPERTIES:
+:CUSTOM_ID: per-clip-opacity-compositing
+:END:
+Before blending each clip's rendered output into the shared canvas, the
+renderer multiplies every pixel's alpha by the clip's opacity value
+(=lrg_reel_clip_get_opacity()=).  At opacity 1.0 (the default) the clip's own
+pixels are composited unmodified.  At opacity 0.0 the clip's output is fully
+transparent.
+
+In v1 this per-clip blending applies only to *top-level* reel clips.  Child
+clips inside a sequence draw at full opacity into the sequence's composite pass
+and are composited as a unit.
+
+** Manual frame loop
+:PROPERTIES:
+:CUSTOM_ID: manual-frame-loop
+:END:
+When you need finer control (e.g. skipping frames, applying a transition
+between renders, or feeding a custom exporter inline):
+
+#+begin_src c
+gint total = lrg_reel_get_duration_in_frames (reel);
+
+for (gint f = 0; f < total; f++)
+{
+    /* (transfer none) — valid until the next render call. */
+    GrlImage *img = lrg_reel_renderer_get_canvas_image (renderer, f);
+    my_custom_sink_push_frame (sink, img);
+}
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =lrg_reel_renderer_render_frame()= returns =(transfer full)=: you own the
+  returned =GrlImage= and must unref it (=g_autoptr(GrlImage)= is recommended).
+  Forgetting to unref it leaks the image allocation.
+- =lrg_reel_renderer_get_canvas_image()= returns =(transfer none)=: the pointer
+  is invalidated on the *next* call to any render function on the same renderer.
+  Never store it across frames.
+- =GrlColor= is a GBoxed value type from graylib.  Pass it by pointer to
+  =lrg_reel_renderer_set_background()= but do *not* call =g_object_unref()= on it.
+  Allocate it on the stack (as a struct literal) or with =grl_color_new()= +
+  =grl_color_free()=.
+- The renderer is not thread-safe.  All render calls must originate from the
+  same thread.

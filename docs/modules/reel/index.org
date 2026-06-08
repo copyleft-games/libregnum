@@ -1,0 +1,176 @@
+* Reel Module
+:PROPERTIES:
+:CUSTOM_ID: reel-module
+:END:
+The Reel module is a declarative, programmatic video-creation framework built on
+top of the engine's CPU image rasterizer.  You describe a composition as a
+stack of timed, animated layers (clips), configure how time flows through each
+layer using sequences, then drive a renderer to produce individual frames that
+are streamed to an exporter (animated GIF, numbered image sequence, or MP4 via
+ffmpeg).  The entire render pipeline is headless — no GPU, no display, no game
+loop — making it suitable for CI asset baking, trailer generation, and offline
+procedural video.
+
+** Conceptual model
+:PROPERTIES:
+:CUSTOM_ID: conceptual-model
+:END:
+| Concept              | Type                   | Role                                                                        |
+|----------------------+------------------------+-----------------------------------------------------------------------------|
+| Composition          | =LrgReel=              | Registers id, resolution, fps, total duration, and the ordered clip stack   |
+| Current frame        | =LrgReelContext=       | Carries absolute frame + offset stack; clips read =get_frame()= from it     |
+| Timed layer          | =LrgReelClip=          | Draws itself onto a canvas for the current relative frame                   |
+| Time remapping       | =LrgReelSequence=      | Shifts, sequences, loops, or freezes time for a group of child clips        |
+| Animation verbs      | =lrg_reel_interpolate= / =lrg_reel_spring= | Pure functions mapping a frame number to a value    |
+| Frame engine         | =LrgReelRenderer=      | Clears the canvas, composites active clips in z-order, returns =GrlImage=   |
+| Output sink          | =LrgReelExporter=      | Abstract: GIF / image-sequence / MP4 concrete subclasses                    |
+| CPU crossfade        | =LrgReelTransition=    | Blends two =GrlImage= frames at a progress value (fade/wipe/dissolve/slide) |
+| Offline audio mix    | =LrgReelAudioTrack=    | Places timed wave clips on a timeline and mixes to =LrgWaveData=            |
+| Live preview         | =LrgReelPlayer=        | Opens a GPU window for interactive playback; the only windowed component     |
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: quick-start
+:END:
+The following is the complete =reel-hello.c= example.  It renders a 2-second
+title card to an animated GIF without touching a display.
+
+#+begin_src c
+#include <libregnum.h>
+#include <graylib.h>
+
+static void
+draw_title (LrgReelClip    *clip,
+            LrgReelContext *ctx,
+            LrgImageCanvas *canvas,
+            gpointer        user_data)
+{
+    gint     frame = lrg_reel_context_get_frame (ctx);
+    gint     width = lrg_reel_context_get_width (ctx);
+    GrlColor bg = { 12, 14, 28, 255 };
+    GrlColor fg = { 255, 255, 255, 255 };
+    gdouble  opacity;
+    gdouble  y;
+
+    /* Background. */
+    lrg_image_canvas_clear (canvas, &bg);
+
+    /* Fade the text in over the first 20 frames. */
+    opacity = lrg_reel_interpolate_clamped (frame, 0.0, 20.0, 0.0, 1.0,
+                                            LRG_EASING_EASE_OUT_CUBIC);
+
+    /* Spring the baseline up from below into place. */
+    y = lrg_reel_spring (frame, 30.0, NULL, 220.0, 150.0);
+
+    fg.a = (guint8) (opacity * 255.0);
+    grl_image_draw_text_bitmap (lrg_image_canvas_get_image (canvas),
+                                "HELLO REEL",
+                                width / 2 - 110, (gint) y, 32, &fg);
+}
+
+int
+main (void)
+{
+    g_autoptr(LrgReel)            reel = NULL;
+    g_autoptr(LrgReelClip)        title = NULL;
+    g_autoptr(LrgReelRenderer)    renderer = NULL;
+    g_autoptr(LrgReelGifExporter) gif = NULL;
+    g_autoptr(GError)             error = NULL;
+
+    reel = lrg_reel_new ("hello", 640, 360, 30.0, 60);
+
+    title = lrg_reel_clip_new_with_func (draw_title, NULL, NULL);
+    lrg_reel_add_clip (reel, title);
+
+    renderer = lrg_reel_renderer_new (reel);
+
+    gif = lrg_reel_gif_exporter_new ("reel-hello.gif", &error);
+    if (gif == NULL)
+    {
+        g_printerr ("Failed to open output: %s\n", error->message);
+        return 1;
+    }
+
+    if (!lrg_reel_renderer_render_to_exporter (renderer,
+                                               LRG_REEL_EXPORTER (gif),
+                                               &error))
+    {
+        g_printerr ("Render failed: %s\n", error->message);
+        return 1;
+    }
+
+    g_print ("Wrote reel-hello.gif (%d frames)\n",
+             lrg_reel_get_duration_in_frames (reel));
+    return 0;
+}
+#+end_src
+
+Key points:
+- =lrg_reel_new= fixes the composition's identity and dimensions up front.
+- A render callback is the simplest way to author a clip; no subclassing needed.
+- =lrg_reel_context_get_frame()= gives the relative (clip-local) frame.
+- =lrg_reel_renderer_render_to_exporter()= drives the full render loop in one call.
+- The GIF exporter requires no external tools; everything runs in-process.
+
+** Topic files
+:PROPERTIES:
+:CUSTOM_ID: topic-files
+:END:
+- [[file:composition.org][composition.org]] — =LrgReel=: id, dimensions, fps, duration, clip z-order, default props
+- [[file:timing.org][timing.org]] — =LrgReelContext= + =LrgReelSequence=: relative-frame model and all four modes
+- [[file:animation.org][animation.org]] — =lrg_reel_interpolate=, =lrg_reel_spring=, =LrgReelSpringConfig=
+- [[file:clips.org][clips.org]] — =LrgReelClip=: subclassing vs render-function authoring
+- [[file:rendering.org][rendering.org]] — =LrgReelRenderer=: offline loop, per-frame ownership, progress callback
+- [[file:exporters.org][exporters.org]] — GIF, image-sequence, and video (ffmpeg) exporters
+- [[file:transitions.org][transitions.org]] — CPU crossfades: fade, wipe, dissolve, slide
+- [[file:audio.org][audio.org]] — =LrgReelAudioTrack=: timed clips, offline mix, MP4 mux
+- [[file:player.org][player.org]] — =LrgReelPlayer=: live preview window
+
+** Key classes
+:PROPERTIES:
+:CUSTOM_ID: key-classes
+:END:
+| Class                        | Description                                     |
+|------------------------------+-------------------------------------------------|
+| =LrgReel=                    | Composition descriptor (final type)             |
+| =LrgReelContext=             | Per-frame state carrier (final type)            |
+| =LrgReelClip=                | Timed renderable layer (derivable)              |
+| =LrgReelSequence=            | Time-remapping group (final, extends clip)      |
+| =LrgReelRenderer=            | Headless frame compositor (final)               |
+| =LrgReelExporter=            | Abstract output sink (derivable)                |
+| =LrgReelGifExporter=         | Animated GIF writer (final)                     |
+| =LrgReelSeqExporter=         | Numbered image-sequence writer (final)          |
+| =LrgReelVideoExporter=       | ffmpeg-backed MP4/WebM writer (final)           |
+| =LrgReelTransition=          | CPU crossfade base (derivable)                  |
+| =LrgReelFadeTransition=      | Cross-fade (final)                              |
+| =LrgReelWipeTransition=      | Hard-edge wipe (final)                          |
+| =LrgReelDissolveTransition=  | Per-pixel dissolve (final)                      |
+| =LrgReelSlideTransition=     | Slide-in (final)                                |
+| =LrgReelAudioTrack=          | Offline audio timeline + mixer (final)          |
+| =LrgReelPlayer=              | Live preview window (final)                     |
+
+** Files
+:PROPERTIES:
+:CUSTOM_ID: files
+:END:
+| File                                       | Description                       |
+|--------------------------------------------+-----------------------------------|
+| =src/reel/lrg-reel.h=                      | Composition type                  |
+| =src/reel/lrg-reel-context.h=              | Per-frame context                 |
+| =src/reel/lrg-reel-clip.h=                 | Clip base class                   |
+| =src/reel/lrg-reel-sequence.h=             | Time-remapping sequences          |
+| =src/reel/lrg-reel-anim.h=                 | Interpolate + spring              |
+| =src/reel/lrg-reel-renderer.h=             | Offline renderer                  |
+| =src/reel/lrg-reel-exporter.h=             | Abstract exporter base            |
+| =src/reel/lrg-reel-gif-exporter.h=         | Animated GIF sink                 |
+| =src/reel/lrg-reel-seq-exporter.h=         | Image sequence sink               |
+| =src/reel/lrg-reel-video-exporter.h=       | ffmpeg video sink                 |
+| =src/reel/lrg-reel-transition.h=           | Transition base class             |
+| =src/reel/lrg-reel-fade-transition.h=      | Cross-fade                        |
+| =src/reel/lrg-reel-wipe-transition.h=      | Hard-edge wipe                    |
+| =src/reel/lrg-reel-dissolve-transition.h=  | Per-pixel dissolve                |
+| =src/reel/lrg-reel-slide-transition.h=     | Slide-in                          |
+| =src/reel/lrg-reel-audio-track.h=          | Audio timeline + mixer            |
+| =src/reel/lrg-reel-player.h=              | Live preview window               |
+| =examples/reel-hello.c=                    | Minimal GIF example               |
+| =examples/reel-showcase.c=                 | Layers + audio + MP4 example      |

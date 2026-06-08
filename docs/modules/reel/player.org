@@ -1,0 +1,123 @@
+* LrgReelPlayer — Live preview
+:PROPERTIES:
+:CUSTOM_ID: lrgreelplayer-live-preview
+:END:
+=LrgReelPlayer= opens a GPU window and plays back a =LrgReel= composition in
+real time.  It is the *only* component in the Reel module that requires a
+display; every other class works headlessly without one.
+
+Instantiating a =LrgReelPlayer= is always safe — no window is opened until
+=lrg_reel_player_run()= is called.
+
+** Creating and running
+:PROPERTIES:
+:CUSTOM_ID: creating-and-running
+:END:
+#+begin_src c
+g_autoptr(LrgReelPlayer) player = lrg_reel_player_new (reel);
+
+/* Opens a window sized to the reel's resolution and blocks until closed. */
+lrg_reel_player_run (player);
+#+end_src
+
+=lrg_reel_player_run()= is blocking: it enters an event loop and returns only
+when the window is closed.  The reel is letterbox-fitted into the window with
+black bars if the window aspect ratio does not match the reel's.
+
+** Keyboard controls
+:PROPERTIES:
+:CUSTOM_ID: keyboard-controls
+:END:
+| Key               | Action                               |
+|-------------------+--------------------------------------|
+| Space             | Toggle play / pause                  |
+| Left arrow        | Step one frame backward (key-repeat) |
+| Right arrow       | Step one frame forward (key-repeat)  |
+
+** Programmatic control
+:PROPERTIES:
+:CUSTOM_ID: programmatic-control
+:END:
+These functions are useful for driving the player from application logic before
+calling =run()=, or — in a future event-loop-based integration — from callbacks
+inside the run loop.
+
+#+begin_src c
+/* Start or resume playback. */
+lrg_reel_player_play (player);
+
+/* Pause at the current frame. */
+lrg_reel_player_pause (player);
+
+/* Toggle between playing and paused. */
+lrg_reel_player_toggle (player);
+
+/* Seek to a specific frame (clamped to [0, duration-1]). */
+lrg_reel_player_seek (player, 30);
+
+/* Loop back to frame 0 when the last frame is reached. */
+lrg_reel_player_set_loop (player, TRUE);
+gboolean looping = lrg_reel_player_get_loop (player);
+
+/* Query current state. */
+gint     frame   = lrg_reel_player_get_current_frame (player);
+gboolean playing = lrg_reel_player_get_playing (player);
+#+end_src
+
+** Typical preview workflow
+:PROPERTIES:
+:CUSTOM_ID: typical-preview-workflow
+:END:
+#+begin_src c
+g_autoptr(LrgReel)       reel     = lrg_reel_new ("preview", 640, 360, 30.0, 90);
+g_autoptr(LrgReelPlayer) player   = lrg_reel_player_new (reel);
+
+/* ... add clips to reel ... */
+
+/* Start paused at frame 0 for scrubbing. */
+lrg_reel_player_pause (player);
+lrg_reel_player_seek  (player, 0);
+
+/* Open the window; user can scrub with arrow keys and press Space to play. */
+lrg_reel_player_run (player);
+#+end_src
+
+** Headless testing
+:PROPERTIES:
+:CUSTOM_ID: headless-testing
+:END:
+Because =LrgReelPlayer= requires a display, tests that exercise it should use
+the standard skip macro from the engine's test guide:
+
+#+begin_src c
+static void
+test_player_run (void)
+{
+    SKIP_IF_NO_DISPLAY ();
+
+    g_autoptr(LrgReel)       reel   = lrg_reel_new ("test", 64, 64, 30.0, 10);
+    g_autoptr(LrgReelPlayer) player = lrg_reel_player_new (reel);
+
+    /* Seek so it plays for only one frame before we close the window. */
+    lrg_reel_player_seek (player, 9);
+    lrg_reel_player_set_loop (player, FALSE);
+    lrg_reel_player_run (player);  /* returns when last frame is reached */
+}
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =lrg_reel_player_run()= is blocking.  Do not call it from the main thread of
+  an application that has its own event loop without running it on a separate
+  thread or integrating the player into that loop.
+- The player renders frames using the same CPU path as =LrgReelRenderer= (no
+  shader effects) and uploads results to a GPU texture each frame.  Very large
+  compositions (4K+) may not hit the reel's target frame rate on slow hardware.
+- =lrg_reel_player_seek()= clamps the target frame to =[0, duration - 1]= and
+  also resets the internal frame accumulator to zero, which prevents a seek
+  followed immediately by a play from skipping ahead.
+- Instantiating =LrgReelPlayer= without a display is safe, but calling =run()=
+  without a display will abort (graylib will fail to open the window).  Use
+  =SKIP_IF_NO_DISPLAY()= in tests.

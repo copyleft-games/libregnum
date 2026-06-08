@@ -4780,4 +4780,121 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_asset_type_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_ASSET_TYPE (lrg_asset_type_get_type ())
 
+/* ==========================================================================
+ * Reel Module (programmatic video creation)
+ * ========================================================================== */
+
+/**
+ * LrgReelExtrapolate:
+ * @LRG_REEL_EXTRAPOLATE_EXTEND: linearly extend the first/last segment beyond
+ *   the input range.
+ * @LRG_REEL_EXTRAPOLATE_CLAMP: clamp to the first/last output value.
+ * @LRG_REEL_EXTRAPOLATE_IDENTITY: return the input value unchanged.
+ * @LRG_REEL_EXTRAPOLATE_WRAP: wrap the input around the input range (modulo).
+ *
+ * Controls how lrg_reel_interpolate() behaves for inputs outside the supplied
+ * input range, independently for the left (below) and right (above) ends.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_REEL_EXTRAPOLATE_EXTEND,
+    LRG_REEL_EXTRAPOLATE_CLAMP,
+    LRG_REEL_EXTRAPOLATE_IDENTITY,
+    LRG_REEL_EXTRAPOLATE_WRAP
+} LrgReelExtrapolate;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reel_extrapolate_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_REEL_EXTRAPOLATE (lrg_reel_extrapolate_get_type ())
+
+/**
+ * LrgReelSequenceMode:
+ * @LRG_REEL_SEQUENCE_MODE_SHIFT: time-shift children by the sequence's
+ *   from-frame and bound them to its duration window.
+ * @LRG_REEL_SEQUENCE_MODE_SERIES: play children back-to-back, each consuming
+ *   its own duration of the timeline.
+ * @LRG_REEL_SEQUENCE_MODE_LOOP: repeat the children every loop-frames, for an
+ *   optional number of times.
+ * @LRG_REEL_SEQUENCE_MODE_FREEZE: lock children to a single fixed frame.
+ *
+ * Selects how an #LrgReelSequence maps the parent's relative frame onto the
+ * frame its children observe.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_REEL_SEQUENCE_MODE_SHIFT,
+    LRG_REEL_SEQUENCE_MODE_SERIES,
+    LRG_REEL_SEQUENCE_MODE_LOOP,
+    LRG_REEL_SEQUENCE_MODE_FREEZE
+} LrgReelSequenceMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reel_sequence_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_REEL_SEQUENCE_MODE (lrg_reel_sequence_mode_get_type ())
+
+/**
+ * LrgReelImageFormat:
+ * @LRG_REEL_IMAGE_FORMAT_PNG: lossless PNG.
+ * @LRG_REEL_IMAGE_FORMAT_JPEG: lossy JPEG.
+ *
+ * Output image format for the image-sequence exporter.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_REEL_IMAGE_FORMAT_PNG,
+    LRG_REEL_IMAGE_FORMAT_JPEG
+} LrgReelImageFormat;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reel_image_format_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_REEL_IMAGE_FORMAT (lrg_reel_image_format_get_type ())
+
+/**
+ * LrgReelVideoCodec:
+ * @LRG_REEL_VIDEO_CODEC_H264: H.264 video in an MP4 container (libx264).
+ * @LRG_REEL_VIDEO_CODEC_VP9: VP9 video in a WebM container (libvpx-vp9).
+ *
+ * Video codec/container selection for the ffmpeg-backed video exporter.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_REEL_VIDEO_CODEC_H264,
+    LRG_REEL_VIDEO_CODEC_VP9
+} LrgReelVideoCodec;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reel_video_codec_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_REEL_VIDEO_CODEC (lrg_reel_video_codec_get_type ())
+
+/**
+ * LrgReelTransitionDirection:
+ * @LRG_REEL_TRANSITION_DIRECTION_LEFT: travels toward the left edge.
+ * @LRG_REEL_TRANSITION_DIRECTION_RIGHT: travels toward the right edge.
+ * @LRG_REEL_TRANSITION_DIRECTION_UP: travels toward the top edge.
+ * @LRG_REEL_TRANSITION_DIRECTION_DOWN: travels toward the bottom edge.
+ *
+ * Direction for directional reel transitions (wipe, slide).
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_REEL_TRANSITION_DIRECTION_LEFT,
+    LRG_REEL_TRANSITION_DIRECTION_RIGHT,
+    LRG_REEL_TRANSITION_DIRECTION_UP,
+    LRG_REEL_TRANSITION_DIRECTION_DOWN
+} LrgReelTransitionDirection;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reel_transition_direction_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_REEL_TRANSITION_DIRECTION (lrg_reel_transition_direction_get_type ())
+
 G_END_DECLS

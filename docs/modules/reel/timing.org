@@ -1,0 +1,214 @@
+* Timing — LrgReelContext and LrgReelSequence
+:PROPERTIES:
+:CUSTOM_ID: timing
+:END:
+Understanding how frame numbers flow through a composition is the single most
+important concept in the Reel module.  This file explains the relative-frame
+model, the sentinel =LRG_REEL_DURATION_INFINITE=, and each of the four
+=LrgReelSequence= modes.
+
+** The relative-frame model
+:PROPERTIES:
+:CUSTOM_ID: relative-frame-model
+:END:
+The renderer creates one =LrgReelContext= per render pass and advances it frame
+by frame.  Before calling each clip's render vfunc, the renderer (or a parent
+sequence) pushes that clip's =(from, duration)= window onto the context's offset
+stack.
+
+Inside a clip's render function, =lrg_reel_context_get_frame()= returns the
+*relative* frame: the absolute frame minus the sum of all pushed offsets.  With
+no nesting the relative frame equals the absolute frame.
+
+#+begin_src c
+static void
+my_render (LrgReelClip    *clip,
+           LrgReelContext *ctx,
+           LrgImageCanvas *canvas,
+           gpointer        user_data)
+{
+    /* Relative frame: 0 on the first frame this clip is active. */
+    gint frame = lrg_reel_context_get_frame (ctx);
+
+    /* Absolute frame: position in the whole composition. */
+    gint abs_frame = lrg_reel_context_get_absolute_frame (ctx);
+
+    /* Seconds corresponding to the relative frame. */
+    gdouble secs = lrg_reel_context_get_seconds (ctx);
+
+    /* Composition dimensions are always available. */
+    gint w = lrg_reel_context_get_width (ctx);
+    gint h = lrg_reel_context_get_height (ctx);
+}
+#+end_src
+
+*** Infinite duration
+
+=LRG_REEL_DURATION_INFINITE= (equal to =G_MAXINT=) means "no upper bound".  Use
+it for clips that should remain active until the end of whatever context they
+live in.
+
+#+begin_src c
+/* This clip is visible from frame 10 to the end of the reel. */
+lrg_reel_clip_set_from_frame (clip, 10);
+lrg_reel_clip_set_duration_in_frames (clip, LRG_REEL_DURATION_INFINITE);
+#+end_src
+
+*** Negative from-frames (pre-roll)
+
+A negative =from_frame= on a clip or sequence means it started before the
+context's origin.  The clip's rendering still receives a relative frame (which
+will be positive when the absolute frame is past zero), but the clip is
+considered active from an earlier point — useful for easing animations that
+should already be partially settled when the composition begins.
+
+** LrgReelSequence modes
+:PROPERTIES:
+:CUSTOM_ID: lrgreelsequence-modes
+:END:
+=LrgReelSequence= is itself an =LrgReelClip=, so it stacks and nests like any
+layer.  Its mode controls how the parent's relative frame is remapped before
+being exposed to child clips.
+
+*** SHIFT — time-shift a group
+:PROPERTIES:
+:CUSTOM_ID: mode-shift
+:END:
+The default mode.  Children share the sequence's own timing window: they
+observe a frame shifted by the sequence's =from_frame= and clipped to its
+=duration_in_frames=.
+
+#+begin_src c
+/* A 30-frame window starting at absolute frame 15.
+ * Children see frames 0..29 while the reel is at 15..44. */
+LrgReelSequence *grp = lrg_reel_sequence_new (15, 30);
+lrg_reel_sequence_add_child (grp, child_a);
+lrg_reel_sequence_add_child (grp, child_b);
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (grp));
+#+end_src
+
+Use SHIFT to group clips that share a common origin without changing their
+individual =from_frame= values.
+
+*** SERIES — back-to-back playback
+:PROPERTIES:
+:CUSTOM_ID: mode-series
+:END:
+Children play back-to-back; each child occupies its own =duration_in_frames=
+slice of the sequence's timeline.  The sequence's total duration is the sum of
+all its children's durations.
+
+#+begin_src c
+LrgReelSequence *seq = lrg_reel_sequence_new_series ();
+
+/* Each child clip must have its duration set. */
+lrg_reel_clip_set_duration_in_frames (scene_a, 30);   /* frames 0..29 */
+lrg_reel_clip_set_duration_in_frames (scene_b, 45);   /* frames 30..74 */
+lrg_reel_clip_set_duration_in_frames (scene_c, 30);   /* frames 75..104 */
+
+lrg_reel_sequence_add_child (seq, scene_a);
+lrg_reel_sequence_add_child (seq, scene_b);
+lrg_reel_sequence_add_child (seq, scene_c);
+
+/* Total duration is automatically 105 frames. */
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (seq));
+#+end_src
+
+Each child sees a relative frame starting at 0 when its own slice begins.
+
+*** LOOP — repeating period
+:PROPERTIES:
+:CUSTOM_ID: mode-loop
+:END:
+Children repeat every =loop_frames= frames.  Pass =times <= 0= for infinite
+repetition, or a positive integer to cap the number of iterations.
+
+#+begin_src c
+/* The puck animation repeats every 30 frames, 3 times (90 frames total). */
+LrgReelClip     *puck = lrg_reel_clip_new_with_func (draw_puck, NULL, NULL);
+LrgReelSequence *loop = lrg_reel_sequence_new_loop (30, 3);
+lrg_reel_sequence_add_child (loop, puck);
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (loop));
+#+end_src
+
+Inside =draw_puck=, =lrg_reel_context_get_frame()= returns a value in =0..29=
+regardless of the absolute frame.  The puck therefore performs the same slide
+on every iteration without any branching in the render callback.
+
+For an infinite loop:
+#+begin_src c
+/* Loops forever — the sequence is active as long as the reel runs. */
+LrgReelSequence *pulse = lrg_reel_sequence_new_loop (20, 0);
+#+end_src
+
+*** FREEZE — snapshot a single frame
+:PROPERTIES:
+:CUSTOM_ID: mode-freeze
+:END:
+All children are locked to a single fixed frame regardless of the real frame.
+Useful for pausing an animation or creating a still insert from a clip that was
+authored as a moving sequence.
+
+#+begin_src c
+/* Children always see frame 5, producing a still image from that point. */
+LrgReelSequence *still = lrg_reel_sequence_new_freeze (5);
+lrg_reel_sequence_add_child (still, animated_clip);
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (still));
+#+end_src
+
+** Querying the context window
+:PROPERTIES:
+:CUSTOM_ID: querying-context-window
+:END:
+=lrg_reel_context_is_active()= tests whether the relative frame falls within the
+innermost pushed window.  With an empty offset stack (e.g. a top-level clip
+with no sequence parent) it always returns =TRUE=.
+
+=lrg_reel_context_test_window()= lets a clip test an inner sub-window without
+pushing an offset, useful for branching render logic:
+
+#+begin_src c
+static void
+my_render (LrgReelClip *clip, LrgReelContext *ctx,
+           LrgImageCanvas *canvas, gpointer ud)
+{
+    /* Only draw the banner during frames 5..24 relative to this clip. */
+    if (lrg_reel_context_test_window (ctx, 5, 20))
+        draw_banner (canvas, ctx);
+}
+#+end_src
+
+** Nesting sequences
+:PROPERTIES:
+:CUSTOM_ID: nesting-sequences
+:END:
+Sequences nest arbitrarily.  Each level applies its remapping on top of the
+accumulated offset.  A LOOP inside a SHIFT inside a SERIES is legal; the
+innermost clip always observes the final composed relative frame.
+
+#+begin_src c
+LrgReelSequence *outer = lrg_reel_sequence_new (10, 90);  /* SHIFT: from=10 */
+LrgReelSequence *inner = lrg_reel_sequence_new_loop (30, 3);
+lrg_reel_sequence_add_child (inner, my_clip);
+lrg_reel_sequence_add_child (outer, LRG_REEL_CLIP (inner));
+lrg_reel_add_clip (reel, LRG_REEL_CLIP (outer));
+#+end_src
+
+Here =my_clip= sees 0..29 repeating, shifted to absolute frames 10..99.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- In SERIES mode every child *must* have its =duration_in_frames= set to a
+  finite value before being added.  A child with =LRG_REEL_DURATION_INFINITE=
+  will consume the entire remaining timeline and prevent subsequent siblings
+  from being reached.
+- =lrg_reel_context_get_seconds()= uses the *relative* frame, not the absolute
+  frame.  If you need wall-clock seconds, divide
+  =lrg_reel_context_get_absolute_frame()= by the fps yourself.
+- Negative =from_frame= values are valid and intentional (pre-roll).  They do
+  not produce negative relative frames visible to children once the absolute
+  frame passes zero; children will see the correct positive relative frame.
+- =LRG_REEL_DURATION_INFINITE= is =G_MAXINT=.  Do not add it to another integer
+  without guarding against overflow.

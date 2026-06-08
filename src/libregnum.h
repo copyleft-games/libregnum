@@ -469,6 +469,25 @@
 #include "photomode/lrg-photo-mode.h"
 #include "photomode/lrg-gif-recorder.h"
 
+/* Reel module (programmatic video creation) */
+#include "reel/lrg-reel-anim.h"
+#include "reel/lrg-reel-context.h"
+#include "reel/lrg-reel-clip.h"
+#include "reel/lrg-reel-sequence.h"
+#include "reel/lrg-reel.h"
+#include "reel/lrg-reel-renderer.h"
+#include "reel/lrg-reel-exporter.h"
+#include "reel/lrg-reel-gif-exporter.h"
+#include "reel/lrg-reel-seq-exporter.h"
+#include "reel/lrg-reel-video-exporter.h"
+#include "reel/lrg-reel-transition.h"
+#include "reel/lrg-reel-fade-transition.h"
+#include "reel/lrg-reel-wipe-transition.h"
+#include "reel/lrg-reel-dissolve-transition.h"
+#include "reel/lrg-reel-slide-transition.h"
+#include "reel/lrg-reel-audio-track.h"
+#include "reel/lrg-reel-player.h"
+
 /* Demo module (Phase 5) */
 #include "demo/lrg-demo-gatable.h"
 #include "demo/lrg-demo-manager.h"

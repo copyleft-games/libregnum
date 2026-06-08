@@ -339,6 +339,23 @@ PUBLIC_HEADERS := \
 	src/photomode/lrg-photo-camera-controller.h \
 	src/photomode/lrg-photo-mode.h \
 	src/photomode/lrg-gif-recorder.h \
+	src/reel/lrg-reel-anim.h \
+	src/reel/lrg-reel-context.h \
+	src/reel/lrg-reel-clip.h \
+	src/reel/lrg-reel-sequence.h \
+	src/reel/lrg-reel.h \
+	src/reel/lrg-reel-renderer.h \
+	src/reel/lrg-reel-exporter.h \
+	src/reel/lrg-reel-gif-exporter.h \
+	src/reel/lrg-reel-seq-exporter.h \
+	src/reel/lrg-reel-video-exporter.h \
+	src/reel/lrg-reel-transition.h \
+	src/reel/lrg-reel-fade-transition.h \
+	src/reel/lrg-reel-wipe-transition.h \
+	src/reel/lrg-reel-dissolve-transition.h \
+	src/reel/lrg-reel-slide-transition.h \
+	src/reel/lrg-reel-audio-track.h \
+	src/reel/lrg-reel-player.h \
 	src/demo/lrg-demo-gatable.h \
 	src/demo/lrg-demo-manager.h \
 	src/vr/lrg-vr-service.h \
@@ -760,6 +777,23 @@ SOURCES := \
 	src/photomode/lrg-photo-camera-controller.c \
 	src/photomode/lrg-photo-mode.c \
 	src/photomode/lrg-gif-recorder.c \
+	src/reel/lrg-reel-anim.c \
+	src/reel/lrg-reel-context.c \
+	src/reel/lrg-reel-clip.c \
+	src/reel/lrg-reel-sequence.c \
+	src/reel/lrg-reel.c \
+	src/reel/lrg-reel-renderer.c \
+	src/reel/lrg-reel-exporter.c \
+	src/reel/lrg-reel-gif-exporter.c \
+	src/reel/lrg-reel-seq-exporter.c \
+	src/reel/lrg-reel-video-exporter.c \
+	src/reel/lrg-reel-transition.c \
+	src/reel/lrg-reel-fade-transition.c \
+	src/reel/lrg-reel-wipe-transition.c \
+	src/reel/lrg-reel-dissolve-transition.c \
+	src/reel/lrg-reel-slide-transition.c \
+	src/reel/lrg-reel-audio-track.c \
+	src/reel/lrg-reel-player.c \
 	src/demo/lrg-demo-gatable.c \
 	src/demo/lrg-demo-manager.c \
 	src/vr/lrg-vr-service.c \

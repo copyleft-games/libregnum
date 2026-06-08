@@ -1,0 +1,122 @@
+* LrgReel — Composition
+:PROPERTIES:
+:CUSTOM_ID: lrgreel-composition
+:END:
+=LrgReel= is the root descriptor for a video composition.  It stores the
+composition's identity, pixel dimensions, frame rate, total length, and the
+ordered stack of =LrgReelClip= layers.  It also carries an optional bag of named
+default properties that parameterise the composition at render time.
+
+=LrgReel= is a final =GObject= type; it is not intended for subclassing.
+
+** Creating a reel
+:PROPERTIES:
+:CUSTOM_ID: creating-a-reel
+:END:
+#+begin_src c
+/* 640x360, 30 fps, 90 frames (3 seconds) */
+g_autoptr(LrgReel) reel = lrg_reel_new ("my-trailer", 640, 360, 30.0, 90);
+#+end_src
+
+The =id= argument is a URL-safe string used to identify the composition.  It
+has no semantic meaning to the renderer; it is purely an annotation for logging
+and asset management.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Accessor                             | Type      | Description                                  |
+|--------------------------------------+-----------+----------------------------------------------|
+| =lrg_reel_get_id()=                  | =const gchar *= | URL-safe composition identifier        |
+| =lrg_reel_get_width()=               | =gint=    | Frame width in pixels                        |
+| =lrg_reel_get_height()=              | =gint=    | Frame height in pixels                       |
+| =lrg_reel_get_fps()=                 | =gdouble= | Frame rate (frames per second)               |
+| =lrg_reel_get_duration_in_frames()=  | =gint=    | Total length in frames                       |
+
+All of these are set at construction and are read-only thereafter.
+
+** Frame / second conversion
+:PROPERTIES:
+:CUSTOM_ID: frame-second-conversion
+:END:
+#+begin_src c
+/* Convert frames to seconds */
+gdouble t = lrg_reel_frames_to_seconds (reel, 45);  /* -> 1.5 at 30 fps */
+
+/* Convert seconds to the nearest whole frame */
+gint f = lrg_reel_seconds_to_frames (reel, 1.5);    /* -> 45 at 30 fps */
+#+end_src
+
+** Clip z-order
+:PROPERTIES:
+:CUSTOM_ID: clip-z-order
+:END:
+Clips are drawn back-to-front: index 0 is the bottommost layer; the last
+inserted clip is on top.  All z-order management goes through the reel's API;
+do not modify the underlying array directly.
+
+#+begin_src c
+/* Append a clip as the new topmost layer. */
+lrg_reel_add_clip (reel, bg_clip);
+lrg_reel_add_clip (reel, fg_clip);   /* fg_clip draws on top of bg_clip */
+
+/* Insert at a specific z-index (0 = bottom). */
+lrg_reel_insert_clip (reel, overlay_clip, 1);
+
+/* Remove a clip by pointer. */
+lrg_reel_remove_clip (reel, bg_clip);
+
+/* Inspect the stack. */
+guint n = lrg_reel_get_n_clips (reel);
+
+/* (transfer none) — do not unref */
+LrgReelClip *clip = lrg_reel_get_clip (reel, 0);
+
+/* Live array — do not modify it directly. */
+GPtrArray *clips = lrg_reel_get_clips (reel);
+#+end_src
+
+The reel takes its own reference to each added clip.  Callers may unref their
+own handle immediately after =lrg_reel_add_clip= / =lrg_reel_insert_clip=.
+
+** Default properties
+:PROPERTIES:
+:CUSTOM_ID: default-properties
+:END:
+Default properties let you parameterise a composition with named values that
+clips can read at render time via the reel stored on the context.  They are a
+simple key-value store; four types are supported.
+
+#+begin_src c
+/* Write defaults into the reel definition. */
+lrg_reel_set_prop_double  (reel, "speed",   1.0);
+lrg_reel_set_prop_int     (reel, "level",   3);
+lrg_reel_set_prop_boolean (reel, "hud",     TRUE);
+lrg_reel_set_prop_string  (reel, "hero",    "knight");
+
+/* Check for presence before reading (useful when a key is optional). */
+if (lrg_reel_has_prop (reel, "speed"))
+{
+    gdouble spd = lrg_reel_get_prop_double (reel, "speed", 1.0);
+}
+
+/* All getters take a fallback returned when the key is absent. */
+gint level = lrg_reel_get_prop_int (reel, "level", 1);
+
+/* String variant returns (transfer none) — do not free.
+ * Returns NULL when the key is absent (no fallback parameter). */
+const gchar *hero = lrg_reel_get_prop_string (reel, "hero");
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =lrg_reel_get_clips()= returns the live internal =GPtrArray=.  Iterating it is
+  safe; inserting or removing elements directly will corrupt the z-order.  Use
+  the add/insert/remove functions instead.
+- =lrg_reel_get_prop_string()= has no fallback parameter and returns =NULL= when
+  the key is absent, not an empty string.  Always check for =NULL= before use.
+- =lrg_reel_get_clip()= returns =(transfer none)=.  Do not call =g_object_unref()=
+  on the result.

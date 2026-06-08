@@ -1,0 +1,215 @@
+* Transitions — CPU crossfades
+:PROPERTIES:
+:CUSTOM_ID: transitions-cpu-crossfades
+:END:
+=LrgReelTransition= and its four concrete subclasses blend two =GrlImage= frames
+together using the CPU rasterizer.  All transitions are headless and designed
+for offline frame baking; no GPU or display is required.
+
+Transitions are not invoked automatically by the renderer.  They are tools you
+call manually inside a clip's render callback or in a custom render loop when
+you want a timed crossfade between two pre-rendered frames.
+
+** The contract: progress 0 → from, 1 → to
+:PROPERTIES:
+:CUSTOM_ID: progress-contract
+:END:
+The single invariant shared by all transition types:
+
+- At =progress = 0.0= the canvas shows =from= entirely.
+- At =progress = 1.0= the canvas shows =to= entirely.
+- Between 0 and 1 the visual interpolation is transition-specific.
+
+The public entry-point =lrg_reel_transition_composite()= clamps =progress= to
+=[0, 1]=, applies the configured easing curve, and then calls the =composite=
+vfunc with the eased value.
+
+#+begin_src c
+void
+lrg_reel_transition_composite (LrgReelTransition *self,
+                                LrgImageCanvas    *canvas,
+                                GrlImage          *from,
+                                GrlImage          *to,
+                                gdouble            progress);
+#+end_src
+
+=canvas=, =from=, and =to= must all share the same pixel dimensions.
+
+** Easing
+:PROPERTIES:
+:CUSTOM_ID: easing
+:END:
+The transition applies an =LrgEasingType= to the raw =progress= value before
+dispatching to the composite vfunc.  The default is =LRG_EASING_LINEAR=.
+
+#+begin_src c
+lrg_reel_transition_set_easing (transition, LRG_EASING_EASE_IN_OUT_CUBIC);
+LrgEasingType e = lrg_reel_transition_get_easing (transition);
+#+end_src
+
+** LrgReelFadeTransition — cross-fade
+:PROPERTIES:
+:CUSTOM_ID: lrgreelfadetransition
+:END:
+The outgoing frame is drawn fully onto the canvas; the incoming frame is then
+composited over it at opacity equal to the eased progress.
+
+#+begin_src c
+g_autoptr(LrgReelFadeTransition) fade = lrg_reel_fade_transition_new ();
+lrg_reel_transition_set_easing (LRG_REEL_TRANSITION (fade),
+                                 LRG_EASING_EASE_IN_OUT_SINE);
+lrg_reel_transition_composite (LRG_REEL_TRANSITION (fade),
+                                canvas, frame_a, frame_b, progress);
+#+end_src
+
+** LrgReelWipeTransition — hard-edge wipe
+:PROPERTIES:
+:CUSTOM_ID: lrgreelwipetransition
+:END:
+A rectangular reveal grows from one edge, progressively replacing =from= with
+=to=.
+
+| Direction value                         | Reveal grows from ... |
+|-----------------------------------------+-----------------------|
+| =LRG_REEL_TRANSITION_DIRECTION_RIGHT=   | Left edge rightward   |
+| =LRG_REEL_TRANSITION_DIRECTION_LEFT=    | Right edge leftward   |
+| =LRG_REEL_TRANSITION_DIRECTION_DOWN=    | Top edge downward     |
+| =LRG_REEL_TRANSITION_DIRECTION_UP=      | Bottom edge upward    |
+
+#+begin_src c
+g_autoptr(LrgReelWipeTransition) wipe =
+    lrg_reel_wipe_transition_new (LRG_REEL_TRANSITION_DIRECTION_RIGHT);
+
+/* Change direction after construction. */
+lrg_reel_wipe_transition_set_direction (wipe,
+    LRG_REEL_TRANSITION_DIRECTION_DOWN);
+
+lrg_reel_transition_composite (LRG_REEL_TRANSITION (wipe),
+                                canvas, from, to, progress);
+#+end_src
+
+** LrgReelDissolveTransition — per-pixel dissolve
+:PROPERTIES:
+:CUSTOM_ID: lrgreeldissolvetransition
+:END:
+Each pixel switches from =from= to =to= at a threshold determined by a
+deterministic hash of the pixel coordinates and a seed value.  The reveal order
+looks random but is perfectly reproducible for a given seed — important for
+offline rendering where frames must be identical across runs.
+
+The algorithm is O(width × height) per composite call.
+
+#+begin_src c
+g_autoptr(LrgReelDissolveTransition) dissolve =
+    lrg_reel_dissolve_transition_new ();  /* default seed: 1337 */
+
+/* Change seed for a different but equally reproducible pattern. */
+lrg_reel_dissolve_transition_set_seed (dissolve, 42);
+guint seed = lrg_reel_dissolve_transition_get_seed (dissolve);
+
+lrg_reel_transition_composite (LRG_REEL_TRANSITION (dissolve),
+                                canvas, from, to, progress);
+#+end_src
+
+** LrgReelSlideTransition — slide-in
+:PROPERTIES:
+:CUSTOM_ID: lrgreelslidetransition
+:END:
+The =from= frame stays stationary; =to= slides in from the edge indicated by
+the direction.  At =progress = 0= the incoming frame is fully off-screen; at
+=progress = 1= it covers the canvas.
+
+| Direction value                         | Incoming frame enters from ... |
+|-----------------------------------------+--------------------------------|
+| =LRG_REEL_TRANSITION_DIRECTION_LEFT=    | Left edge, slides rightward    |
+| =LRG_REEL_TRANSITION_DIRECTION_RIGHT=   | Right edge, slides leftward    |
+| =LRG_REEL_TRANSITION_DIRECTION_UP=      | Top edge, slides downward      |
+| =LRG_REEL_TRANSITION_DIRECTION_DOWN=    | Bottom edge, slides upward     |
+
+#+begin_src c
+g_autoptr(LrgReelSlideTransition) slide =
+    lrg_reel_slide_transition_new (LRG_REEL_TRANSITION_DIRECTION_LEFT);
+
+lrg_reel_transition_composite (LRG_REEL_TRANSITION (slide),
+                                canvas, from, to, progress);
+#+end_src
+
+** Using a transition inside a clip
+:PROPERTIES:
+:CUSTOM_ID: using-transition-inside-clip
+:END:
+A typical pattern is to render =from= and =to= each frame separately, then
+blend with a transition at a progress derived from the current frame:
+
+#+begin_src c
+static void
+draw_crossfade (LrgReelClip    *clip,
+                LrgReelContext *ctx,
+                LrgImageCanvas *canvas,
+                gpointer        user_data)
+{
+    MyData *data = (MyData *) user_data;
+    gint    frame = lrg_reel_context_get_frame (ctx);
+    gdouble progress = lrg_reel_interpolate_clamped (frame, 0.0, 30.0,
+                                                      0.0, 1.0,
+                                                      LRG_EASING_LINEAR);
+    /* Render source and target frames into temporary images. */
+    g_autoptr(GrlImage) from_img =
+        lrg_reel_renderer_render_frame (data->from_renderer, 0);
+    g_autoptr(GrlImage) to_img =
+        lrg_reel_renderer_render_frame (data->to_renderer, 0);
+
+    lrg_reel_transition_composite (LRG_REEL_TRANSITION (data->fade),
+                                    canvas, from_img, to_img, progress);
+}
+#+end_src
+
+** Custom transitions
+:PROPERTIES:
+:CUSTOM_ID: custom-transitions
+:END:
+Subclass =LrgReelTransition= and override the =composite= vfunc to implement
+any CPU-based effect:
+
+#+begin_src c
+struct _MyIrisTransitionClass
+{
+    LrgReelTransitionClass parent_class;
+};
+
+static void
+my_iris_composite (LrgReelTransition *self,
+                   LrgImageCanvas    *canvas,
+                   GrlImage          *from,
+                   GrlImage          *to,
+                   gdouble            progress)
+{
+    /* progress is already eased by the base class. */
+    /* ... circular reveal using grl_image_* draw calls ... */
+}
+
+static void
+my_iris_transition_class_init (MyIrisTransitionClass *klass)
+{
+    LRG_REEL_TRANSITION_CLASS (klass)->composite = my_iris_composite;
+}
+#+end_src
+
+The =composite= vfunc receives the *eased* progress; the base class has already
+applied the easing curve before dispatching.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- All transitions are CPU-side operations on =GrlImage= data.  They can be slow
+  on large frame sizes (e.g. 4K); profile if frame rate during export is a
+  concern.
+- =LrgReelDissolveTransition= is O(width × height) per call.  For large
+  resolutions prefer =LrgReelFadeTransition= if performance is critical.
+- The =composite= vfunc receives the *eased* progress value.  If you override
+  =composite= in a subclass, do not apply easing a second time inside the vfunc.
+- Transition direction semantics differ between wipe and slide: for wipe,
+  =DIRECTION_RIGHT= means the reveal grows rightward (from the left edge); for
+  slide, =DIRECTION_RIGHT= means the incoming frame enters from the right edge
+  (slides leftward into place).  Read the header comments if in doubt.

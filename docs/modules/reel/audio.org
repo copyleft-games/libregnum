@@ -1,0 +1,157 @@
+* LrgReelAudioTrack — Offline audio timeline
+:PROPERTIES:
+:CUSTOM_ID: lrgreelaudiotrack-offline-audio-timeline
+:END:
+=LrgReelAudioTrack= is a frame-accurate audio timeline that holds a list of
+timed wave clips and can mix them into a single =LrgWaveData= suitable for
+muxing into a video file.  Like the rest of the Reel module it is entirely
+offline: no audio device or audio manager is involved.
+
+** Creating a track
+:PROPERTIES:
+:CUSTOM_ID: creating-a-track
+:END:
+#+begin_src c
+/* The fps must match the composition so that frame indices convert correctly. */
+g_autoptr(LrgReelAudioTrack) audio = lrg_reel_audio_track_new (30.0);
+#+end_src
+
+** Adding clips
+:PROPERTIES:
+:CUSTOM_ID: adding-clips
+:END:
+#+begin_src c
+void
+lrg_reel_audio_track_add (LrgReelAudioTrack *self,
+                           LrgWaveData       *wave,
+                           gint               from_frame,
+                           gdouble            volume,
+                           gdouble            trim_start_sec,
+                           gdouble            trim_end_sec);
+#+end_src
+
+| Parameter        | Meaning                                                                 |
+|------------------+-------------------------------------------------------------------------|
+| =wave=           | Source audio; the track takes a reference — caller may unref            |
+| =from_frame=     | Composition frame at which this clip starts                             |
+| =volume=         | Linear volume scalar (1.0 = unity gain; 0.5 = -6 dB)                   |
+| =trim_start_sec= | Seconds into =wave= at which to begin playback (>= 0)                  |
+| =trim_end_sec=   | Seconds into =wave= at which to stop; pass =0.0= (or negative) for the full remaining duration |
+
+#+begin_src c
+g_autoptr(LrgWaveData) music = lrg_wave_data_new_from_file ("theme.wav", &error);
+g_autoptr(LrgWaveData) sfx   = lrg_wave_data_new_from_file ("whoosh.wav", &error);
+
+/* Music from frame 0, full duration, at 80% volume. */
+lrg_reel_audio_track_add (audio, music, 0, 0.8, 0.0, 0.0);
+
+/* Sound effect at frame 45, trimmed to a 0.5-second window from 0.1s in. */
+lrg_reel_audio_track_add (audio, sfx, 45, 1.0, 0.1, 0.6);
+#+end_src
+
+** Procedural audio
+:PROPERTIES:
+:CUSTOM_ID: procedural-audio
+:END:
+Wave data does not have to come from a file.  The =reel-showcase.c= example
+synthesizes a sine tone directly:
+
+#+begin_src c
+static LrgWaveData *
+make_tone (gfloat  freq,
+           gfloat  duration,
+           guint   rate)
+{
+    LrgWaveData *wave = lrg_wave_data_new_procedural (rate, 1, duration);
+    guint        fc = lrg_wave_data_get_frame_count (wave);
+    gfloat      *samples = g_new (gfloat, fc);
+    guint        i;
+
+    for (i = 0; i < fc; i++)
+        samples[i] = 0.25f * sinf (2.0f * (gfloat) G_PI * freq *
+                                   (gfloat) i / (gfloat) rate);
+
+    lrg_wave_data_set_samples (wave, samples, fc);
+    g_free (samples);
+    return wave;
+}
+#+end_src
+
+** Mixing
+:PROPERTIES:
+:CUSTOM_ID: mixing
+:END:
+=lrg_reel_audio_track_mix()= renders all clips into a single =LrgWaveData=.
+Each clip's wave is converted to the requested sample rate and channel count,
+scaled by its volume, and accumulated at the correct temporal position.  The
+final buffer is clamped to =[-1.0, 1.0]= to prevent overflow.
+
+#+begin_src c
+g_autoptr(GError)    error = NULL;
+g_autoptr(LrgWaveData) mixed =
+    lrg_reel_audio_track_mix (audio,
+                               44100,   /* sample_rate */
+                               2,       /* channels (stereo) */
+                               FRAMES,  /* total composition frames */
+                               &error);
+
+if (mixed == NULL)
+{
+    g_printerr ("Audio mix failed: %s\n", error->message);
+    return 1;
+}
+#+end_src
+
+The =total_frames= parameter sets the output buffer length in video frames
+(converted to audio samples internally using the track's fps).  Pass the reel's
+=duration_in_frames= here.
+
+The returned =LrgWaveData= is =(transfer full)=; use =g_autoptr(LrgWaveData)= or
+=g_object_unref()= when done.
+
+** Muxing into video
+:PROPERTIES:
+:CUSTOM_ID: muxing-into-video
+:END:
+Feed the mixed wave to the video exporter before rendering:
+
+#+begin_src c
+g_autoptr(LrgReelVideoExporter) vid =
+    lrg_reel_video_exporter_new ("output.mp4", LRG_REEL_VIDEO_CODEC_H264);
+
+/* Must be called before begin() / render_to_exporter(). */
+lrg_reel_video_exporter_set_audio (vid, mixed);
+
+lrg_reel_renderer_render_to_exporter (renderer, LRG_REEL_EXPORTER (vid), &error);
+#+end_src
+
+=lrg_reel_video_exporter_set_audio()= takes =(transfer none)=: the exporter
+references the wave but does not take ownership.  The caller is responsible for
+keeping the =LrgWaveData= alive until =render_to_exporter()= completes.
+
+** Track inspection
+:PROPERTIES:
+:CUSTOM_ID: track-inspection
+:END:
+#+begin_src c
+guint  n   = lrg_reel_audio_track_get_n_clips (audio);
+gdouble fps = lrg_reel_audio_track_get_fps (audio);
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =lrg_reel_video_exporter_set_audio()= is =(transfer none)=: the mixed
+  =LrgWaveData= must stay alive for the duration of the render.  Do not unref it
+  before =render_to_exporter()= finishes.
+- =lrg_reel_audio_track_mix()= returns =(transfer full) (nullable)=.  Always
+  check for =NULL= and inspect =error= on failure (uses the =G_IO_ERROR= domain).
+- The mix uses the track's fps to convert frame offsets to audio sample positions.
+  Passing a track whose fps differs from the reel's fps will produce
+  audio/video sync drift.
+- Overlapping clips are additively mixed and then clamped to =[-1, 1]=.  If you
+  stack multiple clips at unity gain their summed amplitude may clip; reduce
+  individual volumes or the overall mix level before muxing.
+- GIF and image-sequence exporters do not support audio.  Only
+  =LrgReelVideoExporter= muxes audio.

@@ -1,0 +1,172 @@
+* Exporters — Output sinks
+:PROPERTIES:
+:CUSTOM_ID: exporters-output-sinks
+:END:
+An exporter consumes a stream of =GrlImage= frames and writes them to a file or
+process.  The abstract base class =LrgReelExporter= defines the protocol; three
+concrete subclasses handle animated GIF, numbered image sequences, and
+ffmpeg-backed video.
+
+** LrgReelExporter contract
+:PROPERTIES:
+:CUSTOM_ID: lrgreelexporter-contract
+:END:
+All exporters follow the same lifecycle:
+
+1. =lrg_reel_exporter_begin()= — called once before any frames; opens the output.
+2. =lrg_reel_exporter_add_frame()= — called once per frame in order.
+3. =lrg_reel_exporter_finish()= — called once after the last frame; flushes and closes.
+
+=lrg_reel_renderer_render_to_exporter()= handles this lifecycle automatically.
+You only need to call these functions manually when building a custom pipeline.
+
+Error handling follows the standard =GError= pattern; all three functions return
+=gboolean= and populate =**error= on failure.  The error domain is
+=LRG_REEL_EXPORTER_ERROR=.
+
+| Error code                               | Meaning                             |
+|------------------------------------------+-------------------------------------|
+| =LRG_REEL_EXPORTER_ERROR_FAILED=         | Generic failure                     |
+| =LRG_REEL_EXPORTER_ERROR_OPEN=           | Could not create or open the output |
+| =LRG_REEL_EXPORTER_ERROR_WRITE=          | Write failed mid-stream             |
+| =LRG_REEL_EXPORTER_ERROR_FFMPEG_NOT_FOUND= | ffmpeg not on PATH                 |
+| =LRG_REEL_EXPORTER_ERROR_SPAWN=          | Could not launch encoder            |
+| =LRG_REEL_EXPORTER_ERROR_UNSUPPORTED=    | Operation not implemented           |
+
+** LrgReelGifExporter — animated GIF
+:PROPERTIES:
+:CUSTOM_ID: lrgreelgifexporter
+:END:
+Writes a multi-frame animated GIF.  No external tools required; the encoder
+runs in-process.
+
+#+begin_src c
+g_autoptr(GError)             error = NULL;
+g_autoptr(LrgReelGifExporter) gif   =
+    lrg_reel_gif_exporter_new ("output.gif", &error);
+
+if (gif == NULL)
+{
+    g_printerr ("Could not open output: %s\n", error->message);
+    return 1;
+}
+
+/* Optional: better palette quality at the cost of file size.
+ * Must be called before begin() / render_to_exporter(). */
+lrg_reel_gif_exporter_set_quality (gif,
+                                    TRUE,   /* adaptive_palette */
+                                    TRUE);  /* dither */
+
+lrg_reel_renderer_render_to_exporter (renderer, LRG_REEL_EXPORTER (gif), &error);
+#+end_src
+
+Quality defaults (both =FALSE=) use the fixed web-safe palette, producing the
+smallest files with widest viewer compatibility.  Enable =adaptive_palette= for
+natural-looking gradients; add =dither= on top for the best quality at a modest
+size increase.  =dither= has no effect when =adaptive_palette= is =FALSE=.
+
+** LrgReelSeqExporter — image sequence
+:PROPERTIES:
+:CUSTOM_ID: lrgreelseqexporter
+:END:
+Writes each frame as a separate numbered image file in a directory.
+
+#+begin_src c
+g_autoptr(LrgReelSeqExporter) seq =
+    lrg_reel_seq_exporter_new ("frames/",      /* output directory */
+                                "frame_%05d",  /* printf pattern (no extension) */
+                                LRG_REEL_IMAGE_FORMAT_PNG);
+
+lrg_reel_renderer_render_to_exporter (renderer, LRG_REEL_EXPORTER (seq), &error);
+
+g_print ("Wrote %u frames\n",
+         lrg_reel_seq_exporter_get_frame_count (seq));
+#+end_src
+
+The directory is created with =g_mkdir_with_parents()= on the first call to
+=begin()=.  The frame index substituted into the pattern is 0-based and
+matches the absolute frame number passed to =add_frame()=.
+
+| Format                       | Extension | Notes                    |
+|------------------------------+-----------+--------------------------|
+| =LRG_REEL_IMAGE_FORMAT_PNG=  | .png      | Lossless; larger files   |
+| =LRG_REEL_IMAGE_FORMAT_JPEG= | .jpg      | Lossy; smaller files     |
+
+** LrgReelVideoExporter — MP4 / WebM via ffmpeg
+:PROPERTIES:
+:CUSTOM_ID: lrgreelvideoexporter
+:END:
+Streams frames to an ffmpeg subprocess and produces a muxed video file.
+ffmpeg must be installed and discoverable on =PATH= (or explicitly configured).
+
+*** Availability check
+
+Always check for ffmpeg before attempting a video export:
+
+#+begin_src c
+if (!lrg_reel_video_exporter_is_ffmpeg_available ())
+{
+    g_print ("ffmpeg not found; falling back to GIF.\n");
+    /* ... fall back to LrgReelGifExporter ... */
+}
+#+end_src
+
+If =begin()= is called without ffmpeg available, it fails with
+=LRG_REEL_EXPORTER_ERROR_FFMPEG_NOT_FOUND=.
+
+*** Basic usage
+
+#+begin_src c
+g_autoptr(LrgReelVideoExporter) vid =
+    lrg_reel_video_exporter_new ("output.mp4", LRG_REEL_VIDEO_CODEC_H264);
+
+/* Quality: lower CRF = higher quality. Default is 23. */
+lrg_reel_video_exporter_set_crf (vid, 18);
+
+lrg_reel_renderer_render_to_exporter (renderer, LRG_REEL_EXPORTER (vid), &error);
+#+end_src
+
+| Codec                       | Container | Encoder    |
+|-----------------------------+-----------+------------|
+| =LRG_REEL_VIDEO_CODEC_H264= | .mp4      | libx264    |
+| =LRG_REEL_VIDEO_CODEC_VP9=  | .webm     | libvpx-vp9 |
+
+*** Adding audio
+
+Pass a mixed =LrgWaveData= (from =lrg_reel_audio_track_mix()=) before calling
+=begin()= / =render_to_exporter()=:
+
+#+begin_src c
+lrg_reel_video_exporter_set_audio (vid, mixed_wave);
+/* Now render_to_exporter() will mux audio into the output. */
+#+end_src
+
+See [[file:audio.org][audio.org]] for how to produce =mixed_wave=.
+
+*** Custom ffmpeg path
+
+#+begin_src c
+/* Override auto-discovery if ffmpeg lives in a non-standard location. */
+lrg_reel_video_exporter_set_ffmpeg_path (vid, "/opt/ffmpeg/bin/ffmpeg");
+
+/* Pass NULL to restore auto-discovery. */
+lrg_reel_video_exporter_set_ffmpeg_path (vid, NULL);
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =lrg_reel_gif_exporter_set_quality()= must be called *before*
+  =lrg_reel_exporter_begin()= (or before =render_to_exporter()=, which calls
+  =begin()= internally).  Calling it after the first frame is written has no
+  effect.
+- =lrg_reel_video_exporter_set_audio()= must also be called before =begin()=.
+  Setting it after =begin()= is called will not mux audio into the current run.
+- The video exporter spawns an ffmpeg subprocess and pipes frames via stdin.
+  If the ffmpeg process exits unexpectedly, subsequent =add_frame()= calls will
+  fail with =LRG_REEL_EXPORTER_ERROR_WRITE= or =LRG_REEL_EXPORTER_ERROR_SPAWN=.
+- The image sequence exporter does not clean up partial output on failure.
+  If =add_frame()= fails mid-run, previously written frames remain on disk.
+- =LrgReelExporter= is derivable; you can implement a custom sink by subclassing
+  it and overriding the =begin= / =add_frame= / =finish= vfuncs.

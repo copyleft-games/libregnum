@@ -1,0 +1,197 @@
+* Animation math — interpolate and spring
+:PROPERTIES:
+:CUSTOM_ID: animation-math
+:END:
+The Reel module ships two pure, stateless animation primitives designed for
+frame-by-frame offline rendering.  Neither requires a manager, a game loop, or
+any mutable state: you pass the current frame number and receive an output
+value.
+
+Both functions build on the engine's =LrgEasingType= library.
+
+** lrg_reel_interpolate
+:PROPERTIES:
+:CUSTOM_ID: lrg-reel-interpolate
+:END:
+Maps an input value (typically the current frame) through a piecewise curve
+defined by parallel input/output breakpoint arrays.
+
+#+begin_src c
+gdouble
+lrg_reel_interpolate (gdouble             input,
+                      const gdouble      *input_range,
+                      gsize               n_input,
+                      const gdouble      *output_range,
+                      gsize               n_output,
+                      LrgEasingType       easing,
+                      LrgReelExtrapolate  extrapolate_left,
+                      LrgReelExtrapolate  extrapolate_right);
+#+end_src
+
+=n_input= and =n_output= must be equal and at least 2.  Easing is applied
+within each segment independently.
+
+*** Example: multi-stop opacity keyframes
+#+begin_src c
+static void
+my_render (LrgReelClip *clip, LrgReelContext *ctx,
+           LrgImageCanvas *canvas, gpointer ud)
+{
+    gint    frame = lrg_reel_context_get_frame (ctx);
+    /* Fade in 0->1 over frames 0..15, hold, fade out 1->0 over frames 45..60. */
+    const gdouble in[]  = { 0.0, 15.0, 45.0, 60.0 };
+    const gdouble out[] = { 0.0,  1.0,  1.0,  0.0 };
+    gdouble opacity = lrg_reel_interpolate (
+        (gdouble) frame,
+        in,  G_N_ELEMENTS (in),
+        out, G_N_ELEMENTS (out),
+        LRG_EASING_EASE_IN_OUT_CUBIC,
+        LRG_REEL_EXTRAPOLATE_CLAMP,
+        LRG_REEL_EXTRAPOLATE_CLAMP);
+    /* use opacity ... */
+}
+#+end_src
+
+*** Extrapolate modes
+:PROPERTIES:
+:CUSTOM_ID: extrapolate-modes
+:END:
+| Enum value                       | Behaviour outside the input range                           |
+|----------------------------------+-------------------------------------------------------------|
+| =LRG_REEL_EXTRAPOLATE_CLAMP=     | Returns the first or last output value (most common)        |
+| =LRG_REEL_EXTRAPOLATE_EXTEND=    | Linearly extends the first or last segment beyond the range |
+| =LRG_REEL_EXTRAPOLATE_IDENTITY=  | Returns the input value unchanged                           |
+| =LRG_REEL_EXTRAPOLATE_WRAP=      | Wraps the input modulo the range width                      |
+
+=CLAMP= is the right default for nearly all animation uses.  =EXTEND= is useful
+for a value that should continue growing after the last keyframe.  =IDENTITY=
+passes the raw frame number through; avoid it unless you have a specific reason.
+=WRAP= creates a seamlessly repeating pattern from any segment.
+
+** lrg_reel_interpolate_clamped
+:PROPERTIES:
+:CUSTOM_ID: lrg-reel-interpolate-clamped
+:END:
+The convenience overload for the common two-point case.  Uses
+=LRG_REEL_EXTRAPOLATE_CLAMP= on both sides automatically.
+
+#+begin_src c
+gdouble
+lrg_reel_interpolate_clamped (gdouble       input,
+                              gdouble       in_min,
+                              gdouble       in_max,
+                              gdouble       out_min,
+                              gdouble       out_max,
+                              LrgEasingType easing);
+#+end_src
+
+#+begin_src c
+/* Fade opacity from 0 to 1 over the first 20 frames; clamp outside. */
+gdouble opacity = lrg_reel_interpolate_clamped (
+    (gdouble) frame,
+    0.0, 20.0,
+    0.0, 1.0,
+    LRG_EASING_EASE_OUT_CUBIC);
+
+/* Slide x from 640 to 320 over frames 10..40. */
+gdouble x = lrg_reel_interpolate_clamped (
+    (gdouble) frame,
+    10.0, 40.0,
+    640.0, 320.0,
+    LRG_EASING_EASE_IN_OUT_BACK);
+#+end_src
+
+** lrg_reel_spring
+:PROPERTIES:
+:CUSTOM_ID: lrg-reel-spring
+:END:
+Evaluates a damped harmonic oscillator at a given frame, animating from =from=
+to =to=.
+
+#+begin_src c
+gdouble
+lrg_reel_spring (gint                       frame,
+                 gdouble                    fps,
+                 const LrgReelSpringConfig *config,
+                 gdouble                    from,
+                 gdouble                    to);
+#+end_src
+
+Pass =NULL= for =config= to use the sensible defaults (mass 1.0, stiffness 100.0,
+damping 10.0, no initial velocity, no clamping):
+
+#+begin_src c
+/* Spring a title's y coordinate from 220 (below) to 150 (resting). */
+gdouble y = lrg_reel_spring (frame, 30.0, NULL, 220.0, 150.0);
+#+end_src
+
+At frame 0 the value equals =from= exactly; it then oscillates toward =to=.
+Underdamped configurations (low damping relative to stiffness) overshoot and
+bounce; critically-damped and overdamped configurations approach =to= without
+crossing it.
+
+*** LrgReelSpringConfig
+:PROPERTIES:
+:CUSTOM_ID: lrgreelspringconfig
+:END:
+=LrgReelSpringConfig= is a *GBoxed value type*, not a GObject.  Allocate it with
+=lrg_reel_spring_config_new()= and free it with =lrg_reel_spring_config_free()=
+(or use =g_autoptr=).
+
+#+begin_src c
+g_autoptr(LrgReelSpringConfig) cfg = lrg_reel_spring_config_new ();
+cfg->stiffness  = 200.0;   /* stiffer spring */
+cfg->damping    = 12.0;    /* a little underdamped for a small bounce */
+cfg->mass       = 1.0;
+cfg->initial_velocity = 0.0;
+cfg->overshoot_clamping = FALSE;
+
+gdouble y = lrg_reel_spring (frame, 30.0, cfg, 300.0, 100.0);
+#+end_src
+
+| Field                 | Default | Meaning                                                        |
+|-----------------------+---------+----------------------------------------------------------------|
+| =mass=                | 1.0     | Oscillator inertia; higher mass moves slower (must be > 0)     |
+| =stiffness=           | 100.0   | Spring constant; higher values snap faster (must be > 0)       |
+| =damping=             | 10.0    | Friction coefficient; raise to reduce overshoot (must be >= 0) |
+| =initial_velocity=    | 0.0     | Starting velocity in value-units per second                    |
+| =overshoot_clamping=  | FALSE   | If TRUE the value never passes =to= even in underdamped cases  |
+
+*** Sizing a sequence to a spring
+
+When you need a sequence duration that exactly covers a spring animation:
+
+#+begin_src c
+/* How many frames until the spring settles (within a small threshold)? */
+guint settle = lrg_reel_spring_duration_in_frames (30.0, cfg);
+LrgReelSequence *seq = lrg_reel_sequence_new (0, (gint) settle);
+#+end_src
+
+*** Combining spring and interpolate
+
+Spring and interpolate compose naturally in a single render callback:
+
+#+begin_src c
+/* y springs up; opacity fades in simultaneously. */
+gdouble y       = lrg_reel_spring (frame, 30.0, NULL, 200.0, 100.0);
+gdouble opacity = lrg_reel_interpolate_clamped (frame, 0.0, 20.0,
+                                                0.0, 1.0,
+                                                LRG_EASING_EASE_OUT_CUBIC);
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =LrgReelSpringConfig= is a *GBoxed* type.  Never call =g_object_unref()= on
+  it — use =lrg_reel_spring_config_free()= or =g_autoptr(LrgReelSpringConfig)=.
+- Both functions accept =gdouble= input and output; cast your =gint= frame with
+  =(gdouble) frame= before passing it.
+- =lrg_reel_interpolate= asserts that =n_input == n_output >= 2= and that
+  =input_range= is monotonically increasing.  Violating these will abort.
+- =lrg_reel_spring_duration_in_frames= returns an estimate; do not rely on it
+  for pixel-exact sync.  Verify visually with =LrgReelPlayer= if timing is
+  critical.
+- These are pure functions — calling them multiple times with the same arguments
+  always returns the same value.  Do not cache results across frames of a loop
+  sequence; call them fresh each frame with the current relative frame.

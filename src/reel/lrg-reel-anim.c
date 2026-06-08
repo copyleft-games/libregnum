@@ -1,0 +1,369 @@
+/* lrg-reel-anim.c
+ *
+ * Copyright 2025 Zach Podbielniak
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+#include "config.h"
+#include "lrg-reel-anim.h"
+#include "../tween/lrg-easing.h"
+#include <math.h>
+
+/* ==========================================================================
+ * Spring configuration (boxed)
+ * ========================================================================== */
+
+LrgReelSpringConfig *
+lrg_reel_spring_config_new (void)
+{
+    LrgReelSpringConfig *self;
+
+    self = g_new0 (LrgReelSpringConfig, 1);
+    self->mass = 1.0;
+    self->stiffness = 100.0;
+    self->damping = 10.0;
+    self->initial_velocity = 0.0;
+    self->overshoot_clamping = FALSE;
+
+    return self;
+}
+
+LrgReelSpringConfig *
+lrg_reel_spring_config_copy (const LrgReelSpringConfig *self)
+{
+    LrgReelSpringConfig *copy;
+
+    g_return_val_if_fail (self != NULL, NULL);
+
+    copy = g_new0 (LrgReelSpringConfig, 1);
+    *copy = *self;
+
+    return copy;
+}
+
+void
+lrg_reel_spring_config_free (LrgReelSpringConfig *self)
+{
+    g_return_if_fail (self != NULL);
+
+    g_free (self);
+}
+
+G_DEFINE_BOXED_TYPE (LrgReelSpringConfig, lrg_reel_spring_config,
+                     lrg_reel_spring_config_copy, lrg_reel_spring_config_free)
+
+/* ==========================================================================
+ * Interpolation
+ * ========================================================================== */
+
+/* Interpolate within a single segment [a0,a1] -> [b0,b1] with easing. */
+static gdouble
+reel_interp_segment (gdouble       input,
+                     gdouble       a0,
+                     gdouble       a1,
+                     gdouble       b0,
+                     gdouble       b1,
+                     LrgEasingType easing)
+{
+    gdouble span;
+    gdouble t;
+    gdouble eased;
+
+    span = a1 - a0;
+
+    /* Zero-width segment: avoid division by zero, snap to the right end. */
+    if (span == 0.0)
+        return b1;
+
+    t = (input - a0) / span;
+    eased = (gdouble) lrg_easing_apply (easing, (gfloat) t);
+
+    return b0 + (b1 - b0) * eased;
+}
+
+/* Apply an extrapolation policy outside [a0,a1] -> [b0,b1] at the given end. */
+static gdouble
+reel_extrapolate (gdouble             input,
+                  gdouble             a0,
+                  gdouble             a1,
+                  gdouble             b0,
+                  gdouble             b1,
+                  gdouble             full_in_lo,
+                  gdouble             full_in_hi,
+                  gdouble             clamp_value,
+                  LrgEasingType       easing,
+                  LrgReelExtrapolate  mode)
+{
+    gdouble span;
+    gdouble range;
+    gdouble wrapped;
+
+    switch (mode)
+    {
+    case LRG_REEL_EXTRAPOLATE_CLAMP:
+        return clamp_value;
+
+    case LRG_REEL_EXTRAPOLATE_IDENTITY:
+        return input;
+
+    case LRG_REEL_EXTRAPOLATE_WRAP:
+        range = full_in_hi - full_in_lo;
+        if (range == 0.0)
+            return clamp_value;
+        /* Floor-mod into [full_in_lo, full_in_hi). */
+        wrapped = input - full_in_lo;
+        wrapped = wrapped - range * floor (wrapped / range);
+        wrapped += full_in_lo;
+        return reel_interp_segment (wrapped, a0, a1, b0, b1, easing);
+
+    case LRG_REEL_EXTRAPOLATE_EXTEND:
+    default:
+        /* Linear extension of the edge segment (no easing curvature). */
+        span = a1 - a0;
+        if (span == 0.0)
+            return b1;
+        return b0 + (b1 - b0) * ((input - a0) / span);
+    }
+}
+
+gdouble
+lrg_reel_interpolate (gdouble             input,
+                      const gdouble      *input_range,
+                      gsize               n_input,
+                      const gdouble      *output_range,
+                      gsize               n_output,
+                      LrgEasingType       easing,
+                      LrgReelExtrapolate  extrapolate_left,
+                      LrgReelExtrapolate  extrapolate_right)
+{
+    gsize i;
+    gdouble lo;
+    gdouble hi;
+
+    g_return_val_if_fail (input_range != NULL, 0.0);
+    g_return_val_if_fail (output_range != NULL, 0.0);
+    g_return_val_if_fail (n_input >= 2, 0.0);
+    g_return_val_if_fail (n_input == n_output, 0.0);
+
+    lo = input_range[0];
+    hi = input_range[n_input - 1];
+
+    /* Below the range: extrapolate using the first segment. */
+    if (input < lo)
+        return reel_extrapolate (input,
+                                 input_range[0], input_range[1],
+                                 output_range[0], output_range[1],
+                                 lo, hi,
+                                 output_range[0],
+                                 easing, extrapolate_left);
+
+    /* Above the range: extrapolate using the last segment. */
+    if (input > hi)
+        return reel_extrapolate (input,
+                                 input_range[n_input - 2], input_range[n_input - 1],
+                                 output_range[n_input - 2], output_range[n_input - 1],
+                                 lo, hi,
+                                 output_range[n_input - 1],
+                                 easing, extrapolate_right);
+
+    /* In range: find the active segment [i, i+1]. */
+    for (i = 0; i < n_input - 1; i++)
+    {
+        if (input <= input_range[i + 1])
+            return reel_interp_segment (input,
+                                        input_range[i], input_range[i + 1],
+                                        output_range[i], output_range[i + 1],
+                                        easing);
+    }
+
+    /* Exactly at the upper bound (or numerical edge). */
+    return output_range[n_output - 1];
+}
+
+gdouble
+lrg_reel_interpolate_clamped (gdouble       input,
+                              gdouble       in_min,
+                              gdouble       in_max,
+                              gdouble       out_min,
+                              gdouble       out_max,
+                              LrgEasingType easing)
+{
+    gdouble in_range[2];
+    gdouble out_range[2];
+
+    in_range[0] = in_min;
+    in_range[1] = in_max;
+    out_range[0] = out_min;
+    out_range[1] = out_max;
+
+    return lrg_reel_interpolate (input, in_range, 2, out_range, 2, easing,
+                                 LRG_REEL_EXTRAPOLATE_CLAMP,
+                                 LRG_REEL_EXTRAPOLATE_CLAMP);
+}
+
+/* ==========================================================================
+ * Spring physics
+ * ========================================================================== */
+
+/*
+ * Damped harmonic oscillator displacement x(t) from equilibrium, given the
+ * initial displacement x0 and initial velocity v0.  The equation of motion is
+ * m*x'' + c*x' + k*x = 0.  We solve the underdamped, critically-damped, and
+ * overdamped cases in closed form so any frame can be evaluated directly with
+ * no time-stepping.
+ */
+static gdouble
+reel_spring_displacement (const LrgReelSpringConfig *cfg,
+                          gdouble                    t,
+                          gdouble                    x0,
+                          gdouble                    v0)
+{
+    gdouble m;
+    gdouble k;
+    gdouble c;
+    gdouble omega0;
+    gdouble zeta;
+
+    m = (cfg->mass > 0.0) ? cfg->mass : 1.0;
+    k = (cfg->stiffness > 0.0) ? cfg->stiffness : 100.0;
+    c = (cfg->damping >= 0.0) ? cfg->damping : 10.0;
+
+    omega0 = sqrt (k / m);
+    zeta = c / (2.0 * sqrt (k * m));
+
+    if (zeta < 1.0)
+    {
+        /* Underdamped: decaying oscillation. */
+        gdouble omega1;
+        gdouble envelope;
+
+        omega1 = omega0 * sqrt (1.0 - zeta * zeta);
+        envelope = exp (-zeta * omega0 * t);
+
+        return envelope * (x0 * cos (omega1 * t)
+                           + ((v0 + zeta * omega0 * x0) / omega1) * sin (omega1 * t));
+    }
+    else if (zeta > 1.0)
+    {
+        /* Overdamped: sum of two decaying exponentials. */
+        gdouble disc;
+        gdouble r1;
+        gdouble r2;
+        gdouble c1;
+        gdouble c2;
+
+        disc = omega0 * sqrt (zeta * zeta - 1.0);
+        r1 = -zeta * omega0 + disc;
+        r2 = -zeta * omega0 - disc;
+        c1 = (v0 - r2 * x0) / (r1 - r2);
+        c2 = x0 - c1;
+
+        return c1 * exp (r1 * t) + c2 * exp (r2 * t);
+    }
+    else
+    {
+        /* Critically damped. */
+        return exp (-omega0 * t) * (x0 + (v0 + omega0 * x0) * t);
+    }
+}
+
+gdouble
+lrg_reel_spring (gint                       frame,
+                 gdouble                    fps,
+                 const LrgReelSpringConfig *config,
+                 gdouble                    from,
+                 gdouble                    to)
+{
+    LrgReelSpringConfig defaults;
+    const LrgReelSpringConfig *cfg;
+    gdouble t;
+    gdouble x0;
+    gdouble x;
+    gdouble value;
+
+    if (fps <= 0.0)
+        fps = 60.0;
+
+    if (config != NULL)
+    {
+        cfg = config;
+    }
+    else
+    {
+        defaults.mass = 1.0;
+        defaults.stiffness = 100.0;
+        defaults.damping = 10.0;
+        defaults.initial_velocity = 0.0;
+        defaults.overshoot_clamping = FALSE;
+        cfg = &defaults;
+    }
+
+    if (frame <= 0)
+        return from;
+
+    t = (gdouble) frame / fps;
+    /* Displacement from equilibrium: x(0) = from - to, settles to 0. */
+    x0 = from - to;
+    x = reel_spring_displacement (cfg, t, x0, cfg->initial_velocity);
+    value = to + x;
+
+    if (cfg->overshoot_clamping)
+    {
+        if (to >= from)
+            value = MIN (value, to);
+        else
+            value = MAX (value, to);
+    }
+
+    return value;
+}
+
+guint
+lrg_reel_spring_duration_in_frames (gdouble                    fps,
+                                    const LrgReelSpringConfig *config)
+{
+    LrgReelSpringConfig defaults;
+    const LrgReelSpringConfig *cfg;
+    const gdouble rest_threshold = 0.005;
+    guint max_frames;
+    guint last_active;
+    guint f;
+
+    if (fps <= 0.0)
+        fps = 60.0;
+
+    if (config != NULL)
+    {
+        cfg = config;
+    }
+    else
+    {
+        defaults.mass = 1.0;
+        defaults.stiffness = 100.0;
+        defaults.damping = 10.0;
+        defaults.initial_velocity = 0.0;
+        defaults.overshoot_clamping = FALSE;
+        cfg = &defaults;
+    }
+
+    /* Probe a normalised 0 -> 1 spring; cap the search at 20 seconds. */
+    max_frames = (guint) (fps * 20.0);
+    if (max_frames < 1)
+        max_frames = 1;
+
+    last_active = 0;
+    for (f = 1; f <= max_frames; f++)
+    {
+        gdouble t;
+        gdouble x;
+
+        t = (gdouble) f / fps;
+        /* x0 = from - to = 0 - 1 = -1, so |displacement| is the residual. */
+        x = reel_spring_displacement (cfg, t, -1.0, cfg->initial_velocity);
+        if (fabs (x) > rest_threshold)
+            last_active = f;
+    }
+
+    return last_active + 1;
+}

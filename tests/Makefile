@@ -131,7 +131,8 @@ TEST_SOURCES := \
 	test-gif-recorder.c \
 	test-text-baker.c \
 	test-image-canvas.c \
-	test-vector-image.c
+	test-vector-image.c \
+	test-reel.c
 
 # MCP test sources (conditional on MCP=1)
 ifeq ($(MCP),1)

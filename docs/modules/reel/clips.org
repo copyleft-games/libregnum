@@ -1,0 +1,177 @@
+* LrgReelClip — Timed layers
+:PROPERTIES:
+:CUSTOM_ID: lrgreelclip-timed-layers
+:END:
+=LrgReelClip= is the drawable unit of a composition.  Each clip owns a timing
+window (from-frame, duration), an opacity, and a visibility flag.  The renderer
+calls each clip's render vfunc once per frame while the clip is active, passing
+the current =LrgReelContext= and the =LrgImageCanvas= to draw onto.
+
+=LrgReelClip= is a *derivable* GObject type: subclass it for reusable clip
+objects, or construct a base instance with a render callback for quick one-off
+layers.
+
+** Authoring style 1: render callback
+:PROPERTIES:
+:CUSTOM_ID: authoring-callback
+:END:
+The simplest approach.  Create a base =LrgReelClip= and supply a
+=LrgReelRenderFunc= callback.
+
+#+begin_src c
+typedef void (*LrgReelRenderFunc) (LrgReelClip    *clip,
+                                   LrgReelContext *ctx,
+                                   LrgImageCanvas *canvas,
+                                   gpointer        user_data);
+#+end_src
+
+#+begin_src c
+static void
+draw_banner (LrgReelClip    *clip,
+             LrgReelContext *ctx,
+             LrgImageCanvas *canvas,
+             gpointer        user_data)
+{
+    const gchar *text = (const gchar *) user_data;
+    gint         frame = lrg_reel_context_get_frame (ctx);
+    GrlColor     fg = { 255, 255, 255, 255 };
+    gdouble      opacity;
+
+    opacity = lrg_reel_interpolate_clamped (frame, 0.0, 10.0, 0.0, 1.0,
+                                            LRG_EASING_EASE_OUT_QUAD);
+    fg.a = (guint8) (opacity * 255.0);
+    grl_image_draw_text_bitmap (lrg_image_canvas_get_image (canvas),
+                                text, 20, 20, 24, &fg);
+}
+
+/* The clip owns the string via the destroy notifier. */
+g_autoptr(LrgReelClip) banner =
+    lrg_reel_clip_new_with_func (draw_banner,
+                                 g_strdup ("Level 1"),
+                                 g_free);
+lrg_reel_add_clip (reel, banner);
+#+end_src
+
+The =destroy= parameter is a =GDestroyNotify= invoked when the clip is finalized,
+allowing safe ownership of =user_data=.  Pass =NULL= for both if =user_data= is
+not heap-allocated or is managed elsewhere.
+
+** Authoring style 2: subclass
+:PROPERTIES:
+:CUSTOM_ID: authoring-subclass
+:END:
+Subclassing is preferable for clips that carry their own state or are reused
+across multiple compositions.
+
+#+begin_src c
+/* Declaration */
+G_DECLARE_FINAL_TYPE (MyBannerClip, my_banner_clip, MY, BANNER_CLIP, LrgReelClip)
+
+/* In the .c file */
+struct _MyBannerClip
+{
+    LrgReelClip parent_instance;
+    gchar      *text;
+    GrlColor    color;
+};
+
+static void
+my_banner_clip_render (LrgReelClip    *clip,
+                       LrgReelContext *ctx,
+                       LrgImageCanvas *canvas)
+{
+    MyBannerClip *self = MY_BANNER_CLIP (clip);
+    grl_image_draw_text_bitmap (lrg_image_canvas_get_image (canvas),
+                                self->text, 20, 20, 24, &self->color);
+}
+
+static void
+my_banner_clip_class_init (MyBannerClipClass *klass)
+{
+    LrgReelClipClass *clip_class = LRG_REEL_CLIP_CLASS (klass);
+    clip_class->render = my_banner_clip_render;
+}
+#+end_src
+
+Subclasses should call =lrg_reel_clip_render()= to dispatch the vfunc from
+outside the class; do not call the vfunc pointer directly.
+
+** Timing properties
+:PROPERTIES:
+:CUSTOM_ID: timing-properties
+:END:
+#+begin_src c
+/* When the clip becomes active (parent-relative frame). */
+lrg_reel_clip_set_from_frame (clip, 15);
+
+/* How long it is active.  LRG_REEL_DURATION_INFINITE = until end. */
+lrg_reel_clip_set_duration_in_frames (clip, 45);
+
+/* Test whether a given frame is within the clip's window. */
+gboolean active = lrg_reel_clip_is_active_at (clip, 20);  /* TRUE */
+#+end_src
+
+=lrg_reel_clip_is_active_at()= uses the half-open interval =[from, from +
+duration)=.  A duration of =LRG_REEL_DURATION_INFINITE= (or negative) means the
+clip is active from =from= to the end of its parent context.
+
+** Opacity and visibility
+:PROPERTIES:
+:CUSTOM_ID: opacity-visibility
+:END:
+#+begin_src c
+/* Opacity is applied by the renderer at composite time: [0.0, 1.0]. */
+lrg_reel_clip_set_opacity (clip, 0.75);
+
+/* Visibility is a hard on/off toggle; invisible clips are not rendered. */
+lrg_reel_clip_set_visible (clip, FALSE);
+#+end_src
+
+Opacity compositing is performed by the renderer on the clip's rendered output
+image before blending it into the canvas.  Clips that draw their own per-pixel
+alpha (e.g. using =fg.a=) can set their clip-level opacity to 1.0 and manage
+transparency themselves.
+
+** Name
+:PROPERTIES:
+:CUSTOM_ID: name
+:END:
+#+begin_src c
+lrg_reel_clip_set_name (clip, "title-card");
+const gchar *name = lrg_reel_clip_get_name (clip);
+#+end_src
+
+The name is a convenience label for debugging; it has no effect on rendering.
+
+** LrgReelRenderFunc signature
+:PROPERTIES:
+:CUSTOM_ID: render-func-signature
+:END:
+| Parameter  | Type              | Meaning                                          |
+|------------+-------------------+--------------------------------------------------|
+| =clip=     | =LrgReelClip *=   | The clip being rendered (access name etc.)       |
+| =ctx=      | =LrgReelContext *= | Frame, fps, dimensions; call =get_frame()= here  |
+| =canvas=   | =LrgImageCanvas *= | Draw target; obtain the backing image via =lrg_image_canvas_get_image()= |
+| =user_data=| =gpointer=        | Data passed to =lrg_reel_clip_new_with_func()=   |
+
+The callback must draw synchronously and return.  It must not seek the context
+or push/pop offsets.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Clip-level opacity (=lrg_reel_clip_set_opacity=) is applied by the renderer
+  on the composed clip output.  In v1 this only affects top-level reel clips;
+  nested children inside a sequence draw at full opacity and are composited as
+  a unit.
+- For headless text rendering use =grl_image_draw_text_bitmap()= rather than
+  =grl_image_draw_text()=.  The default-font variant of =grl_image_draw_text()=
+  may crash when called without a GL context; =grl_image_draw_text_bitmap()=
+  always uses the embedded bitmap font and is safe headless.
+- =lrg_reel_clip_new_with_func= takes =(scope notified)= on the callback; do not
+  free or invalidate =user_data= before the clip is finalized unless you
+  provided a =destroy= notifier.
+- =lrg_reel_clip_is_active_at()= accepts parent-relative frames, not absolute
+  frames.  When querying from outside a render context, pass an absolute frame
+  only if the clip is a direct child of the reel (no intermediate sequence).

@@ -2,6 +2,32 @@
 
 Last updated: 2026-02-09
 
+## Recently Shipped
+
+### Reel — Programmatic Video Creation (`src/reel/`)
+
+A declarative, code-driven video framework: define an `LrgReel` composition of
+timed, animated `LrgReelClip` layers, then render it frame-by-frame headlessly.
+Shipped in v1:
+
+- **Composition & timing**: `LrgReel`, `LrgReelContext` (relative-frame stack),
+  `LrgReelSequence` with shift / series / loop / freeze modes.
+- **Animation math**: `lrg_reel_interpolate` (multi-segment, all extrapolation
+  modes), `lrg_reel_spring` (damped oscillator), reusing the engine easing.
+- **Renderer**: `LrgReelRenderer` — CPU/headless compositing with per-clip
+  opacity and z-order; streams to exporters.
+- **Exporters**: GIF (`LrgReelGifExporter`), PNG/JPEG image sequence
+  (`LrgReelSeqExporter`), and MP4/WebM via an ffmpeg subprocess
+  (`LrgReelVideoExporter`, runtime-discovered, graceful when absent).
+- **Transitions**: CPU `LrgReelTransition` — fade, wipe, dissolve, slide.
+- **Audio**: `LrgReelAudioTrack` offline mixing + muxing into MP4.
+- **Preview**: `LrgReelPlayer` interactive play/scrub window (the only GPU part).
+- Full test coverage in `tests/test-reel.c`; examples in `examples/reel-hello.c`
+  and `examples/reel-showcase.c`; docs under `docs/modules/reel/`.
+
+Future ideas: a named-reel registry + CLI renderer, motion blur via sub-frame
+accumulation, nested-clip opacity compositing, and YAML-defined compositions.
+
 ## Immediate Priorities (Finish What's Started)
 
 These are partially-implemented features with explicit TODOs in the codebase.

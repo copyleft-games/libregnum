@@ -4506,3 +4506,113 @@ lrg_asset_type_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * Reel Module (programmatic video creation)
+ * ========================================================================== */
+
+GType
+lrg_reel_extrapolate_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_REEL_EXTRAPOLATE_EXTEND, "LRG_REEL_EXTRAPOLATE_EXTEND", "extend" },
+            { LRG_REEL_EXTRAPOLATE_CLAMP, "LRG_REEL_EXTRAPOLATE_CLAMP", "clamp" },
+            { LRG_REEL_EXTRAPOLATE_IDENTITY, "LRG_REEL_EXTRAPOLATE_IDENTITY", "identity" },
+            { LRG_REEL_EXTRAPOLATE_WRAP, "LRG_REEL_EXTRAPOLATE_WRAP", "wrap" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgReelExtrapolate"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_reel_sequence_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_REEL_SEQUENCE_MODE_SHIFT, "LRG_REEL_SEQUENCE_MODE_SHIFT", "shift" },
+            { LRG_REEL_SEQUENCE_MODE_SERIES, "LRG_REEL_SEQUENCE_MODE_SERIES", "series" },
+            { LRG_REEL_SEQUENCE_MODE_LOOP, "LRG_REEL_SEQUENCE_MODE_LOOP", "loop" },
+            { LRG_REEL_SEQUENCE_MODE_FREEZE, "LRG_REEL_SEQUENCE_MODE_FREEZE", "freeze" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgReelSequenceMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_reel_image_format_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_REEL_IMAGE_FORMAT_PNG, "LRG_REEL_IMAGE_FORMAT_PNG", "png" },
+            { LRG_REEL_IMAGE_FORMAT_JPEG, "LRG_REEL_IMAGE_FORMAT_JPEG", "jpeg" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgReelImageFormat"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_reel_video_codec_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_REEL_VIDEO_CODEC_H264, "LRG_REEL_VIDEO_CODEC_H264", "h264" },
+            { LRG_REEL_VIDEO_CODEC_VP9, "LRG_REEL_VIDEO_CODEC_VP9", "vp9" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgReelVideoCodec"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_reel_transition_direction_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_REEL_TRANSITION_DIRECTION_LEFT, "LRG_REEL_TRANSITION_DIRECTION_LEFT", "left" },
+            { LRG_REEL_TRANSITION_DIRECTION_RIGHT, "LRG_REEL_TRANSITION_DIRECTION_RIGHT", "right" },
+            { LRG_REEL_TRANSITION_DIRECTION_UP, "LRG_REEL_TRANSITION_DIRECTION_UP", "up" },
+            { LRG_REEL_TRANSITION_DIRECTION_DOWN, "LRG_REEL_TRANSITION_DIRECTION_DOWN", "down" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgReelTransitionDirection"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
