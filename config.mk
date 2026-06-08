@@ -625,6 +625,7 @@ GIR_SCANNER_FLAGS := \
     --include=Gio-2.0 \
     --include=Dex-1 \
     --include=Json-1.0 \
+    --include=Graylib-1 \
     -DLIBREGNUM_COMPILATION \
     -I$(CURDIR)/src \
     -I$(GRAYLIB_DIR)/src \
