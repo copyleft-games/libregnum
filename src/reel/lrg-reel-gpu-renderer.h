@@ -50,6 +50,23 @@ typedef void (*LrgReelGpuDrawFunc) (LrgReelGpuRenderer *self,
                                     gpointer            user_data);
 
 /**
+ * LrgReelGpuOverlayFunc:
+ * @self: the #LrgReelGpuRenderer
+ * @frame: the frame index being captured.
+ * @user_data: the data passed to lrg_reel_gpu_renderer_set_overlay_func().
+ *
+ * Issues 2D screen-space draw calls (text, rectangles, etc) for @frame.
+ * Called inside the active capture framebuffer *after* the world has been
+ * color-graded and bloomed, so overlays composite on top of the final image.
+ * Must be deterministic for reproducible output.
+ *
+ * Since: 1.0
+ */
+typedef void (*LrgReelGpuOverlayFunc) (LrgReelGpuRenderer *self,
+                                       gint                frame,
+                                       gpointer            user_data);
+
+/**
  * lrg_reel_gpu_renderer_is_available:
  *
  * Returns: %TRUE if a display (and thus a GL context) appears to be available
@@ -109,6 +126,64 @@ LRG_AVAILABLE_IN_ALL
 void
 lrg_reel_gpu_renderer_set_clear_color (LrgReelGpuRenderer *self,
                                        const GrlColor     *color);
+
+/**
+ * lrg_reel_gpu_renderer_set_overlay_func:
+ * @self: a #LrgReelGpuRenderer
+ * @func: (scope notified) (nullable): the overlay draw callback.
+ * @user_data: (closure func): user data for @func.
+ * @destroy: (nullable): destroy notifier for @user_data.
+ *
+ * Installs a 2D overlay callback drawn on top of the graded/bloomed world.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_gpu_renderer_set_overlay_func (LrgReelGpuRenderer    *self,
+                                        LrgReelGpuOverlayFunc  func,
+                                        gpointer               user_data,
+                                        GDestroyNotify         destroy);
+
+/**
+ * lrg_reel_gpu_renderer_set_grade:
+ * @self: a #LrgReelGpuRenderer
+ * @contrast: contrast multiplier around 0.5 (1.0 = identity).
+ * @brightness: additive exposure offset (0.0 = identity).
+ * @tint_r: red multiply tint (1.0 = identity).
+ * @tint_g: green multiply tint (1.0 = identity).
+ * @tint_b: blue multiply tint (1.0 = identity).
+ *
+ * Sets the per-frame GPU color-grade applied when transferring the world into
+ * the capture framebuffer. The pass always runs (identity values = passthrough).
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_gpu_renderer_set_grade (LrgReelGpuRenderer *self,
+                                 gdouble             contrast,
+                                 gdouble             brightness,
+                                 gdouble             tint_r,
+                                 gdouble             tint_g,
+                                 gdouble             tint_b);
+
+/**
+ * lrg_reel_gpu_renderer_set_bloom:
+ * @self: a #LrgReelGpuRenderer
+ * @intensity: bloom additive strength (0.0 disables the bloom passes).
+ * @threshold: luminance threshold (0..1) for the bright-pass.
+ *
+ * Sets the per-frame GPU bloom. When @intensity is 0 the bloom passes are
+ * skipped entirely.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_gpu_renderer_set_bloom (LrgReelGpuRenderer *self,
+                                 gdouble             intensity,
+                                 gdouble             threshold);
 
 /**
  * lrg_reel_gpu_renderer_capture_frame:

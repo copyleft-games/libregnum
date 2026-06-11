@@ -20,11 +20,33 @@ struct _LrgReelGpuRenderer
     GrlColor clear_color;
 
     GrlWindow        *window;
-    GrlRenderTexture *render_texture;
+
+    /* World is drawn into scene_rt; the grade/bloom/overlay composite into
+     * capture_rt (you cannot sample the framebuffer you are drawing into). */
+    GrlRenderTexture *scene_rt;
+    GrlRenderTexture *capture_rt;
+
+    /* Cached color-buffer wrappers (the underlying GL texture id is stable for
+     * the FBO's lifetime, so fetch once instead of leaking one per frame). */
+    GrlTexture *scene_tex;
+    GrlTexture *capture_tex;
+
+    /* Per-frame post state. */
+    gdouble grade_contrast;
+    gdouble grade_brightness;
+    gdouble grade_tint_r;
+    gdouble grade_tint_g;
+    gdouble grade_tint_b;
+    gdouble bloom_intensity;
+    gdouble bloom_threshold;
 
     LrgReelGpuDrawFunc draw_func;
     gpointer           draw_data;
     GDestroyNotify     draw_destroy;
+
+    LrgReelGpuOverlayFunc overlay_func;
+    gpointer              overlay_data;
+    GDestroyNotify        overlay_destroy;
 };
 
 G_DEFINE_FINAL_TYPE (LrgReelGpuRenderer, lrg_reel_gpu_renderer, G_TYPE_OBJECT)
@@ -38,8 +60,13 @@ lrg_reel_gpu_renderer_finalize (GObject *object)
 
     if (self->draw_destroy != NULL && self->draw_data != NULL)
         self->draw_destroy (self->draw_data);
+    if (self->overlay_destroy != NULL && self->overlay_data != NULL)
+        self->overlay_destroy (self->overlay_data);
 
-    g_clear_object (&self->render_texture);
+    g_clear_object (&self->scene_tex);
+    g_clear_object (&self->capture_tex);
+    g_clear_object (&self->scene_rt);
+    g_clear_object (&self->capture_rt);
     g_clear_object (&self->window);
 
     G_OBJECT_CLASS (lrg_reel_gpu_renderer_parent_class)->finalize (object);
@@ -61,6 +88,14 @@ lrg_reel_gpu_renderer_init (LrgReelGpuRenderer *self)
     self->clear_color.g = 0;
     self->clear_color.b = 0;
     self->clear_color.a = 255;
+
+    self->grade_contrast = 1.0;
+    self->grade_brightness = 0.0;
+    self->grade_tint_r = 1.0;
+    self->grade_tint_g = 1.0;
+    self->grade_tint_b = 1.0;
+    self->bloom_intensity = 0.0;
+    self->bloom_threshold = 0.75;
 }
 
 gboolean
@@ -105,14 +140,19 @@ lrg_reel_gpu_renderer_new (gint      width,
     /* Keep the capture window off-screen. */
     grl_window_set_state (self->window, GRL_FLAG_WINDOW_HIDDEN);
 
-    self->render_texture = grl_render_texture_new (width, height);
-    if (self->render_texture == NULL)
+    self->scene_rt = grl_render_texture_new (width, height);
+    self->capture_rt = grl_render_texture_new (width, height);
+    if (self->scene_rt == NULL || self->capture_rt == NULL)
     {
         g_set_error_literal (error, LRG_REEL_GPU_RENDERER_ERROR, 3,
-                             "failed to create the off-screen framebuffer");
+                             "failed to create the off-screen framebuffers");
         g_object_unref (self);
         return NULL;
     }
+
+    /* Cache the color-buffer texture wrappers once (stable GL ids). */
+    self->scene_tex = grl_render_texture_get_texture (self->scene_rt);
+    self->capture_tex = grl_render_texture_get_texture (self->capture_rt);
 
     return self;
 }
@@ -134,6 +174,22 @@ lrg_reel_gpu_renderer_set_draw_func (LrgReelGpuRenderer *self,
 }
 
 void
+lrg_reel_gpu_renderer_set_overlay_func (LrgReelGpuRenderer    *self,
+                                        LrgReelGpuOverlayFunc  func,
+                                        gpointer               user_data,
+                                        GDestroyNotify         destroy)
+{
+    g_return_if_fail (LRG_IS_REEL_GPU_RENDERER (self));
+
+    if (self->overlay_destroy != NULL && self->overlay_data != NULL)
+        self->overlay_destroy (self->overlay_data);
+
+    self->overlay_func = func;
+    self->overlay_data = user_data;
+    self->overlay_destroy = destroy;
+}
+
+void
 lrg_reel_gpu_renderer_set_clear_color (LrgReelGpuRenderer *self,
                                        const GrlColor     *color)
 {
@@ -143,27 +199,154 @@ lrg_reel_gpu_renderer_set_clear_color (LrgReelGpuRenderer *self,
     self->clear_color = *color;
 }
 
+void
+lrg_reel_gpu_renderer_set_grade (LrgReelGpuRenderer *self,
+                                 gdouble             contrast,
+                                 gdouble             brightness,
+                                 gdouble             tint_r,
+                                 gdouble             tint_g,
+                                 gdouble             tint_b)
+{
+    g_return_if_fail (LRG_IS_REEL_GPU_RENDERER (self));
+
+    self->grade_contrast = contrast;
+    self->grade_brightness = brightness;
+    self->grade_tint_r = tint_r;
+    self->grade_tint_g = tint_g;
+    self->grade_tint_b = tint_b;
+}
+
+void
+lrg_reel_gpu_renderer_set_bloom (LrgReelGpuRenderer *self,
+                                 gdouble             intensity,
+                                 gdouble             threshold)
+{
+    g_return_if_fail (LRG_IS_REEL_GPU_RENDERER (self));
+
+    self->bloom_intensity = intensity;
+    self->bloom_threshold = threshold;
+}
+
+static guint8
+lrg_clamp_unit_to_255 (gdouble v)
+{
+    v = v * 255.0;
+    if (v < 0.0) v = 0.0;
+    if (v > 255.0) v = 255.0;
+    return (guint8) (v + 0.5);
+}
+
+/* Composite the graded+bloomed world into capture_rt using blend operations
+ * (no fragment shaders: texture sampling inside a custom shader is unreliable
+ * in this graylib/raylib build, but blended texture/rectangle draws are solid).
+ *
+ *  - the world is drawn straight from scene_tex;
+ *  - tint is a MULTIPLY full-frame solid (matching the old reel tint clip);
+ *  - positive exposure is an ADDITIVE white solid, negative exposure a darkening
+ *    MULTIPLY solid;
+ *  - bloom is approximated by additive, slightly-upscaled redraws of the world,
+ *    so bright regions glow outward while near-black regions add nothing. */
+static void
+lrg_reel_gpu_renderer_composite (LrgReelGpuRenderer *self)
+{
+    GrlColor white;
+
+    white = grl_color_init (255, 255, 255, 255);
+
+    /* World. */
+    grl_draw_texture (self->scene_tex, 0, 0, &white);
+
+    /* Bloom: a few additive, expanding redraws of the world. */
+    if (self->bloom_intensity > 0.0)
+    {
+        GrlVector2   origin;
+        gint         i;
+        gint         n = 4;
+
+        origin = grl_vector2_init (0.0f, 0.0f);
+        grl_draw_begin_blend_mode (GRL_BLEND_ADDITIVE);
+        for (i = 0; i < n; i++)
+        {
+            GrlRectangle src, dst;
+            GrlColor     tint;
+            gfloat       grow;
+            guint8       a;
+            gfloat       ox, oy;
+
+            grow = 1.0f + 0.02f * (gfloat) (i + 1);
+            ox = (gfloat) self->width * (grow - 1.0f) * 0.5f;
+            oy = (gfloat) self->height * (grow - 1.0f) * 0.5f;
+            a = lrg_clamp_unit_to_255 (self->bloom_intensity * 0.4 / (gdouble) (i + 1));
+            tint = grl_color_init (a, a, a, 255);
+            src = grl_rectangle_init (0.0f, 0.0f, (gfloat) self->width, (gfloat) self->height);
+            dst = grl_rectangle_init (-ox, -oy,
+                                      (gfloat) self->width * grow,
+                                      (gfloat) self->height * grow);
+            grl_draw_texture_pro (self->scene_tex, &src, &dst, &origin, 0.0f, &tint);
+        }
+        grl_draw_end_blend_mode ();
+    }
+
+    /* Exposure (additive for positive, darkening multiply for negative). */
+    if (self->grade_brightness > 0.0)
+    {
+        GrlColor add;
+        guint8   a = lrg_clamp_unit_to_255 (self->grade_brightness);
+        add = grl_color_init (255, 255, 255, a);
+        grl_draw_begin_blend_mode (GRL_BLEND_ADDITIVE);
+        grl_draw_rectangle (0, 0, self->width, self->height, &add);
+        grl_draw_end_blend_mode ();
+    }
+    else if (self->grade_brightness < 0.0)
+    {
+        GrlColor mul;
+        guint8   v = lrg_clamp_unit_to_255 (1.0 + self->grade_brightness);
+        mul = grl_color_init (v, v, v, 255);
+        grl_draw_begin_blend_mode (GRL_BLEND_MULTIPLIED);
+        grl_draw_rectangle (0, 0, self->width, self->height, &mul);
+        grl_draw_end_blend_mode ();
+    }
+
+    /* Tint multiply (skip the identity white tint). */
+    if (self->grade_tint_r < 0.999 || self->grade_tint_g < 0.999 || self->grade_tint_b < 0.999)
+    {
+        GrlColor tint;
+        tint = grl_color_init (lrg_clamp_unit_to_255 (self->grade_tint_r),
+                               lrg_clamp_unit_to_255 (self->grade_tint_g),
+                               lrg_clamp_unit_to_255 (self->grade_tint_b),
+                               255);
+        grl_draw_begin_blend_mode (GRL_BLEND_MULTIPLIED);
+        grl_draw_rectangle (0, 0, self->width, self->height, &tint);
+        grl_draw_end_blend_mode ();
+    }
+}
+
 GrlImage *
 lrg_reel_gpu_renderer_capture_frame (LrgReelGpuRenderer *self,
                                      gint                frame)
 {
-    GrlTexture *texture;
-    GrlImage   *image;
+    GrlImage *image;
 
     g_return_val_if_fail (LRG_IS_REEL_GPU_RENDERER (self), NULL);
 
-    grl_render_texture_begin (self->render_texture);
+    /* 1. draw the world into the scene framebuffer */
+    grl_render_texture_begin (self->scene_rt);
     grl_draw_clear_background (&self->clear_color);
-
     if (self->draw_func != NULL)
         self->draw_func (self, frame, self->draw_data);
+    grl_render_texture_end (self->scene_rt);
 
-    grl_render_texture_end (self->render_texture);
+    /* 2. composite world + grade + bloom + overlays into the capture framebuffer */
+    grl_render_texture_begin (self->capture_rt);
+    grl_draw_clear_background (&self->clear_color);
+    lrg_reel_gpu_renderer_composite (self);
+    if (self->overlay_func != NULL)
+        self->overlay_func (self, frame, self->overlay_data);
+    grl_render_texture_end (self->capture_rt);
 
-    texture = grl_render_texture_get_texture (self->render_texture);
-    image = grl_texture_to_image (texture);
-
-    /* Framebuffer textures are stored bottom-up; flip to image orientation. */
+    /* 3. read back the composited frame.  Framebuffer textures are stored
+     * bottom-up; the single flip here corrects the whole composite at once. */
+    image = grl_texture_to_image (self->capture_tex);
     if (image != NULL)
         grl_image_flip_vertical (image);
 
