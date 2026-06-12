@@ -134,6 +134,15 @@ TEST_SOURCES := \
 	test-vector-image.c \
 	test-reel.c
 
+# CAD test sources (conditional on CAD=1)
+ifeq ($(CAD),1)
+TEST_SOURCES += \
+	test-cad.c
+
+TEST_CFLAGS += $(CAD_CFLAGS)
+TEST_LIBS += $(CAD_LIBS)
+endif
+
 # MCP test sources (conditional on MCP=1)
 ifeq ($(MCP),1)
 TEST_SOURCES += \

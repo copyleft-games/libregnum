@@ -4424,6 +4424,7 @@ lrg_node_visual_kind_get_type (void)
             { LRG_NODE_VISUAL_CAMERA, "LRG_NODE_VISUAL_CAMERA", "camera" },
             { LRG_NODE_VISUAL_AUDIO_EMITTER, "LRG_NODE_VISUAL_AUDIO_EMITTER", "audio-emitter" },
             { LRG_NODE_VISUAL_PREFAB_INSTANCE, "LRG_NODE_VISUAL_PREFAB_INSTANCE", "prefab-instance" },
+            { LRG_NODE_VISUAL_CAD_PART, "LRG_NODE_VISUAL_CAD_PART", "cad-part" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
@@ -4497,6 +4498,7 @@ lrg_asset_type_get_type (void)
             { LRG_ASSET_TYPE_PREFAB, "LRG_ASSET_TYPE_PREFAB", "prefab" },
             { LRG_ASSET_TYPE_TILESET, "LRG_ASSET_TYPE_TILESET", "tileset" },
             { LRG_ASSET_TYPE_SCENE, "LRG_ASSET_TYPE_SCENE", "scene" },
+            { LRG_ASSET_TYPE_CAD, "LRG_ASSET_TYPE_CAD", "cad" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =

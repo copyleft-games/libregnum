@@ -154,7 +154,10 @@ lrg_asset_database_classify (const gchar *path)
 	g_autofree gchar *lower = NULL;
 
 	static const gchar * const tex[]   = { ".png", ".jpg", ".jpeg", ".tga", ".bmp", NULL };
-	static const gchar * const model[] = { ".gltf", ".glb", ".obj", ".fbx", ".ply", NULL };
+	static const gchar * const model[] = { ".gltf", ".glb", ".obj", ".fbx", ".ply",
+	                                       ".stl", ".step", ".stp", ".iges", ".igs",
+	                                       ".3mf", NULL };
+	static const gchar * const cad[]   = { ".cad", ".ccad", NULL };
 	static const gchar * const audio[] = { ".wav", ".ogg", ".flac", ".mp3", NULL };
 	static const gchar * const font[]  = { ".ttf", ".otf", NULL };
 	static const gchar * const script[] = { ".lua", ".py", ".js", ".c", NULL };
@@ -165,6 +168,8 @@ lrg_asset_database_classify (const gchar *path)
 
 	lower = g_ascii_strdown (path, -1);
 
+	if (has_ext (lower, cad))
+		return LRG_ASSET_TYPE_CAD;
 	if (has_ext (lower, tex))
 		return LRG_ASSET_TYPE_TEXTURE;
 	if (has_ext (lower, model))

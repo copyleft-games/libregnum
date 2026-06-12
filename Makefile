@@ -1043,6 +1043,15 @@ SOURCES += \
 endif
 endif
 
+# CAD part support (conditional on CAD=1).  Headers are deliberately
+# NOT in PUBLIC_HEADERS yet: they reference cad-glib types the GIR
+# scan does not know; GIR-ification is a planned follow-up.
+ifeq ($(CAD),1)
+SOURCES += \
+	src/cad/lrg-cad-baker.c \
+	src/cad/lrg-cad-manager.c
+endif
+
 # MCP server support (conditional on MCP=1)
 ifeq ($(MCP),1)
 PUBLIC_HEADERS += \

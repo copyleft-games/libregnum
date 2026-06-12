@@ -267,6 +267,32 @@ endif
 #
 # Note: HTTP transport requires libsoup-3.0 (already a dependency)
 
+# =============================================================================
+# CAD Integration (cad-glib: parametric CAD parts as scene nodes)
+# =============================================================================
+# Opt-in (CAD=1).  cad-glib is NEVER vendored here: set CAD_GLIB_DIR to a
+# sibling/cmacs checkout (cmacs builds the canonical copy at deps/cad-glib)
+# or install cad-glib system-wide (pkg-config).  The static archive path
+# pulls cad-glib's Libs.private (OpenCASCADE toolkits + libstdc++) from its
+# generated .pc so the OCCT probe lives in exactly one place.
+
+CAD ?= 0
+
+ifeq ($(CAD),1)
+    ifneq ($(CAD_GLIB_DIR),)
+        CAD_CFLAGS := -I$(CAD_GLIB_DIR)/src -I$(CAD_GLIB_DIR)/build/release -DLRG_ENABLE_CAD=1
+        CAD_LIBS := $(CAD_GLIB_DIR)/build/release/libcad-glib-1.0.a
+        CAD_LIBS += $(shell sed -n 's/^Libs.private: //p' $(CAD_GLIB_DIR)/cad-glib-1.0.pc 2>/dev/null)
+        CAD_LIBS += -lstdc++
+    else
+        CAD_CFLAGS := $(shell $(PKG_CONFIG) --cflags cad-glib-1.0) -DLRG_ENABLE_CAD=1
+        CAD_LIBS := $(shell $(PKG_CONFIG) --libs cad-glib-1.0)
+    endif
+else
+    CAD_CFLAGS :=
+    CAD_LIBS :=
+endif
+
 MCP ?= 0
 
 ifeq ($(MCP),1)
@@ -573,6 +599,7 @@ LIB_CFLAGS += $(subst -I,-isystem ,$(DEP_CFLAGS))
 LIB_CFLAGS += -I$(CURDIR)/src
 LIB_CFLAGS += $(STEAM_CFLAGS)
 LIB_CFLAGS += $(MCP_CFLAGS)
+LIB_CFLAGS += $(CAD_CFLAGS)
 
 # Library link flags (use platform-specific flags)
 LIB_LDFLAGS := $(LIB_LDFLAGS_PLATFORM)
@@ -606,6 +633,7 @@ else
 endif
 ALL_LIBS += $(STEAM_LIBS)
 ALL_LIBS += $(MCP_LIBS)
+ALL_LIBS += $(CAD_LIBS)
 
 # =============================================================================
 # GIR Scanner Flags

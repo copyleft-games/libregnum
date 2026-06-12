@@ -32,6 +32,8 @@ G_BEGIN_DECLS
  * @LRG_EDITOR_CMD_ADD_NODE: add a node to the level
  * @LRG_EDITOR_CMD_DELETE_NODE: remove a node from the level
  * @LRG_EDITOR_CMD_REPARENT: move a node to a new parent
+ * @LRG_EDITOR_CMD_SET_VISUAL_PARAM: set a numeric param in a node's
+ *   visual param bag (CAD parameters; slider drags coalesce)
  *
  * The kind of mutation an #LrgEditorCommand represents.
  *
@@ -43,7 +45,8 @@ typedef enum
     LRG_EDITOR_CMD_SET_PROPERTY,
     LRG_EDITOR_CMD_ADD_NODE,
     LRG_EDITOR_CMD_DELETE_NODE,
-    LRG_EDITOR_CMD_REPARENT
+    LRG_EDITOR_CMD_REPARENT,
+    LRG_EDITOR_CMD_SET_VISUAL_PARAM
 } LrgEditorCommandKind;
 
 #define LRG_TYPE_EDITOR_COMMAND (lrg_editor_command_get_type ())
@@ -121,6 +124,21 @@ LRG_AVAILABLE_IN_ALL
 LrgEditorCommand * lrg_editor_command_new_reparent (LrgNode *node,
                                                     LrgNode *old_parent,
                                                     LrgNode *new_parent);
+
+/**
+ * lrg_editor_command_new_set_visual_param:
+ * @node: the node whose visual param changes
+ * @param: the param-bag key (e.g. "cad:thickness")
+ * @before: the previous value
+ * @after: the new value
+ *
+ * Returns: (transfer full): a new set-visual-param command
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_set_visual_param (LrgNode     *node,
+                                                            const gchar *param,
+                                                            gdouble      before,
+                                                            gdouble      after);
 
 /* ==========================================================================
  * Operations

@@ -1,0 +1,104 @@
+/* lrg-cad-baker.h
+ *
+ * Copyright 2026 Zach Podbielniak
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Baking parametric CAD parts (cad-glib documents) into renderable
+ * geometry.  The CPU half (evaluate -> tessellate -> 16-bit-safe
+ * chunking) is fully headless; GrlModel creation is deferred until a
+ * GL context exists (the render path calls get_models lazily).
+ */
+
+#pragma once
+
+#if !defined(LIBREGNUM_INSIDE) && !defined(LIBREGNUM_COMPILATION)
+#error "Only <libregnum.h> can be included directly."
+#endif
+
+#include <glib-object.h>
+#include <cad-glib.h>
+#include "../lrg-version.h"
+#include "../lrg-types.h"
+
+G_BEGIN_DECLS
+
+#define LRG_TYPE_CAD_BAKE_RESULT (lrg_cad_bake_result_get_type ())
+
+LRG_AVAILABLE_IN_ALL
+G_DECLARE_FINAL_TYPE (LrgCadBakeResult, lrg_cad_bake_result,
+                      LRG, CAD_BAKE_RESULT, GObject)
+
+/**
+ * lrg_cad_bake:
+ * @document: an evaluated or evaluatable #CadDocument
+ * @overrides: (nullable): parameter overrides (name -> gdouble*)
+ * @deflection: tessellation linear deflection in mm (<= 0 for the
+ *   default display quality)
+ * @part: (nullable): which part to bake, or %NULL for the first
+ * @error: return location for a #GError
+ *
+ * Evaluates the document (when needed) and tessellates the part into
+ * 16-bit-index-safe mesh chunks.  Headless-safe.
+ *
+ * Returns: (transfer full) (nullable): the bake result, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCadBakeResult * lrg_cad_bake (CadDocument  *document,
+                                 GHashTable   *overrides,
+                                 gdouble       deflection,
+                                 const gchar  *part,
+                                 GError      **error);
+
+/**
+ * lrg_cad_bake_result_get_meshes:
+ * @self: a bake result
+ *
+ * Returns: (transfer none) (element-type CadMesh): mesh chunks, each
+ *   within graylib's 65535-vertex limit, with per-triangle provenance
+ *   ids
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_cad_bake_result_get_meshes (LrgCadBakeResult *self);
+
+/**
+ * lrg_cad_bake_result_get_solid:
+ * @self: a bake result
+ *
+ * Returns: (transfer none): the baked part's solid
+ */
+LRG_AVAILABLE_IN_ALL
+CadSolid * lrg_cad_bake_result_get_solid (LrgCadBakeResult *self);
+
+/**
+ * lrg_cad_bake_result_get_tree:
+ * @self: a bake result
+ *
+ * Returns: (transfer none) (nullable): the part's feature tree
+ */
+LRG_AVAILABLE_IN_ALL
+CadFeatureNode * lrg_cad_bake_result_get_tree (LrgCadBakeResult *self);
+
+/**
+ * lrg_cad_bake_result_get_total_triangles:
+ * @self: a bake result
+ *
+ * Returns: total triangles across all chunks
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_cad_bake_result_get_total_triangles (LrgCadBakeResult *self);
+
+/**
+ * lrg_cad_bake_result_get_models:
+ * @self: a bake result
+ *
+ * Lazily uploads the mesh chunks as #GrlModel instances.  REQUIRES a
+ * live GL context (raylib window); call only from render paths.
+ *
+ * Returns: (transfer none) (element-type GrlModel): one model per
+ *   chunk
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_cad_bake_result_get_models (LrgCadBakeResult *self);
+
+G_END_DECLS

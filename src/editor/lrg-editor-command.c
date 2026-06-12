@@ -10,6 +10,7 @@
 #include "lrg-editor-command.h"
 #include "lrg-level.h"
 #include "lrg-node.h"
+#include "lrg-node-visual.h"
 #include <string.h>
 
 struct _LrgEditorCommand
@@ -169,6 +170,41 @@ lrg_editor_command_new_reparent (LrgNode *node,
 	return self;
 }
 
+LrgEditorCommand *
+lrg_editor_command_new_set_visual_param (LrgNode     *node,
+                                         const gchar *param,
+                                         gdouble      before,
+                                         gdouble      after)
+{
+	LrgEditorCommand *self;
+
+	g_return_val_if_fail (LRG_IS_NODE (node), NULL);
+	g_return_val_if_fail (param != NULL, NULL);
+
+	self = g_object_new (LRG_TYPE_EDITOR_COMMAND, NULL);
+	self->kind = LRG_EDITOR_CMD_SET_VISUAL_PARAM;
+	self->node = g_object_ref (node);
+	self->prop_name = g_strdup (param);
+	g_value_init (&self->before_val, G_TYPE_DOUBLE);
+	g_value_set_double (&self->before_val, before);
+	g_value_init (&self->after_val, G_TYPE_DOUBLE);
+	g_value_set_double (&self->after_val, after);
+
+	return self;
+}
+
+static void
+apply_visual_param (LrgNode      *node,
+                    const gchar  *param,
+                    const GValue *value)
+{
+	LrgNodeVisual *visual = lrg_node_get_visual (node);
+
+	if (visual != NULL)
+		lrg_node_visual_set_param_double (visual, param,
+		                                  g_value_get_double (value));
+}
+
 /* ==========================================================================
  * Apply / Undo
  * ========================================================================== */
@@ -213,6 +249,9 @@ lrg_editor_command_apply (LrgEditorCommand *self)
 		lrg_node_remove_child (self->parent_a, self->node);
 		lrg_node_add_child (self->parent_b, self->node);
 		break;
+	case LRG_EDITOR_CMD_SET_VISUAL_PARAM:
+		apply_visual_param (self->node, self->prop_name, &self->after_val);
+		break;
 	default:
 		break;
 	}
@@ -241,6 +280,9 @@ lrg_editor_command_undo (LrgEditorCommand *self)
 		lrg_node_remove_child (self->parent_b, self->node);
 		lrg_node_add_child (self->parent_a, self->node);
 		break;
+	case LRG_EDITOR_CMD_SET_VISUAL_PARAM:
+		apply_visual_param (self->node, self->prop_name, &self->before_val);
+		break;
 	default:
 		break;
 	}
@@ -259,6 +301,14 @@ lrg_editor_command_merge (LrgEditorCommand *self,
 	if (self->kind == LRG_EDITOR_CMD_TRANSFORM && self->node == other->node)
 	{
 		memcpy (self->after, other->after, sizeof self->after);
+		return TRUE;
+	}
+
+	if (self->kind == LRG_EDITOR_CMD_SET_VISUAL_PARAM &&
+	    self->node == other->node &&
+	    g_strcmp0 (self->prop_name, other->prop_name) == 0)
+	{
+		g_value_copy (&other->after_val, &self->after_val);
 		return TRUE;
 	}
 
@@ -296,6 +346,8 @@ lrg_editor_command_describe (LrgEditorCommand *self)
 	case LRG_EDITOR_CMD_REPARENT:
 		return g_strdup_printf ("Reparent %s",
 		                        self->node ? lrg_node_get_name (self->node) : "node");
+	case LRG_EDITOR_CMD_SET_VISUAL_PARAM:
+		return g_strdup_printf ("Set %s", self->prop_name);
 	default:
 		return g_strdup ("Command");
 	}

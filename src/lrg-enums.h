@@ -4671,6 +4671,9 @@ GType lrg_level_error_get_type (void) G_GNUC_CONST;
  * @LRG_NODE_VISUAL_CAMERA: A camera
  * @LRG_NODE_VISUAL_AUDIO_EMITTER: A positional audio emitter
  * @LRG_NODE_VISUAL_PREFAB_INSTANCE: An instance of a saved prefab
+ * @LRG_NODE_VISUAL_CAD_PART: A parametric CAD part (cad-glib document)
+ *   referenced by source path; parameters live in the visual's param
+ *   bag under "cad:"-prefixed keys
  *
  * The kind of visual/content payload carried by an #LrgNode. This is the
  * discriminator for the tagged #LrgNodeVisual payload and is what lets a
@@ -4688,7 +4691,8 @@ typedef enum
     LRG_NODE_VISUAL_LIGHT,
     LRG_NODE_VISUAL_CAMERA,
     LRG_NODE_VISUAL_AUDIO_EMITTER,
-    LRG_NODE_VISUAL_PREFAB_INSTANCE
+    LRG_NODE_VISUAL_PREFAB_INSTANCE,
+    LRG_NODE_VISUAL_CAD_PART
 } LrgNodeVisualKind;
 
 LRG_AVAILABLE_IN_ALL
@@ -4757,6 +4761,7 @@ GType lrg_editor_tool_get_type (void) G_GNUC_CONST;
  * @LRG_ASSET_TYPE_PREFAB: prefab (rprefab)
  * @LRG_ASSET_TYPE_TILESET: tileset definition (tileset, tsx)
  * @LRG_ASSET_TYPE_SCENE: scene geometry export (yaml/scene)
+ * @LRG_ASSET_TYPE_CAD: parametric CAD part source (cad, ccad)
  *
  * The classified kind of a project asset, used by #LrgAssetDatabase.
  *
@@ -4773,7 +4778,8 @@ typedef enum
     LRG_ASSET_TYPE_LEVEL,
     LRG_ASSET_TYPE_PREFAB,
     LRG_ASSET_TYPE_TILESET,
-    LRG_ASSET_TYPE_SCENE
+    LRG_ASSET_TYPE_SCENE,
+    LRG_ASSET_TYPE_CAD
 } LrgAssetType;
 
 LRG_AVAILABLE_IN_ALL
