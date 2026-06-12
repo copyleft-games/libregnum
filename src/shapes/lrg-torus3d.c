@@ -67,16 +67,26 @@ lrg_torus3d_update_mesh (LrgTorus3D *self)
 	g_clear_object (&self->mesh);
 
 	/*
-	 * grl_mesh_new_torus takes:
-	 * - radius: major radius
-	 * - size: minor radius (tube size)
-	 * - rad_seg: radial segments (major)
-	 * - sides: number of sides (minor)
+	 * raylib's GenMeshTorus(radius, size, ...) semantics (via par_shapes):
+	 * - 'radius' is the tube/centre-circle RATIO, clamped to [0.1, 1.0];
+	 * - 'size'/2 is the centre-circle (major) radius.
+	 * Passing (major, minor) straight through collapses any torus with
+	 * major > 1 into a ~minor/2-sized donut. Map major/minor to
+	 * ratio + diameter so the rendered torus matches the authored radii
+	 * (tube thickness is floored at major/10 by the ratio clamp).
 	 */
-	self->mesh = grl_mesh_new_torus (self->major_radius,
-	                                 self->minor_radius,
-	                                 self->major_segments,
-	                                 self->minor_segments);
+	{
+		gfloat ratio = 0.25f;
+
+		if (self->major_radius > 0.0f)
+			ratio = self->minor_radius / self->major_radius;
+		/* par_shapes iterates the centre circle over the 'sides' (stacks)
+		 * argument, so pass major_segments there for a smooth ring. */
+		self->mesh = grl_mesh_new_torus (ratio,
+		                                 self->major_radius * 2.0f,
+		                                 self->minor_segments,
+		                                 self->major_segments);
+	}
 
 	if (self->mesh != NULL)
 	{
