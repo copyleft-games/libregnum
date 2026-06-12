@@ -285,6 +285,32 @@ lrg_cad_manager_bake (LrgCadManager  *self,
 	return result;
 }
 
+gboolean
+lrg_cad_manager_set_source (LrgCadManager  *self,
+                            const gchar    *path,
+                            const gchar    *source,
+                            GError        **error)
+{
+	CadDocument *document;
+	gchar *abs_path;
+
+	g_return_val_if_fail (LRG_IS_CAD_MANAGER (self), FALSE);
+	g_return_val_if_fail (path != NULL, FALSE);
+	g_return_val_if_fail (source != NULL, FALSE);
+
+	document = lrg_cad_manager_load (self, path, error);
+	if (document == NULL)
+		return FALSE;
+
+	cad_document_set_source (document, source);
+
+	abs_path = g_canonicalize_filename (path, NULL);
+	lrg_cad_manager_drop_bakes_for (self, abs_path);
+	g_free (abs_path);
+
+	return TRUE;
+}
+
 void
 lrg_cad_manager_invalidate (LrgCadManager *self,
                             const gchar   *path)

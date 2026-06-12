@@ -219,6 +219,67 @@ test_asset_classification (void)
 }
 #endif /* LRG_BUILD_EDITOR */
 
+static const gchar *bracket_thick_cad =
+	"(defparam thickness 9.0 :min 2 :max 10)\n"
+	"(defpart bracket\n"
+	"  (difference\n"
+	"    (box 40 20 thickness)\n"
+	"    (translate (10 10 -1) (cylinder :r 2.5 :h (+ thickness 2)))))\n";
+
+static void
+test_set_source_rebakes (void)
+{
+	LrgCadManager *mgr = lrg_cad_manager_get_default ();
+	GError *error = NULL;
+	gchar *path = write_fixture (bracket_cad);
+	LrgCadBakeResult *before;
+	LrgCadBakeResult *after;
+	gdouble v_before, v_after;
+
+	/* set_source on a not-yet-loaded path loads the document first. */
+	g_assert_true (lrg_cad_manager_set_source (mgr, path, bracket_cad,
+	                                           &error));
+	g_assert_no_error (error);
+
+	before = lrg_cad_manager_bake (mgr, path, NULL, 0.0, NULL, &error);
+	g_assert_no_error (error);
+	v_before = cad_solid_get_volume (lrg_cad_bake_result_get_solid (before),
+	                                 &error);
+
+	/* Replacing the source (an unsaved editor buffer) drops the bakes,
+	 * so the next bake reflects the new text, not the on-disk file. */
+	g_assert_true (lrg_cad_manager_set_source (mgr, path,
+	                                           bracket_thick_cad, &error));
+	g_assert_no_error (error);
+	after = lrg_cad_manager_bake (mgr, path, NULL, 0.0, NULL, &error);
+	g_assert_no_error (error);
+	g_assert_true (after != before);
+	v_after = cad_solid_get_volume (lrg_cad_bake_result_get_solid (after),
+	                                &error);
+	g_assert_cmpfloat (v_after, >, v_before * 1.5);
+
+	/* Broken source: the bake fails but the document recovers when good
+	 * source is pushed again. */
+	g_assert_true (lrg_cad_manager_set_source (mgr, path, "(defpart b",
+	                                           &error));
+	g_assert_no_error (error);
+	g_assert_null (lrg_cad_manager_bake (mgr, path, NULL, 0.0, NULL,
+	                                     &error));
+	g_assert_nonnull (error);
+	g_clear_error (&error);
+
+	g_assert_true (lrg_cad_manager_set_source (mgr, path, bracket_cad,
+	                                           &error));
+	g_assert_no_error (error);
+	g_assert_nonnull (lrg_cad_manager_bake (mgr, path, NULL, 0.0, NULL,
+	                                        &error));
+	g_assert_no_error (error);
+
+	lrg_cad_manager_invalidate (mgr, path);
+	g_unlink (path);
+	g_free (path);
+}
+
 static void
 test_document_changed_signal (void)
 {
@@ -276,6 +337,8 @@ main (int argc, char **argv)
 	g_test_add_func ("/cad/asset-classification",
 	                 test_asset_classification);
 #endif
+	g_test_add_func ("/cad/set-source-rebakes",
+	                 test_set_source_rebakes);
 	g_test_add_func ("/cad/document-changed-signal",
 	                 test_document_changed_signal);
 

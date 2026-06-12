@@ -79,6 +79,24 @@ LrgCadBakeResult * lrg_cad_manager_bake (LrgCadManager  *self,
                                          GError        **error);
 
 /**
+ * lrg_cad_manager_set_source:
+ * @self: the manager
+ * @path: the part source path
+ * @source: replacement source text (e.g. an unsaved editor buffer)
+ * @error: return location for a #GError
+ *
+ * Replaces the cached document's in-memory source and drops its bakes
+ * so the next bake reflects @source instead of the on-disk file.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_cad_manager_set_source (LrgCadManager  *self,
+                                     const gchar    *path,
+                                     const gchar    *source,
+                                     GError        **error);
+
+/**
  * lrg_cad_manager_invalidate:
  * @self: the manager
  * @path: the part source whose caches to drop
