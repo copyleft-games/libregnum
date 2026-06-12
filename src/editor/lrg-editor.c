@@ -12,6 +12,7 @@
 #include "lrg-editor-selection.h"
 #include "lrg-level.h"
 #include "lrg-node.h"
+#include "lrg-node-visual.h"
 #include "lrg-level-serializer.h"
 #include <graylib.h>
 
@@ -312,6 +313,50 @@ lrg_editor_set_node_property (LrgEditor    *self,
 
 	cmd = lrg_editor_command_new_set_property (G_OBJECT (node), prop_name, &before, value);
 	g_value_unset (&before);
+
+	push_command (self, cmd);
+}
+
+void
+lrg_editor_set_visual_param (LrgEditor   *self,
+                             LrgNode     *node,
+                             const gchar *param,
+                             gdouble      value,
+                             gboolean     merge)
+{
+	LrgNodeVisual    *visual;
+	gdouble           before;
+	LrgEditorCommand *cmd;
+
+	g_return_if_fail (LRG_IS_EDITOR (self));
+	g_return_if_fail (LRG_IS_NODE (node));
+	g_return_if_fail (param != NULL);
+
+	visual = lrg_node_get_visual (node);
+	if (visual == NULL)
+		return;
+
+	before = lrg_node_visual_get_param_double (visual, param, 0.0);
+	cmd = lrg_editor_command_new_set_visual_param (node, param, before,
+	                                               value);
+
+	/* A continuing slider drag coalesces onto the top undo command so
+	 * the whole drag is one undo step. */
+	if (merge && self->undo_stack->len > 0)
+	{
+		LrgEditorCommand *top =
+			g_ptr_array_index (self->undo_stack,
+			                   self->undo_stack->len - 1);
+
+		if (lrg_editor_command_merge (top, cmd))
+		{
+			lrg_editor_command_apply (top);
+			g_object_unref (cmd);
+			g_ptr_array_set_size (self->redo_stack, 0);
+			g_signal_emit (self, signals[SIGNAL_CHANGED], 0);
+			return;
+		}
+	}
 
 	push_command (self, cmd);
 }

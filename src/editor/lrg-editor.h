@@ -198,6 +198,26 @@ void lrg_editor_set_node_property (LrgEditor    *self,
                                    const gchar  *prop_name,
                                    const GValue *value);
 
+/**
+ * lrg_editor_set_visual_param:
+ * @self: an #LrgEditor
+ * @node: the node whose visual param-bag changes
+ * @param: the param-bag key (e.g. "cad:thickness")
+ * @value: the new numeric value
+ * @merge: %TRUE to coalesce onto the previous command (slider drag)
+ *
+ * Sets a numeric visual param on @node as an undoable command.  When
+ * @merge is %TRUE and the top undo command targets the same node and
+ * param, the two collapse into one undo step — so a slider drag is a
+ * single undo.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_set_visual_param (LrgEditor   *self,
+                                  LrgNode     *node,
+                                  const gchar *param,
+                                  gdouble      value,
+                                  gboolean     merge);
+
 /* ==========================================================================
  * Undo / redo
  * ========================================================================== */

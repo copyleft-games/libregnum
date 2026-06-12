@@ -202,6 +202,56 @@ test_set_visual_param_command (void)
 }
 
 static void
+test_editor_set_visual_param_undoable (void)
+{
+	LrgEditor *editor = lrg_editor_new ();
+	LrgLevel *level = lrg_level_new ("scratch");
+	LrgNode *node = lrg_node_new ("part");
+	LrgNodeVisual *visual = lrg_node_visual_new (LRG_NODE_VISUAL_CAD_PART);
+	LrgNodeVisual *got;
+
+	lrg_node_visual_set_asset (visual, "bracket.cad");
+	lrg_node_visual_set_param_double (visual, "cad:thickness", 4.0);
+	lrg_node_set_visual (node, visual);
+	lrg_editor_set_level (editor, level);
+	lrg_editor_add_node (editor, node, NULL);
+
+	/* A fresh set (e.g. a field commit) is its own undo step. */
+	lrg_editor_set_visual_param (editor, node, "cad:thickness", 6.0,
+	                             FALSE);
+	got = lrg_node_get_visual (node);
+	g_assert_cmpfloat_with_epsilon (
+		lrg_node_visual_get_param_double (got, "cad:thickness", 0.0),
+		6.0, 1e-12);
+
+	/* A slider drag: the FIRST move is a fresh step (merge=FALSE),
+	 * continuation moves coalesce onto it (merge=TRUE) so the whole drag
+	 * is one undo step. */
+	lrg_editor_set_visual_param (editor, node, "cad:thickness", 7.0,
+	                             FALSE);
+	lrg_editor_set_visual_param (editor, node, "cad:thickness", 8.0, TRUE);
+	lrg_editor_set_visual_param (editor, node, "cad:thickness", 8.5, TRUE);
+	g_assert_cmpfloat_with_epsilon (
+		lrg_node_visual_get_param_double (got, "cad:thickness", 0.0),
+		8.5, 1e-12);
+
+	/* One undo reverts the whole drag back to 6.0; a second reaches 4.0. */
+	g_assert_true (lrg_editor_can_undo (editor));
+	lrg_editor_undo (editor);
+	g_assert_cmpfloat_with_epsilon (
+		lrg_node_visual_get_param_double (got, "cad:thickness", 0.0),
+		6.0, 1e-12);
+	lrg_editor_undo (editor);
+	g_assert_cmpfloat_with_epsilon (
+		lrg_node_visual_get_param_double (got, "cad:thickness", 0.0),
+		4.0, 1e-12);
+
+	g_object_unref (node);
+	g_object_unref (level);
+	g_object_unref (editor);
+}
+
+static void
 test_asset_classification (void)
 {
 	g_assert_cmpint (lrg_asset_database_classify ("part.cad"), ==,
@@ -334,6 +384,8 @@ main (int argc, char **argv)
 	                 test_node_overrides_bridge);
 	g_test_add_func ("/cad/set-visual-param-command",
 	                 test_set_visual_param_command);
+	g_test_add_func ("/cad/editor-set-visual-param-undoable",
+	                 test_editor_set_visual_param_undoable);
 	g_test_add_func ("/cad/asset-classification",
 	                 test_asset_classification);
 #endif
