@@ -1,0 +1,84 @@
+* CAD Parts (CAD=1)
+:PROPERTIES:
+:CUSTOM_ID: cad-parts
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+With the optional ~CAD=1~ build (which links [[https://git-ssh.podbielniak.com/zachpodbielniak/cad-glib][cad-glib]] via
+~CAD_GLIB_DIR=~), libregnum scenes can contain *parametric CAD parts*: a
+node whose visual is ~LRG_NODE_VISUAL_CAD_PART~ references a ~.cad~/~.ccad~
+part source file, which is evaluated and tessellated through cad-glib and
+rendered as ordinary engine models.  The CAD module is self-contained
+under ~src/cad/~ and append-only at the enum level, so a ~CAD=0~ build
+still loads ~.rlevel~ files containing CAD parts (they render as
+placeholders).
+
+** Key types
+:PROPERTIES:
+:CUSTOM_ID: key-types
+:END:
+*** LrgCadManager
+:PROPERTIES:
+:CUSTOM_ID: lrgcadmanager
+:END:
+A process-wide singleton (~lrg_cad_manager_get_default~) that caches CAD
+documents keyed by absolute path and bake results keyed by
+(path, overrides, deflection, part).  It monitors part files and emits
+~::document-changed~ when one changes on disk so viewers can re-bake.
+
+- ~lrg_cad_manager_load~ — open (or return the cached) document for a path.
+- ~lrg_cad_manager_bake~ — eval + tessellate to a #LrgCadBakeResult,
+  applying per-call parameter overrides (a ~name -> gdouble*~ table) and a
+  tessellation deflection; cached on the exact key.
+- ~lrg_cad_manager_set_source~ — replace a cached document's in-memory
+  source (e.g. an unsaved editor buffer) and drop its bakes so the next
+  bake reflects the new text instead of the on-disk file.
+- ~lrg_cad_manager_invalidate~ — drop a path's document and bakes.
+- ~lrg_cad_manager_overrides_for_node~ (editor builds only) — translate a
+  node's ~cad:~-prefixed numeric visual params into a cad-glib override
+  table (skipping the reserved ~cad:part~ / ~cad:deflection~ keys).
+
+*** LrgCadBaker / LrgCadBakeResult
+:PROPERTIES:
+:CUSTOM_ID: lrgcadbaker
+:END:
+~lrg_cad_bake~ evaluates a document, tessellates the chosen part, splits
+the mesh into 16-bit-index-safe chunks, and builds one ~GrlModel~ per
+chunk (lazily, on first ~lrg_cad_bake_result_get_models~) — so the kernel
+library stays GL-free and the models are created only where a GL context
+exists.  The result also retains the source #CadSolid, the #CadMesh
+chunks (with ~tri_feature_ids~ for face→feature picking) and the
+#CadFeatureNode tree.
+
+** Authoring parts in scenes
+:PROPERTIES:
+:CUSTOM_ID: authoring
+:END:
+A CAD part is referenced through the node's existing visual asset slot;
+parameter overrides live in the node's typed param bag as ~cad:~-prefixed
+keys, so *no serializer format change* was needed — a ~.rlevel~ with CAD
+parts round-trips as plain node + param data.
+
+The editor's undo stack covers param edits via
+~lrg_editor_set_visual_param (editor, node, "cad:NAME", value, merge)~: a
+fresh set is one undo step, and a continuing slider drag (~merge = TRUE~)
+collapses onto the previous command so the whole drag is a single step.
+The underlying ~LRG_EDITOR_CMD_SET_VISUAL_PARAM~ command supports
+~lrg_editor_command_merge~ for that coalescing.
+
+** Build & tests
+:PROPERTIES:
+:CUSTOM_ID: build-tests
+:END:
+#+begin_src bash
+make CAD=1 CAD_GLIB_DIR=/path/to/cad-glib        # build with CAD parts
+make test CAD=1 CAD_GLIB_DIR=/path/to/cad-glib   # runs tests/test-cad.c
+#+end_src
+
+~tests/test-cad.c~ is headless: manager caching, override baking, the
+~set_source~ live-rebake path, the undoable + drag-merge
+~set_visual_param~ command, node→override bridging, asset classification
+and the file-change signal.  A ~CAD=0~ build keeps every other suite
+green and treats CAD parts as placeholders.
