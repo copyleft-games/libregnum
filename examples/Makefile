@@ -140,6 +140,15 @@ ifeq ($(BUILD_EDITOR_UI),1)
 EXAMPLES += editor-standalone
 endif
 
+# Standalone parametric-CAD viewer (only built when CAD=1).  CAD_LIBS is
+# appended to EXAMPLE_LIBS directly (after $(LIBREGNUM_STATIC)) so cad-glib
+# resolves the references the libregnum CAD module makes into it.
+ifeq ($(CAD),1)
+EXAMPLES += lrg-cad-app
+EXAMPLE_CFLAGS += $(CAD_CFLAGS)
+EXAMPLE_LIBS += $(CAD_LIBS)
+endif
+
 # Scripted examples: native Linux only, and only for backends that are actually
 # available (their headers in <libregnum.h> are gated on the same LRG_HAS_* flags).
 ifneq ($(TARGET_PLATFORM),windows)
@@ -379,6 +388,10 @@ $(FPS_GAME_MODULE): game-fps-demo.c
 	@$(CC) $(GM_CFLAGS) -o $@ $< $(GM_LDFLAGS) $(GM_LIBS)
 
 $(EXAMPLES_BUILDDIR)/editor-standalone$(EXE_EXT): editor-standalone.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/lrg-cad-app$(EXE_EXT): lrg-cad-app.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

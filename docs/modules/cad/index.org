@@ -68,6 +68,21 @@ collapses onto the previous command so the whole drag is a single step.
 The underlying ~LRG_EDITOR_CMD_SET_VISUAL_PARAM~ command supports
 ~lrg_editor_command_merge~ for that coalescing.
 
+** Standalone viewer
+:PROPERTIES:
+:CUSTOM_ID: standalone-viewer
+:END:
+~examples/lrg-cad-app.c~ (built when ~CAD=1~) is a standalone parametric
+viewer: it loads a part through the manager, renders the baked models
+with an orbit camera, watches the file for live reload, and retunes
+parameters in place (TAB selects, +/- adjust, clamped to range; the
+override table feeds the next bake).  It is engine-side only — no text
+editing — and shares all geometry machinery with the cmacs workbench.
+
+#+begin_src bash
+lrg-cad-app part.cad     # orbit: right-drag · zoom: scroll · TAB/+/- params
+#+end_src
+
 ** Build & tests
 :PROPERTIES:
 :CUSTOM_ID: build-tests
