@@ -72,6 +72,32 @@ The underlying ~LRG_EDITOR_CMD_SET_VISUAL_PARAM~ command supports
 :PROPERTIES:
 :CUSTOM_ID: standalone-viewer
 :END:
+** Assemblies
+:PROPERTIES:
+:CUSTOM_ID: assemblies
+:END:
+
+cad-glib assemblies (multiple mated part instances) bake into a list of
+per-instance results:
+
+- ~lrg_cad_bake_assembly (document, overrides, deflection, name, &err)~
+  evaluates the document, solves the named assembly (or the first), and
+  returns a ~GPtrArray~ of ~LrgCadInstanceBake~ — one per instance.
+- Each ~LrgCadInstanceBake~ carries the instance id and label, the
+  *solved column-major 3x4 transform* (~lrg_cad_instance_bake_get_transform~),
+  the local mesh chunks, and lazily-built ~GrlModel~ s.  The meshes are
+  baked in the instance's local frame; the renderer applies the
+  transform as the model matrix and draws one node per instance.
+- For *joint motion*, drive a joint and re-bake without re-evaluating the
+  DSL: get the live ~CadAssembly~ (~cad_document_get_assembly~), call
+  ~cad_joint_set_value~ + ~cad_assembly_solve~, then
+  ~lrg_cad_bake_assembly_solved (assembly, deflection, &err)~ for the new
+  transforms.  An ~LrgTween~ over the joint value animates the mechanism.
+
+Interference highlights and per-part materials are rendered by the host
+(cmacs) from ~cad_assembly_check_interference~ and per-instance colours;
+libregnum supplies the geometry and transforms.
+
 ~examples/lrg-cad-app.c~ (built when ~CAD=1~) is a standalone parametric
 viewer: it loads a part through the manager, renders the baked models
 with an orbit camera, watches the file for live reload, and retunes

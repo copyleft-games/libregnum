@@ -1140,7 +1140,7 @@ _lib: lib-static lib-shared
 # Dependencies (Submodules)
 # =============================================================================
 
-.PHONY: deps deps-graylib deps-yamlglib deps-mcp deps-crispy
+.PHONY: deps deps-graylib deps-yamlglib deps-mcp deps-crispy deps-cad-glib
 
 deps: deps-graylib deps-yamlglib
 ifeq ($(MCP),1)
@@ -1148,6 +1148,13 @@ deps: deps-mcp
 endif
 ifeq ($(HAS_CRISPY),1)
 deps: deps-crispy
+endif
+# Build the bundled cad-glib only for a standalone CAD=1 build; a cmacs
+# build supplies its own CAD_GLIB_DIR and builds the canonical copy.
+ifeq ($(CAD),1)
+ifeq ($(CAD_GLIB_DIR),$(CAD_GLIB_BUNDLED))
+deps: deps-cad-glib
+endif
 endif
 
 # Pass cross-compilation settings to dependencies
@@ -1180,6 +1187,15 @@ deps-crispy:
 	@if [ ! -f "$(CRISPY_STATIC)" ]; then \
 		$(call print_status,"Building crispy ($(TARGET_PLATFORM))..."); \
 		$(MAKE) -C $(CRISPY_DIR) lib; \
+	fi
+
+# cad-glib: the bundled parametric CAD kernel (deps/cad-glib submodule),
+# built standalone so a CAD=1 libregnum is self-contained.  Builds its own
+# vendored kernels (manifold, solvespace) via `make deps` then the library.
+deps-cad-glib:
+	@if [ ! -f "$(CAD_GLIB_DIR)/build/release/libcad-glib-1.0.a" ]; then \
+		$(call print_status,"Building cad-glib..."); \
+		$(MAKE) -C $(CAD_GLIB_DIR) deps && $(MAKE) -C $(CAD_GLIB_DIR); \
 	fi
 
 ifeq ($(MCP),1)

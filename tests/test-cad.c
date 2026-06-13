@@ -368,6 +368,100 @@ test_document_changed_signal (void)
 	g_free (path);
 }
 
+static const gchar *hinge_cad =
+	"(defpart post (cylinder :r 2 :h 20))\n"
+	"(defpart arm (cylinder :r 1 :h 6))\n"
+	"(defassembly hinge\n"
+	"  (instance \"base\" post :grounded #t)\n"
+	"  (instance \"lever\" arm)\n"
+	"  (joint revolute \"base\" (cyl-largest) \"lever\" (cyl-largest)\n"
+	"         :value 0))\n";
+
+static void
+test_bake_assembly (void)
+{
+	GError *error = NULL;
+	gchar *path = write_fixture (hinge_cad);
+	CadDocument *doc;
+	GPtrArray *bakes;
+	guint i;
+	gboolean saw_lever = FALSE;
+
+	doc = cad_document_new_from_file (path, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (doc);
+
+	bakes = lrg_cad_bake_assembly (doc, NULL, 0.0, "hinge", &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (bakes);
+	/* two instances -> two per-instance bakes */
+	g_assert_cmpuint (bakes->len, ==, 2);
+
+	for (i = 0; i < bakes->len; i++)
+	{
+		LrgCadInstanceBake *b = g_ptr_array_index (bakes, i);
+		GPtrArray *meshes = lrg_cad_instance_bake_get_meshes (b);
+		gdouble m[12];
+
+		g_assert_cmpuint (meshes->len, >=, 1);
+		lrg_cad_instance_bake_get_transform (b, m);
+		if (g_strcmp0 (lrg_cad_instance_bake_get_name (b), "lever") == 0)
+			saw_lever = TRUE;
+	}
+	g_assert_true (saw_lever);
+
+	g_ptr_array_unref (bakes);
+	g_object_unref (doc);
+	g_unlink (path);
+	g_free (path);
+}
+
+static void
+test_bake_assembly_joint_drive (void)
+{
+	GError *error = NULL;
+	gchar *path = write_fixture (hinge_cad);
+	CadDocument *doc;
+	CadAssembly *asm_;
+	CadJoint *joint;
+	GPtrArray *bakes;
+	guint i;
+
+	doc = cad_document_new_from_file (path, &error);
+	g_assert_no_error (error);
+	g_assert_true (cad_document_eval (doc, NULL, NULL, &error));
+	g_assert_no_error (error);
+
+	asm_ = cad_document_get_assembly (doc, "hinge");
+	g_assert_nonnull (asm_);
+
+	/* drive the hinge and re-bake from the solved assembly */
+	joint = g_ptr_array_index (cad_assembly_get_joints (asm_), 0);
+	cad_joint_set_value (joint, 90.0);
+	g_assert_true (cad_assembly_solve (asm_, &error));
+
+	bakes = lrg_cad_bake_assembly_solved (asm_, 0.0, &error);
+	g_assert_no_error (error);
+	g_assert_cmpuint (bakes->len, ==, 2);
+
+	for (i = 0; i < bakes->len; i++)
+	{
+		LrgCadInstanceBake *b = g_ptr_array_index (bakes, i);
+		gdouble m[12];
+
+		if (g_strcmp0 (lrg_cad_instance_bake_get_name (b), "lever") != 0)
+			continue;
+		lrg_cad_instance_bake_get_transform (b, m);
+		/* lever rotated 90 deg about Z: R[0][0] ~ 0 */
+		g_assert_cmpfloat (fabs (m[0]), <, 1e-6);
+	}
+
+	g_ptr_array_unref (bakes);
+	g_object_unref (doc);
+	g_unlink (path);
+	g_free (path);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -393,6 +487,9 @@ main (int argc, char **argv)
 	                 test_set_source_rebakes);
 	g_test_add_func ("/cad/document-changed-signal",
 	                 test_document_changed_signal);
+	g_test_add_func ("/cad/bake-assembly", test_bake_assembly);
+	g_test_add_func ("/cad/bake-assembly-joint-drive",
+	                 test_bake_assembly_joint_drive);
 
 	return g_test_run ();
 }

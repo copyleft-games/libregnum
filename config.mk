@@ -270,15 +270,26 @@ endif
 # =============================================================================
 # CAD Integration (cad-glib: parametric CAD parts as scene nodes)
 # =============================================================================
-# Opt-in (CAD=1).  cad-glib is NEVER vendored here: set CAD_GLIB_DIR to a
-# sibling/cmacs checkout (cmacs builds the canonical copy at deps/cad-glib)
-# or install cad-glib system-wide (pkg-config).  The static archive path
-# pulls cad-glib's Libs.private (OpenCASCADE toolkits + libstdc++) from its
-# generated .pc so the OCCT probe lives in exactly one place.
+# Opt-in (CAD=1).  cad-glib is ALWAYS linked statically (its generated .pc
+# Libs.private supplies the OpenCASCADE toolkits + libstdc++, so the OCCT
+# probe lives in exactly one place).  It is located, in order:
+#   1. CAD_GLIB_DIR set explicitly -- how a cmacs build points at ITS
+#      canonical copy ($(abs_top_srcdir)/deps/cad-glib), which wins.
+#   2. the bundled deps/cad-glib submodule -- so a standalone libregnum
+#      checkout builds CAD parts independently (`make cad-glib` builds it).
+#   3. a system install via pkg-config.
 
 CAD ?= 0
 
+CAD_GLIB_BUNDLED := $(PROJECT_ROOT)/deps/cad-glib
+
 ifeq ($(CAD),1)
+    # Standalone fallback: a cmacs build supplies CAD_GLIB_DIR and wins.
+    ifeq ($(CAD_GLIB_DIR),)
+        ifneq ($(wildcard $(CAD_GLIB_BUNDLED)/src/cad-glib.h),)
+            CAD_GLIB_DIR := $(CAD_GLIB_BUNDLED)
+        endif
+    endif
     ifneq ($(CAD_GLIB_DIR),)
         CAD_CFLAGS := -I$(CAD_GLIB_DIR)/src -I$(CAD_GLIB_DIR)/build/release -DLRG_ENABLE_CAD=1
         CAD_LIBS := $(CAD_GLIB_DIR)/build/release/libcad-glib-1.0.a

@@ -101,4 +101,102 @@ guint lrg_cad_bake_result_get_total_triangles (LrgCadBakeResult *self);
 LRG_AVAILABLE_IN_ALL
 GPtrArray * lrg_cad_bake_result_get_models (LrgCadBakeResult *self);
 
+/* ---- assemblies ---- */
+
+#define LRG_TYPE_CAD_INSTANCE_BAKE (lrg_cad_instance_bake_get_type ())
+
+LRG_AVAILABLE_IN_ALL
+G_DECLARE_FINAL_TYPE (LrgCadInstanceBake, lrg_cad_instance_bake,
+                      LRG, CAD_INSTANCE_BAKE, GObject)
+
+/**
+ * lrg_cad_instance_bake_get_instance_id:
+ * @self: an instance bake
+ *
+ * Returns: the source #CadAssemblyInstance id
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_cad_instance_bake_get_instance_id (LrgCadInstanceBake *self);
+
+/**
+ * lrg_cad_instance_bake_get_name:
+ * @self: an instance bake
+ *
+ * Returns: (transfer none) (nullable): the instance label
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_cad_instance_bake_get_name (LrgCadInstanceBake *self);
+
+/**
+ * lrg_cad_instance_bake_get_transform:
+ * @self: an instance bake
+ * @out_m12: (out caller-allocates) (array fixed-size=12): the solved
+ *   column-major 3x4 placement transform
+ *
+ * The meshes are baked in the instance's LOCAL frame; this is the
+ * model matrix the renderer applies.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_cad_instance_bake_get_transform (LrgCadInstanceBake *self,
+                                          gdouble            *out_m12);
+
+/**
+ * lrg_cad_instance_bake_get_meshes:
+ * @self: an instance bake
+ *
+ * Returns: (transfer none) (element-type CadMesh): the local mesh chunks
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_cad_instance_bake_get_meshes (LrgCadInstanceBake *self);
+
+/**
+ * lrg_cad_instance_bake_get_models:
+ * @self: an instance bake
+ *
+ * Lazily uploads the chunks as #GrlModel (needs a GL context).
+ *
+ * Returns: (transfer none) (element-type GrlModel): one model per chunk
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_cad_instance_bake_get_models (LrgCadInstanceBake *self);
+
+/**
+ * lrg_cad_bake_assembly_solved:
+ * @assembly: an already-solved #CadAssembly
+ * @deflection: tessellation deflection (<= 0 for default)
+ * @error: return location for a #GError
+ *
+ * Bakes each instance of an already-solved assembly into local mesh
+ * chunks tagged with the instance's solved transform.  Use this for
+ * joint animation: drive a joint, re-solve, re-bake.  Headless-safe.
+ *
+ * Returns: (transfer full) (element-type LrgCadInstanceBake) (nullable):
+ *   one bake per instance, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_cad_bake_assembly_solved (CadAssembly  *assembly,
+                                          gdouble       deflection,
+                                          GError      **error);
+
+/**
+ * lrg_cad_bake_assembly:
+ * @document: a #CadDocument defining the assembly
+ * @overrides: (nullable): parameter overrides (name -> gdouble*)
+ * @deflection: tessellation deflection (<= 0 for default)
+ * @assembly: (nullable): the assembly name, or %NULL for the first
+ * @error: return location for a #GError
+ *
+ * Evaluates @document, solves the named assembly, and bakes its
+ * instances.  Headless-safe.
+ *
+ * Returns: (transfer full) (element-type LrgCadInstanceBake) (nullable):
+ *   one bake per instance, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_cad_bake_assembly (CadDocument  *document,
+                                   GHashTable   *overrides,
+                                   gdouble       deflection,
+                                   const gchar  *assembly,
+                                   GError      **error);
+
 G_END_DECLS
