@@ -253,8 +253,22 @@ lrg_reel_gpu_renderer_composite (LrgReelGpuRenderer *self)
 
     white = grl_color_init (255, 255, 255, 255);
 
-    /* World. */
-    grl_draw_texture (self->scene_tex, 0, 0, &white);
+    /* World. scene_tex is a render-texture and is therefore stored bottom-up, so
+     * blit it with a NEGATIVE source height to flip it upright into capture_rt --
+     * matching the 2D overlay, which overlay_func draws directly into capture_rt
+     * (top-left origin). The single readback flip then corrects both together.
+     * Without this the world renders vertically mirrored relative to the overlay
+     * (invisible for vertically-symmetric scenes, obvious once a scene has a clear
+     * up/down). */
+    {
+        GrlRectangle wsrc = grl_rectangle_init (0.0f, 0.0f,
+                                                (gfloat) self->width, -(gfloat) self->height);
+        GrlRectangle wdst = grl_rectangle_init (0.0f, 0.0f,
+                                                (gfloat) self->width, (gfloat) self->height);
+        GrlVector2   worg = grl_vector2_init (0.0f, 0.0f);
+
+        grl_draw_texture_pro (self->scene_tex, &wsrc, &wdst, &worg, 0.0f, &white);
+    }
 
     /* Bloom: a few additive, expanding redraws of the world. */
     if (self->bloom_intensity > 0.0)
@@ -278,7 +292,8 @@ lrg_reel_gpu_renderer_composite (LrgReelGpuRenderer *self)
             oy = (gfloat) self->height * (grow - 1.0f) * 0.5f;
             a = lrg_clamp_unit_to_255 (self->bloom_intensity * 0.4 / (gdouble) (i + 1));
             tint = grl_color_init (a, a, a, 255);
-            src = grl_rectangle_init (0.0f, 0.0f, (gfloat) self->width, (gfloat) self->height);
+            /* negative source height: flip the render-texture upright (see above) */
+            src = grl_rectangle_init (0.0f, 0.0f, (gfloat) self->width, -(gfloat) self->height);
             dst = grl_rectangle_init (-ox, -oy,
                                       (gfloat) self->width * grow,
                                       (gfloat) self->height * grow);
