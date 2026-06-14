@@ -644,6 +644,15 @@
 #include "chart/lrg-surface-chart3d.h"
 #include "chart/lrg-scatter-chart3d.h"
 
+/* Terminal / display backend module (output_lrg) */
+#include "term/lrg-render-mode.h"
+#include "term/lrg-glyph-key.h"
+#include "term/lrg-glyph-metrics.h"
+#include "term/lrg-glyph-atlas.h"
+#include "term/lrg-text-renderer.h"
+#include "term/lrg-frame-surface.h"
+#include "term/lrg-2d-surface.h"
+
 /* MCP module (optional, build with MCP=1) */
 #ifdef LRG_ENABLE_CAD
 #include "cad/lrg-cad-baker.h"

@@ -959,6 +959,24 @@ SOURCES := \
 	src/chart/lrg-histogram-chart2d.c \
 	src/chart/lrg-bar-chart3d.c
 
+# Terminal / display backend module (output_lrg) -- always built
+PUBLIC_HEADERS += \
+	src/term/lrg-render-mode.h \
+	src/term/lrg-glyph-key.h \
+	src/term/lrg-glyph-metrics.h \
+	src/term/lrg-glyph-atlas.h \
+	src/term/lrg-text-renderer.h \
+	src/term/lrg-frame-surface.h \
+	src/term/lrg-2d-surface.h
+SOURCES += \
+	src/term/lrg-render-mode.c \
+	src/term/lrg-glyph-key.c \
+	src/term/lrg-glyph-metrics.c \
+	src/term/lrg-glyph-atlas.c \
+	src/term/lrg-text-renderer.c \
+	src/term/lrg-frame-surface.c \
+	src/term/lrg-2d-surface.c
+
 # Conditional scripting backends
 ifeq ($(HAS_LUAJIT),1)
 PUBLIC_HEADERS += \

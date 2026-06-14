@@ -132,7 +132,8 @@ TEST_SOURCES := \
 	test-text-baker.c \
 	test-image-canvas.c \
 	test-vector-image.c \
-	test-reel.c
+	test-reel.c \
+	test-term.c
 
 # CAD test sources (conditional on CAD=1)
 ifeq ($(CAD),1)

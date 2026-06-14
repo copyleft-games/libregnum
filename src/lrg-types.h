@@ -1369,4 +1369,25 @@ typedef struct _LrgReelCaptionClip          LrgReelCaptionClip;
 typedef struct _LrgReelGpuRenderer          LrgReelGpuRenderer;
 typedef struct _LrgReelEngineClip           LrgReelEngineClip;
 
+/* ==========================================================================
+ * Terminal / Display Backend Module (output_lrg)
+ * ========================================================================== */
+
+/* LrgGlyphKey / LrgGlyphMetrics are boxed value types */
+typedef struct _LrgGlyphKey                 LrgGlyphKey;
+typedef struct _LrgGlyphMetrics             LrgGlyphMetrics;
+
+/* LrgGlyphAtlas is a final type - no Class forward declaration needed */
+typedef struct _LrgGlyphAtlas               LrgGlyphAtlas;
+
+typedef struct _LrgFrameSurface             LrgFrameSurface;
+typedef struct _LrgFrameSurfaceClass        LrgFrameSurfaceClass;
+
+/* Lrg2DSurface is a final type - no Class forward declaration needed */
+typedef struct _Lrg2DSurface                Lrg2DSurface;
+
+/* LrgTextRenderer is an interface */
+typedef struct _LrgTextRenderer             LrgTextRenderer;
+typedef struct _LrgTextRendererInterface    LrgTextRendererInterface;
+
 G_END_DECLS
