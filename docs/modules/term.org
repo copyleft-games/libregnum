@@ -39,11 +39,20 @@ subclass, never a glue rewrite.
   ~grab_panel~/~drag_panel~/~release_panel~ (move a panel under a pointer in the
   camera plane), ~pin_panel~/~move_panel~/~unpin_panel~/~unpin_all~ and a
   per-key pin map that re-applies after every layout (so a manual placement
-  survives resizes, redisplays and arrangement switches).
+  survives resizes, redisplays and arrangement switches).  It also hosts
+  *workspace panels* — caller-textured *static* panels that show their own
+  off-screen-rendered contents instead of a slice of the live frame:
+  ~set_panel_image~ (create + upload), ~place_panel~ (absolute pin on an arc),
+  ~rotate_panel~ (relative yaw), ~remove_panel~, plus the read-backs
+  ~get_panel_geometry~ (to persist a placement) and ~get_panel_count~.  Static
+  panels are excluded from the live capture and from arrangement layout and are
+  never dropped by the window sync or an arrangement switch.
 - ~LrgScenePanel~ (final) — one window→quad: source sub-rect, eased TRS, a
   depth-of-field focus weight, a cached textured ~GrlModel~ plane; exposes its
   world-space corners for picking and a ~pin~/~unpin~ flag (a pinned panel
-  ignores arrangement ~set_target~).
+  ignores arrangement ~set_target~).  A panel may instead carry a *static
+  texture* (~set_image~ / ~has_static_texture~): an arbitrary image uploaded
+  whole, kept across redisplays (used for workspace panels).
 - ~LrgSpatialCamera~ (final) — wraps ~LrgCamera3D~, eases an ~LrgPose~ (boxed),
   and offers ~reset~ / ~zoom~ / ~orbit~ (eased) plus ~orbit_drag~ / ~pan_drag~
   (immediate, for cursor-following drags).

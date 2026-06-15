@@ -156,6 +156,32 @@ void lrg_scene_panel_pin (LrgScenePanel *self,
                           gfloat         height);
 
 /**
+ * lrg_scene_panel_repin:
+ * @self: a #LrgScenePanel
+ * @px: world x of the panel centre
+ * @py: world y
+ * @pz: world z
+ * @yaw: yaw in degrees
+ * @width: width in world units
+ * @height: height in world units
+ *
+ * Like lrg_scene_panel_pin(), but instead of snapping, *eases* the current
+ * transform toward the new pinned target (the very first placement still snaps,
+ * so a panel appears in place rather than flying in from the origin).  Used for
+ * animated re-layout — e.g. a workspace carousel shifting smoothly on switch.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_scene_panel_repin (LrgScenePanel *self,
+                            gfloat         px,
+                            gfloat         py,
+                            gfloat         pz,
+                            gfloat         yaw,
+                            gfloat         width,
+                            gfloat         height);
+
+/**
  * lrg_scene_panel_unpin:
  * @self: a #LrgScenePanel
  *
@@ -184,6 +210,43 @@ gboolean lrg_scene_panel_is_pinned (LrgScenePanel *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_scene_panel_update_texture (LrgScenePanel *self,
                                GrlImage *frame);
+
+/**
+ * lrg_scene_panel_set_image:
+ * @self: a #LrgScenePanel
+ * @image: an image to display on the whole panel
+ *
+ * Uploads @image to the panel's GPU texture verbatim (no source-rect crop) and
+ * marks the panel as carrying a *static texture*: it is then no longer overwritten
+ * by the per-frame live capture in lrg_3d_surface_end_content().  This is how a
+ * panel shows an independent image — e.g. an off-screen workspace rendered to its
+ * own texture — rather than a slice of the current frame.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_scene_panel_set_image (LrgScenePanel *self,
+                                GrlImage      *image);
+
+/**
+ * lrg_scene_panel_set_static_texture:
+ * @self: a #LrgScenePanel
+ * @static_texture: %TRUE to mark the panel as carrying a caller-supplied texture
+ *
+ * Marks (or clears) the static-texture flag.  A static panel keeps its own texture
+ * (set via lrg_scene_panel_set_image()) and is excluded from the live per-frame
+ * capture and from arrangement layout.  lrg_scene_panel_set_image() sets this
+ * implicitly; the explicit setter lets a panel be reserved as static before its
+ * first image arrives (so layout never moves it).
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_scene_panel_set_static_texture (LrgScenePanel *self,
+                                         gboolean       static_texture);
+
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_scene_panel_has_static_texture (LrgScenePanel *self);
 
 /**
  * lrg_scene_panel_step:

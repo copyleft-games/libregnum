@@ -53,6 +53,11 @@ struct _LrgScenePanel
 	/* TRUE when the user has grabbed/dragged this panel: the arrangement layout
 	   (set_target / set_immediate) is then ignored so it stays put. */
 	gboolean pinned;
+
+	/* TRUE when the panel carries a caller-supplied texture (set_image): it is
+	   then excluded from the live per-frame capture and from arrangement layout.
+	   Used for workspace panels that render their own (off-screen) contents. */
+	gboolean static_texture;
 };
 
 G_DEFINE_FINAL_TYPE (LrgScenePanel, lrg_scene_panel, G_TYPE_OBJECT)
@@ -260,6 +265,41 @@ lrg_scene_panel_pin (LrgScenePanel *self,
 }
 
 void
+lrg_scene_panel_repin (LrgScenePanel *self,
+                       gfloat         px,
+                       gfloat         py,
+                       gfloat         pz,
+                       gfloat         yaw,
+                       gfloat         width,
+                       gfloat         height)
+{
+	g_return_if_fail (LRG_IS_SCENE_PANEL (self));
+
+	self->pinned = TRUE;
+	self->tpx = px;
+	self->tpy = py;
+	self->tpz = pz;
+	self->tyaw = yaw;
+	self->tw = width;
+	self->th = height;
+	if (!self->placed)
+	{
+		/* First placement snaps so the panel appears where it belongs. */
+		self->px = px;
+		self->py = py;
+		self->pz = pz;
+		self->yaw = yaw;
+		self->w = width;
+		self->h = height;
+		self->placed = TRUE;
+		self->animating = FALSE;
+	}
+	else
+		/* Ease the current transform toward the (new) pinned target. */
+		self->animating = (panel_delta (self) > LRG_SCENE_PANEL_EPSILON);
+}
+
+void
 lrg_scene_panel_unpin (LrgScenePanel *self)
 {
 	g_return_if_fail (LRG_IS_SCENE_PANEL (self));
@@ -273,13 +313,51 @@ lrg_scene_panel_is_pinned (LrgScenePanel *self)
 	return self->pinned;
 }
 
+/* Upload @img to the panel's GPU texture, (re)creating it on a size change.
+   Shared by update_texture (cropped slice of the live frame) and set_image
+   (a whole caller-supplied image).  ensure_model () must have run first. */
+static void
+upload_to_texture (LrgScenePanel *self,
+                   GrlImage      *img)
+{
+	gint iw, ih;
+
+	iw = grl_image_get_width (img);
+	ih = grl_image_get_height (img);
+
+	/* A resized window changes the sub-image dimensions; raylib's in-place
+	   update requires a matching size, so drop and recreate on a mismatch. */
+	if (self->texture != NULL
+		&& (grl_texture_get_width (self->texture) != iw
+			|| grl_texture_get_height (self->texture) != ih))
+		g_clear_object (&self->texture);
+
+	if (self->texture == NULL)
+	{
+		self->texture = grl_texture_new_from_image (img);
+		if (self->texture != NULL)
+		{
+			grl_texture_gen_mipmaps (self->texture);
+			grl_texture_set_filter (self->texture,
+									GRL_TEXTURE_FILTER_ANISOTROPIC_16X);
+			grl_model_set_texture (self->model, 0, GRL_MATERIAL_MAP_ALBEDO,
+								   self->texture);
+		}
+	}
+	else
+	{
+		grl_texture_update (self->texture, img);
+		grl_texture_gen_mipmaps (self->texture);
+	}
+}
+
 void
 lrg_scene_panel_update_texture (LrgScenePanel *self,
 						  GrlImage *frame)
 {
 	GrlImage *img;
 	gboolean owned = FALSE;
-	gint fw, fh, iw, ih;
+	gint fw, fh;
 	gint rx, ry, rw, rh;
 
 	g_return_if_fail (LRG_IS_SCENE_PANEL (self));
@@ -321,36 +399,40 @@ lrg_scene_panel_update_texture (LrgScenePanel *self,
 	if (img == NULL)
 		return;
 
-	iw = grl_image_get_width (img);
-	ih = grl_image_get_height (img);
-
-	/* A resized window changes the sub-image dimensions; raylib's in-place
-	   update requires a matching size, so drop and recreate on a mismatch. */
-	if (self->texture != NULL
-		&& (grl_texture_get_width (self->texture) != iw
-			|| grl_texture_get_height (self->texture) != ih))
-		g_clear_object (&self->texture);
-
-	if (self->texture == NULL)
-	{
-		self->texture = grl_texture_new_from_image (img);
-		if (self->texture != NULL)
-		{
-			grl_texture_gen_mipmaps (self->texture);
-			grl_texture_set_filter (self->texture,
-									GRL_TEXTURE_FILTER_ANISOTROPIC_16X);
-			grl_model_set_texture (self->model, 0, GRL_MATERIAL_MAP_ALBEDO,
-								   self->texture);
-		}
-	}
-	else
-	{
-		grl_texture_update (self->texture, img);
-		grl_texture_gen_mipmaps (self->texture);
-	}
+	upload_to_texture (self, img);
 
 	if (owned)
 		g_object_unref (img);
+}
+
+void
+lrg_scene_panel_set_image (LrgScenePanel *self,
+                           GrlImage      *image)
+{
+	g_return_if_fail (LRG_IS_SCENE_PANEL (self));
+	g_return_if_fail (image != NULL);
+
+	ensure_model (self);
+	if (self->model == NULL)
+		return;
+
+	self->static_texture = TRUE;
+	upload_to_texture (self, image);
+}
+
+void
+lrg_scene_panel_set_static_texture (LrgScenePanel *self,
+                                    gboolean       static_texture)
+{
+	g_return_if_fail (LRG_IS_SCENE_PANEL (self));
+	self->static_texture = static_texture;
+}
+
+gboolean
+lrg_scene_panel_has_static_texture (LrgScenePanel *self)
+{
+	g_return_val_if_fail (LRG_IS_SCENE_PANEL (self), FALSE);
+	return self->static_texture;
 }
 
 gboolean
@@ -530,4 +612,5 @@ lrg_scene_panel_init (LrgScenePanel *self)
 	self->animating = FALSE;
 	self->placed = FALSE;
 	self->pinned = FALSE;
+	self->static_texture = FALSE;
 }

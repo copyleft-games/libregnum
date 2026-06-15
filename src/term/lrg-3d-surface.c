@@ -117,7 +117,11 @@ apply_pins (Lrg3DSurface *self)
 		gfloat *t = g_hash_table_lookup (self->pins,
 										 GSIZE_TO_POINTER ((gsize) key));
 		if (t != NULL)
-			lrg_scene_panel_pin (p, t[0], t[1], t[2], t[3], t[4], t[5]);
+			/* Re-affirm the recorded placement, easing toward it.  For a panel
+			   already at its target (a freshly snapped drag/place) this is a
+			   no-op; for one whose recorded target just changed (a carousel
+			   re-slot) it animates there smoothly. */
+			lrg_scene_panel_repin (p, t[0], t[1], t[2], t[3], t[4], t[5]);
 	}
 }
 
@@ -147,18 +151,33 @@ static void
 run_layout (Lrg3DSurface *self)
 {
 	LrgFrameSurface *fs = LRG_FRAME_SURFACE (self);
+	g_autoptr (GPtrArray) dynamic = NULL;
+	guint i;
 
 	if (self->panels->len == 0)
 		return;
 
-	/* Each panel's first placement snaps (so it appears in place); later target
-	   changes ease.  The embedder drives the easing via a recompose clock while
+	/* Static (caller-textured) panels -- e.g. workspace panels showing their own
+	   off-screen contents -- are placed explicitly by the embedder and must not be
+	   moved by the arrangement; lay out only the live window panels.  Each panel's
+	   first placement snaps (so it appears in place); later target changes ease.
+	   The embedder drives the easing via a recompose clock while
 	   lrg_3d_surface_is_animating () / the animation-started signal hold. */
 	if (self->arrangement != NULL)
-		lrg_scene_arrangement_layout (self->arrangement, self->panels,
-									  lrg_frame_surface_get_width (fs),
-									  lrg_frame_surface_get_height (fs),
-									  lrg_frame_surface_get_scale (fs));
+	{
+		dynamic = g_ptr_array_new ();
+		for (i = 0; i < self->panels->len; i++)
+		{
+			LrgScenePanel *p = g_ptr_array_index (self->panels, i);
+			if (!lrg_scene_panel_has_static_texture (p))
+				g_ptr_array_add (dynamic, p);
+		}
+		if (dynamic->len > 0)
+			lrg_scene_arrangement_layout (self->arrangement, dynamic,
+										  lrg_frame_surface_get_width (fs),
+										  lrg_frame_surface_get_height (fs),
+										  lrg_frame_surface_get_scale (fs));
+	}
 	apply_pins (self);
 }
 
@@ -169,8 +188,15 @@ ensure_default_panel (Lrg3DSurface *self)
 {
 	LrgFrameSurface *fs = LRG_FRAME_SURFACE (self);
 	LrgScenePanel *p;
+	guint i, dynamic = 0;
 
-	if (self->panels->len > 0)
+	/* Count live (non-static) panels: workspace panels are static and do not
+	   carry the live frame, so a scene with only workspace panels still needs the
+	   whole-frame default panel for the current content. */
+	for (i = 0; i < self->panels->len; i++)
+		if (!lrg_scene_panel_has_static_texture (g_ptr_array_index (self->panels, i)))
+			dynamic++;
+	if (dynamic > 0)
 		return;
 
 	p = lrg_scene_panel_new (0);
@@ -308,8 +334,14 @@ lrg_3d_surface_end_content (LrgFrameSurface *surface)
 	if (shot != NULL)
 	{
 		for (i = 0; i < self->panels->len; i++)
-			lrg_scene_panel_update_texture (g_ptr_array_index (self->panels, i),
-											shot);
+		{
+			LrgScenePanel *p = g_ptr_array_index (self->panels, i);
+			/* Static panels (workspace panels) carry their own off-screen
+			   contents and must not be overwritten by the live capture. */
+			if (lrg_scene_panel_has_static_texture (p))
+				continue;
+			lrg_scene_panel_update_texture (p, shot);
+		}
 	}
 
 	self->content_generation++;
@@ -568,9 +600,18 @@ lrg_3d_surface_set_arrangement (Lrg3DSurface        *self,
 		return;
 
 	/* A new arrangement may map panels differently (one whole-frame panel vs
-	   one-per-window); drop the current panels so the next present rebuilds the
-	   right set via the window sync / default-panel path.  */
-	g_ptr_array_set_size (self->panels, 0);
+	   one-per-window); drop the current *live* panels so the next present rebuilds
+	   the right set via the window sync / default-panel path.  Static panels
+	   (workspace panels) are embedder-managed and survive the switch.  */
+	{
+		guint i;
+		for (i = self->panels->len; i > 0; i--)
+		{
+			LrgScenePanel *p = g_ptr_array_index (self->panels, i - 1);
+			if (!lrg_scene_panel_has_static_texture (p))
+				g_ptr_array_remove_index (self->panels, i - 1);
+		}
+	}
 	run_layout (self);
 	g_signal_emit (self, signals[SIGNAL_ARRANGEMENT_CHANGED], 0);
 }
@@ -680,12 +721,16 @@ lrg_3d_surface_end_window_sync (Lrg3DSurface *self)
 
 	g_return_if_fail (LRG_IS_3D_SURFACE (self));
 
-	/* Drop panels for windows that disappeared this pass. */
+	/* Drop panels for windows that disappeared this pass.  Static panels
+	   (workspace panels) are not windows and are managed by the embedder, so the
+	   window sync never removes them. */
 	for (i = self->panels->len; i > 0; i--)
 	{
 		LrgScenePanel *p = g_ptr_array_index (self->panels, i - 1);
 		guint64 key = lrg_scene_panel_get_key (p);
 
+		if (lrg_scene_panel_has_static_texture (p))
+			continue;
 		if (!g_hash_table_contains (self->seen, GSIZE_TO_POINTER ((gsize) key)))
 			g_ptr_array_remove_index (self->panels, i - 1);
 	}
@@ -724,14 +769,40 @@ lrg_3d_surface_set_focus_window (Lrg3DSurface *self,
 
 /* --- Interaction / manipulation ------------------------------------------ */
 
+/* Build a head-on, level (0-tilt) camera pose framing panel @p: the eye sits out
+   along the panel's normal at the panel-centre height, looking back at the
+   centre, far enough that the panel height fills 1/@margin of the 45 deg vertical
+   FOV.  @margin 1.0 = edge-to-edge (a flat, 2D-like view); >1 leaves a border.
+   (transfer full)  */
+static LrgPose *
+frame_panel_pose (LrgScenePanel *p,
+                  gfloat         margin)
+{
+	gfloat cx, cy, cz, yaw, w, h, nx, nz, dist, rad;
+
+	lrg_scene_panel_get_geometry (p, &cx, &cy, &cz, &yaw, &w, &h);
+
+	/* The panel faces +Z rotated by @yaw about world Y, so its normal is
+	   (sin yaw, 0, cos yaw); sit the camera out along it, looking back.  The eye
+	   shares the panel-centre height (cy), so the framing has no tilt. */
+	rad = yaw * (gfloat) (G_PI / 180.0);
+	nx = sinf (rad);
+	nz = cosf (rad);
+
+	dist = (h * 0.5f) / tanf (0.5f * 45.0f * (gfloat) (G_PI / 180.0)) * margin;
+	if (dist < 0.5f)
+		dist = 0.5f;
+
+	return lrg_pose_new (cx + nx * dist, cy, cz + nz * dist,
+	                     cx, cy, cz, 0.0f, 1.0f, 0.0f, 45.0f);
+}
+
 gboolean
 lrg_3d_surface_focus_panel (Lrg3DSurface *self,
                             guint64       key)
 {
 	LrgScenePanel *p;
 	g_autoptr (LrgPose) pose = NULL;
-	gfloat cx, cy, cz, yaw, w, h;
-	gfloat nx, nz, dist, rad;
 
 	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
 
@@ -739,27 +810,56 @@ lrg_3d_surface_focus_panel (Lrg3DSurface *self,
 	if (p == NULL)
 		return FALSE;
 
-	lrg_scene_panel_get_geometry (p, &cx, &cy, &cz, &yaw, &w, &h);
-
-	/* The panel faces +Z rotated by @yaw about world Y, so its normal is
-	   (sin yaw, 0, cos yaw); sit the camera out along it, looking back. */
-	rad = yaw * (gfloat) (G_PI / 180.0);
-	nx = sinf (rad);
-	nz = cosf (rad);
-
-	/* Distance at which the panel height fills the 45 deg vertical FOV (+margin). */
-	dist = (h * 0.5f) / tanf (0.5f * 45.0f * (gfloat) (G_PI / 180.0)) * 1.12f;
-	if (dist < 0.5f)
-		dist = 0.5f;
-
-	pose = lrg_pose_new (cx + nx * dist, cy, cz + nz * dist,
-	                     cx, cy, cz,
-	                     0.0f, 1.0f, 0.0f, 45.0f);
+	/* A small margin keeps the whole panel comfortably in view. */
+	pose = frame_panel_pose (p, 1.12f);
 	if (self->camera != NULL)
 		lrg_spatial_camera_set_target_pose (self->camera, pose);
 
 	lrg_3d_surface_set_focus_window (self, key);
 	g_signal_emit (self, signals[SIGNAL_PANEL_FOCUSED], 0, key);
+	return TRUE;
+}
+
+gboolean
+lrg_3d_surface_maximize_panel (Lrg3DSurface *self,
+                               guint64       key)
+{
+	LrgScenePanel *p;
+	g_autoptr (LrgPose) pose = NULL;
+	guint64 hit;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+
+	/* Prefer the requested window's panel; fall back to the whole-frame panel
+	   (single-panel arrangement, key 0); last resort the first live panel.  */
+	p = find_panel (self, key);
+	if (p == NULL)
+		p = find_panel (self, 0);
+	if (p == NULL)
+	{
+		guint i;
+		for (i = 0; i < self->panels->len; i++)
+		{
+			LrgScenePanel *q = g_ptr_array_index (self->panels, i);
+			if (!lrg_scene_panel_has_static_texture (q))
+			{
+				p = q;
+				break;
+			}
+		}
+	}
+	if (p == NULL)
+		return FALSE;
+
+	/* margin 1.0: the panel fills the viewport edge-to-edge, head-on and level
+	   -- a flat 2D-like view of the buffer inside the 3D scene.  */
+	hit = lrg_scene_panel_get_key (p);
+	pose = frame_panel_pose (p, 1.0f);
+	if (self->camera != NULL)
+		lrg_spatial_camera_set_target_pose (self->camera, pose);
+
+	lrg_3d_surface_set_focus_window (self, hit);
+	g_signal_emit (self, signals[SIGNAL_PANEL_FOCUSED], 0, hit);
 	return TRUE;
 }
 
@@ -984,6 +1084,155 @@ lrg_3d_surface_is_panel_pinned (Lrg3DSurface *self,
 	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
 
 	return g_hash_table_contains (self->pins, GSIZE_TO_POINTER ((gsize) key));
+}
+
+/* --- Workspace panels (caller-textured, off-screen contents) -------------- */
+
+/* Find or create the static panel for @key (a workspace panel): it carries its
+   own off-screen-rendered texture, is excluded from the live capture and from
+   arrangement layout, and survives window syncs and arrangement switches. */
+static LrgScenePanel *
+ensure_static_panel (Lrg3DSurface *self,
+                     guint64       key)
+{
+	LrgScenePanel *p = find_panel (self, key);
+
+	if (p == NULL)
+	{
+		p = lrg_scene_panel_new (key);
+		lrg_scene_panel_set_static_texture (p, TRUE);
+		g_ptr_array_add (self->panels, p);
+	}
+	else
+		lrg_scene_panel_set_static_texture (p, TRUE);
+	return p;
+}
+
+void
+lrg_3d_surface_set_panel_image (Lrg3DSurface *self,
+                                guint64       key,
+                                GrlImage     *image)
+{
+	LrgScenePanel *p;
+
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	g_return_if_fail (image != NULL);
+
+	p = ensure_static_panel (self, key);
+	lrg_scene_panel_set_image (p, image);
+}
+
+void
+lrg_3d_surface_place_panel (Lrg3DSurface *self,
+                            guint64       key,
+                            gfloat        px,
+                            gfloat        py,
+                            gfloat        pz,
+                            gfloat        yaw,
+                            gfloat        w,
+                            gfloat        h)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+
+	ensure_static_panel (self, key);
+	pin_panel_to (self, key, px, py, pz, yaw, w, h);
+	g_signal_emit (self, signals[SIGNAL_PANEL_MOVED], 0, key);
+}
+
+void
+lrg_3d_surface_place_panel_eased (Lrg3DSurface *self,
+                                  guint64       key,
+                                  gfloat        px,
+                                  gfloat        py,
+                                  gfloat        pz,
+                                  gfloat        yaw,
+                                  gfloat        w,
+                                  gfloat        h)
+{
+	LrgScenePanel *p;
+	gfloat *t = g_new (gfloat, 6);
+
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+
+	ensure_static_panel (self, key);
+
+	/* Record the new placement (so it survives re-layout) and ease the live panel
+	   toward it instead of snapping -- the carousel slides on a switch. */
+	t[0] = px; t[1] = py; t[2] = pz;
+	t[3] = yaw; t[4] = w; t[5] = h;
+	g_hash_table_replace (self->pins, GSIZE_TO_POINTER ((gsize) key), t);
+	p = find_panel (self, key);
+	if (p != NULL)
+		lrg_scene_panel_repin (p, px, py, pz, yaw, w, h);
+	g_signal_emit (self, signals[SIGNAL_PANEL_MOVED], 0, key);
+}
+
+gboolean
+lrg_3d_surface_rotate_panel (Lrg3DSurface *self,
+                             guint64       key,
+                             gfloat        dyaw)
+{
+	LrgScenePanel *p;
+	gfloat px, py, pz, yaw, w, h;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+
+	p = find_panel (self, key);
+	if (p == NULL)
+		return FALSE;
+	lrg_scene_panel_get_geometry (p, &px, &py, &pz, &yaw, &w, &h);
+	pin_panel_to (self, key, px, py, pz, yaw + dyaw, w, h);
+	g_signal_emit (self, signals[SIGNAL_PANEL_MOVED], 0, key);
+	return TRUE;
+}
+
+void
+lrg_3d_surface_remove_panel (Lrg3DSurface *self,
+                             guint64       key)
+{
+	guint i;
+
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+
+	g_hash_table_remove (self->pins, GSIZE_TO_POINTER ((gsize) key));
+	for (i = self->panels->len; i > 0; i--)
+	{
+		LrgScenePanel *p = g_ptr_array_index (self->panels, i - 1);
+		if (lrg_scene_panel_get_key (p) == key)
+		{
+			g_ptr_array_remove_index (self->panels, i - 1);
+			break;
+		}
+	}
+}
+
+gboolean
+lrg_3d_surface_get_panel_geometry (Lrg3DSurface *self,
+                                   guint64       key,
+                                   gfloat       *out_px,
+                                   gfloat       *out_py,
+                                   gfloat       *out_pz,
+                                   gfloat       *out_yaw,
+                                   gfloat       *out_w,
+                                   gfloat       *out_h)
+{
+	LrgScenePanel *p;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+
+	p = find_panel (self, key);
+	if (p == NULL)
+		return FALSE;
+	lrg_scene_panel_get_geometry (p, out_px, out_py, out_pz, out_yaw,
+								  out_w, out_h);
+	return TRUE;
+}
+
+guint
+lrg_3d_surface_get_panel_count (Lrg3DSurface *self)
+{
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), 0);
+	return self->panels->len;
 }
 
 gboolean

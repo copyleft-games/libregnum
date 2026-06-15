@@ -217,6 +217,25 @@ gboolean lrg_3d_surface_focus_panel (Lrg3DSurface *self,
                                      guint64       key);
 
 /**
+ * lrg_3d_surface_maximize_panel:
+ * @self: a #Lrg3DSurface
+ * @key: the panel/window key to maximize (falls back to the whole-frame panel,
+ *   then the first live panel, if @key has no panel)
+ *
+ * Frames panel @key head-on, level (0-deg tilt), filling the viewport edge-to-edge
+ * — a flat, 2D-like view of the buffer within the 3D scene (as the 2D backend /
+ * PGTK would show it).  Emits #Lrg3DSurface::panel-focused.  Reset the camera
+ * (lrg_spatial_camera_reset()) to return to the 3D view.
+ *
+ * Returns: %TRUE if a panel was framed
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_maximize_panel (Lrg3DSurface *self,
+                                        guint64       key);
+
+/**
  * lrg_3d_surface_orbit_room:
  * @self: a #Lrg3DSurface
  * @dyaw: azimuth delta in degrees
@@ -336,6 +355,152 @@ void lrg_3d_surface_unpin_all (Lrg3DSurface *self);
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_3d_surface_is_panel_pinned (Lrg3DSurface *self,
                                          guint64       key);
+
+/* --- Workspace panels (caller-textured, off-screen contents) -------------- */
+
+/**
+ * lrg_3d_surface_set_panel_image:
+ * @self: a #Lrg3DSurface
+ * @key: a stable identity for the panel (must not collide with a window key)
+ * @image: the image to display on the panel
+ *
+ * Creates (if needed) a *static* panel for @key and uploads @image to it.  Unlike
+ * window panels, a static panel keeps its own texture: it is excluded from the live
+ * per-frame capture and from arrangement layout, and survives window syncs and
+ * arrangement switches.  This is how an off-screen-rendered workspace shows its
+ * real contents in the scene.  Position it with lrg_3d_surface_place_panel().
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_set_panel_image (Lrg3DSurface *self,
+                                     guint64       key,
+                                     GrlImage     *image);
+
+/**
+ * lrg_3d_surface_place_panel:
+ * @self: a #Lrg3DSurface
+ * @key: the panel key
+ * @px: world x of the panel centre
+ * @py: world y
+ * @pz: world z
+ * @yaw: yaw in degrees
+ * @w: width in world units
+ * @h: height in world units
+ *
+ * Creates (if needed) a static panel for @key and pins it at the given absolute
+ * transform.  Used to lay workspace panels out on a curved arc.  Emits
+ * #Lrg3DSurface::panel-moved.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_place_panel (Lrg3DSurface *self,
+                                 guint64       key,
+                                 gfloat        px,
+                                 gfloat        py,
+                                 gfloat        pz,
+                                 gfloat        yaw,
+                                 gfloat        w,
+                                 gfloat        h);
+
+/**
+ * lrg_3d_surface_place_panel_eased:
+ * @self: a #Lrg3DSurface
+ * @key: the panel key
+ * @px: world x of the panel centre
+ * @py: world y
+ * @pz: world z
+ * @yaw: yaw in degrees
+ * @w: width in world units
+ * @h: height in world units
+ *
+ * Like lrg_3d_surface_place_panel(), but *eases* the panel to the new transform
+ * instead of snapping (the first placement still snaps).  Used to animate the
+ * workspace carousel shifting on a switch.  Emits #Lrg3DSurface::panel-moved.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_place_panel_eased (Lrg3DSurface *self,
+                                       guint64       key,
+                                       gfloat        px,
+                                       gfloat        py,
+                                       gfloat        pz,
+                                       gfloat        yaw,
+                                       gfloat        w,
+                                       gfloat        h);
+
+/**
+ * lrg_3d_surface_rotate_panel:
+ * @self: a #Lrg3DSurface
+ * @key: the panel key
+ * @dyaw: yaw delta in degrees
+ *
+ * Rotates panel @key by @dyaw about world Y and pins it there (a relative rotate,
+ * mirroring lrg_3d_surface_move_panel()).  Emits #Lrg3DSurface::panel-moved.
+ *
+ * Returns: %TRUE if the panel exists
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_rotate_panel (Lrg3DSurface *self,
+                                      guint64       key,
+                                      gfloat        dyaw);
+
+/**
+ * lrg_3d_surface_remove_panel:
+ * @self: a #Lrg3DSurface
+ * @key: the panel key
+ *
+ * Removes the panel for @key and forgets any pin for it.  Used when a workspace
+ * is killed.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_remove_panel (Lrg3DSurface *self,
+                                  guint64       key);
+
+/**
+ * lrg_3d_surface_get_panel_geometry:
+ * @self: a #Lrg3DSurface
+ * @key: the panel key
+ * @out_px: (out) (optional): world x
+ * @out_py: (out) (optional): world y
+ * @out_pz: (out) (optional): world z
+ * @out_yaw: (out) (optional): yaw in degrees
+ * @out_w: (out) (optional): width in world units
+ * @out_h: (out) (optional): height in world units
+ *
+ * Reads the current transform of panel @key (e.g. to persist a user-adjusted
+ * workspace placement).
+ *
+ * Returns: %TRUE if a panel with @key exists
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_get_panel_geometry (Lrg3DSurface *self,
+                                            guint64       key,
+                                            gfloat       *out_px,
+                                            gfloat       *out_py,
+                                            gfloat       *out_pz,
+                                            gfloat       *out_yaw,
+                                            gfloat       *out_w,
+                                            gfloat       *out_h);
+
+/**
+ * lrg_3d_surface_get_panel_count:
+ * @self: a #Lrg3DSurface
+ *
+ * Returns: the number of panels currently in the scene (window + static)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_3d_surface_get_panel_count (Lrg3DSurface *self);
 
 /* --- Animation ------------------------------------------------------------ */
 

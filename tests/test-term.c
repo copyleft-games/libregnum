@@ -445,6 +445,89 @@ test_scene_panel_pin (void)
     g_assert_cmpfloat_with_epsilon (px, -5.0f, 0.001f);
 }
 
+/* --------------------------------------- scene panel static flag (no GL) -- */
+
+static void
+test_scene_panel_static (void)
+{
+    g_autoptr(LrgScenePanel) p = lrg_scene_panel_new (5);
+
+    /* A fresh panel carries the live capture, not a static texture. */
+    g_assert_false (lrg_scene_panel_has_static_texture (p));
+
+    lrg_scene_panel_set_static_texture (p, TRUE);
+    g_assert_true (lrg_scene_panel_has_static_texture (p));
+
+    lrg_scene_panel_set_static_texture (p, FALSE);
+    g_assert_false (lrg_scene_panel_has_static_texture (p));
+}
+
+/* ----------------------------------- workspace panels on the surface (GL) -- */
+
+static void
+test_3d_surface_workspace_panels (void)
+{
+    g_autoptr(Lrg3DSurface) surf = NULL;
+    g_autoptr(GrlImage) img = NULL;
+    g_autoptr(GrlColor) col = NULL;
+    const guint64 ws = G_GUINT64_CONSTANT (0x8000000000000001); /* high-bit key */
+    gfloat px, yaw0, yaw1;
+
+    SKIP_IF_NO_DISPLAY ();
+
+    surf = lrg_3d_surface_new (320, 240, "test-term-ws");
+    if (lrg_frame_surface_get_window (LRG_FRAME_SURFACE (surf)) == NULL)
+    {
+        g_test_skip ("GrlWindow could not be created");
+        return;
+    }
+
+    /* Place a workspace panel: it is created, pinned, and reports its transform. */
+    lrg_3d_surface_place_panel (surf, ws, 5.0f, 0.0f, -3.0f, 30.0f, 4.0f, 3.0f);
+    g_assert_cmpuint (lrg_3d_surface_get_panel_count (surf), ==, 1);
+    g_assert_true (lrg_3d_surface_is_panel_pinned (surf, ws));
+    g_assert_true (lrg_3d_surface_get_panel_geometry (surf, ws, &px, NULL, NULL,
+                                                      &yaw0, NULL, NULL));
+    g_assert_cmpfloat_with_epsilon (px, 5.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (yaw0, 30.0f, 0.001f);
+
+    /* Two live windows synced in: count is windows + the workspace panel. */
+    lrg_3d_surface_begin_window_sync (surf);
+    lrg_3d_surface_sync_window (surf, 100, 0, 0, 160, 240);
+    lrg_3d_surface_sync_window (surf, 200, 160, 0, 160, 240);
+    lrg_3d_surface_end_window_sync (surf);
+    g_assert_cmpuint (lrg_3d_surface_get_panel_count (surf), ==, 3);
+
+    /* A sync that drops window 200 must NOT drop the static workspace panel. */
+    lrg_3d_surface_begin_window_sync (surf);
+    lrg_3d_surface_sync_window (surf, 100, 0, 0, 320, 240);
+    lrg_3d_surface_end_window_sync (surf);
+    g_assert_cmpuint (lrg_3d_surface_get_panel_count (surf), ==, 2);
+    g_assert_true (lrg_3d_surface_is_panel_pinned (surf, ws));
+    g_assert_true (lrg_3d_surface_get_panel_geometry (surf, ws, &px, NULL, NULL,
+                                                      NULL, NULL, NULL));
+    g_assert_cmpfloat_with_epsilon (px, 5.0f, 0.001f);
+
+    /* Rotate the workspace panel: yaw advances by the delta. */
+    g_assert_true (lrg_3d_surface_rotate_panel (surf, ws, 45.0f));
+    g_assert_true (lrg_3d_surface_get_panel_geometry (surf, ws, NULL, NULL, NULL,
+                                                      &yaw1, NULL, NULL));
+    g_assert_cmpfloat_with_epsilon (yaw1, 75.0f, 0.001f);
+
+    /* Give it an off-screen-style image; it stays a single static panel. */
+    col = grl_color_new (40, 80, 160, 255);
+    img = grl_image_new_color (200, 120, col);
+    lrg_3d_surface_set_panel_image (surf, ws, img);
+    g_assert_cmpuint (lrg_3d_surface_get_panel_count (surf), ==, 2);
+
+    /* Remove it: count drops and the pin is forgotten. */
+    lrg_3d_surface_remove_panel (surf, ws);
+    g_assert_cmpuint (lrg_3d_surface_get_panel_count (surf), ==, 1);
+    g_assert_false (lrg_3d_surface_is_panel_pinned (surf, ws));
+    g_assert_false (lrg_3d_surface_get_panel_geometry (surf, ws, NULL, NULL, NULL,
+                                                       NULL, NULL, NULL));
+}
+
 /* ------------------------------------------- free arrangement (no GL) ------ */
 
 static void
@@ -556,6 +639,9 @@ main (int   argc,
     g_test_add_func ("/term/spatial-camera", test_spatial_camera);
     g_test_add_func ("/term/scene-panel", test_scene_panel);
     g_test_add_func ("/term/scene-panel-pin", test_scene_panel_pin);
+    g_test_add_func ("/term/scene-panel-static", test_scene_panel_static);
+    g_test_add_func ("/term/3d-surface-workspace-panels",
+                     test_3d_surface_workspace_panels);
     g_test_add_func ("/term/arrangement-free", test_arrangement_free);
     g_test_add_func ("/term/spatial-camera-orbit-drag",
                      test_spatial_camera_orbit_drag);
