@@ -39,6 +39,8 @@ G_DECLARE_DERIVABLE_TYPE (LrgFrameSurface, lrg_frame_surface, LRG, FRAME_SURFACE
  * @parent_class: parent class
  * @begin_frame: start a frame (bind/clear-ready the target)
  * @end_frame: finish + present a frame
+ * @begin_content: 3D modes: begin the flat content-capture pass (no-op in 2D)
+ * @end_content: 3D modes: finish + cache the content pass (no-op in 2D)
  * @clear: clear the whole surface to a colour
  * @fill_rect: fill an axis-aligned rectangle
  * @draw_rect_outline: stroke a rectangle outline
@@ -61,6 +63,8 @@ struct _LrgFrameSurfaceClass
     /*< public >*/
     void     (*begin_frame)         (LrgFrameSurface    *self);
     void     (*end_frame)           (LrgFrameSurface    *self);
+    void     (*begin_content)       (LrgFrameSurface    *self);
+    void     (*end_content)         (LrgFrameSurface    *self);
     void     (*clear)               (LrgFrameSurface    *self,
                                      const GrlColor     *color);
     void     (*fill_rect)           (LrgFrameSurface    *self,
@@ -108,9 +112,10 @@ struct _LrgFrameSurfaceClass
                                      gfloat              py,
                                      gfloat             *out_x,
                                      gfloat             *out_y);
+    GrlWindow * (*get_window)       (LrgFrameSurface    *self);
 
     /*< private >*/
-    gpointer _reserved[8];
+    gpointer _reserved[5];
 };
 
 /* Frame lifecycle */
@@ -118,6 +123,13 @@ LRG_AVAILABLE_IN_ALL
 void lrg_frame_surface_begin_frame (LrgFrameSurface *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_frame_surface_end_frame (LrgFrameSurface *self);
+
+/* Content-capture pass (3D modes capture the flat frame between these; 2D and
+   any surface that does not override them treat both as no-ops).  */
+LRG_AVAILABLE_IN_ALL
+void lrg_frame_surface_begin_content (LrgFrameSurface *self);
+LRG_AVAILABLE_IN_ALL
+void lrg_frame_surface_end_content (LrgFrameSurface *self);
 
 /* Primitives */
 LRG_AVAILABLE_IN_ALL
@@ -192,6 +204,18 @@ LRG_AVAILABLE_IN_ALL
 gfloat lrg_frame_surface_get_scale (LrgFrameSurface *self);
 LRG_AVAILABLE_IN_ALL
 LrgRenderMode lrg_frame_surface_get_render_mode (LrgFrameSurface *self);
+
+/**
+ * lrg_frame_surface_get_window:
+ * @self: a #LrgFrameSurface
+ *
+ * Returns: (transfer none) (nullable): the #GrlWindow backing this surface (for
+ *   input polling / native integration by the embedding backend), or %NULL
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GrlWindow * lrg_frame_surface_get_window (LrgFrameSurface *self);
 
 /**
  * lrg_frame_surface_set_geometry: (skip)

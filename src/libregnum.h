@@ -646,12 +646,26 @@
 
 /* Terminal / display backend module (output_lrg) */
 #include "term/lrg-render-mode.h"
+#include "term/lrg-3d-enums.h"
+#include "term/lrg-pose.h"
 #include "term/lrg-glyph-key.h"
 #include "term/lrg-glyph-metrics.h"
 #include "term/lrg-glyph-atlas.h"
 #include "term/lrg-text-renderer.h"
 #include "term/lrg-frame-surface.h"
 #include "term/lrg-2d-surface.h"
+#include "term/lrg-spatial-camera.h"
+#include "term/lrg-scene-panel.h"
+#include "term/lrg-scene-arrangement.h"
+#include "term/lrg-arrangement-single.h"
+#include "term/lrg-arrangement-per-window.h"
+#include "term/lrg-arrangement-free.h"
+#include "term/lrg-panel-environment.h"
+#include "term/lrg-environment-solid.h"
+#include "term/lrg-environment-workshop.h"
+#include "term/lrg-environment-cockpit.h"
+#include "term/lrg-mode-registry.h"
+#include "term/lrg-3d-surface.h"
 
 /* MCP module (optional, build with MCP=1) */
 #ifdef LRG_ENABLE_CAD

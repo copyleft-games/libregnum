@@ -1386,6 +1386,11 @@ typedef struct _LrgFrameSurfaceClass        LrgFrameSurfaceClass;
 /* Lrg2DSurface is a final type - no Class forward declaration needed */
 typedef struct _Lrg2DSurface                Lrg2DSurface;
 
+/* 3D surface support types (final) */
+typedef struct _LrgSpatialCamera            LrgSpatialCamera;
+typedef struct _LrgScenePanel               LrgScenePanel;
+typedef struct _Lrg3DSurface                Lrg3DSurface;
+
 /* LrgTextRenderer is an interface */
 typedef struct _LrgTextRenderer             LrgTextRenderer;
 typedef struct _LrgTextRendererInterface    LrgTextRendererInterface;

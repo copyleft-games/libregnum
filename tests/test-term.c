@@ -272,6 +272,255 @@ test_surface_upload_draw (void)
     g_clear_object (&atlas);
 }
 
+/* --------------------------------------------------- 3D mode enums (no GL) - */
+
+static void
+test_mode_enums (void)
+{
+    LrgArrangementKind ak = LRG_ARRANGEMENT_KIND_FREE;
+    LrgEnvironmentKind ek = LRG_ENVIRONMENT_KIND_COCKPIT;
+
+    g_assert_true (lrg_arrangement_kind_from_string ("per-window", &ak));
+    g_assert_cmpint (ak, ==, LRG_ARRANGEMENT_KIND_PER_WINDOW);
+    g_assert_cmpstr (lrg_arrangement_kind_to_string (LRG_ARRANGEMENT_KIND_CAROUSEL),
+                     ==, "carousel");
+    g_assert_false (lrg_arrangement_kind_from_string ("nope", &ak));
+    g_assert_cmpint (ak, ==, LRG_ARRANGEMENT_KIND_SINGLE_PANEL);
+
+    g_assert_true (lrg_environment_kind_from_string ("cockpit", &ek));
+    g_assert_cmpint (ek, ==, LRG_ENVIRONMENT_KIND_COCKPIT);
+    g_assert_cmpstr (lrg_environment_kind_to_string (LRG_ENVIRONMENT_KIND_WORKSHOP),
+                     ==, "workshop");
+
+    g_assert_true (G_TYPE_IS_ENUM (LRG_TYPE_ARRANGEMENT_KIND));
+    g_assert_true (G_TYPE_IS_ENUM (LRG_TYPE_ENVIRONMENT_KIND));
+}
+
+/* ------------------------------------------------------------- pose (no GL) - */
+
+static void
+test_pose (void)
+{
+    g_autoptr(LrgPose) a = lrg_pose_new (0, 0, 0, 1, 1, 1, 0, 1, 0, 30.0f);
+    g_autoptr(LrgPose) b = lrg_pose_new (10, 0, 0, 1, 1, 1, 0, 1, 0, 60.0f);
+    g_autoptr(LrgPose) mid = lrg_pose_lerp (a, b, 0.5f);
+    g_autoptr(LrgPose) over = lrg_pose_lerp (a, b, 2.0f);
+    gfloat x;
+
+    lrg_pose_get_position (mid, &x, NULL, NULL);
+    g_assert_cmpfloat_with_epsilon (x, 5.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (lrg_pose_get_fovy (mid), 45.0f, 0.001f);
+
+    /* t is clamped to [0, 1]. */
+    lrg_pose_get_position (over, &x, NULL, NULL);
+    g_assert_cmpfloat_with_epsilon (x, 10.0f, 0.001f);
+
+    g_assert_true (G_TYPE_IS_BOXED (LRG_TYPE_POSE));
+}
+
+/* -------------------------------------------------- mode registry (no GL) -- */
+
+static void
+test_mode_registry (void)
+{
+    LrgModeRegistry *reg = lrg_mode_registry_get_default ();
+    g_autoptr(LrgSceneArrangement) a = NULL;
+    g_autoptr(LrgPanelEnvironment) e = NULL;
+
+    g_assert_nonnull (reg);
+    g_assert_true (lrg_mode_registry_has_arrangement (reg, "single-panel"));
+    g_assert_true (lrg_mode_registry_has_arrangement (reg, "per-window"));
+    g_assert_true (lrg_mode_registry_has_arrangement (reg, "free"));
+    g_assert_true (lrg_mode_registry_has_environment (reg, "void"));
+    g_assert_true (lrg_mode_registry_has_environment (reg, "workshop"));
+    g_assert_false (lrg_mode_registry_has_arrangement (reg, "bogus"));
+
+    a = lrg_mode_registry_create_arrangement (reg, "per-window");
+    g_assert_nonnull (a);
+    g_assert_true (LRG_IS_SCENE_ARRANGEMENT (a));
+    g_assert_cmpstr (lrg_scene_arrangement_get_id (a), ==, "per-window");
+
+    e = lrg_mode_registry_create_environment (reg, "workshop");
+    g_assert_nonnull (e);
+    g_assert_true (LRG_IS_PANEL_ENVIRONMENT (e));
+    g_assert_cmpstr (lrg_panel_environment_get_id (e), ==, "workshop");
+
+    g_assert_null (lrg_mode_registry_create_arrangement (reg, "bogus"));
+}
+
+/* ------------------------------------------------- spatial camera (no GL) -- */
+
+static void
+test_spatial_camera (void)
+{
+    g_autoptr(LrgSpatialCamera) cam = lrg_spatial_camera_new ();
+    g_autoptr(LrgPose) p0 = NULL;
+    g_autoptr(LrgPose) target = NULL;
+    g_autoptr(LrgPose) pf = NULL;
+    gfloat z;
+    int i;
+
+    g_assert_nonnull (cam);
+    p0 = lrg_spatial_camera_get_pose (cam);
+    lrg_pose_get_position (p0, NULL, NULL, &z);
+    /* Default is a gentle elevated 3/4 view (eye z = 6.6). */
+    g_assert_cmpfloat_with_epsilon (z, 6.6f, 0.001f);
+    g_assert_false (lrg_spatial_camera_is_animating (cam));
+
+    target = lrg_pose_new (0, 0, 2, 0, 0, 0, 0, 1, 0, 45.0f);
+    lrg_spatial_camera_set_target_pose (cam, target);
+    g_assert_true (lrg_spatial_camera_is_animating (cam));
+    for (i = 0; i < 500 && lrg_spatial_camera_step (cam, 0.05f); i++)
+        ;
+    g_assert_false (lrg_spatial_camera_is_animating (cam));
+
+    pf = lrg_spatial_camera_get_pose (cam);
+    lrg_pose_get_position (pf, NULL, NULL, &z);
+    g_assert_cmpfloat_with_epsilon (z, 2.0f, 0.05f);
+}
+
+/* --------------------------------------------------- scene panel (no GL) --- */
+
+static void
+test_scene_panel (void)
+{
+    g_autoptr(LrgScenePanel) p = lrg_scene_panel_new (42);
+    gfloat px, w;
+    gfloat corners[12];
+    gint sx, sw;
+    int i;
+
+    g_assert_nonnull (p);
+    g_assert_cmpuint (lrg_scene_panel_get_key (p), ==, 42);
+
+    lrg_scene_panel_set_source_rect (p, 10, 20, 300, 400);
+    lrg_scene_panel_get_source_rect (p, &sx, NULL, &sw, NULL);
+    g_assert_cmpint (sx, ==, 10);
+    g_assert_cmpint (sw, ==, 300);
+
+    lrg_scene_panel_set_immediate (p, 1, 2, 3, 0, 4, 2);
+    lrg_scene_panel_get_geometry (p, &px, NULL, NULL, NULL, &w, NULL);
+    g_assert_cmpfloat_with_epsilon (px, 1.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (w, 4.0f, 0.001f);
+    g_assert_false (lrg_scene_panel_is_animating (p));
+
+    lrg_scene_panel_set_target (p, 5, 2, 3, 0, 4, 2);
+    g_assert_true (lrg_scene_panel_is_animating (p));
+    for (i = 0; i < 500 && lrg_scene_panel_step (p, 0.05f); i++)
+        ;
+    g_assert_false (lrg_scene_panel_is_animating (p));
+    lrg_scene_panel_get_geometry (p, &px, NULL, NULL, NULL, NULL, NULL);
+    g_assert_cmpfloat_with_epsilon (px, 5.0f, 0.05f);
+
+    /* A 4-unit-wide panel spans ~4 in X across its top edge. */
+    lrg_scene_panel_get_corners (p, corners);
+    g_assert_cmpfloat (ABS (corners[3] - corners[0]), >, 1.0f);
+}
+
+/* --------------------------------------------- scene panel pin (no GL) ----- */
+
+static void
+test_scene_panel_pin (void)
+{
+    g_autoptr(LrgScenePanel) p = lrg_scene_panel_new (7);
+    gfloat px, py;
+
+    lrg_scene_panel_set_immediate (p, 1, 2, 0, 0, 4, 2);
+    g_assert_false (lrg_scene_panel_is_pinned (p));
+
+    /* Pin it: arrangement set_target / set_immediate must now be ignored. */
+    lrg_scene_panel_pin (p, 9, 8, 0, 0, 4, 2);
+    g_assert_true (lrg_scene_panel_is_pinned (p));
+    lrg_scene_panel_set_target (p, -5, -5, 0, 0, 4, 2);
+    lrg_scene_panel_set_immediate (p, -5, -5, 0, 0, 4, 2);
+    lrg_scene_panel_get_geometry (p, &px, &py, NULL, NULL, NULL, NULL);
+    g_assert_cmpfloat_with_epsilon (px, 9.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (py, 8.0f, 0.001f);
+
+    /* Unpin: layout governs it again. */
+    lrg_scene_panel_unpin (p);
+    g_assert_false (lrg_scene_panel_is_pinned (p));
+    lrg_scene_panel_set_immediate (p, -5, -5, 0, 0, 4, 2);
+    lrg_scene_panel_get_geometry (p, &px, NULL, NULL, NULL, NULL, NULL);
+    g_assert_cmpfloat_with_epsilon (px, -5.0f, 0.001f);
+}
+
+/* ------------------------------------------- free arrangement (no GL) ------ */
+
+static void
+test_arrangement_free (void)
+{
+    g_autoptr(LrgSceneArrangement) a = lrg_mode_registry_create_arrangement (
+        lrg_mode_registry_get_default (), "free");
+    GPtrArray *panels = g_ptr_array_new_with_free_func (g_object_unref);
+    gfloat x0, x1, x2;
+    guint i;
+
+    g_assert_nonnull (a);
+    g_assert_cmpstr (lrg_scene_arrangement_get_id (a), ==, "free");
+
+    for (i = 0; i < 3; i++)
+    {
+        LrgScenePanel *p = lrg_scene_panel_new (i + 1);
+        lrg_scene_panel_set_source_rect (p, 0, 0, 320, 200);
+        g_ptr_array_add (panels, p);
+    }
+
+    lrg_scene_arrangement_layout (a, panels, 1000, 800, 1.0f);
+
+    /* Three panels spread left-to-right, centred on the origin. */
+    lrg_scene_panel_get_geometry (g_ptr_array_index (panels, 0), &x0,
+                                  NULL, NULL, NULL, NULL, NULL);
+    lrg_scene_panel_get_geometry (g_ptr_array_index (panels, 1), &x1,
+                                  NULL, NULL, NULL, NULL, NULL);
+    lrg_scene_panel_get_geometry (g_ptr_array_index (panels, 2), &x2,
+                                  NULL, NULL, NULL, NULL, NULL);
+    g_assert_cmpfloat (x0, <, x1);
+    g_assert_cmpfloat (x1, <, x2);
+    g_assert_cmpfloat_with_epsilon (x1, 0.0f, 0.001f);  /* middle centred */
+
+    g_ptr_array_unref (panels);
+}
+
+/* ------------------------------------ camera drag (immediate, no GL) ------- */
+
+static void
+test_spatial_camera_orbit_drag (void)
+{
+    g_autoptr(LrgSpatialCamera) cam = lrg_spatial_camera_new ();
+    g_autoptr(LrgPose) before = lrg_spatial_camera_get_pose (cam);
+    g_autoptr(LrgPose) after = NULL;
+    gfloat x0, x1;
+
+    lrg_pose_get_position (before, &x0, NULL, NULL);
+
+    /* orbit_drag applies immediately: pose changes now, nothing left animating. */
+    lrg_spatial_camera_orbit_drag (cam, 30.0f, 0.0f);
+    g_assert_false (lrg_spatial_camera_is_animating (cam));
+    after = lrg_spatial_camera_get_pose (cam);
+    lrg_pose_get_position (after, &x1, NULL, NULL);
+    g_assert_cmpfloat (ABS (x1 - x0), >, 0.5f);
+
+    /* pan_drag is also immediate and moves both eye and target. */
+    lrg_spatial_camera_pan_drag (cam, 1.0f, 0.0f);
+    g_assert_false (lrg_spatial_camera_is_animating (cam));
+
+    /* orbit_around_drag turntables about an arbitrary pivot and looks at it. */
+    {
+        g_autoptr(LrgSpatialCamera) c2 = lrg_spatial_camera_new ();
+        g_autoptr(LrgPose) p = NULL;
+        gfloat tx, ty, tz;
+        lrg_spatial_camera_orbit_around_drag (c2, 2.0f, 0.0f, 0.0f, 30.0f, 0.0f);
+        g_assert_false (lrg_spatial_camera_is_animating (c2));
+        p = lrg_spatial_camera_get_pose (c2);
+        lrg_pose_get_target (p, &tx, &ty, &tz);
+        /* The camera now looks at the pivot (2,0,0), not the origin. */
+        g_assert_cmpfloat_with_epsilon (tx, 2.0f, 0.001f);
+        g_assert_cmpfloat_with_epsilon (ty, 0.0f, 0.001f);
+        g_assert_cmpfloat_with_epsilon (tz, 0.0f, 0.001f);
+    }
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -283,6 +532,15 @@ main (int   argc,
     g_test_add_func ("/term/glyph-metrics", test_glyph_metrics);
     g_test_add_func ("/term/atlas-packing", test_atlas_packing);
     g_test_add_func ("/term/surface-upload-draw", test_surface_upload_draw);
+    g_test_add_func ("/term/mode-enums", test_mode_enums);
+    g_test_add_func ("/term/pose", test_pose);
+    g_test_add_func ("/term/mode-registry", test_mode_registry);
+    g_test_add_func ("/term/spatial-camera", test_spatial_camera);
+    g_test_add_func ("/term/scene-panel", test_scene_panel);
+    g_test_add_func ("/term/scene-panel-pin", test_scene_panel_pin);
+    g_test_add_func ("/term/arrangement-free", test_arrangement_free);
+    g_test_add_func ("/term/spatial-camera-orbit-drag",
+                     test_spatial_camera_orbit_drag);
 
     return g_test_run ();
 }

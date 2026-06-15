@@ -50,19 +50,30 @@ static void
 lrg_2d_surface_begin_frame (LrgFrameSurface *surface)
 {
     Lrg2DSurface *self = LRG_2D_SURFACE (surface);
+    gint ww, wh;
 
     if (self->window == NULL)
         return;
 
-    if (grl_window_is_resized (self->window))
+    /* Reconcile the surface geometry with the live window size on EVERY frame,
+       not only while grl_window_is_resized () (raylib's IsWindowResized ()) is
+       set.  That flag is one-shot -- cleared at the next PollInputEvents () --
+       so a present that runs a cycle after the resize poll (always the case for
+       the 3D surface, whose present is driven by a later redisplay) would miss
+       it and keep stale dimensions: the panel/capture stay the old size while
+       the GL viewport is already the new one, so the scene renders at the wrong
+       size/offset ("the UI drags along on resize").  Comparing actual sizes is
+       robust to that timing and is a cheap no-op when nothing changed.  */
+    ww = grl_window_get_width (self->window);
+    wh = grl_window_get_height (self->window);
+    if (ww > 0 && wh > 0
+        && (ww != lrg_frame_surface_get_width (surface)
+            || wh != lrg_frame_surface_get_height (surface)))
     {
         g_autoptr(GrlVector2) dpi = grl_window_get_scale_dpi (self->window);
         gfloat scale = (dpi != NULL) ? dpi->x : 1.0f;
 
-        lrg_frame_surface_set_geometry (surface,
-                                        grl_window_get_width (self->window),
-                                        grl_window_get_height (self->window),
-                                        scale);
+        lrg_frame_surface_set_geometry (surface, ww, wh, scale);
     }
 
     grl_window_begin_drawing (self->window);
@@ -295,6 +306,12 @@ lrg_2d_surface_draw_texture_region (LrgFrameSurface    *surface,
     grl_draw_end_blend_mode ();
 }
 
+static GrlWindow *
+lrg_2d_surface_real_get_window (LrgFrameSurface *surface)
+{
+    return LRG_2D_SURFACE (surface)->window;
+}
+
 static void
 lrg_2d_surface_text_renderer_draw_glyph (LrgTextRenderer   *renderer,
                                          LrgGlyphAtlas     *atlas,
@@ -382,6 +399,7 @@ lrg_2d_surface_class_init (Lrg2DSurfaceClass *klass)
     surface_class->pop_clip = lrg_2d_surface_pop_clip;
     surface_class->draw_glyph = lrg_2d_surface_draw_glyph;
     surface_class->draw_texture_region = lrg_2d_surface_draw_texture_region;
+    surface_class->get_window = lrg_2d_surface_real_get_window;
     /* pick: inherit base identity mapping */
 }
 

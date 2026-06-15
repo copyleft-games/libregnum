@@ -211,6 +211,17 @@ lrg_frame_surface_pick (LrgFrameSurface *self,
     return klass->pick (self, px, py, out_x, out_y);
 }
 
+GrlWindow *
+lrg_frame_surface_get_window (LrgFrameSurface *self)
+{
+	LrgFrameSurfaceClass *klass;
+
+	g_return_val_if_fail (LRG_IS_FRAME_SURFACE (self), NULL);
+
+	klass = LRG_FRAME_SURFACE_GET_CLASS (self);
+	return klass->get_window != NULL ? klass->get_window (self) : NULL;
+}
+
 gint
 lrg_frame_surface_get_width (LrgFrameSurface *self)
 {
@@ -334,6 +345,26 @@ lrg_frame_surface_get_property (GObject    *object,
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
+}
+
+void
+lrg_frame_surface_begin_content (LrgFrameSurface *self)
+{
+	g_return_if_fail (LRG_IS_FRAME_SURFACE (self));
+	{
+		SURFACE_VCALL (self, begin_content);
+		klass->begin_content (self);
+	}
+}
+
+void
+lrg_frame_surface_end_content (LrgFrameSurface *self)
+{
+	g_return_if_fail (LRG_IS_FRAME_SURFACE (self));
+	{
+		SURFACE_VCALL (self, end_content);
+		klass->end_content (self);
+	}
 }
 
 static void

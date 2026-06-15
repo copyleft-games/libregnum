@@ -962,20 +962,48 @@ SOURCES := \
 # Terminal / display backend module (output_lrg) -- always built
 PUBLIC_HEADERS += \
 	src/term/lrg-render-mode.h \
+	src/term/lrg-3d-enums.h \
+	src/term/lrg-pose.h \
 	src/term/lrg-glyph-key.h \
 	src/term/lrg-glyph-metrics.h \
 	src/term/lrg-glyph-atlas.h \
 	src/term/lrg-text-renderer.h \
 	src/term/lrg-frame-surface.h \
-	src/term/lrg-2d-surface.h
+	src/term/lrg-2d-surface.h \
+	src/term/lrg-spatial-camera.h \
+	src/term/lrg-scene-panel.h \
+	src/term/lrg-scene-arrangement.h \
+	src/term/lrg-arrangement-single.h \
+	src/term/lrg-arrangement-per-window.h \
+	src/term/lrg-arrangement-free.h \
+	src/term/lrg-panel-environment.h \
+	src/term/lrg-environment-solid.h \
+	src/term/lrg-environment-workshop.h \
+	src/term/lrg-environment-cockpit.h \
+	src/term/lrg-mode-registry.h \
+	src/term/lrg-3d-surface.h
 SOURCES += \
 	src/term/lrg-render-mode.c \
+	src/term/lrg-3d-enums.c \
+	src/term/lrg-pose.c \
 	src/term/lrg-glyph-key.c \
 	src/term/lrg-glyph-metrics.c \
 	src/term/lrg-glyph-atlas.c \
 	src/term/lrg-text-renderer.c \
 	src/term/lrg-frame-surface.c \
-	src/term/lrg-2d-surface.c
+	src/term/lrg-2d-surface.c \
+	src/term/lrg-spatial-camera.c \
+	src/term/lrg-scene-panel.c \
+	src/term/lrg-scene-arrangement.c \
+	src/term/lrg-arrangement-single.c \
+	src/term/lrg-arrangement-per-window.c \
+	src/term/lrg-arrangement-free.c \
+	src/term/lrg-panel-environment.c \
+	src/term/lrg-environment-solid.c \
+	src/term/lrg-environment-workshop.c \
+	src/term/lrg-environment-cockpit.c \
+	src/term/lrg-mode-registry.c \
+	src/term/lrg-3d-surface.c
 
 # Conditional scripting backends
 ifeq ($(HAS_LUAJIT),1)

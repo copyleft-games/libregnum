@@ -1,0 +1,66 @@
+#+TITLE: term — display-surface backend (output_lrg)
+#+AUTHOR: libregnum
+
+The =src/term/= module provides the rendering machinery for an *Emacs display
+backend* (cmacs's =output_lrg=): a faithful 2D text surface and a configurable
+real-time 3D workspace, sharing one GPU glyph atlas.  It is GObject /
+GObject-Introspection native, so the embedding application (cmacs) drives it
+entirely through the abstract surface vtable — a new render mode is a new
+subclass, never a glue rewrite.
+
+* Core seam
+
+- ~LrgRenderMode~ (enum) — ~2D~ / ~3D~ / ~3DVR~.
+- ~LrgFrameSurface~ (derivable, abstract) — the draw + present + projection
+  facade: ~begin_frame~/~end_frame~, ~begin_content~/~end_content~ (the 3D
+  flat-capture bracket; no-op in 2D), ~clear~/~fill_rect~/~draw_line~/
+  ~push_clip~/~draw_glyph~/~draw_texture_region~, ~get_window~, and ~pick~
+  (device→logical mapping; identity by default).  The embedder only ever calls
+  this base vtable.
+- ~LrgGlyphAtlas~ / ~LrgGlyphKey~ / ~LrgGlyphMetrics~ — a GL-free shelf packer
+  feeding lazy page textures; ~LrgTextRenderer~ is the projection-free glyph
+  interface.
+
+* 2D
+
+- ~Lrg2DSurface~ (final) — orthographic, pixel-exact; owns the ~GrlWindow~ and
+  presents to the default framebuffer.
+
+* 3D
+
+- ~Lrg3DSurface~ (final) — captures the flat frame (rasterised by an internal
+  ~Lrg2DSurface~) to a texture each redisplay and composites textured *panels*
+  in a perspective scene.  Holds the camera, panels, arrangement and
+  environment; emits ~animation-started~/~animation-finished~,
+  ~arrangement-changed~, ~environment-changed~, and the interaction signals
+  ~panel-focused~ / ~panel-moved~ / ~panel-pinned~ (each carries the window key).
+  It is also the *manipulator*: ~pick_panel~ (ray-cast → frame pixel + hit panel
+  key), ~focus_panel~ (DOF + eased camera fly to a head-on framing),
+  ~grab_panel~/~drag_panel~/~release_panel~ (move a panel under a pointer in the
+  camera plane), ~pin_panel~/~move_panel~/~unpin_panel~/~unpin_all~ and a
+  per-key pin map that re-applies after every layout (so a manual placement
+  survives resizes, redisplays and arrangement switches).
+- ~LrgScenePanel~ (final) — one window→quad: source sub-rect, eased TRS, a
+  depth-of-field focus weight, a cached textured ~GrlModel~ plane; exposes its
+  world-space corners for picking and a ~pin~/~unpin~ flag (a pinned panel
+  ignores arrangement ~set_target~).
+- ~LrgSpatialCamera~ (final) — wraps ~LrgCamera3D~, eases an ~LrgPose~ (boxed),
+  and offers ~reset~ / ~zoom~ / ~orbit~ (eased) plus ~orbit_drag~ / ~pan_drag~
+  (immediate, for cursor-following drags).
+- ~LrgSceneArrangement~ (interface) — lays panels out; built-ins
+  ~LrgArrangementSingle~ ("single-panel"), ~LrgArrangementPerWindow~
+  ("per-window") and ~LrgArrangementFree~ ("free": a loose spread that the user
+  then grabs/moves/pins).
+- ~LrgPanelEnvironment~ (interface) — the ambient scene (clear colour +
+  ~draw_ambient~); built-ins ~LrgEnvironmentSolid~ ("void"),
+  ~LrgEnvironmentWorkshop~ ("workshop", grid floor),
+  ~LrgEnvironmentCockpit~ ("cockpit", enclosed grid room).
+- ~LrgModeRegistry~ (final) — string-id → GType for arrangements and
+  environments, pre-loaded with the built-ins; the seam for adding new modes
+  (implement the interface, register an id) without touching the surface.
+
+Reserved: ~LrgVRSurface~ (an additive ~LrgFrameSurface~ subclass reusing the
+panel / camera / arrangement / environment types) for ~3DVR~.
+
+See the cmacs manual chapter "CMacs Lrgterm" for the user-facing
+launch grammar, commands and the roadmap.
