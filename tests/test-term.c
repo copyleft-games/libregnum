@@ -519,6 +519,24 @@ test_spatial_camera_orbit_drag (void)
         g_assert_cmpfloat_with_epsilon (ty, 0.0f, 0.001f);
         g_assert_cmpfloat_with_epsilon (tz, 0.0f, 0.001f);
     }
+
+    /* look_drag is first-person: the EYE stays put, the target swings around. */
+    {
+        g_autoptr(LrgSpatialCamera) c3 = lrg_spatial_camera_new ();
+        g_autoptr(LrgPose) a = lrg_spatial_camera_get_pose (c3);
+        g_autoptr(LrgPose) b = NULL;
+        gfloat ex0, ey0, ez0, ex1, ey1, ez1, tx0, tz0, tx1, tz1;
+        lrg_pose_get_position (a, &ex0, &ey0, &ez0);
+        lrg_pose_get_target (a, &tx0, NULL, &tz0);
+        lrg_spatial_camera_look_drag (c3, 30.0f, 0.0f);
+        b = lrg_spatial_camera_get_pose (c3);
+        lrg_pose_get_position (b, &ex1, &ey1, &ez1);
+        lrg_pose_get_target (b, &tx1, NULL, &tz1);
+        g_assert_cmpfloat_with_epsilon (ex1, ex0, 0.001f);
+        g_assert_cmpfloat_with_epsilon (ey1, ey0, 0.001f);
+        g_assert_cmpfloat_with_epsilon (ez1, ez0, 0.001f);
+        g_assert_cmpfloat (ABS (tx1 - tx0) + ABS (tz1 - tz0), >, 0.3f);
+    }
 }
 
 int

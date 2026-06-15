@@ -239,6 +239,43 @@ orbit_pose (LrgSpatialCamera *self,
 }
 
 void
+lrg_spatial_camera_look_drag (LrgSpatialCamera *self,
+                              gfloat            dyaw,
+                              gfloat            dpitch)
+{
+    gfloat ex, ey, ez, tx, ty, tz, dx, dy, dz, r, az, el;
+    g_autoptr (LrgPose) p = NULL;
+
+    g_return_if_fail (LRG_IS_SPATIAL_CAMERA (self));
+
+    lrg_pose_get_position (self->current, &ex, &ey, &ez);
+    lrg_pose_get_target (self->current, &tx, &ty, &tz);
+    dx = tx - ex;
+    dy = ty - ey;
+    dz = tz - ez;
+    r = sqrtf (dx * dx + dy * dy + dz * dz);
+    if (r < 0.0001f)
+        return;
+
+    /* Rotate the look direction about the (fixed) eye. */
+    az = atan2f (dx, dz);
+    el = asinf (dy / r);
+    az += dyaw * (gfloat) (G_PI / 180.0);
+    el += dpitch * (gfloat) (G_PI / 180.0);
+    if (el > 1.5f)
+        el = 1.5f;
+    else if (el < -1.5f)
+        el = -1.5f;
+
+    dx = r * cosf (el) * sinf (az);
+    dy = r * sinf (el);
+    dz = r * cosf (el) * cosf (az);
+    p = lrg_pose_new (ex, ey, ez, ex + dx, ey + dy, ez + dz, 0.0f, 1.0f, 0.0f,
+                      lrg_pose_get_fovy (self->current));
+    lrg_spatial_camera_set_pose (self, p);
+}
+
+void
 lrg_spatial_camera_dolly_drag (LrgSpatialCamera *self,
                                gfloat            factor)
 {

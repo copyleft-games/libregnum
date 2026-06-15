@@ -170,6 +170,24 @@ void lrg_spatial_camera_orbit_drag (LrgSpatialCamera *self,
                                     gfloat            dpitch);
 
 /**
+ * lrg_spatial_camera_look_drag:
+ * @self: a #LrgSpatialCamera
+ * @dyaw: azimuth delta in degrees
+ * @dpitch: elevation delta in degrees (clamped near the poles)
+ *
+ * First-person "look": rotates the view direction about the *eye* (the camera's
+ * own position), keeping the eye fixed and swinging the target around it
+ * (immediate).  This is the opposite of orbit_drag / orbit_around_drag, which
+ * move the eye around a pivot — here you turn in place, like turning your head.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_spatial_camera_look_drag (LrgSpatialCamera *self,
+                                   gfloat            dyaw,
+                                   gfloat            dpitch);
+
+/**
  * lrg_spatial_camera_dolly_drag:
  * @self: a #LrgSpatialCamera
  * @factor: eye-to-target distance multiplier (<1 toward, >1 away)
