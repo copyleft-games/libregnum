@@ -435,3 +435,32 @@ lrg_input_action_get_value (LrgInputAction *self)
 
     return max_value;
 }
+
+gfloat
+lrg_input_action_get_axis (LrgInputAction *self)
+{
+    LrgInputActionPrivate *priv;
+    gfloat                 best = 0.0f;
+    guint                  i;
+
+    g_return_val_if_fail (LRG_IS_INPUT_ACTION (self), 0.0f);
+
+    priv = lrg_input_action_get_instance_private (self);
+
+    /* Signed counterpart of get_value(): keep the largest-magnitude binding
+       value WITH its sign, so one action reads a full bidirectional axis. */
+    for (i = 0; i < priv->bindings->len; i++)
+    {
+        LrgInputBinding *binding = g_ptr_array_index (priv->bindings, i);
+        gfloat           value = lrg_input_binding_get_axis_value (binding);
+        gfloat           mag = value < 0.0f ? -value : value;
+        gfloat           cur = best < 0.0f ? -best : best;
+
+        if (mag > cur)
+        {
+            best = value;
+        }
+    }
+
+    return best;
+}

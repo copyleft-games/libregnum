@@ -994,6 +994,39 @@ test_binding_display_string_axis (void)
     lrg_input_binding_free (binding);
 }
 
+/* Signed analog axis query (lrg_input_action_get_axis / lrg_input_map_get_axis):
+   headless (no gamepad) so the axis reads 0, but it exercises the API + the
+   no-crash path that the lrg 3D backend's gamepad camera driver relies on. */
+static void
+test_action_get_axis (void)
+{
+    g_autoptr(LrgInputAction) a = lrg_input_action_new ("orbit-x");
+    g_autoptr(LrgInputBinding) b =
+        lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_RIGHT_X,
+                                            0.1f, TRUE);
+
+    lrg_input_action_add_binding (a, b);
+    g_assert_cmpfloat_with_epsilon (lrg_input_action_get_axis (a), 0.0f, 0.0001f);
+}
+
+static void
+test_map_get_axis (void)
+{
+    g_autoptr(LrgInputMap) m = lrg_input_map_new ();
+    g_autoptr(LrgInputAction) a = lrg_input_action_new ("orbit-x");
+    g_autoptr(LrgInputBinding) b =
+        lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_RIGHT_X,
+                                            0.1f, TRUE);
+
+    lrg_input_action_add_binding (a, b);
+    lrg_input_map_add_action (m, a);
+    g_assert_cmpfloat_with_epsilon (lrg_input_map_get_axis (m, "orbit-x"),
+                                    0.0f, 0.0001f);
+    /* Unknown action -> 0.0, no crash. */
+    g_assert_cmpfloat_with_epsilon (lrg_input_map_get_axis (m, "nope"),
+                                    0.0f, 0.0001f);
+}
+
 /* ==========================================================================
  * Main
  * ========================================================================== */
@@ -1003,6 +1036,9 @@ main (int   argc,
       char *argv[])
 {
     g_test_init (&argc, &argv, NULL);
+
+    g_test_add_func ("/input/action/get-axis", test_action_get_axis);
+    g_test_add_func ("/input/map/get-axis", test_map_get_axis);
 
     /* Binding Tests */
     g_test_add_func ("/input/binding/new-keyboard", test_binding_new_keyboard);

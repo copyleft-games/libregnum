@@ -239,6 +239,27 @@ orbit_pose (LrgSpatialCamera *self,
 }
 
 void
+lrg_spatial_camera_dolly_drag (LrgSpatialCamera *self,
+                               gfloat            factor)
+{
+    gfloat px, py, pz, tx, ty, tz;
+    g_autoptr (LrgPose) p = NULL;
+
+    g_return_if_fail (LRG_IS_SPATIAL_CAMERA (self));
+    if (factor <= 0.0f)
+        return;
+
+    lrg_pose_get_position (self->current, &px, &py, &pz);
+    lrg_pose_get_target (self->current, &tx, &ty, &tz);
+    px = tx + (px - tx) * factor;
+    py = ty + (py - ty) * factor;
+    pz = tz + (pz - tz) * factor;
+    p = lrg_pose_new (px, py, pz, tx, ty, tz, 0.0f, 1.0f, 0.0f,
+                      lrg_pose_get_fovy (self->current));
+    lrg_spatial_camera_set_pose (self, p);
+}
+
+void
 lrg_spatial_camera_orbit (LrgSpatialCamera *self,
                           gfloat            dyaw,
                           gfloat            dpitch)

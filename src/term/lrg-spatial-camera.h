@@ -170,6 +170,21 @@ void lrg_spatial_camera_orbit_drag (LrgSpatialCamera *self,
                                     gfloat            dpitch);
 
 /**
+ * lrg_spatial_camera_dolly_drag:
+ * @self: a #LrgSpatialCamera
+ * @factor: eye-to-target distance multiplier (<1 toward, >1 away)
+ *
+ * Like lrg_spatial_camera_zoom() but applied to the current pose *immediately*
+ * (no easing), so it composes with the other immediate drag operations
+ * (orbit_drag / orbit_around_drag / pan_drag) within one frame.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_spatial_camera_dolly_drag (LrgSpatialCamera *self,
+                                    gfloat            factor);
+
+/**
  * lrg_spatial_camera_orbit_around_drag:
  * @self: a #LrgSpatialCamera
  * @px: pivot world x

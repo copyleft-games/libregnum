@@ -847,6 +847,24 @@ lrg_input_map_get_value (LrgInputMap *self,
     return lrg_input_action_get_value (action);
 }
 
+gfloat
+lrg_input_map_get_axis (LrgInputMap *self,
+                        const gchar *action_name)
+{
+    LrgInputAction *action;
+
+    g_return_val_if_fail (LRG_IS_INPUT_MAP (self), 0.0f);
+    g_return_val_if_fail (action_name != NULL, 0.0f);
+
+    action = lrg_input_map_get_action (self, action_name);
+    if (action == NULL)
+    {
+        return 0.0f;
+    }
+
+    return lrg_input_action_get_axis (action);
+}
+
 /* ==========================================================================
  * YAML Serialization
  * ========================================================================== */

@@ -181,4 +181,21 @@ gboolean lrg_input_action_is_released (LrgInputAction *self);
 LRG_AVAILABLE_IN_ALL
 gfloat lrg_input_action_get_value (LrgInputAction *self);
 
+/**
+ * lrg_input_action_get_axis:
+ * @self: an #LrgInputAction
+ *
+ * Gets the *signed* analog value of the binding with the largest magnitude
+ * (direction preserved), unlike lrg_input_action_get_value() which returns the
+ * absolute magnitude.  This is what analog controls (e.g. a camera orbited by a
+ * gamepad stick or a 6DOF axis) need: a single action can read a full bidirectional
+ * axis.  Digital bindings contribute +1.0 when down.
+ *
+ * Returns: the signed axis value (typically -1.0 to 1.0)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_input_action_get_axis (LrgInputAction *self);
+
 G_END_DECLS

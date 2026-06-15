@@ -194,6 +194,22 @@ LRG_AVAILABLE_IN_ALL
 gfloat lrg_input_map_get_value (LrgInputMap *self,
                                 const gchar *action_name);
 
+/**
+ * lrg_input_map_get_axis:
+ * @self: an #LrgInputMap
+ * @action_name: the action name
+ *
+ * Gets the *signed* analog axis value for an action (see
+ * lrg_input_action_get_axis()), or 0.0 if the action is not found.
+ *
+ * Returns: the signed axis value (typically -1.0 to 1.0)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_input_map_get_axis (LrgInputMap *self,
+                               const gchar *action_name);
+
 /* ==========================================================================
  * YAML Serialization
  * ========================================================================== */
