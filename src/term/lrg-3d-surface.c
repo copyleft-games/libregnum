@@ -206,9 +206,15 @@ render_scene (Lrg3DSurface *self)
 	if (self->environment != NULL)
 		lrg_panel_environment_draw_ambient (self->environment);
 
+	/* Panels are single planes; without this their back face is culled and a
+	   panel rotated away (or the camera swung behind it) vanishes.  Draw them
+	   double-sided so the back shows the front mirrored.  Restore culling after
+	   so the environment (next frame) is unaffected. */
+	grl_rlgl_disable_backface_culling ();
 	dim = grl_color_new (0, 0, 0, 255);
 	for (i = 0; i < self->panels->len; i++)
 		lrg_scene_panel_draw (g_ptr_array_index (self->panels, i), dim);
+	grl_rlgl_enable_backface_culling ();
 
 	lrg_spatial_camera_end (self->camera);
 
