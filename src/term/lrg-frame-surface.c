@@ -14,6 +14,9 @@ typedef struct
     gint          height;
     gfloat        scale;
     LrgRenderMode mode;
+    /* Pixel translation added to every primitive (see set_draw_offset). */
+    gint          ox;
+    gint          oy;
 } LrgFrameSurfacePrivate;
 
 G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (LrgFrameSurface, lrg_frame_surface, G_TYPE_OBJECT)
@@ -100,8 +103,9 @@ lrg_frame_surface_fill_rect (LrgFrameSurface *self,
 {
     g_return_if_fail (LRG_IS_FRAME_SURFACE (self));
     {
+        LrgFrameSurfacePrivate *priv = lrg_frame_surface_get_instance_private (self);
         SURFACE_VCALL (self, fill_rect);
-        klass->fill_rect (self, x, y, width, height, color);
+        klass->fill_rect (self, x + priv->ox, y + priv->oy, width, height, color);
     }
 }
 
@@ -116,8 +120,10 @@ lrg_frame_surface_draw_rect_outline (LrgFrameSurface *self,
 {
     g_return_if_fail (LRG_IS_FRAME_SURFACE (self));
     {
+        LrgFrameSurfacePrivate *priv = lrg_frame_surface_get_instance_private (self);
         SURFACE_VCALL (self, draw_rect_outline);
-        klass->draw_rect_outline (self, x, y, width, height, thickness, color);
+        klass->draw_rect_outline (self, x + priv->ox, y + priv->oy,
+                                  width, height, thickness, color);
     }
 }
 
@@ -132,8 +138,10 @@ lrg_frame_surface_draw_line (LrgFrameSurface *self,
 {
     g_return_if_fail (LRG_IS_FRAME_SURFACE (self));
     {
+        LrgFrameSurfacePrivate *priv = lrg_frame_surface_get_instance_private (self);
         SURFACE_VCALL (self, draw_line);
-        klass->draw_line (self, x1, y1, x2, y2, thickness, color);
+        klass->draw_line (self, x1 + priv->ox, y1 + priv->oy,
+                          x2 + priv->ox, y2 + priv->oy, thickness, color);
     }
 }
 
@@ -146,8 +154,9 @@ lrg_frame_surface_push_clip (LrgFrameSurface *self,
 {
     g_return_if_fail (LRG_IS_FRAME_SURFACE (self));
     {
+        LrgFrameSurfacePrivate *priv = lrg_frame_surface_get_instance_private (self);
         SURFACE_VCALL (self, push_clip);
-        klass->push_clip (self, x, y, width, height);
+        klass->push_clip (self, x + priv->ox, y + priv->oy, width, height);
     }
 }
 
@@ -171,8 +180,10 @@ lrg_frame_surface_draw_glyph (LrgFrameSurface   *self,
 {
     g_return_if_fail (LRG_IS_FRAME_SURFACE (self));
     {
+        LrgFrameSurfacePrivate *priv = lrg_frame_surface_get_instance_private (self);
         SURFACE_VCALL (self, draw_glyph);
-        klass->draw_glyph (self, atlas, key, x, y, fg);
+        klass->draw_glyph (self, atlas, key, x + (gfloat) priv->ox,
+                           y + (gfloat) priv->oy, fg);
     }
 }
 
@@ -188,9 +199,41 @@ lrg_frame_surface_draw_texture_region (LrgFrameSurface    *self,
 {
     g_return_if_fail (LRG_IS_FRAME_SURFACE (self));
     {
+        LrgFrameSurfacePrivate *priv = lrg_frame_surface_get_instance_private (self);
         SURFACE_VCALL (self, draw_texture_region);
-        klass->draw_texture_region (self, texture, src, dx, dy, dw, dh, tint);
+        klass->draw_texture_region (self, texture, src, dx + (gfloat) priv->ox,
+                                    dy + (gfloat) priv->oy, dw, dh, tint);
     }
+}
+
+void
+lrg_frame_surface_set_draw_offset (LrgFrameSurface *self,
+                                   gint             ox,
+                                   gint             oy)
+{
+    LrgFrameSurfacePrivate *priv;
+
+    g_return_if_fail (LRG_IS_FRAME_SURFACE (self));
+
+    priv = lrg_frame_surface_get_instance_private (self);
+    priv->ox = ox;
+    priv->oy = oy;
+}
+
+void
+lrg_frame_surface_get_draw_offset (LrgFrameSurface *self,
+                                   gint            *ox,
+                                   gint            *oy)
+{
+    LrgFrameSurfacePrivate *priv;
+
+    g_return_if_fail (LRG_IS_FRAME_SURFACE (self));
+
+    priv = lrg_frame_surface_get_instance_private (self);
+    if (ox != NULL)
+        *ox = priv->ox;
+    if (oy != NULL)
+        *oy = priv->oy;
 }
 
 gboolean
@@ -421,4 +464,6 @@ lrg_frame_surface_init (LrgFrameSurface *self)
     priv->height = 0;
     priv->scale = 1.0f;
     priv->mode = LRG_RENDER_MODE_2D;
+    priv->ox = 0;
+    priv->oy = 0;
 }

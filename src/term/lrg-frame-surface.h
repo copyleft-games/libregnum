@@ -187,6 +187,20 @@ void lrg_frame_surface_draw_texture_region (LrgFrameSurface    *self,
                                             gfloat              dh,
                                             const GrlColor     *tint);
 
+/* Draw offset.  A pixel translation added to every primitive (fill/outline/line/
+   clip/glyph/texture; NOT clear, which spans the whole surface).  Exposing one
+   frame's content while another's offset is set lands it at that offset -- this is
+   how the embedder composites a child frame (corfu popup, posframe, tooltip) as an
+   in-window overlay at its (left, top) without a second OS window.  Default 0. */
+LRG_AVAILABLE_IN_ALL
+void lrg_frame_surface_set_draw_offset (LrgFrameSurface *self,
+                                        gint             ox,
+                                        gint             oy);
+LRG_AVAILABLE_IN_ALL
+void lrg_frame_surface_get_draw_offset (LrgFrameSurface *self,
+                                        gint            *ox,
+                                        gint            *oy);
+
 /* Input projection */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_frame_surface_pick (LrgFrameSurface *self,

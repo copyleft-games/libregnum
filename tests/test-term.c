@@ -272,6 +272,67 @@ test_surface_upload_draw (void)
     g_clear_object (&atlas);
 }
 
+/* ------------------------------------------ surface draw offset (GL) ------- */
+
+static void
+test_frame_surface_draw_offset (void)
+{
+    g_autoptr(Lrg2DSurface) surface = NULL;
+    g_autoptr(GrlColor) bg = NULL;
+    g_autoptr(GrlColor) red = NULL;
+    LrgFrameSurface *fs;
+    gint ox = -1, oy = -1;
+    int i;
+
+    SKIP_IF_NO_DISPLAY ();
+
+    surface = lrg_2d_surface_new (200, 150, "test-term-offset");
+    if (lrg_2d_surface_get_window (surface) == NULL)
+    {
+        g_test_skip ("GrlWindow could not be created");
+        return;
+    }
+    fs = LRG_FRAME_SURFACE (surface);
+
+    /* Default offset is 0; set + read back. */
+    lrg_frame_surface_get_draw_offset (fs, &ox, &oy);
+    g_assert_cmpint (ox, ==, 0);
+    g_assert_cmpint (oy, ==, 0);
+    lrg_frame_surface_set_draw_offset (fs, 60, 50);
+    lrg_frame_surface_get_draw_offset (fs, &ox, &oy);
+    g_assert_cmpint (ox, ==, 60);
+    g_assert_cmpint (oy, ==, 50);
+
+    /* A fill at (0,0) lands at the offset (60,50), not the origin. */
+    bg = grl_color_new (10, 10, 10, 255);
+    red = grl_color_new (255, 0, 0, 255);
+    for (i = 0; i < 5; i++)
+    {
+        lrg_frame_surface_begin_frame (fs);
+        lrg_frame_surface_clear (fs, bg);
+        lrg_frame_surface_fill_rect (fs, 0, 0, 16, 16, red);
+
+        if (i == 4)
+        {
+            g_autoptr(GrlImage) shot = NULL;
+            g_autoptr(GrlColor) at_off = NULL;
+            g_autoptr(GrlColor) at_origin = NULL;
+
+            lrg_frame_surface_push_clip (fs, 0, 0, 200, 150);
+            lrg_frame_surface_pop_clip (fs);
+            shot = grl_image_new_from_screen ();
+            at_off = grl_image_get_pixel (shot, 68, 58);   /* inside (60,50)+rect */
+            at_origin = grl_image_get_pixel (shot, 4, 4);   /* un-offset corner */
+            g_assert_true (at_off->r > 180 && at_off->g < 80 && at_off->b < 80);
+            g_assert_false (at_origin->r > 180 && at_origin->g < 80
+                            && at_origin->b < 80);
+        }
+        lrg_frame_surface_end_frame (fs);
+    }
+
+    lrg_frame_surface_set_draw_offset (fs, 0, 0);
+}
+
 /* --------------------------------------------------- 3D mode enums (no GL) - */
 
 static void
@@ -633,6 +694,7 @@ main (int   argc,
     g_test_add_func ("/term/glyph-metrics", test_glyph_metrics);
     g_test_add_func ("/term/atlas-packing", test_atlas_packing);
     g_test_add_func ("/term/surface-upload-draw", test_surface_upload_draw);
+    g_test_add_func ("/term/surface-draw-offset", test_frame_surface_draw_offset);
     g_test_add_func ("/term/mode-enums", test_mode_enums);
     g_test_add_func ("/term/pose", test_pose);
     g_test_add_func ("/term/mode-registry", test_mode_registry);
