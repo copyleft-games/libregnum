@@ -1654,7 +1654,9 @@ $(OBJDIR)/src/graphics/lrg-camera2d.o: src/graphics/lrg-camera2d.c src/graphics/
 $(OBJDIR)/src/graphics/lrg-camera3d.o: src/graphics/lrg-camera3d.c src/graphics/lrg-camera3d.h src/graphics/lrg-camera.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
-	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+	@# raylib 6.0 raymath.h uses C99 for-loop declarations (e.g. MatrixDecompose);
+	@# this is the only TU that includes <raymath.h>, so build it as gnu99.
+	@$(CC) $(subst -std=gnu89,-std=gnu99,$(LIB_CFLAGS)) -c -o $@ $<
 
 $(OBJDIR)/src/graphics/lrg-camera-isometric.o: src/graphics/lrg-camera-isometric.c src/graphics/lrg-camera-isometric.h src/graphics/lrg-camera3d.h src/graphics/lrg-camera.h
 	@$(MKDIR_P) $(dir $@)
