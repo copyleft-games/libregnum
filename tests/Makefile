@@ -46,6 +46,9 @@ TEST_LIBS := -l$(LIB_NAME)
 TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 girepository-2.0)
 TEST_LIBS += $(PYTHON_LIBS) $(GJS_LIBS)
 TEST_LIBS += -lm
+# Link sanitizers into the test binaries when SANITIZE/ASAN/UBSAN is active
+# (SANITIZER_LIBS is empty for a normal build, so this is a no-op then).
+TEST_LIBS += $(SANITIZER_LIBS)
 
 # =============================================================================
 # Test Sources
@@ -162,11 +165,24 @@ endif
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))
 
+# Binaries to run under valgrind. The test-scripting* binaries dlopen CPython
+# and GJS, whose runtimes emit large benign leak footprints that drown the
+# signal, so they are excluded by default. Override with VALGRIND_TESTS to
+# run a custom set (e.g. VALGRIND_TESTS="$(TEST_BINARIES)" for everything).
+VALGRIND_BINARIES ?= $(filter-out $(TEST_BUILDDIR)/test-scripting%,$(TEST_BINARIES))
+
+# Binaries to run under ASan+UBSan (make test-sanitize / run-sanitize). The
+# test-scripting* binaries are excluded for the same reason as valgrind above
+# -- the dlopen'd CPython/GJS runtimes leak heavily (observed ~840 KB and
+# ~2.4 MB) and drown any real libregnum finding. Override with SANITIZE_TESTS
+# to run a custom set (e.g. SANITIZE_TESTS="$(TEST_BINARIES)" for everything).
+SANITIZE_BINARIES ?= $(filter-out $(TEST_BUILDDIR)/test-scripting%,$(TEST_BINARIES))
+
 # =============================================================================
 # Targets
 # =============================================================================
 
-.PHONY: all run clean
+.PHONY: all run run-sanitize run-valgrind clean
 
 all: $(TEST_BINARIES)
 
@@ -189,6 +205,60 @@ run: all
 		printf "\033[32m\033[1m==>\033[0m All tests passed!\n"; \
 	else \
 		printf "\033[31m\033[1mERROR:\033[0m Some tests failed!\n"; \
+		exit 1; \
+	fi
+
+# Run the suite under ASan+UBSan. Requires the library and tests to have
+# been built with SANITIZE=1 (the build/sanitize/ directory), which sets
+# G_SLICE=always-malloc + G_DEBUG=gc-friendly so GLib's slice allocator does
+# not hide individual allocations from the tools. The test-scripting* binaries
+# are excluded (see SANITIZE_BINARIES) and confirmed-benign leaks are filtered
+# via tests/lsan.supp (see LSAN_OPTIONS=suppressions= below). Note: leak
+# suppressions go in LSAN_OPTIONS (the `leak:` format), NOT ASAN_OPTIONS --
+# ASan's suppressions= only accepts interceptor types and rejects `leak:`.
+run-sanitize: all
+	$(call print_status,"Running tests under ASan+UBSan...")
+	@failed=0; \
+	for test in $(SANITIZE_BINARIES); do \
+		ASAN_OPTIONS="detect_leaks=1:abort_on_error=0:print_summary=1" \
+		LSAN_OPTIONS="suppressions=$(CURDIR)/lsan.supp" \
+		UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=0" \
+		G_SLICE=always-malloc \
+		G_DEBUG=gc-friendly \
+		LD_LIBRARY_PATH="$(MCP_LD_PATH)../$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
+		G_TEST_SRCDIR="$(shell pwd)" \
+		$$test --tap || failed=1; \
+	done; \
+	if [ $$failed -eq 0 ]; then \
+		printf "\033[32m\033[1m==>\033[0m All sanitized tests passed!\n"; \
+	else \
+		printf "\033[31m\033[1mERROR:\033[0m Some sanitized tests failed!\n"; \
+		exit 1; \
+	fi
+
+# Run the suite under valgrind. Expects a plain (non-sanitized) DEBUG=1
+# build -- ASan-instrumented binaries conflict with valgrind. The
+# test-scripting* binaries are excluded by default (see VALGRIND_BINARIES).
+run-valgrind: all
+	$(call print_status,"Running tests under valgrind...")
+	@command -v valgrind >/dev/null 2>&1 || { \
+		printf "\033[31m\033[1mERROR:\033[0m valgrind not found on PATH\n"; exit 1; }; \
+	failed=0; \
+	for test in $(VALGRIND_BINARIES); do \
+		printf "\n\033[1m==>\033[0m %s\n" "$$test"; \
+		G_SLICE=always-malloc \
+		G_DEBUG=gc-friendly \
+		LD_LIBRARY_PATH="$(MCP_LD_PATH)../$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
+		G_TEST_SRCDIR="$(shell pwd)" \
+		valgrind --error-exitcode=1 --leak-check=full \
+			--show-leak-kinds=definite --run-libc-freeres=yes --num-callers=30 \
+			--suppressions=$(CURDIR)/valgrind.supp \
+			$$test --tap || failed=1; \
+	done; \
+	if [ $$failed -eq 0 ]; then \
+		printf "\n\033[32m\033[1m==>\033[0m All valgrind runs clean!\n"; \
+	else \
+		printf "\n\033[31m\033[1mERROR:\033[0m valgrind reported errors or definite leaks!\n"; \
 		exit 1; \
 	fi
 

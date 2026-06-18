@@ -407,5 +407,5 @@ void log_event(const LrgUIEvent *event)
 :CUSTOM_ID: related
 :END:
 - [[file:widget.org][Widget]] - Widget event handling
-- [[../../../TODO][Canvas Documentation]] - Root container and event dispatch
+- Canvas Documentation - Root container and event dispatch (not yet written)
 - [[file:index.org][UI Module Overview]] - Complete UI documentation

@@ -341,4 +341,4 @@ my_minimal_game_configure (LrgGameTemplate *template)
 :CUSTOM_ID: related-documentation
 :END:
 - [[../templates/game-template.md][LrgGameTemplate]] - Full template reference
-- [[../README.md][Getting Started]] - Template system overview
+- [[../README.org][Getting Started]] - Template system overview

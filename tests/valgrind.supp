@@ -1,0 +1,42 @@
+# Valgrind suppressions for the libregnum test suite.
+#
+# This is a starter file. GLib/GObject one-time type-system and quark
+# allocations are a known source of "still reachable" / benign definite
+# leaks; those that surface repeatedly during real test runs should be
+# added here. Only suppress things confirmed to be tooling/library noise --
+# never suppress a real libregnum leak. See docs/building.org
+# "Testing & Memory Checking".
+#
+# Run a single binary to triage, e.g.:
+#   G_SLICE=always-malloc G_DEBUG=gc-friendly \
+#     valgrind --leak-check=full --show-leak-kinds=definite \
+#       --suppressions=tests/valgrind.supp build/debug/tests/test-registry --tap
+
+# GLib type registration: GType tables and class caches are allocated once
+# and intentionally kept for the process lifetime.
+{
+   glib-type-register-definite
+   Memcheck:Leak
+   match-leak-kinds: definite,possible
+   ...
+   fun:g_type_register_*
+   ...
+}
+{
+   glib-type-class-cache
+   Memcheck:Leak
+   match-leak-kinds: definite,possible
+   ...
+   fun:g_type_class_ref
+   ...
+}
+
+# GLib quark allocation: quarks are interned and live for the process.
+{
+   glib-quark-intern
+   Memcheck:Leak
+   match-leak-kinds: definite,possible
+   ...
+   fun:quark_*
+   ...
+}

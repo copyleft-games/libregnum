@@ -356,7 +356,7 @@ test_container_remove_child (ContainerFixture *fixture,
     GList              *children;
 
     child = lrg_label_new ("Test");
-    g_object_ref (child);
+    /* g_autoptr holds our reference; container add/remove take their own. */
 
     lrg_container_add_child (LRG_CONTAINER (fixture->container), LRG_WIDGET (child));
 

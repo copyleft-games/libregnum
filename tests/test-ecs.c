@@ -302,7 +302,7 @@ test_game_object_remove_component (GameObjectFixture *fixture,
     g_autoptr(MockComponent) component = NULL;
 
     component = mock_component_new ();
-    g_object_ref (component); /* Keep our own reference */
+    /* g_autoptr holds our reference; add/remove take their own. */
 
     lrg_game_object_add_component (fixture->object, LRG_COMPONENT (component));
     g_assert_cmpuint (lrg_game_object_get_component_count (fixture->object), ==, 1);
@@ -408,8 +408,7 @@ test_game_object_remove_all_components (GameObjectFixture *fixture,
 
     comp1 = mock_component_new ();
     comp2 = mock_component2_new ();
-    g_object_ref (comp1);
-    g_object_ref (comp2);
+    /* g_autoptr holds our references; add/remove take their own. */
 
     lrg_game_object_add_component (fixture->object, LRG_COMPONENT (comp1));
     lrg_game_object_add_component (fixture->object, LRG_COMPONENT (comp2));
@@ -459,7 +458,7 @@ test_world_remove_object (WorldFixture  *fixture,
     g_autoptr(LrgGameObject) object = NULL;
 
     object = lrg_game_object_new ();
-    g_object_ref (object);
+    /* g_autoptr holds our reference; world add/remove take their own. */
 
     lrg_world_add_object (fixture->world, object);
     g_assert_cmpuint (lrg_world_get_object_count (fixture->world), ==, 1);

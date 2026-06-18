@@ -1402,6 +1402,37 @@ else
 	$(call print_warning,"Tests disabled (BUILD_TESTS=0)")
 endif
 
+# Run the test suite under AddressSanitizer + UndefinedBehaviorSanitizer.
+# Builds into an isolated build/sanitize/ directory (SANITIZE=1 implies
+# DEBUG=1, ASAN=1, UBSAN=1), so a normal build/test run is unaffected and no
+# prior `make clean` is required.
+test-sanitize:
+ifeq ($(TARGET_PLATFORM),windows)
+	$(call print_warning,"Sanitized tests are not supported for Windows cross-compile.")
+else ifeq ($(BUILD_TESTS),1)
+	$(call print_status,"Building sanitized library (ASan+UBSan)...")
+	$(MAKE) SANITIZE=1 lib
+	$(call print_status,"Running tests under ASan+UBSan...")
+	@$(MAKE) -C tests SANITIZE=1 run-sanitize
+else
+	$(call print_warning,"Tests disabled (BUILD_TESTS=0)")
+endif
+
+# Run the test suite under valgrind. Builds a plain (non-instrumented) DEBUG=1
+# build, since ASan-instrumented binaries conflict with valgrind. The
+# test-scripting* binaries are excluded (see tests/Makefile VALGRIND_BINARIES).
+test-valgrind:
+ifeq ($(TARGET_PLATFORM),windows)
+	$(call print_warning,"Valgrind is not supported for Windows cross-compile.")
+else ifeq ($(BUILD_TESTS),1)
+	$(call print_status,"Building debug library for valgrind...")
+	$(MAKE) DEBUG=1 lib
+	$(call print_status,"Running tests under valgrind...")
+	@$(MAKE) -C tests DEBUG=1 run-valgrind
+else
+	$(call print_warning,"Tests disabled (BUILD_TESTS=0)")
+endif
+
 # =============================================================================
 # Examples
 # =============================================================================

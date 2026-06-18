@@ -59,7 +59,7 @@ sudo pacman -S \
 :CUSTOM_ID: getting-the-source
 :END:
 #+begin_src sh
-git clone https://github.com/example/libregnum.git
+git clone https://gitlab.com/copyleft-games/libregnum.git
 cd libregnum
 git submodule update --init --recursive
 #+end_src
@@ -102,6 +102,8 @@ Enables debug symbols (=-g3=) and disables optimization (=-O0=).
 | =make lib=       | Build library only              |
 | =make gir=       | Generate GIR files              |
 | =make test=      | Build and run tests             |
+| =make test-sanitize= | Run tests under ASan+UBSan (own build dir) |
+| =make test-valgrind= | Run tests under valgrind (excludes scripting tests) |
 | =make examples=  | Build examples                  |
 | =make docs=      | Build documentation             |
 | =make install=   | Install to PREFIX               |
@@ -146,7 +148,63 @@ BUILD_DOCS     := 0    # Build documentation
 #+begin_src makefile
 DEBUG := 0             # Set to 1 for debug build
 ENABLE_TRACE := 0      # Set to 1 for trace logging
+SANITIZE := 0          # Set to 1 for ASan+UBSan build (implies DEBUG=1;
+                       # builds into build/sanitize/ so it cannot collide
+                       # with a normal debug build)
+ASAN := 0              # AddressSanitizer (requires DEBUG=1)
+UBSAN := 0             # UndefinedBehaviorSanitizer (requires DEBUG=1)
 #+end_src
+
+*** Testing & Memory Checking
+:PROPERTIES:
+:CUSTOM_ID: testing-memory-checking
+:END:
+
+Beyond =make test=, two targets verify memory correctness across the test
+suite. Both set =G_SLICE=always-malloc= and =G_DEBUG=gc-friendly= at runtime
+so GLib's slice allocator does not hide individual allocations from the tools
+(=g_slice_*= is used across the codebase).
+
+**** =make test-sanitize=
+
+Builds the library and tests into an isolated =build/sanitize/= directory
+with =-fsanitize=address,undefined= (=SANITIZE=1= implies =DEBUG=1=,
+=ASAN=1=, =UBSAN=1=), runs the full suite with =detect_leaks=1=, and reports
+any ASan/UBSan finding. Because the output directory is separate, no prior
+=make clean= is needed and a normal =make test= run is unaffected.
+
+#+begin_src sh
+make test-sanitize
+#+end_src
+
+Confirmed-benign leaks (process-lifetime singletons such as
+=LrgCrashReporter=) are filtered via [[file:../tests/lsan.supp][tests/lsan.supp]],
+wired through =LSAN_OPTIONS=suppressions==. Leak suppressions go in
+=LSAN_OPTIONS= (the =leak:<regex>= format), *not* =ASAN_OPTIONS= -- ASan's
+=suppressions== accepts only interceptor types and rejects =leak:=. The
+=test-scripting*= binaries are excluded from the sanitize run by default
+(see =SANITIZE_BINARIES= in =tests/Makefile=) for the same reason as valgrind.
+
+**** =make test-valgrind=
+
+Builds a plain (non-instrumented) =DEBUG=1= build and runs the suite under
+=valgrind --leak-check=full= with the starter suppressions file
+[[file:../tests/valgrind.supp][tests/valgrind.supp]]. ASan and valgrind
+conflict, so this target does *not* use sanitizers.
+
+#+begin_src sh
+make test-valgrind
+#+end_src
+
+The five =test-scripting*= binaries are excluded from the valgrind run by
+default (see =VALGRIND_BINARIES= in =tests/Makefile=) because they =dlopen=
+CPython/GJS, whose runtimes emit large benign leak footprints. Override with
+=VALGRIND_TESTS=...= to run a custom set.
+
+Any ASan/UBSan report or valgrind "definite leak" is a *real* defect to file,
+not a tooling artifact. Only add a suppression to =tests/valgrind.supp= once
+the leak is confirmed to be benign library/tool noise; the starter file is
+expected to grow as real runs surface noise.
 
 ** Installation
 :PROPERTIES:

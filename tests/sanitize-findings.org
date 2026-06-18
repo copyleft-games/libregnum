@@ -1,0 +1,263 @@
+#+title: Libregnum sanitizer leak findings (LSan triage)
+#+options: toc:t
+
+This is the triage of the library-internal leaks ("D" items) surfaced by
+=make test-sanitize= after the test-code leaks (B), the crash-reporter
+singleton (C), and the =test-scripting*= runtime noise (A) were resolved /
+excluded. It exists to give each finding a home with a stack trace until the
+underlying library bug is fixed; each item is also filed as a vimban ticket.
+
+* How these were produced
+
+#+begin_src sh
+make test-sanitize        # builds into build/sanitize/, runs suite under ASan+UBSan+LSan
+#+end_src
+
+The run sets =G_SLICE=always-malloc= + =G_DEBUG=gc-friendly= so GLib's slice
+allocator does not hide allocations, =ASAN_OPTIONS=detect_leaks=1=, and
+=LSAN_OPTIONS=suppressions=tests/lsan.supp= (the crash-reporter singleton is
+suppressed there). =test-scripting*= are excluded (see =SANITIZE_BINARIES= in
+=tests/Makefile=). 0 ASan/UBSan memory-safety errors and 0 assertion failures
+across the suite; the only remaining failures are the direct leaks below.
+
+Each "root-cause frame" is the deepest application frame in the leak's stack
+-- the libregnum =src/= caller that triggered the allocation (yaml-glib and
+graylib frames above it are dependencies allocated on libregnum's behalf).
+Extracted with an awk pass over the LSan output grouping leak blocks by
+binary + caller frame.
+
+* Summary by binary
+
+| Binary                    | Bytes leaked | Allocs | Dominant root-cause frame                                          | Class        |
+|---------------------------+-------------+-------+-------------------------------------------------------------------+--------------|
+| test-input                |        6340 |   154 | =lrg_input_map_save_to_file= (src/input/lrg-input-map.c:1015-1157) | serialization |
+| test-save                 |       18023 |   469 | =lrg_save_manager_save= + =lrg_save_context_*= (src/save/)          | serialization |
+| test-quest                |          21 |     3 | =lrg_quest_log_start_quest= (src/quest/lrg-quest-log.c:314)        | strdup       |
+| test-debug                |        1984 |    42 | =lrg_debug_console_execute= (src/debug/lrg-debug-console.c:561)    | mixed        |
+| test-scene                |        7460 |   185 | =lrg_scene_serializer_save_to_data= (src/scene/lrg-scene-serializer.c:155) | serialization |
+| test-idle                 |          24 |     1 | =lrg_prestige_perform= (src/idle/lrg-prestige.c:584)               | single alloc |
+| test-building             |         693 |    15 | =lrg_building_def_new= (src/building/lrg-building-def.c:436)        | constructor  |
+| test-animation            |        5035 |    60 | =lrg_bone_new= (src/animation/lrg-bone.c:206)                      | object graph |
+| test-atlas                |       14517 |   400 | =*_save_to_file= (src/atlas/: sprite-sheet, texture-atlas, nine-slice) | serialization |
+| test-tutorial             |       10463 |   272 | =lrg_tutorial_save_to_file= (src/tutorial/lrg-tutorial.c:1369-1535) | serialization |
+| test-deckbuilder          |       44571 |   868 | =lrg_run_manager_start_run= (src/deckbuilder/lrg-run-manager.c:227) | object graph |
+| test-editor               |       71242 |  1826 | =lrg_level_serializer_save_to_data= (src/editor/lrg-level-serializer.c:861) | serialization |
+| test-template-engagement   |         392 |     7 | =TestDailyRewardsMock= teardown (tests/test-template-engagement.c:44) | test mock    |
+| test-template-idle        |         616 |    11 | template idle mock teardown (tests/test-template-idle.c)           | test mock    |
+
+* Common root cause
+
+The dominant theme is **serialization paths leak the YAML document/builder
+they construct.** =*_save_to_file= / =*_save_to_data= routines build a
+=YamlDocument= / =YamlBuilder= (or =LrgSaveContext= string tree) and return
+without unreffing the intermediate object(s). yaml-glib allocates on
+libregnum's behalf, so the leak is attributed to the libregnum caller.
+
+This is a single class of bug repeated across modules: input-map, save,
+scene, atlas, tutorial, editor, and (via the run/level object graphs)
+deckbuilder. Fixing the serialization helpers to =g_object_unref= / free
+their temporaries on every return path will clear the bulk of these.
+
+The two =test-template-*= items are different: 56-byte =datalist_append=
+(qdata) allocations that leak during =g_object_unref= of the *test's* mock
+objects (e.g. =TestDailyRewardsMock= at
+=tests/test-template-engagement.c:44=). These originate in the test mock's
+teardown, not the library, though they reflect how the engine's engagement /
+idle systems attach qdata to the mock. They are filed together as one
+test-mock ticket.
+
+* Per-binary detail
+
+All stack traces are application frames only (libc / glib / gobject frames
+elided). Full traces are in the =make test-sanitize= output.
+
+** test-input — 6340 B / 154 allocs
+
+=lrg_input_map_save_to_file= leaks the YAML builder / document / per-binding
+strings across the save path. Top sites by bytes:
+
+#+begin_example
+lrg_input_map_save_to_file src/input/lrg-input-map.c:1052   (1088 B / 5)
+lrg_input_map_save_to_file src/input/lrg-input-map.c:1017   ( 576 B / 11)
+lrg_input_map_save_to_file src/input/lrg-input-map.c:1015   ( 544 B / 10)
+lrg_input_map_save_to_file src/input/lrg-input-map.c:1030   ( 544 B / 5)
+lrg_input_map_save_to_file src/input/lrg-input-map.c:1058   ( 502 B / 7)
+lrg_input_map_save_to_file src/input/lrg-input-map.c:1157   ( 432 B / 8)
+... (sites span lines 1015-1157)
+#+end_example
+
+Representative trace (first block):
+
+#+begin_example
+#0 calloc                       (libasan)
+#1 g_malloc0                    (libglib)
+#2 g_type_create_instance       (libgobject)
+#3 g_object_new_internal        (libgobject)
+#4 g_object_new_with_properties (libgobject)
+#5 g_object_new                 (libgobject)
+#6 yaml_document_new_with_root  src/yaml-document.c:165
+#7 yaml_builder_get_document    src/yaml-builder.c:750
+#8 lrg_input_map_save_to_file   src/input/lrg-input-map.c:1157
+#9 test_map_save_load_roundtrip tests/test-input.c:559
+#+end_example
+
+** test-save — 18023 B / 469 allocs
+
+=lrg_save_manager_save= and the =lrg_save_context_*= helpers (sections,
+string/int/double/boolean writers, =to_string=) leak the built YAML tree.
+Top sites:
+
+#+begin_example
+lrg_save_manager_save          src/save/lrg-save-manager.c:502   (3481 B / 114)
+lrg_save_manager_save          src/save/lrg-save-manager.c:515   (2124 B / 54)
+lrg_save_manager_save          src/save/lrg-save-manager.c:480   (1632 B / 30)
+lrg_save_manager_save          src/save/lrg-save-manager.c:484   (1632 B / 30)
+lrg_save_manager_save          src/save/lrg-save-manager.c:500   (1632 B / 30)
+lrg_save_manager_save          src/save/lrg-save-manager.c:485   (1558 B / 42)
+lrg_save_context_begin_section src/save/lrg-save-context.c:285  ( 848 B / 16)
+lrg_save_context_new_for_save  src/save/lrg-save-context.c:102   ( 816 B / 15)
+lrg_save_context_to_string     src/save/lrg-save-context.c:701   ( 648 B / 12)
+lrg_save_context_write_string  src/save/lrg-save-context.c:405  ( 483 B / 13)
+lrg_save_context_end_section   src/save/lrg-save-context.c:303  ( 468 B / 15)
+#+end_example
+
+** test-quest — 21 B / 3 allocs
+
+=lrg_quest_log_start_quest= strdup's the quest id and does not free it on
+the start path (3 starts × ~7 B). (A separate completion-path bug --
+=g_hash_table_steal= orphaning the active-quests key in
+=on_quest_state_changed= -- was identified during triage but is not
+exercised by the current test.)
+
+#+begin_example
+lrg_quest_log_start_quest src/quest/lrg-quest-log.c:314   (21 B / 3)
+#+end_example
+
+** test-debug — 1984 B / 42 allocs
+
+Mixed: =lrg_debug_console_execute= leaks command-result allocations; the
+console test also builds game objects whose =lrg_sprite_component_new= /
+=lrg_game_object_add_component= paths leak.
+
+#+begin_example
+lrg_sprite_component_new     src/ecs/components/lrg-sprite-component.c:198 (576 B / 1)
+lrg_debug_console_execute    src/debug/lrg-debug-console.c:561             (256 B / 2)
+lrg_game_object_add_component src/ecs/lrg-game-object.c:194               (192 B / 1)
+#+end_example
+
+** test-scene — 7460 B / 185 allocs
+
+Single dominant site: =lrg_scene_serializer_save_to_data= leaks the entire
+serialized document. This is the scaffolded scene-serializer base class
+noted in =CLAUDE.md= as still having =not yet implemented= paths.
+
+#+begin_example
+lrg_scene_serializer_save_to_data src/scene/lrg-scene-serializer.c:155  (7460 B / 181)
+#+end_example
+
+** test-idle — 24 B / 1 alloc
+
+Single allocation in =lrg_prestige_perform=.
+
+#+begin_example
+lrg_prestige_perform src/idle/lrg-prestige.c:584  (24 B / 1)
+#+end_example
+
+** test-building — 693 B / 15 allocs
+
+#+begin_example
+lrg_building_def_new        src/building/lrg-building-def.c:436       (437 B / 9)
+lrg_placement_system_confirm src/building/lrg-placement-system.c:579  (248 B / 4)
+#+end_example
+
+** test-animation — 5035 B / 60 allocs
+
+=lrg_bone_new= dominates (4425 B / 8 blocks) -- a bone hierarchy is built
+and not freed; =lrg_animation_state_new= adds 610 B / 4.
+
+#+begin_example
+lrg_bone_new              src/animation/lrg-bone.c:206              (4425 B / 8)
+lrg_animation_state_new  src/animation/lrg-animation-state.c:297   ( 610 B / 4)
+#+end_example
+
+** test-atlas — 14517 B / 400 allocs
+
+Serialization leak across three atlas save functions:
+
+#+begin_example
+lrg_sprite_sheet_save_to_file  src/atlas/lrg-sprite-sheet.c:1335-1446   (many sites)
+lrg_texture_atlas_save_to_file src/atlas/lrg-texture-atlas.c:768-822    (many sites)
+lrg_nine_slice_save_to_file     src/atlas/lrg-nine-slice.c:1069-1133     (many sites)
+#+end_example
+
+** test-tutorial — 10463 B / 272 allocs
+
+=lrg_tutorial_save_to_file= leaks the built YAML document; sites span lines
+1369-1535. (Two LSan SUMMARY blocks for this binary: 10455 B / 270 and 8 B /
+2.)
+
+#+begin_example
+lrg_tutorial_save_to_file src/tutorial/lrg-tutorial.c:1506  (1584 B / 8)
+lrg_tutorial_save_to_file src/tutorial/lrg-tutorial.c:1503  (1520 B / 7)
+lrg_tutorial_save_to_file src/tutorial/lrg-tutorial.c:1403  (1200 B / 4)
+... (sites span 1369-1535)
+#+end_example
+
+** test-deckbuilder — 44571 B / 868 allocs
+
+=lrg_run_manager_start_run= dominates (41959 B / 60 blocks) -- a full run
+object graph is allocated and never released. The rest is the run's
+constituent objects:
+
+#+begin_example
+lrg_run_manager_start_run         src/deckbuilder/lrg-run-manager.c:227         (41959 B / 60)
+lrg_enemy_instance_new            src/deckbuilder/lrg-enemy-instance.c:673     ( 1249 B / 24)
+lrg_enemy_def_new                 src/deckbuilder/lrg-enemy-def.c:395           (  400 B / 12)
+lrg_card_def_new                  src/deckbuilder/lrg-card-def.c:727           (  573 B / 4)
+lrg_deck_instance_setup           src/deckbuilder/lrg-deck-instance.c:675      (  192 B / 3)
+lrg_deckbuilder_manager_end_run   src/deckbuilder/lrg-deckbuilder-manager.c:651 (   48 B / 2)
+#+end_example
+
+** test-editor — 71242 B / 1826 allocs
+
+Editor serialization leaks; =lrg_level_serializer_save_to_data= is by far
+the largest single site in the whole triage (49434 B / 1064 blocks).
+
+#+begin_example
+lrg_level_serializer_save_to_data src/editor/lrg-level-serializer.c:861  (49434 B / 1064)
+lrg_level_serializer_save_to_file src/editor/lrg-level-serializer.c:838 (12133 B / 309)
+lrg_prefab_save                  src/editor/lrg-prefab.c:184              ( 4474 B / 117)
+lrg_editor_save_level            src/editor/lrg-editor.c:169             ( 3717 B / 95)
+lrg_project_save                 src/editor/lrg-project.c:145-160        (  ~1.3 KB / ~30)
+#+end_example
+
+** test-template-engagement + test-template-idle — 1008 B / 18 allocs (filed as one ticket)
+
+These are 56-byte =datalist_append= (qdata) allocations that leak during
+=g_object_unref= of the *test's* mock objects, not the library. They reflect
+qdata the engine's engagement / idle systems attach to the mock that is not
+cleared on teardown. Representative trace (test-template-engagement):
+
+#+begin_example
+#0 malloc                        (libasan)
+#1 g_malloc                      (libglib)
+#2 datalist_append               (libglib)
+#3 g_datalist_id_update_atomic   (libglib)
+#4 g_object_unref                (libgobject)
+#5 glib_autoptr_clear_GObject     (gobject-autocleanups.h:31)
+#6 glib_autoptr_clear_TestDailyRewardsMock  tests/test-template-engagement.c:44
+#7 glib_autoptr_cleanup_TestDailyRewardsMock tests/test-template-engagement.c:44
+#8 test_daily_rewards_streak_bonus tests/test-template-engagement.c:643
+#+end_example
+
+* Resolution status
+
+- [X] A — =test-scripting*= excluded from =run-sanitize= (CPython/GJS runtime
+      noise; see =SANITIZE_BINARIES= in =tests/Makefile=).
+- [X] B — clear test-code leaks fixed: =test-data-loader= (orphaned
+      =write_test_file= paths), =test-ecs= and =test-ui= (spurious
+      =g_object_ref= pinning objects past =g_autoptr= cleanup).
+- [X] C — =LrgCrashReporter= process-lifetime singleton suppressed in
+      =tests/lsan.supp=.
+- [ ] D — the 13 items above, each filed as a vimban bug ticket. Until they
+      are fixed, =make test-sanitize= exits nonzero solely because of these.

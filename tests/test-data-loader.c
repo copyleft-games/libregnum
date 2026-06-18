@@ -454,15 +454,16 @@ test_data_loader_load_directory (LoaderFixture *fixture,
     GList            *objects;
     guint             count;
 
-    /* Create multiple test files */
-    write_test_file (fixture, "entity1.yaml",
-                     "type: entity\nname: \"Entity1\"\nhealth: 100\n");
-    write_test_file (fixture, "entity2.yaml",
-                     "type: entity\nname: \"Entity2\"\nhealth: 200\n");
-    write_test_file (fixture, "entity3.yml",
-                     "type: entity\nname: \"Entity3\"\nhealth: 300\n");
+    /* Create multiple test files.  write_test_file returns the built path
+     * (transfer full); we only need the file on disk, so free the path. */
+    g_free (write_test_file (fixture, "entity1.yaml",
+                             "type: entity\nname: \"Entity1\"\nhealth: 100\n"));
+    g_free (write_test_file (fixture, "entity2.yaml",
+                             "type: entity\nname: \"Entity2\"\nhealth: 200\n"));
+    g_free (write_test_file (fixture, "entity3.yml",
+                             "type: entity\nname: \"Entity3\"\nhealth: 300\n"));
     /* Non-YAML file should be ignored */
-    write_test_file (fixture, "readme.txt", "This should be ignored");
+    g_free (write_test_file (fixture, "readme.txt", "This should be ignored"));
 
     objects = lrg_data_loader_load_directory (fixture->loader,
                                               fixture->test_dir,

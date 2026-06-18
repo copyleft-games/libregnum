@@ -101,6 +101,11 @@ ASAN ?= 0
 # Enable UndefinedBehaviorSanitizer (requires DEBUG=1)
 UBSAN ?= 0
 
+# Convenience flag: SANITIZE=1 implies DEBUG=1, ASAN=1, UBSAN=1 and builds
+# into a separate build/sanitize/ directory so sanitized objects never collide
+# with a normal debug build (avoids stale-object mis-links).
+SANITIZE ?= 0
+
 # Enable trace logging at compile time
 ENABLE_TRACE ?= 0
 
@@ -355,7 +360,13 @@ PC_FILE := libregnum-$(API_VERSION).pc
 # Build Directories
 # =============================================================================
 
-ifeq ($(DEBUG),1)
+ifeq ($(SANITIZE),1)
+    # Sanitized build: implies debug + both sanitizers, isolated output dir.
+    DEBUG := 1
+    ASAN := 1
+    UBSAN := 1
+    BUILDDIR := build/sanitize
+else ifeq ($(DEBUG),1)
     BUILDDIR := build/debug
 else
     BUILDDIR := build/release

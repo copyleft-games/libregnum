@@ -13,7 +13,7 @@ libregnum/
 ├── config.mk                 # Build configuration
 ├── rules.mk                  # Build rules and helpers
 ├── libregnum.pc.in           # pkg-config template
-├── README.md                 # Build instructions
+├── README.org                # Build instructions
 ├── CLAUDE.md                 # This file (AI context)
 ├── ROADMAP.md                # Development history and feature planning
 ├── deps/
@@ -832,6 +832,22 @@ level_is_demo_content (LrgDemoGatable *gatable)
 
 ## Testing
 
+Tests use GLib testing framework. For memory-correctness verification, two
+targets automate detection across the 85-file test suite:
+
+- `make test-sanitize` builds + runs under ASan+UBSan, isolated in
+  `build/sanitize/` (sets `G_SLICE=always-malloc` + `G_DEBUG=gc-friendly` and
+  `detect_leaks=1`). The separate build dir means no `make clean` is needed
+  and a normal `make test` run is unaffected.
+- `make test-valgrind` runs the suite under valgrind `--leak-check=full`
+  against a plain (non-instrumented) debug build, using
+  `tests/valgrind.supp`. It excludes the `test-scripting*` binaries, which
+  `dlopen` CPython/GJS and emit benign leak noise.
+
+Any ASan/UBSan report or valgrind "definite leak" is a real defect — file it;
+do not add a suppression to `tests/valgrind.supp` unless confirmed benign.
+See `docs/building.org` § "Testing & Memory Checking".
+
 Tests use GLib testing framework:
 
 ```c
@@ -1153,7 +1169,13 @@ struct _LrgGame2DTemplateClass
 
 ## Implementation Status
 
-The library is feature-complete and ready for commercial game development.
+The library's core systems are implemented and the public API surface is
+broad (see the module inventory above). A number of subsystems are still
+scaffolded with `not yet implemented` paths — notably the MCP save/ECS/debug
+tools, the scene-serializer base class, the Steam integration (currently a
+no-op stub), VR frame submission, and Windows signal-based crash handling.
+Treat the implementation-status checklist below as "API present," not
+"production-hardened," and verify any subsystem you depend on.
 
 ### Library Statistics
 
