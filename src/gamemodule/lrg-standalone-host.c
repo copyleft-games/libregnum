@@ -158,6 +158,24 @@ lrg_standalone_host_init (LrgStandaloneHost *self)
     self->started = FALSE;
 }
 
+gboolean
+lrg_standalone_host_fullscreen_target (LrgFullscreenMode  mode,
+                                       gint               monitor_width,
+                                       gint               monitor_height,
+                                       gint              *out_width,
+                                       gint              *out_height)
+{
+    if (mode != LRG_FULLSCREEN_FULLSCREEN
+        || monitor_width <= 0 || monitor_height <= 0)
+        return FALSE;
+
+    if (out_width != NULL)
+        *out_width = monitor_width;
+    if (out_height != NULL)
+        *out_height = monitor_height;
+    return TRUE;
+}
+
 LrgStandaloneHost *
 lrg_standalone_host_new (LrgGameTemplate  *game,
                          GError          **error)
@@ -230,7 +248,19 @@ lrg_standalone_host_new (LrgGameTemplate  *game,
     grl_window_set_min_size (raw_window, min_width, min_height);
 
     if (fullscreen_mode == LRG_FULLSCREEN_FULLSCREEN)
+    {
+        /* Size the window to the monitor BEFORE toggling fullscreen. raylib's
+         * fullscreen toggle keeps the current framebuffer size, so without this
+         * the scene renders into a small rectangle in the corner of the screen. */
+        gint mon = grl_window_get_current_monitor (raw_window);
+        gint fw = 0, fh = 0;
+        if (lrg_standalone_host_fullscreen_target (
+                fullscreen_mode,
+                grl_window_get_monitor_width (raw_window, mon),
+                grl_window_get_monitor_height (raw_window, mon), &fw, &fh))
+            grl_window_set_size (raw_window, fw, fh);
         lrg_grl_window_toggle_fullscreen (grl_win);
+    }
     else if (fullscreen_mode == LRG_FULLSCREEN_BORDERLESS)
         grl_window_toggle_borderless (raw_window);
 

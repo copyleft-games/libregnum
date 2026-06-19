@@ -509,8 +509,15 @@ gint
 lrg_window_get_width (LrgWindow *self)
 {
 	LrgWindowPrivate *priv;
+	LrgWindowClass   *klass;
 
 	g_return_val_if_fail (LRG_IS_WINDOW (self), 0);
+
+	/* Prefer the backend's live size (changes on resize/fullscreen); fall back
+	 * to the stored constructed size for windows that do not override it. */
+	klass = LRG_WINDOW_GET_CLASS (self);
+	if (klass->get_width != NULL)
+		return klass->get_width (self);
 
 	priv = lrg_window_get_instance_private (self);
 	return priv->width;
@@ -520,8 +527,13 @@ gint
 lrg_window_get_height (LrgWindow *self)
 {
 	LrgWindowPrivate *priv;
+	LrgWindowClass   *klass;
 
 	g_return_val_if_fail (LRG_IS_WINDOW (self), 0);
+
+	klass = LRG_WINDOW_GET_CLASS (self);
+	if (klass->get_height != NULL)
+		return klass->get_height (self);
 
 	priv = lrg_window_get_instance_private (self);
 	return priv->height;

@@ -119,6 +119,34 @@ lrg_grl_window_get_fps_impl (LrgWindow *window)
 	return grl_window_get_fps (self->grl_window);
 }
 
+/* Report the LIVE framebuffer size so callers see resizes and fullscreen, not
+ * the size the window was constructed with. */
+static gint
+lrg_grl_window_get_width_impl (LrgWindow *window)
+{
+	LrgGrlWindow *self = LRG_GRL_WINDOW (window);
+	gint          w = 0;
+
+	if (self->grl_window != NULL)
+		return grl_window_get_width (self->grl_window);
+
+	g_object_get (window, "width", &w, NULL);
+	return w;
+}
+
+static gint
+lrg_grl_window_get_height_impl (LrgWindow *window)
+{
+	LrgGrlWindow *self = LRG_GRL_WINDOW (window);
+	gint          h = 0;
+
+	if (self->grl_window != NULL)
+		return grl_window_get_height (self->grl_window);
+
+	g_object_get (window, "height", &h, NULL);
+	return h;
+}
+
 static void
 lrg_grl_window_clear (LrgWindow *window,
                       GrlColor  *color)
@@ -162,9 +190,10 @@ lrg_grl_window_constructed (GObject *object)
 
 	G_OBJECT_CLASS (lrg_grl_window_parent_class)->constructed (object);
 
-	/* Get properties from parent class */
-	width = lrg_window_get_width (LRG_WINDOW (self));
-	height = lrg_window_get_height (LRG_WINDOW (self));
+	/* Get properties from parent class. Read the configured size from the
+	 * properties directly: lrg_window_get_width/height now report the *live*
+	 * GrlWindow size, which does not exist yet at construction time. */
+	g_object_get (self, "width", &width, "height", &height, NULL);
 	title = lrg_window_get_title (LRG_WINDOW (self));
 	target_fps = lrg_window_get_target_fps (LRG_WINDOW (self));
 
@@ -242,6 +271,8 @@ lrg_grl_window_class_init (LrgGrlWindowClass *klass)
 	window_class->poll_input = lrg_grl_window_poll_input;
 	window_class->get_frame_time = lrg_grl_window_get_frame_time_impl;
 	window_class->get_fps = lrg_grl_window_get_fps_impl;
+	window_class->get_width = lrg_grl_window_get_width_impl;
+	window_class->get_height = lrg_grl_window_get_height_impl;
 	window_class->clear = lrg_grl_window_clear;
 	window_class->show = lrg_grl_window_show;
 	window_class->hide = lrg_grl_window_hide;

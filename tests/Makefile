@@ -132,6 +132,7 @@ TEST_SOURCES := \
 	test-game-module.c \
 	test-configurable.c \
 	test-lrgldr.c \
+	test-standalone-host.c \
 	test-editor.c \
 	test-gif-recorder.c \
 	test-text-baker.c \

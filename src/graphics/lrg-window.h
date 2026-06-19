@@ -67,8 +67,14 @@ struct _LrgWindowClass
 	void      (*show)             (LrgWindow *self);
 	void      (*hide)             (LrgWindow *self);
 
+	/* Live dimensions. The default returns the stored (constructed) size;
+	 * backends that own a real window (e.g. LrgGrlWindow) override these to
+	 * report the actual framebuffer size, which changes on resize/fullscreen. */
+	gint      (*get_width)        (LrgWindow *self);
+	gint      (*get_height)       (LrgWindow *self);
+
 	/*< private >*/
-	gpointer _reserved[8];
+	gpointer _reserved[6];
 };
 
 /* ==========================================================================
