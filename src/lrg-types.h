@@ -1223,6 +1223,10 @@ typedef struct _LrgStandaloneHost    LrgStandaloneHost;
 /* LrgLoadedGame is a final type - no Class forward declaration needed */
 typedef struct _LrgLoadedGame        LrgLoadedGame;
 
+/* LrgConfigurable is an interface */
+typedef struct _LrgConfigurable          LrgConfigurable;
+typedef struct _LrgConfigurableInterface LrgConfigurableInterface;
+
 /* ==========================================================================
  * Editor / Level Module
  * ========================================================================== */

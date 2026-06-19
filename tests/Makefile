@@ -130,6 +130,8 @@ TEST_SOURCES := \
 	test-template-deckbuilder.c \
 	test-chart.c \
 	test-game-module.c \
+	test-configurable.c \
+	test-lrgldr.c \
 	test-editor.c \
 	test-gif-recorder.c \
 	test-text-baker.c \
@@ -164,6 +166,19 @@ endif
 
 # Test executables
 TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))
+
+# The lrgldr loader binary (built by the root) and the fixture game module used
+# by test-lrgldr. Their absolute paths are baked into the test at compile time.
+LRGLDR_BIN     := $(abspath ../$(BUILDDIR)/lrgldr$(EXE_EXT))
+FIXTURE_SO     := $(TEST_BUILDDIR)/test-args-module.so
+FIXTURE_SO_ABS := $(abspath $(FIXTURE_SO))
+
+# Flags for the fixture module: a libregnum *consumer* (no LIBREGNUM_COMPILATION),
+# built as a position-independent shared object whose lrg_*/g_* symbols resolve
+# from the host (lrgldr) at load time.
+FIXTURE_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -fPIC -I../src -DLRG_GAME_BUILD_MODULE=1
+FIXTURE_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 libdex-1 json-glib-1.0 girepository-2.0)
+FIXTURE_CFLAGS += -I$(GRAYLIB_DIR)/src -I$(GRAYLIB_DIR)/deps/raylib/src -I$(YAMLGLIB_DIR)/src
 
 # Binaries to run under valgrind. The test-scripting* binaries dlopen CPython
 # and GJS, whose runtimes emit large benign leak footprints that drown the
@@ -267,11 +282,30 @@ $(TEST_BUILDDIR)/test-%: test-%.c | $(TEST_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
 
+# Build lrgldr by recursing into the root (it links the shared library).
+.PHONY: $(LRGLDR_BIN)
+$(LRGLDR_BIN):
+	@$(MAKE) -C .. lrgldr
+
+# Fixture game module (.so) loaded by the lrgldr subprocess test.
+$(FIXTURE_SO): fixtures/test-args-module.c | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(FIXTURE_CFLAGS) -shared -o $@ $<
+
+# test-lrgldr needs the loader binary and the fixture module, and has their
+# absolute paths baked in (so it can spawn/load them regardless of CWD).
+$(TEST_BUILDDIR)/test-lrgldr: test-lrgldr.c $(LRGLDR_BIN) $(FIXTURE_SO) | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(TEST_CFLAGS) \
+		-DLRGLDR_BIN_PATH='"$(LRGLDR_BIN)"' \
+		-DTEST_ARGS_MODULE_PATH='"$(FIXTURE_SO_ABS)"' \
+		-o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
+
 # Create test build directory
 $(TEST_BUILDDIR):
 	@$(MKDIR_P) $@
 
 clean:
 	$(call print_status,"Cleaning test artifacts...")
-	$(RM) $(TEST_BINARIES)
+	$(RM) $(TEST_BINARIES) $(FIXTURE_SO)
 	@if [ -d "$(TEST_BUILDDIR)" ]; then rmdir --ignore-fail-on-non-empty "$(TEST_BUILDDIR)"; fi

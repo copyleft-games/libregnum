@@ -235,6 +235,7 @@
 #include "mod/lrg-providers.h"
 
 /* Game module - host abstraction, loader, and the dual-target entry macro */
+#include "gamemodule/lrg-configurable.h"
 #include "gamemodule/lrg-game-host.h"
 #include "gamemodule/lrg-standalone-host.h"
 #include "gamemodule/lrg-loaded-game.h"

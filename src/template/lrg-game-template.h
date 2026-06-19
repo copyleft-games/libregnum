@@ -60,6 +60,7 @@ G_DECLARE_DERIVABLE_TYPE (LrgGameTemplate, lrg_game_template, LRG, GAME_TEMPLATE
  * @on_auto_save: Called when auto-save triggers
  * @on_save_completed: Called after save completes
  * @register_types: Register custom types with registry
+ * @apply_args: Apply a CLI-style argument vector (#LrgConfigurable)
  *
  * The virtual function table for #LrgGameTemplate.
  * Override these methods to customize game behavior.
@@ -127,8 +128,15 @@ struct _LrgGameTemplateClass
     void (*register_types) (LrgGameTemplate *self,
                             LrgRegistry     *registry);
 
+    /* Configuration from a CLI-style argument vector. Bridged from the
+     * #LrgConfigurable interface; override to let a loader/host configure the
+     * game from `argv` (e.g. arguments forwarded after `--` by lrgldr). */
+    gboolean (*apply_args) (LrgGameTemplate    *self,
+                            const gchar *const *argv,
+                            GError            **error);
+
     /*< private >*/
-    gpointer _reserved[12];
+    gpointer _reserved[11];
 };
 
 /* ==========================================================================
@@ -189,6 +197,46 @@ gint
 lrg_game_run_standalone (LrgGameTemplate *self,
                          int              argc,
                          char           **argv);
+
+/**
+ * lrg_game_template_apply_args:
+ * @self: an #LrgGameTemplate
+ * @argv: (array zero-terminated=1) (element-type utf8): a %NULL-terminated,
+ *   `main()`-style argument vector (element 0 is the program name)
+ * @error: (nullable): return location for an error
+ *
+ * Applies a CLI-style argument vector to @self by invoking the @apply_args
+ * class vfunc, then (on success) emits #LrgGameTemplate::args-applied. This is
+ * the same path #LrgConfigurable and lrg_game_run_standalone() use. The base
+ * implementation accepts any arguments as a no-op; subclasses override
+ * @apply_args to actually consume them.
+ *
+ * Returns: %TRUE on success, %FALSE (with @error set) on a parse/validation
+ *   failure.
+ *
+ * Since: 0.2
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_game_template_apply_args (LrgGameTemplate    *self,
+                             const gchar *const *argv,
+                             GError            **error);
+
+/**
+ * lrg_game_template_get_applied_args:
+ * @self: an #LrgGameTemplate
+ *
+ * Gets the most recent argument vector successfully applied via
+ * lrg_game_template_apply_args() (or %NULL if none).
+ *
+ * Returns: (transfer none) (nullable) (array zero-terminated=1) (element-type utf8):
+ *   the applied argument vector, owned by @self.
+ *
+ * Since: 0.2
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * const *
+lrg_game_template_get_applied_args (LrgGameTemplate *self);
 
 /* ==========================================================================
  * Host-Driven Lifecycle

@@ -25,6 +25,7 @@
 #include "../postprocess/effects/lrg-screen-shake.h"
 #include "../graphics/lrg-grl-window.h"
 #include "../graphics/lrg-window.h"
+#include "../gamemodule/lrg-configurable.h"
 #include "../gamemodule/lrg-game-host.h"
 #include "../gamemodule/lrg-standalone-host.h"
 
@@ -96,12 +97,18 @@ static GParamSpec *properties[N_PROPS];
 enum
 {
     SIGNAL_WINDOW_SIZE_CHANGED,
+    SIGNAL_ARGS_APPLIED,
     N_SIGNALS
 };
 
 static guint signals[N_SIGNALS];
 
-G_DEFINE_TYPE_WITH_PRIVATE (LrgGameTemplate, lrg_game_template, G_TYPE_OBJECT)
+static void lrg_game_template_configurable_init (LrgConfigurableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgGameTemplate, lrg_game_template, G_TYPE_OBJECT,
+                         G_ADD_PRIVATE (LrgGameTemplate)
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_CONFIGURABLE,
+                                                lrg_game_template_configurable_init))
 
 /* ========================================================================== */
 /* Error Quark                                                                */
@@ -545,6 +552,49 @@ lrg_game_template_real_post_startup (LrgGameTemplate *self)
     /* Default: do nothing */
 }
 
+static gboolean
+lrg_game_template_real_apply_args (LrgGameTemplate    *self,
+                                   const gchar *const *argv,
+                                   GError            **error)
+{
+    /* Default: accept any arguments as a no-op. Subclasses override to parse. */
+    (void) self;
+    (void) argv;
+    (void) error;
+    return TRUE;
+}
+
+/* ========================================================================== */
+/* LrgConfigurable interface                                                  */
+/* ========================================================================== */
+
+static gboolean
+lrg_game_template_configurable_apply_args (LrgConfigurable    *configurable,
+                                           const gchar *const *argv,
+                                           GError            **error)
+{
+    LrgGameTemplate        *self = LRG_GAME_TEMPLATE (configurable);
+    LrgGameTemplatePrivate *priv = lrg_game_template_get_instance_private (self);
+    LrgGameTemplateClass   *klass = LRG_GAME_TEMPLATE_GET_CLASS (self);
+
+    if (klass->apply_args != NULL &&
+        !klass->apply_args (self, argv, error))
+        return FALSE;
+
+    /* Remember what was applied and notify observers. */
+    g_clear_pointer (&priv->applied_args, g_strfreev);
+    priv->applied_args = g_strdupv ((gchar **) argv);
+    g_signal_emit (self, signals[SIGNAL_ARGS_APPLIED], 0, priv->applied_args);
+
+    return TRUE;
+}
+
+static void
+lrg_game_template_configurable_init (LrgConfigurableInterface *iface)
+{
+    iface->apply_args = lrg_game_template_configurable_apply_args;
+}
+
 static void
 lrg_game_template_real_shutdown (LrgGameTemplate *self)
 {
@@ -718,6 +768,7 @@ lrg_game_template_finalize (GObject *object)
     g_clear_pointer (&priv->title, g_free);
     g_clear_pointer (&priv->app_id, g_free);
     g_clear_pointer (&priv->base_font_path, g_free);
+    g_clear_pointer (&priv->applied_args, g_strfreev);
 
     /* Free GBoxed types */
     g_clear_pointer (&priv->background_color, grl_color_free);
@@ -1050,6 +1101,7 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
     klass->on_auto_save = lrg_game_template_real_on_auto_save;
     klass->on_save_completed = lrg_game_template_real_on_save_completed;
     klass->register_types = lrg_game_template_real_register_types;
+    klass->apply_args = lrg_game_template_real_apply_args;
 
     /* Window properties */
     properties[PROP_TITLE] =
@@ -1393,6 +1445,27 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
                       NULL, NULL, NULL,
                       G_TYPE_NONE, 2,
                       G_TYPE_INT, G_TYPE_INT);
+
+    /**
+     * LrgGameTemplate::args-applied:
+     * @self: the #LrgGameTemplate
+     * @argv: (array zero-terminated=1) (element-type utf8): the applied argument
+     *   vector
+     *
+     * Emitted after a CLI-style argument vector has been successfully applied
+     * via lrg_game_template_apply_args() (or #LrgConfigurable). Hosts and debug
+     * tooling can observe how a loaded module was configured.
+     *
+     * Since: 0.2
+     */
+    signals[SIGNAL_ARGS_APPLIED] =
+        g_signal_new ("args-applied",
+                      G_TYPE_FROM_CLASS (klass),
+                      G_SIGNAL_RUN_LAST,
+                      0,  /* No class handler offset */
+                      NULL, NULL, NULL,
+                      G_TYPE_NONE, 1,
+                      G_TYPE_STRV);
 }
 
 static void
@@ -1729,9 +1802,20 @@ lrg_game_run_standalone (LrgGameTemplate *self,
     g_autoptr(LrgStandaloneHost) host = NULL;
 
     (void) argc;
-    (void) argv;
 
     g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), 1);
+
+    /* Configure the game from argv before any window/engine work, so a parse
+     * error fails fast and module options are applied before startup. argv is a
+     * main()-style vector (element 0 = program name), so options begin at [1]. */
+    if (argv != NULL &&
+        !lrg_configurable_apply_args (LRG_CONFIGURABLE (self),
+                                      (const gchar *const *) argv, &error))
+    {
+        lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Invalid arguments: %s",
+                     error != NULL ? error->message : "unknown error");
+        return 1;
+    }
 
     /* The standalone host starts the engine and creates + configures the
      * window from this template's properties. */
@@ -1771,6 +1855,51 @@ lrg_game_run_standalone (LrgGameTemplate *self,
     lrg_standalone_host_teardown (host);
 
     return 0;
+}
+
+/**
+ * lrg_game_template_apply_args:
+ * @self: an #LrgGameTemplate
+ * @argv: (array zero-terminated=1) (element-type utf8): a %NULL-terminated,
+ *   `main()`-style argument vector (element 0 is the program name)
+ * @error: (nullable): return location for an error
+ *
+ * Applies a CLI-style argument vector to @self (see #LrgConfigurable).
+ *
+ * Returns: %TRUE on success, %FALSE (with @error set) on failure.
+ *
+ * Since: 0.2
+ */
+gboolean
+lrg_game_template_apply_args (LrgGameTemplate    *self,
+                             const gchar *const *argv,
+                             GError            **error)
+{
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), FALSE);
+
+    return lrg_configurable_apply_args (LRG_CONFIGURABLE (self), argv, error);
+}
+
+/**
+ * lrg_game_template_get_applied_args:
+ * @self: an #LrgGameTemplate
+ *
+ * Gets the most recently applied argument vector (or %NULL if none).
+ *
+ * Returns: (transfer none) (nullable) (array zero-terminated=1) (element-type utf8):
+ *   the applied argument vector, owned by @self.
+ *
+ * Since: 0.2
+ */
+const gchar * const *
+lrg_game_template_get_applied_args (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), NULL);
+
+    priv = lrg_game_template_get_instance_private (self);
+    return (const gchar * const *) priv->applied_args;
 }
 
 /**

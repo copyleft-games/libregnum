@@ -1,0 +1,106 @@
+#+TITLE: Game modules, configuration, and the lrgldr loader
+#+OPTIONS: toc:2 num:nil
+
+* Overview
+
+A libregnum game can be packaged as a loadable shared module (=.so=) that any
+host links and drives, or run as a standalone binary — from one source set via
+=LRG_DEFINE_GAME_MODULE= (see [[file:../../../src/gamemodule/lrg-game-module-macros.h][lrg-game-module-macros.h]]). This page covers:
+
+- the *loader* (=LrgLoadedGame=) that opens and validates a module,
+- the *=LrgConfigurable= interface* that lets a loader/host configure a module
+  from a CLI-style argument vector, and
+- *=lrgldr=*, the generic loader binary.
+
+* Loading a module (LrgLoadedGame)
+
+#+begin_src c
+g_autoptr(LrgLoadedGame) loaded = lrg_loaded_game_load ("game.so", &error);
+LrgGameTemplate *game = lrg_loaded_game_get_game (loaded);
+lrg_game_run_standalone (game, argc, argv);
+#+end_src
+
+The loader opens the module, looks up the =lrg_game_module_query= entry symbol,
+validates the game-module ABI (=LRG_GAME_MODULE_ABI_VERSION=) and the libregnum
+version it was built against, then instantiates the top-level
+=LrgGameTemplate= subclass. See [[file:../../../src/gamemodule/lrg-loaded-game.h][lrg-loaded-game.h]].
+
+* Configuring a module — the LrgConfigurable interface
+
+The loader instantiates a module with =g_object_new (type, NULL)= — no arguments
+are threaded through. To configure a loaded module *generically* (without the
+caller knowing the module's options), libregnum defines the =LrgConfigurable=
+interface ([[file:../../../src/gamemodule/lrg-configurable.h][lrg-configurable.h]]):
+
+#+begin_src c
+gboolean lrg_configurable_apply_args (LrgConfigurable    *self,
+                                      const gchar *const *argv,
+                                      GError            **error);
+#+end_src
+
+- =argv= is a =main()=-style, %NULL-terminated vector: element 0 is a program
+  name, so options begin at element 1.
+- An implementor parses =argv= however it likes (GOption, hand-rolled, …) and
+  applies it. A parse/validation failure returns %FALSE with =error= set.
+
+*=LrgGameTemplate= implements =LrgConfigurable=* and bridges it to an overridable
+class vfunc, so every game opts in by overriding one method:
+
+#+begin_src c
+static gboolean
+my_game_apply_args (LrgGameTemplate *self, const gchar *const *argv, GError **error)
+{
+    /* parse argv (e.g. with GOption) and configure the game */
+    return TRUE;
+}
+
+static void
+my_game_class_init (MyGameClass *klass)
+{
+    LRG_GAME_TEMPLATE_CLASS (klass)->apply_args = my_game_apply_args;
+}
+#+end_src
+
+The base implementation accepts any arguments as a no-op, so a game that does not
+override =apply_args= simply ignores them. On success the template emits
+=LrgGameTemplate::args-applied= (carrying the =GStrv=); the last applied vector is
+available via =lrg_game_template_get_applied_args()=.
+
+*When args are applied.* =lrg_game_run_standalone()= calls =apply_args= with its
+=argv= before creating the window, so a parse error fails fast and standalone
+games get a CLI for free. A host that drives the loop itself instead calls
+=lrg_configurable_apply_args()= (or =lrg_game_template_apply_args()=) directly
+after =lrg_loaded_game_get_game()=.
+
+* lrgldr — the generic loader binary
+
+=lrgldr= loads any module and runs it. It takes its *own* options; everything
+after a =--= separator is forwarded verbatim to the module via =apply_args=:
+
+#+begin_src sh
+lrgldr [LRGLDR-OPTIONS] <module.so> [-- MODULE-ARGS...]
+#+end_src
+
+The module is resolved from the first positional argument, else
+=$LRG_GAME_MODULE=, else a compiled-in default. When no =--= is given, module
+arguments fall back to =$LRG_GAME_ARGS= (shell-quoted).
+
+| Option            | Description                                             |
+|-------------------+---------------------------------------------------------|
+| =-i, --info=      | Print the module's metadata and exit (do not run it)    |
+| =-f, --fullscreen=| Start the module in fullscreen                          |
+| =--windowed=      | Start the module windowed                               |
+| =-W, --width N=   | Window width in pixels                                  |
+| =-H, --height N=  | Window height in pixels                                 |
+| =--dry-run=       | Load + configure the module, then exit (no window)      |
+| =-v, --version=   | Print version and exit                                  |
+
+Exit codes: =0= success; =1= load/run failure; =2= usage error (no/*bad* args).
+
+#+begin_src sh
+lrgldr --info game.so                       # inspect a module
+lrgldr game.so -- --difficulty hard         # forward args to the module
+lrgldr -f -W 1920 -H 1080 game.so           # launcher-controlled window
+LRG_GAME_ARGS="--seed 7" lrgldr game.so     # args via the environment
+lrgldr --dry-run game.so -- --opt v         # configure only (headless, for tests)
+#+end_src

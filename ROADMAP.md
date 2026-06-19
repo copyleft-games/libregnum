@@ -1,8 +1,27 @@
 # Libregnum Roadmap
 
-Last updated: 2026-02-09
+Last updated: 2026-06-19
 
 ## Recently Shipped
+
+### Module configuration + `lrgldr` loader (`src/gamemodule/`, `src/launcher/`)
+
+Standardized "configure a loadable module from a CLI-style argument vector":
+
+- **`LrgConfigurable` interface** (`src/gamemodule/lrg-configurable.{h,c}`) —
+  `apply_args(argv, error)`. `LrgGameTemplate` implements it and bridges to an
+  overridable `apply_args` class vfunc; on success it emits the new
+  `LrgGameTemplate::args-applied` signal and records the vector
+  (`lrg_game_template_get_applied_args`).
+- **`lrg_game_run_standalone` now applies its argv** before startup (previously
+  ignored), so standalone games get a CLI for free and the path is unified.
+- **`lrgldr`** (`src/launcher/lrgldr.c`, replaces the old `lrg-launcher`): a
+  generic loader binary with its own options that forwards everything after `--`
+  to the loaded module. Resolves the module from a positional arg,
+  `$LRG_GAME_MODULE`, or a compiled default; module args fall back to
+  `$LRG_GAME_ARGS`. Supports `--info` and a headless `--dry-run`.
+- Tests: `tests/test-configurable.c`, `tests/test-lrgldr.c` (+ the
+  `tests/fixtures/test-args-module.c` fixture). Engine version → 0.2.0.
 
 ### Reel — Programmatic Video Creation (`src/reel/`)
 

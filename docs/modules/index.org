@@ -13,6 +13,17 @@ Complete documentation for all Libregnum game engine modules and systems.
 :PROPERTIES:
 :CUSTOM_ID: completed-modules
 :END:
+*** [[file:gamemodule/index.org][Game Modules & lrgldr]] - Loadable modules, LrgConfigurable, the loader binary
+:PROPERTIES:
+:CUSTOM_ID: game-modules-and-lrgldr
+:END:
+
+Loading and configuring games packaged as =.so= modules: the =LrgLoadedGame=
+loader, the =LrgConfigurable= interface (configure a module from a CLI-style
+argv, bridged to an =LrgGameTemplate= class vfunc + =args-applied= signal), and
+the generic =lrgldr= loader binary that forwards everything after =--= to the
+loaded module.
+
 *** [[file:reel/index.org][Reel Module]] - Programmatic Video Creation
 :PROPERTIES:
 :CUSTOM_ID: reel-module---programmatic-video-creation

@@ -145,6 +145,9 @@ typedef struct _LrgGameTemplatePrivate
     gfloat               camera_zoom_pulse_timer;
     gfloat               camera_zoom_pulse_original;
 
+    /* Last argument vector applied via lrg_game_template_apply_args() (owned) */
+    GStrv                applied_args;
+
 } LrgGameTemplatePrivate;
 
 /**

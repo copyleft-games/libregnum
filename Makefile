@@ -152,6 +152,7 @@ PUBLIC_HEADERS := \
 	src/mod/lrg-mod-manager.h \
 	src/mod/lrg-modable.h \
 	src/mod/lrg-providers.h \
+	src/gamemodule/lrg-configurable.h \
 	src/gamemodule/lrg-game-host.h \
 	src/gamemodule/lrg-standalone-host.h \
 	src/gamemodule/lrg-loaded-game.h \
@@ -619,6 +620,7 @@ SOURCES := \
 	src/mod/lrg-mod-manager.c \
 	src/mod/lrg-modable.c \
 	src/mod/lrg-providers.c \
+	src/gamemodule/lrg-configurable.c \
 	src/gamemodule/lrg-game-host.c \
 	src/gamemodule/lrg-standalone-host.c \
 	src/gamemodule/lrg-loaded-game.c \
@@ -1177,6 +1179,9 @@ all: check-deps platform-check deps generate
 ifeq ($(BUILD_GIR),1)
 	@$(MAKE) --no-print-directory gir
 endif
+ifeq ($(BUILD_SHARED),1)
+	@$(MAKE) --no-print-directory lrgldr
+endif
 
 # Internal target for actual library build (called after generate)
 .PHONY: _lib
@@ -1446,35 +1451,35 @@ else
 endif
 
 # =============================================================================
-# Launcher (generic game-module shim)
+# lrgldr (generic game-module loader/runner)
 # =============================================================================
 
-LAUNCHER_BIN := $(BUILDDIR)/lrg-launcher$(EXE_EXT)
+LRGLDR_BIN := $(BUILDDIR)/lrgldr$(EXE_EXT)
 
-LAUNCHER_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -I src
-LAUNCHER_CFLAGS += -isystem $(GRAYLIB_DIR)/src
-LAUNCHER_CFLAGS += -isystem $(GRAYLIB_DIR)/deps/raylib/src
-LAUNCHER_CFLAGS += -isystem $(YAMLGLIB_DIR)/src
+LRGLDR_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -I src
+LRGLDR_CFLAGS += -isystem $(GRAYLIB_DIR)/src
+LRGLDR_CFLAGS += -isystem $(GRAYLIB_DIR)/deps/raylib/src
+LRGLDR_CFLAGS += -isystem $(YAMLGLIB_DIR)/src
 # DEP_CFLAGS carries the optional-dependency include paths (libdex, json-glib,
 # etc.) that <libregnum.h> pulls in when those backends are enabled.
-LAUNCHER_CFLAGS += $(DEP_CFLAGS)
+LRGLDR_CFLAGS += $(DEP_CFLAGS)
 
-# Link the shim against the SHARED libregnum so it and any module it loads share
-# one copy of the engine singleton, the GType registry, and raylib's globals.
-# --export-dynamic puts libregnum's symbols in the dynamic table so a host-
-# agnostic module (which does not link libregnum itself) resolves them here.
-LAUNCHER_LIBS := -L$(LIBOUTDIR) -l$(LIB_NAME)
-LAUNCHER_LIBS += -Wl,--export-dynamic
-LAUNCHER_LIBS += -Wl,-rpath,'$$ORIGIN/lib' -Wl,-rpath,'$$ORIGIN/../lib'
-LAUNCHER_LIBS += $(GLIB_LIBS) $(PLATFORM_LIBS)
+# Link the loader against the SHARED libregnum so it and any module it loads
+# share one copy of the engine singleton, the GType registry, and raylib's
+# globals. --export-dynamic puts libregnum's symbols in the dynamic table so a
+# host-agnostic module (which does not link libregnum itself) resolves them here.
+LRGLDR_LIBS := -L$(LIBOUTDIR) -l$(LIB_NAME)
+LRGLDR_LIBS += -Wl,--export-dynamic
+LRGLDR_LIBS += -Wl,-rpath,'$$ORIGIN/lib' -Wl,-rpath,'$$ORIGIN/../lib'
+LRGLDR_LIBS += $(GLIB_LIBS) $(PLATFORM_LIBS)
 
-.PHONY: launcher
-launcher: lib-shared $(LAUNCHER_BIN)
+.PHONY: lrgldr
+lrgldr: lib-shared $(LRGLDR_BIN)
 
-$(LAUNCHER_BIN): src/launcher/lrg-launcher.c $(LIBOUTDIR)/$(LIB_SHARED)
-	$(call print_link,lrg-launcher)
+$(LRGLDR_BIN): src/launcher/lrgldr.c $(LIBOUTDIR)/$(LIB_SHARED)
+	$(call print_link,lrgldr)
 	@$(MKDIR_P) $(dir $@)
-	@$(CC) $(LAUNCHER_CFLAGS) -o $@ $< $(LAUNCHER_LIBS)
+	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
 
 # =============================================================================
 # Reel CLI (renders YAML-defined reels to video/stills)
@@ -1554,6 +1559,12 @@ endif
 		$(MKDIR_P) "$$dest"; \
 		$(INSTALL_DATA) "$$hdr" "$$dest/" || exit 1; \
 	done
+	# Install the generic loader binary (needs the shared library)
+ifeq ($(BUILD_SHARED),1)
+	@$(MAKE) --no-print-directory lrgldr
+	@$(MKDIR_P) $(DESTDIR)$(BINDIR)
+	$(INSTALL_PROGRAM) $(LRGLDR_BIN) $(DESTDIR)$(BINDIR)/
+endif
 	# Install pkg-config
 	$(INSTALL_DATA) $(BUILDDIR)/$(PC_FILE) $(DESTDIR)$(PKGCONFIGDIR)/
 	# Install GIR
