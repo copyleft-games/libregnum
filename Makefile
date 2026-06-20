@@ -1216,7 +1216,10 @@ ifeq ($(TARGET_PLATFORM),windows)
 else
     GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/libgraylib.a
     YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/libyaml-glib.a
-    DEP_BUILD_FLAGS :=
+    # Forward DEBUG to the bundled deps (graylib/yaml-glib/mcp-glib) so a
+    # `make DEBUG=1` libregnum also gets debug-instrumented graylib etc.
+    # (they build to build/ regardless, so only the flags change).
+    DEP_BUILD_FLAGS := $(if $(filter 1,$(DEBUG)),DEBUG=1)
 endif
 
 deps-graylib:
