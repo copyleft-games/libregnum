@@ -555,7 +555,7 @@ BASE_CFLAGS := -std=$(CSTD) $(WARN_CFLAGS) $(FEATURE_CFLAGS)
 ifeq ($(DEBUG),1)
     OPT_CFLAGS := -g3 -O0 -DLRG_DEBUG=1
 else
-    OPT_CFLAGS := -Og -g -DNDEBUG
+    OPT_CFLAGS := -O2 -DNDEBUG
 endif
 
 # Trace flag
