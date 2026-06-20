@@ -106,6 +106,22 @@ UBSAN ?= 0
 # with a normal debug build (avoids stale-object mis-links).
 SANITIZE ?= 0
 
+# Build-type subdirectory used by the vendored sub-deps that are built by their
+# OWN recursive make (crispy via `make -C $(CRISPY_DIR) lib`, cad-glib via the
+# cmacs canonical build).  Those Makefiles place their static archive in
+# build/debug when DEBUG=1 (SANITIZE implies DEBUG=1) and build/release
+# otherwise.  Because DEBUG=1 propagates to those sub-makes through MAKEFLAGS,
+# their output dir MUST track our DEBUG/SANITIZE setting -- hardcoding
+# build/release breaks the link the moment libregnum is built with DEBUG=1
+# (e.g. cmacs's --enable-cmacs-deps-debug, now the default).
+ifeq ($(SANITIZE),1)
+    DEP_BUILD_TYPE := debug
+else ifeq ($(DEBUG),1)
+    DEP_BUILD_TYPE := debug
+else
+    DEP_BUILD_TYPE := release
+endif
+
 # Enable trace logging at compile time
 ENABLE_TRACE ?= 0
 
@@ -296,8 +312,8 @@ ifeq ($(CAD),1)
         endif
     endif
     ifneq ($(CAD_GLIB_DIR),)
-        CAD_CFLAGS := -I$(CAD_GLIB_DIR)/src -I$(CAD_GLIB_DIR)/build/release -DLRG_ENABLE_CAD=1
-        CAD_LIBS := $(CAD_GLIB_DIR)/build/release/libcad-glib-1.0.a
+        CAD_CFLAGS := -I$(CAD_GLIB_DIR)/src -I$(CAD_GLIB_DIR)/build/$(DEP_BUILD_TYPE) -DLRG_ENABLE_CAD=1
+        CAD_LIBS := $(CAD_GLIB_DIR)/build/$(DEP_BUILD_TYPE)/libcad-glib-1.0.a
         CAD_LIBS += $(shell sed -n 's/^Libs.private: //p' $(CAD_GLIB_DIR)/cad-glib-1.0.pc 2>/dev/null)
         CAD_LIBS += -lstdc++
     else
@@ -542,7 +558,7 @@ YAMLGLIB_CFLAGS := -I$(YAMLGLIB_DIR)/src
 GRAYLIB_STATIC  := $(GRAYLIB_DIR)/build/lib/libgraylib.a
 RAYLIB_STATIC   := $(GRAYLIB_DIR)/deps/raylib/src/libraylib.a
 YAMLGLIB_STATIC := $(YAMLGLIB_DIR)/build/libyaml-glib.a
-CRISPY_STATIC   := $(CRISPY_DIR)/build/release/libcrispy.a
+CRISPY_STATIC   := $(CRISPY_DIR)/build/$(DEP_BUILD_TYPE)/libcrispy.a
 
 # =============================================================================
 # Composite Flags

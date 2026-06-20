@@ -1236,7 +1236,7 @@ deps-yamlglib:
 
 # Crispy: the vendored compiled-C scripting backend (deps/crispy submodule).
 # Built standalone here so libregnum is self-contained; its `lib' target
-# produces build/release/libcrispy.a.
+# produces build/$(DEP_BUILD_TYPE)/libcrispy.a (debug when DEBUG=1).
 deps-crispy:
 	@if [ ! -f "$(CRISPY_STATIC)" ]; then \
 		$(call print_status,"Building crispy ($(TARGET_PLATFORM))..."); \
@@ -1247,7 +1247,7 @@ deps-crispy:
 # built standalone so a CAD=1 libregnum is self-contained.  Builds its own
 # vendored kernels (manifold, solvespace) via `make deps` then the library.
 deps-cad-glib:
-	@if [ ! -f "$(CAD_GLIB_DIR)/build/release/libcad-glib-1.0.a" ]; then \
+	@if [ ! -f "$(CAD_GLIB_DIR)/build/$(DEP_BUILD_TYPE)/libcad-glib-1.0.a" ]; then \
 		$(call print_status,"Building cad-glib..."); \
 		$(MAKE) -C $(CAD_GLIB_DIR) deps && $(MAKE) -C $(CAD_GLIB_DIR); \
 	fi
