@@ -752,7 +752,7 @@ lrg_texture_atlas_save_to_file (LrgTextureAtlas  *self,
 {
     g_autoptr(YamlBuilder) builder = NULL;
     g_autoptr(YamlGenerator) generator = NULL;
-    YamlDocument *doc;
+    g_autoptr(YamlDocument) doc = NULL;
     GHashTableIter iter;
     gpointer value;
     LrgAtlasRegion *region;

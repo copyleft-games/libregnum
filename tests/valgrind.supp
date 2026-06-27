@@ -40,3 +40,16 @@
    fun:quark_*
    ...
 }
+
+# LrgCrashReporter is a process-lifetime singleton obtained via
+# lrg_crash_reporter_get_default(); it (and its init-time GHashTable) are
+# intentionally never released. test-crash exercises it directly. This mirrors
+# the `leak:lrg_crash_reporter_get_default` entry in tests/lsan.supp.
+{
+   lrg-crash-reporter-singleton
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect,possible
+   ...
+   fun:lrg_crash_reporter_get_default
+   ...
+}

@@ -496,12 +496,14 @@ test_prestige_reset (void)
 {
     g_autoptr(LrgPrestige) prestige = NULL;
     g_autoptr(LrgBigNumber) value = NULL;
+    g_autoptr(LrgBigNumber) reward = NULL;
 
     prestige = lrg_prestige_new ();
     lrg_prestige_set_threshold_simple (prestige, 1000.0);
 
     value = lrg_big_number_new (4000.0);
-    lrg_prestige_perform (prestige, value);
+    /* perform returns a transfer-full reward; capture it so it is freed. */
+    reward = lrg_prestige_perform (prestige, value);
 
     g_assert_cmpint (lrg_prestige_get_times_prestiged (prestige), ==, 1);
 

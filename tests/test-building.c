@@ -743,6 +743,10 @@ test_placement_confirm (PlacementFixture *fixture,
 
     /* Building should be on grid */
     g_assert_true (lrg_build_grid_get_building_at (fixture->grid, 5, 5) == building);
+
+    /* confirm() returns a transfer-full reference (the grid holds its own);
+     * release ours. This also drops the building's reference on the def. */
+    g_object_unref (building);
 }
 
 static void

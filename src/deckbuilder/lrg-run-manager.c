@@ -301,7 +301,7 @@ lrg_run_manager_has_active_run (LrgRunManager *self)
 void
 lrg_run_manager_generate_map (LrgRunManager *self)
 {
-    LrgRunMap *map;
+    g_autoptr(LrgRunMap) map = NULL;
     guint64 map_seed;
 
     g_return_if_fail (LRG_IS_RUN_MANAGER (self));

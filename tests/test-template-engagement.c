@@ -91,7 +91,12 @@ test_daily_rewards_mock_finalize (GObject *object)
     TestDailyRewardsMock *self = TEST_DAILY_REWARDS_MOCK (object);
 
     g_clear_pointer (&self->state, lrg_daily_reward_state_free);
-    /* GObject finalize does nothing, safe to not chain up for test code */
+
+    /* Chain up so GObject clears the instance qdata datalist (the engagement
+     * system attaches qdata to the mock); skipping this leaks it. The
+     * G_DEFINE_TYPE macro (and its _parent_class) is below this function, so
+     * reach the GObject finalize via the parent type directly. */
+    G_OBJECT_CLASS (g_type_class_peek (G_TYPE_OBJECT))->finalize (object);
 }
 
 static void

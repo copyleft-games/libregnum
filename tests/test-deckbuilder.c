@@ -4023,8 +4023,8 @@ test_combat_context_enemies (void)
     g_autoptr(LrgCombatContext) ctx = NULL;
     g_autoptr(LrgEnemyDef) def1 = NULL;
     g_autoptr(LrgEnemyDef) def2 = NULL;
-    LrgEnemyInstance *enemy1;
-    LrgEnemyInstance *enemy2;
+    g_autoptr(LrgEnemyInstance) enemy1 = NULL;
+    g_autoptr(LrgEnemyInstance) enemy2 = NULL;
     GPtrArray *enemies;
 
     player = lrg_player_combatant_new ("ironclad", "Ironclad", 80);
@@ -4232,7 +4232,7 @@ test_combat_manager_victory_check (void)
     g_autoptr(LrgPlayerCombatant) player = NULL;
     g_autoptr(LrgCombatContext) ctx = NULL;
     g_autoptr(LrgEnemyDef) def = NULL;
-    LrgEnemyInstance *enemy;
+    g_autoptr(LrgEnemyInstance) enemy = NULL;
 
     manager = lrg_combat_manager_new ();
     player = lrg_player_combatant_new ("ironclad", "Ironclad", 80);
@@ -6129,7 +6129,7 @@ test_deckbuilder_manager_characters (void)
     g_autoptr(LrgCharacterDef) ironclad = NULL;
     g_autoptr(LrgCharacterDef) silent = NULL;
     LrgCharacterDef *found;
-    GPtrArray *all;
+    g_autoptr(GPtrArray) all = NULL;
 
     mgr = lrg_deckbuilder_manager_get_default ();
 

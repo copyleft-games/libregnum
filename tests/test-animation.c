@@ -56,7 +56,11 @@ skeleton_fixture_tear_down (SkeletonFixture *fixture,
 {
     (void) user_data;
     g_clear_object (&fixture->skeleton);
-    /* Bones are owned by skeleton, so no need to free them */
+    /* The skeleton refs the bones it is given (transfer none), so the fixture
+     * must release its own references too. */
+    g_clear_object (&fixture->root);
+    g_clear_object (&fixture->spine);
+    g_clear_object (&fixture->head);
 }
 
 /* Animator fixture */
@@ -79,6 +83,7 @@ animator_fixture_set_up (AnimatorFixture *fixture,
     fixture->skeleton = lrg_skeleton_new ();
     root = lrg_bone_new ("root", 0);
     lrg_skeleton_add_bone (fixture->skeleton, root);
+    g_object_unref (root);  /* skeleton holds its own reference now */
 
     /* Create clip */
     fixture->clip = lrg_animation_clip_new ("idle");
@@ -130,7 +135,10 @@ state_machine_fixture_tear_down (StateMachineFixture *fixture,
 {
     (void) user_data;
     g_clear_object (&fixture->machine);
-    /* States are owned by machine */
+    /* The machine refs the states it is given (transfer none), so the fixture
+     * must release its own references too. */
+    g_clear_object (&fixture->idle_state);
+    g_clear_object (&fixture->walk_state);
 }
 
 /*

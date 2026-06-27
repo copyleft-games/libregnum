@@ -998,7 +998,7 @@ lrg_input_map_save_to_file (LrgInputMap  *self,
     LrgInputMapPrivate    *priv;
     g_autoptr(YamlBuilder) builder = NULL;
     g_autoptr(YamlGenerator) generator = NULL;
-    YamlDocument          *doc;
+    g_autoptr(YamlDocument) doc = NULL;
     GHashTableIter         iter;
     gpointer               key;
     gpointer               value;

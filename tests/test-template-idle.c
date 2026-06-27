@@ -126,7 +126,12 @@ test_idle_mixin_mock_finalize (GObject *object)
     g_clear_object (&self->prestige);
     g_clear_pointer (&self->last_applied_progress, lrg_big_number_free);
     g_clear_pointer (&self->last_prestige_reward, lrg_big_number_free);
-    /* GObject finalize does nothing, safe to not chain up for test code */
+
+    /* Chain up so GObject clears the instance qdata datalist (the idle mixin
+     * system attaches qdata to the mock); skipping this leaks it. The
+     * G_DEFINE_TYPE macro (and its _parent_class) is below this function, so
+     * reach the GObject finalize via the parent type directly. */
+    G_OBJECT_CLASS (g_type_class_peek (G_TYPE_OBJECT))->finalize (object);
 }
 
 static void

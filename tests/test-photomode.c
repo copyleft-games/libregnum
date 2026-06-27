@@ -45,11 +45,13 @@ test_screenshot_new_from_image (void)
 {
     g_autoptr(LrgScreenshot) screenshot = NULL;
     g_autoptr(GrlImage) image = NULL;
+    g_autoptr(GrlColor) color = NULL;
 
     SKIP_IF_NO_DISPLAY ();
 
     /* Create a simple test image */
-    image = grl_image_new_color (100, 100, grl_color_new (255, 0, 0, 255));
+    color = grl_color_new (255, 0, 0, 255);
+    image = grl_image_new_color (100, 100, color);
     if (image == NULL)
     {
         g_test_skip ("Could not create test image");
@@ -68,12 +70,14 @@ test_screenshot_properties (void)
 {
     g_autoptr(LrgScreenshot) screenshot = NULL;
     g_autoptr(GrlImage) image = NULL;
+    g_autoptr(GrlColor) color = NULL;
     gint width;
     gint height;
 
     SKIP_IF_NO_DISPLAY ();
 
-    image = grl_image_new_color (200, 150, grl_color_new (0, 255, 0, 255));
+    color = grl_color_new (0, 255, 0, 255);
+    image = grl_image_new_color (200, 150, color);
     if (image == NULL)
     {
         g_test_skip ("Could not create test image");
