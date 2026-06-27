@@ -677,8 +677,10 @@ test_console_history (ConsoleFixture *fixture,
     history = lrg_debug_console_get_history (fixture->console);
     g_assert_cmpuint (g_queue_get_length (history), ==, 2);
 
-    /* Clear history */
+    /* Clear history. This frees and replaces the internal queue, so re-fetch
+     * the (now empty) queue rather than reading the freed pointer. */
     lrg_debug_console_clear_history (fixture->console);
+    history = lrg_debug_console_get_history (fixture->console);
     g_assert_cmpuint (g_queue_get_length (history), ==, 0);
 }
 
