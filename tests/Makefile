@@ -278,8 +278,17 @@ run-valgrind: all
 		exit 1; \
 	fi
 
+# Generated headers (produced by the root build). Test binaries bake in the
+# LRG_VERSION_* macros via <libregnum.h>, so a version/config bump must force a
+# recompile -- otherwise a stale macro mismatches the freshly-built library at
+# runtime (e.g. test-engine's version assertion). The fallback rule lets a
+# standalone `make -C tests` regenerate them when no root build ran first.
+GENERATED_HEADERS := ../src/lrg-version.h ../src/config.h
+$(GENERATED_HEADERS):
+	@$(MAKE) -C .. generate
+
 # Pattern rule for test compilation
-$(TEST_BUILDDIR)/test-%: test-%.c | $(TEST_BUILDDIR)
+$(TEST_BUILDDIR)/test-%: test-%.c $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
 
@@ -295,7 +304,7 @@ $(FIXTURE_SO): fixtures/test-args-module.c | $(TEST_BUILDDIR)
 
 # test-lrgldr needs the loader binary and the fixture module, and has their
 # absolute paths baked in (so it can spawn/load them regardless of CWD).
-$(TEST_BUILDDIR)/test-lrgldr: test-lrgldr.c $(LRGLDR_BIN) $(FIXTURE_SO) | $(TEST_BUILDDIR)
+$(TEST_BUILDDIR)/test-lrgldr: test-lrgldr.c $(GENERATED_HEADERS) $(LRGLDR_BIN) $(FIXTURE_SO) | $(TEST_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(TEST_CFLAGS) \
 		-DLRGLDR_BIN_PATH='"$(LRGLDR_BIN)"' \

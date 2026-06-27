@@ -53,3 +53,18 @@
    fun:lrg_crash_reporter_get_default
    ...
 }
+
+# Process-lifetime infrastructure threads -- the GLib worker thread, the GTask
+# thread pool, GDBus, and the GJS/SpiderMonkey static initializer pulled in via
+# GObject-Introspection -- each allocate thread-local storage via
+# pthread_create -> _dl_allocate_tls. valgrind reports these as "possibly lost"
+# because the only pointer lives on the still-running thread's stack; the
+# threads are intentionally never joined. Not a libregnum leak.
+{
+   thread-tls-process-lifetime
+   Memcheck:Leak
+   match-leak-kinds: possible
+   ...
+   fun:_dl_allocate_tls
+   ...
+}

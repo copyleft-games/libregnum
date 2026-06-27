@@ -1222,6 +1222,14 @@ else
     DEP_BUILD_FLAGS := $(if $(filter 1,$(DEBUG)),DEBUG=1)
 endif
 
+# Crispy and cad-glib place their static archive under build/<debug|release>/
+# keyed on DEBUG, so they MUST be built in the same mode as libregnum or the
+# link looks for an archive that was never produced. DEP_BUILD_TYPE is "debug"
+# for SANITIZE=1 or DEBUG=1 (see config.mk); forward DEBUG accordingly. (This
+# is platform-independent and deliberately omits the windows flag -- these are
+# host-side backends.)
+DEP_DEBUG_FLAG := $(if $(filter debug,$(DEP_BUILD_TYPE)),DEBUG=1)
+
 deps-graylib:
 	@if [ ! -f "$(GRAYLIB_LIB)" ]; then \
 		$(call print_status,"Building graylib ($(TARGET_PLATFORM))..."); \
@@ -1240,7 +1248,7 @@ deps-yamlglib:
 deps-crispy:
 	@if [ ! -f "$(CRISPY_STATIC)" ]; then \
 		$(call print_status,"Building crispy ($(TARGET_PLATFORM))..."); \
-		$(MAKE) -C $(CRISPY_DIR) lib; \
+		$(MAKE) -C $(CRISPY_DIR) $(DEP_DEBUG_FLAG) lib; \
 	fi
 
 # cad-glib: the bundled parametric CAD kernel (deps/cad-glib submodule),
@@ -1249,7 +1257,7 @@ deps-crispy:
 deps-cad-glib:
 	@if [ ! -f "$(CAD_GLIB_DIR)/build/$(DEP_BUILD_TYPE)/libcad-glib-1.0.a" ]; then \
 		$(call print_status,"Building cad-glib..."); \
-		$(MAKE) -C $(CAD_GLIB_DIR) deps && $(MAKE) -C $(CAD_GLIB_DIR); \
+		$(MAKE) -C $(CAD_GLIB_DIR) deps && $(MAKE) -C $(CAD_GLIB_DIR) $(DEP_DEBUG_FLAG); \
 	fi
 
 ifeq ($(MCP),1)
@@ -1419,6 +1427,7 @@ ifeq ($(TARGET_PLATFORM),windows)
 	$(call print_warning,"Sanitized tests are not supported for Windows cross-compile.")
 else ifeq ($(BUILD_TESTS),1)
 	$(call print_status,"Building sanitized library (ASan+UBSan)...")
+	$(MAKE) SANITIZE=1 deps
 	$(MAKE) SANITIZE=1 lib
 	$(call print_status,"Running tests under ASan+UBSan...")
 	@$(MAKE) -C tests SANITIZE=1 run-sanitize
@@ -1434,6 +1443,7 @@ ifeq ($(TARGET_PLATFORM),windows)
 	$(call print_warning,"Valgrind is not supported for Windows cross-compile.")
 else ifeq ($(BUILD_TESTS),1)
 	$(call print_status,"Building debug library for valgrind...")
+	$(MAKE) DEBUG=1 deps
 	$(MAKE) DEBUG=1 lib
 	$(call print_status,"Running tests under valgrind...")
 	@$(MAKE) -C tests DEBUG=1 run-valgrind
