@@ -35,6 +35,15 @@ struct _LrgReelVideoSource
 
     GrlImage *current_frame;
     gint      current_index;
+
+    /* Async decode support: `decoded'/`decoding'/`png_data'/`frame_index'
+     * are guarded by `lock'; a worker thread (holding a strong ref) runs
+     * the ffmpeg decode and commits under the lock, then broadcasts. */
+    GMutex    lock;
+    GCond     cond;
+    gboolean  async_decode;
+    gboolean  decoding;
+    GrlImage *placeholder;     /* returned while an async decode runs */
 };
 
 G_DEFINE_FINAL_TYPE (LrgReelVideoSource, lrg_reel_video_source, G_TYPE_OBJECT)
@@ -46,10 +55,15 @@ lrg_reel_video_source_finalize (GObject *object)
 {
     LrgReelVideoSource *self = LRG_REEL_VIDEO_SOURCE (object);
 
+    /* A running decode worker holds a strong ref, so finalize cannot race
+     * an in-flight decode. */
     g_clear_object (&self->current_frame);
+    g_clear_object (&self->placeholder);
     g_clear_pointer (&self->png_data, g_bytes_unref);
     g_clear_pointer (&self->frame_index, g_array_unref);
     g_clear_pointer (&self->path, g_free);
+    g_mutex_clear (&self->lock);
+    g_cond_clear (&self->cond);
 
     G_OBJECT_CLASS (lrg_reel_video_source_parent_class)->finalize (object);
 }
@@ -68,6 +82,8 @@ lrg_reel_video_source_init (LrgReelVideoSource *self)
     self->fps = 30.0;
     self->current_index = -1;
     self->frame_index = g_array_new (FALSE, FALSE, sizeof (ReelFrameEntry));
+    g_mutex_init (&self->lock);
+    g_cond_init (&self->cond);
 }
 
 gboolean
@@ -220,16 +236,17 @@ reel_video_probe (LrgReelVideoSource *self,
     return TRUE;
 }
 
-/* Walk the concatenated-PNG buffer, recording one entry per frame. */
+/* Walk a concatenated-PNG buffer, recording one entry per frame into OUT. */
 static void
-reel_video_build_index (LrgReelVideoSource *self)
+reel_video_build_index_for (GBytes *png_data,
+                            GArray *out)
 {
     const guint8 *data;
     gsize         size = 0;
     gsize         pos = 0;
     static const guint8 sig[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
 
-    data = g_bytes_get_data (self->png_data, &size);
+    data = g_bytes_get_data (png_data, &size);
 
     while (pos + 8 <= size)
     {
@@ -260,7 +277,7 @@ reel_video_build_index (LrgReelVideoSource *self)
 
             e.offset = start;
             e.length = pos - start;
-            g_array_append_val (self->frame_index, e);
+            g_array_append_val (out, e);
         }
         else
         {
@@ -269,17 +286,22 @@ reel_video_build_index (LrgReelVideoSource *self)
     }
 }
 
+/* Run the whole-clip ffmpeg decode.  Touches no mutable object state (only
+ * the immutable `path'), so it is safe on a worker thread.  On success the
+ * caller owns *OUT_BYTES and *OUT_INDEX. */
 static gboolean
-reel_video_ensure_decoded (LrgReelVideoSource *self,
-                           GError            **error)
+reel_video_run_decode (LrgReelVideoSource *self,
+                       GBytes            **out_bytes,
+                       GArray            **out_index,
+                       GError            **error)
 {
     g_autofree gchar *ffmpeg = NULL;
+    GBytes *bytes;
+    GArray *index;
     const gchar *argv[14];
 
-    if (self->decoded)
-        return self->png_data != NULL;
-
-    self->decoded = TRUE;
+    *out_bytes = NULL;
+    *out_index = NULL;
 
     ffmpeg = g_find_program_in_path ("ffmpeg");
     if (ffmpeg == NULL)
@@ -297,20 +319,120 @@ reel_video_ensure_decoded (LrgReelVideoSource *self,
     argv[9] = "-";
     argv[10] = NULL;
 
-    self->png_data = reel_video_run_capture ((const gchar * const *) argv, error);
-    if (self->png_data == NULL)
+    bytes = reel_video_run_capture ((const gchar * const *) argv, error);
+    if (bytes == NULL)
         return FALSE;
 
-    reel_video_build_index (self);
+    index = g_array_new (FALSE, FALSE, sizeof (ReelFrameEntry));
+    reel_video_build_index_for (bytes, index);
 
-    if (self->frame_index->len == 0)
+    if (index->len == 0)
     {
+        g_bytes_unref (bytes);
+        g_array_unref (index);
         g_set_error_literal (error, LRG_REEL_VIDEO_SOURCE_ERROR, 3,
                              "ffmpeg produced no frames");
         return FALSE;
     }
 
+    *out_bytes = bytes;
+    *out_index = index;
     return TRUE;
+}
+
+/* Commit a decode result (or failure: NULL/NULL) and wake waiters. */
+static void
+reel_video_commit_decode (LrgReelVideoSource *self,
+                          GBytes             *bytes,
+                          GArray             *index)
+{
+    g_mutex_lock (&self->lock);
+    self->png_data = bytes;
+    if (index != NULL)
+    {
+        g_array_unref (self->frame_index);
+        self->frame_index = index;
+    }
+    self->decoded = TRUE;
+    self->decoding = FALSE;
+    g_cond_broadcast (&self->cond);
+    g_mutex_unlock (&self->lock);
+}
+
+/* Synchronous path: waits out any in-flight worker, else decodes here. */
+static gboolean
+reel_video_ensure_decoded (LrgReelVideoSource *self,
+                           GError            **error)
+{
+    GBytes *bytes = NULL;
+    GArray *index = NULL;
+    gboolean ok;
+
+    g_mutex_lock (&self->lock);
+    while (self->decoding)
+        g_cond_wait (&self->cond, &self->lock);
+    if (self->decoded)
+    {
+        ok = self->png_data != NULL;
+        g_mutex_unlock (&self->lock);
+        if (!ok)
+            g_set_error_literal (error, LRG_REEL_VIDEO_SOURCE_ERROR, 3,
+                                 "video decode failed");
+        return ok;
+    }
+    self->decoding = TRUE;
+    g_mutex_unlock (&self->lock);
+
+    ok = reel_video_run_decode (self, &bytes, &index, error);
+    reel_video_commit_decode (self, bytes, index);
+    return ok;
+}
+
+static gpointer
+reel_video_decode_thread (gpointer user_data)
+{
+    LrgReelVideoSource *self = user_data;
+    GBytes *bytes = NULL;
+    GArray *index = NULL;
+
+    reel_video_run_decode (self, &bytes, &index, NULL);
+    reel_video_commit_decode (self, bytes, index);
+    g_object_unref (self);
+    return NULL;
+}
+
+/* Start the worker if no decode has happened or is in flight. */
+static void
+reel_video_kick_async (LrgReelVideoSource *self)
+{
+    GThread *thread;
+
+    g_mutex_lock (&self->lock);
+    if (self->decoded || self->decoding)
+    {
+        g_mutex_unlock (&self->lock);
+        return;
+    }
+    self->decoding = TRUE;
+    g_mutex_unlock (&self->lock);
+
+    thread = g_thread_new ("lrg-reel-decode", reel_video_decode_thread,
+                           g_object_ref (self));
+    g_thread_unref (thread);
+}
+
+/* Solid stand-in frame shown while the worker decodes (main thread only). */
+static GrlImage *
+reel_video_placeholder (LrgReelVideoSource *self)
+{
+    if (self->placeholder == NULL)
+    {
+        GrlColor col = { 24, 24, 24, 255 };
+
+        self->placeholder = grl_image_new_color (MAX (self->width, 1),
+                                                 MAX (self->height, 1), &col);
+    }
+    return self->placeholder;
 }
 
 LrgReelVideoSource *
@@ -371,7 +493,23 @@ lrg_reel_video_source_get_has_audio (LrgReelVideoSource *self)
 gint
 lrg_reel_video_source_get_frame_count (LrgReelVideoSource *self)
 {
+    gboolean ready;
+
     g_return_val_if_fail (LRG_IS_REEL_VIDEO_SOURCE (self), 0);
+
+    g_mutex_lock (&self->lock);
+    ready = self->decoded;
+    g_mutex_unlock (&self->lock);
+
+    if (!ready && self->async_decode)
+    {
+        gint est = (gint) (self->duration * self->fps + 0.5);
+
+        /* Kick the worker and answer from the probe so callers never
+         * block; the estimate is replaced by the real count once done. */
+        reel_video_kick_async (self);
+        return MAX (est, 1);
+    }
 
     if (!reel_video_ensure_decoded (self, NULL))
         return 0;
@@ -387,8 +525,22 @@ lrg_reel_video_source_get_frame (LrgReelVideoSource *self,
     ReelFrameEntry e;
     const guint8  *data;
     GrlImage      *img;
+    gboolean       ready;
 
     g_return_val_if_fail (LRG_IS_REEL_VIDEO_SOURCE (self), NULL);
+
+    g_mutex_lock (&self->lock);
+    ready = self->decoded;
+    g_mutex_unlock (&self->lock);
+
+    if (!ready && self->async_decode)
+    {
+        /* Non-blocking preview path: hand back a stand-in frame while the
+         * worker decodes.  Callers needing real frames (export) go through
+         * lrg_reel_video_source_wait_decoded(). */
+        reel_video_kick_async (self);
+        return reel_video_placeholder (self);
+    }
 
     if (!reel_video_ensure_decoded (self, error))
         return NULL;
@@ -416,6 +568,42 @@ lrg_reel_video_source_get_frame (LrgReelVideoSource *self,
     self->current_index = index;
 
     return self->current_frame;
+}
+
+void
+lrg_reel_video_source_set_async_decode (LrgReelVideoSource *self,
+                                        gboolean            async_decode)
+{
+    g_return_if_fail (LRG_IS_REEL_VIDEO_SOURCE (self));
+    self->async_decode = async_decode;
+}
+
+gboolean
+lrg_reel_video_source_get_async_decode (LrgReelVideoSource *self)
+{
+    g_return_val_if_fail (LRG_IS_REEL_VIDEO_SOURCE (self), FALSE);
+    return self->async_decode;
+}
+
+gboolean
+lrg_reel_video_source_is_decoded (LrgReelVideoSource *self)
+{
+    gboolean ok;
+
+    g_return_val_if_fail (LRG_IS_REEL_VIDEO_SOURCE (self), FALSE);
+
+    g_mutex_lock (&self->lock);
+    ok = self->decoded && self->png_data != NULL;
+    g_mutex_unlock (&self->lock);
+    return ok;
+}
+
+gboolean
+lrg_reel_video_source_wait_decoded (LrgReelVideoSource *self,
+                                    GError            **error)
+{
+    g_return_val_if_fail (LRG_IS_REEL_VIDEO_SOURCE (self), FALSE);
+    return reel_video_ensure_decoded (self, error);
 }
 
 LrgWaveData *

@@ -59,6 +59,27 @@ if (!lrg_reel_video_source_is_ffmpeg_available ())
 }
 #+end_src
 
+*** Async decode (non-blocking preview)
+
+By default the whole-clip decode happens synchronously on first frame
+access.  Interactive editors can opt into a worker-thread decode: frame
+accesses return a solid placeholder immediately instead of blocking, and
+readiness is pollable.  Export paths should block for real frames with
+=wait_decoded=.
+
+#+begin_src c
+lrg_reel_video_source_set_async_decode (source, TRUE);
+
+/* Non-blocking: kicks the worker, returns a placeholder until done. */
+GrlImage *frame = lrg_reel_video_source_get_frame (source, 0, NULL);
+
+if (lrg_reel_video_source_is_decoded (source))
+    ; /* real frames from now on */
+
+/* Before export: block until real frames are available. */
+lrg_reel_video_source_wait_decoded (source, &error);
+#+end_src
+
 *** Pitfall
 
 =lrg_reel_video_source_get_frame()= returns =(transfer none)=: the pointer is

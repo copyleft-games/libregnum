@@ -93,6 +93,67 @@ lrg_reel_video_source_get_frame (LrgReelVideoSource *self,
                                  GError            **error);
 
 /**
+ * lrg_reel_video_source_set_async_decode:
+ * @self: a #LrgReelVideoSource
+ * @async_decode: %TRUE to decode on a worker thread
+ *
+ * In async mode the first frame access starts the whole-clip decode on a
+ * worker thread and immediately returns a solid placeholder frame instead
+ * of blocking; poll lrg_reel_video_source_is_decoded() (or block with
+ * lrg_reel_video_source_wait_decoded()) for readiness.  Off by default,
+ * preserving the synchronous decode-on-first-access behaviour.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_video_source_set_async_decode (LrgReelVideoSource *self,
+                                        gboolean            async_decode);
+
+/**
+ * lrg_reel_video_source_get_async_decode:
+ * @self: a #LrgReelVideoSource
+ *
+ * Returns: %TRUE when async (worker-thread) decode mode is enabled
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_reel_video_source_get_async_decode (LrgReelVideoSource *self);
+
+/**
+ * lrg_reel_video_source_is_decoded:
+ * @self: a #LrgReelVideoSource
+ *
+ * Returns: %TRUE once the clip's frames have been decoded successfully;
+ * %FALSE while a decode is still running (or after a failed decode).
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_reel_video_source_is_decoded (LrgReelVideoSource *self);
+
+/**
+ * lrg_reel_video_source_wait_decoded:
+ * @self: a #LrgReelVideoSource
+ * @error: (nullable): return location for a #GError.
+ *
+ * Blocks until the clip is decoded: waits out an in-flight async worker,
+ * or performs the decode synchronously.  Use before exporting so real
+ * frames (never placeholders) are composited.
+ *
+ * Returns: %TRUE when frames are available
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_reel_video_source_wait_decoded (LrgReelVideoSource *self,
+                                    GError            **error);
+
+/**
  * lrg_reel_video_source_extract_audio:
  * @self: a #LrgReelVideoSource
  * @error: (nullable): return location for a #GError.
