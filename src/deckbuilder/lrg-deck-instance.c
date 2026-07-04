@@ -913,6 +913,11 @@ lrg_deck_instance_remove_card (LrgDeckInstance *self,
 
         lrg_log_debug ("Removed card '%s' from deck",
                        lrg_card_instance_get_id (card));
+
+        /* lrg_card_pile_remove steals the pile's reference back to the caller
+         * (it does not unref). This is a permanent removal, so release that
+         * reference now that the card is gone from the master deck too. */
+        g_object_unref (card);
     }
 
     return removed;

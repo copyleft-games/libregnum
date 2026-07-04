@@ -647,8 +647,8 @@ lrg_deckbuilder_manager_end_run (LrgDeckbuilderManager *self,
     /* Emit signal */
     g_signal_emit (self, signals[SIGNAL_RUN_ENDED], 0, self->current_run, victory);
 
-    /* Check for new unlocks */
-    lrg_deckbuilder_manager_check_unlocks (self);
+    /* Check for new unlocks (discard the returned list of granted unlocks). */
+    g_ptr_array_unref (lrg_deckbuilder_manager_check_unlocks (self));
 
     /* Clear run */
     g_clear_object (&self->current_run);

@@ -58,9 +58,11 @@ static gchar *
 get_slot_path (LrgSaveManager *self,
                const gchar    *slot_name)
 {
-    return g_build_filename (self->save_directory,
-                             g_strdup_printf ("%s.yaml", slot_name),
-                             NULL);
+    g_autofree gchar *filename = g_strdup_printf ("%s.yaml", slot_name);
+
+    /* g_build_filename copies its arguments, so the printf'd filename must be
+     * freed by us rather than leaked. */
+    return g_build_filename (self->save_directory, filename, NULL);
 }
 
 static void

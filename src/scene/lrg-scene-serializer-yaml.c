@@ -971,7 +971,9 @@ build_scene_yaml (LrgScene *scene)
 
 	yaml_mapping_set_mapping_member (root_map, "entities", entities_map);
 
-	return yaml_node_new_mapping (g_steal_pointer (&root_map));
+	/* yaml_node_new_mapping refs the mapping (transfer none); let the autoptr
+	 * drop our reference. g_steal_pointer would leak it and the whole tree. */
+	return yaml_node_new_mapping (root_map);
 }
 
 /* ==========================================================================

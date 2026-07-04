@@ -1355,7 +1355,7 @@ lrg_tutorial_save_to_file (LrgTutorial  *self,
 {
     g_autoptr(YamlBuilder) builder = NULL;
     g_autoptr(YamlGenerator) generator = NULL;
-    YamlDocument *doc;
+    g_autoptr(YamlDocument) doc = NULL;
     gchar *yaml_str;
     gboolean ret;
     guint i;

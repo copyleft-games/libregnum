@@ -52,6 +52,24 @@ static guint signals[N_SIGNALS];
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgBuildingInstance, lrg_building_instance, G_TYPE_OBJECT)
 
+/* Per-key user data carries its own destroy notify; wrap it so the hash table
+ * honors that destroy on overwrite and on finalize. */
+typedef struct
+{
+    gpointer       data;
+    GDestroyNotify destroy;
+} LrgBuildingUserData;
+
+static void
+lrg_building_user_data_free (gpointer ptr)
+{
+    LrgBuildingUserData *entry = ptr;
+
+    if (entry->destroy != NULL)
+        entry->destroy (entry->data);
+    g_free (entry);
+}
+
 /* Default virtual implementations */
 
 static void
@@ -356,7 +374,7 @@ lrg_building_instance_init (LrgBuildingInstance *self)
     priv->active = TRUE;
     priv->destroyed = FALSE;
     priv->user_data = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                              g_free, NULL);
+                                              g_free, lrg_building_user_data_free);
 }
 
 LrgBuildingInstance *
@@ -714,7 +732,12 @@ lrg_building_instance_get_data (LrgBuildingInstance *self,
     g_return_val_if_fail (key != NULL, NULL);
 
     priv = lrg_building_instance_get_instance_private (self);
-    return g_hash_table_lookup (priv->user_data, key);
+
+    {
+        LrgBuildingUserData *entry = g_hash_table_lookup (priv->user_data, key);
+
+        return entry != NULL ? entry->data : NULL;
+    }
 }
 
 void
@@ -730,15 +753,18 @@ lrg_building_instance_set_data (LrgBuildingInstance *self,
 
     priv = lrg_building_instance_get_instance_private (self);
 
-    /* Note: This simple implementation doesn't handle destroy notify properly.
-     * A more complete implementation would use a custom struct or
-     * g_object_set_data_full style approach. */
-    (void)destroy;
-
     if (data == NULL)
+    {
         g_hash_table_remove (priv->user_data, key);
+    }
     else
-        g_hash_table_insert (priv->user_data, g_strdup (key), data);
+    {
+        LrgBuildingUserData *entry = g_new (LrgBuildingUserData, 1);
+
+        entry->data = data;
+        entry->destroy = destroy;
+        g_hash_table_insert (priv->user_data, g_strdup (key), entry);
+    }
 }
 
 gboolean

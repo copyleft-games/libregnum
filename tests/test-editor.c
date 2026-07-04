@@ -675,6 +675,8 @@ test_instantiate (void)
 	g_assert_nonnull (comp);
 	g_object_get (comp, "value", &value, NULL);
 	g_assert_cmpint (value, ==, 42);
+
+	g_list_free (objects);  /* transfer-container list from lrg_world_get_objects */
 }
 
 /* ==========================================================================

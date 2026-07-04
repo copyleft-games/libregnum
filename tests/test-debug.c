@@ -115,7 +115,10 @@ inspector_fixture_tear_down (InspectorFixture *fixture,
     (void)user_data;
     g_clear_object (&fixture->inspector);
     g_clear_object (&fixture->world);
-    /* object and component are owned by world */
+    /* add_object / add_component ref their arguments (transfer none), so the
+     * fixture must release its own references too. */
+    g_clear_object (&fixture->component);
+    g_clear_object (&fixture->object);
 }
 
 /* ==========================================================================
@@ -667,15 +670,17 @@ test_console_history (ConsoleFixture *fixture,
 
     (void)user_data;
 
-    /* Execute some commands */
-    lrg_debug_console_execute (fixture->console, "echo one", NULL);
-    lrg_debug_console_execute (fixture->console, "echo two", NULL);
+    /* Execute some commands (execute returns a transfer-full result string). */
+    g_free (lrg_debug_console_execute (fixture->console, "echo one", NULL));
+    g_free (lrg_debug_console_execute (fixture->console, "echo two", NULL));
 
     history = lrg_debug_console_get_history (fixture->console);
     g_assert_cmpuint (g_queue_get_length (history), ==, 2);
 
-    /* Clear history */
+    /* Clear history. This frees and replaces the internal queue, so re-fetch
+     * the (now empty) queue rather than reading the freed pointer. */
     lrg_debug_console_clear_history (fixture->console);
+    history = lrg_debug_console_get_history (fixture->console);
     g_assert_cmpuint (g_queue_get_length (history), ==, 0);
 }
 

@@ -61,11 +61,15 @@ on_quest_state_changed (LrgQuestInstance *instance,
 
     if (state == LRG_QUEST_STATE_COMPLETE)
     {
-        /* Move from active to completed */
-        g_hash_table_steal (self->active_quests, quest_id);
+        /* Move from active to completed. Hold a reference across the remove
+         * (which frees the active-quests key via g_free and drops the table's
+         * reference), then transfer that reference to completed_quests. Using
+         * g_hash_table_steal here would orphan the strdup'd key. */
+        g_object_ref (instance);
+        g_hash_table_remove (self->active_quests, quest_id);
         g_hash_table_replace (self->completed_quests,
                               g_strdup (quest_id),
-                              g_object_ref (instance));
+                              instance);
 
         g_signal_emit (self, signals[SIGNAL_QUEST_COMPLETED], 0, instance);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ACTIVE_COUNT]);
@@ -74,8 +78,6 @@ on_quest_state_changed (LrgQuestInstance *instance,
         /* Clear tracked if this was it */
         if (self->tracked_quest == instance)
             lrg_quest_log_set_tracked_quest (self, NULL);
-
-        g_object_unref (instance);
     }
     else if (state == LRG_QUEST_STATE_FAILED)
     {

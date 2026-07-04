@@ -158,7 +158,9 @@ lrg_project_save (LrgProject  *self,
 	yaml_mapping_set_sequence_member (proj_map, "asset_dirs", dirs_seq);
 
 	yaml_mapping_set_mapping_member (root_map, "project", proj_map);
-	root_node = yaml_node_new_mapping (g_steal_pointer (&root_map));
+	/* yaml_node_new_mapping refs the mapping (transfer none); let the autoptr
+	 * drop our reference. g_steal_pointer would leak it and the whole tree. */
+	root_node = yaml_node_new_mapping (root_map);
 
 	doc = yaml_document_new_with_root (root_node);
 	gen = yaml_generator_new ();

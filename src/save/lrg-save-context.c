@@ -683,7 +683,7 @@ lrg_save_context_to_string (LrgSaveContext  *self,
                             GError         **error)
 {
     g_autoptr(YamlGenerator) generator = NULL;
-    YamlDocument             *doc;
+    g_autoptr(YamlDocument) doc = NULL;
     gchar                    *yaml_str;
 
     g_return_val_if_fail (LRG_IS_SAVE_CONTEXT (self), NULL);

@@ -259,5 +259,20 @@ cleared on teardown. Representative trace (test-template-engagement):
       =g_object_ref= pinning objects past =g_autoptr= cleanup).
 - [X] C — =LrgCrashReporter= process-lifetime singleton suppressed in
       =tests/lsan.supp=.
-- [ ] D — the 13 items above, each filed as a vimban bug ticket. Until they
-      are fixed, =make test-sanitize= exits nonzero solely because of these.
+- [X] D — all 13 items fixed; =make test-sanitize= is leak-clean. Two
+      serialization root causes dominated: (1) the =(transfer full)=
+      =YamlDocument= from =yaml_builder_get_document()= held in a raw pointer
+      and never unreffed (input-map, save-context, atlas, tutorial), and (2)
+      an erroneous =g_steal_pointer()= on the root mapping passed to
+      =yaml_node_new_mapping()= -- which only takes a *new* reference
+      (transfer none) -- leaking the entire serialized node tree (editor
+      level-serializer + project, scene yaml). The remainder were
+      ownership/transfer fixes: the =g_hash_table_steal()= orphaned key in
+      quest-log, the un-unreffed map in =lrg_run_manager_generate_map=, the
+      pile's stolen reference dropped on permanent card removal
+      (=lrg_deck_instance_remove_card=), the discarded =check_unlocks= list in
+      =end_run=, the ignored per-key =GDestroyNotify= in building- and
+      relic-instance =set_data=, and =get_slot_path= leaking its printf'd
+      filename. The rest were test-side reference/return-value releases
+      (template-mock finalize chain-up, animation/debug fixtures,
+      prestige/building/enemy/world-objects/GrlColor temporaries).

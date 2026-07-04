@@ -1056,7 +1056,7 @@ lrg_nine_slice_save_to_file (LrgNineSlice  *self,
 {
     g_autoptr(YamlBuilder) builder = NULL;
     g_autoptr(YamlGenerator) generator = NULL;
-    YamlDocument *doc;
+    g_autoptr(YamlDocument) doc = NULL;
     gchar *yaml_str;
     gboolean ret;
 

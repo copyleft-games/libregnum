@@ -1318,7 +1318,7 @@ lrg_sprite_sheet_save_to_file (LrgSpriteSheet  *self,
 {
     g_autoptr(YamlBuilder) builder = NULL;
     g_autoptr(YamlGenerator) generator = NULL;
-    YamlDocument *doc;
+    g_autoptr(YamlDocument) doc = NULL;
     GHashTableIter iter;
     gpointer value;
     LrgAnimationDef *anim_def;

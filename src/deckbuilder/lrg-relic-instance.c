@@ -45,6 +45,36 @@ enum
 
 static guint signals[N_SIGNALS];
 
+/* Per-key user data carries its own destroy notify (set_data) or is a plain
+ * int-in-pointer (set_int_data, destroy == NULL); wrap it so the hash table
+ * honors the destroy on overwrite and on finalize. */
+typedef struct
+{
+    gpointer       data;
+    GDestroyNotify destroy;
+} LrgRelicUserData;
+
+static void
+lrg_relic_user_data_free (gpointer ptr)
+{
+    LrgRelicUserData *entry = ptr;
+
+    if (entry->destroy != NULL)
+        entry->destroy (entry->data);
+    g_free (entry);
+}
+
+static LrgRelicUserData *
+lrg_relic_user_data_new (gpointer       data,
+                         GDestroyNotify destroy)
+{
+    LrgRelicUserData *entry = g_new (LrgRelicUserData, 1);
+
+    entry->data = data;
+    entry->destroy = destroy;
+    return entry;
+}
+
 /* ==========================================================================
  * GObject Implementation
  * ========================================================================== */
@@ -241,7 +271,7 @@ lrg_relic_instance_init (LrgRelicInstance *self)
     self->counter = 0;
     self->uses = 0;
     self->data = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                         g_free, NULL);
+                                         g_free, lrg_relic_user_data_free);
 }
 
 /* ==========================================================================
@@ -419,7 +449,11 @@ lrg_relic_instance_get_data (LrgRelicInstance *self,
     g_return_val_if_fail (LRG_IS_RELIC_INSTANCE (self), NULL);
     g_return_val_if_fail (key != NULL, NULL);
 
-    return g_hash_table_lookup (self->data, key);
+    {
+        LrgRelicUserData *entry = g_hash_table_lookup (self->data, key);
+
+        return entry != NULL ? entry->data : NULL;
+    }
 }
 
 void
@@ -431,13 +465,9 @@ lrg_relic_instance_set_data (LrgRelicInstance *self,
     g_return_if_fail (LRG_IS_RELIC_INSTANCE (self));
     g_return_if_fail (key != NULL);
 
-    /*
-     * Note: This simple implementation doesn't track destroy notifiers
-     * per key. For a more robust implementation, we'd need a struct
-     * containing both the data and destroy notify.
-     */
     if (data != NULL)
-        g_hash_table_insert (self->data, g_strdup (key), data);
+        g_hash_table_insert (self->data, g_strdup (key),
+                             lrg_relic_user_data_new (data, destroy));
     else
         g_hash_table_remove (self->data, key);
 }
@@ -447,16 +477,16 @@ lrg_relic_instance_get_int_data (LrgRelicInstance *self,
                                   const gchar      *key,
                                   gint              default_value)
 {
-    gpointer value;
+    LrgRelicUserData *entry;
 
     g_return_val_if_fail (LRG_IS_RELIC_INSTANCE (self), default_value);
     g_return_val_if_fail (key != NULL, default_value);
 
-    value = g_hash_table_lookup (self->data, key);
-    if (value == NULL)
+    entry = g_hash_table_lookup (self->data, key);
+    if (entry == NULL)
         return default_value;
 
-    return GPOINTER_TO_INT (value);
+    return GPOINTER_TO_INT (entry->data);
 }
 
 void
@@ -467,7 +497,8 @@ lrg_relic_instance_set_int_data (LrgRelicInstance *self,
     g_return_if_fail (LRG_IS_RELIC_INSTANCE (self));
     g_return_if_fail (key != NULL);
 
-    g_hash_table_insert (self->data, g_strdup (key), GINT_TO_POINTER (value));
+    g_hash_table_insert (self->data, g_strdup (key),
+                         lrg_relic_user_data_new (GINT_TO_POINTER (value), NULL));
 }
 
 /* ==========================================================================

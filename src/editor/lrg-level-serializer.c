@@ -447,7 +447,10 @@ build_level_yaml (LrgLevel *level)
 
 	yaml_mapping_set_sequence_member (root_map, "nodes", nodes_seq);
 
-	return yaml_node_new_mapping (g_steal_pointer (&root_map));
+	/* yaml_node_new_mapping refs the mapping (transfer none); let the autoptr
+	 * drop our reference so the node is its sole owner. g_steal_pointer here
+	 * would leak our reference and thus the entire tree. */
+	return yaml_node_new_mapping (root_map);
 }
 
 /* ==========================================================================
