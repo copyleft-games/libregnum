@@ -53,6 +53,8 @@
 #include "graphics/lrg-renderer.h"
 #include "graphics/lrg-image-canvas.h"
 #include "graphics/lrg-vector-image.h"
+#include "imageedit/lrg-image-layer.h"
+#include "imageedit/lrg-image-document.h"
 
 /* ECS module */
 #include "ecs/lrg-component.h"

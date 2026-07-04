@@ -149,6 +149,16 @@ EXAMPLE_CFLAGS += $(CAD_CFLAGS)
 EXAMPLE_LIBS += $(CAD_LIBS)
 endif
 
+# Video examples (only built when FFMPEG=1).  They drive the in-process
+# LrgVideoPlayer decode backend; FFMPEG_LIBS must be on the link line because
+# the static libregnum archive references libav* but does not carry it.
+# reel-transition-demo uses the subprocess Reel path, but is grouped here as it
+# is part of the video toolchain.
+ifeq ($(FFMPEG),1)
+EXAMPLES += video-player-example video-thumbnail video-to-gif reel-transition-demo
+EXAMPLE_LIBS += $(FFMPEG_LIBS)
+endif
+
 # Scripted examples: native Linux only, and only for backends that are actually
 # available (their headers in <libregnum.h> are gated on the same LRG_HAS_* flags).
 ifneq ($(TARGET_PLATFORM),windows)
@@ -392,6 +402,22 @@ $(EXAMPLES_BUILDDIR)/editor-standalone$(EXE_EXT): editor-standalone.c | $(EXAMPL
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/lrg-cad-app$(EXE_EXT): lrg-cad-app.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/video-player-example$(EXE_EXT): video-player-example.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/video-thumbnail$(EXE_EXT): video-thumbnail.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/video-to-gif$(EXE_EXT): video-to-gif.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/reel-transition-demo$(EXE_EXT): reel-transition-demo.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

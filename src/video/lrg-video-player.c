@@ -10,6 +10,13 @@
 #include <gio/gio.h>
 #include <string.h>
 
+#ifdef LRG_HAS_FFMPEG
+#include "lrg-video-decoder.h"
+
+/* Sentinel "no frame decoded yet" PTS, well below any real timestamp. */
+#define LRG_VIDEO_PLAYER_PTS_NONE (-1.0e30)
+#endif
+
 /**
  * SECTION:lrg-video-player
  * @Title: LrgVideoPlayer
@@ -51,6 +58,12 @@ struct _LrgVideoPlayer
     /* Rendering */
     LrgVideoTexture   *texture;
     LrgVideoSubtitles *subtitles;
+
+#ifdef LRG_HAS_FFMPEG
+    /* FFmpeg decode backend (NULL until a file is opened). */
+    LrgVideoDecoder   *decoder;
+    gdouble            decoded_pts;  /* PTS (s) of the last frame uploaded */
+#endif
 };
 
 G_DEFINE_TYPE (LrgVideoPlayer, lrg_video_player, G_TYPE_OBJECT)
@@ -360,6 +373,10 @@ lrg_video_player_init (LrgVideoPlayer *self)
     self->playback_rate = 1.0f;
     self->texture = NULL;
     self->subtitles = lrg_video_subtitles_new ();
+#ifdef LRG_HAS_FFMPEG
+    self->decoder = NULL;
+    self->decoded_pts = LRG_VIDEO_PLAYER_PTS_NONE;
+#endif
 }
 
 LrgVideoPlayer *
@@ -367,6 +384,67 @@ lrg_video_player_new (void)
 {
     return g_object_new (LRG_TYPE_VIDEO_PLAYER, NULL);
 }
+
+#ifdef LRG_HAS_FFMPEG
+/* Decode frames forward, uploading each into the texture, until the most
+ * recently decoded frame's PTS reaches TARGET seconds (or the stream ends).
+ * At steady state this advances ~one frame per call. */
+static void
+video_player_decode_to (LrgVideoPlayer *self,
+                        gdouble         target)
+{
+    if (self->decoder == NULL || self->texture == NULL)
+        return;
+
+    while (self->decoded_pts < target)
+    {
+        const guint8 *rgba = NULL;
+        gdouble pts = 0.0;
+        gboolean eof = FALSE;
+        GError *derr = NULL;
+
+        if (!lrg_video_decoder_next_frame (self->decoder, &rgba, &pts,
+                                           &eof, &derr))
+        {
+            /* EOF or a decode error: keep the last good frame on screen. */
+            if (derr != NULL)
+            {
+                g_warning ("lrg-video-player: decode failed: %s",
+                           derr->message);
+                g_clear_error (&derr);
+            }
+            break;
+        }
+
+        lrg_video_texture_update (self->texture, rgba,
+                                  (gsize) self->width * self->height * 4);
+        self->decoded_pts = pts;
+    }
+}
+
+/* Seek the decoder to POSITION and arm the decode clock so the next
+ * video_player_decode_to() uploads the frame at/after POSITION. */
+static void
+video_player_seek_decoder (LrgVideoPlayer *self,
+                           gdouble         position)
+{
+    GError *derr = NULL;
+
+    if (self->decoder == NULL)
+        return;
+
+    if (!lrg_video_decoder_seek (self->decoder, position, &derr))
+    {
+        if (derr != NULL)
+        {
+            g_warning ("lrg-video-player: seek failed: %s", derr->message);
+            g_clear_error (&derr);
+        }
+        return;
+    }
+    self->decoded_pts = LRG_VIDEO_PLAYER_PTS_NONE;
+}
+#endif /* LRG_HAS_FFMPEG */
 
 gboolean
 lrg_video_player_open (LrgVideoPlayer  *player,
@@ -394,29 +472,47 @@ lrg_video_player_open (LrgVideoPlayer  *player,
     player->path = g_strdup (path);
 
 #ifdef LRG_HAS_FFMPEG
-    /* TODO: Actual FFmpeg initialization would go here */
-    /*
-     * 1. Open format context with avformat_open_input
-     * 2. Find stream info with avformat_find_stream_info
-     * 3. Find video and audio streams
-     * 4. Open video codec
-     * 5. Open audio codec
-     * 6. Create decode thread
-     */
-#endif
+    {
+        GError *derr = NULL;
 
+        player->decoder = lrg_video_decoder_new ();
+        if (!lrg_video_decoder_open (player->decoder, path, &derr))
+        {
+            const gchar *msg = (derr != NULL) ? derr->message
+                                              : "could not open video";
+            set_error (player, LRG_VIDEO_ERROR_FORMAT, msg);
+            g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, msg);
+            g_clear_error (&derr);
+            g_clear_pointer (&player->decoder, lrg_video_decoder_free);
+            g_clear_pointer (&player->path, g_free);
+            return FALSE;
+        }
+
+        player->width = lrg_video_decoder_get_width (player->decoder);
+        player->height = lrg_video_decoder_get_height (player->decoder);
+        player->frame_rate =
+            (gfloat) lrg_video_decoder_get_frame_rate (player->decoder);
+        player->duration = lrg_video_decoder_get_duration (player->decoder);
+        player->decoded_pts = LRG_VIDEO_PLAYER_PTS_NONE;
+    }
+#else
     /*
-     * For now, create a stub video with test pattern.
-     * This allows testing without FFmpeg.
+     * Stub: a test-pattern video so the engine works without FFmpeg.
      */
     player->width = 640;
     player->height = 480;
     player->frame_rate = 30.0f;
     player->duration = 10.0;
+#endif
 
     /* Create texture */
     g_clear_object (&player->texture);
     player->texture = lrg_video_texture_new (player->width, player->height);
+
+#ifdef LRG_HAS_FFMPEG
+    /* Prime the first frame so a stopped/paused player shows frame 0. */
+    video_player_decode_to (player, 0.0);
+#endif
 
     /* Clear error state */
     player->error = LRG_VIDEO_ERROR_NONE;
@@ -441,6 +537,10 @@ lrg_video_player_close (LrgVideoPlayer *player)
     lrg_video_player_stop (player);
 
     /* Clean up resources */
+#ifdef LRG_HAS_FFMPEG
+    g_clear_pointer (&player->decoder, lrg_video_decoder_free);
+    player->decoded_pts = LRG_VIDEO_PLAYER_PTS_NONE;
+#endif
     g_clear_pointer (&player->path, g_free);
     g_clear_object (&player->texture);
 
@@ -480,7 +580,13 @@ lrg_video_player_play (LrgVideoPlayer *player)
 
     /* Resume from finished state at beginning */
     if (player->state == LRG_VIDEO_STATE_FINISHED)
+    {
         player->position = 0.0;
+#ifdef LRG_HAS_FFMPEG
+        video_player_seek_decoder (player, 0.0);
+        video_player_decode_to (player, 0.0);
+#endif
+    }
 
     set_state (player, LRG_VIDEO_STATE_PLAYING);
 }
@@ -506,6 +612,10 @@ lrg_video_player_stop (LrgVideoPlayer *player)
         player->state == LRG_VIDEO_STATE_FINISHED)
     {
         player->position = 0.0;
+#ifdef LRG_HAS_FFMPEG
+        /* Rewind the decoder so the next play starts from the beginning. */
+        video_player_seek_decoder (player, 0.0);
+#endif
         g_object_notify_by_pspec (G_OBJECT (player), properties[PROP_POSITION]);
         set_state (player, LRG_VIDEO_STATE_STOPPED);
     }
@@ -529,6 +639,12 @@ lrg_video_player_seek (LrgVideoPlayer *player,
     if (player->position != position)
     {
         player->position = position;
+#ifdef LRG_HAS_FFMPEG
+        /* Seek the decoder and upload the target frame so a paused scrub
+         * updates the visible image immediately. */
+        video_player_seek_decoder (player, position);
+        video_player_decode_to (player, position);
+#endif
         g_object_notify_by_pspec (G_OBJECT (player), properties[PROP_POSITION]);
         g_signal_emit (player, signals[SIGNAL_POSITION_CHANGED], 0, position);
     }
@@ -675,12 +791,15 @@ lrg_video_player_update (LrgVideoPlayer *player,
     new_position = player->position + (gdouble) delta_time * player->playback_rate;
 
     /* Check for end of video */
-    if (new_position >= player->duration)
+    if (player->duration > 0.0 && new_position >= player->duration)
     {
         if (player->loop)
         {
             /* Loop back to beginning */
             new_position = 0.0;
+#ifdef LRG_HAS_FFMPEG
+            video_player_seek_decoder (player, 0.0);
+#endif
         }
         else
         {
@@ -698,16 +817,13 @@ lrg_video_player_update (LrgVideoPlayer *player,
         g_signal_emit (player, signals[SIGNAL_POSITION_CHANGED], 0, new_position);
     }
 
+#ifdef LRG_HAS_FFMPEG
+    /* Decode and upload frames up to the current clock. */
+    video_player_decode_to (player, new_position);
+#endif
+
     /* Update subtitles */
     lrg_video_subtitles_update (player->subtitles, player->position);
-
-    /*
-     * In a real implementation with FFmpeg, this would:
-     * 1. Check if we need a new frame based on PTS
-     * 2. Pull decoded frame from queue
-     * 3. Update texture with frame data
-     * 4. Process audio samples
-     */
 }
 
 LrgVideoTexture *

@@ -337,6 +337,32 @@ else
 endif
 
 # =============================================================================
+# FFmpeg / libav (LrgVideoPlayer real-time decode backend)
+# =============================================================================
+# Opt-in (FFMPEG=1).  Enables the libavformat/libavcodec/libavutil/libswscale
+# decode backend (src/video/lrg-video-decoder.c) driving LrgVideoPlayer's
+# real-time decode-to-texture.  Without it the player keeps its test-pattern
+# stub and the decoder translation unit compiles to nothing.  Requires the
+# FFmpeg development packages (Fedora: ffmpeg-devel from RPM Fusion, or the
+# libav*-free-devel set; Debian/Ubuntu: libavformat-dev libavcodec-dev
+# libavutil-dev libswscale-dev).  HAS_FFMPEG is exported for the examples/tests
+# sub-makes, which need FFMPEG_LIBS on their link line (the static archive does
+# not carry its shared dependencies).
+
+FFMPEG ?= 0
+
+ifeq ($(FFMPEG),1)
+    FFMPEG_PKGS := libavformat libavcodec libavutil libswscale
+    FFMPEG_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(FFMPEG_PKGS)) -DLRG_HAS_FFMPEG=1
+    FFMPEG_LIBS := $(shell $(PKG_CONFIG) --libs $(FFMPEG_PKGS))
+    HAS_FFMPEG := 1
+else
+    FFMPEG_CFLAGS :=
+    FFMPEG_LIBS :=
+    HAS_FFMPEG := 0
+endif
+
+# =============================================================================
 # Library Names (Platform-Specific)
 # =============================================================================
 
@@ -638,6 +664,7 @@ LIB_CFLAGS += -I$(CURDIR)/src
 LIB_CFLAGS += $(STEAM_CFLAGS)
 LIB_CFLAGS += $(MCP_CFLAGS)
 LIB_CFLAGS += $(CAD_CFLAGS)
+LIB_CFLAGS += $(FFMPEG_CFLAGS)
 
 # Library link flags (use platform-specific flags)
 LIB_LDFLAGS := $(LIB_LDFLAGS_PLATFORM)
@@ -672,6 +699,7 @@ endif
 ALL_LIBS += $(STEAM_LIBS)
 ALL_LIBS += $(MCP_LIBS)
 ALL_LIBS += $(CAD_LIBS)
+ALL_LIBS += $(FFMPEG_LIBS)
 
 # =============================================================================
 # GIR Scanner Flags

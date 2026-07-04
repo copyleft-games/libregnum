@@ -137,6 +137,7 @@ TEST_SOURCES := \
 	test-gif-recorder.c \
 	test-text-baker.c \
 	test-image-canvas.c \
+	test-image-document.c \
 	test-vector-image.c \
 	test-reel.c \
 	test-term.c
@@ -163,6 +164,17 @@ TEST_LDFLAGS += -L$(MCP_GLIB_DIR)/build
 TEST_LDFLAGS += -Wl,-rpath,$(MCP_GLIB_DIR)/build
 TEST_LIBS += $(MCP_LIBS)
 TEST_LIBS += $(shell pkg-config --libs libsoup-3.0)
+endif
+
+# FFmpeg test sources (conditional on FFMPEG=1).  test-video-player exercises
+# the in-process LrgVideoPlayer + internal LrgVideoDecoder; it generates its
+# own fixture clip with the `ffmpeg` binary and skips if that is unavailable.
+ifeq ($(FFMPEG),1)
+TEST_SOURCES += \
+	test-video-player.c
+
+TEST_CFLAGS += $(FFMPEG_CFLAGS)
+TEST_LIBS += $(FFMPEG_LIBS)
 endif
 
 # Test executables

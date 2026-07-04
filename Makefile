@@ -51,6 +51,8 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-camera-thirdperson.h \
 	src/graphics/lrg-renderer.h \
 	src/graphics/lrg-image-canvas.h \
+	src/imageedit/lrg-image-layer.h \
+	src/imageedit/lrg-image-document.h \
 	src/graphics/lrg-vector-image.h \
 	src/ecs/lrg-component.h \
 	src/ecs/lrg-game-object.h \
@@ -519,6 +521,8 @@ SOURCES := \
 	src/graphics/lrg-camera-thirdperson.c \
 	src/graphics/lrg-renderer.c \
 	src/graphics/lrg-image-canvas.c \
+	src/imageedit/lrg-image-layer.c \
+	src/imageedit/lrg-image-document.c \
 	src/graphics/lrg-vector-image.c \
 	src/ecs/lrg-component.c \
 	src/ecs/lrg-game-object.c \
@@ -743,6 +747,7 @@ SOURCES := \
 	src/video/lrg-video-texture.c \
 	src/video/lrg-video-subtitle-track.c \
 	src/video/lrg-video-subtitles.c \
+	src/video/lrg-video-decoder.c \
 	src/video/lrg-video-player.c \
 	src/tween/lrg-easing.c \
 	src/tween/lrg-tween-base.c \
@@ -1733,6 +1738,8 @@ $(OBJDIR)/src/graphics/lrg-renderer.o: src/graphics/lrg-renderer.c src/graphics/
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
+$(OBJDIR)/src/imageedit/lrg-image-layer.o: src/imageedit/lrg-image-layer.c src/imageedit/lrg-image-layer.h
+$(OBJDIR)/src/imageedit/lrg-image-document.o: src/imageedit/lrg-image-document.c src/imageedit/lrg-image-document.h src/imageedit/lrg-image-layer.h
 $(OBJDIR)/src/graphics/lrg-image-canvas.o: src/graphics/lrg-image-canvas.c src/graphics/lrg-image-canvas.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
