@@ -265,6 +265,9 @@ lrg_reel_clip_add_effect (LrgReelClip   *self,
 LRG_AVAILABLE_IN_ALL
 guint
 lrg_reel_clip_get_n_effects (LrgReelClip *self);
+LRG_AVAILABLE_IN_ALL
+LrgReelEffect *
+lrg_reel_clip_get_effect (LrgReelClip *self, guint index);
 
 LRG_AVAILABLE_IN_ALL
 void

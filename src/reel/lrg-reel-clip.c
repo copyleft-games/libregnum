@@ -505,6 +505,20 @@ lrg_reel_clip_get_n_effects (LrgReelClip *self)
     return priv->effects != NULL ? priv->effects->len : 0;
 }
 
+/* Effect at INDEX in the clip's chain, or NULL (transfer none). */
+LrgReelEffect *
+lrg_reel_clip_get_effect (LrgReelClip *self, guint index)
+{
+    LrgReelClipPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_REEL_CLIP (self), NULL);
+
+    priv = lrg_reel_clip_get_instance_private (self);
+    if (priv->effects == NULL || index >= priv->effects->len)
+        return NULL;
+    return g_ptr_array_index (priv->effects, index);
+}
+
 void
 lrg_reel_clip_clear_effects (LrgReelClip *self)
 {
