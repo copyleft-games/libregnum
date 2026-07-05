@@ -210,6 +210,34 @@ reel_video_probe (LrgReelVideoSource *self,
     if (dur != NULL)
         self->duration = g_ascii_strtod (dur, NULL);
 
+    /* The per-STREAM duration is frequently "N/A" for MP4/MKV/MOV (the
+       duration is stored at the container/FORMAT level).  When the stream
+       gave us nothing usable, fall back to the format duration so a
+       "whole video" import gets the real length. */
+    if (self->duration <= 0.0)
+    {
+        g_autoptr(GBytes) fout = NULL;
+        const gchar *fargv[10];
+
+        fargv[0] = ffprobe;
+        fargv[1] = "-v";          fargv[2] = "error";
+        fargv[3] = "-show_entries"; fargv[4] = "format=duration";
+        fargv[5] = "-of";
+        fargv[6] = "default=noprint_wrappers=1:nokey=1";
+        fargv[7] = self->path;
+        fargv[8] = NULL;
+
+        fout = reel_video_run_capture ((const gchar * const *) fargv, NULL);
+        if (fout != NULL)
+        {
+            gsize flen = 0;
+            const gchar *ftext = g_bytes_get_data (fout, &flen);
+
+            if (flen > 0)
+                self->duration = g_ascii_strtod (ftext, NULL);
+        }
+    }
+
     /* Probe for an audio stream. */
     {
         g_autoptr(GBytes) aout = NULL;
