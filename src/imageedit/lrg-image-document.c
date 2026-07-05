@@ -419,6 +419,77 @@ lrg_image_document_mark_dirty (LrgImageDocument *self)
     self->dirty = TRUE;
 }
 
+/* ── Whole-document geometric transforms ───────────────────────────────
+ * Each transforms every layer's backing image and updates the canvas size.
+ * Layer offsets are assumed 0 (the common full-canvas case in imgedit). */
+
+void
+lrg_image_document_resize (LrgImageDocument *self, gint w, gint h,
+                           gboolean nearest)
+{
+    guint i;
+    g_return_if_fail (LRG_IS_IMAGE_DOCUMENT (self));
+    if (w <= 0 || h <= 0)
+        return;
+    for (i = 0; i < self->layers->len; i++)
+    {
+        LrgImageLayer *l = g_ptr_array_index (self->layers, i);
+        GrlImage *img = lrg_image_layer_get_image (l);
+        if (img == NULL)
+            continue;
+        if (nearest)
+            grl_image_resize_nearest (img, w, h);
+        else
+            grl_image_resize (img, w, h);
+    }
+    self->width = w;
+    self->height = h;
+    self->dirty = TRUE;
+}
+
+void
+lrg_image_document_crop (LrgImageDocument *self, gint x, gint y,
+                         gint w, gint h)
+{
+    guint i;
+    g_autoptr (GrlRectangle) rect = NULL;
+    g_return_if_fail (LRG_IS_IMAGE_DOCUMENT (self));
+    if (w <= 0 || h <= 0)
+        return;
+    rect = grl_rectangle_new ((gfloat) x, (gfloat) y, (gfloat) w, (gfloat) h);
+    for (i = 0; i < self->layers->len; i++)
+    {
+        LrgImageLayer *l = g_ptr_array_index (self->layers, i);
+        GrlImage *img = lrg_image_layer_get_image (l);
+        if (img != NULL)
+            grl_image_crop (img, rect);
+    }
+    self->width = w;
+    self->height = h;
+    self->dirty = TRUE;
+}
+
+void
+lrg_image_document_rotate (LrgImageDocument *self, gboolean clockwise)
+{
+    guint i;
+    gint t;
+    g_return_if_fail (LRG_IS_IMAGE_DOCUMENT (self));
+    for (i = 0; i < self->layers->len; i++)
+    {
+        LrgImageLayer *l = g_ptr_array_index (self->layers, i);
+        GrlImage *img = lrg_image_layer_get_image (l);
+        if (img == NULL)
+            continue;
+        if (clockwise)
+            grl_image_rotate_cw (img);
+        else
+            grl_image_rotate_ccw (img);
+    }
+    t = self->width; self->width = self->height; self->height = t;
+    self->dirty = TRUE;
+}
+
 gboolean
 lrg_image_document_get_pixel (LrgImageDocument *self,
                               gint              x,

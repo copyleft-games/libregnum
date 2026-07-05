@@ -143,6 +143,16 @@ GrlImage *lrg_image_document_flatten (LrgImageDocument *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_image_document_mark_dirty (LrgImageDocument *self);
 
+/* Whole-document geometric transforms (all layers + canvas size). */
+LRG_AVAILABLE_IN_ALL
+void lrg_image_document_resize (LrgImageDocument *self, gint w, gint h,
+                               gboolean nearest);
+LRG_AVAILABLE_IN_ALL
+void lrg_image_document_crop (LrgImageDocument *self, gint x, gint y,
+                             gint w, gint h);
+LRG_AVAILABLE_IN_ALL
+void lrg_image_document_rotate (LrgImageDocument *self, gboolean clockwise);
+
 /**
  * lrg_image_document_get_pixel:
  * @out_color: (out caller-allocates): receives the flattened pixel
