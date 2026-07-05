@@ -277,14 +277,61 @@ lrg_image_document_get_active_layer (LrgImageDocument *self)
 /* Composite one source pixel S onto destination pixel D.  SA is the source
  * alpha already pre-multiplied by the layer opacity (0..255).  All channels
  * are 8-bit; OVER uses straight-alpha source-over. */
+/* Extended Photoshop blend modes, numbered past GrlImageBlendMode's 0..4 range
+   (REPLACE/OVER/ADD/MULTIPLY/SUBTRACT).  Stored in the layer as a plain int. */
+enum
+{
+    LRG_IMGDOC_BLEND_SCREEN = 5,
+    LRG_IMGDOC_BLEND_OVERLAY,
+    LRG_IMGDOC_BLEND_SOFT_LIGHT,
+    LRG_IMGDOC_BLEND_COLOR_DODGE,
+    LRG_IMGDOC_BLEND_COLOR_BURN
+};
+
+/* Blend one channel (dst DC over src SC) for the extended modes. */
+static guint
+blend_ps_channel (int mode, guint dc, guint sc)
+{
+    switch (mode)
+    {
+    case LRG_IMGDOC_BLEND_SCREEN:
+        return 255u - (255u - dc) * (255u - sc) / 255u;
+    case LRG_IMGDOC_BLEND_OVERLAY:
+        return (dc < 128u) ? (2u * dc * sc / 255u)
+                           : (255u - 2u * (255u - dc) * (255u - sc) / 255u);
+    case LRG_IMGDOC_BLEND_SOFT_LIGHT:
+        /* pegtop approximation */
+        return ((255u - 2u * sc) * dc * dc / 255u / 255u) + (2u * sc * dc / 255u);
+    case LRG_IMGDOC_BLEND_COLOR_DODGE:
+        return (sc >= 255u) ? 255u : MIN (255u, dc * 255u / (255u - sc));
+    case LRG_IMGDOC_BLEND_COLOR_BURN:
+        return (sc == 0u) ? 0u : 255u - MIN (255u, (255u - dc) * 255u / sc);
+    default:
+        return dc;
+    }
+}
+
 static void
 blend_pixel (guint8                 *d,
              const guint8           *s,
-             GrlImageBlendMode       mode,
+             gint                    mode,
              guint                   sa)
 {
     guint sr = s[0], sg = s[1], sb = s[2];
     guint dr = d[0], dg = d[1], db = d[2], da = d[3];
+
+    if (mode >= LRG_IMGDOC_BLEND_SCREEN)
+    {
+        /* Extended modes: blend RGB then mix with dst by the source alpha
+           (like MULTIPLY); alpha unchanged. */
+        guint br = blend_ps_channel (mode, dr, sr);
+        guint bg = blend_ps_channel (mode, dg, sg);
+        guint bb = blend_ps_channel (mode, db, sb);
+        d[0] = (guint8) ((dr * (255u - sa) + br * sa) / 255u);
+        d[1] = (guint8) ((dg * (255u - sa) + bg * sa) / 255u);
+        d[2] = (guint8) ((db * (255u - sa) + bb * sa) / 255u);
+        return;
+    }
 
     switch (mode)
     {
