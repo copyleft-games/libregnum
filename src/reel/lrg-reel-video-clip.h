@@ -79,6 +79,10 @@ gdouble    lrg_reel_video_clip_get_trim_start (LrgReelVideoClip *self);
 LRG_AVAILABLE_IN_ALL
 void       lrg_reel_video_clip_set_trim_start (LrgReelVideoClip *self, gdouble seconds);
 LRG_AVAILABLE_IN_ALL
+gdouble    lrg_reel_video_clip_get_trim_end (LrgReelVideoClip *self);
+LRG_AVAILABLE_IN_ALL
+void       lrg_reel_video_clip_set_trim_end (LrgReelVideoClip *self, gdouble seconds);
+LRG_AVAILABLE_IN_ALL
 gdouble    lrg_reel_video_clip_get_playback_rate (LrgReelVideoClip *self);
 LRG_AVAILABLE_IN_ALL
 void       lrg_reel_video_clip_set_playback_rate (LrgReelVideoClip *self, gdouble rate);

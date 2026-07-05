@@ -17,6 +17,7 @@ struct _LrgReelVideoClip
     LrgReelVideoSource *source;
     LrgReelFit          fit;
     gdouble             trim_start;
+    gdouble             trim_end;      /* source out-point, sec; 0 = to source end */
     gdouble             playback_rate;
     gboolean            loop;
 };
@@ -120,6 +121,15 @@ lrg_reel_video_clip_render (LrgReelClip    *clip,
 
     if (self->loop)
         src_index = ((src_index % src_count) + src_count) % src_count;
+    else if (self->trim_end > self->trim_start)
+    {
+        /* Honour the out-point: hold the last in-range source frame once the
+         * timeline runs past `trim_end' (so growing the clip's on-timeline
+         * duration never reads source past the slice). */
+        gint end_index = (gint) (self->trim_end * src_fps + 0.5) - 1;
+        if (end_index >= 0 && src_index > end_index)
+            src_index = end_index;
+    }
 
     frame = lrg_reel_video_source_get_frame (self->source, src_index, &error);
     if (frame == NULL)
@@ -158,6 +168,7 @@ lrg_reel_video_clip_init (LrgReelVideoClip *self)
 {
     self->fit = LRG_REEL_FIT_COVER;
     self->trim_start = 0.0;
+    self->trim_end = 0.0;
     self->playback_rate = 1.0;
     self->loop = FALSE;
 }
@@ -225,6 +236,21 @@ lrg_reel_video_clip_set_trim_start (LrgReelVideoClip *self,
 {
     g_return_if_fail (LRG_IS_REEL_VIDEO_CLIP (self));
     self->trim_start = seconds;
+}
+
+gdouble
+lrg_reel_video_clip_get_trim_end (LrgReelVideoClip *self)
+{
+    g_return_val_if_fail (LRG_IS_REEL_VIDEO_CLIP (self), 0.0);
+    return self->trim_end;
+}
+
+void
+lrg_reel_video_clip_set_trim_end (LrgReelVideoClip *self,
+                                  gdouble           seconds)
+{
+    g_return_if_fail (LRG_IS_REEL_VIDEO_CLIP (self));
+    self->trim_end = (seconds < 0.0) ? 0.0 : seconds;
 }
 
 gdouble
