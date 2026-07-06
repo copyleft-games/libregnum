@@ -84,6 +84,21 @@ lrg_reel_video_exporter_set_bitrate (LrgReelVideoExporter *self,
                                      gint                  kbps);
 
 /**
+ * lrg_reel_video_exporter_set_preset:
+ * @self: a #LrgReelVideoExporter
+ * @preset: an x264/x265 -preset word ("ultrafast".."veryslow"), or %NULL for
+ *   the default ("veryfast").  Ignored for codecs without a word preset.
+ *
+ * Sets the encoder speed/quality preset.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_video_exporter_set_preset (LrgReelVideoExporter *self,
+                                    const gchar          *preset);
+
+/**
  * lrg_reel_video_exporter_set_ffmpeg_path:
  * @self: a #LrgReelVideoExporter
  * @path: (type filename) (nullable): path to the ffmpeg binary, or %NULL to

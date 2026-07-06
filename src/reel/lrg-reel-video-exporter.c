@@ -19,6 +19,7 @@ struct _LrgReelVideoExporter
     LrgReelVideoCodec  codec;
     gint               crf;
     gint               bitrate_kbps;  /* > 0 selects target bitrate over CRF */
+    gchar             *preset;        /* x264/x265 -preset word; NULL=default */
     gchar             *ffmpeg_path;   /* override, or NULL to auto-discover */
     LrgWaveData       *audio;         /* optional, ref */
 
@@ -110,6 +111,9 @@ reel_video_build_argv (LrgReelVideoExporter *self,
             vcodec = "prores_ks"; pix_fmt = "yuva444p10le";
             is_prores = TRUE; prores_profile = 4;
             break;
+        case LRG_REEL_VIDEO_CODEC_AV1:
+            vcodec = "libsvtav1"; pix_fmt = "yuv420p";
+            break;
         case LRG_REEL_VIDEO_CODEC_H264:
         default:
             vcodec = "libx264"; pix_fmt = "yuv420p";
@@ -138,10 +142,18 @@ reel_video_build_argv (LrgReelVideoExporter *self,
                 g_ptr_array_add (args, g_strdup ("-b:v"));
                 g_ptr_array_add (args, g_strdup ("0"));
             }
-            else if (self->codec == LRG_REEL_VIDEO_CODEC_H264)
+            else if (self->codec == LRG_REEL_VIDEO_CODEC_H264
+                     || self->codec == LRG_REEL_VIDEO_CODEC_H265)
             {
                 g_ptr_array_add (args, g_strdup ("-preset"));
-                g_ptr_array_add (args, g_strdup ("medium"));
+                g_ptr_array_add (args, g_strdup (self->preset ? self->preset
+                                                             : "veryfast"));
+            }
+            else if (self->codec == LRG_REEL_VIDEO_CODEC_AV1)
+            {
+                /* SVT-AV1 presets are numeric (0 slowest .. 13 fastest). */
+                g_ptr_array_add (args, g_strdup ("-preset"));
+                g_ptr_array_add (args, g_strdup ("8"));
             }
             g_ptr_array_add (args, g_strdup ("-crf"));
             g_ptr_array_add (args, g_strdup_printf ("%d", self->crf));
@@ -363,6 +375,7 @@ lrg_reel_video_exporter_finalize (GObject *object)
     g_clear_object (&self->audio);
     g_clear_pointer (&self->path, g_free);
     g_clear_pointer (&self->ffmpeg_path, g_free);
+    g_clear_pointer (&self->preset, g_free);
 
     G_OBJECT_CLASS (lrg_reel_video_exporter_parent_class)->finalize (object);
 }
@@ -437,6 +450,15 @@ lrg_reel_video_exporter_set_bitrate (LrgReelVideoExporter *self,
     g_return_if_fail (LRG_IS_REEL_VIDEO_EXPORTER (self));
 
     self->bitrate_kbps = kbps;
+}
+
+void
+lrg_reel_video_exporter_set_preset (LrgReelVideoExporter *self,
+                                    const gchar          *preset)
+{
+    g_return_if_fail (LRG_IS_REEL_VIDEO_EXPORTER (self));
+    g_clear_pointer (&self->preset, g_free);
+    self->preset = (preset && preset[0]) ? g_strdup (preset) : NULL;
 }
 
 void
