@@ -20,6 +20,7 @@ struct _LrgReelVideoExporter
     gint               crf;
     gint               bitrate_kbps;  /* > 0 selects target bitrate over CRF */
     gchar             *preset;        /* x264/x265 -preset word; NULL=default */
+    gboolean           show_progress; /* emit ffmpeg -stats to stderr */
     gchar             *ffmpeg_path;   /* override, or NULL to auto-discover */
     LrgWaveData       *audio;         /* optional, ref */
 
@@ -62,10 +63,12 @@ reel_video_build_argv (LrgReelVideoExporter *self,
 
     g_ptr_array_add (args, g_strdup (ffmpeg));
     g_ptr_array_add (args, g_strdup ("-y"));
-    /* Keep real errors but suppress the banner and per-frame progress. */
+    /* Keep real errors + the banner suppressed; per-frame stats are opt-in
+       (a caller monitoring progress enables them). */
     g_ptr_array_add (args, g_strdup ("-loglevel"));
     g_ptr_array_add (args, g_strdup ("error"));
-    g_ptr_array_add (args, g_strdup ("-nostats"));
+    g_ptr_array_add (args, g_strdup (self->show_progress ? "-stats"
+                                                        : "-nostats"));
 
     /* Video input: a stream of PNG frames at the composition frame rate. */
     g_ptr_array_add (args, g_strdup ("-framerate"));
@@ -459,6 +462,14 @@ lrg_reel_video_exporter_set_preset (LrgReelVideoExporter *self,
     g_return_if_fail (LRG_IS_REEL_VIDEO_EXPORTER (self));
     g_clear_pointer (&self->preset, g_free);
     self->preset = (preset && preset[0]) ? g_strdup (preset) : NULL;
+}
+
+void
+lrg_reel_video_exporter_set_show_progress (LrgReelVideoExporter *self,
+                                           gboolean              show)
+{
+    g_return_if_fail (LRG_IS_REEL_VIDEO_EXPORTER (self));
+    self->show_progress = show;
 }
 
 void

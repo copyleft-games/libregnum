@@ -99,6 +99,21 @@ lrg_reel_video_exporter_set_preset (LrgReelVideoExporter *self,
                                     const gchar          *preset);
 
 /**
+ * lrg_reel_video_exporter_set_show_progress:
+ * @self: a #LrgReelVideoExporter
+ * @show: %TRUE to emit ffmpeg's per-frame -stats line to stderr.
+ *
+ * Enables progress reporting (frame/time/speed) on the ffmpeg stderr; off by
+ * default (quiet).
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_video_exporter_set_show_progress (LrgReelVideoExporter *self,
+                                           gboolean              show);
+
+/**
  * lrg_reel_video_exporter_set_ffmpeg_path:
  * @self: a #LrgReelVideoExporter
  * @path: (type filename) (nullable): path to the ffmpeg binary, or %NULL to
