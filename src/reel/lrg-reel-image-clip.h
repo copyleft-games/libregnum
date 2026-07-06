@@ -184,4 +184,8 @@ lrg_reel_image_clip_set_box (LrgReelImageClip *self,
                               gint              width,
                               gint              height);
 
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_reel_image_clip_get_box (LrgReelImageClip *self, gint *x, gint *y,
+                                      gint *w, gint *h);
+
 G_END_DECLS

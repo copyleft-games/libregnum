@@ -74,6 +74,13 @@ LRG_AVAILABLE_IN_ALL
 LrgReelFit lrg_reel_video_clip_get_fit (LrgReelVideoClip *self);
 LRG_AVAILABLE_IN_ALL
 void       lrg_reel_video_clip_set_fit (LrgReelVideoClip *self, LrgReelFit fit);
+
+LRG_AVAILABLE_IN_ALL
+void       lrg_reel_video_clip_set_box  (LrgReelVideoClip *self, gint x,
+                                         gint y, gint w, gint h);
+LRG_AVAILABLE_IN_ALL
+gboolean   lrg_reel_video_clip_get_box  (LrgReelVideoClip *self, gint *x,
+                                         gint *y, gint *w, gint *h);
 LRG_AVAILABLE_IN_ALL
 gdouble    lrg_reel_video_clip_get_trim_start (LrgReelVideoClip *self);
 LRG_AVAILABLE_IN_ALL

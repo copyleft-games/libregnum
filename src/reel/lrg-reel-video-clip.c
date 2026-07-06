@@ -20,9 +20,63 @@ struct _LrgReelVideoClip
     gdouble             trim_end;      /* source out-point, sec; 0 = to source end */
     gdouble             playback_rate;
     gboolean            loop;
+    gboolean            box_set;       /* draw into an explicit sub-rect (PiP) */
+    gint                box_x, box_y, box_w, box_h;
 };
 
 G_DEFINE_FINAL_TYPE (LrgReelVideoClip, lrg_reel_video_clip, LRG_TYPE_REEL_CLIP)
+
+/**
+ * lrg_reel_video_clip_set_box:
+ * @self: a video clip.
+ * @x: (in): sub-rect origin X in composition pixels.
+ * @y: (in): sub-rect origin Y.
+ * @w: (in): sub-rect width (> 0).
+ * @h: (in): sub-rect height (> 0).
+ *
+ * Draw this clip's frames into an explicit sub-rectangle of the composition
+ * (a picture-in-picture / overlay window) instead of the full frame.  The clip
+ * still composites over the tracks beneath it.  Pass w or h <= 0 to disable.
+ *
+ * Since: 1.0
+ */
+void
+lrg_reel_video_clip_set_box (LrgReelVideoClip *self, gint x, gint y,
+                             gint w, gint h)
+{
+    g_return_if_fail (LRG_IS_REEL_VIDEO_CLIP (self));
+    if (w <= 0 || h <= 0)
+    {
+        self->box_set = FALSE;
+        return;
+    }
+    self->box_set = TRUE;
+    self->box_x = x; self->box_y = y; self->box_w = w; self->box_h = h;
+}
+
+/**
+ * lrg_reel_video_clip_get_box:
+ * @self: a video clip.
+ * @x: (out) (optional): origin X.
+ * @y: (out) (optional): origin Y.
+ * @w: (out) (optional): width.
+ * @h: (out) (optional): height.
+ *
+ * Returns: %TRUE if a picture-in-picture box is set.
+ *
+ * Since: 1.0
+ */
+gboolean
+lrg_reel_video_clip_get_box (LrgReelVideoClip *self, gint *x, gint *y,
+                             gint *w, gint *h)
+{
+    g_return_val_if_fail (LRG_IS_REEL_VIDEO_CLIP (self), FALSE);
+    if (x) *x = self->box_x;
+    if (y) *y = self->box_y;
+    if (w) *w = self->box_w;
+    if (h) *h = self->box_h;
+    return self->box_set;
+}
 
 /* Compute the destination rect for fitting a sw x sh image into fw x fh. */
 static void
@@ -135,10 +189,25 @@ lrg_reel_video_clip_render (LrgReelClip    *clip,
     if (frame == NULL)
         return;
 
-    reel_video_compute_fit (self->fit,
-                            grl_image_get_width (frame),
-                            grl_image_get_height (frame),
-                            fw, fh, &dst);
+    if (self->box_set)
+    {
+        /* Picture-in-picture: fit the frame inside the sub-rect, then offset
+           to the box origin -- drawn straight onto the canvas (no transform),
+           so it composites over the tracks below. */
+        reel_video_compute_fit (self->fit,
+                                grl_image_get_width (frame),
+                                grl_image_get_height (frame),
+                                self->box_w, self->box_h, &dst);
+        dst.x += self->box_x;
+        dst.y += self->box_y;
+    }
+    else
+    {
+        reel_video_compute_fit (self->fit,
+                                grl_image_get_width (frame),
+                                grl_image_get_height (frame),
+                                fw, fh, &dst);
+    }
 
     grl_image_draw_image (lrg_image_canvas_get_image (canvas), frame, NULL, &dst, NULL);
 }

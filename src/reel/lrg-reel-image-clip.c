@@ -562,3 +562,15 @@ lrg_reel_image_clip_set_box (LrgReelImageClip *self,
     self->box_w   = width;
     self->box_h   = height;
 }
+
+gboolean
+lrg_reel_image_clip_get_box (LrgReelImageClip *self, gint *x, gint *y,
+                             gint *w, gint *h)
+{
+    g_return_val_if_fail (LRG_IS_REEL_IMAGE_CLIP (self), FALSE);
+    if (x) *x = self->box_x;
+    if (y) *y = self->box_y;
+    if (w) *w = self->box_w;
+    if (h) *h = self->box_h;
+    return self->box_set;
+}
