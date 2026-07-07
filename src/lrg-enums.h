@@ -4706,10 +4706,15 @@ GType lrg_node_visual_kind_get_type (void) G_GNUC_CONST;
  * @LRG_SCRIPT_LANGUAGE_PYTHON: Python 3 scripting backend
  * @LRG_SCRIPT_LANGUAGE_GJS: Gjs (GNOME JavaScript) scripting backend
  * @LRG_SCRIPT_LANGUAGE_CRISPY: Crispy (compiled C) scripting backend
+ * @LRG_SCRIPT_LANGUAGE_ELISP: Emacs Lisp scripting backend. libregnum ships no
+ *   elisp interpreter; this value is only usable when an embedding application
+ *   (e.g. cmacs) registers an elisp backend at runtime via
+ *   lrg_scripting_manager_register_backend().
  *
  * The scripting language a script binding is authored in. Availability of a
- * given backend at runtime depends on how libregnum was built; query
- * #LrgScriptingManager for the compiled-in set.
+ * given backend at runtime depends on how libregnum was built (for the
+ * compiled-in backends) or on what an embedder has registered dynamically;
+ * query #LrgScriptingManager for the live set.
  *
  * Since: 1.0
  */
@@ -4719,7 +4724,8 @@ typedef enum
     LRG_SCRIPT_LANGUAGE_LUA,
     LRG_SCRIPT_LANGUAGE_PYTHON,
     LRG_SCRIPT_LANGUAGE_GJS,
-    LRG_SCRIPT_LANGUAGE_CRISPY
+    LRG_SCRIPT_LANGUAGE_CRISPY,
+    LRG_SCRIPT_LANGUAGE_ELISP
 } LrgScriptLanguage;
 
 LRG_AVAILABLE_IN_ALL

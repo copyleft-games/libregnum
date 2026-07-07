@@ -32,6 +32,22 @@ LRG_AVAILABLE_IN_ALL
 G_DECLARE_FINAL_TYPE (LrgScriptingManager, lrg_scripting_manager, LRG, SCRIPTING_MANAGER, GObject)
 
 /**
+ * LrgScriptingFactoryFunc:
+ * @user_data: the user data passed to lrg_scripting_manager_register_backend()
+ *
+ * Factory callback that constructs a fresh #LrgScripting context for a
+ * dynamically-registered backend.
+ *
+ * This is the extension point that lets an embedding application provide a
+ * scripting backend libregnum was not compiled with — for example an Emacs
+ * Lisp backend supplied by cmacs — without libregnum having to link that
+ * language's runtime. The interpreter lives entirely in the embedder.
+ *
+ * Returns: (transfer full): a new #LrgScripting context
+ */
+typedef LrgScripting * (*LrgScriptingFactoryFunc) (gpointer user_data);
+
+/**
  * lrg_scripting_manager_get_default:
  *
  * Gets the process-wide scripting manager singleton.
@@ -111,5 +127,41 @@ guint lrg_scripting_manager_get_available_count (LrgScriptingManager *self);
 LRG_AVAILABLE_IN_ALL
 LrgScriptLanguage * lrg_scripting_manager_get_available (LrgScriptingManager *self,
                                                          guint               *n_languages);
+
+/**
+ * lrg_scripting_manager_register_backend:
+ * @self: an #LrgScriptingManager
+ * @language: the #LrgScriptLanguage this backend provides (must not collide
+ *   with a compiled-in backend; typically %LRG_SCRIPT_LANGUAGE_ELISP or a
+ *   value libregnum was not built with)
+ * @display_name: (transfer none): a human-readable name, e.g. "Emacs Lisp"
+ * @extension: (transfer none): the canonical file extension (no dot), e.g. "el"
+ * @factory: (scope notified): factory that constructs a fresh context
+ * @user_data: (closure factory) (nullable): user data passed to @factory
+ * @destroy: (nullable): called on @user_data when the manager is finalized or
+ *   the registration is replaced
+ *
+ * Registers a scripting backend at runtime, in addition to the backends
+ * compiled into libregnum. This is the extension point an embedding
+ * application uses to plug in an interpreter libregnum does not itself ship
+ * (e.g. cmacs registering an Emacs Lisp backend). After registration the
+ * language is reported by lrg_scripting_manager_is_available(),
+ * lrg_scripting_manager_get_available(), etc., and
+ * lrg_scripting_manager_create_context() creates contexts from @factory —
+ * so #LrgScriptComponent and #LrgScriptBinding transparently support it.
+ *
+ * Registering a @language that already has a dynamic registration replaces it.
+ *
+ * Returns: %TRUE on success, %FALSE if @language is %LRG_SCRIPT_LANGUAGE_NONE,
+ *   collides with a compiled-in backend, or @factory is %NULL.
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_scripting_manager_register_backend (LrgScriptingManager     *self,
+                                                 LrgScriptLanguage        language,
+                                                 const gchar             *display_name,
+                                                 const gchar             *extension,
+                                                 LrgScriptingFactoryFunc  factory,
+                                                 gpointer                 user_data,
+                                                 GDestroyNotify           destroy);
 
 G_END_DECLS
