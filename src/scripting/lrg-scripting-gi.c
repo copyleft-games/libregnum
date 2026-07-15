@@ -468,8 +468,15 @@ lrg_scripting_gi_init (LrgScriptingGI *self)
     /* GIRepository 3.0 (GLib >= 2.86): dup_default() returns an owned ref,
      * released in finalize via g_clear_object().  Using the GLib-integrated
      * GIRepository avoids a duplicate "GIRepository" GType registration when
-     * loaded alongside gjs / modern pygobject. */
+     * loaded alongside gjs / modern pygobject.  gi_repository_dup_default()
+     * only exists on GLib >= 2.86 (Ubuntu 24.04 ships 2.80); older
+     * girepository-2.0 gets a private repository instead -- same default
+     * typelib search paths, just not shared process-wide. */
+#if GLIB_CHECK_VERSION (2, 86, 0)
     priv->gi_repository = gi_repository_dup_default ();
+#else
+    priv->gi_repository = gi_repository_new ();
+#endif
     priv->interpreter_initialized = FALSE;
 }
 
