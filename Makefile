@@ -1235,26 +1235,21 @@ endif
 # host-side backends.)
 DEP_DEBUG_FLAG := $(if $(filter debug,$(DEP_BUILD_TYPE)),DEBUG=1)
 
+# graylib/yaml-glib/crispy get merged into liblibregnum.a (ADDLIB below),
+# so their sub-makes always run and decide incrementality themselves.  An
+# existence check alone left stale archives behind when their sources
+# changed, which surfaced as undefined references at the final link.
 deps-graylib:
-	@if [ ! -f "$(GRAYLIB_LIB)" ]; then \
-		$(call print_status,"Building graylib ($(TARGET_PLATFORM))..."); \
-		$(MAKE) -C $(GRAYLIB_DIR) $(DEP_BUILD_FLAGS); \
-	fi
+	@$(MAKE) -C $(GRAYLIB_DIR) $(DEP_BUILD_FLAGS)
 
 deps-yamlglib:
-	@if [ ! -f "$(YAMLGLIB_LIB)" ]; then \
-		$(call print_status,"Building yaml-glib ($(TARGET_PLATFORM))..."); \
-		$(MAKE) -C $(YAMLGLIB_DIR) $(DEP_BUILD_FLAGS); \
-	fi
+	@$(MAKE) -C $(YAMLGLIB_DIR) $(DEP_BUILD_FLAGS)
 
 # Crispy: the vendored compiled-C scripting backend (deps/crispy submodule).
 # Built standalone here so libregnum is self-contained; its `lib' target
 # produces build/$(DEP_BUILD_TYPE)/libcrispy.a (debug when DEBUG=1).
 deps-crispy:
-	@if [ ! -f "$(CRISPY_STATIC)" ]; then \
-		$(call print_status,"Building crispy ($(TARGET_PLATFORM))..."); \
-		$(MAKE) -C $(CRISPY_DIR) $(DEP_DEBUG_FLAG) lib; \
-	fi
+	@$(MAKE) -C $(CRISPY_DIR) $(DEP_DEBUG_FLAG) lib
 
 # cad-glib: the bundled parametric CAD kernel (deps/cad-glib submodule),
 # built standalone so a CAD=1 libregnum is self-contained.  Builds its own
@@ -1304,7 +1299,19 @@ _CRISPY_ADDLIB := ADDLIB $(CRISPY_STATIC)\n
 else
 _CRISPY_ADDLIB :=
 endif
-$(LIBOUTDIR)/$(LIB_STATIC): $(OBJECTS) | $(LIBOUTDIR)
+# The archives merged below are real prerequisites: a rebuilt graylib/
+# yaml-glib/crispy must trigger a re-archive, or the merged copy goes stale.
+# $(wildcard) so a not-yet-built archive (created by the `deps' phase, then
+# re-evaluated when `lib' re-invokes make for _lib) isn't a hard error.
+ifneq ($(TARGET_PLATFORM),windows)
+_STATIC_EMBED_DEPS := $(GRAYLIB_STATIC) $(RAYLIB_STATIC) $(YAMLGLIB_STATIC)
+ifeq ($(HAS_CRISPY),1)
+_STATIC_EMBED_DEPS += $(CRISPY_STATIC)
+endif
+else
+_STATIC_EMBED_DEPS :=
+endif
+$(LIBOUTDIR)/$(LIB_STATIC): $(OBJECTS) $(wildcard $(_STATIC_EMBED_DEPS)) | $(LIBOUTDIR)
 	$(call print_archive,$(LIB_STATIC))
 	@$(AR) rcs $@ $(OBJECTS)
 ifneq ($(TARGET_PLATFORM),windows)
