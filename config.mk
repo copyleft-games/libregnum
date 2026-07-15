@@ -669,8 +669,15 @@ LIB_CFLAGS += $(FFMPEG_CFLAGS)
 # Library link flags (use platform-specific flags)
 LIB_LDFLAGS := $(LIB_LDFLAGS_PLATFORM)
 
-# All libraries to link (include platform-specific libs)
-ALL_LIBS := $(DEP_LIBS) $(PLATFORM_LIBS) $(SANITIZER_LIBS)
+# All libraries to link (include platform-specific libs).
+# NOTE: the embedded dep archives must come FIRST and the system/pkg-config
+# libs AFTER them.  Debian/Ubuntu gcc passes -Wl,--as-needed by default, and
+# a shared library listed before the archive that needs its symbols gets
+# dropped from DT_NEEDED -- liblibregnum.so is then left with undefined
+# X11/yaml references and every executable linked against it (e.g. the GIR
+# scanner dumper) fails.  Fedora's ld records them regardless, which masked
+# the misordering.
+ALL_LIBS := $(SANITIZER_LIBS)
 ifeq ($(TARGET_PLATFORM),windows)
     # Windows: link against import libraries for DLLs
     # Note: libregnum.dll requires graylib.dll and yaml-glib.dll at runtime
@@ -696,6 +703,7 @@ else
     endif
     ALL_LIBS += -Wl,--allow-multiple-definition $(RAYLIB_STATIC)
 endif
+ALL_LIBS += $(DEP_LIBS) $(PLATFORM_LIBS)
 ALL_LIBS += $(STEAM_LIBS)
 ALL_LIBS += $(MCP_LIBS)
 ALL_LIBS += $(CAD_LIBS)
