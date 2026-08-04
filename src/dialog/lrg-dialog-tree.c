@@ -13,6 +13,9 @@
 #include "dialog/lrg-dialog-tree.h"
 #include "lrg-enums.h"
 
+#include <gio/gio.h>
+#include <yaml-glib.h>
+
 /**
  * LrgDialogTree:
  *
@@ -198,6 +201,389 @@ lrg_dialog_tree_new (const gchar *id)
     return g_object_new (LRG_TYPE_DIALOG_TREE,
                          "id", id,
                          NULL);
+}
+
+/*
+ * Helper to parse the string->string "metadata" mapping of a node
+ * definition onto the node. Non-string values are skipped.
+ */
+static void
+parse_node_metadata (YamlMapping   *node_map,
+                     LrgDialogNode *node)
+{
+    YamlMapping *meta_map;
+    guint        n_meta;
+    guint        i;
+
+    if (!yaml_mapping_has_member (node_map, "metadata"))
+        return;
+
+    meta_map = yaml_mapping_get_mapping_member (node_map, "metadata");
+    if (meta_map == NULL)
+        return;
+
+    n_meta = yaml_mapping_get_size (meta_map);
+    for (i = 0; i < n_meta; i++)
+    {
+        const gchar *key;
+        const gchar *value;
+
+        key = yaml_mapping_get_key (meta_map, i);
+        if (key == NULL)
+            continue;
+
+        value = yaml_mapping_get_string_member (meta_map, key);
+        if (value != NULL)
+            lrg_dialog_node_set_metadata_value (node, key, value);
+    }
+}
+
+/*
+ * Helper to parse the "responses" sequence of a node definition.
+ * Each response requires 'text' and 'next'; 'conditions' and
+ * 'effects' are optional string sequences. Response ids are
+ * generated from the node id and the response index.
+ */
+static gboolean
+parse_node_responses (YamlMapping    *node_map,
+                      LrgDialogNode  *node,
+                      const gchar    *source,
+                      GError        **error)
+{
+    YamlSequence *resp_seq;
+    guint         n_resps;
+    guint         i;
+
+    if (!yaml_mapping_has_member (node_map, "responses"))
+        return TRUE;
+
+    resp_seq = yaml_mapping_get_sequence_member (node_map, "responses");
+    if (resp_seq == NULL)
+        return TRUE;
+
+    n_resps = yaml_sequence_get_length (resp_seq);
+    for (i = 0; i < n_resps; i++)
+    {
+        YamlMapping       *resp_map;
+        YamlSequence      *strings;
+        LrgDialogResponse *resp;
+        const gchar       *text;
+        const gchar       *next;
+        g_autofree gchar  *resp_id = NULL;
+        guint              n_strings;
+        guint              j;
+
+        resp_map = yaml_sequence_get_mapping_element (resp_seq, i);
+        if (resp_map == NULL)
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                         "Response %u in node '%s' is not a mapping: %s",
+                         i, lrg_dialog_node_get_id (node), source);
+            return FALSE;
+        }
+
+        text = yaml_mapping_get_string_member (resp_map, "text");
+        if (text == NULL)
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                         "Response %u in node '%s' missing 'text' field: %s",
+                         i, lrg_dialog_node_get_id (node), source);
+            return FALSE;
+        }
+
+        next = yaml_mapping_get_string_member (resp_map, "next");
+        if (next == NULL)
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                         "Response %u in node '%s' missing 'next' field: %s",
+                         i, lrg_dialog_node_get_id (node), source);
+            return FALSE;
+        }
+
+        resp_id = g_strdup_printf ("%s-r%u", lrg_dialog_node_get_id (node), i);
+        resp = lrg_dialog_response_new (resp_id, text, next);
+
+        strings = yaml_mapping_get_sequence_member (resp_map, "conditions");
+        if (strings != NULL)
+        {
+            n_strings = yaml_sequence_get_length (strings);
+            for (j = 0; j < n_strings; j++)
+            {
+                const gchar *value;
+
+                value = yaml_sequence_get_string_element (strings, j);
+                if (value != NULL)
+                    lrg_dialog_response_add_condition (resp, value);
+            }
+        }
+
+        strings = yaml_mapping_get_sequence_member (resp_map, "effects");
+        if (strings != NULL)
+        {
+            n_strings = yaml_sequence_get_length (strings);
+            for (j = 0; j < n_strings; j++)
+            {
+                const gchar *value;
+
+                value = yaml_sequence_get_string_element (strings, j);
+                if (value != NULL)
+                    lrg_dialog_response_add_effect (resp, value);
+            }
+        }
+
+        /* Node takes ownership of the response */
+        lrg_dialog_node_add_response (node, resp);
+    }
+
+    return TRUE;
+}
+
+/*
+ * Shared implementation for the YAML constructors. @source is a
+ * human-readable description of where the data came from (a file
+ * path or "<data>") used in error messages.
+ */
+static LrgDialogTree *
+lrg_dialog_tree_build_from_yaml (YamlParser   *parser,
+                                 const gchar  *source,
+                                 GError      **error)
+{
+    g_autoptr(LrgDialogTree) tree = NULL;
+    YamlNode     *root;
+    YamlMapping  *mapping;
+    YamlSequence *nodes_seq;
+    const gchar  *tree_id;
+    const gchar  *title;
+    const gchar  *start;
+    const gchar  *first_node_id = NULL;
+    guint         n_nodes;
+    guint         i;
+
+    root = yaml_parser_get_root (parser);
+    if (root == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Empty dialog tree document: %s", source);
+        return NULL;
+    }
+
+    mapping = yaml_node_get_mapping (root);
+    if (mapping == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Dialog tree root must be a mapping: %s", source);
+        return NULL;
+    }
+
+    tree_id = yaml_mapping_get_string_member (mapping, "id");
+    if (tree_id == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Dialog tree missing 'id' field: %s", source);
+        return NULL;
+    }
+
+    nodes_seq = yaml_mapping_get_sequence_member (mapping, "nodes");
+    if (nodes_seq == NULL || yaml_sequence_get_length (nodes_seq) == 0)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Dialog tree '%s' has no nodes: %s", tree_id, source);
+        return NULL;
+    }
+
+    tree = lrg_dialog_tree_new (tree_id);
+
+    title = yaml_mapping_get_string_member (mapping, "title");
+    if (title != NULL)
+        lrg_dialog_tree_set_title (tree, title);
+
+    n_nodes = yaml_sequence_get_length (nodes_seq);
+    for (i = 0; i < n_nodes; i++)
+    {
+        YamlMapping   *node_map;
+        YamlSequence  *strings;
+        LrgDialogNode *node;
+        const gchar   *node_id;
+        const gchar   *text;
+        const gchar   *speaker;
+        const gchar   *next;
+        guint          n_strings;
+        guint          j;
+
+        node_map = yaml_sequence_get_mapping_element (nodes_seq, i);
+        if (node_map == NULL)
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                         "Dialog node %u is not a mapping: %s", i, source);
+            return NULL;
+        }
+
+        node_id = yaml_mapping_get_string_member (node_map, "id");
+        if (node_id == NULL)
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                         "Dialog node %u missing 'id' field: %s", i, source);
+            return NULL;
+        }
+
+        text = yaml_mapping_get_string_member (node_map, "text");
+        if (text == NULL)
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                         "Dialog node '%s' missing 'text' field: %s",
+                         node_id, source);
+            return NULL;
+        }
+
+        if (i == 0)
+            first_node_id = node_id;
+
+        node = lrg_dialog_node_new (node_id);
+
+        /* Tree takes ownership; the node stays alive for configuration */
+        lrg_dialog_tree_add_node (tree, node);
+
+        lrg_dialog_node_set_text (node, text);
+
+        speaker = yaml_mapping_get_string_member (node_map, "speaker");
+        if (speaker != NULL)
+            lrg_dialog_node_set_speaker (node, speaker);
+
+        next = yaml_mapping_get_string_member (node_map, "next");
+        if (next != NULL)
+            lrg_dialog_node_set_next_node_id (node, next);
+
+        parse_node_metadata (node_map, node);
+
+        strings = yaml_mapping_get_sequence_member (node_map, "conditions");
+        if (strings != NULL)
+        {
+            n_strings = yaml_sequence_get_length (strings);
+            for (j = 0; j < n_strings; j++)
+            {
+                const gchar *value;
+
+                value = yaml_sequence_get_string_element (strings, j);
+                if (value != NULL)
+                    lrg_dialog_node_add_condition (node, value);
+            }
+        }
+
+        strings = yaml_mapping_get_sequence_member (node_map, "effects");
+        if (strings != NULL)
+        {
+            n_strings = yaml_sequence_get_length (strings);
+            for (j = 0; j < n_strings; j++)
+            {
+                const gchar *value;
+
+                value = yaml_sequence_get_string_element (strings, j);
+                if (value != NULL)
+                    lrg_dialog_node_add_effect (node, value);
+            }
+        }
+
+        if (!parse_node_responses (node_map, node, source, error))
+            return NULL;
+
+        /*
+         * Linear-scene authoring convenience: a node with neither
+         * 'next' nor 'responses' auto-chains to the node that follows
+         * it in the sequence. The last node stays terminal.
+         */
+        if (next == NULL &&
+            lrg_dialog_node_get_response_count (node) == 0 &&
+            i + 1 < n_nodes)
+        {
+            YamlMapping *next_map;
+            const gchar *next_id = NULL;
+
+            next_map = yaml_sequence_get_mapping_element (nodes_seq, i + 1);
+            if (next_map != NULL)
+                next_id = yaml_mapping_get_string_member (next_map, "id");
+
+            /* A missing id on the following node errors on its own turn */
+            if (next_id != NULL)
+                lrg_dialog_node_set_next_node_id (node, next_id);
+        }
+    }
+
+    start = yaml_mapping_get_string_member (mapping, "start");
+    if (start == NULL)
+        start = first_node_id;
+    lrg_dialog_tree_set_start_node_id (tree, start);
+
+    if (!lrg_dialog_tree_validate (tree, error))
+        return NULL;
+
+    return g_steal_pointer (&tree);
+}
+
+/**
+ * lrg_dialog_tree_new_from_file:
+ * @path: path to the dialog tree definition file (YAML)
+ * @error: (nullable): return location for error
+ *
+ * Creates a dialog tree by loading a YAML definition file.
+ *
+ * See lrg_dialog_tree_new_from_data() for the expected schema.
+ *
+ * Returns: (transfer full) (nullable): A new #LrgDialogTree, or %NULL on error
+ */
+LrgDialogTree *
+lrg_dialog_tree_new_from_file (const gchar  *path,
+                               GError      **error)
+{
+    g_autoptr(YamlParser) parser = NULL;
+
+    g_return_val_if_fail (path != NULL, NULL);
+
+    parser = yaml_parser_new ();
+    if (!yaml_parser_load_from_file (parser, path, error))
+        return NULL;
+
+    return lrg_dialog_tree_build_from_yaml (parser, path, error);
+}
+
+/**
+ * lrg_dialog_tree_new_from_data:
+ * @data: (array length=length) (element-type guint8): YAML dialog tree definition
+ * @length: length of @data, or -1 if null-terminated
+ * @error: (nullable): return location for error
+ *
+ * Creates a dialog tree by parsing a YAML definition from memory.
+ *
+ * The expected schema is a mapping with a required `id`, an optional
+ * `title`, an optional `start` node id (defaults to the first node's
+ * id), and a required non-empty `nodes` sequence. Each node requires
+ * `id` and `text`, and may carry `speaker`, `next`, a string->string
+ * `metadata` mapping, `conditions` and `effects` string sequences,
+ * and a `responses` sequence whose entries require `text` and `next`
+ * and may carry `conditions` and `effects`.
+ *
+ * As a linear-scene authoring convenience, a node with neither `next`
+ * nor `responses` is automatically chained to the node that follows
+ * it in the sequence. The last node in the sequence is left terminal.
+ *
+ * The resulting tree is validated with lrg_dialog_tree_validate()
+ * before being returned.
+ *
+ * Returns: (transfer full) (nullable): A new #LrgDialogTree, or %NULL on error
+ */
+LrgDialogTree *
+lrg_dialog_tree_new_from_data (const gchar  *data,
+                               gssize        length,
+                               GError      **error)
+{
+    g_autoptr(YamlParser) parser = NULL;
+
+    g_return_val_if_fail (data != NULL, NULL);
+
+    parser = yaml_parser_new ();
+    if (!yaml_parser_load_from_data (parser, data, length, error))
+        return NULL;
+
+    return lrg_dialog_tree_build_from_yaml (parser, "<data>", error);
 }
 
 /**

@@ -258,6 +258,48 @@ void               lrg_dialog_node_apply_effects        (LrgDialogNode *self,
  */
 gboolean           lrg_dialog_node_is_terminal          (LrgDialogNode *self);
 
+/**
+ * lrg_dialog_node_set_metadata_value:
+ * @self: an #LrgDialogNode
+ * @key: metadata key
+ * @value: metadata value
+ *
+ * Sets a metadata value on this node.
+ *
+ * Metadata entries are presentation hints that the engine does not
+ * interpret -- portrait ids, voice cues, animation triggers. Games
+ * attach arbitrary string key/value pairs here and read them back
+ * when presenting the node.
+ *
+ * Setting a key that already exists overwrites the previous value.
+ */
+void               lrg_dialog_node_set_metadata_value   (LrgDialogNode *self,
+                                                         const gchar   *key,
+                                                         const gchar   *value);
+
+/**
+ * lrg_dialog_node_get_metadata_value:
+ * @self: an #LrgDialogNode
+ * @key: metadata key
+ *
+ * Gets a metadata value from this node.
+ *
+ * Returns: (transfer none) (nullable): The value, or %NULL if unset
+ */
+const gchar       *lrg_dialog_node_get_metadata_value   (LrgDialogNode *self,
+                                                         const gchar   *key);
+
+/**
+ * lrg_dialog_node_get_metadata_keys:
+ * @self: an #LrgDialogNode
+ *
+ * Gets all metadata keys set on this node.
+ *
+ * Returns: (transfer container) (element-type utf8): List of metadata
+ *          keys, or %NULL if no metadata is set. Free with g_list_free().
+ */
+GList             *lrg_dialog_node_get_metadata_keys    (LrgDialogNode *self);
+
 #pragma GCC visibility pop
 
 G_END_DECLS

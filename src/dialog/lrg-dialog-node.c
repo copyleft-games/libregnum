@@ -19,13 +19,14 @@
  */
 typedef struct
 {
-    gchar     *id;
-    gchar     *speaker;
-    gchar     *text;
-    gchar     *next_node_id;
-    GPtrArray *responses;
-    GPtrArray *conditions;
-    GPtrArray *effects;
+    gchar      *id;
+    gchar      *speaker;
+    gchar      *text;
+    gchar      *next_node_id;
+    GPtrArray  *responses;
+    GPtrArray  *conditions;
+    GPtrArray  *effects;
+    GHashTable *metadata;    /* string -> string, lazily created */
 } LrgDialogNodePrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgDialogNode, lrg_dialog_node, G_TYPE_OBJECT)
@@ -62,6 +63,7 @@ lrg_dialog_node_finalize (GObject *object)
     g_clear_pointer (&priv->responses, g_ptr_array_unref);
     g_clear_pointer (&priv->conditions, g_ptr_array_unref);
     g_clear_pointer (&priv->effects, g_ptr_array_unref);
+    g_clear_pointer (&priv->metadata, g_hash_table_unref);
 
     G_OBJECT_CLASS (lrg_dialog_node_parent_class)->finalize (object);
 }
@@ -638,4 +640,92 @@ lrg_dialog_node_is_terminal (LrgDialogNode *self)
 
     /* Terminal if no next node and no responses */
     return (priv->next_node_id == NULL && priv->responses->len == 0);
+}
+
+/**
+ * lrg_dialog_node_set_metadata_value:
+ * @self: an #LrgDialogNode
+ * @key: metadata key
+ * @value: metadata value
+ *
+ * Sets a metadata value on this node.
+ *
+ * Metadata entries are presentation hints that the engine does not
+ * interpret -- portrait ids, voice cues, animation triggers. Games
+ * attach arbitrary string key/value pairs here and read them back
+ * when presenting the node.
+ *
+ * Setting a key that already exists overwrites the previous value.
+ */
+void
+lrg_dialog_node_set_metadata_value (LrgDialogNode *self,
+                                    const gchar   *key,
+                                    const gchar   *value)
+{
+    LrgDialogNodePrivate *priv;
+
+    g_return_if_fail (LRG_IS_DIALOG_NODE (self));
+    g_return_if_fail (key != NULL);
+    g_return_if_fail (value != NULL);
+
+    priv = lrg_dialog_node_get_instance_private (self);
+
+    if (priv->metadata == NULL)
+        priv->metadata = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                                g_free, g_free);
+
+    g_hash_table_replace (priv->metadata, g_strdup (key), g_strdup (value));
+}
+
+/**
+ * lrg_dialog_node_get_metadata_value:
+ * @self: an #LrgDialogNode
+ * @key: metadata key
+ *
+ * Gets a metadata value from this node.
+ *
+ * Metadata entries are presentation hints that the engine does not
+ * interpret -- portrait ids, voice cues, animation triggers.
+ *
+ * Returns: (transfer none) (nullable): The value, or %NULL if unset
+ */
+const gchar *
+lrg_dialog_node_get_metadata_value (LrgDialogNode *self,
+                                    const gchar   *key)
+{
+    LrgDialogNodePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_DIALOG_NODE (self), NULL);
+    g_return_val_if_fail (key != NULL, NULL);
+
+    priv = lrg_dialog_node_get_instance_private (self);
+
+    if (priv->metadata == NULL)
+        return NULL;
+
+    return g_hash_table_lookup (priv->metadata, key);
+}
+
+/**
+ * lrg_dialog_node_get_metadata_keys:
+ * @self: an #LrgDialogNode
+ *
+ * Gets all metadata keys set on this node.
+ *
+ * Returns: (transfer container) (element-type utf8): List of metadata
+ *          keys, or %NULL if no metadata is set. Free with g_list_free().
+ */
+GList *
+lrg_dialog_node_get_metadata_keys (LrgDialogNode *self)
+{
+    LrgDialogNodePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_DIALOG_NODE (self), NULL);
+
+    priv = lrg_dialog_node_get_instance_private (self);
+
+    if (priv->metadata == NULL)
+        return NULL;
+
+    return g_hash_table_get_keys (priv->metadata);
 }

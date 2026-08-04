@@ -37,6 +37,49 @@ G_DECLARE_FINAL_TYPE (LrgDialogTree, lrg_dialog_tree, LRG, DIALOG_TREE, GObject)
 LrgDialogTree *lrg_dialog_tree_new            (const gchar   *id);
 
 /**
+ * lrg_dialog_tree_new_from_file:
+ * @path: path to the dialog tree definition file (YAML)
+ * @error: (nullable): return location for error
+ *
+ * Creates a dialog tree by loading a YAML definition file.
+ *
+ * See lrg_dialog_tree_new_from_data() for the expected schema.
+ *
+ * Returns: (transfer full) (nullable): A new #LrgDialogTree, or %NULL on error
+ */
+LrgDialogTree *lrg_dialog_tree_new_from_file  (const gchar   *path,
+                                               GError       **error);
+
+/**
+ * lrg_dialog_tree_new_from_data:
+ * @data: (array length=length) (element-type guint8): YAML dialog tree definition
+ * @length: length of @data, or -1 if null-terminated
+ * @error: (nullable): return location for error
+ *
+ * Creates a dialog tree by parsing a YAML definition from memory.
+ *
+ * The expected schema is a mapping with a required `id`, an optional
+ * `title`, an optional `start` node id (defaults to the first node's
+ * id), and a required non-empty `nodes` sequence. Each node requires
+ * `id` and `text`, and may carry `speaker`, `next`, a string->string
+ * `metadata` mapping, `conditions` and `effects` string sequences,
+ * and a `responses` sequence whose entries require `text` and `next`
+ * and may carry `conditions` and `effects`.
+ *
+ * As a linear-scene authoring convenience, a node with neither `next`
+ * nor `responses` is automatically chained to the node that follows
+ * it in the sequence. The last node in the sequence is left terminal.
+ *
+ * The resulting tree is validated with lrg_dialog_tree_validate()
+ * before being returned.
+ *
+ * Returns: (transfer full) (nullable): A new #LrgDialogTree, or %NULL on error
+ */
+LrgDialogTree *lrg_dialog_tree_new_from_data  (const gchar   *data,
+                                               gssize         length,
+                                               GError       **error);
+
+/**
  * lrg_dialog_tree_get_id:
  * @self: an #LrgDialogTree
  *

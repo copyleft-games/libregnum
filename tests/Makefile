@@ -67,6 +67,7 @@ TEST_SOURCES := \
 	test-tilemap.c \
 	test-save.c \
 	test-dialog.c \
+	test-dialog-yaml.c \
 	test-quest.c \
 	test-audio.c \
 	test-inventory.c \
