@@ -323,6 +323,12 @@ lrg_shooter_2d_template_pre_update (LrgGameTemplate *template,
     if (parent_class->pre_update != NULL)
         parent_class->pre_update (template, delta);
 
+    /* Freeze the shooter simulation while a pause state is on top;
+     * pre_update runs every frame regardless of the state stack, so
+     * without this gate projectiles keep flying behind the pause menu. */
+    if (lrg_game_template_is_paused (template))
+        return;
+
     /* Update fire cooldown */
     if (priv->fire_cooldown > 0.0f)
     {
