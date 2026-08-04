@@ -350,17 +350,13 @@ static void
 create_ui (LrgTemplateErrorState *self)
 {
     LrgTemplateErrorStatePrivate *priv;
-    LrgEngine *engine;
-    LrgWindow *window;
     gint screen_width;
     gint screen_height;
 
     priv = lrg_template_error_state_get_instance_private (self);
 
-    engine = lrg_engine_get_default ();
-    window = lrg_engine_get_window (engine);
-    screen_width = lrg_window_get_width (window);
-    screen_height = lrg_window_get_height (window);
+    screen_width = grl_render_texture_get_current_width ();
+    screen_height = grl_render_texture_get_current_height ();
 
     /* Create canvas */
     priv->canvas = lrg_canvas_new ();
@@ -475,18 +471,29 @@ lrg_template_error_state_draw (LrgGameState *state)
 {
     LrgTemplateErrorState *self;
     LrgTemplateErrorStatePrivate *priv;
-    LrgEngine *engine;
-    LrgWindow *window;
     gint screen_width;
     gint screen_height;
 
     self = LRG_TEMPLATE_ERROR_STATE (state);
     priv = lrg_template_error_state_get_instance_private (self);
 
-    engine = lrg_engine_get_default ();
-    window = lrg_engine_get_window (engine);
-    screen_width = lrg_window_get_width (window);
-    screen_height = lrg_window_get_height (window);
+    screen_width = grl_render_texture_get_current_width ();
+    screen_height = grl_render_texture_get_current_height ();
+
+    /* Lay out against the current render target (enter() runs outside
+     * the render pass, where the target size is not yet known) */
+    if (priv->canvas != NULL)
+    {
+        lrg_widget_set_size (LRG_WIDGET (priv->canvas),
+                             (gfloat) screen_width,
+                             (gfloat) screen_height);
+    }
+    if (priv->content_box != NULL)
+    {
+        lrg_widget_set_position (LRG_WIDGET (priv->content_box),
+                                 (gfloat) screen_width / 2.0f - 200.0f,
+                                 (gfloat) screen_height / 3.0f);
+    }
 
     /* Draw background */
     grl_draw_rectangle (0, 0, screen_width, screen_height, priv->background_color);

@@ -36,6 +36,12 @@ enum
 
 static GParamSpec *properties[N_PROPS];
 
+/* Process-wide pointer transform (window pixels -> canvas space);
+ * registered by whoever owns the scaled presentation, see
+ * lrg_canvas_set_default_pointer_transform() */
+static LrgCanvasPointerTransform default_pointer_transform = NULL;
+static gpointer default_pointer_transform_data = NULL;
+
 /*
  * Recursive helper to find widget at point.
  * Searches depth-first, returning the deepest matching widget.
@@ -226,6 +232,23 @@ lrg_canvas_new (void)
 }
 
 /**
+ * lrg_canvas_set_default_pointer_transform:
+ * @transform: (nullable) (scope notified): transform applied to pointer
+ *   coordinates before hit-testing, or %NULL to restore raw coordinates
+ * @user_data: user data passed to @transform
+ *
+ * Installs a process-wide pointer transform used by every canvas in
+ * lrg_canvas_handle_input().
+ */
+void
+lrg_canvas_set_default_pointer_transform (LrgCanvasPointerTransform transform,
+                                          gpointer                  user_data)
+{
+    default_pointer_transform = transform;
+    default_pointer_transform_data = user_data;
+}
+
+/**
  * lrg_canvas_render:
  * @self: an #LrgCanvas
  *
@@ -262,6 +285,12 @@ lrg_canvas_handle_input (LrgCanvas *self)
     /* Get current mouse position */
     mouse_x = (gfloat)grl_input_get_mouse_x ();
     mouse_y = (gfloat)grl_input_get_mouse_y ();
+
+    /* Map window pixels into the canvas's render space (virtual
+     * resolution etc.) so hit-testing matches what is on screen */
+    if (default_pointer_transform != NULL)
+        default_pointer_transform (&mouse_x, &mouse_y,
+                                   default_pointer_transform_data);
 
     /* Find widget under mouse */
     target = lrg_canvas_widget_at_point (self, mouse_x, mouse_y);
@@ -304,6 +333,12 @@ lrg_canvas_handle_input (LrgCanvas *self)
     raw = grl_input_is_mouse_button_pressed (GRL_MOUSE_BUTTON_LEFT);
     if (raw != 0)
     {
+        /* Pointer debugging: run with G_MESSAGES_DEBUG=all to trace
+         * why a click did or didn't reach a widget */
+        g_debug ("canvas click at ui(%.1f, %.1f) -> %s",
+                 mouse_x, mouse_y,
+                 target != NULL ? G_OBJECT_TYPE_NAME (target) : "(nothing)");
+
         /* Set focus on click */
         if (target != NULL && target != self->focused_widget)
         {

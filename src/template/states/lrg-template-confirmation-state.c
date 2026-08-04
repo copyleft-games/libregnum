@@ -256,8 +256,6 @@ static void
 create_ui (LrgTemplateConfirmationState *self)
 {
     LrgTemplateConfirmationStatePrivate *priv;
-    LrgEngine *engine;
-    LrgWindow *window;
     gint screen_width;
     gint screen_height;
     gfloat dialog_width;
@@ -267,10 +265,8 @@ create_ui (LrgTemplateConfirmationState *self)
 
     priv = lrg_template_confirmation_state_get_instance_private (self);
 
-    engine = lrg_engine_get_default ();
-    window = lrg_engine_get_window (engine);
-    screen_width = lrg_window_get_width (window);
-    screen_height = lrg_window_get_height (window);
+    screen_width = grl_render_texture_get_current_width ();
+    screen_height = grl_render_texture_get_current_height ();
 
     dialog_width = 400.0f;
     dialog_height = 200.0f;
@@ -388,8 +384,6 @@ lrg_template_confirmation_state_draw (LrgGameState *state)
 {
     LrgTemplateConfirmationState *self;
     LrgTemplateConfirmationStatePrivate *priv;
-    LrgEngine *engine;
-    LrgWindow *window;
     gint screen_width;
     gint screen_height;
     gfloat dialog_width;
@@ -400,15 +394,24 @@ lrg_template_confirmation_state_draw (LrgGameState *state)
     self = LRG_TEMPLATE_CONFIRMATION_STATE (state);
     priv = lrg_template_confirmation_state_get_instance_private (self);
 
-    engine = lrg_engine_get_default ();
-    window = lrg_engine_get_window (engine);
-    screen_width = lrg_window_get_width (window);
-    screen_height = lrg_window_get_height (window);
+    screen_width = grl_render_texture_get_current_width ();
+    screen_height = grl_render_texture_get_current_height ();
 
     dialog_width = 400.0f;
     dialog_height = 200.0f;
     dialog_x = (gfloat) screen_width / 2.0f - dialog_width / 2.0f;
     dialog_y = (gfloat) screen_height / 2.0f - dialog_height / 2.0f;
+
+    /* Keep the dialog centered against the current render target
+     * (enter() runs outside the render pass) */
+    if (priv->canvas != NULL)
+    {
+        lrg_widget_set_size (LRG_WIDGET (priv->canvas),
+                             (gfloat) screen_width,
+                             (gfloat) screen_height);
+    }
+    if (priv->dialog_box != NULL)
+        lrg_widget_set_position (LRG_WIDGET (priv->dialog_box), dialog_x, dialog_y);
 
     /* Draw semi-transparent overlay */
     grl_draw_rectangle (0, 0, screen_width, screen_height, priv->overlay_color);

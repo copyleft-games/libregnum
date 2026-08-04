@@ -519,21 +519,8 @@ lrg_template_pause_menu_state_enter (LrgGameState *state)
     lrg_container_add_child (LRG_CONTAINER (priv->canvas),
                              LRG_WIDGET (priv->menu_container));
 
-    /* Center menu */
-    {
-        LrgEngine *engine = lrg_engine_get_default ();
-        LrgWindow *window = lrg_engine_get_window (engine);
-        gint screen_width = lrg_window_get_width (window);
-        gint screen_height = lrg_window_get_height (window);
-        gfloat menu_x;
-        gfloat menu_y;
-
-        menu_x = (screen_width - DEFAULT_BUTTON_WIDTH) / 2.0f;
-        menu_y = screen_height * 0.3f;
-
-        lrg_widget_set_x (LRG_WIDGET (priv->menu_container), menu_x);
-        lrg_widget_set_y (LRG_WIDGET (priv->menu_container), menu_y);
-    }
+    /* Positioning happens in draw(): enter() runs outside the render
+     * pass, where the render-target size is not yet known. */
 
     priv->menu_built = TRUE;
     priv->selected_index = 0;
@@ -616,17 +603,50 @@ lrg_template_pause_menu_state_draw (LrgGameState *state)
 {
     LrgTemplatePauseMenuState *self = LRG_TEMPLATE_PAUSE_MENU_STATE (state);
     LrgTemplatePauseMenuStatePrivate *priv;
-    LrgEngine *engine;
-    LrgWindow *window;
     gint screen_width;
     gint screen_height;
 
     priv = lrg_template_pause_menu_state_get_instance_private (self);
 
-    engine = lrg_engine_get_default ();
-    window = lrg_engine_get_window (engine);
-    screen_width = lrg_window_get_width (window);
-    screen_height = lrg_window_get_height (window);
+    screen_width = grl_render_texture_get_current_width ();
+    screen_height = grl_render_texture_get_current_height ();
+
+    /* Center the menu against the current render target; size the
+     * canvas and container so pointer hit-testing has real rects */
+    if (priv->menu_container != NULL)
+    {
+        gfloat menu_width = 0.0f;
+        gfloat menu_height = 0.0f;
+        gfloat menu_y;
+
+        if (priv->canvas != NULL)
+        {
+            lrg_widget_set_size (LRG_WIDGET (priv->canvas),
+                                 (gfloat) screen_width,
+                                 (gfloat) screen_height);
+        }
+
+        lrg_widget_measure (LRG_WIDGET (priv->menu_container),
+                            &menu_width, &menu_height);
+        menu_width = MAX (menu_width, DEFAULT_BUTTON_WIDTH);
+        lrg_widget_set_size (LRG_WIDGET (priv->menu_container),
+                             menu_width, menu_height);
+
+        /* Container layout only runs automatically on add_child and
+         * spacing/padding changes - re-run it now that the container
+         * has its real size, so children get non-zero hit rects */
+        lrg_container_layout_children (LRG_CONTAINER (priv->menu_container));
+
+        menu_y = screen_height * 0.3f;
+        if (menu_y + menu_height > (gfloat) screen_height - 4.0f)
+            menu_y = (gfloat) screen_height - menu_height - 4.0f;
+        if (menu_y < 2.0f)
+            menu_y = 2.0f;
+
+        lrg_widget_set_x (LRG_WIDGET (priv->menu_container),
+                          (screen_width - menu_width) / 2.0f);
+        lrg_widget_set_y (LRG_WIDGET (priv->menu_container), menu_y);
+    }
 
     /* Draw overlay */
     if (priv->overlay_color != NULL)

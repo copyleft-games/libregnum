@@ -375,21 +375,8 @@ lrg_template_loading_state_enter (LrgGameState *state)
     lrg_container_add_child (LRG_CONTAINER (priv->canvas),
                              LRG_WIDGET (priv->container));
 
-    /* Center container */
-    {
-        LrgEngine *engine = lrg_engine_get_default ();
-        LrgWindow *window = lrg_engine_get_window (engine);
-        gint screen_width = lrg_window_get_width (window);
-        gint screen_height = lrg_window_get_height (window);
-        gfloat x;
-        gfloat y;
-
-        x = (screen_width - DEFAULT_PROGRESS_BAR_WIDTH) / 2.0f;
-        y = screen_height * 0.4f;
-
-        lrg_widget_set_x (LRG_WIDGET (priv->container), x);
-        lrg_widget_set_y (LRG_WIDGET (priv->container), y);
-    }
+    /* Positioning happens in draw(): enter() runs outside the render
+     * pass, where the render-target size is not yet known. */
 
     update_ui (self);
 }
@@ -464,6 +451,18 @@ lrg_template_loading_state_draw (LrgGameState *state)
     {
         g_autoptr(GrlColor) default_bg = grl_color_new (20, 20, 30, 255);
         grl_draw_clear_background (default_bg);
+    }
+
+    /* Center the container against the current render target */
+    if (priv->container != NULL)
+    {
+        gint screen_width = grl_render_texture_get_current_width ();
+        gint screen_height = grl_render_texture_get_current_height ();
+
+        lrg_widget_set_x (LRG_WIDGET (priv->container),
+                          (screen_width - DEFAULT_PROGRESS_BAR_WIDTH) / 2.0f);
+        lrg_widget_set_y (LRG_WIDGET (priv->container),
+                          screen_height * 0.4f);
     }
 
     /* Render UI */

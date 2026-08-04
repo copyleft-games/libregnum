@@ -62,6 +62,41 @@ LRG_AVAILABLE_IN_ALL
 void lrg_canvas_handle_input (LrgCanvas *self);
 
 /**
+ * LrgCanvasPointerTransform:
+ * @x: (inout): pointer X coordinate to transform
+ * @y: (inout): pointer Y coordinate to transform
+ * @user_data: user data supplied at registration
+ *
+ * Maps raw window pointer coordinates into the coordinate space that
+ * canvases render in. Needed when UI is drawn into a scaled render
+ * target (e.g. a virtual-resolution game): the mouse reports window
+ * pixels, but widgets are laid out in target coordinates.
+ *
+ * Since: 1.0
+ */
+typedef void (*LrgCanvasPointerTransform) (gfloat   *x,
+                                           gfloat   *y,
+                                           gpointer  user_data);
+
+/**
+ * lrg_canvas_set_default_pointer_transform:
+ * @transform: (nullable) (scope notified): transform applied to pointer
+ *   coordinates before hit-testing, or %NULL to restore raw coordinates
+ * @user_data: user data passed to @transform
+ *
+ * Installs a process-wide pointer transform used by every canvas in
+ * lrg_canvas_handle_input(). Whoever owns the scaled presentation
+ * (e.g. #LrgGame2DTemplate's virtual-resolution pipeline) registers the
+ * window-to-target mapping here so widget hit-testing matches what is
+ * on screen.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_set_default_pointer_transform (LrgCanvasPointerTransform transform,
+                                               gpointer                  user_data);
+
+/**
  * lrg_canvas_widget_at_point:
  * @self: an #LrgCanvas
  * @x: the x coordinate

@@ -13,6 +13,7 @@
 #include "lrg-game-2d-template.h"
 #include "lrg-game-2d-template-private.h"
 #include "lrg-template-scalable.h"
+#include "../ui/lrg-canvas.h"
 #include "../lrg-log.h"
 
 #include <graylib.h>
@@ -574,6 +575,24 @@ lrg_game_2d_template_pre_startup (LrgGameTemplate *self)
     priv->last_window_height = 0;
 }
 
+/* Bridge for LrgCanvas UI hit-testing: the mouse reports window
+ * pixels, but under virtual-resolution rendering every canvas draws
+ * in virtual coordinates. */
+static void
+lrg_game_2d_template_pointer_transform (gfloat   *x,
+                                        gfloat   *y,
+                                        gpointer  user_data)
+{
+    LrgGame2DTemplate *self = LRG_GAME_2D_TEMPLATE (user_data);
+    gfloat virtual_x;
+    gfloat virtual_y;
+
+    lrg_game_2d_template_screen_to_virtual (self, *x, *y,
+                                            &virtual_x, &virtual_y);
+    *x = virtual_x;
+    *y = virtual_y;
+}
+
 static void
 lrg_game_2d_template_post_startup (LrgGameTemplate *self)
 {
@@ -596,6 +615,10 @@ lrg_game_2d_template_post_startup (LrgGameTemplate *self)
         priv->last_window_width = width;
         priv->last_window_height = height;
     }
+
+    /* UI hit-testing must happen in virtual coordinates */
+    lrg_canvas_set_default_pointer_transform (
+        lrg_game_2d_template_pointer_transform, self);
 
     /* Chain up */
     parent_class = LRG_GAME_TEMPLATE_CLASS (lrg_game_2d_template_parent_class);
@@ -766,6 +789,9 @@ lrg_game_2d_template_finalize (GObject *object)
     LrgGame2DTemplatePrivate *priv;
 
     priv = lrg_game_2d_template_get_instance_private (LRG_GAME_2D_TEMPLATE (object));
+
+    /* Drop the pointer transform if it still points at us */
+    lrg_canvas_set_default_pointer_transform (NULL, NULL);
 
     g_clear_object (&priv->render_target);
     g_clear_pointer (&priv->letterbox_color, grl_color_free);
