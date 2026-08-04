@@ -1159,6 +1159,9 @@ typedef struct _LrgPoolableInterface  LrgPoolableInterface;
 /* LrgObjectPool is a final type */
 typedef struct _LrgObjectPool  LrgObjectPool;
 
+/* LrgWaveDirector is a final type */
+typedef struct _LrgWaveDirector  LrgWaveDirector;
+
 /* LrgTemplateScalable is an interface */
 typedef struct _LrgTemplateScalable           LrgTemplateScalable;
 typedef struct _LrgTemplateScalableInterface  LrgTemplateScalableInterface;

@@ -412,6 +412,7 @@ PUBLIC_HEADERS := \
 	src/template/lrg-deckbuilder-poker-template.h \
 	src/template/lrg-poolable.h \
 	src/template/lrg-object-pool.h \
+	src/template/lrg-wave-director.h \
 	src/template/lrg-template-scalable.h \
 	src/template/lrg-game-2d-template.h \
 	src/template/lrg-game-3d-template.h \
@@ -882,6 +883,7 @@ SOURCES := \
 	src/template/lrg-deckbuilder-poker-template.c \
 	src/template/lrg-poolable.c \
 	src/template/lrg-object-pool.c \
+	src/template/lrg-wave-director.c \
 	src/template/lrg-template-scalable.c \
 	src/template/lrg-game-2d-template.c \
 	src/template/lrg-game-3d-template.c \

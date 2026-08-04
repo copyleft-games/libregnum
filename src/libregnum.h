@@ -549,6 +549,7 @@
 #include "template/lrg-deckbuilder-poker-template.h"
 #include "template/lrg-poolable.h"
 #include "template/lrg-object-pool.h"
+#include "template/lrg-wave-director.h"
 #include "template/lrg-template-scalable.h"
 #include "template/lrg-game-2d-template.h"
 #include "template/lrg-game-3d-template.h"

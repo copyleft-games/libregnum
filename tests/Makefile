@@ -124,6 +124,7 @@ TEST_SOURCES := \
 	test-template-2d.c \
 	test-template-3d.c \
 	test-template.c \
+	test-wave-director.c \
 	test-input-buffer.c \
 	test-template-states.c \
 	test-template-engagement.c \
