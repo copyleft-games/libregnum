@@ -1,8 +1,35 @@
 # Libregnum Roadmap
 
-Last updated: 2026-06-19
+Last updated: 2026-09-05
 
 ## Recently Shipped
+
+### Reliability and development workflow
+
+- Inventory additions preserve per-instance metadata. Stacks merge only when
+  their item definition and all metadata agree.
+- Default A* uses cost-aware Manhattan or octile estimates, retaining cheapest
+  routes with fractional/zero costs and diagonal movement. Smoothed paths retain
+  the original route cost.
+- Event dispatch preserves registration order and listener lifetime, stops on
+  cancellation, and rejects events cancelled before emission. Quest callbacks
+  detach safely when tracked instances change.
+- The sanitizer test runner now fails on undefined behavior. Regression tests
+  cover these failures before and after their fixes.
+- Loading states now load and cache assets through the asset manager, report
+  failures, preserve task callback lifetimes, and complete once per run.
+- YAML assets support validated loading and opt-in file monitoring, including
+  atomic file replacement. Invalid edits retain the last good cached object;
+  reload/error signals let applications update references explicitly.
+- Analog bindings report press/release transitions from one snapshot per input
+  frame. Engine and template updates poll before input consumers; injected
+  software events survive that poll.
+- The engine exposes a named world registry. MCP now implements ECS inspection,
+  spawn/destroy, transform and component operations, live ECS resources, and
+  save/list/load/delete/quick-save/quick-load operations with actual error results.
+
+Documentation: `docs/modules/core/`, `docs/modules/input/`,
+`docs/modules/mcp/`, and `docs/modules/template/states/loading.org`.
 
 ### Module configuration + `lrgldr` loader (`src/gamemodule/`, `src/launcher/`)
 
@@ -44,8 +71,8 @@ Shipped in v1:
 - Full test coverage in `tests/test-reel.c`; examples in `examples/reel-hello.c`
   and `examples/reel-showcase.c`; docs under `docs/modules/reel/`.
 
-Future ideas: a named-reel registry + CLI renderer, motion blur via sub-frame
-accumulation, nested-clip opacity compositing, and YAML-defined compositions.
+The v2 expansion below adds the CLI renderer, motion blur, and YAML authoring.
+A named-reel registry and nested-clip opacity compositing remain future ideas.
 
 ### Reel v2 Feature Expansion (`src/reel/`)
 
@@ -61,194 +88,74 @@ data-driven authoring (`lrg_reel_load_yaml` + schema), `reel` CLI tool
 (info/still/render, codec/crf/threads), and caption/transcription support
 (`LrgReelCaptionClip`, `lrg_reel_transcribe_audio`).  Docs in `docs/modules/reel/`.
 
-## Immediate Priorities (Finish What's Started)
-
-These are partially-implemented features with explicit TODOs in the codebase.
-
-### 1. Deckbuilder Combat System Completion
-
-**TODOs: 13** | Priority: High
-
-The biggest gap. `LrgCombatContext` isn't implemented yet, which blocks:
-
-- Effect stack resolution (`src/deckbuilder/lrg-card-def.c:84`)
-- Energy/target checking for card plays (`lrg-card-def.c:158, 163`)
-- Variable substitution in card text e.g. `{damage}` -> `"6"` (`lrg-card-def.c:218`)
-- Save/load for `LrgPlayerProfile` (`lrg-player-profile.c:124, 138`)
-- `LrgDeckbuilderManager` save/load to file (`lrg-deckbuilder-manager.c:772, 796`)
-- Wild card enhancement in scoring hands (`lrg-scoring-hand.c:289`)
-- Joker suit requirements (`lrg-joker-def.c:85`)
-- Debuff status checks for player and enemy (`lrg-player-combatant.c:321`, `lrg-enemy-instance.c:327`)
-- Enemy AI integration in combat template (`lrg-deckbuilder-combat-template.c:1074`)
-- Joker effect application in poker template (`lrg-deckbuilder-poker-template.c:109`)
-
-### 2. Transition Rendering Integration
-
-**TODOs: 8** | Priority: High
-
-All transition effects are implemented logically but not hooked up to graylib rendering:
-
-- Fade transition (`src/transition/lrg-fade-transition.c:200`)
-- Wipe transition (`src/transition/lrg-wipe-transition.c:186`)
-- Slide transition (`src/transition/lrg-slide-transition.c:273`)
-- Zoom transition (`src/transition/lrg-zoom-transition.c:202`)
-- Dissolve transition — needs shader rendering (`src/transition/lrg-dissolve-transition.c:191`)
-- Shader transition — compile, unload, and render (`src/transition/lrg-shader-transition.c:160, 177, 247`)
-
-### 3. YAML Serialization for Atlas & Tutorial
-
-**TODOs: 8** | Priority: Medium
-
-These modules need yaml-glib `load_from_yaml` / `save_to_yaml` implementations:
-
-- `LrgTextureAtlas` load/save (`src/atlas/lrg-texture-atlas.c:259, 666`)
-- `LrgSpriteSheet` load/save (`src/atlas/lrg-sprite-sheet.c:350, 1146`)
-- `LrgNineSlice` load/save (`src/atlas/lrg-nine-slice.c:292, 976`)
-- `LrgTutorial` load/save (`src/tutorial/lrg-tutorial.c:400, 1162`)
-
-The pattern is well-established in other modules.
-
-### 4. Vehicle Audio Integration
-
-**TODOs: 7** | Priority: Medium
-
-Vehicle audio system is stubbed out, waiting for `LrgAudioManager` hookup:
-
-- Start engine loop (`src/vehicle/lrg-vehicle-audio.c:386`)
-- Stop all sounds (`src/vehicle/lrg-vehicle-audio.c:408`)
-- General audio integration (`src/vehicle/lrg-vehicle-audio.c:431, 461`)
-- Horn sound stop (`src/vehicle/lrg-vehicle-audio.c:450`)
-- Engine pitch updates (`src/vehicle/lrg-vehicle-audio.c:509`)
-- Tire screech sound updates (`src/vehicle/lrg-vehicle-audio.c:554`)
-
-### 5. Settings Application
-
-**TODOs: 2** | Priority: Medium
-
-Settings are stored but not applied to the engine:
-
-- Graphics settings apply (`src/settings/lrg-graphics-settings.c:169`)
-- Audio settings apply (`src/settings/lrg-audio-settings.c:85`)
-
----
-
-## New Features
-
-### 6. 3D Chart Types
-
-**Priority: Low**
-
-Test TODOs explicitly call out missing chart implementations:
-
-- `LineChart3D`
-- `PieChart3D`
-- `SurfaceChart3D`
-- `ScatterChart3D`
-
-The 2D chart system exists and is tested (`tests/test-chart.c`).
-
-### 7. Atlas Packing Algorithms
-
-**Priority: Low**
-
-Only Shelf packing is implemented. MaxRects and Guillotine algorithms fall back to Shelf with a warning:
-
-- MaxRects algorithm (`src/atlas/lrg-atlas-packer.c:812`)
-- Guillotine algorithm (`src/atlas/lrg-atlas-packer.c:818`)
-
-MaxRects especially would significantly improve atlas space efficiency.
-
-### 8. Video Player (FFmpeg)
-
-**Priority: Low**
-
-`LrgVideoPlayer` exists but FFmpeg initialization is stubbed:
-
-- Actual FFmpeg init (`src/video/lrg-video-player.c:397`)
-
-Would enable cutscene support.
-
-### 9. MCP ECS Tools
-
-**Priority: Medium**
-
-MCP integration tools are waiting on `lrg_engine_get_worlds()` API:
-
-- ECS tools (`src/mcp/tools/lrg-mcp-ecs-tools.c:66`)
-- ECS resources (`src/mcp/resources/lrg-mcp-ecs-resources.c:66`)
-- Full input state reporting (`src/mcp/tools/lrg-mcp-input-tools.c:604`)
-
-Once the engine API exists, this enables live ECS introspection through MCP — a killer debugging feature.
-
-### 10. Input System State Tracking
-
-**Priority: Low**
-
-Input binding needs proper state tracking for press/release detection:
-
-- Press detection (`src/input/lrg-input-binding.c:592`)
-- Release detection (`src/input/lrg-input-binding.c:704`)
-
-### 11. Template Improvements
-
-**Priority: Low**
-
-Game template states have some incomplete features:
-
-- Pause menu confirmation dialogs (`src/template/states/lrg-template-pause-menu-state.c:417, 434`)
-- Loading state asset manager integration (`src/template/states/lrg-template-loading-state.c:795`)
-
-### 12. Lighting Optimization
-
-**Priority: Low**
-
-- Viewport culling for lights (`src/lighting/lrg-lighting-manager.c:758`)
-
-### 13. Weather Particles
-
-**Priority: Low**
-
-- Rain splash particle spawning (`src/weather/lrg-rain.c:181`)
-
-### 14. Registry Built-in Types
-
-**Priority: Low**
-
-- Register built-in types as they are implemented (`src/core/lrg-registry.c:408`)
-
----
-
-## Stretch Ideas
-
-### 15. Procedural Generation Module
-
-**Priority: Stretch**
-
-The engine has weather, particles, procedural audio synthesis, and terrain — but no dedicated procgen module for dungeon/map generation. Given the ECS and tilemap systems, a `lrg-procgen` module with BSP, Wave Function Collapse, or cellular automata would fit naturally.
-
-### 16. Multiplayer / Netcode Improvements
-
-**Priority: Stretch**
-
-The networking module exists. Depending on its current state, rollback netcode or a proper client-server prediction model would make the engine viable for real-time multiplayer.
-
-### 17. Hot-Reload for YAML Data
-
-**Priority: Stretch**
-
-Given everything is data-driven via YAML, a file-watcher that hot-reloads definitions (items, quests, dialog, cards) during development would massively speed up iteration.
-
----
-
-## Documentation Gaps
-
-- `docs/modules/ui/ui-event.org:356` — Canvas Documentation link is a TODO placeholder
-- `LrgSettingsGroup` base class has unimplemented `apply()`, `reset()`, `get_group_name()` virtual methods (`src/settings/lrg-settings-group.c:51, 58, 65`)
-
----
-
-## Notes
-
-- Test coverage is excellent: 75 test files, ~61,714 lines of test code
-- VR and Steam stubs are intentional fallback implementations, not bugs
-- All items sourced from TODO comments in the codebase as of 2026-02-09
+## Implemented Since the Earlier Roadmap
+
+The previous TODO inventory was stale. These features have working
+implementations and should no longer be treated as absent:
+
+- Deckbuilder combat context, card effects/costs/targets, profile and manager
+  persistence, status checks, and combat/poker template integration
+  (`src/deckbuilder/`, `src/template/`).
+- Transition drawing and shaders (`src/transition/`).
+- Atlas, sprite sheet, nine-slice, and tutorial YAML persistence
+  (`src/atlas/`, `src/tutorial/`).
+- Vehicle engine/horn/tire audio (`src/vehicle/lrg-vehicle-audio.c`).
+- Graphics and audio settings application (`src/settings/`); application still
+  requires the corresponding engine window or audio manager.
+- Line, pie, surface, and scatter 3D charts (`src/chart/`).
+- FFmpeg-backed video decoding, seeking, and playback (`src/video/`), enabled
+  with `FFMPEG=1`. The fallback when FFmpeg is disabled is intentional.
+
+Presence of an implementation does not imply every platform/rendering path has
+been validated. Headless tests skip cases requiring a display or hardware.
+
+## Remaining Concrete Gaps
+
+### MCP debugging and engine resources
+
+Profiler/debug operations still have placeholder paths in
+`src/mcp/tools/lrg-mcp-debug-tools.c`. Detailed configuration and registry
+resources remain placeholders in `src/mcp/resources/lrg-mcp-engine-resources.c`.
+Full physical input-state reporting also needs work in
+`src/mcp/tools/lrg-mcp-input-tools.c`. These are separate from the implemented
+ECS and save operations.
+
+### Built-in type registration
+
+`lrg_registry_register_builtin()` in `src/core/lrg-registry.c` still needs its
+built-in type mappings populated. Applications currently register the types
+needed by their YAML definitions and MCP spawning.
+
+### Atlas packing
+
+MaxRects and Guillotine selections still fall back to Shelf with a warning
+(`src/atlas/lrg-atlas-packer.c`). Implement and benchmark the algorithms against
+Shelf using representative sprite sets and validate overlap/bounds invariants.
+
+### Template confirmations
+
+The pause menu still needs confirmation states for returning to the main menu
+and quitting (`src/template/states/lrg-template-pause-menu-state.c`). Loading
+state asset integration is implemented.
+
+### Lighting and weather
+
+- Viewport light culling remains unfinished in
+  `src/lighting/lrg-lighting-manager.c`; its lighting pass also needs further
+  rendering integration.
+- Rain splash particle spawning remains unfinished in `src/weather/lrg-rain.c`.
+
+## Future Directions
+
+- Dedicated dungeon/map generation built on the tilemap and ECS modules:
+  BSP, cellular automata, or Wave Function Collapse.
+- Network prediction or rollback, after defining simulation determinism and
+  synchronization requirements.
+- Named reel registry and nested composition opacity.
+- Extend definition reload workflows to application-specific dependency graphs
+  and live instance migration. Current hot reload replaces cached definitions;
+  existing object references stay valid until the application replaces them.
+
+Steam and VR fallback implementations are intentional. Base-class virtual
+methods such as `LrgSettingsGroup::apply` require subclass implementations and
+are not missing concrete settings features.

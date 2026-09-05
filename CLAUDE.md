@@ -1171,11 +1171,17 @@ struct _LrgGame2DTemplateClass
 
 The library's core systems are implemented and the public API surface is
 broad (see the module inventory above). A number of subsystems are still
-scaffolded with `not yet implemented` paths — notably the MCP save/ECS/debug
-tools, the scene-serializer base class, the Steam integration (currently a
+scaffolded with `not yet implemented` paths — notably the MCP profiler/debug
+tools and engine config/registry resources, the scene-serializer base class,
+the Steam integration (currently a
 no-op stub), VR frame submission, and Windows signal-based crash handling.
 Treat the implementation-status checklist below as "API present," not
 "production-hardened," and verify any subsystem you depend on.
+
+MCP ECS and save tools now operate on registered engine worlds and the save
+manager. YAML assets support validated loading and opt-in file monitoring;
+reload signals replace cached definitions while existing references remain valid.
+See `ROADMAP.md` for current completed work and remaining gaps.
 
 ### Library Statistics
 
