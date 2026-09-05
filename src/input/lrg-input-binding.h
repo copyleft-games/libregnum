@@ -92,8 +92,9 @@ LrgInputBinding * lrg_input_binding_new_gamepad_button (gint             gamepad
  *
  * Creates a new gamepad axis input binding.
  *
- * The binding triggers when the axis value exceeds the threshold
- * in the specified direction.
+ * The binding is active when a nonzero axis value reaches the threshold
+ * in the specified direction. State transitions are captured once per input
+ * frame by lrg_input_manager_poll().
  *
  * Returns: (transfer full): A new #LrgInputBinding
  */
@@ -242,6 +243,10 @@ gboolean lrg_input_binding_get_positive (const LrgInputBinding *self);
  *
  * Checks if this binding was just pressed this frame.
  *
+ * Axis bindings use the snapshots from lrg_input_manager_poll(). Querying a
+ * binding does not advance its state; repeated queries in one frame agree.
+ * Zero is neutral, including for bindings with a zero threshold.
+ *
  * Returns: %TRUE if just pressed
  */
 LRG_AVAILABLE_IN_ALL
@@ -253,6 +258,10 @@ gboolean lrg_input_binding_is_pressed (const LrgInputBinding *self);
  *
  * Checks if this binding is currently held down.
  *
+ * Axis bindings use the snapshots from lrg_input_manager_poll(). Querying a
+ * binding does not advance its state; repeated queries in one frame agree.
+ * Zero is neutral, including for bindings with a zero threshold.
+ *
  * Returns: %TRUE if held down
  */
 LRG_AVAILABLE_IN_ALL
@@ -263,6 +272,10 @@ gboolean lrg_input_binding_is_down (const LrgInputBinding *self);
  * @self: an #LrgInputBinding
  *
  * Checks if this binding was just released this frame.
+ *
+ * Axis bindings use the snapshots from lrg_input_manager_poll(). Querying a
+ * binding does not advance its state; repeated queries in one frame agree.
+ * Zero is neutral, including for bindings with a zero threshold.
  *
  * Returns: %TRUE if just released
  */

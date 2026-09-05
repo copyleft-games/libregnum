@@ -13,6 +13,168 @@
 #include <math.h>
 #include <libregnum.h>
 
+typedef GObject InputHost;
+typedef GObjectClass InputHostClass;
+
+static void input_host_iface_init (LrgGameHostInterface *iface);
+GType input_host_get_type (void);
+G_DEFINE_TYPE_WITH_CODE (InputHost, input_host, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_GAME_HOST,
+                                                input_host_iface_init))
+
+static LrgEngine *
+input_host_get_engine (LrgGameHost *host)
+{
+    return lrg_engine_get_default ();
+}
+
+static void
+input_host_iface_init (LrgGameHostInterface *iface)
+{
+    iface->get_engine = input_host_get_engine;
+}
+
+static void
+input_host_class_init (InputHostClass *klass)
+{
+}
+
+static void
+input_host_init (InputHost *self)
+{
+}
+
+typedef struct
+{
+    LrgGameTemplate parent_instance;
+    LrgInputBinding *binding;
+    gboolean expect_pressed;
+    gboolean expect_released;
+    guint input_calls;
+    guint fixed_calls;
+} InputTemplate;
+
+typedef LrgGameTemplateClass InputTemplateClass;
+
+GType input_template_get_type (void);
+G_DEFINE_TYPE (InputTemplate, input_template, LRG_TYPE_GAME_TEMPLATE)
+
+static gboolean
+input_template_handle_input (LrgGameTemplate *template)
+{
+    InputTemplate *self = (InputTemplate *)template;
+
+    g_assert_cmpint (lrg_input_binding_is_pressed (self->binding), ==,
+                     self->expect_pressed);
+    g_assert_cmpint (lrg_input_binding_is_released (self->binding), ==,
+                     self->expect_released);
+    self->input_calls++;
+    return FALSE;
+}
+
+static void
+input_template_fixed_update (LrgGameTemplate *template,
+                             gdouble          delta)
+{
+    InputTemplate *self = (InputTemplate *)template;
+
+    /* Every simulation step in one host frame sees the same snapshot. */
+    g_assert_cmpint (lrg_input_binding_is_pressed (self->binding), ==,
+                     self->expect_pressed);
+    g_assert_cmpint (lrg_input_binding_is_released (self->binding), ==,
+                     self->expect_released);
+    self->fixed_calls++;
+}
+
+static void
+input_template_class_init (InputTemplateClass *klass)
+{
+    klass->handle_global_input = input_template_handle_input;
+    klass->fixed_update = input_template_fixed_update;
+    klass->create_initial_state = NULL;
+}
+
+static void
+input_template_init (InputTemplate *self)
+{
+}
+
+static void
+test_game_template_input_frame (void)
+{
+    LrgInputManager *manager;
+    g_autoptr(LrgInputMock) mock = NULL;
+    g_autoptr(LrgInputBinding) binding = NULL;
+    g_autoptr(LrgGameTemplate) template = NULL;
+    g_autoptr(LrgGameHost) host = NULL;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GPtrArray) saved_sources = NULL;
+    GPtrArray *sources;
+    InputTemplate *input_template;
+    gboolean saved_enabled;
+    guint i;
+
+    manager = lrg_input_manager_get_default ();
+    saved_enabled = lrg_input_manager_get_enabled (manager);
+    saved_sources = g_ptr_array_new_with_free_func (g_object_unref);
+    sources = lrg_input_manager_get_sources (manager);
+    while (sources->len > 0)
+    {
+        LrgInput *source = g_ptr_array_index (sources, 0);
+
+        g_ptr_array_add (saved_sources, g_object_ref (source));
+        lrg_input_manager_remove_source (manager, source);
+    }
+    lrg_input_manager_set_enabled (manager, TRUE);
+    mock = lrg_input_mock_new ();
+    lrg_input_mock_set_gamepad_available (mock, 0, TRUE);
+    lrg_input_manager_add_source (manager, LRG_INPUT (mock));
+    lrg_input_manager_poll (manager);
+    lrg_input_manager_poll (manager);
+
+    binding = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                                 0.5f, TRUE);
+    template = g_object_new (input_template_get_type (),
+                             "use-fixed-timestep", TRUE,
+                             "fixed-timestep", 0.01, NULL);
+    input_template = (InputTemplate *)template;
+    input_template->binding = binding;
+    host = g_object_new (input_host_get_type (), NULL);
+    g_assert_true (lrg_engine_startup (lrg_engine_get_default (), &error));
+    g_assert_no_error (error);
+    g_test_expect_message (LRG_LOG_DOMAIN_TEMPLATE, G_LOG_LEVEL_WARNING,
+                           "*No initial state created*");
+    g_assert_true (lrg_game_template_startup (template, host, &error));
+    g_assert_no_error (error);
+    g_test_assert_expected_messages ();
+    input_template->expect_pressed = TRUE;
+    lrg_input_mock_set_gamepad_axis (mock, 0, GRL_GAMEPAD_AXIS_LEFT_X, 0.8f);
+    lrg_game_template_update (template, 0.025);
+    g_assert_cmpuint (input_template->input_calls, ==, 1);
+    g_assert_cmpuint (input_template->fixed_calls, ==, 2);
+
+    input_template->expect_pressed = FALSE;
+    lrg_game_template_update (template, 0.0);
+    g_assert_cmpuint (input_template->input_calls, ==, 2);
+    g_assert_cmpuint (input_template->fixed_calls, ==, 2);
+
+    input_template->expect_released = TRUE;
+    lrg_input_mock_set_gamepad_axis (mock, 0, GRL_GAMEPAD_AXIS_LEFT_X, 0.0f);
+    lrg_game_template_update (template, 0.025);
+    input_template->expect_released = FALSE;
+    lrg_game_template_update (template, 0.0);
+    g_assert_cmpuint (input_template->input_calls, ==, 4);
+
+    lrg_game_template_shutdown_game (template);
+    lrg_engine_shutdown (lrg_engine_get_default ());
+
+    lrg_input_manager_remove_source (manager, LRG_INPUT (mock));
+    for (i = 0; i < saved_sources->len; i++)
+        lrg_input_manager_add_source (manager,
+                                     g_ptr_array_index (saved_sources, i));
+    lrg_input_manager_set_enabled (manager, saved_enabled);
+}
+
 /* ==========================================================================
  * Skip Macros for Headless Environments
  * ========================================================================== */
@@ -588,6 +750,7 @@ main (int   argc,
     g_test_init (&argc, &argv, NULL);
 
     /* Construction tests */
+    g_test_add_func ("/template/base/input-frame", test_game_template_input_frame);
     g_test_add_func ("/template/base/new",
                      test_game_template_new);
     g_test_add_func ("/template/base/new-with-properties",

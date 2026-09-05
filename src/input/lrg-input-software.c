@@ -22,10 +22,12 @@
  */
 typedef struct
 {
-	gboolean down;            /* Currently held */
-	gboolean pressed_frame;   /* Just pressed this frame */
-	gboolean released_frame;  /* Just released this frame */
-	gboolean tap_pending;     /* Will release next frame */
+	gboolean down;             /* Currently held */
+	gboolean pressed_frame;    /* Just pressed this frame */
+	gboolean released_frame;   /* Just released this frame */
+	gboolean tap_pending;      /* Release after the press has been polled */
+	gboolean pressed_pending;  /* Injected press for the next poll */
+	gboolean released_pending; /* Injected release for the next poll */
 } SoftKeyState;
 
 /**
@@ -307,8 +309,9 @@ lrg_input_software_press_key (LrgInputSoftware *self,
 
 	if (!self->key_states[key].down)
 	{
-		self->key_states[key].down          = TRUE;
-		self->key_states[key].pressed_frame = TRUE;
+		self->key_states[key].down            = TRUE;
+		self->key_states[key].pressed_frame   = TRUE;
+		self->key_states[key].pressed_pending = TRUE;
 	}
 }
 
@@ -326,10 +329,13 @@ lrg_input_software_release_key (LrgInputSoftware *self,
 	g_return_if_fail (LRG_IS_INPUT_SOFTWARE (self));
 	g_return_if_fail (key >= 0 && key < MAX_KEYS);
 
+	self->key_states[key].tap_pending = FALSE;
+
 	if (self->key_states[key].down)
 	{
-		self->key_states[key].down           = FALSE;
-		self->key_states[key].released_frame = TRUE;
+		self->key_states[key].down             = FALSE;
+		self->key_states[key].released_frame   = TRUE;
+		self->key_states[key].released_pending = TRUE;
 	}
 }
 
@@ -347,9 +353,10 @@ lrg_input_software_tap_key (LrgInputSoftware *self,
 	g_return_if_fail (LRG_IS_INPUT_SOFTWARE (self));
 	g_return_if_fail (key >= 0 && key < MAX_KEYS);
 
-	self->key_states[key].down          = TRUE;
-	self->key_states[key].pressed_frame = TRUE;
-	self->key_states[key].tap_pending   = TRUE;
+	self->key_states[key].down            = TRUE;
+	self->key_states[key].pressed_frame   = TRUE;
+	self->key_states[key].pressed_pending = TRUE;
+	self->key_states[key].tap_pending     = TRUE;
 }
 
 /* Mouse Control */
@@ -370,8 +377,9 @@ lrg_input_software_press_mouse_button (LrgInputSoftware *self,
 
 	if (!self->mouse_button_states[button].down)
 	{
-		self->mouse_button_states[button].down          = TRUE;
-		self->mouse_button_states[button].pressed_frame = TRUE;
+		self->mouse_button_states[button].down            = TRUE;
+		self->mouse_button_states[button].pressed_frame   = TRUE;
+		self->mouse_button_states[button].pressed_pending = TRUE;
 	}
 }
 
@@ -391,8 +399,9 @@ lrg_input_software_release_mouse_button (LrgInputSoftware *self,
 
 	if (self->mouse_button_states[button].down)
 	{
-		self->mouse_button_states[button].down           = FALSE;
-		self->mouse_button_states[button].released_frame = TRUE;
+		self->mouse_button_states[button].down             = FALSE;
+		self->mouse_button_states[button].released_frame   = TRUE;
+		self->mouse_button_states[button].released_pending = TRUE;
 	}
 }
 
@@ -461,8 +470,9 @@ lrg_input_software_press_gamepad_button (LrgInputSoftware *self,
 
 	if (!self->gamepad_button_states[gamepad][button].down)
 	{
-		self->gamepad_button_states[gamepad][button].down          = TRUE;
-		self->gamepad_button_states[gamepad][button].pressed_frame = TRUE;
+		self->gamepad_button_states[gamepad][button].down            = TRUE;
+		self->gamepad_button_states[gamepad][button].pressed_frame   = TRUE;
+		self->gamepad_button_states[gamepad][button].pressed_pending = TRUE;
 	}
 }
 
@@ -485,8 +495,9 @@ lrg_input_software_release_gamepad_button (LrgInputSoftware *self,
 
 	if (self->gamepad_button_states[gamepad][button].down)
 	{
-		self->gamepad_button_states[gamepad][button].down           = FALSE;
-		self->gamepad_button_states[gamepad][button].released_frame = TRUE;
+		self->gamepad_button_states[gamepad][button].down             = FALSE;
+		self->gamepad_button_states[gamepad][button].released_frame   = TRUE;
+		self->gamepad_button_states[gamepad][button].released_pending = TRUE;
 	}
 }
 
@@ -514,11 +525,33 @@ lrg_input_software_set_gamepad_axis (LrgInputSoftware *self,
 
 /* Frame Management */
 
+/* Publish injected edges for one polled frame. A tap remains held until its
+ * press has reached a frame, then publishes a release on the following poll. */
+static void
+advance_key_state (SoftKeyState *state)
+{
+	state->pressed_frame = state->pressed_pending;
+	state->released_frame = state->released_pending;
+
+	if (state->tap_pending && !state->pressed_pending)
+	{
+		state->down = FALSE;
+		state->released_frame = TRUE;
+		state->tap_pending = FALSE;
+	}
+
+	state->pressed_pending = FALSE;
+	state->released_pending = FALSE;
+}
+
 /**
  * lrg_input_software_update:
  * @self: an #LrgInputSoftware
  *
- * Updates the software input state for a new frame.
+ * Begins a new software input frame. Injected press and release events remain
+ * visible through the next poll, then clear on the following poll. A tap is held
+ * for one polled frame and releases on the next. The input manager calls this
+ * through the source's poll method; do not also update it manually in that frame.
  */
 void
 lrg_input_software_update (LrgInputSoftware *self)
@@ -534,37 +567,16 @@ lrg_input_software_update (LrgInputSoftware *self)
 	self->pending_dx = 0.0f;
 	self->pending_dy = 0.0f;
 
-	/* Update key states */
 	for (i = 0; i < MAX_KEYS; i++)
-	{
-		/* Handle tap: release after one frame */
-		if (self->key_states[i].tap_pending)
-		{
-			self->key_states[i].down           = FALSE;
-			self->key_states[i].released_frame = TRUE;
-			self->key_states[i].tap_pending    = FALSE;
-		}
+		advance_key_state (&self->key_states[i]);
 
-		/* Clear per-frame flags */
-		self->key_states[i].pressed_frame  = FALSE;
-		self->key_states[i].released_frame = FALSE;
-	}
-
-	/* Update mouse button states */
 	for (i = 0; i < MAX_MOUSE_BUTTONS; i++)
-	{
-		self->mouse_button_states[i].pressed_frame  = FALSE;
-		self->mouse_button_states[i].released_frame = FALSE;
-	}
+		advance_key_state (&self->mouse_button_states[i]);
 
-	/* Update gamepad button states */
 	for (i = 0; i < MAX_GAMEPADS; i++)
 	{
 		for (j = 0; j < MAX_GAMEPAD_BUTTONS; j++)
-		{
-			self->gamepad_button_states[i][j].pressed_frame  = FALSE;
-			self->gamepad_button_states[i][j].released_frame = FALSE;
-		}
+			advance_key_state (&self->gamepad_button_states[i][j]);
 	}
 }
 
@@ -587,8 +599,9 @@ lrg_input_software_clear_all (LrgInputSoftware *self)
 	{
 		if (self->key_states[i].down)
 		{
-			self->key_states[i].down           = FALSE;
-			self->key_states[i].released_frame = TRUE;
+			self->key_states[i].down             = FALSE;
+			self->key_states[i].released_frame   = TRUE;
+			self->key_states[i].released_pending = TRUE;
 		}
 		self->key_states[i].tap_pending = FALSE;
 	}
@@ -598,8 +611,9 @@ lrg_input_software_clear_all (LrgInputSoftware *self)
 	{
 		if (self->mouse_button_states[i].down)
 		{
-			self->mouse_button_states[i].down           = FALSE;
-			self->mouse_button_states[i].released_frame = TRUE;
+			self->mouse_button_states[i].down             = FALSE;
+			self->mouse_button_states[i].released_frame   = TRUE;
+			self->mouse_button_states[i].released_pending = TRUE;
 		}
 	}
 
@@ -616,8 +630,9 @@ lrg_input_software_clear_all (LrgInputSoftware *self)
 		{
 			if (self->gamepad_button_states[i][j].down)
 			{
-				self->gamepad_button_states[i][j].down           = FALSE;
-				self->gamepad_button_states[i][j].released_frame = TRUE;
+				self->gamepad_button_states[i][j].down             = FALSE;
+				self->gamepad_button_states[i][j].released_frame   = TRUE;
+				self->gamepad_button_states[i][j].released_pending = TRUE;
 			}
 		}
 

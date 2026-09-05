@@ -17,6 +17,7 @@
 #include "../gamestate/lrg-game-state.h"
 #include "../gamestate/lrg-game-state-manager.h"
 #include "../input/lrg-input-map.h"
+#include "../input/lrg-input-manager.h"
 #include "../core/lrg-event-bus.h"
 #include "../settings/lrg-settings.h"
 #include "../ui/lrg-theme.h"
@@ -402,7 +403,8 @@ lrg_game_template_update (LrgGameTemplate *self,
         delta *= priv->time_scale;
     }
 
-    /* Check focus and gamepad state */
+    /* Sample once per host frame, before consumers and outside fixed steps. */
+    lrg_input_manager_poll (lrg_input_manager_get_default ());
     template_check_focus_state (self);
     template_check_gamepad_state (self);
 

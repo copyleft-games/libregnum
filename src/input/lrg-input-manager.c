@@ -13,6 +13,10 @@
 #include "lrg-input-gamepad.h"
 
 #include <math.h>
+#include <string.h>
+
+#define GAMEPAD_COUNT 4
+#define GAMEPAD_AXIS_COUNT (GRL_GAMEPAD_AXIS_RIGHT_TRIGGER + 1)
 
 /**
  * LrgInputManager:
@@ -29,6 +33,8 @@ struct _LrgInputManager
 
 	GPtrArray *sources;
 	gboolean   enabled;
+	gfloat     previous_axes[GAMEPAD_COUNT][GAMEPAD_AXIS_COUNT];
+	gfloat     current_axes[GAMEPAD_COUNT][GAMEPAD_AXIS_COUNT];
 };
 
 G_DEFINE_FINAL_TYPE (LrgInputManager, lrg_input_manager, G_TYPE_OBJECT)
@@ -130,7 +136,7 @@ lrg_input_manager_set_property (GObject      *object,
 	switch (prop_id)
 	{
 	case PROP_ENABLED:
-		self->enabled = g_value_get_boolean (value);
+		lrg_input_manager_set_enabled (self, g_value_get_boolean (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -311,7 +317,15 @@ lrg_input_manager_get_sources (LrgInputManager *self)
  * lrg_input_manager_poll:
  * @self: an #LrgInputManager
  *
- * Polls all input sources for updated state.
+ * Polls all enabled input sources and begins a new input frame.
+ *
+ * Captures previous and current gamepad axis values for binding state queries.
+ * Call once per frame, before querying bindings, actions, or maps. Engine and
+ * game template updates call this automatically; custom loops own this call.
+ * Repeated polls advance the frame, even if no binding was queried.
+ *
+ * Disabled or disconnected sources contribute neutral axes. Before the first
+ * poll, both snapshots are neutral. Disabling the manager clears its snapshots.
  */
 void
 lrg_input_manager_poll (LrgInputManager *self)
@@ -319,6 +333,9 @@ lrg_input_manager_poll (LrgInputManager *self)
 	guint i;
 
 	g_return_if_fail (LRG_IS_INPUT_MANAGER (self));
+
+	memcpy (self->previous_axes, self->current_axes, sizeof self->previous_axes);
+	memset (self->current_axes, 0, sizeof self->current_axes);
 
 	if (!self->enabled)
 		return;
@@ -329,6 +346,33 @@ lrg_input_manager_poll (LrgInputManager *self)
 
 		if (lrg_input_get_enabled (source))
 			lrg_input_poll (source);
+	}
+
+	/* Snapshot only after every source has polled. Each binding can then
+	 * compare the same pair of samples without maintaining query history. */
+	for (i = 0; i < self->sources->len; i++)
+	{
+		LrgInput *source = g_ptr_array_index (self->sources, i);
+		gint gamepad;
+		gint axis;
+
+		if (!lrg_input_get_enabled (source))
+			continue;
+
+		for (gamepad = 0; gamepad < GAMEPAD_COUNT; gamepad++)
+		{
+			if (!lrg_input_is_gamepad_available (source, gamepad))
+				continue;
+
+			for (axis = 0; axis < GAMEPAD_AXIS_COUNT; axis++)
+			{
+				gfloat value;
+
+				value = lrg_input_get_gamepad_axis (source, gamepad, axis);
+				if (fabsf (value) > fabsf (self->current_axes[gamepad][axis]))
+					self->current_axes[gamepad][axis] = value;
+			}
+		}
 	}
 }
 
@@ -830,6 +874,39 @@ lrg_input_manager_get_gamepad_axis (LrgInputManager *self,
 	return max_value;
 }
 
+/**
+ * lrg_input_manager_get_gamepad_axis_state:
+ * @self: an #LrgInputManager
+ * @gamepad: the gamepad index (0-3)
+ * @axis: the axis to query
+ * @previous_value: (out) (optional): value captured in the previous input frame
+ * @current_value: (out) (optional): value captured in the current input frame
+ *
+ * Gets the axis snapshots recorded by lrg_input_manager_poll(). Each snapshot
+ * combines enabled, connected sources by maximum absolute magnitude, retaining
+ * the sign. Values remain unchanged until the next poll, regardless of how many
+ * bindings query them. Before the first poll, and while the manager is disabled,
+ * both values are zero. A held axis on the first poll counts as a press.
+ *
+ * Unlike lrg_input_manager_get_gamepad_axis(), this does not query live sources.
+ */
+void
+lrg_input_manager_get_gamepad_axis_state (LrgInputManager *self,
+                                        gint             gamepad,
+                                        GrlGamepadAxis   axis,
+                                        gfloat          *previous_value,
+                                        gfloat          *current_value)
+{
+	g_return_if_fail (LRG_IS_INPUT_MANAGER (self));
+	g_return_if_fail (gamepad >= 0 && gamepad < GAMEPAD_COUNT);
+	g_return_if_fail (axis >= 0 && axis < GAMEPAD_AXIS_COUNT);
+
+	if (previous_value != NULL)
+		*previous_value = self->enabled ? self->previous_axes[gamepad][axis] : 0.0f;
+	if (current_value != NULL)
+		*current_value = self->enabled ? self->current_axes[gamepad][axis] : 0.0f;
+}
+
 /* ==========================================================================
  * Global Enable/Disable
  * ========================================================================== */
@@ -863,9 +940,12 @@ lrg_input_manager_set_enabled (LrgInputManager *self,
 {
 	g_return_if_fail (LRG_IS_INPUT_MANAGER (self));
 
+	enabled = !!enabled;
 	if (self->enabled != enabled)
 	{
 		self->enabled = enabled;
+		memset (self->previous_axes, 0, sizeof self->previous_axes);
+		memset (self->current_axes, 0, sizeof self->current_axes);
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ENABLED]);
 	}
 }

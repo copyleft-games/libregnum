@@ -115,9 +115,14 @@ GPtrArray * lrg_input_manager_get_sources (LrgInputManager *self);
  * lrg_input_manager_poll:
  * @self: an #LrgInputManager
  *
- * Polls all input sources for updated state.
+ * Polls all enabled input sources and begins a new input frame.
  *
- * This should be called once per frame before querying input.
+ * Captures previous and current gamepad axis values for binding state queries.
+ * Call once per frame before querying bindings, actions, or maps. Engine and
+ * game template updates call this automatically; custom loops own this call.
+ * Repeated polls advance the frame even if no binding was queried.
+ * Disabled or disconnected sources contribute neutral axes. Before the first
+ * poll, both snapshots are neutral. Disabling the manager clears its snapshots.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_input_manager_poll (LrgInputManager *self);
@@ -326,6 +331,29 @@ LRG_AVAILABLE_IN_ALL
 gfloat lrg_input_manager_get_gamepad_axis (LrgInputManager *self,
                                            gint             gamepad,
                                            GrlGamepadAxis   axis);
+
+/**
+ * lrg_input_manager_get_gamepad_axis_state:
+ * @self: an #LrgInputManager
+ * @gamepad: the gamepad index (0-3)
+ * @axis: the axis to query
+ * @previous_value: (out) (optional): value captured in the previous input frame
+ * @current_value: (out) (optional): value captured in the current input frame
+ *
+ * Gets the axis snapshots recorded by lrg_input_manager_poll(). Each snapshot
+ * combines enabled, connected sources by maximum absolute magnitude, retaining
+ * the sign. Values remain unchanged until the next poll, regardless of how many
+ * bindings query them. Before the first poll, and while the manager is disabled,
+ * both values are zero. A held axis on the first poll counts as a press.
+ *
+ * Unlike lrg_input_manager_get_gamepad_axis(), this does not query live sources.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_input_manager_get_gamepad_axis_state (LrgInputManager *self,
+                                              gint             gamepad,
+                                              GrlGamepadAxis   axis,
+                                              gfloat          *previous_value,
+                                              gfloat          *current_value);
 
 /* ==========================================================================
  * Global Enable/Disable

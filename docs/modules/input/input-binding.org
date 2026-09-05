@@ -278,6 +278,24 @@ if (lrg_input_binding_is_released(binding))
 }
 #+end_src
 
+Call =lrg_input_manager_poll(lrg_input_manager_get_default())= once at the
+start of each input frame, before querying bindings. Engine and game-template
+updates do this automatically. A custom loop owns this call; do not poll again
+inside callbacks or fixed simulation steps of the same frame.
+
+Axis state queries compare the previous and current snapshots. Crossing the
+configured threshold produces one pressed frame, staying beyond it remains
+down, and falling below it produces one released frame. Every query within a
+frame sees the same state, including copies of a binding used by several actions.
+Skipping queries does not defer an edge to a later frame.
+
+Before the first poll, axis state is neutral. A held axis on the first poll
+produces a press. Zero stays neutral even with threshold zero; other exact
+threshold values activate in the configured direction. Disconnecting a held
+controller, disabling its source, or removing it produces one release frame on
+the next poll. Disabling the entire manager suppresses all queries and clears
+history; the next poll after re-enabling treats held axes as new presses.
+
 *** Analog Value
 :PROPERTIES:
 :CUSTOM_ID: analog-value
@@ -290,7 +308,7 @@ LrgInputBinding *binding = lrg_input_binding_new_gamepad_axis(
     TRUE
 );
 
-/* Get raw axis value */
+/* Get the live axis value (independent of frame edge snapshots) */
 gfloat value = lrg_input_binding_get_axis_value(binding);
 /* Returns -1.0 to 1.0 for axes */
 /* Returns 1.0 if down, 0.0 if up for digital bindings */
@@ -465,7 +483,8 @@ void handle_movement(LrgInputMap *input_map)
 - Must be explicitly freed with =lrg_input_binding_free()=
 - Use =g_autoptr()= for automatic cleanup
 - Bindings are typically used within actions
-- State is queried from the underlying input system (via graylib)
+- Axis pressed/down/released state comes from the input manager frame snapshots
+- =get_axis_value()= remains a live query of enabled input sources
 
 ** Related
 :PROPERTIES:

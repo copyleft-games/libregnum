@@ -19,6 +19,7 @@
 #include "../graphics/lrg-window.h"
 #include "../graphics/lrg-renderer.h"
 #include "../scripting/lrg-scripting.h"
+#include "../input/lrg-input-manager.h"
 #include "../text/lrg-font-manager.h"
 #include "../ui/lrg-theme.h"
 #ifdef LRG_HAS_LUAJIT
@@ -460,6 +461,8 @@ lrg_engine_update (LrgEngine *self,
     {
         return;
     }
+
+    lrg_input_manager_poll (lrg_input_manager_get_default ());
 
     /* Pre-update signal */
     g_signal_emit (self, signals[SIGNAL_PRE_UPDATE], 0, delta);

@@ -57,6 +57,19 @@ For any action, binding, or input map, you can query:
 - =is_released()= - Just became inactive this frame
 - =get_value()= - Analog value (0.0 to 1.0)
 
+Axis state queries use the snapshots captured by =lrg_input_manager_poll()=.
+Engine and game-template updates poll automatically before their input consumers.
+Custom loops must poll the default manager once per input frame. Do not combine
+engine, template, and explicit polling as competing frame owners. Press and
+release results are stable for the entire frame, even when several actions share
+a binding. The live analog-value APIs remain available for direct source queries.
+
+Software input injection is immediately queryable and survives the next manager
+poll. Injected keyboard, mouse, and gamepad button edges remain visible for that
+polled frame. A software key tap stays down for one polled frame, then releases
+on the next. Applications using the manager should not separately call
+=lrg_input_software_update()= in the same frame.
+
 *** YAML Serialization
 :PROPERTIES:
 :CUSTOM_ID: yaml-serialization

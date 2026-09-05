@@ -191,11 +191,10 @@ void lrg_input_software_set_gamepad_axis (LrgInputSoftware *self,
  * lrg_input_software_update:
  * @self: an #LrgInputSoftware
  *
- * Updates the software input state for a new frame.
- *
- * This should be called once per frame (typically by the poll method).
- * It handles transitioning pressed states to down and clearing per-frame
- * events like taps.
+ * Begins a new software input frame. Injected press and release events remain
+ * visible through the next poll, then clear on the following poll. A tap is held
+ * for one polled frame and releases on the next. The input manager calls this
+ * through the source's poll method; do not also update it manually in that frame.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_input_software_update (LrgInputSoftware *self);

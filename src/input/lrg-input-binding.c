@@ -75,6 +75,17 @@ check_modifiers (LrgInputModifiers required)
     return shift_ok && ctrl_ok && alt_ok;
 }
 
+/* Zero is neutral even when a binding's activation threshold is zero. */
+static gboolean
+axis_is_active (const LrgInputBinding *self,
+                gfloat                 value)
+{
+    if (self->input.axis.positive)
+        return value > 0.0f && value >= self->input.axis.threshold;
+
+    return value < 0.0f && value <= -self->input.axis.threshold;
+}
+
 /*
  * key_to_string:
  *
@@ -313,6 +324,8 @@ lrg_input_binding_new_gamepad_axis (gint           gamepad,
     LrgInputBinding *self;
 
     g_return_val_if_fail (gamepad >= 0 && gamepad <= 3, NULL);
+    g_return_val_if_fail (axis >= GRL_GAMEPAD_AXIS_LEFT_X &&
+                          axis <= GRL_GAMEPAD_AXIS_RIGHT_TRIGGER, NULL);
     g_return_val_if_fail (threshold >= 0.0f && threshold <= 1.0f, NULL);
 
     self = g_new0 (LrgInputBinding, 1);
@@ -551,13 +564,18 @@ lrg_input_binding_get_positive (const LrgInputBinding *self)
  *
  * Checks if this binding was just pressed this frame.
  *
+ * Axis bindings use the snapshots from lrg_input_manager_poll(). Querying a
+ * binding does not advance its state; repeated queries in one frame agree.
+ * Zero is neutral, including for bindings with a zero threshold.
+ *
  * Returns: %TRUE if just pressed
  */
 gboolean
 lrg_input_binding_is_pressed (const LrgInputBinding *self)
 {
     LrgInputManager *input;
-    gfloat           axis_value;
+    gfloat           previous_value;
+    gfloat           current_value;
 
     g_return_val_if_fail (self != NULL, FALSE);
 
@@ -586,22 +604,11 @@ lrg_input_binding_is_pressed (const LrgInputBinding *self)
                                                             self->input.gamepad_button);
 
     case LRG_INPUT_BINDING_GAMEPAD_AXIS:
-        /*
-         * For axes, we can't reliably detect "just pressed" without tracking
-         * previous state. Return TRUE if currently past threshold.
-         * TODO: Consider adding state tracking for proper press detection.
-         */
-        axis_value = lrg_input_manager_get_gamepad_axis (input,
-                                                         self->gamepad,
-                                                         self->input.axis.axis);
-        if (self->input.axis.positive)
-        {
-            return axis_value >= self->input.axis.threshold;
-        }
-        else
-        {
-            return axis_value <= -self->input.axis.threshold;
-        }
+        lrg_input_manager_get_gamepad_axis_state (input, self->gamepad,
+                                                 self->input.axis.axis,
+                                                 &previous_value, &current_value);
+        return axis_is_active (self, current_value) &&
+               !axis_is_active (self, previous_value);
 
     default:
         return FALSE;
@@ -614,13 +621,17 @@ lrg_input_binding_is_pressed (const LrgInputBinding *self)
  *
  * Checks if this binding is currently held down.
  *
+ * Axis bindings use the snapshots from lrg_input_manager_poll(). Querying a
+ * binding does not advance its state; repeated queries in one frame agree.
+ * Zero is neutral, including for bindings with a zero threshold.
+ *
  * Returns: %TRUE if held down
  */
 gboolean
 lrg_input_binding_is_down (const LrgInputBinding *self)
 {
     LrgInputManager *input;
-    gfloat           axis_value;
+    gfloat           current_value;
 
     g_return_val_if_fail (self != NULL, FALSE);
 
@@ -649,17 +660,10 @@ lrg_input_binding_is_down (const LrgInputBinding *self)
                                                          self->input.gamepad_button);
 
     case LRG_INPUT_BINDING_GAMEPAD_AXIS:
-        axis_value = lrg_input_manager_get_gamepad_axis (input,
-                                                         self->gamepad,
-                                                         self->input.axis.axis);
-        if (self->input.axis.positive)
-        {
-            return axis_value >= self->input.axis.threshold;
-        }
-        else
-        {
-            return axis_value <= -self->input.axis.threshold;
-        }
+        lrg_input_manager_get_gamepad_axis_state (input, self->gamepad,
+                                                 self->input.axis.axis,
+                                                 NULL, &current_value);
+        return axis_is_active (self, current_value);
 
     default:
         return FALSE;
@@ -672,13 +676,18 @@ lrg_input_binding_is_down (const LrgInputBinding *self)
  *
  * Checks if this binding was just released this frame.
  *
+ * Axis bindings use the snapshots from lrg_input_manager_poll(). Querying a
+ * binding does not advance its state; repeated queries in one frame agree.
+ * Zero is neutral, including for bindings with a zero threshold.
+ *
  * Returns: %TRUE if just released
  */
 gboolean
 lrg_input_binding_is_released (const LrgInputBinding *self)
 {
     LrgInputManager *input;
-    gfloat           axis_value;
+    gfloat           previous_value;
+    gfloat           current_value;
 
     g_return_val_if_fail (self != NULL, FALSE);
 
@@ -699,21 +708,11 @@ lrg_input_binding_is_released (const LrgInputBinding *self)
                                                              self->input.gamepad_button);
 
     case LRG_INPUT_BINDING_GAMEPAD_AXIS:
-        /*
-         * For axes, check if we're below threshold (released).
-         * TODO: Proper release detection needs state tracking.
-         */
-        axis_value = lrg_input_manager_get_gamepad_axis (input,
-                                                         self->gamepad,
-                                                         self->input.axis.axis);
-        if (self->input.axis.positive)
-        {
-            return axis_value < self->input.axis.threshold;
-        }
-        else
-        {
-            return axis_value > -self->input.axis.threshold;
-        }
+        lrg_input_manager_get_gamepad_axis_state (input, self->gamepad,
+                                                 self->input.axis.axis,
+                                                 &previous_value, &current_value);
+        return axis_is_active (self, previous_value) &&
+               !axis_is_active (self, current_value);
 
     default:
         return FALSE;

@@ -59,6 +59,506 @@ map_fixture_tear_down (MapFixture    *fixture,
     g_clear_object (&fixture->map);
 }
 
+/* Axis bindings use the default manager, so isolate it from real devices. */
+typedef struct
+{
+    LrgInputManager *manager;
+    LrgInputMock    *mock;
+    GPtrArray      *saved_sources;
+    gboolean        saved_enabled;
+} AxisFixture;
+
+static void
+axis_fixture_set_up (AxisFixture   *fixture,
+                     gconstpointer  user_data)
+{
+    GPtrArray *sources;
+
+    fixture->manager = lrg_input_manager_get_default ();
+    fixture->saved_enabled = lrg_input_manager_get_enabled (fixture->manager);
+    fixture->saved_sources = g_ptr_array_new_with_free_func (g_object_unref);
+    sources = lrg_input_manager_get_sources (fixture->manager);
+    while (sources->len > 0)
+    {
+        LrgInput *source = g_ptr_array_index (sources, 0);
+
+        g_ptr_array_add (fixture->saved_sources, g_object_ref (source));
+        lrg_input_manager_remove_source (fixture->manager, source);
+    }
+
+    fixture->mock = lrg_input_mock_new ();
+    lrg_input_manager_set_enabled (fixture->manager, TRUE);
+    lrg_input_manager_add_source (fixture->manager, LRG_INPUT (fixture->mock));
+    lrg_input_mock_set_gamepad_available (fixture->mock, 0, TRUE);
+    lrg_input_manager_poll (fixture->manager);
+    lrg_input_manager_poll (fixture->manager);
+}
+
+static void
+axis_fixture_tear_down (AxisFixture   *fixture,
+                        gconstpointer  user_data)
+{
+    guint i;
+
+    lrg_input_manager_set_enabled (fixture->manager, TRUE);
+    lrg_input_mock_reset (fixture->mock);
+    lrg_input_manager_poll (fixture->manager);
+    lrg_input_manager_poll (fixture->manager);
+    lrg_input_manager_remove_source (fixture->manager, LRG_INPUT (fixture->mock));
+    g_clear_object (&fixture->mock);
+
+    for (i = 0; i < fixture->saved_sources->len; i++)
+        lrg_input_manager_add_source (fixture->manager,
+                                     g_ptr_array_index (fixture->saved_sources, i));
+    g_clear_pointer (&fixture->saved_sources, g_ptr_array_unref);
+    lrg_input_manager_set_enabled (fixture->manager, fixture->saved_enabled);
+}
+
+static void
+axis_fixture_sample (AxisFixture *fixture,
+                     gfloat       value)
+{
+    lrg_input_mock_set_gamepad_axis (fixture->mock, 0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                    value);
+    lrg_input_manager_poll (fixture->manager);
+}
+
+/* A held axis must produce one press frame, and a return below its threshold
+ * must produce one release frame. Exact threshold values activate the binding. */
+static void
+test_binding_axis_edges (AxisFixture   *fixture,
+                         gconstpointer  user_data)
+{
+    g_autoptr(LrgInputBinding) binding = NULL;
+    gboolean positive = GPOINTER_TO_INT (user_data);
+    gfloat direction = positive ? 1.0f : -1.0f;
+
+    binding = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                                0.5f, positive);
+    axis_fixture_sample (fixture, 0.5f * direction);
+    g_assert_true (lrg_input_binding_is_pressed (binding));
+    g_assert_true (lrg_input_binding_is_down (binding));
+    g_assert_false (lrg_input_binding_is_released (binding));
+    g_assert_true (lrg_input_binding_is_pressed (binding));
+
+    axis_fixture_sample (fixture, 0.8f * direction);
+    g_assert_false (lrg_input_binding_is_pressed (binding));
+    g_assert_true (lrg_input_binding_is_down (binding));
+    g_assert_false (lrg_input_binding_is_released (binding));
+
+    axis_fixture_sample (fixture, 0.49f * direction);
+    g_assert_true (lrg_input_binding_is_released (binding));
+    g_assert_false (lrg_input_binding_is_down (binding));
+    g_assert_false (lrg_input_binding_is_pressed (binding));
+    g_assert_true (lrg_input_binding_is_released (binding));
+
+    axis_fixture_sample (fixture, 0.0f);
+    g_assert_false (lrg_input_binding_is_released (binding));
+    g_assert_false (lrg_input_binding_is_pressed (binding));
+}
+
+static void
+test_binding_axis_neutral (AxisFixture   *fixture,
+                           gconstpointer  user_data)
+{
+    g_autoptr(LrgInputBinding) positive = NULL;
+    g_autoptr(LrgInputBinding) negative = NULL;
+    gfloat threshold = GPOINTER_TO_INT (user_data) ? 0.0f : 0.5f;
+
+    positive = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                                 threshold, TRUE);
+    negative = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                                 threshold, FALSE);
+    g_assert_false (lrg_input_binding_is_pressed (positive));
+    g_assert_false (lrg_input_binding_is_down (positive));
+    g_assert_false (lrg_input_binding_is_released (positive));
+    g_assert_false (lrg_input_binding_is_pressed (negative));
+    g_assert_false (lrg_input_binding_is_down (negative));
+    g_assert_false (lrg_input_binding_is_released (negative));
+
+    axis_fixture_sample (fixture, 0.75f);
+    g_assert_true (lrg_input_binding_is_pressed (positive));
+    g_assert_false (lrg_input_binding_is_pressed (negative));
+    axis_fixture_sample (fixture, -0.75f);
+    g_assert_true (lrg_input_binding_is_released (positive));
+    g_assert_true (lrg_input_binding_is_pressed (negative));
+}
+
+static void
+test_binding_axis_frame_snapshot (AxisFixture   *fixture,
+                                  gconstpointer  user_data)
+{
+    g_autoptr(LrgInputBinding) binding = NULL;
+
+    binding = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                                0.5f, TRUE);
+    axis_fixture_sample (fixture, 0.75f);
+    g_assert_true (lrg_input_binding_is_pressed (binding));
+    lrg_input_mock_set_gamepad_axis (fixture->mock, 0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                    0.0f);
+    g_assert_false (lrg_input_binding_is_released (binding));
+    g_assert_true (lrg_input_binding_is_down (binding));
+    g_assert_true (lrg_input_binding_is_pressed (binding));
+
+    lrg_input_manager_poll (fixture->manager);
+    g_assert_true (lrg_input_binding_is_released (binding));
+    g_assert_false (lrg_input_binding_is_pressed (binding));
+}
+
+static void
+test_binding_axis_skipped_queries (AxisFixture   *fixture,
+                                   gconstpointer  user_data)
+{
+    g_autoptr(LrgInputBinding) binding = NULL;
+
+    binding = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                                0.5f, TRUE);
+    axis_fixture_sample (fixture, 0.8f);
+    axis_fixture_sample (fixture, 0.8f);
+    g_assert_false (lrg_input_binding_is_pressed (binding));
+    axis_fixture_sample (fixture, 0.0f);
+    g_assert_true (lrg_input_binding_is_released (binding));
+    axis_fixture_sample (fixture, 0.8f);
+    axis_fixture_sample (fixture, 0.0f);
+    axis_fixture_sample (fixture, 0.0f);
+    g_assert_false (lrg_input_binding_is_released (binding));
+}
+
+static void
+test_binding_axis_direction_change (AxisFixture   *fixture,
+                                    gconstpointer  user_data)
+{
+    g_autoptr(LrgInputBinding) positive = NULL;
+    g_autoptr(LrgInputBinding) negative = NULL;
+    g_autoptr(LrgInputAction) action = NULL;
+    g_autoptr(LrgInputMap) map = NULL;
+
+    positive = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                                 0.5f, TRUE);
+    negative = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                                 0.5f, FALSE);
+    action = lrg_input_action_new ("left");
+    map = lrg_input_map_new ();
+    lrg_input_action_add_binding (action, negative);
+    lrg_input_map_add_action (map, action);
+
+    axis_fixture_sample (fixture, 0.8f);
+    axis_fixture_sample (fixture, -0.8f);
+    g_assert_true (lrg_input_binding_is_released (positive));
+    g_assert_true (lrg_input_binding_is_pressed (negative));
+    g_assert_true (lrg_input_action_is_pressed (action));
+    g_assert_true (lrg_input_map_is_pressed (map, "left"));
+    g_assert_false (lrg_input_binding_is_pressed (positive));
+    g_assert_false (lrg_input_binding_is_released (negative));
+
+    axis_fixture_sample (fixture, -0.8f);
+    g_assert_false (lrg_input_action_is_pressed (action));
+    g_assert_false (lrg_input_map_is_pressed (map, "left"));
+}
+
+static void
+test_binding_axis_disconnect (AxisFixture   *fixture,
+                              gconstpointer  user_data)
+{
+    g_autoptr(LrgInputBinding) binding = NULL;
+
+    binding = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                                0.5f, TRUE);
+    axis_fixture_sample (fixture, 0.8f);
+    lrg_input_mock_set_gamepad_available (fixture->mock, 0, FALSE);
+    lrg_input_manager_poll (fixture->manager);
+    g_assert_true (lrg_input_binding_is_released (binding));
+    g_assert_false (lrg_input_binding_is_down (binding));
+    lrg_input_manager_poll (fixture->manager);
+    g_assert_false (lrg_input_binding_is_released (binding));
+
+    lrg_input_mock_set_gamepad_available (fixture->mock, 0, TRUE);
+    lrg_input_manager_poll (fixture->manager);
+    g_assert_true (lrg_input_binding_is_pressed (binding));
+    lrg_input_set_enabled (LRG_INPUT (fixture->mock), FALSE);
+    lrg_input_manager_poll (fixture->manager);
+    g_assert_true (lrg_input_binding_is_released (binding));
+    lrg_input_manager_poll (fixture->manager);
+    g_assert_false (lrg_input_binding_is_released (binding));
+}
+
+static void
+test_software_edges_survive_poll (void)
+{
+    g_autoptr(LrgInputManager) manager = NULL;
+    g_autoptr(LrgInputSoftware) software = NULL;
+
+    manager = g_object_new (LRG_TYPE_INPUT_MANAGER, NULL);
+    software = lrg_input_software_new ();
+    lrg_input_manager_add_source (manager, LRG_INPUT (software));
+    lrg_input_software_press_key (software, GRL_KEY_SPACE);
+    lrg_input_software_press_mouse_button (software, GRL_MOUSE_BUTTON_LEFT);
+    lrg_input_software_press_gamepad_button (software, 0,
+                                           GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+    g_assert_true (lrg_input_manager_is_key_pressed (manager, GRL_KEY_SPACE));
+    lrg_input_manager_poll (manager);
+    g_assert_true (lrg_input_manager_is_key_pressed (manager, GRL_KEY_SPACE));
+    g_assert_true (lrg_input_manager_is_mouse_button_pressed (manager,
+                                                            GRL_MOUSE_BUTTON_LEFT));
+    g_assert_true (lrg_input_manager_is_gamepad_button_pressed (manager, 0,
+                                          GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+    lrg_input_manager_poll (manager);
+    g_assert_false (lrg_input_manager_is_key_pressed (manager, GRL_KEY_SPACE));
+    g_assert_false (lrg_input_manager_is_mouse_button_pressed (manager,
+                                                             GRL_MOUSE_BUTTON_LEFT));
+    g_assert_false (lrg_input_manager_is_gamepad_button_pressed (manager, 0,
+                                           GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+    g_assert_true (lrg_input_manager_is_key_down (manager, GRL_KEY_SPACE));
+
+    lrg_input_software_release_key (software, GRL_KEY_SPACE);
+    lrg_input_software_release_mouse_button (software, GRL_MOUSE_BUTTON_LEFT);
+    lrg_input_software_release_gamepad_button (software, 0,
+                                             GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+    lrg_input_manager_poll (manager);
+    g_assert_true (lrg_input_manager_is_key_released (manager, GRL_KEY_SPACE));
+    g_assert_true (lrg_input_manager_is_mouse_button_released (manager,
+                                                             GRL_MOUSE_BUTTON_LEFT));
+    g_assert_true (lrg_input_manager_is_gamepad_button_released (manager, 0,
+                                           GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+    lrg_input_manager_poll (manager);
+    g_assert_false (lrg_input_manager_is_key_released (manager, GRL_KEY_SPACE));
+    g_assert_false (lrg_input_manager_is_mouse_button_released (manager,
+                                                              GRL_MOUSE_BUTTON_LEFT));
+    g_assert_false (lrg_input_manager_is_gamepad_button_released (manager, 0,
+                                            GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+}
+
+static void
+test_software_tap_survives_poll (void)
+{
+    g_autoptr(LrgInputManager) manager = NULL;
+    g_autoptr(LrgInputSoftware) software = NULL;
+
+    manager = g_object_new (LRG_TYPE_INPUT_MANAGER, NULL);
+    software = lrg_input_software_new ();
+    lrg_input_manager_add_source (manager, LRG_INPUT (software));
+    lrg_input_software_tap_key (software, GRL_KEY_SPACE);
+    lrg_input_manager_poll (manager);
+    g_assert_true (lrg_input_manager_is_key_pressed (manager, GRL_KEY_SPACE));
+    g_assert_true (lrg_input_manager_is_key_down (manager, GRL_KEY_SPACE));
+    g_assert_false (lrg_input_manager_is_key_released (manager, GRL_KEY_SPACE));
+    lrg_input_manager_poll (manager);
+    g_assert_false (lrg_input_manager_is_key_pressed (manager, GRL_KEY_SPACE));
+    g_assert_false (lrg_input_manager_is_key_down (manager, GRL_KEY_SPACE));
+    g_assert_true (lrg_input_manager_is_key_released (manager, GRL_KEY_SPACE));
+    lrg_input_manager_poll (manager);
+    g_assert_false (lrg_input_manager_is_key_released (manager, GRL_KEY_SPACE));
+
+    /* Cancelling a queued tap must not synthesize another release later. */
+    lrg_input_software_tap_key (software, GRL_KEY_SPACE);
+    lrg_input_software_release_key (software, GRL_KEY_SPACE);
+    lrg_input_manager_poll (manager);
+    g_assert_true (lrg_input_manager_is_key_released (manager, GRL_KEY_SPACE));
+    g_assert_false (lrg_input_manager_is_key_down (manager, GRL_KEY_SPACE));
+    lrg_input_manager_poll (manager);
+    g_assert_false (lrg_input_manager_is_key_released (manager, GRL_KEY_SPACE));
+}
+
+static void
+test_software_clear_releases_on_poll (void)
+{
+    g_autoptr(LrgInputManager) manager = NULL;
+    g_autoptr(LrgInputSoftware) software = NULL;
+
+    manager = g_object_new (LRG_TYPE_INPUT_MANAGER, NULL);
+    software = lrg_input_software_new ();
+    lrg_input_manager_add_source (manager, LRG_INPUT (software));
+    lrg_input_software_press_key (software, GRL_KEY_SPACE);
+    lrg_input_software_press_mouse_button (software, GRL_MOUSE_BUTTON_LEFT);
+    lrg_input_software_press_gamepad_button (software, 0,
+                                           GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+    lrg_input_manager_poll (manager);
+    lrg_input_software_clear_all (software);
+    lrg_input_manager_poll (manager);
+    g_assert_true (lrg_input_manager_is_key_released (manager, GRL_KEY_SPACE));
+    g_assert_true (lrg_input_manager_is_mouse_button_released (manager,
+                                                             GRL_MOUSE_BUTTON_LEFT));
+    g_assert_true (lrg_input_manager_is_gamepad_button_released (manager, 0,
+                                           GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+    g_assert_false (lrg_input_manager_is_key_down (manager, GRL_KEY_SPACE));
+    g_assert_false (lrg_input_manager_is_mouse_button_down (manager,
+                                                          GRL_MOUSE_BUTTON_LEFT));
+    g_assert_false (lrg_input_manager_is_gamepad_button_down (manager, 0,
+                                        GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+}
+
+typedef struct
+{
+    const LrgInputBinding *axis;
+    const LrgInputBinding *key;
+    guint                 calls;
+} EngineInputProbe;
+
+static void
+on_engine_input_pre_update (LrgEngine       *engine,
+                            gfloat           delta,
+                            EngineInputProbe *probe)
+{
+    g_assert_cmpuint (probe->calls, <, 3);
+
+    /* The axis presses in frame 0, stays held in frame 1, then releases.
+     * The software tap presses in frame 0 and releases in frame 1. */
+    g_assert_cmpint (lrg_input_binding_is_pressed (probe->axis), ==,
+                     probe->calls == 0);
+    g_assert_cmpint (lrg_input_binding_is_down (probe->axis), ==,
+                     probe->calls < 2);
+    g_assert_cmpint (lrg_input_binding_is_released (probe->axis), ==,
+                     probe->calls == 2);
+    g_assert_cmpint (lrg_input_binding_is_pressed (probe->key), ==,
+                     probe->calls == 0);
+    g_assert_cmpint (lrg_input_binding_is_down (probe->key), ==,
+                     probe->calls == 0);
+    g_assert_cmpint (lrg_input_binding_is_released (probe->key), ==,
+                     probe->calls == 1);
+
+    /* Re-reading in one consumer cannot consume either edge. */
+    g_assert_cmpint (lrg_input_binding_is_pressed (probe->axis), ==,
+                     probe->calls == 0);
+    g_assert_cmpint (lrg_input_binding_is_released (probe->key), ==,
+                     probe->calls == 1);
+    probe->calls++;
+}
+
+static void
+test_engine_polls_before_input_consumers (AxisFixture   *fixture,
+                                         gconstpointer  user_data)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(LrgInputSoftware) software = NULL;
+    g_autoptr(LrgInputBinding) axis = NULL;
+    g_autoptr(LrgInputBinding) key = NULL;
+    LrgEngine *engine;
+    EngineInputProbe probe;
+    gulong handler;
+
+    engine = lrg_engine_get_default ();
+    g_assert_true (lrg_engine_startup (engine, &error));
+    g_assert_no_error (error);
+    software = lrg_input_software_new ();
+    lrg_input_manager_add_source (fixture->manager, LRG_INPUT (software));
+    axis = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                             0.5f, TRUE);
+    key = lrg_input_binding_new_keyboard (GRL_KEY_SPACE, LRG_INPUT_MODIFIER_NONE);
+    probe.axis = axis;
+    probe.key = key;
+    probe.calls = 0;
+    handler = g_signal_connect (engine, "pre-update",
+                                 G_CALLBACK (on_engine_input_pre_update), &probe);
+
+    /* Inject between frames; engine_update alone must publish both inputs. */
+    lrg_input_mock_set_gamepad_axis (fixture->mock, 0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                    0.8f);
+    lrg_input_software_tap_key (software, GRL_KEY_SPACE);
+    lrg_engine_update (engine, 1.0f / 60.0f);
+    lrg_engine_update (engine, 1.0f / 60.0f);
+    lrg_input_mock_set_gamepad_axis (fixture->mock, 0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                    0.0f);
+    lrg_engine_update (engine, 1.0f / 60.0f);
+    g_assert_cmpuint (probe.calls, ==, 3);
+
+    g_signal_handler_disconnect (engine, handler);
+    lrg_input_manager_remove_source (fixture->manager, LRG_INPUT (software));
+    lrg_engine_shutdown (engine);
+}
+
+static void
+test_manager_axis_first_poll (void)
+{
+    g_autoptr(LrgInputManager) manager = NULL;
+    g_autoptr(LrgInputMock) mock = NULL;
+    gfloat previous;
+    gfloat current;
+
+    manager = g_object_new (LRG_TYPE_INPUT_MANAGER, NULL);
+    mock = lrg_input_mock_new ();
+    lrg_input_mock_set_gamepad_available (mock, 0, TRUE);
+    lrg_input_mock_set_gamepad_axis (mock, 0, GRL_GAMEPAD_AXIS_LEFT_X, 0.75f);
+    lrg_input_manager_add_source (manager, LRG_INPUT (mock));
+    lrg_input_manager_get_gamepad_axis_state (manager, 0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                             &previous, &current);
+    g_assert_cmpfloat (previous, ==, 0.0f);
+    g_assert_cmpfloat (current, ==, 0.0f);
+    g_assert_cmpfloat (lrg_input_manager_get_gamepad_axis (manager, 0,
+                      GRL_GAMEPAD_AXIS_LEFT_X), ==, 0.75f);
+
+    lrg_input_manager_poll (manager);
+    lrg_input_manager_get_gamepad_axis_state (manager, 0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                             &previous, &current);
+    g_assert_cmpfloat (previous, ==, 0.0f);
+    g_assert_cmpfloat (current, ==, 0.75f);
+    lrg_input_manager_poll (manager);
+    lrg_input_manager_get_gamepad_axis_state (manager, 0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                             &previous, &current);
+    g_assert_cmpfloat (previous, ==, 0.75f);
+    g_assert_cmpfloat (current, ==, 0.75f);
+}
+
+static void
+test_manager_axis_multiple_sources (void)
+{
+    g_autoptr(LrgInputManager) manager = NULL;
+    g_autoptr(LrgInputMock) first = NULL;
+    g_autoptr(LrgInputMock) second = NULL;
+    gfloat previous;
+    gfloat current;
+
+    manager = g_object_new (LRG_TYPE_INPUT_MANAGER, NULL);
+    first = lrg_input_mock_new ();
+    second = lrg_input_mock_new ();
+    lrg_input_manager_add_source (manager, LRG_INPUT (first));
+    lrg_input_manager_add_source (manager, LRG_INPUT (second));
+    lrg_input_mock_set_gamepad_available (first, 3, TRUE);
+    lrg_input_mock_set_gamepad_available (second, 3, TRUE);
+    lrg_input_mock_set_gamepad_axis (first, 3, GRL_GAMEPAD_AXIS_RIGHT_TRIGGER, -0.8f);
+    lrg_input_mock_set_gamepad_axis (second, 3, GRL_GAMEPAD_AXIS_RIGHT_TRIGGER, 0.4f);
+    lrg_input_manager_poll (manager);
+    lrg_input_manager_get_gamepad_axis_state (manager, 3,
+        GRL_GAMEPAD_AXIS_RIGHT_TRIGGER, &previous, &current);
+    g_assert_cmpfloat (previous, ==, 0.0f);
+    g_assert_cmpfloat (current, ==, -0.8f);
+
+    /* One stale, disconnected source must not mask a connected controller. */
+    lrg_input_mock_set_gamepad_available (first, 3, FALSE);
+    lrg_input_manager_poll (manager);
+    lrg_input_manager_get_gamepad_axis_state (manager, 3,
+        GRL_GAMEPAD_AXIS_RIGHT_TRIGGER, &previous, &current);
+    g_assert_cmpfloat (previous, ==, -0.8f);
+    g_assert_cmpfloat (current, ==, 0.4f);
+
+    lrg_input_manager_remove_source (manager, LRG_INPUT (second));
+    lrg_input_manager_poll (manager);
+    lrg_input_manager_get_gamepad_axis_state (manager, 3,
+        GRL_GAMEPAD_AXIS_RIGHT_TRIGGER, &previous, &current);
+    g_assert_cmpfloat (previous, ==, 0.4f);
+    g_assert_cmpfloat (current, ==, 0.0f);
+}
+
+static void
+test_binding_axis_manager_disabled (AxisFixture   *fixture,
+                                    gconstpointer  user_data)
+{
+    g_autoptr(LrgInputBinding) binding = NULL;
+
+    binding = lrg_input_binding_new_gamepad_axis (0, GRL_GAMEPAD_AXIS_LEFT_X,
+                                                0.5f, TRUE);
+    axis_fixture_sample (fixture, 0.8f);
+    g_object_set (fixture->manager, "enabled", FALSE, NULL);
+    g_assert_false (lrg_input_binding_is_down (binding));
+    g_assert_false (lrg_input_binding_is_pressed (binding));
+    g_assert_false (lrg_input_binding_is_released (binding));
+    lrg_input_manager_poll (fixture->manager);
+    lrg_input_manager_poll (fixture->manager);
+    lrg_input_manager_set_enabled (fixture->manager, TRUE);
+    g_assert_false (lrg_input_binding_is_pressed (binding));
+    lrg_input_manager_poll (fixture->manager);
+    g_assert_true (lrg_input_binding_is_pressed (binding));
+}
+
 /* ==========================================================================
  * Test Cases - Binding
  * ========================================================================== */
@@ -1039,6 +1539,49 @@ main (int   argc,
 
     g_test_add_func ("/input/action/get-axis", test_action_get_axis);
     g_test_add_func ("/input/map/get-axis", test_map_get_axis);
+
+    g_test_add ("/input/binding/axis-edges-positive", AxisFixture,
+                GINT_TO_POINTER (TRUE), axis_fixture_set_up,
+                test_binding_axis_edges, axis_fixture_tear_down);
+    g_test_add ("/input/binding/axis-edges-negative", AxisFixture,
+                GINT_TO_POINTER (FALSE), axis_fixture_set_up,
+                test_binding_axis_edges, axis_fixture_tear_down);
+    g_test_add ("/input/binding/axis-neutral", AxisFixture, NULL,
+                axis_fixture_set_up, test_binding_axis_neutral,
+                axis_fixture_tear_down);
+    g_test_add ("/input/binding/axis-neutral-zero-threshold", AxisFixture,
+                GINT_TO_POINTER (TRUE), axis_fixture_set_up,
+                test_binding_axis_neutral, axis_fixture_tear_down);
+    g_test_add ("/input/binding/axis-frame-snapshot", AxisFixture, NULL,
+                axis_fixture_set_up, test_binding_axis_frame_snapshot,
+                axis_fixture_tear_down);
+    g_test_add ("/input/binding/axis-skipped-queries", AxisFixture, NULL,
+                axis_fixture_set_up, test_binding_axis_skipped_queries,
+                axis_fixture_tear_down);
+    g_test_add ("/input/binding/axis-direction-change", AxisFixture, NULL,
+                axis_fixture_set_up, test_binding_axis_direction_change,
+                axis_fixture_tear_down);
+    g_test_add ("/input/binding/axis-disconnect", AxisFixture, NULL,
+                axis_fixture_set_up, test_binding_axis_disconnect,
+                axis_fixture_tear_down);
+    g_test_add ("/input/binding/axis-manager-disabled", AxisFixture, NULL,
+                axis_fixture_set_up, test_binding_axis_manager_disabled,
+                axis_fixture_tear_down);
+
+    g_test_add_func ("/input/manager/axis-first-poll", test_manager_axis_first_poll);
+    g_test_add_func ("/input/manager/axis-multiple-sources",
+                     test_manager_axis_multiple_sources);
+
+    g_test_add_func ("/input/software/edges-survive-poll",
+                     test_software_edges_survive_poll);
+    g_test_add_func ("/input/software/tap-survives-poll",
+                     test_software_tap_survives_poll);
+    g_test_add_func ("/input/software/clear-releases-on-poll",
+                     test_software_clear_releases_on_poll);
+
+    g_test_add ("/input/engine/polls-before-input-consumers", AxisFixture, NULL,
+                axis_fixture_set_up, test_engine_polls_before_input_consumers,
+                axis_fixture_tear_down);
 
     /* Binding Tests */
     g_test_add_func ("/input/binding/new-keyboard", test_binding_new_keyboard);
