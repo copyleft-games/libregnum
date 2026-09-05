@@ -317,6 +317,34 @@ No parameters.
 :END:
 ECS tools query and manipulate the Entity-Component-System.
 
+Applications expose worlds explicitly on the engine thread:
+
+#+begin_src c
+lrg_engine_register_world (lrg_engine_get_default (), "main", world);
+/* When this world should no longer be inspected: */
+lrg_engine_unregister_world (lrg_engine_get_default (), "main");
+#+end_src
+
+The engine retains registered worlds; registration does not update or draw them.
+The default world is the first active world in lexicographic name order. Object
+IDs are UUIDs returned by listing/spawning, stable for the object's lifetime,
+and shared by tools and resources. Tags need not be unique. A missing world or
+object produces an error, and an engine with no registrations lists no worlds.
+
+Transform tools edit local values when an =LrgTransformComponent= is attached,
+then synchronize its world transform to the entity. Otherwise they edit entity
+values and require uniform scale: pass both =scale_x= and =scale_y= equally.
+Partial updates preserve omitted fields. Numeric arguments must be finite and
+representable as floats. Invalid requests do not partially apply transforms.
+
+Component inspection reports scalar properties plus =unsupported_properties=
+for boxed/object-valued properties. Property editing supports booleans, strings
+(including null), integer, float, enum and flags properties. Enum values accept
+registered names/nicks or numeric values. Read-only, construct-only, unknown,
+wrong-type and out-of-range properties return errors; boxed/object values are
+unsupported. Unsigned values beyond signed 64-bit range are reported as decimal
+strings and cannot be edited through JSON integers.
+
 *** lrg_ecs_list_worlds
 :PROPERTIES:
 :CUSTOM_ID: lrg_ecs_list_worlds
@@ -353,8 +381,8 @@ List game objects in a world.
 {
   "world": "main",
   "objects": [
-    {"id": "player-1", "name": "Player", "active": true},
-    {"id": "enemy-1", "name": "Goblin", "active": true}
+    {"id": "550e8400-e29b-41d4-a716-446655440000", "name": "Player", "active": true},
+    {"id": "550e8400-e29b-41d4-a716-446655440001", "name": "Goblin", "active": true}
   ]
 }
 #+end_src
@@ -373,7 +401,7 @@ Get detailed information about a game object.
 
 #+begin_src json
 {
-  "id": "player-1",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "name": "Player",
   "active": true,
   "transform": {
@@ -469,7 +497,7 @@ Spawn a new object from a registered type.
 
 #+begin_src json
 {
-  "id": "spawned-123",
+  "id": "550e8400-e29b-41d4-a716-446655440002",
   "type": "enemy",
   "success": true
 }
@@ -489,7 +517,13 @@ Destroy a game object.
 :PROPERTIES:
 :CUSTOM_ID: save-tools-lrgmcpsavetools
 :END:
-Save tools manage game saves.
+Save tools use the default =LrgSaveManager= and its registered =LrgSaveable=
+objects. Configure its save directory before use. Slot names are basenames;
+empty names, path separators, =.=, =..= and drive/path prefixes are rejected.
+Create saves the description as the display-name metadata in the same write as
+game state. Quick save/load use the =quicksave= slot. Missing, corrupt or
+unwritable saves return errors; list returns only readable existing saves,
+so a new game can legitimately have an empty slot list.
 
 *** lrg_save_list_slots
 :PROPERTIES:
@@ -505,7 +539,6 @@ No parameters.
 {
   "slots": [
     {"name": "slot1", "has_save": true, "timestamp": "2025-01-15T10:30:00Z"},
-    {"name": "slot2", "has_save": false},
     {"name": "autosave", "has_save": true, "timestamp": "2025-01-15T11:00:00Z"}
   ]
 }

@@ -378,3 +378,17 @@ mcp_server_add_transport (server, MCP_TRANSPORT (http));
 McpStdioTransport *stdio = mcp_stdio_transport_new ();
 mcp_server_add_transport (server, MCP_TRANSPORT (stdio));
 #+end_src
+
+* Engine integration
+
+Register inspectable worlds explicitly with =lrg_engine_register_world()= and
+release their registration with =lrg_engine_unregister_world()=. World names
+are copied, world references are retained, and duplicate names or registering
+one world under multiple names returns false. Registrations survive engine
+shutdown/startup; their lifetime belongs to the host's world lifecycle. The
+engine does not start updating/drawing worlds merely because they are registered.
+
+MCP ECS operations, engine world registration and game-state mutation belong on
+the same engine thread. Save tools use =lrg_save_manager_get_default()= and its
+configured directory and saveable registrations. =lrg_save_manager_save_with_description()=
+adds display-name metadata while preserving the existing =save()= API.

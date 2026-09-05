@@ -1,370 +1,188 @@
-/* lrg-mcp-save-tools.c
- *
+/* lrg-mcp-save-tools.c - SaveManager-backed MCP save operations.
  * Copyright 2025 Zach Podbielniak
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
- *
- * MCP tool group for save/load operations.
- *
- * NOTE: This is a stub implementation until the SaveManager API
- * is fully available.
  */
-
 #include "lrg-mcp-save-tools.h"
-#include "../../lrg-log.h"
-#include <gio/gio.h>
-#include <json-glib/json-glib.h>
-#include <mcp.h>
-
-/**
- * SECTION:lrg-mcp-save-tools
- * @title: LrgMcpSaveTools
- * @short_description: MCP tools for save/load operations
- *
- * #LrgMcpSaveTools provides MCP tools for managing game saves,
- * including listing slots, saving, loading, and deleting.
- *
- * Note: This is currently a stub implementation that returns placeholder
- * data. Full implementation requires the SaveManager module.
- */
+#include "../lrg-mcp-inspect-private.h"
+#include "../../save/lrg-save-manager.h"
 
 struct _LrgMcpSaveTools
 {
-	LrgMcpToolGroup parent_instance;
+    LrgMcpToolGroup parent_instance;
 };
 
 G_DEFINE_FINAL_TYPE (LrgMcpSaveTools, lrg_mcp_save_tools, LRG_TYPE_MCP_TOOL_GROUP)
 
-/* ==========================================================================
- * Tool Handlers (Stub implementations)
- * ========================================================================== */
-
-static McpToolResult *
-handle_list_slots (LrgMcpSaveTools *self,
-                   JsonObject      *arguments,
-                   GError         **error)
+static gboolean
+valid_slot (const gchar *slot,
+            GError **error)
 {
-	McpToolResult *result;
-	g_autoptr(JsonBuilder) builder = NULL;
-	g_autoptr(JsonGenerator) generator = NULL;
-	g_autoptr(JsonNode) root = NULL;
-	g_autofree gchar *json_str = NULL;
+    /* Slots are basenames, never paths into or out of the save directory. */
+    if (*slot == '\0' || g_str_equal (slot, ".") || g_str_equal (slot, "..") ||
+        strchr (slot, '/') != NULL || strchr (slot, '\\') != NULL ||
+        strchr (slot, ':') != NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                     "Save slot must be a nonempty filename without path separators");
+        return FALSE;
+    }
+    return TRUE;
+}
 
-	/* Stub: Return empty slot list */
-	builder = json_builder_new ();
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "slots");
-	json_builder_begin_array (builder);
-	json_builder_end_array (builder);
-	json_builder_set_member_name (builder, "note");
-	json_builder_add_string_value (builder, "SaveManager API not yet implemented");
-	json_builder_end_object (builder);
+static JsonObject *
+save_json (LrgSaveGame *save)
+{
+    JsonObject *json = json_object_new ();
+    GDateTime *timestamp = lrg_save_game_get_timestamp (save);
+    const gchar *description = lrg_save_game_get_display_name (save);
+    g_autofree gchar *formatted = timestamp == NULL ? NULL : g_date_time_format_iso8601 (timestamp);
 
-	root = json_builder_get_root (builder);
-	generator = json_generator_new ();
-	json_generator_set_root (generator, root);
-	json_generator_set_pretty (generator, TRUE);
-	json_str = json_generator_to_data (generator, NULL);
-
-	result = mcp_tool_result_new (FALSE);
-	mcp_tool_result_add_text (result, json_str);
-	return result;
+    json_object_set_string_member (json, "slot", lrg_save_game_get_slot_name (save));
+    json_object_set_string_member (json, "name", lrg_save_game_get_slot_name (save));
+    json_object_set_boolean_member (json, "has_save", TRUE);
+    if (description != NULL)
+        json_object_set_string_member (json, "description", description);
+    else
+        json_object_set_null_member (json, "description");
+    if (formatted != NULL)
+        json_object_set_string_member (json, "timestamp", formatted);
+    else
+        json_object_set_null_member (json, "timestamp");
+    json_object_set_double_member (json, "playtime", lrg_save_game_get_playtime (save));
+    json_object_set_int_member (json, "version", lrg_save_game_get_version (save));
+    return json;
 }
 
 static McpToolResult *
-handle_get_info (LrgMcpSaveTools *self,
-                 JsonObject      *arguments,
-                 GError         **error)
+lrg_mcp_save_tools_handle_tool (LrgMcpToolGroup *group,
+                                const gchar *name,
+                                JsonObject *args,
+                                GError **error)
 {
-	const gchar *slot;
+    LrgSaveManager *manager = lrg_save_manager_get_default ();
+    const gchar *slot;
+    const gchar *description = NULL;
+    gboolean success;
+    gboolean create = g_str_equal (name, "lrg_save_create");
+    gboolean quick_save = g_str_equal (name, "lrg_save_quick_save");
+    gboolean quick_load = g_str_equal (name, "lrg_save_quick_load");
+    JsonObject *json;
 
-	slot = lrg_mcp_tool_group_get_string_arg (arguments, "slot", NULL);
-	if (slot == NULL)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		             "Missing required argument: slot");
-		return NULL;
-	}
+    if (g_str_equal (name, "lrg_save_list_slots"))
+    {
+        GList *saves;
+        GList *iter;
+        JsonArray *array;
+        g_autoptr(GFile) directory = NULL;
+        g_autoptr(GFileEnumerator) enumerator = NULL;
+        g_autoptr(GError) local_error = NULL;
 
-	/* Stub: Return not supported */
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "SaveManager API not yet implemented");
-	return NULL;
+        if (!_lrg_mcp_args (args, "", "", "", error))
+            return NULL;
+        /* Unlike an empty directory, an unreadable directory is an error. */
+        directory = g_file_new_for_path (lrg_save_manager_get_save_directory (manager));
+        enumerator = g_file_enumerate_children (directory, G_FILE_ATTRIBUTE_STANDARD_NAME,
+                                                G_FILE_QUERY_INFO_NONE, NULL, &local_error);
+        if (enumerator == NULL && !g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+        {
+            g_propagate_error (error, g_steal_pointer (&local_error));
+            return NULL;
+        }
+        saves = lrg_save_manager_list_saves (manager);
+        json = json_object_new ();
+        array = json_array_new ();
+        for (iter = saves; iter != NULL; iter = iter->next)
+            json_array_add_object_element (array, save_json (iter->data));
+        g_list_free_full (saves, g_object_unref);
+        json_object_set_array_member (json, "slots", array);
+        return _lrg_mcp_result (json);
+    }
+    if (!create && !quick_save && !quick_load &&
+        !g_str_equal (name, "lrg_save_get_info") &&
+        !g_str_equal (name, "lrg_save_load") &&
+        !g_str_equal (name, "lrg_save_delete"))
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Unknown tool: %s", name);
+        return NULL;
+    }
+    if (!_lrg_mcp_args (args, quick_save || quick_load ? "" : create ? "slot description" : "slot",
+                        "", quick_save || quick_load ? "" : "slot", error))
+        return NULL;
+    slot = quick_save || quick_load ? "quicksave" : json_object_get_string_member (args, "slot");
+    if (!valid_slot (slot, error))
+        return NULL;
+    if (create && json_object_has_member (args, "description"))
+        description = json_object_get_string_member (args, "description");
+    if (g_str_equal (name, "lrg_save_get_info"))
+    {
+        g_autoptr(LrgSaveGame) save = lrg_save_manager_get_save (manager, slot);
+        if (save == NULL)
+        {
+            g_set_error (error, G_IO_ERROR,
+                         lrg_save_manager_slot_exists (manager, slot) ? G_IO_ERROR_INVALID_DATA : G_IO_ERROR_NOT_FOUND,
+                         "Save metadata unavailable: %s", slot);
+            return NULL;
+        }
+        return _lrg_mcp_result (save_json (save));
+    }
+    if (create || quick_save)
+        success = lrg_save_manager_save_with_description (manager, slot, description, error);
+    else if (quick_load || g_str_equal (name, "lrg_save_load"))
+        success = lrg_save_manager_load (manager, slot, error);
+    else
+        success = lrg_save_manager_delete_save (manager, slot, error);
+    if (!success)
+    {
+        if (error != NULL && *error == NULL)
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "Save operation failed: %s", slot);
+        return NULL;
+    }
+    json = json_object_new ();
+    json_object_set_string_member (json, "slot", slot);
+    json_object_set_boolean_member (json, "success", TRUE);
+    return _lrg_mcp_result (json);
 }
-
-static McpToolResult *
-handle_create (LrgMcpSaveTools *self,
-               JsonObject      *arguments,
-               GError         **error)
-{
-	const gchar *slot;
-
-	slot = lrg_mcp_tool_group_get_string_arg (arguments, "slot", NULL);
-	if (slot == NULL)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		             "Missing required argument: slot");
-		return NULL;
-	}
-
-	/* Stub: Return not supported */
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "SaveManager API not yet implemented");
-	return NULL;
-}
-
-static McpToolResult *
-handle_load (LrgMcpSaveTools *self,
-             JsonObject      *arguments,
-             GError         **error)
-{
-	const gchar *slot;
-
-	slot = lrg_mcp_tool_group_get_string_arg (arguments, "slot", NULL);
-	if (slot == NULL)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		             "Missing required argument: slot");
-		return NULL;
-	}
-
-	/* Stub: Return not supported */
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "SaveManager API not yet implemented");
-	return NULL;
-}
-
-static McpToolResult *
-handle_delete (LrgMcpSaveTools *self,
-               JsonObject      *arguments,
-               GError         **error)
-{
-	const gchar *slot;
-
-	slot = lrg_mcp_tool_group_get_string_arg (arguments, "slot", NULL);
-	if (slot == NULL)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		             "Missing required argument: slot");
-		return NULL;
-	}
-
-	/* Stub: Return not supported */
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "SaveManager API not yet implemented");
-	return NULL;
-}
-
-static McpToolResult *
-handle_quick_save (LrgMcpSaveTools *self,
-                   JsonObject      *arguments,
-                   GError         **error)
-{
-	/* Stub: Return not supported */
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "SaveManager API not yet implemented");
-	return NULL;
-}
-
-static McpToolResult *
-handle_quick_load (LrgMcpSaveTools *self,
-                   JsonObject      *arguments,
-                   GError         **error)
-{
-	/* Stub: Return not supported */
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "SaveManager API not yet implemented");
-	return NULL;
-}
-
-/* ==========================================================================
- * Schema Builders
- * ========================================================================== */
-
-static JsonNode *
-build_schema_slot_required (void)
-{
-	g_autoptr(JsonBuilder) builder = json_builder_new ();
-
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "object");
-	json_builder_set_member_name (builder, "properties");
-	json_builder_begin_object (builder);
-
-	json_builder_set_member_name (builder, "slot");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "string");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, "Save slot name");
-	json_builder_end_object (builder);
-
-	json_builder_end_object (builder);
-
-	json_builder_set_member_name (builder, "required");
-	json_builder_begin_array (builder);
-	json_builder_add_string_value (builder, "slot");
-	json_builder_end_array (builder);
-
-	json_builder_end_object (builder);
-
-	return json_builder_get_root (builder);
-}
-
-static JsonNode *
-build_schema_create (void)
-{
-	g_autoptr(JsonBuilder) builder = json_builder_new ();
-
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "object");
-	json_builder_set_member_name (builder, "properties");
-	json_builder_begin_object (builder);
-
-	json_builder_set_member_name (builder, "slot");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "string");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, "Save slot name");
-	json_builder_end_object (builder);
-
-	json_builder_set_member_name (builder, "description");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "string");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, "Save description");
-	json_builder_end_object (builder);
-
-	json_builder_end_object (builder);
-
-	json_builder_set_member_name (builder, "required");
-	json_builder_begin_array (builder);
-	json_builder_add_string_value (builder, "slot");
-	json_builder_end_array (builder);
-
-	json_builder_end_object (builder);
-
-	return json_builder_get_root (builder);
-}
-
-/* ==========================================================================
- * LrgMcpToolGroup Virtual Methods
- * ========================================================================== */
 
 static const gchar *
 lrg_mcp_save_tools_get_group_name (LrgMcpToolGroup *group)
 {
-	return "save";
+    return "save";
 }
 
 static void
 lrg_mcp_save_tools_register_tools (LrgMcpToolGroup *group)
 {
-	McpTool *tool;
-	JsonNode *schema;
-
-	tool = mcp_tool_new ("lrg_save_list_slots",
-	                     "List all available save slots");
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	tool = mcp_tool_new ("lrg_save_get_info",
-	                     "Get metadata for a save slot");
-	schema = build_schema_slot_required ();
-	mcp_tool_set_input_schema (tool, schema);
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	tool = mcp_tool_new ("lrg_save_create",
-	                     "Create a save in the specified slot");
-	schema = build_schema_create ();
-	mcp_tool_set_input_schema (tool, schema);
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	tool = mcp_tool_new ("lrg_save_load",
-	                     "Load game from the specified slot");
-	schema = build_schema_slot_required ();
-	mcp_tool_set_input_schema (tool, schema);
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	tool = mcp_tool_new ("lrg_save_delete",
-	                     "Delete the save in the specified slot");
-	schema = build_schema_slot_required ();
-	mcp_tool_set_input_schema (tool, schema);
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	tool = mcp_tool_new ("lrg_save_quick_save",
-	                     "Trigger a quick save");
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	tool = mcp_tool_new ("lrg_save_quick_load",
-	                     "Trigger a quick load");
-	lrg_mcp_tool_group_add_tool (group, tool);
+    _lrg_mcp_add_tool (group, "lrg_save_list_slots", "List available saves", "", "", "");
+    _lrg_mcp_add_tool (group, "lrg_save_get_info", "Read save metadata", "slot", "", "slot");
+    _lrg_mcp_add_tool (group, "lrg_save_create", "Save registered state to a slot", "slot description", "", "slot");
+    _lrg_mcp_add_tool (group, "lrg_save_load", "Load registered state from a slot", "slot", "", "slot");
+    _lrg_mcp_add_tool (group, "lrg_save_delete", "Delete a save slot", "slot", "", "slot");
+    _lrg_mcp_add_tool (group, "lrg_save_quick_save", "Save to the quicksave slot", "", "", "");
+    _lrg_mcp_add_tool (group, "lrg_save_quick_load", "Load the quicksave slot", "", "", "");
 }
-
-static McpToolResult *
-lrg_mcp_save_tools_handle_tool (LrgMcpToolGroup  *group,
-                                const gchar      *name,
-                                JsonObject       *arguments,
-                                GError          **error)
-{
-	LrgMcpSaveTools *self = LRG_MCP_SAVE_TOOLS (group);
-
-	if (g_strcmp0 (name, "lrg_save_list_slots") == 0)
-		return handle_list_slots (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_save_get_info") == 0)
-		return handle_get_info (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_save_create") == 0)
-		return handle_create (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_save_load") == 0)
-		return handle_load (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_save_delete") == 0)
-		return handle_delete (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_save_quick_save") == 0)
-		return handle_quick_save (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_save_quick_load") == 0)
-		return handle_quick_load (self, arguments, error);
-
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "Unknown tool: %s", name);
-	return NULL;
-}
-
-/* ==========================================================================
- * GObject Implementation
- * ========================================================================== */
 
 static void
 lrg_mcp_save_tools_class_init (LrgMcpSaveToolsClass *klass)
 {
-	LrgMcpToolGroupClass *group_class = LRG_MCP_TOOL_GROUP_CLASS (klass);
-
-	group_class->get_group_name = lrg_mcp_save_tools_get_group_name;
-	group_class->register_tools = lrg_mcp_save_tools_register_tools;
-	group_class->handle_tool = lrg_mcp_save_tools_handle_tool;
+    LrgMcpToolGroupClass *group = LRG_MCP_TOOL_GROUP_CLASS (klass);
+    group->get_group_name = lrg_mcp_save_tools_get_group_name;
+    group->register_tools = lrg_mcp_save_tools_register_tools;
+    group->handle_tool = lrg_mcp_save_tools_handle_tool;
 }
 
 static void
 lrg_mcp_save_tools_init (LrgMcpSaveTools *self)
 {
-	/* Nothing to initialize */
 }
-
-/* ==========================================================================
- * Public API
- * ========================================================================== */
 
 /**
  * lrg_mcp_save_tools_new:
  *
- * Creates a new save tools provider.
- *
- * Returns: (transfer full): A new #LrgMcpSaveTools
+ * Returns: (transfer full): a new save tools provider
  */
 LrgMcpSaveTools *
 lrg_mcp_save_tools_new (void)
 {
-	return g_object_new (LRG_TYPE_MCP_SAVE_TOOLS, NULL);
+    return g_object_new (LRG_TYPE_MCP_SAVE_TOOLS, NULL);
 }

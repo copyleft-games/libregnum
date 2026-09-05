@@ -170,6 +170,24 @@ gboolean lrg_save_manager_save (LrgSaveManager  *self,
                                 GError         **error);
 
 /**
+ * lrg_save_manager_save_with_description:
+ * @self: a #LrgSaveManager
+ * @slot_name: the slot identifier
+ * @description: (nullable): the user-visible save description
+ * @error: (optional): return location for a #GError
+ *
+ * Saves registered state and the description in one save-file write.
+ * Read the description with lrg_save_game_get_display_name().
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_save_manager_save_with_description (LrgSaveManager *self,
+                                                  const gchar *slot_name,
+                                                  const gchar *description,
+                                                  GError **error);
+
+/**
  * lrg_save_manager_load:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier

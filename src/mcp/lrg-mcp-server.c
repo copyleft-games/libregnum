@@ -8,6 +8,7 @@
  */
 
 #include "lrg-mcp-server.h"
+#include "lrg-mcp-server-private.h"
 #include "../lrg-log.h"
 #include "../lrg-version.h"
 
@@ -288,6 +289,9 @@ register_resources_with_mcp_server (LrgMcpServer *self,
 		}
 
 		g_list_free_full (resources, g_object_unref);
+        if (LRG_IS_MCP_ECS_RESOURCES (provider))
+            _lrg_mcp_server_register_ecs_templates (mcp_server, resource_handler_callback, self);
+
 	}
 }
 
@@ -972,19 +976,29 @@ lrg_mcp_server_register_default_providers (LrgMcpServer *self)
 
 	lrg_info (LRG_LOG_DOMAIN_MCP, "Registering default MCP providers");
 
-	/* Register tool providers */
-	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_input_tools_new ()));
-	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_screenshot_tools_new ()));
-	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_engine_tools_new ()));
-	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_ecs_tools_new ()));
-	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_save_tools_new ()));
-	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_debug_tools_new ()));
-	lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (lrg_mcp_reel_tools_new ()));
+    {
+        g_autoptr(LrgMcpInputTools) input = lrg_mcp_input_tools_new ();
+        g_autoptr(LrgMcpScreenshotTools) screenshot = lrg_mcp_screenshot_tools_new ();
+        g_autoptr(LrgMcpEngineTools) engine = lrg_mcp_engine_tools_new ();
+        g_autoptr(LrgMcpEcsTools) ecs = lrg_mcp_ecs_tools_new ();
+        g_autoptr(LrgMcpSaveTools) save = lrg_mcp_save_tools_new ();
+        g_autoptr(LrgMcpDebugTools) debug = lrg_mcp_debug_tools_new ();
+        g_autoptr(LrgMcpReelTools) reel = lrg_mcp_reel_tools_new ();
+        g_autoptr(LrgMcpEngineResources) engine_resources = lrg_mcp_engine_resources_new ();
+        g_autoptr(LrgMcpEcsResources) ecs_resources = lrg_mcp_ecs_resources_new ();
+        g_autoptr(LrgMcpScreenshotResources) screenshot_resources = lrg_mcp_screenshot_resources_new ();
 
-	/* Register resource providers */
-	lrg_mcp_server_add_resource_provider (self, LRG_MCP_RESOURCE_PROVIDER (lrg_mcp_engine_resources_new ()));
-	lrg_mcp_server_add_resource_provider (self, LRG_MCP_RESOURCE_PROVIDER (lrg_mcp_ecs_resources_new ()));
-	lrg_mcp_server_add_resource_provider (self, LRG_MCP_RESOURCE_PROVIDER (lrg_mcp_screenshot_resources_new ()));
+        lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (input));
+        lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (screenshot));
+        lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (engine));
+        lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (ecs));
+        lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (save));
+        lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (debug));
+        lrg_mcp_server_add_tool_provider (self, LRG_MCP_TOOL_PROVIDER (reel));
+        lrg_mcp_server_add_resource_provider (self, LRG_MCP_RESOURCE_PROVIDER (engine_resources));
+        lrg_mcp_server_add_resource_provider (self, LRG_MCP_RESOURCE_PROVIDER (ecs_resources));
+        lrg_mcp_server_add_resource_provider (self, LRG_MCP_RESOURCE_PROVIDER (screenshot_resources));
+    }
 
 	lrg_info (LRG_LOG_DOMAIN_MCP, "Registered 7 tool providers and 3 resource providers");
 }

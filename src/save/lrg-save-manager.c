@@ -458,9 +458,18 @@ lrg_save_manager_unregister_all (LrgSaveManager *self)
  * Returns: %TRUE on success
  */
 gboolean
-lrg_save_manager_save (LrgSaveManager  *self,
-                       const gchar     *slot_name,
-                       GError         **error)
+lrg_save_manager_save (LrgSaveManager *self,
+                       const gchar *slot_name,
+                       GError **error)
+{
+    return lrg_save_manager_save_with_description (self, slot_name, NULL, error);
+}
+
+gboolean
+lrg_save_manager_save_with_description (LrgSaveManager *self,
+                                        const gchar *slot_name,
+                                        const gchar *description,
+                                        GError **error)
 {
     g_autoptr(LrgSaveContext) context = NULL;
     g_autofree gchar          *path = NULL;
@@ -485,6 +494,8 @@ lrg_save_manager_save (LrgSaveManager  *self,
     /* Write metadata section */
     lrg_save_context_begin_section (context, "metadata");
     lrg_save_context_write_string (context, "slot_name", slot_name);
+    if (description != NULL)
+        lrg_save_context_write_string (context, "display_name", description);
     {
         g_autoptr(GDateTime) now = g_date_time_new_now_utc ();
         g_autofree gchar *timestamp = g_date_time_format_iso8601 (now);
@@ -770,7 +781,10 @@ lrg_save_manager_list_saves (LrgSaveManager *self)
         }
 
         path = g_build_filename (self->save_directory, filename, NULL);
-        save = lrg_save_game_new_from_file (path, NULL);
+        {
+            g_autoptr(GError) metadata_error = NULL;
+            save = lrg_save_game_new_from_file (path, &metadata_error);
+        }
 
         if (save != NULL)
         {
@@ -806,7 +820,10 @@ lrg_save_manager_get_save (LrgSaveManager *self,
         return NULL;
     }
 
-    return lrg_save_game_new_from_file (path, NULL);
+    {
+        g_autoptr(GError) metadata_error = NULL;
+        return lrg_save_game_new_from_file (path, &metadata_error);
+    }
 }
 
 /**

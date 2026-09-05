@@ -55,6 +55,7 @@ G_BEGIN_DECLS
 #include "tools/lrg-mcp-ecs-tools.h"
 #include "tools/lrg-mcp-save-tools.h"
 #include "tools/lrg-mcp-debug-tools.h"
+#include "tools/lrg-mcp-reel-tools.h"
 
 /* ==========================================================================
  * MCP Resource Groups

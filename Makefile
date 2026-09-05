@@ -1134,6 +1134,7 @@ SOURCES += \
 	src/mcp/lrg-mcp-tool-group.c \
 	src/mcp/lrg-mcp-resource-group.c \
 	src/mcp/lrg-mcp-server.c \
+	src/mcp/lrg-mcp-inspect.c \
 	src/mcp/tools/lrg-mcp-input-tools.c \
 	src/mcp/tools/lrg-mcp-screenshot-tools.c \
 	src/mcp/tools/lrg-mcp-engine-tools.c \

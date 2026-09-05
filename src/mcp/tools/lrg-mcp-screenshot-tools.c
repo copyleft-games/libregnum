@@ -340,12 +340,14 @@ lrg_mcp_screenshot_tools_register_tools (LrgMcpToolGroup *group)
 	                     "Capture full screen as base64-encoded PNG image");
 	schema = build_schema_capture ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_screenshot_region",
 	                     "Capture a region of the screen as base64-encoded PNG");
 	schema = build_schema_region ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 }
 

@@ -6,12 +6,11 @@
  *
  * MCP resource group for ECS/World state.
  *
- * NOTE: This is a stub implementation. Full ECS introspection requires
- * additional API to be added to LrgEngine, LrgWorld, and LrgGameObject.
  */
 
 #include "lrg-mcp-ecs-resources.h"
-#include "../../core/lrg-engine.h"
+#include "../lrg-mcp-inspect-private.h"
+#include "../lrg-mcp-tool-group.h"
 #include "../../lrg-log.h"
 #include <gio/gio.h>
 #include <json-glib/json-glib.h>
@@ -25,9 +24,6 @@
  * #LrgMcpEcsResources provides MCP resources for read-only
  * access to worlds, game objects, and their components.
  *
- * Note: This is currently a stub implementation that returns placeholder
- * data. Full implementation requires additional introspection API in the
- * ECS module.
  */
 
 #define URI_PREFIX "libregnum://ecs/"
@@ -38,51 +34,6 @@ struct _LrgMcpEcsResources
 };
 
 G_DEFINE_FINAL_TYPE (LrgMcpEcsResources, lrg_mcp_ecs_resources, LRG_TYPE_MCP_RESOURCE_GROUP)
-
-/* ==========================================================================
- * Resource Handlers (Stub implementations)
- * ========================================================================== */
-
-static GList *
-read_worlds_list (LrgMcpEcsResources  *self,
-                  GError             **error)
-{
-	LrgEngine *engine;
-	g_autoptr(JsonBuilder) builder = NULL;
-	g_autoptr(JsonGenerator) generator = NULL;
-	g_autoptr(JsonNode) root = NULL;
-	g_autofree gchar *json_str = NULL;
-	McpResourceContents *contents;
-
-	engine = lrg_engine_get_default ();
-	if (engine == NULL)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-		             "Engine not available");
-		return NULL;
-	}
-
-	/* Stub: Return empty world list
-	 * TODO: Implement when lrg_engine_get_worlds() is available
-	 */
-	builder = json_builder_new ();
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "worlds");
-	json_builder_begin_array (builder);
-	json_builder_end_array (builder);
-	json_builder_set_member_name (builder, "note");
-	json_builder_add_string_value (builder, "ECS introspection API not yet implemented");
-	json_builder_end_object (builder);
-
-	root = json_builder_get_root (builder);
-	generator = json_generator_new ();
-	json_generator_set_root (generator, root);
-	json_generator_set_pretty (generator, TRUE);
-	json_str = json_generator_to_data (generator, NULL);
-
-	contents = mcp_resource_contents_new_text (URI_PREFIX "worlds", json_str, "application/json");
-	return g_list_append (NULL, contents);
-}
 
 /* ==========================================================================
  * LrgMcpResourceGroup Virtual Methods
@@ -105,33 +56,51 @@ lrg_mcp_ecs_resources_register_resources (LrgMcpResourceGroup *group)
 	mcp_resource_set_mime_type (resource, "application/json");
 	lrg_mcp_resource_group_add_resource (group, resource);
 
-	/* World and object resources are dynamic (template-based)
-	 * but not yet implemented due to missing introspection API */
+	/* World and object URIs resolve dynamically against registered worlds. */
 }
 
 static GList *
-lrg_mcp_ecs_resources_read_resource (LrgMcpResourceGroup  *group,
-                                     const gchar          *uri,
-                                     GError              **error)
+lrg_mcp_ecs_resources_read_resource (LrgMcpResourceGroup *group,
+                                     const gchar *uri,
+                                     GError **error)
 {
-	LrgMcpEcsResources *self = LRG_MCP_ECS_RESOURCES (group);
+    g_autoptr(JsonNode) node = json_node_new (JSON_NODE_OBJECT);
+    g_autofree gchar *text = NULL;
+    JsonObject *object = NULL;
+    McpResourceContents *contents;
 
-	/* Static resource */
-	if (g_strcmp0 (uri, URI_PREFIX "worlds") == 0)
-		return read_worlds_list (self, error);
-
-	/* Dynamic resources not yet implemented */
-	if (g_str_has_prefix (uri, URI_PREFIX "world/") ||
-	    g_str_has_prefix (uri, URI_PREFIX "object/"))
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-		             "ECS introspection API not yet implemented");
-		return NULL;
-	}
-
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-	             "Unknown resource: %s", uri);
-	return NULL;
+    if (g_str_equal (uri, URI_PREFIX "worlds"))
+        object = _lrg_mcp_worlds_json ();
+    else if (g_str_has_prefix (uri, URI_PREFIX "world/"))
+    {
+        g_autofree gchar *name = g_uri_unescape_string (uri + strlen (URI_PREFIX "world/"), NULL);
+        LrgWorld *world;
+        if (name == NULL || *name == '\0')
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid world URI");
+            return NULL;
+        }
+        world = _lrg_mcp_world (name, error);
+        if (world == NULL)
+            return NULL;
+        object = _lrg_mcp_world_json (name, world);
+    }
+    else if (g_str_has_prefix (uri, URI_PREFIX "object/"))
+    {
+        LrgGameObject *entity = _lrg_mcp_find_object (uri + strlen (URI_PREFIX "object/"), NULL, error);
+        if (entity == NULL)
+            return NULL;
+        object = _lrg_mcp_object_json (entity);
+    }
+    else
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Unknown ECS resource: %s", uri);
+        return NULL;
+    }
+    json_node_take_object (node, object);
+    text = json_to_string (node, FALSE);
+    contents = mcp_resource_contents_new_text (uri, text, "application/json");
+    return g_list_append (NULL, contents);
 }
 
 /* ==========================================================================

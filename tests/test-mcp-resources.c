@@ -352,11 +352,75 @@ test_mcp_screenshot_resources_read_invalid (ResourcesFixture *fixture,
  * Main
  * ========================================================================== */
 
+static JsonObject *
+read_ecs_json (LrgMcpResourceProvider *provider,
+               const gchar *uri)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(JsonParser) parser = json_parser_new ();
+    GList *contents = lrg_mcp_resource_provider_read_resource (provider, uri, &error);
+    JsonObject *object;
+
+    g_assert_no_error (error);
+    g_assert_cmpuint (g_list_length (contents), ==, 1);
+    g_assert_cmpstr (mcp_resource_contents_get_uri (contents->data), ==, uri);
+    g_assert_cmpstr (mcp_resource_contents_get_mime_type (contents->data), ==, "application/json");
+    g_assert_true (json_parser_load_from_data (parser, mcp_resource_contents_get_text (contents->data), -1, &error));
+    object = json_object_ref (json_node_get_object (json_parser_get_root (parser)));
+    g_list_free_full (contents, (GDestroyNotify) mcp_resource_contents_unref);
+    return object;
+}
+
+static void
+test_mcp_ecs_resources_live (void)
+{
+    LrgEngine *engine = lrg_engine_get_default ();
+    g_autoptr(LrgMcpEcsResources) resources = lrg_mcp_ecs_resources_new ();
+    LrgMcpResourceProvider *provider = LRG_MCP_RESOURCE_PROVIDER (resources);
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    g_autoptr(LrgGameObject) object = lrg_game_object_new_at (5, 7);
+    g_autoptr(JsonObject) json = NULL;
+    g_autofree gchar *id = NULL;
+    g_autofree gchar *uri = NULL;
+    g_autoptr(GError) error = NULL;
+    JsonObject *entry;
+    GList *contents;
+
+    json = read_ecs_json (provider, "libregnum://ecs/worlds");
+    g_assert_false (json_object_has_member (json, "note"));
+    g_assert_cmpuint (json_array_get_length (json_object_get_array_member (json, "worlds")), ==, 0);
+    g_assert_true (lrg_engine_register_world (engine, "a world", world));
+    lrg_world_add_object (world, object);
+    g_clear_pointer (&json, json_object_unref);
+    json = read_ecs_json (provider, "libregnum://ecs/world/a%20world");
+    g_assert_cmpstr (json_object_get_string_member (json, "name"), ==, "a world");
+    entry = json_array_get_object_element (json_object_get_array_member (json, "objects"), 0);
+    id = g_strdup (json_object_get_string_member (entry, "id"));
+    uri = g_strconcat ("libregnum://ecs/object/", id, NULL);
+    g_clear_pointer (&json, json_object_unref);
+    json = read_ecs_json (provider, uri);
+    g_assert_cmpstr (json_object_get_string_member (json, "id"), ==, id);
+    g_assert_cmpfloat (json_object_get_double_member (json_object_get_object_member (json, "transform"), "x"), ==, 5);
+    g_assert_true (lrg_engine_unregister_world (engine, "a world"));
+    contents = lrg_mcp_resource_provider_read_resource (provider, uri, &error);
+    g_assert_null (contents);
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+    g_clear_error (&error);
+    contents = lrg_mcp_resource_provider_read_resource (provider, "libregnum://ecs/world/%zz", &error);
+    g_assert_null (contents);
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_clear_error (&error);
+    contents = lrg_mcp_resource_provider_read_resource (provider, "libregnum://ecs/world/missing", &error);
+    g_assert_null (contents);
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+}
+
 int
 main (int   argc,
       char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
+    g_test_add_func ("/mcp/resources/ecs/live", test_mcp_ecs_resources_live);
 
 	/* Resource Group Creation */
 	g_test_add_func ("/mcp/resources/engine/new", test_mcp_engine_resources_new);

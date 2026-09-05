@@ -19,6 +19,7 @@
 #include "../graphics/lrg-window.h"
 #include "../graphics/lrg-renderer.h"
 #include "../scripting/lrg-scripting.h"
+#include "../ecs/lrg-world.h"
 #include "../input/lrg-input-manager.h"
 #include "../text/lrg-font-manager.h"
 #include "../ui/lrg-theme.h"
@@ -36,6 +37,7 @@ typedef struct
     LrgScripting     *scripting;
     LrgWindow        *window;
     LrgRenderer      *renderer;
+    GHashTable       *worlds;
 } LrgEnginePrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgEngine, lrg_engine, G_TYPE_OBJECT)
@@ -175,6 +177,7 @@ lrg_engine_finalize (GObject *object)
     g_clear_object (&priv->asset_manager);
     g_clear_object (&priv->data_loader);
     g_clear_object (&priv->registry);
+    g_clear_pointer (&priv->worlds, g_hash_table_unref);
 
     /* Clear singleton reference */
     if (default_engine == self)
@@ -308,6 +311,8 @@ lrg_engine_init (LrgEngine *self)
     priv->scripting = NULL;
     priv->window = NULL;
     priv->renderer = NULL;
+    priv->worlds = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                         g_free, g_object_unref);
 }
 
 /* ==========================================================================
@@ -811,4 +816,71 @@ lrg_check_version (guint required_major,
         return lib_minor > req_minor;
 
     return lib_micro >= req_micro;
+}
+
+
+gboolean
+lrg_engine_register_world (LrgEngine   *self,
+                           const gchar *name,
+                           LrgWorld    *world)
+{
+    LrgEnginePrivate *priv;
+    GHashTableIter iter;
+    gpointer value;
+
+    g_return_val_if_fail (LRG_IS_ENGINE (self), FALSE);
+    g_return_val_if_fail (name != NULL && *name != '\0', FALSE);
+    g_return_val_if_fail (LRG_IS_WORLD (world), FALSE);
+
+    priv = lrg_engine_get_instance_private (self);
+    if (g_hash_table_contains (priv->worlds, name))
+        return FALSE;
+    g_hash_table_iter_init (&iter, priv->worlds);
+    while (g_hash_table_iter_next (&iter, NULL, &value))
+    {
+        if (value == world)
+            return FALSE;
+    }
+    g_hash_table_insert (priv->worlds, g_strdup (name), g_object_ref (world));
+    return TRUE;
+}
+
+gboolean
+lrg_engine_unregister_world (LrgEngine   *self,
+                             const gchar *name)
+{
+    LrgEnginePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ENGINE (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+    priv = lrg_engine_get_instance_private (self);
+    return g_hash_table_remove (priv->worlds, name);
+}
+
+LrgWorld *
+lrg_engine_get_world (LrgEngine   *self,
+                      const gchar *name)
+{
+    LrgEnginePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ENGINE (self), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+    priv = lrg_engine_get_instance_private (self);
+    return g_hash_table_lookup (priv->worlds, name);
+}
+
+GList *
+lrg_engine_list_worlds (LrgEngine *self)
+{
+    LrgEnginePrivate *priv;
+    GHashTableIter iter;
+    gpointer key;
+    GList *names = NULL;
+
+    g_return_val_if_fail (LRG_IS_ENGINE (self), NULL);
+    priv = lrg_engine_get_instance_private (self);
+    g_hash_table_iter_init (&iter, priv->worlds);
+    while (g_hash_table_iter_next (&iter, &key, NULL))
+        names = g_list_prepend (names, g_strdup (key));
+    return g_list_sort (names, (GCompareFunc) g_strcmp0);
 }

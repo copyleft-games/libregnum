@@ -477,6 +477,7 @@ lrg_mcp_reel_tools_register_tools (LrgMcpToolGroup *group)
 	                     "(id, width, height, fps, duration_in_frames)");
 	schema = build_schema_metadata ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("reel_render",
@@ -484,6 +485,7 @@ lrg_mcp_reel_tools_register_tools (LrgMcpToolGroup *group)
 	                     "returns the output path and total frame count");
 	schema = build_schema_render ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("reel_capture_still",
@@ -491,6 +493,7 @@ lrg_mcp_reel_tools_register_tools (LrgMcpToolGroup *group)
 	                     "file (PNG); returns the output path and frame index");
 	schema = build_schema_capture_still ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 }
 

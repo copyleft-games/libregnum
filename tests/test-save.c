@@ -539,11 +539,52 @@ test_saveable_interface (void)
  * Main
  * ========================================================================== */
 
+static void
+test_save_manager_corrupt_metadata (void)
+{
+    g_autoptr(LrgSaveManager) manager = lrg_save_manager_new ();
+    g_autofree gchar *directory = g_dir_make_tmp ("lrg-save-corrupt-XXXXXX", NULL);
+    g_autofree gchar *path = g_build_filename (directory, "broken.yaml", NULL);
+    GList *saves;
+
+    lrg_save_manager_set_save_directory (manager, directory);
+    g_assert_true (g_file_set_contents (path, "broken: [", -1, NULL));
+    g_assert_null (lrg_save_manager_get_save (manager, "broken"));
+    saves = lrg_save_manager_list_saves (manager);
+    g_assert_null (saves);
+    g_assert_cmpint (g_remove (path), ==, 0);
+    g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
+
+static void
+test_save_manager_description (void)
+{
+    g_autoptr(LrgSaveManager) manager = lrg_save_manager_new ();
+    g_autofree gchar *directory = g_dir_make_tmp ("lrg-save-description-XXXXXX", NULL);
+    g_autoptr(LrgSaveGame) save = NULL;
+    g_autoptr(GError) error = NULL;
+
+    g_assert_nonnull (directory);
+    lrg_save_manager_set_save_directory (manager, directory);
+    g_assert_true (lrg_save_manager_save_with_description (manager, "slot", "Before boss", &error));
+    g_assert_no_error (error);
+    save = lrg_save_manager_get_save (manager, "slot");
+    g_assert_nonnull (save);
+    g_assert_cmpstr (lrg_save_game_get_display_name (save), ==, "Before boss");
+    g_assert_true (lrg_save_manager_delete_save (manager, "slot", &error));
+    g_assert_no_error (error);
+    g_assert_cmpint (g_rmdir (directory), ==, 0);
+}
+
+
 int
 main (int   argc,
       char *argv[])
 {
     g_test_init (&argc, &argv, NULL);
+    g_test_add_func ("/save/manager/description", test_save_manager_description);
+    g_test_add_func ("/save/manager/corrupt-metadata", test_save_manager_corrupt_metadata);
 
     /* Save Context tests */
     g_test_add ("/save/context/new-for-save",

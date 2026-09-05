@@ -263,4 +263,57 @@ LrgRenderer * lrg_engine_get_renderer (LrgEngine *self);
 
 /* These are declared in lrg-version.h.in but implemented in lrg-engine.c */
 
+/**
+ * lrg_engine_register_world:
+ * @self: an #LrgEngine
+ * @name: a nonempty, unique world name
+ * @world: (transfer none): the world to expose
+ *
+ * Registers a world for inspection. The engine holds a reference until
+ * unregistered or finalized; registration does not update or draw the world.
+ * Call world registration and inspection on the engine thread.
+ *
+ * Returns: %TRUE if registered, %FALSE if the name or world is already registered
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_engine_register_world (LrgEngine   *self,
+                                     const gchar *name,
+                                     LrgWorld    *world);
+
+/**
+ * lrg_engine_unregister_world:
+ * @self: an #LrgEngine
+ * @name: the registered name
+ *
+ * Releases the engine's reference to the named world.
+ *
+ * Returns: %TRUE if a registration was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_engine_unregister_world (LrgEngine   *self,
+                                       const gchar *name);
+
+/**
+ * lrg_engine_get_world:
+ * @self: an #LrgEngine
+ * @name: the registered name
+ *
+ * Returns: (transfer none) (nullable): the registered world
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWorld * lrg_engine_get_world (LrgEngine   *self,
+                                  const gchar *name);
+
+/**
+ * lrg_engine_list_worlds:
+ * @self: an #LrgEngine
+ *
+ * Lists registered world names in lexicographic order.
+ *
+ * Returns: (transfer full) (element-type utf8): owned names; free with
+ *   g_list_free_full() and g_free()
+ */
+LRG_AVAILABLE_IN_ALL
+GList * lrg_engine_list_worlds (LrgEngine *self);
+
 G_END_DECLS

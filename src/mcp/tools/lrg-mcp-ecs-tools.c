@@ -1,453 +1,263 @@
-/* lrg-mcp-ecs-tools.c
- *
+/* lrg-mcp-ecs-tools.c - live ECS inspection and editing.
  * Copyright 2025 Zach Podbielniak
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
- *
- * MCP tool group for ECS/World manipulation.
- *
- * NOTE: This is a stub implementation. Full ECS introspection requires
- * additional API to be added to LrgEngine, LrgWorld, and LrgGameObject.
  */
-
 #include "lrg-mcp-ecs-tools.h"
-#include "../../core/lrg-engine.h"
-#include "../../lrg-log.h"
-#include <gio/gio.h>
-#include <json-glib/json-glib.h>
-#include <mcp.h>
-
-/**
- * SECTION:lrg-mcp-ecs-tools
- * @title: LrgMcpEcsTools
- * @short_description: MCP tools for ECS manipulation
- *
- * #LrgMcpEcsTools provides MCP tools for querying and manipulating
- * the Entity-Component-System, including worlds, game objects,
- * components, and transforms.
- *
- * Note: This is currently a stub implementation that returns placeholder
- * data. Full implementation requires additional introspection API in the
- * ECS module.
- */
+#include "../lrg-mcp-inspect-private.h"
+#include "../../core/lrg-registry.h"
 
 struct _LrgMcpEcsTools
 {
-	LrgMcpToolGroup parent_instance;
+    LrgMcpToolGroup parent_instance;
 };
 
 G_DEFINE_FINAL_TYPE (LrgMcpEcsTools, lrg_mcp_ecs_tools, LRG_TYPE_MCP_TOOL_GROUP)
 
-/* ==========================================================================
- * Tool Handlers (Stub implementations)
- * ========================================================================== */
-
-static McpToolResult *
-handle_list_worlds (LrgMcpEcsTools *self,
-                    JsonObject     *arguments,
-                    GError        **error)
+static const gchar *
+string_arg (JsonObject *args,
+            const gchar *name)
 {
-	LrgEngine *engine;
-	McpToolResult *result;
-	g_autoptr(JsonBuilder) builder = NULL;
-	g_autoptr(JsonGenerator) generator = NULL;
-	g_autoptr(JsonNode) root = NULL;
-	g_autofree gchar *json_str = NULL;
-
-	engine = lrg_engine_get_default ();
-	if (engine == NULL)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-		             "Engine not available");
-		return NULL;
-	}
-
-	/* Stub: Return empty world list
-	 * TODO: Implement when lrg_engine_get_worlds() is available
-	 */
-	builder = json_builder_new ();
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "worlds");
-	json_builder_begin_array (builder);
-	json_builder_end_array (builder);
-	json_builder_set_member_name (builder, "note");
-	json_builder_add_string_value (builder, "ECS introspection API not yet implemented");
-	json_builder_end_object (builder);
-
-	root = json_builder_get_root (builder);
-	generator = json_generator_new ();
-	json_generator_set_root (generator, root);
-	json_generator_set_pretty (generator, TRUE);
-	json_str = json_generator_to_data (generator, NULL);
-
-	result = mcp_tool_result_new (FALSE);
-	mcp_tool_result_add_text (result, json_str);
-	return result;
+    return args != NULL && json_object_has_member (args, name) ?
+           json_object_get_string_member (args, name) : NULL;
 }
 
 static McpToolResult *
-handle_list_game_objects (LrgMcpEcsTools *self,
-                          JsonObject     *arguments,
-                          GError        **error)
+set_transform (LrgGameObject *object,
+               JsonObject *args,
+               GError **error)
 {
-	McpToolResult *result;
-	g_autoptr(JsonBuilder) builder = NULL;
-	g_autoptr(JsonGenerator) generator = NULL;
-	g_autoptr(JsonNode) root = NULL;
-	g_autofree gchar *json_str = NULL;
+    g_autoptr(JsonObject) current = _lrg_mcp_transform_json (object);
+    g_autoptr(LrgTransformComponent) transform = NULL;
+    GrlEntity *entity = GRL_ENTITY (object);
+    const gchar *fields[] = { "x", "y", "rotation", "scale_x", "scale_y" };
+    gdouble values[5];
+    guint i;
 
-	/* Stub: Return empty object list */
-	builder = json_builder_new ();
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "objects");
-	json_builder_begin_array (builder);
-	json_builder_end_array (builder);
-	json_builder_set_member_name (builder, "note");
-	json_builder_add_string_value (builder, "ECS introspection API not yet implemented");
-	json_builder_end_object (builder);
-
-	root = json_builder_get_root (builder);
-	generator = json_generator_new ();
-	json_generator_set_root (generator, root);
-	json_generator_set_pretty (generator, TRUE);
-	json_str = json_generator_to_data (generator, NULL);
-
-	result = mcp_tool_result_new (FALSE);
-	mcp_tool_result_add_text (result, json_str);
-	return result;
+    for (i = 0; i < G_N_ELEMENTS (fields); i++)
+        values[i] = json_object_get_double_member (
+            json_object_has_member (args, fields[i]) ? args : current, fields[i]);
+    transform = (LrgTransformComponent *) lrg_game_object_get_component (object, LRG_TYPE_TRANSFORM_COMPONENT);
+    if (transform != NULL)
+        g_object_ref (transform);
+    else if (values[3] != values[4])
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                     "Nonuniform scale requires an LrgTransformComponent");
+        return NULL;
+    }
+    /* Hold references across property notifications that may detach objects. */
+    g_object_ref (object);
+    if (transform != NULL)
+    {
+        lrg_transform_component_set_local_position_xy (transform, values[0], values[1]);
+        lrg_transform_component_set_local_rotation (transform, values[2]);
+        lrg_transform_component_set_local_scale_xy (transform, values[3], values[4]);
+        lrg_transform_component_sync_to_entity (transform);
+    }
+    else
+    {
+        grl_entity_set_position_xy (entity, values[0], values[1]);
+        grl_entity_set_rotation (entity, values[2]);
+        grl_entity_set_scale (entity, values[3]);
+    }
+    g_clear_pointer (&current, json_object_unref);
+    current = _lrg_mcp_transform_json (object);
+    g_object_unref (object);
+    return _lrg_mcp_result (g_steal_pointer (&current));
 }
 
 static McpToolResult *
-handle_get_game_object (LrgMcpEcsTools *self,
-                        JsonObject     *arguments,
-                        GError        **error)
+spawn_object (JsonObject *args,
+              GError **error)
 {
-	const gchar *id;
+    LrgEngine *engine = lrg_engine_get_default ();
+    LrgRegistry *registry = lrg_engine_get_registry (engine);
+    g_autoptr(LrgWorld) world = NULL;
+    g_autoptr(LrgGameObject) object = NULL;
+    GType type;
+    JsonObject *json;
 
-	id = lrg_mcp_tool_group_get_string_arg (arguments, "id", NULL);
-	if (id == NULL)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		             "Missing required argument: id");
-		return NULL;
-	}
-
-	/* Stub: Return not found - API not implemented */
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "ECS introspection API not yet implemented");
-	return NULL;
+    world = _lrg_mcp_world (string_arg (args, "world"), error);
+    if (world == NULL)
+        return NULL;
+    g_object_ref (world);
+    if (registry == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED, "Engine registry is not initialized");
+        return NULL;
+    }
+    type = lrg_registry_lookup (registry, string_arg (args, "type"));
+    if (!g_type_is_a (type, LRG_TYPE_GAME_OBJECT) || G_TYPE_IS_ABSTRACT (type))
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                     "Registered type must be a concrete LrgGameObject");
+        return NULL;
+    }
+    object = g_object_new (type, NULL);
+    {
+        g_autoptr(McpToolResult) positioned = set_transform (object, args, error);
+        if (positioned == NULL)
+            return NULL;
+    }
+    lrg_world_add_object (world, object);
+    json = _lrg_mcp_object_json (object);
+    json_object_set_boolean_member (json, "success", TRUE);
+    return _lrg_mcp_result (json);
 }
 
 static McpToolResult *
-handle_get_transform (LrgMcpEcsTools *self,
-                      JsonObject     *arguments,
-                      GError        **error)
+lrg_mcp_ecs_tools_handle_tool (LrgMcpToolGroup *group,
+                               const gchar *name,
+                               JsonObject *args,
+                               GError **error)
 {
-	const gchar *object_id;
+    LrgGameObject *object;
+    LrgWorld *world = NULL;
+    const gchar *id_field;
 
-	object_id = lrg_mcp_tool_group_get_string_arg (arguments, "object_id", NULL);
-	if (object_id == NULL)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		             "Missing required argument: object_id");
-		return NULL;
-	}
+    if (g_str_equal (name, "lrg_ecs_list_worlds"))
+    {
+        if (!_lrg_mcp_args (args, "", "", "", error))
+            return NULL;
+        return _lrg_mcp_result (_lrg_mcp_worlds_json ());
+    }
+    if (g_str_equal (name, "lrg_ecs_list_game_objects"))
+    {
+        if (!_lrg_mcp_args (args, "world", "", "", error))
+            return NULL;
+        world = _lrg_mcp_world (string_arg (args, "world"), error);
+        return world == NULL ? NULL : _lrg_mcp_result (_lrg_mcp_world_json (string_arg (args, "world"), world));
+    }
+    if (g_str_equal (name, "lrg_ecs_spawn_object"))
+    {
+        if (!_lrg_mcp_args (args, "type world", "x y", "type", error))
+            return NULL;
+        return spawn_object (args, error);
+    }
+    if (g_str_equal (name, "lrg_ecs_get_component") ||
+        g_str_equal (name, "lrg_ecs_set_component_property"))
+    {
+        gboolean set = g_str_equal (name, "lrg_ecs_set_component_property");
+        g_autoptr(LrgComponent) component = NULL;
+        GType type;
 
-	/* Stub: Return not supported - API not implemented */
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "ECS introspection API not yet implemented");
-	return NULL;
+        if (!_lrg_mcp_args (args, set ? "object_id type property" : "object_id type", "",
+                           set ? "object_id type property value" : "object_id type", error))
+            return NULL;
+        object = _lrg_mcp_find_object (string_arg (args, "object_id"), NULL, error);
+        if (object == NULL)
+            return NULL;
+        type = g_type_from_name (string_arg (args, "type"));
+        if (!g_type_is_a (type, LRG_TYPE_COMPONENT))
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Unknown component type");
+            return NULL;
+        }
+        component = lrg_game_object_get_component (object, type);
+        if (component == NULL)
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Object has no matching component");
+            return NULL;
+        }
+        g_object_ref (component);
+        if (set && !_lrg_mcp_set_property (G_OBJECT (component), string_arg (args, "property"),
+                                           json_object_get_member (args, "value"), error))
+            return NULL;
+        return _lrg_mcp_result (_lrg_mcp_component_json (component));
+    }
+    if (g_str_equal (name, "lrg_ecs_get_game_object") ||
+        g_str_equal (name, "lrg_ecs_destroy_object"))
+        id_field = "id";
+    else if (g_str_equal (name, "lrg_ecs_get_transform") ||
+             g_str_equal (name, "lrg_ecs_set_transform"))
+        id_field = "object_id";
+    else
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Unknown tool: %s", name);
+        return NULL;
+    }
+    if (!_lrg_mcp_args (args, id_field,
+                       g_str_equal (name, "lrg_ecs_set_transform") ? "x y rotation scale_x scale_y" : "",
+                       id_field, error))
+        return NULL;
+    object = _lrg_mcp_find_object (string_arg (args, id_field), &world, error);
+    if (object == NULL)
+        return NULL;
+    if (g_str_equal (name, "lrg_ecs_get_game_object"))
+        return _lrg_mcp_result (_lrg_mcp_object_json (object));
+    if (g_str_equal (name, "lrg_ecs_get_transform"))
+        return _lrg_mcp_result (_lrg_mcp_transform_json (object));
+    if (g_str_equal (name, "lrg_ecs_set_transform"))
+        return set_transform (object, args, error);
+    {
+        JsonObject *json = json_object_new ();
+        LrgEngine *engine = lrg_engine_get_default ();
+        GList *names = lrg_engine_list_worlds (engine);
+        GList *iter;
+        g_autoptr(GPtrArray) worlds = g_ptr_array_new_with_free_func (g_object_unref);
+        guint i;
+
+        json_object_set_string_member (json, "id", _lrg_mcp_object_id (object));
+        json_object_set_boolean_member (json, "success", TRUE);
+        /* One object may belong to several registered worlds. */
+        for (iter = names; iter != NULL; iter = iter->next)
+            g_ptr_array_add (worlds, g_object_ref (lrg_engine_get_world (engine, iter->data)));
+        g_list_free_full (names, g_free);
+        g_object_ref (object);
+        for (i = 0; i < worlds->len; i++)
+        {
+            LrgWorld *registered = g_ptr_array_index (worlds, i);
+            g_autoptr(GList) objects = lrg_world_get_objects (registered);
+            if (g_list_find (objects, object) != NULL)
+                lrg_world_remove_object (registered, object);
+        }
+        g_object_unref (object);
+        return _lrg_mcp_result (json);
+    }
 }
-
-static McpToolResult *
-handle_set_transform (LrgMcpEcsTools *self,
-                      JsonObject     *arguments,
-                      GError        **error)
-{
-	const gchar *object_id;
-
-	object_id = lrg_mcp_tool_group_get_string_arg (arguments, "object_id", NULL);
-	if (object_id == NULL)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		             "Missing required argument: object_id");
-		return NULL;
-	}
-
-	/* Stub: Return not supported - API not implemented */
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "ECS introspection API not yet implemented");
-	return NULL;
-}
-
-static McpToolResult *
-handle_destroy_object (LrgMcpEcsTools *self,
-                       JsonObject     *arguments,
-                       GError        **error)
-{
-	const gchar *id;
-
-	id = lrg_mcp_tool_group_get_string_arg (arguments, "id", NULL);
-	if (id == NULL)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		             "Missing required argument: id");
-		return NULL;
-	}
-
-	/* Stub: Return not supported - API not implemented */
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "ECS introspection API not yet implemented");
-	return NULL;
-}
-
-/* ==========================================================================
- * Schema Builders
- * ========================================================================== */
-
-static JsonNode *
-build_schema_string_required (const gchar *name,
-                              const gchar *description)
-{
-	g_autoptr(JsonBuilder) builder = json_builder_new ();
-
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "object");
-	json_builder_set_member_name (builder, "properties");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, name);
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "string");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, description);
-	json_builder_end_object (builder);
-	json_builder_end_object (builder);
-	json_builder_set_member_name (builder, "required");
-	json_builder_begin_array (builder);
-	json_builder_add_string_value (builder, name);
-	json_builder_end_array (builder);
-	json_builder_end_object (builder);
-
-	return json_builder_get_root (builder);
-}
-
-static JsonNode *
-build_schema_list_game_objects (void)
-{
-	g_autoptr(JsonBuilder) builder = json_builder_new ();
-
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "object");
-	json_builder_set_member_name (builder, "properties");
-	json_builder_begin_object (builder);
-
-	json_builder_set_member_name (builder, "world");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "string");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, "World name (optional, uses active world)");
-	json_builder_end_object (builder);
-
-	json_builder_end_object (builder);
-	json_builder_end_object (builder);
-
-	return json_builder_get_root (builder);
-}
-
-static JsonNode *
-build_schema_set_transform (void)
-{
-	g_autoptr(JsonBuilder) builder = json_builder_new ();
-
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "object");
-	json_builder_set_member_name (builder, "properties");
-	json_builder_begin_object (builder);
-
-	/* object_id */
-	json_builder_set_member_name (builder, "object_id");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "string");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, "GameObject ID");
-	json_builder_end_object (builder);
-
-	/* x */
-	json_builder_set_member_name (builder, "x");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "number");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, "X position");
-	json_builder_end_object (builder);
-
-	/* y */
-	json_builder_set_member_name (builder, "y");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "number");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, "Y position");
-	json_builder_end_object (builder);
-
-	/* rotation */
-	json_builder_set_member_name (builder, "rotation");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "number");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, "Rotation in degrees");
-	json_builder_end_object (builder);
-
-	/* scale_x */
-	json_builder_set_member_name (builder, "scale_x");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "number");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, "X scale factor");
-	json_builder_end_object (builder);
-
-	/* scale_y */
-	json_builder_set_member_name (builder, "scale_y");
-	json_builder_begin_object (builder);
-	json_builder_set_member_name (builder, "type");
-	json_builder_add_string_value (builder, "number");
-	json_builder_set_member_name (builder, "description");
-	json_builder_add_string_value (builder, "Y scale factor");
-	json_builder_end_object (builder);
-
-	json_builder_end_object (builder);
-
-	json_builder_set_member_name (builder, "required");
-	json_builder_begin_array (builder);
-	json_builder_add_string_value (builder, "object_id");
-	json_builder_end_array (builder);
-
-	json_builder_end_object (builder);
-
-	return json_builder_get_root (builder);
-}
-
-/* ==========================================================================
- * LrgMcpToolGroup Virtual Methods
- * ========================================================================== */
 
 static const gchar *
 lrg_mcp_ecs_tools_get_group_name (LrgMcpToolGroup *group)
 {
-	return "ecs";
+    return "ecs";
 }
 
 static void
 lrg_mcp_ecs_tools_register_tools (LrgMcpToolGroup *group)
 {
-	McpTool *tool;
-	JsonNode *schema;
-
-	/* World tools */
-	tool = mcp_tool_new ("lrg_ecs_list_worlds",
-	                     "List all active game worlds");
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	/* GameObject tools */
-	tool = mcp_tool_new ("lrg_ecs_list_game_objects",
-	                     "List GameObjects in a world");
-	schema = build_schema_list_game_objects ();
-	mcp_tool_set_input_schema (tool, schema);
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	tool = mcp_tool_new ("lrg_ecs_get_game_object",
-	                     "Get detailed information about a GameObject");
-	schema = build_schema_string_required ("id", "GameObject ID");
-	mcp_tool_set_input_schema (tool, schema);
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	tool = mcp_tool_new ("lrg_ecs_destroy_object",
-	                     "Destroy a GameObject");
-	schema = build_schema_string_required ("id", "GameObject ID to destroy");
-	mcp_tool_set_input_schema (tool, schema);
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	/* Transform tools */
-	tool = mcp_tool_new ("lrg_ecs_get_transform",
-	                     "Get transform data for a GameObject");
-	schema = build_schema_string_required ("object_id", "GameObject ID");
-	mcp_tool_set_input_schema (tool, schema);
-	lrg_mcp_tool_group_add_tool (group, tool);
-
-	tool = mcp_tool_new ("lrg_ecs_set_transform",
-	                     "Set transform values for a GameObject");
-	schema = build_schema_set_transform ();
-	mcp_tool_set_input_schema (tool, schema);
-	lrg_mcp_tool_group_add_tool (group, tool);
+    _lrg_mcp_add_tool (group, "lrg_ecs_list_worlds", "List registered worlds", "", "", "");
+    _lrg_mcp_add_tool (group, "lrg_ecs_list_game_objects", "List objects; defaults to first active world", "world", "", "");
+    _lrg_mcp_add_tool (group, "lrg_ecs_get_game_object", "Inspect an object by its returned ID", "id", "", "id");
+    _lrg_mcp_add_tool (group, "lrg_ecs_destroy_object", "Remove an object from its world", "id", "", "id");
+    _lrg_mcp_add_tool (group, "lrg_ecs_get_transform", "Read local component or entity transform", "object_id", "", "object_id");
+    _lrg_mcp_add_tool (group, "lrg_ecs_set_transform", "Edit transform; nonuniform scale requires a transform component", "object_id", "x y rotation scale_x scale_y", "object_id");
+    _lrg_mcp_add_tool (group, "lrg_ecs_get_component", "Read scalar component properties by GType name", "object_id type", "", "object_id type");
+    _lrg_mcp_add_tool (group, "lrg_ecs_set_component_property", "Set a writable scalar component property", "object_id type property", "", "object_id type property value");
+    _lrg_mcp_add_tool (group, "lrg_ecs_spawn_object", "Spawn a registered game object type", "type world", "x y", "type");
 }
-
-static McpToolResult *
-lrg_mcp_ecs_tools_handle_tool (LrgMcpToolGroup  *group,
-                               const gchar      *name,
-                               JsonObject       *arguments,
-                               GError          **error)
-{
-	LrgMcpEcsTools *self = LRG_MCP_ECS_TOOLS (group);
-
-	if (g_strcmp0 (name, "lrg_ecs_list_worlds") == 0)
-		return handle_list_worlds (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_ecs_list_game_objects") == 0)
-		return handle_list_game_objects (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_ecs_get_game_object") == 0)
-		return handle_get_game_object (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_ecs_get_transform") == 0)
-		return handle_get_transform (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_ecs_set_transform") == 0)
-		return handle_set_transform (self, arguments, error);
-	if (g_strcmp0 (name, "lrg_ecs_destroy_object") == 0)
-		return handle_destroy_object (self, arguments, error);
-
-	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-	             "Unknown tool: %s", name);
-	return NULL;
-}
-
-/* ==========================================================================
- * GObject Implementation
- * ========================================================================== */
 
 static void
 lrg_mcp_ecs_tools_class_init (LrgMcpEcsToolsClass *klass)
 {
-	LrgMcpToolGroupClass *group_class = LRG_MCP_TOOL_GROUP_CLASS (klass);
-
-	group_class->get_group_name = lrg_mcp_ecs_tools_get_group_name;
-	group_class->register_tools = lrg_mcp_ecs_tools_register_tools;
-	group_class->handle_tool = lrg_mcp_ecs_tools_handle_tool;
+    LrgMcpToolGroupClass *group = LRG_MCP_TOOL_GROUP_CLASS (klass);
+    group->get_group_name = lrg_mcp_ecs_tools_get_group_name;
+    group->register_tools = lrg_mcp_ecs_tools_register_tools;
+    group->handle_tool = lrg_mcp_ecs_tools_handle_tool;
 }
 
 static void
 lrg_mcp_ecs_tools_init (LrgMcpEcsTools *self)
 {
-	/* Nothing to initialize */
 }
-
-/* ==========================================================================
- * Public API
- * ========================================================================== */
 
 /**
  * lrg_mcp_ecs_tools_new:
  *
- * Creates a new ECS tools provider.
- *
- * Returns: (transfer full): A new #LrgMcpEcsTools
+ * Returns: (transfer full): a new ECS tools provider
  */
 LrgMcpEcsTools *
 lrg_mcp_ecs_tools_new (void)
 {
-	return g_object_new (LRG_TYPE_MCP_ECS_TOOLS, NULL);
+    return g_object_new (LRG_TYPE_MCP_ECS_TOOLS, NULL);
 }

@@ -11,6 +11,7 @@
 #include <libregnum.h>
 
 #ifdef LRG_ENABLE_MCP
+#include "../src/mcp/lrg-mcp-server-private.h"
 
 /* ==========================================================================
  * Skip Macro for MCP Tests
@@ -370,11 +371,48 @@ test_mcp_server_actual_http_port (McpServerFixture *fixture,
  * Main
  * ========================================================================== */
 
+static void
+test_mcp_server_ecs_templates (void)
+{
+    g_autoptr(McpServer) protocol = mcp_server_new ("test", "1.0");
+    GList *templates;
+    GList *iter;
+    gboolean saw_world = FALSE;
+    gboolean saw_object = FALSE;
+
+    _lrg_mcp_server_register_ecs_templates (protocol, NULL, NULL);
+    templates = mcp_server_list_resource_templates (protocol);
+    g_assert_cmpuint (g_list_length (templates), ==, 2);
+    for (iter = templates; iter != NULL; iter = iter->next)
+    {
+        const gchar *uri = mcp_resource_template_get_uri_template (iter->data);
+        saw_world |= g_str_equal (uri, "libregnum://ecs/world/{name}");
+        saw_object |= g_str_equal (uri, "libregnum://ecs/object/{id}");
+        g_assert_cmpstr (mcp_resource_template_get_mime_type (iter->data), ==, "application/json");
+    }
+    g_assert_true (saw_world);
+    g_assert_true (saw_object);
+    g_list_free_full (templates, g_object_unref);
+}
+
+static void
+test_mcp_server_default_provider_lifecycle (void)
+{
+    g_autoptr(LrgMcpServer) host = g_object_new (LRG_TYPE_MCP_SERVER, NULL);
+
+    /* A short-lived host lets leak checking observe default-provider ownership. */
+    lrg_mcp_server_register_default_providers (host);
+}
+
+
 int
 main (int   argc,
       char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
+    g_test_add_func ("/mcp/server/resources/ecs-templates", test_mcp_server_ecs_templates);
+    g_test_add_func ("/mcp/server/provider/default-lifecycle", test_mcp_server_default_provider_lifecycle);
+
 
 	/* Singleton */
 	g_test_add_func ("/mcp/server/singleton", test_mcp_server_singleton);

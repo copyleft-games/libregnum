@@ -36,7 +36,7 @@ G_DECLARE_FINAL_TYPE (LrgMcpEcsTools, lrg_mcp_ecs_tools, LRG, MCP_ECS_TOOLS, Lrg
  * ## Available Tools
  *
  * **World Tools:**
- * - `lrg_ecs_list_worlds` - List all active worlds
+ * - `lrg_ecs_list_worlds` - List all registered worlds
  *
  * **GameObject Tools:**
  * - `lrg_ecs_list_game_objects` - List GameObjects in a world

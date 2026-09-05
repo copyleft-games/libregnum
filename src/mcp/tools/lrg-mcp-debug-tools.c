@@ -270,6 +270,7 @@ lrg_mcp_debug_tools_register_tools (LrgMcpToolGroup *group)
 	                     "Log a message to the debug console");
 	schema = build_schema_log ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_debug_get_fps",
@@ -280,12 +281,14 @@ lrg_mcp_debug_tools_register_tools (LrgMcpToolGroup *group)
 	                     "Start a named profiler section");
 	schema = build_schema_name_required ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_debug_profiler_stop",
 	                     "Stop a named profiler section");
 	schema = build_schema_name_required ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_debug_profiler_report",

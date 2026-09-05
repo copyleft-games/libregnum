@@ -56,47 +56,29 @@ Current engine state information.
 :PROPERTIES:
 :CUSTOM_ID: libregnumengineconfig
 :END:
-Engine configuration settings.
+This endpoint remains a placeholder; it does not read live engine settings.
 
 *MIME Type:* =application/json=
 
-*Response:*
+*Current response:*
 
 #+begin_src json
-{
-  "target_fps": 60,
-  "vsync": true,
-  "fixed_timestep": false
-}
+{"note": "Detailed config API not yet implemented"}
 #+end_src
-
-*Fields:*
-
-| Field          | Type    | Description          |
-|----------------+---------+----------------------|
-| target_fps     | integer | Target frame rate    |
-| vsync          | boolean | VSync enabled        |
-| fixed_timestep | boolean | Using fixed timestep |
 
 *** libregnum://engine/registry
 :PROPERTIES:
 :CUSTOM_ID: libregnumengineregistry
 :END:
-List of registered type names.
+This endpoint remains a placeholder; its empty =types= array does not describe
+the actual engine registry. ECS spawning separately uses the live registry.
 
 *MIME Type:* =application/json=
 
-*Response:*
+*Current response:*
 
 #+begin_src json
-{
-  "types": [
-    "player",
-    "enemy",
-    "projectile",
-    "pickup"
-  ]
-}
+{"types": [], "note": "Registry listing API not yet implemented"}
 #+end_src
 
 ** ECS Resources (=LrgMcpEcsResources=)
@@ -107,11 +89,19 @@ ECS resources provide access to worlds, game objects, and components.
 
 *URI Prefix:* =libregnum://ecs/=
 
+These resources read the worlds registered with =lrg_engine_register_world()=.
+The server advertises world/object URI templates, so resources resolve against
+current state even when objects are spawned after server startup. Percent-encode
+world names in URIs (for example, =a%20world=). Object IDs are the UUIDs returned
+by ECS tools and world resources, valid while the object belongs to a registered
+world. Unregistering a world removes access through both tools and resources.
+Run server dispatch and ECS mutation on the same engine thread.
+
 *** libregnum://ecs/worlds
 :PROPERTIES:
 :CUSTOM_ID: libregnumecsworlds
 :END:
-List of all active game worlds.
+List of all registered game worlds, including inactive worlds.
 
 *MIME Type:* =application/json=
 
@@ -162,12 +152,12 @@ State and objects for a specific world.
   "active": true,
   "objects": [
     {
-      "id": "player-1",
+      "id": "550e8400-e29b-41d4-a716-446655440000",
       "name": "Player",
       "active": true
     },
     {
-      "id": "enemy-1",
+      "id": "550e8400-e29b-41d4-a716-446655440001",
       "name": "Goblin",
       "active": true
     }
@@ -191,7 +181,7 @@ Full state for a specific game object.
 
 *URI Pattern:* =libregnum://ecs/object/<object_id>=
 
-*Example:* =libregnum://ecs/object/player-1=
+*Example:* =libregnum://ecs/object/550e8400-e29b-41d4-a716-446655440000=
 
 *MIME Type:* =application/json=
 
@@ -199,7 +189,7 @@ Full state for a specific game object.
 
 #+begin_src json
 {
-  "id": "player-1",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "name": "Player",
   "active": true,
   "transform": {
@@ -246,7 +236,7 @@ Just the transform data for an object.
 
 *URI Pattern:* =libregnum://ecs/object/<object_id>/transform=
 
-*Example:* =libregnum://ecs/object/player-1/transform=
+*Example:* =libregnum://ecs/object/550e8400-e29b-41d4-a716-446655440000/transform=
 
 *MIME Type:* =application/json=
 

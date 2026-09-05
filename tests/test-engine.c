@@ -343,11 +343,43 @@ test_check_version (void)
  * Main
  * ========================================================================== */
 
+static void
+test_engine_world_registry (void)
+{
+    g_autoptr(LrgEngine) engine = g_object_new (LRG_TYPE_ENGINE, NULL);
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    g_autoptr(LrgWorld) other = lrg_world_new ();
+    LrgWorld *weak_world = world;
+    GList *names;
+
+    g_assert_null (lrg_engine_list_worlds (engine));
+    g_assert_true (lrg_engine_register_world (engine, "beta", world));
+    g_assert_false (lrg_engine_register_world (engine, "beta", other));
+    g_assert_false (lrg_engine_register_world (engine, "alias", world));
+    g_assert_true (lrg_engine_register_world (engine, "alpha", other));
+    names = lrg_engine_list_worlds (engine);
+    g_assert_cmpuint (g_list_length (names), ==, 2);
+    g_assert_cmpstr (names->data, ==, "alpha");
+    g_assert_cmpstr (names->next->data, ==, "beta");
+    g_list_free_full (names, g_free);
+    g_assert_true (lrg_engine_get_world (engine, "beta") == world);
+    g_assert_null (lrg_engine_get_world (engine, "absent"));
+    g_assert_false (lrg_engine_unregister_world (engine, "absent"));
+    g_object_add_weak_pointer (G_OBJECT (world), (gpointer *) &weak_world);
+    g_clear_object (&world);
+    g_assert_nonnull (weak_world);
+    g_assert_true (lrg_engine_unregister_world (engine, "beta"));
+    g_assert_null (weak_world);
+    g_assert_null (lrg_engine_get_world (engine, "beta"));
+}
+
+
 int
 main (int   argc,
       char *argv[])
 {
     g_test_init (&argc, &argv, NULL);
+    g_test_add_func ("/engine/world-registry", test_engine_world_registry);
 
     /* Singleton tests */
     g_test_add_func ("/engine/singleton", test_engine_get_default);

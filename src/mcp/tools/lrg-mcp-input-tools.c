@@ -806,18 +806,21 @@ lrg_mcp_input_tools_register_tools (LrgMcpToolGroup *group)
 	                     "Press a keyboard key (stays down until released)");
 	schema = build_schema_string_param ("key", "Key name (e.g., 'space', 'a', 'enter')", TRUE);
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_input_release_key",
 	                     "Release a keyboard key");
 	schema = build_schema_string_param ("key", "Key name to release", TRUE);
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_input_tap_key",
 	                     "Press and release a key in one frame");
 	schema = build_schema_string_param ("key", "Key name to tap", TRUE);
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	/* Mouse tools */
@@ -825,24 +828,28 @@ lrg_mcp_input_tools_register_tools (LrgMcpToolGroup *group)
 	                     "Press a mouse button");
 	schema = build_schema_button_param ("button", "Button name (left, right, middle)");
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_input_release_mouse_button",
 	                     "Release a mouse button");
 	schema = build_schema_button_param ("button", "Button name to release");
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_input_move_mouse_to",
 	                     "Move mouse to absolute screen position");
 	schema = build_schema_xy_params ("x", "y");
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_input_move_mouse_by",
 	                     "Move mouse by relative delta");
 	schema = build_schema_xy_params ("dx", "dy");
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	/* Gamepad tools */
@@ -850,18 +857,21 @@ lrg_mcp_input_tools_register_tools (LrgMcpToolGroup *group)
 	                     "Press a gamepad button");
 	schema = build_schema_gamepad_button_params ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_input_release_gamepad_button",
 	                     "Release a gamepad button");
 	schema = build_schema_gamepad_button_params ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_input_set_gamepad_axis",
 	                     "Set a gamepad axis value");
 	schema = build_schema_gamepad_axis_params ();
 	mcp_tool_set_input_schema (tool, schema);
+	json_node_unref (schema);
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	/* Utility tools */
