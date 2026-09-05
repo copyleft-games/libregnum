@@ -307,10 +307,10 @@ lrg_quest_log_start_quest (LrgQuestLog *self,
     lrg_quest_instance_set_state (instance, LRG_QUEST_STATE_ACTIVE);
 
     /* Connect to instance signals */
-    g_signal_connect (instance, "state-changed",
-                      G_CALLBACK (on_quest_state_changed), self);
-    g_signal_connect (instance, "objective-updated",
-                      G_CALLBACK (on_quest_objective_updated), self);
+    g_signal_connect_object (instance, "state-changed",
+                             G_CALLBACK (on_quest_state_changed), self, 0);
+    g_signal_connect_object (instance, "objective-updated",
+                             G_CALLBACK (on_quest_objective_updated), self, 0);
 
     g_hash_table_replace (self->active_quests,
                           g_strdup (quest_id),
@@ -392,7 +392,7 @@ lrg_quest_log_set_tracked_quest (LrgQuestLog      *self,
     {
         LrgQuestDef *def = lrg_quest_instance_get_quest_def (quest);
         const gchar *quest_id = lrg_quest_def_get_id (def);
-        if (!g_hash_table_contains (self->active_quests, quest_id))
+        if (g_hash_table_lookup (self->active_quests, quest_id) != quest)
             return;
     }
 
@@ -430,6 +430,9 @@ lrg_quest_log_abandon_quest (LrgQuestLog *self,
     instance = g_hash_table_lookup (self->active_quests, quest_id);
     if (instance == NULL)
         return FALSE;
+
+    /* Retained instances must stop updating this log once abandoned. */
+    g_signal_handlers_disconnect_by_data (instance, self);
 
     /* Clear tracking if this was the tracked quest */
     if (self->tracked_quest == instance)

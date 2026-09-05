@@ -584,6 +584,74 @@ test_log_abandon_quest (QuestLogFixture *fixture,
 }
 
 static void
+test_log_abandoned_instance_detached (QuestLogFixture *fixture,
+                                      gconstpointer    user_data)
+{
+    g_autoptr(LrgQuestInstance) abandoned = NULL;
+    LrgQuestInstance *restarted;
+
+    abandoned = g_object_ref (lrg_quest_log_start_quest (fixture->log, fixture->def1));
+    g_assert_true (lrg_quest_log_abandon_quest (fixture->log, "quest1"));
+    restarted = lrg_quest_log_start_quest (fixture->log, fixture->def1);
+    g_assert_nonnull (restarted);
+
+    /* A retained instance must not complete or remove the restarted quest. */
+    lrg_quest_instance_update_progress (abandoned,
+                                         LRG_QUEST_OBJECTIVE_KILL, NULL, 1);
+    g_assert_true (lrg_quest_log_is_quest_active (fixture->log, "quest1"));
+    g_assert_false (lrg_quest_log_is_quest_completed (fixture->log, "quest1"));
+    g_assert_true (lrg_quest_log_get_quest (fixture->log, "quest1") == restarted);
+    g_assert_cmpuint (lrg_quest_log_get_active_count (fixture->log), ==, 1);
+    g_assert_cmpuint (lrg_quest_log_get_completed_count (fixture->log), ==, 0);
+
+    lrg_quest_instance_update_progress (restarted,
+                                         LRG_QUEST_OBJECTIVE_KILL, NULL, 1);
+    g_assert_true (lrg_quest_log_is_quest_completed (fixture->log, "quest1"));
+}
+
+static void
+test_log_instance_outlives_log (QuestLogFixture *fixture,
+                               gconstpointer    user_data)
+{
+    g_autoptr(LrgQuestInstance) instance = NULL;
+    gpointer weak_log = fixture->log;
+
+    instance = g_object_ref (lrg_quest_log_start_quest (fixture->log, fixture->def1));
+    g_object_add_weak_pointer (G_OBJECT (fixture->log), &weak_log);
+    g_clear_object (&fixture->log);
+    g_assert_null (weak_log);
+
+    /* Both objective and state changes must be safe after the log is gone. */
+    lrg_quest_instance_update_progress (instance,
+                                         LRG_QUEST_OBJECTIVE_KILL, NULL, 1);
+    g_assert_cmpint (lrg_quest_instance_get_state (instance), ==,
+                     LRG_QUEST_STATE_COMPLETE);
+}
+
+static void
+test_log_track_foreign_instance (QuestLogFixture *fixture,
+                                gconstpointer    user_data)
+{
+    g_autoptr(LrgQuestInstance) foreign = NULL;
+    LrgQuestInstance *active;
+
+    active = lrg_quest_log_start_quest (fixture->log, fixture->def1);
+    foreign = lrg_quest_instance_new (fixture->def1);
+    lrg_quest_instance_set_state (foreign, LRG_QUEST_STATE_ACTIVE);
+
+    /* Matching IDs do not make an instance a member of this log. */
+    lrg_quest_log_set_tracked_quest (fixture->log, foreign);
+    g_assert_null (lrg_quest_log_get_tracked_quest (fixture->log));
+    lrg_quest_log_set_tracked_quest (fixture->log, active);
+    lrg_quest_log_set_tracked_quest (fixture->log, foreign);
+    g_assert_true (lrg_quest_log_get_tracked_quest (fixture->log) == active);
+
+    lrg_quest_instance_update_progress (active,
+                                         LRG_QUEST_OBJECTIVE_KILL, NULL, 1);
+    g_assert_null (lrg_quest_log_get_tracked_quest (fixture->log));
+}
+
+static void
 test_log_track_quest (QuestLogFixture *fixture,
                       gconstpointer    user_data)
 {
@@ -743,6 +811,12 @@ main (int   argc,
                 log_fixture_set_up, test_log_complete_quest, log_fixture_tear_down);
     g_test_add ("/quest/log/abandon-quest", QuestLogFixture, NULL,
                 log_fixture_set_up, test_log_abandon_quest, log_fixture_tear_down);
+    g_test_add ("/quest/log/abandoned-instance-detached", QuestLogFixture, NULL,
+                log_fixture_set_up, test_log_abandoned_instance_detached, log_fixture_tear_down);
+    g_test_add ("/quest/log/instance-outlives-log", QuestLogFixture, NULL,
+                log_fixture_set_up, test_log_instance_outlives_log, log_fixture_tear_down);
+    g_test_add ("/quest/log/track-foreign-instance", QuestLogFixture, NULL,
+                log_fixture_set_up, test_log_track_foreign_instance, log_fixture_tear_down);
     g_test_add ("/quest/log/track-quest", QuestLogFixture, NULL,
                 log_fixture_set_up, test_log_track_quest, log_fixture_tear_down);
     g_test_add ("/quest/log/tracked-cleared-on-complete", QuestLogFixture, NULL,
