@@ -147,6 +147,10 @@ guint lrg_event_bus_get_listener_count (LrgEventBus *self);
  * in priority order (highest first). If a listener cancels the event,
  * subsequent listeners are not notified.
  *
+ * Listeners may unregister during dispatch and remain alive until dispatch
+ * finishes. Listeners removed before their turn are skipped. Newly registered
+ * listeners participate in subsequent emissions.
+ *
  * Returns: %TRUE if the event completed (not cancelled), %FALSE if cancelled
  *
  * Since: 1.0

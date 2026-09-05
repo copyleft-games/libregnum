@@ -2450,6 +2450,196 @@ test_event_bus_new (void)
     g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 0);
 }
 
+#define TEST_TYPE_EVENT_LISTENER (test_event_listener_get_type ())
+G_DECLARE_FINAL_TYPE (TestEventListener, test_event_listener, TEST, EVENT_LISTENER, GObject)
+
+struct _TestEventListener
+{
+    GObject parent_instance;
+    gint priority;
+    gboolean unregister_self;
+    gboolean cancel;
+    TestEventListener *unregister_other;
+    TestEventListener *register_other;
+};
+
+static void test_event_listener_iface_init (LrgEventListenerInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (TestEventListener, test_event_listener, G_TYPE_OBJECT,
+                        G_IMPLEMENT_INTERFACE (LRG_TYPE_EVENT_LISTENER,
+                                               test_event_listener_iface_init))
+
+static const gchar *
+test_event_listener_get_id (LrgEventListener *listener)
+{
+    return "test-listener";
+}
+
+static gint
+test_event_listener_get_priority (LrgEventListener *listener)
+{
+    return TEST_EVENT_LISTENER (listener)->priority;
+}
+
+static guint64
+test_event_listener_get_mask (LrgEventListener *listener)
+{
+    return G_MAXUINT64;
+}
+
+typedef struct
+{
+    LrgEventBus *bus;
+    GArray *priorities;
+} TestEventDispatch;
+
+static gboolean
+test_event_listener_on_event (LrgEventListener *listener,
+                             LrgEvent         *event,
+                             gpointer          context)
+{
+    TestEventListener *self = TEST_EVENT_LISTENER (listener);
+    TestEventDispatch *dispatch = context;
+    gpointer weak_listener = listener;
+
+    g_array_append_val (dispatch->priorities, self->priority);
+    if (self->unregister_self)
+    {
+        g_object_add_weak_pointer (G_OBJECT (listener), &weak_listener);
+        lrg_event_bus_unregister (dispatch->bus, listener);
+        g_assert_nonnull (weak_listener);
+        g_object_remove_weak_pointer (G_OBJECT (listener), &weak_listener);
+    }
+    if (self->unregister_other != NULL)
+        lrg_event_bus_unregister (dispatch->bus,
+                                  LRG_EVENT_LISTENER (self->unregister_other));
+    if (self->register_other != NULL)
+    {
+        lrg_event_bus_register (dispatch->bus,
+                                LRG_EVENT_LISTENER (self->register_other));
+        self->register_other = NULL;
+    }
+
+    return !self->cancel;
+}
+
+static void
+test_event_listener_iface_init (LrgEventListenerInterface *iface)
+{
+    iface->get_id = test_event_listener_get_id;
+    iface->get_priority = test_event_listener_get_priority;
+    iface->get_event_mask = test_event_listener_get_mask;
+    iface->on_event = test_event_listener_on_event;
+}
+
+static void
+test_event_listener_class_init (TestEventListenerClass *klass)
+{
+}
+
+static void
+test_event_listener_init (TestEventListener *self)
+{
+}
+
+static void
+test_event_bus_priority_extremes (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    TestEventDispatch dispatch = { bus, priorities };
+    const gint values[] = { G_MININT, 0, G_MAXINT, -1 };
+    const gint expected[] = { G_MAXINT, 0, -1, G_MININT };
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (values); i++)
+    {
+        g_autoptr(TestEventListener) listener = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+        listener->priority = values[i];
+        lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listener));
+    }
+
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, G_N_ELEMENTS (expected));
+    for (i = 0; i < G_N_ELEMENTS (expected); i++)
+        g_assert_cmpint (g_array_index (priorities, gint, i), ==, expected[i]);
+}
+
+static void
+test_event_bus_unregister_during_emit (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    g_autoptr(TestEventListener) first = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(TestEventListener) second = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    TestEventDispatch dispatch = { bus, priorities };
+
+    first->priority = 10;
+    first->unregister_self = TRUE;
+    second->priority = 5;
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (first));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (second));
+
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 2);
+    g_assert_cmpint (g_array_index (priorities, gint, 0), ==, 10);
+    g_assert_cmpint (g_array_index (priorities, gint, 1), ==, 5);
+    g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 1);
+
+    g_array_set_size (priorities, 0);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 1);
+    g_assert_cmpint (g_array_index (priorities, gint, 0), ==, 5);
+
+    /* A listener removed before its turn must not receive the event. */
+    first->unregister_self = FALSE;
+    first->unregister_other = second;
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (first));
+    g_array_set_size (priorities, 0);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 1);
+    g_assert_cmpint (g_array_index (priorities, gint, 0), ==, 10);
+    g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 1);
+
+    /* New registrations take effect on the following emission. */
+    first->unregister_other = NULL;
+    first->register_other = second;
+    g_array_set_size (priorities, 0);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 1);
+    g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 2);
+    g_array_set_size (priorities, 0);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 2);
+    g_assert_cmpint (g_array_index (priorities, gint, 0), ==, 10);
+    g_assert_cmpint (g_array_index (priorities, gint, 1), ==, 5);
+}
+
+static void
+test_event_bus_unregister_and_cancel (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    TestEventListener *listener = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    gpointer weak_listener = listener;
+    TestEventDispatch dispatch = { bus, priorities };
+
+    listener->unregister_self = TRUE;
+    listener->cancel = TRUE;
+    g_object_add_weak_pointer (G_OBJECT (listener), &weak_listener);
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listener));
+    g_object_unref (listener);
+
+    g_assert_false (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_true (lrg_event_is_cancelled (LRG_EVENT (event)));
+    g_assert_cmpuint (priorities->len, ==, 1);
+    g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 0);
+    g_assert_null (weak_listener);
+}
+
 static void
 test_event_bus_singleton (void)
 {
@@ -6445,6 +6635,9 @@ main (int   argc,
     g_test_add_func ("/deckbuilder/card-event/cancel", test_card_event_cancel);
     g_test_add_func ("/deckbuilder/card-event/copy", test_card_event_copy);
     g_test_add_func ("/deckbuilder/event-bus/new", test_event_bus_new);
+    g_test_add_func ("/deckbuilder/event-bus/priority-extremes", test_event_bus_priority_extremes);
+    g_test_add_func ("/deckbuilder/event-bus/unregister-during-emit", test_event_bus_unregister_during_emit);
+    g_test_add_func ("/deckbuilder/event-bus/unregister-and-cancel", test_event_bus_unregister_and_cancel);
     g_test_add_func ("/deckbuilder/event-bus/singleton", test_event_bus_singleton);
     g_test_add_func ("/deckbuilder/event-bus/emit-no-listeners", test_event_bus_emit_no_listeners);
     g_test_add_func ("/deckbuilder/trigger-listener/mask", test_trigger_listener_mask);

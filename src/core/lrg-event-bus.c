@@ -16,6 +16,7 @@ struct _LrgEventBus
 
     GPtrArray *listeners;       /* Array of LrgEventListener */
     gboolean   listeners_dirty; /* TRUE if needs re-sorting */
+    guint64    listeners_revision; /* Registration changes during dispatch */
 };
 
 G_DEFINE_FINAL_TYPE (LrgEventBus, lrg_event_bus, G_TYPE_OBJECT)
@@ -159,7 +160,7 @@ compare_listener_priority (gconstpointer a, gconstpointer b)
     gint priority_b = lrg_event_listener_get_priority (listener_b);
 
     /* Descending order (higher priority first) */
-    return priority_b - priority_a;
+    return (priority_b > priority_a) - (priority_b < priority_a);
 }
 
 static void
@@ -195,6 +196,7 @@ lrg_event_bus_register (LrgEventBus      *self,
 
     g_ptr_array_add (self->listeners, g_object_ref (listener));
     self->listeners_dirty = TRUE;
+    self->listeners_revision++;
 }
 
 /**
@@ -213,7 +215,8 @@ lrg_event_bus_unregister (LrgEventBus      *self,
     g_return_if_fail (LRG_IS_EVENT_BUS (self));
     g_return_if_fail (LRG_IS_EVENT_LISTENER (listener));
 
-    g_ptr_array_remove (self->listeners, listener);
+    if (g_ptr_array_remove (self->listeners, listener))
+        self->listeners_revision++;
 }
 
 /**
@@ -244,7 +247,10 @@ lrg_event_bus_unregister_by_id (LrgEventBus *self,
         id = lrg_event_listener_get_id (listener);
 
         if (g_strcmp0 (id, listener_id) == 0)
+        {
             g_ptr_array_remove_index (self->listeners, i - 1);
+            self->listeners_revision++;
+        }
     }
 }
 
@@ -263,6 +269,7 @@ lrg_event_bus_clear (LrgEventBus *self)
 
     g_ptr_array_set_size (self->listeners, 0);
     self->listeners_dirty = FALSE;
+    self->listeners_revision++;
 }
 
 /**
@@ -296,6 +303,10 @@ lrg_event_bus_get_listener_count (LrgEventBus *self)
  * in priority order (highest first). If a listener cancels the event,
  * subsequent listeners are not notified.
  *
+ * Listeners may unregister during dispatch and remain alive until dispatch
+ * finishes. Listeners removed before their turn are skipped. Newly registered
+ * listeners participate in subsequent emissions.
+ *
  * Returns: %TRUE if the event completed (not cancelled), %FALSE if cancelled
  *
  * Since: 1.0
@@ -305,7 +316,9 @@ lrg_event_bus_emit (LrgEventBus *self,
                     LrgEvent    *event,
                     gpointer     context)
 {
+    g_autoptr(GPtrArray) listeners = NULL;
     guint64 event_mask;
+    guint64 listeners_revision;
     guint i;
     gboolean result;
 
@@ -313,17 +326,31 @@ lrg_event_bus_emit (LrgEventBus *self,
     g_return_val_if_fail (LRG_IS_EVENT (event), TRUE);
 
     ensure_sorted (self);
+    listeners_revision = self->listeners_revision;
+
+    /* Callbacks may change registrations. Keep dispatch order and listener
+     * lifetimes stable, and defer newly registered listeners to the next emit. */
+    listeners = g_ptr_array_new_with_free_func (g_object_unref);
+    for (i = 0; i < self->listeners->len; i++)
+        g_ptr_array_add (listeners,
+                         g_object_ref (g_ptr_array_index (self->listeners, i)));
 
     event_mask = lrg_event_get_type_mask (event);
     result = TRUE;
 
     /* Dispatch to all matching listeners in priority order */
-    for (i = 0; i < self->listeners->len; i++)
+    for (i = 0; i < listeners->len; i++)
     {
         LrgEventListener *listener;
         guint64 listener_mask;
 
-        listener = g_ptr_array_index (self->listeners, i);
+        listener = g_ptr_array_index (listeners, i);
+
+        /* Check membership only after a mutation, keeping normal dispatch linear. */
+        if (self->listeners_revision != listeners_revision &&
+            !g_ptr_array_find (self->listeners, listener, NULL))
+            continue;
+
         listener_mask = lrg_event_listener_get_event_mask (listener);
 
         /* Skip if listener doesn't care about this event type */
