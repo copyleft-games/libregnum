@@ -81,11 +81,6 @@ TEST_SOURCES := \
 	test-world3d.c \
 	test-scene.c \
 	test-primitives.c \
-	test-scripting.c \
-	test-scripting-python.c \
-	test-scripting-gi.c \
-	test-scripting-pygobject.c \
-	test-scripting-gjs.c \
 	test-settings.c \
 	test-gamestate.c \
 	test-crash.c \
@@ -143,6 +138,20 @@ TEST_SOURCES := \
 	test-vector-image.c \
 	test-reel.c \
 	test-term.c
+
+# Match the optional scripting sources selected by the library build.
+ifeq ($(HAS_LUAJIT),1)
+TEST_SOURCES += test-scripting.c
+endif
+ifeq ($(HAS_PYTHON),1)
+TEST_SOURCES += test-scripting-python.c test-scripting-pygobject.c
+endif
+ifeq ($(HAS_GI),1)
+TEST_SOURCES += test-scripting-gi.c
+endif
+ifeq ($(HAS_GJS),1)
+TEST_SOURCES += test-scripting-gjs.c
+endif
 
 # CAD test sources (conditional on CAD=1)
 ifeq ($(CAD),1)
@@ -212,9 +221,12 @@ SANITIZE_BINARIES ?= $(filter-out $(TEST_BUILDDIR)/test-scripting%,$(TEST_BINARI
 # Targets
 # =============================================================================
 
-.PHONY: all run run-sanitize run-valgrind clean
+.PHONY: all run run-sanitize run-valgrind check-build-config clean
 
 all: $(TEST_BINARIES)
+
+check-build-config:
+	@sh $(CURDIR)/test-build-config.sh
 
 # MCP library path (conditional)
 ifeq ($(MCP),1)
@@ -223,7 +235,7 @@ else
 MCP_LD_PATH :=
 endif
 
-run: all
+run: check-build-config all
 	$(call print_status,"Running tests...")
 	@failed=0; \
 	for test in $(TEST_BINARIES); do \
@@ -246,7 +258,7 @@ run: all
 # via tests/lsan.supp (see LSAN_OPTIONS=suppressions= below). Note: leak
 # suppressions go in LSAN_OPTIONS (the `leak:` format), NOT ASAN_OPTIONS --
 # ASan's suppressions= only accepts interceptor types and rejects `leak:`.
-run-sanitize: all
+run-sanitize: check-build-config all
 	$(call print_status,"Running tests under ASan+UBSan...")
 	@failed=0; \
 	for test in $(SANITIZE_BINARIES); do \
@@ -269,7 +281,7 @@ run-sanitize: all
 # Run the suite under valgrind. Expects a plain (non-sanitized) DEBUG=1
 # build -- ASan-instrumented binaries conflict with valgrind. The
 # test-scripting* binaries are excluded by default (see VALGRIND_BINARIES).
-run-valgrind: all
+run-valgrind: check-build-config all
 	$(call print_status,"Running tests under valgrind...")
 	@command -v valgrind >/dev/null 2>&1 || { \
 		printf "\033[31m\033[1mERROR:\033[0m valgrind not found on PATH\n"; exit 1; }; \
