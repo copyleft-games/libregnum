@@ -170,11 +170,11 @@ TEST_SOURCES += \
 	test-mcp-resources.c
 
 TEST_CFLAGS += $(MCP_CFLAGS)
-TEST_CFLAGS += $(shell pkg-config --cflags libsoup-3.0)
+TEST_CFLAGS += $(shell $(PKG_CONFIG) --cflags libsoup-3.0 json-glib-1.0)
 TEST_LDFLAGS += -L$(MCP_GLIB_DIR)/build
 TEST_LDFLAGS += -Wl,-rpath,$(MCP_GLIB_DIR)/build
 TEST_LIBS += $(MCP_LIBS)
-TEST_LIBS += $(shell pkg-config --libs libsoup-3.0)
+TEST_LIBS += $(shell $(PKG_CONFIG) --libs libsoup-3.0 json-glib-1.0)
 endif
 
 # FFmpeg test sources (conditional on FFMPEG=1).  test-video-player exercises
@@ -221,12 +221,17 @@ SANITIZE_BINARIES ?= $(filter-out $(TEST_BUILDDIR)/test-scripting%,$(TEST_BINARI
 # Targets
 # =============================================================================
 
-.PHONY: all run run-sanitize run-valgrind check-build-config clean
+.PHONY: all run run-sanitize run-valgrind check-build-config check-sanitize-exit clean
 
 all: $(TEST_BINARIES)
 
 check-build-config:
 	@sh $(CURDIR)/test-build-config.sh
+
+check-sanitize-exit:
+	@if [ "$(SANITIZER_EXIT_CHECK)" != "0" ]; then \
+		CC="$(CC)" sh $(CURDIR)/test-sanitize-exit.sh; \
+	fi
 
 # MCP library path (conditional)
 ifeq ($(MCP),1)
@@ -258,13 +263,13 @@ run: check-build-config all
 # via tests/lsan.supp (see LSAN_OPTIONS=suppressions= below). Note: leak
 # suppressions go in LSAN_OPTIONS (the `leak:` format), NOT ASAN_OPTIONS --
 # ASan's suppressions= only accepts interceptor types and rejects `leak:`.
-run-sanitize: check-build-config all
+run-sanitize: check-build-config check-sanitize-exit all
 	$(call print_status,"Running tests under ASan+UBSan...")
 	@failed=0; \
 	for test in $(SANITIZE_BINARIES); do \
 		ASAN_OPTIONS="detect_leaks=1:abort_on_error=0:print_summary=1" \
 		LSAN_OPTIONS="suppressions=$(CURDIR)/lsan.supp" \
-		UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=0" \
+		UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1" \
 		G_SLICE=always-malloc \
 		G_DEBUG=gc-friendly \
 		LD_LIBRARY_PATH="$(MCP_LD_PATH)../$(LIBOUTDIR):$$LD_LIBRARY_PATH" \

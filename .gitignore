@@ -34,6 +34,7 @@ g-ir-cpp-*.c
 
 # Tool directories
 .claude/
+.unlazy/
 
 # clangd cache files for lsp
 .cache/
