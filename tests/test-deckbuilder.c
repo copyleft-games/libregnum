@@ -2641,6 +2641,23 @@ test_event_bus_unregister_and_cancel (void)
 }
 
 static void
+test_event_bus_already_cancelled (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(TestEventListener) listener = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    TestEventDispatch dispatch = { bus, priorities };
+
+    lrg_event_cancel (LRG_EVENT (event));
+    g_assert_false (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listener));
+    g_assert_false (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 0);
+    g_assert_true (lrg_event_is_cancelled (LRG_EVENT (event)));
+}
+
+static void
 test_event_bus_singleton (void)
 {
     LrgEventBus *bus1;
@@ -6635,6 +6652,7 @@ main (int   argc,
     g_test_add_func ("/deckbuilder/card-event/cancel", test_card_event_cancel);
     g_test_add_func ("/deckbuilder/card-event/copy", test_card_event_copy);
     g_test_add_func ("/deckbuilder/event-bus/new", test_event_bus_new);
+    g_test_add_func ("/deckbuilder/event-bus/already-cancelled", test_event_bus_already_cancelled);
     g_test_add_func ("/deckbuilder/event-bus/priority-extremes", test_event_bus_priority_extremes);
     g_test_add_func ("/deckbuilder/event-bus/unregister-during-emit", test_event_bus_unregister_during_emit);
     g_test_add_func ("/deckbuilder/event-bus/unregister-and-cancel", test_event_bus_unregister_and_cancel);

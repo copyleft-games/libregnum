@@ -336,10 +336,10 @@ lrg_event_bus_emit (LrgEventBus *self,
                          g_object_ref (g_ptr_array_index (self->listeners, i)));
 
     event_mask = lrg_event_get_type_mask (event);
-    result = TRUE;
+    result = !lrg_event_is_cancelled (event);
 
     /* Dispatch to all matching listeners in priority order */
-    for (i = 0; i < listeners->len; i++)
+    for (i = 0; result && i < listeners->len; i++)
     {
         LrgEventListener *listener;
         guint64 listener_mask;
