@@ -301,6 +301,37 @@ test_pathfinder_simple_path (void)
 }
 
 static void
+test_pathfinder_smoothing_preserves_cost (void)
+{
+    g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (5, 1);
+    g_autoptr(LrgPathfinder) pathfinder = lrg_pathfinder_new (grid);
+    g_autoptr(LrgPath) path = NULL;
+    g_autoptr(LrgPath) smoothed = NULL;
+    g_autoptr(GError) error = NULL;
+    gint x, y;
+
+    lrg_nav_grid_set_cell_cost (grid, 2, 0, 3.0f);
+    path = lrg_pathfinder_find_path (pathfinder, 0, 0, 4, 0, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (path);
+    g_assert_cmpfloat (lrg_path_get_total_cost (path), ==, 6.0f);
+
+    lrg_pathfinder_set_smoothing (pathfinder, LRG_PATH_SMOOTHING_SIMPLE);
+    smoothed = lrg_pathfinder_find_path (pathfinder, 0, 0, 4, 0, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (smoothed);
+    g_assert_cmpuint (lrg_path_get_length (smoothed), ==, 2);
+    g_assert_cmpfloat (lrg_path_get_total_cost (smoothed), ==,
+                       lrg_path_get_total_cost (path));
+    g_assert_true (lrg_path_get_start (smoothed, &x, &y));
+    g_assert_cmpint (x, ==, 0);
+    g_assert_cmpint (y, ==, 0);
+    g_assert_true (lrg_path_get_end (smoothed, &x, &y));
+    g_assert_cmpint (x, ==, 4);
+    g_assert_cmpint (y, ==, 0);
+}
+
+static void
 test_pathfinder_same_start_end (void)
 {
     g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (10, 10);
@@ -541,6 +572,7 @@ main (int   argc,
     /* Pathfinder tests */
     g_test_add_func ("/pathfinding/pathfinder/new", test_pathfinder_new);
     g_test_add_func ("/pathfinding/pathfinder/simple-path", test_pathfinder_simple_path);
+    g_test_add_func ("/pathfinding/pathfinder/smoothing-preserves-cost", test_pathfinder_smoothing_preserves_cost);
     g_test_add_func ("/pathfinding/pathfinder/same-start-end", test_pathfinder_same_start_end);
     g_test_add_func ("/pathfinding/pathfinder/blocked-path", test_pathfinder_blocked_path);
     g_test_add_func ("/pathfinding/pathfinder/around-obstacle", test_pathfinder_around_obstacle);

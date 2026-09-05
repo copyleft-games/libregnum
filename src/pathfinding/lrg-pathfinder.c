@@ -567,7 +567,6 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
         AStarNode *node = current;
 
         path = lrg_path_new ();
-        lrg_path_set_total_cost (path, current->g_cost);
 
         while (node != NULL)
         {
@@ -588,6 +587,9 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
         {
             smooth_path_simple (path);
         }
+
+        /* Smoothing rebuilds the points with lrg_path_clear(), which resets cost. */
+        lrg_path_set_total_cost (path, current->g_cost);
 
         lrg_log_debug ("Found path with %u points, cost %.2f, explored %u nodes",
                        lrg_path_get_length (path),
