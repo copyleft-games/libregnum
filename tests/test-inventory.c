@@ -489,6 +489,83 @@ test_inventory_add_item (InventoryFixture *fixture,
 }
 
 static void
+test_item_stack_merge_metadata (InventoryFixture *fixture,
+                                gconstpointer     user_data)
+{
+    g_autoptr(LrgItemStack) first = lrg_item_stack_new (fixture->potion, 3);
+    g_autoptr(LrgItemStack) second = lrg_item_stack_new (fixture->potion, 2);
+
+    lrg_item_stack_set_data_int (first, "quality", 42);
+    lrg_item_stack_set_data_int (second, "quality", 7);
+    g_assert_false (lrg_item_stack_can_merge (first, second));
+    g_assert_cmpuint (lrg_item_stack_merge (first, second), ==, 0);
+    g_assert_cmpuint (lrg_item_stack_get_quantity (first), ==, 3);
+    g_assert_cmpuint (lrg_item_stack_get_quantity (second), ==, 2);
+
+    lrg_item_stack_set_data_int (second, "quality", 42);
+    lrg_item_stack_set_data_string (first, "owner", "hero");
+    g_assert_false (lrg_item_stack_can_merge (first, second));
+    lrg_item_stack_set_data_string (second, "owner", "hero");
+    lrg_item_stack_set_data_float (first, "durability", 0.5f);
+    lrg_item_stack_set_data_float (second, "durability", 1.0f);
+    g_assert_false (lrg_item_stack_can_merge (first, second));
+    lrg_item_stack_set_data_float (second, "durability", 0.5f);
+    g_assert_cmpuint (lrg_item_stack_merge (first, second), ==, 2);
+    g_assert_cmpuint (lrg_item_stack_get_quantity (first), ==, 5);
+    g_assert_true (lrg_item_stack_is_empty (second));
+}
+
+static void
+test_inventory_add_stack_metadata (InventoryFixture *fixture,
+                                    gconstpointer     user_data)
+{
+    g_autoptr(LrgItemStack) stack = lrg_item_stack_new (fixture->potion, 7);
+    LrgItemStack *stored;
+
+    lrg_item_stack_set_data_int (stack, "quality", 42);
+    lrg_item_stack_set_data_float (stack, "durability", 0.5f);
+    lrg_item_stack_set_data_string (stack, "owner", "hero");
+    g_assert_cmpuint (lrg_inventory_add_stack (fixture->inventory, stack), ==, 7);
+    stored = lrg_inventory_get_slot (fixture->inventory, 0);
+    g_assert_nonnull (stored);
+    g_assert_cmpint (lrg_item_stack_get_data_int (stored, "quality", -1), ==, 42);
+    g_assert_cmpfloat (lrg_item_stack_get_data_float (stored, "durability", -1), ==, 0.5f);
+    g_assert_cmpstr (lrg_item_stack_get_data_string (stored, "owner"), ==, "hero");
+    g_assert_true (stored != stack);
+
+    /* Filling an existing stack and spilling must copy the data to both. */
+    g_assert_cmpuint (lrg_inventory_add_stack (fixture->inventory, stack), ==, 7);
+    g_assert_cmpuint (lrg_item_stack_get_quantity (stored), ==, 10);
+    stored = lrg_inventory_get_slot (fixture->inventory, 1);
+    g_assert_cmpuint (lrg_item_stack_get_quantity (stored), ==, 4);
+    g_assert_cmpstr (lrg_item_stack_get_data_string (stored, "owner"), ==, "hero");
+    g_assert_cmpuint (lrg_item_stack_get_quantity (stack), ==, 7);
+
+    lrg_item_stack_set_data_int (stack, "quality", 7);
+    g_assert_cmpuint (lrg_inventory_add_stack (fixture->inventory, stack), ==, 7);
+    g_assert_cmpuint (lrg_inventory_get_used_slots (fixture->inventory), ==, 3);
+    lrg_inventory_sort (fixture->inventory);
+    g_assert_cmpuint (lrg_inventory_get_used_slots (fixture->inventory), ==, 3);
+}
+
+static void
+test_inventory_plain_item_metadata (InventoryFixture *fixture,
+                                    gconstpointer     user_data)
+{
+    g_autoptr(LrgItemStack) stack = lrg_item_stack_new (fixture->potion, 3);
+
+    lrg_item_stack_set_data_int (stack, "quality", 42);
+    g_assert_true (lrg_inventory_set_slot (fixture->inventory, 0, stack));
+    g_assert_cmpuint (lrg_inventory_add_item (fixture->inventory, fixture->potion, 2), ==, 2);
+    g_assert_cmpuint (lrg_item_stack_get_quantity (stack), ==, 3);
+    g_assert_cmpuint (lrg_inventory_get_used_slots (fixture->inventory), ==, 2);
+    g_assert_cmpuint (lrg_inventory_add_to_slot (fixture->inventory, 0,
+                                                fixture->potion, 1), ==, 0);
+    g_assert_cmpuint (lrg_inventory_add_to_slot (fixture->inventory, 1,
+                                                fixture->potion, 1), ==, 1);
+}
+
+static void
 test_inventory_add_non_stackable (InventoryFixture *fixture,
                                   gconstpointer     user_data)
 {
@@ -1298,6 +1375,13 @@ main (int   argc,
     g_test_add_func ("/inventory/item-def/custom-properties", test_item_def_custom_properties);
     g_test_add ("/inventory/item-def/can-stack-with", InventoryFixture, NULL,
                 inventory_fixture_set_up, test_item_def_can_stack_with, inventory_fixture_tear_down);
+
+    g_test_add ("/inventory/item-stack/merge-metadata", InventoryFixture, NULL,
+                inventory_fixture_set_up, test_item_stack_merge_metadata, inventory_fixture_tear_down);
+    g_test_add ("/inventory/inventory/add-stack-metadata", InventoryFixture, NULL,
+                inventory_fixture_set_up, test_inventory_add_stack_metadata, inventory_fixture_tear_down);
+    g_test_add ("/inventory/inventory/plain-item-metadata", InventoryFixture, NULL,
+                inventory_fixture_set_up, test_inventory_plain_item_metadata, inventory_fixture_tear_down);
 
     /* LrgItemStack tests */
     g_test_add ("/inventory/item-stack/new", InventoryFixture, NULL,

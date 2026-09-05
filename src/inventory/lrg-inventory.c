@@ -485,6 +485,7 @@ lrg_inventory_add_item (LrgInventory *self,
                         LrgItemDef   *def,
                         guint         quantity)
 {
+    g_autoptr(LrgItemStack) prototype = NULL;
     LrgInventoryPrivate *priv;
     LrgInventoryClass *klass;
     guint remaining;
@@ -500,6 +501,7 @@ lrg_inventory_add_item (LrgInventory *self,
     klass = LRG_INVENTORY_GET_CLASS (self);
 
     remaining = quantity;
+    prototype = lrg_item_stack_new (def, 0);
 
     /* First try to add to existing stacks (even if inventory is "full") */
     if (lrg_item_def_get_stackable (def))
@@ -509,8 +511,7 @@ lrg_inventory_add_item (LrgInventory *self,
             LrgItemStack *stack = g_ptr_array_index (priv->slots, i);
             if (stack != NULL)
             {
-                LrgItemDef *stack_def = lrg_item_stack_get_def (stack);
-                if (lrg_item_def_can_stack_with (def, stack_def))
+                if (lrg_item_stack_can_merge (stack, prototype))
                 {
                     guint added = lrg_item_stack_add (stack, remaining);
                     remaining -= added;
@@ -559,12 +560,57 @@ guint
 lrg_inventory_add_stack (LrgInventory *self,
                          LrgItemStack *stack)
 {
+    g_autoptr(LrgItemStack) remaining = NULL;
+    LrgInventoryPrivate *priv;
+    LrgInventoryClass *klass;
+    LrgItemDef *def;
+    guint quantity;
+    guint i;
+
     g_return_val_if_fail (LRG_IS_INVENTORY (self), 0);
     g_return_val_if_fail (stack != NULL, 0);
 
-    return lrg_inventory_add_item (self,
-                                   lrg_item_stack_get_def (stack),
-                                   lrg_item_stack_get_quantity (stack));
+    /* Snapshot the caller's quantity and data before changing inventory slots.
+     * All transfers below consume this private copy. */
+    remaining = lrg_item_stack_copy (stack);
+    quantity = lrg_item_stack_get_quantity (remaining);
+    def = lrg_item_stack_get_def (remaining);
+    priv = lrg_inventory_get_instance_private (self);
+    klass = LRG_INVENTORY_GET_CLASS (self);
+
+    for (i = 0; i < priv->capacity && !lrg_item_stack_is_empty (remaining); i++)
+    {
+        LrgItemStack *existing = g_ptr_array_index (priv->slots, i);
+
+        if (existing != NULL && klass->can_accept (self, def, i) &&
+            lrg_item_stack_merge (existing, remaining) > 0)
+            g_signal_emit (self, signals[SIGNAL_SLOT_CHANGED], 0, i);
+    }
+
+    if (!lrg_item_stack_is_empty (remaining) && klass->can_accept (self, def, -1))
+    {
+        for (i = 0; i < priv->capacity && !lrg_item_stack_is_empty (remaining); i++)
+        {
+            LrgItemStack *added;
+            guint amount;
+
+            if (g_ptr_array_index (priv->slots, i) != NULL ||
+                !klass->can_accept (self, def, i))
+                continue;
+            amount = MIN (lrg_item_stack_get_quantity (remaining),
+                          lrg_item_def_get_max_stack (def));
+            if (amount == 0)
+                break;
+            added = lrg_item_stack_split (remaining, amount);
+            g_ptr_array_index (priv->slots, i) = added;
+            if (klass->on_item_added != NULL)
+                klass->on_item_added (self, i, added);
+            g_signal_emit (self, signals[SIGNAL_ITEM_ADDED], 0, i, added);
+            g_signal_emit (self, signals[SIGNAL_SLOT_CHANGED], 0, i);
+        }
+    }
+
+    return quantity - lrg_item_stack_get_quantity (remaining);
 }
 
 guint
@@ -573,6 +619,7 @@ lrg_inventory_add_to_slot (LrgInventory *self,
                            LrgItemDef   *def,
                            guint         quantity)
 {
+    g_autoptr(LrgItemStack) prototype = NULL;
     LrgInventoryPrivate *priv;
     LrgInventoryClass *klass;
     LrgItemStack *existing;
@@ -598,8 +645,8 @@ lrg_inventory_add_to_slot (LrgInventory *self,
     if (existing != NULL)
     {
         /* Add to existing stack if compatible */
-        LrgItemDef *existing_def = lrg_item_stack_get_def (existing);
-        if (!lrg_item_def_can_stack_with (def, existing_def))
+        prototype = lrg_item_stack_new (def, 0);
+        if (!lrg_item_stack_can_merge (existing, prototype))
             return 0;
 
         added = lrg_item_stack_add (existing, quantity);

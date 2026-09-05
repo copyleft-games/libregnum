@@ -287,6 +287,10 @@ gboolean
 lrg_item_stack_can_merge (const LrgItemStack *self,
                           const LrgItemStack *other)
 {
+    GHashTableIter iter;
+    gpointer key;
+    gpointer value;
+
     g_return_val_if_fail (self != NULL, FALSE);
     g_return_val_if_fail (other != NULL, FALSE);
 
@@ -294,8 +298,38 @@ lrg_item_stack_can_merge (const LrgItemStack *self,
     if (lrg_item_stack_is_full (self))
         return FALSE;
 
-    /* Check if the items can stack */
-    return lrg_item_def_can_stack_with (self->def, other->def);
+    if (!lrg_item_def_can_stack_with (self->def, other->def) ||
+        g_hash_table_size (self->instance_data) !=
+        g_hash_table_size (other->instance_data))
+        return FALSE;
+
+    /* Each stack represents identical instances. Merging distinct instance
+     * data would silently assign the destination's data to the source items. */
+    g_hash_table_iter_init (&iter, self->instance_data);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+        InstanceData *a = value;
+        InstanceData *b = g_hash_table_lookup (other->instance_data, key);
+
+        if (b == NULL || a->type != b->type)
+            return FALSE;
+        switch (a->type)
+        {
+        case DATA_INT:
+            if (a->value.int_val != b->value.int_val)
+                return FALSE;
+            break;
+        case DATA_FLOAT:
+            if (a->value.float_val != b->value.float_val)
+                return FALSE;
+            break;
+        case DATA_STRING:
+            if (g_strcmp0 (a->value.string_val, b->value.string_val) != 0)
+                return FALSE;
+            break;
+        }
+    }
+    return TRUE;
 }
 
 guint

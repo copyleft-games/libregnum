@@ -258,6 +258,8 @@ lrg_item_stack_split (LrgItemStack *self,
  * @other: another #LrgItemStack
  *
  * Checks if two stacks can be merged together.
+ * Item definitions must be compatible and all instance data keys, types,
+ * and values must match. The destination must have space remaining.
  *
  * Returns: %TRUE if the stacks can merge
  *

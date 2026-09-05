@@ -298,7 +298,8 @@ lrg_inventory_add_item (LrgInventory *self,
  * @stack: the item stack to add
  *
  * Adds an item stack to the inventory.
- * The stack is merged with existing stacks where possible.
+ * Copies its items and instance data, merging only with compatible stacks
+ * that have identical instance data. The caller retains ownership of @stack.
  *
  * Returns: the number of items actually added
  *
