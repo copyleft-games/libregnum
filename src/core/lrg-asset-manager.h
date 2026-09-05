@@ -212,6 +212,119 @@ GrlMusic * lrg_asset_manager_load_music (LrgAssetManager  *self,
                                          const gchar      *name,
                                          GError          **error);
 
+/**
+ * lrg_asset_manager_set_data_loader:
+ * @self: an #LrgAssetManager
+ * @loader: (nullable): loader for YAML definitions
+ *
+ * Retains @loader. Changing it clears cached definitions and their watches.
+ * A new manager has no loader; the engine supplies its registered loader.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_manager_set_data_loader (LrgAssetManager *self,
+                                        LrgDataLoader   *loader);
+
+/**
+ * lrg_asset_manager_get_data_loader:
+ * @self: an #LrgAssetManager
+ *
+ * Returns: (transfer none) (nullable): the loader for YAML definitions
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDataLoader * lrg_asset_manager_get_data_loader (LrgAssetManager *self);
+
+/**
+ * lrg_asset_manager_load_asset:
+ * @self: an #LrgAssetManager
+ * @name: asset name or absolute file path
+ * @error: (nullable): return location for error
+ *
+ * Loads and caches an asset based on its case-insensitive extension:
+ * png/jpg/jpeg/bmp/tga/gif/qoi/dds/ktx/pkm/pvr/astc become textures;
+ * ttf/otf/fnt become fonts at size 32; wav becomes a sound;
+ * ogg/mp3/flac/xm/mod become streaming music; yaml/yml become validated
+ * GObject definitions. Other extensions return %G_IO_ERROR_NOT_SUPPORTED.
+ * Call the specific load functions to choose another font size/audio mode.
+ * Texture/font loading requires a graphics context, audio an audio device;
+ * YAML definitions work headlessly. Calls must run on the owning thread.
+ *
+ * Returns: (transfer none) (nullable): the cached asset, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+GObject * lrg_asset_manager_load_asset (LrgAssetManager  *self,
+                                        const gchar      *name,
+                                        GError          **error);
+
+/**
+ * lrg_asset_manager_load_object:
+ * @self: an #LrgAssetManager
+ * @name: YAML asset name or absolute file path
+ * @error: (nullable): return location for error
+ *
+ * Loads a definition using lrg_data_loader_load_file_validated(). A successful
+ * load is cached until unloaded or reloaded. The resolved path is pinned for
+ * reloads; unload it to apply search path changes. Hold your own reference
+ * across reloads and use ::object-reloaded to replace consumer references.
+ *
+ * Returns: (transfer none) (nullable): the cached definition
+ */
+LRG_AVAILABLE_IN_ALL
+GObject * lrg_asset_manager_load_object (LrgAssetManager  *self,
+                                         const gchar      *name,
+                                         GError          **error);
+
+/**
+ * lrg_asset_manager_reload_object:
+ * @self: an #LrgAssetManager
+ * @name: name of a cached YAML definition
+ * @error: (nullable): return location for error
+ *
+ * Validates a replacement before swapping the cache and emitting
+ * ::object-reloaded. A failure emits ::object-reload-failed, returns an
+ * error and keeps the previous object. Changing the definition's GType
+ * is rejected. Unload explicitly to change type.
+ *
+ * Returns: %TRUE if a new definition replaced the cached object
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_asset_manager_reload_object (LrgAssetManager  *self,
+                                           const gchar      *name,
+                                           GError          **error);
+
+/**
+ * lrg_asset_manager_watch_object:
+ * @self: an #LrgAssetManager
+ * @name: YAML asset name or absolute file path
+ * @error: (nullable): return location for error
+ *
+ * Loads a definition if needed and watches its parent directory. Changes,
+ * atomic file replacements, deletion and recreation are debounced for 100ms
+ * on the calling thread's thread-default #GMainContext. Iterate that context
+ * to receive reloads. Watching is opt-in. All manager access must occur on
+ * that thread. Failed edits retain the previous object and emit an error.
+ * Unloading, changing the loader or destroying the manager stops watches and
+ * cancels pending reloads. Watches do not keep the manager alive.
+ *
+ * Returns: %TRUE if the definition is loaded and its watch is active
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_asset_manager_watch_object (LrgAssetManager  *self,
+                                          const gchar      *name,
+                                          GError          **error);
+
+/**
+ * lrg_asset_manager_unwatch_object:
+ * @self: an #LrgAssetManager
+ * @name: watched asset name
+ *
+ * Stops monitoring and cancels pending reloads, retaining the cached object.
+ *
+ * Returns: %TRUE if a watch was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_asset_manager_unwatch_object (LrgAssetManager *self,
+                                           const gchar     *name);
+
 #ifdef LRG_HAS_LIBDEX
 /* ==========================================================================
  * Asynchronous Loading

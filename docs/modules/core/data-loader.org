@@ -112,3 +112,34 @@ int main ()
 - [[../../concepts/data-loading.md][Data Loading Concept]]
 - [[file:registry.org][Type Registry]]
 - [[file:engine.org][LrgEngine]]
+
+* Strict definition validation
+
+=lrg_data_loader_load_file_validated(loader, path, error)= is the strict variant
+used for asset definitions and live reload. Existing =load_file()=,
+=load_data()=, and =load_typed()= retain their existing permissive behavior.
+
+The strict loader checks that the root is a mapping with a registered,
+instantiable GObject type. Fields must name writable GObject properties. It
+checks scalar syntax, finite floating-point values, enum/flag membership,
+string-array structure, and =GParamSpec= ranges before deserialization. Integer
+values must fit signed 64-bit, matching yaml-glib's numeric representation.
+Null numeric, boolean, enum and flags values are rejected; omit a property to
+use its default. Nullable strings, string arrays and raw YAML nodes are
+supported. Unknown fields are rejected, so spelling mistakes cannot silently reset a
+property to its default value.
+
+Custom non-construct properties require =YamlSerializable= and a deserializer
+that accepts their nodes. Each supplied non-construct property is decoded
+exactly once, and the resulting value is checked against its property bounds
+before invoking the setter. A false return from a custom decoder or setter
+rejects the candidate definition. Custom construct-only formats are rejected; standard
+construct-only properties such as an item's string identifier are supported.
+Custom deserializers should validate their own nested schemas and return false
+on invalid data. Application-specific invariants, such as a quest requiring a
+particular objective, remain the application's responsibility.
+
+A failure returns NULL and a =GError=. A successful call returns a new object
+owned by the caller; it does not modify an existing object. Asset-manager
+reloads use this behavior to keep the previous definition until a replacement
+has fully loaded and validated.

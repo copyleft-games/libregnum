@@ -110,3 +110,62 @@ int main ()
 - [[../../architecture.md#asset-manager-pattern][Asset Management]]
 - [[../../concepts/modding.md][Modding System]]
 - [[file:engine.org][LrgEngine]]
+
+* Definition assets and live reload
+
+=lrg_asset_manager_load_asset()= dispatches by extension and caches the result.
+It supports textures, fonts (size 32), WAV sounds, streaming OGG/MP3/FLAC/XM/MOD
+music, and typed YAML definitions. Unknown extensions return
+=G_IO_ERROR_NOT_SUPPORTED=. Use a specific loader to choose another font size
+or to load an OGG file as a sound effect. Graphics loads require a window;
+YAML definitions run without a window or audio device.
+
+The engine connects its registered =LrgDataLoader= automatically. For a
+standalone manager, configure a loader explicitly:
+
+#+begin_src c
+LrgRegistry *registry = lrg_registry_new ();
+LrgDataLoader *loader = lrg_data_loader_new ();
+LrgAssetManager *assets = lrg_asset_manager_new ();
+lrg_registry_register (registry, "item", LRG_TYPE_ITEM_DEF);
+lrg_data_loader_set_registry (loader, registry);
+lrg_asset_manager_set_data_loader (assets, loader);
+lrg_asset_manager_add_search_path (assets, "data");
+GObject *item = lrg_asset_manager_load_object (assets, "sword.yaml", &error);
+/* item is borrowed from the cache. Ref it if retaining it across reloads. */
+g_object_unref (loader);
+g_object_unref (registry);
+#+end_src
+
+Definitions use =lrg_data_loader_load_file_validated()=. A malformed edit,
+unknown type/property, invalid enum, or out-of-range numeric value returns an
+error instead of replacing the definition with partially defaulted data.
+See [[file:data-loader.org][Data loader]] for the validation contract.
+
+Live reload is opt-in, per asset:
+
+#+begin_src c
+if (!lrg_asset_manager_watch_object (assets, "sword.yaml", &error))
+    g_printerr ("Cannot watch definition: %s\n", error->message);
+#+end_src
+
+The watch monitors the containing directory and coalesces changes for 100ms,
+including editor writes made with atomic renames. Invalid edits and deletion
+emit =object-reload-failed(name, error)= and retain the last valid object.
+Recreation is picked up by the same watch. A valid replacement must keep the
+same GType and emits =object-reloaded(name, previous, replacement)= after the
+cache has changed. Existing consumers holding a reference to =previous= remain
+valid; they should connect to this signal and take a reference to =replacement=
+when ready to adopt it. Objects are replaced, not modified in place.
+
+Use =lrg_asset_manager_reload_object()= for an explicit reload without file
+monitoring. The resolved file path is fixed when the definition enters the
+cache. After modifying search paths or mod priority, unload and reload the
+asset to resolve a different file. =unwatch_object()= cancels a watch but keeps
+the definition cached. Unloading a definition, unloading all assets, changing
+the data loader, or destroying the manager cancels its watches and queued
+reloads. Watches do not keep the manager alive.
+
+All calls belong on the manager's owning thread. Iterate the thread-default
+=GMainContext= used when establishing each watch; that is where monitor events,
+debounced reloads, and signals run. Loading and reloading are synchronous.

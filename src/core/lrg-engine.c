@@ -81,6 +81,7 @@ lrg_engine_real_startup (LrgEngine *self)
 
     /* Connect data loader to registry */
     lrg_data_loader_set_registry (priv->data_loader, priv->registry);
+    lrg_asset_manager_set_data_loader (priv->asset_manager, priv->data_loader);
 
     /* Initialize font manager if we have a window (graphics mode) */
     if (priv->window != NULL)

@@ -1,0 +1,32 @@
+#+TITLE: Template loading state
+
+=LrgTemplateLoadingState= executes one synchronous task per update and reports
+progress after successful tasks. =add_asset()= now loads and caches an actual
+resource using =lrg_asset_manager_load_asset()=. The default manager belongs to
+the running engine; =set_asset_manager()= supplies a standalone manager for
+headless definition loading or an independently managed cache.
+
+#+begin_src c
+LrgTemplateLoadingState *loading = lrg_template_loading_state_new ();
+lrg_template_loading_state_set_asset_manager (loading, assets);
+lrg_template_loading_state_add_asset (loading, "items/sword.yaml");
+lrg_template_loading_state_add_asset (loading, "sprites/player.png");
+#+end_src
+
+Supported formats and resource requirements are documented in
+[[file:../../core/asset-manager.org][Asset manager]]. YAML definitions need a registered data loader. Texture and
+font tasks require an initialized graphics context; audio tasks need the
+appropriate device. Unknown extensions and missing resources produce errors.
+
+Each successful task advances =get_completed_count()= and =get_progress()=,
+notifies the =progress= property, and emits the =progress= signal. The final
+=complete= signal fires once after all tasks succeed and the minimum display
+time has elapsed. A failed task emits =failed= once with an error, leaves
+progress at the last successful task, and stops the queue. It never reports
+completion. Clear the tasks or re-enter the state to reset failure/completion
+and retry. =clear_tasks()= lets the same state load another batch.
+
+Tasks run on the thread updating the state. A single expensive task can delay
+a frame; spreading tasks across frames permits progress updates between tasks
+but does not make individual loads asynchronous. Use =add_task()= for custom
+resource formats or explicit font-size/audio-mode choices.

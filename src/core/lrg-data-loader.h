@@ -111,6 +111,30 @@ GObject * lrg_data_loader_load_file (LrgDataLoader  *self,
                                      GError        **error);
 
 /**
+ * lrg_data_loader_load_file_validated:
+ * @self: an #LrgDataLoader
+ * @path: path to the YAML file
+ * @error: (nullable): return location for error
+ *
+ * Loads a definition with strict property validation. Rejects unknown or
+ * unwritable fields, malformed scalar values, invalid enums/flags and values
+ * outside GParamSpec bounds. Null numeric, boolean, enum and flags values
+ * are rejected. Nullable strings, string arrays and raw YAML nodes are
+ * supported. Custom non-construct properties must implement
+ * YamlSerializable and accept their nodes. Each custom decoder runs once;
+ * its output is validated before setting the property. Application-specific invariants
+ * remain the responsibility of those custom deserializers. Integer values
+ * must fit signed 64-bit, matching yaml-glib's numeric representation.
+ * Existing permissive loading APIs are unchanged.
+ *
+ * Returns: (transfer full) (nullable): the validated object, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+GObject * lrg_data_loader_load_file_validated (LrgDataLoader  *self,
+                                               const gchar    *path,
+                                               GError        **error);
+
+/**
  * lrg_data_loader_load_gfile:
  * @self: an #LrgDataLoader
  * @file: a #GFile to load

@@ -16,6 +16,8 @@
 #include "../lrg-log.h"
 
 #include <yaml-glib.h>
+#include <errno.h>
+#include <math.h>
 
 struct _LrgDataLoader
 {
@@ -361,6 +363,7 @@ lrg_data_loader_load_file (LrgDataLoader  *self,
                            GError        **error)
 {
     g_autoptr(YamlParser) parser = NULL;
+    g_autoptr(GError) parse_error = NULL;
     YamlNode             *root;
     GObject              *object;
 
@@ -369,8 +372,9 @@ lrg_data_loader_load_file (LrgDataLoader  *self,
 
     parser = yaml_parser_new ();
 
-    if (!yaml_parser_load_from_file (parser, path, error))
+    if (!yaml_parser_load_from_file (parser, path, &parse_error))
     {
+        g_propagate_error (error, g_steal_pointer (&parse_error));
         return NULL;
     }
 
@@ -388,6 +392,343 @@ lrg_data_loader_load_file (LrgDataLoader  *self,
     object = load_object_from_node (self, root, path, error);
 
     return object;
+}
+
+/* Strict validation is opt-in: existing load APIs retain permissive behavior. */
+static gboolean
+validate_property_node (GParamSpec *pspec,
+                        YamlNode   *node)
+{
+    GType type = G_PARAM_SPEC_VALUE_TYPE (pspec);
+    YamlNodeType node_type = yaml_node_get_node_type (node);
+    GValue value = G_VALUE_INIT;
+    const gchar *text;
+    gchar *end = NULL;
+    gboolean valid = FALSE;
+    gint64 integer;
+    gdouble number;
+
+    if (type == YAML_TYPE_NODE)
+        return TRUE;
+    if (node_type == YAML_NODE_NULL)
+        return type == G_TYPE_STRING || type == G_TYPE_STRV;
+    if (type == G_TYPE_STRV)
+    {
+        YamlSequence *sequence;
+        guint i;
+
+        if (node_type != YAML_NODE_SEQUENCE)
+            return FALSE;
+        sequence = yaml_node_get_sequence (node);
+        for (i = 0; i < yaml_sequence_get_length (sequence); i++)
+        {
+            if (yaml_node_get_node_type (yaml_sequence_get_element (sequence, i)) != YAML_NODE_SCALAR)
+                return FALSE;
+        }
+        return TRUE;
+    }
+    if (G_TYPE_IS_FLAGS (type))
+    {
+        GFlagsClass *klass = g_type_class_ref (type);
+        guint flags = 0;
+
+        if (node_type == YAML_NODE_SEQUENCE)
+        {
+            YamlSequence *sequence = yaml_node_get_sequence (node);
+            guint i;
+
+            valid = TRUE;
+            for (i = 0; i < yaml_sequence_get_length (sequence); i++)
+            {
+                YamlNode *element = yaml_sequence_get_element (sequence, i);
+                GFlagsValue *flag;
+
+                if (yaml_node_get_node_type (element) != YAML_NODE_SCALAR)
+                {
+                    valid = FALSE;
+                    break;
+                }
+                text = yaml_node_get_scalar (element);
+                flag = g_flags_get_value_by_nick (klass, text);
+                if (flag == NULL)
+                    flag = g_flags_get_value_by_name (klass, text);
+                if (flag == NULL)
+                {
+                    valid = FALSE;
+                    break;
+                }
+            }
+        }
+        else if (node_type == YAML_NODE_SCALAR)
+        {
+            text = yaml_node_get_scalar (node);
+            errno = 0;
+            integer = g_ascii_strtoll (text, &end, 10);
+            flags = (guint)integer;
+            valid = errno == 0 && end != text && *end == '\0' &&
+                    integer >= 0 && integer <= G_MAXUINT && (flags & ~klass->mask) == 0;
+        }
+        g_type_class_unref (klass);
+        return valid;
+    }
+    if (node_type != YAML_NODE_SCALAR)
+        return FALSE;
+    text = yaml_node_get_scalar (node);
+    if (type == G_TYPE_STRING)
+        return TRUE;
+    if (type == G_TYPE_BOOLEAN)
+        return g_ascii_strcasecmp (text, "true") == 0 ||
+               g_ascii_strcasecmp (text, "false") == 0;
+    if (G_TYPE_IS_ENUM (type))
+    {
+        GEnumClass *klass = g_type_class_ref (type);
+        GEnumValue *entry = g_enum_get_value_by_nick (klass, text);
+
+        if (entry == NULL)
+            entry = g_enum_get_value_by_name (klass, text);
+        if (entry == NULL)
+        {
+            errno = 0;
+            integer = g_ascii_strtoll (text, &end, 10);
+            if (errno == 0 && end != text && *end == '\0' &&
+                integer >= G_MININT && integer <= G_MAXINT)
+                entry = g_enum_get_value (klass, (gint)integer);
+        }
+        valid = entry != NULL;
+        g_type_class_unref (klass);
+        return valid;
+    }
+    g_value_init (&value, type);
+    if (type == G_TYPE_FLOAT || type == G_TYPE_DOUBLE)
+    {
+        errno = 0;
+        number = g_ascii_strtod (text, &end);
+        if (errno != 0 || end == text || *end != '\0' || !isfinite (number) ||
+            (type == G_TYPE_FLOAT && fabs (number) > G_MAXFLOAT))
+            goto out;
+        if (type == G_TYPE_FLOAT)
+            g_value_set_float (&value, (gfloat)number);
+        else
+            g_value_set_double (&value, number);
+    }
+    else
+    {
+        errno = 0;
+        integer = g_ascii_strtoll (text, &end, 10);
+        if (errno != 0 || end == text || *end != '\0')
+            goto out;
+        switch (G_TYPE_FUNDAMENTAL (type))
+        {
+        case G_TYPE_CHAR:
+            if (integer < G_MININT8 || integer > G_MAXINT8) goto out;
+            g_value_set_schar (&value, integer);
+            break;
+        case G_TYPE_UCHAR:
+            if (integer < 0 || integer > G_MAXUINT8) goto out;
+            g_value_set_uchar (&value, integer);
+            break;
+        case G_TYPE_INT:
+            if (integer < G_MININT || integer > G_MAXINT) goto out;
+            g_value_set_int (&value, integer);
+            break;
+        case G_TYPE_UINT:
+            if (integer < 0 || integer > G_MAXUINT) goto out;
+            g_value_set_uint (&value, integer);
+            break;
+        case G_TYPE_LONG:
+            if (integer < G_MINLONG || integer > G_MAXLONG) goto out;
+            g_value_set_long (&value, integer);
+            break;
+        case G_TYPE_ULONG:
+            if (integer < 0 || (guint64)integer > G_MAXULONG) goto out;
+            g_value_set_ulong (&value, integer);
+            break;
+        case G_TYPE_INT64:
+            g_value_set_int64 (&value, integer);
+            break;
+        case G_TYPE_UINT64:
+            if (integer < 0) goto out;
+            g_value_set_uint64 (&value, integer);
+            break;
+        default:
+            goto out;
+        }
+    }
+    valid = !g_param_value_validate (pspec, &value);
+out:
+    g_value_unset (&value);
+    return valid;
+}
+
+static gboolean
+is_standard_property (GParamSpec *pspec)
+{
+    GType type = G_PARAM_SPEC_VALUE_TYPE (pspec);
+
+    return G_TYPE_IS_FUNDAMENTAL (type) || G_TYPE_IS_ENUM (type) ||
+           G_TYPE_IS_FLAGS (type) || type == G_TYPE_STRV || type == YAML_TYPE_NODE;
+}
+
+static gboolean
+validated_default_deserialize (GValue     *value,
+                               GParamSpec *pspec,
+                               YamlNode   *node)
+{
+    if (G_PARAM_SPEC_VALUE_TYPE (pspec) == YAML_TYPE_NODE)
+    {
+        g_value_set_boxed (value, node);
+        return TRUE;
+    }
+    if (yaml_node_get_node_type (node) == YAML_NODE_NULL)
+    {
+        /* Only nullable standard properties reach this point. */
+        g_value_reset (value);
+        return TRUE;
+    }
+    return yaml_serializable_default_deserialize_property (NULL, pspec->name,
+                                                            value, pspec, node);
+}
+
+GObject *
+lrg_data_loader_load_file_validated (LrgDataLoader  *self,
+                                     const gchar    *path,
+                                     GError        **error)
+{
+    g_autoptr(YamlParser) parser = NULL;
+    g_autoptr(GError) parse_error = NULL;
+    g_autoptr(GObject) object = NULL;
+    g_autofree const gchar **construct_names = NULL;
+    g_autofree GValue *construct_values = NULL;
+    GObjectClass *klass;
+    guint n_construct = 0;
+    gboolean valid = TRUE;
+    YamlNode *root;
+    YamlMapping *mapping;
+    const gchar *type_name;
+    GType type;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_DATA_LOADER (self), NULL);
+    g_return_val_if_fail (path != NULL, NULL);
+    parser = yaml_parser_new ();
+    if (!yaml_parser_load_from_file (parser, path, &parse_error))
+    {
+        g_propagate_error (error, g_steal_pointer (&parse_error));
+        return NULL;
+    }
+    root = yaml_parser_get_root (parser);
+    if (yaml_parser_get_n_documents (parser) != 1 || root == NULL ||
+        yaml_node_get_node_type (root) != YAML_NODE_MAPPING)
+    {
+        g_set_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_PARSE,
+                     "%s: expected one YAML document with a mapping root", path);
+        return NULL;
+    }
+    mapping = yaml_node_get_mapping (root);
+    type_name = yaml_mapping_get_string_member (mapping, self->type_field_name);
+    type = type_name != NULL && self->registry != NULL ?
+           lrg_registry_lookup (self->registry, type_name) : G_TYPE_INVALID;
+    if (type == G_TYPE_INVALID || !g_type_is_a (type, G_TYPE_OBJECT) || G_TYPE_IS_ABSTRACT (type))
+    {
+        g_set_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_TYPE,
+                     "%s: missing, unknown or non-instantiable type '%s'", path,
+                     type_name != NULL ? type_name : "");
+        return NULL;
+    }
+    klass = g_type_class_ref (type);
+    for (i = 0; i < yaml_mapping_get_size (mapping); i++)
+    {
+        const gchar *name = yaml_mapping_get_key (mapping, i);
+        GParamSpec *pspec;
+        YamlNode *node = yaml_mapping_get_value (mapping, i);
+
+        if (g_str_equal (name, self->type_field_name))
+            continue;
+        pspec = g_object_class_find_property (klass, name);
+        if (pspec == NULL || !(pspec->flags & G_PARAM_WRITABLE) ||
+            (is_standard_property (pspec) && !validate_property_node (pspec, node)) ||
+            (!is_standard_property (pspec) &&
+             (!g_type_is_a (type, YAML_TYPE_SERIALIZABLE) || (pspec->flags & G_PARAM_CONSTRUCT_ONLY))))
+        {
+            g_set_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_PROPERTY,
+                         "%s: unknown, unwritable or invalid property '%s'", path, name);
+            g_type_class_unref (klass);
+            return NULL;
+        }
+    }
+    /* Decode construction values before constructing the candidate object. */
+    construct_names = g_new0 (const gchar *, yaml_mapping_get_size (mapping));
+    construct_values = g_new0 (GValue, yaml_mapping_get_size (mapping));
+    for (i = 0; i < yaml_mapping_get_size (mapping); i++)
+    {
+        const gchar *name = yaml_mapping_get_key (mapping, i);
+        GParamSpec *pspec;
+        GValue *value;
+
+        if (g_str_equal (name, self->type_field_name))
+            continue;
+        pspec = g_object_class_find_property (klass, name);
+        if (!(pspec->flags & G_PARAM_CONSTRUCT_ONLY))
+            continue;
+        construct_names[n_construct] = pspec->name;
+        value = &construct_values[n_construct++];
+        g_value_init (value, G_PARAM_SPEC_VALUE_TYPE (pspec));
+        valid = validated_default_deserialize (value, pspec, yaml_mapping_get_value (mapping, i));
+        valid = valid && !g_param_value_validate (pspec, value);
+        if (!valid)
+        {
+            g_set_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_PROPERTY,
+                         "%s: invalid construct property '%s'", path, name);
+            break;
+        }
+    }
+    if (valid)
+        object = g_object_new_with_properties (type, n_construct, construct_names, construct_values);
+    for (i = 0; i < n_construct; i++)
+        g_value_unset (&construct_values[i]);
+
+    /* Decode each non-construct property exactly once, then validate the value
+     * before invoking its setter. The candidate is never published on failure. */
+    if (object != NULL)
+    {
+        for (i = 0; i < yaml_mapping_get_size (mapping); i++)
+        {
+            const gchar *name = yaml_mapping_get_key (mapping, i);
+            GParamSpec *pspec;
+            GValue value = G_VALUE_INIT;
+            YamlNode *node = yaml_mapping_get_value (mapping, i);
+
+            if (g_str_equal (name, self->type_field_name))
+                continue;
+            pspec = g_object_class_find_property (klass, name);
+            if (pspec->flags & G_PARAM_CONSTRUCT_ONLY)
+                continue;
+            g_value_init (&value, G_PARAM_SPEC_VALUE_TYPE (pspec));
+            if (YAML_IS_SERIALIZABLE (object))
+                valid = yaml_serializable_deserialize_property (YAML_SERIALIZABLE (object),
+                           pspec->name, &value, pspec, node);
+            else
+                valid = validated_default_deserialize (&value, pspec, node);
+            valid = valid && !g_param_value_validate (pspec, &value);
+            if (valid)
+            {
+                if (YAML_IS_SERIALIZABLE (object))
+                    valid = yaml_serializable_set_property (YAML_SERIALIZABLE (object), pspec, &value);
+                else
+                    g_object_set_property (object, pspec->name, &value);
+            }
+            g_value_unset (&value);
+            if (!valid)
+            {
+                g_set_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_PROPERTY,
+                             "%s: deserializer or setter rejected property '%s'", path, name);
+                g_clear_object (&object);
+                break;
+            }
+        }
+    }
+    g_type_class_unref (klass);
+    return g_steal_pointer (&object);
 }
 
 /**
@@ -408,6 +749,7 @@ lrg_data_loader_load_gfile (LrgDataLoader  *self,
                             GError        **error)
 {
     g_autoptr(YamlParser) parser = NULL;
+    g_autoptr(GError) parse_error = NULL;
     g_autofree gchar     *path = NULL;
     YamlNode             *root;
     GObject              *object;
@@ -418,8 +760,9 @@ lrg_data_loader_load_gfile (LrgDataLoader  *self,
     parser = yaml_parser_new ();
     path = g_file_get_path (file);
 
-    if (!yaml_parser_load_from_gfile (parser, file, cancellable, error))
+    if (!yaml_parser_load_from_gfile (parser, file, cancellable, &parse_error))
     {
+        g_propagate_error (error, g_steal_pointer (&parse_error));
         return NULL;
     }
 
@@ -459,6 +802,7 @@ lrg_data_loader_load_data (LrgDataLoader  *self,
                            GError        **error)
 {
     g_autoptr(YamlParser) parser = NULL;
+    g_autoptr(GError) parse_error = NULL;
     YamlNode             *root;
     GObject              *object;
 
@@ -467,8 +811,9 @@ lrg_data_loader_load_data (LrgDataLoader  *self,
 
     parser = yaml_parser_new ();
 
-    if (!yaml_parser_load_from_data (parser, data, length, error))
+    if (!yaml_parser_load_from_data (parser, data, length, &parse_error))
     {
+        g_propagate_error (error, g_steal_pointer (&parse_error));
         return NULL;
     }
 
@@ -505,6 +850,7 @@ lrg_data_loader_load_typed (LrgDataLoader  *self,
                             GError        **error)
 {
     g_autoptr(YamlParser) parser = NULL;
+    g_autoptr(GError) parse_error = NULL;
     YamlNode             *root;
     GObject              *object;
 
@@ -514,8 +860,9 @@ lrg_data_loader_load_typed (LrgDataLoader  *self,
 
     parser = yaml_parser_new ();
 
-    if (!yaml_parser_load_from_file (parser, path, error))
+    if (!yaml_parser_load_from_file (parser, path, &parse_error))
     {
+        g_propagate_error (error, g_steal_pointer (&parse_error));
         return NULL;
     }
 

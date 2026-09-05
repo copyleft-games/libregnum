@@ -14,6 +14,7 @@
  */
 
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <libregnum.h>
 
 /* ==========================================================================
@@ -314,6 +315,186 @@ test_settings_menu_state_unsaved_changes (void)
 /* ==========================================================================
  * Test Cases - LrgTemplateLoadingState Construction
  * ========================================================================== */
+
+static void
+count_loading_complete (LrgTemplateLoadingState *state,
+                        guint                   *count)
+{
+    (*count)++;
+}
+
+static void
+count_loading_failed (LrgTemplateLoadingState *state,
+                      GError                  *error,
+                      guint                   *count)
+{
+    g_assert_nonnull (error);
+    (*count)++;
+}
+
+static void
+test_loading_state_missing_asset (void)
+{
+    g_autoptr(LrgTemplateLoadingState) state = lrg_template_loading_state_new ();
+    guint failed = 0;
+    guint complete = 0;
+
+    g_signal_connect (state, "failed", G_CALLBACK (count_loading_failed), &failed);
+    g_signal_connect (state, "complete", G_CALLBACK (count_loading_complete), &complete);
+    lrg_template_loading_state_set_minimum_display_time (state, 0.0);
+    lrg_template_loading_state_add_asset (state, "/missing-libregnum-asset.yaml");
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    g_assert_cmpuint (failed, ==, 1);
+    g_assert_cmpuint (complete, ==, 0);
+    g_assert_cmpuint (lrg_template_loading_state_get_completed_count (state), ==, 0);
+    g_assert_false (lrg_template_loading_state_is_complete (state));
+}
+
+static void
+test_loading_state_complete_once (void)
+{
+    g_autoptr(LrgTemplateLoadingState) state = lrg_template_loading_state_new ();
+    guint complete = 0;
+
+    g_signal_connect (state, "complete", G_CALLBACK (count_loading_complete), &complete);
+    lrg_template_loading_state_set_minimum_display_time (state, 0.0);
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    g_assert_cmpuint (complete, ==, 1);
+}
+
+static void
+record_loading_progress (LrgTemplateLoadingState *state,
+                         gdouble                  fraction,
+                         GArray                  *progress)
+{
+    g_array_append_val (progress, fraction);
+}
+
+static void
+test_loading_state_asset_cache (void)
+{
+    g_autoptr(LrgTemplateLoadingState) state = lrg_template_loading_state_new ();
+    g_autoptr(LrgAssetManager) manager = lrg_asset_manager_new ();
+    g_autoptr(LrgDataLoader) loader = lrg_data_loader_new ();
+    g_autoptr(LrgRegistry) registry = lrg_registry_new ();
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GArray) progress = g_array_new (FALSE, FALSE, sizeof (gdouble));
+    g_autofree gchar *directory = NULL;
+    g_autofree gchar *path = NULL;
+    guint complete = 0;
+    guint failed = 0;
+    GObject *asset;
+
+    directory = g_dir_make_tmp ("libregnum-loading-XXXXXX", &error);
+    g_assert_no_error (error);
+    path = g_build_filename (directory, "item.yaml", NULL);
+    g_assert_true (g_file_set_contents (path, "type: item\nid: sword\nvalue: 25\n", -1, &error));
+    lrg_registry_register (registry, "item", LRG_TYPE_ITEM_DEF);
+    lrg_data_loader_set_registry (loader, registry);
+    lrg_asset_manager_set_data_loader (manager, loader);
+    lrg_asset_manager_add_search_path (manager, directory);
+    lrg_template_loading_state_set_asset_manager (state, manager);
+    g_assert_true (lrg_template_loading_state_get_asset_manager (state) == manager);
+    lrg_template_loading_state_set_minimum_display_time (state, 0.5);
+    lrg_template_loading_state_add_asset (state, "item.yaml");
+    lrg_template_loading_state_add_asset (state, "item.yaml");
+    g_signal_connect (state, "complete", G_CALLBACK (count_loading_complete), &complete);
+    g_signal_connect (state, "failed", G_CALLBACK (count_loading_failed), &failed);
+    g_signal_connect (state, "progress", G_CALLBACK (record_loading_progress), progress);
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    g_assert_true (lrg_asset_manager_is_cached (manager, "item.yaml"));
+    asset = lrg_asset_manager_load_object (manager, "item.yaml", &error);
+    g_assert_no_error (error);
+    g_assert_cmpint (lrg_item_def_get_value (LRG_ITEM_DEF (asset)), ==, 25);
+    g_assert_cmpuint (lrg_template_loading_state_get_completed_count (state), ==, 1);
+    g_assert_cmpfloat (lrg_template_loading_state_get_progress (state), ==, 0.5);
+    /* Removing the file proves that the second task uses the loaded cache. */
+    g_assert_cmpint (g_remove (path), ==, 0);
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    g_assert_cmpuint (complete, ==, 0);
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.4);
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    g_assert_cmpuint (complete, ==, 1);
+    g_assert_cmpuint (failed, ==, 0);
+    g_assert_cmpuint (progress->len, ==, 2);
+    g_assert_cmpfloat (g_array_index (progress, gdouble, 0), ==, 0.5);
+    g_assert_cmpfloat (g_array_index (progress, gdouble, 1), ==, 1.0);
+    g_assert_true (lrg_template_loading_state_is_complete (state));
+    /* Clearing a finished queue makes the same state usable for a new load. */
+    lrg_template_loading_state_clear_tasks (state);
+    lrg_template_loading_state_add_asset (state, "missing.yaml");
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    g_assert_cmpuint (failed, ==, 1);
+    g_assert_cmpuint (complete, ==, 1);
+    g_assert_false (lrg_template_loading_state_is_complete (state));
+    g_rmdir (directory);
+}
+
+typedef struct
+{
+    LrgTemplateLoadingState *state;
+    guint *destroyed;
+} ClearTaskData;
+
+static void
+clear_task_data_free (gpointer data)
+{
+    ClearTaskData *task = data;
+
+    (*task->destroyed)++;
+    g_free (task);
+}
+
+static gboolean
+clear_queue_task (gpointer  data,
+                  GError  **error)
+{
+    ClearTaskData *task = data;
+    guint *destroyed = task->destroyed;
+    LrgTemplateLoadingState *state = task->state;
+
+    lrg_template_loading_state_clear_tasks (state);
+    g_assert_cmpuint (*destroyed, ==, 0);
+    lrg_template_loading_state_add_task (state, "Replacement", NULL, NULL, NULL);
+    return TRUE;
+}
+
+static void
+test_loading_state_callback_clear (void)
+{
+    g_autoptr(LrgTemplateLoadingState) state = lrg_template_loading_state_new ();
+    guint destroyed = 0;
+    ClearTaskData *task = g_new0 (ClearTaskData, 1);
+
+    task->state = state;
+    task->destroyed = &destroyed;
+    lrg_template_loading_state_add_task (state, "Clear queue", clear_queue_task,
+                                         task, clear_task_data_free);
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    g_assert_cmpuint (destroyed, ==, 1);
+    g_assert_cmpuint (lrg_template_loading_state_get_task_count (state), ==, 1);
+    g_assert_cmpuint (lrg_template_loading_state_get_completed_count (state), ==, 0);
+    lrg_game_state_update (LRG_GAME_STATE (state), 0.1);
+    g_assert_cmpuint (lrg_template_loading_state_get_completed_count (state), ==, 1);
+}
+
+static void
+test_loading_state_enter_lifetime (void)
+{
+    LrgTemplateLoadingState *state = lrg_template_loading_state_new ();
+    gpointer weak_state = state;
+
+    g_object_add_weak_pointer (G_OBJECT (state), &weak_state);
+    lrg_game_state_enter (LRG_GAME_STATE (state));
+    lrg_game_state_exit (LRG_GAME_STATE (state));
+    lrg_game_state_enter (LRG_GAME_STATE (state));
+    /* Owners may destroy an active state without an explicit exit. */
+    g_object_unref (state);
+    g_assert_null (weak_state);
+}
 
 static void
 test_loading_state_new (void)
@@ -739,6 +920,14 @@ main (int   argc,
                      test_states_inherit_from_game_state);
     g_test_add_func ("/template/states/derivable",
                      test_states_are_derivable);
+
+    g_test_add_func ("/template/states/loading/missing-asset", test_loading_state_missing_asset);
+    g_test_add_func ("/template/states/loading/complete-once", test_loading_state_complete_once);
+
+    g_test_add_func ("/template/states/loading/asset-cache", test_loading_state_asset_cache);
+
+    g_test_add_func ("/template/states/loading/callback-clear", test_loading_state_callback_clear);
+    g_test_add_func ("/template/states/loading/enter-lifetime", test_loading_state_enter_lifetime);
 
     return g_test_run ();
 }

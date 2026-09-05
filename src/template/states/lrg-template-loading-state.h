@@ -11,6 +11,7 @@
 
 #include <glib-object.h>
 #include <graylib.h>
+#include "../../core/lrg-asset-manager.h"
 #include "../../lrg-version.h"
 #include "../../gamestate/lrg-game-state.h"
 
@@ -112,12 +113,35 @@ lrg_template_loading_state_add_task (LrgTemplateLoadingState *self,
                                      GDestroyNotify           destroy);
 
 /**
+ * lrg_template_loading_state_set_asset_manager:
+ * @self: an #LrgTemplateLoadingState
+ * @manager: (nullable): asset manager, or %NULL to use the engine's manager
+ *
+ * Retains the manager used by asset tasks. Allows loading without an engine.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_template_loading_state_set_asset_manager (LrgTemplateLoadingState *self,
+                                                   LrgAssetManager         *manager);
+
+/**
+ * lrg_template_loading_state_get_asset_manager:
+ * @self: an #LrgTemplateLoadingState
+ *
+ * Returns: (transfer none) (nullable): the explicitly configured manager
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAssetManager * lrg_template_loading_state_get_asset_manager (LrgTemplateLoadingState *self);
+
+/**
  * lrg_template_loading_state_add_asset:
  * @self: an #LrgTemplateLoadingState
  * @asset_path: path to the asset file
  *
  * Adds an asset to load. This is a convenience method that uses
- * the asset manager to load the file.
+ * the asset manager to load and cache the file. See
+ * lrg_asset_manager_load_asset() for supported extensions. Each task is
+ * synchronous and runs on the update thread. Failure emits ::failed once
+ * and stops the queue; clear tasks or re-enter the state to retry.
  *
  * Since: 1.0
  */

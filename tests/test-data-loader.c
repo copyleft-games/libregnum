@@ -139,6 +139,129 @@ test_entity_init (TestEntity *self)
     self->speed = 1.0;
 }
 
+#define TEST_TYPE_VALIDATED (test_validated_get_type ())
+G_DECLARE_FINAL_TYPE (TestValidated, test_validated, TEST, VALIDATED, GObject)
+
+struct _TestValidated
+{
+    GObject parent_instance;
+    GBytes *payload;
+    gint level;
+    guint64 total;
+};
+
+static guint validated_decode_calls;
+static void test_validated_serializable_init (YamlSerializableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (TestValidated, test_validated, G_TYPE_OBJECT,
+                        G_IMPLEMENT_INTERFACE (YAML_TYPE_SERIALIZABLE,
+                                               test_validated_serializable_init))
+
+static void
+test_validated_finalize (GObject *object)
+{
+    TestValidated *self = TEST_VALIDATED (object);
+
+    g_clear_pointer (&self->payload, g_bytes_unref);
+    G_OBJECT_CLASS (test_validated_parent_class)->finalize (object);
+}
+
+static void
+test_validated_get_property (GObject    *object,
+                             guint       prop_id,
+                             GValue     *value,
+                             GParamSpec *pspec)
+{
+    TestValidated *self = TEST_VALIDATED (object);
+
+    switch (prop_id)
+    {
+    case 1: g_value_set_boxed (value, self->payload); break;
+    case 2: g_value_set_int (value, self->level); break;
+    case 3: g_value_set_uint64 (value, self->total); break;
+    default: G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static void
+test_validated_set_property (GObject      *object,
+                             guint         prop_id,
+                             const GValue *value,
+                             GParamSpec   *pspec)
+{
+    TestValidated *self = TEST_VALIDATED (object);
+
+    switch (prop_id)
+    {
+    case 1:
+        g_clear_pointer (&self->payload, g_bytes_unref);
+        self->payload = g_value_dup_boxed (value);
+        break;
+    case 2: self->level = g_value_get_int (value); break;
+    case 3: self->total = g_value_get_uint64 (value); break;
+    default: G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static gboolean
+test_validated_deserialize (YamlSerializable *serializable,
+                            const gchar      *name,
+                            GValue           *value,
+                            GParamSpec       *pspec,
+                            YamlNode         *node)
+{
+    validated_decode_calls++;
+    if (g_str_equal (name, "payload"))
+    {
+        const gchar *text = yaml_node_get_scalar (node);
+
+        if (text == NULL || g_str_equal (text, "reject"))
+            return FALSE;
+        g_value_take_boxed (value, g_bytes_new (text, strlen (text)));
+        return TRUE;
+    }
+    if (g_str_equal (name, "level"))
+    {
+        gint level = yaml_node_get_int (node);
+
+        if (level == 13)
+            return FALSE;
+        g_value_set_int (value, level == 7 ? 200 : level);
+        return TRUE;
+    }
+    return yaml_serializable_default_deserialize_property (serializable, name, value, pspec, node);
+}
+
+static void
+test_validated_serializable_init (YamlSerializableInterface *iface)
+{
+    iface->deserialize_property = test_validated_deserialize;
+}
+
+static void
+test_validated_class_init (TestValidatedClass *klass)
+{
+    GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+    object_class->finalize = test_validated_finalize;
+    object_class->get_property = test_validated_get_property;
+    object_class->set_property = test_validated_set_property;
+    g_object_class_install_property (object_class, 1,
+        g_param_spec_boxed ("payload", "Payload", "Custom payload", G_TYPE_BYTES,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+    g_object_class_install_property (object_class, 2,
+        g_param_spec_int ("level", "Level", "Custom level", 0, 100, 0,
+                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+    g_object_class_install_property (object_class, 3,
+        g_param_spec_uint64 ("total", "Total", "Unsigned total", 0, G_MAXUINT64, 0,
+                             G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+}
+
+static void
+test_validated_init (TestValidated *self)
+{
+}
+
 /* ==========================================================================
  * Test Fixtures
  * ========================================================================== */
@@ -161,6 +284,7 @@ loader_fixture_set_up (LoaderFixture *fixture,
 
     /* Register test type */
     lrg_registry_register (fixture->registry, "entity", TEST_TYPE_ENTITY);
+    lrg_registry_register (fixture->registry, "validated", TEST_TYPE_VALIDATED);
 
     /* Connect loader to registry */
     lrg_data_loader_set_registry (fixture->loader, fixture->registry);
@@ -541,6 +665,185 @@ test_data_loader_no_registry (void)
  * Main
  * ========================================================================== */
 
+static void
+test_data_loader_validated_properties (LoaderFixture *fixture,
+                                       gconstpointer  user_data)
+{
+    const gchar *invalid[] = {
+        "type: entity\nhealth: not-a-number\n",
+        "type: entity\nhealth: -1\n",
+        "type: entity\nhealth: 4294967296\n",
+        "type: entity\nspeed: NaN\n",
+        "type: entity\nspeed: 1.0junk\n",
+        "type: entity\nname: {mapping: invalid}\n",
+        "type: entity\nunknown-property: value\n"
+    };
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GObject) object = NULL;
+    g_autofree gchar *path = NULL;
+    guint i;
+
+    path = write_test_file (fixture, "validated.yaml", "type: entity\nhealth: 125\nspeed: 2.5\n");
+    object = lrg_data_loader_load_file_validated (fixture->loader, path, &error);
+    g_assert_no_error (error);
+    g_assert_true (TEST_IS_ENTITY (object));
+    g_assert_cmpint (TEST_ENTITY (object)->health, ==, 125);
+    g_assert_cmpfloat (TEST_ENTITY (object)->speed, ==, 2.5);
+    g_clear_object (&object);
+    for (i = 0; i < G_N_ELEMENTS (invalid); i++)
+    {
+        g_assert_true (g_file_set_contents (path, invalid[i], -1, &error));
+        object = lrg_data_loader_load_file_validated (fixture->loader, path, &error);
+        g_assert_null (object);
+        g_assert_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_PROPERTY);
+        g_clear_error (&error);
+    }
+    g_assert_true (g_file_set_contents (path, "type: entity\nhealth: [\n", -1, &error));
+    g_assert_null (lrg_data_loader_load_file_validated (fixture->loader, path, NULL));
+
+    /* Existing permissive APIs remain compatible. */
+    object = lrg_data_loader_load_data (fixture->loader,
+                                      "type: entity\nextra-field: ignored\n", -1, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (object);
+}
+
+static void
+test_data_loader_invalid_without_error (LoaderFixture *fixture,
+                                        gconstpointer  user_data)
+{
+    const gchar *invalid = "type: entity\nhealth: [\n";
+    g_autofree gchar *path = write_test_file (fixture, "invalid.yaml", invalid);
+    g_autoptr(GFile) file = g_file_new_for_path (path);
+
+    g_assert_null (lrg_data_loader_load_data (fixture->loader, invalid, -1, NULL));
+    g_assert_null (lrg_data_loader_load_file (fixture->loader, path, NULL));
+    g_assert_null (lrg_data_loader_load_gfile (fixture->loader, file, NULL, NULL));
+    g_assert_null (lrg_data_loader_load_typed (fixture->loader, TEST_TYPE_ENTITY, path, NULL));
+}
+
+static void
+test_data_loader_validated_null (LoaderFixture *fixture,
+                                 gconstpointer  user_data)
+{
+    g_autofree gchar *path = write_test_file (fixture, "null.yaml", "type: entity\nhealth: null\n");
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GObject) object = NULL;
+
+    object = lrg_data_loader_load_file_validated (fixture->loader, path, &error);
+    g_assert_null (object);
+    g_assert_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_PROPERTY);
+}
+
+static void
+test_data_loader_custom_once (LoaderFixture *fixture,
+                              gconstpointer  user_data)
+{
+    g_autofree gchar *path = write_test_file (fixture, "custom.yaml", "type: validated\npayload: hello\n");
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GObject) object = NULL;
+
+    validated_decode_calls = 0;
+    object = lrg_data_loader_load_file_validated (fixture->loader, path, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (object);
+    g_assert_cmpuint (validated_decode_calls, ==, 1);
+    g_assert_cmpmem (g_bytes_get_data (TEST_VALIDATED (object)->payload, NULL),
+                     g_bytes_get_size (TEST_VALIDATED (object)->payload), "hello", 5);
+}
+
+static void
+test_data_loader_custom_reject (LoaderFixture *fixture,
+                                gconstpointer  user_data)
+{
+    g_autofree gchar *path = write_test_file (fixture, "custom.yaml", "type: validated\nlevel: 13\n");
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GObject) object = NULL;
+
+    validated_decode_calls = 0;
+    object = lrg_data_loader_load_file_validated (fixture->loader, path, &error);
+    g_assert_null (object);
+    g_assert_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_PROPERTY);
+    g_assert_cmpuint (validated_decode_calls, ==, 1);
+}
+
+static void
+test_data_loader_custom_range (LoaderFixture *fixture,
+                               gconstpointer  user_data)
+{
+    g_autofree gchar *path = write_test_file (fixture, "custom.yaml", "type: validated\nlevel: 7\n");
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GObject) object = NULL;
+
+    object = lrg_data_loader_load_file_validated (fixture->loader, path, &error);
+    g_assert_null (object);
+    g_assert_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_PROPERTY);
+}
+
+static void
+test_data_loader_uint64_boundaries (LoaderFixture *fixture,
+                                    gconstpointer  user_data)
+{
+    g_autofree gchar *path = write_test_file (fixture, "unsigned.yaml",
+        "type: validated\ntotal: 9223372036854775807\n");
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GObject) object = NULL;
+
+    object = lrg_data_loader_load_file_validated (fixture->loader, path, &error);
+    g_assert_no_error (error);
+    g_assert_cmpuint (TEST_VALIDATED (object)->total, ==, G_MAXINT64);
+    g_clear_object (&object);
+    g_assert_true (g_file_set_contents (path,
+        "type: validated\ntotal: 9223372036854775808\n", -1, &error));
+    object = lrg_data_loader_load_file_validated (fixture->loader, path, &error);
+    g_assert_null (object);
+    g_assert_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_PROPERTY);
+}
+
+static void
+test_data_loader_custom_retention (LoaderFixture *fixture,
+                                   gconstpointer  user_data)
+{
+    const gchar *invalid[] = {
+        "type: validated\npayload: reject\n",
+        "type: validated\nlevel: 13\n",
+        "type: validated\nlevel: 7\n",
+        "type: validated\nlevel: null\n"
+    };
+    g_autofree gchar *path = write_test_file (fixture, "retained.yaml",
+        "type: validated\npayload: original\nlevel: 5\n");
+    g_autoptr(LrgAssetManager) manager = lrg_asset_manager_new ();
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GObject) original = NULL;
+    GObject *replacement;
+    guint i;
+
+    lrg_asset_manager_set_data_loader (manager, fixture->loader);
+    original = g_object_ref (lrg_asset_manager_load_object (manager, path, &error));
+    g_assert_no_error (error);
+    for (i = 0; i < G_N_ELEMENTS (invalid); i++)
+    {
+        g_assert_true (g_file_set_contents (path, invalid[i], -1, &error));
+        validated_decode_calls = 0;
+        g_assert_false (lrg_asset_manager_reload_object (manager, path, &error));
+        g_assert_error (error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_PROPERTY);
+        g_clear_error (&error);
+        g_assert_cmpuint (validated_decode_calls, <=, 1);
+        g_assert_true (lrg_asset_manager_load_object (manager, path, NULL) == original);
+        g_assert_cmpint (TEST_VALIDATED (original)->level, ==, 5);
+    }
+    g_assert_true (g_file_set_contents (path,
+        "type: validated\npayload: replacement\nlevel: 6\n", -1, &error));
+    validated_decode_calls = 0;
+    g_assert_true (lrg_asset_manager_reload_object (manager, path, &error));
+    g_assert_no_error (error);
+    g_assert_cmpuint (validated_decode_calls, ==, 2);
+    replacement = lrg_asset_manager_load_object (manager, path, NULL);
+    g_assert_true (replacement != original);
+    g_assert_cmpint (TEST_VALIDATED (replacement)->level, ==, 6);
+    g_assert_cmpint (TEST_VALIDATED (original)->level, ==, 5);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -628,6 +931,26 @@ main (int   argc,
 
     /* No registry */
     g_test_add_func ("/data-loader/no-registry", test_data_loader_no_registry);
+
+    g_test_add ("/data-loader/validated/properties", LoaderFixture, NULL,
+                loader_fixture_set_up, test_data_loader_validated_properties, loader_fixture_tear_down);
+
+    g_test_add ("/data-loader/invalid-without-error", LoaderFixture, NULL,
+                loader_fixture_set_up, test_data_loader_invalid_without_error, loader_fixture_tear_down);
+
+    g_test_add ("/data-loader/validated/null", LoaderFixture, NULL,
+                loader_fixture_set_up, test_data_loader_validated_null, loader_fixture_tear_down);
+    g_test_add ("/data-loader/validated/custom-once", LoaderFixture, NULL,
+                loader_fixture_set_up, test_data_loader_custom_once, loader_fixture_tear_down);
+    g_test_add ("/data-loader/validated/custom-reject", LoaderFixture, NULL,
+                loader_fixture_set_up, test_data_loader_custom_reject, loader_fixture_tear_down);
+    g_test_add ("/data-loader/validated/custom-range", LoaderFixture, NULL,
+                loader_fixture_set_up, test_data_loader_custom_range, loader_fixture_tear_down);
+    g_test_add ("/data-loader/validated/uint64-boundaries", LoaderFixture, NULL,
+                loader_fixture_set_up, test_data_loader_uint64_boundaries, loader_fixture_tear_down);
+
+    g_test_add ("/data-loader/validated/custom-retention", LoaderFixture, NULL,
+                loader_fixture_set_up, test_data_loader_custom_retention, loader_fixture_tear_down);
 
     return g_test_run ();
 }

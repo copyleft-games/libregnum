@@ -413,54 +413,39 @@ my_settings_create_custom_tab (LrgTemplateSettingsMenuState *self,
 :PROPERTIES:
 :CUSTOM_ID: loading-state
 :END:
-=LrgTemplateLoadingState= provides a loading screen with progress indication.
+=LrgTemplateLoadingState= executes one synchronous task per update. Successful
+tasks advance its progress bar; failures stop the queue and emit =failed=.
+After every task succeeds and the minimum display time elapses, =complete=
+fires once. A single expensive task can still delay a frame.
 
-*** Features
-:PROPERTIES:
-:CUSTOM_ID: features-3
-:END:
-- Progress bar (0.0 to 1.0)
-- Loading text with optional details
-- Spinner animation
-- Minimum display time option
-- Background task support
+See [[file:states/loading.org][Loading state asset integration]] for manager injection, supported formats,
+reload behavior, and retry semantics.
 
 *** Properties
 :PROPERTIES:
 :CUSTOM_ID: properties-3
 :END:
-| Property            | Type    | Default      | Description                |
-|---------------------+---------+--------------+----------------------------|
-| =progress=          | float   | 0.0          | Loading progress (0.0-1.0) |
-| =message=           | string  | "Loading..." | Main loading text          |
-| =detail=            | string  | NULL         | Detail text below progress |
-| =show-progress-bar= | boolean | TRUE         | Show progress bar          |
-| =show-spinner=      | boolean | TRUE         | Show loading spinner       |
-| =min-display-time=  | float   | 0.5          | Minimum seconds to display |
+| Property               | Type    | Default      | Description                         |
+|------------------------+---------+--------------+-------------------------------------|
+| =progress=             | double  | 0.0          | Read-only successful-task fraction   |
+| =status-text=          | string  | "Loading..." | Main loading text                   |
+| =show-progress-bar=    | boolean | TRUE         | Show progress bar                   |
+| =show-percentage=      | boolean | TRUE         | Show numeric progress               |
+| =minimum-display-time= | double  | 0.5          | Minimum seconds before completion   |
 
 *** Example: Asset Loading
 :PROPERTIES:
 :CUSTOM_ID: example-asset-loading
 :END:
 #+begin_src C
-/* Create loading screen */
 LrgTemplateLoadingState *loading = lrg_template_loading_state_new ();
-lrg_template_loading_state_set_message (loading, "Loading Level...");
+lrg_template_loading_state_set_status_text (loading, "Loading Level...");
+lrg_template_loading_state_set_asset_manager (loading, assets);
+lrg_template_loading_state_add_asset (loading, "levels/intro.yaml");
+lrg_template_loading_state_add_asset (loading, "textures/player.png");
 
-/* Push state */
+/* Connect complete/failed handlers before pushing. The manager owns loading. */
 lrg_game_state_manager_push (manager, LRG_GAME_STATE (loading));
-
-/* Update progress as assets load */
-for (gint i = 0; i < asset_count; i++)
-{
-    load_asset (assets[i]);
-    gfloat progress = (gfloat) (i + 1) / (gfloat) asset_count;
-    lrg_template_loading_state_set_progress (loading, progress);
-    lrg_template_loading_state_set_detail (loading, assets[i]->name);
-}
-
-/* Pop when done */
-lrg_game_state_manager_pop (manager);
 #+end_src
 
 ** Error State

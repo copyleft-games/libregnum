@@ -15,6 +15,7 @@
 #include "../../ui/lrg-widget.h"
 #include "../../ui/lrg-container.h"
 #include "../../core/lrg-engine.h"
+#include "../../core/lrg-asset-manager.h"
 #include "../../graphics/lrg-window.h"
 #include "../../lrg-log.h"
 
@@ -26,14 +27,14 @@
  * #LrgTemplateLoadingState provides a loading screen that:
  * - Displays a progress bar
  * - Shows current task name
- * - Executes one loading task per frame (non-blocking)
+ * - Executes one synchronous loading task per frame
  * - Supports minimum display time
  * - Emits signals on completion/failure
  *
  * ## Task Execution
  *
- * Loading tasks are executed one per frame to avoid blocking the UI.
- * This keeps the progress bar responsive.
+ * Loading tasks run synchronously, one per frame. Progress updates between
+ * tasks; a single expensive task can still delay a frame.
  *
  * ## Minimum Display Time
  *
@@ -47,6 +48,7 @@
 
 typedef struct
 {
+    guint            ref_count;
     gchar           *name;
     LrgLoadingTask   task;
     gpointer         user_data;
@@ -58,8 +60,12 @@ typedef struct _LrgTemplateLoadingStatePrivate
 {
     /* Tasks */
     GPtrArray       *tasks;
+    LrgAssetManager *asset_manager;
+    gboolean         loading_failed;
+    gboolean         completion_emitted;
     guint            current_task_index;
     guint            completed_count;
+    guint            task_generation;
 
     /* Timing */
     gdouble          minimum_display_time;
@@ -126,6 +132,7 @@ loading_task_entry_new (const gchar    *name,
     LoadingTaskEntry *entry;
 
     entry = g_new0 (LoadingTaskEntry, 1);
+    entry->ref_count = 1;
     entry->name = g_strdup (name);
     entry->task = task;
     entry->user_data = user_data;
@@ -138,7 +145,7 @@ loading_task_entry_new (const gchar    *name,
 static void
 loading_task_entry_free (LoadingTaskEntry *entry)
 {
-    if (entry == NULL)
+    if (entry == NULL || --entry->ref_count != 0)
         return;
 
     g_free (entry->name);
@@ -146,6 +153,8 @@ loading_task_entry_free (LoadingTaskEntry *entry)
         entry->destroy (entry->user_data);
     g_free (entry);
 }
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (LoadingTaskEntry, loading_task_entry_free)
 
 static void
 update_ui (LrgTemplateLoadingState *self)
@@ -188,7 +197,8 @@ execute_next_task (LrgTemplateLoadingState *self)
 {
     LrgTemplateLoadingStatePrivate *priv;
     LrgTemplateLoadingStateClass *klass;
-    LoadingTaskEntry *entry;
+    g_autoptr(LoadingTaskEntry) entry = NULL;
+    guint generation;
     g_autoptr(GError) error = NULL;
     gboolean success;
 
@@ -203,6 +213,8 @@ execute_next_task (LrgTemplateLoadingState *self)
     }
 
     entry = g_ptr_array_index (priv->tasks, priv->current_task_index);
+    entry->ref_count++;
+    generation = priv->task_generation;
 
     lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Loading: executing task '%s' (%u/%u)",
                    entry->name, priv->current_task_index + 1, priv->tasks->len);
@@ -217,9 +229,18 @@ execute_next_task (LrgTemplateLoadingState *self)
         success = TRUE;  /* NULL task = no-op */
     }
 
+    /* A callback can replace the queue; its entry stays alive until return. */
+    if (generation != priv->task_generation)
+        return success;
+
     if (!success)
     {
-        lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Loading task '%s' failed: %s",
+        priv->loading_failed = TRUE;
+        if (error == NULL)
+            g_set_error_literal (&error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                 "Loading task failed without an error");
+
+        lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Loading task '%s' failed: %s",
                          entry->name, error ? error->message : "Unknown error");
 
         if (klass->on_failed != NULL)
@@ -231,6 +252,8 @@ execute_next_task (LrgTemplateLoadingState *self)
     entry->completed = TRUE;
     priv->completed_count++;
     priv->current_task_index++;
+
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PROGRESS]);
 
     /* Emit progress signal */
     g_signal_emit (self, signals[SIGNAL_PROGRESS], 0,
@@ -262,7 +285,7 @@ static void
 lrg_template_loading_state_real_on_failed (LrgTemplateLoadingState *self,
                                            GError                  *error)
 {
-    lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Loading failed: %s",
+    lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Loading failed: %s",
                      error ? error->message : "Unknown error");
     g_signal_emit (self, signals[SIGNAL_FAILED], 0, error);
 }
@@ -286,10 +309,13 @@ lrg_template_loading_state_enter (LrgGameState *state)
                    priv->tasks->len);
 
     /* Reset state */
+    priv->task_generation++;
     priv->current_task_index = 0;
     priv->completed_count = 0;
     priv->elapsed_time = 0.0;
     priv->loading_complete = FALSE;
+    priv->loading_failed = FALSE;
+    priv->completion_emitted = FALSE;
     priv->minimum_time_reached = FALSE;
 
     /* Create UI */
@@ -341,6 +367,7 @@ lrg_template_loading_state_enter (LrgGameState *state)
         LrgWidget *spacer = g_object_new (LRG_TYPE_WIDGET, NULL);
         lrg_widget_set_height (spacer, 20.0f);
         lrg_container_add_child (LRG_CONTAINER (priv->container), spacer);
+        g_object_unref (spacer);
     }
 
     if (priv->show_progress_bar)
@@ -354,6 +381,7 @@ lrg_template_loading_state_enter (LrgGameState *state)
         LrgWidget *spacer = g_object_new (LRG_TYPE_WIDGET, NULL);
         lrg_widget_set_height (spacer, 10.0f);
         lrg_container_add_child (LRG_CONTAINER (priv->container), spacer);
+        g_object_unref (spacer);
     }
 
     if (priv->show_percentage)
@@ -367,6 +395,7 @@ lrg_template_loading_state_enter (LrgGameState *state)
         LrgWidget *spacer = g_object_new (LRG_TYPE_WIDGET, NULL);
         lrg_widget_set_height (spacer, 10.0f);
         lrg_container_add_child (LRG_CONTAINER (priv->container), spacer);
+        g_object_unref (spacer);
     }
 
     lrg_container_add_child (LRG_CONTAINER (priv->container),
@@ -406,6 +435,8 @@ lrg_template_loading_state_update (LrgGameState *state,
     LrgTemplateLoadingState *self = LRG_TEMPLATE_LOADING_STATE (state);
     LrgTemplateLoadingStatePrivate *priv;
     LrgTemplateLoadingStateClass *klass;
+    g_autoptr(LrgTemplateLoadingState) keep_alive = g_object_ref (self);
+    guint generation;
 
     priv = lrg_template_loading_state_get_instance_private (self);
     klass = LRG_TEMPLATE_LOADING_STATE_GET_CLASS (self);
@@ -416,15 +447,22 @@ lrg_template_loading_state_update (LrgGameState *state,
     if (priv->elapsed_time >= priv->minimum_display_time)
         priv->minimum_time_reached = TRUE;
 
+    generation = priv->task_generation;
+
     /* Execute one task per frame */
-    if (!priv->loading_complete)
+    if (!priv->loading_complete && !priv->loading_failed)
     {
         execute_next_task (self);
     }
 
+    if (generation != priv->task_generation)
+        return;
+
     /* Check if we can signal completion */
-    if (priv->loading_complete && priv->minimum_time_reached)
+    if (priv->loading_complete && priv->minimum_time_reached &&
+        !priv->completion_emitted)
     {
+        priv->completion_emitted = TRUE;
         if (klass->on_complete != NULL)
             klass->on_complete (self);
     }
@@ -551,8 +589,14 @@ lrg_template_loading_state_finalize (GObject *object)
     priv = lrg_template_loading_state_get_instance_private (self);
 
     g_clear_pointer (&priv->tasks, g_ptr_array_unref);
+    g_clear_object (&priv->asset_manager);
     g_clear_pointer (&priv->background_color, grl_color_free);
     g_clear_pointer (&priv->status_text, g_free);
+    g_clear_object (&priv->status_label);
+    g_clear_object (&priv->task_label);
+    g_clear_object (&priv->progress_bar);
+    g_clear_object (&priv->percent_label);
+    g_clear_object (&priv->container);
     g_clear_object (&priv->canvas);
 
     G_OBJECT_CLASS (lrg_template_loading_state_parent_class)->finalize (object);
@@ -733,6 +777,8 @@ lrg_template_loading_state_init (LrgTemplateLoadingState *self)
     priv->minimum_display_time = DEFAULT_MINIMUM_DISPLAY_TIME;
     priv->elapsed_time = 0.0;
     priv->loading_complete = FALSE;
+    priv->loading_failed = FALSE;
+    priv->completion_emitted = FALSE;
     priv->minimum_time_reached = FALSE;
 
     priv->background_color = NULL;
@@ -783,20 +829,81 @@ lrg_template_loading_state_add_task (LrgTemplateLoadingState *self,
     lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Added loading task: %s", name);
 }
 
+typedef struct
+{
+    LrgTemplateLoadingState *state; /* Owned by the state's task array */
+    gchar *path;
+} AssetTask;
+
+static void
+asset_task_free (gpointer data)
+{
+    AssetTask *task = data;
+
+    g_free (task->path);
+    g_free (task);
+}
+
+static gboolean
+load_asset_task (gpointer  data,
+                 GError  **error)
+{
+    AssetTask *task = data;
+    LrgTemplateLoadingStatePrivate *priv;
+    LrgAssetManager *manager;
+
+    priv = lrg_template_loading_state_get_instance_private (task->state);
+    manager = priv->asset_manager;
+    if (manager == NULL)
+        manager = lrg_engine_get_asset_manager (lrg_engine_get_default ());
+
+    if (manager == NULL)
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                             "No asset manager: start the engine or set an asset manager");
+        return FALSE;
+    }
+
+    return lrg_asset_manager_load_asset (manager, task->path, error) != NULL;
+}
+
+void
+lrg_template_loading_state_set_asset_manager (LrgTemplateLoadingState *self,
+                                             LrgAssetManager         *manager)
+{
+    LrgTemplateLoadingStatePrivate *priv;
+
+    g_return_if_fail (LRG_IS_TEMPLATE_LOADING_STATE (self));
+    g_return_if_fail (manager == NULL || LRG_IS_ASSET_MANAGER (manager));
+
+    priv = lrg_template_loading_state_get_instance_private (self);
+    g_set_object (&priv->asset_manager, manager);
+}
+
+LrgAssetManager *
+lrg_template_loading_state_get_asset_manager (LrgTemplateLoadingState *self)
+{
+    LrgTemplateLoadingStatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_TEMPLATE_LOADING_STATE (self), NULL);
+    priv = lrg_template_loading_state_get_instance_private (self);
+    return priv->asset_manager;
+}
+
 void
 lrg_template_loading_state_add_asset (LrgTemplateLoadingState *self,
                                       const gchar             *asset_path)
 {
+    AssetTask *task;
+
     g_return_if_fail (LRG_IS_TEMPLATE_LOADING_STATE (self));
     g_return_if_fail (asset_path != NULL);
 
-    /* For now, just add a placeholder task */
-    /* TODO: Integrate with asset manager */
-    lrg_template_loading_state_add_task (self,
-                                         asset_path,
-                                         NULL,  /* NULL task = immediate success */
-                                         NULL,
-                                         NULL);
+    task = g_new0 (AssetTask, 1);
+    task->state = self;
+    task->path = g_strdup (asset_path);
+    lrg_template_loading_state_add_task (self, asset_path, load_asset_task,
+                                         task, asset_task_free);
 }
 
 void
@@ -808,9 +915,14 @@ lrg_template_loading_state_clear_tasks (LrgTemplateLoadingState *self)
 
     priv = lrg_template_loading_state_get_instance_private (self);
 
+    priv->task_generation++;
     g_ptr_array_set_size (priv->tasks, 0);
     priv->current_task_index = 0;
     priv->completed_count = 0;
+    priv->loading_complete = FALSE;
+    priv->loading_failed = FALSE;
+    priv->completion_emitted = FALSE;
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PROGRESS]);
 }
 
 guint

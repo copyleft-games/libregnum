@@ -12,6 +12,8 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_CORE
 
 #include "lrg-asset-manager.h"
+#include "lrg-data-loader.h"
+#include <raylib.h>
 #include "../lrg-log.h"
 
 typedef struct
@@ -20,10 +22,67 @@ typedef struct
     GHashTable *texture_cache;   /* gchar* -> GrlTexture* */
     GHashTable *font_cache;      /* gchar* (name:size) -> GrlFont* */
     GHashTable *sound_cache;     /* gchar* -> GrlSound* */
+    LrgDataLoader *data_loader;
+    GHashTable *object_cache;
+    GHashTable *object_watches;
     GHashTable *music_cache;     /* gchar* -> GrlMusic* */
 } LrgAssetManagerPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgAssetManager, lrg_asset_manager, G_TYPE_OBJECT)
+
+typedef struct
+{
+    GObject *object;
+    gchar *path;
+} ObjectAsset;
+
+typedef struct
+{
+    LrgAssetManager *manager;
+    gchar *name;
+    GFile *file;
+    GFileMonitor *monitor;
+    GMainContext *context;
+    GSource *pending;
+} ObjectWatch;
+
+enum
+{
+    OBJECT_RELOADED,
+    OBJECT_RELOAD_FAILED,
+    N_ASSET_SIGNALS
+};
+
+static guint asset_signals[N_ASSET_SIGNALS];
+
+static void
+object_asset_free (gpointer data)
+{
+    ObjectAsset *asset = data;
+
+    g_object_unref (asset->object);
+    g_free (asset->path);
+    g_free (asset);
+}
+
+static void
+object_watch_free (gpointer data)
+{
+    ObjectWatch *watch = data;
+
+    if (watch->pending != NULL)
+    {
+        g_source_destroy (watch->pending);
+        g_source_unref (watch->pending);
+    }
+    g_signal_handlers_disconnect_by_data (watch->monitor, watch);
+    g_file_monitor_cancel (watch->monitor);
+    g_object_unref (watch->monitor);
+    g_object_unref (watch->file);
+    g_main_context_unref (watch->context);
+    g_free (watch->name);
+    g_free (watch);
+}
 
 /* ==========================================================================
  * Private Helpers
@@ -47,6 +106,9 @@ resolve_asset_path (LrgAssetManager *self,
     guint                   i;
 
     priv = lrg_asset_manager_get_instance_private (self);
+
+    if (g_path_is_absolute (name))
+        return g_file_test (name, G_FILE_TEST_IS_REGULAR) ? g_strdup (name) : NULL;
 
     /* Search in reverse order (last path has highest priority) */
     for (i = priv->search_paths->len; i > 0; i--)
@@ -116,6 +178,13 @@ lrg_asset_manager_real_load_texture (LrgAssetManager  *self,
         return NULL;
     }
 
+    if (!IsWindowReady ())
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                             "A graphics context is required to load this asset");
+        return NULL;
+    }
+
     /* Load texture */
     texture = grl_texture_new_from_file (path);
     if (texture == NULL || !grl_texture_is_valid (texture))
@@ -172,10 +241,18 @@ lrg_asset_manager_real_load_font (LrgAssetManager  *self,
         return NULL;
     }
 
+    if (!IsWindowReady ())
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                             "A graphics context is required to load this asset");
+        return NULL;
+    }
+
     /* Load font */
     font = grl_font_new_from_file_ex (path, size, NULL, 0);
-    if (font == NULL)
+    if (font == NULL || !grl_font_is_valid (font))
     {
+        g_clear_object (&font);
         g_set_error (error,
                      LRG_ASSET_MANAGER_ERROR,
                      LRG_ASSET_MANAGER_ERROR_LOAD_FAILED,
@@ -300,6 +377,9 @@ lrg_asset_manager_finalize (GObject *object)
     LrgAssetManager        *self = LRG_ASSET_MANAGER (object);
     LrgAssetManagerPrivate *priv = lrg_asset_manager_get_instance_private (self);
 
+    g_clear_pointer (&priv->object_watches, g_hash_table_unref);
+    g_clear_pointer (&priv->object_cache, g_hash_table_unref);
+    g_clear_object (&priv->data_loader);
     g_clear_pointer (&priv->search_paths, g_ptr_array_unref);
     g_clear_pointer (&priv->texture_cache, g_hash_table_unref);
     g_clear_pointer (&priv->font_cache, g_hash_table_unref);
@@ -316,6 +396,33 @@ lrg_asset_manager_class_init (LrgAssetManagerClass *klass)
 
     object_class->finalize = lrg_asset_manager_finalize;
 
+    /**
+     * LrgAssetManager::object-reloaded:
+     * @self: the asset manager
+     * @name: cached asset name
+     * @previous: previous definition, valid during signal emission
+     * @replacement: replacement definition already in the cache
+     *
+     * Consumers can retain @replacement and release their previous reference.
+     */
+    asset_signals[OBJECT_RELOADED] =
+        g_signal_new ("object-reloaded", G_TYPE_FROM_CLASS (klass),
+                      G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 3,
+                      G_TYPE_STRING, G_TYPE_OBJECT, G_TYPE_OBJECT);
+
+    /**
+     * LrgAssetManager::object-reload-failed:
+     * @self: the asset manager
+     * @name: cached asset name
+     * @error: reload failure; the previous definition remains cached
+     *
+     * Emitted for explicit and monitored reload failures.
+     */
+    asset_signals[OBJECT_RELOAD_FAILED] =
+        g_signal_new ("object-reload-failed", G_TYPE_FROM_CLASS (klass),
+                      G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 2,
+                      G_TYPE_STRING, G_TYPE_ERROR);
+
     /* Set default virtual method implementations */
     klass->load_texture = lrg_asset_manager_real_load_texture;
     klass->load_font = lrg_asset_manager_real_load_font;
@@ -328,6 +435,10 @@ lrg_asset_manager_init (LrgAssetManager *self)
 {
     LrgAssetManagerPrivate *priv = lrg_asset_manager_get_instance_private (self);
 
+    priv->object_cache = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                                g_free, object_asset_free);
+    priv->object_watches = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                                  g_free, object_watch_free);
     priv->search_paths = g_ptr_array_new_with_free_func (g_free);
     priv->texture_cache = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                   g_free, g_object_unref);
@@ -570,6 +681,269 @@ lrg_asset_manager_load_music (LrgAssetManager  *self,
     return klass->load_music (self, name, error);
 }
 
+void
+lrg_asset_manager_set_data_loader (LrgAssetManager *self,
+                                    LrgDataLoader   *loader)
+{
+    LrgAssetManagerPrivate *priv;
+
+    g_return_if_fail (LRG_IS_ASSET_MANAGER (self));
+    g_return_if_fail (loader == NULL || LRG_IS_DATA_LOADER (loader));
+    priv = lrg_asset_manager_get_instance_private (self);
+    if (priv->data_loader == loader)
+        return;
+    g_hash_table_remove_all (priv->object_watches);
+    g_hash_table_remove_all (priv->object_cache);
+    g_set_object (&priv->data_loader, loader);
+}
+
+LrgDataLoader *
+lrg_asset_manager_get_data_loader (LrgAssetManager *self)
+{
+    LrgAssetManagerPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), NULL);
+    priv = lrg_asset_manager_get_instance_private (self);
+    return priv->data_loader;
+}
+
+GObject *
+lrg_asset_manager_load_object (LrgAssetManager  *self,
+                                const gchar      *name,
+                                GError          **error)
+{
+    LrgAssetManagerPrivate *priv;
+    ObjectAsset *asset;
+    g_autofree gchar *path = NULL;
+    g_autoptr(GObject) object = NULL;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+    priv = lrg_asset_manager_get_instance_private (self);
+    asset = g_hash_table_lookup (priv->object_cache, name);
+    if (asset != NULL)
+        return asset->object;
+
+    if (priv->data_loader == NULL)
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                             "No data loader configured for YAML assets");
+        return NULL;
+    }
+    path = resolve_asset_path (self, name);
+    if (path == NULL)
+    {
+        g_set_error (error, LRG_ASSET_MANAGER_ERROR,
+                     LRG_ASSET_MANAGER_ERROR_NOT_FOUND, "Definition not found: %s", name);
+        return NULL;
+    }
+    object = lrg_data_loader_load_file_validated (priv->data_loader, path, error);
+    if (object == NULL)
+        return NULL;
+    asset = g_new0 (ObjectAsset, 1);
+    asset->object = g_steal_pointer (&object);
+    asset->path = g_canonicalize_filename (path, NULL);
+    g_hash_table_insert (priv->object_cache, g_strdup (name), asset);
+    return asset->object;
+}
+
+gboolean
+lrg_asset_manager_reload_object (LrgAssetManager  *self,
+                                  const gchar      *name,
+                                  GError          **error)
+{
+    LrgAssetManagerPrivate *priv;
+    ObjectAsset *asset;
+    g_autoptr(GObject) replacement = NULL;
+    g_autoptr(GObject) previous = NULL;
+    g_autoptr(GError) local_error = NULL;
+    g_autoptr(LrgAssetManager) keep_alive = NULL;
+    g_autofree gchar *signal_name = NULL;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+    keep_alive = g_object_ref (self);
+    signal_name = g_strdup (name);
+    priv = lrg_asset_manager_get_instance_private (self);
+    asset = g_hash_table_lookup (priv->object_cache, name);
+    if (asset == NULL)
+    {
+        g_set_error (&local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                     "Definition is not cached: %s", name);
+    }
+    else
+    {
+        replacement = lrg_data_loader_load_file_validated (priv->data_loader,
+                                                           asset->path, &local_error);
+        if (replacement != NULL && G_OBJECT_TYPE (replacement) != G_OBJECT_TYPE (asset->object))
+        {
+            g_set_error (&local_error, LRG_DATA_LOADER_ERROR,
+                         LRG_DATA_LOADER_ERROR_TYPE,
+                         "Reload cannot change definition type from %s to %s",
+                         G_OBJECT_TYPE_NAME (asset->object), G_OBJECT_TYPE_NAME (replacement));
+            g_clear_object (&replacement);
+        }
+    }
+    if (replacement == NULL && local_error == NULL)
+        g_set_error_literal (&local_error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                             "Definition loader returned no object");
+    if (local_error != NULL)
+    {
+        g_signal_emit (self, asset_signals[OBJECT_RELOAD_FAILED], 0, signal_name, local_error);
+        g_propagate_error (error, g_steal_pointer (&local_error));
+        return FALSE;
+    }
+    previous = g_object_ref (asset->object);
+    g_set_object (&asset->object, replacement);
+    g_signal_emit (self, asset_signals[OBJECT_RELOADED], 0,
+                   signal_name, previous, replacement);
+    return TRUE;
+}
+
+static gboolean
+reload_watched_object (gpointer data)
+{
+    ObjectWatch *watch = data;
+    g_autoptr(LrgAssetManager) manager = g_object_ref (watch->manager);
+    g_autofree gchar *name = g_strdup (watch->name);
+    g_autoptr(GError) error = NULL;
+    GSource *source = watch->pending;
+
+    watch->pending = NULL;
+    g_source_unref (source);
+    /* Signal handlers may unwatch/unload this definition or release the manager. */
+    lrg_asset_manager_reload_object (manager, name, &error);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+object_file_changed (GFileMonitor      *monitor,
+                     GFile             *file,
+                     GFile             *other_file,
+                     GFileMonitorEvent  event_type,
+                     gpointer           data)
+{
+    ObjectWatch *watch = data;
+
+    if (!g_file_equal (file, watch->file) &&
+        (other_file == NULL || !g_file_equal (other_file, watch->file)))
+        return;
+
+    switch (event_type)
+    {
+    case G_FILE_MONITOR_EVENT_CHANGED:
+    case G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT:
+    case G_FILE_MONITOR_EVENT_CREATED:
+    case G_FILE_MONITOR_EVENT_DELETED:
+    case G_FILE_MONITOR_EVENT_MOVED:
+    case G_FILE_MONITOR_EVENT_RENAMED:
+    case G_FILE_MONITOR_EVENT_MOVED_IN:
+    case G_FILE_MONITOR_EVENT_MOVED_OUT:
+        if (watch->pending != NULL)
+        {
+            g_source_destroy (watch->pending);
+            g_source_unref (watch->pending);
+        }
+        watch->pending = g_timeout_source_new (100);
+        g_source_set_callback (watch->pending, reload_watched_object, watch, NULL);
+        g_source_attach (watch->pending, watch->context);
+        break;
+    default:
+        break;
+    }
+}
+
+gboolean
+lrg_asset_manager_watch_object (LrgAssetManager  *self,
+                                 const gchar      *name,
+                                 GError          **error)
+{
+    LrgAssetManagerPrivate *priv;
+    ObjectAsset *asset;
+    ObjectWatch *watch;
+    g_autofree gchar *path = NULL;
+    g_autoptr(GFile) file = NULL;
+    g_autoptr(GFile) parent = NULL;
+    g_autoptr(GFileMonitor) monitor = NULL;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+    priv = lrg_asset_manager_get_instance_private (self);
+    if (g_hash_table_contains (priv->object_watches, name))
+        return TRUE;
+    asset = g_hash_table_lookup (priv->object_cache, name);
+    path = asset != NULL ? g_strdup (asset->path) : resolve_asset_path (self, name);
+    if (path == NULL)
+    {
+        g_set_error (error, LRG_ASSET_MANAGER_ERROR,
+                     LRG_ASSET_MANAGER_ERROR_NOT_FOUND, "Definition not found: %s", name);
+        return FALSE;
+    }
+    file = g_file_new_for_path (path);
+    parent = g_file_get_parent (file);
+    monitor = g_file_monitor_directory (parent, G_FILE_MONITOR_WATCH_MOVES, NULL, error);
+    if (monitor == NULL)
+        return FALSE;
+    if (lrg_asset_manager_load_object (self, name, error) == NULL)
+        return FALSE;
+
+    watch = g_new0 (ObjectWatch, 1);
+    watch->manager = self;
+    watch->name = g_strdup (name);
+    watch->file = g_steal_pointer (&file);
+    watch->monitor = g_steal_pointer (&monitor);
+    watch->context = g_main_context_ref_thread_default ();
+    g_signal_connect (watch->monitor, "changed", G_CALLBACK (object_file_changed), watch);
+    g_hash_table_insert (priv->object_watches, g_strdup (name), watch);
+    return TRUE;
+}
+
+gboolean
+lrg_asset_manager_unwatch_object (LrgAssetManager *self,
+                                   const gchar     *name)
+{
+    LrgAssetManagerPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+    priv = lrg_asset_manager_get_instance_private (self);
+    return g_hash_table_remove (priv->object_watches, name);
+}
+
+GObject *
+lrg_asset_manager_load_asset (LrgAssetManager  *self,
+                               const gchar      *name,
+                               GError          **error)
+{
+    const gchar *extension;
+    g_autofree gchar *lower = NULL;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+    extension = strrchr (name, '.');
+    lower = g_ascii_strdown (extension != NULL ? extension : "", -1);
+
+    if (g_str_equal (lower, ".yaml") || g_str_equal (lower, ".yml"))
+        return lrg_asset_manager_load_object (self, name, error);
+    if (g_str_equal (lower, ".ttf") || g_str_equal (lower, ".otf") || g_str_equal (lower, ".fnt"))
+        return (GObject *)lrg_asset_manager_load_font (self, name, 32, error);
+    if (g_str_equal (lower, ".wav"))
+        return (GObject *)lrg_asset_manager_load_sound (self, name, error);
+    if (g_str_equal (lower, ".ogg") || g_str_equal (lower, ".mp3") ||
+        g_str_equal (lower, ".flac") || g_str_equal (lower, ".xm") || g_str_equal (lower, ".mod"))
+        return (GObject *)lrg_asset_manager_load_music (self, name, error);
+    if (g_str_equal (lower, ".png") || g_str_equal (lower, ".jpg") ||
+        g_str_equal (lower, ".jpeg") || g_str_equal (lower, ".bmp") ||
+        g_str_equal (lower, ".tga") || g_str_equal (lower, ".gif") ||
+        g_str_equal (lower, ".qoi") || g_str_equal (lower, ".dds") ||
+        g_str_equal (lower, ".ktx") || g_str_equal (lower, ".pkm") ||
+        g_str_equal (lower, ".pvr") || g_str_equal (lower, ".astc"))
+        return (GObject *)lrg_asset_manager_load_texture (self, name, error);
+    g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                 "Unsupported asset extension: %s", name);
+    return NULL;
+}
+
 #ifdef LRG_HAS_LIBDEX
 /* ==========================================================================
  * Async Loading - Data Structures
@@ -809,6 +1183,10 @@ lrg_asset_manager_unload (LrgAssetManager *self,
 
     priv = lrg_asset_manager_get_instance_private (self);
 
+    g_hash_table_remove (priv->object_watches, name);
+    if (g_hash_table_remove (priv->object_cache, name))
+        removed = TRUE;
+
     /* Try to remove from each cache */
     if (g_hash_table_remove (priv->texture_cache, name))
     {
@@ -878,6 +1256,8 @@ lrg_asset_manager_unload_all (LrgAssetManager *self)
 
     priv = lrg_asset_manager_get_instance_private (self);
 
+    g_hash_table_remove_all (priv->object_watches);
+    g_hash_table_remove_all (priv->object_cache);
     g_hash_table_remove_all (priv->texture_cache);
     g_hash_table_remove_all (priv->font_cache);
     g_hash_table_remove_all (priv->sound_cache);
@@ -905,6 +1285,9 @@ lrg_asset_manager_is_cached (LrgAssetManager *self,
     g_return_val_if_fail (name != NULL, FALSE);
 
     priv = lrg_asset_manager_get_instance_private (self);
+
+    if (g_hash_table_contains (priv->object_cache, name))
+        return TRUE;
 
     /* Check each cache */
     if (g_hash_table_contains (priv->texture_cache, name))

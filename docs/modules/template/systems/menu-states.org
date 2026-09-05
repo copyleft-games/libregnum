@@ -318,6 +318,7 @@ lrg_template_settings_menu_state_set_active_tab (settings, 2);  /* Controls tab 
 :CUSTOM_ID: lrgtemplateloadingstate
 :END:
 A loading screen with progress tracking, task management, and visual feedback.
+See [[file:../states/loading.org][Asset loading and failure handling]] for asset-manager integration.
 
 *** Construction
 :PROPERTIES:
