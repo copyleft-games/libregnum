@@ -332,6 +332,48 @@ test_pathfinder_smoothing_preserves_cost (void)
 }
 
 static void
+test_pathfinder_weighted_optimal (void)
+{
+    g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (3, 2);
+    g_autoptr(LrgPathfinder) finder = lrg_pathfinder_new (grid);
+    g_autoptr(LrgPath) path = NULL;
+    gint x;
+
+    lrg_nav_grid_set_allow_diagonal (grid, FALSE);
+    for (x = 0; x < 3; x++)
+        lrg_nav_grid_set_cell_cost (grid, x, 1, 0.1f);
+    path = lrg_pathfinder_find_path (finder, 0, 0, 2, 0, NULL);
+    g_assert_nonnull (path);
+    g_assert_cmpfloat_with_epsilon (lrg_path_get_total_cost (path), 1.3f, 0.0001f);
+
+    /* Recompute the bound after mutable cell costs change, including zero. */
+    g_clear_pointer (&path, lrg_path_free);
+    for (x = 0; x < 3; x++)
+        lrg_nav_grid_set_cell_cost (grid, x, 1, 0.0f);
+    path = lrg_pathfinder_find_path (finder, 0, 0, 2, 0, NULL);
+    g_assert_nonnull (path);
+    g_assert_cmpfloat (lrg_path_get_total_cost (path), ==, 1.0f);
+}
+
+static void
+test_pathfinder_diagonal_optimal (void)
+{
+    g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (5, 5);
+    g_autoptr(LrgPathfinder) finder = lrg_pathfinder_new (grid);
+    g_autoptr(LrgPath) path = NULL;
+    const gint walls[][2] = { {2, 0}, {4, 1}, {2, 2}, {0, 3}, {4, 3} };
+    guint i;
+
+    lrg_nav_grid_set_allow_diagonal (grid, TRUE);
+    for (i = 0; i < G_N_ELEMENTS (walls); i++)
+        lrg_nav_grid_set_blocked (grid, walls[i][0], walls[i][1], TRUE);
+    path = lrg_pathfinder_find_path (finder, 0, 0, 4, 4, NULL);
+    g_assert_nonnull (path);
+    g_assert_cmpfloat_with_epsilon (lrg_path_get_total_cost (path),
+                                    4.0f + 2.0f * sqrtf (2.0f), 0.0001f);
+}
+
+static void
 test_pathfinder_same_start_end (void)
 {
     g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (10, 10);
@@ -570,6 +612,8 @@ main (int   argc,
     g_test_add_func ("/pathfinding/nav-grid/fill-rect", test_nav_grid_fill_rect);
 
     /* Pathfinder tests */
+    g_test_add_func ("/pathfinding/pathfinder/weighted-optimal", test_pathfinder_weighted_optimal);
+    g_test_add_func ("/pathfinding/pathfinder/diagonal-optimal", test_pathfinder_diagonal_optimal);
     g_test_add_func ("/pathfinding/pathfinder/new", test_pathfinder_new);
     g_test_add_func ("/pathfinding/pathfinder/simple-path", test_pathfinder_simple_path);
     g_test_add_func ("/pathfinding/pathfinder/smoothing-preserves-cost", test_pathfinder_smoothing_preserves_cost);

@@ -271,7 +271,12 @@ lrg_pathfinder_set_heuristic (LrgPathfinder    *self,
                               GDestroyNotify    destroy)
 #+end_src
 
-Sets a custom heuristic function. If NULL, uses Manhattan distance.
+Sets a custom heuristic function. If NULL, selects Manhattan distance for
+cardinal movement or octile distance for diagonal movement, scaled by the
+lowest current cell cost (capped at 1). Zero-cost cells and custom neighbor
+graphs use Dijkstra's algorithm. The bound is recalculated for each search
+because cell costs are mutable. Custom heuristics must be consistent lower
+bounds to guarantee optimal paths.
 
 *Parameters:*
 

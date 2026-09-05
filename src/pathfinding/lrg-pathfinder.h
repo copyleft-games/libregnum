@@ -145,7 +145,10 @@ void                lrg_pathfinder_set_max_iterations (LrgPathfinder *self,
  * @user_data: (closure): User data for function
  * @destroy: (nullable): Destroy function for user data
  *
- * Sets a custom heuristic function. If NULL, uses Manhattan distance.
+ * Sets a custom heuristic function. If NULL, uses a cost-scaled Manhattan or
+ * octile lower bound according to the grid's movement mode. Zero-cost cells
+ * and custom neighbor graphs fall back to Dijkstra's algorithm. Custom
+ * heuristics must be consistent lower bounds to guarantee optimal paths.
  */
 LRG_AVAILABLE_IN_ALL
 void                lrg_pathfinder_set_heuristic     (LrgPathfinder    *self,

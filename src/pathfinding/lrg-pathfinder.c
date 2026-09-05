@@ -112,6 +112,53 @@ node_compare (gconstpointer a,
     return 0;
 }
 
+/* The default heuristic must remain a lower bound for every legal edge.
+ * Scan current cells because callers may edit the mutable grid between searches.
+ * Custom neighbor graphs may contain shortcuts, so use Dijkstra for those. */
+static gfloat
+default_cost_bound (LrgNavGrid *grid)
+{
+    LrgNavGridClass *base_class;
+    gfloat minimum = 1.0f;
+    guint width = lrg_nav_grid_get_width (grid);
+    guint height = lrg_nav_grid_get_height (grid);
+    guint x, y;
+
+    base_class = g_type_class_peek (LRG_TYPE_NAV_GRID);
+    if (LRG_NAV_GRID_GET_CLASS (grid)->get_neighbors != base_class->get_neighbors)
+        return 0.0f;
+
+    for (y = 0; y < height; y++)
+    {
+        for (x = 0; x < width; x++)
+        {
+            LrgNavCell *cell = lrg_nav_grid_get_cell (grid, x, y);
+
+            minimum = MIN (minimum, lrg_nav_cell_get_cost (cell));
+            if (minimum == 0.0f)
+                return 0.0f;
+        }
+    }
+    return minimum;
+}
+
+static gfloat
+estimate_cost (LrgPathfinder *self,
+               gint           x,
+               gint           y,
+               gint           end_x,
+               gint           end_y,
+               gfloat         cost_bound)
+{
+    if (self->heuristic != NULL)
+        return self->heuristic (x, y, end_x, end_y, self->heuristic_data);
+    if (cost_bound == 0.0f)
+        return 0.0f;
+    if (lrg_nav_grid_get_allow_diagonal (self->grid))
+        return cost_bound * lrg_heuristic_octile (x, y, end_x, end_y, NULL);
+    return cost_bound * lrg_heuristic_manhattan (x, y, end_x, end_y, NULL);
+}
+
 /*
  * smooth_path_simple:
  *
@@ -315,7 +362,7 @@ lrg_pathfinder_init (LrgPathfinder *self)
     self->grid = NULL;
     self->smoothing = LRG_PATH_SMOOTHING_NONE;
     self->max_iterations = 0;
-    self->heuristic = lrg_heuristic_manhattan;
+    self->heuristic = NULL;
     self->heuristic_data = NULL;
     self->heuristic_destroy = NULL;
     self->last_nodes_explored = 0;
@@ -397,6 +444,7 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
     AStarNode *current = NULL;
     guint iterations = 0;
     gboolean found = FALSE;
+    gfloat cost_bound;
 
     g_return_val_if_fail (LRG_IS_PATHFINDER (self), NULL);
     g_return_val_if_fail (error == NULL || *error == NULL, NULL);
@@ -456,6 +504,7 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
     }
 
     /* Initialize data structures */
+    cost_bound = self->heuristic == NULL ? default_cost_bound (self->grid) : 0.0f;
     all_nodes = g_hash_table_new_full (node_hash, node_equal, NULL, g_free);
     open_list = g_queue_new ();
 
@@ -464,8 +513,8 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
     start_node->x = start_x;
     start_node->y = start_y;
     start_node->g_cost = 0.0f;
-    start_node->h_cost = self->heuristic (start_x, start_y, end_x, end_y,
-                                          self->heuristic_data);
+    start_node->h_cost = estimate_cost (self, start_x, start_y, end_x, end_y,
+                                        cost_bound);
     start_node->f_cost = start_node->h_cost;
     start_node->parent_x = -1;
     start_node->parent_y = -1;
@@ -534,8 +583,8 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
                 neighbor->x = nx;
                 neighbor->y = ny;
                 neighbor->g_cost = new_g;
-                neighbor->h_cost = self->heuristic (nx, ny, end_x, end_y,
-                                                    self->heuristic_data);
+                neighbor->h_cost = estimate_cost (self, nx, ny, end_x, end_y,
+                                                  cost_bound);
                 neighbor->f_cost = neighbor->g_cost + neighbor->h_cost;
                 neighbor->parent_x = current->x;
                 neighbor->parent_y = current->y;
@@ -678,7 +727,10 @@ lrg_pathfinder_set_max_iterations (LrgPathfinder *self,
  * @user_data: (closure): User data for function
  * @destroy: (nullable): Destroy function for user data
  *
- * Sets a custom heuristic function. If NULL, uses Manhattan distance.
+ * Sets a custom heuristic function. If NULL, uses a cost-scaled Manhattan or
+ * octile lower bound according to the grid's movement mode. Zero-cost cells
+ * and custom neighbor graphs fall back to Dijkstra's algorithm. Custom
+ * heuristics must be consistent lower bounds to guarantee optimal paths.
  */
 void
 lrg_pathfinder_set_heuristic (LrgPathfinder    *self,
@@ -699,7 +751,7 @@ lrg_pathfinder_set_heuristic (LrgPathfinder    *self,
     }
     else
     {
-        self->heuristic = lrg_heuristic_manhattan;
+        self->heuristic = NULL;
         self->heuristic_data = NULL;
         self->heuristic_destroy = NULL;
     }
