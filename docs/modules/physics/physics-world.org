@@ -321,3 +321,38 @@ Both bodies must accept each other's layers; rejected pairs emit no collision
 signals. Trigger contacts obey the same filter. See
 [[file:rigid-body.org][collision layers and masks]] for configuration and defaults.
 Spatial queries retain their existing behavior and include filtered bodies.
+
+** Filtered, bounded raycasts
+
+=lrg_physics_world_raycast_filtered()= queries the closed segment from start to
+end, selecting bodies whose =collision-layer= overlaps the query's =layer_mask=.
+A zero mask selects nothing. The body's collision mask does not affect the
+query. Pass =include_triggers= as false to skip sensors, and =ignore_body= to
+exclude the caster without moving or disabling it.
+
+#+begin_src c
+LrgRigidBody *hit = NULL;
+gfloat x, y, nx, ny;
+if (lrg_physics_world_raycast_filtered (world, 0, 0, 100, 20,
+                                       2u | 4u, FALSE, player,
+                                       &hit, &x, &y, &nx, &ny))
+{
+    /* hit is borrowed from world; retain it if needed beyond world changes. */
+}
+#+end_src
+
+Both raycast methods now return outward axis-aligned face normals for hits from
+outside, accept hits exactly at the segment endpoint, and return the start with
+zero normal when starting inside or on a boundary. Corner ties choose the X
+face; equal-distance body ties follow world insertion order. Tiny nonzero
+segments are accepted. Zero-length segments and nonfinite endpoints miss;
+use =query_point()= for a point test. Every miss clears the body to NULL and
+numeric outputs to zero. Output pointers may be NULL.
+
+The original =raycast()= still includes all bodies regardless of layers, masks,
+or trigger status. Both methods use axis-aligned shape bounds, including for
+circles and rotated bodies; this is not an exact circle or oriented-box query.
+Nonfinite/negative shape bounds are ignored. Calculations use double precision
+internally to avoid overflow when subtracting finite float endpoints, but remain
+subject to floating-point precision at extreme scales. Queries remain linear
+in the number of bodies.

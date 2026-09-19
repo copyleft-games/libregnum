@@ -181,3 +181,21 @@ Valgrind with zero errors or definite leaks. Five Python binding regressions
 passed, including high-bit collision properties. Library, loader, GIR, and
 typelib builds passed; existing unrelated GIR warnings remain. Full-engine
 sanitizer and hardware checks were not run. No new dependency was introduced.
+
+* Additional robustness: physics raycasts
+
+Raycasts returned the negated ray direction instead of a surface normal, missed
+endpoint and inside-origin hits, used an epsilon that discarded tiny segments,
+and offered no layer/trigger/caster filtering. Added =raycast_filtered()= and a
+shared bounded slab intersection implementation. The original raycast preserves
+its unfiltered behavior. Both now have deterministic ties and cleared miss
+outputs. See [[file:modules/physics/physics-world.org][query contracts and AABB limitations]]. Regressions cover oblique normals,
+endpoint/inside/boundary/corner hits, tiny and extreme segments, invalid values,
+nearest/tied bodies, and independent layer, trigger, and caster exclusions.
+
+Validation before integration: 2,649 passed and 125 skipped across 95 headless
+C test binaries. All 54 physics cases passed ASan/UBSan with leak detection and
+Valgrind with zero errors or definite leaks. Six Python binding tests passed,
+including filtered hit/miss outputs. Library, loader, GIR, and typelib builds
+passed; existing unrelated GIR warnings remain. Full-engine sanitizer and
+hardware checks were not run.

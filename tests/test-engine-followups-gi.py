@@ -13,6 +13,20 @@ from gi.repository import Libregnum
 
 
 class FollowupBindings(unittest.TestCase):
+    def test_filtered_raycast(self):
+        world = Libregnum.PhysicsWorld.new()
+        body = Libregnum.RigidBody.new(Libregnum.RigidBodyType.STATIC)
+        body.set_box_shape(2., 2.)
+        body.set_collision_layer(4)
+        world.add_body(body)
+        hit, found, x, y, nx, ny = world.raycast_filtered(
+            -3., 0., -1., 0., 4, True, None)
+        self.assertTrue(hit)
+        self.assertEqual(found, body)
+        self.assertEqual((x, y, nx, ny), (-1., 0., -1., 0.))
+        result = world.raycast_filtered(-3., 0., 3., 0., 4, True, body)
+        self.assertEqual(result, (False, None, 0., 0., 0., 0.))
+
     def test_physics_filters(self):
         a = Libregnum.RigidBody.new(Libregnum.RigidBodyType.DYNAMIC)
         b = Libregnum.RigidBody.new(Libregnum.RigidBodyType.STATIC)
