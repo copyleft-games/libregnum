@@ -35,6 +35,32 @@ lrg_timer_manager_set_paused (timers, cooldown, FALSE);
 lrg_timer_manager_cancel (timers, cooldown);
 #+end_src
 
+* Refreshing cooldowns and repeating effects
+
+Use =lrg_timer_manager_reschedule (timers, id, delay)= to restart an existing
+timer without replacing its ID. This suits a despawn deadline refreshed when
+an object is used, a cooldown reset by an ability, or a repeating effect whose
+interval changes during play.
+
+#+begin_src c
+/* Refresh the countdown while retaining the ID stored by the actor. */
+if (!lrg_timer_manager_reschedule (timers, cooldown, 2.0))
+    cooldown = lrg_timer_manager_add (timers, 2.0, FALSE, FALSE);
+#+end_src
+
+Rescheduling retains registration order, clock domain, repeat status, and pause
+status. A paused timer gets the new remaining time but stays paused. Repeating
+timers adopt the new delay as their interval and discard their old phase.
+One-shots permit zero delay; repeats require a positive interval. Missing IDs,
+NaN, infinity, and negative delays return false without changing anything.
+
+A callback may reschedule another timer whose delivery is pending in the same
+update. That old delivery is suppressed; the new countdown starts on the next
+update with a positive delta in its clock domain, even for a zero-delay timer.
+An invalid reschedule does not suppress a pending delivery. Repeating timers
+can reschedule themselves from their own callback. A one-shot has already been
+removed when its callback runs, so schedule a new timer in that case.
+
 * Clock domains and template integration
 
 The last argument to =add= selects unscaled time. A template advances its owned
@@ -68,8 +94,9 @@ the same thread.
   so a callback can cancel its own repeat safely.
 - Repeats emit at most once per frame. Missed intervals are coalesced, preserving
   phase: a 1-second repeat advanced by 3.25 seconds fires once with 0.75 seconds
-  remaining. This deliberately does not replay missed damage/spawn events.
-- Handlers can cancel or clear pending callbacks, pause another due timer, and
+  remaining. Very large finite deltas retain fractional phase by reducing the
+  delta modulo the interval before subtracting the remaining time. This deliberately does not replay missed damage/spawn events.
+- Handlers can cancel, clear, or reschedule pending callbacks, pause another due timer, and
   schedule new timers. Newly scheduled timers wait for the next update. A due
   timer paused before delivery remains at zero until resumed and advanced.
 - Recursive updates return false. NaN, infinity, and negative deltas reject the
@@ -87,6 +114,8 @@ background threads.
 
 =tests/test-timer-manager.c= covers independent clocks, zero/invalid input,
 repeat phase and large deltas, pause/resume, stale IDs, ordering, mutation during
-dispatch, recursive calls, and release of the manager from its own handler.
+dispatch, recursive calls, release of the manager from its own handler, and
+rescheduling with stable IDs, changed repeat intervals, paused clocks, invalid
+input, and pending deliveries.
 =tests/test-template.c= checks once-per-frame advancement, slow motion, unscaled
 stall handling, pause/resume, hit stop, and shutdown cancellation headlessly.
