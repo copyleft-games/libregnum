@@ -177,6 +177,15 @@ PUBLIC_HEADERS := \
 	src/mmo/lrg-mmo-realm.h \
 	src/mmo/lrg-mmo-replicator.h \
 	src/mmo/lrg-mmo-group.h \
+	src/mmo/lrg-mmo-shard-directory.h \
+	src/mmo/lrg-mmo-replica.h \
+	src/mmo/lrg-mmo-market.h \
+	src/mmo/lrg-mmo-social.h \
+	src/mmo/lrg-mmo-prediction.h \
+	src/mmo/lrg-mmo-gate.h \
+	src/mmo/lrg-mmo-matchmaker.h \
+	src/mmo/lrg-mmo-protocol.h \
+	src/mmo/lrg-mmo-auth.h \
 	src/mmo/lrg-mmo-store.h \
 	src/net/lrg-net-message.h \
 	src/net/lrg-net-peer.h \
@@ -656,6 +665,16 @@ SOURCES := \
 	src/mmo/lrg-mmo-realm.c \
 	src/mmo/lrg-mmo-replicator.c \
 	src/mmo/lrg-mmo-group.c \
+	src/mmo/lrg-mmo-service.c \
+	src/mmo/lrg-mmo-shard-directory.c \
+	src/mmo/lrg-mmo-replica.c \
+	src/mmo/lrg-mmo-market.c \
+	src/mmo/lrg-mmo-social.c \
+	src/mmo/lrg-mmo-prediction.c \
+	src/mmo/lrg-mmo-gate.c \
+	src/mmo/lrg-mmo-matchmaker.c \
+	src/mmo/lrg-mmo-protocol.c \
+	src/mmo/lrg-mmo-auth.c \
 	src/mmo/lrg-mmo-store.c \
 	src/net/lrg-net-message.c \
 	src/net/lrg-net-peer.c \
@@ -1458,6 +1477,13 @@ test-followups-gi: lib
 	@GI_TYPELIB_PATH="$(GIROUTDIR):$(GRAYLIB_DIR)/build/gir:$$GI_TYPELIB_PATH" \
 	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
 	 $(GI_PYTHON) tests/test-engine-followups-gi.py
+
+.PHONY: test-mmo-gi
+test-mmo-gi: lib
+	@$(MAKE) --no-print-directory gir
+	@GI_TYPELIB_PATH="$(GIROUTDIR):$(GRAYLIB_DIR)/build/gir:$$GI_TYPELIB_PATH" \
+	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
+	 $(GI_PYTHON) tests/test-mmo-gi.py
 
 # Run the test suite under AddressSanitizer + UndefinedBehaviorSanitizer.
 # Builds into an isolated build/sanitize/ directory (SANITIZE=1 implies

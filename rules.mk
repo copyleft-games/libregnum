@@ -170,6 +170,8 @@ endif
 
 .PHONY: check-deps
 check-deps:
+	@$(PKG_CONFIG) --exists openssl || (echo "Missing: OpenSSL development package (Fedora: openssl-devel)" && exit 1)
+	@$(PKG_CONFIG) --exists zlib || (echo "Missing: zlib development package (Fedora: zlib-devel)" && exit 1)
 	@$(PKG_CONFIG) --exists sqlite3 || (echo "Missing: SQLite development package (Fedora: sqlite-devel)" && exit 1)
 ifeq ($(TARGET_PLATFORM),windows)
 	@$(PKG_CONFIG) --exists glib-2.0 || (echo "Missing: mingw64-glib2" && exit 1)

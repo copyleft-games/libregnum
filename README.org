@@ -27,6 +27,8 @@ sudo dnf install \
     pkgconf \
     glib2-devel \
     sqlite-devel \
+    openssl-devel \
+    zlib-devel \
     gobject-introspection-devel \
     libdex-devel \
     libyaml-devel \

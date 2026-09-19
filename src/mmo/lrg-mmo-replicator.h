@@ -126,4 +126,30 @@ void
 lrg_mmo_replicator_forget (LrgMmoReplicator *self,
                            guint64 viewer_id);
 
+/**
+ * lrg_mmo_replicator_build_page:
+ * @self: the replicator
+ * @viewer_id: connection-scoped viewer ID
+ * @zone: visible zone
+ * @x: viewer X
+ * @y: viewer Y
+ * @z: viewer Z
+ * @radius: interest radius
+ * @budget: conservative wire budget, 128 to 1048576 bytes
+ * @more: (out): whether additional changes remain after this page
+ * @error: (nullable): error return
+ *
+ * Builds a bandwidth-bounded delta. Removals precede updates; updates use ascending
+ * entity ID. Only acknowledged page contents advance the baseline. Apply and
+ * acknowledge every page, then build the next. Under continuous change, low IDs
+ * can receive more frequent updates; hosts choose per-viewer budgets and cadence.
+ * A single entity larger than the budget fails without losing its update.
+ *
+ * Returns: (transfer full) (nullable): (ta(ttddday)at) page
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *lrg_mmo_replicator_build_page (LrgMmoReplicator *self, guint64 viewer_id, const gchar *zone,
+                                         gdouble x, gdouble y, gdouble z, gdouble radius,
+                                         guint budget, gboolean *more, GError **error);
+
 G_END_DECLS

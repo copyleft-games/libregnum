@@ -1,4 +1,4 @@
-#+TITLE: MMO Server Foundations
+#+TITLE: MMO Server and Client Services
 
 * Audit and scope
 
@@ -24,38 +24,52 @@ provide shared-world coordination or authorize client-originated mutations.
 | Parties / social membership | No party or guild membership authority | Capacity-limited groups, leader-only admission, self-leave, deterministic leadership succession |
 | Public integration | No MMO module | Four GObjects, umbrella header, GIR, tests and headless example |
 
-* What still belongs to the game or deployment
+* Service expansion
 
-This module is a foundation for an MMO server, not a claim that Libregnum can
-operate a production MMO without further work. The following remain explicit
-integration requirements, rather than placeholder implementations:
+The follow-up implementation adds authentication and TLS, persistent guilds and
+private messages, escrow trading, lease fencing, client replication/prediction,
+matchmaking, retry receipts and a runnable service host. See [[file:services.org][service contracts
+and deployment]] for configuration, wire formats, permissions and failure handling.
 
-- Identity provider, credential verification, token rotation, bans and account
-  recovery. =login()= accepts an identity already verified by trusted code; it
-  is not a password checker. Do not copy an account name from a packet into it.
-- Encrypted public ingress, protocol/version negotiation, authentication timeout,
-  connection/IP admission, abuse response and distributed denial-of-service
-  protection. Current net transport is plaintext TCP. Put it behind an
-  authenticated gateway/private network, or implement TLS before public use.
-- Game-specific command schemas, character ownership, movement/combat validation,
-  simulation of NPCs, inventory rules and anti-cheat. Admission only determines
-  whether a connected identity may submit another command.
-- Cross-process shard discovery, ownership leases/fencing, distributed zone
-  handoff, failover, replication between servers and regional routing.
-  =enter_zone()= is atomic only within its owning realm process.
-- A database service for multi-host operation, schema migrations for game data,
-  backups, restore drills, audit logs and durable operation IDs for retrying
-  trades/mail/auction operations. SQLite provides real local transactions but
-  does not provide distributed transactions or an MMO data model.
-- Invitations, durable guild roles, matchmaking, chat history/moderation,
-  friends/blocks, mail and auction house policy. Group membership is a primitive
-  for authorized recipient selection, not a complete social service.
-- Client interpolation, prediction/reconciliation, compression, bandwidth
-  prioritization, UDP/QUIC transport and snapshot pagination. A client must
-  apply a delta and acknowledge it explicitly.
-- Deployment orchestration, health endpoints, metrics, dashboards, capacity/load
-  testing, patch distribution and disaster recovery. No player-count or latency
-  guarantee has been measured here.
+| Requirement | Implemented support |
+|-------------+---------------------|
+| Identity | Password derivation, opaque expiring tokens, rotation/revocation, bans, one-use recovery |
+| Public ingress | Optional verified TLS, bounded asynchronous server handshakes, cancellable client connection, origin gate |
+| Coordination | SQLite ownership leases with monotonic fences, transactional handoff snapshots and fenced record writes |
+| Durable workflows | Intent-bound operation receipts, transactional audit digests and online backup |
+| Social | Guild invitations/roles/leadership, bilateral blocking, bounded persistent private inboxes |
+| Economy | Fungible resource balances, transfers, buyout listings, escrow and cancellation |
+| Clients | Atomic snapshot application, interpolation, paginated acknowledged baselines, prediction/reconciliation |
+| Protocol | Versioned bounded envelope and bounded optional zlib compression |
+| Matchmaking | Bounded expiring FIFO queue with mode/rating matching |
+| Operations | TLS reference host, worker-thread storage, health/metrics, systemd example, end-to-end smoke test |
+
+* Remaining game and deployment requirements
+
+These services do not constitute a complete production MMO. Game rules still
+need character ownership, collision and movement validation, combat, NPC/world
+simulation, unique-item semantics and content distribution. Prediction accepts
+game-computed displacements; it does not implement authoritative physics or
+anti-cheat. The market implements buyouts, not bidding or two-party trade offers.
+Private inboxes do not implement guild/channel chat, friend requests, attachments
+or moderation tooling. Matchmaking is an ephemeral greedy queue, not ranked
+season management or regional party placement.
+
+Shard coordination works across processes sharing one local SQLite database.
+Multi-host database replication, distributed ownership consensus, automatic
+worker failover, regional routing and deployment orchestration remain absent.
+An application must wire handoff snapshots to its simulation and reconnect flow;
+leases alone do not migrate running worlds. Never place the SQLite database on
+a network filesystem to simulate a distributed backend.
+
+Account recovery requires an externally verified recovery channel. Public
+registration/password endpoints, MFA, DDoS protection and operational moderation
+are deployment responsibilities. The example deliberately exposes authenticated
+service requests; its registration/token issuance commands are local admin tools.
+
+UDP/QUIC, replication priority scheduling, measured MMO-scale capacity, automated
+restore drills, fleet dashboards, patch distribution and disaster recovery remain
+outstanding. No player-count, latency or availability guarantee is asserted.
 
 * Threading and ownership
 
@@ -66,7 +80,7 @@ then marshal the result back to the simulation context. The synchronous store
 may wait up to one second for a database lock and must not run in the tick path.
 Separate store instances coordinate writes through SQLite transactions.
 
-All four types have =g_autoptr= cleanup. Record bytes are referenced or copied;
+All MMO object types have =g_autoptr= cleanup. Record bytes are referenced or copied;
 returned snapshots and member arrays are independently owned. Account/zone
 lookups borrow strings that expire at the next realm mutation.
 
@@ -100,7 +114,7 @@ lookups borrow strings that expire at the next realm mutation.
    world entities and schedule persistence. Call =expire(now_us)= periodically;
    failed/replayed commands do not refresh a session. An admitted heartbeat may
    use the same command path. Reconnection requires reauthentication and a full
-   baseline; no bearer reconnect token is issued here.
+   baseline; use a verified unexpired auth token when admitting a new connection.
 
 An application must decide how to resolve an in-flight snapshot before changing
 viewer/zone context. On a world reset, forget the viewer and explicitly reset
@@ -132,13 +146,13 @@ actual population measurements. No benchmark establishes MMO-scale capacity.
 Entity state is capped at 64 KiB; a delta is capped conservatively at 1 MiB.
 Entity and viewer counts have explicit construction-time limits. Memory scales
 with entity payloads and the sum of per-viewer visible baselines; a 1 MiB bound
-per delta is not a global process memory budget. An oversized delta fails
-without advancing its baseline; reduce state/radius or partition the scene.
+per delta is not a global process memory budget. The original =build()= fails an oversized delta without advancing its baseline.
+Use =build_page()= to converge a large visible set within a byte budget.
 Pending deltas hold their own immutable payloads until acknowledged/forgotten.
 
-GVariant is a data representation, not a negotiated network protocol. A host
-must specify version, type, endianness (for example canonical little endian),
-limits and stream identity. On big-endian hosts use =g_variant_byteswap()= for
+GVariant is a data representation. =lrg_mmo_protocol_encode/decode()= provides a
+versioned envelope; the host must still specify opcode schemas, canonical little
+endian payloads and stream identity. On big-endian hosts use =g_variant_byteswap()= for
 that wire representation. Construct incoming variants with =trusted=FALSE,
 validate normal form, exact schema and counts, and reject malformed data before
 applying it. Never deserialize arbitrary client data into trusted GObjects.

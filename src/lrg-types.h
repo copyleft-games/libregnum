@@ -18,6 +18,16 @@
 G_BEGIN_DECLS
 
 /* MMO server foundations */
+typedef struct _LrgMmoPrediction LrgMmoPrediction;
+typedef struct _LrgMmoGate LrgMmoGate;
+typedef struct _LrgMmoMatchmaker LrgMmoMatchmaker;
+
+typedef struct _LrgMmoShardDirectory LrgMmoShardDirectory;
+typedef struct _LrgMmoReplica LrgMmoReplica;
+typedef struct _LrgMmoMarket LrgMmoMarket;
+typedef struct _LrgMmoSocial LrgMmoSocial;
+
+typedef struct _LrgMmoAuth LrgMmoAuth;
 typedef struct _LrgMmoRealm LrgMmoRealm;
 typedef struct _LrgMmoReplicator LrgMmoReplicator;
 typedef struct _LrgMmoGroup LrgMmoGroup;

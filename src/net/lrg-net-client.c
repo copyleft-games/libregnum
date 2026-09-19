@@ -28,9 +28,11 @@ struct _LrgNetClient
     guint               timeout_ms;
     guint32             local_id;
     gboolean            connected;
+    gboolean            connecting;
     gboolean            polling;
 
     GSocketClient      *socket_client;
+    GTlsDatabase       *tls_database;
     GSocketConnection  *connection;
     GInputStream       *input;
     GOutputStream      *output;
@@ -77,6 +79,7 @@ lrg_net_client_finalize (GObject *object)
     _lrg_net_buffer_clear (&self->buffer);
     g_clear_pointer (&self->server_host, g_free);
     g_clear_object (&self->socket_client);
+    g_clear_object (&self->tls_database);
 
     G_OBJECT_CLASS (lrg_net_client_parent_class)->finalize (object);
 }
@@ -279,6 +282,14 @@ lrg_net_client_class_init (LrgNetClientClass *klass)
 }
 
 static void
+on_socket_event (GSocketClient *client, GSocketClientEvent event,
+                 GSocketConnectable *connectable, GIOStream *stream, LrgNetClient *self)
+{
+    if (event == G_SOCKET_CLIENT_TLS_HANDSHAKING && self->tls_database != NULL)
+        g_tls_connection_set_database (G_TLS_CONNECTION (stream), self->tls_database);
+}
+
+static void
 lrg_net_client_init (LrgNetClient *self)
 {
     _lrg_net_buffer_init (&self->buffer);
@@ -286,6 +297,7 @@ lrg_net_client_init (LrgNetClient *self)
     self->connected = FALSE;
     self->local_id = 0;
     self->socket_client = g_socket_client_new ();
+    g_signal_connect (self->socket_client, "event", G_CALLBACK (on_socket_event), self);
 }
 
 /* ==========================================================================
@@ -328,7 +340,7 @@ lrg_net_client_connect (LrgNetClient  *self,
 
     g_return_val_if_fail (LRG_IS_NET_CLIENT (self), FALSE);
 
-    if (self->connected)
+    if (self->connected || self->connecting)
     {
         g_set_error (error,
                      LRG_NET_ERROR,
@@ -383,6 +395,54 @@ lrg_net_client_connect (LrgNetClient  *self,
 }
 
 #ifdef LRG_HAS_LIBDEX
+typedef struct
+{
+    LrgNetClient *client;
+    DexPromise *promise;
+    GCancellable *cancellable;
+} ConnectRequest;
+
+static void
+connect_ready (GObject *source, GAsyncResult *result, gpointer data)
+{
+    ConnectRequest *request = data;
+    LrgNetClient *self = request->client;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GSocketConnection) connection = NULL;
+
+    connection = g_socket_client_connect_to_host_finish (G_SOCKET_CLIENT (source), result, &error);
+    if (self->cancellable != request->cancellable || g_cancellable_is_cancelled (request->cancellable))
+    {
+        g_clear_error (&error);
+        g_set_error_literal (&error, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Connection attempt cancelled");
+    }
+    if (error != NULL)
+    {
+        if (self->cancellable == request->cancellable)
+        {
+            self->connecting = FALSE;
+            g_clear_object (&self->cancellable);
+            g_signal_emit (self, signals[SIGNAL_CONNECTION_FAILED], 0, error);
+        }
+        dex_promise_reject (request->promise, g_steal_pointer (&error));
+    }
+    else
+    {
+        self->connection = g_steal_pointer (&connection);
+        self->input = g_object_ref (g_io_stream_get_input_stream (G_IO_STREAM (self->connection)));
+        self->output = g_object_ref (g_io_stream_get_output_stream (G_IO_STREAM (self->connection)));
+        self->connecting = FALSE;
+        self->connected = TRUE;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IS_CONNECTED]);
+        g_signal_emit (self, signals[SIGNAL_CONNECTED], 0);
+        dex_promise_resolve_boolean (request->promise, TRUE);
+    }
+    g_object_unref (request->cancellable);
+    dex_unref (request->promise);
+    g_object_unref (request->client);
+    g_free (request);
+}
+
 /**
  * lrg_net_client_connect_async:
  * @self: an #LrgNetClient
@@ -394,21 +454,25 @@ lrg_net_client_connect (LrgNetClient  *self,
 DexFuture *
 lrg_net_client_connect_async (LrgNetClient *self)
 {
-    g_autoptr(GError) error = NULL;
-    gboolean          result;
-
+    ConnectRequest *request;
     g_return_val_if_fail (LRG_IS_NET_CLIENT (self), NULL);
-
-    /*
-     * For now, wrap synchronous connect. A full async implementation
-     * would use g_socket_client_connect_to_host_async with DexFuture.
-     */
-    result = lrg_net_client_connect (self, &error);
-
-    if (result)
-        return dex_future_new_for_boolean (TRUE);
-    else
-        return dex_future_new_for_error (g_steal_pointer (&error));
+    if (self->connected || self->connecting)
+        return dex_future_new_for_error (g_error_new_literal (LRG_NET_ERROR,
+                   LRG_NET_ERROR_ALREADY_CONNECTED, "Connection already active"));
+    if (self->server_host == NULL || *self->server_host == '\0')
+        return dex_future_new_for_error (g_error_new_literal (LRG_NET_ERROR,
+                   LRG_NET_ERROR_CONNECTION_FAILED, "No server host specified"));
+    request = g_new0 (ConnectRequest, 1);
+    request->client = g_object_ref (self);
+    request->promise = dex_promise_new_cancellable ();
+    request->cancellable = g_object_ref (dex_promise_get_cancellable (request->promise));
+    g_set_object (&self->cancellable, request->cancellable);
+    self->connecting = TRUE;
+    g_socket_client_set_timeout (self->socket_client,
+                                  MAX (1u, self->timeout_ms / 1000 + (self->timeout_ms % 1000 != 0)));
+    g_socket_client_connect_to_host_async (self->socket_client, self->server_host, self->server_port,
+                                          request->cancellable, connect_ready, request);
+    return DEX_FUTURE (dex_ref (request->promise));
 }
 #endif /* LRG_HAS_LIBDEX */
 
@@ -423,8 +487,9 @@ lrg_net_client_disconnect (LrgNetClient *self)
 {
     g_return_if_fail (LRG_IS_NET_CLIENT (self));
 
-    if (!self->connected)
+    if (!self->connected && !self->connecting)
         return;
+    self->connecting = FALSE;
 
     /* Cancel any pending operations */
     if (self->cancellable != NULL)
@@ -628,14 +693,13 @@ lrg_net_client_poll (LrgNetClient *self)
     {
         g_autoptr(GError) error = NULL;
         g_autoptr(LrgNetMessage) message = NULL;
-        GSocket *socket = g_socket_connection_get_socket (connection);
 
-        if (i == 0 && !_lrg_net_buffer_flush (&self->buffer, socket, &error))
+        if (i == 0 && !_lrg_net_buffer_flush (&self->buffer, self->output, &error))
         {
             lrg_net_client_disconnect (self);
             break;
         }
-        message = _lrg_net_buffer_receive (&self->buffer, socket, &error);
+        message = _lrg_net_buffer_receive (&self->buffer, self->input, &error);
         if (error != NULL)
         {
             lrg_net_client_disconnect (self);
@@ -646,4 +710,22 @@ lrg_net_client_poll (LrgNetClient *self)
         g_signal_emit (self, signals[SIGNAL_MESSAGE_RECEIVED], 0, message);
     }
     self->polling = FALSE;
+}
+
+void
+lrg_net_client_set_tls (LrgNetClient *self,
+                        gboolean      enabled)
+{
+    g_return_if_fail (LRG_IS_NET_CLIENT (self));
+    g_return_if_fail (!self->connected && !self->connecting);
+    g_socket_client_set_tls (self->socket_client, enabled);
+}
+
+void
+lrg_net_client_set_tls_database (LrgNetClient *self, GTlsDatabase *database)
+{
+    g_return_if_fail (LRG_IS_NET_CLIENT (self));
+    g_return_if_fail (!self->connected && !self->connecting);
+    g_return_if_fail (database == NULL || G_IS_TLS_DATABASE (database));
+    g_set_object (&self->tls_database, database);
 }

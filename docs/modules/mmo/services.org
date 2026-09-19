@@ -1,0 +1,230 @@
+#+TITLE: MMO Services and Reference Deployment
+
+* Build and run
+
+Required additions: OpenSSL (=openssl-devel=), zlib (=zlib-devel=), SQLite
+(=sqlite-devel=), plus the existing GLib/GIO, libdex and libsoup dependencies.
+TLS also requires a working GIO TLS backend (typically =glib-networking=).
+No packages or system services are installed by the build.
+
+#+begin_src sh
+make
+make -C examples build/release/examples/mmo-server
+make test-mmo-gi
+python3 tests/check-mmo-server.py examples/build/release/examples/mmo-server
+#+end_src
+
+The opt-in smoke test uses ephemeral loopback ports and a temporary database.
+It exercises real TLS verification, token admission, replay rejection, health,
+metrics, online backup and graceful shutdown. Fixtures under =tests/fixtures/
+mmo-test-*= are public test-only certificates/keys; never deploy them.
+
+For a local service, create a private directory and password file, then use:
+
+#+begin_src sh
+umask 077
+mmo-server --database world.db --register alice --password-file password.txt
+mmo-server --database world.db --login alice --password-file password.txt
+mmo-server --database world.db --certificate chain.pem --key key.pem
+mmo-server --database world.db --backup world-backup.db
+#+end_src
+
+The login command prints a bearer credential to stdout. Keep it private; do not
+put credentials in shell arguments or logs. Registration, login and backup are
+local administration modes, not public HTTP endpoints. Help/version describe the
+CLI. The reference host binds TLS to all IPv4 addresses (default 7777); HTTP
+=/healthz= and Prometheus-text =/metrics= bind only loopback (default 9090).
+SIGTERM/SIGINT stop admissions and drain outstanding worker jobs before exit.
+It permits 128 connections/jobs, one outstanding request per connection, a
+10-second authentication deadline and 60-second session idle timeout.
+
+=examples/deploy/libregnum-mmo.service= is an optional single-host systemd unit.
+Install the executable at the path in =ExecStart=, provision your own certificate
+chain/key under =/etc/libregnum-mmo/=, then install/enable the unit using your
+normal administrator workflow. It uses a private state directory, credentials,
+restrictive umask and restart-on-failure. This task does not install or start it.
+Review port access, certificate renewal and database ownership for your host.
+The dynamic service identity differs from your shell identity; provision accounts
+using an administrative process with access to the same private database.
+
+Backups are consistent SQLite snapshots and refuse an existing destination.
+Test restores by stopping writers, restoring into a separate private directory,
+opening the restored database and checking expected account/record revisions and
+operation receipts before switching the service path. Keep the original until
+verification succeeds. Copying just the live =.db= file can omit WAL data; use
+=backup()=. Backup retention, off-host copies and failover automation belong to
+the deployment. No automated restore/failover claim is made by this example.
+
+* Threading and identity boundary
+
+All service objects are thread-confined. Auth, social, market, directory and store
+operations are synchronous and may block. Each worker opens its own Store and
+creates its own service objects. Never run password derivation or database calls
+in the simulation/network loop. The reference host uses GTask workers and
+marshals results to the owning main context, including during shutdown.
+
+Arguments named =actor=, =buyer=, =sender= or =account= in service APIs are trusted
+identities. Resolve them from =LrgMmoAuth= and the actual transport peer, never
+from packet sender metadata. Administrator operations such as grants, bans and
+recovery issuance must not be exposed to arbitrary authenticated clients.
+Disconnect does not cancel a transaction already executing: retry the same
+semantic operation ID after reconnect, and distinguish a failed reply from a
+failed commit.
+
+* Authentication and TLS
+
+=LrgMmoAuth= stores salted PBKDF2-HMAC-SHA256 credentials (600,000 iterations,
+16-byte random salts, 32-byte digests). Passwords are 12--1024 UTF-8 bytes.
+Account identifiers are 1--64 ASCII letters, digits, underscores or hyphens.
+The library uses OpenSSL random generation and constant-time digest comparison.
+A failed unknown-account login performs a dummy derivation. Apply an ingress
+gate before expensive password verification; this is not a memory-hard password
+scheme or a substitute for monitoring abuse.
+
+Tokens are 32 random bytes encoded as 64 lowercase hex characters. Only their
+SHA-256 hashes are persisted. Tokens expire after one hour; rotation atomically
+invalidates the old token and issues a new one. Revocation, bans and recovery
+invalidate appropriate tokens via expiry or account generation. One-use recovery
+tokens expire after 15 minutes. =begin_recovery()= is trusted administration after
+external identity verification, not evidence that an email/SMS flow occurred.
+Use server wall time for token deadlines; clients must not supply the clock.
+
+Set a server certificate before =start()=; without it existing TCP behavior
+remains available. TLS server handshakes are asynchronous, limited to 128 pending
+and a 10-second deadline. Set client TLS and optionally a CA database before
+connecting. GIO verifies hostname and trust. Client =connect_async()= dispatches
+on the caller's thread-default context; =disconnect()= cancels a pending attempt.
+Keep that context running until completions drain. =poll()= still drives framed
+application reads and queued writes after connection.
+
+=LrgMmoGate= bounds per-origin token buckets. Use the socket IP, not a
+client-supplied origin or untrusted forwarded header. It rejects new origins at
+capacity unless an old bucket is idle and fully refilled. This is per-process
+admission, not distributed DDoS protection. TLS handshake limits apply before
+authentication; the reference IP gate runs after the TLS handshake.
+
+Implementation API references: [[https://docs.gtk.org/gio/tls-overview.html][GIO TLS]],
+[[https://docs.openssl.org/3.4/man3/PKCS5_PBKDF2_HMAC/][OpenSSL PBKDF2]],
+[[https://docs.openssl.org/3.4/man3/RAND_bytes/][OpenSSL random bytes]].
+
+* Fencing, retries and audit
+
+=LrgMmoShardDirectory= coordinates processes using the same local SQLite file.
+Acquisition increments a durable fence; renewal requires the current unexpired
+owner/fence. Use a fresh worker incarnation ID on every restart. Release retains
+the fence history. Handoff atomically changes ownership, increments the fence
+and stores a bounded snapshot. The recipient reads the directory before loading
+its simulation, and clients establish a fresh replication stream when moving.
+Deadlines use database wall-clock seconds; clock rollback is not consensus.
+
+EVERY zone-owned record write must use =commit_fenced()= with the current zone,
+owner and fence. The lease check and writes share one database transaction.
+A stale worker using this path cannot write after handoff. The generic =commit()=
+API intentionally remains available for non-zone state: it bypasses fencing.
+This library cannot prevent trusted code from bypassing its own authority policy.
+
+=commit_once()= binds an operation ID to the exact canonical batch digest. Exact
+retries return success with =duplicate=TRUE; changed reuse is rejected. Market
+and messaging services instead bind IDs to semantic intent in a receipt record
+in the same transaction, allowing retries after record revisions have advanced.
+IDs must be globally unique in the service receipt namespace; preserve them
+across ambiguous failures. A concurrent identical attempt can lose a CAS race;
+retry after rereading to observe its receipt. Do not generate a fresh ID blindly.
+Receipts and audit rows are durable and currently unbounded: define a retention
+policy whose retry horizon is explicit before implementing compaction.
+
+Every newly committed record batch appends an audit sequence, operation label
+(if available), digest and timestamp. Payloads/tokens are not logged. =read_audit()=
+is cursor-paginated, at most 1000 entries. These digests establish ordering and
+batch identity; they are not human-readable moderation logs, tamper-proof logs
+or an event-sourced reconstruction of prior record contents. Directory lease SQL
+operations are not record-batch audit events.
+
+* Guilds, messaging and market
+
+=LrgMmoSocial= persists guilds up to 128 members, roles (member/officer/leader),
+one-hour invitations, leader transfer and kicks. Officers invite; leaders change
+roles. A leader must transfer leadership before leaving a nonempty guild.
+Invitations are consumed on join. Empty guilds close. =get_guild()= includes
+invitations and is a trusted host query, not an unrestricted public listing.
+
+Private messages enforce blocking in both directions. The transaction checks
+block-record revisions, so a concurrent block cannot silently be overwritten.
+Inboxes retain the latest 200 messages, with a 2048-byte UTF-8 message limit.
+Sending uses a durable operation ID, avoiding duplicate delivery after reconnect.
+Read an inbox only for its authenticated owner. This is bounded offline text,
+not unlimited history, attachment mail, moderation or channel chat.
+
+=LrgMmoMarket= tracks nonnegative signed-64-bit fungible balances. Trusted grants,
+transfers and buyouts are atomic and intent-idempotent. Listings reserve seller
+items in escrow; purchases debit buyer coins, credit seller coins, transfer
+items and close the listing together. Self-buy, insufficient balance, expiry,
+overflow and conflicting revisions leave all records unchanged. Seller
+cancellation returns escrow, including expired listings. Listings last at most
+seven days. Games implement catalog validation, fees, unique item ownership,
+bids and exchange policy above these primitives. Registering an account is not
+a prerequisite for a balance record; hosts must validate recipient identities.
+
+* Replication, prediction and queues
+
+=build_page()= advances only the acknowledged portion of a baseline. Retry a
+pending page unchanged, acknowledge only after atomic application, and request
+another page while =more=TRUE. Removals are prioritized, then updates in stable
+entity-ID order. A single entity that cannot fit rejects the page. Continually
+changing low IDs can starve high IDs; adaptive priority scheduling is absent.
+
+=LrgMmoReplica= validates complete deltas before changing state, enforcing unique
+IDs, advancing revisions, capacity, finite positions and stream identity. Exact
+sequence retries are accepted; altered/stale retries reject. Interpolation uses
+previous/current published positions. Reset with a newly negotiated stream ID
+on reconnect or server replacement; a protocol sequence alone is not an epoch.
+
+=LrgMmoPrediction= queues bounded finite movement displacements. Reconciliation
+removes server-acknowledged inputs and replays remaining inputs on the supplied
+authoritative position. Hosts compute/validate movement separately. It is not
+physics rollback, lag-compensated combat or deterministic world replay.
+
+=LrgMmoMatchmaker= is an expiring, bounded, in-memory FIFO queue. Tickets are
+unique by account, last 60 seconds, and match within a mode and rating spread.
+Only complete groups are removed. Matching is greedy and can miss another
+possible combination; it does not promise globally optimal matchmaking.
+Restart loses pending tickets, so clients must requeue under host policy.
+
+* Protocol and reference-host opcodes
+
+The version-one envelope is 24 bytes followed by payload:
+
+| Bytes | Field |
+|-------+-------|
+| 0--3 | ASCII LRGM |
+| 4 | Version 1 |
+| 5 | Compression flag 0 or 1 |
+| 6--7 | Nonzero opcode, unsigned big endian |
+| 8--15 | Nonzero command sequence, unsigned big endian |
+| 16--19 | Uncompressed payload length, unsigned big endian |
+| 20--23 | Stored payload length, unsigned big endian |
+
+Total envelope size is at most 1 MiB, fitting a NetMessage payload. Optional zlib
+compression is used only when smaller. Decoding rejects unknown versions/flags,
+trailing bytes, inconsistent lengths and decompression beyond the declared
+bounded output. Do not compress secrets alongside attacker-controlled content.
+This envelope does not negotiate schemas or stream identity automatically.
+
+The host wraps it in existing =LrgNetMessage= framing and accepts these opcodes:
+
+| Opcode | Request payload | Result text |
+|--------+-----------------+-------------|
+| 1 | Raw 64-byte bearer token, first request only | Authenticated account |
+| 2 | Empty | pong |
+| 3 | Empty | Printed inbox GVariant |
+| 4 | GVariant =(sss)= recipient, text, operation ID | ok |
+| 5 | GVariant =(ss)= listing ID, operation ID | ok |
+| 6 | GVariant =s= resource ID | Decimal balance |
+
+Requests use strictly increasing sequences per connection. Replies set opcode
+bit 15, echo the sequence, and carry canonical little-endian GVariant =(bs)=
+success/result. Errors are intentionally generic. The actor always comes from
+verified credentials, and each worker verifies the token again. Typed arguments
+are limited to 8192 bytes and decoded as untrusted normal-form variants. Send one
+request at a time; overload and sequence violations disconnect. This example
+integrates a subset of APIs, not a complete public gameplay protocol.

@@ -572,11 +572,14 @@ else
 endif
 
 # Combined dependency flags (use -isystem to suppress warnings from deps)
+OPENSSL_CFLAGS := $(shell $(PKG_CONFIG) --cflags openssl)
+OPENSSL_LIBS := $(shell $(PKG_CONFIG) --libs openssl)
+
 SQLITE_CFLAGS := $(shell $(PKG_CONFIG) --cflags sqlite3)
 SQLITE_LIBS := $(shell $(PKG_CONFIG) --libs sqlite3)
 
-DEP_CFLAGS := $(SQLITE_CFLAGS) $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS) $(CRISPY_CFLAGS)
-DEP_LIBS := $(SQLITE_LIBS) $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS) $(CRISPY_LIBS)
+DEP_CFLAGS := $(shell $(PKG_CONFIG) --cflags zlib) $(OPENSSL_CFLAGS) $(SQLITE_CFLAGS) $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS) $(CRISPY_CFLAGS)
+DEP_LIBS := $(shell $(PKG_CONFIG) --libs zlib) $(OPENSSL_LIBS) $(SQLITE_LIBS) $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS) $(CRISPY_LIBS)
 
 # Graylib and yaml-glib (built from submodules)
 # Also include raylib headers for rlgl.h etc.

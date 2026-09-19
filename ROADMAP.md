@@ -192,3 +192,18 @@ state asset integration is implemented.
 Steam and VR fallback implementations are intentional. Base-class virtual
 methods such as `LrgSettingsGroup::apply` require subclass implementations and
 are not missing concrete settings features.
+
+## MMO service expansion (2026-09-18)
+
+Added optional TLS transport and actual cancellable async client connection;
+password/token authentication; SQLite ownership leases, fenced commits, retry
+receipts, audit digests and backup; durable guilds/private inboxes/blocks;
+fungible escrow buyouts and transfers; client snapshot application, pagination,
+interpolation and prediction reconciliation; versioned compressed envelopes;
+origin admission and matchmaking. A Linux TLS reference host exercises worker
+storage, authenticated requests, metrics and graceful drain.
+
+See `docs/modules/mmo/services.org` for tested contracts and deployment. Remaining
+work is explicit in the MMO audit: game-specific authority, multi-host storage
+and failover, broader social/economy policies, production capacity/operations,
+and content distribution. These changes do not establish MMO-scale guarantees.

@@ -33,6 +33,18 @@
 #include "mmo/lrg-mmo-replicator.h"
 #include "mmo/lrg-mmo-group.h"
 #include "mmo/lrg-mmo-store.h"
+#include "mmo/lrg-mmo-auth.h"
+#include "mmo/lrg-mmo-prediction.h"
+#include "mmo/lrg-mmo-gate.h"
+#include "mmo/lrg-mmo-matchmaker.h"
+#include "mmo/lrg-mmo-protocol.h"
+
+#include "mmo/lrg-mmo-shard-directory.h"
+#include "mmo/lrg-mmo-replica.h"
+#include "mmo/lrg-mmo-market.h"
+#include "mmo/lrg-mmo-social.h"
+
+
 
 /* Core module */
 #include "core/lrg-engine.h"

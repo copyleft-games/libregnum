@@ -85,6 +85,8 @@ TEST_SOURCES := \
 	test-mod.c \
 	test-net.c \
 	test-mmo.c \
+	test-mmo-services.c \
+	test-net-tls.c \
 	test-net-transport.c \
 	test-world3d.c \
 	test-scene.c \
