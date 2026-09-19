@@ -21,8 +21,9 @@ triangle navigation meshes, and the advertised atlas packing algorithms.
 | Reusable gameplay timers | Core had no scheduler; template auto-save, camera pulses, trigger cooldowns use local counters | Implemented this pass |
 | Input actions and test injection | =src/input/= has maps, analog bindings, software and mock sources | Already present |
 | Prefabs | =src/editor/lrg-prefab.c= clones, instantiates, saves, and loads node subtrees | Already present; not marked missing |
+| Saveable random streams | =src/core/lrg-random-stream.c= | Implemented PCG32 streams and portable snapshots |
 | Object pooling and event dispatch | =src/template/lrg-object-pool.c= and =src/core/lrg-event-bus.c= | Already present |
-| Asset hot reload | =src/core/lrg-asset-manager.c= validates/replaces cached definitions and monitors changes | Present; dependency propagation/live-instance migration remain follow-ups |
+| Asset hot reload | =src/core/lrg-asset-manager.c= validates/replaces cached definitions and monitors changes | Implemented explicit dependency propagation; live-instance state migration stays application-defined |
 | General audio mixer graph | =src/audio/lrg-audio-manager.h= has fixed channels; =lrg-audio-mixer.h= adds a configurable graph | Implemented: =LrgAudioMixer= bus/send graph and PCM effects |
 | Navigation meshes | =src/pathfinding/= now includes both grid and triangle-surface navigation | Implemented: =LrgNavMesh= walkable triangle baking and A* queries |
 | Production atlas packing choices | =src/atlas/lrg-atlas-packer.c= now dispatches to real free-rectangle algorithms | Implemented: MaxRects and Guillotine, with rotation and bounds validation |
@@ -124,3 +125,25 @@ warnings remain. A Python binding smoke test registered the catalog and loaded
 a positioned game object; the environment emitted a graylib shared-library
 lookup warning despite the successful assertions. Full-engine sanitizer and
 hardware-dependent checks were not run. No new dependencies were introduced.
+
+* Implemented: random state and asset dependency propagation
+
+Added [[file:modules/core/random-stream.org][saveable random streams]] with stable PCG32 output, unbiased bounds,
+53-bit unit doubles, versioned snapshots, and atomic restore. Save-context
+round trips preserve the next draw. Existing subsystem random sequences remain
+unchanged; games adopt independent streams explicitly.
+
+Added [[file:modules/core/asset-manager.org][explicit YAML asset dependency links]] with cycle rejection and transitive,
+atomic reload batches. File-monitor reloads use the same path as explicit
+reloads. All affected definitions are validated before publication; replacement
+signals let consumers reconnect their live references. Application-specific
+live-object state migration remains an application responsibility, as documented.
+
+Validation for the random/dependency pass: full headless =make test= passed
+2,640 cases with 125 skips across 95 C binaries. All ten focused cases passed
+ASan/UBSan with leak detection and Valgrind with zero errors or definite leaks.
+The four =make test-followups-gi= Python cases passed, including new random and
+dependency API regressions. Library/loader/GIR/typelib builds completed and the
+random stream API passed a strict introspection scan. Existing unrelated GIR
+warnings remain. Full-engine sanitizer and hardware checks were not run; no
+new dependency or host package was introduced.

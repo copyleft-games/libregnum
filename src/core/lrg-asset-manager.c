@@ -24,6 +24,8 @@ typedef struct
     GHashTable *sound_cache;     /* gchar* -> GrlSound* */
     LrgDataLoader *data_loader;
     GHashTable *object_cache;
+    GHashTable *dependencies;
+    gboolean reloading;
     GHashTable *object_watches;
     GHashTable *music_cache;     /* gchar* -> GrlMusic* */
 } LrgAssetManagerPrivate;
@@ -379,6 +381,7 @@ lrg_asset_manager_finalize (GObject *object)
 
     g_clear_pointer (&priv->object_watches, g_hash_table_unref);
     g_clear_pointer (&priv->object_cache, g_hash_table_unref);
+    g_clear_pointer (&priv->dependencies, g_hash_table_unref);
     g_clear_object (&priv->data_loader);
     g_clear_pointer (&priv->search_paths, g_ptr_array_unref);
     g_clear_pointer (&priv->texture_cache, g_hash_table_unref);
@@ -435,6 +438,8 @@ lrg_asset_manager_init (LrgAssetManager *self)
 {
     LrgAssetManagerPrivate *priv = lrg_asset_manager_get_instance_private (self);
 
+    priv->dependencies = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                                g_free, (GDestroyNotify) g_hash_table_unref);
     priv->object_cache = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                 g_free, object_asset_free);
     priv->object_watches = g_hash_table_new_full (g_str_hash, g_str_equal,
@@ -694,6 +699,7 @@ lrg_asset_manager_set_data_loader (LrgAssetManager *self,
         return;
     g_hash_table_remove_all (priv->object_watches);
     g_hash_table_remove_all (priv->object_cache);
+    g_hash_table_remove_all (priv->dependencies);
     g_set_object (&priv->data_loader, loader);
 }
 
@@ -747,57 +753,212 @@ lrg_asset_manager_load_object (LrgAssetManager  *self,
     return asset->object;
 }
 
+/* Reachability is iterative so long dependency chains do not use the stack. */
+static gboolean
+object_depends_on (LrgAssetManagerPrivate *priv, const gchar *start, const gchar *target)
+{
+    g_autoptr(GHashTable) visited = g_hash_table_new (g_str_hash, g_str_equal);
+    g_autoptr(GPtrArray) pending = g_ptr_array_new ();
+    guint i;
+
+    g_ptr_array_add (pending, (gpointer) start);
+    g_hash_table_add (visited, (gpointer) start);
+    for (i = 0; i < pending->len; i++)
+    {
+        const gchar *name = g_ptr_array_index (pending, i);
+        GHashTable *deps = g_hash_table_lookup (priv->dependencies, name);
+        GHashTableIter iter;
+        gpointer key;
+
+        if (g_str_equal (name, target))
+            return TRUE;
+        if (deps == NULL)
+            continue;
+        g_hash_table_iter_init (&iter, deps);
+        while (g_hash_table_iter_next (&iter, &key, NULL))
+            if (g_hash_table_add (visited, key))
+                g_ptr_array_add (pending, key);
+    }
+    return FALSE;
+}
+
 gboolean
-lrg_asset_manager_reload_object (LrgAssetManager  *self,
-                                  const gchar      *name,
-                                  GError          **error)
+lrg_asset_manager_add_object_dependency (LrgAssetManager *self,
+                                         const gchar *name,
+                                         const gchar *dependency,
+                                         GError **error)
 {
     LrgAssetManagerPrivate *priv;
-    ObjectAsset *asset;
-    g_autoptr(GObject) replacement = NULL;
-    g_autoptr(GObject) previous = NULL;
-    g_autoptr(GError) local_error = NULL;
+    GHashTable *deps;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), FALSE);
+    g_return_val_if_fail (name != NULL && dependency != NULL, FALSE);
+    priv = lrg_asset_manager_get_instance_private (self);
+    if (!g_hash_table_contains (priv->object_cache, name) ||
+        !g_hash_table_contains (priv->object_cache, dependency))
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                             "Both dependency endpoints must be cached definitions");
+        return FALSE;
+    }
+    if (object_depends_on (priv, dependency, name))
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                             "Object dependency would create a cycle");
+        return FALSE;
+    }
+    deps = g_hash_table_lookup (priv->dependencies, name);
+    if (deps == NULL)
+    {
+        deps = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+        g_hash_table_insert (priv->dependencies, g_strdup (name), deps);
+    }
+    g_hash_table_add (deps, g_strdup (dependency));
+    return TRUE;
+}
+
+gboolean
+lrg_asset_manager_remove_object_dependency (LrgAssetManager *self,
+                                            const gchar *name,
+                                            const gchar *dependency)
+{
+    LrgAssetManagerPrivate *priv;
+    GHashTable *deps;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), FALSE);
+    g_return_val_if_fail (name != NULL && dependency != NULL, FALSE);
+    priv = lrg_asset_manager_get_instance_private (self);
+    deps = g_hash_table_lookup (priv->dependencies, name);
+    return deps != NULL && g_hash_table_remove (deps, dependency);
+}
+
+static void
+forget_object_dependencies (LrgAssetManagerPrivate *priv, const gchar *name)
+{
+    GHashTableIter iter;
+    gpointer value;
+
+    g_hash_table_remove (priv->dependencies, name);
+    g_hash_table_iter_init (&iter, priv->dependencies);
+    while (g_hash_table_iter_next (&iter, NULL, &value))
+        g_hash_table_remove (value, name);
+}
+
+gboolean
+lrg_asset_manager_reload_object (LrgAssetManager *self,
+                                  const gchar *name,
+                                  GError **error)
+{
+    LrgAssetManagerPrivate *priv;
     g_autoptr(LrgAssetManager) keep_alive = NULL;
-    g_autofree gchar *signal_name = NULL;
+    g_autoptr(GPtrArray) names = g_ptr_array_new_with_free_func (g_free);
+    g_autoptr(GPtrArray) previous = g_ptr_array_new_with_free_func (g_object_unref);
+    g_autoptr(GPtrArray) replacements = g_ptr_array_new_with_free_func (g_object_unref);
+    g_autoptr(GHashTable) affected = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+    g_autoptr(GHashTable) ordered = g_hash_table_new (g_str_hash, g_str_equal);
+    g_autoptr(GError) local_error = NULL;
+    g_autofree gchar *root = NULL;
+    GHashTableIter iter;
+    gpointer key;
+    guint i;
 
     g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), FALSE);
     g_return_val_if_fail (name != NULL, FALSE);
-    keep_alive = g_object_ref (self);
-    signal_name = g_strdup (name);
     priv = lrg_asset_manager_get_instance_private (self);
-    asset = g_hash_table_lookup (priv->object_cache, name);
-    if (asset == NULL)
+    if (priv->reloading)
     {
-        g_set_error (&local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-                     "Definition is not cached: %s", name);
-    }
-    else
-    {
-        replacement = lrg_data_loader_load_file_validated (priv->data_loader,
-                                                           asset->path, &local_error);
-        if (replacement != NULL && G_OBJECT_TYPE (replacement) != G_OBJECT_TYPE (asset->object))
-        {
-            g_set_error (&local_error, LRG_DATA_LOADER_ERROR,
-                         LRG_DATA_LOADER_ERROR_TYPE,
-                         "Reload cannot change definition type from %s to %s",
-                         G_OBJECT_TYPE_NAME (asset->object), G_OBJECT_TYPE_NAME (replacement));
-            g_clear_object (&replacement);
-        }
-    }
-    if (replacement == NULL && local_error == NULL)
-        g_set_error_literal (&local_error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                             "Definition loader returned no object");
-    if (local_error != NULL)
-    {
-        g_signal_emit (self, asset_signals[OBJECT_RELOAD_FAILED], 0, signal_name, local_error);
-        g_propagate_error (error, g_steal_pointer (&local_error));
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_PENDING,
+                             "A definition reload is already in progress");
         return FALSE;
     }
-    previous = g_object_ref (asset->object);
-    g_set_object (&asset->object, replacement);
-    g_signal_emit (self, asset_signals[OBJECT_RELOADED], 0,
-                   signal_name, previous, replacement);
+    keep_alive = g_object_ref (self);
+    root = g_strdup (name);
+    priv->reloading = TRUE;
+    if (!g_hash_table_contains (priv->object_cache, root))
+    {
+        g_set_error (&local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                     "Definition is not cached: %s", root);
+        goto failed;
+    }
+    g_hash_table_iter_init (&iter, priv->object_cache);
+    while (g_hash_table_iter_next (&iter, &key, NULL))
+        if (object_depends_on (priv, key, root))
+            g_hash_table_add (affected, g_strdup (key));
+
+    /* Topological order, with lexical tie breaking for independent branches. */
+    while (names->len < g_hash_table_size (affected))
+    {
+        const gchar *next = NULL;
+
+        g_hash_table_iter_init (&iter, affected);
+        while (g_hash_table_iter_next (&iter, &key, NULL))
+        {
+            GHashTable *deps;
+            GHashTableIter dep_iter;
+            gpointer dep;
+            gboolean ready = TRUE;
+
+            if (g_hash_table_contains (ordered, key))
+                continue;
+            deps = g_hash_table_lookup (priv->dependencies, key);
+            if (deps != NULL)
+            {
+                g_hash_table_iter_init (&dep_iter, deps);
+                while (g_hash_table_iter_next (&dep_iter, &dep, NULL))
+                    if (g_hash_table_contains (affected, dep) &&
+                        !g_hash_table_contains (ordered, dep))
+                        ready = FALSE;
+            }
+            if (ready && (next == NULL || g_strcmp0 (key, next) < 0))
+                next = key;
+        }
+        g_assert (next != NULL);
+        g_hash_table_add (ordered, (gpointer) next);
+        g_ptr_array_add (names, g_strdup (next));
+    }
+    for (i = 0; i < names->len; i++)
+    {
+        const gchar *current = g_ptr_array_index (names, i);
+        ObjectAsset *asset = g_hash_table_lookup (priv->object_cache, current);
+        GObject *replacement;
+
+        replacement = lrg_data_loader_load_file_validated (priv->data_loader,
+                                                           asset->path, &local_error);
+        if (replacement == NULL)
+        {
+            if (local_error == NULL)
+                g_set_error_literal (&local_error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                     "Definition loader returned no object");
+            g_prefix_error (&local_error, "%s: ", current);
+            goto failed;
+        }
+        g_ptr_array_add (replacements, replacement);
+        if (G_OBJECT_TYPE (replacement) != G_OBJECT_TYPE (asset->object))
+        {
+            g_set_error (&local_error, LRG_DATA_LOADER_ERROR, LRG_DATA_LOADER_ERROR_TYPE,
+                         "Reload cannot change definition type: %s", current);
+            goto failed;
+        }
+        g_ptr_array_add (previous, g_object_ref (asset->object));
+    }
+    /* Publish the entire batch before any observer can inspect the cache. */
+    for (i = 0; i < names->len; i++)
+    {
+        ObjectAsset *asset = g_hash_table_lookup (priv->object_cache, g_ptr_array_index (names, i));
+
+        g_set_object (&asset->object, g_ptr_array_index (replacements, i));
+    }
+    for (i = 0; i < names->len; i++)
+        g_signal_emit (self, asset_signals[OBJECT_RELOADED], 0,
+                       g_ptr_array_index (names, i), g_ptr_array_index (previous, i),
+                       g_ptr_array_index (replacements, i));
+    priv->reloading = FALSE;
     return TRUE;
+failed:
+    g_signal_emit (self, asset_signals[OBJECT_RELOAD_FAILED], 0, root, local_error);
+    priv->reloading = FALSE;
+    g_propagate_error (error, g_steal_pointer (&local_error));
+    return FALSE;
 }
 
 static gboolean
@@ -1183,6 +1344,7 @@ lrg_asset_manager_unload (LrgAssetManager *self,
 
     priv = lrg_asset_manager_get_instance_private (self);
 
+    forget_object_dependencies (priv, name);
     g_hash_table_remove (priv->object_watches, name);
     if (g_hash_table_remove (priv->object_cache, name))
         removed = TRUE;
@@ -1258,6 +1420,7 @@ lrg_asset_manager_unload_all (LrgAssetManager *self)
 
     g_hash_table_remove_all (priv->object_watches);
     g_hash_table_remove_all (priv->object_cache);
+    g_hash_table_remove_all (priv->dependencies);
     g_hash_table_remove_all (priv->texture_cache);
     g_hash_table_remove_all (priv->font_cache);
     g_hash_table_remove_all (priv->sound_cache);

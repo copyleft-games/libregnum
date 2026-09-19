@@ -38,6 +38,7 @@ PUBLIC_HEADERS := \
 	src/core/lrg-event.h \
 	src/core/lrg-event-listener.h \
 	src/core/lrg-event-bus.h \
+	src/core/lrg-random-stream.h \
 	src/core/lrg-timer-manager.h \
 	src/graphics/lrg-drawable.h \
 	src/graphics/lrg-window.h \
@@ -516,6 +517,7 @@ SOURCES := \
 	src/core/lrg-event.c \
 	src/core/lrg-event-listener.c \
 	src/core/lrg-event-bus.c \
+	src/core/lrg-random-stream.c \
 	src/core/lrg-timer-manager.c \
 	src/graphics/lrg-drawable.c \
 	src/graphics/lrg-window.c \

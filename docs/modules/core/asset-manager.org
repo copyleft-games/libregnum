@@ -169,3 +169,46 @@ reloads. Watches do not keep the manager alive.
 All calls belong on the manager's owning thread. Iterate the thread-default
 =GMainContext= used when establishing each watch; that is where monitor events,
 debounced reloads, and signals run. Loading and reloading are synchronous.
+
+** Live definition dependencies
+
+Declare dependencies after loading both YAML objects:
+
+#+begin_src c
+lrg_asset_manager_load_object (assets, "weapon.yaml", &error);
+lrg_asset_manager_load_object (assets, "enemy.yaml", &error);
+/* Check each return value/error in application code. */
+lrg_asset_manager_add_object_dependency (assets, "enemy.yaml", "weapon.yaml", &error);
+lrg_asset_manager_watch_object (assets, "weapon.yaml", &error);
+#+end_src
+
+Explicit and monitored reloads of =weapon.yaml= now also reload =enemy.yaml=
+and its transitive dependents. Dependencies are explicit cached-name links;
+the manager does not infer references from arbitrary YAML strings. Use the
+same names used to load the objects (absolute and relative aliases are distinct).
+Both endpoints must be cached. Duplicate links succeed, self-links and cycles
+fail, and =remove_object_dependency()= removes a link without unloading assets.
+Unloading an endpoint removes its incoming and outgoing links. Clearing the
+cache or changing its loader clears the graph. Unwatching retains links.
+
+The manager validates every affected file and enforces unchanged GTypes before
+replacing anything. A failure preserves the whole cache and emits one
+=object-reload-failed= signal for the requested root, with the failing filename
+in the error. Success commits the whole batch, then emits =object-reloaded=
+once per affected object in dependency order (lexical order breaks ties).
+Thus a shared dependent in a diamond reloads once, and the first observer sees
+all new definitions. Unaffected cache entries keep their identities.
+
+Signal arguments retain the old/new objects for the complete notification
+batch. Handlers may unload objects, clear the cache, or change links; these
+changes affect subsequent reloads. Remaining signals describe the committed
+batch, even if an earlier handler unloaded it. Recursive reload attempts fail
+with =G_IO_ERROR_PENDING= without emitting another failure signal. Keep all
+manager access on its owning thread.
+
+Links propagate definition replacement; applications still use the replacement
+signals to reconnect live entities and migrate gameplay state. Validation
+constructs standalone definitions before commit; constructors must not mutate
+the asset manager or expect staged replacements to be visible. GPU resources,
+arbitrary live-object migration, and transactional file writes are outside
+this YAML dependency mechanism.

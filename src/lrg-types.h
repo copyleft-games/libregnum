@@ -51,6 +51,7 @@ typedef struct _LrgEventListenerInterface LrgEventListenerInterface;
 
 /* LrgEventBus is a final type - no Class forward declaration needed */
 typedef struct _LrgEventBus  LrgEventBus;
+typedef struct _LrgRandomStream LrgRandomStream;
 typedef struct _LrgTimerManager LrgTimerManager;
 
 /* ==========================================================================

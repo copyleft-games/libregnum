@@ -57,12 +57,14 @@ TEST_LIBS += $(SANITIZER_LIBS)
 # Test source files
 TEST_SOURCES := \
 	test-engine.c \
+	test-random-stream.c \
 	test-timer-manager.c \
 	test-audio-mixer.c \
 	test-nav-mesh.c \
 	test-atlas-packing.c \
 	test-registry.c \
 	test-data-loader.c \
+	test-asset-dependencies.c \
 	test-asset-manager.c \
 	test-graphics.c \
 	test-ecs.c \

@@ -43,6 +43,7 @@
 #include "core/lrg-event.h"
 #include "core/lrg-event-listener.h"
 #include "core/lrg-event-bus.h"
+#include "core/lrg-random-stream.h"
 #include "core/lrg-timer-manager.h"
 
 /* Graphics module */
