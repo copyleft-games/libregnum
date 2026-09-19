@@ -173,6 +173,10 @@ PUBLIC_HEADERS := \
 	src/dlc/lrg-item-pack.h \
 	src/dlc/lrg-character-pack.h \
 	src/dlc/lrg-map-pack.h \
+	src/mmo/lrg-mmo-realm.h \
+	src/mmo/lrg-mmo-replicator.h \
+	src/mmo/lrg-mmo-group.h \
+	src/mmo/lrg-mmo-store.h \
 	src/net/lrg-net-message.h \
 	src/net/lrg-net-peer.h \
 	src/net/lrg-net-server.h \
@@ -646,6 +650,11 @@ SOURCES := \
 	src/dlc/lrg-item-pack.c \
 	src/dlc/lrg-character-pack.c \
 	src/dlc/lrg-map-pack.c \
+	src/net/lrg-net-buffer.c \
+	src/mmo/lrg-mmo-realm.c \
+	src/mmo/lrg-mmo-replicator.c \
+	src/mmo/lrg-mmo-group.c \
+	src/mmo/lrg-mmo-store.c \
 	src/net/lrg-net-message.c \
 	src/net/lrg-net-peer.c \
 	src/net/lrg-net-server.c \

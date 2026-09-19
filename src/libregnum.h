@@ -28,6 +28,12 @@
 /* Logging */
 #include "lrg-log.h"
 
+/* MMO server foundations */
+#include "mmo/lrg-mmo-realm.h"
+#include "mmo/lrg-mmo-replicator.h"
+#include "mmo/lrg-mmo-group.h"
+#include "mmo/lrg-mmo-store.h"
+
 /* Core module */
 #include "core/lrg-engine.h"
 #include "core/lrg-registry.h"

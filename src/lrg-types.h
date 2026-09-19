@@ -17,6 +17,13 @@
 
 G_BEGIN_DECLS
 
+/* MMO server foundations */
+typedef struct _LrgMmoRealm LrgMmoRealm;
+typedef struct _LrgMmoReplicator LrgMmoReplicator;
+typedef struct _LrgMmoGroup LrgMmoGroup;
+typedef struct _LrgMmoStore LrgMmoStore;
+
+
 /* ==========================================================================
  * Core Module
  * ========================================================================== */

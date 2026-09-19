@@ -170,6 +170,7 @@ endif
 
 .PHONY: check-deps
 check-deps:
+	@$(PKG_CONFIG) --exists sqlite3 || (echo "Missing: SQLite development package (Fedora: sqlite-devel)" && exit 1)
 ifeq ($(TARGET_PLATFORM),windows)
 	@$(PKG_CONFIG) --exists glib-2.0 || (echo "Missing: mingw64-glib2" && exit 1)
 	@$(PKG_CONFIG) --exists gobject-2.0 || (echo "Missing: mingw64-glib2" && exit 1)

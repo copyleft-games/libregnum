@@ -82,6 +82,8 @@ TEST_SOURCES := \
 	test-debug.c \
 	test-mod.c \
 	test-net.c \
+	test-mmo.c \
+	test-net-transport.c \
 	test-world3d.c \
 	test-scene.c \
 	test-primitives.c \

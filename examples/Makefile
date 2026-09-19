@@ -104,6 +104,7 @@ ifeq ($(STATIC),1)
     EXAMPLE_LIBS += $(RAYLIB_STATIC)
     # System libraries (static via pkg-config)
     EXAMPLE_LIBS += $(STATIC_GLIB_LIBS) $(STATIC_JSON_LIBS) $(STATIC_YAML_LIBS) $(STATIC_SOUP_LIBS) $(STATIC_DEX_LIBS)
+    EXAMPLE_LIBS += $(shell $(PKG_CONFIG) --static --libs sqlite3)
     EXAMPLE_LIBS += $(STATIC_LUAJIT_LIBS) $(STATIC_PYTHON_LIBS) $(STATIC_GJS_LIBS) $(STATIC_GI_LIBS)
     EXAMPLE_LIBS += -lm
     EXAMPLE_LIBS += $(PLATFORM_LIBS)
@@ -131,6 +132,7 @@ EXAMPLES += game-creature-collector game-vr-demo
 EXAMPLES += game-deckbuilder-combat game-deckbuilder-poker
 EXAMPLES += game-platformer-demo game-fps-demo
 EXAMPLES += game-third-person-demo game-top-down-demo game-twin-stick-demo game-shmup-demo game-racing-3d-demo
+EXAMPLES += mmo-simulation
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
 EXAMPLES += reel-hello reel-showcase
@@ -432,3 +434,8 @@ clean:
 	@$(RM) $(FPS_GAME_MODULE)
 	@if [ -d "$(GAME_MODULES_DIR)" ]; then rmdir --ignore-fail-on-non-empty "$(GAME_MODULES_DIR)"; fi
 	@if [ -d "$(EXAMPLES_BUILDDIR)" ]; then rmdir --ignore-fail-on-non-empty "$(EXAMPLES_BUILDDIR)"; fi
+
+# Headless MMO integration example; rebuild when its public API or archive changes.
+$(EXAMPLES_BUILDDIR)/mmo-simulation$(EXE_EXT): mmo-simulation.c $(LIBREGNUM_STATIC) ../src/mmo/lrg-mmo-realm.h ../src/mmo/lrg-mmo-replicator.h ../src/mmo/lrg-mmo-store.h ../src/mmo/lrg-mmo-group.h | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)

@@ -166,7 +166,7 @@ void lrg_net_client_set_timeout (LrgNetClient *self,
  * @message: the message to send
  * @error: (nullable): return location for error
  *
- * Sends a message to the server.
+ * Queues a message for the server. Call poll() to flush writes.
  *
  * Returns: %TRUE on success
  */
@@ -181,7 +181,7 @@ gboolean lrg_net_client_send (LrgNetClient   *self,
  * @self: an #LrgNetClient
  * @message: the message to send
  *
- * Sends a message asynchronously.
+ * Resolves when a message is queued, not when delivered. Call poll() to flush.
  *
  * Returns: (transfer full): A #DexFuture resolving to %TRUE on success
  */

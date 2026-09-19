@@ -1,0 +1,189 @@
+#+TITLE: MMO Server Foundations
+
+* Audit and scope
+
+Audit baseline: =e3e32cc=, 2026-09-18. This audit examines the local source,
+not a deployment or a load-tested production service.
+
+Libregnum already supplies gameplay building blocks: ECS worlds, navigation,
+AI, quests, inventory, economy, localization, save serialization and profiling.
+These are reusable inside an authoritative server. Their existence does not
+provide shared-world coordination or authorize client-originated mutations.
+
+| Requirement | Baseline evidence / gap | Implementation in this change |
+|------------+-------------------------+-------------------------------|
+| Working transport | Both =src/net/*poll()= bodies were placeholders; sends blocked on =write_all= | Incremental TCP framing, bounded nonblocking reads/writes, disconnect handling |
+| Bind isolation | Server ignored =host= | Numeric IPv4/IPv6 binding; port zero reports the allocated port |
+| Session identity | =LrgNetPeer= describes connections, with no account admission | =LrgMmoRealm=: verified-account admission, duplicate prevention, capacity and idle expiry |
+| Command admission | No sequence/replay or rate admission | Per-session monotonic sequence and token bucket |
+| Server simulation | Game templates couple loops to presentation | Headless fixed-step realm ticks with bounded catch-up |
+| Zones / instances | =LrgWorld= and =LrgLevel3D= model scenes, not session ownership | Named capacity-limited zones and atomic in-process moves |
+| Interest management | Transport broadcast sent to everyone | Spatial cell index, zone isolation and radius queries |
+| Replication | No entity IDs, baselines or acknowledgment history | Stable 64-bit IDs, revisions, spawn/update/despawn deltas, one pending acknowledged baseline per viewer |
+| Shared persistence | =save/= stores game saves, with no concurrent record transaction API | SQLite record batches with compare-and-swap revisions and all-or-nothing commits |
+| Parties / social membership | No party or guild membership authority | Capacity-limited groups, leader-only admission, self-leave, deterministic leadership succession |
+| Public integration | No MMO module | Four GObjects, umbrella header, GIR, tests and headless example |
+
+* What still belongs to the game or deployment
+
+This module is a foundation for an MMO server, not a claim that Libregnum can
+operate a production MMO without further work. The following remain explicit
+integration requirements, rather than placeholder implementations:
+
+- Identity provider, credential verification, token rotation, bans and account
+  recovery. =login()= accepts an identity already verified by trusted code; it
+  is not a password checker. Do not copy an account name from a packet into it.
+- Encrypted public ingress, protocol/version negotiation, authentication timeout,
+  connection/IP admission, abuse response and distributed denial-of-service
+  protection. Current net transport is plaintext TCP. Put it behind an
+  authenticated gateway/private network, or implement TLS before public use.
+- Game-specific command schemas, character ownership, movement/combat validation,
+  simulation of NPCs, inventory rules and anti-cheat. Admission only determines
+  whether a connected identity may submit another command.
+- Cross-process shard discovery, ownership leases/fencing, distributed zone
+  handoff, failover, replication between servers and regional routing.
+  =enter_zone()= is atomic only within its owning realm process.
+- A database service for multi-host operation, schema migrations for game data,
+  backups, restore drills, audit logs and durable operation IDs for retrying
+  trades/mail/auction operations. SQLite provides real local transactions but
+  does not provide distributed transactions or an MMO data model.
+- Invitations, durable guild roles, matchmaking, chat history/moderation,
+  friends/blocks, mail and auction house policy. Group membership is a primitive
+  for authorized recipient selection, not a complete social service.
+- Client interpolation, prediction/reconciliation, compression, bandwidth
+  prioritization, UDP/QUIC transport and snapshot pagination. A client must
+  apply a delta and acknowledge it explicitly.
+- Deployment orchestration, health endpoints, metrics, dashboards, capacity/load
+  testing, patch distribution and disaster recovery. No player-count or latency
+  guarantee has been measured here.
+
+* Threading and ownership
+
+Include =<libregnum.h>=. Realm, replicator, group and net objects are owned by
+one thread/main context; serialize all access there. A store is also confined
+to one thread. Use a worker thread with its own store instance for disk I/O,
+then marshal the result back to the simulation context. The synchronous store
+may wait up to one second for a database lock and must not run in the tick path.
+Separate store instances coordinate writes through SQLite transactions.
+
+All four types have =g_autoptr= cleanup. Record bytes are referenced or copied;
+returned snapshots and member arrays are independently owned. Account/zone
+lookups borrow strings that expire at the next realm mutation.
+
+* Host integration sequence
+
+1. Create a realm, register its zones, create a replicator and set an explicit
+   =LrgNetServer:max-peers=. The transport's compatibility default is unlimited;
+   realm capacity does not limit unauthenticated TCP connections.
+2. Run the socket service's thread-default =GMainContext= for connection
+   acceptance. Call server/client =poll()= regularly for reads and queued writes.
+   Poll does not recursively dispatch arbitrary main-context work.
+3. After verifying identity, call =lrg_mmo_realm_login()= with the actual peer ID
+   from the server signal. Map that account to a character controlled by it.
+4. Decode a bounded, versioned command. Use the transport signal's =peer_id=,
+   never =LrgNetMessage:sender_id=, as the caller identity. Wire sender IDs are
+   untrusted metadata. Pass a nonzero 64-bit command sequence and server
+   monotonic time to =accept_command()=; then perform game-specific checks.
+   Its sequence is separate from the legacy 32-bit message sequence.
+5. Drive =advance(elapsed_seconds)= using monotonic elapsed time. Each =tick=
+   signal carries a 50 ms step and tick number. Update gameplay, then publish
+   public entity state through =replicator_upsert()=. Entity IDs must remain
+   stable across connections; revisions are generated by the replicator.
+6. Build a delta using the viewer's server-authoritative zone and position.
+   Queue the serialized payload. If queuing fails with =WOULD_BLOCK=, retain the
+   delta and retry later. Do not acknowledge it merely because =send()= succeeds.
+7. On a validated acknowledgment from that same connection, call
+   =replicator_acknowledge()=. Unacknowledged deltas are returned unchanged even
+   if the world moves meanwhile; the next delta catches up after acknowledgment.
+8. On disconnect, call =realm_logout()= and =replicator_forget()=. The
+   =session-ended= signal also lets the host disconnect idle peers, remove their
+   world entities and schedule persistence. Call =expire(now_us)= periodically;
+   failed/replayed commands do not refresh a session. An admitted heartbeat may
+   use the same command path. Reconnection requires reauthentication and a full
+   baseline; no bearer reconnect token is issued here.
+
+An application must decide how to resolve an in-flight snapshot before changing
+viewer/zone context. On a world reset, forget the viewer and explicitly reset
+its client world before requesting a new full baseline. Do not mix epochs from
+different replicator instances; establish a fresh stream identity on reconnect.
+
+* Replication contract and bounds
+
+A delta has GVariant type =(ta(ttddday)at)=:
+
+| Field | Meaning |
+|-------+---------|
+| =t= | Snapshot sequence, unique within this replicator |
+| =a(ttddday)= | Sorted entity updates: ID, revision, X, Y, Z, opaque bytes |
+| =at= | Sorted IDs to remove from the client's visible world |
+
+Apply the complete delta before acknowledging. Repeated pending snapshots are
+idempotent: a client should acknowledge already-applied sequences without
+reapplying side effects. An entity entering view produces a full update; an
+unchanged acknowledged entity produces no update; leaving view or deletion
+produces a removal. Reusing an entity ID receives a new revision.
+
+The radius is at most four cell sizes, bounding lookup to at most 9^3 cells.
+Coordinates must be finite and within one billion cells of the origin. Spatial
+queries avoid scanning unrelated cells, but densely occupied cells still cost
+linear time in their occupants. Choose cell size and zone boundaries from
+actual population measurements. No benchmark establishes MMO-scale capacity.
+
+Entity state is capped at 64 KiB; a delta is capped conservatively at 1 MiB.
+Entity and viewer counts have explicit construction-time limits. Memory scales
+with entity payloads and the sum of per-viewer visible baselines; a 1 MiB bound
+per delta is not a global process memory budget. An oversized delta fails
+without advancing its baseline; reduce state/radius or partition the scene.
+Pending deltas hold their own immutable payloads until acknowledged/forgotten.
+
+GVariant is a data representation, not a negotiated network protocol. A host
+must specify version, type, endianness (for example canonical little endian),
+limits and stream identity. On big-endian hosts use =g_variant_byteswap()= for
+that wire representation. Construct incoming variants with =trusted=FALSE,
+validate normal form, exact schema and counts, and reject malformed data before
+applying it. Never deserialize arbitrary client data into trusted GObjects.
+
+* Persistence contract
+
+=LrgMmoStore= stores opaque records keyed by UTF-8 strings of 1--256 bytes.
+A batch is =a(stay)=: record key, expected revision, bytes. Revision zero means
+create-only; a nonzero revision means update that exact version. Each successful
+write increases the revision by one. Revisions cannot exceed signed 64-bit
+SQLite integer range. Up to 256 distinct keys and 1 MiB per record are allowed.
+Duplicate keys, invalid revisions and oversized values reject the entire batch.
+
+Use a single batch for related character/inventory/currency changes. A conflict
+returns =G_IO_ERROR_WRONG_ETAG= and rolls back every change. Reload and revalidate
+gameplay intent before retrying. Do not blindly replay a purchase after an
+ambiguous disconnect: persist a game-defined operation ID in the same batch.
+Empty byte records are supported. There is intentionally no hard-delete API;
+represent domain deletions as versioned tombstones to avoid resetting revision
+history. Schema versioning within record contents belongs to the game.
+
+The backend uses prepared statements, =BEGIN IMMEDIATE=, WAL and
+=synchronous=FULL=. A successful commit is subject to SQLite/filesystem durability
+guarantees, not a backup or replicated failover guarantee. Use a local filesystem
+and an application-controlled database path. =:memory:= is useful for tests.
+SQLite is a required build dependency (=sqlite-devel= on Fedora,
+=libsqlite3-dev= on Debian/Ubuntu).
+
+* Running the headless example and tests
+
+#+begin_src sh
+make
+make -C examples build/release/examples/mmo-simulation
+./examples/build/release/examples/mmo-simulation
+make test
+#+end_src
+
+The example uses two already-verified local identities and an in-memory store.
+It walks admission, group formation, zone placement, authoritative publication,
+acknowledgment and atomic record storage without a window or audio device.
+It is an integration example, not a public login endpoint.
+
+The tests cover session duplication/capacity/expiry, command replay/rate/clock
+checks, failed zone moves, fixed ticks, spatial boundaries/zone isolation,
+acknowledgment retries and despawns, payload budgets, group authority,
+transaction rollback, cross-connection conflicts and database reopen. Transport
+tests use ephemeral loopback ports and exercise fragmented/coalesced frames,
+queue pressure, oversized input, failed connection ownership and callback stop.

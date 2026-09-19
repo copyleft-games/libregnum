@@ -96,3 +96,6 @@ The full engine sanitizer suite and physical audio-device playback were not run.
 Builds used the existing parent-checkout dependency directories; no packages
 were installed. The mixer itself adds no dependency beyond existing engine
 libraries, and the navmesh/packer use GLib/GIO and libm.
+
+After integrating concurrent master changes, the full headless suite passed
+again: 2628 cases passed, 125 skipped across 93 C test binaries.

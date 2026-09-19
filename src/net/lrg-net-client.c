@@ -11,6 +11,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "net/lrg-net-client.h"
+#include "lrg-net-buffer-private.h"
 
 /**
  * LrgNetClient:
@@ -20,12 +21,14 @@
 struct _LrgNetClient
 {
     GObject             parent_instance;
+    LrgNetBuffer        buffer;
 
     gchar              *server_host;
     guint               server_port;
     guint               timeout_ms;
     guint32             local_id;
     gboolean            connected;
+    gboolean            polling;
 
     GSocketClient      *socket_client;
     GSocketConnection  *connection;
@@ -71,6 +74,7 @@ lrg_net_client_finalize (GObject *object)
 
     lrg_net_client_disconnect (self);
 
+    _lrg_net_buffer_clear (&self->buffer);
     g_clear_pointer (&self->server_host, g_free);
     g_clear_object (&self->socket_client);
 
@@ -277,6 +281,7 @@ lrg_net_client_class_init (LrgNetClientClass *klass)
 static void
 lrg_net_client_init (LrgNetClient *self)
 {
+    _lrg_net_buffer_init (&self->buffer);
     self->timeout_ms = 5000;
     self->connected = FALSE;
     self->local_id = 0;
@@ -342,7 +347,7 @@ lrg_net_client_connect (LrgNetClient  *self,
     }
 
     /* Set timeout */
-    g_socket_client_set_timeout (self->socket_client, self->timeout_ms / 1000);
+    g_socket_client_set_timeout (self->socket_client, MAX (1u, self->timeout_ms / 1000 + (self->timeout_ms % 1000 != 0)));
 
     /* Create cancellable */
     self->cancellable = g_cancellable_new ();
@@ -356,11 +361,11 @@ lrg_net_client_connect (LrgNetClient  *self,
 
     if (self->connection == NULL)
     {
-        g_propagate_prefixed_error (error, local_error,
-                                    "Failed to connect to %s:%u: ",
-                                    self->server_host, self->server_port);
         g_clear_object (&self->cancellable);
+        g_prefix_error (&local_error, "Failed to connect to %s:%u: ",
+                        self->server_host, self->server_port);
         g_signal_emit (self, signals[SIGNAL_CONNECTION_FAILED], 0, local_error);
+        g_propagate_error (error, g_steal_pointer (&local_error));
         return FALSE;
     }
 
@@ -439,6 +444,8 @@ lrg_net_client_disconnect (LrgNetClient *self)
     }
 
     self->connected = FALSE;
+    g_byte_array_set_size (self->buffer.input, 0);
+    g_byte_array_set_size (self->buffer.output, 0);
     self->local_id = 0;
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IS_CONNECTED]);
@@ -547,7 +554,7 @@ lrg_net_client_set_timeout (LrgNetClient *self,
  * @message: the message to send
  * @error: (nullable): return location for error
  *
- * Sends a message to the server.
+ * Queues a message for the server. Call poll() to flush writes.
  *
  * Returns: %TRUE on success
  */
@@ -556,39 +563,16 @@ lrg_net_client_send (LrgNetClient   *self,
                      LrgNetMessage  *message,
                      GError        **error)
 {
-    g_autoptr(GBytes)  data = NULL;
-    gsize              size;
-    const guint8      *bytes;
-    gsize              written;
-    g_autoptr(GError)  local_error = NULL;
-
     g_return_val_if_fail (LRG_IS_NET_CLIENT (self), FALSE);
     g_return_val_if_fail (message != NULL, FALSE);
 
     if (!self->connected)
     {
-        g_set_error (error,
-                     LRG_NET_ERROR,
-                     LRG_NET_ERROR_NOT_CONNECTED,
-                     "Client is not connected");
+        g_set_error_literal (error, LRG_NET_ERROR, LRG_NET_ERROR_NOT_CONNECTED,
+                             "Client is not connected");
         return FALSE;
     }
-
-    data = lrg_net_message_serialize (message);
-    bytes = g_bytes_get_data (data, &size);
-
-    if (!g_output_stream_write_all (self->output,
-                                    bytes, size,
-                                    &written,
-                                    self->cancellable,
-                                    &local_error))
-    {
-        g_propagate_prefixed_error (error, local_error,
-                                    "Failed to send message: ");
-        return FALSE;
-    }
-
-    return TRUE;
+    return _lrg_net_buffer_send (&self->buffer, message, error);
 }
 
 #ifdef LRG_HAS_LIBDEX
@@ -597,7 +581,7 @@ lrg_net_client_send (LrgNetClient   *self,
  * @self: an #LrgNetClient
  * @message: the message to send
  *
- * Sends a message asynchronously.
+ * Resolves when a message is queued, not when delivered. Call poll() to flush.
  *
  * Returns: (transfer full): A #DexFuture resolving to %TRUE on success
  */
@@ -611,10 +595,7 @@ lrg_net_client_send_async (LrgNetClient  *self,
     g_return_val_if_fail (LRG_IS_NET_CLIENT (self), NULL);
     g_return_val_if_fail (message != NULL, NULL);
 
-    /*
-     * For now, wrap synchronous send. A full async implementation
-     * would use GOutputStream async APIs with DexFuture.
-     */
+    /* Resolve when queued; poll() drives bounded nonblocking writes. */
     result = lrg_net_client_send (self, message, &error);
 
     if (result)
@@ -633,15 +614,36 @@ lrg_net_client_send_async (LrgNetClient  *self,
 void
 lrg_net_client_poll (LrgNetClient *self)
 {
-    g_return_if_fail (LRG_IS_NET_CLIENT (self));
+    guint i;
+    g_autoptr(GSocketConnection) connection = NULL;
+    g_autoptr(LrgNetClient) keep_alive = NULL;
 
-    /*
-     * In a full implementation, this would:
-     * 1. Check for incoming data on the connection
-     * 2. Parse complete messages from input buffer
-     * 3. Emit message-received signals
-     * 4. Check for disconnect
-     *
-     * For now, message reading would require additional async read scheduling.
-     */
+    g_return_if_fail (LRG_IS_NET_CLIENT (self));
+    if (!self->connected || self->polling)
+        return;
+    keep_alive = g_object_ref (self);
+    self->polling = TRUE;
+    connection = g_object_ref (self->connection);
+    for (i = 0; i < 64 && self->connection == connection; i++)
+    {
+        g_autoptr(GError) error = NULL;
+        g_autoptr(LrgNetMessage) message = NULL;
+        GSocket *socket = g_socket_connection_get_socket (connection);
+
+        if (i == 0 && !_lrg_net_buffer_flush (&self->buffer, socket, &error))
+        {
+            lrg_net_client_disconnect (self);
+            break;
+        }
+        message = _lrg_net_buffer_receive (&self->buffer, socket, &error);
+        if (error != NULL)
+        {
+            lrg_net_client_disconnect (self);
+            break;
+        }
+        if (message == NULL)
+            break;
+        g_signal_emit (self, signals[SIGNAL_MESSAGE_RECEIVED], 0, message);
+    }
+    self->polling = FALSE;
 }
