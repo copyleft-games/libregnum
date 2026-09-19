@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 #include "lrg-mmo-matchmaker.h"
 #include "lrg-mmo-service-private.h"
-typedef struct { gchar *account; gchar *mode; guint rating; gint64 created; } Ticket;
+typedef struct { GPtrArray *members; gchar *mode; guint minimum, maximum; gint64 created; } Ticket;
 struct _LrgMmoMatchmaker
 {
     GObject parent_instance;
     GQueue tickets;
     guint capacity;
+    guint queued;
     gint64 last_time;
 };
 G_DEFINE_TYPE (LrgMmoMatchmaker, lrg_mmo_matchmaker, G_TYPE_OBJECT)
@@ -14,7 +15,7 @@ static void
 ticket_free (gpointer data)
 {
     Ticket *ticket = data;
-    g_free (ticket->account);
+    g_ptr_array_unref (ticket->members);
     g_free (ticket->mode);
     g_free (ticket);
 }
@@ -53,6 +54,7 @@ expire (LrgMmoMatchmaker *self, gint64 now)
         Ticket *ticket = item->data;
         if (now - ticket->created >= 60 * G_TIME_SPAN_SECOND)
         {
+            self->queued -= ticket->members->len;
             g_queue_delete_link (&self->tickets, item);
             ticket_free (ticket);
         }
@@ -61,28 +63,66 @@ expire (LrgMmoMatchmaker *self, gint64 now)
 }
 
 gboolean
+lrg_mmo_matchmaker_enqueue_party (LrgMmoMatchmaker *self, GVariant *members, const gchar *mode,
+                                  gint64 now_us, GError **error)
+{
+    GList *item;
+    GVariantIter iter;
+    const gchar *account;
+    guint rating, minimum = G_MAXUINT, maximum = 0, i;
+    g_autoptr(GPtrArray) accounts = g_ptr_array_new_with_free_func (g_free);
+    Ticket *ticket;
+    g_return_val_if_fail (LRG_IS_MMO_MATCHMAKER (self), FALSE);
+    if (members == NULL || !g_variant_is_of_type (members, G_VARIANT_TYPE ("a(su)")) ||
+        g_variant_n_children (members) == 0 || g_variant_n_children (members) > 128 ||
+        !_lrg_mmo_id_valid (mode) || now_us < self->last_time)
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid party ticket or clock");
+    self->last_time = now_us;
+    expire (self, now_us);
+    g_variant_iter_init (&iter, members);
+    while (g_variant_iter_next (&iter, "(&su)", &account, &rating))
+    {
+        if (!_lrg_mmo_id_valid (account))
+            return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid party account");
+        for (i = 0; i < accounts->len; i++)
+            if (g_str_equal (account, g_ptr_array_index (accounts, i)))
+                return _lrg_mmo_fail (error, G_IO_ERROR_EXISTS, "Duplicate party account");
+        for (item = self->tickets.head; item != NULL; item = item->next)
+        {
+            Ticket *queued = item->data;
+            for (i = 0; i < queued->members->len; i++)
+                if (g_str_equal (account, g_ptr_array_index (queued->members, i)))
+                    return _lrg_mmo_fail (error, G_IO_ERROR_EXISTS, "Account already queued");
+        }
+        minimum = MIN (minimum, rating);
+        maximum = MAX (maximum, rating);
+        g_ptr_array_add (accounts, g_strdup (account));
+    }
+    if (accounts->len > self->capacity - self->queued)
+        return _lrg_mmo_fail (error, G_IO_ERROR_NO_SPACE, "Matchmaking queue full");
+    ticket = g_new0 (Ticket, 1);
+    ticket->members = g_steal_pointer (&accounts);
+    ticket->mode = g_strdup (mode);
+    ticket->minimum = minimum;
+    ticket->maximum = maximum;
+    ticket->created = now_us;
+    self->queued += ticket->members->len;
+    g_queue_push_tail (&self->tickets, ticket);
+    return TRUE;
+}
+
+gboolean
 lrg_mmo_matchmaker_enqueue (LrgMmoMatchmaker *self, const gchar *account, const gchar *mode,
                             guint rating, gint64 now_us, GError **error)
 {
-    GList *item;
-    Ticket *ticket;
-    g_return_val_if_fail (LRG_IS_MMO_MATCHMAKER (self), FALSE);
-    if (!_lrg_mmo_id_valid (account) || !_lrg_mmo_id_valid (mode) || now_us < self->last_time)
-        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid matchmaking ticket or clock");
-    self->last_time = now_us;
-    expire (self, now_us);
-    for (item = self->tickets.head; item != NULL; item = item->next)
-        if (g_str_equal (((Ticket *) item->data)->account, account))
-            return _lrg_mmo_fail (error, G_IO_ERROR_EXISTS, "Account already queued");
-    if (self->tickets.length >= self->capacity)
-        return _lrg_mmo_fail (error, G_IO_ERROR_NO_SPACE, "Matchmaking queue full");
-    ticket = g_new0 (Ticket, 1);
-    ticket->account = g_strdup (account);
-    ticket->mode = g_strdup (mode);
-    ticket->rating = rating;
-    ticket->created = now_us;
-    g_queue_push_tail (&self->tickets, ticket);
-    return TRUE;
+    GVariantBuilder builder;
+    g_autoptr(GVariant) members = NULL;
+    if (!_lrg_mmo_id_valid (account))
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid account");
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(su)"));
+    g_variant_builder_add (&builder, "(su)", account, rating);
+    members = g_variant_ref_sink (g_variant_builder_end (&builder));
+    return lrg_mmo_matchmaker_enqueue_party (self, members, mode, now_us, error);
 }
 
 void
@@ -93,11 +133,16 @@ lrg_mmo_matchmaker_cancel (LrgMmoMatchmaker *self, const gchar *account)
     for (item = self->tickets.head; item != NULL; item = item->next)
     {
         Ticket *ticket = item->data;
-        if (g_strcmp0 (ticket->account, account) == 0)
+        guint i;
+        for (i = 0; i < ticket->members->len; i++)
         {
-            g_queue_delete_link (&self->tickets, item);
-            ticket_free (ticket);
-            return;
+            if (g_strcmp0 (g_ptr_array_index (ticket->members, i), account) == 0)
+            {
+                self->queued -= ticket->members->len;
+                g_queue_delete_link (&self->tickets, item);
+                ticket_free (ticket);
+                return;
+            }
         }
     }
 }
@@ -121,22 +166,24 @@ lrg_mmo_matchmaker_take (LrgMmoMatchmaker *self, const gchar *mode, guint size,
     {
         Ticket *first = seed->data;
         GList *item;
-        guint minimum = first->rating, maximum = first->rating;
+        guint minimum = first->minimum, maximum = first->maximum;
         guint i;
-        if (!g_str_equal (first->mode, mode))
+        if (!g_str_equal (first->mode, mode) || first->members->len > size || maximum - minimum > spread)
             continue;
         g_ptr_array_set_size (result, 0);
-        g_ptr_array_add (result, g_strdup (first->account));
+        for (i = 0; i < first->members->len; i++)
+            g_ptr_array_add (result, g_strdup (g_ptr_array_index (first->members, i)));
         for (item = seed->next; item != NULL && result->len < size; item = item->next)
         {
             Ticket *ticket = item->data;
-            guint low = MIN (minimum, ticket->rating);
-            guint high = MAX (maximum, ticket->rating);
-            if (g_str_equal (ticket->mode, mode) && high - low <= spread)
+            guint low = MIN (minimum, ticket->minimum);
+            guint high = MAX (maximum, ticket->maximum);
+            if (g_str_equal (ticket->mode, mode) && high - low <= spread && ticket->members->len <= size - result->len)
             {
                 minimum = low;
                 maximum = high;
-                g_ptr_array_add (result, g_strdup (ticket->account));
+                for (i = 0; i < ticket->members->len; i++)
+                    g_ptr_array_add (result, g_strdup (g_ptr_array_index (ticket->members, i)));
             }
         }
         if (result->len == size)

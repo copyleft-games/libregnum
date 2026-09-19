@@ -47,8 +47,8 @@ protect database access, transport and backup storage. This is not WebAuthn.
 
 The CLI accepts =--totp-file= during login. Apply the origin gate before expensive
 password/MFA requests. If token issuance fails after consuming a code, wait for
-the next code rather than permitting replay. A secure external email/SMS recovery
-provider is not selected or contacted by these changes.
+the next code rather than permitting replay. The [[file:runtime.org][runtime integration]] adds verified SMTP delivery. Provider credentials are
+operator configuration; tests contact only a local TLS mailbox.
 
 * Worker recovery
 
@@ -77,7 +77,8 @@ make -C examples check-mmo-failover
 
 This tests application-worker recovery against one database primary. It does not
 test infrastructure split-brain, replication loss or database-primary promotion.
-Those require a selected HA provider/topology and its fencing mechanism.
+The [[file:runtime.org][runtime HA drill]] now tests Patroni/etcd primary replacement and quorum
+loss. Physical-host fencing still requires the deployment watchdog mechanism.
 
 * Authoritative simulation
 

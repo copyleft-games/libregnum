@@ -62,27 +62,24 @@ See [[file:completion.org][completion contracts, executable checks and deploymen
 | Recovery and measurement | PostgreSQL dump/restore drill, killed-worker tests, concurrent TLS latency sample |
 | Operational visibility | Existing health/metrics host plus Prometheus scrape/alert and dashboard examples |
 
-* Deployment boundaries and optional capabilities
+* Runtime integration and deployment boundaries
 
-The library now has a tested reference path for shared persistence, worker recovery
-and basic authoritative RPG state. It is not a running production game. A live
-rollout still needs hosting, certificate and recovery-provider configuration,
-a database HA topology with infrastructure fencing, and an explicit load/SLO
-profile. The local tests exercise independent processes against one PostgreSQL
-primary; they do not establish multi-host database failover or WAN availability.
+The remaining reference integrations are covered in [[file:runtime.org][Runtime and Operations]]:
+verified SMTP recovery, Patroni/etcd primary election, mutual DTLS over UDP,
+ranked seasons, whole-party matchmaking, an audited operator console, and a
+playable authoritative TLS host/client. The checks exercise application workers,
+database primary replacement, replica rejoin and DCS quorum loss locally.
 
-The reference simulation is configurable straight-line movement and direct damage
-against static boxes. Games still supply navigation/AI, skills, physics, respawn,
-world content and policy. Existing engine AI/physics/quest modules support those
-game-specific choices. The checkpoint worker advertises an endpoint but does not
-host a gameplay socket; connect the simulation to your authoritative ingress.
+A live rollout still needs hosting, private certificates and provider credentials,
+failure domains and physical-host fencing, and a measured load/SLO profile.
+Local container results do not establish WAN availability or physical watchdog
+behavior. The library is not itself a deployed game.
 
-Recovery-message delivery, automated database-primary election,
-UDP/QUIC, ranked seasons/party placement, and a full moderation console are not
-implemented in this pass. TLS/TCP remains the supported transport. These are
-explicit remaining capabilities, not hidden behind stub APIs or claimed tested.
-The user must choose the operational providers/topology and game policy before a
-complete live deployment can be implemented and verified.
+The reference simulation provides configurable movement and direct damage with
+static collision. Games supply their navigation/AI, skills, physics, respawn,
+world content and policy using the existing engine modules. The checkpoint-only
+worker remains available; the new runtime supplies the connected gameplay path.
+TLS/TCP and DTLS/UDP are implemented alternatives; QUIC is not implemented.
 
 * Threading and ownership
 
@@ -214,8 +211,3 @@ acknowledgment retries and despawns, payload budgets, group authority,
 transaction rollback, cross-connection conflicts and database reopen. Transport
 tests use ephemeral loopback ports and exercise fragmented/coalesced frames,
 queue pressure, oversized input, failed connection ownership and callback stop.
-
-* Runtime integration
-
-See [[file:runtime.org][Runtime and Operations]] for the playable TLS host/client, DTLS UDP, verified
-mailbox delivery, ranked seasons, moderation console and Patroni/etcd HA drill.

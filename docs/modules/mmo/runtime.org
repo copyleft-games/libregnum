@@ -4,7 +4,7 @@
 
 The remaining reference integrations from [[file:completion.org][the shared-world audit]] are now
 implemented: authenticated gameplay/client flow, secure UDP datagrams, verified
-mailbox delivery, ranked seasons, an operator console, and automatic database
+mailbox delivery, ranked seasons, whole-party matchmaking, an operator console, and automatic database
 primary election. These are configurable library and reference components.
 Provisioning a real deployment, selecting game content, measuring its capacity,
 and operating it remain responsibilities of the application and its operators.
@@ -153,6 +153,16 @@ normal CLI output or diagnostic errors. If SMTP fails, the already-issued proof
 expires unused; recovery's cooldown remains consumed. Retry after the cooldown.
 There is no plaintext persistent delivery queue or automatic duplicate mailing.
 The tests use a loopback TLS mailbox and never send external email.
+
+* Party placement
+
+=Matchmaker.enqueue_party()= atomically queues account/rating tuples after the
+host verifies group membership and consent. Capacity counts every member. A
+queued account cannot enter another solo or party ticket. Match assembly selects
+whole parties, enforcing rating spread across every member and never splitting
+a party to fill a smaller match. Expiry or any member's cancellation removes the
+entire ticket. The bounded greedy FIFO policy may leave an incomplete match
+queued even if another packing exists; it does not claim optimal global packing.
 
 * Ranked seasons and operator console
 

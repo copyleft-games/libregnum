@@ -50,7 +50,7 @@ lrg_mmo_matchmaker_enqueue (LrgMmoMatchmaker *self,
  * @self: the service; confine to its owning thread
  * @account: account ID
  *
- * Removes a queued account on disconnect or cancellation.
+ * Removes the entire ticket containing this account, preserving party integrity.
  */
 LRG_AVAILABLE_IN_ALL
 void
@@ -66,7 +66,8 @@ lrg_mmo_matchmaker_cancel (LrgMmoMatchmaker *self,
  * @now_us: monotonic server microseconds
  * @error: (nullable): return location for error
  *
- * Expires old tickets and greedily packs FIFO tickets within the rating bound.
+ * Expires old tickets and greedily packs whole FIFO parties within the rating
+ * bound across all participants. Parties are never split.
  * This bounded-policy queue does not optimize global match quality. Incomplete groups remain queued; no ticket is removed twice.
  *
  * Returns: (transfer full) (element-type utf8) (nullable): account IDs, empty if no full group
@@ -80,4 +81,21 @@ lrg_mmo_matchmaker_take (LrgMmoMatchmaker *self,
                          gint64 now_us,
                          GError **error);
 
+/**
+ * lrg_mmo_matchmaker_enqueue_party:
+ * @self: matchmaking queue
+ * @members: a(su) account and trusted rating tuples, 1 to 128 unique accounts
+ * @mode: game mode ID
+ * @now_us: trusted nonnegative monotonic microseconds
+ * @error: (nullable): error return
+ *
+ * Atomically enqueues a whole party. The host verifies membership and participant
+ * consent before calling; tuple account IDs are not authentication. Capacity
+ * counts accounts, including solo tickets. Duplicate/queued members reject the
+ * whole party. Expiry or cancellation of any member removes the whole ticket.
+ * Returns: whether queued
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_matchmaker_enqueue_party (LrgMmoMatchmaker *self, GVariant *members,
+                                           const gchar *mode, gint64 now_us, GError **error);
 G_END_DECLS

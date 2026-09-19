@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 #include "mmo/lrg-mmo-auth.h"
 #include "mmo/lrg-mmo-season.h"
+#include "mmo/lrg-mmo-matchmaker.h"
 
 static void
 recovery (void)
@@ -96,11 +97,46 @@ seasons (void)
     unchanged = lrg_mmo_season_standings (service, "summer", &error);
     g_assert_true (g_variant_equal (standings, unchanged));
 }
+static void
+parties (void)
+{
+    g_autoptr(LrgMmoMatchmaker) queue = lrg_mmo_matchmaker_new (4);
+    g_autoptr(GVariant) party = g_variant_ref_sink (g_variant_new_parsed ("[('alice', uint32 100), ('bob', uint32 120)]"));
+    g_autoptr(GPtrArray) match = NULL;
+    g_autoptr(GError) error = NULL;
+    g_assert_true (lrg_mmo_matchmaker_enqueue_party (queue, party, "arena", 1, &error));
+    g_assert_false (lrg_mmo_matchmaker_enqueue (queue, "bob", "arena", 120, 1, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_EXISTS);
+    g_clear_error (&error);
+    g_assert_true (lrg_mmo_matchmaker_enqueue (queue, "carol", "arena", 110, 1, &error));
+    match = lrg_mmo_matchmaker_take (queue, "arena", 2, 10, 2, &error);
+    g_assert_cmpuint (match->len, ==, 0);
+    g_clear_pointer (&match, g_ptr_array_unref);
+    match = lrg_mmo_matchmaker_take (queue, "arena", 3, 20, 2, &error);
+    g_assert_cmpuint (match->len, ==, 3);
+    g_clear_pointer (&match, g_ptr_array_unref);
+    g_assert_true (lrg_mmo_matchmaker_enqueue_party (queue, party, "arena", 3, &error));
+    lrg_mmo_matchmaker_cancel (queue, "alice");
+    g_assert_true (lrg_mmo_matchmaker_enqueue (queue, "bob", "arena", 120, 3, &error));
+    lrg_mmo_matchmaker_cancel (queue, "bob");
+    g_assert_true (lrg_mmo_matchmaker_enqueue_party (queue, party, "arena", 4, &error));
+    g_assert_true (lrg_mmo_matchmaker_enqueue (queue, "carol", "arena", 110, 4, &error));
+    g_assert_true (lrg_mmo_matchmaker_enqueue (queue, "dave", "arena", 110, 4, &error));
+    g_assert_false (lrg_mmo_matchmaker_enqueue (queue, "eve", "arena", 110, 4, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE);
+    g_clear_error (&error);
+    match = lrg_mmo_matchmaker_take (queue, "arena", 4, 20, 60000004, &error);
+    g_assert_cmpuint (match->len, ==, 0);
+    g_assert_true (lrg_mmo_matchmaker_enqueue_party (queue, party, "arena", 60000004, &error));
+    g_assert_no_error (error);
+}
+
 int
 main (int argc, char **argv)
 {
     g_test_init (&argc, &argv, NULL);
     g_test_add_func ("/mmo/runtime/recovery-moderation", recovery);
     g_test_add_func ("/mmo/runtime/seasons", seasons);
+    g_test_add_func ("/mmo/runtime/whole-party-placement", parties);
     return g_test_run ();
 }
