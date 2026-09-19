@@ -147,3 +147,19 @@ dependency API regressions. Library/loader/GIR/typelib builds completed and the
 random stream API passed a strict introspection scan. Existing unrelated GIR
 warnings remain. Full-engine sanitizer and hardware checks were not run; no
 new dependency or host package was introduced.
+
+* Additional audit: save format compatibility
+
+Save contexts stored a version and the error enum included a version-mismatch
+code, but the manager did not enforce compatibility before calling gameplay
+load methods. Version parsing also truncated integers and treated malformed or
+zero values as legacy version 1. Implemented strict positive decimal parsing
+and a pre-load rejection of formats newer than the manager's save version.
+Older formats remain available for application-specific per-object migrations.
+See [[file:modules/save/index.org][save compatibility and error behavior]].
+
+Validation: full headless =make test= passed 2,642 cases with 125 skips across
+95 binaries. All 23 save tests passed ASan/UBSan with leak detection and
+Valgrind with zero errors and definite leaks. Static/shared library, loader,
+GIR, and typelib builds passed; existing unrelated GIR warnings remain.
+Full-engine sanitizer and hardware checks were not run. No dependency added.

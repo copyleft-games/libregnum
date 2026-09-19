@@ -102,7 +102,7 @@ guint lrg_save_manager_get_save_version (LrgSaveManager *self);
 /**
  * lrg_save_manager_set_save_version:
  * @self: a #LrgSaveManager
- * @version: the version number
+ * @version: positive format version (at least 1)
  *
  * Sets the current save format version.
  */
@@ -194,6 +194,9 @@ gboolean lrg_save_manager_save_with_description (LrgSaveManager *self,
  * @error: (optional): return location for a #GError
  *
  * Loads the game state from the specified slot.
+ * Rejects versions newer than save-version with LRG_SAVE_ERROR_VERSION_MISMATCH
+ * before invoking any saveable load method. Older formats remain available
+ * for per-object migration using lrg_save_context_get_version().
  *
  * This calls the load method on all registered saveable objects.
  *

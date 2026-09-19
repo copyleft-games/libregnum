@@ -578,6 +578,88 @@ test_save_manager_description (void)
 }
 
 
+static void
+test_save_version_validation (void)
+{
+    const gchar *invalid[] = { "0", "-1", "4294967296", "184467440737095516160",
+                              "1.5", "1e2", "true", "null", "[]", "{}", "''",
+                              "' 2'", "'2junk'", "+2" };
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (invalid); i++)
+    {
+        g_autofree gchar *yaml = g_strdup_printf ("version: %s\n", invalid[i]);
+        g_autoptr(GError) error = NULL;
+        g_autoptr(LrgSaveContext) context = lrg_save_context_new_for_load (yaml, &error);
+
+        g_assert_null (context);
+        g_assert_error (error, LRG_SAVE_ERROR, LRG_SAVE_ERROR_CORRUPT);
+    }
+    {
+        g_autoptr(LrgSaveContext) legacy = lrg_save_context_new_for_load ("metadata: {}\n", NULL);
+        g_autoptr(LrgSaveContext) maximum = lrg_save_context_new_for_load ("version: 4294967295\n", NULL);
+        g_autoptr(LrgSaveContext) quoted = lrg_save_context_new_for_load ("version: '2'\n", NULL);
+
+        g_assert_nonnull (legacy);
+        g_assert_cmpuint (lrg_save_context_get_version (legacy), ==, 1);
+        g_assert_nonnull (maximum);
+        g_assert_cmpuint (lrg_save_context_get_version (maximum), ==, G_MAXUINT);
+        g_assert_nonnull (quoted);
+        g_assert_cmpuint (lrg_save_context_get_version (quoted), ==, 2);
+    }
+}
+
+static void
+on_version_load_completed (LrgSaveManager *manager, const gchar *slot,
+                           gboolean success, gpointer data)
+{
+    guint *failures = data;
+
+    if (!success)
+        (*failures)++;
+}
+
+static void
+test_save_version_compatibility (SaveManagerFixture *fixture, gconstpointer data)
+{
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *path = g_build_filename (fixture->temp_dir, "future.yaml", NULL);
+    g_autofree gchar *before = NULL;
+    g_autofree gchar *after = NULL;
+    guint failures = 0;
+
+    lrg_save_manager_register (fixture->manager, LRG_SAVEABLE (fixture->object));
+    lrg_save_manager_set_save_version (fixture->manager, 2);
+    fixture->object->score = 123;
+    g_assert_true (lrg_save_manager_save (fixture->manager, "future", &error));
+    g_assert_no_error (error);
+    g_assert_true (g_file_get_contents (path, &before, NULL, &error));
+    g_assert_no_error (error);
+    fixture->object->score = 999;
+    lrg_save_manager_set_save_version (fixture->manager, 1);
+    g_signal_connect (fixture->manager, "load-completed", G_CALLBACK (on_version_load_completed), &failures);
+    g_assert_false (lrg_save_manager_load (fixture->manager, "future", &error));
+    g_assert_error (error, LRG_SAVE_ERROR, LRG_SAVE_ERROR_VERSION_MISMATCH);
+    g_clear_error (&error);
+    g_assert_cmpint (fixture->object->score, ==, 999);
+    g_assert_cmpuint (failures, ==, 1);
+    g_assert_true (g_file_get_contents (path, &after, NULL, &error));
+    g_assert_no_error (error);
+    g_assert_cmpstr (before, ==, after);
+
+    lrg_save_manager_set_save_version (fixture->manager, 2);
+    g_assert_true (lrg_save_manager_load (fixture->manager, "future", &error));
+    g_assert_no_error (error);
+    g_assert_cmpint (fixture->object->score, ==, 123);
+    fixture->object->score = 999;
+    lrg_save_manager_set_save_version (fixture->manager, 3);
+    g_assert_true (lrg_save_manager_load (fixture->manager, "future", &error));
+    g_assert_no_error (error);
+    g_assert_cmpint (fixture->object->score, ==, 123);
+    g_assert_cmpuint (failures, ==, 1);
+    g_signal_handlers_disconnect_by_data (fixture->manager, &failures);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -667,5 +749,9 @@ main (int   argc,
     /* Saveable Interface tests */
     g_test_add_func ("/save/interface/basic", test_saveable_interface);
 
+    g_test_add_func ("/save/context/version-validation", test_save_version_validation);
+    g_test_add ("/save/manager/version-compatibility", SaveManagerFixture, NULL,
+                save_manager_fixture_setup, test_save_version_compatibility,
+                save_manager_fixture_teardown);
     return g_test_run ();
 }

@@ -146,3 +146,29 @@ See the individual class documentation:
 - [[file:save-game.org][LrgSaveGame]] - Save slot metadata
 - [[file:save-context.org][LrgSaveContext]] - Serialization interface
 - [[file:saveable.org][LrgSaveable]] - Interface for saveable objects
+
+** Save format compatibility
+
+Set =LrgSaveManager:save-version= to the positive format version written and
+understood by the game. Before invoking any registered saveable's load method,
+the manager rejects a newer version with =LRG_SAVE_ERROR_VERSION_MISMATCH=.
+It emits =load-completed= with failure after =load-started=, leaves gameplay
+objects untouched, and does not rewrite the save file. Async loads use the
+same check through the synchronous implementation.
+
+Current and older positive versions remain loadable. Saveables can inspect
+=lrg_save_context_get_version()= to apply their own field migrations. This
+check does not supply game-specific migrations or roll back changes made by a
+saveable whose own load method later fails.
+
+A missing version field identifies a legacy version-1 save. A present field
+must be a positive decimal integer no larger than =G_MAXUINT=. Quoted decimal
+digits are accepted; signs, whitespace, floating point, booleans, null,
+collections, zero, and overflow fail with =LRG_SAVE_ERROR_CORRUPT=. Writers
+and version setters require versions of at least 1. Metadata inspection can
+still read structurally valid newer saves using =LrgSaveContext= directly;
+compatibility enforcement belongs to the manager that applies gameplay state.
+
+Tests cover malformed headers, the maximum version, legacy defaults,
+future-version rejection without state/file changes, and loading equal/older
+versions.

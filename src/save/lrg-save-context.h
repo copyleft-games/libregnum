@@ -66,6 +66,9 @@ LrgSaveContext * lrg_save_context_new_for_save (void);
  * @error: (optional): return location for a #GError
  *
  * Creates a new save context for loading data from a string.
+ * Missing version means legacy version 1. Present versions must contain only
+ * decimal digits and be in [1, G_MAXUINT]; otherwise LRG_SAVE_ERROR_CORRUPT
+ * is returned. Quoted decimal digits are accepted.
  *
  * Returns: (transfer full) (nullable): A new #LrgSaveContext in load mode,
  *          or %NULL on parse error
@@ -117,7 +120,7 @@ guint lrg_save_context_get_version (LrgSaveContext *self);
 /**
  * lrg_save_context_set_version:
  * @self: a #LrgSaveContext
- * @version: the version number
+ * @version: positive format version (at least 1)
  *
  * Sets the save format version.
  *
