@@ -445,3 +445,36 @@ Internal use only - access waypoints via the public API functions.
 :END:
 - [[file:pathfinder.org][LrgPathfinder]] - Generates paths
 - [[file:nav-grid.org][LrgNavGrid]] - Navigation grid for pathfinding
+
+** Editing and combining routes
+
+| Operation | API | Behaviour |
+|-----------+-----+-----------|
+| Move a waypoint | =lrg_path_set_point()= | Updates coordinates at an existing index |
+| Delete a waypoint | =lrg_path_remove_point()= | Preserves the order of remaining points |
+| Keep a route prefix | =lrg_path_truncate()= | Keeps at most the requested number of points |
+| Combine route segments | =lrg_path_append_path()= | Copies all source points; self-append is safe |
+| Measure geometric distance | =lrg_path_get_distance()= | Sum of Euclidean segment lengths as a double |
+
+Set/remove return false for invalid indices without changing the path. Truncate
+never extends a path. Append keeps duplicate endpoints and does not infer a
+connecting route; callers remain responsible for navigation validity.
+
+These new editing operations reset total cost to zero when geometry changes,
+because terrain costs are unknown. Setting identical coordinates, truncating
+to the existing or a larger length, and appending an empty path preserve cost.
+Existing append/prepend/reverse APIs retain their existing cost behaviour.
+Recompute costs with the navigation system when needed.
+
+Distance is independent of stored terrain cost and counts grid-coordinate
+units. Empty and single-point paths have zero distance; repeated waypoints add
+zero. Coordinates are converted before subtraction, so extreme signed integer
+coordinates are supported. Distance and append are O(n); set/truncate are O(1),
+and removal is O(n) because remaining points shift.
+
+#+begin_src c
+g_autoptr(LrgPath) edited = lrg_path_copy (route);
+lrg_path_truncate (edited, 3);
+lrg_path_append_path (edited, extension);
+g_print ("Geometric distance: %g\n", lrg_path_get_distance (edited));
+#+end_src

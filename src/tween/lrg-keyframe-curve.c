@@ -261,3 +261,84 @@ lrg_keyframe_curve_get_key_count (LrgKeyframeCurve *self)
 
     return self->keys->len;
 }
+
+gboolean
+lrg_keyframe_curve_get_key (LrgKeyframeCurve *self,
+                            guint            index,
+                            gfloat           *t,
+                            gfloat           *value,
+                            LrgEasingType    *easing)
+{
+    const LrgKeyframe *key;
+
+    if (t != NULL)
+        *t = 0.0f;
+    if (value != NULL)
+        *value = 0.0f;
+    if (easing != NULL)
+        *easing = LRG_EASING_LINEAR;
+    g_return_val_if_fail (LRG_IS_KEYFRAME_CURVE (self), FALSE);
+    if (index >= self->keys->len)
+        return FALSE;
+    key = &g_array_index (self->keys, LrgKeyframe, index);
+    if (t != NULL)
+        *t = key->t;
+    if (value != NULL)
+        *value = key->value;
+    if (easing != NULL)
+        *easing = key->ease_to_next;
+    return TRUE;
+}
+
+gboolean
+lrg_keyframe_curve_remove_key (LrgKeyframeCurve *self,
+                               gfloat           t)
+{
+    guint index;
+    gboolean exact;
+
+    g_return_val_if_fail (LRG_IS_KEYFRAME_CURVE (self), FALSE);
+    g_return_val_if_fail (isfinite (t), FALSE);
+    index = find_insert_position (self, t, &exact);
+    if (!exact)
+        return FALSE;
+    g_array_remove_index (self->keys, index);
+    return TRUE;
+}
+
+void
+lrg_keyframe_curve_clear (LrgKeyframeCurve *self)
+{
+    g_return_if_fail (LRG_IS_KEYFRAME_CURVE (self));
+    g_array_set_size (self->keys, 0);
+}
+
+LrgKeyframeCurve *
+lrg_keyframe_curve_copy (LrgKeyframeCurve *self)
+{
+    LrgKeyframeCurve *copy;
+
+    g_return_val_if_fail (LRG_IS_KEYFRAME_CURVE (self), NULL);
+    copy = lrg_keyframe_curve_new ();
+    g_array_append_vals (copy->keys, self->keys->data, self->keys->len);
+    return copy;
+}
+
+gboolean
+lrg_keyframe_curve_get_time_range (LrgKeyframeCurve *self,
+                                   gfloat           *start,
+                                   gfloat           *end)
+{
+    if (start != NULL)
+        *start = 0.0f;
+    if (end != NULL)
+        *end = 0.0f;
+    g_return_val_if_fail (LRG_IS_KEYFRAME_CURVE (self), FALSE);
+    if (self->keys->len == 0)
+        return FALSE;
+    if (start != NULL)
+        *start = g_array_index (self->keys, LrgKeyframe, 0).t;
+    if (end != NULL)
+        *end = g_array_index (self->keys, LrgKeyframe, self->keys->len - 1).t;
+    return TRUE;
+}

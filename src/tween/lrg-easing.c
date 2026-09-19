@@ -600,5 +600,10 @@ lrg_easing_interpolate (LrgEasingType type,
     gfloat eased;
 
     eased = lrg_easing_apply (type, t);
-    return from + (to - from) * eased;
+    /* Preserve exact endpoints and avoid overflowing a finite float span. */
+    if (eased == 0.0f)
+        return from;
+    if (eased == 1.0f)
+        return to;
+    return (gfloat) ((gdouble) from + ((gdouble) to - from) * eased);
 }

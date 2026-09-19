@@ -63,3 +63,20 @@ false with a critical diagnostic and leaves both the error and stream unchanged.
 Tests compare advancement against ordinary draws across seeds and boundaries,
 exercise offsets above 2^63 and full-period wraparound, and check restored
 streams, mixed draw counts, and existing-error rejection.
+
+** Branching simulations
+
+=lrg_random_stream_copy()= clones the current state and stream selector without
+consuming any draws or serializing a snapshot. The returned GObject is owned by
+the caller. The two instances produce identical subsequent draws until their
+call sequences differ; advancing either leaves the other untouched.
+
+#+begin_src c
+g_autoptr(LrgRandomStream) preview = lrg_random_stream_copy (rng);
+guint32 possible_roll = lrg_random_stream_bounded (preview, 20);
+/* Previewing has not consumed a draw from rng. */
+#+end_src
+
+Use copies for deterministic previews or branching simulations, not as
+statistically independent random streams. Use different sequence selectors for
+that purpose. Copying requires no concurrent mutation of the source.

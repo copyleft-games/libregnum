@@ -522,3 +522,26 @@ lrg_blackboard_set_bool(bb, "player_visible", FALSE);
 - [[file:behavior-tree.org][LrgBehaviorTree]] - Contains the blackboard
 - [[file:bt-node.org][LrgBTNode]] - Nodes receive blackboard parameter
 - [[file:bt-leaf.org][LrgBTLeaf]] - Leaf nodes read/write blackboard
+
+** Owned inspection snapshots
+
+=lrg_blackboard_get_size()= counts keys in constant time, including NULL-valued
+entries. Replacing a value does not change the count.
+
+=lrg_blackboard_dup_keys()= returns an owned, NULL-terminated string array sorted
+in bytewise lexical order. Even an empty board returns an allocated empty array.
+Unlike the borrowed names returned by =get_keys()=, these names survive removal,
+clear, and destruction of the board. Free them with =g_strfreev()=.
+
+=lrg_blackboard_dup_string()= returns an owned copy for the same reason; free it
+with =g_free()=. Missing keys, non-string entries, and NULL strings return NULL.
+These APIs do not add thread synchronization: do not mutate during a snapshot
+call. After the call returns, the copied data is independent.
+
+#+begin_src c
+g_auto(GStrv) names = lrg_blackboard_dup_keys (board);
+g_autofree gchar *target = lrg_blackboard_dup_string (board, "target-name");
+
+lrg_blackboard_clear (board);
+/* names and target are still valid here. */
+#+end_src

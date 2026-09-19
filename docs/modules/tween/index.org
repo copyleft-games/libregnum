@@ -223,3 +223,42 @@ Behaviour contracts for =lrg_keyframe_curve_sample()=:
 | =src/tween/lrg-tween-parallel.h=    | Parallel tweens                    |
 | =src/tween/lrg-tween-manager.h=     | Tween manager (live use)           |
 | =src/tween/lrg-keyframe-curve.h=    | Multi-keyframe sampler (headless)  |
+
+** Editing and inspecting curves
+
+Animation tools can reuse a curve without rebuilding it:
+
+| Operation | API | Behaviour |
+|-----------+-----+-----------|
+| Inspect a sorted key | =lrg_keyframe_curve_get_key()= | Reads time, value and outgoing easing by index |
+| Delete a key | =lrg_keyframe_curve_remove_key()= | Exact finite time match; missing times return false |
+| Reuse a curve | =lrg_keyframe_curve_clear()= | Removes all keys |
+| Branch an animation | =lrg_keyframe_curve_copy()= | Independent copy of every key and easing |
+| Set an editor timeline | =lrg_keyframe_curve_get_time_range()= | Earliest/latest time in O(1) |
+
+The get-key and time-range output pointers are optional in C. Invalid indices
+and empty ranges return false and zero their outputs (linear for easing).
+Removing a key leaves the preceding key's outgoing easing unchanged, so it
+now controls the segment to the following remaining key. Clear is idempotent;
+sampling after clear still uses the existing empty-curve diagnostic.
+Copy and clear take O(n); removal takes O(log n) lookup plus O(n) movement.
+All mutation requires caller synchronization with concurrent reads.
+
+#+begin_src c
+g_autoptr(LrgKeyframeCurve) draft = lrg_keyframe_curve_copy (curve);
+gfloat start;
+gfloat end;
+
+lrg_keyframe_curve_remove_key (draft, 0.5f);
+if (lrg_keyframe_curve_get_time_range (draft, &start, &end))
+    g_print ("Timeline: %g to %g\n", start, end);
+#+end_src
+
+** Large-value interpolation
+
+=lrg_easing_interpolate()= uses double arithmetic for the value span and
+returns exact values at eased endpoints. For example, linear interpolation
+from =-G_MAXFLOAT= to =G_MAXFLOAT= at 0.5 now returns zero instead of infinity.
+This also benefits tween and curve consumers. Easing overshoot and time
+extrapolation remain supported; a mathematical result outside the float range
+may still be infinite. This does not clamp or validate individual easing functions.

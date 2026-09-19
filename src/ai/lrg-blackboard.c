@@ -503,3 +503,42 @@ lrg_blackboard_get_keys (LrgBlackboard *self)
 
     return g_hash_table_get_keys (self->entries);
 }
+
+guint
+lrg_blackboard_get_size (LrgBlackboard *self)
+{
+    g_return_val_if_fail (LRG_IS_BLACKBOARD (self), 0);
+    return g_hash_table_size (self->entries);
+}
+
+static gint
+compare_key_names (gconstpointer a, gconstpointer b)
+{
+    return g_strcmp0 (*(gchar * const *) a, *(gchar * const *) b);
+}
+
+gchar **
+lrg_blackboard_dup_keys (LrgBlackboard *self)
+{
+    GHashTableIter iter;
+    gpointer key;
+    GPtrArray *keys;
+
+    g_return_val_if_fail (LRG_IS_BLACKBOARD (self), NULL);
+    keys = g_ptr_array_new ();
+    g_hash_table_iter_init (&iter, self->entries);
+    while (g_hash_table_iter_next (&iter, &key, NULL))
+        g_ptr_array_add (keys, g_strdup (key));
+    g_ptr_array_sort (keys, compare_key_names);
+    g_ptr_array_add (keys, NULL);
+    return (gchar **) g_ptr_array_free (keys, FALSE);
+}
+
+gchar *
+lrg_blackboard_dup_string (LrgBlackboard *self,
+                           const gchar   *key)
+{
+    g_return_val_if_fail (LRG_IS_BLACKBOARD (self), NULL);
+    g_return_val_if_fail (key != NULL, NULL);
+    return g_strdup (lrg_blackboard_get_string (self, key));
+}

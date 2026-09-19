@@ -85,4 +85,18 @@ gchar * lrg_random_stream_snapshot (LrgRandomStream *self);
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_random_stream_restore (LrgRandomStream *self, const gchar *state, GError **error);
+/**
+ * lrg_random_stream_copy:
+ * @self: a random stream
+ *
+ * Clones the current generator state and sequence without consuming draws.
+ * Advancing either instance does not change the other. Useful for branching
+ * deterministic simulations; this does not create statistically distinct streams.
+ *
+ * Returns: (transfer full): an independent stream at the same position
+ */
+LRG_AVAILABLE_IN_ALL
+LrgRandomStream *
+lrg_random_stream_copy (LrgRandomStream *self);
+
 G_END_DECLS

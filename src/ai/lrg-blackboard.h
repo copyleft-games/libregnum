@@ -240,6 +240,46 @@ void                lrg_blackboard_clear             (LrgBlackboard *self);
 LRG_AVAILABLE_IN_ALL
 GList *             lrg_blackboard_get_keys          (LrgBlackboard *self);
 
+/**
+ * lrg_blackboard_get_size:
+ * @self: a blackboard
+ *
+ * Counts entries in constant time, including entries storing NULL values.
+ *
+ * Returns: number of stored keys
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_blackboard_get_size (LrgBlackboard *self);
+
+/**
+ * lrg_blackboard_dup_keys:
+ * @self: a blackboard
+ *
+ * Copies key names in bytewise lexical order. The snapshot survives changes
+ * to, or destruction of, the blackboard. Free it with g_strfreev().
+ *
+ * Returns: (transfer full) (array zero-terminated=1): owned key names
+ */
+LRG_AVAILABLE_IN_ALL
+gchar **
+lrg_blackboard_dup_keys (LrgBlackboard *self);
+
+/**
+ * lrg_blackboard_dup_string:
+ * @self: a blackboard
+ * @key: key name
+ *
+ * Copies a stored string so it survives replacement or blackboard destruction.
+ *
+ * Returns: (transfer full) (nullable): owned string, or NULL for a missing key,
+ *   a different value type, or a stored NULL string
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *
+lrg_blackboard_dup_string (LrgBlackboard *self,
+                           const gchar   *key);
+
 G_END_DECLS
 
 #endif /* LRG_BLACKBOARD_H */

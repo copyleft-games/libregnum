@@ -56,6 +56,7 @@ TEST_LIBS += $(SANITIZER_LIBS)
 
 # Test source files
 TEST_SOURCES := \
+	test-gameplay-utilities.c \
 	test-engine.c \
 	test-random-stream.c \
 	test-timer-manager.c \

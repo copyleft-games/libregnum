@@ -8,6 +8,7 @@
  */
 
 #include "lrg-path.h"
+#include <math.h>
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_PATHFIND
 #include "lrg-log.h"
@@ -343,4 +344,86 @@ lrg_path_foreach (const LrgPath      *self,
         const LrgPathPoint *pt = &g_array_index (points, LrgPathPoint, i);
         func (pt->x, pt->y, i, user_data);
     }
+}
+
+gboolean
+lrg_path_set_point (LrgPath *self,
+                    guint   index,
+                    gint    x,
+                    gint    y)
+{
+    LrgPathPoint *point;
+
+    g_return_val_if_fail (self != NULL, FALSE);
+    if (index >= self->points->len)
+        return FALSE;
+    point = &g_array_index (self->points, LrgPathPoint, index);
+    if (point->x != x || point->y != y)
+    {
+        point->x = x;
+        point->y = y;
+        self->total_cost = 0.0f;
+    }
+    return TRUE;
+}
+
+gboolean
+lrg_path_remove_point (LrgPath *self,
+                       guint   index)
+{
+    g_return_val_if_fail (self != NULL, FALSE);
+    if (index >= self->points->len)
+        return FALSE;
+    g_array_remove_index (self->points, index);
+    self->total_cost = 0.0f;
+    return TRUE;
+}
+
+void
+lrg_path_truncate (LrgPath *self,
+                   guint   length)
+{
+    g_return_if_fail (self != NULL);
+    if (length < self->points->len)
+    {
+        g_array_set_size (self->points, length);
+        self->total_cost = 0.0f;
+    }
+}
+
+void
+lrg_path_append_path (LrgPath       *self,
+                      const LrgPath *other)
+{
+    g_autoptr(LrgPath) copy = NULL;
+
+    g_return_if_fail (self != NULL);
+    g_return_if_fail (other != NULL);
+    g_return_if_fail (other->points->len <= G_MAXUINT - self->points->len);
+    if (other->points->len == 0)
+        return;
+    if (self == other)
+    {
+        copy = lrg_path_copy (other);
+        other = copy;
+    }
+    g_array_append_vals (self->points, other->points->data, other->points->len);
+    self->total_cost = 0.0f;
+}
+
+gdouble
+lrg_path_get_distance (const LrgPath *self)
+{
+    gdouble distance = 0.0;
+    guint i;
+
+    g_return_val_if_fail (self != NULL, 0.0);
+    for (i = 1; i < self->points->len; i++)
+    {
+        const LrgPathPoint *a = &g_array_index (self->points, LrgPathPoint, i - 1);
+        const LrgPathPoint *b = &g_array_index (self->points, LrgPathPoint, i);
+
+        distance += hypot ((gdouble) b->x - a->x, (gdouble) b->y - a->y);
+    }
+    return distance;
 }

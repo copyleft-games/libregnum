@@ -144,3 +144,15 @@ invalid:
                          "Invalid PCG32 v1 snapshot");
     return FALSE;
 }
+
+LrgRandomStream *
+lrg_random_stream_copy (LrgRandomStream *self)
+{
+    LrgRandomStream *copy;
+
+    g_return_val_if_fail (LRG_IS_RANDOM_STREAM (self), NULL);
+    copy = g_object_new (LRG_TYPE_RANDOM_STREAM, NULL);
+    copy->state = self->state;
+    copy->increment = self->increment;
+    return copy;
+}

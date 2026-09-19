@@ -450,6 +450,10 @@ gfloat          lrg_easing_ease_in_out_bounce (gfloat        t);
  * Interpolates between two values using the specified easing function.
  * Convenience function that combines easing with linear interpolation.
  *
+ * Arithmetic uses double precision to avoid intermediate float overflow.
+ * Eased endpoints return the corresponding value exactly. Overshoot and
+ * extrapolation are preserved; results outside the float range can be infinite.
+ *
  * Returns: The interpolated value
  *
  * Since: 1.0

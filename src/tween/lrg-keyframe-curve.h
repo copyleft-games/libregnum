@@ -108,4 +108,78 @@ gfloat              lrg_keyframe_curve_sample       (LrgKeyframeCurve *self,
 LRG_AVAILABLE_IN_ALL
 guint               lrg_keyframe_curve_get_key_count (LrgKeyframeCurve *self);
 
+/**
+ * lrg_keyframe_curve_get_key:
+ * @self: a curve
+ * @index: index in ascending time order
+ * @t: (out) (optional): key time
+ * @value: (out) (optional): key value
+ * @easing: (out) (optional): easing to the next key
+ *
+ * Reads a key for inspection or editing. Outputs are zero/linear on failure.
+ *
+ * Returns: whether the index exists
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_keyframe_curve_get_key (LrgKeyframeCurve *self,
+                            guint            index,
+                            gfloat           *t,
+                            gfloat           *value,
+                            LrgEasingType    *easing);
+
+/**
+ * lrg_keyframe_curve_remove_key:
+ * @self: a curve
+ * @t: finite time of the key to remove
+ *
+ * Removes only an exact time match. The preceding key keeps its easing.
+ *
+ * Returns: whether a key was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_keyframe_curve_remove_key (LrgKeyframeCurve *self,
+                               gfloat           t);
+
+/**
+ * lrg_keyframe_curve_clear:
+ * @self: a curve
+ *
+ * Removes all keys so the same curve can be reused. Sampling an empty curve
+ * retains its existing critical diagnostic and zero return value.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_keyframe_curve_clear (LrgKeyframeCurve *self);
+
+/**
+ * lrg_keyframe_curve_copy:
+ * @self: a curve
+ *
+ * Copies all key times, values and easings into an independently editable curve.
+ *
+ * Returns: (transfer full): a new curve
+ */
+LRG_AVAILABLE_IN_ALL
+LrgKeyframeCurve *
+lrg_keyframe_curve_copy (LrgKeyframeCurve *self);
+
+/**
+ * lrg_keyframe_curve_get_time_range:
+ * @self: a curve
+ * @start: (out) (optional): earliest key time
+ * @end: (out) (optional): latest key time
+ *
+ * Reads the time bounds in constant time. Both outputs are zero when empty.
+ * A single key has identical start and end times.
+ *
+ * Returns: whether the curve contains any keys
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_keyframe_curve_get_time_range (LrgKeyframeCurve *self,
+                                   gfloat           *start,
+                                   gfloat           *end);
+
 G_END_DECLS
