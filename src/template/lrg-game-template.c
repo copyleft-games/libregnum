@@ -12,6 +12,7 @@
 
 #include "lrg-game-template.h"
 #include "lrg-game-template-private.h"
+#include "../core/lrg-timer-manager.h"
 #include "../lrg-log.h"
 #include "../core/lrg-engine.h"
 #include "../gamestate/lrg-game-state.h"
@@ -412,6 +413,10 @@ lrg_game_template_update (LrgGameTemplate *self,
     if (klass->handle_global_input != NULL)
         klass->handle_global_input (self);
 
+    lrg_timer_manager_update (priv->timer_manager,
+                              priv->is_paused ? 0.0 : delta,
+                              MAX (0.0, raw_delta));
+
     /* Fixed timestep loop */
     if (priv->use_fixed_timestep)
     {
@@ -795,6 +800,8 @@ lrg_game_template_finalize (GObject *object)
 
     /* Unref owned subsystems */
     g_clear_object (&priv->state_manager);
+    lrg_timer_manager_clear (priv->timer_manager);
+    g_clear_object (&priv->timer_manager);
     g_clear_object (&priv->input_map);
     g_clear_object (&priv->settings);
     g_clear_object (&priv->event_bus);
@@ -1479,6 +1486,7 @@ lrg_game_template_init (LrgGameTemplate *self)
 
     /* Initialize defaults */
     priv->engine = NULL;
+    priv->timer_manager = lrg_timer_manager_new ();
     priv->state_manager = NULL;
     priv->input_map = NULL;
     priv->settings = NULL;
@@ -1748,9 +1756,10 @@ lrg_game_template_shutdown_game (LrgGameTemplate *self)
         lrg_settings_save (priv->settings, settings_path, NULL);
     }
 
-    /* Clear states */
+    /* Clear states before timers: exit hooks may schedule delayed work. */
     if (priv->state_manager != NULL)
         lrg_game_state_manager_clear (priv->state_manager);
+    lrg_timer_manager_clear (priv->timer_manager);
 }
 
 gboolean
@@ -2977,4 +2986,14 @@ lrg_game_template_get_camera_position (LrgGameTemplate *self,
         *x = cam_x;
     if (y != NULL)
         *y = cam_y;
+}
+
+LrgTimerManager *
+lrg_game_template_get_timer_manager (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), NULL);
+    priv = lrg_game_template_get_instance_private (self);
+    return priv->timer_manager;
 }
