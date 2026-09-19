@@ -8,6 +8,7 @@
  */
 
 #include "config.h"
+#include <math.h>
 
 #include "lrg-keyframe-curve.h"
 #include "../lrg-log.h"
@@ -108,25 +109,23 @@ find_insert_position (LrgKeyframeCurve *self,
                       gfloat            t,
                       gboolean         *exact_match)
 {
-    guint i;
+    guint low = 0;
+    guint high = self->keys->len;
 
-    *exact_match = FALSE;
-
-    for (i = 0; i < self->keys->len; i++)
+    while (low < high)
     {
-        LrgKeyframe *key = &g_array_index (self->keys, LrgKeyframe, i);
+        guint mid = low + (high - low) / 2;
+        LrgKeyframe *key = &g_array_index (self->keys, LrgKeyframe, mid);
 
-        if (key->t == t)
-        {
-            *exact_match = TRUE;
-            return i;
-        }
-
-        if (key->t > t)
-            return i;
+        if (key->t < t)
+            low = mid + 1;
+        else
+            high = mid;
     }
 
-    return self->keys->len;
+    *exact_match = low < self->keys->len &&
+        g_array_index (self->keys, LrgKeyframe, low).t == t;
+    return low;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -156,6 +155,7 @@ lrg_keyframe_curve_new (void)
  * @ease_to_next: easing used from this key to the next
  *
  * Adds (or replaces) the keyframe at normalized time @t.
+ * Time must be finite; invalid times trigger a critical and leave keys unchanged.
  *
  * Since: 1.0
  */
@@ -170,6 +170,8 @@ lrg_keyframe_curve_add_key (LrgKeyframeCurve *self,
     guint        idx;
 
     g_return_if_fail (LRG_IS_KEYFRAME_CURVE (self));
+
+    g_return_if_fail (isfinite (t));
 
     new_key.t            = t;
     new_key.value        = value;
@@ -193,7 +195,8 @@ lrg_keyframe_curve_add_key (LrgKeyframeCurve *self,
  * @self: an #LrgKeyframeCurve
  * @t: normalized time to evaluate
  *
- * Samples the curve at normalized time @t.
+ * Samples the curve at normalized time @t using logarithmic-time lookup.
+ * NaN triggers a critical and returns zero; infinities clamp to the endpoints.
  *
  * Returns: the interpolated value
  *
@@ -207,12 +210,15 @@ lrg_keyframe_curve_sample (LrgKeyframeCurve *self,
     LrgKeyframe *last;
     LrgKeyframe *lo;
     LrgKeyframe *hi;
-    gfloat       seg_len;
+    gdouble      seg_len;
     gfloat       seg_t;
-    guint        i;
+    guint        idx;
+    gboolean     exact_match;
 
     g_return_val_if_fail (LRG_IS_KEYFRAME_CURVE (self), 0.0f);
     g_return_val_if_fail (self->keys->len > 0, 0.0f);
+
+    g_return_val_if_fail (!isnan (t), 0.0f);
 
     first = &g_array_index (self->keys, LrgKeyframe, 0);
     last  = &g_array_index (self->keys, LrgKeyframe, self->keys->len - 1);
@@ -225,31 +231,15 @@ lrg_keyframe_curve_sample (LrgKeyframeCurve *self,
     if (t >= last->t)
         return last->value;
 
-    /* Find the bracketing pair [lo, hi] where lo->t <= t < hi->t */
-    lo = first;
-    hi = NULL;
+    idx = find_insert_position (self, t, &exact_match);
+    hi = &g_array_index (self->keys, LrgKeyframe, idx);
+    if (exact_match)
+        return hi->value;
 
-    for (i = 1; i < self->keys->len; i++)
-    {
-        hi = &g_array_index (self->keys, LrgKeyframe, i);
-
-        if (hi->t > t)
-            break;
-
-        lo = hi;
-        hi = NULL;
-    }
-
-    /* hi must be non-NULL here because t < last->t */
-    if (hi == NULL)
-        return last->value;
-
-    seg_len = hi->t - lo->t;
-
-    if (seg_len <= 0.0f)
-        return lo->value;
-
-    seg_t = (t - lo->t) / seg_len;
+    lo = &g_array_index (self->keys, LrgKeyframe, idx - 1);
+    /* Finite float endpoints may have a difference larger than FLT_MAX. */
+    seg_len = (gdouble) hi->t - (gdouble) lo->t;
+    seg_t = (gfloat) (((gdouble) t - (gdouble) lo->t) / seg_len);
 
     return lrg_easing_interpolate (lo->ease_to_next, lo->value, hi->value, seg_t);
 }

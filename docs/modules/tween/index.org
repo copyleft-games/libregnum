@@ -178,9 +178,17 @@ for (gint frame = 0; frame < N_FRAMES; frame++)
 }
 #+end_src
 
+Key times must be finite; NaN and infinite key times trigger a GLib critical
+and leave the curve unchanged. Finite times outside [0,1] are supported,
+including endpoints whose difference exceeds the float range. Sampling uses
+binary search, taking O(log n) time for n keys. Insertion still takes O(n)
+time to shift the array. Exact key times return the stored value directly.
+NaN sample times trigger a critical and return zero; infinite sample times
+clamp to the corresponding endpoint.
+
 Behaviour contracts for =lrg_keyframe_curve_sample()=:
 - Zero keys: returns 0.0 (with a g_return_val_if_fail warning).
-- One key: returns that key's value for all =t=.
+- One key: returns that key's value for all non-NaN =t=.
 - =t= before the first key: clamped to the first key's value.
 - =t= after the last key: clamped to the last key's value.
 - =t= outside [0,1] follows the same clamping rules.
