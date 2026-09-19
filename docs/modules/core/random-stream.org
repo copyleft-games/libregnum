@@ -36,3 +36,30 @@ gameplay generator, not a cryptographic generator. Saving random state alone
 does not save other simulation state or guarantee whole-engine deterministic
 replay. Tests cover the reference sequence, mixed-draw restoration, save-context
 round trips, independent streams, bounds, and atomic rejection of bad snapshots.
+
+* Advancing to a known draw position
+
+=lrg_random_stream_advance (stream, draws)= skips raw 32-bit outputs in
+O(log draws) time and constant memory. It produces the same subsequent state
+and values as calling =next_uint()= that many times, even for 64-bit offsets.
+Zero is a no-op; the stream selector and version-1 snapshot format are retained.
+
+#+begin_src c
+g_autoptr(LrgRandomStream) chunk = lrg_random_stream_new (world_seed, 7);
+/* Reserve 4096 raw draws per chunk; ensure the multiplication fits guint64. */
+lrg_random_stream_advance (chunk, chunk_index * G_GUINT64_CONSTANT (4096));
+guint32 terrain_choice = lrg_random_stream_next_uint (chunk);
+#+end_src
+
+Reserved ranges only stay separate if each chunk respects its draw budget.
+Advancement counts raw draws: a =next_double()= call uses two and a =bounded()=
+call uses a variable number. It does not reconstruct game state or infer how
+many draws earlier gameplay consumed. Save snapshots when that count is unknown.
+
+As with other GLib error APIs, pass NULL or the address of a NULL =GError *=
+to restore. An already-set error is a programming error: restoration returns
+false with a critical diagnostic and leaves both the error and stream unchanged.
+
+Tests compare advancement against ordinary draws across seeds and boundaries,
+exercise offsets above 2^63 and full-period wraparound, and check restored
+streams, mixed draw counts, and existing-error rejection.

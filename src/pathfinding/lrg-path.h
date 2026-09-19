@@ -213,7 +213,10 @@ void          lrg_path_set_total_cost (LrgPath *self,
  * @func: (scope call): Callback function
  * @user_data: (closure): User data for callback
  *
- * Iterates over all points in the path.
+ * Visits a snapshot of the waypoints in their original order and with their
+ * original indices. Callbacks may modify or free @self without affecting this
+ * iteration. Nested calls take their own snapshot of the current path.
+ * The snapshot requires temporary memory proportional to the waypoint count.
  */
 typedef void (*LrgPathForeachFunc) (gint     x,
                                     gint     y,

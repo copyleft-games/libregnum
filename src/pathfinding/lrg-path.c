@@ -317,21 +317,30 @@ lrg_path_set_total_cost (LrgPath *self,
  * @func: (scope call): Callback function for each point
  * @user_data: (closure): User data for callback
  *
- * Iterates over all points in the path, calling @func for each.
+ * Visits a snapshot of the waypoints in their original order and with their
+ * original indices. Callbacks may modify or free @self without affecting this
+ * iteration. Nested calls take their own snapshot of the current path.
+ * The snapshot requires temporary memory proportional to the waypoint count.
  */
 void
 lrg_path_foreach (const LrgPath      *self,
                   LrgPathForeachFunc  func,
                   gpointer            user_data)
 {
+    g_autoptr(GArray) points = NULL;
     guint i;
 
     g_return_if_fail (self != NULL);
     g_return_if_fail (func != NULL);
 
-    for (i = 0; i < self->points->len; i++)
+    /* Copy values before calling user code, which may even free self. */
+    points = g_array_sized_new (FALSE, FALSE, sizeof (LrgPathPoint),
+                                self->points->len);
+    g_array_append_vals (points, self->points->data, self->points->len);
+
+    for (i = 0; i < points->len; i++)
     {
-        LrgPathPoint *pt = &g_array_index (self->points, LrgPathPoint, i);
+        const LrgPathPoint *pt = &g_array_index (points, LrgPathPoint, i);
         func (pt->x, pt->y, i, user_data);
     }
 }

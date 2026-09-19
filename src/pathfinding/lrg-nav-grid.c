@@ -110,12 +110,22 @@ default_get_neighbors (LrgNavGrid *self,
     gint num_dirs;
     gint i;
 
+    if (!lrg_nav_grid_is_valid (self, x, y))
+        return NULL;
+
     num_dirs = priv->allow_diagonal ? 8 : 4;
 
     for (i = 0; i < num_dirs; i++)
     {
-        gint nx = x + DIR_X[i];
-        gint ny = y + DIR_Y[i];
+        gint64 next_x = (gint64)x + DIR_X[i];
+        gint64 next_y = (gint64)y + DIR_Y[i];
+        gint nx;
+        gint ny;
+
+        if (next_x > G_MAXINT || next_y > G_MAXINT)
+            continue;
+        nx = (gint)next_x;
+        ny = (gint)next_y;
 
         if (!lrg_nav_grid_is_walkable (self, nx, ny))
             continue;
@@ -736,7 +746,10 @@ lrg_nav_grid_clear (LrgNavGrid *self)
  * @flags: Flags to set
  * @cost: Cost to set
  *
- * Fills a rectangular area with specified flags and cost.
+ * Fills a rectangular area with specified flags and cost. The rectangle is
+ * clipped to the grid before iteration, including for extreme coordinates and
+ * dimensions. Empty or disjoint rectangles do nothing. Negative and NaN costs
+ * are rejected before changing any cell.
  */
 void
 lrg_nav_grid_fill_rect (LrgNavGrid      *self,
@@ -747,16 +760,30 @@ lrg_nav_grid_fill_rect (LrgNavGrid      *self,
                         LrgNavCellFlags  flags,
                         gfloat           cost)
 {
-    gint cx;
-    gint cy;
+    LrgNavGridPrivate *priv;
+    gint64 left, top, right, bottom;
+    gint64 cx, cy;
 
     g_return_if_fail (LRG_IS_NAV_GRID (self));
+    g_return_if_fail (cost >= 0.0f);
 
-    for (cy = y; cy < y + (gint)height; cy++)
+    priv = lrg_nav_grid_get_instance_private (self);
+    left = MAX ((gint64)x, 0);
+    top = MAX ((gint64)y, 0);
+    right = MIN ((gint64)x + width, (gint64)priv->width);
+    bottom = MIN ((gint64)y + height, (gint64)priv->height);
+    /* Public cell coordinates are signed integers. */
+    right = MIN (right, (gint64)G_MAXINT + 1);
+    bottom = MIN (bottom, (gint64)G_MAXINT + 1);
+    if (left >= right || top >= bottom)
+        return;
+
+    for (cy = top; cy < bottom; cy++)
     {
-        for (cx = x; cx < x + (gint)width; cx++)
+        for (cx = left; cx < right; cx++)
         {
-            LrgNavCell *cell = lrg_nav_grid_get_cell (self, cx, cy);
+            LrgNavCell *cell = lrg_nav_grid_get_cell (self, (gint)cx, (gint)cy);
+
             if (cell != NULL)
             {
                 lrg_nav_cell_set_flags (cell, flags);

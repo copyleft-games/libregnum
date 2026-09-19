@@ -487,3 +487,16 @@ int main(void) {
 :END:
 - [[file:nav-cell.org][LrgNavCell]] - Individual cells
 - [[file:pathfinder.org][LrgPathfinder]] - Uses grid for pathfinding
+
+** Boundary handling
+
+=fill_rect()= clips its half-open rectangle to the grid before visiting cells.
+Negative origins and dimensions up to =G_MAXUINT= are handled without signed
+integer overflow. Empty and disjoint rectangles do nothing; work is proportional
+to the intersecting area, not the requested off-grid area. Negative or NaN costs
+produce a critical diagnostic and leave both flags and costs unchanged.
+
+The default =get_neighbors()= implementation returns an empty list for origins
+outside the grid, including extreme signed coordinates. Valid edge cells retain
+the normal diagonal and corner-cutting rules. Subclasses overriding neighbor
+lookup retain control of their own graph semantics.

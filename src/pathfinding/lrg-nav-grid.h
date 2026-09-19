@@ -282,7 +282,10 @@ void            lrg_nav_grid_clear            (LrgNavGrid *self);
  * @flags: Flags to set
  * @cost: Cost to set
  *
- * Fills a rectangular area with specified flags and cost.
+ * Fills a rectangular area with specified flags and cost. The rectangle is
+ * clipped to the grid before iteration, including for extreme coordinates and
+ * dimensions. Empty or disjoint rectangles do nothing. Negative and NaN costs
+ * are rejected before changing any cell.
  */
 LRG_AVAILABLE_IN_ALL
 void            lrg_nav_grid_fill_rect        (LrgNavGrid      *self,

@@ -330,7 +330,14 @@ lrg_path_foreach (const LrgPath      *self,
                   gpointer            user_data)
 #+end_src
 
-Iterates over all waypoints in the path.
+Visits every waypoint present when the call starts, in its original order and
+with its original index. Appending, prepending, reversing, or clearing the path
+inside a callback does not change the ongoing iteration. A nested call takes a
+new snapshot and sees the current path.
+
+Callbacks may also free the path; iteration finishes using its copied waypoint
+values. The caller must clear any owning pointer to avoid freeing it twice.
+This operation uses temporary memory proportional to the number of waypoints.
 
 *Parameters:*
 

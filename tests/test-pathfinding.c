@@ -163,6 +163,99 @@ test_path_copy (void)
     g_assert_cmpint (y, ==, 2);
 }
 
+typedef struct
+{
+    LrgPath *path;
+    guint calls;
+    guint nested_calls;
+    guint operation;
+} PathIterationData;
+
+static void
+path_nested_visit (gint x, gint y, guint index, gpointer user_data)
+{
+    PathIterationData *data = user_data;
+
+    g_assert_cmpuint (index, ==, data->nested_calls++);
+    g_assert_cmpint (x, ==, 2 - (gint) index);
+    g_assert_cmpint (y, ==, -x);
+    if (index == 0)
+        lrg_path_clear (data->path);
+}
+
+static void
+path_mutating_visit (gint x, gint y, guint index, gpointer user_data)
+{
+    PathIterationData *data = user_data;
+
+    g_assert_cmpuint (index, <, 3);
+    g_assert_cmpuint (index, ==, data->calls++);
+    g_assert_cmpint (x, ==, (gint) index);
+    g_assert_cmpint (y, ==, -x);
+
+    if (index != 0)
+        return;
+
+    switch (data->operation)
+    {
+    case 0:
+        lrg_path_append (data->path, 99, 99);
+        break;
+    case 1:
+        lrg_path_prepend (data->path, 99, 99);
+        break;
+    case 2:
+        lrg_path_reverse (data->path);
+        break;
+    case 3:
+        lrg_path_clear (data->path);
+        break;
+    case 4:
+        g_clear_pointer (&data->path, lrg_path_free);
+        break;
+    case 5:
+        lrg_path_reverse (data->path);
+        lrg_path_foreach (data->path, path_nested_visit, data);
+        break;
+    default:
+        g_assert_not_reached ();
+    }
+}
+
+static void
+test_path_foreach_mutation (gconstpointer user_data)
+{
+    PathIterationData data = { 0 };
+    guint i;
+
+    data.path = lrg_path_new ();
+    data.operation = GPOINTER_TO_UINT (user_data);
+    for (i = 0; i < 3; i++)
+        lrg_path_append (data.path, (gint) i, -(gint) i);
+
+    lrg_path_foreach (data.path, path_mutating_visit, &data);
+    g_assert_cmpuint (data.calls, ==, 3);
+    if (data.operation < 2)
+        g_assert_cmpuint (lrg_path_get_length (data.path), ==, 4);
+    if (data.operation == 3 || data.operation == 5)
+        g_assert_true (lrg_path_is_empty (data.path));
+    if (data.operation == 4)
+        g_assert_null (data.path);
+    if (data.operation == 5)
+        g_assert_cmpuint (data.nested_calls, ==, 3);
+    g_clear_pointer (&data.path, lrg_path_free);
+}
+
+static void
+test_path_foreach_empty (void)
+{
+    g_autoptr(LrgPath) path = lrg_path_new ();
+    PathIterationData data = { 0 };
+
+    lrg_path_foreach (path, path_mutating_visit, &data);
+    g_assert_cmpuint (data.calls, ==, 0);
+}
+
 /* ========================================================================== */
 /* LrgNavGrid Tests                                                           */
 /* ========================================================================== */
@@ -793,6 +886,79 @@ test_pathfinder_reference_maps (void)
     g_rand_free (random);
 }
 
+static void
+test_nav_grid_clipped_rectangles (void)
+{
+    const struct { gint x, y; guint width, height; } cases[] = {
+        { -2, -1, 4, 3 }, { 2, 2, G_MAXUINT, G_MAXUINT },
+        { G_MININT, G_MININT, G_MAXUINT, G_MAXUINT },
+        { G_MAXINT, G_MAXINT, G_MAXUINT, G_MAXUINT },
+        { -10, -10, 2, 2 }, { 0, 0, 0, G_MAXUINT },
+        { G_MININT, 0, 1, 3 }
+    };
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (cases); i++)
+    {
+        g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (4, 3);
+        gint x, y;
+
+        lrg_nav_grid_fill_rect (grid, cases[i].x, cases[i].y,
+                                cases[i].width, cases[i].height,
+                                LRG_NAV_CELL_BLOCKED, 2.5f);
+        for (y = 0; y < 3; y++)
+            for (x = 0; x < 4; x++)
+            {
+                gboolean inside = (gint64)x >= cases[i].x &&
+                    (gint64)y >= cases[i].y &&
+                    (gint64)x < (gint64)cases[i].x + cases[i].width &&
+                    (gint64)y < (gint64)cases[i].y + cases[i].height;
+
+                g_assert_cmpint (lrg_nav_grid_is_walkable (grid, x, y), ==, !inside);
+                g_assert_cmpfloat (lrg_nav_grid_get_cell_cost (grid, x, y), ==,
+                                   inside ? 2.5f : 1.0f);
+            }
+    }
+}
+
+static void
+test_nav_grid_invalid_fill_cost (void)
+{
+    g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (2, 2);
+    const gfloat costs[] = { -1.0f, NAN };
+    guint i;
+    gint x, y;
+
+    for (i = 0; i < G_N_ELEMENTS (costs); i++)
+    {
+        g_test_expect_message (NULL, G_LOG_LEVEL_CRITICAL, "*cost >= 0.0f*");
+        lrg_nav_grid_fill_rect (grid, 0, 0, 2, 2, LRG_NAV_CELL_BLOCKED, costs[i]);
+        g_test_assert_expected_messages ();
+        for (y = 0; y < 2; y++)
+            for (x = 0; x < 2; x++)
+            {
+                g_assert_true (lrg_nav_grid_is_walkable (grid, x, y));
+                g_assert_cmpfloat (lrg_nav_grid_get_cell_cost (grid, x, y), ==, 1.0f);
+            }
+    }
+}
+
+static void
+test_nav_grid_invalid_neighbor_origin (void)
+{
+    g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (3, 3);
+    const gint origins[][2] = { {-1, 0}, {0, -1}, {3, 0}, {0, 3},
+        {G_MININT, 0}, {0, G_MININT}, {G_MAXINT, 0}, {0, G_MAXINT} };
+    guint i;
+    GList *neighbors;
+
+    for (i = 0; i < G_N_ELEMENTS (origins); i++)
+        g_assert_null (lrg_nav_grid_get_neighbors (grid, origins[i][0], origins[i][1]));
+    neighbors = lrg_nav_grid_get_neighbors (grid, 0, 0);
+    g_assert_cmpuint (g_list_length (neighbors), ==, 3);
+    g_list_free_full (neighbors, (GDestroyNotify)lrg_nav_cell_free);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -811,6 +977,13 @@ main (int   argc,
     g_test_add_func ("/pathfinding/path/get-point", test_path_get_point);
     g_test_add_func ("/pathfinding/path/reverse", test_path_reverse);
     g_test_add_func ("/pathfinding/path/copy", test_path_copy);
+    g_test_add_func ("/pathfinding/path/foreach-empty", test_path_foreach_empty);
+    g_test_add_data_func ("/pathfinding/path/foreach-append", GUINT_TO_POINTER (0), test_path_foreach_mutation);
+    g_test_add_data_func ("/pathfinding/path/foreach-prepend", GUINT_TO_POINTER (1), test_path_foreach_mutation);
+    g_test_add_data_func ("/pathfinding/path/foreach-reverse", GUINT_TO_POINTER (2), test_path_foreach_mutation);
+    g_test_add_data_func ("/pathfinding/path/foreach-clear", GUINT_TO_POINTER (3), test_path_foreach_mutation);
+    g_test_add_data_func ("/pathfinding/path/foreach-free", GUINT_TO_POINTER (4), test_path_foreach_mutation);
+    g_test_add_data_func ("/pathfinding/path/foreach-nested", GUINT_TO_POINTER (5), test_path_foreach_mutation);
 
     /* NavGrid tests */
     g_test_add_func ("/pathfinding/nav-grid/new", test_nav_grid_new);
@@ -842,6 +1015,10 @@ main (int   argc,
     g_test_add_func ("/pathfinding/pathfinder/reference-maps", test_pathfinder_reference_maps);
     g_test_add_func ("/pathfinding/error-enum", test_pathfinding_error_enum);
     g_test_add_func ("/pathfinding/heuristics-large", test_heuristics_large_coordinates);
+
+    g_test_add_func ("/pathfinding/nav-grid/clipped-rectangles", test_nav_grid_clipped_rectangles);
+    g_test_add_func ("/pathfinding/nav-grid/invalid-fill-cost", test_nav_grid_invalid_fill_cost);
+    g_test_add_func ("/pathfinding/nav-grid/invalid-neighbor-origin", test_nav_grid_invalid_neighbor_origin);
 
     /* Heuristic tests */
     g_test_add_func ("/pathfinding/heuristics", test_heuristics);

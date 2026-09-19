@@ -50,6 +50,34 @@ lrg_random_stream_new (guint64 seed, guint64 sequence)
     return self;
 }
 
+void
+lrg_random_stream_advance (LrgRandomStream *self,
+                           guint64          draws)
+{
+    guint64 multiplier = G_GUINT64_CONSTANT (6364136223846793005);
+    guint64 increment;
+    guint64 accumulated_multiplier = 1;
+    guint64 accumulated_increment = 0;
+
+    g_return_if_fail (LRG_IS_RANDOM_STREAM (self));
+
+    increment = self->increment;
+    /* Compose affine state transitions by squaring. Unsigned wraparound is
+     * intentional: PCG's state arithmetic is modulo 2^64. */
+    while (draws != 0)
+    {
+        if (draws & 1)
+        {
+            accumulated_multiplier *= multiplier;
+            accumulated_increment = accumulated_increment * multiplier + increment;
+        }
+        increment *= multiplier + 1;
+        multiplier *= multiplier;
+        draws >>= 1;
+    }
+    self->state = accumulated_multiplier * self->state + accumulated_increment;
+}
+
 guint32
 lrg_random_stream_bounded (LrgRandomStream *self, guint32 bound)
 {
@@ -93,6 +121,7 @@ lrg_random_stream_restore (LrgRandomStream *self, const gchar *state, GError **e
     guint j;
 
     g_return_val_if_fail (LRG_IS_RANDOM_STREAM (self), FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
     if (state == NULL || strlen (state) != 42 ||
         strncmp (state, "pcg32-v1:", 9) != 0 || state[25] != ':')
         goto invalid;
