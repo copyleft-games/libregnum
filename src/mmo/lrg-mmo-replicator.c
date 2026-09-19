@@ -27,6 +27,7 @@ typedef struct
     GHashTable *pending_baseline;
     GVariant *pending;
     guint64 sequence;
+    gboolean more;
 } Viewer;
 
 struct _LrgMmoReplicator
@@ -240,14 +241,17 @@ lrg_mmo_replicator_remove (LrgMmoReplicator *self,
     g_hash_table_remove (self->entities, &entity_id);
 }
 
-GVariant *
-lrg_mmo_replicator_build (LrgMmoReplicator  *self,
+static GVariant *
+build_internal (LrgMmoReplicator  *self,
                          guint64            viewer_id,
                          const gchar       *zone,
                          gdouble            x,
                          gdouble            y,
                          gdouble            z,
                          gdouble            radius,
+                         guint              limit,
+                         gboolean           paginate,
+                         gboolean          *more,
                          GError           **error)
 {
     Viewer *viewer;
@@ -263,9 +267,14 @@ lrg_mmo_replicator_build (LrgMmoReplicator  *self,
     gint min_x, max_x, min_y, max_y, min_z, max_z;
     guint i;
     gsize budget = 32;
+    g_autoptr(GHashTable) page_baseline = NULL;
+    guint n_updates, n_removals;
+    gboolean remaining = FALSE;
 
     g_return_val_if_fail (LRG_IS_MMO_REPLICATOR (self), NULL);
-    if (viewer_id == 0 || !valid_position (self, zone, x, y, z) ||
+    if (more != NULL)
+        *more = FALSE;
+    if (limit < 128 || limit > 1024 * 1024 || viewer_id == 0 || !valid_position (self, zone, x, y, z) ||
         !isfinite (radius) || radius < 0 || radius / self->cell_size > 4 || self->sequence == G_MAXUINT64)
     {
         g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid viewer position or radius");
@@ -273,7 +282,11 @@ lrg_mmo_replicator_build (LrgMmoReplicator  *self,
     }
     viewer = g_hash_table_lookup (self->viewers, &viewer_id);
     if (viewer != NULL && viewer->pending != NULL)
+    {
+        if (more != NULL)
+            *more = viewer->more;
         return g_variant_ref (viewer->pending);
+    }
     if (viewer == NULL && g_hash_table_size (self->viewers) >= self->max_viewers)
     {
         g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE, "Viewer capacity reached");
@@ -313,8 +326,8 @@ lrg_mmo_replicator_build (LrgMmoReplicator  *self,
                     if (previous == NULL || *previous != *revision)
                     {
                         g_ptr_array_add (visible, entity);
-                        budget += 64 + g_bytes_get_size (entity->state);
-                        if (budget > 1024 * 1024)
+                        budget = MIN ((gsize) limit + 1, budget + 64 + g_bytes_get_size (entity->state));
+                        if (!paginate && budget > limit)
                             goto too_large;
                     }
                 }
@@ -327,16 +340,62 @@ lrg_mmo_replicator_build (LrgMmoReplicator  *self,
             {
                 guint64 id = *(guint64 *) key;
                 g_array_append_val (removed, id);
-                budget += 8;
-                if (budget > 1024 * 1024)
+                budget = MIN ((gsize) limit + 1, budget + 8);
+                if (!paginate && budget > limit)
                     goto too_large;
             }
     }
     g_ptr_array_sort (visible, compare_entities);
     g_array_sort (removed, compare_ids);
+    n_updates = visible->len;
+    n_removals = removed->len;
+    if (paginate)
+    {
+        gsize used = 32;
+        page_baseline = new_baseline ();
+        if (viewer != NULL)
+        {
+            gpointer value;
+            g_hash_table_iter_init (&iter, viewer->baseline);
+            while (g_hash_table_iter_next (&iter, &key, &value))
+            {
+                guint64 *id = g_new (guint64, 1);
+                guint64 *revision = g_new (guint64, 1);
+                *id = *(guint64 *) key;
+                *revision = *(guint64 *) value;
+                g_hash_table_insert (page_baseline, id, revision);
+            }
+        }
+        n_removals = MIN (removed->len, (limit - used) / 8);
+        used += n_removals * 8;
+        for (i = 0; i < n_removals; i++)
+            g_hash_table_remove (page_baseline, &g_array_index (removed, guint64, i));
+        n_updates = 0;
+        for (i = 0; i < visible->len; i++)
+        {
+            Entity *entity = g_ptr_array_index (visible, i);
+            gsize cost = 64 + g_bytes_get_size (entity->state);
+            guint64 *id;
+            guint64 *revision;
+            if (cost > limit - used)
+                break;
+            used += cost;
+            id = g_new (guint64, 1);
+            revision = g_new (guint64, 1);
+            *id = entity->id;
+            *revision = entity->revision;
+            g_hash_table_replace (page_baseline, id, revision);
+            n_updates++;
+        }
+        remaining = n_updates < visible->len || n_removals < removed->len;
+        if (remaining && n_updates == 0 && n_removals == 0)
+            goto too_large;
+        g_hash_table_unref (baseline);
+        baseline = g_steal_pointer (&page_baseline);
+    }
     g_variant_builder_init (&updates, G_VARIANT_TYPE ("a(ttddday)"));
     g_variant_builder_init (&removals, G_VARIANT_TYPE ("at"));
-    for (i = 0; i < visible->len; i++)
+    for (i = 0; i < n_updates; i++)
     {
         Entity *entity = g_ptr_array_index (visible, i);
         gsize size;
@@ -345,7 +404,7 @@ lrg_mmo_replicator_build (LrgMmoReplicator  *self,
                                entity->x, entity->y, entity->z,
                                g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, data, size, 1));
     }
-    for (i = 0; i < removed->len; i++)
+    for (i = 0; i < n_removals; i++)
         g_variant_builder_add (&removals, "t", g_array_index (removed, guint64, i));
     delta = g_variant_ref_sink (g_variant_new ("(t@a(ttddday)@at)", ++self->sequence,
                                                g_variant_builder_end (&updates),
@@ -359,6 +418,9 @@ lrg_mmo_replicator_build (LrgMmoReplicator  *self,
         g_hash_table_insert (self->viewers, id, viewer);
     }
     viewer->pending = delta;
+    viewer->more = remaining;
+    if (more != NULL)
+        *more = remaining;
     viewer->sequence = self->sequence;
     viewer->pending_baseline = g_steal_pointer (&baseline);
     return g_variant_ref (delta);
@@ -395,4 +457,19 @@ lrg_mmo_replicator_forget (LrgMmoReplicator *self,
 {
     g_return_if_fail (LRG_IS_MMO_REPLICATOR (self));
     g_hash_table_remove (self->viewers, &viewer_id);
+}
+
+GVariant *
+lrg_mmo_replicator_build (LrgMmoReplicator *self, guint64 viewer_id, const gchar *zone,
+                          gdouble x, gdouble y, gdouble z, gdouble radius, GError **error)
+{
+    return build_internal (self, viewer_id, zone, x, y, z, radius, 1024 * 1024, FALSE, NULL, error);
+}
+
+GVariant *
+lrg_mmo_replicator_build_page (LrgMmoReplicator *self, guint64 viewer_id, const gchar *zone,
+                               gdouble x, gdouble y, gdouble z, gdouble radius,
+                               guint budget, gboolean *more, GError **error)
+{
+    return build_internal (self, viewer_id, zone, x, y, z, radius, budget, TRUE, more, error);
 }

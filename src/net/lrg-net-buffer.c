@@ -51,7 +51,7 @@ _lrg_net_buffer_send (LrgNetBuffer  *buffer,
 
 gboolean
 _lrg_net_buffer_flush (LrgNetBuffer *buffer,
-                       GSocket      *socket,
+                       GOutputStream *output,
                        GError      **error)
 {
     g_autoptr(GError) local_error = NULL;
@@ -59,9 +59,10 @@ _lrg_net_buffer_flush (LrgNetBuffer *buffer,
 
     if (buffer->output->len == 0)
         return TRUE;
-    count = g_socket_send_with_blocking (socket, (gchar *) buffer->output->data,
-                                        MIN (buffer->output->len, 65536u),
-                                        FALSE, NULL, &local_error);
+    count = g_pollable_output_stream_write_nonblocking (G_POLLABLE_OUTPUT_STREAM (output),
+                                                        buffer->output->data,
+                                                        MIN (buffer->output->len, 65536u),
+                                                        NULL, &local_error);
     if (count < 0)
     {
         if (g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK))
@@ -76,7 +77,7 @@ _lrg_net_buffer_flush (LrgNetBuffer *buffer,
 
 LrgNetMessage *
 _lrg_net_buffer_receive (LrgNetBuffer *buffer,
-                         GSocket      *socket,
+                         GInputStream *input,
                          GError      **error)
 {
     guint attempts;
@@ -111,9 +112,9 @@ _lrg_net_buffer_receive (LrgNetBuffer *buffer,
                 return message;
             }
         }
-        count = g_socket_receive_with_blocking (socket, (gchar *) chunk,
-                                                MIN (sizeof chunk, target - buffer->input->len),
-                                                FALSE, NULL, &local_error);
+        count = g_pollable_input_stream_read_nonblocking (G_POLLABLE_INPUT_STREAM (input), chunk,
+                                                       MIN (sizeof chunk, target - buffer->input->len),
+                                                       NULL, &local_error);
         if (count < 0)
         {
             if (!g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK))

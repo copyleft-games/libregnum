@@ -104,7 +104,7 @@ ifeq ($(STATIC),1)
     EXAMPLE_LIBS += $(RAYLIB_STATIC)
     # System libraries (static via pkg-config)
     EXAMPLE_LIBS += $(STATIC_GLIB_LIBS) $(STATIC_JSON_LIBS) $(STATIC_YAML_LIBS) $(STATIC_SOUP_LIBS) $(STATIC_DEX_LIBS)
-    EXAMPLE_LIBS += $(shell $(PKG_CONFIG) --static --libs sqlite3)
+    EXAMPLE_LIBS += $(shell $(PKG_CONFIG) --static --libs sqlite3 openssl zlib)
     EXAMPLE_LIBS += $(STATIC_LUAJIT_LIBS) $(STATIC_PYTHON_LIBS) $(STATIC_GJS_LIBS) $(STATIC_GI_LIBS)
     EXAMPLE_LIBS += -lm
     EXAMPLE_LIBS += $(PLATFORM_LIBS)
@@ -133,6 +133,9 @@ EXAMPLES += game-deckbuilder-combat game-deckbuilder-poker
 EXAMPLES += game-platformer-demo game-fps-demo
 EXAMPLES += game-third-person-demo game-top-down-demo game-twin-stick-demo game-shmup-demo game-racing-3d-demo
 EXAMPLES += mmo-simulation
+ifneq ($(TARGET_PLATFORM),windows)
+EXAMPLES += mmo-server
+endif
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
 EXAMPLES += reel-hello reel-showcase
@@ -439,3 +442,13 @@ clean:
 $(EXAMPLES_BUILDDIR)/mmo-simulation$(EXE_EXT): mmo-simulation.c $(LIBREGNUM_STATIC) ../src/mmo/lrg-mmo-realm.h ../src/mmo/lrg-mmo-replicator.h ../src/mmo/lrg-mmo-store.h ../src/mmo/lrg-mmo-group.h | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+# Linux reference host: TLS ingress, worker-thread persistence and loopback metrics.
+$(EXAMPLES_BUILDDIR)/mmo-server$(EXE_EXT): mmo-server.c $(LIBREGNUM_STATIC) | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) $(SOUP_CFLAGS) -std=gnu89 -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+# Opt-in network integration test; never contacts a remote service.
+.PHONY: check-mmo-server
+check-mmo-server: $(EXAMPLES_BUILDDIR)/mmo-server$(EXE_EXT)
+	python3 ../tests/check-mmo-server.py $<

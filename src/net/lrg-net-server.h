@@ -305,4 +305,16 @@ void lrg_net_server_poll (LrgNetServer *self);
  * Emitted when a message is received from a peer.
  */
 
+/**
+ * lrg_net_server_set_tls_certificate:
+ * @self: the server
+ * @certificate: (nullable): certificate and private key, or NULL for plaintext
+ *
+ * Configures TLS before start. Handshakes are asynchronous, limited to 128
+ * concurrent attempts and ten seconds, and count against max-peers.
+ * The host must keep driving the owning main context after stop for cleanup.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_net_server_set_tls_certificate (LrgNetServer *self, GTlsCertificate *certificate);
+
 G_END_DECLS

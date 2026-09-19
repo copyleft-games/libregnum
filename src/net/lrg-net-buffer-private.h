@@ -12,5 +12,5 @@ typedef struct
 G_GNUC_INTERNAL void _lrg_net_buffer_init (LrgNetBuffer *buffer);
 G_GNUC_INTERNAL void _lrg_net_buffer_clear (LrgNetBuffer *buffer);
 G_GNUC_INTERNAL gboolean _lrg_net_buffer_send (LrgNetBuffer *buffer, LrgNetMessage *message, GError **error);
-G_GNUC_INTERNAL gboolean _lrg_net_buffer_flush (LrgNetBuffer *buffer, GSocket *socket, GError **error);
-G_GNUC_INTERNAL LrgNetMessage *_lrg_net_buffer_receive (LrgNetBuffer *buffer, GSocket *socket, GError **error);
+G_GNUC_INTERNAL gboolean _lrg_net_buffer_flush (LrgNetBuffer *buffer, GOutputStream *output, GError **error);
+G_GNUC_INTERNAL LrgNetMessage *_lrg_net_buffer_receive (LrgNetBuffer *buffer, GInputStream *input, GError **error);

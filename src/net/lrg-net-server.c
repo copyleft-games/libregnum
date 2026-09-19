@@ -20,7 +20,7 @@ typedef struct
 {
     LrgNetBuffer     buffer;
     LrgNetPeer       *peer;
-    GSocketConnection *connection;
+    GIOStream         *connection;
     GInputStream      *input;
     GOutputStream     *output;
     GCancellable      *cancellable;
@@ -42,6 +42,9 @@ struct _LrgNetServer
     gboolean          polling;
 
     GSocketService   *service;
+    GTlsCertificate  *certificate;
+    GCancellable     *handshakes;
+    guint             pending_tls;
     GHashTable       *peers;          /* guint32 -> PeerConnection* */
     guint32           next_peer_id;
     GQueue           *pending_messages; /* LrgNetMessage* received */
@@ -100,12 +103,10 @@ peer_connection_free (PeerConnection *pc)
 }
 
 static gboolean
-on_incoming_connection (GSocketService    *service,
-                        GSocketConnection *connection,
-                        GObject           *source_object,
-                        gpointer           user_data)
+admit_connection (LrgNetServer      *self,
+                  GSocketConnection *connection,
+                  GIOStream         *stream)
 {
-    LrgNetServer    *self = LRG_NET_SERVER (user_data);
     PeerConnection  *pc;
     GSocketAddress  *remote_addr;
     GInetAddress    *inet_addr;
@@ -156,9 +157,9 @@ on_incoming_connection (GSocketService    *service,
     pc = g_new0 (PeerConnection, 1);
     _lrg_net_buffer_init (&pc->buffer);
     pc->peer = lrg_net_peer_new (peer_id, address_str, port);
-    pc->connection = g_object_ref (connection);
-    pc->input = g_io_stream_get_input_stream (G_IO_STREAM (connection));
-    pc->output = g_io_stream_get_output_stream (G_IO_STREAM (connection));
+    pc->connection = g_object_ref (stream);
+    pc->input = g_io_stream_get_input_stream (stream);
+    pc->output = g_io_stream_get_output_stream (stream);
     pc->cancellable = g_cancellable_new ();
 
     /* Keep references */
@@ -183,6 +184,98 @@ on_incoming_connection (GSocketService    *service,
     return TRUE;
 }
 
+typedef struct
+{
+    GWeakRef server;
+    GSocketConnection *connection;
+    GIOStream *stream;
+    GCancellable *cancel;
+    GCancellable *generation;
+    GSource *timeout;
+    gulong cancelled_id;
+} TlsHandshake;
+
+static gboolean
+tls_timeout (gpointer data)
+{
+    g_cancellable_cancel (data);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+cancel_handshake (GCancellable *source,
+                  gpointer      data)
+{
+    g_cancellable_cancel (data);
+}
+
+static void
+tls_ready (GObject      *source,
+           GAsyncResult *result,
+           gpointer      data)
+{
+    TlsHandshake *pending = data;
+    g_autoptr(LrgNetServer) self = g_weak_ref_get (&pending->server);
+    g_autoptr(GError) error = NULL;
+    gboolean ready = g_tls_connection_handshake_finish (G_TLS_CONNECTION (source), result, &error);
+
+    if (self != NULL && self->handshakes == pending->generation)
+    {
+        self->pending_tls--;
+        if (ready && !g_cancellable_is_cancelled (pending->cancel) && self->running)
+            admit_connection (self, pending->connection, pending->stream);
+    }
+    g_source_destroy (pending->timeout);
+    g_source_unref (pending->timeout);
+    g_cancellable_disconnect (pending->generation, pending->cancelled_id);
+    g_object_unref (pending->generation);
+    g_object_unref (pending->cancel);
+    g_object_unref (pending->connection);
+    g_object_unref (pending->stream);
+    g_weak_ref_clear (&pending->server);
+    g_free (pending);
+}
+
+static gboolean
+on_incoming_connection (GSocketService    *service,
+                        GSocketConnection *connection,
+                        GObject           *source_object,
+                        gpointer           user_data)
+{
+    LrgNetServer *self = user_data;
+    TlsHandshake *pending;
+    g_autoptr(GIOStream) stream = NULL;
+    g_autoptr(GError) error = NULL;
+
+    if (!self->running || (self->max_peers > 0 &&
+        g_hash_table_size (self->peers) + self->pending_tls >= self->max_peers))
+        return FALSE;
+    if (self->certificate == NULL)
+        return admit_connection (self, connection, G_IO_STREAM (connection));
+    /* Bound handshakes even if the compatibility peer limit is unlimited. */
+    if (self->pending_tls >= 128)
+        return FALSE;
+    stream = g_tls_server_connection_new (G_IO_STREAM (connection), self->certificate, &error);
+    if (stream == NULL)
+        return FALSE;
+    pending = g_new0 (TlsHandshake, 1);
+    g_weak_ref_init (&pending->server, self);
+    pending->connection = g_object_ref (connection);
+    pending->stream = g_steal_pointer (&stream);
+    pending->cancel = g_cancellable_new ();
+    pending->generation = g_object_ref (self->handshakes);
+    pending->cancelled_id = g_cancellable_connect (pending->generation,
+                                                  G_CALLBACK (cancel_handshake),
+                                                  g_object_ref (pending->cancel), g_object_unref);
+    pending->timeout = g_timeout_source_new_seconds (10);
+    g_source_set_callback (pending->timeout, tls_timeout, g_object_ref (pending->cancel), g_object_unref);
+    g_source_attach (pending->timeout, g_main_context_get_thread_default ());
+    self->pending_tls++;
+    g_tls_connection_handshake_async (G_TLS_CONNECTION (pending->stream), G_PRIORITY_DEFAULT,
+                                      pending->cancel, tls_ready, pending);
+    return TRUE;
+}
+
 /* ==========================================================================
  * GObject Implementation
  * ========================================================================== */
@@ -194,6 +287,8 @@ lrg_net_server_finalize (GObject *object)
 
     lrg_net_server_stop (self);
 
+    g_clear_object (&self->certificate);
+    g_clear_object (&self->handshakes);
     g_clear_pointer (&self->host, g_free);
     g_clear_pointer (&self->peers, g_hash_table_unref);
     g_queue_free_full (self->pending_messages, (GDestroyNotify) lrg_net_message_free);
@@ -476,6 +571,10 @@ lrg_net_server_start (LrgNetServer  *self,
         return FALSE;
     }
 
+    g_clear_object (&self->handshakes);
+    self->handshakes = g_cancellable_new ();
+    self->pending_tls = 0;
+
     /* Create socket service */
     self->service = g_socket_service_new ();
 
@@ -535,6 +634,8 @@ lrg_net_server_stop (LrgNetServer *self)
 
     if (!self->running)
         return;
+
+    g_cancellable_cancel (self->handshakes);
 
     /* Mark stopped before callbacks can re-enter stop(). */
     self->running = FALSE;
@@ -890,18 +991,16 @@ lrg_net_server_poll (LrgNetServer *self)
         {
             g_autoptr(GError) error = NULL;
             g_autoptr(LrgNetMessage) message = NULL;
-            GSocket *socket;
 
             pc = g_hash_table_lookup (self->peers, item->data);
             if (pc == NULL)
                 break;
-            socket = g_socket_connection_get_socket (pc->connection);
-            if (i == 0 && !_lrg_net_buffer_flush (&pc->buffer, socket, &error))
+            if (i == 0 && !_lrg_net_buffer_flush (&pc->buffer, pc->output, &error))
             {
                 lrg_net_server_disconnect_peer (self, GPOINTER_TO_UINT (item->data));
                 break;
             }
-            message = _lrg_net_buffer_receive (&pc->buffer, socket, &error);
+            message = _lrg_net_buffer_receive (&pc->buffer, pc->input, &error);
             if (error != NULL)
             {
                 lrg_net_server_disconnect_peer (self, GPOINTER_TO_UINT (item->data));
@@ -917,4 +1016,14 @@ lrg_net_server_poll (LrgNetServer *self)
     }
     g_list_free (ids);
     self->polling = FALSE;
+}
+
+void
+lrg_net_server_set_tls_certificate (LrgNetServer    *self,
+                                    GTlsCertificate *certificate)
+{
+    g_return_if_fail (LRG_IS_NET_SERVER (self));
+    g_return_if_fail (!self->running);
+    g_return_if_fail (certificate == NULL || G_IS_TLS_CERTIFICATE (certificate));
+    g_set_object (&self->certificate, certificate);
 }

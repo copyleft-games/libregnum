@@ -241,4 +241,25 @@ void lrg_net_client_poll (LrgNetClient *self);
  * Emitted when connection attempt fails.
  */
 
+/**
+ * lrg_net_client_set_tls:
+ * @self: the client
+ * @enabled: whether to require TLS
+ *
+ * Configures TLS before connecting. System trust and hostname validation are
+ * enforced; invalid certificates are never accepted automatically.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_net_client_set_tls (LrgNetClient *self, gboolean enabled);
+
+/**
+ * lrg_net_client_set_tls_database:
+ * @self: the client
+ * @database: (nullable): explicit CA trust database, or NULL for system trust
+ *
+ * Selects a trust store before connecting, without disabling hostname validation.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_net_client_set_tls_database (LrgNetClient *self, GTlsDatabase *database);
+
 G_END_DECLS

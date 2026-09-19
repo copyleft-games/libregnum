@@ -61,4 +61,71 @@ lrg_mmo_store_commit (LrgMmoStore *self,
                       GVariant *changes,
                       GError **error);
 
+/**
+ * lrg_mmo_store_commit_once:
+ * @self: the store
+ * @operation_id: stable unique operation ID, 1 to 256 UTF-8 bytes
+ * @changes: (transfer none): a(stay) batch, identical on every retry
+ * @duplicate: (out) (optional): whether the batch was previously committed
+ * @error: (nullable): error return
+ *
+ * Commits a batch and durable receipt atomically. Exact retries succeed without
+ * applying changes again, including after restart. Reusing an ID for different
+ * changes fails. Retain the original batch (including revisions) when retrying.
+ * Each successful new commit appends a digest-only audit entry; secrets are not logged.
+ *
+ * Returns: whether committed or recognized as an exact retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_store_commit_once (LrgMmoStore *self, const gchar *operation_id,
+                                    GVariant *changes, gboolean *duplicate, GError **error);
+
+/**
+ * lrg_mmo_store_backup:
+ * @self: the store
+ * @path: destination path, which must not exist
+ * @error: (nullable): error return
+ *
+ * Writes a consistent SQLite online backup, including receipts and audit data.
+ * This blocking operation belongs on a worker thread. Existing files are never overwritten.
+ *
+ * Returns: whether copied successfully
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_store_backup (LrgMmoStore *self, const gchar *path, GError **error);
+
+/**
+ * lrg_mmo_store_read_audit:
+ * @self: the store
+ * @after: last seen sequence, or zero
+ * @limit: maximum rows, 1 to 1000
+ * @error: (nullable): error return
+ *
+ * Reads ordered (sequence, operation ID or empty string, batch digest, Unix seconds)
+ * tuples. Audit history is durable and unpruned; deploy a retention/archive policy.
+ *
+ * Returns: (transfer full) (nullable): a(tssx) rows, or NULL
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *lrg_mmo_store_read_audit (LrgMmoStore *self, guint64 after, guint limit, GError **error);
+
+/**
+ * lrg_mmo_store_commit_fenced:
+ * @self: the store
+ * @zone: zone lease ID
+ * @owner: worker incarnation ID
+ * @fence: expected fencing token
+ * @changes: (transfer none): a(stay) batch
+ * @error: (nullable): error return
+ *
+ * Checks the live shard lease inside the same write transaction as the record
+ * batch. A stale worker cannot write after handoff or expiry. The host must route
+ * every zone-owned write through this API rather than unrestricted commit().
+ *
+ * Returns: whether committed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_store_commit_fenced (LrgMmoStore *self, const gchar *zone, const gchar *owner,
+                                      guint64 fence, GVariant *changes, GError **error);
+
 G_END_DECLS
