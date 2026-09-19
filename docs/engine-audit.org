@@ -99,3 +99,28 @@ libraries, and the navmesh/packer use GLib/GIO and libm.
 
 After integrating concurrent master changes, the full headless suite passed
 again: 2628 cases passed, 125 skipped across 93 C test binaries.
+
+* Additional audit: data-driven construction
+
+The registry advertised automatic built-in registration, but its implementation
+was a TODO and engine startup never invoked it. Implemented a deliberately
+bounded, headless scene/definition catalog and connected startup to it. See
+[[file:modules/core/registry.org][catalog, YAML example, overrides, and alias ownership]]. Regression tests load
+every catalog entry through YAML and verify the engine's loader needs no manual
+registration. Alias replacement/removal also now avoids dangling reverse names
+and preserves other names for the same type.
+
+Independent saveable random streams remain a useful future capability: the
+engine currently combines global GLib random calls with subsystem-specific
+opaque GRand instances. This pass does not change existing random sequences.
+Live asset dependency propagation and application-specific object migration
+also remain outside the implemented catalog.
+
+Validation for the catalog pass: full headless =make test= passed 2,630 cases
+with 125 skips across 93 binaries. All 18 registry tests passed ASan/UBSan
+(leak detection enabled) and Valgrind (zero errors and definite leaks).
+Static/shared libraries, loader, GIR, and typelib builds passed; existing GIR
+warnings remain. A Python binding smoke test registered the catalog and loaded
+a positioned game object; the environment emitted a graylib shared-library
+lookup warning despite the successful assertions. Full-engine sanitizer and
+hardware-dependent checks were not run. No new dependencies were introduced.

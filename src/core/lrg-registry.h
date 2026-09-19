@@ -116,7 +116,8 @@ GType lrg_registry_lookup (LrgRegistry *self,
  * Looks up the registered name for a GType.
  *
  * If multiple names are registered for the same type, returns
- * the first one found (order is not guaranteed).
+ * the lexicographically smallest name (byte order). The returned pointer
+ * remains valid until that name is replaced, removed, or the registry is cleared.
  *
  * Returns: (nullable) (transfer none): The registered name, or %NULL
  */
@@ -230,7 +231,10 @@ void lrg_registry_foreach (LrgRegistry            *self,
  * lrg_registry_register_builtin:
  * @self: an #LrgRegistry
  *
- * Registers all built-in Libregnum types.
+ * Registers the core scene and gameplay definition catalog: game-object,
+ * world, transform, sprite, collider, animator, item-def, and quest-def.
+ * Existing registrations are preserved, so this operation is idempotent.
+ * Abstract types and device resources are not included.
  *
  * This is called automatically during engine startup but can
  * also be called manually for testing purposes.

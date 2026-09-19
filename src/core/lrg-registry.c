@@ -14,7 +14,17 @@
 #include "lrg-registry.h"
 #include "../lrg-log.h"
 
+#include "../ecs/lrg-game-object.h"
+#include "../ecs/lrg-world.h"
+#include "../ecs/components/lrg-transform-component.h"
+#include "../ecs/components/lrg-sprite-component.h"
+#include "../ecs/components/lrg-collider-component.h"
+#include "../ecs/components/lrg-animator-component.h"
+#include "../inventory/lrg-item-def.h"
+#include "../quest/lrg-quest-def.h"
+
 #include <stdarg.h>
+#include <string.h>
 
 struct _LrgRegistry
 {
@@ -22,9 +32,6 @@ struct _LrgRegistry
 
     /* Hash table mapping string names to GTypes */
     GHashTable *name_to_type;
-
-    /* Reverse lookup: GType to name (for lookup_name) */
-    GHashTable *type_to_name;
 };
 
 G_DEFINE_TYPE (LrgRegistry, lrg_registry, G_TYPE_OBJECT)
@@ -39,7 +46,6 @@ lrg_registry_finalize (GObject *object)
     LrgRegistry *self = LRG_REGISTRY (object);
 
     g_clear_pointer (&self->name_to_type, g_hash_table_unref);
-    g_clear_pointer (&self->type_to_name, g_hash_table_unref);
 
     G_OBJECT_CLASS (lrg_registry_parent_class)->finalize (object);
 }
@@ -60,13 +66,6 @@ lrg_registry_init (LrgRegistry *self)
                                                 g_str_equal,
                                                 g_free,
                                                 NULL);
-
-    /*
-     * Reverse lookup table. Keys are GTypes cast to pointers,
-     * values are the string names (borrowed from name_to_type).
-     */
-    self->type_to_name = g_hash_table_new (g_direct_hash,
-                                           g_direct_equal);
 }
 
 /* ==========================================================================
@@ -110,35 +109,15 @@ lrg_registry_register (LrgRegistry *self,
     g_return_if_fail (name != NULL && name[0] != '\0');
     g_return_if_fail (type != G_TYPE_INVALID);
 
-    /* Check if name is already registered */
-    old_type = GPOINTER_TO_SIZE (g_hash_table_lookup (self->name_to_type, name));
-    if (old_type != G_TYPE_INVALID)
-    {
-        /* Remove old reverse mapping */
-        g_hash_table_remove (self->type_to_name, GSIZE_TO_POINTER (old_type));
-
-        lrg_debug (LRG_LOG_DOMAIN_CORE,
-                   "Overwriting registry entry '%s': %s -> %s",
-                   name,
-                   g_type_name (old_type),
-                   g_type_name (type));
-    }
-
-    /* Insert name -> type mapping (g_strdup for key) */
+    /* Copy before replacing: name may be borrowed from this registry. */
     name_copy = g_strdup (name);
-    g_hash_table_insert (self->name_to_type,
-                         name_copy,
-                         GSIZE_TO_POINTER (type));
+    old_type = lrg_registry_lookup (self, name);
+    if (old_type != G_TYPE_INVALID)
+        lrg_debug (LRG_LOG_DOMAIN_CORE, "Overwriting registry entry '%s'", name);
 
-    /* Insert reverse mapping (type -> name, name borrowed from name_to_type) */
-    g_hash_table_insert (self->type_to_name,
-                         GSIZE_TO_POINTER (type),
-                         name_copy);
-
-    lrg_debug (LRG_LOG_DOMAIN_CORE,
-               "Registered type '%s' as '%s'",
-               g_type_name (type),
-               name);
+    g_hash_table_replace (self->name_to_type, name_copy, GSIZE_TO_POINTER (type));
+    lrg_debug (LRG_LOG_DOMAIN_CORE, "Registered type '%s' as '%s'",
+               g_type_name (type), name_copy);
 }
 
 /**
@@ -159,22 +138,16 @@ lrg_registry_unregister (LrgRegistry *self,
     g_return_val_if_fail (LRG_IS_REGISTRY (self), FALSE);
     g_return_val_if_fail (name != NULL, FALSE);
 
-    /* Look up type first for reverse mapping removal */
+    /* Check whether the name exists before removing it. */
     type = GPOINTER_TO_SIZE (g_hash_table_lookup (self->name_to_type, name));
     if (type == G_TYPE_INVALID)
     {
         return FALSE;
     }
 
-    /* Remove reverse mapping */
-    g_hash_table_remove (self->type_to_name, GSIZE_TO_POINTER (type));
-
-    /* Remove name -> type mapping */
+    /* Log before removing: name may point into the table. */
+    lrg_debug (LRG_LOG_DOMAIN_CORE, "Unregistered type '%s'", name);
     g_hash_table_remove (self->name_to_type, name);
-
-    lrg_debug (LRG_LOG_DOMAIN_CORE,
-               "Unregistered type '%s'",
-               name);
 
     return TRUE;
 }
@@ -226,7 +199,9 @@ lrg_registry_lookup (LrgRegistry *self,
  * @self: an #LrgRegistry
  * @type: the #GType to look up
  *
- * Looks up the registered name for a GType.
+ * Looks up the lexicographically smallest registered name for a GType.
+ * The borrowed name remains valid until that registration is mutated or
+ * the registry is cleared or destroyed.
  *
  * Returns: (nullable) (transfer none): The registered name, or %NULL
  */
@@ -234,10 +209,23 @@ const gchar *
 lrg_registry_lookup_name (LrgRegistry *self,
                           GType        type)
 {
+    GHashTableIter iter;
+    gpointer key;
+    gpointer value;
+    const gchar *name = NULL;
+
     g_return_val_if_fail (LRG_IS_REGISTRY (self), NULL);
     g_return_val_if_fail (type != G_TYPE_INVALID, NULL);
 
-    return g_hash_table_lookup (self->type_to_name, GSIZE_TO_POINTER (type));
+    /* One owning table avoids stale pointers when aliases are replaced. */
+    g_hash_table_iter_init (&iter, self->name_to_type);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+        if (GPOINTER_TO_SIZE (value) == type &&
+            (name == NULL || strcmp (key, name) < 0))
+            name = key;
+    }
+    return name;
 }
 
 /* ==========================================================================
@@ -394,7 +382,10 @@ lrg_registry_foreach (LrgRegistry            *self,
  * lrg_registry_register_builtin:
  * @self: an #LrgRegistry
  *
- * Registers all built-in Libregnum types.
+ * Registers the core scene and gameplay definition catalog.
+ * Existing names, including application overrides, are preserved.
+ * The catalog is game-object, world, transform, sprite, collider, animator,
+ * item-def, and quest-def. It excludes abstract types and device resources.
  *
  * This is called automatically during engine startup but can
  * also be called manually for testing purposes.
@@ -402,17 +393,29 @@ lrg_registry_foreach (LrgRegistry            *self,
 void
 lrg_registry_register_builtin (LrgRegistry *self)
 {
+    const struct
+    {
+        const gchar *name;
+        GType type;
+    } builtins[] = {
+        { "game-object", LRG_TYPE_GAME_OBJECT },
+        { "world", LRG_TYPE_WORLD },
+        { "transform", LRG_TYPE_TRANSFORM_COMPONENT },
+        { "sprite", LRG_TYPE_SPRITE_COMPONENT },
+        { "collider", LRG_TYPE_COLLIDER_COMPONENT },
+        { "animator", LRG_TYPE_ANIMATOR_COMPONENT },
+        { "item-def", LRG_TYPE_ITEM_DEF },
+        { "quest-def", LRG_TYPE_QUEST_DEF },
+    };
+    guint i;
+
     g_return_if_fail (LRG_IS_REGISTRY (self));
 
-    /*
-     * TODO: Register built-in types as they are implemented.
-     *
-     * Examples:
-     * lrg_registry_register (self, "game-object", LRG_TYPE_GAME_OBJECT);
-     * lrg_registry_register (self, "transform", LRG_TYPE_TRANSFORM_COMPONENT);
-     * lrg_registry_register (self, "sprite", LRG_TYPE_SPRITE_COMPONENT);
-     * etc.
-     */
+    for (i = 0; i < G_N_ELEMENTS (builtins); i++)
+    {
+        if (!lrg_registry_is_registered (self, builtins[i].name))
+            lrg_registry_register (self, builtins[i].name, builtins[i].type);
+    }
 
     lrg_debug (LRG_LOG_DOMAIN_CORE,
                "Built-in types registered (count: %u)",
@@ -431,7 +434,6 @@ lrg_registry_clear (LrgRegistry *self)
     g_return_if_fail (LRG_IS_REGISTRY (self));
 
     g_hash_table_remove_all (self->name_to_type);
-    g_hash_table_remove_all (self->type_to_name);
 
     lrg_debug (LRG_LOG_DOMAIN_CORE, "Registry cleared");
 }

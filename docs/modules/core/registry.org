@@ -101,3 +101,40 @@ int main ()
 - [[../../concepts/type-registry.md][Type Registry Concept]]
 - [[file:engine.org][LrgEngine]]
 - [[file:data-loader.org][LrgDataLoader]]
+
+** Built-in scene and definition catalog
+
+Engine startup registers this catalog before connecting its data loader:
+
+| YAML type | GObject type |
+|-----------+--------------|
+| game-object | LrgGameObject |
+| world | LrgWorld |
+| transform | LrgTransformComponent |
+| sprite | LrgSpriteComponent |
+| collider | LrgColliderComponent |
+| animator | LrgAnimatorComponent |
+| item-def | LrgItemDef |
+| quest-def | LrgQuestDef |
+
+These types can be constructed headlessly. Register application types explicitly;
+abstract base classes, device resources, and the remaining engine types are not
+part of this catalog. Registration creates type mappings, not object instances.
+A standalone registry starts empty; call =lrg_registry_register_builtin()= to
+populate it. Repeated calls fill missing entries without replacing application
+or mod overrides. =clear()= removes both built-in and custom registrations.
+
+For example, after engine startup its data loader can load:
+
+#+begin_src yaml
+type: game-object
+x: 42
+#+end_src
+
+Multiple names may refer to one type. Reverse lookup returns the
+lexicographically smallest registered name in byte order, independent of hash
+iteration order. Replacing or removing one alias preserves the others. Returned
+names are borrowed; copy them to retain them across mutations. Passing a borrowed
+name directly to =register()= or =unregister()= is supported. Reverse lookup scans
+the registry; forward lookup remains a hash lookup. Registry access requires
+external synchronization if shared between threads.
