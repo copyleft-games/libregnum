@@ -115,11 +115,36 @@ exercise (gconstpointer data)
     g_assert_cmpuint (g_bytes_get_size (result), ==, 1100);
 }
 
+static void
+cancel_handshake (void)
+{
+    g_autoptr(GSocket) client_socket = udp_socket ();
+    g_autoptr(GSocket) silent_peer = udp_socket ();
+    g_autoptr(GSocketAddress) address = g_socket_get_local_address (silent_peer, NULL);
+    g_autofree gchar *cert = g_test_build_filename (G_TEST_DIST, "fixtures", "mmo-test-cert.pem", NULL);
+    g_autofree gchar *key = g_test_build_filename (G_TEST_DIST, "fixtures", "mmo-test-key.pem", NULL);
+    g_autoptr(LrgMmoDatagram) channel = NULL;
+    g_autoptr(GBytes) payload = g_bytes_new_static ("private", 7);
+    g_autoptr(GError) error = NULL;
+    g_assert_true (g_socket_connect (client_socket, address, NULL, &error));
+    channel = lrg_mmo_datagram_new (client_socket, FALSE, "localhost", cert, key, cert, &error);
+    g_assert_no_error (error);
+    g_assert_false (lrg_mmo_datagram_send (channel, 1, payload, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED);
+    g_clear_error (&error);
+    g_assert_false (lrg_mmo_datagram_handshake (channel, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK);
+    /* Host deadline/cancellation discards the pending channel synchronously. */
+    g_clear_object (&channel);
+    g_assert_false (g_socket_is_closed (client_socket));
+}
+
 int
 main (int argc, char **argv)
 {
     g_test_init (&argc, &argv, NULL);
     g_test_add_data_func ("/mmo/datagram/mutual-tls-loss-reorder-replay", GINT_TO_POINTER (TRUE), exercise);
     g_test_add_data_func ("/mmo/datagram/wrong-identity", GINT_TO_POINTER (FALSE), exercise);
+    g_test_add_func ("/mmo/datagram/cancel-pending-handshake", cancel_handshake);
     return g_test_run ();
 }
