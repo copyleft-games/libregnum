@@ -12,6 +12,7 @@ typedef struct
     gboolean repeat;
     gboolean unscaled;
     gboolean paused;
+    gboolean pending;
 } Timer;
 
 typedef struct
@@ -106,6 +107,26 @@ lrg_timer_manager_cancel (LrgTimerManager *self,
 }
 
 gboolean
+lrg_timer_manager_reschedule (LrgTimerManager *self,
+                             guint64          id,
+                             gdouble          delay)
+{
+    Timer *timer;
+
+    g_return_val_if_fail (LRG_IS_TIMER_MANAGER (self), FALSE);
+
+    timer = g_hash_table_lookup (self->timers, &id);
+    if (timer == NULL || !isfinite (delay) || delay < 0.0 ||
+        (timer->repeat && delay == 0.0))
+        return FALSE;
+
+    timer->interval = delay;
+    timer->remaining = delay;
+    timer->pending = FALSE;
+    return TRUE;
+}
+
+gboolean
 lrg_timer_manager_set_paused (LrgTimerManager *self,
                               guint64          id,
                               gboolean         paused)
@@ -180,6 +201,7 @@ lrg_timer_manager_update (LrgTimerManager *self,
         Timer *timer = value;
         gdouble delta = timer->unscaled ? unscaled_delta : scaled_delta;
 
+        timer->pending = FALSE;
         if (timer->paused || delta == 0.0)
             continue;
         if (delta >= timer->remaining)
@@ -187,10 +209,19 @@ lrg_timer_manager_update (LrgTimerManager *self,
             DueTimer entry;
 
             entry.id = timer->id;
-            entry.next_remaining = timer->repeat
-                ? timer->interval - fmod (delta - timer->remaining, timer->interval)
-                : 0.0;
+            entry.next_remaining = 0.0;
+            if (timer->repeat)
+            {
+                gdouble phase = fmod (delta, timer->interval);
+
+                /* Reduce first: subtracting a small remaining time from a huge
+                 * delta would round away the timer's fractional phase. */
+                entry.next_remaining = phase >= timer->remaining
+                    ? timer->interval - (phase - timer->remaining)
+                    : timer->remaining - phase;
+            }
             timer->remaining = 0.0;
+            timer->pending = TRUE;
             g_array_append_val (due, entry);
         }
         else
@@ -203,8 +234,9 @@ lrg_timer_manager_update (LrgTimerManager *self,
         DueTimer entry = g_array_index (due, DueTimer, i);
         Timer *timer = g_hash_table_lookup (self->timers, &entry.id);
 
-        if (timer == NULL || timer->paused)
+        if (timer == NULL || timer->paused || !timer->pending)
             continue;
+        timer->pending = FALSE;
         if (timer->repeat)
             timer->remaining = entry.next_remaining;
         else

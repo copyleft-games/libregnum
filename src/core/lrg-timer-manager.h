@@ -60,6 +60,29 @@ gboolean lrg_timer_manager_cancel (LrgTimerManager *self,
                                    guint64          id);
 
 /**
+ * lrg_timer_manager_reschedule:
+ * @self: a scheduler
+ * @id: an existing timer ID
+ * @delay: finite, nonnegative delay in seconds; positive for repeating timers
+ *
+ * Restarts a timer's countdown without changing its ID, registration order,
+ * clock domain, repeat flag, or paused state. For a repeating timer, @delay
+ * also becomes its new repeat interval. The previous phase is discarded.
+ *
+ * When called from a timeout handler, replaces any pending delivery for @id
+ * in the current update. The new countdown starts on the next update, including
+ * zero-delay one-shots. A repeat may reschedule itself; a one-shot has already
+ * been removed when its own handler runs and cannot reschedule itself.
+ * Invalid input leaves the timer and any pending delivery unchanged.
+ *
+ * Returns: %TRUE if rescheduled, %FALSE for an invalid delay or missing ID
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_timer_manager_reschedule (LrgTimerManager *self,
+                                       guint64          id,
+                                       gdouble          delay);
+
+/**
  * lrg_timer_manager_set_paused:
  * @self: a scheduler
  * @id: a timer ID
@@ -111,12 +134,13 @@ void lrg_timer_manager_clear (LrgTimerManager *self);
  * @unscaled_delta: finite, nonnegative real seconds elapsed
  *
  * Advances timers present at entry, then emits timeout in registration order
- * for due timers that have not been cancelled or paused. New timers wait until
- * the next update. One-shots are removed and repeats rearmed before emission.
+ * for due timers that have not been cancelled, paused, or rescheduled. New
+ * timers wait until the next update. One-shots are removed and repeats rearmed
+ * before emission.
  * Repeats emit at most once per update, coalescing missed intervals while
  * retaining their phase. Zero delta freezes the corresponding clock domain.
- * Handlers may add, cancel, clear, or pause timers safely. Recursive updates
- * are rejected. Invalid deltas leave all timers unchanged.
+ * Handlers may add, cancel, clear, pause, or reschedule timers safely. Recursive
+ * updates are rejected. Invalid deltas leave all timers unchanged.
  *
  * Returns: %TRUE if advanced, %FALSE for invalid deltas or recursive calls
  */
