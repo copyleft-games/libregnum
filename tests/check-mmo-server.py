@@ -107,7 +107,8 @@ def main():
                 log = errors.read()
                 assert code == 0, log
                 assert 'CRITICAL' not in log and 'WARNING' not in log, log
-    print('PASS: TLS host authentication, replay rejection, metrics, backup and shutdown')
+    print('PASS: TLS host authentication, replay rejection, metrics and shutdown' +
+          ('; PostgreSQL restore checked separately' if os.environ.get('LRG_TEST_POSTGRES') else '; SQLite backup checked'))
 
 
 if __name__ == '__main__':
