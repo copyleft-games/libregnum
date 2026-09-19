@@ -8,6 +8,7 @@
  */
 
 #include <glib.h>
+#include <math.h>
 #include <libregnum.h>
 
 /* ========================================================================== */
@@ -583,6 +584,215 @@ test_heuristics (void)
 /* Main                                                                       */
 /* ========================================================================== */
 
+/* This lower bound is admissible but drops abruptly along vertical edges. */
+static gfloat
+inconsistent_heuristic (gint     x1,
+                        gint     y1,
+                        gint     x2,
+                        gint     y2,
+                        gpointer data)
+{
+    return y1 == 1 ? (gfloat)(4 - x1) : 0.0f;
+}
+
+static void
+test_pathfinder_reopen (void)
+{
+    g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (4, 2);
+    g_autoptr(LrgPathfinder) finder = lrg_pathfinder_new (grid);
+    g_autoptr(LrgPath) path = NULL;
+
+    lrg_nav_grid_set_allow_diagonal (grid, FALSE);
+    lrg_nav_grid_set_blocked (grid, 3, 1, TRUE);
+    lrg_nav_grid_set_cell_cost (grid, 1, 0, 3.5f);
+    lrg_pathfinder_set_heuristic (finder, inconsistent_heuristic, NULL, NULL);
+    path = lrg_pathfinder_find_path (finder, 0, 0, 3, 0, NULL);
+    g_assert_nonnull (path);
+    /* The upper route costs 5.5; the lower route must reopen (2, 0). */
+    g_assert_cmpfloat (lrg_path_get_total_cost (path), ==, 5.0f);
+    g_assert_cmpuint (lrg_path_get_length (path), ==, 6);
+}
+
+static void
+test_pathfinder_iteration_limit (void)
+{
+    g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (3, 1);
+    g_autoptr(LrgPathfinder) finder = lrg_pathfinder_new (grid);
+    g_autoptr(LrgPath) path = NULL;
+    g_autoptr(GError) error = NULL;
+
+    lrg_pathfinder_set_max_iterations (finder, 2);
+    path = lrg_pathfinder_find_path (finder, 0, 0, 2, 0, &error);
+    g_assert_null (path);
+    g_assert_error (error, LRG_PATHFINDING_ERROR, LRG_PATHFINDING_ERROR_ITERATION_LIMIT);
+    g_assert_cmpuint (lrg_pathfinder_get_last_nodes_explored (finder), ==, 2);
+    g_clear_error (&error);
+
+    /* Reaching the goal on the final permitted expansion succeeds. */
+    lrg_pathfinder_set_max_iterations (finder, 3);
+    path = lrg_pathfinder_find_path (finder, 0, 0, 2, 0, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (path);
+    g_clear_pointer (&path, lrg_path_free);
+
+    /* Exhausting the open set exactly at the limit proves no path exists. */
+    lrg_nav_grid_set_blocked (grid, 1, 0, TRUE);
+    lrg_pathfinder_set_max_iterations (finder, 1);
+    path = lrg_pathfinder_find_path (finder, 0, 0, 2, 0, &error);
+    g_assert_null (path);
+    g_assert_error (error, LRG_PATHFINDING_ERROR, LRG_PATHFINDING_ERROR_NO_PATH);
+    g_clear_error (&error);
+
+    path = lrg_pathfinder_find_path (finder, 0, 0, 0, 0, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (path);
+    g_assert_cmpuint (lrg_pathfinder_get_last_nodes_explored (finder), ==, 0);
+}
+
+static void
+test_pathfinding_error_enum (void)
+{
+    GEnumClass *klass = g_type_class_ref (LRG_TYPE_PATHFINDING_ERROR);
+    gint code;
+
+    for (code = LRG_PATHFINDING_ERROR_FAILED;
+         code <= LRG_PATHFINDING_ERROR_ITERATION_LIMIT; code++)
+        g_assert_nonnull (g_enum_get_value (klass, code));
+    g_assert_cmpint (g_enum_get_value_by_nick (klass, "iteration-limit")->value,
+                    ==, LRG_PATHFINDING_ERROR_ITERATION_LIMIT);
+    g_type_class_unref (klass);
+}
+
+static void
+test_heuristics_large_coordinates (void)
+{
+    LrgHeuristicFunc funcs[] = { lrg_heuristic_manhattan, lrg_heuristic_euclidean,
+                                lrg_heuristic_chebyshev, lrg_heuristic_octile };
+    gdouble span = (gdouble)G_MAXINT - G_MININT;
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (funcs); i++)
+    {
+        gfloat forward = funcs[i] (G_MININT, 0, G_MAXINT, 0, NULL);
+        gfloat reverse = funcs[i] (G_MAXINT, 0, G_MININT, 0, NULL);
+
+        g_assert_cmpfloat_with_epsilon (forward, (gfloat)span, 1.0f);
+        g_assert_cmpfloat (forward, ==, reverse);
+        g_assert_cmpfloat (funcs[i] (G_MAXINT, G_MININT, G_MAXINT, G_MININT, NULL), ==, 0.0f);
+    }
+    g_assert_cmpfloat_with_epsilon (lrg_heuristic_euclidean (0, 0, 60000, 80000, NULL),
+                                    100000.0f, 0.01f);
+    g_assert_cmpfloat_with_epsilon (lrg_heuristic_manhattan (G_MININT, G_MININT,
+                                    G_MAXINT, G_MAXINT, NULL), (gfloat)(2 * span), 1.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_heuristic_euclidean (G_MININT, G_MININT,
+                                    G_MAXINT, G_MAXINT, NULL), (gfloat)(sqrt (2.0) * span), 1024.0f);
+}
+
+/* Independent O(V^2) Dijkstra oracle: no engine queue, heuristic, or neighbors. */
+static gfloat
+reference_cost (LrgNavGrid *grid)
+{
+    gfloat distances[64];
+    gboolean visited[64] = { FALSE };
+    const gint dx[] = { -1, 1, 0, 0 };
+    const gint dy[] = { 0, 0, -1, 1 };
+    guint i;
+
+    for (i = 0; i < 64; i++)
+        distances[i] = G_MAXFLOAT;
+    distances[0] = 0.0f;
+    for (;;)
+    {
+        gint best = -1;
+        guint direction;
+
+        for (i = 0; i < 64; i++)
+            if (!visited[i] && distances[i] < G_MAXFLOAT &&
+                (best < 0 || distances[i] < distances[best]))
+                best = i;
+        if (best < 0)
+            return G_MAXFLOAT;
+        if (best == 63)
+            return distances[best];
+        visited[best] = TRUE;
+        for (direction = 0; direction < 4; direction++)
+        {
+            gint x = best % 8 + dx[direction];
+            gint y = best / 8 + dy[direction];
+            gfloat cost;
+
+            if (x < 0 || x >= 8 || y < 0 || y >= 8 ||
+                !lrg_nav_grid_is_walkable (grid, x, y))
+                continue;
+            cost = distances[best] + lrg_nav_grid_get_cell_cost (grid, x, y);
+            if (cost < distances[y * 8 + x])
+                distances[y * 8 + x] = cost;
+        }
+    }
+}
+
+static void
+test_pathfinder_reference_maps (void)
+{
+    GRand *random = g_rand_new_with_seed (0x51a7);
+    guint map;
+
+    for (map = 0; map < 100; map++)
+    {
+        g_autoptr(LrgNavGrid) grid = lrg_nav_grid_new (8, 8);
+        g_autoptr(LrgPathfinder) finder = lrg_pathfinder_new (grid);
+        g_autoptr(LrgPath) path = NULL;
+        g_autoptr(GError) error = NULL;
+        gfloat expected;
+        gfloat actual = 0.0f;
+        gint previous_x = 0, previous_y = 0;
+        guint i;
+
+        lrg_nav_grid_set_allow_diagonal (grid, FALSE);
+        for (i = 0; i < 64; i++)
+        {
+            lrg_nav_grid_set_cell_cost (grid, i % 8, i / 8,
+                                       g_rand_int_range (random, 0, 20) * 0.25f);
+            if (i != 0 && i != 63 && g_rand_int_range (random, 0, 5) == 0)
+                lrg_nav_grid_set_blocked (grid, i % 8, i / 8, TRUE);
+        }
+        expected = reference_cost (grid);
+        path = lrg_pathfinder_find_path (finder, 0, 0, 7, 7, &error);
+        if (expected == G_MAXFLOAT)
+        {
+            g_assert_null (path);
+            g_assert_error (error, LRG_PATHFINDING_ERROR, LRG_PATHFINDING_ERROR_NO_PATH);
+            continue;
+        }
+        g_assert_no_error (error);
+        g_assert_nonnull (path);
+        g_assert_cmpfloat_with_epsilon (lrg_path_get_total_cost (path), expected, 0.0001f);
+        for (i = 0; i < lrg_path_get_length (path); i++)
+        {
+            gint x, y;
+
+            g_assert_true (lrg_path_get_point (path, i, &x, &y));
+            g_assert_true (lrg_nav_grid_is_walkable (grid, x, y));
+            if (i == 0)
+            {
+                g_assert_cmpint (x, ==, 0);
+                g_assert_cmpint (y, ==, 0);
+            }
+            else
+            {
+                g_assert_cmpint (abs (x - previous_x) + abs (y - previous_y), ==, 1);
+                actual += lrg_nav_grid_get_cell_cost (grid, x, y);
+            }
+            previous_x = x;
+            previous_y = y;
+        }
+        g_assert_cmpint (previous_x, ==, 7);
+        g_assert_cmpint (previous_y, ==, 7);
+        g_assert_cmpfloat_with_epsilon (actual, expected, 0.0001f);
+    }
+    g_rand_free (random);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -626,6 +836,12 @@ main (int   argc,
     g_test_add_func ("/pathfinding/pathfinder/is-reachable", test_pathfinder_is_reachable);
     g_test_add_func ("/pathfinding/pathfinder/nodes-explored", test_pathfinder_nodes_explored);
     g_test_add_func ("/pathfinding/pathfinder/cardinal-only", test_pathfinder_cardinal_only);
+
+    g_test_add_func ("/pathfinding/pathfinder/reopen", test_pathfinder_reopen);
+    g_test_add_func ("/pathfinding/pathfinder/iteration-limit", test_pathfinder_iteration_limit);
+    g_test_add_func ("/pathfinding/pathfinder/reference-maps", test_pathfinder_reference_maps);
+    g_test_add_func ("/pathfinding/error-enum", test_pathfinding_error_enum);
+    g_test_add_func ("/pathfinding/heuristics-large", test_heuristics_large_coordinates);
 
     /* Heuristic tests */
     g_test_add_func ("/pathfinding/heuristics", test_heuristics);

@@ -82,7 +82,9 @@ void                lrg_pathfinder_set_grid          (LrgPathfinder *self,
  * @end_y: End Y coordinate
  * @error: (nullable): Return location for error
  *
- * Finds a path from start to end using A*.
+ * Finds a path from start to end using A*. Returns
+ * %LRG_PATHFINDING_ERROR_ITERATION_LIMIT when the expansion budget is exhausted
+ * with candidates remaining; this does not establish that the goal is unreachable.
  *
  * Returns: (transfer full) (nullable): The path, or %NULL on error
  */
@@ -148,7 +150,9 @@ void                lrg_pathfinder_set_max_iterations (LrgPathfinder *self,
  * Sets a custom heuristic function. If NULL, uses a cost-scaled Manhattan or
  * octile lower bound according to the grid's movement mode. Zero-cost cells
  * and custom neighbor graphs fall back to Dijkstra's algorithm. Custom
- * heuristics must be consistent lower bounds to guarantee optimal paths.
+ * heuristics must be finite, nonnegative lower bounds, with zero at the goal,
+ * to guarantee optimal paths. Improved closed nodes are reopened, so consistency
+ * is not required. Do not mutate the grid or pathfinder from the callback.
  */
 LRG_AVAILABLE_IN_ALL
 void                lrg_pathfinder_set_heuristic     (LrgPathfinder    *self,

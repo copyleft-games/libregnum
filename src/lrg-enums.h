@@ -673,6 +673,7 @@ GQuark lrg_pathfinding_error_quark (void);
  * @LRG_PATHFINDING_ERROR_NO_GRID: No navigation grid set
  * @LRG_PATHFINDING_ERROR_INVALID_START: Invalid start position
  * @LRG_PATHFINDING_ERROR_INVALID_GOAL: Invalid goal position
+ * @LRG_PATHFINDING_ERROR_ITERATION_LIMIT: Search expansion budget exhausted
  *
  * Error codes for the pathfinding system.
  */
@@ -684,7 +685,8 @@ typedef enum
     LRG_PATHFINDING_ERROR_BLOCKED,
     LRG_PATHFINDING_ERROR_NO_GRID,
     LRG_PATHFINDING_ERROR_INVALID_START,
-    LRG_PATHFINDING_ERROR_INVALID_GOAL
+    LRG_PATHFINDING_ERROR_INVALID_GOAL,
+    LRG_PATHFINDING_ERROR_ITERATION_LIMIT
 } LrgPathfindingError;
 
 LRG_AVAILABLE_IN_ALL

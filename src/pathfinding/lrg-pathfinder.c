@@ -62,6 +62,8 @@ typedef struct
     gint    parent_x;
     gint    parent_y;
     gboolean in_closed;
+    guint heap_index;
+    guint64 sequence;
 } AStarNode;
 
 /*
@@ -91,25 +93,78 @@ node_equal (gconstpointer a,
 }
 
 /*
- * node_compare:
+ * node_precedes:
  *
- * Comparison function for priority queue (min-heap by f_cost).
+ * Stable priority ordering for the indexed binary min-heap.
  */
-static gint
-node_compare (gconstpointer a,
-              gconstpointer b,
-              gpointer      user_data)
+static gboolean
+node_precedes (const AStarNode *a,
+               const AStarNode *b)
 {
-    const AStarNode *na = a;
-    const AStarNode *nb = b;
+    if (a->f_cost != b->f_cost)
+        return a->f_cost < b->f_cost;
+    return a->sequence < b->sequence;
+}
 
-    (void)user_data;
+static void
+open_swap (GPtrArray *open,
+           guint      a,
+           guint      b)
+{
+    AStarNode *node_a = open->pdata[a];
+    AStarNode *node_b = open->pdata[b];
 
-    if (na->f_cost < nb->f_cost)
-        return -1;
-    if (na->f_cost > nb->f_cost)
-        return 1;
-    return 0;
+    open->pdata[a] = node_b;
+    open->pdata[b] = node_a;
+    node_a->heap_index = b;
+    node_b->heap_index = a;
+}
+
+static void
+open_sift_up (GPtrArray *open,
+              guint      index)
+{
+    while (index > 0)
+    {
+        guint parent = (index - 1) / 2;
+
+        if (!node_precedes (open->pdata[index], open->pdata[parent]))
+            break;
+        open_swap (open, index, parent);
+        index = parent;
+    }
+}
+
+static void
+open_push (GPtrArray *open,
+           AStarNode *node)
+{
+    node->heap_index = open->len;
+    g_ptr_array_add (open, node);
+    open_sift_up (open, node->heap_index);
+}
+
+static AStarNode *
+open_pop (GPtrArray *open)
+{
+    AStarNode *result = open->pdata[0];
+    guint index = 0;
+
+    open_swap (open, 0, open->len - 1);
+    g_ptr_array_set_size (open, open->len - 1);
+    while (index < open->len / 2)
+    {
+        guint child = index * 2 + 1;
+
+        if (child + 1 < open->len &&
+            node_precedes (open->pdata[child + 1], open->pdata[child]))
+            child++;
+        if (!node_precedes (open->pdata[child], open->pdata[index]))
+            break;
+        open_swap (open, index, child);
+        index = child;
+    }
+    return result;
 }
 
 /* The default heuristic must remain a lower bound for every legal edge.
@@ -191,8 +246,8 @@ smooth_path_simple (LrgPath *path)
         lrg_path_get_point (path, i - 1, &x1, &y1);
         lrg_path_get_point (path, i, &x2, &y2);
 
-        dx = x2 - x1;
-        dy = y2 - y1;
+        dx = (gdouble)x2 - x1;
+        dy = (gdouble)y2 - y1;
 
         /* If direction changed, keep the previous point */
         if (dx != prev_dx || dy != prev_dy)
@@ -425,7 +480,9 @@ lrg_pathfinder_set_grid (LrgPathfinder *self,
  * @end_y: End Y coordinate
  * @error: (nullable): Return location for error
  *
- * Finds a path from start to end using A*.
+ * Finds a path from start to end using A*. Returns
+ * %LRG_PATHFINDING_ERROR_ITERATION_LIMIT when the expansion budget is exhausted
+ * with candidates remaining; this does not establish that the goal is unreachable.
  *
  * Returns: (transfer full) (nullable): The path, or %NULL on error
  */
@@ -438,11 +495,12 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
                           GError        **error)
 {
     GHashTable *all_nodes = NULL;
-    GQueue *open_list = NULL;
+    GPtrArray *open_list = NULL;
     LrgPath *path = NULL;
     AStarNode *start_node = NULL;
     AStarNode *current = NULL;
-    guint iterations = 0;
+    guint64 sequence = 0;
+    gboolean limit_reached = FALSE;
     gboolean found = FALSE;
     gfloat cost_bound;
 
@@ -506,7 +564,7 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
     /* Initialize data structures */
     cost_bound = self->heuristic == NULL ? default_cost_bound (self->grid) : 0.0f;
     all_nodes = g_hash_table_new_full (node_hash, node_equal, NULL, g_free);
-    open_list = g_queue_new ();
+    open_list = g_ptr_array_new ();
 
     /* Create start node */
     start_node = g_new0 (AStarNode, 1);
@@ -521,24 +579,26 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
     start_node->in_closed = FALSE;
 
     g_hash_table_insert (all_nodes, start_node, start_node);
-    g_queue_insert_sorted (open_list, start_node, node_compare, NULL);
+    start_node->sequence = sequence++;
+    open_push (open_list, start_node);
 
     /* A* main loop */
-    while (!g_queue_is_empty (open_list))
+    while (open_list->len > 0)
     {
         GList *neighbors = NULL;
         GList *iter = NULL;
 
-        iterations++;
-        if (self->max_iterations > 0 && iterations > self->max_iterations)
+        if (self->max_iterations > 0 &&
+            self->last_nodes_explored >= self->max_iterations)
         {
+            limit_reached = TRUE;
             lrg_log_debug ("Pathfinding exceeded max iterations (%u)",
                            self->max_iterations);
             break;
         }
 
         /* Get node with lowest f_cost */
-        current = g_queue_pop_head (open_list);
+        current = open_pop (open_list);
         current->in_closed = TRUE;
         self->last_nodes_explored++;
 
@@ -591,9 +651,10 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
                 neighbor->in_closed = FALSE;
 
                 g_hash_table_insert (all_nodes, neighbor, neighbor);
-                g_queue_insert_sorted (open_list, neighbor, node_compare, NULL);
+                neighbor->sequence = sequence++;
+                open_push (open_list, neighbor);
             }
-            else if (!neighbor->in_closed && new_g < neighbor->g_cost)
+            else if (new_g < neighbor->g_cost)
             {
                 /* Better path found */
                 neighbor->g_cost = new_g;
@@ -601,9 +662,17 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
                 neighbor->parent_x = current->x;
                 neighbor->parent_y = current->y;
 
-                /* Re-sort in open list */
-                g_queue_remove (open_list, neighbor);
-                g_queue_insert_sorted (open_list, neighbor, node_compare, NULL);
+                /* Admissible but inconsistent heuristics may improve closed nodes. */
+                if (neighbor->in_closed)
+                {
+                    neighbor->in_closed = FALSE;
+                    neighbor->sequence = sequence++;
+                    open_push (open_list, neighbor);
+                }
+                else
+                {
+                    open_sift_up (open_list, neighbor->heap_index);
+                }
             }
         }
 
@@ -645,6 +714,13 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
                        lrg_path_get_total_cost (path),
                        self->last_nodes_explored);
     }
+    else if (limit_reached)
+    {
+        g_set_error (error, LRG_PATHFINDING_ERROR,
+                     LRG_PATHFINDING_ERROR_ITERATION_LIMIT,
+                     "Search stopped after %u node expansions",
+                     self->last_nodes_explored);
+    }
     else
     {
         g_set_error (error, LRG_PATHFINDING_ERROR,
@@ -654,7 +730,7 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
     }
 
     /* Cleanup */
-    g_queue_free (open_list);
+    g_ptr_array_unref (open_list);
     g_hash_table_destroy (all_nodes);
 
     return path;
@@ -730,7 +806,9 @@ lrg_pathfinder_set_max_iterations (LrgPathfinder *self,
  * Sets a custom heuristic function. If NULL, uses a cost-scaled Manhattan or
  * octile lower bound according to the grid's movement mode. Zero-cost cells
  * and custom neighbor graphs fall back to Dijkstra's algorithm. Custom
- * heuristics must be consistent lower bounds to guarantee optimal paths.
+ * heuristics must be finite, nonnegative lower bounds, with zero at the goal,
+ * to guarantee optimal paths. Improved closed nodes are reopened, so consistency
+ * is not required. Do not mutate the grid or pathfinder from the callback.
  */
 void
 lrg_pathfinder_set_heuristic (LrgPathfinder    *self,
@@ -821,7 +899,7 @@ lrg_heuristic_manhattan (gint     x1,
                          gpointer user_data)
 {
     (void)user_data;
-    return (gfloat)(abs (x2 - x1) + abs (y2 - y1));
+    return (gfloat)(fabs ((gdouble)x2 - x1) + fabs ((gdouble)y2 - y1));
 }
 
 /**
@@ -843,14 +921,14 @@ lrg_heuristic_euclidean (gint     x1,
                          gint     y2,
                          gpointer user_data)
 {
-    gint dx;
-    gint dy;
+    gdouble dx;
+    gdouble dy;
 
     (void)user_data;
 
-    dx = x2 - x1;
-    dy = y2 - y1;
-    return sqrtf ((gfloat)(dx * dx + dy * dy));
+    dx = (gdouble)x2 - x1;
+    dy = (gdouble)y2 - y1;
+    return (gfloat)sqrt (dx * dx + dy * dy);
 }
 
 /**
@@ -872,13 +950,13 @@ lrg_heuristic_chebyshev (gint     x1,
                          gint     y2,
                          gpointer user_data)
 {
-    gint dx;
-    gint dy;
+    gdouble dx;
+    gdouble dy;
 
     (void)user_data;
 
-    dx = abs (x2 - x1);
-    dy = abs (y2 - y1);
+    dx = fabs ((gdouble)x2 - x1);
+    dy = fabs ((gdouble)y2 - y1);
     return (gfloat)MAX (dx, dy);
 }
 
@@ -902,15 +980,15 @@ lrg_heuristic_octile (gint     x1,
                       gint     y2,
                       gpointer user_data)
 {
-    gint dx;
-    gint dy;
-    gint min_d;
-    gint max_d;
+    gdouble dx;
+    gdouble dy;
+    gdouble min_d;
+    gdouble max_d;
 
     (void)user_data;
 
-    dx = abs (x2 - x1);
-    dy = abs (y2 - y1);
+    dx = fabs ((gdouble)x2 - x1);
+    dy = fabs ((gdouble)y2 - y1);
     min_d = MIN (dx, dy);
     max_d = MAX (dx, dy);
 

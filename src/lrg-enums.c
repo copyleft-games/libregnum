@@ -695,6 +695,10 @@ lrg_pathfinding_error_get_type (void)
             { LRG_PATHFINDING_ERROR_NO_PATH, "LRG_PATHFINDING_ERROR_NO_PATH", "no-path" },
             { LRG_PATHFINDING_ERROR_OUT_OF_BOUNDS, "LRG_PATHFINDING_ERROR_OUT_OF_BOUNDS", "out-of-bounds" },
             { LRG_PATHFINDING_ERROR_BLOCKED, "LRG_PATHFINDING_ERROR_BLOCKED", "blocked" },
+            { LRG_PATHFINDING_ERROR_NO_GRID, "LRG_PATHFINDING_ERROR_NO_GRID", "no-grid" },
+            { LRG_PATHFINDING_ERROR_INVALID_START, "LRG_PATHFINDING_ERROR_INVALID_START", "invalid-start" },
+            { LRG_PATHFINDING_ERROR_INVALID_GOAL, "LRG_PATHFINDING_ERROR_INVALID_GOAL", "invalid-goal" },
+            { LRG_PATHFINDING_ERROR_ITERATION_LIMIT, "LRG_PATHFINDING_ERROR_ITERATION_LIMIT", "iteration-limit" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
