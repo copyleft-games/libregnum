@@ -21,6 +21,7 @@ typedef struct _LrgInputMap LrgInputMap;
 typedef struct _LrgGameStateManager LrgGameStateManager;
 typedef struct _LrgGameState LrgGameState;
 typedef struct _LrgEventBus LrgEventBus;
+typedef struct _LrgTimerManager LrgTimerManager;
 typedef struct _LrgTheme LrgTheme;
 typedef struct _LrgRegistry LrgRegistry;
 typedef struct _LrgGameHost LrgGameHost;
@@ -935,6 +936,21 @@ lrg_game_template_is_fullscreen (LrgGameTemplate *self);
 LRG_AVAILABLE_IN_ALL
 gboolean
 lrg_game_template_has_focus (LrgGameTemplate *self);
+
+/**
+ * lrg_game_template_get_timer_manager:
+ * @self: a game template
+ *
+ * Gets the template-owned scheduler, available immediately after construction.
+ * Updated once per frame before fixed/variable gameplay updates. Scaled timers
+ * respect time scale, hit stop, and template pause; unscaled timers use the
+ * raw host delta. Shutdown and destruction cancel all timers. Do not update
+ * it manually.
+ *
+ * Returns: (transfer none): the template's timer manager
+ */
+LRG_AVAILABLE_IN_ALL
+LrgTimerManager *lrg_game_template_get_timer_manager (LrgGameTemplate *self);
 
 G_END_DECLS
 

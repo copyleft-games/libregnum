@@ -1,0 +1,92 @@
+#+title: Gameplay timers
+
+* Frame-driven scheduling
+
+=LrgTimerManager= schedules gameplay cooldowns, delayed actions, despawns, and
+repeating effects without GLib timeout sources or a display. Each instance is
+independent. It uses supplied frame deltas, so deterministic tests and offline
+simulation need no sleeps or wall-clock access.
+
+Create a manager, connect its =timeout= signal, and schedule a timer. The signal
+receives a =guint64= ID; store IDs in your gameplay object to identify actions.
+Use =g_signal_connect_object= when a GObject receives callbacks, so destruction
+of the receiver disconnects the handler automatically. Cancelling the timer is
+still useful when a receiver no longer needs an action.
+
+#+begin_src c
+static void
+on_timeout (LrgTimerManager *timers,
+            guint64          id,
+            GObject         *actor)
+{
+    /* Compare id with the actor's saved cooldown/despawn IDs. */
+}
+
+/* In game initialization, with an existing actor GObject: */
+LrgTimerManager *timers = lrg_game_template_get_timer_manager (game);
+guint64 cooldown;
+
+g_signal_connect_object (timers, "timeout", G_CALLBACK (on_timeout), actor, 0);
+cooldown = lrg_timer_manager_add (timers, 2.0, FALSE, FALSE);
+
+/* Freeze/resume just this cooldown, or cancel it entirely. */
+lrg_timer_manager_set_paused (timers, cooldown, TRUE);
+lrg_timer_manager_set_paused (timers, cooldown, FALSE);
+lrg_timer_manager_cancel (timers, cooldown);
+#+end_src
+
+* Clock domains and template integration
+
+The last argument to =add= selects unscaled time. A template advances its owned
+manager once per host frame, after global input and before fixed/variable
+updates. Scaled timers receive the clamped, scaled gameplay delta, or zero when
+the template is paused. They respect slow motion and hit stop. Unscaled timers
+receive the raw nonnegative host delta, including long stalls; these suit menu
+and UI delays. Template pause requires a =create_pause_state= implementation,
+as with the existing template pause API.
+
+The manager is available after template construction. Shutdown clears its timers
+and destruction cancels pending timers before releasing it. Timer IDs are never reused within the manager,
+even across clear/shutdown. Signal connections persist until disconnected or
+the manager/connected receiver is destroyed. Timers are not tied automatically
+to game-state lifetimes; cancel state-specific timers when leaving the state.
+
+Standalone engine loops and offline simulations create their own manager and
+call =lrg_timer_manager_update (timers, gameplay_delta, real_delta)=. Do not
+manually advance the template-owned manager. Each clock domain freezes when
+its delta is zero; this includes zero-delay one-shots. All calls must occur on
+the same thread.
+
+* Delivery and overload policy
+
+- Delays must be finite and nonnegative. Repeats require a positive interval.
+  Invalid scheduling returns ID zero without changing the manager.
+- A zero-delay one-shot waits for the next update with a positive clock delta.
+- Timers advance together before callbacks run. Due timers emit in registration
+  order, including when different deadlines are crossed in the same frame.
+- One-shots are removed before emission. Repeats are rearmed before emission,
+  so a callback can cancel its own repeat safely.
+- Repeats emit at most once per frame. Missed intervals are coalesced, preserving
+  phase: a 1-second repeat advanced by 3.25 seconds fires once with 0.75 seconds
+  remaining. This deliberately does not replay missed damage/spawn events.
+- Handlers can cancel or clear pending callbacks, pause another due timer, and
+  schedule new timers. Newly scheduled timers wait for the next update. A due
+  timer paused before delivery remains at zero until resumed and advanced.
+- Recursive updates return false. NaN, infinity, and negative deltas reject the
+  whole update without advancing either domain.
+- =get_remaining= returns -1 for missing/completed/cancelled IDs. =get_count=
+  includes paused timers. =clear= cancels without emitting.
+
+The scheduler scans active timers each frame and sorts due IDs for deterministic
+ordering: O(N + D log D) time and O(D) temporary memory, where D is due timers.
+It bounds callback bursts per repeating timer, not the total number of timers.
+It does not serialize callbacks/timers, retain scene objects, or run jobs on
+background threads.
+
+* Verification
+
+=tests/test-timer-manager.c= covers independent clocks, zero/invalid input,
+repeat phase and large deltas, pause/resume, stale IDs, ordering, mutation during
+dispatch, recursive calls, and release of the manager from its own handler.
+=tests/test-template.c= checks once-per-frame advancement, slow motion, unscaled
+stall handling, pause/resume, hit stop, and shutdown cancellation headlessly.

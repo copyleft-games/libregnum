@@ -22,6 +22,8 @@ The Core module provides:
 - *[[file:asset-pack.org][LrgAssetPack]]* - Resource pack (rres) loading and management
 - *[[file:event-bus.org][LrgEventBus]]* - Priority-based publish/subscribe event system
 
+- *[[file:timer-manager.org][LrgTimerManager]]* - Frame-driven gameplay and unscaled timers
+
 ** Essential Concepts
 :PROPERTIES:
 :CUSTOM_ID: essential-concepts

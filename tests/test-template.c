@@ -86,17 +86,82 @@ input_template_fixed_update (LrgGameTemplate *template,
     self->fixed_calls++;
 }
 
+typedef LrgGameState TimerPauseState;
+typedef LrgGameStateClass TimerPauseStateClass;
+
+GType timer_pause_state_get_type (void);
+G_DEFINE_TYPE (TimerPauseState, timer_pause_state, LRG_TYPE_GAME_STATE)
+
+static void
+timer_pause_state_noop (LrgGameState *state)
+{
+}
+
+static void
+timer_pause_state_update (LrgGameState *state,
+                          gdouble       delta)
+{
+}
+
+static void
+timer_pause_state_exit (LrgGameState *state)
+{
+    LrgTimerManager *timers = g_object_get_data (G_OBJECT (state), "timers");
+
+    /* Shutdown must also cancel work scheduled by state exit hooks. */
+    lrg_timer_manager_add (timers, 10.0, FALSE, FALSE);
+}
+
+static void
+timer_pause_state_class_init (TimerPauseStateClass *klass)
+{
+    klass->enter = timer_pause_state_noop;
+    klass->exit = timer_pause_state_exit;
+    klass->update = timer_pause_state_update;
+    klass->draw = timer_pause_state_noop;
+}
+
+static void
+timer_pause_state_init (TimerPauseState *self)
+{
+}
+
+static LrgGameState *
+input_template_create_pause (LrgGameTemplate *template)
+{
+    LrgGameState *state = g_object_new (timer_pause_state_get_type (), NULL);
+
+    g_object_set_data (G_OBJECT (state), "timers",
+                       lrg_game_template_get_timer_manager (template));
+    return state;
+}
+
 static void
 input_template_class_init (InputTemplateClass *klass)
 {
     klass->handle_global_input = input_template_handle_input;
     klass->fixed_update = input_template_fixed_update;
     klass->create_initial_state = NULL;
+    klass->create_pause_state = input_template_create_pause;
 }
 
 static void
 input_template_init (InputTemplate *self)
 {
+}
+
+static void
+test_game_template_timer_lifetime (void)
+{
+    g_autoptr(LrgTimerManager) timers = NULL;
+    LrgGameTemplate *template;
+
+    template = g_object_new (input_template_get_type (), NULL);
+    timers = g_object_ref (lrg_game_template_get_timer_manager (template));
+    lrg_timer_manager_add (timers, 1.0, TRUE, FALSE);
+    /* Even a retained manager must not retain work from a destroyed template. */
+    g_object_unref (template);
+    g_assert_cmpuint (lrg_timer_manager_get_count (timers), ==, 0);
 }
 
 static void
@@ -112,6 +177,9 @@ test_game_template_input_frame (void)
     GPtrArray *sources;
     InputTemplate *input_template;
     gboolean saved_enabled;
+    LrgTimerManager *timers;
+    guint64 scaled_timer;
+    guint64 real_timer;
     guint i;
 
     manager = lrg_input_manager_get_default ();
@@ -147,6 +215,9 @@ test_game_template_input_frame (void)
     g_assert_true (lrg_game_template_startup (template, host, &error));
     g_assert_no_error (error);
     g_test_assert_expected_messages ();
+    timers = lrg_game_template_get_timer_manager (template);
+    scaled_timer = lrg_timer_manager_add (timers, 1.0, FALSE, FALSE);
+    real_timer = lrg_timer_manager_add (timers, 1.0, FALSE, TRUE);
     input_template->expect_pressed = TRUE;
     lrg_input_mock_set_gamepad_axis (mock, 0, GRL_GAMEPAD_AXIS_LEFT_X, 0.8f);
     lrg_game_template_update (template, 0.025);
@@ -165,7 +236,37 @@ test_game_template_input_frame (void)
     lrg_game_template_update (template, 0.0);
     g_assert_cmpuint (input_template->input_calls, ==, 4);
 
+    /* Two fixed steps must still advance timers by just one host delta. */
+    g_assert_cmpfloat_with_epsilon (
+        lrg_timer_manager_get_remaining (timers, scaled_timer), 0.95, 1e-9);
+    lrg_game_template_set_time_scale (template, 0.5);
+    lrg_game_template_update (template, 0.125);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_timer_manager_get_remaining (timers, scaled_timer), 0.8875, 1e-9);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_timer_manager_get_remaining (timers, real_timer), 0.825, 1e-9);
+    lrg_game_template_set_time_scale (template, 0.0);
+    lrg_game_template_update (template, 2.0);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_timer_manager_get_remaining (timers, scaled_timer), 0.8875, 1e-9);
+    g_assert_cmpfloat (lrg_timer_manager_get_remaining (timers, real_timer), ==, -1.0);
+    lrg_game_template_set_time_scale (template, 1.0);
+    lrg_game_template_pause (template);
+    g_assert_true (lrg_game_template_is_paused (template));
+    lrg_game_template_update (template, 0.125);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_timer_manager_get_remaining (timers, scaled_timer), 0.8875, 1e-9);
+    lrg_game_template_resume (template);
+    lrg_game_template_update (template, 0.125);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_timer_manager_get_remaining (timers, scaled_timer), 0.7625, 1e-9);
+    lrg_game_template_hit_stop (template, 0.5);
+    lrg_game_template_update (template, 0.125);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_timer_manager_get_remaining (timers, scaled_timer), 0.7625, 1e-9);
+    lrg_game_template_pause (template);
     lrg_game_template_shutdown_game (template);
+    g_assert_cmpuint (lrg_timer_manager_get_count (timers), ==, 0);
     lrg_engine_shutdown (lrg_engine_get_default ());
 
     lrg_input_manager_remove_source (manager, LRG_INPUT (mock));
@@ -748,6 +849,7 @@ main (int   argc,
       char *argv[])
 {
     g_test_init (&argc, &argv, NULL);
+    g_test_add_func ("/template/base/timer-lifetime", test_game_template_timer_lifetime);
 
     /* Construction tests */
     g_test_add_func ("/template/base/input-frame", test_game_template_input_frame);

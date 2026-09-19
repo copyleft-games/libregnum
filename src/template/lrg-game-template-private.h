@@ -40,6 +40,7 @@ typedef struct _LrgGameTemplatePrivate
     LrgInputMap         *input_map;
     LrgSettings         *settings;
     LrgEventBus         *event_bus;
+    LrgTimerManager     *timer_manager;
     LrgTheme            *theme;
 
     /* Window settings */

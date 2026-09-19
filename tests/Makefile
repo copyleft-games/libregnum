@@ -57,6 +57,7 @@ TEST_LIBS += $(SANITIZER_LIBS)
 # Test source files
 TEST_SOURCES := \
 	test-engine.c \
+	test-timer-manager.c \
 	test-registry.c \
 	test-data-loader.c \
 	test-asset-manager.c \

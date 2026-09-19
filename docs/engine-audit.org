@@ -1,0 +1,68 @@
+#+title: Non-networking engine capability audit
+#+date: 2026-09-18
+
+* Scope and method
+
+This is a source-level capability audit against common game-engine needs, not
+an assertion that every engine needs every feature. Checked public APIs and
+implementations in core, templates, input, audio, pathfinding, editor, assets,
+and atlas packing. Networking and multiplayer are excluded. Existing roadmap
+entries were checked against code rather than treated as proof of absence.
+This pass implements reusable gameplay timers; larger independent systems below
+remain explicit follow-up work.
+
+* Findings
+
+| Capability | Evidence and finding | Disposition |
+|------------+----------------------+-------------|
+| Fixed-step simulation and interpolation | =src/template/lrg-game-template.c= has accumulator, catch-up limit, and interpolation alpha | Already present |
+| Slow motion and hit stop | Template exposes time scale and hit stop | Already present; reused by timers |
+| Reusable gameplay timers | Core had no scheduler; template auto-save, camera pulses, trigger cooldowns use local counters | Implemented this pass |
+| Input actions and test injection | =src/input/= has maps, analog bindings, software and mock sources | Already present |
+| Prefabs | =src/editor/lrg-prefab.c= clones, instantiates, saves, and loads node subtrees | Already present; not marked missing |
+| Object pooling and event dispatch | =src/template/lrg-object-pool.c= and =src/core/lrg-event-bus.c= | Already present |
+| Asset hot reload | =src/core/lrg-asset-manager.c= validates/replaces cached definitions and monitors changes | Present; dependency propagation/live-instance migration remain follow-ups |
+| General audio mixer graph | =src/audio/lrg-audio-manager.h= offers master/SFX/music/voice volume channels, not a configurable bus/send/effect graph | Candidate follow-up for richer audio production |
+| Navigation meshes | =src/pathfinding/= implements grid/cell/path/A*, not mesh baking or polygon navigation | Candidate follow-up for arbitrary 3D levels |
+| Production atlas packing choices | =src/atlas/lrg-atlas-packer.c= still routes MaxRects/Guillotine to Shelf | Concrete existing feature gap; separate algorithm work |
+
+* Implemented: gameplay timer manager
+
+Added =LrgTimerManager= to the public library, installation/GIR inputs, and
+forward declarations. It offers one-shot/repeating timers, scaled/unscaled
+clock selection, per-timer pause/resume, cancellation, remaining-time queries,
+and clear. Synchronous timeout delivery tolerates handler-driven changes and
+protects the manager's lifetime. Repeats coalesce missed intervals while
+preserving phase. Invalid deltas and recursive updates leave state unchanged.
+
+Every game template owns a manager and advances it once per host frame; pause,
+time scaling, hit stop, raw unscaled time, and shutdown are connected. Standalone
+loops can drive isolated managers explicitly. Existing specialized counters are
+retained because their persistence and update semantics differ.
+
+See [[file:modules/core/timer-manager.org][timer API, examples, delivery rules, and tests]].
+
+* Next priorities
+
+Audio buses, navigation meshes, and atlas algorithms need independent API and
+behavioral work; this change does not claim to implement them. Start with atlas
+packing to fulfill existing advertised choices, then choose navigation/audio
+based on the next game's requirements. Timer persistence would require a stable
+application action identifier instead of attempting to serialize signal closures.
+
+* Validation for this change
+
+- Full headless =make test=: 88 test binaries, 2,582 passed cases and 125
+  hardware/environment skips. Dependency directory overrides reused this
+  checkout's graylib, yaml-glib, and crispy builds from the parent checkout.
+- Static/shared library, loader, GIR, and typelib builds completed. Existing
+  duplicate-comment and annotation warnings remain in unrelated GIR inputs;
+  the new timer API passed a separate =--warn-all --warn-error= scanner run.
+- All nine scheduler regressions passed ASan/UBSan with leak detection and
+  Valgrind with no memory errors or definite leaks. The headless template
+  integration scenario also passed Valgrind with no errors or definite leaks.
+- Python GI constructed the manager, called its methods, and received timeout.
+- New documentation links/source blocks and =git diff --check= passed.
+
+The full engine sanitizer suite and hardware-dependent paths were not run.
+No new external dependency or host package was installed.

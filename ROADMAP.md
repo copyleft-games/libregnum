@@ -19,6 +19,16 @@ Last updated: 2026-09-18
   game-specific social/economy services and production operations remain work
   for the game/deployment; this is not a complete production MMO stack.
 
+### Gameplay timers and non-networking audit
+
+- Added `LrgTimerManager`: one-shot/repeating timers, scaled/unscaled clocks,
+  pause/resume, cancellation, and safe callback mutation. Repeats coalesce
+  missed intervals with phase preservation.
+- Game templates own and advance timers once per frame, respecting pause,
+  time scale and hit stop; shutdown cancels pending timers.
+- Added scheduler regression tests and headless template integration checks.
+  See `docs/modules/core/timer-manager.org` and `docs/engine-audit.org` for the
+  audit, implemented scope, and remaining audio/navigation/atlas gaps.
 
 ### Reliability and development workflow
 
