@@ -26,6 +26,22 @@ lrg_mmo_store_new (const gchar *path,
                    GError **error);
 
 /**
+ * lrg_mmo_store_new_postgres:
+ * @connection: libpq connection string; keep credentials private
+ * @error: (nullable): return location for an error
+ *
+ * Opens a PostgreSQL store with the same transaction contracts as SQLite.
+ * Blocking and thread-confined. Use sslmode=verify-full for remote servers and
+ * target_session_attrs=read-write with multi-host connection strings. Failed
+ * connections are never silently reconnected or replayed. Backup uses pg_dump.
+ *
+ * Returns: (transfer full) (nullable): store, or NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMmoStore *
+lrg_mmo_store_new_postgres (const gchar *connection, GError **error);
+
+/**
  * lrg_mmo_store_read:
  * @self: the instance
  * @key: record key

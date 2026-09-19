@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import uuid
 
 
 def receive(stream, count):
@@ -48,9 +49,17 @@ def main():
         password = directory / 'password'
         password.write_text('test-only-password-1234\n')
         password.chmod(0o600)
-        base = [executable, '--database', str(database)]
-        subprocess.run(base + ['--register', 'alice', '--password-file', str(password)], check=True)
-        token = subprocess.check_output(base + ['--login', 'alice', '--password-file', str(password)]).strip()
+        account = 'alice'
+        if os.environ.get('LRG_TEST_POSTGRES'):
+            connection = directory / 'connection'
+            connection.write_text(os.environ['LRG_TEST_POSTGRES'])
+            connection.chmod(0o600)
+            base = [executable, '--postgres-file', str(connection)]
+            account = 'smoke' + uuid.uuid4().hex
+        else:
+            base = [executable, '--database', str(database)]
+        subprocess.run(base + ['--register', account, '--password-file', str(password)], check=True)
+        token = subprocess.check_output(base + ['--login', account, '--password-file', str(password)]).strip()
         assert len(token) == 64
         with (directory / 'server.log').open('w+') as errors:
             host = subprocess.Popen(base + ['--certificate', str(fixtures / 'mmo-test-cert.pem'),
@@ -70,7 +79,7 @@ def main():
                                                server_hostname='localhost')
                 with connect() as stream:
                     reply = request(stream, 1, 1, token)
-                    assert reply == b'\x01alice\0', repr(reply)
+                    assert reply == b'\x01' + account.encode() + b'\0', repr(reply)
                     assert request(stream, 2, 2) == b'\x01pong\0'
                     with urllib.request.urlopen(f'http://127.0.0.1:{metrics}/healthz', timeout=5) as response:
                         assert response.read() == b'ready\n'
@@ -82,8 +91,9 @@ def main():
                     assert stream.recv(1) == b''
                 with connect() as stream:
                     assert request(stream, 1, 1, b'0' * 64).startswith(b'\0Request rejected')
-                subprocess.run(base + ['--backup', str(directory / 'backup.db')], check=True)
-                assert (directory / 'backup.db').stat().st_size > 0
+                if not os.environ.get('LRG_TEST_POSTGRES'):
+                    subprocess.run(base + ['--backup', str(directory / 'backup.db')], check=True)
+                    assert (directory / 'backup.db').stat().st_size > 0
             finally:
                 host.terminate()
                 try:

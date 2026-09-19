@@ -20,6 +20,7 @@ typedef struct
     LrgMmoGate *gate;
     GHashTable *clients;
     gchar *database;
+    gboolean postgres;
     guint jobs;
     guint64 requests;
     guint64 rejected;
@@ -90,7 +91,8 @@ execute_request (GTask *task, gpointer source, gpointer task_data, GCancellable 
     gchar *result = NULL;
     gboolean success = FALSE;
 
-    store = lrg_mmo_store_new (request->host->database, &error);
+    store = request->host->postgres ? lrg_mmo_store_new_postgres (request->host->database, &error) :
+                                      lrg_mmo_store_new (request->host->database, &error);
     if (store == NULL)
         goto out;
     auth = lrg_mmo_auth_new (store);
@@ -371,12 +373,15 @@ main (int argc, char **argv)
     g_autoptr(LrgMmoAuth) auth = NULL;
     g_autoptr(SoupServer) metrics = NULL;
     g_autofree gchar *database = NULL;
+    g_autofree gchar *postgres_file = NULL;
     g_autofree gchar *cert = NULL;
     g_autofree gchar *key = NULL;
     g_autofree gchar *account = NULL;
     g_autofree gchar *login = NULL;
     g_autofree gchar *password_file = NULL;
     g_autofree gchar *password = NULL;
+    g_autofree gchar *totp_file = NULL;
+    g_autofree gchar *totp_text = NULL;
     g_autofree gchar *backup = NULL;
     g_autofree gchar *token = NULL;
     gsize password_size;
@@ -387,6 +392,7 @@ main (int argc, char **argv)
     Host host = { 0 };
     GOptionEntry entries[] = {
         { "version", 0, 0, G_OPTION_ARG_NONE, &version, "Print version and license", NULL },
+        { "postgres-file", 0, 0, G_OPTION_ARG_FILENAME, &postgres_file, "Private libpq connection file instead of SQLite", "PATH" },
         { "database", 0, 0, G_OPTION_ARG_FILENAME, &database, "Private SQLite database path", "PATH" },
         { "certificate", 0, 0, G_OPTION_ARG_FILENAME, &cert, "TLS certificate chain", "PATH" },
         { "key", 0, 0, G_OPTION_ARG_FILENAME, &key, "TLS private key", "PATH" },
@@ -394,6 +400,7 @@ main (int argc, char **argv)
         { "metrics-port", 0, 0, G_OPTION_ARG_INT, &metrics_port, "Loopback HTTP health/metrics port", "PORT" },
         { "register", 0, 0, G_OPTION_ARG_STRING, &account, "Register an account and exit", "ACCOUNT" },
         { "login", 0, 0, G_OPTION_ARG_STRING, &login, "Issue an account token to stdout and exit", "ACCOUNT" },
+        { "totp-file", 0, 0, G_OPTION_ARG_FILENAME, &totp_file, "Private six-digit TOTP file for login", "PATH" },
         { "password-file", 0, 0, G_OPTION_ARG_FILENAME, &password_file, "Private password file for register/login", "PATH" },
         { "backup", 0, 0, G_OPTION_ARG_FILENAME, &backup, "Write a consistent backup and exit", "PATH" },
         { NULL }
@@ -408,13 +415,16 @@ main (int argc, char **argv)
         g_print ("Libregnum MMO host %s\nAGPL-3.0-or-later\n", LRG_VERSION_STRING);
         return 0;
     }
-    if (database == NULL || port < 0 || port > 65535 || metrics_port < 0 || metrics_port > 65535 ||
+    if ((database == NULL) == (postgres_file == NULL) || port < 0 || port > 65535 || metrics_port < 0 || metrics_port > 65535 ||
         (account != NULL) + (login != NULL) + (backup != NULL) > 1)
     {
         g_set_error_literal (&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Specify a database and valid exclusive operating mode");
         goto failure;
     }
-    store = lrg_mmo_store_new (database, &error);
+    if (postgres_file != NULL && !g_file_get_contents (postgres_file, &database, NULL, &error))
+        goto failure;
+    store = postgres_file != NULL ? lrg_mmo_store_new_postgres (database, &error) :
+                                   lrg_mmo_store_new (database, &error);
     if (store == NULL)
         goto failure;
     if (backup != NULL)
@@ -442,7 +452,21 @@ main (int argc, char **argv)
         }
         else
         {
-            token = lrg_mmo_auth_login (auth, login, password, g_get_real_time () / G_TIME_SPAN_SECOND, &error);
+            if (totp_file != NULL)
+            {
+                if (!g_file_get_contents (totp_file, &totp_text, NULL, &error))
+                    goto failure;
+                g_strchomp (totp_text);
+                if (strlen (totp_text) != 6 || strspn (totp_text, "0123456789") != 6)
+                {
+                    g_set_error_literal (&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "TOTP must have six digits");
+                    goto failure;
+                }
+                token = lrg_mmo_auth_login_totp (auth, login, password, g_ascii_strtoull (totp_text, NULL, 10),
+                                                g_get_real_time () / G_TIME_SPAN_SECOND, &error);
+            }
+            else
+                token = lrg_mmo_auth_login (auth, login, password, g_get_real_time () / G_TIME_SPAN_SECOND, &error);
             if (token == NULL)
                 goto failure;
             g_print ("%s\n", token);
@@ -459,6 +483,7 @@ main (int argc, char **argv)
         goto failure;
     host.loop = g_main_loop_new (NULL, FALSE);
     host.database = database;
+    host.postgres = postgres_file != NULL;
     host.clients = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, client_free);
     host.server = lrg_net_server_new ("0.0.0.0", port);
     host.realm = lrg_mmo_realm_new (128, 60 * G_TIME_SPAN_SECOND);

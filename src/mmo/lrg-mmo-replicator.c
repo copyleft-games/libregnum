@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 #include "lrg-mmo-replicator.h"
+#include <stdlib.h>
 #include <math.h>
 
 typedef struct
@@ -28,6 +29,8 @@ typedef struct
     GVariant *pending;
     guint64 sequence;
     gboolean more;
+    guint64 cursor;
+    guint64 pending_cursor;
 } Viewer;
 
 struct _LrgMmoReplicator
@@ -270,6 +273,7 @@ build_internal (LrgMmoReplicator  *self,
     g_autoptr(GHashTable) page_baseline = NULL;
     guint n_updates, n_removals;
     gboolean remaining = FALSE;
+    guint64 next_cursor = 0;
 
     g_return_val_if_fail (LRG_IS_MMO_REPLICATOR (self), NULL);
     if (more != NULL)
@@ -347,6 +351,17 @@ build_internal (LrgMmoReplicator  *self,
     }
     g_ptr_array_sort (visible, compare_entities);
     g_array_sort (removed, compare_ids);
+    if (paginate && viewer != NULL && visible->len > 1)
+    {
+        guint start = 0;
+        gpointer *ordered;
+        while (start < visible->len && ((Entity *) g_ptr_array_index (visible, start))->id <= viewer->cursor)
+            start++;
+        ordered = g_memdup2 (visible->pdata, visible->len * sizeof (gpointer));
+        for (i = 0; i < visible->len; i++)
+            visible->pdata[i] = ordered[(start + i) % visible->len];
+        g_free (ordered);
+    }
     n_updates = visible->len;
     n_removals = removed->len;
     if (paginate)
@@ -393,6 +408,10 @@ build_internal (LrgMmoReplicator  *self,
         g_hash_table_unref (baseline);
         baseline = g_steal_pointer (&page_baseline);
     }
+    next_cursor = n_updates > 0 ? ((Entity *) g_ptr_array_index (visible, n_updates - 1))->id :
+                                  (viewer != NULL ? viewer->cursor : 0);
+    if (n_updates > 1)
+        qsort (visible->pdata, n_updates, sizeof (gpointer), compare_entities);
     g_variant_builder_init (&updates, G_VARIANT_TYPE ("a(ttddday)"));
     g_variant_builder_init (&removals, G_VARIANT_TYPE ("at"));
     for (i = 0; i < n_updates; i++)
@@ -419,6 +438,7 @@ build_internal (LrgMmoReplicator  *self,
     }
     viewer->pending = delta;
     viewer->more = remaining;
+    viewer->pending_cursor = next_cursor;
     if (more != NULL)
         *more = remaining;
     viewer->sequence = self->sequence;
@@ -447,6 +467,7 @@ lrg_mmo_replicator_acknowledge (LrgMmoReplicator  *self,
     }
     g_hash_table_unref (viewer->baseline);
     viewer->baseline = g_steal_pointer (&viewer->pending_baseline);
+    viewer->cursor = viewer->pending_cursor;
     g_clear_pointer (&viewer->pending, g_variant_unref);
     return TRUE;
 }

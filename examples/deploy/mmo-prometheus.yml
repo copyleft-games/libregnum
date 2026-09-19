@@ -1,0 +1,9 @@
+# Prometheus in the host network namespace; the reference metrics bind loopback.
+global:
+  scrape_interval: 15s
+rule_files:
+  - mmo-alerts.yml
+scrape_configs:
+  - job_name: libregnum
+    static_configs:
+      - targets: ['127.0.0.1:9090']

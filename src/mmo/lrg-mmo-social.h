@@ -196,4 +196,61 @@ lrg_mmo_social_read_inbox (LrgMmoSocial *self,
                            const gchar *actor,
                            GError **error);
 
+/**
+ * lrg_mmo_social_friend:
+ * @self: social service
+ * @actor: authenticated account
+ * @target: other account
+ * @action: 0 request, 1 accept incoming request, 2 reject/remove
+ * @error: (nullable): return location for error
+ *
+ * Updates a durable friendship, checking bilateral blocks transactionally.
+ * Returns: whether changed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_social_friend (LrgMmoSocial *self, const gchar *actor, const gchar *target,
+                                guint action, GError **error);
+/**
+ * lrg_mmo_social_are_friends:
+ * @self: social service
+ * @actor: authenticated account
+ * @target: other account
+ * @error: (nullable): return location for error
+ *
+ * Checks accepted friendship; either direction of blocking makes it inactive.
+ * Returns: whether currently friends
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_social_are_friends (LrgMmoSocial *self, const gchar *actor,
+                                     const gchar *target, GError **error);
+/**
+ * lrg_mmo_social_read_channel:
+ * @self: social service
+ * @actor: authenticated guild member
+ * @guild: guild ID
+ * @error: (nullable): return location for error
+ *
+ * Reads the latest 200 guild-channel messages after checking membership.
+ * Returns: (transfer full) (nullable): a(sss) message ID, sender, text
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *lrg_mmo_social_read_channel (LrgMmoSocial *self, const gchar *actor,
+                                       const gchar *guild, GError **error);
+/**
+ * lrg_mmo_social_channel:
+ * @self: social service
+ * @actor: authenticated guild member or moderator
+ * @guild: guild ID
+ * @text: message text, or message ID to redact
+ * @operation: unique durable retry ID
+ * @redact: remove a message; requires officer or leader role
+ * @error: (nullable): return location for error
+ *
+ * Sends or redacts guild-channel text with transactional membership checking.
+ * Returns: whether committed or an identical retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_social_channel (LrgMmoSocial *self, const gchar *actor, const gchar *guild,
+                                 const gchar *text, const gchar *operation, gboolean redact,
+                                 GError **error);
 G_END_DECLS

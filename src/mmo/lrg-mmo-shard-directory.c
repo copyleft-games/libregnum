@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 #include "lrg-mmo-shard-directory.h"
 #include "lrg-mmo-store-private.h"
+#include "lrg-mmo-postgres-private.h"
 #include "lrg-mmo-service-private.h"
 
 struct _LrgMmoShardDirectory
@@ -33,7 +34,7 @@ lrg_mmo_shard_directory_new (LrgMmoStore *store, GError **error)
     sqlite3 *db;
     g_return_val_if_fail (LRG_IS_MMO_STORE (store), NULL);
     db = _lrg_mmo_store_database (store);
-    if (sqlite3_exec (db, "CREATE TABLE IF NOT EXISTS lrg_leases (zone TEXT PRIMARY KEY,"
+    if (db != NULL && sqlite3_exec (db, "CREATE TABLE IF NOT EXISTS lrg_leases (zone TEXT PRIMARY KEY,"
                           "owner TEXT NOT NULL,endpoint TEXT NOT NULL,fence INTEGER NOT NULL,"
                           "expires INTEGER NOT NULL,state BLOB NOT NULL)", NULL, NULL, NULL) != SQLITE_OK)
     {
@@ -79,6 +80,9 @@ mutate_lease (LrgMmoShardDirectory *self, const gchar *zone, const gchar *owner,
         _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid lease parameters");
         return 0;
     }
+    if (_lrg_mmo_store_postgres (self->store) != NULL)
+        return _lrg_mmo_pg_lease (_lrg_mmo_store_postgres (self->store), zone, owner, fence,
+                                   destination, endpoint, state, ttl, operation, error);
     if (sqlite3_exec (db, "BEGIN IMMEDIATE", NULL, NULL, NULL) != SQLITE_OK)
         goto sql_failure;
     if (sqlite3_prepare_v2 (db, "SELECT CAST(strftime('%s','now') AS INTEGER)", -1,
@@ -196,6 +200,8 @@ lrg_mmo_shard_directory_lookup (LrgMmoShardDirectory *self, const gchar *zone, G
         _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid zone ID");
         return NULL;
     }
+    if (_lrg_mmo_store_postgres (self->store) != NULL)
+        return _lrg_mmo_pg_lookup (_lrg_mmo_store_postgres (self->store), zone, error);
     db = _lrg_mmo_store_database (self->store);
     if (sqlite3_prepare_v2 (db, "SELECT fence,owner,endpoint,expires,state FROM lrg_leases WHERE zone=?1 "
                            "AND expires>CAST(strftime('%s','now') AS INTEGER)", -1, &statement, NULL) != SQLITE_OK)

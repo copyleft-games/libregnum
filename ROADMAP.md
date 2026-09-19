@@ -207,3 +207,13 @@ See `docs/modules/mmo/services.org` for tested contracts and deployment. Remaini
 work is explicit in the MMO audit: game-specific authority, multi-host storage
 and failover, broader social/economy policies, production capacity/operations,
 and content distribution. These changes do not establish MMO-scale guarantees.
+
+## MMO shared-world completion pass (2026-09-18)
+
+Added PostgreSQL records/leases/receipts/audit, checkpoint worker takeover,
+server-owned RPG movement/combat state and snapshots, friends/guild chat
+redaction, addressed trade/gift escrow, auctions and unique items, fair paged
+replication, signed content verification and staged HTTPS installation. Added
+real PostgreSQL tests, worker-kill/restore drills and a local TLS load sample.
+See `docs/modules/mmo/completion.org` for contracts and remaining operational
+inputs; no production deployment, database HA election or UDP/QUIC claim.

@@ -323,3 +323,173 @@ lrg_mmo_social_send_message (LrgMmoSocial *self, const gchar *actor, const gchar
     batch = g_variant_ref_sink (g_variant_builder_end (&changes));
     return lrg_mmo_store_commit (self->store, batch, error);
 }
+
+static gchar *
+friend_key (const gchar *a, const gchar *b)
+{
+    return strcmp (a, b) < 0 ? g_strdup_printf ("social/friend/%s/%s", a, b) :
+                              g_strdup_printf ("social/friend/%s/%s", b, a);
+}
+
+gboolean
+lrg_mmo_social_friend (LrgMmoSocial *self, const gchar *actor, const gchar *target,
+                       guint action, GError **error)
+{
+    g_autofree gchar *key = NULL, *forward = NULL, *reverse = NULL;
+    g_autoptr(GVariant) current = NULL, batch = NULL;
+    g_autoptr(GError) local_error = NULL;
+    guint64 revision, a_revision, b_revision;
+    const gchar *requester = "";
+    guint state = 0;
+    gboolean a_block, b_block;
+    GVariantBuilder changes;
+    g_return_val_if_fail (LRG_IS_MMO_SOCIAL (self), FALSE);
+    if (!_lrg_mmo_id_valid (actor) || !_lrg_mmo_id_valid (target) || g_str_equal (actor, target) || action > 2)
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid friendship action");
+    key = friend_key (actor, target);
+    current = _lrg_mmo_load (self->store, key, "(su)", &revision, &local_error);
+    if (current == NULL && !g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+    {
+        g_propagate_error (error, g_steal_pointer (&local_error));
+        return FALSE;
+    }
+    if (current != NULL)
+        g_variant_get (current, "(&su)", &requester, &state);
+    if (action == 0 && state != 0)
+        return _lrg_mmo_fail (error, G_IO_ERROR_EXISTS, "Friendship or request already exists");
+    if (action == 1 && (state != 1 || !g_str_equal (requester, target)))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "No incoming friend request");
+    forward = block_key (actor, target);
+    reverse = block_key (target, actor);
+    if (!get_block (self, forward, &a_revision, &a_block, error) ||
+        !get_block (self, reverse, &b_revision, &b_block, error))
+        return FALSE;
+    if (action != 2 && (a_block || b_block))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Friendship is blocked");
+    g_variant_builder_init (&changes, G_VARIANT_TYPE ("a(stay)"));
+    _lrg_mmo_change (&changes, key, revision, g_variant_new ("(su)", action == 0 ? actor : requester,
+                                                          action == 2 ? 0u : action + 1));
+    _lrg_mmo_change (&changes, forward, a_revision, g_variant_new_boolean (a_block));
+    _lrg_mmo_change (&changes, reverse, b_revision, g_variant_new_boolean (b_block));
+    batch = g_variant_ref_sink (g_variant_builder_end (&changes));
+    return lrg_mmo_store_commit (self->store, batch, error);
+}
+
+gboolean
+lrg_mmo_social_are_friends (LrgMmoSocial *self, const gchar *actor, const gchar *target, GError **error)
+{
+    g_autofree gchar *key = NULL, *forward = NULL, *reverse = NULL;
+    g_autoptr(GVariant) value = NULL;
+    g_autoptr(GError) local_error = NULL;
+    guint64 revision;
+    guint state;
+    gboolean blocked_a, blocked_b;
+    g_return_val_if_fail (LRG_IS_MMO_SOCIAL (self), FALSE);
+    if (!_lrg_mmo_id_valid (actor) || !_lrg_mmo_id_valid (target))
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid friendship identities");
+    forward = block_key (actor, target);
+    reverse = block_key (target, actor);
+    if (!get_block (self, forward, &revision, &blocked_a, error) ||
+        !get_block (self, reverse, &revision, &blocked_b, error) || blocked_a || blocked_b)
+        return FALSE;
+    key = friend_key (actor, target);
+    value = _lrg_mmo_load (self->store, key, "(su)", &revision, &local_error);
+    if (value == NULL)
+    {
+        if (!g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+            g_propagate_error (error, g_steal_pointer (&local_error));
+        return FALSE;
+    }
+    g_variant_get_child (value, 1, "u", &state);
+    return state == 2;
+}
+
+static GVariant *
+channel_auth (LrgMmoSocial *self, const gchar *actor, const gchar *guild, guint required,
+              guint64 *revision, GError **error)
+{
+    g_autoptr(GVariant) membership = NULL;
+    g_autoptr(GVariant) members = NULL;
+    guint role = 0;
+    if (!_lrg_mmo_id_valid (actor))
+        goto denied;
+    membership = load_guild (self, guild, revision, error);
+    if (membership == NULL)
+        return NULL;
+    members = g_variant_get_child_value (membership, 1);
+    if (!g_variant_lookup (members, actor, "u", &role) || role < required)
+        goto denied;
+    return g_steal_pointer (&membership);
+denied:
+    _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Channel membership or moderation role required");
+    return NULL;
+}
+
+static GVariant *
+channel_history (LrgMmoSocial *self, const gchar *guild, guint64 *revision, GError **error)
+{
+    g_autofree gchar *key = g_strconcat ("social/channel/", guild, NULL);
+    g_autoptr(GError) local_error = NULL;
+    GVariant *value = _lrg_mmo_load (self->store, key, "a(sss)", revision, &local_error);
+    if (value != NULL)
+        return value;
+    if (g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+        return g_variant_ref_sink (g_variant_new_array (G_VARIANT_TYPE ("(sss)"), NULL, 0));
+    g_propagate_error (error, g_steal_pointer (&local_error));
+    return NULL;
+}
+
+GVariant *
+lrg_mmo_social_read_channel (LrgMmoSocial *self, const gchar *actor, const gchar *guild, GError **error)
+{
+    g_autoptr(GVariant) membership = NULL;
+    guint64 revision;
+    g_return_val_if_fail (LRG_IS_MMO_SOCIAL (self), NULL);
+    membership = channel_auth (self, actor, guild, 1, &revision, error);
+    return membership != NULL ? channel_history (self, guild, &revision, error) : NULL;
+}
+
+gboolean
+lrg_mmo_social_channel (LrgMmoSocial *self, const gchar *actor, const gchar *guild,
+                        const gchar *text, const gchar *operation, gboolean redact, GError **error)
+{
+    g_autoptr(GVariant) membership = NULL, history = NULL, intent = NULL, batch = NULL;
+    g_autofree gchar *guild_key = NULL, *history_key = NULL;
+    guint64 membership_revision, history_revision;
+    GVariantBuilder messages, changes;
+    gsize i, count;
+    gint status;
+    g_return_val_if_fail (LRG_IS_MMO_SOCIAL (self), FALSE);
+    if (text == NULL || *text == '\0' || strlen (text) > 2048 || !g_utf8_validate (text, -1, NULL))
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid channel text or target");
+    membership = channel_auth (self, actor, guild, redact ? 2 : 1, &membership_revision, error);
+    if (membership == NULL)
+        return FALSE;
+    intent = g_variant_ref_sink (g_variant_new ("(ssssb)", "channel", actor, guild, text, redact));
+    status = _lrg_mmo_operation_check (self->store, operation, intent, error);
+    if (status != 0)
+        return status > 0;
+    history = channel_history (self, guild, &history_revision, error);
+    if (history == NULL)
+        return FALSE;
+    count = g_variant_n_children (history);
+    g_variant_builder_init (&messages, G_VARIANT_TYPE ("a(sss)"));
+    for (i = !redact && count > 199 ? count - 199 : 0; i < count; i++)
+    {
+        g_autoptr(GVariant) item = g_variant_get_child_value (history, i);
+        const gchar *id;
+        g_variant_get_child (item, 0, "&s", &id);
+        if (!redact || !g_str_equal (id, text))
+            g_variant_builder_add_value (&messages, item);
+    }
+    if (!redact)
+        g_variant_builder_add (&messages, "(sss)", operation, actor, text);
+    guild_key = g_strconcat ("social/guild/", guild, NULL);
+    history_key = g_strconcat ("social/channel/", guild, NULL);
+    g_variant_builder_init (&changes, G_VARIANT_TYPE ("a(stay)"));
+    _lrg_mmo_change (&changes, guild_key, membership_revision, membership);
+    _lrg_mmo_change (&changes, history_key, history_revision, g_variant_builder_end (&messages));
+    _lrg_mmo_operation_add (&changes, operation, intent);
+    batch = g_variant_ref_sink (g_variant_builder_end (&changes));
+    return lrg_mmo_store_commit (self->store, batch, error);
+}

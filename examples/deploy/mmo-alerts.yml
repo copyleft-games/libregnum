@@ -1,0 +1,17 @@
+groups:
+  - name: libregnum
+    rules:
+      - alert: LibregnumUnavailable
+        expr: up{job="libregnum"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Libregnum metrics endpoint unavailable
+      - alert: LibregnumWorkerSaturation
+        expr: libregnum_jobs >= 120
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Libregnum job budget nearly exhausted

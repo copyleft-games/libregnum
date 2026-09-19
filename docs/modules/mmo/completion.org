@@ -1,0 +1,197 @@
+#+TITLE: Shared-world Completion Contracts
+
+* PostgreSQL and deployment inputs
+
+=libpq-devel= is now required (Debian: =libpq-dev=). SQLite remains available.
+Use =lrg_mmo_store_new_postgres()= with a private libpq connection string to share
+records and ownership across hosts. All existing auth/social/market services
+operate through either backend. The reference host and zone worker accept
+=--postgres-file PATH= instead of =--database PATH=. The file contains libpq
+connection options, not a URL exposed in process arguments.
+
+Defaults are five-second connect timeout, =sslmode=verify-full= and
+=target_session_attrs=read-write=. Explicit connection options may override
+these for private test deployments. For remote use provision a trusted CA and
+correct server identities. Multi-host libpq connection strings can select a
+writable primary; database leader election and fencing remain infrastructure
+responsibilities. See [[https://www.postgresql.org/docs/current/libpq-connect.html][libpq connection options]].
+
+Use a dedicated, application-owned database. Constructors create the four
+=lrg_records/operations/audit/leases= tables transactionally. Record schemas
+match SQLite semantics, using =bytea= and =bigint=. Each instance is synchronous
+and thread-confined. Query/lock timeouts are 5s/1s. The backend serializes writes
+and lease changes with one transaction advisory lock to provide an unambiguous
+fencing/receipt ordering boundary. This is intentionally conservative and limits
+write throughput; partitioning requires measured workload and revised authority
+boundaries. All values use libpq parameters, never interpolated SQL.
+
+A failed connection is not silently reconnected and a failed commit is never
+blindly replayed. Create a fresh worker connection and retry using the same
+operation ID after resolving ambiguity. PostgreSQL backup uses =pg_dump= and
+=pg_restore=; =Store.backup()= remains SQLite-only and reports NOT_SUPPORTED on
+PostgreSQL. The restore drill compares every table row, including opaque payloads,
+retry receipts, audit sequences and leases, in an isolated restored database.
+
+* Second factor authentication
+
+Auth supports six-digit HMAC-SHA1 TOTP, 30-second steps and one-step clock skew,
+following [[https://www.rfc-editor.org/rfc/rfc6238][RFC 6238]]. Provision the generated raw secret privately through your
+authenticator enrollment UI (normally base32/otpauth encoding). Trusted
+=set_totp()= requires an enrollment code and invalidates all old bearer tokens.
+It is an administrative operation requiring reauthentication, not a public bypass
+for disabling MFA. Login consumes each accepted counter through record CAS;
+password-only login rejects enabled accounts. Password recovery preserves MFA.
+Loss of the authenticator therefore requires a separately verified admin recovery
+procedure. Secrets are stored in the private database and included in backups;
+protect database access, transport and backup storage. This is not WebAuthn.
+
+The CLI accepts =--totp-file= during login. Apply the origin gate before expensive
+password/MFA requests. If token issuance fails after consuming a code, wait for
+the next code rather than permitting replay. A secure external email/SMS recovery
+provider is not selected or contacted by these changes.
+
+* Worker recovery
+
+=examples/mmo-zone-worker.c= is an executable checkpoint/ownership reference,
+not a gameplay listener. Run candidates with the same zone and database, unique
+incarnation IDs and their advertised gameplay endpoint. Each candidate retries
+lease acquisition. The owner renews a three-second lease, advances 20 fixed ticks
+and commits its simulation checkpoint with the current fence each second.
+On renewal/checkpoint failure it stops immediately. Graceful shutdown releases
+ownership; SIGKILL leaves expiry to permit takeover. A standby restores the last
+committed checkpoint after acquiring a strictly higher fence.
+
+Do not reuse incarnation IDs. All application zone writes must use the fenced
+commit API; arbitrary direct SQL or unfenced writes bypass the contract. The
+reference worker has no NPCs/characters unless a trusted checkpoint is seeded.
+Its one-second checkpoints permit loss of uncommitted simulation progress after
+crash. Game transactions requiring stronger durability must commit before reply.
+Configure actual ingress to stop admitting commands when lease authority is lost,
+read routing endpoints from the directory and reset client streams on handoff.
+
+#+begin_src sh
+make -C examples build/release/examples/mmo-zone-worker
+make -C examples check-mmo-failover
+# The same test uses PostgreSQL when LRG_TEST_POSTGRES is set securely.
+#+end_src
+
+This tests application-worker recovery against one database primary. It does not
+test infrastructure split-brain, replication loss or database-primary promotion.
+Those require a selected HA provider/topology and its fencing mechanism.
+
+* Authoritative simulation
+
+=LrgMmoSimulation= owns character IDs, account ownership, zones, positions, health,
+factions and movement/combat configuration. Spawn/obstacle/clock/restore methods
+are trusted server operations. Move/attack take the authenticated session account;
+clients cannot choose speed, damage, elapsed time or cooldown configuration.
+
+Each tick is 50ms. Movement credit is capped at five ticks and consumed on a
+successful command, preventing burst commands from multiplying available movement.
+A swept segment against radius-expanded static boxes prevents tunneling. This is
+a conservative box collision model, not the full physics solver. Coordinates,
+configuration, command order, zone/faction, range, line of sight, cooldown and
+health are checked before mutation. Failed commands do not change state.
+
+A snapshot =(ta(tssdddduududtttt))= contains tick and character tuples: ID,
+account, zone, X/Y/Z, radius, health, faction, speed, damage, range, movement tick,
+attack tick, accepted sequence, cooldown ticks. Treat this as private server
+state. Restoration validates all rows into temporary state before replacement;
+obstacles come from the destination's content. Snapshot input is capped at 1 MiB.
+Partition zones so snapshots fit before using the directory's bounded handoff.
+NPC behavior, navigation, skill formulas, respawn and dynamic-body collision are
+game policy integrated with the existing AI/pathfinding/physics modules.
+
+* Social and commerce
+
+=Social.friend()= supports request, acceptance by the invited account, rejection
+and removal. Bilateral blocks are checked in the same write transaction.
+=are_friends()= treats a blocked relationship as inactive. Accounts may belong to
+multiple guilds. Guild channels retain 200 messages; writes include guild
+membership revisions to prevent a concurrent kick from authorizing a stale
+write. Officers/leaders can redact messages by ID. Channel history is shared
+with members, so private-message blocking does not hide guild-channel messages.
+Redaction is not a moderation UI or an immutable evidence archive.
+
+=Market.offer()= reserves a resource from a sender for a named recipient and
+specifies the requested resource/quantity. Acceptance commits both sides or
+nothing. A requested quantity of zero provides a claim-once resource attachment;
+applications associate its offer ID with mail text. Sending text and creating the
+offer are separate operations, so hosts must handle a message failure without
+losing the durable escrow. Sender cancellation returns escrow even after expiry.
+
+Auctions reserve items at creation. Bids escrow coins and refund an outbid account
+atomically; raising one's own bid reserves only the difference. Settlement after
+the server deadline pays the seller and delivers items, or returns unsold escrow.
+Hosts track auction IDs and schedule settlement; there is no background scan or
+index/listing UI. Balance overflow leaves escrow intact for administrative
+resolution. Fees and taxes are game policy. Bid eligibility checks server time
+before CAS settlement; this is not a precision financial exchange clock.
+
+Unique items use a separate ownership record with immutable definition/metadata.
+Mint rejects duplicate IDs, and authenticated ownership transfer is atomic and
+retry-safe. Fungible auction/trade APIs do not automatically trade these unique
+records; games must define and commit that composite transaction when needed.
+Trusted administrative grants/mints must never be exposed to arbitrary clients.
+
+* Replication and content
+
+Paged replication keeps an acknowledged round-robin cursor over dirty entity IDs.
+A pending retry is identical and does not advance fairness state. Selected wire
+updates remain sorted. This prevents permanently hot low IDs from starving others;
+removals still take priority and oversize individual entities reject. Semantic
+priorities (combat relevance, distance bands) remain configurable host policy.
+
+Signed content manifests use canonical little-endian GVariant =(tsa(stay))=:
+version 1, pinned release ID, and files (relative path, size, 32-byte SHA256).
+Ed25519 signs the exact serialized bytes; provision the raw 32-byte public key
+independently of the download server. Limits are 1 MiB metadata, 4096 files,
+1 GiB/file and 4 GiB total. Unsafe/duplicate paths and symlinks in file paths reject.
+The private staging directory must not be writable by another untrusted process.
+
+=examples/mmo-content.py URL RELEASE KEY DESTINATION= downloads over verified
+HTTPS, checks signature and pinned release, streams bounded files, verifies every
+hash and atomically renames staging to a new version directory. Existing versions
+are never overwritten; activating a version is a separate game-controlled step.
+The signature authenticates listed files only. Load only those entries. HTTPS
+redirects to plaintext are refused. Release pinning is essential: a signature
+alone does not prevent rollback to old signed content. Signing keys, manifest
+production and CDN publication remain release-operator responsibilities.
+
+* Verification and operations
+
+#+begin_src sh
+make test
+make test-mmo-content
+make test-mmo-gi
+make -C examples check-mmo-server
+make -C examples check-mmo-failover
+make -C examples check-mmo-load
+#+end_src
+
+=tests/test-mmo-completion= runs the real PostgreSQL checks only when
+=LRG_TEST_POSTGRES= names an isolated test database. It otherwise reports a skip.
+Do not run it against production: it creates persistent test records. The host,
+load and worker-kill tests accept the same variable. =tests/check-mmo-restore.py
+CONTAINER DATABASE= runs pg_dump/restore in an explicitly supplied disposable
+Podman PostgreSQL container, creates a unique temporary database and removes only
+that restored database afterward. Run with no concurrent source writers.
+
+The local load sample uses six TLS clients and 120 authenticated requests. It
+reports actual successful count and p50/p95 latency, with no asserted production
+capacity threshold. A real capacity target needs your player count, visibility,
+entity sizes, command mix, database/network topology and acceptable latency.
+The current measurements exercise a local machine and simple ping/auth storage.
+
+=examples/deploy/mmo-prometheus.yml=, =mmo-alerts.yml= and =mmo-dashboard.json=
+provide scrape, availability/job-saturation alerts and four dashboard panels for
+the reference host. Metrics bind loopback; run the collector in the same host
+network namespace or configure an explicitly protected endpoint. Configure
+Prometheus's own listen port differently from the reference host's 9090 metrics
+port. Alert delivery and dashboard installation are deployment operations.
+
+Not implemented or claimed: external recovery-message delivery, database HA
+election, UDP/QUIC, ranked seasons, a moderation console, or a deployed complete
+game. Completing those requires provider/topology and game-policy decisions;
+no placeholder API reports success for them. This pass also does not claim WAN,
+Windows or big-endian hardware validation.

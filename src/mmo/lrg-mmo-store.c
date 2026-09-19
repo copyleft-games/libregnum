@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 #include "lrg-mmo-store.h"
 #include <sqlite3.h>
+#include "lrg-mmo-postgres-private.h"
 #include "lrg-mmo-store-private.h"
 
 struct _LrgMmoStore
 {
     GObject parent_instance;
     sqlite3 *db;
+    PGconn *postgres;
 };
 
 G_DEFINE_TYPE (LrgMmoStore, lrg_mmo_store, G_TYPE_OBJECT)
@@ -32,6 +34,8 @@ lrg_mmo_store_finalize (GObject *object)
     LrgMmoStore *self = LRG_MMO_STORE (object);
     if (self->db != NULL)
         sqlite3_close (self->db);
+    if (self->postgres != NULL)
+        PQfinish (self->postgres);
     G_OBJECT_CLASS (lrg_mmo_store_parent_class)->finalize (object);
 }
 
@@ -77,6 +81,22 @@ lrg_mmo_store_new (const gchar  *path,
     return g_steal_pointer (&self);
 }
 
+LrgMmoStore *
+lrg_mmo_store_new_postgres (const gchar *connection, GError **error)
+{
+    g_autoptr(LrgMmoStore) self = NULL;
+    g_return_val_if_fail (connection != NULL, NULL);
+    self = g_object_new (LRG_TYPE_MMO_STORE, NULL);
+    self->postgres = _lrg_mmo_pg_open (connection, error);
+    return self->postgres != NULL ? g_steal_pointer (&self) : NULL;
+}
+
+PGconn *
+_lrg_mmo_store_postgres (LrgMmoStore *self)
+{
+    return self->postgres;
+}
+
 GBytes *
 lrg_mmo_store_read (LrgMmoStore  *self,
                     const gchar  *key,
@@ -94,6 +114,8 @@ lrg_mmo_store_read (LrgMmoStore  *self,
         g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid record key");
         return NULL;
     }
+    if (self->postgres != NULL)
+        return _lrg_mmo_pg_read (self->postgres, key, revision, error);
     if (sqlite3_prepare_v2 (self->db, "SELECT revision, data FROM lrg_records WHERE key=?1",
                            -1, &statement, NULL) != SQLITE_OK)
     {
@@ -184,6 +206,8 @@ commit_internal (LrgMmoStore  *self,
         }
         g_hash_table_add (keys, g_strdup (key));
     }
+    if (self->postgres != NULL)
+        return _lrg_mmo_pg_commit (self->postgres, changes, operation_id, digest, duplicate, zone, owner, fence, error);
     if (sqlite3_exec (self->db, "BEGIN IMMEDIATE", NULL, NULL, NULL) != SQLITE_OK)
         return sql_error (self, error);
     if (operation_id != NULL)
@@ -350,6 +374,11 @@ lrg_mmo_store_backup (LrgMmoStore *self, const gchar *path, GError **error)
     g_autoptr(GFileOutputStream) reservation = NULL;
     g_return_val_if_fail (LRG_IS_MMO_STORE (self), FALSE);
     g_return_val_if_fail (path != NULL, FALSE);
+    if (self->postgres != NULL)
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Use pg_dump for PostgreSQL backups");
+        return FALSE;
+    }
     /* Exclusive reservation prevents overwriting a live database or old backup. */
     file = g_file_new_for_path (path);
     reservation = g_file_create (file, G_FILE_CREATE_PRIVATE, NULL, error);
@@ -391,6 +420,8 @@ lrg_mmo_store_read_audit (LrgMmoStore *self, guint64 after, guint limit, GError 
         g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid audit cursor or limit");
         return NULL;
     }
+    if (self->postgres != NULL)
+        return _lrg_mmo_pg_audit (self->postgres, after, limit, error);
     if (sqlite3_prepare_v2 (self->db,
                            "SELECT sequence,coalesce(operation,''),digest,created FROM lrg_audit "
                            "WHERE sequence>?1 ORDER BY sequence LIMIT ?2", -1, &statement, NULL) != SQLITE_OK)

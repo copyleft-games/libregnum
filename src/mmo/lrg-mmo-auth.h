@@ -171,4 +171,49 @@ lrg_mmo_auth_recover (LrgMmoAuth *self,
                       gint64 now,
                       GError **error);
 
+/**
+ * lrg_mmo_auth_generate_totp_secret:
+ * @error: (nullable): return location for error
+ *
+ * Generates a secret for private authenticator provisioning. Never log or publish.
+ * Returns: (transfer full) (nullable): 20 random bytes
+ */
+LRG_AVAILABLE_IN_ALL
+GBytes *lrg_mmo_auth_generate_totp_secret (GError **error);
+/**
+ * lrg_mmo_auth_set_totp:
+ * @self: auth service
+ * @account: account ID
+ * @secret: (nullable): private 20 to 64 byte secret; NULL disables TOTP
+ * @confirmation: six-digit TOTP enrollment confirmation as an integer
+ * @now: trusted Unix seconds
+ * @error: (nullable): return location for error
+ *
+ * Trusted administration after reauthentication: enables/replaces/disables TOTP
+ * and invalidates existing tokens atomically. Uses HMAC-SHA1, six digits and
+ * 30-second steps with one-step skew. Confirmation consumes its time step.
+ * Database backups contain this secret and must be protected accordingly.
+ * Returns: whether updated
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_auth_set_totp (LrgMmoAuth *self, const gchar *account, GBytes *secret,
+                                guint confirmation, gint64 now, GError **error);
+/**
+ * lrg_mmo_auth_login_totp:
+ * @self: auth service
+ * @account: account ID
+ * @password: account password
+ * @code: six-digit TOTP as an integer
+ * @now: trusted Unix seconds
+ * @error: (nullable): return location for error
+ *
+ * Checks password and configured TOTP, consuming a counter with CAS before
+ * issuing a token. Replayed codes reject across connections. Apply ingress rate
+ * limits. A failure after consumption can require waiting for the next code.
+ * Password-only login rejects accounts with TOTP enabled.
+ * Returns: (transfer full) (nullable): bearer token
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *lrg_mmo_auth_login_totp (LrgMmoAuth *self, const gchar *account, const gchar *password,
+                               guint code, gint64 now, GError **error);
 G_END_DECLS

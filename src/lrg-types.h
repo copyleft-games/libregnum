@@ -30,6 +30,7 @@ typedef struct _LrgMmoSocial LrgMmoSocial;
 typedef struct _LrgMmoAuth LrgMmoAuth;
 typedef struct _LrgMmoRealm LrgMmoRealm;
 typedef struct _LrgMmoReplicator LrgMmoReplicator;
+typedef struct _LrgMmoSimulation LrgMmoSimulation;
 typedef struct _LrgMmoGroup LrgMmoGroup;
 typedef struct _LrgMmoStore LrgMmoStore;
 

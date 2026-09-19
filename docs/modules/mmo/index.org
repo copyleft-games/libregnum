@@ -44,32 +44,45 @@ and deployment]] for configuration, wire formats, permissions and failure handli
 | Matchmaking | Bounded expiring FIFO queue with mode/rating matching |
 | Operations | TLS reference host, worker-thread storage, health/metrics, systemd example, end-to-end smoke test |
 
-* Remaining game and deployment requirements
+* Completion pass
 
-These services do not constitute a complete production MMO. Game rules still
-need character ownership, collision and movement validation, combat, NPC/world
-simulation, unique-item semantics and content distribution. Prediction accepts
-game-computed displacements; it does not implement authoritative physics or
-anti-cheat. The market implements buyouts, not bidding or two-party trade offers.
-Private inboxes do not implement guild/channel chat, friend requests, attachments
-or moderation tooling. Matchmaking is an ephemeral greedy queue, not ranked
-season management or regional party placement.
+See [[file:completion.org][completion contracts, executable checks and deployment boundaries]].
 
-Shard coordination works across processes sharing one local SQLite database.
-Multi-host database replication, distributed ownership consensus, automatic
-worker failover, regional routing and deployment orchestration remain absent.
-An application must wire handoff snapshots to its simulation and reconnect flow;
-leases alone do not migrate running worlds. Never place the SQLite database on
-a network filesystem to simulate a distributed backend.
+| Prior gap | Added implementation |
+|-----------+----------------------|
+| Second factor | TOTP enrollment, password-plus-code login and durable replay prevention |
+| Multi-host shared records | PostgreSQL Store backend, same CAS/receipt/audit/fencing API |
+| Worker failover | Checkpointing zone worker; killed-worker takeover tested on both backends |
+| Movement/combat authority | Owned characters, server tick budgets, swept static collision, faction/range/cooldown/sight checks |
+| Unique items and exchanges | Immutable item metadata/ownership, addressed escrow trade and gift claims |
+| Auctions | Escrowed bids, transactional outbid refunds, expiry settlement |
+| Social workflows | Durable friend requests, guild-channel history and officer/leader redaction |
+| Replication starvation | Acknowledged rotating update cursor with sorted wire deltas |
+| Content distribution | Ed25519 manifests, streamed SHA256 verification, staged HTTPS release installer |
+| Recovery and measurement | PostgreSQL dump/restore drill, killed-worker tests, concurrent TLS latency sample |
+| Operational visibility | Existing health/metrics host plus Prometheus scrape/alert and dashboard examples |
 
-Account recovery requires an externally verified recovery channel. Public
-registration/password endpoints, MFA, DDoS protection and operational moderation
-are deployment responsibilities. The example deliberately exposes authenticated
-service requests; its registration/token issuance commands are local admin tools.
+* Deployment boundaries and optional capabilities
 
-UDP/QUIC, replication priority scheduling, measured MMO-scale capacity, automated
-restore drills, fleet dashboards, patch distribution and disaster recovery remain
-outstanding. No player-count, latency or availability guarantee is asserted.
+The library now has a tested reference path for shared persistence, worker recovery
+and basic authoritative RPG state. It is not a running production game. A live
+rollout still needs hosting, certificate and recovery-provider configuration,
+a database HA topology with infrastructure fencing, and an explicit load/SLO
+profile. The local tests exercise independent processes against one PostgreSQL
+primary; they do not establish multi-host database failover or WAN availability.
+
+The reference simulation is configurable straight-line movement and direct damage
+against static boxes. Games still supply navigation/AI, skills, physics, respawn,
+world content and policy. Existing engine AI/physics/quest modules support those
+game-specific choices. The checkpoint worker advertises an endpoint but does not
+host a gameplay socket; connect the simulation to your authoritative ingress.
+
+Recovery-message delivery, automated database-primary election,
+UDP/QUIC, ranked seasons/party placement, and a full moderation console are not
+implemented in this pass. TLS/TCP remains the supported transport. These are
+explicit remaining capabilities, not hidden behind stub APIs or claimed tested.
+The user must choose the operational providers/topology and game policy before a
+complete live deployment can be implemented and verified.
 
 * Threading and ownership
 

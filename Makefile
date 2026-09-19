@@ -177,6 +177,8 @@ PUBLIC_HEADERS := \
 	src/mmo/lrg-mmo-realm.h \
 	src/mmo/lrg-mmo-replicator.h \
 	src/mmo/lrg-mmo-group.h \
+	src/mmo/lrg-mmo-simulation.h \
+	src/mmo/lrg-mmo-content.h \
 	src/mmo/lrg-mmo-shard-directory.h \
 	src/mmo/lrg-mmo-replica.h \
 	src/mmo/lrg-mmo-market.h \
@@ -665,7 +667,10 @@ SOURCES := \
 	src/mmo/lrg-mmo-realm.c \
 	src/mmo/lrg-mmo-replicator.c \
 	src/mmo/lrg-mmo-group.c \
+	src/mmo/lrg-mmo-simulation.c \
+	src/mmo/lrg-mmo-content.c \
 	src/mmo/lrg-mmo-service.c \
+	src/mmo/lrg-mmo-postgres.c \
 	src/mmo/lrg-mmo-shard-directory.c \
 	src/mmo/lrg-mmo-replica.c \
 	src/mmo/lrg-mmo-market.c \
@@ -1477,6 +1482,13 @@ test-followups-gi: lib
 	@GI_TYPELIB_PATH="$(GIROUTDIR):$(GRAYLIB_DIR)/build/gir:$$GI_TYPELIB_PATH" \
 	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
 	 $(GI_PYTHON) tests/test-engine-followups-gi.py
+
+.PHONY: test-mmo-content
+test-mmo-content: lib
+	@$(MAKE) --no-print-directory gir
+	@GI_TYPELIB_PATH="$(GIROUTDIR):$(GRAYLIB_DIR)/build/gir:$$GI_TYPELIB_PATH" \
+	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
+	 $(GI_PYTHON) tests/test-mmo-content.py
 
 .PHONY: test-mmo-gi
 test-mmo-gi: lib

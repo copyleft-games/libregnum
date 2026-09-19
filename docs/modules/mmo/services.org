@@ -3,7 +3,7 @@
 * Build and run
 
 Required additions: OpenSSL (=openssl-devel=), zlib (=zlib-devel=), SQLite
-(=sqlite-devel=), plus the existing GLib/GIO, libdex and libsoup dependencies.
+(=sqlite-devel=), libpq (=libpq-devel=), plus the existing GLib/GIO, libdex and libsoup dependencies.
 TLS also requires a working GIO TLS backend (typically =glib-networking=).
 No packages or system services are installed by the build.
 
@@ -109,7 +109,8 @@ Implementation API references: [[https://docs.gtk.org/gio/tls-overview.html][GIO
 
 * Fencing, retries and audit
 
-=LrgMmoShardDirectory= coordinates processes using the same local SQLite file.
+=LrgMmoShardDirectory= coordinates processes using the same local SQLite file or
+PostgreSQL database. See [[file:completion.org][PostgreSQL and worker recovery]] for deployment details.
 Acquisition increments a durable fence; renewal requires the current unexpired
 owner/fence. Use a fresh worker incarnation ID on every restart. Release retains
 the fence history. Handoff atomically changes ownership, increments the fence
@@ -153,7 +154,8 @@ block-record revisions, so a concurrent block cannot silently be overwritten.
 Inboxes retain the latest 200 messages, with a 2048-byte UTF-8 message limit.
 Sending uses a durable operation ID, avoiding duplicate delivery after reconnect.
 Read an inbox only for its authenticated owner. This is bounded offline text,
-not unlimited history, attachment mail, moderation or channel chat.
+not unlimited history. Guild-channel redaction, friendship and claimable resource
+attachments are described in [[file:completion.org][the completion contracts]].
 
 =LrgMmoMarket= tracks nonnegative signed-64-bit fungible balances. Trusted grants,
 transfers and buyouts are atomic and intent-idempotent. Listings reserve seller
@@ -161,17 +163,18 @@ items in escrow; purchases debit buyer coins, credit seller coins, transfer
 items and close the listing together. Self-buy, insufficient balance, expiry,
 overflow and conflicting revisions leave all records unchanged. Seller
 cancellation returns escrow, including expired listings. Listings last at most
-seven days. Games implement catalog validation, fees, unique item ownership,
-bids and exchange policy above these primitives. Registering an account is not
+seven days. Separate APIs add unique items, bids and addressed exchanges; see
+[[file:completion.org][completion contracts]]. Games still define catalog validation and fees. Registering an account is not
 a prerequisite for a balance record; hosts must validate recipient identities.
 
 * Replication, prediction and queues
 
 =build_page()= advances only the acknowledged portion of a baseline. Retry a
 pending page unchanged, acknowledge only after atomic application, and request
-another page while =more=TRUE. Removals are prioritized, then updates in stable
-entity-ID order. A single entity that cannot fit rejects the page. Continually
-changing low IDs can starve high IDs; adaptive priority scheduling is absent.
+another page while =more=TRUE. Removals are prioritized, then a rotating cursor
+selects updates fairly across IDs. The cursor advances only on acknowledgment;
+selected wire updates remain sorted. A single entity that cannot fit rejects
+the page. Game-specific priority weights are not implemented.
 
 =LrgMmoReplica= validates complete deltas before changing state, enforcing unique
 IDs, advancing revisions, capacity, finite positions and stream identity. Exact

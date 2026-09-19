@@ -168,4 +168,158 @@ lrg_mmo_market_inspect (LrgMmoMarket *self,
                         const gchar *listing,
                         GError **error);
 
+/**
+ * lrg_mmo_market_offer:
+ * @self: market service
+ * @actor: authenticated sender
+ * @recipient: intended recipient
+ * @offer: unique offer ID
+ * @give_resource: resource reserved from sender
+ * @give_quantity: positive reserved quantity
+ * @take_resource: resource requested in exchange, different from give_resource
+ * @take_quantity: requested quantity; zero creates a claimable gift/mail attachment
+ * @duration: expiry in seconds, 1 to 604800
+ * @error: (nullable): return location for error
+ *
+ * Creates an immutable addressed trade with sender escrow. Repeated IDs reject.
+ * Returns: whether created
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_offer (LrgMmoMarket *self,
+    const gchar *actor,
+    const gchar *recipient,
+    const gchar *offer,
+    const gchar *give_resource,
+    gint64 give_quantity,
+    const gchar *take_resource,
+    gint64 take_quantity,
+    guint duration,
+    GError **error);
+
+/**
+ * lrg_mmo_market_accept_offer:
+ * @self: market service
+ * @actor: authenticated recipient, or sender for cancellation
+ * @offer: offer ID
+ * @operation: durable retry ID
+ * @cancel: return escrow to sender instead of accepting
+ * @error: (nullable): return location for error
+ *
+ * Atomically exchanges both sides, or returns escrow on cancellation. Expired offers
+ * can only be cancelled; a zero-price attachment is claimed once.
+ * Returns: whether settled or identical retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_accept_offer (LrgMmoMarket *self,
+    const gchar *actor,
+    const gchar *offer,
+    const gchar *operation,
+    gboolean cancel,
+    GError **error);
+
+/**
+ * lrg_mmo_market_auction:
+ * @self: market service
+ * @actor: authenticated seller
+ * @auction: unique auction ID
+ * @resource: non-coins resource
+ * @quantity: escrow quantity
+ * @minimum: minimum bid in coins
+ * @duration: duration seconds, 1 to 604800
+ * @error: (nullable): return location for error
+ *
+ * Creates an auction with item escrow and a fixed server-clock deadline.
+ * Returns: whether created
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_auction (LrgMmoMarket *self,
+    const gchar *actor,
+    const gchar *auction,
+    const gchar *resource,
+    gint64 quantity,
+    gint64 minimum,
+    guint duration,
+    GError **error);
+
+/**
+ * lrg_mmo_market_bid:
+ * @self: market service
+ * @actor: authenticated bidder
+ * @auction: auction ID
+ * @amount: total bid, higher than the current bid
+ * @operation: durable retry ID
+ * @error: (nullable): return location for error
+ *
+ * Reserves bid funds and refunds the previous bidder in one transaction.
+ * Returns: whether accepted or identical retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_bid (LrgMmoMarket *self,
+    const gchar *actor,
+    const gchar *auction,
+    gint64 amount,
+    const gchar *operation,
+    GError **error);
+
+/**
+ * lrg_mmo_market_settle:
+ * @self: market service
+ * @auction: auction ID
+ * @error: (nullable): return location for error
+ *
+ * Settles an expired auction atomically. Unsold escrow returns to its seller.
+ * Repeated settlement is harmless. Hosts schedule this for expired auction IDs.
+ * Returns: whether settled
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_settle (LrgMmoMarket *self,
+    const gchar *auction,
+    GError **error);
+
+/**
+ * lrg_mmo_market_mint_item:
+ * @self: market service
+ * @item: globally unique item ID
+ * @owner: owner account
+ * @definition: catalog definition ID
+ * @metadata: immutable per-instance metadata, at most 64 KiB
+ * @error: (nullable): return location for error
+ *
+ * Trusted administration: creates exactly one unique item. Existing IDs reject.
+ * Returns: whether minted
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_market_mint_item (LrgMmoMarket *self, const gchar *item, const gchar *owner,
+                                   const gchar *definition, GBytes *metadata, GError **error);
+/**
+ * lrg_mmo_market_get_item:
+ * @self: market service
+ * @item: unique item ID
+ * @error: (nullable): return location for error
+ *
+ * Trusted query for owner, definition and metadata. Hosts filter private metadata.
+ * Returns: (transfer full) (nullable): (ssay) record
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *lrg_mmo_market_get_item (LrgMmoMarket *self, const gchar *item, GError **error);
+/**
+ * lrg_mmo_market_transfer_item:
+ * @self: market service
+ * @actor: authenticated owner
+ * @recipient: new owner
+ * @item: unique item ID
+ * @operation: durable retry ID
+ * @error: (nullable): return location for error
+ *
+ * Atomically transfers ownership, preserving immutable metadata.
+ * Returns: whether transferred or identical retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_market_transfer_item (LrgMmoMarket *self, const gchar *actor, const gchar *recipient,
+                                       const gchar *item, const gchar *operation, GError **error);
 G_END_DECLS

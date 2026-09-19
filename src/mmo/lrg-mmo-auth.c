@@ -172,9 +172,72 @@ issue (LrgMmoAuth *self, const gchar *account, guint64 generation,
     return g_steal_pointer (&token);
 }
 
-gchar *
-lrg_mmo_auth_login (LrgMmoAuth *self, const gchar *account, const gchar *password,
-                    gint64 now, GError **error)
+static gboolean
+match_totp (GBytes *secret, guint code, gint64 now, gint64 last, gint64 *matched)
+{
+    gint shift;
+    gint64 step;
+    gsize size;
+    const guint8 *key = g_bytes_get_data (secret, &size);
+    if (now < 0 || now > G_MAXINT64 - 3600 || code > 999999 || size < 20 || size > 64)
+        return FALSE;
+    step = now / 30;
+    for (shift = -1; shift <= 1; shift++)
+    {
+        gint64 candidate = step + shift;
+        guint64 counter = GUINT64_TO_BE ((guint64) candidate);
+        g_autoptr(GHmac) hmac = NULL;
+        guint8 digest[20];
+        gsize length = sizeof digest;
+        guint offset, value;
+        if (candidate < 0 || candidate <= last)
+            continue;
+        hmac = g_hmac_new (G_CHECKSUM_SHA1, key, size);
+        g_hmac_update (hmac, (const guint8 *) &counter, sizeof counter);
+        g_hmac_get_digest (hmac, digest, &length);
+        offset = digest[19] & 15;
+        value = ((guint) (digest[offset] & 127) << 24) | ((guint) digest[offset + 1] << 16) |
+                ((guint) digest[offset + 2] << 8) | digest[offset + 3];
+        OPENSSL_cleanse (digest, sizeof digest);
+        if (value % 1000000 == code)
+        {
+            *matched = candidate;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static gboolean
+consume_totp (LrgMmoAuth *self, const gchar *account, gboolean supplied, guint code,
+              gint64 now, GError **error)
+{
+    g_autofree gchar *key = g_strconcat ("auth/totp/", account, NULL);
+    g_autoptr(GVariant) value = NULL, bytes = NULL;
+    g_autoptr(GBytes) secret = NULL;
+    g_autoptr(GError) local_error = NULL;
+    guint64 revision;
+    gint64 last, matched;
+    value = _lrg_mmo_load (self->store, key, "(ayx)", &revision, &local_error);
+    if (value == NULL)
+    {
+        if (g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+            return TRUE;
+        g_propagate_error (error, g_steal_pointer (&local_error));
+        return FALSE;
+    }
+    g_variant_get (value, "(@ayx)", &bytes, &last);
+    if (g_variant_get_size (bytes) == 0)
+        return TRUE;
+    secret = g_variant_get_data_as_bytes (bytes);
+    if (!supplied || !match_totp (secret, code, now, last, &matched))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Second factor missing, invalid or replayed");
+    return _lrg_mmo_put (self->store, key, revision, g_variant_new ("(@ayx)", bytes, matched), error);
+}
+
+static gchar *
+login_internal (LrgMmoAuth *self, const gchar *account, const gchar *password,
+                    gint64 now, gboolean supplied, guint code, GError **error)
 {
     g_autoptr(GVariant) value = NULL;
     g_autoptr(GVariant) salt = NULL;
@@ -207,10 +270,78 @@ lrg_mmo_auth_login (LrgMmoAuth *self, const gchar *account, const gchar *passwor
     OPENSSL_cleanse (digest, sizeof digest);
     if (!matches || banned || local_error != NULL)
         goto denied;
+    if (!consume_totp (self, account, supplied, code, now, error))
+        return NULL;
     return issue (self, account, generation, now, FALSE, error);
 denied:
     _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Invalid credentials or unavailable account");
     return NULL;
+}
+
+gchar *
+lrg_mmo_auth_login (LrgMmoAuth *self, const gchar *account, const gchar *password, gint64 now, GError **error)
+{
+    return login_internal (self, account, password, now, FALSE, 0, error);
+}
+
+gchar *
+lrg_mmo_auth_login_totp (LrgMmoAuth *self, const gchar *account, const gchar *password,
+                        guint code, gint64 now, GError **error)
+{
+    return login_internal (self, account, password, now, TRUE, code, error);
+}
+
+GBytes *
+lrg_mmo_auth_generate_totp_secret (GError **error)
+{
+    guint8 secret[20];
+    GBytes *bytes;
+    if (RAND_bytes (secret, sizeof secret) != 1)
+    {
+        _lrg_mmo_fail (error, G_IO_ERROR_FAILED, "Secure random generation failed");
+        return NULL;
+    }
+    bytes = g_bytes_new (secret, sizeof secret);
+    OPENSSL_cleanse (secret, sizeof secret);
+    return bytes;
+}
+
+gboolean
+lrg_mmo_auth_set_totp (LrgMmoAuth *self, const gchar *account, GBytes *secret,
+                      guint confirmation, gint64 now, GError **error)
+{
+    g_autoptr(GVariant) credentials = NULL, old = NULL, salt = NULL, hash = NULL, batch = NULL;
+    g_autoptr(GError) local_error = NULL;
+    g_autofree gchar *key = NULL, *credentials_key = NULL;
+    guint64 revision, account_revision, generation;
+    gboolean banned;
+    gint64 matched = -1;
+    GVariantBuilder builder;
+    g_return_val_if_fail (LRG_IS_MMO_AUTH (self), FALSE);
+    credentials = load_account (self, account, &account_revision, error);
+    if (credentials == NULL || !account_flags (credentials, &generation, &banned, error))
+        return FALSE;
+    if (generation == G_MAXUINT64 || banned ||
+        (secret != NULL && !match_totp (secret, confirmation, now, -1, &matched)))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Second factor enrollment denied");
+    key = g_strconcat ("auth/totp/", account, NULL);
+    old = _lrg_mmo_load (self->store, key, "(ayx)", &revision, &local_error);
+    if (old == NULL && !g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+    {
+        g_propagate_error (error, g_steal_pointer (&local_error));
+        return FALSE;
+    }
+    credentials_key = account_key (account);
+    salt = g_variant_get_child_value (credentials, 0);
+    hash = g_variant_get_child_value (credentials, 1);
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    _lrg_mmo_change (&builder, credentials_key, account_revision,
+                     g_variant_new ("(@ay@aytb)", salt, hash, generation + 1, banned));
+    _lrg_mmo_change (&builder, key, revision, g_variant_new ("(@ayx)",
+                     secret != NULL ? g_variant_new_from_bytes (G_VARIANT_TYPE ("ay"), secret, TRUE) :
+                                      g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, NULL, 0, 1), matched));
+    batch = g_variant_ref_sink (g_variant_builder_end (&builder));
+    return lrg_mmo_store_commit (self->store, batch, error);
 }
 
 static GVariant *

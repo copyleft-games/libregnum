@@ -104,7 +104,7 @@ ifeq ($(STATIC),1)
     EXAMPLE_LIBS += $(RAYLIB_STATIC)
     # System libraries (static via pkg-config)
     EXAMPLE_LIBS += $(STATIC_GLIB_LIBS) $(STATIC_JSON_LIBS) $(STATIC_YAML_LIBS) $(STATIC_SOUP_LIBS) $(STATIC_DEX_LIBS)
-    EXAMPLE_LIBS += $(shell $(PKG_CONFIG) --static --libs sqlite3 openssl zlib)
+    EXAMPLE_LIBS += $(shell $(PKG_CONFIG) --static --libs sqlite3 openssl zlib libpq)
     EXAMPLE_LIBS += $(STATIC_LUAJIT_LIBS) $(STATIC_PYTHON_LIBS) $(STATIC_GJS_LIBS) $(STATIC_GI_LIBS)
     EXAMPLE_LIBS += -lm
     EXAMPLE_LIBS += $(PLATFORM_LIBS)
@@ -134,7 +134,7 @@ EXAMPLES += game-platformer-demo game-fps-demo
 EXAMPLES += game-third-person-demo game-top-down-demo game-twin-stick-demo game-shmup-demo game-racing-3d-demo
 EXAMPLES += mmo-simulation
 ifneq ($(TARGET_PLATFORM),windows)
-EXAMPLES += mmo-server
+EXAMPLES += mmo-server mmo-zone-worker
 endif
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
@@ -452,3 +452,13 @@ $(EXAMPLES_BUILDDIR)/mmo-server$(EXE_EXT): mmo-server.c $(LIBREGNUM_STATIC) | $(
 .PHONY: check-mmo-server
 check-mmo-server: $(EXAMPLES_BUILDDIR)/mmo-server$(EXE_EXT)
 	python3 ../tests/check-mmo-server.py $<
+
+$(EXAMPLES_BUILDDIR)/mmo-zone-worker$(EXE_EXT): mmo-zone-worker.c $(LIBREGNUM_STATIC) | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+.PHONY: check-mmo-failover check-mmo-load
+check-mmo-failover: $(EXAMPLES_BUILDDIR)/mmo-zone-worker$(EXE_EXT)
+	python3 ../tests/check-mmo-failover.py $<
+check-mmo-load: $(EXAMPLES_BUILDDIR)/mmo-server$(EXE_EXT)
+	python3 ../tests/check-mmo-load.py $<

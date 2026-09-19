@@ -32,6 +32,8 @@
 #include "mmo/lrg-mmo-realm.h"
 #include "mmo/lrg-mmo-replicator.h"
 #include "mmo/lrg-mmo-group.h"
+#include "mmo/lrg-mmo-simulation.h"
+#include "mmo/lrg-mmo-content.h"
 #include "mmo/lrg-mmo-store.h"
 #include "mmo/lrg-mmo-auth.h"
 #include "mmo/lrg-mmo-prediction.h"

@@ -19,6 +19,7 @@ sudo dnf install \
     pkgconf \
     glib2-devel \
     sqlite-devel \
+    libpq-devel \
     openssl-devel \
     zlib-devel \
     gobject-introspection-devel \
@@ -37,6 +38,7 @@ sudo apt install \
     pkg-config \
     libglib2.0-dev \
     libsqlite3-dev \
+    libpq-dev \
     libssl-dev \
     zlib1g-dev \
     gobject-introspection \
@@ -55,6 +57,7 @@ sudo pacman -S \
     base-devel \
     glib2 \
     sqlite \
+    postgresql-libs \
     openssl \
     zlib \
     gobject-introspection \
