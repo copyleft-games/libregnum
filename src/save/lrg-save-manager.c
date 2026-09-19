@@ -162,7 +162,7 @@ lrg_save_manager_class_init (LrgSaveManagerClass *klass)
         g_param_spec_uint ("save-version",
                            "Save Version",
                            "Current save format version",
-                           0, G_MAXUINT, 1,
+                           1, G_MAXUINT, 1,
                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
@@ -363,6 +363,8 @@ lrg_save_manager_set_save_version (LrgSaveManager *self,
                                    guint           version)
 {
     g_return_if_fail (LRG_IS_SAVE_MANAGER (self));
+
+    g_return_if_fail (version > 0);
 
     if (self->save_version == version)
         return;
@@ -582,6 +584,16 @@ lrg_save_manager_load (LrgSaveManager  *self,
     context = lrg_save_context_new_from_file (path, error);
     if (context == NULL)
     {
+        g_signal_emit (self, signals[SIGNAL_LOAD_COMPLETED], 0, slot_name, FALSE);
+        return FALSE;
+    }
+
+    /* Compatibility must be checked before any game state is modified. */
+    if (lrg_save_context_get_version (context) > self->save_version)
+    {
+        g_set_error (error, LRG_SAVE_ERROR, LRG_SAVE_ERROR_VERSION_MISMATCH,
+                     "Save version %u is newer than supported version %u",
+                     lrg_save_context_get_version (context), self->save_version);
         g_signal_emit (self, signals[SIGNAL_LOAD_COMPLETED], 0, slot_name, FALSE);
         return FALSE;
     }

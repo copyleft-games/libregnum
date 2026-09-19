@@ -313,3 +313,11 @@ g_object_unref (world);
 /* or use g_autoptr for automatic cleanup */
 g_autoptr(LrgPhysicsWorld) world = lrg_physics_world_new ();
 #+end_src
+
+** Collision filtering
+
+Rigid-body layer/mask properties filter simulation pairs before overlap tests.
+Both bodies must accept each other's layers; rejected pairs emit no collision
+signals. Trigger contacts obey the same filter. See
+[[file:rigid-body.org][collision layers and masks]] for configuration and defaults.
+Spatial queries retain their existing behavior and include filtered bodies.

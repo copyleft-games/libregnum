@@ -198,3 +198,7 @@ regions:
 | =src/atlas/lrg-sprite-sheet.h=  | Sprite sheet parser |
 | =src/atlas/lrg-nine-slice.h=    | 9-slice renderer    |
 | =src/atlas/lrg-atlas-packer.h=  | Build tool          |
+
+** Shelf, MaxRects, and Guillotine packing
+
+See [[file:packing.org][Shelf, MaxRects, and Guillotine packing]] for the API, examples, and tested behavior.

@@ -24,6 +24,8 @@ The Core module provides:
 
 - *[[file:timer-manager.org][LrgTimerManager]]* - Frame-driven gameplay and unscaled timers
 
+- *[[file:random-stream.org][LrgRandomStream]]* - Independent deterministic random streams with portable snapshots
+
 ** Essential Concepts
 :PROPERTIES:
 :CUSTOM_ID: essential-concepts

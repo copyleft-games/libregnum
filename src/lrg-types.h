@@ -61,6 +61,7 @@ typedef struct _LrgEventListenerInterface LrgEventListenerInterface;
 
 /* LrgEventBus is a final type - no Class forward declaration needed */
 typedef struct _LrgEventBus  LrgEventBus;
+typedef struct _LrgRandomStream LrgRandomStream;
 typedef struct _LrgTimerManager LrgTimerManager;
 
 /* ==========================================================================
@@ -229,6 +230,7 @@ typedef struct _LrgSoundBank       LrgSoundBank;
 typedef struct _LrgMusicTrack      LrgMusicTrack;
 typedef struct _LrgAudioManager    LrgAudioManager;
 typedef struct _LrgWaveData        LrgWaveData;
+typedef struct _LrgAudioMixer      LrgAudioMixer;
 
 /* LrgProceduralAudio is a derivable type */
 typedef struct _LrgProceduralAudio       LrgProceduralAudio;
@@ -263,6 +265,7 @@ typedef struct _LrgNavGrid       LrgNavGrid;
 typedef struct _LrgNavGridClass  LrgNavGridClass;
 
 typedef struct _LrgPathfinder       LrgPathfinder;
+typedef struct _LrgNavMesh          LrgNavMesh;
 /* LrgPathfinderClass is not forward-declared (FINAL type) */
 
 /* ==========================================================================

@@ -8,8 +8,9 @@ an assertion that every engine needs every feature. Checked public APIs and
 implementations in core, templates, input, audio, pathfinding, editor, assets,
 and atlas packing. Networking and multiplayer are excluded. Existing roadmap
 entries were checked against code rather than treated as proof of absence.
-This pass implements reusable gameplay timers; larger independent systems below
-remain explicit follow-up work.
+The first pass implemented reusable gameplay timers. The follow-up pass implements
+the three engine capabilities identified for further work: audio mixer buses,
+triangle navigation meshes, and the advertised atlas packing algorithms.
 
 * Findings
 
@@ -20,11 +21,12 @@ remain explicit follow-up work.
 | Reusable gameplay timers | Core had no scheduler; template auto-save, camera pulses, trigger cooldowns use local counters | Implemented this pass |
 | Input actions and test injection | =src/input/= has maps, analog bindings, software and mock sources | Already present |
 | Prefabs | =src/editor/lrg-prefab.c= clones, instantiates, saves, and loads node subtrees | Already present; not marked missing |
+| Saveable random streams | =src/core/lrg-random-stream.c= | Implemented PCG32 streams and portable snapshots |
 | Object pooling and event dispatch | =src/template/lrg-object-pool.c= and =src/core/lrg-event-bus.c= | Already present |
-| Asset hot reload | =src/core/lrg-asset-manager.c= validates/replaces cached definitions and monitors changes | Present; dependency propagation/live-instance migration remain follow-ups |
-| General audio mixer graph | =src/audio/lrg-audio-manager.h= offers master/SFX/music/voice volume channels, not a configurable bus/send/effect graph | Candidate follow-up for richer audio production |
-| Navigation meshes | =src/pathfinding/= implements grid/cell/path/A*, not mesh baking or polygon navigation | Candidate follow-up for arbitrary 3D levels |
-| Production atlas packing choices | =src/atlas/lrg-atlas-packer.c= still routes MaxRects/Guillotine to Shelf | Concrete existing feature gap; separate algorithm work |
+| Asset hot reload | =src/core/lrg-asset-manager.c= validates/replaces cached definitions and monitors changes | Implemented explicit dependency propagation; live-instance state migration stays application-defined |
+| General audio mixer graph | =src/audio/lrg-audio-manager.h= has fixed channels; =lrg-audio-mixer.h= adds a configurable graph | Implemented: =LrgAudioMixer= bus/send graph and PCM effects |
+| Navigation meshes | =src/pathfinding/= now includes both grid and triangle-surface navigation | Implemented: =LrgNavMesh= walkable triangle baking and A* queries |
+| Production atlas packing choices | =src/atlas/lrg-atlas-packer.c= now dispatches to real free-rectangle algorithms | Implemented: MaxRects and Guillotine, with rotation and bounds validation |
 
 * Implemented: gameplay timer manager
 
@@ -42,15 +44,24 @@ retained because their persistence and update semantics differ.
 
 See [[file:modules/core/timer-manager.org][timer API, examples, delivery rules, and tests]].
 
-* Next priorities
+* Implemented follow-ups
 
-Audio buses, navigation meshes, and atlas algorithms need independent API and
-behavioral work; this change does not claim to implement them. Start with atlas
-packing to fulfill existing advertised choices, then choose navigation/audio
-based on the next game's requirements. Timer persistence would require a stable
-application action identifier instead of attempting to serialize signal closures.
+- [[file:modules/audio/mixer.org][Audio mixer]]: named parent buses, cycle-checked post-fader sends, gain/mute,
+  low-pass and feedback-delay processing, independently owned looping/pausable
+  voices, format conversion, offline rendering, and a graylib stream pump.
+- [[file:modules/pathfinding/nav-mesh.org][Navigation meshes]]: atomic walkable-triangle baking with slope filtering and
+  shared-edge adjacency, nearest-surface projection, polygon blocking, and
+  ordered-frontier A* returning a surface-contained waypoint corridor.
+- [[file:modules/atlas/packing.org][Atlas algorithms]]: MaxRects and Guillotine implementations, candidate-bin
+  search, rotation for all methods, padding/overflow safety, correct power-of-two
+  limits, stale-result invalidation, and reproducible packing comparisons.
 
-* Validation for this change
+Application-specific asset migration and timer action persistence were design
+ideas in the first audit, not part of these three capability implementations.
+They require application contracts for replacing live objects and naming actions.
+The limitations of each implemented capability are stated in its API guide.
+
+* Validation: initial timer pass
 
 - Full headless =make test=: 88 test binaries, 2,582 passed cases and 125
   hardware/environment skips. Dependency directory overrides reused this
@@ -66,3 +77,107 @@ application action identifier instead of attempting to serialize signal closures
 
 The full engine sanitizer suite and hardware-dependent paths were not run.
 No new external dependency or host package was installed.
+
+* Validation: audio/navigation/atlas follow-up pass
+
+- Full headless =make test=: 91 C test binaries, 2,609 passed cases and 125
+  skips. The three new binaries contribute 27 focused regressions.
+- Static/shared libraries, loader, GIR, and typelib built successfully.
+  A strict =--warn-all --warn-error= scan passed for the new mixer/navmesh API.
+  Existing warnings in unrelated GIR inputs remain.
+- All 27 focused tests passed with the changed C implementations instrumented
+  under ASan/UBSan with leak detection. The same tests passed Valgrind with
+  zero errors and zero definite leaks.
+- =make test-followups-gi= passed both Python binding regressions, including
+  caller-allocated projection output and owned PCM arrays. This target requires
+  =python3-gobject=; set =GI_PYTHON= to select another compatible interpreter.
+- New org document links/source blocks and =git diff --check= passed.
+
+The full engine sanitizer suite and physical audio-device playback were not run.
+Builds used the existing parent-checkout dependency directories; no packages
+were installed. The mixer itself adds no dependency beyond existing engine
+libraries, and the navmesh/packer use GLib/GIO and libm.
+
+After integrating concurrent master changes, the full headless suite passed
+again: 2628 cases passed, 125 skipped across 93 C test binaries.
+
+* Additional audit: data-driven construction
+
+The registry advertised automatic built-in registration, but its implementation
+was a TODO and engine startup never invoked it. Implemented a deliberately
+bounded, headless scene/definition catalog and connected startup to it. See
+[[file:modules/core/registry.org][catalog, YAML example, overrides, and alias ownership]]. Regression tests load
+every catalog entry through YAML and verify the engine's loader needs no manual
+registration. Alias replacement/removal also now avoids dangling reverse names
+and preserves other names for the same type.
+
+Independent saveable random streams remain a useful future capability: the
+engine currently combines global GLib random calls with subsystem-specific
+opaque GRand instances. This pass does not change existing random sequences.
+Live asset dependency propagation and application-specific object migration
+also remain outside the implemented catalog.
+
+Validation for the catalog pass: full headless =make test= passed 2,630 cases
+with 125 skips across 93 binaries. All 18 registry tests passed ASan/UBSan
+(leak detection enabled) and Valgrind (zero errors and definite leaks).
+Static/shared libraries, loader, GIR, and typelib builds passed; existing GIR
+warnings remain. A Python binding smoke test registered the catalog and loaded
+a positioned game object; the environment emitted a graylib shared-library
+lookup warning despite the successful assertions. Full-engine sanitizer and
+hardware-dependent checks were not run. No new dependencies were introduced.
+
+* Implemented: random state and asset dependency propagation
+
+Added [[file:modules/core/random-stream.org][saveable random streams]] with stable PCG32 output, unbiased bounds,
+53-bit unit doubles, versioned snapshots, and atomic restore. Save-context
+round trips preserve the next draw. Existing subsystem random sequences remain
+unchanged; games adopt independent streams explicitly.
+
+Added [[file:modules/core/asset-manager.org][explicit YAML asset dependency links]] with cycle rejection and transitive,
+atomic reload batches. File-monitor reloads use the same path as explicit
+reloads. All affected definitions are validated before publication; replacement
+signals let consumers reconnect their live references. Application-specific
+live-object state migration remains an application responsibility, as documented.
+
+Validation for the random/dependency pass: full headless =make test= passed
+2,640 cases with 125 skips across 95 C binaries. All ten focused cases passed
+ASan/UBSan with leak detection and Valgrind with zero errors or definite leaks.
+The four =make test-followups-gi= Python cases passed, including new random and
+dependency API regressions. Library/loader/GIR/typelib builds completed and the
+random stream API passed a strict introspection scan. Existing unrelated GIR
+warnings remain. Full-engine sanitizer and hardware checks were not run; no
+new dependency or host package was introduced.
+
+* Additional audit: save format compatibility
+
+Save contexts stored a version and the error enum included a version-mismatch
+code, but the manager did not enforce compatibility before calling gameplay
+load methods. Version parsing also truncated integers and treated malformed or
+zero values as legacy version 1. Implemented strict positive decimal parsing
+and a pre-load rejection of formats newer than the manager's save version.
+Older formats remain available for application-specific per-object migrations.
+See [[file:modules/save/index.org][save compatibility and error behavior]].
+
+Validation: full headless =make test= passed 2,642 cases with 125 skips across
+95 binaries. All 23 save tests passed ASan/UBSan with leak detection and
+Valgrind with zero errors and definite leaks. Static/shared library, loader,
+GIR, and typelib builds passed; existing unrelated GIR warnings remain.
+Full-engine sanitizer and hardware checks were not run. No dependency added.
+
+* Additional audit: physics collision filtering
+
+Rigid-body physics checked every eligible overlapping pair without layer/mask
+filtering. Added 32-bit =collision-layer= and =collision-mask= properties and
+public accessors, plus a symmetric =can_collide()= predicate. Simulation now
+filters before overlap tests for solids and triggers. Defaults preserve existing
+pairs; spatial queries remain independent. See
+[[file:modules/physics/rigid-body.org][physics filter semantics and examples]]. Tests cover default/high/multiple bits,
+zero filters, asymmetric acceptance, YAML properties, change notifications,
+runtime re-enabling, trigger contacts, and query independence.
+
+Validation: full headless =make test= passed 2,646 cases with 125 skips across
+95 binaries. All 51 physics tests passed ASan/UBSan with leak detection and
+Valgrind with zero errors or definite leaks. Five Python binding regressions
+passed, including high-bit collision properties. Library, loader, GIR, and
+typelib builds passed; existing unrelated GIR warnings remain. Full-engine
+sanitizer and hardware checks were not run. No new dependency was introduced.

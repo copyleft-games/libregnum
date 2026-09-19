@@ -1,0 +1,84 @@
+#+title: Triangle navigation meshes
+
+* Baking walkable geometry
+
+=LrgNavMesh= adds continuous 3D surface navigation alongside the integer grid
+pathfinder. Supply world-space XYZ vertices (Y up) and triangle indices.
+=lrg_nav_mesh_bake= copies retained geometry, rejects invalid coordinates and
+indices, removes degenerate/too-steep triangles, and connects shared edges.
+Coordinates must be finite and within ±10^12 world units. Cross-product
+magnitudes below 10^-12 are considered degenerate.
+
+#+begin_src c
+const gdouble vertices[] = {
+    0, 0, 0,  2, 0, 0,  2, 0, 2,  0, 0, 2
+};
+const guint triangles[] = { 0, 1, 2, 0, 2, 3 };
+g_autoptr(LrgNavMesh) mesh = lrg_nav_mesh_new ();
+g_autoptr(GError) error = NULL;
+
+if (!lrg_nav_mesh_bake (mesh, vertices, G_N_ELEMENTS (vertices),
+                        triangles, G_N_ELEMENTS (triangles), 45.0, &error))
+    g_printerr ("Bake failed: %s\n", error->message);
+#+end_src
+
+Slope is measured against the Y axis; winding is ignored, so provide only
+surfaces intended to be walkable. Complete edges with exactly equal endpoint
+positions connect, even if the input duplicates vertex indices at seams.
+Negative and positive zero are equivalent. T-junctions and near-equal vertices
+do not connect; weld/split those surfaces before baking. Non-manifold shared
+edges and duplicate triangles are errors. An empty walkable result is an error.
+A failed bake leaves the previous mesh and enabled flags intact.
+
+This bake processes supplied walkable surfaces; it is not a voxelizer, collider
+union, or obstacle-subtraction system. Model holes around obstacles in the input.
+For finite-radius agents, supply surfaces already inset by the required clearance.
+It does not infer ceiling clearance, jump links, or a step height between islands.
+
+* Projection and paths
+
+Projection finds the closest enabled triangle in full 3D, including edges and
+vertices, within a caller-supplied distance. The distance limit prevents snapping
+a far-away object to an unrelated island. A polygon index identifies a retained
+triangle in the most recent successful bake; discarded input triangles have no
+output index. Ties choose the earliest retained triangle.
+
+#+begin_src c
+const gdouble start[] = { 1.5, 0.1, 0.25 };
+const gdouble goal[] = { 0.25, 0.1, 1.5 };
+guint n_coordinates = 0;
+g_autofree gdouble *path = NULL;
+
+path = lrg_nav_mesh_find_path (mesh, start, goal, 0.5,
+                               &n_coordinates, &error);
+/* path contains XYZ triples; point count is n_coordinates / 3. */
+#+end_src
+
+Path queries project endpoints, run A* through enabled adjacent triangles, and
+return the projected start, each shared edge's midpoint, and the projected goal.
+Segments lie within the selected convex triangles, including on sloping floors.
+The corridor minimizes centroid-to-centroid costs, with a Euclidean heuristic;
+it does not promise the globally shortest continuous path. Same-triangle queries
+return two endpoint triples. Disconnected islands and failed endpoint projections
+return =G_IO_ERROR_NOT_FOUND=; invalid arguments use =G_IO_ERROR_INVALID_ARGUMENT=.
+All failure paths return a zero output coordinate count.
+
+Use =lrg_nav_mesh_set_enabled= to block and unblock complete polygons, for example
+at a door. Subsequent projection/path queries respect this flag. Existing returned
+paths are independent snapshots and must be queried again after world changes.
+A successful rebake resets flags and invalidates old polygon indices.
+
+Baking uses a hash table of complete edges; adjacency construction is expected
+O(T). Projection scans triangles, O(T). A* uses an ordered frontier, with up to
+three neighbors per triangle and O(T log T) search work. Operations and geometry
+edits belong on one thread. No graphics context or physics world is required.
+
+* Tests
+
+=tests/test-nav-mesh.c= tests distance-limited projection, edge projection,
+connected and same-polygon paths, blocked polygons, disconnected islands,
+slope thresholds, exact seam welding, invalid and non-manifold input, atomic
+failed rebakes, and segment containment around a central obstacle hole.
+
+=make test-followups-gi= also verifies array marshalling for bake, projection,
+and path results through Python GI.

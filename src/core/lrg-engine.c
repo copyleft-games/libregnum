@@ -78,6 +78,7 @@ lrg_engine_real_startup (LrgEngine *self)
 
     /* Create subsystems */
     priv->registry = lrg_registry_new ();
+    lrg_registry_register_builtin (priv->registry);
     priv->data_loader = lrg_data_loader_new ();
     priv->asset_manager = lrg_asset_manager_new ();
 

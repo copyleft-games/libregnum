@@ -1,0 +1,67 @@
+#+title: Atlas packing algorithms
+
+* Selecting an algorithm
+
+=LrgAtlasPacker= now implements all three =LrgAtlasPackMethod= choices:
+
+| Method | Heuristic | Typical tradeoff |
+|--------+-----------+------------------|
+| Shelf | Height-sorted horizontal rows | Fastest; cannot reuse space below shorter sprites in a row |
+| MaxRects | Best short-side fit; split every intersecting free rectangle and prune contained rectangles | More CPU work; can reuse irregular gaps |
+| Guillotine | Best area fit; disjoint splits along the shorter leftover axis | Lower bookkeeping cost; fragmentation depends on input |
+
+Images sort deterministically by height, width, then name. MaxRects and Guillotine
+search a bounded sequence of candidate bin dimensions and keep the smallest
+successful output area. They never substitute another algorithm. These are
+heuristics, not exhaustive optimal packers; different inputs can favor Shelf.
+
+#+begin_src c
+g_autoptr(LrgAtlasPacker) packer = lrg_atlas_packer_new ();
+g_autoptr(GError) error = NULL;
+
+lrg_atlas_packer_set_method (packer, LRG_ATLAS_PACK_METHOD_MAXRECTS);
+lrg_atlas_packer_set_max_size (packer, 1024, 1024);
+lrg_atlas_packer_set_allow_rotation (packer, TRUE);
+lrg_atlas_packer_set_padding (packer, 2);
+lrg_atlas_packer_add_image (packer, "player", 48, 64, NULL);
+lrg_atlas_packer_add_image (packer, "weapon", 12, 40, NULL);
+lrg_atlas_packer_pack (packer, &error);
+#+end_src
+
+* Bounds, rotation, and invalidation
+
+Padding reserves pixels on the right and bottom of each packed rectangle,
+including rectangles at the output border. It is included in all bounds and
+intersection tests. Power-of-two output always fits the configured maximum;
+for a non-power-of-two maximum, the usable limit is the largest power of two
+below it. Unrepresentable or oversized padded images fail cleanly, without
+integer wraparound.
+
+All algorithms support 90-degree rotation when enabled. =get_image_position=
+returns the rotation flag. The atlas returned by =create_atlas= stores physical
+packed width/height (swapped when rotated), with the rotated flag set. This API
+packs metadata; the asset baker must rotate/copy the actual pixels accordingly.
+
+Changes through setters or GObject properties invalidate old results. Dimensions
+and efficiency return zero until a successful pack, position queries return false,
+and iteration emits no old positions. A failed pack exposes no partial placement.
+Packing can be retried after changing dimensions or inputs.
+
+* Reproducible comparison
+
+=tests/test-atlas-packing.c= includes a 256-sprite comparison using seed 42,
+dimensions in [8,64], one-pixel padding, rotation enabled, non-power-of-two output,
+and a 1024×1024 limit. One release run on the development host produced:
+
+| Method | Output | Pixel efficiency | Time |
+|--------+--------+------------------+------|
+| Shelf | 1024×380 | 85.4% | 25 µs |
+| MaxRects | 875×436 | 87.1% | 34.3 ms |
+| Guillotine | 1024×428 | 75.9% | 0.95 ms |
+
+Timings are observations, not test thresholds or cross-machine guarantees. A
+separate gap fixture packs 6×6, 4×4, and 4×2 rectangles into 10×6: MaxRects and
+Guillotine succeed at 100% efficiency; Shelf correctly reports insufficient space.
+Randomized tests validate padding, pairwise non-overlap, bounds, and deterministic
+repacking for all methods. Rotation-only fits, overflow-sized padding, stale
+result invalidation, and non-power-of-two maximum limits are also covered.

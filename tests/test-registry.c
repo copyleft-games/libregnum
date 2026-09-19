@@ -432,6 +432,68 @@ test_registry_clear (RegistryFixture *fixture,
     g_assert_false (lrg_registry_is_registered (fixture->registry, "two"));
 }
 
+static void
+test_registry_alias_lifetime (void)
+{
+    g_autoptr(LrgRegistry) registry = lrg_registry_new ();
+    const gchar *name;
+
+    lrg_registry_register (registry, "zeta", G_TYPE_OBJECT);
+    lrg_registry_register (registry, "alpha", G_TYPE_OBJECT);
+    g_assert_cmpstr (lrg_registry_lookup_name (registry, G_TYPE_OBJECT), ==, "alpha");
+    name = lrg_registry_lookup_name (registry, G_TYPE_OBJECT);
+    lrg_registry_register (registry, name, TEST_TYPE_OBJECT);
+    g_assert_cmpstr (lrg_registry_lookup_name (registry, G_TYPE_OBJECT), ==, "zeta");
+    g_assert_cmpstr (lrg_registry_lookup_name (registry, TEST_TYPE_OBJECT), ==, "alpha");
+    name = lrg_registry_lookup_name (registry, TEST_TYPE_OBJECT);
+    lrg_registry_register (registry, name, TEST_TYPE_OBJECT);
+    name = lrg_registry_lookup_name (registry, TEST_TYPE_OBJECT);
+    g_assert_cmpstr (name, ==, "alpha");
+    g_assert_true (lrg_registry_unregister (registry, name));
+    g_assert_null (lrg_registry_lookup_name (registry, TEST_TYPE_OBJECT));
+    lrg_registry_register (registry, "alpha", G_TYPE_OBJECT);
+    g_assert_true (lrg_registry_unregister (registry, "zeta"));
+    g_assert_cmpstr (lrg_registry_lookup_name (registry, G_TYPE_OBJECT), ==, "alpha");
+    lrg_registry_clear (registry);
+    g_assert_null (lrg_registry_lookup_name (registry, G_TYPE_OBJECT));
+}
+
+static void
+test_registry_builtins (void)
+{
+    g_autoptr(LrgRegistry) registry = lrg_registry_new ();
+    g_autoptr(LrgDataLoader) loader = lrg_data_loader_new ();
+    const gchar *names[] = { "game-object", "world", "transform", "sprite",
+                            "collider", "animator", "item-def", "quest-def" };
+    GType types[] = { LRG_TYPE_GAME_OBJECT, LRG_TYPE_WORLD,
+                     LRG_TYPE_TRANSFORM_COMPONENT, LRG_TYPE_SPRITE_COMPONENT,
+                     LRG_TYPE_COLLIDER_COMPONENT, LRG_TYPE_ANIMATOR_COMPONENT,
+                     LRG_TYPE_ITEM_DEF, LRG_TYPE_QUEST_DEF };
+    guint i;
+
+    lrg_registry_register_builtin (registry);
+    lrg_data_loader_set_registry (loader, registry);
+    for (i = 0; i < G_N_ELEMENTS (names); i++)
+    {
+        g_autoptr(GObject) object = NULL;
+        g_autoptr(GError) error = NULL;
+        g_autofree gchar *yaml = g_strdup_printf ("type: %s\n", names[i]);
+
+        g_assert_cmpuint (lrg_registry_lookup (registry, names[i]), ==, types[i]);
+        object = lrg_data_loader_load_data (loader, yaml, -1, &error);
+        g_assert_no_error (error);
+        g_assert_nonnull (object);
+        g_assert_cmpuint (G_OBJECT_TYPE (object), ==, types[i]);
+    }
+    lrg_registry_register (registry, "game-object", TEST_TYPE_OBJECT);
+    lrg_registry_register_builtin (registry);
+    g_assert_cmpuint (lrg_registry_get_count (registry), ==, G_N_ELEMENTS (names));
+    g_assert_cmpuint (lrg_registry_lookup (registry, "game-object"), ==, TEST_TYPE_OBJECT);
+    lrg_registry_clear (registry);
+    lrg_registry_register_builtin (registry);
+    g_assert_cmpuint (lrg_registry_lookup (registry, "game-object"), ==, LRG_TYPE_GAME_OBJECT);
+}
+
 /* ==========================================================================
  * Main
  * ========================================================================== */
@@ -441,6 +503,9 @@ main (int   argc,
       char *argv[])
 {
     g_test_init (&argc, &argv, NULL);
+
+    g_test_add_func ("/registry/alias-lifetime", test_registry_alias_lifetime);
+    g_test_add_func ("/registry/builtins", test_registry_builtins);
 
     /* Construction */
     g_test_add_func ("/registry/new", test_registry_new);

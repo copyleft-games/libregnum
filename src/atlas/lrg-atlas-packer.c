@@ -8,6 +8,7 @@
  */
 
 #include <gio/gio.h>
+#include <math.h>
 
 #include "lrg-atlas-packer.h"
 
@@ -162,6 +163,8 @@ lrg_atlas_packer_set_property (GObject      *object,
                                GParamSpec   *pspec)
 {
     LrgAtlasPacker *self = LRG_ATLAS_PACKER (object);
+
+    self->is_packed = FALSE;
 
     switch (prop_id)
     {
@@ -627,8 +630,8 @@ static gint
 next_power_of_two (gint n)
 {
     gint power = 1;
-    while (power < n)
-        power <<= 1;
+    while (power < n && power <= G_MAXINT / 2)
+        power *= 2;
     return power;
 }
 
@@ -644,7 +647,11 @@ compare_images_by_height_desc (gconstpointer a,
     const LrgAtlasPackerImage *img_a = *(const LrgAtlasPackerImage **)a;
     const LrgAtlasPackerImage *img_b = *(const LrgAtlasPackerImage **)b;
 
-    return img_b->height - img_a->height;
+    if (img_a->height != img_b->height)
+        return img_b->height - img_a->height;
+    if (img_a->width != img_b->width)
+        return img_b->width - img_a->width;
+    return g_strcmp0 (img_a->name, img_b->name);
 }
 
 /*
@@ -653,114 +660,326 @@ compare_images_by_height_desc (gconstpointer a,
  * Shelf packing algorithm. Simple but decent results.
  * Sorts images by height and packs into horizontal rows.
  */
-static gboolean
-pack_shelf (LrgAtlasPacker  *self,
-            GError         **error)
+typedef struct
 {
-    GArray *shelves;
-    GPtrArray *sorted;
-    gint total_width = 0;
-    gint total_height = 0;
+    gint x, y, w, h;
+} PackRect;
+
+static gint
+packing_limit (gint maximum,
+               gboolean power_of_two)
+{
+    gint power = 1;
+
+    if (!power_of_two)
+        return maximum;
+    while (power <= maximum / 2)
+        power *= 2;
+    return power;
+}
+
+static void
+append_rect (GArray *rects,
+             gint x, gint y, gint w, gint h)
+{
+    PackRect rect = { x, y, w, h };
+
+    if (w > 0 && h > 0)
+        g_array_append_val (rects, rect);
+}
+
+static gboolean
+contains_rect (PackRect a,
+               PackRect b)
+{
+    return a.x <= b.x && a.y <= b.y &&
+           a.x + a.w >= b.x + b.w && a.y + a.h >= b.y + b.h;
+}
+
+static void
+split_maxrects (GArray *free_rects,
+                PackRect used)
+{
     guint i;
+    guint j;
+    guint old_len = free_rects->len;
 
-    /* Create sorted copy of images */
-    sorted = g_ptr_array_new ();
-    for (i = 0; i < self->images->len; i++)
+    /* Split every intersecting free rectangle, not only the selected one. */
+    for (i = 0; i < old_len; )
     {
-        g_ptr_array_add (sorted, g_ptr_array_index (self->images, i));
-    }
-    g_ptr_array_sort (sorted, compare_images_by_height_desc);
+        PackRect rect = g_array_index (free_rects, PackRect, i);
 
-    /* Initialize shelf array */
-    shelves = g_array_new (FALSE, FALSE, sizeof (ShelfRow));
-
-    /* Pack each image */
-    for (i = 0; i < sorted->len; i++)
-    {
-        LrgAtlasPackerImage *image = g_ptr_array_index (sorted, i);
-        gint img_w, img_h;
-        gboolean placed = FALSE;
-        guint j;
-
-        img_w = image->width + self->padding;
-        img_h = image->height + self->padding;
-
-        /* Try to fit in existing shelf */
-        for (j = 0; j < shelves->len; j++)
+        if (used.x >= rect.x + rect.w || used.x + used.w <= rect.x ||
+            used.y >= rect.y + rect.h || used.y + used.h <= rect.y)
         {
-            ShelfRow *shelf = &g_array_index (shelves, ShelfRow, j);
+            i++;
+            continue;
+        }
+        g_array_remove_index (free_rects, i);
+        old_len--;
+        if (used.x > rect.x)
+            append_rect (free_rects, rect.x, rect.y, used.x - rect.x, rect.h);
+        if (used.x + used.w < rect.x + rect.w)
+            append_rect (free_rects, used.x + used.w, rect.y,
+                         rect.x + rect.w - used.x - used.w, rect.h);
+        if (used.y > rect.y)
+            append_rect (free_rects, rect.x, rect.y, rect.w, used.y - rect.y);
+        if (used.y + used.h < rect.y + rect.h)
+            append_rect (free_rects, rect.x, used.y + used.h, rect.w,
+                         rect.y + rect.h - used.y - used.h);
+    }
+    /* Maximal free rectangles can overlap, but contained ones are redundant. */
+    for (i = 0; i < free_rects->len; )
+    {
+        gboolean redundant = FALSE;
 
-            if (shelf->x_used + img_w <= self->max_width &&
-                img_h <= shelf->height)
+        for (j = 0; j < free_rects->len; j++)
+        {
+            if (i != j && contains_rect (g_array_index (free_rects, PackRect, j),
+                                         g_array_index (free_rects, PackRect, i)))
             {
-                image->packed_x = shelf->x_used;
-                image->packed_y = shelf->y;
-                image->rotated = FALSE;
-                image->packed = TRUE;
-
-                shelf->x_used += img_w;
-                if (shelf->x_used > total_width)
-                    total_width = shelf->x_used;
-
-                placed = TRUE;
+                redundant = TRUE;
                 break;
             }
         }
-
-        if (!placed)
-        {
-            /* Create new shelf */
-            ShelfRow new_shelf;
-            gint new_y = 0;
-
-            if (shelves->len > 0)
-            {
-                ShelfRow *last = &g_array_index (shelves, ShelfRow, shelves->len - 1);
-                new_y = last->y + last->height;
-            }
-
-            if (new_y + img_h > self->max_height)
-            {
-                g_set_error (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE,
-                             "Image '%s' (%dx%d) does not fit in atlas",
-                             image->name, image->width, image->height);
-                g_array_unref (shelves);
-                g_ptr_array_unref (sorted);
-                return FALSE;
-            }
-
-            new_shelf.y = new_y;
-            new_shelf.height = img_h;
-            new_shelf.x_used = img_w;
-
-            image->packed_x = 0;
-            image->packed_y = new_y;
-            image->rotated = FALSE;
-            image->packed = TRUE;
-
-            g_array_append_val (shelves, new_shelf);
-
-            if (img_w > total_width)
-                total_width = img_w;
-
-            total_height = new_y + img_h;
-        }
+        if (redundant)
+            g_array_remove_index (free_rects, i);
+        else
+            i++;
     }
+}
 
-    /* Set final dimensions */
-    self->packed_width = total_width;
-    self->packed_height = total_height;
+static gboolean
+pack_rectangles (LrgAtlasPacker *self,
+                 gint limit_w,
+                 gint limit_h,
+                 GError **error)
+{
+    g_autoptr(GPtrArray) sorted = g_ptr_array_new ();
+    g_autoptr(GArray) free_rects = g_array_new (FALSE, FALSE, sizeof (PackRect));
+    g_autoptr(GArray) shelves = g_array_new (FALSE, FALSE, sizeof (ShelfRow));
+    gint total_w = 0;
+    gint total_h = 0;
+    guint i;
 
-    if (self->power_of_two)
+    append_rect (free_rects, 0, 0, limit_w, limit_h);
+    for (i = 0; i < self->images->len; i++)
+        g_ptr_array_add (sorted, g_ptr_array_index (self->images, i));
+    g_ptr_array_sort (sorted, compare_images_by_height_desc);
+
+    for (i = 0; i < sorted->len; i++)
     {
-        self->packed_width = next_power_of_two (self->packed_width);
-        self->packed_height = next_power_of_two (self->packed_height);
+        LrgAtlasPackerImage *image = g_ptr_array_index (sorted, i);
+        PackRect placed = { 0, 0, 0, 0 };
+        gint best = -1;
+        gint64 best_score = G_MAXINT64;
+        gint64 best_secondary = G_MAXINT64;
+        gboolean rotated = FALSE;
+        guint orientation;
+        guint j;
+
+        for (orientation = 0; orientation < (self->allow_rotation ? 2u : 1u); orientation++)
+        {
+            gint64 wide = (orientation ? image->height : image->width);
+            gint64 high = (orientation ? image->width : image->height);
+            gint w, h;
+
+            wide += self->padding;
+            high += self->padding;
+            if (wide > limit_w || high > limit_h)
+                continue;
+            w = (gint)wide;
+            h = (gint)high;
+            if (self->method == LRG_ATLAS_PACK_METHOD_SHELF)
+            {
+                for (j = 0; j <= shelves->len; j++)
+                {
+                    ShelfRow row = { total_h, h, 0 };
+                    gint64 score;
+
+                    if (j < shelves->len)
+                        row = g_array_index (shelves, ShelfRow, j);
+                    if (w > limit_w - row.x_used || h > row.height || h > limit_h - row.y)
+                        continue;
+                    score = (gint64)row.y * limit_w + row.x_used;
+                    if (score < best_score)
+                    {
+                        best_score = score;
+                        best = (gint)j;
+                        placed = (PackRect){ row.x_used, row.y, w, h };
+                        rotated = orientation != 0;
+                    }
+                }
+            }
+            else
+            {
+                for (j = 0; j < free_rects->len; j++)
+                {
+                    PackRect rect = g_array_index (free_rects, PackRect, j);
+                    gint64 score;
+                    gint64 secondary;
+
+                    if (w > rect.w || h > rect.h)
+                        continue;
+                    score = self->method == LRG_ATLAS_PACK_METHOD_MAXRECTS
+                        ? MIN (rect.w - w, rect.h - h)
+                        : (gint64)rect.w * rect.h - (gint64)w * h;
+                    secondary = MAX (rect.w - w, rect.h - h);
+                    if (score < best_score || (score == best_score && secondary < best_secondary))
+                    {
+                        best_score = score;
+                        best_secondary = secondary;
+                        best = (gint)j;
+                        placed = (PackRect){ rect.x, rect.y, w, h };
+                        rotated = orientation != 0;
+                    }
+                }
+            }
+        }
+        if (best < 0)
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_NO_SPACE,
+                         "Image '%s' (%dx%d) does not fit in atlas",
+                         image->name, image->width, image->height);
+            return FALSE;
+        }
+        if (self->method == LRG_ATLAS_PACK_METHOD_SHELF)
+        {
+            if ((guint)best == shelves->len)
+            {
+                ShelfRow row = { placed.y, placed.h, placed.w };
+
+                g_array_append_val (shelves, row);
+            }
+            else
+                g_array_index (shelves, ShelfRow, best).x_used += placed.w;
+        }
+        else if (self->method == LRG_ATLAS_PACK_METHOD_MAXRECTS)
+            split_maxrects (free_rects, placed);
+        else
+        {
+            PackRect rect = g_array_index (free_rects, PackRect, best);
+            gint dw = rect.w - placed.w;
+            gint dh = rect.h - placed.h;
+
+            g_array_remove_index (free_rects, best);
+            /* Split along the shorter leftover axis into disjoint rectangles. */
+            if (dw > dh)
+            {
+                append_rect (free_rects, rect.x + placed.w, rect.y, dw, rect.h);
+                append_rect (free_rects, rect.x, rect.y + placed.h, placed.w, dh);
+            }
+            else
+            {
+                append_rect (free_rects, rect.x + placed.w, rect.y, dw, placed.h);
+                append_rect (free_rects, rect.x, rect.y + placed.h, rect.w, dh);
+            }
+        }
+        image->packed_x = placed.x;
+        image->packed_y = placed.y;
+        image->rotated = rotated;
+        image->packed = TRUE;
+        total_w = MAX (total_w, placed.x + placed.w);
+        total_h = MAX (total_h, placed.y + placed.h);
     }
-
-    g_array_unref (shelves);
-    g_ptr_array_unref (sorted);
-
+    self->packed_width = self->power_of_two ? next_power_of_two (total_w) : total_w;
+    self->packed_height = self->power_of_two ? next_power_of_two (total_h) : total_h;
     return TRUE;
+}
+
+/* Search bounded bin shapes so free-rectangle heuristics do not spread a
+ * small sprite set across the entire configured maximum atlas. */
+static gboolean
+pack_search (LrgAtlasPacker *self,
+             GError **error)
+{
+    g_autofree PackRect *best_positions = NULL;
+    g_autofree gboolean *best_rotations = NULL;
+    gint max_w = packing_limit (self->max_width,self->power_of_two);
+    gint max_h = packing_limit (self->max_height,self->power_of_two);
+    gint min_w = 1, min_h = 1, width;
+    gint best_w = 0, best_h = 0;
+    gint64 best_area = G_MAXINT64;
+    gdouble area = 0;
+    guint i;
+
+    if (self->method == LRG_ATLAS_PACK_METHOD_SHELF)
+        return pack_rectangles (self,max_w,max_h,error);
+    for (i = 0; i < self->images->len; i++)
+    {
+        LrgAtlasPackerImage *image = g_ptr_array_index (self->images,i);
+        gint64 w = (gint64)image->width + self->padding;
+        gint64 h = (gint64)image->height + self->padding;
+        gint64 low_w = self->allow_rotation ? MIN (w,h) : w;
+        gint64 low_h = self->allow_rotation ? MIN (w,h) : h;
+
+        if (low_w > max_w || low_h > max_h ||
+            ((w > max_w || h > max_h) && (!self->allow_rotation || h > max_w || w > max_h)))
+            goto no_space;
+        min_w = MAX (min_w,(gint)low_w);
+        min_h = MAX (min_h,(gint)low_h);
+        area += (gdouble)w * h;
+    }
+    if (area > (gdouble)max_w * max_h) goto no_space;
+    best_positions = g_new (PackRect,self->images->len);
+    best_rotations = g_new (gboolean,self->images->len);
+    width = self->power_of_two ? next_power_of_two (min_w) : min_w;
+    for (;;)
+    {
+        gdouble required = ceil (area / width);
+        gint height;
+
+        if (required <= max_h)
+        {
+            height = MAX (min_h,(gint)required);
+            if (self->power_of_two) height = next_power_of_two (height);
+            for (;;)
+            {
+                if (pack_rectangles (self,width,height,NULL))
+                {
+                    gint64 packed_area = (gint64)self->packed_width * self->packed_height;
+
+                    if (packed_area < best_area)
+                    {
+                        best_area = packed_area;
+                        best_w = self->packed_width;
+                        best_h = self->packed_height;
+                        for (i = 0; i < self->images->len; i++)
+                        {
+                            LrgAtlasPackerImage *image = g_ptr_array_index (self->images,i);
+
+                            best_positions[i].x = image->packed_x;
+                            best_positions[i].y = image->packed_y;
+                            best_rotations[i] = image->rotated;
+                        }
+                    }
+                    break;
+                }
+                if (height == max_h) break;
+                height = (gint)MIN ((gint64)max_h,
+                                   self->power_of_two ? (gint64)height*2 : (gint64)height+MAX (1,height/4));
+            }
+        }
+        if (width == max_w || best_area == area) break;
+        width = (gint)MIN ((gint64)max_w,(gint64)width*2);
+    }
+    if (best_w == 0) goto no_space;
+    for (i = 0; i < self->images->len; i++)
+    {
+        LrgAtlasPackerImage *image = g_ptr_array_index (self->images,i);
+
+        image->packed_x = best_positions[i].x;
+        image->packed_y = best_positions[i].y;
+        image->rotated = best_rotations[i];
+        image->packed = TRUE;
+    }
+    self->packed_width = best_w;
+    self->packed_height = best_h;
+    return TRUE;
+no_space:
+    g_set_error_literal (error,G_IO_ERROR,G_IO_ERROR_NO_SPACE,
+                         "Images do not fit within the configured atlas limits");
+    return FALSE;
 }
 
 /**
@@ -801,28 +1020,22 @@ lrg_atlas_packer_pack (LrgAtlasPacker  *self,
     self->packed_width = 0;
     self->packed_height = 0;
 
-    /* Run packing algorithm */
-    switch (self->method)
+    if (self->max_width <= 0 || self->max_height <= 0 || self->padding < 0 ||
+        self->method < LRG_ATLAS_PACK_METHOD_SHELF ||
+        self->method > LRG_ATLAS_PACK_METHOD_GUILLOTINE)
     {
-    case LRG_ATLAS_PACK_METHOD_SHELF:
-        result = pack_shelf (self, error);
-        break;
-
-    case LRG_ATLAS_PACK_METHOD_MAXRECTS:
-        /* TODO: Implement maxrects algorithm */
-        g_warning ("MaxRects algorithm not yet implemented, using Shelf");
-        result = pack_shelf (self, error);
-        break;
-
-    case LRG_ATLAS_PACK_METHOD_GUILLOTINE:
-        /* TODO: Implement guillotine algorithm */
-        g_warning ("Guillotine algorithm not yet implemented, using Shelf");
-        result = pack_shelf (self, error);
-        break;
-
-    default:
-        result = pack_shelf (self, error);
-        break;
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                             "Invalid atlas packing configuration");
+        result = FALSE;
+    }
+    else
+        result = pack_search (self, error);
+    if (!result)
+    {
+        for (i = 0; i < self->images->len; i++)
+            ((LrgAtlasPackerImage *)g_ptr_array_index (self->images, i))->packed = FALSE;
+        self->packed_width = 0;
+        self->packed_height = 0;
     }
 
     self->is_packed = result;
@@ -843,7 +1056,7 @@ gint
 lrg_atlas_packer_get_packed_width (LrgAtlasPacker *self)
 {
     g_return_val_if_fail (LRG_IS_ATLAS_PACKER (self), 0);
-    return self->packed_width;
+    return self->is_packed ? self->packed_width : 0;
 }
 
 /**
@@ -860,7 +1073,7 @@ gint
 lrg_atlas_packer_get_packed_height (LrgAtlasPacker *self)
 {
     g_return_val_if_fail (LRG_IS_ATLAS_PACKER (self), 0);
-    return self->packed_height;
+    return self->is_packed ? self->packed_height : 0;
 }
 
 /**
@@ -876,8 +1089,8 @@ lrg_atlas_packer_get_packed_height (LrgAtlasPacker *self)
 gfloat
 lrg_atlas_packer_get_efficiency (LrgAtlasPacker *self)
 {
-    gint total_area;
-    gint used_area = 0;
+    gdouble total_area;
+    gdouble used_area = 0;
     guint i;
 
     g_return_val_if_fail (LRG_IS_ATLAS_PACKER (self), 0.0f);
@@ -885,7 +1098,7 @@ lrg_atlas_packer_get_efficiency (LrgAtlasPacker *self)
     if (!self->is_packed)
         return 0.0f;
 
-    total_area = self->packed_width * self->packed_height;
+    total_area = (gdouble)self->packed_width * self->packed_height;
     if (total_area <= 0)
         return 0.0f;
 
@@ -894,7 +1107,7 @@ lrg_atlas_packer_get_efficiency (LrgAtlasPacker *self)
         LrgAtlasPackerImage *image = g_ptr_array_index (self->images, i);
         if (image->packed)
         {
-            used_area += image->width * image->height;
+            used_area += (gdouble)image->width * image->height;
         }
     }
 
@@ -942,8 +1155,8 @@ lrg_atlas_packer_create_atlas (LrgAtlasPacker *self,
             region = lrg_texture_atlas_add_region_rect (atlas, image->name,
                                                         image->packed_x,
                                                         image->packed_y,
-                                                        image->width,
-                                                        image->height);
+                                                        image->rotated ? image->height : image->width,
+                                                        image->rotated ? image->width : image->height);
 
             if (image->rotated && region != NULL)
             {
@@ -983,7 +1196,7 @@ lrg_atlas_packer_get_image_position (LrgAtlasPacker *self,
     g_return_val_if_fail (name != NULL, FALSE);
 
     image = g_hash_table_lookup (self->images_by_name, name);
-    if (image == NULL || !image->packed)
+    if (!self->is_packed || image == NULL || !image->packed)
         return FALSE;
 
     if (out_x != NULL)
@@ -1045,6 +1258,9 @@ lrg_atlas_packer_foreach_image (LrgAtlasPacker *self,
 
     g_return_if_fail (LRG_IS_ATLAS_PACKER (self));
     g_return_if_fail (func != NULL);
+
+    if (!self->is_packed)
+        return;
 
     for (i = 0; i < self->images->len; i++)
     {

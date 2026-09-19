@@ -274,6 +274,38 @@ GObject * lrg_asset_manager_load_object (LrgAssetManager  *self,
                                          GError          **error);
 
 /**
+ * lrg_asset_manager_add_object_dependency:
+ * @self: the manager
+ * @name: cached dependent definition
+ * @dependency: cached source definition
+ * @error: (nullable): error location
+ *
+ * Adds an explicit dependency. Both endpoints must already be loaded.
+ * Duplicate links are harmless; cycles are rejected. Unloading either endpoint
+ * removes the link. Reloading a source also reloads all transitive dependents.
+ *
+ * Returns: whether the link was accepted
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_asset_manager_add_object_dependency (LrgAssetManager *self,
+                                                  const gchar *name,
+                                                  const gchar *dependency,
+                                                  GError **error);
+
+/**
+ * lrg_asset_manager_remove_object_dependency:
+ * @self: the manager
+ * @name: dependent definition
+ * @dependency: source definition
+ *
+ * Returns: whether the link existed and was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_asset_manager_remove_object_dependency (LrgAssetManager *self,
+                                                     const gchar *name,
+                                                     const gchar *dependency);
+
+/**
  * lrg_asset_manager_reload_object:
  * @self: an #LrgAssetManager
  * @name: name of a cached YAML definition
@@ -283,6 +315,12 @@ GObject * lrg_asset_manager_load_object (LrgAssetManager  *self,
  * ::object-reloaded. A failure emits ::object-reload-failed, returns an
  * error and keeps the previous object. Changing the definition's GType
  * is rejected. Unload explicitly to change type.
+ *
+ * All transitive dependents are validated before any cached object is replaced.
+ * Failure leaves the whole batch unchanged and emits one failure for @name.
+ * Success emits one replacement signal per affected object in dependency order,
+ * after committing the entire batch. Recursive reloads return G_IO_ERROR_PENDING.
+ * Signal arguments remain valid even if a handler unloads the cache.
  *
  * Returns: %TRUE if a new definition replaced the cached object
  */

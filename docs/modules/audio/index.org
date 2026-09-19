@@ -154,3 +154,7 @@ See the individual class documentation:
 - [[file:music-track.org][LrgMusicTrack]] - Music playback control
 - [[file:wave-data.org][LrgWaveData]] - Raw wave data manipulation
 - [[file:procedural-audio.org][LrgProceduralAudio]] - Real-time audio generation
+
+** PCM mixer buses, sends, effects, and stream playback
+
+See [[file:mixer.org][PCM mixer buses, sends, effects, and stream playback]] for the API, examples, and tested behavior.

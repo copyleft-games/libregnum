@@ -170,11 +170,44 @@ lrg_save_context_new_for_load (const gchar  *data,
     }
     self->current_section = self->root_mapping;
 
-    /* Read version if present */
-    self->version = (guint) yaml_mapping_get_int_member (self->root_mapping, "version");
-    if (self->version == 0)
+    /* Missing version denotes legacy version 1. Present values must be
+     * positive decimal integers, parsed without truncation or overflow. */
+    if (yaml_mapping_has_member (self->root_mapping, "version"))
     {
-        self->version = 1;  /* Default to version 1 */
+        YamlNode *node = yaml_mapping_get_member (self->root_mapping, "version");
+        const gchar *text = NULL;
+        guint version = 0;
+        gboolean valid = TRUE;
+
+        if (yaml_node_get_node_type (node) == YAML_NODE_SCALAR)
+            text = yaml_node_get_scalar (node);
+        if (text == NULL || *text == '\0')
+            valid = FALSE;
+        while (valid && *text != '\0')
+        {
+            guint digit;
+
+            if (!g_ascii_isdigit (*text))
+            {
+                valid = FALSE;
+                break;
+            }
+            digit = *text++ - '0';
+            if (version > (G_MAXUINT - digit) / 10)
+            {
+                valid = FALSE;
+                break;
+            }
+            version = version * 10 + digit;
+        }
+        if (!valid || version == 0)
+        {
+            g_set_error_literal (error, LRG_SAVE_ERROR, LRG_SAVE_ERROR_CORRUPT,
+                                 "Save version must be a positive decimal integer within guint range");
+            g_object_unref (self);
+            return NULL;
+        }
+        self->version = version;
     }
 
     lrg_log_debug ("Created save context for loading (version %u)", self->version);
@@ -257,6 +290,7 @@ lrg_save_context_set_version (LrgSaveContext *self,
 {
     g_return_if_fail (LRG_IS_SAVE_CONTEXT (self));
     g_return_if_fail (self->mode == LRG_SAVE_CONTEXT_MODE_SAVE);
+    g_return_if_fail (version > 0);
 
     self->version = version;
 }

@@ -1,0 +1,38 @@
+#+title: Saveable random streams
+
+=LrgRandomStream= provides independent deterministic PCG32 XSH-RR streams.
+Create separate streams for loot, world generation, and cosmetic effects so
+unrelated draws do not change gameplay outcomes. Existing global GLib random
+calls and deckbuilder GRand sequences are unchanged; adoption is explicit.
+The algorithm follows [[https://www.pcg-random.org/download.html][the PCG specification]].
+
+#+begin_src c
+g_autoptr(LrgRandomStream) loot = lrg_random_stream_new (42, 54);
+guint32 choice = lrg_random_stream_bounded (loot, 10);
+gdouble unit = lrg_random_stream_next_double (loot);
+g_autofree gchar *state = lrg_random_stream_snapshot (loot);
+lrg_save_context_write_string (save, "loot-rng", state);
+/* In the load path, check the return value and propagate error. */
+lrg_random_stream_restore (loot,
+    lrg_save_context_read_string (load, "loot-rng", NULL), &error);
+#+end_src
+
+The seed is 64 bits; the stream selector uses its low 63 bits. Identical seed,
+selector, and calls produce identical results across platforms. =next_uint()=
+consumes one PCG32 output. =bounded()= uses rejection sampling and may consume
+multiple outputs; its positive bound is exclusive. =next_double()= consumes
+two outputs for a 53-bit value in [0, 1). These draw rules are part of version 1.
+
+Snapshots contain both internal state and odd increment as fixed-width hex:
+=pcg32-v1:SSSSSSSSSSSSSSSS:IIIIIIIIIIIIIIII=. Restoration resumes at the exact
+next draw, without replaying earlier draws. Invalid lengths, characters,
+versions, or even increments fail with =G_IO_ERROR_INVALID_DATA= and leave the
+stream unchanged. Store the string in a save context rather than converting
+its fields through floating-point numbers. Restore into another stream to
+clone it. Snapshot ownership transfers to the caller.
+
+Streams require caller synchronization when shared between threads. This is a
+gameplay generator, not a cryptographic generator. Saving random state alone
+does not save other simulation state or guarantee whole-engine deterministic
+replay. Tests cover the reference sequence, mixed-draw restoration, save-context
+round trips, independent streams, bounds, and atomic rejection of bad snapshots.

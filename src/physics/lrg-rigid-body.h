@@ -482,6 +482,65 @@ void                lrg_rigid_body_wake_up               (LrgRigidBody *self);
 LRG_AVAILABLE_IN_ALL
 void                lrg_rigid_body_sleep                 (LrgRigidBody *self);
 
+/**
+ * lrg_rigid_body_get_collision_layer:
+ * @self: a rigid body
+ *
+ * Returns: the 32-bit membership bitset (default 1)
+ */
+LRG_AVAILABLE_IN_ALL
+guint32 lrg_rigid_body_get_collision_layer (LrgRigidBody *self);
+
+/**
+ * lrg_rigid_body_set_collision_layer:
+ * @self: a rigid body
+ * @bits: 32-bit membership bitset
+ *
+ * Sets collision filtering for subsequent pair checks. Zero disables all
+ * collisions for this body, including trigger contacts. Spatial queries are
+ * unaffected. Emits notify only when the value changes.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_rigid_body_set_collision_layer (LrgRigidBody *self,
+                                         guint32       bits);
+
+/**
+ * lrg_rigid_body_get_collision_mask:
+ * @self: a rigid body
+ *
+ * Returns: the 32-bit accepted layer bitset (default all 32 bits set)
+ */
+LRG_AVAILABLE_IN_ALL
+guint32 lrg_rigid_body_get_collision_mask (LrgRigidBody *self);
+
+/**
+ * lrg_rigid_body_set_collision_mask:
+ * @self: a rigid body
+ * @bits: 32-bit accepted layer bitset
+ *
+ * Sets collision filtering for subsequent pair checks. Zero disables all
+ * collisions for this body, including trigger contacts. Spatial queries are
+ * unaffected. Emits notify only when the value changes.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_rigid_body_set_collision_mask (LrgRigidBody *self,
+                                         guint32       bits);
+
+/**
+ * lrg_rigid_body_can_collide:
+ * @self: a rigid body
+ * @other: another body
+ *
+ * Both bodies must accept at least one of the other's layer bits.
+ * This checks only filtering, not overlap, body type, or world membership.
+ * A body cannot collide with itself.
+ *
+ * Returns: whether the pair passes both collision filters
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_rigid_body_can_collide (LrgRigidBody *self,
+                                    LrgRigidBody *other);
+
 G_END_DECLS
 
 #endif /* LRG_RIGID_BODY_H */

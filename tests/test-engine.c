@@ -163,6 +163,17 @@ test_engine_registry_available (EngineFixture *fixture,
     registry = lrg_engine_get_registry (fixture->engine);
     g_assert_nonnull (registry);
     g_assert_true (LRG_IS_REGISTRY (registry));
+    g_assert_cmpuint (lrg_registry_lookup (registry, "game-object"), ==,
+                      LRG_TYPE_GAME_OBJECT);
+    {
+        g_autoptr(GObject) object = NULL;
+
+        object = lrg_data_loader_load_data (lrg_engine_get_data_loader (fixture->engine),
+                                            "type: game-object\nx: 42\n", -1, &error);
+        g_assert_no_error (error);
+        g_assert_true (LRG_IS_GAME_OBJECT (object));
+        g_assert_cmpfloat (grl_entity_get_x (GRL_ENTITY (object)), ==, 42.0f);
+    }
 }
 
 static void
