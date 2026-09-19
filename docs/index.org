@@ -55,6 +55,7 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - *Physics* - 2D/3D rigid body simulation and collision
 - *3D World* - 3D level support with portals and sectors
 - *Networking* - Multiplayer networking (client/server)
+- [[file:modules/mmo/index.org][MMO foundations]] - Sessions, zones, interest replication, groups and persistence
 - *Debug Tools* - Profiling, console, overlay, and inspector
 - *Modding* - Complete mod system with dependencies
 - *Localization* - Multi-language support with CLDR plural rules

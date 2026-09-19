@@ -369,6 +369,13 @@ lrg_net_message_deserialize (GBytes   *data,
         return NULL;
     }
 
+    if (buffer[0] > LRG_NET_MESSAGE_TYPE_DISCONNECT || (buffer[1] & ~1u) != 0)
+    {
+        g_set_error_literal (error, LRG_NET_ERROR, LRG_NET_ERROR_MESSAGE_INVALID,
+                             "Invalid message type or flags");
+        return NULL;
+    }
+
     offset = 0;
 
     self = g_new0 (LrgNetMessage, 1);
@@ -402,14 +409,14 @@ lrg_net_message_deserialize (GBytes   *data,
     offset += 4;
 
     /* timestamp: 8 bytes (big-endian) */
-    self->timestamp = ((gint64) buffer[offset] << 56) |
-                      ((gint64) buffer[offset + 1] << 48) |
-                      ((gint64) buffer[offset + 2] << 40) |
-                      ((gint64) buffer[offset + 3] << 32) |
-                      ((gint64) buffer[offset + 4] << 24) |
-                      ((gint64) buffer[offset + 5] << 16) |
-                      ((gint64) buffer[offset + 6] << 8) |
-                      (gint64) buffer[offset + 7];
+    self->timestamp = ((guint64) buffer[offset] << 56) |
+                      ((guint64) buffer[offset + 1] << 48) |
+                      ((guint64) buffer[offset + 2] << 40) |
+                      ((guint64) buffer[offset + 3] << 32) |
+                      ((guint64) buffer[offset + 4] << 24) |
+                      ((guint64) buffer[offset + 5] << 16) |
+                      ((guint64) buffer[offset + 6] << 8) |
+                      (guint64) buffer[offset + 7];
     offset += 8;
 
     /* payload_length: 4 bytes (big-endian) */
@@ -420,7 +427,7 @@ lrg_net_message_deserialize (GBytes   *data,
     offset += 4;
 
     /* Validate payload size */
-    if (size < HEADER_SIZE + payload_size)
+    if (payload_size != size - HEADER_SIZE)
     {
         g_set_error (error,
                      LRG_NET_ERROR,

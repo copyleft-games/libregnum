@@ -18,6 +18,7 @@ sudo dnf install \
     make \
     pkgconf \
     glib2-devel \
+    sqlite-devel \
     gobject-introspection-devel \
     libdex-devel \
     libyaml-devel \
@@ -33,6 +34,7 @@ sudo apt install \
     build-essential \
     pkg-config \
     libglib2.0-dev \
+    libsqlite3-dev \
     gobject-introspection \
     libgirepository1.0-dev \
     libdex-1-dev \

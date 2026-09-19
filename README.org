@@ -26,6 +26,7 @@ sudo dnf install \
     make \
     pkgconf \
     glib2-devel \
+    sqlite-devel \
     gobject-introspection-devel \
     libdex-devel \
     libyaml-devel \

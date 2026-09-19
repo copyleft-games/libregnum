@@ -2,7 +2,32 @@
 :PROPERTIES:
 :CUSTOM_ID: networking-module
 :END:
-The Networking module provides peer-to-peer multiplayer functionality with client-server architecture. It supports reliable and unreliable message delivery with latency tracking and connection state management.
+The Networking module provides TCP client/server messaging. The reliability flag
+is metadata; there is no unreliable UDP transport. See the [[file:../mmo/index.org][MMO foundations]]
+for account sessions, zones, replication and transactional persistence.
+
+** Polling, limits and compatibility
+
+=send()= now means accepted into a bounded output queue, not synchronously written
+to a socket. Both endpoints must call =poll()= regularly, even when they only send.
+The send future resolves on queue admission, not delivery. Keep driving the
+socket service's main context to accept new connections. Connecting remains
+synchronous; =connect_async()= is still a compatibility wrapper around it.
+
+Each connection allows a 1 MiB payload and a 4 MiB queued wire-byte budget.
+=G_IO_ERROR_WOULD_BLOCK= means retry later; =G_IO_ERROR_MESSAGE_TOO_LARGE= means
+reduce the payload. Poll writes at most 64 KiB per connection and processes at
+most 64 messages. Partial frames persist across polls. Oversized/malformed input
+and socket closure disconnect that connection. Broadcast can partially succeed;
+it returns the first queuing error while continuing to other peers. Retrying a
+broadcast requires application-level duplicate handling.
+
+The 26-byte big-endian message header remains compatible. Parsing now rejects
+unknown types/flags, truncated data and trailing bytes. Server =host= is a
+numeric bind address (IPv4 or IPv6); NULL selects the IPv4 wildcard. Port zero
+allocates an ephemeral port exposed by =get_port()=. The =peer_id= argument of
+=message-received= is authoritative; sender IDs embedded in frames are untrusted.
+No handshake currently assigns the client's =local-id= automatically.
 
 ** Overview
 :PROPERTIES:

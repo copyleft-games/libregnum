@@ -1,8 +1,24 @@
 # Libregnum Roadmap
 
-Last updated: 2026-09-05
+Last updated: 2026-09-18
 
 ## Recently Shipped
+
+### MMO server foundations
+
+- Implemented incremental bounded TCP receive and queued nonblocking send paths,
+  numeric bind addresses and ephemeral ports; fixed framing and error ownership.
+- Added headless realms with account admission, replay/rate checks, idle expiry,
+  fixed ticks and capacity-checked in-process zone transfers.
+- Added spatial interest replication with acknowledged per-viewer deltas and
+  stable entity revisions, plus authorized group membership.
+- Added SQLite transactional record batches with optimistic revisions, atomic
+  rollback and durable reopen tests. SQLite is now a required dependency.
+- Added an executable headless simulation and a source-based gap audit in
+  `docs/modules/mmo/index.org`. Identity/TLS gateways, multi-process handoff,
+  game-specific social/economy services and production operations remain work
+  for the game/deployment; this is not a complete production MMO stack.
+
 
 ### Reliability and development workflow
 

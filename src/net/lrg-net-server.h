@@ -203,7 +203,7 @@ void lrg_net_server_disconnect_all (LrgNetServer *self);
  * @message: the message to send
  * @error: (nullable): return location for error
  *
- * Sends a message to a specific peer.
+ * Queues a message for a specific peer. Call poll() to flush writes.
  *
  * Returns: %TRUE on success
  */
@@ -235,7 +235,7 @@ gboolean lrg_net_server_broadcast (LrgNetServer   *self,
  * @peer_id: the recipient peer ID
  * @message: the message to send
  *
- * Sends a message asynchronously.
+ * Resolves when a message is queued, not when delivered. Call poll() to flush.
  *
  * Returns: (transfer full): A #DexFuture resolving to %TRUE on success
  */

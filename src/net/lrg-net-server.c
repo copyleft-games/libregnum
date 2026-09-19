@@ -11,12 +11,14 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "net/lrg-net-server.h"
+#include "lrg-net-buffer-private.h"
 
 /*
  * Internal peer connection data.
  */
 typedef struct
 {
+    LrgNetBuffer     buffer;
     LrgNetPeer       *peer;
     GSocketConnection *connection;
     GInputStream      *input;
@@ -37,6 +39,7 @@ struct _LrgNetServer
     guint             port;
     guint             max_peers;
     gboolean          running;
+    gboolean          polling;
 
     GSocketService   *service;
     GHashTable       *peers;          /* guint32 -> PeerConnection* */
@@ -87,6 +90,8 @@ peer_connection_free (PeerConnection *pc)
         g_object_unref (pc->cancellable);
     }
 
+    _lrg_net_buffer_clear (&pc->buffer);
+    g_io_stream_close (G_IO_STREAM (pc->connection), NULL, NULL);
     g_clear_object (&pc->input);
     g_clear_object (&pc->output);
     g_clear_object (&pc->connection);
@@ -107,6 +112,11 @@ on_incoming_connection (GSocketService    *service,
     gchar           *address_str;
     guint            port;
     guint32          peer_id;
+    g_autoptr(LrgNetPeer) peer = NULL;
+    g_autoptr(LrgNetServer) keep_alive = g_object_ref (self);
+
+    if (!self->running)
+        return FALSE;
 
     /* Check max peers */
     if (self->max_peers > 0 && g_hash_table_size (self->peers) >= self->max_peers)
@@ -137,10 +147,14 @@ on_incoming_connection (GSocketService    *service,
     g_object_unref (remote_addr);
 
     /* Assign peer ID */
-    peer_id = self->next_peer_id++;
+    do
+    {
+        peer_id = self->next_peer_id++;
+    } while (peer_id == 0 || g_hash_table_contains (self->peers, GUINT_TO_POINTER (peer_id)));
 
     /* Create peer connection */
     pc = g_new0 (PeerConnection, 1);
+    _lrg_net_buffer_init (&pc->buffer);
     pc->peer = lrg_net_peer_new (peer_id, address_str, port);
     pc->connection = g_object_ref (connection);
     pc->input = g_io_stream_get_input_stream (G_IO_STREAM (connection));
@@ -159,9 +173,12 @@ on_incoming_connection (GSocketService    *service,
     /* Add to peers table */
     g_hash_table_insert (self->peers, GUINT_TO_POINTER (peer_id), pc);
 
+    /* Keep the peer alive if a notify handler disconnects it. */
+    peer = g_object_ref (pc->peer);
     /* Notify */
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PEER_COUNT]);
-    g_signal_emit (self, signals[SIGNAL_PEER_CONNECTED], 0, pc->peer);
+    if (g_hash_table_contains (self->peers, GUINT_TO_POINTER (peer_id)))
+        g_signal_emit (self, signals[SIGNAL_PEER_CONNECTED], 0, peer);
 
     return TRUE;
 }
@@ -462,16 +479,33 @@ lrg_net_server_start (LrgNetServer  *self,
     /* Create socket service */
     self->service = g_socket_service_new ();
 
-    /* Add listener */
-    if (!g_socket_listener_add_inet_port (G_SOCKET_LISTENER (self->service),
-                                          self->port,
-                                          NULL,
-                                          &local_error))
+    /* Honor the bind address and allow an ephemeral port for local hosts. */
     {
-        g_propagate_prefixed_error (error, local_error,
-                                    "Failed to bind to port %u: ", self->port);
-        g_clear_object (&self->service);
-        return FALSE;
+        g_autoptr(GInetAddress) address = NULL;
+        g_autoptr(GSocketAddress) bind_address = NULL;
+        g_autoptr(GSocketAddress) effective = NULL;
+
+        address = self->host != NULL ? g_inet_address_new_from_string (self->host)
+                                    : g_inet_address_new_any (G_SOCKET_FAMILY_IPV4);
+        if (address == NULL)
+        {
+            g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                                 "Bind host must be a numeric IP address");
+            g_clear_object (&self->service);
+            return FALSE;
+        }
+        bind_address = g_inet_socket_address_new (address, self->port);
+        if (!g_socket_listener_add_address (G_SOCKET_LISTENER (self->service),
+                                            bind_address, G_SOCKET_TYPE_STREAM,
+                                            G_SOCKET_PROTOCOL_TCP, NULL, &effective,
+                                            &local_error))
+        {
+            g_propagate_error (error, g_steal_pointer (&local_error));
+            g_clear_object (&self->service);
+            return FALSE;
+        }
+        self->port = g_inet_socket_address_get_port (G_INET_SOCKET_ADDRESS (effective));
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PORT]);
     }
 
     /* Connect incoming handler */
@@ -502,18 +536,19 @@ lrg_net_server_stop (LrgNetServer *self)
     if (!self->running)
         return;
 
-    /* Disconnect all peers */
-    lrg_net_server_disconnect_all (self);
+    /* Mark stopped before callbacks can re-enter stop(). */
+    self->running = FALSE;
 
     /* Stop service */
     if (self->service != NULL)
     {
+        g_signal_handlers_disconnect_by_data (self->service, self);
         g_socket_service_stop (self->service);
         g_socket_listener_close (G_SOCKET_LISTENER (self->service));
         g_clear_object (&self->service);
     }
 
-    self->running = FALSE;
+    lrg_net_server_disconnect_all (self);
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IS_RUNNING]);
     g_signal_emit (self, signals[SIGNAL_STOPPED], 0);
 }
@@ -727,7 +762,7 @@ lrg_net_server_disconnect_all (LrgNetServer *self)
  * @message: the message to send
  * @error: (nullable): return location for error
  *
- * Sends a message to a specific peer.
+ * Queues a message for a specific peer. Call poll() to flush writes.
  *
  * Returns: %TRUE on success
  */
@@ -737,12 +772,7 @@ lrg_net_server_send (LrgNetServer   *self,
                      LrgNetMessage  *message,
                      GError        **error)
 {
-    PeerConnection    *pc;
-    g_autoptr(GBytes)  data = NULL;
-    gsize              size;
-    const guint8      *bytes;
-    gsize              written;
-    g_autoptr(GError)  local_error = NULL;
+    PeerConnection *pc;
 
     g_return_val_if_fail (LRG_IS_NET_SERVER (self), FALSE);
     g_return_val_if_fail (message != NULL, FALSE);
@@ -750,30 +780,11 @@ lrg_net_server_send (LrgNetServer   *self,
     pc = g_hash_table_lookup (self->peers, GUINT_TO_POINTER (peer_id));
     if (pc == NULL)
     {
-        g_set_error (error,
-                     LRG_NET_ERROR,
-                     LRG_NET_ERROR_NOT_CONNECTED,
+        g_set_error (error, LRG_NET_ERROR, LRG_NET_ERROR_NOT_CONNECTED,
                      "Peer %u not found", peer_id);
         return FALSE;
     }
-
-    data = lrg_net_message_serialize (message);
-    bytes = g_bytes_get_data (data, &size);
-
-    if (!g_output_stream_write_all (pc->output,
-                                    bytes, size,
-                                    &written,
-                                    NULL,
-                                    &local_error))
-    {
-        g_propagate_prefixed_error (error, local_error,
-                                    "Failed to send to peer %u: ", peer_id);
-        return FALSE;
-    }
-
-    lrg_net_peer_touch (pc->peer);
-
-    return TRUE;
+    return _lrg_net_buffer_send (&pc->buffer, message, error);
 }
 
 /**
@@ -807,9 +818,9 @@ lrg_net_server_broadcast (LrgNetServer   *self,
 
         if (!lrg_net_server_send (self, peer_id, message, &local_error))
         {
-            /* Log but continue to other peers */
-            g_warning ("Failed to broadcast to peer %u: %s",
-                       peer_id, local_error->message);
+            /* Queue pressure is an expected recoverable failure. */
+            if (success)
+                g_propagate_error (error, g_steal_pointer (&local_error));
             success = FALSE;
         }
     }
@@ -824,7 +835,7 @@ lrg_net_server_broadcast (LrgNetServer   *self,
  * @peer_id: the recipient peer ID
  * @message: the message to send
  *
- * Sends a message asynchronously.
+ * Resolves when a message is queued, not when delivered. Call poll() to flush.
  *
  * Returns: (transfer full): A #DexFuture resolving to %TRUE on success
  */
@@ -839,10 +850,7 @@ lrg_net_server_send_async (LrgNetServer  *self,
     g_return_val_if_fail (LRG_IS_NET_SERVER (self), NULL);
     g_return_val_if_fail (message != NULL, NULL);
 
-    /*
-     * For now, wrap synchronous send. A full async implementation
-     * would use GOutputStream async APIs with DexFuture.
-     */
+    /* Resolve when queued; poll() drives bounded nonblocking writes. */
     result = lrg_net_server_send (self, peer_id, message, &error);
 
     if (result)
@@ -861,16 +869,52 @@ lrg_net_server_send_async (LrgNetServer  *self,
 void
 lrg_net_server_poll (LrgNetServer *self)
 {
-    g_return_if_fail (LRG_IS_NET_SERVER (self));
+    GList *ids;
+    GList *item;
+    g_autoptr(LrgNetServer) keep_alive = NULL;
 
-    /*
-     * In a full implementation, this would:
-     * 1. Check for incoming data on all peer connections
-     * 2. Parse complete messages from input buffers
-     * 3. Emit message-received signals
-     * 4. Check for disconnected peers
-     *
-     * For now, the GSocketService handles connections asynchronously.
-     * Message reading would require additional async read scheduling.
-     */
+    g_return_if_fail (LRG_IS_NET_SERVER (self));
+    if (self->polling)
+        return;
+    keep_alive = g_object_ref (self);
+    self->polling = TRUE;
+
+    /* Accept callbacks run on the service's main context, driven by the host. */
+    ids = g_hash_table_get_keys (self->peers);
+    for (item = ids; item != NULL; item = item->next)
+    {
+        guint i;
+        PeerConnection *pc;
+
+        for (i = 0; i < 64; i++)
+        {
+            g_autoptr(GError) error = NULL;
+            g_autoptr(LrgNetMessage) message = NULL;
+            GSocket *socket;
+
+            pc = g_hash_table_lookup (self->peers, item->data);
+            if (pc == NULL)
+                break;
+            socket = g_socket_connection_get_socket (pc->connection);
+            if (i == 0 && !_lrg_net_buffer_flush (&pc->buffer, socket, &error))
+            {
+                lrg_net_server_disconnect_peer (self, GPOINTER_TO_UINT (item->data));
+                break;
+            }
+            message = _lrg_net_buffer_receive (&pc->buffer, socket, &error);
+            if (error != NULL)
+            {
+                lrg_net_server_disconnect_peer (self, GPOINTER_TO_UINT (item->data));
+                break;
+            }
+            if (message == NULL)
+                break;
+            lrg_net_peer_touch (pc->peer);
+            /* The transport peer ID is authoritative, never the wire sender ID. */
+            g_signal_emit (self, signals[SIGNAL_MESSAGE_RECEIVED], 0,
+                           GPOINTER_TO_UINT (item->data), message);
+        }
+    }
+    g_list_free (ids);
+    self->polling = FALSE;
 }
