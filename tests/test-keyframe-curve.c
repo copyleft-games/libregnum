@@ -361,6 +361,84 @@ test_keyframe_curve_headless_loop (void)
         lrg_keyframe_curve_sample (curve, 1.0f), 100.0f, EPSILON);
 }
 
+static void
+test_keyframe_curve_invalid_times (void)
+{
+    g_autoptr(LrgKeyframeCurve) curve = lrg_keyframe_curve_new ();
+    const gfloat invalid[] = { NAN, INFINITY, -INFINITY };
+    guint i;
+
+    lrg_keyframe_curve_add_key (curve, 0.0f, 10.0f, LRG_EASING_LINEAR);
+    lrg_keyframe_curve_add_key (curve, 1.0f, 20.0f, LRG_EASING_LINEAR);
+    for (i = 0; i < G_N_ELEMENTS (invalid); i++)
+    {
+        g_test_expect_message (NULL, G_LOG_LEVEL_CRITICAL, "*isfinite (t)*");
+        lrg_keyframe_curve_add_key (curve, invalid[i], 99.0f, LRG_EASING_LINEAR);
+        g_test_assert_expected_messages ();
+        g_assert_cmpuint (lrg_keyframe_curve_get_key_count (curve), ==, 2);
+        g_assert_cmpfloat (lrg_keyframe_curve_sample (curve, 0.5f), ==, 15.0f);
+    }
+}
+
+static void
+test_keyframe_curve_sample_nan (void)
+{
+    g_autoptr(LrgKeyframeCurve) curve = lrg_keyframe_curve_new ();
+
+    lrg_keyframe_curve_add_key (curve, 0.0f, 10.0f, LRG_EASING_LINEAR);
+    g_test_expect_message (NULL, G_LOG_LEVEL_CRITICAL, "*!isnan (t)*");
+    g_assert_cmpfloat (lrg_keyframe_curve_sample (curve, NAN), ==, 0.0f);
+    g_test_assert_expected_messages ();
+}
+
+static void
+test_keyframe_curve_extreme_times (void)
+{
+    g_autoptr(LrgKeyframeCurve) curve = lrg_keyframe_curve_new ();
+
+    lrg_keyframe_curve_add_key (curve, -G_MAXFLOAT, 0.0f, LRG_EASING_LINEAR);
+    lrg_keyframe_curve_add_key (curve, G_MAXFLOAT, 100.0f, LRG_EASING_LINEAR);
+    g_assert_cmpfloat (lrg_keyframe_curve_sample (curve, 0.0f), ==, 50.0f);
+    g_assert_cmpfloat (lrg_keyframe_curve_sample (curve, -G_MAXFLOAT / 2), ==, 25.0f);
+    g_assert_cmpfloat (lrg_keyframe_curve_sample (curve, G_MAXFLOAT / 2), ==, 75.0f);
+    g_assert_cmpfloat (lrg_keyframe_curve_sample (curve, -INFINITY), ==, 0.0f);
+    g_assert_cmpfloat (lrg_keyframe_curve_sample (curve, INFINITY), ==, 100.0f);
+}
+
+static void
+test_keyframe_curve_exact_key (void)
+{
+    g_autoptr(LrgKeyframeCurve) curve = lrg_keyframe_curve_new ();
+
+    lrg_keyframe_curve_add_key (curve, 0.0f, 0.0f, LRG_EASING_LINEAR);
+    lrg_keyframe_curve_add_key (curve, 0.5f, -G_MAXFLOAT, LRG_EASING_LINEAR);
+    lrg_keyframe_curve_add_key (curve, 1.0f, G_MAXFLOAT, LRG_EASING_LINEAR);
+    g_assert_cmpfloat (lrg_keyframe_curve_sample (curve, 0.5f), ==, -G_MAXFLOAT);
+}
+
+static void
+test_keyframe_curve_many_keys (void)
+{
+    g_autoptr(LrgKeyframeCurve) curve = lrg_keyframe_curve_new ();
+    guint i;
+
+    /* A permutation exercises insertion on both sides of existing keys. */
+    for (i = 0; i < 1024; i++)
+    {
+        guint k = (i * 317) % 1024;
+
+        lrg_keyframe_curve_add_key (curve, (gfloat) k, (gfloat) (k * 2), LRG_EASING_LINEAR);
+    }
+    for (i = 0; i < 1024; i++)
+    {
+        lrg_keyframe_curve_add_key (curve, (gfloat) i, (gfloat) (i * 3), LRG_EASING_LINEAR);
+        g_assert_cmpfloat (lrg_keyframe_curve_sample (curve, (gfloat) i), ==, (gfloat) (i * 3));
+    }
+    g_assert_cmpuint (lrg_keyframe_curve_get_key_count (curve), ==, 1024);
+    for (i = 0; i < 1023; i++)
+        g_assert_cmpfloat (lrg_keyframe_curve_sample (curve, i + 0.5f), ==, i * 3 + 1.5f);
+}
+
 /* ==========================================================================
  * Main
  * ========================================================================== */
@@ -383,6 +461,13 @@ main (int   argc,
     g_test_add_func ("/keyframe-curve/clamp-out-range", test_keyframe_curve_clamp_out_of_range);
     g_test_add_func ("/keyframe-curve/duplicate-t",     test_keyframe_curve_duplicate_t);
     g_test_add_func ("/keyframe-curve/headless-loop",   test_keyframe_curve_headless_loop);
+
+    g_test_add_func ("/keyframe-curve/invalid-times", test_keyframe_curve_invalid_times);
+    g_test_add_func ("/keyframe-curve/sample-nan", test_keyframe_curve_sample_nan);
+    g_test_add_func ("/keyframe-curve/extreme-times", test_keyframe_curve_extreme_times);
+    g_test_add_func ("/keyframe-curve/many-keys", test_keyframe_curve_many_keys);
+
+    g_test_add_func ("/keyframe-curve/exact-key", test_keyframe_curve_exact_key);
 
     return g_test_run ();
 }

@@ -49,7 +49,9 @@ LrgKeyframeCurve *  lrg_keyframe_curve_new          (void);
  * @value: the value at this keyframe
  * @ease_to_next: easing applied when interpolating from this key to the next
  *
- * Adds a keyframe at normalized time @t.
+ * Adds a keyframe at normalized time @t. Time must be finite; invalid times
+ * trigger a critical and leave the curve unchanged. Finite times outside
+ * [0,1] are supported.
  *
  * Keys are stored sorted by @t in ascending order.  If a key already exists at
  * exactly the same @t the new entry overwrites it (last-write-wins for
@@ -70,11 +72,12 @@ void                lrg_keyframe_curve_add_key      (LrgKeyframeCurve *self,
  * @self: an #LrgKeyframeCurve
  * @t: normalized time to evaluate
  *
- * Samples the curve at normalized time @t.
+ * Samples the curve at normalized time @t using logarithmic-time lookup.
+ * NaN triggers a critical and returns zero; infinities clamp to the endpoints.
  *
  * Behaviour contracts:
  * - Zero keys: returns 0.0 (and triggers a g_return_val_if_fail warning).
- * - One key:   returns that key's value for all @t.
+ * - One key:   returns that key's value for all non-NaN @t.
  * - @t before the first key: returns the first key's value (clamped).
  * - @t after the last key:   returns the last key's value (clamped).
  * - @t outside [0,1] is clamped to [first-key-t, last-key-t].
