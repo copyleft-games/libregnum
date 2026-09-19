@@ -30,6 +30,22 @@ LRG_AVAILABLE_IN_ALL
 guint32 lrg_random_stream_next_uint (LrgRandomStream *self);
 
 /**
+ * lrg_random_stream_advance:
+ * @self: a stream
+ * @draws: number of raw 32-bit outputs to skip
+ *
+ * Advances as if next_uint() had been called @draws times, without generating
+ * the outputs. Zero leaves the stream unchanged. Runs in O(log @draws) time
+ * with constant memory, including for the full guint64 range.
+ *
+ * Counts raw outputs, not higher-level calls: next_double() consumes two,
+ * while bounded() may consume several because of rejection sampling.
+ * The stream selector and snapshot format are unchanged.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_random_stream_advance (LrgRandomStream *self, guint64 draws);
+
+/**
  * lrg_random_stream_bounded:
  * @self: a stream
  * @bound: positive exclusive upper bound
