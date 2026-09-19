@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Local HA laboratory image; never install packages into the host.
+FROM docker.io/library/postgres:17-alpine
+USER root
+RUN apk add --no-cache python3 py3-pip && \
+    python3 -m venv /opt/patroni && \
+    /opt/patroni/bin/pip install --no-cache-dir 'patroni[psycopg3,etcd3]==4.1.5'
+USER postgres
+ENTRYPOINT ["/opt/patroni/bin/patroni"]

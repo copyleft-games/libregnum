@@ -217,3 +217,11 @@ replication, signed content verification and staged HTTPS installation. Added
 real PostgreSQL tests, worker-kill/restore drills and a local TLS load sample.
 See `docs/modules/mmo/completion.org` for contracts and remaining operational
 inputs; no production deployment, database HA election or UDP/QUIC claim.
+
+### MMO runtime integration
+
+- Added mutually authenticated DTLS datagrams with bounded payloads and replay windows.
+- Added verified mailbox recovery, audited moderation, ranked seasons and a local operator console.
+- Connected authoritative simulation, fenced checkpoints and acknowledged replicas in a playable TLS reference host/client.
+- Added opt-in Patroni/etcd primary-election, replica-rejoin and quorum-loss tests.
+- Documented runtime contracts and live deployment inputs in `docs/modules/mmo/runtime.org`.

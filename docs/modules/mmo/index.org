@@ -214,3 +214,8 @@ acknowledgment retries and despawns, payload budgets, group authority,
 transaction rollback, cross-connection conflicts and database reopen. Transport
 tests use ephemeral loopback ports and exercise fragmented/coalesced frames,
 queue pressure, oversized input, failed connection ownership and callback stop.
+
+* Runtime integration
+
+See [[file:runtime.org][Runtime and Operations]] for the playable TLS host/client, DTLS UDP, verified
+mailbox delivery, ranked seasons, moderation console and Patroni/etcd HA drill.

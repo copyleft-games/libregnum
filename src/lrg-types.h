@@ -27,6 +27,8 @@ typedef struct _LrgMmoReplica LrgMmoReplica;
 typedef struct _LrgMmoMarket LrgMmoMarket;
 typedef struct _LrgMmoSocial LrgMmoSocial;
 
+typedef struct _LrgMmoSeason LrgMmoSeason;
+typedef struct _LrgMmoDatagram LrgMmoDatagram;
 typedef struct _LrgMmoAuth LrgMmoAuth;
 typedef struct _LrgMmoRealm LrgMmoRealm;
 typedef struct _LrgMmoReplicator LrgMmoReplicator;

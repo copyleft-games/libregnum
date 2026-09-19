@@ -1,0 +1,237 @@
+#+TITLE: MMO Runtime and Operations Reference
+
+* What this integration delivers
+
+The remaining reference integrations from [[file:completion.org][the shared-world audit]] are now
+implemented: authenticated gameplay/client flow, secure UDP datagrams, verified
+mailbox delivery, ranked seasons, an operator console, and automatic database
+primary election. These are configurable library and reference components.
+Provisioning a real deployment, selecting game content, measuring its capacity,
+and operating it remain responsibilities of the application and its operators.
+
+There are no new native build dependencies. Python references require
+=python3-gobject=. The opt-in HA laboratory uses Podman, PostgreSQL 17, Patroni
+4.1.5 and three etcd 3.5.21 members. Container packages are installed inside the
+laboratory image, never on the host.
+
+* Playable authoritative reference
+
+=examples/mmo-runtime.py= is a TLS game host using the library's auth, simulation,
+lease directory, store and replicator. =examples/mmo-client.py= is its interactive
+headless client. Two enrolled players can observe each other, move and attack.
+The existing graphical, AI, navigation and content APIs can consume the same
+replica state; this example intentionally has a terminal interface.
+
+Create accounts using =mmo-server --register= from the prior service example.
+Supply a trusted roster with stable IDs, account ownership and optional rules:
+
+#+begin_src json
+[
+  {"id": 1, "account": "alice", "position": [0, 0, 0], "faction": 1},
+  {"id": 2, "account": "bob", "position": [2, 0, 0], "faction": 2}
+]
+#+end_src
+
+#+begin_src sh
+python3 examples/mmo-runtime.py --database world.db --roster roster.json \
+  --certificate server.pem --key server-key.pem --zone world \
+  --bind 127.0.0.1 --port 7778 --endpoint tls://localhost:7778
+# Login with mmo-server --login; save the bearer token to a private 0600 file.
+python3 examples/mmo-client.py localhost 7778 --ca ca.pem --token-file token --id 1
+#+end_src
+
+Both programs need the generated typelib and shared library on =GI_TYPELIB_PATH=
+and =LD_LIBRARY_PATH=, or an installed libregnum. Every example provides =--help=
+and =--version=. The host also accepts =--postgres-file= with private libpq
+credentials. Candidate hosts share a zone/database and use their own advertised
+endpoint. Each process generates a fresh incarnation ID. The roster seeds only
+an absent checkpoint; subsequent starts restore committed configuration.
+
+All stateful GObjects and database calls live on one dedicated worker thread.
+The asyncio loop owns sockets and limits established TLS connections to 64,
+frames to 8192 bytes,
+one outstanding request per connection, and origin rates to 10 requests/second
+with a burst of 20. TLS handshake, frame, idle and drain deadlines are bounded.
+The reference supports at most 128 characters in one zone, a 64-unit view radius,
+and 2048-byte replication pages. Increase limits only after workload measurement.
+
+Accepted movement and attacks commit the complete checkpoint and latest command
+receipt in one fenced transaction before reply. Character ownership comes from
+the token's verified account, and simulation sequences survive reconnect/restart.
+The latest exact command can be retried after a lost response without applying
+it twice; different data at that sequence rejects. Older commands reject through
+the persistent accepted sequence. An ambiguous storage failure stops admission;
+the host reconnects, reacquires authority and reloads state before accepting work.
+
+Lease renewal runs once per second with a five-second expiry. Each request checks
+current ownership, and every gameplay write additionally checks the fence inside
+the transaction. Standbys reject gameplay until they acquire the lease. Recovery
+resets replication baselines and stream IDs; the client must reset its replica.
+Clients reconnect to the endpoint advertised by the directory (the terminal
+client is explicitly restarted against that endpoint). There is no invisible
+cross-zone teleport or automatic DNS routing in this example.
+
+The wire format is a four-byte big-endian JSON length followed by UTF-8 JSON.
+Every request carries =token= and =id=. Commands are =view= (optional =ack=),
+=move= (=sequence= and three-number =position=), and =attack= (=sequence= and
+=target=). Replies have =ok= and either =result= or a generic =error=. Views include
+stream ID, public character state, a library replication delta and =more=.
+Only public position/health/sequence enters replication; account ownership and
+server configuration stay in private checkpoints. The production TLS service's
+existing LRGM protocol remains unchanged.
+
+* Secure UDP alternative
+
+=LrgMmoDatagram= wraps a connected GSocket with OpenSSL DTLS 1.2 or later and
+mutual certificate verification. It requires a local PEM certificate/key and
+trusted CA file; clients additionally require the expected DNS identity. Socket
+connection and peer address selection belong to authenticated ingress. A CA
+signature establishes certificate trust, not account ownership: bind certificates
+to accounts/session authorization before accepting commands. Reserve connected
+UDP sockets only after bounded admission; this API is not an open UDP listener.
+
+Call =handshake()= periodically until it succeeds. WOULD_BLOCK is pending;
+other failures are terminal. Enforce a ten-second host deadline and cancel by
+dropping the channel. OpenSSL drives handshake retransmissions. No plaintext
+fallback or certificate-validation bypass exists. The socket is nonblocking and
+retained for the channel lifetime. Its descriptor must not be used concurrently.
+
+Payloads are at most 1100 bytes, below the configured 1200-byte DTLS MTU. Frames
+contain =LRGD=, a big-endian uint64 sequence and payload. A 64-sequence window
+accepts reordering and rejects duplicates/old packets; gaps do not block delivery.
+DTLS authenticates/encrypts the frame. Application delivery is unreliable: use
+replicator acknowledgments, periodic snapshots and command receipts for retries.
+A WOULD_BLOCK send must be retried with identical sequence/payload; another
+payload returns PENDING. A new DTLS session needs a new application stream ID. There is no built-in
+congestion controller: use the existing origin gate and a measured send budget.
+This supplies the UDP alternative; QUIC is not a second implemented transport.
+
+The installed GIO DTLS backend triggered an invalid null-unref during connection
+construction in testing, so this channel uses the existing OpenSSL dependency.
+See [[https://github.com/GNOME/glib-networking/blob/master/tls/base/gtlsconnection-base.c][the GIO backend implementation]] for the separate backend code path.
+
+* Verified mailbox and recovery delivery
+
+=Auth.begin_address()= is a trusted operation following recent password/MFA
+reauthentication. Send its private proof only to the proposed address. It expires
+after fifteen minutes. =confirm_address()= consumes the proof, binds the mailbox
+and increments account generation atomically, invalidating old sessions and
+recovery capabilities. Changing a mailbox repeats this process. The reference
+accepts a restricted ASCII mailbox grammar and rejects header injection.
+
+=Auth.prepare_recovery()= has no destination parameter. It reads the verified
+mailbox, enforces a persistent sixty-second account cooldown, and atomically
+checks mailbox/account revisions while issuing the one-use capability. Bans,
+mailbox replacement and generation changes invalidate authorization. Its private
+=(ss)= return is only for the delivery adapter; never return it to an anonymous
+requester. Public recovery endpoints must apply origin gates and return a generic
+response regardless of existence, cooldown, provider status or delivery outcome.
+
+=examples/mmo-admin.py= provides the complete enrollment/delivery/reset flow using
+SMTP over TLS with CA/hostname verification, optional provider login and a
+ten-second timeout. It refuses plaintext fallback. Provider configuration and
+password/proof files must be private to their owner. Example private SMTP JSON:
+
+#+begin_src json
+{"host":"smtp.example.org","port":465,"sender":"support@example.org",
+ "username":"account","password":"provider-secret"}
+#+end_src
+
+An optional =ca_file= supports private CAs. CLI workflow:
+
+#+begin_src sh
+python3 examples/mmo-admin.py --database world.db enroll-address alice alice@example.org \
+  --password-file password --smtp-file smtp.json
+python3 examples/mmo-admin.py --database world.db confirm-address --proof-file received-proof
+python3 examples/mmo-admin.py --database world.db deliver-recovery alice --smtp-file smtp.json
+python3 examples/mmo-admin.py --database world.db reset-password \
+  --proof-file received-reset --password-file new-password
+#+end_src
+
+MFA enrollment uses =--totp-file=. Capability/password values never appear in
+normal CLI output or diagnostic errors. If SMTP fails, the already-issued proof
+expires unused; recovery's cooldown remains consumed. Retry after the cooldown.
+There is no plaintext persistent delivery queue or automatic duplicate mailing.
+The tests use a loopback TLS mailbox and never send external email.
+
+* Ranked seasons and operator console
+
+=LrgMmoSeason= stores an immutable season interval and bounded entrants (2–1000).
+Each trusted result atomically updates both players and a durable semantic match
+receipt. Exact retries succeed after season end; changed results at the same
+match ID reject. New results are accepted only in =[start,end)= using trusted
+server time. Wins score three points, draws one. Standings sort by points, wins,
+then account ID for deterministic ties. Result counters reject overflow.
+Concurrent conflicting submissions must retry with the same match ID. This is a
+bounded reference league, not an Elo/skill estimator or a client result endpoint.
+
+The operator console exposes =create-season=, =match-result= and =standings=.
+Match submissions require trusted server/operator authority. Players cannot grant
+themselves wins. Multiple season IDs retain separate historical standings.
+
+=Auth.moderate()= atomically changes the ban/generation, stores operator/reason/time
+and writes a retry receipt. =mmo-admin.py ban/unban/event= provides the console.
+OS access to the private database or database credentials is the authorization
+boundary; =--operator= is audit attribution, not proof of privilege. Never expose
+these CLI operations as unrestricted HTTP endpoints. Existing guild officer
+redaction remains available through Social's membership-checked channel API.
+
+* Database-primary HA laboratory
+
+Build the laboratory image, then run the explicit integration:
+
+#+begin_src sh
+podman build -t localhost/libregnum-patroni:4.1.5 \
+  -f examples/deploy/Containerfile.patroni examples/deploy
+make test-mmo-ha
+#+end_src
+
+The script creates three Patroni/PostgreSQL nodes and three etcd members on an
+isolated, uniquely named Podman network. Only database ports are exposed, on
+loopback; passwords are random per run. It waits for the synchronous standby to
+be recorded in etcd before testing. It commits through the actual library,
+kills the primary process/container, waits for automatic election, reconnects
+with libpq's multi-host read-write selection and verifies acknowledged payloads,
+retry receipts and shard fences. The old primary must rejoin as a replica.
+The game/client recovery test then runs against the restored cluster.
+Removing two etcd members must stop writes on all database nodes. Restoring quorum
+must restore service with the acknowledged record intact. Exact task-owned
+containers/volumes/network are removed in a finally block, including on failure.
+
+The lab enables synchronous mode, strict synchronous mode, one synchronous copy,
+=remote_apply= and no DCS failsafe mode. These settings trade availability for
+replication guarantees; transactions canceled while awaiting replication still
+require receipt reconciliation after reconnect. See [[https://patroni.readthedocs.io/en/latest/replication_modes.html][Patroni replication contracts]].
+
+This is a local container election/quorum drill. A real host topology must also
+fence a stalled or partitioned primary with a working hardware watchdog or cloud
+fencing service. Production Patroni should require its validated watchdog; see
+[[https://patroni.readthedocs.io/en/latest/watchdog.html][Patroni watchdog support]]. The lab does not access host watchdog devices and
+sets watchdog mode off explicitly. Across hosts, additionally provision TLS and
+authentication for PostgreSQL, etcd peer/client channels and Patroni REST, separate
+failure domains, durable storage, backup retention and protected administration.
+Do not deploy the local lab's unauthenticated internal etcd/REST configuration.
+
+* Validation and deployment boundary
+
+#+begin_src sh
+make test
+make test-mmo-runtime
+make test-mmo-ha
+#+end_src
+
+Runtime tests cover real TLS peers, authoritative movement/combat, spatial deltas,
+exact retries, worker kill/takeover and live bans. Delivery tests cover mailbox
+proof, one-use recovery, provider refusal, certificate rejection and console
+operations. Native tests exercise DTLS ordering/replay and service transactions.
+The existing load, backup/restore, content-signature and service-host checks remain
+available. Full-suite and sanitizer results belong to the accompanying validation
+report; running the HA target is explicit and may require downloading its images.
+
+Repository implementation is distinct from provisioning a live MMO. Real domain
+names, private certificates, SMTP credentials, watchdog/fencing permissions,
+regional topology, game content and measured player-capacity/SLO targets are
+operator inputs. This change neither deploys them nor claims WAN scale, physical
+host failure, Windows or big-endian hardware validation. Extend the reference
+rules for the intended game instead of treating its fixed combat model as a
+complete game's design.

@@ -522,3 +522,200 @@ lrg_mmo_auth_recover (LrgMmoAuth *self, const gchar *token, const gchar *passwor
     batch = g_variant_ref_sink (g_variant_builder_end (&builder));
     return lrg_mmo_store_commit (self->store, batch, error);
 }
+
+static gboolean
+mailbox_valid (const gchar *address)
+{
+    const gchar *p, *at;
+    if (address == NULL || strlen (address) > 254)
+        return FALSE;
+    at = strchr (address, '@');
+    if (at == NULL || at == address || at[1] == '\0' || strchr (at + 1, '@') != NULL)
+        return FALSE;
+    for (p = address; *p != '\0'; p++)
+        if (!g_ascii_isalnum (*p) && strchr ("._+-@", *p) == NULL)
+            return FALSE;
+    return TRUE;
+}
+
+static gchar *
+address_token_key (const gchar *token)
+{
+    g_autofree gchar *digest = g_compute_checksum_for_string (G_CHECKSUM_SHA256, token, -1);
+    return g_strconcat ("auth/address-proof/", digest, NULL);
+}
+
+gchar *
+lrg_mmo_auth_begin_address (LrgMmoAuth *self, const gchar *account, const gchar *address,
+                            gint64 now, GError **error)
+{
+    g_autoptr(GVariant) value = NULL;
+    g_autofree gchar *token = NULL;
+    g_autofree gchar *key = NULL;
+    guint64 revision, generation;
+    gboolean banned;
+    g_return_val_if_fail (LRG_IS_MMO_AUTH (self), NULL);
+    if (!mailbox_valid (address) || now < 0 || now > G_MAXINT64 - 900)
+    {
+        _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid mailbox or time");
+        return NULL;
+    }
+    value = load_account (self, account, &revision, error);
+    if (value == NULL || !account_flags (value, &generation, &banned, error))
+        return NULL;
+    if (banned)
+    {
+        _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Account unavailable");
+        return NULL;
+    }
+    token = random_token (error);
+    if (token == NULL)
+        return NULL;
+    key = address_token_key (token);
+    if (!_lrg_mmo_put (self->store, key, 0, g_variant_new ("(sstx)", account, address, generation, now + 900), error))
+        return NULL;
+    return g_steal_pointer (&token);
+}
+
+gboolean
+lrg_mmo_auth_confirm_address (LrgMmoAuth *self, const gchar *proof, gint64 now, GError **error)
+{
+    g_autofree gchar *proof_key = NULL;
+    g_autofree gchar *key = NULL;
+    g_autofree gchar *address_key = NULL;
+    g_autoptr(GVariant) pending = NULL;
+    g_autoptr(GVariant) account_value = NULL;
+    g_autoptr(GVariant) address_value = NULL;
+    g_autoptr(GVariant) salt = NULL;
+    g_autoptr(GVariant) hash = NULL;
+    g_autoptr(GVariant) batch = NULL;
+    g_autoptr(GError) local = NULL;
+    const gchar *account, *address;
+    guint64 proof_revision, account_revision, address_revision = 0, generation, current;
+    gboolean banned;
+    gint64 expiry;
+    GVariantBuilder builder;
+    g_return_val_if_fail (LRG_IS_MMO_AUTH (self), FALSE);
+    if (!token_valid (proof) || now < 0)
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid address proof");
+    proof_key = address_token_key (proof);
+    pending = _lrg_mmo_load (self->store, proof_key, "(sstx)", &proof_revision, error);
+    if (pending == NULL)
+        return FALSE;
+    g_variant_get (pending, "(&s&stx)", &account, &address, &generation, &expiry);
+    account_value = load_account (self, account, &account_revision, error);
+    if (account_value == NULL || !account_flags (account_value, &current, &banned, error))
+        return FALSE;
+    if (expiry <= now || banned || generation != current || generation == G_MAXUINT64)
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Address proof expired or invalidated");
+    address_key = g_strconcat ("auth/address/", account, NULL);
+    address_value = _lrg_mmo_load (self->store, address_key, "(sx)", &address_revision, &local);
+    if (address_value == NULL && !g_error_matches (local, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+    {
+        g_propagate_error (error, g_steal_pointer (&local));
+        return FALSE;
+    }
+    key = account_key (account);
+    salt = g_variant_get_child_value (account_value, 0);
+    hash = g_variant_get_child_value (account_value, 1);
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    _lrg_mmo_change (&builder, key, account_revision,
+                     g_variant_new ("(@ay@aytb)", salt, hash, generation + 1, banned));
+    _lrg_mmo_change (&builder, address_key, address_revision, g_variant_new ("(sx)", address, (gint64) 0));
+    _lrg_mmo_change (&builder, proof_key, proof_revision,
+                     g_variant_new ("(sstx)", account, address, generation, (gint64) 0));
+    batch = g_variant_ref_sink (g_variant_builder_end (&builder));
+    return lrg_mmo_store_commit (self->store, batch, error);
+}
+
+GVariant *
+lrg_mmo_auth_prepare_recovery (LrgMmoAuth *self, const gchar *account, gint64 now, GError **error)
+{
+    g_autofree gchar *key = NULL;
+    g_autofree gchar *reset_key = NULL;
+    g_autofree gchar *address_key = NULL;
+    g_autofree gchar *token = NULL;
+    g_autoptr(GVariant) account_value = NULL;
+    g_autoptr(GVariant) address_value = NULL;
+    g_autoptr(GVariant) batch = NULL;
+    const gchar *address;
+    guint64 account_revision, address_revision, generation;
+    gboolean banned;
+    gint64 last;
+    GVariantBuilder builder;
+    g_return_val_if_fail (LRG_IS_MMO_AUTH (self), NULL);
+    if (now < 0 || now > G_MAXINT64 - 900)
+    {
+        _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid server time");
+        return NULL;
+    }
+    account_value = load_account (self, account, &account_revision, error);
+    if (account_value == NULL || !account_flags (account_value, &generation, &banned, error))
+        return NULL;
+    address_key = g_strconcat ("auth/address/", account, NULL);
+    address_value = _lrg_mmo_load (self->store, address_key, "(sx)", &address_revision, error);
+    if (address_value == NULL)
+        return NULL;
+    g_variant_get (address_value, "(&sx)", &address, &last);
+    if (banned || (last != 0 && (now <= last || now - last < 60)))
+    {
+        _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Recovery unavailable or rate limited");
+        return NULL;
+    }
+    token = random_token (error);
+    if (token == NULL)
+        return NULL;
+    key = account_key (account);
+    reset_key = token_key (token, TRUE);
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    /* Include both authorization revisions so mailbox changes and bans race safely. */
+    _lrg_mmo_change (&builder, key, account_revision, account_value);
+    _lrg_mmo_change (&builder, address_key, address_revision, g_variant_new ("(sx)", address, now));
+    _lrg_mmo_change (&builder, reset_key, 0, g_variant_new ("(stx)", account, generation, now + 900));
+    batch = g_variant_ref_sink (g_variant_builder_end (&builder));
+    if (!lrg_mmo_store_commit (self->store, batch, error))
+        return NULL;
+    return g_variant_ref_sink (g_variant_new ("(ss)", address, token));
+}
+
+gboolean
+lrg_mmo_auth_moderate (LrgMmoAuth *self, const gchar *operator_id, const gchar *account,
+                       gboolean banned, const gchar *reason, const gchar *operation, GError **error)
+{
+    g_autoptr(GVariant) value = NULL;
+    g_autoptr(GVariant) salt = NULL;
+    g_autoptr(GVariant) hash = NULL;
+    g_autoptr(GVariant) intent = NULL;
+    g_autoptr(GVariant) batch = NULL;
+    g_autofree gchar *key = NULL;
+    g_autofree gchar *event_key = NULL;
+    guint64 revision, generation;
+    gboolean old_ban;
+    gint prior;
+    GVariantBuilder builder;
+    g_return_val_if_fail (LRG_IS_MMO_AUTH (self), FALSE);
+    if (!_lrg_mmo_id_valid (operator_id) || !_lrg_mmo_id_valid (account) || reason == NULL ||
+        !g_utf8_validate (reason, -1, NULL) || *reason == '\0' || strlen (reason) > 2048)
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid moderation evidence");
+    intent = g_variant_ref_sink (g_variant_new ("(sssbs)", "moderate", operator_id, account, banned, reason));
+    prior = _lrg_mmo_operation_check (self->store, operation, intent, error);
+    if (prior != 0)
+        return prior == 1;
+    value = load_account (self, account, &revision, error);
+    if (value == NULL || !account_flags (value, &generation, &old_ban, error))
+        return FALSE;
+    if (generation == G_MAXUINT64)
+        return _lrg_mmo_fail (error, G_IO_ERROR_NO_SPACE, "Account generation exhausted");
+    salt = g_variant_get_child_value (value, 0);
+    hash = g_variant_get_child_value (value, 1);
+    key = account_key (account);
+    event_key = g_strconcat ("moderation/", operation, NULL);
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    _lrg_mmo_change (&builder, key, revision,
+                     g_variant_new ("(@ay@aytb)", salt, hash, generation + 1, banned));
+    _lrg_mmo_change (&builder, event_key, 0,
+                     g_variant_new ("(ssbsx)", operator_id, account, banned, reason, g_get_real_time () / G_TIME_SPAN_SECOND));
+    _lrg_mmo_operation_add (&builder, operation, intent);
+    batch = g_variant_ref_sink (g_variant_builder_end (&builder));
+    return lrg_mmo_store_commit (self->store, batch, error);
+}

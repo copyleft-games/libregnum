@@ -179,6 +179,8 @@ PUBLIC_HEADERS := \
 	src/mmo/lrg-mmo-group.h \
 	src/mmo/lrg-mmo-simulation.h \
 	src/mmo/lrg-mmo-content.h \
+	src/mmo/lrg-mmo-season.h \
+	src/mmo/lrg-mmo-datagram.h \
 	src/mmo/lrg-mmo-shard-directory.h \
 	src/mmo/lrg-mmo-replica.h \
 	src/mmo/lrg-mmo-market.h \
@@ -669,6 +671,8 @@ SOURCES := \
 	src/mmo/lrg-mmo-group.c \
 	src/mmo/lrg-mmo-simulation.c \
 	src/mmo/lrg-mmo-content.c \
+	src/mmo/lrg-mmo-season.c \
+	src/mmo/lrg-mmo-datagram.c \
 	src/mmo/lrg-mmo-service.c \
 	src/mmo/lrg-mmo-postgres.c \
 	src/mmo/lrg-mmo-shard-directory.c \
@@ -2354,3 +2358,20 @@ $(OBJDIR)/src/steam/lrg-workshop-manager.o: src/steam/lrg-workshop-manager.c src
 .PHONY: all lib lib-static lib-shared gir test tests check examples docs
 .PHONY: install uninstall clean distclean debug-build generate
 .PHONY: deps deps-graylib deps-yamlglib deps-crispy deps-clean check-deps
+
+# Explicit local integrations; neither target contacts a production service.
+.PHONY: test-mmo-runtime test-mmo-ha
+test-mmo-runtime: lib
+	@$(MAKE) --no-print-directory gir
+	@GI_TYPELIB_PATH="$(GIROUTDIR):$(GRAYLIB_DIR)/build/gir:$$GI_TYPELIB_PATH" \
+	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
+	 $(GI_PYTHON) tests/check-mmo-runtime.py
+	@GI_TYPELIB_PATH="$(GIROUTDIR):$(GRAYLIB_DIR)/build/gir:$$GI_TYPELIB_PATH" \
+	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
+	 $(GI_PYTHON) tests/check-mmo-delivery.py
+
+test-mmo-ha: lib
+	@$(MAKE) --no-print-directory gir
+	@GI_TYPELIB_PATH="$(GIROUTDIR):$(GRAYLIB_DIR)/build/gir:$$GI_TYPELIB_PATH" \
+	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
+	 $(GI_PYTHON) tests/check-mmo-ha.py

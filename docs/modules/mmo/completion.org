@@ -190,8 +190,9 @@ network namespace or configure an explicitly protected endpoint. Configure
 Prometheus's own listen port differently from the reference host's 9090 metrics
 port. Alert delivery and dashboard installation are deployment operations.
 
-Not implemented or claimed: external recovery-message delivery, database HA
-election, UDP/QUIC, ranked seasons, a moderation console, or a deployed complete
-game. Completing those requires provider/topology and game-policy decisions;
-no placeholder API reports success for them. This pass also does not claim WAN,
-Windows or big-endian hardware validation.
+The remaining reference integrations are implemented in [[file:runtime.org][Runtime and Operations]]:
+verified SMTP recovery delivery, Patroni/etcd database election, mutually
+authenticated DTLS datagrams, ranked seasons, an operator console and a playable
+headless server/client. That document defines executable checks and the boundary
+between local reference validation and live deployment. No WAN, physical-host
+fencing, Windows or big-endian hardware validation is claimed.

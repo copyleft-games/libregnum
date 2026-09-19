@@ -34,6 +34,8 @@
 #include "mmo/lrg-mmo-group.h"
 #include "mmo/lrg-mmo-simulation.h"
 #include "mmo/lrg-mmo-content.h"
+#include "mmo/lrg-mmo-season.h"
+#include "mmo/lrg-mmo-datagram.h"
 #include "mmo/lrg-mmo-store.h"
 #include "mmo/lrg-mmo-auth.h"
 #include "mmo/lrg-mmo-prediction.h"

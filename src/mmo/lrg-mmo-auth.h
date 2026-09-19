@@ -216,4 +216,65 @@ gboolean lrg_mmo_auth_set_totp (LrgMmoAuth *self, const gchar *account, GBytes *
 LRG_AVAILABLE_IN_ALL
 gchar *lrg_mmo_auth_login_totp (LrgMmoAuth *self, const gchar *account, const gchar *password,
                                guint code, gint64 now, GError **error);
+/**
+ * lrg_mmo_auth_begin_address:
+ * @self: auth service
+ * @account: account authenticated by recent password/MFA reauthentication
+ * @address: ASCII mailbox, up to 254 bytes
+ * @now: trusted Unix seconds
+ * @error: (nullable): error return
+ *
+ * Trusted delivery operation. Send the returned one-use proof only to @address;
+ * never return it to the enrollment requester. Confirmation invalidates existing
+ * tokens and recovery capabilities. Gate requests before calling this method.
+ * Returns: (transfer full) (nullable): private fifteen-minute address proof
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *lrg_mmo_auth_begin_address (LrgMmoAuth *self, const gchar *account,
+                                   const gchar *address, gint64 now, GError **error);
+/**
+ * lrg_mmo_auth_confirm_address:
+ * @self: auth service
+ * @proof: secret received through the proposed mailbox
+ * @now: trusted Unix seconds
+ * @error: (nullable): error return
+ * Returns: whether the verified address was bound atomically
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_auth_confirm_address (LrgMmoAuth *self, const gchar *proof, gint64 now, GError **error);
+/**
+ * lrg_mmo_auth_prepare_recovery:
+ * @self: trusted delivery service
+ * @account: requested account
+ * @now: trusted Unix seconds
+ * @error: (nullable): error return
+ *
+ * Issues a recovery capability bound to the current verified mailbox and account
+ * generation. Atomically checks both revisions and enforces a sixty-second
+ * account cooldown. The host must send through its configured provider and give
+ * requesters a generic response regardless of account existence or delivery.
+ * Delivery failure consumes the cooldown; retry later. No plaintext token is
+ * persisted. This return value must never reach the unauthenticated requester.
+ * Returns: (transfer full) (nullable): private (ss) mailbox and reset capability
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *lrg_mmo_auth_prepare_recovery (LrgMmoAuth *self, const gchar *account, gint64 now, GError **error);
+/**
+ * lrg_mmo_auth_moderate:
+ * @self: trusted administration service
+ * @operator_id: authenticated administrator identifier for the audit
+ * @account: target account
+ * @banned: desired ban state
+ * @reason: nonempty UTF-8 evidence/reason, up to 2048 bytes
+ * @operation: stable unique moderation operation ID
+ * @error: (nullable): error return
+ *
+ * Atomically changes the ban/generation and writes a durable moderation event
+ * and retry receipt. This is privileged just like set_banned(); operator_id is
+ * audit attribution, not authorization. Restrict invocation to trusted operators.
+ * Returns: whether applied or recognized as an exact retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_auth_moderate (LrgMmoAuth *self, const gchar *operator_id, const gchar *account,
+                                gboolean banned, const gchar *reason, const gchar *operation, GError **error);
 G_END_DECLS
