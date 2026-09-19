@@ -163,6 +163,99 @@ test_path_copy (void)
     g_assert_cmpint (y, ==, 2);
 }
 
+typedef struct
+{
+    LrgPath *path;
+    guint calls;
+    guint nested_calls;
+    guint operation;
+} PathIterationData;
+
+static void
+path_nested_visit (gint x, gint y, guint index, gpointer user_data)
+{
+    PathIterationData *data = user_data;
+
+    g_assert_cmpuint (index, ==, data->nested_calls++);
+    g_assert_cmpint (x, ==, 2 - (gint) index);
+    g_assert_cmpint (y, ==, -x);
+    if (index == 0)
+        lrg_path_clear (data->path);
+}
+
+static void
+path_mutating_visit (gint x, gint y, guint index, gpointer user_data)
+{
+    PathIterationData *data = user_data;
+
+    g_assert_cmpuint (index, <, 3);
+    g_assert_cmpuint (index, ==, data->calls++);
+    g_assert_cmpint (x, ==, (gint) index);
+    g_assert_cmpint (y, ==, -x);
+
+    if (index != 0)
+        return;
+
+    switch (data->operation)
+    {
+    case 0:
+        lrg_path_append (data->path, 99, 99);
+        break;
+    case 1:
+        lrg_path_prepend (data->path, 99, 99);
+        break;
+    case 2:
+        lrg_path_reverse (data->path);
+        break;
+    case 3:
+        lrg_path_clear (data->path);
+        break;
+    case 4:
+        g_clear_pointer (&data->path, lrg_path_free);
+        break;
+    case 5:
+        lrg_path_reverse (data->path);
+        lrg_path_foreach (data->path, path_nested_visit, data);
+        break;
+    default:
+        g_assert_not_reached ();
+    }
+}
+
+static void
+test_path_foreach_mutation (gconstpointer user_data)
+{
+    PathIterationData data = { 0 };
+    guint i;
+
+    data.path = lrg_path_new ();
+    data.operation = GPOINTER_TO_UINT (user_data);
+    for (i = 0; i < 3; i++)
+        lrg_path_append (data.path, (gint) i, -(gint) i);
+
+    lrg_path_foreach (data.path, path_mutating_visit, &data);
+    g_assert_cmpuint (data.calls, ==, 3);
+    if (data.operation < 2)
+        g_assert_cmpuint (lrg_path_get_length (data.path), ==, 4);
+    if (data.operation == 3 || data.operation == 5)
+        g_assert_true (lrg_path_is_empty (data.path));
+    if (data.operation == 4)
+        g_assert_null (data.path);
+    if (data.operation == 5)
+        g_assert_cmpuint (data.nested_calls, ==, 3);
+    g_clear_pointer (&data.path, lrg_path_free);
+}
+
+static void
+test_path_foreach_empty (void)
+{
+    g_autoptr(LrgPath) path = lrg_path_new ();
+    PathIterationData data = { 0 };
+
+    lrg_path_foreach (path, path_mutating_visit, &data);
+    g_assert_cmpuint (data.calls, ==, 0);
+}
+
 /* ========================================================================== */
 /* LrgNavGrid Tests                                                           */
 /* ========================================================================== */
@@ -884,6 +977,13 @@ main (int   argc,
     g_test_add_func ("/pathfinding/path/get-point", test_path_get_point);
     g_test_add_func ("/pathfinding/path/reverse", test_path_reverse);
     g_test_add_func ("/pathfinding/path/copy", test_path_copy);
+    g_test_add_func ("/pathfinding/path/foreach-empty", test_path_foreach_empty);
+    g_test_add_data_func ("/pathfinding/path/foreach-append", GUINT_TO_POINTER (0), test_path_foreach_mutation);
+    g_test_add_data_func ("/pathfinding/path/foreach-prepend", GUINT_TO_POINTER (1), test_path_foreach_mutation);
+    g_test_add_data_func ("/pathfinding/path/foreach-reverse", GUINT_TO_POINTER (2), test_path_foreach_mutation);
+    g_test_add_data_func ("/pathfinding/path/foreach-clear", GUINT_TO_POINTER (3), test_path_foreach_mutation);
+    g_test_add_data_func ("/pathfinding/path/foreach-free", GUINT_TO_POINTER (4), test_path_foreach_mutation);
+    g_test_add_data_func ("/pathfinding/path/foreach-nested", GUINT_TO_POINTER (5), test_path_foreach_mutation);
 
     /* NavGrid tests */
     g_test_add_func ("/pathfinding/nav-grid/new", test_nav_grid_new);
