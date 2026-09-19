@@ -75,7 +75,8 @@ LrgEventBus * lrg_event_bus_new (void);
  * @listener: (transfer none): the listener to register
  *
  * Registers an event listener with the event bus. The listener
- * will be notified of matching events.
+ * will be notified of matching events. Each call adds a separate registration,
+ * even for the same listener, and holds a reference until it is removed.
  *
  * Since: 1.0
  */
@@ -88,7 +89,8 @@ void lrg_event_bus_register (LrgEventBus      *self,
  * @self: an #LrgEventBus
  * @listener: the listener to unregister
  *
- * Unregisters an event listener from the event bus.
+ * Removes the oldest registration for this listener from the event bus.
+ * Other registrations of the same listener remain active.
  *
  * Since: 1.0
  */
@@ -149,7 +151,18 @@ guint lrg_event_bus_get_listener_count (LrgEventBus *self);
  *
  * Listeners may unregister during dispatch and remain alive until dispatch
  * finishes. Listeners removed before their turn are skipped. Newly registered
- * listeners participate in subsequent emissions.
+ * listeners participate in subsequent emissions, including nested emissions.
+ * Removing and re-registering the same listener does not revive the removed
+ * registration in a dispatch already in progress.
+ *
+ * Priorities are captured at the start of each emission. Equal priorities use
+ * registration order. Priority changes during callbacks take effect on the
+ * next emission; nested emissions have independent snapshots.
+ *
+ * The bus, event, and snapshotted listeners remain alive through completion
+ * signals even if callbacks release their owners' references. Access must be
+ * confined to one thread or externally serialized. Listener accessors should
+ * not mutate the bus.
  *
  * Returns: %TRUE if the event completed (not cancelled), %FALSE if cancelled
  *

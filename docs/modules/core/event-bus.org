@@ -239,16 +239,39 @@ if (lrg_event_is_cancelled (LRG_EVENT (event)))
 }
 #+end_src
 
-*** Emit with Copy
+*** Dispatch and Lifetime Rules
 :PROPERTIES:
-:CUSTOM_ID: emit-with-copy
+:CUSTOM_ID: dispatch-lifetime
 :END:
-For events that shouldn't be modified:
+Each emission captures the current registrations and their priorities before
+notifying listeners. Higher priorities run first; ties follow registration
+order. A priority changed by a callback affects later emissions, including a
+nested emission, while the outer emission retains its captured order.
 
-#+begin_src C
-/* Emit a copy - original event remains unchanged */
-g_autoptr(LrgEvent) result = lrg_event_bus_emit_copy (bus, LRG_EVENT (event), context);
-#+end_src
+Each call to =register()= creates a separate registration. Registering an object
+twice delivers twice. =unregister()= removes its oldest remaining registration;
+=unregister_by_id()= removes all matches. Removed registrations are skipped if
+their turn has not arrived. Re-registering the same object creates a new
+registration that cannot revive a removed entry in an active emission.
+=clear()= invalidates all pending registrations.
+
+Nested emissions capture their own registrations. For example, a listener
+registered by an outer callback can receive a nested event immediately, but
+will not receive that outer event. Use a distinct event object for a distinct
+nested event; cancellation belongs to the event object.
+
+The bus retains itself, the event, and captured listeners until dispatch and
+completion signals finish. A callback may release its owner's references;
+objects are destroyed only after the last remaining reference is released.
+The optional context pointer remains caller-owned and must stay valid through
+dispatch. This is synchronous dispatch, not a thread-safe queue: use one thread
+or external serialization, and keep listener accessors free of bus mutations.
+
+Capturing and sorting priorities costs O(N log N) per emission. Checking whether
+a registration was removed is O(1), including after callback mutations.
+
+To preserve an original event, copy it using the concrete event type's copy
+function and emit that copy. There is no generic =lrg_event_bus_emit_copy()= API.
 
 ** Priority System
 :PROPERTIES:
@@ -413,7 +436,6 @@ lrg_event_bus_register (bus, LRG_EVENT_LISTENER (trigger));
 | =lrg_event_bus_register(bus, listener)=        | Add listener         |
 | =lrg_event_bus_unregister(bus, listener)=      | Remove listener      |
 | =lrg_event_bus_emit(bus, event, context)=      | Dispatch event       |
-| =lrg_event_bus_emit_copy(bus, event, context)= | Dispatch event copy  |
 | =lrg_event_bus_get_listener_count(bus)=        | Number of listeners  |
 | =lrg_event_bus_clear(bus)=                     | Remove all listeners |
 
@@ -476,4 +498,4 @@ main (void)
 :CUSTOM_ID: related
 :END:
 - [[file:index.org][Core Module Overview]] - Core module documentation
-- [[../deckbuilder/index.md][Deckbuilder Module]] - Card game implementation using events
+- [[file:../deckbuilder/index.org][Deckbuilder Module]] - Card game implementation using events
