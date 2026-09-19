@@ -199,3 +199,7 @@ Valgrind with zero errors or definite leaks. Six Python binding tests passed,
 including filtered hit/miss outputs. Library, loader, GIR, and typelib builds
 passed; existing unrelated GIR warnings remain. Full-engine sanitizer and
 hardware checks were not run.
+
+After integrating concurrent master changes, the combined headless suite passed
+2,664 cases with 125 skips across 97 binaries. All six Python binding
+regressions passed again.
