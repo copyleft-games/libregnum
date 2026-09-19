@@ -123,7 +123,7 @@ LrgObjectPool *pool = lrg_object_pool_new_with_capacity (MY_TYPE_BULLET, 100);
 #+begin_src C
 /* Growth policy when pool is exhausted */
 typedef enum {
-    LRG_POOL_GROWTH_NONE,     /* Don't grow, return NULL */
+    LRG_POOL_GROWTH_FIXED,     /* Don't grow, return NULL */
     LRG_POOL_GROWTH_DOUBLE,   /* Double capacity */
     LRG_POOL_GROWTH_LINEAR,   /* Add fixed amount */
     LRG_POOL_GROWTH_UNLIMITED /* Grow as needed */
@@ -164,23 +164,47 @@ lrg_object_pool_release (pool, obj);
 :PROPERTIES:
 :CUSTOM_ID: iteration
 :END:
-#+begin_src C
-/* Iterate over all active objects */
-lrg_object_pool_foreach_active (pool, update_bullet, delta_ptr);
+Iteration captures the active acquisitions at entry, in reverse storage order.
+Callbacks may release the current object or another object, clear the pool,
+release all active objects, acquire objects, or start a nested iteration.
+Released acquisitions are skipped. A new acquisition waits for a subsequent
+iteration, even when it reuses a captured object's address. Nested iterations
+capture their own current set. Returning =FALSE= stops iteration early.
 
-static void
+The pool and captured objects stay alive until iteration ends. This prevents
+callbacks from receiving freed objects after =clear()= or owner destruction.
+Object state is still mutable: a reference snapshot is not a copy of each
+object's properties. Storage order can change after releases and is not a
+stable acquisition order. Iteration uses O(N) temporary memory. Each acquisition
+allocates a small bookkeeping record; prewarming avoids constructing gameplay
+objects, but does not make acquisition or iteration allocation-free.
+
+Changing =LrgPoolable='s active flag alone does not return an object to the
+pool; call =lrg_object_pool_release()= to update pool membership.
+
+#+begin_src C
+typedef struct
+{
+    LrgObjectPool *pool;
+    gfloat delta;
+} BulletUpdate;
+
+static gboolean
 update_bullet (LrgPoolable *poolable, gpointer user_data)
 {
+    BulletUpdate *update = user_data;
     MyBullet *bullet = MY_BULLET (poolable);
-    gfloat delta = *(gfloat *)user_data;
 
-    bullet->x += bullet->velocity_x * delta;
-    bullet->y += bullet->velocity_y * delta;
-
-    /* Check if bullet should be deactivated */
+    bullet->x += bullet->velocity_x * update->delta;
+    bullet->y += bullet->velocity_y * update->delta;
     if (is_out_of_bounds (bullet))
-        lrg_poolable_set_active (poolable, FALSE);
+        lrg_object_pool_release (update->pool, poolable);
+    return TRUE;
 }
+
+/* In the game update function: */
+BulletUpdate update = { pool, delta };
+lrg_object_pool_foreach_active (pool, update_bullet, &update);
 #+end_src
 
 *** Pool Statistics
@@ -189,7 +213,7 @@ update_bullet (LrgPoolable *poolable, gpointer user_data)
 :END:
 #+begin_src C
 /* Query pool state */
-guint total = lrg_object_pool_get_capacity (pool);
+guint total = lrg_object_pool_get_total_size (pool);
 guint active = lrg_object_pool_get_active_count (pool);
 guint available = lrg_object_pool_get_available_count (pool);
 #+end_src
@@ -238,7 +262,7 @@ shooter_game_fire_bullet (ShooterGame *self,
     bullet->velocity_y = sinf (angle) * BULLET_SPEED;
 }
 
-static void
+static gboolean
 update_bullet_cb (LrgPoolable *poolable, gpointer user_data)
 {
     ShooterGame *game = user_data;
@@ -253,7 +277,7 @@ update_bullet_cb (LrgPoolable *poolable, gpointer user_data)
         bullet->y < 0 || bullet->y > SCREEN_HEIGHT)
     {
         lrg_object_pool_release (game->bullet_pool, poolable);
-        return;
+        return TRUE;
     }
 
     /* Check collision */
@@ -264,6 +288,7 @@ update_bullet_cb (LrgPoolable *poolable, gpointer user_data)
         enemy_take_damage (hit, BULLET_DAMAGE);
         lrg_object_pool_release (game->bullet_pool, poolable);
     }
+    return TRUE;
 }
 
 static void
@@ -278,12 +303,13 @@ shooter_game_update (ShooterGame *self, gfloat delta)
     lrg_object_pool_foreach_active (self->explosion_pool, update_explosion_cb, self);
 }
 
-static void
+static gboolean
 draw_bullet_cb (LrgPoolable *poolable, gpointer user_data)
 {
     MyBullet *bullet = MY_BULLET (poolable);
     g_autoptr(GrlColor) yellow = grl_color_new (255, 255, 0, 255);
     grl_draw_circle (bullet->x, bullet->y, 4.0f, yellow);
+    return TRUE;
 }
 
 static void
@@ -326,7 +352,7 @@ static void
 debug_pool_usage (LrgObjectPool *pool)
 {
     guint active = lrg_object_pool_get_active_count (pool);
-    guint capacity = lrg_object_pool_get_capacity (pool);
+    guint capacity = lrg_object_pool_get_total_size (pool);
     g_print ("Pool: %u/%u (%.1f%%)\n", active, capacity,
              (gfloat)active / capacity * 100.0f);
 }

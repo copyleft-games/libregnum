@@ -328,10 +328,15 @@ lrg_object_pool_get_growth_policy (LrgObjectPool *self);
  * @callback: (scope call): function to call for each active object
  * @user_data: user data for @callback
  *
- * Iterates over all active objects in the pool. The callback can
- * return %FALSE to stop iteration early.
+ * Iterates over a snapshot of active acquisitions in reverse storage order.
+ * Returning %FALSE stops iteration early. Releasing any object, clearing the
+ * pool, or starting a nested iteration from the callback is safe.
  *
- * It is safe to release objects from within the callback.
+ * Acquisitions released before their turn are skipped. New acquisitions wait
+ * for a subsequent iteration, even if they reuse the same object. A nested
+ * iteration takes its own snapshot. The pool and captured objects remain alive
+ * until iteration ends, even when callbacks release their owners' references.
+ * Storage order can change after releases; it is not acquisition order.
  *
  * Since: 1.0
  */

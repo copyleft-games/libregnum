@@ -23,7 +23,7 @@
  *
  * ## Performance Considerations
  *
- * - Pre-warm the pool during loading to avoid allocation during gameplay
+ * - Pre-warm during loading to avoid constructing gameplay objects on acquisition
  * - Use LRG_POOL_GROWTH_FIXED with sufficient initial size for predictable memory
  * - Call shrink_to_fit() during level transitions to reduce memory usage
  *
@@ -34,6 +34,26 @@
  *
  * Since: 1.0
  */
+
+/* Each acquisition has a distinct identity, even when its object is reused. */
+typedef struct
+{
+    GObject *object;
+} PoolLease;
+
+static void
+pool_lease_free (gpointer data)
+{
+    PoolLease *lease = data;
+
+    g_object_unref (lease->object);
+}
+
+static void
+pool_lease_unref (gpointer data)
+{
+    g_rc_box_release_full (data, pool_lease_free);
+}
 
 struct _LrgObjectPool
 {
@@ -46,7 +66,8 @@ struct _LrgObjectPool
 
     /* Object storage */
     GPtrArray *available;   /* Inactive objects ready for reuse */
-    GPtrArray *active;      /* Currently in-use objects */
+    GPtrArray *active;      /* Borrowed objects owned by their active leases */
+    GHashTable *leases;     /* Object -> owned PoolLease */
 };
 
 enum
@@ -205,6 +226,7 @@ lrg_object_pool_finalize (GObject *object)
 
     g_clear_pointer (&self->available, g_ptr_array_unref);
     g_clear_pointer (&self->active, g_ptr_array_unref);
+    g_clear_pointer (&self->leases, g_hash_table_unref);
 
     G_OBJECT_CLASS (lrg_object_pool_parent_class)->finalize (object);
 }
@@ -416,6 +438,8 @@ lrg_object_pool_init (LrgObjectPool *self)
 {
     self->available = g_ptr_array_new_with_free_func (g_object_unref);
     self->active = g_ptr_array_new ();
+    self->leases = g_hash_table_new_full (g_direct_hash, g_direct_equal,
+                                          NULL, pool_lease_unref);
     self->growth_policy = LRG_POOL_GROWTH_DOUBLE;
 }
 
@@ -492,6 +516,7 @@ GObject *
 lrg_object_pool_acquire (LrgObjectPool *self)
 {
     GObject *object;
+    PoolLease *lease;
 
     g_return_val_if_fail (LRG_IS_OBJECT_POOL (self), NULL);
 
@@ -515,6 +540,9 @@ lrg_object_pool_acquire (LrgObjectPool *self)
     /* Get from available and move to active */
     object = g_ptr_array_steal_index_fast (self->available,
                                             self->available->len - 1);
+    lease = g_rc_box_new0 (PoolLease);
+    lease->object = object;
+    g_hash_table_insert (self->leases, object, lease);
     g_ptr_array_add (self->active, object);
 
     /* Mark as active */
@@ -596,6 +624,11 @@ lrg_object_pool_release (LrgObjectPool *self,
         return;
     }
 
+    /* Transfer pool ownership back to available storage. Snapshots retain the
+     * old lease until iteration finishes, independently of future acquisitions. */
+    g_object_ref (object);
+    g_hash_table_remove (self->leases, object);
+
     /* Reset and deactivate */
     lrg_poolable_reset (object);
     lrg_poolable_set_active (object, FALSE);
@@ -668,17 +701,11 @@ lrg_object_pool_shrink_to_fit (LrgObjectPool *self)
 void
 lrg_object_pool_clear (LrgObjectPool *self)
 {
-    guint i;
-
     g_return_if_fail (LRG_IS_OBJECT_POOL (self));
 
-    /* Unref active objects (not managed by array free func) */
-    for (i = 0; i < self->active->len; i++)
-    {
-        GObject *obj = g_ptr_array_index (self->active, i);
-        g_object_unref (obj);
-    }
+    /* Invalidate all acquisitions before dropping their owned references. */
     g_ptr_array_set_size (self->active, 0);
+    g_hash_table_remove_all (self->leases);
 
     /* Available array handles its own unrefs via free func */
     g_ptr_array_set_size (self->available, 0);
@@ -806,7 +833,15 @@ lrg_object_pool_get_growth_policy (LrgObjectPool *self)
  * @callback: (scope call): callback for each active object
  * @user_data: user data for callback
  *
- * Iterates over active objects.
+ * Iterates over a snapshot of active acquisitions in reverse storage order.
+ * Returning %FALSE stops iteration early. Releasing any object, clearing the
+ * pool, or starting a nested iteration from the callback is safe.
+ *
+ * Acquisitions released before their turn are skipped. New acquisitions wait
+ * for a subsequent iteration, even if they reuse the same object. A nested
+ * iteration takes its own snapshot. The pool and captured objects remain alive
+ * until iteration ends, even when callbacks release their owners' references.
+ * Storage order can change after releases; it is not acquisition order.
  *
  * Since: 1.0
  */
@@ -815,16 +850,30 @@ lrg_object_pool_foreach_active (LrgObjectPool            *self,
                                 LrgObjectPoolForeachFunc  callback,
                                 gpointer                  user_data)
 {
+    g_autoptr(LrgObjectPool) pool_ref = NULL;
+    g_autoptr(GPtrArray) snapshot = NULL;
     guint i;
 
     g_return_if_fail (LRG_IS_OBJECT_POOL (self));
     g_return_if_fail (callback != NULL);
 
-    /* Iterate in reverse to allow safe removal during iteration */
+    pool_ref = g_object_ref (self);
+    snapshot = g_ptr_array_new_with_free_func (pool_lease_unref);
     for (i = self->active->len; i > 0; i--)
     {
-        LrgPoolable *obj = g_ptr_array_index (self->active, i - 1);
-        if (!callback (obj, user_data))
+        GObject *object = g_ptr_array_index (self->active, i - 1);
+        PoolLease *lease = g_hash_table_lookup (self->leases, object);
+
+        g_ptr_array_add (snapshot, g_rc_box_acquire (lease));
+    }
+
+    for (i = 0; i < snapshot->len; i++)
+    {
+        PoolLease *lease = g_ptr_array_index (snapshot, i);
+
+        if (g_hash_table_lookup (self->leases, lease->object) != lease)
+            continue;
+        if (!callback (LRG_POOLABLE (lease->object), user_data))
             break;
     }
 }

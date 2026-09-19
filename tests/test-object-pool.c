@@ -719,6 +719,108 @@ test_pool_object_reuse (PoolFixture   *fixture,
     g_assert_cmpint (poolable2->reset_count, ==, 1);
 }
 
+typedef struct
+{
+    LrgObjectPool *pool;
+    LrgPoolable *other;
+    GPtrArray *visited;
+    gint mode;
+    guint nested_count;
+} IterationMutation;
+
+static gboolean
+count_nested_object (LrgPoolable *object,
+                     gpointer     data)
+{
+    guint *count = data;
+
+    (*count)++;
+    return TRUE;
+}
+
+static gboolean
+mutate_pool_iteration (LrgPoolable *object,
+                       gpointer     data)
+{
+    IterationMutation *mutation = data;
+    gpointer weak_object = object;
+    guint i;
+
+    /* No original acquisition may be delivered twice. */
+    for (i = 0; i < mutation->visited->len; i++)
+        g_assert_true (mutation->visited->pdata[i] != object);
+    g_ptr_array_add (mutation->visited, object);
+    if (mutation->visited->len != 1)
+        return TRUE;
+
+    g_object_add_weak_pointer (G_OBJECT (object), &weak_object);
+    switch (mutation->mode)
+    {
+    case 0:
+        lrg_object_pool_release (mutation->pool, mutation->other);
+        break;
+    case 1:
+        lrg_object_pool_clear (mutation->pool);
+        break;
+    case 2:
+    case 3:
+        lrg_object_pool_release (mutation->pool, mutation->other);
+        g_assert_true (lrg_object_pool_acquire (mutation->pool) == G_OBJECT (mutation->other));
+        if (mutation->mode == 3)
+            lrg_object_pool_foreach_active (mutation->pool, count_nested_object,
+                                            &mutation->nested_count);
+        break;
+    case 4:
+        lrg_object_pool_release_all_active (mutation->pool);
+        break;
+    case 5:
+        g_clear_object (&mutation->pool);
+        break;
+    default:
+        g_assert_not_reached ();
+    }
+    g_assert_nonnull (weak_object);
+    g_object_remove_weak_pointer (G_OBJECT (object), &weak_object);
+    return TRUE;
+}
+
+static void
+test_pool_iteration_mutation (gconstpointer data)
+{
+    g_autoptr(GPtrArray) visited = g_ptr_array_new ();
+    IterationMutation mutation = { 0 };
+    gpointer weak_pool;
+    gpointer weak_objects[3];
+    guint expected;
+    guint i;
+
+    mutation.mode = GPOINTER_TO_INT (data);
+    mutation.visited = visited;
+    mutation.pool = lrg_object_pool_new (TEST_TYPE_POOLABLE_OBJECT, 3, LRG_POOL_GROWTH_FIXED);
+    weak_pool = mutation.pool;
+    g_object_add_weak_pointer (G_OBJECT (mutation.pool), &weak_pool);
+    for (i = 0; i < 3; i++)
+    {
+        GObject *object = lrg_object_pool_acquire (mutation.pool);
+
+        weak_objects[i] = object;
+        g_object_add_weak_pointer (object, &weak_objects[i]);
+        if (i == 0)
+            mutation.other = LRG_POOLABLE (object);
+    }
+    lrg_object_pool_foreach_active (mutation.pool, mutate_pool_iteration, &mutation);
+    expected = mutation.mode == 1 || mutation.mode == 4 ? 1 : mutation.mode == 5 ? 3 : 2;
+    g_assert_cmpuint (visited->len, ==, expected);
+    if (mutation.mode == 3)
+        g_assert_cmpuint (mutation.nested_count, ==, 3);
+    if (mutation.mode == 2 || mutation.mode == 3)
+        g_assert_cmpuint (lrg_object_pool_get_active_count (mutation.pool), ==, 3);
+    g_clear_object (&mutation.pool);
+    g_assert_null (weak_pool);
+    for (i = 0; i < 3; i++)
+        g_assert_null (weak_objects[i]);
+}
+
 /* ==========================================================================
  * Main
  * ========================================================================== */
@@ -794,6 +896,13 @@ main (int    argc,
                 PoolFixture, NULL,
                 pool_fixture_set_up, test_pool_clear,
                 pool_fixture_tear_down);
+
+    g_test_add_data_func ("/object-pool/iteration/release-other", GINT_TO_POINTER (0), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/iteration/clear", GINT_TO_POINTER (1), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/iteration/reacquire", GINT_TO_POINTER (2), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/iteration/nested", GINT_TO_POINTER (3), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/iteration/release-all", GINT_TO_POINTER (4), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/iteration/release-owner", GINT_TO_POINTER (5), test_pool_iteration_mutation);
 
     /* Iteration tests */
     g_test_add ("/object-pool/pool/foreach-active",
