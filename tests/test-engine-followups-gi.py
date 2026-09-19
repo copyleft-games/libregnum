@@ -13,6 +13,17 @@ from gi.repository import Libregnum
 
 
 class FollowupBindings(unittest.TestCase):
+    def test_physics_filters(self):
+        a = Libregnum.RigidBody.new(Libregnum.RigidBodyType.DYNAMIC)
+        b = Libregnum.RigidBody.new(Libregnum.RigidBodyType.STATIC)
+        self.assertTrue(a.can_collide(b))
+        a.set_collision_layer(0x80000000)
+        b.props.collision_mask = 0x80000000
+        self.assertTrue(a.can_collide(b))
+        self.assertEqual(a.get_collision_layer(), 0x80000000)
+        b.set_collision_mask(1)
+        self.assertFalse(a.can_collide(b))
+
     def test_random_snapshot(self):
         stream = Libregnum.RandomStream.new(42, 54)
         self.assertEqual(stream.next_uint(), 0xa15c02b7)

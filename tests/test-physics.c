@@ -781,6 +781,124 @@ test_physics_world_static_body_no_move (PhysicsWorldFixture *fixture,
  * Main
  * ========================================================================== */
 
+static void
+test_collision_filters (void)
+{
+    g_autoptr(LrgRigidBody) a = lrg_rigid_body_new (LRG_RIGID_BODY_DYNAMIC);
+    g_autoptr(LrgRigidBody) b = lrg_rigid_body_new (LRG_RIGID_BODY_STATIC);
+
+    g_assert_cmpuint (lrg_rigid_body_get_collision_layer (a), ==, 1);
+    g_assert_cmpuint (lrg_rigid_body_get_collision_mask (a), ==, G_MAXUINT32);
+    g_assert_true (lrg_rigid_body_can_collide (a, b));
+    g_assert_false (lrg_rigid_body_can_collide (a, a));
+    lrg_rigid_body_set_collision_layer (a, 0x80000000u);
+    lrg_rigid_body_set_collision_layer (b, 2 | 4);
+    lrg_rigid_body_set_collision_mask (a, 4);
+    lrg_rigid_body_set_collision_mask (b, 0x80000000u);
+    g_assert_true (lrg_rigid_body_can_collide (a, b));
+    g_assert_true (lrg_rigid_body_can_collide (b, a));
+    lrg_rigid_body_set_collision_mask (b, 1);
+    g_assert_false (lrg_rigid_body_can_collide (a, b));
+    g_assert_false (lrg_rigid_body_can_collide (b, a));
+    lrg_rigid_body_set_collision_mask (b, G_MAXUINT32);
+    lrg_rigid_body_set_collision_layer (a, 0);
+    g_assert_false (lrg_rigid_body_can_collide (a, b));
+    lrg_rigid_body_set_collision_layer (a, 1);
+    lrg_rigid_body_set_collision_mask (a, 0);
+    g_assert_false (lrg_rigid_body_can_collide (a, b));
+}
+
+static void
+count_filter_notify (GObject *object, GParamSpec *pspec, gpointer data)
+{
+    guint *count = data;
+
+    (*count)++;
+}
+
+static void
+test_filter_properties (void)
+{
+    g_autoptr(LrgRegistry) registry = lrg_registry_new ();
+    g_autoptr(LrgDataLoader) loader = lrg_data_loader_new ();
+    g_autoptr(GObject) object = NULL;
+    g_autoptr(GError) error = NULL;
+    guint layer;
+    guint mask;
+    guint changes = 0;
+
+    lrg_registry_register (registry, "body", LRG_TYPE_RIGID_BODY);
+    lrg_data_loader_set_registry (loader, registry);
+    object = lrg_data_loader_load_data (loader,
+        "type: body\ncollision-layer: 2147483648\ncollision-mask: 6\n", -1, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (object);
+    g_object_get (object, "collision-layer", &layer, "collision-mask", &mask, NULL);
+    g_assert_cmpuint (layer, ==, 0x80000000u);
+    g_assert_cmpuint (mask, ==, 6);
+    g_signal_connect (object, "notify::collision-mask", G_CALLBACK (count_filter_notify), &changes);
+    g_object_set (object, "collision-mask", 6u, NULL);
+    g_assert_cmpuint (changes, ==, 0);
+    lrg_rigid_body_set_collision_mask (LRG_RIGID_BODY (object), 2);
+    g_assert_cmpuint (changes, ==, 1);
+    g_object_set (object, "collision-mask", 0u, NULL);
+    g_assert_cmpuint (changes, ==, 2);
+}
+
+static void
+count_body_contact (LrgRigidBody *body, LrgRigidBody *other,
+                    gfloat nx, gfloat ny, gpointer data)
+{
+    guint *count = data;
+
+    (*count)++;
+}
+
+static void
+count_world_contact (LrgPhysicsWorld *world, LrgCollisionInfo *info, gpointer data)
+{
+    guint *count = data;
+
+    (*count)++;
+}
+
+static void
+test_world_filters (gconstpointer data)
+{
+    g_autoptr(LrgPhysicsWorld) world = lrg_physics_world_new ();
+    g_autoptr(LrgRigidBody) a = lrg_rigid_body_new (LRG_RIGID_BODY_DYNAMIC);
+    g_autoptr(LrgRigidBody) b = lrg_rigid_body_new (LRG_RIGID_BODY_STATIC);
+    g_autoptr(GPtrArray) hits = NULL;
+    guint contacts = 0;
+    guint world_contacts = 0;
+    gboolean trigger = GPOINTER_TO_INT (data);
+
+    lrg_physics_world_set_gravity (world, 0, 0);
+    lrg_physics_world_set_time_step (world, 0.125f);
+    lrg_rigid_body_set_box_shape (a, 2, 2);
+    lrg_rigid_body_set_box_shape (b, 2, 2);
+    lrg_rigid_body_set_is_trigger (a, trigger);
+    lrg_physics_world_add_body (world, a);
+    lrg_physics_world_add_body (world, b);
+    g_signal_connect (a, "collision", G_CALLBACK (count_body_contact), &contacts);
+    g_signal_connect (b, "collision", G_CALLBACK (count_body_contact), &contacts);
+    g_signal_connect (world, "collision", G_CALLBACK (count_world_contact), &world_contacts);
+    lrg_physics_world_step (world, 0.125f);
+    g_assert_cmpuint (contacts, ==, 2);
+    g_assert_cmpuint (world_contacts, ==, trigger ? 0 : 1);
+    lrg_rigid_body_set_collision_layer (a, 2);
+    lrg_rigid_body_set_collision_mask (b, 1);
+    lrg_physics_world_step (world, 0.125f);
+    g_assert_cmpuint (contacts, ==, 2);
+    g_assert_cmpuint (world_contacts, ==, trigger ? 0 : 1);
+    hits = lrg_physics_world_query_point (world, 0, 0);
+    g_assert_cmpuint (hits->len, ==, 2);
+    lrg_rigid_body_set_collision_mask (b, 2);
+    lrg_physics_world_step (world, 0.125f);
+    g_assert_cmpuint (contacts, ==, 4);
+    g_assert_cmpuint (world_contacts, ==, trigger ? 0 : 2);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -876,5 +994,9 @@ main (int   argc,
     g_test_add ("/physics/world/static-body-no-move", PhysicsWorldFixture, NULL,
                 physics_world_fixture_set_up, test_physics_world_static_body_no_move, physics_world_fixture_tear_down);
 
+    g_test_add_func ("/physics/filters/pairs", test_collision_filters);
+    g_test_add_func ("/physics/filters/properties", test_filter_properties);
+    g_test_add_data_func ("/physics/filters/solid", GINT_TO_POINTER (FALSE), test_world_filters);
+    g_test_add_data_func ("/physics/filters/trigger", GINT_TO_POINTER (TRUE), test_world_filters);
     return g_test_run ();
 }

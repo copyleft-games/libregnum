@@ -400,3 +400,41 @@ int main (void)
     return 0;
 }
 #+end_src
+
+** Collision layers and masks
+
+Every rigid body has two 32-bit GObject properties:
+
+- =collision-layer=: membership bits, default =1=.
+- =collision-mask=: accepted layer bits, default =G_MAXUINT32=.
+
+A pair passes filtering only when both expressions are nonzero:
+
+#+begin_src c
+(layer_a & mask_b) && (layer_b & mask_a)
+#+end_src
+
+Set multiple bits for multiple memberships. Bits are values such as =1u << 2=,
+not layer indices. A zero layer or mask disables every collision involving that
+body. Defaults preserve existing behavior. =lrg_rigid_body_can_collide()= checks
+this symmetric filter alone; it does not test overlap, body type, or membership
+in a physics world. It returns false for a body paired with itself.
+
+#+begin_src c
+/* Players belong to layer 1 and interact with terrain on layer 2. */
+lrg_rigid_body_set_collision_layer (player, 1u);
+lrg_rigid_body_set_collision_mask (player, 2u);
+lrg_rigid_body_set_collision_layer (terrain, 2u);
+lrg_rigid_body_set_collision_mask (terrain, 1u);
+#+end_src
+
+The properties are writable through GObject and YAML after registering the
+rigid-body type with the data loader. Setters notify only on actual changes.
+Changes apply to subsequent pair checks, including the next physics step.
+Use the simulation's owning thread for access.
+
+The world filters before overlap detection and suppresses both world and body
+collision signals for rejected pairs, including trigger contacts. Existing
+static/kinematic pair rules still apply. This does not add trigger enter/exit
+tracking or alter collision response. Raycasts, point queries, and AABB queries
+remain geometric queries over all bodies, independent of collision masks.

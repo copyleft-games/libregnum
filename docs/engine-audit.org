@@ -163,3 +163,21 @@ Validation: full headless =make test= passed 2,642 cases with 125 skips across
 Valgrind with zero errors and definite leaks. Static/shared library, loader,
 GIR, and typelib builds passed; existing unrelated GIR warnings remain.
 Full-engine sanitizer and hardware checks were not run. No dependency added.
+
+* Additional audit: physics collision filtering
+
+Rigid-body physics checked every eligible overlapping pair without layer/mask
+filtering. Added 32-bit =collision-layer= and =collision-mask= properties and
+public accessors, plus a symmetric =can_collide()= predicate. Simulation now
+filters before overlap tests for solids and triggers. Defaults preserve existing
+pairs; spatial queries remain independent. See
+[[file:modules/physics/rigid-body.org][physics filter semantics and examples]]. Tests cover default/high/multiple bits,
+zero filters, asymmetric acceptance, YAML properties, change notifications,
+runtime re-enabling, trigger contacts, and query independence.
+
+Validation: full headless =make test= passed 2,646 cases with 125 skips across
+95 binaries. All 51 physics tests passed ASan/UBSan with leak detection and
+Valgrind with zero errors or definite leaks. Five Python binding regressions
+passed, including high-bit collision properties. Library, loader, GIR, and
+typelib builds passed; existing unrelated GIR warnings remain. Full-engine
+sanitizer and hardware checks were not run. No new dependency was introduced.

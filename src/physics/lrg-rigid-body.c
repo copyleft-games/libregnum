@@ -26,6 +26,8 @@ typedef struct
     gfloat            angular_damping;
     gfloat            gravity_scale;
     gboolean          is_trigger;
+    guint32           collision_layer;
+    guint32           collision_mask;
 
     /* Transform */
     gfloat            pos_x;
@@ -68,6 +70,8 @@ enum
     PROP_ANGULAR_DAMPING,
     PROP_GRAVITY_SCALE,
     PROP_IS_TRIGGER,
+    PROP_COLLISION_LAYER,
+    PROP_COLLISION_MASK,
     N_PROPS
 };
 
@@ -121,6 +125,12 @@ lrg_rigid_body_get_property (GObject    *object,
     case PROP_IS_TRIGGER:
         g_value_set_boolean (value, priv->is_trigger);
         break;
+    case PROP_COLLISION_LAYER:
+        g_value_set_uint (value, priv->collision_layer);
+        break;
+    case PROP_COLLISION_MASK:
+        g_value_set_uint (value, priv->collision_mask);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
         break;
@@ -160,6 +170,12 @@ lrg_rigid_body_set_property (GObject      *object,
         break;
     case PROP_IS_TRIGGER:
         lrg_rigid_body_set_is_trigger (self, g_value_get_boolean (value));
+        break;
+    case PROP_COLLISION_LAYER:
+        lrg_rigid_body_set_collision_layer (self, g_value_get_uint (value));
+        break;
+    case PROP_COLLISION_MASK:
+        lrg_rigid_body_set_collision_mask (self, g_value_get_uint (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
@@ -272,6 +288,15 @@ lrg_rigid_body_class_init (LrgRigidBodyClass *klass)
                               FALSE,
                               G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
+    properties[PROP_COLLISION_LAYER] =
+        g_param_spec_uint ("collision-layer", "Collision Layer", "Collision membership bits",
+                           0, G_MAXUINT32, 1,
+                           G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+    properties[PROP_COLLISION_MASK] =
+        g_param_spec_uint ("collision-mask", "Collision Mask", "Accepted collision layers",
+                           0, G_MAXUINT32, G_MAXUINT32,
+                           G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
     /**
@@ -348,6 +373,8 @@ lrg_rigid_body_init (LrgRigidBody *self)
     priv->angular_damping = 0.0f;
     priv->gravity_scale = 1.0f;
     priv->is_trigger = FALSE;
+    priv->collision_layer = 1;
+    priv->collision_mask = G_MAXUINT32;
 
     priv->pos_x = 0.0f;
     priv->pos_y = 0.0f;
@@ -979,4 +1006,69 @@ lrg_rigid_body_sleep (LrgRigidBody *self)
     priv->vel_x = 0.0f;
     priv->vel_y = 0.0f;
     priv->angular_velocity = 0.0f;
+}
+
+guint32
+lrg_rigid_body_get_collision_layer (LrgRigidBody *self)
+{
+    LrgRigidBodyPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_RIGID_BODY (self), 0);
+    priv = lrg_rigid_body_get_instance_private (self);
+    return priv->collision_layer;
+}
+
+void
+lrg_rigid_body_set_collision_layer (LrgRigidBody *self,
+                                    guint32       bits)
+{
+    LrgRigidBodyPrivate *priv;
+
+    g_return_if_fail (LRG_IS_RIGID_BODY (self));
+    priv = lrg_rigid_body_get_instance_private (self);
+    if (priv->collision_layer == bits)
+        return;
+    priv->collision_layer = bits;
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLLISION_LAYER]);
+}
+
+guint32
+lrg_rigid_body_get_collision_mask (LrgRigidBody *self)
+{
+    LrgRigidBodyPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_RIGID_BODY (self), 0);
+    priv = lrg_rigid_body_get_instance_private (self);
+    return priv->collision_mask;
+}
+
+void
+lrg_rigid_body_set_collision_mask (LrgRigidBody *self,
+                                    guint32       bits)
+{
+    LrgRigidBodyPrivate *priv;
+
+    g_return_if_fail (LRG_IS_RIGID_BODY (self));
+    priv = lrg_rigid_body_get_instance_private (self);
+    if (priv->collision_mask == bits)
+        return;
+    priv->collision_mask = bits;
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLLISION_MASK]);
+}
+
+gboolean
+lrg_rigid_body_can_collide (LrgRigidBody *self,
+                            LrgRigidBody *other)
+{
+    LrgRigidBodyPrivate *a;
+    LrgRigidBodyPrivate *b;
+
+    g_return_val_if_fail (LRG_IS_RIGID_BODY (self), FALSE);
+    g_return_val_if_fail (LRG_IS_RIGID_BODY (other), FALSE);
+    if (self == other)
+        return FALSE;
+    a = lrg_rigid_body_get_instance_private (self);
+    b = lrg_rigid_body_get_instance_private (other);
+    return (a->collision_layer & b->collision_mask) != 0 &&
+           (b->collision_layer & a->collision_mask) != 0;
 }

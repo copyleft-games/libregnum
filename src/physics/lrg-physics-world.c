@@ -508,6 +508,9 @@ do_physics_step (LrgPhysicsWorld *self,
                 lrg_rigid_body_get_body_type (body_b) != LRG_RIGID_BODY_DYNAMIC)
                 continue;
 
+            if (!lrg_rigid_body_can_collide (body_a, body_b))
+                continue;
+
             /* Check AABB overlap */
             if (check_aabb_overlap (body_a, body_b))
             {
