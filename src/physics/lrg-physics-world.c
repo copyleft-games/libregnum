@@ -638,6 +638,119 @@ lrg_physics_world_set_paused (LrgPhysicsWorld *self,
  * Queries
  * ========================================================================== */
 
+static gboolean
+raycast_impl (LrgPhysicsWorld *  self,
+              gfloat             start_x,
+              gfloat             start_y,
+              gfloat             end_x,
+              gfloat             end_y,
+              guint32            layer_mask,
+              gboolean           filter_layers,
+              gboolean           include_triggers,
+              LrgRigidBody *     ignore_body,
+              LrgRigidBody **    out_hit_body,
+              gfloat *           out_hit_x,
+              gfloat *           out_hit_y,
+              gfloat *           out_hit_normal_x,
+              gfloat *           out_hit_normal_y)
+{
+    LrgPhysicsWorldPrivate *priv;
+    LrgRigidBody *best_body = NULL;
+    gdouble best_t = 1.0;
+    gdouble origin[2] = { start_x, start_y };
+    gdouble direction[2] = { (gdouble) end_x - start_x, (gdouble) end_y - start_y };
+    gfloat best_normal[2] = { 0, 0 };
+    guint i;
+
+    if (out_hit_body) *out_hit_body = NULL;
+    if (out_hit_x) *out_hit_x = 0;
+    if (out_hit_y) *out_hit_y = 0;
+    if (out_hit_normal_x) *out_hit_normal_x = 0;
+    if (out_hit_normal_y) *out_hit_normal_y = 0;
+    g_return_val_if_fail (LRG_IS_PHYSICS_WORLD (self), FALSE);
+    g_return_val_if_fail (ignore_body == NULL || LRG_IS_RIGID_BODY (ignore_body), FALSE);
+    if (!isfinite (start_x) || !isfinite (start_y) ||
+        !isfinite (end_x) || !isfinite (end_y) ||
+        (direction[0] == 0 && direction[1] == 0))
+        return FALSE;
+    priv = lrg_physics_world_get_instance_private (self);
+
+    for (i = 0; i < priv->bodies->len; i++)
+    {
+        LrgRigidBody *body = g_ptr_array_index (priv->bodies, i);
+        gfloat position[2];
+        gfloat extent[2];
+        gfloat normal[2] = { 0, 0 };
+        gdouble enter = 0;
+        gdouble leave = 1;
+        gboolean intersects = TRUE;
+        guint axis;
+
+        if (body == ignore_body ||
+            (!include_triggers && lrg_rigid_body_get_is_trigger (body)) ||
+            (filter_layers && (layer_mask & lrg_rigid_body_get_collision_layer (body)) == 0))
+            continue;
+        lrg_rigid_body_get_position (body, &position[0], &position[1]);
+        lrg_rigid_body_get_shape_bounds (body, &extent[0], &extent[1]);
+        for (axis = 0; axis < 2; axis++)
+        {
+            gdouble lower;
+            gdouble upper;
+            gdouble near_t;
+            gdouble far_t;
+            gfloat sign = -1;
+
+            if (!isfinite (position[axis]) || !isfinite (extent[axis]) || extent[axis] < 0)
+            {
+                intersects = FALSE;
+                break;
+            }
+            lower = (gdouble) position[axis] - (gdouble) extent[axis] * 0.5;
+            upper = (gdouble) position[axis] + (gdouble) extent[axis] * 0.5;
+            if (direction[axis] == 0)
+            {
+                if (origin[axis] < lower || origin[axis] > upper)
+                    intersects = FALSE;
+                continue;
+            }
+            near_t = (lower - origin[axis]) / direction[axis];
+            far_t = (upper - origin[axis]) / direction[axis];
+            if (near_t > far_t)
+            {
+                gdouble swap = near_t;
+
+                near_t = far_t;
+                far_t = swap;
+                sign = 1;
+            }
+            if (near_t > enter)
+            {
+                enter = near_t;
+                normal[0] = normal[1] = 0;
+                normal[axis] = sign;
+            }
+            leave = MIN (leave, far_t);
+            if (enter > leave)
+                intersects = FALSE;
+        }
+        if (intersects && (best_body == NULL || enter < best_t))
+        {
+            best_body = body;
+            best_t = enter;
+            best_normal[0] = normal[0];
+            best_normal[1] = normal[1];
+        }
+    }
+    if (best_body == NULL)
+        return FALSE;
+    if (out_hit_body) *out_hit_body = best_body;
+    if (out_hit_x) *out_hit_x = origin[0] + direction[0] * best_t;
+    if (out_hit_y) *out_hit_y = origin[1] + direction[1] * best_t;
+    if (out_hit_normal_x) *out_hit_normal_x = best_normal[0];
+    if (out_hit_normal_y) *out_hit_normal_y = best_normal[1];
+    return TRUE;
+}
+
 gboolean
 lrg_physics_world_raycast (LrgPhysicsWorld *self,
                            gfloat           start_x,
@@ -650,111 +763,31 @@ lrg_physics_world_raycast (LrgPhysicsWorld *self,
                            gfloat          *out_hit_normal_x,
                            gfloat          *out_hit_normal_y)
 {
-    LrgPhysicsWorldPrivate *priv;
-    gfloat best_t;
-    LrgRigidBody *best_body;
-    gfloat dir_x, dir_y;
-    gfloat len;
-    guint i;
+    return raycast_impl (self, start_x, start_y, end_x, end_y,
+                         G_MAXUINT32, FALSE, TRUE, NULL,
+                         out_hit_body, out_hit_x, out_hit_y,
+                         out_hit_normal_x, out_hit_normal_y);
+}
 
-    g_return_val_if_fail (LRG_IS_PHYSICS_WORLD (self), FALSE);
-
-    priv = lrg_physics_world_get_instance_private (self);
-
-    /* Compute ray direction */
-    dir_x = end_x - start_x;
-    dir_y = end_y - start_y;
-    len = sqrtf (dir_x * dir_x + dir_y * dir_y);
-
-    if (len < 0.0001f)
-        return FALSE;
-
-    dir_x /= len;
-    dir_y /= len;
-
-    best_t = len;
-    best_body = NULL;
-
-    /* Check all bodies (simple ray-AABB test) */
-    for (i = 0; i < priv->bodies->len; i++)
-    {
-        LrgRigidBody *body = g_ptr_array_index (priv->bodies, i);
-        gfloat pos_x, pos_y;
-        gfloat half_w, half_h;
-        gfloat min_x, max_x, min_y, max_y;
-        gfloat t_min, t_max, t_x1, t_x2, t_y1, t_y2;
-
-        lrg_rigid_body_get_position (body, &pos_x, &pos_y);
-        lrg_rigid_body_get_shape_bounds (body, &half_w, &half_h);
-        half_w *= 0.5f;
-        half_h *= 0.5f;
-
-        min_x = pos_x - half_w;
-        max_x = pos_x + half_w;
-        min_y = pos_y - half_h;
-        max_y = pos_y + half_h;
-
-        /* Slab method for ray-AABB intersection */
-        if (fabsf (dir_x) > 0.0001f)
-        {
-            t_x1 = (min_x - start_x) / dir_x;
-            t_x2 = (max_x - start_x) / dir_x;
-        }
-        else if (start_x < min_x || start_x > max_x)
-        {
-            continue;  /* Ray parallel and outside */
-        }
-        else
-        {
-            t_x1 = -G_MAXFLOAT;
-            t_x2 = G_MAXFLOAT;
-        }
-
-        if (fabsf (dir_y) > 0.0001f)
-        {
-            t_y1 = (min_y - start_y) / dir_y;
-            t_y2 = (max_y - start_y) / dir_y;
-        }
-        else if (start_y < min_y || start_y > max_y)
-        {
-            continue;
-        }
-        else
-        {
-            t_y1 = -G_MAXFLOAT;
-            t_y2 = G_MAXFLOAT;
-        }
-
-        if (t_x1 > t_x2) { gfloat tmp = t_x1; t_x1 = t_x2; t_x2 = tmp; }
-        if (t_y1 > t_y2) { gfloat tmp = t_y1; t_y1 = t_y2; t_y2 = tmp; }
-
-        t_min = MAX (t_x1, t_y1);
-        t_max = MIN (t_x2, t_y2);
-
-        if (t_max >= t_min && t_min >= 0.0f && t_min < best_t)
-        {
-            best_t = t_min;
-            best_body = body;
-        }
-    }
-
-    if (best_body != NULL)
-    {
-        if (out_hit_body)
-            *out_hit_body = best_body;
-        if (out_hit_x)
-            *out_hit_x = start_x + dir_x * best_t;
-        if (out_hit_y)
-            *out_hit_y = start_y + dir_y * best_t;
-        if (out_hit_normal_x)
-            *out_hit_normal_x = -dir_x;  /* Simple approximation */
-        if (out_hit_normal_y)
-            *out_hit_normal_y = -dir_y;
-
-        return TRUE;
-    }
-
-    return FALSE;
+gboolean
+lrg_physics_world_raycast_filtered (LrgPhysicsWorld *  self,
+                                    gfloat             start_x,
+                                    gfloat             start_y,
+                                    gfloat             end_x,
+                                    gfloat             end_y,
+                                    guint32            layer_mask,
+                                    gboolean           include_triggers,
+                                    LrgRigidBody *     ignore_body,
+                                    LrgRigidBody **    out_hit_body,
+                                    gfloat *           out_hit_x,
+                                    gfloat *           out_hit_y,
+                                    gfloat *           out_hit_normal_x,
+                                    gfloat *           out_hit_normal_y)
+{
+    return raycast_impl (self, start_x, start_y, end_x, end_y,
+                         layer_mask, TRUE, include_triggers, ignore_body,
+                         out_hit_body, out_hit_x, out_hit_y,
+                         out_hit_normal_x, out_hit_normal_y);
 }
 
 GPtrArray *

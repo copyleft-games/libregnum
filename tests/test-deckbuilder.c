@@ -2461,6 +2461,8 @@ struct _TestEventListener
     gboolean cancel;
     TestEventListener *unregister_other;
     TestEventListener *register_other;
+    void (*action) (TestEventListener *self, LrgEvent *event, gpointer data);
+    gpointer action_data;
 };
 
 static void test_event_listener_iface_init (LrgEventListenerInterface *iface);
@@ -2519,6 +2521,9 @@ test_event_listener_on_event (LrgEventListener *listener,
                                 LRG_EVENT_LISTENER (self->register_other));
         self->register_other = NULL;
     }
+
+    if (self->action != NULL)
+        self->action (self, event, self->action_data);
 
     return !self->cancel;
 }
@@ -2655,6 +2660,253 @@ test_event_bus_already_cancelled (void)
     g_assert_false (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
     g_assert_cmpuint (priorities->len, ==, 0);
     g_assert_true (lrg_event_is_cancelled (LRG_EVENT (event)));
+}
+
+static void
+record_listener (TestEventListener *self,
+                 LrgEvent         *event,
+                 gpointer          data)
+{
+    g_ptr_array_add (data, self);
+}
+
+static void
+test_event_bus_live_priorities (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    g_autoptr(GPtrArray) order = g_ptr_array_new ();
+    g_autoptr(TestEventListener) first = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(TestEventListener) second = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    TestEventDispatch dispatch = { bus, priorities };
+
+    first->priority = -10;
+    second->priority = 10;
+    first->action = second->action = record_listener;
+    first->action_data = second->action_data = order;
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (first));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (second));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_true (order->pdata[0] == second);
+
+    /* Equal priorities restore registration order, not the previous sort order. */
+    first->priority = second->priority = 0;
+    g_ptr_array_set_size (order, 0);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_true (order->pdata[0] == first);
+    g_assert_true (order->pdata[1] == second);
+
+    first->priority = G_MAXINT;
+    second->priority = G_MININT;
+    g_ptr_array_set_size (order, 0);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_true (order->pdata[0] == first);
+}
+
+static void
+emit_nested_event (TestEventListener *self,
+                   LrgEvent         *event,
+                   gpointer          data)
+{
+    TestEventDispatch *dispatch = data;
+    g_autoptr(LrgCardEvent) nested = lrg_card_event_new (LRG_CARD_EVENT_TURN_END);
+
+    self->action = NULL;
+    self->unregister_other = NULL;
+    g_assert_true (lrg_event_bus_emit (dispatch->bus, LRG_EVENT (nested), dispatch));
+}
+
+static void
+test_event_bus_reregister (gconstpointer data)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    g_autoptr(TestEventListener) first = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(TestEventListener) second = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    TestEventDispatch dispatch = { bus, priorities };
+    gboolean nested = GPOINTER_TO_INT (data);
+
+    first->priority = 10;
+    second->priority = 5;
+    first->unregister_other = first->register_other = second;
+    if (nested)
+    {
+        first->action = emit_nested_event;
+        first->action_data = &dispatch;
+    }
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (first));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (second));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, nested ? 3 : 1);
+    if (nested)
+    {
+        g_assert_cmpint (g_array_index (priorities, gint, 1), ==, 10);
+        g_assert_cmpint (g_array_index (priorities, gint, 2), ==, 5);
+    }
+    g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 2);
+    first->unregister_other = NULL;
+    g_array_set_size (priorities, 0);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 2);
+}
+
+typedef struct
+{
+    TestEventDispatch *dispatch;
+    TestEventListener *other;
+} PriorityChange;
+
+static void
+change_priority_and_emit (TestEventListener *self,
+                          LrgEvent         *event,
+                          gpointer          data)
+{
+    PriorityChange *change = data;
+
+    change->other->priority = -5;
+    emit_nested_event (self, event, change->dispatch);
+}
+
+static void
+test_event_bus_nested_priorities (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    g_autoptr(TestEventListener) first = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(TestEventListener) second = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(TestEventListener) third = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    TestEventDispatch dispatch = { bus, priorities };
+    PriorityChange change = { &dispatch, second };
+    const gint expected[] = { 10, 10, 0, -5, -5, 0 };
+    guint i;
+
+    first->priority = 10;
+    second->priority = 5;
+    first->action = change_priority_and_emit;
+    first->action_data = &change;
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (first));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (second));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (third));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, G_N_ELEMENTS (expected));
+    for (i = 0; i < G_N_ELEMENTS (expected); i++)
+        g_assert_cmpint (g_array_index (priorities, gint, i), ==, expected[i]);
+}
+
+static void
+test_event_bus_duplicate_registration (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    g_autoptr(TestEventListener) first = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(TestEventListener) second = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    TestEventDispatch dispatch = { bus, priorities };
+
+    first->priority = 10;
+    second->priority = 5;
+    first->unregister_other = second;
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (first));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (second));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (second));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 2);
+    g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 2);
+    lrg_event_bus_unregister_by_id (bus, "test-listener");
+    g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 0);
+}
+
+typedef struct
+{
+    LrgEventBus **bus;
+    LrgCardEvent **event;
+    guint completed;
+} ReleaseEventOwners;
+
+static void
+release_event_owners (TestEventListener *self,
+                      LrgEvent         *event,
+                      gpointer          data)
+{
+    ReleaseEventOwners *owners = data;
+
+    g_clear_object (owners->bus);
+    g_clear_object (owners->event);
+}
+
+static void
+check_event_completion (LrgEventBus *bus,
+                        LrgEvent    *event,
+                        gpointer     data)
+{
+    ReleaseEventOwners *owners = data;
+
+    g_assert_true (LRG_IS_EVENT_BUS (bus));
+    g_assert_true (LRG_IS_EVENT (event));
+    owners->completed++;
+}
+
+static void
+test_event_bus_release_owners (gconstpointer data)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(TestEventListener) listener = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    TestEventDispatch dispatch = { bus, priorities };
+    ReleaseEventOwners owners = { &bus, &event, 0 };
+    gpointer weak_bus = bus;
+    gpointer weak_event = event;
+
+    g_object_add_weak_pointer (G_OBJECT (bus), &weak_bus);
+    g_object_add_weak_pointer (G_OBJECT (event), &weak_event);
+    listener->cancel = GPOINTER_TO_INT (data);
+    listener->action = release_event_owners;
+    listener->action_data = &owners;
+    g_signal_connect (bus, "event-emitted", G_CALLBACK (check_event_completion), &owners);
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listener));
+    g_assert_cmpint (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch),
+                     ==, !listener->cancel);
+    g_assert_cmpuint (owners.completed, ==, 1);
+    g_assert_null (bus);
+    g_assert_null (event);
+    g_assert_null (weak_bus);
+    g_assert_null (weak_event);
+}
+
+static void
+clear_and_reregister (TestEventListener *self,
+                      LrgEvent         *event,
+                      gpointer          data)
+{
+    TestEventDispatch *dispatch = data;
+
+    self->action = NULL;
+    lrg_event_bus_clear (dispatch->bus);
+    lrg_event_bus_register (dispatch->bus, LRG_EVENT_LISTENER (self));
+}
+
+static void
+test_event_bus_clear_during_emit (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(TestEventListener) listener = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    TestEventDispatch dispatch = { bus, priorities };
+
+    listener->action = clear_and_reregister;
+    listener->action_data = &dispatch;
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listener));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listener));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 1);
+    g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 1);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 2);
 }
 
 static void
@@ -6652,6 +6904,14 @@ main (int   argc,
     g_test_add_func ("/deckbuilder/card-event/cancel", test_card_event_cancel);
     g_test_add_func ("/deckbuilder/card-event/copy", test_card_event_copy);
     g_test_add_func ("/deckbuilder/event-bus/new", test_event_bus_new);
+    g_test_add_func ("/deckbuilder/event-bus/live-priorities", test_event_bus_live_priorities);
+    g_test_add_func ("/deckbuilder/event-bus/nested-priorities", test_event_bus_nested_priorities);
+    g_test_add_data_func ("/deckbuilder/event-bus/reregister", GINT_TO_POINTER (FALSE), test_event_bus_reregister);
+    g_test_add_data_func ("/deckbuilder/event-bus/nested-reregister", GINT_TO_POINTER (TRUE), test_event_bus_reregister);
+    g_test_add_func ("/deckbuilder/event-bus/duplicate-registration", test_event_bus_duplicate_registration);
+    g_test_add_data_func ("/deckbuilder/event-bus/release-owners", GINT_TO_POINTER (FALSE), test_event_bus_release_owners);
+    g_test_add_data_func ("/deckbuilder/event-bus/release-owners-cancel", GINT_TO_POINTER (TRUE), test_event_bus_release_owners);
+    g_test_add_func ("/deckbuilder/event-bus/clear-during-emit", test_event_bus_clear_during_emit);
     g_test_add_func ("/deckbuilder/event-bus/already-cancelled", test_event_bus_already_cancelled);
     g_test_add_func ("/deckbuilder/event-bus/priority-extremes", test_event_bus_priority_extremes);
     g_test_add_func ("/deckbuilder/event-bus/unregister-during-emit", test_event_bus_unregister_during_emit);

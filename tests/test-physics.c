@@ -899,6 +899,119 @@ test_world_filters (gconstpointer data)
     g_assert_cmpuint (world_contacts, ==, trigger ? 0 : 2);
 }
 
+static void
+test_raycast_boundaries (void)
+{
+    g_autoptr(LrgPhysicsWorld) world = lrg_physics_world_new ();
+    g_autoptr(LrgRigidBody) body = lrg_rigid_body_new (LRG_RIGID_BODY_STATIC);
+    LrgRigidBody *hit = NULL;
+    gfloat x, y, nx, ny;
+
+    lrg_rigid_body_set_box_shape (body, 2, 2);
+    lrg_physics_world_add_body (world, body);
+    /* Oblique incidence must return a face normal, not the negated ray. */
+    g_assert_true (lrg_physics_world_raycast (world, -3, -2, 3, 1,
+                   &hit, &x, &y, &nx, &ny));
+    g_assert_true (hit == body);
+    g_assert_cmpfloat (x, ==, -1);
+    g_assert_cmpfloat (y, ==, -1);
+    g_assert_cmpfloat (nx, ==, -1);
+    g_assert_cmpfloat (ny, ==, 0);
+    g_assert_true (lrg_physics_world_raycast (world, 0, 3, 0, 1,
+                   &hit, &x, &y, &nx, &ny));
+    g_assert_cmpfloat (y, ==, 1);
+    g_assert_cmpfloat (nx, ==, 0);
+    g_assert_cmpfloat (ny, ==, 1);
+    g_assert_true (lrg_physics_world_raycast (world, 0, 0, 3, 0,
+                   &hit, &x, &y, &nx, &ny));
+    g_assert_cmpfloat (x, ==, 0);
+    g_assert_cmpfloat (nx, ==, 0);
+    g_assert_cmpfloat (ny, ==, 0);
+    g_assert_true (lrg_physics_world_raycast (world, 1, 0, 2, 0,
+                   NULL, &x, NULL, &nx, NULL));
+    g_assert_cmpfloat (x, ==, 1);
+    g_assert_cmpfloat (nx, ==, 0);
+    /* Tiny segments are valid and need no arbitrary direction epsilon. */
+    g_assert_true (lrg_physics_world_raycast (world, -1.000001f, 0, -1, 0,
+                   NULL, NULL, NULL, NULL, NULL));
+    g_assert_true (lrg_physics_world_raycast (world, -2, -2, 0, 0,
+                   NULL, NULL, NULL, &nx, &ny));
+    g_assert_cmpfloat (nx, ==, -1);
+    g_assert_cmpfloat (ny, ==, 0);
+    /* Avoid float overflow when subtracting finite endpoints. */
+    g_assert_true (lrg_physics_world_raycast (world, -G_MAXFLOAT, 0, G_MAXFLOAT, 0,
+                   &hit, NULL, NULL, NULL, NULL));
+}
+
+static void
+test_raycast_filters (void)
+{
+    g_autoptr(LrgPhysicsWorld) world = lrg_physics_world_new ();
+    g_autoptr(LrgRigidBody) near = lrg_rigid_body_new (LRG_RIGID_BODY_STATIC);
+    g_autoptr(LrgRigidBody) far = lrg_rigid_body_new (LRG_RIGID_BODY_STATIC);
+    LrgRigidBody *hit = NULL;
+
+    lrg_rigid_body_set_position (near, 2, 0);
+    lrg_rigid_body_set_position (far, 5, 0);
+    lrg_rigid_body_set_collision_layer (near, 1);
+    lrg_rigid_body_set_collision_layer (far, 0x80000000u);
+    lrg_rigid_body_set_collision_mask (far, 0);
+    lrg_physics_world_add_body (world, far);
+    lrg_physics_world_add_body (world, near);
+    g_assert_true (lrg_physics_world_raycast (world, 0, 0, 10, 0,
+                   &hit, NULL, NULL, NULL, NULL));
+    g_assert_true (hit == near);
+    g_assert_true (lrg_physics_world_raycast_filtered (world, 0, 0, 10, 0,
+                   0x80000000u, TRUE, NULL, &hit, NULL, NULL, NULL, NULL));
+    g_assert_true (hit == far);
+    g_assert_true (lrg_physics_world_raycast_filtered (world, 0, 0, 10, 0,
+                   G_MAXUINT32, TRUE, near, &hit, NULL, NULL, NULL, NULL));
+    g_assert_true (hit == far);
+    lrg_rigid_body_set_is_trigger (near, TRUE);
+    g_assert_true (lrg_physics_world_raycast_filtered (world, 0, 0, 10, 0,
+                   G_MAXUINT32, FALSE, NULL, &hit, NULL, NULL, NULL, NULL));
+    g_assert_true (hit == far);
+    g_assert_false (lrg_physics_world_raycast_filtered (world, 0, 0, 10, 0,
+                   0, TRUE, NULL, &hit, NULL, NULL, NULL, NULL));
+    g_assert_null (hit);
+    lrg_rigid_body_set_collision_layer (near, 0);
+    g_assert_true (lrg_physics_world_raycast (world, 0, 0, 10, 0,
+                   &hit, NULL, NULL, NULL, NULL));
+    g_assert_true (hit == near);
+    /* Equal-distance ties select the first body added to the world. */
+    lrg_rigid_body_set_position (near, 5, 0);
+    g_assert_true (lrg_physics_world_raycast (world, 0, 0, 10, 0,
+                   &hit, NULL, NULL, NULL, NULL));
+    g_assert_true (hit == far);
+}
+
+static void
+test_raycast_invalid (void)
+{
+    g_autoptr(LrgPhysicsWorld) world = lrg_physics_world_new ();
+    g_autoptr(LrgRigidBody) body = lrg_rigid_body_new (LRG_RIGID_BODY_STATIC);
+    const gfloat rays[][4] = { { 0, 0, 0, 0 }, { NAN, 0, 1, 0 },
+                              { 0, 0, INFINITY, 0 }, { 2, -2, 2, 2 },
+                              { -3, 0, -2, 0 }, { 2, 0, 3, 0 } };
+    guint i;
+
+    lrg_rigid_body_set_box_shape (body, 2, 2);
+    lrg_physics_world_add_body (world, body);
+    for (i = 0; i < G_N_ELEMENTS (rays); i++)
+    {
+        LrgRigidBody *hit = body;
+        gfloat x = 9, y = 9, nx = 9, ny = 9;
+
+        g_assert_false (lrg_physics_world_raycast (world,
+            rays[i][0], rays[i][1], rays[i][2], rays[i][3], &hit, &x, &y, &nx, &ny));
+        g_assert_null (hit);
+        g_assert_cmpfloat (x, ==, 0);
+        g_assert_cmpfloat (y, ==, 0);
+        g_assert_cmpfloat (nx, ==, 0);
+        g_assert_cmpfloat (ny, ==, 0);
+    }
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -998,5 +1111,8 @@ main (int   argc,
     g_test_add_func ("/physics/filters/properties", test_filter_properties);
     g_test_add_data_func ("/physics/filters/solid", GINT_TO_POINTER (FALSE), test_world_filters);
     g_test_add_data_func ("/physics/filters/trigger", GINT_TO_POINTER (TRUE), test_world_filters);
+    g_test_add_func ("/physics/raycast/boundaries", test_raycast_boundaries);
+    g_test_add_func ("/physics/raycast/filters", test_raycast_filters);
+    g_test_add_func ("/physics/raycast/invalid", test_raycast_invalid);
     return g_test_run ();
 }

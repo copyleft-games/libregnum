@@ -263,7 +263,9 @@ void                lrg_physics_world_set_paused         (LrgPhysicsWorld *self,
  * @out_hit_normal_x: (out) (nullable): Hit normal X
  * @out_hit_normal_y: (out) (nullable): Hit normal Y
  *
- * Casts a ray and returns the first hit.
+ * Casts a closed segment against shape AABBs and returns the nearest hit.
+ * Includes all bodies regardless of collision layers, masks, or trigger status. See
+ * lrg_physics_world_raycast_filtered() for normals, ties, and invalid inputs.
  *
  * Returns: %TRUE if something was hit
  */
@@ -278,6 +280,45 @@ gboolean            lrg_physics_world_raycast            (LrgPhysicsWorld *self,
                                                           gfloat          *out_hit_y,
                                                           gfloat          *out_hit_normal_x,
                                                           gfloat          *out_hit_normal_y);
+
+/**
+ * lrg_physics_world_raycast_filtered:
+ * @self: a physics world
+ * @start_x: segment start X
+ * @start_y: segment start Y
+ * @end_x: segment end X
+ * @end_y: segment end Y
+ * @layer_mask: accepted body membership bits; zero matches nothing
+ * @include_triggers: whether trigger bodies participate
+ * @ignore_body: (nullable): body to exclude, typically the caster
+ * @out_hit_body: (out) (transfer none) (nullable): nearest hit body
+ * @out_hit_x: (out) (nullable): hit X
+ * @out_hit_y: (out) (nullable): hit Y
+ * @out_hit_normal_x: (out) (nullable): outward AABB face normal X
+ * @out_hit_normal_y: (out) (nullable): outward AABB face normal Y
+ *
+ * Intersects the closed segment with axis-aligned shape bounds. Body collision
+ * masks do not affect queries. Ties use world insertion order; corner normals
+ * use the X face. Starting inside or on a bound returns the start and zero
+ * normal. Nonfinite endpoints and zero-length segments miss. Misses clear all
+ * outputs. Shape bounds are used even for circles and rotated bodies.
+ *
+ * Returns: whether a matching body was hit
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_physics_world_raycast_filtered (LrgPhysicsWorld *  self,
+                                    gfloat             start_x,
+                                    gfloat             start_y,
+                                    gfloat             end_x,
+                                    gfloat             end_y,
+                                    guint32            layer_mask,
+                                    gboolean           include_triggers,
+                                    LrgRigidBody *     ignore_body,
+                                    LrgRigidBody **    out_hit_body,
+                                    gfloat *           out_hit_x,
+                                    gfloat *           out_hit_y,
+                                    gfloat *           out_hit_normal_x,
+                                    gfloat *           out_hit_normal_y);
 
 /**
  * lrg_physics_world_query_aabb:

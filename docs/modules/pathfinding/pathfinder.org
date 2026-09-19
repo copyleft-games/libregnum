@@ -19,11 +19,11 @@ A final GObject implementing the A* pathfinding algorithm for finding optimal pa
 :END:
 =LrgPathfinder= implements the A* algorithm for finding optimal paths from a start position to a goal position on a navigation grid. Key features:
 
-- //A/ Algorithm/*: Optimal pathfinding with customizable heuristics
+- *A-star Search*: Optimal pathfinding with customizable heuristics
 - *Multiple Heuristics*: Built-in Manhattan, Euclidean, Chebyshev, and Octile distance
 - *Custom Heuristics*: Support for application-specific distance calculations
 - *Path Smoothing*: Optional post-processing to smooth paths
-- *Reachability Checks*: Fast checks to determine if a path exists
+- *Reachability Checks*: Boolean convenience wrapper around path search
 - *Performance Metrics*: Track nodes explored for optimization
 
 ** Creating a Pathfinder
@@ -123,7 +123,8 @@ Finds a path from start to end using A*.
 - =LRG_PATHFINDING_ERROR_NO_GRID= - No grid set on pathfinder
 - =LRG_PATHFINDING_ERROR_INVALID_START= - Start position invalid or blocked
 - =LRG_PATHFINDING_ERROR_INVALID_GOAL= - Goal position invalid or blocked
-- =LRG_PATHFINDING_ERROR_NO_PATH= - No path exists between start and goal
+- =LRG_PATHFINDING_ERROR_NO_PATH= - Search exhausted all candidates without reaching the goal
+- =LRG_PATHFINDING_ERROR_ITERATION_LIMIT= - Budget exhausted with candidates remaining; reachability is unknown
 
 *Example:*
 
@@ -157,18 +158,19 @@ lrg_pathfinder_is_reachable (LrgPathfinder *self,
                              gint           end_y)
 #+end_src
 
-Quickly checks if a path exists without computing the full path.
+Runs the same search as =find_path()= and frees the result. It honors the
+iteration budget and returns =FALSE= for both search errors and unreachable goals.
 
 *Returns:* =TRUE= if a path exists
 
-*Use Case:* Fast queries before expensive pathfinding
+*Use Case:* Callers that only need a boolean answer. When a path is needed,
+call =find_path()= directly to avoid searching twice.
 
 *Example:*
 
 #+begin_src C
 if (lrg_pathfinder_is_reachable(pathfinder, 10, 10, 90, 90)) {
-    /* Safe to call find_path */
-    LrgPath *path = lrg_pathfinder_find_path(pathfinder, 10, 10, 90, 90, NULL);
+    g_print("Goal is reachable\n");
 }
 #+end_src
 
@@ -204,13 +206,14 @@ Sets the path smoothing mode.
 *Smoothing Modes:* (from =lrg-enums.h=)
 
 - =LRG_PATH_SMOOTHING_NONE= - No smoothing (default)
-- =LRG_PATH_SMOOTHING_RAYCASTING= - Line-of-sight smoothing
+- =LRG_PATH_SMOOTHING_SIMPLE= - Removes collinear waypoints, retaining the search cost
+- =LRG_PATH_SMOOTHING_BEZIER= - Reserved; currently leaves the path unchanged
 
 *Example:*
 
 #+begin_src C
 /* Enable path smoothing for smoother movement */
-lrg_pathfinder_set_smoothing(pathfinder, LRG_PATH_SMOOTHING_RAYCASTING);
+lrg_pathfinder_set_smoothing(pathfinder, LRG_PATH_SMOOTHING_SIMPLE);
 #+end_src
 
 ** Iteration Control
@@ -240,7 +243,24 @@ lrg_pathfinder_set_max_iterations (LrgPathfinder *self,
                                    guint          max_iterations)
 #+end_src
 
-Sets the maximum number of iterations before giving up.
+Sets the maximum number of node expansions per search. Zero means unlimited.
+The start and goal each count when expanded (a start equal to the goal returns
+immediately with zero expansions). Reopened nodes count again. Reaching the goal
+on the final allowed expansion succeeds. An exhausted candidate set returns
+=NO_PATH=; an unfinished search returns =ITERATION_LIMIT=. The budget does not
+bound wall-clock time or the initial scan of cell costs.
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgPath) path = NULL;
+lrg_pathfinder_set_max_iterations (pathfinder, 1000);
+path = lrg_pathfinder_find_path (pathfinder, 0, 0, 90, 90, &error);
+if (g_error_matches (error, LRG_PATHFINDING_ERROR,
+                     LRG_PATHFINDING_ERROR_ITERATION_LIMIT))
+{
+    /* Defer a fresh search with a larger budget; do not mark the goal blocked. */
+}
+#+end_src
 
 *Use Case:* Prevent excessive computation on large grids with blocked goals
 
@@ -275,8 +295,10 @@ Sets a custom heuristic function. If NULL, selects Manhattan distance for
 cardinal movement or octile distance for diagonal movement, scaled by the
 lowest current cell cost (capped at 1). Zero-cost cells and custom neighbor
 graphs use Dijkstra's algorithm. The bound is recalculated for each search
-because cell costs are mutable. Custom heuristics must be consistent lower
-bounds to guarantee optimal paths.
+because cell costs are mutable. Custom heuristics must return finite, nonnegative lower
+bounds and zero at the goal to guarantee optimal paths. Consistency is optional:
+a closed node is reopened when a cheaper route is found. Callbacks must not
+mutate the grid or pathfinder during a search.
 
 *Parameters:*
 
@@ -294,7 +316,8 @@ typedef gfloat (*LrgHeuristicFunc) (gint     x1,
                                     gpointer user_data);
 #+end_src
 
-Returns estimated cost from (x1,y1) to (x2,y2).
+Returns estimated cost from (x1,y1) to (x2,y2). The built-in distance helpers
+accept the full signed integer coordinate range without integer overflow.
 
 *** Built-in Heuristics
 :PROPERTIES:
@@ -379,7 +402,7 @@ Octile distance heuristic (diagonal cost = sqrt(2)).
 *Example:*
 
 #+begin_src C
-/* Use Euclidean distance for better path quality */
+/* For unit-cost terrain, Euclidean distance is a valid lower bound. */
 lrg_pathfinder_set_heuristic(pathfinder,
                              lrg_heuristic_euclidean,
                              NULL,
@@ -437,14 +460,8 @@ int main(void) {
 
     /* Create pathfinder */
     g_autoptr(LrgPathfinder) pf = lrg_pathfinder_new(grid);
-    lrg_pathfinder_set_smoothing(pf, LRG_PATH_SMOOTHING_RAYCASTING);
+    lrg_pathfinder_set_smoothing(pf, LRG_PATH_SMOOTHING_SIMPLE);
     lrg_pathfinder_set_max_iterations(pf, 5000);
-
-    /* Check if path exists before pathfinding */
-    if (!lrg_pathfinder_is_reachable(pf, 10, 25, 40, 25)) {
-        g_print("Goal is not reachable\n");
-        return 1;
-    }
 
     /* Find path */
     g_autoptr(LrgPath) path = lrg_pathfinder_find_path(pf, 10, 25, 40, 25, &error);
@@ -479,8 +496,10 @@ int main(void) {
 :END:
 The A* algorithm works by:
 
-1. *Open Set*: Maintains candidates for exploration
-2. *Closed Set*: Tracks already-explored nodes
+1. *Open Set*: An indexed binary min-heap maintains candidates; insertion,
+   removal, and priority updates take logarithmic time in the candidate count.
+   Equal priorities use discovery order for deterministic tie-breaking.
+2. *Closed Set*: Tracks explored nodes, reopening them when their cost improves
 3. *Cost Calculation*: =f(node) = g(node) + h(node)= where:
    - =g(node)= = actual cost from start to node
    - =h(node)= = heuristic estimate from node to goal
