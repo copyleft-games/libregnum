@@ -10,6 +10,7 @@ No packages or system services are installed by the build.
 #+begin_src sh
 make
 make -C examples build/release/examples/mmo-server
+make test-mmo-gi
 python3 tests/check-mmo-server.py examples/build/release/examples/mmo-server
 #+end_src
 

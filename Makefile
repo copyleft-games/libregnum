@@ -1478,6 +1478,13 @@ test-followups-gi: lib
 	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
 	 $(GI_PYTHON) tests/test-engine-followups-gi.py
 
+.PHONY: test-mmo-gi
+test-mmo-gi: lib
+	@$(MAKE) --no-print-directory gir
+	@GI_TYPELIB_PATH="$(GIROUTDIR):$(GRAYLIB_DIR)/build/gir:$$GI_TYPELIB_PATH" \
+	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
+	 $(GI_PYTHON) tests/test-mmo-gi.py
+
 # Run the test suite under AddressSanitizer + UndefinedBehaviorSanitizer.
 # Builds into an isolated build/sanitize/ directory (SANITIZE=1 implies
 # DEBUG=1, ASAN=1, UBSAN=1), so a normal build/test run is unaffected and no
