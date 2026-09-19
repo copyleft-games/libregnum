@@ -212,6 +212,7 @@ typedef struct _LrgSoundBank       LrgSoundBank;
 typedef struct _LrgMusicTrack      LrgMusicTrack;
 typedef struct _LrgAudioManager    LrgAudioManager;
 typedef struct _LrgWaveData        LrgWaveData;
+typedef struct _LrgAudioMixer      LrgAudioMixer;
 
 /* LrgProceduralAudio is a derivable type */
 typedef struct _LrgProceduralAudio       LrgProceduralAudio;
@@ -246,6 +247,7 @@ typedef struct _LrgNavGrid       LrgNavGrid;
 typedef struct _LrgNavGridClass  LrgNavGridClass;
 
 typedef struct _LrgPathfinder       LrgPathfinder;
+typedef struct _LrgNavMesh          LrgNavMesh;
 /* LrgPathfinderClass is not forward-declared (FINAL type) */
 
 /* ==========================================================================

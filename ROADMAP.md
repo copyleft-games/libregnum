@@ -4,6 +4,20 @@ Last updated: 2026-09-18
 
 ## Recently Shipped
 
+### Non-networking audit follow-ups
+
+- Added `LrgAudioMixer`: configurable parent buses and cycle-checked sends,
+  gain/mute, low-pass and feedback-delay effects, copied/resampled voices,
+  looping/pause/stop, headless PCM rendering, and graylib stream refills.
+- Added `LrgNavMesh`: triangle-surface baking, slope filtering, edge adjacency,
+  nearest projection, dynamic polygon blocking, and A* waypoint corridors.
+- Implemented MaxRects and Guillotine atlas packing with bounded bin search.
+  All algorithms now support rotation, preserve bounds/padding, and invalidate
+  stale results correctly. Added geometry/property regressions and benchmarks.
+- Documentation: `docs/modules/audio/mixer.org`,
+  `docs/modules/pathfinding/nav-mesh.org`, `docs/modules/atlas/packing.org`.
+
+
 ### Gameplay timers and non-networking audit
 
 - Added `LrgTimerManager`: one-shot/repeating timers, scaled/unscaled clocks,
@@ -13,7 +27,7 @@ Last updated: 2026-09-18
   time scale and hit stop; shutdown cancels pending timers.
 - Added scheduler regression tests and headless template integration checks.
   See `docs/modules/core/timer-manager.org` and `docs/engine-audit.org` for the
-  audit, implemented scope, and remaining audio/navigation/atlas gaps.
+  audit and the subsequent audio/navigation/atlas implementations.
 
 ### Reliability and development workflow
 
@@ -136,12 +150,6 @@ ECS and save operations.
 `lrg_registry_register_builtin()` in `src/core/lrg-registry.c` still needs its
 built-in type mappings populated. Applications currently register the types
 needed by their YAML definitions and MCP spawning.
-
-### Atlas packing
-
-MaxRects and Guillotine selections still fall back to Shelf with a warning
-(`src/atlas/lrg-atlas-packer.c`). Implement and benchmark the algorithms against
-Shelf using representative sprite sets and validate overlap/bounds invariants.
 
 ### Template confirmations
 

@@ -87,3 +87,7 @@ pathfinding/
 :CUSTOM_ID: examples
 :END:
 For complete working examples, see the [[../examples/pathfinding.md][Pathfinding Examples]].
+
+** Triangle mesh baking, projection, and A* navigation
+
+See [[file:nav-mesh.org][Triangle mesh baking, projection, and A* navigation]] for the API, examples, and tested behavior.

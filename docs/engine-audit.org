@@ -8,8 +8,9 @@ an assertion that every engine needs every feature. Checked public APIs and
 implementations in core, templates, input, audio, pathfinding, editor, assets,
 and atlas packing. Networking and multiplayer are excluded. Existing roadmap
 entries were checked against code rather than treated as proof of absence.
-This pass implements reusable gameplay timers; larger independent systems below
-remain explicit follow-up work.
+The first pass implemented reusable gameplay timers. The follow-up pass implements
+the three engine capabilities identified for further work: audio mixer buses,
+triangle navigation meshes, and the advertised atlas packing algorithms.
 
 * Findings
 
@@ -22,9 +23,9 @@ remain explicit follow-up work.
 | Prefabs | =src/editor/lrg-prefab.c= clones, instantiates, saves, and loads node subtrees | Already present; not marked missing |
 | Object pooling and event dispatch | =src/template/lrg-object-pool.c= and =src/core/lrg-event-bus.c= | Already present |
 | Asset hot reload | =src/core/lrg-asset-manager.c= validates/replaces cached definitions and monitors changes | Present; dependency propagation/live-instance migration remain follow-ups |
-| General audio mixer graph | =src/audio/lrg-audio-manager.h= offers master/SFX/music/voice volume channels, not a configurable bus/send/effect graph | Candidate follow-up for richer audio production |
-| Navigation meshes | =src/pathfinding/= implements grid/cell/path/A*, not mesh baking or polygon navigation | Candidate follow-up for arbitrary 3D levels |
-| Production atlas packing choices | =src/atlas/lrg-atlas-packer.c= still routes MaxRects/Guillotine to Shelf | Concrete existing feature gap; separate algorithm work |
+| General audio mixer graph | =src/audio/lrg-audio-manager.h= has fixed channels; =lrg-audio-mixer.h= adds a configurable graph | Implemented: =LrgAudioMixer= bus/send graph and PCM effects |
+| Navigation meshes | =src/pathfinding/= now includes both grid and triangle-surface navigation | Implemented: =LrgNavMesh= walkable triangle baking and A* queries |
+| Production atlas packing choices | =src/atlas/lrg-atlas-packer.c= now dispatches to real free-rectangle algorithms | Implemented: MaxRects and Guillotine, with rotation and bounds validation |
 
 * Implemented: gameplay timer manager
 
@@ -42,15 +43,24 @@ retained because their persistence and update semantics differ.
 
 See [[file:modules/core/timer-manager.org][timer API, examples, delivery rules, and tests]].
 
-* Next priorities
+* Implemented follow-ups
 
-Audio buses, navigation meshes, and atlas algorithms need independent API and
-behavioral work; this change does not claim to implement them. Start with atlas
-packing to fulfill existing advertised choices, then choose navigation/audio
-based on the next game's requirements. Timer persistence would require a stable
-application action identifier instead of attempting to serialize signal closures.
+- [[file:modules/audio/mixer.org][Audio mixer]]: named parent buses, cycle-checked post-fader sends, gain/mute,
+  low-pass and feedback-delay processing, independently owned looping/pausable
+  voices, format conversion, offline rendering, and a graylib stream pump.
+- [[file:modules/pathfinding/nav-mesh.org][Navigation meshes]]: atomic walkable-triangle baking with slope filtering and
+  shared-edge adjacency, nearest-surface projection, polygon blocking, and
+  ordered-frontier A* returning a surface-contained waypoint corridor.
+- [[file:modules/atlas/packing.org][Atlas algorithms]]: MaxRects and Guillotine implementations, candidate-bin
+  search, rotation for all methods, padding/overflow safety, correct power-of-two
+  limits, stale-result invalidation, and reproducible packing comparisons.
 
-* Validation for this change
+Application-specific asset migration and timer action persistence were design
+ideas in the first audit, not part of these three capability implementations.
+They require application contracts for replacing live objects and naming actions.
+The limitations of each implemented capability are stated in its API guide.
+
+* Validation: initial timer pass
 
 - Full headless =make test=: 88 test binaries, 2,582 passed cases and 125
   hardware/environment skips. Dependency directory overrides reused this
@@ -66,3 +76,23 @@ application action identifier instead of attempting to serialize signal closures
 
 The full engine sanitizer suite and hardware-dependent paths were not run.
 No new external dependency or host package was installed.
+
+* Validation: audio/navigation/atlas follow-up pass
+
+- Full headless =make test=: 91 C test binaries, 2,609 passed cases and 125
+  skips. The three new binaries contribute 27 focused regressions.
+- Static/shared libraries, loader, GIR, and typelib built successfully.
+  A strict =--warn-all --warn-error= scan passed for the new mixer/navmesh API.
+  Existing warnings in unrelated GIR inputs remain.
+- All 27 focused tests passed with the changed C implementations instrumented
+  under ASan/UBSan with leak detection. The same tests passed Valgrind with
+  zero errors and zero definite leaks.
+- =make test-followups-gi= passed both Python binding regressions, including
+  caller-allocated projection output and owned PCM arrays. This target requires
+  =python3-gobject=; set =GI_PYTHON= to select another compatible interpreter.
+- New org document links/source blocks and =git diff --check= passed.
+
+The full engine sanitizer suite and physical audio-device playback were not run.
+Builds used the existing parent-checkout dependency directories; no packages
+were installed. The mixer itself adds no dependency beyond existing engine
+libraries, and the navmesh/packer use GLib/GIO and libm.

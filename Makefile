@@ -125,6 +125,7 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-music-track.h \
 	src/audio/lrg-audio-manager.h \
 	src/audio/lrg-wave-data.h \
+	src/audio/lrg-audio-mixer.h \
 	src/audio/lrg-procedural-audio.h \
 	src/inventory/lrg-item-def.h \
 	src/inventory/lrg-item-stack.h \
@@ -136,6 +137,7 @@ PUBLIC_HEADERS := \
 	src/pathfinding/lrg-path.h \
 	src/pathfinding/lrg-nav-grid.h \
 	src/pathfinding/lrg-pathfinder.h \
+	src/pathfinding/lrg-nav-mesh.h \
 	src/ai/lrg-blackboard.h \
 	src/ai/lrg-bt-node.h \
 	src/ai/lrg-bt-composite.h \
@@ -597,6 +599,7 @@ SOURCES := \
 	src/audio/lrg-music-track.c \
 	src/audio/lrg-audio-manager.c \
 	src/audio/lrg-wave-data.c \
+	src/audio/lrg-audio-mixer.c \
 	src/audio/lrg-procedural-audio.c \
 	src/inventory/lrg-item-def.c \
 	src/inventory/lrg-item-stack.c \
@@ -608,6 +611,7 @@ SOURCES := \
 	src/pathfinding/lrg-path.c \
 	src/pathfinding/lrg-nav-grid.c \
 	src/pathfinding/lrg-pathfinder.c \
+	src/pathfinding/lrg-nav-mesh.c \
 	src/ai/lrg-blackboard.c \
 	src/ai/lrg-bt-node.c \
 	src/ai/lrg-bt-composite.c \
@@ -1434,6 +1438,15 @@ else ifeq ($(BUILD_TESTS),1)
 else
 	$(call print_warning,"Tests disabled (BUILD_TESTS=0)")
 endif
+
+# Explicit binding check: requires python3-gobject and the generated typelib.
+GI_PYTHON ?= /usr/bin/python3
+.PHONY: test-followups-gi
+test-followups-gi: lib
+	@$(MAKE) --no-print-directory gir
+	@GI_TYPELIB_PATH="$(GIROUTDIR):$(GRAYLIB_DIR)/build/gir:$$GI_TYPELIB_PATH" \
+	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
+	 $(GI_PYTHON) tests/test-engine-followups-gi.py
 
 # Run the test suite under AddressSanitizer + UndefinedBehaviorSanitizer.
 # Builds into an isolated build/sanitize/ directory (SANITIZE=1 implies

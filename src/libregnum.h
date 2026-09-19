@@ -144,6 +144,7 @@
 #include "audio/lrg-music-track.h"
 #include "audio/lrg-audio-manager.h"
 #include "audio/lrg-wave-data.h"
+#include "audio/lrg-audio-mixer.h"
 #include "audio/lrg-procedural-audio.h"
 
 /* Inventory module */
@@ -161,6 +162,7 @@
 #include "pathfinding/lrg-path.h"
 #include "pathfinding/lrg-nav-grid.h"
 #include "pathfinding/lrg-pathfinder.h"
+#include "pathfinding/lrg-nav-mesh.h"
 
 /* AI module */
 #include "ai/lrg-blackboard.h"
