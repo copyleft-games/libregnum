@@ -24,7 +24,7 @@ lrg_asset_manager_add_search_path (manager, "mods/my-mod/");
 GrlTexture *tex = lrg_asset_manager_load_texture (manager, "sprites/player.png", &error);
 #+end_src
 
-Asset types: Textures, Fonts, Sounds, Music
+Asset types: Textures, Fonts, Sounds, Music, 3D Models and their skeletal animation clips (see [[#models-and-animations][Models and animations]])
 
 ** Key Methods
 :PROPERTIES:
@@ -47,6 +47,9 @@ Asset types: Textures, Fonts, Sounds, Music
 - =lrg_asset_manager_load_font()= - Load font file
 - =lrg_asset_manager_load_sound()= - Load sound effect
 - =lrg_asset_manager_load_music()= - Load music track
+- =lrg_asset_manager_load_model()= - Load a 3D model (glTF/GLB, OBJ, IQM, M3D, VOX)
+- =lrg_asset_manager_load_model_animations()= - Load a model file's animation clips
+- =lrg_asset_manager_resolve_path()= - Canonical path a name resolves to (the model cache key)
 
 *** Async Loading
 :PROPERTIES:
@@ -68,6 +71,8 @@ Asset types: Textures, Fonts, Sounds, Music
 - =lrg_asset_manager_get_font_cache_size()= - Count fonts
 - =lrg_asset_manager_get_sound_cache_size()= - Count sounds
 - =lrg_asset_manager_get_music_cache_size()= - Count music
+- =lrg_asset_manager_get_model_cache_size()= - Count models
+- =lrg_asset_manager_get_animation_cache_size()= - Count animation sets
 
 ** Complete API Reference
 :PROPERTIES:
@@ -110,6 +115,67 @@ int main ()
 - [[../../architecture.md#asset-manager-pattern][Asset Management]]
 - [[../../concepts/modding.md][Modding System]]
 - [[file:engine.org][LrgEngine]]
+
+** Models and animations
+:PROPERTIES:
+:CUSTOM_ID: models-and-animations
+:END:
+#+begin_src C
+gchar     *lrg_asset_manager_resolve_path          (LrgAssetManager *self, const gchar *name);
+GrlModel  *lrg_asset_manager_load_model            (LrgAssetManager *self, const gchar *name,
+                                                    GError **error);   /* transfer none */
+GPtrArray *lrg_asset_manager_load_model_animations (LrgAssetManager *self, const gchar *name,
+                                                    GError **error);   /* transfer none, GrlModelAnimation */
+guint      lrg_asset_manager_get_model_cache_size     (LrgAssetManager *self);
+guint      lrg_asset_manager_get_animation_cache_size (LrgAssetManager *self);
+#+end_src
+
+*** Cache keys
+:PROPERTIES:
+:CUSTOM_ID: model-cache-keys
+:END:
+Models and animation sets are cached under the *canonical resolved path*: the name is searched in the search paths (last added first, or used as-is when absolute) and then canonicalized with =g_canonicalize_filename()=. Consequences:
+
+- ="models/bear.glb"=, ="models/./bear.glb"=, ="models//bear.glb"= and the equivalent absolute path share one =GrlModel=.
+- The same relative name resolves to a different file (and a different entry) after a higher-priority search path is added, so mods can override models.
+- =lrg_asset_manager_unload()= and =lrg_asset_manager_is_cached()= accept any spelling. Unloading drops both the model and its animation set.
+- =lrg_asset_manager_load_asset()= dispatches =.glb=, =.gltf=, =.obj=, =.iqm=, =.m3d= and =.vox= to =load_model()=.
+
+Symbolic links are not resolved; two links to one file are two entries.
+
+*** Ownership and unloading
+:PROPERTIES:
+:CUSTOM_ID: model-ownership
+:END:
+Both functions return *borrowed* objects: never unref them. The manager unloads a model when it is unloaded explicitly, by =unload_all()= or when the manager is finalized. At load time the manager records every GPU texture the model loader created for the model's material maps and unloads exactly those textures with the model (raylib's =UnloadModel()= leaves textures to the caller). A texture you later assign to a material remains yours, and shaders are never unloaded, so assigning a shared lighting shader to =materials[i].shader= is safe without restoring it first.
+
+Skinned models: raylib 6.0's =UnloadModel()= does not free =Model.currentPose= and =Model.boneMatrices=. graylib's =GrlModel= finalizer frees them, so cached skinned models do not leak; code that already frees them manually through =grl_model_get_handle()= and sets them to =NULL= stays safe.
+
+Release the manager (or unload the models) before closing the window: unloading meshes and textures needs the GL context.
+
+*** Errors
+:PROPERTIES:
+:CUSTOM_ID: model-errors
+:END:
+| Situation                                    | Error                                                       |
+|----------------------------------------------+-------------------------------------------------------------|
+| No file matches the name                     | =LRG_ASSET_MANAGER_ERROR= / =LRG_ASSET_MANAGER_ERROR_NOT_FOUND= |
+| =load_model()= without a graphics context    | =G_IO_ERROR= / =G_IO_ERROR_NOT_INITIALIZED=                 |
+| The loader produced no meshes (corrupt file, Draco-compressed glTF, unsupported format) | =LRG_ASSET_MANAGER_ERROR_LOAD_FAILED= |
+
+Animation loading is CPU-only and works headlessly. A file without a skin or animations yields an *empty* cached array rather than an error (raylib cannot tell "no clips" from "cannot parse"). Clips keep the file's order, are sampled at 60 frames per second, and raylib truncates their names to 31 bytes.
+
+*** Example
+:PROPERTIES:
+:CUSTOM_ID: model-example
+:END:
+#+begin_src C
+GrlModel  *bear = lrg_asset_manager_load_model (manager, "models/bear.glb", &error);
+GPtrArray *clips = lrg_asset_manager_load_model_animations (manager, "models/bear.glb", &error);
+
+if (bear != NULL && clips != NULL)
+    animator = lrg_model_animator_new (bear, clips);
+#+end_src
 
 * Definition assets and live reload
 

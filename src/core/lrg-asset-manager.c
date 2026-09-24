@@ -14,6 +14,7 @@
 #include "lrg-asset-manager.h"
 #include "lrg-data-loader.h"
 #include <raylib.h>
+#include <rlgl.h>
 #include "../lrg-log.h"
 
 typedef struct
@@ -28,6 +29,8 @@ typedef struct
     gboolean reloading;
     GHashTable *object_watches;
     GHashTable *music_cache;     /* gchar* -> GrlMusic* */
+    GHashTable *model_cache;     /* canonical path -> ModelAsset* */
+    GHashTable *animation_cache; /* canonical path -> GPtrArray<GrlModelAnimation> */
 } LrgAssetManagerPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgAssetManager, lrg_asset_manager, G_TYPE_OBJECT)
@@ -37,6 +40,21 @@ typedef struct
     GObject *object;
     gchar *path;
 } ObjectAsset;
+
+/*
+ * ModelAsset:
+ *
+ * A cached model plus the GPU textures its loader created. raylib's
+ * UnloadModel() leaves material textures to the caller, so the manager
+ * records them at load time and releases them with the model. Recording
+ * them up front means textures a caller later swaps into a material are
+ * never unloaded by the manager.
+ */
+typedef struct
+{
+    GrlModel *model;
+    GArray   *textures;   /* Texture2D created by the model loader */
+} ModelAsset;
 
 typedef struct
 {
@@ -65,6 +83,57 @@ object_asset_free (gpointer data)
     g_object_unref (asset->object);
     g_free (asset->path);
     g_free (asset);
+}
+
+static void
+model_asset_free (gpointer data)
+{
+    ModelAsset *asset = data;
+    guint       i;
+
+    /* Model first (meshes, maps, pose caches), then its loader textures.
+     * Both need the GL context the model was created in. */
+    g_clear_object (&asset->model);
+    if (IsWindowReady ())
+    {
+        for (i = 0; i < asset->textures->len; i++)
+            UnloadTexture (g_array_index (asset->textures, Texture2D, i));
+    }
+    g_array_unref (asset->textures);
+    g_free (asset);
+}
+
+/* model_asset_collect_textures:
+ * Records every distinct non-default texture referenced by the model's
+ * material maps right after loading. */
+static void
+model_asset_collect_textures (ModelAsset *asset)
+{
+    Model *model;
+    guint  default_id;
+    gint   m;
+    gint   k;
+
+    model = grl_model_get_handle (asset->model);
+    default_id = rlGetTextureIdDefault ();
+    for (m = 0; m < model->materialCount; m++)
+    {
+        if (model->materials[m].maps == NULL)
+            continue;
+        for (k = 0; k <= MATERIAL_MAP_BRDF; k++)
+        {
+            Texture2D texture = model->materials[m].maps[k].texture;
+            gboolean  seen = FALSE;
+            guint     i;
+
+            if (texture.id == 0 || texture.id == default_id)
+                continue;
+            for (i = 0; i < asset->textures->len && !seen; i++)
+                seen = g_array_index (asset->textures, Texture2D, i).id == texture.id;
+            if (!seen)
+                g_array_append_val (asset->textures, texture);
+        }
+    }
 }
 
 static void
@@ -144,6 +213,34 @@ make_font_cache_key (const gchar *name,
                      gint         size)
 {
     return g_strdup_printf ("%s:%d", name, size);
+}
+
+/*
+ * model_cache_key:
+ * @self: an #LrgAssetManager
+ * @name: asset name or absolute path
+ *
+ * Model and animation caches are keyed by the canonical absolute path of
+ * the resolved file, so different spellings of one file share an entry and
+ * the same relative name under different search paths does not. Absolute
+ * names are canonicalized even when the file is gone so they can still be
+ * unloaded.
+ *
+ * Returns: (transfer full) (nullable): the key, or %NULL if not found
+ */
+static gchar *
+model_cache_key (LrgAssetManager *self,
+                 const gchar     *name)
+{
+    g_autofree gchar *path = NULL;
+
+    if (g_path_is_absolute (name))
+        return g_canonicalize_filename (name, NULL);
+
+    path = resolve_asset_path (self, name);
+    if (path == NULL)
+        return NULL;
+    return g_canonicalize_filename (path, NULL);
 }
 
 /* ==========================================================================
@@ -388,6 +485,8 @@ lrg_asset_manager_finalize (GObject *object)
     g_clear_pointer (&priv->font_cache, g_hash_table_unref);
     g_clear_pointer (&priv->sound_cache, g_hash_table_unref);
     g_clear_pointer (&priv->music_cache, g_hash_table_unref);
+    g_clear_pointer (&priv->model_cache, g_hash_table_unref);
+    g_clear_pointer (&priv->animation_cache, g_hash_table_unref);
 
     G_OBJECT_CLASS (lrg_asset_manager_parent_class)->finalize (object);
 }
@@ -453,6 +552,10 @@ lrg_asset_manager_init (LrgAssetManager *self)
                                                 g_free, g_object_unref);
     priv->music_cache = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                 g_free, g_object_unref);
+    priv->model_cache = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                               g_free, model_asset_free);
+    priv->animation_cache = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                                   g_free, (GDestroyNotify)g_ptr_array_unref);
 }
 
 /* ==========================================================================
@@ -1100,6 +1203,10 @@ lrg_asset_manager_load_asset (LrgAssetManager  *self,
         g_str_equal (lower, ".ktx") || g_str_equal (lower, ".pkm") ||
         g_str_equal (lower, ".pvr") || g_str_equal (lower, ".astc"))
         return (GObject *)lrg_asset_manager_load_texture (self, name, error);
+    if (g_str_equal (lower, ".glb") || g_str_equal (lower, ".gltf") ||
+        g_str_equal (lower, ".obj") || g_str_equal (lower, ".iqm") ||
+        g_str_equal (lower, ".m3d") || g_str_equal (lower, ".vox"))
+        return (GObject *)lrg_asset_manager_load_model (self, name, error);
     g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                  "Unsupported asset extension: %s", name);
     return NULL;
@@ -1365,6 +1472,16 @@ lrg_asset_manager_unload (LrgAssetManager *self,
         removed = TRUE;
     }
 
+    /* Models and animation sets are keyed by canonical path. */
+    {
+        g_autofree gchar *key = model_cache_key (self, name);
+
+        if (key != NULL && g_hash_table_remove (priv->model_cache, key))
+            removed = TRUE;
+        if (key != NULL && g_hash_table_remove (priv->animation_cache, key))
+            removed = TRUE;
+    }
+
     /* For fonts, we need to check keys that start with name: */
     {
         GHashTableIter iter;
@@ -1425,6 +1542,8 @@ lrg_asset_manager_unload_all (LrgAssetManager *self)
     g_hash_table_remove_all (priv->font_cache);
     g_hash_table_remove_all (priv->sound_cache);
     g_hash_table_remove_all (priv->music_cache);
+    g_hash_table_remove_all (priv->model_cache);
+    g_hash_table_remove_all (priv->animation_cache);
 
     lrg_debug (LRG_LOG_DOMAIN_CORE, "Unloaded all cached assets");
 }
@@ -1466,6 +1585,14 @@ lrg_asset_manager_is_cached (LrgAssetManager *self,
     if (g_hash_table_contains (priv->music_cache, name))
     {
         return TRUE;
+    }
+
+    {
+        g_autofree gchar *key = model_cache_key (self, name);
+
+        if (key != NULL && (g_hash_table_contains (priv->model_cache, key) ||
+                            g_hash_table_contains (priv->animation_cache, key)))
+            return TRUE;
     }
 
     /* For fonts, check if any key starts with name: */
@@ -1567,4 +1694,153 @@ lrg_asset_manager_get_music_cache_size (LrgAssetManager *self)
     priv = lrg_asset_manager_get_instance_private (self);
 
     return g_hash_table_size (priv->music_cache);
+}
+
+/* ==========================================================================
+ * Models
+ * ========================================================================== */
+
+gchar *
+lrg_asset_manager_resolve_path (LrgAssetManager *self,
+                                const gchar     *name)
+{
+    g_autofree gchar *path = NULL;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+
+    path = resolve_asset_path (self, name);
+    if (path == NULL)
+        return NULL;
+    return g_canonicalize_filename (path, NULL);
+}
+
+GrlModel *
+lrg_asset_manager_load_model (LrgAssetManager  *self,
+                              const gchar      *name,
+                              GError          **error)
+{
+    LrgAssetManagerPrivate *priv;
+    g_autofree gchar       *key = NULL;
+    ModelAsset             *asset;
+    GrlModel               *model;
+    GError                 *load_error = NULL;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    priv = lrg_asset_manager_get_instance_private (self);
+
+    /* Resolve to the canonical file first; an absolute name must exist. */
+    key = model_cache_key (self, name);
+    if (key != NULL)
+    {
+        asset = g_hash_table_lookup (priv->model_cache, key);
+        if (asset != NULL)
+            return asset->model;
+    }
+    if (key == NULL || !g_file_test (key, G_FILE_TEST_IS_REGULAR))
+    {
+        g_set_error (error, LRG_ASSET_MANAGER_ERROR, LRG_ASSET_MANAGER_ERROR_NOT_FOUND,
+                     "Model not found: %s", name);
+        return NULL;
+    }
+
+    /* Meshes are uploaded to VRAM while loading. */
+    if (!IsWindowReady ())
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                             "A graphics context is required to load this asset");
+        return NULL;
+    }
+
+    model = grl_model_new_from_file (key, &load_error);
+    if (model == NULL || !grl_model_is_valid (model))
+    {
+        g_set_error (error, LRG_ASSET_MANAGER_ERROR, LRG_ASSET_MANAGER_ERROR_LOAD_FAILED,
+                     "Failed to load model %s: %s", key,
+                     load_error != NULL ? load_error->message : "invalid model");
+        g_clear_error (&load_error);
+        g_clear_object (&model);
+        return NULL;
+    }
+
+    asset = g_new0 (ModelAsset, 1);
+    asset->model = model;
+    asset->textures = g_array_new (FALSE, FALSE, sizeof (Texture2D));
+    model_asset_collect_textures (asset);
+    g_hash_table_insert (priv->model_cache, g_strdup (key), asset);
+
+    lrg_debug (LRG_LOG_DOMAIN_CORE, "Loaded model '%s' from %s (%d meshes, %u textures)",
+               name, key, grl_model_get_mesh_count (model), asset->textures->len);
+    return model;
+}
+
+GPtrArray *
+lrg_asset_manager_load_model_animations (LrgAssetManager  *self,
+                                         const gchar      *name,
+                                         GError          **error)
+{
+    LrgAssetManagerPrivate *priv;
+    g_autofree gchar       *key = NULL;
+    GPtrArray              *clips;
+    GrlModelAnimation     **loaded;
+    gint                    count = 0;
+    gint                    i;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    priv = lrg_asset_manager_get_instance_private (self);
+
+    key = model_cache_key (self, name);
+    if (key != NULL)
+    {
+        clips = g_hash_table_lookup (priv->animation_cache, key);
+        if (clips != NULL)
+            return clips;
+    }
+    if (key == NULL || !g_file_test (key, G_FILE_TEST_IS_REGULAR))
+    {
+        g_set_error (error, LRG_ASSET_MANAGER_ERROR, LRG_ASSET_MANAGER_ERROR_NOT_FOUND,
+                     "Model animations not found: %s", name);
+        return NULL;
+    }
+
+    /* Animation data is CPU-only and loads without a graphics context.
+     * raylib reports "no animations" and "cannot parse" the same way, so
+     * both yield an empty (cached) set. */
+    clips = g_ptr_array_new_with_free_func (g_object_unref);
+    loaded = grl_model_animation_load (key, &count, NULL);
+    for (i = 0; loaded != NULL && i < count; i++)
+        g_ptr_array_add (clips, loaded[i]);
+    g_free (loaded);
+
+    g_hash_table_insert (priv->animation_cache, g_strdup (key), clips);
+    lrg_debug (LRG_LOG_DOMAIN_CORE, "Loaded %u animation clips from %s", clips->len, key);
+    return clips;
+}
+
+guint
+lrg_asset_manager_get_model_cache_size (LrgAssetManager *self)
+{
+    LrgAssetManagerPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), 0);
+
+    priv = lrg_asset_manager_get_instance_private (self);
+    return g_hash_table_size (priv->model_cache);
+}
+
+guint
+lrg_asset_manager_get_animation_cache_size (LrgAssetManager *self)
+{
+    LrgAssetManagerPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), 0);
+
+    priv = lrg_asset_manager_get_instance_private (self);
+    return g_hash_table_size (priv->animation_cache);
 }

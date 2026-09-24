@@ -555,7 +555,15 @@ and client-side helpers for skinned and static models.
   broadphase (`cell-size`, default 16, 0 = brute force) never changes a
   result. Call `lrg_wall_set_build_index()` before sharing across threads.
 
-See `docs/modules/physics/wall-set.org`.
+- **Model cache** (`LrgAssetManager`): `lrg_asset_manager_load_model()` and
+  `lrg_asset_manager_load_model_animations()` return *borrowed* objects cached
+  under the canonical resolved path (`lrg_asset_manager_resolve_path()`).
+  The manager unloads the model, the textures its loader created and the
+  skinning pose caches; never unref the results. Animation loading works
+  headlessly; an animation-less file gives an empty array.
+
+See `docs/modules/physics/wall-set.org` and
+`docs/modules/core/asset-manager.org` (Models and animations).
 
 ## Architecture Overview
 

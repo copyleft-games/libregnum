@@ -242,8 +242,9 @@ LrgDataLoader * lrg_asset_manager_get_data_loader (LrgAssetManager *self);
  * Loads and caches an asset based on its case-insensitive extension:
  * png/jpg/jpeg/bmp/tga/gif/qoi/dds/ktx/pkm/pvr/astc become textures;
  * ttf/otf/fnt become fonts at size 32; wav becomes a sound;
- * ogg/mp3/flac/xm/mod become streaming music; yaml/yml become validated
- * GObject definitions. Other extensions return %G_IO_ERROR_NOT_SUPPORTED.
+ * ogg/mp3/flac/xm/mod become streaming music; glb/gltf/obj/iqm/m3d/vox
+ * become cached models (lrg_asset_manager_load_model()); yaml/yml become
+ * validated GObject definitions. Other extensions return %G_IO_ERROR_NOT_SUPPORTED.
  * Call the specific load functions to choose another font size/audio mode.
  * Texture/font loading requires a graphics context, audio an audio device;
  * YAML definitions work headlessly. Calls must run on the owning thread.
@@ -512,5 +513,101 @@ guint lrg_asset_manager_get_sound_cache_size (LrgAssetManager *self);
  */
 LRG_AVAILABLE_IN_ALL
 guint lrg_asset_manager_get_music_cache_size (LrgAssetManager *self);
+
+/* ==========================================================================
+ * Models
+ * ========================================================================== */
+
+/**
+ * lrg_asset_manager_resolve_path:
+ * @self: an #LrgAssetManager
+ * @name: asset name (searched in the search paths, last added first) or
+ *   absolute path
+ *
+ * Resolves @name the same way the loaders do and canonicalizes the result
+ * (absolute, with "." and ".." segments and duplicate separators removed).
+ * This canonical path is the key of the model and animation caches.
+ *
+ * Returns: (transfer full) (nullable) (type filename): the canonical path,
+ *   or %NULL if no search path contains @name
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_asset_manager_resolve_path (LrgAssetManager *self,
+                                        const gchar     *name);
+
+/**
+ * lrg_asset_manager_load_model:
+ * @self: an #LrgAssetManager
+ * @name: model name (e.g. "models/bear.glb") or absolute path
+ * @error: (nullable): return location for error
+ *
+ * Loads a 3D model (glTF/GLB, OBJ, IQM, M3D, VOX) and caches it under its
+ * canonical resolved path (see lrg_asset_manager_resolve_path()), so
+ * different spellings of one file share a single #GrlModel.
+ *
+ * The manager owns the model and unloads it on lrg_asset_manager_unload(),
+ * lrg_asset_manager_unload_all() or finalization, together with the
+ * material textures its loader created and the skinning pose caches.
+ * Textures a caller later assigns to a material stay the caller's.
+ * Materials may be given a custom shader; the manager never unloads
+ * shaders. Release the manager (or unload the model) before closing the
+ * window.
+ *
+ * Errors: %LRG_ASSET_MANAGER_ERROR_NOT_FOUND when no file matches,
+ * %G_IO_ERROR_NOT_INITIALIZED without a graphics context, and
+ * %LRG_ASSET_MANAGER_ERROR_LOAD_FAILED when the loader produced no meshes
+ * (for example a Draco-compressed glTF).
+ *
+ * Returns: (transfer none) (nullable): the cached #GrlModel, or %NULL on
+ *   error
+ */
+LRG_AVAILABLE_IN_ALL
+GrlModel * lrg_asset_manager_load_model (LrgAssetManager  *self,
+                                         const gchar      *name,
+                                         GError          **error);
+
+/**
+ * lrg_asset_manager_load_model_animations:
+ * @self: an #LrgAssetManager
+ * @name: model name or absolute path
+ * @error: (nullable): return location for error
+ *
+ * Loads the skeletal animation clips of a model file, cached under the
+ * same canonical key as lrg_asset_manager_load_model(). Clips are sampled
+ * at 60 frames per second by raylib and keep the file's clip order.
+ * Loading needs no graphics context. A file without a skin or animations
+ * yields an empty array (also cached).
+ *
+ * Errors: %LRG_ASSET_MANAGER_ERROR_NOT_FOUND when no file matches.
+ *
+ * Returns: (transfer none) (nullable) (element-type GrlModelAnimation):
+ *   the cached clips, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_asset_manager_load_model_animations (LrgAssetManager  *self,
+                                                     const gchar      *name,
+                                                     GError          **error);
+
+/**
+ * lrg_asset_manager_get_model_cache_size:
+ * @self: an #LrgAssetManager
+ *
+ * Gets the number of cached models.
+ *
+ * Returns: The model cache size
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_asset_manager_get_model_cache_size (LrgAssetManager *self);
+
+/**
+ * lrg_asset_manager_get_animation_cache_size:
+ * @self: an #LrgAssetManager
+ *
+ * Gets the number of cached animation sets (one per model file).
+ *
+ * Returns: The animation cache size
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_asset_manager_get_animation_cache_size (LrgAssetManager *self);
 
 G_END_DECLS

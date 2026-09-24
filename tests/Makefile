@@ -84,6 +84,7 @@ TEST_SOURCES := \
 	test-profession.c \
 	test-collection.c \
 	test-wall-set.c \
+	test-asset-model-cache.c \
 	test-audio.c \
 	test-inventory.c \
 	test-i18n.c \
