@@ -1,0 +1,111 @@
+* LrgGltfInfo - glTF / GLB Inspection
+:PROPERTIES:
+:CUSTOM_ID: lrggltfinfo---gltf--glb-inspection
+:END:
+Headless inspection of glTF 2.0 files. =LrgGltfInfo= answers the questions a game needs before (or instead of) loading a model with raylib: which raylib mesh index is the helmet, which node did it come from, how many vertices does each mesh have, which animations exist and would raylib even load this file. It parses only the JSON (with json-glib), never opens external buffers and never touches raylib or GL.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgGltfInfo= - *Final GObject Class*, =LRG_TYPE_GLTF_INFO=, GIR =Libregnum.GltfInfo=
+- =LrgGltfError= - error enum in the =LRG_GLTF_ERROR= domain (=lrg-enums.h=)
+- *Header* - =graphics/lrg-gltf-info.h=
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+LrgGltfInfo *lrg_gltf_info_new_from_file  (const gchar *path, GError **error);
+LrgGltfInfo *lrg_gltf_info_new_from_bytes (GBytes *data, GError **error);
+gchar      **lrg_gltf_read_mesh_names     (const gchar *path, GError **error); /* GStrv */
+
+guint        lrg_gltf_info_get_mesh_count        (LrgGltfInfo *self);
+const gchar *lrg_gltf_info_get_mesh_name         (LrgGltfInfo *self, guint index);
+const gchar *lrg_gltf_info_get_mesh_source_name  (LrgGltfInfo *self, guint index);
+const gchar *lrg_gltf_info_get_mesh_node_name    (LrgGltfInfo *self, guint index);
+gint         lrg_gltf_info_get_mesh_node_index   (LrgGltfInfo *self, guint index);
+gint         lrg_gltf_info_get_mesh_source_index (LrgGltfInfo *self, guint index);
+gint         lrg_gltf_info_get_mesh_primitive    (LrgGltfInfo *self, guint index);
+guint        lrg_gltf_info_get_mesh_vertex_count (LrgGltfInfo *self, guint index);
+gint         lrg_gltf_info_get_mesh_material     (LrgGltfInfo *self, guint index);
+gint         lrg_gltf_info_find_mesh_by_node     (LrgGltfInfo *self, const gchar *node_name);
+GBytes      *lrg_gltf_info_build_node_mask       (LrgGltfInfo *self,
+                                                  const gchar *const *hidden_nodes);
+
+guint        lrg_gltf_info_get_node_count        (LrgGltfInfo *self);
+guint        lrg_gltf_info_get_skin_count        (LrgGltfInfo *self);
+guint        lrg_gltf_info_get_animation_count   (LrgGltfInfo *self);
+const gchar *lrg_gltf_info_get_animation_name    (LrgGltfInfo *self, guint index);
+gchar       *lrg_gltf_info_get_animation_raylib_name (LrgGltfInfo *self, guint index);
+gboolean     lrg_gltf_info_get_uses_draco        (LrgGltfInfo *self);
+gboolean     lrg_gltf_info_get_is_binary         (LrgGltfInfo *self);
+#+end_src
+
+Every per-mesh getter is indexed by the *raylib mesh index* (=Model.meshes[index]=). Out-of-range indices return =NULL=, -1 or 0.
+
+** raylib Mesh Order
+:PROPERTIES:
+:CUSTOM_ID: raylib-mesh-order
+:END:
+raylib 6.0 =LoadGLTF()= (=rmodels.c=) creates meshes like this, and =LrgGltfInfo= reproduces it exactly:
+
+1. Visit =nodes[]= in array order. Scenes and the node hierarchy are ignored; every node counts.
+2. Skip nodes without a =mesh=.
+3. For the node's mesh, emit one raylib mesh per primitive whose =mode= is absent or 4 (triangles), in primitive order. Points, lines, strips and fans are skipped.
+
+Consequences: a glTF mesh referenced by two nodes produces two raylib meshes; a mesh with three triangle primitives produces three consecutive raylib meshes that share one node. =Model.meshMaterial[i]= equals =lrg_gltf_info_get_mesh_material (info, i) + 1= (raylib material 0 is its default material, used when the primitive has none).
+
+The ordering has been checked against raylib itself on 172 production GLB files (mesh count, per-mesh vertex count and material index all equal).
+
+** Names
+:PROPERTIES:
+:CUSTOM_ID: names
+:END:
+| Getter            | Value                                                                                   |
+|-------------------+-----------------------------------------------------------------------------------------|
+| =mesh_node_name=  | The referencing node's =name= (=NULL= when unnamed). Usually the meaningful name.        |
+| =mesh_source_name= | The glTF mesh's =name= (=NULL= when unnamed). Often an editor name like =Cube.124=.     |
+| =mesh_name=       | Display name: the mesh name, or =mesh<N>= (N = glTF mesh index) when unnamed; when the glTF mesh has more than one primitive, =#<k>= is appended with k the primitive index inside that mesh (=Horse#3=, =mesh0#1=). |
+
+Example — KayKit =Knight.glb= yields 15 meshes whose node names are =1H_Sword_Offhand=, =Badge_Shield=, =Rectangle_Shield=, =Round_Shield=, =Spike_Shield=, =1H_Sword=, =2H_Sword=, =Knight_Helmet=, =Knight_Cape=, =Knight_ArmLeft=, =Knight_ArmRight=, =Knight_Body=, =Knight_Head=, =Knight_LegLeft=, =Knight_LegRight= while the mesh names are =Cube.003=, =Cylinder.280=, ... Quaternius =horse.glb= yields 8 meshes =Horse#0= .. =Horse#7=, all with node =Horse=.
+
+** Visibility Masks
+:PROPERTIES:
+:CUSTOM_ID: visibility-masks
+:END:
+=lrg_gltf_info_build_node_mask()= returns one byte per raylib mesh: 1 = draw, 0 = hide when the mesh's node name is in the =NULL=-terminated list. Unknown names are ignored. Feed the bytes to =lrg_model_animator_draw_masked()=.
+
+#+begin_src C
+static const gchar *const no_shields[] = {
+    "Badge_Shield", "Rectangle_Shield", "Round_Shield", "Spike_Shield",
+    "1H_Sword_Offhand", "2H_Sword", NULL
+};
+g_autoptr(LrgGltfInfo) info = lrg_gltf_info_new_from_file ("models/Knight.glb", &error);
+g_autoptr(GBytes) mask = lrg_gltf_info_build_node_mask (info, no_shields);
+#+end_src
+
+** Animations, Skins and Draco
+:PROPERTIES:
+:CUSTOM_ID: animations-skins-draco
+:END:
+- =get_animation_name()= returns the full name (="" when unnamed). raylib keeps only the first 31 bytes (=LRG_GLTF_RAYLIB_NAME_MAX=); =get_animation_raylib_name()= returns exactly that truncation.
+- raylib loads animations only when the file has a skin, and only the first skin.
+- =get_uses_draco()= is =TRUE= when =KHR_draco_mesh_compression= appears in =extensionsUsed=, =extensionsRequired= or on a primitive. raylib 6.0 refuses such files entirely (0 meshes); the info still lists the meshes.
+
+** Errors and raylib Compatibility
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+| Error                                | Cause                                                                          |
+|--------------------------------------+--------------------------------------------------------------------------------|
+| =G_FILE_ERROR_*=                      | The file cannot be read                                                        |
+| =LRG_GLTF_ERROR_INVALID_CONTAINER=    | Empty data, no GLB magic and no JSON object, GLB shorter than its headers, declared length larger than the data, first chunk not JSON or overrunning the container |
+| =LRG_GLTF_ERROR_UNSUPPORTED_VERSION=  | GLB version other than 2                                                       |
+| =LRG_GLTF_ERROR_INVALID_JSON=         | JSON does not parse, root is not an object, or a member has the wrong type    |
+| =LRG_GLTF_ERROR_INVALID_REFERENCE=    | An index is negative, fractional, or out of range; a node has two parents; a scene root has a parent |
+
+The reference rules mirror cgltf's pointer fix-ups, which make =cgltf_parse()= — and so raylib — reject a file. A file this API rejects with =INVALID_REFERENCE= therefore loads as an empty model in raylib. Material, texture and extension references are not checked, so the converse is not guaranteed. A notable real-world case: exporters that list a *child* node as a scene root (for example every Kenney Nature Kit GLB, whose scene lists node 1 under a =tmpParent= node) are rejected by both.
+
+Integral floating-point indices (=1.0=) are accepted, as cgltf accepts them.

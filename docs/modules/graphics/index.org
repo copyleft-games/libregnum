@@ -711,6 +711,15 @@ grl_gif_writer_close (gif, &error);
 =CLAUDE.md= on GBoxed vs GObject lifetimes.
 #+end_quote
 
+** Model and Scene Rendering Helpers
+:PROPERTIES:
+:CUSTOM_ID: model-and-scene-rendering-helpers
+:END:
+Helpers for games that render many glTF characters and props with raylib:
+
+- *[[file:gltf-info.org][LrgGltfInfo]]* - Headless glTF/GLB inspection: raylib mesh order, node and mesh names, vertex counts, skins, animation names, Draco detection and per-node visibility masks
+- *[[file:../core/asset-manager.org::#models-and-animations][Model cache]]* - =lrg_asset_manager_load_model()= / =lrg_asset_manager_load_model_animations()=
+
 ** See Also
 :PROPERTIES:
 :CUSTOM_ID: see-also

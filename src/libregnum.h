@@ -77,6 +77,7 @@
 #include "graphics/lrg-renderer.h"
 #include "graphics/lrg-image-canvas.h"
 #include "graphics/lrg-vector-image.h"
+#include "graphics/lrg-gltf-info.h"
 #include "imageedit/lrg-image-layer.h"
 #include "imageedit/lrg-image-document.h"
 

@@ -5384,4 +5384,43 @@ GType lrg_companion_action_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_COMPANION_ACTION (lrg_companion_action_get_type ())
 
 
+/* ==========================================================================
+ * glTF Inspection
+ * ========================================================================== */
+
+/**
+ * LRG_GLTF_ERROR:
+ *
+ * Error domain for glTF / GLB inspection errors.
+ */
+#define LRG_GLTF_ERROR (lrg_gltf_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_gltf_error_quark (void);
+
+/**
+ * LrgGltfError:
+ * @LRG_GLTF_ERROR_INVALID_CONTAINER: Not a GLB/glTF file, bad magic, or a
+ *   truncated / inconsistent GLB header or chunk
+ * @LRG_GLTF_ERROR_UNSUPPORTED_VERSION: GLB container version other than 2
+ * @LRG_GLTF_ERROR_INVALID_JSON: The JSON chunk does not parse or its
+ *   top-level structure has the wrong types
+ * @LRG_GLTF_ERROR_INVALID_REFERENCE: An index (mesh, accessor, material) is
+ *   out of range or not an integer
+ *
+ * Error codes for lrg_gltf_info_new_from_file() and friends.
+ */
+typedef enum
+{
+    LRG_GLTF_ERROR_INVALID_CONTAINER,
+    LRG_GLTF_ERROR_UNSUPPORTED_VERSION,
+    LRG_GLTF_ERROR_INVALID_JSON,
+    LRG_GLTF_ERROR_INVALID_REFERENCE
+} LrgGltfError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_gltf_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_GLTF_ERROR (lrg_gltf_error_get_type ())
+
+
 G_END_DECLS

@@ -418,6 +418,9 @@ typedef struct _LrgImageCanvas    LrgImageCanvas;
 /* LrgVectorImage is a final type - no Class forward declaration needed */
 typedef struct _LrgVectorImage    LrgVectorImage;
 
+/* LrgGltfInfo is a final type - no Class forward declaration needed */
+typedef struct _LrgGltfInfo       LrgGltfInfo;
+
 /* ==========================================================================
  * Shapes Module
  * ========================================================================== */

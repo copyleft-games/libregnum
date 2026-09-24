@@ -90,6 +90,7 @@ Window management, cameras, and rendering abstractions:
 - *[[file:graphics/index.org#lrgcamera2d][LrgCamera2D]]* - 2D camera for top-down/side-scrolling
 - *[[file:graphics/index.org#lrgcamera3d][LrgCamera3D]]* - 3D camera for 3D games
 - *[[file:graphics/index.org#lrgrenderer][LrgRenderer]]* - Render management and layer system
+- *[[file:graphics/gltf-info.org][LrgGltfInfo]]* - Headless glTF/GLB inspection (raylib mesh order, node names, animations, visibility masks)
 
 *** [[file:particles/index.org][Particles Module]] - Particle Systems
 :PROPERTIES:

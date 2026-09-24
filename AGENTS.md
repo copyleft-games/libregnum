@@ -562,8 +562,18 @@ and client-side helpers for skinned and static models.
   skinning pose caches; never unref the results. Animation loading works
   headlessly; an animation-less file gives an empty array.
 
-See `docs/modules/physics/wall-set.org` and
-`docs/modules/core/asset-manager.org` (Models and animations).
+- **`LrgGltfInfo`** (`graphics/lrg-gltf-info.h`): headless glTF/GLB
+  inspection. Per *raylib mesh index* it reports the node name (the useful
+  one, e.g. `Knight_Helmet`), the glTF mesh name (`Cube.124`, or `Horse#3`
+  for multi-primitive meshes), vertex count and material. Order matches
+  raylib 6.0 LoadGLTF exactly (nodes in array order, triangle primitives).
+  `lrg_gltf_info_build_node_mask()` turns hidden node names into a mesh
+  mask. Files cgltf rejects structurally (e.g. a scene root with a parent)
+  fail with `LRG_GLTF_ERROR_INVALID_REFERENCE` — raylib would load 0 meshes.
+
+See `docs/modules/physics/wall-set.org`,
+`docs/modules/core/asset-manager.org` (Models and animations) and
+`docs/modules/graphics/gltf-info.org`.
 
 ## Architecture Overview
 

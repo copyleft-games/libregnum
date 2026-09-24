@@ -56,6 +56,7 @@ PUBLIC_HEADERS := \
 	src/imageedit/lrg-image-layer.h \
 	src/imageedit/lrg-image-document.h \
 	src/graphics/lrg-vector-image.h \
+	src/graphics/lrg-gltf-info.h \
 	src/ecs/lrg-component.h \
 	src/ecs/lrg-game-object.h \
 	src/ecs/lrg-world.h \
@@ -571,6 +572,7 @@ SOURCES := \
 	src/imageedit/lrg-image-layer.c \
 	src/imageedit/lrg-image-document.c \
 	src/graphics/lrg-vector-image.c \
+	src/graphics/lrg-gltf-info.c \
 	src/ecs/lrg-component.c \
 	src/ecs/lrg-game-object.c \
 	src/ecs/lrg-world.c \
