@@ -4712,6 +4712,8 @@ GType lrg_node_visual_kind_get_type (void) G_GNUC_CONST;
  *   elisp interpreter; this value is only usable when an embedding application
  *   (e.g. cmacs) registers an elisp backend at runtime via
  *   lrg_scripting_manager_register_backend().
+ * @LRG_SCRIPT_LANGUAGE_NATIVE: Prebuilt shared objects (.so / .dll) loaded
+ *   by #LrgScriptingNative through the #LrgNativeFunction call ABI.
  *
  * The scripting language a script binding is authored in. Availability of a
  * given backend at runtime depends on how libregnum was built (for the
@@ -4727,7 +4729,8 @@ typedef enum
     LRG_SCRIPT_LANGUAGE_PYTHON,
     LRG_SCRIPT_LANGUAGE_GJS,
     LRG_SCRIPT_LANGUAGE_CRISPY,
-    LRG_SCRIPT_LANGUAGE_ELISP
+    LRG_SCRIPT_LANGUAGE_ELISP,
+    LRG_SCRIPT_LANGUAGE_NATIVE
 } LrgScriptLanguage;
 
 LRG_AVAILABLE_IN_ALL

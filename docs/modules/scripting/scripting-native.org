@@ -1,0 +1,178 @@
+#+title: Native and Crispy Scripting
+#+description: LrgScriptingNative, LrgScriptingCrispy and the compiled-script call ABI
+#+authors: Zach Podbielniak
+#+categories: libregnum scripting
+
+* Native and Crispy Scripting
+:PROPERTIES:
+:CUSTOM_ID: native-scripting
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+Two backends run C as scripts:
+
+- =LrgScriptingNative= loads a prebuilt shared object (=.so=, or =.dll= on
+  Windows) with GModule.  It is always built.
+- =LrgScriptingCrispy= derives from it.  It compiles a C source file with the
+  Crispy library, caches the result, loads it, and then behaves exactly like the
+  native backend.  It is built with =CRISPY=1= (the default) and defines
+  =LRG_HAS_CRISPY=.
+
+One C source can therefore ship either as source (compiled on first load) or
+as a prebuilt object for machines without a compiler.
+
+** The Call ABI
+:PROPERTIES:
+:CUSTOM_ID: abi
+:END:
+Every function a host calls with =lrg_scripting_call_function()= is exported
+with this signature (=LrgNativeFunction=):
+
+#+begin_src C
+G_MODULE_EXPORT gboolean
+name (struct _LrgScripting *scripting,
+      guint                 n_args,
+      const GValue         *args,
+      GValue               *return_value,
+      GError              **error);
+#+end_src
+
+- =scripting= is the calling context.  Pass it back to the host API below.
+- =return_value= is always a valid, *uninitialized* =GValue=.  Leave it alone for
+  "no value", or =g_value_init()= it to return something.
+- Return =TRUE= on success, or =FALSE= with =error= set.  A =FALSE= without an
+  error becomes =LRG_SCRIPTING_ERROR_RUNTIME=.
+- The first parameter is spelled =struct _LrgScripting *= so a script needs only
+  =<glib-object.h>= and =<gmodule.h>=, not the libregnum headers.
+
+** Loading Rules
+:PROPERTIES:
+:CUSTOM_ID: loading
+:END:
+- A context holds an ordered list of loaded units.  Later units shadow earlier
+  ones when both export the same name.
+- If a unit exports =int main (int argc, char **argv)=, it runs once at load with
+  no arguments and must return 0.  A non-zero return is a
+  =LRG_SCRIPTING_ERROR_RUNTIME= error and the unit is dropped.  =main= is
+  optional.
+- Native modules open with =G_MODULE_BIND_LOCAL=, so two modules may export the
+  same entry-point names without clashing.
+- =lrg_scripting_reset()= unloads every unit and forgets host functions and
+  globals.
+
+** Host Functions and Globals
+:PROPERTIES:
+:CUSTOM_ID: host
+:END:
+=lrg_scripting_register_function()= publishes a host function.  Compiled code
+calls it with:
+
+#+begin_src C
+extern gboolean lrg_scripting_native_call_host (struct _LrgScripting *scripting,
+                                                const gchar *name, guint n_args,
+                                                const GValue *args,
+                                                GValue *return_value,
+                                                GError **error);
+#+end_src
+
+Globals set with =lrg_scripting_set_global()= live in a host-side table.  Both
+sides read and write that table through the public API, including
+=lrg_scripting_get_global()= from inside the script.
+
+These symbols resolve from the host process when the object is loaded.  This
+works because libregnum is a shared library, or because the host was linked
+with =-rdynamic= when libregnum is linked statically.
+
+** Crispy Specifics
+:PROPERTIES:
+:CUSTOM_ID: crispy
+:END:
+- Directories added with =lrg_scripting_add_search_path()= become quoted =-I=
+  flags.
+- =lrg_scripting_crispy_add_cflags()= appends further flags.  A script's own
+  =#define CRISPY_PARAMS "..."= still overrides both.
+- =lrg_scripting_crispy_set_cache_dir()= chooses the compile cache.  The default
+  is =~/.cache/crispy/=.  An unchanged source with the same flags is compiled
+  only once.
+- =lrg_scripting_load_string()= takes a complete translation unit, with its own
+  includes and exports.  It is staged in a temporary file and compiled like a
+  file.
+- Compile failures are =LRG_SCRIPTING_ERROR_SYNTAX=, and the message carries
+  gcc's diagnostics.  Unreadable files are =LRG_SCRIPTING_ERROR_LOAD=.
+- Runtime requirements: =gcc=, =pkg-config= and the GLib development headers
+  (Fedora: =gcc pkgconf-pkg-config glib2-devel=).  The base flags come from
+  =pkg-config --cflags --libs glib-2.0 gobject-2.0 gio-2.0 gmodule-2.0=.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+=greeter.c=, loadable by either backend:
+
+#+begin_src C
+#include <glib-object.h>
+#include <gmodule.h>
+
+struct _LrgScripting;
+extern gboolean lrg_scripting_native_call_host (struct _LrgScripting *, const gchar *,
+                                                guint, const GValue *, GValue *, GError **);
+
+G_MODULE_EXPORT gboolean
+greet (struct _LrgScripting *scripting, guint n_args, const GValue *args,
+       GValue *return_value, GError **error)
+{
+    GValue name = G_VALUE_INIT;
+
+    /* Ask the host for a player name, then build the greeting */
+    if (!lrg_scripting_native_call_host (scripting, "player_name", 0, NULL, &name, error))
+        return FALSE;
+
+    g_value_init (return_value, G_TYPE_STRING);
+    g_value_take_string (return_value,
+                         g_strdup_printf ("Welcome, %s", g_value_get_string (&name)));
+    g_value_unset (&name);
+    return TRUE;
+}
+#+end_src
+
+The host:
+
+#+begin_src C
+static gboolean
+player_name (LrgScripting *s, guint n, const GValue *a, GValue *r,
+             gpointer user_data, GError **error)
+{
+    g_value_init (r, G_TYPE_STRING);
+    g_value_set_string (r, "Ada");
+    return TRUE;
+}
+
+g_autoptr(LrgScripting) ctx = NULL;
+GValue result = G_VALUE_INIT;
+
+ctx = LRG_SCRIPTING (lrg_scripting_crispy_new ());  /* or lrg_scripting_native_new () + greeter.so */
+lrg_scripting_register_function (ctx, "player_name", player_name, NULL, &error);
+lrg_scripting_load_file (ctx, "greeter.c", &error);
+lrg_scripting_call_function (ctx, "greet", &result, 0, NULL, &error);
+/* "Welcome, Ada" */
+#+end_src
+
+Prebuilding the same source as a shared object:
+
+#+begin_src bash
+gcc -shared -fPIC -o greeter.so greeter.c $(pkg-config --cflags --libs gobject-2.0 gmodule-2.0)
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-scripting-native.c= loads =tests/fixtures/test-native-script.c= both
+prebuilt and through Crispy, and checks the same behaviour for both: numeric,
+string and discarded returns; script errors; missing functions; host
+callbacks; globals; =LRG_DEFINE_SCRIPT= hooks; and reset.  It also covers a
+Crispy =main()= that succeeds or fails, compile errors, search paths
+containing spaces, extra flags, and the manager's path-to-language lookup.

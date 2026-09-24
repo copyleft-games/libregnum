@@ -944,6 +944,24 @@ lrg_scripting_pygobject_constructed (GObject *object)
     }
 }
 
+/* A function exists when this context's globals hold a callable */
+static gboolean
+lrg_scripting_pygobject_has_function (LrgScripting *scripting,
+                                      const gchar  *func_name)
+{
+    LrgScriptingPyGObject *self = LRG_SCRIPTING_PYGOBJECT (scripting);
+    PyObject              *func;
+
+    if (!lrg_scripting_gi_is_interpreter_initialized (LRG_SCRIPTING_GI (scripting)) ||
+        self->main_dict == NULL)
+    {
+        return FALSE;
+    }
+
+    func = PyDict_GetItemString (self->main_dict, func_name);
+    return func != NULL && PyCallable_Check (func);
+}
+
 static void
 lrg_scripting_pygobject_class_init (LrgScriptingPyGObjectClass *klass)
 {
@@ -962,6 +980,7 @@ lrg_scripting_pygobject_class_init (LrgScriptingPyGObjectClass *klass)
     scripting_class->get_global = lrg_scripting_pygobject_get_global;
     scripting_class->set_global = lrg_scripting_pygobject_set_global;
     scripting_class->reset = lrg_scripting_pygobject_reset;
+    scripting_class->has_function = lrg_scripting_pygobject_has_function;
 
     /* Override LrgScriptingGI virtual methods */
     gi_class->init_interpreter = lrg_scripting_pygobject_init_interpreter;

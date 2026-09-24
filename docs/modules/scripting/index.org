@@ -102,6 +102,8 @@ main (int argc, char *argv[])
 | =LrgScriptingPython=    | Python 3.12+ scripting implementation (direct C API) |
 | =LrgScriptingPyGObject= | Python with PyGObject (native GI bindings)           |
 | =LrgScriptingGjs=       | JavaScript with Gjs (native GI bindings)             |
+| =LrgScriptingNative=    | Prebuilt shared objects via the native call ABI      |
+| =LrgScriptingCrispy=    | C sources compiled at load time (Crispy), native ABI |
 | =LrgScriptable=         | Interface for custom script exposure (opt-in)        |
 
 ** Feature Comparison
@@ -285,6 +287,13 @@ const gchar *name = lrg_scripting_manager_get_display_name (mgr, LRG_SCRIPT_LANG
 const gchar *ext  = lrg_scripting_manager_get_extension     (mgr, LRG_SCRIPT_LANGUAGE_LUA);
 /* ext → "lua" */
 
+/* Pick a backend from a file name (lua, py, js, c, so/dll, or registered) */
+LrgScriptLanguage lang = lrg_scripting_manager_language_for_path (mgr, "addon/main.py");
+if (lang == LRG_SCRIPT_LANGUAGE_NONE)
+    g_warning ("unknown script type");
+else if (!lrg_scripting_manager_is_available (mgr, lang))
+    g_warning ("%s support is not built", lrg_scripting_manager_get_display_name (mgr, lang));
+
 /* Enumerate all available backends */
 guint n = lrg_scripting_manager_get_available_count (mgr);
 
@@ -305,6 +314,25 @@ g_free (langs);
 | =LRG_SCRIPT_LANGUAGE_PYTHON= | =python= | CPython 3 |
 | =LRG_SCRIPT_LANGUAGE_GJS= | =gjs= | GNOME JavaScript |
 | =LRG_SCRIPT_LANGUAGE_CRISPY= | =crispy= | compiled C via Crispy |
+| =LRG_SCRIPT_LANGUAGE_ELISP= | =elisp= | only when an embedder registers one |
+| =LRG_SCRIPT_LANGUAGE_NATIVE= | =native= | prebuilt =.so= / =.dll= (always available) |
+
+** Generic Context Operations
+:PROPERTIES:
+:CUSTOM_ID: generic-operations
+:END:
+Every backend honours two host-facing helpers, so hosts (for example a plugin
+loader) never need backend-specific headers:
+
+| Call | Lua | Python / PyGObject | Gjs | Native / Crispy |
+|------+-----+--------------------+-----+-----------------|
+| =lrg_scripting_add_search_path()= | =package.path= | =sys.path= | Gjs search path | Crispy: =-I= directory; native: recorded |
+| =lrg_scripting_has_function()= | global is a function | global is callable | global is a function | symbol is exported |
+
+Each context is isolated: Lua has one =lua_State= per context, and Python and
+PyGObject contexts each own a private globals dictionary, so resetting one
+context never touches another.  =nil= / =None= arrive in C as a =G_TYPE_POINTER=
+value holding =NULL=.
 
 ** LrgScriptComponent
 :PROPERTIES:
@@ -353,11 +381,11 @@ LrgScripting *ctx = lrg_script_component_get_context (sc);
 A script is expected to provide three lifecycle hooks that =LrgScriptComponent=
 calls by name via =lrg_scripting_call_function()=:
 
-| Hook name | Signature | When called |
-|-----------+-----------+-------------|
-| =lrg_script_start= | =void ()= | once, when the script is attached |
-| =lrg_script_update= | =void (double delta)= | each frame |
-| =lrg_script_detach= | =void ()= | once, when the script is detached |
+| Hook name | Interpreted signature | When called |
+|-----------+-----------------------+-------------|
+| =lrg_script_start= | =()= | once, when the script is attached |
+| =lrg_script_update= | =(delta)= | each frame |
+| =lrg_script_detach= | =()= | once, when the script is detached |
 
 For interpreted backends (Lua/Python/Gjs) these are global functions with the
 hook names. Example (Lua):
@@ -403,23 +431,28 @@ LRG_DEFINE_SCRIPT (my_start, my_update, my_detach)
 #+end_src
 
 The macro emits =G_MODULE_EXPORT= definitions of =lrg_script_start=,
-=lrg_script_update=, and =lrg_script_detach= that forward to the author's functions.
+=lrg_script_update=, and =lrg_script_detach= that follow the =LrgNativeFunction=
+call ABI (see [[file:scripting-native.org][native scripting]]) and forward to the
+author's functions; the update hook reads its delta from the first argument.
 
-** Crispy Backend (LrgScriptingCrispy)
+** Native and Crispy Backends
 :PROPERTIES:
 :CUSTOM_ID: crispy-backend
 :END:
-=LrgScriptingCrispy= is a final =LrgScripting= subclass available when
-=-DLRG_HAS_CRISPY= is defined (=CRISPY=1=). Unlike interpreter backends, it maps
-=lrg_scripting_load_file()= / =lrg_scripting_load_string()= to "compile and run"
-via the Crispy embedded C-scripting library. Per-function call and global
-get/set operations are not part of Crispy's model and are reported as
-unsupported.
+=LrgScriptingNative= loads prebuilt shared objects, and =LrgScriptingCrispy=
+(available with =-DLRG_HAS_CRISPY=, =CRISPY=1=) compiles C sources with Crispy
+and then behaves exactly like the native backend.  Both call exported functions
+through one ABI, publish host functions with
+=lrg_scripting_native_call_host()=, and keep globals in a host-side table.  See
+[[file:scripting-native.org][native scripting]] for the ABI, a full example and
+the runtime requirements.
 
 #+begin_src C
 #ifdef LRG_HAS_CRISPY
 g_autoptr(LrgScriptingCrispy) ctx = lrg_scripting_crispy_new ();
+lrg_scripting_add_search_path (LRG_SCRIPTING (ctx), "include");
 lrg_scripting_load_file (LRG_SCRIPTING (ctx), "scripts/enemy.c", &error);
+lrg_scripting_call_function (LRG_SCRIPTING (ctx), "enemy_think", &result, 0, NULL, &error);
 #endif
 #+end_src
 
@@ -433,6 +466,7 @@ lrg_scripting_load_file (LRG_SCRIPTING (ctx), "scripts/enemy.c", &error);
 - [[file:scripting-python.org][LrgScriptingPython]] - Python implementation details
 - [[file:scripting-pygobject.org][LrgScriptingPyGObject]] - PyGObject implementation details
 - [[file:scripting-gjs.org][LrgScriptingGjs]] - Gjs (GNOME JavaScript) implementation details
+- [[file:scripting-native.org][LrgScriptingNative / LrgScriptingCrispy]] - Compiled C scripts and the native call ABI
 - [[file:scriptable.org][LrgScriptable]] - Custom script exposure interface
 - [[file:../../editor/level-model.org][Level Model]] - LrgScriptBinding authoring type
 - [[file:../editor/index.org][Editor Module Reference]] - editor integration

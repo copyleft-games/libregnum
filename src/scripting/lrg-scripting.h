@@ -182,8 +182,37 @@ struct _LrgScriptingClass
      */
     void (*reset) (LrgScripting *self);
 
+    /**
+     * LrgScriptingClass::add_search_path:
+     * @self: an #LrgScripting
+     * @path: a directory
+     *
+     * Add a directory the backend searches when a script imports or includes
+     * another file: Lua `package.path`, Python `sys.path`, the Gjs search
+     * path, or a C include directory (`-I`) for compiled backends.
+     *
+     * Since: 0.2
+     */
+    void (*add_search_path) (LrgScripting *self,
+                             const gchar  *path);
+
+    /**
+     * LrgScriptingClass::has_function:
+     * @self: an #LrgScripting
+     * @func_name: a function name
+     *
+     * Check whether the loaded scripts define a callable @func_name.  Hosts
+     * use this for optional entry points without provoking an error.
+     *
+     * Returns: %TRUE when @func_name can be called
+     *
+     * Since: 0.2
+     */
+    gboolean (*has_function) (LrgScripting *self,
+                              const gchar  *func_name);
+
     /*< private >*/
-    gpointer _reserved[8];
+    gpointer _reserved[6];
 };
 
 /* ==========================================================================
@@ -316,5 +345,35 @@ gboolean lrg_scripting_set_global (LrgScripting  *self,
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_scripting_reset (LrgScripting *self);
+
+/**
+ * lrg_scripting_add_search_path:
+ * @self: an #LrgScripting
+ * @path: (type filename): a directory
+ *
+ * Add a directory the backend searches when a script imports or includes
+ * another file.  Backends without an import mechanism ignore it.
+ *
+ * Since: 0.2
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_scripting_add_search_path (LrgScripting *self,
+                                    const gchar  *path);
+
+/**
+ * lrg_scripting_has_function:
+ * @self: an #LrgScripting
+ * @func_name: a function name
+ *
+ * Check whether the loaded scripts define a callable @func_name.
+ *
+ * Returns: %TRUE when @func_name can be called; %FALSE when it is missing,
+ *   not callable, or the backend cannot tell
+ *
+ * Since: 0.2
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_scripting_has_function (LrgScripting *self,
+                                     const gchar  *func_name);
 
 G_END_DECLS

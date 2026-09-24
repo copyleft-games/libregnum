@@ -26,7 +26,8 @@
 #error "Only <libregnum.h> can be included directly."
 #endif
 
-#include <glib.h>
+#include <glib-object.h>
+#include <gmodule.h>
 
 G_BEGIN_DECLS
 
@@ -58,15 +59,38 @@ G_BEGIN_DECLS
  * @detach_fn: function to run on detach (signature `void (void)`)
  *
  * Convenience macro for compiled (Crispy / native) scripts: emits the
- * canonically-named hook entry points that forward to the author's functions,
- * so a compiled module presents the same surface as an interpreted script.
+ * canonically-named hook entry points, following the #LrgNativeFunction call
+ * ABI, that forward to the author's functions.  A compiled module therefore
+ * presents the same surface as an interpreted script.  The update hook reads
+ * its delta from the first argument (any numeric #GValue).
  */
-#define LRG_DEFINE_SCRIPT(start_fn, update_fn, detach_fn)            \
-	G_MODULE_EXPORT void lrg_script_start (void);               \
-	G_MODULE_EXPORT void lrg_script_update (double delta);      \
-	G_MODULE_EXPORT void lrg_script_detach (void);             \
-	G_MODULE_EXPORT void lrg_script_start (void)  { start_fn (); } \
-	G_MODULE_EXPORT void lrg_script_update (double delta) { update_fn (delta); } \
-	G_MODULE_EXPORT void lrg_script_detach (void) { detach_fn (); }
+#define LRG_DEFINE_SCRIPT(start_fn, update_fn, detach_fn)                        \
+	G_MODULE_EXPORT gboolean lrg_script_start (struct _LrgScripting *s, guint n, \
+	    const GValue *a, GValue *r, GError **e);                                 \
+	G_MODULE_EXPORT gboolean lrg_script_update (struct _LrgScripting *s, guint n,\
+	    const GValue *a, GValue *r, GError **e);                                 \
+	G_MODULE_EXPORT gboolean lrg_script_detach (struct _LrgScripting *s, guint n,\
+	    const GValue *a, GValue *r, GError **e);                                 \
+	G_MODULE_EXPORT gboolean lrg_script_start (struct _LrgScripting *s, guint n, \
+	    const GValue *a, GValue *r, GError **e)                                  \
+	{ (void) s; (void) n; (void) a; (void) r; (void) e; start_fn (); return TRUE; } \
+	G_MODULE_EXPORT gboolean lrg_script_update (struct _LrgScripting *s, guint n,\
+	    const GValue *a, GValue *r, GError **e)                                  \
+	{                                                                            \
+		GValue d = G_VALUE_INIT;                                                 \
+		double delta = 0.0;                                                      \
+		(void) s; (void) r; (void) e;                                            \
+		if (n > 0 && g_value_type_transformable (G_VALUE_TYPE (&a[0]), G_TYPE_DOUBLE)) \
+		{                                                                        \
+			g_value_init (&d, G_TYPE_DOUBLE);                                    \
+			g_value_transform (&a[0], &d);                                       \
+			delta = g_value_get_double (&d);                                     \
+		}                                                                        \
+		update_fn (delta);                                                       \
+		return TRUE;                                                             \
+	}                                                                            \
+	G_MODULE_EXPORT gboolean lrg_script_detach (struct _LrgScripting *s, guint n,\
+	    const GValue *a, GValue *r, GError **e)                                  \
+	{ (void) s; (void) n; (void) a; (void) r; (void) e; detach_fn (); return TRUE; }
 
 G_END_DECLS

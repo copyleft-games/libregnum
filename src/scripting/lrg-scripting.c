@@ -290,3 +290,57 @@ lrg_scripting_reset (LrgScripting *self)
         klass->reset (self);
     }
 }
+
+/**
+ * lrg_scripting_add_search_path:
+ * @self: an #LrgScripting
+ * @path: (type filename): a directory
+ *
+ * Add a directory the backend searches when a script imports or includes
+ * another file.
+ */
+void
+lrg_scripting_add_search_path (LrgScripting *self,
+                               const gchar  *path)
+{
+    LrgScriptingClass *klass;
+
+    g_return_if_fail (LRG_IS_SCRIPTING (self));
+    g_return_if_fail (path != NULL);
+
+    klass = LRG_SCRIPTING_GET_CLASS (self);
+
+    /* Backends without imports simply have nothing to extend */
+    if (klass->add_search_path != NULL)
+    {
+        klass->add_search_path (self, path);
+    }
+}
+
+/**
+ * lrg_scripting_has_function:
+ * @self: an #LrgScripting
+ * @func_name: a function name
+ *
+ * Check whether the loaded scripts define a callable @func_name.
+ *
+ * Returns: %TRUE when @func_name can be called
+ */
+gboolean
+lrg_scripting_has_function (LrgScripting *self,
+                            const gchar  *func_name)
+{
+    LrgScriptingClass *klass;
+
+    g_return_val_if_fail (LRG_IS_SCRIPTING (self), FALSE);
+    g_return_val_if_fail (func_name != NULL, FALSE);
+
+    klass = LRG_SCRIPTING_GET_CLASS (self);
+
+    if (klass->has_function == NULL)
+    {
+        return FALSE;
+    }
+
+    return klass->has_function (self, func_name);
+}

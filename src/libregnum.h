@@ -321,6 +321,10 @@
 #include "scripting/lrg-scriptable.h"
 #include "scripting/lrg-scripting-manager.h"
 #include "scripting/lrg-script-module.h"
+#include "scripting/lrg-scripting-native.h"
+#ifdef LRG_HAS_CRISPY
+#include "scripting/lrg-scripting-crispy.h"
+#endif
 #ifdef LRG_HAS_LUAJIT
 #include "scripting/lrg-scripting-lua.h"
 #endif

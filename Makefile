@@ -240,6 +240,7 @@ PUBLIC_HEADERS := \
 	src/scripting/lrg-scripting.h \
 	src/scripting/lrg-scripting-manager.h \
 	src/scripting/lrg-script-module.h \
+	src/scripting/lrg-scripting-native.h \
 	src/settings/lrg-settings-group.h \
 	src/settings/lrg-graphics-settings.h \
 	src/settings/lrg-audio-settings.h \
@@ -760,6 +761,7 @@ SOURCES := \
 	src/scripting/lrg-scripting.c \
 	src/scripting/lrg-scriptable.c \
 	src/scripting/lrg-scripting-manager.c \
+	src/scripting/lrg-scripting-native.c \
 	src/settings/lrg-settings-group.c \
 	src/settings/lrg-graphics-settings.c \
 	src/settings/lrg-audio-settings.c \

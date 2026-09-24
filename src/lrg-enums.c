@@ -4453,6 +4453,7 @@ lrg_script_language_get_type (void)
             { LRG_SCRIPT_LANGUAGE_GJS, "LRG_SCRIPT_LANGUAGE_GJS", "gjs" },
             { LRG_SCRIPT_LANGUAGE_CRISPY, "LRG_SCRIPT_LANGUAGE_CRISPY", "crispy" },
             { LRG_SCRIPT_LANGUAGE_ELISP, "LRG_SCRIPT_LANGUAGE_ELISP", "elisp" },
+            { LRG_SCRIPT_LANGUAGE_NATIVE, "LRG_SCRIPT_LANGUAGE_NATIVE", "native" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =

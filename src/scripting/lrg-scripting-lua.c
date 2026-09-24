@@ -473,6 +473,34 @@ lrg_scripting_lua_reset (LrgScripting *scripting)
     lrg_debug (LRG_LOG_DOMAIN_SCRIPTING, "Script context reset");
 }
 
+/* Generic search-path vfunc: forwards to the Lua package.path helper */
+static void
+lrg_scripting_lua_vfunc_add_search_path (LrgScripting *scripting,
+                                         const gchar  *path)
+{
+    lrg_scripting_lua_add_search_path (LRG_SCRIPTING_LUA (scripting), path);
+}
+
+/* A function exists when the global of that name is a Lua function */
+static gboolean
+lrg_scripting_lua_has_function (LrgScripting *scripting,
+                                const gchar  *func_name)
+{
+    LrgScriptingLua *self = LRG_SCRIPTING_LUA (scripting);
+    gboolean         found;
+
+    if (self->L == NULL)
+    {
+        return FALSE;
+    }
+
+    lua_getglobal (self->L, func_name);
+    found = lua_isfunction (self->L, -1);
+    lua_pop (self->L, 1);
+
+    return found;
+}
+
 /* ==========================================================================
  * GObject Implementation
  * ========================================================================== */
@@ -511,6 +539,8 @@ lrg_scripting_lua_class_init (LrgScriptingLuaClass *klass)
     scripting_class->get_global = lrg_scripting_lua_get_global;
     scripting_class->set_global = lrg_scripting_lua_set_global;
     scripting_class->reset = lrg_scripting_lua_reset;
+    scripting_class->add_search_path = lrg_scripting_lua_vfunc_add_search_path;
+    scripting_class->has_function = lrg_scripting_lua_has_function;
 }
 
 static void

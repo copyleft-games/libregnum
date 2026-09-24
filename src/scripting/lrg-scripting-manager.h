@@ -164,4 +164,21 @@ gboolean lrg_scripting_manager_register_backend (LrgScriptingManager     *self,
                                                  gpointer                 user_data,
                                                  GDestroyNotify           destroy);
 
+/**
+ * lrg_scripting_manager_language_for_path:
+ * @self: the #LrgScriptingManager
+ * @path: (type filename): a script path such as `plugin.lua`
+ *
+ * Maps a file's extension (case-insensitively) to the backend that loads it:
+ * `lua`, `py`, `js`, `c` (Crispy), the platform module suffix (native), or
+ * an extension an embedder registered.  The result may name a backend this
+ * build lacks; check lrg_scripting_manager_is_available() before creating a
+ * context, so callers can tell "unknown file" from "backend not built".
+ *
+ * Returns: the language, or %LRG_SCRIPT_LANGUAGE_NONE for unknown extensions
+ */
+LRG_AVAILABLE_IN_ALL
+LrgScriptLanguage lrg_scripting_manager_language_for_path (LrgScriptingManager *self,
+                                                           const gchar         *path);
+
 G_END_DECLS

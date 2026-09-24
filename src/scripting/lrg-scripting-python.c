@@ -625,6 +625,31 @@ lrg_scripting_python_reset (LrgScripting *scripting)
     lrg_debug (LRG_LOG_DOMAIN_SCRIPTING, "Python script context reset");
 }
 
+/* Generic search-path vfunc: forwards to the sys.path helper */
+static void
+lrg_scripting_python_vfunc_add_search_path (LrgScripting *scripting,
+                                            const gchar  *path)
+{
+    lrg_scripting_python_add_search_path (LRG_SCRIPTING_PYTHON (scripting), path);
+}
+
+/* A function exists when this context's globals hold a callable */
+static gboolean
+lrg_scripting_python_has_function (LrgScripting *scripting,
+                                   const gchar  *func_name)
+{
+    LrgScriptingPython *self = LRG_SCRIPTING_PYTHON (scripting);
+    PyObject           *func;
+
+    if (!ensure_python_initialized (self))
+    {
+        return FALSE;
+    }
+
+    func = PyDict_GetItemString (self->main_dict, func_name);
+    return func != NULL && PyCallable_Check (func);
+}
+
 /* ==========================================================================
  * GObject Implementation
  * ========================================================================== */
@@ -678,6 +703,8 @@ lrg_scripting_python_class_init (LrgScriptingPythonClass *klass)
     scripting_class->get_global = lrg_scripting_python_get_global;
     scripting_class->set_global = lrg_scripting_python_set_global;
     scripting_class->reset = lrg_scripting_python_reset;
+    scripting_class->add_search_path = lrg_scripting_python_vfunc_add_search_path;
+    scripting_class->has_function = lrg_scripting_python_has_function;
 }
 
 static void

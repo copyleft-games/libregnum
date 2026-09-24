@@ -164,7 +164,8 @@ TEST_SOURCES := \
 	test-image-document.c \
 	test-vector-image.c \
 	test-reel.c \
-	test-term.c
+	test-term.c \
+	test-scripting-native.c
 
 # Match the optional scripting sources selected by the library build.
 ifeq ($(HAS_LUAJIT),1)
@@ -369,11 +370,29 @@ $(TEST_BUILDDIR)/test-lrgldr: test-lrgldr.c $(GENERATED_HEADERS) $(LRGLDR_BIN) $
 		-DTEST_ARGS_MODULE_PATH='"$(FIXTURE_SO_ABS)"' \
 		-o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
 
+# Fixture script loaded by test-scripting-native: prebuilt here as a shared
+# object, and compiled from the same source by the Crispy backend at runtime.
+NATIVE_FIXTURE_SO     := $(TEST_BUILDDIR)/test-native-script.so
+NATIVE_FIXTURE_SO_ABS := $(abspath $(NATIVE_FIXTURE_SO))
+NATIVE_FIXTURE_SRC    := $(abspath fixtures/test-native-script.c)
+
+$(NATIVE_FIXTURE_SO): fixtures/test-native-script.c ../src/scripting/lrg-script-module.h | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(FIXTURE_CFLAGS) -shared -o $@ $<
+
+$(TEST_BUILDDIR)/test-scripting-native: test-scripting-native.c $(GENERATED_HEADERS) $(NATIVE_FIXTURE_SO) | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(TEST_CFLAGS) \
+		-DTEST_NATIVE_MODULE_PATH='"$(NATIVE_FIXTURE_SO_ABS)"' \
+		-DTEST_NATIVE_SOURCE_PATH='"$(NATIVE_FIXTURE_SRC)"' \
+		-DTEST_LIBREGNUM_SRC_DIR='"$(abspath ../src)"' \
+		-o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
+
 # Create test build directory
 $(TEST_BUILDDIR):
 	@$(MKDIR_P) $@
 
 clean:
 	$(call print_status,"Cleaning test artifacts...")
-	$(RM) $(TEST_BINARIES) $(FIXTURE_SO)
+	$(RM) $(TEST_BINARIES) $(FIXTURE_SO) $(NATIVE_FIXTURE_SO)
 	@if [ -d "$(TEST_BUILDDIR)" ]; then rmdir --ignore-fail-on-non-empty "$(TEST_BUILDDIR)"; fi

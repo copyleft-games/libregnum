@@ -429,6 +429,14 @@ lrg_scripting_gi_constructed (GObject *object)
     }
 }
 
+/* Generic search-path vfunc shared by every GI-based backend */
+static void
+lrg_scripting_gi_vfunc_add_search_path (LrgScripting *scripting,
+                                        const gchar  *path)
+{
+    lrg_scripting_gi_add_search_path (LRG_SCRIPTING_GI (scripting), path);
+}
+
 static void
 lrg_scripting_gi_class_init (LrgScriptingGIClass *klass)
 {
@@ -440,6 +448,7 @@ lrg_scripting_gi_class_init (LrgScriptingGIClass *klass)
 
     /* Override base class reset */
     scripting_class->reset = lrg_scripting_gi_real_reset;
+    scripting_class->add_search_path = lrg_scripting_gi_vfunc_add_search_path;
 
     /* Set default virtual method implementations */
     klass->init_interpreter = lrg_scripting_gi_real_init_interpreter;

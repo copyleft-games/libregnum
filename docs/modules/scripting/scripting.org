@@ -300,6 +300,29 @@ Reset the script context to a clean state.
 
 This clears all loaded scripts, global variables, and registered functions, returning the scripting context to its initial state. Built-in API objects (Log, Registry, Engine) are preserved.
 
+*** Search Paths and Optional Functions
+:PROPERTIES:
+:CUSTOM_ID: search-paths-optional
+:END:
+#+begin_src C
+void     lrg_scripting_add_search_path (LrgScripting *self, const gchar *path);
+gboolean lrg_scripting_has_function    (LrgScripting *self, const gchar *func_name);
+#+end_src
+
+=lrg_scripting_add_search_path()= extends where a script's imports and includes
+resolve.  Depending on the backend that is Lua's =package.path=, Python's
+=sys.path=, the Gjs search path, or a =-I= directory for Crispy.
+=lrg_scripting_has_function()= reports whether a callable of that name exists,
+so a host can call optional entry points (=on_load=, =on_unload=, and so on)
+without treating their absence as an error:
+
+#+begin_src C
+lrg_scripting_add_search_path (ctx, addon_dir);
+lrg_scripting_load_file (ctx, entry, &error);
+if (lrg_scripting_has_function (ctx, "on_load"))
+    lrg_scripting_call_function (ctx, "on_load", NULL, 0, NULL, &error);
+#+end_src
+
 ** Error Handling
 :PROPERTIES:
 :CUSTOM_ID: error-handling

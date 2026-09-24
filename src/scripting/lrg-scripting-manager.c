@@ -7,8 +7,12 @@
  * Registry of available scripting-language backends.
  */
 
+#include <gmodule.h>
+#include <string.h>
+
 #include "lrg-scripting-manager.h"
 #include "lrg-scripting.h"
+#include "lrg-scripting-native.h"
 
 #ifdef LRG_HAS_LUAJIT
 #include "lrg-scripting-lua.h"
@@ -77,6 +81,12 @@ make_crispy (void)
 }
 #endif
 
+static LrgScripting *
+make_native (void)
+{
+	return LRG_SCRIPTING (lrg_scripting_native_new ());
+}
+
 static const BackendDesc backends[] = {
 	{ LRG_SCRIPT_LANGUAGE_LUA, "Lua", "lua",
 #ifdef LRG_HAS_LUAJIT
@@ -105,6 +115,10 @@ static const BackendDesc backends[] = {
 #else
 	  FALSE, NULL
 #endif
+	},
+	/* Prebuilt shared objects: always available where GModule is */
+	{ LRG_SCRIPT_LANGUAGE_NATIVE, "Native", G_MODULE_SUFFIX,
+	  TRUE, make_native
 	}
 };
 
@@ -365,4 +379,40 @@ lrg_scripting_manager_register_backend (LrgScriptingManager     *self,
 	g_array_append_val (self->dynamic, entry);
 
 	return TRUE;
+}
+
+LrgScriptLanguage
+lrg_scripting_manager_language_for_path (LrgScriptingManager *self,
+                                         const gchar         *path)
+{
+	const gchar *dot;
+	guint        i;
+
+	g_return_val_if_fail (LRG_IS_SCRIPTING_MANAGER (self), LRG_SCRIPT_LANGUAGE_NONE);
+	g_return_val_if_fail (path != NULL, LRG_SCRIPT_LANGUAGE_NONE);
+
+	/* Only the final extension counts, and only after the last separator */
+	dot = strrchr (path, '.');
+	if (dot == NULL || strchr (dot, G_DIR_SEPARATOR) != NULL || dot[1] == '\0')
+		return LRG_SCRIPT_LANGUAGE_NONE;
+	dot++;
+
+	/* Compiled-in backends first, whether or not they were built */
+	for (i = 0; i < N_BACKENDS; i++)
+		if (g_ascii_strcasecmp (backends[i].extension, dot) == 0)
+			return backends[i].language;
+
+	/* Then anything an embedder registered */
+	if (self->dynamic != NULL)
+	{
+		for (i = 0; i < self->dynamic->len; i++)
+		{
+			DynamicBackend *d = &g_array_index (self->dynamic, DynamicBackend, i);
+
+			if (d->extension != NULL && g_ascii_strcasecmp (d->extension, dot) == 0)
+				return d->language;
+		}
+	}
+
+	return LRG_SCRIPT_LANGUAGE_NONE;
 }
