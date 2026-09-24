@@ -1,0 +1,140 @@
+* LrgCollectibleDef - Collectible Definition
+:PROPERTIES:
+:CUSTOM_ID: lrgcollectibledef---collectible-definition
+:END:
+Static description of something a character can own: a mount, pet, title or toy. Definitions are shared, read-mostly content objects; per-character ownership lives in [[file:collection.org][LrgCollection]].
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Derivable GObject Class* - subclassed by [[file:mount-def.org][LrgMountDef]] and [[file:pet-def.org][LrgPetDef]]; games may subclass it for custom acquisition rules
+- *Type ID* - =LRG_TYPE_COLLECTIBLE_DEF=
+- *GIR Name* - =Libregnum.CollectibleDef=
+- *Header* - =collection/lrg-collectible-def.h=
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property         | Type                   | Default  | Notes                                                         |
+|------------------+------------------------+----------+---------------------------------------------------------------|
+| =id=             | =gchararray=           | =NULL=   | Construct-only unique identifier                              |
+| =name=           | =gchararray=           | =NULL=   | Display name                                                  |
+| =description=    | =gchararray=           | =NULL=   | Description text                                              |
+| =icon=           | =gchararray=           | =NULL=   | Icon key                                                      |
+| =kind=           | =LrgCollectibleKind=   | =TOY=    | Construct-only; pinned to =MOUNT= / =PET= by the subclasses   |
+| =rarity=         | =LrgCollectibleRarity= | =COMMON= | Rarity tier                                                   |
+| =source=         | =gchararray=           | =NULL=   | Human readable acquisition text, e.g. "Vendor: Stablemaster"  |
+| =model=          | =gchararray=           | =NULL=   | Model / visual key for the client                             |
+| =required-level= | =guint=                | =0=      | Minimum character level                                       |
+
+All writable properties use =G_PARAM_EXPLICIT_NOTIFY=: =notify= fires only when a value actually changes. Every scalar is a real property, so =LrgDataLoader= / =yaml_gobject_deserialize= can load definitions from YAML (construct-only =id= and =kind= are applied at construction).
+
+** Virtual Methods
+:PROPERTIES:
+:CUSTOM_ID: virtual-methods
+:END:
+*** can_obtain()
+:PROPERTIES:
+:CUSTOM_ID: can_obtain
+:END:
+#+begin_src C
+gboolean (*can_obtain) (LrgCollectibleDef  *self,
+                        guint               level,
+                        GError            **error);
+#+end_src
+
+Checks whether a character of =level= may obtain the collectible. The default implementation fails with =LRG_PROGRESSION_ERROR_REQUIREMENT= when =level= is below =required-level=. Override to add faction, achievement or reputation gates; chain up to keep the level check.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_collectible_def_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_collectible_def_new
+:END:
+#+begin_src C
+LrgCollectibleDef * lrg_collectible_def_new (const gchar        *id,
+                                             LrgCollectibleKind  kind);
+#+end_src
+
+Creates a plain definition, typically for a title or toy.
+
+*Parameters:*
+
+- =id= - Unique, non-empty identifier (a =NULL= or empty id is a programmer error and returns =NULL= with a critical)
+- =kind= - The collectible kind
+
+*Returns:* A new =LrgCollectibleDef= (transfer full)
+
+** Accessors
+:PROPERTIES:
+:CUSTOM_ID: accessors
+:END:
+#+begin_src C
+const gchar          *lrg_collectible_def_get_id             (LrgCollectibleDef *self);
+LrgCollectibleKind    lrg_collectible_def_get_kind           (LrgCollectibleDef *self);
+const gchar          *lrg_collectible_def_get_name           (LrgCollectibleDef *self);
+void                  lrg_collectible_def_set_name           (LrgCollectibleDef *self, const gchar *name);
+const gchar          *lrg_collectible_def_get_description    (LrgCollectibleDef *self);
+void                  lrg_collectible_def_set_description    (LrgCollectibleDef *self, const gchar *description);
+const gchar          *lrg_collectible_def_get_icon           (LrgCollectibleDef *self);
+void                  lrg_collectible_def_set_icon           (LrgCollectibleDef *self, const gchar *icon);
+LrgCollectibleRarity  lrg_collectible_def_get_rarity         (LrgCollectibleDef *self);
+void                  lrg_collectible_def_set_rarity         (LrgCollectibleDef *self, LrgCollectibleRarity rarity);
+const gchar          *lrg_collectible_def_get_source         (LrgCollectibleDef *self);
+void                  lrg_collectible_def_set_source         (LrgCollectibleDef *self, const gchar *source);
+const gchar          *lrg_collectible_def_get_model          (LrgCollectibleDef *self);
+void                  lrg_collectible_def_set_model          (LrgCollectibleDef *self, const gchar *model);
+guint                 lrg_collectible_def_get_required_level (LrgCollectibleDef *self);
+void                  lrg_collectible_def_set_required_level (LrgCollectibleDef *self, guint level);
+#+end_src
+
+String getters return (transfer none, nullable) strings owned by the definition. String setters copy their (nullable) argument. =set_rarity= rejects values outside the enum with a critical and leaves the rarity unchanged. There is deliberately no =set_kind=: kind is fixed at construction.
+
+** Acquisition Check
+:PROPERTIES:
+:CUSTOM_ID: acquisition-check
+:END:
+*** lrg_collectible_def_can_obtain()
+:PROPERTIES:
+:CUSTOM_ID: lrg_collectible_def_can_obtain
+:END:
+#+begin_src C
+gboolean lrg_collectible_def_can_obtain (LrgCollectibleDef  *self,
+                                         guint               level,
+                                         GError            **error);
+#+end_src
+
+Dispatches to the =can_obtain= virtual method.
+
+*Parameters:*
+
+- =self= - An =LrgCollectibleDef=
+- =level= - The character's level
+- =error= - Return location for an error (nullable)
+
+*Returns:* =TRUE= if the collectible may be obtained
+
+*Errors:* =LRG_PROGRESSION_ERROR_REQUIREMENT= when =level < required-level= (default implementation).
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgCollectibleDef) title = lrg_collectible_def_new ("title_kingslayer", LRG_COLLECTIBLE_KIND_TITLE);
+g_autoptr(GError) error = NULL;
+
+g_object_set (title,
+              "name", "Kingslayer",
+              "rarity", LRG_COLLECTIBLE_RARITY_EPIC,
+              "source", "Achievement: Regicide",
+              "required-level", 60u,
+              NULL);
+
+if (!lrg_collectible_def_can_obtain (title, player_level, &error))
+    g_message ("cannot grant: %s", error->message);
+#+end_src

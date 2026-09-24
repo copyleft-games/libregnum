@@ -185,6 +185,12 @@
 #include "profession/lrg-gather-node-def.h"
 #include "profession/lrg-profession-state.h"
 
+/* Collection module */
+#include "collection/lrg-collectible-def.h"
+#include "collection/lrg-mount-def.h"
+#include "collection/lrg-pet-def.h"
+#include "collection/lrg-collection.h"
+#include "collection/lrg-companion-brain.h"
 
 /* Audio module */
 #include "audio/lrg-sound-bank.h"

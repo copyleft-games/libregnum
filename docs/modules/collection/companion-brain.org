@@ -1,0 +1,231 @@
+* LrgCompanionBrain - Companion Decision Logic
+:PROPERTIES:
+:CUSTOM_ID: lrgcompanionbrain---companion-decision-logic
+:END:
+Pure, server-authoritative decision logic for pets and other companions: follow, assist, defend or stay passive. Each tick the caller fills an =LrgCompanionInput= snapshot and calls =lrg_companion_brain_think()=, which writes an =LrgCompanionOutput= intent. The brain does no movement, rendering, ECS access, timekeeping or randomness.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgCompanionBrain= - *Final GObject Class*, =LRG_TYPE_COMPANION_BRAIN=, GIR =Libregnum.CompanionBrain=
+- =LrgCompanionInput= - *Boxed struct* with public fields, =LRG_TYPE_COMPANION_INPUT=
+- =LrgCompanionOutput= - *Boxed struct* with public fields, =LRG_TYPE_COMPANION_OUTPUT=
+- *Header* - =collection/lrg-companion-brain.h=
+
+** Coordinate Convention
+:PROPERTIES:
+:CUSTOM_ID: coordinate-convention
+:END:
+Positions are on the XZ plane. Facing 0 looks down -Z; positive angles rotate toward -X (gnunited's yaw convention). The unit direction for angle =a= is =(-sin a, -cos a)=:
+
+| facing | looks toward |
+|--------+--------------|
+| 0      | -Z           |
+| π/2    | -X           |
+| -π/2   | +X           |
+| π      | +Z           |
+
+The follow point is =owner + dir(facing + follow-angle) * follow-distance=. The default follow angle 2.356 (≈3π/4) puts the companion behind-left of the owner.
+
+** LrgCompanionInput
+:PROPERTIES:
+:CUSTOM_ID: lrgcompanioninput
+:END:
+#+begin_src C
+struct _LrgCompanionInput {
+    gdouble  x, z;                         /* companion position */
+    gdouble  owner_x, owner_z;
+    gdouble  owner_facing;                 /* radians, see convention */
+    guint    owner_target;                 /* 0 = none */
+    gboolean owner_target_alive;
+    gdouble  owner_target_x, owner_target_z;
+    guint    owner_attacker;               /* 0 = none */
+    gdouble  owner_attacker_x, owner_attacker_z;
+    guint    self_attacker;                /* 0 = none */
+    gdouble  self_attacker_x, self_attacker_z;
+    gboolean owner_in_combat;              /* informational */
+    gboolean alive;
+};
+LrgCompanionInput *lrg_companion_input_new  (void);                         /* zeroed: alive = FALSE */
+LrgCompanionInput *lrg_companion_input_copy (const LrgCompanionInput *self);
+void               lrg_companion_input_free (LrgCompanionInput *self);      /* NULL-safe */
+#+end_src
+
+The header declares each field on its own line; this is a compact view. Stack allocation (=LrgCompanionInput in = { 0 };=) is the normal usage; the boxed API exists for bindings. Remember to set =alive = TRUE=: a zeroed input means "dead".
+
+** LrgCompanionOutput
+:PROPERTIES:
+:CUSTOM_ID: lrgcompanionoutput
+:END:
+#+begin_src C
+struct _LrgCompanionOutput {
+    LrgCompanionAction action;
+    gdouble            dest_x, dest_z;
+    guint              target;             /* only for ATTACK, else 0 */
+};
+LrgCompanionOutput *lrg_companion_output_new  (void);                       /* action IDLE */
+LrgCompanionOutput *lrg_companion_output_copy (const LrgCompanionOutput *self);
+void                lrg_companion_output_free (LrgCompanionOutput *self);
+#+end_src
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property          | Type                 | Default  | Range       | Meaning                                                  |
+|-------------------+----------------------+----------+-------------+----------------------------------------------------------|
+| =kind=            | =LrgCompanionKind=   | ctor arg | enum        | =VANITY= never attacks                                   |
+| =stance=          | =LrgCompanionStance= | =ASSIST= | enum        | Automatic target selection policy                        |
+| =follow-distance= | =gdouble=            | =2.0=    | 0 .. 1000   | Follow point distance from owner                         |
+| =follow-angle=    | =gdouble=            | =2.356=  | -2π .. 2π   | Follow point angle relative to owner facing              |
+| =leash-range=     | =gdouble=            | =30.0=   | 0 .. 1e5    | Companion-to-owner distance that breaks off combat       |
+| =teleport-range=  | =gdouble=            | =60.0=   | 0 .. 1e5    | Follow-point distance that triggers a teleport           |
+| =attack-range=    | =gdouble=            | =3.0=    | 0 .. 1000   | Reach within which the companion strikes instead of chasing |
+
+=LRG_COMPANION_ARRIVE_DISTANCE= (0.75) is the follow-point distance at or below which the companion idles.
+
+** Decision Table
+:PROPERTIES:
+:CUSTOM_ID: decision-table
+:END:
+=lrg_companion_brain_think()= evaluates these rules in order; the first that applies wins. "Follow point" is computed from the owner's position and facing.
+
+| # | Condition                                                                 | Action                          | dest                           | target | Side effect                    |
+|---+---------------------------------------------------------------------------+---------------------------------+--------------------------------+--------+--------------------------------|
+| 1 | =!alive=, or non-finite companion/owner position or owner facing          | =IDLE=                          | companion position (0,0 if NaN) | 0      | target and order cleared       |
+| 2 | kind =VANITY=                                                             | skip to rule 5                  |                                |        | target cleared                 |
+| 3 | distance(companion, owner) > leash-range                                  | =TELEPORT= if follow distance > teleport-range, else =RETURN= | follow point | 0 | target and order cleared |
+| 4 | a valid target exists (kept or newly selected, see below)                 | =ATTACK=                        | own position if within attack-range, else target position | target |          |
+| 5 | distance(companion, follow point) > teleport-range                        | =TELEPORT=                      | follow point                   | 0      |                                |
+| 5 | distance(companion, follow point) > 0.75                                  | =FOLLOW=                        | follow point                   | 0      |                                |
+| 5 | otherwise                                                                 | =IDLE=                          | companion position             | 0      |                                |
+
+All comparisons are strict (=>=): exactly at attack range the companion strikes, exactly at the leash it keeps fighting, exactly at the teleport range it walks, exactly at 0.75 it idles.
+
+*** Target validity and selection (rule 4)
+:PROPERTIES:
+:CUSTOM_ID: target-validity-and-selection
+:END:
+A hostile id is /known/ when it equals =owner_target= (only while =owner_target_alive=; a dead owner target invalidates that id even if it is also listed as an attacker), =owner_attacker= or =self_attacker=, and the matching position is finite.
+
+1. A PASSIVE brain drops a target it selected itself (an explicit order survives).
+2. The current target is kept while it is known — the companion does not switch just because the owner changes target.
+3. Otherwise a new target is selected by stance:
+
+| Stance       | Selection order                                  |
+|--------------+--------------------------------------------------|
+| =PASSIVE=    | none                                             |
+| =DEFENSIVE=  | =owner_attacker=, then =self_attacker=           |
+| =ASSIST=     | live =owner_target=, then as DEFENSIVE           |
+| =AGGRESSIVE= | same as ASSIST (the snapshot carries no other hostiles) |
+
+*** Commands
+:PROPERTIES:
+:CUSTOM_ID: commands
+:END:
+#+begin_src C
+void     lrg_companion_brain_command_attack (LrgCompanionBrain *self, guint target);
+void     lrg_companion_brain_command_follow (LrgCompanionBrain *self);
+guint    lrg_companion_brain_get_target     (LrgCompanionBrain *self);
+gboolean lrg_companion_brain_is_commanded   (LrgCompanionBrain *self);
+#+end_src
+
+- =command_attack= sets the target and marks it ordered. It overrides the stance, including PASSIVE. VANITY brains ignore it (the target stays 0). =target = 0= clears. The ordered target must still be /known/ in the snapshot (normally the owner's live target); otherwise the next think drops it.
+- =command_follow= clears the target and the order. The stance may pick a new target on the next think (an ASSIST pet whose owner still targets a live hostile re-engages immediately); use the PASSIVE stance to keep a pet out of combat.
+- =get_target= returns the current target (0 for none); =is_commanded= whether it came from an order.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+#+begin_src C
+LrgCompanionBrain *lrg_companion_brain_new         (LrgCompanionKind kind);
+LrgCompanionBrain *lrg_companion_brain_new_for_pet (LrgPetDef *pet);
+#+end_src
+
+=new_for_pet= copies =companion-kind=, =follow-distance=, =follow-angle= and =attack-range= from the pet definition; the rest keep their defaults. Both return (transfer full).
+
+** Accessors
+:PROPERTIES:
+:CUSTOM_ID: accessors
+:END:
+#+begin_src C
+LrgCompanionKind   lrg_companion_brain_get_kind            (LrgCompanionBrain *self);
+void               lrg_companion_brain_set_kind            (LrgCompanionBrain *self, LrgCompanionKind kind);  /* VANITY clears target */
+LrgCompanionStance lrg_companion_brain_get_stance          (LrgCompanionBrain *self);
+void               lrg_companion_brain_set_stance          (LrgCompanionBrain *self, LrgCompanionStance stance);
+gdouble            lrg_companion_brain_get_follow_distance (LrgCompanionBrain *self);
+void               lrg_companion_brain_set_follow_distance (LrgCompanionBrain *self, gdouble distance);
+gdouble            lrg_companion_brain_get_follow_angle    (LrgCompanionBrain *self);
+void               lrg_companion_brain_set_follow_angle    (LrgCompanionBrain *self, gdouble angle);
+gdouble            lrg_companion_brain_get_leash_range     (LrgCompanionBrain *self);
+void               lrg_companion_brain_set_leash_range     (LrgCompanionBrain *self, gdouble range);
+gdouble            lrg_companion_brain_get_teleport_range  (LrgCompanionBrain *self);
+void               lrg_companion_brain_set_teleport_range  (LrgCompanionBrain *self, gdouble range);
+gdouble            lrg_companion_brain_get_attack_range    (LrgCompanionBrain *self);
+void               lrg_companion_brain_set_attack_range    (LrgCompanionBrain *self, gdouble range);
+#+end_src
+
+Setters reject non-finite or out-of-range values with a critical and leave the value unchanged; =notify= fires only on real changes.
+
+** Thinking
+:PROPERTIES:
+:CUSTOM_ID: thinking
+:END:
+*** lrg_companion_brain_think()
+:PROPERTIES:
+:CUSTOM_ID: lrg_companion_brain_think
+:END:
+#+begin_src C
+void lrg_companion_brain_think (LrgCompanionBrain       *self,
+                                const LrgCompanionInput *input,
+                                LrgCompanionOutput      *output);
+#+end_src
+
+Applies the decision table. Every field of =output= (caller-allocated) is overwritten. Destinations are always finite.
+
+*** lrg_companion_brain_follow_point()
+:PROPERTIES:
+:CUSTOM_ID: lrg_companion_brain_follow_point
+:END:
+#+begin_src C
+void lrg_companion_brain_follow_point (LrgCompanionBrain *self,
+                                       gdouble            owner_x,
+                                       gdouble            owner_z,
+                                       gdouble            owner_facing,
+                                       gdouble           *out_x,
+                                       gdouble           *out_z);
+#+end_src
+
+Computes the follow point used by =think=. Useful for spawning a summoned pet at the right spot.
+
+** Integration Notes
+:PROPERTIES:
+:CUSTOM_ID: integration-notes
+:END:
+- =ATTACK= with =dest= equal to the companion's own position means "in range, strike =target= now (respecting your attack interval)"; any other =dest= means "chase toward =dest=".
+- =RETURN= means "move to =dest= and ignore hostiles". The brain has no return-hysteresis: once back inside =leash-range= it may re-engage on the next tick. If companions oscillate at the leash edge in your game, keep them in RETURN until they are near the follow point before calling =think= again.
+- =TELEPORT= means "snap to =dest=" (e.g. after the owner flies or zones).
+- =owner_in_combat= is carried for game-specific extensions and is not used by the default rules.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgCompanionBrain) brain = lrg_companion_brain_new (LRG_COMPANION_KIND_COMBAT);
+LrgCompanionInput  in = { 0 };
+LrgCompanionOutput out;
+
+lrg_companion_brain_set_stance (brain, LRG_COMPANION_STANCE_DEFENSIVE);
+
+in.alive = TRUE;
+in.x = 1.0;  in.z = 2.0;
+in.owner_x = 0.0;  in.owner_z = 0.0;  in.owner_facing = 0.0;
+in.owner_attacker = 77;  in.owner_attacker_x = 1.5;  in.owner_attacker_z = 3.0;
+
+lrg_companion_brain_think (brain, &in, &out);
+/* out.action == LRG_COMPANION_ACTION_ATTACK, out.target == 77,
+ * dest == (1.0, 2.0) because the attacker is within 3.0 units. */
+#+end_src

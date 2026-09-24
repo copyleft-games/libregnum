@@ -277,6 +277,7 @@ Engagement systems for player retention:
 - *[[file:quest/index.org][Quest Module]]* - Quest objectives, prerequisites, repeatable dailies/weeklies, chains and persistence ([[file:quest/quest-chain.org][LrgQuestChain]])
 - *[[file:progression/index.org][Progression Module]]* - Experience curves with rested XP, abilities, spellbooks and action bars, cooldowns, auras, class resources, talent trees, loadouts and dual specs
 - *[[file:profession/index.org][Profession Module]]* - Primary/secondary professions, trainer tiers, recipes, gather nodes and orange/yellow/green/grey skill-ups
+- *[[file:collection/index.org][Collection Module]]* - Mount, pet, title and toy collections plus the server-side companion brain
 - *[[file:core/reset-schedule.org][Reset Schedule]]* - Daily and weekly reset periods for repeatable content
 - *Save Module* - Save/load serialization
 - *Audio Module* - Sound effects and music
@@ -369,6 +370,7 @@ Phase 0   core/ (engine, registry, loader, assets)
 | Quest       | 2     | Implemented | QuestDef, QuestInstance, QuestLog, QuestChain (prerequisites, exclusives, daily/weekly repeats, variant persistence)                |
 | Progression | 2     | Complete    | ExperienceCurve, AbilityDef, Spellbook, CooldownSet, Aura, AuraSet, Vital, TalentTree, TalentLoadout, TalentBook                    |
 | Profession  | 2     | Complete    | SkillBand, ProfessionDef, RecipeDef, GatherNodeDef, ProfessionState                                                                 |
+| Collection  | 2     | Complete    | CollectibleDef, MountDef, PetDef, Collection, CompanionBrain                                                                        |
 | Save        | 2     | Implemented | SaveGame, SaveManager, SaveContext                                                                                                  |
 | Audio       | 2     | Implemented | SoundBank, MusicTrack, AudioManager                                                                                                 |
 | AI          | 3     | Implemented | BehaviorTree, BTNode, Blackboard                                                                                                    |

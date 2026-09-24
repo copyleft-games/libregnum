@@ -41,6 +41,7 @@ libregnum/
 │   ├── quest/                # QuestDef, QuestObjective, QuestInstance, QuestLog, QuestChain
 │   ├── progression/          # ExperienceCurve, AbilityDef, Spellbook, CooldownSet, Aura(Set), Vital, Talent*
 │   ├── profession/           # SkillBand, ProfessionDef, RecipeDef, GatherNodeDef, ProfessionState
+│   ├── collection/           # CollectibleDef, MountDef, PetDef, Collection, CompanionBrain
 │   ├── inventory/            # ItemDef, ItemStack, Inventory, Equipment
 │   ├── save/                 # Saveable interface, SaveContext, SaveGame, SaveManager
 │   ├── ai/                   # BehaviorTree, Blackboard, BTNode hierarchy
@@ -505,6 +506,40 @@ lrg_camera3d_slerp_to (camera, target_quat, 0.1f);
 lrg_transform_component_set_rotation_quaternion (transform, quat);
 lrg_transform_component_slerp_rotation (transform, target, amount);
 ```
+
+### MMO Character Progression (quest, progression, profession, collection)
+
+These modules model the *rules and persistent state* of RPG/MMO character growth
+without owning rendering or networking, so they work inside an authoritative
+server simulation as well as a single-player game.
+
+- **Definitions are data** (`LrgQuestDef`, `LrgAbilityDef`, `LrgTalentTree`,
+  `LrgProfessionDef`, `LrgRecipeDef`, `LrgGatherNodeDef`, `LrgMountDef`,
+  `LrgPetDef`): derivable, property-based, loadable from YAML, immutable
+  after loading.
+- **Runtime state is per character** (`LrgQuestLog`, `LrgSpellbook`,
+  `LrgCooldownSet`, `LrgAuraSet`, `LrgVital`, `LrgTalentBook`,
+  `LrgProfessionState`, `LrgCollection`) and every state type round-trips
+  through `*_to_variant()` / `*_new_from_variant()`. Restores validate every
+  field (type string, normal form, bounds, UTF-8 ids, duplicates) and fail
+  with `LRG_PROGRESSION_ERROR` without touching live state. Persist the
+  variants inside `LrgMmoStore` records; send clients projections only.
+- **No hidden clocks or randomness**: pass trusted Unix seconds (`now`),
+  tick deltas and `[0,1)` rolls from your own deterministic stream.
+- **Daily/weekly content**: `LrgResetSchedule` turns Unix time into period
+  indices; `lrg_quest_log_can_start()` enforces repeat periods, min level,
+  prerequisites and exclusive branches; use `start_quest_checked()` and
+  `turn_in()` for server quests.
+- **Talents**: `lrg_talent_loadout_validate()` replays every spent point, so a
+  tampered save is rejected. Call `lrg_talent_book_set_point_rules()` after
+  restoring a book because point rules are not part of the variant.
+- **Professions**: restore with `lrg_profession_state_new_from_variant_full()`
+  so the primary limit is enforced exactly.
+- **Companions**: `lrg_companion_brain_think()` is pure decision logic;
+  initialise `LrgCompanionInput.alive = TRUE`.
+
+See `docs/modules/{quest,progression,profession,collection}/index.org` and
+`docs/modules/core/reset-schedule.org`.
 
 ## Architecture Overview
 

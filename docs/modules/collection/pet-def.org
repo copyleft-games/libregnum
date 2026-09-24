@@ -1,0 +1,126 @@
+* LrgPetDef - Pet Definition
+:PROPERTIES:
+:CUSTOM_ID: lrgpetdef---pet-definition
+:END:
+A companion pet collectible. Extends [[file:collectible-def.org][LrgCollectibleDef]] with whether the pet fights, how it follows its owner, basic combat stats and a list of ability ids. Pair it with [[file:companion-brain.org][LrgCompanionBrain]] via =lrg_companion_brain_new_for_pet()=.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Derivable GObject Class* - parent =LrgCollectibleDef=
+- *Type ID* - =LRG_TYPE_PET_DEF=
+- *GIR Name* - =Libregnum.PetDef=
+- *Header* - =collection/lrg-pet-def.h=
+- The inherited =kind= is always =LRG_COLLECTIBLE_KIND_PET=.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property          | Type               | Default  | Range          | Notes                                           |
+|-------------------+--------------------+----------+----------------+-------------------------------------------------|
+| =companion-kind=  | =LrgCompanionKind= | =VANITY= | enum           | =VANITY= never attacks; =COMBAT= fights         |
+| =follow-distance= | =gdouble=          | =2.0=    | 0 .. 1000      | Distance of the follow point from the owner     |
+| =follow-angle=    | =gdouble=          | =2.356=  | -2π .. 2π      | Radians relative to owner facing (behind-left)  |
+| =health=          | =guint=            | =0=      | any            | Base health                                     |
+| =damage=          | =guint=            | =0=      | any            | Base damage per attack                          |
+| =attack-range=    | =gdouble=          | =3.0=    | 0 .. 1000      | Reach                                           |
+| =attack-interval= | =gdouble=          | =2.0=    | 0.05 .. 3600   | Seconds between attacks                         |
+| =move-speed=      | =gdouble=          | =7.0=    | 0 .. 1000      | World units per second                          |
+
+Out-of-range or non-finite setter arguments log a critical and leave the value unchanged. =notify= fires only on real changes.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_pet_def_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_pet_def_new
+:END:
+#+begin_src C
+LrgPetDef * lrg_pet_def_new (const gchar      *id,
+                             LrgCompanionKind  companion_kind);
+#+end_src
+
+*Parameters:*
+
+- =id= - Unique, non-empty identifier
+- =companion_kind= - =LRG_COMPANION_KIND_VANITY= or =LRG_COMPANION_KIND_COMBAT=
+
+*Returns:* A new =LrgPetDef= (transfer full) with kind =PET=
+
+** Accessors
+:PROPERTIES:
+:CUSTOM_ID: accessors
+:END:
+#+begin_src C
+LrgCompanionKind lrg_pet_def_get_companion_kind  (LrgPetDef *self);
+void             lrg_pet_def_set_companion_kind  (LrgPetDef *self, LrgCompanionKind kind);
+gdouble          lrg_pet_def_get_follow_distance (LrgPetDef *self);
+void             lrg_pet_def_set_follow_distance (LrgPetDef *self, gdouble distance);
+gdouble          lrg_pet_def_get_follow_angle    (LrgPetDef *self);
+void             lrg_pet_def_set_follow_angle    (LrgPetDef *self, gdouble angle);
+guint            lrg_pet_def_get_health          (LrgPetDef *self);
+void             lrg_pet_def_set_health          (LrgPetDef *self, guint health);
+guint            lrg_pet_def_get_damage          (LrgPetDef *self);
+void             lrg_pet_def_set_damage          (LrgPetDef *self, guint damage);
+gdouble          lrg_pet_def_get_attack_range    (LrgPetDef *self);
+void             lrg_pet_def_set_attack_range    (LrgPetDef *self, gdouble range);
+gdouble          lrg_pet_def_get_attack_interval (LrgPetDef *self);
+void             lrg_pet_def_set_attack_interval (LrgPetDef *self, gdouble interval);
+gdouble          lrg_pet_def_get_move_speed      (LrgPetDef *self);
+void             lrg_pet_def_set_move_speed      (LrgPetDef *self, gdouble speed);
+#+end_src
+
+** Abilities
+:PROPERTIES:
+:CUSTOM_ID: abilities
+:END:
+*** lrg_pet_def_add_ability()
+:PROPERTIES:
+:CUSTOM_ID: lrg_pet_def_add_ability
+:END:
+#+begin_src C
+void lrg_pet_def_add_ability (LrgPetDef   *self,
+                              const gchar *ability_id);
+#+end_src
+
+Appends an ability id (for example an =LrgAbilityDef= id from the progression module). Duplicates are silently ignored so data can be re-applied. A =NULL= or empty id, or adding beyond =LRG_PET_DEF_MAX_ABILITIES= (64), logs a critical and changes nothing.
+
+*** lrg_pet_def_has_ability()
+:PROPERTIES:
+:CUSTOM_ID: lrg_pet_def_has_ability
+:END:
+#+begin_src C
+gboolean lrg_pet_def_has_ability (LrgPetDef   *self,
+                                  const gchar *ability_id);
+#+end_src
+
+*Returns:* =TRUE= if the id was added (=FALSE= for =NULL=).
+
+*** lrg_pet_def_get_abilities()
+:PROPERTIES:
+:CUSTOM_ID: lrg_pet_def_get_abilities
+:END:
+#+begin_src C
+GPtrArray * lrg_pet_def_get_abilities (LrgPetDef *self);
+#+end_src
+
+*Returns:* The ability ids in insertion order (transfer none, element-type utf8). Do not modify the array.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgPetDef) wolf = lrg_pet_def_new ("pet_wolf", LRG_COMPANION_KIND_COMBAT);
+
+g_object_set (wolf, "name", "Timber Wolf", "health", 800u, "damage", 35u,
+              "attack-range", 2.5, "attack-interval", 1.5, NULL);
+lrg_pet_def_add_ability (wolf, "pet_bite");
+lrg_pet_def_add_ability (wolf, "pet_growl");
+
+g_autoptr(LrgCompanionBrain) brain = lrg_companion_brain_new_for_pet (wolf);
+#+end_src

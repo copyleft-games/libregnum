@@ -139,6 +139,11 @@ PUBLIC_HEADERS := \
 	src/profession/lrg-recipe-def.h \
 	src/profession/lrg-gather-node-def.h \
 	src/profession/lrg-profession-state.h \
+	src/collection/lrg-collectible-def.h \
+	src/collection/lrg-mount-def.h \
+	src/collection/lrg-pet-def.h \
+	src/collection/lrg-collection.h \
+	src/collection/lrg-companion-brain.h \
 	src/audio/lrg-sound-bank.h \
 	src/audio/lrg-music-track.h \
 	src/audio/lrg-audio-manager.h \
@@ -648,6 +653,11 @@ SOURCES := \
 	src/profession/lrg-recipe-def.c \
 	src/profession/lrg-gather-node-def.c \
 	src/profession/lrg-profession-state.c \
+	src/collection/lrg-collectible-def.c \
+	src/collection/lrg-mount-def.c \
+	src/collection/lrg-pet-def.c \
+	src/collection/lrg-collection.c \
+	src/collection/lrg-companion-brain.c \
 	src/audio/lrg-sound-bank.c \
 	src/audio/lrg-music-track.c \
 	src/audio/lrg-audio-manager.c \

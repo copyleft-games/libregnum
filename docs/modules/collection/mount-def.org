@@ -1,0 +1,109 @@
+* LrgMountDef - Mount Definition
+:PROPERTIES:
+:CUSTOM_ID: lrgmountdef---mount-definition
+:END:
+A rideable collectible. Extends [[file:collectible-def.org][LrgCollectibleDef]] with the riding gate, speed and seating data a server needs to decide whether a character may mount up and how fast they then move.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Derivable GObject Class* - parent =LrgCollectibleDef=
+- *Type ID* - =LRG_TYPE_MOUNT_DEF=
+- *GIR Name* - =Libregnum.MountDef=
+- *Header* - =collection/lrg-mount-def.h=
+- The inherited =kind= is always =LRG_COLLECTIBLE_KIND_MOUNT=, whatever was passed at construction.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property           | Type       | Default | Range                    | Notes                                  |
+|--------------------+------------+---------+--------------------------+----------------------------------------|
+| =speed-multiplier= | =gdouble=  | =1.0=   | 1.0 .. 100.0             | Mount's own multiplier                 |
+| =required-riding=  | =guint=    | =1=     | any                      | Minimum riding skill tier              |
+| =flying=           | =gboolean= | =FALSE= |                          | Whether the mount can fly              |
+| =passengers=       | =guint=    | =0=     | 0 .. 64                  | Extra passenger seats                  |
+
+Constants: =LRG_MOUNT_DEF_MAX_SPEED_MULTIPLIER= (100.0) and =LRG_MOUNT_DEF_MAX_PASSENGERS= (64). Out-of-range or non-finite setter arguments are programmer errors: a critical is logged and the value is unchanged.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_mount_def_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_mount_def_new
+:END:
+#+begin_src C
+LrgMountDef * lrg_mount_def_new (const gchar *id);
+#+end_src
+
+*Parameters:*
+
+- =id= - Unique, non-empty identifier
+
+*Returns:* A new =LrgMountDef= (transfer full) with kind =MOUNT=
+
+** Accessors
+:PROPERTIES:
+:CUSTOM_ID: accessors
+:END:
+#+begin_src C
+gdouble  lrg_mount_def_get_speed_multiplier (LrgMountDef *self);
+void     lrg_mount_def_set_speed_multiplier (LrgMountDef *self, gdouble multiplier);
+guint    lrg_mount_def_get_required_riding  (LrgMountDef *self);
+void     lrg_mount_def_set_required_riding  (LrgMountDef *self, guint tier);
+gboolean lrg_mount_def_get_flying           (LrgMountDef *self);
+void     lrg_mount_def_set_flying           (LrgMountDef *self, gboolean flying);
+guint    lrg_mount_def_get_passengers       (LrgMountDef *self);
+void     lrg_mount_def_set_passengers       (LrgMountDef *self, guint passengers);
+#+end_src
+
+** Riding Rules
+:PROPERTIES:
+:CUSTOM_ID: riding-rules
+:END:
+*** lrg_mount_def_can_ride()
+:PROPERTIES:
+:CUSTOM_ID: lrg_mount_def_can_ride
+:END:
+#+begin_src C
+gboolean lrg_mount_def_can_ride (LrgMountDef *self,
+                                 guint        riding_tier,
+                                 guint        level);
+#+end_src
+
+Returns =TRUE= iff =riding_tier >= required-riding= *and* =level >= required-level= (the inherited =LrgCollectibleDef:required-level=). Ownership is not checked here; combine with =lrg_collection_has()=.
+
+*Parameters:*
+
+- =riding_tier= - The character's riding skill tier (0 = untrained)
+- =level= - The character's level
+
+*** lrg_mount_def_get_speed()
+:PROPERTIES:
+:CUSTOM_ID: lrg_mount_def_get_speed
+:END:
+#+begin_src C
+gdouble lrg_mount_def_get_speed (LrgMountDef *self,
+                                 gdouble      base_speed,
+                                 gdouble      riding_multiplier);
+#+end_src
+
+Computes =base_speed * riding_multiplier * speed-multiplier=. Negative or non-finite inputs, or an overflowing product, return 0 so a hostile input can never produce an infinite movement speed.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgMountDef) drake = lrg_mount_def_new ("mount_drake");
+
+g_object_set (drake, "name", "Azure Drake", "speed-multiplier", 1.5,
+              "required-riding", 3u, "flying", TRUE, "required-level", 60u, NULL);
+
+if (lrg_collection_has (collection, "mount_drake") &&
+    lrg_mount_def_can_ride (drake, riding_tier, level))
+    move_speed = lrg_mount_def_get_speed (drake, 7.0, riding_multiplier);
+#+end_src

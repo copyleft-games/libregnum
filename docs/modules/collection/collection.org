@@ -1,0 +1,214 @@
+* LrgCollection - Owned Collectibles
+:PROPERTIES:
+:CUSTOM_ID: lrgcollection---owned-collectibles
+:END:
+Per-character runtime state: which mounts, pets, titles and toys the character owns, which are favourites, and which one of each kind is active. The server owns it and persists it with =lrg_collection_to_variant()=.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject Class* - Cannot be subclassed
+- *Type ID* - =LRG_TYPE_COLLECTION=
+- *GIR Name* - =Libregnum.Collection=
+- *Header* - =collection/lrg-collection.h=
+
+** Rules
+:PROPERTIES:
+:CUSTOM_ID: rules
+:END:
+- Ids are 1..128 bytes (=LRG_COLLECTION_MAX_ID_LENGTH=) of valid UTF-8 and unique across *all* kinds.
+- At most 4096 entries (=LRG_COLLECTION_MAX_ENTRIES=) in total.
+- At most one active id per kind; an active id is always owned and of that kind.
+- Removing an id drops its favourite flag and clears its kind's active selection if it was active.
+- Every fallible call is atomic: on error the collection is unchanged.
+- Every list is sorted with =g_strcmp0()=.
+- The collection stores ids only, not definition objects; validate grants against your definition registry first.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_collection_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_collection_new
+:END:
+#+begin_src C
+LrgCollection * lrg_collection_new (void);
+#+end_src
+
+*Returns:* A new empty =LrgCollection= (transfer full)
+
+** Ownership
+:PROPERTIES:
+:CUSTOM_ID: ownership
+:END:
+*** lrg_collection_add()
+:PROPERTIES:
+:CUSTOM_ID: lrg_collection_add
+:END:
+#+begin_src C
+gboolean lrg_collection_add (LrgCollection       *self,
+                             LrgCollectibleKind   kind,
+                             const gchar         *id,
+                             GError             **error);
+#+end_src
+
+Adds an owned collectible (not favourite, not active).
+
+*Errors (checked in this order):*
+
+- =LRG_PROGRESSION_ERROR_INVALID= - =kind= is not a known =LrgCollectibleKind=
+- =LRG_PROGRESSION_ERROR_INVALID= - =id= is =NULL=, empty, longer than 128 bytes or not UTF-8
+- =LRG_PROGRESSION_ERROR_DUPLICATE= - =id= is already owned (with any kind)
+- =LRG_PROGRESSION_ERROR_LIMIT= - the collection already holds 4096 entries
+
+*Returns:* =TRUE= on success
+
+*** lrg_collection_remove()
+:PROPERTIES:
+:CUSTOM_ID: lrg_collection_remove
+:END:
+#+begin_src C
+gboolean lrg_collection_remove (LrgCollection *self,
+                                const gchar   *id);
+#+end_src
+
+Removes =id=, clearing its favourite flag and its kind's active selection if it was active. *Returns:* =TRUE= if =id= was owned (=FALSE= for =NULL= or unknown ids).
+
+*** lrg_collection_has() / lrg_collection_get_kind()
+:PROPERTIES:
+:CUSTOM_ID: lrg_collection_has
+:END:
+#+begin_src C
+gboolean lrg_collection_has      (LrgCollection      *self,
+                                  const gchar        *id);
+gboolean lrg_collection_get_kind (LrgCollection      *self,
+                                  const gchar        *id,
+                                  LrgCollectibleKind *out_kind);
+#+end_src
+
+=has= returns whether =id= is owned. =get_kind= also reports the kind it was added with through the optional =out_kind=. Both accept =NULL= ids (returning =FALSE=).
+
+** Queries
+:PROPERTIES:
+:CUSTOM_ID: queries
+:END:
+#+begin_src C
+guint      lrg_collection_get_count       (LrgCollection *self, LrgCollectibleKind kind);
+guint      lrg_collection_get_total_count (LrgCollection *self);
+GPtrArray *lrg_collection_get_ids         (LrgCollection *self, LrgCollectibleKind kind);
+GPtrArray *lrg_collection_get_favorites   (LrgCollection *self, LrgCollectibleKind kind);
+#+end_src
+
+- =get_count= - owned entries of =kind= (0 for an unknown kind value)
+- =get_total_count= - owned entries of every kind
+- =get_ids= - owned ids of =kind= sorted with =g_strcmp0()= (transfer container, element-type utf8). The strings belong to the collection and stay valid until that entry is removed or the collection is finalized; free the array with =g_ptr_array_unref()=. An unknown kind yields an empty array.
+- =get_favorites= - same as =get_ids= but only favourites
+
+** Favourites
+:PROPERTIES:
+:CUSTOM_ID: favourites
+:END:
+#+begin_src C
+gboolean lrg_collection_set_favorite (LrgCollection  *self,
+                                      const gchar    *id,
+                                      gboolean        favorite,
+                                      GError        **error);
+gboolean lrg_collection_is_favorite  (LrgCollection  *self,
+                                      const gchar    *id);
+#+end_src
+
+=set_favorite= fails with =LRG_PROGRESSION_ERROR_NOT_FOUND= if =id= is not owned (including =NULL=). Setting the current value again succeeds.
+
+** Active Selection
+:PROPERTIES:
+:CUSTOM_ID: active-selection
+:END:
+*** lrg_collection_set_active()
+:PROPERTIES:
+:CUSTOM_ID: lrg_collection_set_active
+:END:
+#+begin_src C
+gboolean lrg_collection_set_active (LrgCollection       *self,
+                                    LrgCollectibleKind   kind,
+                                    const gchar         *id,
+                                    GError             **error);
+#+end_src
+
+Selects the active collectible of =kind=; =id = NULL= clears the selection (always succeeds for a valid kind).
+
+*Errors:*
+
+- =LRG_PROGRESSION_ERROR_INVALID= - unknown =kind=, or =id= is owned with a different kind (e.g. a pet as the active mount)
+- =LRG_PROGRESSION_ERROR_NOT_FOUND= - =id= is not owned
+
+*** lrg_collection_get_active()
+:PROPERTIES:
+:CUSTOM_ID: lrg_collection_get_active
+:END:
+#+begin_src C
+const gchar * lrg_collection_get_active (LrgCollection      *self,
+                                         LrgCollectibleKind  kind);
+#+end_src
+
+*Returns:* The active id of =kind= (transfer none, nullable); =NULL= for none or an unknown kind.
+
+** Persistence
+:PROPERTIES:
+:CUSTOM_ID: persistence
+:END:
+Variant type =LRG_COLLECTION_VARIANT_TYPE= = =(a(usb)a(us))=:
+
+- first member: owned entries as =(kind, id, favourite)=, sorted by kind then id
+- second member: active selections as =(kind, id)=, sorted by kind, only kinds with a selection
+
+*** lrg_collection_to_variant()
+:PROPERTIES:
+:CUSTOM_ID: lrg_collection_to_variant
+:END:
+#+begin_src C
+GVariant * lrg_collection_to_variant (LrgCollection *self);
+#+end_src
+
+*Returns:* A new non-floating variant (transfer full); release with =g_variant_unref()=. Output is deterministic, so to_variant → new_from_variant → to_variant is byte-identical.
+
+*** lrg_collection_new_from_variant()
+:PROPERTIES:
+:CUSTOM_ID: lrg_collection_new_from_variant
+:END:
+#+begin_src C
+LrgCollection * lrg_collection_new_from_variant (GVariant  *variant,
+                                                 GError   **error);
+#+end_src
+
+Restores a collection. A floating =variant= is consumed; a non-floating one is borrowed. Unsorted input is accepted and re-emitted canonically. Returns =NULL= with =LRG_PROGRESSION_ERROR_INVALID= and no leaks when:
+
+- the type string is not exactly =(a(usb)a(us))=
+- the data is not in GVariant normal form (this also catches invalid UTF-8 and truncated data)
+- there are more than 4096 entries or more than 4 active rows
+- an entry or active row has an unknown kind value
+- an id is empty, longer than 128 bytes or not UTF-8
+- an id appears twice (same or different kind) or a kind has two active rows
+- an active id is not owned, or is owned with a different kind
+
+*Returns:* The restored collection (transfer full, nullable)
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(GError)        error = NULL;
+g_autoptr(LrgCollection) c = lrg_collection_new ();
+
+lrg_collection_add (c, LRG_COLLECTIBLE_KIND_PET, "pet_owl", NULL);
+lrg_collection_add (c, LRG_COLLECTIBLE_KIND_PET, "pet_cat", NULL);
+lrg_collection_set_active (c, LRG_COLLECTIBLE_KIND_PET, "pet_owl", NULL);
+
+if (!lrg_collection_set_active (c, LRG_COLLECTIBLE_KIND_MOUNT, "pet_cat", &error))
+    g_message ("%s", error->message);   /* INVALID: kind mismatch */
+
+g_autoptr(GVariant)      saved = lrg_collection_to_variant (c);
+g_autoptr(LrgCollection) loaded = lrg_collection_new_from_variant (saved, &error);
+#+end_src

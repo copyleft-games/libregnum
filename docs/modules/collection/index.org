@@ -1,0 +1,138 @@
+* Collection Module
+:PROPERTIES:
+:CUSTOM_ID: collection-module
+:END:
+The Collection module models the things a character collects in an MMO — mounts, pets, titles and toys — and the pure decision logic that drives companion pets. It is split into immutable-ish data definitions (loaded from YAML or built in C), one small runtime state object per character that the server persists, and a stateless-by-design companion brain the server ticks.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+- [[file:collectible-def.org][LrgCollectibleDef]] - derivable base definition: id, name, description, icon, kind, rarity, source text, model key, required level, and a =can_obtain= virtual method.
+- [[file:mount-def.org][LrgMountDef]] - derivable subclass for rideable mounts: speed multiplier, riding tier gate, flying, passenger seats, =can_ride= and =get_speed=.
+- [[file:pet-def.org][LrgPetDef]] - derivable subclass for companion pets: vanity or combat, follow tuning, combat stats and ability ids.
+- [[file:collection.org][LrgCollection]] - final runtime type: the ids a character owns, favourites, one active selection per kind, and the GVariant persistence contract.
+- [[file:companion-brain.org][LrgCompanionBrain]] - final type plus the boxed =LrgCompanionInput= / =LrgCompanionOutput= snapshots: follow / assist / defend / passive decision table.
+
+** Key Concepts
+:PROPERTIES:
+:CUSTOM_ID: key-concepts
+:END:
+*** Kinds
+:PROPERTIES:
+:CUSTOM_ID: kinds
+:END:
+=LrgCollectibleKind= has four values: =MOUNT=, =PET=, =TITLE= and =TOY=. A definition's kind is construct-only. =LrgMountDef= instances always report =MOUNT= and =LrgPetDef= instances always report =PET=, even if a different =kind= was passed to =g_object_new()= (the subclass pins it in =constructed=). Titles and toys use the plain =LrgCollectibleDef=.
+
+*** Ownership versus definition
+:PROPERTIES:
+:CUSTOM_ID: ownership-versus-definition
+:END:
+=LrgCollection= stores only ids and per-character flags; it never references definition objects. The server keeps a registry of definitions (for example a =GHashTable= of id to =LrgCollectibleDef=) and validates grants against it before calling =lrg_collection_add()=. This keeps the persisted record small and lets content patches change a mount's speed without migrating every character.
+
+Ids are unique across kinds inside one collection: a character cannot own both a mount and a pet called =shadow=. Ids must be 1..128 bytes of valid UTF-8.
+
+*** Active selections
+:PROPERTIES:
+:CUSTOM_ID: active-selections
+:END:
+Each kind has at most one active id: the summoned pet, the current mount, the displayed title, the equipped toy. =lrg_collection_set_active()= rejects an id owned with a different kind (=INVALID=) or not owned (=NOT_FOUND=), and =NULL= clears the selection. Removing an owned id clears its favourite flag and, if it was active, the active selection for its kind.
+
+*** Companion decisions
+:PROPERTIES:
+:CUSTOM_ID: companion-decisions
+:END:
+=LrgCompanionBrain= answers one question per tick: given this snapshot of the owner, the companion and nearby hostiles, what should the companion do? The answer is an =LrgCompanionAction= (=IDLE=, =FOLLOW=, =TELEPORT=, =ATTACK=, =RETURN=), a destination on the XZ plane and an optional target id. The only state carried between ticks is the current target and whether it was explicitly ordered. The brain never moves anything, never renders, never reads a clock and never rolls dice, so it can be unit tested exhaustively and replayed deterministically.
+
+Angles use the gnunited convention: facing 0 looks down -Z and positive angles rotate toward -X. The follow point is =owner + (-sin a, -cos a) * follow-distance= with =a = facing + follow-angle=; the default follow angle 2.356 (about 3π/4) is behind-left of the owner.
+
+** Fit in an authoritative MMO server
+:PROPERTIES:
+:CUSTOM_ID: fit-in-an-authoritative-mmo-server
+:END:
+- The server owns every =LrgCollection=. Clients request "summon pet X" or "favourite mount Y"; the server validates with the collection API and replies with the new projection. Clients never send a serialized collection.
+- Persist a collection by storing =lrg_collection_to_variant()= bytes inside an =LrgMmoStore= record (for example key =char/<id>/collection=). Serialization is deterministic (entries sorted by kind then id, actives sorted by kind), so identical state always produces identical bytes and revision checks stay meaningful.
+- Restore with =lrg_collection_new_from_variant()=. It rejects the whole snapshot with =LRG_PROGRESSION_ERROR_INVALID= on any structural problem (type string, normal form, sizes, unknown kinds, bad ids, duplicates, dangling or mismatched active ids) and never leaks on failure. Treat a rejected snapshot as corruption and alert; do not partially load it.
+- Clients receive projections only: typically the list of owned ids per kind, favourites and active ids, which they resolve against their own copy of the static definitions for names, icons and models.
+- Run =LrgCompanionBrain= on the server for every summoned combat pet (and optionally vanity pets, or let clients animate vanity followers locally since they never affect combat). Feed it the authoritative positions each simulation tick and apply the returned intent to the pet entity; broadcast the pet's resulting transform like any other NPC.
+
+** Worked Example
+:PROPERTIES:
+:CUSTOM_ID: worked-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+/* Static content, normally loaded from YAML through LrgDataLoader. */
+g_autoptr(LrgMountDef) gryphon = lrg_mount_def_new ("mount_gryphon");
+g_autoptr(LrgPetDef)   wolf = lrg_pet_def_new ("pet_wolf", LRG_COMPANION_KIND_COMBAT);
+
+lrg_collectible_def_set_name (LRG_COLLECTIBLE_DEF (gryphon), "Snowy Gryphon");
+lrg_mount_def_set_speed_multiplier (gryphon, 1.6);
+lrg_mount_def_set_required_riding (gryphon, 3);
+lrg_mount_def_set_flying (gryphon, TRUE);
+lrg_pet_def_add_ability (wolf, "bite");
+
+/* Per-character runtime state, restored from the store on login. */
+g_autoptr(GError)        error = NULL;
+g_autoptr(LrgCollection) collection = lrg_collection_new ();
+
+if (!lrg_collection_add (collection, LRG_COLLECTIBLE_KIND_MOUNT, "mount_gryphon", &error))
+    g_warning ("grant failed: %s", error->message);
+lrg_collection_add (collection, LRG_COLLECTIBLE_KIND_PET, "pet_wolf", NULL);
+lrg_collection_set_favorite (collection, "mount_gryphon", TRUE, NULL);
+
+/* Player asks to mount up: check ownership and riding skill. */
+if (lrg_collection_has (collection, "mount_gryphon") &&
+    lrg_mount_def_can_ride (gryphon, /* riding tier */ 3, /* level */ 40))
+{
+    gdouble speed = lrg_mount_def_get_speed (gryphon, 7.0, 1.6);
+    lrg_collection_set_active (collection, LRG_COLLECTIBLE_KIND_MOUNT, "mount_gryphon", NULL);
+    /* apply `speed` to the character's movement component */
+    (void)speed;
+}
+
+/* Persist inside an LrgMmoStore record. */
+g_autoptr(GVariant) snapshot = lrg_collection_to_variant (collection);
+g_autoptr(GBytes)   bytes = g_variant_get_data_as_bytes (snapshot);
+/* ... add ("char/42/collection", revision, bytes) to an a(stay) batch and
+ *     lrg_mmo_store_commit() it ... */
+
+/* Summoned pet AI, once per server tick. */
+g_autoptr(LrgCompanionBrain) brain = lrg_companion_brain_new_for_pet (wolf);
+LrgCompanionInput  in = { 0 };
+LrgCompanionOutput out;
+
+in.alive = TRUE;
+in.x = pet_x;            in.z = pet_z;
+in.owner_x = player_x;   in.owner_z = player_z;
+in.owner_facing = player_yaw;
+in.owner_target = player_target_id;
+in.owner_target_alive = player_target_alive;
+in.owner_target_x = target_x; in.owner_target_z = target_z;
+
+lrg_companion_brain_think (brain, &in, &out);
+switch (out.action)
+{
+case LRG_COMPANION_ACTION_ATTACK:   /* swing at out.target if in range, else path to dest */
+case LRG_COMPANION_ACTION_FOLLOW:   /* path toward (out.dest_x, out.dest_z) */
+case LRG_COMPANION_ACTION_RETURN:   /* path toward dest, ignoring hostiles */
+    break;
+case LRG_COMPANION_ACTION_TELEPORT: /* snap to (out.dest_x, out.dest_z) */
+case LRG_COMPANION_ACTION_IDLE:
+default:
+    break;
+}
+#+end_src
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+All fallible calls use =LRG_PROGRESSION_ERROR=: =INVALID= (bad kind, bad id, kind mismatch, malformed snapshot), =NOT_FOUND= (id not owned), =DUPLICATE= (id already owned), =LIMIT= (collection full at 4096 entries) and =REQUIREMENT= (=lrg_collectible_def_can_obtain()= level gate). A failing call leaves state unchanged.
+
+** Testing
+:PROPERTIES:
+:CUSTOM_ID: testing
+:END:
+=tests/test-collection.c= covers definition defaults and property round trips, kind pinning, every collection rejection branch with an unchanged-state assertion, variant round trips and hostile snapshots (wrong type, non-normal form, invalid UTF-8, unknown kinds, empty and overlong ids, duplicates, oversized arrays, dangling and mismatched active ids), and the companion decision table for every kind × stance × situation plus leash, teleport, arrive and attack-range boundaries and the follow-point geometry.
