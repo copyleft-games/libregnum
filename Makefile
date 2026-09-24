@@ -1777,6 +1777,20 @@ debug-build:
 # Source files depend on generated headers
 $(OBJECTS): src/lrg-version.h src/config.h
 
+# Objects also depend on the effective compile flags. Feature detection
+# changes them between invocations (BUILD_GIR=0 drops GI and with it the
+# Python and gjs scripting backends), and without this a build directory
+# reused with other options keeps objects such as lrg-scripting-manager.o
+# that still reference backends which are no longer compiled, failing at
+# link time. The stamp is rewritten only when the flags differ, so an
+# unchanged configuration rebuilds nothing.
+CFLAGS_STAMP := $(OBJDIR)/.cflags
+ifneq ($(file < $(CFLAGS_STAMP)),$(strip $(LIB_CFLAGS)))
+    $(shell $(MKDIR_P) $(OBJDIR))
+    $(file > $(CFLAGS_STAMP),$(strip $(LIB_CFLAGS)))
+endif
+$(OBJECTS): $(CFLAGS_STAMP)
+
 # =============================================================================
 # Object File Rules
 # =============================================================================
