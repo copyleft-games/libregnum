@@ -173,7 +173,8 @@ void                lrg_quest_objective_set_current_count (LrgQuestObjective *se
  * @self: an #LrgQuestObjective
  * @amount: amount to add
  *
- * Increments the current count.
+ * Increments the current count. The count saturates at %G_MAXUINT
+ * instead of wrapping around.
  *
  * Returns: The new current count
  */

@@ -1,0 +1,324 @@
+* LrgResetSchedule - Daily and Weekly Resets
+:PROPERTIES:
+:CUSTOM_ID: lrgresetschedule---daily-and-weekly-resets
+:END:
+Pure, deterministic arithmetic for "daily reset at 04:00" and "weekly reset on Tuesday" style periods, used by repeatable quests (=LrgQuestLog=) and any other content with daily or weekly caps. The schedule never reads the clock: every query takes Unix seconds supplied by the caller (on an MMO server, the trusted server time), so results are reproducible and testable. The UTC offset is fixed; there are no daylight saving rules.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject Class* - Cannot be subclassed
+- *Type ID* - =LRG_TYPE_RESET_SCHEDULE=
+- *GIR Name* - =Libregnum.ResetSchedule=
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property | Type | Range | Default | Meaning |
+|----------+------+-------+---------+---------|
+| =reset-hour= | =guint= | 0-23 | 0 | Local hour of the reset |
+| =reset-minute= | =guint= | 0-59 | 0 | Local minute of the reset |
+| =weekly-day= | =guint= | 1-7 | 2 (Tuesday) | =GDateWeekday= of the weekly reset (1 = Monday, 7 = Sunday) |
+| =utc-offset= | =gint= | -720 to 840 | 0 | Offset of the reset clock from UTC in minutes |
+
+Setters reject out-of-range values with =g_return_if_fail()= (a programmer error that leaves the schedule unchanged) and notify only when the value changes.
+
+** Period Semantics
+:PROPERTIES:
+:CUSTOM_ID: period-semantics
+:END:
+A reset boundary is an instant at which the local clock (UTC plus =utc-offset=) reads =reset-hour:reset-minute:00=; for weekly periods the local day must also be =weekly-day=. Period N is the half-open interval =[start(N), start(N+1))=, with =start(N+1) - start(N)= equal to 86400 (daily) or 604800 (weekly).
+
+- *Index 0* is the period that begins at the first boundary at or after the Unix epoch, so times before that boundary have negative indices.
+- *Floor division* is used throughout: times before 1970 behave exactly like later times, and consecutive periods always differ by one.
+- *At the reset instant* =lrg_reset_schedule_get_period()= already returns the new period and =lrg_reset_schedule_get_next_reset()= returns the following boundary (one full period later); one second earlier belongs to the old period.
+- *Overflow*: all queries are safe over the whole =gint64= range. Period starts that cannot be represented saturate at =G_MININT64= / =G_MAXINT64=.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_reset_schedule_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_new
+:END:
+#+begin_src C
+LrgResetSchedule *lrg_reset_schedule_new (guint reset_hour,
+                                          guint weekly_day,
+                                          gint  utc_offset_minutes);
+#+end_src
+
+Creates a schedule. The reset minute starts at 0. Out-of-range arguments are programmer errors and return =NULL=. =g_object_new (LRG_TYPE_RESET_SCHEDULE, NULL)= gives the defaults (00:00 UTC, Tuesday).
+
+*Parameters:*
+
+- =reset_hour= - Local reset hour, 0-23
+- =weekly_day= - Weekly reset weekday, 1 (Monday) to 7 (Sunday)
+- =utc_offset_minutes= - Fixed UTC offset, -720 to 840
+
+*Returns:* A new =LrgResetSchedule= (transfer full)
+
+** Accessors
+:PROPERTIES:
+:CUSTOM_ID: accessors
+:END:
+*** lrg_reset_schedule_get_reset_hour()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_get_reset_hour
+:END:
+#+begin_src C
+guint lrg_reset_schedule_get_reset_hour (LrgResetSchedule *self);
+#+end_src
+
+Gets the =reset-hour= property.
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+
+*Returns:* The current value
+
+*** lrg_reset_schedule_set_reset_hour()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_set_reset_hour
+:END:
+#+begin_src C
+void lrg_reset_schedule_set_reset_hour (LrgResetSchedule *self,
+                              guint reset_hour);
+#+end_src
+
+Sets the =reset-hour= property (0-23).
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+- =reset_hour= - New value, 0-23
+
+*** lrg_reset_schedule_get_reset_minute()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_get_reset_minute
+:END:
+#+begin_src C
+guint lrg_reset_schedule_get_reset_minute (LrgResetSchedule *self);
+#+end_src
+
+Gets the =reset-minute= property.
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+
+*Returns:* The current value
+
+*** lrg_reset_schedule_set_reset_minute()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_set_reset_minute
+:END:
+#+begin_src C
+void lrg_reset_schedule_set_reset_minute (LrgResetSchedule *self,
+                              guint reset_minute);
+#+end_src
+
+Sets the =reset-minute= property (0-59).
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+- =reset_minute= - New value, 0-59
+
+*** lrg_reset_schedule_get_weekly_day()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_get_weekly_day
+:END:
+#+begin_src C
+guint lrg_reset_schedule_get_weekly_day (LrgResetSchedule *self);
+#+end_src
+
+Gets the =weekly-day= property.
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+
+*Returns:* The current value
+
+*** lrg_reset_schedule_set_weekly_day()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_set_weekly_day
+:END:
+#+begin_src C
+void lrg_reset_schedule_set_weekly_day (LrgResetSchedule *self,
+                              guint weekly_day);
+#+end_src
+
+Sets the =weekly-day= property (1-7).
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+- =weekly_day= - New value, 1-7
+
+*** lrg_reset_schedule_get_utc_offset()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_get_utc_offset
+:END:
+#+begin_src C
+gint lrg_reset_schedule_get_utc_offset (LrgResetSchedule *self);
+#+end_src
+
+Gets the =utc-offset= property.
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+
+*Returns:* The current value
+
+*** lrg_reset_schedule_set_utc_offset()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_set_utc_offset
+:END:
+#+begin_src C
+void lrg_reset_schedule_set_utc_offset (LrgResetSchedule *self,
+                              gint utc_offset_minutes);
+#+end_src
+
+Sets the =utc-offset= property (-720 to 840).
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+- =utc_offset_minutes= - New value, -720 to 840
+
+** Queries
+:PROPERTIES:
+:CUSTOM_ID: queries
+:END:
+Every query takes an =LrgResetPeriod=: =LRG_RESET_PERIOD_DAILY= or =LRG_RESET_PERIOD_WEEKLY=.
+
+*** lrg_reset_schedule_get_period()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_get_period
+:END:
+#+begin_src C
+gint64 lrg_reset_schedule_get_period (LrgResetSchedule *self,
+                                      LrgResetPeriod    period,
+                                      gint64            now);
+#+end_src
+
+Gets the index of the period containing =now=.
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+- =period= - Cadence
+- =now= - Unix seconds, may be negative
+
+*Returns:* The period index
+
+*** lrg_reset_schedule_get_period_start()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_get_period_start
+:END:
+#+begin_src C
+gint64 lrg_reset_schedule_get_period_start (LrgResetSchedule *self,
+                                            LrgResetPeriod    period,
+                                            gint64            index);
+#+end_src
+
+Gets the Unix second at which period =index= begins (saturating).
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+- =period= - Cadence
+- =index= - Period index
+
+*Returns:* Unix seconds of the boundary
+
+*** lrg_reset_schedule_get_next_reset()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_get_next_reset
+:END:
+#+begin_src C
+gint64 lrg_reset_schedule_get_next_reset (LrgResetSchedule *self,
+                                          LrgResetPeriod    period,
+                                          gint64            now);
+#+end_src
+
+Gets the first boundary strictly after =now= (saturating at =G_MAXINT64=).
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+- =period= - Cadence
+- =now= - Unix seconds
+
+*Returns:* Unix seconds of the next reset
+
+*** lrg_reset_schedule_get_seconds_until_reset()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_get_seconds_until_reset
+:END:
+#+begin_src C
+gint64 lrg_reset_schedule_get_seconds_until_reset (LrgResetSchedule *self,
+                                                   LrgResetPeriod    period,
+                                                   gint64            now);
+#+end_src
+
+Seconds from =now= to the next reset: 1 to 86400 for daily periods, 1 to 604800 for weekly periods.
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+- =period= - Cadence
+- =now= - Unix seconds
+
+*Returns:* Seconds until the next reset
+
+*** lrg_reset_schedule_is_same_period()
+:PROPERTIES:
+:CUSTOM_ID: lrg_reset_schedule_is_same_period
+:END:
+#+begin_src C
+gboolean lrg_reset_schedule_is_same_period (LrgResetSchedule *self,
+                                            LrgResetPeriod    period,
+                                            gint64            a,
+                                            gint64            b);
+#+end_src
+
+Convenience: compares the period indices of two times.
+
+*Parameters:*
+
+- =self= - An =LrgResetSchedule=
+- =period= - Cadence
+- =a=, =b= - Unix seconds
+
+*Returns:* =TRUE= if both times fall in the same period
+
+** MMO Usage
+:PROPERTIES:
+:CUSTOM_ID: mmo-usage
+:END:
+Create one schedule per realm at server start and share it with every quest log check. Store the schedule's configuration with the realm configuration rather than per character: completion records only store Unix seconds, so changing the reset hour later re-buckets old completions consistently. Clients may be sent =lrg_reset_schedule_get_seconds_until_reset()= for countdown timers, but eligibility is always decided on the server.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* Resets at 03:00 in UTC-05:00 (08:00 UTC); weekly on Tuesday. */
+g_autoptr(LrgResetSchedule) schedule = lrg_reset_schedule_new (3, G_DATE_TUESDAY, -300);
+gint64 now = trusted_server_time ();
+
+gint64 today = lrg_reset_schedule_get_period (schedule, LRG_RESET_PERIOD_DAILY, now);
+gint64 last  = lrg_reset_schedule_get_period (schedule, LRG_RESET_PERIOD_DAILY, last_bonus_claim);
+if (last < today)
+    grant_daily_login_bonus (character);
+
+g_print ("Weekly reset in %" G_GINT64_FORMAT " seconds\n",
+         lrg_reset_schedule_get_seconds_until_reset (schedule, LRG_RESET_PERIOD_WEEKLY, now));
+#+end_src

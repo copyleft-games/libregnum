@@ -43,7 +43,7 @@ LrgQuestInstance * lrg_quest_log_start_quest (LrgQuestLog *self,
                                               LrgQuestDef *quest_def);
 #+end_src
 
-Starts a new quest from a definition. Creates an instance and adds it to the active quests.
+Starts a new quest from a definition. Creates an instance and adds it to the active quests. This legacy entry point performs no level, prerequisite, exclusivity or repeat checks and returns =NULL= for any quest that is active or has a completion record. When its instance completes the last stage it moves to the completed set automatically and a completion record with an unknown time (=last= = 0) is created. Server-authoritative games should use =lrg_quest_log_start_quest_checked()= instead.
 
 *Parameters:*
 
@@ -98,7 +98,7 @@ Gets all active quests.
 GList * lrg_quest_log_get_completed_quests (LrgQuestLog *self);
 #+end_src
 
-Gets all completed quests.
+Gets the instances of completed quests. Records created with =lrg_quest_log_mark_completed()= have no instance and are not listed; use =lrg_quest_log_get_completed_ids()= for every completed quest.
 
 *Parameters:*
 
@@ -250,13 +250,295 @@ Gets the number of active quests.
 guint lrg_quest_log_get_completed_count (LrgQuestLog *self);
 #+end_src
 
-Gets the number of completed quests.
+Gets the number of quests with a completion record (quests marked with =lrg_quest_log_mark_completed()= included). This is also the value of the =completed-count= property.
 
 *Parameters:*
 
 - =self= - An =LrgQuestLog=
 
 *Returns:* Completed quest count
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+- =quest-started (LrgQuestInstance *quest)= - a quest was started (not emitted while restoring a snapshot)
+- =quest-completed (LrgQuestInstance *quest)= - a legacy quest auto-completed, or a checked quest was turned in
+- =quest-ready (LrgQuestInstance *quest)= - a checked quest finished its last stage and waits for =lrg_quest_log_turn_in()=
+- =quest-failed=, =quest-abandoned=, =objective-updated=, =tracked-changed= - unchanged
+
+An instance that is no longer the active instance for its ID (abandoned, turned in, or replaced by a restart) never drives the log again.
+
+** Availability and Turn-in
+:PROPERTIES:
+:CUSTOM_ID: availability-and-turn-in
+:END:
+All errors below are in the =LRG_PROGRESSION_ERROR= domain and leave the log unchanged.
+
+*** lrg_quest_log_can_start()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_can_start
+:END:
+#+begin_src C
+gboolean lrg_quest_log_can_start (LrgQuestLog      *self,
+                                  LrgQuestDef      *quest_def,
+                                  guint             level,
+                                  LrgResetSchedule *schedule,
+                                  gint64            now,
+                                  GError          **error);
+#+end_src
+
+Full availability check. Rules are evaluated in this order and the first failure is reported:
+
+1. Already active - =LRG_PROGRESSION_ERROR_DUPLICATE=
+2. =level= below =min-level= - =LRG_PROGRESSION_ERROR_REQUIREMENT=
+3. A prerequisite has no completion record - =LRG_PROGRESSION_ERROR_REQUIREMENT= (message "... requires <id>")
+4. An exclusive quest is active or completed - =LRG_PROGRESSION_ERROR_REQUIREMENT=
+5. Completed and =repeat= is =NONE= - =LRG_PROGRESSION_ERROR_DUPLICATE=
+6. Completed and repeatable with =schedule= =NULL= - =LRG_PROGRESSION_ERROR_INVALID=; completed and the reset period (daily or weekly per =repeat=) of the last completion is not earlier than the period of =now= - =LRG_PROGRESSION_ERROR_NOT_READY=
+7. =LRG_QUEST_LOG_MAX_ACTIVE= (256) quests already active, or a new completion record would exceed =LRG_QUEST_LOG_MAX_COMPLETED= (8192) - =LRG_PROGRESSION_ERROR_LIMIT=
+
+Rule 7 is an engine addition that guarantees every reachable log can be persisted. The =check_prerequisites= virtual method is not called. A completion recorded at an unknown time (0) counts as the period containing the Unix epoch.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_def= - Quest definition
+- =level= - Character level
+- =schedule= - (nullable) Reset schedule; required only for repeatable quests that were completed before
+- =now= - Trusted server Unix seconds
+- =error= - (nullable) Error return
+
+*Returns:* =TRUE= if the quest may be started
+
+*** lrg_quest_log_start_quest_checked()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_start_quest_checked
+:END:
+#+begin_src C
+LrgQuestInstance *lrg_quest_log_start_quest_checked (LrgQuestLog      *self,
+                                                     LrgQuestDef      *quest_def,
+                                                     guint             level,
+                                                     LrgResetSchedule *schedule,
+                                                     gint64            now,
+                                                     GError          **error);
+#+end_src
+
+Runs =lrg_quest_log_can_start()= and starts the quest in turn-in mode: when its last stage completes the instance stays active in state =LRG_QUEST_STATE_COMPLETE= and =quest-ready= is emitted. A restarted repeatable quest keeps its completion record as history, so it is both active and completed until turned in again.
+
+*Parameters:*
+
+- Same as =lrg_quest_log_can_start()=
+
+*Returns:* The new active instance (transfer none), or =NULL= with =error= set
+
+*Errors:* Same as =lrg_quest_log_can_start()=
+
+*** lrg_quest_log_turn_in()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_turn_in
+:END:
+#+begin_src C
+gboolean lrg_quest_log_turn_in (LrgQuestLog *self,
+                                const gchar *quest_id,
+                                gint64       now,
+                                GError     **error);
+#+end_src
+
+Turns in an active quest whose instance is complete: the instance moves to the completed set (replacing an older completed instance), the completion count is incremented (saturating at =G_MAXUINT=), =now= becomes the last completion time, a tracked quest is untracked and =quest-completed= is emitted. Rewards are not granted; call =lrg_quest_def_grant_rewards()= after success.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_id= - Quest ID
+- =now= - Trusted server Unix seconds
+- =error= - (nullable) Error return
+
+*Returns:* =TRUE= on success
+
+*Errors:* =LRG_PROGRESSION_ERROR_NOT_FOUND= if the quest is not active; =LRG_PROGRESSION_ERROR_REQUIREMENT= if its instance is not in state =COMPLETE= (including failed quests)
+
+** Completion Records
+:PROPERTIES:
+:CUSTOM_ID: completion-records
+:END:
+Every quest completed at least once has a record of =count= (number of completions) and =last= (Unix seconds of the last completion, 0 when unknown). =lrg_quest_log_is_quest_completed()= answers from these records.
+
+*** lrg_quest_log_get_completion_count()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_get_completion_count
+:END:
+#+begin_src C
+guint lrg_quest_log_get_completion_count (LrgQuestLog *self,
+                                          const gchar *quest_id);
+#+end_src
+
+Gets how many times a quest was completed.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_id= - Quest ID
+
+*Returns:* The count, 0 if never
+
+*** lrg_quest_log_get_last_completed()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_get_last_completed
+:END:
+#+begin_src C
+gint64 lrg_quest_log_get_last_completed (LrgQuestLog *self,
+                                         const gchar *quest_id);
+#+end_src
+
+Gets the last completion time.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_id= - Quest ID
+
+*Returns:* Unix seconds, 0 if never completed or unknown
+
+*** lrg_quest_log_get_completed_ids()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_get_completed_ids
+:END:
+#+begin_src C
+GPtrArray *lrg_quest_log_get_completed_ids (LrgQuestLog *self);
+#+end_src
+
+Gets every quest ID with a completion record, sorted with =g_strcmp0()=.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+
+*Returns:* Array of IDs (element-type utf8, transfer container; the strings are owned by the log)
+
+*** lrg_quest_log_count_completed_in_period()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_count_completed_in_period
+:END:
+#+begin_src C
+guint lrg_quest_log_count_completed_in_period (LrgQuestLog      *self,
+                                               const gchar      *category,
+                                               LrgResetSchedule *schedule,
+                                               LrgResetPeriod    period,
+                                               gint64            now,
+                                               GHashTable       *defs);
+#+end_src
+
+Counts repeatable quests (per =defs=) whose category matches (=NULL= matches any) and whose last completion lies in the current =period= of =schedule= at =now=. Records with an unknown time (0), missing definitions, or non-repeatable definitions are not counted. Each quest counts at most once. Used for daily and weekly caps.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =category= - (nullable) Category filter
+- =schedule= - Reset schedule
+- =period= - =LRG_RESET_PERIOD_DAILY= or =LRG_RESET_PERIOD_WEEKLY=
+- =now= - Trusted server Unix seconds
+- =defs= - (element-type utf8 LrgQuestDef) Definitions by ID
+
+*Returns:* The number of matching quests
+
+*** lrg_quest_log_mark_completed()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_mark_completed
+:END:
+#+begin_src C
+void lrg_quest_log_mark_completed (LrgQuestLog *self,
+                                   const gchar *quest_id,
+                                   guint        count,
+                                   gint64       last);
+#+end_src
+
+Replaces a completion record directly, for migrations and administrative grants. No instance is created (so =lrg_quest_log_get_quest()= may return =NULL= for it) and only =notify::completed-count= is emitted when a new record appears. An invalid ID (empty, over 128 bytes, not UTF-8) or =count= 0 is a programmer error.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+- =quest_id= - Quest ID
+- =count= - Completion count, at least 1
+- =last= - Unix seconds of the last completion, 0 if unknown
+
+** Persistence
+:PROPERTIES:
+:CUSTOM_ID: persistence
+:END:
+Snapshot type (=LRG_QUEST_LOG_VARIANT_TYPE=): =(a(suau)a(sux))=
+
+| Part | Element | Meaning |
+|------+---------+---------|
+| active | =(s u au)= | quest ID, current stage, progress of every objective of that stage |
+| completed | =(s u x)= | quest ID, completion count, last completion Unix seconds |
+
+Both arrays are sorted by quest ID. The stage equals the stage count when every stage is done and the quest waits for turn-in; its progress array is then empty. Progress values are clamped to their targets. The tracked quest and instance states (for example =FAILED=) are not persisted. Limits: 256 active entries, 8192 completed entries, 16 progress values per entry, IDs of 1 to 128 bytes of UTF-8.
+
+*** lrg_quest_log_to_variant()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_to_variant
+:END:
+#+begin_src C
+GVariant *lrg_quest_log_to_variant (LrgQuestLog *self);
+#+end_src
+
+Serializes the log. The result is in normal form, and =to_variant= after =new_from_variant= reproduces it exactly.
+
+*Parameters:*
+
+- =self= - An =LrgQuestLog=
+
+*Returns:* A new non-floating =GVariant= (transfer full)
+
+*** lrg_quest_log_new_from_variant()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_log_new_from_variant
+:END:
+#+begin_src C
+LrgQuestLog *lrg_quest_log_new_from_variant (GVariant    *variant,
+                                             GHashTable  *defs,
+                                             GError     **error);
+#+end_src
+
+Restores a log. Every entry is validated before anything is built, so a bad entry rejects the whole snapshot with no side effects. Active quests are restored in turn-in mode without emitting =quest-started=; an entry at stage == stage count is restored in state =COMPLETE=. Missing trailing progress values are treated as 0. Completed quests get an unconnected completed instance so =lrg_quest_log_get_quest()= keeps working.
+
+*Parameters:*
+
+- =variant= - Snapshot
+- =defs= - (element-type utf8 LrgQuestDef) Definitions by ID
+- =error= - (nullable) Error return
+
+*Returns:* The restored log (transfer full, nullable)
+
+*Errors:* =LRG_PROGRESSION_ERROR_NOT_FOUND= for a quest ID missing from =defs= (or mapped to a non-=LrgQuestDef=); =LRG_PROGRESSION_ERROR_INVALID= for a wrong type string, non-normal form (including invalid UTF-8), too many entries, an empty/overlong ID, a duplicate ID within either array, a stage beyond the stage count, more than 16 progress values or more values than the stage has objectives, a value above its objective's target, or a completion count of 0
+
+** Server Example
+:PROPERTIES:
+:CUSTOM_ID: server-example
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+LrgQuestInstance *daily;
+
+daily = lrg_quest_log_start_quest_checked (log, bounty_def, level, schedule, now, &error);
+if (daily == NULL)
+{
+    if (g_error_matches (error, LRG_PROGRESSION_ERROR, LRG_PROGRESSION_ERROR_NOT_READY))
+        notify_client (client, "Come back after the daily reset (%" G_GINT64_FORMAT " s)",
+                       lrg_reset_schedule_get_seconds_until_reset (schedule, LRG_RESET_PERIOD_DAILY, now));
+    return;
+}
+
+/* Later, when the player talks to the quest giver. */
+if (!lrg_quest_log_turn_in (log, "wolf_bounty", now, &error))
+    return notify_client (client, "%s", error->message);
+lrg_quest_def_grant_rewards (bounty_def, character);
+
+/* Save. */
+g_autoptr(GVariant) snapshot = lrg_quest_log_to_variant (log);
+store_character_record (store, character_id, "quests", snapshot);
+#+end_src
 
 ** Example
 :PROPERTIES:

@@ -76,6 +76,7 @@ TEST_SOURCES := \
 	test-dialog.c \
 	test-dialog-yaml.c \
 	test-quest.c \
+	test-reset-schedule.c \
 	test-audio.c \
 	test-inventory.c \
 	test-i18n.c \

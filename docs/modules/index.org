@@ -274,7 +274,8 @@ Engagement systems for player retention:
 :END:
 - *Dialog Module* - Branching dialogue trees
 - *Inventory Module* - Item management and equipment
-- *Quest Module* - Quest objectives and tracking
+- *[[file:quest/index.org][Quest Module]]* - Quest objectives, prerequisites, repeatable dailies/weeklies, chains and persistence ([[file:quest/quest-chain.org][LrgQuestChain]])
+- *[[file:core/reset-schedule.org][Reset Schedule]]* - Daily and weekly reset periods for repeatable content
 - *Save Module* - Save/load serialization
 - *Audio Module* - Sound effects and music
 
@@ -363,7 +364,7 @@ Phase 0   core/ (engine, registry, loader, assets)
 | Tilemap     | 1     | Implemented | Tileset, Tilemap, TilemapLayer                                                                                                      |
 | Dialog      | 2     | Implemented | DialogTree, DialogNode, DialogRunner                                                                                                |
 | Inventory   | 2     | Implemented | ItemDef, ItemStack, Inventory, Equipment                                                                                            |
-| Quest       | 2     | Implemented | QuestDef, QuestInstance, QuestLog                                                                                                   |
+| Quest       | 2     | Implemented | QuestDef, QuestInstance, QuestLog, QuestChain (prerequisites, exclusives, daily/weekly repeats, variant persistence)                |
 | Save        | 2     | Implemented | SaveGame, SaveManager, SaveContext                                                                                                  |
 | Audio       | 2     | Implemented | SoundBank, MusicTrack, AudioManager                                                                                                 |
 | AI          | 3     | Implemented | BehaviorTree, BTNode, Blackboard                                                                                                    |

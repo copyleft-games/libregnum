@@ -161,6 +161,13 @@
 #include "quest/lrg-quest-def.h"
 #include "quest/lrg-quest-instance.h"
 #include "quest/lrg-quest-log.h"
+#include "quest/lrg-quest-chain.h"
+
+/* Core reset schedule (daily/weekly periods) */
+#include "core/lrg-reset-schedule.h"
+
+
+
 
 /* Audio module */
 #include "audio/lrg-sound-bank.h"

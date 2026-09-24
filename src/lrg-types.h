@@ -214,6 +214,61 @@ typedef struct _LrgQuestDefClass  LrgQuestDefClass;
 /* Final types - no class typedef needed */
 typedef struct _LrgQuestInstance  LrgQuestInstance;
 typedef struct _LrgQuestLog       LrgQuestLog;
+typedef struct _LrgQuestChain     LrgQuestChain;
+
+/* ==========================================================================
+ * Core: reset schedule
+ * ========================================================================== */
+
+typedef struct _LrgResetSchedule  LrgResetSchedule;
+
+/* ==========================================================================
+ * Progression Module
+ * ========================================================================== */
+
+typedef struct _LrgExperienceCurve  LrgExperienceCurve;
+typedef struct _LrgAbilityEffect    LrgAbilityEffect;
+typedef struct _LrgAbilityDef       LrgAbilityDef;
+typedef struct _LrgAbilityDefClass  LrgAbilityDefClass;
+typedef struct _LrgSpellbook        LrgSpellbook;
+typedef struct _LrgCooldownSet      LrgCooldownSet;
+typedef struct _LrgAura             LrgAura;
+typedef struct _LrgAuraSet          LrgAuraSet;
+typedef struct _LrgVital            LrgVital;
+typedef struct _LrgTalentNode       LrgTalentNode;
+typedef struct _LrgTalentTree       LrgTalentTree;
+typedef struct _LrgTalentLoadout    LrgTalentLoadout;
+typedef struct _LrgTalentBook       LrgTalentBook;
+
+/* ==========================================================================
+ * Profession Module
+ * ========================================================================== */
+
+typedef struct _LrgSkillBand            LrgSkillBand;
+typedef struct _LrgProfessionTier       LrgProfessionTier;
+typedef struct _LrgProfessionDef        LrgProfessionDef;
+typedef struct _LrgProfessionDefClass   LrgProfessionDefClass;
+typedef struct _LrgRecipeItem           LrgRecipeItem;
+typedef struct _LrgRecipeDef            LrgRecipeDef;
+typedef struct _LrgRecipeDefClass       LrgRecipeDefClass;
+typedef struct _LrgGatherNodeDef        LrgGatherNodeDef;
+typedef struct _LrgGatherNodeDefClass   LrgGatherNodeDefClass;
+typedef struct _LrgProfessionState      LrgProfessionState;
+
+/* ==========================================================================
+ * Collection Module
+ * ========================================================================== */
+
+typedef struct _LrgCollectibleDef       LrgCollectibleDef;
+typedef struct _LrgCollectibleDefClass  LrgCollectibleDefClass;
+typedef struct _LrgMountDef             LrgMountDef;
+typedef struct _LrgMountDefClass        LrgMountDefClass;
+typedef struct _LrgPetDef               LrgPetDef;
+typedef struct _LrgPetDefClass          LrgPetDefClass;
+typedef struct _LrgCollection           LrgCollection;
+typedef struct _LrgCompanionBrain       LrgCompanionBrain;
+typedef struct _LrgCompanionInput       LrgCompanionInput;
+typedef struct _LrgCompanionOutput      LrgCompanionOutput;
 
 /* ==========================================================================
  * Save Module

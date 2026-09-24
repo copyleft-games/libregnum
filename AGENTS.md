@@ -38,7 +38,7 @@ libregnum/
 │   ├── ui/                   # 8 widgets, 3 layouts, Theme, Canvas
 │   ├── tilemap/              # Tileset, TilemapLayer, Tilemap
 │   ├── dialog/               # DialogNode, DialogTree, DialogRunner
-│   ├── quest/                # QuestDef, QuestObjective, QuestInstance, QuestLog
+│   ├── quest/                # QuestDef, QuestObjective, QuestInstance, QuestLog, QuestChain
 │   ├── inventory/            # ItemDef, ItemStack, Inventory, Equipment
 │   ├── save/                 # Saveable interface, SaveContext, SaveGame, SaveManager
 │   ├── ai/                   # BehaviorTree, Blackboard, BTNode hierarchy

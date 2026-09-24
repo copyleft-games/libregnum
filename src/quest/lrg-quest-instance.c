@@ -19,7 +19,7 @@ struct _LrgQuestInstance
     LrgQuestDef   *quest_def;
     LrgQuestState  state;
     guint          current_stage;
-    GPtrArray     *objective_progress;  /* Copies of objectives with progress */
+    GPtrArray     *stage_progress;  /* per stage: GPtrArray of LrgQuestObjective copies */
 };
 
 G_DEFINE_TYPE (LrgQuestInstance, lrg_quest_instance, G_TYPE_OBJECT)
@@ -66,7 +66,7 @@ lrg_quest_instance_finalize (GObject *object)
 {
     LrgQuestInstance *self = LRG_QUEST_INSTANCE (object);
 
-    g_clear_pointer (&self->objective_progress, g_ptr_array_unref);
+    g_clear_pointer (&self->stage_progress, g_ptr_array_unref);
 
     G_OBJECT_CLASS (lrg_quest_instance_parent_class)->finalize (object);
 }
@@ -116,26 +116,93 @@ lrg_quest_instance_set_property (GObject      *object,
     }
 }
 
+/*
+ * copy_stage_objectives:
+ * @self: instance
+ * @reset: whether to zero the copied progress
+ *
+ * Rebuilds the per-stage progress copies from the definition. Every
+ * parallel objective of every stage is copied. With @reset the copies
+ * start at zero progress and are only complete when their target is 0.
+ */
+static void
+copy_stage_objectives (LrgQuestInstance *self,
+                       gboolean          reset)
+{
+    guint n_stages;
+    guint i;
+    guint j;
+
+    g_ptr_array_set_size (self->stage_progress, 0);
+    if (self->quest_def == NULL)
+        return;
+
+    n_stages = lrg_quest_def_get_stage_count (self->quest_def);
+    for (i = 0; i < n_stages; i++)
+    {
+        GPtrArray *orig = lrg_quest_def_get_stage_objectives (self->quest_def, i);
+        GPtrArray *copies = g_ptr_array_new_with_free_func (objective_free_wrapper);
+
+        for (j = 0; orig != NULL && j < orig->len; j++)
+        {
+            LrgQuestObjective *copy = lrg_quest_objective_copy (g_ptr_array_index (orig, j));
+            if (reset)
+            {
+                lrg_quest_objective_set_complete (copy, FALSE);
+                lrg_quest_objective_set_current_count (copy, 0);
+            }
+            g_ptr_array_add (copies, copy);
+        }
+        g_ptr_array_add (self->stage_progress, copies);
+    }
+}
+
+/*
+ * current_objectives:
+ * @self: instance
+ *
+ * Returns: (nullable): objectives of the current stage, or NULL when done
+ */
+static GPtrArray *
+current_objectives (LrgQuestInstance *self)
+{
+    if (self->current_stage >= self->stage_progress->len)
+        return NULL;
+    return g_ptr_array_index (self->stage_progress, self->current_stage);
+}
+
+/*
+ * current_stage_complete:
+ * @self: instance
+ *
+ * Returns: whether every objective of the current stage is complete
+ */
+static gboolean
+current_stage_complete (LrgQuestInstance *self)
+{
+    GPtrArray *objectives;
+    guint      i;
+
+    objectives = current_objectives (self);
+    if (objectives == NULL)
+        return TRUE;
+    for (i = 0; i < objectives->len; i++)
+    {
+        if (!lrg_quest_objective_is_complete (g_ptr_array_index (objectives, i)))
+            return FALSE;
+    }
+    return TRUE;
+}
+
 static void
 lrg_quest_instance_constructed (GObject *object)
 {
     LrgQuestInstance *self = LRG_QUEST_INSTANCE (object);
-    GPtrArray        *stages;
-    guint             i;
 
     G_OBJECT_CLASS (lrg_quest_instance_parent_class)->constructed (object);
 
-    /* Copy objectives from quest def for progress tracking */
-    if (self->quest_def != NULL)
-    {
-        stages = lrg_quest_def_get_stages (self->quest_def);
-        for (i = 0; i < stages->len; i++)
-        {
-            LrgQuestObjective *orig = g_ptr_array_index (stages, i);
-            LrgQuestObjective *copy = lrg_quest_objective_copy (orig);
-            g_ptr_array_add (self->objective_progress, copy);
-        }
-    }
+    /* Copy objectives from quest def for progress tracking, as authored. */
+    copy_stage_objectives (self, FALSE);
 }
 
 static void
@@ -193,7 +260,7 @@ lrg_quest_instance_init (LrgQuestInstance *self)
 {
     self->state = LRG_QUEST_STATE_AVAILABLE;
     self->current_stage = 0;
-    self->objective_progress = g_ptr_array_new_with_free_func (objective_free_wrapper);
+    self->stage_progress = g_ptr_array_new_with_free_func ((GDestroyNotify)g_ptr_array_unref);
 }
 
 LrgQuestInstance *
@@ -245,10 +312,7 @@ lrg_quest_instance_get_current_objective (LrgQuestInstance *self)
 {
     g_return_val_if_fail (LRG_IS_QUEST_INSTANCE (self), NULL);
 
-    if (self->current_stage >= self->objective_progress->len)
-        return NULL;
-
-    return g_ptr_array_index (self->objective_progress, self->current_stage);
+    return lrg_quest_instance_get_objective (self, 0);
 }
 
 gboolean
@@ -257,46 +321,72 @@ lrg_quest_instance_update_progress (LrgQuestInstance      *self,
                                     const gchar           *target_id,
                                     guint                  amount)
 {
-    LrgQuestObjective     *obj;
-    LrgQuestObjectiveType  obj_type;
-    const gchar           *obj_target;
+    GPtrArray *objectives;
+    gboolean   updated;
+    guint      i;
 
     g_return_val_if_fail (LRG_IS_QUEST_INSTANCE (self), FALSE);
 
     if (self->state != LRG_QUEST_STATE_ACTIVE)
         return FALSE;
 
-    obj = lrg_quest_instance_get_current_objective (self);
-    if (obj == NULL)
+    objectives = current_objectives (self);
+    if (objectives == NULL)
         return FALSE;
 
-    obj_type = lrg_quest_objective_get_objective_type (obj);
-    if (obj_type != objective_type)
-        return FALSE;
+    /* Increment every incomplete objective of the stage that matches. */
+    updated = FALSE;
+    for (i = 0; i < objectives->len; i++)
+    {
+        LrgQuestObjective *obj = g_ptr_array_index (objectives, i);
+        const gchar       *obj_target;
 
-    obj_target = lrg_quest_objective_get_target_id (obj);
-    if (target_id != NULL && obj_target != NULL && g_strcmp0 (target_id, obj_target) != 0)
-        return FALSE;
+        if (lrg_quest_objective_is_complete (obj))
+            continue;
+        if (lrg_quest_objective_get_objective_type (obj) != objective_type)
+            continue;
 
-    lrg_quest_objective_increment (obj, amount);
-    g_signal_emit (self, signals[SIGNAL_OBJECTIVE_UPDATED], 0, obj);
+        obj_target = lrg_quest_objective_get_target_id (obj);
+        if (target_id != NULL && obj_target != NULL && g_strcmp0 (target_id, obj_target) != 0)
+            continue;
 
-    /* Auto-advance if complete */
-    if (lrg_quest_objective_is_complete (obj))
+        lrg_quest_objective_increment (obj, amount);
+        updated = TRUE;
+        g_signal_emit (self, signals[SIGNAL_OBJECTIVE_UPDATED], 0, obj);
+
+        /* A handler may have changed the state or stage; stop touching it. */
+        if (self->state != LRG_QUEST_STATE_ACTIVE || current_objectives (self) != objectives)
+            return TRUE;
+    }
+
+    /*
+     * Auto-advance once the whole stage is complete. This also advances a
+     * stage that was already complete (restored snapshot or objectives
+     * with a zero target), so an instance can never get stuck.
+     */
+    if (current_stage_complete (self))
         lrg_quest_instance_advance_stage (self);
 
-    return TRUE;
+    return updated;
 }
 
 gboolean
 lrg_quest_instance_advance_stage (LrgQuestInstance *self)
 {
-    LrgQuestObjective *obj;
+    guint n_stages;
 
     g_return_val_if_fail (LRG_IS_QUEST_INSTANCE (self), FALSE);
 
-    obj = lrg_quest_instance_get_current_objective (self);
-    if (obj != NULL && !lrg_quest_objective_is_complete (obj))
+    /*
+     * Past the last stage there is nothing to advance. A quest without
+     * stages may still advance once from stage 0 to complete itself,
+     * which keeps the historical zero-stage behaviour.
+     */
+    n_stages = self->stage_progress->len;
+    if (self->current_stage >= MAX (n_stages, 1))
+        return FALSE;
+
+    if (!current_stage_complete (self))
         return FALSE;
 
     self->current_stage++;
@@ -304,7 +394,7 @@ lrg_quest_instance_advance_stage (LrgQuestInstance *self)
     g_signal_emit (self, signals[SIGNAL_STAGE_ADVANCED], 0, self->current_stage);
 
     /* Check if all stages complete */
-    if (self->current_stage >= self->objective_progress->len)
+    if (self->current_stage >= n_stages)
         lrg_quest_instance_complete (self);
 
     return TRUE;
@@ -339,7 +429,7 @@ lrg_quest_instance_get_progress (LrgQuestInstance *self)
 
     g_return_val_if_fail (LRG_IS_QUEST_INSTANCE (self), 0.0);
 
-    total = self->objective_progress->len;
+    total = self->stage_progress->len;
     if (total == 0)
         return 1.0;
 
@@ -347,12 +437,91 @@ lrg_quest_instance_get_progress (LrgQuestInstance *self)
         return 1.0;
 
     /* Calculate progress based on completed stages plus current stage progress */
+    /* The current stage contributes the mean of its objectives' progress. */
     stage_progress = 0.0;
     {
-        LrgQuestObjective *obj = lrg_quest_instance_get_current_objective (self);
-        if (obj != NULL)
-            stage_progress = lrg_quest_objective_get_progress (obj);
+        GPtrArray *objectives = current_objectives (self);
+        guint      i;
+
+        for (i = 0; objectives != NULL && i < objectives->len; i++)
+            stage_progress += MIN (1.0, lrg_quest_objective_get_progress (g_ptr_array_index (objectives, i)));
+        if (objectives != NULL && objectives->len > 0)
+            stage_progress /= (gdouble)objectives->len;
     }
 
     return ((gdouble)self->current_stage + stage_progress) / (gdouble)total;
+}
+
+guint
+lrg_quest_instance_get_objective_count (LrgQuestInstance *self)
+{
+    GPtrArray *objectives;
+
+    g_return_val_if_fail (LRG_IS_QUEST_INSTANCE (self), 0);
+    objectives = current_objectives (self);
+    return objectives != NULL ? objectives->len : 0;
+}
+
+LrgQuestObjective *
+lrg_quest_instance_get_objective (LrgQuestInstance *self,
+                                  guint             objective_index)
+{
+    GPtrArray *objectives;
+
+    g_return_val_if_fail (LRG_IS_QUEST_INSTANCE (self), NULL);
+    objectives = current_objectives (self);
+    if (objectives == NULL || objective_index >= objectives->len)
+        return NULL;
+    return g_ptr_array_index (objectives, objective_index);
+}
+
+guint
+lrg_quest_instance_get_objective_progress (LrgQuestInstance *self,
+                                           guint             objective_index)
+{
+    LrgQuestObjective *obj;
+
+    g_return_val_if_fail (LRG_IS_QUEST_INSTANCE (self), 0);
+    obj = lrg_quest_instance_get_objective (self, objective_index);
+    return obj != NULL ? lrg_quest_objective_get_current_count (obj) : 0;
+}
+
+gboolean
+lrg_quest_instance_set_objective_progress (LrgQuestInstance *self,
+                                           guint             objective_index,
+                                           guint             count)
+{
+    LrgQuestObjective *obj;
+    guint              target;
+
+    g_return_val_if_fail (LRG_IS_QUEST_INSTANCE (self), FALSE);
+
+    obj = lrg_quest_instance_get_objective (self, objective_index);
+    if (obj == NULL)
+        return FALSE;
+
+    /* Clamp to the target and derive completion from the clamped count. */
+    target = lrg_quest_objective_get_target_count (obj);
+    count = MIN (count, target);
+    lrg_quest_objective_set_complete (obj, FALSE);
+    lrg_quest_objective_set_current_count (obj, count);
+    return TRUE;
+}
+
+gboolean
+lrg_quest_instance_set_stage (LrgQuestInstance *self,
+                              guint             stage)
+{
+    g_return_val_if_fail (LRG_IS_QUEST_INSTANCE (self), FALSE);
+
+    if (stage > self->stage_progress->len)
+        return FALSE;
+
+    copy_stage_objectives (self, TRUE);
+    if (self->current_stage != stage)
+    {
+        self->current_stage = stage;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CURRENT_STAGE]);
+    }
+    return TRUE;
 }

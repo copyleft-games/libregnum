@@ -8,12 +8,14 @@ The Quest module provides a complete quest system with definitions, progress tra
 :PROPERTIES:
 :CUSTOM_ID: overview
 :END:
-The Quest module consists of four core classes:
+The Quest module consists of five core classes, plus the reset schedule from the core module:
 
-- *LrgQuestDef* - Blueprint for a quest with stages, rewards, and prerequisites
+- *LrgQuestDef* - Blueprint for a quest with stages, parallel objectives, rewards, prerequisites, exclusives, level and repeat rules
 - *LrgQuestObjective* - A single goal within a quest (kill, collect, reach)
-- *LrgQuestInstance* - Active quest tracking player progress
-- *LrgQuestLog* - Container for active and completed quests
+- *LrgQuestInstance* - Active quest tracking player progress for every objective of the current stage
+- *LrgQuestLog* - Container for active quests, completion records, availability checks, turn-in and persistence
+- *LrgQuestChain* - Ordered storyline of quest IDs with progress queries
+- *LrgResetSchedule* (core) - Daily and weekly reset periods for repeatable quests, see [[file:../core/reset-schedule.org][reset-schedule.org]]
 
 ** Key Features
 :PROPERTIES:
@@ -28,6 +30,12 @@ The Quest module consists of four core classes:
 - *Quest state* - Active, complete, failed, abandoned
 - *Quest log* - Track active, completed, and failed quests
 - *Tracked quests* - Display current objective in HUD
+- *Parallel objectives* - Up to 16 objectives per stage that progress together
+- *Availability checks* - Level, prerequisites, exclusives and repeat cadence with typed errors
+- *Repeatable quests* - Daily and weekly quests with completion history and period caps
+- *Turn-in* - Checked quests wait for an explicit turn-in before they count as completed
+- *Persistence* - Exact, validated =GVariant= snapshots of a quest log
+- *Quest chains* - Storylines with next-quest, progress and prerequisite linking
 
 ** Quick Start
 :PROPERTIES:
@@ -73,6 +81,62 @@ if (lrg_quest_instance_is_complete(instance)) {
 }
 #+end_src
 
+** Authoritative MMO Servers
+:PROPERTIES:
+:CUSTOM_ID: authoritative-mmo-servers
+:END:
+In a shared world the server owns every character's =LrgQuestLog=. Clients send intents ("accept quest X", "turn in quest X"); the server evaluates them against its own state and only sends projections (quest IDs, stage, objective counts) back. All time is passed in by the caller as trusted server Unix seconds, and nothing in this module reads the wall clock, so behaviour is deterministic and testable.
+
+- *Accepting* uses =lrg_quest_log_start_quest_checked()=, which runs =lrg_quest_log_can_start()=: already active (=DUPLICATE=), level (=REQUIREMENT=), prerequisites (=REQUIREMENT=), exclusives (=REQUIREMENT=), completed non-repeatable (=DUPLICATE=), repeatable without a schedule (=INVALID=), repeatable already done this period (=NOT_READY=), snapshot capacity (=LIMIT=). Errors are in the =LRG_PROGRESSION_ERROR= domain and the log is unchanged on failure.
+- *Progress* comes from server-side events (kills, loot, interactions) fed into =lrg_quest_instance_update_progress()=.
+- *Completing* a checked quest leaves it active in state =COMPLETE= and emits =quest-ready=. The server validates the turn-in (NPC range and so on), calls =lrg_quest_log_turn_in()= and then grants rewards. This keeps reward granting atomic with the record update.
+- *Repeatables* keep a completion record (count and last completion time). A daily or weekly quest is available again once the current reset period of an =LrgResetSchedule= is later than the period of its last completion. =lrg_quest_log_count_completed_in_period()= implements "at most N dailies per day" caps.
+- *Persistence*: =lrg_quest_log_to_variant()= produces a normal-form =(a(suau)a(sux))= snapshot to store inside an =LrgMmoStore= record, next to the other character state. =lrg_quest_log_new_from_variant()= validates everything (types, bounds, UTF-8, duplicates, unknown quest IDs, stage and progress ranges) before building anything, so a corrupted or hostile record is rejected as a whole.
+
+*** Worked example
+:PROPERTIES:
+:CUSTOM_ID: worked-example
+:END:
+#+begin_src C
+/* Server start-up: definitions and the realm's reset schedule. */
+g_autoptr(GHashTable) defs = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
+g_autoptr(LrgResetSchedule) schedule = lrg_reset_schedule_new (4, G_DATE_TUESDAY, 0); /* 04:00 UTC, weekly on Tuesday */
+
+LrgQuestDef *bounty = lrg_quest_def_new ("wolf_bounty");
+lrg_quest_def_set_repeat (bounty, LRG_QUEST_REPEAT_DAILY);
+lrg_quest_def_set_category (bounty, "daily");
+lrg_quest_def_set_min_level (bounty, 10);
+lrg_quest_def_add_stage (bounty, lrg_quest_objective_new ("wolves", "Kill wolves", LRG_QUEST_OBJECTIVE_KILL));
+g_hash_table_insert (defs, g_strdup ("wolf_bounty"), bounty);
+
+/* Character login: restore the log from its store record. */
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgQuestLog) log = lrg_quest_log_new_from_variant (saved_snapshot, defs, &error);
+if (log == NULL)
+{
+    g_warning ("Rejecting corrupted quest log: %s", error->message);
+    return;
+}
+
+/* Client asks to accept the daily. */
+if (lrg_quest_log_count_completed_in_period (log, "daily", schedule, LRG_RESET_PERIOD_DAILY,
+                                             now, defs) >= 10)
+    return send_error (client, "daily cap reached");
+if (lrg_quest_log_start_quest_checked (log, bounty, character_level, schedule, now, &error) == NULL)
+    return send_error (client, error->message);
+
+/* ... kills are applied by the server's combat code ... */
+lrg_quest_instance_update_progress (lrg_quest_log_get_quest (log, "wolf_bounty"),
+                                    LRG_QUEST_OBJECTIVE_KILL, "wolf", 1);
+
+/* Client asks to turn in. */
+if (lrg_quest_log_turn_in (log, "wolf_bounty", now, &error))
+    lrg_quest_def_grant_rewards (bounty, character);
+
+/* Persist inside the character's LrgMmoStore record. */
+g_autoptr(GVariant) snapshot = lrg_quest_log_to_variant (log);
+#+end_src
+
 ** Objective Types
 :PROPERTIES:
 :CUSTOM_ID: objective-types
@@ -101,4 +165,6 @@ See the individual class documentation:
 - [[file:quest-def.org][LrgQuestDef]] - Quest blueprint and definition
 - [[file:quest-objective.org][LrgQuestObjective]] - Single quest objective
 - [[file:quest-instance.org][LrgQuestInstance]] - Active quest with progress
-- [[file:quest-log.org][LrgQuestLog]] - Quest management and tracking
+- [[file:quest-log.org][LrgQuestLog]] - Quest management, availability, turn-in and persistence
+- [[file:quest-chain.org][LrgQuestChain]] - Ordered quest storylines
+- [[file:../core/reset-schedule.org][LrgResetSchedule]] - Daily and weekly reset periods

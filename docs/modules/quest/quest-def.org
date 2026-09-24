@@ -27,6 +27,8 @@ gboolean (*check_prerequisites) (LrgQuestDef *self,
 
 Checks if quest prerequisites are met. Can be overridden for custom logic.
 
+The default implementation inspects =player=: when it is an =LrgQuestLog= the check passes iff every prerequisite quest has a completion record in that log and no exclusive quest (see =lrg_quest_def_add_exclusive()=) is active or completed there. For any other =player= (including =NULL=) it keeps the historical rule and passes only when the quest has no prerequisites. A non-=NULL= =player= must be a =GTypeInstance= (normally a =GObject=) because the default implementation type-checks it.
+
 *** grant_rewards()
 :PROPERTIES:
 :CUSTOM_ID: grant_rewards
@@ -284,6 +286,280 @@ Gets all prerequisite quest IDs.
 
 *Returns:* Array of quest IDs (element-type utf8, transfer none)
 
+** MMO Properties
+:PROPERTIES:
+:CUSTOM_ID: mmo-properties
+:END:
+All of these are real GObject properties, so =LrgDataLoader= YAML files can set them as scalar keys (=min-level=, =repeat=, =category=, =chain-id=, =zone=). Setters notify only when the value changes.
+
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =min-level= | =guint= | 0 | Minimum character level checked by =lrg_quest_log_can_start()= |
+| =repeat= | =LrgQuestRepeat= | =LRG_QUEST_REPEAT_NONE= | =NONE=, =DAILY= or =WEEKLY= repeat cadence |
+| =category= | string, nullable | =NULL= | Game-defined category such as "story", "daily" or "class"; used by daily caps |
+| =chain-id= | string, nullable | =NULL= | Identifier of the =LrgQuestChain= the quest belongs to |
+| =zone= | string, nullable | =NULL= | Zone the quest is offered in |
+
+*** lrg_quest_def_get_min_level()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_get_min_level
+:END:
+#+begin_src C
+guint lrg_quest_def_get_min_level (LrgQuestDef *self);
+#+end_src
+
+Gets the minimum level.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+
+*Returns:* The minimum level, 0 for none
+
+*** lrg_quest_def_set_min_level()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_set_min_level
+:END:
+#+begin_src C
+void lrg_quest_def_set_min_level (LrgQuestDef *self,
+                                  guint        min_level);
+#+end_src
+
+Sets the minimum level.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+- =min_level= - Minimum level, 0 for none
+
+*** lrg_quest_def_get_repeat()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_get_repeat
+:END:
+#+begin_src C
+LrgQuestRepeat lrg_quest_def_get_repeat (LrgQuestDef *self);
+#+end_src
+
+Gets the repeat cadence.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+
+*Returns:* The =LrgQuestRepeat= value
+
+*** lrg_quest_def_set_repeat()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_set_repeat
+:END:
+#+begin_src C
+void lrg_quest_def_set_repeat (LrgQuestDef    *self,
+                               LrgQuestRepeat  repeat);
+#+end_src
+
+Sets the repeat cadence. Values outside the enum are programmer errors.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+- =repeat= - =LRG_QUEST_REPEAT_NONE=, =_DAILY= or =_WEEKLY=
+
+*** lrg_quest_def_get_category()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_get_category
+:END:
+#+begin_src C
+const gchar *lrg_quest_def_get_category (LrgQuestDef *self);
+#+end_src
+
+Gets the =category= property.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+
+*Returns:* The value (transfer none, nullable)
+
+*** lrg_quest_def_set_category()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_set_category
+:END:
+#+begin_src C
+void lrg_quest_def_set_category (LrgQuestDef *self,
+                     const gchar *category);
+#+end_src
+
+Sets the =category= property; =NULL= clears it.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+- =category= - (nullable) New value
+
+*** lrg_quest_def_get_chain_id()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_get_chain_id
+:END:
+#+begin_src C
+const gchar *lrg_quest_def_get_chain_id (LrgQuestDef *self);
+#+end_src
+
+Gets the =chain-id= property.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+
+*Returns:* The value (transfer none, nullable)
+
+*** lrg_quest_def_set_chain_id()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_set_chain_id
+:END:
+#+begin_src C
+void lrg_quest_def_set_chain_id (LrgQuestDef *self,
+                     const gchar *chain_id);
+#+end_src
+
+Sets the =chain-id= property; =NULL= clears it.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+- =chain_id= - (nullable) New value
+
+*** lrg_quest_def_get_zone()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_get_zone
+:END:
+#+begin_src C
+const gchar *lrg_quest_def_get_zone (LrgQuestDef *self);
+#+end_src
+
+Gets the =zone= property.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+
+*Returns:* The value (transfer none, nullable)
+
+*** lrg_quest_def_set_zone()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_set_zone
+:END:
+#+begin_src C
+void lrg_quest_def_set_zone (LrgQuestDef *self,
+                     const gchar *zone);
+#+end_src
+
+Sets the =zone= property; =NULL= clears it.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+- =zone= - (nullable) New value
+
+** Exclusive Quests
+:PROPERTIES:
+:CUSTOM_ID: exclusive-quests
+:END:
+Exclusive quests model faction or path choices: a quest cannot be started while any of its exclusive quests is active, or once any of them has been completed. Declare the relation on both definitions when it must be symmetric.
+
+*** lrg_quest_def_add_exclusive()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_add_exclusive
+:END:
+#+begin_src C
+void lrg_quest_def_add_exclusive (LrgQuestDef *self,
+                                  const gchar *quest_id);
+#+end_src
+
+Declares a mutually exclusive quest. Adding the same ID twice has no effect. An empty or =NULL= ID is a programmer error.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+- =quest_id= - ID of the excluding quest
+
+*** lrg_quest_def_get_exclusives()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_get_exclusives
+:END:
+#+begin_src C
+GPtrArray *lrg_quest_def_get_exclusives (LrgQuestDef *self);
+#+end_src
+
+Gets the exclusive quest IDs in insertion order.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+
+*Returns:* Array of IDs (element-type utf8, transfer none)
+
+** Parallel Stage Objectives
+:PROPERTIES:
+:CUSTOM_ID: parallel-stage-objectives
+:END:
+A stage may hold up to =LRG_QUEST_MAX_STAGE_OBJECTIVES= (16) objectives that progress in parallel, for example "kill 8 wolves AND collect 5 pelts". The objective passed to =lrg_quest_def_add_stage()= is objective 0 of the stage; =lrg_quest_def_get_stage()= and =lrg_quest_def_get_stages()= keep returning objective 0 only, so single-objective code is unaffected. A stage completes only once every one of its objectives is complete.
+
+*** lrg_quest_def_add_stage_objective()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_add_stage_objective
+:END:
+#+begin_src C
+gboolean lrg_quest_def_add_stage_objective (LrgQuestDef       *self,
+                                            guint              stage,
+                                            LrgQuestObjective *objective);
+#+end_src
+
+Adds an extra objective to an existing stage. The objective is always consumed (transfer full): on rejection it is freed.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+- =stage= - Index of an existing stage
+- =objective= - (transfer full) Objective to add
+
+*Returns:* =TRUE= if added; =FALSE= when the stage does not exist, already holds 16 objectives, or already has an objective with the same ID
+
+*** lrg_quest_def_get_stage_objectives()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_get_stage_objectives
+:END:
+#+begin_src C
+GPtrArray *lrg_quest_def_get_stage_objectives (LrgQuestDef *self,
+                                               guint        stage);
+#+end_src
+
+Gets every objective of a stage, objective 0 first.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+- =stage= - Stage index
+
+*Returns:* Array of =LrgQuestObjective= (element-type, transfer none, nullable) - =NULL= if =stage= is out of range
+
+*** lrg_quest_def_get_stage_objective_count()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_def_get_stage_objective_count
+:END:
+#+begin_src C
+guint lrg_quest_def_get_stage_objective_count (LrgQuestDef *self,
+                                               guint        stage);
+#+end_src
+
+Gets the number of objectives in a stage.
+
+*Parameters:*
+
+- =self= - An =LrgQuestDef=
+- =stage= - Stage index
+
+*Returns:* Objective count, 0 if out of range
+
 ** Rewards
 :PROPERTIES:
 :CUSTOM_ID: rewards
@@ -399,12 +675,18 @@ gboolean lrg_quest_def_check_prerequisites (LrgQuestDef *self,
                                             gpointer     player);
 #+end_src
 
-Checks if all prerequisites are met.
+Checks if all prerequisites are met by calling the =check_prerequisites= virtual method (see above for the default rules).
 
 *Parameters:*
 
 - =self= - An =LrgQuestDef=
-- =player= - (nullable) Player context
+- =player= - (nullable) Player context; pass the character's =LrgQuestLog= to get real prerequisite checks
+
+**** Migration note: default check_prerequisites changed
+:PROPERTIES:
+:CUSTOM_ID: migration-check-prerequisites
+:END:
+Before the MMO progression work the default implementation ignored =player= and returned =TRUE= only for quests without prerequisites, so any quest with a prerequisite was permanently locked unless a subclass overrode the method. The default now recognises an =LrgQuestLog= passed as =player= and answers from its completion records and exclusivity rules. Callers passing =NULL= or another object see the old result unchanged. Subclasses that override the method are unaffected; subclasses that chain up with a =LrgQuestLog= now receive real answers. Code that passed a non-GObject pointer (for example a plain C struct) as =player= must switch to passing =NULL=, a GObject, or the quest log, because the default implementation now type-checks the pointer. Server code should prefer =lrg_quest_log_can_start()=, which reports why a quest is unavailable and also checks level and repeat periods.
 
 *Returns:* =TRUE= if prerequisites are satisfied
 
@@ -453,8 +735,20 @@ lrg_quest_def_set_reward_gold(quest, 500);
 lrg_quest_def_set_reward_xp(quest, 1000);
 lrg_quest_def_add_reward_item(quest, "herb_bag", 1);
 
-/* Check prerequisites */
-if (lrg_quest_def_check_prerequisites(quest, player)) {
+/* MMO metadata */
+lrg_quest_def_set_min_level(quest, 10);
+lrg_quest_def_set_category(quest, "profession");
+lrg_quest_def_set_zone(quest, "moonglade");
+
+/* A parallel objective in stage 0: also collect 2 dew drops */
+LrgQuestObjective *dew = lrg_quest_objective_new("collect_dew", "Collect dew drops",
+                                                 LRG_QUEST_OBJECTIVE_COLLECT);
+lrg_quest_objective_set_target_id(dew, "dew_drop");
+lrg_quest_objective_set_target_count(dew, 2);
+lrg_quest_def_add_stage_objective(quest, 0, dew);
+
+/* Check prerequisites against the character's quest log */
+if (lrg_quest_def_check_prerequisites(quest, quest_log)) {
     g_print("Can start this quest\n");
 }
 

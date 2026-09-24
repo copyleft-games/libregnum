@@ -5055,4 +5055,333 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_reel_text_align_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_REEL_TEXT_ALIGN (lrg_reel_text_align_get_type ())
 
+/* ==========================================================================
+ * Progression, Profession and Collection (MMO character growth)
+ * ========================================================================== */
+
+/**
+ * LRG_PROGRESSION_ERROR:
+ *
+ * Error domain for quest availability, progression, profession and
+ * collection errors.
+ */
+#define LRG_PROGRESSION_ERROR (lrg_progression_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_progression_error_quark (void);
+
+/**
+ * LrgResetPeriod:
+ * @LRG_RESET_PERIOD_DAILY: Resets once per day at the reset hour
+ * @LRG_RESET_PERIOD_WEEKLY: Resets once per week on the reset weekday
+ *
+ * Reset cadence used by #LrgResetSchedule.
+ */
+typedef enum
+{
+    LRG_RESET_PERIOD_DAILY,
+    LRG_RESET_PERIOD_WEEKLY
+} LrgResetPeriod;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_reset_period_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_RESET_PERIOD (lrg_reset_period_get_type ())
+
+/**
+ * LrgQuestRepeat:
+ * @LRG_QUEST_REPEAT_NONE: Quest can be completed once
+ * @LRG_QUEST_REPEAT_DAILY: Quest can be completed once per daily reset period
+ * @LRG_QUEST_REPEAT_WEEKLY: Quest can be completed once per weekly reset period
+ *
+ * How often a quest may be completed again.
+ */
+typedef enum
+{
+    LRG_QUEST_REPEAT_NONE,
+    LRG_QUEST_REPEAT_DAILY,
+    LRG_QUEST_REPEAT_WEEKLY
+} LrgQuestRepeat;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_quest_repeat_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_QUEST_REPEAT (lrg_quest_repeat_get_type ())
+
+/**
+ * LrgProgressionError:
+ * @LRG_PROGRESSION_ERROR_FAILED: Generic failure
+ * @LRG_PROGRESSION_ERROR_INVALID: Malformed or out-of-range input
+ * @LRG_PROGRESSION_ERROR_NOT_FOUND: Referenced definition does not exist
+ * @LRG_PROGRESSION_ERROR_REQUIREMENT: A level, prerequisite, skill or ownership requirement is unmet
+ * @LRG_PROGRESSION_ERROR_LIMIT: A capacity or allowance limit was reached
+ * @LRG_PROGRESSION_ERROR_DUPLICATE: The entry is already known, owned or active
+ * @LRG_PROGRESSION_ERROR_NOT_READY: A cooldown or reset period has not elapsed
+ *
+ * Error codes shared by the quest, progression, profession and collection modules.
+ */
+typedef enum
+{
+    LRG_PROGRESSION_ERROR_FAILED,
+    LRG_PROGRESSION_ERROR_INVALID,
+    LRG_PROGRESSION_ERROR_NOT_FOUND,
+    LRG_PROGRESSION_ERROR_REQUIREMENT,
+    LRG_PROGRESSION_ERROR_LIMIT,
+    LRG_PROGRESSION_ERROR_DUPLICATE,
+    LRG_PROGRESSION_ERROR_NOT_READY
+} LrgProgressionError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_progression_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PROGRESSION_ERROR (lrg_progression_error_get_type ())
+
+/**
+ * LrgAbilityLearnSource:
+ * @LRG_ABILITY_LEARN_SOURCE_AUTO: Granted automatically on reaching its level
+ * @LRG_ABILITY_LEARN_SOURCE_TRAINER: Purchased from a class trainer
+ * @LRG_ABILITY_LEARN_SOURCE_QUEST: Granted by a quest reward
+ * @LRG_ABILITY_LEARN_SOURCE_TALENT: Granted by a talent node
+ * @LRG_ABILITY_LEARN_SOURCE_ITEM: Taught by consuming an item
+ *
+ * Where a character learns an ability.
+ */
+typedef enum
+{
+    LRG_ABILITY_LEARN_SOURCE_AUTO,
+    LRG_ABILITY_LEARN_SOURCE_TRAINER,
+    LRG_ABILITY_LEARN_SOURCE_QUEST,
+    LRG_ABILITY_LEARN_SOURCE_TALENT,
+    LRG_ABILITY_LEARN_SOURCE_ITEM
+} LrgAbilityLearnSource;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_ability_learn_source_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ABILITY_LEARN_SOURCE (lrg_ability_learn_source_get_type ())
+
+/**
+ * LrgAuraKind:
+ * @LRG_AURA_KIND_BUFF: Beneficial effect
+ * @LRG_AURA_KIND_DEBUFF: Harmful effect
+ *
+ * Whether an aura helps or harms its bearer.
+ */
+typedef enum
+{
+    LRG_AURA_KIND_BUFF,
+    LRG_AURA_KIND_DEBUFF
+} LrgAuraKind;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_aura_kind_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_AURA_KIND (lrg_aura_kind_get_type ())
+
+/**
+ * LrgAuraApplyResult:
+ * @LRG_AURA_APPLY_RESULT_ADDED: A new aura was added
+ * @LRG_AURA_APPLY_RESULT_REFRESHED: An existing aura had its duration refreshed
+ * @LRG_AURA_APPLY_RESULT_STACKED: An existing aura gained a stack and was refreshed
+ * @LRG_AURA_APPLY_RESULT_REJECTED: The set was full or the aura was invalid
+ *
+ * Outcome of lrg_aura_set_apply().
+ */
+typedef enum
+{
+    LRG_AURA_APPLY_RESULT_ADDED,
+    LRG_AURA_APPLY_RESULT_REFRESHED,
+    LRG_AURA_APPLY_RESULT_STACKED,
+    LRG_AURA_APPLY_RESULT_REJECTED
+} LrgAuraApplyResult;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_aura_apply_result_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_AURA_APPLY_RESULT (lrg_aura_apply_result_get_type ())
+
+/**
+ * LrgProfessionKind:
+ * @LRG_PROFESSION_KIND_PRIMARY: Counts against the primary profession limit
+ * @LRG_PROFESSION_KIND_SECONDARY: Available to every character without a limit
+ *
+ * Profession slot kind.
+ */
+typedef enum
+{
+    LRG_PROFESSION_KIND_PRIMARY,
+    LRG_PROFESSION_KIND_SECONDARY
+} LrgProfessionKind;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_profession_kind_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PROFESSION_KIND (lrg_profession_kind_get_type ())
+
+/**
+ * LrgProfessionCategory:
+ * @LRG_PROFESSION_CATEGORY_GATHERING: Harvests resources from gather nodes
+ * @LRG_PROFESSION_CATEGORY_CRAFTING: Turns reagents into products through recipes
+ * @LRG_PROFESSION_CATEGORY_SERVICE: Provides a service such as cooking, triage or fishing
+ *
+ * What a profession does.
+ */
+typedef enum
+{
+    LRG_PROFESSION_CATEGORY_GATHERING,
+    LRG_PROFESSION_CATEGORY_CRAFTING,
+    LRG_PROFESSION_CATEGORY_SERVICE
+} LrgProfessionCategory;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_profession_category_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PROFESSION_CATEGORY (lrg_profession_category_get_type ())
+
+/**
+ * LrgRecipeSource:
+ * @LRG_RECIPE_SOURCE_STARTER: Known when the profession is learned
+ * @LRG_RECIPE_SOURCE_TRAINER: Purchased from a profession trainer
+ * @LRG_RECIPE_SOURCE_DROP: Taught by a looted item
+ * @LRG_RECIPE_SOURCE_VENDOR: Sold by a (possibly reputation-gated) vendor
+ * @LRG_RECIPE_SOURCE_QUEST: Granted by a quest reward
+ * @LRG_RECIPE_SOURCE_DISCOVERY: Discovered while crafting
+ *
+ * Where a recipe is learned.
+ */
+typedef enum
+{
+    LRG_RECIPE_SOURCE_STARTER,
+    LRG_RECIPE_SOURCE_TRAINER,
+    LRG_RECIPE_SOURCE_DROP,
+    LRG_RECIPE_SOURCE_VENDOR,
+    LRG_RECIPE_SOURCE_QUEST,
+    LRG_RECIPE_SOURCE_DISCOVERY
+} LrgRecipeSource;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_recipe_source_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_RECIPE_SOURCE (lrg_recipe_source_get_type ())
+
+/**
+ * LrgSkillDifficulty:
+ * @LRG_SKILL_DIFFICULTY_UNAVAILABLE: Skill is below the requirement
+ * @LRG_SKILL_DIFFICULTY_ORANGE: Always grants a skill point
+ * @LRG_SKILL_DIFFICULTY_YELLOW: Usually grants a skill point
+ * @LRG_SKILL_DIFFICULTY_GREEN: Rarely grants a skill point
+ * @LRG_SKILL_DIFFICULTY_GREY: Never grants a skill point
+ *
+ * Skill-up colour band for a recipe or gather node.
+ */
+typedef enum
+{
+    LRG_SKILL_DIFFICULTY_UNAVAILABLE,
+    LRG_SKILL_DIFFICULTY_ORANGE,
+    LRG_SKILL_DIFFICULTY_YELLOW,
+    LRG_SKILL_DIFFICULTY_GREEN,
+    LRG_SKILL_DIFFICULTY_GREY
+} LrgSkillDifficulty;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_skill_difficulty_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SKILL_DIFFICULTY (lrg_skill_difficulty_get_type ())
+
+/**
+ * LrgCollectibleKind:
+ * @LRG_COLLECTIBLE_KIND_MOUNT: A rideable mount
+ * @LRG_COLLECTIBLE_KIND_PET: A companion pet
+ * @LRG_COLLECTIBLE_KIND_TITLE: A character title
+ * @LRG_COLLECTIBLE_KIND_TOY: A cosmetic toy
+ *
+ * Kind of collectible.
+ */
+typedef enum
+{
+    LRG_COLLECTIBLE_KIND_MOUNT,
+    LRG_COLLECTIBLE_KIND_PET,
+    LRG_COLLECTIBLE_KIND_TITLE,
+    LRG_COLLECTIBLE_KIND_TOY
+} LrgCollectibleKind;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_collectible_kind_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_COLLECTIBLE_KIND (lrg_collectible_kind_get_type ())
+
+/**
+ * LrgCollectibleRarity:
+ * @LRG_COLLECTIBLE_RARITY_COMMON: Common
+ * @LRG_COLLECTIBLE_RARITY_UNCOMMON: Uncommon
+ * @LRG_COLLECTIBLE_RARITY_RARE: Rare
+ * @LRG_COLLECTIBLE_RARITY_EPIC: Epic
+ * @LRG_COLLECTIBLE_RARITY_LEGENDARY: Legendary
+ *
+ * Rarity tier of a collectible.
+ */
+typedef enum
+{
+    LRG_COLLECTIBLE_RARITY_COMMON,
+    LRG_COLLECTIBLE_RARITY_UNCOMMON,
+    LRG_COLLECTIBLE_RARITY_RARE,
+    LRG_COLLECTIBLE_RARITY_EPIC,
+    LRG_COLLECTIBLE_RARITY_LEGENDARY
+} LrgCollectibleRarity;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_collectible_rarity_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_COLLECTIBLE_RARITY (lrg_collectible_rarity_get_type ())
+
+/**
+ * LrgCompanionKind:
+ * @LRG_COMPANION_KIND_VANITY: Cosmetic follower that never fights
+ * @LRG_COMPANION_KIND_COMBAT: Fights alongside its owner
+ *
+ * Whether a companion fights.
+ */
+typedef enum
+{
+    LRG_COMPANION_KIND_VANITY,
+    LRG_COMPANION_KIND_COMBAT
+} LrgCompanionKind;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_companion_kind_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_COMPANION_KIND (lrg_companion_kind_get_type ())
+
+/**
+ * LrgCompanionStance:
+ * @LRG_COMPANION_STANCE_PASSIVE: Never attacks; only follows
+ * @LRG_COMPANION_STANCE_DEFENSIVE: Attacks whatever attacks the owner or the companion
+ * @LRG_COMPANION_STANCE_ASSIST: Attacks the owner's current target
+ * @LRG_COMPANION_STANCE_AGGRESSIVE: Assists and also engages hostiles within leash range
+ *
+ * Combat behaviour of a companion.
+ */
+typedef enum
+{
+    LRG_COMPANION_STANCE_PASSIVE,
+    LRG_COMPANION_STANCE_DEFENSIVE,
+    LRG_COMPANION_STANCE_ASSIST,
+    LRG_COMPANION_STANCE_AGGRESSIVE
+} LrgCompanionStance;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_companion_stance_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_COMPANION_STANCE (lrg_companion_stance_get_type ())
+
+/**
+ * LrgCompanionAction:
+ * @LRG_COMPANION_ACTION_IDLE: Stay in place
+ * @LRG_COMPANION_ACTION_FOLLOW: Move toward the follow point
+ * @LRG_COMPANION_ACTION_TELEPORT: Snap to the follow point because the owner is too far away
+ * @LRG_COMPANION_ACTION_ATTACK: Attack the chosen target
+ * @LRG_COMPANION_ACTION_RETURN: Break off combat and return to the owner
+ *
+ * Intent returned by lrg_companion_brain_think().
+ */
+typedef enum
+{
+    LRG_COMPANION_ACTION_IDLE,
+    LRG_COMPANION_ACTION_FOLLOW,
+    LRG_COMPANION_ACTION_TELEPORT,
+    LRG_COMPANION_ACTION_ATTACK,
+    LRG_COMPANION_ACTION_RETURN
+} LrgCompanionAction;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_companion_action_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_COMPANION_ACTION (lrg_companion_action_get_type ())
+
+
 G_END_DECLS

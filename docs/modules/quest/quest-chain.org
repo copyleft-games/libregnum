@@ -1,0 +1,346 @@
+* LrgQuestChain - Quest Storyline
+:PROPERTIES:
+:CUSTOM_ID: lrgquestchain---quest-storyline
+:END:
+An ordered list of quest IDs that a character completes one after another, such as a zone storyline or a class quest line. The chain stores IDs only and derives all progress from a caller-supplied =LrgQuestLog=, so it can never disagree with the authoritative log.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject Class* - Cannot be subclassed
+- *Type ID* - =LRG_TYPE_QUEST_CHAIN=
+- *GIR Name* - =Libregnum.QuestChain=
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property | Type | Flags | Meaning |
+|----------+------+-------+---------|
+| =id= | string | construct-only | Unique chain identifier |
+| =name= | string, nullable | read-write | Display name |
+| =storyline= | string, nullable | read-write | Storyline for grouping chains in a UI |
+| =description= | string, nullable | read-write | Description |
+
+Setters notify only when the value changes.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_quest_chain_new()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_new
+:END:
+#+begin_src C
+LrgQuestChain *lrg_quest_chain_new (const gchar *id,
+                                    const gchar *name);
+#+end_src
+
+Creates an empty chain. An empty or =NULL= ID is a programmer error.
+
+*Parameters:*
+
+- =id= - Unique chain identifier
+- =name= - (nullable) Display name
+
+*Returns:* A new =LrgQuestChain= (transfer full)
+
+** Accessors
+:PROPERTIES:
+:CUSTOM_ID: accessors
+:END:
+*** lrg_quest_chain_get_id()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_get_id
+:END:
+#+begin_src C
+const gchar *lrg_quest_chain_get_id (LrgQuestChain *self);
+#+end_src
+
+Gets the chain identifier.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+
+*Returns:* The ID (transfer none)
+
+*** lrg_quest_chain_get_name()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_get_name
+:END:
+#+begin_src C
+const gchar *lrg_quest_chain_get_name (LrgQuestChain *self);
+#+end_src
+
+Gets the =name= property.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+
+*Returns:* The value (transfer none, nullable)
+
+*** lrg_quest_chain_set_name()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_set_name
+:END:
+#+begin_src C
+void lrg_quest_chain_set_name (LrgQuestChain *self,
+                     const gchar   *name);
+#+end_src
+
+Sets the =name= property; =NULL= clears it.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+- =name= - (nullable) New value
+
+*** lrg_quest_chain_get_storyline()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_get_storyline
+:END:
+#+begin_src C
+const gchar *lrg_quest_chain_get_storyline (LrgQuestChain *self);
+#+end_src
+
+Gets the =storyline= property.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+
+*Returns:* The value (transfer none, nullable)
+
+*** lrg_quest_chain_set_storyline()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_set_storyline
+:END:
+#+begin_src C
+void lrg_quest_chain_set_storyline (LrgQuestChain *self,
+                     const gchar   *storyline);
+#+end_src
+
+Sets the =storyline= property; =NULL= clears it.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+- =storyline= - (nullable) New value
+
+*** lrg_quest_chain_get_description()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_get_description
+:END:
+#+begin_src C
+const gchar *lrg_quest_chain_get_description (LrgQuestChain *self);
+#+end_src
+
+Gets the =description= property.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+
+*Returns:* The value (transfer none, nullable)
+
+*** lrg_quest_chain_set_description()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_set_description
+:END:
+#+begin_src C
+void lrg_quest_chain_set_description (LrgQuestChain *self,
+                     const gchar   *description);
+#+end_src
+
+Sets the =description= property; =NULL= clears it.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+- =description= - (nullable) New value
+
+** Quest List
+:PROPERTIES:
+:CUSTOM_ID: quest-list
+:END:
+*** lrg_quest_chain_add_quest()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_add_quest
+:END:
+#+begin_src C
+gboolean lrg_quest_chain_add_quest (LrgQuestChain *self,
+                                    const gchar   *quest_id);
+#+end_src
+
+Appends a quest to the end of the chain. An empty or =NULL= ID is a programmer error.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+- =quest_id= - Quest ID
+
+*Returns:* =TRUE= if added, =FALSE= if the ID is already in the chain
+
+*** lrg_quest_chain_get_quest_ids()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_get_quest_ids
+:END:
+#+begin_src C
+GPtrArray *lrg_quest_chain_get_quest_ids (LrgQuestChain *self);
+#+end_src
+
+Gets the quest IDs in chain order.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+
+*Returns:* Array of IDs (element-type utf8, transfer none)
+
+*** lrg_quest_chain_get_length()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_get_length
+:END:
+#+begin_src C
+guint lrg_quest_chain_get_length (LrgQuestChain *self);
+#+end_src
+
+Gets the number of quests.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+
+*Returns:* Quest count
+
+*** lrg_quest_chain_index_of()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_index_of
+:END:
+#+begin_src C
+gint lrg_quest_chain_index_of (LrgQuestChain *self,
+                               const gchar   *quest_id);
+#+end_src
+
+Finds a quest's position.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+- =quest_id= - Quest ID
+
+*Returns:* Zero-based index, or -1
+
+** Progress
+:PROPERTIES:
+:CUSTOM_ID: progress
+:END:
+A quest counts as done when =lrg_quest_log_is_quest_completed()= is true for it (it has a completion record).
+
+*** lrg_quest_chain_get_next()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_get_next
+:END:
+#+begin_src C
+const gchar *lrg_quest_chain_get_next (LrgQuestChain *self,
+                                      LrgQuestLog   *log);
+#+end_src
+
+Gets the first chain quest not yet completed in =log=. It may already be active. Out-of-order completions do not skip gaps.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+- =log= - The character's quest log
+
+*Returns:* The next quest ID (transfer none, nullable) - =NULL= when every quest is completed
+
+*** lrg_quest_chain_get_progress()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_get_progress
+:END:
+#+begin_src C
+guint lrg_quest_chain_get_progress (LrgQuestChain *self,
+                                    LrgQuestLog   *log);
+#+end_src
+
+Counts the chain quests completed in =log=.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+- =log= - The character's quest log
+
+*Returns:* Number completed
+
+*** lrg_quest_chain_is_complete()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_is_complete
+:END:
+#+begin_src C
+gboolean lrg_quest_chain_is_complete (LrgQuestChain *self,
+                                      LrgQuestLog   *log);
+#+end_src
+
+Checks whether every chain quest is completed. An empty chain is complete.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+- =log= - The character's quest log
+
+*Returns:* =TRUE= if complete
+
+** Authoring
+:PROPERTIES:
+:CUSTOM_ID: authoring
+:END:
+*** lrg_quest_chain_link_prerequisites()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_chain_link_prerequisites
+:END:
+#+begin_src C
+gboolean lrg_quest_chain_link_prerequisites (LrgQuestChain *self,
+                                             GHashTable    *defs,
+                                             GError       **error);
+#+end_src
+
+For every quest after the first, adds its predecessor as a prerequisite of its definition, skipping prerequisites that are already present (so it is idempotent). Every ID is resolved first; the operation is atomic.
+
+*Parameters:*
+
+- =self= - An =LrgQuestChain=
+- =defs= - (element-type utf8 LrgQuestDef) Definitions by ID
+- =error= - (nullable) Error return
+
+*Returns:* =TRUE= on success
+
+*Errors:* =LRG_PROGRESSION_ERROR_NOT_FOUND= if any chain quest is missing from =defs=; no definition is modified
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgQuestChain) chain = lrg_quest_chain_new ("westfall", "The Defias Brotherhood");
+g_autoptr(GError) error = NULL;
+
+lrg_quest_chain_set_storyline (chain, "Westfall");
+lrg_quest_chain_add_quest (chain, "defias_1");
+lrg_quest_chain_add_quest (chain, "defias_2");
+lrg_quest_chain_add_quest (chain, "defias_3");
+
+/* Data authoring: defias_2 requires defias_1, defias_3 requires defias_2. */
+if (!lrg_quest_chain_link_prerequisites (chain, defs, &error))
+    g_error ("Broken chain data: %s", error->message);
+
+/* UI projection for a character. */
+g_print ("%s: %u/%u\n", lrg_quest_chain_get_name (chain),
+         lrg_quest_chain_get_progress (chain, log), lrg_quest_chain_get_length (chain));
+if (!lrg_quest_chain_is_complete (chain, log))
+    g_print ("Next: %s\n", lrg_quest_chain_get_next (chain, log));
+#+end_src

@@ -276,7 +276,8 @@ lrg_quest_objective_set_current_count (LrgQuestObjective *self,
  * @self: an #LrgQuestObjective
  * @amount: amount to add
  *
- * Increments the current count.
+ * Increments the current count. The count saturates at %G_MAXUINT
+ * instead of wrapping around.
  *
  * Returns: The new current count
  */
@@ -286,7 +287,11 @@ lrg_quest_objective_increment (LrgQuestObjective *self,
 {
     g_return_val_if_fail (self != NULL, 0);
 
-    self->current_count += amount;
+    /* Saturate instead of wrapping so a huge award cannot reset progress. */
+    if (amount > G_MAXUINT - self->current_count)
+        self->current_count = G_MAXUINT;
+    else
+        self->current_count += amount;
 
     /* Auto-complete if target reached */
     if (self->current_count >= self->target_count)

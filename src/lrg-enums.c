@@ -4746,3 +4746,349 @@ lrg_reel_text_align_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * Progression, Profession and Collection
+ * ========================================================================== */
+
+/**
+ * lrg_progression_error_quark:
+ *
+ * Gets the error quark for progression errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_progression_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-progression-error-quark");
+}
+
+GType
+lrg_reset_period_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_RESET_PERIOD_DAILY, "LRG_RESET_PERIOD_DAILY", "daily" },
+            { LRG_RESET_PERIOD_WEEKLY, "LRG_RESET_PERIOD_WEEKLY", "weekly" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgResetPeriod"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_quest_repeat_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_QUEST_REPEAT_NONE, "LRG_QUEST_REPEAT_NONE", "none" },
+            { LRG_QUEST_REPEAT_DAILY, "LRG_QUEST_REPEAT_DAILY", "daily" },
+            { LRG_QUEST_REPEAT_WEEKLY, "LRG_QUEST_REPEAT_WEEKLY", "weekly" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgQuestRepeat"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_progression_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PROGRESSION_ERROR_FAILED, "LRG_PROGRESSION_ERROR_FAILED", "failed" },
+            { LRG_PROGRESSION_ERROR_INVALID, "LRG_PROGRESSION_ERROR_INVALID", "invalid" },
+            { LRG_PROGRESSION_ERROR_NOT_FOUND, "LRG_PROGRESSION_ERROR_NOT_FOUND", "not-found" },
+            { LRG_PROGRESSION_ERROR_REQUIREMENT, "LRG_PROGRESSION_ERROR_REQUIREMENT", "requirement" },
+            { LRG_PROGRESSION_ERROR_LIMIT, "LRG_PROGRESSION_ERROR_LIMIT", "limit" },
+            { LRG_PROGRESSION_ERROR_DUPLICATE, "LRG_PROGRESSION_ERROR_DUPLICATE", "duplicate" },
+            { LRG_PROGRESSION_ERROR_NOT_READY, "LRG_PROGRESSION_ERROR_NOT_READY", "not-ready" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgProgressionError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_ability_learn_source_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ABILITY_LEARN_SOURCE_AUTO, "LRG_ABILITY_LEARN_SOURCE_AUTO", "auto" },
+            { LRG_ABILITY_LEARN_SOURCE_TRAINER, "LRG_ABILITY_LEARN_SOURCE_TRAINER", "trainer" },
+            { LRG_ABILITY_LEARN_SOURCE_QUEST, "LRG_ABILITY_LEARN_SOURCE_QUEST", "quest" },
+            { LRG_ABILITY_LEARN_SOURCE_TALENT, "LRG_ABILITY_LEARN_SOURCE_TALENT", "talent" },
+            { LRG_ABILITY_LEARN_SOURCE_ITEM, "LRG_ABILITY_LEARN_SOURCE_ITEM", "item" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAbilityLearnSource"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_aura_kind_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_AURA_KIND_BUFF, "LRG_AURA_KIND_BUFF", "buff" },
+            { LRG_AURA_KIND_DEBUFF, "LRG_AURA_KIND_DEBUFF", "debuff" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAuraKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_aura_apply_result_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_AURA_APPLY_RESULT_ADDED, "LRG_AURA_APPLY_RESULT_ADDED", "added" },
+            { LRG_AURA_APPLY_RESULT_REFRESHED, "LRG_AURA_APPLY_RESULT_REFRESHED", "refreshed" },
+            { LRG_AURA_APPLY_RESULT_STACKED, "LRG_AURA_APPLY_RESULT_STACKED", "stacked" },
+            { LRG_AURA_APPLY_RESULT_REJECTED, "LRG_AURA_APPLY_RESULT_REJECTED", "rejected" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAuraApplyResult"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_profession_kind_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PROFESSION_KIND_PRIMARY, "LRG_PROFESSION_KIND_PRIMARY", "primary" },
+            { LRG_PROFESSION_KIND_SECONDARY, "LRG_PROFESSION_KIND_SECONDARY", "secondary" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgProfessionKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_profession_category_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PROFESSION_CATEGORY_GATHERING, "LRG_PROFESSION_CATEGORY_GATHERING", "gathering" },
+            { LRG_PROFESSION_CATEGORY_CRAFTING, "LRG_PROFESSION_CATEGORY_CRAFTING", "crafting" },
+            { LRG_PROFESSION_CATEGORY_SERVICE, "LRG_PROFESSION_CATEGORY_SERVICE", "service" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgProfessionCategory"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_recipe_source_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_RECIPE_SOURCE_STARTER, "LRG_RECIPE_SOURCE_STARTER", "starter" },
+            { LRG_RECIPE_SOURCE_TRAINER, "LRG_RECIPE_SOURCE_TRAINER", "trainer" },
+            { LRG_RECIPE_SOURCE_DROP, "LRG_RECIPE_SOURCE_DROP", "drop" },
+            { LRG_RECIPE_SOURCE_VENDOR, "LRG_RECIPE_SOURCE_VENDOR", "vendor" },
+            { LRG_RECIPE_SOURCE_QUEST, "LRG_RECIPE_SOURCE_QUEST", "quest" },
+            { LRG_RECIPE_SOURCE_DISCOVERY, "LRG_RECIPE_SOURCE_DISCOVERY", "discovery" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgRecipeSource"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_skill_difficulty_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SKILL_DIFFICULTY_UNAVAILABLE, "LRG_SKILL_DIFFICULTY_UNAVAILABLE", "unavailable" },
+            { LRG_SKILL_DIFFICULTY_ORANGE, "LRG_SKILL_DIFFICULTY_ORANGE", "orange" },
+            { LRG_SKILL_DIFFICULTY_YELLOW, "LRG_SKILL_DIFFICULTY_YELLOW", "yellow" },
+            { LRG_SKILL_DIFFICULTY_GREEN, "LRG_SKILL_DIFFICULTY_GREEN", "green" },
+            { LRG_SKILL_DIFFICULTY_GREY, "LRG_SKILL_DIFFICULTY_GREY", "grey" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgSkillDifficulty"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_collectible_kind_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_COLLECTIBLE_KIND_MOUNT, "LRG_COLLECTIBLE_KIND_MOUNT", "mount" },
+            { LRG_COLLECTIBLE_KIND_PET, "LRG_COLLECTIBLE_KIND_PET", "pet" },
+            { LRG_COLLECTIBLE_KIND_TITLE, "LRG_COLLECTIBLE_KIND_TITLE", "title" },
+            { LRG_COLLECTIBLE_KIND_TOY, "LRG_COLLECTIBLE_KIND_TOY", "toy" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCollectibleKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_collectible_rarity_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_COLLECTIBLE_RARITY_COMMON, "LRG_COLLECTIBLE_RARITY_COMMON", "common" },
+            { LRG_COLLECTIBLE_RARITY_UNCOMMON, "LRG_COLLECTIBLE_RARITY_UNCOMMON", "uncommon" },
+            { LRG_COLLECTIBLE_RARITY_RARE, "LRG_COLLECTIBLE_RARITY_RARE", "rare" },
+            { LRG_COLLECTIBLE_RARITY_EPIC, "LRG_COLLECTIBLE_RARITY_EPIC", "epic" },
+            { LRG_COLLECTIBLE_RARITY_LEGENDARY, "LRG_COLLECTIBLE_RARITY_LEGENDARY", "legendary" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCollectibleRarity"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_companion_kind_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_COMPANION_KIND_VANITY, "LRG_COMPANION_KIND_VANITY", "vanity" },
+            { LRG_COMPANION_KIND_COMBAT, "LRG_COMPANION_KIND_COMBAT", "combat" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCompanionKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_companion_stance_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_COMPANION_STANCE_PASSIVE, "LRG_COMPANION_STANCE_PASSIVE", "passive" },
+            { LRG_COMPANION_STANCE_DEFENSIVE, "LRG_COMPANION_STANCE_DEFENSIVE", "defensive" },
+            { LRG_COMPANION_STANCE_ASSIST, "LRG_COMPANION_STANCE_ASSIST", "assist" },
+            { LRG_COMPANION_STANCE_AGGRESSIVE, "LRG_COMPANION_STANCE_AGGRESSIVE", "aggressive" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCompanionStance"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_companion_action_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_COMPANION_ACTION_IDLE, "LRG_COMPANION_ACTION_IDLE", "idle" },
+            { LRG_COMPANION_ACTION_FOLLOW, "LRG_COMPANION_ACTION_FOLLOW", "follow" },
+            { LRG_COMPANION_ACTION_TELEPORT, "LRG_COMPANION_ACTION_TELEPORT", "teleport" },
+            { LRG_COMPANION_ACTION_ATTACK, "LRG_COMPANION_ACTION_ATTACK", "attack" },
+            { LRG_COMPANION_ACTION_RETURN, "LRG_COMPANION_ACTION_RETURN", "return" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCompanionAction"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

@@ -122,6 +122,8 @@ PUBLIC_HEADERS := \
 	src/quest/lrg-quest-def.h \
 	src/quest/lrg-quest-instance.h \
 	src/quest/lrg-quest-log.h \
+	src/core/lrg-reset-schedule.h \
+	src/quest/lrg-quest-chain.h \
 	src/audio/lrg-sound-bank.h \
 	src/audio/lrg-music-track.h \
 	src/audio/lrg-audio-manager.h \
@@ -614,6 +616,8 @@ SOURCES := \
 	src/quest/lrg-quest-def.c \
 	src/quest/lrg-quest-instance.c \
 	src/quest/lrg-quest-log.c \
+	src/core/lrg-reset-schedule.c \
+	src/quest/lrg-quest-chain.c \
 	src/audio/lrg-sound-bank.c \
 	src/audio/lrg-music-track.c \
 	src/audio/lrg-audio-manager.c \

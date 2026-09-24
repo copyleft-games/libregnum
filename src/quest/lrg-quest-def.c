@@ -11,6 +11,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "quest/lrg-quest-def.h"
+#include "quest/lrg-quest-log.h"
 
 typedef struct
 {
@@ -18,8 +19,15 @@ typedef struct
     gchar      *name;
     gchar      *description;
     gchar      *giver_npc;
-    GPtrArray  *stages;         /* LrgQuestObjective */
-    GPtrArray  *prerequisites;  /* string quest IDs */
+    GPtrArray  *stages;           /* LrgQuestObjective, objective 0 of each stage (borrowed) */
+    GPtrArray  *stage_objectives; /* GPtrArray per stage, owning every LrgQuestObjective */
+    GPtrArray  *prerequisites;    /* string quest IDs */
+    GPtrArray  *exclusives;       /* string quest IDs */
+    guint       min_level;
+    LrgQuestRepeat repeat;
+    gchar      *category;
+    gchar      *chain_id;
+    gchar      *zone;
     gint        reward_gold;
     gint        reward_xp;
     GHashTable *reward_items;   /* string -> GINT_TO_POINTER(count) */
@@ -36,6 +44,11 @@ enum
     PROP_GIVER_NPC,
     PROP_REWARD_GOLD,
     PROP_REWARD_XP,
+    PROP_MIN_LEVEL,
+    PROP_REPEAT,
+    PROP_CATEGORY,
+    PROP_CHAIN_ID,
+    PROP_ZONE,
     N_PROPS
 };
 
@@ -56,8 +69,14 @@ lrg_quest_def_finalize (GObject *object)
     g_clear_pointer (&priv->name, g_free);
     g_clear_pointer (&priv->description, g_free);
     g_clear_pointer (&priv->giver_npc, g_free);
+    g_clear_pointer (&priv->category, g_free);
+    g_clear_pointer (&priv->chain_id, g_free);
+    g_clear_pointer (&priv->zone, g_free);
+    /* stages only borrows objective 0 of each stage; drop it first. */
     g_clear_pointer (&priv->stages, g_ptr_array_unref);
+    g_clear_pointer (&priv->stage_objectives, g_ptr_array_unref);
     g_clear_pointer (&priv->prerequisites, g_ptr_array_unref);
+    g_clear_pointer (&priv->exclusives, g_ptr_array_unref);
     g_clear_pointer (&priv->reward_items, g_hash_table_unref);
 
     G_OBJECT_CLASS (lrg_quest_def_parent_class)->finalize (object);
@@ -91,6 +110,21 @@ lrg_quest_def_get_property (GObject    *object,
         break;
     case PROP_REWARD_XP:
         g_value_set_int (value, priv->reward_xp);
+        break;
+    case PROP_MIN_LEVEL:
+        g_value_set_uint (value, priv->min_level);
+        break;
+    case PROP_REPEAT:
+        g_value_set_enum (value, priv->repeat);
+        break;
+    case PROP_CATEGORY:
+        g_value_set_string (value, priv->category);
+        break;
+    case PROP_CHAIN_ID:
+        g_value_set_string (value, priv->chain_id);
+        break;
+    case PROP_ZONE:
+        g_value_set_string (value, priv->zone);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -129,6 +163,44 @@ lrg_quest_def_set_property (GObject      *object,
         break;
     case PROP_REWARD_XP:
         priv->reward_xp = g_value_get_int (value);
+        break;
+    case PROP_MIN_LEVEL:
+        if (priv->min_level != g_value_get_uint (value))
+        {
+            priv->min_level = g_value_get_uint (value);
+            g_object_notify_by_pspec (object, pspec);
+        }
+        break;
+    case PROP_REPEAT:
+        if (priv->repeat != (LrgQuestRepeat)g_value_get_enum (value))
+        {
+            priv->repeat = (LrgQuestRepeat)g_value_get_enum (value);
+            g_object_notify_by_pspec (object, pspec);
+        }
+        break;
+    case PROP_CATEGORY:
+        if (g_strcmp0 (priv->category, g_value_get_string (value)) != 0)
+        {
+            g_free (priv->category);
+            priv->category = g_value_dup_string (value);
+            g_object_notify_by_pspec (object, pspec);
+        }
+        break;
+    case PROP_CHAIN_ID:
+        if (g_strcmp0 (priv->chain_id, g_value_get_string (value)) != 0)
+        {
+            g_free (priv->chain_id);
+            priv->chain_id = g_value_dup_string (value);
+            g_object_notify_by_pspec (object, pspec);
+        }
+        break;
+    case PROP_ZONE:
+        if (g_strcmp0 (priv->zone, g_value_get_string (value)) != 0)
+        {
+            g_free (priv->zone);
+            priv->zone = g_value_dup_string (value);
+            g_object_notify_by_pspec (object, pspec);
+        }
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -177,6 +249,56 @@ lrg_quest_def_class_init (LrgQuestDefClass *klass)
                           0, G_MAXINT, 0,
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
+    /**
+     * LrgQuestDef:min-level:
+     *
+     * Minimum character level required by lrg_quest_log_can_start().
+     */
+    properties[PROP_MIN_LEVEL] =
+        g_param_spec_uint ("min-level", "Minimum Level", "Minimum level to start the quest",
+                           0, G_MAXUINT, 0,
+                           G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgQuestDef:repeat:
+     *
+     * How often the quest may be completed again.
+     */
+    properties[PROP_REPEAT] =
+        g_param_spec_enum ("repeat", "Repeat", "Repeat cadence",
+                           LRG_TYPE_QUEST_REPEAT, LRG_QUEST_REPEAT_NONE,
+                           G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgQuestDef:category:
+     *
+     * Game-defined category such as "story", "daily" or "class".
+     */
+    properties[PROP_CATEGORY] =
+        g_param_spec_string ("category", "Category", "Quest category",
+                             NULL,
+                             G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgQuestDef:chain-id:
+     *
+     * Identifier of the #LrgQuestChain the quest belongs to.
+     */
+    properties[PROP_CHAIN_ID] =
+        g_param_spec_string ("chain-id", "Chain ID", "Owning quest chain",
+                             NULL,
+                             G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgQuestDef:zone:
+     *
+     * Zone the quest is offered in.
+     */
+    properties[PROP_ZONE] =
+        g_param_spec_string ("zone", "Zone", "Zone the quest is offered in",
+                             NULL,
+                             G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -191,8 +313,11 @@ lrg_quest_def_init (LrgQuestDef *self)
 {
     LrgQuestDefPrivate *priv = lrg_quest_def_get_instance_private (self);
 
-    priv->stages = g_ptr_array_new_with_free_func (objective_free_wrapper);
+    priv->stages = g_ptr_array_new ();
+    priv->stage_objectives = g_ptr_array_new_with_free_func ((GDestroyNotify)g_ptr_array_unref);
     priv->prerequisites = g_ptr_array_new_with_free_func (g_free);
+    priv->exclusives = g_ptr_array_new_with_free_func (g_free);
+    priv->repeat = LRG_QUEST_REPEAT_NONE;
     priv->reward_items = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                  g_free, NULL);
 }
@@ -202,9 +327,33 @@ lrg_quest_def_real_check_prerequisites (LrgQuestDef *self,
                                         gpointer     player)
 {
     LrgQuestDefPrivate *priv = lrg_quest_def_get_instance_private (self);
+    LrgQuestLog        *log;
+    guint               i;
 
-    /* Default: pass if no prerequisites */
-    return (priv->prerequisites->len == 0);
+    /* Historical behaviour for anything that is not a quest log. */
+    if (player == NULL || !LRG_IS_QUEST_LOG (player))
+        return (priv->prerequisites->len == 0);
+
+    log = LRG_QUEST_LOG (player);
+
+    /* Every prerequisite must have been completed at least once. */
+    for (i = 0; i < priv->prerequisites->len; i++)
+    {
+        const gchar *id = g_ptr_array_index (priv->prerequisites, i);
+        if (!lrg_quest_log_is_quest_completed (log, id))
+            return FALSE;
+    }
+
+    /* No mutually exclusive quest may be active or completed. */
+    for (i = 0; i < priv->exclusives->len; i++)
+    {
+        const gchar *id = g_ptr_array_index (priv->exclusives, i);
+        if (lrg_quest_log_is_quest_active (log, id) ||
+            lrg_quest_log_is_quest_completed (log, id))
+            return FALSE;
+    }
+
+    return TRUE;
 }
 
 static void
@@ -291,6 +440,13 @@ lrg_quest_def_add_stage (LrgQuestDef       *self,
     g_return_if_fail (LRG_IS_QUEST_DEF (self));
     g_return_if_fail (objective != NULL);
     priv = lrg_quest_def_get_instance_private (self);
+
+    /* The per-stage array owns the objective; stages borrows objective 0. */
+    {
+        GPtrArray *objectives = g_ptr_array_new_with_free_func (objective_free_wrapper);
+        g_ptr_array_add (objectives, objective);
+        g_ptr_array_add (priv->stage_objectives, objectives);
+    }
     g_ptr_array_add (priv->stages, objective);
 }
 
@@ -421,4 +577,185 @@ lrg_quest_def_grant_rewards (LrgQuestDef *self,
     klass = LRG_QUEST_DEF_GET_CLASS (self);
     if (klass->grant_rewards)
         klass->grant_rewards (self, player);
+}
+
+guint
+lrg_quest_def_get_min_level (LrgQuestDef *self)
+{
+    LrgQuestDefPrivate *priv;
+    g_return_val_if_fail (LRG_IS_QUEST_DEF (self), 0);
+    priv = lrg_quest_def_get_instance_private (self);
+    return priv->min_level;
+}
+
+void
+lrg_quest_def_set_min_level (LrgQuestDef *self,
+                             guint        min_level)
+{
+    g_return_if_fail (LRG_IS_QUEST_DEF (self));
+    g_object_set (self, "min-level", min_level, NULL);
+}
+
+LrgQuestRepeat
+lrg_quest_def_get_repeat (LrgQuestDef *self)
+{
+    LrgQuestDefPrivate *priv;
+    g_return_val_if_fail (LRG_IS_QUEST_DEF (self), LRG_QUEST_REPEAT_NONE);
+    priv = lrg_quest_def_get_instance_private (self);
+    return priv->repeat;
+}
+
+void
+lrg_quest_def_set_repeat (LrgQuestDef    *self,
+                          LrgQuestRepeat  repeat)
+{
+    g_return_if_fail (LRG_IS_QUEST_DEF (self));
+    g_return_if_fail (repeat == LRG_QUEST_REPEAT_NONE ||
+                      repeat == LRG_QUEST_REPEAT_DAILY ||
+                      repeat == LRG_QUEST_REPEAT_WEEKLY);
+    g_object_set (self, "repeat", repeat, NULL);
+}
+
+const gchar *
+lrg_quest_def_get_category (LrgQuestDef *self)
+{
+    LrgQuestDefPrivate *priv;
+    g_return_val_if_fail (LRG_IS_QUEST_DEF (self), NULL);
+    priv = lrg_quest_def_get_instance_private (self);
+    return priv->category;
+}
+
+void
+lrg_quest_def_set_category (LrgQuestDef *self,
+                            const gchar *category)
+{
+    g_return_if_fail (LRG_IS_QUEST_DEF (self));
+    g_object_set (self, "category", category, NULL);
+}
+
+const gchar *
+lrg_quest_def_get_chain_id (LrgQuestDef *self)
+{
+    LrgQuestDefPrivate *priv;
+    g_return_val_if_fail (LRG_IS_QUEST_DEF (self), NULL);
+    priv = lrg_quest_def_get_instance_private (self);
+    return priv->chain_id;
+}
+
+void
+lrg_quest_def_set_chain_id (LrgQuestDef *self,
+                            const gchar *chain_id)
+{
+    g_return_if_fail (LRG_IS_QUEST_DEF (self));
+    g_object_set (self, "chain-id", chain_id, NULL);
+}
+
+const gchar *
+lrg_quest_def_get_zone (LrgQuestDef *self)
+{
+    LrgQuestDefPrivate *priv;
+    g_return_val_if_fail (LRG_IS_QUEST_DEF (self), NULL);
+    priv = lrg_quest_def_get_instance_private (self);
+    return priv->zone;
+}
+
+void
+lrg_quest_def_set_zone (LrgQuestDef *self,
+                        const gchar *zone)
+{
+    g_return_if_fail (LRG_IS_QUEST_DEF (self));
+    g_object_set (self, "zone", zone, NULL);
+}
+
+void
+lrg_quest_def_add_exclusive (LrgQuestDef *self,
+                             const gchar *quest_id)
+{
+    LrgQuestDefPrivate *priv;
+    guint               i;
+
+    g_return_if_fail (LRG_IS_QUEST_DEF (self));
+    g_return_if_fail (quest_id != NULL && quest_id[0] != '\0');
+    priv = lrg_quest_def_get_instance_private (self);
+
+    for (i = 0; i < priv->exclusives->len; i++)
+    {
+        if (g_strcmp0 (g_ptr_array_index (priv->exclusives, i), quest_id) == 0)
+            return;
+    }
+    g_ptr_array_add (priv->exclusives, g_strdup (quest_id));
+}
+
+GPtrArray *
+lrg_quest_def_get_exclusives (LrgQuestDef *self)
+{
+    LrgQuestDefPrivate *priv;
+    g_return_val_if_fail (LRG_IS_QUEST_DEF (self), NULL);
+    priv = lrg_quest_def_get_instance_private (self);
+    return priv->exclusives;
+}
+
+gboolean
+lrg_quest_def_add_stage_objective (LrgQuestDef       *self,
+                                   guint              stage,
+                                   LrgQuestObjective *objective)
+{
+    LrgQuestDefPrivate *priv;
+    GPtrArray          *objectives;
+    const gchar        *new_id;
+    guint               i;
+
+    g_return_val_if_fail (LRG_IS_QUEST_DEF (self), FALSE);
+    g_return_val_if_fail (objective != NULL, FALSE);
+    priv = lrg_quest_def_get_instance_private (self);
+
+    /* Ownership is always taken, so every rejection frees the objective. */
+    if (stage >= priv->stage_objectives->len)
+    {
+        lrg_quest_objective_free (objective);
+        return FALSE;
+    }
+
+    objectives = g_ptr_array_index (priv->stage_objectives, stage);
+    if (objectives->len >= LRG_QUEST_MAX_STAGE_OBJECTIVES)
+    {
+        lrg_quest_objective_free (objective);
+        return FALSE;
+    }
+
+    new_id = lrg_quest_objective_get_id (objective);
+    for (i = 0; i < objectives->len; i++)
+    {
+        LrgQuestObjective *existing = g_ptr_array_index (objectives, i);
+        if (g_strcmp0 (lrg_quest_objective_get_id (existing), new_id) == 0)
+        {
+            lrg_quest_objective_free (objective);
+            return FALSE;
+        }
+    }
+
+    g_ptr_array_add (objectives, objective);
+    return TRUE;
+}
+
+GPtrArray *
+lrg_quest_def_get_stage_objectives (LrgQuestDef *self,
+                                    guint        stage)
+{
+    LrgQuestDefPrivate *priv;
+    g_return_val_if_fail (LRG_IS_QUEST_DEF (self), NULL);
+    priv = lrg_quest_def_get_instance_private (self);
+    if (stage >= priv->stage_objectives->len)
+        return NULL;
+    return g_ptr_array_index (priv->stage_objectives, stage);
+}
+
+guint
+lrg_quest_def_get_stage_objective_count (LrgQuestDef *self,
+                                         guint        stage)
+{
+    GPtrArray *objectives;
+    g_return_val_if_fail (LRG_IS_QUEST_DEF (self), 0);
+    objectives = lrg_quest_def_get_stage_objectives (self, stage);
+    return objectives != NULL ? objectives->len : 0;
 }

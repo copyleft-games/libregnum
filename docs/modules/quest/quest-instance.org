@@ -160,6 +160,8 @@ gboolean lrg_quest_instance_advance_stage (LrgQuestInstance *self);
 
 Advances to the next stage if current objective is complete.
 
+Every objective of the current stage must be complete. Returns =FALSE= without changes once every stage is done.
+
 *Parameters:*
 
 - =self= - An =LrgQuestInstance=
@@ -233,6 +235,102 @@ Gets overall quest progress (0.0 to 1.0). Calculated from current stage and obje
 - =self= - An =LrgQuestInstance=
 
 *Returns:* Progress fraction
+
+** Parallel Objectives
+:PROPERTIES:
+:CUSTOM_ID: parallel-objectives
+:END:
+An instance tracks progress for every objective of the current stage (see [[file:quest-def.org::#parallel-stage-objectives][parallel stage objectives]]). =lrg_quest_instance_update_progress()= increments every incomplete objective of the current stage whose type matches and whose target matches (a =NULL= target on either side matches anything), emitting =objective-updated= for each. The stage advances, emitting =stage-advanced=, only once every objective is complete; after the last stage the instance becomes =LRG_QUEST_STATE_COMPLETE=. An already-complete stage (for example a restored snapshot) advances on the next update. =lrg_quest_instance_get_progress()= counts the current stage as the mean progress of its objectives. Counts saturate at =G_MAXUINT= instead of wrapping.
+
+*** lrg_quest_instance_get_objective_count()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_get_objective_count
+:END:
+#+begin_src C
+guint lrg_quest_instance_get_objective_count (LrgQuestInstance *self);
+#+end_src
+
+Gets the number of objectives in the current stage.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+
+*Returns:* Objective count, 0 once every stage is done
+
+*** lrg_quest_instance_get_objective()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_get_objective
+:END:
+#+begin_src C
+LrgQuestObjective *lrg_quest_instance_get_objective (LrgQuestInstance *self,
+                                                     guint             objective_index);
+#+end_src
+
+Gets an objective of the current stage with its progress. =lrg_quest_instance_get_current_objective()= is the same as index 0.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+- =objective_index= - Index within the current stage
+
+*Returns:* The objective (transfer none, nullable)
+
+*** lrg_quest_instance_get_objective_progress()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_get_objective_progress
+:END:
+#+begin_src C
+guint lrg_quest_instance_get_objective_progress (LrgQuestInstance *self,
+                                                 guint             objective_index);
+#+end_src
+
+Gets the current count of an objective in the current stage.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+- =objective_index= - Index within the current stage
+
+*Returns:* Progress count, 0 if out of range
+
+*** lrg_quest_instance_set_objective_progress()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_set_objective_progress
+:END:
+#+begin_src C
+gboolean lrg_quest_instance_set_objective_progress (LrgQuestInstance *self,
+                                                    guint             objective_index,
+                                                    guint             count);
+#+end_src
+
+Restores the progress of an objective in the current stage. =count= is clamped to the objective's target; the objective is complete iff the clamped count reaches the target. No signal is emitted and the stage does not auto-advance.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+- =objective_index= - Index within the current stage
+- =count= - New progress count
+
+*Returns:* =TRUE= if the objective exists
+
+*** lrg_quest_instance_set_stage()
+:PROPERTIES:
+:CUSTOM_ID: lrg_quest_instance_set_stage
+:END:
+#+begin_src C
+gboolean lrg_quest_instance_set_stage (LrgQuestInstance *self,
+                                       guint             stage);
+#+end_src
+
+Restores the current stage and resets every stage's progress to zero. =stage= may equal the stage count, meaning every stage is done; the state is not changed (the caller decides whether to mark the quest complete). =stage-advanced= is not emitted, only =notify::current-stage=. Objective pointers previously obtained from this instance become invalid.
+
+*Parameters:*
+
+- =self= - An =LrgQuestInstance=
+- =stage= - 0 to the stage count inclusive
+
+*Returns:* =TRUE= on success, =FALSE= if out of range
 
 ** Example
 :PROPERTIES:

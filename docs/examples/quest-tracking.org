@@ -252,8 +252,10 @@ void interact_with_npc(Game *game, NPC *npc) {
             continue;
         }
 
-        /* Check prerequisites */
-        if (!lrg_quest_def_check_prerequisites(quest_def, game->player)) {
+        /* Check prerequisites against the journal (the default
+         * implementation understands an LrgQuestLog; pass NULL or a
+         * GObject of your own when you override the virtual method). */
+        if (!lrg_quest_def_check_prerequisites(quest_def, journal)) {
             g_print("[LOCKED] %s (prerequisites not met)\n",
                     lrg_quest_def_get_name(quest_def));
             continue;

@@ -26,6 +26,8 @@ The Core module provides:
 
 - *[[file:random-stream.org][LrgRandomStream]]* - Independent deterministic random streams with portable snapshots
 
+- *[[file:reset-schedule.org][LrgResetSchedule]]* - Deterministic daily and weekly reset periods for repeatable content
+
 ** Essential Concepts
 :PROPERTIES:
 :CUSTOM_ID: essential-concepts
