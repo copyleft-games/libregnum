@@ -718,6 +718,7 @@ grl_gif_writer_close (gif, &error);
 Helpers for games that render many glTF characters and props with raylib:
 
 - *[[file:gltf-info.org][LrgGltfInfo]]* - Headless glTF/GLB inspection: raylib mesh order, node and mesh names, vertex counts, skins, animation names, Draco detection and per-node visibility masks
+- *[[file:static-batch.org][LrgStaticBatch]]* - CPU merge of static meshes into 16-bit-index chunks per (material, layer) with bounds, then GPU upload and layer-masked drawing
 - *[[file:model-animator.org][LrgModelAnimator]]* - One shared skinned model for many actors: clip lookup (exact, alias, suffix), per-actor LrgModelAnimState with loop/clamp and crossfades, deduplicated posing and masked drawing
 - *[[file:../core/asset-manager.org::#models-and-animations][Model cache]]* - =lrg_asset_manager_load_model()= / =lrg_asset_manager_load_model_animations()=
 

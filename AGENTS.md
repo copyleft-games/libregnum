@@ -30,7 +30,7 @@ libregnum/
 │   │ # Core Systems
 │   ├── core/                 # Engine, Registry, DataLoader, AssetManager, AssetPack
 │   ├── ecs/                  # World, GameObject, Component + transform/sprite/collider/animator
-│   ├── graphics/             # Window, Renderer, Camera (7 types), Drawable interface
+│   ├── graphics/             # Window, Renderer, Camera (7 types), Drawable, GltfInfo, ModelAnimator, StaticBatch
 │   ├── input/                # Keyboard, Mouse, Gamepad, InputMap/Action/Binding
 │   ├── audio/                # AudioManager, SoundBank, MusicTrack, WaveData, ProceduralAudio
 │   │
@@ -580,10 +580,19 @@ and client-side helpers for skinned and static models.
   when (clip, frame, previous clip/frame, 64-level blend) changes. Draw with
   `draw_masked[_ex]()` and a mask from `build_node_mask()`.
 
+- **`LrgStaticBatch`** (`graphics/lrg-static-batch.h`): CPU-merges static
+  meshes (`add_mesh`, `add_grl_mesh`, `add_model`) into chunks per
+  (material, layer) of at most 65535 vertices, splitting big meshes by
+  triangle; normals use the inverse transpose, mirrors flip winding. Merge
+  is headless; `upload()` then `draw (layer_mask)` need GL. `add_model()`
+  keys materials by albedo texture id and borrows the texture (keep the
+  model alive).
+
 See `docs/modules/physics/wall-set.org`,
 `docs/modules/core/asset-manager.org` (Models and animations),
-`docs/modules/graphics/gltf-info.org` and
-`docs/modules/graphics/model-animator.org`.
+`docs/modules/graphics/gltf-info.org`,
+`docs/modules/graphics/model-animator.org` and
+`docs/modules/graphics/static-batch.org`.
 
 ## Architecture Overview
 

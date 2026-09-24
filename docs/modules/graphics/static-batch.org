@@ -1,0 +1,129 @@
+* LrgStaticBatch - Static Mesh Batching
+:PROPERTIES:
+:CUSTOM_ID: lrgstaticbatch---static-mesh-batching
+:END:
+Merges many static meshes — town props, walls, rocks, trees — into a few GPU meshes. Meshes are transformed into world space on the CPU and appended to *chunks* grouped by (material, layer). Each chunk stays within 16-bit indices (at most 65535 vertices), keeps its world-space bounds for culling, and belongs to exactly one layer, so a scene of thousands of props costs a handful of draw calls and whole layers (roofs, interiors, foliage) can be hidden or faded with a bit mask.
+
+Merging is pure CPU work and runs headlessly; only =upload()= and =draw()= need a GL context.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgStaticBatch= - *Final GObject Class*, =LRG_TYPE_STATIC_BATCH=, GIR =Libregnum.StaticBatch=
+- *Header* - =graphics/lrg-static-batch.h=
+
+| Constant                        | Value      | Meaning                                  |
+|---------------------------------+------------+------------------------------------------|
+| =LRG_STATIC_BATCH_MAX_VERTICES= | 65535      | Vertex limit of a chunk (u16 indices)    |
+| =LRG_STATIC_BATCH_MAX_LAYERS=   | 32         | Layers 0 .. 31                           |
+| =LRG_STATIC_BATCH_ALL_LAYERS=   | 0xFFFFFFFF | Layer mask selecting every layer         |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+LrgStaticBatch *lrg_static_batch_new (void);
+void     lrg_static_batch_set_max_chunk_vertices (LrgStaticBatch *self, guint max_vertices);
+guint    lrg_static_batch_get_max_chunk_vertices (LrgStaticBatch *self);
+
+/* Adding (headless) */
+gboolean lrg_static_batch_add_mesh     (LrgStaticBatch *self,
+                                        const gfloat *positions,   /* 3 per vertex */
+                                        const gfloat *normals,     /* nullable, 3 per vertex */
+                                        const gfloat *texcoords,   /* nullable, 2 per vertex */
+                                        const guint8 *colors,      /* nullable, RGBA per vertex */
+                                        guint n_vertices,
+                                        const guint32 *indices,    /* nullable = triangle list */
+                                        guint n_indices,
+                                        const GrlMatrix *transform,/* nullable = identity */
+                                        guint material, guint layer, GError **error);
+gboolean lrg_static_batch_add_grl_mesh (LrgStaticBatch *self, GrlMesh *mesh,
+                                        const GrlMatrix *transform,
+                                        guint material, guint layer, GError **error);
+gboolean lrg_static_batch_add_model    (LrgStaticBatch *self, GrlModel *model,
+                                        const GrlMatrix *transform, guint layer, GError **error);
+void     lrg_static_batch_clear        (LrgStaticBatch *self);
+
+/* Inspection */
+guint    lrg_static_batch_get_chunk_count        (LrgStaticBatch *self);
+guint    lrg_static_batch_get_vertex_count       (LrgStaticBatch *self);
+guint    lrg_static_batch_get_triangle_count     (LrgStaticBatch *self);
+guint    lrg_static_batch_get_chunk_material     (LrgStaticBatch *self, guint chunk);
+guint    lrg_static_batch_get_chunk_layer        (LrgStaticBatch *self, guint chunk);
+guint    lrg_static_batch_get_chunk_vertex_count (LrgStaticBatch *self, guint chunk);
+guint    lrg_static_batch_get_chunk_index_count  (LrgStaticBatch *self, guint chunk);
+gboolean lrg_static_batch_get_chunk_bounds       (LrgStaticBatch *self, guint chunk,
+                                                  gfloat *min_x, gfloat *min_y, gfloat *min_z,
+                                                  gfloat *max_x, gfloat *max_y, gfloat *max_z);
+const gfloat  *lrg_static_batch_get_chunk_positions (LrgStaticBatch *self, guint chunk, guint *n_floats);
+const gfloat  *lrg_static_batch_get_chunk_normals   (LrgStaticBatch *self, guint chunk, guint *n_floats);
+const guint8  *lrg_static_batch_get_chunk_colors    (LrgStaticBatch *self, guint chunk, guint *n_bytes);
+const guint16 *lrg_static_batch_get_chunk_indices   (LrgStaticBatch *self, guint chunk, guint *n_indices);
+
+/* Appearance */
+void     lrg_static_batch_set_material_texture (LrgStaticBatch *self, guint material, GrlTexture *texture);
+void     lrg_static_batch_set_layer_tint       (LrgStaticBatch *self, guint layer, const GrlColor *tint);
+void     lrg_static_batch_set_shader           (LrgStaticBatch *self, GrlShader *shader);
+
+/* GPU */
+gboolean lrg_static_batch_upload      (LrgStaticBatch *self, GError **error);
+gboolean lrg_static_batch_is_uploaded (LrgStaticBatch *self);
+void     lrg_static_batch_unload      (LrgStaticBatch *self);
+void     lrg_static_batch_draw        (LrgStaticBatch *self, guint32 layer_mask);
+void     lrg_static_batch_draw_chunk  (LrgStaticBatch *self, guint chunk);
+#+end_src
+
+=add_mesh()= takes raw arrays and is marked =(skip)= for introspection; bindings use =add_grl_mesh()= and =add_model()=.
+
+** Merging Rules
+:PROPERTIES:
+:CUSTOM_ID: merging-rules
+:END:
+- *Grouping*: a chunk holds one (material, layer) pair. New geometry goes into the most recent chunk of its pair while that chunk has room.
+- *Whole meshes*: a mesh that fits the chunk limit is appended whole (its indices offset by the chunk's vertex count); if the open chunk lacks room a new chunk starts.
+- *Large meshes*: a mesh bigger than the limit is split at triangle granularity. Vertices are remapped per chunk; a vertex shared by triangles on both sides of a split is duplicated. Triangle order is preserved across chunks.
+- *Transforms*: positions use the 4x4 transform (raylib column-major convention, as =Vector3Transform()=). Normals use the inverse transpose of the upper 3x3 and are re-normalized, so non-uniform scale is handled; degenerate normals become +Y. A mirroring transform (negative determinant) also reverses each triangle's winding so front faces stay front faces.
+- *Defaults*: missing normals are +Y, missing texcoords (0, 0), missing colours white.
+- *Validation*: layers above 31, index counts that are not multiples of 3 (or unindexed vertex counts that are not), out-of-range indices, non-finite positions and non-finite or singular transforms fail with =G_IO_ERROR_INVALID_ARGUMENT= and add nothing.
+- =set_max_chunk_vertices()= lowers the limit (clamped to 3 .. 65535) for finer culling; it applies to later additions.
+
+** Models
+:PROPERTIES:
+:CUSTOM_ID: models
+:END:
+=add_model()= adds every mesh of a static model (bind-pose vertices; do not batch skinned characters) with the model's own transform applied first. Each mesh's material id is the GL id of its material's albedo texture (0 when untextured), and that texture is remembered for drawing, *borrowed* from the model — keep the model alive (for example in the asset manager cache) while the batch draws. Don't reuse the same numbers as your own material ids in one batch. =set_material_texture()= overrides a material's texture and keeps a reference.
+
+** Drawing
+:PROPERTIES:
+:CUSTOM_ID: drawing
+:END:
+=upload()= uploads new or changed chunks; adding geometry to an uploaded chunk marks it for re-upload. CPU data is always kept, so chunks remain inspectable and =unload()= / =upload()= can move the batch across a context loss. Release or =unload()= the batch before closing the window.
+
+=draw (mask)= draws every uploaded chunk whose layer bit is set, in chunk order, using the batch shader (raylib's default when unset), the material texture (raylib's white texture when unset) and the layer tint as the diffuse colour. Layer tint alpha below 255 relies on the current blend mode — draw translucent layers after opaque ones. For camera culling, test =get_chunk_bounds()= yourself and call =draw_chunk()=.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+enum { LAYER_GROUND, LAYER_WALLS, LAYER_ROOFS };
+
+g_autoptr(LrgStaticBatch) town = lrg_static_batch_new ();
+
+for (i = 0; i < n_props; i++)
+{
+    GrlModel *model = lrg_asset_manager_load_model (assets, props[i].model, &error);
+    GrlMatrix placement = prop_matrix (&props[i]);
+
+    lrg_static_batch_add_model (town, model, &placement,
+                                props[i].is_roof ? LAYER_ROOFS : LAYER_WALLS, &error);
+}
+lrg_static_batch_set_shader (town, lighting_shader);
+lrg_static_batch_upload (town, &error);
+
+/* Each frame, inside BeginMode3D(): hide roofs while the player is indoors. */
+lrg_static_batch_draw (town, player_inside ? (1u << LAYER_GROUND) | (1u << LAYER_WALLS)
+                                           : LRG_STATIC_BATCH_ALL_LAYERS);
+#+end_src

@@ -425,6 +425,9 @@ typedef struct _LrgGltfInfo       LrgGltfInfo;
 typedef struct _LrgModelAnimator  LrgModelAnimator;
 typedef struct _LrgModelAnimState LrgModelAnimState;
 
+/* LrgStaticBatch is a final type - no Class forward declaration needed */
+typedef struct _LrgStaticBatch    LrgStaticBatch;
+
 /* ==========================================================================
  * Shapes Module
  * ========================================================================== */
