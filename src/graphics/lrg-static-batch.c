@@ -636,16 +636,21 @@ lrg_static_batch_add_mesh (LrgStaticBatch  *self,
 }
 
 /* add_raylib_mesh:
- * Widens a raylib Mesh's 16-bit indices and forwards its CPU arrays. */
+ * Widens a raylib Mesh's 16-bit indices and forwards its CPU arrays.
+ * @tint (nullable) is a material base colour multiplied into the vertex
+ * colours (opaque white when the mesh has none); chunks are keyed by
+ * texture only, so the colour must travel with the vertices. */
 static gboolean
 add_raylib_mesh (LrgStaticBatch  *self,
                  const Mesh      *mesh,
                  Matrix           matrix,
                  guint            material,
                  guint            layer,
+                 const Color     *tint,
                  GError         **error)
 {
     g_autofree guint32 *indices = NULL;
+    g_autofree guint8  *colors = NULL;
     guint               n_indices = 0;
     guint               k;
 
@@ -662,8 +667,24 @@ add_raylib_mesh (LrgStaticBatch  *self,
         for (k = 0; k < n_indices; k++)
             indices[k] = mesh->indices[k];
     }
+    if (tint != NULL && mesh->vertexCount > 0 &&
+        (tint->r != 255 || tint->g != 255 || tint->b != 255 || tint->a != 255))
+    {
+        const guint8 factor[4] = { tint->r, tint->g, tint->b, tint->a };
+        gsize        n = (gsize)mesh->vertexCount * 4;
+        gsize        c;
+
+        colors = g_new (guint8, n);
+        for (c = 0; c < n; c++)
+        {
+            guint base = mesh->colors != NULL ? mesh->colors[c] : 255;
+
+            colors[c] = (guint8)((base * factor[c % 4] + 127) / 255);
+        }
+    }
     return add_mesh_matrix (self, mesh->vertices, mesh->normals, mesh->texcoords,
-                            mesh->colors, (guint)MAX (0, mesh->vertexCount),
+                            colors != NULL ? colors : mesh->colors,
+                            (guint)MAX (0, mesh->vertexCount),
                             indices, n_indices, matrix, material, layer, error);
 }
 
@@ -680,7 +701,7 @@ lrg_static_batch_add_grl_mesh (LrgStaticBatch  *self,
     g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
     return add_raylib_mesh (self, grl_mesh_get_handle (mesh), matrix_from_grl (transform),
-                            material, layer, error);
+                            material, layer, NULL, error);
 }
 
 gboolean
@@ -710,11 +731,17 @@ lrg_static_batch_add_model (LrgStaticBatch  *self,
     for (i = 0; i < raw->meshCount; i++)
     {
         Texture2D texture = { 0, 0, 0, 0, 0 };
+        Color     color = { 255, 255, 255, 255 };
         guint     material;
 
         if (raw->materials != NULL && raw->meshMaterial != NULL &&
             raw->materials[raw->meshMaterial[i]].maps != NULL)
+        {
             texture = raw->materials[raw->meshMaterial[i]].maps[MATERIAL_MAP_ALBEDO].texture;
+            /* glTF baseColorFactor lives here; the chunk only keeps the
+             * texture, so bake the colour into the vertices. */
+            color = raw->materials[raw->meshMaterial[i]].maps[MATERIAL_MAP_ALBEDO].color;
+        }
         material = texture.id;
 
         /* Remember the borrowed texture unless the caller set one. */
@@ -725,7 +752,7 @@ lrg_static_batch_add_model (LrgStaticBatch  *self,
             entry->texture = texture;
             g_hash_table_insert (self->textures, GUINT_TO_POINTER (material), entry);
         }
-        if (!add_raylib_mesh (self, &raw->meshes[i], matrix, material, layer, error))
+        if (!add_raylib_mesh (self, &raw->meshes[i], matrix, material, layer, &color, error))
             return FALSE;
     }
     return TRUE;

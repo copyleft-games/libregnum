@@ -616,6 +616,14 @@ validate_structure (JsonObject  *root,
         {
             gint child = (gint)json_array_get_int_element (children, j);
 
+            /* A node that is its own child would make every parent walk
+             * (and the joint root fix-up) loop forever. */
+            if (child == (gint)i)
+            {
+                g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_REFERENCE,
+                             "node %d lists itself as a child", child);
+                return FALSE;
+            }
             if (parent[child] >= 0)
             {
                 g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_REFERENCE,
@@ -1528,10 +1536,11 @@ static gint
 effective_root (const gint *parents,
                 gint        bone)
 {
-    /* Each step moves to a strictly smaller index, so this terminates. */
+    /* Each step moves to a strictly smaller index, so this terminates;
+     * a bone that is its own parent breaks the chain like a larger one. */
     while (parents[bone] >= 0)
     {
-        if (parents[bone] > bone)
+        if (parents[bone] >= bone)
             return -1;
         bone = parents[bone];
     }

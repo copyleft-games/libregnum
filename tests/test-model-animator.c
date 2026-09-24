@@ -402,6 +402,38 @@ test_apply_dedupe (void)
     g_assert_true (lrg_model_animator_apply (animator, &b));
 }
 
+/*
+ * test_apply_non_finite:
+ *
+ * Regression: a non-finite time mapped to frame -1, which apply() handed
+ * to raylib as keyframe -1 (an out-of-bounds read). The current clip is
+ * then not posed; an unusable previous time drops the crossfade.
+ */
+static void
+test_apply_non_finite (void)
+{
+    g_autoptr(LrgModelAnimator) animator = make_animator ();
+    LrgModelAnimState state;
+
+    lrg_model_anim_state_reset (&state);
+    lrg_model_animator_play (animator, &state, 1, TRUE, 0);
+    state.time = NAN;
+    g_assert_false (lrg_model_animator_apply (animator, &state));
+    state.time = INFINITY;
+    g_assert_false (lrg_model_animator_apply (animator, &state));
+
+    /* Mid-fade with a broken previous time: the plain current pose, the
+     * same key as the finished fade (so the second apply is deduplicated). */
+    lrg_model_anim_state_reset (&state);
+    lrg_model_animator_play (animator, &state, 0, TRUE, 0);
+    lrg_model_animator_play (animator, &state, 1, TRUE, 1.0);
+    state.rate = 0.0;
+    state.previous_time = NAN;
+    g_assert_true (lrg_model_animator_apply (animator, &state));
+    state.previous_clip = -1;
+    g_assert_false (lrg_model_animator_apply (animator, &state));
+}
+
 static void
 test_apply_crossfade_quantized (void)
 {
@@ -566,6 +598,7 @@ main (int   argc,
     g_test_add_func ("/model-animator/play/crossfade", test_crossfade);
     g_test_add_func ("/model-animator/apply/dedupe", test_apply_dedupe);
     g_test_add_func ("/model-animator/apply/crossfade-quantized", test_apply_crossfade_quantized);
+    g_test_add_func ("/model-animator/apply/non-finite", test_apply_non_finite);
     g_test_add_func ("/model-animator/headless-mask-and-draw", test_headless_mask_and_draw);
     g_test_add_func ("/model-animator/gl/real-model", test_real_model);
 

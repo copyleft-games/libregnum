@@ -632,6 +632,9 @@ compute_key (LrgModelAnimator        *self,
 
     key->clip = state->clip;
     key->frame = frame_for (self, state->clip, state->time, state->loop);
+    /* A non-finite time has no frame; raylib would read keyframe -1. */
+    if (key->frame < 0)
+        return FALSE;
     key->previous_clip = -1;
     key->previous_frame = -1;
     key->blend = LRG_MODEL_ANIMATOR_BLEND_LEVELS;
@@ -646,6 +649,13 @@ compute_key (LrgModelAnimator        *self,
             key->previous_clip = state->previous_clip;
             key->previous_frame = frame_for (self, state->previous_clip,
                                              state->previous_time, state->previous_loop);
+            /* Unusable previous time: drop the fade, pose the current clip. */
+            if (key->previous_frame < 0)
+            {
+                key->previous_clip = -1;
+                key->previous_frame = -1;
+                key->blend = LRG_MODEL_ANIMATOR_BLEND_LEVELS;
+            }
         }
         else
         {

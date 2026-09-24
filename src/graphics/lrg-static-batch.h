@@ -164,9 +164,12 @@ lrg_static_batch_add_grl_mesh (LrgStaticBatch  *self,
  * @error: (nullable): return location for a #GError
  *
  * Adds every mesh of @model. Each mesh's material id is the GL id of its
- * material's albedo texture (0 for untextured), and that texture is
- * remembered for drawing, borrowed from the model: keep @model alive
- * while the batch draws. Do not mix these ids with your own material ids.
+ * material's albedo texture (raylib's default white texture for untextured
+ * materials), and that texture is remembered for drawing, borrowed from
+ * the model: keep @model alive while the batch draws. The material's albedo
+ * colour (glTF baseColorFactor) is multiplied into the merged vertex
+ * colours, since chunks are keyed by texture alone. Do not mix these ids
+ * with your own material ids.
  *
  * Returns: %TRUE on success; on error, meshes added before the failing
  *   one remain

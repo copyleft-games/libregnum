@@ -407,6 +407,9 @@ test_gltf_bad_references (void)
     assert_json_error ("{\"nodes\":[{\"children\":[2]},{\"children\":[2]},{}]}",
                        LRG_GLTF_ERROR_INVALID_REFERENCE);
     assert_json_error ("{\"nodes\":[{\"children\":[5]}]}", LRG_GLTF_ERROR_INVALID_REFERENCE);
+    /* Regression: a node listing itself as a child hung the joint root
+     * fix-up (its parent walk never advanced). */
+    assert_json_error ("{\"nodes\":[{},{\"children\":[1]}]}", LRG_GLTF_ERROR_INVALID_REFERENCE);
     assert_json_error ("{\"nodes\":[{}],\"skins\":[{\"joints\":[0,1]}]}",
                        LRG_GLTF_ERROR_INVALID_REFERENCE);
     assert_json_error ("{\"nodes\":[{\"skin\":0}]}", LRG_GLTF_ERROR_INVALID_REFERENCE);

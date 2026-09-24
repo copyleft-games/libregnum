@@ -801,6 +801,67 @@ test_batch_gl (void)
 }
 
 /*
+ * test_batch_gl_material_color:
+ *
+ * Regression: add_model() keyed chunks by albedo texture only and dropped
+ * the material's albedo colour (where raylib stores glTF baseColorFactor),
+ * so flat-coloured materials rendered white. The colour must be multiplied
+ * into the merged vertex colours.
+ */
+static void
+test_batch_gl_material_color (void)
+{
+    g_autoptr(LrgStaticBatch)  batch = NULL;
+    g_autoptr(LrgAssetManager) manager = NULL;
+    g_autoptr(GError)          error = NULL;
+    g_autofree gchar          *path = NULL;
+    const guint8              *colors;
+    GrlModel                  *model;
+    Model                     *raw;
+    Color                      saved;
+    guint                      n_bytes;
+    guint                      i;
+
+    if (!graphics_available)
+    {
+        g_test_skip ("Graphics context not available");
+        return;
+    }
+
+    path = g_build_filename (g_get_tmp_dir (), "lrg-batch-color.glb", NULL);
+    test_glb_write_static_triangle (path);
+    manager = lrg_asset_manager_new ();
+    model = lrg_asset_manager_load_model (manager, path, &error);
+    g_assert_no_error (error);
+    raw = grl_model_get_handle (model);
+    g_assert_cmpint (raw->materialCount, >, 0);
+
+    /* What LoadGLTF stores for baseColorFactor (1, 0.5, 0, 1). */
+    saved = raw->materials[raw->meshMaterial[0]].maps[MATERIAL_MAP_ALBEDO].color;
+    raw->materials[raw->meshMaterial[0]].maps[MATERIAL_MAP_ALBEDO].color = (Color) { 255, 128, 0, 255 };
+
+    batch = lrg_static_batch_new ();
+    g_assert_true (lrg_static_batch_add_model (batch, model, NULL, 0, &error));
+    g_assert_no_error (error);
+    g_assert_cmpuint (lrg_static_batch_get_chunk_count (batch), ==, 1);
+    colors = lrg_static_batch_get_chunk_colors (batch, 0, &n_bytes);
+    g_assert_cmpuint (n_bytes, >, 0);
+    g_assert_cmpuint (n_bytes % 4, ==, 0);
+    for (i = 0; i < n_bytes; i += 4)
+    {
+        g_assert_cmpuint (colors[i], ==, 255);
+        g_assert_cmpuint (colors[i + 1], ==, 128);
+        g_assert_cmpuint (colors[i + 2], ==, 0);
+        g_assert_cmpuint (colors[i + 3], ==, 255);
+    }
+
+    raw->materials[raw->meshMaterial[0]].maps[MATERIAL_MAP_ALBEDO].color = saved;
+    g_clear_object (&batch);
+    g_clear_object (&manager);
+    g_remove (path);
+}
+
+/*
  * Piece:
  *
  * One model placed in the world, for the GL comparison test.
@@ -1082,6 +1143,7 @@ main (int   argc,
     g_test_add_func ("/static-batch/matches-sources", test_batch_matches_sources);
     g_test_add_func ("/static-batch/upload-headless", test_batch_upload_headless);
     g_test_add_func ("/static-batch/gl/upload-draw", test_batch_gl);
+    g_test_add_func ("/static-batch/gl/material-color", test_batch_gl_material_color);
     g_test_add_func ("/static-batch/gl/models-match-draw-mesh", test_batch_gl_models_match);
 
     result = g_test_run ();
