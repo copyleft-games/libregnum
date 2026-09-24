@@ -16,6 +16,7 @@
 #include <string.h>
 #include <libregnum.h>
 #include <raylib.h>
+#include <rlgl.h>
 
 #include "lrg-test-glb.h"
 
@@ -460,6 +461,258 @@ test_batch_upload_headless (void)
     lrg_static_batch_unload (batch);
 }
 
+
+/* ========================================================================== */
+/*                     Reference geometry (independent math)                  */
+/* ========================================================================== */
+
+/* matrix_trs_y:
+ * T * Ry(angle) * S in raylib field form (column vectors, translation in
+ * m12..m14): how a game places a piece. */
+static GrlMatrix
+matrix_trs_y (gfloat tx,
+              gfloat ty,
+              gfloat tz,
+              gfloat angle,
+              gfloat sx,
+              gfloat sy,
+              gfloat sz)
+{
+    GrlMatrix m = matrix_identity ();
+    gfloat    c = cosf (angle);
+    gfloat    s = sinf (angle);
+
+    m.m0 = c * sx;   m.m4 = 0;    m.m8 = s * sz;
+    m.m1 = 0;        m.m5 = sy;   m.m9 = 0;
+    m.m2 = -s * sx;  m.m6 = 0;    m.m10 = c * sz;
+    m.m12 = tx;
+    m.m13 = ty;
+    m.m14 = tz;
+    return m;
+}
+
+/* to_columns / from_columns:
+ * raylib field form <-> column-major doubles, cm[col * 4 + row]. */
+static void
+to_columns (const GrlMatrix *m,
+            gdouble         *cm)
+{
+    cm[0] = m->m0;   cm[1] = m->m1;   cm[2] = m->m2;   cm[3] = m->m3;
+    cm[4] = m->m4;   cm[5] = m->m5;   cm[6] = m->m6;   cm[7] = m->m7;
+    cm[8] = m->m8;   cm[9] = m->m9;   cm[10] = m->m10; cm[11] = m->m11;
+    cm[12] = m->m12; cm[13] = m->m13; cm[14] = m->m14; cm[15] = m->m15;
+}
+
+static GrlMatrix
+from_columns (const gdouble *cm)
+{
+    GrlMatrix m;
+
+    m.m0 = (gfloat)cm[0];   m.m1 = (gfloat)cm[1];   m.m2 = (gfloat)cm[2];   m.m3 = (gfloat)cm[3];
+    m.m4 = (gfloat)cm[4];   m.m5 = (gfloat)cm[5];   m.m6 = (gfloat)cm[6];   m.m7 = (gfloat)cm[7];
+    m.m8 = (gfloat)cm[8];   m.m9 = (gfloat)cm[9];   m.m10 = (gfloat)cm[10]; m.m11 = (gfloat)cm[11];
+    m.m12 = (gfloat)cm[12]; m.m13 = (gfloat)cm[13]; m.m14 = (gfloat)cm[14]; m.m15 = (gfloat)cm[15];
+    return m;
+}
+
+/* compose:
+ * outer * inner as column-vector math (inner applies first). */
+static GrlMatrix
+compose (const GrlMatrix *outer,
+         const GrlMatrix *inner)
+{
+    gdouble a[16], b[16], r[16];
+    gint    col, row, k;
+
+    to_columns (outer, a);
+    to_columns (inner, b);
+    for (col = 0; col < 4; col++)
+        for (row = 0; row < 4; row++)
+        {
+            r[col * 4 + row] = 0.0;
+            for (k = 0; k < 4; k++)
+                r[col * 4 + row] += a[k * 4 + row] * b[col * 4 + k];
+        }
+    return from_columns (r);
+}
+
+/*
+ * SoupGroup:
+ *
+ * Expected triangle soup (9 floats per triangle, world space, in append
+ * order) for one (material, layer) pair.
+ */
+typedef struct
+{
+    guint   material;
+    guint   layer;
+    GArray *soup;
+} SoupGroup;
+
+static void
+soup_group_free (gpointer data)
+{
+    SoupGroup *group = data;
+
+    g_array_unref (group->soup);
+    g_free (group);
+}
+
+static SoupGroup *
+soup_group (GPtrArray *groups,
+            guint      material,
+            guint      layer)
+{
+    SoupGroup *group;
+    guint      i;
+
+    for (i = 0; i < groups->len; i++)
+    {
+        group = g_ptr_array_index (groups, i);
+        if (group->material == material && group->layer == layer)
+            return group;
+    }
+    group = g_new0 (SoupGroup, 1);
+    group->material = material;
+    group->layer = layer;
+    group->soup = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    g_ptr_array_add (groups, group);
+    return group;
+}
+
+/* expect_mesh:
+ * Appends the triangles of one source mesh, transformed by @m, to the
+ * expected soup. @indices16 / @indices32 may both be NULL for a plain
+ * triangle list. */
+static void
+expect_mesh (GPtrArray       *groups,
+             guint            material,
+             guint            layer,
+             const gfloat    *positions,
+             guint            n_vertices,
+             const guint16   *indices16,
+             const guint32   *indices32,
+             guint            n_indices,
+             const GrlMatrix *m)
+{
+    SoupGroup *group = soup_group (groups, material, layer);
+    gdouble    cm[16];
+    guint      k;
+
+    to_columns (m, cm);
+    if (indices16 == NULL && indices32 == NULL)
+        n_indices = n_vertices;
+    for (k = 0; k < n_indices; k++)
+    {
+        guint         v = indices16 != NULL ? indices16[k] : indices32 != NULL ? indices32[k] : k;
+        const gfloat *p = positions + v * 3;
+        gfloat        w[3];
+        gint          row;
+
+        for (row = 0; row < 3; row++)
+            w[row] = (gfloat)(cm[row] * p[0] + cm[4 + row] * p[1] + cm[8 + row] * p[2] + cm[12 + row]);
+        g_array_append_vals (group->soup, w, 3);
+    }
+}
+
+/* actual_soup:
+ * The batch's triangles for (material, layer): every matching chunk in
+ * chunk order, each index resolved to its merged position. */
+static GArray *
+actual_soup (LrgStaticBatch *batch,
+             guint           material,
+             guint           layer)
+{
+    GArray *soup = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    guint   c;
+
+    for (c = 0; c < lrg_static_batch_get_chunk_count (batch); c++)
+    {
+        const gfloat  *positions;
+        const guint16 *indices;
+        guint          n_floats = 0;
+        guint          n_indices = 0;
+        guint          k;
+
+        if (lrg_static_batch_get_chunk_material (batch, c) != material ||
+            lrg_static_batch_get_chunk_layer (batch, c) != layer)
+            continue;
+        positions = lrg_static_batch_get_chunk_positions (batch, c, &n_floats);
+        indices = lrg_static_batch_get_chunk_indices (batch, c, &n_indices);
+        g_assert_cmpuint (n_indices % 3, ==, 0);
+        for (k = 0; k < n_indices; k++)
+        {
+            g_assert_cmpuint ((guint)indices[k] * 3 + 2, <, n_floats);
+            g_array_append_vals (soup, positions + indices[k] * 3, 3);
+        }
+    }
+    return soup;
+}
+
+/* assert_batch_matches:
+ * Every expected group equals the batch's soup, and the batch holds no
+ * triangles beyond the expected ones. */
+static void
+assert_batch_matches (LrgStaticBatch *batch,
+                      GPtrArray      *groups,
+                      gdouble         tolerance)
+{
+    guint total = 0;
+    guint i;
+
+    for (i = 0; i < groups->len; i++)
+    {
+        SoupGroup        *group = g_ptr_array_index (groups, i);
+        g_autoptr(GArray) soup = actual_soup (batch, group->material, group->layer);
+        guint             k;
+
+        g_assert_cmpuint (soup->len, ==, group->soup->len);
+        for (k = 0; k < soup->len; k++)
+        {
+            gdouble want = g_array_index (group->soup, gfloat, k);
+            gdouble got = g_array_index (soup, gfloat, k);
+
+            g_assert_cmpfloat_with_epsilon (got, want, tolerance * MAX (1.0, fabs (want)));
+        }
+        total += soup->len / 9;
+    }
+    g_assert_cmpuint (total, ==, lrg_static_batch_get_triangle_count (batch));
+}
+
+static void
+test_batch_matches_sources (void)
+{
+    g_autoptr(LrgStaticBatch) batch = lrg_static_batch_new ();
+    g_autoptr(GPtrArray)      groups = g_ptr_array_new_with_free_func (soup_group_free);
+    g_autoptr(GError)         error = NULL;
+    static const gfloat       list[18] = { 0, 0, 0,  1, 0, 1,  1, 0, 0,
+                                           0, 0, 0,  0, 0, 1,  1, 0, 1 };
+    static const guint16      want_indices[18] = { 0, 1, 2, 0, 2, 3,
+                                                   4, 5, 6, 7, 8, 9,
+                                                   10, 11, 12, 10, 12, 13 };
+    GrlMatrix                 a = matrix_trs_y (1, 2, 3, 0.7f, 2, 1, 0.5f);
+    GrlMatrix                 b = matrix_trs_y (-4, 0, 1, -1.2f, 1, 3, 1);
+    GrlMatrix                 c = matrix_trs_y (0, -1, 7, 2.5f, 0.25f, 0.25f, 0.25f);
+    const guint16            *indices;
+    guint                     n = 0;
+
+    /* Indexed quad, non-indexed triangle list, indexed quad again. */
+    g_assert_true (add_quad (batch, &a, 3, 1));
+    expect_mesh (groups, 3, 1, quad_positions, 4, NULL, quad_indices, 6, &a);
+    g_assert_true (lrg_static_batch_add_mesh (batch, list, NULL, NULL, NULL, 6, NULL, 0,
+                                              &b, 3, 1, &error));
+    g_assert_no_error (error);
+    expect_mesh (groups, 3, 1, list, 6, NULL, NULL, 0, &b);
+    g_assert_true (add_quad (batch, &c, 3, 1));
+    expect_mesh (groups, 3, 1, quad_positions, 4, NULL, quad_indices, 6, &c);
+
+    g_assert_cmpuint (lrg_static_batch_get_chunk_count (batch), ==, 1);
+    indices = lrg_static_batch_get_chunk_indices (batch, 0, &n);
+    g_assert_cmpuint (n, ==, G_N_ELEMENTS (want_indices));
+    g_assert_true (memcmp (indices, want_indices, sizeof want_indices) == 0);
+    assert_batch_matches (batch, groups, 1e-5);
+}
+
 /* ========================================================================== */
 /*                               GL (display)                                 */
 /* ========================================================================== */
@@ -547,6 +800,268 @@ test_batch_gl (void)
     g_remove (path);
 }
 
+/*
+ * Piece:
+ *
+ * One model placed in the world, for the GL comparison test.
+ */
+typedef struct
+{
+    GrlModel  *model;   /* borrowed from the asset manager */
+    GrlMatrix  world;
+} Piece;
+
+/* find_asset:
+ * A file of the parent game's asset tree (read-only), or NULL. */
+static gchar *
+find_asset (const gchar *relative)
+{
+    static const gchar *const roots[] = { "../../../data/assets", "../../data/assets", NULL };
+    guint i;
+
+    for (i = 0; roots[i] != NULL; i++)
+    {
+        g_autofree gchar *path = g_build_filename (roots[i], relative, NULL);
+
+        /* Absolute, so the asset manager needs no search path. */
+        if (g_file_test (path, G_FILE_TEST_IS_REGULAR))
+            return g_canonicalize_filename (path, NULL);
+    }
+    return NULL;
+}
+
+/* model_mesh_material:
+ * The batch material key of mesh @i: its albedo texture id. */
+static guint
+model_mesh_material (const Model *raw,
+                     gint         i)
+{
+    if (raw->materials == NULL || raw->meshMaterial == NULL ||
+        raw->materials[raw->meshMaterial[i]].maps == NULL)
+        return 0;
+    return raw->materials[raw->meshMaterial[i]].maps[MATERIAL_MAP_ALBEDO].texture.id;
+}
+
+/* draw_reference:
+ * Draws every piece mesh by mesh with raylib's DrawMesh() and
+ * world * model.transform, using the same flat material the batch uses. */
+static void
+draw_reference (GArray *pieces)
+{
+    guint p;
+
+    for (p = 0; p < pieces->len; p++)
+    {
+        Piece    *piece = &g_array_index (pieces, Piece, p);
+        Model    *raw = grl_model_get_handle (piece->model);
+        GrlMatrix model_transform;
+        GrlMatrix full;
+        gint      i;
+
+        memcpy (&model_transform, &raw->transform, sizeof model_transform);
+        full = compose (&piece->world, &model_transform);
+        for (i = 0; i < raw->meshCount; i++)
+        {
+            MaterialMap maps[16];
+            Material    material;
+            Matrix      m;
+            guint       texture = model_mesh_material (raw, i);
+
+            memset (maps, 0, sizeof maps);
+            memset (&material, 0, sizeof material);
+            material.shader.id = rlGetShaderIdDefault ();
+            material.shader.locs = rlGetShaderLocsDefault ();
+            if (texture != 0)
+                maps[MATERIAL_MAP_ALBEDO].texture = raw->materials[raw->meshMaterial[i]].maps[MATERIAL_MAP_ALBEDO].texture;
+            else
+            {
+                maps[MATERIAL_MAP_ALBEDO].texture.id = rlGetTextureIdDefault ();
+                maps[MATERIAL_MAP_ALBEDO].texture.width = 1;
+                maps[MATERIAL_MAP_ALBEDO].texture.height = 1;
+                maps[MATERIAL_MAP_ALBEDO].texture.mipmaps = 1;
+                maps[MATERIAL_MAP_ALBEDO].texture.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+            }
+            maps[MATERIAL_MAP_ALBEDO].color = WHITE;
+            material.maps = maps;
+            memcpy (&m, &full, sizeof m);
+            DrawMesh (raw->meshes[i], material, m);
+        }
+    }
+}
+
+/* render_scene:
+ * Renders either the batch or the per-mesh reference into a fresh render
+ * texture and returns its pixels (RGBA8). */
+static Image
+render_scene (LrgStaticBatch *batch,
+              GArray         *pieces)
+{
+    RenderTexture2D target = LoadRenderTexture (320, 240);
+    Camera3D        camera;
+    Image           image;
+
+    memset (&camera, 0, sizeof camera);
+    camera.position = (Vector3) { 0, 14, 20 };
+    camera.target = (Vector3) { 0, 1, 0 };
+    camera.up = (Vector3) { 0, 1, 0 };
+    camera.fovy = 50;
+    camera.projection = CAMERA_PERSPECTIVE;
+
+    BeginTextureMode (target);
+    ClearBackground (BLACK);
+    BeginMode3D (camera);
+    if (batch != NULL)
+        lrg_static_batch_draw (batch, LRG_STATIC_BATCH_ALL_LAYERS);
+    else
+        draw_reference (pieces);
+    EndMode3D ();
+    EndTextureMode ();
+
+    image = LoadImageFromTexture (target.texture);
+    UnloadRenderTexture (target);
+    return image;
+}
+
+/* Real and generated models (with a non-identity model transform, a
+ * non-indexed mesh and several meshes per model) batched with game-style
+ * world matrices: the merged CPU geometry equals each mesh transformed by
+ * world * model.transform, and the uploaded batch renders the same image
+ * as drawing every mesh with DrawMesh(). */
+static void
+test_batch_gl_models_match (void)
+{
+    static const gchar *const real_models[] = {
+        "quaternius-medieval-village/models/Wall_UnevenBrick_Straight.gltf",
+        "quaternius-medieval-village/models/Roof_RoundTiles_6x6.gltf",
+        "quaternius-medieval-village/models/Floor_WoodDark.gltf",
+        "quaternius-fantasy-props/models/Table_Large.gltf",
+        "kenney-fantasy-town-kit/models/fence.glb",
+        NULL
+    };
+    g_autoptr(LrgStaticBatch)  batch = NULL;
+    g_autoptr(LrgAssetManager) manager = NULL;
+    g_autoptr(GPtrArray)       groups = g_ptr_array_new_with_free_func (soup_group_free);
+    g_autoptr(GArray)          pieces = g_array_new (FALSE, FALSE, sizeof (Piece));
+    g_autoptr(GError)          error = NULL;
+    g_autofree gchar          *generated = NULL;
+    GrlMatrix                  model_transform = matrix_trs_y (0, 0.5f, 0, 0.3f, 1.5f, 1.5f, 1.5f);
+    GrlModel                  *model;
+    Model                     *raw;
+    Image                      batch_image;
+    Image                      reference_image;
+    const guint8              *a;
+    const guint8              *b;
+    guint                      n_real = 0;
+    guint                      lit = 0;
+    guint                      mismatched = 0;
+    guint                      n_pixels;
+    guint                      p;
+    guint                      k;
+    gint                       i;
+
+    if (!graphics_available)
+    {
+        g_test_skip ("Graphics context not available");
+        return;
+    }
+
+    manager = lrg_asset_manager_new ();
+    batch = lrg_static_batch_new ();
+
+    /* Generated two-mesh model, one mesh without indices, with a model
+     * transform, placed twice. */
+    generated = g_build_filename (g_get_tmp_dir (), "lrg-batch-two-mesh.glb", NULL);
+    test_glb_write_two_mesh_model (generated);
+    model = lrg_asset_manager_load_model (manager, generated, &error);
+    g_assert_no_error (error);
+    raw = grl_model_get_handle (model);
+    g_assert_cmpint (raw->meshCount, ==, 2);
+    g_assert_nonnull (raw->meshes[0].indices);
+    g_assert_null (raw->meshes[1].indices);
+    memcpy (&raw->transform, &model_transform, sizeof raw->transform);
+    {
+        Piece first = { model, matrix_trs_y (-5, 0, 4, 0.9f, 2, 2, 2) };
+        Piece second = { model, matrix_trs_y (5, 0, 5, -2.1f, 1.5f, 3, 1.5f) };
+
+        g_array_append_val (pieces, first);
+        g_array_append_val (pieces, second);
+    }
+
+    /* The real pieces the game batches, when the asset tree is present. */
+    for (k = 0; real_models[k] != NULL; k++)
+    {
+        g_autofree gchar *path = find_asset (real_models[k]);
+        Piece             piece;
+
+        if (path == NULL)
+            continue;
+        piece.model = lrg_asset_manager_load_model (manager, path, &error);
+        g_assert_no_error (error);
+        piece.world = matrix_trs_y (-6.0f + 3.5f * (gfloat)k, 0, -3.0f + (gfloat)(k % 2) * 2.0f,
+                                    0.4f + 1.3f * (gfloat)k, 0.9f, 1.1f, 0.8f);
+        g_array_append_val (pieces, piece);
+        n_real++;
+    }
+    if (n_real == 0)
+        g_test_message ("Real model assets not found; generated fixtures only");
+
+    /* Batch and build the expected soups. */
+    for (p = 0; p < pieces->len; p++)
+    {
+        Piece    *piece = &g_array_index (pieces, Piece, p);
+        GrlMatrix mt;
+        GrlMatrix full;
+
+        g_assert_true (lrg_static_batch_add_model (batch, piece->model, &piece->world, 0, &error));
+        g_assert_no_error (error);
+
+        raw = grl_model_get_handle (piece->model);
+        memcpy (&mt, &raw->transform, sizeof mt);
+        full = compose (&piece->world, &mt);
+        for (i = 0; i < raw->meshCount; i++)
+            expect_mesh (groups, model_mesh_material (raw, i), 0, raw->meshes[i].vertices,
+                         (guint)raw->meshes[i].vertexCount, raw->meshes[i].indices, NULL,
+                         raw->meshes[i].indices != NULL ? (guint)raw->meshes[i].triangleCount * 3 : 0,
+                         &full);
+    }
+    assert_batch_matches (batch, groups, 1e-4);
+
+    /* GPU: the batch must render like the per-mesh reference. */
+    g_assert_true (lrg_static_batch_upload (batch, &error));
+    g_assert_no_error (error);
+    batch_image = render_scene (batch, NULL);
+    reference_image = render_scene (NULL, pieces);
+    g_assert_cmpint (batch_image.format, ==, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    g_assert_cmpint (reference_image.format, ==, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    a = batch_image.data;
+    b = reference_image.data;
+    n_pixels = (guint)(batch_image.width * batch_image.height);
+    for (k = 0; k < n_pixels; k++)
+    {
+        const guint8 *pa = a + k * 4;
+        const guint8 *pb = b + k * 4;
+        gint          c;
+        gint          diff = 0;
+
+        for (c = 0; c < 3; c++)
+            diff = MAX (diff, ABS ((gint)pa[c] - (gint)pb[c]));
+        if (pb[0] + pb[1] + pb[2] > 0)
+            lit++;
+        if (diff > 32)
+            mismatched++;
+    }
+    g_test_message ("lit %u, mismatched %u of %u pixels (%u real models)",
+                    lit, mismatched, n_pixels, n_real);
+    g_assert_cmpuint (lit, >, n_pixels / 50);
+    g_assert_cmpuint (mismatched, <, n_pixels / 100);
+    UnloadImage (batch_image);
+    UnloadImage (reference_image);
+
+    g_clear_object (&batch);
+    g_clear_object (&manager);
+    g_remove (generated);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -564,8 +1079,10 @@ main (int   argc,
     g_test_add_func ("/static-batch/split/triangles", test_batch_split_triangles);
     g_test_add_func ("/static-batch/split/u16-limit", test_batch_split_u16_limit);
     g_test_add_func ("/static-batch/invalid", test_batch_invalid);
+    g_test_add_func ("/static-batch/matches-sources", test_batch_matches_sources);
     g_test_add_func ("/static-batch/upload-headless", test_batch_upload_headless);
     g_test_add_func ("/static-batch/gl/upload-draw", test_batch_gl);
+    g_test_add_func ("/static-batch/gl/models-match-draw-mesh", test_batch_gl_models_match);
 
     result = g_test_run ();
     g_clear_object (&test_window);

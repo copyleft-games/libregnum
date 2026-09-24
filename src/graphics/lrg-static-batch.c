@@ -1057,9 +1057,20 @@ draw_one (LrgStaticBatch *self,
     MaterialMap      maps[BATCH_MATERIAL_MAPS];
     Material         material;
     MaterialTexture *entry;
+    Mesh             mesh;
 
     if (!chunk->uploaded || chunk->indices->len == 0)
         return;
+
+    /* raylib's DrawMesh() picks indexed drawing (and binds the element
+     * buffer) only when Mesh.indices is non-NULL, and the stored mesh
+     * keeps no CPU pointers so UnloadMesh() cannot free batch arrays.
+     * Without this the GPU vertices were drawn as a plain triangle list
+     * in vertex order, shredding every indexed mesh. On OpenGL 3.3+ the
+     * pointer is only tested for NULL; the uploaded element buffer and
+     * the triangle count from upload time are what gets drawn. */
+    mesh = chunk->mesh;
+    mesh.indices = (unsigned short *)chunk->indices->data;
 
     memset (maps, 0, sizeof maps);
     memset (&material, 0, sizeof material);
@@ -1084,7 +1095,7 @@ draw_one (LrgStaticBatch *self,
     maps[MATERIAL_MAP_ALBEDO].color = self->tints[chunk->layer];
     material.maps = maps;
 
-    DrawMesh (chunk->mesh, material, matrix_identity ());
+    DrawMesh (mesh, material, matrix_identity ());
 }
 
 void

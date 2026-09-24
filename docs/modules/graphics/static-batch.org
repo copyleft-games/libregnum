@@ -103,6 +103,10 @@ void     lrg_static_batch_draw_chunk  (LrgStaticBatch *self, guint chunk);
 
 =draw (mask)= draws every uploaded chunk whose layer bit is set, in chunk order, using the batch shader (raylib's default when unset), the material texture (raylib's white texture when unset) and the layer tint as the diffuse colour. Layer tint alpha below 255 relies on the current blend mode — draw translucent layers after opaque ones. For camera culling, test =get_chunk_bounds()= yourself and call =draw_chunk()=.
 
+Every chunk is drawn as an indexed mesh. raylib's =DrawMesh()= decides between indexed and plain drawing by testing the CPU pointer =Mesh.indices=, while the chunk's stored raylib mesh keeps no CPU pointers (so =UnloadMesh()= never frees batch arrays); =draw()= therefore passes a copy of the mesh with =indices= pointing at the chunk's CPU index array. Before this was done the GPU vertices were drawn as a triangle list in vertex order, which shredded every real model into spiky, stretched triangles while the CPU data stayed correct.
+
+=tests/test-static-batch.c= guards both halves: =/static-batch/matches-sources= checks that merged positions and rebased indices equal each source mesh transformed on its own (indexed and non-indexed meshes), and =/static-batch/gl/models-match-draw-mesh= (display only) batches a generated two-mesh model with a model transform and a non-indexed mesh plus, when the parent game's asset tree is present, real Quaternius Medieval Village, Fantasy Props and Kenney models, then compares the rendered batch pixel by pixel with per-mesh =DrawMesh (mesh, material, world * model.transform)=.
+
 ** Example
 :PROPERTIES:
 :CUSTOM_ID: example

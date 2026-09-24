@@ -263,3 +263,54 @@ test_glb_write_multi_root_rig (const gchar *path,
 
     test_glb_write (path, json, bin, sizeof bin);
 }
+
+/*
+ * test_glb_write_two_mesh_model:
+ * @path: destination
+ *
+ * A static model with two meshes, the second not indexed:
+ *
+ *   node 0 "Crate"  mesh 0: an indexed unit quad (4 vertices, 2 triangles)
+ *                   translated (0.5, 0, 0) and rotated 90 degrees about Y
+ *   node 1 "Plank"  mesh 1: two triangles as a plain list (6 vertices, no
+ *                   "indices"), scaled 2 on X
+ *
+ * raylib bakes node transforms into the vertices and loads the second mesh
+ * with Mesh.indices == NULL.
+ *
+ * Binary layout: quad positions (48) | quad indices u16 (12) |
+ * plank positions (72) = 132 bytes.
+ */
+G_GNUC_UNUSED static void
+test_glb_write_two_mesh_model (const gchar *path)
+{
+    static const gfloat  quad[12] = { 0, 0, 0,  1, 0, 0,  1, 1, 0,  0, 1, 0 };
+    static const guint16 quad_indices[6] = { 0, 1, 2,  0, 2, 3 };
+    static const gfloat  plank[18] = { 0, 0, 0,  1, 0, 1,  1, 0, 0,
+                                       0, 0, 0,  0, 0, 1,  1, 0, 1 };
+    guint8 bin[132];
+
+    memcpy (bin, quad, 48);
+    memcpy (bin + 48, quad_indices, 12);
+    memcpy (bin + 60, plank, 72);
+
+    test_glb_write (path,
+        "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0,1]}],"
+        "\"nodes\":["
+        "{\"name\":\"Crate\",\"mesh\":0,\"translation\":[0.5,0,0],"
+        "\"rotation\":[0,0.70710678,0,0.70710678]},"
+        "{\"name\":\"Plank\",\"mesh\":1,\"scale\":[2,1,1]}],"
+        "\"meshes\":["
+        "{\"name\":\"Crate\",\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]},"
+        "{\"name\":\"Plank\",\"primitives\":[{\"attributes\":{\"POSITION\":2}}]}],"
+        "\"buffers\":[{\"byteLength\":132}],"
+        "\"bufferViews\":["
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":48},"
+        "{\"buffer\":0,\"byteOffset\":48,\"byteLength\":12},"
+        "{\"buffer\":0,\"byteOffset\":60,\"byteLength\":72}],"
+        "\"accessors\":["
+        "{\"bufferView\":0,\"componentType\":5126,\"count\":4,\"type\":\"VEC3\",\"min\":[0,0,0],\"max\":[1,1,0]},"
+        "{\"bufferView\":1,\"componentType\":5123,\"count\":6,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":2,\"componentType\":5126,\"count\":6,\"type\":\"VEC3\",\"min\":[0,0,0],\"max\":[1,0,1]}]}",
+        bin, sizeof bin);
+}
