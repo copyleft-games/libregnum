@@ -150,7 +150,7 @@ lrg_template_daily_rewards_default_init (LrgTemplateDailyRewardsInterface *iface
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_daily_rewards_get_daily_reward_state:
  * @self: an #LrgTemplateDailyRewards
  *
@@ -172,7 +172,7 @@ lrg_template_daily_rewards_get_daily_reward_state (LrgTemplateDailyRewards *self
     return iface->get_daily_reward_state (self);
 }
 
-/**
+/*
  * lrg_template_daily_rewards_can_claim:
  * @self: an #LrgTemplateDailyRewards
  *
@@ -217,7 +217,7 @@ lrg_template_daily_rewards_can_claim (LrgTemplateDailyRewards *self)
     return TRUE;
 }
 
-/**
+/*
  * lrg_template_daily_rewards_claim:
  * @self: an #LrgTemplateDailyRewards
  *
@@ -283,7 +283,7 @@ lrg_template_daily_rewards_claim (LrgTemplateDailyRewards *self)
     return state->current_streak;
 }
 
-/**
+/*
  * lrg_template_daily_rewards_get_streak_bonus_multiplier:
  * @self: an #LrgTemplateDailyRewards
  *
@@ -311,7 +311,7 @@ lrg_template_daily_rewards_get_streak_bonus_multiplier (LrgTemplateDailyRewards 
     return multiplier;
 }
 
-/**
+/*
  * lrg_template_daily_rewards_get_current_streak:
  * @self: an #LrgTemplateDailyRewards
  *
@@ -333,7 +333,7 @@ lrg_template_daily_rewards_get_current_streak (LrgTemplateDailyRewards *self)
     return state->current_streak;
 }
 
-/**
+/*
  * lrg_template_daily_rewards_get_max_streak:
  * @self: an #LrgTemplateDailyRewards
  *
@@ -355,7 +355,7 @@ lrg_template_daily_rewards_get_max_streak (LrgTemplateDailyRewards *self)
     return state->max_streak;
 }
 
-/**
+/*
  * lrg_template_daily_rewards_get_time_until_claim:
  * @self: an #LrgTemplateDailyRewards
  *
@@ -388,7 +388,7 @@ lrg_template_daily_rewards_get_time_until_claim (LrgTemplateDailyRewards *self)
     return (remaining > 0) ? remaining : 0;
 }
 
-/**
+/*
  * lrg_template_daily_rewards_get_time_until_streak_expires:
  * @self: an #LrgTemplateDailyRewards
  *
@@ -421,7 +421,7 @@ lrg_template_daily_rewards_get_time_until_streak_expires (LrgTemplateDailyReward
     return (remaining > 0) ? remaining : 0;
 }
 
-/**
+/*
  * lrg_template_daily_rewards_session_start:
  * @self: an #LrgTemplateDailyRewards
  *

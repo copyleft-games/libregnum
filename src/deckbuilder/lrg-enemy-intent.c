@@ -42,7 +42,7 @@ G_DEFINE_BOXED_TYPE (LrgEnemyIntent, lrg_enemy_intent,
                      lrg_enemy_intent_copy,
                      lrg_enemy_intent_free)
 
-/**
+/*
  * lrg_enemy_intent_new:
  * @type: the intent type
  *
@@ -68,7 +68,7 @@ lrg_enemy_intent_new (LrgIntentType type)
     return self;
 }
 
-/**
+/*
  * lrg_enemy_intent_new_attack:
  * @damage: base damage amount
  * @times: number of attacks (1 for single hit)
@@ -92,7 +92,7 @@ lrg_enemy_intent_new_attack (gint damage,
     return self;
 }
 
-/**
+/*
  * lrg_enemy_intent_new_defend:
  * @block: block amount
  *
@@ -113,7 +113,7 @@ lrg_enemy_intent_new_defend (gint block)
     return self;
 }
 
-/**
+/*
  * lrg_enemy_intent_new_buff:
  * @status_id: (nullable): status effect to apply
  * @stacks: number of stacks
@@ -137,7 +137,7 @@ lrg_enemy_intent_new_buff (const gchar *status_id,
     return self;
 }
 
-/**
+/*
  * lrg_enemy_intent_new_debuff:
  * @status_id: (nullable): status effect to apply
  * @stacks: number of stacks
@@ -299,7 +299,7 @@ lrg_enemy_intent_set_stacks (LrgEnemyIntent *self,
     self->stacks = MAX (0, stacks);
 }
 
-/**
+/*
  * lrg_enemy_intent_is_attack:
  * @self: an #LrgEnemyIntent
  *
@@ -325,7 +325,7 @@ lrg_enemy_intent_is_attack (const LrgEnemyIntent *self)
     }
 }
 
-/**
+/*
  * lrg_enemy_intent_get_total_damage:
  * @self: an #LrgEnemyIntent
  *

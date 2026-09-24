@@ -113,7 +113,7 @@ lrg_blackboard_init (LrgBlackboard *self)
                                            (GDestroyNotify) entry_free);
 }
 
-/**
+/*
  * lrg_blackboard_new:
  *
  * Creates a new blackboard for storing behavior tree data.
@@ -126,7 +126,7 @@ lrg_blackboard_new (void)
     return g_object_new (LRG_TYPE_BLACKBOARD, NULL);
 }
 
-/**
+/*
  * lrg_blackboard_set_int:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -151,7 +151,7 @@ lrg_blackboard_set_int (LrgBlackboard *self,
     g_hash_table_insert (self->entries, g_strdup (key), entry);
 }
 
-/**
+/*
  * lrg_blackboard_get_int:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -178,7 +178,7 @@ lrg_blackboard_get_int (LrgBlackboard *self,
     return entry->value.int_val;
 }
 
-/**
+/*
  * lrg_blackboard_set_float:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -203,7 +203,7 @@ lrg_blackboard_set_float (LrgBlackboard *self,
     g_hash_table_insert (self->entries, g_strdup (key), entry);
 }
 
-/**
+/*
  * lrg_blackboard_get_float:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -230,7 +230,7 @@ lrg_blackboard_get_float (LrgBlackboard *self,
     return entry->value.float_val;
 }
 
-/**
+/*
  * lrg_blackboard_set_bool:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -255,7 +255,7 @@ lrg_blackboard_set_bool (LrgBlackboard *self,
     g_hash_table_insert (self->entries, g_strdup (key), entry);
 }
 
-/**
+/*
  * lrg_blackboard_get_bool:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -282,7 +282,7 @@ lrg_blackboard_get_bool (LrgBlackboard *self,
     return entry->value.bool_val;
 }
 
-/**
+/*
  * lrg_blackboard_set_string:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -307,7 +307,7 @@ lrg_blackboard_set_string (LrgBlackboard *self,
     g_hash_table_insert (self->entries, g_strdup (key), entry);
 }
 
-/**
+/*
  * lrg_blackboard_get_string:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -332,7 +332,7 @@ lrg_blackboard_get_string (LrgBlackboard *self,
     return entry->value.string_val;
 }
 
-/**
+/*
  * lrg_blackboard_set_object:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -358,7 +358,7 @@ lrg_blackboard_set_object (LrgBlackboard *self,
     g_hash_table_insert (self->entries, g_strdup (key), entry);
 }
 
-/**
+/*
  * lrg_blackboard_get_object:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -383,7 +383,7 @@ lrg_blackboard_get_object (LrgBlackboard *self,
     return entry->value.object_val;
 }
 
-/**
+/*
  * lrg_blackboard_set_pointer:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -411,7 +411,7 @@ lrg_blackboard_set_pointer (LrgBlackboard  *self,
     g_hash_table_insert (self->entries, g_strdup (key), entry);
 }
 
-/**
+/*
  * lrg_blackboard_get_pointer:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -436,7 +436,7 @@ lrg_blackboard_get_pointer (LrgBlackboard *self,
     return entry->value.pointer_val;
 }
 
-/**
+/*
  * lrg_blackboard_has_key:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -455,7 +455,7 @@ lrg_blackboard_has_key (LrgBlackboard *self,
     return g_hash_table_contains (self->entries, key);
 }
 
-/**
+/*
  * lrg_blackboard_remove:
  * @self: an #LrgBlackboard
  * @key: The key name
@@ -474,7 +474,7 @@ lrg_blackboard_remove (LrgBlackboard *self,
     return g_hash_table_remove (self->entries, key);
 }
 
-/**
+/*
  * lrg_blackboard_clear:
  * @self: an #LrgBlackboard
  *
@@ -488,7 +488,7 @@ lrg_blackboard_clear (LrgBlackboard *self)
     g_hash_table_remove_all (self->entries);
 }
 
-/**
+/*
  * lrg_blackboard_get_keys:
  * @self: an #LrgBlackboard
  *

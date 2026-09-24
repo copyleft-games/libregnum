@@ -132,7 +132,7 @@ lrg_reel_solid_clip_init (LrgReelSolidClip *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_solid_clip_new:
  * @color: the fill color.
  *
@@ -155,7 +155,7 @@ lrg_reel_solid_clip_new (const GrlColor *color)
     return self;
 }
 
-/**
+/*
  * lrg_reel_solid_clip_get_color:
  * @self: an #LrgReelSolidClip.
  * @out_color: (out caller-allocates): return location for the color.
@@ -174,7 +174,7 @@ lrg_reel_solid_clip_get_color (LrgReelSolidClip *self,
     *out_color = self->color;
 }
 
-/**
+/*
  * lrg_reel_solid_clip_set_color:
  * @self: an #LrgReelSolidClip.
  * @color: the new fill color.

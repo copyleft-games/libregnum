@@ -1023,7 +1023,7 @@ lrg_template_pause_menu_state_init (LrgTemplatePauseMenuState *self)
 /* Public API                                                                 */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_template_pause_menu_state_new:
  *
  * Creates a new pause menu state.

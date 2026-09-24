@@ -181,7 +181,7 @@ lrg_reel_dissolve_transition_init (LrgReelDissolveTransition *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_dissolve_transition_new:
  *
  * Creates a new #LrgReelDissolveTransition with the default seed (1337).
@@ -196,7 +196,7 @@ lrg_reel_dissolve_transition_new (void)
     return g_object_new (LRG_TYPE_REEL_DISSOLVE_TRANSITION, NULL);
 }
 
-/**
+/*
  * lrg_reel_dissolve_transition_get_seed:
  * @self: an #LrgReelDissolveTransition
  *
@@ -213,7 +213,7 @@ lrg_reel_dissolve_transition_get_seed (LrgReelDissolveTransition *self)
     return self->seed;
 }
 
-/**
+/*
  * lrg_reel_dissolve_transition_set_seed:
  * @self: an #LrgReelDissolveTransition
  * @seed: the new seed value

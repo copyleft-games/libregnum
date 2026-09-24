@@ -904,7 +904,7 @@ lrg_reel_shape_clip_init (LrgReelShapeClip *self)
  * Public API: constructors
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_shape_clip_new:
  * @kind: the shape variant to draw.
  *
@@ -923,7 +923,7 @@ lrg_reel_shape_clip_new (LrgReelShapeKind kind)
                          NULL);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_new_rect:
  * @x: left edge of the rectangle in frame coordinates.
  * @y: top edge of the rectangle in frame coordinates.
@@ -953,7 +953,7 @@ lrg_reel_shape_clip_new_rect (gint x,
     return self;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_new_circle:
  * @cx: centre X coordinate in frame coordinates.
  * @cy: centre Y coordinate in frame coordinates.
@@ -980,7 +980,7 @@ lrg_reel_shape_clip_new_circle (gint cx,
     return self;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_new_line:
  * @x1: X coordinate of the start point.
  * @y1: Y coordinate of the start point.
@@ -1023,7 +1023,7 @@ lrg_reel_shape_clip_new_line (gint x1,
  * Public API: geometry accessors
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_shape_clip_get_kind:
  * @self: an #LrgReelShapeClip.
  *
@@ -1038,7 +1038,7 @@ lrg_reel_shape_clip_get_kind (LrgReelShapeClip *self)
     return self->kind;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_shape_x:
  * @self: an #LrgReelShapeClip.
  *
@@ -1053,7 +1053,7 @@ lrg_reel_shape_clip_get_shape_x (LrgReelShapeClip *self)
     return self->shape_x;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_shape_x:
  * @self: an #LrgReelShapeClip.
  * @x: the new shape X coordinate.
@@ -1073,7 +1073,7 @@ lrg_reel_shape_clip_set_shape_x (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHAPE_X]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_shape_y:
  * @self: an #LrgReelShapeClip.
  *
@@ -1088,7 +1088,7 @@ lrg_reel_shape_clip_get_shape_y (LrgReelShapeClip *self)
     return self->shape_y;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_shape_y:
  * @self: an #LrgReelShapeClip.
  * @y: the new shape Y coordinate.
@@ -1108,7 +1108,7 @@ lrg_reel_shape_clip_set_shape_y (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHAPE_Y]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_shape_width:
  * @self: an #LrgReelShapeClip.
  *
@@ -1123,7 +1123,7 @@ lrg_reel_shape_clip_get_shape_width (LrgReelShapeClip *self)
     return self->shape_width;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_shape_width:
  * @self: an #LrgReelShapeClip.
  * @width: the new width in pixels.
@@ -1143,7 +1143,7 @@ lrg_reel_shape_clip_set_shape_width (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHAPE_WIDTH]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_shape_height:
  * @self: an #LrgReelShapeClip.
  *
@@ -1158,7 +1158,7 @@ lrg_reel_shape_clip_get_shape_height (LrgReelShapeClip *self)
     return self->shape_height;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_shape_height:
  * @self: an #LrgReelShapeClip.
  * @height: the new height in pixels.
@@ -1178,7 +1178,7 @@ lrg_reel_shape_clip_set_shape_height (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHAPE_HEIGHT]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_shape_radius:
  * @self: an #LrgReelShapeClip.
  *
@@ -1193,7 +1193,7 @@ lrg_reel_shape_clip_get_shape_radius (LrgReelShapeClip *self)
     return self->shape_radius;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_shape_radius:
  * @self: an #LrgReelShapeClip.
  * @radius: the new radius in pixels.
@@ -1213,7 +1213,7 @@ lrg_reel_shape_clip_set_shape_radius (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHAPE_RADIUS]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_corner_radius:
  * @self: an #LrgReelShapeClip.
  *
@@ -1228,7 +1228,7 @@ lrg_reel_shape_clip_get_corner_radius (LrgReelShapeClip *self)
     return self->corner_radius;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_corner_radius:
  * @self: an #LrgReelShapeClip.
  * @corner_radius: the new corner radius in pixels.
@@ -1248,7 +1248,7 @@ lrg_reel_shape_clip_set_corner_radius (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CORNER_RADIUS]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_shape_x2:
  * @self: an #LrgReelShapeClip.
  *
@@ -1263,7 +1263,7 @@ lrg_reel_shape_clip_get_shape_x2 (LrgReelShapeClip *self)
     return self->shape_x2;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_shape_x2:
  * @self: an #LrgReelShapeClip.
  * @x2: the new line end X coordinate.
@@ -1283,7 +1283,7 @@ lrg_reel_shape_clip_set_shape_x2 (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHAPE_X2]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_shape_y2:
  * @self: an #LrgReelShapeClip.
  *
@@ -1298,7 +1298,7 @@ lrg_reel_shape_clip_get_shape_y2 (LrgReelShapeClip *self)
     return self->shape_y2;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_shape_y2:
  * @self: an #LrgReelShapeClip.
  * @y2: the new line end Y coordinate.
@@ -1318,7 +1318,7 @@ lrg_reel_shape_clip_set_shape_y2 (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHAPE_Y2]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_point_count:
  * @self: an #LrgReelShapeClip.
  *
@@ -1333,7 +1333,7 @@ lrg_reel_shape_clip_get_point_count (LrgReelShapeClip *self)
     return self->point_count;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_point_count:
  * @self: an #LrgReelShapeClip.
  * @point_count: the new number of star points (>= 2).
@@ -1356,7 +1356,7 @@ lrg_reel_shape_clip_set_point_count (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_POINT_COUNT]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_inner_radius_ratio:
  * @self: an #LrgReelShapeClip.
  *
@@ -1371,7 +1371,7 @@ lrg_reel_shape_clip_get_inner_radius_ratio (LrgReelShapeClip *self)
     return self->inner_radius_ratio;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_inner_radius_ratio:
  * @self: an #LrgReelShapeClip.
  * @ratio: the new inner radius ratio in [0.0, 1.0].
@@ -1397,7 +1397,7 @@ lrg_reel_shape_clip_set_inner_radius_ratio (LrgReelShapeClip *self,
  * Public API: polygon / path setters
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_shape_clip_set_points:
  * @self: an #LrgReelShapeClip.
  * @points: (array length=n_points): vertex array for a polygon shape.
@@ -1427,7 +1427,7 @@ lrg_reel_shape_clip_set_points (LrgReelShapeClip  *self,
     }
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_path:
  * @self: an #LrgReelShapeClip.
  * @path: (nullable) (transfer none): a #GrlPath, or %NULL to clear.
@@ -1455,7 +1455,7 @@ lrg_reel_shape_clip_set_path (LrgReelShapeClip *self,
  * Public API: style accessors
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_shape_clip_get_fill_color:
  * @self: an #LrgReelShapeClip.
  * @out_color: (out caller-allocates): return location for the fill color.
@@ -1472,7 +1472,7 @@ lrg_reel_shape_clip_get_fill_color (LrgReelShapeClip *self,
     *out_color = self->fill_color;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_fill_color:
  * @self: an #LrgReelShapeClip.
  * @color: the new fill color.
@@ -1490,7 +1490,7 @@ lrg_reel_shape_clip_set_fill_color (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FILL_COLOR]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_stroke_color:
  * @self: an #LrgReelShapeClip.
  * @out_color: (out caller-allocates): return location for the stroke color.
@@ -1507,7 +1507,7 @@ lrg_reel_shape_clip_get_stroke_color (LrgReelShapeClip *self,
     *out_color = self->stroke_color;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_stroke_color:
  * @self: an #LrgReelShapeClip.
  * @color: the new stroke color.
@@ -1525,7 +1525,7 @@ lrg_reel_shape_clip_set_stroke_color (LrgReelShapeClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STROKE_COLOR]);
 }
 
-/**
+/*
  * lrg_reel_shape_clip_get_stroke_width:
  * @self: an #LrgReelShapeClip.
  *
@@ -1540,7 +1540,7 @@ lrg_reel_shape_clip_get_stroke_width (LrgReelShapeClip *self)
     return self->stroke_width;
 }
 
-/**
+/*
  * lrg_reel_shape_clip_set_stroke_width:
  * @self: an #LrgReelShapeClip.
  * @stroke_width: the new stroke width in pixels (0 = no stroke).

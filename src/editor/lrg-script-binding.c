@@ -169,7 +169,7 @@ lrg_script_binding_init (LrgScriptBinding *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_script_binding_new:
  * @language: the scripting language
  * @script: (nullable): the script path or asset guid
@@ -192,7 +192,7 @@ lrg_script_binding_new (LrgScriptLanguage  language,
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_script_binding_get_language:
  * @self: an #LrgScriptBinding
  *
@@ -208,7 +208,7 @@ lrg_script_binding_get_language (LrgScriptBinding *self)
 	return self->language;
 }
 
-/**
+/*
  * lrg_script_binding_set_language:
  * @self: an #LrgScriptBinding
  * @language: the scripting language
@@ -225,7 +225,7 @@ lrg_script_binding_set_language (LrgScriptBinding  *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LANGUAGE]);
 }
 
-/**
+/*
  * lrg_script_binding_get_script:
  * @self: an #LrgScriptBinding
  *
@@ -241,7 +241,7 @@ lrg_script_binding_get_script (LrgScriptBinding *self)
 	return self->script;
 }
 
-/**
+/*
  * lrg_script_binding_set_script:
  * @self: an #LrgScriptBinding
  * @script: (nullable): the script path or asset guid
@@ -259,7 +259,7 @@ lrg_script_binding_set_script (LrgScriptBinding *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCRIPT]);
 }
 
-/**
+/*
  * lrg_script_binding_get_enabled:
  * @self: an #LrgScriptBinding
  *
@@ -275,7 +275,7 @@ lrg_script_binding_get_enabled (LrgScriptBinding *self)
 	return self->enabled;
 }
 
-/**
+/*
  * lrg_script_binding_set_enabled:
  * @self: an #LrgScriptBinding
  * @enabled: whether the binding is enabled

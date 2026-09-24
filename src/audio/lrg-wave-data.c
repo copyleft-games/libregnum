@@ -243,7 +243,7 @@ lrg_wave_data_init (LrgWaveData *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_data_new_from_file:
  * @path: (type filename): path to the audio file
  * @error: (nullable): return location for a #GError
@@ -280,7 +280,7 @@ lrg_wave_data_new_from_file (const gchar  *path,
     return self;
 }
 
-/**
+/*
  * lrg_wave_data_new_from_memory:
  * @file_type: file type extension (e.g., ".wav", ".ogg")
  * @data: (array length=data_size): audio file data in memory
@@ -321,7 +321,7 @@ lrg_wave_data_new_from_memory (const gchar  *file_type,
     return self;
 }
 
-/**
+/*
  * lrg_wave_data_new_from_samples:
  * @sample_rate: sample rate in Hz (e.g., 44100)
  * @sample_size: bits per sample (8, 16, or 32)
@@ -359,7 +359,7 @@ lrg_wave_data_new_from_samples (guint         sample_rate,
     return self;
 }
 
-/**
+/*
  * lrg_wave_data_new_procedural:
  * @sample_rate: sample rate in Hz (e.g., 44100)
  * @channels: number of channels (1 = mono, 2 = stereo)
@@ -394,7 +394,7 @@ lrg_wave_data_new_procedural (guint  sample_rate,
     return self;
 }
 
-/**
+/*
  * lrg_wave_data_new_from_grl_wave:
  * @wave: a #GrlWave
  *
@@ -419,7 +419,7 @@ lrg_wave_data_new_from_grl_wave (GrlWave *wave)
  * Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_data_get_name:
  * @self: a #LrgWaveData
  *
@@ -435,7 +435,7 @@ lrg_wave_data_get_name (LrgWaveData *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_wave_data_set_name:
  * @self: a #LrgWaveData
  * @name: (nullable): the name identifier
@@ -456,7 +456,7 @@ lrg_wave_data_set_name (LrgWaveData *self,
     }
 }
 
-/**
+/*
  * lrg_wave_data_get_source_path:
  * @self: a #LrgWaveData
  *
@@ -472,7 +472,7 @@ lrg_wave_data_get_source_path (LrgWaveData *self)
     return self->source_path;
 }
 
-/**
+/*
  * lrg_wave_data_get_frame_count:
  * @self: a #LrgWaveData
  *
@@ -491,7 +491,7 @@ lrg_wave_data_get_frame_count (LrgWaveData *self)
     return grl_wave_get_frame_count (self->wave);
 }
 
-/**
+/*
  * lrg_wave_data_get_sample_rate:
  * @self: a #LrgWaveData
  *
@@ -510,7 +510,7 @@ lrg_wave_data_get_sample_rate (LrgWaveData *self)
     return grl_wave_get_sample_rate (self->wave);
 }
 
-/**
+/*
  * lrg_wave_data_get_sample_size:
  * @self: a #LrgWaveData
  *
@@ -529,7 +529,7 @@ lrg_wave_data_get_sample_size (LrgWaveData *self)
     return grl_wave_get_sample_size (self->wave);
 }
 
-/**
+/*
  * lrg_wave_data_get_channels:
  * @self: a #LrgWaveData
  *
@@ -548,7 +548,7 @@ lrg_wave_data_get_channels (LrgWaveData *self)
     return grl_wave_get_channels (self->wave);
 }
 
-/**
+/*
  * lrg_wave_data_get_duration:
  * @self: a #LrgWaveData
  *
@@ -567,7 +567,7 @@ lrg_wave_data_get_duration (LrgWaveData *self)
     return grl_wave_get_duration (self->wave);
 }
 
-/**
+/*
  * lrg_wave_data_is_valid:
  * @self: a #LrgWaveData
  *
@@ -593,7 +593,7 @@ lrg_wave_data_is_valid (LrgWaveData *self)
  * Manipulation
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_data_copy:
  * @self: a #LrgWaveData
  *
@@ -617,7 +617,7 @@ lrg_wave_data_copy (LrgWaveData *self)
     return copy;
 }
 
-/**
+/*
  * lrg_wave_data_crop:
  * @self: a #LrgWaveData
  * @start_time: start time in seconds
@@ -657,7 +657,7 @@ lrg_wave_data_crop (LrgWaveData *self,
     return cropped;
 }
 
-/**
+/*
  * lrg_wave_data_resample:
  * @self: a #LrgWaveData
  * @new_sample_rate: new sample rate in Hz
@@ -680,7 +680,7 @@ lrg_wave_data_resample (LrgWaveData *self,
                                    grl_wave_get_channels (self->wave));
 }
 
-/**
+/*
  * lrg_wave_data_convert:
  * @self: a #LrgWaveData
  * @sample_rate: new sample rate in Hz
@@ -720,7 +720,7 @@ lrg_wave_data_convert (LrgWaveData *self,
  * Sample Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_data_get_samples:
  * @self: a #LrgWaveData
  * @out_count: (out): return location for the number of samples
@@ -740,7 +740,7 @@ lrg_wave_data_get_samples (LrgWaveData *self,
     return grl_wave_load_samples (self->wave, out_count);
 }
 
-/**
+/*
  * lrg_wave_data_set_samples:
  * @self: a #LrgWaveData
  * @samples: (array length=count): normalized float samples (-1.0 to 1.0)
@@ -786,7 +786,7 @@ lrg_wave_data_set_samples (LrgWaveData  *self,
  * Export
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_data_export_wav:
  * @self: a #LrgWaveData
  * @path: (type filename): output file path
@@ -827,7 +827,7 @@ lrg_wave_data_export_wav (LrgWaveData  *self,
  * Conversion
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_data_to_sound:
  * @self: a #LrgWaveData
  *
@@ -846,7 +846,7 @@ lrg_wave_data_to_sound (LrgWaveData *self)
     return grl_sound_new_from_grl_wave (self->wave);
 }
 
-/**
+/*
  * lrg_wave_data_get_grl_wave:
  * @self: a #LrgWaveData
  *

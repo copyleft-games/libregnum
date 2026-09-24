@@ -10,7 +10,7 @@
 #include "config.h"
 #include "lrg-collision-info.h"
 
-/**
+/*
  * LrgCollisionInfo:
  *
  * Structure containing collision information between two bodies.
@@ -30,7 +30,7 @@ G_DEFINE_BOXED_TYPE (LrgCollisionInfo, lrg_collision_info,
                      lrg_collision_info_copy,
                      lrg_collision_info_free)
 
-/**
+/*
  * lrg_collision_info_new:
  * @body_a: First body in collision
  * @body_b: Second body in collision
@@ -68,7 +68,7 @@ lrg_collision_info_new (GObject *body_a,
     return self;
 }
 
-/**
+/*
  * lrg_collision_info_copy:
  * @self: an #LrgCollisionInfo
  *
@@ -90,7 +90,7 @@ lrg_collision_info_copy (const LrgCollisionInfo *self)
                                    self->contact_y);
 }
 
-/**
+/*
  * lrg_collision_info_free:
  * @self: an #LrgCollisionInfo
  *
@@ -107,7 +107,7 @@ lrg_collision_info_free (LrgCollisionInfo *self)
     g_slice_free (LrgCollisionInfo, self);
 }
 
-/**
+/*
  * lrg_collision_info_get_body_a:
  * @self: an #LrgCollisionInfo
  *
@@ -123,7 +123,7 @@ lrg_collision_info_get_body_a (const LrgCollisionInfo *self)
     return self->body_a;
 }
 
-/**
+/*
  * lrg_collision_info_get_body_b:
  * @self: an #LrgCollisionInfo
  *
@@ -139,7 +139,7 @@ lrg_collision_info_get_body_b (const LrgCollisionInfo *self)
     return self->body_b;
 }
 
-/**
+/*
  * lrg_collision_info_get_normal:
  * @self: an #LrgCollisionInfo
  * @out_x: (out): Normal X component
@@ -160,7 +160,7 @@ lrg_collision_info_get_normal (const LrgCollisionInfo *self,
         *out_y = self->normal_y;
 }
 
-/**
+/*
  * lrg_collision_info_get_penetration:
  * @self: an #LrgCollisionInfo
  *
@@ -176,7 +176,7 @@ lrg_collision_info_get_penetration (const LrgCollisionInfo *self)
     return self->penetration;
 }
 
-/**
+/*
  * lrg_collision_info_get_contact_point:
  * @self: an #LrgCollisionInfo
  * @out_x: (out): Contact point X

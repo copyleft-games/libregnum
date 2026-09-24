@@ -174,7 +174,7 @@ lrg_world_init (LrgWorld *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_world_new:
  *
  * Creates a new empty world.
@@ -191,7 +191,7 @@ lrg_world_new (void)
  * Public API - Game Object Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_world_add_object:
  * @self: an #LrgWorld
  * @object: the game object to add
@@ -225,7 +225,7 @@ lrg_world_add_object (LrgWorld      *self,
                g_list_length (self->objects));
 }
 
-/**
+/*
  * lrg_world_remove_object:
  * @self: an #LrgWorld
  * @object: the game object to remove
@@ -263,7 +263,7 @@ lrg_world_remove_object (LrgWorld      *self,
     g_object_unref (object);
 }
 
-/**
+/*
  * lrg_world_clear:
  * @self: an #LrgWorld
  *
@@ -290,7 +290,7 @@ lrg_world_clear (LrgWorld *self)
     lrg_debug (LRG_LOG_DOMAIN_ECS, "World cleared");
 }
 
-/**
+/*
  * lrg_world_get_objects:
  * @self: an #LrgWorld
  *
@@ -306,7 +306,7 @@ lrg_world_get_objects (LrgWorld *self)
     return g_list_copy (self->objects);
 }
 
-/**
+/*
  * lrg_world_get_object_count:
  * @self: an #LrgWorld
  *
@@ -326,7 +326,7 @@ lrg_world_get_object_count (LrgWorld *self)
  * Public API - Object Lookup
  * ========================================================================== */
 
-/**
+/*
  * lrg_world_find_by_tag:
  * @self: an #LrgWorld
  * @tag: the tag to search for
@@ -356,7 +356,7 @@ lrg_world_find_by_tag (LrgWorld    *self,
     return NULL;
 }
 
-/**
+/*
  * lrg_world_find_all_by_tag:
  * @self: an #LrgWorld
  * @tag: the tag to search for
@@ -393,7 +393,7 @@ lrg_world_find_all_by_tag (LrgWorld    *self,
  * Public API - Frame Processing
  * ========================================================================== */
 
-/**
+/*
  * lrg_world_update:
  * @self: an #LrgWorld
  * @delta: time elapsed since last frame in seconds
@@ -425,7 +425,7 @@ lrg_world_update (LrgWorld *self,
     }
 }
 
-/**
+/*
  * lrg_world_draw:
  * @self: an #LrgWorld
  *
@@ -466,7 +466,7 @@ lrg_world_draw (LrgWorld *self)
  * Public API - graylib Integration
  * ========================================================================== */
 
-/**
+/*
  * lrg_world_get_scene:
  * @self: an #LrgWorld
  *
@@ -486,7 +486,7 @@ lrg_world_get_scene (LrgWorld *self)
  * Public API - Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_world_get_active:
  * @self: an #LrgWorld
  *
@@ -502,7 +502,7 @@ lrg_world_get_active (LrgWorld *self)
     return self->active;
 }
 
-/**
+/*
  * lrg_world_set_active:
  * @self: an #LrgWorld
  * @active: whether the world should be active
@@ -524,7 +524,7 @@ lrg_world_set_active (LrgWorld *self,
     }
 }
 
-/**
+/*
  * lrg_world_get_paused:
  * @self: an #LrgWorld
  *
@@ -540,7 +540,7 @@ lrg_world_get_paused (LrgWorld *self)
     return self->paused;
 }
 
-/**
+/*
  * lrg_world_set_paused:
  * @self: an #LrgWorld
  * @paused: whether the world should be paused

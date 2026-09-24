@@ -216,7 +216,7 @@ lrg_reel_wipe_transition_init (LrgReelWipeTransition *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_wipe_transition_new:
  * @direction: the edge from which the incoming frame is revealed
  *
@@ -234,7 +234,7 @@ lrg_reel_wipe_transition_new (LrgReelTransitionDirection direction)
                          NULL);
 }
 
-/**
+/*
  * lrg_reel_wipe_transition_get_direction:
  * @self: an #LrgReelWipeTransition
  *
@@ -252,7 +252,7 @@ lrg_reel_wipe_transition_get_direction (LrgReelWipeTransition *self)
     return self->direction;
 }
 
-/**
+/*
  * lrg_reel_wipe_transition_set_direction:
  * @self: an #LrgReelWipeTransition
  * @direction: the new #LrgReelTransitionDirection

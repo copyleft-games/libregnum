@@ -220,7 +220,7 @@ lrg_level3d_init (LrgLevel3D *self)
                                                g_free, free_gvalue);
 }
 
-/**
+/*
  * lrg_level3d_new:
  * @id: Unique identifier for this level
  *
@@ -238,7 +238,7 @@ lrg_level3d_new (const gchar *id)
                          NULL);
 }
 
-/**
+/*
  * lrg_level3d_get_id:
  * @self: An #LrgLevel3D
  *
@@ -254,7 +254,7 @@ lrg_level3d_get_id (LrgLevel3D *self)
     return self->id;
 }
 
-/**
+/*
  * lrg_level3d_get_name:
  * @self: An #LrgLevel3D
  *
@@ -270,7 +270,7 @@ lrg_level3d_get_name (LrgLevel3D *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_level3d_set_name:
  * @self: An #LrgLevel3D
  * @name: (nullable): Display name
@@ -291,7 +291,7 @@ lrg_level3d_set_name (LrgLevel3D  *self,
     }
 }
 
-/**
+/*
  * lrg_level3d_get_bounds:
  * @self: An #LrgLevel3D
  *
@@ -307,7 +307,7 @@ lrg_level3d_get_bounds (LrgLevel3D *self)
     return lrg_bounding_box3d_copy (&self->bounds);
 }
 
-/**
+/*
  * lrg_level3d_set_bounds:
  * @self: An #LrgLevel3D
  * @bounds: (transfer none): New level bounds
@@ -333,7 +333,7 @@ lrg_level3d_set_bounds (LrgLevel3D             *self,
 
 /* --- Spawn Point Management --- */
 
-/**
+/*
  * lrg_level3d_add_spawn_point:
  * @self: An #LrgLevel3D
  * @spawn: (transfer none): Spawn point to add
@@ -357,7 +357,7 @@ lrg_level3d_add_spawn_point (LrgLevel3D            *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SPAWN_POINT_COUNT]);
 }
 
-/**
+/*
  * lrg_level3d_remove_spawn_point:
  * @self: An #LrgLevel3D
  * @id: Spawn point ID to remove
@@ -383,7 +383,7 @@ lrg_level3d_remove_spawn_point (LrgLevel3D  *self,
     return removed;
 }
 
-/**
+/*
  * lrg_level3d_get_spawn_point:
  * @self: An #LrgLevel3D
  * @id: Spawn point ID
@@ -402,7 +402,7 @@ lrg_level3d_get_spawn_point (LrgLevel3D  *self,
     return g_hash_table_lookup (self->spawn_points, id);
 }
 
-/**
+/*
  * lrg_level3d_get_spawn_points:
  * @self: An #LrgLevel3D
  *
@@ -428,7 +428,7 @@ lrg_level3d_get_spawn_points (LrgLevel3D *self)
     return result;
 }
 
-/**
+/*
  * lrg_level3d_get_spawn_points_by_type:
  * @self: An #LrgLevel3D
  * @spawn_type: Type of spawn points to get
@@ -460,7 +460,7 @@ lrg_level3d_get_spawn_points_by_type (LrgLevel3D   *self,
     return result;
 }
 
-/**
+/*
  * lrg_level3d_get_spawn_point_count:
  * @self: An #LrgLevel3D
  *
@@ -478,7 +478,7 @@ lrg_level3d_get_spawn_point_count (LrgLevel3D *self)
 
 /* --- Trigger Management --- */
 
-/**
+/*
  * lrg_level3d_add_trigger:
  * @self: An #LrgLevel3D
  * @trigger: (transfer none): Trigger to add
@@ -502,7 +502,7 @@ lrg_level3d_add_trigger (LrgLevel3D         *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TRIGGER_COUNT]);
 }
 
-/**
+/*
  * lrg_level3d_remove_trigger:
  * @self: An #LrgLevel3D
  * @id: Trigger ID to remove
@@ -528,7 +528,7 @@ lrg_level3d_remove_trigger (LrgLevel3D  *self,
     return removed;
 }
 
-/**
+/*
  * lrg_level3d_get_trigger:
  * @self: An #LrgLevel3D
  * @id: Trigger ID
@@ -547,7 +547,7 @@ lrg_level3d_get_trigger (LrgLevel3D  *self,
     return g_hash_table_lookup (self->triggers, id);
 }
 
-/**
+/*
  * lrg_level3d_get_triggers:
  * @self: An #LrgLevel3D
  *
@@ -573,7 +573,7 @@ lrg_level3d_get_triggers (LrgLevel3D *self)
     return result;
 }
 
-/**
+/*
  * lrg_level3d_get_trigger_count:
  * @self: An #LrgLevel3D
  *
@@ -589,7 +589,7 @@ lrg_level3d_get_trigger_count (LrgLevel3D *self)
     return g_hash_table_size (self->triggers);
 }
 
-/**
+/*
  * lrg_level3d_check_triggers:
  * @self: An #LrgLevel3D
  * @point: (transfer none): Point to test
@@ -624,7 +624,7 @@ lrg_level3d_check_triggers (LrgLevel3D       *self,
 
 /* --- Model Management --- */
 
-/**
+/*
  * lrg_level3d_add_model:
  * @self: An #LrgLevel3D
  * @model: (transfer none): Model to add
@@ -648,7 +648,7 @@ lrg_level3d_add_model (LrgLevel3D             *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MODEL_COUNT]);
 }
 
-/**
+/*
  * lrg_level3d_remove_model:
  * @self: An #LrgLevel3D
  * @model: Model to remove
@@ -678,7 +678,7 @@ lrg_level3d_remove_model (LrgLevel3D *self,
     return removed;
 }
 
-/**
+/*
  * lrg_level3d_get_models:
  * @self: An #LrgLevel3D
  *
@@ -702,7 +702,7 @@ lrg_level3d_get_models (LrgLevel3D *self)
     return result;
 }
 
-/**
+/*
  * lrg_level3d_get_model_count:
  * @self: An #LrgLevel3D
  *
@@ -720,7 +720,7 @@ lrg_level3d_get_model_count (LrgLevel3D *self)
 
 /* --- Spatial Queries --- */
 
-/**
+/*
  * lrg_level3d_query_box:
  * @self: An #LrgLevel3D
  * @box: (transfer none): Query bounding box
@@ -739,7 +739,7 @@ lrg_level3d_query_box (LrgLevel3D             *self,
     return lrg_octree_query_box (self->octree, box);
 }
 
-/**
+/*
  * lrg_level3d_query_sphere:
  * @self: An #LrgLevel3D
  * @center: (transfer none): Sphere center
@@ -762,7 +762,7 @@ lrg_level3d_query_sphere (LrgLevel3D       *self,
 
 /* --- Properties --- */
 
-/**
+/*
  * lrg_level3d_set_property_value:
  * @self: An #LrgLevel3D
  * @key: Property key
@@ -788,7 +788,7 @@ lrg_level3d_set_property_value (LrgLevel3D   *self,
     g_hash_table_insert (self->properties, g_strdup (key), new_value);
 }
 
-/**
+/*
  * lrg_level3d_get_property_value:
  * @self: An #LrgLevel3D
  * @key: Property key
@@ -807,7 +807,7 @@ lrg_level3d_get_property_value (LrgLevel3D  *self,
     return g_hash_table_lookup (self->properties, key);
 }
 
-/**
+/*
  * lrg_level3d_has_property:
  * @self: An #LrgLevel3D
  * @key: Property key
@@ -826,7 +826,7 @@ lrg_level3d_has_property (LrgLevel3D  *self,
     return g_hash_table_contains (self->properties, key);
 }
 
-/**
+/*
  * lrg_level3d_get_property_keys:
  * @self: An #LrgLevel3D
  *
@@ -844,7 +844,7 @@ lrg_level3d_get_property_keys (LrgLevel3D *self)
 
 /* --- Octree Access --- */
 
-/**
+/*
  * lrg_level3d_get_octree:
  * @self: An #LrgLevel3D
  *
@@ -860,7 +860,7 @@ lrg_level3d_get_octree (LrgLevel3D *self)
     return self->octree;
 }
 
-/**
+/*
  * lrg_level3d_rebuild_octree:
  * @self: An #LrgLevel3D
  *
@@ -888,7 +888,7 @@ lrg_level3d_rebuild_octree (LrgLevel3D *self)
 
 /* --- Utility --- */
 
-/**
+/*
  * lrg_level3d_clear:
  * @self: An #LrgLevel3D
  *

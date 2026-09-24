@@ -31,7 +31,7 @@ lrg_modable_default_init (LrgModableInterface *iface)
  * Interface Methods
  * ========================================================================== */
 
-/**
+/*
  * lrg_modable_init:
  * @self: a #LrgModable
  * @engine: the engine instance
@@ -58,7 +58,7 @@ lrg_modable_init (LrgModable  *self,
     return iface->mod_init (self, engine, error);
 }
 
-/**
+/*
  * lrg_modable_shutdown:
  * @self: a #LrgModable
  *
@@ -77,7 +77,7 @@ lrg_modable_shutdown (LrgModable *self)
         iface->mod_shutdown (self);
 }
 
-/**
+/*
  * lrg_modable_get_info:
  * @self: a #LrgModable
  *

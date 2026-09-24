@@ -11,7 +11,7 @@
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_DECKBUILDER
 
-/**
+/*
  * LrgScoringContext:
  *
  * Holds the state during a scoring round.
@@ -90,7 +90,7 @@ lrg_scoring_context_init (LrgScoringContext *self)
     self->triggered_cards = g_ptr_array_new ();
 }
 
-/**
+/*
  * lrg_scoring_context_new:
  *
  * Creates a new scoring context.
@@ -105,7 +105,7 @@ lrg_scoring_context_new (void)
     return g_object_new (LRG_TYPE_SCORING_CONTEXT, NULL);
 }
 
-/**
+/*
  * lrg_scoring_context_set_hand_type:
  * @self: a #LrgScoringContext
  * @hand_type: the #LrgHandType
@@ -123,7 +123,7 @@ lrg_scoring_context_set_hand_type (LrgScoringContext *self,
     self->hand_type = hand_type;
 }
 
-/**
+/*
  * lrg_scoring_context_get_hand_type:
  * @self: a #LrgScoringContext
  *
@@ -141,7 +141,7 @@ lrg_scoring_context_get_hand_type (LrgScoringContext *self)
     return self->hand_type;
 }
 
-/**
+/*
  * lrg_scoring_context_set_scoring_cards:
  * @self: a #LrgScoringContext
  * @cards: (element-type LrgCardInstance) (transfer none): the scoring cards
@@ -170,7 +170,7 @@ lrg_scoring_context_set_scoring_cards (LrgScoringContext *self,
     }
 }
 
-/**
+/*
  * lrg_scoring_context_get_scoring_cards:
  * @self: a #LrgScoringContext
  *
@@ -188,7 +188,7 @@ lrg_scoring_context_get_scoring_cards (LrgScoringContext *self)
     return self->scoring_cards;
 }
 
-/**
+/*
  * lrg_scoring_context_set_base_chips:
  * @self: a #LrgScoringContext
  * @chips: the base chip value
@@ -206,7 +206,7 @@ lrg_scoring_context_set_base_chips (LrgScoringContext *self,
     self->base_chips = chips;
 }
 
-/**
+/*
  * lrg_scoring_context_get_base_chips:
  * @self: a #LrgScoringContext
  *
@@ -224,7 +224,7 @@ lrg_scoring_context_get_base_chips (LrgScoringContext *self)
     return self->base_chips;
 }
 
-/**
+/*
  * lrg_scoring_context_add_chips:
  * @self: a #LrgScoringContext
  * @chips: chips to add
@@ -242,7 +242,7 @@ lrg_scoring_context_add_chips (LrgScoringContext *self,
     self->bonus_chips += chips;
 }
 
-/**
+/*
  * lrg_scoring_context_get_total_chips:
  * @self: a #LrgScoringContext
  *
@@ -260,7 +260,7 @@ lrg_scoring_context_get_total_chips (LrgScoringContext *self)
     return self->base_chips + self->bonus_chips;
 }
 
-/**
+/*
  * lrg_scoring_context_set_base_mult:
  * @self: a #LrgScoringContext
  * @mult: the base multiplier
@@ -278,7 +278,7 @@ lrg_scoring_context_set_base_mult (LrgScoringContext *self,
     self->base_mult = mult;
 }
 
-/**
+/*
  * lrg_scoring_context_get_base_mult:
  * @self: a #LrgScoringContext
  *
@@ -296,7 +296,7 @@ lrg_scoring_context_get_base_mult (LrgScoringContext *self)
     return self->base_mult;
 }
 
-/**
+/*
  * lrg_scoring_context_add_mult:
  * @self: a #LrgScoringContext
  * @mult: mult to add
@@ -314,7 +314,7 @@ lrg_scoring_context_add_mult (LrgScoringContext *self,
     self->bonus_mult += mult;
 }
 
-/**
+/*
  * lrg_scoring_context_get_total_mult:
  * @self: a #LrgScoringContext
  *
@@ -332,7 +332,7 @@ lrg_scoring_context_get_total_mult (LrgScoringContext *self)
     return self->base_mult + self->bonus_mult;
 }
 
-/**
+/*
  * lrg_scoring_context_apply_x_mult:
  * @self: a #LrgScoringContext
  * @x_mult: the X-mult to apply
@@ -352,7 +352,7 @@ lrg_scoring_context_apply_x_mult (LrgScoringContext *self,
     self->x_mult *= x_mult;
 }
 
-/**
+/*
  * lrg_scoring_context_get_x_mult:
  * @self: a #LrgScoringContext
  *
@@ -370,7 +370,7 @@ lrg_scoring_context_get_x_mult (LrgScoringContext *self)
     return self->x_mult;
 }
 
-/**
+/*
  * lrg_scoring_context_calculate_score:
  * @self: a #LrgScoringContext
  *
@@ -403,7 +403,7 @@ lrg_scoring_context_calculate_score (LrgScoringContext *self)
     return score;
 }
 
-/**
+/*
  * lrg_scoring_context_reset:
  * @self: a #LrgScoringContext
  *
@@ -426,7 +426,7 @@ lrg_scoring_context_reset (LrgScoringContext *self)
     g_ptr_array_set_size (self->triggered_cards, 0);
 }
 
-/**
+/*
  * lrg_scoring_context_set_jokers:
  * @self: a #LrgScoringContext
  * @jokers: (element-type LrgJokerInstance) (transfer none) (nullable): active jokers
@@ -447,7 +447,7 @@ lrg_scoring_context_set_jokers (LrgScoringContext *self,
     self->jokers = jokers != NULL ? g_ptr_array_ref (jokers) : NULL;
 }
 
-/**
+/*
  * lrg_scoring_context_get_jokers:
  * @self: a #LrgScoringContext
  *
@@ -465,7 +465,7 @@ lrg_scoring_context_get_jokers (LrgScoringContext *self)
     return self->jokers;
 }
 
-/**
+/*
  * lrg_scoring_context_add_triggered_card:
  * @self: a #LrgScoringContext
  * @card: the card that triggered
@@ -484,7 +484,7 @@ lrg_scoring_context_add_triggered_card (LrgScoringContext *self,
     g_ptr_array_add (self->triggered_cards, card);
 }
 
-/**
+/*
  * lrg_scoring_context_get_triggered_cards:
  * @self: a #LrgScoringContext
  *

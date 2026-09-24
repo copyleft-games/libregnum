@@ -280,7 +280,7 @@ lrg_post_effect_init (LrgPostEffect *self)
     priv->height = 0;
 }
 
-/**
+/*
  * lrg_post_effect_initialize:
  * @self: A #LrgPostEffect
  * @width: Render target width
@@ -310,7 +310,7 @@ lrg_post_effect_initialize (LrgPostEffect  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_post_effect_shutdown:
  * @self: A #LrgPostEffect
  *
@@ -329,7 +329,7 @@ lrg_post_effect_shutdown (LrgPostEffect *self)
         klass->shutdown (self);
 }
 
-/**
+/*
  * lrg_post_effect_apply:
  * @self: A #LrgPostEffect
  * @source_texture_id: OpenGL texture ID of the input
@@ -365,7 +365,7 @@ lrg_post_effect_apply (LrgPostEffect *self,
                       width, height, delta_time);
 }
 
-/**
+/*
  * lrg_post_effect_resize:
  * @self: A #LrgPostEffect
  * @width: New width
@@ -388,7 +388,7 @@ lrg_post_effect_resize (LrgPostEffect *self,
         klass->resize (self, width, height);
 }
 
-/**
+/*
  * lrg_post_effect_get_name:
  * @self: A #LrgPostEffect
  *
@@ -411,7 +411,7 @@ lrg_post_effect_get_name (LrgPostEffect *self)
     return "Unknown Effect";
 }
 
-/**
+/*
  * lrg_post_effect_is_enabled:
  * @self: A #LrgPostEffect
  *
@@ -431,7 +431,7 @@ lrg_post_effect_is_enabled (LrgPostEffect *self)
     return priv->enabled;
 }
 
-/**
+/*
  * lrg_post_effect_set_enabled:
  * @self: A #LrgPostEffect
  * @enabled: Whether to enable the effect
@@ -455,7 +455,7 @@ lrg_post_effect_set_enabled (LrgPostEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ENABLED]);
 }
 
-/**
+/*
  * lrg_post_effect_get_intensity:
  * @self: A #LrgPostEffect
  *
@@ -475,7 +475,7 @@ lrg_post_effect_get_intensity (LrgPostEffect *self)
     return priv->intensity;
 }
 
-/**
+/*
  * lrg_post_effect_set_intensity:
  * @self: A #LrgPostEffect
  * @intensity: Intensity value (0.0 - 1.0)
@@ -501,7 +501,7 @@ lrg_post_effect_set_intensity (LrgPostEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_INTENSITY]);
 }
 
-/**
+/*
  * lrg_post_effect_is_initialized:
  * @self: A #LrgPostEffect
  *
@@ -521,7 +521,7 @@ lrg_post_effect_is_initialized (LrgPostEffect *self)
     return priv->initialized;
 }
 
-/**
+/*
  * lrg_post_effect_get_priority:
  * @self: A #LrgPostEffect
  *
@@ -541,7 +541,7 @@ lrg_post_effect_get_priority (LrgPostEffect *self)
     return priv->priority;
 }
 
-/**
+/*
  * lrg_post_effect_set_priority:
  * @self: A #LrgPostEffect
  * @priority: Priority value

@@ -263,7 +263,7 @@ lrg_container_init (LrgContainer *self)
  * Public API - Child Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_container_add_child:
  * @self: an #LrgContainer
  * @child: the widget to add
@@ -292,7 +292,7 @@ lrg_container_add_child (LrgContainer *self,
     lrg_container_layout_children (self);
 }
 
-/**
+/*
  * lrg_container_remove_child:
  * @self: an #LrgContainer
  * @child: the widget to remove
@@ -329,7 +329,7 @@ lrg_container_remove_child (LrgContainer *self,
     lrg_container_layout_children (self);
 }
 
-/**
+/*
  * lrg_container_remove_all:
  * @self: an #LrgContainer
  *
@@ -357,7 +357,7 @@ lrg_container_remove_all (LrgContainer *self)
     priv->children = NULL;
 }
 
-/**
+/*
  * lrg_container_get_child_count:
  * @self: an #LrgContainer
  *
@@ -376,7 +376,7 @@ lrg_container_get_child_count (LrgContainer *self)
     return g_list_length (priv->children);
 }
 
-/**
+/*
  * lrg_container_get_child:
  * @self: an #LrgContainer
  * @index: the child index
@@ -397,7 +397,7 @@ lrg_container_get_child (LrgContainer *self,
     return g_list_nth_data (priv->children, index);
 }
 
-/**
+/*
  * lrg_container_get_children:
  * @self: an #LrgContainer
  *
@@ -420,7 +420,7 @@ lrg_container_get_children (LrgContainer *self)
  * Public API - Layout Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_container_get_spacing:
  * @self: an #LrgContainer
  *
@@ -439,7 +439,7 @@ lrg_container_get_spacing (LrgContainer *self)
     return priv->spacing;
 }
 
-/**
+/*
  * lrg_container_set_spacing:
  * @self: an #LrgContainer
  * @spacing: the spacing in pixels
@@ -465,7 +465,7 @@ lrg_container_set_spacing (LrgContainer *self,
     }
 }
 
-/**
+/*
  * lrg_container_get_padding:
  * @self: an #LrgContainer
  *
@@ -484,7 +484,7 @@ lrg_container_get_padding (LrgContainer *self)
     return priv->padding;
 }
 
-/**
+/*
  * lrg_container_set_padding:
  * @self: an #LrgContainer
  * @padding: the padding in pixels
@@ -514,7 +514,7 @@ lrg_container_set_padding (LrgContainer *self,
  * Public API - Layout
  * ========================================================================== */
 
-/**
+/*
  * lrg_container_layout_children:
  * @self: an #LrgContainer
  *

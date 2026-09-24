@@ -68,7 +68,7 @@ static guint signals[N_SIGNALS];
 
 static LrgEventBus *default_event_bus = NULL;
 
-/**
+/*
  * lrg_event_bus_get_default:
  *
  * Gets the default event bus singleton.
@@ -161,7 +161,7 @@ lrg_event_bus_init (LrgEventBus *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_event_bus_new:
  *
  * Creates a new event bus. Use this for isolated contexts
@@ -198,7 +198,7 @@ compare_listener_priority (gconstpointer a,
  * Listener Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_event_bus_register:
  * @self: an #LrgEventBus
  * @listener: (transfer none): the listener to register
@@ -224,7 +224,7 @@ lrg_event_bus_register (LrgEventBus      *self,
     g_ptr_array_add (self->listeners, registration);
 }
 
-/**
+/*
  * lrg_event_bus_unregister:
  * @self: an #LrgEventBus
  * @listener: the listener to unregister
@@ -256,7 +256,7 @@ lrg_event_bus_unregister (LrgEventBus      *self,
     }
 }
 
-/**
+/*
  * lrg_event_bus_unregister_by_id:
  * @self: an #LrgEventBus
  * @listener_id: the listener ID to unregister
@@ -291,7 +291,7 @@ lrg_event_bus_unregister_by_id (LrgEventBus *self,
     }
 }
 
-/**
+/*
  * lrg_event_bus_clear:
  * @self: an #LrgEventBus
  *
@@ -315,7 +315,7 @@ lrg_event_bus_clear (LrgEventBus *self)
     g_ptr_array_set_size (self->listeners, 0);
 }
 
-/**
+/*
  * lrg_event_bus_get_listener_count:
  * @self: an #LrgEventBus
  *
@@ -336,7 +336,7 @@ lrg_event_bus_get_listener_count (LrgEventBus *self)
  * Event Dispatch
  * ========================================================================== */
 
-/**
+/*
  * lrg_event_bus_emit:
  * @self: an #LrgEventBus
  * @event: (transfer none): the event to emit

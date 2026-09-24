@@ -354,7 +354,7 @@ lrg_potion_def_init (LrgPotionDef *self)
  * Public API - Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_potion_def_new:
  * @id: unique identifier
  * @name: display name

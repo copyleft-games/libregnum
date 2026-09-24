@@ -422,7 +422,7 @@ lrg_synergy_init (LrgSynergy *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_synergy_new:
  * @id: unique synergy identifier
  * @name: display name
@@ -449,7 +449,7 @@ lrg_synergy_new (const gchar    *id,
                          NULL);
 }
 
-/**
+/*
  * lrg_synergy_new_keyword:
  * @id: unique synergy identifier
  * @name: display name
@@ -488,7 +488,7 @@ lrg_synergy_new_keyword (const gchar    *id,
     return self;
 }
 
-/**
+/*
  * lrg_synergy_new_card_type:
  * @id: unique synergy identifier
  * @name: display name
@@ -527,7 +527,7 @@ lrg_synergy_new_card_type (const gchar *id,
     return self;
 }
 
-/**
+/*
  * lrg_synergy_new_tag:
  * @id: unique synergy identifier
  * @name: display name
@@ -571,7 +571,7 @@ lrg_synergy_new_tag (const gchar *id,
  * Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_synergy_get_id:
  * @self: a #LrgSynergy
  *
@@ -592,7 +592,7 @@ lrg_synergy_get_id (LrgSynergy *self)
     return priv->id;
 }
 
-/**
+/*
  * lrg_synergy_get_name:
  * @self: a #LrgSynergy
  *
@@ -613,7 +613,7 @@ lrg_synergy_get_name (LrgSynergy *self)
     return priv->name;
 }
 
-/**
+/*
  * lrg_synergy_get_description:
  * @self: a #LrgSynergy
  *
@@ -634,7 +634,7 @@ lrg_synergy_get_description (LrgSynergy *self)
     return priv->description;
 }
 
-/**
+/*
  * lrg_synergy_set_description:
  * @self: a #LrgSynergy
  * @description: (nullable): the description
@@ -661,7 +661,7 @@ lrg_synergy_set_description (LrgSynergy  *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DESCRIPTION]);
 }
 
-/**
+/*
  * lrg_synergy_get_synergy_type:
  * @self: a #LrgSynergy
  *
@@ -682,7 +682,7 @@ lrg_synergy_get_synergy_type (LrgSynergy *self)
     return priv->synergy_type;
 }
 
-/**
+/*
  * lrg_synergy_get_min_count:
  * @self: a #LrgSynergy
  *
@@ -703,7 +703,7 @@ lrg_synergy_get_min_count (LrgSynergy *self)
     return priv->min_count;
 }
 
-/**
+/*
  * lrg_synergy_set_min_count:
  * @self: a #LrgSynergy
  * @min_count: the minimum count
@@ -730,7 +730,7 @@ lrg_synergy_set_min_count (LrgSynergy *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MIN_COUNT]);
 }
 
-/**
+/*
  * lrg_synergy_get_bonus_per_card:
  * @self: a #LrgSynergy
  *
@@ -751,7 +751,7 @@ lrg_synergy_get_bonus_per_card (LrgSynergy *self)
     return priv->bonus_per_card;
 }
 
-/**
+/*
  * lrg_synergy_set_bonus_per_card:
  * @self: a #LrgSynergy
  * @bonus: the bonus per card
@@ -781,7 +781,7 @@ lrg_synergy_set_bonus_per_card (LrgSynergy *self,
  * Virtual Method Wrappers
  * ========================================================================== */
 
-/**
+/*
  * lrg_synergy_check_cards:
  * @self: a #LrgSynergy
  * @cards: (element-type gpointer): array of cards to check
@@ -807,7 +807,7 @@ lrg_synergy_check_cards (LrgSynergy *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_synergy_calculate_bonus:
  * @self: a #LrgSynergy
  * @cards: (element-type gpointer): array of cards
@@ -833,7 +833,7 @@ lrg_synergy_calculate_bonus (LrgSynergy *self,
     return 0;
 }
 
-/**
+/*
  * lrg_synergy_get_synergy_cards:
  * @self: a #LrgSynergy
  * @cards: (element-type gpointer): array of all cards

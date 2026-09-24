@@ -264,7 +264,7 @@ lrg_circle3d_init (LrgCircle3D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_circle3d_new:
  *
  * Creates a new circle at the origin with radius 1.0 on the XZ plane.
@@ -277,7 +277,7 @@ lrg_circle3d_new (void)
 	return g_object_new (LRG_TYPE_CIRCLE3D, NULL);
 }
 
-/**
+/*
  * lrg_circle3d_new_at:
  * @x: X position
  * @y: Y position
@@ -304,7 +304,7 @@ lrg_circle3d_new_at (gfloat x,
 	return circle;
 }
 
-/**
+/*
  * lrg_circle3d_new_full:
  * @x: X position
  * @y: Y position
@@ -339,7 +339,7 @@ lrg_circle3d_new_full (gfloat    x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_circle3d_get_radius:
  * @self: an #LrgCircle3D
  *
@@ -355,7 +355,7 @@ lrg_circle3d_get_radius (LrgCircle3D *self)
 	return self->radius;
 }
 
-/**
+/*
  * lrg_circle3d_set_radius:
  * @self: an #LrgCircle3D
  * @radius: the radius value
@@ -376,7 +376,7 @@ lrg_circle3d_set_radius (LrgCircle3D *self,
 	}
 }
 
-/**
+/*
  * lrg_circle3d_get_vertices:
  * @self: an #LrgCircle3D
  *
@@ -392,7 +392,7 @@ lrg_circle3d_get_vertices (LrgCircle3D *self)
 	return self->vertices;
 }
 
-/**
+/*
  * lrg_circle3d_set_vertices:
  * @self: an #LrgCircle3D
  * @vertices: the number of vertices
@@ -413,7 +413,7 @@ lrg_circle3d_set_vertices (LrgCircle3D *self,
 	}
 }
 
-/**
+/*
  * lrg_circle3d_get_fill_type:
  * @self: an #LrgCircle3D
  *
@@ -429,7 +429,7 @@ lrg_circle3d_get_fill_type (LrgCircle3D *self)
 	return self->fill_type;
 }
 
-/**
+/*
  * lrg_circle3d_set_fill_type:
  * @self: an #LrgCircle3D
  * @fill_type: the fill type
@@ -449,7 +449,7 @@ lrg_circle3d_set_fill_type (LrgCircle3D       *self,
 	}
 }
 
-/**
+/*
  * lrg_circle3d_get_rotation_axis:
  * @self: an #LrgCircle3D
  *
@@ -465,7 +465,7 @@ lrg_circle3d_get_rotation_axis (LrgCircle3D *self)
 	return grl_vector3_copy (self->rotation_axis);
 }
 
-/**
+/*
  * lrg_circle3d_set_rotation_axis:
  * @self: an #LrgCircle3D
  * @axis: (transfer none): the rotation axis
@@ -484,7 +484,7 @@ lrg_circle3d_set_rotation_axis (LrgCircle3D *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ROTATION_AXIS]);
 }
 
-/**
+/*
  * lrg_circle3d_get_rotation_angle:
  * @self: an #LrgCircle3D
  *
@@ -500,7 +500,7 @@ lrg_circle3d_get_rotation_angle (LrgCircle3D *self)
 	return self->rotation_angle;
 }
 
-/**
+/*
  * lrg_circle3d_set_rotation_angle:
  * @self: an #LrgCircle3D
  * @angle: the rotation angle in degrees

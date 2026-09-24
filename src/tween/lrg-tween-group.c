@@ -220,7 +220,7 @@ lrg_tween_group_init (LrgTweenGroup *self)
  * Public API
  */
 
-/**
+/*
  * lrg_tween_group_add_tween:
  * @self: A #LrgTweenGroup
  * @tween: (transfer none): The tween to add
@@ -246,7 +246,7 @@ lrg_tween_group_add_tween (LrgTweenGroup *self,
     }
 }
 
-/**
+/*
  * lrg_tween_group_remove_tween:
  * @self: A #LrgTweenGroup
  * @tween: The tween to remove
@@ -275,7 +275,7 @@ lrg_tween_group_remove_tween (LrgTweenGroup *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_tween_group_clear:
  * @self: A #LrgTweenGroup
  *
@@ -297,7 +297,7 @@ lrg_tween_group_clear (LrgTweenGroup *self)
     }
 }
 
-/**
+/*
  * lrg_tween_group_get_tweens:
  * @self: A #LrgTweenGroup
  *
@@ -323,7 +323,7 @@ lrg_tween_group_get_tweens (LrgTweenGroup *self)
     return NULL;
 }
 
-/**
+/*
  * lrg_tween_group_get_tween_count:
  * @self: A #LrgTweenGroup
  *
@@ -349,7 +349,7 @@ lrg_tween_group_get_tween_count (LrgTweenGroup *self)
     return 0;
 }
 
-/**
+/*
  * lrg_tween_group_get_tween_at:
  * @self: A #LrgTweenGroup
  * @index: The index of the tween

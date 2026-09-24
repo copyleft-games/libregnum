@@ -278,7 +278,7 @@ lrg_input_software_init (LrgInputSoftware *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_software_new:
  *
  * Creates a new software input source.
@@ -293,7 +293,7 @@ lrg_input_software_new (void)
 
 /* Keyboard Control */
 
-/**
+/*
  * lrg_input_software_press_key:
  * @self: an #LrgInputSoftware
  * @key: the key to press
@@ -315,7 +315,7 @@ lrg_input_software_press_key (LrgInputSoftware *self,
 	}
 }
 
-/**
+/*
  * lrg_input_software_release_key:
  * @self: an #LrgInputSoftware
  * @key: the key to release
@@ -339,7 +339,7 @@ lrg_input_software_release_key (LrgInputSoftware *self,
 	}
 }
 
-/**
+/*
  * lrg_input_software_tap_key:
  * @self: an #LrgInputSoftware
  * @key: the key to tap
@@ -361,7 +361,7 @@ lrg_input_software_tap_key (LrgInputSoftware *self,
 
 /* Mouse Control */
 
-/**
+/*
  * lrg_input_software_press_mouse_button:
  * @self: an #LrgInputSoftware
  * @button: the mouse button to press
@@ -383,7 +383,7 @@ lrg_input_software_press_mouse_button (LrgInputSoftware *self,
 	}
 }
 
-/**
+/*
  * lrg_input_software_release_mouse_button:
  * @self: an #LrgInputSoftware
  * @button: the mouse button to release
@@ -405,7 +405,7 @@ lrg_input_software_release_mouse_button (LrgInputSoftware *self,
 	}
 }
 
-/**
+/*
  * lrg_input_software_move_mouse_to:
  * @self: an #LrgInputSoftware
  * @x: the target X coordinate
@@ -428,7 +428,7 @@ lrg_input_software_move_mouse_to (LrgInputSoftware *self,
 	self->mouse_y = y;
 }
 
-/**
+/*
  * lrg_input_software_move_mouse_by:
  * @self: an #LrgInputSoftware
  * @dx: the X delta
@@ -451,7 +451,7 @@ lrg_input_software_move_mouse_by (LrgInputSoftware *self,
 
 /* Gamepad Control */
 
-/**
+/*
  * lrg_input_software_press_gamepad_button:
  * @self: an #LrgInputSoftware
  * @gamepad: the gamepad index (0-3)
@@ -476,7 +476,7 @@ lrg_input_software_press_gamepad_button (LrgInputSoftware *self,
 	}
 }
 
-/**
+/*
  * lrg_input_software_release_gamepad_button:
  * @self: an #LrgInputSoftware
  * @gamepad: the gamepad index (0-3)
@@ -501,7 +501,7 @@ lrg_input_software_release_gamepad_button (LrgInputSoftware *self,
 	}
 }
 
-/**
+/*
  * lrg_input_software_set_gamepad_axis:
  * @self: an #LrgInputSoftware
  * @gamepad: the gamepad index (0-3)
@@ -544,7 +544,7 @@ advance_key_state (SoftKeyState *state)
 	state->released_pending = FALSE;
 }
 
-/**
+/*
  * lrg_input_software_update:
  * @self: an #LrgInputSoftware
  *
@@ -580,7 +580,7 @@ lrg_input_software_update (LrgInputSoftware *self)
 	}
 }
 
-/**
+/*
  * lrg_input_software_clear_all:
  * @self: an #LrgInputSoftware
  *

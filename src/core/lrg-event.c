@@ -18,7 +18,7 @@ lrg_event_default_init (LrgEventInterface *iface)
     /* No default implementations - all methods must be provided */
 }
 
-/**
+/*
  * lrg_event_get_type_mask:
  * @self: an #LrgEvent
  *
@@ -42,7 +42,7 @@ lrg_event_get_type_mask (LrgEvent *self)
     return iface->get_type_mask (self);
 }
 
-/**
+/*
  * lrg_event_is_cancelled:
  * @self: an #LrgEvent
  *
@@ -66,7 +66,7 @@ lrg_event_is_cancelled (LrgEvent *self)
     return iface->is_cancelled (self);
 }
 
-/**
+/*
  * lrg_event_cancel:
  * @self: an #LrgEvent
  *

@@ -374,7 +374,7 @@ lrg_trigger2d_mark_fired (LrgTrigger2D *self)
  * Public API
  */
 
-/**
+/*
  * lrg_trigger2d_test_point:
  * @self: A #LrgTrigger2D
  * @x: X coordinate
@@ -404,7 +404,7 @@ lrg_trigger2d_test_point (LrgTrigger2D *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_trigger2d_get_bounds:
  * @self: A #LrgTrigger2D
  * @out_x: (out) (nullable): Return location for X
@@ -445,7 +445,7 @@ lrg_trigger2d_get_bounds (LrgTrigger2D *self,
     }
 }
 
-/**
+/*
  * lrg_trigger2d_get_shape:
  * @self: A #LrgTrigger2D
  *
@@ -471,7 +471,7 @@ lrg_trigger2d_get_shape (LrgTrigger2D *self)
     return LRG_TRIGGER2D_SHAPE_RECTANGLE;
 }
 
-/**
+/*
  * lrg_trigger2d_get_id:
  * @self: A #LrgTrigger2D
  *
@@ -492,7 +492,7 @@ lrg_trigger2d_get_id (LrgTrigger2D *self)
     return priv->id;
 }
 
-/**
+/*
  * lrg_trigger2d_set_id:
  * @self: A #LrgTrigger2D
  * @id: (nullable): The ID
@@ -519,7 +519,7 @@ lrg_trigger2d_set_id (LrgTrigger2D *self,
     }
 }
 
-/**
+/*
  * lrg_trigger2d_is_enabled:
  * @self: A #LrgTrigger2D
  *
@@ -540,7 +540,7 @@ lrg_trigger2d_is_enabled (LrgTrigger2D *self)
     return priv->enabled;
 }
 
-/**
+/*
  * lrg_trigger2d_set_enabled:
  * @self: A #LrgTrigger2D
  * @enabled: Whether enabled
@@ -567,7 +567,7 @@ lrg_trigger2d_set_enabled (LrgTrigger2D *self,
     }
 }
 
-/**
+/*
  * lrg_trigger2d_is_one_shot:
  * @self: A #LrgTrigger2D
  *
@@ -588,7 +588,7 @@ lrg_trigger2d_is_one_shot (LrgTrigger2D *self)
     return priv->one_shot;
 }
 
-/**
+/*
  * lrg_trigger2d_set_one_shot:
  * @self: A #LrgTrigger2D
  * @one_shot: Whether one-shot
@@ -615,7 +615,7 @@ lrg_trigger2d_set_one_shot (LrgTrigger2D *self,
     }
 }
 
-/**
+/*
  * lrg_trigger2d_has_fired:
  * @self: A #LrgTrigger2D
  *
@@ -636,7 +636,7 @@ lrg_trigger2d_has_fired (LrgTrigger2D *self)
     return priv->has_fired;
 }
 
-/**
+/*
  * lrg_trigger2d_reset:
  * @self: A #LrgTrigger2D
  *
@@ -662,7 +662,7 @@ lrg_trigger2d_reset (LrgTrigger2D *self)
     priv->cooldown_remaining = 0.0f;
 }
 
-/**
+/*
  * lrg_trigger2d_get_cooldown:
  * @self: A #LrgTrigger2D
  *
@@ -683,7 +683,7 @@ lrg_trigger2d_get_cooldown (LrgTrigger2D *self)
     return priv->cooldown;
 }
 
-/**
+/*
  * lrg_trigger2d_set_cooldown:
  * @self: A #LrgTrigger2D
  * @cooldown: Cooldown in seconds
@@ -710,7 +710,7 @@ lrg_trigger2d_set_cooldown (LrgTrigger2D *self,
     }
 }
 
-/**
+/*
  * lrg_trigger2d_is_on_cooldown:
  * @self: A #LrgTrigger2D
  *
@@ -731,7 +731,7 @@ lrg_trigger2d_is_on_cooldown (LrgTrigger2D *self)
     return priv->cooldown_remaining > 0.0f;
 }
 
-/**
+/*
  * lrg_trigger2d_update_cooldown:
  * @self: A #LrgTrigger2D
  * @delta_time: Time elapsed
@@ -760,7 +760,7 @@ lrg_trigger2d_update_cooldown (LrgTrigger2D *self,
     }
 }
 
-/**
+/*
  * lrg_trigger2d_get_collision_layer:
  * @self: A #LrgTrigger2D
  *
@@ -781,7 +781,7 @@ lrg_trigger2d_get_collision_layer (LrgTrigger2D *self)
     return priv->collision_layer;
 }
 
-/**
+/*
  * lrg_trigger2d_set_collision_layer:
  * @self: A #LrgTrigger2D
  * @layer: Layer bitmask
@@ -807,7 +807,7 @@ lrg_trigger2d_set_collision_layer (LrgTrigger2D *self,
     }
 }
 
-/**
+/*
  * lrg_trigger2d_get_collision_mask:
  * @self: A #LrgTrigger2D
  *
@@ -828,7 +828,7 @@ lrg_trigger2d_get_collision_mask (LrgTrigger2D *self)
     return priv->collision_mask;
 }
 
-/**
+/*
  * lrg_trigger2d_set_collision_mask:
  * @self: A #LrgTrigger2D
  * @mask: Mask bitmask
@@ -854,7 +854,7 @@ lrg_trigger2d_set_collision_mask (LrgTrigger2D *self,
     }
 }
 
-/**
+/*
  * lrg_trigger2d_can_collide_with:
  * @self: A #LrgTrigger2D
  * @other_layer: Other entity's layer

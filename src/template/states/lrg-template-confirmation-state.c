@@ -765,7 +765,7 @@ lrg_template_confirmation_state_init (LrgTemplateConfirmationState *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_confirmation_state_new:
  *
  * Creates a new confirmation state.
@@ -778,7 +778,7 @@ lrg_template_confirmation_state_new (void)
     return g_object_new (LRG_TYPE_TEMPLATE_CONFIRMATION_STATE, NULL);
 }
 
-/**
+/*
  * lrg_template_confirmation_state_new_with_message:
  * @title: the title text
  * @message: the message text
@@ -801,7 +801,7 @@ lrg_template_confirmation_state_new_with_message (const gchar *title,
  * Public API - Text Content
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_confirmation_state_get_title:
  * @self: an #LrgTemplateConfirmationState
  *
@@ -821,7 +821,7 @@ lrg_template_confirmation_state_get_title (LrgTemplateConfirmationState *self)
     return priv->title;
 }
 
-/**
+/*
  * lrg_template_confirmation_state_set_title:
  * @self: an #LrgTemplateConfirmationState
  * @title: the title text
@@ -837,7 +837,7 @@ lrg_template_confirmation_state_set_title (LrgTemplateConfirmationState *self,
     g_object_set (self, "title", title, NULL);
 }
 
-/**
+/*
  * lrg_template_confirmation_state_get_message:
  * @self: an #LrgTemplateConfirmationState
  *
@@ -857,7 +857,7 @@ lrg_template_confirmation_state_get_message (LrgTemplateConfirmationState *self)
     return priv->message;
 }
 
-/**
+/*
  * lrg_template_confirmation_state_set_message:
  * @self: an #LrgTemplateConfirmationState
  * @message: the message text
@@ -877,7 +877,7 @@ lrg_template_confirmation_state_set_message (LrgTemplateConfirmationState *self,
  * Public API - Button Labels
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_confirmation_state_get_confirm_label:
  * @self: an #LrgTemplateConfirmationState
  *
@@ -897,7 +897,7 @@ lrg_template_confirmation_state_get_confirm_label (LrgTemplateConfirmationState 
     return priv->confirm_label;
 }
 
-/**
+/*
  * lrg_template_confirmation_state_set_confirm_label:
  * @self: an #LrgTemplateConfirmationState
  * @label: the button label
@@ -913,7 +913,7 @@ lrg_template_confirmation_state_set_confirm_label (LrgTemplateConfirmationState 
     g_object_set (self, "confirm-label", label, NULL);
 }
 
-/**
+/*
  * lrg_template_confirmation_state_get_cancel_label:
  * @self: an #LrgTemplateConfirmationState
  *
@@ -933,7 +933,7 @@ lrg_template_confirmation_state_get_cancel_label (LrgTemplateConfirmationState *
     return priv->cancel_label;
 }
 
-/**
+/*
  * lrg_template_confirmation_state_set_cancel_label:
  * @self: an #LrgTemplateConfirmationState
  * @label: the button label
@@ -953,7 +953,7 @@ lrg_template_confirmation_state_set_cancel_label (LrgTemplateConfirmationState *
  * Public API - Appearance
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_confirmation_state_get_overlay_color:
  * @self: an #LrgTemplateConfirmationState
  *
@@ -973,7 +973,7 @@ lrg_template_confirmation_state_get_overlay_color (LrgTemplateConfirmationState 
     return priv->overlay_color;
 }
 
-/**
+/*
  * lrg_template_confirmation_state_set_overlay_color:
  * @self: an #LrgTemplateConfirmationState
  * @color: the overlay color
@@ -995,7 +995,7 @@ lrg_template_confirmation_state_set_overlay_color (LrgTemplateConfirmationState 
     priv->overlay_color = grl_color_copy (color);
 }
 
-/**
+/*
  * lrg_template_confirmation_state_get_dialog_color:
  * @self: an #LrgTemplateConfirmationState
  *
@@ -1015,7 +1015,7 @@ lrg_template_confirmation_state_get_dialog_color (LrgTemplateConfirmationState *
     return priv->dialog_color;
 }
 
-/**
+/*
  * lrg_template_confirmation_state_set_dialog_color:
  * @self: an #LrgTemplateConfirmationState
  * @color: the dialog background color
@@ -1041,7 +1041,7 @@ lrg_template_confirmation_state_set_dialog_color (LrgTemplateConfirmationState *
  * Public API - Configuration
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_confirmation_state_get_default_selection:
  * @self: an #LrgTemplateConfirmationState
  *
@@ -1061,7 +1061,7 @@ lrg_template_confirmation_state_get_default_selection (LrgTemplateConfirmationSt
     return priv->default_selection;
 }
 
-/**
+/*
  * lrg_template_confirmation_state_set_default_selection:
  * @self: an #LrgTemplateConfirmationState
  * @selection: the default selection (0 = confirm, 1 = cancel)

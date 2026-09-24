@@ -333,7 +333,7 @@ lrg_procedural_audio_init (LrgProceduralAudio *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_procedural_audio_new:
  * @sample_rate: sample rate in Hz (e.g., 44100, 48000)
  * @channels: number of channels (1 = mono, 2 = stereo)
@@ -372,7 +372,7 @@ lrg_procedural_audio_new (guint sample_rate,
  * Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_procedural_audio_get_name:
  * @self: a #LrgProceduralAudio
  *
@@ -391,7 +391,7 @@ lrg_procedural_audio_get_name (LrgProceduralAudio *self)
     return priv->name;
 }
 
-/**
+/*
  * lrg_procedural_audio_set_name:
  * @self: a #LrgProceduralAudio
  * @name: (nullable): the name identifier
@@ -417,7 +417,7 @@ lrg_procedural_audio_set_name (LrgProceduralAudio *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_NAME]);
 }
 
-/**
+/*
  * lrg_procedural_audio_get_sample_rate:
  * @self: a #LrgProceduralAudio
  *
@@ -436,7 +436,7 @@ lrg_procedural_audio_get_sample_rate (LrgProceduralAudio *self)
     return priv->sample_rate;
 }
 
-/**
+/*
  * lrg_procedural_audio_get_channels:
  * @self: a #LrgProceduralAudio
  *
@@ -455,7 +455,7 @@ lrg_procedural_audio_get_channels (LrgProceduralAudio *self)
     return priv->channels;
 }
 
-/**
+/*
  * lrg_procedural_audio_is_valid:
  * @self: a #LrgProceduralAudio
  *
@@ -482,7 +482,7 @@ lrg_procedural_audio_is_valid (LrgProceduralAudio *self)
  * Playback Control
  * ========================================================================== */
 
-/**
+/*
  * lrg_procedural_audio_play:
  * @self: a #LrgProceduralAudio
  *
@@ -508,7 +508,7 @@ lrg_procedural_audio_play (LrgProceduralAudio *self)
                    priv->name ? priv->name : "(unnamed)");
 }
 
-/**
+/*
  * lrg_procedural_audio_stop:
  * @self: a #LrgProceduralAudio
  *
@@ -534,7 +534,7 @@ lrg_procedural_audio_stop (LrgProceduralAudio *self)
                    priv->name ? priv->name : "(unnamed)");
 }
 
-/**
+/*
  * lrg_procedural_audio_pause:
  * @self: a #LrgProceduralAudio
  *
@@ -556,7 +556,7 @@ lrg_procedural_audio_pause (LrgProceduralAudio *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PLAYING]);
 }
 
-/**
+/*
  * lrg_procedural_audio_resume:
  * @self: a #LrgProceduralAudio
  *
@@ -578,7 +578,7 @@ lrg_procedural_audio_resume (LrgProceduralAudio *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PLAYING]);
 }
 
-/**
+/*
  * lrg_procedural_audio_is_playing:
  * @self: a #LrgProceduralAudio
  *
@@ -601,7 +601,7 @@ lrg_procedural_audio_is_playing (LrgProceduralAudio *self)
     return grl_audio_stream_is_playing (priv->stream);
 }
 
-/**
+/*
  * lrg_procedural_audio_update:
  * @self: a #LrgProceduralAudio
  *
@@ -645,7 +645,7 @@ lrg_procedural_audio_update (LrgProceduralAudio *self)
  * Audio Parameters
  * ========================================================================== */
 
-/**
+/*
  * lrg_procedural_audio_set_volume:
  * @self: a #LrgProceduralAudio
  * @volume: volume level (0.0 to 1.0)
@@ -670,7 +670,7 @@ lrg_procedural_audio_set_volume (LrgProceduralAudio *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VOLUME]);
 }
 
-/**
+/*
  * lrg_procedural_audio_get_volume:
  * @self: a #LrgProceduralAudio
  *
@@ -693,7 +693,7 @@ lrg_procedural_audio_get_volume (LrgProceduralAudio *self)
     return grl_audio_stream_get_volume (priv->stream);
 }
 
-/**
+/*
  * lrg_procedural_audio_set_pitch:
  * @self: a #LrgProceduralAudio
  * @pitch: pitch multiplier (1.0 = normal)
@@ -718,7 +718,7 @@ lrg_procedural_audio_set_pitch (LrgProceduralAudio *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PITCH]);
 }
 
-/**
+/*
  * lrg_procedural_audio_get_pitch:
  * @self: a #LrgProceduralAudio
  *
@@ -741,7 +741,7 @@ lrg_procedural_audio_get_pitch (LrgProceduralAudio *self)
     return grl_audio_stream_get_pitch (priv->stream);
 }
 
-/**
+/*
  * lrg_procedural_audio_set_pan:
  * @self: a #LrgProceduralAudio
  * @pan: pan position (-1.0 = left, 0.0 = center, 1.0 = right)
@@ -766,7 +766,7 @@ lrg_procedural_audio_set_pan (LrgProceduralAudio *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PAN]);
 }
 
-/**
+/*
  * lrg_procedural_audio_get_pan:
  * @self: a #LrgProceduralAudio
  *
@@ -793,7 +793,7 @@ lrg_procedural_audio_get_pan (LrgProceduralAudio *self)
  * Access Underlying
  * ========================================================================== */
 
-/**
+/*
  * lrg_procedural_audio_get_audio_stream:
  * @self: a #LrgProceduralAudio
  *

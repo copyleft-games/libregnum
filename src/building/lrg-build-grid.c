@@ -314,7 +314,7 @@ lrg_build_grid_class_init (LrgBuildGridClass *klass)
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
-    /**
+    /*
      * LrgBuildGrid::building-placed:
      * @grid: the #LrgBuildGrid
      * @building: the placed building
@@ -333,7 +333,7 @@ lrg_build_grid_class_init (LrgBuildGridClass *klass)
                       G_TYPE_NONE, 1,
                       LRG_TYPE_BUILDING_INSTANCE);
 
-    /**
+    /*
      * LrgBuildGrid::building-removed:
      * @grid: the #LrgBuildGrid
      * @building: the removed building
@@ -352,7 +352,7 @@ lrg_build_grid_class_init (LrgBuildGridClass *klass)
                       G_TYPE_NONE, 1,
                       LRG_TYPE_BUILDING_INSTANCE);
 
-    /**
+    /*
      * LrgBuildGrid::cell-changed:
      * @grid: the #LrgBuildGrid
      * @x: cell X coordinate

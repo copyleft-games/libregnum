@@ -18,7 +18,7 @@ lrg_saveable_default_init (LrgSaveableInterface *iface)
     /* No default implementations - all methods must be provided */
 }
 
-/**
+/*
  * lrg_saveable_get_save_id:
  * @self: a #LrgSaveable
  *
@@ -40,7 +40,7 @@ lrg_saveable_get_save_id (LrgSaveable *self)
     return iface->get_save_id (self);
 }
 
-/**
+/*
  * lrg_saveable_save:
  * @self: a #LrgSaveable
  * @context: the #LrgSaveContext to save to
@@ -76,7 +76,7 @@ lrg_saveable_save (LrgSaveable      *self,
     return iface->save (self, context, error);
 }
 
-/**
+/*
  * lrg_saveable_load:
  * @self: a #LrgSaveable
  * @context: the #LrgSaveContext to load from

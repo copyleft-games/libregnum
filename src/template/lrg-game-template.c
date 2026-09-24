@@ -1589,7 +1589,7 @@ lrg_game_template_init (LrgGameTemplate *self)
 /* Public API                                                                 */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_game_template_new:
  *
  * Creates a new game template with default settings.
@@ -1868,7 +1868,7 @@ lrg_game_run_standalone (LrgGameTemplate *self,
     return 0;
 }
 
-/**
+/*
  * lrg_game_template_apply_args:
  * @self: an #LrgGameTemplate
  * @argv: (array zero-terminated=1) (element-type utf8): a %NULL-terminated,
@@ -1891,7 +1891,7 @@ lrg_game_template_apply_args (LrgGameTemplate    *self,
     return lrg_configurable_apply_args (LRG_CONFIGURABLE (self), argv, error);
 }
 
-/**
+/*
  * lrg_game_template_get_applied_args:
  * @self: an #LrgGameTemplate
  *
@@ -1913,7 +1913,7 @@ lrg_game_template_get_applied_args (LrgGameTemplate *self)
     return (const gchar * const *) priv->applied_args;
 }
 
-/**
+/*
  * lrg_game_template_run:
  * @self: an #LrgGameTemplate
  * @argc: argument count from main()
@@ -1935,7 +1935,7 @@ lrg_game_template_run (LrgGameTemplate *self,
     return lrg_game_run_standalone (self, argc, argv);
 }
 
-/**
+/*
  * lrg_game_template_quit:
  * @self: an #LrgGameTemplate
  *
@@ -1954,7 +1954,7 @@ lrg_game_template_quit (LrgGameTemplate *self)
     priv->should_quit = TRUE;
 }
 
-/**
+/*
  * lrg_game_template_pause:
  * @self: an #LrgGameTemplate
  *
@@ -1991,7 +1991,7 @@ lrg_game_template_pause (LrgGameTemplate *self)
     }
 }
 
-/**
+/*
  * lrg_game_template_resume:
  * @self: an #LrgGameTemplate
  *
@@ -2016,7 +2016,7 @@ lrg_game_template_resume (LrgGameTemplate *self)
     lrg_game_template_pop_state (self);
 }
 
-/**
+/*
  * lrg_game_template_is_paused:
  * @self: an #LrgGameTemplate
  *
@@ -2038,7 +2038,7 @@ lrg_game_template_is_paused (LrgGameTemplate *self)
     return priv->is_paused;
 }
 
-/**
+/*
  * lrg_game_template_push_state:
  * @self: an #LrgGameTemplate
  * @state: (transfer full): state to push
@@ -2072,7 +2072,7 @@ lrg_game_template_push_state (LrgGameTemplate *self,
     lrg_game_state_manager_push (priv->state_manager, state);
 }
 
-/**
+/*
  * lrg_game_template_pop_state:
  * @self: an #LrgGameTemplate
  *
@@ -2102,7 +2102,7 @@ lrg_game_template_pop_state (LrgGameTemplate *self)
     lrg_game_state_manager_pop (priv->state_manager);
 }
 
-/**
+/*
  * lrg_game_template_replace_state:
  * @self: an #LrgGameTemplate
  * @state: (transfer full): new state
@@ -2136,7 +2136,7 @@ lrg_game_template_replace_state (LrgGameTemplate *self,
     lrg_game_state_manager_replace (priv->state_manager, state);
 }
 
-/**
+/*
  * lrg_game_template_get_current_state:
  * @self: an #LrgGameTemplate
  *
@@ -2158,7 +2158,7 @@ lrg_game_template_get_current_state (LrgGameTemplate *self)
     return lrg_game_state_manager_get_current (priv->state_manager);
 }
 
-/**
+/*
  * lrg_game_template_get_engine:
  * @self: an #LrgGameTemplate
  *
@@ -2180,7 +2180,7 @@ lrg_game_template_get_engine (LrgGameTemplate *self)
     return priv->engine;
 }
 
-/**
+/*
  * lrg_game_template_get_settings:
  * @self: an #LrgGameTemplate
  *
@@ -2202,7 +2202,7 @@ lrg_game_template_get_settings (LrgGameTemplate *self)
     return priv->settings;
 }
 
-/**
+/*
  * lrg_game_template_get_input_map:
  * @self: an #LrgGameTemplate
  *
@@ -2224,7 +2224,7 @@ lrg_game_template_get_input_map (LrgGameTemplate *self)
     return priv->input_map;
 }
 
-/**
+/*
  * lrg_game_template_get_state_manager:
  * @self: an #LrgGameTemplate
  *
@@ -2246,7 +2246,7 @@ lrg_game_template_get_state_manager (LrgGameTemplate *self)
     return priv->state_manager;
 }
 
-/**
+/*
  * lrg_game_template_get_event_bus:
  * @self: an #LrgGameTemplate
  *
@@ -2268,7 +2268,7 @@ lrg_game_template_get_event_bus (LrgGameTemplate *self)
     return priv->event_bus;
 }
 
-/**
+/*
  * lrg_game_template_get_theme:
  * @self: an #LrgGameTemplate
  *
@@ -2290,7 +2290,7 @@ lrg_game_template_get_theme (LrgGameTemplate *self)
     return priv->theme;
 }
 
-/**
+/*
  * lrg_game_template_hit_stop:
  * @self: an #LrgGameTemplate
  * @duration: freeze duration in seconds
@@ -2321,7 +2321,7 @@ lrg_game_template_hit_stop (LrgGameTemplate *self,
     priv->hit_stop_remaining = duration;
 }
 
-/**
+/*
  * lrg_game_template_get_time_scale:
  * @self: an #LrgGameTemplate
  *
@@ -2343,7 +2343,7 @@ lrg_game_template_get_time_scale (LrgGameTemplate *self)
     return priv->time_scale;
 }
 
-/**
+/*
  * lrg_game_template_set_time_scale:
  * @self: an #LrgGameTemplate
  * @scale: time scale multiplier
@@ -2370,7 +2370,7 @@ lrg_game_template_set_time_scale (LrgGameTemplate *self,
         priv->saved_time_scale = scale;
 }
 
-/**
+/*
  * lrg_game_template_get_interpolation_alpha:
  * @self: an #LrgGameTemplate
  *
@@ -2394,7 +2394,7 @@ lrg_game_template_get_interpolation_alpha (LrgGameTemplate *self)
     return priv->interpolation_alpha;
 }
 
-/**
+/*
  * lrg_game_template_get_title:
  * @self: an #LrgGameTemplate
  *
@@ -2416,7 +2416,7 @@ lrg_game_template_get_title (LrgGameTemplate *self)
     return priv->title;
 }
 
-/**
+/*
  * lrg_game_template_set_title:
  * @self: an #LrgGameTemplate
  * @title: new window title
@@ -2445,7 +2445,7 @@ lrg_game_template_set_title (LrgGameTemplate *self,
     }
 }
 
-/**
+/*
  * lrg_game_template_get_window_size:
  * @self: an #LrgGameTemplate
  * @width: (out) (optional): return location for width
@@ -2482,7 +2482,7 @@ lrg_game_template_get_window_size (LrgGameTemplate *self,
     }
 }
 
-/**
+/*
  * lrg_game_template_set_window_size:
  * @self: an #LrgGameTemplate
  * @width: the new window width in pixels
@@ -2522,7 +2522,7 @@ lrg_game_template_set_window_size (LrgGameTemplate *self,
     g_signal_emit (self, signals[SIGNAL_WINDOW_SIZE_CHANGED], 0, width, height);
 }
 
-/**
+/*
  * lrg_game_template_toggle_fullscreen:
  * @self: an #LrgGameTemplate
  *
@@ -2544,7 +2544,7 @@ lrg_game_template_toggle_fullscreen (LrgGameTemplate *self)
         lrg_grl_window_toggle_fullscreen (LRG_GRL_WINDOW (priv->window));
 }
 
-/**
+/*
  * lrg_game_template_is_fullscreen:
  * @self: an #LrgGameTemplate
  *
@@ -2571,7 +2571,7 @@ lrg_game_template_is_fullscreen (LrgGameTemplate *self)
     return grl_window_is_fullscreen (raw_window);
 }
 
-/**
+/*
  * lrg_game_template_has_focus:
  * @self: an #LrgGameTemplate
  *
@@ -2615,7 +2615,7 @@ template_ensure_screen_shake (LrgGameTemplate *self)
     }
 }
 
-/**
+/*
  * lrg_game_template_shake:
  * @self: an #LrgGameTemplate
  * @trauma: trauma amount to add (0.0 to 1.0)
@@ -2639,7 +2639,7 @@ lrg_game_template_shake (LrgGameTemplate *self,
     lrg_screen_shake_add_trauma (priv->screen_shake, trauma);
 }
 
-/**
+/*
  * lrg_game_template_shake_with_params:
  * @self: an #LrgGameTemplate
  * @trauma: trauma amount to add (0.0 to 1.0)
@@ -2669,7 +2669,7 @@ lrg_game_template_shake_with_params (LrgGameTemplate *self,
     lrg_screen_shake_add_trauma (priv->screen_shake, trauma);
 }
 
-/**
+/*
  * lrg_game_template_get_shake_offset:
  * @self: an #LrgGameTemplate
  * @x: (out) (optional): return location for X offset
@@ -2707,7 +2707,7 @@ lrg_game_template_get_shake_offset (LrgGameTemplate *self,
 /* Audio Helpers                                                              */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_game_template_set_sound_bank:
  * @self: an #LrgGameTemplate
  * @bank: (transfer none): the sound bank to use
@@ -2730,7 +2730,7 @@ lrg_game_template_set_sound_bank (LrgGameTemplate *self,
     priv->default_sound_bank = (LrgSoundBank *)bank;
 }
 
-/**
+/*
  * lrg_game_template_play_sound:
  * @self: an #LrgGameTemplate
  * @sound_name: name of the sound in the default bank
@@ -2762,7 +2762,7 @@ lrg_game_template_play_sound (LrgGameTemplate *self,
     return lrg_sound_bank_play (priv->default_sound_bank, sound_name);
 }
 
-/**
+/*
  * lrg_game_template_play_sound_varied:
  * @self: an #LrgGameTemplate
  * @sound_name: name of the sound in the default bank
@@ -2832,7 +2832,7 @@ lrg_game_template_play_sound_varied (LrgGameTemplate *self,
 /* Camera Juice                                                               */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_game_template_camera_zoom_pulse:
  * @self: an #LrgGameTemplate
  * @zoom_delta: amount to change zoom by
@@ -2865,7 +2865,7 @@ lrg_game_template_camera_zoom_pulse (LrgGameTemplate *self,
     priv->camera_zoom_pulse_timer = duration;
 }
 
-/**
+/*
  * lrg_game_template_set_camera_follow:
  * @self: an #LrgGameTemplate
  * @enabled: whether to enable camera follow
@@ -2890,7 +2890,7 @@ lrg_game_template_set_camera_follow (LrgGameTemplate *self,
     priv->camera_follow_smoothing = CLAMP (smoothing, 0.0f, 1.0f);
 }
 
-/**
+/*
  * lrg_game_template_set_camera_deadzone:
  * @self: an #LrgGameTemplate
  * @deadzone_x: horizontal deadzone size
@@ -2915,7 +2915,7 @@ lrg_game_template_set_camera_deadzone (LrgGameTemplate *self,
     priv->camera_deadzone_y = deadzone_y;
 }
 
-/**
+/*
  * lrg_game_template_update_camera_follow_target:
  * @self: an #LrgGameTemplate
  * @target_x: target X position
@@ -2940,7 +2940,7 @@ lrg_game_template_update_camera_follow_target (LrgGameTemplate *self,
     priv->camera_follow_target_y = target_y;
 }
 
-/**
+/*
  * lrg_game_template_get_camera_position:
  * @self: an #LrgGameTemplate
  * @x: (out) (optional): return location for camera X

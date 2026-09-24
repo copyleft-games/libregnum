@@ -447,7 +447,7 @@ lrg_reel_transition_series_init (LrgReelTransitionSeries *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_transition_series_new:
  *
  * Creates a new, empty #LrgReelTransitionSeries.
@@ -462,7 +462,7 @@ lrg_reel_transition_series_new (void)
     return g_object_new (LRG_TYPE_REEL_TRANSITION_SERIES, NULL);
 }
 
-/**
+/*
  * lrg_reel_transition_series_add:
  * @self: an #LrgReelTransitionSeries
  * @clip: (transfer none): the #LrgReelClip to append as the next segment.
@@ -491,7 +491,7 @@ lrg_reel_transition_series_add (LrgReelTransitionSeries *self,
     series_sync_duration (self);
 }
 
-/**
+/*
  * lrg_reel_transition_series_add_transition:
  * @self: an #LrgReelTransitionSeries
  * @transition: (transfer none): the #LrgReelTransition to interpose.
@@ -519,7 +519,7 @@ lrg_reel_transition_series_add_transition (LrgReelTransitionSeries *self,
     /* The series duration does not change until the next add() call. */
 }
 
-/**
+/*
  * lrg_reel_transition_series_get_total_frames:
  * @self: an #LrgReelTransitionSeries
  *

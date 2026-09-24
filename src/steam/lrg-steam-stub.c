@@ -98,7 +98,7 @@ lrg_steam_stub_init (LrgSteamStub *self)
     self->initialized = FALSE;
 }
 
-/**
+/*
  * lrg_steam_stub_new:
  *
  * Creates a new stub Steam service.

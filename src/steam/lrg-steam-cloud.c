@@ -143,7 +143,7 @@ lrg_steam_cloud_init (LrgSteamCloud *self)
     self->client = NULL;
 }
 
-/**
+/*
  * lrg_steam_cloud_new:
  * @client: an #LrgSteamClient
  *
@@ -161,7 +161,7 @@ lrg_steam_cloud_new (LrgSteamClient *client)
                          NULL);
 }
 
-/**
+/*
  * lrg_steam_cloud_is_enabled:
  * @self: an #LrgSteamCloud
  *
@@ -192,7 +192,7 @@ lrg_steam_cloud_is_enabled (LrgSteamCloud *self)
 #endif
 }
 
-/**
+/*
  * lrg_steam_cloud_write:
  * @self: an #LrgSteamCloud
  * @filename: the remote filename
@@ -266,7 +266,7 @@ lrg_steam_cloud_write (LrgSteamCloud  *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_cloud_read:
  * @self: an #LrgSteamCloud
  * @filename: the remote filename
@@ -354,7 +354,7 @@ lrg_steam_cloud_read (LrgSteamCloud  *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_cloud_delete:
  * @self: an #LrgSteamCloud
  * @filename: the remote filename
@@ -412,7 +412,7 @@ lrg_steam_cloud_delete (LrgSteamCloud  *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_cloud_exists:
  * @self: an #LrgSteamCloud
  * @filename: the remote filename
@@ -445,7 +445,7 @@ lrg_steam_cloud_exists (LrgSteamCloud *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_cloud_get_file_size:
  * @self: an #LrgSteamCloud
  * @filename: the remote filename
@@ -481,7 +481,7 @@ lrg_steam_cloud_get_file_size (LrgSteamCloud *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_cloud_get_file_count:
  * @self: an #LrgSteamCloud
  *
@@ -511,7 +511,7 @@ lrg_steam_cloud_get_file_count (LrgSteamCloud *self)
 #endif
 }
 
-/**
+/*
  * lrg_steam_cloud_get_file_name:
  * @self: an #LrgSteamCloud
  * @index: the file index

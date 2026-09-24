@@ -185,7 +185,7 @@ lrg_sprite_component_init (LrgSpriteComponent *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_sprite_component_new:
  *
  * Creates a new sprite component with no texture.
@@ -198,7 +198,7 @@ lrg_sprite_component_new (void)
     return g_object_new (LRG_TYPE_SPRITE_COMPONENT, NULL);
 }
 
-/**
+/*
  * lrg_sprite_component_new_with_texture:
  * @texture: initial texture
  *
@@ -218,7 +218,7 @@ lrg_sprite_component_new_with_texture (GrlTexture *texture)
  * Public API - Texture Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_sprite_component_set_texture:
  * @self: an #LrgSpriteComponent
  * @texture: the texture to use
@@ -238,7 +238,7 @@ lrg_sprite_component_set_texture (LrgSpriteComponent *self,
     }
 }
 
-/**
+/*
  * lrg_sprite_component_get_texture:
  * @self: an #LrgSpriteComponent
  *
@@ -258,7 +258,7 @@ lrg_sprite_component_get_texture (LrgSpriteComponent *self)
  * Public API - Source Rectangle
  * ========================================================================== */
 
-/**
+/*
  * lrg_sprite_component_set_source:
  * @self: an #LrgSpriteComponent
  * @x: source X coordinate
@@ -282,7 +282,7 @@ lrg_sprite_component_set_source (LrgSpriteComponent *self,
                                            (gfloat)width, (gfloat)height);
 }
 
-/**
+/*
  * lrg_sprite_component_get_source:
  * @self: an #LrgSpriteComponent
  *
@@ -303,7 +303,7 @@ lrg_sprite_component_get_source (LrgSpriteComponent *self)
     return grl_rectangle_copy (self->source_rect);
 }
 
-/**
+/*
  * lrg_sprite_component_clear_source:
  * @self: an #LrgSpriteComponent
  *
@@ -321,7 +321,7 @@ lrg_sprite_component_clear_source (LrgSpriteComponent *self)
  * Public API - Tint Color
  * ========================================================================== */
 
-/**
+/*
  * lrg_sprite_component_set_tint:
  * @self: an #LrgSpriteComponent
  * @color: the tint color
@@ -339,7 +339,7 @@ lrg_sprite_component_set_tint (LrgSpriteComponent *self,
     self->tint = grl_color_copy (color);
 }
 
-/**
+/*
  * lrg_sprite_component_get_tint:
  * @self: an #LrgSpriteComponent
  *
@@ -359,7 +359,7 @@ lrg_sprite_component_get_tint (LrgSpriteComponent *self)
  * Public API - Flip
  * ========================================================================== */
 
-/**
+/*
  * lrg_sprite_component_set_flip_h:
  * @self: an #LrgSpriteComponent
  * @flip: whether to flip horizontally
@@ -381,7 +381,7 @@ lrg_sprite_component_set_flip_h (LrgSpriteComponent *self,
     }
 }
 
-/**
+/*
  * lrg_sprite_component_get_flip_h:
  * @self: an #LrgSpriteComponent
  *
@@ -397,7 +397,7 @@ lrg_sprite_component_get_flip_h (LrgSpriteComponent *self)
     return self->flip_h;
 }
 
-/**
+/*
  * lrg_sprite_component_set_flip_v:
  * @self: an #LrgSpriteComponent
  * @flip: whether to flip vertically
@@ -419,7 +419,7 @@ lrg_sprite_component_set_flip_v (LrgSpriteComponent *self,
     }
 }
 
-/**
+/*
  * lrg_sprite_component_get_flip_v:
  * @self: an #LrgSpriteComponent
  *
@@ -439,7 +439,7 @@ lrg_sprite_component_get_flip_v (LrgSpriteComponent *self)
  * Public API - Drawing
  * ========================================================================== */
 
-/**
+/*
  * lrg_sprite_component_draw:
  * @self: an #LrgSpriteComponent
  *

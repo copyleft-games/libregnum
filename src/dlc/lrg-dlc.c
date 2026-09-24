@@ -513,7 +513,7 @@ lrg_dlc_init (LrgDlc *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_dlc_new:
  * @manifest: the mod manifest
  * @base_path: the DLC's base directory path
@@ -538,7 +538,7 @@ lrg_dlc_new (LrgModManifest *manifest,
                          NULL);
 }
 
-/**
+/*
  * lrg_dlc_get_dlc_type:
  * @self: a #LrgDlc
  *
@@ -557,7 +557,7 @@ lrg_dlc_get_dlc_type (LrgDlc *self)
     return priv->dlc_type;
 }
 
-/**
+/*
  * lrg_dlc_get_price_string:
  * @self: a #LrgDlc
  *
@@ -576,7 +576,7 @@ lrg_dlc_get_price_string (LrgDlc *self)
     return priv->price_string;
 }
 
-/**
+/*
  * lrg_dlc_set_price_string:
  * @self: a #LrgDlc
  * @price_string: the price string
@@ -592,7 +592,7 @@ lrg_dlc_set_price_string (LrgDlc      *self,
     g_object_set (self, "price-string", price_string, NULL);
 }
 
-/**
+/*
  * lrg_dlc_get_currency:
  * @self: a #LrgDlc
  *
@@ -611,7 +611,7 @@ lrg_dlc_get_currency (LrgDlc *self)
     return priv->currency;
 }
 
-/**
+/*
  * lrg_dlc_set_currency:
  * @self: a #LrgDlc
  * @currency: the currency code
@@ -627,7 +627,7 @@ lrg_dlc_set_currency (LrgDlc      *self,
     g_object_set (self, "currency", currency, NULL);
 }
 
-/**
+/*
  * lrg_dlc_get_steam_app_id:
  * @self: a #LrgDlc
  *
@@ -646,7 +646,7 @@ lrg_dlc_get_steam_app_id (LrgDlc *self)
     return priv->steam_app_id;
 }
 
-/**
+/*
  * lrg_dlc_set_steam_app_id:
  * @self: a #LrgDlc
  * @app_id: the Steam App ID
@@ -662,7 +662,7 @@ lrg_dlc_set_steam_app_id (LrgDlc *self,
     g_object_set (self, "steam-app-id", app_id, NULL);
 }
 
-/**
+/*
  * lrg_dlc_get_store_id:
  * @self: a #LrgDlc
  *
@@ -681,7 +681,7 @@ lrg_dlc_get_store_id (LrgDlc *self)
     return priv->store_id;
 }
 
-/**
+/*
  * lrg_dlc_set_store_id:
  * @self: a #LrgDlc
  * @store_id: the store identifier
@@ -697,7 +697,7 @@ lrg_dlc_set_store_id (LrgDlc      *self,
     g_object_set (self, "store-id", store_id, NULL);
 }
 
-/**
+/*
  * lrg_dlc_get_release_date:
  * @self: a #LrgDlc
  *
@@ -716,7 +716,7 @@ lrg_dlc_get_release_date (LrgDlc *self)
     return priv->release_date;
 }
 
-/**
+/*
  * lrg_dlc_set_release_date:
  * @self: a #LrgDlc
  * @release_date: (nullable): the release date
@@ -732,7 +732,7 @@ lrg_dlc_set_release_date (LrgDlc    *self,
     g_object_set (self, "release-date", release_date, NULL);
 }
 
-/**
+/*
  * lrg_dlc_get_min_game_version:
  * @self: a #LrgDlc
  *
@@ -751,7 +751,7 @@ lrg_dlc_get_min_game_version (LrgDlc *self)
     return priv->min_game_version;
 }
 
-/**
+/*
  * lrg_dlc_set_min_game_version:
  * @self: a #LrgDlc
  * @version: the minimum version string
@@ -767,7 +767,7 @@ lrg_dlc_set_min_game_version (LrgDlc      *self,
     g_object_set (self, "min-game-version", version, NULL);
 }
 
-/**
+/*
  * lrg_dlc_get_trial_enabled:
  * @self: a #LrgDlc
  *
@@ -786,7 +786,7 @@ lrg_dlc_get_trial_enabled (LrgDlc *self)
     return priv->trial_enabled;
 }
 
-/**
+/*
  * lrg_dlc_set_trial_enabled:
  * @self: a #LrgDlc
  * @enabled: whether to enable trial mode
@@ -802,7 +802,7 @@ lrg_dlc_set_trial_enabled (LrgDlc   *self,
     g_object_set (self, "trial-enabled", enabled, NULL);
 }
 
-/**
+/*
  * lrg_dlc_get_ownership_state:
  * @self: a #LrgDlc
  *
@@ -821,7 +821,7 @@ lrg_dlc_get_ownership_state (LrgDlc *self)
     return priv->ownership_state;
 }
 
-/**
+/*
  * lrg_dlc_set_ownership_checker:
  * @self: a #LrgDlc
  * @checker: (nullable): the ownership checker to use
@@ -842,7 +842,7 @@ lrg_dlc_set_ownership_checker (LrgDlc          *self,
     g_set_object (&priv->ownership_checker, checker);
 }
 
-/**
+/*
  * lrg_dlc_get_ownership_checker:
  * @self: a #LrgDlc
  *
@@ -861,7 +861,7 @@ lrg_dlc_get_ownership_checker (LrgDlc *self)
     return priv->ownership_checker;
 }
 
-/**
+/*
  * lrg_dlc_verify_ownership:
  * @self: a #LrgDlc
  * @error: (nullable): return location for a #GError
@@ -880,7 +880,7 @@ lrg_dlc_verify_ownership (LrgDlc   *self,
     return LRG_DLC_GET_CLASS (self)->verify_ownership (self, error);
 }
 
-/**
+/*
  * lrg_dlc_is_owned:
  * @self: a #LrgDlc
  *
@@ -901,7 +901,7 @@ lrg_dlc_is_owned (LrgDlc *self)
             priv->ownership_state == LRG_DLC_OWNERSHIP_TRIAL);
 }
 
-/**
+/*
  * lrg_dlc_add_trial_content_id:
  * @self: a #LrgDlc
  * @content_id: the content identifier
@@ -922,7 +922,7 @@ lrg_dlc_add_trial_content_id (LrgDlc      *self,
     g_ptr_array_add (priv->trial_content_ids, g_strdup (content_id));
 }
 
-/**
+/*
  * lrg_dlc_remove_trial_content_id:
  * @self: a #LrgDlc
  * @content_id: the content identifier
@@ -951,7 +951,7 @@ lrg_dlc_remove_trial_content_id (LrgDlc      *self,
     }
 }
 
-/**
+/*
  * lrg_dlc_get_trial_content_ids:
  * @self: a #LrgDlc
  *
@@ -967,7 +967,7 @@ lrg_dlc_get_trial_content_ids (LrgDlc *self)
     return LRG_DLC_GET_CLASS (self)->get_trial_content_ids (self);
 }
 
-/**
+/*
  * lrg_dlc_is_content_accessible:
  * @self: a #LrgDlc
  * @content_id: the content identifier to check
@@ -1008,7 +1008,7 @@ lrg_dlc_is_content_accessible (LrgDlc      *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_dlc_get_store_url:
  * @self: a #LrgDlc
  *
@@ -1024,7 +1024,7 @@ lrg_dlc_get_store_url (LrgDlc *self)
     return LRG_DLC_GET_CLASS (self)->get_store_url (self);
 }
 
-/**
+/*
  * lrg_dlc_open_store_page:
  * @self: a #LrgDlc
  * @error: (nullable): return location for a #GError

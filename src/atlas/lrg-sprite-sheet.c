@@ -259,7 +259,7 @@ lrg_sprite_sheet_init (LrgSpriteSheet *self)
                                                NULL, (GDestroyNotify) animation_def_free);
 }
 
-/**
+/*
  * lrg_sprite_sheet_new:
  * @name: Name identifier for the sprite sheet
  *
@@ -277,7 +277,7 @@ lrg_sprite_sheet_new (const gchar *name)
                          NULL);
 }
 
-/**
+/*
  * lrg_sprite_sheet_new_from_grid:
  * @name: Name identifier
  * @texture_path: Path to the texture file
@@ -332,7 +332,7 @@ lrg_sprite_sheet_new_from_grid (const gchar *name,
     return self;
 }
 
-/**
+/*
  * lrg_sprite_sheet_new_from_file:
  * @path: Path to the sprite sheet definition file (YAML)
  * @error: (nullable): Return location for error
@@ -529,7 +529,7 @@ lrg_sprite_sheet_new_from_file (const gchar  *path,
     return self;
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_name:
  * @self: A #LrgSpriteSheet
  *
@@ -546,7 +546,7 @@ lrg_sprite_sheet_get_name (LrgSpriteSheet *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_texture_path:
  * @self: A #LrgSpriteSheet
  *
@@ -563,7 +563,7 @@ lrg_sprite_sheet_get_texture_path (LrgSpriteSheet *self)
     return self->texture_path;
 }
 
-/**
+/*
  * lrg_sprite_sheet_set_texture_path:
  * @self: A #LrgSpriteSheet
  * @path: Path to the texture file
@@ -583,7 +583,7 @@ lrg_sprite_sheet_set_texture_path (LrgSpriteSheet *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TEXTURE_PATH]);
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_texture_width:
  * @self: A #LrgSpriteSheet
  *
@@ -600,7 +600,7 @@ lrg_sprite_sheet_get_texture_width (LrgSpriteSheet *self)
     return self->texture_width;
 }
 
-/**
+/*
  * lrg_sprite_sheet_set_texture_width:
  * @self: A #LrgSpriteSheet
  * @width: Width in pixels
@@ -619,7 +619,7 @@ lrg_sprite_sheet_set_texture_width (LrgSpriteSheet *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TEXTURE_WIDTH]);
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_texture_height:
  * @self: A #LrgSpriteSheet
  *
@@ -636,7 +636,7 @@ lrg_sprite_sheet_get_texture_height (LrgSpriteSheet *self)
     return self->texture_height;
 }
 
-/**
+/*
  * lrg_sprite_sheet_set_texture_height:
  * @self: A #LrgSpriteSheet
  * @height: Height in pixels
@@ -655,7 +655,7 @@ lrg_sprite_sheet_set_texture_height (LrgSpriteSheet *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TEXTURE_HEIGHT]);
 }
 
-/**
+/*
  * lrg_sprite_sheet_set_texture_size:
  * @self: A #LrgSpriteSheet
  * @width: Width in pixels
@@ -678,7 +678,7 @@ lrg_sprite_sheet_set_texture_size (LrgSpriteSheet *self,
     g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_format:
  * @self: A #LrgSpriteSheet
  *
@@ -695,7 +695,7 @@ lrg_sprite_sheet_get_format (LrgSpriteSheet *self)
     return self->format;
 }
 
-/**
+/*
  * lrg_sprite_sheet_set_format:
  * @self: A #LrgSpriteSheet
  * @format: The format type
@@ -714,7 +714,7 @@ lrg_sprite_sheet_set_format (LrgSpriteSheet      *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FORMAT]);
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_frame_count:
  * @self: A #LrgSpriteSheet
  *
@@ -731,7 +731,7 @@ lrg_sprite_sheet_get_frame_count (LrgSpriteSheet *self)
     return self->frames->len;
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_frame:
  * @self: A #LrgSpriteSheet
  * @index: Frame index (0-based)
@@ -754,7 +754,7 @@ lrg_sprite_sheet_get_frame (LrgSpriteSheet *self,
     return g_ptr_array_index (self->frames, index);
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_frame_by_name:
  * @self: A #LrgSpriteSheet
  * @name: Frame name
@@ -775,7 +775,7 @@ lrg_sprite_sheet_get_frame_by_name (LrgSpriteSheet *self,
     return g_hash_table_lookup (self->frames_by_name, name);
 }
 
-/**
+/*
  * lrg_sprite_sheet_add_frame:
  * @self: A #LrgSpriteSheet
  * @frame: The frame region to add
@@ -808,7 +808,7 @@ lrg_sprite_sheet_add_frame (LrgSpriteSheet *self,
     return self->frames->len - 1;
 }
 
-/**
+/*
  * lrg_sprite_sheet_add_frame_rect:
  * @self: A #LrgSpriteSheet
  * @name: (nullable): Frame name (can be NULL for numbered frames)
@@ -855,7 +855,7 @@ lrg_sprite_sheet_add_frame_rect (LrgSpriteSheet *self,
     return lrg_sprite_sheet_add_frame (self, frame);
 }
 
-/**
+/*
  * lrg_sprite_sheet_remove_frame:
  * @self: A #LrgSpriteSheet
  * @index: Frame index to remove
@@ -892,7 +892,7 @@ lrg_sprite_sheet_remove_frame (LrgSpriteSheet *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_sprite_sheet_clear_frames:
  * @self: A #LrgSpriteSheet
  *
@@ -910,7 +910,7 @@ lrg_sprite_sheet_clear_frames (LrgSpriteSheet *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FRAME_COUNT]);
 }
 
-/**
+/*
  * lrg_sprite_sheet_define_animation:
  * @self: A #LrgSpriteSheet
  * @name: Animation name
@@ -954,7 +954,7 @@ lrg_sprite_sheet_define_animation (LrgSpriteSheet *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_sprite_sheet_define_animation_frames:
  * @self: A #LrgSpriteSheet
  * @name: Animation name
@@ -1008,7 +1008,7 @@ lrg_sprite_sheet_define_animation_frames (LrgSpriteSheet *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_sprite_sheet_has_animation:
  * @self: A #LrgSpriteSheet
  * @name: Animation name
@@ -1029,7 +1029,7 @@ lrg_sprite_sheet_has_animation (LrgSpriteSheet *self,
     return g_hash_table_contains (self->animations, name);
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_animation_frame_count:
  * @self: A #LrgSpriteSheet
  * @name: Animation name
@@ -1056,7 +1056,7 @@ lrg_sprite_sheet_get_animation_frame_count (LrgSpriteSheet *self,
     return def->frame_indices->len;
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_animation_duration:
  * @self: A #LrgSpriteSheet
  * @name: Animation name
@@ -1083,7 +1083,7 @@ lrg_sprite_sheet_get_animation_duration (LrgSpriteSheet *self,
     return def->frame_duration * def->frame_indices->len;
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_animation_frame:
  * @self: A #LrgSpriteSheet
  * @name: Animation name
@@ -1143,7 +1143,7 @@ lrg_sprite_sheet_get_animation_frame (LrgSpriteSheet *self,
     return lrg_sprite_sheet_get_frame (self, frame_idx);
 }
 
-/**
+/*
  * lrg_sprite_sheet_get_animation_names:
  * @self: A #LrgSpriteSheet
  *
@@ -1173,7 +1173,7 @@ lrg_sprite_sheet_get_animation_names (LrgSpriteSheet *self)
     return names;
 }
 
-/**
+/*
  * lrg_sprite_sheet_remove_animation:
  * @self: A #LrgSpriteSheet
  * @name: Animation name
@@ -1194,7 +1194,7 @@ lrg_sprite_sheet_remove_animation (LrgSpriteSheet *self,
     return g_hash_table_remove (self->animations, name);
 }
 
-/**
+/*
  * lrg_sprite_sheet_recalculate_uvs:
  * @self: A #LrgSpriteSheet
  *
@@ -1223,7 +1223,7 @@ lrg_sprite_sheet_recalculate_uvs (LrgSpriteSheet *self)
     }
 }
 
-/**
+/*
  * lrg_sprite_sheet_generate_grid:
  * @self: A #LrgSpriteSheet
  * @frame_width: Width of each frame
@@ -1299,7 +1299,7 @@ lrg_sprite_sheet_generate_grid (LrgSpriteSheet *self,
     return count;
 }
 
-/**
+/*
  * lrg_sprite_sheet_save_to_file:
  * @self: A #LrgSpriteSheet
  * @path: Path to save to

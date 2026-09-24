@@ -24,7 +24,7 @@ struct _LrgEffectStackEntry
 G_DEFINE_BOXED_TYPE (LrgEffectStackEntry, lrg_effect_stack_entry,
                      lrg_effect_stack_entry_copy, lrg_effect_stack_entry_free)
 
-/**
+/*
  * lrg_effect_stack_entry_new:
  * @effect: the effect to queue
  * @source: (nullable): the source combatant
@@ -53,7 +53,7 @@ lrg_effect_stack_entry_new (LrgCardEffect *effect,
     return entry;
 }
 
-/**
+/*
  * lrg_effect_stack_entry_copy:
  * @entry: a #LrgEffectStackEntry
  *
@@ -73,7 +73,7 @@ lrg_effect_stack_entry_copy (LrgEffectStackEntry *entry)
                                         entry->target);
 }
 
-/**
+/*
  * lrg_effect_stack_entry_free:
  * @entry: a #LrgEffectStackEntry
  *
@@ -91,7 +91,7 @@ lrg_effect_stack_entry_free (LrgEffectStackEntry *entry)
     g_free (entry);
 }
 
-/**
+/*
  * lrg_effect_stack_entry_get_effect:
  * @entry: a #LrgEffectStackEntry
  *
@@ -108,7 +108,7 @@ lrg_effect_stack_entry_get_effect (LrgEffectStackEntry *entry)
     return entry->effect;
 }
 
-/**
+/*
  * lrg_effect_stack_entry_get_source:
  * @entry: a #LrgEffectStackEntry
  *
@@ -125,7 +125,7 @@ lrg_effect_stack_entry_get_source (LrgEffectStackEntry *entry)
     return entry->source;
 }
 
-/**
+/*
  * lrg_effect_stack_entry_get_target:
  * @entry: a #LrgEffectStackEntry
  *
@@ -296,7 +296,7 @@ lrg_effect_stack_init (LrgEffectStack *self)
     self->sorted = TRUE;  /* Empty array is sorted */
 }
 
-/**
+/*
  * lrg_effect_stack_new:
  * @registry: the effect registry to use for execution
  *
@@ -343,7 +343,7 @@ ensure_sorted (LrgEffectStack *self)
  * Stack Operations
  * ========================================================================== */
 
-/**
+/*
  * lrg_effect_stack_push:
  * @self: a #LrgEffectStack
  * @entry: (transfer full): the entry to push
@@ -364,7 +364,7 @@ lrg_effect_stack_push (LrgEffectStack      *self,
     self->sorted = FALSE;
 }
 
-/**
+/*
  * lrg_effect_stack_push_effect:
  * @self: a #LrgEffectStack
  * @effect: the effect to push
@@ -390,7 +390,7 @@ lrg_effect_stack_push_effect (LrgEffectStack *self,
     lrg_effect_stack_push (self, entry);
 }
 
-/**
+/*
  * lrg_effect_stack_peek:
  * @self: a #LrgEffectStack
  *
@@ -413,7 +413,7 @@ lrg_effect_stack_peek (LrgEffectStack *self)
     return g_ptr_array_index (self->entries, 0);
 }
 
-/**
+/*
  * lrg_effect_stack_pop:
  * @self: a #LrgEffectStack
  *
@@ -440,7 +440,7 @@ lrg_effect_stack_pop (LrgEffectStack *self)
     return entry;
 }
 
-/**
+/*
  * lrg_effect_stack_is_empty:
  * @self: a #LrgEffectStack
  *
@@ -457,7 +457,7 @@ lrg_effect_stack_is_empty (LrgEffectStack *self)
     return self->entries->len == 0;
 }
 
-/**
+/*
  * lrg_effect_stack_get_count:
  * @self: a #LrgEffectStack
  *
@@ -474,7 +474,7 @@ lrg_effect_stack_get_count (LrgEffectStack *self)
     return self->entries->len;
 }
 
-/**
+/*
  * lrg_effect_stack_clear:
  * @self: a #LrgEffectStack
  *
@@ -495,7 +495,7 @@ lrg_effect_stack_clear (LrgEffectStack *self)
  * Resolution
  * ========================================================================== */
 
-/**
+/*
  * lrg_effect_stack_resolve_one:
  * @self: a #LrgEffectStack
  * @context: the combat context
@@ -547,7 +547,7 @@ lrg_effect_stack_resolve_one (LrgEffectStack  *self,
     return success;
 }
 
-/**
+/*
  * lrg_effect_stack_resolve_all:
  * @self: a #LrgEffectStack
  * @context: the combat context

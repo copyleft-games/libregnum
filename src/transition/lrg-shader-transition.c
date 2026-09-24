@@ -411,7 +411,7 @@ lrg_shader_transition_init (LrgShaderTransition *self)
  * Public API
  */
 
-/**
+/*
  * lrg_shader_transition_new:
  *
  * Creates a new shader transition.
@@ -426,7 +426,7 @@ lrg_shader_transition_new (void)
     return g_object_new (LRG_TYPE_SHADER_TRANSITION, NULL);
 }
 
-/**
+/*
  * lrg_shader_transition_new_from_file:
  * @fragment_path: Path to fragment shader file
  * @error: (nullable): Return location for error
@@ -455,7 +455,7 @@ lrg_shader_transition_new_from_file (const gchar  *fragment_path,
     return self;
 }
 
-/**
+/*
  * lrg_shader_transition_new_from_source:
  * @fragment_source: Fragment shader source code
  * @error: (nullable): Return location for error
@@ -484,7 +484,7 @@ lrg_shader_transition_new_from_source (const gchar  *fragment_source,
     return self;
 }
 
-/**
+/*
  * lrg_shader_transition_load_from_file:
  * @self: A #LrgShaderTransition
  * @fragment_path: Path to fragment shader file
@@ -515,7 +515,7 @@ lrg_shader_transition_load_from_file (LrgShaderTransition  *self,
     return lrg_shader_transition_load_from_source (self, contents, error);
 }
 
-/**
+/*
  * lrg_shader_transition_load_from_source:
  * @self: A #LrgShaderTransition
  * @fragment_source: Fragment shader source code
@@ -548,7 +548,7 @@ lrg_shader_transition_load_from_source (LrgShaderTransition  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_shader_transition_set_uniform_float:
  * @self: A #LrgShaderTransition
  * @name: Uniform name
@@ -576,7 +576,7 @@ lrg_shader_transition_set_uniform_float (LrgShaderTransition *self,
     g_hash_table_replace (self->uniforms, uniform->name, uniform);
 }
 
-/**
+/*
  * lrg_shader_transition_set_uniform_vec2:
  * @self: A #LrgShaderTransition
  * @name: Uniform name
@@ -607,7 +607,7 @@ lrg_shader_transition_set_uniform_vec2 (LrgShaderTransition *self,
     g_hash_table_replace (self->uniforms, uniform->name, uniform);
 }
 
-/**
+/*
  * lrg_shader_transition_set_uniform_vec3:
  * @self: A #LrgShaderTransition
  * @name: Uniform name
@@ -641,7 +641,7 @@ lrg_shader_transition_set_uniform_vec3 (LrgShaderTransition *self,
     g_hash_table_replace (self->uniforms, uniform->name, uniform);
 }
 
-/**
+/*
  * lrg_shader_transition_set_uniform_vec4:
  * @self: A #LrgShaderTransition
  * @name: Uniform name
@@ -678,7 +678,7 @@ lrg_shader_transition_set_uniform_vec4 (LrgShaderTransition *self,
     g_hash_table_replace (self->uniforms, uniform->name, uniform);
 }
 
-/**
+/*
  * lrg_shader_transition_set_uniform_int:
  * @self: A #LrgShaderTransition
  * @name: Uniform name
@@ -706,7 +706,7 @@ lrg_shader_transition_set_uniform_int (LrgShaderTransition *self,
     g_hash_table_replace (self->uniforms, uniform->name, uniform);
 }
 
-/**
+/*
  * lrg_shader_transition_is_shader_loaded:
  * @self: A #LrgShaderTransition
  *

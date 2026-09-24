@@ -171,7 +171,7 @@ lrg_material3d_init (LrgMaterial3D *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_material3d_new:
  *
  * Creates a new #LrgMaterial3D with default values.
@@ -184,7 +184,7 @@ lrg_material3d_new (void)
 	return g_object_new (LRG_TYPE_MATERIAL3D, NULL);
 }
 
-/**
+/*
  * lrg_material3d_new_with_color:
  * @r: Red component (0.0-1.0)
  * @g: Green component (0.0-1.0)
@@ -212,7 +212,7 @@ lrg_material3d_new_with_color (gfloat r,
  * Color Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_material3d_set_color:
  * @self: an #LrgMaterial3D
  * @r: Red component (0.0-1.0)
@@ -237,7 +237,7 @@ lrg_material3d_set_color (LrgMaterial3D *self,
 	self->color[3] = a;
 }
 
-/**
+/*
  * lrg_material3d_get_color:
  * @self: an #LrgMaterial3D
  * @r: (out) (optional): Location for red component
@@ -266,7 +266,7 @@ lrg_material3d_get_color (LrgMaterial3D *self,
 		*a = self->color[3];
 }
 
-/**
+/*
  * lrg_material3d_get_color_grl:
  * @self: an #LrgMaterial3D
  *
@@ -290,7 +290,7 @@ lrg_material3d_get_color_grl (LrgMaterial3D *self)
  * PBR Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_material3d_get_roughness:
  * @self: an #LrgMaterial3D
  *
@@ -306,7 +306,7 @@ lrg_material3d_get_roughness (LrgMaterial3D *self)
 	return self->roughness;
 }
 
-/**
+/*
  * lrg_material3d_set_roughness:
  * @self: an #LrgMaterial3D
  * @roughness: The roughness value (0.0-1.0)
@@ -326,7 +326,7 @@ lrg_material3d_set_roughness (LrgMaterial3D *self,
 	}
 }
 
-/**
+/*
  * lrg_material3d_get_metallic:
  * @self: an #LrgMaterial3D
  *
@@ -342,7 +342,7 @@ lrg_material3d_get_metallic (LrgMaterial3D *self)
 	return self->metallic;
 }
 
-/**
+/*
  * lrg_material3d_set_metallic:
  * @self: an #LrgMaterial3D
  * @metallic: The metallic value (0.0-1.0)
@@ -366,7 +366,7 @@ lrg_material3d_set_metallic (LrgMaterial3D *self,
  * Emission Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_material3d_set_emission_color:
  * @self: an #LrgMaterial3D
  * @r: Red component (0.0-1.0)
@@ -391,7 +391,7 @@ lrg_material3d_set_emission_color (LrgMaterial3D *self,
 	self->emission_color[3] = a;
 }
 
-/**
+/*
  * lrg_material3d_get_emission_color:
  * @self: an #LrgMaterial3D
  * @r: (out) (optional): Location for red component
@@ -420,7 +420,7 @@ lrg_material3d_get_emission_color (LrgMaterial3D *self,
 		*a = self->emission_color[3];
 }
 
-/**
+/*
  * lrg_material3d_get_emission_strength:
  * @self: an #LrgMaterial3D
  *
@@ -436,7 +436,7 @@ lrg_material3d_get_emission_strength (LrgMaterial3D *self)
 	return self->emission_strength;
 }
 
-/**
+/*
  * lrg_material3d_set_emission_strength:
  * @self: an #LrgMaterial3D
  * @strength: The emission strength (0.0+)

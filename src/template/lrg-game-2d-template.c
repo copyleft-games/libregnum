@@ -1125,7 +1125,7 @@ lrg_game_2d_template_init (LrgGame2DTemplate *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_game_2d_template_new:
  *
  * Creates a new 2D game template with default settings.

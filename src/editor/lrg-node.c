@@ -272,7 +272,7 @@ lrg_node_init (LrgNode *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_node_new:
  * @name: (nullable): the node name
  *

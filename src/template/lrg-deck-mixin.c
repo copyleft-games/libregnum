@@ -142,7 +142,7 @@ lrg_deck_mixin_default_init (LrgDeckMixinInterface *iface)
  * Interface Methods
  * ========================================================================== */
 
-/**
+/*
  * lrg_deck_mixin_get_deck_instance:
  * @self: an #LrgDeckMixin
  *
@@ -166,7 +166,7 @@ lrg_deck_mixin_get_deck_instance (LrgDeckMixin *self)
     return NULL;
 }
 
-/**
+/*
  * lrg_deck_mixin_get_hand_size:
  * @self: an #LrgDeckMixin
  *
@@ -190,7 +190,7 @@ lrg_deck_mixin_get_hand_size (LrgDeckMixin *self)
     return LRG_HAND_DEFAULT_MAX_SIZE;
 }
 
-/**
+/*
  * lrg_deck_mixin_on_card_drawn:
  * @self: an #LrgDeckMixin
  * @card: (transfer none): the card that was drawn
@@ -213,7 +213,7 @@ lrg_deck_mixin_on_card_drawn (LrgDeckMixin    *self,
         iface->on_card_drawn (self, card);
 }
 
-/**
+/*
  * lrg_deck_mixin_on_card_played:
  * @self: an #LrgDeckMixin
  * @card: (transfer none): the card that was played
@@ -238,7 +238,7 @@ lrg_deck_mixin_on_card_played (LrgDeckMixin    *self,
         iface->on_card_played (self, card, target);
 }
 
-/**
+/*
  * lrg_deck_mixin_on_card_discarded:
  * @self: an #LrgDeckMixin
  * @card: (transfer none): the card that was discarded
@@ -261,7 +261,7 @@ lrg_deck_mixin_on_card_discarded (LrgDeckMixin    *self,
         iface->on_card_discarded (self, card);
 }
 
-/**
+/*
  * lrg_deck_mixin_on_deck_shuffled:
  * @self: an #LrgDeckMixin
  *
@@ -281,7 +281,7 @@ lrg_deck_mixin_on_deck_shuffled (LrgDeckMixin *self)
         iface->on_deck_shuffled (self);
 }
 
-/**
+/*
  * lrg_deck_mixin_on_card_exhausted:
  * @self: an #LrgDeckMixin
  * @card: (transfer none): the card that was exhausted
@@ -304,7 +304,7 @@ lrg_deck_mixin_on_card_exhausted (LrgDeckMixin    *self,
         iface->on_card_exhausted (self, card);
 }
 
-/**
+/*
  * lrg_deck_mixin_on_turn_started:
  * @self: an #LrgDeckMixin
  * @turn_number: the current turn number
@@ -326,7 +326,7 @@ lrg_deck_mixin_on_turn_started (LrgDeckMixin *self,
         iface->on_turn_started (self, turn_number);
 }
 
-/**
+/*
  * lrg_deck_mixin_on_turn_ended:
  * @self: an #LrgDeckMixin
  * @turn_number: the turn that just ended
@@ -352,7 +352,7 @@ lrg_deck_mixin_on_turn_ended (LrgDeckMixin *self,
  * Helper Methods
  * ========================================================================== */
 
-/**
+/*
  * lrg_deck_mixin_draw_card:
  * @self: an #LrgDeckMixin
  *
@@ -381,7 +381,7 @@ lrg_deck_mixin_draw_card (LrgDeckMixin *self)
     return card;
 }
 
-/**
+/*
  * lrg_deck_mixin_draw_cards:
  * @self: an #LrgDeckMixin
  * @count: number of cards to draw
@@ -419,7 +419,7 @@ lrg_deck_mixin_draw_cards (LrgDeckMixin *self,
     return drawn;
 }
 
-/**
+/*
  * lrg_deck_mixin_discard_hand:
  * @self: an #LrgDeckMixin
  *
@@ -477,7 +477,7 @@ lrg_deck_mixin_discard_hand (LrgDeckMixin *self)
     return discarded;
 }
 
-/**
+/*
  * lrg_deck_mixin_shuffle_discard_into_deck:
  * @self: an #LrgDeckMixin
  *
@@ -500,7 +500,7 @@ lrg_deck_mixin_shuffle_discard_into_deck (LrgDeckMixin *self)
     lrg_deck_mixin_on_deck_shuffled (self);
 }
 
-/**
+/*
  * lrg_deck_mixin_get_draw_pile:
  * @self: an #LrgDeckMixin
  *
@@ -524,7 +524,7 @@ lrg_deck_mixin_get_draw_pile (LrgDeckMixin *self)
     return lrg_deck_instance_get_draw_pile (deck);
 }
 
-/**
+/*
  * lrg_deck_mixin_get_discard_pile:
  * @self: an #LrgDeckMixin
  *
@@ -548,7 +548,7 @@ lrg_deck_mixin_get_discard_pile (LrgDeckMixin *self)
     return lrg_deck_instance_get_discard_pile (deck);
 }
 
-/**
+/*
  * lrg_deck_mixin_get_exhaust_pile:
  * @self: an #LrgDeckMixin
  *
@@ -572,7 +572,7 @@ lrg_deck_mixin_get_exhaust_pile (LrgDeckMixin *self)
     return lrg_deck_instance_get_exhaust_pile (deck);
 }
 
-/**
+/*
  * lrg_deck_mixin_get_hand:
  * @self: an #LrgDeckMixin
  *
@@ -596,7 +596,7 @@ lrg_deck_mixin_get_hand (LrgDeckMixin *self)
     return lrg_deck_instance_get_hand (deck);
 }
 
-/**
+/*
  * lrg_deck_mixin_get_draw_pile_count:
  * @self: an #LrgDeckMixin
  *
@@ -620,7 +620,7 @@ lrg_deck_mixin_get_draw_pile_count (LrgDeckMixin *self)
     return lrg_card_pile_get_count (pile);
 }
 
-/**
+/*
  * lrg_deck_mixin_get_discard_pile_count:
  * @self: an #LrgDeckMixin
  *
@@ -644,7 +644,7 @@ lrg_deck_mixin_get_discard_pile_count (LrgDeckMixin *self)
     return lrg_card_pile_get_count (pile);
 }
 
-/**
+/*
  * lrg_deck_mixin_get_hand_count:
  * @self: an #LrgDeckMixin
  *
@@ -668,7 +668,7 @@ lrg_deck_mixin_get_hand_count (LrgDeckMixin *self)
     return lrg_hand_get_count (hand);
 }
 
-/**
+/*
  * lrg_deck_mixin_setup_deck:
  * @self: an #LrgDeckMixin
  *
@@ -691,7 +691,7 @@ lrg_deck_mixin_setup_deck (LrgDeckMixin *self)
     lrg_deck_mixin_on_deck_shuffled (self);
 }
 
-/**
+/*
  * lrg_deck_mixin_end_combat:
  * @self: an #LrgDeckMixin
  *

@@ -374,7 +374,7 @@ lrg_animator_component_init (LrgAnimatorComponent *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_animator_component_new:
  *
  * Creates a new animator component.
@@ -387,7 +387,7 @@ lrg_animator_component_new (void)
     return g_object_new (LRG_TYPE_ANIMATOR_COMPONENT, NULL);
 }
 
-/**
+/*
  * lrg_animator_component_new_with_texture:
  * @texture: The spritesheet texture
  * @frame_width: Width of each frame
@@ -413,7 +413,7 @@ lrg_animator_component_new_with_texture (GrlTexture *texture,
  * Public API - Spritesheet Configuration
  * ========================================================================== */
 
-/**
+/*
  * lrg_animator_component_set_texture:
  * @self: an #LrgAnimatorComponent
  * @texture: The spritesheet texture
@@ -451,7 +451,7 @@ lrg_animator_component_set_texture (LrgAnimatorComponent *self,
     }
 }
 
-/**
+/*
  * lrg_animator_component_get_texture:
  * @self: an #LrgAnimatorComponent
  *
@@ -470,7 +470,7 @@ lrg_animator_component_get_texture (LrgAnimatorComponent *self)
     return priv->texture;
 }
 
-/**
+/*
  * lrg_animator_component_get_frame_width:
  * @self: an #LrgAnimatorComponent
  *
@@ -489,7 +489,7 @@ lrg_animator_component_get_frame_width (LrgAnimatorComponent *self)
     return priv->frame_width;
 }
 
-/**
+/*
  * lrg_animator_component_get_frame_height:
  * @self: an #LrgAnimatorComponent
  *
@@ -512,7 +512,7 @@ lrg_animator_component_get_frame_height (LrgAnimatorComponent *self)
  * Public API - Animation Definition
  * ========================================================================== */
 
-/**
+/*
  * lrg_animator_component_add_animation:
  * @self: an #LrgAnimatorComponent
  * @name: Unique animation name
@@ -559,7 +559,7 @@ lrg_animator_component_add_animation (LrgAnimatorComponent *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_animator_component_remove_animation:
  * @self: an #LrgAnimatorComponent
  * @name: Animation name to remove
@@ -588,7 +588,7 @@ lrg_animator_component_remove_animation (LrgAnimatorComponent *self,
     return g_hash_table_remove (priv->animations, name);
 }
 
-/**
+/*
  * lrg_animator_component_has_animation:
  * @self: an #LrgAnimatorComponent
  * @name: Animation name to check
@@ -611,7 +611,7 @@ lrg_animator_component_has_animation (LrgAnimatorComponent *self,
     return g_hash_table_contains (priv->animations, name);
 }
 
-/**
+/*
  * lrg_animator_component_get_animation_names:
  * @self: an #LrgAnimatorComponent
  *
@@ -631,7 +631,7 @@ lrg_animator_component_get_animation_names (LrgAnimatorComponent *self)
     return g_hash_table_get_keys (priv->animations);
 }
 
-/**
+/*
  * lrg_animator_component_clear_animations:
  * @self: an #LrgAnimatorComponent
  *
@@ -654,7 +654,7 @@ lrg_animator_component_clear_animations (LrgAnimatorComponent *self)
  * Public API - Playback Control
  * ========================================================================== */
 
-/**
+/*
  * lrg_animator_component_play:
  * @self: an #LrgAnimatorComponent
  * @name: Animation name to play
@@ -701,7 +701,7 @@ lrg_animator_component_play (LrgAnimatorComponent *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_animator_component_play_if_different:
  * @self: an #LrgAnimatorComponent
  * @name: Animation name to play
@@ -732,7 +732,7 @@ lrg_animator_component_play_if_different (LrgAnimatorComponent *self,
     return lrg_animator_component_play (self, name);
 }
 
-/**
+/*
  * lrg_animator_component_stop:
  * @self: an #LrgAnimatorComponent
  *
@@ -765,7 +765,7 @@ lrg_animator_component_stop (LrgAnimatorComponent *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PLAYING]);
 }
 
-/**
+/*
  * lrg_animator_component_pause:
  * @self: an #LrgAnimatorComponent
  *
@@ -787,7 +787,7 @@ lrg_animator_component_pause (LrgAnimatorComponent *self)
     }
 }
 
-/**
+/*
  * lrg_animator_component_resume:
  * @self: an #LrgAnimatorComponent
  *
@@ -813,7 +813,7 @@ lrg_animator_component_resume (LrgAnimatorComponent *self)
  * Public API - State Queries
  * ========================================================================== */
 
-/**
+/*
  * lrg_animator_component_get_current_animation:
  * @self: an #LrgAnimatorComponent
  *
@@ -832,7 +832,7 @@ lrg_animator_component_get_current_animation (LrgAnimatorComponent *self)
     return priv->current_animation;
 }
 
-/**
+/*
  * lrg_animator_component_is_playing:
  * @self: an #LrgAnimatorComponent
  *
@@ -851,7 +851,7 @@ lrg_animator_component_is_playing (LrgAnimatorComponent *self)
     return priv->playing;
 }
 
-/**
+/*
  * lrg_animator_component_is_finished:
  * @self: an #LrgAnimatorComponent
  *
@@ -870,7 +870,7 @@ lrg_animator_component_is_finished (LrgAnimatorComponent *self)
     return priv->finished;
 }
 
-/**
+/*
  * lrg_animator_component_get_current_frame:
  * @self: an #LrgAnimatorComponent
  *
@@ -889,7 +889,7 @@ lrg_animator_component_get_current_frame (LrgAnimatorComponent *self)
     return priv->current_frame;
 }
 
-/**
+/*
  * lrg_animator_component_get_current_frame_rect:
  * @self: an #LrgAnimatorComponent
  *
@@ -929,7 +929,7 @@ lrg_animator_component_get_current_frame_rect (LrgAnimatorComponent *self)
  * Public API - Speed Control
  * ========================================================================== */
 
-/**
+/*
  * lrg_animator_component_get_speed:
  * @self: an #LrgAnimatorComponent
  *
@@ -948,7 +948,7 @@ lrg_animator_component_get_speed (LrgAnimatorComponent *self)
     return priv->speed;
 }
 
-/**
+/*
  * lrg_animator_component_set_speed:
  * @self: an #LrgAnimatorComponent
  * @speed: Speed multiplier
@@ -976,7 +976,7 @@ lrg_animator_component_set_speed (LrgAnimatorComponent *self,
  * Public API - Transition Helpers
  * ========================================================================== */
 
-/**
+/*
  * lrg_animator_component_set_default_animation:
  * @self: an #LrgAnimatorComponent
  * @name: (nullable): Default animation name
@@ -997,7 +997,7 @@ lrg_animator_component_set_default_animation (LrgAnimatorComponent *self,
     priv->default_animation = g_strdup (name);
 }
 
-/**
+/*
  * lrg_animator_component_get_default_animation:
  * @self: an #LrgAnimatorComponent
  *

@@ -320,7 +320,7 @@ lrg_engine_init (LrgEngine *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_engine_get_default:
  *
  * Gets the default engine instance. Creates it if it doesn't exist.
@@ -338,7 +338,7 @@ lrg_engine_get_default (void)
     return default_engine;
 }
 
-/**
+/*
  * lrg_engine_startup:
  * @self: an #LrgEngine
  * @error: (nullable): return location for error
@@ -399,7 +399,7 @@ lrg_engine_startup (LrgEngine  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_engine_shutdown:
  * @self: an #LrgEngine
  *
@@ -446,7 +446,7 @@ lrg_engine_shutdown (LrgEngine *self)
     lrg_info (LRG_LOG_DOMAIN_CORE, "Libregnum engine shutdown complete");
 }
 
-/**
+/*
  * lrg_engine_update:
  * @self: an #LrgEngine
  * @delta: time since last frame in seconds
@@ -485,7 +485,7 @@ lrg_engine_update (LrgEngine *self,
     g_signal_emit (self, signals[SIGNAL_POST_UPDATE], 0, delta);
 }
 
-/**
+/*
  * lrg_engine_get_state:
  * @self: an #LrgEngine
  *
@@ -505,7 +505,7 @@ lrg_engine_get_state (LrgEngine *self)
     return priv->state;
 }
 
-/**
+/*
  * lrg_engine_is_running:
  * @self: an #LrgEngine
  *
@@ -525,7 +525,7 @@ lrg_engine_is_running (LrgEngine *self)
     return priv->state == LRG_ENGINE_STATE_RUNNING;
 }
 
-/**
+/*
  * lrg_engine_get_registry:
  * @self: an #LrgEngine
  *
@@ -545,7 +545,7 @@ lrg_engine_get_registry (LrgEngine *self)
     return priv->registry;
 }
 
-/**
+/*
  * lrg_engine_get_data_loader:
  * @self: an #LrgEngine
  *
@@ -565,7 +565,7 @@ lrg_engine_get_data_loader (LrgEngine *self)
     return priv->data_loader;
 }
 
-/**
+/*
  * lrg_engine_get_asset_manager:
  * @self: an #LrgEngine
  *
@@ -585,7 +585,7 @@ lrg_engine_get_asset_manager (LrgEngine *self)
     return priv->asset_manager;
 }
 
-/**
+/*
  * lrg_engine_get_scripting:
  * @self: an #LrgEngine
  *
@@ -605,7 +605,7 @@ lrg_engine_get_scripting (LrgEngine *self)
     return priv->scripting;
 }
 
-/**
+/*
  * lrg_engine_set_scripting:
  * @self: an #LrgEngine
  * @scripting: (transfer none) (nullable): the scripting subsystem to use
@@ -659,7 +659,7 @@ lrg_engine_set_scripting (LrgEngine    *self,
  * Graphics Subsystem Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_engine_set_window:
  * @self: an #LrgEngine
  * @window: (transfer none) (nullable): the window to use for rendering
@@ -700,7 +700,7 @@ lrg_engine_set_window (LrgEngine *self,
     }
 }
 
-/**
+/*
  * lrg_engine_get_window:
  * @self: an #LrgEngine
  *
@@ -720,7 +720,7 @@ lrg_engine_get_window (LrgEngine *self)
     return priv->window;
 }
 
-/**
+/*
  * lrg_engine_get_renderer:
  * @self: an #LrgEngine
  *
@@ -744,7 +744,7 @@ lrg_engine_get_renderer (LrgEngine *self)
  * Version Functions
  * ========================================================================== */
 
-/**
+/*
  * lrg_get_major_version:
  *
  * Gets the major version of the Libregnum library at runtime.
@@ -757,7 +757,7 @@ lrg_get_major_version (void)
     return LRG_VERSION_MAJOR;
 }
 
-/**
+/*
  * lrg_get_minor_version:
  *
  * Gets the minor version of the Libregnum library at runtime.
@@ -770,7 +770,7 @@ lrg_get_minor_version (void)
     return LRG_VERSION_MINOR;
 }
 
-/**
+/*
  * lrg_get_micro_version:
  *
  * Gets the micro version of the Libregnum library at runtime.
@@ -783,7 +783,7 @@ lrg_get_micro_version (void)
     return LRG_VERSION_MICRO;
 }
 
-/**
+/*
  * lrg_check_version:
  * @required_major: the required major version
  * @required_minor: the required minor version

@@ -69,7 +69,7 @@ lrg_bt_action_init (LrgBTAction *self)
 {
 }
 
-/**
+/*
  * lrg_bt_action_new:
  * @func: (scope notified): The action function
  * @user_data: (closure): User data for the function
@@ -96,7 +96,7 @@ lrg_bt_action_new (LrgBTActionFunc  func,
     return self;
 }
 
-/**
+/*
  * lrg_bt_action_new_simple:
  * @func: (scope notified): The action function
  *
@@ -171,7 +171,7 @@ lrg_bt_condition_init (LrgBTCondition *self)
 {
 }
 
-/**
+/*
  * lrg_bt_condition_new:
  * @func: (scope notified): The condition function
  * @user_data: (closure): User data for the function
@@ -198,7 +198,7 @@ lrg_bt_condition_new (LrgBTConditionFunc  func,
     return self;
 }
 
-/**
+/*
  * lrg_bt_condition_new_simple:
  * @func: (scope notified): The condition function
  *
@@ -274,7 +274,7 @@ lrg_bt_wait_init (LrgBTWait *self)
     self->elapsed = 0.0f;
 }
 
-/**
+/*
  * lrg_bt_wait_new:
  * @duration: Duration to wait in seconds
  *
@@ -290,7 +290,7 @@ lrg_bt_wait_new (gfloat duration)
     return self;
 }
 
-/**
+/*
  * lrg_bt_wait_get_duration:
  * @self: an #LrgBTWait
  *
@@ -306,7 +306,7 @@ lrg_bt_wait_get_duration (LrgBTWait *self)
     return self->duration;
 }
 
-/**
+/*
  * lrg_bt_wait_set_duration:
  * @self: an #LrgBTWait
  * @duration: Duration in seconds

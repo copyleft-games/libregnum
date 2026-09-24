@@ -173,7 +173,7 @@ lrg_deckbuilder_manager_init (LrgDeckbuilderManager *self)
  * Public API - Singleton
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_manager_get_default:
  *
  * Gets the default deckbuilder manager singleton.
@@ -197,7 +197,7 @@ lrg_deckbuilder_manager_get_default (void)
  * Public API - Player Profile
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_manager_get_profile:
  * @self: a #LrgDeckbuilderManager
  *
@@ -215,7 +215,7 @@ lrg_deckbuilder_manager_get_profile (LrgDeckbuilderManager *self)
     return self->profile;
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_set_profile:
  * @self: a #LrgDeckbuilderManager
  * @profile: (transfer none): the profile to use
@@ -242,7 +242,7 @@ lrg_deckbuilder_manager_set_profile (LrgDeckbuilderManager *self,
  * Public API - Character Registry
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_manager_register_character:
  * @self: a #LrgDeckbuilderManager
  * @character: (transfer none): character to register
@@ -268,7 +268,7 @@ lrg_deckbuilder_manager_register_character (LrgDeckbuilderManager *self,
                          g_object_ref (character));
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_get_character:
  * @self: a #LrgDeckbuilderManager
  * @id: character ID
@@ -289,7 +289,7 @@ lrg_deckbuilder_manager_get_character (LrgDeckbuilderManager *self,
     return g_hash_table_lookup (self->characters, id);
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_get_characters:
  * @self: a #LrgDeckbuilderManager
  *
@@ -319,7 +319,7 @@ lrg_deckbuilder_manager_get_characters (LrgDeckbuilderManager *self)
     return result;
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_get_unlocked_characters:
  * @self: a #LrgDeckbuilderManager
  *
@@ -369,7 +369,7 @@ lrg_deckbuilder_manager_get_unlocked_characters (LrgDeckbuilderManager *self)
  * Public API - Unlock Registry
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_manager_register_unlock:
  * @self: a #LrgDeckbuilderManager
  * @unlock: (transfer none): unlock definition to register
@@ -395,7 +395,7 @@ lrg_deckbuilder_manager_register_unlock (LrgDeckbuilderManager *self,
                          g_object_ref (unlock));
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_get_unlock:
  * @self: a #LrgDeckbuilderManager
  * @id: unlock ID
@@ -416,7 +416,7 @@ lrg_deckbuilder_manager_get_unlock (LrgDeckbuilderManager *self,
     return g_hash_table_lookup (self->unlocks, id);
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_check_unlocks:
  * @self: a #LrgDeckbuilderManager
  *
@@ -458,7 +458,7 @@ lrg_deckbuilder_manager_check_unlocks (LrgDeckbuilderManager *self)
  * Public API - Ascension
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_manager_get_ascension:
  * @self: a #LrgDeckbuilderManager
  * @level: ascension level (0-20)
@@ -492,7 +492,7 @@ lrg_deckbuilder_manager_get_ascension (LrgDeckbuilderManager *self,
     return ascension;
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_get_max_ascension:
  * @self: a #LrgDeckbuilderManager
  * @character_id: character ID
@@ -517,7 +517,7 @@ lrg_deckbuilder_manager_get_max_ascension (LrgDeckbuilderManager *self,
  * Public API - Run Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_manager_get_current_run:
  * @self: a #LrgDeckbuilderManager
  *
@@ -535,7 +535,7 @@ lrg_deckbuilder_manager_get_current_run (LrgDeckbuilderManager *self)
     return self->current_run;
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_start_run:
  * @self: a #LrgDeckbuilderManager
  * @character_id: character to play
@@ -606,7 +606,7 @@ lrg_deckbuilder_manager_start_run (LrgDeckbuilderManager *self,
     return self->current_run;
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_end_run:
  * @self: a #LrgDeckbuilderManager
  * @victory: whether the run was won
@@ -654,7 +654,7 @@ lrg_deckbuilder_manager_end_run (LrgDeckbuilderManager *self,
     g_clear_object (&self->current_run);
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_abandon_run:
  * @self: a #LrgDeckbuilderManager
  *
@@ -677,7 +677,7 @@ lrg_deckbuilder_manager_abandon_run (LrgDeckbuilderManager *self)
  * Public API - Statistics
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_manager_get_run_count:
  * @self: a #LrgDeckbuilderManager
  * @character_id: (nullable): character ID, or %NULL for total
@@ -700,7 +700,7 @@ lrg_deckbuilder_manager_get_run_count (LrgDeckbuilderManager *self,
         return lrg_player_profile_get_total_runs (self->profile);
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_get_win_count:
  * @self: a #LrgDeckbuilderManager
  * @character_id: (nullable): character ID, or %NULL for total
@@ -723,7 +723,7 @@ lrg_deckbuilder_manager_get_win_count (LrgDeckbuilderManager *self,
         return lrg_player_profile_get_total_wins (self->profile);
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_get_win_rate:
  * @self: a #LrgDeckbuilderManager
  * @character_id: (nullable): character ID, or %NULL for total
@@ -756,7 +756,7 @@ lrg_deckbuilder_manager_get_win_rate (LrgDeckbuilderManager *self,
  * Public API - Persistence
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_manager_save:
  * @self: a #LrgDeckbuilderManager
  * @error: (nullable): return location for error
@@ -808,7 +808,7 @@ lrg_deckbuilder_manager_save (LrgDeckbuilderManager  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_deckbuilder_manager_load:
  * @self: a #LrgDeckbuilderManager
  * @error: (nullable): return location for error

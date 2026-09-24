@@ -467,7 +467,7 @@ lrg_scripting_native_init (LrgScriptingNative *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_scripting_native_new:
  *
  * Creates a native scripting context that loads prebuilt shared objects.
@@ -480,7 +480,7 @@ lrg_scripting_native_new (void)
     return g_object_new (LRG_TYPE_SCRIPTING_NATIVE, NULL);
 }
 
-/**
+/*
  * lrg_scripting_native_call_host:
  * @scripting: the #LrgScripting context passed to the calling function
  * @name: a function registered with lrg_scripting_register_function()
@@ -533,7 +533,7 @@ lrg_scripting_native_call_host (LrgScripting  *scripting,
     return ok;
 }
 
-/**
+/*
  * lrg_scripting_native_add_unit: (skip)
  * @self: an #LrgScriptingNative
  * @unit: (transfer full): the loaded unit
@@ -588,7 +588,7 @@ lrg_scripting_native_add_unit (LrgScriptingNative     *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_scripting_native_get_search_paths:
  * @self: an #LrgScriptingNative
  *

@@ -668,7 +668,7 @@ lrg_game_3d_template_init (LrgGame3DTemplate *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_game_3d_template_new:
  *
  * Creates a new 3D game template with default settings.

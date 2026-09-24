@@ -468,7 +468,7 @@ lrg_vector_image_init (LrgVectorImage *self)
 /* Public API                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_vector_image_new_from_file:
  * @filename: path to the SVG file
  * @error: (nullable): return location for a #GError
@@ -523,7 +523,7 @@ lrg_vector_image_new_from_file (const gchar  *filename,
     return self;
 }
 
-/**
+/*
  * lrg_vector_image_new_from_data:
  * @data: (array length=len): SVG source bytes
  * @len: length of @data in bytes
@@ -571,7 +571,7 @@ lrg_vector_image_new_from_data (const gchar  *data,
     return self;
 }
 
-/**
+/*
  * lrg_vector_image_get_source_size:
  * @self: an #LrgVectorImage
  * @out_w: (out) (nullable): return location for the intrinsic width
@@ -596,7 +596,7 @@ lrg_vector_image_get_source_size (LrgVectorImage *self,
     return self->src_bounds_valid;
 }
 
-/**
+/*
  * lrg_vector_image_get_shape_count:
  * @self: an #LrgVectorImage
  *
@@ -612,7 +612,7 @@ lrg_vector_image_get_shape_count (LrgVectorImage *self)
     return self->n_shapes;
 }
 
-/**
+/*
  * lrg_vector_image_render:
  * @self: an #LrgVectorImage
  * @width: target width in pixels (must be > 0)
@@ -643,7 +643,7 @@ lrg_vector_image_render (LrgVectorImage  *self,
     return do_render (self, width, height, bg_or_null, preserve_aspect);
 }
 
-/**
+/*
  * lrg_vector_image_render_to_texture:
  * @self: an #LrgVectorImage
  * @width: target width in pixels (must be > 0)

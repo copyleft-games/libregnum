@@ -380,7 +380,7 @@ lrg_reel_caption_clip_init (LrgReelCaptionClip *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_caption_clip_new:
  *
  * Creates a new #LrgReelCaptionClip with an empty subtitle track.
@@ -395,7 +395,7 @@ lrg_reel_caption_clip_new (void)
     return g_object_new (LRG_TYPE_REEL_CAPTION_CLIP, NULL);
 }
 
-/**
+/*
  * lrg_reel_caption_clip_new_from_srt:
  * @path: (type filename): path to an SRT subtitle file.
  * @error: (nullable): return location for a #GError, or %NULL.
@@ -431,7 +431,7 @@ lrg_reel_caption_clip_new_from_srt (const gchar  *path,
     return self;
 }
 
-/**
+/*
  * lrg_reel_caption_clip_new_from_vtt:
  * @path: (type filename): path to a WebVTT subtitle file.
  * @error: (nullable): return location for a #GError, or %NULL.
@@ -471,7 +471,7 @@ lrg_reel_caption_clip_new_from_vtt (const gchar  *path,
  * Track accessor
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_caption_clip_set_track:
  * @self: an #LrgReelCaptionClip
  * @track: (transfer none) (nullable): the #LrgVideoSubtitleTrack to use, or
@@ -497,7 +497,7 @@ lrg_reel_caption_clip_set_track (LrgReelCaptionClip    *self,
         self->track = g_object_ref (track);
 }
 
-/**
+/*
  * lrg_reel_caption_clip_get_track:
  * @self: an #LrgReelCaptionClip
  *
@@ -518,7 +518,7 @@ lrg_reel_caption_clip_get_track (LrgReelCaptionClip *self)
  * Style accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_caption_clip_set_font_size:
  * @self: an #LrgReelCaptionClip
  * @font_size: font size in pixels (> 0).
@@ -541,7 +541,7 @@ lrg_reel_caption_clip_set_font_size (LrgReelCaptionClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FONT_SIZE]);
 }
 
-/**
+/*
  * lrg_reel_caption_clip_get_font_size:
  * @self: an #LrgReelCaptionClip
  *
@@ -557,7 +557,7 @@ lrg_reel_caption_clip_get_font_size (LrgReelCaptionClip *self)
     return self->font_size;
 }
 
-/**
+/*
  * lrg_reel_caption_clip_set_color:
  * @self: an #LrgReelCaptionClip
  * @color: the text color.
@@ -580,7 +580,7 @@ lrg_reel_caption_clip_set_color (LrgReelCaptionClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLOR]);
 }
 
-/**
+/*
  * lrg_reel_caption_clip_get_color:
  * @self: an #LrgReelCaptionClip
  * @out_color: (out caller-allocates): return location for the color.
@@ -599,7 +599,7 @@ lrg_reel_caption_clip_get_color (LrgReelCaptionClip *self,
     memcpy (out_color, &self->color, sizeof (GrlColor));
 }
 
-/**
+/*
  * lrg_reel_caption_clip_set_align:
  * @self: an #LrgReelCaptionClip
  * @align: the horizontal text alignment.
@@ -621,7 +621,7 @@ lrg_reel_caption_clip_set_align (LrgReelCaptionClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ALIGN]);
 }
 
-/**
+/*
  * lrg_reel_caption_clip_get_align:
  * @self: an #LrgReelCaptionClip
  *
@@ -638,7 +638,7 @@ lrg_reel_caption_clip_get_align (LrgReelCaptionClip *self)
     return self->align;
 }
 
-/**
+/*
  * lrg_reel_caption_clip_set_margin_bottom:
  * @self: an #LrgReelCaptionClip
  * @margin_bottom: distance in pixels from the bottom edge of the frame.
@@ -662,7 +662,7 @@ lrg_reel_caption_clip_set_margin_bottom (LrgReelCaptionClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MARGIN_BOTTOM]);
 }
 
-/**
+/*
  * lrg_reel_caption_clip_get_margin_bottom:
  * @self: an #LrgReelCaptionClip
  *
@@ -678,7 +678,7 @@ lrg_reel_caption_clip_get_margin_bottom (LrgReelCaptionClip *self)
     return self->margin_bottom;
 }
 
-/**
+/*
  * lrg_reel_caption_clip_set_box:
  * @self: an #LrgReelCaptionClip
  * @box: %TRUE to draw a background box behind the caption text.
@@ -702,7 +702,7 @@ lrg_reel_caption_clip_set_box (LrgReelCaptionClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BOX]);
 }
 
-/**
+/*
  * lrg_reel_caption_clip_get_box:
  * @self: an #LrgReelCaptionClip
  *
@@ -718,7 +718,7 @@ lrg_reel_caption_clip_get_box (LrgReelCaptionClip *self)
     return self->box;
 }
 
-/**
+/*
  * lrg_reel_caption_clip_set_box_color:
  * @self: an #LrgReelCaptionClip
  * @color: the background box fill color (alpha controls opacity).
@@ -741,7 +741,7 @@ lrg_reel_caption_clip_set_box_color (LrgReelCaptionClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BOX_COLOR]);
 }
 
-/**
+/*
  * lrg_reel_caption_clip_get_box_color:
  * @self: an #LrgReelCaptionClip
  * @out_color: (out caller-allocates): return location for the box color.
@@ -797,7 +797,7 @@ find_whisper_exe (void)
     return NULL;
 }
 
-/**
+/*
  * lrg_reel_is_whisper_available:
  *
  * Tests whether a supported speech-recognition command-line tool is installed
@@ -842,7 +842,7 @@ is_cpp_cli (const gchar *exe_basename)
             g_strcmp0 (exe_basename, "main")        == 0);
 }
 
-/**
+/*
  * lrg_reel_transcribe_audio:
  * @audio: an #LrgWaveData containing the audio to transcribe.
  * @language: (nullable): BCP-47 language tag (e.g. "en", "es"), or %NULL to

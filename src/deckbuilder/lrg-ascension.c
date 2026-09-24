@@ -214,7 +214,7 @@ lrg_ascension_init (LrgAscension *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_ascension_new:
  * @level: ascension level (0 = normal, 1-20 = ascension)
  *
@@ -232,7 +232,7 @@ lrg_ascension_new (gint level)
                          NULL);
 }
 
-/**
+/*
  * lrg_ascension_new_default:
  * @level: ascension level
  *
@@ -355,7 +355,7 @@ lrg_ascension_new_default (gint level)
     return self;
 }
 
-/**
+/*
  * lrg_ascension_get_level:
  * @self: a #LrgAscension
  *
@@ -373,7 +373,7 @@ lrg_ascension_get_level (LrgAscension *self)
     return self->level;
 }
 
-/**
+/*
  * lrg_ascension_get_name:
  * @self: a #LrgAscension
  *
@@ -391,7 +391,7 @@ lrg_ascension_get_name (LrgAscension *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_ascension_get_description:
  * @self: a #LrgAscension
  *
@@ -409,7 +409,7 @@ lrg_ascension_get_description (LrgAscension *self)
     return self->description;
 }
 
-/**
+/*
  * lrg_ascension_set_description:
  * @self: a #LrgAscension
  * @description: (nullable): the description
@@ -427,7 +427,7 @@ lrg_ascension_set_description (LrgAscension *self,
     g_object_set (self, "description", description, NULL);
 }
 
-/**
+/*
  * lrg_ascension_get_modifiers:
  * @self: a #LrgAscension
  *
@@ -445,7 +445,7 @@ lrg_ascension_get_modifiers (LrgAscension *self)
     return self->modifiers;
 }
 
-/**
+/*
  * lrg_ascension_has_modifier:
  * @self: a #LrgAscension
  * @modifier: modifier to check
@@ -465,7 +465,7 @@ lrg_ascension_has_modifier (LrgAscension         *self,
     return (self->modifiers & modifier) != 0;
 }
 
-/**
+/*
  * lrg_ascension_add_modifier:
  * @self: a #LrgAscension
  * @modifier: modifier to add
@@ -483,7 +483,7 @@ lrg_ascension_add_modifier (LrgAscension         *self,
     self->modifiers |= modifier;
 }
 
-/**
+/*
  * lrg_ascension_get_hp_reduction:
  * @self: a #LrgAscension
  *
@@ -501,7 +501,7 @@ lrg_ascension_get_hp_reduction (LrgAscension *self)
     return self->hp_reduction;
 }
 
-/**
+/*
  * lrg_ascension_set_hp_reduction:
  * @self: a #LrgAscension
  * @reduction: HP reduction amount
@@ -520,7 +520,7 @@ lrg_ascension_set_hp_reduction (LrgAscension *self,
     self->hp_reduction = reduction;
 }
 
-/**
+/*
  * lrg_ascension_get_gold_reduction:
  * @self: a #LrgAscension
  *
@@ -538,7 +538,7 @@ lrg_ascension_get_gold_reduction (LrgAscension *self)
     return self->gold_reduction;
 }
 
-/**
+/*
  * lrg_ascension_set_gold_reduction:
  * @self: a #LrgAscension
  * @reduction: gold reduction amount
@@ -557,7 +557,7 @@ lrg_ascension_set_gold_reduction (LrgAscension *self,
     self->gold_reduction = reduction;
 }
 
-/**
+/*
  * lrg_ascension_get_heal_reduction_percent:
  * @self: a #LrgAscension
  *
@@ -575,7 +575,7 @@ lrg_ascension_get_heal_reduction_percent (LrgAscension *self)
     return self->heal_reduction_percent;
 }
 
-/**
+/*
  * lrg_ascension_set_heal_reduction_percent:
  * @self: a #LrgAscension
  * @percent: healing reduction percentage
@@ -594,7 +594,7 @@ lrg_ascension_set_heal_reduction_percent (LrgAscension *self,
     self->heal_reduction_percent = percent;
 }
 
-/**
+/*
  * lrg_ascension_get_enemy_hp_increase_percent:
  * @self: a #LrgAscension
  *
@@ -612,7 +612,7 @@ lrg_ascension_get_enemy_hp_increase_percent (LrgAscension *self)
     return self->enemy_hp_increase_percent;
 }
 
-/**
+/*
  * lrg_ascension_set_enemy_hp_increase_percent:
  * @self: a #LrgAscension
  * @percent: enemy HP increase percentage
@@ -631,7 +631,7 @@ lrg_ascension_set_enemy_hp_increase_percent (LrgAscension *self,
     self->enemy_hp_increase_percent = percent;
 }
 
-/**
+/*
  * lrg_ascension_get_enemy_damage_increase_percent:
  * @self: a #LrgAscension
  *
@@ -649,7 +649,7 @@ lrg_ascension_get_enemy_damage_increase_percent (LrgAscension *self)
     return self->enemy_damage_increase_percent;
 }
 
-/**
+/*
  * lrg_ascension_set_enemy_damage_increase_percent:
  * @self: a #LrgAscension
  * @percent: enemy damage increase percentage
@@ -668,7 +668,7 @@ lrg_ascension_set_enemy_damage_increase_percent (LrgAscension *self,
     self->enemy_damage_increase_percent = percent;
 }
 
-/**
+/*
  * lrg_ascension_apply_hp:
  * @self: a #LrgAscension
  * @base_hp: base HP before modifiers
@@ -694,7 +694,7 @@ lrg_ascension_apply_hp (LrgAscension *self,
     return result;
 }
 
-/**
+/*
  * lrg_ascension_apply_gold:
  * @self: a #LrgAscension
  * @base_gold: base gold before modifiers
@@ -720,7 +720,7 @@ lrg_ascension_apply_gold (LrgAscension *self,
     return result;
 }
 
-/**
+/*
  * lrg_ascension_apply_heal:
  * @self: a #LrgAscension
  * @base_heal: base heal amount before modifiers
@@ -749,7 +749,7 @@ lrg_ascension_apply_heal (LrgAscension *self,
     return result;
 }
 
-/**
+/*
  * lrg_ascension_apply_enemy_hp:
  * @self: a #LrgAscension
  * @base_hp: base enemy HP
@@ -775,7 +775,7 @@ lrg_ascension_apply_enemy_hp (LrgAscension *self,
     return result;
 }
 
-/**
+/*
  * lrg_ascension_apply_enemy_damage:
  * @self: a #LrgAscension
  * @base_damage: base enemy damage

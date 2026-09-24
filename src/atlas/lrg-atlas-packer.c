@@ -12,7 +12,7 @@
 
 #include "lrg-atlas-packer.h"
 
-/**
+/*
  * LrgAtlasPackerImage:
  *
  * Internal structure for images to be packed.
@@ -291,7 +291,7 @@ lrg_atlas_packer_init (LrgAtlasPacker *self)
     self->images_by_name = g_hash_table_new (g_str_hash, g_str_equal);
 }
 
-/**
+/*
  * lrg_atlas_packer_new:
  *
  * Creates a new atlas packer.
@@ -306,7 +306,7 @@ lrg_atlas_packer_new (void)
     return g_object_new (LRG_TYPE_ATLAS_PACKER, NULL);
 }
 
-/**
+/*
  * lrg_atlas_packer_set_max_size:
  * @self: A #LrgAtlasPacker
  * @width: Maximum atlas width
@@ -328,7 +328,7 @@ lrg_atlas_packer_set_max_size (LrgAtlasPacker *self,
     self->is_packed = FALSE;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_max_width:
  * @self: A #LrgAtlasPacker
  *
@@ -345,7 +345,7 @@ lrg_atlas_packer_get_max_width (LrgAtlasPacker *self)
     return self->max_width;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_max_height:
  * @self: A #LrgAtlasPacker
  *
@@ -362,7 +362,7 @@ lrg_atlas_packer_get_max_height (LrgAtlasPacker *self)
     return self->max_height;
 }
 
-/**
+/*
  * lrg_atlas_packer_set_padding:
  * @self: A #LrgAtlasPacker
  * @padding: Padding between images in pixels
@@ -381,7 +381,7 @@ lrg_atlas_packer_set_padding (LrgAtlasPacker *self,
     self->is_packed = FALSE;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_padding:
  * @self: A #LrgAtlasPacker
  *
@@ -398,7 +398,7 @@ lrg_atlas_packer_get_padding (LrgAtlasPacker *self)
     return self->padding;
 }
 
-/**
+/*
  * lrg_atlas_packer_set_method:
  * @self: A #LrgAtlasPacker
  * @method: The packing algorithm to use
@@ -417,7 +417,7 @@ lrg_atlas_packer_set_method (LrgAtlasPacker   *self,
     self->is_packed = FALSE;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_method:
  * @self: A #LrgAtlasPacker
  *
@@ -434,7 +434,7 @@ lrg_atlas_packer_get_method (LrgAtlasPacker *self)
     return self->method;
 }
 
-/**
+/*
  * lrg_atlas_packer_set_power_of_two:
  * @self: A #LrgAtlasPacker
  * @power_of_two: Whether to use power-of-two dimensions
@@ -453,7 +453,7 @@ lrg_atlas_packer_set_power_of_two (LrgAtlasPacker *self,
     self->is_packed = FALSE;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_power_of_two:
  * @self: A #LrgAtlasPacker
  *
@@ -470,7 +470,7 @@ lrg_atlas_packer_get_power_of_two (LrgAtlasPacker *self)
     return self->power_of_two;
 }
 
-/**
+/*
  * lrg_atlas_packer_set_allow_rotation:
  * @self: A #LrgAtlasPacker
  * @allow: Whether to allow 90-degree rotation
@@ -489,7 +489,7 @@ lrg_atlas_packer_set_allow_rotation (LrgAtlasPacker *self,
     self->is_packed = FALSE;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_allow_rotation:
  * @self: A #LrgAtlasPacker
  *
@@ -506,7 +506,7 @@ lrg_atlas_packer_get_allow_rotation (LrgAtlasPacker *self)
     return self->allow_rotation;
 }
 
-/**
+/*
  * lrg_atlas_packer_add_image:
  * @self: A #LrgAtlasPacker
  * @name: Unique name for the image (used as region name)
@@ -551,7 +551,7 @@ lrg_atlas_packer_add_image (LrgAtlasPacker *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_atlas_packer_remove_image:
  * @self: A #LrgAtlasPacker
  * @name: Name of the image to remove
@@ -583,7 +583,7 @@ lrg_atlas_packer_remove_image (LrgAtlasPacker *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_atlas_packer_clear_images:
  * @self: A #LrgAtlasPacker
  *
@@ -604,7 +604,7 @@ lrg_atlas_packer_clear_images (LrgAtlasPacker *self)
     self->packed_height = 0;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_image_count:
  * @self: A #LrgAtlasPacker
  *
@@ -982,7 +982,7 @@ no_space:
     return FALSE;
 }
 
-/**
+/*
  * lrg_atlas_packer_pack:
  * @self: A #LrgAtlasPacker
  * @error: (nullable): Return location for error
@@ -1042,7 +1042,7 @@ lrg_atlas_packer_pack (LrgAtlasPacker  *self,
     return result;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_packed_width:
  * @self: A #LrgAtlasPacker
  *
@@ -1059,7 +1059,7 @@ lrg_atlas_packer_get_packed_width (LrgAtlasPacker *self)
     return self->is_packed ? self->packed_width : 0;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_packed_height:
  * @self: A #LrgAtlasPacker
  *
@@ -1076,7 +1076,7 @@ lrg_atlas_packer_get_packed_height (LrgAtlasPacker *self)
     return self->is_packed ? self->packed_height : 0;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_efficiency:
  * @self: A #LrgAtlasPacker
  *
@@ -1114,7 +1114,7 @@ lrg_atlas_packer_get_efficiency (LrgAtlasPacker *self)
     return (gfloat)used_area / (gfloat)total_area;
 }
 
-/**
+/*
  * lrg_atlas_packer_create_atlas:
  * @self: A #LrgAtlasPacker
  * @name: Name for the atlas
@@ -1168,7 +1168,7 @@ lrg_atlas_packer_create_atlas (LrgAtlasPacker *self,
     return atlas;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_image_position:
  * @self: A #LrgAtlasPacker
  * @name: Name of the image
@@ -1209,7 +1209,7 @@ lrg_atlas_packer_get_image_position (LrgAtlasPacker *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_atlas_packer_get_image_user_data:
  * @self: A #LrgAtlasPacker
  * @name: Name of the image
@@ -1236,7 +1236,7 @@ lrg_atlas_packer_get_image_user_data (LrgAtlasPacker *self,
     return image->user_data;
 }
 
-/**
+/*
  * lrg_atlas_packer_foreach_image:
  * @self: A #LrgAtlasPacker
  * @func: (scope call): Function to call for each image

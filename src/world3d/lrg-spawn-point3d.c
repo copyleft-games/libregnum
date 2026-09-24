@@ -33,7 +33,7 @@ free_gvalue (gpointer data)
 G_DEFINE_BOXED_TYPE (LrgSpawnPoint3D, lrg_spawn_point3d,
                      lrg_spawn_point3d_copy, lrg_spawn_point3d_free)
 
-/**
+/*
  * lrg_spawn_point3d_new:
  * @id: Unique identifier for this spawn point
  * @x: X position
@@ -72,7 +72,7 @@ lrg_spawn_point3d_new (const gchar  *id,
     return self;
 }
 
-/**
+/*
  * lrg_spawn_point3d_new_from_vector:
  * @id: Unique identifier for this spawn point
  * @position: (transfer none): World position
@@ -93,7 +93,7 @@ lrg_spawn_point3d_new_from_vector (const gchar      *id,
     return lrg_spawn_point3d_new (id, position->x, position->y, position->z, spawn_type);
 }
 
-/**
+/*
  * lrg_spawn_point3d_copy:
  * @self: (nullable): A #LrgSpawnPoint3D
  *
@@ -135,7 +135,7 @@ lrg_spawn_point3d_copy (const LrgSpawnPoint3D *self)
     return copy;
 }
 
-/**
+/*
  * lrg_spawn_point3d_free:
  * @self: (nullable): A #LrgSpawnPoint3D
  *
@@ -153,7 +153,7 @@ lrg_spawn_point3d_free (LrgSpawnPoint3D *self)
     g_free (self);
 }
 
-/**
+/*
  * lrg_spawn_point3d_get_id:
  * @self: A #LrgSpawnPoint3D
  *
@@ -169,7 +169,7 @@ lrg_spawn_point3d_get_id (const LrgSpawnPoint3D *self)
     return self->id;
 }
 
-/**
+/*
  * lrg_spawn_point3d_get_position:
  * @self: A #LrgSpawnPoint3D
  *
@@ -185,7 +185,7 @@ lrg_spawn_point3d_get_position (const LrgSpawnPoint3D *self)
     return grl_vector3_new (self->position.x, self->position.y, self->position.z);
 }
 
-/**
+/*
  * lrg_spawn_point3d_get_rotation:
  * @self: A #LrgSpawnPoint3D
  *
@@ -201,7 +201,7 @@ lrg_spawn_point3d_get_rotation (const LrgSpawnPoint3D *self)
     return grl_vector3_new (self->rotation.x, self->rotation.y, self->rotation.z);
 }
 
-/**
+/*
  * lrg_spawn_point3d_set_rotation:
  * @self: A #LrgSpawnPoint3D
  * @rotation: (transfer none): New rotation (euler angles in degrees)
@@ -220,7 +220,7 @@ lrg_spawn_point3d_set_rotation (LrgSpawnPoint3D  *self,
     self->rotation.z = rotation->z;
 }
 
-/**
+/*
  * lrg_spawn_point3d_get_spawn_type:
  * @self: A #LrgSpawnPoint3D
  *
@@ -236,7 +236,7 @@ lrg_spawn_point3d_get_spawn_type (const LrgSpawnPoint3D *self)
     return self->spawn_type;
 }
 
-/**
+/*
  * lrg_spawn_point3d_get_entity_type:
  * @self: A #LrgSpawnPoint3D
  *
@@ -252,7 +252,7 @@ lrg_spawn_point3d_get_entity_type (const LrgSpawnPoint3D *self)
     return self->entity_type;
 }
 
-/**
+/*
  * lrg_spawn_point3d_set_entity_type:
  * @self: A #LrgSpawnPoint3D
  * @entity_type: (nullable): Entity type name to spawn
@@ -269,7 +269,7 @@ lrg_spawn_point3d_set_entity_type (LrgSpawnPoint3D *self,
     self->entity_type = g_strdup (entity_type);
 }
 
-/**
+/*
  * lrg_spawn_point3d_set_property:
  * @self: A #LrgSpawnPoint3D
  * @key: Property key
@@ -296,7 +296,7 @@ lrg_spawn_point3d_set_property (LrgSpawnPoint3D *self,
     g_hash_table_insert (self->properties, g_strdup (key), new_value);
 }
 
-/**
+/*
  * lrg_spawn_point3d_get_property:
  * @self: A #LrgSpawnPoint3D
  * @key: Property key
@@ -315,7 +315,7 @@ lrg_spawn_point3d_get_property (const LrgSpawnPoint3D *self,
     return g_hash_table_lookup (self->properties, key);
 }
 
-/**
+/*
  * lrg_spawn_point3d_has_property:
  * @self: A #LrgSpawnPoint3D
  * @key: Property key
@@ -334,7 +334,7 @@ lrg_spawn_point3d_has_property (const LrgSpawnPoint3D *self,
     return g_hash_table_contains (self->properties, key);
 }
 
-/**
+/*
  * lrg_spawn_point3d_get_property_keys:
  * @self: A #LrgSpawnPoint3D
  *

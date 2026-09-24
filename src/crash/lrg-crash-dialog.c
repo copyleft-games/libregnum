@@ -47,7 +47,7 @@ lrg_crash_dialog_init (LrgCrashDialog *self)
 {
 }
 
-/**
+/*
  * lrg_crash_dialog_show:
  * @self: an #LrgCrashDialog
  * @crash_info: crash information string
@@ -70,7 +70,7 @@ lrg_crash_dialog_show (LrgCrashDialog *self,
     klass->show (self, crash_info);
 }
 
-/**
+/*
  * lrg_crash_dialog_hide:
  * @self: an #LrgCrashDialog
  *

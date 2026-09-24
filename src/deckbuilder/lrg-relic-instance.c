@@ -278,7 +278,7 @@ lrg_relic_instance_init (LrgRelicInstance *self)
  * Public API - Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_relic_instance_new:
  * @def: the relic definition
  *

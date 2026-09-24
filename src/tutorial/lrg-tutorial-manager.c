@@ -262,7 +262,7 @@ lrg_tutorial_manager_init (LrgTutorialManager *self)
     self->active_tutorial = NULL;
 }
 
-/**
+/*
  * lrg_tutorial_manager_new:
  *
  * Creates a new tutorial manager.
@@ -277,7 +277,7 @@ lrg_tutorial_manager_new (void)
     return g_object_new (LRG_TYPE_TUTORIAL_MANAGER, NULL);
 }
 
-/**
+/*
  * lrg_tutorial_manager_register:
  * @self: A #LrgTutorialManager
  * @tutorial: (transfer none): The tutorial to register
@@ -330,7 +330,7 @@ lrg_tutorial_manager_register (LrgTutorialManager *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_tutorial_manager_unregister:
  * @self: A #LrgTutorialManager
  * @tutorial_id: ID of the tutorial to unregister
@@ -371,7 +371,7 @@ lrg_tutorial_manager_unregister (LrgTutorialManager *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_tutorial_manager_get_tutorial:
  * @self: A #LrgTutorialManager
  * @tutorial_id: ID of the tutorial to get
@@ -392,7 +392,7 @@ lrg_tutorial_manager_get_tutorial (LrgTutorialManager *self,
     return g_hash_table_lookup (self->tutorials, tutorial_id);
 }
 
-/**
+/*
  * lrg_tutorial_manager_get_tutorials:
  * @self: A #LrgTutorialManager
  *
@@ -410,7 +410,7 @@ lrg_tutorial_manager_get_tutorials (LrgTutorialManager *self)
     return g_hash_table_get_values (self->tutorials);
 }
 
-/**
+/*
  * lrg_tutorial_manager_load_from_file:
  * @self: A #LrgTutorialManager
  * @path: Path to the tutorial definition file (YAML)
@@ -447,7 +447,7 @@ lrg_tutorial_manager_load_from_file (LrgTutorialManager  *self,
     return lrg_tutorial_manager_get_tutorial (self, lrg_tutorial_get_id (tutorial));
 }
 
-/**
+/*
  * lrg_tutorial_manager_load_from_directory:
  * @self: A #LrgTutorialManager
  * @directory: Path to directory containing tutorial files
@@ -497,7 +497,7 @@ lrg_tutorial_manager_load_from_directory (LrgTutorialManager  *self,
     return count;
 }
 
-/**
+/*
  * lrg_tutorial_manager_get_active_tutorial:
  * @self: A #LrgTutorialManager
  *
@@ -514,7 +514,7 @@ lrg_tutorial_manager_get_active_tutorial (LrgTutorialManager *self)
     return self->active_tutorial;
 }
 
-/**
+/*
  * lrg_tutorial_manager_start_tutorial:
  * @self: A #LrgTutorialManager
  * @tutorial_id: ID of the tutorial to start
@@ -553,7 +553,7 @@ lrg_tutorial_manager_start_tutorial (LrgTutorialManager *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_tutorial_manager_stop_active:
  * @self: A #LrgTutorialManager
  *
@@ -574,7 +574,7 @@ lrg_tutorial_manager_stop_active (LrgTutorialManager *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ACTIVE_TUTORIAL]);
 }
 
-/**
+/*
  * lrg_tutorial_manager_skip_active:
  * @self: A #LrgTutorialManager
  *
@@ -595,7 +595,7 @@ lrg_tutorial_manager_skip_active (LrgTutorialManager *self)
     return lrg_tutorial_skip (self->active_tutorial);
 }
 
-/**
+/*
  * lrg_tutorial_manager_advance_active:
  * @self: A #LrgTutorialManager
  *
@@ -616,7 +616,7 @@ lrg_tutorial_manager_advance_active (LrgTutorialManager *self)
     return lrg_tutorial_advance (self->active_tutorial);
 }
 
-/**
+/*
  * lrg_tutorial_manager_is_completed:
  * @self: A #LrgTutorialManager
  * @tutorial_id: ID of the tutorial to check
@@ -644,7 +644,7 @@ lrg_tutorial_manager_is_completed (LrgTutorialManager *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_tutorial_manager_mark_completed:
  * @self: A #LrgTutorialManager
  * @tutorial_id: ID of the tutorial to mark
@@ -664,7 +664,7 @@ lrg_tutorial_manager_mark_completed (LrgTutorialManager *self,
                          GINT_TO_POINTER (TRUE));
 }
 
-/**
+/*
  * lrg_tutorial_manager_clear_completion:
  * @self: A #LrgTutorialManager
  * @tutorial_id: ID of the tutorial to clear
@@ -683,7 +683,7 @@ lrg_tutorial_manager_clear_completion (LrgTutorialManager *self,
     g_hash_table_remove (self->completed, tutorial_id);
 }
 
-/**
+/*
  * lrg_tutorial_manager_clear_all_completions:
  * @self: A #LrgTutorialManager
  *
@@ -699,7 +699,7 @@ lrg_tutorial_manager_clear_all_completions (LrgTutorialManager *self)
     g_hash_table_remove_all (self->completed);
 }
 
-/**
+/*
  * lrg_tutorial_manager_update:
  * @self: A #LrgTutorialManager
  * @delta_time: Time since last update in seconds
@@ -720,7 +720,7 @@ lrg_tutorial_manager_update (LrgTutorialManager *self,
     }
 }
 
-/**
+/*
  * lrg_tutorial_manager_save_progress:
  * @self: A #LrgTutorialManager
  * @path: Path to save progress to
@@ -764,7 +764,7 @@ lrg_tutorial_manager_save_progress (LrgTutorialManager  *self,
     return g_file_set_contents (path, content->str, (gssize)content->len, error);
 }
 
-/**
+/*
  * lrg_tutorial_manager_load_progress:
  * @self: A #LrgTutorialManager
  * @path: Path to load progress from
@@ -831,7 +831,7 @@ lrg_tutorial_manager_load_progress (LrgTutorialManager  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_tutorial_manager_set_condition_callback:
  * @self: A #LrgTutorialManager
  * @callback: (scope notified) (nullable): The callback function

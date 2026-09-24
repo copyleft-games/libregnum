@@ -70,7 +70,7 @@ lrg_reel_player_init (LrgReelPlayer *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_player_new:
  * @reel: (transfer none): the #LrgReel to preview.
  *
@@ -97,7 +97,7 @@ lrg_reel_player_new (LrgReel *reel)
     return self;
 }
 
-/**
+/*
  * lrg_reel_player_run:
  * @self: an #LrgReelPlayer
  *
@@ -254,7 +254,7 @@ lrg_reel_player_run (LrgReelPlayer *self)
     g_clear_object (&win);
 }
 
-/**
+/*
  * lrg_reel_player_play:
  * @self: an #LrgReelPlayer
  *
@@ -269,7 +269,7 @@ lrg_reel_player_play (LrgReelPlayer *self)
     self->playing = TRUE;
 }
 
-/**
+/*
  * lrg_reel_player_pause:
  * @self: an #LrgReelPlayer
  *
@@ -284,7 +284,7 @@ lrg_reel_player_pause (LrgReelPlayer *self)
     self->playing = FALSE;
 }
 
-/**
+/*
  * lrg_reel_player_toggle:
  * @self: an #LrgReelPlayer
  *
@@ -299,7 +299,7 @@ lrg_reel_player_toggle (LrgReelPlayer *self)
     self->playing = !self->playing;
 }
 
-/**
+/*
  * lrg_reel_player_seek:
  * @self: an #LrgReelPlayer
  * @frame: the target frame number.
@@ -328,7 +328,7 @@ lrg_reel_player_seek (LrgReelPlayer *self,
     self->accumulator = 0.0;
 }
 
-/**
+/*
  * lrg_reel_player_set_loop:
  * @self: an #LrgReelPlayer
  * @loop: %TRUE to loop, %FALSE to stop at the last frame.
@@ -346,7 +346,7 @@ lrg_reel_player_set_loop (LrgReelPlayer *self,
     self->looping = loop;
 }
 
-/**
+/*
  * lrg_reel_player_get_loop:
  * @self: an #LrgReelPlayer
  *
@@ -361,7 +361,7 @@ lrg_reel_player_get_loop (LrgReelPlayer *self)
     return self->looping;
 }
 
-/**
+/*
  * lrg_reel_player_get_current_frame:
  * @self: an #LrgReelPlayer
  *
@@ -376,7 +376,7 @@ lrg_reel_player_get_current_frame (LrgReelPlayer *self)
     return self->cur_frame;
 }
 
-/**
+/*
  * lrg_reel_player_get_playing:
  * @self: an #LrgReelPlayer
  *

@@ -215,7 +215,7 @@ lrg_nine_slice_init (LrgNineSlice *self)
     self->mode = LRG_NINE_SLICE_MODE_STRETCH;
 }
 
-/**
+/*
  * lrg_nine_slice_new:
  * @name: Name identifier for the nine-slice
  *
@@ -233,7 +233,7 @@ lrg_nine_slice_new (const gchar *name)
                          NULL);
 }
 
-/**
+/*
  * lrg_nine_slice_new_from_region:
  * @name: Name identifier
  * @region: Source atlas region
@@ -273,7 +273,7 @@ lrg_nine_slice_new_from_region (const gchar          *name,
     return self;
 }
 
-/**
+/*
  * lrg_nine_slice_new_from_file:
  * @path: Path to the nine-slice definition file (YAML)
  * @error: (nullable): Return location for error
@@ -379,7 +379,7 @@ lrg_nine_slice_new_from_file (const gchar  *path,
     return self;
 }
 
-/**
+/*
  * lrg_nine_slice_get_name:
  * @self: A #LrgNineSlice
  *
@@ -396,7 +396,7 @@ lrg_nine_slice_get_name (LrgNineSlice *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_nine_slice_get_source_region:
  * @self: A #LrgNineSlice
  *
@@ -413,7 +413,7 @@ lrg_nine_slice_get_source_region (LrgNineSlice *self)
     return self->source_region;
 }
 
-/**
+/*
  * lrg_nine_slice_set_source_region:
  * @self: A #LrgNineSlice
  * @region: The source region (copied)
@@ -436,7 +436,7 @@ lrg_nine_slice_set_source_region (LrgNineSlice         *self,
     }
 }
 
-/**
+/*
  * lrg_nine_slice_get_mode:
  * @self: A #LrgNineSlice
  *
@@ -453,7 +453,7 @@ lrg_nine_slice_get_mode (LrgNineSlice *self)
     return self->mode;
 }
 
-/**
+/*
  * lrg_nine_slice_set_mode:
  * @self: A #LrgNineSlice
  * @mode: The fill mode
@@ -472,7 +472,7 @@ lrg_nine_slice_set_mode (LrgNineSlice    *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MODE]);
 }
 
-/**
+/*
  * lrg_nine_slice_get_border_left:
  * @self: A #LrgNineSlice
  *
@@ -489,7 +489,7 @@ lrg_nine_slice_get_border_left (LrgNineSlice *self)
     return self->border_left;
 }
 
-/**
+/*
  * lrg_nine_slice_get_border_right:
  * @self: A #LrgNineSlice
  *
@@ -506,7 +506,7 @@ lrg_nine_slice_get_border_right (LrgNineSlice *self)
     return self->border_right;
 }
 
-/**
+/*
  * lrg_nine_slice_get_border_top:
  * @self: A #LrgNineSlice
  *
@@ -523,7 +523,7 @@ lrg_nine_slice_get_border_top (LrgNineSlice *self)
     return self->border_top;
 }
 
-/**
+/*
  * lrg_nine_slice_get_border_bottom:
  * @self: A #LrgNineSlice
  *
@@ -540,7 +540,7 @@ lrg_nine_slice_get_border_bottom (LrgNineSlice *self)
     return self->border_bottom;
 }
 
-/**
+/*
  * lrg_nine_slice_get_borders:
  * @self: A #LrgNineSlice
  * @out_left: (out) (nullable): Return location for left border
@@ -571,7 +571,7 @@ lrg_nine_slice_get_borders (LrgNineSlice *self,
         *out_bottom = self->border_bottom;
 }
 
-/**
+/*
  * lrg_nine_slice_set_borders:
  * @self: A #LrgNineSlice
  * @left: Left border width
@@ -607,7 +607,7 @@ lrg_nine_slice_set_borders (LrgNineSlice *self,
     g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_nine_slice_set_uniform_border:
  * @self: A #LrgNineSlice
  * @border: Border size for all sides
@@ -623,7 +623,7 @@ lrg_nine_slice_set_uniform_border (LrgNineSlice *self,
     lrg_nine_slice_set_borders (self, border, border, border, border);
 }
 
-/**
+/*
  * lrg_nine_slice_get_min_width:
  * @self: A #LrgNineSlice
  *
@@ -640,7 +640,7 @@ lrg_nine_slice_get_min_width (LrgNineSlice *self)
     return self->border_left + self->border_right;
 }
 
-/**
+/*
  * lrg_nine_slice_get_min_height:
  * @self: A #LrgNineSlice
  *
@@ -657,7 +657,7 @@ lrg_nine_slice_get_min_height (LrgNineSlice *self)
     return self->border_top + self->border_bottom;
 }
 
-/**
+/*
  * lrg_nine_slice_get_center_width:
  * @self: A #LrgNineSlice
  *
@@ -681,7 +681,7 @@ lrg_nine_slice_get_center_width (LrgNineSlice *self)
     return source_width - self->border_left - self->border_right;
 }
 
-/**
+/*
  * lrg_nine_slice_get_center_height:
  * @self: A #LrgNineSlice
  *
@@ -705,7 +705,7 @@ lrg_nine_slice_get_center_height (LrgNineSlice *self)
     return source_height - self->border_top - self->border_bottom;
 }
 
-/**
+/*
  * lrg_nine_slice_get_patch_rect:
  * @self: A #LrgNineSlice
  * @patch: Which patch to get
@@ -810,7 +810,7 @@ lrg_nine_slice_get_patch_rect (LrgNineSlice     *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_nine_slice_get_patch_region:
  * @self: A #LrgNineSlice
  * @patch: Which patch to get
@@ -871,7 +871,7 @@ lrg_nine_slice_get_patch_region (LrgNineSlice     *self,
     return region;
 }
 
-/**
+/*
  * lrg_nine_slice_calculate_dest_rects:
  * @self: A #LrgNineSlice
  * @dest_x: Destination X position
@@ -988,7 +988,7 @@ lrg_nine_slice_calculate_dest_rects (LrgNineSlice *self,
     out_rects[35] = bottom;
 }
 
-/**
+/*
  * lrg_nine_slice_calculate_tile_count:
  * @self: A #LrgNineSlice
  * @dest_width: Destination width
@@ -1037,7 +1037,7 @@ lrg_nine_slice_calculate_tile_count (LrgNineSlice *self,
     }
 }
 
-/**
+/*
  * lrg_nine_slice_save_to_file:
  * @self: A #LrgNineSlice
  * @path: Path to save to

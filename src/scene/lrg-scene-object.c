@@ -265,7 +265,7 @@ lrg_scene_object_init (LrgSceneObject *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_object_new:
  * @name: The object name (part name)
  * @primitive: The primitive type
@@ -288,7 +288,7 @@ lrg_scene_object_new (const gchar     *name,
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_object_get_name:
  * @self: an #LrgSceneObject
  *
@@ -304,7 +304,7 @@ lrg_scene_object_get_name (LrgSceneObject *self)
 	return self->name;
 }
 
-/**
+/*
  * lrg_scene_object_set_name:
  * @self: an #LrgSceneObject
  * @name: The new name
@@ -322,7 +322,7 @@ lrg_scene_object_set_name (LrgSceneObject *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_NAME]);
 }
 
-/**
+/*
  * lrg_scene_object_get_primitive:
  * @self: an #LrgSceneObject
  *
@@ -338,7 +338,7 @@ lrg_scene_object_get_primitive (LrgSceneObject *self)
 	return self->primitive;
 }
 
-/**
+/*
  * lrg_scene_object_set_primitive:
  * @self: an #LrgSceneObject
  * @primitive: The primitive type
@@ -362,7 +362,7 @@ lrg_scene_object_set_primitive (LrgSceneObject  *self,
  * Transform Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_object_get_location:
  * @self: an #LrgSceneObject
  *
@@ -378,7 +378,7 @@ lrg_scene_object_get_location (LrgSceneObject *self)
 	return self->location;
 }
 
-/**
+/*
  * lrg_scene_object_set_location:
  * @self: an #LrgSceneObject
  * @location: (transfer none): The location vector
@@ -397,7 +397,7 @@ lrg_scene_object_set_location (LrgSceneObject *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOCATION]);
 }
 
-/**
+/*
  * lrg_scene_object_set_location_xyz:
  * @self: an #LrgSceneObject
  * @x: X coordinate
@@ -420,7 +420,7 @@ lrg_scene_object_set_location_xyz (LrgSceneObject *self,
 	lrg_scene_object_set_location (self, loc);
 }
 
-/**
+/*
  * lrg_scene_object_get_rotation:
  * @self: an #LrgSceneObject
  *
@@ -436,7 +436,7 @@ lrg_scene_object_get_rotation (LrgSceneObject *self)
 	return self->rotation;
 }
 
-/**
+/*
  * lrg_scene_object_set_rotation:
  * @self: an #LrgSceneObject
  * @rotation: (transfer none): The rotation vector
@@ -455,7 +455,7 @@ lrg_scene_object_set_rotation (LrgSceneObject *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ROTATION]);
 }
 
-/**
+/*
  * lrg_scene_object_set_rotation_xyz:
  * @self: an #LrgSceneObject
  * @rx: X rotation in radians
@@ -478,7 +478,7 @@ lrg_scene_object_set_rotation_xyz (LrgSceneObject *self,
 	lrg_scene_object_set_rotation (self, rot);
 }
 
-/**
+/*
  * lrg_scene_object_get_scale:
  * @self: an #LrgSceneObject
  *
@@ -494,7 +494,7 @@ lrg_scene_object_get_scale (LrgSceneObject *self)
 	return self->scale;
 }
 
-/**
+/*
  * lrg_scene_object_set_scale:
  * @self: an #LrgSceneObject
  * @scale: (transfer none): The scale vector
@@ -513,7 +513,7 @@ lrg_scene_object_set_scale (LrgSceneObject *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCALE]);
 }
 
-/**
+/*
  * lrg_scene_object_set_scale_xyz:
  * @self: an #LrgSceneObject
  * @sx: X scale factor
@@ -540,7 +540,7 @@ lrg_scene_object_set_scale_xyz (LrgSceneObject *self,
  * Material Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_object_get_material:
  * @self: an #LrgSceneObject
  *
@@ -556,7 +556,7 @@ lrg_scene_object_get_material (LrgSceneObject *self)
 	return self->material;
 }
 
-/**
+/*
  * lrg_scene_object_set_material:
  * @self: an #LrgSceneObject
  * @material: (transfer none): The material
@@ -582,7 +582,7 @@ lrg_scene_object_set_material (LrgSceneObject *self,
  * Parameter Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_object_set_param_float:
  * @self: an #LrgSceneObject
  * @name: Parameter name
@@ -607,7 +607,7 @@ lrg_scene_object_set_param_float (LrgSceneObject *self,
 	g_hash_table_insert (self->params, g_strdup (name), gval);
 }
 
-/**
+/*
  * lrg_scene_object_get_param_float:
  * @self: an #LrgSceneObject
  * @name: Parameter name
@@ -634,7 +634,7 @@ lrg_scene_object_get_param_float (LrgSceneObject *self,
 	return g_value_get_float (gval);
 }
 
-/**
+/*
  * lrg_scene_object_set_param_int:
  * @self: an #LrgSceneObject
  * @name: Parameter name
@@ -659,7 +659,7 @@ lrg_scene_object_set_param_int (LrgSceneObject *self,
 	g_hash_table_insert (self->params, g_strdup (name), gval);
 }
 
-/**
+/*
  * lrg_scene_object_get_param_int:
  * @self: an #LrgSceneObject
  * @name: Parameter name
@@ -686,7 +686,7 @@ lrg_scene_object_get_param_int (LrgSceneObject *self,
 	return g_value_get_int (gval);
 }
 
-/**
+/*
  * lrg_scene_object_set_param_bool:
  * @self: an #LrgSceneObject
  * @name: Parameter name
@@ -711,7 +711,7 @@ lrg_scene_object_set_param_bool (LrgSceneObject *self,
 	g_hash_table_insert (self->params, g_strdup (name), gval);
 }
 
-/**
+/*
  * lrg_scene_object_get_param_bool:
  * @self: an #LrgSceneObject
  * @name: Parameter name
@@ -738,7 +738,7 @@ lrg_scene_object_get_param_bool (LrgSceneObject *self,
 	return g_value_get_boolean (gval);
 }
 
-/**
+/*
  * lrg_scene_object_has_param:
  * @self: an #LrgSceneObject
  * @name: Parameter name
@@ -757,7 +757,7 @@ lrg_scene_object_has_param (LrgSceneObject *self,
 	return g_hash_table_contains (self->params, name);
 }
 
-/**
+/*
  * lrg_scene_object_get_param_names:
  * @self: an #LrgSceneObject
  *
@@ -777,7 +777,7 @@ lrg_scene_object_get_param_names (LrgSceneObject *self)
  * Mesh Data Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_object_set_mesh_data:
  * @self: an #LrgSceneObject
  * @mesh_data: (transfer none) (nullable): The mesh data
@@ -797,7 +797,7 @@ lrg_scene_object_set_mesh_data (LrgSceneObject *self,
 		self->mesh_data = lrg_mesh_data_copy (mesh_data);
 }
 
-/**
+/*
  * lrg_scene_object_get_mesh_data:
  * @self: an #LrgSceneObject
  *

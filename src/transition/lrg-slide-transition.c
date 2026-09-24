@@ -476,7 +476,7 @@ lrg_slide_transition_init (LrgSlideTransition *self)
  * Public API
  */
 
-/**
+/*
  * lrg_slide_transition_new:
  *
  * Creates a new slide transition with default settings.
@@ -491,7 +491,7 @@ lrg_slide_transition_new (void)
     return g_object_new (LRG_TYPE_SLIDE_TRANSITION, NULL);
 }
 
-/**
+/*
  * lrg_slide_transition_new_with_options:
  * @direction: The slide direction
  * @mode: The slide mode
@@ -512,7 +512,7 @@ lrg_slide_transition_new_with_options (LrgTransitionDirection direction,
                          NULL);
 }
 
-/**
+/*
  * lrg_slide_transition_get_direction:
  * @self: A #LrgSlideTransition
  *
@@ -530,7 +530,7 @@ lrg_slide_transition_get_direction (LrgSlideTransition *self)
     return self->direction;
 }
 
-/**
+/*
  * lrg_slide_transition_set_direction:
  * @self: A #LrgSlideTransition
  * @direction: The slide direction
@@ -552,7 +552,7 @@ lrg_slide_transition_set_direction (LrgSlideTransition     *self,
     }
 }
 
-/**
+/*
  * lrg_slide_transition_get_mode:
  * @self: A #LrgSlideTransition
  *
@@ -570,7 +570,7 @@ lrg_slide_transition_get_mode (LrgSlideTransition *self)
     return self->mode;
 }
 
-/**
+/*
  * lrg_slide_transition_set_mode:
  * @self: A #LrgSlideTransition
  * @mode: The slide mode

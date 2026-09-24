@@ -44,7 +44,7 @@ struct _LrgTutorialStep
 G_DEFINE_BOXED_TYPE (LrgTutorialStep, lrg_tutorial_step,
                      lrg_tutorial_step_copy, lrg_tutorial_step_free)
 
-/**
+/*
  * lrg_tutorial_step_new:
  * @step_type: The type of step
  *
@@ -70,7 +70,7 @@ lrg_tutorial_step_new (LrgTutorialStepType step_type)
     return self;
 }
 
-/**
+/*
  * lrg_tutorial_step_new_text:
  * @text: The text to display
  * @speaker: (nullable): Name of the speaker (for dialog-style)
@@ -94,7 +94,7 @@ lrg_tutorial_step_new_text (const gchar *text,
     return self;
 }
 
-/**
+/*
  * lrg_tutorial_step_new_highlight:
  * @target_id: ID of the widget/element to highlight
  * @style: The highlight style
@@ -118,7 +118,7 @@ lrg_tutorial_step_new_highlight (const gchar       *target_id,
     return self;
 }
 
-/**
+/*
  * lrg_tutorial_step_new_input:
  * @action_name: Name of the input action to wait for
  * @show_prompt: Whether to show an input prompt
@@ -142,7 +142,7 @@ lrg_tutorial_step_new_input (const gchar *action_name,
     return self;
 }
 
-/**
+/*
  * lrg_tutorial_step_new_condition:
  * @condition_id: ID of the condition to check
  *
@@ -163,7 +163,7 @@ lrg_tutorial_step_new_condition (const gchar *condition_id)
     return self;
 }
 
-/**
+/*
  * lrg_tutorial_step_new_delay:
  * @duration: Delay duration in seconds
  *
@@ -185,7 +185,7 @@ lrg_tutorial_step_new_delay (gfloat duration)
     return self;
 }
 
-/**
+/*
  * lrg_tutorial_step_copy:
  * @self: A #LrgTutorialStep
  *
@@ -230,7 +230,7 @@ lrg_tutorial_step_copy (const LrgTutorialStep *self)
     return copy;
 }
 
-/**
+/*
  * lrg_tutorial_step_free:
  * @self: A #LrgTutorialStep
  *
@@ -253,7 +253,7 @@ lrg_tutorial_step_free (LrgTutorialStep *self)
     g_free (self);
 }
 
-/**
+/*
  * lrg_tutorial_step_get_step_type:
  * @self: A #LrgTutorialStep
  *
@@ -270,7 +270,7 @@ lrg_tutorial_step_get_step_type (const LrgTutorialStep *self)
     return self->step_type;
 }
 
-/**
+/*
  * lrg_tutorial_step_get_id:
  * @self: A #LrgTutorialStep
  *
@@ -287,7 +287,7 @@ lrg_tutorial_step_get_id (const LrgTutorialStep *self)
     return self->id;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_id:
  * @self: A #LrgTutorialStep
  * @id: The step ID
@@ -306,7 +306,7 @@ lrg_tutorial_step_set_id (LrgTutorialStep *self,
     self->id = g_strdup (id);
 }
 
-/**
+/*
  * lrg_tutorial_step_get_text:
  * @self: A #LrgTutorialStep
  *
@@ -323,7 +323,7 @@ lrg_tutorial_step_get_text (const LrgTutorialStep *self)
     return self->text;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_text:
  * @self: A #LrgTutorialStep
  * @text: The text to display
@@ -342,7 +342,7 @@ lrg_tutorial_step_set_text (LrgTutorialStep *self,
     self->text = g_strdup (text);
 }
 
-/**
+/*
  * lrg_tutorial_step_get_speaker:
  * @self: A #LrgTutorialStep
  *
@@ -359,7 +359,7 @@ lrg_tutorial_step_get_speaker (const LrgTutorialStep *self)
     return self->speaker;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_speaker:
  * @self: A #LrgTutorialStep
  * @speaker: The speaker name
@@ -378,7 +378,7 @@ lrg_tutorial_step_set_speaker (LrgTutorialStep *self,
     self->speaker = g_strdup (speaker);
 }
 
-/**
+/*
  * lrg_tutorial_step_get_target_id:
  * @self: A #LrgTutorialStep
  *
@@ -395,7 +395,7 @@ lrg_tutorial_step_get_target_id (const LrgTutorialStep *self)
     return self->target_id;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_target_id:
  * @self: A #LrgTutorialStep
  * @target_id: The target element ID
@@ -414,7 +414,7 @@ lrg_tutorial_step_set_target_id (LrgTutorialStep *self,
     self->target_id = g_strdup (target_id);
 }
 
-/**
+/*
  * lrg_tutorial_step_get_highlight_style:
  * @self: A #LrgTutorialStep
  *
@@ -431,7 +431,7 @@ lrg_tutorial_step_get_highlight_style (const LrgTutorialStep *self)
     return self->highlight_style;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_highlight_style:
  * @self: A #LrgTutorialStep
  * @style: The highlight style
@@ -448,7 +448,7 @@ lrg_tutorial_step_set_highlight_style (LrgTutorialStep  *self,
     self->highlight_style = style;
 }
 
-/**
+/*
  * lrg_tutorial_step_get_action_name:
  * @self: A #LrgTutorialStep
  *
@@ -465,7 +465,7 @@ lrg_tutorial_step_get_action_name (const LrgTutorialStep *self)
     return self->action_name;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_action_name:
  * @self: A #LrgTutorialStep
  * @action_name: The input action name
@@ -484,7 +484,7 @@ lrg_tutorial_step_set_action_name (LrgTutorialStep *self,
     self->action_name = g_strdup (action_name);
 }
 
-/**
+/*
  * lrg_tutorial_step_get_show_prompt:
  * @self: A #LrgTutorialStep
  *
@@ -501,7 +501,7 @@ lrg_tutorial_step_get_show_prompt (const LrgTutorialStep *self)
     return self->show_prompt;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_show_prompt:
  * @self: A #LrgTutorialStep
  * @show: Whether to show the prompt
@@ -518,7 +518,7 @@ lrg_tutorial_step_set_show_prompt (LrgTutorialStep *self,
     self->show_prompt = show;
 }
 
-/**
+/*
  * lrg_tutorial_step_get_condition_id:
  * @self: A #LrgTutorialStep
  *
@@ -535,7 +535,7 @@ lrg_tutorial_step_get_condition_id (const LrgTutorialStep *self)
     return self->condition_id;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_condition_id:
  * @self: A #LrgTutorialStep
  * @condition_id: The condition ID
@@ -554,7 +554,7 @@ lrg_tutorial_step_set_condition_id (LrgTutorialStep *self,
     self->condition_id = g_strdup (condition_id);
 }
 
-/**
+/*
  * lrg_tutorial_step_get_duration:
  * @self: A #LrgTutorialStep
  *
@@ -571,7 +571,7 @@ lrg_tutorial_step_get_duration (const LrgTutorialStep *self)
     return self->duration;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_duration:
  * @self: A #LrgTutorialStep
  * @duration: Duration in seconds
@@ -588,7 +588,7 @@ lrg_tutorial_step_set_duration (LrgTutorialStep *self,
     self->duration = duration;
 }
 
-/**
+/*
  * lrg_tutorial_step_get_can_skip:
  * @self: A #LrgTutorialStep
  *
@@ -605,7 +605,7 @@ lrg_tutorial_step_get_can_skip (const LrgTutorialStep *self)
     return self->can_skip;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_can_skip:
  * @self: A #LrgTutorialStep
  * @can_skip: Whether the step can be skipped
@@ -622,7 +622,7 @@ lrg_tutorial_step_set_can_skip (LrgTutorialStep *self,
     self->can_skip = can_skip;
 }
 
-/**
+/*
  * lrg_tutorial_step_get_blocks_input:
  * @self: A #LrgTutorialStep
  *
@@ -639,7 +639,7 @@ lrg_tutorial_step_get_blocks_input (const LrgTutorialStep *self)
     return self->blocks_input;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_blocks_input:
  * @self: A #LrgTutorialStep
  * @blocks: Whether to block game input
@@ -656,7 +656,7 @@ lrg_tutorial_step_set_blocks_input (LrgTutorialStep *self,
     self->blocks_input = blocks;
 }
 
-/**
+/*
  * lrg_tutorial_step_get_auto_advance:
  * @self: A #LrgTutorialStep
  *
@@ -673,7 +673,7 @@ lrg_tutorial_step_get_auto_advance (const LrgTutorialStep *self)
     return self->auto_advance;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_auto_advance:
  * @self: A #LrgTutorialStep
  * @auto_advance: Whether to auto-advance
@@ -690,7 +690,7 @@ lrg_tutorial_step_set_auto_advance (LrgTutorialStep *self,
     self->auto_advance = auto_advance;
 }
 
-/**
+/*
  * lrg_tutorial_step_get_position:
  * @self: A #LrgTutorialStep
  * @out_x: (out) (nullable): Return location for X position
@@ -713,7 +713,7 @@ lrg_tutorial_step_get_position (const LrgTutorialStep *self,
         *out_y = self->position_y;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_position:
  * @self: A #LrgTutorialStep
  * @x: X position
@@ -734,7 +734,7 @@ lrg_tutorial_step_set_position (LrgTutorialStep *self,
     self->position_y = y;
 }
 
-/**
+/*
  * lrg_tutorial_step_get_arrow_direction:
  * @self: A #LrgTutorialStep
  *
@@ -751,7 +751,7 @@ lrg_tutorial_step_get_arrow_direction (const LrgTutorialStep *self)
     return self->arrow_direction;
 }
 
-/**
+/*
  * lrg_tutorial_step_set_arrow_direction:
  * @self: A #LrgTutorialStep
  * @direction: The arrow direction

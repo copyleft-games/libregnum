@@ -163,7 +163,7 @@ lrg_settings_init (LrgSettings *self)
 
 /* Public API */
 
-/**
+/*
  * lrg_settings_new:
  *
  * Creates a new #LrgSettings with default values for all groups.
@@ -176,7 +176,7 @@ lrg_settings_new (void)
     return g_object_new (LRG_TYPE_SETTINGS, NULL);
 }
 
-/**
+/*
  * lrg_settings_get_default:
  *
  * Gets the default settings singleton instance.

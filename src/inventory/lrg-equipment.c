@@ -113,7 +113,7 @@ lrg_equipment_init (LrgEquipment *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_equipment_new:
  *
  * Creates a new equipment manager with all slots empty.
@@ -126,7 +126,7 @@ lrg_equipment_new (void)
     return g_object_new (LRG_TYPE_EQUIPMENT, NULL);
 }
 
-/**
+/*
  * lrg_equipment_get_slot:
  * @self: an #LrgEquipment
  * @slot: the equipment slot
@@ -144,7 +144,7 @@ lrg_equipment_get_slot (LrgEquipment    *self,
     return g_hash_table_lookup (self->slots, GINT_TO_POINTER (slot));
 }
 
-/**
+/*
  * lrg_equipment_is_slot_empty:
  * @self: an #LrgEquipment
  * @slot: the equipment slot
@@ -162,7 +162,7 @@ lrg_equipment_is_slot_empty (LrgEquipment    *self,
     return !g_hash_table_contains (self->slots, GINT_TO_POINTER (slot));
 }
 
-/**
+/*
  * lrg_equipment_equip:
  * @self: an #LrgEquipment
  * @slot: the equipment slot
@@ -206,7 +206,7 @@ lrg_equipment_equip (LrgEquipment    *self,
     return old_stack;
 }
 
-/**
+/*
  * lrg_equipment_unequip:
  * @self: an #LrgEquipment
  * @slot: the equipment slot
@@ -243,7 +243,7 @@ lrg_equipment_unequip (LrgEquipment    *self,
     return stack;
 }
 
-/**
+/*
  * lrg_equipment_clear:
  * @self: an #LrgEquipment
  *
@@ -281,7 +281,7 @@ lrg_equipment_clear (LrgEquipment *self)
     lrg_debug (LRG_LOG_DOMAIN_INVENTORY, "Cleared all equipment");
 }
 
-/**
+/*
  * lrg_equipment_get_equipped_slots:
  * @self: an #LrgEquipment
  *
@@ -307,7 +307,7 @@ lrg_equipment_get_equipped_slots (LrgEquipment *self)
     return result;
 }
 
-/**
+/*
  * lrg_equipment_can_equip:
  * @self: an #LrgEquipment
  * @slot: the target slot
@@ -355,7 +355,7 @@ lrg_equipment_can_equip (LrgEquipment    *self,
     }
 }
 
-/**
+/*
  * lrg_equipment_get_stat_bonus:
  * @self: an #LrgEquipment
  * @stat_name: the stat property name to sum
@@ -391,7 +391,7 @@ lrg_equipment_get_stat_bonus (LrgEquipment *self,
     return total;
 }
 
-/**
+/*
  * lrg_equipment_get_stat_bonus_float:
  * @self: an #LrgEquipment
  * @stat_name: the stat property name to sum

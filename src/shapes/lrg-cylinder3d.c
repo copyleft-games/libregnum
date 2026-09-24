@@ -239,7 +239,7 @@ lrg_cylinder3d_init (LrgCylinder3D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_cylinder3d_new:
  *
  * Creates a new cylinder at the origin with radius 1.0 and height 2.0.
@@ -252,7 +252,7 @@ lrg_cylinder3d_new (void)
 	return g_object_new (LRG_TYPE_CYLINDER3D, NULL);
 }
 
-/**
+/*
  * lrg_cylinder3d_new_at:
  * @x: X position
  * @y: Y position
@@ -282,7 +282,7 @@ lrg_cylinder3d_new_at (gfloat x,
 	return cylinder;
 }
 
-/**
+/*
  * lrg_cylinder3d_new_full:
  * @x: X position
  * @y: Y position
@@ -320,7 +320,7 @@ lrg_cylinder3d_new_full (gfloat    x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_cylinder3d_get_radius:
  * @self: an #LrgCylinder3D
  *
@@ -336,7 +336,7 @@ lrg_cylinder3d_get_radius (LrgCylinder3D *self)
 	return self->radius;
 }
 
-/**
+/*
  * lrg_cylinder3d_set_radius:
  * @self: an #LrgCylinder3D
  * @radius: the radius value
@@ -357,7 +357,7 @@ lrg_cylinder3d_set_radius (LrgCylinder3D *self,
 	}
 }
 
-/**
+/*
  * lrg_cylinder3d_get_height:
  * @self: an #LrgCylinder3D
  *
@@ -373,7 +373,7 @@ lrg_cylinder3d_get_height (LrgCylinder3D *self)
 	return self->height;
 }
 
-/**
+/*
  * lrg_cylinder3d_set_height:
  * @self: an #LrgCylinder3D
  * @height: the height value
@@ -394,7 +394,7 @@ lrg_cylinder3d_set_height (LrgCylinder3D *self,
 	}
 }
 
-/**
+/*
  * lrg_cylinder3d_get_slices:
  * @self: an #LrgCylinder3D
  *
@@ -410,7 +410,7 @@ lrg_cylinder3d_get_slices (LrgCylinder3D *self)
 	return self->slices;
 }
 
-/**
+/*
  * lrg_cylinder3d_set_slices:
  * @self: an #LrgCylinder3D
  * @slices: the number of slices
@@ -431,7 +431,7 @@ lrg_cylinder3d_set_slices (LrgCylinder3D *self,
 	}
 }
 
-/**
+/*
  * lrg_cylinder3d_get_cap_ends:
  * @self: an #LrgCylinder3D
  *
@@ -447,7 +447,7 @@ lrg_cylinder3d_get_cap_ends (LrgCylinder3D *self)
 	return self->cap_ends;
 }
 
-/**
+/*
  * lrg_cylinder3d_set_cap_ends:
  * @self: an #LrgCylinder3D
  * @cap_ends: whether to cap the ends

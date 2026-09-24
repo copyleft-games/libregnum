@@ -132,7 +132,7 @@ find_insert_position (LrgKeyframeCurve *self,
 /* Public API                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_keyframe_curve_new:
  *
  * Creates a new, empty keyframe curve.
@@ -147,7 +147,7 @@ lrg_keyframe_curve_new (void)
     return g_object_new (LRG_TYPE_KEYFRAME_CURVE, NULL);
 }
 
-/**
+/*
  * lrg_keyframe_curve_add_key:
  * @self: an #LrgKeyframeCurve
  * @t: normalized time of this keyframe
@@ -190,7 +190,7 @@ lrg_keyframe_curve_add_key (LrgKeyframeCurve *self,
     }
 }
 
-/**
+/*
  * lrg_keyframe_curve_sample:
  * @self: an #LrgKeyframeCurve
  * @t: normalized time to evaluate
@@ -244,7 +244,7 @@ lrg_keyframe_curve_sample (LrgKeyframeCurve *self,
     return lrg_easing_interpolate (lo->ease_to_next, lo->value, hi->value, seg_t);
 }
 
-/**
+/*
  * lrg_keyframe_curve_get_key_count:
  * @self: an #LrgKeyframeCurve
  *

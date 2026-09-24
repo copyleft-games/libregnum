@@ -240,7 +240,7 @@ lrg_cone3d_init (LrgCone3D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_cone3d_new:
  *
  * Creates a new cone at the origin with base radius 1.0, top radius 0.0,
@@ -254,7 +254,7 @@ lrg_cone3d_new (void)
 	return g_object_new (LRG_TYPE_CONE3D, NULL);
 }
 
-/**
+/*
  * lrg_cone3d_new_at:
  * @x: X position
  * @y: Y position
@@ -285,7 +285,7 @@ lrg_cone3d_new_at (gfloat x,
 	return cone;
 }
 
-/**
+/*
  * lrg_cone3d_new_full:
  * @x: X position
  * @y: Y position
@@ -326,7 +326,7 @@ lrg_cone3d_new_full (gfloat    x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_cone3d_get_radius_bottom:
  * @self: an #LrgCone3D
  *
@@ -342,7 +342,7 @@ lrg_cone3d_get_radius_bottom (LrgCone3D *self)
 	return self->radius_bottom;
 }
 
-/**
+/*
  * lrg_cone3d_set_radius_bottom:
  * @self: an #LrgCone3D
  * @radius: the base radius
@@ -363,7 +363,7 @@ lrg_cone3d_set_radius_bottom (LrgCone3D *self,
 	}
 }
 
-/**
+/*
  * lrg_cone3d_get_radius_top:
  * @self: an #LrgCone3D
  *
@@ -379,7 +379,7 @@ lrg_cone3d_get_radius_top (LrgCone3D *self)
 	return self->radius_top;
 }
 
-/**
+/*
  * lrg_cone3d_set_radius_top:
  * @self: an #LrgCone3D
  * @radius: the top radius (0 for pointed cone)
@@ -400,7 +400,7 @@ lrg_cone3d_set_radius_top (LrgCone3D *self,
 	}
 }
 
-/**
+/*
  * lrg_cone3d_get_height:
  * @self: an #LrgCone3D
  *
@@ -416,7 +416,7 @@ lrg_cone3d_get_height (LrgCone3D *self)
 	return self->height;
 }
 
-/**
+/*
  * lrg_cone3d_set_height:
  * @self: an #LrgCone3D
  * @height: the height value
@@ -437,7 +437,7 @@ lrg_cone3d_set_height (LrgCone3D *self,
 	}
 }
 
-/**
+/*
  * lrg_cone3d_get_slices:
  * @self: an #LrgCone3D
  *
@@ -453,7 +453,7 @@ lrg_cone3d_get_slices (LrgCone3D *self)
 	return self->slices;
 }
 
-/**
+/*
  * lrg_cone3d_set_slices:
  * @self: an #LrgCone3D
  * @slices: the number of slices

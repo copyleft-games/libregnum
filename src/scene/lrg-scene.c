@@ -176,7 +176,7 @@ lrg_scene_init (LrgScene *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_new:
  * @name: The scene name
  *
@@ -196,7 +196,7 @@ lrg_scene_new (const gchar *name)
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_get_name:
  * @self: an #LrgScene
  *
@@ -212,7 +212,7 @@ lrg_scene_get_name (LrgScene *self)
 	return self->name;
 }
 
-/**
+/*
  * lrg_scene_set_name:
  * @self: an #LrgScene
  * @name: The new name
@@ -230,7 +230,7 @@ lrg_scene_set_name (LrgScene    *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_NAME]);
 }
 
-/**
+/*
  * lrg_scene_get_exported_from:
  * @self: an #LrgScene
  *
@@ -246,7 +246,7 @@ lrg_scene_get_exported_from (LrgScene *self)
 	return self->exported_from;
 }
 
-/**
+/*
  * lrg_scene_set_exported_from:
  * @self: an #LrgScene
  * @exported_from: (nullable): The exporter name
@@ -264,7 +264,7 @@ lrg_scene_set_exported_from (LrgScene    *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_EXPORTED_FROM]);
 }
 
-/**
+/*
  * lrg_scene_get_export_date:
  * @self: an #LrgScene
  *
@@ -280,7 +280,7 @@ lrg_scene_get_export_date (LrgScene *self)
 	return self->export_date;
 }
 
-/**
+/*
  * lrg_scene_set_export_date:
  * @self: an #LrgScene
  * @export_date: (nullable) (transfer none): The export date
@@ -299,7 +299,7 @@ lrg_scene_set_export_date (LrgScene  *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_EXPORT_DATE]);
 }
 
-/**
+/*
  * lrg_scene_set_export_date_iso:
  * @self: an #LrgScene
  * @iso_string: An ISO 8601 date string
@@ -329,7 +329,7 @@ lrg_scene_set_export_date_iso (LrgScene    *self,
  * Entity Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_add_entity:
  * @self: an #LrgScene
  * @entity: (transfer none): The entity to add
@@ -354,7 +354,7 @@ lrg_scene_add_entity (LrgScene       *self,
 	                     g_object_ref (entity));
 }
 
-/**
+/*
  * lrg_scene_remove_entity:
  * @self: an #LrgScene
  * @name: The entity name to remove
@@ -373,7 +373,7 @@ lrg_scene_remove_entity (LrgScene    *self,
 	return g_hash_table_remove (self->entities, name);
 }
 
-/**
+/*
  * lrg_scene_get_entity:
  * @self: an #LrgScene
  * @name: The entity name
@@ -392,7 +392,7 @@ lrg_scene_get_entity (LrgScene    *self,
 	return g_hash_table_lookup (self->entities, name);
 }
 
-/**
+/*
  * lrg_scene_get_entity_names:
  * @self: an #LrgScene
  *
@@ -408,7 +408,7 @@ lrg_scene_get_entity_names (LrgScene *self)
 	return g_hash_table_get_keys (self->entities);
 }
 
-/**
+/*
  * lrg_scene_get_entity_count:
  * @self: an #LrgScene
  *
@@ -443,7 +443,7 @@ foreach_wrapper (gpointer key,
 	data->func (name, entity, data->user_data);
 }
 
-/**
+/*
  * lrg_scene_foreach_entity:
  * @self: an #LrgScene
  * @func: (scope call): The function to call for each entity

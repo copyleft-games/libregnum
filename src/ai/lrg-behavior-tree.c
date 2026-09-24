@@ -172,7 +172,7 @@ lrg_behavior_tree_init (LrgBehaviorTree *self)
     self->status = LRG_BT_STATUS_INVALID;
 }
 
-/**
+/*
  * lrg_behavior_tree_new:
  *
  * Creates a new empty behavior tree.
@@ -185,7 +185,7 @@ lrg_behavior_tree_new (void)
     return g_object_new (LRG_TYPE_BEHAVIOR_TREE, NULL);
 }
 
-/**
+/*
  * lrg_behavior_tree_new_with_root:
  * @root: (transfer none): The root node
  *
@@ -203,7 +203,7 @@ lrg_behavior_tree_new_with_root (LrgBTNode *root)
                          NULL);
 }
 
-/**
+/*
  * lrg_behavior_tree_get_root:
  * @self: an #LrgBehaviorTree
  *
@@ -219,7 +219,7 @@ lrg_behavior_tree_get_root (LrgBehaviorTree *self)
     return self->root;
 }
 
-/**
+/*
  * lrg_behavior_tree_set_root:
  * @self: an #LrgBehaviorTree
  * @root: (nullable) (transfer none): The root node
@@ -243,7 +243,7 @@ lrg_behavior_tree_set_root (LrgBehaviorTree *self,
     }
 }
 
-/**
+/*
  * lrg_behavior_tree_get_blackboard:
  * @self: an #LrgBehaviorTree
  *
@@ -259,7 +259,7 @@ lrg_behavior_tree_get_blackboard (LrgBehaviorTree *self)
     return self->blackboard;
 }
 
-/**
+/*
  * lrg_behavior_tree_tick:
  * @self: an #LrgBehaviorTree
  * @delta_time: Time since last tick
@@ -294,7 +294,7 @@ lrg_behavior_tree_tick (LrgBehaviorTree *self,
     return self->status;
 }
 
-/**
+/*
  * lrg_behavior_tree_reset:
  * @self: an #LrgBehaviorTree
  *
@@ -312,7 +312,7 @@ lrg_behavior_tree_reset (LrgBehaviorTree *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STATUS]);
 }
 
-/**
+/*
  * lrg_behavior_tree_abort:
  * @self: an #LrgBehaviorTree
  *
@@ -331,7 +331,7 @@ lrg_behavior_tree_abort (LrgBehaviorTree *self)
     }
 }
 
-/**
+/*
  * lrg_behavior_tree_get_status:
  * @self: an #LrgBehaviorTree
  *
@@ -347,7 +347,7 @@ lrg_behavior_tree_get_status (LrgBehaviorTree *self)
     return self->status;
 }
 
-/**
+/*
  * lrg_behavior_tree_is_running:
  * @self: an #LrgBehaviorTree
  *

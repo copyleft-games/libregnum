@@ -26,7 +26,7 @@ G_DEFINE_BOXED_TYPE (LrgNavCell, lrg_nav_cell,
                      lrg_nav_cell_copy,
                      lrg_nav_cell_free)
 
-/**
+/*
  * lrg_nav_cell_new:
  * @x: X coordinate in the grid
  * @y: Y coordinate in the grid
@@ -56,7 +56,7 @@ lrg_nav_cell_new (gint            x,
     return self;
 }
 
-/**
+/*
  * lrg_nav_cell_copy:
  * @self: an #LrgNavCell
  *
@@ -84,7 +84,7 @@ lrg_nav_cell_copy (const LrgNavCell *self)
     return copy;
 }
 
-/**
+/*
  * lrg_nav_cell_free:
  * @self: an #LrgNavCell
  *
@@ -102,7 +102,7 @@ lrg_nav_cell_free (LrgNavCell *self)
     g_slice_free (LrgNavCell, self);
 }
 
-/**
+/*
  * lrg_nav_cell_get_x:
  * @self: an #LrgNavCell
  *
@@ -117,7 +117,7 @@ lrg_nav_cell_get_x (const LrgNavCell *self)
     return self->x;
 }
 
-/**
+/*
  * lrg_nav_cell_get_y:
  * @self: an #LrgNavCell
  *
@@ -132,7 +132,7 @@ lrg_nav_cell_get_y (const LrgNavCell *self)
     return self->y;
 }
 
-/**
+/*
  * lrg_nav_cell_get_cost:
  * @self: an #LrgNavCell
  *
@@ -147,7 +147,7 @@ lrg_nav_cell_get_cost (const LrgNavCell *self)
     return self->cost;
 }
 
-/**
+/*
  * lrg_nav_cell_set_cost:
  * @self: an #LrgNavCell
  * @cost: New movement cost
@@ -164,7 +164,7 @@ lrg_nav_cell_set_cost (LrgNavCell *self,
     self->cost = cost;
 }
 
-/**
+/*
  * lrg_nav_cell_get_flags:
  * @self: an #LrgNavCell
  *
@@ -179,7 +179,7 @@ lrg_nav_cell_get_flags (const LrgNavCell *self)
     return self->flags;
 }
 
-/**
+/*
  * lrg_nav_cell_set_flags:
  * @self: an #LrgNavCell
  * @flags: New navigation flags
@@ -194,7 +194,7 @@ lrg_nav_cell_set_flags (LrgNavCell      *self,
     self->flags = flags;
 }
 
-/**
+/*
  * lrg_nav_cell_has_flag:
  * @self: an #LrgNavCell
  * @flag: Flag to check
@@ -211,7 +211,7 @@ lrg_nav_cell_has_flag (const LrgNavCell *self,
     return (self->flags & flag) != 0;
 }
 
-/**
+/*
  * lrg_nav_cell_is_walkable:
  * @self: an #LrgNavCell
  *
@@ -226,7 +226,7 @@ lrg_nav_cell_is_walkable (const LrgNavCell *self)
     return (self->flags & LRG_NAV_CELL_BLOCKED) == 0;
 }
 
-/**
+/*
  * lrg_nav_cell_get_user_data:
  * @self: an #LrgNavCell
  *
@@ -241,7 +241,7 @@ lrg_nav_cell_get_user_data (const LrgNavCell *self)
     return self->user_data;
 }
 
-/**
+/*
  * lrg_nav_cell_set_user_data:
  * @self: an #LrgNavCell
  * @user_data: (nullable): User data to attach

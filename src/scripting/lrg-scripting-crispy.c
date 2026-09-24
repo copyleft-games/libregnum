@@ -265,7 +265,7 @@ lrg_scripting_crispy_new (void)
 	return g_object_new (LRG_TYPE_SCRIPTING_CRISPY, NULL);
 }
 
-/**
+/*
  * lrg_scripting_crispy_add_cflags:
  * @self: an #LrgScriptingCrispy
  * @cflags: extra compiler flags, in shell syntax
@@ -284,7 +284,7 @@ lrg_scripting_crispy_add_cflags (LrgScriptingCrispy *self,
 	g_string_append (self->cflags, cflags);
 }
 
-/**
+/*
  * lrg_scripting_crispy_set_cache_dir:
  * @self: an #LrgScriptingCrispy
  * @cache_dir: (type filename) (nullable): the cache directory

@@ -290,7 +290,7 @@ lrg_data_loader_init (LrgDataLoader *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_data_loader_new:
  *
  * Creates a new data loader.
@@ -307,7 +307,7 @@ lrg_data_loader_new (void)
  * Public API - Registry
  * ========================================================================== */
 
-/**
+/*
  * lrg_data_loader_set_registry:
  * @self: an #LrgDataLoader
  * @registry: (nullable): the #LrgRegistry to use for type lookups
@@ -327,7 +327,7 @@ lrg_data_loader_set_registry (LrgDataLoader *self,
     }
 }
 
-/**
+/*
  * lrg_data_loader_get_registry:
  * @self: an #LrgDataLoader
  *
@@ -347,7 +347,7 @@ lrg_data_loader_get_registry (LrgDataLoader *self)
  * Public API - Synchronous Loading
  * ========================================================================== */
 
-/**
+/*
  * lrg_data_loader_load_file:
  * @self: an #LrgDataLoader
  * @path: path to the YAML file
@@ -731,7 +731,7 @@ lrg_data_loader_load_file_validated (LrgDataLoader  *self,
     return g_steal_pointer (&object);
 }
 
-/**
+/*
  * lrg_data_loader_load_gfile:
  * @self: an #LrgDataLoader
  * @file: a #GFile to load
@@ -784,7 +784,7 @@ lrg_data_loader_load_gfile (LrgDataLoader  *self,
     return object;
 }
 
-/**
+/*
  * lrg_data_loader_load_data:
  * @self: an #LrgDataLoader
  * @data: the YAML string
@@ -832,7 +832,7 @@ lrg_data_loader_load_data (LrgDataLoader  *self,
     return object;
 }
 
-/**
+/*
  * lrg_data_loader_load_typed:
  * @self: an #LrgDataLoader
  * @type: the #GType to deserialize as
@@ -886,7 +886,7 @@ lrg_data_loader_load_typed (LrgDataLoader  *self,
  * Public API - Batch Loading
  * ========================================================================== */
 
-/**
+/*
  * lrg_data_loader_load_directory:
  * @self: an #LrgDataLoader
  * @directory: path to directory containing YAML files
@@ -981,7 +981,7 @@ lrg_data_loader_load_directory (LrgDataLoader  *self,
     return g_list_reverse (objects);
 }
 
-/**
+/*
  * lrg_data_loader_load_files:
  * @self: an #LrgDataLoader
  * @paths: (array zero-terminated=1): NULL-terminated array of file paths
@@ -1226,7 +1226,7 @@ lrg_data_loader_load_directory_async (LrgDataLoader *self,
  * Public API - Utility
  * ========================================================================== */
 
-/**
+/*
  * lrg_data_loader_get_type_field_name:
  * @self: an #LrgDataLoader
  *
@@ -1242,7 +1242,7 @@ lrg_data_loader_get_type_field_name (LrgDataLoader *self)
     return self->type_field_name;
 }
 
-/**
+/*
  * lrg_data_loader_set_type_field_name:
  * @self: an #LrgDataLoader
  * @field_name: the field name to use
@@ -1264,7 +1264,7 @@ lrg_data_loader_set_type_field_name (LrgDataLoader *self,
     }
 }
 
-/**
+/*
  * lrg_data_loader_get_file_extensions:
  * @self: an #LrgDataLoader
  *
@@ -1280,7 +1280,7 @@ lrg_data_loader_get_file_extensions (LrgDataLoader *self)
     return (const gchar * const *)self->file_extensions;
 }
 
-/**
+/*
  * lrg_data_loader_set_file_extensions:
  * @self: an #LrgDataLoader
  * @extensions: (array zero-terminated=1): NULL-terminated array of extensions

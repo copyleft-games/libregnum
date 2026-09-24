@@ -494,7 +494,7 @@ lrg_image_init (LrgImage *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_image_new:
  *
  * Creates a new image widget without a texture.
@@ -507,7 +507,7 @@ lrg_image_new (void)
     return g_object_new (LRG_TYPE_IMAGE, NULL);
 }
 
-/**
+/*
  * lrg_image_new_with_texture:
  * @texture: (nullable): the texture to display
  *
@@ -527,7 +527,7 @@ lrg_image_new_with_texture (GrlTexture *texture)
  * Public API - Texture
  * ========================================================================== */
 
-/**
+/*
  * lrg_image_get_texture:
  * @self: an #LrgImage
  *
@@ -543,7 +543,7 @@ lrg_image_get_texture (LrgImage *self)
     return self->texture;
 }
 
-/**
+/*
  * lrg_image_set_texture:
  * @self: an #LrgImage
  * @texture: (nullable): the texture to display
@@ -571,7 +571,7 @@ lrg_image_set_texture (LrgImage   *self,
  * Public API - Scale Mode
  * ========================================================================== */
 
-/**
+/*
  * lrg_image_get_scale_mode:
  * @self: an #LrgImage
  *
@@ -587,7 +587,7 @@ lrg_image_get_scale_mode (LrgImage *self)
     return self->scale_mode;
 }
 
-/**
+/*
  * lrg_image_set_scale_mode:
  * @self: an #LrgImage
  * @mode: the scale mode
@@ -611,7 +611,7 @@ lrg_image_set_scale_mode (LrgImage          *self,
  * Public API - Tint
  * ========================================================================== */
 
-/**
+/*
  * lrg_image_get_tint:
  * @self: an #LrgImage
  *
@@ -627,7 +627,7 @@ lrg_image_get_tint (LrgImage *self)
     return &self->tint;
 }
 
-/**
+/*
  * lrg_image_set_tint:
  * @self: an #LrgImage
  * @tint: the tint color
@@ -655,7 +655,7 @@ lrg_image_set_tint (LrgImage       *self,
  * Public API - Source Rectangle
  * ========================================================================== */
 
-/**
+/*
  * lrg_image_get_source_rect:
  * @self: an #LrgImage
  *
@@ -671,7 +671,7 @@ lrg_image_get_source_rect (LrgImage *self)
     return self->source_rect;
 }
 
-/**
+/*
  * lrg_image_set_source_rect:
  * @self: an #LrgImage
  * @rect: (nullable): the source rectangle, or %NULL for whole texture
@@ -692,7 +692,7 @@ lrg_image_set_source_rect (LrgImage           *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SOURCE_RECT]);
 }
 
-/**
+/*
  * lrg_image_clear_source_rect:
  * @self: an #LrgImage
  *

@@ -210,7 +210,7 @@ lrg_game_state_init (LrgGameState *self)
     priv->blocking = TRUE;
 }
 
-/**
+/*
  * lrg_game_state_enter:
  * @self: an #LrgGameState
  *
@@ -230,7 +230,7 @@ lrg_game_state_enter (LrgGameState *self)
     klass->enter (self);
 }
 
-/**
+/*
  * lrg_game_state_exit:
  * @self: an #LrgGameState
  *
@@ -250,7 +250,7 @@ lrg_game_state_exit (LrgGameState *self)
     klass->exit (self);
 }
 
-/**
+/*
  * lrg_game_state_pause:
  * @self: an #LrgGameState
  *
@@ -269,7 +269,7 @@ lrg_game_state_pause (LrgGameState *self)
         klass->pause (self);
 }
 
-/**
+/*
  * lrg_game_state_resume:
  * @self: an #LrgGameState
  *
@@ -288,7 +288,7 @@ lrg_game_state_resume (LrgGameState *self)
         klass->resume (self);
 }
 
-/**
+/*
  * lrg_game_state_update:
  * @self: an #LrgGameState
  * @delta: time since last frame in seconds
@@ -310,7 +310,7 @@ lrg_game_state_update (LrgGameState *self,
     klass->update (self, delta);
 }
 
-/**
+/*
  * lrg_game_state_draw:
  * @self: an #LrgGameState
  *
@@ -330,7 +330,7 @@ lrg_game_state_draw (LrgGameState *self)
     klass->draw (self);
 }
 
-/**
+/*
  * lrg_game_state_handle_input:
  * @self: an #LrgGameState
  * @event: (transfer none): the input event to handle
@@ -355,7 +355,7 @@ lrg_game_state_handle_input (LrgGameState *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_game_state_update_safe:
  * @self: an #LrgGameState
  * @delta: time since last frame in seconds
@@ -390,7 +390,7 @@ lrg_game_state_update_safe (LrgGameState  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_game_state_get_name:
  * @self: an #LrgGameState
  *
@@ -409,7 +409,7 @@ lrg_game_state_get_name (LrgGameState *self)
     return priv->name;
 }
 
-/**
+/*
  * lrg_game_state_set_name:
  * @self: an #LrgGameState
  * @name: (nullable): the display name
@@ -434,7 +434,7 @@ lrg_game_state_set_name (LrgGameState *self,
     }
 }
 
-/**
+/*
  * lrg_game_state_is_transparent:
  * @self: an #LrgGameState
  *
@@ -453,7 +453,7 @@ lrg_game_state_is_transparent (LrgGameState *self)
     return priv->transparent;
 }
 
-/**
+/*
  * lrg_game_state_set_transparent:
  * @self: an #LrgGameState
  * @transparent: whether state is transparent
@@ -479,7 +479,7 @@ lrg_game_state_set_transparent (LrgGameState *self,
     }
 }
 
-/**
+/*
  * lrg_game_state_is_blocking:
  * @self: an #LrgGameState
  *
@@ -498,7 +498,7 @@ lrg_game_state_is_blocking (LrgGameState *self)
     return priv->blocking;
 }
 
-/**
+/*
  * lrg_game_state_set_blocking:
  * @self: an #LrgGameState
  * @blocking: whether state blocks updates

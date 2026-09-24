@@ -375,7 +375,7 @@ lrg_enemy_def_init (LrgEnemyDef *self)
     priv->patterns = g_ptr_array_new_with_free_func (intent_pattern_free);
 }
 
-/**
+/*
  * lrg_enemy_def_new:
  * @id: unique identifier
  * @name: display name
@@ -640,7 +640,7 @@ lrg_enemy_def_on_death (LrgEnemyDef      *self,
         klass->on_death (self, instance, context);
 }
 
-/**
+/*
  * lrg_enemy_def_add_intent_pattern:
  * @self: an #LrgEnemyDef
  * @intent: (transfer full): intent to add to pattern
@@ -672,7 +672,7 @@ lrg_enemy_def_add_intent_pattern (LrgEnemyDef    *self,
     g_ptr_array_add (priv->patterns, pattern);
 }
 
-/**
+/*
  * lrg_enemy_def_clear_intent_patterns:
  * @self: an #LrgEnemyDef
  *

@@ -200,7 +200,7 @@ lrg_vr_comfort_settings_init (LrgVRComfortSettings *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_vr_comfort_settings_new:
  *
  * Creates new VR comfort settings with defaults.
@@ -215,7 +215,7 @@ lrg_vr_comfort_settings_new (void)
     return g_object_new (LRG_TYPE_VR_COMFORT_SETTINGS, NULL);
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_get_turn_mode:
  * @self: a #LrgVRComfortSettings
  *
@@ -233,7 +233,7 @@ lrg_vr_comfort_settings_get_turn_mode (LrgVRComfortSettings *self)
     return self->turn_mode;
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_set_turn_mode:
  * @self: a #LrgVRComfortSettings
  * @mode: the #LrgVRTurnMode
@@ -255,7 +255,7 @@ lrg_vr_comfort_settings_set_turn_mode (LrgVRComfortSettings *self,
     }
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_get_snap_turn_angle:
  * @self: a #LrgVRComfortSettings
  *
@@ -273,7 +273,7 @@ lrg_vr_comfort_settings_get_snap_turn_angle (LrgVRComfortSettings *self)
     return self->snap_turn_angle;
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_set_snap_turn_angle:
  * @self: a #LrgVRComfortSettings
  * @angle: snap turn angle in degrees
@@ -297,7 +297,7 @@ lrg_vr_comfort_settings_set_snap_turn_angle (LrgVRComfortSettings *self,
     }
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_get_locomotion_mode:
  * @self: a #LrgVRComfortSettings
  *
@@ -315,7 +315,7 @@ lrg_vr_comfort_settings_get_locomotion_mode (LrgVRComfortSettings *self)
     return self->locomotion_mode;
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_set_locomotion_mode:
  * @self: a #LrgVRComfortSettings
  * @mode: the #LrgVRLocomotionMode
@@ -337,7 +337,7 @@ lrg_vr_comfort_settings_set_locomotion_mode (LrgVRComfortSettings *self,
     }
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_get_vignette_enabled:
  * @self: a #LrgVRComfortSettings
  *
@@ -355,7 +355,7 @@ lrg_vr_comfort_settings_get_vignette_enabled (LrgVRComfortSettings *self)
     return self->vignette_enabled;
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_set_vignette_enabled:
  * @self: a #LrgVRComfortSettings
  * @enabled: whether to enable vignette
@@ -377,7 +377,7 @@ lrg_vr_comfort_settings_set_vignette_enabled (LrgVRComfortSettings *self,
     }
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_get_vignette_intensity:
  * @self: a #LrgVRComfortSettings
  *
@@ -395,7 +395,7 @@ lrg_vr_comfort_settings_get_vignette_intensity (LrgVRComfortSettings *self)
     return self->vignette_intensity;
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_set_vignette_intensity:
  * @self: a #LrgVRComfortSettings
  * @intensity: vignette intensity (0.0 to 1.0)
@@ -419,7 +419,7 @@ lrg_vr_comfort_settings_set_vignette_intensity (LrgVRComfortSettings *self,
     }
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_get_height_adjustment:
  * @self: a #LrgVRComfortSettings
  *
@@ -437,7 +437,7 @@ lrg_vr_comfort_settings_get_height_adjustment (LrgVRComfortSettings *self)
     return self->height_adjustment;
 }
 
-/**
+/*
  * lrg_vr_comfort_settings_set_height_adjustment:
  * @self: a #LrgVRComfortSettings
  * @adjustment: height adjustment in meters

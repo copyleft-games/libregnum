@@ -129,7 +129,7 @@ lrg_input_action_init (LrgInputAction *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_action_new:
  * @name: the action name (e.g., "jump", "attack")
  *
@@ -151,7 +151,7 @@ lrg_input_action_new (const gchar *name)
  * Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_action_get_name:
  * @self: an #LrgInputAction
  *
@@ -174,7 +174,7 @@ lrg_input_action_get_name (LrgInputAction *self)
  * Binding Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_action_add_binding:
  * @self: an #LrgInputAction
  * @binding: the binding to add
@@ -202,7 +202,7 @@ lrg_input_action_add_binding (LrgInputAction        *self,
                priv->name, priv->bindings->len);
 }
 
-/**
+/*
  * lrg_input_action_remove_binding:
  * @self: an #LrgInputAction
  * @index: the index of the binding to remove
@@ -234,7 +234,7 @@ lrg_input_action_remove_binding (LrgInputAction *self,
                priv->name, priv->bindings->len);
 }
 
-/**
+/*
  * lrg_input_action_clear_bindings:
  * @self: an #LrgInputAction
  *
@@ -258,7 +258,7 @@ lrg_input_action_clear_bindings (LrgInputAction *self)
     }
 }
 
-/**
+/*
  * lrg_input_action_get_binding_count:
  * @self: an #LrgInputAction
  *
@@ -277,7 +277,7 @@ lrg_input_action_get_binding_count (LrgInputAction *self)
     return priv->bindings->len;
 }
 
-/**
+/*
  * lrg_input_action_get_binding:
  * @self: an #LrgInputAction
  * @index: the binding index
@@ -308,7 +308,7 @@ lrg_input_action_get_binding (LrgInputAction *self,
  * State Query
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_action_is_pressed:
  * @self: an #LrgInputAction
  *
@@ -338,7 +338,7 @@ lrg_input_action_is_pressed (LrgInputAction *self)
     return FALSE;
 }
 
-/**
+/*
  * lrg_input_action_is_down:
  * @self: an #LrgInputAction
  *
@@ -368,7 +368,7 @@ lrg_input_action_is_down (LrgInputAction *self)
     return FALSE;
 }
 
-/**
+/*
  * lrg_input_action_is_released:
  * @self: an #LrgInputAction
  *
@@ -398,7 +398,7 @@ lrg_input_action_is_released (LrgInputAction *self)
     return FALSE;
 }
 
-/**
+/*
  * lrg_input_action_get_value:
  * @self: an #LrgInputAction
  *

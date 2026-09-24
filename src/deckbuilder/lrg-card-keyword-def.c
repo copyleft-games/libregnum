@@ -319,7 +319,7 @@ lrg_card_keyword_def_init (LrgCardKeywordDef *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_keyword_def_new:
  * @id: unique keyword identifier
  * @name: display name
@@ -350,7 +350,7 @@ lrg_card_keyword_def_new (const gchar *id,
  * Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_keyword_def_get_id:
  * @self: a #LrgCardKeywordDef
  *
@@ -371,7 +371,7 @@ lrg_card_keyword_def_get_id (LrgCardKeywordDef *self)
     return priv->id;
 }
 
-/**
+/*
  * lrg_card_keyword_def_get_name:
  * @self: a #LrgCardKeywordDef
  *
@@ -392,7 +392,7 @@ lrg_card_keyword_def_get_name (LrgCardKeywordDef *self)
     return priv->name;
 }
 
-/**
+/*
  * lrg_card_keyword_def_get_description:
  * @self: a #LrgCardKeywordDef
  *
@@ -413,7 +413,7 @@ lrg_card_keyword_def_get_description (LrgCardKeywordDef *self)
     return priv->description;
 }
 
-/**
+/*
  * lrg_card_keyword_def_get_icon:
  * @self: a #LrgCardKeywordDef
  *
@@ -434,7 +434,7 @@ lrg_card_keyword_def_get_icon (LrgCardKeywordDef *self)
     return priv->icon;
 }
 
-/**
+/*
  * lrg_card_keyword_def_set_icon:
  * @self: a #LrgCardKeywordDef
  * @icon: (nullable): the icon identifier
@@ -461,7 +461,7 @@ lrg_card_keyword_def_set_icon (LrgCardKeywordDef *self,
     }
 }
 
-/**
+/*
  * lrg_card_keyword_def_is_positive:
  * @self: a #LrgCardKeywordDef
  *
@@ -482,7 +482,7 @@ lrg_card_keyword_def_is_positive (LrgCardKeywordDef *self)
     return priv->positive;
 }
 
-/**
+/*
  * lrg_card_keyword_def_set_positive:
  * @self: a #LrgCardKeywordDef
  * @positive: whether the keyword is positive
@@ -508,7 +508,7 @@ lrg_card_keyword_def_set_positive (LrgCardKeywordDef *self,
     }
 }
 
-/**
+/*
  * lrg_card_keyword_def_is_negative:
  * @self: a #LrgCardKeywordDef
  *
@@ -529,7 +529,7 @@ lrg_card_keyword_def_is_negative (LrgCardKeywordDef *self)
     return priv->negative;
 }
 
-/**
+/*
  * lrg_card_keyword_def_set_negative:
  * @self: a #LrgCardKeywordDef
  * @negative: whether the keyword is negative
@@ -559,7 +559,7 @@ lrg_card_keyword_def_set_negative (LrgCardKeywordDef *self,
  * Virtual Method Wrappers
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_keyword_def_on_card_played:
  * @self: a #LrgCardKeywordDef
  * @card: the card being played
@@ -583,7 +583,7 @@ lrg_card_keyword_def_on_card_played (LrgCardKeywordDef *self,
         klass->on_card_played (self, card, context);
 }
 
-/**
+/*
  * lrg_card_keyword_def_on_card_drawn:
  * @self: a #LrgCardKeywordDef
  * @card: the card drawn
@@ -607,7 +607,7 @@ lrg_card_keyword_def_on_card_drawn (LrgCardKeywordDef *self,
         klass->on_card_drawn (self, card, context);
 }
 
-/**
+/*
  * lrg_card_keyword_def_on_card_discarded:
  * @self: a #LrgCardKeywordDef
  * @card: the card discarded
@@ -631,7 +631,7 @@ lrg_card_keyword_def_on_card_discarded (LrgCardKeywordDef *self,
         klass->on_card_discarded (self, card, context);
 }
 
-/**
+/*
  * lrg_card_keyword_def_on_turn_start:
  * @self: a #LrgCardKeywordDef
  * @card: the card
@@ -655,7 +655,7 @@ lrg_card_keyword_def_on_turn_start (LrgCardKeywordDef *self,
         klass->on_turn_start (self, card, context);
 }
 
-/**
+/*
  * lrg_card_keyword_def_on_turn_end:
  * @self: a #LrgCardKeywordDef
  * @card: the card
@@ -679,7 +679,7 @@ lrg_card_keyword_def_on_turn_end (LrgCardKeywordDef *self,
         klass->on_turn_end (self, card, context);
 }
 
-/**
+/*
  * lrg_card_keyword_def_modify_cost:
  * @self: a #LrgCardKeywordDef
  * @card: the card
@@ -709,7 +709,7 @@ lrg_card_keyword_def_modify_cost (LrgCardKeywordDef *self,
     return base_cost;
 }
 
-/**
+/*
  * lrg_card_keyword_def_can_play:
  * @self: a #LrgCardKeywordDef
  * @card: the card

@@ -200,7 +200,7 @@ lrg_level_init (LrgLevel *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_level_new:
  * @name: (nullable): the level name
  *

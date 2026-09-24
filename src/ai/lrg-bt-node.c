@@ -177,7 +177,7 @@ lrg_bt_node_init (LrgBTNode *self)
     priv->name = NULL;
 }
 
-/**
+/*
  * lrg_bt_node_get_name:
  * @self: an #LrgBTNode
  *
@@ -196,7 +196,7 @@ lrg_bt_node_get_name (LrgBTNode *self)
     return priv->name;
 }
 
-/**
+/*
  * lrg_bt_node_set_name:
  * @self: an #LrgBTNode
  * @name: (nullable): The node name
@@ -218,7 +218,7 @@ lrg_bt_node_set_name (LrgBTNode   *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_NAME]);
 }
 
-/**
+/*
  * lrg_bt_node_get_status:
  * @self: an #LrgBTNode
  *
@@ -237,7 +237,7 @@ lrg_bt_node_get_status (LrgBTNode *self)
     return priv->status;
 }
 
-/**
+/*
  * lrg_bt_node_tick:
  * @self: an #LrgBTNode
  * @blackboard: The shared blackboard
@@ -266,7 +266,7 @@ lrg_bt_node_tick (LrgBTNode     *self,
     return priv->status;
 }
 
-/**
+/*
  * lrg_bt_node_reset:
  * @self: an #LrgBTNode
  *
@@ -283,7 +283,7 @@ lrg_bt_node_reset (LrgBTNode *self)
     klass->reset (self);
 }
 
-/**
+/*
  * lrg_bt_node_abort:
  * @self: an #LrgBTNode
  *
@@ -300,7 +300,7 @@ lrg_bt_node_abort (LrgBTNode *self)
     klass->abort (self);
 }
 
-/**
+/*
  * lrg_bt_node_is_running:
  * @self: an #LrgBTNode
  *

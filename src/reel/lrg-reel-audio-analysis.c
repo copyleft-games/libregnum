@@ -205,7 +205,7 @@ build_mono_window (const gfloat *samples,
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_audio_spectrum:
  * @wave: an #LrgWaveData
  * @frame: video frame index (0-based)
@@ -342,7 +342,7 @@ lrg_reel_audio_spectrum (LrgWaveData *wave,
     return result;
 }
 
-/**
+/*
  * lrg_reel_audio_waveform:
  * @wave: an #LrgWaveData
  * @frame: video frame index (0-based)
@@ -475,7 +475,7 @@ lrg_reel_audio_waveform (LrgWaveData *wave,
     return result;
 }
 
-/**
+/*
  * lrg_reel_audio_level:
  * @wave: an #LrgWaveData
  * @frame: video frame index (0-based)

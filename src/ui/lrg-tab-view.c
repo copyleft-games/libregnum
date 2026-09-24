@@ -634,7 +634,7 @@ lrg_tab_view_init (LrgTabView *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_tab_view_new:
  *
  * Creates a new tab view widget.
@@ -647,7 +647,7 @@ lrg_tab_view_new (void)
     return g_object_new (LRG_TYPE_TAB_VIEW, NULL);
 }
 
-/**
+/*
  * lrg_tab_view_add_tab:
  * @self: an #LrgTabView
  * @label: the tab label text
@@ -679,7 +679,7 @@ lrg_tab_view_add_tab (LrgTabView  *self,
     lrg_container_layout_children (LRG_CONTAINER (self));
 }
 
-/**
+/*
  * lrg_tab_view_remove_tab:
  * @self: an #LrgTabView
  * @index: the tab index to remove
@@ -718,7 +718,7 @@ lrg_tab_view_remove_tab (LrgTabView *self,
     lrg_container_layout_children (LRG_CONTAINER (self));
 }
 
-/**
+/*
  * lrg_tab_view_get_tab_count:
  * @self: an #LrgTabView
  *
@@ -733,7 +733,7 @@ lrg_tab_view_get_tab_count (LrgTabView *self)
     return self->tabs->len;
 }
 
-/**
+/*
  * lrg_tab_view_get_active_tab:
  * @self: an #LrgTabView
  *
@@ -748,7 +748,7 @@ lrg_tab_view_get_active_tab (LrgTabView *self)
     return self->active_tab;
 }
 
-/**
+/*
  * lrg_tab_view_set_active_tab:
  * @self: an #LrgTabView
  * @index: the tab index to activate
@@ -780,7 +780,7 @@ lrg_tab_view_set_active_tab (LrgTabView *self,
     }
 }
 
-/**
+/*
  * lrg_tab_view_get_tab_position:
  * @self: an #LrgTabView
  *
@@ -795,7 +795,7 @@ lrg_tab_view_get_tab_position (LrgTabView *self)
     return self->tab_position;
 }
 
-/**
+/*
  * lrg_tab_view_set_tab_position:
  * @self: an #LrgTabView
  * @position: the tab bar position
@@ -816,7 +816,7 @@ lrg_tab_view_set_tab_position (LrgTabView     *self,
     }
 }
 
-/**
+/*
  * lrg_tab_view_get_tab_height:
  * @self: an #LrgTabView
  *
@@ -831,7 +831,7 @@ lrg_tab_view_get_tab_height (LrgTabView *self)
     return self->tab_height;
 }
 
-/**
+/*
  * lrg_tab_view_set_tab_height:
  * @self: an #LrgTabView
  * @height: the tab bar height in pixels
@@ -853,7 +853,7 @@ lrg_tab_view_set_tab_height (LrgTabView *self,
     }
 }
 
-/**
+/*
  * lrg_tab_view_get_tab_content:
  * @self: an #LrgTabView
  * @index: the tab index
@@ -879,7 +879,7 @@ lrg_tab_view_get_tab_content (LrgTabView *self,
     return entry->content;
 }
 
-/**
+/*
  * lrg_tab_view_get_tab_label:
  * @self: an #LrgTabView
  * @index: the tab index
@@ -905,7 +905,7 @@ lrg_tab_view_get_tab_label (LrgTabView *self,
     return entry->label;
 }
 
-/**
+/*
  * lrg_tab_view_set_tab_label:
  * @self: an #LrgTabView
  * @index: the tab index

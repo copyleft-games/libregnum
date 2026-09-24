@@ -186,7 +186,7 @@ lrg_joker_def_init (LrgJokerDef *self)
     priv->required_suit = LRG_CARD_SUIT_NONE;
 }
 
-/**
+/*
  * lrg_joker_def_new:
  * @id: unique identifier for the joker
  * @name: display name
@@ -216,7 +216,7 @@ lrg_joker_def_new (const gchar *id,
     return self;
 }
 
-/**
+/*
  * lrg_joker_def_get_id:
  * @self: a #LrgJokerDef
  *
@@ -237,7 +237,7 @@ lrg_joker_def_get_id (LrgJokerDef *self)
     return priv->id;
 }
 
-/**
+/*
  * lrg_joker_def_get_name:
  * @self: a #LrgJokerDef
  *
@@ -258,7 +258,7 @@ lrg_joker_def_get_name (LrgJokerDef *self)
     return priv->name;
 }
 
-/**
+/*
  * lrg_joker_def_set_description:
  * @self: a #LrgJokerDef
  * @description: the description text
@@ -281,7 +281,7 @@ lrg_joker_def_set_description (LrgJokerDef *self,
     priv->description = g_strdup (description);
 }
 
-/**
+/*
  * lrg_joker_def_get_description:
  * @self: a #LrgJokerDef
  * @instance: (nullable): optional instance for dynamic values
@@ -306,7 +306,7 @@ lrg_joker_def_get_description (LrgJokerDef      *self,
     return klass->get_description (self, instance);
 }
 
-/**
+/*
  * lrg_joker_def_set_rarity:
  * @self: a #LrgJokerDef
  * @rarity: the #LrgJokerRarity
@@ -327,7 +327,7 @@ lrg_joker_def_set_rarity (LrgJokerDef    *self,
     priv->rarity = rarity;
 }
 
-/**
+/*
  * lrg_joker_def_get_rarity:
  * @self: a #LrgJokerDef
  *
@@ -348,7 +348,7 @@ lrg_joker_def_get_rarity (LrgJokerDef *self)
     return priv->rarity;
 }
 
-/**
+/*
  * lrg_joker_def_set_cost:
  * @self: a #LrgJokerDef
  * @cost: the cost in gold
@@ -369,7 +369,7 @@ lrg_joker_def_set_cost (LrgJokerDef *self,
     priv->cost = cost;
 }
 
-/**
+/*
  * lrg_joker_def_get_cost:
  * @self: a #LrgJokerDef
  *
@@ -390,7 +390,7 @@ lrg_joker_def_get_cost (LrgJokerDef *self)
     return priv->cost;
 }
 
-/**
+/*
  * lrg_joker_def_set_sell_value:
  * @self: a #LrgJokerDef
  * @value: the sell value
@@ -411,7 +411,7 @@ lrg_joker_def_set_sell_value (LrgJokerDef *self,
     priv->sell_value = value;
 }
 
-/**
+/*
  * lrg_joker_def_get_sell_value:
  * @self: a #LrgJokerDef
  *
@@ -432,7 +432,7 @@ lrg_joker_def_get_sell_value (LrgJokerDef *self)
     return priv->sell_value;
 }
 
-/**
+/*
  * lrg_joker_def_set_plus_chips:
  * @self: a #LrgJokerDef
  * @chips: bonus chips to add
@@ -453,7 +453,7 @@ lrg_joker_def_set_plus_chips (LrgJokerDef *self,
     priv->plus_chips = chips;
 }
 
-/**
+/*
  * lrg_joker_def_get_plus_chips:
  * @self: a #LrgJokerDef
  *
@@ -474,7 +474,7 @@ lrg_joker_def_get_plus_chips (LrgJokerDef *self)
     return priv->plus_chips;
 }
 
-/**
+/*
  * lrg_joker_def_set_plus_mult:
  * @self: a #LrgJokerDef
  * @mult: bonus mult to add
@@ -495,7 +495,7 @@ lrg_joker_def_set_plus_mult (LrgJokerDef *self,
     priv->plus_mult = mult;
 }
 
-/**
+/*
  * lrg_joker_def_get_plus_mult:
  * @self: a #LrgJokerDef
  *
@@ -516,7 +516,7 @@ lrg_joker_def_get_plus_mult (LrgJokerDef *self)
     return priv->plus_mult;
 }
 
-/**
+/*
  * lrg_joker_def_set_x_mult:
  * @self: a #LrgJokerDef
  * @x_mult: the X multiplier
@@ -537,7 +537,7 @@ lrg_joker_def_set_x_mult (LrgJokerDef *self,
     priv->x_mult = x_mult;
 }
 
-/**
+/*
  * lrg_joker_def_get_x_mult:
  * @self: a #LrgJokerDef
  *
@@ -558,7 +558,7 @@ lrg_joker_def_get_x_mult (LrgJokerDef *self)
     return priv->x_mult;
 }
 
-/**
+/*
  * lrg_joker_def_can_trigger:
  * @self: a #LrgJokerDef
  * @ctx: the scoring context
@@ -586,7 +586,7 @@ lrg_joker_def_can_trigger (LrgJokerDef       *self,
     return klass->can_trigger (self, ctx, instance);
 }
 
-/**
+/*
  * lrg_joker_def_apply_effect:
  * @self: a #LrgJokerDef
  * @ctx: the scoring context to modify
@@ -612,7 +612,7 @@ lrg_joker_def_apply_effect (LrgJokerDef       *self,
     klass->apply_effect (self, ctx, instance);
 }
 
-/**
+/*
  * lrg_joker_def_set_required_hand:
  * @self: a #LrgJokerDef
  * @hand_type: the required hand type, or NONE for any
@@ -633,7 +633,7 @@ lrg_joker_def_set_required_hand (LrgJokerDef *self,
     priv->required_hand = hand_type;
 }
 
-/**
+/*
  * lrg_joker_def_get_required_hand:
  * @self: a #LrgJokerDef
  *
@@ -654,7 +654,7 @@ lrg_joker_def_get_required_hand (LrgJokerDef *self)
     return priv->required_hand;
 }
 
-/**
+/*
  * lrg_joker_def_set_required_suit:
  * @self: a #LrgJokerDef
  * @suit: the required suit, or NONE for any
@@ -675,7 +675,7 @@ lrg_joker_def_set_required_suit (LrgJokerDef *self,
     priv->required_suit = suit;
 }
 
-/**
+/*
  * lrg_joker_def_get_required_suit:
  * @self: a #LrgJokerDef
  *

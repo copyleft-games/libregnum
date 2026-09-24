@@ -213,7 +213,7 @@ lrg_vr_stub_init (LrgVRStub *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_vr_stub_new:
  *
  * Creates a new VR stub instance.
@@ -228,7 +228,7 @@ lrg_vr_stub_new (void)
     return g_object_new (LRG_TYPE_VR_STUB, NULL);
 }
 
-/**
+/*
  * lrg_vr_stub_get_default:
  *
  * Gets the default VR stub instance.

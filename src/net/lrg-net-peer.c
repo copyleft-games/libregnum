@@ -218,7 +218,7 @@ lrg_net_peer_class_init (LrgNetPeerClass *klass)
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
-    /**
+    /*
      * LrgNetPeer::state-changed:
      * @self: the #LrgNetPeer
      * @old_state: the previous state
@@ -250,7 +250,7 @@ lrg_net_peer_init (LrgNetPeer *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_net_peer_new:
  * @peer_id: unique peer identifier
  * @address: network address (IP or hostname)
@@ -272,7 +272,7 @@ lrg_net_peer_new (guint32      peer_id,
                          NULL);
 }
 
-/**
+/*
  * lrg_net_peer_get_peer_id:
  * @self: an #LrgNetPeer
  *
@@ -287,7 +287,7 @@ lrg_net_peer_get_peer_id (LrgNetPeer *self)
     return self->peer_id;
 }
 
-/**
+/*
  * lrg_net_peer_get_address:
  * @self: an #LrgNetPeer
  *
@@ -302,7 +302,7 @@ lrg_net_peer_get_address (LrgNetPeer *self)
     return self->address;
 }
 
-/**
+/*
  * lrg_net_peer_get_port:
  * @self: an #LrgNetPeer
  *
@@ -317,7 +317,7 @@ lrg_net_peer_get_port (LrgNetPeer *self)
     return self->port;
 }
 
-/**
+/*
  * lrg_net_peer_get_state:
  * @self: an #LrgNetPeer
  *
@@ -332,7 +332,7 @@ lrg_net_peer_get_state (LrgNetPeer *self)
     return self->state;
 }
 
-/**
+/*
  * lrg_net_peer_get_rtt:
  * @self: an #LrgNetPeer
  *
@@ -347,7 +347,7 @@ lrg_net_peer_get_rtt (LrgNetPeer *self)
     return self->rtt;
 }
 
-/**
+/*
  * lrg_net_peer_get_last_activity:
  * @self: an #LrgNetPeer
  *
@@ -362,7 +362,7 @@ lrg_net_peer_get_last_activity (LrgNetPeer *self)
     return self->last_activity;
 }
 
-/**
+/*
  * lrg_net_peer_is_connected:
  * @self: an #LrgNetPeer
  *
@@ -377,7 +377,7 @@ lrg_net_peer_is_connected (LrgNetPeer *self)
     return self->state == LRG_NET_PEER_STATE_CONNECTED;
 }
 
-/**
+/*
  * lrg_net_peer_set_state:
  * @self: an #LrgNetPeer
  * @state: the new state
@@ -404,7 +404,7 @@ lrg_net_peer_set_state (LrgNetPeer      *self,
     g_signal_emit (self, signals[SIGNAL_STATE_CHANGED], 0, old_state, state);
 }
 
-/**
+/*
  * lrg_net_peer_update_rtt:
  * @self: an #LrgNetPeer
  * @rtt_ms: round-trip time in milliseconds
@@ -424,7 +424,7 @@ lrg_net_peer_update_rtt (LrgNetPeer *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_RTT]);
 }
 
-/**
+/*
  * lrg_net_peer_touch:
  * @self: an #LrgNetPeer
  *

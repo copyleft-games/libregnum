@@ -239,7 +239,7 @@ lrg_building_ui_class_init (LrgBuildingUIClass *klass)
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
-    /**
+    /*
      * LrgBuildingUI::building-selected:
      * @ui: the building UI
      * @definition: the selected building definition
@@ -258,7 +258,7 @@ lrg_building_ui_class_init (LrgBuildingUIClass *klass)
                       G_TYPE_NONE, 1,
                       LRG_TYPE_BUILDING_DEF);
 
-    /**
+    /*
      * LrgBuildingUI::demolish-selected:
      * @ui: the building UI
      *
@@ -275,7 +275,7 @@ lrg_building_ui_class_init (LrgBuildingUIClass *klass)
                       NULL,
                       G_TYPE_NONE, 0);
 
-    /**
+    /*
      * LrgBuildingUI::category-changed:
      * @ui: the building UI
      * @category: the new category

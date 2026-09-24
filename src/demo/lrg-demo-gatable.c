@@ -75,7 +75,7 @@ lrg_demo_gatable_default_init (LrgDemoGatableInterface *iface)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_demo_gatable_get_content_id:
  * @self: a #LrgDemoGatable
  *
@@ -101,7 +101,7 @@ lrg_demo_gatable_get_content_id (LrgDemoGatable *self)
     return iface->get_content_id (self);
 }
 
-/**
+/*
  * lrg_demo_gatable_is_demo_content:
  * @self: a #LrgDemoGatable
  *
@@ -124,7 +124,7 @@ lrg_demo_gatable_is_demo_content (LrgDemoGatable *self)
     return iface->is_demo_content (self);
 }
 
-/**
+/*
  * lrg_demo_gatable_get_unlock_message:
  * @self: a #LrgDemoGatable
  *

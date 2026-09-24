@@ -106,7 +106,7 @@ lrg_input_mouse_init (LrgInputMouse *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_mouse_new:
  *
  * Creates a new mouse input source.

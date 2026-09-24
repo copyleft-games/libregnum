@@ -198,7 +198,7 @@ lrg_scene_entity_init (LrgSceneEntity *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_entity_new:
  * @name: The entity name
  *
@@ -218,7 +218,7 @@ lrg_scene_entity_new (const gchar *name)
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_entity_get_name:
  * @self: an #LrgSceneEntity
  *
@@ -234,7 +234,7 @@ lrg_scene_entity_get_name (LrgSceneEntity *self)
 	return self->name;
 }
 
-/**
+/*
  * lrg_scene_entity_set_name:
  * @self: an #LrgSceneEntity
  * @name: The new name
@@ -256,7 +256,7 @@ lrg_scene_entity_set_name (LrgSceneEntity *self,
  * Transform Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_entity_get_location:
  * @self: an #LrgSceneEntity
  *
@@ -272,7 +272,7 @@ lrg_scene_entity_get_location (LrgSceneEntity *self)
 	return self->location;
 }
 
-/**
+/*
  * lrg_scene_entity_set_location:
  * @self: an #LrgSceneEntity
  * @location: (transfer none): The location vector
@@ -291,7 +291,7 @@ lrg_scene_entity_set_location (LrgSceneEntity *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOCATION]);
 }
 
-/**
+/*
  * lrg_scene_entity_set_location_xyz:
  * @self: an #LrgSceneEntity
  * @x: X coordinate
@@ -314,7 +314,7 @@ lrg_scene_entity_set_location_xyz (LrgSceneEntity *self,
 	lrg_scene_entity_set_location (self, loc);
 }
 
-/**
+/*
  * lrg_scene_entity_get_rotation:
  * @self: an #LrgSceneEntity
  *
@@ -330,7 +330,7 @@ lrg_scene_entity_get_rotation (LrgSceneEntity *self)
 	return self->rotation;
 }
 
-/**
+/*
  * lrg_scene_entity_set_rotation:
  * @self: an #LrgSceneEntity
  * @rotation: (transfer none): The rotation vector
@@ -349,7 +349,7 @@ lrg_scene_entity_set_rotation (LrgSceneEntity *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ROTATION]);
 }
 
-/**
+/*
  * lrg_scene_entity_set_rotation_xyz:
  * @self: an #LrgSceneEntity
  * @rx: X rotation in radians
@@ -372,7 +372,7 @@ lrg_scene_entity_set_rotation_xyz (LrgSceneEntity *self,
 	lrg_scene_entity_set_rotation (self, rot);
 }
 
-/**
+/*
  * lrg_scene_entity_get_scale:
  * @self: an #LrgSceneEntity
  *
@@ -388,7 +388,7 @@ lrg_scene_entity_get_scale (LrgSceneEntity *self)
 	return self->scale;
 }
 
-/**
+/*
  * lrg_scene_entity_set_scale:
  * @self: an #LrgSceneEntity
  * @scale: (transfer none): The scale vector
@@ -407,7 +407,7 @@ lrg_scene_entity_set_scale (LrgSceneEntity *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCALE]);
 }
 
-/**
+/*
  * lrg_scene_entity_set_scale_xyz:
  * @self: an #LrgSceneEntity
  * @sx: X scale factor
@@ -434,7 +434,7 @@ lrg_scene_entity_set_scale_xyz (LrgSceneEntity *self,
  * Object Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_entity_add_object:
  * @self: an #LrgSceneEntity
  * @object: (transfer none): The object to add
@@ -451,7 +451,7 @@ lrg_scene_entity_add_object (LrgSceneEntity *self,
 	g_ptr_array_add (self->objects, g_object_ref (object));
 }
 
-/**
+/*
  * lrg_scene_entity_remove_object:
  * @self: an #LrgSceneEntity
  * @object: The object to remove
@@ -470,7 +470,7 @@ lrg_scene_entity_remove_object (LrgSceneEntity *self,
 	return g_ptr_array_remove (self->objects, object);
 }
 
-/**
+/*
  * lrg_scene_entity_get_objects:
  * @self: an #LrgSceneEntity
  *
@@ -486,7 +486,7 @@ lrg_scene_entity_get_objects (LrgSceneEntity *self)
 	return self->objects;
 }
 
-/**
+/*
  * lrg_scene_entity_get_object_count:
  * @self: an #LrgSceneEntity
  *
@@ -502,7 +502,7 @@ lrg_scene_entity_get_object_count (LrgSceneEntity *self)
 	return self->objects->len;
 }
 
-/**
+/*
  * lrg_scene_entity_find_object:
  * @self: an #LrgSceneEntity
  * @name: The object name to find
@@ -532,7 +532,7 @@ lrg_scene_entity_find_object (LrgSceneEntity *self,
 	return NULL;
 }
 
-/**
+/*
  * lrg_scene_entity_foreach_object:
  * @self: an #LrgSceneEntity
  * @func: (scope call): The function to call for each object

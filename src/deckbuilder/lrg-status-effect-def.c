@@ -468,7 +468,7 @@ lrg_status_effect_def_init (LrgStatusEffectDef *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_status_effect_def_new:
  * @id: unique status identifier
  * @name: display name
@@ -499,7 +499,7 @@ lrg_status_effect_def_new (const gchar          *id,
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_status_effect_def_get_id:
  * @self: a #LrgStatusEffectDef
  *
@@ -520,7 +520,7 @@ lrg_status_effect_def_get_id (LrgStatusEffectDef *self)
     return priv->id;
 }
 
-/**
+/*
  * lrg_status_effect_def_get_name:
  * @self: a #LrgStatusEffectDef
  *
@@ -541,7 +541,7 @@ lrg_status_effect_def_get_name (LrgStatusEffectDef *self)
     return priv->name;
 }
 
-/**
+/*
  * lrg_status_effect_def_get_description:
  * @self: a #LrgStatusEffectDef
  *
@@ -562,7 +562,7 @@ lrg_status_effect_def_get_description (LrgStatusEffectDef *self)
     return priv->description;
 }
 
-/**
+/*
  * lrg_status_effect_def_set_description:
  * @self: a #LrgStatusEffectDef
  * @description: (nullable): the description
@@ -585,7 +585,7 @@ lrg_status_effect_def_set_description (LrgStatusEffectDef *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DESCRIPTION]);
 }
 
-/**
+/*
  * lrg_status_effect_def_get_icon:
  * @self: a #LrgStatusEffectDef
  *
@@ -606,7 +606,7 @@ lrg_status_effect_def_get_icon (LrgStatusEffectDef *self)
     return priv->icon;
 }
 
-/**
+/*
  * lrg_status_effect_def_set_icon:
  * @self: a #LrgStatusEffectDef
  * @icon: (nullable): the icon identifier
@@ -629,7 +629,7 @@ lrg_status_effect_def_set_icon (LrgStatusEffectDef *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ICON]);
 }
 
-/**
+/*
  * lrg_status_effect_def_get_effect_type:
  * @self: a #LrgStatusEffectDef
  *
@@ -650,7 +650,7 @@ lrg_status_effect_def_get_effect_type (LrgStatusEffectDef *self)
     return priv->effect_type;
 }
 
-/**
+/*
  * lrg_status_effect_def_get_stack_behavior:
  * @self: a #LrgStatusEffectDef
  *
@@ -671,7 +671,7 @@ lrg_status_effect_def_get_stack_behavior (LrgStatusEffectDef *self)
     return priv->stack_behavior;
 }
 
-/**
+/*
  * lrg_status_effect_def_set_stack_behavior:
  * @self: a #LrgStatusEffectDef
  * @behavior: the stack behavior
@@ -693,7 +693,7 @@ lrg_status_effect_def_set_stack_behavior (LrgStatusEffectDef    *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STACK_BEHAVIOR]);
 }
 
-/**
+/*
  * lrg_status_effect_def_get_max_stacks:
  * @self: a #LrgStatusEffectDef
  *
@@ -714,7 +714,7 @@ lrg_status_effect_def_get_max_stacks (LrgStatusEffectDef *self)
     return priv->max_stacks;
 }
 
-/**
+/*
  * lrg_status_effect_def_set_max_stacks:
  * @self: a #LrgStatusEffectDef
  * @max_stacks: maximum stacks (0 = unlimited)
@@ -736,7 +736,7 @@ lrg_status_effect_def_set_max_stacks (LrgStatusEffectDef *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MAX_STACKS]);
 }
 
-/**
+/*
  * lrg_status_effect_def_is_permanent:
  * @self: a #LrgStatusEffectDef
  *
@@ -757,7 +757,7 @@ lrg_status_effect_def_is_permanent (LrgStatusEffectDef *self)
     return priv->permanent;
 }
 
-/**
+/*
  * lrg_status_effect_def_set_permanent:
  * @self: a #LrgStatusEffectDef
  * @permanent: whether the status is permanent
@@ -779,7 +779,7 @@ lrg_status_effect_def_set_permanent (LrgStatusEffectDef *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PERMANENT]);
 }
 
-/**
+/*
  * lrg_status_effect_def_clears_at_turn_end:
  * @self: a #LrgStatusEffectDef
  *
@@ -800,7 +800,7 @@ lrg_status_effect_def_clears_at_turn_end (LrgStatusEffectDef *self)
     return priv->clears_at_turn_end;
 }
 
-/**
+/*
  * lrg_status_effect_def_set_clears_at_turn_end:
  * @self: a #LrgStatusEffectDef
  * @clears: whether to clear at turn end
@@ -822,7 +822,7 @@ lrg_status_effect_def_set_clears_at_turn_end (LrgStatusEffectDef *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CLEARS_AT_TURN_END]);
 }
 
-/**
+/*
  * lrg_status_effect_def_decrements_at_turn_end:
  * @self: a #LrgStatusEffectDef
  *
@@ -843,7 +843,7 @@ lrg_status_effect_def_decrements_at_turn_end (LrgStatusEffectDef *self)
     return priv->decrements_at_turn_end;
 }
 
-/**
+/*
  * lrg_status_effect_def_set_decrements_at_turn_end:
  * @self: a #LrgStatusEffectDef
  * @decrements: whether to decrement at turn end
@@ -865,7 +865,7 @@ lrg_status_effect_def_set_decrements_at_turn_end (LrgStatusEffectDef *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DECREMENTS_AT_TURN_END]);
 }
 
-/**
+/*
  * lrg_status_effect_def_is_buff:
  * @self: a #LrgStatusEffectDef
  *
@@ -886,7 +886,7 @@ lrg_status_effect_def_is_buff (LrgStatusEffectDef *self)
     return priv->effect_type == LRG_STATUS_EFFECT_TYPE_BUFF;
 }
 
-/**
+/*
  * lrg_status_effect_def_is_debuff:
  * @self: a #LrgStatusEffectDef
  *
@@ -911,7 +911,7 @@ lrg_status_effect_def_is_debuff (LrgStatusEffectDef *self)
  * Virtual Method Wrappers
  * ========================================================================== */
 
-/**
+/*
  * lrg_status_effect_def_on_apply:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant receiving the status
@@ -937,7 +937,7 @@ lrg_status_effect_def_on_apply (LrgStatusEffectDef *self,
         klass->on_apply (self, owner, stacks, context);
 }
 
-/**
+/*
  * lrg_status_effect_def_on_remove:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant losing the status
@@ -961,7 +961,7 @@ lrg_status_effect_def_on_remove (LrgStatusEffectDef *self,
         klass->on_remove (self, owner, context);
 }
 
-/**
+/*
  * lrg_status_effect_def_on_stack_change:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant with the status
@@ -989,7 +989,7 @@ lrg_status_effect_def_on_stack_change (LrgStatusEffectDef *self,
         klass->on_stack_change (self, owner, old_stacks, new_stacks, context);
 }
 
-/**
+/*
  * lrg_status_effect_def_on_turn_start:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant with the status
@@ -1015,7 +1015,7 @@ lrg_status_effect_def_on_turn_start (LrgStatusEffectDef *self,
         klass->on_turn_start (self, owner, stacks, context);
 }
 
-/**
+/*
  * lrg_status_effect_def_on_turn_end:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant with the status
@@ -1041,7 +1041,7 @@ lrg_status_effect_def_on_turn_end (LrgStatusEffectDef *self,
         klass->on_turn_end (self, owner, stacks, context);
 }
 
-/**
+/*
  * lrg_status_effect_def_on_damage_dealt:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant with the status
@@ -1071,7 +1071,7 @@ lrg_status_effect_def_on_damage_dealt (LrgStatusEffectDef *self,
         klass->on_damage_dealt (self, owner, target, damage, stacks, context);
 }
 
-/**
+/*
  * lrg_status_effect_def_on_damage_received:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant with the status
@@ -1101,7 +1101,7 @@ lrg_status_effect_def_on_damage_received (LrgStatusEffectDef *self,
         klass->on_damage_received (self, owner, attacker, damage, stacks, context);
 }
 
-/**
+/*
  * lrg_status_effect_def_on_block_gained:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant with the status
@@ -1129,7 +1129,7 @@ lrg_status_effect_def_on_block_gained (LrgStatusEffectDef *self,
         klass->on_block_gained (self, owner, block, stacks, context);
 }
 
-/**
+/*
  * lrg_status_effect_def_modify_damage_dealt:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant with the status
@@ -1161,7 +1161,7 @@ lrg_status_effect_def_modify_damage_dealt (LrgStatusEffectDef *self,
     return base_damage;
 }
 
-/**
+/*
  * lrg_status_effect_def_modify_damage_received:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant with the status
@@ -1193,7 +1193,7 @@ lrg_status_effect_def_modify_damage_received (LrgStatusEffectDef *self,
     return base_damage;
 }
 
-/**
+/*
  * lrg_status_effect_def_modify_block_gained:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant with the status
@@ -1225,7 +1225,7 @@ lrg_status_effect_def_modify_block_gained (LrgStatusEffectDef *self,
     return base_block;
 }
 
-/**
+/*
  * lrg_status_effect_def_can_apply_debuff:
  * @self: a #LrgStatusEffectDef
  * @owner: the combatant with the status
@@ -1257,7 +1257,7 @@ lrg_status_effect_def_can_apply_debuff (LrgStatusEffectDef *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_status_effect_def_get_tooltip:
  * @self: a #LrgStatusEffectDef
  * @stacks: current stack count

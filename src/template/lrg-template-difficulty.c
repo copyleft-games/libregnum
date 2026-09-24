@@ -35,7 +35,7 @@ lrg_template_difficulty_default_init (LrgTemplateDifficultyInterface *iface)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_difficulty_get_performance_score:
  * @self: an #LrgTemplateDifficulty
  *
@@ -57,7 +57,7 @@ lrg_template_difficulty_get_performance_score (LrgTemplateDifficulty *self)
     return iface->get_performance_score (self);
 }
 
-/**
+/*
  * lrg_template_difficulty_get_difficulty_modifier:
  * @self: an #LrgTemplateDifficulty
  *
@@ -79,7 +79,7 @@ lrg_template_difficulty_get_difficulty_modifier (LrgTemplateDifficulty *self)
     return iface->get_difficulty_modifier (self);
 }
 
-/**
+/*
  * lrg_template_difficulty_record_player_success:
  * @self: an #LrgTemplateDifficulty
  * @weight: importance of the success
@@ -109,7 +109,7 @@ lrg_template_difficulty_record_player_success (LrgTemplateDifficulty *self,
     }
 }
 
-/**
+/*
  * lrg_template_difficulty_record_player_failure:
  * @self: an #LrgTemplateDifficulty
  * @weight: importance of the failure
@@ -139,7 +139,7 @@ lrg_template_difficulty_record_player_failure (LrgTemplateDifficulty *self,
     }
 }
 
-/**
+/*
  * lrg_template_difficulty_reset_performance_window:
  * @self: an #LrgTemplateDifficulty
  *
@@ -163,7 +163,7 @@ lrg_template_difficulty_reset_performance_window (LrgTemplateDifficulty *self)
     }
 }
 
-/**
+/*
  * lrg_template_difficulty_is_player_struggling:
  * @self: an #LrgTemplateDifficulty
  *
@@ -183,7 +183,7 @@ lrg_template_difficulty_is_player_struggling (LrgTemplateDifficulty *self)
     return score < STRUGGLING_THRESHOLD;
 }
 
-/**
+/*
  * lrg_template_difficulty_is_player_dominating:
  * @self: an #LrgTemplateDifficulty
  *
@@ -203,7 +203,7 @@ lrg_template_difficulty_is_player_dominating (LrgTemplateDifficulty *self)
     return score > DOMINATING_THRESHOLD;
 }
 
-/**
+/*
  * lrg_template_difficulty_get_performance_label:
  * @self: an #LrgTemplateDifficulty
  *

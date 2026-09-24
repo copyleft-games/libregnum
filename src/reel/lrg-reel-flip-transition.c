@@ -250,7 +250,7 @@ lrg_reel_flip_transition_init (LrgReelFlipTransition *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_flip_transition_new:
  * @direction: axis of the flip; LEFT/RIGHT for horizontal, UP/DOWN for vertical
  *
@@ -268,7 +268,7 @@ lrg_reel_flip_transition_new (LrgReelTransitionDirection direction)
                          NULL);
 }
 
-/**
+/*
  * lrg_reel_flip_transition_get_direction:
  * @self: an #LrgReelFlipTransition
  *
@@ -286,7 +286,7 @@ lrg_reel_flip_transition_get_direction (LrgReelFlipTransition *self)
     return self->direction;
 }
 
-/**
+/*
  * lrg_reel_flip_transition_set_direction:
  * @self: an #LrgReelFlipTransition
  * @direction: the new #LrgReelTransitionDirection

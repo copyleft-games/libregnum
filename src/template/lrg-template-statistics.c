@@ -11,7 +11,7 @@
 #include "../save/lrg-save-context.h"
 #include "../lrg-log.h"
 
-/**
+/*
  * SECTION:lrg-template-statistics
  * @title: LrgTemplateStatistics
  * @short_description: Game statistics tracking system
@@ -408,7 +408,7 @@ lrg_template_statistics_init (LrgTemplateStatistics *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_statistics_new:
  * @save_id: unique identifier for save/load operations
  *
@@ -428,7 +428,7 @@ lrg_template_statistics_new (const gchar *save_id)
  * Public API - Counters
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_statistics_track_counter:
  * @self: an #LrgTemplateStatistics
  * @name: the statistic name
@@ -459,7 +459,7 @@ lrg_template_statistics_track_counter (LrgTemplateStatistics *self,
     }
 }
 
-/**
+/*
  * lrg_template_statistics_get_counter:
  * @self: an #LrgTemplateStatistics
  * @name: the statistic name
@@ -481,7 +481,7 @@ lrg_template_statistics_get_counter (LrgTemplateStatistics *self,
     return (value != NULL) ? *value : 0;
 }
 
-/**
+/*
  * lrg_template_statistics_set_counter:
  * @self: an #LrgTemplateStatistics
  * @name: the statistic name
@@ -506,7 +506,7 @@ lrg_template_statistics_set_counter (LrgTemplateStatistics *self,
  * Public API - Maximums
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_statistics_track_maximum:
  * @self: an #LrgTemplateStatistics
  * @name: the statistic name
@@ -538,7 +538,7 @@ lrg_template_statistics_track_maximum (LrgTemplateStatistics *self,
     }
 }
 
-/**
+/*
  * lrg_template_statistics_get_maximum:
  * @self: an #LrgTemplateStatistics
  * @name: the statistic name
@@ -564,7 +564,7 @@ lrg_template_statistics_get_maximum (LrgTemplateStatistics *self,
  * Public API - Minimums
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_statistics_track_minimum:
  * @self: an #LrgTemplateStatistics
  * @name: the statistic name
@@ -596,7 +596,7 @@ lrg_template_statistics_track_minimum (LrgTemplateStatistics *self,
     }
 }
 
-/**
+/*
  * lrg_template_statistics_get_minimum:
  * @self: an #LrgTemplateStatistics
  * @name: the statistic name
@@ -622,7 +622,7 @@ lrg_template_statistics_get_minimum (LrgTemplateStatistics *self,
  * Public API - Timers
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_statistics_timer_start:
  * @self: an #LrgTemplateStatistics
  * @name: the timer name
@@ -652,7 +652,7 @@ lrg_template_statistics_timer_start (LrgTemplateStatistics *self,
     }
 }
 
-/**
+/*
  * lrg_template_statistics_timer_stop:
  * @self: an #LrgTemplateStatistics
  * @name: the timer name
@@ -679,7 +679,7 @@ lrg_template_statistics_timer_stop (LrgTemplateStatistics *self,
     }
 }
 
-/**
+/*
  * lrg_template_statistics_timer_reset:
  * @self: an #LrgTemplateStatistics
  * @name: the timer name
@@ -704,7 +704,7 @@ lrg_template_statistics_timer_reset (LrgTemplateStatistics *self,
     }
 }
 
-/**
+/*
  * lrg_template_statistics_get_timer:
  * @self: an #LrgTemplateStatistics
  * @name: the timer name
@@ -729,7 +729,7 @@ lrg_template_statistics_get_timer (LrgTemplateStatistics *self,
     return timer_state_get_current (timer);
 }
 
-/**
+/*
  * lrg_template_statistics_is_timer_running:
  * @self: an #LrgTemplateStatistics
  * @name: the timer name
@@ -755,7 +755,7 @@ lrg_template_statistics_is_timer_running (LrgTemplateStatistics *self,
  * Public API - Utility
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_statistics_has_stat:
  * @self: an #LrgTemplateStatistics
  * @name: the statistic name
@@ -777,7 +777,7 @@ lrg_template_statistics_has_stat (LrgTemplateStatistics *self,
            g_hash_table_contains (self->timers, name);
 }
 
-/**
+/*
  * lrg_template_statistics_remove_stat:
  * @self: an #LrgTemplateStatistics
  * @name: the statistic name
@@ -803,7 +803,7 @@ lrg_template_statistics_remove_stat (LrgTemplateStatistics *self,
     return removed;
 }
 
-/**
+/*
  * lrg_template_statistics_clear_all:
  * @self: an #LrgTemplateStatistics
  *
@@ -820,7 +820,7 @@ lrg_template_statistics_clear_all (LrgTemplateStatistics *self)
     g_hash_table_remove_all (self->timers);
 }
 
-/**
+/*
  * lrg_template_statistics_get_all_names:
  * @self: an #LrgTemplateStatistics
  *
@@ -856,7 +856,7 @@ lrg_template_statistics_get_all_names (LrgTemplateStatistics *self)
     return names;
 }
 
-/**
+/*
  * lrg_template_statistics_get_counter_names:
  * @self: an #LrgTemplateStatistics
  *
@@ -880,7 +880,7 @@ lrg_template_statistics_get_counter_names (LrgTemplateStatistics *self)
     return names;
 }
 
-/**
+/*
  * lrg_template_statistics_get_maximum_names:
  * @self: an #LrgTemplateStatistics
  *
@@ -904,7 +904,7 @@ lrg_template_statistics_get_maximum_names (LrgTemplateStatistics *self)
     return names;
 }
 
-/**
+/*
  * lrg_template_statistics_get_minimum_names:
  * @self: an #LrgTemplateStatistics
  *
@@ -928,7 +928,7 @@ lrg_template_statistics_get_minimum_names (LrgTemplateStatistics *self)
     return names;
 }
 
-/**
+/*
  * lrg_template_statistics_get_timer_names:
  * @self: an #LrgTemplateStatistics
  *

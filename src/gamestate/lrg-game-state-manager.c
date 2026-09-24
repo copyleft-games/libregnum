@@ -102,7 +102,7 @@ lrg_game_state_manager_init (LrgGameStateManager *self)
     self->states = g_ptr_array_new_with_free_func (g_object_unref);
 }
 
-/**
+/*
  * lrg_game_state_manager_new:
  *
  * Creates a new #LrgGameStateManager with an empty state stack.
@@ -115,7 +115,7 @@ lrg_game_state_manager_new (void)
     return g_object_new (LRG_TYPE_GAME_STATE_MANAGER, NULL);
 }
 
-/**
+/*
  * lrg_game_state_manager_push:
  * @self: an #LrgGameStateManager
  * @state: (transfer full): the #LrgGameState to push
@@ -145,7 +145,7 @@ lrg_game_state_manager_push (LrgGameStateManager *self,
     g_signal_emit (self, signals[SIGNAL_STATE_CHANGED], 0, state);
 }
 
-/**
+/*
  * lrg_game_state_manager_pop:
  * @self: an #LrgGameStateManager
  *
@@ -177,7 +177,7 @@ lrg_game_state_manager_pop (LrgGameStateManager *self)
     g_signal_emit (self, signals[SIGNAL_STATE_CHANGED], 0, next);
 }
 
-/**
+/*
  * lrg_game_state_manager_replace:
  * @self: an #LrgGameStateManager
  * @state: (transfer full): the #LrgGameState to replace with
@@ -210,7 +210,7 @@ lrg_game_state_manager_replace (LrgGameStateManager *self,
     g_signal_emit (self, signals[SIGNAL_STATE_CHANGED], 0, state);
 }
 
-/**
+/*
  * lrg_game_state_manager_clear:
  * @self: an #LrgGameStateManager
  *
@@ -236,7 +236,7 @@ lrg_game_state_manager_clear (LrgGameStateManager *self)
     g_signal_emit (self, signals[SIGNAL_STATE_CHANGED], 0, NULL);
 }
 
-/**
+/*
  * lrg_game_state_manager_get_current:
  * @self: an #LrgGameStateManager
  *
@@ -255,7 +255,7 @@ lrg_game_state_manager_get_current (LrgGameStateManager *self)
     return g_ptr_array_index (self->states, self->states->len - 1);
 }
 
-/**
+/*
  * lrg_game_state_manager_get_state_count:
  * @self: an #LrgGameStateManager
  *
@@ -271,7 +271,7 @@ lrg_game_state_manager_get_state_count (LrgGameStateManager *self)
     return self->states->len;
 }
 
-/**
+/*
  * lrg_game_state_manager_is_empty:
  * @self: an #LrgGameStateManager
  *
@@ -287,7 +287,7 @@ lrg_game_state_manager_is_empty (LrgGameStateManager *self)
     return self->states->len == 0;
 }
 
-/**
+/*
  * lrg_game_state_manager_update:
  * @self: an #LrgGameStateManager
  * @delta: time since last frame in seconds
@@ -340,7 +340,7 @@ lrg_game_state_manager_update (LrgGameStateManager *self,
     }
 }
 
-/**
+/*
  * lrg_game_state_manager_draw:
  * @self: an #LrgGameStateManager
  *
@@ -388,7 +388,7 @@ lrg_game_state_manager_draw (LrgGameStateManager *self)
     }
 }
 
-/**
+/*
  * lrg_game_state_manager_handle_input:
  * @self: an #LrgGameStateManager
  * @event: (transfer none): the input event

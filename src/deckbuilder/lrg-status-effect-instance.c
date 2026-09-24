@@ -25,7 +25,7 @@ G_DEFINE_BOXED_TYPE (LrgStatusEffectInstance,
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_status_effect_instance_new:
  * @def: (transfer none): the status effect definition
  * @stacks: initial stack count
@@ -59,7 +59,7 @@ lrg_status_effect_instance_new (LrgStatusEffectDef *def,
     return self;
 }
 
-/**
+/*
  * lrg_status_effect_instance_copy:
  * @self: a #LrgStatusEffectInstance
  *
@@ -83,7 +83,7 @@ lrg_status_effect_instance_copy (LrgStatusEffectInstance *self)
     return copy;
 }
 
-/**
+/*
  * lrg_status_effect_instance_free:
  * @self: (nullable): a #LrgStatusEffectInstance
  *
@@ -105,7 +105,7 @@ lrg_status_effect_instance_free (LrgStatusEffectInstance *self)
  * Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_status_effect_instance_get_def:
  * @self: a #LrgStatusEffectInstance
  *
@@ -122,7 +122,7 @@ lrg_status_effect_instance_get_def (LrgStatusEffectInstance *self)
     return self->def;
 }
 
-/**
+/*
  * lrg_status_effect_instance_get_id:
  * @self: a #LrgStatusEffectInstance
  *
@@ -139,7 +139,7 @@ lrg_status_effect_instance_get_id (LrgStatusEffectInstance *self)
     return lrg_status_effect_def_get_id (self->def);
 }
 
-/**
+/*
  * lrg_status_effect_instance_get_stacks:
  * @self: a #LrgStatusEffectInstance
  *
@@ -156,7 +156,7 @@ lrg_status_effect_instance_get_stacks (LrgStatusEffectInstance *self)
     return self->stacks;
 }
 
-/**
+/*
  * lrg_status_effect_instance_set_stacks:
  * @self: a #LrgStatusEffectInstance
  * @stacks: the new stack count
@@ -181,7 +181,7 @@ lrg_status_effect_instance_set_stacks (LrgStatusEffectInstance *self,
         self->stacks = stacks;
 }
 
-/**
+/*
  * lrg_status_effect_instance_add_stacks:
  * @self: a #LrgStatusEffectInstance
  * @amount: stacks to add (can be negative)
@@ -202,7 +202,7 @@ lrg_status_effect_instance_add_stacks (LrgStatusEffectInstance *self,
     return self->stacks;
 }
 
-/**
+/*
  * lrg_status_effect_instance_remove_stacks:
  * @self: a #LrgStatusEffectInstance
  * @amount: stacks to remove
@@ -227,7 +227,7 @@ lrg_status_effect_instance_remove_stacks (LrgStatusEffectInstance *self,
     return self->stacks;
 }
 
-/**
+/*
  * lrg_status_effect_instance_is_expired:
  * @self: a #LrgStatusEffectInstance
  *
@@ -248,7 +248,7 @@ lrg_status_effect_instance_is_expired (LrgStatusEffectInstance *self)
  * Convenience Accessors (from definition)
  * ========================================================================== */
 
-/**
+/*
  * lrg_status_effect_instance_get_name:
  * @self: a #LrgStatusEffectInstance
  *
@@ -265,7 +265,7 @@ lrg_status_effect_instance_get_name (LrgStatusEffectInstance *self)
     return lrg_status_effect_def_get_name (self->def);
 }
 
-/**
+/*
  * lrg_status_effect_instance_get_effect_type:
  * @self: a #LrgStatusEffectInstance
  *
@@ -282,7 +282,7 @@ lrg_status_effect_instance_get_effect_type (LrgStatusEffectInstance *self)
     return lrg_status_effect_def_get_effect_type (self->def);
 }
 
-/**
+/*
  * lrg_status_effect_instance_is_buff:
  * @self: a #LrgStatusEffectInstance
  *
@@ -299,7 +299,7 @@ lrg_status_effect_instance_is_buff (LrgStatusEffectInstance *self)
     return lrg_status_effect_def_is_buff (self->def);
 }
 
-/**
+/*
  * lrg_status_effect_instance_is_debuff:
  * @self: a #LrgStatusEffectInstance
  *
@@ -316,7 +316,7 @@ lrg_status_effect_instance_is_debuff (LrgStatusEffectInstance *self)
     return lrg_status_effect_def_is_debuff (self->def);
 }
 
-/**
+/*
  * lrg_status_effect_instance_get_tooltip:
  * @self: a #LrgStatusEffectInstance
  *

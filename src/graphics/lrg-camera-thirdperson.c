@@ -690,7 +690,7 @@ lrg_camera_thirdperson_begin (LrgCamera *camera)
  * Public API Implementation
  * ========================================================================== */
 
-/**
+/*
  * lrg_camera_thirdperson_new:
  *
  * Create a new third-person camera with default settings.

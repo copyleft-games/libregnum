@@ -173,7 +173,7 @@ lrg_physics_world_init (LrgPhysicsWorld *self)
     lrg_debug (LRG_LOG_DOMAIN, "Created physics world");
 }
 
-/**
+/*
  * lrg_physics_world_new:
  *
  * Creates a new physics world with default settings.

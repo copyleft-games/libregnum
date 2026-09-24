@@ -197,7 +197,7 @@ lrg_component_init (LrgComponent *self)
  * Public API - Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_component_get_owner:
  * @self: an #LrgComponent
  *
@@ -216,7 +216,7 @@ lrg_component_get_owner (LrgComponent *self)
     return priv->owner;
 }
 
-/**
+/*
  * lrg_component_get_enabled:
  * @self: an #LrgComponent
  *
@@ -235,7 +235,7 @@ lrg_component_get_enabled (LrgComponent *self)
     return priv->enabled;
 }
 
-/**
+/*
  * lrg_component_set_enabled:
  * @self: an #LrgComponent
  * @enabled: whether to enable the component
@@ -265,7 +265,7 @@ lrg_component_set_enabled (LrgComponent *self,
  * Public API - Methods
  * ========================================================================== */
 
-/**
+/*
  * lrg_component_update:
  * @self: an #LrgComponent
  * @delta: time elapsed since last frame in seconds

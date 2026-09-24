@@ -33,7 +33,7 @@ G_DEFINE_BOXED_TYPE (LrgConsoleCommand, lrg_console_command,
                      lrg_console_command_copy, lrg_console_command_free)
 #pragma GCC visibility pop
 
-/**
+/*
  * lrg_console_command_new:
  * @name: command name
  * @description: (nullable): command description
@@ -156,7 +156,7 @@ lrg_entity_provider_default_init (LrgEntityProviderInterface *iface)
     /* Default implementation */
 }
 
-/**
+/*
  * lrg_entity_provider_get_entity_types:
  * @self: an #LrgEntityProvider
  *
@@ -193,7 +193,7 @@ lrg_item_provider_default_init (LrgItemProviderInterface *iface)
     /* Default implementation */
 }
 
-/**
+/*
  * lrg_item_provider_get_item_defs:
  * @self: an #LrgItemProvider
  *
@@ -230,7 +230,7 @@ lrg_scene_provider_default_init (LrgSceneProviderInterface *iface)
     /* Default implementation */
 }
 
-/**
+/*
  * lrg_scene_provider_get_scenes:
  * @self: an #LrgSceneProvider
  *
@@ -267,7 +267,7 @@ lrg_dialog_provider_default_init (LrgDialogProviderInterface *iface)
     /* Default implementation */
 }
 
-/**
+/*
  * lrg_dialog_provider_get_dialog_trees:
  * @self: an #LrgDialogProvider
  *
@@ -304,7 +304,7 @@ lrg_quest_provider_default_init (LrgQuestProviderInterface *iface)
     /* Default implementation */
 }
 
-/**
+/*
  * lrg_quest_provider_get_quest_defs:
  * @self: an #LrgQuestProvider
  *
@@ -341,7 +341,7 @@ lrg_ai_provider_default_init (LrgAIProviderInterface *iface)
     /* Default implementation */
 }
 
-/**
+/*
  * lrg_ai_provider_get_bt_node_types:
  * @self: an #LrgAIProvider
  *
@@ -378,7 +378,7 @@ lrg_command_provider_default_init (LrgCommandProviderInterface *iface)
     /* Default implementation */
 }
 
-/**
+/*
  * lrg_command_provider_get_commands:
  * @self: an #LrgCommandProvider
  *
@@ -415,7 +415,7 @@ lrg_locale_provider_default_init (LrgLocaleProviderInterface *iface)
     /* Default implementation */
 }
 
-/**
+/*
  * lrg_locale_provider_get_locales:
  * @self: an #LrgLocaleProvider
  *
@@ -452,7 +452,7 @@ lrg_card_provider_default_init (LrgCardProviderInterface *iface)
     /* Default implementation - all methods return NULL by default */
 }
 
-/**
+/*
  * lrg_card_provider_get_card_defs:
  * @self: an #LrgCardProvider
  *
@@ -475,7 +475,7 @@ lrg_card_provider_get_card_defs (LrgCardProvider *self)
     return iface->get_card_defs (self);
 }
 
-/**
+/*
  * lrg_card_provider_get_deck_defs:
  * @self: an #LrgCardProvider
  *
@@ -498,7 +498,7 @@ lrg_card_provider_get_deck_defs (LrgCardProvider *self)
     return iface->get_deck_defs (self);
 }
 
-/**
+/*
  * lrg_card_provider_get_relic_defs:
  * @self: an #LrgCardProvider
  *
@@ -521,7 +521,7 @@ lrg_card_provider_get_relic_defs (LrgCardProvider *self)
     return iface->get_relic_defs (self);
 }
 
-/**
+/*
  * lrg_card_provider_get_potion_defs:
  * @self: an #LrgCardProvider
  *
@@ -544,7 +544,7 @@ lrg_card_provider_get_potion_defs (LrgCardProvider *self)
     return iface->get_potion_defs (self);
 }
 
-/**
+/*
  * lrg_card_provider_get_enemy_defs:
  * @self: an #LrgCardProvider
  *
@@ -567,7 +567,7 @@ lrg_card_provider_get_enemy_defs (LrgCardProvider *self)
     return iface->get_enemy_defs (self);
 }
 
-/**
+/*
  * lrg_card_provider_get_event_defs:
  * @self: an #LrgCardProvider
  *
@@ -590,7 +590,7 @@ lrg_card_provider_get_event_defs (LrgCardProvider *self)
     return iface->get_event_defs (self);
 }
 
-/**
+/*
  * lrg_card_provider_get_joker_defs:
  * @self: an #LrgCardProvider
  *
@@ -613,7 +613,7 @@ lrg_card_provider_get_joker_defs (LrgCardProvider *self)
     return iface->get_joker_defs (self);
 }
 
-/**
+/*
  * lrg_card_provider_get_effect_executors:
  * @self: an #LrgCardProvider
  *
@@ -636,7 +636,7 @@ lrg_card_provider_get_effect_executors (LrgCardProvider *self)
     return iface->get_effect_executors (self);
 }
 
-/**
+/*
  * lrg_card_provider_get_status_effect_defs:
  * @self: an #LrgCardProvider
  *
@@ -659,7 +659,7 @@ lrg_card_provider_get_status_effect_defs (LrgCardProvider *self)
     return iface->get_status_effect_defs (self);
 }
 
-/**
+/*
  * lrg_card_provider_get_keyword_defs:
  * @self: an #LrgCardProvider
  *
@@ -682,7 +682,7 @@ lrg_card_provider_get_keyword_defs (LrgCardProvider *self)
     return iface->get_keyword_defs (self);
 }
 
-/**
+/*
  * lrg_card_provider_get_character_defs:
  * @self: an #LrgCardProvider
  *

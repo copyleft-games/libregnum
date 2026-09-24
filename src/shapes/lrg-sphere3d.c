@@ -212,7 +212,7 @@ lrg_sphere3d_init (LrgSphere3D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_sphere3d_new:
  *
  * Creates a new sphere at the origin with radius 1.0.
@@ -225,7 +225,7 @@ lrg_sphere3d_new (void)
 	return g_object_new (LRG_TYPE_SPHERE3D, NULL);
 }
 
-/**
+/*
  * lrg_sphere3d_new_at:
  * @x: X position
  * @y: Y position
@@ -252,7 +252,7 @@ lrg_sphere3d_new_at (gfloat x,
 	return sphere;
 }
 
-/**
+/*
  * lrg_sphere3d_new_full:
  * @x: X position
  * @y: Y position
@@ -284,7 +284,7 @@ lrg_sphere3d_new_full (gfloat    x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_sphere3d_get_radius:
  * @self: an #LrgSphere3D
  *
@@ -300,7 +300,7 @@ lrg_sphere3d_get_radius (LrgSphere3D *self)
 	return self->radius;
 }
 
-/**
+/*
  * lrg_sphere3d_set_radius:
  * @self: an #LrgSphere3D
  * @radius: the radius value
@@ -321,7 +321,7 @@ lrg_sphere3d_set_radius (LrgSphere3D *self,
 	}
 }
 
-/**
+/*
  * lrg_sphere3d_get_rings:
  * @self: an #LrgSphere3D
  *
@@ -337,7 +337,7 @@ lrg_sphere3d_get_rings (LrgSphere3D *self)
 	return self->rings;
 }
 
-/**
+/*
  * lrg_sphere3d_set_rings:
  * @self: an #LrgSphere3D
  * @rings: the number of rings
@@ -358,7 +358,7 @@ lrg_sphere3d_set_rings (LrgSphere3D *self,
 	}
 }
 
-/**
+/*
  * lrg_sphere3d_get_slices:
  * @self: an #LrgSphere3D
  *
@@ -374,7 +374,7 @@ lrg_sphere3d_get_slices (LrgSphere3D *self)
 	return self->slices;
 }
 
-/**
+/*
  * lrg_sphere3d_set_slices:
  * @self: an #LrgSphere3D
  * @slices: the number of slices

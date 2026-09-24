@@ -17,7 +17,7 @@ lrg_scene_serializer_default_init (LrgSceneSerializerInterface *iface)
 	/* Default implementations are NULL; subclasses must override */
 }
 
-/**
+/*
  * lrg_scene_serializer_load_from_file:
  * @self: an #LrgSceneSerializer
  * @path: Path to the file
@@ -52,7 +52,7 @@ lrg_scene_serializer_load_from_file (LrgSceneSerializer  *self,
 	return iface->load_from_file (self, path, error);
 }
 
-/**
+/*
  * lrg_scene_serializer_load_from_data:
  * @self: an #LrgSceneSerializer
  * @data: The serialized data
@@ -89,7 +89,7 @@ lrg_scene_serializer_load_from_data (LrgSceneSerializer  *self,
 	return iface->load_from_data (self, data, length, error);
 }
 
-/**
+/*
  * lrg_scene_serializer_save_to_file:
  * @self: an #LrgSceneSerializer
  * @scene: The scene to save
@@ -127,7 +127,7 @@ lrg_scene_serializer_save_to_file (LrgSceneSerializer  *self,
 	return iface->save_to_file (self, scene, path, error);
 }
 
-/**
+/*
  * lrg_scene_serializer_save_to_data:
  * @self: an #LrgSceneSerializer
  * @scene: The scene to save

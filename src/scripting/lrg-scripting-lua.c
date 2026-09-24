@@ -561,7 +561,7 @@ lrg_scripting_lua_init (LrgScriptingLua *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_scripting_lua_new:
  *
  * Creates a new LuaJIT scripting context.
@@ -574,7 +574,7 @@ lrg_scripting_lua_new (void)
     return g_object_new (LRG_TYPE_SCRIPTING_LUA, NULL);
 }
 
-/**
+/*
  * lrg_scripting_lua_set_registry:
  * @self: an #LrgScriptingLua
  * @registry: (nullable): the #LrgRegistry for type lookups
@@ -596,7 +596,7 @@ lrg_scripting_lua_set_registry (LrgScriptingLua *self,
     }
 }
 
-/**
+/*
  * lrg_scripting_lua_get_registry:
  * @self: an #LrgScriptingLua
  *
@@ -612,7 +612,7 @@ lrg_scripting_lua_get_registry (LrgScriptingLua *self)
     return self->registry;
 }
 
-/**
+/*
  * lrg_scripting_lua_add_search_path:
  * @self: an #LrgScriptingLua
  * @path: (type filename): directory path to add
@@ -630,7 +630,7 @@ lrg_scripting_lua_add_search_path (LrgScriptingLua *self,
     update_package_path (self);
 }
 
-/**
+/*
  * lrg_scripting_lua_clear_search_paths:
  * @self: an #LrgScriptingLua
  *
@@ -645,7 +645,7 @@ lrg_scripting_lua_clear_search_paths (LrgScriptingLua *self)
     update_package_path (self);
 }
 
-/**
+/*
  * lrg_scripting_lua_register_update_hook:
  * @self: an #LrgScriptingLua
  * @func_name: name of the Lua function to call on update
@@ -664,7 +664,7 @@ lrg_scripting_lua_register_update_hook (LrgScriptingLua *self,
     lrg_debug (LRG_LOG_DOMAIN_SCRIPTING, "Registered update hook: %s", func_name);
 }
 
-/**
+/*
  * lrg_scripting_lua_unregister_update_hook:
  * @self: an #LrgScriptingLua
  * @func_name: name of the Lua function to unregister
@@ -695,7 +695,7 @@ lrg_scripting_lua_unregister_update_hook (LrgScriptingLua *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_scripting_lua_clear_update_hooks:
  * @self: an #LrgScriptingLua
  *
@@ -709,7 +709,7 @@ lrg_scripting_lua_clear_update_hooks (LrgScriptingLua *self)
     g_ptr_array_set_size (self->update_hooks, 0);
 }
 
-/**
+/*
  * lrg_scripting_lua_update:
  * @self: an #LrgScriptingLua
  * @delta: time since last frame in seconds
@@ -757,7 +757,7 @@ lrg_scripting_lua_update (LrgScriptingLua *self,
     }
 }
 
-/**
+/*
  * lrg_scripting_lua_set_engine:
  * @self: an #LrgScriptingLua
  * @engine: (nullable): the #LrgEngine to expose to scripts
@@ -779,7 +779,7 @@ lrg_scripting_lua_set_engine (LrgScriptingLua *self,
     }
 }
 
-/**
+/*
  * lrg_scripting_lua_get_engine:
  * @self: an #LrgScriptingLua
  *

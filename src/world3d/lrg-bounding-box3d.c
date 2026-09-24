@@ -16,7 +16,7 @@
 G_DEFINE_BOXED_TYPE (LrgBoundingBox3D, lrg_bounding_box3d,
                      lrg_bounding_box3d_copy, lrg_bounding_box3d_free)
 
-/**
+/*
  * lrg_bounding_box3d_new:
  * @min_x: Minimum X coordinate
  * @min_y: Minimum Y coordinate
@@ -50,7 +50,7 @@ lrg_bounding_box3d_new (gfloat min_x,
     return self;
 }
 
-/**
+/*
  * lrg_bounding_box3d_new_from_vectors:
  * @min: (transfer none): Minimum corner
  * @max: (transfer none): Maximum corner
@@ -70,7 +70,7 @@ lrg_bounding_box3d_new_from_vectors (const GrlVector3 *min,
                                    max->x, max->y, max->z);
 }
 
-/**
+/*
  * lrg_bounding_box3d_new_from_center:
  * @center: (transfer none): Center point
  * @half_size: Half the size in each dimension
@@ -93,7 +93,7 @@ lrg_bounding_box3d_new_from_center (const GrlVector3 *center,
                                    center->z + half_size);
 }
 
-/**
+/*
  * lrg_bounding_box3d_copy:
  * @self: (nullable): A #LrgBoundingBox3D
  *
@@ -111,7 +111,7 @@ lrg_bounding_box3d_copy (const LrgBoundingBox3D *self)
                                    self->max.x, self->max.y, self->max.z);
 }
 
-/**
+/*
  * lrg_bounding_box3d_free:
  * @self: (nullable): A #LrgBoundingBox3D
  *
@@ -124,7 +124,7 @@ lrg_bounding_box3d_free (LrgBoundingBox3D *self)
         g_free (self);
 }
 
-/**
+/*
  * lrg_bounding_box3d_get_min:
  * @self: A #LrgBoundingBox3D
  *
@@ -140,7 +140,7 @@ lrg_bounding_box3d_get_min (const LrgBoundingBox3D *self)
     return grl_vector3_new (self->min.x, self->min.y, self->min.z);
 }
 
-/**
+/*
  * lrg_bounding_box3d_get_max:
  * @self: A #LrgBoundingBox3D
  *
@@ -156,7 +156,7 @@ lrg_bounding_box3d_get_max (const LrgBoundingBox3D *self)
     return grl_vector3_new (self->max.x, self->max.y, self->max.z);
 }
 
-/**
+/*
  * lrg_bounding_box3d_get_center:
  * @self: A #LrgBoundingBox3D
  *
@@ -174,7 +174,7 @@ lrg_bounding_box3d_get_center (const LrgBoundingBox3D *self)
                             (self->min.z + self->max.z) * 0.5f);
 }
 
-/**
+/*
  * lrg_bounding_box3d_get_size:
  * @self: A #LrgBoundingBox3D
  *
@@ -192,7 +192,7 @@ lrg_bounding_box3d_get_size (const LrgBoundingBox3D *self)
                             self->max.z - self->min.z);
 }
 
-/**
+/*
  * lrg_bounding_box3d_contains_point:
  * @self: A #LrgBoundingBox3D
  * @point: (transfer none): The point to check
@@ -211,7 +211,7 @@ lrg_bounding_box3d_contains_point (const LrgBoundingBox3D *self,
     return lrg_bounding_box3d_contains_point_xyz (self, point->x, point->y, point->z);
 }
 
-/**
+/*
  * lrg_bounding_box3d_contains_point_xyz:
  * @self: A #LrgBoundingBox3D
  * @x: X coordinate
@@ -235,7 +235,7 @@ lrg_bounding_box3d_contains_point_xyz (const LrgBoundingBox3D *self,
             z >= self->min.z && z <= self->max.z);
 }
 
-/**
+/*
  * lrg_bounding_box3d_intersects:
  * @self: A #LrgBoundingBox3D
  * @other: (transfer none): Another #LrgBoundingBox3D
@@ -257,7 +257,7 @@ lrg_bounding_box3d_intersects (const LrgBoundingBox3D *self,
             self->min.z <= other->max.z && self->max.z >= other->min.z);
 }
 
-/**
+/*
  * lrg_bounding_box3d_contains:
  * @self: A #LrgBoundingBox3D
  * @other: (transfer none): Another #LrgBoundingBox3D
@@ -278,7 +278,7 @@ lrg_bounding_box3d_contains (const LrgBoundingBox3D *self,
             self->min.z <= other->min.z && self->max.z >= other->max.z);
 }
 
-/**
+/*
  * lrg_bounding_box3d_expand:
  * @self: A #LrgBoundingBox3D
  * @amount: Amount to expand in all directions
@@ -301,7 +301,7 @@ lrg_bounding_box3d_expand (const LrgBoundingBox3D *self,
                                    self->max.z + amount);
 }
 
-/**
+/*
  * lrg_bounding_box3d_merge:
  * @self: A #LrgBoundingBox3D
  * @other: (transfer none): Another #LrgBoundingBox3D
@@ -325,7 +325,7 @@ lrg_bounding_box3d_merge (const LrgBoundingBox3D *self,
                                    MAX (self->max.z, other->max.z));
 }
 
-/**
+/*
  * lrg_bounding_box3d_get_volume:
  * @self: A #LrgBoundingBox3D
  *
@@ -349,7 +349,7 @@ lrg_bounding_box3d_get_volume (const LrgBoundingBox3D *self)
     return width * height * depth;
 }
 
-/**
+/*
  * lrg_bounding_box3d_get_surface_area:
  * @self: A #LrgBoundingBox3D
  *

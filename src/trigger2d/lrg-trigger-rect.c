@@ -236,7 +236,7 @@ lrg_trigger_rect_init (LrgTriggerRect *self)
 
 /* Public API */
 
-/**
+/*
  * lrg_trigger_rect_new:
  * @x: X coordinate of the rectangle origin
  * @y: Y coordinate of the rectangle origin
@@ -263,7 +263,7 @@ lrg_trigger_rect_new (gfloat x,
                          NULL);
 }
 
-/**
+/*
  * lrg_trigger_rect_new_with_id:
  * @id: Unique identifier for the trigger
  * @x: X coordinate of the rectangle origin
@@ -293,7 +293,7 @@ lrg_trigger_rect_new_with_id (const gchar *id,
                          NULL);
 }
 
-/**
+/*
  * lrg_trigger_rect_get_x:
  * @self: A #LrgTriggerRect
  *
@@ -310,7 +310,7 @@ lrg_trigger_rect_get_x (LrgTriggerRect *self)
     return self->x;
 }
 
-/**
+/*
  * lrg_trigger_rect_set_x:
  * @self: A #LrgTriggerRect
  * @x: The X coordinate
@@ -332,7 +332,7 @@ lrg_trigger_rect_set_x (LrgTriggerRect *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_rect_get_y:
  * @self: A #LrgTriggerRect
  *
@@ -349,7 +349,7 @@ lrg_trigger_rect_get_y (LrgTriggerRect *self)
     return self->y;
 }
 
-/**
+/*
  * lrg_trigger_rect_set_y:
  * @self: A #LrgTriggerRect
  * @y: The Y coordinate
@@ -371,7 +371,7 @@ lrg_trigger_rect_set_y (LrgTriggerRect *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_rect_set_position:
  * @self: A #LrgTriggerRect
  * @x: The X coordinate
@@ -394,7 +394,7 @@ lrg_trigger_rect_set_position (LrgTriggerRect *self,
     g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_trigger_rect_get_width:
  * @self: A #LrgTriggerRect
  *
@@ -411,7 +411,7 @@ lrg_trigger_rect_get_width (LrgTriggerRect *self)
     return self->width;
 }
 
-/**
+/*
  * lrg_trigger_rect_set_width:
  * @self: A #LrgTriggerRect
  * @width: The width
@@ -434,7 +434,7 @@ lrg_trigger_rect_set_width (LrgTriggerRect *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_rect_get_height:
  * @self: A #LrgTriggerRect
  *
@@ -451,7 +451,7 @@ lrg_trigger_rect_get_height (LrgTriggerRect *self)
     return self->height;
 }
 
-/**
+/*
  * lrg_trigger_rect_set_height:
  * @self: A #LrgTriggerRect
  * @height: The height
@@ -474,7 +474,7 @@ lrg_trigger_rect_set_height (LrgTriggerRect *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_rect_set_size:
  * @self: A #LrgTriggerRect
  * @width: The width
@@ -497,7 +497,7 @@ lrg_trigger_rect_set_size (LrgTriggerRect *self,
     g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_trigger_rect_set_rect:
  * @self: A #LrgTriggerRect
  * @x: The X coordinate
@@ -526,7 +526,7 @@ lrg_trigger_rect_set_rect (LrgTriggerRect *self,
     g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_trigger_rect_get_center:
  * @self: A #LrgTriggerRect
  * @out_x: (out) (nullable): Return location for center X
@@ -549,7 +549,7 @@ lrg_trigger_rect_get_center (LrgTriggerRect *self,
         *out_y = self->y + self->height * 0.5f;
 }
 
-/**
+/*
  * lrg_trigger_rect_set_center:
  * @self: A #LrgTriggerRect
  * @x: The center X coordinate

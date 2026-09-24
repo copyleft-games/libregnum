@@ -28,7 +28,7 @@ G_DECLARE_DERIVABLE_TYPE (LrgBuildingDef, lrg_building_def, LRG, BUILDING_DEF, G
 
 /* Note: LrgBuildingCategory, LrgTerrainType, and LrgRotation are defined in lrg-enums.h */
 
-/**
+/*
  * LrgBuildCost:
  * @resources: Hash table of resource IDs to amounts
  *

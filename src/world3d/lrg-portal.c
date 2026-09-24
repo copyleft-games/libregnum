@@ -64,7 +64,7 @@ compute_default_normal (const LrgBoundingBox3D *bounds,
     }
 }
 
-/**
+/*
  * lrg_portal_new:
  * @id: Unique identifier for this portal
  * @bounds: (transfer none): The portal bounds (opening area)
@@ -100,7 +100,7 @@ lrg_portal_new (const gchar            *id,
     return self;
 }
 
-/**
+/*
  * lrg_portal_new_with_normal:
  * @id: Unique identifier for this portal
  * @bounds: (transfer none): The portal bounds (opening area)
@@ -137,7 +137,7 @@ lrg_portal_new_with_normal (const gchar            *id,
     return self;
 }
 
-/**
+/*
  * lrg_portal_copy:
  * @self: (nullable): A #LrgPortal
  *
@@ -163,7 +163,7 @@ lrg_portal_copy (const LrgPortal *self)
     return copy;
 }
 
-/**
+/*
  * lrg_portal_free:
  * @self: (nullable): A #LrgPortal
  *
@@ -181,7 +181,7 @@ lrg_portal_free (LrgPortal *self)
     g_free (self);
 }
 
-/**
+/*
  * lrg_portal_get_id:
  * @self: A #LrgPortal
  *
@@ -197,7 +197,7 @@ lrg_portal_get_id (const LrgPortal *self)
     return self->id;
 }
 
-/**
+/*
  * lrg_portal_get_bounds:
  * @self: A #LrgPortal
  *
@@ -213,7 +213,7 @@ lrg_portal_get_bounds (const LrgPortal *self)
     return lrg_bounding_box3d_copy (&self->bounds);
 }
 
-/**
+/*
  * lrg_portal_get_sector_a:
  * @self: A #LrgPortal
  *
@@ -229,7 +229,7 @@ lrg_portal_get_sector_a (const LrgPortal *self)
     return self->sector_a;
 }
 
-/**
+/*
  * lrg_portal_get_sector_b:
  * @self: A #LrgPortal
  *
@@ -245,7 +245,7 @@ lrg_portal_get_sector_b (const LrgPortal *self)
     return self->sector_b;
 }
 
-/**
+/*
  * lrg_portal_get_normal:
  * @self: A #LrgPortal
  *
@@ -261,7 +261,7 @@ lrg_portal_get_normal (const LrgPortal *self)
     return grl_vector3_new (self->normal.x, self->normal.y, self->normal.z);
 }
 
-/**
+/*
  * lrg_portal_set_normal:
  * @self: A #LrgPortal
  * @normal: (transfer none): New normal direction
@@ -280,7 +280,7 @@ lrg_portal_set_normal (LrgPortal        *self,
     self->normal.z = normal->z;
 }
 
-/**
+/*
  * lrg_portal_get_other_sector:
  * @self: A #LrgPortal
  * @from_sector: The sector you're coming from
@@ -304,7 +304,7 @@ lrg_portal_get_other_sector (const LrgPortal *self,
     return NULL;
 }
 
-/**
+/*
  * lrg_portal_is_visible_from:
  * @self: A #LrgPortal
  * @point: (transfer none): Point to check from
@@ -347,7 +347,7 @@ lrg_portal_is_visible_from (const LrgPortal  *self,
     return dot > 0.0f;
 }
 
-/**
+/*
  * lrg_portal_connects_sector:
  * @self: A #LrgPortal
  * @sector_id: Sector ID to check
@@ -367,7 +367,7 @@ lrg_portal_connects_sector (const LrgPortal *self,
            g_strcmp0 (self->sector_b, sector_id) == 0;
 }
 
-/**
+/*
  * lrg_portal_get_center:
  * @self: A #LrgPortal
  *

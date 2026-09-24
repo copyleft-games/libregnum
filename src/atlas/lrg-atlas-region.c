@@ -11,7 +11,7 @@
 
 #include "lrg-atlas-region.h"
 
-/**
+/*
  * LrgAtlasRegion:
  *
  * A region within a texture atlas.
@@ -48,7 +48,7 @@ G_DEFINE_BOXED_TYPE (LrgAtlasRegion,
                      lrg_atlas_region_copy,
                      lrg_atlas_region_free)
 
-/**
+/*
  * lrg_atlas_region_new:
  * @name: Region name/identifier
  * @x: X position in the atlas (pixels)
@@ -90,7 +90,7 @@ lrg_atlas_region_new (const gchar *name,
     return self;
 }
 
-/**
+/*
  * lrg_atlas_region_new_with_uv:
  * @name: Region name/identifier
  * @x: X position in the atlas (pixels)
@@ -130,7 +130,7 @@ lrg_atlas_region_new_with_uv (const gchar *name,
     return self;
 }
 
-/**
+/*
  * lrg_atlas_region_copy:
  * @self: A #LrgAtlasRegion
  *
@@ -166,7 +166,7 @@ lrg_atlas_region_copy (const LrgAtlasRegion *self)
     return copy;
 }
 
-/**
+/*
  * lrg_atlas_region_free:
  * @self: A #LrgAtlasRegion
  *
@@ -184,7 +184,7 @@ lrg_atlas_region_free (LrgAtlasRegion *self)
     }
 }
 
-/**
+/*
  * lrg_atlas_region_get_name:
  * @self: A #LrgAtlasRegion
  *
@@ -201,7 +201,7 @@ lrg_atlas_region_get_name (const LrgAtlasRegion *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_atlas_region_get_x:
  * @self: A #LrgAtlasRegion
  *
@@ -218,7 +218,7 @@ lrg_atlas_region_get_x (const LrgAtlasRegion *self)
     return self->x;
 }
 
-/**
+/*
  * lrg_atlas_region_get_y:
  * @self: A #LrgAtlasRegion
  *
@@ -235,7 +235,7 @@ lrg_atlas_region_get_y (const LrgAtlasRegion *self)
     return self->y;
 }
 
-/**
+/*
  * lrg_atlas_region_get_width:
  * @self: A #LrgAtlasRegion
  *
@@ -252,7 +252,7 @@ lrg_atlas_region_get_width (const LrgAtlasRegion *self)
     return self->width;
 }
 
-/**
+/*
  * lrg_atlas_region_get_height:
  * @self: A #LrgAtlasRegion
  *
@@ -269,7 +269,7 @@ lrg_atlas_region_get_height (const LrgAtlasRegion *self)
     return self->height;
 }
 
-/**
+/*
  * lrg_atlas_region_get_rect:
  * @self: A #LrgAtlasRegion
  * @out_x: (out) (nullable): Return location for X
@@ -300,7 +300,7 @@ lrg_atlas_region_get_rect (const LrgAtlasRegion *self,
         *out_height = self->height;
 }
 
-/**
+/*
  * lrg_atlas_region_get_u1:
  * @self: A #LrgAtlasRegion
  *
@@ -317,7 +317,7 @@ lrg_atlas_region_get_u1 (const LrgAtlasRegion *self)
     return self->u1;
 }
 
-/**
+/*
  * lrg_atlas_region_get_v1:
  * @self: A #LrgAtlasRegion
  *
@@ -334,7 +334,7 @@ lrg_atlas_region_get_v1 (const LrgAtlasRegion *self)
     return self->v1;
 }
 
-/**
+/*
  * lrg_atlas_region_get_u2:
  * @self: A #LrgAtlasRegion
  *
@@ -351,7 +351,7 @@ lrg_atlas_region_get_u2 (const LrgAtlasRegion *self)
     return self->u2;
 }
 
-/**
+/*
  * lrg_atlas_region_get_v2:
  * @self: A #LrgAtlasRegion
  *
@@ -368,7 +368,7 @@ lrg_atlas_region_get_v2 (const LrgAtlasRegion *self)
     return self->v2;
 }
 
-/**
+/*
  * lrg_atlas_region_get_uv:
  * @self: A #LrgAtlasRegion
  * @out_u1: (out) (nullable): Return location for U1
@@ -399,7 +399,7 @@ lrg_atlas_region_get_uv (const LrgAtlasRegion *self,
         *out_v2 = self->v2;
 }
 
-/**
+/*
  * lrg_atlas_region_is_rotated:
  * @self: A #LrgAtlasRegion
  *
@@ -416,7 +416,7 @@ lrg_atlas_region_is_rotated (const LrgAtlasRegion *self)
     return self->rotated;
 }
 
-/**
+/*
  * lrg_atlas_region_set_rotated:
  * @self: A #LrgAtlasRegion
  * @rotated: Whether the region is rotated
@@ -433,7 +433,7 @@ lrg_atlas_region_set_rotated (LrgAtlasRegion *self,
     self->rotated = rotated;
 }
 
-/**
+/*
  * lrg_atlas_region_is_flipped_x:
  * @self: A #LrgAtlasRegion
  *
@@ -450,7 +450,7 @@ lrg_atlas_region_is_flipped_x (const LrgAtlasRegion *self)
     return self->flipped_x;
 }
 
-/**
+/*
  * lrg_atlas_region_set_flipped_x:
  * @self: A #LrgAtlasRegion
  * @flipped: Whether to flip horizontally
@@ -467,7 +467,7 @@ lrg_atlas_region_set_flipped_x (LrgAtlasRegion *self,
     self->flipped_x = flipped;
 }
 
-/**
+/*
  * lrg_atlas_region_is_flipped_y:
  * @self: A #LrgAtlasRegion
  *
@@ -484,7 +484,7 @@ lrg_atlas_region_is_flipped_y (const LrgAtlasRegion *self)
     return self->flipped_y;
 }
 
-/**
+/*
  * lrg_atlas_region_set_flipped_y:
  * @self: A #LrgAtlasRegion
  * @flipped: Whether to flip vertically
@@ -501,7 +501,7 @@ lrg_atlas_region_set_flipped_y (LrgAtlasRegion *self,
     self->flipped_y = flipped;
 }
 
-/**
+/*
  * lrg_atlas_region_get_pivot_x:
  * @self: A #LrgAtlasRegion
  *
@@ -518,7 +518,7 @@ lrg_atlas_region_get_pivot_x (const LrgAtlasRegion *self)
     return self->pivot_x;
 }
 
-/**
+/*
  * lrg_atlas_region_get_pivot_y:
  * @self: A #LrgAtlasRegion
  *
@@ -535,7 +535,7 @@ lrg_atlas_region_get_pivot_y (const LrgAtlasRegion *self)
     return self->pivot_y;
 }
 
-/**
+/*
  * lrg_atlas_region_set_pivot:
  * @self: A #LrgAtlasRegion
  * @x: Pivot X offset
@@ -555,7 +555,7 @@ lrg_atlas_region_set_pivot (LrgAtlasRegion *self,
     self->pivot_y = y;
 }
 
-/**
+/*
  * lrg_atlas_region_calculate_uv:
  * @self: A #LrgAtlasRegion
  * @atlas_width: Total width of the atlas texture

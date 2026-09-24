@@ -429,7 +429,7 @@ lrg_net_server_class_init (LrgNetServerClass *klass)
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
-    /**
+    /*
      * LrgNetServer::started:
      * @self: the #LrgNetServer
      *
@@ -444,7 +444,7 @@ lrg_net_server_class_init (LrgNetServerClass *klass)
                       NULL,
                       G_TYPE_NONE, 0);
 
-    /**
+    /*
      * LrgNetServer::stopped:
      * @self: the #LrgNetServer
      *
@@ -459,7 +459,7 @@ lrg_net_server_class_init (LrgNetServerClass *klass)
                       NULL,
                       G_TYPE_NONE, 0);
 
-    /**
+    /*
      * LrgNetServer::peer-connected:
      * @self: the #LrgNetServer
      * @peer: the connected peer
@@ -475,7 +475,7 @@ lrg_net_server_class_init (LrgNetServerClass *klass)
                       NULL,
                       G_TYPE_NONE, 1, LRG_TYPE_NET_PEER);
 
-    /**
+    /*
      * LrgNetServer::peer-disconnected:
      * @self: the #LrgNetServer
      * @peer_id: the peer ID
@@ -492,7 +492,7 @@ lrg_net_server_class_init (LrgNetServerClass *klass)
                       NULL,
                       G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_STRING);
 
-    /**
+    /*
      * LrgNetServer::message-received:
      * @self: the #LrgNetServer
      * @peer_id: the sender peer ID
@@ -526,7 +526,7 @@ lrg_net_server_init (LrgNetServer *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_net_server_new:
  * @host: (nullable): bind address (NULL for all interfaces)
  * @port: listen port
@@ -545,7 +545,7 @@ lrg_net_server_new (const gchar *host,
                          NULL);
 }
 
-/**
+/*
  * lrg_net_server_start:
  * @self: an #LrgNetServer
  * @error: (nullable): return location for error
@@ -621,7 +621,7 @@ lrg_net_server_start (LrgNetServer  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_net_server_stop:
  * @self: an #LrgNetServer
  *
@@ -654,7 +654,7 @@ lrg_net_server_stop (LrgNetServer *self)
     g_signal_emit (self, signals[SIGNAL_STOPPED], 0);
 }
 
-/**
+/*
  * lrg_net_server_is_running:
  * @self: an #LrgNetServer
  *
@@ -669,7 +669,7 @@ lrg_net_server_is_running (LrgNetServer *self)
     return self->running;
 }
 
-/**
+/*
  * lrg_net_server_get_host:
  * @self: an #LrgNetServer
  *
@@ -684,7 +684,7 @@ lrg_net_server_get_host (LrgNetServer *self)
     return self->host;
 }
 
-/**
+/*
  * lrg_net_server_get_port:
  * @self: an #LrgNetServer
  *
@@ -699,7 +699,7 @@ lrg_net_server_get_port (LrgNetServer *self)
     return self->port;
 }
 
-/**
+/*
  * lrg_net_server_get_max_peers:
  * @self: an #LrgNetServer
  *
@@ -714,7 +714,7 @@ lrg_net_server_get_max_peers (LrgNetServer *self)
     return self->max_peers;
 }
 
-/**
+/*
  * lrg_net_server_set_max_peers:
  * @self: an #LrgNetServer
  * @max_peers: maximum peers (0 = unlimited)
@@ -734,7 +734,7 @@ lrg_net_server_set_max_peers (LrgNetServer *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MAX_PEERS]);
 }
 
-/**
+/*
  * lrg_net_server_get_peer:
  * @self: an #LrgNetServer
  * @peer_id: the peer identifier
@@ -755,7 +755,7 @@ lrg_net_server_get_peer (LrgNetServer *self,
     return pc ? pc->peer : NULL;
 }
 
-/**
+/*
  * lrg_net_server_get_peers:
  * @self: an #LrgNetServer
  *
@@ -782,7 +782,7 @@ lrg_net_server_get_peers (LrgNetServer *self)
     return list;
 }
 
-/**
+/*
  * lrg_net_server_get_peer_count:
  * @self: an #LrgNetServer
  *
@@ -797,7 +797,7 @@ lrg_net_server_get_peer_count (LrgNetServer *self)
     return g_hash_table_size (self->peers);
 }
 
-/**
+/*
  * lrg_net_server_disconnect_peer:
  * @self: an #LrgNetServer
  * @peer_id: the peer to disconnect
@@ -823,7 +823,7 @@ lrg_net_server_disconnect_peer (LrgNetServer *self,
     g_signal_emit (self, signals[SIGNAL_PEER_DISCONNECTED], 0, peer_id, NULL);
 }
 
-/**
+/*
  * lrg_net_server_disconnect_all:
  * @self: an #LrgNetServer
  *
@@ -856,7 +856,7 @@ lrg_net_server_disconnect_all (LrgNetServer *self)
     g_list_free (peer_ids);
 }
 
-/**
+/*
  * lrg_net_server_send:
  * @self: an #LrgNetServer
  * @peer_id: the recipient peer ID
@@ -888,7 +888,7 @@ lrg_net_server_send (LrgNetServer   *self,
     return _lrg_net_buffer_send (&pc->buffer, message, error);
 }
 
-/**
+/*
  * lrg_net_server_broadcast:
  * @self: an #LrgNetServer
  * @message: the message to broadcast
@@ -961,7 +961,7 @@ lrg_net_server_send_async (LrgNetServer  *self,
 }
 #endif /* LRG_HAS_LIBDEX */
 
-/**
+/*
  * lrg_net_server_poll:
  * @self: an #LrgNetServer
  *

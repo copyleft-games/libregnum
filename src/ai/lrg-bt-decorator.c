@@ -77,7 +77,7 @@ lrg_bt_decorator_init (LrgBTDecorator *self)
 {
 }
 
-/**
+/*
  * lrg_bt_decorator_get_child:
  * @self: an #LrgBTDecorator
  *
@@ -96,7 +96,7 @@ lrg_bt_decorator_get_child (LrgBTDecorator *self)
     return priv->child;
 }
 
-/**
+/*
  * lrg_bt_decorator_set_child:
  * @self: an #LrgBTDecorator
  * @child: (nullable) (transfer none): The child node
@@ -174,7 +174,7 @@ lrg_bt_inverter_init (LrgBTInverter *self)
 {
 }
 
-/**
+/*
  * lrg_bt_inverter_new:
  * @child: (nullable) (transfer none): The child node
  *
@@ -268,7 +268,7 @@ lrg_bt_repeater_init (LrgBTRepeater *self)
     self->current = 0;
 }
 
-/**
+/*
  * lrg_bt_repeater_new:
  * @child: (nullable) (transfer none): The child node
  * @count: Number of times to repeat (0 = infinite)
@@ -291,7 +291,7 @@ lrg_bt_repeater_new (LrgBTNode *child,
     return self;
 }
 
-/**
+/*
  * lrg_bt_repeater_get_count:
  * @self: an #LrgBTRepeater
  *
@@ -307,7 +307,7 @@ lrg_bt_repeater_get_count (LrgBTRepeater *self)
     return self->count;
 }
 
-/**
+/*
  * lrg_bt_repeater_set_count:
  * @self: an #LrgBTRepeater
  * @count: Repeat count (0 = infinite)
@@ -369,7 +369,7 @@ lrg_bt_succeeder_init (LrgBTSucceeder *self)
 {
 }
 
-/**
+/*
  * lrg_bt_succeeder_new:
  * @child: (nullable) (transfer none): The child node
  *
@@ -434,7 +434,7 @@ lrg_bt_failer_init (LrgBTFailer *self)
 {
 }
 
-/**
+/*
  * lrg_bt_failer_new:
  * @child: (nullable) (transfer none): The child node
  *

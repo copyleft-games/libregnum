@@ -851,7 +851,7 @@ lrg_text_input_init (LrgTextInput *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_text_input_new:
  *
  * Creates a new text input widget.
@@ -864,7 +864,7 @@ lrg_text_input_new (void)
     return g_object_new (LRG_TYPE_TEXT_INPUT, NULL);
 }
 
-/**
+/*
  * lrg_text_input_new_with_placeholder:
  * @placeholder: (nullable): placeholder text
  *
@@ -884,7 +884,7 @@ lrg_text_input_new_with_placeholder (const gchar *placeholder)
  * Public API - Text
  * ========================================================================== */
 
-/**
+/*
  * lrg_text_input_get_text:
  * @self: an #LrgTextInput
  *
@@ -900,7 +900,7 @@ lrg_text_input_get_text (LrgTextInput *self)
     return self->text;
 }
 
-/**
+/*
  * lrg_text_input_set_text:
  * @self: an #LrgTextInput
  * @text: (nullable): the text to set
@@ -935,7 +935,7 @@ lrg_text_input_set_text (LrgTextInput *self,
     g_signal_emit (self, signals[SIGNAL_TEXT_CHANGED], 0);
 }
 
-/**
+/*
  * lrg_text_input_get_placeholder:
  * @self: an #LrgTextInput
  *
@@ -951,7 +951,7 @@ lrg_text_input_get_placeholder (LrgTextInput *self)
     return self->placeholder;
 }
 
-/**
+/*
  * lrg_text_input_set_placeholder:
  * @self: an #LrgTextInput
  * @placeholder: (nullable): the placeholder text

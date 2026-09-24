@@ -793,7 +793,7 @@ lrg_template_loading_state_init (LrgTemplateLoadingState *self)
 /* Public API                                                                 */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_template_loading_state_new:
  *
  * Creates a new loading state.

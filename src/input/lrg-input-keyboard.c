@@ -78,7 +78,7 @@ lrg_input_keyboard_init (LrgInputKeyboard *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_keyboard_new:
  *
  * Creates a new keyboard input source.

@@ -180,7 +180,7 @@ lrg_reel_bloom_effect_init (LrgReelBloomEffect *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_bloom_effect_new:
  * @threshold: luminance threshold (0–255)
  * @blur_radius: bloom blur radius
@@ -204,7 +204,7 @@ lrg_reel_bloom_effect_new (guint8  threshold,
                          NULL);
 }
 
-/**
+/*
  * lrg_reel_bloom_effect_get_threshold:
  * @self: a #LrgReelBloomEffect
  *
@@ -220,7 +220,7 @@ lrg_reel_bloom_effect_get_threshold (LrgReelBloomEffect *self)
     return self->threshold;
 }
 
-/**
+/*
  * lrg_reel_bloom_effect_set_threshold:
  * @self: a #LrgReelBloomEffect
  * @threshold: new luminance threshold
@@ -240,7 +240,7 @@ lrg_reel_bloom_effect_set_threshold (LrgReelBloomEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_THRESHOLD]);
 }
 
-/**
+/*
  * lrg_reel_bloom_effect_get_blur_radius:
  * @self: a #LrgReelBloomEffect
  *
@@ -256,7 +256,7 @@ lrg_reel_bloom_effect_get_blur_radius (LrgReelBloomEffect *self)
     return self->blur_radius;
 }
 
-/**
+/*
  * lrg_reel_bloom_effect_set_blur_radius:
  * @self: a #LrgReelBloomEffect
  * @blur_radius: new blur radius
@@ -276,7 +276,7 @@ lrg_reel_bloom_effect_set_blur_radius (LrgReelBloomEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BLUR_RADIUS]);
 }
 
-/**
+/*
  * lrg_reel_bloom_effect_get_intensity:
  * @self: a #LrgReelBloomEffect
  *
@@ -292,7 +292,7 @@ lrg_reel_bloom_effect_get_intensity (LrgReelBloomEffect *self)
     return self->intensity;
 }
 
-/**
+/*
  * lrg_reel_bloom_effect_set_intensity:
  * @self: a #LrgReelBloomEffect
  * @intensity: new intensity value

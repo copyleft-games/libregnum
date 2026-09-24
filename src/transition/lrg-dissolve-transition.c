@@ -552,7 +552,7 @@ lrg_dissolve_transition_init (LrgDissolveTransition *self)
  * Public API
  */
 
-/**
+/*
  * lrg_dissolve_transition_new:
  *
  * Creates a new dissolve transition with default settings.
@@ -567,7 +567,7 @@ lrg_dissolve_transition_new (void)
     return g_object_new (LRG_TYPE_DISSOLVE_TRANSITION, NULL);
 }
 
-/**
+/*
  * lrg_dissolve_transition_get_noise_scale:
  * @self: A #LrgDissolveTransition
  *
@@ -585,7 +585,7 @@ lrg_dissolve_transition_get_noise_scale (LrgDissolveTransition *self)
     return self->noise_scale;
 }
 
-/**
+/*
  * lrg_dissolve_transition_set_noise_scale:
  * @self: A #LrgDissolveTransition
  * @scale: Noise scale
@@ -609,7 +609,7 @@ lrg_dissolve_transition_set_noise_scale (LrgDissolveTransition *self,
     }
 }
 
-/**
+/*
  * lrg_dissolve_transition_get_edge_width:
  * @self: A #LrgDissolveTransition
  *
@@ -627,7 +627,7 @@ lrg_dissolve_transition_get_edge_width (LrgDissolveTransition *self)
     return self->edge_width;
 }
 
-/**
+/*
  * lrg_dissolve_transition_set_edge_width:
  * @self: A #LrgDissolveTransition
  * @width: Edge width
@@ -651,7 +651,7 @@ lrg_dissolve_transition_set_edge_width (LrgDissolveTransition *self,
     }
 }
 
-/**
+/*
  * lrg_dissolve_transition_get_edge_color:
  * @self: A #LrgDissolveTransition
  * @r: (out) (nullable): Return location for red
@@ -678,7 +678,7 @@ lrg_dissolve_transition_get_edge_color (LrgDissolveTransition *self,
         *b = self->edge_b;
 }
 
-/**
+/*
  * lrg_dissolve_transition_set_edge_color:
  * @self: A #LrgDissolveTransition
  * @r: Red component
@@ -720,7 +720,7 @@ lrg_dissolve_transition_set_edge_color (LrgDissolveTransition *self,
     g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_dissolve_transition_get_seed:
  * @self: A #LrgDissolveTransition
  *
@@ -738,7 +738,7 @@ lrg_dissolve_transition_get_seed (LrgDissolveTransition *self)
     return self->seed;
 }
 
-/**
+/*
  * lrg_dissolve_transition_set_seed:
  * @self: A #LrgDissolveTransition
  * @seed: Noise seed

@@ -197,7 +197,7 @@ lrg_collider_component_init (LrgColliderComponent *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_collider_component_new:
  *
  * Creates a new collider component with default bounds.
@@ -210,7 +210,7 @@ lrg_collider_component_new (void)
     return g_object_new (LRG_TYPE_COLLIDER_COMPONENT, NULL);
 }
 
-/**
+/*
  * lrg_collider_component_new_with_bounds:
  * @x: X offset from entity position
  * @y: Y offset from entity position
@@ -239,7 +239,7 @@ lrg_collider_component_new_with_bounds (gfloat x,
  * Public API - Bounds
  * ========================================================================== */
 
-/**
+/*
  * lrg_collider_component_set_bounds:
  * @self: an #LrgColliderComponent
  * @x: X offset
@@ -262,7 +262,7 @@ lrg_collider_component_set_bounds (LrgColliderComponent *self,
     self->bounds = grl_rectangle_new (x, y, width, height);
 }
 
-/**
+/*
  * lrg_collider_component_get_bounds:
  * @self: an #LrgColliderComponent
  *
@@ -278,7 +278,7 @@ lrg_collider_component_get_bounds (LrgColliderComponent *self)
     return grl_rectangle_copy (self->bounds);
 }
 
-/**
+/*
  * lrg_collider_component_get_world_bounds:
  * @self: an #LrgColliderComponent
  *
@@ -314,7 +314,7 @@ lrg_collider_component_get_world_bounds (LrgColliderComponent *self)
  * Public API - Collision Enable/Disable
  * ========================================================================== */
 
-/**
+/*
  * lrg_collider_component_set_collision_enabled:
  * @self: an #LrgColliderComponent
  * @enabled: whether collision checking is enabled
@@ -336,7 +336,7 @@ lrg_collider_component_set_collision_enabled (LrgColliderComponent *self,
     }
 }
 
-/**
+/*
  * lrg_collider_component_get_collision_enabled:
  * @self: an #LrgColliderComponent
  *
@@ -356,7 +356,7 @@ lrg_collider_component_get_collision_enabled (LrgColliderComponent *self)
  * Public API - Collision Layers
  * ========================================================================== */
 
-/**
+/*
  * lrg_collider_component_set_layer:
  * @self: an #LrgColliderComponent
  * @layer: the collision layer bitmask
@@ -376,7 +376,7 @@ lrg_collider_component_set_layer (LrgColliderComponent *self,
     }
 }
 
-/**
+/*
  * lrg_collider_component_get_layer:
  * @self: an #LrgColliderComponent
  *
@@ -392,7 +392,7 @@ lrg_collider_component_get_layer (LrgColliderComponent *self)
     return self->layer;
 }
 
-/**
+/*
  * lrg_collider_component_set_mask:
  * @self: an #LrgColliderComponent
  * @mask: the collision mask bitmask
@@ -412,7 +412,7 @@ lrg_collider_component_set_mask (LrgColliderComponent *self,
     }
 }
 
-/**
+/*
  * lrg_collider_component_get_mask:
  * @self: an #LrgColliderComponent
  *
@@ -432,7 +432,7 @@ lrg_collider_component_get_mask (LrgColliderComponent *self)
  * Public API - Collision Testing
  * ========================================================================== */
 
-/**
+/*
  * lrg_collider_component_intersects:
  * @self: an #LrgColliderComponent
  * @other: another #LrgColliderComponent
@@ -465,7 +465,7 @@ lrg_collider_component_intersects (LrgColliderComponent *self,
     return result != 0;
 }
 
-/**
+/*
  * lrg_collider_component_can_collide_with:
  * @self: an #LrgColliderComponent
  * @other: another #LrgColliderComponent

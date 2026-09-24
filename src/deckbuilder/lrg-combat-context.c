@@ -263,7 +263,7 @@ lrg_combat_context_init (LrgCombatContext *self)
     self->rng = g_rand_new ();
 }
 
-/**
+/*
  * lrg_combat_context_new:
  * @player: the player combatant
  * @rules: (nullable): combat rules

@@ -286,7 +286,7 @@ lrg_audio_manager_init (LrgAudioManager *self)
  * Singleton Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_audio_manager_get_default:
  *
  * Gets the default audio manager singleton.
@@ -374,7 +374,7 @@ update_procedural_foreach (gpointer key     G_GNUC_UNUSED,
     lrg_procedural_audio_update (audio);
 }
 
-/**
+/*
  * lrg_audio_manager_update:
  * @self: the audio manager
  *
@@ -443,7 +443,7 @@ lrg_audio_manager_update (LrgAudioManager *self)
  * Sound Bank Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_audio_manager_add_bank:
  * @self: the audio manager
  * @bank: the sound bank to add
@@ -474,7 +474,7 @@ lrg_audio_manager_add_bank (LrgAudioManager *self,
     lrg_log_debug ("Added sound bank '%s'", name);
 }
 
-/**
+/*
  * lrg_audio_manager_load_bank:
  * @self: the audio manager
  * @manifest_path: path to the bank manifest YAML file
@@ -503,7 +503,7 @@ lrg_audio_manager_load_bank (LrgAudioManager  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_audio_manager_remove_bank:
  * @self: the audio manager
  * @name: the bank name to remove
@@ -522,7 +522,7 @@ lrg_audio_manager_remove_bank (LrgAudioManager *self,
     return g_hash_table_remove (self->banks, name);
 }
 
-/**
+/*
  * lrg_audio_manager_get_bank:
  * @self: the audio manager
  * @name: the bank name
@@ -541,7 +541,7 @@ lrg_audio_manager_get_bank (LrgAudioManager *self,
     return g_hash_table_lookup (self->banks, name);
 }
 
-/**
+/*
  * lrg_audio_manager_get_bank_names:
  * @self: the audio manager
  *
@@ -561,7 +561,7 @@ lrg_audio_manager_get_bank_names (LrgAudioManager *self)
  * Sound Playback
  * ========================================================================== */
 
-/**
+/*
  * lrg_audio_manager_play_sound:
  * @self: the audio manager
  * @bank: the bank name
@@ -598,7 +598,7 @@ lrg_audio_manager_play_sound (LrgAudioManager *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_audio_manager_play_sound_multi:
  * @self: the audio manager
  * @bank: the bank name
@@ -635,7 +635,7 @@ lrg_audio_manager_play_sound_multi (LrgAudioManager *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_audio_manager_stop_sound:
  * @self: the audio manager
  * @bank: the bank name
@@ -672,7 +672,7 @@ stop_bank_sounds (gpointer key     G_GNUC_UNUSED,
     lrg_sound_bank_stop_all (bank);
 }
 
-/**
+/*
  * lrg_audio_manager_stop_all_sounds:
  * @self: the audio manager
  *
@@ -690,7 +690,7 @@ lrg_audio_manager_stop_all_sounds (LrgAudioManager *self)
  * Music Playback
  * ========================================================================== */
 
-/**
+/*
  * lrg_audio_manager_play_music:
  * @self: the audio manager
  * @track: the music track to play
@@ -740,7 +740,7 @@ lrg_audio_manager_play_music (LrgAudioManager *self,
     g_signal_emit (self, signals[SIGNAL_MUSIC_CHANGED], 0, track);
 }
 
-/**
+/*
  * lrg_audio_manager_play_music_from_file:
  * @self: the audio manager
  * @path: path to the music file
@@ -769,7 +769,7 @@ lrg_audio_manager_play_music_from_file (LrgAudioManager  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_audio_manager_stop_music:
  * @self: the audio manager
  *
@@ -797,7 +797,7 @@ lrg_audio_manager_stop_music (LrgAudioManager *self)
     }
 }
 
-/**
+/*
  * lrg_audio_manager_pause_music:
  * @self: the audio manager
  *
@@ -812,7 +812,7 @@ lrg_audio_manager_pause_music (LrgAudioManager *self)
         lrg_music_track_pause (self->current_music);
 }
 
-/**
+/*
  * lrg_audio_manager_resume_music:
  * @self: the audio manager
  *
@@ -827,7 +827,7 @@ lrg_audio_manager_resume_music (LrgAudioManager *self)
         lrg_music_track_resume (self->current_music);
 }
 
-/**
+/*
  * lrg_audio_manager_get_current_music:
  * @self: the audio manager
  *
@@ -843,7 +843,7 @@ lrg_audio_manager_get_current_music (LrgAudioManager *self)
     return self->current_music;
 }
 
-/**
+/*
  * lrg_audio_manager_is_music_playing:
  * @self: the audio manager
  *
@@ -866,7 +866,7 @@ lrg_audio_manager_is_music_playing (LrgAudioManager *self)
  * Crossfade
  * ========================================================================== */
 
-/**
+/*
  * lrg_audio_manager_crossfade_to:
  * @self: the audio manager
  * @track: the new music track
@@ -919,7 +919,7 @@ lrg_audio_manager_crossfade_to (LrgAudioManager *self,
                   duration);
 }
 
-/**
+/*
  * lrg_audio_manager_is_crossfading:
  * @self: the audio manager
  *
@@ -939,7 +939,7 @@ lrg_audio_manager_is_crossfading (LrgAudioManager *self)
  * Volume Control
  * ========================================================================== */
 
-/**
+/*
  * lrg_audio_manager_set_master_volume:
  * @self: the audio manager
  * @volume: volume level (0.0 to 1.0)
@@ -974,7 +974,7 @@ lrg_audio_manager_set_master_volume (LrgAudioManager *self,
     }
 }
 
-/**
+/*
  * lrg_audio_manager_get_master_volume:
  * @self: the audio manager
  *
@@ -990,7 +990,7 @@ lrg_audio_manager_get_master_volume (LrgAudioManager *self)
     return self->volume_master;
 }
 
-/**
+/*
  * lrg_audio_manager_set_sfx_volume:
  * @self: the audio manager
  * @volume: volume level (0.0 to 1.0)
@@ -1013,7 +1013,7 @@ lrg_audio_manager_set_sfx_volume (LrgAudioManager *self,
     }
 }
 
-/**
+/*
  * lrg_audio_manager_get_sfx_volume:
  * @self: the audio manager
  *
@@ -1029,7 +1029,7 @@ lrg_audio_manager_get_sfx_volume (LrgAudioManager *self)
     return self->volume_sfx;
 }
 
-/**
+/*
  * lrg_audio_manager_set_music_volume:
  * @self: the audio manager
  * @volume: volume level (0.0 to 1.0)
@@ -1052,7 +1052,7 @@ lrg_audio_manager_set_music_volume (LrgAudioManager *self,
     }
 }
 
-/**
+/*
  * lrg_audio_manager_get_music_volume:
  * @self: the audio manager
  *
@@ -1068,7 +1068,7 @@ lrg_audio_manager_get_music_volume (LrgAudioManager *self)
     return self->volume_music;
 }
 
-/**
+/*
  * lrg_audio_manager_set_voice_volume:
  * @self: the audio manager
  * @volume: volume level (0.0 to 1.0)
@@ -1091,7 +1091,7 @@ lrg_audio_manager_set_voice_volume (LrgAudioManager *self,
     }
 }
 
-/**
+/*
  * lrg_audio_manager_get_voice_volume:
  * @self: the audio manager
  *
@@ -1107,7 +1107,7 @@ lrg_audio_manager_get_voice_volume (LrgAudioManager *self)
     return self->volume_voice;
 }
 
-/**
+/*
  * lrg_audio_manager_set_muted:
  * @self: the audio manager
  * @muted: whether to mute
@@ -1140,7 +1140,7 @@ lrg_audio_manager_set_muted (LrgAudioManager *self,
     }
 }
 
-/**
+/*
  * lrg_audio_manager_get_muted:
  * @self: the audio manager
  *
@@ -1160,7 +1160,7 @@ lrg_audio_manager_get_muted (LrgAudioManager *self)
  * Procedural Audio Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_audio_manager_add_procedural:
  * @self: the audio manager
  * @name: a unique name for the procedural audio
@@ -1188,7 +1188,7 @@ lrg_audio_manager_add_procedural (LrgAudioManager    *self,
     lrg_log_debug ("Added procedural audio '%s'", name);
 }
 
-/**
+/*
  * lrg_audio_manager_remove_procedural:
  * @self: the audio manager
  * @name: the name of the procedural audio to remove
@@ -1216,7 +1216,7 @@ lrg_audio_manager_remove_procedural (LrgAudioManager *self,
     return g_hash_table_remove (self->procedural, name);
 }
 
-/**
+/*
  * lrg_audio_manager_get_procedural:
  * @self: the audio manager
  * @name: the name of the procedural audio
@@ -1235,7 +1235,7 @@ lrg_audio_manager_get_procedural (LrgAudioManager *self,
     return g_hash_table_lookup (self->procedural, name);
 }
 
-/**
+/*
  * lrg_audio_manager_get_procedural_names:
  * @self: the audio manager
  *
@@ -1251,7 +1251,7 @@ lrg_audio_manager_get_procedural_names (LrgAudioManager *self)
     return g_hash_table_get_keys (self->procedural);
 }
 
-/**
+/*
  * lrg_audio_manager_play_procedural:
  * @self: the audio manager
  * @name: the name of the procedural audio to play
@@ -1280,7 +1280,7 @@ lrg_audio_manager_play_procedural (LrgAudioManager *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_audio_manager_stop_procedural:
  * @self: the audio manager
  * @name: the name of the procedural audio to stop
@@ -1315,7 +1315,7 @@ stop_procedural_foreach (gpointer key     G_GNUC_UNUSED,
     lrg_procedural_audio_stop (audio);
 }
 
-/**
+/*
  * lrg_audio_manager_stop_all_procedural:
  * @self: the audio manager
  *

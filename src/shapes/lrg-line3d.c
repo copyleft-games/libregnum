@@ -142,7 +142,7 @@ lrg_line3d_init (LrgLine3D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_line3d_new:
  *
  * Creates a new line from origin to (1, 0, 0).
@@ -155,7 +155,7 @@ lrg_line3d_new (void)
 	return g_object_new (LRG_TYPE_LINE3D, NULL);
 }
 
-/**
+/*
  * lrg_line3d_new_from_to:
  * @start_x: start X position
  * @start_y: start Y position
@@ -185,7 +185,7 @@ lrg_line3d_new_from_to (gfloat start_x,
 	return line;
 }
 
-/**
+/*
  * lrg_line3d_new_from_to_v:
  * @start: (transfer none): start position
  * @end: (transfer none): end position
@@ -211,7 +211,7 @@ lrg_line3d_new_from_to_v (GrlVector3 *start,
 	return line;
 }
 
-/**
+/*
  * lrg_line3d_new_full:
  * @start_x: start X position
  * @start_y: start Y position
@@ -247,7 +247,7 @@ lrg_line3d_new_full (gfloat    start_x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_line3d_get_end:
  * @self: an #LrgLine3D
  *
@@ -263,7 +263,7 @@ lrg_line3d_get_end (LrgLine3D *self)
 	return self->end;
 }
 
-/**
+/*
  * lrg_line3d_set_end:
  * @self: an #LrgLine3D
  * @end: (transfer none): the end position to set
@@ -282,7 +282,7 @@ lrg_line3d_set_end (LrgLine3D  *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_END]);
 }
 
-/**
+/*
  * lrg_line3d_set_end_xyz:
  * @self: an #LrgLine3D
  * @x: the end X coordinate
@@ -307,7 +307,7 @@ lrg_line3d_set_end_xyz (LrgLine3D *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_END]);
 }
 
-/**
+/*
  * lrg_line3d_get_end_x:
  * @self: an #LrgLine3D
  *
@@ -323,7 +323,7 @@ lrg_line3d_get_end_x (LrgLine3D *self)
 	return self->end->x;
 }
 
-/**
+/*
  * lrg_line3d_get_end_y:
  * @self: an #LrgLine3D
  *
@@ -339,7 +339,7 @@ lrg_line3d_get_end_y (LrgLine3D *self)
 	return self->end->y;
 }
 
-/**
+/*
  * lrg_line3d_get_end_z:
  * @self: an #LrgLine3D
  *
@@ -355,7 +355,7 @@ lrg_line3d_get_end_z (LrgLine3D *self)
 	return self->end->z;
 }
 
-/**
+/*
  * lrg_line3d_set_points:
  * @self: an #LrgLine3D
  * @start_x: start X position

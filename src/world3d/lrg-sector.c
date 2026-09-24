@@ -22,7 +22,7 @@ struct _LrgSector
 G_DEFINE_BOXED_TYPE (LrgSector, lrg_sector,
                      lrg_sector_copy, lrg_sector_free)
 
-/**
+/*
  * lrg_sector_new:
  * @id: Unique identifier for this sector
  * @bounds: (transfer none): The sector bounds
@@ -49,7 +49,7 @@ lrg_sector_new (const gchar            *id,
     return self;
 }
 
-/**
+/*
  * lrg_sector_new_box:
  * @id: Unique identifier for this sector
  * @min_x: Minimum X coordinate
@@ -90,7 +90,7 @@ lrg_sector_new_box (const gchar *id,
     return self;
 }
 
-/**
+/*
  * lrg_sector_copy:
  * @self: (nullable): A #LrgSector
  *
@@ -120,7 +120,7 @@ lrg_sector_copy (const LrgSector *self)
     return copy;
 }
 
-/**
+/*
  * lrg_sector_free:
  * @self: (nullable): A #LrgSector
  *
@@ -137,7 +137,7 @@ lrg_sector_free (LrgSector *self)
     g_free (self);
 }
 
-/**
+/*
  * lrg_sector_get_id:
  * @self: A #LrgSector
  *
@@ -153,7 +153,7 @@ lrg_sector_get_id (const LrgSector *self)
     return self->id;
 }
 
-/**
+/*
  * lrg_sector_get_bounds:
  * @self: A #LrgSector
  *
@@ -169,7 +169,7 @@ lrg_sector_get_bounds (const LrgSector *self)
     return lrg_bounding_box3d_copy (&self->bounds);
 }
 
-/**
+/*
  * lrg_sector_add_portal:
  * @self: A #LrgSector
  * @portal_id: ID of portal to add
@@ -189,7 +189,7 @@ lrg_sector_add_portal (LrgSector   *self,
         g_ptr_array_add (self->portal_ids, g_strdup (portal_id));
 }
 
-/**
+/*
  * lrg_sector_remove_portal:
  * @self: A #LrgSector
  * @portal_id: ID of portal to remove
@@ -220,7 +220,7 @@ lrg_sector_remove_portal (LrgSector   *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_sector_has_portal:
  * @self: A #LrgSector
  * @portal_id: Portal ID to check
@@ -248,7 +248,7 @@ lrg_sector_has_portal (const LrgSector *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_sector_get_portal_ids:
  * @self: A #LrgSector
  *
@@ -275,7 +275,7 @@ lrg_sector_get_portal_ids (const LrgSector *self)
     return result;
 }
 
-/**
+/*
  * lrg_sector_get_portal_count:
  * @self: A #LrgSector
  *
@@ -291,7 +291,7 @@ lrg_sector_get_portal_count (const LrgSector *self)
     return self->portal_ids->len;
 }
 
-/**
+/*
  * lrg_sector_contains_point:
  * @self: A #LrgSector
  * @point: (transfer none): Point to test
@@ -310,7 +310,7 @@ lrg_sector_contains_point (const LrgSector  *self,
     return lrg_sector_contains_point_xyz (self, point->x, point->y, point->z);
 }
 
-/**
+/*
  * lrg_sector_contains_point_xyz:
  * @self: A #LrgSector
  * @x: X coordinate
@@ -332,7 +332,7 @@ lrg_sector_contains_point_xyz (const LrgSector *self,
     return lrg_bounding_box3d_contains_point_xyz (&self->bounds, x, y, z);
 }
 
-/**
+/*
  * lrg_sector_is_visible:
  * @self: A #LrgSector
  *
@@ -348,7 +348,7 @@ lrg_sector_is_visible (const LrgSector *self)
     return self->visible;
 }
 
-/**
+/*
  * lrg_sector_set_visible:
  * @self: A #LrgSector
  * @visible: Visibility state
@@ -364,7 +364,7 @@ lrg_sector_set_visible (LrgSector *self,
     self->visible = visible;
 }
 
-/**
+/*
  * lrg_sector_get_center:
  * @self: A #LrgSector
  *

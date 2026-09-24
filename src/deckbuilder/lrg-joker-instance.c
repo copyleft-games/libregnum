@@ -12,7 +12,7 @@
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_DECKBUILDER
 
-/**
+/*
  * LrgJokerInstance:
  *
  * Runtime instance of a joker.
@@ -77,7 +77,7 @@ lrg_joker_instance_init (LrgJokerInstance *self)
     self->instance_id = next_instance_id++;
 }
 
-/**
+/*
  * lrg_joker_instance_new:
  * @def: the joker definition
  *
@@ -101,7 +101,7 @@ lrg_joker_instance_new (LrgJokerDef *def)
     return self;
 }
 
-/**
+/*
  * lrg_joker_instance_new_with_edition:
  * @def: the joker definition
  * @edition: the edition
@@ -126,7 +126,7 @@ lrg_joker_instance_new_with_edition (LrgJokerDef    *def,
     return self;
 }
 
-/**
+/*
  * lrg_joker_instance_get_def:
  * @self: a #LrgJokerInstance
  *
@@ -144,7 +144,7 @@ lrg_joker_instance_get_def (LrgJokerInstance *self)
     return self->def;
 }
 
-/**
+/*
  * lrg_joker_instance_get_id:
  * @self: a #LrgJokerInstance
  *
@@ -162,7 +162,7 @@ lrg_joker_instance_get_id (LrgJokerInstance *self)
     return lrg_joker_def_get_id (self->def);
 }
 
-/**
+/*
  * lrg_joker_instance_get_name:
  * @self: a #LrgJokerInstance
  *
@@ -180,7 +180,7 @@ lrg_joker_instance_get_name (LrgJokerInstance *self)
     return lrg_joker_def_get_name (self->def);
 }
 
-/**
+/*
  * lrg_joker_instance_get_edition:
  * @self: a #LrgJokerInstance
  *
@@ -198,7 +198,7 @@ lrg_joker_instance_get_edition (LrgJokerInstance *self)
     return self->edition;
 }
 
-/**
+/*
  * lrg_joker_instance_set_edition:
  * @self: a #LrgJokerInstance
  * @edition: the new edition
@@ -220,7 +220,7 @@ lrg_joker_instance_set_edition (LrgJokerInstance *self,
     self->edition = edition;
 }
 
-/**
+/*
  * lrg_joker_instance_get_sell_value:
  * @self: a #LrgJokerInstance
  *
@@ -238,7 +238,7 @@ lrg_joker_instance_get_sell_value (LrgJokerInstance *self)
     return self->sell_value;
 }
 
-/**
+/*
  * lrg_joker_instance_set_sell_value:
  * @self: a #LrgJokerInstance
  * @value: the new sell value
@@ -256,7 +256,7 @@ lrg_joker_instance_set_sell_value (LrgJokerInstance *self,
     self->sell_value = value;
 }
 
-/**
+/*
  * lrg_joker_instance_add_sell_value:
  * @self: a #LrgJokerInstance
  * @amount: amount to add
@@ -274,7 +274,7 @@ lrg_joker_instance_add_sell_value (LrgJokerInstance *self,
     self->sell_value += amount;
 }
 
-/**
+/*
  * lrg_joker_instance_get_times_triggered:
  * @self: a #LrgJokerInstance
  *
@@ -292,7 +292,7 @@ lrg_joker_instance_get_times_triggered (LrgJokerInstance *self)
     return self->times_triggered;
 }
 
-/**
+/*
  * lrg_joker_instance_increment_trigger_count:
  * @self: a #LrgJokerInstance
  *
@@ -308,7 +308,7 @@ lrg_joker_instance_increment_trigger_count (LrgJokerInstance *self)
     self->times_triggered++;
 }
 
-/**
+/*
  * lrg_joker_instance_reset_trigger_count:
  * @self: a #LrgJokerInstance
  *
@@ -324,7 +324,7 @@ lrg_joker_instance_reset_trigger_count (LrgJokerInstance *self)
     self->times_triggered = 0;
 }
 
-/**
+/*
  * lrg_joker_instance_get_counter:
  * @self: a #LrgJokerInstance
  *
@@ -342,7 +342,7 @@ lrg_joker_instance_get_counter (LrgJokerInstance *self)
     return self->counter;
 }
 
-/**
+/*
  * lrg_joker_instance_set_counter:
  * @self: a #LrgJokerInstance
  * @value: the counter value
@@ -360,7 +360,7 @@ lrg_joker_instance_set_counter (LrgJokerInstance *self,
     self->counter = value;
 }
 
-/**
+/*
  * lrg_joker_instance_add_counter:
  * @self: a #LrgJokerInstance
  * @amount: amount to add
@@ -378,7 +378,7 @@ lrg_joker_instance_add_counter (LrgJokerInstance *self,
     self->counter += amount;
 }
 
-/**
+/*
  * lrg_joker_instance_get_edition_chips:
  * @self: a #LrgJokerInstance
  *
@@ -399,7 +399,7 @@ lrg_joker_instance_get_edition_chips (LrgJokerInstance *self)
     return 0;
 }
 
-/**
+/*
  * lrg_joker_instance_get_edition_mult:
  * @self: a #LrgJokerInstance
  *
@@ -420,7 +420,7 @@ lrg_joker_instance_get_edition_mult (LrgJokerInstance *self)
     return 0;
 }
 
-/**
+/*
  * lrg_joker_instance_get_edition_x_mult:
  * @self: a #LrgJokerInstance
  *
@@ -441,7 +441,7 @@ lrg_joker_instance_get_edition_x_mult (LrgJokerInstance *self)
     return 1.0;
 }
 
-/**
+/*
  * lrg_joker_instance_get_instance_id:
  * @self: a #LrgJokerInstance
  *

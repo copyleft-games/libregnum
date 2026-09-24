@@ -151,7 +151,7 @@ measure_multiline (LrgTextBaker *self,
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_text_baker_new_from_file:
  * @font_path: path to a TTF or OTF font file
  * @error: (nullable): return location for a #GError
@@ -197,7 +197,7 @@ lrg_text_baker_new_from_file (const gchar  *font_path,
     return baker;
 }
 
-/**
+/*
  * lrg_text_baker_new_for_font:
  * @font: a #GrlImageFont to use
  *
@@ -224,7 +224,7 @@ lrg_text_baker_new_for_font (GrlImageFont *font)
  * Public API - Font Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_text_baker_get_font:
  * @self: an #LrgTextBaker
  *
@@ -246,7 +246,7 @@ lrg_text_baker_get_font (LrgTextBaker *self)
  * Public API - Measurement
  * ========================================================================== */
 
-/**
+/*
  * lrg_text_baker_measure:
  * @self: an #LrgTextBaker
  * @text: the UTF-8 text to measure
@@ -288,7 +288,7 @@ lrg_text_baker_measure (LrgTextBaker *self,
  * Public API - Rendering
  * ========================================================================== */
 
-/**
+/*
  * lrg_text_baker_render_to_image:
  * @self: an #LrgTextBaker
  * @text: the UTF-8 text to render (may contain '\n')
@@ -393,7 +393,7 @@ lrg_text_baker_render_to_image (LrgTextBaker    *self,
     return image;
 }
 
-/**
+/*
  * lrg_text_baker_render_to_texture:
  * @self: an #LrgTextBaker
  * @text: the UTF-8 text to render
@@ -431,7 +431,7 @@ lrg_text_baker_render_to_texture (LrgTextBaker    *self,
  * Public API - Glyph Atlas
  * ========================================================================== */
 
-/**
+/*
  * lrg_text_baker_bake_atlas:
  * @self: an #LrgTextBaker
  * @codepoints_utf8: UTF-8 string defining the glyph set to bake

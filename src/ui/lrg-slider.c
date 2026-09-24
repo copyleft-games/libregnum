@@ -671,7 +671,7 @@ lrg_slider_init (LrgSlider *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_slider_new:
  *
  * Creates a new slider widget with default range (0 to 100).
@@ -684,7 +684,7 @@ lrg_slider_new (void)
     return g_object_new (LRG_TYPE_SLIDER, NULL);
 }
 
-/**
+/*
  * lrg_slider_new_with_range:
  * @min: minimum value
  * @max: maximum value
@@ -710,7 +710,7 @@ lrg_slider_new_with_range (gdouble min,
  * Public API - Value
  * ========================================================================== */
 
-/**
+/*
  * lrg_slider_get_value:
  * @self: an #LrgSlider
  *
@@ -726,7 +726,7 @@ lrg_slider_get_value (LrgSlider *self)
     return self->value;
 }
 
-/**
+/*
  * lrg_slider_set_value:
  * @self: an #LrgSlider
  * @value: the new value
@@ -753,7 +753,7 @@ lrg_slider_set_value (LrgSlider *self,
  * Public API - Range
  * ========================================================================== */
 
-/**
+/*
  * lrg_slider_get_min:
  * @self: an #LrgSlider
  *
@@ -769,7 +769,7 @@ lrg_slider_get_min (LrgSlider *self)
     return self->min;
 }
 
-/**
+/*
  * lrg_slider_set_min:
  * @self: an #LrgSlider
  * @min: the minimum value
@@ -794,7 +794,7 @@ lrg_slider_set_min (LrgSlider *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MIN]);
 }
 
-/**
+/*
  * lrg_slider_get_max:
  * @self: an #LrgSlider
  *
@@ -810,7 +810,7 @@ lrg_slider_get_max (LrgSlider *self)
     return self->max;
 }
 
-/**
+/*
  * lrg_slider_set_max:
  * @self: an #LrgSlider
  * @max: the maximum value
@@ -835,7 +835,7 @@ lrg_slider_set_max (LrgSlider *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MAX]);
 }
 
-/**
+/*
  * lrg_slider_get_step:
  * @self: an #LrgSlider
  *
@@ -851,7 +851,7 @@ lrg_slider_get_step (LrgSlider *self)
     return self->step;
 }
 
-/**
+/*
  * lrg_slider_set_step:
  * @self: an #LrgSlider
  * @step: the step increment
@@ -876,7 +876,7 @@ lrg_slider_set_step (LrgSlider *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STEP]);
 }
 
-/**
+/*
  * lrg_slider_set_range:
  * @self: an #LrgSlider
  * @min: the minimum value
@@ -898,7 +898,7 @@ lrg_slider_set_range (LrgSlider *self,
     g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_slider_get_fraction:
  * @self: an #LrgSlider
  *
@@ -924,7 +924,7 @@ lrg_slider_get_fraction (LrgSlider *self)
  * Public API - Orientation
  * ========================================================================== */
 
-/**
+/*
  * lrg_slider_get_orientation:
  * @self: an #LrgSlider
  *
@@ -940,7 +940,7 @@ lrg_slider_get_orientation (LrgSlider *self)
     return self->orientation;
 }
 
-/**
+/*
  * lrg_slider_set_orientation:
  * @self: an #LrgSlider
  * @orientation: the orientation
@@ -964,7 +964,7 @@ lrg_slider_set_orientation (LrgSlider      *self,
  * Public API - Appearance
  * ========================================================================== */
 
-/**
+/*
  * lrg_slider_get_track_color:
  * @self: an #LrgSlider
  *
@@ -980,7 +980,7 @@ lrg_slider_get_track_color (LrgSlider *self)
     return &self->track_color;
 }
 
-/**
+/*
  * lrg_slider_set_track_color:
  * @self: an #LrgSlider
  * @color: the track color
@@ -1004,7 +1004,7 @@ lrg_slider_set_track_color (LrgSlider      *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TRACK_COLOR]);
 }
 
-/**
+/*
  * lrg_slider_get_fill_color:
  * @self: an #LrgSlider
  *
@@ -1020,7 +1020,7 @@ lrg_slider_get_fill_color (LrgSlider *self)
     return &self->fill_color;
 }
 
-/**
+/*
  * lrg_slider_set_fill_color:
  * @self: an #LrgSlider
  * @color: the fill color
@@ -1044,7 +1044,7 @@ lrg_slider_set_fill_color (LrgSlider      *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FILL_COLOR]);
 }
 
-/**
+/*
  * lrg_slider_get_handle_color:
  * @self: an #LrgSlider
  *
@@ -1060,7 +1060,7 @@ lrg_slider_get_handle_color (LrgSlider *self)
     return &self->handle_color;
 }
 
-/**
+/*
  * lrg_slider_set_handle_color:
  * @self: an #LrgSlider
  * @color: the handle color
@@ -1084,7 +1084,7 @@ lrg_slider_set_handle_color (LrgSlider      *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_HANDLE_COLOR]);
 }
 
-/**
+/*
  * lrg_slider_get_handle_size:
  * @self: an #LrgSlider
  *
@@ -1100,7 +1100,7 @@ lrg_slider_get_handle_size (LrgSlider *self)
     return self->handle_size;
 }
 
-/**
+/*
  * lrg_slider_set_handle_size:
  * @self: an #LrgSlider
  * @size: the handle diameter in pixels
@@ -1121,7 +1121,7 @@ lrg_slider_set_handle_size (LrgSlider *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_HANDLE_SIZE]);
 }
 
-/**
+/*
  * lrg_slider_get_track_thickness:
  * @self: an #LrgSlider
  *
@@ -1137,7 +1137,7 @@ lrg_slider_get_track_thickness (LrgSlider *self)
     return self->track_thickness;
 }
 
-/**
+/*
  * lrg_slider_set_track_thickness:
  * @self: an #LrgSlider
  * @thickness: the track thickness in pixels

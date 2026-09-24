@@ -500,7 +500,7 @@ lrg_character_def_init (LrgCharacterDef *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_character_def_new:
  * @id: unique identifier
  * @name: display name
@@ -524,7 +524,7 @@ lrg_character_def_new (const gchar *id,
                          NULL);
 }
 
-/**
+/*
  * lrg_character_def_get_id:
  * @self: a #LrgCharacterDef
  *
@@ -545,7 +545,7 @@ lrg_character_def_get_id (LrgCharacterDef *self)
     return priv->id;
 }
 
-/**
+/*
  * lrg_character_def_get_name:
  * @self: a #LrgCharacterDef
  *
@@ -566,7 +566,7 @@ lrg_character_def_get_name (LrgCharacterDef *self)
     return priv->name;
 }
 
-/**
+/*
  * lrg_character_def_set_name:
  * @self: a #LrgCharacterDef
  * @name: the new name
@@ -584,7 +584,7 @@ lrg_character_def_set_name (LrgCharacterDef *self,
     g_object_set (self, "name", name, NULL);
 }
 
-/**
+/*
  * lrg_character_def_get_description:
  * @self: a #LrgCharacterDef
  *
@@ -605,7 +605,7 @@ lrg_character_def_get_description (LrgCharacterDef *self)
     return priv->description;
 }
 
-/**
+/*
  * lrg_character_def_set_description:
  * @self: a #LrgCharacterDef
  * @description: (nullable): the description
@@ -623,7 +623,7 @@ lrg_character_def_set_description (LrgCharacterDef *self,
     g_object_set (self, "description", description, NULL);
 }
 
-/**
+/*
  * lrg_character_def_get_icon:
  * @self: a #LrgCharacterDef
  *
@@ -644,7 +644,7 @@ lrg_character_def_get_icon (LrgCharacterDef *self)
     return priv->icon;
 }
 
-/**
+/*
  * lrg_character_def_set_icon:
  * @self: a #LrgCharacterDef
  * @icon: (nullable): the icon path
@@ -662,7 +662,7 @@ lrg_character_def_set_icon (LrgCharacterDef *self,
     g_object_set (self, "icon", icon, NULL);
 }
 
-/**
+/*
  * lrg_character_def_get_base_hp:
  * @self: a #LrgCharacterDef
  *
@@ -683,7 +683,7 @@ lrg_character_def_get_base_hp (LrgCharacterDef *self)
     return priv->base_hp;
 }
 
-/**
+/*
  * lrg_character_def_set_base_hp:
  * @self: a #LrgCharacterDef
  * @base_hp: base HP
@@ -701,7 +701,7 @@ lrg_character_def_set_base_hp (LrgCharacterDef *self,
     g_object_set (self, "base-hp", base_hp, NULL);
 }
 
-/**
+/*
  * lrg_character_def_get_base_energy:
  * @self: a #LrgCharacterDef
  *
@@ -722,7 +722,7 @@ lrg_character_def_get_base_energy (LrgCharacterDef *self)
     return priv->base_energy;
 }
 
-/**
+/*
  * lrg_character_def_set_base_energy:
  * @self: a #LrgCharacterDef
  * @base_energy: base energy per turn
@@ -740,7 +740,7 @@ lrg_character_def_set_base_energy (LrgCharacterDef *self,
     g_object_set (self, "base-energy", base_energy, NULL);
 }
 
-/**
+/*
  * lrg_character_def_get_base_draw:
  * @self: a #LrgCharacterDef
  *
@@ -761,7 +761,7 @@ lrg_character_def_get_base_draw (LrgCharacterDef *self)
     return priv->base_draw;
 }
 
-/**
+/*
  * lrg_character_def_set_base_draw:
  * @self: a #LrgCharacterDef
  * @base_draw: base cards drawn per turn
@@ -779,7 +779,7 @@ lrg_character_def_set_base_draw (LrgCharacterDef *self,
     g_object_set (self, "base-draw", base_draw, NULL);
 }
 
-/**
+/*
  * lrg_character_def_get_starting_gold:
  * @self: a #LrgCharacterDef
  *
@@ -800,7 +800,7 @@ lrg_character_def_get_starting_gold (LrgCharacterDef *self)
     return priv->starting_gold;
 }
 
-/**
+/*
  * lrg_character_def_set_starting_gold:
  * @self: a #LrgCharacterDef
  * @starting_gold: starting gold
@@ -818,7 +818,7 @@ lrg_character_def_set_starting_gold (LrgCharacterDef *self,
     g_object_set (self, "starting-gold", starting_gold, NULL);
 }
 
-/**
+/*
  * lrg_character_def_add_starting_card:
  * @self: a #LrgCharacterDef
  * @card_id: the card ID to add
@@ -845,7 +845,7 @@ lrg_character_def_add_starting_card (LrgCharacterDef *self,
     g_array_append_val (priv->starting_deck_counts, count);
 }
 
-/**
+/*
  * lrg_character_def_get_starting_deck:
  * @self: a #LrgCharacterDef
  *
@@ -870,7 +870,7 @@ lrg_character_def_get_starting_deck (LrgCharacterDef *self)
     return g_ptr_array_new ();
 }
 
-/**
+/*
  * lrg_character_def_set_starting_relic:
  * @self: a #LrgCharacterDef
  * @relic_id: (nullable): the starting relic ID
@@ -888,7 +888,7 @@ lrg_character_def_set_starting_relic (LrgCharacterDef *self,
     g_object_set (self, "starting-relic", relic_id, NULL);
 }
 
-/**
+/*
  * lrg_character_def_get_starting_relic:
  * @self: a #LrgCharacterDef
  *
@@ -913,7 +913,7 @@ lrg_character_def_get_starting_relic (LrgCharacterDef *self)
     return NULL;
 }
 
-/**
+/*
  * lrg_character_def_get_unlocked_by_default:
  * @self: a #LrgCharacterDef
  *
@@ -934,7 +934,7 @@ lrg_character_def_get_unlocked_by_default (LrgCharacterDef *self)
     return priv->unlocked_by_default;
 }
 
-/**
+/*
  * lrg_character_def_set_unlocked_by_default:
  * @self: a #LrgCharacterDef
  * @unlocked: whether unlocked by default
@@ -952,7 +952,7 @@ lrg_character_def_set_unlocked_by_default (LrgCharacterDef *self,
     g_object_set (self, "unlocked-by-default", unlocked, NULL);
 }
 
-/**
+/*
  * lrg_character_def_get_unlock_requirement:
  * @self: a #LrgCharacterDef
  *
@@ -973,7 +973,7 @@ lrg_character_def_get_unlock_requirement (LrgCharacterDef *self)
     return priv->unlock_requirement;
 }
 
-/**
+/*
  * lrg_character_def_set_unlock_requirement:
  * @self: a #LrgCharacterDef
  * @requirement: (nullable): requirement description
@@ -991,7 +991,7 @@ lrg_character_def_set_unlock_requirement (LrgCharacterDef *self,
     g_object_set (self, "unlock-requirement", requirement, NULL);
 }
 
-/**
+/*
  * lrg_character_def_on_run_start:
  * @self: a #LrgCharacterDef
  * @run: (nullable): the run context
@@ -1014,7 +1014,7 @@ lrg_character_def_on_run_start (LrgCharacterDef *self,
         klass->on_run_start (self, run);
 }
 
-/**
+/*
  * lrg_character_def_on_run_end:
  * @self: a #LrgCharacterDef
  * @run: (nullable): the run context
@@ -1039,7 +1039,7 @@ lrg_character_def_on_run_end (LrgCharacterDef *self,
         klass->on_run_end (self, run, victory);
 }
 
-/**
+/*
  * lrg_character_def_modify_starting_hp:
  * @self: a #LrgCharacterDef
  * @base_hp: base HP value
@@ -1066,7 +1066,7 @@ lrg_character_def_modify_starting_hp (LrgCharacterDef *self,
     return base_hp;
 }
 
-/**
+/*
  * lrg_character_def_modify_starting_gold:
  * @self: a #LrgCharacterDef
  * @base_gold: base gold value
@@ -1093,7 +1093,7 @@ lrg_character_def_modify_starting_gold (LrgCharacterDef *self,
     return base_gold;
 }
 
-/**
+/*
  * lrg_character_def_can_unlock:
  * @self: a #LrgCharacterDef
  * @profile: (nullable): player profile to check against

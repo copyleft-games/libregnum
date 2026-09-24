@@ -38,7 +38,7 @@
 G_DEFINE_BOXED_TYPE (LrgParticle, lrg_particle,
                      lrg_particle_copy, lrg_particle_free)
 
-/**
+/*
  * lrg_particle_new:
  *
  * Creates a new particle with default values.
@@ -75,7 +75,7 @@ lrg_particle_new (void)
     return self;
 }
 
-/**
+/*
  * lrg_particle_new_at:
  * @x: Initial X position
  * @y: Initial Y position
@@ -101,7 +101,7 @@ lrg_particle_new_at (gfloat x,
     return self;
 }
 
-/**
+/*
  * lrg_particle_copy:
  * @self: (nullable): A #LrgParticle
  *
@@ -123,7 +123,7 @@ lrg_particle_copy (const LrgParticle *self)
     return copy;
 }
 
-/**
+/*
  * lrg_particle_free:
  * @self: (nullable): A #LrgParticle
  *
@@ -135,7 +135,7 @@ lrg_particle_free (LrgParticle *self)
     g_free (self);
 }
 
-/**
+/*
  * lrg_particle_reset:
  * @self: A #LrgParticle
  *
@@ -166,7 +166,7 @@ lrg_particle_reset (LrgParticle *self)
     self->alive = FALSE;
 }
 
-/**
+/*
  * lrg_particle_spawn:
  * @self: A #LrgParticle
  * @x: Initial X position
@@ -206,7 +206,7 @@ lrg_particle_spawn (LrgParticle *self,
     self->alive = TRUE;
 }
 
-/**
+/*
  * lrg_particle_update:
  * @self: A #LrgParticle
  * @delta_time: Time step in seconds
@@ -249,7 +249,7 @@ lrg_particle_update (LrgParticle *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_particle_is_alive:
  * @self: A #LrgParticle
  *
@@ -265,7 +265,7 @@ lrg_particle_is_alive (const LrgParticle *self)
     return self->alive;
 }
 
-/**
+/*
  * lrg_particle_kill:
  * @self: A #LrgParticle
  *
@@ -280,7 +280,7 @@ lrg_particle_kill (LrgParticle *self)
     self->life = 0.0f;
 }
 
-/**
+/*
  * lrg_particle_get_normalized_age:
  * @self: A #LrgParticle
  *
@@ -300,7 +300,7 @@ lrg_particle_get_normalized_age (const LrgParticle *self)
     return CLAMP (self->age / self->max_life, 0.0f, 1.0f);
 }
 
-/**
+/*
  * lrg_particle_set_velocity:
  * @self: A #LrgParticle
  * @vx: X velocity
@@ -322,7 +322,7 @@ lrg_particle_set_velocity (LrgParticle *self,
     self->velocity_z = vz;
 }
 
-/**
+/*
  * lrg_particle_set_color:
  * @self: A #LrgParticle
  * @r: Red component (0.0 - 1.0)
@@ -347,7 +347,7 @@ lrg_particle_set_color (LrgParticle *self,
     self->color_a = CLAMP (a, 0.0f, 1.0f);
 }
 
-/**
+/*
  * lrg_particle_apply_force:
  * @self: A #LrgParticle
  * @fx: X force component

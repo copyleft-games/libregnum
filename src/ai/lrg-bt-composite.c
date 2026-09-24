@@ -98,7 +98,7 @@ lrg_bt_composite_init (LrgBTComposite *self)
     priv->current_child = 0;
 }
 
-/**
+/*
  * lrg_bt_composite_add_child:
  * @self: an #LrgBTComposite
  * @child: (transfer none): The child node to add
@@ -118,7 +118,7 @@ lrg_bt_composite_add_child (LrgBTComposite *self,
     g_ptr_array_add (priv->children, g_object_ref (child));
 }
 
-/**
+/*
  * lrg_bt_composite_remove_child:
  * @self: an #LrgBTComposite
  * @child: The child node to remove
@@ -140,7 +140,7 @@ lrg_bt_composite_remove_child (LrgBTComposite *self,
     return g_ptr_array_remove (priv->children, child);
 }
 
-/**
+/*
  * lrg_bt_composite_get_children:
  * @self: an #LrgBTComposite
  *
@@ -159,7 +159,7 @@ lrg_bt_composite_get_children (LrgBTComposite *self)
     return priv->children;
 }
 
-/**
+/*
  * lrg_bt_composite_get_child_count:
  * @self: an #LrgBTComposite
  *
@@ -178,7 +178,7 @@ lrg_bt_composite_get_child_count (LrgBTComposite *self)
     return priv->children->len;
 }
 
-/**
+/*
  * lrg_bt_composite_clear_children:
  * @self: an #LrgBTComposite
  *
@@ -259,7 +259,7 @@ lrg_bt_sequence_init (LrgBTSequence *self)
 {
 }
 
-/**
+/*
  * lrg_bt_sequence_new:
  *
  * Creates a new sequence node.
@@ -336,7 +336,7 @@ lrg_bt_selector_init (LrgBTSelector *self)
 {
 }
 
-/**
+/*
  * lrg_bt_selector_new:
  *
  * Creates a new selector node.
@@ -440,7 +440,7 @@ lrg_bt_parallel_init (LrgBTParallel *self)
     self->policy = LRG_BT_PARALLEL_REQUIRE_ALL;
 }
 
-/**
+/*
  * lrg_bt_parallel_new:
  * @policy: The success policy
  *
@@ -457,7 +457,7 @@ lrg_bt_parallel_new (LrgBTParallelPolicy policy)
     return self;
 }
 
-/**
+/*
  * lrg_bt_parallel_get_policy:
  * @self: an #LrgBTParallel
  *
@@ -473,7 +473,7 @@ lrg_bt_parallel_get_policy (LrgBTParallel *self)
     return self->policy;
 }
 
-/**
+/*
  * lrg_bt_parallel_set_policy:
  * @self: an #LrgBTParallel
  * @policy: The success policy

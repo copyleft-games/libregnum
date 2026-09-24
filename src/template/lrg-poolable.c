@@ -145,7 +145,7 @@ lrg_poolable_default_init (LrgPoolableInterface *iface)
  * Interface Methods
  * ========================================================================== */
 
-/**
+/*
  * lrg_poolable_reset:
  * @self: an #LrgPoolable
  *
@@ -165,7 +165,7 @@ lrg_poolable_reset (LrgPoolable *self)
         iface->reset (self);
 }
 
-/**
+/*
  * lrg_poolable_is_active:
  * @self: an #LrgPoolable
  *
@@ -189,7 +189,7 @@ lrg_poolable_is_active (LrgPoolable *self)
     return FALSE;
 }
 
-/**
+/*
  * lrg_poolable_set_active:
  * @self: an #LrgPoolable
  * @active: the new active state
@@ -211,7 +211,7 @@ lrg_poolable_set_active (LrgPoolable *self,
         iface->set_active (self, active);
 }
 
-/**
+/*
  * lrg_poolable_get_pool:
  * @self: an #LrgPoolable
  *
@@ -239,7 +239,7 @@ lrg_poolable_get_pool (LrgPoolable *self)
  * Helper Methods
  * ========================================================================== */
 
-/**
+/*
  * lrg_poolable_release:
  * @self: an #LrgPoolable
  *

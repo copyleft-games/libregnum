@@ -836,7 +836,7 @@ lrg_template_error_state_init (LrgTemplateErrorState *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_error_state_new:
  *
  * Creates a new error state.
@@ -849,7 +849,7 @@ lrg_template_error_state_new (void)
     return g_object_new (LRG_TYPE_TEMPLATE_ERROR_STATE, NULL);
 }
 
-/**
+/*
  * lrg_template_error_state_new_with_error:
  * @error: the error to display
  *
@@ -876,7 +876,7 @@ lrg_template_error_state_new_with_error (GError *error)
  * Public API - Error Information
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_error_state_get_error_message:
  * @self: an #LrgTemplateErrorState
  *
@@ -896,7 +896,7 @@ lrg_template_error_state_get_error_message (LrgTemplateErrorState *self)
     return priv->error_message;
 }
 
-/**
+/*
  * lrg_template_error_state_set_error_message:
  * @self: an #LrgTemplateErrorState
  * @message: (nullable): the error message
@@ -912,7 +912,7 @@ lrg_template_error_state_set_error_message (LrgTemplateErrorState *self,
     g_object_set (self, "error-message", message, NULL);
 }
 
-/**
+/*
  * lrg_template_error_state_set_error:
  * @self: an #LrgTemplateErrorState
  * @error: (nullable): the GError to display
@@ -935,7 +935,7 @@ lrg_template_error_state_set_error (LrgTemplateErrorState *self,
     }
 }
 
-/**
+/*
  * lrg_template_error_state_get_title:
  * @self: an #LrgTemplateErrorState
  *
@@ -955,7 +955,7 @@ lrg_template_error_state_get_title (LrgTemplateErrorState *self)
     return priv->title;
 }
 
-/**
+/*
  * lrg_template_error_state_set_title:
  * @self: an #LrgTemplateErrorState
  * @title: the title text
@@ -975,7 +975,7 @@ lrg_template_error_state_set_title (LrgTemplateErrorState *self,
  * Public API - Button Visibility
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_error_state_get_allow_retry:
  * @self: an #LrgTemplateErrorState
  *
@@ -995,7 +995,7 @@ lrg_template_error_state_get_allow_retry (LrgTemplateErrorState *self)
     return priv->allow_retry;
 }
 
-/**
+/*
  * lrg_template_error_state_set_allow_retry:
  * @self: an #LrgTemplateErrorState
  * @allow: whether to show Retry button
@@ -1011,7 +1011,7 @@ lrg_template_error_state_set_allow_retry (LrgTemplateErrorState *self,
     g_object_set (self, "allow-retry", allow, NULL);
 }
 
-/**
+/*
  * lrg_template_error_state_get_show_main_menu:
  * @self: an #LrgTemplateErrorState
  *
@@ -1031,7 +1031,7 @@ lrg_template_error_state_get_show_main_menu (LrgTemplateErrorState *self)
     return priv->show_main_menu;
 }
 
-/**
+/*
  * lrg_template_error_state_set_show_main_menu:
  * @self: an #LrgTemplateErrorState
  * @show: whether to show Main Menu button
@@ -1047,7 +1047,7 @@ lrg_template_error_state_set_show_main_menu (LrgTemplateErrorState *self,
     g_object_set (self, "show-main-menu", show, NULL);
 }
 
-/**
+/*
  * lrg_template_error_state_get_show_exit:
  * @self: an #LrgTemplateErrorState
  *
@@ -1067,7 +1067,7 @@ lrg_template_error_state_get_show_exit (LrgTemplateErrorState *self)
     return priv->show_exit;
 }
 
-/**
+/*
  * lrg_template_error_state_set_show_exit:
  * @self: an #LrgTemplateErrorState
  * @show: whether to show Exit button

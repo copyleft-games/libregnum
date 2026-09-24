@@ -387,7 +387,7 @@ lrg_octree_init (LrgOctree *self)
     self->object_nodes = g_hash_table_new (g_direct_hash, g_direct_equal);
 }
 
-/**
+/*
  * lrg_octree_new:
  * @bounds: (transfer none): World bounds for the octree
  *
@@ -401,7 +401,7 @@ lrg_octree_new (const LrgBoundingBox3D *bounds)
     return lrg_octree_new_with_depth (bounds, DEFAULT_MAX_DEPTH);
 }
 
-/**
+/*
  * lrg_octree_new_with_depth:
  * @bounds: (transfer none): World bounds for the octree
  * @max_depth: Maximum subdivision depth (default: 8)
@@ -427,7 +427,7 @@ lrg_octree_new_with_depth (const LrgBoundingBox3D *bounds,
     return self;
 }
 
-/**
+/*
  * lrg_octree_insert:
  * @self: An #LrgOctree
  * @object: Object to insert
@@ -464,7 +464,7 @@ lrg_octree_insert (LrgOctree              *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_octree_remove:
  * @self: An #LrgOctree
  * @object: Object to remove
@@ -503,7 +503,7 @@ lrg_octree_remove (LrgOctree *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_octree_update:
  * @self: An #LrgOctree
  * @object: Object to update
@@ -529,7 +529,7 @@ lrg_octree_update (LrgOctree              *self,
     return lrg_octree_insert (self, object, new_bounds);
 }
 
-/**
+/*
  * lrg_octree_clear:
  * @self: An #LrgOctree
  *
@@ -548,7 +548,7 @@ lrg_octree_clear (LrgOctree *self)
     self->object_count = 0;
 }
 
-/**
+/*
  * lrg_octree_query_box:
  * @self: An #LrgOctree
  * @query: (transfer none): Query bounding box
@@ -572,7 +572,7 @@ lrg_octree_query_box (LrgOctree              *self,
     return results;
 }
 
-/**
+/*
  * lrg_octree_query_sphere:
  * @self: An #LrgOctree
  * @center: (transfer none): Sphere center
@@ -599,7 +599,7 @@ lrg_octree_query_sphere (LrgOctree        *self,
     return results;
 }
 
-/**
+/*
  * lrg_octree_query_point:
  * @self: An #LrgOctree
  * @point: (transfer none): Point to query
@@ -624,7 +624,7 @@ lrg_octree_query_point (LrgOctree        *self,
     return lrg_octree_query_box (self, tiny_box);
 }
 
-/**
+/*
  * lrg_octree_query_nearest:
  * @self: An #LrgOctree
  * @point: (transfer none): Point to search from
@@ -713,7 +713,7 @@ lrg_octree_query_nearest (LrgOctree        *self,
     return nearest;
 }
 
-/**
+/*
  * lrg_octree_get_bounds:
  * @self: An #LrgOctree
  *
@@ -729,7 +729,7 @@ lrg_octree_get_bounds (LrgOctree *self)
     return lrg_bounding_box3d_copy (&self->bounds);
 }
 
-/**
+/*
  * lrg_octree_get_object_count:
  * @self: An #LrgOctree
  *
@@ -745,7 +745,7 @@ lrg_octree_get_object_count (LrgOctree *self)
     return self->object_count;
 }
 
-/**
+/*
  * lrg_octree_get_node_count:
  * @self: An #LrgOctree
  *
@@ -761,7 +761,7 @@ lrg_octree_get_node_count (LrgOctree *self)
     return octree_node_count_nodes (self->root);
 }
 
-/**
+/*
  * lrg_octree_get_max_depth:
  * @self: An #LrgOctree
  *
@@ -777,7 +777,7 @@ lrg_octree_get_max_depth (LrgOctree *self)
     return self->max_depth;
 }
 
-/**
+/*
  * lrg_octree_set_max_depth:
  * @self: An #LrgOctree
  * @max_depth: Maximum depth
@@ -794,7 +794,7 @@ lrg_octree_set_max_depth (LrgOctree *self,
     self->max_depth = max_depth;
 }
 
-/**
+/*
  * lrg_octree_get_max_objects_per_node:
  * @self: An #LrgOctree
  *
@@ -810,7 +810,7 @@ lrg_octree_get_max_objects_per_node (LrgOctree *self)
     return self->max_objects;
 }
 
-/**
+/*
  * lrg_octree_set_max_objects_per_node:
  * @self: An #LrgOctree
  * @max_objects: Maximum objects per node
@@ -827,7 +827,7 @@ lrg_octree_set_max_objects_per_node (LrgOctree *self,
     self->max_objects = max_objects;
 }
 
-/**
+/*
  * lrg_octree_rebuild:
  * @self: An #LrgOctree
  *

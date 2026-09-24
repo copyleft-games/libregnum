@@ -9,7 +9,7 @@
 #include "../config.h"
 #include "lrg-input-buffer.h"
 
-/**
+/*
  * LrgInputBuffer:
  *
  * Internal structure for input buffering.
@@ -54,7 +54,7 @@ buffered_input_free (LrgBufferedInput *input)
 /* Construction / Destruction                                                 */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_input_buffer_new:
  * @buffer_frames: number of frames to buffer inputs
  *
@@ -80,7 +80,7 @@ lrg_input_buffer_new (gint buffer_frames)
     return self;
 }
 
-/**
+/*
  * lrg_input_buffer_free:
  * @self: (nullable): an #LrgInputBuffer
  *
@@ -108,7 +108,7 @@ lrg_input_buffer_free (LrgInputBuffer *self)
 /* Configuration                                                              */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_input_buffer_get_buffer_frames:
  * @self: an #LrgInputBuffer
  *
@@ -126,7 +126,7 @@ lrg_input_buffer_get_buffer_frames (LrgInputBuffer *self)
     return self->buffer_frames;
 }
 
-/**
+/*
  * lrg_input_buffer_set_buffer_frames:
  * @self: an #LrgInputBuffer
  * @buffer_frames: number of frames to buffer inputs
@@ -145,7 +145,7 @@ lrg_input_buffer_set_buffer_frames (LrgInputBuffer *self,
     self->buffer_frames = buffer_frames;
 }
 
-/**
+/*
  * lrg_input_buffer_is_enabled:
  * @self: an #LrgInputBuffer
  *
@@ -163,7 +163,7 @@ lrg_input_buffer_is_enabled (LrgInputBuffer *self)
     return self->enabled;
 }
 
-/**
+/*
  * lrg_input_buffer_set_enabled:
  * @self: an #LrgInputBuffer
  * @enabled: whether to enable the buffer
@@ -188,7 +188,7 @@ lrg_input_buffer_set_enabled (LrgInputBuffer *self,
     }
 }
 
-/**
+/*
  * lrg_input_buffer_get_context:
  * @self: an #LrgInputBuffer
  *
@@ -206,7 +206,7 @@ lrg_input_buffer_get_context (LrgInputBuffer *self)
     return self->current_context;
 }
 
-/**
+/*
  * lrg_input_buffer_set_context:
  * @self: an #LrgInputBuffer
  * @context: the new input context
@@ -235,7 +235,7 @@ lrg_input_buffer_set_context (LrgInputBuffer  *self,
 /* Core Operations                                                            */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_input_buffer_update:
  * @self: an #LrgInputBuffer
  *
@@ -277,7 +277,7 @@ lrg_input_buffer_update (LrgInputBuffer *self)
     }
 }
 
-/**
+/*
  * lrg_input_buffer_record:
  * @self: an #LrgInputBuffer
  * @action: the action name to record
@@ -323,7 +323,7 @@ lrg_input_buffer_record (LrgInputBuffer *self,
     g_queue_push_tail (self->queue, input);
 }
 
-/**
+/*
  * lrg_input_buffer_consume:
  * @self: an #LrgInputBuffer
  * @action: the action name to consume
@@ -373,7 +373,7 @@ lrg_input_buffer_consume (LrgInputBuffer  *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_input_buffer_has_action:
  * @self: an #LrgInputBuffer
  * @action: the action name to check
@@ -409,7 +409,7 @@ lrg_input_buffer_has_action (LrgInputBuffer *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_input_buffer_clear:
  * @self: an #LrgInputBuffer
  *
@@ -426,7 +426,7 @@ lrg_input_buffer_clear (LrgInputBuffer *self)
     self->queue = g_queue_new ();
 }
 
-/**
+/*
  * lrg_input_buffer_get_length:
  * @self: an #LrgInputBuffer
  *

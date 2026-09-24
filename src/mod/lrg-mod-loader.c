@@ -552,7 +552,7 @@ lrg_mod_loader_discover (LrgModLoader  *self,
     return all_mods;
 }
 
-/**
+/*
  * lrg_mod_loader_set_implicit_entries:
  * @self: a #LrgModLoader
  * @implicit: whether folders without a manifest may load
@@ -571,7 +571,7 @@ lrg_mod_loader_set_implicit_entries (LrgModLoader *self,
     self->implicit_entries = implicit;
 }
 
-/**
+/*
  * lrg_mod_loader_get_implicit_entries:
  * @self: a #LrgModLoader
  *

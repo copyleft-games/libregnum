@@ -290,7 +290,7 @@ lrg_input_mock_init (LrgInputMock *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_mock_new:
  *
  * Creates a new mock input source.
@@ -305,7 +305,7 @@ lrg_input_mock_new (void)
 
 /* Keyboard Control */
 
-/**
+/*
  * lrg_input_mock_set_key_state:
  * @self: an #LrgInputMock
  * @key: the key to set
@@ -324,7 +324,7 @@ lrg_input_mock_set_key_state (LrgInputMock *self,
 	self->key_states[key] = state;
 }
 
-/**
+/*
  * lrg_input_mock_press_key:
  * @self: an #LrgInputMock
  * @key: the key to press
@@ -338,7 +338,7 @@ lrg_input_mock_press_key (LrgInputMock *self,
 	lrg_input_mock_set_key_state (self, key, LRG_KEY_STATE_PRESSED);
 }
 
-/**
+/*
  * lrg_input_mock_release_key:
  * @self: an #LrgInputMock
  * @key: the key to release
@@ -352,7 +352,7 @@ lrg_input_mock_release_key (LrgInputMock *self,
 	lrg_input_mock_set_key_state (self, key, LRG_KEY_STATE_RELEASED);
 }
 
-/**
+/*
  * lrg_input_mock_hold_key:
  * @self: an #LrgInputMock
  * @key: the key to hold
@@ -368,7 +368,7 @@ lrg_input_mock_hold_key (LrgInputMock *self,
 
 /* Mouse Control */
 
-/**
+/*
  * lrg_input_mock_set_mouse_button_state:
  * @self: an #LrgInputMock
  * @button: the mouse button
@@ -387,7 +387,7 @@ lrg_input_mock_set_mouse_button_state (LrgInputMock   *self,
 	self->mouse_button_states[button] = state;
 }
 
-/**
+/*
  * lrg_input_mock_set_mouse_position:
  * @self: an #LrgInputMock
  * @x: the X coordinate
@@ -406,7 +406,7 @@ lrg_input_mock_set_mouse_position (LrgInputMock *self,
 	self->mouse_y = y;
 }
 
-/**
+/*
  * lrg_input_mock_set_mouse_delta:
  * @self: an #LrgInputMock
  * @dx: the X delta
@@ -427,7 +427,7 @@ lrg_input_mock_set_mouse_delta (LrgInputMock *self,
 
 /* Gamepad Control */
 
-/**
+/*
  * lrg_input_mock_set_gamepad_available:
  * @self: an #LrgInputMock
  * @gamepad: the gamepad index (0-3)
@@ -446,7 +446,7 @@ lrg_input_mock_set_gamepad_available (LrgInputMock *self,
 	self->gamepad_available[gamepad] = available;
 }
 
-/**
+/*
  * lrg_input_mock_set_gamepad_button_state:
  * @self: an #LrgInputMock
  * @gamepad: the gamepad index (0-3)
@@ -468,7 +468,7 @@ lrg_input_mock_set_gamepad_button_state (LrgInputMock     *self,
 	self->gamepad_button_states[gamepad][button] = state;
 }
 
-/**
+/*
  * lrg_input_mock_set_gamepad_axis:
  * @self: an #LrgInputMock
  * @gamepad: the gamepad index (0-3)
@@ -492,7 +492,7 @@ lrg_input_mock_set_gamepad_axis (LrgInputMock   *self,
 
 /* Utility */
 
-/**
+/*
  * lrg_input_mock_reset:
  * @self: an #LrgInputMock
  *
@@ -529,7 +529,7 @@ lrg_input_mock_reset (LrgInputMock *self)
 	}
 }
 
-/**
+/*
  * lrg_input_mock_advance_frame:
  * @self: an #LrgInputMock
  *

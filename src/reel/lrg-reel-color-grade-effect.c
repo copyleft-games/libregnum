@@ -254,7 +254,7 @@ lrg_reel_color_grade_effect_init (LrgReelColorGradeEffect *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_color_grade_effect_new:
  *
  * Creates a new #LrgReelColorGradeEffect with identity settings.
@@ -269,7 +269,7 @@ lrg_reel_color_grade_effect_new (void)
     return g_object_new (LRG_TYPE_REEL_COLOR_GRADE_EFFECT, NULL);
 }
 
-/**
+/*
  * lrg_reel_color_grade_effect_get_brightness:
  * @self: a #LrgReelColorGradeEffect
  *
@@ -285,7 +285,7 @@ lrg_reel_color_grade_effect_get_brightness (LrgReelColorGradeEffect *self)
     return self->brightness;
 }
 
-/**
+/*
  * lrg_reel_color_grade_effect_set_brightness:
  * @self: a #LrgReelColorGradeEffect
  * @brightness: new brightness offset [-1, 1]
@@ -305,7 +305,7 @@ lrg_reel_color_grade_effect_set_brightness (LrgReelColorGradeEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BRIGHTNESS]);
 }
 
-/**
+/*
  * lrg_reel_color_grade_effect_get_contrast:
  * @self: a #LrgReelColorGradeEffect
  *
@@ -321,7 +321,7 @@ lrg_reel_color_grade_effect_get_contrast (LrgReelColorGradeEffect *self)
     return self->contrast;
 }
 
-/**
+/*
  * lrg_reel_color_grade_effect_set_contrast:
  * @self: a #LrgReelColorGradeEffect
  * @contrast: new contrast multiplier [0.5, 2]
@@ -341,7 +341,7 @@ lrg_reel_color_grade_effect_set_contrast (LrgReelColorGradeEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CONTRAST]);
 }
 
-/**
+/*
  * lrg_reel_color_grade_effect_get_saturation:
  * @self: a #LrgReelColorGradeEffect
  *
@@ -357,7 +357,7 @@ lrg_reel_color_grade_effect_get_saturation (LrgReelColorGradeEffect *self)
     return self->saturation;
 }
 
-/**
+/*
  * lrg_reel_color_grade_effect_set_saturation:
  * @self: a #LrgReelColorGradeEffect
  * @saturation: new saturation multiplier [0, 2]

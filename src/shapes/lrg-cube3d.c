@@ -213,7 +213,7 @@ lrg_cube3d_init (LrgCube3D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_cube3d_new:
  *
  * Creates a new unit cube at the origin.
@@ -226,7 +226,7 @@ lrg_cube3d_new (void)
 	return g_object_new (LRG_TYPE_CUBE3D, NULL);
 }
 
-/**
+/*
  * lrg_cube3d_new_at:
  * @x: X position
  * @y: Y position
@@ -259,7 +259,7 @@ lrg_cube3d_new_at (gfloat x,
 	return cube;
 }
 
-/**
+/*
  * lrg_cube3d_new_full:
  * @x: X position
  * @y: Y position
@@ -297,7 +297,7 @@ lrg_cube3d_new_full (gfloat    x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_cube3d_get_width:
  * @self: an #LrgCube3D
  *
@@ -313,7 +313,7 @@ lrg_cube3d_get_width (LrgCube3D *self)
 	return self->width;
 }
 
-/**
+/*
  * lrg_cube3d_set_width:
  * @self: an #LrgCube3D
  * @width: the width value
@@ -334,7 +334,7 @@ lrg_cube3d_set_width (LrgCube3D *self,
 	}
 }
 
-/**
+/*
  * lrg_cube3d_get_height:
  * @self: an #LrgCube3D
  *
@@ -350,7 +350,7 @@ lrg_cube3d_get_height (LrgCube3D *self)
 	return self->height;
 }
 
-/**
+/*
  * lrg_cube3d_set_height:
  * @self: an #LrgCube3D
  * @height: the height value
@@ -371,7 +371,7 @@ lrg_cube3d_set_height (LrgCube3D *self,
 	}
 }
 
-/**
+/*
  * lrg_cube3d_get_depth:
  * @self: an #LrgCube3D
  *
@@ -387,7 +387,7 @@ lrg_cube3d_get_depth (LrgCube3D *self)
 	return self->depth;
 }
 
-/**
+/*
  * lrg_cube3d_set_depth:
  * @self: an #LrgCube3D
  * @depth: the depth value
@@ -408,7 +408,7 @@ lrg_cube3d_set_depth (LrgCube3D *self,
 	}
 }
 
-/**
+/*
  * lrg_cube3d_set_size:
  * @self: an #LrgCube3D
  * @width: the width value
@@ -449,7 +449,7 @@ lrg_cube3d_set_size (LrgCube3D *self,
 	g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_cube3d_set_uniform_size:
  * @self: an #LrgCube3D
  * @size: the size for all dimensions

@@ -59,7 +59,7 @@ lrg_trigger_listener_default_init (LrgTriggerListenerInterface *iface)
  * Interface Methods
  * ========================================================================== */
 
-/**
+/*
  * lrg_trigger_listener_get_trigger_id:
  * @self: a #LrgTriggerListener
  *
@@ -82,7 +82,7 @@ lrg_trigger_listener_get_trigger_id (LrgTriggerListener *self)
     return iface->get_trigger_id (self);
 }
 
-/**
+/*
  * lrg_trigger_listener_get_priority:
  * @self: a #LrgTriggerListener
  *
@@ -106,7 +106,7 @@ lrg_trigger_listener_get_priority (LrgTriggerListener *self)
     return iface->get_priority (self);
 }
 
-/**
+/*
  * lrg_trigger_listener_get_event_mask:
  * @self: a #LrgTriggerListener
  *
@@ -129,7 +129,7 @@ lrg_trigger_listener_get_event_mask (LrgTriggerListener *self)
     return iface->get_event_mask (self);
 }
 
-/**
+/*
  * lrg_trigger_listener_on_event:
  * @self: a #LrgTriggerListener
  * @event: the event that occurred
@@ -162,7 +162,7 @@ lrg_trigger_listener_on_event (LrgTriggerListener *self,
  * Convenience Functions
  * ========================================================================== */
 
-/**
+/*
  * lrg_trigger_listener_event_type_to_mask:
  * @event_type: the event type
  *
@@ -178,7 +178,7 @@ lrg_trigger_listener_event_type_to_mask (LrgCardEventType event_type)
     return ((guint64)1) << event_type;
 }
 
-/**
+/*
  * lrg_trigger_listener_listens_to:
  * @self: a #LrgTriggerListener
  * @event_type: the event type to check

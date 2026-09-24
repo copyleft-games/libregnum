@@ -897,7 +897,7 @@ lrg_mod_manager_resolve_path (LrgModManager *self,
  * Provider Queries
  * ========================================================================== */
 
-/**
+/*
  * lrg_mod_manager_collect_entity_types:
  * @self: a #LrgModManager
  *
@@ -931,7 +931,7 @@ lrg_mod_manager_collect_entity_types (LrgModManager *self)
     return result;
 }
 
-/**
+/*
  * lrg_mod_manager_collect_item_defs:
  * @self: a #LrgModManager
  *
@@ -965,7 +965,7 @@ lrg_mod_manager_collect_item_defs (LrgModManager *self)
     return result;
 }
 
-/**
+/*
  * lrg_mod_manager_collect_dialog_trees:
  * @self: a #LrgModManager
  *
@@ -999,7 +999,7 @@ lrg_mod_manager_collect_dialog_trees (LrgModManager *self)
     return result;
 }
 
-/**
+/*
  * lrg_mod_manager_collect_quest_defs:
  * @self: a #LrgModManager
  *
@@ -1033,7 +1033,7 @@ lrg_mod_manager_collect_quest_defs (LrgModManager *self)
     return result;
 }
 
-/**
+/*
  * lrg_mod_manager_collect_bt_node_types:
  * @self: a #LrgModManager
  *
@@ -1067,7 +1067,7 @@ lrg_mod_manager_collect_bt_node_types (LrgModManager *self)
     return result;
 }
 
-/**
+/*
  * lrg_mod_manager_collect_commands:
  * @self: a #LrgModManager
  *
@@ -1101,7 +1101,7 @@ lrg_mod_manager_collect_commands (LrgModManager *self)
     return result;
 }
 
-/**
+/*
  * lrg_mod_manager_collect_locales:
  * @self: a #LrgModManager
  *
@@ -1135,7 +1135,7 @@ lrg_mod_manager_collect_locales (LrgModManager *self)
     return result;
 }
 
-/**
+/*
  * lrg_mod_manager_collect_scenes:
  * @self: a #LrgModManager
  *
@@ -1307,7 +1307,7 @@ lrg_mod_manager_get_dlcs_by_type (LrgModManager *self,
  * Single-mod reload
  * ========================================================================== */
 
-/**
+/*
  * lrg_mod_manager_reload_mod:
  * @self: an #LrgModManager
  * @mod_id: the mod to reload
@@ -1359,7 +1359,7 @@ lrg_mod_manager_reload_mod (LrgModManager  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_mod_manager_unload_mod:
  * @self: an #LrgModManager
  * @mod_id: the mod to unload

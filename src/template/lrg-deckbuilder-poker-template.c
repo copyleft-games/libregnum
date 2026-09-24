@@ -393,7 +393,7 @@ lrg_deckbuilder_poker_template_class_init (LrgDeckbuilderPokerTemplateClass *kla
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_poker_template_new:
  *
  * Creates a new poker template with default settings.

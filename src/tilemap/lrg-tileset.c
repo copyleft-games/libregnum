@@ -204,7 +204,7 @@ lrg_tileset_init (LrgTileset *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_tileset_new:
  * @texture: (transfer none): the source texture atlas
  * @tile_width: width of each tile in pixels
@@ -260,7 +260,7 @@ lrg_tileset_new (GrlTexture *texture,
     return self;
 }
 
-/**
+/*
  * lrg_tileset_new_from_file:
  * @path: path to the image file
  * @tile_width: width of each tile in pixels
@@ -304,7 +304,7 @@ lrg_tileset_new_from_file (const gchar  *path,
  * Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_tileset_get_texture:
  * @self: an #LrgTileset
  *
@@ -320,7 +320,7 @@ lrg_tileset_get_texture (LrgTileset *self)
     return self->texture;
 }
 
-/**
+/*
  * lrg_tileset_get_tile_width:
  * @self: an #LrgTileset
  *
@@ -336,7 +336,7 @@ lrg_tileset_get_tile_width (LrgTileset *self)
     return self->tile_width;
 }
 
-/**
+/*
  * lrg_tileset_get_tile_height:
  * @self: an #LrgTileset
  *
@@ -352,7 +352,7 @@ lrg_tileset_get_tile_height (LrgTileset *self)
     return self->tile_height;
 }
 
-/**
+/*
  * lrg_tileset_get_columns:
  * @self: an #LrgTileset
  *
@@ -368,7 +368,7 @@ lrg_tileset_get_columns (LrgTileset *self)
     return self->columns;
 }
 
-/**
+/*
  * lrg_tileset_get_rows:
  * @self: an #LrgTileset
  *
@@ -384,7 +384,7 @@ lrg_tileset_get_rows (LrgTileset *self)
     return self->rows;
 }
 
-/**
+/*
  * lrg_tileset_get_tile_count:
  * @self: an #LrgTileset
  *
@@ -404,7 +404,7 @@ lrg_tileset_get_tile_count (LrgTileset *self)
  * Tile Rectangles
  * ========================================================================== */
 
-/**
+/*
  * lrg_tileset_get_tile_rect:
  * @self: an #LrgTileset
  * @tile_id: the tile index (0-based)
@@ -442,7 +442,7 @@ lrg_tileset_get_tile_rect (LrgTileset *self,
     return rect;
 }
 
-/**
+/*
  * lrg_tileset_get_tile_rect_to:
  * @self: an #LrgTileset
  * @tile_id: the tile index (0-based)
@@ -484,7 +484,7 @@ lrg_tileset_get_tile_rect_to (LrgTileset   *self,
  * Tile Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_tileset_get_tile_properties:
  * @self: an #LrgTileset
  * @tile_id: the tile index (0-based)
@@ -507,7 +507,7 @@ lrg_tileset_get_tile_properties (LrgTileset *self,
     return g_array_index (self->tile_properties, LrgTileProperty, tile_id);
 }
 
-/**
+/*
  * lrg_tileset_set_tile_properties:
  * @self: an #LrgTileset
  * @tile_id: the tile index (0-based)
@@ -531,7 +531,7 @@ lrg_tileset_set_tile_properties (LrgTileset      *self,
     g_array_index (self->tile_properties, LrgTileProperty, tile_id) = properties;
 }
 
-/**
+/*
  * lrg_tileset_tile_has_property:
  * @self: an #LrgTileset
  * @tile_id: the tile index (0-based)

@@ -170,7 +170,7 @@ lrg_sound_bank_init (LrgSoundBank *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_sound_bank_new:
  * @name: the bank name (e.g., "player", "ui")
  *
@@ -216,7 +216,7 @@ load_sound_foreach (YamlMapping *mapping G_GNUC_UNUSED,
     }
 }
 
-/**
+/*
  * lrg_sound_bank_new_from_file:
  * @manifest_path: path to the YAML manifest file
  * @error: (optional): return location for a #GError
@@ -317,7 +317,7 @@ lrg_sound_bank_new_from_file (const gchar  *manifest_path,
  * Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_sound_bank_get_name:
  * @self: a #LrgSoundBank
  *
@@ -333,7 +333,7 @@ lrg_sound_bank_get_name (LrgSoundBank *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_sound_bank_get_base_path:
  * @self: a #LrgSoundBank
  *
@@ -349,7 +349,7 @@ lrg_sound_bank_get_base_path (LrgSoundBank *self)
     return self->base_path;
 }
 
-/**
+/*
  * lrg_sound_bank_set_base_path:
  * @self: a #LrgSoundBank
  * @path: (nullable): the base path for sound files
@@ -374,7 +374,7 @@ lrg_sound_bank_set_base_path (LrgSoundBank *self,
  * Sound Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_sound_bank_add:
  * @self: a #LrgSoundBank
  * @name: the sound name
@@ -401,7 +401,7 @@ lrg_sound_bank_add (LrgSoundBank *self,
     lrg_log_debug ("Added sound '%s' to bank '%s'", name, self->name);
 }
 
-/**
+/*
  * lrg_sound_bank_load:
  * @self: a #LrgSoundBank
  * @name: the sound name
@@ -449,7 +449,7 @@ lrg_sound_bank_load (LrgSoundBank  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_sound_bank_add_from_wave:
  * @self: a #LrgSoundBank
  * @name: the sound name
@@ -489,7 +489,7 @@ lrg_sound_bank_add_from_wave (LrgSoundBank *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_sound_bank_load_from_memory:
  * @self: a #LrgSoundBank
  * @name: the sound name
@@ -527,7 +527,7 @@ lrg_sound_bank_load_from_memory (LrgSoundBank  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_sound_bank_load_from_resource:
  * @self: a #LrgSoundBank
  * @name: the sound name
@@ -562,7 +562,7 @@ lrg_sound_bank_load_from_resource (LrgSoundBank  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_sound_bank_add_alias:
  * @self: a #LrgSoundBank
  * @alias: the alias name
@@ -599,7 +599,7 @@ lrg_sound_bank_add_alias (LrgSoundBank *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_sound_bank_remove:
  * @self: a #LrgSoundBank
  * @name: the sound name to remove
@@ -618,7 +618,7 @@ lrg_sound_bank_remove (LrgSoundBank *self,
     return g_hash_table_remove (self->sounds, name);
 }
 
-/**
+/*
  * lrg_sound_bank_get:
  * @self: a #LrgSoundBank
  * @name: the sound name
@@ -637,7 +637,7 @@ lrg_sound_bank_get (LrgSoundBank *self,
     return g_hash_table_lookup (self->sounds, name);
 }
 
-/**
+/*
  * lrg_sound_bank_contains:
  * @self: a #LrgSoundBank
  * @name: the sound name
@@ -656,7 +656,7 @@ lrg_sound_bank_contains (LrgSoundBank *self,
     return g_hash_table_contains (self->sounds, name);
 }
 
-/**
+/*
  * lrg_sound_bank_get_count:
  * @self: a #LrgSoundBank
  *
@@ -672,7 +672,7 @@ lrg_sound_bank_get_count (LrgSoundBank *self)
     return g_hash_table_size (self->sounds);
 }
 
-/**
+/*
  * lrg_sound_bank_get_names:
  * @self: a #LrgSoundBank
  *
@@ -688,7 +688,7 @@ lrg_sound_bank_get_names (LrgSoundBank *self)
     return g_hash_table_get_keys (self->sounds);
 }
 
-/**
+/*
  * lrg_sound_bank_clear:
  * @self: a #LrgSoundBank
  *
@@ -706,7 +706,7 @@ lrg_sound_bank_clear (LrgSoundBank *self)
  * Playback
  * ========================================================================== */
 
-/**
+/*
  * lrg_sound_bank_play:
  * @self: a #LrgSoundBank
  * @name: the sound name to play
@@ -736,7 +736,7 @@ lrg_sound_bank_play (LrgSoundBank *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_sound_bank_play_multi:
  * @self: a #LrgSoundBank
  * @name: the sound name to play
@@ -766,7 +766,7 @@ lrg_sound_bank_play_multi (LrgSoundBank *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_sound_bank_stop:
  * @self: a #LrgSoundBank
  * @name: the sound name to stop
@@ -803,7 +803,7 @@ stop_sound_foreach (gpointer key     G_GNUC_UNUSED,
     grl_sound_stop_multi (sound);
 }
 
-/**
+/*
  * lrg_sound_bank_stop_all:
  * @self: a #LrgSoundBank
  *
@@ -831,7 +831,7 @@ set_volume_foreach (gpointer key     G_GNUC_UNUSED,
     grl_sound_set_volume (sound, volume);
 }
 
-/**
+/*
  * lrg_sound_bank_set_volume:
  * @self: a #LrgSoundBank
  * @volume: volume level (0.0 to 1.0)
@@ -854,7 +854,7 @@ lrg_sound_bank_set_volume (LrgSoundBank *self,
     }
 }
 
-/**
+/*
  * lrg_sound_bank_get_volume:
  * @self: a #LrgSoundBank
  *

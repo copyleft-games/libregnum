@@ -321,7 +321,7 @@ deg_to_rad (gfloat degrees)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_transform_component_new:
  *
  * Creates a new transform component at position (0, 0).
@@ -334,7 +334,7 @@ lrg_transform_component_new (void)
     return g_object_new (LRG_TYPE_TRANSFORM_COMPONENT, NULL);
 }
 
-/**
+/*
  * lrg_transform_component_new_at:
  * @x: Initial local X position
  * @y: Initial local Y position
@@ -357,7 +357,7 @@ lrg_transform_component_new_at (gfloat x,
  * Public API - Local Transform
  * ========================================================================== */
 
-/**
+/*
  * lrg_transform_component_get_local_position:
  * @self: an #LrgTransformComponent
  *
@@ -376,7 +376,7 @@ lrg_transform_component_get_local_position (LrgTransformComponent *self)
     return grl_vector2_new (priv->local_x, priv->local_y);
 }
 
-/**
+/*
  * lrg_transform_component_set_local_position:
  * @self: an #LrgTransformComponent
  * @position: The local position
@@ -393,7 +393,7 @@ lrg_transform_component_set_local_position (LrgTransformComponent *self,
     lrg_transform_component_set_local_position_xy (self, position->x, position->y);
 }
 
-/**
+/*
  * lrg_transform_component_set_local_position_xy:
  * @self: an #LrgTransformComponent
  * @x: Local X position
@@ -429,7 +429,7 @@ lrg_transform_component_set_local_position_xy (LrgTransformComponent *self,
     }
 }
 
-/**
+/*
  * lrg_transform_component_get_local_x:
  * @self: an #LrgTransformComponent
  *
@@ -448,7 +448,7 @@ lrg_transform_component_get_local_x (LrgTransformComponent *self)
     return priv->local_x;
 }
 
-/**
+/*
  * lrg_transform_component_set_local_x:
  * @self: an #LrgTransformComponent
  * @x: The local X coordinate
@@ -472,7 +472,7 @@ lrg_transform_component_set_local_x (LrgTransformComponent *self,
     }
 }
 
-/**
+/*
  * lrg_transform_component_get_local_y:
  * @self: an #LrgTransformComponent
  *
@@ -491,7 +491,7 @@ lrg_transform_component_get_local_y (LrgTransformComponent *self)
     return priv->local_y;
 }
 
-/**
+/*
  * lrg_transform_component_set_local_y:
  * @self: an #LrgTransformComponent
  * @y: The local Y coordinate
@@ -515,7 +515,7 @@ lrg_transform_component_set_local_y (LrgTransformComponent *self,
     }
 }
 
-/**
+/*
  * lrg_transform_component_get_local_rotation:
  * @self: an #LrgTransformComponent
  *
@@ -534,7 +534,7 @@ lrg_transform_component_get_local_rotation (LrgTransformComponent *self)
     return priv->local_rotation;
 }
 
-/**
+/*
  * lrg_transform_component_set_local_rotation:
  * @self: an #LrgTransformComponent
  * @rotation: Local rotation in degrees
@@ -558,7 +558,7 @@ lrg_transform_component_set_local_rotation (LrgTransformComponent *self,
     }
 }
 
-/**
+/*
  * lrg_transform_component_get_local_scale:
  * @self: an #LrgTransformComponent
  *
@@ -577,7 +577,7 @@ lrg_transform_component_get_local_scale (LrgTransformComponent *self)
     return grl_vector2_new (priv->scale_x, priv->scale_y);
 }
 
-/**
+/*
  * lrg_transform_component_set_local_scale:
  * @self: an #LrgTransformComponent
  * @scale: The local scale (x, y)
@@ -594,7 +594,7 @@ lrg_transform_component_set_local_scale (LrgTransformComponent *self,
     lrg_transform_component_set_local_scale_xy (self, scale->x, scale->y);
 }
 
-/**
+/*
  * lrg_transform_component_set_local_scale_xy:
  * @self: an #LrgTransformComponent
  * @scale_x: X scale factor
@@ -630,7 +630,7 @@ lrg_transform_component_set_local_scale_xy (LrgTransformComponent *self,
     }
 }
 
-/**
+/*
  * lrg_transform_component_set_local_scale_uniform:
  * @self: an #LrgTransformComponent
  * @scale: Uniform scale factor
@@ -648,7 +648,7 @@ lrg_transform_component_set_local_scale_uniform (LrgTransformComponent *self,
  * Public API - World Transform
  * ========================================================================== */
 
-/**
+/*
  * lrg_transform_component_get_world_position:
  * @self: an #LrgTransformComponent
  *
@@ -699,7 +699,7 @@ lrg_transform_component_get_world_position (LrgTransformComponent *self)
     }
 }
 
-/**
+/*
  * lrg_transform_component_get_world_rotation:
  * @self: an #LrgTransformComponent
  *
@@ -726,7 +726,7 @@ lrg_transform_component_get_world_rotation (LrgTransformComponent *self)
     }
 }
 
-/**
+/*
  * lrg_transform_component_get_world_scale:
  * @self: an #LrgTransformComponent
  *
@@ -759,7 +759,7 @@ lrg_transform_component_get_world_scale (LrgTransformComponent *self)
  * Public API - Hierarchy
  * ========================================================================== */
 
-/**
+/*
  * lrg_transform_component_get_parent:
  * @self: an #LrgTransformComponent
  *
@@ -778,7 +778,7 @@ lrg_transform_component_get_parent (LrgTransformComponent *self)
     return priv->parent;
 }
 
-/**
+/*
  * lrg_transform_component_set_parent:
  * @self: an #LrgTransformComponent
  * @parent: (nullable): The new parent transform, or %NULL to unparent
@@ -820,7 +820,7 @@ lrg_transform_component_set_parent (LrgTransformComponent *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PARENT]);
 }
 
-/**
+/*
  * lrg_transform_component_get_children:
  * @self: an #LrgTransformComponent
  *
@@ -839,7 +839,7 @@ lrg_transform_component_get_children (LrgTransformComponent *self)
     return g_list_copy (priv->children);
 }
 
-/**
+/*
  * lrg_transform_component_get_child_count:
  * @self: an #LrgTransformComponent
  *
@@ -858,7 +858,7 @@ lrg_transform_component_get_child_count (LrgTransformComponent *self)
     return g_list_length (priv->children);
 }
 
-/**
+/*
  * lrg_transform_component_detach_children:
  * @self: an #LrgTransformComponent
  *
@@ -896,7 +896,7 @@ lrg_transform_component_detach_children (LrgTransformComponent *self)
  * Public API - Utility
  * ========================================================================== */
 
-/**
+/*
  * lrg_transform_component_translate:
  * @self: an #LrgTransformComponent
  * @offset: Translation offset in local space
@@ -919,7 +919,7 @@ lrg_transform_component_translate (LrgTransformComponent *self,
                                                    priv->local_y + offset->y);
 }
 
-/**
+/*
  * lrg_transform_component_rotate:
  * @self: an #LrgTransformComponent
  * @degrees: Rotation amount in degrees
@@ -939,7 +939,7 @@ lrg_transform_component_rotate (LrgTransformComponent *self,
     lrg_transform_component_set_local_rotation (self, priv->local_rotation + degrees);
 }
 
-/**
+/*
  * lrg_transform_component_look_at:
  * @self: an #LrgTransformComponent
  * @target: World-space target position
@@ -977,7 +977,7 @@ lrg_transform_component_look_at (LrgTransformComponent *self,
     lrg_transform_component_set_local_rotation (self, angle);
 }
 
-/**
+/*
  * lrg_transform_component_sync_to_entity:
  * @self: an #LrgTransformComponent
  *
@@ -1015,7 +1015,7 @@ lrg_transform_component_sync_to_entity (LrgTransformComponent *self)
  * Public API - 3D Rotation (Quaternion)
  * ========================================================================== */
 
-/**
+/*
  * lrg_transform_component_get_rotation_quaternion:
  * @self: an #LrgTransformComponent
  *
@@ -1044,7 +1044,7 @@ lrg_transform_component_get_rotation_quaternion (LrgTransformComponent *self)
     return grl_quaternion_new (0.0f, 0.0f, sinf (rad / 2.0f), cosf (rad / 2.0f));
 }
 
-/**
+/*
  * lrg_transform_component_set_rotation_quaternion:
  * @self: an #LrgTransformComponent
  * @quaternion: The rotation quaternion
@@ -1072,7 +1072,7 @@ lrg_transform_component_set_rotation_quaternion (LrgTransformComponent *self,
     lrg_transform_component_set_local_rotation (self, roll * (180.0f / G_PI));
 }
 
-/**
+/*
  * lrg_transform_component_set_rotation_euler:
  * @self: an #LrgTransformComponent
  * @pitch: Rotation around X axis in radians
@@ -1100,7 +1100,7 @@ lrg_transform_component_set_rotation_euler (LrgTransformComponent *self,
     lrg_transform_component_set_local_rotation (self, roll * (180.0f / G_PI));
 }
 
-/**
+/*
  * lrg_transform_component_slerp_rotation:
  * @self: an #LrgTransformComponent
  * @target: Target rotation quaternion

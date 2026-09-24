@@ -139,7 +139,7 @@ lrg_component_desc_init (LrgComponentDesc *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_component_desc_new:
  * @type_name: the registry type name of the component (e.g. "health")
  *
@@ -159,7 +159,7 @@ lrg_component_desc_new (const gchar *type_name)
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_component_desc_get_type_name:
  * @self: an #LrgComponentDesc
  *
@@ -175,7 +175,7 @@ lrg_component_desc_get_type_name (LrgComponentDesc *self)
 	return self->type_name;
 }
 
-/**
+/*
  * lrg_component_desc_set_type_name:
  * @self: an #LrgComponentDesc
  * @type_name: (nullable): the registry type name
@@ -197,7 +197,7 @@ lrg_component_desc_set_type_name (LrgComponentDesc *self,
  * Property Values
  * ========================================================================== */
 
-/**
+/*
  * lrg_component_desc_set_value:
  * @self: an #LrgComponentDesc
  * @name: the property name
@@ -223,7 +223,7 @@ lrg_component_desc_set_value (LrgComponentDesc *self,
 	g_hash_table_insert (self->props, g_strdup (name), copy);
 }
 
-/**
+/*
  * lrg_component_desc_get_value:
  * @self: an #LrgComponentDesc
  * @name: the property name
@@ -242,7 +242,7 @@ lrg_component_desc_get_value (LrgComponentDesc *self,
 	return g_hash_table_lookup (self->props, name);
 }
 
-/**
+/*
  * lrg_component_desc_set_string:
  * @self: an #LrgComponentDesc
  * @name: the property name
@@ -266,7 +266,7 @@ lrg_component_desc_set_string (LrgComponentDesc *self,
 	g_value_unset (&v);
 }
 
-/**
+/*
  * lrg_component_desc_set_int:
  * @self: an #LrgComponentDesc
  * @name: the property name
@@ -290,7 +290,7 @@ lrg_component_desc_set_int (LrgComponentDesc *self,
 	g_value_unset (&v);
 }
 
-/**
+/*
  * lrg_component_desc_set_double:
  * @self: an #LrgComponentDesc
  * @name: the property name
@@ -314,7 +314,7 @@ lrg_component_desc_set_double (LrgComponentDesc *self,
 	g_value_unset (&v);
 }
 
-/**
+/*
  * lrg_component_desc_set_boolean:
  * @self: an #LrgComponentDesc
  * @name: the property name
@@ -338,7 +338,7 @@ lrg_component_desc_set_boolean (LrgComponentDesc *self,
 	g_value_unset (&v);
 }
 
-/**
+/*
  * lrg_component_desc_has:
  * @self: an #LrgComponentDesc
  * @name: the property name
@@ -357,7 +357,7 @@ lrg_component_desc_has (LrgComponentDesc *self,
 	return g_hash_table_contains (self->props, name);
 }
 
-/**
+/*
  * lrg_component_desc_get_keys:
  * @self: an #LrgComponentDesc
  *

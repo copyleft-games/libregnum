@@ -298,7 +298,7 @@ lrg_grid_init (LrgGrid *self)
     self->row_spacing = 0.0f;
 }
 
-/**
+/*
  * lrg_grid_new:
  * @columns: number of columns
  *
@@ -316,7 +316,7 @@ lrg_grid_new (guint columns)
                          NULL);
 }
 
-/**
+/*
  * lrg_grid_get_columns:
  * @self: an #LrgGrid
  *
@@ -331,7 +331,7 @@ lrg_grid_get_columns (LrgGrid *self)
     return self->columns;
 }
 
-/**
+/*
  * lrg_grid_set_columns:
  * @self: an #LrgGrid
  * @columns: number of columns
@@ -353,7 +353,7 @@ lrg_grid_set_columns (LrgGrid *self,
     }
 }
 
-/**
+/*
  * lrg_grid_get_column_spacing:
  * @self: an #LrgGrid
  *
@@ -368,7 +368,7 @@ lrg_grid_get_column_spacing (LrgGrid *self)
     return self->column_spacing;
 }
 
-/**
+/*
  * lrg_grid_set_column_spacing:
  * @self: an #LrgGrid
  * @spacing: the spacing in pixels
@@ -390,7 +390,7 @@ lrg_grid_set_column_spacing (LrgGrid *self,
     }
 }
 
-/**
+/*
  * lrg_grid_get_row_spacing:
  * @self: an #LrgGrid
  *
@@ -405,7 +405,7 @@ lrg_grid_get_row_spacing (LrgGrid *self)
     return self->row_spacing;
 }
 
-/**
+/*
  * lrg_grid_set_row_spacing:
  * @self: an #LrgGrid
  * @spacing: the spacing in pixels

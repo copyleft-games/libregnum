@@ -161,7 +161,7 @@ lrg_reel_gif_exporter_init (LrgReelGifExporter *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_gif_exporter_new:
  * @path: (type filename): path of the GIF file to create.
  * @error: (nullable): return location for a #GError, or %NULL.
@@ -189,7 +189,7 @@ lrg_reel_gif_exporter_new (const gchar  *path,
     return self;
 }
 
-/**
+/*
  * lrg_reel_gif_exporter_set_quality:
  * @self: an #LrgReelGifExporter.
  * @adaptive_palette: if %TRUE, use median-cut quantisation for an adaptive

@@ -762,7 +762,7 @@ lrg_scripting_python_init (LrgScriptingPython *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_scripting_python_new:
  *
  * Creates a new Python scripting context.
@@ -775,7 +775,7 @@ lrg_scripting_python_new (void)
     return g_object_new (LRG_TYPE_SCRIPTING_PYTHON, NULL);
 }
 
-/**
+/*
  * lrg_scripting_python_set_registry:
  * @self: an #LrgScriptingPython
  * @registry: (nullable): the #LrgRegistry for type lookups
@@ -797,7 +797,7 @@ lrg_scripting_python_set_registry (LrgScriptingPython *self,
     }
 }
 
-/**
+/*
  * lrg_scripting_python_get_registry:
  * @self: an #LrgScriptingPython
  *
@@ -813,7 +813,7 @@ lrg_scripting_python_get_registry (LrgScriptingPython *self)
     return self->registry;
 }
 
-/**
+/*
  * lrg_scripting_python_add_search_path:
  * @self: an #LrgScriptingPython
  * @path: (type filename): directory path to add
@@ -831,7 +831,7 @@ lrg_scripting_python_add_search_path (LrgScriptingPython *self,
     update_search_paths (self);
 }
 
-/**
+/*
  * lrg_scripting_python_clear_search_paths:
  * @self: an #LrgScriptingPython
  *
@@ -845,7 +845,7 @@ lrg_scripting_python_clear_search_paths (LrgScriptingPython *self)
     g_ptr_array_set_size (self->search_paths, 0);
 }
 
-/**
+/*
  * lrg_scripting_python_register_update_hook:
  * @self: an #LrgScriptingPython
  * @func_name: name of the Python function to call on update
@@ -864,7 +864,7 @@ lrg_scripting_python_register_update_hook (LrgScriptingPython *self,
     lrg_debug (LRG_LOG_DOMAIN_SCRIPTING, "Registered update hook: %s", func_name);
 }
 
-/**
+/*
  * lrg_scripting_python_unregister_update_hook:
  * @self: an #LrgScriptingPython
  * @func_name: name of the Python function to unregister
@@ -895,7 +895,7 @@ lrg_scripting_python_unregister_update_hook (LrgScriptingPython *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_scripting_python_clear_update_hooks:
  * @self: an #LrgScriptingPython
  *
@@ -909,7 +909,7 @@ lrg_scripting_python_clear_update_hooks (LrgScriptingPython *self)
     g_ptr_array_set_size (self->update_hooks, 0);
 }
 
-/**
+/*
  * lrg_scripting_python_update:
  * @self: an #LrgScriptingPython
  * @delta: time since last frame in seconds
@@ -974,7 +974,7 @@ lrg_scripting_python_update (LrgScriptingPython *self,
     }
 }
 
-/**
+/*
  * lrg_scripting_python_set_engine:
  * @self: an #LrgScriptingPython
  * @engine: (nullable): the #LrgEngine to expose to scripts
@@ -996,7 +996,7 @@ lrg_scripting_python_set_engine (LrgScriptingPython *self,
     }
 }
 
-/**
+/*
  * lrg_scripting_python_get_engine:
  * @self: an #LrgScriptingPython
  *

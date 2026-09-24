@@ -12,7 +12,7 @@
 #endif
 #include "dialog/lrg-dialog-response.h"
 
-/**
+/*
  * LrgDialogResponse:
  *
  * Internal structure for dialog responses.
@@ -31,7 +31,7 @@ G_DEFINE_BOXED_TYPE (LrgDialogResponse,
                      lrg_dialog_response_copy,
                      lrg_dialog_response_free)
 
-/**
+/*
  * lrg_dialog_response_new:
  * @id: unique identifier for the response
  * @text: display text shown to player
@@ -61,7 +61,7 @@ lrg_dialog_response_new (const gchar *id,
     return self;
 }
 
-/**
+/*
  * lrg_dialog_response_copy:
  * @self: an #LrgDialogResponse
  *
@@ -96,7 +96,7 @@ lrg_dialog_response_copy (const LrgDialogResponse *self)
     return copy;
 }
 
-/**
+/*
  * lrg_dialog_response_free:
  * @self: an #LrgDialogResponse
  *
@@ -116,7 +116,7 @@ lrg_dialog_response_free (LrgDialogResponse *self)
     g_free (self);
 }
 
-/**
+/*
  * lrg_dialog_response_get_id:
  * @self: an #LrgDialogResponse
  *
@@ -131,7 +131,7 @@ lrg_dialog_response_get_id (const LrgDialogResponse *self)
     return self->id;
 }
 
-/**
+/*
  * lrg_dialog_response_get_text:
  * @self: an #LrgDialogResponse
  *
@@ -146,7 +146,7 @@ lrg_dialog_response_get_text (const LrgDialogResponse *self)
     return self->text;
 }
 
-/**
+/*
  * lrg_dialog_response_set_text:
  * @self: an #LrgDialogResponse
  * @text: new display text
@@ -164,7 +164,7 @@ lrg_dialog_response_set_text (LrgDialogResponse *self,
     self->text = g_strdup (text);
 }
 
-/**
+/*
  * lrg_dialog_response_get_next_node_id:
  * @self: an #LrgDialogResponse
  *
@@ -179,7 +179,7 @@ lrg_dialog_response_get_next_node_id (const LrgDialogResponse *self)
     return self->next_node_id;
 }
 
-/**
+/*
  * lrg_dialog_response_set_next_node_id:
  * @self: an #LrgDialogResponse
  * @next_node_id: (nullable): next node ID
@@ -196,7 +196,7 @@ lrg_dialog_response_set_next_node_id (LrgDialogResponse *self,
     self->next_node_id = g_strdup (next_node_id);
 }
 
-/**
+/*
  * lrg_dialog_response_add_condition:
  * @self: an #LrgDialogResponse
  * @condition: condition expression string
@@ -213,7 +213,7 @@ lrg_dialog_response_add_condition (LrgDialogResponse *self,
     g_ptr_array_add (self->conditions, g_strdup (condition));
 }
 
-/**
+/*
  * lrg_dialog_response_get_conditions:
  * @self: an #LrgDialogResponse
  *
@@ -228,7 +228,7 @@ lrg_dialog_response_get_conditions (const LrgDialogResponse *self)
     return self->conditions;
 }
 
-/**
+/*
  * lrg_dialog_response_add_effect:
  * @self: an #LrgDialogResponse
  * @effect: effect expression string
@@ -245,7 +245,7 @@ lrg_dialog_response_add_effect (LrgDialogResponse *self,
     g_ptr_array_add (self->effects, g_strdup (effect));
 }
 
-/**
+/*
  * lrg_dialog_response_get_effects:
  * @self: an #LrgDialogResponse
  *

@@ -37,7 +37,7 @@ lrg_card_effect_executor_default_init (LrgCardEffectExecutorInterface *iface)
     iface->get_description = lrg_card_effect_executor_default_get_description;
 }
 
-/**
+/*
  * lrg_card_effect_executor_get_effect_type:
  * @self: a #LrgCardEffectExecutor
  *
@@ -60,7 +60,7 @@ lrg_card_effect_executor_get_effect_type (LrgCardEffectExecutor *self)
     return iface->get_effect_type (self);
 }
 
-/**
+/*
  * lrg_card_effect_executor_execute:
  * @self: a #LrgCardEffectExecutor
  * @effect: the effect to execute
@@ -94,7 +94,7 @@ lrg_card_effect_executor_execute (LrgCardEffectExecutor  *self,
     return iface->execute (self, effect, context, source, target, error);
 }
 
-/**
+/*
  * lrg_card_effect_executor_validate:
  * @self: a #LrgCardEffectExecutor
  * @effect: the effect to validate
@@ -122,7 +122,7 @@ lrg_card_effect_executor_validate (LrgCardEffectExecutor  *self,
     return iface->validate (self, effect, error);
 }
 
-/**
+/*
  * lrg_card_effect_executor_get_description:
  * @self: a #LrgCardEffectExecutor
  * @effect: the effect to describe

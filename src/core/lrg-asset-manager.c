@@ -563,7 +563,7 @@ lrg_asset_manager_init (LrgAssetManager *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_asset_manager_new:
  *
  * Creates a new asset manager.
@@ -580,7 +580,7 @@ lrg_asset_manager_new (void)
  * Public API - Search Path Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_asset_manager_add_search_path:
  * @self: an #LrgAssetManager
  * @path: directory path to add
@@ -605,7 +605,7 @@ lrg_asset_manager_add_search_path (LrgAssetManager *self,
                path);
 }
 
-/**
+/*
  * lrg_asset_manager_remove_search_path:
  * @self: an #LrgAssetManager
  * @path: directory path to remove
@@ -643,7 +643,7 @@ lrg_asset_manager_remove_search_path (LrgAssetManager *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_asset_manager_clear_search_paths:
  * @self: an #LrgAssetManager
  *
@@ -663,7 +663,7 @@ lrg_asset_manager_clear_search_paths (LrgAssetManager *self)
     lrg_debug (LRG_LOG_DOMAIN_CORE, "Cleared all asset search paths");
 }
 
-/**
+/*
  * lrg_asset_manager_get_search_paths:
  * @self: an #LrgAssetManager
  *
@@ -687,7 +687,7 @@ lrg_asset_manager_get_search_paths (LrgAssetManager *self)
  * Public API - Synchronous Loading
  * ========================================================================== */
 
-/**
+/*
  * lrg_asset_manager_load_texture:
  * @self: an #LrgAssetManager
  * @name: relative path to texture file
@@ -712,7 +712,7 @@ lrg_asset_manager_load_texture (LrgAssetManager  *self,
     return klass->load_texture (self, name, error);
 }
 
-/**
+/*
  * lrg_asset_manager_load_font:
  * @self: an #LrgAssetManager
  * @name: relative path to font file
@@ -740,7 +740,7 @@ lrg_asset_manager_load_font (LrgAssetManager  *self,
     return klass->load_font (self, name, size, error);
 }
 
-/**
+/*
  * lrg_asset_manager_load_sound:
  * @self: an #LrgAssetManager
  * @name: relative path to sound file
@@ -765,7 +765,7 @@ lrg_asset_manager_load_sound (LrgAssetManager  *self,
     return klass->load_sound (self, name, error);
 }
 
-/**
+/*
  * lrg_asset_manager_load_music:
  * @self: an #LrgAssetManager
  * @name: relative path to music file
@@ -1431,7 +1431,7 @@ lrg_asset_manager_load_music_async (LrgAssetManager *self,
  * Public API - Cache Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_asset_manager_unload:
  * @self: an #LrgAssetManager
  * @name: the asset name to unload
@@ -1521,7 +1521,7 @@ lrg_asset_manager_unload (LrgAssetManager *self,
     return removed;
 }
 
-/**
+/*
  * lrg_asset_manager_unload_all:
  * @self: an #LrgAssetManager
  *
@@ -1549,7 +1549,7 @@ lrg_asset_manager_unload_all (LrgAssetManager *self)
     lrg_debug (LRG_LOG_DOMAIN_CORE, "Unloaded all cached assets");
 }
 
-/**
+/*
  * lrg_asset_manager_is_cached:
  * @self: an #LrgAssetManager
  * @name: the asset name to check
@@ -1617,7 +1617,7 @@ lrg_asset_manager_is_cached (LrgAssetManager *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_asset_manager_get_texture_cache_size:
  * @self: an #LrgAssetManager
  *
@@ -1637,7 +1637,7 @@ lrg_asset_manager_get_texture_cache_size (LrgAssetManager *self)
     return g_hash_table_size (priv->texture_cache);
 }
 
-/**
+/*
  * lrg_asset_manager_get_font_cache_size:
  * @self: an #LrgAssetManager
  *
@@ -1657,7 +1657,7 @@ lrg_asset_manager_get_font_cache_size (LrgAssetManager *self)
     return g_hash_table_size (priv->font_cache);
 }
 
-/**
+/*
  * lrg_asset_manager_get_sound_cache_size:
  * @self: an #LrgAssetManager
  *
@@ -1677,7 +1677,7 @@ lrg_asset_manager_get_sound_cache_size (LrgAssetManager *self)
     return g_hash_table_size (priv->sound_cache);
 }
 
-/**
+/*
  * lrg_asset_manager_get_music_cache_size:
  * @self: an #LrgAssetManager
  *

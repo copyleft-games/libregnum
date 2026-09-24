@@ -136,7 +136,7 @@ lrg_shape2d_init (LrgShape2D *self)
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_shape2d_get_x:
  * @self: an #LrgShape2D
  *
@@ -155,7 +155,7 @@ lrg_shape2d_get_x (LrgShape2D *self)
 	return priv->x;
 }
 
-/**
+/*
  * lrg_shape2d_set_x:
  * @self: an #LrgShape2D
  * @x: the X coordinate
@@ -179,7 +179,7 @@ lrg_shape2d_set_x (LrgShape2D *self,
 	}
 }
 
-/**
+/*
  * lrg_shape2d_get_y:
  * @self: an #LrgShape2D
  *
@@ -198,7 +198,7 @@ lrg_shape2d_get_y (LrgShape2D *self)
 	return priv->y;
 }
 
-/**
+/*
  * lrg_shape2d_set_y:
  * @self: an #LrgShape2D
  * @y: the Y coordinate
@@ -222,7 +222,7 @@ lrg_shape2d_set_y (LrgShape2D *self,
 	}
 }
 
-/**
+/*
  * lrg_shape2d_set_position:
  * @self: an #LrgShape2D
  * @x: the X coordinate
@@ -257,7 +257,7 @@ lrg_shape2d_set_position (LrgShape2D *self,
 	g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_shape2d_get_position:
  * @self: an #LrgShape2D
  * @x: (out) (optional): return location for X coordinate

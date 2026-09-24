@@ -161,7 +161,7 @@ lrg_circle2d_init (LrgCircle2D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_circle2d_new:
  *
  * Creates a new circle at the origin with default radius (1.0).
@@ -174,7 +174,7 @@ lrg_circle2d_new (void)
 	return g_object_new (LRG_TYPE_CIRCLE2D, NULL);
 }
 
-/**
+/*
  * lrg_circle2d_new_at:
  * @x: X position (center)
  * @y: Y position (center)
@@ -196,7 +196,7 @@ lrg_circle2d_new_at (gfloat x,
 	                     NULL);
 }
 
-/**
+/*
  * lrg_circle2d_new_full:
  * @x: X position (center)
  * @y: Y position (center)
@@ -223,7 +223,7 @@ lrg_circle2d_new_full (gfloat    x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_circle2d_get_radius:
  * @self: an #LrgCircle2D
  *
@@ -239,7 +239,7 @@ lrg_circle2d_get_radius (LrgCircle2D *self)
 	return self->radius;
 }
 
-/**
+/*
  * lrg_circle2d_set_radius:
  * @self: an #LrgCircle2D
  * @radius: the radius
@@ -260,7 +260,7 @@ lrg_circle2d_set_radius (LrgCircle2D *self,
 	}
 }
 
-/**
+/*
  * lrg_circle2d_get_filled:
  * @self: an #LrgCircle2D
  *
@@ -276,7 +276,7 @@ lrg_circle2d_get_filled (LrgCircle2D *self)
 	return self->filled;
 }
 
-/**
+/*
  * lrg_circle2d_set_filled:
  * @self: an #LrgCircle2D
  * @filled: %TRUE for filled, %FALSE for outline only

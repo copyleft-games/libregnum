@@ -492,7 +492,7 @@ lrg_input_gamepad_init (LrgInputGamepad *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_gamepad_new:
  *
  * Creates a new gamepad input source with default dead zone of 0.1.
@@ -509,7 +509,7 @@ lrg_input_gamepad_new (void)
  * Public API - Controller Type Detection
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_gamepad_detect_type:
  * @self: an #LrgInputGamepad
  * @gamepad: the gamepad index (0-3)
@@ -536,7 +536,7 @@ lrg_input_gamepad_detect_type (LrgInputGamepad *self,
 	return detect_gamepad_type_from_name (name);
 }
 
-/**
+/*
  * lrg_input_gamepad_get_name:
  * @self: an #LrgInputGamepad
  * @gamepad: the gamepad index (0-3)
@@ -564,7 +564,7 @@ lrg_input_gamepad_get_name (LrgInputGamepad *self,
  * Public API - Display Names
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_gamepad_get_button_display_name:
  * @self: an #LrgInputGamepad
  * @gamepad: the gamepad index (0-3)
@@ -587,7 +587,7 @@ lrg_input_gamepad_get_button_display_name (LrgInputGamepad  *self,
 	return lrg_input_gamepad_get_button_display_name_for_type (button, type);
 }
 
-/**
+/*
  * lrg_input_gamepad_get_button_display_name_for_type:
  * @button: the button to get the name for
  * @gamepad_type: the controller type
@@ -614,7 +614,7 @@ lrg_input_gamepad_get_button_display_name_for_type (GrlGamepadButton button,
 	return table[index];
 }
 
-/**
+/*
  * lrg_input_gamepad_get_axis_display_name:
  * @self: an #LrgInputGamepad
  * @gamepad: the gamepad index (0-3)
@@ -637,7 +637,7 @@ lrg_input_gamepad_get_axis_display_name (LrgInputGamepad *self,
 	return lrg_input_gamepad_get_axis_display_name_for_type (axis, type);
 }
 
-/**
+/*
  * lrg_input_gamepad_get_axis_display_name_for_type:
  * @axis: the axis to get the name for
  * @gamepad_type: the controller type
@@ -668,7 +668,7 @@ lrg_input_gamepad_get_axis_display_name_for_type (GrlGamepadAxis axis,
  * Public API - Dead Zone Configuration
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_gamepad_set_dead_zone:
  * @self: an #LrgInputGamepad
  * @dead_zone: the dead zone threshold (0.0 to 1.0)
@@ -690,7 +690,7 @@ lrg_input_gamepad_set_dead_zone (LrgInputGamepad *self,
 	}
 }
 
-/**
+/*
  * lrg_input_gamepad_get_dead_zone:
  * @self: an #LrgInputGamepad
  *

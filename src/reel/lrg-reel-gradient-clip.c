@@ -243,7 +243,7 @@ lrg_reel_gradient_clip_init (LrgReelGradientClip *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_gradient_clip_new_linear:
  * @start: the gradient color at the start edge.
  * @end: the gradient color at the end edge.
@@ -274,7 +274,7 @@ lrg_reel_gradient_clip_new_linear (const GrlColor  *start,
     return self;
 }
 
-/**
+/*
  * lrg_reel_gradient_clip_new_radial:
  * @inner: the gradient color at the center.
  * @outer: the gradient color at the edge.
@@ -302,7 +302,7 @@ lrg_reel_gradient_clip_new_radial (const GrlColor *inner,
     return self;
 }
 
-/**
+/*
  * lrg_reel_gradient_clip_get_is_radial:
  * @self: an #LrgReelGradientClip.
  *
@@ -318,7 +318,7 @@ lrg_reel_gradient_clip_get_is_radial (LrgReelGradientClip *self)
     return self->radial;
 }
 
-/**
+/*
  * lrg_reel_gradient_clip_get_axis:
  * @self: an #LrgReelGradientClip.
  *
@@ -335,7 +335,7 @@ lrg_reel_gradient_clip_get_axis (LrgReelGradientClip *self)
     return self->axis;
 }
 
-/**
+/*
  * lrg_reel_gradient_clip_set_axis:
  * @self: an #LrgReelGradientClip.
  * @axis: the new #GrlGradientAxis.
@@ -357,7 +357,7 @@ lrg_reel_gradient_clip_set_axis (LrgReelGradientClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_AXIS]);
 }
 
-/**
+/*
  * lrg_reel_gradient_clip_get_start_color:
  * @self: an #LrgReelGradientClip.
  * @out_color: (out caller-allocates): return location for the color.
@@ -376,7 +376,7 @@ lrg_reel_gradient_clip_get_start_color (LrgReelGradientClip *self,
     *out_color = self->color_start;
 }
 
-/**
+/*
  * lrg_reel_gradient_clip_set_start_color:
  * @self: an #LrgReelGradientClip.
  * @color: the new start (or inner) color.
@@ -397,7 +397,7 @@ lrg_reel_gradient_clip_set_start_color (LrgReelGradientClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_START_COLOR]);
 }
 
-/**
+/*
  * lrg_reel_gradient_clip_get_end_color:
  * @self: an #LrgReelGradientClip.
  * @out_color: (out caller-allocates): return location for the color.
@@ -416,7 +416,7 @@ lrg_reel_gradient_clip_get_end_color (LrgReelGradientClip *self,
     *out_color = self->color_end;
 }
 
-/**
+/*
  * lrg_reel_gradient_clip_set_end_color:
  * @self: an #LrgReelGradientClip.
  * @color: the new end (or outer) color.

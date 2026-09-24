@@ -309,7 +309,7 @@ lrg_transition_manager_init (LrgTransitionManager *self)
  * Public API
  */
 
-/**
+/*
  * lrg_transition_manager_new:
  *
  * Creates a new transition manager.
@@ -324,7 +324,7 @@ lrg_transition_manager_new (void)
     return g_object_new (LRG_TYPE_TRANSITION_MANAGER, NULL);
 }
 
-/**
+/*
  * lrg_transition_manager_initialize:
  * @self: A #LrgTransitionManager
  * @width: Viewport width
@@ -356,7 +356,7 @@ lrg_transition_manager_initialize (LrgTransitionManager  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_transition_manager_shutdown:
  * @self: A #LrgTransitionManager
  *
@@ -380,7 +380,7 @@ lrg_transition_manager_shutdown (LrgTransitionManager *self)
     lrg_debug (LRG_LOG_DOMAIN_TRANSITION, "Transition manager shutdown");
 }
 
-/**
+/*
  * lrg_transition_manager_update:
  * @self: A #LrgTransitionManager
  * @delta_time: Time since last update
@@ -403,7 +403,7 @@ lrg_transition_manager_update (LrgTransitionManager *self,
     lrg_transition_update (self->current, delta_time);
 }
 
-/**
+/*
  * lrg_transition_manager_render:
  * @self: A #LrgTransitionManager
  * @old_scene_texture: Old scene texture ID
@@ -432,7 +432,7 @@ lrg_transition_manager_render (LrgTransitionManager *self,
                            self->viewport_height);
 }
 
-/**
+/*
  * lrg_transition_manager_start:
  * @self: A #LrgTransitionManager
  * @transition: The transition to start
@@ -483,7 +483,7 @@ lrg_transition_manager_start (LrgTransitionManager *self,
     lrg_transition_start (transition);
 }
 
-/**
+/*
  * lrg_transition_manager_cancel:
  * @self: A #LrgTransitionManager
  *
@@ -512,7 +512,7 @@ lrg_transition_manager_cancel (LrgTransitionManager *self)
     lrg_debug (LRG_LOG_DOMAIN_TRANSITION, "Transition cancelled");
 }
 
-/**
+/*
  * lrg_transition_manager_is_active:
  * @self: A #LrgTransitionManager
  *
@@ -539,7 +539,7 @@ lrg_transition_manager_is_active (LrgTransitionManager *self)
            state != LRG_TRANSITION_STATE_COMPLETE;
 }
 
-/**
+/*
  * lrg_transition_manager_is_at_midpoint:
  * @self: A #LrgTransitionManager
  *
@@ -562,7 +562,7 @@ lrg_transition_manager_is_at_midpoint (LrgTransitionManager *self)
     return lrg_transition_is_at_midpoint (self->current);
 }
 
-/**
+/*
  * lrg_transition_manager_get_current:
  * @self: A #LrgTransitionManager
  *
@@ -580,7 +580,7 @@ lrg_transition_manager_get_current (LrgTransitionManager *self)
     return self->current;
 }
 
-/**
+/*
  * lrg_transition_manager_get_state:
  * @self: A #LrgTransitionManager
  *
@@ -603,7 +603,7 @@ lrg_transition_manager_get_state (LrgTransitionManager *self)
     return lrg_transition_get_state (self->current);
 }
 
-/**
+/*
  * lrg_transition_manager_set_viewport:
  * @self: A #LrgTransitionManager
  * @width: New width
@@ -633,7 +633,7 @@ lrg_transition_manager_set_viewport (LrgTransitionManager *self,
     }
 }
 
-/**
+/*
  * lrg_transition_manager_get_viewport_width:
  * @self: A #LrgTransitionManager
  *
@@ -651,7 +651,7 @@ lrg_transition_manager_get_viewport_width (LrgTransitionManager *self)
     return self->viewport_width;
 }
 
-/**
+/*
  * lrg_transition_manager_get_viewport_height:
  * @self: A #LrgTransitionManager
  *

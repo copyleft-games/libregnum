@@ -628,7 +628,7 @@ lrg_camera3d_set_projection (LrgCamera3D       *self,
  * Quaternion Orientation API
  * ========================================================================== */
 
-/**
+/*
  * lrg_camera3d_get_orientation:
  * @self: an #LrgCamera3D
  *
@@ -737,7 +737,7 @@ lrg_camera3d_get_orientation (LrgCamera3D *self)
 	return grl_quaternion_new (qx, qy, qz, qw);
 }
 
-/**
+/*
  * lrg_camera3d_set_orientation:
  * @self: an #LrgCamera3D
  * @quaternion: The orientation quaternion
@@ -813,7 +813,7 @@ lrg_camera3d_set_orientation (LrgCamera3D         *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_UP_Z]);
 }
 
-/**
+/*
  * lrg_camera3d_slerp_to:
  * @self: an #LrgCamera3D
  * @target: Target orientation quaternion

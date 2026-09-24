@@ -93,7 +93,7 @@ lrg_reel_fade_transition_init (LrgReelFadeTransition *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_fade_transition_new:
  *
  * Creates a new #LrgReelFadeTransition.

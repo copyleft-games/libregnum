@@ -46,7 +46,7 @@ lrg_scripting_init (LrgScripting *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_scripting_load_file:
  * @self: an #LrgScripting
  * @path: (type filename): path to the script file
@@ -80,7 +80,7 @@ lrg_scripting_load_file (LrgScripting  *self,
     return klass->load_file (self, path, error);
 }
 
-/**
+/*
  * lrg_scripting_load_string:
  * @self: an #LrgScripting
  * @name: name to identify the script (for error messages)
@@ -117,7 +117,7 @@ lrg_scripting_load_string (LrgScripting  *self,
     return klass->load_string (self, name, code, error);
 }
 
-/**
+/*
  * lrg_scripting_call_function:
  * @self: an #LrgScripting
  * @func_name: name of the function to call
@@ -157,7 +157,7 @@ lrg_scripting_call_function (LrgScripting  *self,
     return klass->call_function (self, func_name, return_value, n_args, args, error);
 }
 
-/**
+/*
  * lrg_scripting_register_function:
  * @self: an #LrgScripting
  * @name: name to expose the function as
@@ -196,7 +196,7 @@ lrg_scripting_register_function (LrgScripting           *self,
     return klass->register_function (self, name, func, user_data, error);
 }
 
-/**
+/*
  * lrg_scripting_get_global:
  * @self: an #LrgScripting
  * @name: name of the global variable
@@ -233,7 +233,7 @@ lrg_scripting_get_global (LrgScripting  *self,
     return klass->get_global (self, name, value, error);
 }
 
-/**
+/*
  * lrg_scripting_set_global:
  * @self: an #LrgScripting
  * @name: name of the global variable
@@ -270,7 +270,7 @@ lrg_scripting_set_global (LrgScripting  *self,
     return klass->set_global (self, name, value, error);
 }
 
-/**
+/*
  * lrg_scripting_reset:
  * @self: an #LrgScripting
  *
@@ -291,7 +291,7 @@ lrg_scripting_reset (LrgScripting *self)
     }
 }
 
-/**
+/*
  * lrg_scripting_add_search_path:
  * @self: an #LrgScripting
  * @path: (type filename): a directory
@@ -317,7 +317,7 @@ lrg_scripting_add_search_path (LrgScripting *self,
     }
 }
 
-/**
+/*
  * lrg_scripting_has_function:
  * @self: an #LrgScripting
  * @func_name: a function name

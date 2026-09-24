@@ -313,7 +313,7 @@ lrg_input_init (LrgInput *self)
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_get_name:
  * @self: an #LrgInput
  *
@@ -332,7 +332,7 @@ lrg_input_get_name (LrgInput *self)
 	return priv->name;
 }
 
-/**
+/*
  * lrg_input_get_enabled:
  * @self: an #LrgInput
  *
@@ -351,7 +351,7 @@ lrg_input_get_enabled (LrgInput *self)
 	return priv->enabled;
 }
 
-/**
+/*
  * lrg_input_set_enabled:
  * @self: an #LrgInput
  * @enabled: whether to enable this input source
@@ -375,7 +375,7 @@ lrg_input_set_enabled (LrgInput *self,
 	}
 }
 
-/**
+/*
  * lrg_input_get_priority:
  * @self: an #LrgInput
  *
@@ -394,7 +394,7 @@ lrg_input_get_priority (LrgInput *self)
 	return priv->priority;
 }
 
-/**
+/*
  * lrg_input_set_priority:
  * @self: an #LrgInput
  * @priority: the priority value (higher = queried first)
@@ -422,7 +422,7 @@ lrg_input_set_priority (LrgInput *self,
  * Virtual Method Wrappers
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_poll:
  * @self: an #LrgInput
  *
@@ -444,7 +444,7 @@ lrg_input_poll (LrgInput *self)
 
 /* Keyboard */
 
-/**
+/*
  * lrg_input_is_key_pressed:
  * @self: an #LrgInput
  * @key: the key to check
@@ -468,7 +468,7 @@ lrg_input_is_key_pressed (LrgInput *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_is_key_down:
  * @self: an #LrgInput
  * @key: the key to check
@@ -492,7 +492,7 @@ lrg_input_is_key_down (LrgInput *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_is_key_released:
  * @self: an #LrgInput
  * @key: the key to check
@@ -518,7 +518,7 @@ lrg_input_is_key_released (LrgInput *self,
 
 /* Mouse */
 
-/**
+/*
  * lrg_input_is_mouse_button_pressed:
  * @self: an #LrgInput
  * @button: the mouse button to check
@@ -542,7 +542,7 @@ lrg_input_is_mouse_button_pressed (LrgInput       *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_is_mouse_button_down:
  * @self: an #LrgInput
  * @button: the mouse button to check
@@ -566,7 +566,7 @@ lrg_input_is_mouse_button_down (LrgInput       *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_is_mouse_button_released:
  * @self: an #LrgInput
  * @button: the mouse button to check
@@ -590,7 +590,7 @@ lrg_input_is_mouse_button_released (LrgInput       *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_get_mouse_position:
  * @self: an #LrgInput
  * @x: (out) (optional): location to store X coordinate
@@ -619,7 +619,7 @@ lrg_input_get_mouse_position (LrgInput *self,
 	}
 }
 
-/**
+/*
  * lrg_input_get_mouse_delta:
  * @self: an #LrgInput
  * @dx: (out) (optional): location to store X delta
@@ -650,7 +650,7 @@ lrg_input_get_mouse_delta (LrgInput *self,
 
 /* Gamepad */
 
-/**
+/*
  * lrg_input_is_gamepad_available:
  * @self: an #LrgInput
  * @gamepad: the gamepad index (0-3)
@@ -674,7 +674,7 @@ lrg_input_is_gamepad_available (LrgInput *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_is_gamepad_button_pressed:
  * @self: an #LrgInput
  * @gamepad: the gamepad index (0-3)
@@ -700,7 +700,7 @@ lrg_input_is_gamepad_button_pressed (LrgInput         *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_is_gamepad_button_down:
  * @self: an #LrgInput
  * @gamepad: the gamepad index (0-3)
@@ -726,7 +726,7 @@ lrg_input_is_gamepad_button_down (LrgInput         *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_is_gamepad_button_released:
  * @self: an #LrgInput
  * @gamepad: the gamepad index (0-3)
@@ -752,7 +752,7 @@ lrg_input_is_gamepad_button_released (LrgInput         *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_get_gamepad_axis:
  * @self: an #LrgInput
  * @gamepad: the gamepad index (0-3)

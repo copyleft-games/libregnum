@@ -644,7 +644,7 @@ lrg_mod_real_load (LrgMod   *self,
     return success;
 }
 
-/**
+/*
  * lrg_mod_load:
  * @self: a #LrgMod
  * @error: (nullable): return location for error
@@ -703,7 +703,7 @@ lrg_mod_real_unload (LrgMod *self)
     lrg_info (LRG_LOG_DOMAIN_MOD, "Unloaded mod: %s", lrg_mod_get_id (self));
 }
 
-/**
+/*
  * lrg_mod_unload:
  * @self: a #LrgMod
  *
@@ -843,7 +843,7 @@ lrg_mod_real_get_display_info (LrgMod *self)
         return g_strdup (name);
 }
 
-/**
+/*
  * lrg_mod_can_load:
  * @self: a #LrgMod
  * @error: (nullable): return location for error
@@ -868,7 +868,7 @@ lrg_mod_can_load (LrgMod   *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_mod_get_display_info:
  * @self: a #LrgMod
  *
@@ -895,7 +895,7 @@ lrg_mod_get_display_info (LrgMod *self)
  * Scripting and failure state
  * ========================================================================== */
 
-/**
+/*
  * lrg_mod_get_scripting:
  * @self: a #LrgMod
  *
@@ -915,7 +915,7 @@ lrg_mod_get_scripting (LrgMod *self)
     return priv->scripting;
 }
 
-/**
+/*
  * lrg_mod_mark_failed:
  * @self: a #LrgMod
  * @message: why the mod failed

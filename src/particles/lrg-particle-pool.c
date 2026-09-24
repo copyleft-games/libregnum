@@ -300,7 +300,7 @@ lrg_particle_pool_grow (LrgParticlePool *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_particle_pool_new:
  * @initial_capacity: Initial number of particles to allocate
  *
@@ -316,7 +316,7 @@ lrg_particle_pool_new (guint initial_capacity)
                                                0);
 }
 
-/**
+/*
  * lrg_particle_pool_new_with_policy:
  * @initial_capacity: Initial number of particles to allocate
  * @policy: The grow policy to use
@@ -345,7 +345,7 @@ lrg_particle_pool_new_with_policy (guint             initial_capacity,
     return self;
 }
 
-/**
+/*
  * lrg_particle_pool_acquire:
  * @self: A #LrgParticlePool
  *
@@ -431,7 +431,7 @@ lrg_particle_pool_acquire (LrgParticlePool *self)
     return lrg_particle_pool_acquire (self);
 }
 
-/**
+/*
  * lrg_particle_pool_release:
  * @self: A #LrgParticlePool
  * @particle: The particle to release
@@ -465,7 +465,7 @@ lrg_particle_pool_release (LrgParticlePool *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FREE_COUNT]);
 }
 
-/**
+/*
  * lrg_particle_pool_release_dead:
  * @self: A #LrgParticlePool
  *
@@ -525,7 +525,7 @@ lrg_particle_pool_release_dead (LrgParticlePool *self)
     return released;
 }
 
-/**
+/*
  * lrg_particle_pool_get_capacity:
  * @self: A #LrgParticlePool
  *
@@ -541,7 +541,7 @@ lrg_particle_pool_get_capacity (LrgParticlePool *self)
     return self->capacity;
 }
 
-/**
+/*
  * lrg_particle_pool_get_alive_count:
  * @self: A #LrgParticlePool
  *
@@ -557,7 +557,7 @@ lrg_particle_pool_get_alive_count (LrgParticlePool *self)
     return self->alive_count;
 }
 
-/**
+/*
  * lrg_particle_pool_get_free_count:
  * @self: A #LrgParticlePool
  *
@@ -573,7 +573,7 @@ lrg_particle_pool_get_free_count (LrgParticlePool *self)
     return self->free_count;
 }
 
-/**
+/*
  * lrg_particle_pool_is_full:
  * @self: A #LrgParticlePool
  *
@@ -598,7 +598,7 @@ lrg_particle_pool_is_full (LrgParticlePool *self)
     return FALSE;
 }
 
-/**
+/*
  * lrg_particle_pool_is_empty:
  * @self: A #LrgParticlePool
  *
@@ -614,7 +614,7 @@ lrg_particle_pool_is_empty (LrgParticlePool *self)
     return self->alive_count == 0;
 }
 
-/**
+/*
  * lrg_particle_pool_clear:
  * @self: A #LrgParticlePool
  *
@@ -642,7 +642,7 @@ lrg_particle_pool_clear (LrgParticlePool *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FREE_COUNT]);
 }
 
-/**
+/*
  * lrg_particle_pool_foreach_alive:
  * @self: A #LrgParticlePool
  * @func: (scope call): Callback function
@@ -672,7 +672,7 @@ lrg_particle_pool_foreach_alive (LrgParticlePool        *self,
     }
 }
 
-/**
+/*
  * lrg_particle_pool_get_particles:
  * @self: A #LrgParticlePool
  * @out_count: (out) (optional): Location to store count
@@ -693,7 +693,7 @@ lrg_particle_pool_get_particles (LrgParticlePool *self,
     return self->particles;
 }
 
-/**
+/*
  * lrg_particle_pool_update_all:
  * @self: A #LrgParticlePool
  * @delta_time: Time step in seconds
@@ -741,7 +741,7 @@ lrg_particle_pool_update_all (LrgParticlePool *self,
     return still_alive;
 }
 
-/**
+/*
  * lrg_particle_pool_get_grow_policy:
  * @self: A #LrgParticlePool
  *
@@ -757,7 +757,7 @@ lrg_particle_pool_get_grow_policy (LrgParticlePool *self)
     return self->grow_policy;
 }
 
-/**
+/*
  * lrg_particle_pool_set_grow_policy:
  * @self: A #LrgParticlePool
  * @policy: The new grow policy
@@ -777,7 +777,7 @@ lrg_particle_pool_set_grow_policy (LrgParticlePool   *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_GROW_POLICY]);
 }
 
-/**
+/*
  * lrg_particle_pool_get_max_capacity:
  * @self: A #LrgParticlePool
  *
@@ -793,7 +793,7 @@ lrg_particle_pool_get_max_capacity (LrgParticlePool *self)
     return self->max_capacity;
 }
 
-/**
+/*
  * lrg_particle_pool_set_max_capacity:
  * @self: A #LrgParticlePool
  * @max_capacity: The new maximum capacity
@@ -813,7 +813,7 @@ lrg_particle_pool_set_max_capacity (LrgParticlePool *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MAX_CAPACITY]);
 }
 
-/**
+/*
  * lrg_particle_pool_reserve:
  * @self: A #LrgParticlePool
  * @capacity: The desired minimum capacity
@@ -834,7 +834,7 @@ lrg_particle_pool_reserve (LrgParticlePool *self,
     return lrg_particle_pool_grow (self, capacity);
 }
 
-/**
+/*
  * lrg_particle_pool_shrink_to_fit:
  * @self: A #LrgParticlePool
  *

@@ -37,7 +37,7 @@ G_DEFINE_BOXED_TYPE (LrgUIEvent, lrg_ui_event,
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_ui_event_new:
  * @type: the event type
  *
@@ -63,7 +63,7 @@ lrg_ui_event_new (LrgUIEventType type)
     return self;
 }
 
-/**
+/*
  * lrg_ui_event_new_mouse_move:
  * @x: the mouse X position
  * @y: the mouse Y position
@@ -85,7 +85,7 @@ lrg_ui_event_new_mouse_move (gfloat x,
     return self;
 }
 
-/**
+/*
  * lrg_ui_event_new_mouse_button:
  * @type: %LRG_UI_EVENT_MOUSE_BUTTON_DOWN or %LRG_UI_EVENT_MOUSE_BUTTON_UP
  * @button: the mouse button (0=left, 1=right, 2=middle)
@@ -115,7 +115,7 @@ lrg_ui_event_new_mouse_button (LrgUIEventType type,
     return self;
 }
 
-/**
+/*
  * lrg_ui_event_new_key:
  * @type: %LRG_UI_EVENT_KEY_DOWN or %LRG_UI_EVENT_KEY_UP
  * @key: the keyboard key
@@ -139,7 +139,7 @@ lrg_ui_event_new_key (LrgUIEventType type,
     return self;
 }
 
-/**
+/*
  * lrg_ui_event_new_scroll:
  * @x: the mouse X position
  * @y: the mouse Y position
@@ -167,7 +167,7 @@ lrg_ui_event_new_scroll (gfloat x,
     return self;
 }
 
-/**
+/*
  * lrg_ui_event_new_focus_in:
  *
  * Creates a new focus-in event.
@@ -180,7 +180,7 @@ lrg_ui_event_new_focus_in (void)
     return lrg_ui_event_new (LRG_UI_EVENT_FOCUS_IN);
 }
 
-/**
+/*
  * lrg_ui_event_new_focus_out:
  *
  * Creates a new focus-out event.
@@ -197,7 +197,7 @@ lrg_ui_event_new_focus_out (void)
  * Copy/Free
  * ========================================================================== */
 
-/**
+/*
  * lrg_ui_event_copy:
  * @self: an #LrgUIEvent
  *
@@ -225,7 +225,7 @@ lrg_ui_event_copy (const LrgUIEvent *self)
     return copy;
 }
 
-/**
+/*
  * lrg_ui_event_free:
  * @self: an #LrgUIEvent
  *
@@ -243,7 +243,7 @@ lrg_ui_event_free (LrgUIEvent *self)
  * Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_ui_event_get_event_type:
  * @self: an #LrgUIEvent
  *
@@ -259,7 +259,7 @@ lrg_ui_event_get_event_type (const LrgUIEvent *self)
     return self->type;
 }
 
-/**
+/*
  * lrg_ui_event_get_x:
  * @self: an #LrgUIEvent
  *
@@ -275,7 +275,7 @@ lrg_ui_event_get_x (const LrgUIEvent *self)
     return self->x;
 }
 
-/**
+/*
  * lrg_ui_event_get_y:
  * @self: an #LrgUIEvent
  *
@@ -291,7 +291,7 @@ lrg_ui_event_get_y (const LrgUIEvent *self)
     return self->y;
 }
 
-/**
+/*
  * lrg_ui_event_get_button:
  * @self: an #LrgUIEvent
  *
@@ -307,7 +307,7 @@ lrg_ui_event_get_button (const LrgUIEvent *self)
     return self->button;
 }
 
-/**
+/*
  * lrg_ui_event_get_key:
  * @self: an #LrgUIEvent
  *
@@ -323,7 +323,7 @@ lrg_ui_event_get_key (const LrgUIEvent *self)
     return self->key;
 }
 
-/**
+/*
  * lrg_ui_event_get_scroll_x:
  * @self: an #LrgUIEvent
  *
@@ -339,7 +339,7 @@ lrg_ui_event_get_scroll_x (const LrgUIEvent *self)
     return self->scroll_x;
 }
 
-/**
+/*
  * lrg_ui_event_get_scroll_y:
  * @self: an #LrgUIEvent
  *
@@ -359,7 +359,7 @@ lrg_ui_event_get_scroll_y (const LrgUIEvent *self)
  * Event State
  * ========================================================================== */
 
-/**
+/*
  * lrg_ui_event_get_consumed:
  * @self: an #LrgUIEvent
  *
@@ -375,7 +375,7 @@ lrg_ui_event_get_consumed (const LrgUIEvent *self)
     return self->consumed;
 }
 
-/**
+/*
  * lrg_ui_event_set_consumed:
  * @self: an #LrgUIEvent
  * @consumed: whether the event is consumed
@@ -391,7 +391,7 @@ lrg_ui_event_set_consumed (LrgUIEvent *self,
     self->consumed = consumed;
 }
 
-/**
+/*
  * lrg_ui_event_consume:
  * @self: an #LrgUIEvent
  *

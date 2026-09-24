@@ -380,7 +380,7 @@ lrg_trigger_manager_init (LrgTriggerManager *self)
 
 /* Public API */
 
-/**
+/*
  * lrg_trigger_manager_new:
  *
  * Creates a new trigger manager.
@@ -395,7 +395,7 @@ lrg_trigger_manager_new (void)
     return g_object_new (LRG_TYPE_TRIGGER_MANAGER, NULL);
 }
 
-/**
+/*
  * lrg_trigger_manager_add_trigger:
  * @self: A #LrgTriggerManager
  * @trigger: The trigger to add
@@ -429,7 +429,7 @@ lrg_trigger_manager_add_trigger (LrgTriggerManager *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_manager_remove_trigger:
  * @self: A #LrgTriggerManager
  * @trigger: The trigger to remove
@@ -471,7 +471,7 @@ lrg_trigger_manager_remove_trigger (LrgTriggerManager *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_trigger_manager_remove_trigger_by_id:
  * @self: A #LrgTriggerManager
  * @id: The trigger ID to remove
@@ -498,7 +498,7 @@ lrg_trigger_manager_remove_trigger_by_id (LrgTriggerManager *self,
     return lrg_trigger_manager_remove_trigger (self, trigger);
 }
 
-/**
+/*
  * lrg_trigger_manager_get_trigger:
  * @self: A #LrgTriggerManager
  * @id: The trigger ID to find
@@ -519,7 +519,7 @@ lrg_trigger_manager_get_trigger (LrgTriggerManager *self,
     return g_hash_table_lookup (self->triggers_by_id, id);
 }
 
-/**
+/*
  * lrg_trigger_manager_get_triggers:
  * @self: A #LrgTriggerManager
  *
@@ -536,7 +536,7 @@ lrg_trigger_manager_get_triggers (LrgTriggerManager *self)
     return self->triggers;
 }
 
-/**
+/*
  * lrg_trigger_manager_get_trigger_count:
  * @self: A #LrgTriggerManager
  *
@@ -553,7 +553,7 @@ lrg_trigger_manager_get_trigger_count (LrgTriggerManager *self)
     return self->triggers->len;
 }
 
-/**
+/*
  * lrg_trigger_manager_clear:
  * @self: A #LrgTriggerManager
  *
@@ -582,7 +582,7 @@ lrg_trigger_manager_clear (LrgTriggerManager *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TRIGGER_COUNT]);
 }
 
-/**
+/*
  * lrg_trigger_manager_register_entity:
  * @self: A #LrgTriggerManager
  * @entity: The entity to track
@@ -616,7 +616,7 @@ lrg_trigger_manager_register_entity (LrgTriggerManager *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_manager_unregister_entity:
  * @self: A #LrgTriggerManager
  * @entity: The entity to unregister
@@ -656,7 +656,7 @@ lrg_trigger_manager_unregister_entity (LrgTriggerManager *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_manager_set_entity_position:
  * @self: A #LrgTriggerManager
  * @entity: The entity
@@ -686,7 +686,7 @@ lrg_trigger_manager_set_entity_position (LrgTriggerManager *self,
     state->y = y;
 }
 
-/**
+/*
  * lrg_trigger_manager_set_entity_layer:
  * @self: A #LrgTriggerManager
  * @entity: The entity
@@ -713,7 +713,7 @@ lrg_trigger_manager_set_entity_layer (LrgTriggerManager *self,
     state->collision_layer = collision_layer;
 }
 
-/**
+/*
  * lrg_trigger_manager_update:
  * @self: A #LrgTriggerManager
  * @delta_time: Time elapsed since last update
@@ -751,7 +751,7 @@ lrg_trigger_manager_update (LrgTriggerManager *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_manager_check_point:
  * @self: A #LrgTriggerManager
  * @x: X coordinate to check
@@ -794,7 +794,7 @@ lrg_trigger_manager_check_point (LrgTriggerManager *self,
     return result;
 }
 
-/**
+/*
  * lrg_trigger_manager_check_bounds:
  * @self: A #LrgTriggerManager
  * @x: X coordinate of bounds
@@ -849,7 +849,7 @@ lrg_trigger_manager_check_bounds (LrgTriggerManager *self,
     return result;
 }
 
-/**
+/*
  * lrg_trigger_manager_get_entities_in_trigger:
  * @self: A #LrgTriggerManager
  * @trigger: The trigger to check
@@ -883,7 +883,7 @@ lrg_trigger_manager_get_entities_in_trigger (LrgTriggerManager *self,
     return result;
 }
 
-/**
+/*
  * lrg_trigger_manager_get_triggers_containing_entity:
  * @self: A #LrgTriggerManager
  * @entity: The entity to check
@@ -921,7 +921,7 @@ lrg_trigger_manager_get_triggers_containing_entity (LrgTriggerManager *self,
     return result;
 }
 
-/**
+/*
  * lrg_trigger_manager_set_debug_enabled:
  * @self: A #LrgTriggerManager
  * @enabled: Whether debug mode is enabled
@@ -943,7 +943,7 @@ lrg_trigger_manager_set_debug_enabled (LrgTriggerManager *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_manager_is_debug_enabled:
  * @self: A #LrgTriggerManager
  *

@@ -480,7 +480,7 @@ lrg_tooltip_arrow_init (LrgTooltipArrow *self)
     self->use_manual_position = FALSE;
 }
 
-/**
+/*
  * lrg_tooltip_arrow_new:
  *
  * Creates a new tooltip arrow widget.
@@ -495,7 +495,7 @@ lrg_tooltip_arrow_new (void)
     return g_object_new (LRG_TYPE_TOOLTIP_ARROW, NULL);
 }
 
-/**
+/*
  * lrg_tooltip_arrow_new_with_direction:
  * @direction: The arrow direction
  *
@@ -513,7 +513,7 @@ lrg_tooltip_arrow_new_with_direction (LrgArrowDirection direction)
                          NULL);
 }
 
-/**
+/*
  * lrg_tooltip_arrow_get_direction:
  * @self: An #LrgTooltipArrow
  *
@@ -530,7 +530,7 @@ lrg_tooltip_arrow_get_direction (LrgTooltipArrow *self)
     return self->direction;
 }
 
-/**
+/*
  * lrg_tooltip_arrow_set_direction:
  * @self: An #LrgTooltipArrow
  * @direction: The arrow direction
@@ -552,7 +552,7 @@ lrg_tooltip_arrow_set_direction (LrgTooltipArrow  *self,
     }
 }
 
-/**
+/*
  * lrg_tooltip_arrow_get_target:
  * @self: An #LrgTooltipArrow
  *
@@ -569,7 +569,7 @@ lrg_tooltip_arrow_get_target (LrgTooltipArrow *self)
     return self->target;
 }
 
-/**
+/*
  * lrg_tooltip_arrow_set_target:
  * @self: An #LrgTooltipArrow
  * @target: (nullable): The widget to point at
@@ -591,7 +591,7 @@ lrg_tooltip_arrow_set_target (LrgTooltipArrow *self,
     }
 }
 
-/**
+/*
  * lrg_tooltip_arrow_set_target_position:
  * @self: An #LrgTooltipArrow
  * @x: Target X position
@@ -615,7 +615,7 @@ lrg_tooltip_arrow_set_target_position (LrgTooltipArrow *self,
     g_clear_object (&self->target);
 }
 
-/**
+/*
  * lrg_tooltip_arrow_get_color:
  * @self: An #LrgTooltipArrow
  *
@@ -632,7 +632,7 @@ lrg_tooltip_arrow_get_color (LrgTooltipArrow *self)
     return &self->color;
 }
 
-/**
+/*
  * lrg_tooltip_arrow_set_color:
  * @self: An #LrgTooltipArrow
  * @color: The arrow color
@@ -658,7 +658,7 @@ lrg_tooltip_arrow_set_color (LrgTooltipArrow *self,
     }
 }
 
-/**
+/*
  * lrg_tooltip_arrow_get_size:
  * @self: An #LrgTooltipArrow
  *
@@ -675,7 +675,7 @@ lrg_tooltip_arrow_get_size (LrgTooltipArrow *self)
     return self->size;
 }
 
-/**
+/*
  * lrg_tooltip_arrow_set_size:
  * @self: An #LrgTooltipArrow
  * @size: The size in pixels
@@ -697,7 +697,7 @@ lrg_tooltip_arrow_set_size (LrgTooltipArrow *self,
     }
 }
 
-/**
+/*
  * lrg_tooltip_arrow_get_offset:
  * @self: An #LrgTooltipArrow
  *
@@ -714,7 +714,7 @@ lrg_tooltip_arrow_get_offset (LrgTooltipArrow *self)
     return self->offset;
 }
 
-/**
+/*
  * lrg_tooltip_arrow_set_offset:
  * @self: An #LrgTooltipArrow
  * @offset: The offset in pixels
@@ -736,7 +736,7 @@ lrg_tooltip_arrow_set_offset (LrgTooltipArrow *self,
     }
 }
 
-/**
+/*
  * lrg_tooltip_arrow_get_animated:
  * @self: An #LrgTooltipArrow
  *
@@ -753,7 +753,7 @@ lrg_tooltip_arrow_get_animated (LrgTooltipArrow *self)
     return self->animated;
 }
 
-/**
+/*
  * lrg_tooltip_arrow_set_animated:
  * @self: An #LrgTooltipArrow
  * @animated: Whether to animate
@@ -775,7 +775,7 @@ lrg_tooltip_arrow_set_animated (LrgTooltipArrow *self,
     }
 }
 
-/**
+/*
  * lrg_tooltip_arrow_get_bounce_amount:
  * @self: An #LrgTooltipArrow
  *
@@ -792,7 +792,7 @@ lrg_tooltip_arrow_get_bounce_amount (LrgTooltipArrow *self)
     return self->bounce_amount;
 }
 
-/**
+/*
  * lrg_tooltip_arrow_set_bounce_amount:
  * @self: An #LrgTooltipArrow
  * @amount: The bounce amount in pixels
@@ -814,7 +814,7 @@ lrg_tooltip_arrow_set_bounce_amount (LrgTooltipArrow *self,
     }
 }
 
-/**
+/*
  * lrg_tooltip_arrow_get_bounce_speed:
  * @self: An #LrgTooltipArrow
  *
@@ -831,7 +831,7 @@ lrg_tooltip_arrow_get_bounce_speed (LrgTooltipArrow *self)
     return self->bounce_speed;
 }
 
-/**
+/*
  * lrg_tooltip_arrow_set_bounce_speed:
  * @self: An #LrgTooltipArrow
  * @speed: The bounce speed
@@ -853,7 +853,7 @@ lrg_tooltip_arrow_set_bounce_speed (LrgTooltipArrow *self,
     }
 }
 
-/**
+/*
  * lrg_tooltip_arrow_update:
  * @self: An #LrgTooltipArrow
  * @delta_time: Time since last update in seconds

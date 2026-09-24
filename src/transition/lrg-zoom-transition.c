@@ -435,7 +435,7 @@ lrg_zoom_transition_init (LrgZoomTransition *self)
  * Public API
  */
 
-/**
+/*
  * lrg_zoom_transition_new:
  *
  * Creates a new zoom transition with default settings.
@@ -450,7 +450,7 @@ lrg_zoom_transition_new (void)
     return g_object_new (LRG_TYPE_ZOOM_TRANSITION, NULL);
 }
 
-/**
+/*
  * lrg_zoom_transition_new_with_direction:
  * @direction: The zoom direction
  *
@@ -468,7 +468,7 @@ lrg_zoom_transition_new_with_direction (LrgZoomDirection direction)
                          NULL);
 }
 
-/**
+/*
  * lrg_zoom_transition_get_direction:
  * @self: A #LrgZoomTransition
  *
@@ -486,7 +486,7 @@ lrg_zoom_transition_get_direction (LrgZoomTransition *self)
     return self->direction;
 }
 
-/**
+/*
  * lrg_zoom_transition_set_direction:
  * @self: A #LrgZoomTransition
  * @direction: The zoom direction
@@ -508,7 +508,7 @@ lrg_zoom_transition_set_direction (LrgZoomTransition *self,
     }
 }
 
-/**
+/*
  * lrg_zoom_transition_get_scale:
  * @self: A #LrgZoomTransition
  *
@@ -526,7 +526,7 @@ lrg_zoom_transition_get_scale (LrgZoomTransition *self)
     return self->scale;
 }
 
-/**
+/*
  * lrg_zoom_transition_set_scale:
  * @self: A #LrgZoomTransition
  * @scale: Maximum zoom scale
@@ -550,7 +550,7 @@ lrg_zoom_transition_set_scale (LrgZoomTransition *self,
     }
 }
 
-/**
+/*
  * lrg_zoom_transition_get_center_x:
  * @self: A #LrgZoomTransition
  *
@@ -568,7 +568,7 @@ lrg_zoom_transition_get_center_x (LrgZoomTransition *self)
     return self->center_x;
 }
 
-/**
+/*
  * lrg_zoom_transition_get_center_y:
  * @self: A #LrgZoomTransition
  *
@@ -586,7 +586,7 @@ lrg_zoom_transition_get_center_y (LrgZoomTransition *self)
     return self->center_y;
 }
 
-/**
+/*
  * lrg_zoom_transition_set_center:
  * @self: A #LrgZoomTransition
  * @x: Center X (0.0-1.0)

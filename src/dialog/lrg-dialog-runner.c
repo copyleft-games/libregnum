@@ -204,7 +204,7 @@ lrg_dialog_runner_init (LrgDialogRunner *self)
     self->active = FALSE;
 }
 
-/**
+/*
  * lrg_dialog_runner_new:
  *
  * Creates a new dialog runner.
@@ -217,7 +217,7 @@ lrg_dialog_runner_new (void)
     return g_object_new (LRG_TYPE_DIALOG_RUNNER, NULL);
 }
 
-/**
+/*
  * lrg_dialog_runner_get_tree:
  * @self: an #LrgDialogRunner
  *
@@ -232,7 +232,7 @@ lrg_dialog_runner_get_tree (LrgDialogRunner *self)
     return self->tree;
 }
 
-/**
+/*
  * lrg_dialog_runner_set_tree:
  * @self: an #LrgDialogRunner
  * @tree: (nullable): dialog tree to set
@@ -252,7 +252,7 @@ lrg_dialog_runner_set_tree (LrgDialogRunner *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TREE]);
 }
 
-/**
+/*
  * lrg_dialog_runner_get_current_node:
  * @self: an #LrgDialogRunner
  *
@@ -293,7 +293,7 @@ enter_node (LrgDialogRunner *self,
     }
 }
 
-/**
+/*
  * lrg_dialog_runner_start:
  * @self: an #LrgDialogRunner
  * @error: (nullable): return location for error
@@ -336,7 +336,7 @@ lrg_dialog_runner_start (LrgDialogRunner  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_dialog_runner_start_at:
  * @self: an #LrgDialogRunner
  * @node_id: node ID to start at
@@ -383,7 +383,7 @@ lrg_dialog_runner_start_at (LrgDialogRunner  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_dialog_runner_advance:
  * @self: an #LrgDialogRunner
  * @error: (nullable): return location for error
@@ -437,7 +437,7 @@ lrg_dialog_runner_advance (LrgDialogRunner  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_dialog_runner_select_response:
  * @self: an #LrgDialogRunner
  * @index: response index
@@ -508,7 +508,7 @@ lrg_dialog_runner_select_response (LrgDialogRunner  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_dialog_runner_is_active:
  * @self: an #LrgDialogRunner
  *
@@ -523,7 +523,7 @@ lrg_dialog_runner_is_active (LrgDialogRunner *self)
     return self->active;
 }
 
-/**
+/*
  * lrg_dialog_runner_is_at_choice:
  * @self: an #LrgDialogRunner
  *
@@ -542,7 +542,7 @@ lrg_dialog_runner_is_at_choice (LrgDialogRunner *self)
     return (lrg_dialog_node_get_response_count (self->current_node) > 0);
 }
 
-/**
+/*
  * lrg_dialog_runner_stop:
  * @self: an #LrgDialogRunner
  *
@@ -562,7 +562,7 @@ lrg_dialog_runner_stop (LrgDialogRunner *self)
     }
 }
 
-/**
+/*
  * lrg_dialog_runner_get_available_responses:
  * @self: an #LrgDialogRunner
  *
@@ -605,7 +605,7 @@ lrg_dialog_runner_get_available_responses (LrgDialogRunner *self)
     return available;
 }
 
-/**
+/*
  * lrg_dialog_runner_get_context:
  * @self: an #LrgDialogRunner
  *
@@ -620,7 +620,7 @@ lrg_dialog_runner_get_context (LrgDialogRunner *self)
     return self->context;
 }
 
-/**
+/*
  * lrg_dialog_runner_set_variable:
  * @self: an #LrgDialogRunner
  * @key: variable name
@@ -639,7 +639,7 @@ lrg_dialog_runner_set_variable (LrgDialogRunner *self,
     g_hash_table_replace (self->context, g_strdup (key), g_strdup (value));
 }
 
-/**
+/*
  * lrg_dialog_runner_get_variable:
  * @self: an #LrgDialogRunner
  * @key: variable name

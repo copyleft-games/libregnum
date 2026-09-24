@@ -147,7 +147,7 @@ lrg_reel_clock_wipe_transition_init (LrgReelClockWipeTransition *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_clock_wipe_transition_new:
  *
  * Creates a new #LrgReelClockWipeTransition.

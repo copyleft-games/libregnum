@@ -230,7 +230,7 @@ gamepad_axis_to_string (GrlGamepadAxis axis)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_binding_new_keyboard:
  * @key: the keyboard key
  * @modifiers: modifier keys (Shift, Ctrl, Alt)
@@ -254,7 +254,7 @@ lrg_input_binding_new_keyboard (GrlKey            key,
     return self;
 }
 
-/**
+/*
  * lrg_input_binding_new_mouse_button:
  * @button: the mouse button
  * @modifiers: modifier keys (Shift, Ctrl, Alt)
@@ -278,7 +278,7 @@ lrg_input_binding_new_mouse_button (GrlMouseButton    button,
     return self;
 }
 
-/**
+/*
  * lrg_input_binding_new_gamepad_button:
  * @gamepad: the gamepad index (0-3)
  * @button: the gamepad button
@@ -304,7 +304,7 @@ lrg_input_binding_new_gamepad_button (gint             gamepad,
     return self;
 }
 
-/**
+/*
  * lrg_input_binding_new_gamepad_axis:
  * @gamepad: the gamepad index (0-3)
  * @axis: the gamepad axis
@@ -343,7 +343,7 @@ lrg_input_binding_new_gamepad_axis (gint           gamepad,
  * Copy/Free
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_binding_copy:
  * @self: an #LrgInputBinding
  *
@@ -364,7 +364,7 @@ lrg_input_binding_copy (const LrgInputBinding *self)
     return copy;
 }
 
-/**
+/*
  * lrg_input_binding_free:
  * @self: an #LrgInputBinding
  *
@@ -380,7 +380,7 @@ lrg_input_binding_free (LrgInputBinding *self)
  * Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_binding_get_binding_type:
  * @self: an #LrgInputBinding
  *
@@ -396,7 +396,7 @@ lrg_input_binding_get_binding_type (const LrgInputBinding *self)
     return self->type;
 }
 
-/**
+/*
  * lrg_input_binding_get_key:
  * @self: an #LrgInputBinding
  *
@@ -417,7 +417,7 @@ lrg_input_binding_get_key (const LrgInputBinding *self)
     return self->input.key;
 }
 
-/**
+/*
  * lrg_input_binding_get_mouse_button:
  * @self: an #LrgInputBinding
  *
@@ -438,7 +438,7 @@ lrg_input_binding_get_mouse_button (const LrgInputBinding *self)
     return self->input.mouse_button;
 }
 
-/**
+/*
  * lrg_input_binding_get_gamepad_button:
  * @self: an #LrgInputBinding
  *
@@ -459,7 +459,7 @@ lrg_input_binding_get_gamepad_button (const LrgInputBinding *self)
     return self->input.gamepad_button;
 }
 
-/**
+/*
  * lrg_input_binding_get_gamepad_axis:
  * @self: an #LrgInputBinding
  *
@@ -480,7 +480,7 @@ lrg_input_binding_get_gamepad_axis (const LrgInputBinding *self)
     return self->input.axis.axis;
 }
 
-/**
+/*
  * lrg_input_binding_get_gamepad:
  * @self: an #LrgInputBinding
  *
@@ -496,7 +496,7 @@ lrg_input_binding_get_gamepad (const LrgInputBinding *self)
     return self->gamepad;
 }
 
-/**
+/*
  * lrg_input_binding_get_modifiers:
  * @self: an #LrgInputBinding
  *
@@ -512,7 +512,7 @@ lrg_input_binding_get_modifiers (const LrgInputBinding *self)
     return self->modifiers;
 }
 
-/**
+/*
  * lrg_input_binding_get_threshold:
  * @self: an #LrgInputBinding
  *
@@ -533,7 +533,7 @@ lrg_input_binding_get_threshold (const LrgInputBinding *self)
     return self->input.axis.threshold;
 }
 
-/**
+/*
  * lrg_input_binding_get_positive:
  * @self: an #LrgInputBinding
  *
@@ -558,7 +558,7 @@ lrg_input_binding_get_positive (const LrgInputBinding *self)
  * State Query
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_binding_is_pressed:
  * @self: an #LrgInputBinding
  *
@@ -615,7 +615,7 @@ lrg_input_binding_is_pressed (const LrgInputBinding *self)
     }
 }
 
-/**
+/*
  * lrg_input_binding_is_down:
  * @self: an #LrgInputBinding
  *
@@ -670,7 +670,7 @@ lrg_input_binding_is_down (const LrgInputBinding *self)
     }
 }
 
-/**
+/*
  * lrg_input_binding_is_released:
  * @self: an #LrgInputBinding
  *
@@ -719,7 +719,7 @@ lrg_input_binding_is_released (const LrgInputBinding *self)
     }
 }
 
-/**
+/*
  * lrg_input_binding_get_axis_value:
  * @self: an #LrgInputBinding
  *
@@ -752,7 +752,7 @@ lrg_input_binding_get_axis_value (const LrgInputBinding *self)
  * Display
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_binding_to_string:
  * @self: an #LrgInputBinding
  *
@@ -810,7 +810,7 @@ lrg_input_binding_to_string (const LrgInputBinding *self)
     return g_string_free (str, FALSE);
 }
 
-/**
+/*
  * lrg_input_binding_to_display_string:
  * @self: an #LrgInputBinding
  * @gamepad_type: the controller type for button/axis names

@@ -179,7 +179,7 @@ lrg_plane3d_init (LrgPlane3D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_plane3d_new:
  *
  * Creates a new plane at the origin with size 2x2.
@@ -192,7 +192,7 @@ lrg_plane3d_new (void)
 	return g_object_new (LRG_TYPE_PLANE3D, NULL);
 }
 
-/**
+/*
  * lrg_plane3d_new_at:
  * @x: X position
  * @y: Y position
@@ -222,7 +222,7 @@ lrg_plane3d_new_at (gfloat x,
 	return plane;
 }
 
-/**
+/*
  * lrg_plane3d_new_full:
  * @x: X position
  * @y: Y position
@@ -257,7 +257,7 @@ lrg_plane3d_new_full (gfloat    x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_plane3d_get_width:
  * @self: an #LrgPlane3D
  *
@@ -273,7 +273,7 @@ lrg_plane3d_get_width (LrgPlane3D *self)
 	return self->width;
 }
 
-/**
+/*
  * lrg_plane3d_set_width:
  * @self: an #LrgPlane3D
  * @width: the width value
@@ -294,7 +294,7 @@ lrg_plane3d_set_width (LrgPlane3D *self,
 	}
 }
 
-/**
+/*
  * lrg_plane3d_get_length:
  * @self: an #LrgPlane3D
  *
@@ -310,7 +310,7 @@ lrg_plane3d_get_length (LrgPlane3D *self)
 	return self->length;
 }
 
-/**
+/*
  * lrg_plane3d_set_length:
  * @self: an #LrgPlane3D
  * @length: the length value
@@ -331,7 +331,7 @@ lrg_plane3d_set_length (LrgPlane3D *self,
 	}
 }
 
-/**
+/*
  * lrg_plane3d_get_size:
  * @self: an #LrgPlane3D
  *
@@ -347,7 +347,7 @@ lrg_plane3d_get_size (LrgPlane3D *self)
 	return grl_vector2_new (self->width, self->length);
 }
 
-/**
+/*
  * lrg_plane3d_set_size:
  * @self: an #LrgPlane3D
  * @size: (transfer none): the size (width, length)

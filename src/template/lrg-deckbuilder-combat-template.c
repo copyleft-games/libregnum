@@ -335,7 +335,7 @@ lrg_deckbuilder_combat_template_class_init (LrgDeckbuilderCombatTemplateClass *k
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_combat_template_new:
  *
  * Creates a new combat template with default settings.
@@ -352,7 +352,7 @@ lrg_deckbuilder_combat_template_new (void)
  * Public API - Combat Context
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_combat_context:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -368,7 +368,7 @@ lrg_deckbuilder_combat_template_get_combat_context (LrgDeckbuilderCombatTemplate
     return self->combat_context;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_combat_rules:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -384,7 +384,7 @@ lrg_deckbuilder_combat_template_get_combat_rules (LrgDeckbuilderCombatTemplate *
     return self->combat_rules;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_set_combat_rules:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @rules: (transfer none): the combat rules
@@ -409,7 +409,7 @@ lrg_deckbuilder_combat_template_set_combat_rules (LrgDeckbuilderCombatTemplate *
  * Public API - Player State
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_player:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -425,7 +425,7 @@ lrg_deckbuilder_combat_template_get_player (LrgDeckbuilderCombatTemplate *self)
     return self->player;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_player_health:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -444,7 +444,7 @@ lrg_deckbuilder_combat_template_get_player_health (LrgDeckbuilderCombatTemplate 
     return lrg_combatant_get_current_health (LRG_COMBATANT (self->player));
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_player_max_health:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -463,7 +463,7 @@ lrg_deckbuilder_combat_template_get_player_max_health (LrgDeckbuilderCombatTempl
     return lrg_combatant_get_max_health (LRG_COMBATANT (self->player));
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_set_player_max_health:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @max_health: new maximum health
@@ -484,7 +484,7 @@ lrg_deckbuilder_combat_template_set_player_max_health (LrgDeckbuilderCombatTempl
     }
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_player_block:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -503,7 +503,7 @@ lrg_deckbuilder_combat_template_get_player_block (LrgDeckbuilderCombatTemplate *
     return lrg_combatant_get_block (LRG_COMBATANT (self->player));
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_add_player_block:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @amount: block to add
@@ -529,7 +529,7 @@ lrg_deckbuilder_combat_template_add_player_block (LrgDeckbuilderCombatTemplate *
     return gained;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_heal_player:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @amount: amount to heal
@@ -559,7 +559,7 @@ lrg_deckbuilder_combat_template_heal_player (LrgDeckbuilderCombatTemplate *self,
     return healed;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_damage_player:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @amount: damage to deal
@@ -594,7 +594,7 @@ lrg_deckbuilder_combat_template_damage_player (LrgDeckbuilderCombatTemplate *sel
  * Public API - Enemy Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_combat_template_add_enemy:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @enemy: (transfer full): enemy to add
@@ -615,7 +615,7 @@ lrg_deckbuilder_combat_template_add_enemy (LrgDeckbuilderCombatTemplate *self,
     g_signal_emit (self, signals[SIGNAL_ENEMY_ADDED], 0, enemy);
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_add_enemy_from_def:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @def: (transfer none): enemy definition
@@ -642,7 +642,7 @@ lrg_deckbuilder_combat_template_add_enemy_from_def (LrgDeckbuilderCombatTemplate
     return enemy;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_remove_enemy:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @enemy: enemy to remove
@@ -667,7 +667,7 @@ lrg_deckbuilder_combat_template_remove_enemy (LrgDeckbuilderCombatTemplate *self
     g_signal_emit (self, signals[SIGNAL_ENEMY_REMOVED], 0, enemy);
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_enemies:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -686,7 +686,7 @@ lrg_deckbuilder_combat_template_get_enemies (LrgDeckbuilderCombatTemplate *self)
     return lrg_combat_context_get_enemies (self->combat_context);
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_enemy_count:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -705,7 +705,7 @@ lrg_deckbuilder_combat_template_get_enemy_count (LrgDeckbuilderCombatTemplate *s
     return lrg_combat_context_get_enemy_count (self->combat_context);
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_enemy_at:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @index: enemy index
@@ -726,7 +726,7 @@ lrg_deckbuilder_combat_template_get_enemy_at (LrgDeckbuilderCombatTemplate *self
     return lrg_combat_context_get_enemy_at (self->combat_context, index);
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_alive_enemy_count:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -757,7 +757,7 @@ lrg_deckbuilder_combat_template_get_alive_enemy_count (LrgDeckbuilderCombatTempl
     return alive_count;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_damage_enemy:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @enemy: target enemy
@@ -788,7 +788,7 @@ lrg_deckbuilder_combat_template_damage_enemy (LrgDeckbuilderCombatTemplate *self
     return damage_taken;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_damage_all_enemies:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @amount: damage to deal to each enemy
@@ -825,7 +825,7 @@ lrg_deckbuilder_combat_template_damage_all_enemies (LrgDeckbuilderCombatTemplate
  * Public API - Target Selection
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_selected_target:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -841,7 +841,7 @@ lrg_deckbuilder_combat_template_get_selected_target (LrgDeckbuilderCombatTemplat
     return self->selected_target;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_set_selected_target:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @target: (nullable): the enemy to select
@@ -857,7 +857,7 @@ lrg_deckbuilder_combat_template_set_selected_target (LrgDeckbuilderCombatTemplat
     self->selected_target = target;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_random_enemy:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -904,7 +904,7 @@ lrg_deckbuilder_combat_template_get_random_enemy (LrgDeckbuilderCombatTemplate *
  * Public API - Combat Flow
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_combat_template_is_in_combat:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -920,7 +920,7 @@ lrg_deckbuilder_combat_template_is_in_combat (LrgDeckbuilderCombatTemplate *self
     return self->in_combat;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_start_combat:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -959,7 +959,7 @@ lrg_deckbuilder_combat_template_start_combat (LrgDeckbuilderCombatTemplate *self
     lrg_info (LRG_LOG_DOMAIN_TEMPLATE, "Combat started");
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_end_combat:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @result: the combat result
@@ -993,7 +993,7 @@ lrg_deckbuilder_combat_template_end_combat (LrgDeckbuilderCombatTemplate *self,
     lrg_info (LRG_LOG_DOMAIN_TEMPLATE, "Combat ended with result %d", result);
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_get_combat_result:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -1009,7 +1009,7 @@ lrg_deckbuilder_combat_template_get_combat_result (LrgDeckbuilderCombatTemplate 
     return self->combat_result;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_end_player_turn:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -1031,7 +1031,7 @@ lrg_deckbuilder_combat_template_end_player_turn (LrgDeckbuilderCombatTemplate *s
     self->enemy_turns_complete = FALSE;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_process_enemy_turns:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -1078,7 +1078,7 @@ lrg_deckbuilder_combat_template_process_enemy_turns (LrgDeckbuilderCombatTemplat
     return FALSE;
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_check_combat_end:
  * @self: an #LrgDeckbuilderCombatTemplate
  *
@@ -1115,7 +1115,7 @@ lrg_deckbuilder_combat_template_check_combat_end (LrgDeckbuilderCombatTemplate *
  * Public API - Status Effects
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_combat_template_apply_status_to_player:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @status_id: status effect ID
@@ -1139,7 +1139,7 @@ lrg_deckbuilder_combat_template_apply_status_to_player (LrgDeckbuilderCombatTemp
     return lrg_combatant_apply_status (LRG_COMBATANT (self->player), status_id, stacks);
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_apply_status_to_enemy:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @enemy: target enemy
@@ -1163,7 +1163,7 @@ lrg_deckbuilder_combat_template_apply_status_to_enemy (LrgDeckbuilderCombatTempl
     return lrg_combatant_apply_status (LRG_COMBATANT (enemy), status_id, stacks);
 }
 
-/**
+/*
  * lrg_deckbuilder_combat_template_apply_status_to_all_enemies:
  * @self: an #LrgDeckbuilderCombatTemplate
  * @status_id: status effect ID

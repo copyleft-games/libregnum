@@ -247,7 +247,7 @@ lrg_icosphere3d_init (LrgIcoSphere3D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_icosphere3d_new:
  *
  * Creates a new icosphere at the origin with radius 1.0 and 2 subdivisions.
@@ -260,7 +260,7 @@ lrg_icosphere3d_new (void)
 	return g_object_new (LRG_TYPE_ICOSPHERE3D, NULL);
 }
 
-/**
+/*
  * lrg_icosphere3d_new_at:
  * @x: X position
  * @y: Y position
@@ -287,7 +287,7 @@ lrg_icosphere3d_new_at (gfloat x,
 	return sphere;
 }
 
-/**
+/*
  * lrg_icosphere3d_new_full:
  * @x: X position
  * @y: Y position
@@ -322,7 +322,7 @@ lrg_icosphere3d_new_full (gfloat    x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_icosphere3d_get_radius:
  * @self: an #LrgIcoSphere3D
  *
@@ -338,7 +338,7 @@ lrg_icosphere3d_get_radius (LrgIcoSphere3D *self)
 	return self->radius;
 }
 
-/**
+/*
  * lrg_icosphere3d_set_radius:
  * @self: an #LrgIcoSphere3D
  * @radius: the radius value
@@ -360,7 +360,7 @@ lrg_icosphere3d_set_radius (LrgIcoSphere3D *self,
 	}
 }
 
-/**
+/*
  * lrg_icosphere3d_get_subdivisions:
  * @self: an #LrgIcoSphere3D
  *
@@ -376,7 +376,7 @@ lrg_icosphere3d_get_subdivisions (LrgIcoSphere3D *self)
 	return self->subdivisions;
 }
 
-/**
+/*
  * lrg_icosphere3d_set_subdivisions:
  * @self: an #LrgIcoSphere3D
  * @subdivisions: the number of subdivisions

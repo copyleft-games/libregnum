@@ -364,7 +364,7 @@ lrg_post_processor_init (LrgPostProcessor *self)
     priv->current_source = 0;
 }
 
-/**
+/*
  * lrg_post_processor_new:
  * @width: Initial render target width
  * @height: Initial render target height
@@ -383,7 +383,7 @@ lrg_post_processor_new (guint width,
                          NULL);
 }
 
-/**
+/*
  * lrg_post_processor_add_effect:
  * @self: A #LrgPostProcessor
  * @effect: (transfer none): Effect to add
@@ -420,7 +420,7 @@ lrg_post_processor_add_effect (LrgPostProcessor *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_EFFECT_COUNT]);
 }
 
-/**
+/*
  * lrg_post_processor_remove_effect:
  * @self: A #LrgPostProcessor
  * @effect: Effect to remove
@@ -449,7 +449,7 @@ lrg_post_processor_remove_effect (LrgPostProcessor *self,
     }
 }
 
-/**
+/*
  * lrg_post_processor_get_effect:
  * @self: A #LrgPostProcessor
  * @name: Effect name to find
@@ -482,7 +482,7 @@ lrg_post_processor_get_effect (LrgPostProcessor *self,
     return NULL;
 }
 
-/**
+/*
  * lrg_post_processor_get_effects:
  * @self: A #LrgPostProcessor
  *
@@ -502,7 +502,7 @@ lrg_post_processor_get_effects (LrgPostProcessor *self)
     return priv->effects;
 }
 
-/**
+/*
  * lrg_post_processor_get_effect_count:
  * @self: A #LrgPostProcessor
  *
@@ -522,7 +522,7 @@ lrg_post_processor_get_effect_count (LrgPostProcessor *self)
     return g_list_length (priv->effects);
 }
 
-/**
+/*
  * lrg_post_processor_clear_effects:
  * @self: A #LrgPostProcessor
  *
@@ -550,7 +550,7 @@ lrg_post_processor_clear_effects (LrgPostProcessor *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_EFFECT_COUNT]);
 }
 
-/**
+/*
  * lrg_post_processor_begin_capture:
  * @self: A #LrgPostProcessor
  *
@@ -569,7 +569,7 @@ lrg_post_processor_begin_capture (LrgPostProcessor *self)
         klass->begin_capture (self);
 }
 
-/**
+/*
  * lrg_post_processor_end_capture:
  * @self: A #LrgPostProcessor
  *
@@ -588,7 +588,7 @@ lrg_post_processor_end_capture (LrgPostProcessor *self)
         klass->end_capture (self);
 }
 
-/**
+/*
  * lrg_post_processor_render:
  * @self: A #LrgPostProcessor
  * @delta_time: Time since last frame
@@ -609,7 +609,7 @@ lrg_post_processor_render (LrgPostProcessor *self,
         klass->render (self, delta_time);
 }
 
-/**
+/*
  * lrg_post_processor_resize:
  * @self: A #LrgPostProcessor
  * @width: New width
@@ -652,7 +652,7 @@ lrg_post_processor_resize (LrgPostProcessor *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_HEIGHT]);
 }
 
-/**
+/*
  * lrg_post_processor_get_width:
  * @self: A #LrgPostProcessor
  *
@@ -672,7 +672,7 @@ lrg_post_processor_get_width (LrgPostProcessor *self)
     return priv->width;
 }
 
-/**
+/*
  * lrg_post_processor_get_height:
  * @self: A #LrgPostProcessor
  *
@@ -692,7 +692,7 @@ lrg_post_processor_get_height (LrgPostProcessor *self)
     return priv->height;
 }
 
-/**
+/*
  * lrg_post_processor_is_enabled:
  * @self: A #LrgPostProcessor
  *
@@ -712,7 +712,7 @@ lrg_post_processor_is_enabled (LrgPostProcessor *self)
     return priv->enabled;
 }
 
-/**
+/*
  * lrg_post_processor_set_enabled:
  * @self: A #LrgPostProcessor
  * @enabled: Whether to enable
@@ -736,7 +736,7 @@ lrg_post_processor_set_enabled (LrgPostProcessor *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ENABLED]);
 }
 
-/**
+/*
  * lrg_post_processor_is_capturing:
  * @self: A #LrgPostProcessor
  *
@@ -756,7 +756,7 @@ lrg_post_processor_is_capturing (LrgPostProcessor *self)
     return priv->capturing;
 }
 
-/**
+/*
  * lrg_post_processor_sort_effects:
  * @self: A #LrgPostProcessor
  *

@@ -382,7 +382,7 @@ lrg_transition_init (LrgTransition *self)
  * Public API
  */
 
-/**
+/*
  * lrg_transition_initialize:
  * @self: A #LrgTransition
  * @width: Viewport width
@@ -426,7 +426,7 @@ lrg_transition_initialize (LrgTransition  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_transition_shutdown:
  * @self: A #LrgTransition
  *
@@ -458,7 +458,7 @@ lrg_transition_shutdown (LrgTransition *self)
     priv->initialized = FALSE;
 }
 
-/**
+/*
  * lrg_transition_start:
  * @self: A #LrgTransition
  *
@@ -491,7 +491,7 @@ lrg_transition_start (LrgTransition *self)
     g_signal_emit (self, signals[SIGNAL_STARTED], 0);
 }
 
-/**
+/*
  * lrg_transition_update:
  * @self: A #LrgTransition
  * @delta_time: Time elapsed since last update in seconds
@@ -588,7 +588,7 @@ lrg_transition_update (LrgTransition *self,
     }
 }
 
-/**
+/*
  * lrg_transition_render:
  * @self: A #LrgTransition
  * @old_scene_texture: Texture ID of the outgoing scene
@@ -618,7 +618,7 @@ lrg_transition_render (LrgTransition *self,
     }
 }
 
-/**
+/*
  * lrg_transition_reset:
  * @self: A #LrgTransition
  *
@@ -650,7 +650,7 @@ lrg_transition_reset (LrgTransition *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STATE]);
 }
 
-/**
+/*
  * lrg_transition_get_state:
  * @self: A #LrgTransition
  *
@@ -672,7 +672,7 @@ lrg_transition_get_state (LrgTransition *self)
     return priv->state;
 }
 
-/**
+/*
  * lrg_transition_is_complete:
  * @self: A #LrgTransition
  *
@@ -694,7 +694,7 @@ lrg_transition_is_complete (LrgTransition *self)
     return priv->state == LRG_TRANSITION_STATE_COMPLETE;
 }
 
-/**
+/*
  * lrg_transition_is_at_midpoint:
  * @self: A #LrgTransition
  *
@@ -717,7 +717,7 @@ lrg_transition_is_at_midpoint (LrgTransition *self)
     return priv->state == LRG_TRANSITION_STATE_HOLD;
 }
 
-/**
+/*
  * lrg_transition_get_duration:
  * @self: A #LrgTransition
  *
@@ -735,7 +735,7 @@ lrg_transition_get_duration (LrgTransition *self)
     return get_total_duration (self);
 }
 
-/**
+/*
  * lrg_transition_set_duration:
  * @self: A #LrgTransition
  * @duration: Duration in seconds
@@ -775,7 +775,7 @@ lrg_transition_set_duration (LrgTransition *self,
     }
 }
 
-/**
+/*
  * lrg_transition_get_out_duration:
  * @self: A #LrgTransition
  *
@@ -797,7 +797,7 @@ lrg_transition_get_out_duration (LrgTransition *self)
     return priv->out_duration;
 }
 
-/**
+/*
  * lrg_transition_set_out_duration:
  * @self: A #LrgTransition
  * @duration: Duration in seconds
@@ -824,7 +824,7 @@ lrg_transition_set_out_duration (LrgTransition *self,
     }
 }
 
-/**
+/*
  * lrg_transition_get_hold_duration:
  * @self: A #LrgTransition
  *
@@ -846,7 +846,7 @@ lrg_transition_get_hold_duration (LrgTransition *self)
     return priv->hold_duration;
 }
 
-/**
+/*
  * lrg_transition_set_hold_duration:
  * @self: A #LrgTransition
  * @duration: Duration in seconds
@@ -873,7 +873,7 @@ lrg_transition_set_hold_duration (LrgTransition *self,
     }
 }
 
-/**
+/*
  * lrg_transition_get_in_duration:
  * @self: A #LrgTransition
  *
@@ -895,7 +895,7 @@ lrg_transition_get_in_duration (LrgTransition *self)
     return priv->in_duration;
 }
 
-/**
+/*
  * lrg_transition_set_in_duration:
  * @self: A #LrgTransition
  * @duration: Duration in seconds
@@ -922,7 +922,7 @@ lrg_transition_set_in_duration (LrgTransition *self,
     }
 }
 
-/**
+/*
  * lrg_transition_get_progress:
  * @self: A #LrgTransition
  *
@@ -951,7 +951,7 @@ lrg_transition_get_progress (LrgTransition *self)
     return CLAMP (priv->elapsed / total_duration, 0.0f, 1.0f);
 }
 
-/**
+/*
  * lrg_transition_get_phase_progress:
  * @self: A #LrgTransition
  *
@@ -973,7 +973,7 @@ lrg_transition_get_phase_progress (LrgTransition *self)
     return priv->phase_progress;
 }
 
-/**
+/*
  * lrg_transition_get_easing:
  * @self: A #LrgTransition
  *
@@ -995,7 +995,7 @@ lrg_transition_get_easing (LrgTransition *self)
     return priv->easing;
 }
 
-/**
+/*
  * lrg_transition_set_easing:
  * @self: A #LrgTransition
  * @easing: The easing function type

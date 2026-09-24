@@ -1317,7 +1317,7 @@ lrg_template_settings_menu_state_init (LrgTemplateSettingsMenuState *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_settings_menu_state_new:
  *
  * Creates a new settings menu state.
@@ -1334,7 +1334,7 @@ lrg_template_settings_menu_state_new (void)
  * Public API - Tab Visibility
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_settings_menu_state_get_show_graphics_tab:
  * @self: an #LrgTemplateSettingsMenuState
  *
@@ -1354,7 +1354,7 @@ lrg_template_settings_menu_state_get_show_graphics_tab (LrgTemplateSettingsMenuS
     return priv->show_graphics_tab;
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_set_show_graphics_tab:
  * @self: an #LrgTemplateSettingsMenuState
  * @show: whether to show the Graphics tab
@@ -1370,7 +1370,7 @@ lrg_template_settings_menu_state_set_show_graphics_tab (LrgTemplateSettingsMenuS
     g_object_set (self, "show-graphics-tab", show, NULL);
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_get_show_audio_tab:
  * @self: an #LrgTemplateSettingsMenuState
  *
@@ -1390,7 +1390,7 @@ lrg_template_settings_menu_state_get_show_audio_tab (LrgTemplateSettingsMenuStat
     return priv->show_audio_tab;
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_set_show_audio_tab:
  * @self: an #LrgTemplateSettingsMenuState
  * @show: whether to show the Audio tab
@@ -1406,7 +1406,7 @@ lrg_template_settings_menu_state_set_show_audio_tab (LrgTemplateSettingsMenuStat
     g_object_set (self, "show-audio-tab", show, NULL);
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_get_show_controls_tab:
  * @self: an #LrgTemplateSettingsMenuState
  *
@@ -1426,7 +1426,7 @@ lrg_template_settings_menu_state_get_show_controls_tab (LrgTemplateSettingsMenuS
     return priv->show_controls_tab;
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_set_show_controls_tab:
  * @self: an #LrgTemplateSettingsMenuState
  * @show: whether to show the Controls tab
@@ -1446,7 +1446,7 @@ lrg_template_settings_menu_state_set_show_controls_tab (LrgTemplateSettingsMenuS
  * Public API - Custom Tabs
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_settings_menu_state_add_custom_tab:
  * @self: an #LrgTemplateSettingsMenuState
  * @name: the internal name for the tab
@@ -1472,7 +1472,7 @@ lrg_template_settings_menu_state_add_custom_tab (LrgTemplateSettingsMenuState *s
     g_ptr_array_add (priv->custom_tabs, entry);
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_remove_custom_tab:
  * @self: an #LrgTemplateSettingsMenuState
  * @name: the internal name for the tab
@@ -1507,7 +1507,7 @@ lrg_template_settings_menu_state_remove_custom_tab (LrgTemplateSettingsMenuState
  * Public API - Active Tab
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_settings_menu_state_get_active_tab:
  * @self: an #LrgTemplateSettingsMenuState
  *
@@ -1530,7 +1530,7 @@ lrg_template_settings_menu_state_get_active_tab (LrgTemplateSettingsMenuState *s
     return 0;
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_set_active_tab:
  * @self: an #LrgTemplateSettingsMenuState
  * @index: the tab index to activate
@@ -1555,7 +1555,7 @@ lrg_template_settings_menu_state_set_active_tab (LrgTemplateSettingsMenuState *s
  * Public API - Button Visibility
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_settings_menu_state_get_show_reset_button:
  * @self: an #LrgTemplateSettingsMenuState
  *
@@ -1575,7 +1575,7 @@ lrg_template_settings_menu_state_get_show_reset_button (LrgTemplateSettingsMenuS
     return priv->show_reset_button;
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_set_show_reset_button:
  * @self: an #LrgTemplateSettingsMenuState
  * @show: whether to show the Reset button
@@ -1595,7 +1595,7 @@ lrg_template_settings_menu_state_set_show_reset_button (LrgTemplateSettingsMenuS
  * Public API - Confirmation
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_settings_menu_state_get_confirm_cancel:
  * @self: an #LrgTemplateSettingsMenuState
  *
@@ -1615,7 +1615,7 @@ lrg_template_settings_menu_state_get_confirm_cancel (LrgTemplateSettingsMenuStat
     return priv->confirm_cancel;
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_set_confirm_cancel:
  * @self: an #LrgTemplateSettingsMenuState
  * @confirm: whether to confirm before canceling
@@ -1631,7 +1631,7 @@ lrg_template_settings_menu_state_set_confirm_cancel (LrgTemplateSettingsMenuStat
     g_object_set (self, "confirm-cancel", confirm, NULL);
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_get_confirm_reset:
  * @self: an #LrgTemplateSettingsMenuState
  *
@@ -1651,7 +1651,7 @@ lrg_template_settings_menu_state_get_confirm_reset (LrgTemplateSettingsMenuState
     return priv->confirm_reset;
 }
 
-/**
+/*
  * lrg_template_settings_menu_state_set_confirm_reset:
  * @self: an #LrgTemplateSettingsMenuState
  * @confirm: whether to confirm before resetting
@@ -1671,7 +1671,7 @@ lrg_template_settings_menu_state_set_confirm_reset (LrgTemplateSettingsMenuState
  * Public API - Dirty State
  * ========================================================================== */
 
-/**
+/*
  * lrg_template_settings_menu_state_has_unsaved_changes:
  * @self: an #LrgTemplateSettingsMenuState
  *

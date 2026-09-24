@@ -250,7 +250,7 @@ lrg_reel_push_transition_init (LrgReelPushTransition *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_push_transition_new:
  * @direction: the direction @from is pushed out of the frame
  *
@@ -268,7 +268,7 @@ lrg_reel_push_transition_new (LrgReelTransitionDirection direction)
                          NULL);
 }
 
-/**
+/*
  * lrg_reel_push_transition_get_direction:
  * @self: an #LrgReelPushTransition
  *
@@ -286,7 +286,7 @@ lrg_reel_push_transition_get_direction (LrgReelPushTransition *self)
     return self->direction;
 }
 
-/**
+/*
  * lrg_reel_push_transition_set_direction:
  * @self: an #LrgReelPushTransition
  * @direction: the new #LrgReelTransitionDirection

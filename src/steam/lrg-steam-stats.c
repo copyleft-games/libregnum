@@ -110,7 +110,7 @@ lrg_steam_stats_init (LrgSteamStats *self)
     self->client = NULL;
 }
 
-/**
+/*
  * lrg_steam_stats_new:
  * @client: an #LrgSteamClient
  *
@@ -128,7 +128,7 @@ lrg_steam_stats_new (LrgSteamClient *client)
                          NULL);
 }
 
-/**
+/*
  * lrg_steam_stats_get_int:
  * @self: an #LrgSteamStats
  * @stat_name: the stat API name
@@ -165,7 +165,7 @@ lrg_steam_stats_get_int (LrgSteamStats *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_stats_set_int:
  * @self: an #LrgSteamStats
  * @stat_name: the stat API name
@@ -201,7 +201,7 @@ lrg_steam_stats_set_int (LrgSteamStats *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_stats_get_float:
  * @self: an #LrgSteamStats
  * @stat_name: the stat API name
@@ -238,7 +238,7 @@ lrg_steam_stats_get_float (LrgSteamStats *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_stats_set_float:
  * @self: an #LrgSteamStats
  * @stat_name: the stat API name
@@ -274,7 +274,7 @@ lrg_steam_stats_set_float (LrgSteamStats *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_stats_store:
  * @self: an #LrgSteamStats
  *

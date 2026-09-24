@@ -163,7 +163,7 @@ lrg_reel_grain_effect_init (LrgReelGrainEffect *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_grain_effect_new:
  *
  * Creates a new #LrgReelGrainEffect with default settings.
@@ -178,7 +178,7 @@ lrg_reel_grain_effect_new (void)
     return g_object_new (LRG_TYPE_REEL_GRAIN_EFFECT, NULL);
 }
 
-/**
+/*
  * lrg_reel_grain_effect_get_amount:
  * @self: a #LrgReelGrainEffect
  *
@@ -194,7 +194,7 @@ lrg_reel_grain_effect_get_amount (LrgReelGrainEffect *self)
     return self->amount;
 }
 
-/**
+/*
  * lrg_reel_grain_effect_set_amount:
  * @self: a #LrgReelGrainEffect
  * @amount: grain amplitude [0, 1]
@@ -214,7 +214,7 @@ lrg_reel_grain_effect_set_amount (LrgReelGrainEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_AMOUNT]);
 }
 
-/**
+/*
  * lrg_reel_grain_effect_get_frequency:
  * @self: a #LrgReelGrainEffect
  *
@@ -230,7 +230,7 @@ lrg_reel_grain_effect_get_frequency (LrgReelGrainEffect *self)
     return self->frequency;
 }
 
-/**
+/*
  * lrg_reel_grain_effect_set_frequency:
  * @self: a #LrgReelGrainEffect
  * @frequency: grain spatial frequency (>0)

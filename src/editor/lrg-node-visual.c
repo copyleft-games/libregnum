@@ -208,7 +208,7 @@ lrg_node_visual_init (LrgNodeVisual *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_node_visual_new:
  * @kind: the visual kind
  *
@@ -228,7 +228,7 @@ lrg_node_visual_new (LrgNodeVisualKind kind)
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_node_visual_get_kind:
  * @self: an #LrgNodeVisual
  *
@@ -244,7 +244,7 @@ lrg_node_visual_get_kind (LrgNodeVisual *self)
 	return self->kind;
 }
 
-/**
+/*
  * lrg_node_visual_set_kind:
  * @self: an #LrgNodeVisual
  * @kind: the visual kind
@@ -261,7 +261,7 @@ lrg_node_visual_set_kind (LrgNodeVisual     *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_KIND]);
 }
 
-/**
+/*
  * lrg_node_visual_get_primitive:
  * @self: an #LrgNodeVisual
  *
@@ -277,7 +277,7 @@ lrg_node_visual_get_primitive (LrgNodeVisual *self)
 	return self->primitive;
 }
 
-/**
+/*
  * lrg_node_visual_set_primitive:
  * @self: an #LrgNodeVisual
  * @primitive: the primitive type
@@ -294,7 +294,7 @@ lrg_node_visual_set_primitive (LrgNodeVisual    *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PRIMITIVE]);
 }
 
-/**
+/*
  * lrg_node_visual_get_asset:
  * @self: an #LrgNodeVisual
  *
@@ -310,7 +310,7 @@ lrg_node_visual_get_asset (LrgNodeVisual *self)
 	return self->asset;
 }
 
-/**
+/*
  * lrg_node_visual_set_asset:
  * @self: an #LrgNodeVisual
  * @asset: (nullable): the asset reference (path or guid)
@@ -328,7 +328,7 @@ lrg_node_visual_set_asset (LrgNodeVisual *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ASSET]);
 }
 
-/**
+/*
  * lrg_node_visual_get_material:
  * @self: an #LrgNodeVisual
  *
@@ -344,7 +344,7 @@ lrg_node_visual_get_material (LrgNodeVisual *self)
 	return self->material;
 }
 
-/**
+/*
  * lrg_node_visual_set_material:
  * @self: an #LrgNodeVisual
  * @material: (transfer none) (nullable): the material
@@ -366,7 +366,7 @@ lrg_node_visual_set_material (LrgNodeVisual *self,
  * Kind-specific Parameters
  * ========================================================================== */
 
-/**
+/*
  * lrg_node_visual_set_param:
  * @self: an #LrgNodeVisual
  * @name: the parameter name
@@ -392,7 +392,7 @@ lrg_node_visual_set_param (LrgNodeVisual *self,
 	g_hash_table_insert (self->params, g_strdup (name), copy);
 }
 
-/**
+/*
  * lrg_node_visual_get_param:
  * @self: an #LrgNodeVisual
  * @name: the parameter name
@@ -411,7 +411,7 @@ lrg_node_visual_get_param (LrgNodeVisual *self,
 	return g_hash_table_lookup (self->params, name);
 }
 
-/**
+/*
  * lrg_node_visual_set_param_double:
  * @self: an #LrgNodeVisual
  * @name: the parameter name
@@ -435,7 +435,7 @@ lrg_node_visual_set_param_double (LrgNodeVisual *self,
 	g_value_unset (&v);
 }
 
-/**
+/*
  * lrg_node_visual_get_param_double:
  * @self: an #LrgNodeVisual
  * @name: the parameter name
@@ -474,7 +474,7 @@ lrg_node_visual_get_param_double (LrgNodeVisual *self,
 	return default_value;
 }
 
-/**
+/*
  * lrg_node_visual_get_param_names:
  * @self: an #LrgNodeVisual
  *

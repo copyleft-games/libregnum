@@ -153,7 +153,7 @@ lrg_dlc_ownership_steam_init (LrgDlcOwnershipSteam *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_dlc_ownership_steam_new:
  *
  * Creates a new Steam-based DLC ownership checker.
@@ -166,7 +166,7 @@ lrg_dlc_ownership_steam_new (void)
     return g_object_new (LRG_TYPE_DLC_OWNERSHIP_STEAM, NULL);
 }
 
-/**
+/*
  * lrg_dlc_ownership_steam_check_by_app_id:
  * @self: a #LrgDlcOwnershipSteam
  * @app_id: the Steam App ID of the DLC
@@ -210,7 +210,7 @@ lrg_dlc_ownership_steam_check_by_app_id (LrgDlcOwnershipSteam  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_dlc_ownership_steam_register_dlc:
  * @self: a #LrgDlcOwnershipSteam
  * @dlc_id: the DLC identifier
@@ -232,7 +232,7 @@ lrg_dlc_ownership_steam_register_dlc (LrgDlcOwnershipSteam *self,
                          GUINT_TO_POINTER (app_id));
 }
 
-/**
+/*
  * lrg_dlc_ownership_steam_unregister_dlc:
  * @self: a #LrgDlcOwnershipSteam
  * @dlc_id: the DLC identifier
@@ -249,7 +249,7 @@ lrg_dlc_ownership_steam_unregister_dlc (LrgDlcOwnershipSteam *self,
     g_hash_table_remove (self->dlc_app_ids, dlc_id);
 }
 
-/**
+/*
  * lrg_dlc_ownership_steam_set_steam_service:
  * @self: a #LrgDlcOwnershipSteam
  * @steam_service: (nullable): a #LrgSteamService, or %NULL

@@ -126,7 +126,7 @@ lrg_tilemap_class_init (LrgTilemapClass *klass)
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
-    /**
+    /*
      * LrgTilemap::tile-changed:
      * @self: the tilemap
      * @layer_index: the layer where the tile changed
@@ -163,7 +163,7 @@ lrg_tilemap_init (LrgTilemap *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_new:
  * @tileset: (transfer none): the tileset to use for rendering
  *
@@ -186,7 +186,7 @@ lrg_tilemap_new (LrgTileset *tileset)
  * Tileset
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_get_tileset:
  * @self: an #LrgTilemap
  *
@@ -206,7 +206,7 @@ lrg_tilemap_get_tileset (LrgTilemap *self)
     return priv->tileset;
 }
 
-/**
+/*
  * lrg_tilemap_set_tileset:
  * @self: an #LrgTilemap
  * @tileset: (transfer none): the tileset
@@ -234,7 +234,7 @@ lrg_tilemap_set_tileset (LrgTilemap *self,
  * Layer Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_add_layer:
  * @self: an #LrgTilemap
  * @layer: (transfer none): the layer to add
@@ -260,7 +260,7 @@ lrg_tilemap_add_layer (LrgTilemap      *self,
                g_list_length (priv->layers));
 }
 
-/**
+/*
  * lrg_tilemap_insert_layer:
  * @self: an #LrgTilemap
  * @layer: (transfer none): the layer to insert
@@ -284,7 +284,7 @@ lrg_tilemap_insert_layer (LrgTilemap      *self,
     priv->layers = g_list_insert (priv->layers, g_object_ref (layer), (gint)index);
 }
 
-/**
+/*
  * lrg_tilemap_remove_layer:
  * @self: an #LrgTilemap
  * @layer: the layer to remove
@@ -311,7 +311,7 @@ lrg_tilemap_remove_layer (LrgTilemap      *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_remove_layer_at:
  * @self: an #LrgTilemap
  * @index: the layer index to remove
@@ -337,7 +337,7 @@ lrg_tilemap_remove_layer_at (LrgTilemap *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_get_layer:
  * @self: an #LrgTilemap
  * @index: the layer index
@@ -359,7 +359,7 @@ lrg_tilemap_get_layer (LrgTilemap *self,
     return (LrgTilemapLayer *)g_list_nth_data (priv->layers, index);
 }
 
-/**
+/*
  * lrg_tilemap_get_layer_by_name:
  * @self: an #LrgTilemap
  * @name: the layer name
@@ -394,7 +394,7 @@ lrg_tilemap_get_layer_by_name (LrgTilemap  *self,
     return NULL;
 }
 
-/**
+/*
  * lrg_tilemap_get_layer_count:
  * @self: an #LrgTilemap
  *
@@ -414,7 +414,7 @@ lrg_tilemap_get_layer_count (LrgTilemap *self)
     return g_list_length (priv->layers);
 }
 
-/**
+/*
  * lrg_tilemap_get_layers:
  * @self: an #LrgTilemap
  *
@@ -524,7 +524,7 @@ draw_layer_internal (LrgTilemap      *self,
  * Rendering
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_draw:
  * @self: an #LrgTilemap
  *
@@ -536,7 +536,7 @@ lrg_tilemap_draw (LrgTilemap *self)
     lrg_tilemap_draw_at (self, 0.0f, 0.0f);
 }
 
-/**
+/*
  * lrg_tilemap_draw_at:
  * @self: an #LrgTilemap
  * @x: the X position to draw at
@@ -562,7 +562,7 @@ lrg_tilemap_draw_at (LrgTilemap *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_draw_with_camera:
  * @self: an #LrgTilemap
  * @camera: the camera for view transformation and parallax
@@ -609,7 +609,7 @@ lrg_tilemap_draw_with_camera (LrgTilemap  *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_draw_layer:
  * @self: an #LrgTilemap
  * @layer_index: the layer to draw
@@ -639,7 +639,7 @@ lrg_tilemap_draw_layer (LrgTilemap *self,
  * Collision Queries
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_is_solid:
  * @self: an #LrgTilemap
  * @tile_x: the tile X coordinate
@@ -693,7 +693,7 @@ lrg_tilemap_is_solid (LrgTilemap *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_tilemap_is_solid_at:
  * @self: an #LrgTilemap
  * @world_x: the world X coordinate in pixels
@@ -718,7 +718,7 @@ lrg_tilemap_is_solid_at (LrgTilemap *self,
     return lrg_tilemap_is_solid (self, tile_x, tile_y);
 }
 
-/**
+/*
  * lrg_tilemap_get_tile_at:
  * @self: an #LrgTilemap
  * @layer_index: the layer to query
@@ -756,7 +756,7 @@ lrg_tilemap_get_tile_at (LrgTilemap *self,
  * World Bounds
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_get_world_bounds:
  * @self: an #LrgTilemap
  *
@@ -775,7 +775,7 @@ lrg_tilemap_get_world_bounds (LrgTilemap *self)
                               (gfloat)lrg_tilemap_get_pixel_height (self));
 }
 
-/**
+/*
  * lrg_tilemap_get_width:
  * @self: an #LrgTilemap
  *
@@ -799,7 +799,7 @@ lrg_tilemap_get_width (LrgTilemap *self)
     return lrg_tilemap_layer_get_width (layer);
 }
 
-/**
+/*
  * lrg_tilemap_get_height:
  * @self: an #LrgTilemap
  *
@@ -823,7 +823,7 @@ lrg_tilemap_get_height (LrgTilemap *self)
     return lrg_tilemap_layer_get_height (layer);
 }
 
-/**
+/*
  * lrg_tilemap_get_pixel_width:
  * @self: an #LrgTilemap
  *
@@ -851,7 +851,7 @@ lrg_tilemap_get_pixel_width (LrgTilemap *self)
     return lrg_tilemap_get_width (self) * tile_width;
 }
 
-/**
+/*
  * lrg_tilemap_get_pixel_height:
  * @self: an #LrgTilemap
  *
@@ -883,7 +883,7 @@ lrg_tilemap_get_pixel_height (LrgTilemap *self)
  * Coordinate Conversion
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_world_to_tile:
  * @self: an #LrgTilemap
  * @world_x: the world X coordinate
@@ -940,7 +940,7 @@ lrg_tilemap_world_to_tile (LrgTilemap *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_tile_to_world:
  * @self: an #LrgTilemap
  * @tile_x: the tile X coordinate

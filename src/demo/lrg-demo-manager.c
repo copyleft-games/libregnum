@@ -311,7 +311,7 @@ lrg_demo_manager_init (LrgDemoManager *self)
  * Constructor
  * ========================================================================== */
 
-/**
+/*
  * lrg_demo_manager_new:
  *
  * Creates a new demo manager.
@@ -326,7 +326,7 @@ lrg_demo_manager_new (void)
     return g_object_new (LRG_TYPE_DEMO_MANAGER, NULL);
 }
 
-/**
+/*
  * lrg_demo_manager_get_default:
  *
  * Gets the default demo manager instance.
@@ -348,7 +348,7 @@ lrg_demo_manager_get_default (void)
  * Demo Mode State
  * ========================================================================== */
 
-/**
+/*
  * lrg_demo_manager_set_demo_mode:
  * @self: a #LrgDemoManager
  * @is_demo: whether to enable demo mode
@@ -372,7 +372,7 @@ lrg_demo_manager_set_demo_mode (LrgDemoManager *self,
     }
 }
 
-/**
+/*
  * lrg_demo_manager_get_demo_mode:
  * @self: a #LrgDemoManager
  *
@@ -390,7 +390,7 @@ lrg_demo_manager_get_demo_mode (LrgDemoManager *self)
     return self->is_demo_mode;
 }
 
-/**
+/*
  * lrg_demo_manager_start:
  * @self: a #LrgDemoManager
  *
@@ -410,7 +410,7 @@ lrg_demo_manager_start (LrgDemoManager *self)
     lrg_info (LRG_LOG_DOMAIN, "Demo session started");
 }
 
-/**
+/*
  * lrg_demo_manager_stop:
  * @self: a #LrgDemoManager
  * @reason: the reason for stopping
@@ -436,7 +436,7 @@ lrg_demo_manager_stop (LrgDemoManager   *self,
     g_signal_emit (self, signals[SIGNAL_DEMO_ENDED], 0, reason);
 }
 
-/**
+/*
  * lrg_demo_manager_update:
  * @self: a #LrgDemoManager
  * @delta_time: time since last update in seconds
@@ -492,7 +492,7 @@ lrg_demo_manager_update (LrgDemoManager *self,
  * Time Limit
  * ========================================================================== */
 
-/**
+/*
  * lrg_demo_manager_set_time_limit:
  * @self: a #LrgDemoManager
  * @seconds: time limit in seconds (0 = no limit)
@@ -514,7 +514,7 @@ lrg_demo_manager_set_time_limit (LrgDemoManager *self,
     }
 }
 
-/**
+/*
  * lrg_demo_manager_get_time_limit:
  * @self: a #LrgDemoManager
  *
@@ -532,7 +532,7 @@ lrg_demo_manager_get_time_limit (LrgDemoManager *self)
     return self->time_limit;
 }
 
-/**
+/*
  * lrg_demo_manager_get_time_remaining:
  * @self: a #LrgDemoManager
  *
@@ -556,7 +556,7 @@ lrg_demo_manager_get_time_remaining (LrgDemoManager *self)
     return remaining > 0.0f ? remaining : 0.0f;
 }
 
-/**
+/*
  * lrg_demo_manager_get_time_elapsed:
  * @self: a #LrgDemoManager
  *
@@ -587,7 +587,7 @@ compare_float_desc (gconstpointer a,
     return 0;
 }
 
-/**
+/*
  * lrg_demo_manager_set_warning_times:
  * @self: a #LrgDemoManager
  * @warning_seconds: (array length=n_warnings): array of warning times
@@ -625,7 +625,7 @@ lrg_demo_manager_set_warning_times (LrgDemoManager *self,
  * Content Gating
  * ========================================================================== */
 
-/**
+/*
  * lrg_demo_manager_gate_content:
  * @self: a #LrgDemoManager
  * @content_id: the content ID to gate
@@ -645,7 +645,7 @@ lrg_demo_manager_gate_content (LrgDemoManager *self,
     lrg_debug (LRG_LOG_DOMAIN, "Gated content: %s", content_id);
 }
 
-/**
+/*
  * lrg_demo_manager_ungate_content:
  * @self: a #LrgDemoManager
  * @content_id: the content ID to ungate
@@ -664,7 +664,7 @@ lrg_demo_manager_ungate_content (LrgDemoManager *self,
     g_hash_table_remove (self->gated_content, content_id);
 }
 
-/**
+/*
  * lrg_demo_manager_is_content_gated:
  * @self: a #LrgDemoManager
  * @content_id: the content ID to check
@@ -685,7 +685,7 @@ lrg_demo_manager_is_content_gated (LrgDemoManager *self,
     return g_hash_table_contains (self->gated_content, content_id);
 }
 
-/**
+/*
  * lrg_demo_manager_check_access:
  * @self: a #LrgDemoManager
  * @gatable: a #LrgDemoGatable object
@@ -739,7 +739,7 @@ lrg_demo_manager_check_access (LrgDemoManager  *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_demo_manager_get_gated_content:
  * @self: a #LrgDemoManager
  *
@@ -769,7 +769,7 @@ lrg_demo_manager_get_gated_content (LrgDemoManager *self)
     return result;
 }
 
-/**
+/*
  * lrg_demo_manager_clear_gated_content:
  * @self: a #LrgDemoManager
  *
@@ -789,7 +789,7 @@ lrg_demo_manager_clear_gated_content (LrgDemoManager *self)
  * Demo Saves
  * ========================================================================== */
 
-/**
+/*
  * lrg_demo_manager_mark_save_as_demo:
  * @self: a #LrgDemoManager
  * @save_id: the save identifier
@@ -808,7 +808,7 @@ lrg_demo_manager_mark_save_as_demo (LrgDemoManager *self,
     g_hash_table_add (self->demo_saves, g_strdup (save_id));
 }
 
-/**
+/*
  * lrg_demo_manager_is_demo_save:
  * @self: a #LrgDemoManager
  * @save_id: the save identifier
@@ -829,7 +829,7 @@ lrg_demo_manager_is_demo_save (LrgDemoManager *self,
     return g_hash_table_contains (self->demo_saves, save_id);
 }
 
-/**
+/*
  * lrg_demo_manager_get_demo_saves:
  * @self: a #LrgDemoManager
  *
@@ -859,7 +859,7 @@ lrg_demo_manager_get_demo_saves (LrgDemoManager *self)
     return result;
 }
 
-/**
+/*
  * lrg_demo_manager_convert_demo_save:
  * @self: a #LrgDemoManager
  * @save_id: the save identifier
@@ -883,7 +883,7 @@ lrg_demo_manager_convert_demo_save (LrgDemoManager *self,
  * Purchase URL
  * ========================================================================== */
 
-/**
+/*
  * lrg_demo_manager_set_purchase_url:
  * @self: a #LrgDemoManager
  * @url: (nullable): the purchase URL
@@ -903,7 +903,7 @@ lrg_demo_manager_set_purchase_url (LrgDemoManager *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PURCHASE_URL]);
 }
 
-/**
+/*
  * lrg_demo_manager_get_purchase_url:
  * @self: a #LrgDemoManager
  *
@@ -921,7 +921,7 @@ lrg_demo_manager_get_purchase_url (LrgDemoManager *self)
     return self->purchase_url;
 }
 
-/**
+/*
  * lrg_demo_manager_open_purchase_url:
  * @self: a #LrgDemoManager
  * @error: (optional): return location for error
@@ -954,7 +954,7 @@ lrg_demo_manager_open_purchase_url (LrgDemoManager  *self,
  * Upgrade Detection
  * ========================================================================== */
 
-/**
+/*
  * lrg_demo_manager_set_upgrade_check_func:
  * @self: a #LrgDemoManager
  * @func: (nullable): function to check for upgrade
@@ -975,7 +975,7 @@ lrg_demo_manager_set_upgrade_check_func (LrgDemoManager *self,
     self->upgrade_check_data = user_data;
 }
 
-/**
+/*
  * lrg_demo_manager_check_upgrade:
  * @self: a #LrgDemoManager
  *

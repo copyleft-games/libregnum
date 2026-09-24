@@ -200,7 +200,7 @@ lrg_shape3d_init (LrgShape3D *self)
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_shape3d_get_position:
  * @self: an #LrgShape3D
  *
@@ -219,7 +219,7 @@ lrg_shape3d_get_position (LrgShape3D *self)
 	return priv->position;
 }
 
-/**
+/*
  * lrg_shape3d_set_position:
  * @self: an #LrgShape3D
  * @position: (transfer none): the position to set
@@ -242,7 +242,7 @@ lrg_shape3d_set_position (LrgShape3D *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_POSITION]);
 }
 
-/**
+/*
  * lrg_shape3d_set_position_xyz:
  * @self: an #LrgShape3D
  * @x: the X coordinate
@@ -270,7 +270,7 @@ lrg_shape3d_set_position_xyz (LrgShape3D *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_POSITION]);
 }
 
-/**
+/*
  * lrg_shape3d_get_x:
  * @self: an #LrgShape3D
  *
@@ -289,7 +289,7 @@ lrg_shape3d_get_x (LrgShape3D *self)
 	return priv->position->x;
 }
 
-/**
+/*
  * lrg_shape3d_get_y:
  * @self: an #LrgShape3D
  *
@@ -308,7 +308,7 @@ lrg_shape3d_get_y (LrgShape3D *self)
 	return priv->position->y;
 }
 
-/**
+/*
  * lrg_shape3d_get_z:
  * @self: an #LrgShape3D
  *
@@ -327,7 +327,7 @@ lrg_shape3d_get_z (LrgShape3D *self)
 	return priv->position->z;
 }
 
-/**
+/*
  * lrg_shape3d_get_wireframe:
  * @self: an #LrgShape3D
  *
@@ -346,7 +346,7 @@ lrg_shape3d_get_wireframe (LrgShape3D *self)
 	return priv->wireframe;
 }
 
-/**
+/*
  * lrg_shape3d_set_wireframe:
  * @self: an #LrgShape3D
  * @wireframe: whether to enable wireframe mode
@@ -374,7 +374,7 @@ lrg_shape3d_set_wireframe (LrgShape3D *self,
  * Rotation Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_shape3d_get_rotation:
  * @self: an #LrgShape3D
  *
@@ -393,7 +393,7 @@ lrg_shape3d_get_rotation (LrgShape3D *self)
 	return priv->rotation;
 }
 
-/**
+/*
  * lrg_shape3d_set_rotation:
  * @self: an #LrgShape3D
  * @rotation: (transfer none): the rotation to set (Euler angles in radians)
@@ -416,7 +416,7 @@ lrg_shape3d_set_rotation (LrgShape3D *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ROTATION]);
 }
 
-/**
+/*
  * lrg_shape3d_set_rotation_xyz:
  * @self: an #LrgShape3D
  * @rx: the X rotation (pitch) in radians
@@ -444,7 +444,7 @@ lrg_shape3d_set_rotation_xyz (LrgShape3D *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ROTATION]);
 }
 
-/**
+/*
  * lrg_shape3d_get_rotation_x:
  * @self: an #LrgShape3D
  *
@@ -463,7 +463,7 @@ lrg_shape3d_get_rotation_x (LrgShape3D *self)
 	return priv->rotation->x;
 }
 
-/**
+/*
  * lrg_shape3d_get_rotation_y:
  * @self: an #LrgShape3D
  *
@@ -482,7 +482,7 @@ lrg_shape3d_get_rotation_y (LrgShape3D *self)
 	return priv->rotation->y;
 }
 
-/**
+/*
  * lrg_shape3d_get_rotation_z:
  * @self: an #LrgShape3D
  *
@@ -505,7 +505,7 @@ lrg_shape3d_get_rotation_z (LrgShape3D *self)
  * Scale Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_shape3d_get_scale:
  * @self: an #LrgShape3D
  *
@@ -524,7 +524,7 @@ lrg_shape3d_get_scale (LrgShape3D *self)
 	return priv->scale;
 }
 
-/**
+/*
  * lrg_shape3d_set_scale:
  * @self: an #LrgShape3D
  * @scale: (transfer none): the scale to set
@@ -547,7 +547,7 @@ lrg_shape3d_set_scale (LrgShape3D *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCALE]);
 }
 
-/**
+/*
  * lrg_shape3d_set_scale_xyz:
  * @self: an #LrgShape3D
  * @sx: the X scale factor
@@ -575,7 +575,7 @@ lrg_shape3d_set_scale_xyz (LrgShape3D *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCALE]);
 }
 
-/**
+/*
  * lrg_shape3d_set_scale_uniform:
  * @self: an #LrgShape3D
  * @scale: the uniform scale factor
@@ -589,7 +589,7 @@ lrg_shape3d_set_scale_uniform (LrgShape3D *self,
 	lrg_shape3d_set_scale_xyz (self, scale, scale, scale);
 }
 
-/**
+/*
  * lrg_shape3d_get_scale_x:
  * @self: an #LrgShape3D
  *
@@ -608,7 +608,7 @@ lrg_shape3d_get_scale_x (LrgShape3D *self)
 	return priv->scale->x;
 }
 
-/**
+/*
  * lrg_shape3d_get_scale_y:
  * @self: an #LrgShape3D
  *
@@ -627,7 +627,7 @@ lrg_shape3d_get_scale_y (LrgShape3D *self)
 	return priv->scale->y;
 }
 
-/**
+/*
  * lrg_shape3d_get_scale_z:
  * @self: an #LrgShape3D
  *

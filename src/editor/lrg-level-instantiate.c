@@ -98,7 +98,7 @@ bake_node (LrgScene *scene,
 		bake_node (scene, g_ptr_array_index (children, i));
 }
 
-/**
+/*
  * lrg_level_to_scene:
  * @level: an #LrgLevel
  *
@@ -226,7 +226,7 @@ instantiate_node (LrgNode     *node,
 		instantiate_node (g_ptr_array_index (children, i), world, registry);
 }
 
-/**
+/*
  * lrg_level_instantiate:
  * @level: an #LrgLevel
  * @world: the #LrgWorld to populate

@@ -18,7 +18,7 @@ lrg_dlc_ownership_default_init (LrgDlcOwnershipInterface *iface)
     /* No default implementations - methods must be provided by implementors */
 }
 
-/**
+/*
  * lrg_dlc_ownership_check_ownership:
  * @self: a #LrgDlcOwnership
  * @dlc_id: the unique identifier of the DLC to check
@@ -54,7 +54,7 @@ lrg_dlc_ownership_check_ownership (LrgDlcOwnership  *self,
     return iface->check_ownership (self, dlc_id, error);
 }
 
-/**
+/*
  * lrg_dlc_ownership_refresh_ownership:
  * @self: a #LrgDlcOwnership
  * @error: (nullable): return location for a #GError
@@ -81,7 +81,7 @@ lrg_dlc_ownership_refresh_ownership (LrgDlcOwnership  *self,
     return iface->refresh_ownership (self, error);
 }
 
-/**
+/*
  * lrg_dlc_ownership_get_backend_id:
  * @self: a #LrgDlcOwnership
  *

@@ -544,7 +544,7 @@ lrg_input_prompt_init (LrgInputPrompt *self)
     self->animation_time = 0.0f;
 }
 
-/**
+/*
  * lrg_input_prompt_new:
  *
  * Creates a new input prompt widget.
@@ -559,7 +559,7 @@ lrg_input_prompt_new (void)
     return g_object_new (LRG_TYPE_INPUT_PROMPT, NULL);
 }
 
-/**
+/*
  * lrg_input_prompt_new_with_action:
  * @action_name: The input action to display
  *
@@ -577,7 +577,7 @@ lrg_input_prompt_new_with_action (const gchar *action_name)
                          NULL);
 }
 
-/**
+/*
  * lrg_input_prompt_get_action_name:
  * @self: An #LrgInputPrompt
  *
@@ -594,7 +594,7 @@ lrg_input_prompt_get_action_name (LrgInputPrompt *self)
     return self->action_name;
 }
 
-/**
+/*
  * lrg_input_prompt_set_action_name:
  * @self: An #LrgInputPrompt
  * @action_name: (nullable): The action name to display
@@ -617,7 +617,7 @@ lrg_input_prompt_set_action_name (LrgInputPrompt *self,
     }
 }
 
-/**
+/*
  * lrg_input_prompt_get_prompt_text:
  * @self: An #LrgInputPrompt
  *
@@ -634,7 +634,7 @@ lrg_input_prompt_get_prompt_text (LrgInputPrompt *self)
     return self->prompt_text;
 }
 
-/**
+/*
  * lrg_input_prompt_set_prompt_text:
  * @self: An #LrgInputPrompt
  * @text: (nullable): The prompt text
@@ -657,7 +657,7 @@ lrg_input_prompt_set_prompt_text (LrgInputPrompt *self,
     }
 }
 
-/**
+/*
  * lrg_input_prompt_get_device_type:
  * @self: An #LrgInputPrompt
  *
@@ -674,7 +674,7 @@ lrg_input_prompt_get_device_type (LrgInputPrompt *self)
     return self->device_type;
 }
 
-/**
+/*
  * lrg_input_prompt_set_device_type:
  * @self: An #LrgInputPrompt
  * @device_type: The device type to display glyphs for
@@ -696,7 +696,7 @@ lrg_input_prompt_set_device_type (LrgInputPrompt    *self,
     }
 }
 
-/**
+/*
  * lrg_input_prompt_get_gamepad_style:
  * @self: An #LrgInputPrompt
  *
@@ -713,7 +713,7 @@ lrg_input_prompt_get_gamepad_style (LrgInputPrompt *self)
     return self->gamepad_style;
 }
 
-/**
+/*
  * lrg_input_prompt_set_gamepad_style:
  * @self: An #LrgInputPrompt
  * @style: The gamepad style
@@ -735,7 +735,7 @@ lrg_input_prompt_set_gamepad_style (LrgInputPrompt *self,
     }
 }
 
-/**
+/*
  * lrg_input_prompt_get_font:
  * @self: An #LrgInputPrompt
  *
@@ -752,7 +752,7 @@ lrg_input_prompt_get_font (LrgInputPrompt *self)
     return self->font;
 }
 
-/**
+/*
  * lrg_input_prompt_set_font:
  * @self: An #LrgInputPrompt
  * @font: (nullable): The font to use
@@ -773,7 +773,7 @@ lrg_input_prompt_set_font (LrgInputPrompt *self,
     }
 }
 
-/**
+/*
  * lrg_input_prompt_get_font_size:
  * @self: An #LrgInputPrompt
  *
@@ -790,7 +790,7 @@ lrg_input_prompt_get_font_size (LrgInputPrompt *self)
     return self->font_size;
 }
 
-/**
+/*
  * lrg_input_prompt_set_font_size:
  * @self: An #LrgInputPrompt
  * @size: The font size in pixels
@@ -812,7 +812,7 @@ lrg_input_prompt_set_font_size (LrgInputPrompt *self,
     }
 }
 
-/**
+/*
  * lrg_input_prompt_get_text_color:
  * @self: An #LrgInputPrompt
  *
@@ -829,7 +829,7 @@ lrg_input_prompt_get_text_color (LrgInputPrompt *self)
     return &self->text_color;
 }
 
-/**
+/*
  * lrg_input_prompt_set_text_color:
  * @self: An #LrgInputPrompt
  * @color: The text color
@@ -855,7 +855,7 @@ lrg_input_prompt_set_text_color (LrgInputPrompt *self,
     }
 }
 
-/**
+/*
  * lrg_input_prompt_get_glyph_size:
  * @self: An #LrgInputPrompt
  *
@@ -872,7 +872,7 @@ lrg_input_prompt_get_glyph_size (LrgInputPrompt *self)
     return self->glyph_size;
 }
 
-/**
+/*
  * lrg_input_prompt_set_glyph_size:
  * @self: An #LrgInputPrompt
  * @size: The glyph size in pixels
@@ -894,7 +894,7 @@ lrg_input_prompt_set_glyph_size (LrgInputPrompt *self,
     }
 }
 
-/**
+/*
  * lrg_input_prompt_get_animated:
  * @self: An #LrgInputPrompt
  *
@@ -911,7 +911,7 @@ lrg_input_prompt_get_animated (LrgInputPrompt *self)
     return self->animated;
 }
 
-/**
+/*
  * lrg_input_prompt_set_animated:
  * @self: An #LrgInputPrompt
  * @animated: Whether to animate
@@ -933,7 +933,7 @@ lrg_input_prompt_set_animated (LrgInputPrompt *self,
     }
 }
 
-/**
+/*
  * lrg_input_prompt_update:
  * @self: An #LrgInputPrompt
  * @delta_time: Time since last update in seconds

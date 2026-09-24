@@ -691,7 +691,7 @@ lrg_reel_text_clip_init (LrgReelTextClip *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_text_clip_new:
  * @text: (nullable): UTF-8 text to display, or %NULL for an empty clip.
  *
@@ -715,7 +715,7 @@ lrg_reel_text_clip_new (const gchar *text)
     return self;
 }
 
-/**
+/*
  * lrg_reel_text_clip_new_with_font:
  * @text: (nullable): UTF-8 text to display, or %NULL for an empty clip.
  * @font: (nullable): a #GrlImageFont to use for rendering, or %NULL to fall
@@ -746,7 +746,7 @@ lrg_reel_text_clip_new_with_font (const gchar  *text,
     return self;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_font_from_file:
  * @self: an #LrgReelTextClip.
  * @path: (type filename): path to a TTF or OTF font file.
@@ -784,7 +784,7 @@ lrg_reel_text_clip_set_font_from_file (LrgReelTextClip  *self,
  * Text accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_text_clip_get_text:
  * @self: an #LrgReelTextClip.
  *
@@ -799,7 +799,7 @@ lrg_reel_text_clip_get_text (LrgReelTextClip *self)
     return self->text;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_text:
  * @self: an #LrgReelTextClip.
  * @text: (nullable): new UTF-8 text string, or %NULL to clear.
@@ -824,7 +824,7 @@ lrg_reel_text_clip_set_text (LrgReelTextClip *self,
  * Font accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_text_clip_get_font:
  * @self: an #LrgReelTextClip.
  *
@@ -839,7 +839,7 @@ lrg_reel_text_clip_get_font (LrgReelTextClip *self)
     return self->font;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_font:
  * @self: an #LrgReelTextClip.
  * @font: (nullable): a #GrlImageFont, or %NULL to switch back to the bitmap font.
@@ -867,7 +867,7 @@ lrg_reel_text_clip_set_font (LrgReelTextClip *self,
  * Font size accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_text_clip_get_font_size:
  * @self: an #LrgReelTextClip.
  *
@@ -882,7 +882,7 @@ lrg_reel_text_clip_get_font_size (LrgReelTextClip *self)
     return self->font_size;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_font_size:
  * @self: an #LrgReelTextClip.
  * @font_size: font size in pixels (must be > 0).
@@ -907,7 +907,7 @@ lrg_reel_text_clip_set_font_size (LrgReelTextClip *self,
  * Color accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_text_clip_get_color:
  * @self: an #LrgReelTextClip.
  * @out_color: (out caller-allocates): return location for the text color.
@@ -924,7 +924,7 @@ lrg_reel_text_clip_get_color (LrgReelTextClip *self,
     *out_color = self->color;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_color:
  * @self: an #LrgReelTextClip.
  * @color: new text color.
@@ -946,7 +946,7 @@ lrg_reel_text_clip_set_color (LrgReelTextClip *self,
  * Alignment accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_text_clip_get_align:
  * @self: an #LrgReelTextClip.
  *
@@ -962,7 +962,7 @@ lrg_reel_text_clip_get_align (LrgReelTextClip *self)
     return self->align;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_align:
  * @self: an #LrgReelTextClip.
  * @align: the desired text alignment.
@@ -986,7 +986,7 @@ lrg_reel_text_clip_set_align (LrgReelTextClip  *self,
  * Position accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_text_clip_get_text_x:
  * @self: an #LrgReelTextClip.
  *
@@ -1001,7 +1001,7 @@ lrg_reel_text_clip_get_text_x (LrgReelTextClip *self)
     return self->text_x;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_text_x:
  * @self: an #LrgReelTextClip.
  * @text_x: X coordinate in frame pixels.
@@ -1021,7 +1021,7 @@ lrg_reel_text_clip_set_text_x (LrgReelTextClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TEXT_X]);
 }
 
-/**
+/*
  * lrg_reel_text_clip_get_text_y:
  * @self: an #LrgReelTextClip.
  *
@@ -1036,7 +1036,7 @@ lrg_reel_text_clip_get_text_y (LrgReelTextClip *self)
     return self->text_y;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_text_y:
  * @self: an #LrgReelTextClip.
  * @text_y: Y coordinate in frame pixels.
@@ -1060,7 +1060,7 @@ lrg_reel_text_clip_set_text_y (LrgReelTextClip *self,
  * Max-width accessor
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_text_clip_get_max_width:
  * @self: an #LrgReelTextClip.
  *
@@ -1075,7 +1075,7 @@ lrg_reel_text_clip_get_max_width (LrgReelTextClip *self)
     return self->max_width;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_max_width:
  * @self: an #LrgReelTextClip.
  * @max_width: maximum line width in pixels, or 0 to disable word-wrapping.
@@ -1100,7 +1100,7 @@ lrg_reel_text_clip_set_max_width (LrgReelTextClip *self,
  * Line height accessor
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_text_clip_get_line_height:
  * @self: an #LrgReelTextClip.
  *
@@ -1115,7 +1115,7 @@ lrg_reel_text_clip_get_line_height (LrgReelTextClip *self)
     return self->line_height;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_line_height:
  * @self: an #LrgReelTextClip.
  * @line_height: line-height multiplier (must be > 0).
@@ -1140,7 +1140,7 @@ lrg_reel_text_clip_set_line_height (LrgReelTextClip *self,
  * Shadow accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_text_clip_get_shadow:
  * @self: an #LrgReelTextClip.
  *
@@ -1155,7 +1155,7 @@ lrg_reel_text_clip_get_shadow (LrgReelTextClip *self)
     return self->shadow;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_shadow:
  * @self: an #LrgReelTextClip.
  * @shadow: %TRUE to enable drop-shadow rendering.
@@ -1176,7 +1176,7 @@ lrg_reel_text_clip_set_shadow (LrgReelTextClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHADOW]);
 }
 
-/**
+/*
  * lrg_reel_text_clip_get_shadow_color:
  * @self: an #LrgReelTextClip.
  * @out_color: (out caller-allocates): return location for the shadow color.
@@ -1193,7 +1193,7 @@ lrg_reel_text_clip_get_shadow_color (LrgReelTextClip *self,
     *out_color = self->shadow_color;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_shadow_color:
  * @self: an #LrgReelTextClip.
  * @color: the new shadow color.
@@ -1210,7 +1210,7 @@ lrg_reel_text_clip_set_shadow_color (LrgReelTextClip *self,
     self->shadow_color = *color;
 }
 
-/**
+/*
  * lrg_reel_text_clip_get_shadow_offset:
  * @self: an #LrgReelTextClip.
  * @out_dx: (out) (optional): return location for the horizontal offset.
@@ -1229,7 +1229,7 @@ lrg_reel_text_clip_get_shadow_offset (LrgReelTextClip *self,
     if (out_dy) *out_dy = self->shadow_dy;
 }
 
-/**
+/*
  * lrg_reel_text_clip_set_shadow_offset:
  * @self: an #LrgReelTextClip.
  * @dx: horizontal shadow offset in pixels (positive = right).
@@ -1252,7 +1252,7 @@ lrg_reel_text_clip_set_shadow_offset (LrgReelTextClip *self,
  * Layout utility: lrg_reel_measure_text
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_measure_text:
  * @font: (nullable): a #GrlImageFont, or %NULL for the bitmap font.
  * @text: (nullable): UTF-8 text to measure.
@@ -1338,7 +1338,7 @@ lrg_reel_measure_text (GrlImageFont *font,
  * Layout utility: lrg_reel_fit_text
  * ========================================================================== */
 
-/**
+/*
  * lrg_reel_fit_text:
  * @font: (nullable): a #GrlImageFont, or %NULL for the bitmap font.
  * @text: (nullable): UTF-8 text (single logical line).

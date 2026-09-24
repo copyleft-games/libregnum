@@ -337,7 +337,7 @@ lrg_combat_manager_init (LrgCombatManager *self)
     priv->result = LRG_COMBAT_RESULT_IN_PROGRESS;
 }
 
-/**
+/*
  * lrg_combat_manager_new:
  *
  * Creates a new combat manager.

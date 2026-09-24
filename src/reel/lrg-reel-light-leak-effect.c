@@ -246,7 +246,7 @@ lrg_reel_light_leak_effect_init (LrgReelLightLeakEffect *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_light_leak_effect_new:
  *
  * Creates a new #LrgReelLightLeakEffect.
@@ -261,7 +261,7 @@ lrg_reel_light_leak_effect_new (void)
     return g_object_new (LRG_TYPE_REEL_LIGHT_LEAK_EFFECT, NULL);
 }
 
-/**
+/*
  * lrg_reel_light_leak_effect_get_color:
  * @self: a #LrgReelLightLeakEffect
  * @out_color: (out caller-allocates): return location for the leak color
@@ -278,7 +278,7 @@ lrg_reel_light_leak_effect_get_color (LrgReelLightLeakEffect *self,
     *out_color = self->leak_color;
 }
 
-/**
+/*
  * lrg_reel_light_leak_effect_set_color:
  * @self: a #LrgReelLightLeakEffect
  * @color: (not nullable): new leak tint color
@@ -296,7 +296,7 @@ lrg_reel_light_leak_effect_set_color (LrgReelLightLeakEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLOR]);
 }
 
-/**
+/*
  * lrg_reel_light_leak_effect_get_intensity:
  * @self: a #LrgReelLightLeakEffect
  *
@@ -312,7 +312,7 @@ lrg_reel_light_leak_effect_get_intensity (LrgReelLightLeakEffect *self)
     return self->intensity;
 }
 
-/**
+/*
  * lrg_reel_light_leak_effect_set_intensity:
  * @self: a #LrgReelLightLeakEffect
  * @intensity: new intensity [0, 1]

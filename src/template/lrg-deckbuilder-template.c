@@ -561,7 +561,7 @@ lrg_deckbuilder_template_class_init (LrgDeckbuilderTemplateClass *klass)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_template_new:
  *
  * Creates a new deckbuilder template with default settings.
@@ -578,7 +578,7 @@ lrg_deckbuilder_template_new (void)
  * Public API - Deck Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_template_get_deck_instance:
  * @self: an #LrgDeckbuilderTemplate
  *
@@ -597,7 +597,7 @@ lrg_deckbuilder_template_get_deck_instance (LrgDeckbuilderTemplate *self)
     return priv->deck_instance;
 }
 
-/**
+/*
  * lrg_deckbuilder_template_set_deck_instance:
  * @self: an #LrgDeckbuilderTemplate
  * @deck: (transfer none): the deck to use
@@ -626,7 +626,7 @@ lrg_deckbuilder_template_set_deck_instance (LrgDeckbuilderTemplate *self,
  * Public API - Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_template_get_current_energy:
  * @self: an #LrgDeckbuilderTemplate
  *
@@ -645,7 +645,7 @@ lrg_deckbuilder_template_get_current_energy (LrgDeckbuilderTemplate *self)
     return priv->current_energy;
 }
 
-/**
+/*
  * lrg_deckbuilder_template_set_current_energy:
  * @self: an #LrgDeckbuilderTemplate
  * @energy: energy value
@@ -672,7 +672,7 @@ lrg_deckbuilder_template_set_current_energy (LrgDeckbuilderTemplate *self,
     }
 }
 
-/**
+/*
  * lrg_deckbuilder_template_get_max_energy:
  * @self: an #LrgDeckbuilderTemplate
  *
@@ -691,7 +691,7 @@ lrg_deckbuilder_template_get_max_energy (LrgDeckbuilderTemplate *self)
     return priv->max_energy;
 }
 
-/**
+/*
  * lrg_deckbuilder_template_set_max_energy:
  * @self: an #LrgDeckbuilderTemplate
  * @energy: max energy value
@@ -712,7 +712,7 @@ lrg_deckbuilder_template_set_max_energy (LrgDeckbuilderTemplate *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MAX_ENERGY]);
 }
 
-/**
+/*
  * lrg_deckbuilder_template_get_current_turn:
  * @self: an #LrgDeckbuilderTemplate
  *
@@ -731,7 +731,7 @@ lrg_deckbuilder_template_get_current_turn (LrgDeckbuilderTemplate *self)
     return priv->current_turn;
 }
 
-/**
+/*
  * lrg_deckbuilder_template_get_base_hand_size:
  * @self: an #LrgDeckbuilderTemplate
  *
@@ -750,7 +750,7 @@ lrg_deckbuilder_template_get_base_hand_size (LrgDeckbuilderTemplate *self)
     return priv->base_hand_size;
 }
 
-/**
+/*
  * lrg_deckbuilder_template_set_base_hand_size:
  * @self: an #LrgDeckbuilderTemplate
  * @size: new base hand size
@@ -775,7 +775,7 @@ lrg_deckbuilder_template_set_base_hand_size (LrgDeckbuilderTemplate *self,
  * Public API - Turn Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_template_start_turn:
  * @self: an #LrgDeckbuilderTemplate
  *
@@ -804,7 +804,7 @@ lrg_deckbuilder_template_start_turn (LrgDeckbuilderTemplate *self)
         klass->start_turn (self, priv->current_turn);
 }
 
-/**
+/*
  * lrg_deckbuilder_template_end_turn:
  * @self: an #LrgDeckbuilderTemplate
  *
@@ -829,7 +829,7 @@ lrg_deckbuilder_template_end_turn (LrgDeckbuilderTemplate *self)
         klass->end_turn (self, priv->current_turn);
 }
 
-/**
+/*
  * lrg_deckbuilder_template_is_player_turn:
  * @self: an #LrgDeckbuilderTemplate
  *
@@ -852,7 +852,7 @@ lrg_deckbuilder_template_is_player_turn (LrgDeckbuilderTemplate *self)
  * Public API - Card Operations
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_template_play_card:
  * @self: an #LrgDeckbuilderTemplate
  * @card: (transfer none): the card to play
@@ -941,7 +941,7 @@ lrg_deckbuilder_template_play_card (LrgDeckbuilderTemplate *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_deckbuilder_template_play_card_at:
  * @self: an #LrgDeckbuilderTemplate
  * @hand_index: index in hand
@@ -976,7 +976,7 @@ lrg_deckbuilder_template_play_card_at (LrgDeckbuilderTemplate *self,
     return lrg_deckbuilder_template_play_card (self, card, target);
 }
 
-/**
+/*
  * lrg_deckbuilder_template_can_play_card:
  * @self: an #LrgDeckbuilderTemplate
  * @card: (transfer none): the card to check
@@ -1002,7 +1002,7 @@ lrg_deckbuilder_template_can_play_card (LrgDeckbuilderTemplate *self,
     return lrg_deckbuilder_template_real_can_play_card (self, card, NULL);
 }
 
-/**
+/*
  * lrg_deckbuilder_template_get_card_cost:
  * @self: an #LrgDeckbuilderTemplate
  * @card: (transfer none): the card to evaluate
@@ -1028,7 +1028,7 @@ lrg_deckbuilder_template_get_card_cost (LrgDeckbuilderTemplate *self,
     return lrg_card_instance_get_effective_cost (card, NULL);
 }
 
-/**
+/*
  * lrg_deckbuilder_template_draw_cards:
  * @self: an #LrgDeckbuilderTemplate
  * @count: number of cards to draw
@@ -1046,7 +1046,7 @@ lrg_deckbuilder_template_draw_cards (LrgDeckbuilderTemplate *self,
     return lrg_deck_mixin_draw_cards (LRG_DECK_MIXIN (self), count);
 }
 
-/**
+/*
  * lrg_deckbuilder_template_add_card_to_deck:
  * @self: an #LrgDeckbuilderTemplate
  * @card_def: (transfer none): card definition to add
@@ -1068,7 +1068,7 @@ lrg_deckbuilder_template_add_card_to_deck (LrgDeckbuilderTemplate *self,
         lrg_deck_instance_add_card (priv->deck_instance, card_def);
 }
 
-/**
+/*
  * lrg_deckbuilder_template_remove_card_from_deck:
  * @self: an #LrgDeckbuilderTemplate
  * @card: (transfer none): card instance to remove
@@ -1098,7 +1098,7 @@ lrg_deckbuilder_template_remove_card_from_deck (LrgDeckbuilderTemplate *self,
  * Public API - Energy Operations
  * ========================================================================== */
 
-/**
+/*
  * lrg_deckbuilder_template_spend_energy:
  * @self: an #LrgDeckbuilderTemplate
  * @amount: energy to spend
@@ -1128,7 +1128,7 @@ lrg_deckbuilder_template_spend_energy (LrgDeckbuilderTemplate *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_deckbuilder_template_gain_energy:
  * @self: an #LrgDeckbuilderTemplate
  * @amount: energy to gain
@@ -1151,7 +1151,7 @@ lrg_deckbuilder_template_gain_energy (LrgDeckbuilderTemplate *self,
     lrg_deckbuilder_template_set_current_energy (self, new_energy);
 }
 
-/**
+/*
  * lrg_deckbuilder_template_reset_energy:
  * @self: an #LrgDeckbuilderTemplate
  *

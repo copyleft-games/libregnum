@@ -83,7 +83,7 @@ lrg_reel_audio_track_init (LrgReelAudioTrack *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_audio_track_new:
  * @fps: the frame rate of the owning composition (frames per second, > 0).
  *
@@ -104,7 +104,7 @@ lrg_reel_audio_track_new (gdouble fps)
     return self;
 }
 
-/**
+/*
  * lrg_reel_audio_track_add:
  * @self: a #LrgReelAudioTrack
  * @wave: (transfer none): the wave data to place on the track
@@ -141,7 +141,7 @@ lrg_reel_audio_track_add (LrgReelAudioTrack *self,
     g_array_append_val (self->clips, clip);
 }
 
-/**
+/*
  * lrg_reel_audio_track_add_from_file:
  * @self: a #LrgReelAudioTrack
  * @path: (type filename): path to an audio file.
@@ -180,7 +180,7 @@ lrg_reel_audio_track_add_from_file (LrgReelAudioTrack *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_reel_audio_track_mix:
  * @self: a #LrgReelAudioTrack
  * @sample_rate: output sample rate in Hz (must be > 0)
@@ -358,7 +358,7 @@ lrg_reel_audio_track_mix (LrgReelAudioTrack *self,
     return out;
 }
 
-/**
+/*
  * lrg_reel_audio_track_get_n_clips:
  * @self: a #LrgReelAudioTrack
  *
@@ -374,7 +374,7 @@ lrg_reel_audio_track_get_n_clips (LrgReelAudioTrack *self)
     return self->clips->len;
 }
 
-/**
+/*
  * lrg_reel_audio_track_get_fps:
  * @self: a #LrgReelAudioTrack
  *

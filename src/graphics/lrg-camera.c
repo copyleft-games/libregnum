@@ -58,7 +58,7 @@ lrg_camera_init (LrgCamera *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_camera_begin:
  * @self: an #LrgCamera
  *
@@ -80,7 +80,7 @@ lrg_camera_begin (LrgCamera *self)
 	klass->begin (self);
 }
 
-/**
+/*
  * lrg_camera_end:
  * @self: an #LrgCamera
  *
@@ -101,7 +101,7 @@ lrg_camera_end (LrgCamera *self)
 	klass->end (self);
 }
 
-/**
+/*
  * lrg_camera_world_to_screen:
  * @self: an #LrgCamera
  * @world: world position (uses x, y for 2D cameras)
@@ -128,7 +128,7 @@ lrg_camera_world_to_screen (LrgCamera        *self,
 	klass->world_to_screen (self, world, out_screen);
 }
 
-/**
+/*
  * lrg_camera_screen_to_world:
  * @self: an #LrgCamera
  * @screen: screen position

@@ -246,7 +246,7 @@ lrg_reel_vignette_effect_init (LrgReelVignetteEffect *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_vignette_effect_new:
  *
  * Creates a new #LrgReelVignetteEffect.
@@ -261,7 +261,7 @@ lrg_reel_vignette_effect_new (void)
     return g_object_new (LRG_TYPE_REEL_VIGNETTE_EFFECT, NULL);
 }
 
-/**
+/*
  * lrg_reel_vignette_effect_get_intensity:
  * @self: a #LrgReelVignetteEffect
  *
@@ -277,7 +277,7 @@ lrg_reel_vignette_effect_get_intensity (LrgReelVignetteEffect *self)
     return self->intensity;
 }
 
-/**
+/*
  * lrg_reel_vignette_effect_set_intensity:
  * @self: a #LrgReelVignetteEffect
  * @intensity: darkening strength [0, 1]
@@ -297,7 +297,7 @@ lrg_reel_vignette_effect_set_intensity (LrgReelVignetteEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_INTENSITY]);
 }
 
-/**
+/*
  * lrg_reel_vignette_effect_get_radius:
  * @self: a #LrgReelVignetteEffect
  *
@@ -313,7 +313,7 @@ lrg_reel_vignette_effect_get_radius (LrgReelVignetteEffect *self)
     return self->radius;
 }
 
-/**
+/*
  * lrg_reel_vignette_effect_set_radius:
  * @self: a #LrgReelVignetteEffect
  * @radius: inner radius fraction [0, 1]

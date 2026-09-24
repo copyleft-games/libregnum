@@ -99,7 +99,7 @@ node_from_entity (LrgSceneEntity *entity)
 	return node;
 }
 
-/**
+/*
  * lrg_level_from_scene:
  * @scene: an #LrgScene to import
  *

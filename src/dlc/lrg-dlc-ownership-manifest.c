@@ -121,7 +121,7 @@ lrg_dlc_ownership_manifest_init (LrgDlcOwnershipManifest *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_dlc_ownership_manifest_new:
  *
  * Creates a new manifest-based DLC ownership checker.
@@ -134,7 +134,7 @@ lrg_dlc_ownership_manifest_new (void)
     return g_object_new (LRG_TYPE_DLC_OWNERSHIP_MANIFEST, NULL);
 }
 
-/**
+/*
  * lrg_dlc_ownership_manifest_set_owned:
  * @self: a #LrgDlcOwnershipManifest
  * @dlc_id: the DLC identifier
@@ -155,7 +155,7 @@ lrg_dlc_ownership_manifest_set_owned (LrgDlcOwnershipManifest *self,
                          GINT_TO_POINTER (owned));
 }
 
-/**
+/*
  * lrg_dlc_ownership_manifest_get_owned:
  * @self: a #LrgDlcOwnershipManifest
  * @dlc_id: the DLC identifier
@@ -179,7 +179,7 @@ lrg_dlc_ownership_manifest_get_owned (LrgDlcOwnershipManifest *self,
     return self->all_owned;
 }
 
-/**
+/*
  * lrg_dlc_ownership_manifest_set_all_owned:
  * @self: a #LrgDlcOwnershipManifest
  * @owned: whether all DLCs should be marked as owned
@@ -195,7 +195,7 @@ lrg_dlc_ownership_manifest_set_all_owned (LrgDlcOwnershipManifest *self,
     self->all_owned = owned;
 }
 
-/**
+/*
  * lrg_dlc_ownership_manifest_get_all_owned:
  * @self: a #LrgDlcOwnershipManifest
  *
@@ -211,7 +211,7 @@ lrg_dlc_ownership_manifest_get_all_owned (LrgDlcOwnershipManifest *self)
     return self->all_owned;
 }
 
-/**
+/*
  * lrg_dlc_ownership_manifest_unregister_dlc:
  * @self: a #LrgDlcOwnershipManifest
  * @dlc_id: the DLC identifier

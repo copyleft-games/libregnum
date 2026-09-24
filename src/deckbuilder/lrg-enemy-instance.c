@@ -641,7 +641,7 @@ lrg_enemy_instance_init (LrgEnemyInstance *self)
                                                g_free, NULL);
 }
 
-/**
+/*
  * lrg_enemy_instance_new:
  * @def: the enemy definition
  *
@@ -673,7 +673,7 @@ lrg_enemy_instance_new (LrgEnemyDef *def)
     return lrg_enemy_instance_new_with_health (def, actual_health);
 }
 
-/**
+/*
  * lrg_enemy_instance_new_with_health:
  * @def: the enemy definition
  * @max_health: specific max health value

@@ -18,7 +18,7 @@ lrg_event_listener_default_init (LrgEventListenerInterface *iface)
     /* No default implementations - all methods must be provided */
 }
 
-/**
+/*
  * lrg_event_listener_get_id:
  * @self: an #LrgEventListener
  *
@@ -42,7 +42,7 @@ lrg_event_listener_get_id (LrgEventListener *self)
     return iface->get_id (self);
 }
 
-/**
+/*
  * lrg_event_listener_get_priority:
  * @self: an #LrgEventListener
  *
@@ -67,7 +67,7 @@ lrg_event_listener_get_priority (LrgEventListener *self)
     return iface->get_priority (self);
 }
 
-/**
+/*
  * lrg_event_listener_get_event_mask:
  * @self: an #LrgEventListener
  *
@@ -91,7 +91,7 @@ lrg_event_listener_get_event_mask (LrgEventListener *self)
     return iface->get_event_mask (self);
 }
 
-/**
+/*
  * lrg_event_listener_on_event:
  * @self: an #LrgEventListener
  * @event: (transfer none): the event that occurred
@@ -121,7 +121,7 @@ lrg_event_listener_on_event (LrgEventListener *self,
     return iface->on_event (self, event, context);
 }
 
-/**
+/*
  * lrg_event_listener_listens_to:
  * @self: an #LrgEventListener
  * @event: an #LrgEvent

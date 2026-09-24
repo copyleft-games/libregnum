@@ -32,7 +32,7 @@ lrg_configurable_default_init (LrgConfigurableInterface *iface)
     (void) iface;
 }
 
-/**
+/*
  * lrg_configurable_apply_args:
  * @self: a #LrgConfigurable
  * @argv: (array zero-terminated=1) (element-type utf8): a %NULL-terminated,

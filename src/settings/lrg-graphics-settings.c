@@ -638,7 +638,7 @@ lrg_graphics_settings_init (LrgGraphicsSettings *self)
 
 /* Public API */
 
-/**
+/*
  * lrg_graphics_settings_new:
  *
  * Creates a new #LrgGraphicsSettings with default values.

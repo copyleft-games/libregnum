@@ -171,7 +171,7 @@ lrg_crash_dialog_terminal_init (LrgCrashDialogTerminal *self)
     self->log_path = NULL;
 }
 
-/**
+/*
  * lrg_crash_dialog_terminal_new:
  *
  * Creates a new #LrgCrashDialogTerminal that outputs to stderr.
@@ -184,7 +184,7 @@ lrg_crash_dialog_terminal_new (void)
     return g_object_new (LRG_TYPE_CRASH_DIALOG_TERMINAL, NULL);
 }
 
-/**
+/*
  * lrg_crash_dialog_terminal_new_with_file:
  * @log_path: path to write crash log
  *
@@ -201,7 +201,7 @@ lrg_crash_dialog_terminal_new_with_file (const gchar *log_path)
                          NULL);
 }
 
-/**
+/*
  * lrg_crash_dialog_terminal_get_log_path:
  * @self: an #LrgCrashDialogTerminal
  *
@@ -217,7 +217,7 @@ lrg_crash_dialog_terminal_get_log_path (LrgCrashDialogTerminal *self)
     return self->log_path;
 }
 
-/**
+/*
  * lrg_crash_dialog_terminal_set_log_path:
  * @self: an #LrgCrashDialogTerminal
  * @log_path: (nullable): path to write crash log

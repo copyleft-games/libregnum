@@ -34,7 +34,7 @@ static guint signals[N_SIGNALS];
 
 static LrgStatusEffectRegistry *default_registry = NULL;
 
-/**
+/*
  * lrg_status_effect_registry_get_default:
  *
  * Gets the default status effect registry singleton.
@@ -126,7 +126,7 @@ lrg_status_effect_registry_init (LrgStatusEffectRegistry *self)
  * Registration
  * ========================================================================== */
 
-/**
+/*
  * lrg_status_effect_registry_register:
  * @self: a #LrgStatusEffectRegistry
  * @def: (transfer none): the status effect definition to register
@@ -168,7 +168,7 @@ lrg_status_effect_registry_register (LrgStatusEffectRegistry *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_status_effect_registry_unregister:
  * @self: a #LrgStatusEffectRegistry
  * @id: the status effect ID to unregister
@@ -201,7 +201,7 @@ lrg_status_effect_registry_unregister (LrgStatusEffectRegistry *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_status_effect_registry_is_registered:
  * @self: a #LrgStatusEffectRegistry
  * @id: the status effect ID to check
@@ -226,7 +226,7 @@ lrg_status_effect_registry_is_registered (LrgStatusEffectRegistry *self,
  * Lookup
  * ========================================================================== */
 
-/**
+/*
  * lrg_status_effect_registry_lookup:
  * @self: a #LrgStatusEffectRegistry
  * @id: the status effect ID
@@ -247,7 +247,7 @@ lrg_status_effect_registry_lookup (LrgStatusEffectRegistry *self,
     return g_hash_table_lookup (self->effects, id);
 }
 
-/**
+/*
  * lrg_status_effect_registry_create_instance:
  * @self: a #LrgStatusEffectRegistry
  * @id: the status effect ID
@@ -281,7 +281,7 @@ lrg_status_effect_registry_create_instance (LrgStatusEffectRegistry *self,
     return lrg_status_effect_instance_new (def, stacks);
 }
 
-/**
+/*
  * lrg_status_effect_registry_get_all:
  * @self: a #LrgStatusEffectRegistry
  *
@@ -299,7 +299,7 @@ lrg_status_effect_registry_get_all (LrgStatusEffectRegistry *self)
     return g_hash_table_get_values (self->effects);
 }
 
-/**
+/*
  * lrg_status_effect_registry_get_buffs:
  * @self: a #LrgStatusEffectRegistry
  *
@@ -329,7 +329,7 @@ lrg_status_effect_registry_get_buffs (LrgStatusEffectRegistry *self)
     return result;
 }
 
-/**
+/*
  * lrg_status_effect_registry_get_debuffs:
  * @self: a #LrgStatusEffectRegistry
  *
@@ -359,7 +359,7 @@ lrg_status_effect_registry_get_debuffs (LrgStatusEffectRegistry *self)
     return result;
 }
 
-/**
+/*
  * lrg_status_effect_registry_get_count:
  * @self: a #LrgStatusEffectRegistry
  *
@@ -381,7 +381,7 @@ lrg_status_effect_registry_get_count (LrgStatusEffectRegistry *self)
  * Utility
  * ========================================================================== */
 
-/**
+/*
  * lrg_status_effect_registry_clear:
  * @self: a #LrgStatusEffectRegistry
  *
@@ -411,7 +411,7 @@ foreach_callback (gpointer key,
     func (value, data);
 }
 
-/**
+/*
  * lrg_status_effect_registry_foreach:
  * @self: a #LrgStatusEffectRegistry
  * @func: (scope call): callback for each status effect

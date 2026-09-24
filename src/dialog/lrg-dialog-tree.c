@@ -185,7 +185,7 @@ lrg_dialog_tree_init (LrgDialogTree *self)
                                          g_free, g_object_unref);
 }
 
-/**
+/*
  * lrg_dialog_tree_new:
  * @id: unique identifier for the tree
  *
@@ -519,7 +519,7 @@ lrg_dialog_tree_build_from_yaml (YamlParser   *parser,
     return g_steal_pointer (&tree);
 }
 
-/**
+/*
  * lrg_dialog_tree_new_from_file:
  * @path: path to the dialog tree definition file (YAML)
  * @error: (nullable): return location for error
@@ -545,7 +545,7 @@ lrg_dialog_tree_new_from_file (const gchar  *path,
     return lrg_dialog_tree_build_from_yaml (parser, path, error);
 }
 
-/**
+/*
  * lrg_dialog_tree_new_from_data:
  * @data: (array length=length) (element-type guint8): YAML dialog tree definition
  * @length: length of @data, or -1 if null-terminated
@@ -586,7 +586,7 @@ lrg_dialog_tree_new_from_data (const gchar  *data,
     return lrg_dialog_tree_build_from_yaml (parser, "<data>", error);
 }
 
-/**
+/*
  * lrg_dialog_tree_get_id:
  * @self: an #LrgDialogTree
  *
@@ -601,7 +601,7 @@ lrg_dialog_tree_get_id (LrgDialogTree *self)
     return self->id;
 }
 
-/**
+/*
  * lrg_dialog_tree_get_start_node_id:
  * @self: an #LrgDialogTree
  *
@@ -616,7 +616,7 @@ lrg_dialog_tree_get_start_node_id (LrgDialogTree *self)
     return self->start_node_id;
 }
 
-/**
+/*
  * lrg_dialog_tree_set_start_node_id:
  * @self: an #LrgDialogTree
  * @start_node_id: (nullable): start node ID
@@ -631,7 +631,7 @@ lrg_dialog_tree_set_start_node_id (LrgDialogTree *self,
     g_object_set (self, "start-node-id", start_node_id, NULL);
 }
 
-/**
+/*
  * lrg_dialog_tree_add_node:
  * @self: an #LrgDialogTree
  * @node: (transfer full): node to add
@@ -654,7 +654,7 @@ lrg_dialog_tree_add_node (LrgDialogTree *self,
     g_hash_table_replace (self->nodes, g_strdup (node_id), node);
 }
 
-/**
+/*
  * lrg_dialog_tree_get_node:
  * @self: an #LrgDialogTree
  * @node_id: node identifier
@@ -673,7 +673,7 @@ lrg_dialog_tree_get_node (LrgDialogTree *self,
     return g_hash_table_lookup (self->nodes, node_id);
 }
 
-/**
+/*
  * lrg_dialog_tree_get_start_node:
  * @self: an #LrgDialogTree
  *
@@ -692,7 +692,7 @@ lrg_dialog_tree_get_start_node (LrgDialogTree *self)
     return lrg_dialog_tree_get_node (self, self->start_node_id);
 }
 
-/**
+/*
  * lrg_dialog_tree_remove_node:
  * @self: an #LrgDialogTree
  * @node_id: node identifier
@@ -711,7 +711,7 @@ lrg_dialog_tree_remove_node (LrgDialogTree *self,
     return g_hash_table_remove (self->nodes, node_id);
 }
 
-/**
+/*
  * lrg_dialog_tree_get_node_count:
  * @self: an #LrgDialogTree
  *
@@ -726,7 +726,7 @@ lrg_dialog_tree_get_node_count (LrgDialogTree *self)
     return g_hash_table_size (self->nodes);
 }
 
-/**
+/*
  * lrg_dialog_tree_get_node_ids:
  * @self: an #LrgDialogTree
  *
@@ -741,7 +741,7 @@ lrg_dialog_tree_get_node_ids (LrgDialogTree *self)
     return g_hash_table_get_keys (self->nodes);
 }
 
-/**
+/*
  * lrg_dialog_tree_get_title:
  * @self: an #LrgDialogTree
  *
@@ -756,7 +756,7 @@ lrg_dialog_tree_get_title (LrgDialogTree *self)
     return self->title;
 }
 
-/**
+/*
  * lrg_dialog_tree_set_title:
  * @self: an #LrgDialogTree
  * @title: (nullable): tree title
@@ -771,7 +771,7 @@ lrg_dialog_tree_set_title (LrgDialogTree *self,
     g_object_set (self, "title", title, NULL);
 }
 
-/**
+/*
  * lrg_dialog_tree_get_description:
  * @self: an #LrgDialogTree
  *
@@ -786,7 +786,7 @@ lrg_dialog_tree_get_description (LrgDialogTree *self)
     return self->description;
 }
 
-/**
+/*
  * lrg_dialog_tree_set_description:
  * @self: an #LrgDialogTree
  * @description: (nullable): tree description
@@ -814,7 +814,7 @@ node_exists (LrgDialogTree *self,
     return g_hash_table_contains (self->nodes, node_id);
 }
 
-/**
+/*
  * lrg_dialog_tree_validate:
  * @self: an #LrgDialogTree
  * @error: (nullable): return location for error

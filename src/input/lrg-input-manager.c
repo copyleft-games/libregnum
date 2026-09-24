@@ -183,7 +183,7 @@ lrg_input_manager_init (LrgInputManager *self)
  * Singleton Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_manager_get_default:
  *
  * Gets the default input manager instance.
@@ -226,7 +226,7 @@ lrg_input_manager_get_default (void)
  * Source Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_manager_add_source:
  * @self: an #LrgInputManager
  * @source: (transfer none): the input source to add
@@ -244,7 +244,7 @@ lrg_input_manager_add_source (LrgInputManager *self,
 	sort_sources (self);
 }
 
-/**
+/*
  * lrg_input_manager_remove_source:
  * @self: an #LrgInputManager
  * @source: the input source to remove
@@ -263,7 +263,7 @@ lrg_input_manager_remove_source (LrgInputManager *self,
 	return g_ptr_array_remove (self->sources, source);
 }
 
-/**
+/*
  * lrg_input_manager_get_source:
  * @self: an #LrgInputManager
  * @name: the name of the source to find
@@ -293,7 +293,7 @@ lrg_input_manager_get_source (LrgInputManager *self,
 	return NULL;
 }
 
-/**
+/*
  * lrg_input_manager_get_sources:
  * @self: an #LrgInputManager
  *
@@ -313,7 +313,7 @@ lrg_input_manager_get_sources (LrgInputManager *self)
  * Polling
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_manager_poll:
  * @self: an #LrgInputManager
  *
@@ -380,7 +380,7 @@ lrg_input_manager_poll (LrgInputManager *self)
  * Keyboard Input
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_manager_is_key_pressed:
  * @self: an #LrgInputManager
  * @key: the key to check
@@ -413,7 +413,7 @@ lrg_input_manager_is_key_pressed (LrgInputManager *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_manager_is_key_down:
  * @self: an #LrgInputManager
  * @key: the key to check
@@ -445,7 +445,7 @@ lrg_input_manager_is_key_down (LrgInputManager *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_manager_is_key_released:
  * @self: an #LrgInputManager
  * @key: the key to check
@@ -481,7 +481,7 @@ lrg_input_manager_is_key_released (LrgInputManager *self,
  * Mouse Input
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_manager_is_mouse_button_pressed:
  * @self: an #LrgInputManager
  * @button: the mouse button to check
@@ -513,7 +513,7 @@ lrg_input_manager_is_mouse_button_pressed (LrgInputManager *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_manager_is_mouse_button_down:
  * @self: an #LrgInputManager
  * @button: the mouse button to check
@@ -545,7 +545,7 @@ lrg_input_manager_is_mouse_button_down (LrgInputManager *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_manager_is_mouse_button_released:
  * @self: an #LrgInputManager
  * @button: the mouse button to check
@@ -577,7 +577,7 @@ lrg_input_manager_is_mouse_button_released (LrgInputManager *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_manager_get_mouse_position:
  * @self: an #LrgInputManager
  * @x: (out) (optional): location to store X coordinate
@@ -636,7 +636,7 @@ lrg_input_manager_get_mouse_position (LrgInputManager *self,
 	}
 }
 
-/**
+/*
  * lrg_input_manager_get_mouse_delta:
  * @self: an #LrgInputManager
  * @dx: (out) (optional): location to store X delta
@@ -691,7 +691,7 @@ lrg_input_manager_get_mouse_delta (LrgInputManager *self,
  * Gamepad Input
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_manager_is_gamepad_available:
  * @self: an #LrgInputManager
  * @gamepad: the gamepad index (0-3)
@@ -723,7 +723,7 @@ lrg_input_manager_is_gamepad_available (LrgInputManager *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_manager_is_gamepad_button_pressed:
  * @self: an #LrgInputManager
  * @gamepad: the gamepad index (0-3)
@@ -757,7 +757,7 @@ lrg_input_manager_is_gamepad_button_pressed (LrgInputManager  *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_manager_is_gamepad_button_down:
  * @self: an #LrgInputManager
  * @gamepad: the gamepad index (0-3)
@@ -791,7 +791,7 @@ lrg_input_manager_is_gamepad_button_down (LrgInputManager  *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_manager_is_gamepad_button_released:
  * @self: an #LrgInputManager
  * @gamepad: the gamepad index (0-3)
@@ -825,7 +825,7 @@ lrg_input_manager_is_gamepad_button_released (LrgInputManager  *self,
 	return FALSE;
 }
 
-/**
+/*
  * lrg_input_manager_get_gamepad_axis:
  * @self: an #LrgInputManager
  * @gamepad: the gamepad index (0-3)
@@ -874,7 +874,7 @@ lrg_input_manager_get_gamepad_axis (LrgInputManager *self,
 	return max_value;
 }
 
-/**
+/*
  * lrg_input_manager_get_gamepad_axis_state:
  * @self: an #LrgInputManager
  * @gamepad: the gamepad index (0-3)
@@ -911,7 +911,7 @@ lrg_input_manager_get_gamepad_axis_state (LrgInputManager *self,
  * Global Enable/Disable
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_manager_get_enabled:
  * @self: an #LrgInputManager
  *
@@ -927,7 +927,7 @@ lrg_input_manager_get_enabled (LrgInputManager *self)
 	return self->enabled;
 }
 
-/**
+/*
  * lrg_input_manager_set_enabled:
  * @self: an #LrgInputManager
  * @enabled: whether to enable input

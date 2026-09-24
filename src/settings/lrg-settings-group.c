@@ -129,7 +129,7 @@ lrg_settings_group_init (LrgSettingsGroup *self)
     priv->dirty = FALSE;
 }
 
-/**
+/*
  * lrg_settings_group_apply:
  * @self: an #LrgSettingsGroup
  *
@@ -149,7 +149,7 @@ lrg_settings_group_apply (LrgSettingsGroup *self)
     klass->apply (self);
 }
 
-/**
+/*
  * lrg_settings_group_reset:
  * @self: an #LrgSettingsGroup
  *
@@ -171,7 +171,7 @@ lrg_settings_group_reset (LrgSettingsGroup *self)
     lrg_settings_group_mark_dirty (self);
 }
 
-/**
+/*
  * lrg_settings_group_get_group_name:
  * @self: an #LrgSettingsGroup
  *
@@ -192,7 +192,7 @@ lrg_settings_group_get_group_name (LrgSettingsGroup *self)
     return klass->get_group_name (self);
 }
 
-/**
+/*
  * lrg_settings_group_serialize:
  * @self: an #LrgSettingsGroup
  * @error: (nullable): return location for error
@@ -215,7 +215,7 @@ lrg_settings_group_serialize (LrgSettingsGroup  *self,
     return klass->serialize (self, error);
 }
 
-/**
+/*
  * lrg_settings_group_deserialize:
  * @self: an #LrgSettingsGroup
  * @data: the #GVariant containing settings data
@@ -250,7 +250,7 @@ lrg_settings_group_deserialize (LrgSettingsGroup  *self,
     return result;
 }
 
-/**
+/*
  * lrg_settings_group_is_dirty:
  * @self: an #LrgSettingsGroup
  *
@@ -269,7 +269,7 @@ lrg_settings_group_is_dirty (LrgSettingsGroup *self)
     return priv->dirty;
 }
 
-/**
+/*
  * lrg_settings_group_mark_dirty:
  * @self: an #LrgSettingsGroup
  *
@@ -287,7 +287,7 @@ lrg_settings_group_mark_dirty (LrgSettingsGroup *self)
     priv->dirty = TRUE;
 }
 
-/**
+/*
  * lrg_settings_group_mark_clean:
  * @self: an #LrgSettingsGroup
  *

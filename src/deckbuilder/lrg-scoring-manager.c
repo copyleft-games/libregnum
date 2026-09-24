@@ -236,7 +236,7 @@ lrg_scoring_manager_init (LrgScoringManager *self)
     priv->last_context = NULL;
 }
 
-/**
+/*
  * lrg_scoring_manager_new:
  *
  * Creates a new scoring manager.
@@ -251,7 +251,7 @@ lrg_scoring_manager_new (void)
     return g_object_new (LRG_TYPE_SCORING_MANAGER, NULL);
 }
 
-/**
+/*
  * lrg_scoring_manager_get_default:
  *
  * Gets the default scoring manager singleton.
@@ -271,7 +271,7 @@ lrg_scoring_manager_get_default (void)
     return default_manager;
 }
 
-/**
+/*
  * lrg_scoring_manager_set_rules:
  * @self: a #LrgScoringManager
  * @rules: (transfer none): the scoring rules to use
@@ -293,7 +293,7 @@ lrg_scoring_manager_set_rules (LrgScoringManager *self,
     g_set_object (&priv->rules, rules);
 }
 
-/**
+/*
  * lrg_scoring_manager_get_rules:
  * @self: a #LrgScoringManager
  *
@@ -314,7 +314,7 @@ lrg_scoring_manager_get_rules (LrgScoringManager *self)
     return priv->rules;
 }
 
-/**
+/*
  * lrg_scoring_manager_start_round:
  * @self: a #LrgScoringManager
  * @target_score: the score needed to win
@@ -355,7 +355,7 @@ lrg_scoring_manager_start_round (LrgScoringManager *self,
                target_score, hands, discards);
 }
 
-/**
+/*
  * lrg_scoring_manager_end_round:
  * @self: a #LrgScoringManager
  *
@@ -394,7 +394,7 @@ lrg_scoring_manager_end_round (LrgScoringManager *self)
                priv->current_score, priv->target_score);
 }
 
-/**
+/*
  * lrg_scoring_manager_is_round_active:
  * @self: a #LrgScoringManager
  *
@@ -415,7 +415,7 @@ lrg_scoring_manager_is_round_active (LrgScoringManager *self)
     return priv->round_active;
 }
 
-/**
+/*
  * lrg_scoring_manager_get_current_score:
  * @self: a #LrgScoringManager
  *
@@ -436,7 +436,7 @@ lrg_scoring_manager_get_current_score (LrgScoringManager *self)
     return priv->current_score;
 }
 
-/**
+/*
  * lrg_scoring_manager_get_target_score:
  * @self: a #LrgScoringManager
  *
@@ -457,7 +457,7 @@ lrg_scoring_manager_get_target_score (LrgScoringManager *self)
     return priv->target_score;
 }
 
-/**
+/*
  * lrg_scoring_manager_get_hands_remaining:
  * @self: a #LrgScoringManager
  *
@@ -478,7 +478,7 @@ lrg_scoring_manager_get_hands_remaining (LrgScoringManager *self)
     return priv->hands_remaining;
 }
 
-/**
+/*
  * lrg_scoring_manager_get_discards_remaining:
  * @self: a #LrgScoringManager
  *
@@ -499,7 +499,7 @@ lrg_scoring_manager_get_discards_remaining (LrgScoringManager *self)
     return priv->discards_remaining;
 }
 
-/**
+/*
  * lrg_scoring_manager_get_phase:
  * @self: a #LrgScoringManager
  *
@@ -520,7 +520,7 @@ lrg_scoring_manager_get_phase (LrgScoringManager *self)
     return priv->phase;
 }
 
-/**
+/*
  * lrg_scoring_manager_add_joker:
  * @self: a #LrgScoringManager
  * @joker: (transfer full): the joker to add
@@ -557,7 +557,7 @@ lrg_scoring_manager_add_joker (LrgScoringManager *self,
                priv->jokers->len, priv->max_jokers);
 }
 
-/**
+/*
  * lrg_scoring_manager_remove_joker:
  * @self: a #LrgScoringManager
  * @joker: the joker to remove
@@ -582,7 +582,7 @@ lrg_scoring_manager_remove_joker (LrgScoringManager *self,
     return g_ptr_array_remove (priv->jokers, joker);
 }
 
-/**
+/*
  * lrg_scoring_manager_get_jokers:
  * @self: a #LrgScoringManager
  *
@@ -603,7 +603,7 @@ lrg_scoring_manager_get_jokers (LrgScoringManager *self)
     return priv->jokers;
 }
 
-/**
+/*
  * lrg_scoring_manager_get_max_jokers:
  * @self: a #LrgScoringManager
  *
@@ -624,7 +624,7 @@ lrg_scoring_manager_get_max_jokers (LrgScoringManager *self)
     return priv->max_jokers;
 }
 
-/**
+/*
  * lrg_scoring_manager_set_max_jokers:
  * @self: a #LrgScoringManager
  * @max: the maximum joker slots
@@ -646,7 +646,7 @@ lrg_scoring_manager_set_max_jokers (LrgScoringManager *self,
     priv->max_jokers = max;
 }
 
-/**
+/*
  * lrg_scoring_manager_play_hand:
  * @self: a #LrgScoringManager
  * @cards: (element-type LrgCardInstance): the cards to play
@@ -786,7 +786,7 @@ lrg_scoring_manager_play_hand (LrgScoringManager *self,
     return score;
 }
 
-/**
+/*
  * lrg_scoring_manager_discard:
  * @self: a #LrgScoringManager
  * @cards: (element-type LrgCardInstance): the cards to discard
@@ -829,7 +829,7 @@ lrg_scoring_manager_discard (LrgScoringManager *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_scoring_manager_evaluate_hand:
  * @self: a #LrgScoringManager
  * @cards: (element-type LrgCardInstance): the cards to evaluate
@@ -855,7 +855,7 @@ lrg_scoring_manager_evaluate_hand (LrgScoringManager *self,
     return lrg_scoring_hand_evaluate (priv->evaluator);
 }
 
-/**
+/*
  * lrg_scoring_manager_preview_score:
  * @self: a #LrgScoringManager
  * @cards: (element-type LrgCardInstance): the cards to preview
@@ -919,7 +919,7 @@ lrg_scoring_manager_preview_score (LrgScoringManager *self,
     return lrg_scoring_context_calculate_score (ctx);
 }
 
-/**
+/*
  * lrg_scoring_manager_get_last_context:
  * @self: a #LrgScoringManager
  *

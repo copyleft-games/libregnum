@@ -324,7 +324,7 @@ lrg_widget_init (LrgWidget *self)
  * Public API - Position and Size
  * ========================================================================== */
 
-/**
+/*
  * lrg_widget_get_x:
  * @self: an #LrgWidget
  *
@@ -343,7 +343,7 @@ lrg_widget_get_x (LrgWidget *self)
     return priv->x;
 }
 
-/**
+/*
  * lrg_widget_set_x:
  * @self: an #LrgWidget
  * @x: the X position
@@ -367,7 +367,7 @@ lrg_widget_set_x (LrgWidget *self,
     }
 }
 
-/**
+/*
  * lrg_widget_get_y:
  * @self: an #LrgWidget
  *
@@ -386,7 +386,7 @@ lrg_widget_get_y (LrgWidget *self)
     return priv->y;
 }
 
-/**
+/*
  * lrg_widget_set_y:
  * @self: an #LrgWidget
  * @y: the Y position
@@ -410,7 +410,7 @@ lrg_widget_set_y (LrgWidget *self,
     }
 }
 
-/**
+/*
  * lrg_widget_get_width:
  * @self: an #LrgWidget
  *
@@ -429,7 +429,7 @@ lrg_widget_get_width (LrgWidget *self)
     return priv->width;
 }
 
-/**
+/*
  * lrg_widget_set_width:
  * @self: an #LrgWidget
  * @width: the width
@@ -454,7 +454,7 @@ lrg_widget_set_width (LrgWidget *self,
     }
 }
 
-/**
+/*
  * lrg_widget_get_height:
  * @self: an #LrgWidget
  *
@@ -473,7 +473,7 @@ lrg_widget_get_height (LrgWidget *self)
     return priv->height;
 }
 
-/**
+/*
  * lrg_widget_set_height:
  * @self: an #LrgWidget
  * @height: the height
@@ -498,7 +498,7 @@ lrg_widget_set_height (LrgWidget *self,
     }
 }
 
-/**
+/*
  * lrg_widget_set_position:
  * @self: an #LrgWidget
  * @x: the X position
@@ -519,7 +519,7 @@ lrg_widget_set_position (LrgWidget *self,
     g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_widget_set_size:
  * @self: an #LrgWidget
  * @width: the width
@@ -544,7 +544,7 @@ lrg_widget_set_size (LrgWidget *self,
  * Public API - World Coordinates
  * ========================================================================== */
 
-/**
+/*
  * lrg_widget_get_world_x:
  * @self: an #LrgWidget
  *
@@ -572,7 +572,7 @@ lrg_widget_get_world_x (LrgWidget *self)
     return world_x;
 }
 
-/**
+/*
  * lrg_widget_get_world_y:
  * @self: an #LrgWidget
  *
@@ -604,7 +604,7 @@ lrg_widget_get_world_y (LrgWidget *self)
  * Public API - State
  * ========================================================================== */
 
-/**
+/*
  * lrg_widget_get_visible:
  * @self: an #LrgWidget
  *
@@ -623,7 +623,7 @@ lrg_widget_get_visible (LrgWidget *self)
     return priv->visible;
 }
 
-/**
+/*
  * lrg_widget_set_visible:
  * @self: an #LrgWidget
  * @visible: whether to show the widget
@@ -649,7 +649,7 @@ lrg_widget_set_visible (LrgWidget *self,
     }
 }
 
-/**
+/*
  * lrg_widget_get_enabled:
  * @self: an #LrgWidget
  *
@@ -668,7 +668,7 @@ lrg_widget_get_enabled (LrgWidget *self)
     return priv->enabled;
 }
 
-/**
+/*
  * lrg_widget_set_enabled:
  * @self: an #LrgWidget
  * @enabled: whether to enable the widget
@@ -698,7 +698,7 @@ lrg_widget_set_enabled (LrgWidget *self,
  * Public API - Hierarchy
  * ========================================================================== */
 
-/**
+/*
  * lrg_widget_get_parent:
  * @self: an #LrgWidget
  *
@@ -721,7 +721,7 @@ lrg_widget_get_parent (LrgWidget *self)
  * Public API - Hit Testing
  * ========================================================================== */
 
-/**
+/*
  * lrg_widget_contains_point:
  * @self: an #LrgWidget
  * @x: the X coordinate in world space
@@ -755,7 +755,7 @@ lrg_widget_contains_point (LrgWidget *self,
  * Public API - Virtual Method Wrappers
  * ========================================================================== */
 
-/**
+/*
  * lrg_widget_draw:
  * @self: an #LrgWidget
  *
@@ -785,7 +785,7 @@ lrg_widget_draw (LrgWidget *self)
     }
 }
 
-/**
+/*
  * lrg_widget_measure:
  * @self: an #LrgWidget
  * @preferred_width: (out): location to store preferred width
@@ -822,7 +822,7 @@ lrg_widget_measure (LrgWidget *self,
     }
 }
 
-/**
+/*
  * lrg_widget_handle_event:
  * @self: an #LrgWidget
  * @event: the UI event to handle

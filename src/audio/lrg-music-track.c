@@ -314,7 +314,7 @@ lrg_music_track_init (LrgMusicTrack *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_music_track_new:
  * @music: the underlying GrlMusic
  *
@@ -332,7 +332,7 @@ lrg_music_track_new (GrlMusic *music)
                          NULL);
 }
 
-/**
+/*
  * lrg_music_track_new_from_file:
  * @path: path to the music file
  * @error: (optional): return location for a #GError
@@ -361,7 +361,7 @@ lrg_music_track_new_from_file (const gchar  *path,
  * Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_music_track_get_music:
  * @self: a #LrgMusicTrack
  *
@@ -377,7 +377,7 @@ lrg_music_track_get_music (LrgMusicTrack *self)
     return self->music;
 }
 
-/**
+/*
  * lrg_music_track_get_name:
  * @self: a #LrgMusicTrack
  *
@@ -393,7 +393,7 @@ lrg_music_track_get_name (LrgMusicTrack *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_music_track_set_name:
  * @self: a #LrgMusicTrack
  * @name: (nullable): the track name
@@ -418,7 +418,7 @@ lrg_music_track_set_name (LrgMusicTrack *self,
  * Loop Points
  * ========================================================================== */
 
-/**
+/*
  * lrg_music_track_set_loop_points:
  * @self: a #LrgMusicTrack
  * @start: loop start in seconds (negative means beginning)
@@ -441,7 +441,7 @@ lrg_music_track_set_loop_points (LrgMusicTrack *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOOP_END]);
 }
 
-/**
+/*
  * lrg_music_track_get_loop_start:
  * @self: a #LrgMusicTrack
  *
@@ -457,7 +457,7 @@ lrg_music_track_get_loop_start (LrgMusicTrack *self)
     return self->loop_start;
 }
 
-/**
+/*
  * lrg_music_track_get_loop_end:
  * @self: a #LrgMusicTrack
  *
@@ -473,7 +473,7 @@ lrg_music_track_get_loop_end (LrgMusicTrack *self)
     return self->loop_end;
 }
 
-/**
+/*
  * lrg_music_track_clear_loop_points:
  * @self: a #LrgMusicTrack
  *
@@ -492,7 +492,7 @@ lrg_music_track_clear_loop_points (LrgMusicTrack *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOOP_END]);
 }
 
-/**
+/*
  * lrg_music_track_has_loop_points:
  * @self: a #LrgMusicTrack
  *
@@ -512,7 +512,7 @@ lrg_music_track_has_loop_points (LrgMusicTrack *self)
  * Playback Control
  * ========================================================================== */
 
-/**
+/*
  * lrg_music_track_play:
  * @self: a #LrgMusicTrack
  *
@@ -544,7 +544,7 @@ lrg_music_track_play (LrgMusicTrack *self)
     grl_music_play (self->music);
 }
 
-/**
+/*
  * lrg_music_track_stop:
  * @self: a #LrgMusicTrack
  *
@@ -561,7 +561,7 @@ lrg_music_track_stop (LrgMusicTrack *self)
     grl_music_stop (self->music);
 }
 
-/**
+/*
  * lrg_music_track_pause:
  * @self: a #LrgMusicTrack
  *
@@ -576,7 +576,7 @@ lrg_music_track_pause (LrgMusicTrack *self)
     grl_music_pause (self->music);
 }
 
-/**
+/*
  * lrg_music_track_resume:
  * @self: a #LrgMusicTrack
  *
@@ -591,7 +591,7 @@ lrg_music_track_resume (LrgMusicTrack *self)
     grl_music_resume (self->music);
 }
 
-/**
+/*
  * lrg_music_track_update:
  * @self: a #LrgMusicTrack
  *
@@ -675,7 +675,7 @@ lrg_music_track_update (LrgMusicTrack *self)
     }
 }
 
-/**
+/*
  * lrg_music_track_is_playing:
  * @self: a #LrgMusicTrack
  *
@@ -701,7 +701,7 @@ lrg_music_track_is_playing (LrgMusicTrack *self)
  * Looping
  * ========================================================================== */
 
-/**
+/*
  * lrg_music_track_set_looping:
  * @self: a #LrgMusicTrack
  * @looping: whether to loop
@@ -726,7 +726,7 @@ lrg_music_track_set_looping (LrgMusicTrack *self,
     }
 }
 
-/**
+/*
  * lrg_music_track_get_looping:
  * @self: a #LrgMusicTrack
  *
@@ -746,7 +746,7 @@ lrg_music_track_get_looping (LrgMusicTrack *self)
  * Position and Duration
  * ========================================================================== */
 
-/**
+/*
  * lrg_music_track_seek:
  * @self: a #LrgMusicTrack
  * @position: position in seconds
@@ -763,7 +763,7 @@ lrg_music_track_seek (LrgMusicTrack *self,
     grl_music_seek (self->music, position);
 }
 
-/**
+/*
  * lrg_music_track_get_position:
  * @self: a #LrgMusicTrack
  *
@@ -782,7 +782,7 @@ lrg_music_track_get_position (LrgMusicTrack *self)
     return grl_music_get_time_played (self->music);
 }
 
-/**
+/*
  * lrg_music_track_get_duration:
  * @self: a #LrgMusicTrack
  *
@@ -805,7 +805,7 @@ lrg_music_track_get_duration (LrgMusicTrack *self)
  * Volume and Effects
  * ========================================================================== */
 
-/**
+/*
  * lrg_music_track_set_volume:
  * @self: a #LrgMusicTrack
  * @volume: volume level (0.0 to 1.0)
@@ -833,7 +833,7 @@ lrg_music_track_set_volume (LrgMusicTrack *self,
     }
 }
 
-/**
+/*
  * lrg_music_track_get_volume:
  * @self: a #LrgMusicTrack
  *
@@ -849,7 +849,7 @@ lrg_music_track_get_volume (LrgMusicTrack *self)
     return self->volume;
 }
 
-/**
+/*
  * lrg_music_track_set_pitch:
  * @self: a #LrgMusicTrack
  * @pitch: pitch multiplier (1.0 = normal)
@@ -875,7 +875,7 @@ lrg_music_track_set_pitch (LrgMusicTrack *self,
     }
 }
 
-/**
+/*
  * lrg_music_track_get_pitch:
  * @self: a #LrgMusicTrack
  *
@@ -895,7 +895,7 @@ lrg_music_track_get_pitch (LrgMusicTrack *self)
  * Crossfade Support
  * ========================================================================== */
 
-/**
+/*
  * lrg_music_track_set_fade_in:
  * @self: a #LrgMusicTrack
  * @duration: fade-in duration in seconds
@@ -917,7 +917,7 @@ lrg_music_track_set_fade_in (LrgMusicTrack *self,
     }
 }
 
-/**
+/*
  * lrg_music_track_get_fade_in:
  * @self: a #LrgMusicTrack
  *
@@ -933,7 +933,7 @@ lrg_music_track_get_fade_in (LrgMusicTrack *self)
     return self->fade_in;
 }
 
-/**
+/*
  * lrg_music_track_set_fade_out:
  * @self: a #LrgMusicTrack
  * @duration: fade-out duration in seconds
@@ -955,7 +955,7 @@ lrg_music_track_set_fade_out (LrgMusicTrack *self,
     }
 }
 
-/**
+/*
  * lrg_music_track_get_fade_out:
  * @self: a #LrgMusicTrack
  *

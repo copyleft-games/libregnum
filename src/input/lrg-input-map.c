@@ -556,7 +556,7 @@ lrg_input_map_init (LrgInputMap *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_map_new:
  *
  * Creates a new empty input map.
@@ -573,7 +573,7 @@ lrg_input_map_new (void)
  * Action Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_map_add_action:
  * @self: an #LrgInputMap
  * @action: the action to add
@@ -604,7 +604,7 @@ lrg_input_map_add_action (LrgInputMap    *self,
                name, g_hash_table_size (priv->actions));
 }
 
-/**
+/*
  * lrg_input_map_remove_action:
  * @self: an #LrgInputMap
  * @name: the action name to remove
@@ -630,7 +630,7 @@ lrg_input_map_remove_action (LrgInputMap *self,
     }
 }
 
-/**
+/*
  * lrg_input_map_get_action:
  * @self: an #LrgInputMap
  * @name: the action name
@@ -652,7 +652,7 @@ lrg_input_map_get_action (LrgInputMap *self,
     return g_hash_table_lookup (priv->actions, name);
 }
 
-/**
+/*
  * lrg_input_map_has_action:
  * @self: an #LrgInputMap
  * @name: the action name
@@ -674,7 +674,7 @@ lrg_input_map_has_action (LrgInputMap *self,
     return g_hash_table_contains (priv->actions, name);
 }
 
-/**
+/*
  * lrg_input_map_get_actions:
  * @self: an #LrgInputMap
  *
@@ -693,7 +693,7 @@ lrg_input_map_get_actions (LrgInputMap *self)
     return g_hash_table_get_values (priv->actions);
 }
 
-/**
+/*
  * lrg_input_map_get_action_count:
  * @self: an #LrgInputMap
  *
@@ -712,7 +712,7 @@ lrg_input_map_get_action_count (LrgInputMap *self)
     return g_hash_table_size (priv->actions);
 }
 
-/**
+/*
  * lrg_input_map_clear:
  * @self: an #LrgInputMap
  *
@@ -735,7 +735,7 @@ lrg_input_map_clear (LrgInputMap *self)
  * Convenience State Query
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_map_is_pressed:
  * @self: an #LrgInputMap
  * @action_name: the action name
@@ -763,7 +763,7 @@ lrg_input_map_is_pressed (LrgInputMap *self,
     return lrg_input_action_is_pressed (action);
 }
 
-/**
+/*
  * lrg_input_map_is_down:
  * @self: an #LrgInputMap
  * @action_name: the action name
@@ -791,7 +791,7 @@ lrg_input_map_is_down (LrgInputMap *self,
     return lrg_input_action_is_down (action);
 }
 
-/**
+/*
  * lrg_input_map_is_released:
  * @self: an #LrgInputMap
  * @action_name: the action name
@@ -819,7 +819,7 @@ lrg_input_map_is_released (LrgInputMap *self,
     return lrg_input_action_is_released (action);
 }
 
-/**
+/*
  * lrg_input_map_get_value:
  * @self: an #LrgInputMap
  * @action_name: the action name
@@ -869,7 +869,7 @@ lrg_input_map_get_axis (LrgInputMap *self,
  * YAML Serialization
  * ========================================================================== */
 
-/**
+/*
  * lrg_input_map_load_from_file:
  * @self: an #LrgInputMap
  * @path: (type filename): path to the YAML file
@@ -980,7 +980,7 @@ lrg_input_map_load_from_file (LrgInputMap  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_input_map_save_to_file:
  * @self: an #LrgInputMap
  * @path: (type filename): path to save the YAML file

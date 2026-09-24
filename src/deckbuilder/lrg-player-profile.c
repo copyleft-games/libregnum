@@ -531,7 +531,7 @@ lrg_player_profile_init (LrgPlayerProfile *self)
  * Public API - Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_player_profile_new:
  * @profile_name: (nullable): profile name
  *
@@ -557,7 +557,7 @@ lrg_player_profile_new (const gchar *profile_name)
     return self;
 }
 
-/**
+/*
  * lrg_player_profile_get_default:
  *
  * Gets the default player profile singleton.
@@ -581,7 +581,7 @@ lrg_player_profile_get_default (void)
  * Public API - Profile Info
  * ========================================================================== */
 
-/**
+/*
  * lrg_player_profile_get_name:
  * @self: a #LrgPlayerProfile
  *
@@ -599,7 +599,7 @@ lrg_player_profile_get_name (LrgPlayerProfile *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_player_profile_set_name:
  * @self: a #LrgPlayerProfile
  * @name: (nullable): new profile name
@@ -617,7 +617,7 @@ lrg_player_profile_set_name (LrgPlayerProfile *self,
     g_object_set (self, "name", name, NULL);
 }
 
-/**
+/*
  * lrg_player_profile_get_total_playtime:
  * @self: a #LrgPlayerProfile
  *
@@ -635,7 +635,7 @@ lrg_player_profile_get_total_playtime (LrgPlayerProfile *self)
     return self->total_playtime;
 }
 
-/**
+/*
  * lrg_player_profile_add_playtime:
  * @self: a #LrgPlayerProfile
  * @seconds: seconds to add
@@ -659,7 +659,7 @@ lrg_player_profile_add_playtime (LrgPlayerProfile *self,
  * Public API - Unlock Tracking
  * ========================================================================== */
 
-/**
+/*
  * lrg_player_profile_is_unlocked:
  * @self: a #LrgPlayerProfile
  * @unlock_type: type of unlock
@@ -689,7 +689,7 @@ lrg_player_profile_is_unlocked (LrgPlayerProfile *self,
     return entry->status != LRG_UNLOCK_STATUS_LOCKED;
 }
 
-/**
+/*
  * lrg_player_profile_unlock:
  * @self: a #LrgPlayerProfile
  * @unlock_type: type of unlock
@@ -734,7 +734,7 @@ lrg_player_profile_unlock (LrgPlayerProfile *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_player_profile_get_unlock_status:
  * @self: a #LrgPlayerProfile
  * @unlock_type: type of unlock
@@ -764,7 +764,7 @@ lrg_player_profile_get_unlock_status (LrgPlayerProfile *self,
     return entry->status;
 }
 
-/**
+/*
  * lrg_player_profile_mark_seen:
  * @self: a #LrgPlayerProfile
  * @unlock_type: type of unlock
@@ -793,7 +793,7 @@ lrg_player_profile_mark_seen (LrgPlayerProfile *self,
     }
 }
 
-/**
+/*
  * lrg_player_profile_get_unlocked_ids:
  * @self: a #LrgPlayerProfile
  * @unlock_type: type of unlock
@@ -837,7 +837,7 @@ lrg_player_profile_get_unlocked_ids (LrgPlayerProfile *self,
  * Public API - Character Progress
  * ========================================================================== */
 
-/**
+/*
  * lrg_player_profile_get_character_wins:
  * @self: a #LrgPlayerProfile
  * @character_id: character ID
@@ -864,7 +864,7 @@ lrg_player_profile_get_character_wins (LrgPlayerProfile *self,
     return progress->wins;
 }
 
-/**
+/*
  * lrg_player_profile_add_character_win:
  * @self: a #LrgPlayerProfile
  * @character_id: character ID
@@ -887,7 +887,7 @@ lrg_player_profile_add_character_win (LrgPlayerProfile *self,
     self->dirty = TRUE;
 }
 
-/**
+/*
  * lrg_player_profile_get_character_runs:
  * @self: a #LrgPlayerProfile
  * @character_id: character ID
@@ -914,7 +914,7 @@ lrg_player_profile_get_character_runs (LrgPlayerProfile *self,
     return progress->runs;
 }
 
-/**
+/*
  * lrg_player_profile_add_character_run:
  * @self: a #LrgPlayerProfile
  * @character_id: character ID
@@ -941,7 +941,7 @@ lrg_player_profile_add_character_run (LrgPlayerProfile *self,
  * Public API - Ascension Progress
  * ========================================================================== */
 
-/**
+/*
  * lrg_player_profile_get_max_ascension:
  * @self: a #LrgPlayerProfile
  * @character_id: character ID
@@ -968,7 +968,7 @@ lrg_player_profile_get_max_ascension (LrgPlayerProfile *self,
     return progress->max_ascension;
 }
 
-/**
+/*
  * lrg_player_profile_set_max_ascension:
  * @self: a #LrgPlayerProfile
  * @character_id: character ID
@@ -994,7 +994,7 @@ lrg_player_profile_set_max_ascension (LrgPlayerProfile *self,
     self->dirty = TRUE;
 }
 
-/**
+/*
  * lrg_player_profile_unlock_next_ascension:
  * @self: a #LrgPlayerProfile
  * @character_id: character ID
@@ -1032,7 +1032,7 @@ lrg_player_profile_unlock_next_ascension (LrgPlayerProfile *self,
  * Public API - Statistics
  * ========================================================================== */
 
-/**
+/*
  * lrg_player_profile_get_stat:
  * @self: a #LrgPlayerProfile
  * @stat_name: statistic name
@@ -1058,7 +1058,7 @@ lrg_player_profile_get_stat (LrgPlayerProfile *self,
     return 0;
 }
 
-/**
+/*
  * lrg_player_profile_set_stat:
  * @self: a #LrgPlayerProfile
  * @stat_name: statistic name
@@ -1082,7 +1082,7 @@ lrg_player_profile_set_stat (LrgPlayerProfile *self,
     self->dirty = TRUE;
 }
 
-/**
+/*
  * lrg_player_profile_increment_stat:
  * @self: a #LrgPlayerProfile
  * @stat_name: statistic name
@@ -1106,7 +1106,7 @@ lrg_player_profile_increment_stat (LrgPlayerProfile *self,
     lrg_player_profile_set_stat (self, stat_name, current + amount);
 }
 
-/**
+/*
  * lrg_player_profile_get_total_wins:
  * @self: a #LrgPlayerProfile
  *
@@ -1138,7 +1138,7 @@ lrg_player_profile_get_total_wins (LrgPlayerProfile *self)
     return total;
 }
 
-/**
+/*
  * lrg_player_profile_get_total_runs:
  * @self: a #LrgPlayerProfile
  *
@@ -1174,7 +1174,7 @@ lrg_player_profile_get_total_runs (LrgPlayerProfile *self)
  * Public API - High Scores
  * ========================================================================== */
 
-/**
+/*
  * lrg_player_profile_get_high_score:
  * @self: a #LrgPlayerProfile
  * @character_id: (nullable): character ID, or NULL for global
@@ -1203,7 +1203,7 @@ lrg_player_profile_get_high_score (LrgPlayerProfile *self,
     return progress->high_score;
 }
 
-/**
+/*
  * lrg_player_profile_submit_score:
  * @self: a #LrgPlayerProfile
  * @character_id: character ID
@@ -1250,7 +1250,7 @@ lrg_player_profile_submit_score (LrgPlayerProfile *self,
  * Public API - Persistence
  * ========================================================================== */
 
-/**
+/*
  * lrg_player_profile_reset:
  * @self: a #LrgPlayerProfile
  *
@@ -1278,7 +1278,7 @@ lrg_player_profile_reset (LrgPlayerProfile *self)
     self->dirty = TRUE;
 }
 
-/**
+/*
  * lrg_player_profile_is_dirty:
  * @self: a #LrgPlayerProfile
  *
@@ -1296,7 +1296,7 @@ lrg_player_profile_is_dirty (LrgPlayerProfile *self)
     return self->dirty;
 }
 
-/**
+/*
  * lrg_player_profile_mark_clean:
  * @self: a #LrgPlayerProfile
  *

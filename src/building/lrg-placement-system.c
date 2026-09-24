@@ -208,7 +208,7 @@ lrg_placement_system_class_init (LrgPlacementSystemClass *klass)
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
-    /**
+    /*
      * LrgPlacementSystem::placement-started:
      * @system: the placement system
      * @definition: the building definition
@@ -227,7 +227,7 @@ lrg_placement_system_class_init (LrgPlacementSystemClass *klass)
                       G_TYPE_NONE, 1,
                       LRG_TYPE_BUILDING_DEF);
 
-    /**
+    /*
      * LrgPlacementSystem::placement-cancelled:
      * @system: the placement system
      *
@@ -244,7 +244,7 @@ lrg_placement_system_class_init (LrgPlacementSystemClass *klass)
                       NULL,
                       G_TYPE_NONE, 0);
 
-    /**
+    /*
      * LrgPlacementSystem::placement-confirmed:
      * @system: the placement system
      * @building: the placed building
@@ -263,7 +263,7 @@ lrg_placement_system_class_init (LrgPlacementSystemClass *klass)
                       G_TYPE_NONE, 1,
                       LRG_TYPE_BUILDING_INSTANCE);
 
-    /**
+    /*
      * LrgPlacementSystem::building-demolished:
      * @system: the placement system
      * @building: the demolished building
@@ -282,7 +282,7 @@ lrg_placement_system_class_init (LrgPlacementSystemClass *klass)
                       G_TYPE_NONE, 1,
                       LRG_TYPE_BUILDING_INSTANCE);
 
-    /**
+    /*
      * LrgPlacementSystem::validity-changed:
      * @system: the placement system
      * @is_valid: whether placement is now valid

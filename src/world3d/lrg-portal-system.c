@@ -218,7 +218,7 @@ lrg_portal_system_init (LrgPortalSystem *self)
     self->max_portal_depth = DEFAULT_MAX_PORTAL_DEPTH;
 }
 
-/**
+/*
  * lrg_portal_system_new:
  *
  * Creates a new portal system.
@@ -233,7 +233,7 @@ lrg_portal_system_new (void)
 
 /* --- Sector Management --- */
 
-/**
+/*
  * lrg_portal_system_add_sector:
  * @self: An #LrgPortalSystem
  * @sector: (transfer none): Sector to add
@@ -257,7 +257,7 @@ lrg_portal_system_add_sector (LrgPortalSystem *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SECTOR_COUNT]);
 }
 
-/**
+/*
  * lrg_portal_system_remove_sector:
  * @self: An #LrgPortalSystem
  * @id: Sector ID to remove
@@ -283,7 +283,7 @@ lrg_portal_system_remove_sector (LrgPortalSystem *self,
     return removed;
 }
 
-/**
+/*
  * lrg_portal_system_get_sector:
  * @self: An #LrgPortalSystem
  * @id: Sector ID
@@ -302,7 +302,7 @@ lrg_portal_system_get_sector (LrgPortalSystem *self,
     return g_hash_table_lookup (self->sectors, id);
 }
 
-/**
+/*
  * lrg_portal_system_get_sectors:
  * @self: An #LrgPortalSystem
  *
@@ -328,7 +328,7 @@ lrg_portal_system_get_sectors (LrgPortalSystem *self)
     return result;
 }
 
-/**
+/*
  * lrg_portal_system_get_sector_count:
  * @self: An #LrgPortalSystem
  *
@@ -344,7 +344,7 @@ lrg_portal_system_get_sector_count (LrgPortalSystem *self)
     return g_hash_table_size (self->sectors);
 }
 
-/**
+/*
  * lrg_portal_system_find_sector_at:
  * @self: An #LrgPortalSystem
  * @point: (transfer none): Point to test
@@ -376,7 +376,7 @@ lrg_portal_system_find_sector_at (LrgPortalSystem  *self,
 
 /* --- Portal Management --- */
 
-/**
+/*
  * lrg_portal_system_add_portal:
  * @self: An #LrgPortalSystem
  * @portal: (transfer none): Portal to add
@@ -400,7 +400,7 @@ lrg_portal_system_add_portal (LrgPortalSystem *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PORTAL_COUNT]);
 }
 
-/**
+/*
  * lrg_portal_system_remove_portal:
  * @self: An #LrgPortalSystem
  * @id: Portal ID to remove
@@ -426,7 +426,7 @@ lrg_portal_system_remove_portal (LrgPortalSystem *self,
     return removed;
 }
 
-/**
+/*
  * lrg_portal_system_get_portal:
  * @self: An #LrgPortalSystem
  * @id: Portal ID
@@ -445,7 +445,7 @@ lrg_portal_system_get_portal (LrgPortalSystem *self,
     return g_hash_table_lookup (self->portals, id);
 }
 
-/**
+/*
  * lrg_portal_system_get_portals:
  * @self: An #LrgPortalSystem
  *
@@ -471,7 +471,7 @@ lrg_portal_system_get_portals (LrgPortalSystem *self)
     return result;
 }
 
-/**
+/*
  * lrg_portal_system_get_portal_count:
  * @self: An #LrgPortalSystem
  *
@@ -540,7 +540,7 @@ traverse_portals_recursive (LrgPortalSystem *self,
     g_ptr_array_unref (portal_ids);
 }
 
-/**
+/*
  * lrg_portal_system_update:
  * @self: An #LrgPortalSystem
  * @camera_pos: (transfer none): Camera position
@@ -608,7 +608,7 @@ lrg_portal_system_update (LrgPortalSystem  *self,
     g_signal_emit (self, signals[SIGNAL_VISIBILITY_CHANGED], 0);
 }
 
-/**
+/*
  * lrg_portal_system_get_visible_sectors:
  * @self: An #LrgPortalSystem
  *
@@ -637,7 +637,7 @@ lrg_portal_system_get_visible_sectors (LrgPortalSystem *self)
     return result;
 }
 
-/**
+/*
  * lrg_portal_system_get_visible_sector_count:
  * @self: An #LrgPortalSystem
  *
@@ -653,7 +653,7 @@ lrg_portal_system_get_visible_sector_count (LrgPortalSystem *self)
     return self->visible_sectors->len;
 }
 
-/**
+/*
  * lrg_portal_system_is_sector_visible:
  * @self: An #LrgPortalSystem
  * @id: Sector ID to check
@@ -681,7 +681,7 @@ lrg_portal_system_is_sector_visible (LrgPortalSystem *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_portal_system_get_current_sector:
  * @self: An #LrgPortalSystem
  *
@@ -699,7 +699,7 @@ lrg_portal_system_get_current_sector (LrgPortalSystem *self)
 
 /* --- Configuration --- */
 
-/**
+/*
  * lrg_portal_system_get_max_portal_depth:
  * @self: An #LrgPortalSystem
  *
@@ -715,7 +715,7 @@ lrg_portal_system_get_max_portal_depth (LrgPortalSystem *self)
     return self->max_portal_depth;
 }
 
-/**
+/*
  * lrg_portal_system_set_max_portal_depth:
  * @self: An #LrgPortalSystem
  * @max_depth: Maximum traversal depth
@@ -738,7 +738,7 @@ lrg_portal_system_set_max_portal_depth (LrgPortalSystem *self,
 
 /* --- Utility --- */
 
-/**
+/*
  * lrg_portal_system_clear:
  * @self: An #LrgPortalSystem
  *
@@ -759,7 +759,7 @@ lrg_portal_system_clear (LrgPortalSystem *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CURRENT_SECTOR]);
 }
 
-/**
+/*
  * lrg_portal_system_get_sector_portals:
  * @self: An #LrgPortalSystem
  * @sector_id: Sector ID

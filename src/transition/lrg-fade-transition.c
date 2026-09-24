@@ -394,7 +394,7 @@ lrg_fade_transition_init (LrgFadeTransition *self)
  * Public API
  */
 
-/**
+/*
  * lrg_fade_transition_new:
  *
  * Creates a new fade transition with default settings (fade to black).
@@ -409,7 +409,7 @@ lrg_fade_transition_new (void)
     return g_object_new (LRG_TYPE_FADE_TRANSITION, NULL);
 }
 
-/**
+/*
  * lrg_fade_transition_new_with_color:
  * @r: Red component (0-255)
  * @g: Green component (0-255)
@@ -433,7 +433,7 @@ lrg_fade_transition_new_with_color (guint8 r,
                          NULL);
 }
 
-/**
+/*
  * lrg_fade_transition_get_color:
  * @self: A #LrgFadeTransition
  * @r: (out) (nullable): Return location for red component
@@ -460,7 +460,7 @@ lrg_fade_transition_get_color (LrgFadeTransition *self,
         *b = self->blue;
 }
 
-/**
+/*
  * lrg_fade_transition_set_color:
  * @self: A #LrgFadeTransition
  * @r: Red component (0-255)

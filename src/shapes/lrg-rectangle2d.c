@@ -260,7 +260,7 @@ lrg_rectangle2d_init (LrgRectangle2D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_rectangle2d_new:
  *
  * Creates a new rectangle at the origin with default size (1x1).
@@ -273,7 +273,7 @@ lrg_rectangle2d_new (void)
 	return g_object_new (LRG_TYPE_RECTANGLE2D, NULL);
 }
 
-/**
+/*
  * lrg_rectangle2d_new_at:
  * @x: X position
  * @y: Y position
@@ -298,7 +298,7 @@ lrg_rectangle2d_new_at (gfloat x,
 	                     NULL);
 }
 
-/**
+/*
  * lrg_rectangle2d_new_full:
  * @x: X position
  * @y: Y position
@@ -328,7 +328,7 @@ lrg_rectangle2d_new_full (gfloat    x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_rectangle2d_get_width:
  * @self: an #LrgRectangle2D
  *
@@ -344,7 +344,7 @@ lrg_rectangle2d_get_width (LrgRectangle2D *self)
 	return self->width;
 }
 
-/**
+/*
  * lrg_rectangle2d_set_width:
  * @self: an #LrgRectangle2D
  * @width: the width
@@ -365,7 +365,7 @@ lrg_rectangle2d_set_width (LrgRectangle2D *self,
 	}
 }
 
-/**
+/*
  * lrg_rectangle2d_get_height:
  * @self: an #LrgRectangle2D
  *
@@ -381,7 +381,7 @@ lrg_rectangle2d_get_height (LrgRectangle2D *self)
 	return self->height;
 }
 
-/**
+/*
  * lrg_rectangle2d_set_height:
  * @self: an #LrgRectangle2D
  * @height: the height
@@ -402,7 +402,7 @@ lrg_rectangle2d_set_height (LrgRectangle2D *self,
 	}
 }
 
-/**
+/*
  * lrg_rectangle2d_get_filled:
  * @self: an #LrgRectangle2D
  *
@@ -418,7 +418,7 @@ lrg_rectangle2d_get_filled (LrgRectangle2D *self)
 	return self->filled;
 }
 
-/**
+/*
  * lrg_rectangle2d_set_filled:
  * @self: an #LrgRectangle2D
  * @filled: %TRUE for filled, %FALSE for outline only
@@ -438,7 +438,7 @@ lrg_rectangle2d_set_filled (LrgRectangle2D *self,
 	}
 }
 
-/**
+/*
  * lrg_rectangle2d_get_line_thickness:
  * @self: an #LrgRectangle2D
  *
@@ -454,7 +454,7 @@ lrg_rectangle2d_get_line_thickness (LrgRectangle2D *self)
 	return self->line_thickness;
 }
 
-/**
+/*
  * lrg_rectangle2d_set_line_thickness:
  * @self: an #LrgRectangle2D
  * @thickness: the line thickness
@@ -475,7 +475,7 @@ lrg_rectangle2d_set_line_thickness (LrgRectangle2D *self,
 	}
 }
 
-/**
+/*
  * lrg_rectangle2d_get_corner_radius:
  * @self: an #LrgRectangle2D
  *
@@ -491,7 +491,7 @@ lrg_rectangle2d_get_corner_radius (LrgRectangle2D *self)
 	return self->corner_radius;
 }
 
-/**
+/*
  * lrg_rectangle2d_set_corner_radius:
  * @self: an #LrgRectangle2D
  * @radius: the corner radius (0.0 for sharp corners)

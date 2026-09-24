@@ -118,7 +118,7 @@ lrg_idle_mixin_default_init (LrgIdleMixinInterface *iface)
  * Interface Methods
  * ========================================================================== */
 
-/**
+/*
  * lrg_idle_mixin_get_idle_calculator:
  * @self: an #LrgIdleMixin
  *
@@ -142,7 +142,7 @@ lrg_idle_mixin_get_idle_calculator (LrgIdleMixin *self)
     return NULL;
 }
 
-/**
+/*
  * lrg_idle_mixin_get_prestige:
  * @self: an #LrgIdleMixin
  *
@@ -166,7 +166,7 @@ lrg_idle_mixin_get_prestige (LrgIdleMixin *self)
     return NULL;
 }
 
-/**
+/*
  * lrg_idle_mixin_calculate_offline_progress:
  * @self: an #LrgIdleMixin
  * @efficiency: offline efficiency (0.0 to 1.0)
@@ -194,7 +194,7 @@ lrg_idle_mixin_calculate_offline_progress (LrgIdleMixin *self,
     return lrg_big_number_new (0.0);
 }
 
-/**
+/*
  * lrg_idle_mixin_apply_offline_progress:
  * @self: an #LrgIdleMixin
  * @progress: (transfer none): the progress amount to apply
@@ -217,7 +217,7 @@ lrg_idle_mixin_apply_offline_progress (LrgIdleMixin       *self,
         iface->apply_offline_progress (self, progress);
 }
 
-/**
+/*
  * lrg_idle_mixin_get_auto_save_interval:
  * @self: an #LrgIdleMixin
  *
@@ -241,7 +241,7 @@ lrg_idle_mixin_get_auto_save_interval (LrgIdleMixin *self)
     return 30.0;
 }
 
-/**
+/*
  * lrg_idle_mixin_on_prestige_performed:
  * @self: an #LrgIdleMixin
  * @reward: (transfer none): the prestige points that were awarded
@@ -268,7 +268,7 @@ lrg_idle_mixin_on_prestige_performed (LrgIdleMixin       *self,
  * Helper Methods
  * ========================================================================== */
 
-/**
+/*
  * lrg_idle_mixin_perform_prestige:
  * @self: an #LrgIdleMixin
  * @current_value: (transfer none): current accumulated value
@@ -304,7 +304,7 @@ lrg_idle_mixin_perform_prestige (LrgIdleMixin       *self,
     return reward;
 }
 
-/**
+/*
  * lrg_idle_mixin_can_prestige:
  * @self: an #LrgIdleMixin
  * @current_value: (transfer none): current accumulated value
@@ -331,7 +331,7 @@ lrg_idle_mixin_can_prestige (LrgIdleMixin       *self,
     return lrg_prestige_can_prestige (prestige, current_value);
 }
 
-/**
+/*
  * lrg_idle_mixin_get_prestige_reward:
  * @self: an #LrgIdleMixin
  * @current_value: (transfer none): current accumulated value
@@ -358,7 +358,7 @@ lrg_idle_mixin_get_prestige_reward (LrgIdleMixin       *self,
     return lrg_prestige_calculate_reward (prestige, current_value);
 }
 
-/**
+/*
  * lrg_idle_mixin_get_prestige_multiplier:
  * @self: an #LrgIdleMixin
  *
@@ -382,7 +382,7 @@ lrg_idle_mixin_get_prestige_multiplier (LrgIdleMixin *self)
     return lrg_prestige_get_bonus_multiplier (prestige);
 }
 
-/**
+/*
  * lrg_idle_mixin_take_snapshot:
  * @self: an #LrgIdleMixin
  *
@@ -402,7 +402,7 @@ lrg_idle_mixin_take_snapshot (LrgIdleMixin *self)
         lrg_idle_calculator_take_snapshot (calculator);
 }
 
-/**
+/*
  * lrg_idle_mixin_simulate:
  * @self: an #LrgIdleMixin
  * @seconds: number of seconds to simulate
@@ -428,7 +428,7 @@ lrg_idle_mixin_simulate (LrgIdleMixin *self,
     return lrg_idle_calculator_simulate (calculator, seconds);
 }
 
-/**
+/*
  * lrg_idle_mixin_get_total_rate:
  * @self: an #LrgIdleMixin
  *

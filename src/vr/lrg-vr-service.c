@@ -38,7 +38,7 @@ lrg_vr_service_default_init (LrgVRServiceInterface *iface)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_vr_service_initialize:
  * @self: a #LrgVRService
  * @error: (optional): return location for error
@@ -68,7 +68,7 @@ lrg_vr_service_initialize (LrgVRService  *self,
     return iface->initialize (self, error);
 }
 
-/**
+/*
  * lrg_vr_service_shutdown:
  * @self: a #LrgVRService
  *
@@ -88,7 +88,7 @@ lrg_vr_service_shutdown (LrgVRService *self)
         iface->shutdown (self);
 }
 
-/**
+/*
  * lrg_vr_service_is_available:
  * @self: a #LrgVRService
  *
@@ -112,7 +112,7 @@ lrg_vr_service_is_available (LrgVRService *self)
     return iface->is_available (self);
 }
 
-/**
+/*
  * lrg_vr_service_is_hmd_present:
  * @self: a #LrgVRService
  *
@@ -136,7 +136,7 @@ lrg_vr_service_is_hmd_present (LrgVRService *self)
     return iface->is_hmd_present (self);
 }
 
-/**
+/*
  * lrg_vr_service_poll_events:
  * @self: a #LrgVRService
  *
@@ -156,7 +156,7 @@ lrg_vr_service_poll_events (LrgVRService *self)
         iface->poll_events (self);
 }
 
-/**
+/*
  * lrg_vr_service_get_recommended_render_size:
  * @self: a #LrgVRService
  * @width: (out): render target width
@@ -187,7 +187,7 @@ lrg_vr_service_get_recommended_render_size (LrgVRService *self,
     }
 }
 
-/**
+/*
  * lrg_vr_service_get_eye_projection:
  * @self: a #LrgVRService
  * @eye: which eye
@@ -225,7 +225,7 @@ lrg_vr_service_get_eye_projection (LrgVRService *self,
     }
 }
 
-/**
+/*
  * lrg_vr_service_get_eye_to_head:
  * @self: a #LrgVRService
  * @eye: which eye
@@ -259,7 +259,7 @@ lrg_vr_service_get_eye_to_head (LrgVRService *self,
     }
 }
 
-/**
+/*
  * lrg_vr_service_get_hmd_pose:
  * @self: a #LrgVRService
  * @matrix: (out) (array fixed-size=16): 4x4 HMD pose matrix
@@ -291,7 +291,7 @@ lrg_vr_service_get_hmd_pose (LrgVRService *self,
     }
 }
 
-/**
+/*
  * lrg_vr_service_submit_frame:
  * @self: a #LrgVRService
  * @eye: which eye
@@ -325,7 +325,7 @@ lrg_vr_service_submit_frame (LrgVRService *self,
     return iface->submit_frame (self, eye, texture_id, error);
 }
 
-/**
+/*
  * lrg_vr_service_get_controller_pose:
  * @self: a #LrgVRService
  * @hand: which hand
@@ -359,7 +359,7 @@ lrg_vr_service_get_controller_pose (LrgVRService *self,
     }
 }
 
-/**
+/*
  * lrg_vr_service_get_controller_buttons:
  * @self: a #LrgVRService
  * @hand: which hand
@@ -385,7 +385,7 @@ lrg_vr_service_get_controller_buttons (LrgVRService *self,
     return iface->get_controller_buttons (self, hand);
 }
 
-/**
+/*
  * lrg_vr_service_get_controller_axis:
  * @self: a #LrgVRService
  * @hand: which hand
@@ -413,7 +413,7 @@ lrg_vr_service_get_controller_axis (LrgVRService *self,
     return iface->get_controller_axis (self, hand, axis);
 }
 
-/**
+/*
  * lrg_vr_service_trigger_haptic:
  * @self: a #LrgVRService
  * @hand: which hand

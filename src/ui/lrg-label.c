@@ -351,7 +351,7 @@ lrg_label_init (LrgLabel *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_label_new:
  * @text: (nullable): the label text
  *
@@ -371,7 +371,7 @@ lrg_label_new (const gchar *text)
  * Public API - Text
  * ========================================================================== */
 
-/**
+/*
  * lrg_label_get_text:
  * @self: an #LrgLabel
  *
@@ -387,7 +387,7 @@ lrg_label_get_text (LrgLabel *self)
     return self->text;
 }
 
-/**
+/*
  * lrg_label_set_text:
  * @self: an #LrgLabel
  * @text: (nullable): the text to display
@@ -412,7 +412,7 @@ lrg_label_set_text (LrgLabel    *self,
  * Public API - Font
  * ========================================================================== */
 
-/**
+/*
  * lrg_label_get_font:
  * @self: an #LrgLabel
  *
@@ -428,7 +428,7 @@ lrg_label_get_font (LrgLabel *self)
     return self->font;
 }
 
-/**
+/*
  * lrg_label_set_font:
  * @self: an #LrgLabel
  * @font: (nullable): the font to use, or %NULL for default
@@ -447,7 +447,7 @@ lrg_label_set_font (LrgLabel *self,
     }
 }
 
-/**
+/*
  * lrg_label_get_font_size:
  * @self: an #LrgLabel
  *
@@ -463,7 +463,7 @@ lrg_label_get_font_size (LrgLabel *self)
     return self->font_size;
 }
 
-/**
+/*
  * lrg_label_set_font_size:
  * @self: an #LrgLabel
  * @size: the font size in pixels
@@ -488,7 +488,7 @@ lrg_label_set_font_size (LrgLabel *self,
  * Public API - Appearance
  * ========================================================================== */
 
-/**
+/*
  * lrg_label_get_color:
  * @self: an #LrgLabel
  *
@@ -504,7 +504,7 @@ lrg_label_get_color (LrgLabel *self)
     return &self->color;
 }
 
-/**
+/*
  * lrg_label_set_color:
  * @self: an #LrgLabel
  * @color: the text color
@@ -528,7 +528,7 @@ lrg_label_set_color (LrgLabel       *self,
     }
 }
 
-/**
+/*
  * lrg_label_get_alignment:
  * @self: an #LrgLabel
  *
@@ -544,7 +544,7 @@ lrg_label_get_alignment (LrgLabel *self)
     return self->alignment;
 }
 
-/**
+/*
  * lrg_label_set_alignment:
  * @self: an #LrgLabel
  * @alignment: the text alignment

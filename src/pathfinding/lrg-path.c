@@ -23,7 +23,7 @@ G_DEFINE_BOXED_TYPE (LrgPath, lrg_path,
                      lrg_path_copy,
                      lrg_path_free)
 
-/**
+/*
  * lrg_path_new:
  *
  * Creates a new empty path.
@@ -42,7 +42,7 @@ lrg_path_new (void)
     return self;
 }
 
-/**
+/*
  * lrg_path_copy:
  * @self: an #LrgPath
  *
@@ -72,7 +72,7 @@ lrg_path_copy (const LrgPath *self)
     return copy;
 }
 
-/**
+/*
  * lrg_path_free:
  * @self: an #LrgPath
  *
@@ -88,7 +88,7 @@ lrg_path_free (LrgPath *self)
     g_slice_free (LrgPath, self);
 }
 
-/**
+/*
  * lrg_path_append:
  * @self: an #LrgPath
  * @x: X coordinate
@@ -110,7 +110,7 @@ lrg_path_append (LrgPath *self,
     g_array_append_val (self->points, pt);
 }
 
-/**
+/*
  * lrg_path_prepend:
  * @self: an #LrgPath
  * @x: X coordinate
@@ -132,7 +132,7 @@ lrg_path_prepend (LrgPath *self,
     g_array_prepend_val (self->points, pt);
 }
 
-/**
+/*
  * lrg_path_get_length:
  * @self: an #LrgPath
  *
@@ -147,7 +147,7 @@ lrg_path_get_length (const LrgPath *self)
     return self->points->len;
 }
 
-/**
+/*
  * lrg_path_is_empty:
  * @self: an #LrgPath
  *
@@ -162,7 +162,7 @@ lrg_path_is_empty (const LrgPath *self)
     return self->points->len == 0;
 }
 
-/**
+/*
  * lrg_path_get_point:
  * @self: an #LrgPath
  * @index: Point index
@@ -196,7 +196,7 @@ lrg_path_get_point (const LrgPath *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_path_get_start:
  * @self: an #LrgPath
  * @x: (out): X coordinate
@@ -214,7 +214,7 @@ lrg_path_get_start (const LrgPath *self,
     return lrg_path_get_point (self, 0, x, y);
 }
 
-/**
+/*
  * lrg_path_get_end:
  * @self: an #LrgPath
  * @x: (out): X coordinate
@@ -237,7 +237,7 @@ lrg_path_get_end (const LrgPath *self,
     return lrg_path_get_point (self, self->points->len - 1, x, y);
 }
 
-/**
+/*
  * lrg_path_reverse:
  * @self: an #LrgPath
  *
@@ -267,7 +267,7 @@ lrg_path_reverse (LrgPath *self)
     }
 }
 
-/**
+/*
  * lrg_path_clear:
  * @self: an #LrgPath
  *
@@ -282,7 +282,7 @@ lrg_path_clear (LrgPath *self)
     self->total_cost = 0.0f;
 }
 
-/**
+/*
  * lrg_path_get_total_cost:
  * @self: an #LrgPath
  *
@@ -297,7 +297,7 @@ lrg_path_get_total_cost (const LrgPath *self)
     return self->total_cost;
 }
 
-/**
+/*
  * lrg_path_set_total_cost:
  * @self: an #LrgPath
  * @cost: Total cost
@@ -312,7 +312,7 @@ lrg_path_set_total_cost (LrgPath *self,
     self->total_cost = cost;
 }
 
-/**
+/*
  * lrg_path_foreach:
  * @self: an #LrgPath
  * @func: (scope call): Callback function for each point

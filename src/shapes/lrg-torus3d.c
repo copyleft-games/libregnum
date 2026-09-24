@@ -298,7 +298,7 @@ lrg_torus3d_init (LrgTorus3D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_torus3d_new:
  *
  * Creates a new torus at the origin with default dimensions.
@@ -311,7 +311,7 @@ lrg_torus3d_new (void)
 	return g_object_new (LRG_TYPE_TORUS3D, NULL);
 }
 
-/**
+/*
  * lrg_torus3d_new_at:
  * @x: X position
  * @y: Y position
@@ -341,7 +341,7 @@ lrg_torus3d_new_at (gfloat x,
 	return torus;
 }
 
-/**
+/*
  * lrg_torus3d_new_full:
  * @x: X position
  * @y: Y position
@@ -382,7 +382,7 @@ lrg_torus3d_new_full (gfloat    x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_torus3d_get_major_radius:
  * @self: an #LrgTorus3D
  *
@@ -398,7 +398,7 @@ lrg_torus3d_get_major_radius (LrgTorus3D *self)
 	return self->major_radius;
 }
 
-/**
+/*
  * lrg_torus3d_set_major_radius:
  * @self: an #LrgTorus3D
  * @radius: the major radius
@@ -420,7 +420,7 @@ lrg_torus3d_set_major_radius (LrgTorus3D *self,
 	}
 }
 
-/**
+/*
  * lrg_torus3d_get_minor_radius:
  * @self: an #LrgTorus3D
  *
@@ -436,7 +436,7 @@ lrg_torus3d_get_minor_radius (LrgTorus3D *self)
 	return self->minor_radius;
 }
 
-/**
+/*
  * lrg_torus3d_set_minor_radius:
  * @self: an #LrgTorus3D
  * @radius: the minor radius
@@ -458,7 +458,7 @@ lrg_torus3d_set_minor_radius (LrgTorus3D *self,
 	}
 }
 
-/**
+/*
  * lrg_torus3d_get_major_segments:
  * @self: an #LrgTorus3D
  *
@@ -474,7 +474,7 @@ lrg_torus3d_get_major_segments (LrgTorus3D *self)
 	return self->major_segments;
 }
 
-/**
+/*
  * lrg_torus3d_set_major_segments:
  * @self: an #LrgTorus3D
  * @segments: the number of major segments
@@ -496,7 +496,7 @@ lrg_torus3d_set_major_segments (LrgTorus3D *self,
 	}
 }
 
-/**
+/*
  * lrg_torus3d_get_minor_segments:
  * @self: an #LrgTorus3D
  *
@@ -512,7 +512,7 @@ lrg_torus3d_get_minor_segments (LrgTorus3D *self)
 	return self->minor_segments;
 }
 
-/**
+/*
  * lrg_torus3d_set_minor_segments:
  * @self: an #LrgTorus3D
  * @segments: the number of minor segments

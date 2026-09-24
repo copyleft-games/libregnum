@@ -589,7 +589,7 @@ lrg_theme_init (LrgTheme *self)
  * Singleton Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_theme_get_default:
  *
  * Gets the default theme singleton.
@@ -607,7 +607,7 @@ lrg_theme_get_default (void)
     return default_theme;
 }
 
-/**
+/*
  * lrg_theme_new:
  *
  * Creates a new custom theme.
@@ -624,7 +624,7 @@ lrg_theme_new (void)
  * Color Getters/Setters
  * ========================================================================== */
 
-/**
+/*
  * lrg_theme_get_primary_color:
  * @self: an #LrgTheme
  *
@@ -639,7 +639,7 @@ lrg_theme_get_primary_color (LrgTheme *self)
     return &self->primary_color;
 }
 
-/**
+/*
  * lrg_theme_set_primary_color:
  * @self: an #LrgTheme
  * @color: the primary color
@@ -660,7 +660,7 @@ lrg_theme_set_primary_color (LrgTheme       *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PRIMARY_COLOR]);
 }
 
-/**
+/*
  * lrg_theme_get_secondary_color:
  * @self: an #LrgTheme
  *
@@ -675,7 +675,7 @@ lrg_theme_get_secondary_color (LrgTheme *self)
     return &self->secondary_color;
 }
 
-/**
+/*
  * lrg_theme_set_secondary_color:
  * @self: an #LrgTheme
  * @color: the secondary color
@@ -696,7 +696,7 @@ lrg_theme_set_secondary_color (LrgTheme       *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SECONDARY_COLOR]);
 }
 
-/**
+/*
  * lrg_theme_get_accent_color:
  * @self: an #LrgTheme
  *
@@ -711,7 +711,7 @@ lrg_theme_get_accent_color (LrgTheme *self)
     return &self->accent_color;
 }
 
-/**
+/*
  * lrg_theme_set_accent_color:
  * @self: an #LrgTheme
  * @color: the accent color
@@ -732,7 +732,7 @@ lrg_theme_set_accent_color (LrgTheme       *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ACCENT_COLOR]);
 }
 
-/**
+/*
  * lrg_theme_get_background_color:
  * @self: an #LrgTheme
  *
@@ -747,7 +747,7 @@ lrg_theme_get_background_color (LrgTheme *self)
     return &self->background_color;
 }
 
-/**
+/*
  * lrg_theme_set_background_color:
  * @self: an #LrgTheme
  * @color: the background color
@@ -768,7 +768,7 @@ lrg_theme_set_background_color (LrgTheme       *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BACKGROUND_COLOR]);
 }
 
-/**
+/*
  * lrg_theme_get_surface_color:
  * @self: an #LrgTheme
  *
@@ -783,7 +783,7 @@ lrg_theme_get_surface_color (LrgTheme *self)
     return &self->surface_color;
 }
 
-/**
+/*
  * lrg_theme_set_surface_color:
  * @self: an #LrgTheme
  * @color: the surface color
@@ -804,7 +804,7 @@ lrg_theme_set_surface_color (LrgTheme       *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SURFACE_COLOR]);
 }
 
-/**
+/*
  * lrg_theme_get_text_color:
  * @self: an #LrgTheme
  *
@@ -819,7 +819,7 @@ lrg_theme_get_text_color (LrgTheme *self)
     return &self->text_color;
 }
 
-/**
+/*
  * lrg_theme_set_text_color:
  * @self: an #LrgTheme
  * @color: the text color
@@ -840,7 +840,7 @@ lrg_theme_set_text_color (LrgTheme       *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TEXT_COLOR]);
 }
 
-/**
+/*
  * lrg_theme_get_text_secondary_color:
  * @self: an #LrgTheme
  *
@@ -855,7 +855,7 @@ lrg_theme_get_text_secondary_color (LrgTheme *self)
     return &self->text_secondary_color;
 }
 
-/**
+/*
  * lrg_theme_set_text_secondary_color:
  * @self: an #LrgTheme
  * @color: the secondary text color
@@ -876,7 +876,7 @@ lrg_theme_set_text_secondary_color (LrgTheme       *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TEXT_SECONDARY_COLOR]);
 }
 
-/**
+/*
  * lrg_theme_get_border_color:
  * @self: an #LrgTheme
  *
@@ -891,7 +891,7 @@ lrg_theme_get_border_color (LrgTheme *self)
     return &self->border_color;
 }
 
-/**
+/*
  * lrg_theme_set_border_color:
  * @self: an #LrgTheme
  * @color: the border color
@@ -912,7 +912,7 @@ lrg_theme_set_border_color (LrgTheme       *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BORDER_COLOR]);
 }
 
-/**
+/*
  * lrg_theme_get_error_color:
  * @self: an #LrgTheme
  *
@@ -927,7 +927,7 @@ lrg_theme_get_error_color (LrgTheme *self)
     return &self->error_color;
 }
 
-/**
+/*
  * lrg_theme_set_error_color:
  * @self: an #LrgTheme
  * @color: the error color
@@ -948,7 +948,7 @@ lrg_theme_set_error_color (LrgTheme       *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ERROR_COLOR]);
 }
 
-/**
+/*
  * lrg_theme_get_success_color:
  * @self: an #LrgTheme
  *
@@ -963,7 +963,7 @@ lrg_theme_get_success_color (LrgTheme *self)
     return &self->success_color;
 }
 
-/**
+/*
  * lrg_theme_set_success_color:
  * @self: an #LrgTheme
  * @color: the success color
@@ -988,7 +988,7 @@ lrg_theme_set_success_color (LrgTheme       *self,
  * Typography Getters/Setters
  * ========================================================================== */
 
-/**
+/*
  * lrg_theme_get_default_font:
  * @self: an #LrgTheme
  *
@@ -1028,7 +1028,7 @@ lrg_theme_get_default_font (LrgTheme *self)
     return self->default_font;
 }
 
-/**
+/*
  * lrg_theme_set_default_font:
  * @self: an #LrgTheme
  * @font: (nullable): the default font
@@ -1052,7 +1052,7 @@ lrg_theme_set_default_font (LrgTheme *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DEFAULT_FONT]);
 }
 
-/**
+/*
  * lrg_theme_get_font_size_small:
  * @self: an #LrgTheme
  *
@@ -1067,7 +1067,7 @@ lrg_theme_get_font_size_small (LrgTheme *self)
     return self->font_size_small;
 }
 
-/**
+/*
  * lrg_theme_set_font_size_small:
  * @self: an #LrgTheme
  * @size: the small font size
@@ -1087,7 +1087,7 @@ lrg_theme_set_font_size_small (LrgTheme *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FONT_SIZE_SMALL]);
 }
 
-/**
+/*
  * lrg_theme_get_font_size_normal:
  * @self: an #LrgTheme
  *
@@ -1102,7 +1102,7 @@ lrg_theme_get_font_size_normal (LrgTheme *self)
     return self->font_size_normal;
 }
 
-/**
+/*
  * lrg_theme_set_font_size_normal:
  * @self: an #LrgTheme
  * @size: the normal font size
@@ -1122,7 +1122,7 @@ lrg_theme_set_font_size_normal (LrgTheme *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FONT_SIZE_NORMAL]);
 }
 
-/**
+/*
  * lrg_theme_get_font_size_large:
  * @self: an #LrgTheme
  *
@@ -1137,7 +1137,7 @@ lrg_theme_get_font_size_large (LrgTheme *self)
     return self->font_size_large;
 }
 
-/**
+/*
  * lrg_theme_set_font_size_large:
  * @self: an #LrgTheme
  * @size: the large font size
@@ -1161,7 +1161,7 @@ lrg_theme_set_font_size_large (LrgTheme *self,
  * Spacing Getters/Setters
  * ========================================================================== */
 
-/**
+/*
  * lrg_theme_get_padding_small:
  * @self: an #LrgTheme
  *
@@ -1176,7 +1176,7 @@ lrg_theme_get_padding_small (LrgTheme *self)
     return self->padding_small;
 }
 
-/**
+/*
  * lrg_theme_set_padding_small:
  * @self: an #LrgTheme
  * @padding: the small padding
@@ -1196,7 +1196,7 @@ lrg_theme_set_padding_small (LrgTheme *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PADDING_SMALL]);
 }
 
-/**
+/*
  * lrg_theme_get_padding_normal:
  * @self: an #LrgTheme
  *
@@ -1211,7 +1211,7 @@ lrg_theme_get_padding_normal (LrgTheme *self)
     return self->padding_normal;
 }
 
-/**
+/*
  * lrg_theme_set_padding_normal:
  * @self: an #LrgTheme
  * @padding: the normal padding
@@ -1231,7 +1231,7 @@ lrg_theme_set_padding_normal (LrgTheme *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PADDING_NORMAL]);
 }
 
-/**
+/*
  * lrg_theme_get_padding_large:
  * @self: an #LrgTheme
  *
@@ -1246,7 +1246,7 @@ lrg_theme_get_padding_large (LrgTheme *self)
     return self->padding_large;
 }
 
-/**
+/*
  * lrg_theme_set_padding_large:
  * @self: an #LrgTheme
  * @padding: the large padding
@@ -1266,7 +1266,7 @@ lrg_theme_set_padding_large (LrgTheme *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PADDING_LARGE]);
 }
 
-/**
+/*
  * lrg_theme_get_border_width:
  * @self: an #LrgTheme
  *
@@ -1281,7 +1281,7 @@ lrg_theme_get_border_width (LrgTheme *self)
     return self->border_width;
 }
 
-/**
+/*
  * lrg_theme_set_border_width:
  * @self: an #LrgTheme
  * @width: the border width
@@ -1301,7 +1301,7 @@ lrg_theme_set_border_width (LrgTheme *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BORDER_WIDTH]);
 }
 
-/**
+/*
  * lrg_theme_get_corner_radius:
  * @self: an #LrgTheme
  *
@@ -1316,7 +1316,7 @@ lrg_theme_get_corner_radius (LrgTheme *self)
     return self->corner_radius;
 }
 
-/**
+/*
  * lrg_theme_set_corner_radius:
  * @self: an #LrgTheme
  * @radius: the corner radius

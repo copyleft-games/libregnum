@@ -274,7 +274,7 @@ lrg_reel_drop_shadow_effect_init (LrgReelDropShadowEffect *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_drop_shadow_effect_new:
  *
  * Creates a new #LrgReelDropShadowEffect.
@@ -289,7 +289,7 @@ lrg_reel_drop_shadow_effect_new (void)
     return g_object_new (LRG_TYPE_REEL_DROP_SHADOW_EFFECT, NULL);
 }
 
-/**
+/*
  * lrg_reel_drop_shadow_effect_get_offset_x:
  * @self: a #LrgReelDropShadowEffect
  *
@@ -305,7 +305,7 @@ lrg_reel_drop_shadow_effect_get_offset_x (LrgReelDropShadowEffect *self)
     return self->offset_x;
 }
 
-/**
+/*
  * lrg_reel_drop_shadow_effect_set_offset_x:
  * @self: a #LrgReelDropShadowEffect
  * @offset_x: horizontal shadow offset in pixels
@@ -325,7 +325,7 @@ lrg_reel_drop_shadow_effect_set_offset_x (LrgReelDropShadowEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_OFFSET_X]);
 }
 
-/**
+/*
  * lrg_reel_drop_shadow_effect_get_offset_y:
  * @self: a #LrgReelDropShadowEffect
  *
@@ -341,7 +341,7 @@ lrg_reel_drop_shadow_effect_get_offset_y (LrgReelDropShadowEffect *self)
     return self->offset_y;
 }
 
-/**
+/*
  * lrg_reel_drop_shadow_effect_set_offset_y:
  * @self: a #LrgReelDropShadowEffect
  * @offset_y: vertical shadow offset in pixels
@@ -361,7 +361,7 @@ lrg_reel_drop_shadow_effect_set_offset_y (LrgReelDropShadowEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_OFFSET_Y]);
 }
 
-/**
+/*
  * lrg_reel_drop_shadow_effect_get_blur_radius:
  * @self: a #LrgReelDropShadowEffect
  *
@@ -377,7 +377,7 @@ lrg_reel_drop_shadow_effect_get_blur_radius (LrgReelDropShadowEffect *self)
     return self->blur_radius;
 }
 
-/**
+/*
  * lrg_reel_drop_shadow_effect_set_blur_radius:
  * @self: a #LrgReelDropShadowEffect
  * @blur_radius: shadow blur radius
@@ -397,7 +397,7 @@ lrg_reel_drop_shadow_effect_set_blur_radius (LrgReelDropShadowEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BLUR_RADIUS]);
 }
 
-/**
+/*
  * lrg_reel_drop_shadow_effect_get_shadow_color:
  * @self: a #LrgReelDropShadowEffect
  * @out_color: (out caller-allocates): return location for the shadow color
@@ -414,7 +414,7 @@ lrg_reel_drop_shadow_effect_get_shadow_color (LrgReelDropShadowEffect *self,
     *out_color = self->shadow_color;
 }
 
-/**
+/*
  * lrg_reel_drop_shadow_effect_set_shadow_color:
  * @self: a #LrgReelDropShadowEffect
  * @color: (not nullable): new shadow color

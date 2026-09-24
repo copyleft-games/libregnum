@@ -248,7 +248,7 @@ lrg_reel_chroma_key_effect_init (LrgReelChromaKeyEffect *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_chroma_key_effect_new:
  * @key: (not nullable): the key color to remove
  *
@@ -268,7 +268,7 @@ lrg_reel_chroma_key_effect_new (const GrlColor *key)
                          NULL);
 }
 
-/**
+/*
  * lrg_reel_chroma_key_effect_get_key_color:
  * @self: a #LrgReelChromaKeyEffect
  * @out_color: (out caller-allocates): return location for the key color
@@ -285,7 +285,7 @@ lrg_reel_chroma_key_effect_get_key_color (LrgReelChromaKeyEffect *self,
     *out_color = self->key_color;
 }
 
-/**
+/*
  * lrg_reel_chroma_key_effect_set_key_color:
  * @self: a #LrgReelChromaKeyEffect
  * @key: (not nullable): new key color
@@ -303,7 +303,7 @@ lrg_reel_chroma_key_effect_set_key_color (LrgReelChromaKeyEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_KEY_COLOR]);
 }
 
-/**
+/*
  * lrg_reel_chroma_key_effect_get_threshold:
  * @self: a #LrgReelChromaKeyEffect
  *
@@ -319,7 +319,7 @@ lrg_reel_chroma_key_effect_get_threshold (LrgReelChromaKeyEffect *self)
     return self->threshold;
 }
 
-/**
+/*
  * lrg_reel_chroma_key_effect_set_threshold:
  * @self: a #LrgReelChromaKeyEffect
  * @threshold: new threshold [0, 1]
@@ -339,7 +339,7 @@ lrg_reel_chroma_key_effect_set_threshold (LrgReelChromaKeyEffect *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_THRESHOLD]);
 }
 
-/**
+/*
  * lrg_reel_chroma_key_effect_get_smoothness:
  * @self: a #LrgReelChromaKeyEffect
  *
@@ -355,7 +355,7 @@ lrg_reel_chroma_key_effect_get_smoothness (LrgReelChromaKeyEffect *self)
     return self->smoothness;
 }
 
-/**
+/*
  * lrg_reel_chroma_key_effect_set_smoothness:
  * @self: a #LrgReelChromaKeyEffect
  * @smoothness: new smoothness range [0, 1]

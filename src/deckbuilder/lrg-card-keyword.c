@@ -118,7 +118,7 @@ find_keyword_info (LrgCardKeyword keyword)
  * Keyword Information
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_keyword_get_name:
  * @keyword: a single #LrgCardKeyword flag
  *
@@ -135,7 +135,7 @@ lrg_card_keyword_get_name (LrgCardKeyword keyword)
     return info != NULL ? info->name : NULL;
 }
 
-/**
+/*
  * lrg_card_keyword_get_description:
  * @keyword: a single #LrgCardKeyword flag
  *
@@ -152,7 +152,7 @@ lrg_card_keyword_get_description (LrgCardKeyword keyword)
     return info != NULL ? info->description : NULL;
 }
 
-/**
+/*
  * lrg_card_keyword_get_icon:
  * @keyword: a single #LrgCardKeyword flag
  *
@@ -173,7 +173,7 @@ lrg_card_keyword_get_icon (LrgCardKeyword keyword)
  * Keyword Queries
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_keyword_is_positive:
  * @keyword: a single #LrgCardKeyword flag
  *
@@ -190,7 +190,7 @@ lrg_card_keyword_is_positive (LrgCardKeyword keyword)
     return info != NULL ? info->positive : FALSE;
 }
 
-/**
+/*
  * lrg_card_keyword_is_negative:
  * @keyword: a single #LrgCardKeyword flag
  *
@@ -207,7 +207,7 @@ lrg_card_keyword_is_negative (LrgCardKeyword keyword)
     return info != NULL ? info->negative : FALSE;
 }
 
-/**
+/*
  * lrg_card_keyword_affects_playability:
  * @keyword: a single #LrgCardKeyword flag
  *
@@ -224,7 +224,7 @@ lrg_card_keyword_affects_playability (LrgCardKeyword keyword)
     return info != NULL ? info->affects_playability : FALSE;
 }
 
-/**
+/*
  * lrg_card_keyword_affects_discard:
  * @keyword: a single #LrgCardKeyword flag
  *
@@ -245,7 +245,7 @@ lrg_card_keyword_affects_discard (LrgCardKeyword keyword)
  * Keyword Parsing
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_keyword_from_string:
  * @str: keyword name string
  *
@@ -272,7 +272,7 @@ lrg_card_keyword_from_string (const gchar *str)
     return LRG_CARD_KEYWORD_NONE;
 }
 
-/**
+/*
  * lrg_card_keyword_to_string:
  * @keyword: a single #LrgCardKeyword flag
  *
@@ -288,7 +288,7 @@ lrg_card_keyword_to_string (LrgCardKeyword keyword)
     return lrg_card_keyword_get_name (keyword);
 }
 
-/**
+/*
  * lrg_card_keywords_from_string:
  * @str: comma-separated keyword names
  *
@@ -320,7 +320,7 @@ lrg_card_keywords_from_string (const gchar *str)
     return result;
 }
 
-/**
+/*
  * lrg_card_keywords_to_string:
  * @keywords: combined keyword flags
  *
@@ -364,7 +364,7 @@ lrg_card_keywords_to_string (LrgCardKeyword keywords)
  * Keyword Iteration
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_keyword_foreach:
  * @keywords: combined keyword flags
  * @func: (scope call): callback for each keyword
@@ -390,7 +390,7 @@ lrg_card_keyword_foreach (LrgCardKeyword  keywords,
     }
 }
 
-/**
+/*
  * lrg_card_keyword_count:
  * @keywords: combined keyword flags
  *
@@ -415,7 +415,7 @@ lrg_card_keyword_count (LrgCardKeyword keywords)
     return count;
 }
 
-/**
+/*
  * lrg_card_keyword_get_all:
  *
  * Gets an array of all built-in keyword values.

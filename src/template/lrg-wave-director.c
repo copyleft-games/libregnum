@@ -873,7 +873,7 @@ lrg_wave_director_init (LrgWaveDirector *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_director_new:
  *
  * Creates a new, empty wave director.
@@ -892,7 +892,7 @@ lrg_wave_director_new (void)
  * Loading
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_director_load_from_file:
  * @self: an #LrgWaveDirector
  * @path: path to a YAML wave definition file
@@ -922,7 +922,7 @@ lrg_wave_director_load_from_file (LrgWaveDirector  *self,
     return load_from_parser (self, parser, error);
 }
 
-/**
+/*
  * lrg_wave_director_load_from_data:
  * @self: an #LrgWaveDirector
  * @data: YAML wave definition data
@@ -958,7 +958,7 @@ lrg_wave_director_load_from_data (LrgWaveDirector  *self,
  * Programmatic Builders
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_director_add_wave:
  * @self: an #LrgWaveDirector
  * @trigger: the trigger condition for this wave
@@ -982,7 +982,7 @@ lrg_wave_director_add_wave (LrgWaveDirector    *self,
     return self->waves->len - 1;
 }
 
-/**
+/*
  * lrg_wave_director_wave_add_entry:
  * @self: an #LrgWaveDirector
  * @wave_index: index of the wave to add the entry to
@@ -1034,7 +1034,7 @@ lrg_wave_director_wave_add_entry (LrgWaveDirector *self,
  * Configuration
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_director_set_bounds:
  * @self: an #LrgWaveDirector
  * @min_x: left edge of the spawn bounds
@@ -1067,7 +1067,7 @@ lrg_wave_director_set_bounds (LrgWaveDirector *self,
  * Lifecycle
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_director_start:
  * @self: an #LrgWaveDirector
  *
@@ -1097,7 +1097,7 @@ lrg_wave_director_start (LrgWaveDirector *self)
     }
 }
 
-/**
+/*
  * lrg_wave_director_reset:
  * @self: an #LrgWaveDirector
  *
@@ -1122,7 +1122,7 @@ lrg_wave_director_reset (LrgWaveDirector *self)
         wave_reset_entries (g_ptr_array_index (self->waves, i));
 }
 
-/**
+/*
  * lrg_wave_director_update:
  * @self: an #LrgWaveDirector
  * @delta: time step in seconds
@@ -1166,7 +1166,7 @@ lrg_wave_director_update (LrgWaveDirector *self,
         wave_advance (self);
 }
 
-/**
+/*
  * lrg_wave_director_skip_to_wave:
  * @self: an #LrgWaveDirector
  * @index: index of the wave to make current
@@ -1194,7 +1194,7 @@ lrg_wave_director_skip_to_wave (LrgWaveDirector *self,
  * State Queries
  * ========================================================================== */
 
-/**
+/*
  * lrg_wave_director_get_current_wave:
  * @self: an #LrgWaveDirector
  *
@@ -1212,7 +1212,7 @@ lrg_wave_director_get_current_wave (LrgWaveDirector *self)
     return self->current_wave;
 }
 
-/**
+/*
  * lrg_wave_director_get_wave_count:
  * @self: an #LrgWaveDirector
  *
@@ -1230,7 +1230,7 @@ lrg_wave_director_get_wave_count (LrgWaveDirector *self)
     return self->waves->len;
 }
 
-/**
+/*
  * lrg_wave_director_is_started:
  * @self: an #LrgWaveDirector
  *
@@ -1248,7 +1248,7 @@ lrg_wave_director_is_started (LrgWaveDirector *self)
     return self->started;
 }
 
-/**
+/*
  * lrg_wave_director_is_finished:
  * @self: an #LrgWaveDirector
  *

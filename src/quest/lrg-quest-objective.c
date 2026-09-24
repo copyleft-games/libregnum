@@ -12,7 +12,7 @@
 #endif
 #include "quest/lrg-quest-objective.h"
 
-/**
+/*
  * LrgQuestObjective:
  *
  * Internal structure for quest objectives.
@@ -34,7 +34,7 @@ G_DEFINE_BOXED_TYPE (LrgQuestObjective,
                      lrg_quest_objective_copy,
                      lrg_quest_objective_free)
 
-/**
+/*
  * lrg_quest_objective_new:
  * @id: unique identifier for the objective
  * @description: human-readable description
@@ -65,7 +65,7 @@ lrg_quest_objective_new (const gchar           *id,
     return self;
 }
 
-/**
+/*
  * lrg_quest_objective_copy:
  * @self: an #LrgQuestObjective
  *
@@ -93,7 +93,7 @@ lrg_quest_objective_copy (const LrgQuestObjective *self)
     return copy;
 }
 
-/**
+/*
  * lrg_quest_objective_free:
  * @self: an #LrgQuestObjective
  *
@@ -112,7 +112,7 @@ lrg_quest_objective_free (LrgQuestObjective *self)
     g_free (self);
 }
 
-/**
+/*
  * lrg_quest_objective_get_id:
  * @self: an #LrgQuestObjective
  *
@@ -127,7 +127,7 @@ lrg_quest_objective_get_id (const LrgQuestObjective *self)
     return self->id;
 }
 
-/**
+/*
  * lrg_quest_objective_get_description:
  * @self: an #LrgQuestObjective
  *
@@ -142,7 +142,7 @@ lrg_quest_objective_get_description (const LrgQuestObjective *self)
     return self->description;
 }
 
-/**
+/*
  * lrg_quest_objective_set_description:
  * @self: an #LrgQuestObjective
  * @description: new description
@@ -160,7 +160,7 @@ lrg_quest_objective_set_description (LrgQuestObjective *self,
     self->description = g_strdup (description);
 }
 
-/**
+/*
  * lrg_quest_objective_get_objective_type:
  * @self: an #LrgQuestObjective
  *
@@ -175,7 +175,7 @@ lrg_quest_objective_get_objective_type (const LrgQuestObjective *self)
     return self->type;
 }
 
-/**
+/*
  * lrg_quest_objective_get_target_id:
  * @self: an #LrgQuestObjective
  *
@@ -190,7 +190,7 @@ lrg_quest_objective_get_target_id (const LrgQuestObjective *self)
     return self->target_id;
 }
 
-/**
+/*
  * lrg_quest_objective_set_target_id:
  * @self: an #LrgQuestObjective
  * @target_id: (nullable): target entity/item ID
@@ -207,7 +207,7 @@ lrg_quest_objective_set_target_id (LrgQuestObjective *self,
     self->target_id = g_strdup (target_id);
 }
 
-/**
+/*
  * lrg_quest_objective_get_target_count:
  * @self: an #LrgQuestObjective
  *
@@ -222,7 +222,7 @@ lrg_quest_objective_get_target_count (const LrgQuestObjective *self)
     return self->target_count;
 }
 
-/**
+/*
  * lrg_quest_objective_set_target_count:
  * @self: an #LrgQuestObjective
  * @count: required count
@@ -237,7 +237,7 @@ lrg_quest_objective_set_target_count (LrgQuestObjective *self,
     self->target_count = count;
 }
 
-/**
+/*
  * lrg_quest_objective_get_current_count:
  * @self: an #LrgQuestObjective
  *
@@ -252,7 +252,7 @@ lrg_quest_objective_get_current_count (const LrgQuestObjective *self)
     return self->current_count;
 }
 
-/**
+/*
  * lrg_quest_objective_set_current_count:
  * @self: an #LrgQuestObjective
  * @count: current count
@@ -271,7 +271,7 @@ lrg_quest_objective_set_current_count (LrgQuestObjective *self,
         self->complete = TRUE;
 }
 
-/**
+/*
  * lrg_quest_objective_increment:
  * @self: an #LrgQuestObjective
  * @amount: amount to add
@@ -300,7 +300,7 @@ lrg_quest_objective_increment (LrgQuestObjective *self,
     return self->current_count;
 }
 
-/**
+/*
  * lrg_quest_objective_get_location:
  * @self: an #LrgQuestObjective
  *
@@ -315,7 +315,7 @@ lrg_quest_objective_get_location (const LrgQuestObjective *self)
     return self->location;
 }
 
-/**
+/*
  * lrg_quest_objective_set_location:
  * @self: an #LrgQuestObjective
  * @location: (nullable): location ID
@@ -332,7 +332,7 @@ lrg_quest_objective_set_location (LrgQuestObjective *self,
     self->location = g_strdup (location);
 }
 
-/**
+/*
  * lrg_quest_objective_is_complete:
  * @self: an #LrgQuestObjective
  *
@@ -347,7 +347,7 @@ lrg_quest_objective_is_complete (const LrgQuestObjective *self)
     return self->complete;
 }
 
-/**
+/*
  * lrg_quest_objective_set_complete:
  * @self: an #LrgQuestObjective
  * @complete: completion state
@@ -362,7 +362,7 @@ lrg_quest_objective_set_complete (LrgQuestObjective *self,
     self->complete = complete;
 }
 
-/**
+/*
  * lrg_quest_objective_get_progress:
  * @self: an #LrgQuestObjective
  *

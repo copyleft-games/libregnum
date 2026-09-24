@@ -29,7 +29,7 @@ G_DEFINE_BOXED_TYPE (LrgMeshData, lrg_mesh_data,
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_mesh_data_new:
  *
  * Creates a new empty #LrgMeshData.
@@ -53,7 +53,7 @@ lrg_mesh_data_new (void)
     return self;
 }
 
-/**
+/*
  * lrg_mesh_data_copy:
  * @self: an #LrgMeshData
  *
@@ -91,7 +91,7 @@ lrg_mesh_data_copy (const LrgMeshData *self)
     return copy;
 }
 
-/**
+/*
  * lrg_mesh_data_free:
  * @self: an #LrgMeshData
  *
@@ -112,7 +112,7 @@ lrg_mesh_data_free (LrgMeshData *self)
  * Vertex Data
  * ========================================================================== */
 
-/**
+/*
  * lrg_mesh_data_set_vertices:
  * @self: an #LrgMeshData
  * @vertices: (array length=n_floats): Flat array of vertex coordinates
@@ -137,7 +137,7 @@ lrg_mesh_data_set_vertices (LrgMeshData  *self,
     }
 }
 
-/**
+/*
  * lrg_mesh_data_get_vertices:
  * @self: an #LrgMeshData
  * @n_vertices: (out) (optional): Location for number of vertices
@@ -158,7 +158,7 @@ lrg_mesh_data_get_vertices (const LrgMeshData *self,
     return self->vertices;
 }
 
-/**
+/*
  * lrg_mesh_data_get_n_vertices:
  * @self: an #LrgMeshData
  *
@@ -178,7 +178,7 @@ lrg_mesh_data_get_n_vertices (const LrgMeshData *self)
  * Face Data
  * ========================================================================== */
 
-/**
+/*
  * lrg_mesh_data_set_faces:
  * @self: an #LrgMeshData
  * @faces: (array length=total_indices): Face data
@@ -207,7 +207,7 @@ lrg_mesh_data_set_faces (LrgMeshData *self,
     }
 }
 
-/**
+/*
  * lrg_mesh_data_get_faces:
  * @self: an #LrgMeshData
  * @n_faces: (out) (optional): Location for number of faces
@@ -233,7 +233,7 @@ lrg_mesh_data_get_faces (const LrgMeshData *self,
     return self->faces;
 }
 
-/**
+/*
  * lrg_mesh_data_get_n_faces:
  * @self: an #LrgMeshData
  *
@@ -253,7 +253,7 @@ lrg_mesh_data_get_n_faces (const LrgMeshData *self)
  * Shading
  * ========================================================================== */
 
-/**
+/*
  * lrg_mesh_data_set_smooth:
  * @self: an #LrgMeshData
  * @smooth: Whether to use smooth shading
@@ -269,7 +269,7 @@ lrg_mesh_data_set_smooth (LrgMeshData *self,
     self->smooth = smooth;
 }
 
-/**
+/*
  * lrg_mesh_data_get_smooth:
  * @self: an #LrgMeshData
  *
@@ -289,7 +289,7 @@ lrg_mesh_data_get_smooth (const LrgMeshData *self)
  * Utility
  * ========================================================================== */
 
-/**
+/*
  * lrg_mesh_data_is_empty:
  * @self: an #LrgMeshData
  *
@@ -309,7 +309,7 @@ lrg_mesh_data_is_empty (const LrgMeshData *self)
  * Face Winding
  * ========================================================================== */
 
-/**
+/*
  * lrg_mesh_data_set_reverse_winding:
  * @self: an #LrgMeshData
  * @reverse: Whether face winding should be reversed
@@ -325,7 +325,7 @@ lrg_mesh_data_set_reverse_winding (LrgMeshData *self,
     self->reverse_winding = reverse;
 }
 
-/**
+/*
  * lrg_mesh_data_get_reverse_winding:
  * @self: an #LrgMeshData
  *

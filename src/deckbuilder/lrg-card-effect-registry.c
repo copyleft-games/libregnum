@@ -50,7 +50,7 @@ lrg_card_effect_registry_init (LrgCardEffectRegistry *self)
  * Singleton Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_effect_registry_get_default:
  *
  * Gets the default effect registry singleton. The singleton is
@@ -78,7 +78,7 @@ lrg_card_effect_registry_get_default (void)
  * Registration
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_effect_registry_register:
  * @self: a #LrgCardEffectRegistry
  * @executor: (transfer none): the executor to register
@@ -112,7 +112,7 @@ lrg_card_effect_registry_register (LrgCardEffectRegistry *self,
                "Registered effect executor for type: %s", effect_type);
 }
 
-/**
+/*
  * lrg_card_effect_registry_unregister:
  * @self: a #LrgCardEffectRegistry
  * @effect_type: the effect type to unregister
@@ -137,7 +137,7 @@ lrg_card_effect_registry_unregister (LrgCardEffectRegistry *self,
  * Lookup
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_effect_registry_lookup:
  * @self: a #LrgCardEffectRegistry
  * @effect_type: the effect type to look up
@@ -158,7 +158,7 @@ lrg_card_effect_registry_lookup (LrgCardEffectRegistry *self,
     return g_hash_table_lookup (self->executors, effect_type);
 }
 
-/**
+/*
  * lrg_card_effect_registry_has_executor:
  * @self: a #LrgCardEffectRegistry
  * @effect_type: the effect type to check
@@ -183,7 +183,7 @@ lrg_card_effect_registry_has_executor (LrgCardEffectRegistry *self,
  * Enumeration
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_effect_registry_get_effect_types:
  * @self: a #LrgCardEffectRegistry
  *
@@ -213,7 +213,7 @@ lrg_card_effect_registry_get_effect_types (LrgCardEffectRegistry *self)
     return types;
 }
 
-/**
+/*
  * lrg_card_effect_registry_get_executor_count:
  * @self: a #LrgCardEffectRegistry
  *
@@ -235,7 +235,7 @@ lrg_card_effect_registry_get_executor_count (LrgCardEffectRegistry *self)
  * Effect Execution
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_effect_registry_execute:
  * @self: a #LrgCardEffectRegistry
  * @effect: the effect to execute

@@ -217,7 +217,7 @@ lrg_steam_client_init (LrgSteamClient *self)
 #endif
 }
 
-/**
+/*
  * lrg_steam_client_new:
  *
  * Creates a new Steam client.
@@ -230,7 +230,7 @@ lrg_steam_client_new (void)
     return g_object_new (LRG_TYPE_STEAM_CLIENT, NULL);
 }
 
-/**
+/*
  * lrg_steam_client_is_logged_on:
  * @self: an #LrgSteamClient
  *
@@ -251,7 +251,7 @@ lrg_steam_client_is_logged_on (LrgSteamClient *self)
     return FALSE;
 }
 
-/**
+/*
  * lrg_steam_client_get_steam_id:
  * @self: an #LrgSteamClient
  *
@@ -272,7 +272,7 @@ lrg_steam_client_get_steam_id (LrgSteamClient *self)
     return 0;
 }
 
-/**
+/*
  * lrg_steam_client_get_persona_name:
  * @self: an #LrgSteamClient
  *
@@ -293,7 +293,7 @@ lrg_steam_client_get_persona_name (LrgSteamClient *self)
     return NULL;
 }
 
-/**
+/*
  * lrg_steam_client_get_app_id:
  * @self: an #LrgSteamClient
  *

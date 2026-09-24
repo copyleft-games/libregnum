@@ -23,7 +23,7 @@ struct _LrgCardEffect
 G_DEFINE_BOXED_TYPE (LrgCardEffect, lrg_card_effect,
                      lrg_card_effect_copy, lrg_card_effect_free)
 
-/**
+/*
  * lrg_card_effect_new:
  * @effect_type: the effect type identifier
  *
@@ -58,7 +58,7 @@ lrg_card_effect_new (const gchar *effect_type)
     return effect;
 }
 
-/**
+/*
  * lrg_card_effect_copy:
  * @effect: a #LrgCardEffect
  *
@@ -114,7 +114,7 @@ lrg_card_effect_copy (LrgCardEffect *effect)
     return copy;
 }
 
-/**
+/*
  * lrg_card_effect_free:
  * @effect: a #LrgCardEffect
  *
@@ -135,7 +135,7 @@ lrg_card_effect_free (LrgCardEffect *effect)
     g_free (effect);
 }
 
-/**
+/*
  * lrg_card_effect_get_effect_type:
  * @effect: a #LrgCardEffect
  *
@@ -153,7 +153,7 @@ lrg_card_effect_get_effect_type (LrgCardEffect *effect)
     return effect->effect_type;
 }
 
-/**
+/*
  * lrg_card_effect_get_target_type:
  * @effect: a #LrgCardEffect
  *
@@ -171,7 +171,7 @@ lrg_card_effect_get_target_type (LrgCardEffect *effect)
     return effect->target_type;
 }
 
-/**
+/*
  * lrg_card_effect_set_target_type:
  * @effect: a #LrgCardEffect
  * @target_type: the target type
@@ -188,7 +188,7 @@ lrg_card_effect_set_target_type (LrgCardEffect     *effect,
     effect->target_type = target_type;
 }
 
-/**
+/*
  * lrg_card_effect_get_flags:
  * @effect: a #LrgCardEffect
  *
@@ -206,7 +206,7 @@ lrg_card_effect_get_flags (LrgCardEffect *effect)
     return effect->flags;
 }
 
-/**
+/*
  * lrg_card_effect_set_flags:
  * @effect: a #LrgCardEffect
  * @flags: the flags to set
@@ -223,7 +223,7 @@ lrg_card_effect_set_flags (LrgCardEffect  *effect,
     effect->flags = flags;
 }
 
-/**
+/*
  * lrg_card_effect_add_flag:
  * @effect: a #LrgCardEffect
  * @flag: the flag to add
@@ -240,7 +240,7 @@ lrg_card_effect_add_flag (LrgCardEffect  *effect,
     effect->flags |= flag;
 }
 
-/**
+/*
  * lrg_card_effect_has_flag:
  * @effect: a #LrgCardEffect
  * @flag: the flag to check
@@ -259,7 +259,7 @@ lrg_card_effect_has_flag (LrgCardEffect  *effect,
     return (effect->flags & flag) != 0;
 }
 
-/**
+/*
  * lrg_card_effect_set_param_int:
  * @effect: a #LrgCardEffect
  * @key: the parameter key
@@ -283,7 +283,7 @@ lrg_card_effect_set_param_int (LrgCardEffect *effect,
                          GINT_TO_POINTER (value));
 }
 
-/**
+/*
  * lrg_card_effect_get_param_int:
  * @effect: a #LrgCardEffect
  * @key: the parameter key
@@ -311,7 +311,7 @@ lrg_card_effect_get_param_int (LrgCardEffect *effect,
     return default_value;
 }
 
-/**
+/*
  * lrg_card_effect_set_param_float:
  * @effect: a #LrgCardEffect
  * @key: the parameter key
@@ -339,7 +339,7 @@ lrg_card_effect_set_param_float (LrgCardEffect *effect,
                          float_ptr);
 }
 
-/**
+/*
  * lrg_card_effect_get_param_float:
  * @effect: a #LrgCardEffect
  * @key: the parameter key
@@ -368,7 +368,7 @@ lrg_card_effect_get_param_float (LrgCardEffect *effect,
     return default_value;
 }
 
-/**
+/*
  * lrg_card_effect_set_param_string:
  * @effect: a #LrgCardEffect
  * @key: the parameter key
@@ -392,7 +392,7 @@ lrg_card_effect_set_param_string (LrgCardEffect *effect,
                          g_strdup (value));
 }
 
-/**
+/*
  * lrg_card_effect_get_param_string:
  * @effect: a #LrgCardEffect
  * @key: the parameter key
@@ -421,7 +421,7 @@ lrg_card_effect_get_param_string (LrgCardEffect *effect,
     return default_value;
 }
 
-/**
+/*
  * lrg_card_effect_has_param:
  * @effect: a #LrgCardEffect
  * @key: the parameter key
@@ -445,7 +445,7 @@ lrg_card_effect_has_param (LrgCardEffect *effect,
            g_hash_table_contains (effect->params_string, key);
 }
 
-/**
+/*
  * lrg_card_effect_get_priority:
  * @effect: a #LrgCardEffect
  *
@@ -463,7 +463,7 @@ lrg_card_effect_get_priority (LrgCardEffect *effect)
     return effect->priority;
 }
 
-/**
+/*
  * lrg_card_effect_set_priority:
  * @effect: a #LrgCardEffect
  * @priority: the priority value

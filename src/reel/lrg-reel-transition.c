@@ -137,7 +137,7 @@ lrg_reel_transition_init (LrgReelTransition *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_transition_composite:
  * @self: an #LrgReelTransition
  * @canvas: the destination #LrgImageCanvas (already sized to frame dimensions)
@@ -177,7 +177,7 @@ lrg_reel_transition_composite (LrgReelTransition *self,
                                                       (gdouble) eased);
 }
 
-/**
+/*
  * lrg_reel_transition_get_easing:
  * @self: an #LrgReelTransition
  *
@@ -198,7 +198,7 @@ lrg_reel_transition_get_easing (LrgReelTransition *self)
     return priv->easing;
 }
 
-/**
+/*
  * lrg_reel_transition_set_easing:
  * @self: an #LrgReelTransition
  * @easing: the #LrgEasingType to use

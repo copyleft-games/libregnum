@@ -96,7 +96,7 @@ host_slot_lookup (guint id)
  * Host side
  * ========================================================================== */
 
-/**
+/*
  * lrg_script_host_register: (skip)
  * @scripting: the context the id stands for (not referenced)
  *
@@ -135,7 +135,7 @@ lrg_script_host_register (LrgScripting *scripting)
     return id;
 }
 
-/**
+/*
  * lrg_script_host_unregister: (skip)
  * @id: a bridge id
  *
@@ -152,7 +152,7 @@ lrg_script_host_unregister (guint id)
     g_mutex_unlock (&host_lock);
 }
 
-/**
+/*
  * lrg_script_host_add_function: (skip)
  * @id: a bridge id
  * @name: the script-visible name
@@ -185,7 +185,7 @@ lrg_script_host_add_function (guint                  id,
     g_mutex_unlock (&host_lock);
 }
 
-/**
+/*
  * lrg_script_host_add_object: (skip)
  * @id: a bridge id
  * @name: the script-visible name
@@ -212,7 +212,7 @@ lrg_script_host_add_object (guint        id,
     g_mutex_unlock (&host_lock);
 }
 
-/**
+/*
  * lrg_script_host_stash_args: (skip)
  * @id: a bridge id
  * @args: (transfer none): an `av` array for the script to take
@@ -238,7 +238,7 @@ lrg_script_host_stash_args (guint     id,
     g_mutex_unlock (&host_lock);
 }
 
-/**
+/*
  * lrg_script_host_steal_result: (skip)
  * @id: a bridge id
  *
@@ -268,7 +268,7 @@ lrg_script_host_steal_result (guint id)
  * Script side (introspectable)
  * ========================================================================== */
 
-/**
+/*
  * lrg_script_host_take_args:
  * @id: a bridge id
  *
@@ -294,7 +294,7 @@ lrg_script_host_take_args (guint id)
     return args;
 }
 
-/**
+/*
  * lrg_script_host_set_result:
  * @id: a bridge id
  * @result: (nullable): the value to hand back to the host
@@ -320,7 +320,7 @@ lrg_script_host_set_result (guint     id,
     g_mutex_unlock (&host_lock);
 }
 
-/**
+/*
  * lrg_script_host_call:
  * @id: a bridge id
  * @name: a function published with lrg_script_host_add_function()
@@ -430,7 +430,7 @@ lrg_script_host_call (guint         id,
     return out;
 }
 
-/**
+/*
  * lrg_script_host_get_object:
  * @id: a bridge id
  * @name: an object published with lrg_script_host_add_object()
@@ -464,7 +464,7 @@ lrg_script_host_get_object (guint        id,
  * Conversions
  * ========================================================================== */
 
-/**
+/*
  * lrg_script_host_value_to_variant: (skip)
  * @value: (nullable): a #GValue
  *
@@ -541,7 +541,7 @@ lrg_script_host_value_to_variant (const GValue *value)
     return g_variant_ref_sink (out);
 }
 
-/**
+/*
  * lrg_script_host_variant_to_value: (skip)
  * @variant: a bridge variant (a `v` box is unwrapped first)
  * @value: (out caller-allocates): an uninitialized #GValue

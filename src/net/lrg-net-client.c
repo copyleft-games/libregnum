@@ -217,7 +217,7 @@ lrg_net_client_class_init (LrgNetClientClass *klass)
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
-    /**
+    /*
      * LrgNetClient::connected:
      * @self: the #LrgNetClient
      *
@@ -232,7 +232,7 @@ lrg_net_client_class_init (LrgNetClientClass *klass)
                       NULL,
                       G_TYPE_NONE, 0);
 
-    /**
+    /*
      * LrgNetClient::disconnected:
      * @self: the #LrgNetClient
      * @reason: (nullable): disconnect reason
@@ -248,7 +248,7 @@ lrg_net_client_class_init (LrgNetClientClass *klass)
                       NULL,
                       G_TYPE_NONE, 1, G_TYPE_STRING);
 
-    /**
+    /*
      * LrgNetClient::message-received:
      * @self: the #LrgNetClient
      * @message: the received message
@@ -264,7 +264,7 @@ lrg_net_client_class_init (LrgNetClientClass *klass)
                       NULL,
                       G_TYPE_NONE, 1, LRG_TYPE_NET_MESSAGE);
 
-    /**
+    /*
      * LrgNetClient::connection-failed:
      * @self: the #LrgNetClient
      * @error: the error
@@ -304,7 +304,7 @@ lrg_net_client_init (LrgNetClient *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_net_client_new:
  * @host: server hostname or IP address
  * @port: server port
@@ -323,7 +323,7 @@ lrg_net_client_new (const gchar *host,
                          NULL);
 }
 
-/**
+/*
  * lrg_net_client_connect:
  * @self: an #LrgNetClient
  * @error: (nullable): return location for error
@@ -476,7 +476,7 @@ lrg_net_client_connect_async (LrgNetClient *self)
 }
 #endif /* LRG_HAS_LIBDEX */
 
-/**
+/*
  * lrg_net_client_disconnect:
  * @self: an #LrgNetClient
  *
@@ -518,7 +518,7 @@ lrg_net_client_disconnect (LrgNetClient *self)
     g_signal_emit (self, signals[SIGNAL_DISCONNECTED], 0, NULL);
 }
 
-/**
+/*
  * lrg_net_client_is_connected:
  * @self: an #LrgNetClient
  *
@@ -533,7 +533,7 @@ lrg_net_client_is_connected (LrgNetClient *self)
     return self->connected;
 }
 
-/**
+/*
  * lrg_net_client_get_server_host:
  * @self: an #LrgNetClient
  *
@@ -548,7 +548,7 @@ lrg_net_client_get_server_host (LrgNetClient *self)
     return self->server_host;
 }
 
-/**
+/*
  * lrg_net_client_get_server_port:
  * @self: an #LrgNetClient
  *
@@ -563,7 +563,7 @@ lrg_net_client_get_server_port (LrgNetClient *self)
     return self->server_port;
 }
 
-/**
+/*
  * lrg_net_client_get_local_id:
  * @self: an #LrgNetClient
  *
@@ -578,7 +578,7 @@ lrg_net_client_get_local_id (LrgNetClient *self)
     return self->local_id;
 }
 
-/**
+/*
  * lrg_net_client_get_timeout:
  * @self: an #LrgNetClient
  *
@@ -593,7 +593,7 @@ lrg_net_client_get_timeout (LrgNetClient *self)
     return self->timeout_ms;
 }
 
-/**
+/*
  * lrg_net_client_set_timeout:
  * @self: an #LrgNetClient
  * @timeout_ms: timeout in milliseconds
@@ -613,7 +613,7 @@ lrg_net_client_set_timeout (LrgNetClient *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TIMEOUT]);
 }
 
-/**
+/*
  * lrg_net_client_send:
  * @self: an #LrgNetClient
  * @message: the message to send
@@ -670,7 +670,7 @@ lrg_net_client_send_async (LrgNetClient  *self,
 }
 #endif /* LRG_HAS_LIBDEX */
 
-/**
+/*
  * lrg_net_client_poll:
  * @self: an #LrgNetClient
  *

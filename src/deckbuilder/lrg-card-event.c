@@ -105,7 +105,7 @@ lrg_card_event_init (LrgCardEvent *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_event_new:
  * @event_type: the type of event
  *
@@ -126,7 +126,7 @@ lrg_card_event_new (LrgCardEventType event_type)
     return event;
 }
 
-/**
+/*
  * lrg_card_event_copy:
  * @event: a #LrgCardEvent
  *
@@ -156,7 +156,7 @@ lrg_card_event_copy (LrgCardEvent *event)
     return copy;
 }
 
-/**
+/*
  * lrg_card_event_get_event_type_mask:
  * @event_type: the event type
  *
@@ -176,7 +176,7 @@ lrg_card_event_get_event_type_mask (LrgCardEventType event_type)
  * Convenience Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_event_new_turn:
  * @event_type: LRG_CARD_EVENT_TURN_START or LRG_CARD_EVENT_TURN_END
  * @turn: the turn number
@@ -199,7 +199,7 @@ lrg_card_event_new_turn (LrgCardEventType event_type,
     return event;
 }
 
-/**
+/*
  * lrg_card_event_new_card:
  * @event_type: the card event type
  * @card: the card involved
@@ -222,7 +222,7 @@ lrg_card_event_new_card (LrgCardEventType  event_type,
     return event;
 }
 
-/**
+/*
  * lrg_card_event_new_damage:
  * @source: (nullable): the source of damage
  * @target: the target receiving damage
@@ -252,7 +252,7 @@ lrg_card_event_new_damage (gpointer       source,
     return event;
 }
 
-/**
+/*
  * lrg_card_event_new_block:
  * @target: the entity gaining block
  * @amount: the block amount
@@ -276,7 +276,7 @@ lrg_card_event_new_block (gpointer target,
     return event;
 }
 
-/**
+/*
  * lrg_card_event_new_heal:
  * @target: the entity being healed
  * @amount: the heal amount
@@ -300,7 +300,7 @@ lrg_card_event_new_heal (gpointer target,
     return event;
 }
 
-/**
+/*
  * lrg_card_event_new_status:
  * @event_type: LRG_CARD_EVENT_STATUS_APPLIED or LRG_CARD_EVENT_STATUS_REMOVED
  * @target: the entity affected
@@ -333,7 +333,7 @@ lrg_card_event_new_status (LrgCardEventType  event_type,
  * Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_event_get_event_type:
  * @event: a #LrgCardEvent
  *
@@ -350,7 +350,7 @@ lrg_card_event_get_event_type (LrgCardEvent *event)
     return event->event_type;
 }
 
-/**
+/*
  * lrg_card_event_get_source:
  * @event: a #LrgCardEvent
  *
@@ -367,7 +367,7 @@ lrg_card_event_get_source (LrgCardEvent *event)
     return event->source;
 }
 
-/**
+/*
  * lrg_card_event_set_source:
  * @event: a #LrgCardEvent
  * @source: (nullable): the source entity
@@ -384,7 +384,7 @@ lrg_card_event_set_source (LrgCardEvent *event,
     event->source = source;
 }
 
-/**
+/*
  * lrg_card_event_get_target:
  * @event: a #LrgCardEvent
  *
@@ -401,7 +401,7 @@ lrg_card_event_get_target (LrgCardEvent *event)
     return event->target;
 }
 
-/**
+/*
  * lrg_card_event_set_target:
  * @event: a #LrgCardEvent
  * @target: (nullable): the target entity
@@ -418,7 +418,7 @@ lrg_card_event_set_target (LrgCardEvent *event,
     event->target = target;
 }
 
-/**
+/*
  * lrg_card_event_get_card:
  * @event: a #LrgCardEvent
  *
@@ -435,7 +435,7 @@ lrg_card_event_get_card (LrgCardEvent *event)
     return event->card;
 }
 
-/**
+/*
  * lrg_card_event_set_card:
  * @event: a #LrgCardEvent
  * @card: (nullable): the card
@@ -452,7 +452,7 @@ lrg_card_event_set_card (LrgCardEvent *event,
     event->card = card;
 }
 
-/**
+/*
  * lrg_card_event_get_amount:
  * @event: a #LrgCardEvent
  *
@@ -469,7 +469,7 @@ lrg_card_event_get_amount (LrgCardEvent *event)
     return event->amount;
 }
 
-/**
+/*
  * lrg_card_event_set_amount:
  * @event: a #LrgCardEvent
  * @amount: the amount
@@ -486,7 +486,7 @@ lrg_card_event_set_amount (LrgCardEvent *event,
     event->amount = amount;
 }
 
-/**
+/*
  * lrg_card_event_get_turn:
  * @event: a #LrgCardEvent
  *
@@ -503,7 +503,7 @@ lrg_card_event_get_turn (LrgCardEvent *event)
     return event->turn;
 }
 
-/**
+/*
  * lrg_card_event_set_turn:
  * @event: a #LrgCardEvent
  * @turn: the turn number
@@ -520,7 +520,7 @@ lrg_card_event_set_turn (LrgCardEvent *event,
     event->turn = turn;
 }
 
-/**
+/*
  * lrg_card_event_get_flags:
  * @event: a #LrgCardEvent
  *
@@ -537,7 +537,7 @@ lrg_card_event_get_flags (LrgCardEvent *event)
     return event->flags;
 }
 
-/**
+/*
  * lrg_card_event_set_flags:
  * @event: a #LrgCardEvent
  * @flags: the flags
@@ -554,7 +554,7 @@ lrg_card_event_set_flags (LrgCardEvent   *event,
     event->flags = flags;
 }
 
-/**
+/*
  * lrg_card_event_get_status_id:
  * @event: a #LrgCardEvent
  *
@@ -571,7 +571,7 @@ lrg_card_event_get_status_id (LrgCardEvent *event)
     return event->status_id;
 }
 
-/**
+/*
  * lrg_card_event_set_status_id:
  * @event: a #LrgCardEvent
  * @status_id: (nullable): the status ID
@@ -594,7 +594,7 @@ lrg_card_event_set_status_id (LrgCardEvent *event,
  * Cancellation
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_event_is_cancelled:
  * @event: a #LrgCardEvent
  *
@@ -611,7 +611,7 @@ lrg_card_event_is_cancelled (LrgCardEvent *event)
     return event->cancelled;
 }
 
-/**
+/*
  * lrg_card_event_cancel:
  * @event: a #LrgCardEvent
  *

@@ -243,7 +243,7 @@ lrg_tween_sequence_init (LrgTweenSequence *self)
  * Public API
  */
 
-/**
+/*
  * lrg_tween_sequence_new:
  *
  * Creates a new tween sequence.
@@ -259,7 +259,7 @@ lrg_tween_sequence_new (void)
     return g_object_new (LRG_TYPE_TWEEN_SEQUENCE, NULL);
 }
 
-/**
+/*
  * lrg_tween_sequence_append:
  * @self: A #LrgTweenSequence
  * @tween: (transfer none): The tween to append
@@ -283,7 +283,7 @@ lrg_tween_sequence_append (LrgTweenSequence *self,
     return self;
 }
 
-/**
+/*
  * lrg_tween_sequence_append_interval:
  * @self: A #LrgTweenSequence
  * @duration: Duration of the delay in seconds
@@ -319,7 +319,7 @@ lrg_tween_sequence_append_interval (LrgTweenSequence *self,
     return self;
 }
 
-/**
+/*
  * lrg_tween_sequence_get_current_index:
  * @self: A #LrgTweenSequence
  *
@@ -342,7 +342,7 @@ lrg_tween_sequence_get_current_index (LrgTweenSequence *self)
     return self->current_index;
 }
 
-/**
+/*
  * lrg_tween_sequence_get_current_tween:
  * @self: A #LrgTweenSequence
  *

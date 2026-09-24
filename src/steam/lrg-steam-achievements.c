@@ -136,7 +136,7 @@ lrg_steam_achievements_init (LrgSteamAchievements *self)
     self->client = NULL;
 }
 
-/**
+/*
  * lrg_steam_achievements_new:
  * @client: an #LrgSteamClient
  *
@@ -154,7 +154,7 @@ lrg_steam_achievements_new (LrgSteamClient *client)
                          NULL);
 }
 
-/**
+/*
  * lrg_steam_achievements_unlock:
  * @self: an #LrgSteamAchievements
  * @achievement_id: the achievement API name
@@ -212,7 +212,7 @@ lrg_steam_achievements_unlock (LrgSteamAchievements  *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_achievements_is_unlocked:
  * @self: an #LrgSteamAchievements
  * @achievement_id: the achievement API name
@@ -250,7 +250,7 @@ lrg_steam_achievements_is_unlocked (LrgSteamAchievements *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_achievements_clear:
  * @self: an #LrgSteamAchievements
  * @achievement_id: the achievement API name
@@ -308,7 +308,7 @@ lrg_steam_achievements_clear (LrgSteamAchievements  *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_achievements_store:
  * @self: an #LrgSteamAchievements
  * @error: (nullable): return location for error
@@ -363,7 +363,7 @@ lrg_steam_achievements_store (LrgSteamAchievements  *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_achievements_get_count:
  * @self: an #LrgSteamAchievements
  *
@@ -393,7 +393,7 @@ lrg_steam_achievements_get_count (LrgSteamAchievements *self)
 #endif
 }
 
-/**
+/*
  * lrg_steam_achievements_get_name:
  * @self: an #LrgSteamAchievements
  * @index: the achievement index

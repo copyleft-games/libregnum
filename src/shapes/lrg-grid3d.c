@@ -173,7 +173,7 @@ lrg_grid3d_init (LrgGrid3D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_grid3d_new:
  *
  * Creates a new grid with 10 slices and 1.0 spacing.
@@ -186,7 +186,7 @@ lrg_grid3d_new (void)
 	return g_object_new (LRG_TYPE_GRID3D, NULL);
 }
 
-/**
+/*
  * lrg_grid3d_new_sized:
  * @slices: number of grid divisions
  * @spacing: spacing between grid lines
@@ -207,7 +207,7 @@ lrg_grid3d_new_sized (gint   slices,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_grid3d_get_slices:
  * @self: an #LrgGrid3D
  *
@@ -223,7 +223,7 @@ lrg_grid3d_get_slices (LrgGrid3D *self)
 	return self->slices;
 }
 
-/**
+/*
  * lrg_grid3d_set_slices:
  * @self: an #LrgGrid3D
  * @slices: the number of slices
@@ -244,7 +244,7 @@ lrg_grid3d_set_slices (LrgGrid3D *self,
 	}
 }
 
-/**
+/*
  * lrg_grid3d_get_spacing:
  * @self: an #LrgGrid3D
  *
@@ -260,7 +260,7 @@ lrg_grid3d_get_spacing (LrgGrid3D *self)
 	return self->spacing;
 }
 
-/**
+/*
  * lrg_grid3d_set_spacing:
  * @self: an #LrgGrid3D
  * @spacing: the spacing value

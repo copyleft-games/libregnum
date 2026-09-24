@@ -480,7 +480,7 @@ lrg_idle_template_init (LrgIdleTemplate *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_idle_template_new:
  *
  * Creates a new idle template.
@@ -495,7 +495,7 @@ lrg_idle_template_new (void)
     return g_object_new (LRG_TYPE_IDLE_TEMPLATE, NULL);
 }
 
-/**
+/*
  * lrg_idle_template_get_idle_calculator:
  * @self: an #LrgIdleTemplate
  *
@@ -516,7 +516,7 @@ lrg_idle_template_get_idle_calculator (LrgIdleTemplate *self)
     return priv->calculator;
 }
 
-/**
+/*
  * lrg_idle_template_get_prestige:
  * @self: an #LrgIdleTemplate
  *
@@ -537,7 +537,7 @@ lrg_idle_template_get_prestige (LrgIdleTemplate *self)
     return priv->prestige;
 }
 
-/**
+/*
  * lrg_idle_template_get_offline_efficiency:
  * @self: an #LrgIdleTemplate
  *
@@ -558,7 +558,7 @@ lrg_idle_template_get_offline_efficiency (LrgIdleTemplate *self)
     return priv->offline_efficiency;
 }
 
-/**
+/*
  * lrg_idle_template_set_offline_efficiency:
  * @self: an #LrgIdleTemplate
  * @efficiency: efficiency multiplier (0.0 to 1.0)
@@ -579,7 +579,7 @@ lrg_idle_template_set_offline_efficiency (LrgIdleTemplate *self,
     priv->offline_efficiency = CLAMP (efficiency, 0.0, 1.0);
 }
 
-/**
+/*
  * lrg_idle_template_get_max_offline_hours:
  * @self: an #LrgIdleTemplate
  *
@@ -600,7 +600,7 @@ lrg_idle_template_get_max_offline_hours (LrgIdleTemplate *self)
     return priv->max_offline_hours;
 }
 
-/**
+/*
  * lrg_idle_template_set_max_offline_hours:
  * @self: an #LrgIdleTemplate
  * @hours: max hours (0 = unlimited)
@@ -621,7 +621,7 @@ lrg_idle_template_set_max_offline_hours (LrgIdleTemplate *self,
     priv->max_offline_hours = hours;
 }
 
-/**
+/*
  * lrg_idle_template_get_prestige_enabled:
  * @self: an #LrgIdleTemplate
  *
@@ -642,7 +642,7 @@ lrg_idle_template_get_prestige_enabled (LrgIdleTemplate *self)
     return priv->prestige_enabled;
 }
 
-/**
+/*
  * lrg_idle_template_set_prestige_enabled:
  * @self: an #LrgIdleTemplate
  * @enabled: whether prestige should be enabled
@@ -663,7 +663,7 @@ lrg_idle_template_set_prestige_enabled (LrgIdleTemplate *self,
     priv->prestige_enabled = enabled;
 }
 
-/**
+/*
  * lrg_idle_template_get_show_offline_popup:
  * @self: an #LrgIdleTemplate
  *
@@ -684,7 +684,7 @@ lrg_idle_template_get_show_offline_popup (LrgIdleTemplate *self)
     return priv->show_offline_popup;
 }
 
-/**
+/*
  * lrg_idle_template_set_show_offline_popup:
  * @self: an #LrgIdleTemplate
  * @show: whether to show the popup
@@ -705,7 +705,7 @@ lrg_idle_template_set_show_offline_popup (LrgIdleTemplate *self,
     priv->show_offline_popup = show;
 }
 
-/**
+/*
  * lrg_idle_template_process_offline_progress:
  * @self: an #LrgIdleTemplate
  *
@@ -777,7 +777,7 @@ lrg_idle_template_process_offline_progress (LrgIdleTemplate *self)
     return g_steal_pointer (&progress);
 }
 
-/**
+/*
  * lrg_idle_template_format_big_number:
  * @self: an #LrgIdleTemplate
  * @number: (transfer none): the number to format
@@ -805,7 +805,7 @@ lrg_idle_template_format_big_number (LrgIdleTemplate    *self,
     return lrg_big_number_format_short (number);
 }
 
-/**
+/*
  * lrg_idle_template_add_generator:
  * @self: an #LrgIdleTemplate
  * @id: unique generator ID
@@ -835,7 +835,7 @@ lrg_idle_template_add_generator (LrgIdleTemplate *self,
     lrg_idle_calculator_add_generator (priv->calculator, generator);
 }
 
-/**
+/*
  * lrg_idle_template_set_generator_count:
  * @self: an #LrgIdleTemplate
  * @id: generator ID
@@ -866,7 +866,7 @@ lrg_idle_template_set_generator_count (LrgIdleTemplate *self,
         lrg_idle_generator_set_count (generator, count);
 }
 
-/**
+/*
  * lrg_idle_template_get_generator_count:
  * @self: an #LrgIdleTemplate
  * @id: generator ID
@@ -899,7 +899,7 @@ lrg_idle_template_get_generator_count (LrgIdleTemplate *self,
     return lrg_idle_generator_get_count (generator);
 }
 
-/**
+/*
  * lrg_idle_template_get_total_production_rate:
  * @self: an #LrgIdleTemplate
  *
@@ -924,7 +924,7 @@ lrg_idle_template_get_total_production_rate (LrgIdleTemplate *self)
     return lrg_idle_calculator_get_total_rate (priv->calculator);
 }
 
-/**
+/*
  * lrg_idle_template_try_prestige:
  * @self: an #LrgIdleTemplate
  * @current_value: (transfer none): current accumulated value

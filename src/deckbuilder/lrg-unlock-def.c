@@ -474,7 +474,7 @@ lrg_unlock_def_init (LrgUnlockDef *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_unlock_def_new:
  * @id: unique identifier
  * @unlock_type: type of content being unlocked
@@ -501,7 +501,7 @@ lrg_unlock_def_new (const gchar   *id,
                          NULL);
 }
 
-/**
+/*
  * lrg_unlock_def_get_id:
  * @self: a #LrgUnlockDef
  *
@@ -522,7 +522,7 @@ lrg_unlock_def_get_id (LrgUnlockDef *self)
     return priv->id;
 }
 
-/**
+/*
  * lrg_unlock_def_get_unlock_type:
  * @self: a #LrgUnlockDef
  *
@@ -543,7 +543,7 @@ lrg_unlock_def_get_unlock_type (LrgUnlockDef *self)
     return priv->unlock_type;
 }
 
-/**
+/*
  * lrg_unlock_def_get_target_id:
  * @self: a #LrgUnlockDef
  *
@@ -564,7 +564,7 @@ lrg_unlock_def_get_target_id (LrgUnlockDef *self)
     return priv->target_id;
 }
 
-/**
+/*
  * lrg_unlock_def_get_name:
  * @self: a #LrgUnlockDef
  *
@@ -585,7 +585,7 @@ lrg_unlock_def_get_name (LrgUnlockDef *self)
     return priv->name;
 }
 
-/**
+/*
  * lrg_unlock_def_set_name:
  * @self: a #LrgUnlockDef
  * @name: (nullable): the display name
@@ -603,7 +603,7 @@ lrg_unlock_def_set_name (LrgUnlockDef *self,
     g_object_set (self, "name", name, NULL);
 }
 
-/**
+/*
  * lrg_unlock_def_get_description:
  * @self: a #LrgUnlockDef
  *
@@ -624,7 +624,7 @@ lrg_unlock_def_get_description (LrgUnlockDef *self)
     return priv->description;
 }
 
-/**
+/*
  * lrg_unlock_def_set_description:
  * @self: a #LrgUnlockDef
  * @description: (nullable): the description
@@ -642,7 +642,7 @@ lrg_unlock_def_set_description (LrgUnlockDef *self,
     g_object_set (self, "description", description, NULL);
 }
 
-/**
+/*
  * lrg_unlock_def_get_hidden:
  * @self: a #LrgUnlockDef
  *
@@ -663,7 +663,7 @@ lrg_unlock_def_get_hidden (LrgUnlockDef *self)
     return priv->hidden;
 }
 
-/**
+/*
  * lrg_unlock_def_set_hidden:
  * @self: a #LrgUnlockDef
  * @hidden: whether hidden
@@ -681,7 +681,7 @@ lrg_unlock_def_set_hidden (LrgUnlockDef *self,
     g_object_set (self, "hidden", hidden, NULL);
 }
 
-/**
+/*
  * lrg_unlock_def_set_win_count:
  * @self: a #LrgUnlockDef
  * @character_id: (nullable): character ID, or NULL for any
@@ -708,7 +708,7 @@ lrg_unlock_def_set_win_count (LrgUnlockDef *self,
     priv->win_count = count;
 }
 
-/**
+/*
  * lrg_unlock_def_set_run_count:
  * @self: a #LrgUnlockDef
  * @character_id: (nullable): character ID, or NULL for any
@@ -735,7 +735,7 @@ lrg_unlock_def_set_run_count (LrgUnlockDef *self,
     priv->run_count = count;
 }
 
-/**
+/*
  * lrg_unlock_def_set_ascension_requirement:
  * @self: a #LrgUnlockDef
  * @character_id: character ID
@@ -763,7 +763,7 @@ lrg_unlock_def_set_ascension_requirement (LrgUnlockDef *self,
     priv->ascension_level = level;
 }
 
-/**
+/*
  * lrg_unlock_def_set_unlock_requirement:
  * @self: a #LrgUnlockDef
  * @required_unlock_id: ID of unlock that must be completed first
@@ -787,7 +787,7 @@ lrg_unlock_def_set_unlock_requirement (LrgUnlockDef *self,
     priv->required_unlock_id = g_strdup (required_unlock_id);
 }
 
-/**
+/*
  * lrg_unlock_def_check_condition:
  * @self: a #LrgUnlockDef
  * @profile: player profile to check
@@ -814,7 +814,7 @@ lrg_unlock_def_check_condition (LrgUnlockDef     *self,
     return FALSE;
 }
 
-/**
+/*
  * lrg_unlock_def_get_progress:
  * @self: a #LrgUnlockDef
  * @profile: player profile to check
@@ -841,7 +841,7 @@ lrg_unlock_def_get_progress (LrgUnlockDef     *self,
     return 0.0f;
 }
 
-/**
+/*
  * lrg_unlock_def_get_requirement_text:
  * @self: a #LrgUnlockDef
  *
@@ -866,7 +866,7 @@ lrg_unlock_def_get_requirement_text (LrgUnlockDef *self)
     return g_strdup ("Unknown requirement.");
 }
 
-/**
+/*
  * lrg_unlock_def_grant:
  * @self: a #LrgUnlockDef
  * @profile: player profile to unlock for

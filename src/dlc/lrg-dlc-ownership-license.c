@@ -215,7 +215,7 @@ lrg_dlc_ownership_license_init (LrgDlcOwnershipLicense *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_dlc_ownership_license_new:
  * @license_filename: (nullable): the license filename (default: "license.key")
  *
@@ -236,7 +236,7 @@ lrg_dlc_ownership_license_new (const gchar *license_filename)
     return self;
 }
 
-/**
+/*
  * lrg_dlc_ownership_license_get_license_filename:
  * @self: a #LrgDlcOwnershipLicense
  *
@@ -252,7 +252,7 @@ lrg_dlc_ownership_license_get_license_filename (LrgDlcOwnershipLicense *self)
     return self->license_filename;
 }
 
-/**
+/*
  * lrg_dlc_ownership_license_set_license_filename:
  * @self: a #LrgDlcOwnershipLicense
  * @filename: the license filename to use
@@ -270,7 +270,7 @@ lrg_dlc_ownership_license_set_license_filename (LrgDlcOwnershipLicense *self,
     self->license_filename = g_strdup (filename);
 }
 
-/**
+/*
  * lrg_dlc_ownership_license_register_dlc:
  * @self: a #LrgDlcOwnershipLicense
  * @dlc_id: the DLC identifier
@@ -292,7 +292,7 @@ lrg_dlc_ownership_license_register_dlc (LrgDlcOwnershipLicense *self,
                          g_strdup (base_path));
 }
 
-/**
+/*
  * lrg_dlc_ownership_license_unregister_dlc:
  * @self: a #LrgDlcOwnershipLicense
  * @dlc_id: the DLC identifier
@@ -309,7 +309,7 @@ lrg_dlc_ownership_license_unregister_dlc (LrgDlcOwnershipLicense *self,
     g_hash_table_remove (self->dlc_paths, dlc_id);
 }
 
-/**
+/*
  * lrg_dlc_ownership_license_set_validator:
  * @self: a #LrgDlcOwnershipLicense
  * @validator: (nullable) (scope notified): the validation function

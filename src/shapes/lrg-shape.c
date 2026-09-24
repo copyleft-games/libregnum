@@ -236,7 +236,7 @@ lrg_shape_init (LrgShape *self)
  * Property Accessors
  * ========================================================================== */
 
-/**
+/*
  * lrg_shape_get_visible:
  * @self: an #LrgShape
  *
@@ -255,7 +255,7 @@ lrg_shape_get_visible (LrgShape *self)
 	return priv->visible;
 }
 
-/**
+/*
  * lrg_shape_set_visible:
  * @self: an #LrgShape
  * @visible: whether the shape should be visible
@@ -279,7 +279,7 @@ lrg_shape_set_visible (LrgShape *self,
 	}
 }
 
-/**
+/*
  * lrg_shape_get_color:
  * @self: an #LrgShape
  *
@@ -298,7 +298,7 @@ lrg_shape_get_color (LrgShape *self)
 	return priv->color;
 }
 
-/**
+/*
  * lrg_shape_set_color:
  * @self: an #LrgShape
  * @color: (transfer none): the color to set
@@ -321,7 +321,7 @@ lrg_shape_set_color (LrgShape *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLOR]);
 }
 
-/**
+/*
  * lrg_shape_set_color_rgba:
  * @self: an #LrgShape
  * @r: red component (0-255)
@@ -351,7 +351,7 @@ lrg_shape_set_color_rgba (LrgShape *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLOR]);
 }
 
-/**
+/*
  * lrg_shape_get_z_index:
  * @self: an #LrgShape
  *
@@ -370,7 +370,7 @@ lrg_shape_get_z_index (LrgShape *self)
 	return priv->z_index;
 }
 
-/**
+/*
  * lrg_shape_set_z_index:
  * @self: an #LrgShape
  * @z_index: the z-index value

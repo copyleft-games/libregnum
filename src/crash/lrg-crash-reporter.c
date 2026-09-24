@@ -375,7 +375,7 @@ lrg_crash_reporter_init (LrgCrashReporter *self)
     self->installed = FALSE;
 }
 
-/**
+/*
  * lrg_crash_reporter_new:
  *
  * Creates a new #LrgCrashReporter.
@@ -388,7 +388,7 @@ lrg_crash_reporter_new (void)
     return g_object_new (LRG_TYPE_CRASH_REPORTER, NULL);
 }
 
-/**
+/*
  * lrg_crash_reporter_get_default:
  *
  * Gets the default crash reporter singleton.
@@ -404,7 +404,7 @@ lrg_crash_reporter_get_default (void)
     return g_crash_reporter_instance;
 }
 
-/**
+/*
  * lrg_crash_reporter_install:
  * @self: an #LrgCrashReporter
  * @error: (nullable): return location for error
@@ -468,7 +468,7 @@ lrg_crash_reporter_install (LrgCrashReporter  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_crash_reporter_uninstall:
  * @self: an #LrgCrashReporter
  *
@@ -498,7 +498,7 @@ lrg_crash_reporter_uninstall (LrgCrashReporter *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_INSTALLED]);
 }
 
-/**
+/*
  * lrg_crash_reporter_is_installed:
  * @self: an #LrgCrashReporter
  *
@@ -514,7 +514,7 @@ lrg_crash_reporter_is_installed (LrgCrashReporter *self)
     return self->installed;
 }
 
-/**
+/*
  * lrg_crash_reporter_set_dialog:
  * @self: an #LrgCrashReporter
  * @dialog: (transfer none) (nullable): the #LrgCrashDialog to use
@@ -531,7 +531,7 @@ lrg_crash_reporter_set_dialog (LrgCrashReporter *self,
     g_set_object (&self->dialog, dialog);
 }
 
-/**
+/*
  * lrg_crash_reporter_get_dialog:
  * @self: an #LrgCrashReporter
  *
@@ -547,7 +547,7 @@ lrg_crash_reporter_get_dialog (LrgCrashReporter *self)
     return self->dialog;
 }
 
-/**
+/*
  * lrg_crash_reporter_set_app_name:
  * @self: an #LrgCrashReporter
  * @app_name: the application name
@@ -568,7 +568,7 @@ lrg_crash_reporter_set_app_name (LrgCrashReporter *self,
     }
 }
 
-/**
+/*
  * lrg_crash_reporter_get_app_name:
  * @self: an #LrgCrashReporter
  *
@@ -584,7 +584,7 @@ lrg_crash_reporter_get_app_name (LrgCrashReporter *self)
     return self->app_name;
 }
 
-/**
+/*
  * lrg_crash_reporter_set_app_version:
  * @self: an #LrgCrashReporter
  * @app_version: the application version
@@ -605,7 +605,7 @@ lrg_crash_reporter_set_app_version (LrgCrashReporter *self,
     }
 }
 
-/**
+/*
  * lrg_crash_reporter_get_app_version:
  * @self: an #LrgCrashReporter
  *
@@ -621,7 +621,7 @@ lrg_crash_reporter_get_app_version (LrgCrashReporter *self)
     return self->app_version;
 }
 
-/**
+/*
  * lrg_crash_reporter_set_log_path:
  * @self: an #LrgCrashReporter
  * @log_path: (nullable): path for crash log
@@ -642,7 +642,7 @@ lrg_crash_reporter_set_log_path (LrgCrashReporter *self,
     }
 }
 
-/**
+/*
  * lrg_crash_reporter_get_log_path:
  * @self: an #LrgCrashReporter
  *
@@ -658,7 +658,7 @@ lrg_crash_reporter_get_log_path (LrgCrashReporter *self)
     return self->log_path;
 }
 
-/**
+/*
  * lrg_crash_reporter_add_metadata:
  * @self: an #LrgCrashReporter
  * @key: metadata key
@@ -678,7 +678,7 @@ lrg_crash_reporter_add_metadata (LrgCrashReporter *self,
     g_hash_table_insert (self->metadata, g_strdup (key), g_strdup (value));
 }
 
-/**
+/*
  * lrg_crash_reporter_remove_metadata:
  * @self: an #LrgCrashReporter
  * @key: metadata key to remove
@@ -695,7 +695,7 @@ lrg_crash_reporter_remove_metadata (LrgCrashReporter *self,
     g_hash_table_remove (self->metadata, key);
 }
 
-/**
+/*
  * lrg_crash_reporter_clear_metadata:
  * @self: an #LrgCrashReporter
  *
@@ -709,7 +709,7 @@ lrg_crash_reporter_clear_metadata (LrgCrashReporter *self)
     g_hash_table_remove_all (self->metadata);
 }
 
-/**
+/*
  * lrg_crash_reporter_report_crash:
  * @self: an #LrgCrashReporter
  * @signal_number: the signal that caused the crash

@@ -1166,7 +1166,7 @@ lrg_template_main_menu_state_init (LrgTemplateMainMenuState *self)
 /* Public API                                                                 */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_template_main_menu_state_new:
  *
  * Creates a new main menu state with default settings.
@@ -1181,7 +1181,7 @@ lrg_template_main_menu_state_new (void)
     return g_object_new (LRG_TYPE_TEMPLATE_MAIN_MENU_STATE, NULL);
 }
 
-/**
+/*
  * lrg_template_main_menu_state_new_with_title:
  * @title: the game title to display
  *

@@ -229,7 +229,7 @@ lrg_reel_iris_transition_init (LrgReelIrisTransition *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_iris_transition_new:
  *
  * Creates a new #LrgReelIrisTransition with the default settings
@@ -245,7 +245,7 @@ lrg_reel_iris_transition_new (void)
     return g_object_new (LRG_TYPE_REEL_IRIS_TRANSITION, NULL);
 }
 
-/**
+/*
  * lrg_reel_iris_transition_get_inverse:
  * @self: an #LrgReelIrisTransition
  *
@@ -262,7 +262,7 @@ lrg_reel_iris_transition_get_inverse (LrgReelIrisTransition *self)
     return self->inverse;
 }
 
-/**
+/*
  * lrg_reel_iris_transition_set_inverse:
  * @self: an #LrgReelIrisTransition
  * @inverse: %TRUE to invert the iris direction

@@ -34,7 +34,7 @@ static guint signals[N_SIGNALS];
 
 static LrgCardKeywordRegistry *default_registry = NULL;
 
-/**
+/*
  * lrg_card_keyword_registry_get_default:
  *
  * Gets the default keyword registry singleton.
@@ -126,7 +126,7 @@ lrg_card_keyword_registry_init (LrgCardKeywordRegistry *self)
  * Registration
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_keyword_registry_register:
  * @self: a #LrgCardKeywordRegistry
  * @keyword: (transfer none): the keyword definition to register
@@ -168,7 +168,7 @@ lrg_card_keyword_registry_register (LrgCardKeywordRegistry *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_card_keyword_registry_unregister:
  * @self: a #LrgCardKeywordRegistry
  * @id: the keyword ID to unregister
@@ -201,7 +201,7 @@ lrg_card_keyword_registry_unregister (LrgCardKeywordRegistry *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_card_keyword_registry_is_registered:
  * @self: a #LrgCardKeywordRegistry
  * @id: the keyword ID to check
@@ -226,7 +226,7 @@ lrg_card_keyword_registry_is_registered (LrgCardKeywordRegistry *self,
  * Lookup
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_keyword_registry_lookup:
  * @self: a #LrgCardKeywordRegistry
  * @id: the keyword ID
@@ -247,7 +247,7 @@ lrg_card_keyword_registry_lookup (LrgCardKeywordRegistry *self,
     return g_hash_table_lookup (self->keywords, id);
 }
 
-/**
+/*
  * lrg_card_keyword_registry_get_all:
  * @self: a #LrgCardKeywordRegistry
  *
@@ -265,7 +265,7 @@ lrg_card_keyword_registry_get_all (LrgCardKeywordRegistry *self)
     return g_hash_table_get_values (self->keywords);
 }
 
-/**
+/*
  * lrg_card_keyword_registry_get_count:
  * @self: a #LrgCardKeywordRegistry
  *
@@ -287,7 +287,7 @@ lrg_card_keyword_registry_get_count (LrgCardKeywordRegistry *self)
  * Utility
  * ========================================================================== */
 
-/**
+/*
  * lrg_card_keyword_registry_clear:
  * @self: a #LrgCardKeywordRegistry
  *
@@ -317,7 +317,7 @@ foreach_callback (gpointer key,
     func (value, data);
 }
 
-/**
+/*
  * lrg_card_keyword_registry_foreach:
  * @self: a #LrgCardKeywordRegistry
  * @func: (scope call): callback for each keyword

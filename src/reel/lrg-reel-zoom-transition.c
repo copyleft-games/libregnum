@@ -132,7 +132,7 @@ lrg_reel_zoom_transition_init (LrgReelZoomTransition *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_zoom_transition_new:
  *
  * Creates a new #LrgReelZoomTransition.

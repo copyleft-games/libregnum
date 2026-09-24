@@ -346,7 +346,7 @@ lrg_locale_init (LrgLocale *self)
 /* Public API                                                                 */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_locale_new:
  * @code: locale code (e.g., "en", "en_US", "de_DE")
  * @name: human-readable name (e.g., "English", "Deutsch")
@@ -368,7 +368,7 @@ lrg_locale_new (const gchar *code,
                          NULL);
 }
 
-/**
+/*
  * lrg_locale_new_from_file:
  * @path: path to YAML locale file
  * @error: return location for a #GError, or %NULL
@@ -449,7 +449,7 @@ lrg_locale_new_from_file (const gchar  *path,
     return locale;
 }
 
-/**
+/*
  * lrg_locale_get_code:
  * @self: a #LrgLocale
  *
@@ -468,7 +468,7 @@ lrg_locale_get_code (LrgLocale *self)
     return priv->code;
 }
 
-/**
+/*
  * lrg_locale_get_name:
  * @self: a #LrgLocale
  *
@@ -487,7 +487,7 @@ lrg_locale_get_name (LrgLocale *self)
     return priv->name;
 }
 
-/**
+/*
  * lrg_locale_set_string:
  * @self: a #LrgLocale
  * @key: the string key
@@ -510,7 +510,7 @@ lrg_locale_set_string (LrgLocale   *self,
     g_hash_table_replace (priv->strings, g_strdup (key), g_strdup (value));
 }
 
-/**
+/*
  * lrg_locale_get_string:
  * @self: a #LrgLocale
  * @key: the string key to look up
@@ -532,7 +532,7 @@ lrg_locale_get_string (LrgLocale   *self,
     return (const gchar *)g_hash_table_lookup (priv->strings, key);
 }
 
-/**
+/*
  * lrg_locale_set_plural:
  * @self: a #LrgLocale
  * @key: the base string key
@@ -569,7 +569,7 @@ lrg_locale_set_plural (LrgLocale     *self,
     g_hash_table_replace (forms, (gpointer)form_key, g_strdup (value));
 }
 
-/**
+/*
  * lrg_locale_get_plural:
  * @self: a #LrgLocale
  * @key: the base string key
@@ -614,7 +614,7 @@ lrg_locale_get_plural (LrgLocale   *self,
     return result;
 }
 
-/**
+/*
  * lrg_locale_has_string:
  * @self: a #LrgLocale
  * @key: the string key to check
@@ -639,7 +639,7 @@ lrg_locale_has_string (LrgLocale   *self,
            g_hash_table_contains (priv->plurals, key);
 }
 
-/**
+/*
  * lrg_locale_get_plural_form:
  * @self: a #LrgLocale
  * @count: the count
@@ -664,7 +664,7 @@ lrg_locale_get_plural_form (LrgLocale *self,
     return default_get_plural_form (self, count);
 }
 
-/**
+/*
  * lrg_locale_get_string_count:
  * @self: a #LrgLocale
  *
@@ -683,7 +683,7 @@ lrg_locale_get_string_count (LrgLocale *self)
     return g_hash_table_size (priv->strings) + g_hash_table_size (priv->plurals);
 }
 
-/**
+/*
  * lrg_locale_get_keys:
  * @self: a #LrgLocale
  *

@@ -167,7 +167,7 @@ lrg_save_manager_class_init (LrgSaveManagerClass *klass)
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
-    /**
+    /*
      * LrgSaveManager::save-started:
      * @self: the #LrgSaveManager
      * @slot_name: the slot being saved to
@@ -184,7 +184,7 @@ lrg_save_manager_class_init (LrgSaveManagerClass *klass)
                       G_TYPE_NONE, 1,
                       G_TYPE_STRING);
 
-    /**
+    /*
      * LrgSaveManager::save-completed:
      * @self: the #LrgSaveManager
      * @slot_name: the slot that was saved
@@ -202,7 +202,7 @@ lrg_save_manager_class_init (LrgSaveManagerClass *klass)
                       G_TYPE_NONE, 2,
                       G_TYPE_STRING, G_TYPE_BOOLEAN);
 
-    /**
+    /*
      * LrgSaveManager::load-started:
      * @self: the #LrgSaveManager
      * @slot_name: the slot being loaded from
@@ -219,7 +219,7 @@ lrg_save_manager_class_init (LrgSaveManagerClass *klass)
                       G_TYPE_NONE, 1,
                       G_TYPE_STRING);
 
-    /**
+    /*
      * LrgSaveManager::load-completed:
      * @self: the #LrgSaveManager
      * @slot_name: the slot that was loaded
@@ -257,7 +257,7 @@ lrg_save_manager_init (LrgSaveManager *self)
  * Construction and Singleton
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_manager_get_default:
  *
  * Gets the default save manager instance.
@@ -275,7 +275,7 @@ lrg_save_manager_get_default (void)
     return default_manager;
 }
 
-/**
+/*
  * lrg_save_manager_new:
  *
  * Creates a new save manager.
@@ -292,7 +292,7 @@ lrg_save_manager_new (void)
  * Configuration
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_manager_get_save_directory:
  * @self: a #LrgSaveManager
  *
@@ -308,7 +308,7 @@ lrg_save_manager_get_save_directory (LrgSaveManager *self)
     return self->save_directory;
 }
 
-/**
+/*
  * lrg_save_manager_set_save_directory:
  * @self: a #LrgSaveManager
  * @directory: the save directory path
@@ -335,7 +335,7 @@ lrg_save_manager_set_save_directory (LrgSaveManager *self,
     lrg_log_info ("Save directory set to: %s", directory);
 }
 
-/**
+/*
  * lrg_save_manager_get_save_version:
  * @self: a #LrgSaveManager
  *
@@ -351,7 +351,7 @@ lrg_save_manager_get_save_version (LrgSaveManager *self)
     return self->save_version;
 }
 
-/**
+/*
  * lrg_save_manager_set_save_version:
  * @self: a #LrgSaveManager
  * @version: the version number
@@ -378,7 +378,7 @@ lrg_save_manager_set_save_version (LrgSaveManager *self,
  * Saveable Registration
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_manager_register:
  * @self: a #LrgSaveManager
  * @saveable: the #LrgSaveable to register
@@ -404,7 +404,7 @@ lrg_save_manager_register (LrgSaveManager *self,
     lrg_log_debug ("Registered saveable: %s", save_id);
 }
 
-/**
+/*
  * lrg_save_manager_unregister:
  * @self: a #LrgSaveManager
  * @saveable: the #LrgSaveable to unregister
@@ -429,7 +429,7 @@ lrg_save_manager_unregister (LrgSaveManager *self,
     }
 }
 
-/**
+/*
  * lrg_save_manager_unregister_all:
  * @self: a #LrgSaveManager
  *
@@ -449,7 +449,7 @@ lrg_save_manager_unregister_all (LrgSaveManager *self)
  * Synchronous Save/Load
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_manager_save:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
@@ -540,7 +540,7 @@ lrg_save_manager_save_with_description (LrgSaveManager *self,
     return success;
 }
 
-/**
+/*
  * lrg_save_manager_load:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
@@ -753,7 +753,7 @@ lrg_save_manager_load_async (LrgSaveManager *self,
  * Save Slot Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_manager_list_saves:
  * @self: a #LrgSaveManager
  *
@@ -807,7 +807,7 @@ lrg_save_manager_list_saves (LrgSaveManager *self)
     return g_list_reverse (saves);
 }
 
-/**
+/*
  * lrg_save_manager_get_save:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
@@ -838,7 +838,7 @@ lrg_save_manager_get_save (LrgSaveManager *self,
     }
 }
 
-/**
+/*
  * lrg_save_manager_delete_save:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
@@ -883,7 +883,7 @@ lrg_save_manager_delete_save (LrgSaveManager  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_save_manager_slot_exists:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier

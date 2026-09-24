@@ -645,7 +645,7 @@ lrg_player_combatant_init (LrgPlayerCombatant *self)
                                             g_free, status_entry_free);
 }
 
-/**
+/*
  * lrg_player_combatant_new:
  * @id: player identifier
  * @name: player display name

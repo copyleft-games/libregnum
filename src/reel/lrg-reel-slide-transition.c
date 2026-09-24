@@ -201,7 +201,7 @@ lrg_reel_slide_transition_init (LrgReelSlideTransition *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_slide_transition_new:
  * @direction: the edge from which the incoming frame slides in
  *
@@ -219,7 +219,7 @@ lrg_reel_slide_transition_new (LrgReelTransitionDirection direction)
                          NULL);
 }
 
-/**
+/*
  * lrg_reel_slide_transition_get_direction:
  * @self: an #LrgReelSlideTransition
  *
@@ -237,7 +237,7 @@ lrg_reel_slide_transition_get_direction (LrgReelSlideTransition *self)
     return self->direction;
 }
 
-/**
+/*
  * lrg_reel_slide_transition_set_direction:
  * @self: an #LrgReelSlideTransition
  * @direction: the new #LrgReelTransitionDirection

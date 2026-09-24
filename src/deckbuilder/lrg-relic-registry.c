@@ -34,7 +34,7 @@ static guint signals[N_SIGNALS];
 
 static LrgRelicRegistry *default_registry = NULL;
 
-/**
+/*
  * lrg_relic_registry_get_default:
  *
  * Gets the default relic registry singleton.
@@ -126,7 +126,7 @@ lrg_relic_registry_init (LrgRelicRegistry *self)
  * Registration
  * ========================================================================== */
 
-/**
+/*
  * lrg_relic_registry_register:
  * @self: a #LrgRelicRegistry
  * @def: (transfer none): the relic definition to register
@@ -168,7 +168,7 @@ lrg_relic_registry_register (LrgRelicRegistry *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_relic_registry_unregister:
  * @self: a #LrgRelicRegistry
  * @id: the relic ID to unregister
@@ -201,7 +201,7 @@ lrg_relic_registry_unregister (LrgRelicRegistry *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_relic_registry_is_registered:
  * @self: a #LrgRelicRegistry
  * @id: the relic ID to check
@@ -226,7 +226,7 @@ lrg_relic_registry_is_registered (LrgRelicRegistry *self,
  * Lookup
  * ========================================================================== */
 
-/**
+/*
  * lrg_relic_registry_lookup:
  * @self: a #LrgRelicRegistry
  * @id: the relic ID
@@ -247,7 +247,7 @@ lrg_relic_registry_lookup (LrgRelicRegistry *self,
     return g_hash_table_lookup (self->relics, id);
 }
 
-/**
+/*
  * lrg_relic_registry_create_instance:
  * @self: a #LrgRelicRegistry
  * @id: the relic ID
@@ -278,7 +278,7 @@ lrg_relic_registry_create_instance (LrgRelicRegistry *self,
     return lrg_relic_instance_new (def);
 }
 
-/**
+/*
  * lrg_relic_registry_get_all:
  * @self: a #LrgRelicRegistry
  *
@@ -296,7 +296,7 @@ lrg_relic_registry_get_all (LrgRelicRegistry *self)
     return g_hash_table_get_values (self->relics);
 }
 
-/**
+/*
  * lrg_relic_registry_get_by_rarity:
  * @self: a #LrgRelicRegistry
  * @rarity: the rarity to filter by
@@ -328,7 +328,7 @@ lrg_relic_registry_get_by_rarity (LrgRelicRegistry *self,
     return result;
 }
 
-/**
+/*
  * lrg_relic_registry_get_count:
  * @self: a #LrgRelicRegistry
  *
@@ -350,7 +350,7 @@ lrg_relic_registry_get_count (LrgRelicRegistry *self)
  * Utility
  * ========================================================================== */
 
-/**
+/*
  * lrg_relic_registry_clear:
  * @self: a #LrgRelicRegistry
  *
@@ -380,7 +380,7 @@ foreach_callback (gpointer key,
     func (value, data);
 }
 
-/**
+/*
  * lrg_relic_registry_foreach:
  * @self: a #LrgRelicRegistry
  * @func: (scope call): callback for each relic

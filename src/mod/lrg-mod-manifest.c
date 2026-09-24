@@ -1191,7 +1191,7 @@ lrg_mod_manifest_save_to_file (LrgModManifest  *self,
  * Game-specific fields
  * ========================================================================== */
 
-/**
+/*
  * lrg_mod_manifest_get_extra:
  * @self: a #LrgModManifest
  *
@@ -1212,7 +1212,7 @@ lrg_mod_manifest_get_extra (LrgModManifest *self)
     return self->extra;
 }
 
-/**
+/*
  * lrg_mod_manifest_lookup_extra_string:
  * @self: a #LrgModManifest
  * @key: a top-level key

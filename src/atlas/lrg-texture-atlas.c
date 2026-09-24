@@ -225,7 +225,7 @@ lrg_texture_atlas_init (LrgTextureAtlas *self)
 
 /* Public API */
 
-/**
+/*
  * lrg_texture_atlas_new:
  * @name: Name identifier for the atlas
  *
@@ -243,7 +243,7 @@ lrg_texture_atlas_new (const gchar *name)
                          NULL);
 }
 
-/**
+/*
  * lrg_texture_atlas_new_from_file:
  * @path: Path to the atlas definition file (YAML)
  * @error: (nullable): Return location for error
@@ -351,7 +351,7 @@ lrg_texture_atlas_new_from_file (const gchar  *path,
     return self;
 }
 
-/**
+/*
  * lrg_texture_atlas_get_name:
  * @self: A #LrgTextureAtlas
  *
@@ -368,7 +368,7 @@ lrg_texture_atlas_get_name (LrgTextureAtlas *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_texture_atlas_get_texture_path:
  * @self: A #LrgTextureAtlas
  *
@@ -385,7 +385,7 @@ lrg_texture_atlas_get_texture_path (LrgTextureAtlas *self)
     return self->texture_path;
 }
 
-/**
+/*
  * lrg_texture_atlas_set_texture_path:
  * @self: A #LrgTextureAtlas
  * @path: Path to the texture file
@@ -408,7 +408,7 @@ lrg_texture_atlas_set_texture_path (LrgTextureAtlas *self,
     }
 }
 
-/**
+/*
  * lrg_texture_atlas_get_width:
  * @self: A #LrgTextureAtlas
  *
@@ -425,7 +425,7 @@ lrg_texture_atlas_get_width (LrgTextureAtlas *self)
     return self->width;
 }
 
-/**
+/*
  * lrg_texture_atlas_set_width:
  * @self: A #LrgTextureAtlas
  * @width: Width in pixels
@@ -448,7 +448,7 @@ lrg_texture_atlas_set_width (LrgTextureAtlas *self,
     }
 }
 
-/**
+/*
  * lrg_texture_atlas_get_height:
  * @self: A #LrgTextureAtlas
  *
@@ -465,7 +465,7 @@ lrg_texture_atlas_get_height (LrgTextureAtlas *self)
     return self->height;
 }
 
-/**
+/*
  * lrg_texture_atlas_set_height:
  * @self: A #LrgTextureAtlas
  * @height: Height in pixels
@@ -488,7 +488,7 @@ lrg_texture_atlas_set_height (LrgTextureAtlas *self,
     }
 }
 
-/**
+/*
  * lrg_texture_atlas_set_size:
  * @self: A #LrgTextureAtlas
  * @width: Width in pixels
@@ -511,7 +511,7 @@ lrg_texture_atlas_set_size (LrgTextureAtlas *self,
     g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_texture_atlas_add_region:
  * @self: A #LrgTextureAtlas
  * @region: The region to add
@@ -536,7 +536,7 @@ lrg_texture_atlas_add_region (LrgTextureAtlas *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_REGION_COUNT]);
 }
 
-/**
+/*
  * lrg_texture_atlas_add_region_rect:
  * @self: A #LrgTextureAtlas
  * @name: Name of the region
@@ -575,7 +575,7 @@ lrg_texture_atlas_add_region_rect (LrgTextureAtlas *self,
     return region;
 }
 
-/**
+/*
  * lrg_texture_atlas_remove_region:
  * @self: A #LrgTextureAtlas
  * @name: Name of the region to remove
@@ -603,7 +603,7 @@ lrg_texture_atlas_remove_region (LrgTextureAtlas *self,
     return removed;
 }
 
-/**
+/*
  * lrg_texture_atlas_get_region:
  * @self: A #LrgTextureAtlas
  * @name: Name of the region
@@ -624,7 +624,7 @@ lrg_texture_atlas_get_region (LrgTextureAtlas *self,
     return g_hash_table_lookup (self->regions, name);
 }
 
-/**
+/*
  * lrg_texture_atlas_has_region:
  * @self: A #LrgTextureAtlas
  * @name: Name of the region
@@ -645,7 +645,7 @@ lrg_texture_atlas_has_region (LrgTextureAtlas *self,
     return g_hash_table_contains (self->regions, name);
 }
 
-/**
+/*
  * lrg_texture_atlas_get_region_count:
  * @self: A #LrgTextureAtlas
  *
@@ -662,7 +662,7 @@ lrg_texture_atlas_get_region_count (LrgTextureAtlas *self)
     return g_hash_table_size (self->regions);
 }
 
-/**
+/*
  * lrg_texture_atlas_get_region_names:
  * @self: A #LrgTextureAtlas
  *
@@ -692,7 +692,7 @@ lrg_texture_atlas_get_region_names (LrgTextureAtlas *self)
     return names;
 }
 
-/**
+/*
  * lrg_texture_atlas_clear_regions:
  * @self: A #LrgTextureAtlas
  *
@@ -709,7 +709,7 @@ lrg_texture_atlas_clear_regions (LrgTextureAtlas *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_REGION_COUNT]);
 }
 
-/**
+/*
  * lrg_texture_atlas_recalculate_uvs:
  * @self: A #LrgTextureAtlas
  *
@@ -733,7 +733,7 @@ lrg_texture_atlas_recalculate_uvs (LrgTextureAtlas *self)
     }
 }
 
-/**
+/*
  * lrg_texture_atlas_save_to_file:
  * @self: A #LrgTextureAtlas
  * @path: Path to save to

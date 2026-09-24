@@ -235,7 +235,7 @@ lrg_text2d_init (LrgText2D *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_text2d_new:
  *
  * Creates a new empty text at the origin.
@@ -248,7 +248,7 @@ lrg_text2d_new (void)
 	return g_object_new (LRG_TYPE_TEXT2D, NULL);
 }
 
-/**
+/*
  * lrg_text2d_new_with_text:
  * @text: the text to display
  *
@@ -264,7 +264,7 @@ lrg_text2d_new_with_text (const gchar *text)
 	                     NULL);
 }
 
-/**
+/*
  * lrg_text2d_new_at:
  * @x: X position
  * @y: Y position
@@ -286,7 +286,7 @@ lrg_text2d_new_at (gfloat       x,
 	                     NULL);
 }
 
-/**
+/*
  * lrg_text2d_new_full:
  * @x: X position
  * @y: Y position
@@ -316,7 +316,7 @@ lrg_text2d_new_full (gfloat       x,
 
 /* Property accessors */
 
-/**
+/*
  * lrg_text2d_get_text:
  * @self: an #LrgText2D
  *
@@ -332,7 +332,7 @@ lrg_text2d_get_text (LrgText2D *self)
 	return self->text;
 }
 
-/**
+/*
  * lrg_text2d_set_text:
  * @self: an #LrgText2D
  * @text: the text to set
@@ -353,7 +353,7 @@ lrg_text2d_set_text (LrgText2D   *self,
 	}
 }
 
-/**
+/*
  * lrg_text2d_get_font_size:
  * @self: an #LrgText2D
  *
@@ -369,7 +369,7 @@ lrg_text2d_get_font_size (LrgText2D *self)
 	return self->font_size;
 }
 
-/**
+/*
  * lrg_text2d_set_font_size:
  * @self: an #LrgText2D
  * @font_size: the font size
@@ -390,7 +390,7 @@ lrg_text2d_set_font_size (LrgText2D *self,
 	}
 }
 
-/**
+/*
  * lrg_text2d_get_spacing:
  * @self: an #LrgText2D
  *
@@ -406,7 +406,7 @@ lrg_text2d_get_spacing (LrgText2D *self)
 	return self->spacing;
 }
 
-/**
+/*
  * lrg_text2d_set_spacing:
  * @self: an #LrgText2D
  * @spacing: the character spacing
@@ -426,7 +426,7 @@ lrg_text2d_set_spacing (LrgText2D *self,
 	}
 }
 
-/**
+/*
  * lrg_text2d_get_font:
  * @self: an #LrgText2D
  *
@@ -442,7 +442,7 @@ lrg_text2d_get_font (LrgText2D *self)
 	return self->font;
 }
 
-/**
+/*
  * lrg_text2d_set_font:
  * @self: an #LrgText2D
  * @font: (nullable) (transfer none): the font, or %NULL for default

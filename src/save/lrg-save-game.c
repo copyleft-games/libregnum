@@ -239,7 +239,7 @@ lrg_save_game_init (LrgSaveGame *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_game_new:
  * @slot_name: the slot identifier
  *
@@ -257,7 +257,7 @@ lrg_save_game_new (const gchar *slot_name)
                          NULL);
 }
 
-/**
+/*
  * lrg_save_game_new_from_file:
  * @path: path to the save file
  * @error: (optional): return location for a #GError
@@ -338,7 +338,7 @@ lrg_save_game_new_from_file (const gchar  *path,
  * Metadata
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_game_get_slot_name:
  * @self: a #LrgSaveGame
  *
@@ -354,7 +354,7 @@ lrg_save_game_get_slot_name (LrgSaveGame *self)
     return self->slot_name;
 }
 
-/**
+/*
  * lrg_save_game_get_display_name:
  * @self: a #LrgSaveGame
  *
@@ -370,7 +370,7 @@ lrg_save_game_get_display_name (LrgSaveGame *self)
     return self->display_name;
 }
 
-/**
+/*
  * lrg_save_game_set_display_name:
  * @self: a #LrgSaveGame
  * @name: (nullable): the display name to set
@@ -392,7 +392,7 @@ lrg_save_game_set_display_name (LrgSaveGame *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DISPLAY_NAME]);
 }
 
-/**
+/*
  * lrg_save_game_get_timestamp:
  * @self: a #LrgSaveGame
  *
@@ -408,7 +408,7 @@ lrg_save_game_get_timestamp (LrgSaveGame *self)
     return self->timestamp;
 }
 
-/**
+/*
  * lrg_save_game_set_timestamp:
  * @self: a #LrgSaveGame
  * @timestamp: (nullable): the timestamp to set
@@ -427,7 +427,7 @@ lrg_save_game_set_timestamp (LrgSaveGame *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TIMESTAMP]);
 }
 
-/**
+/*
  * lrg_save_game_update_timestamp:
  * @self: a #LrgSaveGame
  *
@@ -444,7 +444,7 @@ lrg_save_game_update_timestamp (LrgSaveGame *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TIMESTAMP]);
 }
 
-/**
+/*
  * lrg_save_game_get_playtime:
  * @self: a #LrgSaveGame
  *
@@ -460,7 +460,7 @@ lrg_save_game_get_playtime (LrgSaveGame *self)
     return self->playtime;
 }
 
-/**
+/*
  * lrg_save_game_set_playtime:
  * @self: a #LrgSaveGame
  * @playtime: the playtime in seconds
@@ -482,7 +482,7 @@ lrg_save_game_set_playtime (LrgSaveGame *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PLAYTIME]);
 }
 
-/**
+/*
  * lrg_save_game_add_playtime:
  * @self: a #LrgSaveGame
  * @seconds: seconds to add
@@ -505,7 +505,7 @@ lrg_save_game_add_playtime (LrgSaveGame *self,
  * File Path
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_game_get_path:
  * @self: a #LrgSaveGame
  *
@@ -521,7 +521,7 @@ lrg_save_game_get_path (LrgSaveGame *self)
     return self->path;
 }
 
-/**
+/*
  * lrg_save_game_set_path:
  * @self: a #LrgSaveGame
  * @path: (nullable): the file path to set
@@ -543,7 +543,7 @@ lrg_save_game_set_path (LrgSaveGame *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PATH]);
 }
 
-/**
+/*
  * lrg_save_game_exists:
  * @self: a #LrgSaveGame
  *
@@ -566,7 +566,7 @@ lrg_save_game_exists (LrgSaveGame *self)
  * Version
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_game_get_version:
  * @self: a #LrgSaveGame
  *
@@ -582,7 +582,7 @@ lrg_save_game_get_version (LrgSaveGame *self)
     return self->version;
 }
 
-/**
+/*
  * lrg_save_game_set_version:
  * @self: a #LrgSaveGame
  * @version: the version number
@@ -607,7 +607,7 @@ lrg_save_game_set_version (LrgSaveGame *self,
  * Custom Data
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_game_set_custom_string:
  * @self: a #LrgSaveGame
  * @key: the key name
@@ -635,7 +635,7 @@ lrg_save_game_set_custom_string (LrgSaveGame *self,
     }
 }
 
-/**
+/*
  * lrg_save_game_get_custom_string:
  * @self: a #LrgSaveGame
  * @key: the key name
@@ -654,7 +654,7 @@ lrg_save_game_get_custom_string (LrgSaveGame *self,
     return g_hash_table_lookup (self->custom_strings, key);
 }
 
-/**
+/*
  * lrg_save_game_set_custom_int:
  * @self: a #LrgSaveGame
  * @key: the key name
@@ -680,7 +680,7 @@ lrg_save_game_set_custom_int (LrgSaveGame *self,
                          stored_value);
 }
 
-/**
+/*
  * lrg_save_game_get_custom_int:
  * @self: a #LrgSaveGame
  * @key: the key name

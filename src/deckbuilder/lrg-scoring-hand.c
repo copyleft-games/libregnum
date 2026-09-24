@@ -414,7 +414,7 @@ find_scoring_cards_for_hand (LrgScoringHand *self, LrgHandType type)
     }
 }
 
-/**
+/*
  * lrg_scoring_hand_new:
  *
  * Creates a new scoring hand evaluator.
@@ -429,7 +429,7 @@ lrg_scoring_hand_new (void)
     return g_object_new (LRG_TYPE_SCORING_HAND, NULL);
 }
 
-/**
+/*
  * lrg_scoring_hand_set_cards:
  * @self: a #LrgScoringHand
  * @cards: (element-type LrgCardInstance) (transfer none): the cards to evaluate
@@ -456,7 +456,7 @@ lrg_scoring_hand_set_cards (LrgScoringHand *self,
     g_ptr_array_set_size (priv->scoring_cards, 0);
 }
 
-/**
+/*
  * lrg_scoring_hand_get_cards:
  * @self: a #LrgScoringHand
  *
@@ -477,7 +477,7 @@ lrg_scoring_hand_get_cards (LrgScoringHand *self)
     return priv->cards;
 }
 
-/**
+/*
  * lrg_scoring_hand_clear_cards:
  * @self: a #LrgScoringHand
  *
@@ -499,7 +499,7 @@ lrg_scoring_hand_clear_cards (LrgScoringHand *self)
     priv->hand_type = LRG_HAND_TYPE_NONE;
 }
 
-/**
+/*
  * lrg_scoring_hand_evaluate:
  * @self: a #LrgScoringHand
  *
@@ -523,7 +523,7 @@ lrg_scoring_hand_evaluate (LrgScoringHand *self)
     return klass->evaluate (self);
 }
 
-/**
+/*
  * lrg_scoring_hand_get_hand_type:
  * @self: a #LrgScoringHand
  *
@@ -544,7 +544,7 @@ lrg_scoring_hand_get_hand_type (LrgScoringHand *self)
     return priv->hand_type;
 }
 
-/**
+/*
  * lrg_scoring_hand_get_scoring_cards:
  * @self: a #LrgScoringHand
  *
@@ -566,7 +566,7 @@ lrg_scoring_hand_get_scoring_cards (LrgScoringHand *self)
     return priv->scoring_cards;
 }
 
-/**
+/*
  * lrg_scoring_hand_get_rank_value:
  * @rank: a #LrgCardRank
  *
@@ -615,7 +615,7 @@ lrg_scoring_hand_get_rank_value (LrgCardRank rank)
     }
 }
 
-/**
+/*
  * lrg_scoring_hand_get_chip_value:
  * @rank: a #LrgCardRank
  *

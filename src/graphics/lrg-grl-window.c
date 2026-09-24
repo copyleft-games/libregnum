@@ -299,7 +299,7 @@ lrg_grl_window_init (LrgGrlWindow *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_grl_window_new:
  * @width: initial window width
  * @height: initial window height
@@ -321,7 +321,7 @@ lrg_grl_window_new (gint         width,
 	                     NULL);
 }
 
-/**
+/*
  * lrg_grl_window_toggle_fullscreen:
  * @self: an #LrgGrlWindow
  *
@@ -335,7 +335,7 @@ lrg_grl_window_toggle_fullscreen (LrgGrlWindow *self)
 	grl_window_toggle_fullscreen (self->grl_window);
 }
 
-/**
+/*
  * lrg_grl_window_set_vsync:
  * @self: an #LrgGrlWindow
  * @vsync: whether to enable vsync
@@ -364,7 +364,7 @@ lrg_grl_window_set_vsync (LrgGrlWindow *self,
 	g_object_notify_by_pspec (G_OBJECT (self), grl_window_properties[PROP_VSYNC]);
 }
 
-/**
+/*
  * lrg_grl_window_get_vsync:
  * @self: an #LrgGrlWindow
  *
@@ -380,7 +380,7 @@ lrg_grl_window_get_vsync (LrgGrlWindow *self)
 	return self->vsync;
 }
 
-/**
+/*
  * lrg_grl_window_get_grl_window:
  * @self: an #LrgGrlWindow
  *

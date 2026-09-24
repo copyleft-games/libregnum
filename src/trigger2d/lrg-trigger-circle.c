@@ -222,7 +222,7 @@ lrg_trigger_circle_init (LrgTriggerCircle *self)
 
 /* Public API */
 
-/**
+/*
  * lrg_trigger_circle_new:
  * @center_x: X coordinate of the circle center
  * @center_y: Y coordinate of the circle center
@@ -246,7 +246,7 @@ lrg_trigger_circle_new (gfloat center_x,
                          NULL);
 }
 
-/**
+/*
  * lrg_trigger_circle_new_with_id:
  * @id: Unique identifier for the trigger
  * @center_x: X coordinate of the circle center
@@ -273,7 +273,7 @@ lrg_trigger_circle_new_with_id (const gchar *id,
                          NULL);
 }
 
-/**
+/*
  * lrg_trigger_circle_get_center_x:
  * @self: A #LrgTriggerCircle
  *
@@ -290,7 +290,7 @@ lrg_trigger_circle_get_center_x (LrgTriggerCircle *self)
     return self->center_x;
 }
 
-/**
+/*
  * lrg_trigger_circle_set_center_x:
  * @self: A #LrgTriggerCircle
  * @x: The center X coordinate
@@ -312,7 +312,7 @@ lrg_trigger_circle_set_center_x (LrgTriggerCircle *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_circle_get_center_y:
  * @self: A #LrgTriggerCircle
  *
@@ -329,7 +329,7 @@ lrg_trigger_circle_get_center_y (LrgTriggerCircle *self)
     return self->center_y;
 }
 
-/**
+/*
  * lrg_trigger_circle_set_center_y:
  * @self: A #LrgTriggerCircle
  * @y: The center Y coordinate
@@ -351,7 +351,7 @@ lrg_trigger_circle_set_center_y (LrgTriggerCircle *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_circle_get_center:
  * @self: A #LrgTriggerCircle
  * @out_x: (out) (nullable): Return location for center X
@@ -374,7 +374,7 @@ lrg_trigger_circle_get_center (LrgTriggerCircle *self,
         *out_y = self->center_y;
 }
 
-/**
+/*
  * lrg_trigger_circle_set_center:
  * @self: A #LrgTriggerCircle
  * @x: The center X coordinate
@@ -397,7 +397,7 @@ lrg_trigger_circle_set_center (LrgTriggerCircle *self,
     g_object_thaw_notify (G_OBJECT (self));
 }
 
-/**
+/*
  * lrg_trigger_circle_get_radius:
  * @self: A #LrgTriggerCircle
  *
@@ -414,7 +414,7 @@ lrg_trigger_circle_get_radius (LrgTriggerCircle *self)
     return self->radius;
 }
 
-/**
+/*
  * lrg_trigger_circle_set_radius:
  * @self: A #LrgTriggerCircle
  * @radius: The radius
@@ -437,7 +437,7 @@ lrg_trigger_circle_set_radius (LrgTriggerCircle *self,
     }
 }
 
-/**
+/*
  * lrg_trigger_circle_get_diameter:
  * @self: A #LrgTriggerCircle
  *
@@ -454,7 +454,7 @@ lrg_trigger_circle_get_diameter (LrgTriggerCircle *self)
     return self->radius * 2.0f;
 }
 
-/**
+/*
  * lrg_trigger_circle_distance_to_point:
  * @self: A #LrgTriggerCircle
  * @x: X coordinate of the point

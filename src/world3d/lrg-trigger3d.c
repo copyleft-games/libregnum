@@ -24,7 +24,7 @@ struct _LrgTrigger3D
 G_DEFINE_BOXED_TYPE (LrgTrigger3D, lrg_trigger3d,
                      lrg_trigger3d_copy, lrg_trigger3d_free)
 
-/**
+/*
  * lrg_trigger3d_new:
  * @id: Unique identifier for this trigger
  * @bounds: (transfer none): The trigger volume bounds
@@ -55,7 +55,7 @@ lrg_trigger3d_new (const gchar            *id,
     return self;
 }
 
-/**
+/*
  * lrg_trigger3d_new_box:
  * @id: Unique identifier for this trigger
  * @min_x: Minimum X coordinate
@@ -100,7 +100,7 @@ lrg_trigger3d_new_box (const gchar    *id,
     return self;
 }
 
-/**
+/*
  * lrg_trigger3d_copy:
  * @self: (nullable): A #LrgTrigger3D
  *
@@ -126,7 +126,7 @@ lrg_trigger3d_copy (const LrgTrigger3D *self)
     return copy;
 }
 
-/**
+/*
  * lrg_trigger3d_free:
  * @self: (nullable): A #LrgTrigger3D
  *
@@ -143,7 +143,7 @@ lrg_trigger3d_free (LrgTrigger3D *self)
     g_free (self);
 }
 
-/**
+/*
  * lrg_trigger3d_get_id:
  * @self: A #LrgTrigger3D
  *
@@ -159,7 +159,7 @@ lrg_trigger3d_get_id (const LrgTrigger3D *self)
     return self->id;
 }
 
-/**
+/*
  * lrg_trigger3d_get_bounds:
  * @self: A #LrgTrigger3D
  *
@@ -175,7 +175,7 @@ lrg_trigger3d_get_bounds (const LrgTrigger3D *self)
     return lrg_bounding_box3d_copy (&self->bounds);
 }
 
-/**
+/*
  * lrg_trigger3d_get_trigger_type:
  * @self: A #LrgTrigger3D
  *
@@ -191,7 +191,7 @@ lrg_trigger3d_get_trigger_type (const LrgTrigger3D *self)
     return self->trigger_type;
 }
 
-/**
+/*
  * lrg_trigger3d_get_target_id:
  * @self: A #LrgTrigger3D
  *
@@ -207,7 +207,7 @@ lrg_trigger3d_get_target_id (const LrgTrigger3D *self)
     return self->target_id;
 }
 
-/**
+/*
  * lrg_trigger3d_set_target_id:
  * @self: A #LrgTrigger3D
  * @target_id: (nullable): Target ID to affect when triggered
@@ -224,7 +224,7 @@ lrg_trigger3d_set_target_id (LrgTrigger3D *self,
     self->target_id = g_strdup (target_id);
 }
 
-/**
+/*
  * lrg_trigger3d_is_enabled:
  * @self: A #LrgTrigger3D
  *
@@ -240,7 +240,7 @@ lrg_trigger3d_is_enabled (const LrgTrigger3D *self)
     return self->enabled;
 }
 
-/**
+/*
  * lrg_trigger3d_set_enabled:
  * @self: A #LrgTrigger3D
  * @enabled: Whether to enable the trigger
@@ -256,7 +256,7 @@ lrg_trigger3d_set_enabled (LrgTrigger3D *self,
     self->enabled = enabled;
 }
 
-/**
+/*
  * lrg_trigger3d_test_point:
  * @self: A #LrgTrigger3D
  * @point: (transfer none): Point to test
@@ -276,7 +276,7 @@ lrg_trigger3d_test_point (const LrgTrigger3D *self,
     return lrg_trigger3d_test_point_xyz (self, point->x, point->y, point->z);
 }
 
-/**
+/*
  * lrg_trigger3d_test_point_xyz:
  * @self: A #LrgTrigger3D
  * @x: X coordinate
@@ -302,7 +302,7 @@ lrg_trigger3d_test_point_xyz (const LrgTrigger3D *self,
     return lrg_bounding_box3d_contains_point_xyz (&self->bounds, x, y, z);
 }
 
-/**
+/*
  * lrg_trigger3d_is_one_shot:
  * @self: A #LrgTrigger3D
  *
@@ -318,7 +318,7 @@ lrg_trigger3d_is_one_shot (const LrgTrigger3D *self)
     return self->one_shot;
 }
 
-/**
+/*
  * lrg_trigger3d_set_one_shot:
  * @self: A #LrgTrigger3D
  * @one_shot: Whether this is a one-shot trigger

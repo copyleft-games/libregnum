@@ -161,7 +161,7 @@ lrg_scene_serializer_blender_init (LrgSceneSerializerBlender *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_serializer_blender_new:
  *
  * Creates a new #LrgSceneSerializerBlender.

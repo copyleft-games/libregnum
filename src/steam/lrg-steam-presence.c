@@ -127,7 +127,7 @@ lrg_steam_presence_init (LrgSteamPresence *self)
     self->client = NULL;
 }
 
-/**
+/*
  * lrg_steam_presence_new:
  * @client: an #LrgSteamClient
  *
@@ -145,7 +145,7 @@ lrg_steam_presence_new (LrgSteamClient *client)
                          NULL);
 }
 
-/**
+/*
  * lrg_steam_presence_set:
  * @self: an #LrgSteamPresence
  * @key: the rich presence key
@@ -181,7 +181,7 @@ lrg_steam_presence_set (LrgSteamPresence *self,
 #endif
 }
 
-/**
+/*
  * lrg_steam_presence_set_status:
  * @self: an #LrgSteamPresence
  * @status: the status string
@@ -197,7 +197,7 @@ lrg_steam_presence_set_status (LrgSteamPresence *self,
     return lrg_steam_presence_set (self, "status", status);
 }
 
-/**
+/*
  * lrg_steam_presence_clear:
  * @self: an #LrgSteamPresence
  *

@@ -11,7 +11,7 @@
 
 #include "lrg-trigger-event.h"
 
-/**
+/*
  * LrgTriggerEvent:
  *
  * Event data emitted when a trigger fires.
@@ -29,7 +29,7 @@ G_DEFINE_BOXED_TYPE (LrgTriggerEvent,
                      lrg_trigger_event_copy,
                      lrg_trigger_event_free)
 
-/**
+/*
  * lrg_trigger_event_new:
  * @event_type: The type of trigger event
  * @entity: (nullable): The entity that triggered the event
@@ -59,7 +59,7 @@ lrg_trigger_event_new (LrgTrigger2DEventType  event_type,
     return self;
 }
 
-/**
+/*
  * lrg_trigger_event_copy:
  * @self: A #LrgTriggerEvent
  *
@@ -100,7 +100,7 @@ lrg_trigger_event_free (LrgTriggerEvent *self)
     g_free (self);
 }
 
-/**
+/*
  * lrg_trigger_event_get_event_type:
  * @self: A #LrgTriggerEvent
  *
@@ -117,7 +117,7 @@ lrg_trigger_event_get_event_type (const LrgTriggerEvent *self)
     return self->event_type;
 }
 
-/**
+/*
  * lrg_trigger_event_get_entity:
  * @self: A #LrgTriggerEvent
  *
@@ -134,7 +134,7 @@ lrg_trigger_event_get_entity (const LrgTriggerEvent *self)
     return self->entity;
 }
 
-/**
+/*
  * lrg_trigger_event_get_x:
  * @self: A #LrgTriggerEvent
  *
@@ -151,7 +151,7 @@ lrg_trigger_event_get_x (const LrgTriggerEvent *self)
     return self->x;
 }
 
-/**
+/*
  * lrg_trigger_event_get_y:
  * @self: A #LrgTriggerEvent
  *
@@ -168,7 +168,7 @@ lrg_trigger_event_get_y (const LrgTriggerEvent *self)
     return self->y;
 }
 
-/**
+/*
  * lrg_trigger_event_get_position:
  * @self: A #LrgTriggerEvent
  * @out_x: (out) (nullable): Return location for X
@@ -191,7 +191,7 @@ lrg_trigger_event_get_position (const LrgTriggerEvent *self,
         *out_y = self->y;
 }
 
-/**
+/*
  * lrg_trigger_event_is_enter:
  * @self: A #LrgTriggerEvent
  *
@@ -208,7 +208,7 @@ lrg_trigger_event_is_enter (const LrgTriggerEvent *self)
     return self->event_type == LRG_TRIGGER2D_EVENT_ENTER;
 }
 
-/**
+/*
  * lrg_trigger_event_is_stay:
  * @self: A #LrgTriggerEvent
  *
@@ -225,7 +225,7 @@ lrg_trigger_event_is_stay (const LrgTriggerEvent *self)
     return self->event_type == LRG_TRIGGER2D_EVENT_STAY;
 }
 
-/**
+/*
  * lrg_trigger_event_is_exit:
  * @self: A #LrgTriggerEvent
  *

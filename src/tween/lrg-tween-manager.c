@@ -311,7 +311,7 @@ lrg_tween_manager_init (LrgTweenManager *self)
  * Public API
  */
 
-/**
+/*
  * lrg_tween_manager_new:
  *
  * Creates a new tween manager.
@@ -326,7 +326,7 @@ lrg_tween_manager_new (void)
     return g_object_new (LRG_TYPE_TWEEN_MANAGER, NULL);
 }
 
-/**
+/*
  * lrg_tween_manager_add:
  * @self: A #LrgTweenManager
  * @tween: (transfer none): The tween to manage
@@ -361,7 +361,7 @@ lrg_tween_manager_add (LrgTweenManager *self,
     }
 }
 
-/**
+/*
  * lrg_tween_manager_remove:
  * @self: A #LrgTweenManager
  * @tween: The tween to remove
@@ -400,7 +400,7 @@ lrg_tween_manager_remove (LrgTweenManager *self,
     }
 }
 
-/**
+/*
  * lrg_tween_manager_clear:
  * @self: A #LrgTweenManager
  *
@@ -429,7 +429,7 @@ lrg_tween_manager_clear (LrgTweenManager *self)
     g_ptr_array_set_size (self->pending_remove, 0);
 }
 
-/**
+/*
  * lrg_tween_manager_update:
  * @self: A #LrgTweenManager
  * @delta_time: Time elapsed since last update in seconds
@@ -485,7 +485,7 @@ lrg_tween_manager_update (LrgTweenManager *self,
     process_pending (self);
 }
 
-/**
+/*
  * lrg_tween_manager_get_tween_count:
  * @self: A #LrgTweenManager
  *
@@ -503,7 +503,7 @@ lrg_tween_manager_get_tween_count (LrgTweenManager *self)
     return self->tweens->len;
 }
 
-/**
+/*
  * lrg_tween_manager_get_tweens:
  * @self: A #LrgTweenManager
  *
@@ -521,7 +521,7 @@ lrg_tween_manager_get_tweens (LrgTweenManager *self)
     return self->tweens;
 }
 
-/**
+/*
  * lrg_tween_manager_pause_all:
  * @self: A #LrgTweenManager
  *
@@ -545,7 +545,7 @@ lrg_tween_manager_pause_all (LrgTweenManager *self)
     }
 }
 
-/**
+/*
  * lrg_tween_manager_resume_all:
  * @self: A #LrgTweenManager
  *
@@ -572,7 +572,7 @@ lrg_tween_manager_resume_all (LrgTweenManager *self)
     }
 }
 
-/**
+/*
  * lrg_tween_manager_stop_all:
  * @self: A #LrgTweenManager
  *
@@ -596,7 +596,7 @@ lrg_tween_manager_stop_all (LrgTweenManager *self)
     }
 }
 
-/**
+/*
  * lrg_tween_manager_create_tween:
  * @self: A #LrgTweenManager
  * @target: (transfer none): The target object
@@ -631,7 +631,7 @@ lrg_tween_manager_create_tween (LrgTweenManager *self,
     return tween;
 }
 
-/**
+/*
  * lrg_tween_manager_create_sequence:
  * @self: A #LrgTweenManager
  *
@@ -657,7 +657,7 @@ lrg_tween_manager_create_sequence (LrgTweenManager *self)
     return sequence;
 }
 
-/**
+/*
  * lrg_tween_manager_create_parallel:
  * @self: A #LrgTweenManager
  *
@@ -683,7 +683,7 @@ lrg_tween_manager_create_parallel (LrgTweenManager *self)
     return parallel;
 }
 
-/**
+/*
  * lrg_tween_manager_get_auto_remove_finished:
  * @self: A #LrgTweenManager
  *
@@ -701,7 +701,7 @@ lrg_tween_manager_get_auto_remove_finished (LrgTweenManager *self)
     return self->auto_remove_finished;
 }
 
-/**
+/*
  * lrg_tween_manager_set_auto_remove_finished:
  * @self: A #LrgTweenManager
  * @auto_remove: Whether to auto-remove finished tweens
@@ -724,7 +724,7 @@ lrg_tween_manager_set_auto_remove_finished (LrgTweenManager *self,
     }
 }
 
-/**
+/*
  * lrg_tween_manager_get_time_scale:
  * @self: A #LrgTweenManager
  *
@@ -742,7 +742,7 @@ lrg_tween_manager_get_time_scale (LrgTweenManager *self)
     return self->time_scale;
 }
 
-/**
+/*
  * lrg_tween_manager_set_time_scale:
  * @self: A #LrgTweenManager
  * @scale: The time scale multiplier

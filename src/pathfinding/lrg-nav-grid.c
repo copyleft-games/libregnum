@@ -350,7 +350,7 @@ lrg_nav_grid_init (LrgNavGrid *self)
     priv->cut_corners = FALSE;
 }
 
-/**
+/*
  * lrg_nav_grid_new:
  * @width: Grid width in cells
  * @height: Grid height in cells
@@ -369,7 +369,7 @@ lrg_nav_grid_new (guint width,
                          NULL);
 }
 
-/**
+/*
  * lrg_nav_grid_get_width:
  * @self: an #LrgNavGrid
  *
@@ -388,7 +388,7 @@ lrg_nav_grid_get_width (LrgNavGrid *self)
     return priv->width;
 }
 
-/**
+/*
  * lrg_nav_grid_get_height:
  * @self: an #LrgNavGrid
  *
@@ -407,7 +407,7 @@ lrg_nav_grid_get_height (LrgNavGrid *self)
     return priv->height;
 }
 
-/**
+/*
  * lrg_nav_grid_is_valid:
  * @self: an #LrgNavGrid
  * @x: X coordinate
@@ -431,7 +431,7 @@ lrg_nav_grid_is_valid (LrgNavGrid *self,
             y >= 0 && (guint)y < priv->height);
 }
 
-/**
+/*
  * lrg_nav_grid_get_cell:
  * @self: an #LrgNavGrid
  * @x: X coordinate
@@ -457,7 +457,7 @@ lrg_nav_grid_get_cell (LrgNavGrid *self,
     return priv->cells[get_cell_index (priv, x, y)];
 }
 
-/**
+/*
  * lrg_nav_grid_set_cell_cost:
  * @self: an #LrgNavGrid
  * @x: X coordinate
@@ -481,7 +481,7 @@ lrg_nav_grid_set_cell_cost (LrgNavGrid *self,
         lrg_nav_cell_set_cost (cell, cost);
 }
 
-/**
+/*
  * lrg_nav_grid_get_cell_cost:
  * @self: an #LrgNavGrid
  * @x: X coordinate
@@ -504,7 +504,7 @@ lrg_nav_grid_get_cell_cost (LrgNavGrid *self,
     return klass->get_cell_cost (self, x, y);
 }
 
-/**
+/*
  * lrg_nav_grid_set_cell_flags:
  * @self: an #LrgNavGrid
  * @x: X coordinate
@@ -528,7 +528,7 @@ lrg_nav_grid_set_cell_flags (LrgNavGrid      *self,
         lrg_nav_cell_set_flags (cell, flags);
 }
 
-/**
+/*
  * lrg_nav_grid_get_cell_flags:
  * @self: an #LrgNavGrid
  * @x: X coordinate
@@ -554,7 +554,7 @@ lrg_nav_grid_get_cell_flags (LrgNavGrid *self,
     return lrg_nav_cell_get_flags (cell);
 }
 
-/**
+/*
  * lrg_nav_grid_set_blocked:
  * @self: an #LrgNavGrid
  * @x: X coordinate
@@ -587,7 +587,7 @@ lrg_nav_grid_set_blocked (LrgNavGrid *self,
     lrg_nav_cell_set_flags (cell, flags);
 }
 
-/**
+/*
  * lrg_nav_grid_is_walkable:
  * @self: an #LrgNavGrid
  * @x: X coordinate
@@ -610,7 +610,7 @@ lrg_nav_grid_is_walkable (LrgNavGrid *self,
     return klass->is_cell_walkable (self, x, y);
 }
 
-/**
+/*
  * lrg_nav_grid_get_allow_diagonal:
  * @self: an #LrgNavGrid
  *
@@ -629,7 +629,7 @@ lrg_nav_grid_get_allow_diagonal (LrgNavGrid *self)
     return priv->allow_diagonal;
 }
 
-/**
+/*
  * lrg_nav_grid_set_allow_diagonal:
  * @self: an #LrgNavGrid
  * @allow: Whether to allow diagonal movement
@@ -648,7 +648,7 @@ lrg_nav_grid_set_allow_diagonal (LrgNavGrid *self,
     priv->allow_diagonal = allow;
 }
 
-/**
+/*
  * lrg_nav_grid_get_cut_corners:
  * @self: an #LrgNavGrid
  *
@@ -667,7 +667,7 @@ lrg_nav_grid_get_cut_corners (LrgNavGrid *self)
     return priv->cut_corners;
 }
 
-/**
+/*
  * lrg_nav_grid_set_cut_corners:
  * @self: an #LrgNavGrid
  * @allow: Whether to allow corner cutting
@@ -686,7 +686,7 @@ lrg_nav_grid_set_cut_corners (LrgNavGrid *self,
     priv->cut_corners = allow;
 }
 
-/**
+/*
  * lrg_nav_grid_get_neighbors:
  * @self: an #LrgNavGrid
  * @x: X coordinate
@@ -709,7 +709,7 @@ lrg_nav_grid_get_neighbors (LrgNavGrid *self,
     return klass->get_neighbors (self, x, y);
 }
 
-/**
+/*
  * lrg_nav_grid_clear:
  * @self: an #LrgNavGrid
  *
@@ -736,7 +736,7 @@ lrg_nav_grid_clear (LrgNavGrid *self)
     lrg_log_debug ("Cleared navigation grid");
 }
 
-/**
+/*
  * lrg_nav_grid_fill_rect:
  * @self: an #LrgNavGrid
  * @x: Starting X coordinate

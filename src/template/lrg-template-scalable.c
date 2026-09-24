@@ -89,7 +89,7 @@ lrg_template_scalable_default_init (LrgTemplateScalableInterface *iface)
 /* Public Interface Methods                                                   */
 /* ========================================================================== */
 
-/**
+/*
  * lrg_template_scalable_get_virtual_width:
  * @self: a #LrgTemplateScalable
  *
@@ -110,7 +110,7 @@ lrg_template_scalable_get_virtual_width (LrgTemplateScalable *self)
     return iface->get_virtual_width (self);
 }
 
-/**
+/*
  * lrg_template_scalable_get_virtual_height:
  * @self: a #LrgTemplateScalable
  *
@@ -131,7 +131,7 @@ lrg_template_scalable_get_virtual_height (LrgTemplateScalable *self)
     return iface->get_virtual_height (self);
 }
 
-/**
+/*
  * lrg_template_scalable_get_scaling_mode:
  * @self: a #LrgTemplateScalable
  *
@@ -154,7 +154,7 @@ lrg_template_scalable_get_scaling_mode (LrgTemplateScalable *self)
     return iface->get_scaling_mode (self);
 }
 
-/**
+/*
  * lrg_template_scalable_world_to_screen:
  * @self: a #LrgTemplateScalable
  * @world_x: world X coordinate
@@ -181,7 +181,7 @@ lrg_template_scalable_world_to_screen (LrgTemplateScalable *self,
     iface->world_to_screen (self, world_x, world_y, screen_x, screen_y);
 }
 
-/**
+/*
  * lrg_template_scalable_screen_to_world:
  * @self: a #LrgTemplateScalable
  * @screen_x: screen X coordinate
@@ -352,7 +352,7 @@ get_window_dimensions (LrgTemplateScalable *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_template_scalable_get_scale_factor:
  * @self: a #LrgTemplateScalable
  *
@@ -384,7 +384,7 @@ lrg_template_scalable_get_scale_factor (LrgTemplateScalable *self)
     return (scale_x + scale_y) / 2.0f;
 }
 
-/**
+/*
  * lrg_template_scalable_get_viewport_offset:
  * @self: a #LrgTemplateScalable
  * @offset_x: (out) (optional): location for X offset
@@ -415,7 +415,7 @@ lrg_template_scalable_get_viewport_offset (LrgTemplateScalable *self,
                                NULL, NULL, offset_x, offset_y);
 }
 
-/**
+/*
  * lrg_template_scalable_get_viewport_size:
  * @self: a #LrgTemplateScalable
  * @width: (out) (optional): location for viewport width
@@ -458,7 +458,7 @@ lrg_template_scalable_get_viewport_size (LrgTemplateScalable *self,
         *height = virtual_height * scale_y;
 }
 
-/**
+/*
  * lrg_template_scalable_is_point_in_viewport:
  * @self: a #LrgTemplateScalable
  * @screen_x: screen X coordinate

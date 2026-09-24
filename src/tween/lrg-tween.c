@@ -547,7 +547,7 @@ lrg_tween_init (LrgTween *self)
  * Public API
  */
 
-/**
+/*
  * lrg_tween_new:
  * @target: (transfer none): The target #GObject to animate
  * @property_name: The name of the property to animate
@@ -577,7 +577,7 @@ lrg_tween_new (GObject     *target,
                          NULL);
 }
 
-/**
+/*
  * lrg_tween_new_full:
  * @target: (transfer none): The target #GObject to animate
  * @property_name: The name of the property to animate
@@ -618,7 +618,7 @@ lrg_tween_new_full (GObject      *target,
     return tween;
 }
 
-/**
+/*
  * lrg_tween_get_target:
  * @self: A #LrgTween
  *
@@ -636,7 +636,7 @@ lrg_tween_get_target (LrgTween *self)
     return self->target;
 }
 
-/**
+/*
  * lrg_tween_get_property_name:
  * @self: A #LrgTween
  *
@@ -654,7 +654,7 @@ lrg_tween_get_property_name (LrgTween *self)
     return self->property_name;
 }
 
-/**
+/*
  * lrg_tween_set_from_float:
  * @self: A #LrgTween
  * @value: The start value
@@ -680,7 +680,7 @@ lrg_tween_set_from_float (LrgTween *self,
     self->use_current_as_from = FALSE;
 }
 
-/**
+/*
  * lrg_tween_set_to_float:
  * @self: A #LrgTween
  * @value: The end value
@@ -705,7 +705,7 @@ lrg_tween_set_to_float (LrgTween *self,
     self->to_value_set = TRUE;
 }
 
-/**
+/*
  * lrg_tween_set_from_double:
  * @self: A #LrgTween
  * @value: The start value
@@ -731,7 +731,7 @@ lrg_tween_set_from_double (LrgTween *self,
     self->use_current_as_from = FALSE;
 }
 
-/**
+/*
  * lrg_tween_set_to_double:
  * @self: A #LrgTween
  * @value: The end value
@@ -756,7 +756,7 @@ lrg_tween_set_to_double (LrgTween *self,
     self->to_value_set = TRUE;
 }
 
-/**
+/*
  * lrg_tween_set_from_int:
  * @self: A #LrgTween
  * @value: The start value
@@ -782,7 +782,7 @@ lrg_tween_set_from_int (LrgTween *self,
     self->use_current_as_from = FALSE;
 }
 
-/**
+/*
  * lrg_tween_set_to_int:
  * @self: A #LrgTween
  * @value: The end value
@@ -807,7 +807,7 @@ lrg_tween_set_to_int (LrgTween *self,
     self->to_value_set = TRUE;
 }
 
-/**
+/*
  * lrg_tween_set_from_uint:
  * @self: A #LrgTween
  * @value: The start value
@@ -833,7 +833,7 @@ lrg_tween_set_from_uint (LrgTween *self,
     self->use_current_as_from = FALSE;
 }
 
-/**
+/*
  * lrg_tween_set_to_uint:
  * @self: A #LrgTween
  * @value: The end value
@@ -858,7 +858,7 @@ lrg_tween_set_to_uint (LrgTween *self,
     self->to_value_set = TRUE;
 }
 
-/**
+/*
  * lrg_tween_set_from_value:
  * @self: A #LrgTween
  * @value: The start value
@@ -886,7 +886,7 @@ lrg_tween_set_from_value (LrgTween     *self,
     self->use_current_as_from = FALSE;
 }
 
-/**
+/*
  * lrg_tween_set_to_value:
  * @self: A #LrgTween
  * @value: The end value
@@ -913,7 +913,7 @@ lrg_tween_set_to_value (LrgTween     *self,
     self->to_value_set = TRUE;
 }
 
-/**
+/*
  * lrg_tween_get_relative:
  * @self: A #LrgTween
  *
@@ -931,7 +931,7 @@ lrg_tween_get_relative (LrgTween *self)
     return self->relative;
 }
 
-/**
+/*
  * lrg_tween_set_relative:
  * @self: A #LrgTween
  * @relative: Whether to use relative mode
@@ -954,7 +954,7 @@ lrg_tween_set_relative (LrgTween *self,
     }
 }
 
-/**
+/*
  * lrg_tween_by_float:
  * @self: A #LrgTween
  * @delta: The amount to change
@@ -975,7 +975,7 @@ lrg_tween_by_float (LrgTween *self,
     self->use_current_as_from = TRUE;
 }
 
-/**
+/*
  * lrg_tween_by_int:
  * @self: A #LrgTween
  * @delta: The amount to change
@@ -996,7 +996,7 @@ lrg_tween_by_int (LrgTween *self,
     self->use_current_as_from = TRUE;
 }
 
-/**
+/*
  * lrg_tween_get_use_current_as_from:
  * @self: A #LrgTween
  *
@@ -1014,7 +1014,7 @@ lrg_tween_get_use_current_as_from (LrgTween *self)
     return self->use_current_as_from;
 }
 
-/**
+/*
  * lrg_tween_set_use_current_as_from:
  * @self: A #LrgTween
  * @use_current: Whether to use current value

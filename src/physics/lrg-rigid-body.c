@@ -397,7 +397,7 @@ lrg_rigid_body_init (LrgRigidBody *self)
     priv->sleep_time = 0.0f;
 }
 
-/**
+/*
  * lrg_rigid_body_new:
  * @body_type: The type of rigid body
  *

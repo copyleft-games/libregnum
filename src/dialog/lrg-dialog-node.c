@@ -255,7 +255,7 @@ lrg_dialog_node_real_apply_effects (LrgDialogNode *self,
     (void)context;
 }
 
-/**
+/*
  * lrg_dialog_node_new:
  * @id: unique identifier for the node
  *
@@ -273,7 +273,7 @@ lrg_dialog_node_new (const gchar *id)
                          NULL);
 }
 
-/**
+/*
  * lrg_dialog_node_get_id:
  * @self: an #LrgDialogNode
  *
@@ -292,7 +292,7 @@ lrg_dialog_node_get_id (LrgDialogNode *self)
     return priv->id;
 }
 
-/**
+/*
  * lrg_dialog_node_get_speaker:
  * @self: an #LrgDialogNode
  *
@@ -311,7 +311,7 @@ lrg_dialog_node_get_speaker (LrgDialogNode *self)
     return priv->speaker;
 }
 
-/**
+/*
  * lrg_dialog_node_set_speaker:
  * @self: an #LrgDialogNode
  * @speaker: (nullable): speaker name
@@ -326,7 +326,7 @@ lrg_dialog_node_set_speaker (LrgDialogNode *self,
     g_object_set (self, "speaker", speaker, NULL);
 }
 
-/**
+/*
  * lrg_dialog_node_get_text:
  * @self: an #LrgDialogNode
  *
@@ -345,7 +345,7 @@ lrg_dialog_node_get_text (LrgDialogNode *self)
     return priv->text;
 }
 
-/**
+/*
  * lrg_dialog_node_set_text:
  * @self: an #LrgDialogNode
  * @text: (nullable): text content
@@ -360,7 +360,7 @@ lrg_dialog_node_set_text (LrgDialogNode *self,
     g_object_set (self, "text", text, NULL);
 }
 
-/**
+/*
  * lrg_dialog_node_get_display_text:
  * @self: an #LrgDialogNode
  *
@@ -382,7 +382,7 @@ lrg_dialog_node_get_display_text (LrgDialogNode *self)
     return NULL;
 }
 
-/**
+/*
  * lrg_dialog_node_get_next_node_id:
  * @self: an #LrgDialogNode
  *
@@ -401,7 +401,7 @@ lrg_dialog_node_get_next_node_id (LrgDialogNode *self)
     return priv->next_node_id;
 }
 
-/**
+/*
  * lrg_dialog_node_set_next_node_id:
  * @self: an #LrgDialogNode
  * @next_node_id: (nullable): next node ID
@@ -416,7 +416,7 @@ lrg_dialog_node_set_next_node_id (LrgDialogNode *self,
     g_object_set (self, "next-node-id", next_node_id, NULL);
 }
 
-/**
+/*
  * lrg_dialog_node_add_response:
  * @self: an #LrgDialogNode
  * @response: (transfer full): response to add
@@ -436,7 +436,7 @@ lrg_dialog_node_add_response (LrgDialogNode     *self,
     g_ptr_array_add (priv->responses, response);
 }
 
-/**
+/*
  * lrg_dialog_node_get_responses:
  * @self: an #LrgDialogNode
  *
@@ -455,7 +455,7 @@ lrg_dialog_node_get_responses (LrgDialogNode *self)
     return priv->responses;
 }
 
-/**
+/*
  * lrg_dialog_node_get_response_count:
  * @self: an #LrgDialogNode
  *
@@ -474,7 +474,7 @@ lrg_dialog_node_get_response_count (LrgDialogNode *self)
     return priv->responses->len;
 }
 
-/**
+/*
  * lrg_dialog_node_get_response:
  * @self: an #LrgDialogNode
  * @index: response index
@@ -499,7 +499,7 @@ lrg_dialog_node_get_response (LrgDialogNode *self,
     return g_ptr_array_index (priv->responses, index);
 }
 
-/**
+/*
  * lrg_dialog_node_add_condition:
  * @self: an #LrgDialogNode
  * @condition: condition expression
@@ -519,7 +519,7 @@ lrg_dialog_node_add_condition (LrgDialogNode *self,
     g_ptr_array_add (priv->conditions, g_strdup (condition));
 }
 
-/**
+/*
  * lrg_dialog_node_get_conditions:
  * @self: an #LrgDialogNode
  *
@@ -538,7 +538,7 @@ lrg_dialog_node_get_conditions (LrgDialogNode *self)
     return priv->conditions;
 }
 
-/**
+/*
  * lrg_dialog_node_evaluate_conditions:
  * @self: an #LrgDialogNode
  * @context: (nullable): variable context for evaluation
@@ -562,7 +562,7 @@ lrg_dialog_node_evaluate_conditions (LrgDialogNode *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_dialog_node_add_effect:
  * @self: an #LrgDialogNode
  * @effect: effect expression
@@ -582,7 +582,7 @@ lrg_dialog_node_add_effect (LrgDialogNode *self,
     g_ptr_array_add (priv->effects, g_strdup (effect));
 }
 
-/**
+/*
  * lrg_dialog_node_get_effects:
  * @self: an #LrgDialogNode
  *
@@ -601,7 +601,7 @@ lrg_dialog_node_get_effects (LrgDialogNode *self)
     return priv->effects;
 }
 
-/**
+/*
  * lrg_dialog_node_apply_effects:
  * @self: an #LrgDialogNode
  * @context: (nullable): variable context for effects
@@ -621,7 +621,7 @@ lrg_dialog_node_apply_effects (LrgDialogNode *self,
         klass->apply_effects (self, context);
 }
 
-/**
+/*
  * lrg_dialog_node_is_terminal:
  * @self: an #LrgDialogNode
  *
@@ -642,7 +642,7 @@ lrg_dialog_node_is_terminal (LrgDialogNode *self)
     return (priv->next_node_id == NULL && priv->responses->len == 0);
 }
 
-/**
+/*
  * lrg_dialog_node_set_metadata_value:
  * @self: an #LrgDialogNode
  * @key: metadata key
@@ -677,7 +677,7 @@ lrg_dialog_node_set_metadata_value (LrgDialogNode *self,
     g_hash_table_replace (priv->metadata, g_strdup (key), g_strdup (value));
 }
 
-/**
+/*
  * lrg_dialog_node_get_metadata_value:
  * @self: an #LrgDialogNode
  * @key: metadata key
@@ -706,7 +706,7 @@ lrg_dialog_node_get_metadata_value (LrgDialogNode *self,
     return g_hash_table_lookup (priv->metadata, key);
 }
 
-/**
+/*
  * lrg_dialog_node_get_metadata_keys:
  * @self: an #LrgDialogNode
  *

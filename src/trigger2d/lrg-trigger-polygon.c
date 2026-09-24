@@ -263,7 +263,7 @@ lrg_trigger_polygon_init (LrgTriggerPolygon *self)
 
 /* Public API */
 
-/**
+/*
  * lrg_trigger_polygon_new:
  *
  * Creates a new empty polygon trigger zone.
@@ -278,7 +278,7 @@ lrg_trigger_polygon_new (void)
     return g_object_new (LRG_TYPE_TRIGGER_POLYGON, NULL);
 }
 
-/**
+/*
  * lrg_trigger_polygon_new_with_id:
  * @id: Unique identifier for the trigger
  *
@@ -296,7 +296,7 @@ lrg_trigger_polygon_new_with_id (const gchar *id)
                          NULL);
 }
 
-/**
+/*
  * lrg_trigger_polygon_new_from_points:
  * @points: (array length=n_points) (element-type gfloat): Array of x,y pairs
  * @n_points: Number of points
@@ -329,7 +329,7 @@ lrg_trigger_polygon_new_from_points (const gfloat *points,
     return self;
 }
 
-/**
+/*
  * lrg_trigger_polygon_add_vertex:
  * @self: A #LrgTriggerPolygon
  * @x: X coordinate
@@ -352,7 +352,7 @@ lrg_trigger_polygon_add_vertex (LrgTriggerPolygon *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VERTEX_COUNT]);
 }
 
-/**
+/*
  * lrg_trigger_polygon_insert_vertex:
  * @self: A #LrgTriggerPolygon
  * @index: Position to insert at
@@ -383,7 +383,7 @@ lrg_trigger_polygon_insert_vertex (LrgTriggerPolygon *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VERTEX_COUNT]);
 }
 
-/**
+/*
  * lrg_trigger_polygon_remove_vertex:
  * @self: A #LrgTriggerPolygon
  * @index: Index of vertex to remove
@@ -409,7 +409,7 @@ lrg_trigger_polygon_remove_vertex (LrgTriggerPolygon *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VERTEX_COUNT]);
 }
 
-/**
+/*
  * lrg_trigger_polygon_set_vertex:
  * @self: A #LrgTriggerPolygon
  * @index: Index of vertex to modify
@@ -440,7 +440,7 @@ lrg_trigger_polygon_set_vertex (LrgTriggerPolygon *self,
     lrg_trigger_polygon_invalidate_bounds (self);
 }
 
-/**
+/*
  * lrg_trigger_polygon_get_vertex:
  * @self: A #LrgTriggerPolygon
  * @index: Index of vertex to get
@@ -478,7 +478,7 @@ lrg_trigger_polygon_get_vertex (LrgTriggerPolygon *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_trigger_polygon_get_vertex_count:
  * @self: A #LrgTriggerPolygon
  *
@@ -495,7 +495,7 @@ lrg_trigger_polygon_get_vertex_count (LrgTriggerPolygon *self)
     return self->vertices->len / 2;
 }
 
-/**
+/*
  * lrg_trigger_polygon_clear_vertices:
  * @self: A #LrgTriggerPolygon
  *
@@ -513,7 +513,7 @@ lrg_trigger_polygon_clear_vertices (LrgTriggerPolygon *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VERTEX_COUNT]);
 }
 
-/**
+/*
  * lrg_trigger_polygon_translate:
  * @self: A #LrgTriggerPolygon
  * @dx: X offset
@@ -546,7 +546,7 @@ lrg_trigger_polygon_translate (LrgTriggerPolygon *self,
     lrg_trigger_polygon_invalidate_bounds (self);
 }
 
-/**
+/*
  * lrg_trigger_polygon_scale:
  * @self: A #LrgTriggerPolygon
  * @sx: X scale factor
@@ -591,7 +591,7 @@ lrg_trigger_polygon_scale (LrgTriggerPolygon *self,
     lrg_trigger_polygon_invalidate_bounds (self);
 }
 
-/**
+/*
  * lrg_trigger_polygon_rotate:
  * @self: A #LrgTriggerPolygon
  * @angle: Rotation angle in radians
@@ -642,7 +642,7 @@ lrg_trigger_polygon_rotate (LrgTriggerPolygon *self,
     lrg_trigger_polygon_invalidate_bounds (self);
 }
 
-/**
+/*
  * lrg_trigger_polygon_get_centroid:
  * @self: A #LrgTriggerPolygon
  * @out_x: (out) (nullable): Return location for centroid X
@@ -691,7 +691,7 @@ lrg_trigger_polygon_get_centroid (LrgTriggerPolygon *self,
         *out_y = sum_y / (gfloat)n_vertices;
 }
 
-/**
+/*
  * lrg_trigger_polygon_get_area:
  * @self: A #LrgTriggerPolygon
  *
@@ -736,7 +736,7 @@ lrg_trigger_polygon_get_area (LrgTriggerPolygon *self)
     return fabsf (area * 0.5f);
 }
 
-/**
+/*
  * lrg_trigger_polygon_is_convex:
  * @self: A #LrgTriggerPolygon
  *
@@ -796,7 +796,7 @@ lrg_trigger_polygon_is_convex (LrgTriggerPolygon *self)
     return TRUE;
 }
 
-/**
+/*
  * lrg_trigger_polygon_is_valid:
  * @self: A #LrgTriggerPolygon
  *

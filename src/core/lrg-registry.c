@@ -72,7 +72,7 @@ lrg_registry_init (LrgRegistry *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_registry_new:
  *
  * Creates a new type registry.
@@ -89,7 +89,7 @@ lrg_registry_new (void)
  * Public API - Type Registration
  * ========================================================================== */
 
-/**
+/*
  * lrg_registry_register:
  * @self: an #LrgRegistry
  * @name: the string name to register (e.g., "player", "enemy")
@@ -120,7 +120,7 @@ lrg_registry_register (LrgRegistry *self,
                g_type_name (type), name_copy);
 }
 
-/**
+/*
  * lrg_registry_unregister:
  * @self: an #LrgRegistry
  * @name: the string name to unregister
@@ -152,7 +152,7 @@ lrg_registry_unregister (LrgRegistry *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_registry_is_registered:
  * @self: an #LrgRegistry
  * @name: the string name to check
@@ -175,7 +175,7 @@ lrg_registry_is_registered (LrgRegistry *self,
  * Public API - Type Lookup
  * ========================================================================== */
 
-/**
+/*
  * lrg_registry_lookup:
  * @self: an #LrgRegistry
  * @name: the string name to look up
@@ -194,7 +194,7 @@ lrg_registry_lookup (LrgRegistry *self,
     return GPOINTER_TO_SIZE (g_hash_table_lookup (self->name_to_type, name));
 }
 
-/**
+/*
  * lrg_registry_lookup_name:
  * @self: an #LrgRegistry
  * @type: the #GType to look up
@@ -232,7 +232,7 @@ lrg_registry_lookup_name (LrgRegistry *self,
  * Public API - Object Creation
  * ========================================================================== */
 
-/**
+/*
  * lrg_registry_create:
  * @self: an #LrgRegistry
  * @name: the registered type name
@@ -273,7 +273,7 @@ lrg_registry_create (LrgRegistry *self,
     return object;
 }
 
-/**
+/*
  * lrg_registry_create_with_properties:
  * @self: an #LrgRegistry
  * @name: the registered type name
@@ -313,7 +313,7 @@ lrg_registry_create_with_properties (LrgRegistry  *self,
  * Public API - Enumeration
  * ========================================================================== */
 
-/**
+/*
  * lrg_registry_get_names:
  * @self: an #LrgRegistry
  *
@@ -329,7 +329,7 @@ lrg_registry_get_names (LrgRegistry *self)
     return g_hash_table_get_keys (self->name_to_type);
 }
 
-/**
+/*
  * lrg_registry_get_count:
  * @self: an #LrgRegistry
  *
@@ -345,7 +345,7 @@ lrg_registry_get_count (LrgRegistry *self)
     return g_hash_table_size (self->name_to_type);
 }
 
-/**
+/*
  * lrg_registry_foreach:
  * @self: an #LrgRegistry
  * @func: (scope call): the function to call for each entry
@@ -378,7 +378,7 @@ lrg_registry_foreach (LrgRegistry            *self,
  * Public API - Bulk Operations
  * ========================================================================== */
 
-/**
+/*
  * lrg_registry_register_builtin:
  * @self: an #LrgRegistry
  *
@@ -422,7 +422,7 @@ lrg_registry_register_builtin (LrgRegistry *self)
                lrg_registry_get_count (self));
 }
 
-/**
+/*
  * lrg_registry_clear:
  * @self: an #LrgRegistry
  *

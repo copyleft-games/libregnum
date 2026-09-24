@@ -147,7 +147,7 @@ lrg_reel_seq_exporter_init (LrgReelSeqExporter *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_seq_exporter_new:
  * @dir: (type filename): the output directory; created with g_mkdir_with_parents()
  *   if it does not yet exist.
@@ -183,7 +183,7 @@ lrg_reel_seq_exporter_new (const gchar        *dir,
     return self;
 }
 
-/**
+/*
  * lrg_reel_seq_exporter_get_frame_count:
  * @self: an #LrgReelSeqExporter.
  *

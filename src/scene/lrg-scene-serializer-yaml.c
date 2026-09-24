@@ -1115,7 +1115,7 @@ lrg_scene_serializer_yaml_init (LrgSceneSerializerYaml *self)
  * Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_scene_serializer_yaml_new:
  *
  * Creates a new #LrgSceneSerializerYaml with no coordinate conversion.

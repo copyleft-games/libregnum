@@ -53,7 +53,7 @@ lrg_drawable_default_init (LrgDrawableInterface *iface)
 	/* Default implementations are NULL, subclasses must provide draw() */
 }
 
-/**
+/*
  * lrg_drawable_draw:
  * @self: an #LrgDrawable
  * @delta: time since last frame in seconds
@@ -78,7 +78,7 @@ lrg_drawable_draw (LrgDrawable *self,
 		iface->draw (self, delta);
 }
 
-/**
+/*
  * lrg_drawable_get_bounds:
  * @self: an #LrgDrawable
  * @out_bounds: (out): location to store the bounding rectangle

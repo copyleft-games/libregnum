@@ -113,7 +113,7 @@ lrg_game_object_init (LrgGameObject *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_game_object_new:
  *
  * Creates a new game object at position (0, 0).
@@ -126,7 +126,7 @@ lrg_game_object_new (void)
     return g_object_new (LRG_TYPE_GAME_OBJECT, NULL);
 }
 
-/**
+/*
  * lrg_game_object_new_at:
  * @x: Initial X position
  * @y: Initial Y position
@@ -149,7 +149,7 @@ lrg_game_object_new_at (gfloat x,
  * Public API - Component Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_game_object_add_component:
  * @self: an #LrgGameObject
  * @component: the component to add
@@ -201,7 +201,7 @@ lrg_game_object_add_component (LrgGameObject *self,
                G_OBJECT_TYPE_NAME (component));
 }
 
-/**
+/*
  * lrg_game_object_remove_component:
  * @self: an #LrgGameObject
  * @component: the component to remove
@@ -244,7 +244,7 @@ lrg_game_object_remove_component (LrgGameObject *self,
     g_object_unref (component);
 }
 
-/**
+/*
  * lrg_game_object_get_component:
  * @self: an #LrgGameObject
  * @component_type: the #GType of the component to find
@@ -277,7 +277,7 @@ lrg_game_object_get_component (LrgGameObject *self,
     return NULL;
 }
 
-/**
+/*
  * lrg_game_object_get_components:
  * @self: an #LrgGameObject
  *
@@ -297,7 +297,7 @@ lrg_game_object_get_components (LrgGameObject *self)
     return g_list_copy (priv->components);
 }
 
-/**
+/*
  * lrg_game_object_has_component:
  * @self: an #LrgGameObject
  * @component_type: the #GType to check for
@@ -315,7 +315,7 @@ lrg_game_object_has_component (LrgGameObject *self,
     return lrg_game_object_get_component (self, component_type) != NULL;
 }
 
-/**
+/*
  * lrg_game_object_get_components_of_type:
  * @self: an #LrgGameObject
  * @component_type: the #GType to find
@@ -350,7 +350,7 @@ lrg_game_object_get_components_of_type (LrgGameObject *self,
     return g_list_reverse (result);
 }
 
-/**
+/*
  * lrg_game_object_remove_all_components:
  * @self: an #LrgGameObject
  *
@@ -388,7 +388,7 @@ lrg_game_object_remove_all_components (LrgGameObject *self)
     priv->components = NULL;
 }
 
-/**
+/*
  * lrg_game_object_get_component_count:
  * @self: an #LrgGameObject
  *

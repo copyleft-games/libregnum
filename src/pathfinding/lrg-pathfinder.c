@@ -423,7 +423,7 @@ lrg_pathfinder_init (LrgPathfinder *self)
     self->last_nodes_explored = 0;
 }
 
-/**
+/*
  * lrg_pathfinder_new:
  * @grid: The navigation grid to use
  *
@@ -439,7 +439,7 @@ lrg_pathfinder_new (LrgNavGrid *grid)
                          NULL);
 }
 
-/**
+/*
  * lrg_pathfinder_get_grid:
  * @self: an #LrgPathfinder
  *
@@ -454,7 +454,7 @@ lrg_pathfinder_get_grid (LrgPathfinder *self)
     return self->grid;
 }
 
-/**
+/*
  * lrg_pathfinder_set_grid:
  * @self: an #LrgPathfinder
  * @grid: The navigation grid
@@ -471,7 +471,7 @@ lrg_pathfinder_set_grid (LrgPathfinder *self,
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_GRID]);
 }
 
-/**
+/*
  * lrg_pathfinder_find_path:
  * @self: an #LrgPathfinder
  * @start_x: Start X coordinate
@@ -736,7 +736,7 @@ lrg_pathfinder_find_path (LrgPathfinder  *self,
     return path;
 }
 
-/**
+/*
  * lrg_pathfinder_get_smoothing:
  * @self: an #LrgPathfinder
  *
@@ -751,7 +751,7 @@ lrg_pathfinder_get_smoothing (LrgPathfinder *self)
     return self->smoothing;
 }
 
-/**
+/*
  * lrg_pathfinder_set_smoothing:
  * @self: an #LrgPathfinder
  * @mode: Smoothing mode
@@ -766,7 +766,7 @@ lrg_pathfinder_set_smoothing (LrgPathfinder        *self,
     self->smoothing = mode;
 }
 
-/**
+/*
  * lrg_pathfinder_get_max_iterations:
  * @self: an #LrgPathfinder
  *
@@ -781,7 +781,7 @@ lrg_pathfinder_get_max_iterations (LrgPathfinder *self)
     return self->max_iterations;
 }
 
-/**
+/*
  * lrg_pathfinder_set_max_iterations:
  * @self: an #LrgPathfinder
  * @max_iterations: Maximum iterations (0 = unlimited)
@@ -796,7 +796,7 @@ lrg_pathfinder_set_max_iterations (LrgPathfinder *self,
     self->max_iterations = max_iterations;
 }
 
-/**
+/*
  * lrg_pathfinder_set_heuristic:
  * @self: an #LrgPathfinder
  * @func: (nullable) (scope notified): Heuristic function
@@ -835,7 +835,7 @@ lrg_pathfinder_set_heuristic (LrgPathfinder    *self,
     }
 }
 
-/**
+/*
  * lrg_pathfinder_get_last_nodes_explored:
  * @self: an #LrgPathfinder
  *
@@ -850,7 +850,7 @@ lrg_pathfinder_get_last_nodes_explored (LrgPathfinder *self)
     return self->last_nodes_explored;
 }
 
-/**
+/*
  * lrg_pathfinder_is_reachable:
  * @self: an #LrgPathfinder
  * @start_x: Start X coordinate
@@ -879,7 +879,7 @@ lrg_pathfinder_is_reachable (LrgPathfinder *self,
 
 /* Built-in heuristic functions */
 
-/**
+/*
  * lrg_heuristic_manhattan:
  * @x1: Start X
  * @y1: Start Y
@@ -902,7 +902,7 @@ lrg_heuristic_manhattan (gint     x1,
     return (gfloat)(fabs ((gdouble)x2 - x1) + fabs ((gdouble)y2 - y1));
 }
 
-/**
+/*
  * lrg_heuristic_euclidean:
  * @x1: Start X
  * @y1: Start Y
@@ -931,7 +931,7 @@ lrg_heuristic_euclidean (gint     x1,
     return (gfloat)sqrt (dx * dx + dy * dy);
 }
 
-/**
+/*
  * lrg_heuristic_chebyshev:
  * @x1: Start X
  * @y1: Start Y
@@ -960,7 +960,7 @@ lrg_heuristic_chebyshev (gint     x1,
     return (gfloat)MAX (dx, dy);
 }
 
-/**
+/*
  * lrg_heuristic_octile:
  * @x1: Start X
  * @y1: Start Y

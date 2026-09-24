@@ -281,7 +281,7 @@ lrg_tilemap_layer_init (LrgTilemapLayer *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_layer_new:
  * @width: the layer width in tiles
  * @height: the layer height in tiles
@@ -318,7 +318,7 @@ lrg_tilemap_layer_new (guint width,
  * Dimensions
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_layer_get_width:
  * @self: an #LrgTilemapLayer
  *
@@ -334,7 +334,7 @@ lrg_tilemap_layer_get_width (LrgTilemapLayer *self)
     return self->width;
 }
 
-/**
+/*
  * lrg_tilemap_layer_get_height:
  * @self: an #LrgTilemapLayer
  *
@@ -354,7 +354,7 @@ lrg_tilemap_layer_get_height (LrgTilemapLayer *self)
  * Tile Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_layer_get_tile:
  * @self: an #LrgTilemapLayer
  * @x: the tile X coordinate
@@ -383,7 +383,7 @@ lrg_tilemap_layer_get_tile (LrgTilemapLayer *self,
     return self->tiles[index];
 }
 
-/**
+/*
  * lrg_tilemap_layer_set_tile:
  * @self: an #LrgTilemapLayer
  * @x: the tile X coordinate
@@ -412,7 +412,7 @@ lrg_tilemap_layer_set_tile (LrgTilemapLayer *self,
     self->tiles[index] = tile_id;
 }
 
-/**
+/*
  * lrg_tilemap_layer_fill:
  * @self: an #LrgTilemapLayer
  * @tile_id: the tile ID to fill with
@@ -433,7 +433,7 @@ lrg_tilemap_layer_fill (LrgTilemapLayer *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_layer_fill_rect:
  * @self: an #LrgTilemapLayer
  * @x: the starting X coordinate
@@ -487,7 +487,7 @@ lrg_tilemap_layer_fill_rect (LrgTilemapLayer *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_layer_clear:
  * @self: an #LrgTilemapLayer
  *
@@ -505,7 +505,7 @@ lrg_tilemap_layer_clear (LrgTilemapLayer *self)
  * Layer Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_layer_get_visible:
  * @self: an #LrgTilemapLayer
  *
@@ -521,7 +521,7 @@ lrg_tilemap_layer_get_visible (LrgTilemapLayer *self)
     return self->visible;
 }
 
-/**
+/*
  * lrg_tilemap_layer_set_visible:
  * @self: an #LrgTilemapLayer
  * @visible: whether the layer is visible
@@ -542,7 +542,7 @@ lrg_tilemap_layer_set_visible (LrgTilemapLayer *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_layer_get_collision_enabled:
  * @self: an #LrgTilemapLayer
  *
@@ -558,7 +558,7 @@ lrg_tilemap_layer_get_collision_enabled (LrgTilemapLayer *self)
     return self->collision_enabled;
 }
 
-/**
+/*
  * lrg_tilemap_layer_set_collision_enabled:
  * @self: an #LrgTilemapLayer
  * @enabled: whether collision is enabled
@@ -579,7 +579,7 @@ lrg_tilemap_layer_set_collision_enabled (LrgTilemapLayer *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_layer_get_parallax_x:
  * @self: an #LrgTilemapLayer
  *
@@ -596,7 +596,7 @@ lrg_tilemap_layer_get_parallax_x (LrgTilemapLayer *self)
     return self->parallax_x;
 }
 
-/**
+/*
  * lrg_tilemap_layer_set_parallax_x:
  * @self: an #LrgTilemapLayer
  * @parallax: the parallax factor
@@ -616,7 +616,7 @@ lrg_tilemap_layer_set_parallax_x (LrgTilemapLayer *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_layer_get_parallax_y:
  * @self: an #LrgTilemapLayer
  *
@@ -632,7 +632,7 @@ lrg_tilemap_layer_get_parallax_y (LrgTilemapLayer *self)
     return self->parallax_y;
 }
 
-/**
+/*
  * lrg_tilemap_layer_set_parallax_y:
  * @self: an #LrgTilemapLayer
  * @parallax: the parallax factor
@@ -652,7 +652,7 @@ lrg_tilemap_layer_set_parallax_y (LrgTilemapLayer *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_layer_get_opacity:
  * @self: an #LrgTilemapLayer
  *
@@ -668,7 +668,7 @@ lrg_tilemap_layer_get_opacity (LrgTilemapLayer *self)
     return self->opacity;
 }
 
-/**
+/*
  * lrg_tilemap_layer_set_opacity:
  * @self: an #LrgTilemapLayer
  * @opacity: the opacity value (0.0 to 1.0)
@@ -698,7 +698,7 @@ lrg_tilemap_layer_set_opacity (LrgTilemapLayer *self,
     }
 }
 
-/**
+/*
  * lrg_tilemap_layer_get_name:
  * @self: an #LrgTilemapLayer
  *
@@ -714,7 +714,7 @@ lrg_tilemap_layer_get_name (LrgTilemapLayer *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_tilemap_layer_set_name:
  * @self: an #LrgTilemapLayer
  * @name: (nullable): the layer name
@@ -739,7 +739,7 @@ lrg_tilemap_layer_set_name (LrgTilemapLayer *self,
  * Tile Data Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_tilemap_layer_get_tiles:
  * @self: an #LrgTilemapLayer
  * @out_len: (out) (optional): return location for tile count
@@ -763,7 +763,7 @@ lrg_tilemap_layer_get_tiles (LrgTilemapLayer *self,
     return self->tiles;
 }
 
-/**
+/*
  * lrg_tilemap_layer_set_tiles:
  * @self: an #LrgTilemapLayer
  * @tiles: (array length=len): the tile data to copy

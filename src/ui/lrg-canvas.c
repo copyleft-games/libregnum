@@ -218,7 +218,7 @@ lrg_canvas_init (LrgCanvas *self)
     self->last_mouse_y = 0.0f;
 }
 
-/**
+/*
  * lrg_canvas_new:
  *
  * Creates a new canvas - the root container for UI widgets.
@@ -231,7 +231,7 @@ lrg_canvas_new (void)
     return g_object_new (LRG_TYPE_CANVAS, NULL);
 }
 
-/**
+/*
  * lrg_canvas_set_default_pointer_transform:
  * @transform: (nullable) (scope notified): transform applied to pointer
  *   coordinates before hit-testing, or %NULL to restore raw coordinates
@@ -248,7 +248,7 @@ lrg_canvas_set_default_pointer_transform (LrgCanvasPointerTransform transform,
     default_pointer_transform_data = user_data;
 }
 
-/**
+/*
  * lrg_canvas_render:
  * @self: an #LrgCanvas
  *
@@ -265,7 +265,7 @@ lrg_canvas_render (LrgCanvas *self)
     }
 }
 
-/**
+/*
  * lrg_canvas_handle_input:
  * @self: an #LrgCanvas
  *
@@ -431,7 +431,7 @@ lrg_canvas_handle_input (LrgCanvas *self)
     }
 }
 
-/**
+/*
  * lrg_canvas_widget_at_point:
  * @self: an #LrgCanvas
  * @x: the x coordinate
@@ -461,7 +461,7 @@ lrg_canvas_widget_at_point (LrgCanvas *self,
     return hit;
 }
 
-/**
+/*
  * lrg_canvas_get_focused_widget:
  * @self: an #LrgCanvas
  *
@@ -476,7 +476,7 @@ lrg_canvas_get_focused_widget (LrgCanvas *self)
     return self->focused_widget;
 }
 
-/**
+/*
  * lrg_canvas_set_focused_widget:
  * @self: an #LrgCanvas
  * @widget: (nullable): the widget to focus, or %NULL to clear focus
@@ -517,7 +517,7 @@ lrg_canvas_set_focused_widget (LrgCanvas *self,
     }
 }
 
-/**
+/*
  * lrg_canvas_get_hovered_widget:
  * @self: an #LrgCanvas
  *

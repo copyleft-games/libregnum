@@ -545,7 +545,7 @@ lrg_highlight_init (LrgHighlight *self)
     self->screen_height = 0;
 }
 
-/**
+/*
  * lrg_highlight_new:
  *
  * Creates a new highlight widget.
@@ -560,7 +560,7 @@ lrg_highlight_new (void)
     return g_object_new (LRG_TYPE_HIGHLIGHT, NULL);
 }
 
-/**
+/*
  * lrg_highlight_new_with_style:
  * @style: The highlight style to use
  *
@@ -578,7 +578,7 @@ lrg_highlight_new_with_style (LrgHighlightStyle style)
                          NULL);
 }
 
-/**
+/*
  * lrg_highlight_get_target:
  * @self: An #LrgHighlight
  *
@@ -595,7 +595,7 @@ lrg_highlight_get_target (LrgHighlight *self)
     return self->target;
 }
 
-/**
+/*
  * lrg_highlight_set_target:
  * @self: An #LrgHighlight
  * @target: (nullable): The widget to highlight
@@ -617,7 +617,7 @@ lrg_highlight_set_target (LrgHighlight *self,
     }
 }
 
-/**
+/*
  * lrg_highlight_set_target_rect:
  * @self: An #LrgHighlight
  * @x: Target X position
@@ -647,7 +647,7 @@ lrg_highlight_set_target_rect (LrgHighlight *self,
     g_clear_object (&self->target);
 }
 
-/**
+/*
  * lrg_highlight_get_style:
  * @self: An #LrgHighlight
  *
@@ -664,7 +664,7 @@ lrg_highlight_get_style (LrgHighlight *self)
     return self->style;
 }
 
-/**
+/*
  * lrg_highlight_set_style:
  * @self: An #LrgHighlight
  * @style: The highlight style
@@ -686,7 +686,7 @@ lrg_highlight_set_style (LrgHighlight     *self,
     }
 }
 
-/**
+/*
  * lrg_highlight_get_color:
  * @self: An #LrgHighlight
  *
@@ -703,7 +703,7 @@ lrg_highlight_get_color (LrgHighlight *self)
     return &self->color;
 }
 
-/**
+/*
  * lrg_highlight_set_color:
  * @self: An #LrgHighlight
  * @color: The highlight color
@@ -729,7 +729,7 @@ lrg_highlight_set_color (LrgHighlight   *self,
     }
 }
 
-/**
+/*
  * lrg_highlight_get_padding:
  * @self: An #LrgHighlight
  *
@@ -746,7 +746,7 @@ lrg_highlight_get_padding (LrgHighlight *self)
     return self->padding;
 }
 
-/**
+/*
  * lrg_highlight_set_padding:
  * @self: An #LrgHighlight
  * @padding: The padding in pixels
@@ -768,7 +768,7 @@ lrg_highlight_set_padding (LrgHighlight *self,
     }
 }
 
-/**
+/*
  * lrg_highlight_get_outline_thickness:
  * @self: An #LrgHighlight
  *
@@ -785,7 +785,7 @@ lrg_highlight_get_outline_thickness (LrgHighlight *self)
     return self->outline_thickness;
 }
 
-/**
+/*
  * lrg_highlight_set_outline_thickness:
  * @self: An #LrgHighlight
  * @thickness: The thickness in pixels
@@ -807,7 +807,7 @@ lrg_highlight_set_outline_thickness (LrgHighlight *self,
     }
 }
 
-/**
+/*
  * lrg_highlight_get_corner_radius:
  * @self: An #LrgHighlight
  *
@@ -824,7 +824,7 @@ lrg_highlight_get_corner_radius (LrgHighlight *self)
     return self->corner_radius;
 }
 
-/**
+/*
  * lrg_highlight_set_corner_radius:
  * @self: An #LrgHighlight
  * @radius: The radius in pixels
@@ -846,7 +846,7 @@ lrg_highlight_set_corner_radius (LrgHighlight *self,
     }
 }
 
-/**
+/*
  * lrg_highlight_get_animated:
  * @self: An #LrgHighlight
  *
@@ -863,7 +863,7 @@ lrg_highlight_get_animated (LrgHighlight *self)
     return self->animated;
 }
 
-/**
+/*
  * lrg_highlight_set_animated:
  * @self: An #LrgHighlight
  * @animated: Whether to animate
@@ -885,7 +885,7 @@ lrg_highlight_set_animated (LrgHighlight *self,
     }
 }
 
-/**
+/*
  * lrg_highlight_get_pulse_speed:
  * @self: An #LrgHighlight
  *
@@ -902,7 +902,7 @@ lrg_highlight_get_pulse_speed (LrgHighlight *self)
     return self->pulse_speed;
 }
 
-/**
+/*
  * lrg_highlight_set_pulse_speed:
  * @self: An #LrgHighlight
  * @speed: The pulse speed
@@ -924,7 +924,7 @@ lrg_highlight_set_pulse_speed (LrgHighlight *self,
     }
 }
 
-/**
+/*
  * lrg_highlight_update:
  * @self: An #LrgHighlight
  * @delta_time: Time since last update in seconds

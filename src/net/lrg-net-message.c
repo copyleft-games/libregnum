@@ -25,7 +25,7 @@
  */
 #define HEADER_SIZE 26
 
-/**
+/*
  * LrgNetMessage:
  *
  * Internal structure for network messages.
@@ -46,7 +46,7 @@ G_DEFINE_BOXED_TYPE (LrgNetMessage,
                      lrg_net_message_copy,
                      lrg_net_message_free)
 
-/**
+/*
  * lrg_net_message_new:
  * @message_type: the type of message
  * @sender_id: ID of the sending peer
@@ -77,7 +77,7 @@ lrg_net_message_new (LrgNetMessageType  message_type,
     return self;
 }
 
-/**
+/*
  * lrg_net_message_copy:
  * @self: an #LrgNetMessage
  *
@@ -104,7 +104,7 @@ lrg_net_message_copy (const LrgNetMessage *self)
     return copy;
 }
 
-/**
+/*
  * lrg_net_message_free:
  * @self: an #LrgNetMessage
  *
@@ -120,7 +120,7 @@ lrg_net_message_free (LrgNetMessage *self)
     g_free (self);
 }
 
-/**
+/*
  * lrg_net_message_get_message_type:
  * @self: an #LrgNetMessage
  *
@@ -135,7 +135,7 @@ lrg_net_message_get_message_type (const LrgNetMessage *self)
     return self->message_type;
 }
 
-/**
+/*
  * lrg_net_message_get_sender_id:
  * @self: an #LrgNetMessage
  *
@@ -150,7 +150,7 @@ lrg_net_message_get_sender_id (const LrgNetMessage *self)
     return self->sender_id;
 }
 
-/**
+/*
  * lrg_net_message_get_receiver_id:
  * @self: an #LrgNetMessage
  *
@@ -165,7 +165,7 @@ lrg_net_message_get_receiver_id (const LrgNetMessage *self)
     return self->receiver_id;
 }
 
-/**
+/*
  * lrg_net_message_get_payload:
  * @self: an #LrgNetMessage
  *
@@ -180,7 +180,7 @@ lrg_net_message_get_payload (const LrgNetMessage *self)
     return self->payload;
 }
 
-/**
+/*
  * lrg_net_message_is_reliable:
  * @self: an #LrgNetMessage
  *
@@ -195,7 +195,7 @@ lrg_net_message_is_reliable (const LrgNetMessage *self)
     return self->reliable;
 }
 
-/**
+/*
  * lrg_net_message_set_reliable:
  * @self: an #LrgNetMessage
  * @reliable: whether to use reliable delivery
@@ -210,7 +210,7 @@ lrg_net_message_set_reliable (LrgNetMessage *self,
     self->reliable = reliable;
 }
 
-/**
+/*
  * lrg_net_message_get_timestamp:
  * @self: an #LrgNetMessage
  *
@@ -225,7 +225,7 @@ lrg_net_message_get_timestamp (const LrgNetMessage *self)
     return self->timestamp;
 }
 
-/**
+/*
  * lrg_net_message_get_sequence:
  * @self: an #LrgNetMessage
  *
@@ -240,7 +240,7 @@ lrg_net_message_get_sequence (const LrgNetMessage *self)
     return self->sequence;
 }
 
-/**
+/*
  * lrg_net_message_set_sequence:
  * @self: an #LrgNetMessage
  * @sequence: the sequence number
@@ -255,7 +255,7 @@ lrg_net_message_set_sequence (LrgNetMessage *self,
     self->sequence = sequence;
 }
 
-/**
+/*
  * lrg_net_message_serialize:
  * @self: an #LrgNetMessage
  *
@@ -334,7 +334,7 @@ lrg_net_message_serialize (const LrgNetMessage *self)
     return g_bytes_new_take (buffer, total_size);
 }
 
-/**
+/*
  * lrg_net_message_deserialize:
  * @data: serialized message data
  * @error: (nullable): return location for error
@@ -452,7 +452,7 @@ lrg_net_message_deserialize (GBytes   *data,
     return self;
 }
 
-/**
+/*
  * lrg_net_message_is_broadcast:
  * @self: an #LrgNetMessage
  *

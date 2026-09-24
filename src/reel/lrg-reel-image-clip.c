@@ -343,7 +343,7 @@ lrg_reel_image_clip_init (LrgReelImageClip *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_image_clip_new_from_file:
  * @path: path to the image file to load.
  * @error: (nullable): return location for a #GError, or %NULL.
@@ -383,7 +383,7 @@ lrg_reel_image_clip_new_from_file (const gchar  *path,
     return self;
 }
 
-/**
+/*
  * lrg_reel_image_clip_new_from_image:
  * @image: a #GrlImage to use as the clip source.
  *
@@ -406,7 +406,7 @@ lrg_reel_image_clip_new_from_image (GrlImage *image)
     return self;
 }
 
-/**
+/*
  * lrg_reel_image_clip_get_image:
  * @self: an #LrgReelImageClip.
  *
@@ -422,7 +422,7 @@ lrg_reel_image_clip_get_image (LrgReelImageClip *self)
     return self->image;
 }
 
-/**
+/*
  * lrg_reel_image_clip_set_image:
  * @self: an #LrgReelImageClip.
  * @image: (nullable): a #GrlImage to use, or %NULL to clear.
@@ -448,7 +448,7 @@ lrg_reel_image_clip_set_image (LrgReelImageClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IMAGE]);
 }
 
-/**
+/*
  * lrg_reel_image_clip_get_fit:
  * @self: an #LrgReelImageClip.
  *
@@ -464,7 +464,7 @@ lrg_reel_image_clip_get_fit (LrgReelImageClip *self)
     return self->fit;
 }
 
-/**
+/*
  * lrg_reel_image_clip_set_fit:
  * @self: an #LrgReelImageClip.
  * @fit: the new #LrgReelFit value.
@@ -486,7 +486,7 @@ lrg_reel_image_clip_set_fit (LrgReelImageClip *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FIT]);
 }
 
-/**
+/*
  * lrg_reel_image_clip_set_tint:
  * @self: an #LrgReelImageClip.
  * @tint: (nullable): a #GrlColor to apply as a tint, or %NULL to clear.
@@ -512,7 +512,7 @@ lrg_reel_image_clip_set_tint (LrgReelImageClip *self,
     }
 }
 
-/**
+/*
  * lrg_reel_image_clip_get_tint:
  * @self: an #LrgReelImageClip.
  *
@@ -528,7 +528,7 @@ lrg_reel_image_clip_get_tint (LrgReelImageClip *self)
     return self->has_tint;
 }
 
-/**
+/*
  * lrg_reel_image_clip_set_box:
  * @self: an #LrgReelImageClip.
  * @x: left edge of the destination box in pixels.

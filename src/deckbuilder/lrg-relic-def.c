@@ -531,7 +531,7 @@ lrg_relic_def_init (LrgRelicDef *self)
  * Public API - Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_relic_def_new:
  * @id: unique identifier
  * @name: display name

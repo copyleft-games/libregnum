@@ -181,7 +181,7 @@ lrg_potion_instance_init (LrgPotionInstance *self)
  * Public API - Constructors
  * ========================================================================== */
 
-/**
+/*
  * lrg_potion_instance_new:
  * @def: the potion definition
  *

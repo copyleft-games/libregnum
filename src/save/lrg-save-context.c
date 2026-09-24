@@ -82,7 +82,7 @@ lrg_save_context_init (LrgSaveContext *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_context_new_for_save:
  *
  * Creates a new save context for saving data.
@@ -106,7 +106,7 @@ lrg_save_context_new_for_save (void)
     return self;
 }
 
-/**
+/*
  * lrg_save_context_new_for_load:
  * @data: the YAML data to load from
  * @error: (optional): return location for a #GError
@@ -215,7 +215,7 @@ lrg_save_context_new_for_load (const gchar  *data,
     return self;
 }
 
-/**
+/*
  * lrg_save_context_new_from_file:
  * @path: path to the YAML file to load
  * @error: (optional): return location for a #GError
@@ -245,7 +245,7 @@ lrg_save_context_new_from_file (const gchar  *path,
  * Mode and Version
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_context_get_mode:
  * @self: a #LrgSaveContext
  *
@@ -261,7 +261,7 @@ lrg_save_context_get_mode (LrgSaveContext *self)
     return self->mode;
 }
 
-/**
+/*
  * lrg_save_context_get_version:
  * @self: a #LrgSaveContext
  *
@@ -277,7 +277,7 @@ lrg_save_context_get_version (LrgSaveContext *self)
     return self->version;
 }
 
-/**
+/*
  * lrg_save_context_set_version:
  * @self: a #LrgSaveContext
  * @version: the version number
@@ -299,7 +299,7 @@ lrg_save_context_set_version (LrgSaveContext *self,
  * Section Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_context_begin_section:
  * @self: a #LrgSaveContext
  * @name: the section name
@@ -321,7 +321,7 @@ lrg_save_context_begin_section (LrgSaveContext *self,
     lrg_log_debug ("Began section '%s'", name);
 }
 
-/**
+/*
  * lrg_save_context_end_section:
  * @self: a #LrgSaveContext
  *
@@ -339,7 +339,7 @@ lrg_save_context_end_section (LrgSaveContext *self)
     lrg_log_debug ("Ended section");
 }
 
-/**
+/*
  * lrg_save_context_has_section:
  * @self: a #LrgSaveContext
  * @name: the section name to check
@@ -360,7 +360,7 @@ lrg_save_context_has_section (LrgSaveContext *self,
     return yaml_mapping_has_member (self->root_mapping, name);
 }
 
-/**
+/*
  * lrg_save_context_enter_section:
  * @self: a #LrgSaveContext
  * @name: the section name to enter
@@ -395,7 +395,7 @@ lrg_save_context_enter_section (LrgSaveContext *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_save_context_leave_section:
  * @self: a #LrgSaveContext
  *
@@ -417,7 +417,7 @@ lrg_save_context_leave_section (LrgSaveContext *self)
  * Writing (Save Mode)
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_context_write_string:
  * @self: a #LrgSaveContext
  * @key: the key name
@@ -439,7 +439,7 @@ lrg_save_context_write_string (LrgSaveContext *self,
     yaml_builder_add_string_value (self->builder, value != NULL ? value : "");
 }
 
-/**
+/*
  * lrg_save_context_write_int:
  * @self: a #LrgSaveContext
  * @key: the key name
@@ -461,7 +461,7 @@ lrg_save_context_write_int (LrgSaveContext *self,
     yaml_builder_add_int_value (self->builder, value);
 }
 
-/**
+/*
  * lrg_save_context_write_uint:
  * @self: a #LrgSaveContext
  * @key: the key name
@@ -484,7 +484,7 @@ lrg_save_context_write_uint (LrgSaveContext *self,
     yaml_builder_add_int_value (self->builder, (gint64) value);
 }
 
-/**
+/*
  * lrg_save_context_write_double:
  * @self: a #LrgSaveContext
  * @key: the key name
@@ -506,7 +506,7 @@ lrg_save_context_write_double (LrgSaveContext *self,
     yaml_builder_add_double_value (self->builder, value);
 }
 
-/**
+/*
  * lrg_save_context_write_boolean:
  * @self: a #LrgSaveContext
  * @key: the key name
@@ -532,7 +532,7 @@ lrg_save_context_write_boolean (LrgSaveContext *self,
  * Reading (Load Mode)
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_context_read_string:
  * @self: a #LrgSaveContext
  * @key: the key name
@@ -563,7 +563,7 @@ lrg_save_context_read_string (LrgSaveContext *self,
     return value != NULL ? value : default_value;
 }
 
-/**
+/*
  * lrg_save_context_read_int:
  * @self: a #LrgSaveContext
  * @key: the key name
@@ -591,7 +591,7 @@ lrg_save_context_read_int (LrgSaveContext *self,
     return yaml_mapping_get_int_member (self->current_section, key);
 }
 
-/**
+/*
  * lrg_save_context_read_uint:
  * @self: a #LrgSaveContext
  * @key: the key name
@@ -622,7 +622,7 @@ lrg_save_context_read_uint (LrgSaveContext *self,
     return (guint64) value;
 }
 
-/**
+/*
  * lrg_save_context_read_double:
  * @self: a #LrgSaveContext
  * @key: the key name
@@ -650,7 +650,7 @@ lrg_save_context_read_double (LrgSaveContext *self,
     return yaml_mapping_get_double_member (self->current_section, key);
 }
 
-/**
+/*
  * lrg_save_context_read_boolean:
  * @self: a #LrgSaveContext
  * @key: the key name
@@ -678,7 +678,7 @@ lrg_save_context_read_boolean (LrgSaveContext *self,
     return yaml_mapping_get_boolean_member (self->current_section, key);
 }
 
-/**
+/*
  * lrg_save_context_has_key:
  * @self: a #LrgSaveContext
  * @key: the key name to check
@@ -703,7 +703,7 @@ lrg_save_context_has_key (LrgSaveContext *self,
  * Output (Save Mode)
  * ========================================================================== */
 
-/**
+/*
  * lrg_save_context_to_string:
  * @self: a #LrgSaveContext
  * @error: (optional): return location for a #GError
@@ -749,7 +749,7 @@ lrg_save_context_to_string (LrgSaveContext  *self,
     return yaml_str;
 }
 
-/**
+/*
  * lrg_save_context_to_file:
  * @self: a #LrgSaveContext
  * @path: the file path to write to

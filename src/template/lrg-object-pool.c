@@ -447,7 +447,7 @@ lrg_object_pool_init (LrgObjectPool *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_object_pool_new:
  * @object_type: the #GType of objects to pool
  * @initial_size: initial pool capacity
@@ -471,7 +471,7 @@ lrg_object_pool_new (GType               object_type,
                          NULL);
 }
 
-/**
+/*
  * lrg_object_pool_new_with_max:
  * @object_type: the #GType of objects to pool
  * @initial_size: initial pool capacity
@@ -502,7 +502,7 @@ lrg_object_pool_new_with_max (GType               object_type,
  * Pool Operations
  * ========================================================================== */
 
-/**
+/*
  * lrg_object_pool_acquire:
  * @self: an #LrgObjectPool
  *
@@ -551,7 +551,7 @@ lrg_object_pool_acquire (LrgObjectPool *self)
     return object;
 }
 
-/**
+/*
  * lrg_object_pool_acquire_with_init:
  * @self: an #LrgObjectPool
  * @first_property_name: (nullable): first property name
@@ -587,7 +587,7 @@ lrg_object_pool_acquire_with_init (LrgObjectPool *self,
     return object;
 }
 
-/**
+/*
  * lrg_object_pool_release:
  * @self: an #LrgObjectPool
  * @object: (transfer none): the object to release
@@ -637,7 +637,7 @@ lrg_object_pool_release (LrgObjectPool *self,
     g_ptr_array_add (self->available, object);
 }
 
-/**
+/*
  * lrg_object_pool_prewarm:
  * @self: an #LrgObjectPool
  * @count: number of objects to pre-allocate
@@ -662,7 +662,7 @@ lrg_object_pool_prewarm (LrgObjectPool *self,
         pool_grow (self, needed);
 }
 
-/**
+/*
  * lrg_object_pool_shrink_to_fit:
  * @self: an #LrgObjectPool
  *
@@ -690,7 +690,7 @@ lrg_object_pool_shrink_to_fit (LrgObjectPool *self)
     }
 }
 
-/**
+/*
  * lrg_object_pool_clear:
  * @self: an #LrgObjectPool
  *
@@ -715,7 +715,7 @@ lrg_object_pool_clear (LrgObjectPool *self)
  * Pool Information
  * ========================================================================== */
 
-/**
+/*
  * lrg_object_pool_get_object_type:
  * @self: an #LrgObjectPool
  *
@@ -733,7 +733,7 @@ lrg_object_pool_get_object_type (LrgObjectPool *self)
     return self->object_type;
 }
 
-/**
+/*
  * lrg_object_pool_get_active_count:
  * @self: an #LrgObjectPool
  *
@@ -751,7 +751,7 @@ lrg_object_pool_get_active_count (LrgObjectPool *self)
     return self->active->len;
 }
 
-/**
+/*
  * lrg_object_pool_get_available_count:
  * @self: an #LrgObjectPool
  *
@@ -769,7 +769,7 @@ lrg_object_pool_get_available_count (LrgObjectPool *self)
     return self->available->len;
 }
 
-/**
+/*
  * lrg_object_pool_get_total_size:
  * @self: an #LrgObjectPool
  *
@@ -787,7 +787,7 @@ lrg_object_pool_get_total_size (LrgObjectPool *self)
     return self->available->len + self->active->len;
 }
 
-/**
+/*
  * lrg_object_pool_get_max_size:
  * @self: an #LrgObjectPool
  *
@@ -805,7 +805,7 @@ lrg_object_pool_get_max_size (LrgObjectPool *self)
     return self->max_size;
 }
 
-/**
+/*
  * lrg_object_pool_get_growth_policy:
  * @self: an #LrgObjectPool
  *
@@ -827,7 +827,7 @@ lrg_object_pool_get_growth_policy (LrgObjectPool *self)
  * Iteration
  * ========================================================================== */
 
-/**
+/*
  * lrg_object_pool_foreach_active:
  * @self: an #LrgObjectPool
  * @callback: (scope call): callback for each active object
@@ -878,7 +878,7 @@ lrg_object_pool_foreach_active (LrgObjectPool            *self,
     }
 }
 
-/**
+/*
  * lrg_object_pool_release_all_active:
  * @self: an #LrgObjectPool
  *

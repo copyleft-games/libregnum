@@ -129,7 +129,7 @@ lrg_reel_blur_effect_init (LrgReelBlurEffect *self)
  * Public API
  * -------------------------------------------------------------------------- */
 
-/**
+/*
  * lrg_reel_blur_effect_new:
  * @radius: blur radius in pixels (<=0 is a no-op)
  *
@@ -147,7 +147,7 @@ lrg_reel_blur_effect_new (gint radius)
                          NULL);
 }
 
-/**
+/*
  * lrg_reel_blur_effect_get_radius:
  * @self: a #LrgReelBlurEffect
  *
@@ -163,7 +163,7 @@ lrg_reel_blur_effect_get_radius (LrgReelBlurEffect *self)
     return self->radius;
 }
 
-/**
+/*
  * lrg_reel_blur_effect_set_radius:
  * @self: a #LrgReelBlurEffect
  * @radius: new blur radius

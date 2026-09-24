@@ -361,7 +361,7 @@ lrg_tutorial_init (LrgTutorial *self)
     self->steps_by_id = g_hash_table_new (g_str_hash, g_str_equal);
 }
 
-/**
+/*
  * lrg_tutorial_new:
  * @id: Unique identifier for the tutorial
  * @name: Display name of the tutorial
@@ -382,7 +382,7 @@ lrg_tutorial_new (const gchar *id,
                          NULL);
 }
 
-/**
+/*
  * lrg_tutorial_new_from_file:
  * @path: Path to the tutorial definition file (YAML)
  * @error: (nullable): Return location for error
@@ -600,7 +600,7 @@ lrg_tutorial_new_from_file (const gchar  *path,
     return self;
 }
 
-/**
+/*
  * lrg_tutorial_get_id:
  * @self: A #LrgTutorial
  *
@@ -617,7 +617,7 @@ lrg_tutorial_get_id (LrgTutorial *self)
     return self->id;
 }
 
-/**
+/*
  * lrg_tutorial_get_name:
  * @self: A #LrgTutorial
  *
@@ -634,7 +634,7 @@ lrg_tutorial_get_name (LrgTutorial *self)
     return self->name;
 }
 
-/**
+/*
  * lrg_tutorial_get_description:
  * @self: A #LrgTutorial
  *
@@ -651,7 +651,7 @@ lrg_tutorial_get_description (LrgTutorial *self)
     return self->description;
 }
 
-/**
+/*
  * lrg_tutorial_set_description:
  * @self: A #LrgTutorial
  * @description: The description
@@ -671,7 +671,7 @@ lrg_tutorial_set_description (LrgTutorial *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DESCRIPTION]);
 }
 
-/**
+/*
  * lrg_tutorial_get_state:
  * @self: A #LrgTutorial
  *
@@ -688,7 +688,7 @@ lrg_tutorial_get_state (LrgTutorial *self)
     return self->state;
 }
 
-/**
+/*
  * lrg_tutorial_is_repeatable:
  * @self: A #LrgTutorial
  *
@@ -705,7 +705,7 @@ lrg_tutorial_is_repeatable (LrgTutorial *self)
     return self->repeatable;
 }
 
-/**
+/*
  * lrg_tutorial_set_repeatable:
  * @self: A #LrgTutorial
  * @repeatable: Whether the tutorial is repeatable
@@ -724,7 +724,7 @@ lrg_tutorial_set_repeatable (LrgTutorial *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_REPEATABLE]);
 }
 
-/**
+/*
  * lrg_tutorial_is_skippable:
  * @self: A #LrgTutorial
  *
@@ -741,7 +741,7 @@ lrg_tutorial_is_skippable (LrgTutorial *self)
     return self->skippable;
 }
 
-/**
+/*
  * lrg_tutorial_set_skippable:
  * @self: A #LrgTutorial
  * @skippable: Whether the tutorial is skippable
@@ -760,7 +760,7 @@ lrg_tutorial_set_skippable (LrgTutorial *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SKIPPABLE]);
 }
 
-/**
+/*
  * lrg_tutorial_get_step_count:
  * @self: A #LrgTutorial
  *
@@ -777,7 +777,7 @@ lrg_tutorial_get_step_count (LrgTutorial *self)
     return self->steps->len;
 }
 
-/**
+/*
  * lrg_tutorial_get_step:
  * @self: A #LrgTutorial
  * @index: Step index (0-based)
@@ -800,7 +800,7 @@ lrg_tutorial_get_step (LrgTutorial *self,
     return g_ptr_array_index (self->steps, index);
 }
 
-/**
+/*
  * lrg_tutorial_get_step_by_id:
  * @self: A #LrgTutorial
  * @id: Step ID
@@ -821,7 +821,7 @@ lrg_tutorial_get_step_by_id (LrgTutorial *self,
     return g_hash_table_lookup (self->steps_by_id, id);
 }
 
-/**
+/*
  * lrg_tutorial_add_step:
  * @self: A #LrgTutorial
  * @step: The step to add (copied)
@@ -856,7 +856,7 @@ lrg_tutorial_add_step (LrgTutorial           *self,
     return self->steps->len - 1;
 }
 
-/**
+/*
  * lrg_tutorial_insert_step:
  * @self: A #LrgTutorial
  * @index: Position to insert at
@@ -889,7 +889,7 @@ lrg_tutorial_insert_step (LrgTutorial           *self,
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STEP_COUNT]);
 }
 
-/**
+/*
  * lrg_tutorial_remove_step:
  * @self: A #LrgTutorial
  * @index: Index of step to remove
@@ -926,7 +926,7 @@ lrg_tutorial_remove_step (LrgTutorial *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_tutorial_clear_steps:
  * @self: A #LrgTutorial
  *
@@ -944,7 +944,7 @@ lrg_tutorial_clear_steps (LrgTutorial *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STEP_COUNT]);
 }
 
-/**
+/*
  * lrg_tutorial_get_current_step_index:
  * @self: A #LrgTutorial
  *
@@ -961,7 +961,7 @@ lrg_tutorial_get_current_step_index (LrgTutorial *self)
     return self->current_step_index;
 }
 
-/**
+/*
  * lrg_tutorial_get_current_step:
  * @self: A #LrgTutorial
  *
@@ -982,7 +982,7 @@ lrg_tutorial_get_current_step (LrgTutorial *self)
     return g_ptr_array_index (self->steps, self->current_step_index);
 }
 
-/**
+/*
  * lrg_tutorial_get_progress:
  * @self: A #LrgTutorial
  *
@@ -1010,7 +1010,7 @@ lrg_tutorial_get_progress (LrgTutorial *self)
     return (gfloat)self->current_step_index / (gfloat)self->steps->len;
 }
 
-/**
+/*
  * lrg_tutorial_start:
  * @self: A #LrgTutorial
  *
@@ -1057,7 +1057,7 @@ lrg_tutorial_start (LrgTutorial *self)
     return TRUE;
 }
 
-/**
+/*
  * lrg_tutorial_pause:
  * @self: A #LrgTutorial
  *
@@ -1077,7 +1077,7 @@ lrg_tutorial_pause (LrgTutorial *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STATE]);
 }
 
-/**
+/*
  * lrg_tutorial_resume:
  * @self: A #LrgTutorial
  *
@@ -1097,7 +1097,7 @@ lrg_tutorial_resume (LrgTutorial *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STATE]);
 }
 
-/**
+/*
  * lrg_tutorial_skip:
  * @self: A #LrgTutorial
  *
@@ -1132,7 +1132,7 @@ lrg_tutorial_skip (LrgTutorial *self)
     return TRUE;
 }
 
-/**
+/*
  * lrg_tutorial_advance:
  * @self: A #LrgTutorial
  *
@@ -1183,7 +1183,7 @@ lrg_tutorial_advance (LrgTutorial *self)
     return TRUE;
 }
 
-/**
+/*
  * lrg_tutorial_go_to_step:
  * @self: A #LrgTutorial
  * @index: Step index to go to
@@ -1225,7 +1225,7 @@ lrg_tutorial_go_to_step (LrgTutorial *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_tutorial_reset:
  * @self: A #LrgTutorial
  *
@@ -1247,7 +1247,7 @@ lrg_tutorial_reset (LrgTutorial *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PROGRESS]);
 }
 
-/**
+/*
  * lrg_tutorial_update:
  * @self: A #LrgTutorial
  * @delta_time: Time since last update in seconds
@@ -1307,7 +1307,7 @@ lrg_tutorial_update (LrgTutorial *self,
     }
 }
 
-/**
+/*
  * lrg_tutorial_set_condition_callback:
  * @self: A #LrgTutorial
  * @callback: (scope notified) (nullable): The callback function
@@ -1336,7 +1336,7 @@ lrg_tutorial_set_condition_callback (LrgTutorial              *self,
     self->condition_destroy = destroy;
 }
 
-/**
+/*
  * lrg_tutorial_save_to_file:
  * @self: A #LrgTutorial
  * @path: Path to save to

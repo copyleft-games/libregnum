@@ -240,7 +240,7 @@ lrg_panel_init (LrgPanel *self)
  * Public API - Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_panel_new:
  *
  * Creates a new panel widget.
@@ -257,7 +257,7 @@ lrg_panel_new (void)
  * Public API - Background
  * ========================================================================== */
 
-/**
+/*
  * lrg_panel_get_background_color:
  * @self: an #LrgPanel
  *
@@ -273,7 +273,7 @@ lrg_panel_get_background_color (LrgPanel *self)
     return &self->background_color;
 }
 
-/**
+/*
  * lrg_panel_set_background_color:
  * @self: an #LrgPanel
  * @color: the background color
@@ -301,7 +301,7 @@ lrg_panel_set_background_color (LrgPanel       *self,
  * Public API - Border
  * ========================================================================== */
 
-/**
+/*
  * lrg_panel_get_border_color:
  * @self: an #LrgPanel
  *
@@ -317,7 +317,7 @@ lrg_panel_get_border_color (LrgPanel *self)
     return self->has_border ? &self->border_color : NULL;
 }
 
-/**
+/*
  * lrg_panel_set_border_color:
  * @self: an #LrgPanel
  * @color: (nullable): the border color, or %NULL for no border
@@ -353,7 +353,7 @@ lrg_panel_set_border_color (LrgPanel       *self,
     }
 }
 
-/**
+/*
  * lrg_panel_get_border_width:
  * @self: an #LrgPanel
  *
@@ -369,7 +369,7 @@ lrg_panel_get_border_width (LrgPanel *self)
     return self->border_width;
 }
 
-/**
+/*
  * lrg_panel_set_border_width:
  * @self: an #LrgPanel
  * @width: the border width in pixels
@@ -394,7 +394,7 @@ lrg_panel_set_border_width (LrgPanel *self,
  * Public API - Corner Radius
  * ========================================================================== */
 
-/**
+/*
  * lrg_panel_get_corner_radius:
  * @self: an #LrgPanel
  *
@@ -410,7 +410,7 @@ lrg_panel_get_corner_radius (LrgPanel *self)
     return self->corner_radius;
 }
 
-/**
+/*
  * lrg_panel_set_corner_radius:
  * @self: an #LrgPanel
  * @radius: the corner radius in pixels

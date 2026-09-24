@@ -225,7 +225,7 @@ lrg_tween_parallel_init (LrgTweenParallel *self)
  * Public API
  */
 
-/**
+/*
  * lrg_tween_parallel_new:
  *
  * Creates a new parallel tween group.
@@ -241,7 +241,7 @@ lrg_tween_parallel_new (void)
     return g_object_new (LRG_TYPE_TWEEN_PARALLEL, NULL);
 }
 
-/**
+/*
  * lrg_tween_parallel_add:
  * @self: A #LrgTweenParallel
  * @tween: (transfer none): The tween to add
@@ -265,7 +265,7 @@ lrg_tween_parallel_add (LrgTweenParallel *self,
     return self;
 }
 
-/**
+/*
  * lrg_tween_parallel_get_finished_count:
  * @self: A #LrgTweenParallel
  *
@@ -283,7 +283,7 @@ lrg_tween_parallel_get_finished_count (LrgTweenParallel *self)
     return count_finished_tweens (self);
 }
 
-/**
+/*
  * lrg_tween_parallel_get_running_count:
  * @self: A #LrgTweenParallel
  *

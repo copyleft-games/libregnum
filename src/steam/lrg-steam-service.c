@@ -35,7 +35,7 @@ lrg_steam_service_default_init (LrgSteamServiceInterface *iface)
     /* Default implementations could be added here if needed */
 }
 
-/**
+/*
  * lrg_steam_service_is_available:
  * @self: an #LrgSteamService
  *
@@ -57,7 +57,7 @@ lrg_steam_service_is_available (LrgSteamService *self)
     return FALSE;
 }
 
-/**
+/*
  * lrg_steam_service_init:
  * @self: an #LrgSteamService
  * @app_id: the Steam application ID
@@ -84,7 +84,7 @@ lrg_steam_service_init (LrgSteamService  *self,
     return TRUE;
 }
 
-/**
+/*
  * lrg_steam_service_shutdown:
  * @self: an #LrgSteamService
  *
@@ -103,7 +103,7 @@ lrg_steam_service_shutdown (LrgSteamService *self)
         iface->shutdown (self);
 }
 
-/**
+/*
  * lrg_steam_service_run_callbacks:
  * @self: an #LrgSteamService
  *

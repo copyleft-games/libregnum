@@ -133,7 +133,7 @@ lrg_color_filter_init (LrgColorFilter *self)
     priv->enabled = TRUE;
 }
 
-/**
+/*
  * lrg_color_filter_get_matrix:
  * @self: an #LrgColorFilter
  * @matrix: (out) (array fixed-size=16): output 4x4 matrix
@@ -155,7 +155,7 @@ lrg_color_filter_get_matrix (LrgColorFilter *self,
     klass->get_matrix (self, matrix);
 }
 
-/**
+/*
  * lrg_color_filter_get_name:
  * @self: an #LrgColorFilter
  *
@@ -177,7 +177,7 @@ lrg_color_filter_get_name (LrgColorFilter *self)
     return "Unknown Filter";
 }
 
-/**
+/*
  * lrg_color_filter_get_intensity:
  * @self: an #LrgColorFilter
  *
@@ -196,7 +196,7 @@ lrg_color_filter_get_intensity (LrgColorFilter *self)
     return priv->intensity;
 }
 
-/**
+/*
  * lrg_color_filter_set_intensity:
  * @self: an #LrgColorFilter
  * @intensity: the intensity (0.0 to 1.0)
@@ -222,7 +222,7 @@ lrg_color_filter_set_intensity (LrgColorFilter *self,
     }
 }
 
-/**
+/*
  * lrg_color_filter_is_enabled:
  * @self: an #LrgColorFilter
  *
@@ -241,7 +241,7 @@ lrg_color_filter_is_enabled (LrgColorFilter *self)
     return priv->enabled;
 }
 
-/**
+/*
  * lrg_color_filter_set_enabled:
  * @self: an #LrgColorFilter
  * @enabled: whether to enable the filter

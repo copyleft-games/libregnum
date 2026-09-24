@@ -426,7 +426,7 @@ lrg_wipe_transition_init (LrgWipeTransition *self)
  * Public API
  */
 
-/**
+/*
  * lrg_wipe_transition_new:
  *
  * Creates a new wipe transition with default settings (wipe from left).
@@ -441,7 +441,7 @@ lrg_wipe_transition_new (void)
     return g_object_new (LRG_TYPE_WIPE_TRANSITION, NULL);
 }
 
-/**
+/*
  * lrg_wipe_transition_new_with_direction:
  * @direction: The wipe direction
  *
@@ -459,7 +459,7 @@ lrg_wipe_transition_new_with_direction (LrgTransitionDirection direction)
                          NULL);
 }
 
-/**
+/*
  * lrg_wipe_transition_get_direction:
  * @self: A #LrgWipeTransition
  *
@@ -477,7 +477,7 @@ lrg_wipe_transition_get_direction (LrgWipeTransition *self)
     return self->direction;
 }
 
-/**
+/*
  * lrg_wipe_transition_set_direction:
  * @self: A #LrgWipeTransition
  * @direction: The wipe direction
@@ -499,7 +499,7 @@ lrg_wipe_transition_set_direction (LrgWipeTransition      *self,
     }
 }
 
-/**
+/*
  * lrg_wipe_transition_get_softness:
  * @self: A #LrgWipeTransition
  *
@@ -517,7 +517,7 @@ lrg_wipe_transition_get_softness (LrgWipeTransition *self)
     return self->softness;
 }
 
-/**
+/*
  * lrg_wipe_transition_set_softness:
  * @self: A #LrgWipeTransition
  * @softness: Edge softness (0.0 = hard, 1.0 = soft)

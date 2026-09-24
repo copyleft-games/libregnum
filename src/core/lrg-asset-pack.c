@@ -166,7 +166,7 @@ lrg_asset_pack_init (LrgAssetPack *self)
  * Construction
  * ========================================================================== */
 
-/**
+/*
  * lrg_asset_pack_new:
  * @path: (type filename): path to the rres file
  * @error: (nullable): return location for a #GError
@@ -200,7 +200,7 @@ lrg_asset_pack_new (const gchar  *path,
     return self;
 }
 
-/**
+/*
  * lrg_asset_pack_new_encrypted:
  * @path: (type filename): path to the rres file
  * @password: the decryption password
@@ -235,7 +235,7 @@ lrg_asset_pack_new_encrypted (const gchar  *path,
  * Properties
  * ========================================================================== */
 
-/**
+/*
  * lrg_asset_pack_get_filename:
  * @self: a #LrgAssetPack
  *
@@ -251,7 +251,7 @@ lrg_asset_pack_get_filename (LrgAssetPack *self)
     return self->filename;
 }
 
-/**
+/*
  * lrg_asset_pack_get_resource_count:
  * @self: a #LrgAssetPack
  *
@@ -270,7 +270,7 @@ lrg_asset_pack_get_resource_count (LrgAssetPack *self)
     return grl_resource_pack_get_chunk_count (self->pack);
 }
 
-/**
+/*
  * lrg_asset_pack_get_version:
  * @self: a #LrgAssetPack
  *
@@ -289,7 +289,7 @@ lrg_asset_pack_get_version (LrgAssetPack *self)
     return grl_resource_pack_get_version (self->pack);
 }
 
-/**
+/*
  * lrg_asset_pack_has_directory:
  * @self: a #LrgAssetPack
  *
@@ -315,7 +315,7 @@ lrg_asset_pack_has_directory (LrgAssetPack *self)
  * Directory Access
  * ========================================================================== */
 
-/**
+/*
  * lrg_asset_pack_list_resources:
  * @self: a #LrgAssetPack
  *
@@ -348,7 +348,7 @@ lrg_asset_pack_list_resources (LrgAssetPack *self)
     return g_list_reverse (result);
 }
 
-/**
+/*
  * lrg_asset_pack_get_id:
  * @self: a #LrgAssetPack
  * @name: the resource name
@@ -370,7 +370,7 @@ lrg_asset_pack_get_id (LrgAssetPack *self,
     return grl_resource_pack_get_resource_id (self->pack, name);
 }
 
-/**
+/*
  * lrg_asset_pack_get_name:
  * @self: a #LrgAssetPack
  * @id: the resource ID
@@ -405,7 +405,7 @@ lrg_asset_pack_get_name (LrgAssetPack *self,
     return NULL;
 }
 
-/**
+/*
  * lrg_asset_pack_contains:
  * @self: a #LrgAssetPack
  * @name: the resource name
@@ -428,7 +428,7 @@ lrg_asset_pack_contains (LrgAssetPack *self,
  * Raw Data Loading
  * ========================================================================== */
 
-/**
+/*
  * lrg_asset_pack_load_raw:
  * @self: a #LrgAssetPack
  * @name: the resource name
@@ -474,7 +474,7 @@ lrg_asset_pack_load_raw (LrgAssetPack  *self,
     return lrg_asset_pack_load_raw_by_id (self, id, size, error);
 }
 
-/**
+/*
  * lrg_asset_pack_load_raw_by_id:
  * @self: a #LrgAssetPack
  * @id: the resource ID
@@ -526,7 +526,7 @@ get_file_type_from_name (const gchar *name)
     return ext;  /* Returns ".wav", ".ogg", etc. */
 }
 
-/**
+/*
  * lrg_asset_pack_load_texture:
  * @self: a #LrgAssetPack
  * @name: the resource name
@@ -595,7 +595,7 @@ lrg_asset_pack_load_texture (LrgAssetPack  *self,
     return texture;
 }
 
-/**
+/*
  * lrg_asset_pack_load_sound:
  * @self: a #LrgAssetPack
  * @name: the resource name
@@ -651,7 +651,7 @@ lrg_asset_pack_load_sound (LrgAssetPack  *self,
     return sound;
 }
 
-/**
+/*
  * lrg_asset_pack_load_wave:
  * @self: a #LrgAssetPack
  * @name: the resource name
@@ -694,7 +694,7 @@ lrg_asset_pack_load_wave (LrgAssetPack  *self,
     return wave_data;
 }
 
-/**
+/*
  * lrg_asset_pack_load_music:
  * @self: a #LrgAssetPack
  * @name: the resource name
@@ -737,7 +737,7 @@ lrg_asset_pack_load_music (LrgAssetPack  *self,
     return music;
 }
 
-/**
+/*
  * lrg_asset_pack_load_object:
  * @self: a #LrgAssetPack
  * @name: the resource name (should be a YAML file)
@@ -786,7 +786,7 @@ lrg_asset_pack_load_object (LrgAssetPack   *self,
  * Access Underlying
  * ========================================================================== */
 
-/**
+/*
  * lrg_asset_pack_get_resource_pack:
  * @self: a #LrgAssetPack
  *
