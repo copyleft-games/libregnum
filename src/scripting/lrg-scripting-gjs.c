@@ -79,6 +79,7 @@ static const gchar gjs_prelude[] =
     "    const Lrg = imports.gi.Libregnum;\n"
     "    const IDENT = /^[A-Za-z_$][\\w$]*$/;\n"
     "    const contexts = new Map();\n"
+    "    const REAL = globalThis;\n"
     "    function ctx(id) {\n"
     "        let c = contexts.get(id);\n"
     "        if (c === undefined) {\n"
@@ -86,6 +87,22 @@ static const gchar gjs_prelude[] =
     "            contexts.set(id, c);\n"
     "        }\n"
     "        return c;\n"
+    "    }\n"
+    /*
+     * Sloppy assignments to undeclared names (`counter = 0`) create
+     * enumerable properties on the real global, visible to every context.
+     * After each run of a context, move those into its own scope.  Lazily
+     * resolved built-ins are non-enumerable and stay where they are.
+     */
+    "    function owned() { return new Set(Object.keys(REAL)); }\n"
+    "    function adopt(c, before) {\n"
+    "        for (const k of Object.keys(REAL)) {\n"
+    "            if (before.has(k)) continue;\n"
+    "            const d = Object.getOwnPropertyDescriptor(REAL, k);\n"
+    "            if (d === undefined || !d.configurable) continue;\n"
+    "            c.scope[k] = REAL[k];\n"
+    "            delete REAL[k];\n"
+    "        }\n"
     "    }\n"
     "    function pack(v) {\n"
     "        switch (typeof v) {\n"
@@ -115,16 +132,21 @@ static const gchar gjs_prelude[] =
     "        return (name in c.scope) ? c.scope[name] : MISSING;\n"
     "    }\n"
     "    function guarded(id, body) {\n"
+    "        const before = owned();\n"
     "        try { body(); }\n"
     "        catch (e) {\n"
     "            let text = String(e);\n"
     "            if (e && e.stack) text += '\\n' + e.stack;\n"
     "            reply(id, 'error', text);\n"
     "        }\n"
+    "        finally { adopt(ctx(id), before); }\n"
     "    }\n"
     "    return Object.freeze({\n"
     "        scope(id) { return ctx(id).scope; },\n"
-    "        load(id, factory) { const c = ctx(id); c.resolvers.push(factory(c.scope)); },\n"
+    "        load(id, factory) {\n"
+    "            const c = ctx(id), before = owned();\n"
+    "            try { c.resolvers.push(factory(c.scope)); } finally { adopt(c, before); }\n"
+    "        },\n"
     "        invoke(id) {\n"
     "            guarded(id, () => {\n"
     "                const [name, ...rest] = args(id);\n"
@@ -174,7 +196,9 @@ static const gchar gjs_prelude[] =
     "        },\n"
     "        forget(id) { contexts.delete(id); },\n"
     "    });\n"
-    "})();\n";
+    "})();\n"
+    /* No context can replace or delete the bridge for the others */
+    "Object.defineProperty(globalThis, '__lrg', { writable: false, configurable: false });\n";
 
 /* ==========================================================================
  * Forward Declarations
@@ -264,8 +288,8 @@ gjs_eval_quiet (const gchar  *code,
     gboolean       ok;
 
     exit_status = 0;
-    old_fatal_mask = g_log_set_always_fatal (G_LOG_FATAL_MASK &
-                                             ~(G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING));
+    /* Gjs reports script exceptions as warnings; host calls keep the caller's mask */
+    old_fatal_mask = lrg_script_host_enter_script ();
     old_handler = g_log_set_handler ("Gjs",
                                      G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING,
                                      lrg_scripting_gjs_silent_log_handler,
@@ -274,7 +298,7 @@ gjs_eval_quiet (const gchar  *code,
     ok = gjs_context_eval (shared_context, code, length, filename, &exit_status, error);
 
     g_log_remove_handler ("Gjs", old_handler);
-    g_log_set_always_fatal (old_fatal_mask);
+    lrg_script_host_leave_script (old_fatal_mask);
 
     return ok;
 }

@@ -731,12 +731,15 @@ test_scripting_gjs_bridge_isolation (void)
     b = lrg_scripting_gjs_new ();
 
     g_assert_true (lrg_scripting_load_string (LRG_SCRIPTING (a), "a",
-        "function who() { return 'a'; }\nlet counter = 1;\nglobalThis.shared_name = 'from a';\n",
+        "function who() { return 'a'; }\nlet counter = 1;\nglobalThis.shared_name = 'from a';\n"
+        "sloppy_global = 5;\nsloppy_fn = function () { return 'a'; };\n"
+        "function math_ok() { return Math.max(1, 2) + (typeof imports); }\n",
         &error));
     g_assert_no_error (error);
     g_assert_true (lrg_scripting_load_string (LRG_SCRIPTING (b), "b",
         "function who() { return 'b'; }\n"
-        "function peek() { return typeof counter + '/' + typeof shared_name; }\n",
+        "function peek() { return typeof counter + '/' + typeof shared_name + '/' + typeof sloppy_global; }\n"
+        "function clobber() { try { __lrg = 1; } catch (e) { return 'kept'; } return 'kept'; }\n",
         &error));
     g_assert_no_error (error);
 
@@ -747,7 +750,25 @@ test_scripting_gjs_bridge_isolation (void)
     g_assert_cmpstr (g_value_get_string (&result), ==, "b");
     g_value_unset (&result);
     g_assert_true (lrg_scripting_call_function (LRG_SCRIPTING (b), "peek", &result, 0, NULL, &error));
-    g_assert_cmpstr (g_value_get_string (&result), ==, "undefined/undefined");
+    g_assert_cmpstr (g_value_get_string (&result), ==, "undefined/undefined/undefined");
+    g_value_unset (&result);
+
+    /* Sloppy assignments stay in their own context; built-ins still resolve */
+    g_assert_true (lrg_scripting_has_function (LRG_SCRIPTING (a), "sloppy_fn"));
+    g_assert_false (lrg_scripting_has_function (LRG_SCRIPTING (b), "sloppy_fn"));
+    g_assert_true (lrg_scripting_get_global (LRG_SCRIPTING (a), "sloppy_global", &result, &error));
+    g_assert_cmpint (g_value_get_int64 (&result), ==, 5);
+    g_value_unset (&result);
+    g_assert_false (lrg_scripting_get_global (LRG_SCRIPTING (b), "sloppy_global", &result, NULL));
+    g_assert_true (lrg_scripting_call_function (LRG_SCRIPTING (a), "math_ok", &result, 0, NULL, &error));
+    g_assert_cmpstr (g_value_get_string (&result), ==, "2object");
+    g_value_unset (&result);
+
+    /* No context can replace the bridge: both keep working afterwards */
+    g_assert_true (lrg_scripting_call_function (LRG_SCRIPTING (b), "clobber", &result, 0, NULL, &error));
+    g_value_unset (&result);
+    g_assert_true (lrg_scripting_call_function (LRG_SCRIPTING (a), "who", &result, 0, NULL, &error));
+    g_assert_cmpstr (g_value_get_string (&result), ==, "a");
     g_value_unset (&result);
 
     /* Resetting b leaves a untouched */

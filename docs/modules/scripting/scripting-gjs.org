@@ -457,6 +457,16 @@ single runtime.  Each context still behaves as if it had its own:
   =set_global= values, exposed objects) resolve as plain identifiers.  Names
   it does not define, such as =imports=, =print= and =Math=, fall through to
   the real global object.
+- A sloppy assignment to an undeclared name (=counter = 0=) briefly lands on
+  the real global.  After each load or call of the context it is moved into
+  that context's scope, so other contexts never see it.  Reading an
+  undeclared name still raises =ReferenceError=, and =typeof= still works for
+  feature checks.
+- =__lrg= (the prelude) cannot be replaced or deleted by scripts.
+- While Gjs runs, its own reports of script exceptions (warnings in the
+  =Gjs= domain) never abort the process.  Host functions called from
+  JavaScript run under the caller's fatal mask, so engine CRITICALs stay
+  fatal where the caller wanted them.
 - Arguments, results and names cross as =GVariant= values through the
   introspectable =LrgScriptHost= (=imports.gi.Libregnum.script_host_*=).
   Nothing from C is ever spliced into source text, so quotes and newlines in

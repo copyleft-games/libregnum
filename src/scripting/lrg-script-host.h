@@ -46,6 +46,29 @@ LRG_AVAILABLE_IN_ALL
 guint lrg_script_host_register (LrgScripting *scripting);
 
 /**
+ * lrg_script_host_enter_script: (skip)
+ *
+ * Marks the start of an interpreter run whose own logging (for example Gjs
+ * reporting a script exception as a warning) must not abort the process:
+ * CRITICAL and WARNING leave the always-fatal mask.  Host functions called
+ * from that run still execute under the mask the outermost caller had, so
+ * engine CRITICALs stay fatal where the caller wanted them to be.
+ *
+ * Returns: the mask to hand back to lrg_script_host_leave_script()
+ */
+LRG_AVAILABLE_IN_ALL
+GLogLevelFlags lrg_script_host_enter_script (void);
+
+/**
+ * lrg_script_host_leave_script: (skip)
+ * @previous: the value lrg_script_host_enter_script() returned
+ *
+ * Ends a run started with lrg_script_host_enter_script().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_script_host_leave_script (GLogLevelFlags previous);
+
+/**
  * lrg_script_host_unregister: (skip)
  * @id: a bridge id
  *

@@ -42,6 +42,10 @@ static GMutex      host_lock;
 static GHashTable *host_slots;  /* guint id -> HostSlot */
 static guint       host_next_id = 1;
 
+/* Interpreter runs in progress (main thread) and the mask before the first */
+static guint          script_depth;
+static GLogLevelFlags script_outer_fatal_mask;
+
 /* Frees a slot with everything it holds */
 static void
 host_slot_free (gpointer data)
@@ -53,6 +57,27 @@ host_slot_free (gpointer data)
     g_clear_pointer (&slot->functions, g_hash_table_unref);
     g_clear_pointer (&slot->objects, g_hash_table_unref);
     g_free (slot);
+}
+
+GLogLevelFlags
+lrg_script_host_enter_script (void)
+{
+    GLogLevelFlags previous;
+
+    previous = g_log_set_always_fatal (G_LOG_FATAL_MASK & ~(G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING));
+    if (script_depth++ == 0)
+    {
+        script_outer_fatal_mask = previous;
+    }
+    return previous;
+}
+
+void
+lrg_script_host_leave_script (GLogLevelFlags previous)
+{
+    g_return_if_fail (script_depth > 0);
+    script_depth--;
+    g_log_set_always_fatal (previous);
 }
 
 /* Looks up a slot; the caller holds host_lock */
@@ -362,7 +387,18 @@ lrg_script_host_call (guint         id,
         }
     }
 
-    ok = host.func (scripting, (guint)n_args, values, &result, host.user_data, error);
+    /* Host code runs under the caller's fatal mask, not the script's */
+    if (script_depth > 0)
+    {
+        GLogLevelFlags during = g_log_set_always_fatal (script_outer_fatal_mask);
+
+        ok = host.func (scripting, (guint)n_args, values, &result, host.user_data, error);
+        g_log_set_always_fatal (during);
+    }
+    else
+    {
+        ok = host.func (scripting, (guint)n_args, values, &result, host.user_data, error);
+    }
 
     for (i = 0; i < n_args; i++)
     {
