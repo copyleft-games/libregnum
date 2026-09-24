@@ -157,6 +157,11 @@ c_function_wrapper (PyObject *capsule, PyObject *args)
         PyErr_SetString (PyExc_RuntimeError, "Invalid C function registration");
         return NULL;
     }
+    if (reg->scripting == NULL)
+    {
+        PyErr_Format (PyExc_RuntimeError, "'%s' is no longer registered in this context", reg->name);
+        return NULL;
+    }
 
     /* Get arguments */
     n_args = PyTuple_Size (args);
@@ -200,6 +205,9 @@ c_function_wrapper (PyObject *capsule, PyObject *args)
     if (!success)
     {
         const gchar *msg = error ? error->message : "Unknown error";
+        /* A failing callee may still have set the return value */
+        if (G_IS_VALUE (&return_value))
+            g_value_unset (&return_value);
         PyErr_SetString (PyExc_RuntimeError, msg);
         return NULL;
     }
@@ -216,14 +224,37 @@ c_function_wrapper (PyObject *capsule, PyObject *args)
 }
 
 /*
- * Free a RegisteredCFunction.
+ * RegisteredCFunction lifetime: the context's table holds one reference and
+ * every Python callable made for it another, because scripts may keep a
+ * callable (an alias, a stored callback) after the context re-registers
+ * the name, resets or dies.
  */
+static RegisteredCFunction *
+registered_func_ref (RegisteredCFunction *reg)
+{
+    g_atomic_int_inc (&reg->ref_count);
+    return reg;
+}
+
 static void
-registered_func_free (gpointer data)
+registered_func_unref (gpointer data)
 {
     RegisteredCFunction *reg = (RegisteredCFunction *)data;
+
+    if (!g_atomic_int_dec_and_test (&reg->ref_count))
+        return;
     g_free (reg->name);
     g_free (reg);
+}
+
+/* The context forgets a registration: callables still alive now fail cleanly. */
+static void
+registered_func_release (gpointer data)
+{
+    RegisteredCFunction *reg = (RegisteredCFunction *)data;
+
+    reg->scripting = NULL;
+    registered_func_unref (reg);
 }
 
 /* ==========================================================================
@@ -470,6 +501,7 @@ lrg_scripting_python_register_function (LrgScripting           *scripting,
 
     /* Create registration data */
     reg = g_new0 (RegisteredCFunction, 1);
+    reg->ref_count = 1;
     reg->scripting = self;
     reg->func = func;
     reg->user_data = user_data;
@@ -481,8 +513,9 @@ lrg_scripting_python_register_function (LrgScripting           *scripting,
     /* Create a callable with its own method definition */
     py_func = lrg_python_new_c_function (name,
                                          (PyCFunction)c_function_wrapper,
-                                         reg,
-                                         "RegisteredCFunction");
+                                         registered_func_ref (reg),
+                                         "RegisteredCFunction",
+                                         registered_func_unref);
     if (py_func == NULL)
     {
         g_set_error (error,
@@ -718,7 +751,7 @@ lrg_scripting_python_init (LrgScriptingPython *self)
     self->update_hooks = g_ptr_array_new_with_free_func (g_free);
     self->search_paths = g_ptr_array_new_with_free_func (g_free);
     self->registered_funcs = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                                     g_free, registered_func_free);
+                                                     g_free, registered_func_release);
     self->initialized = FALSE;
 
     /* Initialize Python */

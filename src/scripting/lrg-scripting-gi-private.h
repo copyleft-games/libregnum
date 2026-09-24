@@ -29,7 +29,8 @@ G_BEGIN_DECLS
  */
 typedef struct
 {
-    LrgScriptingGI        *scripting;   /* Weak reference */
+    gint                   ref_count;   /* the context's table and each callable */
+    LrgScriptingGI        *scripting;   /* NULL once the context dropped it */
     LrgScriptingCFunction  func;        /* C function pointer */
     gpointer               user_data;   /* User data */
     gchar                 *name;        /* Function name */
@@ -123,6 +124,15 @@ void lrg_scripting_gi_set_interpreter_initialized (LrgScriptingGI *self,
  *
  * Returns: (transfer none): the registration data (owned by the hash table)
  */
+/*
+ * References for Python callables that outlive a registration's context
+ * (see lrg_python_new_c_function()).  The context's own reference is
+ * dropped, and @scripting cleared, when the name is re-registered or the
+ * context resets or dies.
+ */
+RegisteredCFunctionGI * lrg_scripting_gi_registered_function_ref (RegisteredCFunctionGI *reg);
+void lrg_scripting_gi_registered_function_unref (gpointer reg);
+
 RegisteredCFunctionGI * lrg_scripting_gi_add_registered_function (LrgScriptingGI        *self,
                                                                   const gchar           *name,
                                                                   LrgScriptingCFunction  func,

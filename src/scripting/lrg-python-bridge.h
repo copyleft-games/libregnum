@@ -192,17 +192,21 @@ PyObject * lrg_python_new_globals (void);
  * @meth: the C trampoline
  * @capsule_data: pointer stored in the bound capsule
  * @capsule_name: the capsule name used to retrieve @capsule_data
+ * @release: (nullable): called with @capsule_data when the capsule dies
+ *   (also when creation fails), so the callable can own a reference
  *
  * Creates a Python callable bound to a capsule.  Each callable owns a
  * private heap #PyMethodDef (freed with the capsule), so registered
  * functions keep their own `__name__` and never alias a shared static
- * definition.
+ * definition.  Python code may keep the callable after its context resets
+ * or dies, so @capsule_data must stay valid until @release runs.
  *
  * Returns: (transfer full) (nullable): the new callable
  */
-PyObject * lrg_python_new_c_function (const gchar *name,
-                                      PyCFunction  meth,
-                                      gpointer     capsule_data,
-                                      const gchar *capsule_name);
+PyObject * lrg_python_new_c_function (const gchar    *name,
+                                      PyCFunction     meth,
+                                      gpointer        capsule_data,
+                                      const gchar    *capsule_name,
+                                      GDestroyNotify  release);
 
 G_END_DECLS

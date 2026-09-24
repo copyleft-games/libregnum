@@ -70,6 +70,11 @@ pygobject_c_function_wrapper (PyObject *capsule,
         PyErr_SetString (PyExc_RuntimeError, "Invalid C function registration");
         return NULL;
     }
+    if (reg->scripting == NULL)
+    {
+        PyErr_Format (PyExc_RuntimeError, "'%s' is no longer registered in this context", reg->name);
+        return NULL;
+    }
 
     /* Get arguments */
     n_args = PyTuple_Size (args);
@@ -113,6 +118,9 @@ pygobject_c_function_wrapper (PyObject *capsule,
     if (!success)
     {
         const gchar *msg = error ? error->message : "Unknown error";
+        /* A failing callee may still have set the return value */
+        if (G_IS_VALUE (&return_value))
+            g_value_unset (&return_value);
         PyErr_SetString (PyExc_RuntimeError, msg);
         return NULL;
     }
@@ -764,8 +772,9 @@ lrg_scripting_pygobject_register_function (LrgScripting           *scripting,
     /* Create a callable with its own method definition */
     py_func = lrg_python_new_c_function (name,
                                          (PyCFunction)pygobject_c_function_wrapper,
-                                         reg,
-                                         "RegisteredCFunctionGI");
+                                         lrg_scripting_gi_registered_function_ref (reg),
+                                         "RegisteredCFunctionGI",
+                                         lrg_scripting_gi_registered_function_unref);
     if (py_func == NULL)
     {
         g_set_error (error,

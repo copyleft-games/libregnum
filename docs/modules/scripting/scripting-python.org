@@ -76,6 +76,11 @@ lrg_scripting_load_string (LRG_SCRIPTING (scripting), "create",
     NULL);
 #+end_src
 
+** What contexts share
+Each context has its own globals dictionary, so top-level names, functions and =reset()= never touch another context. The embedded interpreter itself is shared: =sys.path=, =sys.modules=, =builtins= and imported modules are process-wide. Two contexts that each ship a helper module named =util.py= therefore get whichever =util= was imported first. Give helper modules names unique to their owner (for example a package named after the mod id). Search paths added by a context stay on =sys.path= after it resets.
+
+Registered C functions stay safe when a script keeps a reference to them. Each Python callable holds its own reference to the registration. After the name is registered again, or the context resets or is finalized, an old callable raises =RuntimeError= instead of calling into freed data.
+
 ** Search Paths
 :PROPERTIES:
 :CUSTOM_ID: search-paths

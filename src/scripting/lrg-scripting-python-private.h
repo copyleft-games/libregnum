@@ -27,7 +27,8 @@ G_BEGIN_DECLS
  */
 typedef struct
 {
-    LrgScriptingPython    *scripting;   /* Weak reference to scripting context */
+    gint                   ref_count;   /* the context's table and each callable */
+    LrgScriptingPython    *scripting;   /* NULL once the context dropped it */
     LrgScriptingCFunction  func;        /* The C function to call */
     gpointer               user_data;   /* User data to pass to the function */
     gchar                 *name;        /* Function name for error messages */

@@ -23,16 +23,32 @@ G_DEFINE_TYPE_WITH_PRIVATE (LrgScriptingGI, lrg_scripting_gi, LRG_TYPE_SCRIPTING
  * Private Helper Functions
  * ========================================================================== */
 
-/*
- * Free a RegisteredCFunctionGI.
- */
-static void
-registered_func_free (gpointer data)
+RegisteredCFunctionGI *
+lrg_scripting_gi_registered_function_ref (RegisteredCFunctionGI *reg)
+{
+    g_atomic_int_inc (&reg->ref_count);
+    return reg;
+}
+
+void
+lrg_scripting_gi_registered_function_unref (gpointer data)
 {
     RegisteredCFunctionGI *reg = (RegisteredCFunctionGI *)data;
 
+    if (!g_atomic_int_dec_and_test (&reg->ref_count))
+        return;
     g_free (reg->name);
     g_free (reg);
+}
+
+/* The context forgets a registration: callables still alive now fail cleanly. */
+static void
+registered_func_release (gpointer data)
+{
+    RegisteredCFunctionGI *reg = (RegisteredCFunctionGI *)data;
+
+    reg->scripting = NULL;
+    lrg_scripting_gi_registered_function_unref (reg);
 }
 
 /*
@@ -165,7 +181,8 @@ lrg_scripting_gi_add_registered_function (LrgScriptingGI        *self,
     priv = lrg_scripting_gi_get_instance_private (self);
 
     reg = g_new0 (RegisteredCFunctionGI, 1);
-    reg->scripting = self;  /* Weak reference */
+    reg->ref_count = 1;
+    reg->scripting = self;  /* cleared when the table drops it */
     reg->func = func;
     reg->user_data = user_data;
     reg->name = g_strdup (name);
@@ -471,7 +488,7 @@ lrg_scripting_gi_init (LrgScriptingGI *self)
     priv->search_paths = g_ptr_array_new_with_free_func (g_free);
     priv->search_paths_null_term = g_new0 (gchar *, 1);
     priv->registered_funcs = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                                     g_free, registered_func_free);
+                                                     g_free, registered_func_release);
     priv->loaded_typelibs = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                     g_free, g_free);
     /* GIRepository 3.0 (GLib >= 2.86): dup_default() returns an owned ref,

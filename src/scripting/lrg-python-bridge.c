@@ -1173,16 +1173,24 @@ lrg_python_new_globals (void)
  * Capsule destructor: frees the private method definition kept in the
  * capsule context.  The capsule pointer itself belongs to the backend.
  */
+typedef struct
+{
+    PyMethodDef    def;       /* first: PyCFunction_New keeps a pointer to it */
+    GDestroyNotify release;   /* drops the capsule's reference to its data */
+} CFunctionContext;
+
 static void
 c_function_capsule_free (PyObject *capsule)
 {
-    PyMethodDef *def;
+    CFunctionContext *ctx;
 
-    def = (PyMethodDef *)PyCapsule_GetContext (capsule);
-    if (def != NULL)
+    ctx = (CFunctionContext *)PyCapsule_GetContext (capsule);
+    if (ctx != NULL)
     {
-        g_free ((gchar *)def->ml_name);
-        g_free (def);
+        if (ctx->release != NULL)
+            ctx->release (PyCapsule_GetPointer (capsule, PyCapsule_GetName (capsule)));
+        g_free ((gchar *)ctx->def.ml_name);
+        g_free (ctx);
     }
 }
 
@@ -1199,31 +1207,38 @@ c_function_capsule_free (PyObject *capsule)
  * Returns: (transfer full) (nullable): the new callable
  */
 PyObject *
-lrg_python_new_c_function (const gchar *name,
-                           PyCFunction  meth,
-                           gpointer     capsule_data,
-                           const gchar *capsule_name)
+lrg_python_new_c_function (const gchar    *name,
+                           PyCFunction     meth,
+                           gpointer        capsule_data,
+                           const gchar    *capsule_name,
+                           GDestroyNotify  release)
 {
-    PyMethodDef *def;
-    PyObject    *capsule;
-    PyObject    *func;
+    CFunctionContext *ctx;
+    PyObject         *capsule;
+    PyObject         *func;
 
     g_return_val_if_fail (name != NULL, NULL);
     g_return_val_if_fail (meth != NULL, NULL);
 
-    /* The capsule owns the heap definition; the function owns the capsule */
+    /* The capsule owns the heap definition and a reference to its data;
+     * the function owns the capsule */
     capsule = PyCapsule_New (capsule_data, capsule_name, c_function_capsule_free);
     if (capsule == NULL)
+    {
+        if (release != NULL)
+            release (capsule_data);
         return NULL;
+    }
 
-    def = g_new0 (PyMethodDef, 1);
-    def->ml_name = g_strdup (name);
-    def->ml_meth = meth;
-    def->ml_flags = METH_VARARGS;
-    def->ml_doc = NULL;
-    PyCapsule_SetContext (capsule, def);
+    ctx = g_new0 (CFunctionContext, 1);
+    ctx->def.ml_name = g_strdup (name);
+    ctx->def.ml_meth = meth;
+    ctx->def.ml_flags = METH_VARARGS;
+    ctx->def.ml_doc = NULL;
+    ctx->release = release;
+    PyCapsule_SetContext (capsule, ctx);
 
-    func = PyCFunction_New (def, capsule);
+    func = PyCFunction_New (&ctx->def, capsule);
     Py_DECREF (capsule);
     return func;
 }

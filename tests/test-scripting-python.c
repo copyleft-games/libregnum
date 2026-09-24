@@ -808,6 +808,63 @@ test_scripting_python_function_names_and_none (ScriptingFixture *fixture,
     g_value_unset (&value);
 }
 
+/*
+ * A script may keep a registered callable (an alias, a module attribute)
+ * after the name is registered again or the context resets: calling it
+ * then raises RuntimeError instead of touching freed registration data.
+ */
+static void
+test_scripting_python_stale_callables (ScriptingFixture *fixture,
+                                       gconstpointer     user_data)
+{
+    LrgScripting     *ctx = LRG_SCRIPTING (fixture->scripting);
+    g_autoptr(GError) error = NULL;
+    GValue value = G_VALUE_INIT;
+
+    (void)user_data;
+
+    g_assert_true (lrg_scripting_register_function (ctx, "sum_all", test_c_function, NULL, &error));
+    g_assert_true (lrg_scripting_load_string (ctx, "keep",
+        "import sys, types\n"
+        "old_sum = sum_all\n"
+        "keeper = types.ModuleType('lrg_test_keeper')\n"
+        "keeper.f = sum_all\n"
+        "sys.modules['lrg_test_keeper'] = keeper\n", &error));
+    g_assert_no_error (error);
+
+    /* Re-registering replaces the name; the alias fails cleanly */
+    g_assert_true (lrg_scripting_register_function (ctx, "sum_all", test_c_function, NULL, &error));
+    g_assert_true (lrg_scripting_load_string (ctx, "stale",
+        "try:\n"
+        "    old_sum(1)\n"
+        "    outcome = 'called'\n"
+        "except RuntimeError as e:\n"
+        "    outcome = 'raised'\n"
+        "fresh = sum_all(2, 3)\n", &error));
+    g_assert_no_error (error);
+    g_assert_true (lrg_scripting_get_global (ctx, "outcome", &value, &error));
+    g_assert_cmpstr (g_value_get_string (&value), ==, "raised");
+    g_value_unset (&value);
+    g_assert_true (lrg_scripting_get_global (ctx, "fresh", &value, &error));
+    g_assert_cmpfloat_with_epsilon (get_numeric_value (&value), 5.0, 0.001);
+    g_value_unset (&value);
+
+    /* The module outlives a reset; its callable raises, nothing crashes */
+    lrg_scripting_reset (ctx);
+    g_assert_true (lrg_scripting_load_string (ctx, "after-reset",
+        "import sys\n"
+        "try:\n"
+        "    sys.modules['lrg_test_keeper'].f(1)\n"
+        "    outcome = 'called'\n"
+        "except RuntimeError:\n"
+        "    outcome = 'raised'\n"
+        "del sys.modules['lrg_test_keeper']\n", &error));
+    g_assert_no_error (error);
+    g_assert_true (lrg_scripting_get_global (ctx, "outcome", &value, &error));
+    g_assert_cmpstr (g_value_get_string (&value), ==, "raised");
+    g_value_unset (&value);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -894,6 +951,12 @@ main (int   argc,
                 ScriptingFixture, NULL,
                 scripting_fixture_set_up,
                 test_scripting_python_reset,
+                scripting_fixture_tear_down);
+
+    g_test_add ("/scripting-python/stale-callables",
+                ScriptingFixture, NULL,
+                scripting_fixture_set_up,
+                test_scripting_python_stale_callables,
                 scripting_fixture_tear_down);
 
     /* Engine integration */
