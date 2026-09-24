@@ -277,13 +277,68 @@ order_pick (OrderNode *nodes,
     return best;
 }
 
+/* Places @node: appends its id and releases the mods ordered after it */
+static void
+order_place (OrderNode *nodes,
+             guint      node,
+             GPtrArray *result)
+{
+    guint j;
+
+    nodes[node].placed = TRUE;
+    for (j = 0; j < nodes[node].before->len; j++)
+    {
+        guint later = GPOINTER_TO_UINT (g_ptr_array_index (nodes[node].before, j));
+
+        if (nodes[later].in_degree > 0)
+            nodes[later].in_degree--;
+    }
+    g_ptr_array_add (result, g_strdup (lrg_mod_get_id (nodes[node].mod)));
+}
+
+/* TRUE when @to is reachable from @from through unplaced nodes (one edge at least) */
+static gboolean
+order_reaches (OrderNode *nodes,
+               guint      n_nodes,
+               guint      from,
+               guint      to)
+{
+    g_autofree gboolean *seen = g_new0 (gboolean, n_nodes);
+    g_autoptr(GArray)    stack = g_array_new (FALSE, FALSE, sizeof (guint));
+    guint                j;
+
+    g_array_append_val (stack, from);
+    while (stack->len > 0)
+    {
+        guint node = g_array_index (stack, guint, stack->len - 1);
+
+        g_array_set_size (stack, stack->len - 1);
+        for (j = 0; j < nodes[node].before->len; j++)
+        {
+            guint later = GPOINTER_TO_UINT (g_ptr_array_index (nodes[node].before, j));
+
+            if (nodes[later].placed)
+                continue;
+            if (later == to)
+                return TRUE;
+            if (!seen[later])
+            {
+                seen[later] = TRUE;
+                g_array_append_val (stack, later);
+            }
+        }
+    }
+    return FALSE;
+}
+
 /*
  * Computes the load order over every discovered mod (enabled or not, so
  * toggling a mod later needs no recomputation).  Dependencies (required and
  * optional, when present), load_after and load_before are hard edges; among
  * mods that are free to load, priority and then discovery order decide.  A
- * cycle cannot be ordered: its members are recorded in cycle_ids and placed
- * last by the same tiebreak, and load_all() fails them.
+ * cycle cannot be ordered: exactly its members are recorded in cycle_ids and
+ * placed together where the order stalls, and load_all() fails them; mods
+ * that only depend on a cycle keep their normal position.
  */
 static GPtrArray *
 compute_load_order (LrgModManager *self)
@@ -345,28 +400,43 @@ compute_load_order (LrgModManager *self)
 
     /* Kahn's algorithm with a deterministic choice among ready mods */
     result = g_ptr_array_new_with_free_func (g_free);
-    for (i = 0; i < n_nodes; i++)
+    while (result->len < n_nodes)
     {
         guint next = order_pick (nodes, n_nodes, TRUE);
 
         if (next == G_MAXUINT)
         {
-            /* Only cycle members remain unplaced */
-            next = order_pick (nodes, n_nodes, FALSE);
-            g_hash_table_add (self->cycle_ids, g_strdup (lrg_mod_get_id (nodes[next].mod)));
-            lrg_info (LRG_LOG_DOMAIN_MOD, "Mod %s is part of a dependency cycle",
-                      lrg_mod_get_id (nodes[next].mod));
-        }
+            /*
+             * Stalled: exactly the unplaced mods that reach themselves are
+             * in a cycle.  They are placed together (by the usual tiebreak)
+             * and fail at load; mods merely downstream of a cycle stay in
+             * the normal order and fail only through their dependencies.
+             */
+            gboolean *in_cycle = g_new0 (gboolean, n_nodes);
 
-        nodes[next].placed = TRUE;
-        for (j = 0; j < nodes[next].before->len; j++)
-        {
-            guint later = GPOINTER_TO_UINT (g_ptr_array_index (nodes[next].before, j));
+            for (i = 0; i < n_nodes; i++)
+                if (!nodes[i].placed)
+                    in_cycle[i] = order_reaches (nodes, n_nodes, i, i);
+            for (;;)
+            {
+                guint member = G_MAXUINT;
 
-            if (nodes[later].in_degree > 0)
-                nodes[later].in_degree--;
+                for (i = 0; i < n_nodes; i++)
+                    if (in_cycle[i] && !nodes[i].placed &&
+                        (member == G_MAXUINT || nodes[i].priority < nodes[member].priority ||
+                         (nodes[i].priority == nodes[member].priority && nodes[i].index < nodes[member].index)))
+                        member = i;
+                if (member == G_MAXUINT)
+                    break;
+                g_hash_table_add (self->cycle_ids, g_strdup (lrg_mod_get_id (nodes[member].mod)));
+                lrg_info (LRG_LOG_DOMAIN_MOD, "Mod %s is part of a dependency cycle",
+                          lrg_mod_get_id (nodes[member].mod));
+                order_place (nodes, member, result);
+            }
+            g_free (in_cycle);
+            continue;
         }
-        g_ptr_array_add (result, g_strdup (lrg_mod_get_id (nodes[next].mod)));
+        order_place (nodes, next, result);
     }
 
     for (i = 0; i < n_nodes; i++)
@@ -384,6 +454,19 @@ on_mod_prepare_scripting (LrgMod        *mod,
                           LrgModManager *self)
 {
     g_signal_emit (self, signals[SIGNAL_MOD_PREPARE_SCRIPTING], 0, mod, scripting);
+}
+
+/* A mod's index in the computed load order (G_MAXUINT when absent) */
+static guint
+load_order_position (LrgModManager *self,
+                     const gchar   *mod_id)
+{
+    guint i;
+
+    for (i = 0; i < self->load_order->len; i++)
+        if (g_strcmp0 (g_ptr_array_index (self->load_order, i), mod_id) == 0)
+            return i;
+    return G_MAXUINT;
 }
 
 /* Records a failure on @mod and tells listeners */
@@ -409,6 +492,10 @@ lrg_mod_manager_discover (LrgModManager  *self,
     guint i;
 
     g_return_val_if_fail (LRG_IS_MOD_MANAGER (self), 0);
+
+    /* Mods about to be dropped are unloaded properly first (their shutdown
+     * hooks run, and loaded_mods never points at freed mods) */
+    lrg_mod_manager_unload_all (self);
 
     /* Clear existing mods */
     g_hash_table_remove_all (self->mods_by_id);
@@ -555,7 +642,17 @@ load_one (LrgModManager *self,
         return FALSE;
     }
 
-    g_ptr_array_add (self->loaded_mods, mod);
+    /* Keep loaded_mods in load order (a reloaded mod returns to its place),
+     * so shutdown still unloads dependents before their dependencies */
+    {
+        guint position = load_order_position (self, lrg_mod_get_id (mod));
+        guint at;
+
+        for (at = 0; at < self->loaded_mods->len; at++)
+            if (load_order_position (self, lrg_mod_get_id (g_ptr_array_index (self->loaded_mods, at))) > position)
+                break;
+        g_ptr_array_insert (self->loaded_mods, (gint)at, mod);
+    }
     g_signal_emit (self, signals[SIGNAL_MOD_LOADED], 0, mod);
     return TRUE;
 }

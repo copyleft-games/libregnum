@@ -636,7 +636,8 @@ lrg_mod_real_load (LrgMod   *self,
         priv->state = LRG_MOD_STATE_FAILED;
         if (error != NULL && *error != NULL)
             priv->error_message = g_strdup ((*error)->message);
-        lrg_warning (LRG_LOG_DOMAIN_MOD, "Failed to load mod: %s - %s",
+        /* An expected mod error (bad script): reported, never fatal in tests */
+        lrg_info (LRG_LOG_DOMAIN_MOD, "Failed to load mod: %s - %s",
                      lrg_mod_get_id (self), priv->error_message);
     }
 
@@ -922,6 +923,12 @@ lrg_mod_get_scripting (LrgMod *self)
  * Unloads the mod if it is loaded and records it as failed with @message.
  * Hosts use this when a loaded mod misbehaves at runtime (for example after
  * repeated script errors) or when a dependency could not be satisfied.
+ *
+ * Unloading resets the mod's scripting context (closing a native module,
+ * tearing down a Lua state).  Never call this while the mod's own code is
+ * on the stack, for example from a host function the mod just called:
+ * record the failure and unload once that call has returned.  The same
+ * applies to lrg_mod_manager_unload_mod() and lrg_mod_manager_reload_mod().
  */
 void
 lrg_mod_mark_failed (LrgMod      *self,

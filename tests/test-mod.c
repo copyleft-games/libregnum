@@ -1006,6 +1006,71 @@ test_manager_cycles_and_failed_dependencies (ManagerFixture *fixture,
     g_signal_handlers_disconnect_by_data (fixture->manager, log);
 }
 
+/*
+ * Only true cycle members fail.  "c" (discovered first) merely loads after a
+ * member of the a <-> b cycle; it must keep loading, after the cycle.
+ */
+static void
+test_manager_cycle_members_only (ManagerFixture *fixture,
+                                 gconstpointer   user_data)
+{
+    g_autofree gchar *dir_c = g_build_filename (fixture->test_dir, "1-c", NULL);
+    g_autofree gchar *dir_a = g_build_filename (fixture->test_dir, "2-a", NULL);
+    g_autofree gchar *dir_b = g_build_filename (fixture->test_dir, "3-b", NULL);
+    GPtrArray *order;
+
+    (void)user_data;
+
+    write_raw_manifest (dir_c, "id: c\ntype: data\nload_after: [a]\n");
+    write_raw_manifest (dir_a, "id: a\ntype: data\nload_after: [b]\n");
+    write_raw_manifest (dir_b, "id: b\ntype: data\nload_after: [a]\n");
+    lrg_mod_manager_add_search_path (fixture->manager, fixture->test_dir);
+    lrg_mod_manager_discover (fixture->manager, NULL);
+
+    g_assert_false (lrg_mod_manager_load_all (fixture->manager, NULL));
+    g_assert_cmpstr (lrg_mod_get_error (lrg_mod_manager_get_mod (fixture->manager, "a")),
+                     ==, "Circular dependency between mods");
+    g_assert_cmpstr (lrg_mod_get_error (lrg_mod_manager_get_mod (fixture->manager, "b")),
+                     ==, "Circular dependency between mods");
+    g_assert_true (lrg_mod_is_loaded (lrg_mod_manager_get_mod (fixture->manager, "c")));
+
+    order = lrg_mod_manager_get_load_order (fixture->manager);
+    g_assert_cmpuint (order->len, ==, 3);
+    g_assert_cmpstr (g_ptr_array_index (order, 0), ==, "a");
+    g_assert_cmpstr (g_ptr_array_index (order, 1), ==, "b");
+    g_assert_cmpstr (g_ptr_array_index (order, 2), ==, "c");
+}
+
+/* A reloaded dependency returns to its place: dependents still unload first. */
+static void
+test_manager_reload_keeps_order (ManagerFixture *fixture,
+                                 gconstpointer   user_data)
+{
+    g_autofree gchar *dir_base = g_build_filename (fixture->test_dir, "base", NULL);
+    g_autofree gchar *dir_top = g_build_filename (fixture->test_dir, "top", NULL);
+    g_autoptr(GError) error = NULL;
+    GPtrArray *loaded;
+
+    (void)user_data;
+
+    write_raw_manifest (dir_base, "id: base\ntype: data\n");
+    write_raw_manifest (dir_top, "id: top\ntype: data\ndependencies:\n  - base\n");
+    lrg_mod_manager_add_search_path (fixture->manager, fixture->test_dir);
+    lrg_mod_manager_discover (fixture->manager, NULL);
+    g_assert_true (lrg_mod_manager_load_all (fixture->manager, NULL));
+
+    g_assert_true (lrg_mod_manager_reload_mod (fixture->manager, "base", &error));
+    g_assert_no_error (error);
+    loaded = lrg_mod_manager_get_loaded_mods (fixture->manager);
+    g_assert_cmpuint (loaded->len, ==, 2);
+    g_assert_cmpstr (lrg_mod_get_id (g_ptr_array_index (loaded, 0)), ==, "base");
+    g_assert_cmpstr (lrg_mod_get_id (g_ptr_array_index (loaded, 1)), ==, "top");
+
+    /* Rediscovery unloads what was loaded instead of dropping it */
+    lrg_mod_manager_discover (fixture->manager, NULL);
+    g_assert_cmpuint (lrg_mod_manager_get_loaded_mods (fixture->manager)->len, ==, 0);
+}
+
 static void
 test_manager_disabled_survives_discover (ManagerFixture *fixture,
                                          gconstpointer   user_data)
@@ -1366,6 +1431,12 @@ main (int   argc,
                 manager_fixture_tear_down);
     g_test_add ("/mod/manager/cycles-and-failed-dependencies", ManagerFixture, NULL,
                 manager_fixture_set_up, test_manager_cycles_and_failed_dependencies,
+                manager_fixture_tear_down);
+    g_test_add ("/mod/manager/cycle-members-only", ManagerFixture, NULL,
+                manager_fixture_set_up, test_manager_cycle_members_only,
+                manager_fixture_tear_down);
+    g_test_add ("/mod/manager/reload-keeps-order", ManagerFixture, NULL,
+                manager_fixture_set_up, test_manager_reload_keeps_order,
                 manager_fixture_tear_down);
     g_test_add ("/mod/manager/disabled-survives-discover", ManagerFixture, NULL,
                 manager_fixture_set_up, test_manager_disabled_survives_discover,
