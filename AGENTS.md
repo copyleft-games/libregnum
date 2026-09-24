@@ -541,6 +541,35 @@ server simulation as well as a single-player game.
 See `docs/modules/{quest,progression,profession,collection}/index.org` and
 `docs/modules/core/reset-schedule.org`.
 
+### Scripting Hosts and Script Mods
+
+Everything a plugin/addon host needs, driven through the generic API only:
+
+- **Backends**: Lua, Python/PyGObject, Gjs, Crispy (C compiled at load) and
+  native `.so`. `lrg_scripting_manager_language_for_path()` picks one from a
+  file extension; `is_available()` says whether this build has it (Python and
+  Gjs need `HAS_GI`; native is always there).
+- **Isolation**: every context is private. Python contexts own a globals
+  dict. Gjs contexts share the one runtime Gjs allows per thread but run in
+  private scopes via the `LrgScriptHost` bridge (needs `Libregnum-1.typelib`
+  and `Graylib-1.typelib`; the build copies both into `build/*/gir`).
+- **Generic ops**: `lrg_scripting_add_search_path()` (Lua `package.path`,
+  `sys.path`, Gjs search path, Crispy `-I`) and `lrg_scripting_has_function()`
+  for optional entry points. nil/None/null reach C as a NULL `G_TYPE_POINTER`.
+- **C ABI**: compiled scripts export `LrgNativeFunction`
+  (`gboolean fn (struct _LrgScripting *, guint, const GValue *, GValue *ret,
+  GError **)`); `ret` is uninitialized, leave it unset for "no value". They
+  call host functions with `lrg_scripting_native_call_host()`.
+- **Script mods**: `type: script` + `entry_point`. Connect
+  `LrgModManager::mod-prepare-scripting` to register API functions before
+  the entry runs; `lrg_mod_init`/`lrg_mod_shutdown` are optional hooks.
+  Load order is a topological sort (priority breaks ties only); failed
+  requirements and cycles fail individual mods; `lrg_mod_mark_failed()`,
+  `reload_mod()`, persistent `disable_mod()`, implicit single-file folders,
+  and `lrg_mod_manifest_get_extra()` (all keys as `a{sv}`) support game
+  hosts. See `docs/modules/scripting/scripting-native.org` and
+  `docs/modules/mod/`.
+
 ### Static World Collision and Model Rendering
 
 Generic building blocks for MMO-style worlds: a server-side collision world
