@@ -9,6 +9,7 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <string.h>
 #include <libregnum.h>
 
 /* ==========================================================================
@@ -849,6 +850,412 @@ test_console_command_gtype (void)
  * Main
  * ========================================================================== */
 
+/* ==========================================================================
+ * Load Order, Failure Handling, Script Mods and Extras
+ * ========================================================================== */
+
+/* Writes a manifest with free-form YAML (no defaults added) */
+static void
+write_raw_manifest (const gchar *mod_dir,
+                    const gchar *yaml)
+{
+    g_autofree gchar *path = NULL;
+
+    g_mkdir_with_parents (mod_dir, 0755);
+    path = g_build_filename (mod_dir, "mod.yaml", NULL);
+    g_assert_true (g_file_set_contents (path, yaml, -1, NULL));
+}
+
+/* Writes a file inside a mod folder */
+static void
+write_mod_file (const gchar *mod_dir,
+                const gchar *name,
+                const gchar *contents)
+{
+    g_autofree gchar *path = NULL;
+
+    g_mkdir_with_parents (mod_dir, 0755);
+    path = g_build_filename (mod_dir, name, NULL);
+    g_assert_true (g_file_set_contents (path, contents, -1, NULL));
+}
+
+/* Joins the computed load order into "a,b,c" */
+static gchar *
+load_order_string (LrgModManager *manager)
+{
+    g_autoptr(GPtrArray) order = lrg_mod_manager_get_load_order (manager);
+    GString *out = g_string_new (NULL);
+    guint i;
+
+    for (i = 0; i < order->len; i++)
+    {
+        if (i > 0)
+            g_string_append_c (out, ',');
+        g_string_append (out, g_ptr_array_index (order, i));
+    }
+    return g_string_free (out, FALSE);
+}
+
+static void
+on_loaded (LrgModManager *manager, LrgMod *mod, gpointer user_data)
+{
+    GString *log = user_data;
+
+    (void)manager;
+    g_string_append_printf (log, "%sloaded:%s", log->len > 0 ? " " : "", lrg_mod_get_id (mod));
+}
+
+static void
+on_failed (LrgModManager *manager, LrgMod *mod, gpointer user_data)
+{
+    GString *log = user_data;
+
+    (void)manager;
+    g_string_append_printf (log, "%sfailed:%s", log->len > 0 ? " " : "", lrg_mod_get_id (mod));
+}
+
+static void
+on_unloaded (LrgModManager *manager, LrgMod *mod, gpointer user_data)
+{
+    GString *log = user_data;
+
+    (void)manager;
+    g_string_append_printf (log, "%sunloaded:%s", log->len > 0 ? " " : "", lrg_mod_get_id (mod));
+}
+
+static void
+test_manager_order_dependencies_beat_priority (ManagerFixture *fixture,
+                                               gconstpointer   user_data)
+{
+    g_autofree gchar *dir_a = g_build_filename (fixture->test_dir, "a", NULL);
+    g_autofree gchar *dir_b = g_build_filename (fixture->test_dir, "b", NULL);
+    g_autofree gchar *dir_c = g_build_filename (fixture->test_dir, "c", NULL);
+    g_autofree gchar *dir_d = g_build_filename (fixture->test_dir, "d", NULL);
+    g_autofree gchar *order = NULL;
+
+    (void)user_data;
+
+    /*
+     * "base" has the highest priority value (loads late on its own), but
+     * "addon" depends on it with the lowest value: the dependency must win.
+     * "early" asks to load before "base".  "plain" only has its priority.
+     */
+    write_raw_manifest (dir_a, "id: addon\ntype: data\npriority: lowest\ndependencies:\n  - base\n");
+    write_raw_manifest (dir_b, "id: base\ntype: data\npriority: highest\n");
+    write_raw_manifest (dir_c, "id: early\ntype: data\npriority: highest\nload_before:\n  - base\n");
+    write_raw_manifest (dir_d, "id: plain\ntype: data\npriority: normal\n");
+
+    lrg_mod_manager_add_search_path (fixture->manager, fixture->test_dir);
+    g_assert_cmpuint (lrg_mod_manager_discover (fixture->manager, NULL), ==, 4);
+
+    order = load_order_string (fixture->manager);
+    g_assert_cmpstr (order, ==, "plain,early,base,addon");
+
+    g_assert_true (lrg_mod_manager_load_all (fixture->manager, NULL));
+    g_assert_cmpuint (lrg_mod_manager_get_loaded_mods (fixture->manager)->len, ==, 4);
+}
+
+static void
+test_manager_cycles_and_failed_dependencies (ManagerFixture *fixture,
+                                             gconstpointer   user_data)
+{
+    g_autofree gchar *dir_x = g_build_filename (fixture->test_dir, "x", NULL);
+    g_autofree gchar *dir_y = g_build_filename (fixture->test_dir, "y", NULL);
+    g_autofree gchar *dir_s = g_build_filename (fixture->test_dir, "s", NULL);
+    g_autofree gchar *dir_d = g_build_filename (fixture->test_dir, "d", NULL);
+    g_autofree gchar *dir_o = g_build_filename (fixture->test_dir, "o", NULL);
+    g_autoptr(GString) log = g_string_new (NULL);
+    g_autoptr(GError) error = NULL;
+
+    (void)user_data;
+
+    /* x <-> y is a cycle; "script" has no loadable entry; "dependent" needs it */
+    write_raw_manifest (dir_x, "id: x\ntype: data\ndependencies:\n  - y\n");
+    write_raw_manifest (dir_y, "id: y\ntype: data\ndependencies:\n  - x\n");
+    write_raw_manifest (dir_s, "id: script\ntype: script\nentry_point: missing.lua\n");
+    write_raw_manifest (dir_d, "id: dependent\ntype: data\ndependencies:\n  - script\n  - id: absent\n    optional: true\n");
+    write_raw_manifest (dir_o, "id: ok\ntype: data\n");
+
+    g_signal_connect (fixture->manager, "mod-loaded", G_CALLBACK (on_loaded), log);
+    g_signal_connect (fixture->manager, "mod-failed", G_CALLBACK (on_failed), log);
+
+    lrg_mod_manager_add_search_path (fixture->manager, fixture->test_dir);
+    lrg_mod_manager_discover (fixture->manager, NULL);
+
+    /* Load failures are logged as warnings; they are expected here */
+    g_log_set_always_fatal (G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
+    g_assert_false (lrg_mod_manager_load_all (fixture->manager, &error));
+    g_assert_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_LOAD_FAILED);
+
+    /* Everything is reported; only "ok" loads */
+    g_assert_nonnull (strstr (log->str, "failed:x"));
+    g_assert_nonnull (strstr (log->str, "failed:y"));
+    g_assert_nonnull (strstr (log->str, "failed:script"));
+    g_assert_nonnull (strstr (log->str, "failed:dependent"));
+    g_assert_nonnull (strstr (log->str, "loaded:ok"));
+    g_assert_cmpuint (lrg_mod_manager_get_loaded_mods (fixture->manager)->len, ==, 1);
+
+    g_assert_cmpstr (lrg_mod_get_error (lrg_mod_manager_get_mod (fixture->manager, "x")),
+                     ==, "Circular dependency between mods");
+    g_assert_cmpstr (lrg_mod_get_error (lrg_mod_manager_get_mod (fixture->manager, "dependent")),
+                     ==, "Required dependency failed to load: script");
+    g_assert_cmpint (lrg_mod_get_state (lrg_mod_manager_get_mod (fixture->manager, "dependent")),
+                     ==, LRG_MOD_STATE_FAILED);
+
+    /* The log dies with this test; the manager outlives it */
+    g_signal_handlers_disconnect_by_data (fixture->manager, log);
+}
+
+static void
+test_manager_disabled_survives_discover (ManagerFixture *fixture,
+                                         gconstpointer   user_data)
+{
+    g_autofree gchar *dir_a = g_build_filename (fixture->test_dir, "a", NULL);
+    g_autofree gchar *dir_b = g_build_filename (fixture->test_dir, "b", NULL);
+
+    (void)user_data;
+
+    create_mod_manifest (dir_a, "alpha", NULL);
+    create_mod_manifest (dir_b, "beta", "dependencies:\n  - alpha\n");
+    lrg_mod_manager_add_search_path (fixture->manager, fixture->test_dir);
+
+    /* Disabling before discovery is remembered */
+    g_assert_false (lrg_mod_manager_disable_mod (fixture->manager, "alpha"));
+    lrg_mod_manager_discover (fixture->manager, NULL);
+    g_assert_false (lrg_mod_is_enabled (lrg_mod_manager_get_mod (fixture->manager, "alpha")));
+
+    /* A disabled requirement fails its dependents with a clear reason */
+    g_assert_false (lrg_mod_manager_load_all (fixture->manager, NULL));
+    g_assert_cmpstr (lrg_mod_get_error (lrg_mod_manager_get_mod (fixture->manager, "beta")),
+                     ==, "Required dependency is disabled: alpha");
+
+    /* Rediscovery keeps the choice; enabling clears it */
+    lrg_mod_manager_unload_all (fixture->manager);
+    lrg_mod_manager_discover (fixture->manager, NULL);
+    g_assert_false (lrg_mod_is_enabled (lrg_mod_manager_get_mod (fixture->manager, "alpha")));
+    g_assert_true (lrg_mod_manager_enable_mod (fixture->manager, "alpha"));
+    lrg_mod_manager_discover (fixture->manager, NULL);
+    g_assert_true (lrg_mod_is_enabled (lrg_mod_manager_get_mod (fixture->manager, "alpha")));
+    g_assert_true (lrg_mod_manager_load_all (fixture->manager, NULL));
+}
+
+static void
+test_loader_invalid_and_implicit (ManagerFixture *fixture,
+                                  gconstpointer   user_data)
+{
+    g_autofree gchar *bad = g_build_filename (fixture->test_dir, "broken", NULL);
+    g_autofree gchar *escape = g_build_filename (fixture->test_dir, "escape", NULL);
+    g_autofree gchar *lone = g_build_filename (fixture->test_dir, "lone", NULL);
+    g_autofree gchar *two = g_build_filename (fixture->test_dir, "two", NULL);
+    g_autofree gchar *hidden = g_build_filename (fixture->test_dir, ".hidden", NULL);
+    g_autofree gchar *notes = g_build_filename (fixture->test_dir, "notes", NULL);
+    LrgMod *mod;
+
+    (void)user_data;
+
+    write_raw_manifest (bad, "name: no id here\n");
+    write_raw_manifest (escape, "id: escape\ntype: script\nentry_point: ../../etc/passwd.lua\n");
+    write_mod_file (lone, "main.lua", "x = 1\n");
+    write_mod_file (lone, "README.txt", "not a script\n");
+    write_mod_file (two, "a.lua", "x = 1\n");
+    write_mod_file (two, "b.py", "x = 1\n");
+    write_mod_file (hidden, "main.lua", "x = 1\n");
+    write_mod_file (notes, "notes.txt", "nothing\n");
+
+    lrg_mod_manager_add_search_path (fixture->manager, fixture->test_dir);
+
+    /* Without implicit entries only manifest folders count */
+    lrg_mod_manager_discover (fixture->manager, NULL);
+    g_assert_false (lrg_mod_manager_has_mod (fixture->manager, "lone"));
+
+    lrg_mod_loader_set_implicit_entries (lrg_mod_manager_get_loader (fixture->manager), TRUE);
+    g_assert_true (lrg_mod_loader_get_implicit_entries (lrg_mod_manager_get_loader (fixture->manager)));
+    lrg_mod_manager_discover (fixture->manager, NULL);
+
+    /* Broken manifests become failed placeholders named after the folder */
+    mod = lrg_mod_manager_get_mod (fixture->manager, "broken");
+    g_assert_nonnull (mod);
+    g_assert_cmpint (lrg_mod_get_state (mod), ==, LRG_MOD_STATE_FAILED);
+    g_assert_nonnull (strstr (lrg_mod_get_error (mod), "'id'"));
+    mod = lrg_mod_manager_get_mod (fixture->manager, "escape");
+    g_assert_nonnull (mod);
+    g_assert_cmpint (lrg_mod_get_state (mod), ==, LRG_MOD_STATE_FAILED);
+    g_assert_nonnull (strstr (lrg_mod_get_error (mod), "inside the mod"));
+
+    /* A lone script file is a script mod; ambiguous and hidden folders are not */
+    mod = lrg_mod_manager_get_mod (fixture->manager, "lone");
+    g_assert_nonnull (mod);
+    g_assert_cmpint (lrg_mod_manifest_get_mod_type (lrg_mod_get_manifest (mod)), ==, LRG_MOD_TYPE_SCRIPT);
+    g_assert_cmpstr (lrg_mod_manifest_get_entry_point (lrg_mod_get_manifest (mod)), ==, "main.lua");
+    g_assert_false (lrg_mod_manager_has_mod (fixture->manager, "two"));
+    g_assert_false (lrg_mod_manager_has_mod (fixture->manager, ".hidden"));
+    g_assert_false (lrg_mod_manager_has_mod (fixture->manager, "notes"));
+}
+
+static void
+test_manifest_extra (ManagerFixture *fixture,
+                     gconstpointer   user_data)
+{
+    g_autofree gchar *dir = g_build_filename (fixture->test_dir, "extra", NULL);
+    g_autofree gchar *path = g_build_filename (dir, "mod.yaml", NULL);
+    g_autoptr(LrgModManifest) manifest = NULL;
+    g_autoptr(GVariant) settings = NULL;
+    g_autoptr(GVariant) tags = NULL;
+    g_autoptr(GVariant) greeting = NULL;
+    g_autoptr(GError) error = NULL;
+    GVariant *extra;
+
+    (void)user_data;
+
+    write_raw_manifest (dir,
+        "id: extra\n"
+        "api_version: \"2.1\"\n"
+        "settings:\n"
+        "  greeting: hi\n"
+        "  count: 3\n"
+        "tags: [pvp, fun]\n"
+        "empty:\n");
+    manifest = lrg_mod_manifest_new_from_file (path, &error);
+    g_assert_no_error (error);
+
+    extra = lrg_mod_manifest_get_extra (manifest);
+    g_assert_nonnull (extra);
+    g_assert_true (g_variant_is_of_type (extra, G_VARIANT_TYPE_VARDICT));
+    g_assert_cmpstr (lrg_mod_manifest_lookup_extra_string (manifest, "api_version"), ==, "2.1");
+    g_assert_cmpstr (lrg_mod_manifest_lookup_extra_string (manifest, "id"), ==, "extra");
+    g_assert_null (lrg_mod_manifest_lookup_extra_string (manifest, "settings"));
+    g_assert_null (lrg_mod_manifest_lookup_extra_string (manifest, "nope"));
+
+    settings = g_variant_lookup_value (extra, "settings", G_VARIANT_TYPE_VARDICT);
+    g_assert_nonnull (settings);
+    greeting = g_variant_lookup_value (settings, "greeting", G_VARIANT_TYPE_STRING);
+    g_assert_cmpstr (g_variant_get_string (greeting, NULL), ==, "hi");
+    tags = g_variant_lookup_value (extra, "tags", G_VARIANT_TYPE ("av"));
+    g_assert_cmpuint (g_variant_n_children (tags), ==, 2);
+
+    /* Manifests built in code have no extras */
+    {
+        g_autoptr(LrgModManifest) coded = lrg_mod_manifest_new ("code");
+
+        g_assert_null (lrg_mod_manifest_get_extra (coded));
+        g_assert_null (lrg_mod_manifest_lookup_extra_string (coded, "id"));
+    }
+}
+
+#ifdef LRG_HAS_LUAJIT
+
+/* Host function published during prepare-scripting */
+static gboolean
+host_note (LrgScripting  *scripting,
+           guint          n_args,
+           const GValue  *args,
+           GValue        *return_value,
+           gpointer       user_data,
+           GError       **error)
+{
+    GString *log = user_data;
+
+    (void)scripting;
+    (void)return_value;
+    (void)error;
+
+    if (n_args == 1 && G_VALUE_HOLDS_STRING (&args[0]))
+        g_string_append_printf (log, "%s%s", log->len > 0 ? " " : "", g_value_get_string (&args[0]));
+    return TRUE;
+}
+
+static void
+on_prepare (LrgModManager *manager,
+            LrgMod        *mod,
+            LrgScripting  *scripting,
+            gpointer       user_data)
+{
+    (void)manager;
+    (void)mod;
+    g_assert_true (lrg_scripting_register_function (scripting, "note", host_note,
+                                                    user_data, NULL));
+}
+
+static void
+test_manager_script_mod_lua (ManagerFixture *fixture,
+                             gconstpointer   user_data)
+{
+    g_autofree gchar *dir = g_build_filename (fixture->test_dir, "luamod", NULL);
+    g_autofree gchar *broken = g_build_filename (fixture->test_dir, "broken", NULL);
+    g_autoptr(GString) notes = g_string_new (NULL);
+    g_autoptr(GString) signals_log = g_string_new (NULL);
+    g_autoptr(GError) error = NULL;
+    LrgMod *mod;
+    GValue value = G_VALUE_INIT;
+
+    (void)user_data;
+
+    write_raw_manifest (dir, "id: luamod\ntype: script\nentry_point: main.lua\n");
+    write_mod_file (dir, "helper.lua", "return { greet = function () return 'hello' end }\n");
+    write_mod_file (dir, "main.lua",
+        "local helper = require('helper')\n"
+        "note('body')\n"
+        "answer = 42\n"
+        "function lrg_mod_init() note('init ' .. helper.greet()) end\n"
+        "function lrg_mod_shutdown() note('shutdown') end\n");
+    write_raw_manifest (broken, "id: broken\ntype: script\nentry_point: main.lua\n");
+    write_mod_file (broken, "main.lua", "note('before')\nerror('boom')\n");
+
+    g_signal_connect (fixture->manager, "mod-prepare-scripting", G_CALLBACK (on_prepare), notes);
+    g_signal_connect (fixture->manager, "mod-loaded", G_CALLBACK (on_loaded), signals_log);
+    g_signal_connect (fixture->manager, "mod-failed", G_CALLBACK (on_failed), signals_log);
+    g_signal_connect (fixture->manager, "mod-unloaded", G_CALLBACK (on_unloaded), signals_log);
+
+    lrg_mod_manager_add_search_path (fixture->manager, fixture->test_dir);
+    lrg_mod_manager_discover (fixture->manager, NULL);
+    /* The broken mod's load failure is logged as a warning */
+    g_log_set_always_fatal (G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
+    g_assert_false (lrg_mod_manager_load_all (fixture->manager, &error));
+    g_clear_error (&error);
+
+    /* Host functions exist while the body runs; require() searches the mod */
+    g_assert_cmpstr (notes->str, ==, "before body init hello");
+    g_assert_cmpstr (signals_log->str, ==, "failed:broken loaded:luamod");
+    g_assert_nonnull (strstr (lrg_mod_get_error (lrg_mod_manager_get_mod (fixture->manager, "broken")), "boom"));
+    g_assert_null (lrg_mod_get_scripting (lrg_mod_manager_get_mod (fixture->manager, "broken")));
+
+    mod = lrg_mod_manager_get_mod (fixture->manager, "luamod");
+    g_assert_nonnull (lrg_mod_get_scripting (mod));
+    g_assert_true (lrg_scripting_get_global (lrg_mod_get_scripting (mod), "answer", &value, &error));
+    g_assert_cmpint (g_value_get_int64 (&value), ==, 42);
+    g_value_unset (&value);
+
+    /* reload_mod runs shutdown, then the body and init again */
+    g_string_truncate (notes, 0);
+    g_string_truncate (signals_log, 0);
+    g_assert_true (lrg_mod_manager_reload_mod (fixture->manager, "luamod", &error));
+    g_assert_no_error (error);
+    g_assert_cmpstr (notes->str, ==, "shutdown body init hello");
+    g_assert_cmpstr (signals_log->str, ==, "unloaded:luamod loaded:luamod");
+
+    /* Unloading runs the shutdown hook and drops the context */
+    g_string_truncate (notes, 0);
+    lrg_mod_manager_unload_mod (fixture->manager, "luamod");
+    g_assert_cmpstr (notes->str, ==, "shutdown");
+    g_assert_null (lrg_mod_get_scripting (mod));
+    g_assert_false (lrg_mod_is_loaded (mod));
+
+    /* Marking a mod failed records the reason */
+    g_assert_true (lrg_mod_manager_reload_mod (fixture->manager, "luamod", NULL));
+    lrg_mod_mark_failed (mod, "too many errors");
+    g_assert_cmpint (lrg_mod_get_state (mod), ==, LRG_MOD_STATE_FAILED);
+    g_assert_cmpstr (lrg_mod_get_error (mod), ==, "too many errors");
+
+    g_assert_false (lrg_mod_manager_reload_mod (fixture->manager, "nope", &error));
+    g_assert_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_NOT_FOUND);
+
+    /* The logs die with this test; the manager outlives it */
+    g_signal_handlers_disconnect_by_data (fixture->manager, notes);
+    g_signal_handlers_disconnect_by_data (fixture->manager, signals_log);
+}
+
+#endif /* LRG_HAS_LUAJIT */
+
 int
 main (int   argc,
       char *argv[])
@@ -952,6 +1359,26 @@ main (int   argc,
 
     /* Interfaces */
     g_test_add_func ("/mod/interfaces/types-exist", test_interface_types_exist);
+
+    /* Ordering, failures, script mods and extras */
+    g_test_add ("/mod/manager/order-dependencies-beat-priority", ManagerFixture, NULL,
+                manager_fixture_set_up, test_manager_order_dependencies_beat_priority,
+                manager_fixture_tear_down);
+    g_test_add ("/mod/manager/cycles-and-failed-dependencies", ManagerFixture, NULL,
+                manager_fixture_set_up, test_manager_cycles_and_failed_dependencies,
+                manager_fixture_tear_down);
+    g_test_add ("/mod/manager/disabled-survives-discover", ManagerFixture, NULL,
+                manager_fixture_set_up, test_manager_disabled_survives_discover,
+                manager_fixture_tear_down);
+    g_test_add ("/mod/loader/invalid-and-implicit", ManagerFixture, NULL,
+                manager_fixture_set_up, test_loader_invalid_and_implicit,
+                manager_fixture_tear_down);
+    g_test_add ("/mod/manifest/extra", ManagerFixture, NULL,
+                manager_fixture_set_up, test_manifest_extra, manager_fixture_tear_down);
+#ifdef LRG_HAS_LUAJIT
+    g_test_add ("/mod/manager/script-mod-lua", ManagerFixture, NULL,
+                manager_fixture_set_up, test_manager_script_mod_lua, manager_fixture_tear_down);
+#endif
 
     return g_test_run ();
 }

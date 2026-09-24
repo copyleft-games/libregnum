@@ -442,4 +442,31 @@ LRG_AVAILABLE_IN_ALL
 GPtrArray *        lrg_mod_manager_get_dlcs_by_type (LrgModManager *self,
                                                       LrgDlcType     dlc_type);
 
+/**
+ * lrg_mod_manager_reload_mod:
+ * @self: an #LrgModManager
+ * @mod_id: the mod to reload
+ * @error: (nullable): return location for error
+ *
+ * Unloads @mod_id if loaded and loads it again.  Mods that depend on it
+ * keep running.
+ *
+ * Returns: %TRUE when the mod is loaded afterwards (or was disabled)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean           lrg_mod_manager_reload_mod    (LrgModManager  *self,
+                                                  const gchar    *mod_id,
+                                                  GError        **error);
+
+/**
+ * lrg_mod_manager_unload_mod:
+ * @self: an #LrgModManager
+ * @mod_id: the mod to unload
+ *
+ * Unloads one loaded mod.
+ */
+LRG_AVAILABLE_IN_ALL
+void               lrg_mod_manager_unload_mod    (LrgModManager *self,
+                                                  const gchar   *mod_id);
+
 G_END_DECLS

@@ -130,6 +130,9 @@ struct _LrgModManifest
     gchar         *ownership_method;
     gboolean       trial_enabled;
     GPtrArray     *trial_content_ids;  /* gchar* */
+
+    /* Every top-level key as a{sv}, for game-specific fields */
+    GVariant      *extra;
 };
 
 #pragma GCC visibility push(default)
@@ -164,6 +167,7 @@ lrg_mod_manifest_finalize (GObject *object)
     g_free (self->min_game_version);
     g_free (self->ownership_method);
     g_clear_pointer (&self->trial_content_ids, g_ptr_array_unref);
+    g_clear_pointer (&self->extra, g_variant_unref);
 
     G_OBJECT_CLASS (lrg_mod_manifest_parent_class)->finalize (object);
 }
@@ -212,6 +216,79 @@ lrg_mod_manifest_new (const gchar *mod_id)
     return manifest;
 }
 
+/*
+ * Converts a YAML node for lrg_mod_manifest_get_extra(): mappings become
+ * a{sv}, sequences av, scalars s (YAML scalars are untyped text) and nulls
+ * the empty maybe ms.
+ */
+static GVariant *
+yaml_node_to_variant (YamlNode *node)
+{
+    GVariantBuilder builder;
+    guint           i;
+
+    switch (yaml_node_get_node_type (node))
+    {
+    case YAML_NODE_MAPPING:
+        {
+            YamlMapping *map = yaml_node_get_mapping (node);
+
+            g_variant_builder_init (&builder, G_VARIANT_TYPE_VARDICT);
+            for (i = 0; i < yaml_mapping_get_size (map); i++)
+            {
+                const gchar *key = yaml_mapping_get_key (map, i);
+                YamlNode    *value = yaml_mapping_get_value (map, i);
+
+                if (key != NULL && value != NULL)
+                    g_variant_builder_add (&builder, "{sv}", key,
+                                           yaml_node_to_variant (value));
+            }
+            return g_variant_builder_end (&builder);
+        }
+    case YAML_NODE_SEQUENCE:
+        {
+            YamlSequence *seq = yaml_node_get_sequence (node);
+
+            g_variant_builder_init (&builder, G_VARIANT_TYPE ("av"));
+            for (i = 0; i < yaml_sequence_get_length (seq); i++)
+            {
+                YamlNode *element = yaml_sequence_get_element (seq, i);
+
+                if (element != NULL)
+                    g_variant_builder_add (&builder, "v", yaml_node_to_variant (element));
+            }
+            return g_variant_builder_end (&builder);
+        }
+    case YAML_NODE_SCALAR:
+        return g_variant_new_string (yaml_node_get_string (node) != NULL
+                                     ? yaml_node_get_string (node) : "");
+    case YAML_NODE_NULL:
+    default:
+        return g_variant_new_maybe (G_VARIANT_TYPE_STRING, NULL);
+    }
+}
+
+/*
+ * A relative path that stays inside the mod directory: not absolute, and no
+ * ".." component.  Manifests must not point loaders outside their folder.
+ */
+static gboolean
+relative_path_is_contained (const gchar *path)
+{
+    g_auto(GStrv) parts = NULL;
+    guint         i;
+
+    if (path == NULL || path[0] == '\0' || g_path_is_absolute (path))
+        return FALSE;
+
+    parts = g_strsplit_set (path, "/\\", -1);
+    for (i = 0; parts[i] != NULL; i++)
+        if (g_strcmp0 (parts[i], "..") == 0)
+            return FALSE;
+
+    return TRUE;
+}
+
 static gboolean
 parse_manifest_yaml (LrgModManifest *manifest,
                      YamlNode       *root,
@@ -241,6 +318,13 @@ parse_manifest_yaml (LrgModManifest *manifest,
         return FALSE;
     }
     manifest->id = g_strdup (yaml_node_get_string (node));
+    if (manifest->id == NULL || manifest->id[0] == '\0' ||
+        strpbrk (manifest->id, "/\\") != NULL)
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_INVALID_MANIFEST,
+                     "Manifest 'id' must be a non-empty name without path separators");
+        return FALSE;
+    }
 
     /* Optional fields */
     node = yaml_mapping_get_member (root_map, "name");
@@ -301,6 +385,14 @@ parse_manifest_yaml (LrgModManifest *manifest,
     node = yaml_mapping_get_member (root_map, "entry_point");
     if (node != NULL && yaml_node_get_node_type (node) == YAML_NODE_SCALAR)
         manifest->entry_point = g_strdup (yaml_node_get_string (node));
+    if (manifest->entry_point != NULL &&
+        !relative_path_is_contained (manifest->entry_point))
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_INVALID_MANIFEST,
+                     "Manifest 'entry_point' must be a relative path inside the mod: %s",
+                     manifest->entry_point);
+        return FALSE;
+    }
 
     /* Dependencies */
     deps_node = yaml_mapping_get_member (root_map, "dependencies");
@@ -463,6 +555,9 @@ parse_manifest_yaml (LrgModManifest *manifest,
             }
         }
     }
+
+    /* Keep every key for game-specific fields */
+    manifest->extra = g_variant_ref_sink (yaml_node_to_variant (root));
 
     return TRUE;
 }
@@ -1090,4 +1185,61 @@ lrg_mod_manifest_save_to_file (LrgModManifest  *self,
         lrg_debug (LRG_LOG_DOMAIN_MOD, "Saved manifest to: %s", path);
 
     return success;
+}
+
+/* ==========================================================================
+ * Game-specific fields
+ * ========================================================================== */
+
+/**
+ * lrg_mod_manifest_get_extra:
+ * @self: a #LrgModManifest
+ *
+ * Gets every top-level manifest key, including ones libregnum does not
+ * interpret, so games can define their own fields (for example
+ * `api_version` or a `settings` block).  Mappings are `a{sv}`, sequences
+ * `av`, scalars `s` (YAML scalars are untyped text; parse numbers yourself)
+ * and nulls the empty maybe `ms`.
+ *
+ * Returns: (transfer none) (nullable): an `a{sv}` of the manifest, or %NULL
+ *   for manifests not read from a file
+ */
+GVariant *
+lrg_mod_manifest_get_extra (LrgModManifest *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), NULL);
+
+    return self->extra;
+}
+
+/**
+ * lrg_mod_manifest_lookup_extra_string:
+ * @self: a #LrgModManifest
+ * @key: a top-level key
+ *
+ * Convenience accessor for a scalar game-specific field.
+ *
+ * Returns: (transfer none) (nullable): the value, or %NULL when absent or
+ *   not a scalar
+ */
+const gchar *
+lrg_mod_manifest_lookup_extra_string (LrgModManifest *self,
+                                      const gchar    *key)
+{
+    g_autoptr(GVariant) value = NULL;
+    const gchar *out;
+
+    g_return_val_if_fail (LRG_IS_MOD_MANIFEST (self), NULL);
+    g_return_val_if_fail (key != NULL, NULL);
+
+    if (self->extra == NULL)
+        return NULL;
+
+    value = g_variant_lookup_value (self->extra, key, G_VARIANT_TYPE_STRING);
+    if (value == NULL)
+        return NULL;
+
+    /* The string lives as long as the extra dictionary it came from */
+    out = g_variant_get_string (value, NULL);
+    return out;
 }

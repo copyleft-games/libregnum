@@ -649,4 +649,30 @@ gboolean           lrg_mod_manifest_save_to_file (LrgModManifest  *self,
                                                   const gchar     *path,
                                                   GError         **error);
 
+/**
+ * lrg_mod_manifest_get_extra:
+ * @self: a #LrgModManifest
+ *
+ * Gets every top-level manifest key as an `a{sv}` (mappings `a{sv}`,
+ * sequences `av`, scalars `s`, nulls `ms`), for game-specific fields.
+ *
+ * Returns: (transfer none) (nullable): the fields, or %NULL for manifests
+ *   not read from a file
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *         lrg_mod_manifest_get_extra (LrgModManifest *self);
+
+/**
+ * lrg_mod_manifest_lookup_extra_string:
+ * @self: a #LrgModManifest
+ * @key: a top-level key
+ *
+ * Convenience accessor for a scalar game-specific field.
+ *
+ * Returns: (transfer none) (nullable): the value, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *      lrg_mod_manifest_lookup_extra_string (LrgModManifest *self,
+                                                         const gchar    *key);
+
 G_END_DECLS

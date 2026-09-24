@@ -104,9 +104,15 @@ Discovers mods in all search paths.
 gboolean lrg_mod_manager_load_all(LrgModManager *self, GError **error);
 #+end_src
 
-Loads all discovered enabled mods in dependency order.
+Loads every enabled mod in the computed load order (see [[#load-order][Load Order]]).  One failure never stops the others:
 
-*Returns:* =TRUE= if all required mods loaded successfully
+- A mod whose required dependency is missing, disabled or failed is marked failed with that reason, for example =Required dependency failed to load: base=.  Optional dependencies only order the load.
+- Members of a dependency cycle fail with =Circular dependency between mods=.
+- Mods that are already loaded stay loaded.  Failed mods (including invalid manifests found at discovery) stay failed until they are rediscovered or reloaded with =lrg_mod_manager_reload_mod()=.
+
+Each outcome emits =mod-loaded= or =mod-failed=.
+
+*Returns:* =TRUE= if nothing failed; otherwise =FALSE= with =LRG_MOD_ERROR_LOAD_FAILED= giving the failure count
 
 *Example:*
 
@@ -137,6 +143,20 @@ gboolean lrg_mod_manager_reload(LrgModManager *self, GError **error);
 #+end_src
 
 Reloads all mods (unload then load).
+
+*** lrg_mod_manager_reload_mod / lrg_mod_manager_unload_mod
+:PROPERTIES:
+:CUSTOM_ID: lrg_mod_manager_reload_mod
+:END:
+#+begin_src C
+gboolean lrg_mod_manager_reload_mod (LrgModManager *self, const gchar *mod_id, GError **error);
+void     lrg_mod_manager_unload_mod (LrgModManager *self, const gchar *mod_id);
+#+end_src
+
+Unloads a single mod, or reloads it, for example after its files changed.  A
+script mod's =lrg_mod_shutdown()= runs, its context is dropped, and a reload
+runs the entry file and =lrg_mod_init()= again.  Mods that depend on it keep
+running.  =mod-unloaded=, then =mod-loaded= or =mod-failed=, are emitted.
 
 ** Mod Queries
 :PROPERTIES:
@@ -211,9 +231,11 @@ gboolean lrg_mod_manager_enable_mod(LrgModManager *self, const gchar *mod_id);
 gboolean lrg_mod_manager_disable_mod(LrgModManager *self, const gchar *mod_id);
 #+end_src
 
-Enables/disables a mod. Must call before loading.
+Enables or disables a mod before loading.  The choice is also remembered by
+id: it applies to mods discovered later and survives =lrg_mod_manager_discover()=,
+so a host can apply a configured disabled list before discovery.
 
-*Returns:* =TRUE= if mod found
+*Returns:* =TRUE= if the mod is currently known (the choice is recorded either way)
 
 ** Load Order
 :PROPERTIES:
@@ -227,9 +249,40 @@ Enables/disables a mod. Must call before loading.
 GPtrArray *lrg_mod_manager_get_load_order(LrgModManager *self);
 #+end_src
 
-Gets the computed load order.
+Gets the computed load order.  It covers every discovered mod, enabled or
+not, so toggling a mod needs no recomputation:
+
+- Dependencies (required and optional, when present), =load_after= and =load_before= are hard constraints.
+- Among mods that are free to load, a lower priority value loads first (=lowest= … =highest=), then discovery order.  Discovery sorts folder names, so the order is deterministic.
+- Members of a dependency cycle are placed last and fail in =lrg_mod_manager_load_all()=.
+
+A dependency therefore always loads before its dependents, whatever their
+priorities.
 
 *Returns:* (transfer full) (element-type utf8) Mod IDs in order
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+| Signal | Arguments | When |
+|--------+-----------+------|
+| =mod-loaded= | =LrgMod= | after a mod loads |
+| =mod-failed= | =LrgMod= | a load failed (see =lrg_mod_get_error()=) |
+| =mod-unloaded= | =LrgMod= | after a loaded mod unloads |
+| =mod-prepare-scripting= | =LrgMod=, =LrgScripting= | a script mod's context exists and its entry file has not run yet |
+
+=mod-prepare-scripting= is where a host publishes its API to every script mod:
+
+#+begin_src C
+static void
+on_prepare (LrgModManager *mgr, LrgMod *mod, LrgScripting *ctx, gpointer data)
+{
+    lrg_scripting_register_function (ctx, "log", host_log, mod, NULL);
+}
+
+g_signal_connect (mgr, "mod-prepare-scripting", G_CALLBACK (on_prepare), NULL);
+#+end_src
 
 *** lrg_mod_manager_check_dependencies
 :PROPERTIES:

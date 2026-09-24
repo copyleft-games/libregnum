@@ -178,6 +178,31 @@ void lrg_mod_unload(LrgMod *self);
 
 Unloads the mod.
 
+** Script Mods
+:PROPERTIES:
+:CUSTOM_ID: script-mods
+:END:
+A mod with =type: script= loads its =entry_point= through the scripting
+backend its extension selects (=lua=, =py=, =js=, =c= for Crispy, or the
+platform module suffix for native).  The sequence is:
+
+1. Create the context and add the mod folder as a search path (=require=, =import= and =#include= resolve there).
+2. Emit =prepare-scripting= with the context, so hosts register their functions first.
+3. Run the entry file.
+4. Call =lrg_mod_init()= if the script defines it.  A failure fails the load.
+
+Unloading calls =lrg_mod_shutdown()= if defined, then resets and drops the
+context.  A backend that is not built fails the mod with, for example,
+=Python scripting is not available in this build=.
+
+#+begin_src C
+LrgScripting *lrg_mod_get_scripting (LrgMod *self);   /* loaded script mods only */
+void          lrg_mod_mark_failed   (LrgMod *self, const gchar *message);
+#+end_src
+
+=lrg_mod_mark_failed()= unloads a mod and records why.  Hosts use it when a
+mod misbehaves at runtime, for example after repeated script errors.
+
 ** Resources
 :PROPERTIES:
 :CUSTOM_ID: resources

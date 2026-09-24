@@ -9,6 +9,7 @@
 
 #include "config.h"
 #include "lrg-mod.h"
+#include "../scripting/lrg-scripting-manager.h"
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_MOD
 #include "../lrg-log.h"
@@ -33,6 +34,9 @@ typedef struct
     /* For native mods */
     GModule         *module;
     gpointer         user_data;
+
+    /* For script mods */
+    LrgScripting    *scripting;
 } LrgModPrivate;
 
 #pragma GCC visibility push(default)
@@ -48,6 +52,14 @@ enum
 };
 
 static GParamSpec *properties[N_PROPS];
+
+enum
+{
+    SIGNAL_PREPARE_SCRIPTING,
+    N_SIGNALS
+};
+
+static guint signals[N_SIGNALS];
 
 /* Forward declarations for virtual method implementations */
 static gboolean lrg_mod_real_load             (LrgMod   *self,
@@ -206,6 +218,24 @@ lrg_mod_class_init (LrgModClass *klass)
                              G_PARAM_STATIC_STRINGS);
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
+
+    /**
+     * LrgMod::prepare-scripting:
+     * @self: the #LrgMod
+     * @scripting: the freshly created #LrgScripting context
+     *
+     * Emitted for script mods after the scripting context is created and
+     * before the entry point is loaded.  Hosts register the functions and
+     * globals the mod may use here, so they exist while the entry file runs.
+     *
+     * Since: 0.2
+     */
+    signals[SIGNAL_PREPARE_SCRIPTING] =
+        g_signal_new ("prepare-scripting",
+                      G_TYPE_FROM_CLASS (klass),
+                      G_SIGNAL_RUN_LAST,
+                      0, NULL, NULL, NULL,
+                      G_TYPE_NONE, 1, LRG_TYPE_SCRIPTING);
 }
 
 static void
@@ -399,16 +429,108 @@ load_data_mod (LrgMod        *self,
     return TRUE;
 }
 
+/* Drops a script mod's context, calling its optional shutdown hook first */
+static void
+unload_script_mod (LrgMod        *self,
+                   LrgModPrivate *priv)
+{
+    g_autoptr(GError) error = NULL;
+
+    if (priv->scripting == NULL)
+        return;
+
+    if (priv->state == LRG_MOD_STATE_LOADED &&
+        lrg_scripting_has_function (priv->scripting, LRG_MOD_HOOK_SHUTDOWN) &&
+        !lrg_scripting_call_function (priv->scripting, LRG_MOD_HOOK_SHUTDOWN,
+                                      NULL, 0, NULL, &error))
+    {
+        lrg_info (LRG_LOG_DOMAIN_MOD, "Mod %s shutdown hook failed: %s",
+                  lrg_mod_get_id (self), error->message);
+    }
+
+    lrg_scripting_reset (priv->scripting);
+    g_clear_object (&priv->scripting);
+}
+
+/*
+ * Script mods: the entry point's extension picks the backend (lua, py, js,
+ * c, or a native module).  The context searches the mod folder, hosts get
+ * prepare-scripting to publish their API, then the entry file runs and an
+ * optional lrg_mod_init() is called.
+ */
 static gboolean
 load_script_mod (LrgMod        *self,
                  LrgModPrivate *priv,
                  GError       **error)
 {
-    (void)priv;
+    LrgScriptingManager *manager;
+    LrgScriptLanguage    language;
+    const gchar         *entry_point;
+    g_autofree gchar    *entry_path = NULL;
+    g_autoptr(GError)    local_error = NULL;
 
-    /* Script mods would require a scripting engine integration */
-    lrg_info (LRG_LOG_DOMAIN_MOD,
-              "Script mods not yet implemented: %s", lrg_mod_get_id (self));
+    entry_point = lrg_mod_manifest_get_entry_point (priv->manifest);
+    if (entry_point == NULL)
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_LOAD_FAILED,
+                     "Script mod has no entry_point: %s", lrg_mod_get_id (self));
+        return FALSE;
+    }
+
+    entry_path = g_build_filename (priv->base_path, entry_point, NULL);
+    if (!g_file_test (entry_path, G_FILE_TEST_IS_REGULAR))
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_LOAD_FAILED,
+                     "Entry point not found: %s", entry_path);
+        return FALSE;
+    }
+
+    /* Pick the backend from the file type */
+    manager = lrg_scripting_manager_get_default ();
+    language = lrg_scripting_manager_language_for_path (manager, entry_path);
+    if (language == LRG_SCRIPT_LANGUAGE_NONE)
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_LOAD_FAILED,
+                     "Unknown script type for entry point: %s", entry_point);
+        return FALSE;
+    }
+    if (!lrg_scripting_manager_is_available (manager, language))
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_LOAD_FAILED,
+                     "%s scripting is not available in this build",
+                     lrg_scripting_manager_get_display_name (manager, language));
+        return FALSE;
+    }
+
+    priv->scripting = lrg_scripting_manager_create_context (manager, language);
+    if (priv->scripting == NULL)
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_LOAD_FAILED,
+                     "Could not create a %s context",
+                     lrg_scripting_manager_get_display_name (manager, language));
+        return FALSE;
+    }
+
+    /* Imports and includes resolve inside the mod folder */
+    lrg_scripting_add_search_path (priv->scripting, priv->base_path);
+
+    /* Hosts publish their API before any mod code runs */
+    g_signal_emit (self, signals[SIGNAL_PREPARE_SCRIPTING], 0, priv->scripting);
+
+    if (!lrg_scripting_load_file (priv->scripting, entry_path, &local_error) ||
+        (lrg_scripting_has_function (priv->scripting, LRG_MOD_HOOK_INIT) &&
+         !lrg_scripting_call_function (priv->scripting, LRG_MOD_HOOK_INIT,
+                                       NULL, 0, NULL, &local_error)))
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_LOAD_FAILED,
+                     "%s", local_error != NULL ? local_error->message : "script failed");
+        lrg_scripting_reset (priv->scripting);
+        g_clear_object (&priv->scripting);
+        return FALSE;
+    }
+
+    lrg_debug (LRG_LOG_DOMAIN_MOD, "Loaded script mod %s from %s",
+               lrg_mod_get_id (self), entry_path);
     return TRUE;
 }
 
@@ -572,6 +694,9 @@ lrg_mod_real_unload (LrgMod *self)
         priv->module = NULL;
         priv->user_data = NULL;
     }
+
+    /* For script mods, run the shutdown hook and drop the context */
+    unload_script_mod (self, priv);
 
     priv->state = LRG_MOD_STATE_UNLOADED;
     lrg_info (LRG_LOG_DOMAIN_MOD, "Unloaded mod: %s", lrg_mod_get_id (self));
@@ -763,4 +888,56 @@ lrg_mod_get_display_info (LrgMod *self)
         return klass->get_display_info (self);
 
     return g_strdup (lrg_mod_get_id (self));
+}
+
+/* ==========================================================================
+ * Scripting and failure state
+ * ========================================================================== */
+
+/**
+ * lrg_mod_get_scripting:
+ * @self: a #LrgMod
+ *
+ * Gets the scripting context of a loaded script mod.
+ *
+ * Returns: (transfer none) (nullable): the context, or %NULL when the mod
+ *   is not a loaded script mod
+ */
+LrgScripting *
+lrg_mod_get_scripting (LrgMod *self)
+{
+    LrgModPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_MOD (self), NULL);
+
+    priv = lrg_mod_get_instance_private (self);
+    return priv->scripting;
+}
+
+/**
+ * lrg_mod_mark_failed:
+ * @self: a #LrgMod
+ * @message: why the mod failed
+ *
+ * Unloads the mod if it is loaded and records it as failed with @message.
+ * Hosts use this when a loaded mod misbehaves at runtime (for example after
+ * repeated script errors) or when a dependency could not be satisfied.
+ */
+void
+lrg_mod_mark_failed (LrgMod      *self,
+                     const gchar *message)
+{
+    LrgModPrivate *priv;
+
+    g_return_if_fail (LRG_IS_MOD (self));
+    g_return_if_fail (message != NULL);
+
+    priv = lrg_mod_get_instance_private (self);
+
+    if (priv->state == LRG_MOD_STATE_LOADED)
+        lrg_mod_unload (self);
+
+    priv->state = LRG_MOD_STATE_FAILED;
+    g_free (priv->error_message);
+    priv->error_message = g_strdup (message);
 }

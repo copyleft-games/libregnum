@@ -9,6 +9,7 @@
 
 #include "config.h"
 #include "lrg-mod-loader.h"
+#include "../scripting/lrg-scripting-manager.h"
 #include "../dlc/lrg-dlc.h"
 #include "../dlc/lrg-expansion-pack.h"
 #include "../dlc/lrg-cosmetic-pack.h"
@@ -36,6 +37,7 @@ struct _LrgModLoader
 
     GPtrArray *search_paths;     /* gchar* */
     gchar     *manifest_filename;
+    gboolean   implicit_entries; /* folders without a manifest may load */
 };
 
 #pragma GCC visibility push(default)
@@ -309,6 +311,59 @@ setup_dlc_from_manifest (LrgDlc         *dlc,
  * Discovery
  * ========================================================================== */
 
+/*
+ * Folders without a manifest (when implicit entries are enabled): exactly one
+ * file whose extension a scripting backend claims becomes a script mod with
+ * the folder name as its id.  Zero or several candidates skip the folder.
+ */
+static LrgMod *
+load_implicit_mod (const gchar *mod_path,
+                   const gchar *folder_name)
+{
+    LrgScriptingManager *manager;
+    g_autoptr(GDir)      dir = NULL;
+    g_autofree gchar    *entry = NULL;
+    const gchar         *file;
+    guint                candidates;
+    LrgModManifest      *manifest;
+    LrgMod              *mod;
+
+    dir = g_dir_open (mod_path, 0, NULL);
+    if (dir == NULL)
+        return NULL;
+
+    manager = lrg_scripting_manager_get_default ();
+    candidates = 0;
+    while ((file = g_dir_read_name (dir)) != NULL)
+    {
+        g_autofree gchar *full = g_build_filename (mod_path, file, NULL);
+
+        if (file[0] == '.' || !g_file_test (full, G_FILE_TEST_IS_REGULAR))
+            continue;
+        if (lrg_scripting_manager_language_for_path (manager, file) == LRG_SCRIPT_LANGUAGE_NONE)
+            continue;
+        candidates++;
+        g_free (entry);
+        entry = g_strdup (file);
+    }
+
+    if (candidates != 1)
+    {
+        lrg_debug (LRG_LOG_DOMAIN_MOD,
+                   "Skipping %s: no manifest and %u script files", mod_path, candidates);
+        return NULL;
+    }
+
+    manifest = lrg_mod_manifest_new (folder_name);
+    lrg_mod_manifest_set_mod_type (manifest, LRG_MOD_TYPE_SCRIPT);
+    lrg_mod_manifest_set_entry_point (manifest, entry);
+    mod = lrg_mod_new (manifest, mod_path);
+    g_object_unref (manifest);
+
+    lrg_info (LRG_LOG_DOMAIN_MOD, "Loaded implicit mod %s (%s)", folder_name, entry);
+    return mod;
+}
+
 LrgMod *
 lrg_mod_loader_load_mod (LrgModLoader  *self,
                          const gchar   *path,
@@ -375,8 +430,10 @@ lrg_mod_loader_discover_at (LrgModLoader  *self,
                             GError       **error)
 {
     GPtrArray *mods;
+    GPtrArray *names;
     GDir *dir;
     const gchar *name;
+    guint n;
     g_autoptr(GError) local_error = NULL;
 
     g_return_val_if_fail (LRG_IS_MOD_LOADER (self), NULL);
@@ -399,37 +456,61 @@ lrg_mod_loader_discover_at (LrgModLoader  *self,
         return mods;
     }
 
+    /* Sorted names make discovery (and so tie-breaking) deterministic */
+    names = g_ptr_array_new_with_free_func (g_free);
     while ((name = g_dir_read_name (dir)) != NULL)
+    {
+        /* Hidden folders (".git", editor backups) are never mods */
+        if (name[0] != '.')
+            g_ptr_array_add (names, g_strdup (name));
+    }
+    g_ptr_array_sort_values (names, (GCompareFunc)g_strcmp0);
+
+    for (n = 0; n < names->len; n++)
     {
         g_autofree gchar *mod_path = NULL;
         g_autofree gchar *manifest_path = NULL;
         LrgMod *mod;
         g_autoptr(GError) mod_error = NULL;
 
+        name = g_ptr_array_index (names, n);
         mod_path = g_build_filename (path, name, NULL);
 
         /* Skip non-directories */
         if (!g_file_test (mod_path, G_FILE_TEST_IS_DIR))
             continue;
 
-        /* Check for manifest */
+        /* No manifest: optionally treat a lone script file as the entry */
         manifest_path = g_build_filename (mod_path, self->manifest_filename, NULL);
         if (!g_file_test (manifest_path, G_FILE_TEST_EXISTS))
+        {
+            if (self->implicit_entries)
+            {
+                mod = load_implicit_mod (mod_path, name);
+                if (mod != NULL)
+                    g_ptr_array_add (mods, mod);
+            }
             continue;
+        }
 
-        /* Load mod */
+        /*
+         * A broken manifest still yields a failed placeholder mod (id = folder
+         * name) so hosts can show the user what is wrong.
+         */
         mod = lrg_mod_loader_load_mod (self, mod_path, &mod_error);
-        if (mod != NULL)
+        if (mod == NULL)
         {
-            g_ptr_array_add (mods, mod);
+            g_autoptr(LrgModManifest) placeholder = lrg_mod_manifest_new (name);
+
+            lrg_info (LRG_LOG_DOMAIN_MOD, "Invalid mod at %s: %s",
+                      mod_path, mod_error->message);
+            mod = lrg_mod_new (placeholder, mod_path);
+            lrg_mod_mark_failed (mod, mod_error->message);
         }
-        else
-        {
-            lrg_warning (LRG_LOG_DOMAIN_MOD, "Failed to load mod at %s: %s",
-                         mod_path, mod_error->message);
-        }
+        g_ptr_array_add (mods, mod);
     }
 
+    g_ptr_array_unref (names);
     g_dir_close (dir);
 
     lrg_debug (LRG_LOG_DOMAIN_MOD, "Discovered %u mods at %s", mods->len, path);
@@ -469,4 +550,37 @@ lrg_mod_loader_discover (LrgModLoader  *self,
     lrg_info (LRG_LOG_DOMAIN_MOD, "Discovered %u total mods", all_mods->len);
 
     return all_mods;
+}
+
+/**
+ * lrg_mod_loader_set_implicit_entries:
+ * @self: a #LrgModLoader
+ * @implicit: whether folders without a manifest may load
+ *
+ * When enabled, a folder with no manifest but exactly one script file (any
+ * extension a scripting backend claims: lua, py, js, c, so, ...) is
+ * discovered as a script mod whose id is the folder name.  This supports
+ * "drop a file in a folder" extensions.  Disabled by default.
+ */
+void
+lrg_mod_loader_set_implicit_entries (LrgModLoader *self,
+                                     gboolean      implicit)
+{
+    g_return_if_fail (LRG_IS_MOD_LOADER (self));
+
+    self->implicit_entries = implicit;
+}
+
+/**
+ * lrg_mod_loader_get_implicit_entries:
+ * @self: a #LrgModLoader
+ *
+ * Returns: whether folders without a manifest may load
+ */
+gboolean
+lrg_mod_loader_get_implicit_entries (LrgModLoader *self)
+{
+    g_return_val_if_fail (LRG_IS_MOD_LOADER (self), FALSE);
+
+    return self->implicit_entries;
 }

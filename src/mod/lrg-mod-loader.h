@@ -150,4 +150,25 @@ LrgMod *           lrg_mod_loader_load_mod       (LrgModLoader  *self,
                                                   const gchar   *path,
                                                   GError       **error);
 
+/**
+ * lrg_mod_loader_set_implicit_entries:
+ * @self: a #LrgModLoader
+ * @implicit: whether folders without a manifest may load
+ *
+ * When enabled, a folder with no manifest but exactly one script file is
+ * discovered as a script mod whose id is the folder name.
+ */
+LRG_AVAILABLE_IN_ALL
+void               lrg_mod_loader_set_implicit_entries (LrgModLoader *self,
+                                                        gboolean      implicit);
+
+/**
+ * lrg_mod_loader_get_implicit_entries:
+ * @self: a #LrgModLoader
+ *
+ * Returns: whether folders without a manifest may load
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean           lrg_mod_loader_get_implicit_entries (LrgModLoader *self);
+
 G_END_DECLS

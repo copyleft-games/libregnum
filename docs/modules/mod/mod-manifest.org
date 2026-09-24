@@ -360,3 +360,38 @@ if (!lrg_mod_manifest_save_to_file(manifest, "mod.yaml", &error))
 :END:
 - [[file:mod.org][LrgMod]] - Uses manifest
 - [[file:mod-manager.org][LrgModManager]] - Processes dependencies
+
+** Game-Specific Fields
+:PROPERTIES:
+:CUSTOM_ID: extra
+:END:
+#+begin_src C
+GVariant    *lrg_mod_manifest_get_extra           (LrgModManifest *self);
+const gchar *lrg_mod_manifest_lookup_extra_string (LrgModManifest *self, const gchar *key);
+#+end_src
+
+Every top-level key of a manifest read from a file is kept as an =a{sv}=, so a
+game can define its own fields without libregnum knowing them.  Mappings are
+=a{sv}=, sequences =av=, and scalars =s=: YAML scalars are untyped text, so
+parse numbers yourself.  Nulls are the empty maybe =ms=.  Manifests built in
+code return =NULL=.
+
+#+begin_src yaml
+id: dps-meter
+type: script
+entry_point: main.lua
+api_version: "1.0"
+settings:
+  window: 5
+#+end_src
+
+#+begin_src C
+const gchar *api = lrg_mod_manifest_lookup_extra_string (manifest, "api_version");
+g_autoptr(GVariant) settings =
+    g_variant_lookup_value (lrg_mod_manifest_get_extra (manifest), "settings",
+                            G_VARIANT_TYPE_VARDICT);
+#+end_src
+
+The parser also validates: =id= must be non-empty and contain no path
+separator, and =entry_point= must be a relative path inside the mod
+(not absolute, and no =..=).

@@ -118,6 +118,19 @@ Discovers mods at a specific path.
 
 *Returns:* (transfer full) (element-type LrgMod) Mods at path
 
+*** Discovery Rules
+:PROPERTIES:
+:CUSTOM_ID: discovery-rules
+:END:
+- Folder names are read in sorted order.  Hidden folders (names beginning with =.=) are skipped.
+- A folder whose manifest fails to parse (a missing =id=, an =id= containing a path separator, or an =entry_point= that is absolute or contains =..=) still yields a mod: a placeholder whose id is the folder name, in the =FAILED= state, with the parse error as =lrg_mod_get_error()=.  UIs can therefore show what is wrong.
+- With =lrg_mod_loader_set_implicit_entries (loader, TRUE)=, a folder without a manifest that contains exactly one script file (any extension a scripting backend claims) becomes a script mod.  Its id is the folder name.  Folders with zero or several candidates are skipped.
+
+#+begin_src C
+lrg_mod_loader_set_implicit_entries (lrg_mod_manager_get_loader (mgr), TRUE);
+/* addons/hello/hello.lua  →  script mod "hello", no manifest needed */
+#+end_src
+
 ** Loading
 :PROPERTIES:
 :CUSTOM_ID: loading

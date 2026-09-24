@@ -21,6 +21,7 @@
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
 #include "lrg-mod-manifest.h"
+#include "../scripting/lrg-scripting.h"
 
 G_BEGIN_DECLS
 
@@ -272,5 +273,43 @@ gboolean           lrg_mod_can_load              (LrgMod   *self,
  */
 LRG_AVAILABLE_IN_ALL
 gchar *            lrg_mod_get_display_info      (LrgMod *self);
+
+/**
+ * LRG_MOD_HOOK_INIT:
+ *
+ * Optional function a script mod may define; called with no arguments after
+ * its entry file ran.  A failure fails the load.
+ */
+#define LRG_MOD_HOOK_INIT     "lrg_mod_init"
+
+/**
+ * LRG_MOD_HOOK_SHUTDOWN:
+ *
+ * Optional function a script mod may define; called with no arguments
+ * before the mod is unloaded.
+ */
+#define LRG_MOD_HOOK_SHUTDOWN "lrg_mod_shutdown"
+
+/**
+ * lrg_mod_get_scripting:
+ * @self: a #LrgMod
+ *
+ * Gets the scripting context of a loaded script mod.
+ *
+ * Returns: (transfer none) (nullable): the context
+ */
+LRG_AVAILABLE_IN_ALL
+LrgScripting *     lrg_mod_get_scripting         (LrgMod *self);
+
+/**
+ * lrg_mod_mark_failed:
+ * @self: a #LrgMod
+ * @message: why the mod failed
+ *
+ * Unloads the mod if loaded and records it as failed with @message.
+ */
+LRG_AVAILABLE_IN_ALL
+void               lrg_mod_mark_failed           (LrgMod      *self,
+                                                  const gchar *message);
 
 G_END_DECLS

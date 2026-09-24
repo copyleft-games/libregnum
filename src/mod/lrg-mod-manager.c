@@ -32,7 +32,20 @@ struct _LrgModManager
     GPtrArray    *all_mods;      /* LrgMod, in discovery order */
     GPtrArray    *loaded_mods;   /* LrgMod, in load order */
     GPtrArray    *load_order;    /* gchar*, computed order */
+    GHashTable   *disabled_ids;  /* ids disabled by the host; survives discover */
+    GHashTable   *cycle_ids;     /* ids caught in a dependency cycle */
 };
+
+enum
+{
+    SIGNAL_MOD_LOADED,
+    SIGNAL_MOD_FAILED,
+    SIGNAL_MOD_UNLOADED,
+    SIGNAL_MOD_PREPARE_SCRIPTING,
+    N_SIGNALS
+};
+
+static guint signals[N_SIGNALS];
 
 #pragma GCC visibility push(default)
 G_DEFINE_TYPE (LrgModManager, lrg_mod_manager, G_TYPE_OBJECT)
@@ -64,6 +77,8 @@ lrg_mod_manager_finalize (GObject *object)
     g_ptr_array_unref (self->all_mods);
     g_ptr_array_unref (self->loaded_mods);
     g_ptr_array_unref (self->load_order);
+    g_hash_table_destroy (self->disabled_ids);
+    g_hash_table_destroy (self->cycle_ids);
 
     if (default_manager == self)
         default_manager = NULL;
@@ -78,6 +93,62 @@ lrg_mod_manager_class_init (LrgModManagerClass *klass)
 
     object_class->dispose = lrg_mod_manager_dispose;
     object_class->finalize = lrg_mod_manager_finalize;
+
+    /**
+     * LrgModManager::mod-loaded:
+     * @self: the manager
+     * @mod: the mod that finished loading
+     *
+     * Emitted after a mod loads successfully.
+     *
+     * Since: 0.2
+     */
+    signals[SIGNAL_MOD_LOADED] =
+        g_signal_new ("mod-loaded", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+                      0, NULL, NULL, NULL, G_TYPE_NONE, 1, LRG_TYPE_MOD);
+
+    /**
+     * LrgModManager::mod-failed:
+     * @self: the manager
+     * @mod: the mod that could not load; see lrg_mod_get_error()
+     *
+     * Emitted when a mod fails to load, including unmet dependencies and
+     * dependency cycles.
+     *
+     * Since: 0.2
+     */
+    signals[SIGNAL_MOD_FAILED] =
+        g_signal_new ("mod-failed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+                      0, NULL, NULL, NULL, G_TYPE_NONE, 1, LRG_TYPE_MOD);
+
+    /**
+     * LrgModManager::mod-unloaded:
+     * @self: the manager
+     * @mod: the mod that was unloaded
+     *
+     * Emitted after a loaded mod is unloaded.
+     *
+     * Since: 0.2
+     */
+    signals[SIGNAL_MOD_UNLOADED] =
+        g_signal_new ("mod-unloaded", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+                      0, NULL, NULL, NULL, G_TYPE_NONE, 1, LRG_TYPE_MOD);
+
+    /**
+     * LrgModManager::mod-prepare-scripting:
+     * @self: the manager
+     * @mod: the script mod being loaded
+     * @scripting: its new context, before the entry point runs
+     *
+     * Re-emits #LrgMod::prepare-scripting for every managed mod, so a host
+     * can publish its API to all script mods with one handler.
+     *
+     * Since: 0.2
+     */
+    signals[SIGNAL_MOD_PREPARE_SCRIPTING] =
+        g_signal_new ("mod-prepare-scripting", G_TYPE_FROM_CLASS (klass),
+                      G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+                      G_TYPE_NONE, 2, LRG_TYPE_MOD, LRG_TYPE_SCRIPTING);
 }
 
 static void
@@ -88,6 +159,8 @@ lrg_mod_manager_init (LrgModManager *self)
     self->all_mods = g_ptr_array_new_with_free_func (g_object_unref);
     self->loaded_mods = g_ptr_array_new ();
     self->load_order = g_ptr_array_new_with_free_func (g_free);
+    self->disabled_ids = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+    self->cycle_ids = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 
     lrg_debug (LRG_LOG_DOMAIN_MOD, "Created mod manager");
 }
@@ -136,137 +209,192 @@ lrg_mod_manager_add_search_path (LrgModManager *self,
  * Load Order Computation
  * ========================================================================== */
 
+/* One node of the ordering graph */
 typedef struct
 {
-    LrgModManager *manager;
-    GHashTable    *visiting;    /* id -> TRUE if currently visiting */
-    GHashTable    *visited;     /* id -> TRUE if fully processed */
-    GPtrArray     *result;      /* final order */
-    gboolean       has_cycle;
-} TopoSortContext;
+    LrgMod    *mod;
+    guint      index;     /* discovery position, the final tiebreak */
+    gint       priority;  /* lower loads earlier among ready mods */
+    guint      in_degree; /* unplaced mods that must load first */
+    GPtrArray *before;    /* indices of mods that must load after this one */
+    gboolean   placed;
+} OrderNode;
 
+/* Adds the edge "first loads before second" (ignoring duplicates) */
 static void
-topo_visit (TopoSortContext *ctx,
-            const gchar     *mod_id)
+order_add_edge (OrderNode *nodes,
+                guint      first,
+                guint      second)
 {
-    LrgMod *mod;
-    LrgModManifest *manifest;
-    GPtrArray *deps;
-    GPtrArray *load_after;
     guint i;
 
-    if (ctx->has_cycle)
+    if (first == second)
         return;
 
-    /* Already fully processed */
-    if (g_hash_table_contains (ctx->visited, mod_id))
-        return;
+    for (i = 0; i < nodes[first].before->len; i++)
+        if (GPOINTER_TO_UINT (g_ptr_array_index (nodes[first].before, i)) == second)
+            return;
 
-    /* Cycle detection */
-    if (g_hash_table_contains (ctx->visiting, mod_id))
-    {
-        lrg_warning (LRG_LOG_DOMAIN_MOD,
-                     "Circular dependency detected at mod: %s", mod_id);
-        ctx->has_cycle = TRUE;
-        return;
-    }
-
-    mod = lrg_mod_manager_get_mod (ctx->manager, mod_id);
-    if (mod == NULL)
-    {
-        /* Unknown mod, skip */
-        return;
-    }
-
-    g_hash_table_insert (ctx->visiting, (gpointer)mod_id, GINT_TO_POINTER (TRUE));
-
-    manifest = lrg_mod_get_manifest (mod);
-
-    /* Visit dependencies first */
-    deps = lrg_mod_manifest_get_dependencies (manifest);
-    for (i = 0; i < deps->len; i++)
-    {
-        LrgModDependency *dep = g_ptr_array_index (deps, i);
-        const gchar *dep_id = lrg_mod_dependency_get_mod_id (dep);
-        topo_visit (ctx, dep_id);
-    }
-
-    /* Visit load_after mods */
-    load_after = lrg_mod_manifest_get_load_after (manifest);
-    for (i = 0; i < load_after->len; i++)
-    {
-        const gchar *after_id = g_ptr_array_index (load_after, i);
-        topo_visit (ctx, after_id);
-    }
-
-    g_hash_table_remove (ctx->visiting, mod_id);
-    g_hash_table_insert (ctx->visited, (gpointer)mod_id, GINT_TO_POINTER (TRUE));
-
-    g_ptr_array_add (ctx->result, g_strdup (mod_id));
+    g_ptr_array_add (nodes[first].before, GUINT_TO_POINTER (second));
+    nodes[second].in_degree++;
 }
 
-static gint
-compare_mod_priority (gconstpointer a,
-                      gconstpointer b,
-                      gpointer      user_data)
+/* Finds a node index by mod id, or G_MAXUINT */
+static guint
+order_find (GHashTable  *index_by_id,
+            const gchar *mod_id)
 {
-    LrgModManager *manager = user_data;
-    const gchar *id_a = *(const gchar **)a;
-    const gchar *id_b = *(const gchar **)b;
-    LrgMod *mod_a;
-    LrgMod *mod_b;
-    LrgModManifest *manifest_a;
-    LrgModManifest *manifest_b;
-    LrgModPriority prio_a;
-    LrgModPriority prio_b;
+    gpointer value;
 
-    mod_a = lrg_mod_manager_get_mod (manager, id_a);
-    mod_b = lrg_mod_manager_get_mod (manager, id_b);
-
-    if (mod_a == NULL || mod_b == NULL)
-        return 0;
-
-    manifest_a = lrg_mod_get_manifest (mod_a);
-    manifest_b = lrg_mod_get_manifest (mod_b);
-
-    prio_a = lrg_mod_manifest_get_priority (manifest_a);
-    prio_b = lrg_mod_manifest_get_priority (manifest_b);
-
-    /* Lower priority values load first */
-    return (gint)prio_a - (gint)prio_b;
+    if (!g_hash_table_lookup_extended (index_by_id, mod_id, NULL, &value))
+        return G_MAXUINT;
+    return GPOINTER_TO_UINT (value);
 }
 
+/*
+ * Picks the next node among @candidates: lowest priority value first, then
+ * discovery order.  With @require_ready only nodes whose prerequisites are
+ * placed qualify.
+ */
+static guint
+order_pick (OrderNode *nodes,
+            guint      n_nodes,
+            gboolean   require_ready)
+{
+    guint best;
+    guint i;
+
+    best = G_MAXUINT;
+    for (i = 0; i < n_nodes; i++)
+    {
+        if (nodes[i].placed || (require_ready && nodes[i].in_degree > 0))
+            continue;
+        if (best == G_MAXUINT ||
+            nodes[i].priority < nodes[best].priority ||
+            (nodes[i].priority == nodes[best].priority && nodes[i].index < nodes[best].index))
+            best = i;
+    }
+    return best;
+}
+
+/*
+ * Computes the load order over every discovered mod (enabled or not, so
+ * toggling a mod later needs no recomputation).  Dependencies (required and
+ * optional, when present), load_after and load_before are hard edges; among
+ * mods that are free to load, priority and then discovery order decide.  A
+ * cycle cannot be ordered: its members are recorded in cycle_ids and placed
+ * last by the same tiebreak, and load_all() fails them.
+ */
 static GPtrArray *
 compute_load_order (LrgModManager *self)
 {
-    TopoSortContext ctx;
-    guint i;
+    GHashTable *index_by_id;
+    OrderNode  *nodes;
+    GPtrArray  *result;
+    guint       n_nodes;
+    guint       i;
+    guint       j;
 
-    ctx.manager = self;
-    ctx.visiting = g_hash_table_new (g_str_hash, g_str_equal);
-    ctx.visited = g_hash_table_new (g_str_hash, g_str_equal);
-    ctx.result = g_ptr_array_new_with_free_func (g_free);
-    ctx.has_cycle = FALSE;
+    n_nodes = self->all_mods->len;
+    nodes = g_new0 (OrderNode, n_nodes > 0 ? n_nodes : 1);
+    index_by_id = g_hash_table_new (g_str_hash, g_str_equal);
+    g_hash_table_remove_all (self->cycle_ids);
 
-    /* Visit all mods */
-    for (i = 0; i < self->all_mods->len; i++)
+    for (i = 0; i < n_nodes; i++)
     {
         LrgMod *mod = g_ptr_array_index (self->all_mods, i);
-        const gchar *mod_id = lrg_mod_get_id (mod);
 
-        if (!lrg_mod_is_enabled (mod))
-            continue;
-
-        topo_visit (&ctx, mod_id);
+        nodes[i].mod = mod;
+        nodes[i].index = i;
+        nodes[i].priority = (gint)lrg_mod_manifest_get_priority (lrg_mod_get_manifest (mod));
+        nodes[i].before = g_ptr_array_new ();
+        g_hash_table_insert (index_by_id, (gpointer)lrg_mod_get_id (mod), GUINT_TO_POINTER (i));
     }
 
-    g_hash_table_destroy (ctx.visiting);
-    g_hash_table_destroy (ctx.visited);
+    /* Edges from dependencies, load_after and load_before */
+    for (i = 0; i < n_nodes; i++)
+    {
+        LrgModManifest *manifest = lrg_mod_get_manifest (nodes[i].mod);
+        GPtrArray      *deps = lrg_mod_manifest_get_dependencies (manifest);
+        GPtrArray      *after = lrg_mod_manifest_get_load_after (manifest);
+        GPtrArray      *before = lrg_mod_manifest_get_load_before (manifest);
 
-    /* Sort by priority within the topological order */
-    g_ptr_array_sort_with_data (ctx.result, compare_mod_priority, self);
+        for (j = 0; j < deps->len; j++)
+        {
+            guint other = order_find (index_by_id,
+                lrg_mod_dependency_get_mod_id (g_ptr_array_index (deps, j)));
 
-    return ctx.result;
+            if (other != G_MAXUINT)
+                order_add_edge (nodes, other, i);
+        }
+        for (j = 0; j < after->len; j++)
+        {
+            guint other = order_find (index_by_id, g_ptr_array_index (after, j));
+
+            if (other != G_MAXUINT)
+                order_add_edge (nodes, other, i);
+        }
+        for (j = 0; j < before->len; j++)
+        {
+            guint other = order_find (index_by_id, g_ptr_array_index (before, j));
+
+            if (other != G_MAXUINT)
+                order_add_edge (nodes, i, other);
+        }
+    }
+
+    /* Kahn's algorithm with a deterministic choice among ready mods */
+    result = g_ptr_array_new_with_free_func (g_free);
+    for (i = 0; i < n_nodes; i++)
+    {
+        guint next = order_pick (nodes, n_nodes, TRUE);
+
+        if (next == G_MAXUINT)
+        {
+            /* Only cycle members remain unplaced */
+            next = order_pick (nodes, n_nodes, FALSE);
+            g_hash_table_add (self->cycle_ids, g_strdup (lrg_mod_get_id (nodes[next].mod)));
+            lrg_info (LRG_LOG_DOMAIN_MOD, "Mod %s is part of a dependency cycle",
+                      lrg_mod_get_id (nodes[next].mod));
+        }
+
+        nodes[next].placed = TRUE;
+        for (j = 0; j < nodes[next].before->len; j++)
+        {
+            guint later = GPOINTER_TO_UINT (g_ptr_array_index (nodes[next].before, j));
+
+            if (nodes[later].in_degree > 0)
+                nodes[later].in_degree--;
+        }
+        g_ptr_array_add (result, g_strdup (lrg_mod_get_id (nodes[next].mod)));
+    }
+
+    for (i = 0; i < n_nodes; i++)
+        g_ptr_array_unref (nodes[i].before);
+    g_free (nodes);
+    g_hash_table_destroy (index_by_id);
+
+    return result;
+}
+
+/* Re-emits a mod's prepare-scripting on the manager */
+static void
+on_mod_prepare_scripting (LrgMod        *mod,
+                          LrgScripting  *scripting,
+                          LrgModManager *self)
+{
+    g_signal_emit (self, signals[SIGNAL_MOD_PREPARE_SCRIPTING], 0, mod, scripting);
+}
+
+/* Records a failure on @mod and tells listeners */
+static void
+fail_mod (LrgModManager *self,
+          LrgMod        *mod,
+          const gchar   *message)
+{
+    lrg_mod_mark_failed (mod, message);
+    lrg_info (LRG_LOG_DOMAIN_MOD, "Mod %s failed: %s", lrg_mod_get_id (mod), message);
+    g_signal_emit (self, signals[SIGNAL_MOD_FAILED], 0, mod);
 }
 
 /* ==========================================================================
@@ -307,6 +435,13 @@ lrg_mod_manager_discover (LrgModManager  *self,
 
         g_ptr_array_add (self->all_mods, g_object_ref (mod));
         g_hash_table_insert (self->mods_by_id, (gpointer)mod_id, mod);
+
+        /* Host choices survive rediscovery */
+        if (g_hash_table_contains (self->disabled_ids, mod_id))
+            lrg_mod_set_enabled (mod, FALSE);
+
+        g_signal_connect_object (mod, "prepare-scripting",
+                                 G_CALLBACK (on_mod_prepare_scripting), self, 0);
     }
 
     /* Compute load order */
@@ -369,56 +504,115 @@ lrg_mod_manager_check_dependencies (LrgModManager  *self,
     return TRUE;
 }
 
+/*
+ * Loads one mod whose prerequisites were already processed (the load order
+ * guarantees that): cycle members and mods with a missing, disabled or
+ * failed required dependency fail without being loaded.
+ */
+static gboolean
+load_one (LrgModManager *self,
+          LrgMod        *mod)
+{
+    GPtrArray        *deps;
+    g_autoptr(GError) mod_error = NULL;
+    guint             i;
+
+    if (g_hash_table_contains (self->cycle_ids, lrg_mod_get_id (mod)))
+    {
+        fail_mod (self, mod, "Circular dependency between mods");
+        return FALSE;
+    }
+
+    deps = lrg_mod_manifest_get_dependencies (lrg_mod_get_manifest (mod));
+    for (i = 0; i < deps->len; i++)
+    {
+        LrgModDependency *dep = g_ptr_array_index (deps, i);
+        const gchar      *dep_id = lrg_mod_dependency_get_mod_id (dep);
+        LrgMod           *dep_mod = lrg_mod_manager_get_mod (self, dep_id);
+        g_autofree gchar *message = NULL;
+
+        if (lrg_mod_dependency_is_optional (dep))
+            continue;
+
+        if (dep_mod == NULL)
+            message = g_strdup_printf ("Missing required dependency: %s", dep_id);
+        else if (!lrg_mod_is_enabled (dep_mod))
+            message = g_strdup_printf ("Required dependency is disabled: %s", dep_id);
+        else if (!lrg_mod_is_loaded (dep_mod))
+            message = g_strdup_printf ("Required dependency failed to load: %s", dep_id);
+
+        if (message != NULL)
+        {
+            fail_mod (self, mod, message);
+            return FALSE;
+        }
+    }
+
+    if (!lrg_mod_load (mod, &mod_error))
+    {
+        lrg_mod_mark_failed (mod, mod_error != NULL ? mod_error->message : "load failed");
+        g_signal_emit (self, signals[SIGNAL_MOD_FAILED], 0, mod);
+        return FALSE;
+    }
+
+    g_ptr_array_add (self->loaded_mods, mod);
+    g_signal_emit (self, signals[SIGNAL_MOD_LOADED], 0, mod);
+    return TRUE;
+}
+
 gboolean
 lrg_mod_manager_load_all (LrgModManager  *self,
                           GError        **error)
 {
-    guint i;
-    gboolean all_success;
+    guint    i;
+    guint    failures;
 
     g_return_val_if_fail (LRG_IS_MOD_MANAGER (self), FALSE);
 
     g_ptr_array_set_size (self->loaded_mods, 0);
-    all_success = TRUE;
+    failures = 0;
 
-    /* Load in computed order */
+    /* Load in computed order; dependencies are always processed first */
     for (i = 0; i < self->load_order->len; i++)
     {
         const gchar *mod_id = g_ptr_array_index (self->load_order, i);
-        LrgMod *mod = lrg_mod_manager_get_mod (self, mod_id);
-        g_autoptr(GError) mod_error = NULL;
+        LrgMod      *mod = lrg_mod_manager_get_mod (self, mod_id);
 
-        if (mod == NULL)
+        if (mod == NULL || !lrg_mod_is_enabled (mod))
             continue;
 
-        if (!lrg_mod_is_enabled (mod))
-            continue;
-
-        /* Check dependencies */
-        if (!lrg_mod_manager_check_dependencies (self, mod, &mod_error))
-        {
-            lrg_warning (LRG_LOG_DOMAIN_MOD, "%s", mod_error->message);
-            all_success = FALSE;
-            continue;
-        }
-
-        /* Load mod */
-        if (lrg_mod_load (mod, &mod_error))
+        /* Already loaded mods stay loaded and keep their place */
+        if (lrg_mod_is_loaded (mod))
         {
             g_ptr_array_add (self->loaded_mods, mod);
+            continue;
         }
-        else
+
+        /*
+         * Failed mods (invalid manifests, earlier failures, mods a host marked
+         * failed) stay failed until rediscovered or reloaded individually.
+         */
+        if (lrg_mod_get_state (mod) == LRG_MOD_STATE_FAILED)
         {
-            lrg_warning (LRG_LOG_DOMAIN_MOD, "Failed to load mod %s: %s",
-                         mod_id, mod_error->message);
-            all_success = FALSE;
+            failures++;
+            continue;
         }
+
+        if (!load_one (self, mod))
+            failures++;
     }
 
     lrg_info (LRG_LOG_DOMAIN_MOD, "Loaded %u of %u mods",
               self->loaded_mods->len, self->load_order->len);
 
-    return all_success;
+    if (failures > 0)
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_LOAD_FAILED,
+                     "%u mod(s) failed to load", failures);
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 void
@@ -432,7 +626,9 @@ lrg_mod_manager_unload_all (LrgModManager *self)
     for (i = (gint)self->loaded_mods->len - 1; i >= 0; i--)
     {
         LrgMod *mod = g_ptr_array_index (self->loaded_mods, (guint)i);
+
         lrg_mod_unload (mod);
+        g_signal_emit (self, signals[SIGNAL_MOD_UNLOADED], 0, mod);
     }
 
     g_ptr_array_set_size (self->loaded_mods, 0);
@@ -519,6 +715,9 @@ lrg_mod_manager_enable_mod (LrgModManager *self,
     g_return_val_if_fail (LRG_IS_MOD_MANAGER (self), FALSE);
     g_return_val_if_fail (mod_id != NULL, FALSE);
 
+    /* Remember the choice even for mods not discovered yet */
+    g_hash_table_remove (self->disabled_ids, mod_id);
+
     mod = lrg_mod_manager_get_mod (self, mod_id);
     if (mod == NULL)
         return FALSE;
@@ -535,6 +734,9 @@ lrg_mod_manager_disable_mod (LrgModManager *self,
 
     g_return_val_if_fail (LRG_IS_MOD_MANAGER (self), FALSE);
     g_return_val_if_fail (mod_id != NULL, FALSE);
+
+    /* Remember the choice even for mods not discovered yet */
+    g_hash_table_add (self->disabled_ids, g_strdup (mod_id));
 
     mod = lrg_mod_manager_get_mod (self, mod_id);
     if (mod == NULL)
@@ -1002,4 +1204,86 @@ lrg_mod_manager_get_dlcs_by_type (LrgModManager *self,
     }
 
     return result;
+}
+
+/* ==========================================================================
+ * Single-mod reload
+ * ========================================================================== */
+
+/**
+ * lrg_mod_manager_reload_mod:
+ * @self: an #LrgModManager
+ * @mod_id: the mod to reload
+ * @error: (nullable): return location for error
+ *
+ * Unloads @mod_id if it is loaded and loads it again (for example after its
+ * files changed), emitting #LrgModManager::mod-unloaded and then
+ * #LrgModManager::mod-loaded or #LrgModManager::mod-failed.  Mods that
+ * depend on it keep running.  A disabled mod is only unloaded.
+ *
+ * Returns: %TRUE when the mod is loaded afterwards (or was disabled)
+ */
+gboolean
+lrg_mod_manager_reload_mod (LrgModManager  *self,
+                            const gchar    *mod_id,
+                            GError        **error)
+{
+    LrgMod *mod;
+
+    g_return_val_if_fail (LRG_IS_MOD_MANAGER (self), FALSE);
+    g_return_val_if_fail (mod_id != NULL, FALSE);
+
+    mod = lrg_mod_manager_get_mod (self, mod_id);
+    if (mod == NULL)
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_NOT_FOUND,
+                     "Unknown mod: %s", mod_id);
+        return FALSE;
+    }
+
+    if (lrg_mod_is_loaded (mod))
+    {
+        lrg_mod_unload (mod);
+        g_ptr_array_remove (self->loaded_mods, mod);
+        g_signal_emit (self, signals[SIGNAL_MOD_UNLOADED], 0, mod);
+    }
+
+    if (!lrg_mod_is_enabled (mod))
+        return TRUE;
+
+    if (!load_one (self, mod))
+    {
+        g_set_error (error, LRG_MOD_ERROR, LRG_MOD_ERROR_LOAD_FAILED,
+                     "%s", lrg_mod_get_error (mod) != NULL ? lrg_mod_get_error (mod)
+                                                           : "load failed");
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+/**
+ * lrg_mod_manager_unload_mod:
+ * @self: an #LrgModManager
+ * @mod_id: the mod to unload
+ *
+ * Unloads one loaded mod, emitting #LrgModManager::mod-unloaded.  Nothing
+ * happens for unknown or unloaded mods.
+ */
+void
+lrg_mod_manager_unload_mod (LrgModManager *self,
+                            const gchar   *mod_id)
+{
+    LrgMod *mod;
+
+    g_return_if_fail (LRG_IS_MOD_MANAGER (self));
+    g_return_if_fail (mod_id != NULL);
+
+    mod = lrg_mod_manager_get_mod (self, mod_id);
+    if (mod == NULL || !lrg_mod_is_loaded (mod))
+        return;
+
+    lrg_mod_unload (mod);
+    g_ptr_array_remove (self->loaded_mods, mod);
+    g_signal_emit (self, signals[SIGNAL_MOD_UNLOADED], 0, mod);
 }
