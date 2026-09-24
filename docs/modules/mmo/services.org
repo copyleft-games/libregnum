@@ -174,7 +174,13 @@ pending page unchanged, acknowledge only after atomic application, and request
 another page while =more=TRUE. Removals are prioritized, then a rotating cursor
 selects updates fairly across IDs. The cursor advances only on acknowledgment;
 selected wire updates remain sorted. A single entity that cannot fit rejects
-the page. Game-specific priority weights are not implemented.
+the page. General priority weights are not implemented, with one exception:
+=lrg_mmo_replicator_set_focus (rep, viewer, entity)= names one entity per viewer,
+normally its own avatar.  Whenever that entity has changed, it leads the page
+ahead of the rotation.  In a crowded area where every page fills with nearby
+changes, the rotation would otherwise hold the viewer's own movement back behind
+entities with lower IDs, and the avatar would visibly stall.  The focus sits outside
+the cursor, so the other entities still rotate fairly.  =forget()= clears it.
 
 =LrgMmoReplica= validates complete deltas before changing state, enforcing unique
 IDs, advancing revisions, capacity, finite positions and stream identity. Exact

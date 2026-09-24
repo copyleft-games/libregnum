@@ -157,7 +157,8 @@ Entity state is capped at 64 KiB; a delta is capped conservatively at 1 MiB.
 Entity and viewer counts have explicit construction-time limits. Memory scales
 with entity payloads and the sum of per-viewer visible baselines; a 1 MiB bound
 per delta is not a global process memory budget. The original =build()= fails an oversized delta without advancing its baseline.
-Use =build_page()= to converge a large visible set within a byte budget.
+Use =build_page()= to converge a large visible set within a byte budget, and
+=set_focus()= so the viewer's own avatar is sent first on every page.
 Pending deltas hold their own immutable payloads until acknowledged/forgotten.
 
 GVariant is a data representation. =lrg_mmo_protocol_encode/decode()= provides a

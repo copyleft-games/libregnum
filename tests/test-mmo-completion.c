@@ -188,6 +188,80 @@ fair_pages (void)
     g_assert_nonnull (found);
 }
 
+/* Pages of one round where all @n_npcs entities (ids 1..n) and the avatar
+ * (id 100) changed; returns whether the avatar made the page and marks the
+ * NPCs that did in @seen. */
+static gboolean
+crowded_round (LrgMmoReplicator *server, guint n_npcs, gboolean *seen)
+{
+    g_autoptr(GBytes) state = g_bytes_new_static ("x", 1);
+    g_autoptr(GVariant) page = NULL;
+    g_autoptr(GVariant) updates = NULL;
+    gboolean more, avatar = FALSE;
+    guint64 sequence, previous = 0;
+    guint i;
+
+    for (i = 1; i <= n_npcs; i++)
+        g_assert_true (lrg_mmo_replicator_upsert (server, i, "zone", 0, 0, 0, state, NULL));
+    g_assert_true (lrg_mmo_replicator_upsert (server, 100, "zone", 0, 0, 0, state, NULL));
+    page = lrg_mmo_replicator_build_page (server, 7, "zone", 0, 0, 0, 10, 256, &more, NULL);
+    g_assert_nonnull (page);
+    g_assert_true (more);
+    g_variant_get_child (page, 0, "t", &sequence);
+    updates = g_variant_get_child_value (page, 1);
+    for (i = 0; i < g_variant_n_children (updates); i++)
+    {
+        guint64 id;
+        g_variant_get_child (updates, i, "(ttddd@ay)", &id, NULL, NULL, NULL, NULL, NULL);
+        /* updates stay in ascending ID order within a page */
+        g_assert_cmpuint (id, >, previous);
+        previous = id;
+        if (id == 100)
+            avatar = TRUE;
+        else
+            seen[id] = TRUE;
+    }
+    g_assert_true (lrg_mmo_replicator_acknowledge (server, 7, sequence, NULL));
+    return avatar;
+}
+
+/*
+ * In a crowd where every entity changes every round and a page holds three,
+ * the focus entity (the viewer's avatar) is on every page, and the
+ * round-robin still reaches every other entity.  Without a focus the avatar
+ * waits its turn and misses most pages.
+ */
+static void
+focus_pages (void)
+{
+    g_autoptr(LrgMmoReplicator) focused = lrg_mmo_replicator_new (32, 4, 4);
+    g_autoptr(LrgMmoReplicator) plain = lrg_mmo_replicator_new (32, 4, 4);
+    gboolean seen[21] = { FALSE };
+    gboolean ignored[21] = { FALSE };
+    guint round, avatar_focused = 0, avatar_plain = 0, i;
+
+    lrg_mmo_replicator_set_focus (focused, 7, 100);
+    for (round = 0; round < 20; round++)
+    {
+        if (crowded_round (focused, 20, seen))
+            avatar_focused++;
+        if (crowded_round (plain, 20, ignored))
+            avatar_plain++;
+    }
+    g_assert_cmpuint (avatar_focused, ==, 20);
+    g_assert_cmpuint (avatar_plain, <, 10);
+    for (i = 1; i <= 20; i++)
+        g_assert_true (seen[i]);
+
+    /* Clearing the focus (or forgetting the viewer) restores the plain rotation */
+    lrg_mmo_replicator_set_focus (focused, 7, 0);
+    avatar_focused = 0;
+    for (round = 0; round < 20; round++)
+        if (crowded_round (focused, 20, seen))
+            avatar_focused++;
+    g_assert_cmpuint (avatar_focused, <, 10);
+}
+
 static void
 second_factor (void)
 {
@@ -224,6 +298,7 @@ main (int argc, char **argv)
     g_test_add_func ("/mmo/completion/postgres", postgres);
     g_test_add_func ("/mmo/completion/social-economy", social_economy);
     g_test_add_func ("/mmo/completion/fair-pages", fair_pages);
+    g_test_add_func ("/mmo/completion/focus-pages", focus_pages);
     g_test_add_func ("/mmo/completion/second-factor", second_factor);
     return g_test_run ();
 }

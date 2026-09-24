@@ -2,6 +2,7 @@
 #include "lrg-mmo-replicator.h"
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 
 typedef struct
 {
@@ -39,6 +40,7 @@ struct _LrgMmoReplicator
     GHashTable *entities;
     GHashTable *cells;
     GHashTable *viewers;
+    GHashTable *focus;          /* viewer ID -> entity ID sent first in pages */
     guint max_entities;
     guint max_viewers;
     gdouble cell_size;
@@ -146,6 +148,7 @@ lrg_mmo_replicator_finalize (GObject *object)
     g_hash_table_unref (self->cells);
     g_hash_table_unref (self->entities);
     g_hash_table_unref (self->viewers);
+    g_hash_table_unref (self->focus);
     G_OBJECT_CLASS (lrg_mmo_replicator_parent_class)->finalize (object);
 }
 
@@ -161,6 +164,7 @@ lrg_mmo_replicator_init (LrgMmoReplicator *self)
     self->entities = g_hash_table_new_full (g_int64_hash, g_int64_equal, NULL, entity_free);
     self->cells = g_hash_table_new_full (cell_hash, cell_equal, cell_free, (GDestroyNotify) g_ptr_array_unref);
     self->viewers = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, viewer_free);
+    self->focus = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, g_free);
 }
 
 LrgMmoReplicator *
@@ -274,8 +278,13 @@ build_internal (LrgMmoReplicator  *self,
     guint n_updates, n_removals;
     gboolean remaining = FALSE;
     guint64 next_cursor = 0;
+    guint64 focus_id;
 
     g_return_val_if_fail (LRG_IS_MMO_REPLICATOR (self), NULL);
+    {
+        guint64 *focused = g_hash_table_lookup (self->focus, &viewer_id);
+        focus_id = focused != NULL ? *focused : 0;
+    }
     if (more != NULL)
         *more = FALSE;
     if (limit < 128 || limit > 1024 * 1024 || viewer_id == 0 || !valid_position (self, zone, x, y, z) ||
@@ -362,6 +371,19 @@ build_internal (LrgMmoReplicator  *self,
             visible->pdata[i] = ordered[(start + i) % visible->len];
         g_free (ordered);
     }
+    /* The viewer's focus entity (usually its own avatar) leads every page it
+     * changed in, ahead of the round-robin, so it never waits for others */
+    if (paginate && focus_id != 0)
+    {
+        for (i = 0; i < visible->len; i++)
+            if (((Entity *) g_ptr_array_index (visible, i))->id == focus_id)
+            {
+                gpointer focused = g_ptr_array_index (visible, i);
+                memmove (visible->pdata + 1, visible->pdata, i * sizeof (gpointer));
+                visible->pdata[0] = focused;
+                break;
+            }
+    }
     n_updates = visible->len;
     n_removals = removed->len;
     if (paginate)
@@ -408,8 +430,15 @@ build_internal (LrgMmoReplicator  *self,
         g_hash_table_unref (baseline);
         baseline = g_steal_pointer (&page_baseline);
     }
-    next_cursor = n_updates > 0 ? ((Entity *) g_ptr_array_index (visible, n_updates - 1))->id :
-                                  (viewer != NULL ? viewer->cursor : 0);
+    /* The round-robin resumes after the last entity it reached; the focus
+     * entity sits outside it */
+    next_cursor = viewer != NULL ? viewer->cursor : 0;
+    for (i = n_updates; i > 0; i--)
+        if (((Entity *) g_ptr_array_index (visible, i - 1))->id != focus_id || focus_id == 0)
+        {
+            next_cursor = ((Entity *) g_ptr_array_index (visible, i - 1))->id;
+            break;
+        }
     if (n_updates > 1)
         qsort (visible->pdata, n_updates, sizeof (gpointer), compare_entities);
     g_variant_builder_init (&updates, G_VARIANT_TYPE ("a(ttddday)"));
@@ -478,6 +507,29 @@ lrg_mmo_replicator_forget (LrgMmoReplicator *self,
 {
     g_return_if_fail (LRG_IS_MMO_REPLICATOR (self));
     g_hash_table_remove (self->viewers, &viewer_id);
+    g_hash_table_remove (self->focus, &viewer_id);
+}
+
+void
+lrg_mmo_replicator_set_focus (LrgMmoReplicator *self,
+                              guint64           viewer_id,
+                              guint64           entity_id)
+{
+    guint64 *key;
+    guint64 *value;
+
+    g_return_if_fail (LRG_IS_MMO_REPLICATOR (self));
+    g_return_if_fail (viewer_id != 0);
+    if (entity_id == 0)
+    {
+        g_hash_table_remove (self->focus, &viewer_id);
+        return;
+    }
+    key = g_new (guint64, 1);
+    value = g_new (guint64, 1);
+    *key = viewer_id;
+    *value = entity_id;
+    g_hash_table_replace (self->focus, key, value);
 }
 
 GVariant *

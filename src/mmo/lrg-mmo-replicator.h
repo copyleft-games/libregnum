@@ -127,6 +127,24 @@ lrg_mmo_replicator_forget (LrgMmoReplicator *self,
                            guint64 viewer_id);
 
 /**
+ * lrg_mmo_replicator_set_focus:
+ * @self: the replicator
+ * @viewer_id: connection-scoped viewer ID
+ * @entity_id: the entity to send first, usually the viewer's own avatar, or 0 to clear
+ *
+ * Gives a viewer's pages a focus entity.  Whenever the focus entity changed and
+ * is visible, lrg_mmo_replicator_build_page() places it on the page before the
+ * round-robin of other changes, so under a tight budget in a crowded area the
+ * viewer's own avatar is never delayed behind other entities.  The focus stays
+ * outside the round-robin cursor.  lrg_mmo_replicator_forget() clears it.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_mmo_replicator_set_focus (LrgMmoReplicator *self,
+                              guint64           viewer_id,
+                              guint64           entity_id);
+
+/**
  * lrg_mmo_replicator_build_page:
  * @self: the replicator
  * @viewer_id: connection-scoped viewer ID
@@ -141,8 +159,9 @@ lrg_mmo_replicator_forget (LrgMmoReplicator *self,
  *
  * Builds a bandwidth-bounded delta. Removals precede updates; updates use ascending
  * entity ID. Only acknowledged page contents advance the baseline. Apply and
- * acknowledge every page, then build the next. Under continuous change, low IDs
- * can receive more frequent updates; hosts choose per-viewer budgets and cadence.
+ * acknowledge every page, then build the next. Changed entities are chosen
+ * round-robin across pages, after the viewer's focus entity (see
+ * lrg_mmo_replicator_set_focus()); hosts choose per-viewer budgets and cadence.
  * A single entity larger than the budget fails without losing its update.
  *
  * Returns: (transfer full) (nullable): (ta(ttddday)at) page
