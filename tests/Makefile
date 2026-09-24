@@ -81,6 +81,7 @@ TEST_SOURCES := \
 	test-ability.c \
 	test-cooldown-aura.c \
 	test-talent.c \
+	test-profession.c \
 	test-audio.c \
 	test-inventory.c \
 	test-i18n.c \

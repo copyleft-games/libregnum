@@ -1,0 +1,155 @@
+* Profession Module
+:PROPERTIES:
+:CUSTOM_ID: profession-module
+:END:
+The Profession module models WoW-style trade skills: a limited number of primary professions (mining, smithing, alchemy, ...), unlimited secondary professions (cooking, fishing, first aid), trainer tiers that raise the skill cap, recipes learned from trainers, drops or quests, gather nodes, and the orange/yellow/green/grey skill-up colours. It is pure game logic: no rendering, no randomness and no clock. Callers pass character levels, random rolls in =[0, 1)= and item counts, which keeps every decision deterministic and testable on an authoritative server.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+| Type | Kind | Purpose |
+|------+------+---------|
+| [[file:skill-band.org][LrgSkillBand]] | Boxed | Orange/yellow/green/grey thresholds and the skill-up chance formula |
+| [[file:profession-def.org][LrgProfessionTier]] | Boxed | One trainer rank: skill cap, required level, cost |
+| [[file:profession-def.org][LrgProfessionDef]] | Derivable GObject | Profession definition: kind, category and ordered tiers |
+| [[file:recipe-def.org][LrgRecipeItem]] | Boxed | Reagent, product or gather yield (item id, count, chance) |
+| [[file:recipe-def.org][LrgRecipeDef]] | Derivable GObject | Crafting recipe: skill requirement, band, reagents, products, tool, station |
+| [[file:gather-node-def.org][LrgGatherNodeDef]] | Derivable GObject | Resource node: profession, skill requirement, band, yields, tool, respawn |
+| [[file:profession-state.org][LrgProfessionState]] | Final GObject | One character's professions, skills, caps and known recipes, with persistence |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Primary and secondary professions
+A definition's =kind= is =LRG_PROFESSION_KIND_PRIMARY= or =LRG_PROFESSION_KIND_SECONDARY=. =LrgProfessionState:max-primary= (default 2, range 0..64) limits primaries only; secondaries are unlimited apart from the hard cap of 64 professions per state. =lrg_profession_state_unlearn()= frees the slot and drops every recipe of that profession.
+
+*** Tiers and training
+A profession has up to 64 tiers whose skill caps strictly increase (for example Apprentice 75, Journeyman 150, Expert 225, Artisan 300). Learning grants skill 1 with tier 0's cap and requires tier 0's level. Training raises the cap to the next tier (the first cap above the current one) when the character meets its level and the skill is at least =cap - train-margin= (default margin 25, saturating at 0). Training never changes the skill itself. The tier's =cost= is not charged by the engine: call =lrg_profession_state_can_train()=, charge the returned tier's cost through your economy, then call =lrg_profession_state_train()=.
+
+*** Skill-up colours
+Every recipe and gather node has an =LrgSkillBand=. With thresholds =orange <= yellow <= green <= grey=:
+
+| Skill range | Colour | Chance of +1 skill |
+|-------------+--------+--------------------|
+| skill < orange | unavailable | 0 |
+| orange <= skill < yellow | orange | 1 |
+| yellow <= skill < green | yellow | (grey - skill) / (grey - yellow) |
+| green <= skill < grey | green | (grey - skill) / (grey - yellow) |
+| grey <= skill | grey | 0 |
+
+=lrg_profession_state_try_skill_up()= grants a point when =roll < chance= and the skill is below the cap; it never exceeds the cap. Invalid rolls (outside =[0, 1)=, NaN, infinities) and invalid bands grant nothing. Recipes and nodes without an explicit band use a default band starting at the required skill: +15 yellow, +30 green, +45 grey.
+
+*** Recipes and crafting
+=lrg_profession_state_learn_recipe()= requires the profession to be known and the skill to reach the recipe's =required-skill=. =lrg_profession_state_can_craft()= re-checks knowledge and skill and, given an =LrgItemCountFunc=, the tool and every reagent =count * quantity= (computed in 64 bits). =lrg_profession_state_inventory_count()= is a ready-made counter over =LrgInventory=. Station proximity, the recipe's =required-level=, consuming reagents and rolling products are the game's job.
+
+*** Gathering
+=lrg_profession_state_can_gather()= checks profession and skill; =lrg_profession_state_can_gather_with()= also checks the node's required tool via a counter. Node timers (=respawn=) belong to the server's world simulation.
+
+** How it fits an authoritative MMO server
+:PROPERTIES:
+:CUSTOM_ID: authoritative-server
+:END:
+- The server owns every =LrgProfessionState=. Clients send intents ("train mining", "craft 5 bronze bars", "gather node 1234"); the server validates them with this module and applies the result. Never accept skills, caps or recipe lists from a client.
+- Randomness is supplied by the server (for example an =LrgRandomStream= per character or per realm) as rolls in =[0, 1)=, so replays and audits are reproducible.
+- Persist the state with =lrg_profession_state_to_variant()= (type =(ua(suu)as)=) inside the character's =LrgMmoStore= record, alongside other character data, in the same compare-and-swap commit that charges trainer costs or consumes reagents. That keeps "gold spent" and "tier trained" atomic.
+- Restore with =lrg_profession_state_new_from_variant_full()= and the server's definition tables. It rejects corrupt or hostile snapshots (wrong type, non-normal data, oversized arrays, bad or duplicate ids, skill above cap, cap above the definition, recipes of unknown professions) as a whole, so a bad record never half-loads. With profession definitions it also resolves each profession's kind; the plain =lrg_profession_state_new_from_variant()= cannot know kinds and therefore counts every restored profession as primary (fail closed) until definitions are supplied.
+- Clients receive projections only: a UI list built from =lrg_profession_state_get_professions()=, skills, caps and recipe ids, plus per-recipe colours computed with =lrg_skill_band_get_difficulty()=. Do not send the persisted variant as the client protocol.
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: worked-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+/* Definitions: normally loaded from YAML by the data loader at startup */
+static LrgProfessionDef *
+make_smithing (void)
+{
+    LrgProfessionDef *def;
+
+    def = lrg_profession_def_new ("smithing", LRG_PROFESSION_KIND_PRIMARY,
+                                  LRG_PROFESSION_CATEGORY_CRAFTING);
+    lrg_profession_def_set_name (def, "Blacksmithing");
+    lrg_profession_def_add_tier (def, lrg_profession_tier_new ("Apprentice", 75, 5, 10), NULL);
+    lrg_profession_def_add_tier (def, lrg_profession_tier_new ("Journeyman", 150, 10, 500), NULL);
+    return def;
+}
+
+static gboolean
+server_craft (LrgProfessionState *state,
+              LrgRecipeDef       *recipe,
+              LrgInventory       *bags,
+              guint               quantity,
+              LrgRandomStream    *rng,
+              GError            **error)
+{
+    guint i;
+
+    /* Validate the client's intent against authoritative state */
+    if (!lrg_profession_state_can_craft (state, recipe, quantity,
+                                         lrg_profession_state_inventory_count,
+                                         bags, error))
+        return FALSE;
+
+    /* ... consume reagents, create products (game code) ... */
+
+    /* One skill-up attempt per craft, with server-side rolls */
+    for (i = 0; i < quantity; i++)
+        lrg_profession_state_try_skill_up (state,
+                                           lrg_recipe_def_get_profession_id (recipe),
+                                           lrg_recipe_def_get_band (recipe),
+                                           lrg_random_stream_next_double (rng));
+    return TRUE;
+}
+
+static GVariant *
+save_professions (LrgProfessionState *state)
+{
+    /* (transfer full), non-floating: embed in the character record, then unref */
+    return lrg_profession_state_to_variant (state);
+}
+
+static LrgProfessionState *
+load_professions (GVariant   *saved,
+                  GHashTable *profession_defs,
+                  GHashTable *recipe_defs,
+                  GError    **error)
+{
+    /* Reject the whole snapshot on any inconsistency */
+    return lrg_profession_state_new_from_variant_full (saved, profession_defs,
+                                                       recipe_defs, error);
+}
+#+end_src
+
+=lrg_random_stream_next_double()= returns uniform doubles in =[0, 1)=; any server-side source with that range works.
+
+** Error domain
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+All fallible calls use =LRG_PROGRESSION_ERROR=:
+
+| Code | Used for |
+|------+----------|
+| =INVALID= | Malformed identifiers, tier caps, craft quantity 0, hostile or inconsistent snapshots |
+| =NOT_FOUND= | Training an unknown profession; unknown recipe or profession ids in a snapshot |
+| =REQUIREMENT= | Level, skill, profession, recipe knowledge, tool or reagent requirements |
+| =LIMIT= | Primary limit, 64 professions, 4096 recipes, 64 tiers, top tier reached |
+| =DUPLICATE= | Profession or recipe already known |
+
+Every failing call leaves the state unchanged.
+
+** Limits
+:PROPERTIES:
+:CUSTOM_ID: limits
+:END:
+| Constant | Value |
+|----------+-------|
+| =LRG_PROFESSION_SKILL_LIMIT= | 100000 (largest skill or cap) |
+| =LRG_PROFESSION_STATE_MAX_PROFESSIONS= | 64 |
+| =LRG_PROFESSION_STATE_MAX_RECIPES= | 4096 |
+| Tiers per profession | 64 |
+| Identifier length | 1..128 bytes of valid UTF-8 |

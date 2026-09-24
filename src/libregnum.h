@@ -178,6 +178,12 @@
 #include "progression/lrg-talent-loadout.h"
 #include "progression/lrg-talent-book.h"
 
+/* Profession module */
+#include "profession/lrg-skill-band.h"
+#include "profession/lrg-profession-def.h"
+#include "profession/lrg-recipe-def.h"
+#include "profession/lrg-gather-node-def.h"
+#include "profession/lrg-profession-state.h"
 
 
 /* Audio module */

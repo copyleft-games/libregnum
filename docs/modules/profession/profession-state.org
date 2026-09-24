@@ -1,0 +1,234 @@
+* LrgProfessionState - Character Professions
+:PROPERTIES:
+:CUSTOM_ID: lrgprofessionstate
+:END:
+Runtime state of one character's professions: known professions with their skill and trained cap, known recipes, skill-ups, crafting and gathering checks, and GVariant persistence. On an MMO server this object is authoritative and lives with the character record.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject* - =LRG_TYPE_PROFESSION_STATE=, GIR =Libregnum.ProfessionState=
+- Header - =profession/lrg-profession-state.h=
+- Not thread-safe; confine each state to its zone/worker thread.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property | Type | Default | Notes |
+|----------+------+---------+-------|
+| =max-primary= | guint 0..64 | 2 | Construct property; primary profession limit. Lowering it never removes professions, it only blocks new primaries |
+| =train-margin= | guint 0..100000 | 25 | Next tier trainable once =skill >= cap - margin= (saturating). Configuration only, not persisted |
+
+C accessors: =lrg_profession_state_get_max_primary/set_max_primary=, =get_train_margin/set_train_margin=. Out-of-range values are rejected with a critical.
+
+** Constants and callback
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Name | Value |
+|------+-------|
+| =LRG_PROFESSION_STATE_MAX_PROFESSIONS= | 64 |
+| =LRG_PROFESSION_STATE_MAX_RECIPES= | 4096 |
+| =LRG_PROFESSION_STATE_VARIANT_TYPE= | ="(ua(suu)as)"= |
+
+#+begin_src C
+typedef guint (*LrgItemCountFunc) (const gchar *item_id, gpointer user_data);
+#+end_src
+Reports how many of an item the crafter can use, so crafting checks work against any storage.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+#+begin_src C
+LrgProfessionState *lrg_profession_state_new (guint max_primary);
+#+end_src
+Creates an empty state (transfer full). =max_primary= above 64 is a programmer error.
+
+** Professions
+:PROPERTIES:
+:CUSTOM_ID: professions
+:END:
+*** lrg_profession_state_learn()
+#+begin_src C
+gboolean lrg_profession_state_learn (LrgProfessionState *self, LrgProfessionDef *def,
+                                     guint level, GError **error);
+#+end_src
+Learns =def= at skill 1 with tier 0's cap. Checks, in order:
+1. =INVALID= - id empty, over 128 bytes or not UTF-8; definition without tiers
+2. =DUPLICATE= - already known
+3. =LIMIT= - a primary when the primary count is already =max-primary=; any profession when 64 are known
+4. =REQUIREMENT= - =level= below tier 0's =required_level=
+
+The profession's kind is recorded for later primary counting. State is unchanged on failure.
+
+*** lrg_profession_state_unlearn()
+#+begin_src C
+gboolean lrg_profession_state_unlearn (LrgProfessionState *self, const gchar *profession_id);
+#+end_src
+Forgets the profession, its skill and every recipe learned for it. *Returns:* =TRUE= if it was known.
+
+*** Queries
+#+begin_src C
+gboolean   lrg_profession_state_knows             (LrgProfessionState *self, const gchar *profession_id);
+guint      lrg_profession_state_get_skill         (LrgProfessionState *self, const gchar *profession_id);
+guint      lrg_profession_state_get_max_skill     (LrgProfessionState *self, const gchar *profession_id);
+guint      lrg_profession_state_get_primary_count (LrgProfessionState *self, GHashTable *defs);
+GPtrArray *lrg_profession_state_get_professions   (LrgProfessionState *self);
+#+end_src
+- Skill and max skill are 0 for unknown professions.
+- =get_primary_count= takes an optional =utf8 -> LrgProfessionDef= table. A profession's kind comes from =defs= when present, otherwise from the kind recorded at learn time. Professions with no known kind (restored without definitions, or added by =set_skill=) count as primary so the limit fails closed.
+- =get_professions= returns (transfer container) ids sorted with =g_strcmp0=; the strings belong to the state.
+
+** Training
+:PROPERTIES:
+:CUSTOM_ID: training
+:END:
+#+begin_src C
+gboolean lrg_profession_state_can_train (LrgProfessionState *self, LrgProfessionDef *def, guint level,
+                                         const LrgProfessionTier **out_tier, GError **error);
+gboolean lrg_profession_state_train     (LrgProfessionState *self, LrgProfessionDef *def, guint level,
+                                         GError **error);
+#+end_src
+The next tier is the first tier whose cap exceeds the current cap. Checks, in order:
+1. =NOT_FOUND= - profession not known
+2. =LIMIT= - no higher tier
+3. =REQUIREMENT= - =level= below the tier's =required_level=
+4. =REQUIREMENT= - skill below =cap - train-margin= (0 when the margin exceeds the cap)
+
+=out_tier= (optional, transfer none) receives the tier on success and =NULL= on failure; charge its =cost= before calling =train=. =train= raises only the cap, never the skill, and leaves the state unchanged on failure.
+
+** Recipes
+:PROPERTIES:
+:CUSTOM_ID: recipes
+:END:
+*** lrg_profession_state_learn_recipe()
+#+begin_src C
+gboolean lrg_profession_state_learn_recipe (LrgProfessionState *self, LrgRecipeDef *recipe, GError **error);
+#+end_src
+Checks, in order: =INVALID= bad recipe or profession id; =DUPLICATE= already known; =REQUIREMENT= profession not known or skill below =required-skill=; =LIMIT= 4096 recipes known. The recipe's =required-level= and trainer cost are the caller's to enforce.
+
+*** lrg_profession_state_learn_starter_recipes()
+#+begin_src C
+guint lrg_profession_state_learn_starter_recipes (LrgProfessionState *self, GPtrArray *recipes);
+#+end_src
+Learns every =LRG_RECIPE_SOURCE_STARTER= recipe in =recipes= (element-type =LrgRecipeDef=) that =learn_recipe= accepts. Call after learning or training. *Returns:* number learned.
+
+*** Queries
+#+begin_src C
+gboolean   lrg_profession_state_knows_recipe (LrgProfessionState *self, const gchar *recipe_id);
+GPtrArray *lrg_profession_state_get_recipes  (LrgProfessionState *self, const gchar *profession_id);
+#+end_src
+=get_recipes= filters by profession (=NULL= for all) and returns (transfer container) sorted ids owned by the state.
+
+** Skill-ups and admin
+:PROPERTIES:
+:CUSTOM_ID: skill
+:END:
+*** lrg_profession_state_try_skill_up()
+#+begin_src C
+guint lrg_profession_state_try_skill_up (LrgProfessionState *self, const gchar *profession_id,
+                                         const LrgSkillBand *band, gdouble roll);
+#+end_src
+Adds one point when =roll < lrg_skill_band_get_chance (band, skill)= and =skill < max=. Returns 0 for unknown professions, rolls outside =[0, 1)= (including NaN and infinities), invalid bands, or a skill already at its cap. *Returns:* 0 or 1.
+
+*** lrg_profession_state_set_skill()
+#+begin_src C
+void lrg_profession_state_set_skill (LrgProfessionState *self, const gchar *profession_id,
+                                     guint skill, guint max_skill);
+#+end_src
+Migration/admin override. Sets the cap (1..100000) and the skill clamped to it. Adds the profession when unknown with an unresolved kind; bypasses levels, tiers and the primary limit, but not the 64-profession cap. Recipes are kept. Invalid arguments are programmer errors.
+
+** Crafting and gathering checks
+:PROPERTIES:
+:CUSTOM_ID: checks
+:END:
+*** lrg_profession_state_can_craft()
+#+begin_src C
+gboolean lrg_profession_state_can_craft (LrgProfessionState *self, LrgRecipeDef *recipe, guint quantity,
+                                         LrgItemCountFunc count_func, gpointer user_data, GError **error);
+#+end_src
+Checks, in order: =INVALID= for =quantity= 0 or bad ids; =REQUIREMENT= for an unknown recipe, unknown profession or skill below =required-skill=; then, only when =count_func= is non-NULL, =REQUIREMENT= for a missing tool (at least one) or any reagent with fewer than =count * quantity= available (64-bit arithmetic, so huge quantities cannot wrap). Station and level checks are the caller's.
+
+*** lrg_profession_state_can_gather() / can_gather_with()
+#+begin_src C
+gboolean lrg_profession_state_can_gather      (LrgProfessionState *self, LrgGatherNodeDef *node, GError **error);
+gboolean lrg_profession_state_can_gather_with (LrgProfessionState *self, LrgGatherNodeDef *node,
+                                               LrgItemCountFunc count_func, gpointer user_data,
+                                               GError **error);
+#+end_src
+=INVALID= for a node without a valid profession id; =REQUIREMENT= when the profession is unknown or the skill is below the node's =required-skill=. =can_gather_with= additionally requires the node's =required-tool= through =count_func= when both are set.
+
+*** lrg_profession_state_inventory_count()
+#+begin_src C
+guint lrg_profession_state_inventory_count (const gchar *item_id, gpointer user_data);
+#+end_src
+An =LrgItemCountFunc= treating =user_data= as =LrgInventory*=; returns =lrg_inventory_count_item()= (total quantity across all slots). Passing anything but an inventory is a programmer error.
+
+#+begin_src C
+lrg_profession_state_can_craft (state, recipe, 5, lrg_profession_state_inventory_count, bags, &error);
+#+end_src
+
+** Persistence
+:PROPERTIES:
+:CUSTOM_ID: persistence
+:END:
+*** lrg_profession_state_to_variant()
+#+begin_src C
+GVariant *lrg_profession_state_to_variant (LrgProfessionState *self);
+#+end_src
+*Returns:* (transfer full) non-floating variant of type =(ua(suu)as)=: =max-primary=, professions sorted by id as =(id, skill, max_skill)=, recipe ids sorted. Output is deterministic, so equal states serialise to equal bytes.
+
+*** lrg_profession_state_new_from_variant() / new_from_variant_full()
+#+begin_src C
+LrgProfessionState *lrg_profession_state_new_from_variant      (GVariant *variant, GHashTable *recipes,
+                                                                GError **error);
+LrgProfessionState *lrg_profession_state_new_from_variant_full (GVariant *variant, GHashTable *professions,
+                                                                GHashTable *recipes, GError **error);
+#+end_src
+=recipes= and =professions= are optional =utf8 -> LrgRecipeDef= / =utf8 -> LrgProfessionDef= tables. The whole snapshot is rejected (=NULL=, nothing leaked) on any problem:
+
+| Check | Error |
+|-------+-------|
+| Type string not exactly =(ua(suu)as)= | =INVALID= |
+| Not in GVariant normal form (includes non-UTF-8 strings) | =INVALID= |
+| =max-primary= > 64, more than 64 professions or 4096 recipes | =INVALID= |
+| Empty, >128-byte or non-UTF-8 id; duplicate profession or recipe id | =INVALID= |
+| =max_skill= 0 or > 100000; =skill > max_skill= | =INVALID= |
+| Recipe id missing from =recipes= (or =recipes= is =NULL=), or not an =LrgRecipeDef= | =NOT_FOUND= |
+| Recipe's profession not in the snapshot | =INVALID= |
+| With =professions=: unknown profession id or not an =LrgProfessionDef= | =NOT_FOUND= |
+| With =professions=: =max_skill= above the definition's top cap | =INVALID= |
+| With =professions=: more primaries than =max-primary= | =INVALID= |
+
+=new_from_variant (v, recipes, e)= equals =new_from_variant_full (v, NULL, recipes, e)=. Only the =_full= form resolves each profession's kind; without it the restored professions count as primary until =train= or a =defs= table says otherwise. Servers should always use =_full=. Round trips are exact: =to_variant (new_from_variant (to_variant (s)))= equals =to_variant (s)=.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgProfessionState) state = lrg_profession_state_new (2);
+g_autoptr(GError) error = NULL;
+const LrgProfessionTier *tier = NULL;
+
+if (!lrg_profession_state_learn (state, mining, character_level, &error))
+    return reply_error (error);
+
+/* Trainer: check, charge, commit */
+if (lrg_profession_state_can_train (state, mining, character_level, &tier, &error)
+    && charge_gold (character, tier->cost)
+    && lrg_profession_state_train (state, mining, character_level, &error))
+    lrg_profession_state_learn_starter_recipes (state, all_recipes);
+
+/* Gathering with a server roll */
+if (lrg_profession_state_can_gather_with (state, node, lrg_profession_state_inventory_count,
+                                          bags, &error))
+    lrg_profession_state_try_skill_up (state, "mining", lrg_gather_node_def_get_band (node),
+                                       lrg_random_stream_next_double (rng));
+
+/* Persist inside the character record */
+g_autoptr(GVariant) saved = lrg_profession_state_to_variant (state);
+#+end_src

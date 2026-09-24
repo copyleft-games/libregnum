@@ -1,0 +1,106 @@
+* LrgRecipeDef and LrgRecipeItem - Crafting Recipes
+:PROPERTIES:
+:CUSTOM_ID: lrgrecipedef
+:END:
+Static data for one crafting recipe: owning profession, skill requirement, skill-up band, reagents consumed, products created, and optional tool and station.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgRecipeItem= - *Boxed type* with public fields, =LRG_TYPE_RECIPE_ITEM=, GIR =Libregnum.RecipeItem=; also used for gather yields
+- =LrgRecipeDef= - *Derivable GObject*, =LRG_TYPE_RECIPE_DEF=, GIR =Libregnum.RecipeDef=; 8 reserved class slots
+- Header - =profession/lrg-recipe-def.h=
+
+#+begin_src C
+struct _LrgRecipeItem
+{
+    gchar   *item_id;  /* item definition id */
+    guint    count;    /* >= 1 */
+    gdouble  chance;   /* (0, 1]; 1 for reagents */
+};
+#+end_src
+
+** LrgRecipeItem functions
+:PROPERTIES:
+:CUSTOM_ID: recipe-item
+:END:
+#+begin_src C
+LrgRecipeItem *lrg_recipe_item_new  (const gchar *item_id, guint count, gdouble chance);
+LrgRecipeItem *lrg_recipe_item_copy (const LrgRecipeItem *self);
+void           lrg_recipe_item_free (LrgRecipeItem *self);
+#+end_src
+=new= returns =NULL= with a critical for an empty id, =count= 0, or a =chance= that is not finite or not in =(0, 1]=. =copy= is a deep copy; =free= accepts =NULL=.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property | Type | Default | Notes |
+|----------+------+---------+-------|
+| =id= | string | NULL | Construct-only |
+| =name= | string | NULL | |
+| =description= | string | NULL | |
+| =profession-id= | string | ctor arg | Owning profession |
+| =required-skill= | guint 0..100000 | 0 | Needed to learn and craft; default band's orange |
+| =craft-time= | gdouble 0..86400 | 0 | Seconds |
+| =source= | =LrgRecipeSource= | =TRAINER= | =STARTER= recipes are picked up by =lrg_profession_state_learn_starter_recipes()= |
+| =trainer-cost= | guint | 0 | Charged by the caller |
+| =station= | string | NULL | Station key (forge, anvil); proximity checked by the game |
+| =tool= | string | NULL | Tool item id, not consumed; checked by =can_craft= with a counter |
+| =required-level= | guint | 0 | Character level; enforced by the caller |
+
+Every property has a C getter and setter (=lrg_recipe_def_get_name=, =lrg_recipe_def_set_required_skill=, ...). Setters notify only on change.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+#+begin_src C
+LrgRecipeDef *lrg_recipe_def_new (const gchar *id, const gchar *profession_id);
+#+end_src
+*Returns:* (transfer full) recipe with no reagents or products and the default band.
+
+** Band
+:PROPERTIES:
+:CUSTOM_ID: band
+:END:
+#+begin_src C
+void                lrg_recipe_def_set_band          (LrgRecipeDef *self, const LrgSkillBand *band);
+const LrgSkillBand *lrg_recipe_def_get_band          (LrgRecipeDef *self);
+gboolean            lrg_recipe_def_has_explicit_band (LrgRecipeDef *self);
+#+end_src
+- =set_band= copies a valid band; =NULL= returns to the default band. An invalid band is rejected with a critical and the old band stays.
+- =get_band= returns (transfer none) the explicit band or, when none is set, =lrg_skill_band_new_default (required-skill)= kept up to date as =required-skill= changes. Never =NULL=.
+
+** Reagents and products
+:PROPERTIES:
+:CUSTOM_ID: items
+:END:
+#+begin_src C
+void       lrg_recipe_def_add_reagent  (LrgRecipeDef *self, const gchar *item_id, guint count);
+void       lrg_recipe_def_add_product  (LrgRecipeDef *self, const gchar *item_id, guint count, gdouble chance);
+GPtrArray *lrg_recipe_def_get_reagents (LrgRecipeDef *self);
+GPtrArray *lrg_recipe_def_get_products (LrgRecipeDef *self);
+#+end_src
+- Reagents are unique per item: adding the same item again sums the counts (saturating at =G_MAXUINT=).
+- Products keep insertion order and may repeat, e.g. a guaranteed bar plus a 25% bonus bar.
+- Getters return (transfer none) =GPtrArray= of =LrgRecipeItem= owned by the recipe.
+- Invalid ids, zero counts and bad chances are rejected with a critical.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgRecipeDef) bronze = lrg_recipe_def_new ("smelt_bronze", "mining");
+g_autoptr(LrgSkillBand) band = lrg_skill_band_new (65, 65, 90, 115);
+
+lrg_recipe_def_set_name (bronze, "Smelt Bronze");
+lrg_recipe_def_set_required_skill (bronze, 65);
+lrg_recipe_def_set_station (bronze, "forge");
+lrg_recipe_def_set_band (bronze, band);
+lrg_recipe_def_add_reagent (bronze, "copper_bar", 1);
+lrg_recipe_def_add_reagent (bronze, "tin_bar", 1);
+lrg_recipe_def_add_product (bronze, "bronze_bar", 2, 1.0);
+#+end_src

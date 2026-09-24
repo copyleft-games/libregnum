@@ -1,0 +1,69 @@
+* LrgGatherNodeDef - Gather Node Definitions
+:PROPERTIES:
+:CUSTOM_ID: lrggathernodedef
+:END:
+Static data for a harvestable node type (ore vein, herb, skinnable beast, fishing pool): which gathering profession it needs, the skill requirement and band, possible yields, an optional tool and the respawn delay.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Derivable GObject* - =LRG_TYPE_GATHER_NODE_DEF=, GIR =Libregnum.GatherNodeDef=; 8 reserved class slots
+- Header - =profession/lrg-gather-node-def.h=
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property | Type | Default | Notes |
+|----------+------+---------+-------|
+| =id= | string | NULL | Construct-only |
+| =name= | string | NULL | |
+| =profession-id= | string | ctor arg | Gathering profession |
+| =required-skill= | guint 0..100000 | 0 | Default band's orange threshold |
+| =respawn= | gdouble 0..86400 | 0 | Seconds; node timers belong to the server world |
+| =required-tool= | string | NULL | Tool item id checked by =lrg_profession_state_can_gather_with()= |
+
+C accessors: =lrg_gather_node_def_get_id=, =get_name/set_name=, =get_profession_id/set_profession_id=, =get_required_skill/set_required_skill=, =get_respawn/set_respawn=, =get_required_tool/set_required_tool=. Setters notify only on change.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+#+begin_src C
+LrgGatherNodeDef *lrg_gather_node_def_new (const gchar *id, const gchar *profession_id);
+#+end_src
+*Returns:* (transfer full) node with no yields and the default band.
+
+** Band and yields
+:PROPERTIES:
+:CUSTOM_ID: band-yields
+:END:
+#+begin_src C
+void                lrg_gather_node_def_set_band   (LrgGatherNodeDef *self, const LrgSkillBand *band);
+const LrgSkillBand *lrg_gather_node_def_get_band   (LrgGatherNodeDef *self);
+void                lrg_gather_node_def_add_yield  (LrgGatherNodeDef *self, const gchar *item_id,
+                                                    guint count, gdouble chance);
+GPtrArray          *lrg_gather_node_def_get_yields (LrgGatherNodeDef *self);
+#+end_src
+Band semantics match =LrgRecipeDef=: copied on set, =NULL= resets to =lrg_skill_band_new_default (required-skill)=, invalid bands are rejected with a critical, the getter never returns =NULL=. Yields are =LrgRecipeItem= entries in insertion order (transfer none); roll each =chance= with a server-supplied random value.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgGatherNodeDef) vein = lrg_gather_node_def_new ("copper_vein", "mining");
+g_autoptr(GError) error = NULL;
+
+lrg_gather_node_def_set_required_tool (vein, "mining_pick");
+lrg_gather_node_def_set_respawn (vein, 300.0);
+lrg_gather_node_def_add_yield (vein, "copper_ore", 2, 1.0);
+lrg_gather_node_def_add_yield (vein, "malachite", 1, 0.05);
+
+if (lrg_profession_state_can_gather_with (state, vein,
+                                          lrg_profession_state_inventory_count,
+                                          bags, &error))
+    lrg_profession_state_try_skill_up (state, "mining",
+                                       lrg_gather_node_def_get_band (vein), roll);
+#+end_src

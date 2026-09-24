@@ -134,6 +134,11 @@ PUBLIC_HEADERS := \
 	src/progression/lrg-talent-tree.h \
 	src/progression/lrg-talent-loadout.h \
 	src/progression/lrg-talent-book.h \
+	src/profession/lrg-skill-band.h \
+	src/profession/lrg-profession-def.h \
+	src/profession/lrg-recipe-def.h \
+	src/profession/lrg-gather-node-def.h \
+	src/profession/lrg-profession-state.h \
 	src/audio/lrg-sound-bank.h \
 	src/audio/lrg-music-track.h \
 	src/audio/lrg-audio-manager.h \
@@ -638,6 +643,11 @@ SOURCES := \
 	src/progression/lrg-talent-tree.c \
 	src/progression/lrg-talent-loadout.c \
 	src/progression/lrg-talent-book.c \
+	src/profession/lrg-skill-band.c \
+	src/profession/lrg-profession-def.c \
+	src/profession/lrg-recipe-def.c \
+	src/profession/lrg-gather-node-def.c \
+	src/profession/lrg-profession-state.c \
 	src/audio/lrg-sound-bank.c \
 	src/audio/lrg-music-track.c \
 	src/audio/lrg-audio-manager.c \

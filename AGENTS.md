@@ -40,6 +40,7 @@ libregnum/
 │   ├── dialog/               # DialogNode, DialogTree, DialogRunner
 │   ├── quest/                # QuestDef, QuestObjective, QuestInstance, QuestLog, QuestChain
 │   ├── progression/          # ExperienceCurve, AbilityDef, Spellbook, CooldownSet, Aura(Set), Vital, Talent*
+│   ├── profession/           # SkillBand, ProfessionDef, RecipeDef, GatherNodeDef, ProfessionState
 │   ├── inventory/            # ItemDef, ItemStack, Inventory, Equipment
 │   ├── save/                 # Saveable interface, SaveContext, SaveGame, SaveManager
 │   ├── ai/                   # BehaviorTree, Blackboard, BTNode hierarchy

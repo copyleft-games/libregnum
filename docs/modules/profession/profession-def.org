@@ -1,0 +1,112 @@
+* LrgProfessionDef and LrgProfessionTier - Profession Definitions
+:PROPERTIES:
+:CUSTOM_ID: lrgprofessiondef
+:END:
+Static data describing a profession: whether it is primary or secondary, what it does, and the ordered trainer tiers that raise the skill cap.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgProfessionTier= - *Boxed type* with public fields, =LRG_TYPE_PROFESSION_TIER=, GIR =Libregnum.ProfessionTier=
+- =LrgProfessionDef= - *Derivable GObject*, =LRG_TYPE_PROFESSION_DEF=, GIR =Libregnum.ProfessionDef=; the class struct has no virtual methods and 8 reserved slots
+- Header - =profession/lrg-profession-def.h=
+
+#+begin_src C
+struct _LrgProfessionTier
+{
+    gchar *name;            /* nullable display name, e.g. "Journeyman" */
+    guint  skill_cap;       /* 1..LRG_PROFESSION_SKILL_LIMIT */
+    guint  required_level;  /* minimum character level */
+    guint  cost;            /* trainer cost, charged by the caller */
+};
+#+end_src
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property | Type | Default | Notes |
+|----------+------+---------+-------|
+| =id= | string | NULL | Construct-only identifier |
+| =name= | string | NULL | Display name |
+| =description= | string | NULL | Description |
+| =icon= | string | NULL | Icon key |
+| =kind= | =LrgProfessionKind= | =PRIMARY= | Primaries count against =max-primary= |
+| =category= | =LrgProfessionCategory= | =CRAFTING= | =GATHERING=, =CRAFTING= or =SERVICE= |
+
+All properties are real GObject properties (so =LrgDataLoader= YAML loading works) and notify only when the value changes. Tiers are not properties; add them in code after loading.
+
+** Tier functions
+:PROPERTIES:
+:CUSTOM_ID: tier-functions
+:END:
+#+begin_src C
+LrgProfessionTier *lrg_profession_tier_new  (const gchar *name, guint skill_cap,
+                                             guint required_level, guint cost);
+LrgProfessionTier *lrg_profession_tier_copy (const LrgProfessionTier *self);
+void               lrg_profession_tier_free (LrgProfessionTier *self);
+#+end_src
+=new= and =copy= return (transfer full) tiers; =free= accepts =NULL=. =g_autoptr(LrgProfessionTier)= is supported.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_profession_def_new()
+#+begin_src C
+LrgProfessionDef *lrg_profession_def_new (const gchar *id, LrgProfessionKind kind,
+                                          LrgProfessionCategory category);
+#+end_src
+Creates a definition without tiers. *Returns:* (transfer full).
+
+** Accessors
+:PROPERTIES:
+:CUSTOM_ID: accessors
+:END:
+=lrg_profession_def_get_id()=, =get_name/set_name=, =get_description/set_description=, =get_icon/set_icon=, =get_kind/set_kind=, =get_category/set_category=. String getters return (transfer none) nullable strings owned by the definition.
+
+** Tiers
+:PROPERTIES:
+:CUSTOM_ID: tiers
+:END:
+*** lrg_profession_def_add_tier()
+#+begin_src C
+gboolean lrg_profession_def_add_tier (LrgProfessionDef *self, LrgProfessionTier *tier,
+                                      GError **error);
+#+end_src
+Appends a tier. *Ownership:* =tier= is (transfer full) and always taken; it is freed on failure.
+
+*Errors:*
+- =LRG_PROGRESSION_ERROR_INVALID= - cap 0, cap above =LRG_PROFESSION_SKILL_LIMIT=, or cap not strictly greater than the previous tier's cap
+- =LRG_PROGRESSION_ERROR_LIMIT= - the definition already has 64 tiers
+
+*** Queries
+#+begin_src C
+guint                    lrg_profession_def_get_tier_count   (LrgProfessionDef *self);
+const LrgProfessionTier *lrg_profession_def_get_tier         (LrgProfessionDef *self, guint index);
+guint                    lrg_profession_def_get_max_skill    (LrgProfessionDef *self);
+gint                     lrg_profession_def_get_tier_for_cap (LrgProfessionDef *self, guint skill_cap);
+gint                     lrg_profession_def_get_next_tier    (LrgProfessionDef *self, guint current_cap);
+#+end_src
+- =get_tier= - (transfer none, nullable) tier, =NULL= when out of range
+- =get_max_skill= - last tier's cap, 0 without tiers
+- =get_tier_for_cap= - index whose cap equals =skill_cap=, or -1
+- =get_next_tier= - index of the first tier whose cap is strictly greater than =current_cap= (what a trainer teaches next), or -1 at the top. This also handles caps between tiers set by admin tools.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgProfessionDef) mining =
+    lrg_profession_def_new ("mining", LRG_PROFESSION_KIND_PRIMARY,
+                            LRG_PROFESSION_CATEGORY_GATHERING);
+
+lrg_profession_def_set_name (mining, "Mining");
+lrg_profession_def_add_tier (mining, lrg_profession_tier_new ("Apprentice", 75, 5, 10), NULL);
+lrg_profession_def_add_tier (mining, lrg_profession_tier_new ("Journeyman", 150, 10, 500), NULL);
+if (!lrg_profession_def_add_tier (mining, lrg_profession_tier_new ("Oops", 150, 20, 0), &error))
+    g_warning ("%s", error->message); /* caps must strictly increase */
+#+end_src

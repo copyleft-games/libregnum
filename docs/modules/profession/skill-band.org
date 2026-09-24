@@ -1,0 +1,108 @@
+* LrgSkillBand - Skill-up Colour Thresholds
+:PROPERTIES:
+:CUSTOM_ID: lrgskillband
+:END:
+Four thresholds that classify a skill value as unavailable, orange, yellow, green or grey for a recipe or gather node, and the classic WoW formula for the chance of gaining a skill point.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Boxed type* with public fields - =LRG_TYPE_SKILL_BAND=
+- *GIR Name* - =Libregnum.SkillBand=
+- Header - =profession/lrg-skill-band.h= (via =<libregnum.h>=)
+
+#+begin_src C
+struct _LrgSkillBand
+{
+    guint orange;  /* usable from here */
+    guint yellow;  /* first yellow skill */
+    guint green;   /* first green skill */
+    guint grey;    /* first grey skill: never grants a point */
+};
+#+end_src
+
+A band is valid when =orange <= yellow <= green <= grey <= LRG_PROFESSION_SKILL_LIMIT=. Equal thresholds collapse the colour between them (for example =yellow == green= means there is no yellow range).
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant | Value | Meaning |
+|----------+-------+---------|
+| =LRG_PROFESSION_SKILL_LIMIT= | 100000 | Largest skill, cap or threshold accepted by the module |
+| =LRG_SKILL_BAND_DEFAULT_YELLOW_OFFSET= | 15 | Default yellow = orange + 15 |
+| =LRG_SKILL_BAND_DEFAULT_GREEN_OFFSET= | 30 | Default green = orange + 30 |
+| =LRG_SKILL_BAND_DEFAULT_GREY_OFFSET= | 45 | Default grey = orange + 45 |
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_skill_band_new()
+#+begin_src C
+LrgSkillBand *lrg_skill_band_new (guint orange, guint yellow, guint green, guint grey);
+#+end_src
+Creates a band storing the thresholds as given (no validation; use =lrg_skill_band_is_valid()=).
+
+*Returns:* a new band (transfer full); free with =lrg_skill_band_free()= or =g_autoptr(LrgSkillBand)=.
+
+*** lrg_skill_band_new_default()
+#+begin_src C
+LrgSkillBand *lrg_skill_band_new_default (guint required_skill);
+#+end_src
+Creates the band used by recipes and gather nodes without an explicit band: =orange = required_skill=, then +15, +30 and +45. Every threshold saturates at =LRG_PROFESSION_SKILL_LIMIT=, so the result is always valid.
+
+*Returns:* a new valid band (transfer full).
+
+*** lrg_skill_band_copy() / lrg_skill_band_free()
+#+begin_src C
+LrgSkillBand *lrg_skill_band_copy (const LrgSkillBand *self);
+void          lrg_skill_band_free (LrgSkillBand *self);
+#+end_src
+Copy returns a new band (transfer full). Free accepts =NULL=.
+
+** Queries
+:PROPERTIES:
+:CUSTOM_ID: queries
+:END:
+*** lrg_skill_band_is_valid()
+#+begin_src C
+gboolean lrg_skill_band_is_valid (const LrgSkillBand *self);
+#+end_src
+*Returns:* =TRUE= when the thresholds are ordered and within the skill limit.
+
+*** lrg_skill_band_get_difficulty()
+#+begin_src C
+LrgSkillDifficulty lrg_skill_band_get_difficulty (const LrgSkillBand *self, guint skill);
+#+end_src
+Each threshold is the first skill of its colour:
+
+| Condition | Result |
+|-----------+--------|
+| band invalid | =LRG_SKILL_DIFFICULTY_UNAVAILABLE= |
+| skill < orange | =UNAVAILABLE= |
+| skill < yellow | =ORANGE= |
+| skill < green | =YELLOW= |
+| skill < grey | =GREEN= |
+| otherwise | =GREY= |
+
+*** lrg_skill_band_get_chance()
+#+begin_src C
+gdouble lrg_skill_band_get_chance (const LrgSkillBand *self, guint skill);
+#+end_src
+Chance in =[0, 1]= of gaining a skill point: 0 for unavailable, grey or an invalid band; 1 for orange; =(grey - skill) / (grey - yellow)= for yellow and green (clamped).
+
+For band =(100, 125, 150, 175)=: skill 100 and 124 give 1.0, 125 gives 1.0, 149 gives 0.52, 150 gives 0.5, 174 gives 0.02, 175 gives 0.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgSkillBand) band = lrg_skill_band_new (100, 125, 150, 175);
+
+if (lrg_skill_band_get_difficulty (band, skill) == LRG_SKILL_DIFFICULTY_ORANGE)
+    g_print ("guaranteed skill-up\n");
+g_print ("chance %.2f\n", lrg_skill_band_get_chance (band, skill));
+#+end_src
