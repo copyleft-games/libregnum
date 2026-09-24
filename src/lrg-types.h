@@ -336,6 +336,9 @@ typedef struct _LrgRigidBodyClass  LrgRigidBodyClass;
 typedef struct _LrgPhysicsWorld       LrgPhysicsWorld;
 typedef struct _LrgPhysicsWorldClass  LrgPhysicsWorldClass;
 
+typedef struct _LrgWall               LrgWall;     /* Boxed type */
+typedef struct _LrgWallSet            LrgWallSet;
+
 /* ==========================================================================
  * Localization Module
  * ========================================================================== */

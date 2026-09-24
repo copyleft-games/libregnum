@@ -13,6 +13,7 @@ The Physics module consists of three main components:
 - *LrgPhysicsWorld*: The main physics simulation environment
 - *LrgRigidBody*: Individual physical objects with mass, velocity, and collision shapes
 - *LrgCollisionInfo*: Detailed information about collisions between bodies
+- *[[file:wall-set.org][LrgWallSet]]*: Static XZ box collision world for authoritative servers (swept square agents, wall sliding, line of sight, camera raycasts, interior volumes, grid broadphase)
 
 ** Core Concepts
 :PROPERTIES:
@@ -209,6 +210,7 @@ while (delta_accumulator >= fixed_time_step)
 - =/var/home/zach/Source/Projects/libregnum/src/physics/lrg-physics-world.h= - World management
 - =/var/home/zach/Source/Projects/libregnum/src/physics/lrg-rigid-body.h= - Rigid body implementation
 - =/var/home/zach/Source/Projects/libregnum/src/physics/lrg-collision-info.h= - Collision data
+- =src/physics/lrg-wall-set.h= - Static XZ box collision (=LrgWallSet=, =LrgWall=)
 
 ** See Also
 :PROPERTIES:
@@ -217,3 +219,4 @@ while (delta_accumulator >= fixed_time_step)
 - [[./physics-world.md][LrgPhysicsWorld Documentation]]
 - [[./rigid-body.md][LrgRigidBody Documentation]]
 - [[./collision-info.md][LrgCollisionInfo Documentation]]
+- [[file:wall-set.org][LrgWallSet Documentation]]

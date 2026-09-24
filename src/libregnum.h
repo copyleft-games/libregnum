@@ -229,6 +229,7 @@
 #include "physics/lrg-collision-info.h"
 #include "physics/lrg-rigid-body.h"
 #include "physics/lrg-physics-world.h"
+#include "physics/lrg-wall-set.h"
 
 /* Debug module */
 #include "debug/lrg-profiler.h"

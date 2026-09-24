@@ -46,7 +46,7 @@ libregnum/
 │   ├── save/                 # Saveable interface, SaveContext, SaveGame, SaveManager
 │   ├── ai/                   # BehaviorTree, Blackboard, BTNode hierarchy
 │   ├── pathfinding/          # NavGrid, NavCell, Path, Pathfinder (A*)
-│   ├── physics/              # PhysicsWorld, RigidBody, CollisionInfo
+│   ├── physics/              # PhysicsWorld, RigidBody, CollisionInfo, WallSet
 │   │
 │   │ # Genre-Specific
 │   ├── economy/              # Resource, ResourcePool, Producer, Consumer, Market, EconomyManager
@@ -540,6 +540,22 @@ server simulation as well as a single-player game.
 
 See `docs/modules/{quest,progression,profession,collection}/index.org` and
 `docs/modules/core/reset-schedule.org`.
+
+### Static World Collision and Model Rendering
+
+Generic building blocks for MMO-style worlds: a server-side collision world
+and client-side helpers for skinned and static models.
+
+- **`LrgWallSet`** (`physics/lrg-wall-set.h`): static axis-aligned boxes on
+  the XZ plane. `is_clear()`, `move_slide()` (swept square agent, slides
+  along walls, 4 iterations), `segment_clear()` (line of sight),
+  `raycast_distance()` (camera boom) and interior volumes (`volume_at()`).
+  Semantics are a fixed reference algorithm: strict overlap, later wall wins
+  ties, contact at t == 1 counts, 1e-7 push-out. The uniform-grid
+  broadphase (`cell-size`, default 16, 0 = brute force) never changes a
+  result. Call `lrg_wall_set_build_index()` before sharing across threads.
+
+See `docs/modules/physics/wall-set.org`.
 
 ## Architecture Overview
 

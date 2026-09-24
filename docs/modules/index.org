@@ -288,7 +288,7 @@ Engagement systems for player retention:
 :END:
 - *AI Module* - Behavior trees and decision making
 - *Pathfinding Module* - A* navigation and path smoothing
-- *Physics Module* - 2D/3D rigid body simulation
+- *[[file:physics/index.org][Physics Module]]* - 2D/3D rigid body simulation and static XZ wall collision ([[file:physics/wall-set.org][LrgWallSet]])
 - *I18N Module* - Localization and translations
 - *Networking Module* - Client/server multiplayer
 
@@ -375,7 +375,7 @@ Phase 0   core/ (engine, registry, loader, assets)
 | Audio       | 2     | Implemented | SoundBank, MusicTrack, AudioManager                                                                                                 |
 | AI          | 3     | Implemented | BehaviorTree, BTNode, Blackboard                                                                                                    |
 | Pathfinding | 3     | Implemented | NavGrid, Pathfinder, Path                                                                                                           |
-| Physics     | 3     | Implemented | RigidBody, PhysicsWorld, CollisionInfo                                                                                              |
+| Physics     | 3     | Implemented | RigidBody, PhysicsWorld, CollisionInfo, WallSet                                                                                     |
 | I18N        | 3     | Implemented | Locale, Localization                                                                                                                |
 | Networking  | 3     | Implemented | NetPeer, NetServer, NetClient                                                                                                       |
 | 3D World    | 3     | Implemented | Level3D, Portal, PortalSystem                                                                                                       |

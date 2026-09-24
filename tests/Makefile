@@ -83,6 +83,7 @@ TEST_SOURCES := \
 	test-talent.c \
 	test-profession.c \
 	test-collection.c \
+	test-wall-set.c \
 	test-audio.c \
 	test-inventory.c \
 	test-i18n.c \

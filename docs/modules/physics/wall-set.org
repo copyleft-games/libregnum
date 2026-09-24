@@ -1,0 +1,182 @@
+* LrgWallSet - Static XZ Box Collision
+:PROPERTIES:
+:CUSTOM_ID: lrgwallset---static-xz-box-collision
+:END:
+A static, axis-aligned box collision world on the XZ plane, designed for authoritative game servers that need deterministic, cheap movement and line-of-sight checks against buildings, trees and walls. Agents are squares of half-extent =radius=; movement is a swept slab test that stops at the first wall and slides along it. A uniform-grid broadphase makes queries scale with local density instead of the total wall count, and is guaranteed not to change any result.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgWallSet= - *Final GObject Class*, =LRG_TYPE_WALL_SET=, GIR =Libregnum.WallSet=
+- =LrgWall= - *Boxed struct* with public fields, =LRG_TYPE_WALL=, copy with =lrg_wall_copy()=, free with =lrg_wall_free()= / =g_autoptr(LrgWall)=
+- *Header* - =physics/lrg-wall-set.h=
+
+#+begin_src C
+struct _LrgWall {
+    gdouble x, z;            /* centre */
+    gdouble half_x, half_z;  /* half extents, >= 0 */
+    gdouble height;          /* informational (renderers); ignored by queries */
+    guint   kind;            /* caller category */
+    guint   tag;             /* caller identifier */
+};
+#+end_src
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant                        | Value         | Meaning                                                  |
+|---------------------------------+---------------+----------------------------------------------------------|
+| =LRG_WALL_SET_MAX_RADIUS=        | 5.0           | Largest accepted agent half extent                       |
+| =LRG_WALL_SET_DEFAULT_CELL_SIZE= | 16.0          | Default broadphase cell edge in world units (metres)     |
+| =LRG_WALL_SET_INVALID_INDEX=     | =G_MAXUINT=   | Returned by =add= / =add_volume= for rejected input      |
+| =LRG_WALL_SET_NO_HIT=            | =G_MAXUINT=   | Kind reported by =raycast_distance= when nothing is hit |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+LrgWallSet *lrg_wall_set_new               (void);
+guint       lrg_wall_set_add               (LrgWallSet *self, const LrgWall *wall);
+guint       lrg_wall_set_add_box           (LrgWallSet *self, gdouble x, gdouble z,
+                                            gdouble half_x, gdouble half_z, gdouble height,
+                                            guint kind, guint tag);
+guint       lrg_wall_set_get_count         (LrgWallSet *self);
+gboolean    lrg_wall_set_get               (LrgWallSet *self, guint index, LrgWall *out);
+void        lrg_wall_set_clear             (LrgWallSet *self);   /* walls and volumes */
+
+void        lrg_wall_set_set_bounds_limit  (LrgWallSet *self, gdouble limit);
+gdouble     lrg_wall_set_get_bounds_limit  (LrgWallSet *self);   /* default G_MAXDOUBLE */
+void        lrg_wall_set_set_cell_size     (LrgWallSet *self, gdouble cell_size); /* 0 = brute */
+gdouble     lrg_wall_set_get_cell_size     (LrgWallSet *self);
+void        lrg_wall_set_build_index       (LrgWallSet *self);
+
+gboolean    lrg_wall_set_is_clear          (LrgWallSet *self, gdouble x, gdouble z, gdouble radius);
+gboolean    lrg_wall_set_move_slide        (LrgWallSet *self, gdouble radius,
+                                            gdouble *x, gdouble *z, gdouble dx, gdouble dz);
+gboolean    lrg_wall_set_segment_clear     (LrgWallSet *self, gdouble ax, gdouble az,
+                                            gdouble bx, gdouble bz);
+gdouble     lrg_wall_set_raycast_distance  (LrgWallSet *self, gdouble ox, gdouble oz,
+                                            gdouble dx, gdouble dz, gdouble max_distance,
+                                            guint *hit_kind);
+
+guint       lrg_wall_set_add_volume        (LrgWallSet *self, gdouble x, gdouble z,
+                                            gdouble half_x, gdouble half_z, guint tag);
+guint       lrg_wall_set_get_volume_count  (LrgWallSet *self);
+gint        lrg_wall_set_volume_at         (LrgWallSet *self, gdouble x, gdouble z);
+#+end_src
+
+Properties: =bounds-limit= (double, default =G_MAXDOUBLE=) and =cell-size= (double, default 16).
+
+** Exact Semantics
+:PROPERTIES:
+:CUSTOM_ID: exact-semantics
+:END:
+The wall set reproduces a reference brute-force algorithm bit for bit. Games that already simulate with that algorithm can switch without changing a single test expectation.
+
+*** Validity
+:PROPERTIES:
+:CUSTOM_ID: validity
+:END:
+A position is valid when both coordinates are finite and |x|, |z| <= the bounds limit. =lrg_wall_set_add()= rejects non-finite fields, negative half extents and boxes whose edges overflow to infinity.
+
+*** is_clear
+:PROPERTIES:
+:CUSTOM_ID: is-clear
+:END:
+Returns =FALSE= for an invalid position, a non-finite radius, or a radius outside =[0, 5]=. Otherwise a wall =b= blocks when
+
+#+begin_src C
+fabs (x - b.x) < b.half_x + radius && fabs (z - b.z) < b.half_z + radius
+#+end_src
+
+The comparisons are strict, so an agent may touch a face or a corner.
+
+*** Sweep
+:PROPERTIES:
+:CUSTOM_ID: sweep
+:END:
+Movement uses slab intersection of the segment =p + t*d=, =t ∈ [0, 1]=, against each wall expanded by =radius=. Per axis (X then Z):
+
+1. If =|d| < 1e-12= the axis is fixed: no hit when =p <= low= or =p >= high=, otherwise continue.
+2. =a = (low - p) / d=, =c = (high - p) / d=, normal =-1=; if =a > c= swap them and use normal =+1=.
+3. If =a > enter=, set =enter = a= and the hit normal to this axis' normal.
+4. =leave = min (leave, c)=; no hit if =enter > leave=.
+
+Finally there is no hit when =enter < 0=, =enter > 1= or =leave < 0=. The entering time is =enter=.
+
+*** move_slide
+:PROPERTIES:
+:CUSTOM_ID: move-slide
+:END:
+1. Return =FALSE= (coordinates untouched) when the start is not clear, a displacement component is not finite, or =|d| > 2 * limit=.
+2. Clamp the target into =[-limit, limit]=.
+3. Up to four iterations while =|dx| + |dz| > 1e-10=:
+   - find the smallest hit time =first= (starting at 1) over all walls; on equal times the *later* wall wins (=time <= first=), so a contact exactly at the end of the motion counts;
+   - advance by =d * first=; stop when nothing was hit;
+   - push out by =normal * 1e-7=, scale the remaining motion by =1 - first= and zero the component along the hit normal.
+
+*** segment_clear
+:PROPERTIES:
+:CUSTOM_ID: segment-clear
+:END:
+Both endpoints must pass =is_clear= with radius 0, then any wall hit by the zero-radius sweep from =a= to =b= blocks. Grazing a face is not an entry.
+
+*** raycast_distance
+:PROPERTIES:
+:CUSTOM_ID: raycast-distance
+:END:
+For third-person cameras. The direction is normalised internally; the result is the distance to the first wall along the ray (a zero-radius sweep of length =max_distance=), =max_distance= when nothing is hit (=hit_kind= set to =LRG_WALL_SET_NO_HIT=), or 0 on invalid input (non-finite values, zero direction, non-positive or infinite =max_distance=). An origin strictly inside a wall reports 0 and that wall's kind. Equal distances report the lowest wall index. Heights are ignored.
+
+** Interior Volumes
+:PROPERTIES:
+:CUSTOM_ID: interior-volumes
+:END:
+Volumes are named rectangles (rooms, building interiors, zones) that never block movement. =lrg_wall_set_volume_at()= returns the tag of the first-added volume containing the point, with inclusive edges, or -1. Tags must fit in a =gint=.
+
+#+begin_src C
+lrg_wall_set_add_volume (walls, 12.0, -40.0, 6.0, 5.0, TAVERN_INTERIOR);
+if (lrg_wall_set_volume_at (walls, player_x, player_z) == TAVERN_INTERIOR)
+    hide_roof ();
+#+end_src
+
+** Broadphase
+:PROPERTIES:
+:CUSTOM_ID: broadphase
+:END:
+A uniform grid over the walls' bounding rectangle, stored in compressed sparse-row form. It is built lazily on the first query and invalidated by =add=, =clear= and =set_cell_size=. Cells are at most 512 per axis; a larger world gets proportionally larger cells.
+
+Each query covers the agent's swept rectangle (grown by the radius plus an absolute 1e-3 and a relative 1e-9 margin), collects walls from the touched cells, sorts them and removes duplicates, then runs the exact test in ascending index order. A single-cell query borrows the cell list without copying. Because the candidate set is a superset of every wall that could hit and the order matches the brute-force loop, results — including tie-breaking — are identical. The test suite checks this with seeded random scenes against both =cell-size = 0= and an independent reference copy.
+
+*Threading*: queries only read once the index exists. Call =lrg_wall_set_build_index()= after loading, then any number of reader threads may query concurrently as long as nobody mutates the set.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgWallSet) walls = lrg_wall_set_new ();
+
+lrg_wall_set_set_bounds_limit (walls, 512.0);
+lrg_wall_set_add_box (walls, -5.6, 10.0, 5.0, 0.5, 4.0, WALL_KIND_GALLERY, 0);
+lrg_wall_set_add_box (walls,  5.6, 10.0, 5.0, 0.5, 4.0, WALL_KIND_GALLERY, 1);
+lrg_wall_set_build_index (walls);
+
+/* Server tick: move a player of half extent 0.35. */
+if (!lrg_wall_set_move_slide (walls, 0.35, &player->x, &player->z,
+                              input_dx * speed * dt, input_dz * speed * dt))
+    reject_move (player);
+
+/* Camera: keep the boom in front of walls. */
+boom = lrg_wall_set_raycast_distance (walls, eye_x, eye_z, back_x, back_z, 6.0, NULL);
+#+end_src
+
+** Notes
+:PROPERTIES:
+:CUSTOM_ID: notes
+:END:
+- The world is 2D: =height= is carried for renderers only.
+- Invalid input never modifies caller state.
+- There is no removal of single walls; rebuild with =clear()= and re-add, which is cheap for static level geometry.
