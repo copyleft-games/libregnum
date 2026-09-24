@@ -322,6 +322,7 @@
 #include "scripting/lrg-scripting-manager.h"
 #include "scripting/lrg-script-module.h"
 #include "scripting/lrg-scripting-native.h"
+#include "scripting/lrg-script-host.h"
 #ifdef LRG_HAS_CRISPY
 #include "scripting/lrg-scripting-crispy.h"
 #endif

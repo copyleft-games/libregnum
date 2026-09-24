@@ -241,6 +241,7 @@ PUBLIC_HEADERS := \
 	src/scripting/lrg-scripting-manager.h \
 	src/scripting/lrg-script-module.h \
 	src/scripting/lrg-scripting-native.h \
+	src/scripting/lrg-script-host.h \
 	src/settings/lrg-settings-group.h \
 	src/settings/lrg-graphics-settings.h \
 	src/settings/lrg-audio-settings.h \
@@ -762,6 +763,7 @@ SOURCES := \
 	src/scripting/lrg-scriptable.c \
 	src/scripting/lrg-scripting-manager.c \
 	src/scripting/lrg-scripting-native.c \
+	src/scripting/lrg-script-host.c \
 	src/settings/lrg-settings-group.c \
 	src/settings/lrg-graphics-settings.c \
 	src/settings/lrg-audio-settings.c \
@@ -1473,7 +1475,13 @@ $(BUILDDIR)/$(PC_FILE): libregnum.pc.in config.mk | $(BUILDDIR)
 # GObject Introspection
 # =============================================================================
 
-gir: $(GIROUTDIR)/$(GIR_NAME) $(GIROUTDIR)/$(TYPELIB_NAME)
+gir: $(GIROUTDIR)/$(GIR_NAME) $(GIROUTDIR)/$(TYPELIB_NAME) $(GIROUTDIR)/Graylib-1.typelib
+
+# Libregnum-1.typelib hard-depends on Graylib-1.typelib.  Keeping a copy next
+# to it makes the build tree's gir/ directory self-contained, so a runtime
+# (for example the Gjs host bridge) that finds one finds both.
+$(GIROUTDIR)/Graylib-1.typelib: $(GRAYLIB_DIR)/build/gir/Graylib-1.typelib | $(GIROUTDIR)
+	@cp $< $@
 
 # MCP library path for GIR (conditional)
 ifeq ($(MCP),1)

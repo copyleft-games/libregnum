@@ -219,7 +219,10 @@ lrg_scripting_load_string (LRG_SCRIPTING (scripting),
                            NULL);
 #+end_src
 
-*Note:* Gjs uses =globalThis= for global variable access. Variables set via =set_global= are stored on =globalThis=.
+Values round-trip through the host bridge (see [[#host-bridge][Host Bridge]]): booleans,
+integers (as =G_TYPE_INT64=), doubles and strings.  JavaScript =null= or
+=undefined=, and non-scalar values such as functions, arrive as a =NULL=
+=G_TYPE_POINTER= value.
 
 ** Function Calls
 :PROPERTIES:
@@ -265,7 +268,7 @@ lrg_scripting_call_function (LRG_SCRIPTING (scripting),
                              "calculate_damage",
                              &result, 2, args, &error);
 
-/* Result: 150 */
+/* result holds G_TYPE_INT64 150: integral numbers come back as INT64 */
 
 g_value_unset (&args[0]);
 g_value_unset (&args[1]);
@@ -440,23 +443,60 @@ print("Using GLib version: " + GLib.MAJOR_VERSION + "." + GLib.MINOR_VERSION);
 :PROPERTIES:
 :CUSTOM_ID: gjs-specific-considerations
 :END:
-*** Global Variables
+*** Host Bridge
 :PROPERTIES:
-:CUSTOM_ID: global-variables
+:CUSTOM_ID: host-bridge
 :END:
-Gjs uses =globalThis= for global scope. Variables set from C are stored on =globalThis=:
+Gjs allows only one =GjsContext= per thread, so every =LrgScriptingGjs= shares a
+single runtime.  Each context still behaves as if it had its own:
 
-#+begin_src javascript
-// Variables set via lrg_scripting_set_global are on globalThis
-print(globalThis.score);  // Access global set from C
-print(score);             // Also works (shorthand)
+- Loaded code runs inside a function whose =globalThis= is a private scope
+  object, wrapped in =with (globalThis)=.  Top-level =function=, =let= and
+  =const= declarations stay local to the context, =globalThis.x = 1= writes
+  the context's scope, and names the host publishes (registered functions,
+  =set_global= values, exposed objects) resolve as plain identifiers.  Names
+  it does not define, such as =imports=, =print= and =Math=, fall through to
+  the real global object.
+- Arguments, results and names cross as =GVariant= values through the
+  introspectable =LrgScriptHost= (=imports.gi.Libregnum.script_host_*=).
+  Nothing from C is ever spliced into source text, so quotes and newlines in
+  strings are harmless.
+- =lrg_scripting_register_function()= really calls the C function.  Its
+  result comes back as the JavaScript return value, and a =GError= becomes a
+  thrown exception that the script may catch.
+- =lrg_scripting_reset()= and finalization drop only that context's scope.
+
+The bridge needs =Libregnum-1.typelib= and =Graylib-1.typelib=.  They are
+looked up in =LRG_TYPELIB_PATH=, next to the loaded libregnum object
+(=../gir= in the build tree, where the build copies both, or
+=girepository-1.0= when installed), and in =GI_TYPELIB_PATH=.  Without them,
+plain evaluation still works, but calls, globals and registered functions
+fail with =LRG_SCRIPTING_ERROR_TYPELIB_NOT_FOUND=.
+
+#+begin_src C
+static gboolean
+host_scale (LrgScripting *s, guint n, const GValue *args, GValue *ret,
+            gpointer user_data, GError **error)
+{
+    g_value_init (ret, G_TYPE_DOUBLE);
+    g_value_set_double (ret, g_value_get_double (&args[0]) * g_value_get_double (&args[1]));
+    return TRUE;
+}
+
+lrg_scripting_register_function (ctx, "scale", host_scale, NULL, &error);
+lrg_scripting_load_string (ctx, "area",
+                           "function area(w, h) { return scale(w, h); }", &error);
+/* lrg_scripting_call_function (ctx, "area", &result, 2, args, &error) → scale() runs in C */
 #+end_src
 
 *** Error Handling
 :PROPERTIES:
 :CUSTOM_ID: error-handling
 :END:
-Gjs logs JavaScript errors as CRITICAL messages. The scripting backend handles this appropriately, but be aware when debugging:
+Exceptions thrown while loading or calling are reported only through the
+=GError= (=LRG_SCRIPTING_ERROR_SYNTAX= or =LRG_SCRIPTING_ERROR_RUNTIME=, with the
+exception text and stack); Gjs's own uncaught-error logging is silenced during
+evaluation:
 
 #+begin_src C
 g_autoptr(GError) error = NULL;
