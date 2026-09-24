@@ -8,12 +8,19 @@
  * rmodels.c LoadGLTF(): it walks data->nodes in array order (scenes are
  * ignored), and for every node with a mesh emits one raylib Mesh per
  * primitive whose type is triangles, in primitive order.
+ *
+ * Node transforms, parents and the first skin's joints are also kept so
+ * that lrg_gltf_info_fix_animation_roots() can correct raylib 6.0's
+ * multi-root skeleton animation bug (see that function).
  */
 
 #include "config.h"
 
+#include <math.h>
 #include <string.h>
 #include <json-glib/json-glib.h>
+#include <graylib.h>
+#include <raylib.h>
 
 #ifndef LIBREGNUM_COMPILATION
 #define LIBREGNUM_COMPILATION
@@ -26,6 +33,7 @@
 #define GLB_CHUNK_HEADER (8)
 #define GLTF_MODE_TRIANGLES (4)
 #define DRACO_EXTENSION  "KHR_draco_mesh_compression"
+#define ROOTS_FIXED_KEY  "lrg-gltf-info-roots-fixed"
 
 /*
  * GltfMesh:
@@ -44,12 +52,29 @@ typedef struct
     gint   material;
 } GltfMesh;
 
+/*
+ * GltfNode:
+ *
+ * One glTF node: its local transform as a column-major 4x4 matrix built
+ * exactly like cgltf_node_transform_local() (from "matrix", or from
+ * translation/rotation/scale), its parent node index (-1 for none) and its
+ * name.
+ */
+typedef struct
+{
+    gfloat  local[16];
+    gint    parent;
+    gchar  *name;
+} GltfNode;
+
 struct _LrgGltfInfo
 {
     GObject    parent_instance;
 
     GPtrArray *meshes;       /* GltfMesh* */
     GPtrArray *animations;   /* gchar*, "" when unnamed */
+    GltfNode  *nodes;        /* node_count entries */
+    GArray    *joints;       /* gint node index per joint of skins[0] */
     guint      node_count;
     guint      skin_count;
     gboolean   uses_draco;
@@ -73,9 +98,14 @@ static void
 lrg_gltf_info_finalize (GObject *object)
 {
     LrgGltfInfo *self = LRG_GLTF_INFO (object);
+    guint        i;
 
     g_clear_pointer (&self->meshes, g_ptr_array_unref);
     g_clear_pointer (&self->animations, g_ptr_array_unref);
+    g_clear_pointer (&self->joints, g_array_unref);
+    for (i = 0; self->nodes != NULL && i < self->node_count; i++)
+        g_free (self->nodes[i].name);
+    g_clear_pointer (&self->nodes, g_free);
 
     G_OBJECT_CLASS (lrg_gltf_info_parent_class)->finalize (object);
 }
@@ -93,6 +123,7 @@ lrg_gltf_info_init (LrgGltfInfo *self)
 {
     self->meshes = g_ptr_array_new_with_free_func (gltf_mesh_free);
     self->animations = g_ptr_array_new_with_free_func (g_free);
+    self->joints = g_array_new (FALSE, FALSE, sizeof (gint));
 }
 
 /* ------------------------------------------------------------------------ */
@@ -621,6 +652,144 @@ validate_structure (JsonObject  *root,
     return get_index (root, "scene", n_scenes, &index, error);
 }
 
+/* get_float_array:
+ * Reads an optional member holding exactly @count numbers into @out.
+ * Missing leaves @out untouched and sets *@present to FALSE; any other
+ * type or length is an error, as cgltf rejects it too. */
+static gboolean
+get_float_array (JsonObject  *object,
+                 const gchar *member,
+                 guint        count,
+                 gfloat      *out,
+                 gboolean    *present,
+                 GError     **error)
+{
+    JsonArray *array = NULL;
+    guint      i;
+
+    *present = FALSE;
+    if (!get_array (object, member, &array, error))
+        return FALSE;
+    if (array == NULL)
+        return TRUE;
+    if (json_array_get_length (array) != count)
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_JSON,
+                     "\"%s\" must have %u elements", member, count);
+        return FALSE;
+    }
+    for (i = 0; i < count; i++)
+    {
+        JsonNode *element = json_array_get_element (array, i);
+
+        if (!JSON_NODE_HOLDS_VALUE (element) ||
+            (json_node_get_value_type (element) != G_TYPE_INT64 &&
+             json_node_get_value_type (element) != G_TYPE_DOUBLE))
+        {
+            g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_JSON,
+                         "\"%s\" element %u is not a number", member, i);
+            return FALSE;
+        }
+        out[i] = json_node_get_value_type (element) == G_TYPE_INT64
+            ? (gfloat)json_node_get_int (element) : (gfloat)json_node_get_double (element);
+    }
+    *present = TRUE;
+    return TRUE;
+}
+
+/* parse_node_transform:
+ * Builds the node's local column-major matrix the way
+ * cgltf_node_transform_local() does: "matrix" verbatim when present,
+ * otherwise T * R * S from translation (default 0), rotation (default
+ * identity quaternion, x y z w) and scale (default 1). */
+static gboolean
+parse_node_transform (JsonObject  *node,
+                      gfloat      *lm,
+                      GError     **error)
+{
+    gfloat   t[3] = { 0.0f, 0.0f, 0.0f };
+    gfloat   q[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    gfloat   sc[3] = { 1.0f, 1.0f, 1.0f };
+    gboolean has_matrix = FALSE;
+    gboolean present = FALSE;
+
+    if (!get_float_array (node, "matrix", 16, lm, &has_matrix, error) ||
+        !get_float_array (node, "translation", 3, t, &present, error) ||
+        !get_float_array (node, "rotation", 4, q, &present, error) ||
+        !get_float_array (node, "scale", 3, sc, &present, error))
+        return FALSE;
+    if (has_matrix)
+        return TRUE;
+
+    lm[0] = (1 - 2 * q[1] * q[1] - 2 * q[2] * q[2]) * sc[0];
+    lm[1] = (2 * q[0] * q[1] + 2 * q[2] * q[3]) * sc[0];
+    lm[2] = (2 * q[0] * q[2] - 2 * q[1] * q[3]) * sc[0];
+    lm[3] = 0.0f;
+
+    lm[4] = (2 * q[0] * q[1] - 2 * q[2] * q[3]) * sc[1];
+    lm[5] = (1 - 2 * q[0] * q[0] - 2 * q[2] * q[2]) * sc[1];
+    lm[6] = (2 * q[1] * q[2] + 2 * q[0] * q[3]) * sc[1];
+    lm[7] = 0.0f;
+
+    lm[8] = (2 * q[0] * q[2] + 2 * q[1] * q[3]) * sc[2];
+    lm[9] = (2 * q[1] * q[2] - 2 * q[0] * q[3]) * sc[2];
+    lm[10] = (1 - 2 * q[0] * q[0] - 2 * q[1] * q[1]) * sc[2];
+    lm[11] = 0.0f;
+
+    lm[12] = t[0];
+    lm[13] = t[1];
+    lm[14] = t[2];
+    lm[15] = 1.0f;
+    return TRUE;
+}
+
+/* parse_nodes:
+ * Records every node's name, local transform and parent (from the
+ * "children" lists, already validated to give one parent per node), and
+ * the joint list of the first skin, the only one raylib loads. */
+static gboolean
+parse_nodes (LrgGltfInfo *self,
+             JsonArray   *nodes,
+             JsonArray   *skins,
+             GError     **error)
+{
+    guint i, j;
+
+    self->nodes = g_new0 (GltfNode, MAX (1u, self->node_count));
+    for (i = 0; i < self->node_count; i++)
+        self->nodes[i].parent = -1;
+
+    for (i = 0; i < self->node_count; i++)
+    {
+        JsonObject *node = array_object (nodes, i, "node", error);
+        JsonArray  *children = NULL;
+
+        if (node == NULL ||
+            !get_string (node, "name", &self->nodes[i].name, error) ||
+            !parse_node_transform (node, self->nodes[i].local, error) ||
+            !get_array (node, "children", &children, error))
+            return FALSE;
+        for (j = 0; children != NULL && j < json_array_get_length (children); j++)
+            self->nodes[json_array_get_int_element (children, j)].parent = (gint)i;
+    }
+
+    if (self->skin_count > 0)
+    {
+        JsonObject *skin = array_object (skins, 0, "skin", error);
+        JsonArray  *joints = NULL;
+
+        if (skin == NULL || !get_array (skin, "joints", &joints, error))
+            return FALSE;
+        for (j = 0; joints != NULL && j < json_array_get_length (joints); j++)
+        {
+            gint node_index = (gint)json_array_get_int_element (joints, j);
+
+            g_array_append_val (self->joints, node_index);
+        }
+    }
+    return TRUE;
+}
+
 static gboolean
 parse_document (LrgGltfInfo *self,
                 JsonObject  *root,
@@ -649,6 +818,9 @@ parse_document (LrgGltfInfo *self,
 
     self->node_count = nodes != NULL ? json_array_get_length (nodes) : 0;
     self->skin_count = skins != NULL ? json_array_get_length (skins) : 0;
+
+    if (!parse_nodes (self, nodes, skins, error))
+        return FALSE;
 
     /* raylib visits every node in array order, ignoring scenes. */
     for (i = 0; i < self->node_count; i++)
@@ -970,4 +1142,487 @@ lrg_gltf_info_get_is_binary (LrgGltfInfo *self)
     g_return_val_if_fail (LRG_IS_GLTF_INFO (self), FALSE);
 
     return self->is_binary;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Skin joints and the raylib multi-root animation fix                       */
+/* ------------------------------------------------------------------------ */
+
+/*
+ * raymath ports
+ *
+ * raylib 6.0's raymath.h needs C99 (loop declarations), so the few
+ * functions the fix needs are ported here to gnu89 with the same
+ * operation order, keeping results bit-compatible with raylib's own
+ * handling of joint 0.
+ */
+
+static gfloat
+v3_dot (Vector3 a,
+        Vector3 b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+static Vector3
+v3_scale (Vector3 v,
+          gfloat  s)
+{
+    return (Vector3){ v.x * s, v.y * s, v.z * s };
+}
+
+static Vector3
+v3_sub (Vector3 a,
+        Vector3 b)
+{
+    return (Vector3){ a.x - b.x, a.y - b.y, a.z - b.z };
+}
+
+static Vector3
+v3_mul (Vector3 a,
+        Vector3 b)
+{
+    return (Vector3){ a.x * b.x, a.y * b.y, a.z * b.z };
+}
+
+static Vector3
+v3_cross (Vector3 a,
+          Vector3 b)
+{
+    return (Vector3){ a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
+}
+
+/* QuaternionMultiply(). */
+static Quaternion
+quat_multiply (Quaternion a,
+               Quaternion b)
+{
+    Quaternion r;
+
+    r.x = a.x * b.w + a.w * b.x + a.y * b.z - a.z * b.y;
+    r.y = a.y * b.w + a.w * b.y + a.z * b.x - a.x * b.z;
+    r.z = a.z * b.w + a.w * b.z + a.x * b.y - a.y * b.x;
+    r.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z;
+    return r;
+}
+
+/* Vector3RotateByQuaternion(). */
+static Vector3
+v3_rotate (Vector3    v,
+           Quaternion q)
+{
+    Vector3 r;
+
+    r.x = v.x * (q.x * q.x + q.w * q.w - q.y * q.y - q.z * q.z) +
+          v.y * (2 * q.x * q.y - 2 * q.w * q.z) + v.z * (2 * q.x * q.z + 2 * q.w * q.y);
+    r.y = v.x * (2 * q.w * q.z + 2 * q.x * q.y) +
+          v.y * (q.w * q.w - q.x * q.x + q.y * q.y - q.z * q.z) +
+          v.z * (-2 * q.w * q.x + 2 * q.y * q.z);
+    r.z = v.x * (-2 * q.w * q.y + 2 * q.x * q.z) + v.y * (2 * q.w * q.x + 2 * q.y * q.z) +
+          v.z * (q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z);
+    return r;
+}
+
+/* QuaternionFromMatrix(), reading only the rotation part. */
+static Quaternion
+quat_from_matrix (Matrix m)
+{
+    Quaternion r = { 0.0f, 0.0f, 0.0f, 0.0f };
+    gfloat     four_w = m.m0 + m.m5 + m.m10;
+    gfloat     four_x = m.m0 - m.m5 - m.m10;
+    gfloat     four_y = m.m5 - m.m0 - m.m10;
+    gfloat     four_z = m.m10 - m.m0 - m.m5;
+    gfloat     biggest = four_w;
+    gint       index = 0;
+    gfloat     value;
+    gfloat     mult;
+
+    if (four_x > biggest)
+    {
+        biggest = four_x;
+        index = 1;
+    }
+    if (four_y > biggest)
+    {
+        biggest = four_y;
+        index = 2;
+    }
+    if (four_z > biggest)
+    {
+        biggest = four_z;
+        index = 3;
+    }
+    value = sqrtf (biggest + 1.0f) * 0.5f;
+    mult = 0.25f / value;
+
+    switch (index)
+    {
+    case 0:
+        r.w = value;
+        r.x = (m.m6 - m.m9) * mult;
+        r.y = (m.m8 - m.m2) * mult;
+        r.z = (m.m1 - m.m4) * mult;
+        break;
+    case 1:
+        r.x = value;
+        r.w = (m.m6 - m.m9) * mult;
+        r.y = (m.m1 + m.m4) * mult;
+        r.z = (m.m8 + m.m2) * mult;
+        break;
+    case 2:
+        r.y = value;
+        r.w = (m.m8 - m.m2) * mult;
+        r.x = (m.m1 + m.m4) * mult;
+        r.z = (m.m6 + m.m9) * mult;
+        break;
+    default:
+        r.z = value;
+        r.w = (m.m1 - m.m4) * mult;
+        r.x = (m.m8 + m.m2) * mult;
+        r.y = (m.m6 + m.m9) * mult;
+        break;
+    }
+    return r;
+}
+
+/* MatrixDecompose(): translation, then Gram-Schmidt on the (stabilized)
+ * basis to get scale (shear discarded), a sign flip for mirrored bases,
+ * and the rotation of the orthonormal basis. */
+static void
+matrix_decompose (Matrix     mat,
+                  Transform *out)
+{
+    const gfloat eps = 1e-9f;
+    Vector3      col[3];
+    Vector3      scl = { 0.0f, 0.0f, 0.0f };
+    gfloat       stabilizer = eps;
+    gfloat       shear;
+    Matrix       rotation;
+    gint         i;
+
+    out->translation = (Vector3){ mat.m12, mat.m13, mat.m14 };
+
+    col[0] = (Vector3){ mat.m0, mat.m4, mat.m8 };
+    col[1] = (Vector3){ mat.m1, mat.m5, mat.m9 };
+    col[2] = (Vector3){ mat.m2, mat.m6, mat.m10 };
+
+    /* Max-normalizing helps numerical stability. */
+    for (i = 0; i < 3; i++)
+    {
+        stabilizer = fmaxf (stabilizer, fabsf (col[i].x));
+        stabilizer = fmaxf (stabilizer, fabsf (col[i].y));
+        stabilizer = fmaxf (stabilizer, fabsf (col[i].z));
+    }
+    for (i = 0; i < 3; i++)
+        col[i] = v3_scale (col[i], 1.0f / stabilizer);
+
+    scl.x = sqrtf (v3_dot (col[0], col[0]));
+    if (scl.x > eps)
+        col[0] = v3_scale (col[0], 1.0f / scl.x);
+
+    shear = v3_dot (col[0], col[1]);
+    col[1] = v3_sub (col[1], v3_scale (col[0], shear));
+    scl.y = sqrtf (v3_dot (col[1], col[1]));
+    if (scl.y > eps)
+        col[1] = v3_scale (col[1], 1.0f / scl.y);
+
+    shear = v3_dot (col[0], col[2]);
+    col[2] = v3_sub (col[2], v3_scale (col[0], shear));
+    shear = v3_dot (col[1], col[2]);
+    col[2] = v3_sub (col[2], v3_scale (col[1], shear));
+    scl.z = sqrtf (v3_dot (col[2], col[2]));
+    if (scl.z > eps)
+        col[2] = v3_scale (col[2], 1.0f / scl.z);
+
+    /* Orthonormal in O(3); force SO(3) by flipping a mirrored basis. */
+    if (v3_dot (col[0], v3_cross (col[1], col[2])) < 0)
+    {
+        scl = v3_scale (scl, -1.0f);
+        for (i = 0; i < 3; i++)
+            col[i] = v3_scale (col[i], -1.0f);
+    }
+    out->scale = v3_scale (scl, stabilizer);
+
+    rotation = (Matrix){
+        col[0].x, col[0].y, col[0].z, 0.0f,
+        col[1].x, col[1].y, col[1].z, 0.0f,
+        col[2].x, col[2].y, col[2].z, 0.0f,
+        0.0f,     0.0f,     0.0f,     1.0f
+    };
+    out->rotation = quat_from_matrix (rotation);
+}
+
+/* joint_node:
+ * Node index of joint @joint of the first skin, or -1 when out of range. */
+static gint
+joint_node (LrgGltfInfo *self,
+            guint        joint)
+{
+    return joint < self->joints->len ? g_array_index (self->joints, gint, joint) : -1;
+}
+
+guint
+lrg_gltf_info_get_joint_count (LrgGltfInfo *self)
+{
+    g_return_val_if_fail (LRG_IS_GLTF_INFO (self), 0);
+
+    return self->joints->len;
+}
+
+gint
+lrg_gltf_info_get_joint_node_index (LrgGltfInfo *self,
+                                    guint        joint)
+{
+    g_return_val_if_fail (LRG_IS_GLTF_INFO (self), -1);
+
+    return joint_node (self, joint);
+}
+
+const gchar *
+lrg_gltf_info_get_joint_name (LrgGltfInfo *self,
+                              guint        joint)
+{
+    gint node;
+
+    g_return_val_if_fail (LRG_IS_GLTF_INFO (self), NULL);
+
+    node = joint_node (self, joint);
+    return node >= 0 ? self->nodes[node].name : NULL;
+}
+
+gint
+lrg_gltf_info_get_joint_parent (LrgGltfInfo *self,
+                                guint        joint)
+{
+    gint  node;
+    gint  parent;
+    guint j;
+
+    g_return_val_if_fail (LRG_IS_GLTF_INFO (self), -1);
+
+    /* Same search as raylib's LoadBoneInfoGLTF(): the first joint whose
+     * node is this joint's parent node. */
+    node = joint_node (self, joint);
+    if (node < 0)
+        return -1;
+    parent = self->nodes[node].parent;
+    if (parent < 0)
+        return -1;
+    for (j = 0; j < self->joints->len; j++)
+        if (g_array_index (self->joints, gint, j) == parent)
+            return (gint)j;
+    return -1;
+}
+
+/* node_world_matrix:
+ * World matrix of @node, composed up the parent chain exactly like
+ * cgltf_node_transform_world() (affine, column-major). The walk is
+ * bounded by the node count so a parent cycle cannot hang. */
+static void
+node_world_matrix (LrgGltfInfo *self,
+                   gint         node,
+                   gfloat      *lm)
+{
+    gint  parent;
+    guint steps = 0;
+
+    memcpy (lm, self->nodes[node].local, sizeof (gfloat) * 16);
+    parent = self->nodes[node].parent;
+    while (parent >= 0 && steps++ < self->node_count)
+    {
+        const gfloat *pm = self->nodes[parent].local;
+        gint          i;
+
+        for (i = 0; i < 4; ++i)
+        {
+            gfloat l0 = lm[i * 4 + 0];
+            gfloat l1 = lm[i * 4 + 1];
+            gfloat l2 = lm[i * 4 + 2];
+
+            lm[i * 4 + 0] = l0 * pm[0] + l1 * pm[4] + l2 * pm[8];
+            lm[i * 4 + 1] = l0 * pm[1] + l1 * pm[5] + l2 * pm[9];
+            lm[i * 4 + 2] = l0 * pm[2] + l1 * pm[6] + l2 * pm[10];
+        }
+        lm[12] += pm[12];
+        lm[13] += pm[13];
+        lm[14] += pm[14];
+
+        parent = self->nodes[parent].parent;
+    }
+}
+
+/* joint_root_transform:
+ * The decomposed world transform of joint @joint's parent node, as raylib
+ * computes it for joint 0 (cgltf world matrix, then MatrixDecompose()).
+ * Returns FALSE when the joint has no parent node (identity). */
+static gboolean
+joint_root_transform (LrgGltfInfo *self,
+                      guint        joint,
+                      Transform   *out)
+{
+    gfloat m[16];
+    gint   node = joint_node (self, joint);
+    Matrix world;
+
+    out->translation = (Vector3){ 0.0f, 0.0f, 0.0f };
+    out->rotation = (Quaternion){ 0.0f, 0.0f, 0.0f, 1.0f };
+    out->scale = (Vector3){ 1.0f, 1.0f, 1.0f };
+    if (node < 0 || self->nodes[node].parent < 0)
+        return FALSE;
+
+    node_world_matrix (self, self->nodes[node].parent, m);
+    world = (Matrix){
+        m[0], m[4], m[8],  m[12],
+        m[1], m[5], m[9],  m[13],
+        m[2], m[6], m[10], m[14],
+        m[3], m[7], m[11], m[15]
+    };
+    matrix_decompose (world, out);
+    return TRUE;
+}
+
+gboolean
+lrg_gltf_info_get_joint_root_transform (LrgGltfInfo *self,
+                                        guint        joint,
+                                        gfloat      *out_translation,
+                                        gfloat      *out_rotation,
+                                        gfloat      *out_scale)
+{
+    Transform transform;
+
+    g_return_val_if_fail (LRG_IS_GLTF_INFO (self), FALSE);
+
+    if (joint >= self->joints->len)
+        return FALSE;
+
+    joint_root_transform (self, joint, &transform);
+    if (out_translation != NULL)
+    {
+        out_translation[0] = transform.translation.x;
+        out_translation[1] = transform.translation.y;
+        out_translation[2] = transform.translation.z;
+    }
+    if (out_rotation != NULL)
+    {
+        out_rotation[0] = transform.rotation.x;
+        out_rotation[1] = transform.rotation.y;
+        out_rotation[2] = transform.rotation.z;
+        out_rotation[3] = transform.rotation.w;
+    }
+    if (out_scale != NULL)
+    {
+        out_scale[0] = transform.scale.x;
+        out_scale[1] = transform.scale.y;
+        out_scale[2] = transform.scale.z;
+    }
+    return TRUE;
+}
+
+/* effective_root:
+ * The bone whose transform raylib's BuildPoseFromParentJoints() actually
+ * rooted bone @bone's model-space pose at. raylib composes a bone with its
+ * parent only when the parent index is smaller; a larger index breaks the
+ * chain (the bone keeps its local pose). Returns the root bone when the
+ * chain ends at a bone without a parent joint, or -1 when it breaks. */
+static gint
+effective_root (const gint *parents,
+                gint        bone)
+{
+    /* Each step moves to a strictly smaller index, so this terminates. */
+    while (parents[bone] >= 0)
+    {
+        if (parents[bone] > bone)
+            return -1;
+        bone = parents[bone];
+    }
+    return bone;
+}
+
+guint
+lrg_gltf_info_fix_animation_roots (LrgGltfInfo *self,
+                                   GPtrArray   *clips)
+{
+    g_autofree gint      *parents = NULL;
+    g_autofree gint      *roots = NULL;
+    g_autofree Transform *root_world = NULL;
+    g_autofree gboolean  *needs_fix = NULL;
+    GQuark                fixed_quark;
+    gboolean              any = FALSE;
+    guint                 n_bones;
+    guint                 patched = 0;
+    guint                 b;
+    guint                 c;
+
+    g_return_val_if_fail (LRG_IS_GLTF_INFO (self), 0);
+    g_return_val_if_fail (clips != NULL, 0);
+
+    fixed_quark = g_quark_from_static_string (ROOTS_FIXED_KEY);
+    n_bones = self->joints->len;
+    if (n_bones == 0)
+        return 0;
+
+    /* Per bone: raylib's parent index, the effective root it was posed
+     * under and, per root, the world transform of that root joint's
+     * parent node. Root 0 already received its transform from raylib;
+     * every other parentless root with a parent node needs it. */
+    parents = g_new (gint, n_bones);
+    roots = g_new (gint, n_bones);
+    root_world = g_new (Transform, n_bones);
+    needs_fix = g_new0 (gboolean, n_bones);
+    for (b = 0; b < n_bones; b++)
+        parents[b] = lrg_gltf_info_get_joint_parent (self, b);
+    for (b = 0; b < n_bones; b++)
+    {
+        roots[b] = effective_root (parents, (gint)b);
+        if (b != 0 && parents[b] < 0)
+            needs_fix[b] = joint_root_transform (self, b, &root_world[b]);
+        any = any || needs_fix[b];
+    }
+
+    for (c = 0; c < clips->len; c++)
+    {
+        GrlModelAnimation *clip = g_ptr_array_index (clips, c);
+        ModelAnimation    *anim;
+        gboolean           changed = FALSE;
+        gint               frame;
+
+        if (!GRL_IS_MODEL_ANIMATION (clip) ||
+            g_object_get_qdata (G_OBJECT (clip), fixed_quark) != NULL)
+            continue;
+        anim = grl_model_animation_get_handle (clip);
+        if (anim == NULL || anim->boneCount != (gint)n_bones || anim->keyframePoses == NULL)
+            continue;
+
+        /* raylib has already turned the keyframes into model-space poses
+         * with BuildPoseFromParentJoints(), so left-compose the missing
+         * root transform W onto every bone of each affected subtree:
+         * rot = W.rot * rot, t = W.rot * (W.scale . t) + W.t,
+         * scale = W.scale . scale. */
+        for (frame = 0; any && frame < anim->keyframeCount; frame++)
+        {
+            Transform *pose = anim->keyframePoses[frame];
+
+            for (b = 0; pose != NULL && b < n_bones; b++)
+            {
+                const Transform *w;
+                Vector3          t;
+
+                if (roots[b] < 0 || !needs_fix[roots[b]])
+                    continue;
+                w = &root_world[roots[b]];
+                t = v3_rotate (v3_mul (pose[b].translation, w->scale), w->rotation);
+                pose[b].rotation = quat_multiply (w->rotation, pose[b].rotation);
+                pose[b].translation = (Vector3){ t.x + w->translation.x,
+                                                 t.y + w->translation.y,
+                                                 t.z + w->translation.z };
+                pose[b].scale = v3_mul (pose[b].scale, w->scale);
+                changed = TRUE;
+            }
+        }
+
+        g_object_set_qdata (G_OBJECT (clip), fixed_quark, GINT_TO_POINTER (1));
+        if (changed)
+            patched++;
+    }
+    return patched;
 }

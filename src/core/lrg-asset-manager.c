@@ -13,6 +13,7 @@
 
 #include "lrg-asset-manager.h"
 #include "lrg-data-loader.h"
+#include "../graphics/lrg-gltf-info.h"
 #include <raylib.h>
 #include <rlgl.h>
 #include "../lrg-log.h"
@@ -1817,6 +1818,26 @@ lrg_asset_manager_load_model_animations (LrgAssetManager  *self,
     for (i = 0; loaded != NULL && i < count; i++)
         g_ptr_array_add (clips, loaded[i]);
     g_free (loaded);
+
+    /* raylib 6.0 poses every root joint but the first without its
+     * armature transform; correct glTF clips before they are shared. */
+    if (clips->len > 0 && (g_str_has_suffix (key, ".glb") || g_str_has_suffix (key, ".gltf") ||
+                           g_str_has_suffix (key, ".GLB") || g_str_has_suffix (key, ".GLTF")))
+    {
+        g_autoptr(GError)      info_error = NULL;
+        g_autoptr(LrgGltfInfo) info = lrg_gltf_info_new_from_file (key, &info_error);
+
+        if (info != NULL)
+        {
+            guint patched = lrg_gltf_info_fix_animation_roots (info, clips);
+
+            lrg_debug (LRG_LOG_DOMAIN_CORE, "Fixed multi-root poses in %u clips of %s",
+                       patched, key);
+        }
+        else
+            lrg_debug (LRG_LOG_DOMAIN_CORE, "Cannot inspect %s for root fix-up: %s",
+                       key, info_error->message);
+    }
 
     g_hash_table_insert (priv->animation_cache, g_strdup (key), clips);
     lrg_debug (LRG_LOG_DOMAIN_CORE, "Loaded %u animation clips from %s", clips->len, key);

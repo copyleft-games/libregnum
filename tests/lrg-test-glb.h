@@ -186,3 +186,80 @@ test_glb_write_static_triangle (const gchar *path)
         "\"min\":[0,0,0],\"max\":[1,1,0]}]}",
         (const guint8 *)positions, sizeof positions);
 }
+
+/*
+ * test_glb_write_multi_root_rig:
+ * @path: destination
+ * @two_roots: %TRUE for two root joints, %FALSE to parent the second
+ *   root under the first (a single-root rig)
+ *
+ * A skinned rig under an "Armature" node with translation (1, 2, 3),
+ * rotation -90 degrees about X and scale 100 (a typical Blender export):
+ *
+ *   node 0 Armature  children [1, 2, 4] (or [1, 4] for one root)
+ *   node 1 Root0     t (0, 0.01, 0)     children [3] (+ [2] for one root)
+ *   node 2 Root1     t (0.02, 0, 0.01)  children [5]
+ *   node 3 Child0    t (0, 0.01, 0)
+ *   node 4 Body      mesh 0, skin 0
+ *   node 5 Child1    t (0, 0, 0.01)
+ *
+ * Skin joints, in raylib bone order, are [Root0, Child0, Root1, Child1].
+ * Two animations: "MoveRoot1" translates Root1 by +0.01 Y over 0.5 s and
+ * "MoveRoot0" translates Root0 by +0.01 Y over 0.5 s (31 keyframes each).
+ *
+ * Binary layout: positions (36) | indices u16 (6 + 2 pad) | times (8) |
+ * Root1 translations (24) | Root0 translations (24) = 100 bytes.
+ */
+G_GNUC_UNUSED static void
+test_glb_write_multi_root_rig (const gchar *path,
+                               gboolean     two_roots)
+{
+    static const gfloat  positions[9] = { 0, 0, 0, 1, 0, 0, 0, 1, 0 };
+    static const guint16 indices[4] = { 0, 1, 2, 0 };
+    static const gfloat  times[2] = { 0.0f, 0.5f };
+    static const gfloat  root1_moves[6] = { 0.02f, 0, 0.01f, 0.02f, 0.01f, 0.01f };
+    static const gfloat  root0_moves[6] = { 0, 0.01f, 0, 0, 0.02f, 0 };
+    guint8           bin[100];
+    g_autofree gchar *json = NULL;
+
+    memcpy (bin, positions, 36);
+    memcpy (bin + 36, indices, 8);
+    memcpy (bin + 44, times, 8);
+    memcpy (bin + 52, root1_moves, 24);
+    memcpy (bin + 76, root0_moves, 24);
+
+    json = g_strdup_printf (
+        "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
+        "\"nodes\":["
+        "{\"name\":\"Armature\",\"children\":%s,\"translation\":[1,2,3],"
+        "\"rotation\":[-0.70710678,0,0,0.70710678],\"scale\":[100,100,100]},"
+        "{\"name\":\"Root0\",\"translation\":[0,0.01,0],\"children\":%s},"
+        "{\"name\":\"Root1\",\"translation\":[0.02,0,0.01],\"children\":[5]},"
+        "{\"name\":\"Child0\",\"translation\":[0,0.01,0]},"
+        "{\"name\":\"Body\",\"mesh\":0,\"skin\":0},"
+        "{\"name\":\"Child1\",\"translation\":[0,0,0.01]}],"
+        "\"meshes\":[{\"name\":\"Body\",\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+        "\"skins\":[{\"joints\":[1,3,2,5]}],"
+        "\"animations\":["
+        "{\"name\":\"MoveRoot1\",\"channels\":[{\"sampler\":0,\"target\":{\"node\":2,\"path\":\"translation\"}}],"
+        "\"samplers\":[{\"input\":2,\"output\":3,\"interpolation\":\"LINEAR\"}]},"
+        "{\"name\":\"MoveRoot0\",\"channels\":[{\"sampler\":0,\"target\":{\"node\":1,\"path\":\"translation\"}}],"
+        "\"samplers\":[{\"input\":2,\"output\":4,\"interpolation\":\"LINEAR\"}]}],"
+        "\"buffers\":[{\"byteLength\":100}],"
+        "\"bufferViews\":["
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+        "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":6},"
+        "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":8},"
+        "{\"buffer\":0,\"byteOffset\":52,\"byteLength\":24},"
+        "{\"buffer\":0,\"byteOffset\":76,\"byteLength\":24}],"
+        "\"accessors\":["
+        "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\",\"min\":[0,0,0],\"max\":[1,1,0]},"
+        "{\"bufferView\":1,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":2,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\",\"min\":[0],\"max\":[0.5]},"
+        "{\"bufferView\":3,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
+        "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}]}",
+        two_roots ? "[1,2,4]" : "[1,4]",
+        two_roots ? "[3]" : "[3,2]");
+
+    test_glb_write (path, json, bin, sizeof bin);
+}

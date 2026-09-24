@@ -6,8 +6,10 @@
  *
  * LrgGltfInfo - headless inspection of glTF 2.0 / GLB files: the meshes
  * raylib will create (in raylib's exact order, with the node and glTF mesh
- * each came from), skins, animation names, Draco usage and vertex counts.
- * Needs no graphics context and never touches raylib.
+ * each came from), skins and skin joints, node transforms, animation
+ * names, Draco usage and vertex counts. Needs no graphics context.
+ * Inspection never touches raylib; lrg_gltf_info_fix_animation_roots()
+ * patches raylib animation data in place.
  */
 
 #pragma once
@@ -334,5 +336,125 @@ lrg_gltf_info_get_uses_draco (LrgGltfInfo *self);
 LRG_AVAILABLE_IN_ALL
 gboolean
 lrg_gltf_info_get_is_binary (LrgGltfInfo *self);
+
+/**
+ * lrg_gltf_info_get_joint_count:
+ * @self: an #LrgGltfInfo
+ *
+ * Number of joints of the first skin, the only skin raylib loads. raylib
+ * bone k is joint k, so this equals raylib's bone count for the file's
+ * animations.
+ *
+ * Returns: the joint count, 0 when the file has no skin
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_gltf_info_get_joint_count (LrgGltfInfo *self);
+
+/**
+ * lrg_gltf_info_get_joint_node_index:
+ * @self: an #LrgGltfInfo
+ * @joint: joint (raylib bone) index
+ *
+ * Returns: the glTF node index of @joint, or -1 when out of range
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_gltf_info_get_joint_node_index (LrgGltfInfo *self,
+                                    guint        joint);
+
+/**
+ * lrg_gltf_info_get_joint_name:
+ * @self: an #LrgGltfInfo
+ * @joint: joint (raylib bone) index
+ *
+ * The full node name of @joint (raylib keeps only 31 bytes of it).
+ *
+ * Returns: (transfer none) (nullable): the name, or %NULL when unnamed or
+ *   out of range
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *
+lrg_gltf_info_get_joint_name (LrgGltfInfo *self,
+                              guint        joint);
+
+/**
+ * lrg_gltf_info_get_joint_parent:
+ * @self: an #LrgGltfInfo
+ * @joint: joint (raylib bone) index
+ *
+ * The raylib parent bone of @joint: the first joint whose node is the
+ * parent node of @joint's node. A joint whose parent node is not a joint
+ * (or that has no parent node) is a *root* joint.
+ *
+ * Returns: the parent joint index, or -1 for a root joint or when out of
+ *   range
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_gltf_info_get_joint_parent (LrgGltfInfo *self,
+                                guint        joint);
+
+/**
+ * lrg_gltf_info_get_joint_root_transform:
+ * @self: an #LrgGltfInfo
+ * @joint: joint (raylib bone) index
+ * @out_translation: (out caller-allocates) (array fixed-size=3) (optional):
+ *   translation x, y, z
+ * @out_rotation: (out caller-allocates) (array fixed-size=4) (optional):
+ *   rotation quaternion x, y, z, w
+ * @out_scale: (out caller-allocates) (array fixed-size=3) (optional):
+ *   scale x, y, z
+ *
+ * The world transform of @joint's *parent node* (the glTF parent chain
+ * composed like cgltf_node_transform_world(), then decomposed like
+ * raymath's MatrixDecompose()). For a root joint under an armature node
+ * this is the armature transform, e.g. rotation -90 degrees about X and
+ * scale 100 for a Blender export. A joint without a parent node gets the
+ * identity.
+ *
+ * Returns: %TRUE on success, %FALSE when @joint is out of range
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_gltf_info_get_joint_root_transform (LrgGltfInfo *self,
+                                        guint        joint,
+                                        gfloat      *out_translation,
+                                        gfloat      *out_rotation,
+                                        gfloat      *out_scale);
+
+/**
+ * lrg_gltf_info_fix_animation_roots:
+ * @self: an #LrgGltfInfo for the file the clips were loaded from
+ * @clips: (element-type GrlModelAnimation): clips loaded by raylib from
+ *   the same file, e.g. with grl_model_animation_load()
+ *
+ * Corrects raylib 6.0's glTF animation loader for skeletons with more than
+ * one root joint. raylib applies the world transform of the parent node of
+ * joint 0 only to bone 0, so every subtree under another root joint (IK
+ * leg targets in Quaternius animals, a separate Head root, ...) is posed
+ * without its armature transform and the mesh stretches or twists.
+ *
+ * For every bone whose model-space pose raylib rooted at a root joint r
+ * other than 0, this left-composes W, the world transform of r's parent
+ * node (see lrg_gltf_info_get_joint_root_transform()), onto every keyframe
+ * pose: rotation = W.rotation * rotation, translation = W.rotation *
+ * (W.scale * translation) + W.translation, scale = W.scale * scale. With a
+ * uniform W scale (the common case) this equals giving each root its own
+ * parent-node transform inside raylib. Bones raylib left unposed because
+ * the joints are not topologically sorted are not touched.
+ *
+ * Each clip is marked once processed and skipped by later calls, so the
+ * function is idempotent per clip object. Clips whose bone count differs
+ * from lrg_gltf_info_get_joint_count() are skipped and not marked.
+ * lrg_asset_manager_load_model_animations() already calls this for .glb and
+ * .gltf files.
+ *
+ * Returns: the number of clips whose poses changed
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_gltf_info_fix_animation_roots (LrgGltfInfo *self,
+                                   GPtrArray   *clips);
 
 G_END_DECLS

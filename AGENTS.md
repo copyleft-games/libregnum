@@ -570,6 +570,10 @@ and client-side helpers for skinned and static models.
   `lrg_gltf_info_build_node_mask()` turns hidden node names into a mesh
   mask. Files cgltf rejects structurally (e.g. a scene root with a parent)
   fail with `LRG_GLTF_ERROR_INVALID_REFERENCE` — raylib would load 0 meshes.
+  Skin-joint getters (`get_joint_name/parent/root_transform`) and
+  `lrg_gltf_info_fix_animation_roots()` repair raylib 6.0 clips of rigs with
+  several root joints (raylib applies the armature transform to bone 0
+  only); the asset manager applies it to .glb/.gltf clips automatically.
 
 - **`LrgModelAnimator`** (`graphics/lrg-model-animator.h`): one animator per
   shared model, one `LrgModelAnimState` per actor (embed by value, init with

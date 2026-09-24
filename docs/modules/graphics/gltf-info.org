@@ -2,7 +2,7 @@
 :PROPERTIES:
 :CUSTOM_ID: lrggltfinfo---gltf--glb-inspection
 :END:
-Headless inspection of glTF 2.0 files. =LrgGltfInfo= answers the questions a game needs before (or instead of) loading a model with raylib: which raylib mesh index is the helmet, which node did it come from, how many vertices does each mesh have, which animations exist and would raylib even load this file. It parses only the JSON (with json-glib), never opens external buffers and never touches raylib or GL.
+Headless inspection of glTF 2.0 files. =LrgGltfInfo= answers the questions a game needs before (or instead of) loading a model with raylib: which raylib mesh index is the helmet, which node did it come from, how many vertices does each mesh have, which animations exist and would raylib even load this file. It parses only the JSON (with json-glib), never opens external buffers and needs no GL context. Inspection never touches raylib; the one exception is =lrg_gltf_info_fix_animation_roots()=, which patches raylib animation clips in place (see [[#multi-root-animation-fix][Multi-root animation fix]]).
 
 ** Types
 :PROPERTIES:
@@ -41,6 +41,17 @@ const gchar *lrg_gltf_info_get_animation_name    (LrgGltfInfo *self, guint index
 gchar       *lrg_gltf_info_get_animation_raylib_name (LrgGltfInfo *self, guint index);
 gboolean     lrg_gltf_info_get_uses_draco        (LrgGltfInfo *self);
 gboolean     lrg_gltf_info_get_is_binary         (LrgGltfInfo *self);
+
+guint        lrg_gltf_info_get_joint_count       (LrgGltfInfo *self);
+gint         lrg_gltf_info_get_joint_node_index  (LrgGltfInfo *self, guint joint);
+const gchar *lrg_gltf_info_get_joint_name        (LrgGltfInfo *self, guint joint);
+gint         lrg_gltf_info_get_joint_parent      (LrgGltfInfo *self, guint joint);
+gboolean     lrg_gltf_info_get_joint_root_transform (LrgGltfInfo *self, guint joint,
+                                                     gfloat *out_translation, /* [3] or NULL */
+                                                     gfloat *out_rotation,    /* [4] x y z w or NULL */
+                                                     gfloat *out_scale);      /* [3] or NULL */
+guint        lrg_gltf_info_fix_animation_roots   (LrgGltfInfo *self,
+                                                  GPtrArray *clips); /* GrlModelAnimation */
 #+end_src
 
 Every per-mesh getter is indexed by the *raylib mesh index* (=Model.meshes[index]=). Out-of-range indices return =NULL=, -1 or 0.
@@ -93,6 +104,63 @@ g_autoptr(GBytes) mask = lrg_gltf_info_build_node_mask (info, no_shields);
 - =get_animation_name()= returns the full name (="" when unnamed). raylib keeps only the first 31 bytes (=LRG_GLTF_RAYLIB_NAME_MAX=); =get_animation_raylib_name()= returns exactly that truncation.
 - raylib loads animations only when the file has a skin, and only the first skin.
 - =get_uses_draco()= is =TRUE= when =KHR_draco_mesh_compression= appears in =extensionsUsed=, =extensionsRequired= or on a primitive. raylib 6.0 refuses such files entirely (0 meshes); the info still lists the meshes.
+
+** Skin Joints
+:PROPERTIES:
+:CUSTOM_ID: skin-joints
+:END:
+The joint getters describe the first skin, the only one raylib loads. Joint k is raylib bone k (=ModelAnimation.keyframePoses[frame][k]=), so =get_joint_count()= equals the bone count of the file's clips.
+
+- =get_joint_name()= - the full node name (raylib keeps 31 bytes).
+- =get_joint_parent()= - raylib's parent bone: the first joint whose node is this joint's parent node, or -1. A joint with parent -1 is a *root joint*.
+- =get_joint_root_transform()= - the world transform of the joint's *parent node*: local node transforms (=matrix=, or translation/rotation/scale with glTF defaults) composed up the parent chain like =cgltf_node_transform_world()=, then decomposed like raymath's =MatrixDecompose()=. For a Blender root bone this is the armature transform, typically rotation -90 degrees about X and scale 100. A joint without a parent node gets the identity.
+
+Node =matrix=, =translation=, =rotation= and =scale= arrays must have 16, 3, 4 and 3 numbers; anything else fails with =LRG_GLTF_ERROR_INVALID_JSON=, as cgltf rejects it too.
+
+** Multi-root Animation Fix
+:PROPERTIES:
+:CUSTOM_ID: multi-root-animation-fix
+:END:
+*The raylib 6.0 bug.* =LoadModelAnimationsGLTF()= computes the world transform W of the parent node of =skin.joints[0]= and applies it to bone 0 only, before =BuildPoseFromParentJoints()= turns the local poses into model space. Many rigs have several root joints (joints whose parent node is not a joint):
+
+| Rig                   | Root joints                                       |
+|-----------------------+---------------------------------------------------|
+| Quaternius animals    | =Body=, =IKBackLeg.L=, =IKFrontLeg.L=, =IKBackLeg.R=, =IKFrontLeg.R= |
+| Quaternius Mushnub    | =Body=, =Head=                                    |
+| Quaternius cat        | =All=, =Root=                                     |
+
+Every subtree under a root other than bone 0 is posed in armature space, without the armature's rotation and scale, so legs stretch toward the origin and the model twists.
+
+*The fix.* =lrg_gltf_info_fix_animation_roots()= repairs loaded clips without modifying raylib. For every bone b whose model-space pose raylib rooted at a root joint r != 0 with a parent node, it left-composes W_r (=get_joint_root_transform (r)=) onto the pose of b in every keyframe:
+
+#+begin_example
+rotation    = W.rotation * rotation
+translation = W.rotation * (W.scale . translation) + W.translation
+scale       = W.scale . scale
+#+end_example
+
+With a uniform W scale (the normal case) this is exactly what raylib would produce had it given each root its own parent-node transform, as it does for bone 0. Details:
+
+- Bone 0 already has its transform and is never touched; neither is a rig with one root.
+- raylib composes a bone with its parent only when the parent index is smaller. A bone below a link that breaks this order keeps raylib's result.
+- Each processed clip is marked (object data), so later calls skip it: the fix is idempotent per clip object. Clips whose bone count differs from =get_joint_count()= (another rig) are skipped and left unmarked.
+- The return value is the number of clips whose poses changed.
+- =lrg_asset_manager_load_model_animations()= applies the fix automatically to =.glb= / =.gltf= files before caching; only clips loaded directly with =grl_model_animation_load()= need a manual call.
+
+#+begin_src C
+gint                count = 0;
+gint                i;
+GrlModelAnimation **loaded = grl_model_animation_load ("models/wolf.glb", &count, &error);
+g_autoptr(GPtrArray) clips = g_ptr_array_new_with_free_func (g_object_unref);
+g_autoptr(LrgGltfInfo) info = lrg_gltf_info_new_from_file ("models/wolf.glb", &error);
+
+for (i = 0; i < count; i++)
+    g_ptr_array_add (clips, loaded[i]);
+g_free (loaded);
+lrg_gltf_info_fix_animation_roots (info, clips);
+#+end_src
+
+Tests: =tests/test-gltf-animation-roots.c= checks exact posed positions on a generated two-root rig (armature translation (1, 2, 3), -90 degrees about X, scale 100), that a single-root rig is bit-identical, idempotency, the asset-manager path and, read-only when present, the Quaternius wolf's IK roots.
 
 ** Errors and raylib Compatibility
 :PROPERTIES:

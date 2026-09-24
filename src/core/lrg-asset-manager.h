@@ -578,6 +578,10 @@ GrlModel * lrg_asset_manager_load_model (LrgAssetManager  *self,
  * Loading needs no graphics context. A file without a skin or animations
  * yields an empty array (also cached).
  *
+ * For .glb and .gltf files the clips are passed through
+ * lrg_gltf_info_fix_animation_roots() before caching, correcting raylib
+ * 6.0's posing of skeletons with more than one root joint.
+ *
  * Errors: %LRG_ASSET_MANAGER_ERROR_NOT_FOUND when no file matches.
  *
  * Returns: (transfer none) (nullable) (element-type GrlModelAnimation):

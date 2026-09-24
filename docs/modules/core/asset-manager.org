@@ -165,6 +165,8 @@ Release the manager (or unload the models) before closing the window: unloading 
 
 Animation loading is CPU-only and works headlessly. A file without a skin or animations yields an *empty* cached array rather than an error (raylib cannot tell "no clips" from "cannot parse"). Clips keep the file's order, are sampled at 60 frames per second, and raylib truncates their names to 31 bytes.
 
+For =.glb= and =.gltf= files the clips are corrected with =lrg_gltf_info_fix_animation_roots()= before they are cached: raylib 6.0 poses every root joint except the first without its armature transform, which stretches and twists rigs with several root joints (Quaternius animals and their IK leg roots, for example). Single-root rigs are unchanged. See [[file:../graphics/gltf-info.org::#multi-root-animation-fix][Multi-root animation fix]].
+
 *** Example
 :PROPERTIES:
 :CUSTOM_ID: model-example
