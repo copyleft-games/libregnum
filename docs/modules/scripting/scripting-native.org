@@ -86,6 +86,12 @@ These symbols resolve from the host process when the object is loaded.  This
 works because libregnum is a shared library, or because the host was linked
 with =-rdynamic= when libregnum is linked statically.
 
+Objects are opened with local binding.  =call_function()= and
+=has_function()= only find symbols the object itself defines.  Names from the
+libraries it links, such as =g_free= or =printf=, never resolve, and neither
+do another unit's exports.  The same holds for Crispy units.  A failing call
+leaves the return value unset, even if the callee initialized it.
+
 ** Crispy Specifics
 :PROPERTIES:
 :CUSTOM_ID: crispy

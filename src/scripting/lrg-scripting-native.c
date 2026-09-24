@@ -18,6 +18,9 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_SCRIPTING
 
 #include <gmodule.h>
+#include <dlfcn.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "lrg-scripting-native.h"
 #include "../lrg-enums.h"
@@ -81,6 +84,32 @@ native_value_free (gpointer data)
     g_free (value);
 }
 
+/*
+ * dlsym() on a module handle also searches its dependencies (libc, GLib,
+ * libregnum), so "g_free" would resolve and be called through the native
+ * ABI.  Only symbols defined by the unit's own file count.
+ */
+static gboolean
+symbol_in_module (GModule  *module,
+                  gpointer  symbol)
+{
+    Dl_info   info;
+    gchar    *mine;
+    gchar    *owner;
+    gboolean  same;
+
+    if (dladdr (symbol, &info) == 0 || info.dli_fname == NULL || g_module_name (module) == NULL)
+    {
+        return FALSE;
+    }
+    mine = realpath (g_module_name (module), NULL);
+    owner = realpath (info.dli_fname, NULL);
+    same = mine != NULL && owner != NULL && strcmp (mine, owner) == 0;
+    free (mine);
+    free (owner);
+    return same;
+}
+
 /* Symbol lookup for plain GModule units */
 static gpointer
 native_module_lookup (gpointer     unit,
@@ -89,7 +118,8 @@ native_module_lookup (gpointer     unit,
     gpointer symbol;
 
     symbol = NULL;
-    if (!g_module_symbol ((GModule *)unit, symbol_name, &symbol))
+    if (!g_module_symbol ((GModule *)unit, symbol_name, &symbol) ||
+        !symbol_in_module ((GModule *)unit, symbol))
     {
         return NULL;
     }
@@ -225,6 +255,9 @@ lrg_scripting_native_call_function (LrgScripting  *scripting,
 
     if (!ok)
     {
+        /* A failing callee may still have set the return value */
+        if (return_value != NULL && G_IS_VALUE (return_value))
+            g_value_unset (return_value);
         if (local_error == NULL)
         {
             g_set_error (error, LRG_SCRIPTING_ERROR, LRG_SCRIPTING_ERROR_RUNTIME,
@@ -493,6 +526,9 @@ lrg_scripting_native_call_host (LrgScripting  *scripting,
     {
         g_value_unset (&discard);
     }
+    /* On failure the caller gets no value, even if the host set one */
+    if (!ok && return_value != NULL && G_IS_VALUE (return_value))
+        g_value_unset (return_value);
 
     return ok;
 }
