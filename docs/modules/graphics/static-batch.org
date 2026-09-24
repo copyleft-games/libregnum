@@ -93,7 +93,7 @@ void     lrg_static_batch_draw_chunk  (LrgStaticBatch *self, guint chunk);
 :PROPERTIES:
 :CUSTOM_ID: models
 :END:
-=add_model()= adds every mesh of a static model (bind-pose vertices; do not batch skinned characters) with the model's own transform applied first. Each mesh's material id is the GL id of its material's albedo texture (0 when untextured), and that texture is remembered for drawing, *borrowed* from the model — keep the model alive (for example in the asset manager cache) while the batch draws. Don't reuse the same numbers as your own material ids in one batch. =set_material_texture()= overrides a material's texture and keeps a reference.
+=add_model()= adds every mesh of a static model (bind-pose vertices; do not batch skinned characters) with the model's own transform applied first. Each mesh's material id is the GL id of its material's albedo texture (raylib's default white texture id when untextured), and that texture is remembered for drawing, *borrowed* from the model — keep the model alive (for example in the asset manager cache) while the batch draws. The material's albedo colour (glTF =baseColorFactor=) is multiplied into the merged vertex colours, because chunks are keyed by texture alone. Don't reuse the same numbers as your own material ids in one batch. =set_material_texture()= overrides a material's texture and keeps a reference.
 
 ** Drawing
 :PROPERTIES:
