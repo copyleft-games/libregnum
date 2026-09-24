@@ -153,29 +153,17 @@ lrg_scripting_pygobject_init_interpreter (LrgScriptingGI  *gi_self,
         g_python_initialized = TRUE;
     }
 
-    /* Get __main__ module */
-    self->main_module = PyImport_AddModule ("__main__");
-    if (self->main_module == NULL)
-    {
-        g_set_error (error,
-                     LRG_SCRIPTING_ERROR,
-                     LRG_SCRIPTING_ERROR_GI_FAILED,
-                     "Failed to get __main__ module");
-        return FALSE;
-    }
-    Py_INCREF (self->main_module);
-
-    /* Get __main__.__dict__ */
-    self->main_dict = PyModule_GetDict (self->main_module);
+    /* Private globals: contexts never share or clear each other's names */
+    self->main_module = NULL;
+    self->main_dict = lrg_python_new_globals ();
     if (self->main_dict == NULL)
     {
         g_set_error (error,
                      LRG_SCRIPTING_ERROR,
                      LRG_SCRIPTING_ERROR_GI_FAILED,
-                     "Failed to get __main__.__dict__");
+                     "Failed to create Python globals");
         return FALSE;
     }
-    Py_INCREF (self->main_dict);
 
     /* Import the gi module */
     self->gi_module = PyImport_ImportModule ("gi");
@@ -746,9 +734,7 @@ lrg_scripting_pygobject_register_function (LrgScripting           *scripting,
     LrgScriptingPyGObject   *self = LRG_SCRIPTING_PYGOBJECT (scripting);
     LrgScriptingGI          *gi_self = LRG_SCRIPTING_GI (scripting);
     RegisteredCFunctionGI   *reg;
-    PyObject                *capsule;
     PyObject                *py_func;
-    static PyMethodDef       method_def = {"", NULL, METH_VARARGS, NULL};
 
     g_return_val_if_fail (name != NULL, FALSE);
     g_return_val_if_fail (func != NULL, FALSE);
@@ -775,25 +761,11 @@ lrg_scripting_pygobject_register_function (LrgScripting           *scripting,
         return FALSE;
     }
 
-    /* Create a PyCapsule to hold the registration data */
-    capsule = PyCapsule_New (reg, "RegisteredCFunctionGI", NULL);
-    if (capsule == NULL)
-    {
-        g_set_error (error,
-                     LRG_SCRIPTING_ERROR,
-                     LRG_SCRIPTING_ERROR_FAILED,
-                     "Failed to create capsule for '%s'",
-                     name);
-        return FALSE;
-    }
-
-    /* Create a Python function */
-    method_def.ml_name = name;
-    method_def.ml_meth = (PyCFunction)pygobject_c_function_wrapper;
-
-    py_func = PyCFunction_New (&method_def, capsule);
-    Py_DECREF (capsule);
-
+    /* Create a callable with its own method definition */
+    py_func = lrg_python_new_c_function (name,
+                                         (PyCFunction)pygobject_c_function_wrapper,
+                                         reg,
+                                         "RegisteredCFunctionGI");
     if (py_func == NULL)
     {
         g_set_error (error,

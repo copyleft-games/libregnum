@@ -61,6 +61,8 @@ lrg_lua_push_gvalue (lua_State    *L,
     {
     case G_TYPE_NONE:
     case G_TYPE_INVALID:
+    case G_TYPE_POINTER:
+        /* nil travels as a NULL pointer; other raw pointers are opaque */
         lua_pushnil (L);
         return 1;
 
@@ -162,7 +164,9 @@ lrg_lua_to_gvalue (lua_State *L,
     switch (ltype)
     {
     case LUA_TNIL:
-        g_value_init (value, G_TYPE_NONE);
+        /* nil is carried as a NULL G_TYPE_POINTER: G_TYPE_NONE has no value table */
+        g_value_init (value, G_TYPE_POINTER);
+        g_value_set_pointer (value, NULL);
         return TRUE;
 
     case LUA_TBOOLEAN:

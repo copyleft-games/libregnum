@@ -103,8 +103,9 @@ lrg_python_from_gvalue (const GValue *value)
     type = G_VALUE_TYPE (value);
 
     /* Handle None/Invalid */
-    if (type == G_TYPE_NONE || type == G_TYPE_INVALID)
+    if (type == G_TYPE_NONE || type == G_TYPE_INVALID || type == G_TYPE_POINTER)
     {
+        /* nil travels as a NULL pointer; other raw pointers are opaque */
         Py_RETURN_NONE;
     }
 
@@ -223,10 +224,11 @@ lrg_python_to_gvalue (PyObject *obj,
 {
     g_return_val_if_fail (value != NULL, FALSE);
 
-    /* None */
+    /* None is carried as a NULL G_TYPE_POINTER: G_TYPE_NONE has no value table */
     if (obj == Py_None)
     {
-        g_value_init (value, G_TYPE_NONE);
+        g_value_init (value, G_TYPE_POINTER);
+        g_value_set_pointer (value, NULL);
         return TRUE;
     }
 
@@ -322,9 +324,10 @@ lrg_python_to_gvalue_with_type (PyObject *obj,
     /* Handle None for nullable types */
     if (obj == Py_None)
     {
-        if (type == G_TYPE_NONE)
+        if (type == G_TYPE_NONE || type == G_TYPE_POINTER)
         {
-            g_value_init (value, G_TYPE_NONE);
+            g_value_init (value, G_TYPE_POINTER);
+            g_value_set_pointer (value, NULL);
             return TRUE;
         }
         if (g_type_is_a (type, G_TYPE_OBJECT))
@@ -1125,4 +1128,102 @@ lrg_python_register_bound_method_type (void)
         return FALSE;
     }
     return TRUE;
+}
+
+/**
+ * lrg_python_new_globals:
+ *
+ * Creates a private globals dictionary for one scripting context.
+ *
+ * Returns: (transfer full) (nullable): a new dict, or %NULL on failure
+ */
+PyObject *
+lrg_python_new_globals (void)
+{
+    PyObject *globals;
+    PyObject *builtins;
+    PyObject *name;
+
+    globals = PyDict_New ();
+    if (globals == NULL)
+        return NULL;
+
+    /* Every context sees the interpreter's builtins module */
+    builtins = PyImport_ImportModule ("builtins");
+    if (builtins == NULL)
+    {
+        Py_DECREF (globals);
+        return NULL;
+    }
+    PyDict_SetItemString (globals, "__builtins__", builtins);
+    Py_DECREF (builtins);
+
+    /* Scripts run as top-level code */
+    name = PyUnicode_FromString ("__main__");
+    if (name != NULL)
+    {
+        PyDict_SetItemString (globals, "__name__", name);
+        Py_DECREF (name);
+    }
+
+    return globals;
+}
+
+/*
+ * Capsule destructor: frees the private method definition kept in the
+ * capsule context.  The capsule pointer itself belongs to the backend.
+ */
+static void
+c_function_capsule_free (PyObject *capsule)
+{
+    PyMethodDef *def;
+
+    def = (PyMethodDef *)PyCapsule_GetContext (capsule);
+    if (def != NULL)
+    {
+        g_free ((gchar *)def->ml_name);
+        g_free (def);
+    }
+}
+
+/**
+ * lrg_python_new_c_function:
+ * @name: the Python-visible function name
+ * @meth: the C trampoline
+ * @capsule_data: pointer stored in the bound capsule
+ * @capsule_name: the capsule name used to retrieve @capsule_data
+ *
+ * Creates a Python callable bound to a capsule with a private method
+ * definition.
+ *
+ * Returns: (transfer full) (nullable): the new callable
+ */
+PyObject *
+lrg_python_new_c_function (const gchar *name,
+                           PyCFunction  meth,
+                           gpointer     capsule_data,
+                           const gchar *capsule_name)
+{
+    PyMethodDef *def;
+    PyObject    *capsule;
+    PyObject    *func;
+
+    g_return_val_if_fail (name != NULL, NULL);
+    g_return_val_if_fail (meth != NULL, NULL);
+
+    /* The capsule owns the heap definition; the function owns the capsule */
+    capsule = PyCapsule_New (capsule_data, capsule_name, c_function_capsule_free);
+    if (capsule == NULL)
+        return NULL;
+
+    def = g_new0 (PyMethodDef, 1);
+    def->ml_name = g_strdup (name);
+    def->ml_meth = meth;
+    def->ml_flags = METH_VARARGS;
+    def->ml_doc = NULL;
+    PyCapsule_SetContext (capsule, def);
+
+    func = PyCFunction_New (def, capsule);
+    Py_DECREF (capsule);
+    return func;
 }

@@ -701,6 +701,113 @@ test_scripting_python_registry_api (ScriptingFixture *fixture,
  * Main
  * ========================================================================== */
 
+/* ==========================================================================
+ * Test Cases - Context Isolation
+ * ========================================================================== */
+
+/*
+ * Two contexts must not share globals, and resetting one must leave the
+ * other untouched: plugin hosts give every extension its own context.
+ */
+static void
+test_scripting_python_isolation (void)
+{
+    g_autoptr(LrgScriptingPython) a = NULL;
+    g_autoptr(LrgScriptingPython) b = NULL;
+    g_autoptr(GError) error = NULL;
+    GValue value = G_VALUE_INIT;
+
+    a = lrg_scripting_python_new ();
+    b = lrg_scripting_python_new ();
+
+    g_assert_true (lrg_scripting_load_string (LRG_SCRIPTING (a), "a",
+                                              "only_in_a = 41\ndef who():\n    return 'a'\n",
+                                              &error));
+    g_assert_no_error (error);
+    g_assert_true (lrg_scripting_load_string (LRG_SCRIPTING (b), "b",
+                                              "def who():\n    return 'b'\n",
+                                              &error));
+    g_assert_no_error (error);
+
+    /* b cannot see a's global */
+    g_assert_false (lrg_scripting_get_global (LRG_SCRIPTING (b), "only_in_a",
+                                              &value, &error));
+    g_assert_error (error, LRG_SCRIPTING_ERROR, LRG_SCRIPTING_ERROR_NOT_FOUND);
+    g_clear_error (&error);
+
+    /* Same function name resolves per context */
+    g_assert_true (lrg_scripting_call_function (LRG_SCRIPTING (a), "who", &value,
+                                                0, NULL, &error));
+    g_assert_no_error (error);
+    g_assert_cmpstr (g_value_get_string (&value), ==, "a");
+    g_value_unset (&value);
+
+    /* Resetting b keeps a intact */
+    lrg_scripting_reset (LRG_SCRIPTING (b));
+    g_assert_true (lrg_scripting_get_global (LRG_SCRIPTING (a), "only_in_a",
+                                             &value, &error));
+    g_assert_no_error (error);
+    g_assert_cmpfloat_with_epsilon (get_numeric_value (&value), 41.0, 0.001);
+    g_value_unset (&value);
+}
+
+/*
+ * Registered functions keep their own name, and None crosses the bridge
+ * as a NULL pointer value instead of an invalid G_TYPE_NONE value.
+ */
+static gboolean
+test_count_args (LrgScripting  *scripting,
+                 guint          n_args,
+                 const GValue  *args,
+                 GValue        *return_value,
+                 gpointer       user_data,
+                 GError       **error)
+{
+    (void)scripting;
+    (void)user_data;
+    (void)error;
+
+    g_value_init (return_value, G_TYPE_INT64);
+    g_value_set_int64 (return_value,
+                       (gint64)n_args * 10 +
+                       (n_args > 0 && G_VALUE_HOLDS_POINTER (&args[0]) &&
+                        g_value_get_pointer (&args[0]) == NULL ? 1 : 0));
+    return TRUE;
+}
+
+static void
+test_scripting_python_function_names_and_none (ScriptingFixture *fixture,
+                                               gconstpointer     user_data)
+{
+    g_autoptr(GError) error = NULL;
+    GValue value = G_VALUE_INIT;
+
+    (void)user_data;
+
+    g_assert_true (lrg_scripting_register_function (LRG_SCRIPTING (fixture->scripting),
+                                                    "first_fn", test_count_args,
+                                                    NULL, &error));
+    g_assert_true (lrg_scripting_register_function (LRG_SCRIPTING (fixture->scripting),
+                                                    "second_fn", test_count_args,
+                                                    NULL, &error));
+    g_assert_no_error (error);
+    g_assert_true (lrg_scripting_load_string (LRG_SCRIPTING (fixture->scripting), "names",
+                                              "names = first_fn.__name__ + ',' + second_fn.__name__\n"
+                                              "counted = first_fn(None)\n",
+                                              &error));
+    g_assert_no_error (error);
+
+    g_assert_true (lrg_scripting_get_global (LRG_SCRIPTING (fixture->scripting), "names",
+                                             &value, &error));
+    g_assert_cmpstr (g_value_get_string (&value), ==, "first_fn,second_fn");
+    g_value_unset (&value);
+
+    g_assert_true (lrg_scripting_get_global (LRG_SCRIPTING (fixture->scripting), "counted",
+                                             &value, &error));
+    g_assert_cmpfloat_with_epsilon (get_numeric_value (&value), 11.0, 0.001);
+    g_value_unset (&value);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -804,6 +911,15 @@ main (int   argc,
                 ScriptingFixture, NULL,
                 scripting_fixture_set_up,
                 test_scripting_python_registry_api,
+                scripting_fixture_tear_down);
+
+    /* Isolation between contexts */
+    g_test_add_func ("/scripting-python/isolation",
+                     test_scripting_python_isolation);
+    g_test_add ("/scripting-python/function-names-and-none",
+                ScriptingFixture, NULL,
+                scripting_fixture_set_up,
+                test_scripting_python_function_names_and_none,
                 scripting_fixture_tear_down);
 
     return g_test_run ();

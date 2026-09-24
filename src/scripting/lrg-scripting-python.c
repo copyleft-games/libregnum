@@ -74,23 +74,18 @@ ensure_python_initialized (LrgScriptingPython *self)
         return FALSE;
     }
 
-    /* Get __main__ module */
-    self->main_module = PyImport_AddModule ("__main__");
-    if (self->main_module == NULL)
-    {
-        lrg_error (LRG_LOG_DOMAIN_SCRIPTING, "Failed to get __main__ module");
-        return FALSE;
-    }
-    Py_INCREF (self->main_module);
-
-    /* Get __main__.__dict__ */
-    self->main_dict = PyModule_GetDict (self->main_module);
+    /*
+     * Each context owns a private globals dict instead of __main__.__dict__:
+     * two contexts (for example two plugins) must never see or clear each
+     * other's names.
+     */
+    self->main_module = NULL;
+    self->main_dict = lrg_python_new_globals ();
     if (self->main_dict == NULL)
     {
-        lrg_error (LRG_LOG_DOMAIN_SCRIPTING, "Failed to get __main__.__dict__");
+        lrg_error (LRG_LOG_DOMAIN_SCRIPTING, "Failed to create Python globals");
         return FALSE;
     }
-    Py_INCREF (self->main_dict);
 
     /* Register built-in API */
     lrg_python_api_register_all (self);
@@ -459,14 +454,10 @@ lrg_scripting_python_register_function (LrgScripting           *scripting,
 {
     LrgScriptingPython  *self = LRG_SCRIPTING_PYTHON (scripting);
     RegisteredCFunction *reg;
-    PyObject            *capsule;
     PyObject            *py_func;
-    static PyMethodDef   method_def = {"", NULL, METH_VARARGS, NULL};
 
     g_return_val_if_fail (name != NULL, FALSE);
     g_return_val_if_fail (func != NULL, FALSE);
-
-    (void)error;
 
     if (!ensure_python_initialized (self))
     {
@@ -487,22 +478,18 @@ lrg_scripting_python_register_function (LrgScripting           *scripting,
     /* Store in hash table for cleanup */
     g_hash_table_insert (self->registered_funcs, g_strdup (name), reg);
 
-    /* Create a PyCapsule to hold the registration data */
-    capsule = PyCapsule_New (reg, "RegisteredCFunction", NULL);
-    if (capsule == NULL)
-    {
-        return FALSE;
-    }
-
-    /* Create a Python function */
-    method_def.ml_name = name;
-    method_def.ml_meth = (PyCFunction)c_function_wrapper;
-
-    py_func = PyCFunction_New (&method_def, capsule);
-    Py_DECREF (capsule);
-
+    /* Create a callable with its own method definition */
+    py_func = lrg_python_new_c_function (name,
+                                         (PyCFunction)c_function_wrapper,
+                                         reg,
+                                         "RegisteredCFunction");
     if (py_func == NULL)
     {
+        g_set_error (error,
+                     LRG_SCRIPTING_ERROR,
+                     LRG_SCRIPTING_ERROR_FAILED,
+                     "Failed to create Python function for '%s'",
+                     name);
         return FALSE;
     }
 

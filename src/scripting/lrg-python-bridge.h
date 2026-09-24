@@ -175,4 +175,34 @@ gboolean lrg_python_check_error (GError **error);
  */
 gchar * lrg_python_get_error_message (void);
 
+/**
+ * lrg_python_new_globals:
+ *
+ * Creates a private globals dictionary for one scripting context.  The
+ * dictionary carries `__builtins__` and `__name__ = "__main__"` so scripts
+ * behave as they would at top level, but no two contexts share state.
+ *
+ * Returns: (transfer full) (nullable): a new dict, or %NULL on failure
+ */
+PyObject * lrg_python_new_globals (void);
+
+/**
+ * lrg_python_new_c_function:
+ * @name: the Python-visible function name
+ * @meth: the C trampoline
+ * @capsule_data: pointer stored in the bound capsule
+ * @capsule_name: the capsule name used to retrieve @capsule_data
+ *
+ * Creates a Python callable bound to a capsule.  Each callable owns a
+ * private heap #PyMethodDef (freed with the capsule), so registered
+ * functions keep their own `__name__` and never alias a shared static
+ * definition.
+ *
+ * Returns: (transfer full) (nullable): the new callable
+ */
+PyObject * lrg_python_new_c_function (const gchar *name,
+                                      PyCFunction  meth,
+                                      gpointer     capsule_data,
+                                      const gchar *capsule_name);
+
 G_END_DECLS
