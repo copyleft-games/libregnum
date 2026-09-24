@@ -1,0 +1,158 @@
+* LrgModelAnimator - Shared Skinned Model Animation
+:PROPERTIES:
+:CUSTOM_ID: lrgmodelanimator---shared-skinned-model-animation
+:END:
+Drives one shared skinned =GrlModel= for many actors. The animator owns the clip table (lookup, aliases, full names) and the model's current pose; every actor keeps its own small =LrgModelAnimState= (clip, time, rate, loop, crossfade). Right before an actor is drawn, =lrg_model_animator_apply()= poses the shared model for that actor's state — and skips the expensive re-skinning when the pose would not change — then =lrg_model_animator_draw_masked()= draws the meshes the actor should show.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgModelAnimator= - *Final GObject Class*, =LRG_TYPE_MODEL_ANIMATOR=, GIR =Libregnum.ModelAnimator=
+- =LrgModelAnimState= - *Boxed struct* with public fields, =LRG_TYPE_MODEL_ANIM_STATE=, =g_autoptr= capable; normally embedded by value in an actor
+- *Header* - =graphics/lrg-model-animator.h=
+
+#+begin_src C
+struct _LrgModelAnimState {
+    gint     clip;           /* current clip, -1 = none */
+    gdouble  time;           /* seconds into clip */
+    gdouble  rate;           /* speed multiplier, negative plays backwards */
+    gboolean loop;           /* wrap, or hold the last frame */
+    gint     previous_clip;  /* clip fading out, -1 = none */
+    gdouble  previous_time;
+    gboolean previous_loop;
+    gdouble  fade;           /* seconds into the crossfade */
+    gdouble  fade_duration;  /* 0 = not fading */
+};
+#+end_src
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+/* State */
+LrgModelAnimState *lrg_model_anim_state_new   (void);
+void               lrg_model_anim_state_reset (LrgModelAnimState *self);
+gdouble            lrg_model_anim_state_get_blend (const LrgModelAnimState *self);
+
+/* Construction */
+LrgModelAnimator *lrg_model_animator_new          (GrlModel *model, GPtrArray *clips);
+LrgModelAnimator *lrg_model_animator_new_headless (const gchar *const *names,
+                                                   const gint *frame_counts, guint n_clips);
+
+/* Clips */
+guint        lrg_model_animator_get_clip_count       (LrgModelAnimator *self);
+const gchar *lrg_model_animator_get_clip_name        (LrgModelAnimator *self, gint clip);
+gint         lrg_model_animator_get_clip_frame_count (LrgModelAnimator *self, gint clip);
+gdouble      lrg_model_animator_get_clip_duration    (LrgModelAnimator *self, gint clip);
+gboolean     lrg_model_animator_clip_is_valid        (LrgModelAnimator *self, gint clip);
+gboolean     lrg_model_animator_set_clip_names_from_info (LrgModelAnimator *self, LrgGltfInfo *info);
+void         lrg_model_animator_set_alias            (LrgModelAnimator *self,
+                                                      const gchar *alias, const gchar *target);
+void         lrg_model_animator_clear_aliases        (LrgModelAnimator *self);
+gint         lrg_model_animator_find_clip            (LrgModelAnimator *self, const gchar *name);
+
+/* Playback */
+gboolean lrg_model_animator_play    (LrgModelAnimator *self, LrgModelAnimState *state,
+                                     gint clip, gboolean loop, gdouble fade_seconds);
+void     lrg_model_animator_restart (LrgModelAnimator *self, LrgModelAnimState *state);
+void     lrg_model_animator_advance (LrgModelAnimator *self, LrgModelAnimState *state, gdouble dt);
+gint     lrg_model_animator_frame_of          (LrgModelAnimator *self, const LrgModelAnimState *state);
+gint     lrg_model_animator_previous_frame_of (LrgModelAnimator *self, const LrgModelAnimState *state);
+gboolean lrg_model_animator_is_finished       (LrgModelAnimator *self, const LrgModelAnimState *state);
+
+/* Posing and drawing */
+gboolean lrg_model_animator_apply      (LrgModelAnimator *self, const LrgModelAnimState *state);
+void     lrg_model_animator_invalidate (LrgModelAnimator *self);
+GBytes  *lrg_model_animator_build_node_mask (LrgModelAnimator *self, LrgGltfInfo *info,
+                                             const gchar *const *hidden_nodes);
+void     lrg_model_animator_draw_masked    (LrgModelAnimator *self, GBytes *mask,
+                                            const GrlMatrix *transform, const GrlColor *tint);
+void     lrg_model_animator_draw_masked_ex (LrgModelAnimator *self, GBytes *mask,
+                                            gfloat x, gfloat y, gfloat z,
+                                            gfloat yaw, gfloat scale, const GrlColor *tint);
+#+end_src
+
+** Clip Lookup
+:PROPERTIES:
+:CUSTOM_ID: clip-lookup
+:END:
+=lrg_model_animator_find_clip()= resolves a name in three steps and returns the clip index or -1:
+
+1. *Exact*, case-sensitive match (lowest index wins).
+2. *Alias* table: =set_alias ("walk", "Walking_A")=. The target is resolved by exact then suffix matching; aliases do not chain. Passing a =NULL= target removes an alias.
+3. *Suffix* match, case-insensitive, at a word boundary: the clip name must end with the name and the preceding character must not be a letter or digit. "walk" finds "Armature|Walk" and "Rat_Walk" but never "Sidewalk". Candidates rank by what precedes the suffix — nothing (whole name ignoring case), then =|= (exporter prefixes like =Armature|=), then any other separator — so "idle" prefers "CharacterArmature|Idle" over "CharacterArmature|Jump_Idle" and "Armature|Idle" over "Jump_Idle". Within a rank the shortest name wins, then the lowest index.
+
+*Truncated names.* raylib keeps only the first 31 bytes of an animation name. Files such as the Quaternius cat ("AnimalArmature|AnimalArmature|AnimalArmature|Walk") end up with eight identical names. =lrg_model_animator_set_clip_names_from_info()= replaces them with the full names from the file's =LrgGltfInfo=, after checking the clip count and that every current name is a prefix of the corresponding full name. Suffix lookup then works normally.
+
+** Playback Semantics
+:PROPERTIES:
+:CUSTOM_ID: playback-semantics
+:END:
+- *Sampling*: clips are sampled at 60 fps (=LRG_MODEL_ANIMATOR_FPS=, matching raylib's glTF import). A clip of N frames lasts N / 60 s. =frame_of()= is =floor (time * 60)= with a 1e-6 frame tolerance for rounding.
+- *Looping* clips wrap =time= into =[0, duration)=, forwards or backwards (negative =rate=), so time never grows without bound.
+- *One-shot* clips clamp =time= to =[0, (N - 1) / 60]= and hold the last frame; =is_finished()= reports reaching it (or time 0 when playing backwards).
+- =play()= with the clip that is already current only updates =loop=; call it every tick without restarting. =restart()= rewinds explicitly. Out-of-range clips are refused (=FALSE=, state untouched); clip -1 stops.
+- *Crossfade*: a positive =fade_seconds= from a valid current clip moves the current clip into the =previous_*= fields and starts the new clip at time 0. Both clips keep advancing at the state's rate; =fade= advances by real time. =lrg_model_anim_state_get_blend()= = =fade / fade_duration=. When the fade completes the previous clip is dropped. Zero, negative or non-finite fades — or a fade from no/invalid clip — cut immediately.
+- =advance()= ignores negative or non-finite =dt=.
+
+** Posing: apply() and the Pose Key
+:PROPERTIES:
+:CUSTOM_ID: posing
+:END:
+=apply()= computes a key of *(clip, frame, previous clip, previous frame, quantized blend)*. The blend weight is quantized to 64 levels (=LRG_MODEL_ANIMATOR_BLEND_LEVELS=); a weight that rounds to full degrades to the plain current pose (same key as a finished fade). If the key equals the last key the animator applied, nothing happens and =apply()= returns =FALSE=. Otherwise it poses the model — =grl_model_animation_update()= for a single clip or =grl_model_animation_blend()= (previous → current at the quantized weight) while fading — and returns =TRUE=.
+
+Because the key is stored in the animator, actors that share a clip and frame share one skinning pass. Use *one animator per model*, shared by all actors of that model. Call =invalidate()= if anything else changed the model's pose.
+
+A clip whose skeleton does not match the model (=clip_is_valid()= false) is never applied. Headless animators track keys without posing, which is how the key logic is unit tested.
+
+** Drawing Subsets of a Model
+:PROPERTIES:
+:CUSTOM_ID: drawing
+:END:
+=draw_masked()= replicates raylib's =DrawModelEx()= for the meshes whose mask byte is non-zero: material diffuse tint, GPU-skinning bone upload (=SHADER_LOC_MATRIX_BONETRANSFORMS=), =DrawMesh()= with =model.transform × transform=. A =NULL= mask, or bytes missing past its end, draw everything. =draw_masked_ex()= builds the transform from position, yaw (radians about +Y, raylib's rotation convention) and uniform scale in DrawModelEx order. Both do nothing headless and must run inside a 3D mode.
+
+Masks usually come from node names — accessory nodes in character packs:
+
+#+begin_src C
+static const gchar *const unarmed[] = {
+    "1H_Sword", "1H_Sword_Offhand", "2H_Sword",
+    "Badge_Shield", "Rectangle_Shield", "Round_Shield", "Spike_Shield", NULL
+};
+g_autoptr(GBytes) mask = lrg_model_animator_build_node_mask (animator, knight_info, unarmed);
+#+end_src
+
+=build_node_mask()= returns =NULL= when the info describes a different mesh count than the model (wrong file).
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* Once per model. */
+GrlModel  *model = lrg_asset_manager_load_model (assets, "models/Knight.glb", &error);
+GPtrArray *clips = lrg_asset_manager_load_model_animations (assets, "models/Knight.glb", &error);
+g_autoptr(LrgGltfInfo) info = lrg_gltf_info_new_from_file (resolved_path, &error);
+g_autoptr(LrgModelAnimator) knight = lrg_model_animator_new (model, clips);
+
+lrg_model_animator_set_clip_names_from_info (knight, info);
+lrg_model_animator_set_alias (knight, "walk", "Walking_A");
+walk = lrg_model_animator_find_clip (knight, "walk");
+idle = lrg_model_animator_find_clip (knight, "idle");
+
+/* Per actor, per tick. */
+lrg_model_animator_play (knight, &actor->anim, actor->moving ? walk : idle, TRUE, 0.15);
+lrg_model_animator_advance (knight, &actor->anim, dt);
+
+/* Per actor, when drawing. */
+lrg_model_animator_apply (knight, &actor->anim);
+lrg_model_animator_draw_masked_ex (knight, actor->mask, actor->x, 0.0f, actor->z,
+                                   actor->yaw, 1.0f, NULL);
+#+end_src
+
+** Lifetime
+:PROPERTIES:
+:CUSTOM_ID: lifetime
+:END:
+The animator references the model and every clip. Models from the asset manager are only freed after both the manager's cache entry and every animator are released; release animators before closing the window.

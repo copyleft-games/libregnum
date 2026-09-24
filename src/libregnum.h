@@ -78,6 +78,7 @@
 #include "graphics/lrg-image-canvas.h"
 #include "graphics/lrg-vector-image.h"
 #include "graphics/lrg-gltf-info.h"
+#include "graphics/lrg-model-animator.h"
 #include "imageedit/lrg-image-layer.h"
 #include "imageedit/lrg-image-document.h"
 

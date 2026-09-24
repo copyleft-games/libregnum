@@ -571,9 +571,19 @@ and client-side helpers for skinned and static models.
   mask. Files cgltf rejects structurally (e.g. a scene root with a parent)
   fail with `LRG_GLTF_ERROR_INVALID_REFERENCE` — raylib would load 0 meshes.
 
+- **`LrgModelAnimator`** (`graphics/lrg-model-animator.h`): one animator per
+  shared model, one `LrgModelAnimState` per actor (embed by value, init with
+  `lrg_model_anim_state_reset()`). `find_clip()` = exact, alias, then
+  boundary suffix (`|` beats `_`). Repair raylib's 31-byte clip names with
+  `set_clip_names_from_info()`. `play()` of the current clip does not
+  restart. Call `apply()` right before drawing each actor; it re-skins only
+  when (clip, frame, previous clip/frame, 64-level blend) changes. Draw with
+  `draw_masked[_ex]()` and a mask from `build_node_mask()`.
+
 See `docs/modules/physics/wall-set.org`,
-`docs/modules/core/asset-manager.org` (Models and animations) and
-`docs/modules/graphics/gltf-info.org`.
+`docs/modules/core/asset-manager.org` (Models and animations),
+`docs/modules/graphics/gltf-info.org` and
+`docs/modules/graphics/model-animator.org`.
 
 ## Architecture Overview
 

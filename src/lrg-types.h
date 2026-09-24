@@ -421,6 +421,10 @@ typedef struct _LrgVectorImage    LrgVectorImage;
 /* LrgGltfInfo is a final type - no Class forward declaration needed */
 typedef struct _LrgGltfInfo       LrgGltfInfo;
 
+/* LrgModelAnimator is a final type; LrgModelAnimState is boxed */
+typedef struct _LrgModelAnimator  LrgModelAnimator;
+typedef struct _LrgModelAnimState LrgModelAnimState;
+
 /* ==========================================================================
  * Shapes Module
  * ========================================================================== */

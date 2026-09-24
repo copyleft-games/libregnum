@@ -86,6 +86,7 @@ TEST_SOURCES := \
 	test-wall-set.c \
 	test-asset-model-cache.c \
 	test-gltf-info.c \
+	test-model-animator.c \
 	test-audio.c \
 	test-inventory.c \
 	test-i18n.c \
