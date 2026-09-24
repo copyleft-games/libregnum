@@ -44,7 +44,7 @@ lrg_saveable_get_save_id (LrgSaveable *self)
  * lrg_saveable_save:
  * @self: a #LrgSaveable
  * @context: the #LrgSaveContext to save to
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Saves the object's state to the save context.
  *
@@ -80,7 +80,7 @@ lrg_saveable_save (LrgSaveable      *self,
  * lrg_saveable_load:
  * @self: a #LrgSaveable
  * @context: the #LrgSaveContext to load from
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads the object's state from the save context.
  *

@@ -174,8 +174,8 @@ void                lrg_particle_pool_clear             (LrgParticlePool    *sel
 /**
  * lrg_particle_pool_foreach_alive:
  * @self: A #LrgParticlePool
- * @func: (scope call): Callback function
- * @user_data: (closure): User data for the callback
+ * @func: (scope call) (closure user_data): Callback function
+ * @user_data: User data for the callback
  *
  * Iterates over all alive particles in the pool.
  * It is safe to kill particles during iteration.

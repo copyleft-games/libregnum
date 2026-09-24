@@ -316,7 +316,7 @@ void lrg_synergy_set_bonus_per_card (LrgSynergy *self,
 /**
  * lrg_synergy_check_cards:
  * @self: a #LrgSynergy
- * @cards: (element-type gpointer): array of cards to check
+ * @cards: (element-type GObject) (nullable): array of cards to check
  *
  * Checks if the given cards have this synergy active.
  *
@@ -331,7 +331,7 @@ gboolean lrg_synergy_check_cards (LrgSynergy *self,
 /**
  * lrg_synergy_calculate_bonus:
  * @self: a #LrgSynergy
- * @cards: (element-type gpointer): array of cards
+ * @cards: (element-type GObject) (nullable): array of cards
  *
  * Calculates the bonus value from this synergy.
  *
@@ -346,11 +346,11 @@ gint lrg_synergy_calculate_bonus (LrgSynergy *self,
 /**
  * lrg_synergy_get_synergy_cards:
  * @self: a #LrgSynergy
- * @cards: (element-type gpointer): array of all cards
+ * @cards: (element-type GObject) (nullable): array of all cards
  *
  * Gets the subset of cards that contribute to this synergy.
  *
- * Returns: (transfer container) (element-type gpointer): contributing cards
+ * Returns: (transfer container) (element-type GObject): contributing cards
  *
  * Since: 1.0
  */

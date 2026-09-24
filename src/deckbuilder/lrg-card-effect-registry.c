@@ -242,7 +242,7 @@ lrg_card_effect_registry_get_executor_count (LrgCardEffectRegistry *self)
  * @context: the combat context
  * @source: (nullable): the source combatant
  * @target: (nullable): the target combatant
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Convenience method to look up the executor for an effect and
  * execute it in one call. Returns an error if no executor is

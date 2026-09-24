@@ -59,7 +59,7 @@ struct _LrgMcpResourceProviderInterface
 	 * LrgMcpResourceProviderInterface::read_resource:
 	 * @self: a #LrgMcpResourceProvider
 	 * @uri: the resource URI
-	 * @error: (optional): return location for a #GError
+	 * @error: return location for a #GError
 	 *
 	 * Reads a resource by URI.
 	 *
@@ -102,7 +102,7 @@ GList * lrg_mcp_resource_provider_list_resources (LrgMcpResourceProvider *self);
  * lrg_mcp_resource_provider_read_resource:
  * @self: a #LrgMcpResourceProvider
  * @uri: the resource URI
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Reads a resource by URI.
  *

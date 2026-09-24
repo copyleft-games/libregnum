@@ -301,7 +301,7 @@ guint               lrg_level3d_get_model_count     (LrgLevel3D             *sel
  *
  * Finds all objects (models) that intersect with the query box.
  *
- * Returns: (transfer container) (element-type gpointer): Array of objects
+ * Returns: (transfer container) (element-type GrlModel): Array of objects
  */
 LRG_AVAILABLE_IN_ALL
 GPtrArray *         lrg_level3d_query_box           (LrgLevel3D             *self,
@@ -315,7 +315,7 @@ GPtrArray *         lrg_level3d_query_box           (LrgLevel3D             *sel
  *
  * Finds all objects (models) that intersect with a sphere.
  *
- * Returns: (transfer container) (element-type gpointer): Array of objects
+ * Returns: (transfer container) (element-type GrlModel): Array of objects
  */
 LRG_AVAILABLE_IN_ALL
 GPtrArray *         lrg_level3d_query_sphere        (LrgLevel3D             *self,

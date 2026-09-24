@@ -325,6 +325,8 @@ lrg_rigid_body_class_init (LrgRigidBodyClass *klass)
      * LrgRigidBody::trigger-enter:
      * @self: The trigger body
      * @other: The body entering
+     * @entering: %TRUE when @other enters, %FALSE when it leaves (the
+     *   #LrgRigidBodyClass.on_trigger contract)
      *
      * Emitted when a body enters this trigger.
      */

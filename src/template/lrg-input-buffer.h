@@ -52,10 +52,11 @@ typedef struct _LrgBufferedInput
 /* ========================================================================== */
 
 /**
- * lrg_input_buffer_new:
+ * lrg_input_buffer_new: (skip)
  * @buffer_frames: number of frames to buffer inputs
  *
- * Creates a new input buffer.
+ * Creates a new input buffer.  Not available to language bindings:
+ * #LrgInputBuffer is a plain C structure, not a registered boxed type.
  *
  * Returns: (transfer full): a new #LrgInputBuffer
  *

@@ -504,7 +504,7 @@ lrg_chart_legend_set_visible (LrgChartLegend *self,
     }
 }
 
-LrgLegendPosition
+LrgChartLegendPosition
 lrg_chart_legend_get_position (LrgChartLegend *self)
 {
     g_return_val_if_fail (LRG_IS_CHART_LEGEND (self), LRG_LEGEND_RIGHT);
@@ -513,7 +513,7 @@ lrg_chart_legend_get_position (LrgChartLegend *self)
 
 void
 lrg_chart_legend_set_position (LrgChartLegend    *self,
-                               LrgLegendPosition  position)
+                               LrgChartLegendPosition position)
 {
     g_return_if_fail (LRG_IS_CHART_LEGEND (self));
 

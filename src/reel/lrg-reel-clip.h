@@ -76,8 +76,8 @@ struct _LrgReelClipClass
 
 /**
  * lrg_reel_clip_new_with_func:
- * @func: (scope notified): the render callback.
- * @user_data: (closure func): user data for @func.
+ * @func: (scope notified) (closure user_data): the render callback.
+ * @user_data: user data for @func.
  * @destroy: (nullable): destroy notifier for @user_data.
  *
  * Creates a base #LrgReelClip that renders by invoking @func each frame.

@@ -65,7 +65,7 @@ struct _LrgSaveableInterface
      * LrgSaveableInterface::save:
      * @self: a #LrgSaveable
      * @context: the #LrgSaveContext to save to
-     * @error: (optional): return location for a #GError
+     * @error: return location for a #GError
      *
      * Saves the object's state to the save context.
      *
@@ -82,7 +82,7 @@ struct _LrgSaveableInterface
      * LrgSaveableInterface::load:
      * @self: a #LrgSaveable
      * @context: the #LrgSaveContext to load from
-     * @error: (optional): return location for a #GError
+     * @error: return location for a #GError
      *
      * Loads the object's state from the save context.
      *
@@ -116,7 +116,7 @@ const gchar * lrg_saveable_get_save_id (LrgSaveable *self);
  * lrg_saveable_save:
  * @self: a #LrgSaveable
  * @context: the #LrgSaveContext to save to
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Saves the object's state to the save context.
  *
@@ -131,7 +131,7 @@ gboolean lrg_saveable_save (LrgSaveable      *self,
  * lrg_saveable_load:
  * @self: a #LrgSaveable
  * @context: the #LrgSaveContext to load from
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads the object's state from the save context.
  *

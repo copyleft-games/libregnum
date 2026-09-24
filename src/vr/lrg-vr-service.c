@@ -41,7 +41,7 @@ lrg_vr_service_default_init (LrgVRServiceInterface *iface)
 /*
  * lrg_vr_service_initialize:
  * @self: a #LrgVRService
- * @error: (optional): return location for error
+ * @error: return location for error
  *
  * Initializes the VR runtime.
  *
@@ -296,7 +296,7 @@ lrg_vr_service_get_hmd_pose (LrgVRService *self,
  * @self: a #LrgVRService
  * @eye: which eye
  * @texture_id: OpenGL texture ID
- * @error: (optional): return location for error
+ * @error: return location for error
  *
  * Submits a rendered frame to the VR compositor.
  *

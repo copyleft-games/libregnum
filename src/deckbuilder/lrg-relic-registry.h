@@ -187,8 +187,8 @@ void lrg_relic_registry_clear (LrgRelicRegistry *self);
 /**
  * lrg_relic_registry_foreach:
  * @self: a #LrgRelicRegistry
- * @func: (scope call): callback for each relic
- * @user_data: (closure): data to pass to callback
+ * @func: (scope call) (closure user_data): callback for each relic
+ * @user_data: data to pass to callback
  *
  * Calls a function for each registered relic.
  *

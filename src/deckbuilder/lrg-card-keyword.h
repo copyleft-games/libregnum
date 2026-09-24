@@ -185,8 +185,8 @@ gchar * lrg_card_keywords_to_string (LrgCardKeyword keywords);
 /**
  * lrg_card_keyword_foreach:
  * @keywords: combined keyword flags
- * @func: (scope call): callback for each keyword
- * @user_data: (closure): data to pass to callback
+ * @func: (scope call) (closure user_data): callback for each keyword
+ * @user_data: data to pass to callback
  *
  * Calls a function for each keyword in the flags.
  *

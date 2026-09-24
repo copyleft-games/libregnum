@@ -260,7 +260,7 @@ lrg_save_game_new (const gchar *slot_name)
 /*
  * lrg_save_game_new_from_file:
  * @path: path to the save file
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads save game metadata from a file.
  *

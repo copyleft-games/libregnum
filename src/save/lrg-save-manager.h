@@ -156,7 +156,7 @@ void lrg_save_manager_unregister_all (LrgSaveManager *self);
  * lrg_save_manager_save:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Saves the game state to the specified slot.
  *
@@ -174,7 +174,7 @@ gboolean lrg_save_manager_save (LrgSaveManager  *self,
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
  * @description: (nullable): the user-visible save description
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Saves registered state and the description in one save-file write.
  * Read the description with lrg_save_game_get_display_name().
@@ -191,7 +191,7 @@ gboolean lrg_save_manager_save_with_description (LrgSaveManager *self,
  * lrg_save_manager_load:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads the game state from the specified slot.
  * Rejects versions newer than save-version with LRG_SAVE_ERROR_VERSION_MISMATCH
@@ -271,7 +271,7 @@ LrgSaveGame * lrg_save_manager_get_save (LrgSaveManager *self,
  * lrg_save_manager_delete_save:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Deletes a save game.
  *

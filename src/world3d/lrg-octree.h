@@ -103,7 +103,7 @@ LRG_AVAILABLE_IN_ALL
 void                lrg_octree_clear                (LrgOctree              *self);
 
 /**
- * lrg_octree_query_box:
+ * lrg_octree_query_box: (skip)
  * @self: An #LrgOctree
  * @query: (transfer none): Query bounding box
  *
@@ -116,7 +116,7 @@ GPtrArray *         lrg_octree_query_box            (LrgOctree              *sel
                                                      const LrgBoundingBox3D *query);
 
 /**
- * lrg_octree_query_sphere:
+ * lrg_octree_query_sphere: (skip)
  * @self: An #LrgOctree
  * @center: (transfer none): Sphere center
  * @radius: Sphere radius
@@ -131,7 +131,7 @@ GPtrArray *         lrg_octree_query_sphere         (LrgOctree              *sel
                                                      gfloat                  radius);
 
 /**
- * lrg_octree_query_point:
+ * lrg_octree_query_point: (skip)
  * @self: An #LrgOctree
  * @point: (transfer none): Point to query
  *

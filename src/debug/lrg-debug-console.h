@@ -319,7 +319,7 @@ void              lrg_debug_console_print_error  (LrgDebugConsole *self,
  *
  * Gets all console output entries.
  *
- * Returns: (transfer none) (element-type LrgConsoleOutput): output entries
+ * Returns: (transfer none): output entries, a #GQueue of #LrgConsoleOutput
  */
 LRG_AVAILABLE_IN_ALL
 GQueue *          lrg_debug_console_get_output   (LrgDebugConsole *self);
@@ -330,7 +330,7 @@ GQueue *          lrg_debug_console_get_output   (LrgDebugConsole *self);
  *
  * Gets command history.
  *
- * Returns: (transfer none) (element-type utf8): command history
+ * Returns: (transfer none): command history, a #GQueue of strings
  */
 LRG_AVAILABLE_IN_ALL
 GQueue *          lrg_debug_console_get_history  (LrgDebugConsole *self);

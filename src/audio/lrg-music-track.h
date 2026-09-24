@@ -47,7 +47,7 @@ LrgMusicTrack * lrg_music_track_new (GrlMusic *music);
 /**
  * lrg_music_track_new_from_file:
  * @path: path to the music file
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads a music track from a file.
  *

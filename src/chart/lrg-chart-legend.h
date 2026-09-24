@@ -92,7 +92,7 @@ lrg_chart_legend_set_visible (LrgChartLegend *self,
  * Since: 1.0
  */
 LRG_AVAILABLE_IN_ALL
-LrgLegendPosition
+LrgChartLegendPosition
 lrg_chart_legend_get_position (LrgChartLegend *self);
 
 /**
@@ -107,7 +107,7 @@ lrg_chart_legend_get_position (LrgChartLegend *self);
 LRG_AVAILABLE_IN_ALL
 void
 lrg_chart_legend_set_position (LrgChartLegend    *self,
-                               LrgLegendPosition  position);
+                               LrgChartLegendPosition position);
 
 /**
  * lrg_chart_legend_get_orientation:

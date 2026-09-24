@@ -61,7 +61,7 @@ struct _LrgMcpToolProviderInterface
 	 * @self: a #LrgMcpToolProvider
 	 * @name: the tool name
 	 * @arguments: (nullable): JSON object with tool arguments
-	 * @error: (optional): return location for a #GError
+	 * @error: return location for a #GError
 	 *
 	 * Calls a tool by name with the given arguments.
 	 *
@@ -93,7 +93,7 @@ GList * lrg_mcp_tool_provider_list_tools (LrgMcpToolProvider *self);
  * @self: a #LrgMcpToolProvider
  * @name: the tool name
  * @arguments: (nullable): JSON object with tool arguments
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Calls a tool by name with the given arguments.
  *

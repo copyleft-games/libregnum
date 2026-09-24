@@ -143,8 +143,8 @@ void                lrg_pathfinder_set_max_iterations (LrgPathfinder *self,
 /**
  * lrg_pathfinder_set_heuristic:
  * @self: an #LrgPathfinder
- * @func: (nullable) (scope notified): Heuristic function
- * @user_data: (closure): User data for function
+ * @func: (nullable) (scope notified) (closure user_data): Heuristic function
+ * @user_data: User data for function
  * @destroy: (nullable): Destroy function for user data
  *
  * Sets a custom heuristic function. If NULL, uses a cost-scaled Manhattan or

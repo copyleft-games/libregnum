@@ -104,10 +104,11 @@ LRG_AVAILABLE_IN_ALL
 const gchar       *lrg_console_command_get_description (const LrgConsoleCommand *self);
 
 /**
- * lrg_console_command_get_callback:
+ * lrg_console_command_get_callback: (skip)
  * @self: a #LrgConsoleCommand
  *
- * Gets the command callback function.
+ * Gets the command callback function.  Not available to language
+ * bindings, which cannot receive a C function pointer.
  *
  * Returns: the callback function
  */

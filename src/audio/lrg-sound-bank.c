@@ -219,7 +219,7 @@ load_sound_foreach (YamlMapping *mapping G_GNUC_UNUSED,
 /*
  * lrg_sound_bank_new_from_file:
  * @manifest_path: path to the YAML manifest file
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads a sound bank from a YAML manifest file.
  *
@@ -406,7 +406,7 @@ lrg_sound_bank_add (LrgSoundBank *self,
  * @self: a #LrgSoundBank
  * @name: the sound name
  * @filename: path to the sound file (relative to base_path)
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads a sound from a file and adds it to the bank.
  *
@@ -496,7 +496,7 @@ lrg_sound_bank_add_from_wave (LrgSoundBank *self,
  * @file_type: file type extension (e.g., ".wav", ".ogg")
  * @data: (array length=data_size): audio file data in memory
  * @data_size: size of @data in bytes
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads a sound from a memory buffer containing audio file data.
  *
@@ -533,7 +533,7 @@ lrg_sound_bank_load_from_memory (LrgSoundBank  *self,
  * @name: the sound name
  * @pack: the resource pack to load from
  * @resource_name: the name of the resource in the pack
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads a sound from a resource pack (rres file).
  *

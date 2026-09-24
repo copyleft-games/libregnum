@@ -478,7 +478,7 @@ lrg_audio_manager_add_bank (LrgAudioManager *self,
  * lrg_audio_manager_load_bank:
  * @self: the audio manager
  * @manifest_path: path to the bank manifest YAML file
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads a sound bank from a manifest file and adds it.
  *
@@ -744,7 +744,7 @@ lrg_audio_manager_play_music (LrgAudioManager *self,
  * lrg_audio_manager_play_music_from_file:
  * @self: the audio manager
  * @path: path to the music file
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads and plays a music file.
  *

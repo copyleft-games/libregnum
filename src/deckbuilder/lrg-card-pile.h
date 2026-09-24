@@ -420,8 +420,8 @@ lrg_card_pile_find_by_keyword (LrgCardPile    *self,
 /**
  * lrg_card_pile_foreach:
  * @self: a #LrgCardPile
- * @func: (scope call): callback for each card
- * @user_data: (closure): data for callback
+ * @func: (scope call) (closure user_data): callback for each card
+ * @user_data: data for callback
  *
  * Calls a function for each card in the pile.
  *

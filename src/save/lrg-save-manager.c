@@ -453,7 +453,7 @@ lrg_save_manager_unregister_all (LrgSaveManager *self)
  * lrg_save_manager_save:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Saves the game state to the specified slot.
  *
@@ -544,7 +544,7 @@ lrg_save_manager_save_with_description (LrgSaveManager *self,
  * lrg_save_manager_load:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Loads the game state from the specified slot.
  *
@@ -842,7 +842,7 @@ lrg_save_manager_get_save (LrgSaveManager *self,
  * lrg_save_manager_delete_save:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Deletes a save game.
  *

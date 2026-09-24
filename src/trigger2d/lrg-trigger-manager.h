@@ -279,13 +279,13 @@ GPtrArray *         lrg_trigger_manager_check_bounds    (LrgTriggerManager *self
 /* Queries */
 
 /**
- * lrg_trigger_manager_get_entities_in_trigger:
+ * lrg_trigger_manager_get_entities_in_trigger: (skip)
  * @self: A #LrgTriggerManager
  * @trigger: The trigger to check
  *
  * Gets all entities currently inside the trigger.
  *
- * Returns: (transfer full) (element-type gpointer): Array of entity pointers
+ * Returns: (transfer container): Array of entity pointers
  *
  * Since: 1.0
  */

@@ -210,8 +210,8 @@ void          lrg_path_set_total_cost (LrgPath *self,
 /**
  * lrg_path_foreach:
  * @self: an #LrgPath
- * @func: (scope call): Callback function
- * @user_data: (closure): User data for callback
+ * @func: (scope call) (closure user_data): Callback function
+ * @user_data: User data for callback
  *
  * Visits a snapshot of the waypoints in their original order and with their
  * original indices. Callbacks may modify or free @self without affecting this

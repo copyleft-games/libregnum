@@ -70,7 +70,7 @@ struct _LrgMcpResourceGroupClass
 	 * LrgMcpResourceGroupClass::read_resource:
 	 * @self: the resource group
 	 * @uri: the resource URI
-	 * @error: (optional): return location for a #GError
+	 * @error: return location for a #GError
 	 *
 	 * Reads a resource by URI. Subclasses must override this
 	 * to provide resource data.

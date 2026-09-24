@@ -462,8 +462,8 @@ lrg_hand_clear (LrgHand *self);
 /**
  * lrg_hand_foreach:
  * @self: a #LrgHand
- * @func: (scope call): callback for each card
- * @user_data: (closure): data for callback
+ * @func: (scope call) (closure user_data): callback for each card
+ * @user_data: data for callback
  *
  * Calls a function for each card in the hand.
  *

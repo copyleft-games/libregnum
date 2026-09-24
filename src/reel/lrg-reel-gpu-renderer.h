@@ -102,8 +102,8 @@ lrg_reel_gpu_renderer_new (gint      width,
 /**
  * lrg_reel_gpu_renderer_set_draw_func:
  * @self: a #LrgReelGpuRenderer
- * @func: (scope notified) (nullable): the draw callback.
- * @user_data: (closure func): user data for @func.
+ * @func: (scope notified) (closure user_data) (nullable): the draw callback.
+ * @user_data: user data for @func.
  * @destroy: (nullable): destroy notifier for @user_data.
  *
  * Since: 1.0
@@ -130,8 +130,8 @@ lrg_reel_gpu_renderer_set_clear_color (LrgReelGpuRenderer *self,
 /**
  * lrg_reel_gpu_renderer_set_overlay_func:
  * @self: a #LrgReelGpuRenderer
- * @func: (scope notified) (nullable): the overlay draw callback.
- * @user_data: (closure func): user data for @func.
+ * @func: (scope notified) (closure user_data) (nullable): the overlay draw callback.
+ * @user_data: user data for @func.
  * @destroy: (nullable): destroy notifier for @user_data.
  *
  * Installs a 2D overlay callback drawn on top of the graded/bloomed world.

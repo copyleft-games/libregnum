@@ -63,7 +63,7 @@ LrgSaveContext * lrg_save_context_new_for_save (void);
 /**
  * lrg_save_context_new_for_load:
  * @data: the YAML data to load from
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Creates a new save context for loading data from a string.
  * Missing version means legacy version 1. Present versions must contain only
@@ -80,7 +80,7 @@ LrgSaveContext * lrg_save_context_new_for_load (const gchar  *data,
 /**
  * lrg_save_context_new_from_file:
  * @path: path to the YAML file to load
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Creates a new save context for loading data from a file.
  *
@@ -373,7 +373,7 @@ gboolean lrg_save_context_has_key (LrgSaveContext *self,
 /**
  * lrg_save_context_to_string:
  * @self: a #LrgSaveContext
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Generates the YAML string from the save context.
  *
@@ -389,7 +389,7 @@ gchar * lrg_save_context_to_string (LrgSaveContext  *self,
  * lrg_save_context_to_file:
  * @self: a #LrgSaveContext
  * @path: the file path to write to
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Writes the save context to a file.
  *

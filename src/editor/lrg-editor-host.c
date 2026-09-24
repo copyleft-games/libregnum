@@ -20,6 +20,12 @@ lrg_editor_host_default_init (LrgEditorHostInterface *iface)
  * Interface method wrappers
  * ========================================================================== */
 
+/**
+ * lrg_editor_host_get_engine:
+ * @self: an #LrgEditorHost
+ *
+ * Returns: (transfer none) (nullable): the engine the editor uses
+ */
 LrgEngine *
 lrg_editor_host_get_engine (LrgEditorHost *self)
 {
@@ -98,6 +104,12 @@ lrg_editor_host_get_frame_delta (LrgEditorHost *self)
 	return (iface->get_frame_delta != NULL) ? iface->get_frame_delta (self) : 0.0;
 }
 
+/**
+ * lrg_editor_host_get_input_source:
+ * @self: an #LrgEditorHost
+ *
+ * Returns: (transfer none) (nullable): the software input source injected into the host, or %NULL
+ */
 LrgInputSoftware *
 lrg_editor_host_get_input_source (LrgEditorHost *self)
 {
@@ -109,6 +121,12 @@ lrg_editor_host_get_input_source (LrgEditorHost *self)
 	return (iface->get_input_source != NULL) ? iface->get_input_source (self) : NULL;
 }
 
+/**
+ * lrg_editor_host_get_viewport_camera:
+ * @self: an #LrgEditorHost
+ *
+ * Returns: (transfer none) (nullable): the camera the editor renders through, or %NULL
+ */
 LrgCamera *
 lrg_editor_host_get_viewport_camera (LrgEditorHost *self)
 {

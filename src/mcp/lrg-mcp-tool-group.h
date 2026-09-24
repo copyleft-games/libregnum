@@ -72,7 +72,7 @@ struct _LrgMcpToolGroupClass
 	 * @self: the tool group
 	 * @name: the tool name
 	 * @arguments: (nullable): JSON object with tool arguments
-	 * @error: (optional): return location for a #GError
+	 * @error: return location for a #GError
 	 *
 	 * Handles a tool invocation. Subclasses must override this
 	 * to implement their tool logic.

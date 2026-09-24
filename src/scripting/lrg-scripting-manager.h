@@ -136,8 +136,8 @@ LrgScriptLanguage * lrg_scripting_manager_get_available (LrgScriptingManager *se
  *   value libregnum was not built with)
  * @display_name: (transfer none): a human-readable name, e.g. "Emacs Lisp"
  * @extension: (transfer none): the canonical file extension (no dot), e.g. "el"
- * @factory: (scope notified): factory that constructs a fresh context
- * @user_data: (closure factory) (nullable): user data passed to @factory
+ * @factory: (scope notified) (closure user_data): factory that constructs a fresh context
+ * @user_data: (nullable): user data passed to @factory
  * @destroy: (nullable): called on @user_data when the manager is finalized or
  *   the registration is replaced
  *

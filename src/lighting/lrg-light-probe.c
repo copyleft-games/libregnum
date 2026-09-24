@@ -101,6 +101,14 @@ void lrg_light_probe_set_radius (LrgLightProbe *self, gfloat radius) { g_return_
 void lrg_light_probe_get_color (LrgLightProbe *self, guint8 *r, guint8 *g, guint8 *b) { g_return_if_fail (LRG_IS_LIGHT_PROBE (self)); if (r) *r = self->sampled_r; if (g) *g = self->sampled_g; if (b) *b = self->sampled_b; }
 gfloat lrg_light_probe_get_intensity (LrgLightProbe *self) { g_return_val_if_fail (LRG_IS_LIGHT_PROBE (self), 0); return self->sampled_intensity; }
 
+/**
+ * lrg_light_probe_sample:
+ * @self: an #LrgLightProbe
+ * @lights: (element-type LrgLight2D): the lights to sample
+ *
+ * Samples the enabled @lights at the probe's position and stores the
+ * blended color and intensity.
+ */
 void
 lrg_light_probe_sample (LrgLightProbe *self,
                         GPtrArray     *lights)

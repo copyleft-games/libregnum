@@ -156,8 +156,8 @@ void lrg_card_keyword_registry_clear (LrgCardKeywordRegistry *self);
 /**
  * lrg_card_keyword_registry_foreach:
  * @self: a #LrgCardKeywordRegistry
- * @func: (scope call): callback for each keyword
- * @user_data: (closure): data to pass to callback
+ * @func: (scope call) (closure user_data): callback for each keyword
+ * @user_data: data to pass to callback
  *
  * Calls a function for each registered keyword.
  *

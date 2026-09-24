@@ -91,6 +91,16 @@ lrg_lightmap_new (guint width, guint height)
     return self;
 }
 
+/**
+ * lrg_lightmap_load:
+ * @path: the lightmap file
+ * @error: return location for a #GError
+ *
+ * Loads a lightmap.  Loading from files is not implemented yet: this
+ * returns a new blank 256 x 256 lightmap.
+ *
+ * Returns: (transfer full): a new lightmap
+ */
 LrgLightmap *
 lrg_lightmap_load (const gchar *path, GError **error)
 {

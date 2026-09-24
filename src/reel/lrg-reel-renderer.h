@@ -151,8 +151,8 @@ lrg_reel_renderer_render_parallel (LrgReelRenderer *self,
 /**
  * lrg_reel_renderer_set_progress_callback:
  * @self: a #LrgReelRenderer
- * @callback: (scope notified) (nullable): progress callback, or %NULL to clear.
- * @user_data: (closure callback): user data for @callback.
+ * @callback: (scope notified) (closure user_data) (nullable): progress callback, or %NULL to clear.
+ * @user_data: user data for @callback.
  * @destroy: (nullable): destroy notifier for @user_data.
  *
  * Sets a callback invoked once per frame during

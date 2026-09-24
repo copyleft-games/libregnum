@@ -213,8 +213,8 @@ typedef void (*LrgRegistryForeachFunc) (const gchar *name,
 /**
  * lrg_registry_foreach:
  * @self: an #LrgRegistry
- * @func: (scope call): the function to call for each entry
- * @user_data: (closure): user data to pass to @func
+ * @func: (scope call) (closure user_data): the function to call for each entry
+ * @user_data: user data to pass to @func
  *
  * Calls @func for each registered type in the registry.
  */

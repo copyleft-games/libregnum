@@ -40,8 +40,8 @@ typedef LrgBTStatus (*LrgBTActionFunc) (LrgBlackboard *blackboard,
 
 /**
  * lrg_bt_action_new:
- * @func: (scope notified): The action function
- * @user_data: (closure): User data for the function
+ * @func: (scope notified) (closure user_data): The action function
+ * @user_data: User data for the function
  * @destroy: (nullable): Destroy function for user data
  *
  * Creates a new action node.
@@ -86,8 +86,8 @@ typedef gboolean (*LrgBTConditionFunc) (LrgBlackboard *blackboard,
 
 /**
  * lrg_bt_condition_new:
- * @func: (scope notified): The condition function
- * @user_data: (closure): User data for the function
+ * @func: (scope notified) (closure user_data): The condition function
+ * @user_data: User data for the function
  * @destroy: (nullable): Destroy function for user data
  *
  * Creates a new condition node.

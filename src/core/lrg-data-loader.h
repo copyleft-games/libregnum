@@ -96,12 +96,12 @@ LrgRegistry * lrg_data_loader_get_registry (LrgDataLoader *self);
  * corresponds to a registered type name. The remaining fields
  * are used to set object properties.
  *
- * Example YAML:
- * ```yaml
- * type: player
- * name: "Hero"
- * health: 100
- * ```
+ * Example YAML (a player with a name and health):
+ * |[<!-- language="YAML" -->
+ *   type: player
+ *   name: "Hero"
+ *   health: 100
+ * ]|
  *
  * Returns: (transfer full) (nullable): The loaded #GObject, or %NULL on error
  */

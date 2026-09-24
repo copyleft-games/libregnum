@@ -233,6 +233,15 @@ lrg_weather_remove_effect (LrgWeather *self, LrgWeatherEffect *effect)
     return g_ptr_array_remove (priv->effects, effect);
 }
 
+/**
+ * lrg_weather_get_effect:
+ * @self: an #LrgWeather
+ * @effect_id: the effect's id
+ *
+ * Finds one of the weather's effects by id.
+ *
+ * Returns: (transfer none) (nullable): the effect, or %NULL
+ */
 LrgWeatherEffect *
 lrg_weather_get_effect (LrgWeather *self, const gchar *effect_id)
 {
@@ -249,6 +258,15 @@ lrg_weather_get_effect (LrgWeather *self, const gchar *effect_id)
     return NULL;
 }
 
+/**
+ * lrg_weather_get_effects:
+ * @self: an #LrgWeather
+ *
+ * Lists the weather's effects in the order they were added.
+ *
+ * Returns: (transfer container) (element-type LrgWeatherEffect): the
+ *   effects; free the list with g_list_free(), not the effects
+ */
 GList *
 lrg_weather_get_effects (LrgWeather *self)
 {

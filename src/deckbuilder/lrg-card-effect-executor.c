@@ -67,7 +67,7 @@ lrg_card_effect_executor_get_effect_type (LrgCardEffectExecutor *self)
  * @context: the combat context
  * @source: (nullable): the source combatant
  * @target: (nullable): the target combatant
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Executes the effect against the target.
  *
@@ -98,7 +98,7 @@ lrg_card_effect_executor_execute (LrgCardEffectExecutor  *self,
  * lrg_card_effect_executor_validate:
  * @self: a #LrgCardEffectExecutor
  * @effect: the effect to validate
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Validates that the effect has all required parameters.
  *

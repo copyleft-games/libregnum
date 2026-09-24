@@ -499,7 +499,7 @@ lrg_effect_stack_clear (LrgEffectStack *self)
  * lrg_effect_stack_resolve_one:
  * @self: a #LrgEffectStack
  * @context: the combat context
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Resolves the next effect on the stack (highest priority).
  * Emits effect-resolved or effect-failed signal as appropriate.
@@ -551,7 +551,7 @@ lrg_effect_stack_resolve_one (LrgEffectStack  *self,
  * lrg_effect_stack_resolve_all:
  * @self: a #LrgEffectStack
  * @context: the combat context
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Resolves all effects on the stack in priority order.
  * Stops on first error and returns FALSE.

@@ -200,8 +200,8 @@ void lrg_status_effect_registry_clear (LrgStatusEffectRegistry *self);
 /**
  * lrg_status_effect_registry_foreach:
  * @self: a #LrgStatusEffectRegistry
- * @func: (scope call): callback for each status effect
- * @user_data: (closure): data to pass to callback
+ * @func: (scope call) (closure user_data): callback for each status effect
+ * @user_data: data to pass to callback
  *
  * Calls a function for each registered status effect.
  *

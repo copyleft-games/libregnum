@@ -360,8 +360,8 @@ void lrg_profession_state_set_skill (LrgProfessionState *self,
  * @self: an #LrgProfessionState
  * @recipe: recipe to craft
  * @quantity: number of crafts, at least 1
- * @count_func: (scope call) (nullable): item counter; %NULL skips item checks
- * @user_data: (closure count_func) (nullable): data for @count_func
+ * @count_func: (scope call) (closure user_data) (nullable): item counter; %NULL skips item checks
+ * @user_data: (nullable): data for @count_func
  * @error: (nullable): return location for a #GError
  *
  * Checks that the recipe is known, its profession skill is at least the
@@ -404,8 +404,8 @@ gboolean lrg_profession_state_can_gather (LrgProfessionState  *self,
  * lrg_profession_state_can_gather_with:
  * @self: an #LrgProfessionState
  * @node: gather node definition
- * @count_func: (scope call) (nullable): item counter used for the required tool
- * @user_data: (closure count_func) (nullable): data for @count_func
+ * @count_func: (scope call) (closure user_data) (nullable): item counter used for the required tool
+ * @user_data: (nullable): data for @count_func
  * @error: (nullable): return location for a #GError
  *
  * lrg_profession_state_can_gather() plus, when @count_func is given and the

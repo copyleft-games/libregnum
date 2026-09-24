@@ -297,8 +297,8 @@ lrg_resource_pool_get_count (LrgResourcePool *self);
 /**
  * lrg_resource_pool_foreach:
  * @self: an #LrgResourcePool
- * @func: (scope call): callback function
- * @user_data: (closure): data to pass to the callback
+ * @func: (scope call) (closure user_data): callback function
+ * @user_data: data to pass to the callback
  *
  * Calls a function for each resource in the pool.
  *

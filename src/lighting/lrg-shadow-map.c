@@ -135,6 +135,16 @@ lrg_shadow_map_clear (LrgShadowMap *self)
         memset (self->data, 0, self->width * self->height);
 }
 
+/**
+ * lrg_shadow_map_render_shadows:
+ * @self: an #LrgShadowMap
+ * @light_x: light position, X
+ * @light_y: light position, Y
+ * @casters: (element-type LrgShadowCaster): the shadow casters
+ *
+ * Clears the map and renders the shadows @casters throw from a light at
+ * (@light_x, @light_y).
+ */
 void
 lrg_shadow_map_render_shadows (LrgShadowMap *self,
                                gfloat        light_x,

@@ -159,7 +159,7 @@ lrg_analytics_backend_class_init (LrgAnalyticsBackendClass *klass)
                              G_PARAM_STATIC_STRINGS);
 
     /**
-     * LrgAnalyticsBackend:enabled:
+     * LrgAnalyticsBackend:enabled: (getter get_enabled) (setter set_enabled)
      *
      * Whether the backend is enabled.
      *

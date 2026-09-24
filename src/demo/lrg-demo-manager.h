@@ -262,7 +262,7 @@ gboolean lrg_demo_manager_is_content_gated (LrgDemoManager *self,
  * lrg_demo_manager_check_access:
  * @self: a #LrgDemoManager
  * @gatable: a #LrgDemoGatable object
- * @error: (optional): return location for error
+ * @error: return location for error
  *
  * Checks if access to gatable content is allowed.
  *
@@ -397,7 +397,7 @@ const gchar * lrg_demo_manager_get_purchase_url (LrgDemoManager *self);
 /**
  * lrg_demo_manager_open_purchase_url:
  * @self: a #LrgDemoManager
- * @error: (optional): return location for error
+ * @error: return location for error
  *
  * Opens the purchase URL in the system browser.
  *

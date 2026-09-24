@@ -68,7 +68,7 @@ struct _LrgCardEffectExecutorInterface
      * @context: the combat context (opaque pointer)
      * @source: (nullable): the source combatant
      * @target: (nullable): the target combatant
-     * @error: (optional): return location for a #GError
+     * @error: return location for a #GError
      *
      * Executes the effect. The context provides access to combat
      * state, and source/target are the combatants involved.
@@ -86,7 +86,7 @@ struct _LrgCardEffectExecutorInterface
      * LrgCardEffectExecutorInterface::validate:
      * @self: a #LrgCardEffectExecutor
      * @effect: the effect to validate
-     * @error: (optional): return location for a #GError
+     * @error: return location for a #GError
      *
      * Validates that the effect has all required parameters
      * and they are within acceptable ranges.
@@ -138,7 +138,7 @@ const gchar * lrg_card_effect_executor_get_effect_type (LrgCardEffectExecutor *s
  * @context: the combat context
  * @source: (nullable): the source combatant
  * @target: (nullable): the target combatant
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Executes the effect against the target.
  *
@@ -158,7 +158,7 @@ gboolean lrg_card_effect_executor_execute (LrgCardEffectExecutor  *self,
  * lrg_card_effect_executor_validate:
  * @self: a #LrgCardEffectExecutor
  * @effect: the effect to validate
- * @error: (optional): return location for a #GError
+ * @error: return location for a #GError
  *
  * Validates that the effect has all required parameters.
  *

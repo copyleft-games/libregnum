@@ -280,8 +280,8 @@ gboolean lrg_scripting_call_function (LrgScripting  *self,
  * lrg_scripting_register_function:
  * @self: an #LrgScripting
  * @name: name to expose the function as
- * @func: (scope notified): the C function to call
- * @user_data: (closure func): user data to pass to the function
+ * @func: (scope notified) (closure user_data): the C function to call
+ * @user_data: user data to pass to the function
  * @error: (nullable): return location for error
  *
  * Register a C function that can be called from scripts.
