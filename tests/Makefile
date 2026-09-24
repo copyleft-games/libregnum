@@ -77,6 +77,10 @@ TEST_SOURCES := \
 	test-dialog-yaml.c \
 	test-quest.c \
 	test-reset-schedule.c \
+	test-experience-curve.c \
+	test-ability.c \
+	test-cooldown-aura.c \
+	test-talent.c \
 	test-audio.c \
 	test-inventory.c \
 	test-i18n.c \

@@ -1,0 +1,176 @@
+* LrgTalentLoadout - Spent Talent Points
+:PROPERTIES:
+:CUSTOM_ID: lrgtalentloadout
+:END:
+The talent points one character has spent across the [[file:talent-tree.org][talent trees]] of its class, i.e. one "spec". Classic rules apply: points may be spent in any tree of the class, tier gates count points already spent in that tree, prerequisites must be at max rank and refunds are all-or-nothing (=lrg_talent_loadout_reset()=).
+
+On an authoritative MMO server the loadout is server state: clients send "spend point in tree/node" requests, the server calls =lrg_talent_loadout_spend()= and persists =lrg_talent_loadout_to_variant()= (usually inside an [[file:talent-book.org][LrgTalentBook]] snapshot in an =LrgMmoStore= record). After loading a snapshot, always call =lrg_talent_loadout_validate()=: parsing only checks shape, replay checks the rules.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject class* - =LRG_TYPE_TALENT_LOADOUT=, GIR =Libregnum.TalentLoadout=
+- Variant type =LRG_TALENT_LOADOUT_VARIANT_TYPE= = ="(smsa(ssu))"=
+- At most =LRG_TALENT_LOADOUT_MAX_ROWS= (512) persisted rows
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property           | Type   | Flags          | Default | Meaning                                  |
+|--------------------+--------+----------------+---------+------------------------------------------|
+| =class-id=         | string | construct-only | -       | Class whose trees accept points          |
+| =first-level=      | guint  | read/write >= 1 | 10     | Level granting the first point           |
+| =points-per-level= | guint  | read/write 0..100 | 1    | Points per level from first-level on     |
+| =spec=             | string | read/write     | NULL    | Primary tree id (specialisation)         |
+
+=first-level= and =points-per-level= are game rules and are *not* persisted; set them again after restoring (or use =lrg_talent_book_set_point_rules()=).
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_talent_loadout_new()
+#+begin_src C
+LrgTalentLoadout *lrg_talent_loadout_new (const gchar *class_id);
+#+end_src
+Empty loadout, first-level 10, one point per level. *Returns:* transfer full.
+
+** Points
+:PROPERTIES:
+:CUSTOM_ID: points
+:END:
+#+begin_src C
+guint lrg_talent_loadout_get_points_total     (LrgTalentLoadout *self, guint level);
+guint lrg_talent_loadout_get_points_spent     (LrgTalentLoadout *self);
+guint lrg_talent_loadout_get_points_available (LrgTalentLoadout *self, guint level);
+guint lrg_talent_loadout_get_points_in_tree   (LrgTalentLoadout *self, const gchar *tree_id);
+guint lrg_talent_loadout_get_rank             (LrgTalentLoadout *self, const gchar *tree_id, const gchar *node_id);
+GPtrArray *lrg_talent_loadout_get_trees       (LrgTalentLoadout *self);
+#+end_src
+- =get_points_total= - =(level - first-level + 1) × points-per-level= when =level >= first-level=, else 0; saturates at =G_MAXUINT=. With defaults: level 9 → 0, level 10 → 1, level 60 → 51.
+- =get_points_available= - total minus spent, saturating at 0 (querying a level lower than the one points were spent at gives 0, never wraps).
+- =get_points_in_tree= / =get_rank= - 0 for unknown or =NULL= ids.
+- =get_trees= - ids of trees with spent points, sorted (transfer container, strings owned by the loadout).
+
+** Spending
+:PROPERTIES:
+:CUSTOM_ID: spending
+:END:
+*** lrg_talent_loadout_can_spend()
+#+begin_src C
+gboolean lrg_talent_loadout_can_spend (LrgTalentLoadout *self, LrgTalentTree *tree,
+                                       const gchar *node_id, guint level, GError **error);
+#+end_src
+Checks whether one point may be spent in =node_id=. Checks run in this order and the first failure is reported:
+
+| # | Condition                                                      | Error         |
+|---+----------------------------------------------------------------+---------------|
+| 1 | tree =class-id= differs from the loadout's                     | =INVALID=     |
+| 2 | node not in =tree= (includes =NULL=)                            | =INVALID=     |
+| 3 | node already at =max_rank=                                     | =LIMIT=       |
+| 4 | no points available at =level=                                 | =LIMIT=       |
+| 5 | points already in this tree < tier × tier-gate                 | =REQUIREMENT= |
+| 6 | prerequisite not at its max rank (or missing from the tree)    | =REQUIREMENT= |
+
+The tier gate counts points in the *same tree only*, spent *before* this point: with a gate of 5, the fifth tier-0 point opens tier 1 and points in other trees never help.
+
+*** lrg_talent_loadout_spend()
+#+begin_src C
+gboolean lrg_talent_loadout_spend (LrgTalentLoadout *self, LrgTalentTree *tree,
+                                   const gchar *node_id, guint level, GError **error);
+#+end_src
+=can_spend()= then adds one rank. Atomic: on failure nothing changes.
+
+*** lrg_talent_loadout_reset()
+#+begin_src C
+void lrg_talent_loadout_reset (LrgTalentLoadout *self);
+#+end_src
+Refunds every point. The spec is *kept*. Charging a respec fee and bumping the counter is the caller's job (see =lrg_talent_book_record_respec()=).
+
+*** lrg_talent_loadout_get_spec() / set_spec()
+#+begin_src C
+const gchar *lrg_talent_loadout_get_spec (LrgTalentLoadout *self);
+void         lrg_talent_loadout_set_spec (LrgTalentLoadout *self, const gchar *tree_id);
+#+end_src
+The primary tree (nullable). Not checked when set; =validate()= checks it names a tree of the class. Abilities with a =required-spec= compare against this.
+
+** Derived data
+:PROPERTIES:
+:CUSTOM_ID: derived-data
+:END:
+*** lrg_talent_loadout_get_granted_abilities()
+#+begin_src C
+GPtrArray *lrg_talent_loadout_get_granted_abilities (LrgTalentLoadout *self, GHashTable *trees);
+#+end_src
+=trees= maps tree id → =LrgTalentTree=. *Returns:* sorted, de-duplicated ability ids of every node with rank >= 1 (transfer full, free func =g_free=). Trees missing from =trees= are skipped. Feed these into the spellbook after a spend or a spec swap.
+
+*** lrg_talent_loadout_sum_effect()
+#+begin_src C
+gdouble lrg_talent_loadout_sum_effect (LrgTalentLoadout *self, GHashTable *trees, const gchar *effect);
+#+end_src
+Sums =lrg_talent_node_get_value (node, rank)= over ranked nodes whose =effect= equals =effect=. Ranks beyond the provided values clamp to the last value. =NULL= effect → 0.
+
+** Validation
+:PROPERTIES:
+:CUSTOM_ID: validation
+:END:
+*** lrg_talent_loadout_validate()
+#+begin_src C
+gboolean lrg_talent_loadout_validate (LrgTalentLoadout *self, GHashTable *trees,
+                                      guint level, GError **error);
+#+end_src
+Replays every spent point into a fresh loadout with the same class and point rules: trees in id order, nodes in (tier, column, id) order, one point at a time through =can_spend()=. Because prerequisites are always in lower tiers and the gate only counts earlier points, this ordering accepts exactly the loadouts that some legal sequence of live spends could produce. The loadout itself is never modified.
+
+*Errors:*
+- =NOT_FOUND= - a tree id is missing from =trees= or maps to a tree with another id
+- =INVALID= - unknown node, tree of another class, spec not a tree of this class
+- =LIMIT= - a rank above =max_rank= or more points than =level= grants
+- =REQUIREMENT= - a skipped tier gate or a prerequisite not at max rank
+
+Error messages from replay are prefixed with "Invalid talent loadout: ".
+
+** Persistence
+:PROPERTIES:
+:CUSTOM_ID: persistence
+:END:
+*** lrg_talent_loadout_to_variant()
+#+begin_src C
+GVariant *lrg_talent_loadout_to_variant (LrgTalentLoadout *self);
+#+end_src
+=(smsa(ssu))=: class id, optional spec, then =(tree id, node id, rank)= rows sorted by tree id then node id. *Returns:* transfer full, non-floating.
+
+*** lrg_talent_loadout_new_from_variant()
+#+begin_src C
+LrgTalentLoadout *lrg_talent_loadout_new_from_variant (GVariant *variant, GError **error);
+#+end_src
+Restores a loadout. Returns =NULL= with =LRG_PROGRESSION_ERROR_INVALID= (and leaks nothing) for: another type string, non-normal form (includes invalid UTF-8), empty/over 128-byte/non-UTF-8 class, spec, tree or node ids, more than 512 rows, a rank of 0 or above 100, or the same (tree, node) twice. Rule legality is *not* checked here; call =validate()= next.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* Server: a client asks to spend a point */
+static gboolean
+handle_spend (LrgTalentLoadout *loadout, GHashTable *trees, const gchar *tree_id,
+              const gchar *node_id, guint level, GError **error)
+{
+    LrgTalentTree *tree;
+
+    tree = g_hash_table_lookup (trees, tree_id);
+    if (tree == NULL)
+    {
+        g_set_error (error, LRG_PROGRESSION_ERROR, LRG_PROGRESSION_ERROR_NOT_FOUND,
+                     "unknown tree %s", tree_id);
+        return FALSE;
+    }
+    return lrg_talent_loadout_spend (loadout, tree, node_id, level, error);
+}
+
+/* Server: load a character */
+g_autoptr(LrgTalentLoadout) loadout = lrg_talent_loadout_new_from_variant (stored, &error);
+if (loadout == NULL || !lrg_talent_loadout_validate (loadout, trees, level, &error))
+    reject_or_reset_talents (character, error);
+#+end_src

@@ -124,6 +124,16 @@ PUBLIC_HEADERS := \
 	src/quest/lrg-quest-log.h \
 	src/core/lrg-reset-schedule.h \
 	src/quest/lrg-quest-chain.h \
+	src/progression/lrg-experience-curve.h \
+	src/progression/lrg-ability-def.h \
+	src/progression/lrg-spellbook.h \
+	src/progression/lrg-cooldown-set.h \
+	src/progression/lrg-aura.h \
+	src/progression/lrg-aura-set.h \
+	src/progression/lrg-vital.h \
+	src/progression/lrg-talent-tree.h \
+	src/progression/lrg-talent-loadout.h \
+	src/progression/lrg-talent-book.h \
 	src/audio/lrg-sound-bank.h \
 	src/audio/lrg-music-track.h \
 	src/audio/lrg-audio-manager.h \
@@ -618,6 +628,16 @@ SOURCES := \
 	src/quest/lrg-quest-log.c \
 	src/core/lrg-reset-schedule.c \
 	src/quest/lrg-quest-chain.c \
+	src/progression/lrg-experience-curve.c \
+	src/progression/lrg-ability-def.c \
+	src/progression/lrg-spellbook.c \
+	src/progression/lrg-cooldown-set.c \
+	src/progression/lrg-aura.c \
+	src/progression/lrg-aura-set.c \
+	src/progression/lrg-vital.c \
+	src/progression/lrg-talent-tree.c \
+	src/progression/lrg-talent-loadout.c \
+	src/progression/lrg-talent-book.c \
 	src/audio/lrg-sound-bank.c \
 	src/audio/lrg-music-track.c \
 	src/audio/lrg-audio-manager.c \

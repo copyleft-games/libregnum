@@ -166,6 +166,17 @@
 /* Core reset schedule (daily/weekly periods) */
 #include "core/lrg-reset-schedule.h"
 
+/* Progression module */
+#include "progression/lrg-experience-curve.h"
+#include "progression/lrg-ability-def.h"
+#include "progression/lrg-spellbook.h"
+#include "progression/lrg-cooldown-set.h"
+#include "progression/lrg-aura.h"
+#include "progression/lrg-aura-set.h"
+#include "progression/lrg-vital.h"
+#include "progression/lrg-talent-tree.h"
+#include "progression/lrg-talent-loadout.h"
+#include "progression/lrg-talent-book.h"
 
 
 

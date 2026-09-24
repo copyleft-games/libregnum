@@ -1,0 +1,122 @@
+* LrgCooldownSet - Ability, Category and Global Cooldowns
+:PROPERTIES:
+:CUSTOM_ID: lrgcooldownset
+:END:
+Tracks the remaining time of per-key cooldowns (ability or item ids), shared category cooldowns (every potion, every interrupt) and the global cooldown (GCD). Time only moves through =lrg_cooldown_set_tick()=, so the server's fixed step drives it.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject class* - =LRG_TYPE_COOLDOWN_SET=, GIR =Libregnum.CooldownSet=
+- Header: =progression/lrg-cooldown-set.h=
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant                        | Value           | Meaning                                                        |
+|---------------------------------+-----------------+----------------------------------------------------------------|
+| =LRG_COOLDOWN_SET_MAX_ENTRIES=  | 1024            | Most running key cooldowns, and separately category cooldowns  |
+| =LRG_COOLDOWN_SET_MAX_SECONDS=  | 86400.0         | Longest cooldown; longer requests are clamped                  |
+| =LRG_COOLDOWN_SET_VARIANT_TYPE= | "(da(sd)a(sd))" | Persistence type string                                        |
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property          | Type    | Range    | Default | Meaning                                                |
+|-------------------+---------+----------+---------+--------------------------------------------------------|
+| =global-duration= | gdouble | 0..86400 | 1.0     | GCD length used by =lrg_cooldown_set_start_ability()= |
+
+#+begin_src C
+gdouble lrg_cooldown_set_get_global_duration (LrgCooldownSet *self);
+void    lrg_cooldown_set_set_global_duration (LrgCooldownSet *self, gdouble seconds);
+#+end_src
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+#+begin_src C
+LrgCooldownSet *lrg_cooldown_set_new (void);   /* (transfer full) */
+#+end_src
+
+** Starting cooldowns
+:PROPERTIES:
+:CUSTOM_ID: starting
+:END:
+#+begin_src C
+void lrg_cooldown_set_start          (LrgCooldownSet *self, const gchar *key, gdouble seconds);
+void lrg_cooldown_set_start_category (LrgCooldownSet *self, const gchar *category, gdouble seconds);
+void lrg_cooldown_set_start_global   (LrgCooldownSet *self, gdouble seconds);
+#+end_src
+Starts or restarts a cooldown with exactly =seconds= remaining (a restart may shorten it). Zero or negative clears it; values above one day are clamped. Keys and categories must be 1 to 128 bytes of UTF-8 and =seconds= finite; violations are criticals and change nothing.
+
+When 1024 keys (or categories) already run, starting a new one first drops the entry with the least time left (ties: the smallest name), so the set can always be persisted. Restarting an existing entry never evicts.
+
+** Queries
+:PROPERTIES:
+:CUSTOM_ID: queries
+:END:
+#+begin_src C
+gdouble  lrg_cooldown_set_get_remaining          (LrgCooldownSet *self, const gchar *key);
+gdouble  lrg_cooldown_set_get_category_remaining (LrgCooldownSet *self, const gchar *category);
+gdouble  lrg_cooldown_set_get_global_remaining   (LrgCooldownSet *self);
+guint    lrg_cooldown_set_get_count              (LrgCooldownSet *self);   /* running key cooldowns */
+gboolean lrg_cooldown_set_is_ready (LrgCooldownSet *self, const gchar *key,
+                                    const gchar *category, gboolean uses_global);
+#+end_src
+Remaining times are 0 for unknown or =NULL= names. =is_ready= is =TRUE= when =key= (skipped if =NULL=), =category= (skipped if =NULL=) and, when =uses_global=, the GCD all have no time left.
+
+** Clearing and time
+:PROPERTIES:
+:CUSTOM_ID: clearing
+:END:
+#+begin_src C
+void lrg_cooldown_set_reset (LrgCooldownSet *self, const gchar *key);   /* finish one key now */
+void lrg_cooldown_set_clear (LrgCooldownSet *self);                     /* finish everything */
+void lrg_cooldown_set_tick  (LrgCooldownSet *self, gdouble delta);
+#+end_src
+=tick= subtracts =delta= from every cooldown and removes entries that reach zero. NaN, infinite, zero and negative deltas are ignored, so a bad frame time cannot corrupt state or refund cooldowns.
+
+** Ability helpers
+:PROPERTIES:
+:CUSTOM_ID: ability-helpers
+:END:
+#+begin_src C
+gboolean lrg_cooldown_set_ability_ready (LrgCooldownSet *self, LrgAbilityDef *def);
+void     lrg_cooldown_set_start_ability (LrgCooldownSet *self, LrgAbilityDef *def);
+#+end_src
+=ability_ready= is =is_ready (id, category, triggers-gcd)=. =start_ability= starts the definition's =cooldown= under its id (if positive), its =category-cooldown= under its =category= (if both are set) and, when =triggers-gcd=, the GCD for =global-duration= seconds. Off-GCD abilities (trinkets, interrupts) neither start nor wait for the GCD.
+
+** Persistence
+:PROPERTIES:
+:CUSTOM_ID: persistence
+:END:
+#+begin_src C
+GVariant       *lrg_cooldown_set_to_variant       (LrgCooldownSet *self);                 /* (transfer full), non-floating */
+LrgCooldownSet *lrg_cooldown_set_new_from_variant (GVariant *variant, GError **error);  /* (transfer full) (nullable) */
+#+end_src
+Type =(da(sd)a(sd))=: remaining GCD, (key, remaining) pairs sorted by key, (category, remaining) pairs sorted by category. =global-duration= is configuration and is not stored.
+
+=new_from_variant= fails with =INVALID= for another type string, a non-normal variant, more than 1024 entries in either array, empty/overlong/non-UTF-8 names, duplicate names, or a time that is NaN, infinite, negative or above 86400. Entries with exactly 0 seconds are accepted and dropped as finished. A round trip reproduces the identical variant.
+
+Store remaining times, not absolute end times, and tick the restored set by the offline time if cooldowns should run while logged out (typical for long cooldowns such as a hearthstone).
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgCooldownSet) cds = lrg_cooldown_set_new ();
+
+if (lrg_cooldown_set_ability_ready (cds, healing_potion))
+{
+    lrg_cooldown_set_start_ability (cds, healing_potion);   /* key 0s, "potion" 60s, GCD 1s */
+}
+
+lrg_cooldown_set_tick (cds, 0.05);
+g_print ("potions ready in %.1fs\n",
+         lrg_cooldown_set_get_category_remaining (cds, "potion"));
+#+end_src

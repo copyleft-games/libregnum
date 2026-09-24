@@ -1,0 +1,86 @@
+* LrgAura - Buff and Debuff Instance
+:PROPERTIES:
+:CUSTOM_ID: lrgaura
+:END:
+One aura on one entity: an identifier, who applied it, whether it helps or harms, how it can be dispelled, which stat it modifies, its stacks and its timers. Auras usually live inside an [[file:aura-set.org][LrgAuraSet]], which owns the stacking, ticking and expiry rules.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Boxed type* - =LRG_TYPE_AURA=, GIR =Libregnum.Aura=; =g_autoptr= supported
+- Header: =progression/lrg-aura.h=
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant               | Value   | Meaning                                   |
+|------------------------+---------+-------------------------------------------|
+| =LRG_AURA_MAX_SECONDS= | 86400.0 | Longest duration and tick period          |
+| =LRG_AURA_MAX_STACKS=  | 999     | Largest =max_stacks=                      |
+
+** Fields
+:PROPERTIES:
+:CUSTOM_ID: fields
+:END:
+| Field        | Type        | Meaning                                                            |
+|--------------+-------------+--------------------------------------------------------------------|
+| =id=         | gchar*      | Identifier, 1-128 bytes of UTF-8                                   |
+| =source=     | guint       | Caller-defined source entity id, 0 = none                          |
+| =kind=       | LrgAuraKind | =LRG_AURA_KIND_BUFF= or =LRG_AURA_KIND_DEBUFF=                     |
+| =dispel=     | gchar*      | Dispel type ("magic", "poison", ...); =NULL= = cannot be dispelled |
+| =stat=       | gchar*      | Stat/effect key the aura modifies, or =NULL=                       |
+| =magnitude=  | gdouble     | Effect per stack                                                   |
+| =duration=   | gdouble     | Total seconds; 0 = permanent until removed                         |
+| =remaining=  | gdouble     | Seconds left (0 for permanent auras)                               |
+| =period=     | gdouble     | Seconds between periodic ticks; 0 = none                           |
+| =tick_left=  | gdouble     | Seconds until the next periodic tick                               |
+| =stacks=     | guint       | Current stacks, 1..=max_stacks=                                    |
+| =max_stacks= | guint       | Stack limit, 1..999                                                |
+
+Identity inside a set is (=id=, =source=). Strings are owned by the aura.
+
+** Functions
+:PROPERTIES:
+:CUSTOM_ID: functions
+:END:
+*** lrg_aura_new()
+#+begin_src C
+LrgAura *lrg_aura_new (const gchar *id, LrgAuraKind kind, gdouble duration);
+#+end_src
+*Returns:* (transfer full) an aura with =remaining = duration=, one stack, =max_stacks= 1, source 0, no dispel/stat and no period. =id= must be non-empty and =duration= finite and non-negative (criticals otherwise).
+
+*** lrg_aura_copy() / lrg_aura_free()
+#+begin_src C
+LrgAura *lrg_aura_copy (const LrgAura *self);   /* deep copy */
+void     lrg_aura_free (LrgAura *self);         /* NULL-safe */
+#+end_src
+
+*** lrg_aura_get_total()
+#+begin_src C
+gdouble lrg_aura_get_total (const LrgAura *self);
+#+end_src
+*Returns:* =magnitude × stacks=.
+
+*** lrg_aura_is_valid()
+#+begin_src C
+gboolean lrg_aura_is_valid (const LrgAura *self);
+#+end_src
+The rules =LrgAuraSet= enforces on apply and restore: a valid id; =dispel= and =stat= =NULL= or 1-128 bytes of UTF-8; a known =kind=; a finite =magnitude=; =duration= and =period= in 0..86400; =remaining= in 0..=duration= (so 0 for permanent auras); =tick_left= in 0..=period= (so 0 without a period); and =1 <= stacks <= max_stacks <= 999=.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgAura) renew = lrg_aura_new ("renew", LRG_AURA_KIND_BUFF, 15.0);
+
+renew->source = caster_entity_id;
+renew->dispel = g_strdup ("magic");
+renew->stat = g_strdup ("hot");
+renew->magnitude = 45.0;
+renew->period = 3.0;
+
+lrg_aura_set_apply (target_auras, renew);   /* copies the aura */
+#+end_src

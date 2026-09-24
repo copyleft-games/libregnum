@@ -1,0 +1,190 @@
+* LrgTalentNode / LrgTalentTree - Tiered Talent Trees
+:PROPERTIES:
+:CUSTOM_ID: lrgtalenttree
+:END:
+Classic tiered talent trees. A tree is a grid of ranked talents: rows are tiers, and spending a point in tier /t/ requires /t × tier-gate/ points already spent in the same tree. A talent may require another talent of a lower tier at its maximum rank, may grant an ability once it has at least one rank (a "capstone"), and may carry a value per rank for a game-interpreted effect key that loadouts sum up.
+
+Trees are static content: build them once (from code or data), validate them with =lrg_talent_tree_validate()= at load time, and share them read-only between every player. Per-player state lives in [[file:talent-loadout.org][LrgTalentLoadout]] and [[file:talent-book.org][LrgTalentBook]].
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgTalentNode= - *Boxed type* (=LRG_TYPE_TALENT_NODE=, GIR =Libregnum.TalentNode=) with public fields, copied with =lrg_talent_node_copy()= and freed with =lrg_talent_node_free()= (=g_autoptr= supported).
+- =LrgTalentTree= - *Final GObject class* (=LRG_TYPE_TALENT_TREE=, GIR =Libregnum.TalentTree=) owning its nodes.
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant                            | Value | Meaning                                              |
+|-------------------------------------+-------+------------------------------------------------------|
+| =LRG_TALENT_TREE_DEFAULT_TIER_GATE= |     5 | Default points per tier                              |
+| =LRG_TALENT_TREE_MAX_TIER_GATE=     |  1000 | Largest accepted tier gate                           |
+| =LRG_TALENT_ID_MAX_LENGTH=          |   128 | Maximum bytes of any talent, tree, class or spec id  |
+| =LRG_TALENT_MAX_RANK=               |   100 | Largest accepted =max_rank= (and persisted rank)     |
+
+** LrgTalentNode fields
+:PROPERTIES:
+:CUSTOM_ID: lrgtalentnode-fields
+:END:
+| Field            | Type               | Meaning                                                                          |
+|------------------+--------------------+----------------------------------------------------------------------------------|
+| =id=             | =gchar *=          | Unique id within the tree                                                        |
+| =name=           | =gchar *= nullable | Display name                                                                     |
+| =description=    | =gchar *= nullable | Display description                                                              |
+| =tier=           | =guint=            | 0-based row                                                                      |
+| =column=         | =guint=            | Column; (tier, column) must be unique in a valid tree                            |
+| =max_rank=       | =guint=            | 1..=LRG_TALENT_MAX_RANK=                                                         |
+| =prerequisite=   | =gchar *= nullable | Node id in a strictly lower tier that must be at max rank                        |
+| =grants_ability= | =gchar *= nullable | Ability id granted while rank >= 1                                               |
+| =effect=         | =gchar *= nullable | Effect/stat key summed by =lrg_talent_loadout_sum_effect()=                      |
+| =rank_values=    | =GArray *= of =gdouble= | Value per rank; length 0 or =max_rank= in a valid tree; never =NULL= once added |
+
+Do not change =id=, =tier= or =column= of a node after adding it to a tree: the tree indexes and sorts on them. =lrg_talent_tree_get_node()= returns a =const= pointer for that reason.
+
+** LrgTalentNode functions
+:PROPERTIES:
+:CUSTOM_ID: lrgtalentnode-functions
+:END:
+*** lrg_talent_node_new()
+#+begin_src C
+LrgTalentNode *lrg_talent_node_new (const gchar *id, guint tier, guint column, guint max_rank);
+#+end_src
+Creates a node with no name, prerequisite, ability, effect or rank values. =id= must be non-NULL and =max_rank= at least 1 (programmer errors, =g_return_val_if_fail=).
+
+*Returns:* a new node (transfer full).
+
+*** lrg_talent_node_copy() / lrg_talent_node_free()
+#+begin_src C
+LrgTalentNode *lrg_talent_node_copy (const LrgTalentNode *self);
+void           lrg_talent_node_free (LrgTalentNode *self);
+#+end_src
+Deep copy (strings and rank values) and free. =free= accepts =NULL=.
+
+*** lrg_talent_node_add_rank_value()
+#+begin_src C
+void lrg_talent_node_add_rank_value (LrgTalentNode *self, gdouble value);
+#+end_src
+Appends the value of the next rank (the first call is rank 1).
+
+*** lrg_talent_node_get_value()
+#+begin_src C
+gdouble lrg_talent_node_get_value (const LrgTalentNode *self, guint rank);
+#+end_src
+Value at =rank=. Rank 0 and nodes without values return 0. Ranks beyond the last value clamp to the last value.
+
+*** Field setters
+#+begin_src C
+void lrg_talent_node_set_name           (LrgTalentNode *self, const gchar *name);
+void lrg_talent_node_set_description    (LrgTalentNode *self, const gchar *description);
+void lrg_talent_node_set_prerequisite   (LrgTalentNode *self, const gchar *prerequisite);
+void lrg_talent_node_set_grants_ability (LrgTalentNode *self, const gchar *ability_id);
+void lrg_talent_node_set_effect         (LrgTalentNode *self, const gchar *effect);
+#+end_src
+Binding-friendly replacements for the owned string fields; all accept =NULL=.
+
+** LrgTalentTree properties
+:PROPERTIES:
+:CUSTOM_ID: lrgtalenttree-properties
+:END:
+| Property      | Type   | Flags             | Default | Meaning                                              |
+|---------------+--------+-------------------+---------+------------------------------------------------------|
+| =id=          | string | construct-only    | NULL    | Unique tree id                                       |
+| =name=        | string | read/write        | NULL    | Display name                                         |
+| =description= | string | read/write        | NULL    | Display description                                  |
+| =icon=        | string | read/write        | NULL    | Icon key                                             |
+| =class-id=    | string | read/write        | NULL    | Owning class; loadouts only spend in their own class |
+| =role=        | string | read/write        | NULL    | Role hint: "tank", "healer", "damage"                |
+| =tier-gate=   | guint  | read/write 0..1000 | 5      | Points per tier; 0 disables gating                   |
+
+Every property has a =lrg_talent_tree_get_*= / =lrg_talent_tree_set_*= accessor (=id= has only a getter). Setters notify only when the value changes.
+
+** LrgTalentTree functions
+:PROPERTIES:
+:CUSTOM_ID: lrgtalenttree-functions
+:END:
+*** lrg_talent_tree_new()
+#+begin_src C
+LrgTalentTree *lrg_talent_tree_new (const gchar *id, const gchar *class_id);
+#+end_src
+Creates an empty tree with tier gate 5. *Returns:* transfer full.
+
+*** lrg_talent_tree_add_node()
+#+begin_src C
+gboolean lrg_talent_tree_add_node (LrgTalentTree *self, LrgTalentNode *node, GError **error);
+#+end_src
+Adds =node= (transfer full: ownership is taken *even on failure*, so never free it yourself).
+
+*Errors:*
+- =LRG_PROGRESSION_ERROR_DUPLICATE= - a node with the same id exists
+- =LRG_PROGRESSION_ERROR_INVALID= - id empty, longer than 128 bytes or not UTF-8; =max_rank= outside 1..100
+
+Checks that involve several nodes are deferred to =lrg_talent_tree_validate()= so nodes can be added in any order.
+
+*** lrg_talent_tree_get_node()
+#+begin_src C
+const LrgTalentNode *lrg_talent_tree_get_node (LrgTalentTree *self, const gchar *node_id);
+#+end_src
+*Returns:* the node (transfer none) or =NULL= for unknown or =NULL= ids.
+
+*** lrg_talent_tree_get_nodes()
+#+begin_src C
+GPtrArray *lrg_talent_tree_get_nodes (LrgTalentTree *self);
+#+end_src
+*Returns:* every node sorted by (tier, column, id) (transfer none, element-type =LrgTalentNode=). Do not modify the array.
+
+*** lrg_talent_tree_get_node_count() / get_tier_count() / get_max_points()
+#+begin_src C
+guint lrg_talent_tree_get_node_count (LrgTalentTree *self);
+guint lrg_talent_tree_get_tier_count (LrgTalentTree *self); /* highest tier + 1, 0 when empty */
+guint lrg_talent_tree_get_max_points (LrgTalentTree *self); /* sum of max_rank */
+#+end_src
+
+*** lrg_talent_tree_validate()
+#+begin_src C
+gboolean lrg_talent_tree_validate (LrgTalentTree *self, GError **error);
+#+end_src
+Validates the whole structure. Run it once at content load and refuse to start the server on failure. Checks in node order (tier, column, id):
+
+| Check                                                                   | Error         |
+|-------------------------------------------------------------------------+---------------|
+| =max_rank= in 1..100 (public field may have been edited)                | =INVALID=     |
+| =rank_values= length is 0 or =max_rank=                                 | =INVALID=     |
+| prerequisite names a node of this tree                                  | =NOT_FOUND=   |
+| prerequisite is in a strictly lower tier (also rejects self-reference)  | =INVALID=     |
+| (tier, column) unique                                                   | =DUPLICATE=   |
+| every populated tier /t/ reachable: max points of tiers < /t/ >= /t/ × tier-gate | =REQUIREMENT= |
+
+An empty tree is valid. With a tier gate of 5, a tier-0 row whose ranks sum to exactly 5 makes tier 1 reachable; 4 does not. Skipped tiers are allowed as long as the points below suffice.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+LrgTalentTree *arms;
+LrgTalentNode *node;
+guint i;
+
+arms = lrg_talent_tree_new ("arms", "warrior");
+lrg_talent_tree_set_name (arms, "Arms");
+lrg_talent_tree_set_role (arms, "damage");
+
+/* Tier 0: +1..+5 strength */
+node = lrg_talent_node_new ("improved_strength", 0, 0, 5);
+lrg_talent_node_set_effect (node, "strength");
+for (i = 1; i <= 5; i++)
+    lrg_talent_node_add_rank_value (node, (gdouble)i);
+lrg_talent_tree_add_node (arms, node, &error);
+
+/* Tier 1 capstone: requires improved_strength at rank 5, grants an ability */
+node = lrg_talent_node_new ("mortal_strike", 1, 0, 1);
+lrg_talent_node_set_prerequisite (node, "improved_strength");
+lrg_talent_node_set_grants_ability (node, "mortal_strike");
+lrg_talent_tree_add_node (arms, node, &error);
+
+if (!lrg_talent_tree_validate (arms, &error))
+    g_error ("bad talent content: %s", error->message);
+#+end_src

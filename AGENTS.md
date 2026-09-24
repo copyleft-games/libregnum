@@ -39,6 +39,7 @@ libregnum/
 │   ├── tilemap/              # Tileset, TilemapLayer, Tilemap
 │   ├── dialog/               # DialogNode, DialogTree, DialogRunner
 │   ├── quest/                # QuestDef, QuestObjective, QuestInstance, QuestLog, QuestChain
+│   ├── progression/          # ExperienceCurve, AbilityDef, Spellbook, CooldownSet, Aura(Set), Vital, Talent*
 │   ├── inventory/            # ItemDef, ItemStack, Inventory, Equipment
 │   ├── save/                 # Saveable interface, SaveContext, SaveGame, SaveManager
 │   ├── ai/                   # BehaviorTree, Blackboard, BTNode hierarchy

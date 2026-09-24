@@ -1,0 +1,173 @@
+* Progression Module
+:PROPERTIES:
+:CUSTOM_ID: progression-module
+:END:
+The Progression module holds the character-growth rules of an MMO-style RPG: levels and experience (including rested experience), ability definitions and the spellbook/action bar, cooldowns, auras (buffs and debuffs), resource pools such as mana, rage and energy, and classic tiered talent trees with dual specialisation. Every type is plain data plus deterministic rules: no rendering, no ECS, no wall clock and no random numbers. The caller passes elapsed seconds, Unix times and random rolls in, which makes every rule reproducible on a server and trivially unit-testable.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+| Type                   | Kind               | Purpose                                                                                           | Persisted as              |
+|------------------------+--------------------+---------------------------------------------------------------------------------------------------+---------------------------|
+| [[file:experience-curve.org][LrgExperienceCurve]]     | Final GObject      | XP per level (formula or table), saturating awards across many levels, rested accrual and bonus   | (config; player keeps level/xp/pool) |
+| [[file:ability-def.org][LrgAbilityEffect]]       | Boxed              | One effect of an ability (damage, heal, aura, ...), interpreted by the game                      | (content)                 |
+| [[file:ability-def.org][LrgAbilityDef]]          | Derivable GObject  | Ability definition: class, level, rank, cost, cooldowns, learn source, spec/talent requirements  | (content)                 |
+| [[file:spellbook.org][LrgSpellbook]]           | Final GObject      | Known abilities and the action bar                                                                | =(asuas)=                 |
+| [[file:cooldown-set.org][LrgCooldownSet]]         | Final GObject      | Per-ability, per-category and global cooldowns                                                    | =(da(sd)a(sd))=           |
+| [[file:aura.org][LrgAura]]                | Boxed              | One buff/debuff instance with stacks, duration and periodic ticks                                 | (inside the aura set)     |
+| [[file:aura-set.org][LrgAuraSet]]             | Final GObject      | All auras on one entity: stacking, ticking, expiry, dispel, stat sums, signals                    | =(ua(suussddddduu))=      |
+| [[file:vital.org][LrgVital]]               | Boxed              | A regenerating or decaying resource pool                                                          | =(sdddd)=                 |
+| [[file:talent-tree.org][LrgTalentNode]]          | Boxed              | One ranked talent in a tree                                                                       | (content)                 |
+| [[file:talent-tree.org][LrgTalentTree]]          | Final GObject      | A class's tiered talent tree with tier gates, prerequisites and granted abilities                 | (content)                 |
+| [[file:talent-loadout.org][LrgTalentLoadout]]       | Final GObject      | Points spent by one character in one specialisation, validated against the trees                 | =(smsa(ssu))=             |
+| [[file:talent-book.org][LrgTalentBook]]          | Final GObject      | Dual/multi-spec: several loadouts, the active index and the respec count                          | =(suuuav)=                |
+
+All failures are reported with the shared =LRG_PROGRESSION_ERROR= domain (=LrgProgressionError=: =FAILED=, =INVALID=, =NOT_FOUND=, =REQUIREMENT=, =LIMIT=, =DUPLICATE=, =NOT_READY=), and a failed call leaves the object unchanged. Programmer errors (a =NULL= object, a NaN passed to a setter) are =g_return_if_fail= criticals instead.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Content versus state
+:PROPERTIES:
+:CUSTOM_ID: content-versus-state
+:END:
+Definitions (=LrgAbilityDef=, =LrgTalentTree=, the =LrgExperienceCurve= configuration) are static content: load them once, from code or YAML through =LrgDataLoader= (every scalar field of a definition is a GObject property), and share them read-only between all players. Per-character state (=LrgSpellbook=, =LrgCooldownSet=, =LrgAuraSet=, =LrgVital=, =LrgTalentLoadout=, =LrgTalentBook=, plus the level/xp/rested integers the curve operates on) is small, owned by one character and serialised with =to_variant= / =new_from_variant=.
+
+*** Experience and rested experience
+:PROPERTIES:
+:CUSTOM_ID: experience
+:END:
+The curve converts an award into levels. Awards may cross any number of levels at once, the excess at the level cap is discarded, and every sum saturates at =G_MAXUINT64=, so hostile or buggy callers cannot wrap counters. Rested experience is a pool that grows while logged out (5% of a level per 8 hours in an inn or city by default, a quarter of that elsewhere, capped at 1.5 levels) and doubles kill awards while it lasts.
+
+*** Abilities, spellbook and learning
+:PROPERTIES:
+:CUSTOM_ID: abilities
+:END:
+An ability definition says who can learn it (=class-id=, =min-level=, =required-spec=) and how (=learn-source=: automatic on level-up, from a trainer, quest, talent or item). =lrg_spellbook_get_learnable()= lists what a trainer should offer in a stable (min-level, id) order and =lrg_spellbook_learn_automatic()= grants level-up abilities. Higher ranks name the rank they upgrade with =replaces=; the spellbook keeps every learned rank so the game can decide which rank to show.
+
+*** Cooldowns
+:PROPERTIES:
+:CUSTOM_ID: cooldowns
+:END:
+An ability is ready when its own cooldown, its shared category (e.g. every potion) and, if it is on the global cooldown, the GCD have all finished. =lrg_cooldown_set_start_ability()= starts all three from the definition in one call.
+
+*** Auras
+:PROPERTIES:
+:CUSTOM_ID: auras
+:END:
+An aura is identified by (id, source), so two priests can each keep a renew on the same target while re-casting your own renew refreshes it. Re-applying stacks up to =max_stacks=. Periodic auras emit =aura-ticked= once per elapsed period (bounded to 100 per tick call so a long server hitch cannot flood the game), timed auras emit =aura-expired= and disappear, and explicit removal, dispels and clears emit =aura-removed=. =lrg_aura_set_sum_stat()= folds every aura's =magnitude × stacks= into a stat.
+
+*** Talents and specialisations
+:PROPERTIES:
+:CUSTOM_ID: talents
+:END:
+A class has several [[file:talent-tree.org][talent trees]]; a tree's tiers unlock after a number of points spent in that tree (=tier-gate=, default 5 per tier) and talents may require a lower-tier talent at its maximum rank. A [[file:talent-loadout.org][loadout]] records the ranks one character bought, earns points from =first-level= onwards, and can re-validate everything against the trees after a content patch. A [[file:talent-book.org][talent book]] holds several loadouts for dual or multi-spec, which one is active, and how many respecs were bought. Ability definitions reference talent content through =required-spec= and =required-talent=, and loadouts report the abilities their talents grant.
+
+*** Vitals
+:PROPERTIES:
+:CUSTOM_ID: vitals
+:END:
+A vital is a pool with an in-combat and an out-of-combat rate. Mana regenerates, energy regenerates quickly and rage decays out of combat (negative =idle_regen=) and starts empty. =lrg_vital_spend()= is atomic: it spends the whole cost or nothing.
+
+** Authoritative MMO servers
+:PROPERTIES:
+:CUSTOM_ID: authoritative-servers
+:END:
+The server owns every progression object. Clients send intents ("cast ability X on target Y", "buy talent Z"), never results. The server:
+
+1. validates the intent with the pure checks (=lrg_ability_def_is_eligible()=, =lrg_spellbook_knows()=, =lrg_cooldown_set_ability_ready()=, =lrg_vital_spend()=, =lrg_talent_loadout_can_spend()=, ...);
+2. applies it to its own objects;
+3. persists the changed state by storing =to_variant= bytes (=g_variant_get_data_as_bytes()=) inside =LrgMmoStore= records, usually as part of the same =lrg_mmo_store_commit()= batch as the rest of the character so the change is atomic;
+4. sends clients a projection (known abilities, cooldown remaining times, visible auras, vital fractions) rather than the full objects.
+
+On load, =new_from_variant= treats the stored bytes as untrusted: it checks the exact type string and normal form, bounds every array, rejects empty, overlong (over 128 bytes) or non-UTF-8 ids, non-finite or out-of-range numbers and duplicates, and returns =NULL= with =LRG_PROGRESSION_ERROR_INVALID= without leaking. A snapshot that round-trips (=to_variant= → =new_from_variant= → =to_variant=) is byte-for-byte identical.
+
+Time is always an argument: tick cooldowns, auras and vitals from the server's fixed simulation step, and accrue rested experience from the logout timestamp the server stored. Nothing in this module reads the clock.
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: worked-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+/* Content, loaded once. */
+g_autoptr(LrgExperienceCurve) curve = lrg_experience_curve_new (60);
+g_autoptr(GPtrArray) abilities = g_ptr_array_new_with_free_func (g_object_unref);
+LrgAbilityDef *strike;
+
+strike = lrg_ability_def_new ("heroic_strike");
+lrg_ability_def_set_class_id (strike, "warrior");
+lrg_ability_def_set_learn_source (strike, LRG_ABILITY_LEARN_SOURCE_AUTO);
+lrg_ability_def_set_resource (strike, "rage");
+lrg_ability_def_set_cost (strike, 15);
+lrg_ability_def_set_cooldown (strike, 4.0);
+g_ptr_array_add (abilities, strike);
+
+/* Per-character state, owned by the server. */
+g_autoptr(LrgSpellbook) book = lrg_spellbook_new ();
+g_autoptr(LrgCooldownSet) cooldowns = lrg_cooldown_set_new ();
+g_autoptr(LrgAuraSet) auras = lrg_aura_set_new (32);
+g_autoptr(LrgVital) rage = lrg_vital_new ("rage", 100.0, 0.0, -1.0);
+guint level = 1;
+guint64 xp = 0;
+guint64 rested = 0;
+
+/* Log-in: rested XP for 10 hours in an inn, then grant level-up abilities. */
+rested = lrg_experience_curve_accrue_rested (curve, level, rested, 10 * 3600, TRUE);
+lrg_spellbook_learn_automatic (book, abilities, "warrior", level, NULL);
+lrg_spellbook_bind (book, 0, "heroic_strike", NULL);
+
+/* Cast intent from the client. */
+if (lrg_spellbook_knows (book, "heroic_strike") &&
+    lrg_cooldown_set_ability_ready (cooldowns, strike) &&
+    lrg_vital_spend (rage, lrg_ability_def_get_cost (strike)))
+{
+    lrg_cooldown_set_start_ability (cooldowns, strike);
+    /* resolve effects, apply auras ... */
+}
+
+/* Kill reward: may level several times; re-run automatic learning. */
+if (lrg_experience_curve_award (curve, &level, &xp, 450, &rested) > 0)
+    lrg_spellbook_learn_automatic (book, abilities, "warrior", level, NULL);
+
+/* Fixed server step. */
+lrg_cooldown_set_tick (cooldowns, 0.05);
+lrg_aura_set_tick (auras, 0.05);
+lrg_vital_tick (rage, 0.05, FALSE);
+
+/* Persist inside the character's LrgMmoStore batch. */
+{
+    g_autoptr(GVariant) snapshot = lrg_spellbook_to_variant (book);
+    g_autoptr(GBytes) bytes = g_variant_get_data_as_bytes (snapshot);
+    /* add ("character/42/spellbook", revision, bytes) to the a(stay) batch */
+}
+#+end_src
+
+Restoring reverses it:
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(GVariant) stored = g_variant_new_from_bytes (G_VARIANT_TYPE (LRG_SPELLBOOK_VARIANT_TYPE), bytes, FALSE);
+g_autoptr(LrgSpellbook) book = lrg_spellbook_new_from_variant (stored, &error);
+
+if (book == NULL)
+    g_warning ("corrupt spellbook: %s", error->message);
+#+end_src
+
+** Type reference
+:PROPERTIES:
+:CUSTOM_ID: type-reference
+:END:
+- [[file:experience-curve.org][LrgExperienceCurve]]
+- [[file:ability-def.org][LrgAbilityEffect and LrgAbilityDef]]
+- [[file:spellbook.org][LrgSpellbook]]
+- [[file:cooldown-set.org][LrgCooldownSet]]
+- [[file:aura.org][LrgAura]]
+- [[file:aura-set.org][LrgAuraSet]]
+- [[file:vital.org][LrgVital]]
+- [[file:talent-tree.org][LrgTalentNode and LrgTalentTree]]
+- [[file:talent-loadout.org][LrgTalentLoadout]]
+- [[file:talent-book.org][LrgTalentBook]]

@@ -1,0 +1,199 @@
+* LrgExperienceCurve - Levels, Experience and Rested XP
+:PROPERTIES:
+:CUSTOM_ID: lrgexperiencecurve
+:END:
+Maps experience to levels. The experience needed to advance from level L to L+1 comes from a polynomial formula or from an explicit table, awards may cross many levels at once, and rested experience accrues while a character rests and boosts awards while it lasts. The curve is configuration: the character's level, progress within the level and rested pool are plain integers the caller keeps (and persists) and passes in by pointer.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject class* - =LRG_TYPE_EXPERIENCE_CURVE=, GIR =Libregnum.ExperienceCurve=
+- Header: =progression/lrg-experience-curve.h= (via =<libregnum.h>=)
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant                             | Value | Meaning                   |
+|--------------------------------------+-------+---------------------------|
+| =LRG_EXPERIENCE_CURVE_MAX_LEVEL_CAP= |  1000 | Largest accepted level cap |
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property            | Type    | Range           | Default    | Meaning                                                                  |
+|---------------------+---------+-----------------+------------+--------------------------------------------------------------------------|
+| =level-cap=         | guint   | 1..1000         | 60         | Highest reachable level (construct). Changing it discards a table.       |
+| =rested-rate=       | gdouble | 0..10           | 0.05 / 8   | Fraction of the current level's requirement accrued per hour of rest     |
+| =rested-cap=        | gdouble | 0..100          | 1.5        | Pool cap as a fraction of the current level's requirement                |
+| =rested-multiplier= | gdouble | 1..100          | 2.0        | Award multiplier while rested experience remains                         |
+| =formula-base=      | gdouble | finite          | 100        | Constant term                                                            |
+| =formula-linear=    | gdouble | finite          | 100        | Coefficient of L                                                         |
+| =formula-quadratic= | gdouble | finite          | 10         | Coefficient of L²                                                        |
+| =formula-cubic=     | gdouble | finite          | 0          | Coefficient of L³                                                        |
+
+All double properties reject NaN and infinity with a critical and leave the value unchanged. Notifications fire only when a value changes. Setting any formula property discards an installed table. The formula properties make a curve loadable from YAML through =LrgDataLoader=.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_experience_curve_new()
+#+begin_src C
+LrgExperienceCurve *lrg_experience_curve_new (guint level_cap);
+#+end_src
+Creates a curve with the default formula =100 + 100·L + 10·L²=.
+
+- =level_cap= - 1 to =LRG_EXPERIENCE_CURVE_MAX_LEVEL_CAP=; anything else is a critical and returns =NULL=.
+
+*Returns:* (transfer full) a new curve.
+
+** Configuration
+:PROPERTIES:
+:CUSTOM_ID: configuration
+:END:
+*** Level cap and rested settings
+#+begin_src C
+guint   lrg_experience_curve_get_level_cap         (LrgExperienceCurve *self);
+void    lrg_experience_curve_set_level_cap         (LrgExperienceCurve *self, guint level_cap);
+gdouble lrg_experience_curve_get_rested_rate       (LrgExperienceCurve *self);
+void    lrg_experience_curve_set_rested_rate       (LrgExperienceCurve *self, gdouble rate);
+gdouble lrg_experience_curve_get_rested_cap        (LrgExperienceCurve *self);
+void    lrg_experience_curve_set_rested_cap        (LrgExperienceCurve *self, gdouble cap);
+gdouble lrg_experience_curve_get_rested_multiplier (LrgExperienceCurve *self);
+void    lrg_experience_curve_set_rested_multiplier (LrgExperienceCurve *self, gdouble multiplier);
+#+end_src
+Accessors for the properties above. Out-of-range or non-finite values are criticals and change nothing.
+
+*** lrg_experience_curve_set_formula()
+#+begin_src C
+void lrg_experience_curve_set_formula (LrgExperienceCurve *self,
+                                       gdouble base, gdouble linear,
+                                       gdouble quadratic, gdouble cubic);
+#+end_src
+Sets the polynomial. The requirement for level L is =round(base + linear·L + quadratic·L² + cubic·L³)=, at least 1 (negative and NaN results become 1) and saturating at =G_MAXUINT64=. All coefficients must be finite. Discards any table.
+
+*** lrg_experience_curve_get_formula()
+#+begin_src C
+void lrg_experience_curve_get_formula (LrgExperienceCurve *self,
+                                       gdouble *base, gdouble *linear,
+                                       gdouble *quadratic, gdouble *cubic);
+#+end_src
+Reads the coefficients; every out parameter is optional.
+
+*** lrg_experience_curve_set_table()
+#+begin_src C
+gboolean lrg_experience_curve_set_table (LrgExperienceCurve *self,
+                                         const guint64      *table,
+                                         gsize               n_levels,
+                                         GError            **error);
+#+end_src
+Installs an explicit table that overrides the formula. =table[i]= is the experience to go from level i+1 to i+2, so =n_levels= must be =level-cap - 1= (a cap of 1 takes an empty table, =NULL= allowed). The table is copied.
+
+*Errors:* =LRG_PROGRESSION_ERROR_INVALID= for a wrong length, a =NULL= table with entries, or any zero entry. The curve (including a previous table) is unchanged on error.
+
+*** lrg_experience_curve_clear_table() / lrg_experience_curve_has_table()
+#+begin_src C
+void     lrg_experience_curve_clear_table (LrgExperienceCurve *self);
+gboolean lrg_experience_curve_has_table   (LrgExperienceCurve *self);
+#+end_src
+Drops the table (the formula applies again) / reports whether one is installed.
+
+** Queries
+:PROPERTIES:
+:CUSTOM_ID: queries
+:END:
+*** lrg_experience_curve_get_xp_for_level()
+#+begin_src C
+guint64 lrg_experience_curve_get_xp_for_level (LrgExperienceCurve *self, guint level);
+#+end_src
+*Returns:* the experience to advance from =level= to =level + 1=; 0 for level 0 and for every level at or above the cap.
+
+*** lrg_experience_curve_get_total_xp_for_level()
+#+begin_src C
+guint64 lrg_experience_curve_get_total_xp_for_level (LrgExperienceCurve *self, guint level);
+#+end_src
+*Returns:* cumulative experience to reach =level= from level 1 (0 for levels 0 and 1). Levels above the cap are treated as the cap. Saturates at =G_MAXUINT64=.
+
+*** lrg_experience_curve_get_rested_limit()
+#+begin_src C
+guint64 lrg_experience_curve_get_rested_limit (LrgExperienceCurve *self, guint level);
+#+end_src
+*Returns:* =round(rested-cap × xp_for_level(level))=, the largest pool accrual can reach; 0 at the cap.
+
+** Awards and rested experience
+:PROPERTIES:
+:CUSTOM_ID: awards
+:END:
+*** lrg_experience_curve_award()
+#+begin_src C
+guint lrg_experience_curve_award (LrgExperienceCurve *self,
+                                  guint              *level,
+                                  guint64            *xp,
+                                  guint64             amount,
+                                  guint64            *rested_pool);
+#+end_src
+Awards experience in place.
+
+1. =*level= is clamped into 1..cap first. At (or above) the cap nothing is awarded, =*xp= becomes 0, the pool is untouched and 0 is returned.
+2. When =rested_pool= is non-=NULL=, a bonus of =MIN(*rested_pool, round(amount × (rested-multiplier − 1)))= is added to the award and removed from the pool.
+3. The total is spent level by level: each level consumes what is missing from =*xp= to its requirement, the character levels up with progress 0, and whatever is left becomes progress in the final level. Reaching the cap discards the remainder and leaves =*xp = 0=.
+
+Progress already at or above the requirement (a corrupt input) is repaired by levelling. Every sum saturates; nothing wraps. Pass =NULL= for =rested_pool= for awards that should not consume rested experience (quests, exploration).
+
+*Returns:* the number of levels gained.
+
+*** lrg_experience_curve_accrue_rested()
+#+begin_src C
+guint64 lrg_experience_curve_accrue_rested (LrgExperienceCurve *self,
+                                            guint               level,
+                                            guint64             pool,
+                                            gint64              seconds,
+                                            gboolean            in_rest_area);
+#+end_src
+Computes the pool after resting =seconds= at =level=: =rested-rate × hours × xp_for_level(level)=, a quarter of that outside a rest area, rounded. The result stops at =lrg_experience_curve_get_rested_limit()= but accrual never shrinks an existing pool that is already above it. Zero or negative =seconds= return =pool= unchanged.
+
+With the defaults a level-10 character (2100 XP per level) gains 105 XP of rested pool per 8 hours in an inn, up to 3150.
+
+*** lrg_experience_curve_validate()
+#+begin_src C
+gboolean lrg_experience_curve_validate (LrgExperienceCurve *self,
+                                        guint               level,
+                                        guint64             xp,
+                                        GError            **error);
+#+end_src
+Checks a persisted pair: =level= in 1..cap and =xp= below the level requirement, or exactly 0 at the cap.
+
+*Errors:* =LRG_PROGRESSION_ERROR_INVALID=.
+
+** Ownership notes
+:PROPERTIES:
+:CUSTOM_ID: ownership
+:END:
+- The curve copies the table passed to =set_table=.
+- The curve holds no per-character state; one curve serves every character. Persist level, xp and pool yourself (e.g. as =(uttx)= together with the logout time) and run =validate= after loading.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgExperienceCurve) curve = lrg_experience_curve_new (4);
+const guint64 table[] = { 100, 200, 300 };
+guint level = 1;
+guint64 xp = 0;
+guint64 pool = 50;
+
+lrg_experience_curve_set_table (curve, table, 3, NULL);
+
+/* 280 + 50 rested = 330: level 1 -> 2 (100), 2 -> 3 (200), 30 into level 3 */
+g_assert_cmpuint (lrg_experience_curve_award (curve, &level, &xp, 280, &pool), ==, 2);
+g_assert_cmpuint (level, ==, 3);
+g_assert_cmpuint (xp, ==, 30);
+g_assert_cmpuint (pool, ==, 0);
+
+/* offline for 16 hours outside a rest area */
+pool = lrg_experience_curve_accrue_rested (curve, level, pool, 16 * 3600, FALSE);
+#+end_src

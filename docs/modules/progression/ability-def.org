@@ -1,0 +1,189 @@
+* LrgAbilityEffect / LrgAbilityDef - Ability Definitions
+:PROPERTIES:
+:CUSTOM_ID: lrgabilitydef
+:END:
+=LrgAbilityDef= describes one spell, skill or passive: who may learn it, how it is learned, what it costs, how its cooldowns work and which effects it has. =LrgAbilityEffect= is one effect (damage, heal, aura, ...), stored and copied by the engine and interpreted by the game when the ability resolves. Definitions are static content shared by every player.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgAbilityEffect= - *Boxed type* (=LRG_TYPE_ABILITY_EFFECT=, GIR =Libregnum.AbilityEffect=) with public fields; =g_autoptr= supported.
+- =LrgAbilityDef= - *Derivable GObject class* (=LRG_TYPE_ABILITY_DEF=, GIR =Libregnum.AbilityDef=). Subclass it to add game-specific usability checks.
+- Header: =progression/lrg-ability-def.h=
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant                   | Value     | Meaning                                                    |
+|----------------------------+-----------+------------------------------------------------------------|
+| =LRG_ABILITY_MAX_COOLDOWN= | 86400.0   | Longest cooldown, category cooldown or cast time (seconds) |
+| =LRG_ABILITY_MAX_RANGE=    | 1000000.0 | Largest range                                              |
+
+** LrgAbilityEffect
+:PROPERTIES:
+:CUSTOM_ID: lrgabilityeffect
+:END:
+| Field         | Type    | Meaning                                                                                                              |
+|---------------+---------+----------------------------------------------------------------------------------------------------------------------|
+| =kind=        | gchar*  | Game-interpreted kind: "damage", "heal", "hot", "dot", "shield", "buff", "debuff", "form", "summon", "taunt", "interrupt", "resource", ... |
+| =aura_id=     | gchar*  | Aura applied by the effect, or =NULL=                                                                               |
+| =stat=        | gchar*  | Stat or effect key the aura modifies, or =NULL=                                                                     |
+| =amount=      | gdouble | Flat amount                                                                                                          |
+| =scale=       | gdouble | Coefficient applied to a caster stat or power                                                                        |
+| =duration=    | gdouble | Seconds, 0 = instant                                                                                                 |
+| =period=      | gdouble | Seconds between ticks, 0 = none                                                                                      |
+| =radius=      | gdouble | Area radius, 0 = single target                                                                                       |
+| =max_targets= | guint   | Most targets hit (default 1)                                                                                         |
+
+#+begin_src C
+LrgAbilityEffect *lrg_ability_effect_new  (const gchar *kind);             /* transfer full; kind non-empty */
+LrgAbilityEffect *lrg_ability_effect_copy (const LrgAbilityEffect *self);  /* deep copy */
+void              lrg_ability_effect_free (LrgAbilityEffect *self);        /* NULL-safe */
+#+end_src
+=lrg_ability_effect_new()= zeroes every number except =max_targets= (1). Strings in the struct are owned by the effect: replace them with =g_free= + =g_strdup=.
+
+** LrgAbilityDef properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property            | Type                  | Default   | Meaning                                                   |
+|---------------------+-----------------------+-----------+-----------------------------------------------------------|
+| =id=                | string                | —         | Unique id (construct-only)                                |
+| =name=              | string                | NULL      | Display name                                              |
+| =description=       | string                | NULL      | Tooltip text                                              |
+| =icon=              | string                | NULL      | Icon key                                                  |
+| =class-id=          | string                | NULL      | Owning class; NULL = any class                            |
+| =min-level=         | guint                 | 1         | Level required to learn                                   |
+| =rank=              | guint (≥1)            | 1         | Rank of this ability                                      |
+| =resource=          | string                | NULL      | Resource spent, e.g. "mana", "rage", "energy"             |
+| =cost=              | guint                 | 0         | Resource cost                                             |
+| =cooldown=          | gdouble (0..86400)    | 0         | Own cooldown in seconds                                   |
+| =category=          | string                | NULL      | Shared cooldown category (e.g. "potion")                  |
+| =category-cooldown= | gdouble (0..86400)    | 0         | Seconds the category locks after use                      |
+| =triggers-gcd=      | gboolean              | TRUE      | Starts and respects the global cooldown                   |
+| =cast-time=         | gdouble (0..86400)    | 0         | Cast/channel time, 0 = instant                            |
+| =channel=           | gboolean              | FALSE     | The cast time is a channel                                |
+| =range=             | gdouble (0..1e6)      | 0         | Maximum range; 0 = self/melee                             |
+| =passive=           | gboolean              | FALSE     | Always-on ability                                         |
+| =learn-source=      | LrgAbilityLearnSource | TRAINER   | AUTO, TRAINER, QUEST, TALENT or ITEM                      |
+| =trainer-cost=      | guint                 | 0         | Trainer price                                             |
+| =required-spec=     | string                | NULL      | Talent tree id that must be the primary spec              |
+| =required-talent=   | string                | NULL      | Talent node id that grants the ability                    |
+| =replaces=          | string                | NULL      | Lower-rank ability this rank upgrades                     |
+| =target=            | string                | NULL      | "enemy", "ally", "self", "ground", ...                    |
+
+Every property has a =lrg_ability_def_get_<name>()= / =lrg_ability_def_set_<name>()= pair (dashes become underscores; =id= has only a getter), for example:
+
+#+begin_src C
+const gchar *lrg_ability_def_get_class_id (LrgAbilityDef *self);
+void         lrg_ability_def_set_class_id (LrgAbilityDef *self, const gchar *class_id);
+gdouble      lrg_ability_def_get_cooldown (LrgAbilityDef *self);
+void         lrg_ability_def_set_cooldown (LrgAbilityDef *self, gdouble cooldown);
+LrgAbilityLearnSource lrg_ability_def_get_learn_source (LrgAbilityDef *self);
+void         lrg_ability_def_set_learn_source (LrgAbilityDef *self, LrgAbilityLearnSource source);
+#+end_src
+
+Setters notify only when the value changes. Double setters reject NaN, infinity and out-of-range values with a critical; =set_rank (0)= and an unknown learn source are criticals too. All fields are GObject properties, so =LrgDataLoader= can build definitions from YAML.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_ability_def_new()
+#+begin_src C
+LrgAbilityDef *lrg_ability_def_new (const gchar *id);
+#+end_src
+*Returns:* (transfer full) a definition with the defaults above. =id= must be non-empty. Subclasses use =g_object_new (MY_TYPE, "id", id, NULL)=.
+
+** Tags and effects
+:PROPERTIES:
+:CUSTOM_ID: tags-effects
+:END:
+#+begin_src C
+void       lrg_ability_def_add_tag     (LrgAbilityDef *self, const gchar *tag);
+gboolean   lrg_ability_def_has_tag     (LrgAbilityDef *self, const gchar *tag);
+GPtrArray *lrg_ability_def_get_tags    (LrgAbilityDef *self);  /* (transfer none) (element-type utf8) */
+void       lrg_ability_def_add_effect  (LrgAbilityDef *self, LrgAbilityEffect *effect /* transfer full */);
+GPtrArray *lrg_ability_def_get_effects (LrgAbilityDef *self);  /* (transfer none) (element-type LrgAbilityEffect) */
+#+end_src
+Tags keep insertion order and ignore duplicates (empty tags are criticals); =has_tag (NULL)= is =FALSE=. Effects keep insertion order and are owned by the definition.
+
+** Checks
+:PROPERTIES:
+:CUSTOM_ID: checks
+:END:
+*** lrg_ability_def_is_eligible()
+#+begin_src C
+gboolean lrg_ability_def_is_eligible (LrgAbilityDef *self,
+                                      const gchar   *class_id,
+                                      guint          level,
+                                      const gchar   *spec_id);
+#+end_src
+Pure learnability check, no virtual method: the definition's =class-id= is =NULL= or equals =class_id= (a =NULL= caller class only matches class-less abilities), =level >= min-level=, and =required-spec= is =NULL= or equals =spec_id=. =required-talent= is not checked here: talent-granted abilities come from =lrg_talent_loadout_get_granted_abilities()=.
+
+*** lrg_ability_def_can_use()
+#+begin_src C
+gboolean lrg_ability_def_can_use (LrgAbilityDef *self, gpointer caster, GError **error);
+#+end_src
+Calls the =can_use= class virtual method (default: =TRUE=). Override it for game rules such as forms, stances, reagents or line of sight, and report failures with =LRG_PROGRESSION_ERROR= codes (typically =REQUIREMENT= or =NOT_READY=).
+
+** Subclassing
+:PROPERTIES:
+:CUSTOM_ID: subclassing
+:END:
+#+begin_src C
+G_DECLARE_FINAL_TYPE (MyStanceAbility, my_stance_ability, MY, STANCE_ABILITY, LrgAbilityDef)
+
+static gboolean
+my_stance_ability_can_use (LrgAbilityDef *def, gpointer caster, GError **error)
+{
+    if (!my_player_in_stance (caster, "battle"))
+    {
+        g_set_error_literal (error, LRG_PROGRESSION_ERROR, LRG_PROGRESSION_ERROR_REQUIREMENT,
+                             "requires Battle Stance");
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static void
+my_stance_ability_class_init (MyStanceAbilityClass *klass)
+{
+    LRG_ABILITY_DEF_CLASS (klass)->can_use = my_stance_ability_can_use;
+}
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgAbilityDef) corruption = lrg_ability_def_new ("corruption_r2");
+LrgAbilityEffect *dot;
+
+g_object_set (corruption,
+              "name", "Corruption",
+              "class-id", "warlock",
+              "min-level", 14,
+              "rank", 2,
+              "replaces", "corruption_r1",
+              "resource", "mana",
+              "cost", 55,
+              "cast-time", 2.0,
+              "range", 30.0,
+              "target", "enemy",
+              "trainer-cost", 300,
+              NULL);
+lrg_ability_def_add_tag (corruption, "shadow");
+
+dot = lrg_ability_effect_new ("dot");
+dot->aura_id = g_strdup ("corruption");
+dot->amount = 108.0;
+dot->duration = 18.0;
+dot->period = 3.0;
+lrg_ability_def_add_effect (corruption, dot);
+
+g_assert_true (lrg_ability_def_is_eligible (corruption, "warlock", 14, NULL));
+#+end_src

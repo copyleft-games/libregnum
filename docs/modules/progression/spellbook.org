@@ -1,0 +1,157 @@
+* LrgSpellbook - Known Abilities and Action Bar
+:PROPERTIES:
+:CUSTOM_ID: lrgspellbook
+:END:
+A character's known ability ids plus an action bar of up to 48 slots. The spellbook stores ids only; it looks definitions up in the arrays the caller passes to the learning helpers, so content can be reloaded without touching player state.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject class* - =LRG_TYPE_SPELLBOOK=, GIR =Libregnum.Spellbook=
+- Header: =progression/lrg-spellbook.h=
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant                         | Value     | Meaning                                  |
+|----------------------------------+-----------+------------------------------------------|
+| =LRG_SPELLBOOK_MAX_KNOWN=        | 512       | Most known abilities                     |
+| =LRG_SPELLBOOK_DEFAULT_BAR_SIZE= | 12        | Bar size of a new spellbook              |
+| =LRG_SPELLBOOK_MAX_BAR_SIZE=     | 48        | Largest bar                              |
+| =LRG_SPELLBOOK_VARIANT_TYPE=     | "(asuas)" | Persistence type string                  |
+
+Ability ids must be 1 to 128 bytes of valid UTF-8.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_spellbook_new()
+#+begin_src C
+LrgSpellbook *lrg_spellbook_new (void);
+#+end_src
+*Returns:* (transfer full) an empty spellbook with a 12-slot bar.
+
+** Known abilities
+:PROPERTIES:
+:CUSTOM_ID: known
+:END:
+*** lrg_spellbook_learn()
+#+begin_src C
+gboolean lrg_spellbook_learn (LrgSpellbook *self, const gchar *ability_id, GError **error);
+#+end_src
+Adds an ability.
+
+*Errors:* =INVALID= for a =NULL=, empty, overlong or non-UTF-8 id; =DUPLICATE= when already known; =LIMIT= when 512 abilities are known. Nothing changes on error.
+
+*** lrg_spellbook_forget()
+#+begin_src C
+gboolean lrg_spellbook_forget (LrgSpellbook *self, const gchar *ability_id);
+#+end_src
+Removes an ability and clears every bar slot bound to it. *Returns:* =TRUE= if it was known.
+
+*** lrg_spellbook_knows() / lrg_spellbook_get_known_count()
+#+begin_src C
+gboolean lrg_spellbook_knows           (LrgSpellbook *self, const gchar *ability_id);  /* NULL -> FALSE */
+guint    lrg_spellbook_get_known_count (LrgSpellbook *self);
+#+end_src
+
+*** lrg_spellbook_get_known()
+#+begin_src C
+GPtrArray *lrg_spellbook_get_known (LrgSpellbook *self);
+#+end_src
+*Returns:* (transfer container) (element-type utf8) the known ids sorted with =g_strcmp0()=. Free the array with =g_ptr_array_unref()=; the strings belong to the spellbook and stay valid until the ability is forgotten.
+
+** Learning from definitions
+:PROPERTIES:
+:CUSTOM_ID: learning
+:END:
+*** lrg_spellbook_get_learnable()
+#+begin_src C
+GPtrArray *lrg_spellbook_get_learnable (LrgSpellbook          *self,
+                                        GPtrArray             *defs,
+                                        const gchar           *class_id,
+                                        guint                  level,
+                                        const gchar           *spec_id,
+                                        LrgAbilityLearnSource  source);
+#+end_src
+Filters =defs= (element-type =LrgAbilityDef=) to definitions that are eligible (=lrg_ability_def_is_eligible()=), not yet known and learned from =source=. Passive abilities are included. When several definitions share an id, the first one is offered.
+
+*Returns:* (transfer container) (element-type LrgAbilityDef) the matches sorted by (=min-level=, =id=). The definitions are not referenced; keep =defs= alive while using the result. Use it to build a trainer window (=LRG_ABILITY_LEARN_SOURCE_TRAINER=), then charge =trainer-cost= and call =lrg_spellbook_learn()= on the server.
+
+*** lrg_spellbook_learn_automatic()
+#+begin_src C
+guint lrg_spellbook_learn_automatic (LrgSpellbook *self,
+                                     GPtrArray    *defs,
+                                     const gchar  *class_id,
+                                     guint         level,
+                                     const gchar  *spec_id);
+#+end_src
+Learns every eligible unknown =LRG_ABILITY_LEARN_SOURCE_AUTO= definition in (min-level, id) order. Call it at character creation, on level-up and after a spec change. Lower ranks are kept and nothing is re-bound. *Returns:* how many abilities were learned.
+
+** Action bar
+:PROPERTIES:
+:CUSTOM_ID: bar
+:END:
+*** lrg_spellbook_get_bar_size() / lrg_spellbook_set_bar_size()
+#+begin_src C
+guint    lrg_spellbook_get_bar_size (LrgSpellbook *self);
+gboolean lrg_spellbook_set_bar_size (LrgSpellbook *self, guint size, GError **error);
+#+end_src
+Growing adds empty slots; shrinking drops the trailing slots and their bindings (they stay empty if the bar grows again).
+
+*Errors:* =INVALID= when =size= is outside 1..48 (bar unchanged).
+
+*** lrg_spellbook_bind()
+#+begin_src C
+gboolean lrg_spellbook_bind (LrgSpellbook *self, guint slot, const gchar *ability_id, GError **error);
+#+end_src
+Binds a zero-based slot to a known ability, or clears it when =ability_id= is =NULL=. The same ability may sit in several slots.
+
+*Errors:* =INVALID= for a slot past the bar; =NOT_FOUND= when the ability is not known. The bar is unchanged on error.
+
+*** lrg_spellbook_get_binding()
+#+begin_src C
+const gchar *lrg_spellbook_get_binding (LrgSpellbook *self, guint slot);
+#+end_src
+*Returns:* (transfer none) (nullable) the bound id, or =NULL= for an empty or out-of-range slot.
+
+** Persistence
+:PROPERTIES:
+:CUSTOM_ID: persistence
+:END:
+#+begin_src C
+GVariant     *lrg_spellbook_to_variant       (LrgSpellbook *self);                  /* (transfer full), non-floating */
+LrgSpellbook *lrg_spellbook_new_from_variant (GVariant *variant, GError **error);   /* (transfer full) (nullable) */
+#+end_src
+Type =(asuas)=: the known ids sorted, the bar size, and exactly bar-size slot strings ("" for an empty slot).
+
+=new_from_variant= fails with =INVALID= (returning =NULL= and leaking nothing) for a different type string, a non-normal variant (including invalid UTF-8), more than 512 known ids, empty/overlong ids, duplicate ids, a bar size outside 1..48, a slot count different from the bar size, or a slot naming an id that is not known. Known ids may arrive unsorted. A round trip reproduces the identical variant.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgSpellbook) book = lrg_spellbook_new ();
+g_autoptr(GPtrArray) offers = NULL;
+g_autoptr(GError) error = NULL;
+guint i;
+
+lrg_spellbook_learn_automatic (book, class_abilities, "mage", 10, NULL);
+
+offers = lrg_spellbook_get_learnable (book, class_abilities, "mage", 10, NULL,
+                                      LRG_ABILITY_LEARN_SOURCE_TRAINER);
+for (i = 0; i < offers->len; i++)
+{
+    LrgAbilityDef *def = g_ptr_array_index (offers, i);
+
+    g_print ("%s (%u copper)\n", lrg_ability_def_get_id (def),
+             lrg_ability_def_get_trainer_cost (def));
+}
+
+if (!lrg_spellbook_bind (book, 0, "fireball", &error))
+    g_warning ("%s", error->message);
+#+end_src

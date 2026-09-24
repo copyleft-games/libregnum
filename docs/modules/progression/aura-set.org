@@ -1,0 +1,161 @@
+* LrgAuraSet - Auras on One Entity
+:PROPERTIES:
+:CUSTOM_ID: lrgauraset
+:END:
+The ordered buffs and debuffs on one entity. The set copies auras in, stacks and refreshes repeated applications, advances timers, emits a signal for every periodic tick, expiry and removal, dispels oldest first, and sums aura magnitudes per stat.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject class* - =LRG_TYPE_AURA_SET=, GIR =Libregnum.AuraSet=
+- Header: =progression/lrg-aura-set.h=
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant                          | Value                  | Meaning                                         |
+|-----------------------------------+------------------------+-------------------------------------------------|
+| =LRG_AURA_SET_MAX_CAPACITY=       | 256                    | Largest capacity                                |
+| =LRG_AURA_SET_DEFAULT_CAPACITY=   | 32                     | Default capacity                                |
+| =LRG_AURA_SET_MAX_TICKS_PER_CALL= | 100                    | Most =aura-ticked= emissions per aura per tick  |
+| =LRG_AURA_SET_VARIANT_TYPE=       | "(ua(suussddddduu))"   | Persistence type string                         |
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property   | Type  | Range  | Default | Meaning                                                      |
+|------------+-------+--------+---------+--------------------------------------------------------------|
+| =capacity= | guint | 1..256 | 32      | Most simultaneous auras (construct; may not drop below count) |
+
+#+begin_src C
+guint lrg_aura_set_get_capacity (LrgAuraSet *self);
+void  lrg_aura_set_set_capacity (LrgAuraSet *self, guint capacity);
+#+end_src
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+All three pass the aura as =LRG_TYPE_AURA | G_SIGNAL_TYPE_STATIC_SCOPE= (a pointer, not a copy; do not keep it after the handler returns).
+
+| Signal         | Emitted                                                                                   | Aura state during emission         |
+|----------------+-------------------------------------------------------------------------------------------+------------------------------------|
+| =aura-ticked=  | Once per elapsed period of a periodic aura (at most 100 per aura per =tick= call)         | In the set                         |
+| =aura-expired= | When a timed aura's duration runs out, before it is removed; not followed by =aura-removed= | Still in the set (=get= finds it)  |
+| =aura-removed= | For =remove=, =remove_all_by_id=, =dispel= and =clear=                                    | Already detached from the set      |
+
+Handlers may apply or remove auras, including the one being reported. Removed auras stay allocated until the outermost emission finishes, so the pointer a handler receives never dangles; an aura removed by a handler during =tick= is skipped for the rest of that tick (no further ticks, no expiry).
+
+#+begin_src C
+static void
+on_ticked (LrgAuraSet *set, LrgAura *aura, gpointer user_data)
+{
+    if (g_strcmp0 (aura->stat, "dot") == 0)
+        my_deal_damage (user_data, aura->source, lrg_aura_get_total (aura));
+}
+#+end_src
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+#+begin_src C
+LrgAuraSet *lrg_aura_set_new (guint capacity);   /* (transfer full); capacity 1..256 */
+#+end_src
+
+** Applying
+:PROPERTIES:
+:CUSTOM_ID: applying
+:END:
+*** lrg_aura_set_apply()
+#+begin_src C
+LrgAuraApplyResult lrg_aura_set_apply (LrgAuraSet *self, const LrgAura *aura);
+#+end_src
+Applies a copy of =aura=; the incoming =remaining= and =tick_left= are ignored.
+
+- *New (id, source)*: added at the end with =remaining = duration= and =tick_left = period=. → =ADDED=, or =REJECTED= when the set is full.
+- *Existing (id, source)*: =stacks = MIN(stacks + 1, max_stacks)=; the aura takes the incoming =kind=, =dispel=, =stat=, =magnitude=, =duration=, =period= and =max_stacks=; =remaining= is reset to the duration; =tick_left= is kept (clamped to the new period, and reset to it when the aura had no period). → =STACKED= when the stack count grew, otherwise =REFRESHED=.
+- *Invalid aura* (see =lrg_aura_is_valid()=): nothing changes. → =REJECTED=.
+
+** Removing
+:PROPERTIES:
+:CUSTOM_ID: removing
+:END:
+#+begin_src C
+gboolean lrg_aura_set_remove           (LrgAuraSet *self, const gchar *id, guint source);
+guint    lrg_aura_set_remove_all_by_id (LrgAuraSet *self, const gchar *id);
+guint    lrg_aura_set_dispel           (LrgAuraSet *self, LrgAuraKind kind,
+                                        const gchar *dispel, guint max_count);
+void     lrg_aura_set_clear            (LrgAuraSet *self);
+#+end_src
+- =remove= removes one aura. *Returns:* whether it was present.
+- =remove_all_by_id= removes =id= from every source. *Returns:* the count.
+- =dispel= removes up to =max_count= auras of =kind= in application order (oldest first) whose dispel type equals =dispel=, or, when =dispel= is =NULL=, any dispellable aura of that kind. Auras with a =NULL= dispel type are never dispelled; =max_count= 0 removes nothing. *Returns:* the count.
+- =clear= removes everything, emitting =aura-removed= for each aura in order.
+
+** Queries
+:PROPERTIES:
+:CUSTOM_ID: queries
+:END:
+#+begin_src C
+LrgAura   *lrg_aura_set_get       (LrgAuraSet *self, const gchar *id, guint source); /* (transfer none) (nullable) */
+gboolean   lrg_aura_set_has       (LrgAuraSet *self, const gchar *id);               /* any source */
+GPtrArray *lrg_aura_set_get_all   (LrgAuraSet *self);  /* (transfer none) (element-type LrgAura), application order */
+guint      lrg_aura_set_get_count (LrgAuraSet *self);
+gdouble    lrg_aura_set_sum_stat  (LrgAuraSet *self, const gchar *stat);
+#+end_src
+Pointers from =get= and =get_all= stay valid until the aura is removed; do not modify the array. =sum_stat= adds =magnitude × stacks= over auras whose =stat= equals =stat= (0 for =NULL=).
+
+** Time
+:PROPERTIES:
+:CUSTOM_ID: time
+:END:
+*** lrg_aura_set_tick()
+#+begin_src C
+void lrg_aura_set_tick (LrgAuraSet *self, gdouble delta);
+#+end_src
+Advances every aura in application order. For each aura:
+
+1. Periodic ticks: =tick_left= decreases by =delta= (by at most the aura's =remaining= for timed auras, so no tick happens after expiry). Each elapsed period emits =aura-ticked=; more than 100 in one call are dropped and =tick_left= resets to one period. A tick that coincides with expiry still fires (a 10 s aura with a 2 s period ticks 5 times).
+2. Expiry: a timed aura whose =remaining= reaches 0 emits =aura-expired= and is removed.
+
+NaN, infinite, zero and negative deltas are ignored. Permanent auras (=duration= 0) never expire.
+
+** Persistence
+:PROPERTIES:
+:CUSTOM_ID: persistence
+:END:
+#+begin_src C
+GVariant   *lrg_aura_set_to_variant       (LrgAuraSet *self);                   /* (transfer full), non-floating */
+LrgAuraSet *lrg_aura_set_new_from_variant (GVariant *variant, GError **error);  /* (transfer full) (nullable) */
+#+end_src
+Type =(ua(suussddddduu))=: the capacity, then every aura in application order as (=id=, =source=, =kind=, =dispel= or "", =stat= or "", =magnitude=, =duration=, =remaining=, =period=, =tick_left=, =stacks=, =max_stacks=).
+
+=new_from_variant= fails with =INVALID= for another type string, a non-normal variant, a capacity outside 1..256, more auras than the capacity, an unknown kind, any aura failing =lrg_aura_is_valid()= (NaN/inf numbers, durations or periods outside 0..86400, remaining above duration, tick_left above period, stacks outside 1..max_stacks, max_stacks above 999, empty/overlong/non-UTF-8 strings), or a repeated (id, source). A round trip reproduces the identical variant. Restoring emits no signals.
+
+Many games drop short auras on logout and persist only long buffs; filter the set before serialising if so.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgAuraSet) auras = lrg_aura_set_new (32);
+g_autoptr(LrgAura) sunder = lrg_aura_new ("sunder_armor", LRG_AURA_KIND_DEBUFF, 30.0);
+
+g_signal_connect (auras, "aura-ticked", G_CALLBACK (on_ticked), world);
+
+sunder->source = warrior_id;
+sunder->stat = g_strdup ("armor");
+sunder->magnitude = -90.0;
+sunder->max_stacks = 5;
+
+lrg_aura_set_apply (auras, sunder);   /* ADDED */
+lrg_aura_set_apply (auras, sunder);   /* STACKED: 2 stacks, -180 armor */
+
+armor = base_armor + lrg_aura_set_sum_stat (auras, "armor");
+lrg_aura_set_tick (auras, 0.05);
+#+end_src

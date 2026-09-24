@@ -1,0 +1,144 @@
+* LrgTalentBook - Dual / Multi Spec
+:PROPERTIES:
+:CUSTOM_ID: lrgtalentbook
+:END:
+A character's set of [[file:talent-loadout.org][talent loadouts]]: a fixed capacity of slots (2 for classic dual spec, up to 8), how many are unlocked, which one is active, and a respec counter the game can use to price respecs. Every book starts with one unlocked, empty, active loadout.
+
+On the server the book is the unit of persistence for talents: store =lrg_talent_book_to_variant()= in the character's =LrgMmoStore= record, restore with =lrg_talent_book_new_from_variant()=, re-apply the point rules and run =lrg_talent_book_validate()=. Clients only receive projections (active index, spent ranks, granted abilities).
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+- *Final GObject class* - =LRG_TYPE_TALENT_BOOK=, GIR =Libregnum.TalentBook=
+- Variant type =LRG_TALENT_BOOK_VARIANT_TYPE= = ="(suuuav)"=
+- =LRG_TALENT_BOOK_DEFAULT_CAPACITY= = 2, =LRG_TALENT_BOOK_MAX_CAPACITY= = 8
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property       | Type   | Flags               | Default | Meaning                       |
+|----------------+--------+---------------------+---------+-------------------------------|
+| =class-id=     | string | construct-only      | -       | Class of every loadout        |
+| =capacity=     | guint  | construct-only 1..8 | 2       | Maximum loadouts              |
+| =unlocked=     | guint  | read-only           | 1       | Unlocked loadouts             |
+| =active-index= | guint  | read-only           | 0       | Active loadout                |
+| =respec-count= | guint  | read/write          | 0       | Recorded respecs              |
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: construction
+:END:
+*** lrg_talent_book_new()
+#+begin_src C
+LrgTalentBook *lrg_talent_book_new (const gchar *class_id, guint capacity);
+#+end_src
+=capacity= must be 1..8 (programmer error otherwise). *Returns:* transfer full, with one unlocked empty active loadout.
+
+** Slots
+:PROPERTIES:
+:CUSTOM_ID: slots
+:END:
+*** lrg_talent_book_get_capacity() / get_unlocked() / get_class_id()
+#+begin_src C
+guint        lrg_talent_book_get_capacity (LrgTalentBook *self);
+guint        lrg_talent_book_get_unlocked (LrgTalentBook *self);
+const gchar *lrg_talent_book_get_class_id (LrgTalentBook *self);
+#+end_src
+
+*** lrg_talent_book_unlock()
+#+begin_src C
+gboolean lrg_talent_book_unlock (LrgTalentBook *self, GError **error);
+#+end_src
+Appends an empty loadout using the book's point rules. *Errors:* =LIMIT= when every slot is unlocked (state unchanged).
+
+*** lrg_talent_book_set_active()
+#+begin_src C
+gboolean lrg_talent_book_set_active (LrgTalentBook *self, guint index, GError **error);
+#+end_src
+Switches the active loadout. Setting the current index is a successful no-op. *Errors:* =INVALID= when =index >= capacity=, =REQUIREMENT= when the slot is locked (state unchanged). After a switch, recompute granted abilities and effects from the new active loadout.
+
+*** lrg_talent_book_get_active_index() / get_active() / get_loadout()
+#+begin_src C
+guint             lrg_talent_book_get_active_index (LrgTalentBook *self);
+LrgTalentLoadout *lrg_talent_book_get_active       (LrgTalentBook *self);           /* transfer none */
+LrgTalentLoadout *lrg_talent_book_get_loadout      (LrgTalentBook *self, guint i);  /* transfer none, NULL if locked */
+#+end_src
+
+** Respecs and rules
+:PROPERTIES:
+:CUSTOM_ID: respecs-and-rules
+:END:
+*** lrg_talent_book_record_respec() / get_respec_count() / set_respec_count()
+#+begin_src C
+void  lrg_talent_book_record_respec    (LrgTalentBook *self);  /* saturating +1 */
+guint lrg_talent_book_get_respec_count (LrgTalentBook *self);
+void  lrg_talent_book_set_respec_count (LrgTalentBook *self, guint count);
+#+end_src
+The book only counts; a respec is =lrg_talent_loadout_reset()= on the loadout plus =record_respec()=, with the price computed and charged by the game (for example escalating with the count and decaying over time via =set_respec_count()=).
+
+*** lrg_talent_book_set_point_rules()
+#+begin_src C
+void lrg_talent_book_set_point_rules (LrgTalentBook *self, guint first_level, guint points_per_level);
+#+end_src
+Applies =first-level= (>= 1) and =points-per-level= (0..100) to every loadout, including ones unlocked later. Not persisted.
+
+*** lrg_talent_book_validate()
+#+begin_src C
+gboolean lrg_talent_book_validate (LrgTalentBook *self, GHashTable *trees, guint level, GError **error);
+#+end_src
+Runs =lrg_talent_loadout_validate()= on every unlocked loadout; the error (same domain and code as the loadout's) is prefixed with "Talent loadout N: ".
+
+** Persistence
+:PROPERTIES:
+:CUSTOM_ID: persistence
+:END:
+*** lrg_talent_book_to_variant()
+#+begin_src C
+GVariant *lrg_talent_book_to_variant (LrgTalentBook *self);
+#+end_src
+=(suuuav)= = (class id, unlocked, active index, respec count, one boxed =(smsa(ssu))= loadout per unlocked slot). Capacity is a game rule and is not stored. *Returns:* transfer full, non-floating.
+
+*** lrg_talent_book_new_from_variant()
+#+begin_src C
+LrgTalentBook *lrg_talent_book_new_from_variant (GVariant *variant, GError **error);
+#+end_src
+Restores with capacity =MAX (2, unlocked)= (bounded by 8). Otherwise identical to =_full=.
+
+*** lrg_talent_book_new_from_variant_full()
+#+begin_src C
+LrgTalentBook *lrg_talent_book_new_from_variant_full (GVariant *variant, guint capacity, GError **error);
+#+end_src
+Restores with an explicit capacity (1..8). Returns =NULL= with =LRG_PROGRESSION_ERROR_INVALID= and no leaks for: another type string, non-normal form, an invalid class id, =unlocked= outside 1..capacity, =active >= unlocked=, a loadout count different from =unlocked=, an inner variant of another type or rejected by =lrg_talent_loadout_new_from_variant()= (message prefixed "Talent book loadout N: "), or a loadout of another class.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgTalentBook) book = lrg_talent_book_new ("warrior", 2);
+g_autoptr(GVariant) snapshot = NULL;
+g_autoptr(LrgTalentBook) restored = NULL;
+g_autoptr(GPtrArray) abilities = NULL;
+
+/* Buy dual spec at level 40 */
+if (!lrg_talent_book_unlock (book, &error))
+    g_warning ("%s", error->message);
+
+/* Build the second spec and swap to it */
+lrg_talent_book_set_active (book, 1, NULL);
+lrg_talent_loadout_set_spec (lrg_talent_book_get_active (book), "protection");
+lrg_talent_loadout_spend (lrg_talent_book_get_active (book), protection_tree,
+                          "toughness", level, &error);
+abilities = lrg_talent_loadout_get_granted_abilities (lrg_talent_book_get_active (book), trees);
+
+/* Persist and restore */
+snapshot = lrg_talent_book_to_variant (book);
+restored = lrg_talent_book_new_from_variant (snapshot, &error);
+if (restored != NULL)
+    lrg_talent_book_set_point_rules (restored, 10, 1);
+if (restored == NULL || !lrg_talent_book_validate (restored, trees, level, &error))
+    g_warning ("talent snapshot rejected: %s", error->message);
+#+end_src
