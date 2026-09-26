@@ -266,7 +266,7 @@ c_function_wrapper (lua_State *L)
     RegisteredCFunction *reg;
     GValue              *args = NULL;
     GValue               return_value = G_VALUE_INIT;
-    g_autoptr(GError)    error = NULL;
+    GError              *error = NULL;
     guint                n_args;
     guint                i;
     gboolean             success;
@@ -319,9 +319,18 @@ c_function_wrapper (lua_State *L)
 
     if (!success)
     {
-        const gchar *msg = error ? error->message : "Unknown error";
-        return luaL_error (L, "%s", msg);
+        /*
+         * lua_error() longjmps out of this frame, so nothing may be left
+         * to free when it runs: push the message (Lua copies it), release
+         * the error and any return value first, then raise.
+         */
+        lua_pushstring (L, error != NULL ? error->message : "Unknown error");
+        g_clear_error (&error);
+        if (G_IS_VALUE (&return_value))
+            g_value_unset (&return_value);
+        return lua_error (L);
     }
+    g_clear_error (&error);
 
     /* Push return value */
     if (G_IS_VALUE (&return_value))
