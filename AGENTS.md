@@ -570,6 +570,29 @@ Everything a plugin/addon host needs, driven through the generic API only:
   hosts. See `docs/modules/scripting/scripting-native.org` and
   `docs/modules/mod/`.
 
+### MMO Replication (`mmo/lrg-mmo-replicator.h`)
+
+`LrgMmoReplicator` sends each viewer the public entity state near it as
+`(ta(ttddday)at)` deltas against the baseline that viewer acknowledged.
+Full contract: `docs/modules/mmo/index.org` ("Replication contract and
+bounds", "Cost of a page").
+
+- `upsert()`/`remove()` publish; `build_page (viewer, zone, x, y, z, radius,
+  budget, &more)` returns removals first, then the viewer's focus entity
+  (`set_focus()`), then a round-robin by ID; the same pending page comes
+  back until `acknowledge (viewer, sequence)`; `forget()` on disconnect.
+- Cost: a page costs the visible set's scan plus the entities it carries.
+  Baselines are flat (ID, revision) tables; a pending page stores only its
+  own changes, so `acknowledge()` costs the page, not the visible set;
+  changes are heap-selected, never fully sorted; each entity's wire record
+  is serialized once per revision and shared by every page carrying it.
+  Building allocates nothing per visible entity.
+- `get_counters (&pages, &updates, &encodings)`: work done since creation;
+  `updates - encodings` records were shared. Useful as host metrics.
+- One thread owns a replicator. Pages are byte-for-byte what the original
+  implementation produced (`tests/test-mmo-replicator.c` keeps it as a
+  reference model and fuzzes both; its benchmark prints ms a cycle).
+
 ### Static World Collision and Model Rendering
 
 Generic building blocks for MMO-style worlds: a server-side collision world

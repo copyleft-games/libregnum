@@ -181,6 +181,8 @@ ahead of the rotation.  In a crowded area where every page fills with nearby
 changes, the rotation would otherwise hold the viewer's own movement back behind
 entities with lower IDs, and the avatar would visibly stall.  The focus sits outside
 the cursor, so the other entities still rotate fairly.  =forget()= clears it.
+Building a page costs the viewer's visible set scan plus what the page carries,
+and an acknowledgement only what the page carried; see [[file:index.org::*Cost of a page][cost of a page]].
 
 =LrgMmoReplica= validates complete deltas before changing state, enforcing unique
 IDs, advancing revisions, capacity, finite positions and stream identity. Exact

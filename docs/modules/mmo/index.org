@@ -161,6 +161,47 @@ Use =build_page()= to converge a large visible set within a byte budget, and
 =set_focus()= so the viewer's own avatar is sent first on every page.
 Pending deltas hold their own immutable payloads until acknowledged/forgotten.
 
+** Cost of a page
+
+A host with many viewers in one crowded place builds a page for each of them
+every cycle, so page building and acknowledgement are kept proportional to
+what a page carries, not to what a viewer can see:
+
+| Step | Cost |
+|------+------|
+| Interest query | the occupied cells within the radius (clamped to the cells ever used) and their occupants; a squared-distance test, =hypot()= only within rounding of the radius |
+| Baseline check | one probe of the viewer's flat (ID, revision) table per visible entity; no allocation |
+| Removals | found by stamping the baseline entries the query met; the table is scanned only when some were not met |
+| Choosing the page | changes sit in a binary heap by round-robin rank (ID minus cursor minus one, wrapping); only the entities the page takes are popped, then sorted by ID |
+| Wire records | each entity's =(ttddday)= record is built and serialized once per revision and shared by reference by every page carrying it |
+| Acknowledgement | applies the page's own removals and updates to the baseline; the page never copied the baseline |
+
+The pages are byte for byte those of the original implementation:
+=tests/test-mmo-replicator.c= keeps that implementation as a reference model
+and drives both through seeded random publishes, removals, pages, whole deltas,
+late, early and repeated acknowledgements, focus changes and forgotten viewers
+(=LRG_REPLICATOR_FUZZ_ROUNDS=N= runs more seeds). Its benchmark prints what a
+cycle of a crowded town costs (600 townsfolk, one 8 KiB page per walking viewer
+a cycle) with both; on a busy 24-thread development machine:
+
+| Viewers | Reference model ms a cycle | Replicator ms a cycle |
+|---------+----------------------------+-----------------------|
+|     256 |                       41.4 |                   5.1 |
+|     512 |                  132 - 232 |                  15.5 |
+
+Run it with =build/release/tests/test-mmo-replicator -m perf -p
+/mmo/replicator/benchmark= for 512 viewers.  The figures are printed, never
+asserted, and are no capacity claim.
+
+=lrg_mmo_replicator_get_counters()= reports pages built, updates carried and
+records encoded; =updates - encodings= records were shared. A host can publish
+them with its own timing of =build_page()= and =acknowledge()=.
+
+Memory: a baseline slot is 24 bytes and a table holds at most 8/5 of its
+entries rounded up to a power of two; an entity keeps its encoded record until
+it changes or is removed; the scratch arrays of the query belong to the
+replicator and grow to the largest visible set.
+
 GVariant is a data representation. =lrg_mmo_protocol_encode/decode()= provides a
 versioned envelope; the host must still specify opcode schemas, canonical little
 endian payloads and stream identity. On big-endian hosts use =g_variant_byteswap()= for

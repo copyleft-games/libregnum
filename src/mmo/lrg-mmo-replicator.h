@@ -171,4 +171,25 @@ GVariant *lrg_mmo_replicator_build_page (LrgMmoReplicator *self, guint64 viewer_
                                          gdouble x, gdouble y, gdouble z, gdouble radius,
                                          guint budget, gboolean *more, GError **error);
 
+/**
+ * lrg_mmo_replicator_get_counters:
+ * @self: the replicator
+ * @pages: (out) (optional): pages and deltas built since creation (a pending
+ *   page returned again is not counted)
+ * @updates: (out) (optional): entity updates placed on those pages
+ * @encodings: (out) (optional): entity wire records serialized for them
+ *
+ * Reports how much work page building did.  Each entity's update record is
+ * serialized once per revision and shared by every page that carries it, so
+ * @updates minus @encodings is the number of records reused instead of
+ * encoded again; a host may publish the ratio as a metric.  The counters
+ * only grow.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_mmo_replicator_get_counters (LrgMmoReplicator *self,
+                                 guint64          *pages,
+                                 guint64          *updates,
+                                 guint64          *encodings);
+
 G_END_DECLS
