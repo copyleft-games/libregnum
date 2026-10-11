@@ -122,6 +122,7 @@ struct _LrgOpenXRService
        Everything below @frame_lock is shared with the waiter. */
     GThread     *waiter;
     gint         frame_fd;
+    gfloat       resolution_scale; /* eye size / recommended, see setter */
     GMutex       frame_lock;
     GCond        frame_cond;
     gboolean     waiter_quit;
@@ -394,6 +395,21 @@ create_session (LrgOpenXRService  *self,
 
 /* -------------------------------------------------------------- swapchains - */
 
+/* The runtime's recommended eye size times @scale, within what it allows. */
+static guint32
+scaled_extent (guint32 recommended,
+               guint32 max,
+               gfloat  scale)
+{
+    gdouble want = (gdouble) recommended * (gdouble) scale;
+
+    if (want < 16.0)
+        want = 16.0;
+    if (max > 0 && want > (gdouble) max)
+        want = (gdouble) max;
+    return (guint32) (want + 0.5);
+}
+
 static gboolean
 create_swapchains (LrgOpenXRService  *self,
                    GError           **error)
@@ -441,8 +457,12 @@ create_swapchains (LrgOpenXRService  *self,
                        | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
         c.format = self->format;
         c.sampleCount = 1;
-        c.width = self->config[v].recommendedImageRectWidth;
-        c.height = self->config[v].recommendedImageRectHeight;
+        c.width = scaled_extent (self->config[v].recommendedImageRectWidth,
+                                 self->config[v].maxImageRectWidth,
+                                 self->resolution_scale);
+        c.height = scaled_extent (self->config[v].recommendedImageRectHeight,
+                                  self->config[v].maxImageRectHeight,
+                                  self->resolution_scale);
         c.faceCount = 1;
         c.arraySize = 1;
         c.mipCount = 1;
@@ -1625,6 +1645,43 @@ lrg_openxr_service_start_frame_thread (LrgOpenXRService *self)
 #endif
 }
 
+void
+lrg_openxr_service_set_resolution_scale (LrgOpenXRService *self,
+                                         gfloat            scale)
+{
+    g_return_if_fail (LRG_IS_OPENXR_SERVICE (self));
+    g_return_if_fail (scale > 0.0f);
+
+#ifdef LRG_HAS_OPENXR
+    self->resolution_scale = scale;
+#else
+    (void) scale;
+#endif
+}
+
+void
+lrg_openxr_service_get_eye_size (LrgOpenXRService *self,
+                                 guint            *width,
+                                 guint            *height)
+{
+    guint w = 0;
+    guint h = 0;
+
+    g_return_if_fail (LRG_IS_OPENXR_SERVICE (self));
+
+#ifdef LRG_HAS_OPENXR
+    if (self->view_count > 0)
+    {
+        w = self->views[0].width;
+        h = self->views[0].height;
+    }
+#endif
+    if (width != NULL)
+        *width = w;
+    if (height != NULL)
+        *height = h;
+}
+
 gint
 lrg_openxr_service_get_frame_fd (LrgOpenXRService *self)
 {
@@ -1791,6 +1848,7 @@ lrg_openxr_service_init (LrgOpenXRService *self)
     g_mutex_init (&self->frame_lock);
     g_cond_init (&self->frame_cond);
     self->frame_fd = -1;
+    self->resolution_scale = 1.0f;
 #else
     (void) self;
 #endif

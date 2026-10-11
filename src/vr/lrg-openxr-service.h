@@ -131,6 +131,41 @@ gchar * lrg_openxr_service_get_interaction_profile (LrgOpenXRService *self,
                                                     LrgVRHand         hand);
 
 /**
+ * lrg_openxr_service_set_resolution_scale:
+ * @self: a #LrgOpenXRService, not yet initialised
+ * @scale: eye image size relative to the runtime's recommendation
+ *
+ * Renders each eye at @scale times the recommended size, clamped to the
+ * runtime's maximum.  The recommendation already reflects the runtime's
+ * own render-resolution choice, which on a standalone headset is often
+ * well below the display's native resolution; text, whose detail is
+ * finer than anything else in a scene, loses most to that.  Takes effect
+ * when the swapchains are created, so call it before initialising.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_openxr_service_set_resolution_scale (LrgOpenXRService *self,
+                                              gfloat            scale);
+
+/**
+ * lrg_openxr_service_get_eye_size:
+ * @self: a #LrgOpenXRService
+ * @width: (out) (optional): eye image width in pixels
+ * @height: (out) (optional): eye image height in pixels
+ *
+ * The size each eye is actually rendered at -- the runtime's
+ * recommendation times the resolution scale, clamped -- or 0 x 0 before
+ * the swapchains exist.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_openxr_service_get_eye_size (LrgOpenXRService *self,
+                                      guint            *width,
+                                      guint            *height);
+
+/**
  * lrg_openxr_service_start_frame_thread:
  * @self: an initialised #LrgOpenXRService
  *

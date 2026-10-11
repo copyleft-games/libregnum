@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include <math.h>
+#include <stdlib.h>
 #include <graylib.h>
 #include "lrg-3d-surface.h"
 #include "lrg-2d-surface.h"
@@ -90,11 +91,12 @@ struct _Lrg3DSurface
 	   offscreen framebuffer instead of the window's, so the window can be
 	   hidden -- a host compositor (gamescope, under SteamVR) otherwise shows
 	   it as a separate flat "desktop game" in front of the scene. */
-	guint       content_fbo;
-	guint       content_tex;
+	GrlRenderTexture *content_rt;
 	gint        content_w;
 	gint        content_h;
 	gboolean    content_bound;
+	gint        offscreen_w;       /* VR frame size, 0 = the window's */
+	gint        offscreen_h;
 	GrlImage   *last_content;      /* VR: the last captured flat frame */
 	GrlColor    clear_color;       /* last clear(): repeated on the target */
 	gboolean    have_clear;
@@ -291,10 +293,21 @@ lrg_3d_surface_begin_frame (LrgFrameSurface *surface)
 
 	/* Mirror the content surface's (possibly resized) geometry onto ourselves
 	   so the arrangement/capture use the right dimensions. */
-	lrg_frame_surface_set_geometry (surface,
-									lrg_frame_surface_get_width (content),
-									lrg_frame_surface_get_height (content),
-									lrg_frame_surface_get_scale (content));
+	if (self->vr != NULL && self->offscreen_w > 0 && self->offscreen_h > 0)
+	{
+		/* VR draws off screen: the frame is the panel's size, not the
+		   (hidden, display-clamped) window's.  The content surface clips and
+		   draws in the same coordinates, so it gets the size too. */
+		lrg_frame_surface_set_geometry (content, self->offscreen_w,
+		                                self->offscreen_h, 1.0f);
+		lrg_frame_surface_set_geometry (surface, self->offscreen_w,
+		                                self->offscreen_h, 1.0f);
+	}
+	else
+		lrg_frame_surface_set_geometry (surface,
+										lrg_frame_surface_get_width (content),
+										lrg_frame_surface_get_height (content),
+										lrg_frame_surface_get_scale (content));
 
 	/* On a geometry change (window resize), re-fit the panels.  Without this the
 	   panels keep their old world size while the window grows -- the scene shows
@@ -342,15 +355,17 @@ lrg_3d_surface_end_frame (LrgFrameSurface *surface)
 static void
 content_target_free (Lrg3DSurface *self)
 {
-	if (self->content_fbo != 0)
-		rlUnloadFramebuffer (self->content_fbo);   /* and its depth buffer */
-	if (self->content_tex != 0)
-		rlUnloadTexture (self->content_tex);
-	self->content_fbo = self->content_tex = 0;
+	g_clear_object (&self->content_rt);
 	self->content_w = self->content_h = 0;
 }
 
-/* Bind the VR content target, (re)creating it at the frame's size. */
+/* Bind the VR content target, (re)creating it at the frame's size.  It is a
+   raylib render texture, not a bare framebuffer, because raylib's texture
+   mode is what tells the rest of raylib the target's size: the 2D
+   surface's clip rectangles are scissors, and BeginScissorMode flips their
+   y against that size.  The target may be larger than the window -- in VR
+   the frame size is the panel's, and the hidden window is clamped to the
+   host display (gamescope's is 1280x720). */
 static void
 content_target_bind (Lrg3DSurface *self)
 {
@@ -359,34 +374,18 @@ content_target_bind (Lrg3DSurface *self)
 
 	if (w <= 0 || h <= 0)
 		return;
-	if (self->content_fbo != 0 && (w != self->content_w || h != self->content_h))
+	if (self->content_rt != NULL && (w != self->content_w || h != self->content_h))
 		content_target_free (self);
-	if (self->content_fbo == 0)
+	if (self->content_rt == NULL)
 	{
-		guint fbo = rlLoadFramebuffer ();
-		guint tex = rlLoadTexture (NULL, w, h,
-		                           RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
-		guint depth = rlLoadTextureDepth (w, h, true);
-
-		rlFramebufferAttach (fbo, tex, RL_ATTACHMENT_COLOR_CHANNEL0,
-		                     RL_ATTACHMENT_TEXTURE2D, 0);
-		rlFramebufferAttach (fbo, depth, RL_ATTACHMENT_DEPTH,
-		                     RL_ATTACHMENT_RENDERBUFFER, 0);
-		if (!rlFramebufferComplete (fbo))
-		{
-			rlUnloadFramebuffer (fbo);
-			rlUnloadTexture (tex);
+		self->content_rt = grl_render_texture_new (w, h);
+		if (self->content_rt == NULL)
 			return;   /* fall back to the window's framebuffer */
-		}
-		self->content_fbo = fbo;
-		self->content_tex = tex;
 		self->content_w = w;
 		self->content_h = h;
 	}
 
-	rlDrawRenderBatchActive ();
-	rlEnableFramebuffer (self->content_fbo);
-	rlViewport (0, 0, w, h);
+	grl_render_texture_begin (self->content_rt);
 	self->content_bound = TRUE;
 	if (self->have_clear)
 		rlClearColor (self->clear_color.r, self->clear_color.g,
@@ -401,9 +400,32 @@ content_target_unbind (Lrg3DSurface *self)
 {
 	if (!self->content_bound)
 		return;
-	rlDrawRenderBatchActive ();
-	rlDisableFramebuffer ();
+	grl_render_texture_end (self->content_rt);
 	self->content_bound = FALSE;
+}
+
+void
+lrg_3d_surface_set_offscreen_size (Lrg3DSurface *self,
+                                   gint          width,
+                                   gint          height)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+
+	self->offscreen_w = MAX (width, 0);
+	self->offscreen_h = MAX (height, 0);
+}
+
+void
+lrg_3d_surface_get_offscreen_size (Lrg3DSurface *self,
+                                   gint         *width,
+                                   gint         *height)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+
+	if (width != NULL)
+		*width = self->offscreen_w;
+	if (height != NULL)
+		*height = self->offscreen_h;
 }
 
 void
@@ -425,16 +447,28 @@ lrg_3d_surface_end_capture (Lrg3DSurface *self)
 	w = lrg_frame_surface_get_width (LRG_FRAME_SURFACE (self));
 	h = lrg_frame_surface_get_height (LRG_FRAME_SURFACE (self));
 
+	if (self->content_bound)
+	{
+		/* The VR content target, which may be larger than the window: read
+		   it at its own size (grl_image_new_from_screen reads the window's). */
+		guint8 *px;
+
+		rlDrawRenderBatchActive ();
+		px = rlReadScreenPixels (self->content_w, self->content_h);
+		shot = px != NULL
+			? grl_image_new_from_pixels (self->content_w, self->content_h,
+			                             GRL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, px)
+			: NULL;
+		free (px);   /* rlReadScreenPixels allocates with calloc */
+		content_target_unbind (self);
+		return shot;
+	}
+
 	/* raylib batches draws; a scissor begin/end forces the flush so the
 	   readback sees the flat frame just rasterised. */
 	grl_draw_begin_scissor_mode (0, 0, w, h);
 	grl_draw_end_scissor_mode ();
-
-	/* Reads the bound framebuffer: the VR content target when bound, else
-	   the window's.  Same size and projection either way. */
-	shot = grl_image_new_from_screen ();
-	content_target_unbind (self);
-	return shot;
+	return grl_image_new_from_screen ();
 }
 
 static void

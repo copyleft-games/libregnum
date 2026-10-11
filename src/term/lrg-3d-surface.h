@@ -626,6 +626,38 @@ LRG_AVAILABLE_IN_ALL
 gfloat lrg_3d_surface_get_vr_scale (Lrg3DSurface *self);
 
 /**
+ * lrg_3d_surface_set_offscreen_size:
+ * @self: a #Lrg3DSurface
+ * @width: frame width in pixels, or 0 to follow the window
+ * @height: frame height in pixels, or 0 to follow the window
+ *
+ * While a VR service is attached the flat frame is drawn off screen, and its
+ * size need not be the window's: the window is usually hidden, and a host
+ * compositor may clamp it to its display.  A non-zero size here is the
+ * frame's size in VR -- the surface geometry, the content target and the
+ * capture all use it.  Outside VR it has no effect.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_set_offscreen_size (Lrg3DSurface *self,
+                                        gint          width,
+                                        gint          height);
+
+/**
+ * lrg_3d_surface_get_offscreen_size:
+ * @self: a #Lrg3DSurface
+ * @width: (out) (optional): the VR frame width, 0 when following the window
+ * @height: (out) (optional): the VR frame height, 0 when following the window
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_get_offscreen_size (Lrg3DSurface *self,
+                                        gint         *width,
+                                        gint         *height);
+
+/**
  * lrg_3d_surface_begin_capture:
  * @self: a #Lrg3DSurface
  *
