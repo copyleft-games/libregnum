@@ -338,6 +338,14 @@ upload_to_texture (LrgScenePanel *self,
 		if (self->texture != NULL)
 		{
 			grl_texture_gen_mipmaps (self->texture);
+			/* Trilinear first: raylib loads textures with NEAREST min/mag
+			   filters and its anisotropic setting changes only the
+			   anisotropy level, so without this the mipmaps went unused
+			   and text sampled nearest-texel -- crawling, "interlaced"
+			   strokes on every head movement in VR.  The parameters
+			   persist across the in-place updates below. */
+			grl_texture_set_filter (self->texture,
+									GRL_TEXTURE_FILTER_TRILINEAR);
 			grl_texture_set_filter (self->texture,
 									GRL_TEXTURE_FILTER_ANISOTROPIC_16X);
 			grl_model_set_texture (self->model, 0, GRL_MATERIAL_MAP_ALBEDO,
