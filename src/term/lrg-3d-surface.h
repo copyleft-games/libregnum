@@ -626,6 +626,51 @@ LRG_AVAILABLE_IN_ALL
 gfloat lrg_3d_surface_get_vr_scale (Lrg3DSurface *self);
 
 /**
+ * lrg_3d_surface_begin_capture:
+ * @self: a #Lrg3DSurface
+ *
+ * Starts an out-of-band capture of the flat frame -- e.g. an off-screen
+ * workspace rendered into its own panel.  In VR this binds (and clears)
+ * the offscreen content target, since the window is not drawn there;
+ * otherwise draws go to the window as before.  Call after the frame has
+ * been cleared, draw, then lrg_3d_surface_end_capture().
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_begin_capture (Lrg3DSurface *self);
+
+/**
+ * lrg_3d_surface_end_capture:
+ * @self: a #Lrg3DSurface
+ *
+ * Flushes what was drawn since lrg_3d_surface_begin_capture() and reads it
+ * back.  Does not touch the live panels.
+ *
+ * Returns: (transfer full) (nullable): the captured flat frame
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GrlImage * lrg_3d_surface_end_capture (Lrg3DSurface *self);
+
+/**
+ * lrg_3d_surface_export_content:
+ * @self: a #Lrg3DSurface
+ * @path: file to write; the format follows the extension (.png)
+ *
+ * Writes the flat frame as last captured onto the panels -- what the
+ * headset's panels show.  Kept only while presenting in VR.
+ *
+ * Returns: %TRUE if an image was written
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_export_content (Lrg3DSurface *self,
+                                        const gchar  *path);
+
+/**
  * lrg_3d_surface_vr_recenter:
  * @self: a #Lrg3DSurface
  *

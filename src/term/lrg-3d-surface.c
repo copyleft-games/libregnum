@@ -95,6 +95,9 @@ struct _Lrg3DSurface
 	gint        content_w;
 	gint        content_h;
 	gboolean    content_bound;
+	GrlImage   *last_content;      /* VR: the last captured flat frame */
+	GrlColor    clear_color;       /* last clear(): repeated on the target */
+	gboolean    have_clear;
 };
 
 G_DEFINE_FINAL_TYPE (Lrg3DSurface, lrg_3d_surface, LRG_TYPE_FRAME_SURFACE)
@@ -385,6 +388,12 @@ content_target_bind (Lrg3DSurface *self)
 	rlEnableFramebuffer (self->content_fbo);
 	rlViewport (0, 0, w, h);
 	self->content_bound = TRUE;
+	if (self->have_clear)
+		rlClearColor (self->clear_color.r, self->clear_color.g,
+		              self->clear_color.b, self->clear_color.a);
+	else
+		rlClearColor (0, 0, 0, 255);
+	rlClearScreenBuffers ();
 }
 
 static void
@@ -397,14 +406,44 @@ content_target_unbind (Lrg3DSurface *self)
 	self->content_bound = FALSE;
 }
 
+void
+lrg_3d_surface_begin_capture (Lrg3DSurface *self)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	if (self->vr != NULL && !self->content_bound)
+		content_target_bind (self);
+}
+
+GrlImage *
+lrg_3d_surface_end_capture (Lrg3DSurface *self)
+{
+	GrlImage *shot;
+	gint w, h;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), NULL);
+
+	w = lrg_frame_surface_get_width (LRG_FRAME_SURFACE (self));
+	h = lrg_frame_surface_get_height (LRG_FRAME_SURFACE (self));
+
+	/* raylib batches draws; a scissor begin/end forces the flush so the
+	   readback sees the flat frame just rasterised. */
+	grl_draw_begin_scissor_mode (0, 0, w, h);
+	grl_draw_end_scissor_mode ();
+
+	/* Reads the bound framebuffer: the VR content target when bound, else
+	   the window's.  Same size and projection either way. */
+	shot = grl_image_new_from_screen ();
+	content_target_unbind (self);
+	return shot;
+}
+
 static void
 lrg_3d_surface_begin_content (LrgFrameSurface *surface)
 {
 	Lrg3DSurface *self = LRG_3D_SURFACE (surface);
 
 	self->drawing_content = TRUE;
-	if (self->vr != NULL)
-		content_target_bind (self);
+	lrg_3d_surface_begin_capture (self);
 }
 
 static void
@@ -412,7 +451,6 @@ lrg_3d_surface_end_content (LrgFrameSurface *surface)
 {
 	Lrg3DSurface *self = LRG_3D_SURFACE (surface);
 	g_autoptr (GrlImage) shot = NULL;
-	gint w, h;
 	guint i;
 
 	if (!self->drawing_content)
@@ -425,18 +463,9 @@ lrg_3d_surface_end_content (LrgFrameSurface *surface)
 		return;
 	}
 
-	w = lrg_frame_surface_get_width (surface);
-	h = lrg_frame_surface_get_height (surface);
-
-	/* raylib batches draws; a scissor begin/end forces the flush so the
-	   readback sees the flat frame we just rasterised. */
-	grl_draw_begin_scissor_mode (0, 0, w, h);
-	grl_draw_end_scissor_mode ();
-
-	/* Reads the bound framebuffer: the VR content target when bound, else
-	   the window's.  Same size and projection either way. */
-	shot = grl_image_new_from_screen ();
-	content_target_unbind (self);
+	shot = lrg_3d_surface_end_capture (self);
+	if (shot != NULL && self->vr != NULL)
+		g_set_object (&self->last_content, shot);
 	if (shot != NULL)
 	{
 		for (i = 0; i < self->panels->len; i++)
@@ -458,6 +487,22 @@ lrg_3d_surface_clear (LrgFrameSurface *surface,
 					  const GrlColor  *color)
 {
 	Lrg3DSurface *self = LRG_3D_SURFACE (surface);
+
+	/* The embedder clears before begin_content, i.e. before the VR content
+	   target is bound; remember the colour so binding can clear the target
+	   too.  Otherwise the target keeps every earlier frame, which shows
+	   through wherever a redraw paints nothing (old frames "overlapping"). */
+	if (color != NULL)
+	{
+		self->clear_color = *color;
+		self->have_clear = TRUE;
+	}
+	if (self->content_bound && color != NULL)
+	{
+		rlClearColor (color->r, color->g, color->b, color->a);
+		rlClearScreenBuffers ();
+		return;
+	}
 	if (self->content != NULL)
 		lrg_frame_surface_clear (LRG_FRAME_SURFACE (self->content), color);
 }
@@ -1572,7 +1617,10 @@ lrg_3d_surface_set_vr_service (Lrg3DSurface *self,
 	if (!g_set_object (&self->vr, service))
 		return;
 	if (service == NULL)
+	{
 		content_target_free (self);
+		g_clear_object (&self->last_content);
+	}
 	self->vr_need_recenter = TRUE;
 	lrg_frame_surface_set_render_mode (LRG_FRAME_SURFACE (self),
 	                                   service != NULL ? LRG_RENDER_MODE_3DVR
@@ -1751,6 +1799,18 @@ lrg_3d_surface_set_panel_transform (Lrg3DSurface *self,
 }
 
 gboolean
+lrg_3d_surface_export_content (Lrg3DSurface *self,
+                               const gchar  *path)
+{
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+	g_return_val_if_fail (path != NULL, FALSE);
+
+	if (self->last_content == NULL)
+		return FALSE;
+	return grl_image_export (self->last_content, path);
+}
+
+gboolean
 lrg_3d_surface_render_vr (Lrg3DSurface *self)
 {
 	g_autoptr (GrlColor) clear = NULL;
@@ -1874,6 +1934,7 @@ lrg_3d_surface_dispose (GObject *object)
 	g_clear_object (&self->vr);
 	/* GL objects go while the content surface still owns the context. */
 	content_target_free (self);
+	g_clear_object (&self->last_content);
 	g_clear_object (&self->content);
 	g_clear_object (&self->camera);
 	g_clear_object (&self->arrangement);

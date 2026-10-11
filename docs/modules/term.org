@@ -68,8 +68,19 @@ subclass, never a glue rewrite.
   environments, pre-loaded with the built-ins; the seam for adding new modes
   (implement the interface, register an id) without touching the surface.
 
-Reserved: ~LrgVRSurface~ (an additive ~LrgFrameSurface~ subclass reusing the
-panel / camera / arrangement / environment types) for ~3DVR~.
+*VR (~3DVR~).*  There is no separate VR surface: ~Lrg3DSurface~ gains a
+headset present path when a VR service is attached.  While one is, the flat
+frame is rasterised into an off-screen *content target* (an FBO the size of
+the frame) rather than the window, since the window is usually hidden.  The
+target is cleared to the colour last passed to ~clear~ every time it is bound
+-- callers clear before ~begin_content~, when the target is not yet bound, so
+without that each frame drew over the previous one.  Code that renders the
+flat frame outside ~begin_content~/~end_content~ (a workspace panel) brackets
+it with ~lrg_3d_surface_begin_capture~ / ~lrg_3d_surface_end_capture~, which
+bind and clear the target in VR, flush the batch, and read back whichever
+framebuffer was drawn; on a flat screen they reduce to the flush and
+readback.  ~lrg_3d_surface_export_content~ writes the last VR capture to an
+image file, for checking what the headset is being sent.
 
 See the cmacs manual chapter "CMacs Lrgterm" for the user-facing
 launch grammar, commands and the roadmap.
