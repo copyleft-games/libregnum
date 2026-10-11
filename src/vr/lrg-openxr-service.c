@@ -144,6 +144,11 @@ struct _LrgOpenXRService
     XrAction    act_primary;
     XrAction    act_secondary;
     XrAction    act_menu;
+    XrAction    act_x;
+    XrAction    act_y;
+    XrAction    act_bumper;
+    XrAction    act_dpad[4];      /* up, down, left, right */
+    XrAction    act_view;
     XrAction    act_haptic;
     LrgXrHand   hands[2];
 #endif
@@ -532,6 +537,14 @@ action_by_name (LrgOpenXRService *self,
     if (g_strcmp0 (name, "primary") == 0)         return self->act_primary;
     if (g_strcmp0 (name, "secondary") == 0)       return self->act_secondary;
     if (g_strcmp0 (name, "menu") == 0)            return self->act_menu;
+    if (g_strcmp0 (name, "x") == 0)               return self->act_x;
+    if (g_strcmp0 (name, "y") == 0)               return self->act_y;
+    if (g_strcmp0 (name, "bumper") == 0)          return self->act_bumper;
+    if (g_strcmp0 (name, "dpad-up") == 0)         return self->act_dpad[0];
+    if (g_strcmp0 (name, "dpad-down") == 0)       return self->act_dpad[1];
+    if (g_strcmp0 (name, "dpad-left") == 0)       return self->act_dpad[2];
+    if (g_strcmp0 (name, "dpad-right") == 0)      return self->act_dpad[3];
+    if (g_strcmp0 (name, "view") == 0)            return self->act_view;
     if (g_strcmp0 (name, "haptic") == 0)          return self->act_haptic;
     return XR_NULL_HANDLE;
 }
@@ -559,7 +572,14 @@ static const LrgXrProfile profiles[] = {
         { "haptic", "/user/hand/left/output/haptic" },
         { "haptic", "/user/hand/right/output/haptic" },
         { NULL, NULL } } },
-    { "/interaction_profiles/valve/frame_controller", {
+    /* The Steam Frame's controllers are a split gamepad: the right one has
+       A, B, X, Y and menu, the left a D-pad and view, both a bumper.  The
+       profile needs XR_VALVE_frame_controller_interaction (enabled when the
+       runtime has it); without it SteamVR offers the Frame as an Oculus
+       Touch, whose two face buttons per hand turn the right X and Y into
+       B.  Suggested twice, with the grip spelled both ways OpenXR profiles
+       use; a rejected suggestion leaves the other in place. */
+    { "/interaction_profiles/valve/frame_controller_valve", {
         { "aim", "/user/hand/left/input/aim/pose" },
         { "aim", "/user/hand/right/input/aim/pose" },
         { "trigger", "/user/hand/left/input/trigger/value" },
@@ -570,10 +590,44 @@ static const LrgXrProfile profiles[] = {
         { "thumbstick", "/user/hand/right/input/thumbstick" },
         { "thumbstick-click", "/user/hand/left/input/thumbstick/click" },
         { "thumbstick-click", "/user/hand/right/input/thumbstick/click" },
-        { "primary", "/user/hand/left/input/x/click" },
         { "primary", "/user/hand/right/input/a/click" },
-        { "secondary", "/user/hand/left/input/y/click" },
         { "secondary", "/user/hand/right/input/b/click" },
+        { "x", "/user/hand/right/input/x/click" },
+        { "y", "/user/hand/right/input/y/click" },
+        { "menu", "/user/hand/right/input/menu/click" },
+        { "bumper", "/user/hand/left/input/bumper/click" },
+        { "bumper", "/user/hand/right/input/bumper/click" },
+        { "dpad-up", "/user/hand/left/input/dpad_up/click" },
+        { "dpad-down", "/user/hand/left/input/dpad_down/click" },
+        { "dpad-left", "/user/hand/left/input/dpad_left/click" },
+        { "dpad-right", "/user/hand/left/input/dpad_right/click" },
+        { "view", "/user/hand/left/input/view/click" },
+        { "haptic", "/user/hand/left/output/haptic" },
+        { "haptic", "/user/hand/right/output/haptic" },
+        { NULL, NULL } } },
+    { "/interaction_profiles/valve/frame_controller_valve", {
+        { "aim", "/user/hand/left/input/aim/pose" },
+        { "aim", "/user/hand/right/input/aim/pose" },
+        { "trigger", "/user/hand/left/input/trigger/value" },
+        { "trigger", "/user/hand/right/input/trigger/value" },
+        { "squeeze", "/user/hand/left/input/grip/value" },
+        { "squeeze", "/user/hand/right/input/grip/value" },
+        { "thumbstick", "/user/hand/left/input/thumbstick" },
+        { "thumbstick", "/user/hand/right/input/thumbstick" },
+        { "thumbstick-click", "/user/hand/left/input/thumbstick/click" },
+        { "thumbstick-click", "/user/hand/right/input/thumbstick/click" },
+        { "primary", "/user/hand/right/input/a/click" },
+        { "secondary", "/user/hand/right/input/b/click" },
+        { "x", "/user/hand/right/input/x/click" },
+        { "y", "/user/hand/right/input/y/click" },
+        { "menu", "/user/hand/right/input/menu/click" },
+        { "bumper", "/user/hand/left/input/bumper/click" },
+        { "bumper", "/user/hand/right/input/bumper/click" },
+        { "dpad-up", "/user/hand/left/input/dpad_up/click" },
+        { "dpad-down", "/user/hand/left/input/dpad_down/click" },
+        { "dpad-left", "/user/hand/left/input/dpad_left/click" },
+        { "dpad-right", "/user/hand/left/input/dpad_right/click" },
+        { "view", "/user/hand/left/input/view/click" },
         { "haptic", "/user/hand/left/output/haptic" },
         { "haptic", "/user/hand/right/output/haptic" },
         { NULL, NULL } } },
@@ -679,6 +733,22 @@ create_actions (LrgOpenXRService  *self,
                          XR_ACTION_TYPE_BOOLEAN_INPUT, &self->act_secondary, error)
         || !make_action (self, "menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT,
                          &self->act_menu, error)
+        || !make_action (self, "x", "X button", XR_ACTION_TYPE_BOOLEAN_INPUT,
+                         &self->act_x, error)
+        || !make_action (self, "y", "Y button", XR_ACTION_TYPE_BOOLEAN_INPUT,
+                         &self->act_y, error)
+        || !make_action (self, "bumper", "Bumper", XR_ACTION_TYPE_BOOLEAN_INPUT,
+                         &self->act_bumper, error)
+        || !make_action (self, "dpad-up", "D-pad up", XR_ACTION_TYPE_BOOLEAN_INPUT,
+                         &self->act_dpad[0], error)
+        || !make_action (self, "dpad-down", "D-pad down", XR_ACTION_TYPE_BOOLEAN_INPUT,
+                         &self->act_dpad[1], error)
+        || !make_action (self, "dpad-left", "D-pad left", XR_ACTION_TYPE_BOOLEAN_INPUT,
+                         &self->act_dpad[2], error)
+        || !make_action (self, "dpad-right", "D-pad right", XR_ACTION_TYPE_BOOLEAN_INPUT,
+                         &self->act_dpad[3], error)
+        || !make_action (self, "view", "View", XR_ACTION_TYPE_BOOLEAN_INPUT,
+                         &self->act_view, error)
         || !make_action (self, "haptic", "Haptics", XR_ACTION_TYPE_VIBRATION_OUTPUT,
                          &self->act_haptic, error))
         return FALSE;
@@ -847,6 +917,22 @@ sync_input (LrgOpenXRService *self,
                 bool_action (self, self->act_secondary, hand->path));
         SETBIT (LRG_VR_CONTROLLER_BUTTON_MENU,
                 bool_action (self, self->act_menu, hand->path));
+        SETBIT (LRG_VR_CONTROLLER_BUTTON_X,
+                bool_action (self, self->act_x, hand->path));
+        SETBIT (LRG_VR_CONTROLLER_BUTTON_Y,
+                bool_action (self, self->act_y, hand->path));
+        SETBIT (LRG_VR_CONTROLLER_BUTTON_BUMPER,
+                bool_action (self, self->act_bumper, hand->path));
+        SETBIT (LRG_VR_CONTROLLER_BUTTON_DPAD_UP,
+                bool_action (self, self->act_dpad[0], hand->path));
+        SETBIT (LRG_VR_CONTROLLER_BUTTON_DPAD_DOWN,
+                bool_action (self, self->act_dpad[1], hand->path));
+        SETBIT (LRG_VR_CONTROLLER_BUTTON_DPAD_LEFT,
+                bool_action (self, self->act_dpad[2], hand->path));
+        SETBIT (LRG_VR_CONTROLLER_BUTTON_DPAD_RIGHT,
+                bool_action (self, self->act_dpad[3], hand->path));
+        SETBIT (LRG_VR_CONTROLLER_BUTTON_VIEW,
+                bool_action (self, self->act_view, hand->path));
 #undef SETBIT
     }
 }
@@ -1029,7 +1115,7 @@ lrg_openxr_service_real_initialize (LrgVRService  *service,
     LrgOpenXRService *self = LRG_OPENXR_SERVICE (service);
     XrExtensionProperties *props = NULL;
     guint32 n_props = 0, i;
-    const gchar *exts[4];
+    const gchar *exts[5];
     guint32 n_exts = 0;
     gboolean have_egl;
     XrInstanceCreateInfo ici = { .type = XR_TYPE_INSTANCE_CREATE_INFO };
@@ -1073,6 +1159,9 @@ lrg_openxr_service_real_initialize (LrgVRService  *service,
         has_extension (props, n_props, XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
     if (self->has_refresh_rate_ext)
         exts[n_exts++] = XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME;
+    /* The Steam Frame's own controller profile (see profiles[]). */
+    if (has_extension (props, n_props, "XR_VALVE_frame_controller_interaction"))
+        exts[n_exts++] = "XR_VALVE_frame_controller_interaction";
     g_free (props);
 
     g_strlcpy (ici.applicationInfo.applicationName,

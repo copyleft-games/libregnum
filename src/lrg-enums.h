@@ -3448,6 +3448,16 @@ GType lrg_vr_hand_get_type (void) G_GNUC_CONST;
  * @LRG_VR_CONTROLLER_BUTTON_THUMBSTICK: Thumbstick click
  * @LRG_VR_CONTROLLER_BUTTON_A: A button (where present)
  * @LRG_VR_CONTROLLER_BUTTON_B: B button (where present)
+ * @LRG_VR_CONTROLLER_BUTTON_X: X button, where a controller has X as well
+ *   as A (the Steam Frame's right controller); Touch-style controllers
+ *   report their X and Y as A and B of the left hand
+ * @LRG_VR_CONTROLLER_BUTTON_Y: Y button, as X
+ * @LRG_VR_CONTROLLER_BUTTON_BUMPER: Bumper (shoulder button)
+ * @LRG_VR_CONTROLLER_BUTTON_DPAD_UP: D-pad up
+ * @LRG_VR_CONTROLLER_BUTTON_DPAD_DOWN: D-pad down
+ * @LRG_VR_CONTROLLER_BUTTON_DPAD_LEFT: D-pad left
+ * @LRG_VR_CONTROLLER_BUTTON_DPAD_RIGHT: D-pad right
+ * @LRG_VR_CONTROLLER_BUTTON_VIEW: View button
  *
  * VR controller button flags.
  *
@@ -3462,7 +3472,15 @@ typedef enum
     LRG_VR_CONTROLLER_BUTTON_TOUCHPAD   = (1 << 4),
     LRG_VR_CONTROLLER_BUTTON_THUMBSTICK = (1 << 5),
     LRG_VR_CONTROLLER_BUTTON_A          = (1 << 6),
-    LRG_VR_CONTROLLER_BUTTON_B          = (1 << 7)
+    LRG_VR_CONTROLLER_BUTTON_B          = (1 << 7),
+    LRG_VR_CONTROLLER_BUTTON_X          = (1 << 8),
+    LRG_VR_CONTROLLER_BUTTON_Y          = (1 << 9),
+    LRG_VR_CONTROLLER_BUTTON_BUMPER     = (1 << 10),
+    LRG_VR_CONTROLLER_BUTTON_DPAD_UP    = (1 << 11),
+    LRG_VR_CONTROLLER_BUTTON_DPAD_DOWN  = (1 << 12),
+    LRG_VR_CONTROLLER_BUTTON_DPAD_LEFT  = (1 << 13),
+    LRG_VR_CONTROLLER_BUTTON_DPAD_RIGHT = (1 << 14),
+    LRG_VR_CONTROLLER_BUTTON_VIEW       = (1 << 15)
 } LrgVRControllerButton;
 
 LRG_AVAILABLE_IN_ALL
