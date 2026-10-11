@@ -523,6 +523,52 @@ test_scene_panel_static (void)
     g_assert_false (lrg_scene_panel_has_static_texture (p));
 }
 
+/* --------------------------------------------- VR seat math (no GL needed) -- */
+
+static void
+test_3d_surface_vr_seat (void)
+{
+    g_autoptr(Lrg3DSurface) surf = g_object_new (LRG_TYPE_3D_SURFACE, NULL);
+    gfloat pose[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1 };
+    gfloat pos[3], dir[3], x, y;
+    guint64 key;
+
+    /* Default scale, clamped setter. */
+    g_assert_cmpfloat_with_epsilon (lrg_3d_surface_get_vr_scale (surf), 0.3f, 1e-6);
+    lrg_3d_surface_set_vr_scale (surf, 100.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_3d_surface_get_vr_scale (surf), 5.0f, 1e-6);
+    lrg_3d_surface_set_vr_scale (surf, 0.5f);
+
+    /* The seat sits at the default camera's eye (0, 1.6, 6.6), at the height
+       of its target (0, 0, 0), facing it (-Z).  An identity tracking pose is
+       the seat itself. */
+    lrg_3d_surface_vr_tracking_to_scene (surf, pose, pos, dir);
+    g_assert_cmpfloat_with_epsilon (pos[0], 0.0f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (pos[1], 0.0f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (pos[2], 6.6f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (dir[2], -1.0f, 1e-4);
+
+    /* Tracking metres become scene units through the scale: 1 m right and
+       0.5 m up at 0.5 m/unit is 2 units right, 1 up. */
+    pose[12] = 1.0f;
+    pose[13] = 0.5f;
+    lrg_3d_surface_vr_tracking_to_scene (surf, pose, pos, dir);
+    g_assert_cmpfloat_with_epsilon (pos[0], 2.0f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (pos[1], 1.0f, 1e-4);
+
+    /* Turning the seat 90 degrees left turns "forward" from -Z to -X. */
+    pose[12] = pose[13] = 0.0f;
+    lrg_3d_surface_vr_turn (surf, 90.0f);
+    lrg_3d_surface_vr_tracking_to_scene (surf, pose, pos, dir);
+    g_assert_cmpfloat_with_epsilon (dir[0], -1.0f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (dir[2], 0.0f, 1e-4);
+
+    /* No panels yet: a world ray hits nothing. */
+    g_assert_false (lrg_3d_surface_pick_ray (surf, 0, 0, 10, 0, 0, -1,
+                                             &x, &y, &key, NULL));
+    g_assert_null (lrg_3d_surface_get_vr_service (surf));
+}
+
 /* ----------------------------------- workspace panels on the surface (GL) -- */
 
 static void
@@ -704,6 +750,7 @@ main (int   argc,
     g_test_add_func ("/term/scene-panel-static", test_scene_panel_static);
     g_test_add_func ("/term/3d-surface-workspace-panels",
                      test_3d_surface_workspace_panels);
+    g_test_add_func ("/term/3d-surface-vr-seat", test_3d_surface_vr_seat);
     g_test_add_func ("/term/arrangement-free", test_arrangement_free);
     g_test_add_func ("/term/spatial-camera-orbit-drag",
                      test_spatial_camera_orbit_drag);

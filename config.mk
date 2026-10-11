@@ -363,6 +363,36 @@ else
 endif
 
 # =============================================================================
+# OpenXR (LrgOpenXRService -- real VR rendering + motion controllers)
+# =============================================================================
+# OPENXR=1 compiles the OpenXR backend of LrgVRService (src/vr/
+# lrg-openxr-service.c) against the OpenXR loader; OPENXR=auto (the default)
+# enables it when pkg-config finds `openxr'; OPENXR=0 leaves it a stub.  An
+# embedder that runs several libregnum makes must give them all the same
+# value, or each flip rebuilds the backend (see the stamp in the Makefile).  The backend binds to the current GL context
+# through GLX or EGL, so the X11 and EGL headers are needed too (Fedora:
+# openxr-devel libX11-devel mesa-libEGL-devel; Debian/Ubuntu: libopenxr-dev
+# libx11-dev libegl-dev).  Without it the type still exists and initialize()
+# reports LRG_VR_ERROR_NOT_AVAILABLE.  HAS_OPENXR is exported for the
+# examples/tests sub-makes (the static archive does not carry -lopenxr_loader).
+
+OPENXR ?= auto
+
+ifeq ($(OPENXR),auto)
+    OPENXR := $(shell $(PKG_CONFIG) --exists openxr 2>/dev/null && echo 1 || echo 0)
+endif
+
+ifeq ($(OPENXR),1)
+    OPENXR_CFLAGS := $(shell $(PKG_CONFIG) --cflags openxr) -DLRG_HAS_OPENXR=1
+    OPENXR_LIBS := $(shell $(PKG_CONFIG) --libs openxr)
+    HAS_OPENXR := 1
+else
+    OPENXR_CFLAGS :=
+    OPENXR_LIBS :=
+    HAS_OPENXR := 0
+endif
+
+# =============================================================================
 # Library Names (Platform-Specific)
 # =============================================================================
 
@@ -671,6 +701,7 @@ LIB_CFLAGS += $(STEAM_CFLAGS)
 LIB_CFLAGS += $(MCP_CFLAGS)
 LIB_CFLAGS += $(CAD_CFLAGS)
 LIB_CFLAGS += $(FFMPEG_CFLAGS)
+LIB_CFLAGS += $(OPENXR_CFLAGS)
 
 # Library link flags (use platform-specific flags)
 LIB_LDFLAGS := $(LIB_LDFLAGS_PLATFORM)
@@ -714,6 +745,7 @@ ALL_LIBS += $(STEAM_LIBS)
 ALL_LIBS += $(MCP_LIBS)
 ALL_LIBS += $(CAD_LIBS)
 ALL_LIBS += $(FFMPEG_LIBS)
+ALL_LIBS += $(OPENXR_LIBS)
 
 # =============================================================================
 # GIR Scanner Flags

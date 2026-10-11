@@ -12,6 +12,7 @@
 #include "lrg-2d-surface.h"
 #include "lrg-scene-panel.h"
 #include "lrg-mode-registry.h"
+#include <rlgl.h>
 
 /* Focus weight an unfocused panel eases to (still readable, just dimmed). */
 #define LRG_3D_UNFOCUSED 0.35f
@@ -70,6 +71,20 @@ struct _Lrg3DSurface
 	   its place across resizes, redisplays and arrangement switches (which
 	   recreate the panel objects). */
 	GHashTable *pins;
+
+	/* VR presentation (lrg_3d_surface_set_vr_service).  The seat follows the
+	   spatial camera; vr_origin/vr_yaw0 are the tracked head position and
+	   heading the seat's origin was recentred on. */
+	LrgVRService *vr;
+	gfloat        vr_mpu;              /* metres per scene unit */
+	gboolean      vr_need_recenter;
+	gfloat        vr_origin[3];
+	gfloat        vr_yaw0;             /* radians */
+	gfloat        vr_seat_theta;       /* last valid seat heading, radians */
+
+	Lrg3DSurfaceVROverlayFunc vr_overlay;
+	gpointer                  vr_overlay_data;
+	GDestroyNotify            vr_overlay_destroy;
 };
 
 G_DEFINE_FINAL_TYPE (Lrg3DSurface, lrg_3d_surface, LRG_TYPE_FRAME_SURFACE)
@@ -298,7 +313,17 @@ lrg_3d_surface_begin_frame (LrgFrameSurface *surface)
 static void
 lrg_3d_surface_end_frame (LrgFrameSurface *surface)
 {
-	render_scene (LRG_3D_SURFACE (surface));
+	Lrg3DSurface *self = LRG_3D_SURFACE (surface);
+
+	/* In VR the headset is the display: no desktop mirror.  Presenting the
+	   window is not just wasted work -- under a compositor that does not
+	   show it (gamescope, with the headset active), the swap can block the
+	   GL queue, and the semaphore the VR runtime waits on in xrEndFrame
+	   sits behind it, hanging the frame loop.  The content capture
+	   (end_content) still refreshes the panel textures every redisplay. */
+	if (self->vr != NULL)
+		return;
+	render_scene (self);
 }
 
 static void
@@ -458,44 +483,22 @@ lrg_3d_surface_draw_texture_region (LrgFrameSurface    *surface,
    the (u,v) on that quad to a pixel in the panel's source window rect.  This is
    what makes the mouse land on the right buffer cell in 3D.  @out_key (optional)
    receives the hit panel's key, so callers can focus/grab that panel.  */
+/* Cast @ray against every panel; on the nearest hit report the frame pixel it
+   lands on (the hit's (u,v) on the quad mapped into the panel's source window
+   rect), the panel's key and the distance.  Shared by the screen-pixel pick
+   (mouse) and the world-ray pick (VR controllers). */
 static gboolean
-pick_internal (Lrg3DSurface *self,
-               gfloat        px,
-               gfloat        py,
-               gfloat       *out_x,
-               gfloat       *out_y,
-               guint64      *out_key)
+pick_ray_internal (Lrg3DSurface *self,
+                   const GrlRay *ray,
+                   gfloat       *out_x,
+                   gfloat       *out_y,
+                   guint64      *out_key,
+                   gfloat       *out_distance)
 {
-	LrgFrameSurface *surface = LRG_FRAME_SURFACE (self);
-	g_autoptr (LrgPose) pose = NULL;
-	g_autoptr (GrlVector2) screen = NULL;
-	g_autoptr (GrlVector3) cpos = NULL;
-	g_autoptr (GrlVector3) ctgt = NULL;
-	g_autoptr (GrlVector3) cup = NULL;
-	GrlRay *ray = NULL;
-	gfloat ppx, ppy, ppz, tx, ty, tz;
-	gfloat best = G_MAXFLOAT, best_x = px, best_y = py;
+	gfloat best = G_MAXFLOAT, best_x = 0.0f, best_y = 0.0f;
 	guint64 best_key = 0;
 	gboolean found = FALSE;
 	guint i;
-
-	if (self->camera == NULL)
-		return FALSE;
-
-	pose = lrg_spatial_camera_get_pose (self->camera);
-	lrg_pose_get_position (pose, &ppx, &ppy, &ppz);
-	lrg_pose_get_target (pose, &tx, &ty, &tz);
-
-	screen = grl_vector2_new (px, py);
-	cpos = grl_vector3_new (ppx, ppy, ppz);
-	ctgt = grl_vector3_new (tx, ty, tz);
-	cup = grl_vector3_new (0.0f, 1.0f, 0.0f);
-	ray = grl_collision_get_ray_from_screen (screen, cpos, ctgt, cup,
-	                                         lrg_pose_get_fovy (pose),
-	                                         lrg_frame_surface_get_width (surface),
-	                                         lrg_frame_surface_get_height (surface));
-	if (ray == NULL)
-		return FALSE;
 
 	for (i = 0; i < self->panels->len; i++)
 	{
@@ -541,7 +544,6 @@ pick_internal (Lrg3DSurface *self,
 		g_clear_pointer (&hit, grl_ray_collision_free);
 	}
 
-	grl_ray_free (ray);
 	if (!found)
 		return FALSE;
 	if (out_x != NULL)
@@ -550,7 +552,50 @@ pick_internal (Lrg3DSurface *self,
 		*out_y = best_y;
 	if (out_key != NULL)
 		*out_key = best_key;
+	if (out_distance != NULL)
+		*out_distance = best;
 	return TRUE;
+}
+
+static gboolean
+pick_internal (Lrg3DSurface *self,
+               gfloat        px,
+               gfloat        py,
+               gfloat       *out_x,
+               gfloat       *out_y,
+               guint64      *out_key)
+{
+	LrgFrameSurface *surface = LRG_FRAME_SURFACE (self);
+	g_autoptr (LrgPose) pose = NULL;
+	g_autoptr (GrlVector2) screen = NULL;
+	g_autoptr (GrlVector3) cpos = NULL;
+	g_autoptr (GrlVector3) ctgt = NULL;
+	g_autoptr (GrlVector3) cup = NULL;
+	GrlRay *ray = NULL;
+	gfloat ppx, ppy, ppz, tx, ty, tz;
+	gboolean found;
+
+	if (self->camera == NULL)
+		return FALSE;
+
+	pose = lrg_spatial_camera_get_pose (self->camera);
+	lrg_pose_get_position (pose, &ppx, &ppy, &ppz);
+	lrg_pose_get_target (pose, &tx, &ty, &tz);
+
+	screen = grl_vector2_new (px, py);
+	cpos = grl_vector3_new (ppx, ppy, ppz);
+	ctgt = grl_vector3_new (tx, ty, tz);
+	cup = grl_vector3_new (0.0f, 1.0f, 0.0f);
+	ray = grl_collision_get_ray_from_screen (screen, cpos, ctgt, cup,
+	                                         lrg_pose_get_fovy (pose),
+	                                         lrg_frame_surface_get_width (surface),
+	                                         lrg_frame_surface_get_height (surface));
+	if (ray == NULL)
+		return FALSE;
+
+	found = pick_ray_internal (self, ray, out_x, out_y, out_key, NULL);
+	grl_ray_free (ray);
+	return found;
 }
 
 static gboolean
@@ -1288,6 +1333,429 @@ lrg_3d_surface_is_animating (Lrg3DSurface *self)
 	return FALSE;
 }
 
+/* ---------------------------------------------------------------- VR ----- */
+
+#define LRG_VR_DEFAULT_MPU 0.3f
+#define LRG_VR_NEAR_M      0.05f
+#define LRG_VR_FAR_M       400.0f
+
+/* Heading (rotation about +Y, radians) that turns -Z onto the horizontal part
+   of (fx, fz).  Ry(t) maps (0,0,-1) to (-sin t, 0, -cos t). */
+static gfloat
+heading_of (gfloat fx,
+            gfloat fz)
+{
+	return atan2f (-fx, -fz);
+}
+
+/* Ry(t) applied to (x, z). */
+static void
+rot_y (gfloat  t,
+       gfloat  x,
+       gfloat  z,
+       gfloat *ox,
+       gfloat *oz)
+{
+	gfloat c = cosf (t), sn = sinf (t);
+
+	*ox = x * c + z * sn;
+	*oz = -x * sn + z * c;
+}
+
+/* The seat: where the spatial camera's eye is, at the height of what it looks
+   at, facing its horizontal heading.  Pitch is dropped on purpose -- a tilted
+   seat tilts the world, which is the fastest way to make a headset user ill. */
+static void
+vr_seat (Lrg3DSurface *self,
+         gfloat       *pos,
+         gfloat       *theta)
+{
+	g_autoptr (LrgPose) pose = NULL;
+	gfloat ex, ey, ez, tx, ty, tz, fx, fz;
+
+	pos[0] = 0.0f; pos[1] = 0.0f; pos[2] = 0.0f;
+	*theta = self->vr_seat_theta;
+	if (self->camera == NULL)
+		return;
+
+	pose = lrg_spatial_camera_get_pose (self->camera);
+	lrg_pose_get_position (pose, &ex, &ey, &ez);
+	lrg_pose_get_target (pose, &tx, &ty, &tz);
+	pos[0] = ex;
+	pos[1] = ty;
+	pos[2] = ez;
+	fx = tx - ex;
+	fz = tz - ez;
+	if (fx * fx + fz * fz > 1e-6f)
+		self->vr_seat_theta = *theta = heading_of (fx, fz);
+	(void) ey;
+}
+
+/* Map a tracking-space pose (column-major, metres) to the scene: rotation
+   R = Ry(phi) * R_tracking, position = seat + Ry(phi) (p - origin) / mpu,
+   phi = seat heading - recentred head heading. */
+static void
+vr_to_scene (Lrg3DSurface *self,
+             const gfloat *m,
+             gfloat       *rot,     /* 9: columns c0 c1 c2 */
+             gfloat       *pos)
+{
+	gfloat seat[3], theta, phi, dx, dz, rx, rz;
+	gint c;
+
+	vr_seat (self, seat, &theta);
+	phi = theta - self->vr_yaw0;
+
+	for (c = 0; c < 3; c++)
+	{
+		rot_y (phi, m[c * 4 + 0], m[c * 4 + 2], &rx, &rz);
+		rot[c * 3 + 0] = rx;
+		rot[c * 3 + 1] = m[c * 4 + 1];
+		rot[c * 3 + 2] = rz;
+	}
+
+	dx = m[12] - self->vr_origin[0];
+	dz = m[14] - self->vr_origin[2];
+	rot_y (phi, dx, dz, &rx, &rz);
+	pos[0] = seat[0] + rx / self->vr_mpu;
+	pos[1] = seat[1] + (m[13] - self->vr_origin[1]) / self->vr_mpu;
+	pos[2] = seat[2] + rz / self->vr_mpu;
+}
+
+static void
+vr_recenter_on (Lrg3DSurface *self,
+                const gfloat *head)
+{
+	self->vr_origin[0] = head[12];
+	self->vr_origin[1] = head[13];
+	self->vr_origin[2] = head[14];
+	/* head forward = -column 2 */
+	self->vr_yaw0 = heading_of (-head[8], -head[10]);
+	self->vr_need_recenter = FALSE;
+}
+
+static Matrix
+matrix_from (const gfloat *a)
+{
+	Matrix m;
+
+	m.m0 = a[0];   m.m1 = a[1];   m.m2 = a[2];   m.m3 = a[3];
+	m.m4 = a[4];   m.m5 = a[5];   m.m6 = a[6];   m.m7 = a[7];
+	m.m8 = a[8];   m.m9 = a[9];   m.m10 = a[10]; m.m11 = a[11];
+	m.m12 = a[12]; m.m13 = a[13]; m.m14 = a[14]; m.m15 = a[15];
+	return m;
+}
+
+/* View matrix (column-major) = inverse of [R | p] for a rigid transform. */
+static void
+view_from (const gfloat *rot,
+           const gfloat *pos,
+           gfloat       *v)
+{
+	gint i, j;
+
+	for (i = 0; i < 3; i++)
+	{
+		for (j = 0; j < 3; j++)
+			v[j * 4 + i] = rot[i * 3 + j];
+		v[12 + i] = -(rot[i * 3 + 0] * pos[0] + rot[i * 3 + 1] * pos[1]
+		              + rot[i * 3 + 2] * pos[2]);
+	}
+	v[3] = v[7] = v[11] = 0.0f;
+	v[15] = 1.0f;
+}
+
+static void
+draw_scene_contents (Lrg3DSurface *self)
+{
+	g_autoptr (GrlColor) dim = NULL;
+	guint i;
+
+	if (self->environment != NULL)
+		lrg_panel_environment_draw_ambient (self->environment);
+
+	grl_rlgl_disable_backface_culling ();
+	dim = grl_color_new (0, 0, 0, 255);
+	for (i = 0; i < self->panels->len; i++)
+		lrg_scene_panel_draw (g_ptr_array_index (self->panels, i), dim);
+	grl_rlgl_enable_backface_culling ();
+}
+
+void
+lrg_3d_surface_set_vr_service (Lrg3DSurface *self,
+                               LrgVRService *service)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	g_return_if_fail (service == NULL || LRG_IS_VR_SERVICE (service));
+
+	if (!g_set_object (&self->vr, service))
+		return;
+	self->vr_need_recenter = TRUE;
+	lrg_frame_surface_set_render_mode (LRG_FRAME_SURFACE (self),
+	                                   service != NULL ? LRG_RENDER_MODE_3DVR
+	                                                   : LRG_RENDER_MODE_3D);
+}
+
+LrgVRService *
+lrg_3d_surface_get_vr_service (Lrg3DSurface *self)
+{
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), NULL);
+	return self->vr;
+}
+
+void
+lrg_3d_surface_set_vr_overlay_func (Lrg3DSurface              *self,
+                                    Lrg3DSurfaceVROverlayFunc  func,
+                                    gpointer                   user_data,
+                                    GDestroyNotify             destroy)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+
+	if (self->vr_overlay_destroy != NULL)
+		self->vr_overlay_destroy (self->vr_overlay_data);
+	self->vr_overlay = func;
+	self->vr_overlay_data = user_data;
+	self->vr_overlay_destroy = destroy;
+}
+
+void
+lrg_3d_surface_set_vr_scale (Lrg3DSurface *self,
+                             gfloat        metres_per_unit)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	self->vr_mpu = CLAMP (metres_per_unit, 0.02f, 5.0f);
+}
+
+gfloat
+lrg_3d_surface_get_vr_scale (Lrg3DSurface *self)
+{
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), LRG_VR_DEFAULT_MPU);
+	return self->vr_mpu;
+}
+
+void
+lrg_3d_surface_vr_recenter (Lrg3DSurface *self)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	self->vr_need_recenter = TRUE;
+}
+
+void
+lrg_3d_surface_vr_turn (Lrg3DSurface *self,
+                        gfloat        degrees)
+{
+	g_autoptr (LrgPose) pose = NULL;
+	g_autoptr (LrgPose) turned = NULL;
+	gfloat ex, ey, ez, tx, ty, tz, rx, rz;
+
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	if (self->camera == NULL)
+		return;
+
+	/* Swing the camera's target around its eye: the seat stays put and the
+	   heading changes. */
+	pose = lrg_spatial_camera_get_pose (self->camera);
+	lrg_pose_get_position (pose, &ex, &ey, &ez);
+	lrg_pose_get_target (pose, &tx, &ty, &tz);
+	rot_y (degrees * (gfloat) (G_PI / 180.0), tx - ex, tz - ez, &rx, &rz);
+	turned = lrg_pose_new (ex, ey, ez, ex + rx, ty, ez + rz,
+	                       0.0f, 1.0f, 0.0f, lrg_pose_get_fovy (pose));
+	lrg_spatial_camera_set_pose (self->camera, turned);
+}
+
+void
+lrg_3d_surface_vr_move (Lrg3DSurface *self,
+                        gfloat        forward,
+                        gfloat        right,
+                        gfloat        up)
+{
+	g_autoptr (LrgPose) pose = NULL;
+	g_autoptr (LrgPose) moved = NULL;
+	gfloat ex, ey, ez, tx, ty, tz, seat[3], theta, heading, mx, mz, k;
+	gfloat head[16];
+
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	if (self->camera == NULL)
+		return;
+
+	/* Relative to where the viewer looks, not where the seat faces: the head
+	   heading in the scene is the seat heading plus the head's own yaw. */
+	vr_seat (self, seat, &theta);
+	heading = theta;
+	if (self->vr != NULL)
+	{
+		lrg_vr_service_get_hmd_pose (self->vr, head);
+		heading = theta - self->vr_yaw0 + heading_of (-head[8], -head[10]);
+	}
+
+	/* forward is -Z, right is +X, in the heading's frame */
+	rot_y (heading, right, -forward, &mx, &mz);
+	k = 1.0f / self->vr_mpu;
+
+	pose = lrg_spatial_camera_get_pose (self->camera);
+	lrg_pose_get_position (pose, &ex, &ey, &ez);
+	lrg_pose_get_target (pose, &tx, &ty, &tz);
+	moved = lrg_pose_new (ex + mx * k, ey + up * k, ez + mz * k,
+	                      tx + mx * k, ty + up * k, tz + mz * k,
+	                      0.0f, 1.0f, 0.0f, lrg_pose_get_fovy (pose));
+	lrg_spatial_camera_set_pose (self->camera, moved);
+}
+
+void
+lrg_3d_surface_vr_tracking_to_scene (Lrg3DSurface *self,
+                                     const gfloat *pose,
+                                     gfloat       *out_pos,
+                                     gfloat       *out_dir)
+{
+	gfloat rot[9];
+
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	g_return_if_fail (pose != NULL && out_pos != NULL && out_dir != NULL);
+
+	vr_to_scene (self, pose, rot, out_pos);
+	out_dir[0] = -rot[6];
+	out_dir[1] = -rot[7];
+	out_dir[2] = -rot[8];
+}
+
+gboolean
+lrg_3d_surface_pick_ray (Lrg3DSurface *self,
+                         gfloat        ox,
+                         gfloat        oy,
+                         gfloat        oz,
+                         gfloat        dx,
+                         gfloat        dy,
+                         gfloat        dz,
+                         gfloat       *out_x,
+                         gfloat       *out_y,
+                         guint64      *out_key,
+                         gfloat       *out_distance)
+{
+	g_autoptr (GrlVector3) o = NULL;
+	g_autoptr (GrlVector3) d = NULL;
+	GrlRay *ray;
+	gboolean found;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+
+	o = grl_vector3_new (ox, oy, oz);
+	d = grl_vector3_new (dx, dy, dz);
+	ray = grl_ray_new (o, d);
+	if (ray == NULL)
+		return FALSE;
+	found = pick_ray_internal (self, ray, out_x, out_y, out_key, out_distance);
+	grl_ray_free (ray);
+	return found;
+}
+
+gboolean
+lrg_3d_surface_set_panel_transform (Lrg3DSurface *self,
+                                    guint64       key,
+                                    gfloat        px,
+                                    gfloat        py,
+                                    gfloat        pz,
+                                    gfloat        yaw,
+                                    gfloat        w,
+                                    gfloat        h)
+{
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+
+	if (find_panel (self, key) == NULL)
+		return FALSE;
+	pin_panel_to (self, key, px, py, pz, yaw, w, h);
+	g_signal_emit (self, signals[SIGNAL_PANEL_MOVED], 0, key);
+	return TRUE;
+}
+
+gboolean
+lrg_3d_surface_render_vr (Lrg3DSurface *self)
+{
+	g_autoptr (GrlColor) clear = NULL;
+	Matrix saved_proj, saved_view;
+	guint n_views, v;
+	gint ww = 0, wh = 0;
+	gfloat near_u, far_u;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+
+	if (self->vr == NULL || self->drawing_content || content_window (self) == NULL)
+		return FALSE;
+
+	ensure_default_panel (self);
+
+	/* Flush anything queued for the desktop framebuffer before switching
+	   targets, and remember the matrices the 2D/3D desktop passes rely on. */
+	rlDrawRenderBatchActive ();
+	saved_proj = rlGetMatrixProjection ();
+	saved_view = rlGetMatrixModelview ();
+
+	if (!lrg_vr_service_begin_frame (self->vr))
+		return FALSE;
+
+	if (self->vr_need_recenter)
+	{
+		gfloat head[16];
+
+		lrg_vr_service_get_hmd_pose (self->vr, head);
+		/* Wait for real tracking: an identity pose means "not yet". */
+		if (head[12] != 0.0f || head[13] != 0.0f || head[14] != 0.0f
+		    || head[0] != 1.0f || head[10] != 1.0f)
+			vr_recenter_on (self, head);
+	}
+
+	if (self->environment != NULL)
+		clear = lrg_panel_environment_get_clear_color (self->environment);
+	if (clear == NULL)
+		clear = grl_color_new (16, 16, 20, 255);
+
+	near_u = LRG_VR_NEAR_M / self->vr_mpu;
+	far_u = LRG_VR_FAR_M / self->vr_mpu;
+	n_views = lrg_vr_service_get_view_count (self->vr);
+
+	for (v = 0; v < n_views; v++)
+	{
+		gfloat eye[16], proj[16], rot[9], pos[3], view[16];
+		guint fbo = 0, w = 0, h = 0;
+
+		if (!lrg_vr_service_begin_view (self->vr, v, near_u, far_u, eye, proj,
+		                                &fbo, &w, &h))
+			continue;
+
+		rlClearColor (clear->r, clear->g, clear->b, 255);
+		rlClearScreenBuffers ();
+
+		vr_to_scene (self, eye, rot, pos);
+		view_from (rot, pos, view);
+		rlSetMatrixProjection (matrix_from (proj));
+		rlSetMatrixModelview (matrix_from (view));
+		rlEnableDepthTest ();
+
+		draw_scene_contents (self);
+		if (self->vr_overlay != NULL)
+			self->vr_overlay (self, v, self->vr_overlay_data);
+
+		rlDrawRenderBatchActive ();
+		rlDisableDepthTest ();
+		lrg_vr_service_end_view (self->vr, v);
+	}
+
+	lrg_vr_service_end_frame (self->vr);
+
+	/* Back to the desktop framebuffer, viewport and matrices. */
+	rlDisableFramebuffer ();
+	ww = grl_window_get_width (content_window (self));
+	wh = grl_window_get_height (content_window (self));
+	if (ww <= 0 || wh <= 0)
+	{
+		ww = lrg_frame_surface_get_width (LRG_FRAME_SURFACE (self));
+		wh = lrg_frame_surface_get_height (LRG_FRAME_SURFACE (self));
+	}
+	rlViewport (0, 0, ww, wh);
+	rlSetMatrixProjection (saved_proj);
+	rlSetMatrixModelview (saved_view);
+	return TRUE;
+}
+
 /* ------------------------------------------------------------- new / type -- */
 
 Lrg3DSurface *
@@ -1316,6 +1784,11 @@ lrg_3d_surface_dispose (GObject *object)
 {
 	Lrg3DSurface *self = LRG_3D_SURFACE (object);
 
+	if (self->vr_overlay_destroy != NULL)
+		self->vr_overlay_destroy (self->vr_overlay_data);
+	self->vr_overlay = NULL;
+	self->vr_overlay_destroy = NULL;
+	g_clear_object (&self->vr);
 	g_clear_object (&self->content);
 	g_clear_object (&self->camera);
 	g_clear_object (&self->arrangement);
@@ -1418,4 +1891,7 @@ lrg_3d_surface_init (Lrg3DSurface *self)
 	self->drawing_content = FALSE;
 	self->was_animating = FALSE;
 	self->content_generation = 0;
+	self->vr_mpu = LRG_VR_DEFAULT_MPU;
+	self->vr_need_recenter = TRUE;
+	self->vr_seat_theta = 0.0f;
 }

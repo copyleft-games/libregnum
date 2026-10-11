@@ -26,6 +26,7 @@
 #include "lrg-spatial-camera.h"
 #include "lrg-scene-arrangement.h"
 #include "lrg-panel-environment.h"
+#include "../vr/lrg-vr-service.h"
 
 G_BEGIN_DECLS
 
@@ -521,5 +522,231 @@ gboolean lrg_3d_surface_step (Lrg3DSurface *self,
 
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_3d_surface_is_animating (Lrg3DSurface *self);
+
+/* --- VR presentation ----------------------------------------------------- */
+
+/**
+ * Lrg3DSurfaceVROverlayFunc:
+ * @self: the surface
+ * @view: the view (eye) being drawn
+ * @user_data: data passed to lrg_3d_surface_set_vr_overlay_func()
+ *
+ * Called inside each eye's 3D pass, after the panels, with that eye's
+ * matrices loaded and depth testing on.  Draw in scene units (e.g. controller
+ * rays, cursors, an in-world keyboard) with the ordinary 3D draw calls.
+ *
+ * Since: 1.0
+ */
+typedef void (*Lrg3DSurfaceVROverlayFunc) (Lrg3DSurface *self,
+                                           guint         view,
+                                           gpointer      user_data);
+
+/**
+ * lrg_3d_surface_set_vr_service:
+ * @self: a #Lrg3DSurface
+ * @service: (nullable): an initialised #LrgVRService, or %NULL to leave VR
+ *
+ * Presents the scene in a headset as well as the desktop window.  Each call
+ * to lrg_3d_surface_render_vr() then renders one runtime-paced stereo frame
+ * from the cached panel textures; redisplay keeps refreshing those textures
+ * exactly as in plain 3D mode.  Sets the render mode to
+ * %LRG_RENDER_MODE_3DVR (back to 3D when @service is %NULL).
+ *
+ * The viewer sits in a *seat* that follows the spatial camera: the seat is
+ * at the camera's eye, at the height of what it looks at, facing the
+ * camera's heading (its pitch is ignored, so the horizon stays level).
+ * Every camera intent -- focus a panel, orbit, dolly -- therefore moves the
+ * seat, and the headset's own tracking adds head motion on top.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_set_vr_service (Lrg3DSurface *self,
+                                    LrgVRService *service);
+
+/**
+ * lrg_3d_surface_get_vr_service:
+ * @self: a #Lrg3DSurface
+ *
+ * Returns: (transfer none) (nullable): the VR service, if presenting in VR
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgVRService * lrg_3d_surface_get_vr_service (Lrg3DSurface *self);
+
+/**
+ * lrg_3d_surface_render_vr:
+ * @self: a #Lrg3DSurface
+ *
+ * Renders one VR frame: waits for the runtime's frame timing, draws the
+ * scene once per eye (environment, panels, then the overlay function) and
+ * submits it.  Blocks for at most one display interval.  Must not be called
+ * while a content pass is open.
+ *
+ * Returns: %TRUE if a frame was begun (and submitted)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_render_vr (Lrg3DSurface *self);
+
+/**
+ * lrg_3d_surface_set_vr_overlay_func:
+ * @self: a #Lrg3DSurface
+ * @func: (nullable) (scope notified): overlay drawer, or %NULL
+ * @user_data: (closure func): data for @func
+ * @destroy: (destroy func) (nullable): frees @user_data
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_set_vr_overlay_func (Lrg3DSurface              *self,
+                                         Lrg3DSurfaceVROverlayFunc  func,
+                                         gpointer                   user_data,
+                                         GDestroyNotify             destroy);
+
+/**
+ * lrg_3d_surface_set_vr_scale:
+ * @self: a #Lrg3DSurface
+ * @metres_per_unit: how many metres one scene unit spans in the headset
+ *
+ * The scene is laid out in abstract units (a whole-frame panel is ~5 units
+ * tall, viewed from ~6.6 units).  The default, 0.3, puts that panel 1.5 m
+ * tall about 2 m away -- the same angular size as the desktop 3D view.
+ * Larger makes everything bigger and farther; clamped to 0.02..5.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_set_vr_scale (Lrg3DSurface *self,
+                                  gfloat        metres_per_unit);
+
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_3d_surface_get_vr_scale (Lrg3DSurface *self);
+
+/**
+ * lrg_3d_surface_vr_recenter:
+ * @self: a #Lrg3DSurface
+ *
+ * Makes the viewer's current head position and heading the seat's origin,
+ * so the scene is straight ahead again.  Happens automatically on the first
+ * tracked frame.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_vr_recenter (Lrg3DSurface *self);
+
+/**
+ * lrg_3d_surface_vr_turn:
+ * @self: a #Lrg3DSurface
+ * @degrees: yaw to turn the seat by (positive turns left)
+ *
+ * Rotates the seat in place (snap / smooth turning).
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_vr_turn (Lrg3DSurface *self,
+                             gfloat        degrees);
+
+/**
+ * lrg_3d_surface_vr_move:
+ * @self: a #Lrg3DSurface
+ * @forward: metres along the head's horizontal heading
+ * @right: metres to the right of it
+ * @up: metres up
+ *
+ * Moves the seat (stick locomotion), relative to where the viewer looks.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_vr_move (Lrg3DSurface *self,
+                             gfloat        forward,
+                             gfloat        right,
+                             gfloat        up);
+
+/**
+ * lrg_3d_surface_vr_tracking_to_scene:
+ * @self: a #Lrg3DSurface
+ * @pose: (array fixed-size=16): a column-major pose in tracking space
+ *   (e.g. lrg_vr_service_get_controller_pose())
+ * @out_pos: (out) (array fixed-size=3): its position in scene units
+ * @out_dir: (out) (array fixed-size=3): its forward (-Z) direction, unit length
+ *
+ * Maps a tracked pose into the scene, through the seat and scale, so a
+ * controller can be ray-cast with lrg_3d_surface_pick_ray().
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_vr_tracking_to_scene (Lrg3DSurface *self,
+                                          const gfloat *pose,
+                                          gfloat       *out_pos,
+                                          gfloat       *out_dir);
+
+/**
+ * lrg_3d_surface_pick_ray:
+ * @self: a #Lrg3DSurface
+ * @ox: ray origin x (scene units)
+ * @oy: ray origin y
+ * @oz: ray origin z
+ * @dx: ray direction x
+ * @dy: ray direction y
+ * @dz: ray direction z
+ * @out_x: (out) (optional): frame pixel x of the hit
+ * @out_y: (out) (optional): frame pixel y of the hit
+ * @out_key: (out) (optional): key of the panel hit
+ * @out_distance: (out) (optional): distance to the hit, in scene units
+ *
+ * The world-space twin of lrg_3d_surface_pick_panel(): casts an arbitrary
+ * ray (a VR controller's) against the panels.
+ *
+ * Returns: %TRUE if the ray hit a panel
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_pick_ray (Lrg3DSurface *self,
+                                  gfloat        ox,
+                                  gfloat        oy,
+                                  gfloat        oz,
+                                  gfloat        dx,
+                                  gfloat        dy,
+                                  gfloat        dz,
+                                  gfloat       *out_x,
+                                  gfloat       *out_y,
+                                  guint64      *out_key,
+                                  gfloat       *out_distance);
+
+/**
+ * lrg_3d_surface_set_panel_transform:
+ * @self: a #Lrg3DSurface
+ * @key: the panel/window key
+ * @px: world x of the panel centre
+ * @py: world y
+ * @pz: world z
+ * @yaw: yaw in degrees
+ * @w: width in world units
+ * @h: height in world units
+ *
+ * Pins any panel -- window or static -- at an absolute transform (a
+ * hand-held grab places panels this way).  Emits #Lrg3DSurface::panel-moved.
+ *
+ * Returns: %TRUE if the panel exists
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_set_panel_transform (Lrg3DSurface *self,
+                                             guint64       key,
+                                             gfloat        px,
+                                             gfloat        py,
+                                             gfloat        pz,
+                                             gfloat        yaw,
+                                             gfloat        w,
+                                             gfloat        h);
 
 G_END_DECLS

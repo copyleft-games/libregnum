@@ -44,11 +44,27 @@ G_DECLARE_INTERFACE (LrgVRService, lrg_vr_service, LRG, VR_SERVICE, GObject)
  * @get_controller_buttons: gets controller button state
  * @trigger_haptic: triggers haptic feedback
  * @submit_frame: submits rendered frame to compositor
+ * @begin_frame: starts a runtime-paced frame; %TRUE when views must render
+ * @get_view_count: number of views (2 for stereo)
+ * @begin_view: binds a view's render target, reports its pose + projection
+ * @end_view: releases a view's render target
+ * @end_frame: submits the frame begun by @begin_frame
+ * @is_session_running: whether frames are being accepted
+ * @should_quit: whether the runtime asked the application to exit
+ * @is_controller_tracked: whether a hand's controller pose is valid
  *
  * Interface structure for #LrgVRService.
  *
  * Implementors should provide all methods. The stub implementation
  * returns no-op/failure for all methods.
+ *
+ * Matrices are 4x4, column-major (OpenGL order: element [12..14] is the
+ * translation).  Poses are in the runtime's tracking space, in metres.
+ *
+ * The frame-loop methods (@begin_frame .. @end_frame) serve runtimes that
+ * pace frames themselves (OpenXR): call begin_frame, then for each view
+ * begin_view / draw into the bound framebuffer / end_view, then end_frame.
+ * They supersede @submit_frame for such runtimes.
  */
 struct _LrgVRServiceInterface
 {
@@ -96,7 +112,52 @@ struct _LrgVRServiceInterface
                                         LrgVRHand     hand,
                                         gfloat        duration,
                                         gfloat        amplitude);
+
+    /* Runtime-paced frame loop */
+    gboolean (*begin_frame)        (LrgVRService *self);
+    guint    (*get_view_count)     (LrgVRService *self);
+    gboolean (*begin_view)         (LrgVRService *self,
+                                    guint         view,
+                                    gfloat        near_clip,
+                                    gfloat        far_clip,
+                                    gfloat       *eye_pose,
+                                    gfloat       *projection,
+                                    guint        *framebuffer,
+                                    guint        *width,
+                                    guint        *height);
+    void     (*end_view)           (LrgVRService *self,
+                                    guint         view);
+    void     (*end_frame)          (LrgVRService *self);
+    gboolean (*is_session_running) (LrgVRService *self);
+    gboolean (*should_quit)        (LrgVRService *self);
+    gboolean (*is_controller_tracked) (LrgVRService *self,
+                                       LrgVRHand     hand);
 };
+
+/**
+ * LRG_VR_AXIS_THUMBSTICK_X:
+ *
+ * Axis index for lrg_vr_service_get_controller_axis(): thumbstick X, -1..1.
+ */
+#define LRG_VR_AXIS_THUMBSTICK_X 0
+/**
+ * LRG_VR_AXIS_THUMBSTICK_Y:
+ *
+ * Axis index: thumbstick Y, -1 (down) .. 1 (up).
+ */
+#define LRG_VR_AXIS_THUMBSTICK_Y 1
+/**
+ * LRG_VR_AXIS_TRIGGER:
+ *
+ * Axis index: trigger pull, 0..1.
+ */
+#define LRG_VR_AXIS_TRIGGER      2
+/**
+ * LRG_VR_AXIS_GRIP:
+ *
+ * Axis index: grip squeeze, 0..1.
+ */
+#define LRG_VR_AXIS_GRIP         3
 
 /* ==========================================================================
  * Public API
@@ -311,5 +372,125 @@ void lrg_vr_service_trigger_haptic (LrgVRService *self,
                                     LrgVRHand     hand,
                                     gfloat        duration,
                                     gfloat        amplitude);
+
+/**
+ * lrg_vr_service_begin_frame:
+ * @self: a #LrgVRService
+ *
+ * Starts a runtime-paced frame.  For OpenXR this waits for the runtime's
+ * frame timing (xrWaitFrame) and begins the frame, so it blocks until the
+ * runtime wants the next frame -- unless the implementation waits on a
+ * thread of its own (lrg_openxr_service_start_frame_thread()), in which case
+ * it returns %FALSE at once when no frame is due.  Always pair with
+ * lrg_vr_service_end_frame() when it returns %TRUE, and render the views
+ * lrg_vr_service_get_view_count() then reports (none, when the runtime does
+ * not want this frame drawn).
+ *
+ * Returns: %TRUE if a frame was begun
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_vr_service_begin_frame (LrgVRService *self);
+
+/**
+ * lrg_vr_service_get_view_count:
+ * @self: a #LrgVRService
+ *
+ * Returns: the number of views to render (2 for a stereo HMD, 0 if none)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_vr_service_get_view_count (LrgVRService *self);
+
+/**
+ * lrg_vr_service_begin_view:
+ * @self: a #LrgVRService
+ * @view: view index, below lrg_vr_service_get_view_count()
+ * @near_clip: near clip distance, in metres
+ * @far_clip: far clip distance, in metres
+ * @eye_pose: (out) (array fixed-size=16): the eye's pose in tracking space
+ * @projection: (out) (array fixed-size=16): the view's projection matrix
+ * @framebuffer: (out): GL framebuffer to draw into (already bound)
+ * @width: (out): framebuffer width in pixels
+ * @height: (out): framebuffer height in pixels
+ *
+ * Acquires and binds the render target for @view.
+ *
+ * Returns: %TRUE if the view's target was acquired
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_vr_service_begin_view (LrgVRService *self,
+                                    guint         view,
+                                    gfloat        near_clip,
+                                    gfloat        far_clip,
+                                    gfloat       *eye_pose,
+                                    gfloat       *projection,
+                                    guint        *framebuffer,
+                                    guint        *width,
+                                    guint        *height);
+
+/**
+ * lrg_vr_service_end_view:
+ * @self: a #LrgVRService
+ * @view: the view begun by lrg_vr_service_begin_view()
+ *
+ * Releases @view's render target and unbinds its framebuffer.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_vr_service_end_view (LrgVRService *self,
+                              guint         view);
+
+/**
+ * lrg_vr_service_end_frame:
+ * @self: a #LrgVRService
+ *
+ * Submits the frame begun by lrg_vr_service_begin_frame().
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_vr_service_end_frame (LrgVRService *self);
+
+/**
+ * lrg_vr_service_is_session_running:
+ * @self: a #LrgVRService
+ *
+ * Returns: %TRUE while the runtime accepts frames
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_vr_service_is_session_running (LrgVRService *self);
+
+/**
+ * lrg_vr_service_should_quit:
+ * @self: a #LrgVRService
+ *
+ * Returns: %TRUE once the runtime has asked the application to exit (the
+ *   user quit it from the VR dashboard, or the runtime is shutting down)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_vr_service_should_quit (LrgVRService *self);
+
+/**
+ * lrg_vr_service_is_controller_tracked:
+ * @self: a #LrgVRService
+ * @hand: which hand
+ *
+ * Returns: %TRUE when @hand's controller pose is currently valid
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_vr_service_is_controller_tracked (LrgVRService *self,
+                                               LrgVRHand     hand);
 
 G_END_DECLS

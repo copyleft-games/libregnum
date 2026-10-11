@@ -592,6 +592,7 @@
 #include "vr/lrg-vr-service.h"
 #include "vr/lrg-vr-stub.h"
 #include "vr/lrg-vr-comfort.h"
+#include "vr/lrg-openxr-service.h"
 
 /* Template module - Base game templates for rapid development */
 #include "template/lrg-game-template.h"

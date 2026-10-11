@@ -438,3 +438,125 @@ lrg_vr_service_trigger_haptic (LrgVRService *self,
     if (iface->trigger_haptic != NULL)
         iface->trigger_haptic (self, hand, duration, amplitude);
 }
+
+gboolean
+lrg_vr_service_begin_frame (LrgVRService *self)
+{
+    LrgVRServiceInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_VR_SERVICE (self), FALSE);
+
+    iface = LRG_VR_SERVICE_GET_IFACE (self);
+    if (iface->begin_frame == NULL)
+        return FALSE;
+
+    return iface->begin_frame (self);
+}
+
+guint
+lrg_vr_service_get_view_count (LrgVRService *self)
+{
+    LrgVRServiceInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_VR_SERVICE (self), 0);
+
+    iface = LRG_VR_SERVICE_GET_IFACE (self);
+    if (iface->get_view_count == NULL)
+        return 0;
+
+    return iface->get_view_count (self);
+}
+
+gboolean
+lrg_vr_service_begin_view (LrgVRService *self,
+                           guint         view,
+                           gfloat        near_clip,
+                           gfloat        far_clip,
+                           gfloat       *eye_pose,
+                           gfloat       *projection,
+                           guint        *framebuffer,
+                           guint        *width,
+                           guint        *height)
+{
+    LrgVRServiceInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_VR_SERVICE (self), FALSE);
+    g_return_val_if_fail (eye_pose != NULL && projection != NULL, FALSE);
+    g_return_val_if_fail (framebuffer != NULL, FALSE);
+    g_return_val_if_fail (width != NULL && height != NULL, FALSE);
+
+    iface = LRG_VR_SERVICE_GET_IFACE (self);
+    if (iface->begin_view == NULL)
+        return FALSE;
+
+    return iface->begin_view (self, view, near_clip, far_clip, eye_pose,
+                              projection, framebuffer, width, height);
+}
+
+void
+lrg_vr_service_end_view (LrgVRService *self,
+                         guint         view)
+{
+    LrgVRServiceInterface *iface;
+
+    g_return_if_fail (LRG_IS_VR_SERVICE (self));
+
+    iface = LRG_VR_SERVICE_GET_IFACE (self);
+    if (iface->end_view != NULL)
+        iface->end_view (self, view);
+}
+
+void
+lrg_vr_service_end_frame (LrgVRService *self)
+{
+    LrgVRServiceInterface *iface;
+
+    g_return_if_fail (LRG_IS_VR_SERVICE (self));
+
+    iface = LRG_VR_SERVICE_GET_IFACE (self);
+    if (iface->end_frame != NULL)
+        iface->end_frame (self);
+}
+
+gboolean
+lrg_vr_service_is_session_running (LrgVRService *self)
+{
+    LrgVRServiceInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_VR_SERVICE (self), FALSE);
+
+    iface = LRG_VR_SERVICE_GET_IFACE (self);
+    if (iface->is_session_running == NULL)
+        return FALSE;
+
+    return iface->is_session_running (self);
+}
+
+gboolean
+lrg_vr_service_should_quit (LrgVRService *self)
+{
+    LrgVRServiceInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_VR_SERVICE (self), FALSE);
+
+    iface = LRG_VR_SERVICE_GET_IFACE (self);
+    if (iface->should_quit == NULL)
+        return FALSE;
+
+    return iface->should_quit (self);
+}
+
+gboolean
+lrg_vr_service_is_controller_tracked (LrgVRService *self,
+                                      LrgVRHand     hand)
+{
+    LrgVRServiceInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_VR_SERVICE (self), FALSE);
+
+    iface = LRG_VR_SERVICE_GET_IFACE (self);
+    if (iface->is_controller_tracked == NULL)
+        return FALSE;
+
+    return iface->is_controller_tracked (self, hand);
+}

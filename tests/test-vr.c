@@ -462,6 +462,61 @@ test_vr_locomotion_mode_enum (void)
     g_assert_true (g_type_is_a (type, G_TYPE_ENUM));
 }
 
+/* ==========================================================================
+ * OpenXR service (no headset, no GL context: what must still hold)
+ * ========================================================================== */
+
+static void
+test_openxr_service_before_initialize (void)
+{
+    g_autoptr(LrgOpenXRService) xr = lrg_openxr_service_new ("test");
+    LrgVRService *svc = LRG_VR_SERVICE (xr);
+    gfloat m[16];
+
+    g_assert_true (LRG_IS_VR_SERVICE (xr));
+    /* Every frame-loop call is a safe no-op before initialize. */
+    g_assert_false (lrg_vr_service_begin_frame (svc));
+    g_assert_cmpuint (lrg_vr_service_get_view_count (svc), ==, 0);
+    g_assert_false (lrg_vr_service_is_session_running (svc));
+    g_assert_false (lrg_vr_service_should_quit (svc));
+    g_assert_false (lrg_vr_service_is_controller_tracked (svc, LRG_VR_HAND_LEFT));
+    lrg_vr_service_end_frame (svc);
+    lrg_vr_service_get_controller_pose (svc, LRG_VR_HAND_RIGHT, m);
+    g_assert_cmpfloat (lrg_openxr_service_get_display_refresh_rate (xr), ==, 90.0f);
+    g_assert_cmpstr (lrg_openxr_service_get_session_state_name (xr), ==, "none");
+    g_assert_cmpint (lrg_openxr_service_get_frame_fd (xr), ==, -1);
+    /* The frame thread needs an initialised session. */
+    g_assert_cmpint (lrg_openxr_service_start_frame_thread (xr), ==, -1);
+}
+
+static void
+test_openxr_service_initialize_without_gl (void)
+{
+    g_autoptr(LrgOpenXRService) xr = lrg_openxr_service_new ("test");
+    g_autoptr(GError) error = NULL;
+
+    /* No GL context is current here, so a session cannot be bound whether or
+       not a runtime is installed: initialize must fail with an error (not
+       crash, not half-succeed) and leave the service reusable. */
+    g_assert_false (lrg_vr_service_initialize (LRG_VR_SERVICE (xr), &error));
+    g_assert_nonnull (error);
+    g_assert_true (error->domain == LRG_VR_ERROR);
+    g_assert_false (lrg_vr_service_is_hmd_present (LRG_VR_SERVICE (xr)));
+}
+
+static void
+test_stub_frame_loop (void)
+{
+    LrgVRService *stub = LRG_VR_SERVICE (lrg_vr_stub_get_default ());
+    gfloat eye[16], proj[16];
+    guint fbo = 0, w = 0, h = 0;
+
+    g_assert_false (lrg_vr_service_begin_frame (stub));
+    g_assert_cmpuint (lrg_vr_service_get_view_count (stub), ==, 0);
+    g_assert_false (lrg_vr_service_begin_view (stub, 0, 0.1f, 100.0f, eye, proj,
+                                               &fbo, &w, &h));
+}
+
 static void
 test_vr_error_enum (void)
 {
@@ -540,6 +595,11 @@ main (int   argc,
     g_test_add_func ("/vr/enums/turn-mode", test_vr_turn_mode_enum);
     g_test_add_func ("/vr/enums/locomotion-mode", test_vr_locomotion_mode_enum);
     g_test_add_func ("/vr/enums/error", test_vr_error_enum);
+    g_test_add_func ("/vr/openxr/before-initialize",
+                     test_openxr_service_before_initialize);
+    g_test_add_func ("/vr/openxr/initialize-without-gl",
+                     test_openxr_service_initialize_without_gl);
+    g_test_add_func ("/vr/stub/frame-loop", test_stub_frame_loop);
 
     return g_test_run ();
 }

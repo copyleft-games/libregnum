@@ -441,6 +441,7 @@ PUBLIC_HEADERS := \
 	src/vr/lrg-vr-service.h \
 	src/vr/lrg-vr-stub.h \
 	src/vr/lrg-vr-comfort.h \
+	src/vr/lrg-openxr-service.h \
 	src/template/lrg-game-template.h \
 	src/template/lrg-input-buffer.h \
 	src/template/states/lrg-template-main-menu-state.h \
@@ -964,6 +965,7 @@ SOURCES := \
 	src/vr/lrg-vr-service.c \
 	src/vr/lrg-vr-stub.c \
 	src/vr/lrg-vr-comfort.c \
+	src/vr/lrg-openxr-service.c \
 	src/template/lrg-game-template.c \
 	src/template/lrg-input-buffer.c \
 	src/template/states/lrg-template-main-menu-state.c \
@@ -1810,6 +1812,14 @@ $(OBJDIR)/src/%.o: src/%.c | $(OBJDIR)
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# The OpenXR backend compiles to a stub without OPENXR=1, so it must rebuild
+# when the flag flips; the stamp's name carries the value.
+OPENXR_STAMP := $(OBJDIR)/.openxr-$(HAS_OPENXR)
+$(OPENXR_STAMP): | $(OBJDIR)
+	@rm -f $(OBJDIR)/.openxr-*
+	@touch $@
+$(OBJDIR)/src/vr/lrg-openxr-service.o: $(OPENXR_STAMP)
 
 # Explicit rules for each source file (for proper dependency tracking)
 
