@@ -85,6 +85,16 @@ struct _Lrg3DSurface
 	Lrg3DSurfaceVROverlayFunc vr_overlay;
 	gpointer                  vr_overlay_data;
 	GDestroyNotify            vr_overlay_destroy;
+
+	/* VR content target: in VR the flat frame is rasterised into this
+	   offscreen framebuffer instead of the window's, so the window can be
+	   hidden -- a host compositor (gamescope, under SteamVR) otherwise shows
+	   it as a separate flat "desktop game" in front of the scene. */
+	guint       content_fbo;
+	guint       content_tex;
+	gint        content_w;
+	gint        content_h;
+	gboolean    content_bound;
 };
 
 G_DEFINE_FINAL_TYPE (Lrg3DSurface, lrg_3d_surface, LRG_TYPE_FRAME_SURFACE)
@@ -327,9 +337,74 @@ lrg_3d_surface_end_frame (LrgFrameSurface *surface)
 }
 
 static void
+content_target_free (Lrg3DSurface *self)
+{
+	if (self->content_fbo != 0)
+		rlUnloadFramebuffer (self->content_fbo);   /* and its depth buffer */
+	if (self->content_tex != 0)
+		rlUnloadTexture (self->content_tex);
+	self->content_fbo = self->content_tex = 0;
+	self->content_w = self->content_h = 0;
+}
+
+/* Bind the VR content target, (re)creating it at the frame's size. */
+static void
+content_target_bind (Lrg3DSurface *self)
+{
+	gint w = lrg_frame_surface_get_width (LRG_FRAME_SURFACE (self));
+	gint h = lrg_frame_surface_get_height (LRG_FRAME_SURFACE (self));
+
+	if (w <= 0 || h <= 0)
+		return;
+	if (self->content_fbo != 0 && (w != self->content_w || h != self->content_h))
+		content_target_free (self);
+	if (self->content_fbo == 0)
+	{
+		guint fbo = rlLoadFramebuffer ();
+		guint tex = rlLoadTexture (NULL, w, h,
+		                           RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+		guint depth = rlLoadTextureDepth (w, h, true);
+
+		rlFramebufferAttach (fbo, tex, RL_ATTACHMENT_COLOR_CHANNEL0,
+		                     RL_ATTACHMENT_TEXTURE2D, 0);
+		rlFramebufferAttach (fbo, depth, RL_ATTACHMENT_DEPTH,
+		                     RL_ATTACHMENT_RENDERBUFFER, 0);
+		if (!rlFramebufferComplete (fbo))
+		{
+			rlUnloadFramebuffer (fbo);
+			rlUnloadTexture (tex);
+			return;   /* fall back to the window's framebuffer */
+		}
+		self->content_fbo = fbo;
+		self->content_tex = tex;
+		self->content_w = w;
+		self->content_h = h;
+	}
+
+	rlDrawRenderBatchActive ();
+	rlEnableFramebuffer (self->content_fbo);
+	rlViewport (0, 0, w, h);
+	self->content_bound = TRUE;
+}
+
+static void
+content_target_unbind (Lrg3DSurface *self)
+{
+	if (!self->content_bound)
+		return;
+	rlDrawRenderBatchActive ();
+	rlDisableFramebuffer ();
+	self->content_bound = FALSE;
+}
+
+static void
 lrg_3d_surface_begin_content (LrgFrameSurface *surface)
 {
-	LRG_3D_SURFACE (surface)->drawing_content = TRUE;
+	Lrg3DSurface *self = LRG_3D_SURFACE (surface);
+
+	self->drawing_content = TRUE;
+	if (self->vr != NULL)
+		content_target_bind (self);
 }
 
 static void
@@ -345,7 +420,10 @@ lrg_3d_surface_end_content (LrgFrameSurface *surface)
 	self->drawing_content = FALSE;
 
 	if (content_window (self) == NULL)
+	{
+		content_target_unbind (self);
 		return;
+	}
 
 	w = lrg_frame_surface_get_width (surface);
 	h = lrg_frame_surface_get_height (surface);
@@ -355,7 +433,10 @@ lrg_3d_surface_end_content (LrgFrameSurface *surface)
 	grl_draw_begin_scissor_mode (0, 0, w, h);
 	grl_draw_end_scissor_mode ();
 
+	/* Reads the bound framebuffer: the VR content target when bound, else
+	   the window's.  Same size and projection either way. */
 	shot = grl_image_new_from_screen ();
+	content_target_unbind (self);
 	if (shot != NULL)
 	{
 		for (i = 0; i < self->panels->len; i++)
@@ -1490,6 +1571,8 @@ lrg_3d_surface_set_vr_service (Lrg3DSurface *self,
 
 	if (!g_set_object (&self->vr, service))
 		return;
+	if (service == NULL)
+		content_target_free (self);
 	self->vr_need_recenter = TRUE;
 	lrg_frame_surface_set_render_mode (LRG_FRAME_SURFACE (self),
 	                                   service != NULL ? LRG_RENDER_MODE_3DVR
@@ -1789,6 +1872,8 @@ lrg_3d_surface_dispose (GObject *object)
 	self->vr_overlay = NULL;
 	self->vr_overlay_destroy = NULL;
 	g_clear_object (&self->vr);
+	/* GL objects go while the content surface still owns the context. */
+	content_target_free (self);
 	g_clear_object (&self->content);
 	g_clear_object (&self->camera);
 	g_clear_object (&self->arrangement);
