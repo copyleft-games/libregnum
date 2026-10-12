@@ -387,6 +387,17 @@ content_target_bind (Lrg3DSurface *self)
 
 	grl_render_texture_begin (self->content_rt);
 	self->content_bound = TRUE;
+	/* The frame is flat 2D, drawn in raylib's batch order.  The GL context
+	   is shared with whatever 3D the embedder renders between frames (scene
+	   buffers into their own targets), and in VR nothing resets its state
+	   per frame -- the desktop's scene pass does.  A depth test left on
+	   drops every 2D draw after a batch flush (raylib's per-call depth
+	   restarts at the back), so text goes missing in runs; reset what the
+	   2D pass relies on.  */
+	rlDisableDepthTest ();
+	rlDisableScissorTest ();
+	rlEnableColorBlend ();
+	rlSetBlendMode (RL_BLEND_ALPHA);
 	if (self->have_clear)
 		rlClearColor (self->clear_color.r, self->clear_color.g,
 		              self->clear_color.b, self->clear_color.a);
