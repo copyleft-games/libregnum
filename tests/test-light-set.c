@@ -377,6 +377,100 @@ test_light_set_shader_terrain_origin (void)
     lrg_terrain_set_shader (terrain, NULL);
 }
 
+/* CPU evaluation matches the shader's model term by term */
+static void
+test_light_set_sample (void)
+{
+    g_autoptr(LrgLightSet) lights = lrg_light_set_new ();
+    GrlColor gray = { 51, 51, 51, 255 };
+    GrlColor red = { 255, 0, 0, 255 };
+    GrlColor sun = { 0, 0, 255, 255 };
+    GrlVector3 at = { 0.0f, 0.0f, 0.0f };
+    GrlVector3 up = { 0.0f, 2.0f, 0.0f };
+    GrlVector3 down = { 0.0f, -1.0f, 0.0f };
+    GrlVector3 side = { 1.0f, 0.0f, 0.0f };
+    GrlVector3 zero = { 0.0f, 0.0f, 0.0f };
+    gfloat rgb[3];
+
+    /* ambient only (nothing selected yet) */
+    lrg_light_set_set_ambient (lights, &gray);
+    lrg_light_set_sample (lights, &at, NULL, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], 0.2f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (rgb[2], 0.2f, 1e-5);
+
+    /* the directional light: Lambert with a normal, full without */
+    lrg_light_set_set_directional (lights, &down, &sun);
+    lrg_light_set_sample (lights, &at, &up, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[2], 1.2f, 1e-5);
+    lrg_light_set_sample (lights, &at, &side, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[2], 0.2f, 1e-5);
+    lrg_light_set_sample (lights, &at, NULL, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[2], 1.2f, 1e-5);
+    /* a zero normal counts as none */
+    lrg_light_set_sample (lights, &at, &zero, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[2], 1.2f, 1e-5);
+    lrg_light_set_set_directional (lights, NULL, NULL);
+
+    /* a point light 2 above with radius 4: k = 0.5, k² = 0.25; only
+     * after a selection */
+    lrg_light_set_add_point_light (lights, 0.0, 2.0, 0.0, &red, 4.0f);
+    lrg_light_set_sample (lights, &at, &up, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], 0.2f, 1e-5);
+    lrg_light_set_select (lights, 0.0, 0.0, 0.0);
+    lrg_light_set_sample (lights, &at, &up, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], 0.45f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (rgb[1], 0.2f, 1e-5);
+    /* facing away: no Lambert contribution; no normal: full */
+    lrg_light_set_sample (lights, &at, &down, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], 0.2f, 1e-5);
+    lrg_light_set_sample (lights, &at, NULL, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], 0.45f, 1e-5);
+
+    /* intensity scales, beyond the radius nothing */
+    lrg_light_set_set_point_light_intensity (lights, 0, 2.0f);
+    lrg_light_set_sample (lights, &at, NULL, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], 0.7f, 1e-5);
+    at.x = 10.0f;
+    lrg_light_set_sample (lights, &at, NULL, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], 0.2f, 1e-5);
+
+    /* the origin: sample positions are draw space (world - origin) */
+    lrg_light_set_set_point_light_intensity (lights, 0, 1.0f);
+    lrg_light_set_set_point_light_position (lights, 0, 100.0, 2.0, 0.0);
+    lrg_light_set_set_origin (lights, 100.0, 0.0, 0.0);
+    lrg_light_set_select (lights, 100.0, 0.0, 0.0);
+    at.x = 0.0f;
+    lrg_light_set_sample (lights, &at, NULL, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], 0.45f, 1e-5);
+}
+
+/* the bound light set is process wide and holds a reference */
+static void
+test_light_set_bind (void)
+{
+    LrgLightSet *lights = lrg_light_set_new ();
+    GWeakRef weak;
+
+    g_assert_null (lrg_light_set_get_bound ());
+    g_weak_ref_init (&weak, lights);
+
+    lrg_light_set_bind (lights);
+    g_assert_true (lrg_light_set_get_bound () == lights);
+    g_object_unref (lights);
+    /* still alive through the binding */
+    lights = g_weak_ref_get (&weak);
+    g_assert_nonnull (lights);
+    g_object_unref (lights);
+
+    lrg_light_set_unbind ();
+    g_assert_null (lrg_light_set_get_bound ());
+    g_assert_null (g_weak_ref_get (&weak));
+    g_weak_ref_clear (&weak);
+
+    /* unbinding twice is harmless */
+    lrg_light_set_unbind ();
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -390,6 +484,8 @@ main (int   argc,
     g_test_add_func ("/light-set/new", test_light_set_new);
     g_test_add_func ("/light-set/ids", test_light_set_ids);
     g_test_add_func ("/light-set/select", test_light_set_select);
+    g_test_add_func ("/light-set/sample", test_light_set_sample);
+    g_test_add_func ("/light-set/bind", test_light_set_bind);
     g_test_add_func ("/light-set/shader-static-batch", test_light_set_shader_static_batch);
     g_test_add_func ("/light-set/shader-terrain-origin", test_light_set_shader_terrain_origin);
 

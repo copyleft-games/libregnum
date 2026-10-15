@@ -54,6 +54,14 @@ guint    lrg_light_set_get_active_light (LrgLightSet *self, guint index);
 void       lrg_light_set_set_alpha_cutoff (LrgLightSet *self, gfloat cutoff);
 GrlShader *lrg_light_set_get_shader       (LrgLightSet *self);
 gboolean   lrg_light_set_apply            (LrgLightSet *self, gdouble camera_x, gdouble camera_y, gdouble camera_z);
+
+/* CPU evaluation and binding (headless) */
+void         lrg_light_set_sample    (LrgLightSet *self, const GrlVector3 *position,
+                                      const GrlVector3 *normal,   /* NULL: no Lambert term */
+                                      gfloat out_rgb[3]);
+void         lrg_light_set_bind      (LrgLightSet *self);
+void         lrg_light_set_unbind    (void);
+LrgLightSet *lrg_light_set_get_bound (void);
 #+end_src
 
 ** Semantics
@@ -96,6 +104,18 @@ final = texel * colDiffuse * vertexColor * light   (alpha unchanged)
 - The best =n= are kept by insertion into a fixed array: O(lights × n), no allocation. =get_active_light (i)= gives them nearest first.
 - Removing or clearing lights empties the selection until the next =select()= / =apply()=.
 
+*** CPU evaluation
+:PROPERTIES:
+:CUSTOM_ID: cpu-evaluation
+:END:
+=sample()= evaluates exactly the lighting model above for one point, with the point lights of the last selection (=select()= / =apply()=; none before the first) and positions in draw space (world minus the origin, the space of =fragPosition=). A =NULL= or zero normal drops every Lambert term, the convention for camera-facing quads. The result is the =light= term, unclamped. It lights geometry the shader cannot reach, such as [[file:billboard-batch.org][LrgBillboardBatch]] quads.
+
+*** Binding
+:PROPERTIES:
+:CUSTOM_ID: binding
+:END:
+=bind()= makes a light set the process-wide bound set (a reference is held until =unbind()= or the next =bind()=), like raylib's current shader. Billboard batches without a light set of their own are lit by it, so a game can light every billboard drawn between =bind()= and =unbind()= (scenery, monsters, loot) without handing the set to each batch. Drawing is single threaded; so is the binding.
+
 ** Example
 :PROPERTIES:
 :CUSTOM_ID: example
@@ -124,5 +144,8 @@ lrg_light_set_apply (lights, player_x, player_y, player_z);
 grl_camera3d_begin (camera);
 lrg_terrain_draw (ground);
 lrg_static_batch_draw (town, LRG_STATIC_BATCH_ALL_LAYERS);
+lrg_light_set_bind (lights);          /* billboards lit on the CPU */
+lrg_billboard_batch_draw (trees, &eye);
+lrg_light_set_unbind ();
 grl_camera3d_end (camera);
 #+end_src

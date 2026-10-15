@@ -39,6 +39,7 @@ typedef struct
     gfloat   uv[4];       /* u0, v0 (top), u1, v1 (bottom) */
     guint8   tint[4];
     gboolean visible;
+    gboolean emissive;
 } Billboard;
 
 typedef struct
@@ -59,6 +60,8 @@ struct _LrgBillboardBatch
     gboolean          shader_tried;
     gboolean          shader_loaded;
     gint              cutoff_loc;
+    LrgLightSet      *light_set;    /* own lights, NULL: the bound set */
+    gboolean          lit;
 };
 
 G_DEFINE_TYPE (LrgBillboardBatch, lrg_billboard_batch, G_TYPE_OBJECT)
@@ -114,6 +117,7 @@ lrg_billboard_batch_finalize (GObject *object)
     if (self->shader_loaded && IsWindowReady ())
         UnloadShader (self->shader);
 
+    g_clear_object (&self->light_set);
     g_clear_pointer (&self->billboards, g_array_unref);
     g_clear_pointer (&self->textures, g_hash_table_unref);
 
@@ -135,6 +139,7 @@ lrg_billboard_batch_init (LrgBillboardBatch *self)
                                             NULL, material_texture_free);
     self->cutoff = LRG_BILLBOARD_BATCH_DEFAULT_CUTOFF;
     self->cutoff_loc = -1;
+    self->lit = TRUE;
 }
 
 LrgBillboardBatch *
@@ -500,6 +505,144 @@ lrg_billboard_batch_get_corners (LrgBillboardBatch *self,
 }
 
 /* ------------------------------------------------------------------------ */
+/* Lighting                                                                 */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_billboard_batch_set_light_set (LrgBillboardBatch *self,
+                                   LrgLightSet       *light_set)
+{
+    g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
+    g_return_if_fail (light_set == NULL || LRG_IS_LIGHT_SET (light_set));
+
+    g_set_object (&self->light_set, light_set);
+}
+
+LrgLightSet *
+lrg_billboard_batch_get_light_set (LrgBillboardBatch *self)
+{
+    g_return_val_if_fail (LRG_IS_BILLBOARD_BATCH (self), NULL);
+    return self->light_set;
+}
+
+void
+lrg_billboard_batch_set_lit (LrgBillboardBatch *self,
+                             gboolean           lit)
+{
+    g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
+    self->lit = lit;
+}
+
+gboolean
+lrg_billboard_batch_get_lit (LrgBillboardBatch *self)
+{
+    g_return_val_if_fail (LRG_IS_BILLBOARD_BATCH (self), FALSE);
+    return self->lit;
+}
+
+void
+lrg_billboard_batch_set_emissive (LrgBillboardBatch *self,
+                                  guint              index,
+                                  gboolean           emissive)
+{
+    Billboard *b;
+
+    g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
+
+    b = billboard_at (self, index);
+    g_return_if_fail (b != NULL);
+    b->emissive = emissive;
+}
+
+gboolean
+lrg_billboard_batch_get_emissive (LrgBillboardBatch *self,
+                                  guint              index)
+{
+    Billboard *b;
+
+    g_return_val_if_fail (LRG_IS_BILLBOARD_BATCH (self), FALSE);
+
+    b = billboard_at (self, index);
+    return b != NULL && b->emissive;
+}
+
+/* active_light_set:
+ * The lights a draw uses now: the batch's own, else the bound set;
+ * NULL for an unlit batch. */
+static LrgLightSet *
+active_light_set (LrgBillboardBatch *self)
+{
+    if (!self->lit)
+        return NULL;
+    return self->light_set != NULL ? self->light_set : lrg_light_set_get_bound ();
+}
+
+/* lit_tint:
+ * The billboard's tint times the light at its centre (pivot moved to
+ * the middle of the quad along world up, then through @transform, the
+ * rlgl matrix vertices go through), clamped per channel. */
+static void
+lit_tint (const Billboard *b,
+          LrgLightSet     *lights,
+          const Matrix    *transform,
+          guint8          *out)
+{
+    GrlVector3 centre;
+    gfloat     local[3];
+    gfloat     light[3];
+    guint      k;
+
+    memcpy (out, b->tint, 4);
+    if (lights == NULL || b->emissive)
+        return;
+
+    local[0] = b->position[0];
+    local[1] = b->position[1] + (0.5f - b->pivot_y) * b->height;
+    local[2] = b->position[2];
+    centre.x = transform->m0 * local[0] + transform->m4 * local[1]
+               + transform->m8 * local[2] + transform->m12;
+    centre.y = transform->m1 * local[0] + transform->m5 * local[1]
+               + transform->m9 * local[2] + transform->m13;
+    centre.z = transform->m2 * local[0] + transform->m6 * local[1]
+               + transform->m10 * local[2] + transform->m14;
+
+    lrg_light_set_sample (lights, &centre, NULL, light);
+    for (k = 0; k < 3; k++)
+    {
+        gfloat v = (gfloat)b->tint[k] * light[k];
+
+        out[k] = (guint8)CLAMP (v + 0.5f, 0.0f, 255.0f);
+    }
+}
+
+gboolean
+lrg_billboard_batch_get_lit_tint (LrgBillboardBatch *self,
+                                  guint              index,
+                                  GrlColor          *out_tint)
+{
+    Billboard *b;
+    Matrix     identity = { 1.0f, 0.0f, 0.0f, 0.0f,
+                            0.0f, 1.0f, 0.0f, 0.0f,
+                            0.0f, 0.0f, 1.0f, 0.0f,
+                            0.0f, 0.0f, 0.0f, 1.0f };
+    guint8     rgba[4];
+
+    g_return_val_if_fail (LRG_IS_BILLBOARD_BATCH (self), FALSE);
+    g_return_val_if_fail (out_tint != NULL, FALSE);
+
+    b = billboard_at (self, index);
+    if (b == NULL)
+        return FALSE;
+
+    lit_tint (b, active_light_set (self), &identity, rgba);
+    out_tint->r = rgba[0];
+    out_tint->g = rgba[1];
+    out_tint->b = rgba[2];
+    out_tint->a = rgba[3];
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Drawing                                                                  */
 /* ------------------------------------------------------------------------ */
 
@@ -541,6 +684,8 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     gfloat    cam_right[3];
     gfloat    cam_up[3];
     gboolean  use_shader;
+    LrgLightSet *lights;
+    Matrix    transform;
     guint     current;
     gboolean  open;
     guint     i;
@@ -576,6 +721,12 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     if (order->len == 0)
         return;
     g_ptr_array_sort (order, compare_material);
+
+    /* rlVertex3f() applies the push/pop transform on the CPU; light the
+     * centres in that same space (the space the static-geometry shader
+     * lights, see lrg_light_set_sample()). */
+    lights = active_light_set (self);
+    transform = rlGetMatrixTransform ();
 
     use_shader = FALSE;
     if (self->cutoff > 0.0f)
@@ -614,7 +765,12 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
         compute_basis (self, b, camera, cam_right, cam_up, right, up);
         build_corners (b, right, up, q);
 
-        rlColor4ub (b->tint[0], b->tint[1], b->tint[2], b->tint[3]);
+        {
+            guint8 rgba[4];
+
+            lit_tint (b, lights, &transform, rgba);
+            rlColor4ub (rgba[0], rgba[1], rgba[2], rgba[3]);
+        }
         /* facing normal = right x up (points at the camera) */
         rlNormal3f (right[1] * up[2] - right[2] * up[1],
                     right[2] * up[0] - right[0] * up[2],

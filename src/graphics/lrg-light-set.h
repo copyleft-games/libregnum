@@ -332,4 +332,60 @@ lrg_light_set_apply (LrgLightSet *self,
                      gdouble      camera_y,
                      gdouble      camera_z);
 
+/**
+ * lrg_light_set_sample:
+ * @self: an #LrgLightSet
+ * @position: a point in draw space, the space the shader lights (world
+ *   minus the origin, see lrg_light_set_set_origin())
+ * @normal: (nullable): the surface normal (any length > 0), or %NULL
+ *   for a surface that faces every light (no Lambert term; billboards)
+ * @out_rgb: (out caller-allocates) (array fixed-size=3): the light
+ *   reaching @position, the shader's light term before it multiplies
+ *   the texel (not clamped)
+ *
+ * Evaluates the shader's lighting model on the CPU with the ambient
+ * colour, the directional light and the point lights of the last
+ * selection (lrg_light_set_select() or lrg_light_set_apply()).
+ * Headless; used to light geometry the shader cannot reach, such as
+ * #LrgBillboardBatch quads.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_sample (LrgLightSet      *self,
+                      const GrlVector3 *position,
+                      const GrlVector3 *normal,
+                      gfloat           *out_rgb);
+
+/**
+ * lrg_light_set_bind:
+ * @self: an #LrgLightSet
+ *
+ * Makes @self the bound light set (one per process, like raylib's
+ * current shader): billboard batches without a light set of their own
+ * (lrg_billboard_batch_set_light_set()) are lit by it while it stays
+ * bound.  Keeps a reference until lrg_light_set_unbind() or the next
+ * bind.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_bind (LrgLightSet *self);
+
+/**
+ * lrg_light_set_unbind:
+ *
+ * Drops the bound light set; billboards draw unlit again.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_unbind (void);
+
+/**
+ * lrg_light_set_get_bound:
+ *
+ * Returns: (transfer none) (nullable): the bound light set
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLightSet *
+lrg_light_set_get_bound (void);
+
 G_END_DECLS

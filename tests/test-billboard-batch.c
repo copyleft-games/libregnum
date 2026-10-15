@@ -258,6 +258,149 @@ test_billboard_batch_draw (void)
     EndDrawing ();
 }
 
+/* lit tints: the batch's own lights, the bound set, emissive and unlit */
+static void
+test_billboard_batch_lighting (void)
+{
+    g_autoptr(LrgBillboardBatch) batch = lrg_billboard_batch_new ();
+    g_autoptr(LrgLightSet) own = lrg_light_set_new ();
+    g_autoptr(LrgLightSet) bound = lrg_light_set_new ();
+    GrlVector3 pos = { 0.0f, 0.0f, 0.0f };
+    GrlColor half = { 128, 128, 128, 255 };
+    GrlColor dark = { 51, 51, 51, 255 };
+    GrlColor red = { 255, 0, 0, 255 };
+    GrlColor tint = { 200, 100, 50, 128 };
+    GrlColor out;
+    guint index;
+
+    index = lrg_billboard_batch_add (batch, 0, &pos, 1.0f, 2.0f);
+    g_assert_true (lrg_billboard_batch_get_lit (batch));
+    g_assert_null (lrg_billboard_batch_get_light_set (batch));
+    g_assert_false (lrg_billboard_batch_get_emissive (batch, index));
+    g_assert_false (lrg_billboard_batch_get_emissive (batch, 99));
+    g_assert_false (lrg_billboard_batch_get_lit_tint (batch, 99, &out));
+
+    /* no lights: the plain tint */
+    g_assert_true (lrg_billboard_batch_get_lit_tint (batch, index, &out));
+    g_assert_cmpuint (out.r, ==, 255);
+    g_assert_cmpuint (out.a, ==, 255);
+
+    /* the bound set lights batches without their own */
+    lrg_light_set_set_ambient (bound, &dark);
+    lrg_light_set_bind (bound);
+    lrg_billboard_batch_get_lit_tint (batch, index, &out);
+    g_assert_cmpuint (out.r, ==, 51);
+    g_assert_cmpuint (out.g, ==, 51);
+
+    /* the batch's own set wins; its tint multiplies, alpha is kept */
+    lrg_light_set_set_ambient (own, &half);
+    lrg_billboard_batch_set_light_set (batch, own);
+    g_assert_true (lrg_billboard_batch_get_light_set (batch) == own);
+    lrg_billboard_batch_set_tint (batch, index, &tint);
+    lrg_billboard_batch_get_lit_tint (batch, index, &out);
+    g_assert_cmpuint (out.r, ==, 100);
+    g_assert_cmpuint (out.g, ==, 50);
+    g_assert_cmpuint (out.b, ==, 25);
+    g_assert_cmpuint (out.a, ==, 128);
+
+    /* a point light at the quad's centre (pivot at the feet, height 2:
+     * centre y = 1) over-brightens and clamps */
+    lrg_light_set_add_point_light (own, 0.0, 1.0, 0.0, &red, 4.0f);
+    lrg_light_set_select (own, 0.0, 0.0, 0.0);
+    lrg_billboard_batch_get_lit_tint (batch, index, &out);
+    g_assert_cmpuint (out.r, ==, 255);
+    g_assert_cmpuint (out.g, ==, 50);
+
+    /* emissive quads keep their tint */
+    lrg_billboard_batch_set_emissive (batch, index, TRUE);
+    g_assert_true (lrg_billboard_batch_get_emissive (batch, index));
+    lrg_billboard_batch_get_lit_tint (batch, index, &out);
+    g_assert_cmpuint (out.r, ==, 200);
+    g_assert_cmpuint (out.b, ==, 50);
+    lrg_billboard_batch_set_emissive (batch, index, FALSE);
+
+    /* an unlit batch ignores every light set */
+    lrg_billboard_batch_set_lit (batch, FALSE);
+    g_assert_false (lrg_billboard_batch_get_lit (batch));
+    lrg_billboard_batch_get_lit_tint (batch, index, &out);
+    g_assert_cmpuint (out.r, ==, 200);
+
+    /* back to the bound set */
+    lrg_billboard_batch_set_lit (batch, TRUE);
+    lrg_billboard_batch_set_light_set (batch, NULL);
+    lrg_billboard_batch_get_lit_tint (batch, index, &out);
+    g_assert_cmpuint (out.r, ==, 40);
+    lrg_light_set_unbind ();
+    lrg_billboard_batch_get_lit_tint (batch, index, &out);
+    g_assert_cmpuint (out.r, ==, 200);
+}
+
+/* drawn lighting: the quad's centre goes through the pushed transform
+ * before sampling, so a translated batch is lit where it appears */
+static void
+test_billboard_batch_draw_lit (void)
+{
+    g_autoptr(LrgBillboardBatch) batch = NULL;
+    g_autoptr(LrgLightSet) lights = NULL;
+    g_autoptr(GrlImage)   image = NULL;
+    g_autoptr(GrlTexture) texture = NULL;
+    GrlVector3 pos = vec (0, 0, 0);
+    GrlVector3 cam_pos = vec (5, 1, 5);
+    GrlColor   dark = { 26, 26, 26, 255 };
+    GrlColor   red = { 255, 0, 0, 255 };
+    RenderTexture2D rt;
+    Camera3D   camera;
+    Image      shot;
+    Color      centre;
+
+    if (!graphics_available)
+    {
+        g_test_skip ("No display available (headless environment)");
+        return;
+    }
+
+    image = grl_image_new_color (4, 4, &(GrlColor){ 255, 255, 255, 255 });
+    texture = grl_texture_new_from_image (image);
+    batch = lrg_billboard_batch_new ();
+    lrg_billboard_batch_set_material_texture (batch, 0, texture);
+    lrg_billboard_batch_add (batch, 0, &pos, 2, 2);
+
+    lights = lrg_light_set_new ();
+    lrg_light_set_set_ambient (lights, &dark);
+    lrg_light_set_add_point_light (lights, 5.0, 1.0, 0.0, &red, 2.0f);
+    lrg_light_set_select (lights, 5.0, 1.0, 5.0);
+    lrg_light_set_bind (lights);
+
+    memset (&camera, 0, sizeof camera);
+    camera.position = (Vector3){ 5, 1, 5 };
+    camera.target = (Vector3){ 5, 1, 0 };
+    camera.up = (Vector3){ 0, 1, 0 };
+    camera.fovy = 45.0f;
+    camera.projection = CAMERA_PERSPECTIVE;
+
+    rt = LoadRenderTexture (16, 16);
+    BeginTextureMode (rt);
+    ClearBackground ((Color){ 0, 0, 255, 255 });
+    BeginMode3D (camera);
+    rlPushMatrix ();
+    rlTranslatef (5.0f, 0.0f, 0.0f);
+    lrg_billboard_batch_draw (batch, &cam_pos);
+    rlPopMatrix ();
+    EndMode3D ();
+    EndTextureMode ();
+    lrg_light_set_unbind ();
+
+    shot = LoadImageFromTexture (rt.texture);
+    centre = GetImageColor (shot, 8, 8);
+    UnloadImage (shot);
+    UnloadRenderTexture (rt);
+
+    /* ambient 0.1 plus the full red light at the centre */
+    g_assert_cmpuint (centre.r, >, 240);
+    g_assert_cmpuint (centre.g, <, 40);
+    g_assert_cmpuint (centre.b, <, 40);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -274,7 +417,9 @@ main (int   argc,
     g_test_add_func ("/billboard-batch/spherical", test_billboard_batch_spherical);
     g_test_add_func ("/billboard-batch/updates", test_billboard_batch_updates);
     g_test_add_func ("/billboard-batch/invalid-size", test_billboard_batch_invalid_size);
+    g_test_add_func ("/billboard-batch/lighting", test_billboard_batch_lighting);
     g_test_add_func ("/billboard-batch/draw", test_billboard_batch_draw);
+    g_test_add_func ("/billboard-batch/draw-lit", test_billboard_batch_draw_lit);
 
     result = g_test_run ();
 
