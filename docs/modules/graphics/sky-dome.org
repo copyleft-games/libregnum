@@ -1,0 +1,135 @@
+* LrgSkyDome - Camera-Centred Sky
+:PROPERTIES:
+:CUSTOM_ID: lrgskydome---camera-centred-sky
+:END:
+A sky drawn around the camera before the world: a colour gradient sphere (ground → horizon → zenith), an optional textured horizon band (one panorama wrapped all the way round, or two halves such as the east/west sky images of a classic RPG), a sun disc with a soft halo, and a time-of-day helper that interpolates a small, configurable set of colour keyframes and moves the sun along its daily arc.
+
+The gradient geometry, colours, keyframe interpolation and band mapping are computed headlessly and exposed for tests; only =draw()= needs GL. Drawing goes through rlgl's immediate batch, so the sky owns no GPU objects.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgSkyDome= - *Final GObject Class*, =LRG_TYPE_SKY_DOME=, GIR =Libregnum.SkyDome=
+- *Header* - =graphics/lrg-sky-dome.h=
+
+| Constant                      | Value | Meaning                                         |
+|-------------------------------+-------+-------------------------------------------------|
+| =LRG_SKY_DOME_DEFAULT_RADIUS= | 100   | dome radius, inside raylib's default far plane  |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+LrgSkyDome *lrg_sky_dome_new (void);
+void   lrg_sky_dome_set_resolution    (LrgSkyDome *self, guint segments, guint rings);
+void   lrg_sky_dome_set_radius        (LrgSkyDome *self, gfloat radius);
+
+/* Gradient */
+void   lrg_sky_dome_set_zenith_color  (LrgSkyDome *self, const GrlColor *color);
+void   lrg_sky_dome_set_horizon_color (LrgSkyDome *self, const GrlColor *color);
+void   lrg_sky_dome_set_ground_color  (LrgSkyDome *self, const GrlColor *color); /* NULL: follow horizon */
+void   lrg_sky_dome_get_{zenith,horizon,ground}_color (LrgSkyDome *self, GrlColor *color);
+void   lrg_sky_dome_get_color_at      (LrgSkyDome *self, const GrlVector3 *direction, GrlColor *color);
+
+/* Horizon band */
+void     lrg_sky_dome_set_band_texture (LrgSkyDome *self, GrlTexture *texture);   /* NULL removes */
+void     lrg_sky_dome_set_band_halves  (LrgSkyDome *self, GrlTexture *first, GrlTexture *second);
+void     lrg_sky_dome_set_band_range   (LrgSkyDome *self, gfloat bottom_degrees, gfloat top_degrees);
+void     lrg_sky_dome_set_band_heading (LrgSkyDome *self, gfloat degrees);
+void     lrg_sky_dome_set_band_tint    (LrgSkyDome *self, const GrlColor *tint);
+gboolean lrg_sky_dome_get_band_uv      (LrgSkyDome *self, gfloat azimuth_degrees,
+                                        guint *texture_index, gfloat *u);
+
+/* Sun */
+void   lrg_sky_dome_set_sun_direction (LrgSkyDome *self, const GrlVector3 *direction);
+void   lrg_sky_dome_get_sun_direction (LrgSkyDome *self, GrlVector3 *direction);
+void   lrg_sky_dome_set_sun_color     (LrgSkyDome *self, const GrlColor *color);
+void   lrg_sky_dome_get_sun_color     (LrgSkyDome *self, GrlColor *color);
+void   lrg_sky_dome_set_sun_size      (LrgSkyDome *self, gfloat degrees);
+void   lrg_sky_dome_set_sun_tilt      (LrgSkyDome *self, gfloat degrees);
+
+/* Time of day */
+void   lrg_sky_dome_clear_keyframes   (LrgSkyDome *self);
+void   lrg_sky_dome_add_keyframe      (LrgSkyDome *self, gfloat hours, const GrlColor *zenith,
+                                       const GrlColor *horizon, const GrlColor *sun);
+guint  lrg_sky_dome_get_keyframe_count (LrgSkyDome *self);
+void   lrg_sky_dome_set_time_of_day   (LrgSkyDome *self, gfloat hours);
+gfloat lrg_sky_dome_get_time_of_day   (LrgSkyDome *self);
+
+/* Geometry (headless) and drawing */
+const gfloat  *lrg_sky_dome_get_positions (LrgSkyDome *self, guint *n_floats);
+const guint8  *lrg_sky_dome_get_colors    (LrgSkyDome *self, guint *n_bytes);
+const guint16 *lrg_sky_dome_get_indices   (LrgSkyDome *self, guint *n_indices);
+void           lrg_sky_dome_draw          (LrgSkyDome *self, const GrlVector3 *camera_position);
+#+end_src
+
+** Semantics
+:PROPERTIES:
+:CUSTOM_ID: semantics
+:END:
+*** Directions
+:PROPERTIES:
+:CUSTOM_ID: directions
+:END:
+Azimuth is measured in degrees clockwise seen from above: 0 is -Z, 90 is +X, 180 is +Z, 270 is -X. Elevation is the angle above the horizontal plane.
+
+*** Gradient
+:PROPERTIES:
+:CUSTOM_ID: gradient
+:END:
+For a direction with unit Y component =y=, the colour is =lerp(horizon, zenith, y)= above the horizon and =lerp(horizon, ground, -y)= below; the ground colour follows the horizon unless set. Interpolation is per RGBA channel, rounded to nearest. =get_color_at()= returns exactly what the dome vertices get.
+
+The sphere has =2 * rings + 1= latitude rows from the nadir to the zenith, one exactly on the horizon, each with =segments + 1= vertices (seam duplicated) at the dome radius, relative to the camera. Triangles are counter-clockwise seen from the centre. Defaults: 32 segments, 8 rings, radius 100.
+
+*** Horizon band
+:PROPERTIES:
+:CUSTOM_ID: horizon-band
+:END:
+- The band is a vertical cylinder at 0.9 × radius between two elevations (default -5° to 40°; a cylindrical panorama keeps vertical lines straight). The texture's top row is at the top.
+- =set_band_texture()= wraps one texture once round the horizon: =u = (azimuth - heading) / 360=.
+- =set_band_halves()= wraps two textures, each over 180°: the first over =[heading, heading + 180)=, the second over the rest, each with =u= from 0 to 1. For example Daggerfall's 512 × 220 sky halves: pass them in the order they join left to right as the viewer turns right.
+- =u= increases with azimuth, so the image reads left to right as the viewer turns right (not mirrored).
+- =get_band_uv()= says which texture and which =u= face an azimuth. The band tint multiplies the textures (e.g. to darken them at night, or swap textures per time of day).
+
+*** Sun
+:PROPERTIES:
+:CUSTOM_ID: sun
+:END:
+A disc of angular radius =sun_size= (default 2°, 0 hides it) in the sun colour, over a halo four times larger fading from 40 % to 0 alpha. The sun colour's alpha scales both, and the sun is skipped once its halo is entirely below the horizon. =get_sun_direction()= is the unit direction towards the sun; negate it for a directional light.
+
+*** Time of day
+:PROPERTIES:
+:CUSTOM_ID: time-of-day
+:END:
+- Keyframes hold zenith, horizon and sun colours at an hour in =[0, 24)=, kept sorted; adding one at an existing hour replaces it. The defaults are midnight (dark blue, sun alpha 0), dawn at 6 (orange horizon), noon (blue) and dusk at 18. =clear_keyframes()= removes them.
+- =set_time_of_day (hours)= wraps =hours= into =[0, 24)=, interpolates linearly between the keyframe at or before it and the next one, cyclically across midnight (one keyframe is constant; none leaves the colours alone), and moves the sun: with =θ = (hours - 6) / 24 × 2π= and tilt =τ= (default 30°) the direction is =(cos θ, sin θ cos τ, sin θ sin τ)= - rising at +X at 6, highest at noon leaning towards +Z, setting at -X at 18, below the horizon at night.
+- Set colours or the sun direction directly afterwards to override.
+
+*** Drawing
+:PROPERTIES:
+:CUSTOM_ID: drawing
+:END:
+=draw (camera_position)= flushes the batch, disables depth test, depth writes and back-face culling, draws the gradient, the sun, then the band (so the band's scenery hides a setting sun), flushes, and re-enables all three (raylib's defaults). Call it first inside =BeginMode3D()=, with the camera's eye position; the radius only has to lie inside the far plane.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgSkyDome) sky = lrg_sky_dome_new ();
+GrlVector3 sun;
+
+lrg_sky_dome_set_band_halves (sky, sky_east, sky_west);
+lrg_sky_dome_set_band_range (sky, -2.0f, 30.0f);
+
+/* each frame */
+lrg_sky_dome_set_time_of_day (sky, game_hours);
+lrg_sky_dome_get_sun_direction (sky, &sun);
+
+grl_camera3d_begin (camera);
+lrg_sky_dome_draw (sky, &camera_position);
+/* ... terrain, static batches, billboards ... */
+grl_camera3d_end (camera);
+#+end_src

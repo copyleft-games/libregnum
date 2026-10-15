@@ -721,6 +721,7 @@ Helpers for games that render many glTF characters and props with raylib:
 - *[[file:static-batch.org][LrgStaticBatch]]* - CPU merge of static meshes into 16-bit-index chunks per (material, layer) with bounds, then GPU upload and layer-masked drawing
 - *[[file:billboard-batch.org][LrgBillboardBatch]]* - camera-facing textured quads (axis-locked or spherical), batched per material with an alpha-cutout shader; headless corner math for picking
 - *[[file:terrain.org][LrgTerrain]]* - chunked heightfield terrain for streamed worlds: per-cell materials with 8 UV orientations, bilinear height queries, cross-chunk normals, floating origin, headless inspectable meshes
+- *[[file:sky-dome.org][LrgSkyDome]]* - camera-centred sky: zenith/horizon/ground gradient, textured horizon band (one panorama or two halves), sun disc and halo, time-of-day keyframes and sun arc; headless geometry
 - *[[file:model-animator.org][LrgModelAnimator]]* - One shared skinned model for many actors: clip lookup (exact, alias, suffix), per-actor LrgModelAnimState with loop/clamp and crossfades, deduplicated posing and masked drawing
 - *[[file:../core/asset-manager.org::#models-and-animations][Model cache]]* - =lrg_asset_manager_load_model()= / =lrg_asset_manager_load_model_animations()=
 

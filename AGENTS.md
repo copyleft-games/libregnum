@@ -663,13 +663,23 @@ and client-side helpers for skinned and static models.
   is applied as the model matrix at draw time, so moving it re-uploads
   nothing. `set_texture_repeat (N)` spans a texture over N×N cells.
 
+- **`LrgSkyDome`** (`graphics/lrg-sky-dome.h`): camera-centred sky drawn
+  first in 3D mode (depth test/write and culling off, then restored).
+  Gradient ground→horizon→zenith by sin(elevation); a horizon band as a
+  cylinder with one wrapped texture or two 180° halves (azimuth 0 = -Z,
+  90 = +X, u grows with azimuth); sun disc + halo. `set_time_of_day()`
+  interpolates sorted, cyclic keyframes (zenith, horizon, sun colours)
+  and moves the sun (+X at 6, tilted noon, -X at 18). Geometry, colours
+  and `get_band_uv()` are headless.
+
 See `docs/modules/physics/wall-set.org`,
 `docs/modules/core/asset-manager.org` (Models and animations),
 `docs/modules/graphics/gltf-info.org`,
 `docs/modules/graphics/model-animator.org` and
 `docs/modules/graphics/static-batch.org`,
 `docs/modules/graphics/billboard-batch.org`,
-`docs/modules/graphics/terrain.org`.
+`docs/modules/graphics/terrain.org`,
+`docs/modules/graphics/sky-dome.org`.
 
 ## Architecture Overview
 

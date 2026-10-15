@@ -61,6 +61,7 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-static-batch.h \
 	src/graphics/lrg-billboard-batch.h \
 	src/graphics/lrg-terrain.h \
+	src/graphics/lrg-sky-dome.h \
 	src/ecs/lrg-component.h \
 	src/ecs/lrg-game-object.h \
 	src/ecs/lrg-world.h \
@@ -584,6 +585,7 @@ SOURCES := \
 	src/graphics/lrg-static-batch.c \
 	src/graphics/lrg-billboard-batch.c \
 	src/graphics/lrg-terrain.c \
+	src/graphics/lrg-sky-dome.c \
 	src/ecs/lrg-component.c \
 	src/ecs/lrg-game-object.c \
 	src/ecs/lrg-world.c \

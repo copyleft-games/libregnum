@@ -82,6 +82,7 @@
 #include "graphics/lrg-static-batch.h"
 #include "graphics/lrg-billboard-batch.h"
 #include "graphics/lrg-terrain.h"
+#include "graphics/lrg-sky-dome.h"
 #include "imageedit/lrg-image-layer.h"
 #include "imageedit/lrg-image-document.h"
 

@@ -91,6 +91,7 @@ TEST_SOURCES := \
 	test-static-batch.c \
 	test-billboard-batch.c \
 	test-terrain.c \
+	test-sky-dome.c \
 	test-audio.c \
 	test-inventory.c \
 	test-i18n.c \
