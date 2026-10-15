@@ -19,9 +19,18 @@
  * lrg_audio_manager_play_sound_at().  The alias shares the samples of
  * @source, which the voice keeps alive (raylib aliases do not own their
  * data), so a bank may drop the sound while voices still play.
+ *
+ * Finished aliases are not unloaded but parked in the manager's alias
+ * pool (per source sound) and reused by the next voice of that sound:
+ * raylib's UnloadSoundAlias() does not free the buffer's converter
+ * residual, so unloading every voice would leak a little per sound
+ * played.  Pooling bounds that to the pool size, freed at shutdown.
  */
+#define LRG_AUDIO_ALIAS_POOL_MAX (8)
+
 typedef struct
 {
+    GHashTable          *pool;          /* borrowed: the manager's alias pool */
     GrlSound            *source;        /* owned ref: the bank's sound */
     GrlSound            *alias;         /* owned: this voice's sound */
     gfloat               volume;        /* requested 0..1 */
@@ -46,10 +55,31 @@ lrg_audio_voice_free (gpointer data)
 
     /* the alias goes before the sound whose samples it borrows */
     if (voice->alias != NULL)
+    {
+        GPtrArray *idle;
+
         grl_sound_stop (voice->alias);
+        idle = voice->pool != NULL ? g_hash_table_lookup (voice->pool, voice->source) : NULL;
+        if (voice->pool != NULL && idle == NULL)
+        {
+            idle = g_ptr_array_new_with_free_func (g_object_unref);
+            g_hash_table_insert (voice->pool, g_object_ref (voice->source), idle);
+        }
+        if (idle != NULL && idle->len < LRG_AUDIO_ALIAS_POOL_MAX)
+            g_ptr_array_add (idle, g_steal_pointer (&voice->alias));
+    }
     g_clear_object (&voice->alias);
     g_clear_object (&voice->source);
     g_free (voice);
+}
+
+/* empties every pooled alias list before the pool's source keys go */
+static void
+clear_pool_entry (gpointer key       G_GNUC_UNUSED,
+                  gpointer value,
+                  gpointer user_data G_GNUC_UNUSED)
+{
+    g_ptr_array_set_size (value, 0);
 }
 
 /* Private structure */
@@ -81,6 +111,7 @@ struct _LrgAudioManager
 
     /* Positional voices and the listener */
     GHashTable     *voices;         /* GUINT_TO_POINTER(id) -> LrgAudioVoice* */
+    GHashTable     *alias_pool;     /* GrlSound* source (ref) -> GPtrArray of idle aliases */
     guint           next_voice;
     gfloat          listener_position[3];
     gfloat          listener_forward[3];
@@ -123,8 +154,12 @@ lrg_audio_manager_finalize (GObject *object)
 {
     LrgAudioManager *self = LRG_AUDIO_MANAGER (object);
 
-    /* voices hold aliases of bank sounds: release them first */
+    /* voices hold aliases of bank sounds: release them first, then the
+     * idle aliases, then the pool's references to their sources */
     g_clear_pointer (&self->voices, g_hash_table_unref);
+    if (self->alias_pool != NULL)
+        g_hash_table_foreach (self->alias_pool, clear_pool_entry, NULL);
+    g_clear_pointer (&self->alias_pool, g_hash_table_unref);
     g_clear_pointer (&self->banks, g_hash_table_unref);
     g_clear_pointer (&self->procedural, g_hash_table_unref);
     g_clear_object (&self->current_music);
@@ -335,6 +370,10 @@ lrg_audio_manager_init (LrgAudioManager *self)
                                           g_direct_equal,
                                           NULL,
                                           lrg_audio_voice_free);
+    self->alias_pool = g_hash_table_new_full (g_direct_hash,
+                                              g_direct_equal,
+                                              g_object_unref,
+                                              (GDestroyNotify) g_ptr_array_unref);
     self->next_voice = 1;
     self->listener_forward[2] = 1.0f;
     self->listener_up[1] = 1.0f;
@@ -1102,7 +1141,16 @@ lrg_audio_manager_play_sound_at (LrgAudioManager           *self,
         return 0;
     }
 
-    alias = grl_sound_new_alias (source);
+    /* an idle alias of this sound if one is pooled, else a new one */
+    alias = NULL;
+    {
+        GPtrArray *idle = g_hash_table_lookup (self->alias_pool, source);
+
+        if (idle != NULL && idle->len > 0)
+            alias = g_ptr_array_steal_index_fast (idle, idle->len - 1);
+    }
+    if (alias == NULL)
+        alias = grl_sound_new_alias (source);
     if (alias == NULL)
     {
         lrg_log_debug ("Cannot create a voice of '%s/%s'", bank_name, sound_name);
@@ -1111,6 +1159,7 @@ lrg_audio_manager_play_sound_at (LrgAudioManager           *self,
 
     /* the voice: owns the alias and a reference to the shared samples */
     voice = g_new0 (LrgAudioVoice, 1);
+    voice->pool = self->alias_pool;
     voice->source = g_object_ref (source);
     voice->alias = alias;
     voice->volume = CLAMP (volume, 0.0f, 1.0f);

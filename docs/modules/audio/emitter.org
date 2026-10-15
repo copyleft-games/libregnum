@@ -23,6 +23,8 @@ The math lives in a pure function, =lrg_audio_compute_spatial()=, that needs no 
 
 =play_sound_at()= looks up the sound in the named bank and creates a graylib *alias* of it (=grl_sound_new_alias()=): a new playback buffer that shares the bank sound's samples.  The voice keeps a reference to the bank sound, because raylib aliases do not own their samples; the bank may therefore drop or replace the sound while voices still play.  The voice id is a non-zero =guint= that is not reused while the voice lives.
 
+A finished or stopped voice does not unload its alias: it is parked in a per-sound pool (at most 8 idle aliases per sound) and the next voice of that sound reuses it.  raylib's =UnloadSoundAlias()= frees the alias buffer but not its converter residual (64 bytes), so unloading an alias per played sound would grow memory for the whole session; with the pool the cost is bounded by the number of voices of one sound that ever played at once, released (and, for that residual, leaked once) when the manager is finalized.  raylib is third-party code and stays unmodified.
+
 The effective volume of a voice is
 
 #+begin_example
