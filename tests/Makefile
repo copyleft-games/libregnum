@@ -89,6 +89,7 @@ TEST_SOURCES := \
 	test-gltf-animation-roots.c \
 	test-model-animator.c \
 	test-static-batch.c \
+	test-billboard-batch.c \
 	test-audio.c \
 	test-inventory.c \
 	test-i18n.c \

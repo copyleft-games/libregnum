@@ -1954,6 +1954,25 @@ GType lrg_particle_render_mode_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_PARTICLE_RENDER_MODE (lrg_particle_render_mode_get_type ())
 
 /**
+ * LrgBillboardMode:
+ * @LRG_BILLBOARD_MODE_AXIS_Y: quads turn about the world Y axis only and
+ *   stay upright (trees, NPCs, monsters)
+ * @LRG_BILLBOARD_MODE_SPHERICAL: quads face the camera plane fully
+ *   (particles, markers)
+ *
+ * How billboards are oriented towards the camera.
+ */
+typedef enum
+{
+    LRG_BILLBOARD_MODE_AXIS_Y,
+    LRG_BILLBOARD_MODE_SPHERICAL
+} LrgBillboardMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_billboard_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_BILLBOARD_MODE (lrg_billboard_mode_get_type ())
+
+/**
  * LrgParticleBackendType:
  * @LRG_PARTICLE_BACKEND_CPU: CPU-based simulation
  * @LRG_PARTICLE_BACKEND_GPU: GPU compute shader simulation

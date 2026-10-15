@@ -1,0 +1,86 @@
+* LrgBillboardBatch - Batched Billboards
+:PROPERTIES:
+:CUSTOM_ID: lrgbillboardbatch---batched-billboards
+:END:
+Draws many camera-facing textured quads ("billboards", the /flats/ of sprite-based 3D games: trees, NPCs, monsters, signs) with one texture bind per material. Billboards are plain records (position, size, pivot, UV rectangle, tint, visibility, material); every =draw()= rebuilds their quads from the camera position, so they turn as the camera moves, and emits them through rlgl's immediate batch grouped by material.
+
+Orientation and corner math run headlessly (=get_corners()=), so picking and tests see exactly what is drawn. Only =draw()= needs a GL context.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgBillboardBatch= - *Final GObject Class*, =LRG_TYPE_BILLBOARD_BATCH=, GIR =Libregnum.BillboardBatch=
+- =LrgBillboardMode= - *Enum*, =LRG_TYPE_BILLBOARD_MODE= (=lrg-enums.h=)
+- *Header* - =graphics/lrg-billboard-batch.h=
+
+| Mode                            | Nick        | Behaviour                                                    |
+|---------------------------------+-------------+--------------------------------------------------------------|
+| =LRG_BILLBOARD_MODE_AXIS_Y=     | =axis-y=    | turns about world Y only, stays upright (default)            |
+| =LRG_BILLBOARD_MODE_SPHERICAL=  | =spherical= | faces the camera plane (basis read from the modelview matrix) |
+
+| Constant                              | Value | Meaning                                  |
+|---------------------------------------+-------+------------------------------------------|
+| =LRG_BILLBOARD_BATCH_DEFAULT_CUTOFF=  | 0.5   | default alpha-test threshold             |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+LrgBillboardBatch *lrg_billboard_batch_new (void);
+void   lrg_billboard_batch_set_mode     (LrgBillboardBatch *self, LrgBillboardMode mode);
+
+/* Billboards (headless); the default pivot is bottom centre (0.5, 0) */
+guint  lrg_billboard_batch_add          (LrgBillboardBatch *self, guint material,
+                                         const GrlVector3 *position, gfloat width, gfloat height);
+void   lrg_billboard_batch_set_position (LrgBillboardBatch *self, guint index, const GrlVector3 *position);
+void   lrg_billboard_batch_set_size     (LrgBillboardBatch *self, guint index, gfloat width, gfloat height);
+void   lrg_billboard_batch_set_pivot    (LrgBillboardBatch *self, guint index, gfloat pivot_x, gfloat pivot_y);
+void   lrg_billboard_batch_set_uv       (LrgBillboardBatch *self, guint index, const GrlRectangle *uv);
+void   lrg_billboard_batch_set_material (LrgBillboardBatch *self, guint index, guint material);
+void   lrg_billboard_batch_set_tint     (LrgBillboardBatch *self, guint index, const GrlColor *tint);
+void   lrg_billboard_batch_set_visible  (LrgBillboardBatch *self, guint index, gboolean visible);
+void   lrg_billboard_batch_clear        (LrgBillboardBatch *self);
+gboolean lrg_billboard_batch_get_corners (LrgBillboardBatch *self, guint index,
+                                          const GrlVector3 *camera_position,
+                                          const GrlVector3 *camera_right,  /* spherical only */
+                                          const GrlVector3 *camera_up,     /* spherical only */
+                                          GrlVector3 corners[4]);
+
+/* Rendering */
+void   lrg_billboard_batch_set_material_texture (LrgBillboardBatch *self, guint material, GrlTexture *texture);
+void   lrg_billboard_batch_set_alpha_cutoff     (LrgBillboardBatch *self, gfloat cutoff);
+void   lrg_billboard_batch_draw                 (LrgBillboardBatch *self, const GrlVector3 *camera_position);
+#+end_src
+
+** Semantics
+:PROPERTIES:
+:CUSTOM_ID: semantics
+:END:
+- *Axis-locked facing*: the quad's right vector is perpendicular to the horizontal direction from the billboard to the camera, =(f.z, 0, -f.x)= for that direction =f=, so it faces the eye regardless of camera height. With the camera exactly overhead the basis falls back to world +X/+Y.
+- *Corners* are bottom-left, bottom-right, top-right, top-left, counter-clockwise as seen from the camera (front-facing under raylib's default culling). The pivot is the point of the quad placed at =position= (0,0 = bottom-left, 1,1 = top-right).
+- *UVs* are normalized with =y= at the top of the texture; a negative width mirrors the image (e.g. for the opposite facing of a directional sprite).
+- *Cutout*: with a cutoff above 0 an alpha-test shader discards texels below it, so transparent pixels never write depth and overlapping billboards need no sorting. If the shader cannot be built (GLES2) the batch falls back to raylib's default shader and plain blending. =set_alpha_cutoff (0)= forces plain blending.
+- *Materials* without a texture are skipped. The batch keeps a reference to each texture.
+- Call =draw()= inside =BeginMode3D()= / =grl_camera3d_begin()=.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgBillboardBatch) flats = lrg_billboard_batch_new ();
+GrlVector3 tree = { 12.0f, 0.0f, -4.0f };
+guint index;
+
+lrg_billboard_batch_set_material_texture (flats, 0, tree_texture);
+index = lrg_billboard_batch_add (flats, 0, &tree, 3.2f, 6.4f);
+
+/* animate by switching material (one texture per frame) or UV rect */
+lrg_billboard_batch_set_material (flats, index, 1);
+
+grl_camera3d_begin (camera);
+lrg_billboard_batch_draw (flats, &camera_position);
+grl_camera3d_end (camera);
+#+end_src

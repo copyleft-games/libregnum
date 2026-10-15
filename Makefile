@@ -59,6 +59,7 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-gltf-info.h \
 	src/graphics/lrg-model-animator.h \
 	src/graphics/lrg-static-batch.h \
+	src/graphics/lrg-billboard-batch.h \
 	src/ecs/lrg-component.h \
 	src/ecs/lrg-game-object.h \
 	src/ecs/lrg-world.h \
@@ -580,6 +581,7 @@ SOURCES := \
 	src/graphics/lrg-gltf-info.c \
 	src/graphics/lrg-model-animator.c \
 	src/graphics/lrg-static-batch.c \
+	src/graphics/lrg-billboard-batch.c \
 	src/ecs/lrg-component.c \
 	src/ecs/lrg-game-object.c \
 	src/ecs/lrg-world.c \

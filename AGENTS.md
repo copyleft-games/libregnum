@@ -644,11 +644,21 @@ and client-side helpers for skinned and static models.
   keys materials by albedo texture id and borrows the texture (keep the
   model alive).
 
+- **`LrgBillboardBatch`** (`graphics/lrg-billboard-batch.h`): camera-facing
+  textured quads (sprite "flats": trees, NPCs, monsters). Records only;
+  quads are rebuilt from the camera position each `draw()` and emitted
+  through rlgl grouped by material (one bind per texture). Axis-Y mode
+  (default) stays upright; spherical mode reads the camera basis from the
+  modelview matrix. An alpha-test shader (cutoff 0.5, 0 = plain blend)
+  keeps transparent texels out of the depth buffer. `get_corners()` is
+  headless and returns exactly the drawn quad.
+
 See `docs/modules/physics/wall-set.org`,
 `docs/modules/core/asset-manager.org` (Models and animations),
 `docs/modules/graphics/gltf-info.org`,
 `docs/modules/graphics/model-animator.org` and
-`docs/modules/graphics/static-batch.org`.
+`docs/modules/graphics/static-batch.org`,
+`docs/modules/graphics/billboard-batch.org`.
 
 ## Architecture Overview
 
