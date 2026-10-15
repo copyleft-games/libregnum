@@ -206,6 +206,7 @@
 #include "audio/lrg-wave-data.h"
 #include "audio/lrg-audio-mixer.h"
 #include "audio/lrg-procedural-audio.h"
+#include "audio/lrg-midi-synth.h"
 
 /* Inventory module */
 #include "inventory/lrg-item-def.h"

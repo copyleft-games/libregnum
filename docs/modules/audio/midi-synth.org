@@ -1,0 +1,126 @@
+#+title: LrgMidiSynth: General MIDI through SoundFont 2
+#+description: Standard MIDI File playback through a SoundFont 2 bank, with loop markers, crossfades, smooth volume, headless rendering and a graylib audio stream
+
+* Overview
+
+=LrgMidiSynth= plays Standard MIDI Files (format 0 and 1) through a SoundFont 2 bank.  It is built on two vendored, *unmodified* single-header libraries by Bernhard Schelling: TinySoundFont (=tsf.h=, the synthesizer) and TinyMidiLoader (=tml.h=, the MIDI file reader).  Rendering is headless: =lrg_midi_synth_render()= writes interleaved stereo floats without an audio device, which is how the tests (and offline tools) use it.  A running game opens a graylib audio stream with =lrg_midi_synth_start_stream()= and keeps it fed by calling =lrg_midi_synth_update()= every frame.  graylib and raylib are not modified.
+
+Applications can probe for this API at compile time with =#ifdef LRG_AUDIO_HAS_MIDI_SYNTH=.
+
+What it adds over a bare TinySoundFont player:
+
+- *Validation.*  The SoundFont's RIFF tree and every index of its preset, instrument and sample tables, and the MIDI file's chunks and events, are checked by libregnum's own bounds-checked readers before the vendored loaders see them.  A malformed file fails with a =GError= and changes nothing; it never makes the vendored code read out of bounds.
+- *Loop points.*  TinyMidiLoader drops meta events, so libregnum scans the file itself for the tempo map and the =loopStart= / =loopEnd= marker events (the convention of libADLMIDI and of converted HMI songs).
+- *Crossfades* between two songs, each in its own synthesizer instance sharing the bank's samples.
+- *Smooth volume*: changes ramp over 50 ms, so a slider never clicks.
+- *End detection* for songs that do not loop.
+
+* API
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_midi_synth_new (sample_rate)= | a synthesizer for interleaved stereo at =sample_rate= (8000 .. 192000; 44100 typical) |
+| =lrg_midi_synth_load_soundfont (path)= | read a =.sf2= (file errors in =G_IO_ERROR=) and load it |
+| =lrg_midi_synth_load_soundfont_bytes (sf2)= | validate and load a bank; on success it replaces the old bank and stops the songs |
+| =lrg_midi_synth_has_soundfont= / =get_preset_count= / =get_sample_rate= | state |
+| =lrg_midi_synth_play (smf, loop, fade_in)= | start a song; =fade_in= > 0 crossfades from the song playing |
+| =lrg_midi_synth_stop (fade_out)= | stop, at once or fading |
+| =lrg_midi_synth_is_playing= | a song plays (looping, or not finished yet); a song fading out after =stop()= does not count |
+| =lrg_midi_synth_is_finished= | the current non-looping song ended |
+| =lrg_midi_synth_set_volume= / =get_volume= | output volume 0 .. 1 (also the =volume= property) |
+| =lrg_midi_synth_get_position= | seconds into the current song, wrapping with the loop |
+| =lrg_midi_synth_get_loop_points= | the loop of the current song, in seconds |
+| =lrg_midi_synth_render (frames, n_frames)= | headless: advance and mix =n_frames= frames |
+| =lrg_midi_synth_start_stream= / =update= / =stop_stream= / =has_stream= | the graylib audio stream |
+
+Errors are in =LRG_MIDI_SYNTH_ERROR=: =INVALID= (malformed bank or song), =NO_SOUNDFONT= (=play()= before a bank), =NO_DEVICE= (=start_stream()= without the audio device).
+
+* Example
+
+#+begin_src c
+g_autoptr(LrgMidiSynth) synth = NULL;
+g_autoptr(GBytes) song = NULL;
+g_autoptr(GError) error = NULL;
+
+synth = lrg_midi_synth_new (LRG_MIDI_SYNTH_DEFAULT_SAMPLE_RATE);
+if (!lrg_midi_synth_load_soundfont (synth, "/usr/share/soundfonts/FluidR3_GM.sf2", &error))
+{
+    g_warning ("no music: %s", error->message);
+    return;
+}
+
+song = load_smf_somehow ();
+if (!lrg_midi_synth_play (synth, song, TRUE, 1.5, &error))   /* loop, 1.5 s crossfade */
+    g_warning ("song: %s", error->message);
+
+/* in a game: once, after grl_audio_device_init_audio () */
+lrg_midi_synth_start_stream (synth, NULL);
+
+/* every frame */
+lrg_midi_synth_set_volume (synth, music_volume * master_volume);
+lrg_midi_synth_update (synth);
+
+/* headless (tests, offline export) instead of the stream */
+gfloat buffer[2 * 1024];
+lrg_midi_synth_render (synth, buffer, 1024);
+#+end_src
+
+* Behaviour
+
+** Songs and time
+
+A song is converted by TinyMidiLoader into a time-ordered list of channel messages in milliseconds (tempo changes applied).  Playback renders blocks of 64 frames (TinySoundFont's own effect block, about 1.5 ms at 44100 Hz): before each block the messages that are due are applied to the song's synthesizer, after it the song time moves on.  The dispatch is TinySoundFont's MIDI player example: program change (channel 10 on the percussion bank), note on/off, pitch wheel, control change (volume, pan, expression, sustain, bank select, RPN pitch range, all notes off ...).  Key and channel pressure are ignored (TinySoundFont has no aftertouch).  Every song starts with all 16 channels on preset 0 (channel 10 on the drum bank).  Each song owns a fixed pool of 128 voices, so rendering never allocates.
+
+** Loops
+
+With =loop= set a song loops:
+
+- between its first =loopStart= and first =loopEnd= marker meta events (type 6, text compared without case);
+- from =loopStart= to the end of the song when there is no =loopEnd=;
+- over the whole song without markers (or when the markers are out of order).
+
+The end of a song is its latest event or end-of-track, whichever is later, so trailing silence written as an end-of-track delta is kept.  When the song time passes the loop end, the messages up to the end are applied (controllers are not lost), the sounding notes are released, and playback continues at the same offset after the loop start; the messages from the loop start on play again.  =lrg_midi_synth_get_position()= therefore always stays inside the loop once it was reached.
+
+Without =loop= a song finishes once its last message played, its time reached its end and every voice died away (or five seconds after the last message, for sustained notes that never end).  =lrg_midi_synth_is_finished()= reports it until the next =play()= or =stop()=.
+
+** Crossfades and stopping
+
+=play()= with =fade_in= > 0 while a song plays makes the playing song the *outgoing* one: its gain falls linearly to 0 over =fade_in= seconds while the new song's gain rises from 0 to 1 over the same time; both are rendered and mixed.  An older outgoing song (a crossfade interrupted by another) is dropped at once.  =play()= with =fade_in= = 0 replaces both songs.  =stop (fade_out)= turns the current song into the outgoing one fading over =fade_out= seconds (0: silence at once).
+
+** Volume
+
+=set_volume()= stores the target (clamped to 0 .. 1); the applied volume moves towards it at a rate of full scale per 50 ms, frame by frame.
+
+** The audio stream
+
+=start_stream()= needs the audio device (=grl_audio_device_init_audio()=, or =grl_audio_device_get_default()= which opens it).  It opens a 32-bit float stereo stream of =LRG_MIDI_SYNTH_STREAM_FRAMES= (4096) frames per buffer, double buffered (about 186 ms of latency at 44100 Hz), and starts it.  raylib sizes stream buffers from a process-wide default; =start_stream()= sets it to 4096 frames so each write fills a buffer exactly (shorter writes would be padded with silence, audible as gaps).  raylib cannot report the previous default, so streams opened later get 4096-frame buffers too, which matches =LrgProceduralAudio='s write size.  =update()= renders one buffer for every buffer the device consumed (at most two per call).  The synthesizer renders on the caller's thread; raylib's mixer thread only copies the finished buffers.
+
+* Validation details
+
+** SoundFont 2
+
+The checks mirror how TinySoundFont walks the file, so anything it would read is known to be in bounds:
+
+1. =RIFF= / =sfbk= header; the RIFF size must lie inside the file.
+2. Every chunk (top level, inside =pdta= and =sdta=) must have a valid four-character code (first byte above space and below =z=) and lie inside its parent; nested =RIFF= chunks and =LIST= chunks without a type are refused.
+3. The nine =pdta= tables (=phdr=, =pbag=, =pmod=, =pgen=, =inst=, =ibag=, =imod=, =igen=, =shdr=) must each appear once, be non-empty and hold a whole number of records; there must be at least one preset, one instrument and one sample besides the terminal records, and a sample pool (the first =smpl= chunk) of at least two samples.
+4. The index chains: preset bag indices and instrument bag indices must not decrease and the terminal record's index must leave room for the bag after it; bag generator indices must not decrease and stay within the generator table; an instrument generator (41) must name a real instrument, never the terminal one; a sample generator (53) must name a real sample header.
+
+After TinySoundFont loaded the bank, every region's sample range (start, end, loop start, loop end; generator address offsets are added to them without bounds by the loader) is clamped inside the sample pool, leaving one sample of headroom for the interpolation's look-ahead.
+
+** Standard MIDI File
+
+=MThd= header of length 6; format 0, 1 or 2; at least one track; ticks-per-quarter division (SMPTE time codes are refused).  Every =MTrk= chunk must lie inside the file and every event must parse: variable-length quantities of at most four bytes, running status only after a channel status, channel messages with their data bytes, meta events and SysEx with lengths inside the track, tempo events of exactly three bytes, end-of-track without data.  Delta times above 2^20 ticks count as 0, TinyMidiLoader's rule for broken files.
+
+* Tests
+
+=tests/test-midi-synth.c= writes a tiny SoundFont (one looped 100 Hz sine sample, one preset) and small MIDI files byte by byte, then checks: defaults and silence without a song; =NO_SOUNDFONT=; loading from bytes and from a file (and =G_IO_ERROR_NOT_FOUND=); a held note renders a non-silent sine and a non-looping song finishes; loop markers wrap the position (=loopStart= / =loopEnd=, =loopStart= alone, the whole song); crossfades (loud to silent falls along the fade, silent to loud rises, loud to loud never drops out, an immediate switch replaces both); stop with and without a fade; the volume ramp halves the level; twelve malformed SoundFonts and thirteen malformed MIDI files fail with =LRG_MIDI_SYNTH_ERROR_INVALID= and leave the previous bank or song in place; a deterministic mutation sweep of 600 truncated or corrupted files either loads and renders or fails cleanly.  The device case runs only with =LRG_TEST_AUDIO_DEVICE=1=.  Run it under the sanitizers with =make test-sanitize=.
+
+* Vendored code and licenses
+
+| File | Upstream | Version | License |
+|------+----------+---------+---------|
+| =src/audio/vendor/tsf.h= | TinySoundFont, https://github.com/schellingb/TinySoundFont | v0.9, commit =853a0a171759f1ddba0de1442133a75912bbeffa= (2026-07-19) | MIT, Copyright (C) 2017-2025 Bernhard Schelling, based on SFZero, Copyright (C) 2012 Steve Folta |
+| =src/audio/vendor/tml.h= | TinyMidiLoader, same repository and commit | v0.7 | zlib, Copyright (C) 2017, 2018, 2020 Bernhard Schelling |
+
+Both files are copied byte for byte (SHA-256 =70d55963c98f60ebb81518eaa1f25d46888d5180eb5f5289fd6b74ffc177d197= for =tsf.h=, =93257db259e0efb2ea2037d7157841bec8cb4a2d7986286e43c8090705326546= for =tml.h=) and carry their license notices in their headers; the repository's MIT license text is =src/audio/vendor/LICENSE-TinySoundFont=.  They are compiled in exactly one translation unit, =src/audio/lrg-midi-synth-vendor.c=, with =TSF_NO_STDIO= and =TML_NO_STDIO= (banks and songs are always loaded from memory).  The Makefile puts =src/audio/vendor= on the =-isystem= path for that file only, so the vendored style (C++ comments, mixed declarations) is not held to libregnum's warning set while the file's own code is; nothing is silenced with =-Wno-*=.  The bridge =src/audio/lrg-midi-synth-private.h= keeps the vendored types out of the public headers, and the vendor file is excluded from the introspection scan.  To update: replace both headers with a newer upstream copy, record the commit and checksums here, and run the tests (including =make test-sanitize=).

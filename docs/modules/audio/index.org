@@ -31,6 +31,7 @@ The Audio module consists of these core classes:
 - *Wave data* - Load, manipulate, crop, resample, and export audio
 - *Procedural audio* - Create custom synthesizers and sound generators
 - *Positional sound* - A listener and per-voice emitters with distance attenuation and stereo pan (compile-time probe: =LRG_AUDIO_HAS_POSITIONAL=)
+- *MIDI synthesis* - Standard MIDI Files through a SoundFont 2 bank, loop markers, crossfades, headless rendering (compile-time probe: =LRG_AUDIO_HAS_MIDI_SYNTH=)
 
 ** Quick Start
 :PROPERTIES:
@@ -156,6 +157,7 @@ See the individual class documentation:
 - [[file:wave-data.org][LrgWaveData]] - Raw wave data manipulation
 - [[file:procedural-audio.org][LrgProceduralAudio]] - Real-time audio generation
 - [[file:emitter.org][Positional sound]] - Listener, emitter voices, distance attenuation and pan (=LrgAudioAttenuation=, =lrg_audio_manager_play_sound_at()=)
+- [[file:midi-synth.org][LrgMidiSynth]] - General MIDI synthesizer: SoundFont 2 + Standard MIDI Files (vendored TinySoundFont / TinyMidiLoader)
 
 ** PCM mixer buses, sends, effects, and stream playback
 
