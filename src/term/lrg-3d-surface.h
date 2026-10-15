@@ -594,9 +594,9 @@ gboolean lrg_3d_surface_render_vr (Lrg3DSurface *self);
 /**
  * lrg_3d_surface_set_vr_overlay_func:
  * @self: a #Lrg3DSurface
- * @func: (nullable) (scope notified): overlay drawer, or %NULL
- * @user_data: (closure func): data for @func
- * @destroy: (destroy func) (nullable): frees @user_data
+ * @func: (nullable) (scope notified) (closure user_data) (destroy destroy): overlay drawer, or %NULL
+ * @user_data: data for @func
+ * @destroy: (nullable): frees @user_data
  *
  * Since: 1.0
  */
