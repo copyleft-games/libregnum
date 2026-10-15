@@ -67,6 +67,10 @@ struct _LrgLightSet
 
 G_DEFINE_TYPE (LrgLightSet, lrg_light_set, G_TYPE_OBJECT)
 
+/* The bound light set (lrg_light_set_bind()); drawing is single
+ * threaded, like raylib's own current-shader state. */
+static LrgLightSet *bound_light_set = NULL;
+
 /* GLSL 330 with raylib's default attribute and uniform names. */
 static const gchar light_vs[] =
     "#version 330\n"
@@ -589,4 +593,101 @@ lrg_light_set_apply (LrgLightSet *self,
         SetShaderValueV (*handle, self->loc_radii, radii, SHADER_UNIFORM_FLOAT, count);
     }
     return TRUE;
+}
+
+/* ------------------------------------------------------------------------ */
+/* CPU evaluation and binding                                               */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_light_set_sample (LrgLightSet      *self,
+                      const GrlVector3 *position,
+                      const GrlVector3 *normal,
+                      gfloat           *out_rgb)
+{
+    gfloat n[3] = { 0.0f, 0.0f, 0.0f };
+    gfloat p[3];
+    gboolean has_normal = FALSE;
+    guint i;
+    guint k;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (position != NULL);
+    g_return_if_fail (out_rgb != NULL);
+
+    /* The normal is normalized as the fragment shader does; a zero one
+     * means "faces every light". */
+    if (normal != NULL)
+    {
+        gfloat len = sqrtf (normal->x * normal->x + normal->y * normal->y
+                            + normal->z * normal->z);
+
+        if (len > 0.0f && isfinite (len))
+        {
+            n[0] = normal->x / len;
+            n[1] = normal->y / len;
+            n[2] = normal->z / len;
+            has_normal = TRUE;
+        }
+    }
+
+    p[0] = position->x;
+    p[1] = position->y;
+    p[2] = position->z;
+    for (k = 0; k < 3; k++)
+        out_rgb[k] = self->ambient[k];
+
+    if (self->has_directional)
+    {
+        gfloat lambert = 1.0f;
+
+        if (has_normal)
+            lambert = MAX (-(n[0] * self->directional_dir[0]
+                             + n[1] * self->directional_dir[1]
+                             + n[2] * self->directional_dir[2]), 0.0f);
+        for (k = 0; k < 3; k++)
+            out_rgb[k] += self->directional_color[k] * lambert;
+    }
+
+    /* Point lights of the last selection, origin-relative like the
+     * uniforms apply() uploads. */
+    for (i = 0; i < self->n_active; i++)
+    {
+        PointLight *pl = &g_array_index (self->lights, PointLight, self->active[i]);
+        gfloat d[3];
+        gfloat dist;
+        gfloat f;
+        gfloat lambert = 1.0f;
+
+        for (k = 0; k < 3; k++)
+            d[k] = (gfloat)(pl->position[k] - self->origin[k]) - p[k];
+        dist = sqrtf (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        f = CLAMP (1.0f - dist / pl->radius, 0.0f, 1.0f);
+        if (f <= 0.0f)
+            continue;
+        if (has_normal && dist > 0.0001f)
+            lambert = MAX ((n[0] * d[0] + n[1] * d[1] + n[2] * d[2]) / dist, 0.0f);
+        for (k = 0; k < 3; k++)
+            out_rgb[k] += pl->color[k] * pl->intensity * f * f * lambert;
+    }
+}
+
+void
+lrg_light_set_bind (LrgLightSet *self)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    g_set_object (&bound_light_set, self);
+}
+
+void
+lrg_light_set_unbind (void)
+{
+    g_clear_object (&bound_light_set);
+}
+
+LrgLightSet *
+lrg_light_set_get_bound (void)
+{
+    return bound_light_set;
 }

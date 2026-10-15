@@ -52,6 +52,15 @@ gboolean lrg_billboard_batch_get_corners (LrgBillboardBatch *self, guint index,
 void   lrg_billboard_batch_set_material_texture (LrgBillboardBatch *self, guint material, GrlTexture *texture);
 void   lrg_billboard_batch_set_alpha_cutoff     (LrgBillboardBatch *self, gfloat cutoff);
 void   lrg_billboard_batch_draw                 (LrgBillboardBatch *self, const GrlVector3 *camera_position);
+
+/* Lighting (headless bookkeeping; see light-set.org) */
+void         lrg_billboard_batch_set_light_set (LrgBillboardBatch *self, LrgLightSet *light_set); /* NULL: the bound set */
+LrgLightSet *lrg_billboard_batch_get_light_set (LrgBillboardBatch *self);
+void         lrg_billboard_batch_set_lit       (LrgBillboardBatch *self, gboolean lit);           /* default TRUE */
+gboolean     lrg_billboard_batch_get_lit       (LrgBillboardBatch *self);
+void         lrg_billboard_batch_set_emissive  (LrgBillboardBatch *self, guint index, gboolean emissive);
+gboolean     lrg_billboard_batch_get_emissive  (LrgBillboardBatch *self, guint index);
+gboolean     lrg_billboard_batch_get_lit_tint  (LrgBillboardBatch *self, guint index, GrlColor *out_tint);
 #+end_src
 
 ** Semantics
@@ -64,6 +73,7 @@ void   lrg_billboard_batch_draw                 (LrgBillboardBatch *self, const 
 - *Cutout*: with a cutoff above 0 an alpha-test shader discards texels below it, so transparent pixels never write depth and overlapping billboards need no sorting. If the shader cannot be built (GLES2) the batch falls back to raylib's default shader and plain blending. =set_alpha_cutoff (0)= forces plain blending.
 - *Materials* without a texture are skipped. The batch keeps a reference to each texture.
 - Call =draw()= inside =BeginMode3D()= / =grl_camera3d_begin()=.
+- *Lighting*: a batch is lit by its own [[file:light-set.org][LrgLightSet]] (=set_light_set()=), else by the bound one (=lrg_light_set_bind()=), unless =set_lit (FALSE)=. The quads are immediate-mode geometry the light set's shader cannot light correctly (rlgl transforms their vertices on the CPU), so the batch lights them on the CPU instead: per quad, the centre (the pivot moved to mid-height along world up) is put through the current rlgl transform (=rlGetMatrixTransform()=, the space the static-geometry shader lights) and =lrg_light_set_sample()= is evaluated there without a normal (the quad faces the camera, so every light counts in full). The vertex colour becomes =tint × light=, clamped to 255 per channel; alpha is the tint's. Emissive billboards (flames, lamps) keep their plain tint. Lights come from the light set's last selection, so call =lrg_light_set_apply()= (or =select()=) first, as for the shader. =get_lit_tint()= returns the colour a draw would use with an identity transform (tests, tools).
 
 ** Example
 :PROPERTIES:

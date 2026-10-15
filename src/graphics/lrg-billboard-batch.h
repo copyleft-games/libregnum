@@ -18,6 +18,7 @@
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
+#include "lrg-light-set.h"
 
 G_BEGIN_DECLS
 
@@ -256,6 +257,99 @@ lrg_billboard_batch_set_alpha_cutoff (LrgBillboardBatch *self,
                                       gfloat             cutoff);
 
 /**
+ * lrg_billboard_batch_set_light_set:
+ * @self: an #LrgBillboardBatch
+ * @light_set: (nullable): lights for this batch, %NULL to follow the
+ *   bound light set (lrg_light_set_bind())
+ *
+ * Lit billboards are tinted per quad by the light reaching their centre
+ * (lrg_light_set_sample() without a normal, after the current rlgl
+ * transform), multiplied with their own tint.  The batch keeps a
+ * reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_billboard_batch_set_light_set (LrgBillboardBatch *self,
+                                   LrgLightSet       *light_set);
+
+/**
+ * lrg_billboard_batch_get_light_set:
+ * @self: an #LrgBillboardBatch
+ *
+ * Returns: (transfer none) (nullable): the batch's own light set
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLightSet *
+lrg_billboard_batch_get_light_set (LrgBillboardBatch *self);
+
+/**
+ * lrg_billboard_batch_set_lit:
+ * @self: an #LrgBillboardBatch
+ * @lit: %FALSE to never light this batch (UI, sky, effects)
+ *
+ * Batches are lit by default whenever a light set applies.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_billboard_batch_set_lit (LrgBillboardBatch *self,
+                             gboolean           lit);
+
+/**
+ * lrg_billboard_batch_get_lit:
+ * @self: an #LrgBillboardBatch
+ *
+ * Returns: whether the batch may be lit
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_billboard_batch_get_lit (LrgBillboardBatch *self);
+
+/**
+ * lrg_billboard_batch_set_emissive:
+ * @self: an #LrgBillboardBatch
+ * @index: a billboard index
+ * @emissive: %TRUE for a billboard that shines by itself (flames,
+ *   lamps): it keeps its own tint under any light
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_billboard_batch_set_emissive (LrgBillboardBatch *self,
+                                  guint              index,
+                                  gboolean           emissive);
+
+/**
+ * lrg_billboard_batch_get_emissive:
+ * @self: an #LrgBillboardBatch
+ * @index: a billboard index
+ *
+ * Returns: whether the billboard is emissive (%FALSE for a bad index)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_billboard_batch_get_emissive (LrgBillboardBatch *self,
+                                  guint              index);
+
+/**
+ * lrg_billboard_batch_get_lit_tint:
+ * @self: an #LrgBillboardBatch
+ * @index: a billboard index
+ * @out_tint: (out caller-allocates): the colour the next draw gives the
+ *   quad, with an identity rlgl transform
+ *
+ * Headless: the billboard's tint times the light of the applicable
+ * light set (the batch's own, else the bound one) at its centre,
+ * clamped to 255; the plain tint when the batch is unlit, the billboard
+ * emissive or no light set applies.
+ *
+ * Returns: %TRUE when @index exists
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_billboard_batch_get_lit_tint (LrgBillboardBatch *self,
+                                  guint              index,
+                                  GrlColor          *out_tint);
+
+/**
  * lrg_billboard_batch_draw:
  * @self: an #LrgBillboardBatch
  * @camera_position: the eye position of the active 3D camera
@@ -263,7 +357,8 @@ lrg_billboard_batch_set_alpha_cutoff (LrgBillboardBatch *self,
  * Draws every visible billboard with a texture, one texture bind per
  * material.  Call between BeginMode3D()/EndMode3D() (or
  * grl_camera3d_begin()/end()).  Spherical mode reads the camera basis
- * from the current modelview matrix.
+ * from the current modelview matrix.  With a light set (own or bound)
+ * every non-emissive quad is tinted by the light at its centre.
  */
 LRG_AVAILABLE_IN_ALL
 void
