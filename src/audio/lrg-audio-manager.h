@@ -192,6 +192,269 @@ LRG_AVAILABLE_IN_ALL
 void lrg_audio_manager_stop_all_sounds (LrgAudioManager *self);
 
 /* ==========================================================================
+ * Positional Sound (emitters and listener)
+ * ========================================================================== */
+
+/**
+ * LRG_AUDIO_DEFAULT_MIN_DISTANCE:
+ *
+ * Default #LrgAudioAttenuation.min_distance: full volume inside it.
+ */
+#define LRG_AUDIO_DEFAULT_MIN_DISTANCE (1.0f)
+
+/**
+ * LRG_AUDIO_DEFAULT_MAX_DISTANCE:
+ *
+ * Default #LrgAudioAttenuation.max_distance: silent beyond it.
+ */
+#define LRG_AUDIO_DEFAULT_MAX_DISTANCE (50.0f)
+
+/**
+ * LRG_AUDIO_DEFAULT_ROLLOFF:
+ *
+ * Default #LrgAudioAttenuation.rolloff (inverse distance).
+ */
+#define LRG_AUDIO_DEFAULT_ROLLOFF (1.0f)
+
+#define LRG_TYPE_AUDIO_ATTENUATION (lrg_audio_attenuation_get_type ())
+
+/**
+ * LrgAudioAttenuation:
+ * @min_distance: distance within which a source plays at full volume
+ * @max_distance: distance beyond which a source is silent
+ * @rolloff: curve between the two: 0 is linear; a positive value is
+ *   inverse distance `min / (min + rolloff * (d - min))`, rescaled so
+ *   that it reaches exactly 0 at @max_distance (1.0 resembles Unity's
+ *   logarithmic rolloff; larger values fall off faster)
+ * @spatial_blend: 0 plays flat (2D: full volume, centred), 1 fully
+ *   positional; values between mix gain and pan linearly
+ *
+ * How a positional voice fades and pans with its distance and direction
+ * from the listener (see lrg_audio_compute_spatial()).
+ */
+typedef struct _LrgAudioAttenuation LrgAudioAttenuation;
+
+struct _LrgAudioAttenuation
+{
+    gfloat min_distance;
+    gfloat max_distance;
+    gfloat rolloff;
+    gfloat spatial_blend;
+};
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_audio_attenuation_get_type (void) G_GNUC_CONST;
+
+/**
+ * lrg_audio_attenuation_new:
+ * @min_distance: full volume within this distance
+ * @max_distance: silent beyond this distance
+ * @rolloff: 0 linear, > 0 inverse distance
+ * @spatial_blend: 0 flat .. 1 positional
+ *
+ * Returns: (transfer full): a new attenuation, free with
+ *   lrg_audio_attenuation_free()
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAudioAttenuation * lrg_audio_attenuation_new (gfloat min_distance,
+                                                 gfloat max_distance,
+                                                 gfloat rolloff,
+                                                 gfloat spatial_blend);
+
+/**
+ * lrg_audio_attenuation_init_default:
+ * @self: (out caller-allocates): the attenuation to fill
+ *
+ * Fills @self with %LRG_AUDIO_DEFAULT_MIN_DISTANCE,
+ * %LRG_AUDIO_DEFAULT_MAX_DISTANCE, %LRG_AUDIO_DEFAULT_ROLLOFF and a
+ * spatial blend of 1.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_attenuation_init_default (LrgAudioAttenuation *self);
+
+/**
+ * lrg_audio_attenuation_copy:
+ * @self: an #LrgAudioAttenuation
+ *
+ * Returns: (transfer full): a copy of @self
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAudioAttenuation * lrg_audio_attenuation_copy (const LrgAudioAttenuation *self);
+
+/**
+ * lrg_audio_attenuation_free:
+ * @self: (nullable): an #LrgAudioAttenuation
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_attenuation_free (LrgAudioAttenuation *self);
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgAudioAttenuation, lrg_audio_attenuation_free)
+
+/**
+ * lrg_audio_compute_spatial:
+ * @listener_position: (array fixed-size=3): the listener (ears)
+ * @listener_forward: (array fixed-size=3): where the listener looks
+ *   (need not be normalized; a zero vector means +Z)
+ * @listener_up: (array fixed-size=3) (nullable): the listener's up,
+ *   %NULL for +Y
+ * @source_position: (array fixed-size=3): the sound source
+ * @attenuation: (nullable): the curve, %NULL for the defaults
+ * @out_gain: (out) (optional): 0 .. 1 volume factor
+ * @out_pan: (out) (optional): -1 (left) .. 1 (right)
+ *
+ * Pure spatialisation used by positional voices.  The gain is 1 within
+ * min_distance, 0 beyond max_distance and follows the rolloff curve in
+ * between.  The pan is the source direction projected on the
+ * listener's right vector (`forward x up`, the screen right of a
+ * right-handed Y-up camera such as raylib's), shrunk inside
+ * min_distance so a source at the listener's head stays centred.  Both
+ * are mixed with the flat values (gain 1, pan 0) by spatial_blend.
+ * Needs no audio device.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_compute_spatial (const gfloat              *listener_position,
+                                const gfloat              *listener_forward,
+                                const gfloat              *listener_up,
+                                const gfloat              *source_position,
+                                const LrgAudioAttenuation *attenuation,
+                                gfloat                    *out_gain,
+                                gfloat                    *out_pan);
+
+/**
+ * lrg_audio_manager_set_listener:
+ * @self: the audio manager
+ * @position: (array fixed-size=3): the listener position (camera)
+ * @forward: (array fixed-size=3): view direction
+ * @up: (array fixed-size=3) (nullable): up vector, %NULL for +Y
+ *
+ * Moves the ears every positional voice is heard with.  Live voices
+ * pick the change up on the next lrg_audio_manager_update().  The
+ * default listener sits at the origin looking along +Z with +Y up.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_manager_set_listener (LrgAudioManager *self,
+                                     const gfloat    *position,
+                                     const gfloat    *forward,
+                                     const gfloat    *up);
+
+/**
+ * lrg_audio_manager_get_listener:
+ * @self: the audio manager
+ * @out_position: (out caller-allocates) (array fixed-size=3) (optional):
+ *   the listener position
+ * @out_forward: (out caller-allocates) (array fixed-size=3) (optional):
+ *   the view direction as set
+ * @out_up: (out caller-allocates) (array fixed-size=3) (optional): the
+ *   up vector
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_manager_get_listener (LrgAudioManager *self,
+                                     gfloat          *out_position,
+                                     gfloat          *out_forward,
+                                     gfloat          *out_up);
+
+/**
+ * lrg_audio_manager_play_sound_at:
+ * @self: the audio manager
+ * @bank_name: the bank name
+ * @sound_name: the sound name in that bank
+ * @position: (array fixed-size=3) (nullable): where the sound plays,
+ *   %NULL for a flat (2D) voice
+ * @volume: 0 .. 1 before the manager's master and SFX volumes and the
+ *   attenuation
+ * @attenuation: (nullable): the curve, %NULL for the defaults
+ *
+ * Starts a new voice of the sound: an alias of the bank's #GrlSound
+ * that shares its samples, so several voices of one sound overlap, each
+ * with its own volume and pan.  The voice is released by
+ * lrg_audio_manager_update() once it finished.
+ *
+ * Returns: a voice id (> 0), or 0 when nothing played (unknown bank or
+ *   sound, no audio device)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_audio_manager_play_sound_at (LrgAudioManager           *self,
+                                       const gchar               *bank_name,
+                                       const gchar               *sound_name,
+                                       const gfloat              *position,
+                                       gfloat                     volume,
+                                       const LrgAudioAttenuation *attenuation);
+
+/**
+ * lrg_audio_manager_set_voice_position:
+ * @self: the audio manager
+ * @voice: a voice id
+ * @position: (array fixed-size=3): the new source position
+ *
+ * Moves a positional voice (a moving emitter); gain and pan follow at
+ * once.  A flat voice becomes positional.
+ *
+ * Returns: %TRUE when @voice is alive
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_audio_manager_set_voice_position (LrgAudioManager *self,
+                                               guint            voice,
+                                               const gfloat    *position);
+
+/**
+ * lrg_audio_manager_get_voice_spatial:
+ * @self: the audio manager
+ * @voice: a voice id
+ * @out_gain: (out) (optional): the attenuation gain last applied
+ * @out_pan: (out) (optional): the pan last applied
+ *
+ * Returns: %TRUE when @voice is alive
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_audio_manager_get_voice_spatial (LrgAudioManager *self,
+                                              guint            voice,
+                                              gfloat          *out_gain,
+                                              gfloat          *out_pan);
+
+/**
+ * lrg_audio_manager_stop_voice:
+ * @self: the audio manager
+ * @voice: a voice id
+ *
+ * Stops and releases a voice.
+ *
+ * Returns: %TRUE when @voice was alive
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_audio_manager_stop_voice (LrgAudioManager *self,
+                                       guint            voice);
+
+/**
+ * lrg_audio_manager_is_voice_playing:
+ * @self: the audio manager
+ * @voice: a voice id
+ *
+ * Returns: %TRUE while @voice is audible (alive and not finished)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_audio_manager_is_voice_playing (LrgAudioManager *self,
+                                             guint            voice);
+
+/**
+ * lrg_audio_manager_get_voice_count:
+ * @self: the audio manager
+ *
+ * Returns: the number of voices not yet released
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_audio_manager_get_voice_count (LrgAudioManager *self);
+
+/**
+ * lrg_audio_manager_stop_all_voices:
+ * @self: the audio manager
+ *
+ * Stops and releases every voice (lrg_audio_manager_stop_all_sounds()
+ * does this too).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_manager_stop_all_voices (LrgAudioManager *self);
+
+/* ==========================================================================
  * Music Playback
  * ========================================================================== */
 

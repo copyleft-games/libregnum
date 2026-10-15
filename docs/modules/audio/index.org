@@ -30,6 +30,7 @@ The Audio module consists of these core classes:
 - *Singleton manager* - Easy access from anywhere in game
 - *Wave data* - Load, manipulate, crop, resample, and export audio
 - *Procedural audio* - Create custom synthesizers and sound generators
+- *Positional sound* - A listener and per-voice emitters with distance attenuation and stereo pan
 
 ** Quick Start
 :PROPERTIES:
@@ -154,6 +155,7 @@ See the individual class documentation:
 - [[file:music-track.org][LrgMusicTrack]] - Music playback control
 - [[file:wave-data.org][LrgWaveData]] - Raw wave data manipulation
 - [[file:procedural-audio.org][LrgProceduralAudio]] - Real-time audio generation
+- [[file:emitter.org][Positional sound]] - Listener, emitter voices, distance attenuation and pan (=LrgAudioAttenuation=, =lrg_audio_manager_play_sound_at()=)
 
 ** PCM mixer buses, sends, effects, and stream playback
 

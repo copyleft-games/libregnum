@@ -96,6 +96,7 @@ TEST_SOURCES := \
 	test-sky-dome.c \
 	test-light-set.c \
 	test-audio.c \
+	test-audio-positional.c \
 	test-inventory.c \
 	test-i18n.c \
 	test-pathfinding.c \

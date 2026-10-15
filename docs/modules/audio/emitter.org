@@ -1,0 +1,86 @@
+#+title: Positional sound: listener, emitters, attenuation and pan
+#+description: LrgAudioManager's positional voices (play_sound_at) and the pure lrg_audio_compute_spatial()
+
+* Overview
+
+=LrgAudioManager= can play a bank sound as a *voice* placed in the world.  The manager keeps one *listener* (position, forward and up vectors, normally the camera) and gives every positional voice a gain from its distance to the listener and a stereo pan from its direction.  Voices are independent: several voices of the same sound overlap, each with its own volume and pan.  They are released automatically once they finished playing.
+
+The math lives in a pure function, =lrg_audio_compute_spatial()=, that needs no audio device; the manager applies its result to the voice through graylib's per-sound volume and pan setters.  graylib and raylib are unchanged.
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_audio_manager_set_listener()= / =get_listener()= | the ears: position, forward, up (=NULL= up = +Y) |
+| =lrg_audio_manager_play_sound_at()= | start a voice of =bank/sound= at a position (=NULL= = flat 2D) with a volume and an optional =LrgAudioAttenuation=; returns a voice id, 0 when nothing played |
+| =lrg_audio_manager_set_voice_position()= | move a voice (a moving emitter); gain and pan follow at once |
+| =lrg_audio_manager_get_voice_spatial()= | the gain and pan last applied to a voice |
+| =lrg_audio_manager_stop_voice()= / =stop_all_voices()= | stop and release |
+| =lrg_audio_manager_is_voice_playing()= / =get_voice_count()= | state |
+| =lrg_audio_compute_spatial()= | the pure gain/pan computation |
+
+* Voices
+
+=play_sound_at()= looks up the sound in the named bank and creates a graylib *alias* of it (=grl_sound_new_alias()=): a new playback buffer that shares the bank sound's samples.  The voice keeps a reference to the bank sound, because raylib aliases do not own their samples; the bank may therefore drop or replace the sound while voices still play.  The voice id is a non-zero =guint= that is not reused while the voice lives.
+
+The effective volume of a voice is
+
+#+begin_example
+requested volume x attenuation gain x master volume x SFX volume   (0 when muted)
+#+end_example
+
+and is re-applied whenever a channel volume changes and on every =lrg_audio_manager_update()=, which also re-spatialises live voices after listener moves and frees finished ones.  =lrg_audio_manager_stop_all_sounds()= stops voices as well.
+
+Without an audio device (headless runs, CI) no bank sound can be loaded (raylib needs the device's format to convert samples), so =play_sound_at()= returns 0 and every voice call is a harmless no-op.
+
+* Attenuation
+
+=LrgAudioAttenuation= is a boxed record:
+
+| Field | Meaning | Default |
+|-------+---------+---------|
+| =min_distance= | full volume within it | =LRG_AUDIO_DEFAULT_MIN_DISTANCE= (1) |
+| =max_distance= | silent beyond it | =LRG_AUDIO_DEFAULT_MAX_DISTANCE= (50) |
+| =rolloff= | 0 linear, > 0 inverse distance | =LRG_AUDIO_DEFAULT_ROLLOFF= (1) |
+| =spatial_blend= | 0 flat .. 1 fully positional | 1 |
+
+The distance gain =g(d)= is 1 for =d <= min=, 0 for =d >= max= and in between:
+
+- =rolloff <= 0=: linear, =(max - d) / (max - min)= (Daggerfall Unity's enemy sounds use a linear rolloff);
+- =rolloff > 0=: inverse distance =inv(d) = min / (min + rolloff * (d - min))=, rescaled to reach exactly zero at the maximum: =(inv(d) - inv(max)) / (1 - inv(max))=.  1.0 resembles Unity's default logarithmic rolloff without its audible tail past =max=.
+
+Nonsense values are clamped (=min= at least 0.0001, =max= at least =min=, blend to 0..1).
+
+* Pan
+
+The listener's right vector is =forward x up= (normalised); in a right-handed, Y-up world such as raylib's this is the screen right: looking along +Z with +Y up, the right is -X.  The pan is the cosine between the source direction and that right vector, so a source straight to the side pans fully, one in front or behind stays centred.  Inside =min_distance= the pan is scaled by =d / min= so a sound at the listener's head does not flip from ear to ear.  Looking straight along the up vector there is no right; the pan is 0.  graylib's pan convention is -1 left, 0 centre, 1 right.
+
+* Spatial blend
+
+The final values mix flat and positional playback:
+
+#+begin_example
+gain = (1 - blend) + blend x g(d)
+pan  = blend x pan(direction)
+#+end_example
+
+* Example
+
+#+begin_src c
+LrgAudioManager *audio = lrg_audio_manager_get_default ();
+LrgAudioAttenuation near = { 1.0f, 30.0f, 0.0f, 1.0f };
+gfloat ears[3], forward[3], door[3] = { 4.0f, 0.0f, 10.0f };
+guint voice;
+
+/* every frame: the camera is the listener */
+lrg_audio_manager_set_listener (audio, ears, forward, NULL);
+lrg_audio_manager_update (audio);
+
+/* a door creaks 4 m to the side and 10 m ahead */
+voice = lrg_audio_manager_play_sound_at (audio, "sfx", "door-open", door, 1.0f, &near);
+
+/* a flat UI click */
+lrg_audio_manager_play_sound_at (audio, "ui", "click", NULL, 1.0f, NULL);
+#+end_src
+
+* Tests
+
+=tests/test-audio-positional.c=: the boxed type, the linear and inverse curves (monotonic, exact ends), pan in every direction and orientation, degenerate inputs (no NaN, clamping), the spatial blend, the listener getters/setters and the voice API without a device.  =LRG_TEST_AUDIO_DEVICE=1= additionally plays overlapping voices on the real device (at master volume 0) and checks their gain, pan, movement, release and the bank being removed while a voice lives.

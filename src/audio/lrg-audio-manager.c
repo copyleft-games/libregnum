@@ -8,8 +8,49 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_AUDIO
 
 #include "config.h"
+#include <math.h>
+#include <string.h>
 #include "lrg-audio-manager.h"
 #include "../lrg-log.h"
+
+/*
+ * LrgAudioVoice:
+ * One playing instance of a bank sound started by
+ * lrg_audio_manager_play_sound_at().  The alias shares the samples of
+ * @source, which the voice keeps alive (raylib aliases do not own their
+ * data), so a bank may drop the sound while voices still play.
+ */
+typedef struct
+{
+    GrlSound            *source;        /* owned ref: the bank's sound */
+    GrlSound            *alias;         /* owned: this voice's sound */
+    gfloat               volume;        /* requested 0..1 */
+    gboolean             positional;
+    gfloat               position[3];
+    LrgAudioAttenuation  attenuation;
+    gfloat               gain;          /* last applied attenuation gain */
+    gfloat               pan;           /* last applied pan */
+} LrgAudioVoice;
+
+static void apply_voice_foreach (gpointer key,
+                                 gpointer value,
+                                 gpointer user_data);
+
+static void
+lrg_audio_voice_free (gpointer data)
+{
+    LrgAudioVoice *voice = data;
+
+    if (voice == NULL)
+        return;
+
+    /* the alias goes before the sound whose samples it borrows */
+    if (voice->alias != NULL)
+        grl_sound_stop (voice->alias);
+    g_clear_object (&voice->alias);
+    g_clear_object (&voice->source);
+    g_free (voice);
+}
 
 /* Private structure */
 struct _LrgAudioManager
@@ -37,6 +78,13 @@ struct _LrgAudioManager
     gboolean        crossfading;
     gfloat          crossfade_timer;
     gfloat          crossfade_duration;
+
+    /* Positional voices and the listener */
+    GHashTable     *voices;         /* GUINT_TO_POINTER(id) -> LrgAudioVoice* */
+    guint           next_voice;
+    gfloat          listener_position[3];
+    gfloat          listener_forward[3];
+    gfloat          listener_up[3];
 };
 
 G_DEFINE_FINAL_TYPE (LrgAudioManager, lrg_audio_manager, G_TYPE_OBJECT)
@@ -75,6 +123,8 @@ lrg_audio_manager_finalize (GObject *object)
 {
     LrgAudioManager *self = LRG_AUDIO_MANAGER (object);
 
+    /* voices hold aliases of bank sounds: release them first */
+    g_clear_pointer (&self->voices, g_hash_table_unref);
     g_clear_pointer (&self->banks, g_hash_table_unref);
     g_clear_pointer (&self->procedural, g_hash_table_unref);
     g_clear_object (&self->current_music);
@@ -280,6 +330,14 @@ lrg_audio_manager_init (LrgAudioManager *self)
     self->crossfading = FALSE;
     self->crossfade_timer = 0.0f;
     self->crossfade_duration = 0.0f;
+
+    self->voices = g_hash_table_new_full (g_direct_hash,
+                                          g_direct_equal,
+                                          NULL,
+                                          lrg_audio_voice_free);
+    self->next_voice = 1;
+    self->listener_forward[2] = 1.0f;
+    self->listener_up[1] = 1.0f;
 }
 
 /* ==========================================================================
@@ -342,6 +400,10 @@ update_all_bank_volumes (LrgAudioManager *self)
 {
     gfloat volume = calculate_effective_sfx_volume (self);
     g_hash_table_foreach (self->banks, update_bank_volume, &volume);
+
+    /* voices carry their own volume: re-apply with the new channels */
+    if (self->voices != NULL)
+        g_hash_table_foreach (self->voices, apply_voice_foreach, self);
 }
 
 static void
@@ -358,6 +420,119 @@ update_music_volume (LrgAudioManager *self)
 
     volume = calculate_effective_music_volume (self);
     lrg_music_track_set_volume (self->current_music, volume);
+}
+
+/* ==========================================================================
+ * Positional voices: helpers
+ * ========================================================================== */
+
+static gfloat
+vec3_length (const gfloat *v)
+{
+    return sqrtf (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+
+/*
+ * attenuation_gain:
+ * The distance curve of lrg_audio_compute_spatial() before the spatial
+ * blend: 1 within min, 0 beyond max, linear (rolloff <= 0) or inverse
+ * distance rescaled to reach 0 at max (rolloff > 0) in between.
+ */
+static gfloat
+attenuation_gain (const LrgAudioAttenuation *att,
+                  gfloat                     distance)
+{
+    gfloat min_d;
+    gfloat max_d;
+    gfloat inv_d;
+    gfloat inv_max;
+
+    min_d = MAX (att->min_distance, 0.0001f);
+    max_d = MAX (att->max_distance, min_d);
+
+    if (distance <= min_d)
+        return 1.0f;
+    if (distance >= max_d)
+        return 0.0f;
+
+    if (att->rolloff <= 0.0f)
+        return (max_d - distance) / (max_d - min_d);
+
+    inv_d = min_d / (min_d + att->rolloff * (distance - min_d));
+    inv_max = min_d / (min_d + att->rolloff * (max_d - min_d));
+    if (inv_max >= 1.0f)
+        return 1.0f;
+
+    return CLAMP ((inv_d - inv_max) / (1.0f - inv_max), 0.0f, 1.0f);
+}
+
+/* effective volume of one voice: request x attenuation x channels */
+static void
+apply_voice (LrgAudioManager *self,
+             LrgAudioVoice   *voice)
+{
+    gfloat gain;
+    gfloat pan;
+
+    gain = 1.0f;
+    pan = 0.0f;
+    if (voice->positional)
+        lrg_audio_compute_spatial (self->listener_position,
+                                   self->listener_forward,
+                                   self->listener_up,
+                                   voice->position,
+                                   &voice->attenuation,
+                                   &gain, &pan);
+
+    voice->gain = gain;
+    voice->pan = pan;
+
+    if (voice->alias != NULL)
+    {
+        grl_sound_set_volume (voice->alias,
+                              CLAMP (voice->volume * gain *
+                                     calculate_effective_sfx_volume (self),
+                                     0.0f, 1.0f));
+        grl_sound_set_pan (voice->alias, pan);
+    }
+}
+
+static void
+apply_voice_foreach (gpointer key       G_GNUC_UNUSED,
+                     gpointer value,
+                     gpointer user_data)
+{
+    apply_voice (LRG_AUDIO_MANAGER (user_data), value);
+}
+
+/* GHRFunc: drop finished voices, re-spatialise the others */
+static gboolean
+update_voice_foreach (gpointer key       G_GNUC_UNUSED,
+                      gpointer value,
+                      gpointer user_data)
+{
+    LrgAudioVoice *voice = value;
+
+    if (voice->alias == NULL || !grl_sound_is_playing (voice->alias))
+        return TRUE;
+
+    apply_voice (LRG_AUDIO_MANAGER (user_data), voice);
+    return FALSE;
+}
+
+static void
+update_voices (LrgAudioManager *self)
+{
+    g_hash_table_foreach_remove (self->voices, update_voice_foreach, self);
+}
+
+static LrgAudioVoice *
+lookup_voice (LrgAudioManager *self,
+              guint            voice)
+{
+    if (voice == 0)
+        return NULL;
+    return g_hash_table_lookup (self->voices, GUINT_TO_POINTER (voice));
 }
 
 /* ==========================================================================
@@ -401,6 +576,9 @@ lrg_audio_manager_update (LrgAudioManager *self)
 
     /* Update all procedural audio sources */
     g_hash_table_foreach (self->procedural, update_procedural_foreach, NULL);
+
+    /* Release finished voices, re-spatialise the others */
+    update_voices (self);
 
     /* Handle crossfading */
     if (self->crossfading && self->current_music != NULL && self->next_music != NULL)
@@ -684,6 +862,370 @@ lrg_audio_manager_stop_all_sounds (LrgAudioManager *self)
     g_return_if_fail (LRG_IS_AUDIO_MANAGER (self));
 
     g_hash_table_foreach (self->banks, stop_bank_sounds, NULL);
+    lrg_audio_manager_stop_all_voices (self);
+}
+
+/* ==========================================================================
+ * Positional Sound (emitters and listener)
+ * ========================================================================== */
+
+G_DEFINE_BOXED_TYPE (LrgAudioAttenuation, lrg_audio_attenuation,
+                     lrg_audio_attenuation_copy,
+                     lrg_audio_attenuation_free)
+
+/*
+ * lrg_audio_attenuation_new:
+ * Allocates an attenuation curve with the given values.
+ */
+LrgAudioAttenuation *
+lrg_audio_attenuation_new (gfloat min_distance,
+                           gfloat max_distance,
+                           gfloat rolloff,
+                           gfloat spatial_blend)
+{
+    LrgAudioAttenuation *self;
+
+    self = g_new0 (LrgAudioAttenuation, 1);
+    self->min_distance = min_distance;
+    self->max_distance = max_distance;
+    self->rolloff = rolloff;
+    self->spatial_blend = spatial_blend;
+    return self;
+}
+
+/*
+ * lrg_audio_attenuation_init_default:
+ * Fills in the default curve (also used for a %NULL attenuation).
+ */
+void
+lrg_audio_attenuation_init_default (LrgAudioAttenuation *self)
+{
+    g_return_if_fail (self != NULL);
+
+    self->min_distance = LRG_AUDIO_DEFAULT_MIN_DISTANCE;
+    self->max_distance = LRG_AUDIO_DEFAULT_MAX_DISTANCE;
+    self->rolloff = LRG_AUDIO_DEFAULT_ROLLOFF;
+    self->spatial_blend = 1.0f;
+}
+
+/* lrg_audio_attenuation_copy: plain struct copy */
+LrgAudioAttenuation *
+lrg_audio_attenuation_copy (const LrgAudioAttenuation *self)
+{
+    g_return_val_if_fail (self != NULL, NULL);
+
+    return g_memdup2 (self, sizeof (LrgAudioAttenuation));
+}
+
+/* lrg_audio_attenuation_free: accepts NULL */
+void
+lrg_audio_attenuation_free (LrgAudioAttenuation *self)
+{
+    g_free (self);
+}
+
+/*
+ * lrg_audio_compute_spatial:
+ * Gain from the distance curve; pan from the source direction projected
+ * on the listener's right (forward x up), faded towards the centre
+ * inside min_distance; both mixed with flat playback by spatial_blend.
+ */
+void
+lrg_audio_compute_spatial (const gfloat              *listener_position,
+                           const gfloat              *listener_forward,
+                           const gfloat              *listener_up,
+                           const gfloat              *source_position,
+                           const LrgAudioAttenuation *attenuation,
+                           gfloat                    *out_gain,
+                           gfloat                    *out_pan)
+{
+    LrgAudioAttenuation defaults;
+    const LrgAudioAttenuation *att;
+    gfloat forward[3];
+    gfloat up[3];
+    gfloat right[3];
+    gfloat dir[3];
+    gfloat distance;
+    gfloat length;
+    gfloat blend;
+    gfloat gain;
+    gfloat pan;
+    gfloat min_d;
+
+    g_return_if_fail (listener_position != NULL);
+    g_return_if_fail (listener_forward != NULL);
+    g_return_if_fail (source_position != NULL);
+
+    lrg_audio_attenuation_init_default (&defaults);
+    att = attenuation != NULL ? attenuation : &defaults;
+    blend = CLAMP (att->spatial_blend, 0.0f, 1.0f);
+
+    /* distance and normalized direction listener -> source */
+    dir[0] = source_position[0] - listener_position[0];
+    dir[1] = source_position[1] - listener_position[1];
+    dir[2] = source_position[2] - listener_position[2];
+    distance = vec3_length (dir);
+
+    gain = attenuation_gain (att, distance);
+    pan = 0.0f;
+
+    if (distance > 1e-6f)
+    {
+        /* listener basis: forward (default +Z) and up (default +Y) */
+        length = vec3_length (listener_forward);
+        if (length > 1e-6f)
+        {
+            forward[0] = listener_forward[0] / length;
+            forward[1] = listener_forward[1] / length;
+            forward[2] = listener_forward[2] / length;
+        }
+        else
+        {
+            forward[0] = 0.0f;
+            forward[1] = 0.0f;
+            forward[2] = 1.0f;
+        }
+
+        up[0] = 0.0f;
+        up[1] = 1.0f;
+        up[2] = 0.0f;
+        if (listener_up != NULL && vec3_length (listener_up) > 1e-6f)
+        {
+            up[0] = listener_up[0];
+            up[1] = listener_up[1];
+            up[2] = listener_up[2];
+        }
+
+        /* right = forward x up; looking straight along up has no right */
+        right[0] = forward[1] * up[2] - forward[2] * up[1];
+        right[1] = forward[2] * up[0] - forward[0] * up[2];
+        right[2] = forward[0] * up[1] - forward[1] * up[0];
+        length = vec3_length (right);
+
+        if (length > 1e-6f)
+        {
+            pan = (dir[0] * right[0] + dir[1] * right[1] + dir[2] * right[2]) /
+                  (distance * length);
+
+            /* a source inside the head zone drifts to the centre */
+            min_d = MAX (att->min_distance, 0.0001f);
+            if (distance < min_d)
+                pan *= distance / min_d;
+        }
+    }
+
+    if (out_gain != NULL)
+        *out_gain = CLAMP ((1.0f - blend) + blend * gain, 0.0f, 1.0f);
+    if (out_pan != NULL)
+        *out_pan = CLAMP (blend * pan, -1.0f, 1.0f);
+}
+
+/*
+ * lrg_audio_manager_set_listener:
+ * Stores the ears; voices follow on the next update.
+ */
+void
+lrg_audio_manager_set_listener (LrgAudioManager *self,
+                                const gfloat    *position,
+                                const gfloat    *forward,
+                                const gfloat    *up)
+{
+    g_return_if_fail (LRG_IS_AUDIO_MANAGER (self));
+    g_return_if_fail (position != NULL);
+    g_return_if_fail (forward != NULL);
+
+    memcpy (self->listener_position, position, sizeof (gfloat) * 3);
+    memcpy (self->listener_forward, forward, sizeof (gfloat) * 3);
+    if (up != NULL)
+    {
+        memcpy (self->listener_up, up, sizeof (gfloat) * 3);
+    }
+    else
+    {
+        self->listener_up[0] = 0.0f;
+        self->listener_up[1] = 1.0f;
+        self->listener_up[2] = 0.0f;
+    }
+}
+
+/* lrg_audio_manager_get_listener: copies out what was set */
+void
+lrg_audio_manager_get_listener (LrgAudioManager *self,
+                                gfloat          *out_position,
+                                gfloat          *out_forward,
+                                gfloat          *out_up)
+{
+    g_return_if_fail (LRG_IS_AUDIO_MANAGER (self));
+
+    if (out_position != NULL)
+        memcpy (out_position, self->listener_position, sizeof (gfloat) * 3);
+    if (out_forward != NULL)
+        memcpy (out_forward, self->listener_forward, sizeof (gfloat) * 3);
+    if (out_up != NULL)
+        memcpy (out_up, self->listener_up, sizeof (gfloat) * 3);
+}
+
+/*
+ * lrg_audio_manager_play_sound_at:
+ * Looks the sound up, makes an alias of it (fails without an audio
+ * device or for an unloaded sound), spatialises and plays it.
+ */
+guint
+lrg_audio_manager_play_sound_at (LrgAudioManager           *self,
+                                 const gchar               *bank_name,
+                                 const gchar               *sound_name,
+                                 const gfloat              *position,
+                                 gfloat                     volume,
+                                 const LrgAudioAttenuation *attenuation)
+{
+    LrgSoundBank *bank;
+    GrlSound *source;
+    GrlSound *alias;
+    LrgAudioVoice *voice;
+    guint id;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), 0);
+    g_return_val_if_fail (bank_name != NULL, 0);
+    g_return_val_if_fail (sound_name != NULL, 0);
+
+    bank = lrg_audio_manager_get_bank (self, bank_name);
+    if (bank == NULL)
+    {
+        lrg_log_debug ("Sound bank '%s' not found", bank_name);
+        return 0;
+    }
+
+    source = lrg_sound_bank_get (bank, sound_name);
+    if (source == NULL)
+    {
+        lrg_log_debug ("Sound '%s' not found in bank '%s'", sound_name, bank_name);
+        return 0;
+    }
+
+    alias = grl_sound_new_alias (source);
+    if (alias == NULL)
+    {
+        lrg_log_debug ("Cannot create a voice of '%s/%s'", bank_name, sound_name);
+        return 0;
+    }
+
+    /* the voice: owns the alias and a reference to the shared samples */
+    voice = g_new0 (LrgAudioVoice, 1);
+    voice->source = g_object_ref (source);
+    voice->alias = alias;
+    voice->volume = CLAMP (volume, 0.0f, 1.0f);
+    voice->positional = (position != NULL);
+    if (position != NULL)
+        memcpy (voice->position, position, sizeof (gfloat) * 3);
+    if (attenuation != NULL)
+        voice->attenuation = *attenuation;
+    else
+        lrg_audio_attenuation_init_default (&voice->attenuation);
+
+    /* ids are never 0 and skip any still in use after wrapping */
+    do
+    {
+        id = self->next_voice++;
+        if (self->next_voice == 0)
+            self->next_voice = 1;
+    }
+    while (id == 0 || g_hash_table_contains (self->voices, GUINT_TO_POINTER (id)));
+
+    g_hash_table_insert (self->voices, GUINT_TO_POINTER (id), voice);
+
+    apply_voice (self, voice);
+    grl_sound_play (voice->alias);
+
+    g_signal_emit (self, signals[SIGNAL_SOUND_PLAYED], 0, bank_name, sound_name);
+    return id;
+}
+
+/* lrg_audio_manager_set_voice_position: moves an emitter */
+gboolean
+lrg_audio_manager_set_voice_position (LrgAudioManager *self,
+                                      guint            voice,
+                                      const gfloat    *position)
+{
+    LrgAudioVoice *entry;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
+    g_return_val_if_fail (position != NULL, FALSE);
+
+    entry = lookup_voice (self, voice);
+    if (entry == NULL)
+        return FALSE;
+
+    entry->positional = TRUE;
+    memcpy (entry->position, position, sizeof (gfloat) * 3);
+    apply_voice (self, entry);
+    return TRUE;
+}
+
+/* lrg_audio_manager_get_voice_spatial: last applied gain and pan */
+gboolean
+lrg_audio_manager_get_voice_spatial (LrgAudioManager *self,
+                                     guint            voice,
+                                     gfloat          *out_gain,
+                                     gfloat          *out_pan)
+{
+    LrgAudioVoice *entry;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
+
+    entry = lookup_voice (self, voice);
+    if (entry == NULL)
+        return FALSE;
+
+    if (out_gain != NULL)
+        *out_gain = entry->gain;
+    if (out_pan != NULL)
+        *out_pan = entry->pan;
+    return TRUE;
+}
+
+/* lrg_audio_manager_stop_voice: stop and release at once */
+gboolean
+lrg_audio_manager_stop_voice (LrgAudioManager *self,
+                              guint            voice)
+{
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
+
+    if (voice == 0)
+        return FALSE;
+    return g_hash_table_remove (self->voices, GUINT_TO_POINTER (voice));
+}
+
+/* lrg_audio_manager_is_voice_playing: alive and still sounding */
+gboolean
+lrg_audio_manager_is_voice_playing (LrgAudioManager *self,
+                                    guint            voice)
+{
+    LrgAudioVoice *entry;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
+
+    entry = lookup_voice (self, voice);
+    if (entry == NULL || entry->alias == NULL)
+        return FALSE;
+    return grl_sound_is_playing (entry->alias);
+}
+
+/* lrg_audio_manager_get_voice_count: voices not yet released */
+guint
+lrg_audio_manager_get_voice_count (LrgAudioManager *self)
+{
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), 0);
+
+    return g_hash_table_size (self->voices);
+}
+
+/* lrg_audio_manager_stop_all_voices: releases every voice */
+void
+lrg_audio_manager_stop_all_voices (LrgAudioManager *self)
+{
+    g_return_if_fail (LRG_IS_AUDIO_MANAGER (self));
+
+    g_hash_table_remove_all (self->voices);
 }
 
 /* ==========================================================================
