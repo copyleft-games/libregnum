@@ -30,7 +30,7 @@ The Audio module consists of these core classes:
 - *Singleton manager* - Easy access from anywhere in game
 - *Wave data* - Load, manipulate, crop, resample, and export audio
 - *Procedural audio* - Create custom synthesizers and sound generators
-- *Positional sound* - A listener and per-voice emitters with distance attenuation and stereo pan
+- *Positional sound* - A listener and per-voice emitters with distance attenuation and stereo pan (compile-time probe: =LRG_AUDIO_HAS_POSITIONAL=)
 
 ** Quick Start
 :PROPERTIES:

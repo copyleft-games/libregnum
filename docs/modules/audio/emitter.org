@@ -5,6 +5,8 @@
 
 =LrgAudioManager= can play a bank sound as a *voice* placed in the world.  The manager keeps one *listener* (position, forward and up vectors, normally the camera) and gives every positional voice a gain from its distance to the listener and a stereo pan from its direction.  Voices are independent: several voices of the same sound overlap, each with its own volume and pan.  They are released automatically once they finished playing.
 
+Applications can probe for this API at compile time with =#ifdef LRG_AUDIO_HAS_POSITIONAL=.
+
 The math lives in a pure function, =lrg_audio_compute_spatial()=, that needs no audio device; the manager applies its result to the voice through graylib's per-sound volume and pan setters.  graylib and raylib are unchanged.
 
 | Function | Purpose |

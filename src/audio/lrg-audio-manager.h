@@ -196,6 +196,15 @@ void lrg_audio_manager_stop_all_sounds (LrgAudioManager *self);
  * ========================================================================== */
 
 /**
+ * LRG_AUDIO_HAS_POSITIONAL:
+ *
+ * Defined when this libregnum provides positional voices
+ * (lrg_audio_manager_play_sound_at() and friends), so applications can
+ * probe for the API at compile time.
+ */
+#define LRG_AUDIO_HAS_POSITIONAL (1)
+
+/**
  * LRG_AUDIO_DEFAULT_MIN_DISTANCE:
  *
  * Default #LrgAudioAttenuation.min_distance: full volume inside it.
