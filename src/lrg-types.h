@@ -289,6 +289,7 @@ typedef struct _LrgMusicTrack      LrgMusicTrack;
 typedef struct _LrgAudioManager    LrgAudioManager;
 typedef struct _LrgWaveData        LrgWaveData;
 typedef struct _LrgAudioMixer      LrgAudioMixer;
+typedef struct _LrgMidiSynth       LrgMidiSynth;
 
 /* LrgProceduralAudio is a derivable type */
 typedef struct _LrgProceduralAudio       LrgProceduralAudio;

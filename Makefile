@@ -157,6 +157,7 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-wave-data.h \
 	src/audio/lrg-audio-mixer.h \
 	src/audio/lrg-procedural-audio.h \
+	src/audio/lrg-midi-synth.h \
 	src/inventory/lrg-item-def.h \
 	src/inventory/lrg-item-stack.h \
 	src/inventory/lrg-inventory.h \
@@ -684,6 +685,8 @@ SOURCES := \
 	src/audio/lrg-wave-data.c \
 	src/audio/lrg-audio-mixer.c \
 	src/audio/lrg-procedural-audio.c \
+	src/audio/lrg-midi-synth.c \
+	src/audio/lrg-midi-synth-vendor.c \
 	src/inventory/lrg-item-def.c \
 	src/inventory/lrg-item-stack.c \
 	src/inventory/lrg-inventory.c \
@@ -1513,6 +1516,7 @@ endif
 # authors use the editor types + the LrgScripting base / manager / component +
 # the LrgScriptLanguage enum, all of which remain introspectable.
 GIR_EXCLUDE := \
+	src/audio/lrg-midi-synth-vendor.c \
 	src/scripting/lrg-scripting-gi.h \
 	src/scripting/lrg-scripting-gi.c \
 	src/scripting/lrg-scripting-gi-private.h \
@@ -1824,6 +1828,15 @@ $(OBJDIR)/src/%.o: src/%.c | $(OBJDIR)
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# The vendored, unmodified TinySoundFont / TinyMidiLoader single headers
+# (src/audio/vendor/) are compiled in this one translation unit only.  They
+# are third-party code we must not edit, so their directory is a system
+# include path here: their own style (C++ comments, mixed declarations)
+# is not held to libregnum's warning set, while the file's own code is.
+$(OBJDIR)/src/audio/lrg-midi-synth-vendor.o: LIB_CFLAGS += -isystem $(CURDIR)/src/audio/vendor
+$(OBJDIR)/src/audio/lrg-midi-synth-vendor.o: src/audio/vendor/tsf.h src/audio/vendor/tml.h src/audio/lrg-midi-synth-private.h
+$(OBJDIR)/src/audio/lrg-midi-synth.o: src/audio/lrg-midi-synth-private.h
 
 # The OpenXR backend compiles to a stub without OPENXR=1, so it must rebuild
 # when the flag flips; the stamp's name carries the value.

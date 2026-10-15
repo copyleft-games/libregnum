@@ -97,6 +97,7 @@ TEST_SOURCES := \
 	test-light-set.c \
 	test-audio.c \
 	test-audio-positional.c \
+	test-midi-synth.c \
 	test-inventory.c \
 	test-i18n.c \
 	test-pathfinding.c \
