@@ -653,12 +653,23 @@ and client-side helpers for skinned and static models.
   keeps transparent texels out of the depth buffer. `get_corners()` is
   headless and returns exactly the drawn quad.
 
+- **`LrgTerrain`** (`graphics/lrg-terrain.h`): chunked heightfield for
+  streamed worlds. Chunks `(cx, cz)` hold `(res+1)²` heights plus one
+  material and one `LrgTerrainUvVariant` (rotate 90 / flip U / flip V)
+  per cell. `height_at()` is bilinear, world coordinates, FALSE outside
+  loaded chunks. Meshes are built lazily per material (≤65535 vertices,
+  4 vertices per cell, CCW from above), chunk-local and inspectable;
+  normals difference across loaded neighbours. `set_origin()` (double)
+  is applied as the model matrix at draw time, so moving it re-uploads
+  nothing. `set_texture_repeat (N)` spans a texture over N×N cells.
+
 See `docs/modules/physics/wall-set.org`,
 `docs/modules/core/asset-manager.org` (Models and animations),
 `docs/modules/graphics/gltf-info.org`,
 `docs/modules/graphics/model-animator.org` and
 `docs/modules/graphics/static-batch.org`,
-`docs/modules/graphics/billboard-batch.org`.
+`docs/modules/graphics/billboard-batch.org`,
+`docs/modules/graphics/terrain.org`.
 
 ## Architecture Overview
 

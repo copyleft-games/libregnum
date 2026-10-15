@@ -81,6 +81,7 @@
 #include "graphics/lrg-model-animator.h"
 #include "graphics/lrg-static-batch.h"
 #include "graphics/lrg-billboard-batch.h"
+#include "graphics/lrg-terrain.h"
 #include "imageedit/lrg-image-layer.h"
 #include "imageedit/lrg-image-document.h"
 

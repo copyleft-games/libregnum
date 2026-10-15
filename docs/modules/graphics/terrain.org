@@ -1,0 +1,164 @@
+* LrgTerrain - Chunked Heightfield Terrain
+:PROPERTIES:
+:CUSTOM_ID: lrgterrain---chunked-heightfield-terrain
+:END:
+Heightfield terrain for large, streamed worlds. The world is split into square chunks addressed by integer =(cx, cz)=; each chunk holds a grid of heights plus one material (texture) per grid cell with a 3-bit UV variant, so tile-based worlds (Daggerfall-style ground tiles) can reuse one tile texture in eight orientations. Chunks are added and removed independently as the player moves.
+
+Height queries and mesh generation are headless: meshes are built lazily on the CPU and stay inspectable (positions, normals, texcoords, indices per mesh), so tests verify geometry without a GPU. Only =upload()= and =draw()= need a GL context.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgTerrain= - *Final GObject Class*, =LRG_TYPE_TERRAIN=, GIR =Libregnum.Terrain=
+- =LrgTerrainUvVariant= - *Flags*, =LRG_TYPE_TERRAIN_UV_VARIANT= (=lrg-enums.h=)
+- *Header* - =graphics/lrg-terrain.h=
+
+| Flag                       | Nick        | Effect on the cell's texture coordinates (s, t) |
+|----------------------------+-------------+-------------------------------------------------|
+| =LRG_TERRAIN_UV_NONE=      | =none=      | unchanged                                       |
+| =LRG_TERRAIN_UV_ROTATE_90= | =rotate-90= | (s, t) -> (t, 1 - s), applied first             |
+| =LRG_TERRAIN_UV_FLIP_U=    | =flip-u=    | s -> 1 - s                                      |
+| =LRG_TERRAIN_UV_FLIP_V=    | =flip-v=    | t -> 1 - t                                      |
+
+| Constant                        | Value | Meaning                                    |
+|---------------------------------+-------+--------------------------------------------|
+| =LRG_TERRAIN_MAX_RESOLUTION=    | 1024  | largest cells per chunk side               |
+| =LRG_TERRAIN_MAX_MESH_VERTICES= | 65535 | vertex limit of one mesh (16-bit indices)  |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+LrgTerrain *lrg_terrain_new (guint resolution, gfloat chunk_size);
+guint    lrg_terrain_get_resolution (LrgTerrain *self);
+gfloat   lrg_terrain_get_chunk_size (LrgTerrain *self);
+
+/* Chunks (headless) */
+gboolean lrg_terrain_set_chunk      (LrgTerrain *self, gint cx, gint cz,
+                                     const gfloat *heights, guint n_heights,
+                                     const guint *materials,  /* nullable, res² */
+                                     const guint8 *variants,  /* nullable, res² */
+                                     GError **error);
+gboolean lrg_terrain_remove_chunk   (LrgTerrain *self, gint cx, gint cz);
+gboolean lrg_terrain_has_chunk      (LrgTerrain *self, gint cx, gint cz);
+guint    lrg_terrain_get_chunk_count (LrgTerrain *self);
+void     lrg_terrain_clear          (LrgTerrain *self);
+
+/* Queries (world coordinates, headless) */
+void     lrg_terrain_world_to_chunk (LrgTerrain *self, gdouble x, gdouble z, gint *cx, gint *cz);
+gboolean lrg_terrain_height_at      (LrgTerrain *self, gdouble x, gdouble z, gfloat *height);
+gboolean lrg_terrain_get_chunk_bounds (LrgTerrain *self, gint cx, gint cz,
+                                       gdouble *min_x, gdouble *min_y, gdouble *min_z,
+                                       gdouble *max_x, gdouble *max_y, gdouble *max_z);
+
+/* Settings */
+void     lrg_terrain_set_texture_repeat (LrgTerrain *self, guint cells);
+void     lrg_terrain_set_origin     (LrgTerrain *self, gdouble x, gdouble y, gdouble z);
+void     lrg_terrain_get_origin     (LrgTerrain *self, gdouble *x, gdouble *y, gdouble *z);
+
+/* Mesh inspection (headless; builds meshes on demand) */
+guint          lrg_terrain_get_chunk_mesh_count     (LrgTerrain *self, gint cx, gint cz);
+guint          lrg_terrain_get_chunk_mesh_material  (LrgTerrain *self, gint cx, gint cz, guint mesh);
+const gfloat  *lrg_terrain_get_chunk_mesh_positions (LrgTerrain *self, gint cx, gint cz, guint mesh, guint *n_floats);
+const gfloat  *lrg_terrain_get_chunk_mesh_normals   (LrgTerrain *self, gint cx, gint cz, guint mesh, guint *n_floats);
+const gfloat  *lrg_terrain_get_chunk_mesh_texcoords (LrgTerrain *self, gint cx, gint cz, guint mesh, guint *n_floats);
+const guint16 *lrg_terrain_get_chunk_mesh_indices   (LrgTerrain *self, gint cx, gint cz, guint mesh, guint *n_indices);
+
+/* Rendering */
+void     lrg_terrain_set_material_texture (LrgTerrain *self, guint material, GrlTexture *texture);
+void     lrg_terrain_set_tint       (LrgTerrain *self, const GrlColor *tint);
+void     lrg_terrain_set_shader     (LrgTerrain *self, GrlShader *shader);
+gboolean lrg_terrain_upload         (LrgTerrain *self, GError **error);
+gboolean lrg_terrain_is_uploaded    (LrgTerrain *self);
+void     lrg_terrain_unload         (LrgTerrain *self);
+void     lrg_terrain_draw           (LrgTerrain *self);
+void     lrg_terrain_draw_chunk     (LrgTerrain *self, gint cx, gint cz);
+#+end_src
+
+** Semantics
+:PROPERTIES:
+:CUSTOM_ID: semantics
+:END:
+*** Layout
+:PROPERTIES:
+:CUSTOM_ID: layout
+:END:
+- A chunk has =resolution= cells per side and =(resolution + 1)²= heights. Cell size is =chunk_size / resolution=.
+- Chunk =(cx, cz)= covers world X in =[cx * chunk_size, (cx + 1) * chunk_size]=, likewise Z. =world_to_chunk()= uses floor division, so negative coordinates work.
+- Arrays are row major with =i= along +X and =j= along +Z: height =(i, j)= is =heights[j * (res + 1) + i]=, cell =(i, j)= is =materials[j * res + i]= / =variants[j * res + i]=.
+- Neighbouring chunks share their edge heights: the last column of chunk =cx= and the first column of chunk =cx + 1= are the same world positions, so the caller should give them equal heights.
+
+*** Validation
+:PROPERTIES:
+:CUSTOM_ID: validation
+:END:
+=set_chunk()= fails with =G_IO_ERROR_INVALID_ARGUMENT= (and changes nothing) when =n_heights= is not =(res + 1)²=, a height is NaN/infinite, or a variant uses bits beyond the three flags. The data is copied.
+
+*** Height queries
+:PROPERTIES:
+:CUSTOM_ID: height-queries
+:END:
+=height_at()= bilinearly interpolates the four heights of the cell containing =(x, z)=. It takes world coordinates (independent of the origin) and returns =FALSE= outside loaded chunks. Note the rendered surface is two triangles per cell, so on strongly non-planar cells the bilinear height and the drawn triangle differ slightly (zero on planar cells and at grid vertices).
+
+*** Meshes
+:PROPERTIES:
+:CUSTOM_ID: meshes
+:END:
+- Built lazily (on the first inspection or =upload()=) and rebuilt after the chunk, a neighbour or the texture repeat changes.
+- One mesh per material used in the chunk, ordered by ascending material id; inside a material, cells are in row-major order. A material whose cells need more than 65535 vertices is split into further meshes of the same material.
+- Each cell owns four vertices (corners =(i, j)=, =(i+1, j)=, =(i, j+1)=, =(i+1, j+1)=) because its UVs are its own, and two triangles =(0, 2, 1)=, =(1, 2, 3)=: counter-clockwise from above, i.e. front-facing under raylib's culling.
+- Positions are *chunk-local* (relative to the chunk corner, Y = height). Drawing translates them.
+- Normals are per grid vertex, from central differences of the heights; across a chunk edge the neighbour's heights are used when it is loaded (one-sided differences otherwise), so lighting is continuous between chunks. Adding or removing a chunk invalidates its four neighbours' meshes.
+
+*** Texture coordinates
+:PROPERTIES:
+:CUSTOM_ID: texture-coordinates
+:END:
+With texture repeat =R= (default 1) a texture covers =R × R= cells. For a cell at global column =gx = cx * res + i= the U range is =((gx mod R) + s') / R= with =s'= the variant-transformed corner coordinate (likewise V with =gz=, =t'=). With =R = 1= every cell shows the whole texture (tile mode); with larger =R= a texture continues seamlessly across cells and chunks, and each cell's variant reorients only its own part of it. UV =(0, 0)= of a cell sits at its =-X, -Z= corner.
+
+*** Floating origin
+:PROPERTIES:
+:CUSTOM_ID: floating-origin
+:END:
+=set_origin()= stores a double-precision world position; =draw()= gives each chunk the model matrix translation =(corner - origin)= computed in double, so a world many kilometres across renders without float jitter: place the camera at =(camera_world - origin)=. Meshes are chunk-local, so moving the origin re-uploads nothing. Queries and bounds stay in world coordinates. Because the translation is the model matrix, lighting shaders see origin-relative positions; give them the same origin.
+
+*** Drawing
+:PROPERTIES:
+:CUSTOM_ID: drawing
+:END:
+- =upload()= builds and uploads new or changed chunks (=G_IO_ERROR_NOT_INITIALIZED= without a window); =is_uploaded()= is =TRUE= when nothing is pending; =unload()= frees GPU meshes but keeps CPU data.
+- =draw()= draws every uploaded mesh with its material texture (raylib's white texture when unset), the tint and the terrain shader (raylib's default when unset). Call inside =BeginMode3D()=. Chunks whose meshes are stale keep drawing their previous meshes until the next =upload()=.
+- =draw_chunk()= draws one chunk, for callers that cull with =get_chunk_bounds()=.
+- Material textures are referenced by the terrain.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgTerrain) ground = lrg_terrain_new (16, 128.0f);
+g_autoptr(GError) error = NULL;
+gfloat heights[17 * 17];
+guint  tiles[16 * 16];
+guint8 orient[16 * 16];
+gfloat y;
+
+/* ... fill heights, tile ids and LRG_TERRAIN_UV_* bits from map data ... */
+lrg_terrain_set_material_texture (ground, 3, grass_texture);
+if (!lrg_terrain_set_chunk (ground, cx, cz, heights, G_N_ELEMENTS (heights),
+                            tiles, orient, &error))
+    g_warning ("chunk: %s", error->message);
+
+/* each frame */
+lrg_terrain_set_origin (ground, origin_x, 0.0, origin_z);
+lrg_terrain_upload (ground, NULL);
+grl_camera3d_begin (camera);       /* camera at player - origin */
+lrg_terrain_draw (ground);
+grl_camera3d_end (camera);
+
+/* keep the player on the ground */
+if (lrg_terrain_height_at (ground, player_x, player_z, &y))
+    player_y = y;
+#+end_src

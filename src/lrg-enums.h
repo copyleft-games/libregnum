@@ -1973,6 +1973,32 @@ GType lrg_billboard_mode_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_BILLBOARD_MODE (lrg_billboard_mode_get_type ())
 
 /**
+ * LrgTerrainUvVariant:
+ * @LRG_TERRAIN_UV_NONE: texture drawn as is
+ * @LRG_TERRAIN_UV_ROTATE_90: rotate the cell's texture coordinates a
+ *   quarter turn, (s, t) -> (t, 1 - s); applied before the flips
+ * @LRG_TERRAIN_UV_FLIP_U: mirror the cell's texture horizontally
+ *   (s -> 1 - s)
+ * @LRG_TERRAIN_UV_FLIP_V: mirror the cell's texture vertically
+ *   (t -> 1 - t)
+ *
+ * Per-cell texture orientation of an #LrgTerrain. The three bits give
+ * eight orientations of one tile texture; both flips together are a
+ * half turn.
+ */
+typedef enum /*< flags >*/
+{
+    LRG_TERRAIN_UV_NONE      = 0,
+    LRG_TERRAIN_UV_ROTATE_90 = 1 << 0,
+    LRG_TERRAIN_UV_FLIP_U    = 1 << 1,
+    LRG_TERRAIN_UV_FLIP_V    = 1 << 2
+} LrgTerrainUvVariant;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_terrain_uv_variant_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TERRAIN_UV_VARIANT (lrg_terrain_uv_variant_get_type ())
+
+/**
  * LrgParticleBackendType:
  * @LRG_PARTICLE_BACKEND_CPU: CPU-based simulation
  * @LRG_PARTICLE_BACKEND_GPU: GPU compute shader simulation

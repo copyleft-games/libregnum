@@ -90,6 +90,7 @@ TEST_SOURCES := \
 	test-model-animator.c \
 	test-static-batch.c \
 	test-billboard-batch.c \
+	test-terrain.c \
 	test-audio.c \
 	test-inventory.c \
 	test-i18n.c \
