@@ -1338,7 +1338,7 @@ else
     # Forward DEBUG to the bundled deps (graylib/yaml-glib/mcp-glib) so a
     # `make DEBUG=1` libregnum also gets debug-instrumented graylib etc.
     # (they build to build/ regardless, so only the flags change).
-    DEP_BUILD_FLAGS := $(if $(filter 1,$(DEBUG)),DEBUG=1)
+    DEP_BUILD_FLAGS := $(if $(filter 1,$(DEBUG)),DEBUG=1) WAYLAND=$(LRG_WAYLAND)
 endif
 
 # Crispy and cad-glib place their static archive under build/<debug|release>/

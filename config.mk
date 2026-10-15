@@ -417,6 +417,20 @@ else
     EXE_EXT :=
     # Platform-specific system libraries
     PLATFORM_LIBS := -lGL -lm -lpthread -ldl -lrt -lX11
+    # graylib's embedded raylib also gets GLFW's Wayland backend when the
+    # Wayland development files exist (WAYLAND=auto|1|0, forwarded to
+    # graylib); its libraries then belong on our link line too
+    WAYLAND ?= auto
+    LRG_WAYLAND_PKGS := wayland-client wayland-cursor wayland-egl xkbcommon
+    ifeq ($(WAYLAND),auto)
+        LRG_WAYLAND := $(shell $(PKG_CONFIG) --exists $(LRG_WAYLAND_PKGS) && \
+                              command -v wayland-scanner >/dev/null 2>&1 && echo 1 || echo 0)
+    else
+        LRG_WAYLAND := $(WAYLAND)
+    endif
+    ifeq ($(LRG_WAYLAND),1)
+        PLATFORM_LIBS += $(shell $(PKG_CONFIG) --libs $(LRG_WAYLAND_PKGS))
+    endif
     # Unix shared library linker flags
     LIB_LDFLAGS_PLATFORM = -shared -Wl,-soname,$(LIB_SHARED_SONAME)
 endif
