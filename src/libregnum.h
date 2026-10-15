@@ -83,6 +83,7 @@
 #include "graphics/lrg-billboard-batch.h"
 #include "graphics/lrg-terrain.h"
 #include "graphics/lrg-sky-dome.h"
+#include "graphics/lrg-light-set.h"
 #include "imageedit/lrg-image-layer.h"
 #include "imageedit/lrg-image-document.h"
 

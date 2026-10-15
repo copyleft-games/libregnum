@@ -1,0 +1,128 @@
+* LrgLightSet - Forward Lighting for Static Geometry
+:PROPERTIES:
+:CUSTOM_ID: lrglightset---forward-lighting-for-static-geometry
+:END:
+Lights static 3D geometry drawn with =DrawMesh()= - [[file:static-batch.org][LrgStaticBatch]] chunks and [[file:terrain.org][LrgTerrain]] meshes - with an ambient colour, one directional light (the sun or moon) and any number of point lights (torches, lamp posts, windows). Each frame the point lights nearest the camera, up to =LRG_LIGHT_SET_MAX_ACTIVE= (16), are selected and uploaded to a GLSL 330 shader that the light set owns and hands out with =get_shader()=.
+
+Light bookkeeping and the nearest-N selection are headless; only the shader needs GL. Without GLSL 330 (or without a window) =get_shader()= returns =NULL= and callers keep raylib's default shader, so a game degrades to unlit rather than failing.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgLightSet= - *Final GObject Class*, =LRG_TYPE_LIGHT_SET=, GIR =Libregnum.LightSet=
+- *Header* - =graphics/lrg-light-set.h=
+
+| Constant                       | Value       | Meaning                                       |
+|--------------------------------+-------------+-----------------------------------------------|
+| =LRG_LIGHT_SET_MAX_ACTIVE=     | 16          | point lights evaluated per fragment           |
+| =LRG_LIGHT_SET_INVALID_LIGHT=  | =G_MAXUINT= | returned for an unknown light / active index  |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+LrgLightSet *lrg_light_set_new (void);
+
+/* Global lights */
+void   lrg_light_set_set_ambient     (LrgLightSet *self, const GrlColor *color);
+void   lrg_light_set_set_directional (LrgLightSet *self, const GrlVector3 *direction,
+                                      const GrlColor *color);           /* NULL turns it off */
+void   lrg_light_set_set_origin      (LrgLightSet *self, gdouble x, gdouble y, gdouble z);
+
+/* Point lights (headless); ids of removed lights are reused */
+guint    lrg_light_set_add_point_light    (LrgLightSet *self, gdouble x, gdouble y, gdouble z,
+                                           const GrlColor *color, gfloat radius);
+gboolean lrg_light_set_remove_point_light (LrgLightSet *self, guint light);
+void     lrg_light_set_clear_point_lights (LrgLightSet *self);
+guint    lrg_light_set_get_point_light_count (LrgLightSet *self);
+void     lrg_light_set_set_point_light_position  (LrgLightSet *self, guint light, gdouble x, gdouble y, gdouble z);
+void     lrg_light_set_set_point_light_color     (LrgLightSet *self, guint light, const GrlColor *color);
+void     lrg_light_set_set_point_light_radius    (LrgLightSet *self, guint light, gfloat radius);
+void     lrg_light_set_set_point_light_intensity (LrgLightSet *self, guint light, gfloat intensity);
+void     lrg_light_set_set_point_light_enabled   (LrgLightSet *self, guint light, gboolean enabled);
+
+/* Selection (headless) */
+void     lrg_light_set_set_max_active   (LrgLightSet *self, guint count);
+void     lrg_light_set_set_max_distance (LrgLightSet *self, gfloat distance);
+guint    lrg_light_set_select           (LrgLightSet *self, gdouble camera_x, gdouble camera_y, gdouble camera_z);
+guint    lrg_light_set_get_active_count (LrgLightSet *self);
+guint    lrg_light_set_get_active_light (LrgLightSet *self, guint index);
+
+/* Shader */
+void       lrg_light_set_set_alpha_cutoff (LrgLightSet *self, gfloat cutoff);
+GrlShader *lrg_light_set_get_shader       (LrgLightSet *self);
+gboolean   lrg_light_set_apply            (LrgLightSet *self, gdouble camera_x, gdouble camera_y, gdouble camera_z);
+#+end_src
+
+** Semantics
+:PROPERTIES:
+:CUSTOM_ID: semantics
+:END:
+*** Lighting model
+:PROPERTIES:
+:CUSTOM_ID: lighting-model
+:END:
+Per fragment, with unit normal =n=:
+
+#+begin_example
+light = ambient
+      + directional_color * max(dot(n, -direction), 0)
+      + sum over active point lights of
+          color * intensity * k² * max(dot(n, L), 0),   k = clamp(1 - dist / radius, 0, 1)
+final = texel * colDiffuse * vertexColor * light   (alpha unchanged)
+#+end_example
+
+=L= is the unit vector from the fragment to the light. Colours are the 0..255 channels divided by 255; the sum is not clamped before multiplying, so overlapping lights can over-brighten (clamped by the framebuffer). The directional =direction= is where the light travels (for an [[file:sky-dome.org][LrgSkyDome]], the negated sun direction).
+
+*** Shader contract
+:PROPERTIES:
+:CUSTOM_ID: shader-contract
+:END:
+- GLSL 330 using raylib's default names: attributes =vertexPosition=, =vertexTexCoord=, =vertexNormal=, =vertexColor=; uniforms =mvp=, =matModel=, =matNormal=, =colDiffuse=, =texture0=. =DrawMesh()= fills all of them, so the shader drops into =lrg_static_batch_set_shader()= and =lrg_terrain_set_shader()= unchanged. Meshes need normals (both of those have them); missing vertex colours default to white.
+- Lighting happens in the space the model matrix maps to. LrgTerrain draws origin-relative, so give the light set the same origin (=set_origin()=): light positions are uploaded as =(world - origin)=. Selection always uses world coordinates.
+- Uniforms persist in the program: =apply()= once per frame (and after changing lights) is enough for every batch using the shader.
+- =set_alpha_cutoff (c)= with =c > 0= discards fragments whose final alpha is below =c= (foliage, fences) so they never write depth; 0 (default) keeps all.
+- =get_shader()= builds the shader on the first call with a window; if raylib falls back to its default program (compile failure, e.g. GLES2), it returns =NULL= for good. The shader belongs to the light set; release the light set and any batch holding the shader before closing the window.
+
+*** Selection
+:PROPERTIES:
+:CUSTOM_ID: selection
+:END:
+- Candidates are enabled lights with intensity > 0.
+- Each is ranked by its distance from the camera to its sphere, =|light - camera| - radius= (negative when the camera is inside), so a large light slightly further away beats a small one at the same centre distance. Ties go to the lower id.
+- =set_max_distance (d)= (0 = unlimited) drops candidates whose rank exceeds =d=; =set_max_active (n)= caps the selection (0 .. 16).
+- The best =n= are kept by insertion into a fixed array: O(lights × n), no allocation. =get_active_light (i)= gives them nearest first.
+- Removing or clearing lights empties the selection until the next =select()= / =apply()=.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgLightSet) lights = lrg_light_set_new ();
+GrlShader *shader;
+GrlColor torch = { 255, 170, 90, 255 };
+GrlColor night = { 30, 30, 50, 255 };
+GrlVector3 sun, sun_light;
+
+lrg_light_set_set_ambient (lights, &night);
+lrg_light_set_add_point_light (lights, 1204.5, 2.0, -88.0, &torch, 6.0f);
+
+shader = lrg_light_set_get_shader (lights);       /* NULL: stay unlit */
+lrg_static_batch_set_shader (town, shader);
+lrg_terrain_set_shader (ground, shader);
+
+/* each frame */
+lrg_sky_dome_get_sun_direction (sky, &sun);
+sun_light.x = -sun.x; sun_light.y = -sun.y; sun_light.z = -sun.z;
+lrg_light_set_set_directional (lights, &sun_light, &sun_color);
+lrg_light_set_set_origin (lights, origin_x, 0.0, origin_z);
+lrg_light_set_apply (lights, player_x, player_y, player_z);
+
+grl_camera3d_begin (camera);
+lrg_terrain_draw (ground);
+lrg_static_batch_draw (town, LRG_STATIC_BATCH_ALL_LAYERS);
+grl_camera3d_end (camera);
+#+end_src

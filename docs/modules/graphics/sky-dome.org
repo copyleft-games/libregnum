@@ -97,7 +97,7 @@ The sphere has =2 * rings + 1= latitude rows from the nadir to the zenith, one e
 :PROPERTIES:
 :CUSTOM_ID: sun
 :END:
-A disc of angular radius =sun_size= (default 2°, 0 hides it) in the sun colour, over a halo four times larger fading from 40 % to 0 alpha. The sun colour's alpha scales both, and the sun is skipped once its halo is entirely below the horizon. =get_sun_direction()= is the unit direction towards the sun; negate it for a directional light.
+A disc of angular radius =sun_size= (default 2°, 0 hides it) in the sun colour, over a halo four times larger fading from 40 % to 0 alpha. The sun colour's alpha scales both, and the sun is skipped once its halo is entirely below the horizon. =get_sun_direction()= is the unit direction towards the sun; negate it for a directional light (see [[file:light-set.org][LrgLightSet]]).
 
 *** Time of day
 :PROPERTIES:

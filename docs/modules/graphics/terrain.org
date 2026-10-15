@@ -122,7 +122,7 @@ With texture repeat =R= (default 1) a texture covers =R × R= cells. For a cell 
 :PROPERTIES:
 :CUSTOM_ID: floating-origin
 :END:
-=set_origin()= stores a double-precision world position; =draw()= gives each chunk the model matrix translation =(corner - origin)= computed in double, so a world many kilometres across renders without float jitter: place the camera at =(camera_world - origin)=. Meshes are chunk-local, so moving the origin re-uploads nothing. Queries and bounds stay in world coordinates. Because the translation is the model matrix, lighting shaders see origin-relative positions; give them the same origin.
+=set_origin()= stores a double-precision world position; =draw()= gives each chunk the model matrix translation =(corner - origin)= computed in double, so a world many kilometres across renders without float jitter: place the camera at =(camera_world - origin)=. Meshes are chunk-local, so moving the origin re-uploads nothing. Queries and bounds stay in world coordinates. Because the translation is the model matrix, lighting shaders (e.g. [[file:light-set.org][LrgLightSet]]) see origin-relative positions; give them the same origin.
 
 *** Drawing
 :PROPERTIES:

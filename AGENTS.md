@@ -30,7 +30,7 @@ libregnum/
 │   │ # Core Systems
 │   ├── core/                 # Engine, Registry, DataLoader, AssetManager, AssetPack
 │   ├── ecs/                  # World, GameObject, Component + transform/sprite/collider/animator
-│   ├── graphics/             # Window, Renderer, Camera (7 types), Drawable, GltfInfo, ModelAnimator, StaticBatch
+│   ├── graphics/             # Window, Renderer, Camera (7 types), Drawable, GltfInfo, ModelAnimator, StaticBatch, BillboardBatch, Terrain, SkyDome, LightSet
 │   ├── input/                # Keyboard, Mouse, Gamepad, InputMap/Action/Binding
 │   ├── audio/                # AudioManager, SoundBank, MusicTrack, WaveData, ProceduralAudio
 │   │
@@ -672,6 +672,18 @@ and client-side helpers for skinned and static models.
   and moves the sun (+X at 6, tilted noon, -X at 18). Geometry, colours
   and `get_band_uv()` are headless.
 
+- **`LrgLightSet`** (`graphics/lrg-light-set.h`): forward lighting for
+  `DrawMesh()` geometry. Ambient + one directional + point lights;
+  `select (camera)` (headless) keeps the 16 (`set_max_active`) nearest
+  by distance to the light's sphere, ties to the lower id. `get_shader()`
+  (GLSL 330, raylib default names) goes to
+  `lrg_static_batch_set_shader()` / `lrg_terrain_set_shader()`; it is
+  NULL without GL or on compile failure (stay on the default shader).
+  `apply (camera)` selects and uploads uniforms once per frame. Light
+  positions are uploaded relative to `set_origin()` to match an
+  origin-relative terrain. Optional alpha cutout. Release the shader
+  before the window closes.
+
 See `docs/modules/physics/wall-set.org`,
 `docs/modules/core/asset-manager.org` (Models and animations),
 `docs/modules/graphics/gltf-info.org`,
@@ -679,7 +691,8 @@ See `docs/modules/physics/wall-set.org`,
 `docs/modules/graphics/static-batch.org`,
 `docs/modules/graphics/billboard-batch.org`,
 `docs/modules/graphics/terrain.org`,
-`docs/modules/graphics/sky-dome.org`.
+`docs/modules/graphics/sky-dome.org`,
+`docs/modules/graphics/light-set.org`.
 
 ## Architecture Overview
 

@@ -1,0 +1,592 @@
+/* lrg-light-set.c
+ *
+ * Copyright 2026 Zach Podbielniak
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Forward lighting for static geometry. Point lights are plain records
+ * in a slot array (removed slots are reused); select() keeps the best N
+ * by insertion into a fixed array, which beats sorting for N <= 16. The
+ * shader uses raylib's default attribute and matrix names, so DrawMesh()
+ * (LrgStaticBatch, LrgTerrain) feeds it model and normal matrices
+ * without any extra work; lighting happens in the space the model
+ * matrix maps to (origin-relative with a floating origin).
+ */
+
+#include "config.h"
+
+#include <math.h>
+#include <string.h>
+#include <raylib.h>
+#include <rlgl.h>
+
+#ifndef LIBREGNUM_COMPILATION
+#define LIBREGNUM_COMPILATION
+#endif
+#include "graphics/lrg-light-set.h"
+
+typedef struct
+{
+    gboolean used;
+    gboolean enabled;
+    gdouble  position[3];   /* world */
+    gfloat   color[3];      /* 0 .. 1 */
+    gfloat   radius;
+    gfloat   intensity;
+} PointLight;
+
+struct _LrgLightSet
+{
+    GObject     parent_instance;
+
+    gfloat      ambient[3];
+    gboolean    has_directional;
+    gfloat      directional_dir[3];
+    gfloat      directional_color[3];
+    gdouble     origin[3];
+
+    GArray     *lights;          /* PointLight, slot = id */
+    guint       n_lights;        /* used slots */
+    guint       max_active;
+    gfloat      max_distance;
+    guint       active[LRG_LIGHT_SET_MAX_ACTIVE];
+    guint       n_active;
+    gfloat      cutoff;
+
+    GrlShader  *shader;
+    gboolean    shader_tried;
+    gint        loc_ambient;
+    gint        loc_sun_dir;
+    gint        loc_sun_color;
+    gint        loc_count;
+    gint        loc_positions;
+    gint        loc_colors;
+    gint        loc_radii;
+    gint        loc_cutoff;
+};
+
+G_DEFINE_TYPE (LrgLightSet, lrg_light_set, G_TYPE_OBJECT)
+
+/* GLSL 330 with raylib's default attribute and uniform names. */
+static const gchar light_vs[] =
+    "#version 330\n"
+    "in vec3 vertexPosition;\n"
+    "in vec2 vertexTexCoord;\n"
+    "in vec3 vertexNormal;\n"
+    "in vec4 vertexColor;\n"
+    "uniform mat4 mvp;\n"
+    "uniform mat4 matModel;\n"
+    "uniform mat4 matNormal;\n"
+    "out vec3 fragPosition;\n"
+    "out vec2 fragTexCoord;\n"
+    "out vec4 fragColor;\n"
+    "out vec3 fragNormal;\n"
+    "void main() {\n"
+    "    fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));\n"
+    "    fragTexCoord = vertexTexCoord;\n"
+    "    fragColor = vertexColor;\n"
+    "    fragNormal = vec3(matNormal * vec4(vertexNormal, 0.0));\n"
+    "    gl_Position = mvp * vec4(vertexPosition, 1.0);\n"
+    "}\n";
+
+static const gchar light_fs[] =
+    "#version 330\n"
+    "#define MAX_LIGHTS 16\n"
+    "in vec3 fragPosition;\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "in vec3 fragNormal;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec4 colDiffuse;\n"
+    "uniform vec3 ambientColor;\n"
+    "uniform vec3 sunDirection;\n"
+    "uniform vec3 sunColor;\n"
+    "uniform int lightCount;\n"
+    "uniform vec3 lightPosition[MAX_LIGHTS];\n"
+    "uniform vec3 lightColor[MAX_LIGHTS];\n"
+    "uniform float lightRadius[MAX_LIGHTS];\n"
+    "uniform float alphaCutoff;\n"
+    "out vec4 finalColor;\n"
+    "void main() {\n"
+    "    vec4 texel = texture(texture0, fragTexCoord) * colDiffuse * fragColor;\n"
+    "    if (texel.a < alphaCutoff) discard;\n"
+    "    float nlen = length(fragNormal);\n"
+    "    vec3 n = nlen > 0.0 ? fragNormal / nlen : vec3(0.0, 1.0, 0.0);\n"
+    "    vec3 light = ambientColor + sunColor * max(dot(n, -sunDirection), 0.0);\n"
+    "    for (int i = 0; i < MAX_LIGHTS; i++) {\n"
+    "        if (i >= lightCount) break;\n"
+    "        vec3 d = lightPosition[i] - fragPosition;\n"
+    "        float dist = length(d);\n"
+    "        float k = clamp(1.0 - dist / lightRadius[i], 0.0, 1.0);\n"
+    "        float lambert = dist > 0.0001 ? max(dot(n, d / dist), 0.0) : 1.0;\n"
+    "        light += lightColor[i] * (k * k * lambert);\n"
+    "    }\n"
+    "    finalColor = vec4(texel.rgb * light, texel.a);\n"
+    "}\n";
+
+/* ------------------------------------------------------------------------ */
+/* Lifecycle                                                                */
+/* ------------------------------------------------------------------------ */
+
+static void
+lrg_light_set_finalize (GObject *object)
+{
+    LrgLightSet *self = LRG_LIGHT_SET (object);
+
+    g_clear_object (&self->shader);
+    g_clear_pointer (&self->lights, g_array_unref);
+
+    G_OBJECT_CLASS (lrg_light_set_parent_class)->finalize (object);
+}
+
+static void
+lrg_light_set_class_init (LrgLightSetClass *klass)
+{
+    G_OBJECT_CLASS (klass)->finalize = lrg_light_set_finalize;
+}
+
+static void
+lrg_light_set_init (LrgLightSet *self)
+{
+    self->ambient[0] = self->ambient[1] = self->ambient[2] = 64.0f / 255.0f;
+    self->lights = g_array_new (FALSE, TRUE, sizeof (PointLight));
+    self->max_active = LRG_LIGHT_SET_MAX_ACTIVE;
+}
+
+LrgLightSet *
+lrg_light_set_new (void)
+{
+    return g_object_new (LRG_TYPE_LIGHT_SET, NULL);
+}
+
+static void
+color_to_rgb (const GrlColor *color,
+              gfloat         *out)
+{
+    out[0] = (gfloat)color->r / 255.0f;
+    out[1] = (gfloat)color->g / 255.0f;
+    out[2] = (gfloat)color->b / 255.0f;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Global lights                                                            */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_light_set_set_ambient (LrgLightSet    *self,
+                           const GrlColor *color)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (color != NULL);
+
+    color_to_rgb (color, self->ambient);
+}
+
+void
+lrg_light_set_set_directional (LrgLightSet      *self,
+                               const GrlVector3 *direction,
+                               const GrlColor   *color)
+{
+    gfloat len;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    self->has_directional = FALSE;
+    if (direction == NULL || color == NULL)
+        return;
+
+    len = sqrtf (direction->x * direction->x + direction->y * direction->y
+                 + direction->z * direction->z);
+    if (len <= 0.0f || !isfinite (len))
+        return;
+
+    self->directional_dir[0] = direction->x / len;
+    self->directional_dir[1] = direction->y / len;
+    self->directional_dir[2] = direction->z / len;
+    color_to_rgb (color, self->directional_color);
+    self->has_directional = TRUE;
+}
+
+void
+lrg_light_set_set_origin (LrgLightSet *self,
+                          gdouble      x,
+                          gdouble      y,
+                          gdouble      z)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    self->origin[0] = x;
+    self->origin[1] = y;
+    self->origin[2] = z;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Point lights                                                             */
+/* ------------------------------------------------------------------------ */
+
+static PointLight *
+light_at (LrgLightSet *self,
+          guint        light)
+{
+    PointLight *pl;
+
+    if (light >= self->lights->len)
+        return NULL;
+    pl = &g_array_index (self->lights, PointLight, light);
+    return pl->used ? pl : NULL;
+}
+
+guint
+lrg_light_set_add_point_light (LrgLightSet    *self,
+                               gdouble         x,
+                               gdouble         y,
+                               gdouble         z,
+                               const GrlColor *color,
+                               gfloat          radius)
+{
+    PointLight *pl = NULL;
+    guint       id;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), LRG_LIGHT_SET_INVALID_LIGHT);
+    g_return_val_if_fail (color != NULL, LRG_LIGHT_SET_INVALID_LIGHT);
+    g_return_val_if_fail (radius > 0.0f, LRG_LIGHT_SET_INVALID_LIGHT);
+
+    /* Reuse the first free slot, else append. */
+    for (id = 0; id < self->lights->len; id++)
+    {
+        if (!g_array_index (self->lights, PointLight, id).used)
+        {
+            pl = &g_array_index (self->lights, PointLight, id);
+            break;
+        }
+    }
+    if (pl == NULL)
+    {
+        g_array_set_size (self->lights, self->lights->len + 1);
+        id = self->lights->len - 1;
+        pl = &g_array_index (self->lights, PointLight, id);
+    }
+
+    memset (pl, 0, sizeof *pl);
+    pl->used = TRUE;
+    pl->enabled = TRUE;
+    pl->position[0] = x;
+    pl->position[1] = y;
+    pl->position[2] = z;
+    color_to_rgb (color, pl->color);
+    pl->radius = radius;
+    pl->intensity = 1.0f;
+    self->n_lights++;
+    return id;
+}
+
+gboolean
+lrg_light_set_remove_point_light (LrgLightSet *self,
+                                  guint        light)
+{
+    PointLight *pl;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
+
+    pl = light_at (self, light);
+    if (pl == NULL)
+        return FALSE;
+    pl->used = FALSE;
+    self->n_lights--;
+    /* The last selection may name it; drop the selection. */
+    self->n_active = 0;
+    return TRUE;
+}
+
+void
+lrg_light_set_clear_point_lights (LrgLightSet *self)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    g_array_set_size (self->lights, 0);
+    self->n_lights = 0;
+    self->n_active = 0;
+}
+
+guint
+lrg_light_set_get_point_light_count (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
+    return self->n_lights;
+}
+
+void
+lrg_light_set_set_point_light_position (LrgLightSet *self,
+                                        guint        light,
+                                        gdouble      x,
+                                        gdouble      y,
+                                        gdouble      z)
+{
+    PointLight *pl;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    pl = light_at (self, light);
+    g_return_if_fail (pl != NULL);
+    pl->position[0] = x;
+    pl->position[1] = y;
+    pl->position[2] = z;
+}
+
+void
+lrg_light_set_set_point_light_color (LrgLightSet    *self,
+                                     guint           light,
+                                     const GrlColor *color)
+{
+    PointLight *pl;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (color != NULL);
+
+    pl = light_at (self, light);
+    g_return_if_fail (pl != NULL);
+    color_to_rgb (color, pl->color);
+}
+
+void
+lrg_light_set_set_point_light_radius (LrgLightSet *self,
+                                      guint        light,
+                                      gfloat       radius)
+{
+    PointLight *pl;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (radius > 0.0f);
+
+    pl = light_at (self, light);
+    g_return_if_fail (pl != NULL);
+    pl->radius = radius;
+}
+
+void
+lrg_light_set_set_point_light_intensity (LrgLightSet *self,
+                                         guint        light,
+                                         gfloat       intensity)
+{
+    PointLight *pl;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (intensity >= 0.0f);
+
+    pl = light_at (self, light);
+    g_return_if_fail (pl != NULL);
+    pl->intensity = intensity;
+}
+
+void
+lrg_light_set_set_point_light_enabled (LrgLightSet *self,
+                                       guint        light,
+                                       gboolean     enabled)
+{
+    PointLight *pl;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    pl = light_at (self, light);
+    g_return_if_fail (pl != NULL);
+    pl->enabled = enabled;
+}
+
+void
+lrg_light_set_set_max_active (LrgLightSet *self,
+                              guint        count)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (count <= LRG_LIGHT_SET_MAX_ACTIVE);
+
+    self->max_active = count;
+}
+
+void
+lrg_light_set_set_max_distance (LrgLightSet *self,
+                                gfloat       distance)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (distance >= 0.0f);
+
+    self->max_distance = distance;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Selection                                                                */
+/* ------------------------------------------------------------------------ */
+
+guint
+lrg_light_set_select (LrgLightSet *self,
+                      gdouble      camera_x,
+                      gdouble      camera_y,
+                      gdouble      camera_z)
+{
+    gdouble keys[LRG_LIGHT_SET_MAX_ACTIVE];
+    guint   id;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
+
+    self->n_active = 0;
+    if (self->max_active == 0)
+        return 0;
+
+    for (id = 0; id < self->lights->len; id++)
+    {
+        PointLight *pl = &g_array_index (self->lights, PointLight, id);
+        gdouble     dx;
+        gdouble     dy;
+        gdouble     dz;
+        gdouble     key;
+        guint       slot;
+
+        if (!pl->used || !pl->enabled || pl->intensity <= 0.0f)
+            continue;
+
+        dx = pl->position[0] - camera_x;
+        dy = pl->position[1] - camera_y;
+        dz = pl->position[2] - camera_z;
+        key = sqrt (dx * dx + dy * dy + dz * dz) - (gdouble)pl->radius;
+        if (self->max_distance > 0.0f && key > (gdouble)self->max_distance)
+            continue;
+
+        /* Insertion into the sorted best-N; ids arrive ascending, so a
+         * strict comparison keeps the lower id first on ties. */
+        if (self->n_active == self->max_active && key >= keys[self->n_active - 1])
+            continue;
+        slot = self->n_active < self->max_active ? self->n_active : self->n_active - 1;
+        while (slot > 0 && keys[slot - 1] > key)
+        {
+            keys[slot] = keys[slot - 1];
+            self->active[slot] = self->active[slot - 1];
+            slot--;
+        }
+        keys[slot] = key;
+        self->active[slot] = id;
+        if (self->n_active < self->max_active)
+            self->n_active++;
+    }
+    return self->n_active;
+}
+
+guint
+lrg_light_set_get_active_count (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
+    return self->n_active;
+}
+
+guint
+lrg_light_set_get_active_light (LrgLightSet *self,
+                                guint        index)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), LRG_LIGHT_SET_INVALID_LIGHT);
+
+    if (index >= self->n_active)
+        return LRG_LIGHT_SET_INVALID_LIGHT;
+    return self->active[index];
+}
+
+void
+lrg_light_set_set_alpha_cutoff (LrgLightSet *self,
+                                gfloat       cutoff)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    self->cutoff = cutoff;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Shader                                                                   */
+/* ------------------------------------------------------------------------ */
+
+GrlShader *
+lrg_light_set_get_shader (LrgLightSet *self)
+{
+    g_autoptr(GError) error = NULL;
+    Shader *handle;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), NULL);
+
+    if (self->shader != NULL || self->shader_tried)
+        return self->shader;
+    if (!IsWindowReady ())
+        return NULL;
+    self->shader_tried = TRUE;
+
+    /* On a compile failure raylib hands back its default shader. */
+    self->shader = grl_shader_new_from_memory (light_vs, light_fs, &error);
+    if (self->shader == NULL)
+        return NULL;
+    handle = grl_shader_get_handle (self->shader);
+    if (handle->id == 0 || handle->id == rlGetShaderIdDefault ())
+    {
+        g_clear_object (&self->shader);
+        return NULL;
+    }
+
+    self->loc_ambient = GetShaderLocation (*handle, "ambientColor");
+    self->loc_sun_dir = GetShaderLocation (*handle, "sunDirection");
+    self->loc_sun_color = GetShaderLocation (*handle, "sunColor");
+    self->loc_count = GetShaderLocation (*handle, "lightCount");
+    self->loc_positions = GetShaderLocation (*handle, "lightPosition");
+    self->loc_colors = GetShaderLocation (*handle, "lightColor");
+    self->loc_radii = GetShaderLocation (*handle, "lightRadius");
+    self->loc_cutoff = GetShaderLocation (*handle, "alphaCutoff");
+    return self->shader;
+}
+
+gboolean
+lrg_light_set_apply (LrgLightSet *self,
+                     gdouble      camera_x,
+                     gdouble      camera_y,
+                     gdouble      camera_z)
+{
+    gfloat  positions[LRG_LIGHT_SET_MAX_ACTIVE * 3];
+    gfloat  colors[LRG_LIGHT_SET_MAX_ACTIVE * 3];
+    gfloat  radii[LRG_LIGHT_SET_MAX_ACTIVE];
+    gfloat  sun_dir[3] = { 0.0f, -1.0f, 0.0f };
+    gfloat  sun_color[3] = { 0.0f, 0.0f, 0.0f };
+    Shader *handle;
+    gint    count;
+    guint   i;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
+
+    lrg_light_set_select (self, camera_x, camera_y, camera_z);
+    if (lrg_light_set_get_shader (self) == NULL)
+        return FALSE;
+    handle = grl_shader_get_handle (self->shader);
+
+    /* Positions relative to the floating origin, colours pre-scaled. */
+    for (i = 0; i < self->n_active; i++)
+    {
+        PointLight *pl = &g_array_index (self->lights, PointLight, self->active[i]);
+        guint       k;
+
+        for (k = 0; k < 3; k++)
+        {
+            positions[i * 3 + k] = (gfloat)(pl->position[k] - self->origin[k]);
+            colors[i * 3 + k] = pl->color[k] * pl->intensity;
+        }
+        radii[i] = pl->radius;
+    }
+    if (self->has_directional)
+    {
+        memcpy (sun_dir, self->directional_dir, sizeof sun_dir);
+        memcpy (sun_color, self->directional_color, sizeof sun_color);
+    }
+    count = (gint)self->n_active;
+
+    SetShaderValue (*handle, self->loc_ambient, self->ambient, SHADER_UNIFORM_VEC3);
+    SetShaderValue (*handle, self->loc_sun_dir, sun_dir, SHADER_UNIFORM_VEC3);
+    SetShaderValue (*handle, self->loc_sun_color, sun_color, SHADER_UNIFORM_VEC3);
+    SetShaderValue (*handle, self->loc_count, &count, SHADER_UNIFORM_INT);
+    SetShaderValue (*handle, self->loc_cutoff, &self->cutoff, SHADER_UNIFORM_FLOAT);
+    if (count > 0)
+    {
+        SetShaderValueV (*handle, self->loc_positions, positions, SHADER_UNIFORM_VEC3, count);
+        SetShaderValueV (*handle, self->loc_colors, colors, SHADER_UNIFORM_VEC3, count);
+        SetShaderValueV (*handle, self->loc_radii, radii, SHADER_UNIFORM_FLOAT, count);
+    }
+    return TRUE;
+}
