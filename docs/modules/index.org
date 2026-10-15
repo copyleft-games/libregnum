@@ -291,7 +291,7 @@ Engagement systems for player retention:
 :END:
 - *AI Module* - Behavior trees and decision making
 - *Pathfinding Module* - A* navigation and path smoothing
-- *[[file:physics/index.org][Physics Module]]* - 2D/3D rigid body simulation and static XZ wall collision ([[file:physics/wall-set.org][LrgWallSet]])
+- *[[file:physics/index.org][Physics Module]]* - 2D/3D rigid body simulation and static XZ wall collision ([[file:physics/wall-set.org][LrgWallSet]]), triangle mesh collision ([[file:physics/collision-mesh.org][LrgCollisionMesh]]) and a capsule character controller ([[file:physics/character-controller.org][LrgCharacterController]])
 - *I18N Module* - Localization and translations
 - *Networking Module* - Client/server multiplayer
 
@@ -378,7 +378,7 @@ Phase 0   core/ (engine, registry, loader, assets)
 | Audio       | 2     | Implemented | SoundBank, MusicTrack, AudioManager                                                                                                 |
 | AI          | 3     | Implemented | BehaviorTree, BTNode, Blackboard                                                                                                    |
 | Pathfinding | 3     | Implemented | NavGrid, Pathfinder, Path                                                                                                           |
-| Physics     | 3     | Implemented | RigidBody, PhysicsWorld, CollisionInfo, WallSet                                                                                     |
+| Physics     | 3     | Implemented | RigidBody, PhysicsWorld, CollisionInfo, WallSet, CollisionMesh, CharacterController                                                                                   |
 | I18N        | 3     | Implemented | Locale, Localization                                                                                                                |
 | Networking  | 3     | Implemented | NetPeer, NetServer, NetClient                                                                                                       |
 | 3D World    | 3     | Implemented | Level3D, Portal, PortalSystem                                                                                                       |

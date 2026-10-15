@@ -46,7 +46,7 @@ libregnum/
 │   ├── save/                 # Saveable interface, SaveContext, SaveGame, SaveManager
 │   ├── ai/                   # BehaviorTree, Blackboard, BTNode hierarchy
 │   ├── pathfinding/          # NavGrid, NavCell, Path, Pathfinder (A*)
-│   ├── physics/              # PhysicsWorld, RigidBody, CollisionInfo, WallSet
+│   ├── physics/              # PhysicsWorld, RigidBody, CollisionInfo, WallSet, CollisionMesh, CharacterController
 │   │
 │   │ # Genre-Specific
 │   ├── economy/              # Resource, ResourcePool, Producer, Consumer, Market, EconomyManager
@@ -684,7 +684,20 @@ and client-side helpers for skinned and static models.
   origin-relative terrain. Optional alpha cutout. Release the shader
   before the window closes.
 
+- **`LrgCollisionMesh`** (`physics/lrg-collision-mesh.h`): 3D triangle
+  soup in a binned-SAH BVH plus transformed instances (doors, platforms).
+  Double-sided ray casts, sphere/capsule sweeps by conservative
+  advancement (no tunnelling), strict capsule overlap. A touching
+  triangle only blocks motion that goes deeper. Deterministic.
+- **`LrgCharacterController`** (`physics/lrg-character-controller.h`):
+  Unity-style capsule move-and-slide on a collision mesh and optional
+  terrain `LrgHeightFunc`: depenetration, wall sliding, step climbing
+  (retry raised, keep when landing on a walkable face within a step),
+  slope limit, ground snapping. Gravity and speeds stay with the caller.
+
 See `docs/modules/physics/wall-set.org`,
+`docs/modules/physics/collision-mesh.org`,
+`docs/modules/physics/character-controller.org`,
 `docs/modules/core/asset-manager.org` (Models and animations),
 `docs/modules/graphics/gltf-info.org`,
 `docs/modules/graphics/model-animator.org` and

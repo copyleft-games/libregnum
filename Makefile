@@ -178,6 +178,8 @@ PUBLIC_HEADERS := \
 	src/physics/lrg-rigid-body.h \
 	src/physics/lrg-physics-world.h \
 	src/physics/lrg-wall-set.h \
+	src/physics/lrg-collision-mesh.h \
+	src/physics/lrg-character-controller.h \
 	src/debug/lrg-profiler.h \
 	src/debug/lrg-debug-console.h \
 	src/debug/lrg-debug-overlay.h \
@@ -703,6 +705,8 @@ SOURCES := \
 	src/physics/lrg-rigid-body.c \
 	src/physics/lrg-physics-world.c \
 	src/physics/lrg-wall-set.c \
+	src/physics/lrg-collision-mesh.c \
+	src/physics/lrg-character-controller.c \
 	src/debug/lrg-profiler.c \
 	src/debug/lrg-debug-console.c \
 	src/debug/lrg-debug-overlay.c \

@@ -84,6 +84,8 @@ TEST_SOURCES := \
 	test-profession.c \
 	test-collection.c \
 	test-wall-set.c \
+	test-collision-mesh.c \
+	test-character-controller.c \
 	test-asset-model-cache.c \
 	test-gltf-info.c \
 	test-gltf-animation-roots.c \

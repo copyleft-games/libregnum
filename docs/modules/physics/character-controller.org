@@ -1,0 +1,112 @@
+* LrgCharacterController - Capsule Move-and-Slide
+:PROPERTIES:
+:CUSTOM_ID: lrgcharactercontroller---capsule-move-and-slide
+:END:
+An upright capsule that moves through an [[file:collision-mesh.org][LrgCollisionMesh]] and an optional terrain height field: it slides along walls, climbs steps, refuses slopes steeper than a limit, snaps to the ground while walking down stairs and ramps, and reports what it stands on. The semantics follow Unity's =CharacterController.Move()=, which first-person game code (for example Daggerfall Unity's =PlayerMotor=) is written against. Gravity, jumping, speeds and input are the caller's business: the controller only resolves a desired displacement against geometry.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgCharacterController= - *Final GObject Class*, =LRG_TYPE_CHARACTER_CONTROLLER=, GIR =Libregnum.CharacterController=
+- =LrgCharacterMove= - plain struct, the result of a move
+- =LrgHeightFunc= - terrain sampler callback, =gboolean (*)(gfloat x, gfloat z, gfloat *height, gpointer user_data)=
+- *Header* - =physics/lrg-character-controller.h=
+
+#+begin_src C
+typedef struct {
+    gfloat   position[3];          /* feet after the move */
+    gboolean grounded;
+    gfloat   ground_normal[3];     /* +Y when not grounded */
+    guint64  ground_instance_id;   /* instance stood on, 0 otherwise */
+    gboolean hit_wall;
+    gboolean hit_ceiling;
+    gboolean stepped;
+} LrgCharacterMove;
+#+end_src
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant                                        | Value | Meaning                          |
+|-------------------------------------------------+-------+----------------------------------|
+| =LRG_CHARACTER_CONTROLLER_DEFAULT_STEP_HEIGHT=  | 0.3   | highest step climbed             |
+| =LRG_CHARACTER_CONTROLLER_DEFAULT_MAX_SLOPE=    | 45    | steepest walkable slope, degrees |
+| =LRG_CHARACTER_CONTROLLER_DEFAULT_SKIN_WIDTH=   | 0.01  | gap kept from geometry           |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_character_controller_new(radius, height)= | capsule with default step, slope and skin, no world |
+| =set/get_radius=, =set/get_height= | capsule shape; the height never drops below the sphere (2 x radius); crouching changes the height |
+| =set/get_step_height= | 0 disables stepping and snapping |
+| =set/get_max_slope= | degrees, clamped to 0..89.9 |
+| =set/get_skin_width= | clamped to 0.0001..radius/2 |
+| =set/get_world= | the =LrgCollisionMesh= (nullable) |
+| =set_height_func(func, data, destroy)= | terrain floor; =destroy= runs when replaced or on dispose |
+| =lrg_character_controller_move(self, feet, motion, snap_to_ground, out_move)= | resolve one displacement |
+| =lrg_character_controller_can_stand(self, feet, height)= | room for a taller capsule (standing up from a crouch) |
+
+** The move
+:PROPERTIES:
+:CUSTOM_ID: the-move
+:END:
+=move()= works in double precision and always uses the capsule inflated by the skin width for sweeps, so the real capsule keeps that gap from geometry. Together with the mesh's contact rule (a touching triangle only blocks motion that goes deeper into it) a resting capsule slides freely along floors and walls without jitter.
+
+1. *Depenetration.* Geometry closer than half the skin to the capsule axis pushes the capsule out along the contact normal to the full skin distance, deepest contact first, at most four passes. This handles spawning inside geometry and platforms rising into the player. A capsule resting deeper than its skin would otherwise catch the edges of the very face it stands on.
+2. *Up.* The upward part of the motion is swept; a contact stops it and sets =hit_ceiling=.
+3. *Horizontal.* Collide-and-slide with up to four contacts. The *contact normal* decides the response: a walkable contact (normal Y at least cos(max slope)) deflects the motion along it, so ramps are climbed; a steeper contact is flattened into a vertical wall so steep slopes are never climbed (=hit_wall=). Two walls make the motion follow their crease, three stop it.
+   When the plain slide hit a wall and stepping is enabled, the same move is retried from the start raised by the step height (less under a low ceiling), then swept back down by the raise plus the step height. The stepped result is kept when it landed on a walkable *face*, the surface landed on is no higher than one step above the start, and it made more progress along the motion than the plain slide; =stepped= is set when it ended higher.
+4. *Down.* The downward part slides down faces steeper than the limit (the capsule slides off steep slopes) and stops on walkable ground.
+5. *Ground.* With =snap_to_ground= and no upward motion, ground within the step height below is snapped to (walking down stairs and ramps keeps contact). The height function is a floor nothing passes; it also counts as ground within two skins (or within the step height when snapping), with a normal from finite differences, and ignores the slope limit. Finally a short probe (two skins) reports ground the capsule rests on.
+
+*Grounded* uses the *face normal* of the triangle touched, not the contact normal: the rounded bottom resting on a step's edge stands on the tread. The mesh resolves simultaneous contacts in favour of the most upward face for the same reason.
+
+Without a world and without a height function the capsule moves by exactly =motion= and is never grounded. Non-finite input returns =FALSE= and leaves =out_move= at =feet=.
+
+** Moving platforms
+:PROPERTIES:
+:CUSTOM_ID: moving-platforms
+:END:
+Put platforms in the world mesh as instances with an =instance_id=; =ground_instance_id= then says which one the capsule stands on. Carrying the character is the caller's job (as in Daggerfall Unity's =PlayerGroundMotor=): remember the feet in the platform's local frame, and next frame move by the difference between that point under the new transform and the old feet before the regular move. A platform that rises into the capsule is handled by depenetration.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgCharacterController) body = lrg_character_controller_new (0.35f, 1.8f);
+LrgCharacterMove move;
+gfloat feet[3] = { 0.0f, 0.0f, 0.0f };
+gfloat motion[3];
+gfloat vertical_speed = 0.0f;
+
+lrg_character_controller_set_step_height (body, 0.4f);
+lrg_character_controller_set_world (body, level);   /* an LrgCollisionMesh */
+
+/* each fixed tick */
+vertical_speed -= 20.0f * dt;
+motion[0] = walk_x * dt;
+motion[1] = vertical_speed * dt;
+motion[2] = walk_z * dt;
+lrg_character_controller_move (body, feet, motion, vertical_speed <= 0.0f, &move);
+memcpy (feet, move.position, sizeof (feet));
+if (move.grounded)
+    vertical_speed = 0.0f;
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-character-controller.c=: property clamping, free motion and non-finite input, a floor of 800 triangles (no snagging on seams), walls (stop at the skin, slide diagonally), corners, eight 0.3 high stairs up (stepping) and down (snapping), stairs 0.6 high (refused), a 30 degree ramp (climbed, grounded, no creeping when idle, contact while walking down), a 60 degree ramp (refused; dropped onto it the capsule slides down), a ledge with and without snapping, a 500 unit fall onto a single quad (no tunnelling), ceilings and crouch clearance, a platform instance (ground id, rising into the capsule, stepping off), a terrain height function (and its destroy notify), depenetration out of a wall, and a seeded random walk through a room of boxes, stairs and ramps that never ends inside geometry.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:collision-mesh.org][LrgCollisionMesh]] - the geometry queries underneath

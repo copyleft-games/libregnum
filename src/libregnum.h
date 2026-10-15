@@ -237,6 +237,8 @@
 #include "physics/lrg-rigid-body.h"
 #include "physics/lrg-physics-world.h"
 #include "physics/lrg-wall-set.h"
+#include "physics/lrg-collision-mesh.h"
+#include "physics/lrg-character-controller.h"
 
 /* Debug module */
 #include "debug/lrg-profiler.h"

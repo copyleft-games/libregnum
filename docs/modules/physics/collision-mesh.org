@@ -1,0 +1,136 @@
+* LrgCollisionMesh - Triangle BVH Collision
+:PROPERTIES:
+:CUSTOM_ID: lrgcollisionmesh---triangle-bvh-collision
+:END:
+A static triangle soup in a bounding volume hierarchy, plus transformed instances of other meshes for objects that move (doors, lifts, platforms). It answers ray casts, sphere and capsule sweeps and capsule overlap tests, deterministically and without a GPU. It is the collision layer under [[file:character-controller.org][LrgCharacterController]] and is sized for whole game levels: a 50 000 triangle dungeon builds in a few tens of milliseconds and a capsule sweep costs microseconds.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgCollisionMesh= - *Final GObject Class*, =LRG_TYPE_COLLISION_MESH=, GIR =Libregnum.CollisionMesh=
+- =LrgCollisionHit= - plain struct (value type) filled by ray casts and sweeps
+- *Header* - =physics/lrg-collision-mesh.h=
+
+#+begin_src C
+typedef struct {
+    gfloat   position[3];   /* contact point on the surface */
+    gfloat   normal[3];     /* unit, facing the query (double-sided) */
+    gfloat   distance;      /* along the ray / motion */
+    guint    triangle;      /* index in the mesh that owns the triangle */
+    guint32  tag;           /* per-triangle tag */
+    guint64  instance_id;   /* 0 for the mesh's own triangles */
+} LrgCollisionHit;
+#+end_src
+
+** Constants
+:PROPERTIES:
+:CUSTOM_ID: constants
+:END:
+| Constant                               | Value              | Meaning                                         |
+|----------------------------------------+--------------------+-------------------------------------------------|
+| =LRG_COLLISION_MESH_INVALID_INSTANCE=  | =G_MAXUINT=        | =add_instance()= rejected its input             |
+| =LRG_COLLISION_MESH_MAX_TRIANGLES=     | =G_MAXUINT32 / 4=  | largest triangle count =set_triangles()= takes  |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_collision_mesh_new()= | empty mesh; every query misses |
+| =lrg_collision_mesh_set_triangles(self, vertices, n_floats, tags, error)= | replace the own triangles (nine floats each, optional =guint32= tag per triangle) and build the hierarchy |
+| =lrg_collision_mesh_get_triangle_count()=, =get_node_count()= | sizes (own triangles, hierarchy nodes) |
+| =lrg_collision_mesh_get_bounds(self, min, max)= | world box of own triangles and instances |
+| =lrg_collision_mesh_translate(self, offset)= | floating origin shift of everything, in place |
+| =lrg_collision_mesh_add_instance(self, shape, transform, instance_id)= | place another mesh with a column-major 4x4 affine transform; returns a handle |
+| =lrg_collision_mesh_set_instance_transform(self, instance, transform)= | move an instance |
+| =lrg_collision_mesh_remove_instance(self, instance)= | drop it (the handle may be reused) |
+| =lrg_collision_mesh_get_instance_count()= | live instances |
+| =lrg_collision_mesh_raycast(self, origin, direction, max_distance, hit)= | nearest double-sided hit |
+| =lrg_collision_mesh_sweep_sphere(self, center, radius, motion, hit)= | first contact of a moving sphere |
+| =lrg_collision_mesh_sweep_capsule(self, base, radius, height, motion, hit)= | first contact of a moving upright capsule (=base= is its lowest point) |
+| =lrg_collision_mesh_overlap_capsule(self, base, radius, height)= | does any triangle come strictly closer than =radius= to the capsule axis |
+
+** Semantics
+:PROPERTIES:
+:CUSTOM_ID: semantics
+:END:
+*** Triangles
+- Collision is *double-sided*: winding carries no meaning. Hit normals face the query: against the ray direction for rays, from the surface towards the swept shape for sweeps.
+- Zero-area triangles keep their index (so caller indices stay valid) but never enter the hierarchy and are never hit.
+- =set_triangles()= validates everything first: a float count that is not a multiple of nine, too many triangles or a non-finite coordinate fail with =G_IO_ERROR_INVALID_ARGUMENT= and leave the previous triangles in place. =NULL= with =n_floats= 0 clears.
+
+*** Hierarchy
+- Binned surface area heuristic over triangle centroids: 16 bins on the widest centroid axis, at most four triangles per leaf; nodes whose centroids coincide are split in half. Child boxes come straight from the bins.
+- Nodes are stored depth-first in one array; interior nodes keep their two children next to each other. Traversal uses an explicit stack (on the C stack up to 128 levels, on the heap beyond).
+- The build and every query are deterministic: same input, same hierarchy, same results, no randomness.
+
+*** Ray casts
+- The direction is normalised; =distance= is in world units and must lie within =max_distance=.
+- Nodes are visited front to back (nearer child first) with a slab test, triangles with a double-precision Moller-Trumbore test.
+- Ties keep the first triangle found in traversal order; own triangles are tested before instances, instances in ascending handle order.
+
+*** Sweeps
+- A sphere is a capsule whose axis has zero length; both run the same routine on the swept-sphere volume of the axis segment.
+- Candidate triangles come from a box query over the swept volume. For each one the time of impact is found by *conservative advancement* on the segment-to-triangle distance. For a translating convex shape against a convex triangle that distance is a convex function of time, so a Newton step from the start never passes the first contact: fast shapes cannot tunnel through thin walls, and grazing approaches converge in a few iterations (at most 48, after which the sweep stops conservatively).
+- *Contact rule*: a triangle the shape already touches (gap within 1e-5) blocks only motion that goes deeper into it, at distance 0. Motion away from it or along it passes. A capsule resting on a floor slides across it; a capsule pressed against a wall stops at once.
+- The earliest contact wins. Among contacts at the same time (within 1e-5 world units), the triangle whose face normal points most upward wins, so a capsule landing on the edge between a step's tread and riser reports the tread (the internal helper also returns that face normal to the controller).
+
+*** Overlap
+- =overlap_capsule()= is strict: touching (distance equal to the radius) is not an overlap, so a capsule resting at its skin distance can test its own position.
+
+*** Instances
+- An instance is any other =LrgCollisionMesh= (its =shape=, referenced) under an affine transform: translation, rotation, non-uniform scale. Projective, singular or non-finite matrices are rejected (=LRG_COLLISION_MESH_INVALID_INSTANCE= from =add_instance()=, =FALSE= from =set_instance_transform()=).
+- Changes to the shape after instancing are seen through every instance. Shapes may hold instances themselves; hits report the =instance_id= of the instance added to the mesh queried (the outermost one). A mesh cannot instance itself.
+- Rays are transformed into the shape's model space (the parameter stays a world distance); sweeps transform the shape's candidate triangles into world space, so scaled instances collide correctly.
+- Handles are slot indices: removal frees a slot and the lowest free slot is reused.
+
+*** Floating origin
+=translate()= shifts the vertices, the hierarchy boxes and every instance translation in place; no rebuild.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgCollisionMesh) level = lrg_collision_mesh_new ();
+g_autoptr(LrgCollisionMesh) door = lrg_collision_mesh_new ();
+g_autoptr(GError) error = NULL;
+LrgCollisionHit hit;
+gfloat eye[3] = { 0.0f, 1.7f, 0.0f };
+gfloat look[3] = { 0.0f, 0.0f, 1.0f };
+gfloat door_m[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 2,0,5,1 };
+guint handle;
+
+if (!lrg_collision_mesh_set_triangles (level, level_vertices, n_level_floats, level_tags, &error))
+    g_printerr ("level collision: %s\n", error->message);
+lrg_collision_mesh_set_triangles (door, door_vertices, n_door_floats, NULL, NULL);
+handle = lrg_collision_mesh_add_instance (level, door, door_m, 42);
+
+if (lrg_collision_mesh_raycast (level, eye, look, 3.0f, &hit) && hit.instance_id == 42)
+    g_print ("looking at the door, %.2f away\n", hit.distance);
+
+/* the door swings: move the instance */
+door_m[12] = 2.5f;
+lrg_collision_mesh_set_instance_transform (level, handle, door_m);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured by =tests/test-collision-mesh.c= on a 160 x 160 height-field grid (51 200 triangles): the build takes roughly 15-30 ms depending on load, and 2000 capsule sweeps plus 2000 rays take a few milliseconds. The strict bounds (build under 50 ms, the query batch under 100 ms) are asserted with =-m perf=; a plain run only applies loose bounds so busy machines and =make test-valgrind= pass. Instances are tested linearly against their world boxes; hundreds are fine, thousands would want a top-level hierarchy.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-collision-mesh.c=: empty meshes, input validation (bad counts, non-finite data, degenerate queries), zero-area triangles, ray casts against a floor (double-sided normals, tags, range), nearest of several boxes, 400 random rays on 51 200 triangles against a brute-force reference, determinism of two independent builds, sphere sweeps (floor, resting contact, moving away), tunnelling through a single quad with a 1000 unit motion, capsule flank against a box edge, strict overlap, instances (translation, rotation with scale, sweeps, removal and handle reuse, invalid transforms, shape changes seen through instances), translation of triangles and instances, and query speed.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:character-controller.org][LrgCharacterController]] - capsule move-and-slide on top of this mesh
+- [[file:wall-set.org][LrgWallSet]] - 2D box collision for servers
