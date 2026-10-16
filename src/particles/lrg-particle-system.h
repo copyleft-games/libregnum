@@ -24,6 +24,18 @@
 
 G_BEGIN_DECLS
 
+/**
+ * LrgParticleFunc:
+ * @particle: (not nullable): an active particle (read only)
+ * @user_data: data passed to lrg_particle_system_foreach_active()
+ *
+ * Callback receiving each active particle of a #LrgParticleSystem.
+ *
+ * Since: 1.0
+ */
+typedef void (*LrgParticleFunc) (const LrgParticle *particle,
+                                 gpointer           user_data);
+
 #define LRG_TYPE_PARTICLE_SYSTEM (lrg_particle_system_get_type ())
 
 LRG_AVAILABLE_IN_ALL
@@ -117,6 +129,23 @@ void                    lrg_particle_system_update              (LrgParticleSyst
  */
 LRG_AVAILABLE_IN_ALL
 void                    lrg_particle_system_draw                (LrgParticleSystem   *self);
+
+/**
+ * lrg_particle_system_foreach_active:
+ * @self: A #LrgParticleSystem
+ * @func: (scope call) (closure user_data): called once per active particle
+ * @user_data: data for @func
+ *
+ * Calls @func for every active (alive) particle of the system, newest
+ * first.  Renderers use it to read particles without reaching into the
+ * pool; @func must not add or remove particles.  Headless.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void                    lrg_particle_system_foreach_active      (LrgParticleSystem   *self,
+                                                                 LrgParticleFunc      func,
+                                                                 gpointer             user_data);
 
 /* Emitter management */
 

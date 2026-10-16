@@ -43,6 +43,7 @@ typedef struct
 {
     /* Particle storage */
     LrgParticlePool     *pool;
+    guint                max_particles;     /* construct-only capacity */
     GList               *active_particles;  /* List of LrgParticle * */
     guint                active_count;
 
@@ -280,6 +281,13 @@ lrg_particle_system_set_property (GObject      *object,
 
     switch (prop_id)
     {
+    case PROP_MAX_PARTICLES:
+        {
+            LrgParticleSystemPrivate *priv = lrg_particle_system_get_instance_private (self);
+
+            priv->max_particles = g_value_get_uint (value);
+        }
+        break;
     case PROP_LOOP:
         lrg_particle_system_set_loop (self, g_value_get_boolean (value));
         break;
@@ -300,12 +308,26 @@ lrg_particle_system_set_property (GObject      *object,
     }
 }
 
+/* The pool is created once the construct-only capacity is known, so
+ * subclasses built with g_object_new() get one too. */
+static void
+lrg_particle_system_constructed (GObject *object)
+{
+    LrgParticleSystem        *self = LRG_PARTICLE_SYSTEM (object);
+    LrgParticleSystemPrivate *priv = lrg_particle_system_get_instance_private (self);
+
+    G_OBJECT_CLASS (lrg_particle_system_parent_class)->constructed (object);
+
+    priv->pool = lrg_particle_pool_new (priv->max_particles > 0 ? priv->max_particles : 1000);
+}
+
 static void
 lrg_particle_system_class_init (LrgParticleSystemClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
     object_class->finalize = lrg_particle_system_finalize;
+    object_class->constructed = lrg_particle_system_constructed;
     object_class->get_property = lrg_particle_system_get_property;
     object_class->set_property = lrg_particle_system_set_property;
 
@@ -320,7 +342,8 @@ lrg_particle_system_class_init (LrgParticleSystemClass *klass)
                            "Max Particles",
                            "Maximum particle capacity",
                            1, G_MAXUINT, 1000,
-                           G_PARAM_READABLE |
+                           G_PARAM_READWRITE |
+                           G_PARAM_CONSTRUCT_ONLY |
                            G_PARAM_STATIC_STRINGS);
 
     properties[PROP_ACTIVE_COUNT] =
@@ -414,15 +437,9 @@ lrg_particle_system_init (LrgParticleSystem *self)
 LrgParticleSystem *
 lrg_particle_system_new (guint max_particles)
 {
-    LrgParticleSystem        *self;
-    LrgParticleSystemPrivate *priv;
-
-    self = g_object_new (LRG_TYPE_PARTICLE_SYSTEM, NULL);
-    priv = lrg_particle_system_get_instance_private (self);
-
-    priv->pool = lrg_particle_pool_new (max_particles);
-
-    return self;
+    return g_object_new (LRG_TYPE_PARTICLE_SYSTEM,
+                         "max-particles", MAX (max_particles, 1u),
+                         NULL);
 }
 
 void
@@ -450,6 +467,31 @@ lrg_particle_system_draw (LrgParticleSystem *self)
 
     if (klass->draw != NULL)
         klass->draw (self);
+}
+
+void
+lrg_particle_system_foreach_active (LrgParticleSystem *self,
+                                    LrgParticleFunc    func,
+                                    gpointer           user_data)
+{
+    LrgParticleSystemPrivate *priv;
+    GList *l;
+
+    g_return_if_fail (LRG_IS_PARTICLE_SYSTEM (self));
+    g_return_if_fail (func != NULL);
+
+    priv = lrg_particle_system_get_instance_private (self);
+
+    /* The active list only holds live particles: dead ones are released
+     * during update.  Skip a particle killed by a direct lrg_particle_kill()
+     * since the last update all the same. */
+    for (l = priv->active_particles; l != NULL; l = l->next)
+    {
+        const LrgParticle *particle = (const LrgParticle *)l->data;
+
+        if (particle->alive)
+            func (particle, user_data);
+    }
 }
 
 void
@@ -575,6 +617,7 @@ lrg_particle_system_emit (LrgParticleSystem *self,
                           guint              count)
 {
     LrgParticleSystemPrivate *priv;
+    LrgParticleSystemClass   *klass;
     LrgParticleEmitter *emitter;
     guint emitted;
     guint i;
@@ -582,6 +625,7 @@ lrg_particle_system_emit (LrgParticleSystem *self,
     g_return_val_if_fail (LRG_IS_PARTICLE_SYSTEM (self), 0);
 
     priv = lrg_particle_system_get_instance_private (self);
+    klass = LRG_PARTICLE_SYSTEM_GET_CLASS (self);
 
     if (priv->emitters == NULL)
         return 0;
@@ -606,6 +650,11 @@ lrg_particle_system_emit (LrgParticleSystem *self,
         priv->active_particles = g_list_prepend (priv->active_particles, particle);
         priv->active_count++;
         emitted++;
+
+        /* Same hook as rate emission in update(): burst particles get the
+         * subclass's custom initialisation too. */
+        if (klass->on_particle_spawn != NULL)
+            klass->on_particle_spawn (self, particle);
     }
 
     return emitted;

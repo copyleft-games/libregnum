@@ -29,6 +29,19 @@ LrgParticleSystem *lrg_particle_system_new (guint max_particles);
 
 Creates a particle system with the specified maximum capacity. The internal pool is sized to this limit.
 
+The capacity is the construct-only property =max-particles= (default 1000); the pool is created in =constructed()=, so a subclass built with =g_object_new (MY_TYPE_SYSTEM, "max-particles", 256, NULL)= gets its pool as well.  =lrg_particle_system_emit()= and =emit_at()= call the class's =on_particle_spawn= for every particle they emit, like rate emission during =update()=.
+
+*** Reading active particles
+:PROPERTIES:
+:CUSTOM_ID: foreach-active
+:END:
+#+begin_src C
+typedef void (*LrgParticleFunc) (const LrgParticle *particle, gpointer user_data);
+void lrg_particle_system_foreach_active (LrgParticleSystem *self, LrgParticleFunc func, gpointer user_data);
+#+end_src
+
+Calls =func= for every alive particle, newest first.  The callback must not add or remove particles.  Renderers ([[file:billboard-renderer.org][LrgParticleBillboardRenderer]]) read particles through it; the default =draw= virtual still draws nothing.
+
 *** Update Loop
 :PROPERTIES:
 :CUSTOM_ID: update-loop
