@@ -237,7 +237,10 @@ lrg_standalone_host_new (LrgGameTemplate  *game,
 
     raw_window = lrg_grl_window_get_grl_window (grl_win);
 
+    /* LrgWindow only records the rate; raylib paces EndDrawing() by its
+     * own target, which the window set from the default at creation */
     lrg_window_set_target_fps (self->window, target_fps);
+    grl_window_set_target_fps (raw_window, target_fps);
 
     if (vsync)
         lrg_grl_window_set_vsync (grl_win, TRUE);
