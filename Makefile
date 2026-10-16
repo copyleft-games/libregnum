@@ -303,6 +303,7 @@ PUBLIC_HEADERS := \
 	src/particles/lrg-particle-emitter.h \
 	src/particles/lrg-particle-force.h \
 	src/particles/lrg-particle-system.h \
+	src/particles/lrg-particle-billboard-renderer.h \
 	src/postprocess/lrg-post-effect.h \
 	src/postprocess/lrg-post-processor.h \
 	src/postprocess/effects/lrg-vignette.h \
@@ -834,6 +835,7 @@ SOURCES := \
 	src/particles/lrg-particle-emitter.c \
 	src/particles/lrg-particle-force.c \
 	src/particles/lrg-particle-system.c \
+	src/particles/lrg-particle-billboard-renderer.c \
 	src/postprocess/lrg-post-effect.c \
 	src/postprocess/lrg-post-processor.c \
 	src/postprocess/effects/lrg-vignette.c \

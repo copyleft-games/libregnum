@@ -1,0 +1,91 @@
+* LrgParticleBillboardRenderer
+:PROPERTIES:
+:CUSTOM_ID: lrgparticlebillboardrenderer
+:END:
+=LrgParticleBillboardRenderer= draws the active particles of an [[file:system.org][LrgParticleSystem]] as camera-facing textured quads ("billboards") on graylib's raylib, through rlgl's immediate batch.  raylib is used unmodified.  The geometry step (=build()=) is headless, so the same quads the GPU receives can be checked in tests; =draw()= only submits them.
+
+** Type
+:PROPERTIES:
+:CUSTOM_ID: type
+:END:
+#+begin_src C
+#define LRG_TYPE_PARTICLE_BILLBOARD_RENDERER (lrg_particle_billboard_renderer_get_type ())
+G_DECLARE_FINAL_TYPE (LrgParticleBillboardRenderer, lrg_particle_billboard_renderer,
+                      LRG, PARTICLE_BILLBOARD_RENDERER, GObject)
+#+end_src
+
+A final type.  One renderer can draw any number of systems; it keeps only its texture, its flipbook layout, a generated fallback texture and a scratch vertex buffer.
+
+** Functions
+:PROPERTIES:
+:CUSTOM_ID: functions
+:END:
+| Function | Headless | Meaning |
+|----------+----------+---------|
+| =lrg_particle_billboard_renderer_new ()= | yes | no texture (a soft round dot), one 1x1 frame |
+| =set_texture (self, texture)= / =get_texture= | yes | the particle texture or flipbook atlas (a reference is kept); =NULL= = the dot |
+| =set_frames (self, columns, rows, fps)= / =get_frames= | yes | flipbook atlas layout and speed |
+| =build (self, system, eye[3], up[3], vertices, max_quads)= | yes | the CPU quads; returns how many were written |
+| =draw (self, system, camera)= | no | submits the quads with the system's blend mode |
+| =release_gpu (self)= | safe | frees the generated dot texture while the context exists |
+
+** Geometry
+:PROPERTIES:
+:CUSTOM_ID: geometry
+:END:
+For each active particle (read with =lrg_particle_system_foreach_active()=):
+
+1. Facing $f$ = normalise(eye - position); a particle on the eye faces $+Z$.
+2. Right $r$ = normalise(up x $f$); when =up= is parallel to $f$ (looking straight down) world $Z$, then $X$, replace =up= so the basis stays defined.
+3. Quad up $u$ = $f$ x $r$.
+4. The particle's =rotation= (degrees, counter-clockwise as seen from the eye) turns both: $r' = \cos\theta\,r + \sin\theta\,u$, $u' = -\sin\theta\,r + \cos\theta\,u$.
+5. Corners at position $\pm r' s/2 \pm u' s/2$ with $s$ the particle's =size=: bottom-left, bottom-right, top-right, top-left.
+
+Every vertex is 9 floats (=LRG_PARTICLE_BILLBOARD_FLOATS_PER_VERTEX=): =x y z u v r g b a=, colour straight from the particle (0..1); a quad is 36 floats (=LRG_PARTICLE_BILLBOARD_FLOATS_PER_QUAD=).  Texture $v = 0$ is the top of the texture (raylib's convention), so the bottom corners carry $v_1$.
+
+*** Sorting and capacity
+:PROPERTIES:
+:CUSTOM_ID: sorting
+:END:
+Quads are sorted back to front by squared distance to the eye, as alpha blending needs.  When the system has more active particles than =max_quads=, the nearest =max_quads= are kept (still back to front); nothing past =max_quads= quads of the buffer is written.  =vertices = NULL= only counts.
+
+*** Flipbooks
+:PROPERTIES:
+:CUSTOM_ID: flipbooks
+:END:
+=set_frames (columns, rows, fps)= splits the texture into a grid read left to right, top to bottom.  With =fps > 0= a particle shows frame =floor (age * fps) % (columns * rows)= (a looping animation); with =fps <= 0= the frames are spread evenly over each particle's lifetime (=floor (age / max_life * frames)=, the last frame at death), which suits explosions and puffs.
+
+** Drawing
+:PROPERTIES:
+:CUSTOM_ID: drawing
+:END:
+=draw()= takes the eye and up vector from the =GrlCamera3D= and must be called inside that camera's 3D mode (=grl_camera3d_begin()=).  It flushes the batch, turns depth writes off (particles still test against the scene's depth), selects the system's blend mode (=LRG_PARTICLE_BLEND_ADDITIVE= → raylib =BLEND_ADDITIVE=, =ALPHA= → =BLEND_ALPHA=, =MULTIPLY= → =BLEND_MULTIPLIED=), emits one =RL_QUADS= batch with the texture, then flushes and restores the blend and depth state.  Without a texture a 32x32 white radial-gradient dot is generated on the first draw and freed by =release_gpu()= or finalisation (only while a window exists).
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgParticleSystem) trail = lrg_particle_system_new (256);
+g_autoptr(LrgParticleBillboardRenderer) renderer = lrg_particle_billboard_renderer_new ();
+
+lrg_particle_system_set_blend_mode (trail, LRG_PARTICLE_BLEND_ADDITIVE);
+lrg_particle_billboard_renderer_set_texture (renderer, fire_atlas);
+lrg_particle_billboard_renderer_set_frames (renderer, 4, 1, 0.0f);   /* spread over the life */
+
+/* each frame */
+lrg_particle_system_update (trail, dt);
+grl_camera3d_begin (camera);
+/* ... opaque scene ... */
+lrg_particle_billboard_renderer_draw (renderer, trail, camera);
+grl_camera3d_end (camera);
+
+/* before closing the window */
+lrg_particle_billboard_renderer_release_gpu (renderer);
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-particle-billboard-renderer.c=: =foreach_active= (alive particles only), =emit()= calling =on_particle_spawn= and a subclass getting its pool from =max-particles=, an empty system, camera-facing quads of the particle's size and colour from two eyes, a straight-down eye, flipbook UVs by age (fps and lifetime modes, wrapping), back-to-front order and =max_quads= (run under ASAN with =make SANITIZE=1 test-sanitize=).

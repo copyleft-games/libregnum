@@ -420,6 +420,7 @@
 #include "particles/lrg-particle-emitter.h"
 #include "particles/lrg-particle-force.h"
 #include "particles/lrg-particle-system.h"
+#include "particles/lrg-particle-billboard-renderer.h"
 
 /* Post-Processing module (Phase 3) */
 #include "postprocess/lrg-post-effect.h"

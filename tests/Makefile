@@ -127,6 +127,7 @@ TEST_SOURCES := \
 	test-building.c \
 	test-vehicle.c \
 	test-particles.c \
+	test-particle-billboard-renderer.c \
 	test-postprocess.c \
 	test-animation.c \
 	test-text.c \

@@ -95,3 +95,4 @@ lrg_particle_system_draw (system);
 | [[file:emitter.org]]  | LrgParticleEmitter configuration  |
 | [[file:forces.org]]   | LrgParticleForce implementations  |
 | [[file:system.org]]   | LrgParticleSystem coordination    |
+| [[file:billboard-renderer.org]] | LrgParticleBillboardRenderer: camera-facing textured quads, flipbooks |
