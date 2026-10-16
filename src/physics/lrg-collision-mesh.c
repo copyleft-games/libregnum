@@ -32,6 +32,7 @@
 #include "config.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include <gio/gio.h>
 
@@ -667,12 +668,46 @@ typedef struct
     guint  count;
 } BvhNode;
 
+/*
+ * InstNode:
+ *
+ * A node of the instance tree: interior nodes have count == 0 and their
+ * children at first and first + 1; leaves list iorder[first .. first +
+ * count). Boxes are in the owning mesh's space.
+ */
+typedef struct
+{
+    gdouble bmin[3];
+    gdouble bmax[3];
+    guint   first;
+    guint   count;
+} InstNode;
+
+/* Instances below this count are scanned linearly (no tree). */
+#define ITREE_MIN_INSTANCES (16u)
+/* Most instances kept in one instance tree leaf. */
+#define ITREE_LEAF_SIZE     (4u)
+/* Candidate handles kept on the C stack before spilling to the heap. */
+#define ITREE_LOCAL         (256u)
+
+/* Bumped (atomically) whenever any mesh's own triangles change or move:
+ * instance trees of other meshes then rebuild, since their boxes are
+ * their shapes' boxes. */
+static gint geometry_epoch = 0;
+
 typedef struct
 {
     LrgCollisionMesh *shape;     /* owned reference, NULL when free */
     gdouble           m[16];     /* model to world */
     gdouble           inv[16];   /* world to model */
     guint64           id;
+    /* world box cache (instance_cached_bounds()): valid while cached is
+     * set and the shape's generation is cached_gen */
+    gboolean          cached;
+    gboolean          has_bounds;
+    guint             cached_gen;
+    gdouble           wmin[3];
+    gdouble           wmax[3];
 } Instance;
 
 struct _LrgCollisionMesh
@@ -691,6 +726,17 @@ struct _LrgCollisionMesh
 
     GArray   *instances;     /* Instance; free slots have shape == NULL */
     guint     n_live;
+    guint     generation;    /* bumped by every change of the geometry */
+
+    /* instance tree (see instance_tree_ensure()): a hierarchy over the
+     * instances' cached boxes, rebuilt when the instances or any mesh's
+     * own triangles changed */
+    InstNode *inodes;
+    guint     n_inodes;
+    guint    *iorder;        /* instance handles referenced by leaves */
+    guint     itree_gen;     /* self->generation the tree was built for */
+    gint      itree_epoch;   /* geometry_epoch the tree was built for */
+    gboolean  itree_valid;
 };
 
 G_DEFINE_TYPE (LrgCollisionMesh, lrg_collision_mesh, G_TYPE_OBJECT)
@@ -714,6 +760,8 @@ lrg_collision_mesh_finalize (GObject *object)
     g_free (self->tags);
     g_free (self->nodes);
     g_free (self->order);
+    g_free (self->inodes);
+    g_free (self->iorder);
 
     G_OBJECT_CLASS (lrg_collision_mesh_parent_class)->finalize (object);
 }
@@ -1157,6 +1205,8 @@ lrg_collision_mesh_set_triangles (LrgCollisionMesh  *self,
         if (tags != NULL)
             memcpy (self->tags, tags, sizeof (guint32) * n);
     }
+    self->generation++;
+    g_atomic_int_inc (&geometry_epoch);
     build_hierarchy (self);
     return TRUE;
 }
@@ -1259,6 +1309,44 @@ mesh_bounds (LrgCollisionMesh *self,
     return any;
 }
 
+/* Box padding of a cached instance box: the corners went through a
+ * double transform, so a hair of slack keeps the culling conservative. */
+#define INSTANCE_BOUNDS_PAD (1e-6)
+
+/*
+ * instance_cached_bounds:
+ * The instance's world box, from the cache when its shape has not
+ * changed since (generation) and has no instances of its own (whose
+ * changes the shape's generation would not see; those are recomputed
+ * every time). Returns FALSE for a shape without geometry. Queries use
+ * it to skip instances before transforming anything into their space.
+ */
+static gboolean
+instance_cached_bounds (Instance *inst,
+                        gdouble  *bmin,
+                        gdouble  *bmax)
+{
+    guint k;
+
+    if (!inst->cached || inst->cached_gen != inst->shape->generation
+        || inst->shape->n_live > 0)
+    {
+        inst->has_bounds = instance_bounds (inst, inst->wmin, inst->wmax);
+        for (k = 0; inst->has_bounds && k < 3; k++)
+        {
+            gdouble pad = INSTANCE_BOUNDS_PAD * (1.0 + fabs (inst->wmin[k]) + fabs (inst->wmax[k]));
+
+            inst->wmin[k] -= pad;
+            inst->wmax[k] += pad;
+        }
+        inst->cached = TRUE;
+        inst->cached_gen = inst->shape->generation;
+    }
+    memcpy (bmin, inst->wmin, sizeof (inst->wmin));
+    memcpy (bmax, inst->wmax, sizeof (inst->wmax));
+    return inst->has_bounds;
+}
+
 gboolean
 lrg_collision_mesh_get_bounds (LrgCollisionMesh *self,
                                gfloat           *min,
@@ -1301,6 +1389,8 @@ lrg_collision_mesh_translate (LrgCollisionMesh *self,
 
     if (!v3f_finite (offset))
         return;
+    self->generation++;
+    g_atomic_int_inc (&geometry_epoch);
 
     /* own triangles and the hierarchy move together */
     for (i = 0; i < self->n_triangles; i++)
@@ -1329,6 +1419,7 @@ lrg_collision_mesh_translate (LrgCollisionMesh *self,
         inst->m[13] += offset[1];
         inst->m[14] += offset[2];
         m4_affine_inverse (inst->m, inst->inv);
+        inst->cached = FALSE;
     }
 }
 
@@ -1375,6 +1466,7 @@ lrg_collision_mesh_add_instance (LrgCollisionMesh *self,
         return LRG_COLLISION_MESH_INVALID_INSTANCE;
     inst.id = instance_id;
     inst.shape = (LrgCollisionMesh *) g_object_ref (shape);
+    self->generation++;
 
     /* reuse the lowest free slot so handles stay small and deterministic */
     for (i = 0; i < self->instances->len; i++)
@@ -1412,6 +1504,8 @@ lrg_collision_mesh_set_instance_transform (LrgCollisionMesh *self,
         return FALSE;
     memcpy (inst->m, m, sizeof (m));
     memcpy (inst->inv, inv, sizeof (inv));
+    inst->cached = FALSE;
+    self->generation++;
     return TRUE;
 }
 
@@ -1429,7 +1523,9 @@ lrg_collision_mesh_remove_instance (LrgCollisionMesh *self,
     if (inst->shape == NULL)
         return FALSE;
     g_clear_object (&inst->shape);
+    inst->cached = FALSE;
     self->n_live--;
+    self->generation++;
 
     /* trim trailing free slots */
     while (self->instances->len > 0 &&
@@ -1444,6 +1540,276 @@ lrg_collision_mesh_get_instance_count (LrgCollisionMesh *self)
     g_return_val_if_fail (LRG_IS_COLLISION_MESH (self), 0);
 
     return self->n_live;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Instance tree                                                            */
+/* ------------------------------------------------------------------------ */
+
+/* Build scratch: the box and centre of each live instance with geometry. */
+typedef struct
+{
+    guint   handle;
+    gdouble bmin[3];
+    gdouble bmax[3];
+    gdouble centre[3];
+} ITreeItem;
+
+static gint
+compare_item_axis0 (gconstpointer a, gconstpointer b)
+{
+    gdouble ca = ((const ITreeItem *) a)->centre[0];
+    gdouble cb = ((const ITreeItem *) b)->centre[0];
+
+    if (ca != cb)
+        return ca < cb ? -1 : 1;
+    return (gint) ((const ITreeItem *) a)->handle - (gint) ((const ITreeItem *) b)->handle;
+}
+
+static gint
+compare_item_axis1 (gconstpointer a, gconstpointer b)
+{
+    gdouble ca = ((const ITreeItem *) a)->centre[1];
+    gdouble cb = ((const ITreeItem *) b)->centre[1];
+
+    if (ca != cb)
+        return ca < cb ? -1 : 1;
+    return (gint) ((const ITreeItem *) a)->handle - (gint) ((const ITreeItem *) b)->handle;
+}
+
+static gint
+compare_item_axis2 (gconstpointer a, gconstpointer b)
+{
+    gdouble ca = ((const ITreeItem *) a)->centre[2];
+    gdouble cb = ((const ITreeItem *) b)->centre[2];
+
+    if (ca != cb)
+        return ca < cb ? -1 : 1;
+    return (gint) ((const ITreeItem *) a)->handle - (gint) ((const ITreeItem *) b)->handle;
+}
+
+/* itree_split:
+ * Node @node covers items[first .. first + count): its box is theirs; a
+ * range above the leaf size is split at the median of the longest axis
+ * of the centres' box (deterministic: ties by handle). */
+static void
+itree_split (LrgCollisionMesh *self,
+             ITreeItem        *items,
+             guint             node,
+             guint             first,
+             guint             count)
+{
+    InstNode *n = &self->inodes[node];
+    gdouble   cmin[3];
+    gdouble   cmax[3];
+    guint     axis;
+    guint     half;
+    guint     i;
+    guint     k;
+
+    for (k = 0; k < 3; k++)
+    {
+        n->bmin[k] = cmin[k] = G_MAXDOUBLE;
+        n->bmax[k] = cmax[k] = -G_MAXDOUBLE;
+    }
+    for (i = first; i < first + count; i++)
+    {
+        for (k = 0; k < 3; k++)
+        {
+            n->bmin[k] = MIN (n->bmin[k], items[i].bmin[k]);
+            n->bmax[k] = MAX (n->bmax[k], items[i].bmax[k]);
+            cmin[k] = MIN (cmin[k], items[i].centre[k]);
+            cmax[k] = MAX (cmax[k], items[i].centre[k]);
+        }
+    }
+    if (count <= ITREE_LEAF_SIZE)
+    {
+        n->first = first;
+        n->count = count;
+        for (i = first; i < first + count; i++)
+            self->iorder[i] = items[i].handle;
+        return;
+    }
+
+    axis = 0;
+    if (cmax[1] - cmin[1] > cmax[axis] - cmin[axis])
+        axis = 1;
+    if (cmax[2] - cmin[2] > cmax[axis] - cmin[axis])
+        axis = 2;
+    qsort (items + first, count, sizeof (ITreeItem),
+           axis == 0 ? compare_item_axis0 : axis == 1 ? compare_item_axis1 : compare_item_axis2);
+    half = count / 2;
+
+    n->first = self->n_inodes;
+    n->count = 0;
+    self->n_inodes += 2;
+    itree_split (self, items, n->first, first, half);
+    itree_split (self, items, self->inodes[node].first + 1, first + half, count - half);
+}
+
+/* instance_tree_ensure:
+ * Returns TRUE when the instance tree is usable, (re)building it after
+ * any change of the instances or of any mesh's triangles. Meshes with
+ * few instances, or with a nested shape (one that has instances of its
+ * own, whose changes no generation here records), are scanned linearly
+ * instead (FALSE). */
+static gboolean
+instance_tree_ensure (LrgCollisionMesh *self)
+{
+    g_autofree ITreeItem *items = NULL;
+    gint  epoch = g_atomic_int_get (&geometry_epoch);
+    guint n;
+    guint i;
+
+    if (self->itree_valid && self->itree_gen == self->generation && self->itree_epoch == epoch)
+        return self->n_inodes > 0;
+
+    self->itree_valid = TRUE;
+    self->itree_gen = self->generation;
+    self->itree_epoch = epoch;
+    g_clear_pointer (&self->inodes, g_free);
+    g_clear_pointer (&self->iorder, g_free);
+    self->n_inodes = 0;
+    if (self->n_live < ITREE_MIN_INSTANCES)
+        return FALSE;
+
+    items = g_new (ITreeItem, self->instances->len);
+    n = 0;
+    for (i = 0; i < self->instances->len; i++)
+    {
+        Instance *inst = &g_array_index (self->instances, Instance, i);
+        guint     k;
+
+        if (inst->shape == NULL)
+            continue;
+        if (inst->shape->n_live > 0)
+        {
+            /* nested: stay linear */
+            return FALSE;
+        }
+        if (!instance_cached_bounds (inst, items[n].bmin, items[n].bmax))
+            continue;
+        items[n].handle = i;
+        for (k = 0; k < 3; k++)
+            items[n].centre[k] = 0.5 * (items[n].bmin[k] + items[n].bmax[k]);
+        n++;
+    }
+    if (n == 0)
+    {
+        /* no instance has geometry: an empty tree, nothing to visit */
+        self->inodes = g_new0 (InstNode, 1);
+        self->n_inodes = 1;
+        self->inodes[0].bmin[0] = self->inodes[0].bmin[1] = self->inodes[0].bmin[2] = 1.0;
+        self->inodes[0].bmax[0] = self->inodes[0].bmax[1] = self->inodes[0].bmax[2] = -1.0;
+        return TRUE;
+    }
+    self->inodes = g_new0 (InstNode, 2 * n);
+    self->iorder = g_new (guint, n);
+    self->n_inodes = 1;
+    itree_split (self, items, 0, 0, n);
+    return TRUE;
+}
+
+/* compare_handle:
+ * Ascending instance handles: candidates are visited in the order the
+ * linear scan visits them, so results (ties included) do not change. */
+static gint
+compare_handle (gconstpointer a,
+                gconstpointer b)
+{
+    guint ha = *(const guint *) a;
+    guint hb = *(const guint *) b;
+
+    return (ha > hb) - (ha < hb);
+}
+
+/* Candidate list: a stack buffer, spilled to the heap when it fills. */
+typedef struct
+{
+    guint  local[ITREE_LOCAL];
+    guint *items;
+    guint  len;
+    guint  cap;
+} Candidates;
+
+static void
+candidates_init (Candidates *c)
+{
+    c->items = c->local;
+    c->len = 0;
+    c->cap = ITREE_LOCAL;
+}
+
+static void
+candidates_add (Candidates *c,
+                guint       handle)
+{
+    if (c->len == c->cap)
+    {
+        guint *grown = g_new (guint, c->cap * 2);
+
+        memcpy (grown, c->items, sizeof (guint) * c->len);
+        if (c->items != c->local)
+            g_free (c->items);
+        c->items = grown;
+        c->cap *= 2;
+    }
+    c->items[c->len++] = handle;
+}
+
+static void
+candidates_clear (Candidates *c)
+{
+    if (c->items != c->local)
+        g_free (c->items);
+}
+
+/* itree_collect:
+ * The handles of the leaves whose node boxes pass @test (a ray or box
+ * test on node boxes), sorted ascending. */
+typedef gboolean (*ITreeTest) (const gdouble *bmin, const gdouble *bmax, gconstpointer data);
+
+static void
+itree_collect (LrgCollisionMesh *self,
+               ITreeTest         test,
+               gconstpointer     data,
+               Candidates       *out)
+{
+    guint  local[BVH_STACK_LOCAL];
+    guint *stack = local;
+    guint  cap = BVH_STACK_LOCAL;
+    guint  top = 0;
+
+    stack[top++] = 0;
+    while (top > 0)
+    {
+        const InstNode *node = &self->inodes[stack[--top]];
+        guint i;
+
+        if (!test (node->bmin, node->bmax, data))
+            continue;
+        if (node->count == 0)
+        {
+            if (top + 2 > cap)
+            {
+                guint *grown = g_new (guint, cap * 2);
+
+                memcpy (grown, stack, sizeof (guint) * top);
+                if (stack != local)
+                    g_free (stack);
+                stack = grown;
+                cap *= 2;
+            }
+            stack[top++] = node->first + 1;
+            stack[top++] = node->first;
+            continue;
+        }
+        for (i = node->first; i < node->first + node->count; i++)
+            candidates_add (out, self->iorder[i]);
+    }
+    if (stack != local)
+        g_free (stack);
+    qsort (out->items, out->len, sizeof (guint), compare_handle);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1503,6 +1869,51 @@ ray_box (const gdouble *o,
             return -1.0;
     }
     return t0;
+}
+
+/* ray_misses_box:
+ * The slab test against a double box (an instance's cached world box):
+ * TRUE when the ray misses it before @tmax. */
+static gboolean
+ray_misses_box (const gdouble *o,
+                const gdouble *d,
+                const gdouble *bmin,
+                const gdouble *bmax,
+                gdouble        tmax)
+{
+    gdouble t0;
+    gdouble t1;
+    guint k;
+
+    t0 = 0.0;
+    t1 = tmax;
+    for (k = 0; k < 3; k++)
+    {
+        gdouble a;
+        gdouble b;
+
+        if (fabs (d[k]) < 1e-300)
+        {
+            if (o[k] < bmin[k] || o[k] > bmax[k])
+                return TRUE;
+            continue;
+        }
+        a = (bmin[k] - o[k]) / d[k];
+        b = (bmax[k] - o[k]) / d[k];
+        if (a > b)
+        {
+            gdouble tmp;
+
+            tmp = a;
+            a = b;
+            b = tmp;
+        }
+        t0 = MAX (t0, a);
+        t1 = MIN (t1, b);
+        if (t0 > t1)
+            return TRUE;
+    }
+    return FALSE;
 }
 
 /* Double-sided Moller-Trumbore. */
@@ -1647,6 +2058,81 @@ raycast_own (LrgCollisionMesh *self,
         g_free (stack);
 }
 
+/* ray_instance:
+ * The ray against instance @handle (skipped by its cached box), keeping
+ * the nearest hit in @res. */
+static void
+ray_instance (LrgCollisionMesh *self,
+              guint             handle,
+              const gdouble    *o,
+              const gdouble    *d,
+              RayResult        *res)
+{
+    Instance *inst;
+    gdouble lo[3];
+    gdouble ld[3];
+    gdouble wmin[3];
+    gdouble wmax[3];
+    RayResult sub;
+
+    inst = &g_array_index (self->instances, Instance, handle);
+    if (inst->shape == NULL)
+        return;
+
+    /* the cached world box first: most instances are nowhere near the
+     * ray, and this skips transforming the ray for them */
+    if (!instance_cached_bounds (inst, wmin, wmax) ||
+        ray_misses_box (o, d, wmin, wmax, res->t))
+        return;
+
+    /* local ray keeps the world parameterisation: t stays a world
+     * distance because the world direction is unit length */
+    m4_point (inst->inv, o, lo);
+    m4_vector (inst->inv, d, ld);
+    memset (&sub, 0, sizeof (sub));
+    sub.t = res->t;
+    raycast_mesh (inst->shape, lo, ld, &sub);
+    if (sub.hit && sub.t < res->t)
+    {
+        gdouble n[3];
+
+        res->t = sub.t;
+        res->hit = TRUE;
+        res->triangle = sub.triangle;
+        res->tag = sub.tag;
+        res->instance_id = inst->id;
+        m4_point (inst->m, sub.point, res->point);
+
+        /* normals transform by the inverse transpose */
+        n[0] = inst->inv[0] * sub.normal[0] + inst->inv[1] * sub.normal[1] + inst->inv[2] * sub.normal[2];
+        n[1] = inst->inv[4] * sub.normal[0] + inst->inv[5] * sub.normal[1] + inst->inv[6] * sub.normal[2];
+        n[2] = inst->inv[8] * sub.normal[0] + inst->inv[9] * sub.normal[1] + inst->inv[10] * sub.normal[2];
+        memcpy (res->normal, n, sizeof (n));
+    }
+}
+
+/* the ray of an instance tree walk */
+typedef struct
+{
+    const gdouble *o;
+    const gdouble *d;
+    gdouble        t;
+} RayTest;
+
+static gboolean
+ray_node_test (const gdouble *bmin,
+               const gdouble *bmax,
+               gconstpointer  data)
+{
+    const RayTest *rt = data;
+
+    return !ray_misses_box (rt->o, rt->d, bmin, bmax, rt->t);
+}
+
+/* raycast_mesh:
+ * Own triangles, then the instances in ascending handle order: through
+ * the instance tree when there is one (only the instances whose boxes
+ * the ray crosses), else every instance. */
 static void
 raycast_mesh (LrgCollisionMesh *self,
               const gdouble    *o,
@@ -1657,42 +2143,23 @@ raycast_mesh (LrgCollisionMesh *self,
 
     raycast_own (self, o, d, res);
 
-    for (i = 0; i < self->instances->len; i++)
+    if (instance_tree_ensure (self))
     {
-        const Instance *inst;
-        gdouble lo[3];
-        gdouble ld[3];
-        RayResult sub;
+        Candidates c;
+        RayTest    rt;
 
-        inst = &g_array_index (self->instances, Instance, i);
-        if (inst->shape == NULL)
-            continue;
-
-        /* local ray keeps the world parameterisation: t stays a world
-         * distance because the world direction is unit length */
-        m4_point (inst->inv, o, lo);
-        m4_vector (inst->inv, d, ld);
-        memset (&sub, 0, sizeof (sub));
-        sub.t = res->t;
-        raycast_mesh (inst->shape, lo, ld, &sub);
-        if (sub.hit && sub.t < res->t)
-        {
-            gdouble n[3];
-
-            res->t = sub.t;
-            res->hit = TRUE;
-            res->triangle = sub.triangle;
-            res->tag = sub.tag;
-            res->instance_id = inst->id;
-            m4_point (inst->m, sub.point, res->point);
-
-            /* normals transform by the inverse transpose */
-            n[0] = inst->inv[0] * sub.normal[0] + inst->inv[1] * sub.normal[1] + inst->inv[2] * sub.normal[2];
-            n[1] = inst->inv[4] * sub.normal[0] + inst->inv[5] * sub.normal[1] + inst->inv[6] * sub.normal[2];
-            n[2] = inst->inv[8] * sub.normal[0] + inst->inv[9] * sub.normal[1] + inst->inv[10] * sub.normal[2];
-            memcpy (res->normal, n, sizeof (n));
-        }
+        rt.o = o;
+        rt.d = d;
+        rt.t = res->t;
+        candidates_init (&c);
+        itree_collect (self, ray_node_test, &rt, &c);
+        for (i = 0; i < c.len; i++)
+            ray_instance (self, c.items[i], o, d, res);
+        candidates_clear (&c);
+        return;
     }
+    for (i = 0; i < self->instances->len; i++)
+        ray_instance (self, i, o, d, res);
 }
 
 static void
@@ -1794,6 +2261,94 @@ box_overlap (const gfloat  *bmin,
              bmax[2] < qmin[2] || bmin[2] > qmax[2]);
 }
 
+static gboolean query_box_mesh (LrgCollisionMesh    *self,
+                                const gdouble       *world,
+                                const gdouble       *qmin,
+                                const gdouble       *qmax,
+                                guint64              id_override,
+                                LrgCollisionTriFunc  func,
+                                gpointer             user_data);
+
+/* the query box of an instance tree walk */
+typedef struct
+{
+    const gdouble *qmin;
+    const gdouble *qmax;
+} BoxTest;
+
+static gboolean
+box_node_test (const gdouble *bmin,
+               const gdouble *bmax,
+               gconstpointer  data)
+{
+    const BoxTest *bt = data;
+
+    return !(bmax[0] < bt->qmin[0] || bmin[0] > bt->qmax[0] ||
+             bmax[1] < bt->qmin[1] || bmin[1] > bt->qmax[1] ||
+             bmax[2] < bt->qmin[2] || bmin[2] > bt->qmax[2]);
+}
+
+/* box_instance:
+ * The query box against instance @handle (skipped by its cached box):
+ * the box goes into the shape's space and the shape's triangles come
+ * back through the composed transform. FALSE when @func stopped. */
+static gboolean
+box_instance (LrgCollisionMesh    *self,
+              guint                handle,
+              const gdouble       *world,
+              const gdouble       *qmin,
+              const gdouble       *qmax,
+              guint64              id_override,
+              LrgCollisionTriFunc  func,
+              gpointer             user_data)
+{
+    Instance *inst;
+    gdouble lmin[3];
+    gdouble lmax[3];
+    gdouble wmin[3];
+    gdouble wmax[3];
+    gdouble composed[16];
+    guint corner;
+    guint k;
+
+    inst = &g_array_index (self->instances, Instance, handle);
+    if (inst->shape == NULL)
+        return TRUE;
+
+    /* the cached box (in self's space, like the query) first */
+    if (!instance_cached_bounds (inst, wmin, wmax) ||
+        wmax[0] < qmin[0] || wmin[0] > qmax[0] ||
+        wmax[1] < qmin[1] || wmin[1] > qmax[1] ||
+        wmax[2] < qmin[2] || wmin[2] > qmax[2])
+        return TRUE;
+
+    lmin[0] = lmin[1] = lmin[2] = G_MAXDOUBLE;
+    lmax[0] = lmax[1] = lmax[2] = -G_MAXDOUBLE;
+    for (corner = 0; corner < 8; corner++)
+    {
+        gdouble p[3];
+        gdouble l[3];
+
+        p[0] = (corner & 1) ? qmax[0] : qmin[0];
+        p[1] = (corner & 2) ? qmax[1] : qmin[1];
+        p[2] = (corner & 4) ? qmax[2] : qmin[2];
+        m4_point (inst->inv, p, l);
+        for (k = 0; k < 3; k++)
+        {
+            lmin[k] = MIN (lmin[k], l[k]);
+            lmax[k] = MAX (lmax[k], l[k]);
+        }
+    }
+
+    if (world != NULL)
+        m4_multiply (world, inst->m, composed);
+    else
+        memcpy (composed, inst->m, sizeof (composed));
+
+    return query_box_mesh (inst->shape, composed, lmin, lmax,
+                           id_override != 0 ? id_override : inst->id, func, user_data);
+}
+
 /*
  * Recursive box query. world is the model-to-world matrix of self (NULL
  * for identity); qmin/qmax are in self's model space; id_override is the
@@ -1878,45 +2433,25 @@ query_box_mesh (LrgCollisionMesh    *self,
             return FALSE;
     }
 
-    /* instances: transform the query box into the shape's space */
+    /* instances: through the instance tree when there is one */
+    if (instance_tree_ensure (self))
+    {
+        Candidates c;
+        gboolean   go = TRUE;
+        BoxTest    bt;
+
+        bt.qmin = qmin;
+        bt.qmax = qmax;
+        candidates_init (&c);
+        itree_collect (self, box_node_test, &bt, &c);
+        for (i = 0; i < c.len && go; i++)
+            go = box_instance (self, c.items[i], world, qmin, qmax, id_override, func, user_data);
+        candidates_clear (&c);
+        return go;
+    }
     for (i = 0; i < self->instances->len; i++)
     {
-        const Instance *inst;
-        gdouble lmin[3];
-        gdouble lmax[3];
-        gdouble composed[16];
-        guint corner;
-        guint k;
-
-        inst = &g_array_index (self->instances, Instance, i);
-        if (inst->shape == NULL)
-            continue;
-
-        lmin[0] = lmin[1] = lmin[2] = G_MAXDOUBLE;
-        lmax[0] = lmax[1] = lmax[2] = -G_MAXDOUBLE;
-        for (corner = 0; corner < 8; corner++)
-        {
-            gdouble p[3];
-            gdouble l[3];
-
-            p[0] = (corner & 1) ? qmax[0] : qmin[0];
-            p[1] = (corner & 2) ? qmax[1] : qmin[1];
-            p[2] = (corner & 4) ? qmax[2] : qmin[2];
-            m4_point (inst->inv, p, l);
-            for (k = 0; k < 3; k++)
-            {
-                lmin[k] = MIN (lmin[k], l[k]);
-                lmax[k] = MAX (lmax[k], l[k]);
-            }
-        }
-
-        if (world != NULL)
-            m4_multiply (world, inst->m, composed);
-        else
-            memcpy (composed, inst->m, sizeof (composed));
-
-        if (!query_box_mesh (inst->shape, composed, lmin, lmax,
-                             id_override != 0 ? id_override : inst->id, func, user_data))
+        if (!box_instance (self, i, world, qmin, qmax, id_override, func, user_data))
             return FALSE;
     }
     return TRUE;

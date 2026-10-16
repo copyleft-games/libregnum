@@ -84,6 +84,7 @@ typedef struct {
 - An instance is any other =LrgCollisionMesh= (its =shape=, referenced) under an affine transform: translation, rotation, non-uniform scale. Projective, singular or non-finite matrices are rejected (=LRG_COLLISION_MESH_INVALID_INSTANCE= from =add_instance()=, =FALSE= from =set_instance_transform()=).
 - Changes to the shape after instancing are seen through every instance. Shapes may hold instances themselves; hits report the =instance_id= of the instance added to the mesh queried (the outermost one). A mesh cannot instance itself.
 - Rays are transformed into the shape's model space (the parameter stays a world distance); sweeps transform the shape's candidate triangles into world space, so scaled instances collide correctly.
+- *Culling*: each instance caches its world box (its shape's box through the transform, padded by a hair), valid until the instance moves or its shape's own triangles change (a per-mesh generation counter); queries test that box before transforming anything. A mesh with at least 16 instances also keeps an /instance tree/, a median-split hierarchy over those boxes, rebuilt lazily after any instance is added, moved or removed, or any mesh's triangles change or move (a global geometry epoch). Ray casts and box queries walk it to collect the instances whose boxes they touch, then visit those in ascending handle order, so the answers (ties included) are exactly those of visiting every instance. Shapes that hold instances themselves are never cached and keep their parent on the linear scan, since a change inside them moves no generation the parent sees.
 - Handles are slot indices: removal frees a slot and the lowest free slot is reused.
 
 *** Floating origin
@@ -120,13 +121,13 @@ lrg_collision_mesh_set_instance_transform (level, handle, door_m);
 :PROPERTIES:
 :CUSTOM_ID: performance
 :END:
-Measured by =tests/test-collision-mesh.c= on a 160 x 160 height-field grid (51 200 triangles): the build takes roughly 15-30 ms depending on load, and 2000 capsule sweeps plus 2000 rays take a few milliseconds. The strict bounds (build under 50 ms, the query batch under 100 ms) are asserted with =-m perf=; a plain run only applies loose bounds so busy machines and =make test-valgrind= pass. Instances are tested linearly against their world boxes; hundreds are fine, thousands would want a top-level hierarchy.
+Measured by =tests/test-collision-mesh.c= on a 160 x 160 height-field grid (51 200 triangles): the build takes roughly 15-30 ms depending on load, and 2000 capsule sweeps plus 2000 rays take a few milliseconds. The strict bounds (build under 50 ms, the query batch under 100 ms) are asserted with =-m perf=; a plain run only applies loose bounds so busy machines and =make test-valgrind= pass. Instances are culled by their cached boxes and, from 16 instances on, through the instance tree: librefall's Castle Daggerfall (a few hundred instanced models and as many enemies raycasting for line of sight) went from about 60 ms of collision queries a frame to about 3 ms.
 
 ** Tests
 :PROPERTIES:
 :CUSTOM_ID: tests
 :END:
-=tests/test-collision-mesh.c=: empty meshes, input validation (bad counts, non-finite data, degenerate queries), zero-area triangles, ray casts against a floor (double-sided normals, tags, range), nearest of several boxes, 400 random rays on 51 200 triangles against a brute-force reference, determinism of two independent builds, sphere sweeps (floor, resting contact, moving away), tunnelling through a single quad with a 1000 unit motion, capsule flank against a box edge, strict overlap, instances (translation, rotation with scale, sweeps, removal and handle reuse, invalid transforms, shape changes seen through instances), translation of triangles and instances, and query speed.
+=tests/test-collision-mesh.c=: empty meshes, input validation (bad counts, non-finite data, degenerate queries), zero-area triangles, ray casts against a floor (double-sided normals, tags, range), nearest of several boxes, 400 random rays on 51 200 triangles against a brute-force reference, determinism of two independent builds, sphere sweeps (floor, resting contact, moving away), tunnelling through a single quad with a 1000 unit motion, capsule flank against a box edge, strict overlap, instances (translation, rotation with scale, sweeps, removal and handle reuse, invalid transforms, shape changes seen through instances), the instance box cache following moves and nested shapes, the instance tree against one-instance worlds on 400 random rays and sphere sweeps over 300 instances, translation of triangles and instances, and query speed.
 
 ** See also
 :PROPERTIES:

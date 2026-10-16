@@ -757,6 +757,156 @@ test_query_speed (void)
         g_assert_cmpint (t1 - t0, <, 20000000);
 }
 
+/* queries skip instances by a cached world box; the cache must follow
+ * moves, shape edits and changes inside a nested shape */
+static void
+test_instance_bounds_cache (void)
+{
+    g_autoptr(LrgCollisionMesh) shape = unit_box_mesh ();
+    g_autoptr(LrgCollisionMesh) mid = lrg_collision_mesh_new ();
+    g_autoptr(LrgCollisionMesh) world = lrg_collision_mesh_new ();
+    gfloat m[16];
+    gfloat o[3] = { 0, 0, 0 };
+    gfloat d[3] = { 1, 0, 0 };
+    LrgCollisionHit hit;
+    guint inner;
+    guint i;
+
+    /* many instances off the ray, one on it */
+    identity (m);
+    for (i = 0; i < 200; i++)
+    {
+        m[12] = (gfloat) i;
+        m[14] = 50.0f;
+        lrg_collision_mesh_add_instance (world, shape, m, 1000 + i);
+    }
+    identity (m);
+    m[12] = 10.0f;
+    lrg_collision_mesh_add_instance (world, shape, m, 7);
+    g_assert_true (lrg_collision_mesh_raycast (world, o, d, 100.0f, &hit));
+    g_assert_cmpuint (hit.instance_id, ==, 7);
+    g_assert_cmpfloat_with_epsilon (hit.distance, 9.5f, EPS);
+
+    /* a nested shape: world -> mid -> box; moving the box inside mid
+     * changes no generation the world sees, so it must not be cached */
+    identity (m);
+    m[12] = 4.0f;
+    inner = lrg_collision_mesh_add_instance (mid, shape, m, 0);
+    identity (m);
+    lrg_collision_mesh_add_instance (world, mid, m, 8);
+    g_assert_true (lrg_collision_mesh_raycast (world, o, d, 100.0f, &hit));
+    g_assert_cmpuint (hit.instance_id, ==, 8);
+    g_assert_cmpfloat_with_epsilon (hit.distance, 3.5f, EPS);
+    m[12] = 20.0f;
+    g_assert_true (lrg_collision_mesh_set_instance_transform (mid, inner, m));
+    g_assert_true (lrg_collision_mesh_raycast (world, o, d, 100.0f, &hit));
+    g_assert_cmpuint (hit.instance_id, ==, 7);
+}
+
+/* the instance tree must answer exactly what visiting every instance
+ * answers: random boxes, random rays and sweeps, compared with the
+ * nearest result over one-instance worlds (scanned linearly) */
+static void
+test_instance_tree_matches_linear (void)
+{
+    g_autoptr(LrgCollisionMesh) shape = unit_box_mesh ();
+    g_autoptr(LrgCollisionMesh) world = lrg_collision_mesh_new ();
+    g_autoptr(GPtrArray) singles = g_ptr_array_new_with_free_func (g_object_unref);
+    guint32 state = 12345u;
+    guint i;
+    guint r;
+
+    for (i = 0; i < 300; i++)
+    {
+        LrgCollisionMesh *single = lrg_collision_mesh_new ();
+        gfloat m[16];
+        gfloat s;
+
+        identity (m);
+        s = rng_float (&state, 0.2f, 3.0f);
+        m[0] = s;
+        m[5] = rng_float (&state, 0.2f, 3.0f);
+        m[10] = s;
+        m[12] = rng_float (&state, -50.0f, 50.0f);
+        m[13] = rng_float (&state, -5.0f, 5.0f);
+        m[14] = rng_float (&state, -50.0f, 50.0f);
+        g_assert_cmpuint (lrg_collision_mesh_add_instance (world, shape, m, 100 + i), ==, i);
+        lrg_collision_mesh_add_instance (single, shape, m, 100 + i);
+        g_ptr_array_add (singles, single);
+    }
+
+    for (r = 0; r < 400; r++)
+    {
+        gfloat o[3];
+        gfloat d[3];
+        LrgCollisionHit hit;
+        LrgCollisionHit best;
+        gboolean any;
+        gboolean got;
+
+        o[0] = rng_float (&state, -60.0f, 60.0f);
+        o[1] = rng_float (&state, -6.0f, 6.0f);
+        o[2] = rng_float (&state, -60.0f, 60.0f);
+        d[0] = rng_float (&state, -1.0f, 1.0f);
+        d[1] = rng_float (&state, -0.2f, 0.2f);
+        d[2] = rng_float (&state, -1.0f, 1.0f);
+
+        any = FALSE;
+        memset (&best, 0, sizeof (best));
+        for (i = 0; i < singles->len; i++)
+        {
+            if (lrg_collision_mesh_raycast (g_ptr_array_index (singles, i), o, d, 200.0f, &hit) &&
+                (!any || hit.distance < best.distance))
+            {
+                best = hit;
+                any = TRUE;
+            }
+        }
+        got = lrg_collision_mesh_raycast (world, o, d, 200.0f, &hit);
+        g_assert_cmpint (got, ==, any);
+        if (got)
+        {
+            g_assert_cmpfloat_with_epsilon (hit.distance, best.distance, 1e-4f);
+            g_assert_cmpuint (hit.instance_id, ==, best.instance_id);
+        }
+
+        /* a sphere sweep along the same ray (box queries underneath) */
+        d[0] *= 20.0f;
+        d[1] *= 20.0f;
+        d[2] *= 20.0f;
+        any = FALSE;
+        for (i = 0; i < singles->len; i++)
+        {
+            if (lrg_collision_mesh_sweep_sphere (g_ptr_array_index (singles, i), o, 0.5f, d, &hit) &&
+                (!any || hit.distance < best.distance))
+            {
+                best = hit;
+                any = TRUE;
+            }
+        }
+        got = lrg_collision_mesh_sweep_sphere (world, o, 0.5f, d, &hit);
+        g_assert_cmpint (got, ==, any);
+        if (got)
+            g_assert_cmpfloat_with_epsilon (hit.distance, best.distance, 1e-4f);
+    }
+
+    /* moving and removing instances rebuilds the tree */
+    {
+        gfloat m[16];
+        gfloat o[3] = { 0, 100, 0 };
+        gfloat d[3] = { 0, -1, 0 };
+        LrgCollisionHit hit;
+
+        identity (m);
+        m[13] = 50.0f;
+        g_assert_true (lrg_collision_mesh_set_instance_transform (world, 17, m));
+        g_assert_true (lrg_collision_mesh_raycast (world, o, d, 200.0f, &hit));
+        g_assert_cmpuint (hit.instance_id, ==, 117);
+        g_assert_true (lrg_collision_mesh_remove_instance (world, 17));
+        g_assert_true (!lrg_collision_mesh_raycast (world, o, d, 40.0f, &hit));
+    }
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -777,6 +927,8 @@ main (int   argc,
     g_test_add_func ("/collision-mesh/instances", test_instances);
     g_test_add_func ("/collision-mesh/instances/invalid", test_instance_invalid);
     g_test_add_func ("/collision-mesh/instances/shape-changes", test_instance_shape_changes);
+    g_test_add_func ("/collision-mesh/instances/bounds-cache", test_instance_bounds_cache);
+    g_test_add_func ("/collision-mesh/instances/tree-matches-linear", test_instance_tree_matches_linear);
     g_test_add_func ("/collision-mesh/translate", test_translate);
     g_test_add_func ("/collision-mesh/query-speed", test_query_speed);
 
