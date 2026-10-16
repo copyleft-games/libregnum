@@ -8,8 +8,10 @@
  * colour, one directional light and any number of point lights, of
  * which the ones nearest the camera (up to LRG_LIGHT_SET_MAX_ACTIVE) are
  * selected each frame and uploaded to a GLSL 330 shader usable with
- * LrgStaticBatch and LrgTerrain. Light bookkeeping and selection are
- * headless; only the shader needs GL.
+ * LrgStaticBatch and LrgTerrain, plus optional distance fog (linear,
+ * exponential, uniform or height) the same shader applies. Light
+ * bookkeeping, selection and the fog model are headless; only the
+ * shader needs GL.
  */
 
 #pragma once
@@ -22,6 +24,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../lrg-enums.h"
 
 G_BEGIN_DECLS
 
@@ -319,7 +322,8 @@ lrg_light_set_get_shader (LrgLightSet *self);
  * @camera_z: camera world Z
  *
  * Selects lights for the camera (lrg_light_set_select()) and uploads
- * ambient, directional, point light and cutout uniforms to the shader.
+ * ambient, directional, point light, cutout and fog uniforms to the
+ * shader.
  * Call once per frame (and after changing lights) before drawing with
  * the shader.
  *
@@ -355,6 +359,108 @@ lrg_light_set_sample (LrgLightSet      *self,
                       const GrlVector3 *position,
                       const GrlVector3 *normal,
                       gfloat           *out_rgb);
+
+/**
+ * lrg_light_set_set_fog:
+ * @self: an #LrgLightSet
+ * @type: the fog model (see #LrgFogType)
+ * @color: fog colour; its alpha caps the fog (255 = surfaces vanish
+ *   into the colour, 128 = at most half fogged)
+ * @density: exponential/height density per world unit, or the constant
+ *   amount (0 .. 1) of %LRG_FOG_TYPE_UNIFORM
+ * @start: linear fog: distance where the fog begins
+ * @end: linear fog: distance where it is full (end <= start: a hard
+ *   edge at @end)
+ *
+ * Turns on distance fog. Fragments drawn with lrg_light_set_get_shader()
+ * (and billboards lit by this set, see #LrgBillboardBatch) blend toward
+ * @color by the fog amount at their distance from the camera of the
+ * last lrg_light_set_apply():
+ *
+ * - %LRG_FOG_TYPE_LINEAR: clamp ((d - @start) / (@end - @start))
+ * - %LRG_FOG_TYPE_EXPONENTIAL: 1 - exp (-@density * d)
+ * - %LRG_FOG_TYPE_UNIFORM: @density, at every distance
+ * - %LRG_FOG_TYPE_HEIGHT: exponential, thinned above the base height
+ *   (lrg_light_set_set_fog_height())
+ *
+ * The amount is then multiplied by @color's alpha. Takes effect on the
+ * next apply. #LrgFog (lrg_fog_apply()) and
+ * lrg_weather_manager_apply_fog() call this from weather.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_fog (LrgLightSet    *self,
+                       LrgFogType      type,
+                       const GrlColor *color,
+                       gfloat          density,
+                       gfloat          start,
+                       gfloat          end);
+
+/**
+ * lrg_light_set_set_fog_height:
+ * @self: an #LrgLightSet
+ * @base_height: world height below which %LRG_FOG_TYPE_HEIGHT fog has
+ *   its full density
+ * @falloff: how fast it thins above @base_height, per world unit
+ *
+ * Shapes %LRG_FOG_TYPE_HEIGHT fog (defaults 0 and 1). The base is a
+ * world height; it is moved by the origin like everything else.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_fog_height (LrgLightSet *self,
+                              gfloat       base_height,
+                              gfloat       falloff);
+
+/**
+ * lrg_light_set_clear_fog:
+ * @self: an #LrgLightSet
+ *
+ * Turns the fog off (the default).
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_clear_fog (LrgLightSet *self);
+
+/**
+ * lrg_light_set_get_fog:
+ * @self: an #LrgLightSet
+ * @out_type: (out) (optional): the fog model
+ * @out_color: (out caller-allocates) (optional): the fog colour
+ * @out_density: (out) (optional): the density
+ * @out_start: (out) (optional): the linear start
+ * @out_end: (out) (optional): the linear end
+ *
+ * Reads the fog set by lrg_light_set_set_fog(). The outputs are left
+ * alone when the fog is off.
+ *
+ * Returns: %TRUE when fog is on
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_light_set_get_fog (LrgLightSet *self,
+                       LrgFogType  *out_type,
+                       GrlColor    *out_color,
+                       gfloat      *out_density,
+                       gfloat      *out_start,
+                       gfloat      *out_end);
+
+/**
+ * lrg_light_set_sample_fog:
+ * @self: an #LrgLightSet
+ * @position: a point in draw space (world minus the origin)
+ *
+ * The fog amount the shader gives a fragment at @position, seen from
+ * the camera of the last lrg_light_set_select() or
+ * lrg_light_set_apply(): 0 (clear, or fog off) .. the colour's alpha
+ * as a fraction. Headless.
+ *
+ * Returns: the share of the fog colour, 0 .. 1
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_light_set_sample_fog (LrgLightSet      *self,
+                          const GrlVector3 *position);
 
 /**
  * lrg_light_set_bind:

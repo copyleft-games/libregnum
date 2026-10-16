@@ -23,6 +23,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "graphics/lrg-billboard-batch.h"
+#include "graphics/lrg-light-set-private.h"
 
 /* Below this horizontal distance the camera is "above" the billboard and
  * the axis-locked facing is undefined; a fixed basis is used instead. */
@@ -60,22 +61,27 @@ struct _LrgBillboardBatch
     gboolean          shader_tried;
     gboolean          shader_loaded;
     gint              cutoff_loc;
+    LrgLightSetFogLocations fog_locs;
     LrgLightSet      *light_set;    /* own lights, NULL: the bound set */
     gboolean          lit;
 };
 
 G_DEFINE_TYPE (LrgBillboardBatch, lrg_billboard_batch, G_TYPE_OBJECT)
 
-/* raylib's default vertex shader inputs, plus an alpha test. */
+/* raylib's default vertex shader inputs, plus an alpha test and the
+ * light set's fog. rlVertex3f() applies the rlgl transform on the CPU,
+ * so vertexPosition is already in the light set's draw space. */
 static const gchar cutout_vs[] =
     "#version 330\n"
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
     "in vec4 vertexColor;\n"
     "uniform mat4 mvp;\n"
+    "out vec3 fragPosition;\n"
     "out vec2 fragTexCoord;\n"
     "out vec4 fragColor;\n"
     "void main() {\n"
+    "    fragPosition = vertexPosition;\n"
     "    fragTexCoord = vertexTexCoord;\n"
     "    fragColor = vertexColor;\n"
     "    gl_Position = mvp * vec4(vertexPosition, 1.0);\n"
@@ -83,16 +89,18 @@ static const gchar cutout_vs[] =
 
 static const gchar cutout_fs[] =
     "#version 330\n"
+    "in vec3 fragPosition;\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "uniform sampler2D texture0;\n"
     "uniform vec4 colDiffuse;\n"
     "uniform float alphaCutoff;\n"
+    LRG_FOG_GLSL
     "out vec4 finalColor;\n"
     "void main() {\n"
     "    vec4 texel = texture(texture0, fragTexCoord) * colDiffuse * fragColor;\n"
     "    if (texel.a < alphaCutoff) discard;\n"
-    "    finalColor = texel;\n"
+    "    finalColor = vec4(mix(texel.rgb, fogColor.rgb, lrg_fog_amount(fragPosition)), texel.a);\n"
     "}\n";
 
 /* ------------------------------------------------------------------------ */
@@ -139,6 +147,7 @@ lrg_billboard_batch_init (LrgBillboardBatch *self)
                                             NULL, material_texture_free);
     self->cutoff = LRG_BILLBOARD_BATCH_DEFAULT_CUTOFF;
     self->cutoff_loc = -1;
+    memset (&self->fog_locs, 0xff, sizeof self->fog_locs);   /* all -1 */
     self->lit = TRUE;
 }
 
@@ -662,6 +671,7 @@ ensure_shader (LrgBillboardBatch *self)
 
     self->shader_loaded = TRUE;
     self->cutoff_loc = GetShaderLocation (self->shader, "alphaCutoff");
+    lrg_light_set_fog_locations (self->shader, &self->fog_locs);
 }
 
 static gint
@@ -728,8 +738,11 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     lights = active_light_set (self);
     transform = rlGetMatrixTransform ();
 
+    /* The shader is needed for the cutout or for the light set's fog;
+     * without either the default shader blends plainly. */
     use_shader = FALSE;
-    if (self->cutoff > 0.0f)
+    if (self->cutoff > 0.0f
+        || (lights != NULL && lrg_light_set_get_fog (lights, NULL, NULL, NULL, NULL, NULL)))
     {
         ensure_shader (self);
         use_shader = self->shader_loaded;
@@ -738,6 +751,7 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     {
         BeginShaderMode (self->shader);
         SetShaderValue (self->shader, self->cutoff_loc, &self->cutoff, SHADER_UNIFORM_FLOAT);
+        lrg_light_set_upload_fog (lights, self->shader, &self->fog_locs);
     }
 
     open = FALSE;

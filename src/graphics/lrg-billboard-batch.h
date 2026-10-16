@@ -264,7 +264,9 @@ lrg_billboard_batch_set_alpha_cutoff (LrgBillboardBatch *self,
  *
  * Lit billboards are tinted per quad by the light reaching their centre
  * (lrg_light_set_sample() without a normal, after the current rlgl
- * transform), multiplied with their own tint.  The batch keeps a
+ * transform), multiplied with their own tint.  When the light set has
+ * fog (lrg_light_set_set_fog()) every quad, emissive ones included, is
+ * fogged per fragment like the static geometry.  The batch keeps a
  * reference.
  */
 LRG_AVAILABLE_IN_ALL
@@ -358,7 +360,9 @@ lrg_billboard_batch_get_lit_tint (LrgBillboardBatch *self,
  * material.  Call between BeginMode3D()/EndMode3D() (or
  * grl_camera3d_begin()/end()).  Spherical mode reads the camera basis
  * from the current modelview matrix.  With a light set (own or bound)
- * every non-emissive quad is tinted by the light at its centre.
+ * every non-emissive quad is tinted by the light at its centre, and the
+ * light set's fog applies to every quad (the cutout shader is used for
+ * it, with the cutoff at 0 if none was set).
  */
 LRG_AVAILABLE_IN_ALL
 void

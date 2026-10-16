@@ -2,9 +2,9 @@
 :PROPERTIES:
 :CUSTOM_ID: lrglightset---forward-lighting-for-static-geometry
 :END:
-Lights static 3D geometry drawn with =DrawMesh()= - [[file:static-batch.org][LrgStaticBatch]] chunks and [[file:terrain.org][LrgTerrain]] meshes - with an ambient colour, one directional light (the sun or moon) and any number of point lights (torches, lamp posts, windows). Each frame the point lights nearest the camera, up to =LRG_LIGHT_SET_MAX_ACTIVE= (16), are selected and uploaded to a GLSL 330 shader that the light set owns and hands out with =get_shader()=.
+Lights static 3D geometry drawn with =DrawMesh()= - [[file:static-batch.org][LrgStaticBatch]] chunks and [[file:terrain.org][LrgTerrain]] meshes - with an ambient colour, one directional light (the sun or moon) and any number of point lights (torches, lamp posts, windows). Each frame the point lights nearest the camera, up to =LRG_LIGHT_SET_MAX_ACTIVE= (16), are selected and uploaded to a GLSL 330 shader that the light set owns and hands out with =get_shader()=. The same shader applies optional distance fog (linear, exponential, uniform or height), which the weather module's [[file:../weather/index.org][LrgFog]] and =LrgWeatherManager= drive.
 
-Light bookkeeping and the nearest-N selection are headless; only the shader needs GL. Without GLSL 330 (or without a window) =get_shader()= returns =NULL= and callers keep raylib's default shader, so a game degrades to unlit rather than failing.
+Light bookkeeping, the nearest-N selection and the fog model are headless; only the shader needs GL. Without GLSL 330 (or without a window) =get_shader()= returns =NULL= and callers keep raylib's default shader, so a game degrades to unlit rather than failing.
 
 ** Types
 :PROPERTIES:
@@ -55,6 +55,15 @@ void       lrg_light_set_set_alpha_cutoff (LrgLightSet *self, gfloat cutoff);
 GrlShader *lrg_light_set_get_shader       (LrgLightSet *self);
 gboolean   lrg_light_set_apply            (LrgLightSet *self, gdouble camera_x, gdouble camera_y, gdouble camera_z);
 
+/* Distance fog */
+void     lrg_light_set_set_fog        (LrgLightSet *self, LrgFogType type, const GrlColor *color,
+                                       gfloat density, gfloat start, gfloat end);
+void     lrg_light_set_set_fog_height (LrgLightSet *self, gfloat base_height, gfloat falloff);
+void     lrg_light_set_clear_fog      (LrgLightSet *self);
+gboolean lrg_light_set_get_fog        (LrgLightSet *self, LrgFogType *type, GrlColor *color,
+                                       gfloat *density, gfloat *start, gfloat *end);   /* FALSE: off */
+gfloat   lrg_light_set_sample_fog     (LrgLightSet *self, const GrlVector3 *position); /* headless */
+
 /* CPU evaluation and binding (headless) */
 void         lrg_light_set_sample    (LrgLightSet *self, const GrlVector3 *position,
                                       const GrlVector3 *normal,   /* NULL: no Lambert term */
@@ -79,7 +88,8 @@ light = ambient
       + directional_color * max(dot(n, -direction), 0)
       + sum over active point lights of
           color * intensity * k² * max(dot(n, L), 0),   k = clamp(1 - dist / radius, 0, 1)
-final = texel * colDiffuse * vertexColor * light   (alpha unchanged)
+lit   = texel * colDiffuse * vertexColor * light
+final = mix(lit, fog_color, fog_amount(fragment))   (alpha unchanged)
 #+end_example
 
 =L= is the unit vector from the fragment to the light. Colours are the 0..255 channels divided by 255; the sum is not clamped before multiplying, so overlapping lights can over-brighten (clamped by the framebuffer). The directional =direction= is where the light travels (for an [[file:sky-dome.org][LrgSkyDome]], the negated sun direction).
@@ -93,6 +103,29 @@ final = texel * colDiffuse * vertexColor * light   (alpha unchanged)
 - Uniforms persist in the program: =apply()= once per frame (and after changing lights) is enough for every batch using the shader.
 - =set_alpha_cutoff (c)= with =c > 0= discards fragments whose final alpha is below =c= (foliage, fences) so they never write depth; 0 (default) keeps all.
 - =get_shader()= builds the shader on the first call with a window; if raylib falls back to its default program (compile failure, e.g. GLES2), it returns =NULL= for good. The shader belongs to the light set; release the light set and any batch holding the shader before closing the window.
+
+*** Distance fog
+:PROPERTIES:
+:CUSTOM_ID: distance-fog
+:END:
+Off by default. =set_fog()= turns it on; the fragment blends toward the fog colour by
+
+#+begin_example
+d = distance(fragment, camera)          (both in draw space: world minus the origin)
+LINEAR       f = clamp((d - start) / (end - start), 0, 1)     end <= start: 0 before end, 1 from end
+EXPONENTIAL  f = 1 - exp(-density * d)
+UNIFORM      f = clamp(density, 0, 1)                         every distance
+HEIGHT       f = (1 - exp(-density * d)) * exp(-falloff * max(height - base, 0))
+fog_amount = f * fog_color.alpha / 255
+#+end_example
+
+- The camera is the one of the last =select()= / =apply()=; =apply()= uploads it with the fog uniforms (=fogType= -1 when off, =fogColor=, =fogParams= = (density, start, end, falloff), =fogBase=, =fogCamera=).
+- The colour's alpha caps the fog: 255 lets distant surfaces vanish into the colour, 128 never fogs more than half. Weather fades fog in and out through this alpha.
+- =set_fog_height (base, falloff)= shapes HEIGHT fog (defaults 0 and 1); =base= is a world height, moved by the origin like everything else.
+- Non-finite numbers are stored as 0; negative densities as 0. =clear_fog()= turns it off.
+- =sample_fog (position)= is the same model on the CPU, for a draw-space position; it equals what the shader computes there (tests, picking, CPU-lit geometry).
+- Lit [[file:billboard-batch.org][billboard batches]] fog their quads per fragment with the same model and uniforms.
+- The sky is not fogged (it does not use this shader); match its horizon to the fog colour for a seamless far plane.
 
 *** Selection
 :PROPERTIES:
@@ -139,6 +172,7 @@ lrg_sky_dome_get_sun_direction (sky, &sun);
 sun_light.x = -sun.x; sun_light.y = -sun.y; sun_light.z = -sun.z;
 lrg_light_set_set_directional (lights, &sun_light, &sun_color);
 lrg_light_set_set_origin (lights, origin_x, 0.0, origin_z);
+lrg_weather_manager_apply_fog (weather, lights);   /* or lrg_light_set_set_fog () */
 lrg_light_set_apply (lights, player_x, player_y, player_z);
 
 grl_camera3d_begin (camera);

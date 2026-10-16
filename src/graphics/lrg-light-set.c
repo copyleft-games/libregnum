@@ -10,7 +10,9 @@
  * shader uses raylib's default attribute and matrix names, so DrawMesh()
  * (LrgStaticBatch, LrgTerrain) feeds it model and normal matrices
  * without any extra work; lighting happens in the space the model
- * matrix maps to (origin-relative with a floating origin).
+ * matrix maps to (origin-relative with a floating origin). Fog is a
+ * blend toward one colour by distance from the selected camera; the
+ * GLSL and lrg_fog_amount() share one model (lrg-light-set-private.h).
  */
 
 #include "config.h"
@@ -24,6 +26,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "graphics/lrg-light-set.h"
+#include "graphics/lrg-light-set-private.h"
 
 typedef struct
 {
@@ -52,6 +55,16 @@ struct _LrgLightSet
     guint       active[LRG_LIGHT_SET_MAX_ACTIVE];
     guint       n_active;
     gfloat      cutoff;
+    gdouble     camera[3];       /* world, last select() */
+
+    gboolean    fog_on;
+    LrgFogType  fog_type;
+    gfloat      fog_color[4];    /* 0 .. 1, alpha caps the amount */
+    gfloat      fog_density;
+    gfloat      fog_start;
+    gfloat      fog_end;
+    gfloat      fog_base;        /* world height */
+    gfloat      fog_falloff;
 
     GrlShader  *shader;
     gboolean    shader_tried;
@@ -63,6 +76,7 @@ struct _LrgLightSet
     gint        loc_colors;
     gint        loc_radii;
     gint        loc_cutoff;
+    LrgLightSetFogLocations fog_locs;
 };
 
 G_DEFINE_TYPE (LrgLightSet, lrg_light_set, G_TYPE_OBJECT)
@@ -110,6 +124,7 @@ static const gchar light_fs[] =
     "uniform vec3 lightColor[MAX_LIGHTS];\n"
     "uniform float lightRadius[MAX_LIGHTS];\n"
     "uniform float alphaCutoff;\n"
+    LRG_FOG_GLSL
     "out vec4 finalColor;\n"
     "void main() {\n"
     "    vec4 texel = texture(texture0, fragTexCoord) * colDiffuse * fragColor;\n"
@@ -125,7 +140,8 @@ static const gchar light_fs[] =
     "        float lambert = dist > 0.0001 ? max(dot(n, d / dist), 0.0) : 1.0;\n"
     "        light += lightColor[i] * (k * k * lambert);\n"
     "    }\n"
-    "    finalColor = vec4(texel.rgb * light, texel.a);\n"
+    "    vec3 lit = texel.rgb * light;\n"
+    "    finalColor = vec4(mix(lit, fogColor.rgb, lrg_fog_amount(fragPosition)), texel.a);\n"
     "}\n";
 
 /* ------------------------------------------------------------------------ */
@@ -155,6 +171,8 @@ lrg_light_set_init (LrgLightSet *self)
     self->ambient[0] = self->ambient[1] = self->ambient[2] = 64.0f / 255.0f;
     self->lights = g_array_new (FALSE, TRUE, sizeof (PointLight));
     self->max_active = LRG_LIGHT_SET_MAX_ACTIVE;
+    self->fog_type = LRG_FOG_TYPE_LINEAR;
+    self->fog_falloff = 1.0f;
 }
 
 LrgLightSet *
@@ -431,6 +449,11 @@ lrg_light_set_select (LrgLightSet *self,
 
     g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
 
+    /* The fog measures distances from this camera too. */
+    self->camera[0] = camera_x;
+    self->camera[1] = camera_y;
+    self->camera[2] = camera_z;
+
     self->n_active = 0;
     if (self->max_active == 0)
         return 0;
@@ -536,6 +559,7 @@ lrg_light_set_get_shader (LrgLightSet *self)
     self->loc_colors = GetShaderLocation (*handle, "lightColor");
     self->loc_radii = GetShaderLocation (*handle, "lightRadius");
     self->loc_cutoff = GetShaderLocation (*handle, "alphaCutoff");
+    lrg_light_set_fog_locations (*handle, &self->fog_locs);
     return self->shader;
 }
 
@@ -592,7 +616,194 @@ lrg_light_set_apply (LrgLightSet *self,
         SetShaderValueV (*handle, self->loc_colors, colors, SHADER_UNIFORM_VEC3, count);
         SetShaderValueV (*handle, self->loc_radii, radii, SHADER_UNIFORM_FLOAT, count);
     }
+    lrg_light_set_upload_fog (self, *handle, &self->fog_locs);
     return TRUE;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Fog                                                                      */
+/* ------------------------------------------------------------------------ */
+
+gfloat
+lrg_fog_amount (LrgFogType type,
+                gfloat     density,
+                gfloat     start,
+                gfloat     end,
+                gfloat     base_height,
+                gfloat     falloff,
+                gfloat     distance,
+                gfloat     height)
+{
+    gfloat f;
+
+    /* Mirrors lrg_fog_amount() in LRG_FOG_GLSL line by line. */
+    if (!isfinite (distance) || distance < 0.0f)
+        distance = 0.0f;
+    switch (type)
+    {
+    case LRG_FOG_TYPE_UNIFORM:
+        f = density;
+        break;
+    case LRG_FOG_TYPE_LINEAR:
+        if (end > start)
+            f = (distance - start) / (end - start);
+        else
+            f = distance >= end ? 1.0f : 0.0f;
+        break;
+    case LRG_FOG_TYPE_HEIGHT:
+        f = (1.0f - expf (-density * distance))
+            * expf (-falloff * MAX (height - base_height, 0.0f));
+        break;
+    case LRG_FOG_TYPE_EXPONENTIAL:
+    default:
+        f = 1.0f - expf (-density * distance);
+        break;
+    }
+    if (!isfinite (f))
+        return 0.0f;
+    return CLAMP (f, 0.0f, 1.0f);
+}
+
+void
+lrg_light_set_fog_locations (Shader                   shader,
+                             LrgLightSetFogLocations *out_locs)
+{
+    out_locs->type = GetShaderLocation (shader, "fogType");
+    out_locs->color = GetShaderLocation (shader, "fogColor");
+    out_locs->params = GetShaderLocation (shader, "fogParams");
+    out_locs->base = GetShaderLocation (shader, "fogBase");
+    out_locs->camera = GetShaderLocation (shader, "fogCamera");
+}
+
+void
+lrg_light_set_upload_fog (LrgLightSet                   *self,
+                          Shader                         shader,
+                          const LrgLightSetFogLocations *locs)
+{
+    gint   type = -1;
+    gfloat params[4];
+    gfloat camera[3];
+    gfloat base;
+    guint  k;
+
+    if (self == NULL || !self->fog_on)
+    {
+        SetShaderValue (shader, locs->type, &type, SHADER_UNIFORM_INT);
+        return;
+    }
+
+    /* Everything in draw space: the eye and the height base move with
+     * the floating origin, like the point lights. */
+    type = (gint)self->fog_type;
+    params[0] = self->fog_density;
+    params[1] = self->fog_start;
+    params[2] = self->fog_end;
+    params[3] = self->fog_falloff;
+    for (k = 0; k < 3; k++)
+        camera[k] = (gfloat)(self->camera[k] - self->origin[k]);
+    base = (gfloat)((gdouble)self->fog_base - self->origin[1]);
+
+    SetShaderValue (shader, locs->type, &type, SHADER_UNIFORM_INT);
+    SetShaderValue (shader, locs->color, self->fog_color, SHADER_UNIFORM_VEC4);
+    SetShaderValue (shader, locs->params, params, SHADER_UNIFORM_VEC4);
+    SetShaderValue (shader, locs->base, &base, SHADER_UNIFORM_FLOAT);
+    SetShaderValue (shader, locs->camera, camera, SHADER_UNIFORM_VEC3);
+}
+
+void
+lrg_light_set_set_fog (LrgLightSet    *self,
+                       LrgFogType      type,
+                       const GrlColor *color,
+                       gfloat          density,
+                       gfloat          start,
+                       gfloat          end)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (color != NULL);
+
+    /* Non-finite numbers would poison every fragment; treat them as 0. */
+    self->fog_on = TRUE;
+    self->fog_type = type;
+    color_to_rgb (color, self->fog_color);
+    self->fog_color[3] = (gfloat)color->a / 255.0f;
+    self->fog_density = isfinite (density) ? MAX (density, 0.0f) : 0.0f;
+    self->fog_start = isfinite (start) ? start : 0.0f;
+    self->fog_end = isfinite (end) ? end : 0.0f;
+}
+
+void
+lrg_light_set_set_fog_height (LrgLightSet *self,
+                              gfloat       base_height,
+                              gfloat       falloff)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    self->fog_base = isfinite (base_height) ? base_height : 0.0f;
+    self->fog_falloff = isfinite (falloff) ? MAX (falloff, 0.0f) : 0.0f;
+}
+
+void
+lrg_light_set_clear_fog (LrgLightSet *self)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    self->fog_on = FALSE;
+}
+
+gboolean
+lrg_light_set_get_fog (LrgLightSet *self,
+                       LrgFogType  *out_type,
+                       GrlColor    *out_color,
+                       gfloat      *out_density,
+                       gfloat      *out_start,
+                       gfloat      *out_end)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
+
+    if (!self->fog_on)
+        return FALSE;
+    if (out_type != NULL)
+        *out_type = self->fog_type;
+    if (out_color != NULL)
+    {
+        out_color->r = (guint8)(self->fog_color[0] * 255.0f + 0.5f);
+        out_color->g = (guint8)(self->fog_color[1] * 255.0f + 0.5f);
+        out_color->b = (guint8)(self->fog_color[2] * 255.0f + 0.5f);
+        out_color->a = (guint8)(self->fog_color[3] * 255.0f + 0.5f);
+    }
+    if (out_density != NULL)
+        *out_density = self->fog_density;
+    if (out_start != NULL)
+        *out_start = self->fog_start;
+    if (out_end != NULL)
+        *out_end = self->fog_end;
+    return TRUE;
+}
+
+gfloat
+lrg_light_set_sample_fog (LrgLightSet      *self,
+                          const GrlVector3 *position)
+{
+    gdouble d[3];
+    gfloat  distance;
+    gfloat  height;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0.0f);
+    g_return_val_if_fail (position != NULL, 0.0f);
+
+    if (!self->fog_on)
+        return 0.0f;
+
+    /* The shader's draw space: eye and base minus the origin. */
+    d[0] = (gdouble)position->x - (self->camera[0] - self->origin[0]);
+    d[1] = (gdouble)position->y - (self->camera[1] - self->origin[1]);
+    d[2] = (gdouble)position->z - (self->camera[2] - self->origin[2]);
+    distance = (gfloat)sqrt (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    height = (gfloat)((gdouble)position->y + self->origin[1]);
+
+    return lrg_fog_amount (self->fog_type, self->fog_density, self->fog_start,
+                           self->fog_end, self->fog_base, self->fog_falloff,
+                           distance, height) * self->fog_color[3];
 }
 
 /* ------------------------------------------------------------------------ */
