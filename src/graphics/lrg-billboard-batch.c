@@ -8,7 +8,8 @@
  *
  * Static billboards live on the GPU: once a batch of at least
  * GPU_MIN_QUADS billboards has been drawn GPU_SETTLE_DRAWS times without
- * a billboard being added, its visible billboards are written once into
+ * a billboard being added (at its first draw when GPU_EAGER_QUADS were
+ * added since the last upload), its visible billboards are written once into
  * vertex buffers sorted by material (pages of up to PAGE_QUADS quads,
  * 16-bit indices). Every frame the vertex shader turns each quad
  * towards the eye and lights it at its centre (LRG_LIGHT_SAMPLE_GLSL),
@@ -55,6 +56,10 @@
 
 /* GPU path: draws without an added billboard before the upload */
 #define GPU_SETTLE_DRAWS (2u)
+
+/* GPU path: a batch this large uploads at its first draw (a streamed
+ * landscape tile: drawing it the immediate way first costs a frame) */
+#define GPU_EAGER_QUADS (1024u)
 
 /* one vertex of the GPU path: position (the billboard's pivot point),
  * texture coordinate, tint, and (corner right offset, corner up offset,
@@ -1155,12 +1160,16 @@ gpu_build (LrgBillboardBatch *self)
 }
 
 /* gpu_maybe_build:
- * Uploads once a large enough batch has settled, and again when the
- * billboards added since outnumber an eighth of the upload. */
+ * Uploads once a large enough batch has settled (a very large one at
+ * once), and again when the billboards added since outnumber an eighth
+ * of the upload. */
 static void
 gpu_maybe_build (LrgBillboardBatch *self)
 {
-    if (self->gpu_off || self->settle < GPU_SETTLE_DRAWS)
+    if (self->gpu_off)
+        return;
+    if (self->settle < GPU_SETTLE_DRAWS &&
+        !(self->settle >= 1 && self->added >= GPU_EAGER_QUADS))
         return;
     if (self->gpu_quads == 0)
     {
