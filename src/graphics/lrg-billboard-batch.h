@@ -363,6 +363,12 @@ lrg_billboard_batch_get_lit_tint (LrgBillboardBatch *self,
  * every non-emissive quad is tinted by the light at its centre, and the
  * light set's fog applies to every quad (the cutout shader is used for
  * it, with the cutoff at 0 if none was set).
+ *
+ * A batch of at least 64 billboards that has been drawn twice without
+ * additions keeps its unchanged billboards in GPU vertex buffers and
+ * turns and lights them in a vertex shader (same pixels, one draw call
+ * per material); billboards changed afterwards are drawn the immediate
+ * way.  See docs/modules/graphics/billboard-batch.org.
  */
 LRG_AVAILABLE_IN_ALL
 void

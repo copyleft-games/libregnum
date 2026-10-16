@@ -2,7 +2,7 @@
 :PROPERTIES:
 :CUSTOM_ID: lrgbillboardbatch---batched-billboards
 :END:
-Draws many camera-facing textured quads ("billboards", the /flats/ of sprite-based 3D games: trees, NPCs, monsters, signs) with one texture bind per material. Billboards are plain records (position, size, pivot, UV rectangle, tint, visibility, material); every =draw()= rebuilds their quads from the camera position, so they turn as the camera moves, and emits them through rlgl's immediate batch grouped by material.
+Draws many camera-facing textured quads ("billboards", the /flats/ of sprite-based 3D games: trees, NPCs, monsters, signs) with one texture bind per material. Billboards are plain records (position, size, pivot, UV rectangle, tint, visibility, material). A large batch that stops changing lives on the GPU and turns its quads towards the eye in the vertex shader (see [[#gpu-path][GPU path]]); everything else is rebuilt every =draw()= from the camera position, so it turns as the camera moves, and emitted through rlgl's immediate batch grouped by material.
 
 Orientation and corner math run headlessly (=get_corners()=), so picking and tests see exactly what is drawn. Only =draw()= needs a GL context.
 
@@ -75,6 +75,18 @@ gboolean     lrg_billboard_batch_get_lit_tint  (LrgBillboardBatch *self, guint i
 - Call =draw()= inside =BeginMode3D()= / =grl_camera3d_begin()=.
 - *Lighting*: a batch is lit by its own [[file:light-set.org][LrgLightSet]] (=set_light_set()=), else by the bound one (=lrg_light_set_bind()=), unless =set_lit (FALSE)=. The quads are immediate-mode geometry the light set's shader cannot light correctly (rlgl transforms their vertices on the CPU), so the batch lights them on the CPU instead: per quad, the centre (the pivot moved to mid-height along world up) is put through the current rlgl transform (=rlGetMatrixTransform()=, the space the static-geometry shader lights) and =lrg_light_set_sample()= is evaluated there without a normal (the quad faces the camera, so every light counts in full). The vertex colour becomes =tint × light=, clamped to 255 per channel; alpha is the tint's. Emissive billboards (flames, lamps) keep their plain tint. Lights come from the light set's last selection, so call =lrg_light_set_apply()= (or =select()=) first, as for the shader. =get_lit_tint()= returns the colour a draw would use with an identity transform (tests, tools).
 - *Fog*: when the batch's light set (own or bound, and only while lit) has fog (=lrg_light_set_set_fog()=), every quad - emissive ones included, fog is not light - is fogged per fragment with the light set's model and camera. The cutout shader does it (its vertex positions are already in the light set's draw space, as rlgl transformed them on the CPU), so a batch with cutoff 0 switches to that shader while fog is on; without GLSL 330 there is no fog.
+
+** GPU path
+:PROPERTIES:
+:CUSTOM_ID: gpu-path
+:END:
+Rebuilding every quad on the CPU costs a few hundred nanoseconds per billboard per frame: fine for a room, far too slow for a landscape of a hundred thousand trees (librefall's overworld at view distance 2 drew 126 000 flats at 4 - 14 frames per second, almost all of it in this loop). So a batch moves its settled billboards to the GPU:
+
+- *Upload*: once a batch of at least 64 billboards has been drawn twice with nothing added in between, every visible billboard that has not changed since an earlier upload is written once into vertex buffers, sorted by material (stable, so a material keeps insertion order, as the immediate path draws). Buffers are pages of up to 16 384 quads (16-bit indices, one shared index pattern). Each vertex holds the pivot point, its texture coordinate, the tint, and the corner's offset along the facing basis, the light sample height and the emissive flag.
+- *Draw*: one indexed draw per material run (split at page edges) under the batch's GPU shader. The vertex shader rebuilds the corner exactly as =get_corners()= does (axis-locked: right = =(d.z, 0, -d.x)= / =|d|= for the horizontal direction =d= from the billboard to the eye in the batch's space; spherical: the camera basis from the modelview), puts it through the current rlgl transform (=matModel=, the transform the immediate path applies on the CPU) and the camera, and lights the tint at the quad's centre with =lrg_light_sample()= from =LRG_LIGHT_SAMPLE_GLSL= (see [[file:light-set.org][LrgLightSet]]): the same numbers =lit_tint()= computes on the CPU. The fragment shader is the cutout shader (alpha test, the light set's fog). Pixels match the immediate path.
+- *Changes*: a billboard on the GPU that changes afterwards (position, size, pivot, UV, material, tint, visibility, emissive; setting the same material, visibility or emissive flag again is not a change) is /demoted/: its quad in the vertex buffer is zeroed (no area, no fragments) and it is drawn through the immediate path from then on. A billboard whose material changes (an animated flat) is never uploaded. Billboards added after an upload are drawn immediately until they outnumber an eighth of the upload; then the batch uploads again.
+- *Volatile batches*: when more than half of the uploaded quads get demoted (particles, actors that move every frame) the batch drops its buffers and stays immediate until =clear()=.
+- Without GLSL 330 the batch never uploads. =clear()= and finalization free the buffers (while a context exists).
 
 ** Example
 :PROPERTIES:

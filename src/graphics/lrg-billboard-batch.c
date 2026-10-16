@@ -4,12 +4,30 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Batched camera-facing quads. Billboards are stored as plain records;
- * quads are rebuilt every draw from the camera position (they turn as
- * the camera moves) and emitted through rlgl's immediate batch grouped
- * by material, so a town of several thousand flats costs one texture
- * bind per distinct texture. Corner math is shared with the headless
- * get_corners() so tests and picking see exactly what is drawn.
+ * Batched camera-facing quads. Billboards are stored as plain records.
+ *
+ * Static billboards live on the GPU: once a batch of at least
+ * GPU_MIN_QUADS billboards has been drawn GPU_SETTLE_DRAWS times without
+ * a billboard being added, its visible billboards are written once into
+ * vertex buffers sorted by material (pages of up to PAGE_QUADS quads,
+ * 16-bit indices). Every frame the vertex shader turns each quad
+ * towards the eye and lights it at its centre (LRG_LIGHT_SAMPLE_GLSL),
+ * so a draw costs one call per material instead of rebuilding every
+ * quad on the CPU.
+ *
+ * Billboards that change afterwards (a new material, position, size,
+ * tint, visibility...) are "demoted": their quad in the buffer is
+ * zeroed (no area, no fragments) and they join the loose list, which
+ * is drawn the original way: quads rebuilt every draw from the camera
+ * position and emitted through rlgl's immediate batch grouped by
+ * material, lit on the CPU (lit_tint). Billboards added after the
+ * upload are loose too until enough of them justify a rebuild; a batch
+ * whose quads mostly get demoted (particles, actors that move every
+ * frame) drops its buffers and stays immediate until it is cleared.
+ *
+ * Corner math is shared with the headless get_corners() and mirrored in
+ * the vertex shader, so tests, picking and both paths agree on what is
+ * drawn.
  */
 
 #include "config.h"
@@ -29,6 +47,42 @@
  * the axis-locked facing is undefined; a fixed basis is used instead. */
 #define BILLBOARD_MIN_FACING (1e-6f)
 
+/* GPU path: quads per vertex page (16-bit indices: 4 vertices each) */
+#define PAGE_QUADS (16384u)
+
+/* GPU path: smallest batch worth its own buffers */
+#define GPU_MIN_QUADS (64u)
+
+/* GPU path: draws without an added billboard before the upload */
+#define GPU_SETTLE_DRAWS (2u)
+
+/* one vertex of the GPU path: position (the billboard's pivot point),
+ * texture coordinate, tint, and (corner right offset, corner up offset,
+ * light sample height above the pivot, emissive) */
+typedef struct
+{
+    gfloat position[3];
+    gfloat uv[2];
+    guint8 color[4];
+    gfloat corner[4];
+} GpuVertex;
+
+/* one vertex page of the GPU path */
+typedef struct
+{
+    guint vao;
+    guint vbo;
+    guint quads;
+} GpuPage;
+
+/* a run of quads of one material in upload order */
+typedef struct
+{
+    guint material;
+    guint first;     /* quad index over all pages */
+    guint count;
+} GpuRange;
+
 typedef struct
 {
     guint    material;
@@ -41,6 +95,8 @@ typedef struct
     guint8   tint[4];
     gboolean visible;
     gboolean emissive;
+    gint     gpu_slot;    /* quad index in the GPU pages, -1: loose */
+    gboolean dynamic;     /* changed after an upload: always loose */
 } Billboard;
 
 typedef struct
@@ -64,6 +120,31 @@ struct _LrgBillboardBatch
     LrgLightSetFogLocations fog_locs;
     LrgLightSet      *light_set;    /* own lights, NULL: the bound set */
     gboolean          lit;
+
+    /* GPU path (see the file comment) */
+    GArray           *pages;        /* GpuPage */
+    GArray           *ranges;       /* GpuRange, by material */
+    GArray           *loose;        /* guint billboard indices drawn immediately */
+    guint             ebo;          /* shared quad index pattern */
+    guint             gpu_quads;    /* quads uploaded */
+    guint             demoted;      /* uploaded quads zeroed since */
+    guint             added;        /* billboards added since the upload */
+    guint             settle;       /* draws since the last add */
+    gboolean          gpu_off;      /* volatile batch: immediate until cleared */
+    Shader            gpu_shader;
+    gboolean          gpu_tried;
+    gboolean          gpu_loaded;
+    gint              gpu_attr[4];  /* position, texcoord, color, corner */
+    gint              loc_mvp;
+    gint              loc_model;
+    gint              loc_eye;
+    gint              loc_spherical;
+    gint              loc_cam_right;
+    gint              loc_cam_up;
+    gint              loc_lit;
+    gint              loc_cutoff;
+    LrgLightSetSampleLocations light_locs;
+    LrgLightSetFogLocations gpu_fog_locs;
 };
 
 G_DEFINE_TYPE (LrgBillboardBatch, lrg_billboard_batch, G_TYPE_OBJECT)
@@ -103,6 +184,68 @@ static const gchar cutout_fs[] =
     "    finalColor = vec4(mix(texel.rgb, fogColor.rgb, lrg_fog_amount(fragPosition)), texel.a);\n"
     "}\n";
 
+/* The GPU path: the quad's corner from the pivot point and the facing
+ * basis (compute_basis() / build_corners() in GLSL), the tint lit at
+ * the quad's centre (lit_tint() in GLSL); matModel is the rlgl
+ * transform the immediate path applies on the CPU. */
+static const gchar gpu_vs[] =
+    "#version 330\n"
+    "in vec3 vertexPosition;\n"
+    "in vec2 vertexTexCoord;\n"
+    "in vec4 vertexColor;\n"
+    "in vec4 bbCorner;\n"
+    "uniform mat4 mvp;\n"
+    "uniform mat4 matModel;\n"
+    "uniform vec3 eyeLocal;\n"
+    "uniform int spherical;\n"
+    "uniform vec3 camRight;\n"
+    "uniform vec3 camUp;\n"
+    "uniform int lit;\n"
+    LRG_LIGHT_SAMPLE_GLSL
+    "out vec3 fragPosition;\n"
+    "out vec2 fragTexCoord;\n"
+    "out vec4 fragColor;\n"
+    "void main() {\n"
+    "    vec3 right;\n"
+    "    vec3 up;\n"
+    "    if (spherical == 1) {\n"
+    "        right = camRight;\n"
+    "        up = camUp;\n"
+    "    } else {\n"
+    "        vec2 d = eyeLocal.xz - vertexPosition.xz;\n"
+    "        float len = length(d);\n"
+    "        right = len < 1e-6 ? vec3(1.0, 0.0, 0.0) : vec3(d.y / len, 0.0, -d.x / len);\n"
+    "        up = vec3(0.0, 1.0, 0.0);\n"
+    "    }\n"
+    "    vec3 local = vertexPosition + right * bbCorner.x + up * bbCorner.y;\n"
+    "    vec4 c = vertexColor;\n"
+    "    if (lit == 1 && bbCorner.w < 0.5) {\n"
+    "        vec3 centre = (matModel * vec4(vertexPosition + vec3(0.0, bbCorner.z, 0.0), 1.0)).xyz;\n"
+    "        c.rgb = clamp(c.rgb * lrg_light_sample(centre), 0.0, 1.0);\n"
+    "    }\n"
+    "    fragColor = c;\n"
+    "    fragTexCoord = vertexTexCoord;\n"
+    "    fragPosition = (matModel * vec4(local, 1.0)).xyz;\n"
+    "    gl_Position = mvp * vec4(local, 1.0);\n"
+    "}\n";
+
+static const gchar gpu_fs[] =
+    "#version 330\n"
+    "in vec3 fragPosition;\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform float alphaCutoff;\n"
+    LRG_FOG_GLSL
+    "out vec4 finalColor;\n"
+    "void main() {\n"
+    "    vec4 texel = texture(texture0, fragTexCoord) * fragColor;\n"
+    "    if (texel.a < alphaCutoff) discard;\n"
+    "    finalColor = vec4(mix(texel.rgb, fogColor.rgb, lrg_fog_amount(fragPosition)), texel.a);\n"
+    "}\n";
+
+static void gpu_release (LrgBillboardBatch *self);
+
 /* ------------------------------------------------------------------------ */
 /* Lifecycle                                                                */
 /* ------------------------------------------------------------------------ */
@@ -124,6 +267,12 @@ lrg_billboard_batch_finalize (GObject *object)
     /* GPU objects can only be released while the context exists. */
     if (self->shader_loaded && IsWindowReady ())
         UnloadShader (self->shader);
+    if (self->gpu_loaded && IsWindowReady ())
+        UnloadShader (self->gpu_shader);
+    gpu_release (self);
+    g_clear_pointer (&self->pages, g_array_unref);
+    g_clear_pointer (&self->ranges, g_array_unref);
+    g_clear_pointer (&self->loose, g_array_unref);
 
     g_clear_object (&self->light_set);
     g_clear_pointer (&self->billboards, g_array_unref);
@@ -149,6 +298,9 @@ lrg_billboard_batch_init (LrgBillboardBatch *self)
     self->cutoff_loc = -1;
     memset (&self->fog_locs, 0xff, sizeof self->fog_locs);   /* all -1 */
     self->lit = TRUE;
+    self->pages = g_array_new (FALSE, TRUE, sizeof (GpuPage));
+    self->ranges = g_array_new (FALSE, TRUE, sizeof (GpuRange));
+    self->loose = g_array_new (FALSE, FALSE, sizeof (guint));
 }
 
 LrgBillboardBatch *
@@ -185,6 +337,46 @@ billboard_at (LrgBillboardBatch *self,
     return &g_array_index (self->billboards, Billboard, index);
 }
 
+/* touch:
+ * A billboard is about to change. One already on the GPU is demoted
+ * (and never uploaded again: it is one that changes):
+ * its quad is zeroed in the vertex buffer and it is drawn loose from
+ * now on. A batch whose uploaded quads are mostly demoted gives its
+ * buffers up and stays immediate (until cleared). */
+static void
+touch (LrgBillboardBatch *self,
+       Billboard         *b)
+{
+    guint     index;
+    guint     page;
+    guint     quad;
+    GpuVertex zero[4];
+
+    if (b->gpu_slot < 0)
+        return;
+    b->dynamic = TRUE;
+
+    index = (guint)(b - (Billboard *)(gpointer)self->billboards->data);
+    page = (guint)b->gpu_slot / PAGE_QUADS;
+    quad = (guint)b->gpu_slot % PAGE_QUADS;
+    b->gpu_slot = -1;
+    g_array_append_val (self->loose, index);
+    self->demoted++;
+
+    if (self->demoted * 2 > self->gpu_quads)
+    {
+        self->gpu_off = TRUE;
+        gpu_release (self);
+        return;
+    }
+    if (page < self->pages->len && IsWindowReady ())
+    {
+        memset (zero, 0, sizeof zero);
+        rlUpdateVertexBuffer (g_array_index (self->pages, GpuPage, page).vbo,
+                              zero, (gint)sizeof zero, (gint)(quad * sizeof zero));
+    }
+}
+
 guint
 lrg_billboard_batch_add (LrgBillboardBatch *self,
                          guint              material,
@@ -213,7 +405,18 @@ lrg_billboard_batch_add (LrgBillboardBatch *self,
     b.uv[3] = 1.0f;
     b.tint[0] = b.tint[1] = b.tint[2] = b.tint[3] = 255;
     b.visible = TRUE;
+    b.gpu_slot = -1;
     g_array_append_val (self->billboards, b);
+
+    /* loose until the next upload */
+    if (self->gpu_quads > 0)
+    {
+        guint index = self->billboards->len - 1;
+
+        g_array_append_val (self->loose, index);
+    }
+    self->added++;
+    self->settle = 0;
 
     return self->billboards->len - 1;
 }
@@ -223,6 +426,10 @@ lrg_billboard_batch_clear (LrgBillboardBatch *self)
 {
     g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
     g_array_set_size (self->billboards, 0);
+    gpu_release (self);
+    self->gpu_off = FALSE;
+    self->added = 0;
+    self->settle = 0;
 }
 
 guint
@@ -244,6 +451,7 @@ lrg_billboard_batch_set_position (LrgBillboardBatch *self,
 
     b = billboard_at (self, index);
     g_return_if_fail (b != NULL);
+    touch (self, b);
     b->position[0] = position->x;
     b->position[1] = position->y;
     b->position[2] = position->z;
@@ -262,6 +470,7 @@ lrg_billboard_batch_set_size (LrgBillboardBatch *self,
 
     b = billboard_at (self, index);
     g_return_if_fail (b != NULL);
+    touch (self, b);
     b->width = width;
     b->height = height;
 }
@@ -278,6 +487,7 @@ lrg_billboard_batch_set_pivot (LrgBillboardBatch *self,
 
     b = billboard_at (self, index);
     g_return_if_fail (b != NULL);
+    touch (self, b);
     b->pivot_x = pivot_x;
     b->pivot_y = pivot_y;
 }
@@ -293,6 +503,7 @@ lrg_billboard_batch_set_uv (LrgBillboardBatch  *self,
 
     b = billboard_at (self, index);
     g_return_if_fail (b != NULL);
+    touch (self, b);
 
     if (uv == NULL)
     {
@@ -319,6 +530,11 @@ lrg_billboard_batch_set_material (LrgBillboardBatch *self,
 
     b = billboard_at (self, index);
     g_return_if_fail (b != NULL);
+    if (b->material == material)
+        return;
+    touch (self, b);
+    /* a billboard that changes material animates: keep it loose */
+    b->dynamic = TRUE;
     b->material = material;
 }
 
@@ -333,6 +549,7 @@ lrg_billboard_batch_set_tint (LrgBillboardBatch *self,
 
     b = billboard_at (self, index);
     g_return_if_fail (b != NULL);
+    touch (self, b);
 
     if (tint == NULL)
     {
@@ -356,6 +573,9 @@ lrg_billboard_batch_set_visible (LrgBillboardBatch *self,
 
     b = billboard_at (self, index);
     g_return_if_fail (b != NULL);
+    if (!b->visible == !visible)
+        return;
+    touch (self, b);
     b->visible = visible;
 }
 
@@ -560,6 +780,9 @@ lrg_billboard_batch_set_emissive (LrgBillboardBatch *self,
 
     b = billboard_at (self, index);
     g_return_if_fail (b != NULL);
+    if (!b->emissive == !emissive)
+        return;
+    touch (self, b);
     b->emissive = emissive;
 }
 
@@ -684,6 +907,405 @@ compare_material (gconstpointer a,
     return (ma > mb) - (ma < mb);
 }
 
+/* ------------------------------------------------------------------------ */
+/* GPU path                                                                 */
+/* ------------------------------------------------------------------------ */
+
+/* gpu_release:
+ * Drops the vertex pages and the index buffer (GL objects only while
+ * the context exists; without one they died with it). Every billboard
+ * is loose afterwards. */
+static void
+gpu_release (LrgBillboardBatch *self)
+{
+    gboolean ready = IsWindowReady ();
+    guint    i;
+
+    for (i = 0; self->pages != NULL && i < self->pages->len; i++)
+    {
+        GpuPage *page = &g_array_index (self->pages, GpuPage, i);
+
+        if (ready)
+        {
+            rlUnloadVertexArray (page->vao);
+            rlUnloadVertexBuffer (page->vbo);
+        }
+    }
+    if (self->ebo != 0 && ready)
+        rlUnloadVertexBuffer (self->ebo);
+    self->ebo = 0;
+    if (self->pages != NULL)
+        g_array_set_size (self->pages, 0);
+    if (self->ranges != NULL)
+        g_array_set_size (self->ranges, 0);
+    if (self->loose != NULL)
+        g_array_set_size (self->loose, 0);
+    for (i = 0; self->billboards != NULL && i < self->billboards->len; i++)
+        g_array_index (self->billboards, Billboard, i).gpu_slot = -1;
+    self->gpu_quads = 0;
+    self->demoted = 0;
+}
+
+/* gpu_ensure_shader:
+ * Compiles the GPU path's shader once; FALSE (and the immediate path
+ * for good) when GLSL 330 is unavailable. */
+static gboolean
+gpu_ensure_shader (LrgBillboardBatch *self)
+{
+    gint unit = 0;
+
+    if (self->gpu_tried)
+        return self->gpu_loaded;
+    self->gpu_tried = TRUE;
+
+    self->gpu_shader = LoadShaderFromMemory (gpu_vs, gpu_fs);
+    if (self->gpu_shader.id == 0 || self->gpu_shader.id == rlGetShaderIdDefault ())
+        return FALSE;
+
+    self->gpu_attr[0] = rlGetLocationAttrib (self->gpu_shader.id, "vertexPosition");
+    self->gpu_attr[1] = rlGetLocationAttrib (self->gpu_shader.id, "vertexTexCoord");
+    self->gpu_attr[2] = rlGetLocationAttrib (self->gpu_shader.id, "vertexColor");
+    self->gpu_attr[3] = rlGetLocationAttrib (self->gpu_shader.id, "bbCorner");
+    if (self->gpu_attr[0] < 0 || self->gpu_attr[1] < 0 || self->gpu_attr[2] < 0
+        || self->gpu_attr[3] < 0)
+    {
+        UnloadShader (self->gpu_shader);
+        return FALSE;
+    }
+    self->loc_mvp = GetShaderLocation (self->gpu_shader, "mvp");
+    self->loc_model = GetShaderLocation (self->gpu_shader, "matModel");
+    self->loc_eye = GetShaderLocation (self->gpu_shader, "eyeLocal");
+    self->loc_spherical = GetShaderLocation (self->gpu_shader, "spherical");
+    self->loc_cam_right = GetShaderLocation (self->gpu_shader, "camRight");
+    self->loc_cam_up = GetShaderLocation (self->gpu_shader, "camUp");
+    self->loc_lit = GetShaderLocation (self->gpu_shader, "lit");
+    self->loc_cutoff = GetShaderLocation (self->gpu_shader, "alphaCutoff");
+    lrg_light_set_sample_locations (self->gpu_shader, &self->light_locs);
+    lrg_light_set_fog_locations (self->gpu_shader, &self->gpu_fog_locs);
+    SetShaderValue (self->gpu_shader, GetShaderLocation (self->gpu_shader, "texture0"),
+                    &unit, SHADER_UNIFORM_INT);
+    self->gpu_loaded = TRUE;
+    return TRUE;
+}
+
+/* compare_index_material:
+ * Orders billboard indices by material (g_array_sort() is stable, so
+ * a material keeps insertion order, as the immediate path draws). */
+static gint
+compare_index_material (gconstpointer a,
+                        gconstpointer b,
+                        gpointer      user_data)
+{
+    GArray *billboards = user_data;
+    guint   ma = g_array_index (billboards, Billboard, *(const guint *)a).material;
+    guint   mb = g_array_index (billboards, Billboard, *(const guint *)b).material;
+
+    return (ma > mb) - (ma < mb);
+}
+
+/* fill_quad:
+ * The four vertices of @b in build_corners() order (bottom-left,
+ * bottom-right, top-right, top-left) with the matching texture
+ * corners, as the immediate path emits them. */
+static void
+fill_quad (const Billboard *b,
+           GpuVertex       *v)
+{
+    gfloat left = -b->width * b->pivot_x;
+    gfloat right = b->width * (1.0f - b->pivot_x);
+    gfloat bottom = -b->height * b->pivot_y;
+    gfloat top = b->height * (1.0f - b->pivot_y);
+    gfloat cx[4];
+    gfloat cy[4];
+    gfloat u[4];
+    gfloat w[4];
+    guint  k;
+
+    cx[0] = left;  cy[0] = bottom; u[0] = b->uv[0]; w[0] = b->uv[3];
+    cx[1] = right; cy[1] = bottom; u[1] = b->uv[2]; w[1] = b->uv[3];
+    cx[2] = right; cy[2] = top;    u[2] = b->uv[2]; w[2] = b->uv[1];
+    cx[3] = left;  cy[3] = top;    u[3] = b->uv[0]; w[3] = b->uv[1];
+
+    for (k = 0; k < 4; k++)
+    {
+        memcpy (v[k].position, b->position, sizeof v[k].position);
+        v[k].uv[0] = u[k];
+        v[k].uv[1] = w[k];
+        memcpy (v[k].color, b->tint, 4);
+        v[k].corner[0] = cx[k];
+        v[k].corner[1] = cy[k];
+        v[k].corner[2] = (0.5f - b->pivot_y) * b->height;
+        v[k].corner[3] = b->emissive ? 1.0f : 0.0f;
+    }
+}
+
+/* gpu_build:
+ * Uploads every visible, unchanging billboard into vertex pages sorted
+ * by material; the rest become the loose list. */
+static void
+gpu_build (LrgBillboardBatch *self)
+{
+    g_autoptr(GArray) order = NULL;
+    g_autofree GpuVertex *vertices = NULL;
+    g_autofree guint16 *indices = NULL;
+    guint i;
+    guint first;
+
+    gpu_release (self);
+
+    order = g_array_sized_new (FALSE, FALSE, sizeof (guint), self->billboards->len);
+    for (i = 0; i < self->billboards->len; i++)
+    {
+        Billboard *b = &g_array_index (self->billboards, Billboard, i);
+
+        if (b->visible && !b->dynamic)
+            g_array_append_val (order, i);
+        else
+            g_array_append_val (self->loose, i);
+    }
+    self->added = 0;
+    if (order->len < GPU_MIN_QUADS)
+    {
+        /* not worth buffers: everything stays loose */
+        g_array_set_size (self->loose, 0);
+        for (i = 0; i < self->billboards->len; i++)
+            g_array_append_val (self->loose, i);
+        return;
+    }
+    g_array_sort_with_data (order, compare_index_material, self->billboards);
+
+    /* the index pattern of one full page, shared by every page */
+    indices = g_new (guint16, (gsize)PAGE_QUADS * 6);
+    for (i = 0; i < PAGE_QUADS; i++)
+    {
+        indices[i * 6 + 0] = (guint16)(i * 4 + 0);
+        indices[i * 6 + 1] = (guint16)(i * 4 + 1);
+        indices[i * 6 + 2] = (guint16)(i * 4 + 2);
+        indices[i * 6 + 3] = (guint16)(i * 4 + 0);
+        indices[i * 6 + 4] = (guint16)(i * 4 + 2);
+        indices[i * 6 + 5] = (guint16)(i * 4 + 3);
+    }
+
+    vertices = g_new (GpuVertex, (gsize)MIN (order->len, PAGE_QUADS) * 4);
+    for (first = 0; first < order->len; first += PAGE_QUADS)
+    {
+        GpuPage page;
+        guint   n = MIN (order->len - first, PAGE_QUADS);
+        gint    stride = (gint)sizeof (GpuVertex);
+
+        for (i = 0; i < n; i++)
+        {
+            guint      index = g_array_index (order, guint, first + i);
+            Billboard *b = &g_array_index (self->billboards, Billboard, index);
+
+            fill_quad (b, vertices + (gsize)i * 4);
+            b->gpu_slot = (gint)(first + i);
+        }
+
+        page.quads = n;
+        page.vao = rlLoadVertexArray ();
+        rlEnableVertexArray (page.vao);
+        page.vbo = rlLoadVertexBuffer (vertices, (gint)(n * 4 * sizeof (GpuVertex)), FALSE);
+        rlSetVertexAttribute ((guint)self->gpu_attr[0], 3, RL_FLOAT, FALSE, stride,
+                              (gint)G_STRUCT_OFFSET (GpuVertex, position));
+        rlEnableVertexAttribute ((guint)self->gpu_attr[0]);
+        rlSetVertexAttribute ((guint)self->gpu_attr[1], 2, RL_FLOAT, FALSE, stride,
+                              (gint)G_STRUCT_OFFSET (GpuVertex, uv));
+        rlEnableVertexAttribute ((guint)self->gpu_attr[1]);
+        rlSetVertexAttribute ((guint)self->gpu_attr[2], 4, RL_UNSIGNED_BYTE, TRUE, stride,
+                              (gint)G_STRUCT_OFFSET (GpuVertex, color));
+        rlEnableVertexAttribute ((guint)self->gpu_attr[2]);
+        rlSetVertexAttribute ((guint)self->gpu_attr[3], 4, RL_FLOAT, FALSE, stride,
+                              (gint)G_STRUCT_OFFSET (GpuVertex, corner));
+        rlEnableVertexAttribute ((guint)self->gpu_attr[3]);
+        if (self->ebo == 0)
+            self->ebo = rlLoadVertexBufferElement (indices,
+                                                   (gint)((gsize)PAGE_QUADS * 6 * sizeof (guint16)),
+                                                   FALSE);
+        else
+            rlEnableVertexBufferElement (self->ebo);
+        rlDisableVertexArray ();
+        g_array_append_val (self->pages, page);
+    }
+
+    /* the material runs */
+    for (i = 0; i < order->len; i++)
+    {
+        guint material = g_array_index (self->billboards, Billboard,
+                                        g_array_index (order, guint, i)).material;
+        GpuRange *last = self->ranges->len > 0
+                         ? &g_array_index (self->ranges, GpuRange, self->ranges->len - 1)
+                         : NULL;
+
+        if (last != NULL && last->material == material)
+        {
+            last->count++;
+        }
+        else
+        {
+            GpuRange range;
+
+            range.material = material;
+            range.first = i;
+            range.count = 1;
+            g_array_append_val (self->ranges, range);
+        }
+    }
+    self->gpu_quads = order->len;
+}
+
+/* gpu_maybe_build:
+ * Uploads once a large enough batch has settled, and again when the
+ * billboards added since outnumber an eighth of the upload. */
+static void
+gpu_maybe_build (LrgBillboardBatch *self)
+{
+    if (self->gpu_off || self->settle < GPU_SETTLE_DRAWS)
+        return;
+    if (self->gpu_quads == 0)
+    {
+        if (self->added == 0 || self->billboards->len < GPU_MIN_QUADS)
+            return;
+    }
+    else if (self->added <= MAX (GPU_MIN_QUADS, self->gpu_quads / 8))
+    {
+        return;
+    }
+    if (!gpu_ensure_shader (self))
+    {
+        self->gpu_off = TRUE;
+        return;
+    }
+    gpu_build (self);
+}
+
+/* mat_to_array / mat_from_array:
+ * A raylib Matrix by element number (m0 .. m15); the struct stores its
+ * fields in another order (m0, m4, m8, m12, m1, ...). */
+static void
+mat_to_array (const Matrix *m,
+              gfloat       *v)
+{
+    v[0] = m->m0;   v[1] = m->m1;   v[2] = m->m2;   v[3] = m->m3;
+    v[4] = m->m4;   v[5] = m->m5;   v[6] = m->m6;   v[7] = m->m7;
+    v[8] = m->m8;   v[9] = m->m9;   v[10] = m->m10; v[11] = m->m11;
+    v[12] = m->m12; v[13] = m->m13; v[14] = m->m14; v[15] = m->m15;
+}
+
+static Matrix
+mat_from_array (const gfloat *v)
+{
+    Matrix m;
+
+    m.m0 = v[0];   m.m1 = v[1];   m.m2 = v[2];   m.m3 = v[3];
+    m.m4 = v[4];   m.m5 = v[5];   m.m6 = v[6];   m.m7 = v[7];
+    m.m8 = v[8];   m.m9 = v[9];   m.m10 = v[10]; m.m11 = v[11];
+    m.m12 = v[12]; m.m13 = v[13]; m.m14 = v[14]; m.m15 = v[15];
+    return m;
+}
+
+/* mat_mul:
+ * raylib's MatrixMultiply (@a applied first, then @b):
+ * result.m[4i + j] = sum over k of a.m[4i + k] * b.m[4k + j]. */
+static Matrix
+mat_mul (const Matrix *a,
+         const Matrix *b)
+{
+    gfloat x[16];
+    gfloat y[16];
+    gfloat o[16];
+    guint  i;
+    guint  j;
+
+    mat_to_array (a, x);
+    mat_to_array (b, y);
+    for (i = 0; i < 4; i++)
+        for (j = 0; j < 4; j++)
+            o[i * 4 + j] = x[i * 4 + 0] * y[0 * 4 + j] + x[i * 4 + 1] * y[1 * 4 + j]
+                           + x[i * 4 + 2] * y[2 * 4 + j] + x[i * 4 + 3] * y[3 * 4 + j];
+    return mat_from_array (o);
+}
+
+/* gpu_draw:
+ * One indexed draw per material run (split at page edges) under the
+ * GPU path's shader, with the rlgl transform, the eye in the batch's
+ * space and the lights and fog of @lights (unlit without). */
+static void
+gpu_draw (LrgBillboardBatch *self,
+          const gfloat      *camera,
+          const gfloat      *cam_right,
+          const gfloat      *cam_up,
+          LrgLightSet       *lights)
+{
+    Matrix   transform;
+    Matrix   modelview;
+    Matrix   projection;
+    Matrix   mvp;
+    gint     spherical;
+    gint     lit;
+    guint    page_bound = G_MAXUINT;
+    guint    i;
+
+    /* the immediate batch so far belongs before these draws */
+    rlDrawRenderBatchActive ();
+
+    transform = rlGetMatrixTransform ();
+    modelview = rlGetMatrixModelview ();
+    projection = rlGetMatrixProjection ();
+    mvp = mat_mul (&transform, &modelview);
+    mvp = mat_mul (&mvp, &projection);
+
+    rlEnableShader (self->gpu_shader.id);
+    rlSetUniformMatrix (self->loc_mvp, mvp);
+    rlSetUniformMatrix (self->loc_model, transform);
+    SetShaderValue (self->gpu_shader, self->loc_eye, camera, SHADER_UNIFORM_VEC3);
+    spherical = self->mode == LRG_BILLBOARD_MODE_SPHERICAL;
+    SetShaderValue (self->gpu_shader, self->loc_spherical, &spherical, SHADER_UNIFORM_INT);
+    SetShaderValue (self->gpu_shader, self->loc_cam_right, cam_right, SHADER_UNIFORM_VEC3);
+    SetShaderValue (self->gpu_shader, self->loc_cam_up, cam_up, SHADER_UNIFORM_VEC3);
+    SetShaderValue (self->gpu_shader, self->loc_cutoff, &self->cutoff, SHADER_UNIFORM_FLOAT);
+    lit = lrg_light_set_upload_sample (lights, self->gpu_shader, &self->light_locs);
+    SetShaderValue (self->gpu_shader, self->loc_lit, &lit, SHADER_UNIFORM_INT);
+    lrg_light_set_upload_fog (lights, self->gpu_shader, &self->gpu_fog_locs);
+
+    rlActiveTextureSlot (0);
+    for (i = 0; i < self->ranges->len; i++)
+    {
+        GpuRange        *range = &g_array_index (self->ranges, GpuRange, i);
+        MaterialTexture *entry;
+        guint            q;
+        guint            end;
+
+        entry = g_hash_table_lookup (self->textures, GUINT_TO_POINTER (range->material));
+        if (entry == NULL)
+            continue;
+        rlEnableTexture (entry->texture.id);
+
+        end = range->first + range->count;
+        for (q = range->first; q < end;)
+        {
+            guint page = q / PAGE_QUADS;
+            guint in_page = q % PAGE_QUADS;
+            guint n = MIN (end - q, PAGE_QUADS - in_page);
+
+            if (page != page_bound)
+            {
+                rlEnableVertexArray (g_array_index (self->pages, GpuPage, page).vao);
+                page_bound = page;
+            }
+            rlDrawVertexArrayElements ((gint)(in_page * 6), (gint)(n * 6), NULL);
+            q += n;
+        }
+    }
+    rlDisableVertexArray ();
+    rlDisableTexture ();
+    rlDisableShader ();
+}
+
+/* ------------------------------------------------------------------------ */
+/* Drawing                                                                  */
+/* ------------------------------------------------------------------------ */
+
 void
 lrg_billboard_batch_draw (LrgBillboardBatch *self,
                           const GrlVector3  *camera_position)
@@ -698,6 +1320,7 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     Matrix    transform;
     guint     current;
     gboolean  open;
+    guint     n_candidates;
     guint     i;
 
     g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
@@ -719,11 +1342,23 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     cam_up[1] = view.m5;
     cam_up[2] = view.m9;
 
-    /* Group visible, textured billboards by material: one bind each. */
-    order = g_ptr_array_sized_new (self->billboards->len);
-    for (i = 0; i < self->billboards->len; i++)
+    lights = active_light_set (self);
+
+    /* the settled part on the GPU */
+    if (self->settle < G_MAXUINT)
+        self->settle++;
+    gpu_maybe_build (self);
+    if (self->gpu_quads > 0)
+        gpu_draw (self, camera, cam_right, cam_up, lights);
+
+    /* The loose part (everything without an upload): visible, textured
+     * billboards grouped by material, one bind each. */
+    n_candidates = self->gpu_quads > 0 ? self->loose->len : self->billboards->len;
+    order = g_ptr_array_sized_new (n_candidates);
+    for (i = 0; i < n_candidates; i++)
     {
-        Billboard *b = &g_array_index (self->billboards, Billboard, i);
+        guint      index = self->gpu_quads > 0 ? g_array_index (self->loose, guint, i) : i;
+        Billboard *b = &g_array_index (self->billboards, Billboard, index);
 
         if (b->visible && g_hash_table_contains (self->textures, GUINT_TO_POINTER (b->material)))
             g_ptr_array_add (order, b);
@@ -735,7 +1370,6 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     /* rlVertex3f() applies the push/pop transform on the CPU; light the
      * centres in that same space (the space the static-geometry shader
      * lights, see lrg_light_set_sample()). */
-    lights = active_light_set (self);
     transform = rlGetMatrixTransform ();
 
     /* The shader is needed for the cutout or for the light set's fog;

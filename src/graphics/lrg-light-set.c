@@ -114,8 +114,8 @@ struct _LrgLightSet
 };
 
 /* texture units of the grid textures: above raylib's 12 material maps */
-#define GRID_DATA_UNIT  (14)
-#define GRID_CELLS_UNIT (15)
+#define GRID_DATA_UNIT  (LRG_LIGHT_SET_GRID_DATA_UNIT)
+#define GRID_CELLS_UNIT (LRG_LIGHT_SET_GRID_CELLS_UNIT)
 
 /* the soft light limit passes values up to this share of the limit */
 #define LIMIT_KNEE      (0.75f)
@@ -1289,6 +1289,103 @@ lrg_light_set_sample_fog (LrgLightSet      *self,
     return lrg_fog_amount (self->fog_type, self->fog_density, self->fog_start,
                            self->fog_end, self->fog_base, self->fog_falloff,
                            distance, height) * self->fog_color[3];
+}
+
+/* ------------------------------------------------------------------------ */
+/* Light sampling on the GPU (LRG_LIGHT_SAMPLE_GLSL)                        */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_light_set_sample_locations (Shader                      shader,
+                                LrgLightSetSampleLocations *out_locs)
+{
+    gint unit;
+
+    out_locs->ambient = GetShaderLocation (shader, "ambientColor");
+    out_locs->sun_color = GetShaderLocation (shader, "sunColor");
+    out_locs->count = GetShaderLocation (shader, "lightCount");
+    out_locs->positions = GetShaderLocation (shader, "lightPosition");
+    out_locs->colors = GetShaderLocation (shader, "lightColor");
+    out_locs->radii = GetShaderLocation (shader, "lightRadius");
+    out_locs->use_grid = GetShaderLocation (shader, "useGrid");
+    out_locs->light_data = GetShaderLocation (shader, "lightData");
+    out_locs->light_grid = GetShaderLocation (shader, "lightGrid");
+    out_locs->grid_params = GetShaderLocation (shader, "gridParams");
+    out_locs->limit = GetShaderLocation (shader, "lightLimit");
+
+    /* the samplers never move: point them at the grid units once */
+    unit = GRID_DATA_UNIT;
+    SetShaderValue (shader, out_locs->light_data, &unit, SHADER_UNIFORM_INT);
+    unit = GRID_CELLS_UNIT;
+    SetShaderValue (shader, out_locs->light_grid, &unit, SHADER_UNIFORM_INT);
+}
+
+gboolean
+lrg_light_set_upload_sample (LrgLightSet                      *self,
+                             Shader                            shader,
+                             const LrgLightSetSampleLocations *locs)
+{
+    gfloat  positions[LRG_LIGHT_SET_MAX_ACTIVE * 3];
+    gfloat  colors[LRG_LIGHT_SET_MAX_ACTIVE * 3];
+    gfloat  radii[LRG_LIGHT_SET_MAX_ACTIVE];
+    gfloat  sun_color[3] = { 0.0f, 0.0f, 0.0f };
+    gint    count;
+    gint    use_grid;
+    guint   i;
+
+    if (self == NULL)
+        return FALSE;
+
+    /* the same numbers apply() gives the mesh shader, so a quad gets
+     * what lrg_light_set_sample() answers for its centre */
+    for (i = 0; i < self->n_active; i++)
+    {
+        PointLight *pl = &g_array_index (self->lights, PointLight, self->active[i]);
+        guint       k;
+
+        for (k = 0; k < 3; k++)
+        {
+            positions[i * 3 + k] = (gfloat)(pl->position[k] - self->origin[k]);
+            colors[i * 3 + k] = pl->color[k] * pl->intensity;
+        }
+        radii[i] = pl->radius;
+    }
+    if (self->has_directional)
+        memcpy (sun_color, self->directional_color, sizeof sun_color);
+    count = (gint)self->n_active;
+
+    SetShaderValue (shader, locs->ambient, self->ambient, SHADER_UNIFORM_VEC3);
+    SetShaderValue (shader, locs->sun_color, sun_color, SHADER_UNIFORM_VEC3);
+    SetShaderValue (shader, locs->count, &count, SHADER_UNIFORM_INT);
+    if (count > 0)
+    {
+        SetShaderValueV (shader, locs->positions, positions, SHADER_UNIFORM_VEC3, count);
+        SetShaderValueV (shader, locs->colors, colors, SHADER_UNIFORM_VEC3, count);
+        SetShaderValueV (shader, locs->radii, radii, SHADER_UNIFORM_FLOAT, count);
+    }
+    SetShaderValue (shader, locs->limit, &self->light_limit, SHADER_UNIFORM_FLOAT);
+
+    /* the grid as apply() uploaded it; a set whose grid was built but
+     * never applied has no textures and lights from its active list */
+    use_grid = self->grid_cells > 0 && self->grid_built && self->tex_grid != 0
+               && self->tex_data != 0;
+    SetShaderValue (shader, locs->use_grid, &use_grid, SHADER_UNIFORM_INT);
+    if (use_grid)
+    {
+        gfloat params[4];
+
+        params[0] = (gfloat)(self->grid_x0 - self->origin[0]);
+        params[1] = (gfloat)(self->grid_z0 - self->origin[2]);
+        params[2] = self->grid_cell;
+        params[3] = (gfloat)self->grid_cells;
+        SetShaderValue (shader, locs->grid_params, params, SHADER_UNIFORM_VEC4);
+        rlActiveTextureSlot (GRID_DATA_UNIT);
+        rlEnableTexture (self->tex_data);
+        rlActiveTextureSlot (GRID_CELLS_UNIT);
+        rlEnableTexture (self->tex_grid);
+        rlActiveTextureSlot (0);
+    }
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------------ */

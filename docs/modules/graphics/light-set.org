@@ -165,7 +165,9 @@ The model sums ambient, sun and point lights without tonemapping, so a bright li
 :PROPERTIES:
 :CUSTOM_ID: cpu-evaluation
 :END:
-=sample()= evaluates exactly the lighting model above for one point, with the point lights of the last selection (=select()= / =apply()=; none before the first; with a light grid, the lights of the point's cell) and positions in draw space (world minus the origin, the space of =fragPosition=). A =NULL= or zero normal drops every Lambert term, the convention for camera-facing quads. The result is the =light= term after the light limit (unclamped without one). It lights geometry the shader cannot reach, such as [[file:billboard-batch.org][LrgBillboardBatch]] quads.
+=sample()= evaluates exactly the lighting model above for one point, with the point lights of the last selection (=select()= / =apply()=; none before the first; with a light grid, the lights of the point's cell) and positions in draw space (world minus the origin, the space of =fragPosition=). A =NULL= or zero normal drops every Lambert term, the convention for camera-facing quads. The result is the =light= term after the light limit (unclamped without one). It lights geometry the shader cannot reach, such as [[file:billboard-batch.org][LrgBillboardBatch]] quads drawn through rlgl's immediate batch.
+
+The same evaluation exists on the GPU for libregnum's own shaders (=graphics/lrg-light-set-private.h=, not installed): =LRG_LIGHT_SAMPLE_GLSL= declares the light uniforms and =vec3 lrg_light_sample (vec3 p)= (ambient, the directional colour without a Lambert term, the point lights of =p='s grid cell or the active list, the light limit); =lrg_light_set_sample_locations()= finds its uniforms in a shader and =lrg_light_set_upload_sample()= uploads the set's last selection and grid (and binds the grid textures to units 14 and 15). The billboard batch's GPU path lights its static quads with it in the vertex shader, so CPU and GPU lighting agree.
 
 *** Binding
 :PROPERTIES:

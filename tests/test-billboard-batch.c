@@ -401,6 +401,137 @@ test_billboard_batch_draw_lit (void)
     g_assert_cmpuint (centre.b, <, 40);
 }
 
+/* draws @batch three times (the GPU path uploads after two settled
+ * draws) into a 16 x 16 target from (5, 1, 5) looking down -Z, under a
+ * translation of +5 on X, and returns the centre pixel */
+static Color
+draw_centre (LrgBillboardBatch *batch,
+             guint              frames)
+{
+    GrlVector3      cam_pos = vec (0, 1, 5);
+    RenderTexture2D rt;
+    Camera3D        camera;
+    Image           shot;
+    Color           centre;
+    guint           f;
+
+    memset (&camera, 0, sizeof camera);
+    camera.position = (Vector3){ 5, 1, 5 };
+    camera.target = (Vector3){ 5, 1, 0 };
+    camera.up = (Vector3){ 0, 1, 0 };
+    camera.fovy = 45.0f;
+    camera.projection = CAMERA_PERSPECTIVE;
+
+    rt = LoadRenderTexture (16, 16);
+    for (f = 0; f < frames; f++)
+    {
+        BeginTextureMode (rt);
+        ClearBackground ((Color){ 0, 0, 255, 255 });
+        BeginMode3D (camera);
+        rlPushMatrix ();
+        rlTranslatef (5.0f, 0.0f, 0.0f);
+        /* the eye in the batch's (translated) space */
+        lrg_billboard_batch_draw (batch, &cam_pos);
+        rlPopMatrix ();
+        EndMode3D ();
+        EndTextureMode ();
+    }
+    shot = LoadImageFromTexture (rt.texture);
+    centre = GetImageColor (shot, 8, 8);
+    UnloadImage (shot);
+    UnloadRenderTexture (rt);
+    return centre;
+}
+
+/* the GPU path: a large settled batch is uploaded and lit in the vertex
+ * shader like the immediate path lights on the CPU; a billboard moved
+ * afterwards leaves its old place (its uploaded quad is zeroed) and is
+ * drawn where it went; a hidden one disappears */
+static void
+test_billboard_batch_gpu_path (void)
+{
+    g_autoptr(LrgBillboardBatch) batch = NULL;
+    g_autoptr(LrgLightSet) lights = NULL;
+    g_autoptr(GrlImage)   image = NULL;
+    g_autoptr(GrlTexture) texture = NULL;
+    GrlVector3 pos = vec (0, 0, 0);
+    GrlVector3 away = vec (0, 0, 50);
+    GrlColor   dark = { 26, 26, 26, 255 };
+    GrlColor   red = { 255, 0, 0, 255 };
+    GrlColor   green = { 0, 255, 0, 255 };
+    Color      centre;
+    guint      i;
+
+    if (!graphics_available)
+    {
+        g_test_skip ("No display available (headless environment)");
+        return;
+    }
+
+    image = grl_image_new_color (4, 4, &(GrlColor){ 255, 255, 255, 255 });
+    texture = grl_texture_new_from_image (image);
+    batch = lrg_billboard_batch_new ();
+    lrg_billboard_batch_set_material_texture (batch, 0, texture);
+    lrg_billboard_batch_set_material_texture (batch, 1, texture);
+    /* billboard 0 in front of the eye, 199 behind it (two materials) */
+    lrg_billboard_batch_add (batch, 0, &pos, 2, 2);
+    for (i = 1; i < 200; i++)
+    {
+        GrlVector3 behind = vec ((gfloat)i * 0.01f, 0, 20);
+
+        lrg_billboard_batch_add (batch, i % 2, &behind, 1, 1);
+    }
+
+    lights = lrg_light_set_new ();
+    lrg_light_set_set_ambient (lights, &dark);
+    lrg_light_set_add_point_light (lights, 5.0, 1.0, 0.0, &red, 2.0f);
+    lrg_light_set_select (lights, 5.0, 1.0, 5.0);
+    lrg_light_set_bind (lights);
+
+    /* ambient 0.1 plus the full red light at the centre, on the GPU */
+    centre = draw_centre (batch, 3);
+    g_assert_cmpuint (centre.r, >, 240);
+    g_assert_cmpuint (centre.g, <, 40);
+    g_assert_cmpuint (centre.b, <, 40);
+
+    /* moved away: the uploaded quad no longer covers the centre */
+    lrg_billboard_batch_set_position (batch, 0, &away);
+    centre = draw_centre (batch, 1);
+    g_assert_cmpuint (centre.b, >, 240);
+    g_assert_cmpuint (centre.r, <, 16);
+
+    /* moved back: drawn again (now from the loose list) */
+    lrg_billboard_batch_set_position (batch, 0, &pos);
+    centre = draw_centre (batch, 1);
+    g_assert_cmpuint (centre.r, >, 240);
+
+    /* hidden: gone */
+    lrg_billboard_batch_set_visible (batch, 0, FALSE);
+    centre = draw_centre (batch, 1);
+    g_assert_cmpuint (centre.b, >, 240);
+    lrg_light_set_unbind ();
+
+    /* unlit, a fresh batch: the tint alone */
+    g_clear_object (&batch);
+    batch = lrg_billboard_batch_new ();
+    lrg_billboard_batch_set_material_texture (batch, 0, texture);
+    lrg_billboard_batch_add (batch, 0, &pos, 2, 2);
+    for (i = 1; i < 200; i++)
+    {
+        GrlVector3 behind = vec ((gfloat)i * 0.01f, 0, 20);
+
+        lrg_billboard_batch_add (batch, 0, &behind, 1, 1);
+    }
+    lrg_billboard_batch_set_lit (batch, FALSE);
+    centre = draw_centre (batch, 3);
+    g_assert_cmpuint (centre.r, >, 240);
+    g_assert_cmpuint (centre.g, >, 240);
+    lrg_billboard_batch_set_tint (batch, 0, &green);
+    centre = draw_centre (batch, 1);
+    g_assert_cmpuint (centre.r, <, 16);
+    g_assert_cmpuint (centre.g, >, 240);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -420,6 +551,7 @@ main (int   argc,
     g_test_add_func ("/billboard-batch/lighting", test_billboard_batch_lighting);
     g_test_add_func ("/billboard-batch/draw", test_billboard_batch_draw);
     g_test_add_func ("/billboard-batch/draw-lit", test_billboard_batch_draw_lit);
+    g_test_add_func ("/billboard-batch/gpu-path", test_billboard_batch_gpu_path);
 
     result = g_test_run ();
 
