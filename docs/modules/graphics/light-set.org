@@ -127,6 +127,30 @@ fog_amount = f * fog_color.alpha / 255
 - Lit [[file:billboard-batch.org][billboard batches]] fog their quads per fragment with the same model and uniforms.
 - The sky is not fogged (it does not use this shader); match its horizon to the fog colour for a seamless far plane.
 
+*** Light grid
+:PROPERTIES:
+:CUSTOM_ID: light-grid
+:END:
+With only the 16 nearest lights a large scene (a dungeon with 90 torches, a city with 155 lamps) lights just the area around the camera: distant rooms go dark and lights pop in and out as the 16th-nearest changes. =set_grid (cell_size, cells)= replaces that with a world-space light grid:
+
+- =select()= lays a square of =cells x cells= cells (XZ plane, =cell_size= each) around the camera's cell, snapped to multiples of the cell size so the grid never swims, and sorts every enabled light (intensity > 0, within =max_distance= when set) into the cells its radius reaches. A cell keeps at most =LRG_LIGHT_SET_GRID_SLOTS= (16) lights, ranked by =distance(light, cell rectangle) / radius= (0 inside, 1 at the edge of its reach), so strong lights beat weak ones at the same distance.
+- =apply()= uploads the lights referenced by any cell as a =RGBA32F= texture (two texels per light: draw-space position and radius, colour times intensity; at most =LRG_LIGHT_SET_GRID_MAX_LIGHTS=) and the cell lists as a second one (four light indices per texel, -1 ends a list), binds them to texture units 14 and 15 (above raylib's 12 material maps, which =DrawMesh()= binds and unbinds per draw) and sets =useGrid=, =gridParams= = (grid corner X, Z in draw space, cell size, cells).
+- The fragment shader finds its cell from =fragPosition.xz= and adds the lights of that list; fragments outside the square get no point light. The per-fragment cost stays bounded by 16 lights however many the scene has.
+- =get_grid_light_count (x, z)= / =get_grid_light (x, z, i)= expose a cell's list (headless); =sample()= uses the same lists, so CPU-lit billboards match the geometry.
+- =set_grid (0, 0)= returns to the nearest-16 uniform arrays. =max_active= and the nearest-N selection keep working either way (=get_active_light()=).
+
+*** Light limit
+:PROPERTIES:
+:CUSTOM_ID: light-limit
+:END:
+The model sums ambient, sun and point lights without tonemapping, so a bright light next to a wall can push the texel to white, brighter than daylight. =set_light_limit (m)= (0 = off, the default) rolls the summed light off per channel: values up to =0.75 m= pass unchanged, above that =knee + (m - knee) (1 - exp(-(l - knee) / (m - knee)))= approaches =m= with slope 1 at the knee, so ordinary levels are untouched. =limit_light (m, value)= is the same curve on the CPU; =sample()= applies it.
+
+*** Emission
+:PROPERTIES:
+:CUSTOM_ID: emission
+:END:
+=set_emission (color, intensity)= sets =emissionColor=; the shader adds =texture(emissionMap, uv).rgb * emissionColor= to the lit colour before the fog, independent of the lights (lit windows at night). =emissionMap= is raylib's =MATERIAL_MAP_EMISSION= (texture unit =LRG_LIGHT_SET_EMISSION_UNIT= = 5): [[file:static-batch.org][LrgStaticBatch]] binds a material's map from =lrg_static_batch_set_material_emission()= and a black 1x1 map for materials without one, so nothing left in that unit can glow. The default is no emission (black).
+
 *** Selection
 :PROPERTIES:
 :CUSTOM_ID: selection
@@ -141,7 +165,7 @@ fog_amount = f * fog_color.alpha / 255
 :PROPERTIES:
 :CUSTOM_ID: cpu-evaluation
 :END:
-=sample()= evaluates exactly the lighting model above for one point, with the point lights of the last selection (=select()= / =apply()=; none before the first) and positions in draw space (world minus the origin, the space of =fragPosition=). A =NULL= or zero normal drops every Lambert term, the convention for camera-facing quads. The result is the =light= term, unclamped. It lights geometry the shader cannot reach, such as [[file:billboard-batch.org][LrgBillboardBatch]] quads.
+=sample()= evaluates exactly the lighting model above for one point, with the point lights of the last selection (=select()= / =apply()=; none before the first; with a light grid, the lights of the point's cell) and positions in draw space (world minus the origin, the space of =fragPosition=). A =NULL= or zero normal drops every Lambert term, the convention for camera-facing quads. The result is the =light= term after the light limit (unclamped without one). It lights geometry the shader cannot reach, such as [[file:billboard-batch.org][LrgBillboardBatch]] quads.
 
 *** Binding
 :PROPERTIES:

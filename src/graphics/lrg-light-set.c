@@ -13,6 +13,17 @@
  * matrix maps to (origin-relative with a floating origin). Fog is a
  * blend toward one colour by distance from the selected camera; the
  * GLSL and lrg_fog_amount() share one model (lrg-light-set-private.h).
+ *
+ * Light grid: select() also sorts every light into the XZ cells its
+ * radius reaches (a square of cells centred on the camera's cell, at
+ * most LRG_LIGHT_SET_GRID_SLOTS per cell, the closest relative to their
+ * radius first). apply() uploads the lights as a float texture (two
+ * texels per light: position and radius, colour times intensity) and the
+ * cell lists as a second one (four light indices per texel, -1 ends a
+ * list), binds them to texture units 14 and 15 (above raylib's material
+ * maps, which DrawMesh() binds and unbinds per draw) and the shader
+ * walks the list of each fragment's cell. sample() reads the same lists
+ * so billboards match the geometry.
  */
 
 #include "config.h"
@@ -66,6 +77,23 @@ struct _LrgLightSet
     gfloat      fog_base;        /* world height */
     gfloat      fog_falloff;
 
+    /* light grid (cells == 0: off) */
+    gfloat      grid_cell;
+    guint       grid_cells;
+    gboolean    grid_built;      /* select() filled the lists */
+    gdouble     grid_x0;         /* world corner of cell (0, 0) */
+    gdouble     grid_z0;
+    guint      *grid_ids;        /* cells * cells * SLOTS light ids */
+    gfloat     *grid_keys;
+    guint8     *grid_counts;
+    guint       tex_data;        /* GL texture ids, 0 = none */
+    gint        tex_data_height;
+    guint       tex_grid;
+    gint        tex_grid_cells;
+
+    gfloat      light_limit;
+    gfloat      emission[3];
+
     GrlShader  *shader;
     gboolean    shader_tried;
     gint        loc_ambient;
@@ -76,10 +104,28 @@ struct _LrgLightSet
     gint        loc_colors;
     gint        loc_radii;
     gint        loc_cutoff;
+    gint        loc_use_grid;
+    gint        loc_light_data;
+    gint        loc_light_grid;
+    gint        loc_grid_params;
+    gint        loc_limit;
+    gint        loc_emission_color;
     LrgLightSetFogLocations fog_locs;
 };
 
+/* texture units of the grid textures: above raylib's 12 material maps */
+#define GRID_DATA_UNIT  (14)
+#define GRID_CELLS_UNIT (15)
+
+/* the soft light limit passes values up to this share of the limit */
+#define LIMIT_KNEE      (0.75f)
+
 G_DEFINE_TYPE (LrgLightSet, lrg_light_set, G_TYPE_OBJECT)
+
+static void build_grid (LrgLightSet *self,
+                        gdouble      camera_x,
+                        gdouble      camera_y,
+                        gdouble      camera_z);
 
 /* The bound light set (lrg_light_set_bind()); drawing is single
  * threaded, like raylib's own current-shader state. */
@@ -124,23 +170,56 @@ static const gchar light_fs[] =
     "uniform vec3 lightColor[MAX_LIGHTS];\n"
     "uniform float lightRadius[MAX_LIGHTS];\n"
     "uniform float alphaCutoff;\n"
+    "uniform int useGrid;\n"
+    "uniform sampler2D lightData;\n"
+    "uniform sampler2D lightGrid;\n"
+    "uniform vec4 gridParams;\n"
+    "uniform float lightLimit;\n"
+    "uniform sampler2D emissionMap;\n"
+    "uniform vec3 emissionColor;\n"
     LRG_FOG_GLSL
     "out vec4 finalColor;\n"
+    "vec3 point_light(vec3 n, vec3 p, float r, vec3 c) {\n"
+    "    vec3 d = p - fragPosition;\n"
+    "    float dist = length(d);\n"
+    "    float k = clamp(1.0 - dist / r, 0.0, 1.0);\n"
+    "    float lambert = dist > 0.0001 ? max(dot(n, d / dist), 0.0) : 1.0;\n"
+    "    return c * (k * k * lambert);\n"
+    "}\n"
     "void main() {\n"
     "    vec4 texel = texture(texture0, fragTexCoord) * colDiffuse * fragColor;\n"
     "    if (texel.a < alphaCutoff) discard;\n"
     "    float nlen = length(fragNormal);\n"
     "    vec3 n = nlen > 0.0 ? fragNormal / nlen : vec3(0.0, 1.0, 0.0);\n"
     "    vec3 light = ambientColor + sunColor * max(dot(n, -sunDirection), 0.0);\n"
-    "    for (int i = 0; i < MAX_LIGHTS; i++) {\n"
-    "        if (i >= lightCount) break;\n"
-    "        vec3 d = lightPosition[i] - fragPosition;\n"
-    "        float dist = length(d);\n"
-    "        float k = clamp(1.0 - dist / lightRadius[i], 0.0, 1.0);\n"
-    "        float lambert = dist > 0.0001 ? max(dot(n, d / dist), 0.0) : 1.0;\n"
-    "        light += lightColor[i] * (k * k * lambert);\n"
+    "    if (useGrid == 1) {\n"
+    "        vec2 cell = floor((fragPosition.xz - gridParams.xy) / gridParams.z);\n"
+    "        if (cell.x >= 0.0 && cell.y >= 0.0 && cell.x < gridParams.w && cell.y < gridParams.w) {\n"
+    "            ivec2 base = ivec2(int(cell.x) * 4, int(cell.y));\n"
+    "            bool done = false;\n"
+    "            for (int t = 0; t < 4 && !done; t++) {\n"
+    "                vec4 ids = texelFetch(lightGrid, base + ivec2(t, 0), 0);\n"
+    "                for (int j = 0; j < 4; j++) {\n"
+    "                    if (ids[j] < 0.0) { done = true; break; }\n"
+    "                    int id = int(ids[j] + 0.5);\n"
+    "                    vec4 pr = texelFetch(lightData, ivec2(0, id), 0);\n"
+    "                    vec4 col = texelFetch(lightData, ivec2(1, id), 0);\n"
+    "                    light += point_light(n, pr.xyz, pr.w, col.rgb);\n"
+    "                }\n"
+    "            }\n"
+    "        }\n"
+    "    } else {\n"
+    "        for (int i = 0; i < MAX_LIGHTS; i++) {\n"
+    "            if (i >= lightCount) break;\n"
+    "            light += point_light(n, lightPosition[i], lightRadius[i], lightColor[i]);\n"
+    "        }\n"
     "    }\n"
-    "    vec3 lit = texel.rgb * light;\n"
+    "    if (lightLimit > 0.0) {\n"
+    "        float knee = lightLimit * 0.75;\n"
+    "        vec3 over = max(light - knee, 0.0);\n"
+    "        light = min(light, vec3(knee)) + (lightLimit - knee) * (1.0 - exp(-over / (lightLimit - knee)));\n"
+    "    }\n"
+    "    vec3 lit = texel.rgb * light + texture(emissionMap, fragTexCoord).rgb * emissionColor;\n"
     "    finalColor = vec4(mix(lit, fogColor.rgb, lrg_fog_amount(fragPosition)), texel.a);\n"
     "}\n";
 
@@ -155,6 +234,19 @@ lrg_light_set_finalize (GObject *object)
 
     g_clear_object (&self->shader);
     g_clear_pointer (&self->lights, g_array_unref);
+    g_clear_pointer (&self->grid_ids, g_free);
+    g_clear_pointer (&self->grid_keys, g_free);
+    g_clear_pointer (&self->grid_counts, g_free);
+    /* GPU textures only while the context lives (never at exit) */
+    if (IsWindowReady ())
+    {
+        if (self->tex_data != 0)
+            rlUnloadTexture (self->tex_data);
+        if (self->tex_grid != 0)
+            rlUnloadTexture (self->tex_grid);
+    }
+    self->tex_data = 0;
+    self->tex_grid = 0;
 
     G_OBJECT_CLASS (lrg_light_set_parent_class)->finalize (object);
 }
@@ -317,6 +409,7 @@ lrg_light_set_remove_point_light (LrgLightSet *self,
     self->n_lights--;
     /* The last selection may name it; drop the selection. */
     self->n_active = 0;
+    self->grid_built = FALSE;
     return TRUE;
 }
 
@@ -328,6 +421,7 @@ lrg_light_set_clear_point_lights (LrgLightSet *self)
     g_array_set_size (self->lights, 0);
     self->n_lights = 0;
     self->n_active = 0;
+    self->grid_built = FALSE;
 }
 
 guint
@@ -455,6 +549,8 @@ lrg_light_set_select (LrgLightSet *self,
     self->camera[2] = camera_z;
 
     self->n_active = 0;
+    if (self->grid_cells > 0)
+        build_grid (self, camera_x, camera_y, camera_z);
     if (self->max_active == 0)
         return 0;
 
@@ -494,6 +590,244 @@ lrg_light_set_select (LrgLightSet *self,
             self->n_active++;
     }
     return self->n_active;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Light grid                                                               */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_light_set_set_grid (LrgLightSet *self,
+                        gfloat       cell_size,
+                        guint        cells)
+{
+    gsize n;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (cells == 0 || (cells >= 2 && cells <= LRG_LIGHT_SET_GRID_MAX_CELLS));
+    g_return_if_fail (cells == 0 || (cell_size > 0.0f && isfinite (cell_size)));
+
+    g_clear_pointer (&self->grid_ids, g_free);
+    g_clear_pointer (&self->grid_keys, g_free);
+    g_clear_pointer (&self->grid_counts, g_free);
+    self->grid_built = FALSE;
+    self->grid_cells = cells;
+    self->grid_cell = cell_size;
+    if (cells == 0)
+        return;
+
+    n = (gsize)cells * cells;
+    self->grid_ids = g_new (guint, n * LRG_LIGHT_SET_GRID_SLOTS);
+    self->grid_keys = g_new (gfloat, n * LRG_LIGHT_SET_GRID_SLOTS);
+    self->grid_counts = g_new0 (guint8, n);
+}
+
+/* grid_insert:
+ * Puts @id with @key into the sorted list of cell @c; a full list keeps
+ * its best (smallest key) entries. Equal keys keep the earlier light. */
+static void
+grid_insert (LrgLightSet *self,
+             gsize        c,
+             guint        id,
+             gfloat       key)
+{
+    guint  *ids = self->grid_ids + c * LRG_LIGHT_SET_GRID_SLOTS;
+    gfloat *keys = self->grid_keys + c * LRG_LIGHT_SET_GRID_SLOTS;
+    guint   count = self->grid_counts[c];
+    guint   slot;
+
+    if (count == LRG_LIGHT_SET_GRID_SLOTS && key >= keys[count - 1])
+        return;
+    slot = count < LRG_LIGHT_SET_GRID_SLOTS ? count : count - 1;
+    while (slot > 0 && keys[slot - 1] > key)
+    {
+        keys[slot] = keys[slot - 1];
+        ids[slot] = ids[slot - 1];
+        slot--;
+    }
+    keys[slot] = key;
+    ids[slot] = id;
+    if (count < LRG_LIGHT_SET_GRID_SLOTS)
+        self->grid_counts[c] = (guint8)(count + 1);
+}
+
+/* build_grid:
+ * Sorts every lit light into the cells its radius reaches, around the
+ * camera's cell. A light's key in a cell is the distance from the light
+ * to the cell's rectangle over its radius: 0 inside, 1 at the edge of
+ * its reach, so strong lights win over weak ones at equal distance. */
+static void
+build_grid (LrgLightSet *self,
+            gdouble      camera_x,
+            gdouble      camera_y,
+            gdouble      camera_z)
+{
+    guint   n = self->grid_cells;
+    gdouble cell = (gdouble)self->grid_cell;
+    gdouble extent = cell * (gdouble)n;
+    guint   id;
+
+    memset (self->grid_counts, 0, (gsize)n * n);
+    self->grid_x0 = (floor (camera_x / cell) - (gdouble)(n / 2)) * cell;
+    self->grid_z0 = (floor (camera_z / cell) - (gdouble)(n / 2)) * cell;
+
+    for (id = 0; id < self->lights->len; id++)
+    {
+        PointLight *pl = &g_array_index (self->lights, PointLight, id);
+        gdouble     r;
+        gdouble     lx;
+        gdouble     lz;
+        gint        gx0;
+        gint        gx1;
+        gint        gz0;
+        gint        gz1;
+        gint        gx;
+        gint        gz;
+
+        if (!pl->used || !pl->enabled || pl->intensity <= 0.0f)
+            continue;
+        r = (gdouble)pl->radius;
+        if (self->max_distance > 0.0f)
+        {
+            gdouble dx = pl->position[0] - camera_x;
+            gdouble dy = pl->position[1] - camera_y;
+            gdouble dz = pl->position[2] - camera_z;
+
+            if (sqrt (dx * dx + dy * dy + dz * dz) - r > (gdouble)self->max_distance)
+                continue;
+        }
+
+        /* the cells the light's circle overlaps, clipped to the grid */
+        lx = pl->position[0] - self->grid_x0;
+        lz = pl->position[2] - self->grid_z0;
+        if (lx + r < 0.0 || lz + r < 0.0 || lx - r >= extent || lz - r >= extent)
+            continue;
+        gx0 = (gint)CLAMP (floor ((lx - r) / cell), 0.0, (gdouble)(n - 1));
+        gx1 = (gint)CLAMP (floor ((lx + r) / cell), 0.0, (gdouble)(n - 1));
+        gz0 = (gint)CLAMP (floor ((lz - r) / cell), 0.0, (gdouble)(n - 1));
+        gz1 = (gint)CLAMP (floor ((lz + r) / cell), 0.0, (gdouble)(n - 1));
+
+        for (gz = gz0; gz <= gz1; gz++)
+        {
+            for (gx = gx0; gx <= gx1; gx++)
+            {
+                gdouble ax = (gdouble)gx * cell;
+                gdouble az = (gdouble)gz * cell;
+                gdouble dx = MAX (MAX (ax - lx, 0.0), lx - (ax + cell));
+                gdouble dz = MAX (MAX (az - lz, 0.0), lz - (az + cell));
+                gdouble d = sqrt (dx * dx + dz * dz);
+
+                if (d >= r)
+                    continue;
+                grid_insert (self, (gsize)gz * n + (gsize)gx, id, (gfloat)(d / r));
+            }
+        }
+    }
+    self->grid_built = TRUE;
+}
+
+/* grid_cell_at:
+ * The cell index of world (@x, @z), or -1 outside the built grid. */
+static gssize
+grid_cell_at (LrgLightSet *self,
+              gdouble      x,
+              gdouble      z)
+{
+    gdouble gx;
+    gdouble gz;
+
+    if (self->grid_cells == 0 || !self->grid_built)
+        return -1;
+    gx = floor ((x - self->grid_x0) / (gdouble)self->grid_cell);
+    gz = floor ((z - self->grid_z0) / (gdouble)self->grid_cell);
+    if (!(gx >= 0.0 && gz >= 0.0 && gx < (gdouble)self->grid_cells
+          && gz < (gdouble)self->grid_cells))
+        return -1;
+    return (gssize)gz * (gssize)self->grid_cells + (gssize)gx;
+}
+
+guint
+lrg_light_set_get_grid_light_count (LrgLightSet *self,
+                                    gdouble      x,
+                                    gdouble      z)
+{
+    gssize c;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
+
+    c = grid_cell_at (self, x, z);
+    return c < 0 ? 0 : self->grid_counts[c];
+}
+
+guint
+lrg_light_set_get_grid_light (LrgLightSet *self,
+                              gdouble      x,
+                              gdouble      z,
+                              guint        index)
+{
+    gssize c;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), LRG_LIGHT_SET_INVALID_LIGHT);
+
+    c = grid_cell_at (self, x, z);
+    if (c < 0 || index >= self->grid_counts[c])
+        return LRG_LIGHT_SET_INVALID_LIGHT;
+    return self->grid_ids[(gsize)c * LRG_LIGHT_SET_GRID_SLOTS + index];
+}
+
+/* ------------------------------------------------------------------------ */
+/* Light limit and emission                                                 */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_light_set_set_light_limit (LrgLightSet *self,
+                               gfloat       limit)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (limit >= 0.0f);
+
+    self->light_limit = isfinite (limit) ? limit : 0.0f;
+}
+
+gfloat
+lrg_light_set_get_light_limit (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0.0f);
+    return self->light_limit;
+}
+
+gfloat
+lrg_light_set_limit_light (gfloat limit,
+                           gfloat value)
+{
+    gfloat knee;
+
+    /* Mirrors the shader: identity to the knee, then an exponential
+     * roll-off with slope 1 at the knee and @limit as its asymptote. */
+    if (limit <= 0.0f || value <= limit * LIMIT_KNEE)
+        return value;
+    knee = limit * LIMIT_KNEE;
+    return knee + (limit - knee) * (1.0f - expf (-(value - knee) / (limit - knee)));
+}
+
+void
+lrg_light_set_set_emission (LrgLightSet    *self,
+                            const GrlColor *color,
+                            gfloat          intensity)
+{
+    guint k;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (intensity >= 0.0f);
+
+    if (color == NULL)
+    {
+        self->emission[0] = self->emission[1] = self->emission[2] = 0.0f;
+        return;
+    }
+    color_to_rgb (color, self->emission);
+    for (k = 0; k < 3; k++)
+        self->emission[k] *= intensity;
 }
 
 guint
@@ -559,8 +893,147 @@ lrg_light_set_get_shader (LrgLightSet *self)
     self->loc_colors = GetShaderLocation (*handle, "lightColor");
     self->loc_radii = GetShaderLocation (*handle, "lightRadius");
     self->loc_cutoff = GetShaderLocation (*handle, "alphaCutoff");
+    self->loc_use_grid = GetShaderLocation (*handle, "useGrid");
+    self->loc_light_data = GetShaderLocation (*handle, "lightData");
+    self->loc_light_grid = GetShaderLocation (*handle, "lightGrid");
+    self->loc_grid_params = GetShaderLocation (*handle, "gridParams");
+    self->loc_limit = GetShaderLocation (*handle, "lightLimit");
+    self->loc_emission_color = GetShaderLocation (*handle, "emissionColor");
     lrg_light_set_fog_locations (*handle, &self->fog_locs);
+
+    /* The emission map is raylib's MATERIAL_MAP_EMISSION: DrawMesh()
+     * binds a material's map to that unit and sets the sampler through
+     * this location. Without a map the unit is empty and reads black;
+     * the sampler must not default to unit 0 (the albedo). */
+    {
+        gint unit = LRG_LIGHT_SET_EMISSION_UNIT;
+
+        handle->locs[SHADER_LOC_MAP_EMISSION] = GetShaderLocation (*handle, "emissionMap");
+        SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_EMISSION], &unit, SHADER_UNIFORM_INT);
+        unit = GRID_DATA_UNIT;
+        SetShaderValue (*handle, self->loc_light_data, &unit, SHADER_UNIFORM_INT);
+        unit = GRID_CELLS_UNIT;
+        SetShaderValue (*handle, self->loc_light_grid, &unit, SHADER_UNIFORM_INT);
+    }
     return self->shader;
+}
+
+/* upload_texture:
+ * Creates or refreshes a float RGBA texture (point sampled) of @width x
+ * @height texels; a size change recreates it. */
+static void
+upload_texture (guint        *id,
+                gint         *have_w,
+                gint         *have_h,
+                gint          width,
+                gint          height,
+                const gfloat *texels)
+{
+    if (*id != 0 && (*have_w != width || *have_h != height))
+    {
+        rlUnloadTexture (*id);
+        *id = 0;
+    }
+    if (*id == 0)
+    {
+        *id = rlLoadTexture (texels, width, height, RL_PIXELFORMAT_UNCOMPRESSED_R32G32B32A32, 1);
+        rlTextureParameters (*id, RL_TEXTURE_MIN_FILTER, RL_TEXTURE_FILTER_NEAREST);
+        rlTextureParameters (*id, RL_TEXTURE_MAG_FILTER, RL_TEXTURE_FILTER_NEAREST);
+        *have_w = width;
+        *have_h = height;
+    }
+    else
+    {
+        rlUpdateTexture (*id, 0, 0, width, height, RL_PIXELFORMAT_UNCOMPRESSED_R32G32B32A32, texels);
+    }
+}
+
+/* upload_grid:
+ * The lights of the built grid (two texels each, in first-use order)
+ * and the cell lists (four indices per texel, -1 terminated), bound to
+ * GRID_DATA_UNIT / GRID_CELLS_UNIT, plus the grid uniforms. */
+static void
+upload_grid (LrgLightSet *self,
+             Shader      *handle)
+{
+    g_autofree gfloat *data = NULL;
+    g_autofree gfloat *cells = NULL;
+    g_autofree guint  *index_of = NULL;
+    guint   n = self->grid_cells;
+    guint   n_data = 0;
+    gsize   c;
+    gint    grid_w;
+    gint    unused_w;
+    gint    use_grid = 1;
+    gfloat  params[4];
+
+    /* raylib leaves the last material slot active after DrawMesh();
+     * uploads must not bind into a material unit */
+    rlActiveTextureSlot (0);
+    grid_w = (gint)(n * (LRG_LIGHT_SET_GRID_SLOTS / 4));
+    data = g_new0 (gfloat, (gsize)LRG_LIGHT_SET_GRID_MAX_LIGHTS * 8);
+    cells = g_new (gfloat, (gsize)n * n * LRG_LIGHT_SET_GRID_SLOTS);
+    index_of = g_new (guint, MAX (self->lights->len, 1));
+    memset (index_of, 0xff, sizeof (guint) * MAX (self->lights->len, 1));
+
+    for (c = 0; c < (gsize)n * n; c++)
+    {
+        guint written = 0;
+        guint s;
+
+        for (s = 0; s < self->grid_counts[c]; s++)
+        {
+            guint       id = self->grid_ids[c * LRG_LIGHT_SET_GRID_SLOTS + s];
+            PointLight *pl = &g_array_index (self->lights, PointLight, id);
+
+            if (index_of[id] == G_MAXUINT)
+            {
+                gfloat *t;
+                guint   k;
+
+                if (n_data == LRG_LIGHT_SET_GRID_MAX_LIGHTS)
+                    continue;
+                index_of[id] = n_data;
+                t = data + (gsize)n_data * 8;
+                for (k = 0; k < 3; k++)
+                {
+                    t[k] = (gfloat)(pl->position[k] - self->origin[k]);
+                    t[4 + k] = pl->color[k] * pl->intensity;
+                }
+                t[3] = pl->radius;
+                n_data++;
+            }
+            cells[c * LRG_LIGHT_SET_GRID_SLOTS + written++] = (gfloat)index_of[id];
+        }
+        for (; written < LRG_LIGHT_SET_GRID_SLOTS; written++)
+            cells[c * LRG_LIGHT_SET_GRID_SLOTS + written] = -1.0f;
+    }
+
+    /* the cell texture is (n * 4) x n: cell (x, z) at texels 4x .. 4x+3
+     * of row z; the light texture 2 x lights */
+    unused_w = 2;
+    upload_texture (&self->tex_data, &unused_w, &self->tex_data_height,
+                    2, (gint)MAX (n_data, 1u), data);
+    {
+        gint have_w = self->tex_grid_cells * (LRG_LIGHT_SET_GRID_SLOTS / 4);
+        gint have_h = self->tex_grid_cells;
+
+        upload_texture (&self->tex_grid, &have_w, &have_h, grid_w, (gint)n, cells);
+        self->tex_grid_cells = (gint)n;
+    }
+
+    rlActiveTextureSlot (GRID_DATA_UNIT);
+    rlEnableTexture (self->tex_data);
+    rlActiveTextureSlot (GRID_CELLS_UNIT);
+    rlEnableTexture (self->tex_grid);
+    rlActiveTextureSlot (0);
+
+    params[0] = (gfloat)(self->grid_x0 - self->origin[0]);
+    params[1] = (gfloat)(self->grid_z0 - self->origin[2]);
+    params[2] = self->grid_cell;
+    params[3] = (gfloat)n;
+    SetShaderValue (*handle, self->loc_use_grid, &use_grid, SHADER_UNIFORM_INT);
+    SetShaderValue (*handle, self->loc_grid_params, params, SHADER_UNIFORM_VEC4);
 }
 
 gboolean
@@ -615,6 +1088,18 @@ lrg_light_set_apply (LrgLightSet *self,
         SetShaderValueV (*handle, self->loc_positions, positions, SHADER_UNIFORM_VEC3, count);
         SetShaderValueV (*handle, self->loc_colors, colors, SHADER_UNIFORM_VEC3, count);
         SetShaderValueV (*handle, self->loc_radii, radii, SHADER_UNIFORM_FLOAT, count);
+    }
+    SetShaderValue (*handle, self->loc_limit, &self->light_limit, SHADER_UNIFORM_FLOAT);
+    SetShaderValue (*handle, self->loc_emission_color, self->emission, SHADER_UNIFORM_VEC3);
+    if (self->grid_cells > 0 && self->grid_built)
+    {
+        upload_grid (self, handle);
+    }
+    else
+    {
+        gint use_grid = 0;
+
+        SetShaderValue (*handle, self->loc_use_grid, &use_grid, SHADER_UNIFORM_INT);
     }
     lrg_light_set_upload_fog (self, *handle, &self->fog_locs);
     return TRUE;
@@ -819,6 +1304,8 @@ lrg_light_set_sample (LrgLightSet      *self,
     gfloat n[3] = { 0.0f, 0.0f, 0.0f };
     gfloat p[3];
     gboolean has_normal = FALSE;
+    gssize cell;
+    guint count;
     guint i;
     guint k;
 
@@ -860,15 +1347,27 @@ lrg_light_set_sample (LrgLightSet      *self,
             out_rgb[k] += self->directional_color[k] * lambert;
     }
 
-    /* Point lights of the last selection, origin-relative like the
-     * uniforms apply() uploads. */
-    for (i = 0; i < self->n_active; i++)
+    /* Point lights: the grid cell of @position when there is a grid,
+     * else the last selection; origin-relative like the uniforms apply()
+     * uploads. */
+    cell = grid_cell_at (self, (gdouble)p[0] + self->origin[0], (gdouble)p[2] + self->origin[2]);
+    if (self->grid_cells > 0 && self->grid_built)
+        count = cell < 0 ? 0 : self->grid_counts[cell];
+    else
+        count = self->n_active;
+    for (i = 0; i < count; i++)
     {
-        PointLight *pl = &g_array_index (self->lights, PointLight, self->active[i]);
+        PointLight *pl;
         gfloat d[3];
         gfloat dist;
         gfloat f;
         gfloat lambert = 1.0f;
+
+        if (self->grid_cells > 0 && self->grid_built)
+            pl = &g_array_index (self->lights, PointLight,
+                                 self->grid_ids[(gsize)cell * LRG_LIGHT_SET_GRID_SLOTS + i]);
+        else
+            pl = &g_array_index (self->lights, PointLight, self->active[i]);
 
         for (k = 0; k < 3; k++)
             d[k] = (gfloat)(pl->position[k] - self->origin[k]) - p[k];
@@ -881,6 +1380,9 @@ lrg_light_set_sample (LrgLightSet      *self,
         for (k = 0; k < 3; k++)
             out_rgb[k] += pl->color[k] * pl->intensity * f * f * lambert;
     }
+
+    for (k = 0; k < 3; k++)
+        out_rgb[k] = lrg_light_set_limit_light (self->light_limit, out_rgb[k]);
 }
 
 void

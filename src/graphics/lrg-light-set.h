@@ -9,9 +9,14 @@
  * which the ones nearest the camera (up to LRG_LIGHT_SET_MAX_ACTIVE) are
  * selected each frame and uploaded to a GLSL 330 shader usable with
  * LrgStaticBatch and LrgTerrain, plus optional distance fog (linear,
- * exponential, uniform or height) the same shader applies. Light
- * bookkeeping, selection and the fog model are headless; only the
- * shader needs GL.
+ * exponential, uniform or height) the same shader applies. With a light
+ * grid (lrg_light_set_set_grid()) the shader instead finds the lights of
+ * each fragment in a world-space grid of cells around the camera, so any
+ * number of lights each light their own surroundings. A soft light
+ * limit (lrg_light_set_set_light_limit()) and an emission term for
+ * materials with an emission map (lrg_static_batch_set_material_emission())
+ * complete the model. Light bookkeeping, selection, the grid and the
+ * fog model are headless; only the shader needs GL.
  */
 
 #pragma once
@@ -37,6 +42,37 @@ G_BEGIN_DECLS
  * uniform arrays).
  */
 #define LRG_LIGHT_SET_MAX_ACTIVE (16)
+
+/**
+ * LRG_LIGHT_SET_GRID_SLOTS:
+ *
+ * Point lights one grid cell holds (the lights a fragment evaluates
+ * with a light grid).
+ */
+#define LRG_LIGHT_SET_GRID_SLOTS (16)
+
+/**
+ * LRG_LIGHT_SET_GRID_MAX_CELLS:
+ *
+ * Largest grid side (cells per row and per column).
+ */
+#define LRG_LIGHT_SET_GRID_MAX_CELLS (128)
+
+/**
+ * LRG_LIGHT_SET_GRID_MAX_LIGHTS:
+ *
+ * Point lights one grid upload holds; lights beyond it (the farthest
+ * from the camera) light nothing that frame.
+ */
+#define LRG_LIGHT_SET_GRID_MAX_LIGHTS (1024)
+
+/**
+ * LRG_LIGHT_SET_EMISSION_UNIT:
+ *
+ * The texture unit (raylib's %MATERIAL_MAP_EMISSION) the shader reads
+ * a material's emission map from.
+ */
+#define LRG_LIGHT_SET_EMISSION_UNIT (5)
 
 /**
  * LRG_LIGHT_SET_INVALID_LIGHT:
@@ -297,6 +333,116 @@ LRG_AVAILABLE_IN_ALL
 void
 lrg_light_set_set_alpha_cutoff (LrgLightSet *self,
                                 gfloat       cutoff);
+
+/**
+ * lrg_light_set_set_grid:
+ * @self: an #LrgLightSet
+ * @cell_size: cell edge in world units (> 0)
+ * @cells: cells per side (2 .. %LRG_LIGHT_SET_GRID_MAX_CELLS), or 0 to
+ *   turn the grid off
+ *
+ * Switches point lighting from the %LRG_LIGHT_SET_MAX_ACTIVE lights
+ * nearest the camera to a light grid: a square of @cells x @cells cells
+ * in the XZ plane, centred on the camera's cell, each listing up to
+ * %LRG_LIGHT_SET_GRID_SLOTS lights whose radius reaches it (closest
+ * first). Every fragment is lit by the lights of its own cell, so lights
+ * far from the camera still light their surroundings and nothing pops
+ * when the camera moves. Fragments outside the square get no point
+ * light. Built by lrg_light_set_select(); needs float textures on the
+ * GPU (GLSL 330 has them).
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_grid (LrgLightSet *self,
+                        gfloat       cell_size,
+                        guint        cells);
+
+/**
+ * lrg_light_set_get_grid_light_count:
+ * @self: an #LrgLightSet
+ * @x: world X
+ * @z: world Z
+ *
+ * Returns: the lights of the grid cell holding (@x, @z) after the last
+ *   selection, 0 outside the grid or without one
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_light_set_get_grid_light_count (LrgLightSet *self,
+                                    gdouble      x,
+                                    gdouble      z);
+
+/**
+ * lrg_light_set_get_grid_light:
+ * @self: an #LrgLightSet
+ * @x: world X
+ * @z: world Z
+ * @index: 0 .. lrg_light_set_get_grid_light_count() - 1, closest first
+ *
+ * Returns: the light id, or %LRG_LIGHT_SET_INVALID_LIGHT
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_light_set_get_grid_light (LrgLightSet *self,
+                              gdouble      x,
+                              gdouble      z,
+                              guint        index);
+
+/**
+ * lrg_light_set_set_light_limit:
+ * @self: an #LrgLightSet
+ * @limit: the most light a surface can receive per channel (> 0), or 0
+ *   (the default) for no limit
+ *
+ * A soft tonemap of the summed light: values up to 0.75 x @limit pass
+ * unchanged, larger ones roll off exponentially towards @limit, so a
+ * bright light near a wall saturates gracefully instead of turning the
+ * texture white. lrg_light_set_sample() applies it too.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_light_limit (LrgLightSet *self,
+                               gfloat       limit);
+
+/**
+ * lrg_light_set_get_light_limit:
+ * @self: an #LrgLightSet
+ *
+ * Returns: the light limit, 0 when off
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_light_set_get_light_limit (LrgLightSet *self);
+
+/**
+ * lrg_light_set_limit_light:
+ * @limit: a light limit (0: none)
+ * @value: a summed light value of one channel
+ *
+ * The light limit's curve (see lrg_light_set_set_light_limit()).
+ *
+ * Returns: @value after the soft limit
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_light_set_limit_light (gfloat limit,
+                           gfloat value);
+
+/**
+ * lrg_light_set_set_emission:
+ * @self: an #LrgLightSet
+ * @color: (nullable): colour of emissive texels, %NULL for none
+ * @intensity: multiplier of @color (>= 0)
+ *
+ * Materials with an emission map (lrg_static_batch_set_material_emission())
+ * add map texel x @color x @intensity to their lit colour, unaffected by
+ * the lights (lit windows at night). The default is no emission.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_emission (LrgLightSet    *self,
+                            const GrlColor *color,
+                            gfloat          intensity);
 
 /**
  * lrg_light_set_get_shader:

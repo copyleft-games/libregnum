@@ -373,6 +373,25 @@ lrg_static_batch_set_material_texture (LrgStaticBatch *self,
                                        GrlTexture     *texture);
 
 /**
+ * lrg_static_batch_set_material_emission:
+ * @self: an #LrgStaticBatch
+ * @material: material id
+ * @texture: (nullable): emission map for the material (same UVs as its
+ *   albedo), %NULL to unset
+ *
+ * Binds @texture as raylib's %MATERIAL_MAP_EMISSION when @material's
+ * chunks draw (the batch keeps a reference). #LrgLightSet's shader adds
+ * map texel x the light set's emission colour
+ * (lrg_light_set_set_emission()) to the lit colour; other shaders
+ * ignore it.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_static_batch_set_material_emission (LrgStaticBatch *self,
+                                        guint           material,
+                                        GrlTexture     *texture);
+
+/**
  * lrg_static_batch_set_layer_tint:
  * @self: an #LrgStaticBatch
  * @layer: layer 0 .. 31

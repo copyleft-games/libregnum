@@ -444,6 +444,223 @@ test_light_set_sample (void)
     g_assert_cmpfloat_with_epsilon (rgb[0], 0.45f, 1e-5);
 }
 
+/* the light grid: cell lists, closest first, around the camera's cell */
+static void
+test_light_set_grid (void)
+{
+    g_autoptr(LrgLightSet) lights = lrg_light_set_new ();
+    GrlColor red = { 255, 0, 0, 255 };
+    GrlVector3 at = { 0.0f, 0.0f, 0.0f };
+    gfloat rgb[3];
+    guint i;
+    guint far_light;
+
+    /* 40 lights along +X every 10 units: the nearest 16 of the camera
+     * at 0 never reach x = 300, the grid does */
+    for (i = 0; i < 40; i++)
+        lrg_light_set_add_point_light (lights, (gdouble)i * 10.0, 1.0, 0.0, &red, 4.0f);
+    far_light = 30;
+
+    /* no grid: nothing listed */
+    lrg_light_set_select (lights, 0, 0, 0);
+    g_assert_cmpuint (lrg_light_set_get_grid_light_count (lights, 300.0, 0.0), ==, 0);
+
+    lrg_light_set_set_grid (lights, 8.0f, 128);
+    lrg_light_set_select (lights, 0, 0, 0);
+    g_assert_cmpuint (lrg_light_set_get_active_count (lights), ==, 16);
+    /* the cell [296, 304) holds light 30 (and nothing else in reach) */
+    g_assert_cmpuint (lrg_light_set_get_grid_light_count (lights, 300.0, 0.0), ==, 1);
+    g_assert_cmpuint (lrg_light_set_get_grid_light (lights, 300.0, 0.0, 0), ==, far_light);
+    g_assert_cmpuint (lrg_light_set_get_grid_light (lights, 300.0, 0.0, 1), ==,
+                      LRG_LIGHT_SET_INVALID_LIGHT);
+    /* an empty cell between two lights' reach */
+    g_assert_cmpuint (lrg_light_set_get_grid_light_count (lights, 305.0, 50.0), ==, 0);
+
+    /* the CPU sample reads the cell: k = 0.75 at 1 below the light */
+    at.x = 300.0f;
+    lrg_light_set_sample (lights, &at, NULL, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], 64.0f / 255.0f + 0.75f * 0.75f, 1e-4);
+
+    /* outside the grid (128 cells of 8 around the camera): no light */
+    g_assert_cmpuint (lrg_light_set_get_grid_light_count (lights, 600.0, 0.0), ==, 0);
+    g_assert_cmpuint (lrg_light_set_get_grid_light_count (lights, -600.0, 0.0), ==, 0);
+
+    /* a crowded cell keeps the 16 closest relative to their reach */
+    lrg_light_set_clear_point_lights (lights);
+    for (i = 0; i < 20; i++)
+        lrg_light_set_add_point_light (lights, 0.5 + (gdouble)i * 0.25, 0.0, 0.5, &red,
+                                       10.0f);
+    lrg_light_set_add_point_light (lights, 40.0, 0.0, 0.5, &red, 39.0f);
+    lrg_light_set_select (lights, 0, 0, 0);
+    g_assert_cmpuint (lrg_light_set_get_grid_light_count (lights, 1.0, 1.0), ==,
+                      LRG_LIGHT_SET_GRID_SLOTS);
+    for (i = 0; i < LRG_LIGHT_SET_GRID_SLOTS; i++)
+        g_assert_cmpuint (lrg_light_set_get_grid_light (lights, 1.0, 1.0, i), <, 20);
+
+    /* disabled lights stay out; removing drops the lists until selected */
+    lrg_light_set_set_point_light_enabled (lights, 0, FALSE);
+    lrg_light_set_select (lights, 0, 0, 0);
+    for (i = 0; i < LRG_LIGHT_SET_GRID_SLOTS; i++)
+        g_assert_cmpuint (lrg_light_set_get_grid_light (lights, 1.0, 1.0, i), !=, 0);
+    lrg_light_set_remove_point_light (lights, 1);
+    g_assert_cmpuint (lrg_light_set_get_grid_light_count (lights, 1.0, 1.0), ==, 0);
+
+    /* turning the grid off */
+    lrg_light_set_set_grid (lights, 0.0f, 0);
+    lrg_light_set_select (lights, 0, 0, 0);
+    g_assert_cmpuint (lrg_light_set_get_grid_light_count (lights, 1.0, 1.0), ==, 0);
+}
+
+/* the soft light limit: identity to the knee, then towards the limit */
+static void
+test_light_set_limit (void)
+{
+    g_autoptr(LrgLightSet) lights = lrg_light_set_new ();
+    GrlColor white_light = { 255, 255, 255, 255 };
+    GrlVector3 at = { 0.0f, 0.0f, 0.0f };
+    gfloat rgb[3];
+    gfloat v;
+
+    g_assert_cmpfloat (lrg_light_set_get_light_limit (lights), ==, 0.0f);
+    g_assert_cmpfloat (lrg_light_set_limit_light (0.0f, 5.0f), ==, 5.0f);
+    g_assert_cmpfloat (lrg_light_set_limit_light (1.0f, 0.5f), ==, 0.5f);
+    g_assert_cmpfloat (lrg_light_set_limit_light (1.0f, 0.75f), ==, 0.75f);
+    v = lrg_light_set_limit_light (1.0f, 0.8f);
+    g_assert_cmpfloat (v, >, 0.78f);
+    g_assert_cmpfloat (v, <, 0.8f);
+    v = lrg_light_set_limit_light (1.0f, 10.0f);
+    g_assert_cmpfloat (v, >, 0.99f);
+    g_assert_cmpfloat (v, <=, 1.0f);
+
+    /* the CPU sample applies it to the sum */
+    lrg_light_set_set_ambient (lights, &white_light);
+    lrg_light_set_add_point_light (lights, 0.0, 0.0, 0.0, &white_light, 10.0f);
+    lrg_light_set_select (lights, 0, 0, 0);
+    lrg_light_set_sample (lights, &at, NULL, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], 2.0f, 1e-5);
+    lrg_light_set_set_light_limit (lights, 1.0f);
+    g_assert_cmpfloat (lrg_light_set_get_light_limit (lights), ==, 1.0f);
+    lrg_light_set_sample (lights, &at, NULL, rgb);
+    g_assert_cmpfloat_with_epsilon (rgb[0], lrg_light_set_limit_light (1.0f, 2.0f), 1e-6);
+    g_assert_cmpfloat (rgb[0], <, 1.0f);
+}
+
+/* texture sampling: which modes use mipmaps; nothing without a context */
+static void
+test_texture_sampling (void)
+{
+    g_assert_false (lrg_texture_sampling_uses_mipmaps (LRG_TEXTURE_SAMPLING_POINT));
+    g_assert_true (lrg_texture_sampling_uses_mipmaps (LRG_TEXTURE_SAMPLING_POINT_MIPMAPPED));
+    g_assert_false (lrg_texture_sampling_uses_mipmaps (LRG_TEXTURE_SAMPLING_BILINEAR));
+    g_assert_true (lrg_texture_sampling_uses_mipmaps (LRG_TEXTURE_SAMPLING_TRILINEAR));
+    {
+        GEnumClass *klass = g_type_class_ref (LRG_TYPE_TEXTURE_SAMPLING);
+
+        g_assert_cmpstr (g_enum_get_value (klass, LRG_TEXTURE_SAMPLING_POINT_MIPMAPPED)->value_nick,
+                         ==, "point-mipmapped");
+        g_type_class_unref (klass);
+    }
+
+    if (graphics_available)
+    {
+        g_autoptr(GrlImage)   image = grl_image_new_color (8, 8, &white);
+        g_autoptr(GrlTexture) texture = grl_texture_new_from_image (image);
+
+        g_assert_true (lrg_texture_set_sampling (texture, LRG_TEXTURE_SAMPLING_POINT_MIPMAPPED));
+        g_assert_cmpint (grl_texture_get_mipmaps (texture), >, 1);
+        g_assert_true (lrg_texture_set_sampling (texture, LRG_TEXTURE_SAMPLING_POINT));
+    }
+}
+
+/* GPU: the grid lights a floor far from the camera's 16 nearest
+ * lights; the light limit caps a saturating light; an emission map adds
+ * its colour regardless of the light */
+static void
+test_light_set_shader_grid_emission (void)
+{
+    g_autoptr(LrgLightSet)    lights = NULL;
+    g_autoptr(LrgStaticBatch) batch = NULL;
+    g_autoptr(GrlImage)       mask_image = NULL;
+    g_autoptr(GrlTexture)     mask = NULL;
+    GrlShader *shader;
+    GrlColor   black = { 0, 0, 0, 255 };
+    GrlColor   red = { 255, 0, 0, 255 };
+    GrlColor   yellow = { 255, 255, 0, 255 };
+    guint      i;
+    Color      px;
+
+    if (!graphics_available)
+    {
+        g_test_skip ("No display available (headless environment)");
+        return;
+    }
+    lights = lrg_light_set_new ();
+    shader = lrg_light_set_get_shader (lights);
+    if (shader == NULL)
+    {
+        g_test_skip ("GLSL 330 unavailable");
+        return;
+    }
+    batch = floor_batch (0, 0);
+    lrg_static_batch_set_shader (batch, shader);
+    lrg_light_set_set_ambient (lights, &black);
+
+    /* 20 dim lights near a "camera" at x = -200 fill the nearest 16; the
+     * red lamp over the floor at the origin is the 21st */
+    for (i = 0; i < 20; i++)
+        lrg_light_set_add_point_light (lights, -200.0 + (gdouble)i, 1.0, 0.0, &black, 2.0f);
+    lrg_light_set_add_point_light (lights, 0.0, 1.0, 0.0, &red, 5.0f);
+    lrg_light_set_apply (lights, -200.0, 10.0, 0.0);
+    px = render_centre (batch, NULL);
+    g_assert_cmpuint (px.r, <, 10);
+    lrg_light_set_set_grid (lights, 8.0f, 64);
+    lrg_light_set_apply (lights, -200.0, 10.0, 0.0);
+    px = render_centre (batch, NULL);
+    g_assert_cmpuint (px.r, >, 100);
+    g_assert_cmpuint (px.g, <, 10);
+
+    /* a light of intensity 4 right above saturates; the limit keeps it
+     * below the limit */
+    lrg_light_set_set_point_light_intensity (lights, 20, 4.0f);
+    lrg_light_set_apply (lights, -200.0, 10.0, 0.0);
+    px = render_centre (batch, NULL);
+    g_assert_cmpuint (px.r, >, 250);
+    lrg_light_set_set_light_limit (lights, 0.5f);
+    lrg_light_set_apply (lights, -200.0, 10.0, 0.0);
+    px = render_centre (batch, NULL);
+    g_assert_cmpuint (px.r, >, 110);
+    g_assert_cmpuint (px.r, <, 130);
+    lrg_light_set_set_light_limit (lights, 0.0f);
+
+    /* emission: a white mask adds the emission colour in the dark */
+    lrg_light_set_set_point_light_enabled (lights, 20, FALSE);
+    lrg_light_set_apply (lights, -200.0, 10.0, 0.0);
+    px = render_centre (batch, NULL);
+    g_assert_cmpuint (px.r, <, 10);
+    mask_image = grl_image_new_color (2, 2, &white);
+    mask = grl_texture_new_from_image (mask_image);
+    lrg_static_batch_set_material_emission (batch, 0, mask);
+    lrg_light_set_set_emission (lights, &yellow, 0.5f);
+    lrg_light_set_apply (lights, -200.0, 10.0, 0.0);
+    px = render_centre (batch, NULL);
+    g_assert_cmpuint (px.r, >, 115);
+    g_assert_cmpuint (px.r, <, 140);
+    g_assert_cmpuint (px.g, >, 115);
+    g_assert_cmpuint (px.b, <, 10);
+    /* no emission colour: dark; no map: dark */
+    lrg_light_set_set_emission (lights, NULL, 1.0f);
+    lrg_light_set_apply (lights, -200.0, 10.0, 0.0);
+    px = render_centre (batch, NULL);
+    g_assert_cmpuint (px.r, <, 10);
+    lrg_light_set_set_emission (lights, &yellow, 1.0f);
+    lrg_static_batch_set_material_emission (batch, 0, NULL);
+    lrg_light_set_apply (lights, -200.0, 10.0, 0.0);
+    px = render_centre (batch, NULL);
+    g_assert_cmpuint (px.r, <, 10);
+
+    lrg_static_batch_set_shader (batch, NULL);
+}
+
 /* the bound light set is process wide and holds a reference */
 static void
 test_light_set_bind (void)
@@ -486,6 +703,10 @@ main (int   argc,
     g_test_add_func ("/light-set/select", test_light_set_select);
     g_test_add_func ("/light-set/sample", test_light_set_sample);
     g_test_add_func ("/light-set/bind", test_light_set_bind);
+    g_test_add_func ("/light-set/grid", test_light_set_grid);
+    g_test_add_func ("/light-set/limit", test_light_set_limit);
+    g_test_add_func ("/light-set/texture-sampling", test_texture_sampling);
+    g_test_add_func ("/light-set/shader-grid-emission", test_light_set_shader_grid_emission);
     g_test_add_func ("/light-set/shader-static-batch", test_light_set_shader_static_batch);
     g_test_add_func ("/light-set/shader-terrain-origin", test_light_set_shader_terrain_origin);
 

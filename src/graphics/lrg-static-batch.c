@@ -58,6 +58,8 @@ struct _LrgStaticBatch
     GPtrArray  *chunks;          /* Chunk* */
     guint       max_vertices;
     GHashTable *textures;        /* GUINT_TO_POINTER (material) -> MaterialTexture* */
+    GHashTable *emissions;       /* GUINT_TO_POINTER (material) -> MaterialTexture* */
+    guint       no_emission;     /* 1x1 black GL texture, 0 = none yet */
     Color       tints[LRG_STATIC_BATCH_MAX_LAYERS];
     GrlShader  *shader;
 };
@@ -475,7 +477,11 @@ lrg_static_batch_finalize (GObject *object)
 
     g_clear_pointer (&self->chunks, g_ptr_array_unref);
     g_clear_pointer (&self->textures, g_hash_table_unref);
+    g_clear_pointer (&self->emissions, g_hash_table_unref);
     g_clear_object (&self->shader);
+    if (self->no_emission != 0 && IsWindowReady ())
+        rlUnloadTexture (self->no_emission);
+    self->no_emission = 0;
 
     G_OBJECT_CLASS (lrg_static_batch_parent_class)->finalize (object);
 }
@@ -496,6 +502,8 @@ lrg_static_batch_init (LrgStaticBatch *self)
     self->chunks = g_ptr_array_new_with_free_func (chunk_free);
     self->textures = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL,
                                             material_texture_free);
+    self->emissions = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL,
+                                             material_texture_free);
     self->max_vertices = LRG_STATIC_BATCH_MAX_VERTICES;
     for (i = 0; i < LRG_STATIC_BATCH_MAX_LAYERS; i++)
         self->tints[i] = (Color) { 255, 255, 255, 255 };
@@ -971,6 +979,27 @@ lrg_static_batch_set_material_texture (LrgStaticBatch *self,
 }
 
 void
+lrg_static_batch_set_material_emission (LrgStaticBatch *self,
+                                        guint           material,
+                                        GrlTexture     *texture)
+{
+    MaterialTexture *entry;
+
+    g_return_if_fail (LRG_IS_STATIC_BATCH (self));
+    g_return_if_fail (texture == NULL || GRL_IS_TEXTURE (texture));
+
+    if (texture == NULL)
+    {
+        g_hash_table_remove (self->emissions, GUINT_TO_POINTER (material));
+        return;
+    }
+    entry = g_new0 (MaterialTexture, 1);
+    entry->owned = g_object_ref (texture);
+    entry->texture = *(Texture2D *)grl_texture_get_handle (texture);
+    g_hash_table_replace (self->emissions, GUINT_TO_POINTER (material), entry);
+}
+
+void
 lrg_static_batch_set_layer_tint (LrgStaticBatch *self,
                                  guint           layer,
                                  const GrlColor *tint)
@@ -1072,6 +1101,34 @@ lrg_static_batch_unload (LrgStaticBatch *self)
 
     for (i = 0; i < self->chunks->len; i++)
         chunk_unload_gpu (g_ptr_array_index (self->chunks, i));
+    if (self->no_emission != 0 && IsWindowReady ())
+        rlUnloadTexture (self->no_emission);
+    self->no_emission = 0;
+}
+
+/* no_emission_texture:
+ * A black 1x1 texture bound as the emission map of materials without
+ * one. raylib leaves the last material slot active after DrawMesh(), so
+ * later texture uploads bind into the emission unit; an explicit black
+ * map keeps emissive shaders from reading whatever landed there. */
+static Texture2D
+no_emission_texture (LrgStaticBatch *self)
+{
+    Texture2D texture;
+
+    if (self->no_emission == 0)
+    {
+        static const guint8 black[4] = { 0, 0, 0, 255 };
+
+        self->no_emission = rlLoadTexture (black, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+    }
+    memset (&texture, 0, sizeof texture);
+    texture.id = self->no_emission;
+    texture.width = 1;
+    texture.height = 1;
+    texture.mipmaps = 1;
+    texture.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    return texture;
 }
 
 /* draw_one:
@@ -1120,6 +1177,11 @@ draw_one (LrgStaticBatch *self,
         maps[MATERIAL_MAP_ALBEDO].texture.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
     }
     maps[MATERIAL_MAP_ALBEDO].color = self->tints[chunk->layer];
+    entry = g_hash_table_lookup (self->emissions, GUINT_TO_POINTER (chunk->material));
+    if (entry != NULL)
+        maps[MATERIAL_MAP_EMISSION].texture = entry->texture;
+    else if (self->shader != NULL)
+        maps[MATERIAL_MAP_EMISSION].texture = no_emission_texture (self);
     material.maps = maps;
 
     DrawMesh (mesh, material, matrix_identity ());
