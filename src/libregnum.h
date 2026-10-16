@@ -84,6 +84,7 @@
 #include "graphics/lrg-terrain.h"
 #include "graphics/lrg-sky-dome.h"
 #include "graphics/lrg-light-set.h"
+#include "graphics/lrg-texture-sampling.h"
 #include "imageedit/lrg-image-layer.h"
 #include "imageedit/lrg-image-document.h"
 

@@ -5509,4 +5509,27 @@ GType lrg_gltf_error_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_GLTF_ERROR (lrg_gltf_error_get_type ())
 
 
+/**
+ * LrgTextureSampling:
+ * @LRG_TEXTURE_SAMPLING_POINT: nearest texel, no mipmaps (crisp, shimmers
+ *   when minified)
+ * @LRG_TEXTURE_SAMPLING_POINT_MIPMAPPED: nearest texel within a mipmap
+ *   level, blended between levels (crisp up close, calm at a distance)
+ * @LRG_TEXTURE_SAMPLING_BILINEAR: bilinear, no mipmaps
+ * @LRG_TEXTURE_SAMPLING_TRILINEAR: bilinear with mipmaps
+ *
+ * How a texture is sampled; see lrg_texture_set_sampling().
+ */
+typedef enum
+{
+    LRG_TEXTURE_SAMPLING_POINT,
+    LRG_TEXTURE_SAMPLING_POINT_MIPMAPPED,
+    LRG_TEXTURE_SAMPLING_BILINEAR,
+    LRG_TEXTURE_SAMPLING_TRILINEAR
+} LrgTextureSampling;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_texture_sampling_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXTURE_SAMPLING (lrg_texture_sampling_get_type ())
+
 G_END_DECLS

@@ -63,6 +63,7 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-terrain.h \
 	src/graphics/lrg-sky-dome.h \
 	src/graphics/lrg-light-set.h \
+	src/graphics/lrg-texture-sampling.h \
 	src/ecs/lrg-component.h \
 	src/ecs/lrg-game-object.h \
 	src/ecs/lrg-world.h \
@@ -592,6 +593,7 @@ SOURCES := \
 	src/graphics/lrg-terrain.c \
 	src/graphics/lrg-sky-dome.c \
 	src/graphics/lrg-light-set.c \
+	src/graphics/lrg-texture-sampling.c \
 	src/ecs/lrg-component.c \
 	src/ecs/lrg-game-object.c \
 	src/ecs/lrg-world.c \

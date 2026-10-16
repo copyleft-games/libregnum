@@ -1,0 +1,42 @@
+* Texture Sampling - Point, Mipmapped Point, Bilinear, Trilinear
+:PROPERTIES:
+:CUSTOM_ID: texture-sampling
+:END:
+=lrg_texture_set_sampling()= sets how a =GrlTexture= is filtered, including the one mode graylib's =GRL_TEXTURE_FILTER_*= lacks: mipmapped point sampling. Low-resolution "retro" art drawn with plain point sampling stays crisp up close but shimmers and forms moiré lines at a distance, where many texels fall into one pixel; mipmapped point sampling (=GL_NEAREST_MIPMAP_LINEAR=) keeps nearest-texel magnification and picks the nearest texel of the two mipmap levels around the pixel's footprint, blending between them, so distant surfaces average out calmly.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgTextureSampling= - enum, =LRG_TYPE_TEXTURE_SAMPLING=, nicks =point=, =point-mipmapped=, =bilinear=, =trilinear=
+- *Header* - =graphics/lrg-texture-sampling.h=
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src c
+gboolean lrg_texture_sampling_uses_mipmaps (LrgTextureSampling sampling);
+gboolean lrg_texture_set_sampling (GrlTexture *texture, LrgTextureSampling sampling);
+#+end_src
+
+| Mode              | Minification              | Magnification | Mipmaps   |
+|-------------------+---------------------------+---------------+-----------|
+| =POINT=           | =GL_NEAREST=              | =GL_NEAREST=  | no        |
+| =POINT_MIPMAPPED= | =GL_NEAREST_MIPMAP_LINEAR= | =GL_NEAREST=  | generated |
+| =BILINEAR=        | =GL_LINEAR=               | =GL_LINEAR=   | no        |
+| =TRILINEAR=       | =GL_LINEAR_MIPMAP_LINEAR= | =GL_LINEAR=   | generated |
+
+** Semantics
+:PROPERTIES:
+:CUSTOM_ID: semantics
+:END:
+- The mipmapped modes generate the chain once (=grl_texture_gen_mipmaps()=, on the GPU) when the texture has a single level; a texture keeps its levels when switched back to a plain mode.
+- Needs a graphics context; returns =FALSE= and changes nothing without one or for a texture without GPU storage.
+- Textures with cut-out alpha lose coverage in smaller levels (alpha averages towards the cut-off); prefer the plain modes for sprites with hard transparent edges.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-light-set.c= =/light-set/texture-sampling=: the mode table, the enum nick and, with a display, that =POINT_MIPMAPPED= gives an 8x8 texture more than one level.

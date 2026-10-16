@@ -5202,3 +5202,25 @@ lrg_gltf_error_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+GType
+lrg_texture_sampling_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TEXTURE_SAMPLING_POINT, "LRG_TEXTURE_SAMPLING_POINT", "point" },
+            { LRG_TEXTURE_SAMPLING_POINT_MIPMAPPED, "LRG_TEXTURE_SAMPLING_POINT_MIPMAPPED", "point-mipmapped" },
+            { LRG_TEXTURE_SAMPLING_BILINEAR, "LRG_TEXTURE_SAMPLING_BILINEAR", "bilinear" },
+            { LRG_TEXTURE_SAMPLING_TRILINEAR, "LRG_TEXTURE_SAMPLING_TRILINEAR", "trilinear" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTextureSampling"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

@@ -29,6 +29,7 @@ The Graphics module provides:
 - *[[file:renderer.org][LrgRenderer]]* - Render management and layer system
 - *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
 - *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
+- *[[file:texture-sampling.org][Texture sampling]]* - Point, mipmapped point, bilinear and trilinear sampling (=lrg_texture_set_sampling()=)
 
 ** Architecture
 :PROPERTIES:
