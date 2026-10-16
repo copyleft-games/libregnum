@@ -42,8 +42,10 @@ typedef struct
     GArray  *normals;     /* gfloat x3 */
     GArray  *texcoords;   /* gfloat x2 */
     GArray  *indices;     /* guint16 */
+    GArray  *grid;        /* guint32: grid vertex of each vertex (normal refresh) */
     Mesh     mesh;        /* GPU handles only */
     gboolean uploaded;
+    gboolean normals_dirty; /* uploaded, but the normals changed since */
 } TerrainMesh;
 
 typedef struct
@@ -58,6 +60,7 @@ typedef struct
     gfloat     max_y;
     GPtrArray *meshes;     /* TerrainMesh*, valid when mesh_valid */
     gboolean   mesh_valid; /* CPU meshes match the source data */
+    gboolean   normals_stale; /* a neighbour came or went: edge normals moved */
 } TerrainChunk;
 
 typedef struct
@@ -112,19 +115,30 @@ terrain_mesh_free (gpointer data)
     g_array_unref (tm->normals);
     g_array_unref (tm->texcoords);
     g_array_unref (tm->indices);
+    g_array_unref (tm->grid);
     g_free (tm);
 }
 
+/* terrain_mesh_new:
+ * A mesh of @cells cells, its arrays sized for them (four vertices and
+ * six indices a cell) and filled by the caller. */
 static TerrainMesh *
-terrain_mesh_new (guint material)
+terrain_mesh_new (guint material,
+                  guint cells)
 {
     TerrainMesh *tm = g_new0 (TerrainMesh, 1);
 
     tm->material = material;
-    tm->positions = g_array_new (FALSE, FALSE, sizeof (gfloat));
-    tm->normals = g_array_new (FALSE, FALSE, sizeof (gfloat));
-    tm->texcoords = g_array_new (FALSE, FALSE, sizeof (gfloat));
-    tm->indices = g_array_new (FALSE, FALSE, sizeof (guint16));
+    tm->positions = g_array_sized_new (FALSE, FALSE, sizeof (gfloat), cells * 12);
+    tm->normals = g_array_sized_new (FALSE, FALSE, sizeof (gfloat), cells * 12);
+    tm->texcoords = g_array_sized_new (FALSE, FALSE, sizeof (gfloat), cells * 8);
+    tm->indices = g_array_sized_new (FALSE, FALSE, sizeof (guint16), cells * 6);
+    tm->grid = g_array_sized_new (FALSE, FALSE, sizeof (guint32), cells * 4);
+    g_array_set_size (tm->positions, cells * 12);
+    g_array_set_size (tm->normals, cells * 12);
+    g_array_set_size (tm->texcoords, cells * 8);
+    g_array_set_size (tm->indices, cells * 6);
+    g_array_set_size (tm->grid, cells * 4);
     return tm;
 }
 
@@ -172,6 +186,18 @@ invalidate_chunk (TerrainChunk *chunk)
     chunk->mesh_valid = FALSE;
 }
 
+/* stale_normals:
+ * Only a neighbour changed: the chunk's geometry stands, its edge
+ * normals need recomputing (refresh_normals()), which is far cheaper
+ * than a rebuild. A chunk without valid meshes rebuilds anyway. */
+static void
+stale_normals (TerrainChunk *chunk)
+{
+    if (chunk == NULL || !chunk->mesh_valid)
+        return;
+    chunk->normals_stale = TRUE;
+}
+
 /* invalidate_neighbours:
  * Edge normals sample the four orthogonal neighbours, so they change
  * whenever a chunk appears or disappears next to them. */
@@ -180,10 +206,10 @@ invalidate_neighbours (LrgTerrain *self,
                        gint        cx,
                        gint        cz)
 {
-    invalidate_chunk (lookup_chunk (self, cx - 1, cz));
-    invalidate_chunk (lookup_chunk (self, cx + 1, cz));
-    invalidate_chunk (lookup_chunk (self, cx, cz - 1));
-    invalidate_chunk (lookup_chunk (self, cx, cz + 1));
+    stale_normals (lookup_chunk (self, cx - 1, cz));
+    stale_normals (lookup_chunk (self, cx + 1, cz));
+    stale_normals (lookup_chunk (self, cx, cz - 1));
+    stale_normals (lookup_chunk (self, cx, cz + 1));
 }
 
 /* sample_grid:
@@ -301,121 +327,195 @@ positive_mod (gint64 a,
     return (guint)(r < 0 ? r + (gint64)m : r);
 }
 
-typedef struct
-{
-    const guint *materials;
-} SortContext;
-
+/* compare_guint:
+ * Ascending order of material ids. */
 static gint
-compare_cells (gconstpointer a,
-               gconstpointer b,
-               gpointer      user_data)
+compare_guint (gconstpointer a,
+               gconstpointer b)
 {
-    const SortContext *ctx = user_data;
-    guint ca = *(const guint *)a;
-    guint cb = *(const guint *)b;
-    guint ma = ctx->materials[ca];
-    guint mb = ctx->materials[cb];
+    guint ua = *(const guint *)a;
+    guint ub = *(const guint *)b;
 
-    if (ma != mb)
-        return ma < mb ? -1 : 1;
-    return (ca > cb) - (ca < cb);
+    return (ua > ub) - (ua < ub);
+}
+
+/* compute_grid_normals:
+ * One normal per grid vertex, shared by the up to four cells that touch
+ * it, so lighting is smooth across cells (and, through the neighbours'
+ * heights, across chunks). */
+static gfloat *
+compute_grid_normals (LrgTerrain         *self,
+                      const TerrainChunk *chunk)
+{
+    guint   res = self->resolution;
+    guint   stride = res + 1;
+    gfloat  cell = self->chunk_size / (gfloat)res;
+    gfloat *normals;
+    guint   i;
+    guint   j;
+
+    normals = g_new (gfloat, stride * stride * 3);
+    for (j = 0; j <= res; j++)
+        for (i = 0; i <= res; i++)
+            grid_normal (self, chunk, (gint)i, (gint)j, cell, &normals[(j * stride + i) * 3]);
+    return normals;
 }
 
 /* build_chunk_meshes:
  * Generates the chunk's CPU meshes: cells grouped by material (ascending)
  * and, inside a material, in row-major cell order. Each cell owns four
- * vertices (its UVs are its own) and two counter-clockwise triangles. */
+ * vertices (its UVs are its own) and two counter-clockwise triangles.
+ * The cells are bucketed by material in one pass (a material's cells
+ * keep their row-major order) and every array is sized up front. */
 static void
 build_chunk_meshes (LrgTerrain   *self,
                     TerrainChunk *chunk)
 {
     g_autofree gfloat *grid_normals = NULL;
-    g_autoptr(GArray)  order = NULL;
-    SortContext        ctx;
-    TerrainMesh       *current = NULL;
+    g_autoptr(GArray)  materials = NULL;     /* distinct ids, ascending */
+    g_autoptr(GHashTable) slot_of = NULL;    /* material -> slot + 1 */
+    g_autofree guint  *counts = NULL;        /* cells of each slot */
+    g_autofree guint  *first = NULL;         /* first entry of each slot in order[] */
+    g_autofree guint  *order = NULL;         /* cells bucketed by material */
     guint              res = self->resolution;
     guint              stride = res + 1;
     gfloat             cell = self->chunk_size / (gfloat)res;
     guint              n_cells = res * res;
+    guint              max_cells = LRG_TERRAIN_MAX_MESH_VERTICES / 4;
     guint              k;
-    guint              i;
-    guint              j;
+    guint              m;
 
     g_clear_pointer (&chunk->meshes, g_ptr_array_unref);
     chunk->meshes = g_ptr_array_new_with_free_func (terrain_mesh_free);
+    grid_normals = compute_grid_normals (self, chunk);
 
-    /* One normal per grid vertex, shared by the up to four cells that
-     * touch it, so lighting is smooth across cells. */
-    grid_normals = g_new (gfloat, stride * stride * 3);
-    for (j = 0; j <= res; j++)
-        for (i = 0; i <= res; i++)
-            grid_normal (self, chunk, (gint)i, (gint)j, cell,
-                         &grid_normals[(j * stride + i) * 3]);
-
-    order = g_array_sized_new (FALSE, FALSE, sizeof (guint), n_cells);
-    for (k = 0; k < n_cells; k++)
-        g_array_append_val (order, k);
-    ctx.materials = chunk->materials;
-    g_array_sort_with_data (order, compare_cells, &ctx);
-
+    /* the distinct materials in ascending order, then a stable bucket
+     * pass: a counting sort by material, row-major inside one */
+    materials = g_array_new (FALSE, FALSE, sizeof (guint));
+    slot_of = g_hash_table_new (g_direct_hash, g_direct_equal);
     for (k = 0; k < n_cells; k++)
     {
-        guint   c = g_array_index (order, guint, k);
-        guint   ci = c % res;
-        guint   cj = c / res;
-        guint   material = chunk->materials[c];
-        guint8  variant = chunk->variants[c];
-        guint   gu = positive_mod ((gint64)chunk->cx * res + ci, self->repeat);
-        guint   gv = positive_mod ((gint64)chunk->cz * res + cj, self->repeat);
-        guint16 base;
-        guint   corner;
-
-        if (current == NULL || current->material != material ||
-            current->positions->len / 3 + 4 > LRG_TERRAIN_MAX_MESH_VERTICES)
+        if (!g_hash_table_contains (slot_of, GUINT_TO_POINTER (chunk->materials[k])))
         {
-            current = terrain_mesh_new (material);
-            g_ptr_array_add (chunk->meshes, current);
+            g_hash_table_insert (slot_of, GUINT_TO_POINTER (chunk->materials[k]), GUINT_TO_POINTER (1));
+            g_array_append_val (materials, chunk->materials[k]);
         }
-        base = (guint16)(current->positions->len / 3);
+    }
+    g_array_sort (materials, compare_guint);
+    for (m = 0; m < materials->len; m++)
+        g_hash_table_insert (slot_of, GUINT_TO_POINTER (g_array_index (materials, guint, m)),
+                             GUINT_TO_POINTER (m + 1));
 
-        /* corners: 0 = (i, j), 1 = (i+1, j), 2 = (i, j+1), 3 = (i+1, j+1) */
-        for (corner = 0; corner < 4; corner++)
+    counts = g_new0 (guint, materials->len);
+    first = g_new0 (guint, materials->len);
+    order = g_new (guint, n_cells);
+    {
+        g_autofree guint *slot = g_new (guint, n_cells);
+        g_autofree guint *fill = g_new0 (guint, materials->len);
+
+        for (k = 0; k < n_cells; k++)
         {
-            guint  gi = ci + (corner & 1u);
-            guint  gj = cj + (corner >> 1);
-            gfloat p[3];
-            gfloat uv[2];
-            gfloat s = (gfloat)(corner & 1u);
-            gfloat t = (gfloat)(corner >> 1);
-
-            p[0] = (gfloat)gi * cell;
-            p[1] = chunk->heights[gj * stride + gi];
-            p[2] = (gfloat)gj * cell;
-            g_array_append_vals (current->positions, p, 3);
-            g_array_append_vals (current->normals, &grid_normals[(gj * stride + gi) * 3], 3);
-
-            apply_variant (variant, &s, &t);
-            uv[0] = ((gfloat)gu + s) / (gfloat)self->repeat;
-            uv[1] = ((gfloat)gv + t) / (gfloat)self->repeat;
-            g_array_append_vals (current->texcoords, uv, 2);
+            slot[k] = GPOINTER_TO_UINT (g_hash_table_lookup (slot_of,
+                                                             GUINT_TO_POINTER (chunk->materials[k]))) - 1;
+            counts[slot[k]]++;
         }
+        for (m = 1; m < materials->len; m++)
+            first[m] = first[m - 1] + counts[m - 1];
+        for (k = 0; k < n_cells; k++)
+            order[first[slot[k]] + fill[slot[k]]++] = k;
+    }
 
-        /* (0, 2, 1) and (1, 2, 3): both have normal +Y in raylib's
-         * counter-clockwise convention. */
+    /* one mesh per material, split when it outgrows 16-bit indices */
+    for (m = 0; m < materials->len; m++)
+    {
+        guint material = g_array_index (materials, guint, m);
+        guint done;
+
+        for (done = 0; done < counts[m];)
         {
-            guint16 tri[6];
+            guint        n = MIN (counts[m] - done, max_cells);
+            TerrainMesh *tm = terrain_mesh_new (material, n);
+            gfloat      *pos = (gfloat *)(gpointer)tm->positions->data;
+            gfloat      *nrm = (gfloat *)(gpointer)tm->normals->data;
+            gfloat      *tex = (gfloat *)(gpointer)tm->texcoords->data;
+            guint16     *idx = (guint16 *)(gpointer)tm->indices->data;
+            guint32     *grid = (guint32 *)(gpointer)tm->grid->data;
+            guint        q;
 
-            tri[0] = base;
-            tri[1] = (guint16)(base + 2);
-            tri[2] = (guint16)(base + 1);
-            tri[3] = (guint16)(base + 1);
-            tri[4] = (guint16)(base + 2);
-            tri[5] = (guint16)(base + 3);
-            g_array_append_vals (current->indices, tri, 6);
+            for (q = 0; q < n; q++)
+            {
+                guint   c = order[first[m] + done + q];
+                guint   ci = c % res;
+                guint   cj = c / res;
+                guint8  variant = chunk->variants[c];
+                guint   gu = positive_mod ((gint64)chunk->cx * res + ci, self->repeat);
+                guint   gv = positive_mod ((gint64)chunk->cz * res + cj, self->repeat);
+                guint16 base = (guint16)(q * 4);
+                guint   corner;
+
+                /* corners: 0 = (i, j), 1 = (i+1, j), 2 = (i, j+1), 3 = (i+1, j+1) */
+                for (corner = 0; corner < 4; corner++)
+                {
+                    guint  gi = ci + (corner & 1u);
+                    guint  gj = cj + (corner >> 1);
+                    guint  v = q * 4 + corner;
+                    guint  g = gj * stride + gi;
+                    gfloat st = (gfloat)(corner & 1u);
+                    gfloat tt = (gfloat)(corner >> 1);
+
+                    pos[v * 3 + 0] = (gfloat)gi * cell;
+                    pos[v * 3 + 1] = chunk->heights[g];
+                    pos[v * 3 + 2] = (gfloat)gj * cell;
+                    memcpy (&nrm[v * 3], &grid_normals[g * 3], 3 * sizeof (gfloat));
+                    grid[v] = g;
+
+                    apply_variant (variant, &st, &tt);
+                    tex[v * 2 + 0] = ((gfloat)gu + st) / (gfloat)self->repeat;
+                    tex[v * 2 + 1] = ((gfloat)gv + tt) / (gfloat)self->repeat;
+                }
+
+                /* (0, 2, 1) and (1, 2, 3): both have normal +Y in raylib's
+                 * counter-clockwise convention. */
+                idx[q * 6 + 0] = base;
+                idx[q * 6 + 1] = (guint16)(base + 2);
+                idx[q * 6 + 2] = (guint16)(base + 1);
+                idx[q * 6 + 3] = (guint16)(base + 1);
+                idx[q * 6 + 4] = (guint16)(base + 2);
+                idx[q * 6 + 5] = (guint16)(base + 3);
+            }
+            g_ptr_array_add (chunk->meshes, tm);
+            done += n;
         }
     }
     chunk->mesh_valid = TRUE;
+    chunk->normals_stale = FALSE;
+}
+
+/* refresh_normals:
+ * A neighbour came or went: recompute the grid normals and copy them
+ * into every mesh (geometry, order and texture coordinates stand). An
+ * uploaded mesh re-sends only its normal buffer at the next upload. */
+static void
+refresh_normals (LrgTerrain   *self,
+                 TerrainChunk *chunk)
+{
+    g_autofree gfloat *grid_normals = NULL;
+    guint              m;
+
+    grid_normals = compute_grid_normals (self, chunk);
+    for (m = 0; m < chunk->meshes->len; m++)
+    {
+        TerrainMesh   *tm = g_ptr_array_index (chunk->meshes, m);
+        gfloat        *nrm = (gfloat *)(gpointer)tm->normals->data;
+        const guint32 *grid = (const guint32 *)(gpointer)tm->grid->data;
+        guint          v;
+
+        for (v = 0; v < tm->grid->len; v++)
+            memcpy (&nrm[v * 3], &grid_normals[grid[v] * 3], 3 * sizeof (gfloat));
+        if (tm->uploaded)
+            tm->normals_dirty = TRUE;
+    }
+    chunk->normals_stale = FALSE;
 }
 
 static TerrainChunk *
@@ -427,6 +527,8 @@ ready_chunk (LrgTerrain *self,
 
     if (chunk != NULL && !chunk->mesh_valid)
         build_chunk_meshes (self, chunk);
+    else if (chunk != NULL && chunk->normals_stale)
+        refresh_normals (self, chunk);
     return chunk;
 }
 
@@ -1017,12 +1119,24 @@ lrg_terrain_upload (LrgTerrain  *self,
 
         if (!chunk->mesh_valid)
             build_chunk_meshes (self, chunk);
+        else if (chunk->normals_stale)
+            refresh_normals (self, chunk);
         for (m = 0; m < chunk->meshes->len; m++)
         {
             TerrainMesh *tm = g_ptr_array_index (chunk->meshes, m);
 
             if (!tm->uploaded && tm->indices->len > 0)
+            {
                 upload_mesh (tm);
+            }
+            else if (tm->uploaded && tm->normals_dirty)
+            {
+                /* only the normals moved: re-send that buffer */
+                UpdateMeshBuffer (tm->mesh, RL_DEFAULT_SHADER_ATTRIB_LOCATION_NORMAL,
+                                  tm->normals->data,
+                                  (gint)(tm->normals->len * sizeof (gfloat)), 0);
+                tm->normals_dirty = FALSE;
+            }
         }
     }
     return TRUE;
@@ -1042,13 +1156,13 @@ lrg_terrain_is_uploaded (LrgTerrain *self)
         TerrainChunk *chunk = value;
         guint         m;
 
-        if (!chunk->mesh_valid || chunk->meshes == NULL)
+        if (!chunk->mesh_valid || chunk->normals_stale || chunk->meshes == NULL)
             return FALSE;
         for (m = 0; m < chunk->meshes->len; m++)
         {
             TerrainMesh *tm = g_ptr_array_index (chunk->meshes, m);
 
-            if (!tm->uploaded)
+            if (!tm->uploaded || tm->normals_dirty)
                 return FALSE;
         }
     }

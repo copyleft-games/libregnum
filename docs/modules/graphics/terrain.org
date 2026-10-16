@@ -110,7 +110,8 @@ void     lrg_terrain_draw_chunk     (LrgTerrain *self, gint cx, gint cz);
 - One mesh per material used in the chunk, ordered by ascending material id; inside a material, cells are in row-major order. A material whose cells need more than 65535 vertices is split into further meshes of the same material.
 - Each cell owns four vertices (corners =(i, j)=, =(i+1, j)=, =(i, j+1)=, =(i+1, j+1)=) because its UVs are its own, and two triangles =(0, 2, 1)=, =(1, 2, 3)=: counter-clockwise from above, i.e. front-facing under raylib's culling.
 - Positions are *chunk-local* (relative to the chunk corner, Y = height). Drawing translates them.
-- Normals are per grid vertex, from central differences of the heights; across a chunk edge the neighbour's heights are used when it is loaded (one-sided differences otherwise), so lighting is continuous between chunks. Adding or removing a chunk invalidates its four neighbours' meshes.
+- Normals are per grid vertex, from central differences of the heights; across a chunk edge the neighbour's heights are used when it is loaded (one-sided differences otherwise), so lighting is continuous between chunks. Adding or removing a chunk marks its four neighbours' normals stale: their geometry, order and texture coordinates stand, so the next inspection or =upload()= only recomputes their normals (each mesh remembers the grid vertex of each of its vertices) and re-sends the normal buffer of an uploaded mesh (=UpdateMeshBuffer()=) instead of rebuilding and re-uploading four whole chunks.
+- The build buckets the cells by material in one counting pass (no comparison sort) and writes into arrays sized up front; a 128 x 128 chunk builds in a few milliseconds, which matters to a game that streams chunks while the player moves.
 
 *** Texture coordinates
 :PROPERTIES:
@@ -128,9 +129,9 @@ With texture repeat =R= (default 1) a texture covers =R × R= cells. For a cell 
 :PROPERTIES:
 :CUSTOM_ID: drawing
 :END:
-- =upload()= builds and uploads new or changed chunks (=G_IO_ERROR_NOT_INITIALIZED= without a window); =is_uploaded()= is =TRUE= when nothing is pending; =unload()= frees GPU meshes but keeps CPU data.
+- =upload()= builds and uploads new or changed chunks and refreshes stale normals (=G_IO_ERROR_NOT_INITIALIZED= without a window); =is_uploaded()= is =TRUE= when nothing is pending (stale normals count as pending); =unload()= frees GPU meshes but keeps CPU data.
 - =draw()= draws every uploaded mesh with its material texture (raylib's white texture when unset), the tint and the terrain shader (raylib's default when unset). Call inside =BeginMode3D()=. Chunks whose meshes are stale keep drawing their previous meshes until the next =upload()=.
-- =draw_chunk()= draws one chunk, for callers that cull with =get_chunk_bounds()=.
+- =draw_chunk()= draws one chunk, for callers that cull with =get_chunk_bounds()= (bounds are world coordinates: subtract the origin for the draw space). librefall's overworld draws only the chunks inside the camera's frustum this way.
 - Material textures are referenced by the terrain.
 
 ** Example
