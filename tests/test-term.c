@@ -22,6 +22,44 @@
         } \
     } while (0)
 
+/* ------------------------------------------------------ system GTK log --- */
+
+/*
+ * tolerate_system_gtk:
+ * The tests that open a window go through GLFW, which on Wayland loads
+ * the system's libdecor GTK plugin for window decorations.  The plugin
+ * fails to initialise GTK for the first window and, for the second,
+ * calls gtk_disable_setlocale() after GTK has started, which logs a
+ * structured Gtk-WARNING.  g_test_init() makes every warning fatal, so
+ * that third-party message used to abort the whole binary.  This log
+ * writer drops warnings of the "Gtk" domain only; everything else
+ * (libregnum's own messages included) goes to the default writer and
+ * stays fatal.
+ */
+static GLogWriterOutput
+tolerate_system_gtk (GLogLevelFlags   log_level,
+                     const GLogField *fields,
+                     gsize            n_fields,
+                     gpointer         user_data)
+{
+    gsize i;
+
+    if ((log_level & G_LOG_LEVEL_WARNING) != 0)
+    {
+        for (i = 0; i < n_fields; i++)
+        {
+            if (g_str_equal (fields[i].key, "GLIB_DOMAIN") &&
+                fields[i].length < 0 &&
+                g_str_equal ((const gchar *) fields[i].value, "Gtk"))
+            {
+                g_test_message ("ignored a system GTK warning (libdecor plugin)");
+                return G_LOG_WRITER_HANDLED;
+            }
+        }
+    }
+    return g_log_writer_default (log_level, fields, n_fields, user_data);
+}
+
 /* ----------------------------------------------------------------- enum --- */
 
 static void
@@ -733,6 +771,8 @@ int
 main (int   argc,
       char *argv[])
 {
+    /* before any message: GLib takes the writer only once */
+    g_log_set_writer_func (tolerate_system_gtk, NULL, NULL);
     g_test_init (&argc, &argv, NULL);
 
     g_test_add_func ("/term/render-mode", test_render_mode);
