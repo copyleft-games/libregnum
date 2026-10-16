@@ -312,19 +312,90 @@ void lrg_weather_activate (LrgWeather *self) { g_return_if_fail (LRG_IS_WEATHER 
 void lrg_weather_deactivate (LrgWeather *self) { g_return_if_fail (LRG_IS_WEATHER (self)); LRG_WEATHER_GET_CLASS (self)->deactivate (self); }
 void lrg_weather_update (LrgWeather *self, gfloat delta_time) { g_return_if_fail (LRG_IS_WEATHER (self)); LRG_WEATHER_GET_CLASS (self)->update (self, delta_time); }
 
+/* compare_layer:
+ * Ascending render layer; g_ptr_array_sort() is stable, so effects of
+ * one layer keep their insertion order. */
+static gint
+compare_layer (gconstpointer a,
+               gconstpointer b)
+{
+    gint la = lrg_weather_effect_get_render_layer (*(LrgWeatherEffect * const *)a);
+    gint lb = lrg_weather_effect_get_render_layer (*(LrgWeatherEffect * const *)b);
+
+    return (la > lb) - (la < lb);
+}
+
+typedef enum
+{
+    PASS_2D,
+    PASS_WORLD,
+    PASS_OVERLAY
+} RenderPass;
+
+/* render_pass:
+ * Draws one pass of every effect in render-layer order (a sorted copy:
+ * effects may change layers between frames). */
+static void
+render_pass (LrgWeather       *self,
+             RenderPass        pass,
+             const GrlVector3 *camera_position,
+             gint              width,
+             gint              height)
+{
+    LrgWeatherPrivate *priv = lrg_weather_get_instance_private (self);
+    g_autoptr(GPtrArray) order = NULL;
+    guint i;
+
+    if (!priv->active || priv->effects->len == 0)
+        return;
+
+    /* A borrowed copy: g_ptr_array_copy() would inherit the unref
+     * free func and drop the effects with the copy. */
+    order = g_ptr_array_sized_new (priv->effects->len);
+    for (i = 0; i < priv->effects->len; i++)
+        g_ptr_array_add (order, g_ptr_array_index (priv->effects, i));
+    g_ptr_array_sort (order, compare_layer);
+    for (i = 0; i < order->len; i++)
+    {
+        LrgWeatherEffect *effect = g_ptr_array_index (order, i);
+
+        switch (pass)
+        {
+        case PASS_WORLD:
+            lrg_weather_effect_render_world (effect, camera_position);
+            break;
+        case PASS_OVERLAY:
+            lrg_weather_effect_render_overlay (effect, width, height);
+            break;
+        case PASS_2D:
+        default:
+            lrg_weather_effect_render (effect);
+            break;
+        }
+    }
+}
+
 void
 lrg_weather_render (LrgWeather *self)
 {
-    LrgWeatherPrivate *priv;
-    guint i;
     g_return_if_fail (LRG_IS_WEATHER (self));
-    priv = lrg_weather_get_instance_private (self);
-    if (!priv->active)
-        return;
-    /* Sort by render layer, then render each effect */
-    for (i = 0; i < priv->effects->len; i++)
-    {
-        LrgWeatherEffect *effect = g_ptr_array_index (priv->effects, i);
-        lrg_weather_effect_render (effect);
-    }
+    render_pass (self, PASS_2D, NULL, 0, 0);
+}
+
+void
+lrg_weather_render_world (LrgWeather       *self,
+                          const GrlVector3 *camera_position)
+{
+    g_return_if_fail (LRG_IS_WEATHER (self));
+    g_return_if_fail (camera_position != NULL);
+    render_pass (self, PASS_WORLD, camera_position, 0, 0);
+}
+
+void
+lrg_weather_render_overlay (LrgWeather *self,
+                            gint        width,
+                            gint        height)
+{
+    g_return_if_fail (LRG_IS_WEATHER (self));
+    render_pass (self, PASS_OVERLAY, NULL, width, height);
 }

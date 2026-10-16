@@ -10,43 +10,84 @@ The Weather System provides dynamic weather effects including rain, snow, fog, l
 :END:
 The weather system coordinates multiple effects for atmospheric immersion:
 
-- *LrgWeatherEffect* - Abstract base for weather effects (derivable)
-- *LrgRain* - Particle-based rain with optional splashes
-- *LrgSnow* - Particle-based snow with wind drift
-- *LrgFog* - Screen-space fog effect (uniform, linear, exponential, height-based)
-- *LrgLightning* - Lightning flashes with thunder audio
+- *LrgWeatherEffect* - Abstract base for weather effects (derivable): intensity with smooth transitions, wind, render layer, the particle space, the camera volume and three render passes
+- *LrgRain* - Rain drops: screen-space lines or world-space streaks around the camera, with splashes
+- *LrgSnow* - Snow flakes: screen-space dots or world-space sprites that sway and ride the wind
+- *LrgFog* - Distance fog parameters for shaders ([[file:../graphics/light-set.org][LrgLightSet]]) plus a screen-veil fallback (uniform, linear, exponential, height-based)
+- *LrgLightning* - Strikes of flickering flashes with a brightness curve, optional bolts and a thunder signal
 - *LrgWeather* - Weather state definition combining effects
 - *LrgDayNightCycle* - Time-of-day system with color transitions
-- *LrgWeatherManager* - Coordinates weather states and transitions
+- *LrgWeatherManager* - Coordinates weather states, crossfades, wind, the render passes and the scene fog
+
+** Spaces and render passes
+:PROPERTIES:
+:CUSTOM_ID: spaces-and-render-passes
+:END:
+Every effect has a *space* (=LrgWeatherSpace=, property =space=):
+
+| Space                      | Units                | Particles live in                       | Drawn by           |
+|----------------------------+----------------------+-----------------------------------------+--------------------|
+| =LRG_WEATHER_SPACE_SCREEN= | pixels (default)     | an area (=set_area()=)                  | =render()=         |
+| =LRG_WEATHER_SPACE_WORLD=  | world units (metres) | a box centred on the camera (=set_volume()=) | =render_world()= |
+
+Switching the space resets the unit-dependent settings (speeds, lengths, sizes, sway, splash height) to that space's defaults, so set them *after* =set_space()=.
+
+There are three passes, each a virtual method of =LrgWeatherEffect= with a wrapper on =LrgWeather= and =LrgWeatherManager= (effects in ascending render layer, insertion order within a layer):
+
+| Pass              | When                                                     | Draws                                                                 |
+|-------------------+----------------------------------------------------------+-----------------------------------------------------------------------|
+| =render()=        | 2D games, anywhere                                       | screen rain and snow, fog veil, lightning flash and a 2D bolt          |
+| =render_world()=  | inside =BeginMode3D()=, after opaque geometry            | world rain streaks, snow flakes, splashes, lightning bolts             |
+| =render_overlay()= | after =EndMode3D()=, before the UI (3D games)           | fog veil, lightning flash                                             |
+
+- The built-in effects draw nothing without a window, so every pass is safe headless; custom effects' vfuncs are always called.
+- =render_world (camera)= also remembers the camera (=lrg_weather_effect_get_camera_position()=); the next update wraps and spawns particles around it. =set_camera_position()= does the same without drawing.
+- World particles test depth but do not write it, with face culling off; the pass flushes rlgl's batch before and after and restores raylib's 3D defaults (culling and depth writes on).
 
 ** Quick Start
 :PROPERTIES:
 :CUSTOM_ID: quick-start
 :END:
+A 3D storm (world-space rain, lightning with bolts, shader fog):
+
 #+begin_src C
-/* Get the weather manager from engine */
-LrgWeatherManager *weather = lrg_engine_get_weather_manager (engine);
+g_autoptr(LrgWeatherManager) weather = lrg_weather_manager_new ();
+g_autoptr(LrgWeather) storm = lrg_weather_new ("storm", "Thunderstorm");
+g_autoptr(LrgRain) rain = lrg_rain_new ();
+g_autoptr(LrgLightning) lightning = lrg_lightning_new ();
+g_autoptr(LrgFog) fog = lrg_fog_new ();
 
-/* Create a rainy weather state */
-LrgWeather *rainy = lrg_weather_new ("rainy");
+lrg_weather_effect_set_space (LRG_WEATHER_EFFECT (rain), LRG_WEATHER_SPACE_WORLD);
+lrg_rain_set_drop_count (rain, 3000);              /* x intensity are drawn */
+lrg_rain_set_color (rain, 160, 170, 190, 170);
+lrg_weather_add_effect (storm, LRG_WEATHER_EFFECT (rain));
 
-LrgRain *rain = lrg_rain_new ();
-lrg_weather_effect_set_intensity (LRG_WEATHER_EFFECT (rain), 0.8f);
-lrg_rain_set_drop_count (rain, 1000);
-lrg_weather_add_effect (rainy, LRG_WEATHER_EFFECT (rain));
+lrg_lightning_set_bolts_enabled (lightning, TRUE);
+lrg_weather_add_effect (storm, LRG_WEATHER_EFFECT (lightning));
 
-LrgFog *fog = lrg_fog_new ();
-lrg_fog_set_type (fog, LRG_FOG_TYPE_LINEAR);
-lrg_fog_set_density (fog, 0.3f);
-lrg_weather_add_effect (rainy, LRG_WEATHER_EFFECT (fog));
+lrg_fog_set_fog_type (fog, LRG_FOG_TYPE_EXPONENTIAL);
+lrg_fog_set_density (fog, 0.02f);                  /* per metre */
+lrg_fog_set_color (fog, 90, 95, 105, 255);
+lrg_fog_set_veil_opacity (fog, 0.0f);              /* the shader fogs instead */
+lrg_weather_add_effect (storm, LRG_WEATHER_EFFECT (fog));
 
-/* Register and transition to it */
-lrg_weather_manager_register (weather, rainy);
-lrg_weather_manager_transition_to (weather, "rainy", 5.0f);
+lrg_weather_manager_register_weather (weather, storm);
+lrg_weather_manager_set_weather (weather, "storm", 5.0f);   /* 5 s crossfade */
 
-/* In game loop */
+/* each frame */
 lrg_weather_manager_update (weather, delta_time);
+lrg_weather_manager_apply_fog (weather, lights);            /* before apply */
+lrg_light_set_apply (lights, eye.x, eye.y, eye.z);
+
+BeginMode3D (camera);
+/* ... opaque world, billboards ... */
+lrg_weather_manager_render_world (weather, &eye);
+EndMode3D ();
+lrg_weather_manager_render_overlay (weather, GetScreenWidth (), GetScreenHeight ());
+/* ... UI ... */
 #+end_src
+
+A 2D game keeps the defaults (screen space) and calls =lrg_weather_manager_render()= after drawing the scene.
 
 ** Weather Effects
 :PROPERTIES:
@@ -61,10 +102,24 @@ LrgRain *rain = lrg_rain_new ();
 lrg_rain_set_drop_count (rain, 1000);
 lrg_rain_set_drop_speed (rain, 400.0f);
 lrg_rain_set_drop_length (rain, 20.0f);
+lrg_rain_set_drop_thickness (rain, 1.0f);
 lrg_rain_set_color (rain, 180, 200, 255, 150);
 lrg_rain_set_splash_enabled (rain, TRUE);
-lrg_rain_set_wind_influence (rain, 0.5f);
+lrg_rain_set_splash_height (rain, 600.0f);         /* screen Y or world ground height */
 #+end_src
+
+| Setting              | Screen default | World default | Meaning                                   |
+|----------------------+----------------+---------------+-------------------------------------------|
+| =drop-speed=         | 500 px/s       | 9 units/s     | base fall speed                           |
+| =drop-speed-variation= | 100          | 1.5           | ± per drop                                |
+| =drop-length=        | 15 px          | 0.5           | streak length (× 0.8 .. 1.2 per drop)     |
+| =drop-thickness=     | 1 px           | 0.012         | line / ribbon width                       |
+| =splash-enabled=     | TRUE           | FALSE         | splash at the splash height               |
+| =splash-height=      | 600 px         | 0             | screen Y / world ground plane             |
+
+- *Screen*: drops fall through the area; a dead drop respawns at the top with the intensity as its per-update chance (the original 2D behaviour); =render()= draws each as a line slanted by the wind ending at the drop, splashes as two spreading ticks.
+- *World*: every drop keeps a world position and is folded back into the half-open camera box whenever it leaves, so moving or teleporting the camera never empties the volume and nearby drops show parallax. Velocity = (wind_x, -speed, wind_y). The first =drop_count × intensity= drops are drawn as camera-facing ribbons from tail to head along the velocity, head at the rain colour and tail transparent. With splashes on and the box reaching above the ground plane, a drop crossing it leaves a fading ring (6 segments, 0.3 s, at most 128 live) and restarts just under the top of the box; drops below the plane are never drawn. A drop leaving through the bottom restarts at a fresh X/Z so columns do not repeat.
+- Inspection (headless): =get_visible_count()=, =get_drop (i, &pos)= (exactly where it is drawn), =get_splash_count()=.
 
 *** Snow
 :PROPERTIES:
@@ -72,12 +127,24 @@ lrg_rain_set_wind_influence (rain, 0.5f);
 :END:
 #+begin_src C
 LrgSnow *snow = lrg_snow_new ();
-lrg_snow_set_flake_count (snow, 500);
-lrg_snow_set_fall_speed (snow, 50.0f);
-lrg_snow_set_drift_amount (snow, 30.0f);
-lrg_snow_set_flake_size_range (snow, 2.0f, 6.0f);
-lrg_snow_set_rotation_enabled (snow, TRUE);
+lrg_weather_effect_set_space (LRG_WEATHER_EFFECT (snow), LRG_WEATHER_SPACE_WORLD);
+lrg_snow_set_flake_count (snow, 2000);
+lrg_snow_set_flake_speed (snow, 1.0f);
+lrg_snow_set_sway_amount (snow, 0.4f);
+lrg_snow_set_color (snow, 240, 240, 250, 220);
 #+end_src
+
+| Setting                | Screen default | World default |
+|------------------------+----------------+---------------|
+| =flake-speed=          | 100 px/s       | 1.2 units/s (× 0.5 .. 1.5 per flake) |
+| =flake-size=           | 4 px           | 0.05          |
+| =flake-size-variation= | 2 px           | 0.02          |
+| =sway-amount=          | 30 px/s        | 0.35 units/s  |
+| =sway-speed=           | 2              | 1.5           |
+
+- *Screen*: flakes sway on X, drift with 30% of the wind, are drawn as dots (=flake-size= is the diameter); accumulation draws a band of the accumulated height along the bottom of the area.
+- *World*: flakes fall, sway on X (=sin=) and Z (=cos= at 0.7× the rate, own phase: a lazy spiral), ride the full wind and wrap around the camera box like rain; the first =flake_count × intensity= are drawn as camera-facing squares (camera basis from the modelview matrix). Accumulation counts drawn flakes leaving through the bottom.
+- Inspection: =get_visible_count()=, =get_flake (i, &pos)=.
 
 *** Fog
 :PROPERTIES:
@@ -85,23 +152,32 @@ lrg_snow_set_rotation_enabled (snow, TRUE);
 :END:
 #+begin_src C
 LrgFog *fog = lrg_fog_new ();
-lrg_fog_set_type (fog, LRG_FOG_TYPE_EXPONENTIAL);
-lrg_fog_set_density (fog, 0.5f);
-lrg_fog_set_color (fog, 200, 200, 210);
-lrg_fog_set_start_distance (fog, 100.0f);  /* For linear fog */
+lrg_fog_set_fog_type (fog, LRG_FOG_TYPE_LINEAR);
+lrg_fog_set_color (fog, 200, 200, 210, 255);      /* alpha caps the fog */
+lrg_fog_set_start_distance (fog, 100.0f);
 lrg_fog_set_end_distance (fog, 500.0f);
+lrg_fog_set_veil_opacity (fog, 0.0f);             /* 3D: shader fog only */
 #+end_src
+
+Fog is distance fog for shaders with a screen veil as fallback:
+
+- =lrg_fog_apply (fog, lights)= hands the parameters to an [[file:../graphics/light-set.org][LrgLightSet]] (=set_fog()= + =set_fog_height()=), whose shader and lit billboards blend toward the colour per fragment. The colour's alpha is scaled by the intensity, so manager transitions fade the fog; inactive or zero intensity clears the light set's fog (returns =FALSE=).
+- =lrg_fog_get_amount (fog, distance, height)= is the same model on the CPU: the share of fog colour, already × alpha × intensity.
+- The *veil*: =render()= (whole screen) and =render_overlay (w, h)= draw a rectangle of the fog colour with alpha = colour alpha × intensity × =veil-opacity= (default 0.5). A 3D scene with shader fog sets the opacity to 0 (or keeps a little).
+- =get_scroll_offset()= exposes the animated offset (scroll speeds + wind/10, integrated by update) for shaders that texture their fog.
 
 *** Fog Types
 :PROPERTIES:
 :CUSTOM_ID: fog-types
 :END:
-| Type          | Description                      |
-|---------------+----------------------------------|
-| =UNIFORM=     | Constant density everywhere      |
-| =LINEAR=      | Increases linearly with distance |
-| =EXPONENTIAL= | Exponential falloff              |
-| =HEIGHT=      | Density based on Y position      |
+=d= is the distance from the camera, =h= the world height; the result is then × colour alpha (× intensity for =LrgFog=).
+
+| Type          | Amount                                                          |
+|---------------+-----------------------------------------------------------------|
+| =UNIFORM=     | =density=, at every distance                                    |
+| =LINEAR=      | =clamp ((d - start) / (end - start))=; a hard edge at =end= when =end <= start= |
+| =EXPONENTIAL= | =1 - exp (-density × d)=                                        |
+| =HEIGHT=      | exponential × =exp (-falloff × max (h - base, 0))=              |
 
 *** Lightning
 :PROPERTIES:
@@ -109,12 +185,26 @@ lrg_fog_set_end_distance (fog, 500.0f);
 :END:
 #+begin_src C
 LrgLightning *lightning = lrg_lightning_new ();
-lrg_lightning_set_flash_interval_range (lightning, 5.0f, 15.0f);
+lrg_lightning_set_min_interval (lightning, 5.0f);
+lrg_lightning_set_max_interval (lightning, 15.0f);
 lrg_lightning_set_flash_duration (lightning, 0.1f);
-lrg_lightning_set_thunder_delay_range (lightning, 0.5f, 3.0f);
-lrg_lightning_set_intensity (lightning, 1.0f);
+lrg_lightning_set_flash_count (lightning, 2);
+lrg_lightning_set_flash_intensity (lightning, 0.8f);
+lrg_lightning_set_bolts_enabled (lightning, TRUE);
+lrg_lightning_set_bolt_shape (lightning, 150.0f, 90.0f, 1.0f);   /* distance, height, width */
 lrg_lightning_set_color (lightning, 255, 255, 230);
+g_signal_connect (lightning, "thunder", G_CALLBACK (play_thunder), NULL);
 #+end_src
+
+- A strike is =flash-count= sub-flashes (+ up to 2 more at full intensity) of =flash-duration= each, every =min-interval= .. =max-interval= seconds; =trigger_flash()= starts one now. =thunder= fires =thunder-delay= (+ 0..2 s) later.
+- *Flash level* (=get_flash_level()=, 0..1): within a sub-flash a 10% attack from 60% to full, then a quadratic decay to dark; flicker sub-flashes after the first are at 60%; × =flash-intensity= × the effect intensity. The overlay pass draws the lightning colour with the level as alpha; =lrg_weather_manager_get_flash_level()= gives the brightest one, e.g. to add to the scene's ambient light while it lasts.
+- *Bolts* (=bolts-enabled=): each strike generates a 33-point jagged polyline by midpoint displacement. In the world pass it stands =distance= away from the camera of the moment on a random bearing, its top =height= above the camera, spanning 1.25 × =height= (a quarter below the camera, so terrain hides its foot), drawn as =width=-wide camera-facing ribbons at 1.5 × the flash level. The 2D pass draws it from the top of the screen at a random column. =get_bolt_point_count()= / =get_bolt_point()= read it headless.
+
+*** Custom effects
+:PROPERTIES:
+:CUSTOM_ID: custom-effects
+:END:
+Subclass =LrgWeatherEffect= and override any of =render=, =render_world (camera)=, =render_overlay (width, height)=; =space_changed= runs after =set_space()= stored the new space. Chain up =update= for the intensity transition.
 
 ** Day/Night Cycle
 :PROPERTIES:
@@ -161,33 +251,30 @@ gfloat angle = lrg_day_night_cycle_get_sun_angle (cycle);
 :CUSTOM_ID: weather-transitions
 :END:
 #+begin_src C
-/* Smooth transition over 10 seconds */
-lrg_weather_manager_transition_to (weather, "stormy", 10.0f);
+/* Crossfade over 10 seconds: the old weather's effects fade 1 -> 0,
+ * the new one's 0 -> 1 (world rain thins, fog alpha fades) */
+lrg_weather_manager_set_weather (weather, "stormy", 10.0f);
 
-/* Instant change */
-lrg_weather_manager_set_weather (weather, "clear");
+/* Instant change (doors, loading screens) */
+lrg_weather_manager_set_weather (weather, "clear", 0.0f);
+lrg_weather_manager_clear_weather (weather, 2.0f);
 
-/* Check transition state */
 if (lrg_weather_manager_is_transitioning (weather))
-{
-    gfloat progress = lrg_weather_manager_get_transition_progress (weather);
-}
+    ;   /* both weathers update and draw */
 #+end_src
+
+During a crossfade =apply_fog()= blends the two weathers' fogs: densities, distances, heights and colours averaged weighted by each fog's alpha × intensity, the stronger fog's type, alpha = the sum (at most 255). Without fog it clears the light set's fog and returns =FALSE=, so a scene with its own base fog (interiors, dungeons) sets that afterwards.
 
 ** Wind System
 :PROPERTIES:
 :CUSTOM_ID: wind-system
 :END:
-Wind affects weather particles and can integrate with physics:
-
 #+begin_src C
-/* Set global wind */
-lrg_weather_manager_set_wind (weather, 50.0f, 0.0f);  /* Wind from left */
-lrg_weather_manager_set_wind_strength (weather, 0.5f);
-
-/* Enable physics wind (affects rigid bodies) */
-lrg_weather_manager_set_physics_wind_enabled (weather, TRUE);
+/* Propagated to the active (and fading) weather's effects */
+lrg_weather_manager_set_wind (weather, 3.0f, -1.0f);
 #+end_src
+
+Screen space: pixels per second, y down the screen (rain adds half of it to the fall speed, snow drifts with 30% / 20%). World space: horizontal wind along X and Z in world units per second; rain slants its streaks along the resulting velocity, snow is carried by it in full.
 
 ** YAML Configuration
 :PROPERTIES:
@@ -245,7 +332,7 @@ g_signal_connect (day_night, "period-changed",
 | =LrgWeatherEffect=  | Abstract effect base (derivable) |
 | =LrgRain=           | Rain particles                   |
 | =LrgSnow=           | Snow particles                   |
-| =LrgFog=            | Fog post-effect                  |
+| =LrgFog=            | Distance fog + screen veil       |
 | =LrgLightning=      | Lightning flashes                |
 | =LrgWeather=        | Weather state                    |
 | =LrgDayNightCycle=  | Time-of-day                      |
@@ -265,3 +352,6 @@ g_signal_connect (day_night, "period-changed",
 | =src/weather/lrg-weather.h=         | Weather state     |
 | =src/weather/lrg-day-night-cycle.h= | Day/night cycle   |
 | =src/weather/lrg-weather-manager.h= | Manager           |
+| =src/weather/lrg-weather-effect-private.h= | Internal: volume wrap, rlgl ribbons and sprites |
+| =src/graphics/lrg-light-set.h=      | Fog for the lighting shader (=set_fog()=) |
+| =tests/test-weather-render.c=       | Renderer, fog and manager tests |

@@ -3083,6 +3083,26 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_fog_type_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_FOG_TYPE (lrg_fog_type_get_type ())
 
+/**
+ * LrgWeatherSpace:
+ * @LRG_WEATHER_SPACE_SCREEN: 2D: particles live in a screen-space
+ *   area, units are pixels, lrg_weather_effect_render() draws them
+ * @LRG_WEATHER_SPACE_WORLD: 3D: particles live in world units in a
+ *   volume around the camera, lrg_weather_effect_render_world() draws
+ *   them inside 3D mode
+ *
+ * Where a weather effect simulates and draws its particles.
+ */
+typedef enum
+{
+    LRG_WEATHER_SPACE_SCREEN,
+    LRG_WEATHER_SPACE_WORLD
+} LrgWeatherSpace;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_weather_space_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_WEATHER_SPACE (lrg_weather_space_get_type ())
+
 /*
  * Lighting Module Enums
  */

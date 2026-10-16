@@ -4,13 +4,22 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Base class for weather effects.
+ * Base class for weather effects, plus the rlgl helpers the effects
+ * share to draw camera-facing particles (lrg-weather-effect-private.h).
  */
 
-#include "lrg-weather-effect.h"
-#include "../lrg-log.h"
+#include "config.h"
 
 #include <math.h>
+#include <raylib.h>
+#include <rlgl.h>
+
+#ifndef LIBREGNUM_COMPILATION
+#define LIBREGNUM_COMPILATION
+#endif
+#include "lrg-weather-effect.h"
+#include "lrg-weather-effect-private.h"
+#include "../lrg-log.h"
 
 typedef struct
 {
@@ -22,6 +31,10 @@ typedef struct
     gfloat   wind_x;
     gfloat   wind_y;
     gint     render_layer;
+    LrgWeatherSpace space;
+    gfloat   volume_radius;
+    gfloat   volume_height;
+    gfloat   camera[3];
 } LrgWeatherEffectPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgWeatherEffect, lrg_weather_effect, G_TYPE_OBJECT)
@@ -37,6 +50,7 @@ enum
     PROP_WIND_X,
     PROP_WIND_Y,
     PROP_RENDER_LAYER,
+    PROP_SPACE,
     N_PROPS
 };
 
@@ -201,6 +215,9 @@ lrg_weather_effect_get_property (GObject    *object,
     case PROP_RENDER_LAYER:
         g_value_set_int (value, priv->render_layer);
         break;
+    case PROP_SPACE:
+        g_value_set_enum (value, priv->space);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -238,6 +255,9 @@ lrg_weather_effect_set_property (GObject      *object,
         break;
     case PROP_RENDER_LAYER:
         priv->render_layer = g_value_get_int (value);
+        break;
+    case PROP_SPACE:
+        lrg_weather_effect_set_space (self, g_value_get_enum (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -373,6 +393,20 @@ lrg_weather_effect_class_init (LrgWeatherEffectClass *klass)
                           G_MININT, G_MAXINT, 0,
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
+    /**
+     * LrgWeatherEffect:space:
+     *
+     * Where the effect simulates and draws its particles: a 2D screen
+     * area (pixels) or a 3D volume around the camera (world units).
+     */
+    properties[PROP_SPACE] =
+        g_param_spec_enum ("space",
+                           "Space",
+                           "Screen (2D) or world (3D) particles",
+                           LRG_TYPE_WEATHER_SPACE,
+                           LRG_WEATHER_SPACE_SCREEN,
+                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
     /**
@@ -434,6 +468,9 @@ lrg_weather_effect_init (LrgWeatherEffect *self)
     priv->wind_x = 0.0f;
     priv->wind_y = 0.0f;
     priv->render_layer = 0;
+    priv->space = LRG_WEATHER_SPACE_SCREEN;
+    priv->volume_radius = LRG_WEATHER_DEFAULT_VOLUME_RADIUS;
+    priv->volume_height = LRG_WEATHER_DEFAULT_VOLUME_HEIGHT;
 }
 
 /* Public API */
@@ -657,4 +694,279 @@ lrg_weather_effect_set_render_layer (LrgWeatherEffect *self,
         priv->render_layer = layer;
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_RENDER_LAYER]);
     }
+}
+
+void
+lrg_weather_effect_render_world (LrgWeatherEffect *self,
+                                 const GrlVector3 *camera_position)
+{
+    LrgWeatherEffectClass *klass;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+    g_return_if_fail (camera_position != NULL);
+
+    /* The camera is kept even headless: the next update wraps and
+     * spawns around it. */
+    lrg_weather_effect_set_camera_position (self, camera_position);
+
+    klass = LRG_WEATHER_EFFECT_GET_CLASS (self);
+    if (klass->render_world != NULL)
+        klass->render_world (self, camera_position);
+}
+
+void
+lrg_weather_effect_render_overlay (LrgWeatherEffect *self,
+                                   gint              width,
+                                   gint              height)
+{
+    LrgWeatherEffectClass *klass;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+
+    if (width <= 0 || height <= 0)
+        return;
+
+    klass = LRG_WEATHER_EFFECT_GET_CLASS (self);
+    if (klass->render_overlay != NULL)
+        klass->render_overlay (self, width, height);
+}
+
+LrgWeatherSpace
+lrg_weather_effect_get_space (LrgWeatherEffect *self)
+{
+    LrgWeatherEffectPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_WEATHER_EFFECT (self), LRG_WEATHER_SPACE_SCREEN);
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    return priv->space;
+}
+
+void
+lrg_weather_effect_set_space (LrgWeatherEffect *self,
+                              LrgWeatherSpace   space)
+{
+    LrgWeatherEffectPrivate *priv;
+    LrgWeatherEffectClass   *klass;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+    g_return_if_fail (space == LRG_WEATHER_SPACE_SCREEN || space == LRG_WEATHER_SPACE_WORLD);
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    if (priv->space == space)
+        return;
+
+    /* Store first: the subclass resets its units for the new space. */
+    priv->space = space;
+    klass = LRG_WEATHER_EFFECT_GET_CLASS (self);
+    if (klass->space_changed != NULL)
+        klass->space_changed (self);
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SPACE]);
+}
+
+void
+lrg_weather_effect_get_volume (LrgWeatherEffect *self,
+                               gfloat           *radius,
+                               gfloat           *height)
+{
+    LrgWeatherEffectPrivate *priv;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    if (radius != NULL)
+        *radius = priv->volume_radius;
+    if (height != NULL)
+        *height = priv->volume_height;
+}
+
+void
+lrg_weather_effect_set_volume (LrgWeatherEffect *self,
+                               gfloat            radius,
+                               gfloat            height)
+{
+    LrgWeatherEffectPrivate *priv;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    if (isfinite (radius) && radius > 0.0f)
+        priv->volume_radius = radius;
+    if (isfinite (height) && height > 0.0f)
+        priv->volume_height = height;
+}
+
+void
+lrg_weather_effect_get_camera_position (LrgWeatherEffect *self,
+                                        GrlVector3       *out_position)
+{
+    LrgWeatherEffectPrivate *priv;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+    g_return_if_fail (out_position != NULL);
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    out_position->x = priv->camera[0];
+    out_position->y = priv->camera[1];
+    out_position->z = priv->camera[2];
+}
+
+void
+lrg_weather_effect_set_camera_position (LrgWeatherEffect *self,
+                                        const GrlVector3 *position)
+{
+    LrgWeatherEffectPrivate *priv;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+    g_return_if_fail (position != NULL);
+
+    if (!isfinite (position->x) || !isfinite (position->y) || !isfinite (position->z))
+        return;
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    priv->camera[0] = position->x;
+    priv->camera[1] = position->y;
+    priv->camera[2] = position->z;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Shared drawing helpers (lrg-weather-effect-private.h)                    */
+/* ------------------------------------------------------------------------ */
+
+gfloat
+lrg_weather_wrap (gfloat value,
+                  gfloat centre,
+                  gfloat extent)
+{
+    gfloat rel;
+
+    if (!isfinite (value) || !isfinite (centre) || !isfinite (extent) || extent <= 0.0f)
+        return centre;
+
+    /* Offset from the box's low edge, folded into [0, extent). */
+    rel = value - (centre - extent * 0.5f);
+    rel -= floorf (rel / extent) * extent;
+    if (rel >= extent || rel < 0.0f)   /* float rounding at the edge */
+        rel = 0.0f;
+    return centre - extent * 0.5f + rel;
+}
+
+gboolean
+lrg_weather_can_draw (void)
+{
+    return IsWindowReady ();
+}
+
+void
+lrg_weather_begin_particles (void)
+{
+    /* GL state changes are immediate but rlgl batches vertices: flush
+     * what was queued under the old state before changing it. */
+    rlDrawRenderBatchActive ();
+    rlDisableBackfaceCulling ();
+    rlEnableDepthTest ();
+    rlDisableDepthMask ();
+    rlSetTexture (0);
+    rlBegin (RL_TRIANGLES);
+}
+
+void
+lrg_weather_end_particles (void)
+{
+    rlEnd ();
+    rlDrawRenderBatchActive ();
+    rlEnableDepthMask ();
+    rlEnableBackfaceCulling ();
+}
+
+void
+lrg_weather_camera_basis (gfloat *right,
+                          gfloat *up)
+{
+    Matrix view = rlGetMatrixModelview ();
+
+    /* The view matrix rows are the camera axes in world space. */
+    right[0] = view.m0;
+    right[1] = view.m4;
+    right[2] = view.m8;
+    up[0] = view.m1;
+    up[1] = view.m5;
+    up[2] = view.m9;
+}
+
+void
+lrg_weather_emit_ribbon (const gfloat *a,
+                         const gfloat *b,
+                         gfloat        width,
+                         const gfloat *eye,
+                         const guint8 *color_a,
+                         const guint8 *color_b)
+{
+    gfloat dir[3];
+    gfloat view[3];
+    gfloat side[3];
+    gfloat len;
+    guint  k;
+
+    for (k = 0; k < 3; k++)
+    {
+        dir[k] = b[k] - a[k];
+        view[k] = eye[k] - (a[k] + b[k]) * 0.5f;
+    }
+
+    /* side = dir x view: across the segment, facing the eye. */
+    side[0] = dir[1] * view[2] - dir[2] * view[1];
+    side[1] = dir[2] * view[0] - dir[0] * view[2];
+    side[2] = dir[0] * view[1] - dir[1] * view[0];
+    len = sqrtf (side[0] * side[0] + side[1] * side[1] + side[2] * side[2]);
+    if (len < 1e-8f || !isfinite (len))
+    {
+        /* Seen end-on: any horizontal side will do. */
+        side[0] = 1.0f;
+        side[1] = 0.0f;
+        side[2] = 0.0f;
+        len = 1.0f;
+    }
+    for (k = 0; k < 3; k++)
+        side[k] *= width * 0.5f / len;
+
+    rlColor4ub (color_a[0], color_a[1], color_a[2], color_a[3]);
+    rlVertex3f (a[0] - side[0], a[1] - side[1], a[2] - side[2]);
+    rlVertex3f (a[0] + side[0], a[1] + side[1], a[2] + side[2]);
+    rlColor4ub (color_b[0], color_b[1], color_b[2], color_b[3]);
+    rlVertex3f (b[0] + side[0], b[1] + side[1], b[2] + side[2]);
+
+    rlColor4ub (color_a[0], color_a[1], color_a[2], color_a[3]);
+    rlVertex3f (a[0] - side[0], a[1] - side[1], a[2] - side[2]);
+    rlColor4ub (color_b[0], color_b[1], color_b[2], color_b[3]);
+    rlVertex3f (b[0] + side[0], b[1] + side[1], b[2] + side[2]);
+    rlVertex3f (b[0] - side[0], b[1] - side[1], b[2] - side[2]);
+}
+
+void
+lrg_weather_emit_sprite (const gfloat *centre,
+                         gfloat        size,
+                         const gfloat *right,
+                         const gfloat *up,
+                         const guint8 *color)
+{
+    gfloat h = size * 0.5f;
+    gfloat q[4][3];
+    guint  k;
+
+    for (k = 0; k < 3; k++)
+    {
+        q[0][k] = centre[k] - right[k] * h - up[k] * h;
+        q[1][k] = centre[k] + right[k] * h - up[k] * h;
+        q[2][k] = centre[k] + right[k] * h + up[k] * h;
+        q[3][k] = centre[k] - right[k] * h + up[k] * h;
+    }
+
+    rlColor4ub (color[0], color[1], color[2], color[3]);
+    rlVertex3f (q[0][0], q[0][1], q[0][2]);
+    rlVertex3f (q[1][0], q[1][1], q[1][2]);
+    rlVertex3f (q[2][0], q[2][1], q[2][2]);
+    rlVertex3f (q[0][0], q[0][1], q[0][2]);
+    rlVertex3f (q[2][0], q[2][1], q[2][2]);
+    rlVertex3f (q[3][0], q[3][1], q[3][2]);
 }

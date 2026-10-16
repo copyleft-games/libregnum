@@ -7,7 +7,13 @@
  * Rain weather effect.
  *
  * Creates rain particles with configurable density, speed,
- * and wind interaction.
+ * and wind interaction. In %LRG_WEATHER_SPACE_SCREEN (the default)
+ * drops fall through a pixel area and lrg_weather_effect_render()
+ * draws them as lines; in %LRG_WEATHER_SPACE_WORLD they fill a box
+ * around the camera in world units and lrg_weather_effect_render_world()
+ * draws them as camera-facing streaks along their velocity (fall speed
+ * plus wind), solid at the head and fading to the tail. The intensity
+ * thins world rain: drop count x intensity drops are drawn.
  */
 
 #pragma once
@@ -73,7 +79,7 @@ void                lrg_rain_set_drop_count             (LrgRain *self,
  *
  * Gets the base drop fall speed.
  *
- * Returns: Speed in pixels per second
+ * Returns: Speed in pixels (screen) or world units (world) per second
  *
  * Since: 1.0
  */
@@ -83,9 +89,9 @@ gfloat              lrg_rain_get_drop_speed             (LrgRain *self);
 /**
  * lrg_rain_set_drop_speed:
  * @self: A #LrgRain
- * @speed: Speed in pixels per second
+ * @speed: Speed in pixels (screen) or world units (world) per second
  *
- * Sets the base drop fall speed.
+ * Sets the base drop fall speed (defaults 500 px/s, 9 units/s).
  *
  * Since: 1.0
  */
@@ -99,7 +105,7 @@ void                lrg_rain_set_drop_speed             (LrgRain *self,
  *
  * Gets the speed variation amount.
  *
- * Returns: Speed variation in pixels per second
+ * Returns: Speed variation in the space's units per second
  *
  * Since: 1.0
  */
@@ -109,7 +115,7 @@ gfloat              lrg_rain_get_drop_speed_variation   (LrgRain *self);
 /**
  * lrg_rain_set_drop_speed_variation:
  * @self: A #LrgRain
- * @variation: Speed variation in pixels per second
+ * @variation: Speed variation in the space's units per second
  *
  * Sets the speed variation amount.
  *
@@ -125,7 +131,7 @@ void                lrg_rain_set_drop_speed_variation   (LrgRain *self,
  *
  * Gets the rain drop length.
  *
- * Returns: Length in pixels
+ * Returns: Length in pixels (screen) or world units (world)
  *
  * Since: 1.0
  */
@@ -135,9 +141,9 @@ gfloat              lrg_rain_get_drop_length            (LrgRain *self);
 /**
  * lrg_rain_set_drop_length:
  * @self: A #LrgRain
- * @length: Length in pixels
+ * @length: Length in pixels (screen) or world units (world)
  *
- * Sets the rain drop length.
+ * Sets the rain streak length (defaults 15 px, 0.5 units).
  *
  * Since: 1.0
  */
@@ -151,7 +157,7 @@ void                lrg_rain_set_drop_length            (LrgRain *self,
  *
  * Gets the rain drop thickness.
  *
- * Returns: Thickness in pixels
+ * Returns: Thickness in pixels (screen) or world units (world)
  *
  * Since: 1.0
  */
@@ -161,9 +167,9 @@ gfloat              lrg_rain_get_drop_thickness         (LrgRain *self);
 /**
  * lrg_rain_set_drop_thickness:
  * @self: A #LrgRain
- * @thickness: Thickness in pixels
+ * @thickness: Thickness in pixels (screen) or world units (world)
  *
- * Sets the rain drop thickness.
+ * Sets the rain streak thickness (defaults 1 px, 0.012 units).
  *
  * Since: 1.0
  */
@@ -191,7 +197,10 @@ gboolean            lrg_rain_get_splash_enabled         (LrgRain *self);
  * @self: A #LrgRain
  * @enabled: Whether to enable splashes
  *
- * Sets whether splash effects are enabled.
+ * Sets whether drops splash at the splash height (on by default in
+ * screen space, off in world space). In world space the splash height
+ * is a ground plane: drops below it are not drawn and restart at the
+ * top of the volume, leaving a fading ring.
  *
  * Since: 1.0
  */
@@ -205,7 +214,7 @@ void                lrg_rain_set_splash_enabled         (LrgRain  *self,
  *
  * Gets the Y position where splashes occur.
  *
- * Returns: Y position in pixels
+ * Returns: screen Y in pixels, or world height
  *
  * Since: 1.0
  */
@@ -215,9 +224,10 @@ gfloat              lrg_rain_get_splash_height          (LrgRain *self);
 /**
  * lrg_rain_set_splash_height:
  * @self: A #LrgRain
- * @height: Y position in pixels
+ * @height: screen Y in pixels, or world height
  *
- * Sets the Y position where splashes occur (ground level).
+ * Sets the Y position where splashes occur (ground level; defaults
+ * 600 px, world height 0).
  *
  * Since: 1.0
  */
@@ -304,5 +314,46 @@ void                lrg_rain_get_area                   (LrgRain *self,
                                                          gfloat  *y,
                                                          gfloat  *width,
                                                          gfloat  *height);
+
+/* Inspection */
+
+/**
+ * lrg_rain_get_visible_count:
+ * @self: A #LrgRain
+ *
+ * The drops drawn now: live drops in screen space, drop count x
+ * intensity in world space; 0 while inactive.
+ *
+ * Returns: the number of drops drawn
+ */
+LRG_AVAILABLE_IN_ALL
+guint               lrg_rain_get_visible_count          (LrgRain *self);
+
+/**
+ * lrg_rain_get_drop:
+ * @self: A #LrgRain
+ * @index: drop index
+ * @out_position: (out caller-allocates): the drop's head: (x, y, 0)
+ *   in pixels on screen, or its world position folded into the camera
+ *   volume
+ *
+ * Reads where drop @index is drawn. Headless.
+ *
+ * Returns: %TRUE when that drop is drawn (exists, is live, and in world
+ *   space is below lrg_rain_get_visible_count())
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_rain_get_drop                   (LrgRain    *self,
+                                                         guint       index,
+                                                         GrlVector3 *out_position);
+
+/**
+ * lrg_rain_get_splash_count:
+ * @self: A #LrgRain
+ *
+ * Returns: the splashes currently fading (at most 128)
+ */
+LRG_AVAILABLE_IN_ALL
+guint               lrg_rain_get_splash_count           (LrgRain *self);
 
 G_END_DECLS

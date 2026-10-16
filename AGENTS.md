@@ -681,8 +681,22 @@ and client-side helpers for skinned and static models.
   NULL without GL or on compile failure (stay on the default shader).
   `apply (camera)` selects and uploads uniforms once per frame. Light
   positions are uploaded relative to `set_origin()` to match an
-  origin-relative terrain. Optional alpha cutout. Release the shader
-  before the window closes.
+  origin-relative terrain. Optional alpha cutout. Optional distance fog
+  (`set_fog()`: linear / exponential / uniform / height, colour alpha
+  caps it) in the same shader and in lit billboard batches;
+  `sample_fog()` is the headless twin. Release the shader before the
+  window closes.
+
+- **Weather rendering** (`weather/`): effects have a space
+  (`LRG_WEATHER_SPACE_SCREEN` pixels, default; `..._WORLD` world units
+  in a box around the camera, particles wrap so the camera never
+  escapes them) and three passes: `render()` (2D), `render_world
+  (camera)` inside 3D mode, `render_overlay (w, h)` after it (fog veil,
+  lightning flash). `set_space()` resets unit-dependent settings to
+  that space's defaults. `LrgFog` feeds an `LrgLightSet`
+  (`lrg_fog_apply()`, `lrg_weather_manager_apply_fog()` crossfades);
+  `LrgLightning` has a flash-level curve and optional bolts. Built-in
+  effects draw nothing headless.
 
 - **`LrgCollisionMesh`** (`physics/lrg-collision-mesh.h`): 3D triangle
   soup in a binned-SAH BVH plus transformed instances (doors, platforms).
@@ -705,7 +719,8 @@ See `docs/modules/physics/wall-set.org`,
 `docs/modules/graphics/billboard-batch.org`,
 `docs/modules/graphics/terrain.org`,
 `docs/modules/graphics/sky-dome.org`,
-`docs/modules/graphics/light-set.org`.
+`docs/modules/graphics/light-set.org`,
+`docs/modules/weather/index.org`.
 
 ## Architecture Overview
 
@@ -923,13 +938,15 @@ sepia_effect_apply (LrgPostEffect *effect)
 
 ### Custom Weather Effects
 
-Subclass `LrgWeatherEffect`:
+Subclass `LrgWeatherEffect` and override the passes you need
+(`render` 2D, `render_world` 3D, `render_overlay` screen after 3D):
 
 ```c
 static void
-sandstorm_render (LrgWeatherEffect *effect)
+sandstorm_render_world (LrgWeatherEffect *effect,
+                        const GrlVector3 *camera_position)
 {
-    /* Render sand particles */
+    /* Render sand particles around the camera */
 }
 ```
 

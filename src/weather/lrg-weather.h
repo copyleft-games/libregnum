@@ -117,7 +117,41 @@ LRG_AVAILABLE_IN_ALL
 void                lrg_weather_update                  (LrgWeather *self,
                                                          gfloat      delta_time);
 
+/**
+ * lrg_weather_render:
+ * @self: an #LrgWeather
+ *
+ * Runs lrg_weather_effect_render() (the 2D pass) on every effect, in
+ * ascending render layer (insertion order within a layer). Nothing
+ * while the weather is inactive.
+ */
 LRG_AVAILABLE_IN_ALL
 void                lrg_weather_render                  (LrgWeather *self);
+
+/**
+ * lrg_weather_render_world:
+ * @self: an #LrgWeather
+ * @camera_position: the eye of the active 3D camera
+ *
+ * Runs lrg_weather_effect_render_world() on every effect, in render
+ * layer order. Call inside 3D mode after opaque geometry.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_render_world            (LrgWeather       *self,
+                                                         const GrlVector3 *camera_position);
+
+/**
+ * lrg_weather_render_overlay:
+ * @self: an #LrgWeather
+ * @width: screen width in pixels
+ * @height: screen height in pixels
+ *
+ * Runs lrg_weather_effect_render_overlay() on every effect, in render
+ * layer order. Call after the 3D pass, before the UI.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_render_overlay          (LrgWeather *self,
+                                                         gint        width,
+                                                         gint        height);
 
 G_END_DECLS

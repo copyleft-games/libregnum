@@ -4,7 +4,14 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Snow weather effect.
+ * Snow weather effect. In %LRG_WEATHER_SPACE_SCREEN (the default)
+ * flakes drift through a pixel area and lrg_weather_effect_render()
+ * draws them as dots (plus the accumulated band); in
+ * %LRG_WEATHER_SPACE_WORLD they fill a box around the camera in world
+ * units, sway on both horizontal axes, ride the wind and
+ * lrg_weather_effect_render_world() draws them as camera-facing
+ * squares. Speeds, sizes and sway are in the space's units (defaults
+ * 100 px/s, 4 px, sway 30 px/s; world 1.2 units/s, 0.05, sway 0.35).
  */
 
 #pragma once
@@ -116,5 +123,36 @@ void                lrg_snow_set_area                   (LrgSnow *self,
                                                          gfloat   y,
                                                          gfloat   width,
                                                          gfloat   height);
+
+/* Inspection */
+
+/**
+ * lrg_snow_get_visible_count:
+ * @self: A #LrgSnow
+ *
+ * The flakes drawn now: live flakes in screen space, flake count x
+ * intensity in world space; 0 while inactive.
+ *
+ * Returns: the number of flakes drawn
+ */
+LRG_AVAILABLE_IN_ALL
+guint               lrg_snow_get_visible_count          (LrgSnow *self);
+
+/**
+ * lrg_snow_get_flake:
+ * @self: A #LrgSnow
+ * @index: flake index
+ * @out_position: (out caller-allocates): the flake's centre: (x, y, 0)
+ *   in pixels on screen, or its world position folded into the camera
+ *   volume
+ *
+ * Reads where flake @index is drawn. Headless.
+ *
+ * Returns: %TRUE when that flake is drawn
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_snow_get_flake                  (LrgSnow    *self,
+                                                         guint       index,
+                                                         GrlVector3 *out_position);
 
 G_END_DECLS

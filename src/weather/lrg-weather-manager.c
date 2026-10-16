@@ -8,6 +8,8 @@
  */
 
 #include "lrg-weather-manager.h"
+#include "lrg-fog.h"
+#include "lrg-lightning.h"
 #include "../lrg-log.h"
 
 struct _LrgWeatherManager
@@ -588,4 +590,153 @@ lrg_weather_manager_render (LrgWeatherManager *self)
     /* Render active weather */
     if (self->active_weather != NULL)
         lrg_weather_render (self->active_weather);
+}
+
+/* The weathers drawn this frame: the fading one first, then the
+ * active one; returns how many of @out are set. */
+static guint
+drawn_weathers (LrgWeatherManager *self,
+                LrgWeather        *out[2])
+{
+    guint n = 0;
+
+    if (self->previous_weather != NULL && self->transitioning)
+        out[n++] = self->previous_weather;
+    if (self->active_weather != NULL)
+        out[n++] = self->active_weather;
+    return n;
+}
+
+void
+lrg_weather_manager_render_world (LrgWeatherManager *self,
+                                  const GrlVector3  *camera_position)
+{
+    LrgWeather *weathers[2];
+    guint       n;
+    guint       i;
+
+    g_return_if_fail (LRG_IS_WEATHER_MANAGER (self));
+    g_return_if_fail (camera_position != NULL);
+
+    n = drawn_weathers (self, weathers);
+    for (i = 0; i < n; i++)
+        lrg_weather_render_world (weathers[i], camera_position);
+}
+
+void
+lrg_weather_manager_render_overlay (LrgWeatherManager *self,
+                                    gint               width,
+                                    gint               height)
+{
+    LrgWeather *weathers[2];
+    guint       n;
+    guint       i;
+
+    g_return_if_fail (LRG_IS_WEATHER_MANAGER (self));
+
+    n = drawn_weathers (self, weathers);
+    for (i = 0; i < n; i++)
+        lrg_weather_render_overlay (weathers[i], width, height);
+}
+
+gboolean
+lrg_weather_manager_apply_fog (LrgWeatherManager *self,
+                               LrgLightSet       *lights)
+{
+    LrgWeather *weathers[2];
+    LrgFog     *strongest = NULL;
+    gfloat      strongest_w = 0.0f;
+    gfloat      total_w = 0.0f;
+    gfloat      rgb[3] = { 0.0f, 0.0f, 0.0f };
+    gfloat      density = 0.0f;
+    gfloat      start = 0.0f;
+    gfloat      end = 0.0f;
+    gfloat      base = 0.0f;
+    gfloat      falloff = 0.0f;
+    GrlColor    color;
+    guint       n;
+    guint       i;
+
+    g_return_val_if_fail (LRG_IS_WEATHER_MANAGER (self), FALSE);
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (lights), FALSE);
+
+    /* Accumulate every live fog weighted by its alpha x intensity. */
+    n = drawn_weathers (self, weathers);
+    for (i = 0; i < n; i++)
+    {
+        GList *effects = lrg_weather_get_effects (weathers[i]);
+        GList *l;
+
+        for (l = effects; l != NULL; l = l->next)
+        {
+            LrgWeatherEffect *effect = l->data;
+            LrgFog *fog;
+            guint8  r, g, b, a;
+            gfloat  w;
+
+            if (!LRG_IS_FOG (effect) || !lrg_weather_effect_is_active (effect))
+                continue;
+            fog = LRG_FOG (effect);
+            lrg_fog_get_color (fog, &r, &g, &b, &a);
+            w = (gfloat)a / 255.0f
+                * CLAMP (lrg_weather_effect_get_intensity (effect), 0.0f, 1.0f);
+            if (w <= 0.0f)
+                continue;
+
+            rgb[0] += w * (gfloat)r;
+            rgb[1] += w * (gfloat)g;
+            rgb[2] += w * (gfloat)b;
+            density += w * lrg_fog_get_density (fog);
+            start += w * lrg_fog_get_start_distance (fog);
+            end += w * lrg_fog_get_end_distance (fog);
+            base += w * lrg_fog_get_base_height (fog);
+            falloff += w * lrg_fog_get_height_falloff (fog);
+            total_w += w;
+            if (w > strongest_w)
+            {
+                strongest_w = w;
+                strongest = fog;
+            }
+        }
+        g_list_free (effects);
+    }
+
+    if (strongest == NULL)
+    {
+        lrg_light_set_clear_fog (lights);
+        return FALSE;
+    }
+
+    color.r = (guint8)CLAMP (rgb[0] / total_w + 0.5f, 0.0f, 255.0f);
+    color.g = (guint8)CLAMP (rgb[1] / total_w + 0.5f, 0.0f, 255.0f);
+    color.b = (guint8)CLAMP (rgb[2] / total_w + 0.5f, 0.0f, 255.0f);
+    color.a = (guint8)CLAMP (total_w * 255.0f + 0.5f, 0.0f, 255.0f);
+    lrg_light_set_set_fog (lights, lrg_fog_get_fog_type (strongest), &color,
+                           density / total_w, start / total_w, end / total_w);
+    lrg_light_set_set_fog_height (lights, base / total_w, falloff / total_w);
+    return TRUE;
+}
+
+gfloat
+lrg_weather_manager_get_flash_level (LrgWeatherManager *self)
+{
+    LrgWeather *weathers[2];
+    gfloat      level = 0.0f;
+    guint       n;
+    guint       i;
+
+    g_return_val_if_fail (LRG_IS_WEATHER_MANAGER (self), 0.0f);
+
+    n = drawn_weathers (self, weathers);
+    for (i = 0; i < n; i++)
+    {
+        GList *effects = lrg_weather_get_effects (weathers[i]);
+        GList *l;
+
+        for (l = effects; l != NULL; l = l->next)
+            if (LRG_IS_LIGHTNING (l->data))
+                level = MAX (level, lrg_lightning_get_flash_level (LRG_LIGHTNING (l->data)));
+        g_list_free (effects);
+    }
+    return level;
 }
