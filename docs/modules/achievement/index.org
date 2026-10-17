@@ -14,6 +14,9 @@ This module includes:
 - *LrgAchievement* - Derivable type for achievement definitions with virtual unlock checking
 - *LrgAchievementManager* - Singleton manager implementing =LrgSaveable= for persistence
 - *LrgAchievementNotification* - UI popup widget for displaying achievement unlocks
+- *LrgAchievementCriterion* - Reference-counted boxed criterion with its own progress (count, value or distinct keys)
+- *LrgAchievementToasts* / *LrgAchievementToast* - Headless model of unlock toasts (queue, fades, slide) for a game's HUD
+- *LrgAchievementScope* - Whether the account or one character earns an achievement
 
 ** Key Features
 :PROPERTIES:
@@ -284,6 +287,51 @@ typedef enum {
     LRG_NOTIFICATION_POSITION_BOTTOM_RIGHT
 } LrgNotificationPosition;
 #+end_src
+
+** Categories, criteria and scopes
+:PROPERTIES:
+:CUSTOM_ID: categories-criteria-scopes
+:END:
+An achievement may carry a =category= (an id the game lists it under: "quests", "combat") and a =scope=: =LRG_ACHIEVEMENT_SCOPE_ACCOUNT= (the default; earned once for the player's account) or =LRG_ACHIEVEMENT_SCOPE_CHARACTER= (earned by one character and kept with its saves).  Hidden achievements (=hidden=) and points work as before.
+
+Criteria are the steps of an achievement, each with its own target and progress:
+
+- =lrg_achievement_criterion_new (id, description, target)= creates one; =lrg_achievement_add_criterion()= adds it (an id twice is refused).
+- =lrg_achievement_increment_criterion()= counts, =lrg_achievement_set_criterion_progress()= sets a value (clamped to 0 .. target), =lrg_achievement_add_criterion_key()= counts a distinct key once ("visit 25 different towns"; keys past the target are remembered, not counted).
+- Each move emits =LrgAchievement::criterion-changed= (criterion id, current, target), forwarded by the manager as =LrgAchievementManager::criterion-changed=; the default =check_unlock= unlocks once every criterion (and the progress, if any) is complete.  Nothing moves after the unlock.
+- =lrg_achievement_get_fraction()= is the progress bar: 1 when unlocked, else the mean of the criteria's (and the progress's) fractions.
+
+#+begin_src C
+g_autoptr(LrgAchievementManager) manager = lrg_achievement_manager_new ();
+g_autoptr(LrgAchievementCriterion) towns = lrg_achievement_criterion_new ("towns", "Visit towns", 25);
+LrgAchievement *wanderer = lrg_achievement_new ("wanderer", "Wanderer", "Visit 25 towns");
+
+lrg_achievement_set_category (wanderer, "exploration");
+lrg_achievement_set_scope (wanderer, LRG_ACHIEVEMENT_SCOPE_CHARACTER);
+lrg_achievement_add_criterion (wanderer, towns);
+lrg_achievement_manager_register (manager, wanderer);
+lrg_achievement_add_criterion_key (wanderer, "towns", "Daggerfall");
+#+end_src
+
+** Managers and state per scope
+:PROPERTIES:
+:CUSTOM_ID: managers-state
+:END:
+=lrg_achievement_manager_new()= gives a game session a manager of its own besides the default singleton.  =lrg_achievement_manager_list()= returns the achievements in registration order (optionally one category's), =lrg_achievement_manager_get_categories()= the categories in first-seen order, =lrg_achievement_manager_count_points()= the earned and total points (optionally per category).
+
+Each scope's progress is a =GVariant= of =LRG_ACHIEVEMENT_STATE_TYPE= (=a{s(bxxa{s(xas)})}=: id -> unlocked, unlock time in Unix seconds, progress, criterion id -> (progress, keys)):
+
+- =lrg_achievement_manager_save_state (manager, scope)= keeps only achievements with something to keep, plus loaded entries of achievements not registered yet.
+- =lrg_achievement_manager_load_state (manager, scope, state, &error)= resets the scope, then restores without unlock signals (=lrg_achievement_restore()=; a loaded game does not announce old achievements).  Entries of unregistered achievements wait and apply when they register (a mod that registers late loses nothing).  A variant of another type fails with =G_IO_ERROR_INVALID_DATA= and changes nothing.
+- =lrg_achievement_manager_reset_scope()= resets one scope (a new character) and forgets its waiting entries; =lrg_achievement_reset()= resets one achievement.
+
+** Toasts
+:PROPERTIES:
+:CUSTOM_ID: toasts
+:END:
+=LrgAchievementToasts= is the headless model of the "achievement earned" toast: =lrg_achievement_toasts_push()= queues a copy of an achievement's name, description, icon and points (=LrgAchievementToast=), =lrg_achievement_toasts_follow()= pushes every unlock of a manager.  At most =max-visible= (1) show at once, each for =duration= seconds (5) with a fade of =fade= seconds (0.5) at both ends (=lrg_achievement_toasts_get_alpha()=) and an eased slide in (=lrg_achievement_toasts_get_slide()=); =lrg_achievement_toasts_update()= ages them and shows the next waiting one (signal =shown=).  The game draws the toasts; =LrgAchievementNotification= remains the widget for =LrgUi= games.
+
+Tests: =tests/test-achievement.c= (=/achievement/criterion/*=, =/achievement/manager/state-scopes=, =/achievement/toasts=).
 
 ** Save System Integration
 :PROPERTIES:

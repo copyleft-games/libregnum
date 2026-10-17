@@ -10,6 +10,7 @@
 #include "config.h"
 
 #include "lrg-achievement-manager.h"
+#include <gio/gio.h>
 #include "../save/lrg-saveable.h"
 #include "../save/lrg-save-context.h"
 #include "../lrg-log.h"
@@ -23,12 +24,15 @@ struct _LrgAchievementManager
     GHashTable *achievements;     /* id -> LrgAchievement */
     GHashTable *stats_int;        /* name -> gint64 */
     GHashTable *stats_float;      /* name -> gdouble */
+    GPtrArray  *order;            /* LrgAchievement (unowned), registration order */
+    GHashTable *pending[2];       /* per scope: id -> GVariant (bxxa{s(xas)}) */
 };
 
 enum
 {
     SIGNAL_ACHIEVEMENT_UNLOCKED,
     SIGNAL_ACHIEVEMENT_PROGRESS,
+    SIGNAL_CRITERION_CHANGED,
     N_SIGNALS
 };
 
@@ -216,6 +220,17 @@ on_achievement_progress (LrgAchievement        *achievement,
                    achievement, current, target);
 }
 
+static void
+on_criterion_changed (LrgAchievement        *achievement,
+                      const gchar           *criterion,
+                      gint64                 current,
+                      gint64                 target,
+                      LrgAchievementManager *self)
+{
+    g_signal_emit (self, signals[SIGNAL_CRITERION_CHANGED], 0,
+                   achievement, criterion, current, target);
+}
+
 /* ==========================================================================
  * GObject Implementation
  * ========================================================================== */
@@ -228,6 +243,9 @@ lrg_achievement_manager_finalize (GObject *object)
     g_clear_pointer (&self->achievements, g_hash_table_unref);
     g_clear_pointer (&self->stats_int, g_hash_table_unref);
     g_clear_pointer (&self->stats_float, g_hash_table_unref);
+    g_clear_pointer (&self->order, g_ptr_array_unref);
+    g_clear_pointer (&self->pending[0], g_hash_table_unref);
+    g_clear_pointer (&self->pending[1], g_hash_table_unref);
 
     G_OBJECT_CLASS (lrg_achievement_manager_parent_class)->finalize (object);
 }
@@ -278,6 +296,28 @@ lrg_achievement_manager_class_init (LrgAchievementManagerClass *klass)
                       NULL,
                       G_TYPE_NONE, 3,
                       LRG_TYPE_ACHIEVEMENT, G_TYPE_INT64, G_TYPE_INT64);
+
+    /**
+     * LrgAchievementManager::criterion-changed:
+     * @self: the manager
+     * @achievement: the achievement
+     * @criterion: the criterion's id
+     * @current: its progress
+     * @target: its target
+     *
+     * Emitted when a criterion of any achievement moved.
+     *
+     * Since: 1.0
+     */
+    signals[SIGNAL_CRITERION_CHANGED] =
+        g_signal_new ("criterion-changed",
+                      G_TYPE_FROM_CLASS (klass),
+                      G_SIGNAL_RUN_LAST,
+                      0,
+                      NULL, NULL,
+                      NULL,
+                      G_TYPE_NONE, 4,
+                      LRG_TYPE_ACHIEVEMENT, G_TYPE_STRING, G_TYPE_INT64, G_TYPE_INT64);
 }
 
 static void
@@ -295,6 +335,50 @@ lrg_achievement_manager_init (LrgAchievementManager *self)
                                              g_free, NULL);
     self->stats_float = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                g_free, free_double);
+    self->order = g_ptr_array_new ();
+    self->pending[0] = g_hash_table_new_full (g_str_hash, g_str_equal, g_free,
+                                              (GDestroyNotify)g_variant_unref);
+    self->pending[1] = g_hash_table_new_full (g_str_hash, g_str_equal, g_free,
+                                              (GDestroyNotify)g_variant_unref);
+}
+
+/* applies one saved entry (bxxa{s(xas)}) to an achievement, silently */
+static void
+apply_entry (LrgAchievement *achievement,
+             GVariant       *entry)
+{
+    g_autoptr(GVariantIter) criteria = NULL;
+    g_autoptr(GDateTime) when = NULL;
+    const gchar *criterion_id;
+    GVariant *criterion_value;
+    gboolean unlocked;
+    gint64 unix_time;
+    gint64 progress;
+
+    g_variant_get (entry, "(bxxa{s(xas)})", &unlocked, &unix_time, &progress, &criteria);
+    if (lrg_achievement_has_progress (achievement))
+        lrg_achievement_progress_set_current (lrg_achievement_get_progress (achievement), progress);
+    while (g_variant_iter_loop (criteria, "{s@(xas)}", &criterion_id, &criterion_value))
+    {
+        LrgAchievementCriterion *criterion;
+        g_autoptr(GVariantIter) keys = NULL;
+        const gchar *key;
+        gint64 current;
+
+        criterion = lrg_achievement_get_criterion (achievement, criterion_id);
+        if (criterion == NULL)
+            continue;
+        g_variant_get (criterion_value, "(xas)", &current, &keys);
+        lrg_achievement_criterion_reset (criterion);
+        while (g_variant_iter_loop (keys, "&s", &key))
+            lrg_achievement_criterion_add_key (criterion, key);
+        /* the count wins over the keys (a counted criterion has none) */
+        lrg_achievement_criterion_set_current (criterion,
+            MAX (current, lrg_achievement_criterion_get_current (criterion)));
+    }
+    if (unlocked && unix_time > 0)
+        when = g_date_time_new_from_unix_utc (unix_time);
+    lrg_achievement_restore (achievement, unlocked, when);
 }
 
 /* ==========================================================================
@@ -335,8 +419,24 @@ lrg_achievement_manager_register (LrgAchievementManager *self,
                       G_CALLBACK (on_achievement_unlocked), self);
     g_signal_connect (achievement, "progress-changed",
                       G_CALLBACK (on_achievement_progress), self);
+    g_signal_connect (achievement, "criterion-changed",
+                      G_CALLBACK (on_criterion_changed), self);
 
     g_hash_table_insert (self->achievements, g_strdup (id), achievement);
+    g_ptr_array_add (self->order, achievement);
+
+    /* state loaded before it registered */
+    {
+        GHashTable *pending = self->pending[lrg_achievement_get_scope (achievement) ==
+                                            LRG_ACHIEVEMENT_SCOPE_CHARACTER ? 1 : 0];
+        GVariant *entry = g_hash_table_lookup (pending, id);
+
+        if (entry != NULL)
+        {
+            apply_entry (achievement, entry);
+            g_hash_table_remove (pending, id);
+        }
+    }
 
     lrg_debug (LRG_LOG_DOMAIN_ACHIEVEMENT,
                    "Registered achievement: %s", id);
@@ -349,6 +449,14 @@ lrg_achievement_manager_unregister (LrgAchievementManager *self,
     g_return_val_if_fail (LRG_IS_ACHIEVEMENT_MANAGER (self), FALSE);
     g_return_val_if_fail (id != NULL, FALSE);
 
+    {
+        LrgAchievement *achievement = g_hash_table_lookup (self->achievements, id);
+
+        if (achievement == NULL)
+            return FALSE;
+        g_signal_handlers_disconnect_by_data (achievement, self);
+        g_ptr_array_remove (self->order, achievement);
+    }
     return g_hash_table_remove (self->achievements, id);
 }
 
@@ -627,4 +735,224 @@ lrg_achievement_manager_reset_stats (LrgAchievementManager *self)
     g_hash_table_remove_all (self->stats_float);
 
     lrg_info (LRG_LOG_DOMAIN_ACHIEVEMENT, "All statistics reset");
+}
+
+/* ==========================================================================
+ * Instances, listing, scopes and state
+ * ========================================================================== */
+
+LrgAchievementManager *
+lrg_achievement_manager_new (void)
+{
+    return g_object_new (LRG_TYPE_ACHIEVEMENT_MANAGER, NULL);
+}
+
+GPtrArray *
+lrg_achievement_manager_list (LrgAchievementManager *self,
+                              const gchar           *category)
+{
+    GPtrArray *list;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT_MANAGER (self), NULL);
+
+    list = g_ptr_array_new ();
+    for (i = 0; i < self->order->len; i++)
+    {
+        LrgAchievement *achievement = g_ptr_array_index (self->order, i);
+
+        if (category == NULL || g_strcmp0 (lrg_achievement_get_category (achievement), category) == 0)
+            g_ptr_array_add (list, achievement);
+    }
+    return list;
+}
+
+gchar **
+lrg_achievement_manager_get_categories (LrgAchievementManager *self)
+{
+    GPtrArray *names;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT_MANAGER (self), NULL);
+
+    names = g_ptr_array_new ();
+    for (i = 0; i < self->order->len; i++)
+    {
+        const gchar *category = lrg_achievement_get_category (g_ptr_array_index (self->order, i));
+        guint k;
+        gboolean seen = FALSE;
+
+        if (category == NULL)
+            continue;
+        for (k = 0; k < names->len && !seen; k++)
+            seen = g_strcmp0 (g_ptr_array_index (names, k), category) == 0;
+        if (!seen)
+            g_ptr_array_add (names, g_strdup (category));
+    }
+    g_ptr_array_add (names, NULL);
+    return (gchar **)g_ptr_array_free (names, FALSE);
+}
+
+guint
+lrg_achievement_manager_count_points (LrgAchievementManager *self,
+                                      const gchar           *category,
+                                      guint                 *earned,
+                                      guint                 *total)
+{
+    guint unlocked = 0;
+    guint e = 0;
+    guint t = 0;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT_MANAGER (self), 0);
+
+    for (i = 0; i < self->order->len; i++)
+    {
+        LrgAchievement *achievement = g_ptr_array_index (self->order, i);
+
+        if (category != NULL && g_strcmp0 (lrg_achievement_get_category (achievement), category) != 0)
+            continue;
+        t += lrg_achievement_get_points (achievement);
+        if (lrg_achievement_is_unlocked (achievement))
+        {
+            e += lrg_achievement_get_points (achievement);
+            unlocked++;
+        }
+    }
+    if (earned != NULL)
+        *earned = e;
+    if (total != NULL)
+        *total = t;
+    return unlocked;
+}
+
+/* one achievement's entry, NULL when it has nothing to keep */
+static GVariant *
+entry_for (LrgAchievement *achievement)
+{
+    GVariantBuilder criteria;
+    GPtrArray *list;
+    GDateTime *when;
+    gboolean any;
+    gint64 progress;
+    guint i;
+
+    any = lrg_achievement_is_unlocked (achievement);
+    progress = 0;
+    if (lrg_achievement_has_progress (achievement))
+        progress = lrg_achievement_progress_get_current (lrg_achievement_get_progress (achievement));
+    any = any || progress > 0;
+    g_variant_builder_init (&criteria, G_VARIANT_TYPE ("a{s(xas)}"));
+    list = lrg_achievement_get_criteria (achievement);
+    for (i = 0; i < list->len; i++)
+    {
+        LrgAchievementCriterion *criterion = g_ptr_array_index (list, i);
+        g_auto(GStrv) keys = lrg_achievement_criterion_get_keys (criterion);
+        gint64 current = lrg_achievement_criterion_get_current (criterion);
+
+        if (current == 0 && keys[0] == NULL)
+            continue;
+        any = TRUE;
+        g_variant_builder_add (&criteria, "{s(x^as)}", lrg_achievement_criterion_get_id (criterion),
+                               current, keys);
+    }
+    if (!any)
+    {
+        g_variant_builder_clear (&criteria);
+        return NULL;
+    }
+    when = lrg_achievement_get_unlock_time (achievement);
+    return g_variant_new ("(bxxa{s(xas)})", lrg_achievement_is_unlocked (achievement),
+                          lrg_achievement_is_unlocked (achievement) && when != NULL ?
+                              g_date_time_to_unix (when) : (gint64)0,
+                          progress, &criteria);
+}
+
+GVariant *
+lrg_achievement_manager_save_state (LrgAchievementManager *self,
+                                    LrgAchievementScope    scope)
+{
+    GVariantBuilder builder;
+    GHashTableIter iter;
+    gpointer key;
+    gpointer value;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT_MANAGER (self), NULL);
+
+    g_variant_builder_init (&builder, G_VARIANT_TYPE (LRG_ACHIEVEMENT_STATE_TYPE));
+    for (i = 0; i < self->order->len; i++)
+    {
+        LrgAchievement *achievement = g_ptr_array_index (self->order, i);
+        GVariant *entry;
+
+        if (lrg_achievement_get_scope (achievement) != scope)
+            continue;
+        entry = entry_for (achievement);
+        if (entry != NULL)
+            g_variant_builder_add (&builder, "{s@(bxxa{s(xas)})}", lrg_achievement_get_id (achievement), entry);
+    }
+    /* what waits for achievements not registered keeps its place */
+    g_hash_table_iter_init (&iter, self->pending[scope == LRG_ACHIEVEMENT_SCOPE_CHARACTER ? 1 : 0]);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+        g_variant_builder_add (&builder, "{s@(bxxa{s(xas)})}", (const gchar *)key, (GVariant *)value);
+    return g_variant_ref_sink (g_variant_builder_end (&builder));
+}
+
+gboolean
+lrg_achievement_manager_load_state (LrgAchievementManager  *self,
+                                    LrgAchievementScope     scope,
+                                    GVariant               *state,
+                                    GError                **error)
+{
+    GVariantIter iter;
+    const gchar *id;
+    GVariant *entry;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT_MANAGER (self), FALSE);
+    g_return_val_if_fail (state != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    if (!g_variant_is_of_type (state, G_VARIANT_TYPE (LRG_ACHIEVEMENT_STATE_TYPE)))
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "achievement state of type %s, expected %s",
+                     g_variant_get_type_string (state), LRG_ACHIEVEMENT_STATE_TYPE);
+        return FALSE;
+    }
+    lrg_achievement_manager_reset_scope (self, scope);
+    g_variant_iter_init (&iter, state);
+    while (g_variant_iter_loop (&iter, "{&s@(bxxa{s(xas)})}", &id, &entry))
+    {
+        LrgAchievement *achievement = g_hash_table_lookup (self->achievements, id);
+
+        if (achievement == NULL)
+        {
+            g_hash_table_replace (self->pending[scope == LRG_ACHIEVEMENT_SCOPE_CHARACTER ? 1 : 0],
+                                  g_strdup (id), g_variant_ref (entry));
+            continue;
+        }
+        if (lrg_achievement_get_scope (achievement) != scope)
+            continue;
+        apply_entry (achievement, entry);
+    }
+    return TRUE;
+}
+
+void
+lrg_achievement_manager_reset_scope (LrgAchievementManager *self,
+                                     LrgAchievementScope    scope)
+{
+    guint i;
+
+    g_return_if_fail (LRG_IS_ACHIEVEMENT_MANAGER (self));
+
+    for (i = 0; i < self->order->len; i++)
+    {
+        LrgAchievement *achievement = g_ptr_array_index (self->order, i);
+
+        if (lrg_achievement_get_scope (achievement) == scope)
+            lrg_achievement_reset (achievement);
+    }
+    g_hash_table_remove_all (self->pending[scope == LRG_ACHIEVEMENT_SCOPE_CHARACTER ? 1 : 0]);
 }

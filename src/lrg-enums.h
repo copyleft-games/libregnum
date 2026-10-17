@@ -5676,4 +5676,24 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_hud_anchor_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_HUD_ANCHOR (lrg_hud_anchor_get_type ())
 
+/**
+ * LrgAchievementScope:
+ * @LRG_ACHIEVEMENT_SCOPE_ACCOUNT: earned once for the player's account,
+ *   whatever character or save earned it
+ * @LRG_ACHIEVEMENT_SCOPE_CHARACTER: earned by one character, kept with
+ *   that character's saves
+ *
+ * Where an achievement's progress lives (#LrgAchievementManager saves
+ * each scope's state separately).
+ */
+typedef enum
+{
+    LRG_ACHIEVEMENT_SCOPE_ACCOUNT,
+    LRG_ACHIEVEMENT_SCOPE_CHARACTER
+} LrgAchievementScope;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_achievement_scope_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ACHIEVEMENT_SCOPE (lrg_achievement_scope_get_type ())
+
 G_END_DECLS

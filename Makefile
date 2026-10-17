@@ -414,6 +414,8 @@ PUBLIC_HEADERS := \
 	src/achievement/lrg-achievement.h \
 	src/achievement/lrg-achievement-manager.h \
 	src/achievement/lrg-achievement-notification.h \
+	src/achievement/lrg-achievement-criterion.h \
+	src/achievement/lrg-achievement-toasts.h \
 	src/photomode/lrg-screenshot.h \
 	src/photomode/lrg-photo-camera-controller.h \
 	src/photomode/lrg-photo-mode.h \
@@ -966,6 +968,8 @@ SOURCES := \
 	src/achievement/lrg-achievement.c \
 	src/achievement/lrg-achievement-manager.c \
 	src/achievement/lrg-achievement-notification.c \
+	src/achievement/lrg-achievement-criterion.c \
+	src/achievement/lrg-achievement-toasts.c \
 	src/photomode/lrg-screenshot.c \
 	src/photomode/lrg-photo-camera-controller.c \
 	src/photomode/lrg-photo-mode.c \

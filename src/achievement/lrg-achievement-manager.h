@@ -366,4 +366,136 @@ LRG_AVAILABLE_IN_ALL
 void
 lrg_achievement_manager_reset_stats (LrgAchievementManager *self);
 
+/* ==========================================================================
+ * Instances, listing, scopes and state
+ * ========================================================================== */
+
+/**
+ * LRG_ACHIEVEMENT_STATE_TYPE:
+ *
+ * The #GVariant type of lrg_achievement_manager_save_state():
+ * id -> (unlocked, unlock time in Unix seconds (0 none), progress,
+ * criterion id -> (progress, keys)).
+ *
+ * Since: 1.0
+ */
+#define LRG_ACHIEVEMENT_STATE_TYPE "a{s(bxxa{s(xas)})}"
+
+/**
+ * lrg_achievement_manager_new:
+ *
+ * A manager of its own (a game session's), apart from the default one.
+ *
+ * Returns: (transfer full): a new, empty manager
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAchievementManager *
+lrg_achievement_manager_new (void);
+
+/**
+ * lrg_achievement_manager_list:
+ * @self: an #LrgAchievementManager
+ * @category: (nullable): only this category's, %NULL for all
+ *
+ * Returns: (transfer container) (element-type LrgAchievement): the
+ *   achievements in the order they were registered
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *
+lrg_achievement_manager_list (LrgAchievementManager *self,
+                              const gchar           *category);
+
+/**
+ * lrg_achievement_manager_get_categories:
+ * @self: an #LrgAchievementManager
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the categories of
+ *   the registered achievements, in the order they first appear
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar **
+lrg_achievement_manager_get_categories (LrgAchievementManager *self);
+
+/**
+ * lrg_achievement_manager_count_points:
+ * @self: an #LrgAchievementManager
+ * @category: (nullable): only this category's, %NULL for all
+ * @earned: (out) (optional): the points of the unlocked ones
+ * @total: (out) (optional): the points of all
+ *
+ * Returns: the number of unlocked achievements counted
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_achievement_manager_count_points (LrgAchievementManager *self,
+                                      const gchar           *category,
+                                      guint                 *earned,
+                                      guint                 *total);
+
+/**
+ * lrg_achievement_manager_save_state:
+ * @self: an #LrgAchievementManager
+ * @scope: whose state
+ *
+ * The progress of every achievement of @scope that has some (unlocked,
+ * progress or criteria above 0), plus saved state of achievements not
+ * registered (yet) that was loaded for @scope, so a game that saves
+ * before a mod registers its achievements loses nothing.
+ *
+ * Returns: (transfer full): a %LRG_ACHIEVEMENT_STATE_TYPE variant
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *
+lrg_achievement_manager_save_state (LrgAchievementManager *self,
+                                    LrgAchievementScope    scope);
+
+/**
+ * lrg_achievement_manager_load_state:
+ * @self: an #LrgAchievementManager
+ * @scope: whose state
+ * @state: a %LRG_ACHIEVEMENT_STATE_TYPE variant
+ * @error: return location for a #GError
+ *
+ * Resets every achievement of @scope, then restores @state without
+ * unlock signals (lrg_achievement_restore()).  Entries of achievements
+ * not registered wait and apply when they register; entries of another
+ * scope's achievements are ignored.  A variant of another type fails
+ * with %G_IO_ERROR_INVALID_DATA and changes nothing.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_achievement_manager_load_state (LrgAchievementManager  *self,
+                                    LrgAchievementScope     scope,
+                                    GVariant               *state,
+                                    GError                **error);
+
+/**
+ * lrg_achievement_manager_reset_scope:
+ * @self: an #LrgAchievementManager
+ * @scope: whose progress
+ *
+ * Resets every achievement of @scope (lrg_achievement_reset()) and
+ * forgets @scope's waiting state (a new character).
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_achievement_manager_reset_scope (LrgAchievementManager *self,
+                                     LrgAchievementScope    scope);
+
 G_END_DECLS

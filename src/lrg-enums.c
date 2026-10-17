@@ -5346,3 +5346,23 @@ lrg_hud_anchor_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+GType
+lrg_achievement_scope_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ACHIEVEMENT_SCOPE_ACCOUNT, "LRG_ACHIEVEMENT_SCOPE_ACCOUNT", "account" },
+            { LRG_ACHIEVEMENT_SCOPE_CHARACTER, "LRG_ACHIEVEMENT_SCOPE_CHARACTER", "character" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAchievementScope"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

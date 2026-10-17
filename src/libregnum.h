@@ -561,9 +561,11 @@
 
 /* Achievement module (Phase 5) */
 #include "achievement/lrg-achievement-progress.h"
+#include "achievement/lrg-achievement-criterion.h"
 #include "achievement/lrg-achievement.h"
 #include "achievement/lrg-achievement-manager.h"
 #include "achievement/lrg-achievement-notification.h"
+#include "achievement/lrg-achievement-toasts.h"
 
 /* Photo Mode module (Phase 5) */
 #include "photomode/lrg-screenshot.h"

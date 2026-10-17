@@ -19,6 +19,8 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "lrg-achievement-progress.h"
+#include "lrg-achievement-criterion.h"
+#include "../lrg-enums.h"
 
 G_BEGIN_DECLS
 
@@ -417,5 +419,205 @@ lrg_achievement_increment_progress (LrgAchievement *self,
 LRG_AVAILABLE_IN_ALL
 gboolean
 lrg_achievement_check_unlock (LrgAchievement *self);
+
+/* ==========================================================================
+ * Categories, scope and criteria
+ * ========================================================================== */
+
+/**
+ * lrg_achievement_get_category:
+ * @self: an #LrgAchievement
+ *
+ * Returns: (transfer none) (nullable): the category id the achievement
+ *   is listed under ("quests", "combat"), %NULL for none
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *
+lrg_achievement_get_category (LrgAchievement *self);
+
+/**
+ * lrg_achievement_set_category:
+ * @self: an #LrgAchievement
+ * @category: (nullable): a category id
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_achievement_set_category (LrgAchievement *self,
+                              const gchar    *category);
+
+/**
+ * lrg_achievement_get_scope:
+ * @self: an #LrgAchievement
+ *
+ * Returns: where its progress lives (%LRG_ACHIEVEMENT_SCOPE_ACCOUNT by
+ *   default)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAchievementScope
+lrg_achievement_get_scope (LrgAchievement *self);
+
+/**
+ * lrg_achievement_set_scope:
+ * @self: an #LrgAchievement
+ * @scope: the scope
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_achievement_set_scope (LrgAchievement      *self,
+                           LrgAchievementScope  scope);
+
+/**
+ * lrg_achievement_add_criterion:
+ * @self: an #LrgAchievement
+ * @criterion: a criterion (the achievement takes a reference)
+ *
+ * Adds a criterion.  An achievement with criteria unlocks (by default)
+ * when every criterion is complete, and its progress, if it has one.
+ *
+ * Returns: %FALSE when a criterion of that id exists already
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_achievement_add_criterion (LrgAchievement          *self,
+                               LrgAchievementCriterion *criterion);
+
+/**
+ * lrg_achievement_get_criteria:
+ * @self: an #LrgAchievement
+ *
+ * Returns: (transfer none) (element-type LrgAchievementCriterion): the
+ *   criteria in the order they were added
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *
+lrg_achievement_get_criteria (LrgAchievement *self);
+
+/**
+ * lrg_achievement_get_criterion:
+ * @self: an #LrgAchievement
+ * @id: a criterion id
+ *
+ * Returns: (transfer none) (nullable): the criterion
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAchievementCriterion *
+lrg_achievement_get_criterion (LrgAchievement *self,
+                               const gchar    *id);
+
+/**
+ * lrg_achievement_set_criterion_progress:
+ * @self: an #LrgAchievement
+ * @id: a criterion id
+ * @value: its progress (clamped to 0 .. its target)
+ *
+ * Sets a criterion's progress, emits #LrgAchievement::criterion-changed
+ * when it changed and unlocks the achievement when it completes it.
+ * Nothing changes once the achievement is unlocked.
+ *
+ * Returns: %TRUE when the progress changed
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_achievement_set_criterion_progress (LrgAchievement *self,
+                                        const gchar    *id,
+                                        gint64          value);
+
+/**
+ * lrg_achievement_increment_criterion:
+ * @self: an #LrgAchievement
+ * @id: a criterion id
+ * @amount: added to its progress
+ *
+ * As lrg_achievement_set_criterion_progress() with the progress plus
+ * @amount.
+ *
+ * Returns: %TRUE when the progress changed
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_achievement_increment_criterion (LrgAchievement *self,
+                                     const gchar    *id,
+                                     gint64          amount);
+
+/**
+ * lrg_achievement_add_criterion_key:
+ * @self: an #LrgAchievement
+ * @id: a criterion id
+ * @key: a distinct thing done
+ *
+ * lrg_achievement_criterion_add_key() on the criterion, with the
+ * signal and the unlock of lrg_achievement_set_criterion_progress().
+ *
+ * Returns: %TRUE when @key was new
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_achievement_add_criterion_key (LrgAchievement *self,
+                                   const gchar    *id,
+                                   const gchar    *key);
+
+/**
+ * lrg_achievement_get_fraction:
+ * @self: an #LrgAchievement
+ *
+ * Returns: how far it is, 0.0 .. 1.0: 1 when unlocked, else the mean of
+ *   its criteria's fractions (and the progress's), 0 without either
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_achievement_get_fraction (LrgAchievement *self);
+
+/**
+ * lrg_achievement_restore:
+ * @self: an #LrgAchievement
+ * @unlocked: whether it is unlocked
+ * @unlock_time: (nullable): when it was unlocked (%NULL: now, when
+ *   @unlocked)
+ *
+ * Restores a saved unlock without the #LrgAchievement::unlocked signal
+ * or the on_unlocked virtual method (a loaded game does not announce
+ * old achievements again).
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_achievement_restore (LrgAchievement *self,
+                         gboolean        unlocked,
+                         GDateTime      *unlock_time);
+
+/**
+ * lrg_achievement_reset:
+ * @self: an #LrgAchievement
+ *
+ * Locks it and puts its progress and criteria back to 0.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_achievement_reset (LrgAchievement *self);
 
 G_END_DECLS

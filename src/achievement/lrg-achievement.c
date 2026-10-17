@@ -24,6 +24,9 @@ typedef struct
     gboolean  unlocked;
     GDateTime *unlock_time;
     LrgAchievementProgress *progress;
+    gchar     *category;
+    LrgAchievementScope scope;
+    GPtrArray *criteria;     /* LrgAchievementCriterion, added order */
 } LrgAchievementPrivate;
 
 enum
@@ -37,6 +40,8 @@ enum
     PROP_POINTS,
     PROP_HIDDEN,
     PROP_UNLOCKED,
+    PROP_CATEGORY,
+    PROP_SCOPE,
     N_PROPS
 };
 
@@ -44,6 +49,7 @@ enum
 {
     SIGNAL_UNLOCKED,
     SIGNAL_PROGRESS_CHANGED,
+    SIGNAL_CRITERION_CHANGED,
     N_SIGNALS
 };
 
@@ -61,7 +67,19 @@ lrg_achievement_real_check_unlock (LrgAchievement *self)
 {
     LrgAchievementPrivate *priv = lrg_achievement_get_instance_private (self);
 
-    /* Default: unlock when progress is complete, or if no progress tracking */
+    /* Default: every criterion complete (and the progress, if any);
+     * without either nothing unlocks by itself */
+    if (priv->criteria->len > 0)
+    {
+        guint i;
+
+        for (i = 0; i < priv->criteria->len; i++)
+        {
+            if (!lrg_achievement_criterion_is_complete (g_ptr_array_index (priv->criteria, i)))
+                return FALSE;
+        }
+        return priv->progress == NULL || lrg_achievement_progress_is_complete (priv->progress);
+    }
     if (priv->progress == NULL)
         return FALSE;
 
@@ -95,6 +113,8 @@ lrg_achievement_finalize (GObject *object)
     g_clear_pointer (&priv->locked_icon, g_free);
     g_clear_pointer (&priv->unlock_time, g_date_time_unref);
     g_clear_pointer (&priv->progress, lrg_achievement_progress_free);
+    g_clear_pointer (&priv->category, g_free);
+    g_clear_pointer (&priv->criteria, g_ptr_array_unref);
 
     G_OBJECT_CLASS (lrg_achievement_parent_class)->finalize (object);
 }
@@ -133,6 +153,12 @@ lrg_achievement_get_property (GObject    *object,
         break;
     case PROP_UNLOCKED:
         g_value_set_boolean (value, priv->unlocked);
+        break;
+    case PROP_CATEGORY:
+        g_value_set_string (value, priv->category);
+        break;
+    case PROP_SCOPE:
+        g_value_set_enum (value, priv->scope);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -175,6 +201,13 @@ lrg_achievement_set_property (GObject      *object,
         break;
     case PROP_HIDDEN:
         priv->hidden = g_value_get_boolean (value);
+        break;
+    case PROP_CATEGORY:
+        g_clear_pointer (&priv->category, g_free);
+        priv->category = g_value_dup_string (value);
+        break;
+    case PROP_SCOPE:
+        priv->scope = (LrgAchievementScope)g_value_get_enum (value);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -315,7 +348,60 @@ lrg_achievement_class_init (LrgAchievementClass *klass)
                               G_PARAM_READABLE |
                               G_PARAM_STATIC_STRINGS);
 
+    /**
+     * LrgAchievement:category:
+     *
+     * The category id the achievement is listed under.
+     *
+     * Since: 1.0
+     */
+    properties[PROP_CATEGORY] =
+        g_param_spec_string ("category",
+                             "Category",
+                             "Category id",
+                             NULL,
+                             G_PARAM_READWRITE |
+                             G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgAchievement:scope:
+     *
+     * Whether the account or one character earns it.
+     *
+     * Since: 1.0
+     */
+    properties[PROP_SCOPE] =
+        g_param_spec_enum ("scope",
+                           "Scope",
+                           "Where the progress lives",
+                           LRG_TYPE_ACHIEVEMENT_SCOPE,
+                           LRG_ACHIEVEMENT_SCOPE_ACCOUNT,
+                           G_PARAM_READWRITE |
+                           G_PARAM_STATIC_STRINGS);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
+
+    /**
+     * LrgAchievement::criterion-changed:
+     * @self: the achievement
+     * @criterion: the criterion's id
+     * @current: its progress now
+     * @target: its target
+     *
+     * Emitted when a criterion's progress changed, before the unlock it
+     * may cause.
+     *
+     * Since: 1.0
+     */
+    signals[SIGNAL_CRITERION_CHANGED] =
+        g_signal_new ("criterion-changed",
+                      G_TYPE_FROM_CLASS (klass),
+                      G_SIGNAL_RUN_LAST,
+                      0,
+                      NULL, NULL,
+                      NULL,
+                      G_TYPE_NONE, 3,
+                      G_TYPE_STRING, G_TYPE_INT64, G_TYPE_INT64);
 
     /**
      * LrgAchievement::unlocked:
@@ -370,6 +456,9 @@ lrg_achievement_init (LrgAchievement *self)
     priv->unlocked = FALSE;
     priv->unlock_time = NULL;
     priv->progress = NULL;
+    priv->category = NULL;
+    priv->scope = LRG_ACHIEVEMENT_SCOPE_ACCOUNT;
+    priv->criteria = g_ptr_array_new_with_free_func ((GDestroyNotify)lrg_achievement_criterion_unref);
 }
 
 /* ==========================================================================
@@ -726,4 +815,246 @@ lrg_achievement_check_unlock (LrgAchievement *self)
         return klass->check_unlock (self);
 
     return FALSE;
+}
+
+/* ==========================================================================
+ * Categories, scope and criteria
+ * ========================================================================== */
+
+const gchar *
+lrg_achievement_get_category (LrgAchievement *self)
+{
+    LrgAchievementPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT (self), NULL);
+
+    priv = lrg_achievement_get_instance_private (self);
+    return priv->category;
+}
+
+void
+lrg_achievement_set_category (LrgAchievement *self,
+                              const gchar    *category)
+{
+    LrgAchievementPrivate *priv;
+
+    g_return_if_fail (LRG_IS_ACHIEVEMENT (self));
+
+    priv = lrg_achievement_get_instance_private (self);
+    if (g_strcmp0 (priv->category, category) == 0)
+        return;
+    g_free (priv->category);
+    priv->category = g_strdup (category);
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CATEGORY]);
+}
+
+LrgAchievementScope
+lrg_achievement_get_scope (LrgAchievement *self)
+{
+    LrgAchievementPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT (self), LRG_ACHIEVEMENT_SCOPE_ACCOUNT);
+
+    priv = lrg_achievement_get_instance_private (self);
+    return priv->scope;
+}
+
+void
+lrg_achievement_set_scope (LrgAchievement      *self,
+                           LrgAchievementScope  scope)
+{
+    LrgAchievementPrivate *priv;
+
+    g_return_if_fail (LRG_IS_ACHIEVEMENT (self));
+
+    priv = lrg_achievement_get_instance_private (self);
+    if (priv->scope == scope)
+        return;
+    priv->scope = scope;
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCOPE]);
+}
+
+gboolean
+lrg_achievement_add_criterion (LrgAchievement          *self,
+                               LrgAchievementCriterion *criterion)
+{
+    LrgAchievementPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT (self), FALSE);
+    g_return_val_if_fail (criterion != NULL, FALSE);
+
+    priv = lrg_achievement_get_instance_private (self);
+    if (lrg_achievement_get_criterion (self, lrg_achievement_criterion_get_id (criterion)) != NULL)
+        return FALSE;
+    g_ptr_array_add (priv->criteria, lrg_achievement_criterion_ref (criterion));
+    return TRUE;
+}
+
+GPtrArray *
+lrg_achievement_get_criteria (LrgAchievement *self)
+{
+    LrgAchievementPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT (self), NULL);
+
+    priv = lrg_achievement_get_instance_private (self);
+    return priv->criteria;
+}
+
+LrgAchievementCriterion *
+lrg_achievement_get_criterion (LrgAchievement *self,
+                               const gchar    *id)
+{
+    LrgAchievementPrivate *priv;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT (self), NULL);
+    g_return_val_if_fail (id != NULL, NULL);
+
+    priv = lrg_achievement_get_instance_private (self);
+    for (i = 0; i < priv->criteria->len; i++)
+    {
+        LrgAchievementCriterion *criterion = g_ptr_array_index (priv->criteria, i);
+
+        if (g_strcmp0 (lrg_achievement_criterion_get_id (criterion), id) == 0)
+            return criterion;
+    }
+    return NULL;
+}
+
+/* a criterion moved: tell, then unlock when that completed everything */
+static void
+criterion_changed (LrgAchievement          *self,
+                   LrgAchievementCriterion *criterion)
+{
+    g_signal_emit (self, signals[SIGNAL_CRITERION_CHANGED], 0,
+                   lrg_achievement_criterion_get_id (criterion),
+                   lrg_achievement_criterion_get_current (criterion),
+                   lrg_achievement_criterion_get_target (criterion));
+    if (!lrg_achievement_is_unlocked (self) && lrg_achievement_check_unlock (self))
+        lrg_achievement_unlock (self);
+}
+
+gboolean
+lrg_achievement_set_criterion_progress (LrgAchievement *self,
+                                        const gchar    *id,
+                                        gint64          value)
+{
+    LrgAchievementCriterion *criterion;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT (self), FALSE);
+    g_return_val_if_fail (id != NULL, FALSE);
+
+    criterion = lrg_achievement_get_criterion (self, id);
+    if (criterion == NULL || lrg_achievement_is_unlocked (self))
+        return FALSE;
+    if (!lrg_achievement_criterion_set_current (criterion, value))
+        return FALSE;
+    criterion_changed (self, criterion);
+    return TRUE;
+}
+
+gboolean
+lrg_achievement_increment_criterion (LrgAchievement *self,
+                                     const gchar    *id,
+                                     gint64          amount)
+{
+    LrgAchievementCriterion *criterion;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT (self), FALSE);
+    g_return_val_if_fail (id != NULL, FALSE);
+
+    criterion = lrg_achievement_get_criterion (self, id);
+    if (criterion == NULL || lrg_achievement_is_unlocked (self))
+        return FALSE;
+    if (!lrg_achievement_criterion_increment (criterion, amount))
+        return FALSE;
+    criterion_changed (self, criterion);
+    return TRUE;
+}
+
+gboolean
+lrg_achievement_add_criterion_key (LrgAchievement *self,
+                                   const gchar    *id,
+                                   const gchar    *key)
+{
+    LrgAchievementCriterion *criterion;
+    gint64 before;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT (self), FALSE);
+    g_return_val_if_fail (id != NULL, FALSE);
+    g_return_val_if_fail (key != NULL, FALSE);
+
+    criterion = lrg_achievement_get_criterion (self, id);
+    if (criterion == NULL || lrg_achievement_is_unlocked (self))
+        return FALSE;
+    before = lrg_achievement_criterion_get_current (criterion);
+    if (!lrg_achievement_criterion_add_key (criterion, key))
+        return FALSE;
+    /* keys past the target are remembered without a signal */
+    if (lrg_achievement_criterion_get_current (criterion) != before)
+        criterion_changed (self, criterion);
+    return TRUE;
+}
+
+gdouble
+lrg_achievement_get_fraction (LrgAchievement *self)
+{
+    LrgAchievementPrivate *priv;
+    gdouble sum;
+    guint parts;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_ACHIEVEMENT (self), 0.0);
+
+    priv = lrg_achievement_get_instance_private (self);
+    if (priv->unlocked)
+        return 1.0;
+    sum = 0.0;
+    parts = 0;
+    for (i = 0; i < priv->criteria->len; i++, parts++)
+        sum += lrg_achievement_criterion_get_fraction (g_ptr_array_index (priv->criteria, i));
+    if (priv->progress != NULL)
+    {
+        sum += lrg_achievement_progress_get_percentage (priv->progress);
+        parts++;
+    }
+    return parts > 0 ? CLAMP (sum / (gdouble)parts, 0.0, 1.0) : 0.0;
+}
+
+void
+lrg_achievement_restore (LrgAchievement *self,
+                         gboolean        unlocked,
+                         GDateTime      *unlock_time)
+{
+    LrgAchievementPrivate *priv;
+
+    g_return_if_fail (LRG_IS_ACHIEVEMENT (self));
+
+    priv = lrg_achievement_get_instance_private (self);
+    g_clear_pointer (&priv->unlock_time, g_date_time_unref);
+    if (unlocked)
+        priv->unlock_time = unlock_time != NULL ? g_date_time_ref (unlock_time)
+                                                : g_date_time_new_now_utc ();
+    if (priv->unlocked != unlocked)
+    {
+        priv->unlocked = unlocked;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_UNLOCKED]);
+    }
+}
+
+void
+lrg_achievement_reset (LrgAchievement *self)
+{
+    LrgAchievementPrivate *priv;
+    guint i;
+
+    g_return_if_fail (LRG_IS_ACHIEVEMENT (self));
+
+    priv = lrg_achievement_get_instance_private (self);
+    lrg_achievement_lock (self);
+    if (priv->progress != NULL)
+        lrg_achievement_progress_reset (priv->progress);
+    for (i = 0; i < priv->criteria->len; i++)
+        lrg_achievement_criterion_reset (g_ptr_array_index (priv->criteria, i));
 }
