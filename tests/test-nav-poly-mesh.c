@@ -619,6 +619,22 @@ test_random_and_regions (void)
     g_assert_cmpuint (lrg_nav_poly_mesh_get_polygon_region (mesh, 999999), ==, 0);
     g_assert_true (no_path (mesh, in_a, in_b, NULL, NULL));
 
+    /* nearest within a region: from between the rooms, each side on request */
+    {
+        const gfloat between[3] = { 12.0f, 0.0f, 3.0f };
+        const gfloat wide[3] = { 12.0f, 1.0f, 12.0f };
+        guint ra = lrg_nav_poly_mesh_get_polygon_region (mesh, pa);
+        guint rb = lrg_nav_poly_mesh_get_polygon_region (mesh, pb);
+        gfloat q[3];
+
+        g_assert_true (lrg_nav_poly_mesh_find_nearest_in_region (mesh, between, wide, ra, q, NULL));
+        g_assert_cmpfloat (q[0], <, 6.0f);
+        g_assert_true (lrg_nav_poly_mesh_find_nearest_in_region (mesh, between, wide, rb, q, NULL));
+        g_assert_cmpfloat (q[0], >, 20.0f);
+        g_assert_false (lrg_nav_poly_mesh_find_nearest_in_region (mesh, between, extents, ra, q, NULL));
+        g_assert_false (lrg_nav_poly_mesh_find_nearest_in_region (mesh, between, wide, 99, q, NULL));
+    }
+
     /* deterministic, and always in the asked region */
     g_assert_true (lrg_nav_poly_mesh_random_point (mesh, in_a, NULL, 42, p1));
     g_assert_true (lrg_nav_poly_mesh_random_point (mesh, in_a, NULL, 42, p2));

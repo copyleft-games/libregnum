@@ -537,6 +537,7 @@ static gboolean
 nearest (LrgNavPolyMesh       *self,
          const gfloat         *point,
          const gfloat         *extents,
+         guint                 region,
          LrgNavPolyFilterFunc  filter,
          gpointer              user_data,
          gfloat               *out,
@@ -591,6 +592,8 @@ nearest (LrgNavPolyMesh       *self,
                     continue;
                 last_poly = c->poly;
                 p = &g_array_index (self->polys, Poly, c->poly);
+                if (region != 0 && p->region != region)
+                    continue;
                 poly_rect (self, p, &rx0, &rz0, &rx1, &rz1);
                 q[0] = CLAMP (point[0], rx0 + 1e-3f, rx1 - 1e-3f);
                 q[2] = CLAMP (point[2], rz0 + 1e-3f, rz1 - 1e-3f);
@@ -668,8 +671,8 @@ connect_link (LrgNavPolyMesh *self,
     extents[1] = MAX (self->max_climb, self->bake_ch * 2.0f);
     memcpy (end_extents, extents, sizeof (end_extents));
     end_extents[1] = extents[1] * 2.0f;
-    if (!nearest (self, link->start, extents, NULL, NULL, a, &pa) ||
-        !nearest (self, link->end, end_extents, NULL, NULL, b, &pb))
+    if (!nearest (self, link->start, extents, 0, NULL, NULL, a, &pa) ||
+        !nearest (self, link->end, end_extents, 0, NULL, NULL, b, &pb))
         return;
     link->poly_a = pa;
     link->poly_b = pb;
@@ -2058,7 +2061,21 @@ lrg_nav_poly_mesh_find_nearest (LrgNavPolyMesh *self,
     g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), FALSE);
     g_return_val_if_fail (point != NULL && extents != NULL, FALSE);
 
-    return nearest (self, point, extents, NULL, NULL, out, polygon);
+    return nearest (self, point, extents, 0, NULL, NULL, out, polygon);
+}
+
+gboolean
+lrg_nav_poly_mesh_find_nearest_in_region (LrgNavPolyMesh *self,
+                                          const gfloat   *point,
+                                          const gfloat   *extents,
+                                          guint           region,
+                                          gfloat         *out,
+                                          guint          *polygon)
+{
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), FALSE);
+    g_return_val_if_fail (point != NULL && extents != NULL, FALSE);
+
+    return nearest (self, point, extents, region, NULL, NULL, out, polygon);
 }
 
 guint
@@ -2362,8 +2379,8 @@ lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
     if (out_expanded != NULL)
         *out_expanded = 0;
     cache = g_hash_table_new (g_direct_hash, g_direct_equal);
-    if (!nearest (self, start, extents, filter, user_data, s, &ps) ||
-        !nearest (self, goal, extents, filter, user_data, g, &pg))
+    if (!nearest (self, start, extents, 0, filter, user_data, s, &ps) ||
+        !nearest (self, goal, extents, 0, filter, user_data, g, &pg))
     {
         g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
                              "navigation mesh: start or goal is off the mesh");
@@ -2624,7 +2641,7 @@ lrg_nav_poly_mesh_raycast (LrgNavPolyMesh       *self,
             probe[0] += dx / len * MIN (1e-3f, len * 0.5f);
             probe[2] += dz / len * MIN (1e-3f, len * 0.5f);
         }
-        if (!nearest (self, probe, extents, filter, user_data, s, &poly))
+        if (!nearest (self, probe, extents, 0, filter, user_data, s, &poly))
         {
             if (hit_point != NULL)
                 memcpy (hit_point, start, sizeof (gfloat) * 3);
@@ -2763,7 +2780,7 @@ lrg_nav_poly_mesh_random_point (LrgNavPolyMesh *self,
     {
         guint poly;
 
-        if (!nearest (self, from, extents != NULL ? extents : one_metre, NULL, NULL, NULL, &poly))
+        if (!nearest (self, from, extents != NULL ? extents : one_metre, 0, NULL, NULL, NULL, &poly))
             return FALSE;
         region = g_array_index (self->polys, Poly, poly).region;
     }
@@ -2888,7 +2905,7 @@ lrg_nav_poly_mesh_block_portal (LrgNavPolyMesh *self,
     g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), FALSE);
     g_return_val_if_fail (from != NULL && toward != NULL, FALSE);
 
-    if (!nearest (self, from, box, NULL, NULL, NULL, &poly))
+    if (!nearest (self, from, box, 0, NULL, NULL, NULL, &poly))
         return FALSE;
     dir[0] = toward[0] - from[0];
     dir[1] = toward[2] - from[2];

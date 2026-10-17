@@ -313,6 +313,31 @@ lrg_nav_poly_mesh_find_nearest (LrgNavPolyMesh *self,
                                 guint          *polygon);
 
 /**
+ * lrg_nav_poly_mesh_find_nearest_in_region:
+ * @self: an #LrgNavPolyMesh
+ * @point: (array fixed-size=3): query point
+ * @extents: (array fixed-size=3): half extents of the search box
+ * @region: the region the point must be in, 0 for any
+ * @out: (out caller-allocates) (array fixed-size=3) (optional): the
+ *   nearest point on the surface
+ * @polygon: (out) (optional): its polygon
+ *
+ * As lrg_nav_poly_mesh_find_nearest(), restricted to polygons of
+ * @region (lrg_nav_poly_mesh_get_polygon_region()): where an agent in
+ * that region stands to reach something off the mesh.
+ *
+ * Returns: %TRUE when one was found
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_poly_mesh_find_nearest_in_region (LrgNavPolyMesh *self,
+                                          const gfloat   *point,
+                                          const gfloat   *extents,
+                                          guint           region,
+                                          gfloat         *out,
+                                          guint          *polygon);
+
+/**
  * lrg_nav_poly_mesh_get_polygon_region:
  * @self: an #LrgNavPolyMesh
  * @polygon: a polygon index
