@@ -1,0 +1,41 @@
+* LrgQuestTracker - tracked quests
+:PROPERTIES:
+:CUSTOM_ID: lrgquesttracker
+:END:
+=LrgQuestTracker= (=src/quest/lrg-quest-tracker.h=, final GObject, GIR =Libregnum.QuestTracker=) is the set of quests a player follows on the HUD, in the order they were tracked, with a limit: the HUD's quest tracker lists them and a world guidance (waypoints, beacons; [[file:../guidance/index.org][guidance]]) follows the first.  Quests are string ids the game chooses, so it serves =LrgQuestLog='s quests (their ids) as well as a game's own quest system (librefall names its quest runs by their numeric uid).  =LrgQuestLog= keeps its single "tracked quest" for compatibility; a game that wants several uses a tracker.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Call | Does |
+|------+------|
+| =lrg_quest_tracker_new(max)= | an empty tracker; 0 means =LRG_QUEST_TRACKER_DEFAULT_MAX= (5), the limit is clamped to 1 .. =LRG_QUEST_TRACKER_MAX_LIMIT= (64) |
+| =track(id)= | adds after the others; =FALSE= for an empty id, one already tracked, or a full tracker |
+| =untrack(id)=, =set_tracked(id, on)= | =TRUE= when the set changed |
+| =is_tracked(id)=, =get_index(id)=, =get_count()=, =get_ids()= | queries; =get_ids()= is in tracking order |
+| =move(id, index)= | reorders (the index clamps to the end) |
+| =set_max_tracked(max)= | a lower limit untracks the latest tracked beyond it |
+| =clear()= | untracks everything |
+| =to_variant()= / =from_variant(v)= | ="as"= in order; restoring skips empty and repeated ids and drops ids beyond the limit; another type is =LRG_PROGRESSION_ERROR_INVALID= and changes nothing |
+
+Properties =max-tracked= (read-write) and =count= (read-only, notified).  The signal =changed (id, tracked)= follows every change: =id= is the quest tracked or untracked, =NULL= when the set changed as a whole (cleared, restored, reordered, the limit lowered).
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src c
+g_autoptr(LrgQuestTracker) tracker = lrg_quest_tracker_new (5);
+
+lrg_quest_tracker_track (tracker, "rats-in-the-cellar");
+lrg_quest_tracker_track (tracker, "letter-for-the-baron");
+lrg_quest_tracker_move (tracker, "letter-for-the-baron", 0);   /* guide to this one */
+save_section = lrg_quest_tracker_to_variant (tracker);
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-guidance.c=: =/quest/tracker/track= (limit, repeats, signals, order, moving, lowering the limit), =/quest/tracker/variant= (round trip, the wrong type, messy input).

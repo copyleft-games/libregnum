@@ -77,6 +77,7 @@ TEST_SOURCES := \
 	test-dialog.c \
 	test-dialog-yaml.c \
 	test-quest.c \
+	test-guidance.c \
 	test-reset-schedule.c \
 	test-experience-curve.c \
 	test-ability.c \

@@ -172,6 +172,12 @@
 #include "quest/lrg-quest-instance.h"
 #include "quest/lrg-quest-log.h"
 #include "quest/lrg-quest-chain.h"
+#include "quest/lrg-quest-tracker.h"
+
+/* Guidance module (waypoints, screen indicators, 3D beacons) */
+#include "guidance/lrg-waypoint.h"
+#include "guidance/lrg-waypoint-indicator.h"
+#include "guidance/lrg-beacon.h"
 
 /* Core reset schedule (daily/weekly periods) */
 #include "core/lrg-reset-schedule.h"

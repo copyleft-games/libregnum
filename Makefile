@@ -134,6 +134,10 @@ PUBLIC_HEADERS := \
 	src/quest/lrg-quest-log.h \
 	src/core/lrg-reset-schedule.h \
 	src/quest/lrg-quest-chain.h \
+	src/quest/lrg-quest-tracker.h \
+	src/guidance/lrg-waypoint.h \
+	src/guidance/lrg-waypoint-indicator.h \
+	src/guidance/lrg-beacon.h \
 	src/progression/lrg-experience-curve.h \
 	src/progression/lrg-ability-def.h \
 	src/progression/lrg-spellbook.h \
@@ -666,6 +670,10 @@ SOURCES := \
 	src/quest/lrg-quest-log.c \
 	src/core/lrg-reset-schedule.c \
 	src/quest/lrg-quest-chain.c \
+	src/quest/lrg-quest-tracker.c \
+	src/guidance/lrg-waypoint.c \
+	src/guidance/lrg-waypoint-indicator.c \
+	src/guidance/lrg-beacon.c \
 	src/progression/lrg-experience-curve.c \
 	src/progression/lrg-ability-def.c \
 	src/progression/lrg-spellbook.c \

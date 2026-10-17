@@ -15,6 +15,7 @@ The Quest module consists of five core classes, plus the reset schedule from the
 - *LrgQuestInstance* - Active quest tracking player progress for every objective of the current stage
 - *LrgQuestLog* - Container for active quests, completion records, availability checks, turn-in and persistence
 - *LrgQuestChain* - Ordered storyline of quest IDs with progress queries
+- *LrgQuestTracker* - The tracked quests (HUD tracker, world guidance) by string id, in order, with a limit
 - *LrgResetSchedule* (core) - Daily and weekly reset periods for repeatable quests, see [[file:../core/reset-schedule.org][reset-schedule.org]]
 
 ** Key Features
@@ -167,4 +168,5 @@ See the individual class documentation:
 - [[file:quest-instance.org][LrgQuestInstance]] - Active quest with progress
 - [[file:quest-log.org][LrgQuestLog]] - Quest management, availability, turn-in and persistence
 - [[file:quest-chain.org][LrgQuestChain]] - Ordered quest storylines
+- [[file:quest-tracker.org][LrgQuestTracker]] - The quests followed on the HUD, ordered and limited
 - [[file:../core/reset-schedule.org][LrgResetSchedule]] - Daily and weekly reset periods

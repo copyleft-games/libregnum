@@ -214,6 +214,7 @@ typedef struct _LrgQuestDefClass  LrgQuestDefClass;
 /* Final types - no class typedef needed */
 typedef struct _LrgQuestInstance  LrgQuestInstance;
 typedef struct _LrgQuestLog       LrgQuestLog;
+typedef struct _LrgQuestTracker   LrgQuestTracker;
 typedef struct _LrgQuestChain     LrgQuestChain;
 
 /* ==========================================================================
@@ -269,6 +270,12 @@ typedef struct _LrgCollection           LrgCollection;
 typedef struct _LrgCompanionBrain       LrgCompanionBrain;
 typedef struct _LrgCompanionInput       LrgCompanionInput;
 typedef struct _LrgCompanionOutput      LrgCompanionOutput;
+
+/* ==========================================================================
+ * Guidance Module
+ * ========================================================================== */
+
+typedef struct _LrgWaypoint          LrgWaypoint;
 
 /* ==========================================================================
  * Save Module

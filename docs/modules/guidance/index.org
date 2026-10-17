@@ -1,0 +1,71 @@
+* Guidance Module
+:PROPERTIES:
+:CUSTOM_ID: guidance-module
+:END:
+The guidance module (=src/guidance/=) holds what a game needs to lead the player to a target without a map: the waypoint itself, where it shows on the screen (or the screen edge it is pinned to), and a beacon of light in 3D space over it.  It is presentation arithmetic plus one draw call: what the target is and how to get there (doors, levels, paths) is the game's.  The quest tracker that decides which quests are followed is in the quest module ([[file:../quest/quest-tracker.org][LrgQuestTracker]]).
+
+| Type | Kind | GIR name | Header |
+|------+------+----------+--------|
+| =LrgWaypoint= | reference-counted boxed | =Libregnum.Waypoint= | =lrg-waypoint.h= |
+| =LrgWaypointIndicator= | boxed struct | =Libregnum.WaypointIndicator= | =lrg-waypoint-indicator.h= |
+| =LrgBeaconStyle= | boxed struct | =Libregnum.BeaconStyle= | =lrg-beacon.h= |
+| =LrgBeaconShape= | plain struct | - | =lrg-beacon.h= |
+
+Everything but =lrg_beacon_draw()= is pure and works headless (tests, HUD layout, servers).
+
+** Conventions
+:PROPERTIES:
+:CUSTOM_ID: conventions
+:END:
+- Positions are world units with Y up (librefall: one unit is one metre).
+- Headings are degrees in the XZ plane: 0 along +Z, 90 along +X, clockwise seen from above, wrapped to [0, 360).  This is the yaw that turns a +Z forward vector; a game with another convention converts once.
+- Screen coordinates have their origin at the top-left, +Y down, in whatever unit the caller passes the screen size in (pixels or a UI's virtual units).
+
+** LrgWaypoint
+:PROPERTIES:
+:CUSTOM_ID: lrgwaypoint
+:END:
+A mutable record: =id= (the caller's, e.g. ="quest:12"=), =label=, =position=, =color= (RGBA), =radius= (the arrival radius, =LRG_WAYPOINT_DEFAULT_RADIUS= = 1.5).
+
+| Call | Result |
+|------+--------|
+| =lrg_waypoint_distance_from(wp, from)= | straight-line distance |
+| =lrg_waypoint_heading_from(wp, from)= | the compass heading to the waypoint (0 when straight above or below) |
+| =lrg_waypoint_is_reached(wp, from)= | within the radius in the plane and within four radii (at least 2 units) vertically, so a floor above is not the spot |
+| =lrg_waypoint_relative_heading(heading, facing)= | the heading seen from a facing, (-180, 180]: negative left, positive right (compass marks, "turn left" arrows) |
+| =lrg_waypoint_format_distance(d)= | ="7 m"=, ="313 m"=, ="1.4 km"= (always a decimal point), ="27 km"=; negative and non-finite give ="0 m"= |
+
+** LrgWaypointIndicator
+:PROPERTIES:
+:CUSTOM_ID: lrgwaypointindicator
+:END:
+=lrg_waypoint_indicator_compute(out, eye, target, up, fovy, width, height, margin, point)= projects a world point the way raylib's perspective camera does (=forward x up= is right, the aspect is =width / height=): a point in front and inside the screen less =margin= is =on_screen= at its projection; any other is pinned to the edge of the inset rectangle in its direction, =angle= giving the arrow's direction from the centre (radians: 0 right, pi/2 down).  A point behind the viewer pins to the side it lies on as seen from the front, straight behind to the bottom edge; =behind= and a negative =depth= tell it apart.  =lrg_waypoint_indicator_compute_for_camera()= takes an =LrgCamera3D=.  A degenerate view (eye on the target, up along the view, no size or field of view) returns =FALSE=.
+
+=LrgCamera3D='s own =world_to_screen= is still a placeholder (it has no screen size); use the indicator for real projections.
+
+** LrgBeacon
+:PROPERTIES:
+:CUSTOM_ID: lrgbeacon
+:END:
+A tall translucent column of light over the waypoint with a bobbing double-cone marker near its foot.  =lrg_beacon_compute(style, eye, foot, time, out)= works out the =LrgBeaconShape= for one viewer:
+
+- the radius is =min_radius + distance * radius_per_unit=, at most =max_radius=, so the column keeps about the same width on the screen from afar;
+- the opacity fades in between =fade_near= and =fade_far= (nothing within =fade_near=: the viewer has arrived), times =alpha=;
+- the marker stands =marker_lift= over the foot, at least =marker_size= or 1.5 radii big, bobbing =bob_amplitude= every =bob_period= seconds of =time=.
+
+=lrg_beacon_style_init()= gives the defaults (radius 0.15 + 0.004 per unit up to 30, 80 tall, fade 1.5 .. 6, opacity 0.35, the marker 2.2 up, 0.3 big, bob 0.12 per 2 s).  It returns =FALSE= when nothing is to be drawn.
+
+=lrg_beacon_draw(shape, r, g, b)= draws a shape inside a 3D camera pass, after the opaque world: the column alpha blended without writing depth (what stands in front still hides it, nothing drawn later is hidden by it), the marker at twice the opacity.  It needs a graphics context.
+
+#+begin_src c
+LrgBeaconShape shape;
+
+if (lrg_beacon_compute (NULL, eye, foot, clock_seconds, &shape))
+    lrg_beacon_draw (&shape, 255, 210, 60);
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-guidance.c=: the waypoint's record, headings, arrival and distance texts; the indicator's projection (centre, right, up), edges (beside, behind, straight behind), degenerate views and the camera form; the beacon's fade, widening, bob and refusals; the quest tracker.
