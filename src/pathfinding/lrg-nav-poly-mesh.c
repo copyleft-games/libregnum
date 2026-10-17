@@ -41,7 +41,7 @@
 #define MAX_SIDE      (32)          /* longest rectangle side in cells */
 #define CLIP_VERTS    (16)
 #define FORMAT_MAGIC  "LRGNPM01"
-#define FORMAT_VERSION (1u)
+#define FORMAT_VERSION (2u)       /* 2: real floor heights per cell */
 #define LINK_DROP_BIT (0x80000000u) /* link reference: a drop link */
 
 enum
@@ -54,6 +54,7 @@ enum
     PROP_MAX_CLIMB,
     PROP_MAX_SLOPE,
     PROP_MAX_DROP,
+    PROP_CORNER_MARGIN,
     N_PROPS
 };
 
@@ -88,7 +89,7 @@ typedef struct
 /* a walkable cell kept after the bake */
 typedef struct
 {
-    gint32 y;
+    gfloat y;       /* the floor's real height */
     gint32 poly;
 } Cell;
 
@@ -137,6 +138,7 @@ struct _LrgNavPolyMesh
     gfloat max_climb;
     gfloat max_slope;
     gfloat max_drop;
+    gfloat corner_margin;
 
     /* staged input */
     GArray *triangles;      /* gfloat, nine per triangle */
@@ -228,6 +230,7 @@ lrg_nav_poly_mesh_get_property (GObject    *object,
     case PROP_MAX_CLIMB:    g_value_set_float (value, self->max_climb); break;
     case PROP_MAX_SLOPE:    g_value_set_float (value, self->max_slope); break;
     case PROP_MAX_DROP:     g_value_set_float (value, self->max_drop); break;
+    case PROP_CORNER_MARGIN: g_value_set_float (value, self->corner_margin); break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -250,6 +253,7 @@ lrg_nav_poly_mesh_set_property (GObject      *object,
     case PROP_MAX_CLIMB:    self->max_climb = g_value_get_float (value); break;
     case PROP_MAX_SLOPE:    self->max_slope = g_value_get_float (value); break;
     case PROP_MAX_DROP:     self->max_drop = g_value_get_float (value); break;
+    case PROP_CORNER_MARGIN: self->corner_margin = g_value_get_float (value); break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -315,6 +319,15 @@ lrg_nav_poly_mesh_class_init (LrgNavPolyMeshClass *klass)
      */
     properties[PROP_MAX_DROP] = g_param_spec_float ("max-drop", NULL, NULL,
                                                     0.0f, 1000.0f, 0.0f, flags);
+    /**
+     * LrgNavPolyMesh:corner-margin:
+     *
+     * How far paths keep from the corners they turn round: each portal
+     * is narrowed by this at both ends (never past its middle) before
+     * the funnel straightens the corridor.  Read at query time.
+     */
+    properties[PROP_CORNER_MARGIN] = g_param_spec_float ("corner-margin", NULL, NULL,
+                                                         0.0f, 100.0f, 0.0f, flags);
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -431,9 +444,10 @@ column_of (LrgNavPolyMesh *self,
 
 static gfloat
 cell_y (LrgNavPolyMesh *self,
-        gint32          y)
+        gfloat          y)
 {
-    return self->origin[1] + (gfloat) y * self->bake_ch;
+    (void) self;
+    return y;
 }
 
 /* the floor height of @poly at its cell (@cx, @cz), clamped into it */
@@ -742,6 +756,7 @@ typedef struct
     gint32 smin;
     gint32 smax;
     gint32 next;
+    gfloat top;         /* the real height of the span's top */
     guint8 walkable;
 } HfSpan;
 
@@ -760,24 +775,32 @@ hf_add_span (Heightfield *hf,
              gint32       z,
              gint32       smin,
              gint32       smax,
+             gfloat       top,
              guint8       walkable)
 {
-    gint32 *link;
+    gint32 column;
+    gint32 prev;
     gint32 cur;
     HfSpan span;
 
-    /* walk the sorted column, absorbing every overlapping span */
-    link = &hf->heads[z * hf->width + x];
-    cur = *link;
+    /*
+     * walk the sorted column, absorbing every overlapping span; @prev is
+     * the pool index of the span before the insertion point (-1: the
+     * column head), an index because appending may move the pool
+     */
+    column = z * hf->width + x;
+    prev = -1;
+    cur = hf->heads[column];
     while (cur >= 0)
     {
         HfSpan *c = &g_array_index (hf->pool, HfSpan, cur);
+        gint32 next;
 
         if (c->smin > smax)
             break;
         if (c->smax < smin)
         {
-            link = &c->next;
+            prev = cur;
             cur = c->next;
             continue;
         }
@@ -788,16 +811,25 @@ hf_add_span (Heightfield *hf,
             walkable = c->walkable;
         smin = MIN (smin, c->smin);
         smax = MAX (smax, c->smax);
+        top = MAX (top, c->top);
         /* unlink c (its slot is simply abandoned in the pool) */
-        cur = c->next;
-        *link = cur;
+        next = c->next;
+        if (prev < 0)
+            hf->heads[column] = next;
+        else
+            g_array_index (hf->pool, HfSpan, prev).next = next;
+        cur = next;
     }
     span.smin = smin;
     span.smax = smax;
+    span.top = top;
     span.walkable = walkable;
     span.next = cur;
     g_array_append_val (hf->pool, span);
-    *link = (gint32) hf->pool->len - 1;
+    if (prev < 0)
+        hf->heads[column] = (gint32) hf->pool->len - 1;
+    else
+        g_array_index (hf->pool, HfSpan, prev).next = (gint32) hf->pool->len - 1;
 }
 
 /*
@@ -946,7 +978,7 @@ rasterise_triangle (Heightfield  *hf,
             smax = CLAMP (smax, 0, layers);
             if (smax <= smin)
                 smax = smin + 1;
-            hf_add_span (hf, x, z, smin, smax, walkable);
+            hf_add_span (hf, x, z, smin, smax, ymax, walkable);
         }
     }
 }
@@ -958,6 +990,7 @@ typedef struct
 {
     gint32  y;
     gint32  h;
+    gfloat  fy;         /* the floor's real height (steps are measured on it) */
     gint32  con[4];
     guint32 tag;
     gint32  poly;
@@ -1004,7 +1037,7 @@ static void
 build_open (Open          *open,
             Heightfield   *hf,
             gint32         height_cells,
-            gint32         climb_cells)
+            gfloat         max_climb)
 {
     gint32 x;
     gint32 z;
@@ -1039,6 +1072,7 @@ build_open (Open          *open,
                 memset (&o, 0, sizeof (o));
                 o.y = s->smax;
                 o.h = ceiling - s->smax;
+                o.fy = s->top;
                 o.con[0] = o.con[1] = o.con[2] = o.con[3] = -1;
                 o.poly = -1;
                 o.walk = s->walkable && ceiling - s->smax >= height_cells;
@@ -1071,22 +1105,22 @@ build_open (Open          *open,
                     gint32 nz = z + dir_z[d];
                     guint32 ncol;
                     guint32 j;
-                    gint32 best_dy;
+                    gfloat best_dy;
 
                     if (nx < 0 || nz < 0 || nx >= hf->width || nz >= hf->depth)
                         continue;
                     ncol = (guint32) nz * (guint32) hf->width + (guint32) nx;
-                    best_dy = G_MAXINT32;
+                    best_dy = G_MAXFLOAT;
                     for (j = open->first[ncol]; j < open->first[ncol + 1]; j++)
                     {
                         const OSpan *t = &g_array_index (open->spans, OSpan, j);
                         gint32 bottom = MAX (s->y, t->y);
                         gint32 top = MIN (s->y + s->h, t->y + t->h);
-                        gint32 dy = ABS (t->y - s->y);
+                        gfloat dy = fabsf (t->fy - s->fy);
 
                         if (!t->walk)
                             continue;
-                        if (top - bottom >= height_cells && dy <= climb_cells && dy < best_dy)
+                        if (top - bottom >= height_cells && dy <= max_climb && dy < best_dy)
                         {
                             best_dy = dy;
                             s->con[d] = (gint32) j;
@@ -1339,9 +1373,7 @@ build_polygons (LrgNavPolyMesh *self,
                 poly.ymax = -G_MAXFLOAT;
                 for (k = 0; k < members->len; k++)
                 {
-                    gfloat y = self->origin[1] +
-                               (gfloat) g_array_index (open->spans, OSpan,
-                                                       g_array_index (members, guint32, k)).y * self->bake_ch;
+                    gfloat y = g_array_index (open->spans, OSpan, g_array_index (members, guint32, k)).fy;
 
                     poly.ymin = MIN (poly.ymin, y);
                     poly.ymax = MAX (poly.ymax, y);
@@ -1393,7 +1425,7 @@ build_portals (LrgNavPolyMesh *self,
                     bd.side = (guint32) d;
                     bd.to = (guint32) b->poly;
                     bd.along = (d == 0 || d == 2) ? z : x;
-                    bd.y = self->origin[1] + (gfloat) (a->y + b->y) * 0.5f * self->bake_ch;
+                    bd.y = (a->fy + b->fy) * 0.5f;
                     g_array_append_val (bounds, bd);
                 }
             }
@@ -1597,10 +1629,10 @@ build_drops (LrgNavPolyMesh *self,
 
                     memset (&link, 0, sizeof (link));
                     link.start[0] = self->origin[0] + ((gfloat) sx + 0.5f) * self->bake_cs;
-                    link.start[1] = self->origin[1] + (gfloat) st->y * self->bake_ch;
+                    link.start[1] = st->fy;
                     link.start[2] = self->origin[2] + ((gfloat) sz + 0.5f) * self->bake_cs;
                     link.end[0] = self->origin[0] + ((gfloat) lx + 0.5f) * self->bake_cs;
-                    link.end[1] = self->origin[1] + (gfloat) l->y * self->bake_ch;
+                    link.end[1] = l->fy;
                     link.end[2] = self->origin[2] + ((gfloat) lz + 0.5f) * self->bake_cs;
                     link.cost = 1.0f;
                     link.enabled = TRUE;
@@ -1788,7 +1820,8 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
     layers = (gint32) ceilf ((bmax[1] - bmin[1]) / ch) + 1;
     height_cells = (gint32) ceilf (self->agent_height / ch);
     climb_cells = (gint32) floorf (self->max_climb / ch + 1e-3f);
-    radius_cells = (gint32) floorf (self->agent_radius / cs + 0.5f);
+    /* whole cells, never less than the radius */
+    radius_cells = (gint32) ceilf (self->agent_radius / cs - 1e-4f);
     drop_cells = (gint32) floorf (self->max_drop / ch + 1e-3f);
     hf.merge = climb_cells;
     n_columns = (guint32) hf.width * (guint32) hf.depth;
@@ -1827,17 +1860,17 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
     {
         gint32 cur;
         gboolean previous_walkable = FALSE;
-        gint32 previous_top = 0;
+        gfloat previous_top = 0.0f;
 
         for (cur = hf.heads[i]; cur >= 0; )
         {
             HfSpan *s = &g_array_index (hf.pool, HfSpan, cur);
             gboolean was = s->walkable;
 
-            if (!s->walkable && previous_walkable && s->smax - previous_top <= climb_cells)
+            if (!s->walkable && previous_walkable && s->top - previous_top <= self->max_climb)
                 s->walkable = 1;
             previous_walkable = was;
-            previous_top = s->smax;
+            previous_top = s->top;
             cur = s->next;
         }
     }
@@ -1851,7 +1884,7 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
     self->bake_ch = ch;
 
     /* --- 3. open spans and their neighbours --- */
-    build_open (&open, &hf, height_cells, climb_cells);
+    build_open (&open, &hf, height_cells, self->max_climb);
     g_free (hf.heads);
     g_array_unref (hf.pool);
 
@@ -1881,7 +1914,7 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
                 for (s = open.first[column]; s < open.first[column + 1]; s++)
                 {
                     OSpan *o = &g_array_index (open.spans, OSpan, s);
-                    gfloat y = bmin[1] + (gfloat) o->y * ch;
+                    gfloat y = o->fy;
 
                     if (y >= box->min[1] && y <= box->max[1])
                         o->tag = box->tag;
@@ -1924,7 +1957,7 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
 
             if (o->poly < 0)
                 continue;
-            c.y = o->y;
+            c.y = o->fy;
             c.poly = o->poly;
             g_array_append_val (cells, c);
         }
@@ -2578,6 +2611,29 @@ lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
                 gfloat lr[6];
 
                 edge_portal (edge, lr, lr + 3);
+                if (self->corner_margin > 0.0f)
+                {
+                    gfloat dx = lr[3] - lr[0];
+                    gfloat dz = lr[5] - lr[2];
+                    gfloat len = sqrtf (dx * dx + dz * dz);
+                    gfloat cut = MIN (self->corner_margin, len * 0.5f);
+                    guint k;
+
+                    /* both ends towards each other (heights follow) */
+                    if (len > 1e-6f)
+                    {
+                        gfloat f = cut / len;
+
+                        for (k = 0; k < 3; k++)
+                        {
+                            gfloat a = lr[k];
+                            gfloat b = lr[3 + k];
+
+                            lr[k] = a + (b - a) * f;
+                            lr[3 + k] = b + (a - b) * f;
+                        }
+                    }
+                }
                 g_array_append_vals (portals, lr, 6);
             }
         }
@@ -3103,7 +3159,7 @@ lrg_nav_poly_mesh_save (LrgNavPolyMesh *self)
     {
         const Cell *c = &g_array_index (self->cells, Cell, i);
 
-        put_u32 (b, (guint32) c->y);
+        put_f32 (b, c->y);
         put_u32 (b, (guint32) c->poly);
     }
     for (i = 0; i < self->polys->len; i++)
@@ -3286,7 +3342,7 @@ lrg_nav_poly_mesh_load (LrgNavPolyMesh  *self,
     {
         Cell c;
 
-        c.y = (gint32) get_u32 (&r);
+        c.y = get_f32 (&r);
         c.poly = (gint32) get_u32 (&r);
         if (c.poly < 0 || (guint32) c.poly >= n_polys)
             r.ok = FALSE;

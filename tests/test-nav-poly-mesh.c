@@ -137,6 +137,33 @@ path_length (const gfloat *p,
     return len;
 }
 
+/* the least distance of a path's legs from the wall end x = @x, z @z0 .. @z1 */
+static gfloat
+clearance (const gfloat *p,
+           guint         n,
+           gfloat        x,
+           gfloat        z0,
+           gfloat        z1)
+{
+    gfloat best = G_MAXFLOAT;
+    guint i;
+    guint k;
+
+    for (i = 3; i < n; i += 3)
+    {
+        for (k = 0; k <= 100; k++)
+        {
+            gfloat t = (gfloat) k / 100.0f;
+            gfloat px = p[i - 3] + (p[i] - p[i - 3]) * t;
+            gfloat pz = p[i - 1] + (p[i + 2] - p[i - 1]) * t;
+            gfloat cz = CLAMP (pz, z0, z1);
+
+            best = MIN (best, sqrtf ((px - x) * (px - x) + (pz - cz) * (pz - cz)));
+        }
+    }
+    return best;
+}
+
 /* every leg of a path stays on the surface (the walk is not blocked) */
 static void
 assert_walkable_legs (LrgNavPolyMesh *mesh,
@@ -178,8 +205,8 @@ test_flat_floor (void)
     g_assert_cmpuint (lrg_nav_poly_mesh_get_polygon_count (mesh), >, 0);
     g_assert_cmpuint (lrg_nav_poly_mesh_get_region_count (mesh), ==, 1);
     g_assert_cmpfloat (lrg_nav_poly_mesh_get_bake_seconds (mesh), >, 0.0);
-    /* 40 x 40 cells, the ring of border cells eroded */
-    g_assert_cmpuint (lrg_nav_poly_mesh_get_span_count (mesh), ==, 38 * 38);
+    /* 40 x 40 cells, two rings eroded (the 0.3 m radius in whole cells) */
+    g_assert_cmpuint (lrg_nav_poly_mesh_get_span_count (mesh), ==, 36 * 36);
 
     g_assert_true (lrg_nav_poly_mesh_find_nearest (mesh, a, extents, q, &poly));
     g_assert_cmpfloat_with_epsilon (q[0], 1.0f, 1e-4);
@@ -202,7 +229,7 @@ test_flat_floor (void)
         const gfloat edge[3] = { 0.05f, 0.0f, 5.0f };
 
         g_assert_true (lrg_nav_poly_mesh_find_nearest (mesh, edge, extents, q, NULL));
-        g_assert_cmpfloat (q[0], >=, 0.25f - 1e-3f);
+        g_assert_cmpfloat (q[0], >=, 0.5f - 1e-3f);
     }
 }
 
@@ -246,6 +273,20 @@ test_wall_gap (void)
     /* the funnel keeps it near the shortest way round the wall end */
     g_assert_cmpfloat (path_length (p, n), <, 2.0f * sqrtf (6.5f * 6.5f + 4.0f * 4.0f) + 1.0f);
     g_assert_cmpfloat (path_length (p, n), >, 8.0f);
+
+    /* with a corner margin the path keeps further from the wall's ends */
+    {
+        g_autofree gfloat *wide = NULL;
+        gfloat plain_clearance;
+        gfloat wide_clearance;
+
+        plain_clearance = clearance (p, n, 8.0f, 5.9f, 6.1f);
+        g_object_set (mesh, "corner-margin", 0.3f, NULL);
+        wide = path (mesh, a, b, &n);
+        assert_walkable_legs (mesh, wide, n);
+        wide_clearance = clearance (wide, n, 8.0f, 5.9f, 6.1f);
+        g_assert_cmpfloat (wide_clearance, >=, plain_clearance + 0.1f);
+    }
 }
 
 static void
