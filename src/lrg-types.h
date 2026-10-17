@@ -278,6 +278,9 @@ typedef struct _LrgCompanionOutput      LrgCompanionOutput;
 typedef struct _LrgSaveContext       LrgSaveContext;
 typedef struct _LrgSaveGame          LrgSaveGame;
 typedef struct _LrgSaveManager       LrgSaveManager;
+typedef struct _LrgSaveDocument      LrgSaveDocument;
+typedef struct _LrgSaveMigration     LrgSaveMigration;
+typedef struct _LrgSaveMigrator      LrgSaveMigrator;
 
 /* ==========================================================================
  * Audio Module

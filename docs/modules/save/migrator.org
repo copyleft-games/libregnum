@@ -1,0 +1,110 @@
+* LrgSaveMigrator - chained save conversion
+:PROPERTIES:
+:CUSTOM_ID: lrgsavemigrator
+:END:
+=LrgSaveMigrator= (=src/save/lrg-save-migrator.h=) converts saved data written by any older version of a game, or a server's stored state, to the current layout, one version step at a time.  A player who skips several releases passes through every step in order in one load, so a character is never lost.  It works on =LrgSaveDocument= values (=src/save/lrg-save-document.h=) and never touches files or a running game: the game reads its file into a document, converts it, then restores from the result.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+| Type               | Kind                       | GIR name                     |
+|--------------------+----------------------------+------------------------------|
+| =LrgSaveDocument=  | reference-counted boxed    | =Libregnum.SaveDocument=     |
+| =LrgSaveMigration= | reference-counted boxed    | =Libregnum.SaveMigration=    |
+| =LrgSaveMigrator=  | final GObject              | =Libregnum.SaveMigrator=     |
+| =LrgSaveMigrationScope= | enum (=document=, =section=) | =Libregnum.SaveMigrationScope= |
+
+New =LrgSaveError= codes: =LRG_SAVE_ERROR_DUPLICATE_STEP= (=duplicate-step=), =LRG_SAVE_ERROR_MISSING_STEP= (=missing-step=), =LRG_SAVE_ERROR_STEP_FAILED= (=step-failed=).
+
+** The document
+:PROPERTIES:
+:CUSTOM_ID: document
+:END:
+An =LrgSaveDocument= is a format version (at least 1) and named sections; each section is an immutable =GVariant= state and a version.  Version 0 means /unversioned/: data written before its format recorded section versions.  The migrator refuses to convert an unversioned section it knows, so the document step of the format that introduced section versions must set them.
+
+- =lrg_save_document_set_section()=, =get_section()=, =get_section_version()=, =set_section_version()=, =remove_section()=, =rename_section()= (=LRG_SAVE_ERROR_NOT_FOUND= without the old name, =LRG_SAVE_ERROR_FAILED= when the new one is taken), =get_section_names()= (byte order).
+- =lrg_save_document_copy()= shares the immutable states; changing either copy never changes the other.
+- =lrg_save_document_to_variant()= / =new_from_variant()= use the type =(ua{sv}a{su})= (=LRG_SAVE_DOCUMENT_VARIANT_TYPE=): format, sections, versions.  This is the form a server stores its state in.  A format of 0, an empty or repeated name, or a version for a missing section is =LRG_SAVE_ERROR_CORRUPT=.
+- =lrg_save_document_equal()= compares format, states and versions.
+
+** Steps
+:PROPERTIES:
+:CUSTOM_ID: steps
+:END:
+A step (=LrgSaveMigration=) converts exactly one version, from N to N + 1:
+
+- a *document step* (=lrg_save_migration_new_document()=, =LrgSaveDocumentStepFunc=) receives a working copy of the whole document at format N and changes it in place: it may add, drop, rename or split sections and set their versions.  The migrator sets the format version to N + 1 after the step returns =TRUE=.
+- a *section step* (=lrg_save_migration_new_section()=, =LrgSaveSectionStepFunc=) receives one section's state at version N and returns the state at N + 1 (a floating reference is sunk).  =lrg_save_migration_set_output_type()= (before the step is added) makes the migrator check the type of every state the step returns.
+
+Each step carries a description used in logs and errors (=lrg_save_migration_to_string()=: =format 1 -> 2: add section versions=, =section "stats" 3 -> 4: widen=) and a =user_data= with a destroy notify, called when the last reference goes.
+
+** The migrator
+:PROPERTIES:
+:CUSTOM_ID: migrator
+:END:
+- =current-format= (property) is the format documents are converted to.
+- =lrg_save_migrator_set_section_version()= declares a known section and its current version; =lrg_save_migrator_forget_section()= makes it unknown again and removes its steps (a mod being unloaded).
+- =lrg_save_migrator_add()= (or =add_document_step()= / =add_section_step()=, which free the user data of a refused step) refuses a second step of the same scope, section and from version with =LRG_SAVE_ERROR_DUPLICATE_STEP=.  Since every step is one version wide, that is the only way two steps overlap.
+- =lrg_save_migrator_plan()= returns the ordered chain between two versions.  A gap is =LRG_SAVE_ERROR_MISSING_STEP= naming the first missing step ("no conversion step for section "stats" from version 3 to 4"); going down is =LRG_SAVE_ERROR_VERSION_MISMATCH=; version 0 is =LRG_SAVE_ERROR_CORRUPT=.
+- =lrg_save_migrator_migrate_section()= runs a section's chain on one state.
+- =lrg_save_migrator_migrate_document()= converts a whole document:
+  1. the document steps from the stored format to =current-format=, in order, on a copy;
+  2. then, in name order, every section the migrator knows: the section steps from its stored version to its current version.  Document steps therefore see sections at their stored versions.  Sections the migrator does not know (a mod that is not installed) are kept unchanged;
+  3. only when every step succeeded, the caller's document is made to hold the result, the optional =applied= array lists the steps in order, and =step-applied= is emitted once per step.
+  Any failure leaves the document exactly as it was: a failing step (=LRG_SAVE_ERROR_STEP_FAILED=, the message names the step and carries its error), a gap, data newer than the current version (never converted back), or an unversioned known section.
+- =lrg_save_migrator_needs_migration()= tells whether the format or a known section differs from the current version.
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+| Signal         | Arguments                    | When                                                          |
+|----------------+------------------------------+---------------------------------------------------------------|
+| =step-applied= | =LrgSaveMigration *migration= | once per step of a successful conversion, after it is committed |
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src c
+static GVariant *
+stats_1_to_2 (GVariant  *state,
+              gpointer   user_data,
+              GError   **error)
+{
+    GVariantDict dict;
+
+    /* version 2 adds the mana pool */
+    g_variant_dict_init (&dict, state);
+    g_variant_dict_insert (&dict, "mp", "i", 10);
+    return g_variant_dict_end (&dict);
+}
+
+g_autoptr(LrgSaveMigrator) migrator = lrg_save_migrator_new ();
+g_autoptr(GPtrArray) applied = NULL;
+
+lrg_save_migrator_set_current_format (migrator, 2);
+lrg_save_migrator_set_section_version (migrator, "stats", 2);
+lrg_save_migrator_add_document_step (migrator, 1, "add section versions",
+                                     add_versions, NULL, NULL, &error);
+lrg_save_migrator_add_section_step (migrator, "stats", 1, "add mp",
+                                    stats_1_to_2, NULL, NULL, &error);
+
+if (!lrg_save_migrator_migrate_document (migrator, document, &applied, &error))
+    g_warning ("cannot convert the save: %s", error->message);   /* document unchanged */
+#+end_src
+
+** Procedure for a game
+:PROPERTIES:
+:CUSTOM_ID: procedure
+:END:
+1. Store the format version and every section's version with the data.
+2. On load, build a document, convert it, and only then validate and apply it.  Write the converted data back in the current format when the player next saves.
+3. A change of a saved layout raises that section's version (or the format for a file-level change) and adds the step in the same change, with a test that loads data of the old layout.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-save-migrator.c=: document accessors, copies and the variant form (with malformed input); duplicate refusal and user data freed; plans over a four-step chain, a gap at the end and in the middle, downgrades and version 0; a section converted from version 1 to 5 in one call; failing, silent and mistyped steps; a format 1 document converted through two document steps (a rename, then a split into new sections with versions) and four section steps in one call, with the signal order; a document from an intermediate release; atomicity when a section step or a document step fails after earlier steps succeeded, and on a gap; refusal of a newer format, a newer section and an unversioned known section.

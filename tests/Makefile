@@ -73,6 +73,7 @@ TEST_SOURCES := \
 	test-ui.c \
 	test-tilemap.c \
 	test-save.c \
+	test-save-migrator.c \
 	test-dialog.c \
 	test-dialog-yaml.c \
 	test-quest.c \

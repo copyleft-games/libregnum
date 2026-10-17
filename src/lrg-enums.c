@@ -178,10 +178,33 @@ lrg_save_error_get_type (void)
             { LRG_SAVE_ERROR_VERSION_MISMATCH, "LRG_SAVE_ERROR_VERSION_MISMATCH", "version-mismatch" },
             { LRG_SAVE_ERROR_CORRUPT, "LRG_SAVE_ERROR_CORRUPT", "corrupt" },
             { LRG_SAVE_ERROR_NOT_FOUND, "LRG_SAVE_ERROR_NOT_FOUND", "not-found" },
+            { LRG_SAVE_ERROR_DUPLICATE_STEP, "LRG_SAVE_ERROR_DUPLICATE_STEP", "duplicate-step" },
+            { LRG_SAVE_ERROR_MISSING_STEP, "LRG_SAVE_ERROR_MISSING_STEP", "missing-step" },
+            { LRG_SAVE_ERROR_STEP_FAILED, "LRG_SAVE_ERROR_STEP_FAILED", "step-failed" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgSaveError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_save_migration_scope_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SAVE_MIGRATION_SCOPE_DOCUMENT, "LRG_SAVE_MIGRATION_SCOPE_DOCUMENT", "document" },
+            { LRG_SAVE_MIGRATION_SCOPE_SECTION, "LRG_SAVE_MIGRATION_SCOPE_SECTION", "section" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgSaveMigrationScope"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
 

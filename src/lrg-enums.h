@@ -407,6 +407,12 @@ GQuark lrg_save_error_quark (void);
  * @LRG_SAVE_ERROR_VERSION_MISMATCH: Save file version incompatible
  * @LRG_SAVE_ERROR_CORRUPT: Save file is corrupted
  * @LRG_SAVE_ERROR_NOT_FOUND: Save slot not found
+ * @LRG_SAVE_ERROR_DUPLICATE_STEP: An #LrgSaveMigrator already has a
+ *   conversion step for that scope, section and version
+ * @LRG_SAVE_ERROR_MISSING_STEP: No conversion step leads from a stored
+ *   version to the current one (a gap in the chain)
+ * @LRG_SAVE_ERROR_STEP_FAILED: A conversion step failed or produced a
+ *   state of the wrong type
  *
  * Error codes for the save system.
  */
@@ -416,12 +422,35 @@ typedef enum
     LRG_SAVE_ERROR_IO,
     LRG_SAVE_ERROR_VERSION_MISMATCH,
     LRG_SAVE_ERROR_CORRUPT,
-    LRG_SAVE_ERROR_NOT_FOUND
+    LRG_SAVE_ERROR_NOT_FOUND,
+    LRG_SAVE_ERROR_DUPLICATE_STEP,
+    LRG_SAVE_ERROR_MISSING_STEP,
+    LRG_SAVE_ERROR_STEP_FAILED
 } LrgSaveError;
 
 LRG_AVAILABLE_IN_ALL
 GType lrg_save_error_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_SAVE_ERROR (lrg_save_error_get_type ())
+
+/**
+ * LrgSaveMigrationScope:
+ * @LRG_SAVE_MIGRATION_SCOPE_DOCUMENT: the step converts the whole
+ *   document from one format version to the next (it may add, drop,
+ *   rename or split sections)
+ * @LRG_SAVE_MIGRATION_SCOPE_SECTION: the step converts one section's
+ *   state from one version to the next
+ *
+ * What an #LrgSaveMigration converts.
+ */
+typedef enum
+{
+    LRG_SAVE_MIGRATION_SCOPE_DOCUMENT,
+    LRG_SAVE_MIGRATION_SCOPE_SECTION
+} LrgSaveMigrationScope;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_save_migration_scope_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SAVE_MIGRATION_SCOPE (lrg_save_migration_scope_get_type ())
 
 /* ==========================================================================
  * Item System

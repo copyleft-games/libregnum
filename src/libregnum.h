@@ -157,6 +157,8 @@
 #include "save/lrg-save-context.h"
 #include "save/lrg-save-game.h"
 #include "save/lrg-save-manager.h"
+#include "save/lrg-save-document.h"
+#include "save/lrg-save-migrator.h"
 
 /* Dialog module */
 #include "dialog/lrg-dialog-response.h"

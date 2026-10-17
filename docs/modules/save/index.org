@@ -14,6 +14,7 @@ The Save module consists of five core classes:
 - *LrgSaveGame* - Metadata for a single save slot
 - *LrgSaveContext* - Serialization context for reading/writing YAML data
 - *LrgSaveable* - Interface for objects that can be saved/loaded
+- *LrgSaveDocument* / *LrgSaveMigrator* - Saved data as a document and its chained conversion from older versions ([[file:migrator.org][migrator]])
 - Save slots tracked by name (e.g., "slot1", "autosave")
 
 ** Key Features
@@ -25,6 +26,7 @@ The Save module consists of five core classes:
 - *Context-based serialization* - YAML format for human-readable saves
 - *Asynchronous saves* - Non-blocking save/load with libdex futures
 - *Version tracking* - Track save format version for compatibility
+- *Chained conversion* - =LrgSaveMigrator= converts data of any older format and section version step by step, atomically
 - *Metadata storage* - Timestamp, playtime, custom data per save
 - *Section management* - Organize data by saveable object ID
 - *Signal notifications* - Events for save/load start and completion
@@ -146,6 +148,7 @@ See the individual class documentation:
 - [[file:save-game.org][LrgSaveGame]] - Save slot metadata
 - [[file:save-context.org][LrgSaveContext]] - Serialization interface
 - [[file:saveable.org][LrgSaveable]] - Interface for saveable objects
+- [[file:migrator.org][LrgSaveDocument, LrgSaveMigration, LrgSaveMigrator]] - Chained conversion of older saves and server state
 
 ** Save format compatibility
 
@@ -159,7 +162,10 @@ same check through the synchronous implementation.
 Current and older positive versions remain loadable. Saveables can inspect
 =lrg_save_context_get_version()= to apply their own field migrations. This
 check does not supply game-specific migrations or roll back changes made by a
-saveable whose own load method later fails.
+saveable whose own load method later fails.  For game-specific conversions
+that must be atomic and may span several versions at once, read the file into
+an =LrgSaveDocument= and convert it with =LrgSaveMigrator=
+([[file:migrator.org][migrator]]) before applying anything.
 
 A missing version field identifies a legacy version-1 save. A present field
 must be a positive decimal integer no larger than =G_MAXUINT=. Quoted decimal

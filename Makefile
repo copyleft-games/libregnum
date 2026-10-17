@@ -122,6 +122,8 @@ PUBLIC_HEADERS := \
 	src/save/lrg-save-context.h \
 	src/save/lrg-save-game.h \
 	src/save/lrg-save-manager.h \
+	src/save/lrg-save-document.h \
+	src/save/lrg-save-migrator.h \
 	src/dialog/lrg-dialog-response.h \
 	src/dialog/lrg-dialog-node.h \
 	src/dialog/lrg-dialog-tree.h \
@@ -652,6 +654,8 @@ SOURCES := \
 	src/save/lrg-save-context.c \
 	src/save/lrg-save-game.c \
 	src/save/lrg-save-manager.c \
+	src/save/lrg-save-document.c \
+	src/save/lrg-save-migrator.c \
 	src/dialog/lrg-dialog-response.c \
 	src/dialog/lrg-dialog-node.c \
 	src/dialog/lrg-dialog-tree.c \
