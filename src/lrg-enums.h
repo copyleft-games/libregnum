@@ -5696,4 +5696,68 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_achievement_scope_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_ACHIEVEMENT_SCOPE (lrg_achievement_scope_get_type ())
 
+/* ==========================================================================
+ * DDS images
+ * ========================================================================== */
+
+/**
+ * LRG_DDS_ERROR:
+ *
+ * Error domain for #LrgDdsImage.
+ */
+#define LRG_DDS_ERROR (lrg_dds_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_dds_error_quark (void);
+
+/**
+ * LrgDdsError:
+ * @LRG_DDS_ERROR_INVALID: not a DDS file, an impossible header, or a
+ *   mip level that does not exist
+ * @LRG_DDS_ERROR_TRUNCATED: the file ends before level 0's pixels
+ * @LRG_DDS_ERROR_UNSUPPORTED: a valid DDS in a format the decoder does
+ *   not handle (BC4 .. BC7, floating point, volume textures)
+ *
+ * Error codes of lrg_dds_image_new_from_bytes() and lrg_dds_image_decode().
+ */
+typedef enum
+{
+    LRG_DDS_ERROR_INVALID,
+    LRG_DDS_ERROR_TRUNCATED,
+    LRG_DDS_ERROR_UNSUPPORTED
+} LrgDdsError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_dds_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DDS_ERROR (lrg_dds_error_get_type ())
+
+/**
+ * LrgDdsFormat:
+ * @LRG_DDS_FORMAT_DXT1: BC1 blocks, opaque or with 1-bit alpha
+ * @LRG_DDS_FORMAT_DXT3: BC2 blocks, explicit 4-bit alpha
+ * @LRG_DDS_FORMAT_DXT5: BC3 blocks, interpolated alpha
+ * @LRG_DDS_FORMAT_RGB: uncompressed colour without alpha (bit masks)
+ * @LRG_DDS_FORMAT_RGBA: uncompressed colour with alpha (bit masks)
+ * @LRG_DDS_FORMAT_LUMINANCE: uncompressed luminance
+ * @LRG_DDS_FORMAT_LUMINANCE_ALPHA: uncompressed luminance with alpha
+ * @LRG_DDS_FORMAT_ALPHA: uncompressed alpha only
+ *
+ * How an #LrgDdsImage stores its pixels.
+ */
+typedef enum
+{
+    LRG_DDS_FORMAT_DXT1,
+    LRG_DDS_FORMAT_DXT3,
+    LRG_DDS_FORMAT_DXT5,
+    LRG_DDS_FORMAT_RGB,
+    LRG_DDS_FORMAT_RGBA,
+    LRG_DDS_FORMAT_LUMINANCE,
+    LRG_DDS_FORMAT_LUMINANCE_ALPHA,
+    LRG_DDS_FORMAT_ALPHA
+} LrgDdsFormat;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_dds_format_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DDS_FORMAT (lrg_dds_format_get_type ())
+
 G_END_DECLS

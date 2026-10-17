@@ -5366,3 +5366,67 @@ lrg_achievement_scope_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * DDS images
+ * ========================================================================== */
+
+/**
+ * lrg_dds_error_quark:
+ *
+ * Gets the error quark for DDS image errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_dds_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-dds-error-quark");
+}
+
+GType
+lrg_dds_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_DDS_ERROR_INVALID, "LRG_DDS_ERROR_INVALID", "invalid" },
+            { LRG_DDS_ERROR_TRUNCATED, "LRG_DDS_ERROR_TRUNCATED", "truncated" },
+            { LRG_DDS_ERROR_UNSUPPORTED, "LRG_DDS_ERROR_UNSUPPORTED", "unsupported" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgDdsError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_dds_format_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_DDS_FORMAT_DXT1, "LRG_DDS_FORMAT_DXT1", "dxt1" },
+            { LRG_DDS_FORMAT_DXT3, "LRG_DDS_FORMAT_DXT3", "dxt3" },
+            { LRG_DDS_FORMAT_DXT5, "LRG_DDS_FORMAT_DXT5", "dxt5" },
+            { LRG_DDS_FORMAT_RGB, "LRG_DDS_FORMAT_RGB", "rgb" },
+            { LRG_DDS_FORMAT_RGBA, "LRG_DDS_FORMAT_RGBA", "rgba" },
+            { LRG_DDS_FORMAT_LUMINANCE, "LRG_DDS_FORMAT_LUMINANCE", "luminance" },
+            { LRG_DDS_FORMAT_LUMINANCE_ALPHA, "LRG_DDS_FORMAT_LUMINANCE_ALPHA", "luminance-alpha" },
+            { LRG_DDS_FORMAT_ALPHA, "LRG_DDS_FORMAT_ALPHA", "alpha" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgDdsFormat"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
