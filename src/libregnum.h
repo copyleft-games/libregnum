@@ -246,6 +246,7 @@
 #include "pathfinding/lrg-nav-grid.h"
 #include "pathfinding/lrg-pathfinder.h"
 #include "pathfinding/lrg-nav-mesh.h"
+#include "pathfinding/lrg-nav-poly-mesh.h"
 
 /* AI module */
 #include "ai/lrg-blackboard.h"
