@@ -5642,4 +5642,38 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_texture_sampling_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_TEXTURE_SAMPLING (lrg_texture_sampling_get_type ())
 
+/**
+ * LrgHudAnchor:
+ * @LRG_HUD_ANCHOR_TOP_LEFT: the canvas' top-left corner
+ * @LRG_HUD_ANCHOR_TOP: the middle of the top edge
+ * @LRG_HUD_ANCHOR_TOP_RIGHT: the top-right corner
+ * @LRG_HUD_ANCHOR_LEFT: the middle of the left edge
+ * @LRG_HUD_ANCHOR_CENTER: the centre
+ * @LRG_HUD_ANCHOR_RIGHT: the middle of the right edge
+ * @LRG_HUD_ANCHOR_BOTTOM_LEFT: the bottom-left corner
+ * @LRG_HUD_ANCHOR_BOTTOM: the middle of the bottom edge
+ * @LRG_HUD_ANCHOR_BOTTOM_RIGHT: the bottom-right corner
+ *
+ * The point of the canvas a HUD piece is pinned to (#LrgHudLayout): the
+ * same point of the piece sits there, moved by the piece's offset.  The
+ * values run row by row, so value % 3 is the column (0 left, 1 middle,
+ * 2 right) and value / 3 the row (0 top, 1 middle, 2 bottom).
+ */
+typedef enum
+{
+    LRG_HUD_ANCHOR_TOP_LEFT,
+    LRG_HUD_ANCHOR_TOP,
+    LRG_HUD_ANCHOR_TOP_RIGHT,
+    LRG_HUD_ANCHOR_LEFT,
+    LRG_HUD_ANCHOR_CENTER,
+    LRG_HUD_ANCHOR_RIGHT,
+    LRG_HUD_ANCHOR_BOTTOM_LEFT,
+    LRG_HUD_ANCHOR_BOTTOM,
+    LRG_HUD_ANCHOR_BOTTOM_RIGHT
+} LrgHudAnchor;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_hud_anchor_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_HUD_ANCHOR (lrg_hud_anchor_get_type ())
+
 G_END_DECLS

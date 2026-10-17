@@ -74,6 +74,7 @@
 #include "graphics/lrg-camera-sideon.h"
 #include "graphics/lrg-camera-firstperson.h"
 #include "graphics/lrg-camera-thirdperson.h"
+#include "graphics/lrg-camera-zoom.h"
 #include "graphics/lrg-renderer.h"
 #include "graphics/lrg-image-canvas.h"
 #include "graphics/lrg-vector-image.h"
@@ -115,6 +116,12 @@
 #include "actionbar/lrg-action-slot.h"
 #include "actionbar/lrg-action-slot-provider.h"
 #include "actionbar/lrg-action-bar.h"
+
+/* HUD (layout and its file, floating combat text, radial menus, feeds) */
+#include "hud/lrg-hud-layout.h"
+#include "hud/lrg-floating-text.h"
+#include "hud/lrg-radial-menu.h"
+#include "hud/lrg-feed.h"
 
 /* Shapes module */
 #include "shapes/lrg-shape.h"

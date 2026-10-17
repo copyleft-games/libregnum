@@ -1,0 +1,90 @@
+* HUD Module
+:PROPERTIES:
+:CUSTOM_ID: hud-module
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+The models behind the pieces of a modern game HUD: where every piece sits as the player arranged it (and the small file that keeps it), floating combat text, radial selectors and a scrolling notification feed.  Everything here is pure state and arithmetic, headless and testable; projecting world points to the screen (see [[file:../guidance/index.org][LrgWaypointIndicator]]) and drawing are the game's.
+
+| Type | Kind | GIR name | Header |
+|------+------+----------+--------|
+| =LrgHudAnchor= | enum (=top-left= .. =bottom-right=, row by row) | =Libregnum.HudAnchor= | =lrg-enums.h= |
+| =LrgHudLayout= | final GObject, signal =changed= | =Libregnum.HudLayout= | =hud/lrg-hud-layout.h= |
+| =LrgFloatingText= | final GObject (property =max-count=) | =Libregnum.FloatingText= | =hud/lrg-floating-text.h= |
+| =LrgFloatingTextEntry= | boxed struct (a snapshot) | =Libregnum.FloatingTextEntry= | =hud/lrg-floating-text.h= |
+| =LrgRadialMenu= | final GObject, signals =selection-changed=, =activated= | =Libregnum.RadialMenu= | =hud/lrg-radial-menu.h= |
+| =LrgFeed= | final GObject, signal =changed= | =Libregnum.Feed= | =hud/lrg-feed.h= |
+
+The spring-arm zoom of a third-person camera that crosses into first person, =LrgCameraZoom=, is in the graphics module ([[file:../graphics/camera-zoom.org][camera-zoom.org]]).
+
+** LrgHudLayout
+:PROPERTIES:
+:CUSTOM_ID: lrghudlayout
+:END:
+The model of a HUD layout editor (move, lock, reset).  Every piece has a string id, a label and the game's default placement; the player's placement, a lock and a hidden flag are kept on top of it.
+
+- A placement is an =LrgHudAnchor= and an offset in canvas units: the piece's own anchor point sits at the canvas' anchor point moved by the offset (+X right, +Y down).  =lrg_hud_layout_resolve()= turns a placement, the piece's size and the canvas' size into the piece's top-left corner.
+- =lrg_hud_layout_set_position()= and =lrg_hud_layout_move_by()= place a piece; placing it exactly at its default counts as no placement (=lrg_hud_layout_is_modified()= is false again).
+- =lrg_hud_layout_place_rect()= is what a drag does: the rectangle is kept on the canvas, the anchor becomes the one of the canvas' thirds the piece's centre lies in (so a piece dragged to the bottom right keeps its distance from the bottom-right corner on a wider screen), the offset follows.
+- A locked piece refuses all three until it is unlocked or reset; a hidden piece is the player's (or an addon's) choice the game honours when drawing.
+- =lrg_hud_layout_reset()= drops the placement, the lock and the hidden flag of one piece, =lrg_hud_layout_reset_all()= of all.
+- The player's state of a piece the game has not added (a mod's piece, a layout loaded at start-up before the HUD exists) waits and applies when the piece is added; removing a piece keeps its state.  It is saved again meanwhile.
+
+*** Persistence
+:PROPERTIES:
+:CUSTOM_ID: persistence
+:END:
+=lrg_hud_layout_save_to_file()= writes YAML (the directory is created, mode 0700):
+
+#+begin_src yaml
+version: 1
+pieces:
+  quest-tracker:
+    anchor: top-left
+    x: 8.5
+    y: 30
+    locked: true
+  pickup-feed:
+    hidden: true
+#+end_src
+
+Only pieces with state are written, sorted by id.  =lrg_hud_layout_load_from_file()= replaces the player's state with the file's: a missing file is the default layout; bad YAML, unknown keys, unknown anchors, non-numbers, x or y without an anchor and duplicate ids fail with =G_IO_ERROR_INVALID_DATA=, a version above =LRG_HUD_LAYOUT_FORMAT_VERSION= (1) with =G_IO_ERROR_NOT_SUPPORTED=; a failed load changes nothing.  =lrg_hud_layout_to_variant()= / =lrg_hud_layout_load_variant()= carry the same state as =a{s(bsddbb)}= (id to placed, anchor nick, x, y, locked, hidden) for saves and the network.
+
+** LrgFloatingText
+:PROPERTIES:
+:CUSTOM_ID: lrgfloatingtext
+:END:
+Floating combat text: =lrg_floating_text_add()= puts a text (a damage number, "Miss") at a world point with an RGBA colour, a caller's kind and a lifetime (=LRG_FLOATING_TEXT_DEFAULT_LIFETIME= 1.2 s); =lrg_floating_text_update()= ages the texts and drops expired ones.  A full queue (=max-count=, 1 .. 256) lets the oldest go.
+
+| Call | Result |
+|------+--------|
+| =lrg_floating_text_entry_get_lift()= | the rise so far: an ease-out (1 - (1 - t)^2) of =rise= (=LRG_FLOATING_TEXT_DEFAULT_RISE=, 0.8 units) over the life |
+| =lrg_floating_text_entry_get_alpha()= | 1, then down to 0 over the last =LRG_FLOATING_TEXT_FADE_SHARE= (35%) of the life |
+| =lrg_floating_text_entry_get_scale()= | a pop: 1.4 at first, 1 after a tenth of a second |
+| =lrg_floating_text_get_world_position()= | the point lifted by the rise and the stack |
+
+Texts added within =LRG_FLOATING_TEXT_STACK_SECONDS= (0.4 s) of another at nearly the same point (half a unit) stack a quarter unit above it, so quick hits on one foe do not overlap.
+
+** LrgRadialMenu
+:PROPERTIES:
+:CUSTOM_ID: lrgradialmenu
+:END:
+A wheel of up to =LRG_RADIAL_MENU_MAX_ITEMS= (16) items in clockwise order, the first centred at =start-angle= (degrees clockwise from up), each in a sector of 360 / n degrees.  Directions are screen vectors (+Y down).
+
+- =lrg_radial_menu_index_at()= names the item a direction points into, -1 inside the dead zone (=LRG_RADIAL_MENU_DEFAULT_DEAD_ZONE=, 8 units).
+- =lrg_radial_menu_open()= with the current choice, =lrg_radial_menu_point()= from the pointer or a stick (a direction in the dead zone keeps the selection, so a stick let go keeps the choice), =lrg_radial_menu_step()= from keys or a wheel, =lrg_radial_menu_close()= with or without choosing (=activated= fires with the index and id).
+- =lrg_radial_menu_get_item_position()= places the items on a circle for drawing.
+
+** LrgFeed
+:PROPERTIES:
+:CUSTOM_ID: lrgfeed
+:END:
+The "you received" corner: =lrg_feed_push(key, label, count)= adds a row, or adds the count to the shown row of the same key, moves it to the end and restarts its time (rows without a key never merge).  At most =max_rows= (1 .. 64) rows, oldest first; each stays =seconds= (=LRG_FEED_DEFAULT_SECONDS=, 5) and fades over its last =LRG_FEED_FADE_SECONDS= (1).  =lrg_feed_update()= drops the rows whose time is up.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-hud.c=: layout pieces, defaults, placements, locks, hidden pieces, waiting state, resets; the geometry of anchors and drags; the YAML file and the variant round trip, every refused input and the missing file; floating text motion, stacking and expiry; radial sectors, dead zone, start angle, stepping, activation and cancelling; feed merging, fading and expiry; and =LrgCameraZoom=.

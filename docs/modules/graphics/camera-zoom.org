@@ -1,0 +1,32 @@
+* LrgCameraZoom
+:PROPERTIES:
+:CUSTOM_ID: lrgcamerazoom
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+The zoom of a third-person camera's spring arm, from its farthest distance into first person, as games with a mouse-wheel zoom do it: each notch moves a target distance by =step=, the arm eases to it, and zooming in past the arm's near end crosses into the eye once the arm got there.  Zooming out of first person starts the arm at its near end.  It is pure state; the game's camera rig reads =lrg_camera_zoom_get_distance()= for the arm and =lrg_camera_zoom_get_first_person()= for its mode.
+
+| Property | Meaning |
+|----------+---------|
+| min distance | the arm's near end (> 0) |
+| max distance | its far end (at least the near end) |
+| step | distance per notch (default 0.75) |
+| speed | easing rate per second: the gap shrinks by e^(-speed * dt) per update (default 10; 0 jumps) |
+
+** States
+:PROPERTIES:
+:CUSTOM_ID: states
+:END:
+- Third person: =lrg_camera_zoom_scroll(n)= with n > 0 zooms in, n < 0 out; the target stays within the limits.  A notch while the target is at the near end, or notches that overshoot it by half a step or more, start a crossing; a notch that only reaches the near end stops there.
+- Crossing (=lrg_camera_zoom_is_crossing()=): the arm eases to the near end and =lrg_camera_zoom_update()= enters first person when it arrives (it returns =TRUE= that update).  Zooming out cancels the crossing.
+- First person: the distance is 0; zooming in does nothing; zooming out leaves at once with the arm at the near end and the target one step less than the notches beyond it.
+
+=crossed= (=gboolean= first person) fires on every change of mode.  =lrg_camera_zoom_set_distance()= jumps (0 or less enters first person).  =lrg_camera_zoom_set_first_person()= follows a mode change made by another control (a first / third person key): entering remembers the target, leaving returns to it (=lrg_camera_zoom_set_resume_distance()= sets it).
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=/hud/camera-zoom= in =tests/test-hud.c=: easing, the limits, the stop at the near end, crossing from a notch at the near end and from a fast spin, leaving first person, a cancelled crossing, toggles, jumps and the speed of 0.

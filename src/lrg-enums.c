@@ -5319,3 +5319,30 @@ lrg_texture_sampling_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+GType
+lrg_hud_anchor_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_HUD_ANCHOR_TOP_LEFT, "LRG_HUD_ANCHOR_TOP_LEFT", "top-left" },
+            { LRG_HUD_ANCHOR_TOP, "LRG_HUD_ANCHOR_TOP", "top" },
+            { LRG_HUD_ANCHOR_TOP_RIGHT, "LRG_HUD_ANCHOR_TOP_RIGHT", "top-right" },
+            { LRG_HUD_ANCHOR_LEFT, "LRG_HUD_ANCHOR_LEFT", "left" },
+            { LRG_HUD_ANCHOR_CENTER, "LRG_HUD_ANCHOR_CENTER", "center" },
+            { LRG_HUD_ANCHOR_RIGHT, "LRG_HUD_ANCHOR_RIGHT", "right" },
+            { LRG_HUD_ANCHOR_BOTTOM_LEFT, "LRG_HUD_ANCHOR_BOTTOM_LEFT", "bottom-left" },
+            { LRG_HUD_ANCHOR_BOTTOM, "LRG_HUD_ANCHOR_BOTTOM", "bottom" },
+            { LRG_HUD_ANCHOR_BOTTOM_RIGHT, "LRG_HUD_ANCHOR_BOTTOM_RIGHT", "bottom-right" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgHudAnchor"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

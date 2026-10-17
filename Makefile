@@ -51,6 +51,7 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-camera-sideon.h \
 	src/graphics/lrg-camera-firstperson.h \
 	src/graphics/lrg-camera-thirdperson.h \
+	src/graphics/lrg-camera-zoom.h \
 	src/graphics/lrg-renderer.h \
 	src/graphics/lrg-image-canvas.h \
 	src/imageedit/lrg-image-layer.h \
@@ -86,6 +87,10 @@ PUBLIC_HEADERS := \
 	src/actionbar/lrg-action-slot.h \
 	src/actionbar/lrg-action-slot-provider.h \
 	src/actionbar/lrg-action-bar.h \
+	src/hud/lrg-hud-layout.h \
+	src/hud/lrg-floating-text.h \
+	src/hud/lrg-radial-menu.h \
+	src/hud/lrg-feed.h \
 	src/shapes/lrg-shape.h \
 	src/shapes/lrg-shape2d.h \
 	src/shapes/lrg-shape3d.h \
@@ -594,6 +599,7 @@ SOURCES := \
 	src/graphics/lrg-camera-sideon.c \
 	src/graphics/lrg-camera-firstperson.c \
 	src/graphics/lrg-camera-thirdperson.c \
+	src/graphics/lrg-camera-zoom.c \
 	src/graphics/lrg-renderer.c \
 	src/graphics/lrg-image-canvas.c \
 	src/imageedit/lrg-image-layer.c \
@@ -629,6 +635,10 @@ SOURCES := \
 	src/actionbar/lrg-action-slot.c \
 	src/actionbar/lrg-action-slot-provider.c \
 	src/actionbar/lrg-action-bar.c \
+	src/hud/lrg-hud-layout.c \
+	src/hud/lrg-floating-text.c \
+	src/hud/lrg-radial-menu.c \
+	src/hud/lrg-feed.c \
 	src/shapes/lrg-shape.c \
 	src/shapes/lrg-shape2d.c \
 	src/shapes/lrg-shape3d.c \
