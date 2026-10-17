@@ -8,6 +8,8 @@
  */
 
 #include <glib.h>
+#include <glib/gstdio.h>
+#include <gio/gio.h>
 #include <libregnum.h>
 
 /* ==========================================================================
@@ -704,6 +706,227 @@ test_console_clear (ConsoleFixture *fixture,
     g_assert_cmpuint (g_queue_get_length (output), ==, 0);
 }
 
+/* an evaluator that upper-cases its line; "fail" fails */
+static gchar *
+upper_evaluator (LrgDebugConsole  *console,
+                 const gchar      *line,
+                 gpointer          user_data,
+                 GError          **error)
+{
+    (void)console;
+    (*(guint *)user_data)++;
+    if (g_strcmp0 (line, "fail") == 0)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "it failed");
+        return NULL;
+    }
+    return g_ascii_strup (line, -1);
+}
+
+static void
+test_console_evaluator (ConsoleFixture *fixture,
+                        gconstpointer   user_data)
+{
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *code = NULL;
+    g_autofree gchar *echo = NULL;
+    gchar *nothing;
+    GQueue *output;
+    guint calls;
+
+    (void)user_data;
+    calls = 0;
+    lrg_debug_console_set_evaluator (fixture->console, upper_evaluator, &calls, NULL);
+    g_assert_true (lrg_debug_console_has_evaluator (fixture->console));
+
+    /* code goes whole to the evaluator, no shell parsing ("it's") */
+    code = lrg_debug_console_execute (fixture->console, "print('it''s')", &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (code, ==, "PRINT('IT''S')");
+    g_assert_cmpuint (calls, ==, 1);
+
+    /* commands need their slash now */
+    echo = lrg_debug_console_execute (fixture->console, "/echo a b", &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (echo, ==, "a b");
+    g_assert_cmpuint (calls, ==, 1);
+
+    /* a failure is an error line and the error */
+    nothing = lrg_debug_console_execute (fixture->console, "fail", &error);
+    g_assert_null (nothing);
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_FAILED);
+    output = lrg_debug_console_get_output (fixture->console);
+    g_assert_true (lrg_console_output_is_error (g_queue_peek_tail (output)));
+    g_assert_cmpstr (lrg_console_output_get_text (g_queue_peek_tail (output)), ==, "it failed");
+
+    lrg_debug_console_set_evaluator (fixture->console, NULL, NULL, NULL);
+    g_assert_false (lrg_debug_console_has_evaluator (fixture->console));
+}
+
+static void
+test_console_history_browse (ConsoleFixture *fixture,
+                             gconstpointer   user_data)
+{
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *dir = NULL;
+    g_autofree gchar *path = NULL;
+    g_autoptr(LrgDebugConsole) other = NULL;
+    GQueue *history;
+
+    (void)user_data;
+    g_assert_null (lrg_debug_console_history_previous (fixture->console));
+    lrg_debug_console_add_history (fixture->console, "one");
+    lrg_debug_console_add_history (fixture->console, "two");
+    lrg_debug_console_add_history (fixture->console, "two");
+    lrg_debug_console_add_history (fixture->console, "");
+    lrg_debug_console_add_history (fixture->console, "three\nlines");
+    history = lrg_debug_console_get_history (fixture->console);
+    g_assert_cmpuint (g_queue_get_length (history), ==, 3);
+
+    /* Up from the end, the oldest stays, Down past the newest is empty */
+    g_assert_cmpstr (lrg_debug_console_history_previous (fixture->console), ==, "three\nlines");
+    g_assert_cmpstr (lrg_debug_console_history_previous (fixture->console), ==, "two");
+    g_assert_cmpstr (lrg_debug_console_history_previous (fixture->console), ==, "one");
+    g_assert_cmpstr (lrg_debug_console_history_previous (fixture->console), ==, "one");
+    g_assert_cmpstr (lrg_debug_console_history_next (fixture->console), ==, "two");
+    g_assert_cmpstr (lrg_debug_console_history_next (fixture->console), ==, "three\nlines");
+    g_assert_null (lrg_debug_console_history_next (fixture->console));
+    g_assert_null (lrg_debug_console_history_next (fixture->console));
+    lrg_debug_console_history_previous (fixture->console);
+    lrg_debug_console_history_reset (fixture->console);
+    g_assert_cmpstr (lrg_debug_console_history_previous (fixture->console), ==, "three\nlines");
+
+    /* saved and read back, the line break kept */
+    dir = g_dir_make_tmp ("lrg-console-XXXXXX", &error);
+    g_assert_no_error (error);
+    path = g_build_filename (dir, "sub", "history", NULL);
+    g_assert_true (lrg_debug_console_save_history (fixture->console, path, &error));
+    g_assert_no_error (error);
+    other = lrg_debug_console_new ();
+    g_assert_true (lrg_debug_console_load_history (other, path, &error));
+    g_assert_no_error (error);
+    history = lrg_debug_console_get_history (other);
+    g_assert_cmpuint (g_queue_get_length (history), ==, 3);
+    g_assert_cmpstr (g_queue_peek_tail (history), ==, "three\nlines");
+    g_assert_cmpstr (lrg_debug_console_history_previous (other), ==, "three\nlines");
+
+    /* a missing file is an empty history; a directory is an error */
+    g_remove (path);
+    g_assert_true (lrg_debug_console_load_history (other, path, &error));
+    g_assert_cmpuint (g_queue_get_length (lrg_debug_console_get_history (other)), ==, 0);
+    lrg_debug_console_add_history (other, "kept");
+    g_assert_false (lrg_debug_console_load_history (other, dir, &error));
+    g_assert_nonnull (error);
+    g_assert_cmpuint (g_queue_get_length (lrg_debug_console_get_history (other)), ==, 1);
+    g_clear_error (&error);
+
+    {
+        g_autofree gchar *sub = g_build_filename (dir, "sub", NULL);
+
+        g_rmdir (sub);
+    }
+    g_rmdir (dir);
+}
+
+static gchar **
+api_completer (LrgDebugConsole *console,
+               const gchar     *word,
+               gpointer         user_data)
+{
+    static const gchar *const names[] = { "lf.player.position", "lf.player.heal", "lf.log",
+                                          "lf.player.position", NULL };
+
+    (void)console;
+    (void)word;
+    (void)user_data;
+    return g_strdupv ((gchar **)names);
+}
+
+static void
+test_console_completion (ConsoleFixture *fixture,
+                         gconstpointer   user_data)
+{
+    g_auto(GStrv) found = NULL;
+    g_auto(GStrv) commands = NULL;
+    g_autofree gchar *word = NULL;
+    g_autofree gchar *line = NULL;
+    g_autofree gchar *one = NULL;
+    g_autofree gchar *none = NULL;
+
+    (void)user_data;
+    word = lrg_debug_console_get_completion_word ("x = lf.pl");
+    g_assert_cmpstr (word, ==, "lf.pl");
+    g_free (word);
+    word = lrg_debug_console_get_completion_word ("print( ");
+    g_assert_cmpstr (word, ==, "");
+
+    /* without an evaluator the commands complete bare */
+    commands = lrg_debug_console_complete (fixture->console, "he");
+    g_assert_cmpuint (g_strv_length (commands), ==, 1);
+    g_assert_cmpstr (commands[0], ==, "help");
+
+    lrg_debug_console_set_evaluator (fixture->console, upper_evaluator, NULL, NULL);
+    lrg_debug_console_set_completer (fixture->console, api_completer, NULL, NULL);
+    found = lrg_debug_console_complete (fixture->console, "x = lf.player.");
+    g_assert_cmpuint (g_strv_length (found), ==, 2);
+    g_assert_cmpstr (found[0], ==, "lf.player.heal");
+    g_assert_cmpstr (found[1], ==, "lf.player.position");
+
+    line = lrg_debug_console_complete_line (fixture->console, "x = lf.pl");
+    g_assert_cmpstr (line, ==, "x = lf.player.");
+    one = lrg_debug_console_complete_line (fixture->console, "/hel");
+    g_assert_cmpstr (one, ==, "/help");
+    none = lrg_debug_console_complete_line (fixture->console, "zzz");
+    g_assert_cmpstr (none, ==, "zzz");
+    lrg_debug_console_set_evaluator (fixture->console, NULL, NULL, NULL);
+}
+
+static gpointer
+log_from_thread (gpointer data)
+{
+    (void)data;
+    g_message ("from a thread");
+    return NULL;
+}
+
+static void
+test_console_log_capture (ConsoleFixture *fixture,
+                          gconstpointer   user_data)
+{
+    GQueue *output;
+    GThread *thread;
+    LrgConsoleOutput *last;
+
+    (void)user_data;
+    lrg_debug_console_set_log_capture (fixture->console, TRUE,
+                                       G_LOG_LEVEL_MESSAGE | G_LOG_LEVEL_WARNING);
+    g_assert_true (lrg_debug_console_get_log_capture (fixture->console));
+
+    g_log ("my-domain", G_LOG_LEVEL_MESSAGE, "hello %d", 7);
+    g_log ("my-domain", G_LOG_LEVEL_INFO, "not collected");
+    output = lrg_debug_console_get_output (fixture->console);
+    g_assert_cmpuint (g_queue_get_length (output), ==, 1);
+    last = g_queue_peek_tail (output);
+    g_assert_cmpstr (lrg_console_output_get_text (last), ==, "[my-domain] hello 7");
+    g_assert_false (lrg_console_output_is_error (last));
+
+    /* another thread's line waits for the console's thread */
+    thread = g_thread_new ("log", log_from_thread, NULL);
+    g_thread_join (thread);
+    g_assert_cmpuint (lrg_debug_console_flush_log (fixture->console), ==, 1);
+    g_assert_cmpuint (lrg_debug_console_flush_log (fixture->console), ==, 0);
+    output = lrg_debug_console_get_output (fixture->console);
+    g_assert_cmpuint (g_queue_get_length (output), ==, 2);
+
+    lrg_debug_console_set_log_capture (fixture->console, FALSE, 0);
+    g_log ("my-domain", G_LOG_LEVEL_MESSAGE, "after");
+    g_assert_cmpuint (g_queue_get_length (lrg_debug_console_get_output (fixture->console)), ==, 2);
+
+    lrg_debug_console_set_max_output (fixture->console, 1);
+    g_assert_cmpuint (lrg_debug_console_get_max_output (fixture->console), ==, 1);
+    g_assert_cmpuint (g_queue_get_length (lrg_debug_console_get_output (fixture->console)), ==, 1);
+}
+
 /* ==========================================================================
  * Overlay Tests
  * ========================================================================== */
@@ -1237,6 +1460,18 @@ main (int   argc,
                 console_fixture_tear_down);
     g_test_add ("/debug/console/clear", ConsoleFixture, NULL,
                 console_fixture_set_up, test_console_clear,
+                console_fixture_tear_down);
+    g_test_add ("/debug/console/evaluator", ConsoleFixture, NULL,
+                console_fixture_set_up, test_console_evaluator,
+                console_fixture_tear_down);
+    g_test_add ("/debug/console/history-browse", ConsoleFixture, NULL,
+                console_fixture_set_up, test_console_history_browse,
+                console_fixture_tear_down);
+    g_test_add ("/debug/console/completion", ConsoleFixture, NULL,
+                console_fixture_set_up, test_console_completion,
+                console_fixture_tear_down);
+    g_test_add ("/debug/console/log-capture", ConsoleFixture, NULL,
+                console_fixture_set_up, test_console_log_capture,
                 console_fixture_tear_down);
 
     /* Overlay */

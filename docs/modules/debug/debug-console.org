@@ -333,3 +333,49 @@ The console uses =LRG_DEBUG_ERROR= domain:
 
 - =LRG_DEBUG_ERROR_COMMAND_NOT_FOUND= - Unknown command
 - =LRG_DEBUG_ERROR_INVALID_ARGS= - Invalid arguments
+
+** Drop-down console model
+:PROPERTIES:
+:CUSTOM_ID: drop-down-console-model
+:END:
+A game draws its own Quake-style drop-down console over this model; the console keeps everything that is not drawing: what a line runs, the history the Up and Down keys walk, what Tab completes and the log it shows.
+
+*** Evaluator
+:PROPERTIES:
+:CUSTOM_ID: evaluator
+:END:
+=lrg_debug_console_set_evaluator()= hands every line that does not start with a slash to an =LrgDebugEvalFunc= whole, without shell parsing, so a line can be code for a scripting runtime (=print("it's")=).  Commands are then written with their slash (=/help=, =/clear=).  The evaluator's output is printed, its =GError= printed as an error line and returned from =lrg_debug_console_execute()=.  =lrg_debug_console_has_evaluator()= tells whether one is set; without one every line is a command, as before.
+
+#+begin_src C
+static gchar *
+eval_lua (LrgDebugConsole *console, const gchar *line, gpointer user_data, GError **error)
+{
+    return run_in_my_runtime ((MyGame *)user_data, line, error);
+}
+
+lrg_debug_console_set_evaluator (console, eval_lua, game, NULL);
+lrg_debug_console_execute (console, "return 1 + 2", NULL);   /* the evaluator */
+lrg_debug_console_execute (console, "/clear", NULL);         /* a command */
+#+end_src
+
+*** History
+:PROPERTIES:
+:CUSTOM_ID: history-browsing
+:END:
+Every executed line joins the history (=lrg_debug_console_add_history()= adds one without running it; an empty line or a repeat of the newest entry is skipped, the oldest go beyond =max-history=).  =lrg_debug_console_history_previous()= (Up) steps back from after the newest entry and stays on the oldest; =lrg_debug_console_history_next()= (Down) steps forward and returns =NULL= past the newest (an empty input line); executing a line or =lrg_debug_console_history_reset()= puts the cursor after the newest entry again.
+
+=lrg_debug_console_save_history()= writes the history atomically, one entry a line escaped with =g_strescape()= (entries of several lines survive), creating the directory; =lrg_debug_console_load_history()= replaces the history by a file's entries, a missing file being an empty history and an unreadable one an error that leaves the history as it was.
+
+*** Completion
+:PROPERTIES:
+:CUSTOM_ID: completion
+:END:
+=lrg_debug_console_get_completion_word()= is the trailing run of letters, digits, =_=, =.=, =:= and =/= of a line.  =lrg_debug_console_complete()= returns the candidates that start with it, sorted and without repeats: the commands (with their slash, and only as the line's first word, while an evaluator is set) and whatever the =LrgDebugCompleteFunc= of =lrg_debug_console_set_completer()= offers (a game's script function names).  =lrg_debug_console_complete_line()= is the Tab key: the line with its word extended to the longest prefix every candidate shares.
+
+*** The log
+:PROPERTIES:
+:CUSTOM_ID: the-log
+:END:
+=lrg_debug_console_set_log_capture(console, TRUE, levels)= copies every message of =levels= into the console as =[domain] text=, warnings and worse as error lines.  The first capture installs libregnum's handlers once per process: a log writer (=g_log_set_writer_func()=, for structured messages) that hands every message on to =g_log_writer_default()=, and a default handler (=g_log_set_default_handler()=, for classic =g_log()= calls) that chains to the one installed before it (GLib's own, or a test harness's), so messages are still printed as usual and each is copied once.  An application that installs its own writer must not capture.  Messages from other threads are queued under a lock and printed by the next =lrg_debug_console_get_output()= or =lrg_debug_console_flush_log()= on the console's thread.  =lrg_debug_console_set_max_output()= bounds the lines kept (500 by default).
+
+Tests: =tests/test-debug.c= (=/debug/console/evaluator=, =history-browse=, =completion=, =log-capture=).
