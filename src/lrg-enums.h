@@ -1475,6 +1475,10 @@ GQuark lrg_scripting_error_quark (void);
  * @LRG_SCRIPTING_ERROR_NOT_FOUND: Function or variable not found
  * @LRG_SCRIPTING_ERROR_GI_FAILED: GObject Introspection operation failed
  * @LRG_SCRIPTING_ERROR_TYPELIB_NOT_FOUND: Typelib not found
+ * @LRG_SCRIPTING_ERROR_BUDGET: a script task ran past its watchdog
+ *   without yielding (#LrgScriptScheduler)
+ * @LRG_SCRIPTING_ERROR_UNSUPPORTED: the backend cannot do what was asked
+ *   (a wait outside a coroutine task, a task on a backend without one)
  *
  * Error codes for the scripting system.
  */
@@ -1487,8 +1491,85 @@ typedef enum
     LRG_SCRIPTING_ERROR_TYPE,
     LRG_SCRIPTING_ERROR_NOT_FOUND,
     LRG_SCRIPTING_ERROR_GI_FAILED,
-    LRG_SCRIPTING_ERROR_TYPELIB_NOT_FOUND
+    LRG_SCRIPTING_ERROR_TYPELIB_NOT_FOUND,
+    LRG_SCRIPTING_ERROR_BUDGET,
+    LRG_SCRIPTING_ERROR_UNSUPPORTED
 } LrgScriptingError;
+
+/**
+ * LrgScriptTaskState:
+ * @LRG_SCRIPT_TASK_STATE_PENDING: added, not resumed yet
+ * @LRG_SCRIPT_TASK_STATE_RUNNING: being resumed right now
+ * @LRG_SCRIPT_TASK_STATE_WAITING: suspended until its wait is over (a
+ *   time, frames, a condition, or the next frame after a yield or a
+ *   preemption by the budget)
+ * @LRG_SCRIPT_TASK_STATE_FINISHED: the body returned
+ * @LRG_SCRIPT_TASK_STATE_CANCELLED: cancelled (lrg_script_task_cancel())
+ * @LRG_SCRIPT_TASK_STATE_FAILED: the body raised an error, or ran past
+ *   its watchdog
+ *
+ * Where an #LrgScriptTask is in its life.  The last three are final.
+ */
+typedef enum
+{
+    LRG_SCRIPT_TASK_STATE_PENDING,
+    LRG_SCRIPT_TASK_STATE_RUNNING,
+    LRG_SCRIPT_TASK_STATE_WAITING,
+    LRG_SCRIPT_TASK_STATE_FINISHED,
+    LRG_SCRIPT_TASK_STATE_CANCELLED,
+    LRG_SCRIPT_TASK_STATE_FAILED
+} LrgScriptTaskState;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_script_task_state_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SCRIPT_TASK_STATE (lrg_script_task_state_get_type ())
+
+/**
+ * LrgScriptWaitKind:
+ * @LRG_SCRIPT_WAIT_NONE: runs again on the next frame (a yield, or a
+ *   preemption when the frame's budget ran out)
+ * @LRG_SCRIPT_WAIT_SECONDS: until a number of seconds of scheduler time
+ *   passed
+ * @LRG_SCRIPT_WAIT_FRAMES: until a number of scheduler frames passed
+ * @LRG_SCRIPT_WAIT_CONDITION: until a condition holds (checked once a
+ *   frame, before the task would run), or its timeout
+ *
+ * What a suspended #LrgScriptTask waits for.
+ */
+typedef enum
+{
+    LRG_SCRIPT_WAIT_NONE,
+    LRG_SCRIPT_WAIT_SECONDS,
+    LRG_SCRIPT_WAIT_FRAMES,
+    LRG_SCRIPT_WAIT_CONDITION
+} LrgScriptWaitKind;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_script_wait_kind_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SCRIPT_WAIT_KIND (lrg_script_wait_kind_get_type ())
+
+/**
+ * LrgBindingConflictPolicy:
+ * @LRG_BINDING_CONFLICT_REFUSE: binding a key another action holds is
+ *   refused; nothing changes
+ * @LRG_BINDING_CONFLICT_REPLACE: the other actions lose the key
+ * @LRG_BINDING_CONFLICT_SWAP: the other actions get the key the action
+ *   had in that slot (or lose the key when it had none)
+ * @LRG_BINDING_CONFLICT_KEEP: both keep it (one key, several actions)
+ *
+ * What lrg_binding_catalog_bind() does when the key is bound elsewhere.
+ */
+typedef enum
+{
+    LRG_BINDING_CONFLICT_REFUSE,
+    LRG_BINDING_CONFLICT_REPLACE,
+    LRG_BINDING_CONFLICT_SWAP,
+    LRG_BINDING_CONFLICT_KEEP
+} LrgBindingConflictPolicy;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_binding_conflict_policy_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_BINDING_CONFLICT_POLICY (lrg_binding_conflict_policy_get_type ())
 
 LRG_AVAILABLE_IN_ALL
 GType lrg_scripting_error_get_type (void) G_GNUC_CONST;

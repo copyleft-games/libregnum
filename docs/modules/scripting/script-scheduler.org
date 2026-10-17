@@ -1,0 +1,83 @@
+* Script tasks and the scheduler
+:PROPERTIES:
+:CUSTOM_ID: script-scheduler
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+Script code that runs over many frames (a macro's loop, a cut scene, a mod's background job) is a *task*, and an =LrgScriptScheduler= runs every task a little each frame on a budget, so a loop never takes the main thread:
+
+| Type                    | Kind                    | Role                                                                     |
+|-------------------------+-------------------------+--------------------------------------------------------------------------|
+| =LrgScriptTask=         | derivable GObject       | life cycle, waits, cancellation, counters; one subclass per backend kind |
+| =LrgScriptScheduler=    | final GObject           | the per-frame runner: budgets, round robin, cancellation, statistics     |
+| =LrgScriptTaskLua=      | final (LuaJIT builds)   | a Lua coroutine, preempted by a count hook                               |
+| =LrgScriptTaskCallback= | final                   | a step called once per resume: a C function or any backend's function    |
+| =LrgScriptBudget=       | boxed struct            | what one resume may spend (deadline, instructions, slice, watchdog)      |
+
+** Life of a task
+:PROPERTIES:
+:CUSTOM_ID: life
+:END:
+=pending= (added, not run) -> =running= (being resumed) -> =waiting= (seconds, frames, a condition, or the next frame) -> ... -> =finished=, =cancelled= or =failed= (final; =LrgScriptTask::finished= once, the body released).  A subclass's =resume()= runs the body and, before it returns, asks for =lrg_script_task_wait_seconds()=, =wait_frames()=, =wait_condition()= (a C condition checked once a frame, with a timeout) or =finish()=; with none of them the task runs again on the next frame.  =lrg_script_task_get_current()= is the task being resumed (the primitives a backend exposes need it).
+
+Cancellation (=lrg_script_task_cancel()=, =lrg_script_scheduler_cancel()=, =cancel_owner()=, =cancel_all()=): a task that never ran ends at once; a started one gets one more resume with its wait cut short and =is_cancel_requested()= true, so a loop such as =while not cancelled() do ... end= can end cleanly, and ends =cancelled= after it whatever it did.  =lrg_script_scheduler_drop_all()= ends everything without that resume (a context going away).
+
+** The scheduler
+:PROPERTIES:
+:CUSTOM_ID: scheduler
+:END:
+=lrg_script_scheduler_update (delta)= is one frame: the frame counter and the clock advance (scheduler time is the sum of the deltas, so waits follow the game's clock, fixed-step in tests), tasks added during the last update join, then the ready tasks are resumed round robin from where the last frame stopped until the frame's time budget (=frame-budget-us=, default 2 ms) or instruction budget (=instruction-budget=, default 200 000) is spent; the rest run first next frame.  Tasks added from inside a resume start next frame.  Ended tasks are dropped after =LrgScriptScheduler::task-finished=.  Statistics: =get_last_frame_instructions()=, =get_last_frame_time_us()=, the maxima, per task =get_resume_count()=, =get_preemption_count()=, =get_instructions()=, =get_last_time_us()=.
+
+** Backends: what is bounded how
+:PROPERTIES:
+:CUSTOM_ID: backends
+:END:
+| Backend                         | Task kind                          | Waits inside the code                | A busy loop                                                                                       |
+|---------------------------------+------------------------------------+--------------------------------------+---------------------------------------------------------------------------------------------------|
+| Lua (LuaJIT)                    | =LrgScriptTaskLua= coroutine       | =wait=, =wait_frames=, =wait_until=, =yield= | preempted by a count hook every =instruction-slice= instructions once the budget is spent; resumed where it stopped |
+| Python, PyGObject, Gjs          | =LrgScriptTaskCallback= (a step function) | the step returns its wait           | not interruptible inside a step: a step running past =watchdog-us= fails the task afterwards       |
+| crispy C, native modules, C     | =LrgScriptTaskCallback= (a C step)  | the step calls =lrg_script_task_wait_*()= | the same                                                                                          |
+
+Lua is the only backend with real coroutines and preemption here.  The others get cooperative step tasks: a script function called once per resume as =fn(task_id, cancelled)=, whose return value is the next wait (a number of seconds, =0= or =true= for the next frame, =false= / nothing to finish), bounded only after the fact by the watchdog (=LRG_SCRIPTING_ERROR_BUDGET=).
+
+*** The Lua task in detail
+:PROPERTIES:
+:CUSTOM_ID: lua
+:END:
+- =lrg_script_task_lua_new_from_string (lua, name, code)= compiles a chunk into a coroutine (a syntax error is =LRG_SCRIPTING_ERROR_SYNTAX=); =new_from_global (lua, func)= runs a global function.  The task holds a weak reference to the context: a context gone or reset (=lrg_scripting_lua_get_generation()= changes) fails the next resume.
+- The primitives yield a sentinel with the wait; any other yield of the task's coroutine waits for the next frame.  Yields across =pcall= work.
+- Preemption: the count hook adds the slice to the resume's count and checks the clock; once either budget is spent it yields the coroutine (LuaJIT lets count hooks yield) if no C function other than =pcall= / =xpcall= lies between the code and the coroutine's base.  Code inside a C function (a =table.sort= comparator, a host function calling back into Lua) or inside a coroutine of the script's own cannot be suspended there: the hook waits for a point and raises a budget error past =watchdog-us= or eight budgets of instructions.
+- LuaJIT runs compiled traces without hooks, so a task switches the compiler off for its body and every function defined inside it.  Functions defined elsewhere and called from the task stay compiled and can only be suspended when they return; a context that should run nothing but preemptible code switches the compiler off entirely with =lrg_scripting_lua_set_jit_enabled()= (the interpreter is still fast).
+
+*** The Lua library
+:PROPERTIES:
+:CUSTOM_ID: lua-library
+:END:
+=lrg_script_task_lua_install_library (lua, table, owner, resolve, data, destroy)= fills a global table (e.g. =lf=) with:
+
+| Function                  | Does                                                                                   |
+|---------------------------+----------------------------------------------------------------------------------------|
+| =wait(seconds)=           | suspends the running task (inside a task only; anywhere else it raises)                 |
+| =wait_frames(n)=          | suspends for n frames                                                                  |
+| =yield()=                 | until the next frame                                                                   |
+| =wait_until(fn [, timeout])= | yields every frame until =fn()= is true (returns true) or the timeout passed (false) |
+| =cancelled()=             | true once the running task was asked to stop (false outside a task)                    |
+| =spawn(fn [, name])=      | starts =fn= as a task of the scheduler =resolve= returns (next frame); its id           |
+| =cancel(id)=              | asks a task to stop                                                                    |
+| =running()=               | the running task's id, or nil                                                          |
+| =time()=, =frame()=       | the scheduler's clock and frame (0 without a scheduler)                                |
+
+The resolver is asked at every call, so a game whose scheduler belongs to a session can install the library once per context.
+
+#+begin_src lua
+local id = lf.spawn(function()
+    while not lf.cancelled() do
+        do_something()
+        lf.wait(2)
+    end
+end, "fishing")
+#+end_src
+
+Tests: =tests/test-script-scheduler.c= (waits, conditions, cancellation and its grace resume, owners, the watchdog, a Lua busy loop held to the instruction budget every frame, the time budget, the library, failures, a reset context).

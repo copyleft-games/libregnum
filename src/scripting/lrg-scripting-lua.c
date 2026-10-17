@@ -22,6 +22,7 @@
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
+#include <luajit.h>
 
 struct _LrgScriptingLua
 {
@@ -33,6 +34,8 @@ struct _LrgScriptingLua
     GPtrArray    *update_hooks;     /* Array of function names (gchar *) */
     GPtrArray    *search_paths;     /* Array of search paths (gchar *) */
     gchar        *default_path;     /* Default Lua package path */
+    guint         generation;       /* states created so far (reset bumps it) */
+    gboolean      jit_disabled;     /* lrg_scripting_lua_set_jit_enabled() */
 };
 
 G_DEFINE_TYPE (LrgScriptingLua, lrg_scripting_lua, LRG_TYPE_SCRIPTING)
@@ -452,7 +455,8 @@ lrg_scripting_lua_reset (LrgScripting *scripting)
     /* Clear update hooks */
     g_ptr_array_set_size (self->update_hooks, 0);
 
-    /* Create new state */
+    /* Create new state; tasks of the old one see the new generation */
+    self->generation++;
     self->L = luaL_newstate ();
     if (self->L != NULL)
     {
@@ -477,6 +481,9 @@ lrg_scripting_lua_reset (LrgScripting *scripting)
 
         /* Update package path */
         update_package_path (self);
+
+        if (self->jit_disabled)
+            luaJIT_setmode (self->L, 0, LUAJIT_MODE_ENGINE | LUAJIT_MODE_OFF);
     }
 
     lrg_debug (LRG_LOG_DOMAIN_SCRIPTING, "Script context reset");
@@ -819,4 +826,41 @@ lrg_scripting_lua_get_state (LrgScriptingLua *self)
     g_return_val_if_fail (LRG_IS_SCRIPTING_LUA (self), NULL);
 
     return self->L;
+}
+
+/*
+ * lrg_scripting_lua_get_generation:
+ * @self: an #LrgScriptingLua
+ *
+ * Counts the states the context created (lrg_scripting_reset() makes a
+ * new one): references into a state, such as a task's coroutine, are
+ * valid only while the generation they were made in is current.
+ *
+ * Returns: the current generation
+ */
+guint
+lrg_scripting_lua_get_generation (LrgScriptingLua *self)
+{
+    g_return_val_if_fail (LRG_IS_SCRIPTING_LUA (self), 0);
+
+    return self->generation;
+}
+
+void
+lrg_scripting_lua_set_jit_enabled (LrgScriptingLua *self,
+                                   gboolean         enabled)
+{
+    g_return_if_fail (LRG_IS_SCRIPTING_LUA (self));
+
+    self->jit_disabled = !enabled;
+    if (self->L != NULL)
+        luaJIT_setmode (self->L, 0, LUAJIT_MODE_ENGINE | (enabled ? LUAJIT_MODE_ON : LUAJIT_MODE_OFF));
+}
+
+gboolean
+lrg_scripting_lua_get_jit_enabled (LrgScriptingLua *self)
+{
+    g_return_val_if_fail (LRG_IS_SCRIPTING_LUA (self), FALSE);
+
+    return !self->jit_disabled;
 }

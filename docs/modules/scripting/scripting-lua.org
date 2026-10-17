@@ -334,3 +334,9 @@ main (int argc, char *argv[])
 - [[file:scripting.org][LrgScripting]] - Base class API
 - [[file:scripting-python.org][LrgScriptingPython]] - Python alternative
 - [[../../examples/scripting-basics.md][Scripting Examples]] - More examples
+
+** JIT switch
+:PROPERTIES:
+:CUSTOM_ID: jit-switch
+:END:
+=lrg_scripting_lua_set_jit_enabled (lua, FALSE)= turns LuaJIT's compiler off for the context and for the states later resets create (=lrg_scripting_lua_get_jit_enabled()=).  Compiled traces run without debug hooks, so a context whose code must always be preemptible by an =LrgScriptScheduler= (see [[file:script-scheduler.org][script tasks]]) turns it off.

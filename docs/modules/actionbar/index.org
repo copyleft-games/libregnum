@@ -1,0 +1,54 @@
+* Action Bar Module
+:PROPERTIES:
+:CUSTOM_ID: action-bar-module
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+World of Warcraft style action bars for any game: bars of buttons with several pages, each button holding a piece of content the game understands (a spell, an item, an equipment set, a macro), and an interface through which the game tells how a button looks right now and uses it.  The module keeps the contents and pages only; drawing, key bindings (see [[file:../input/binding-catalog.org][LrgBindingCatalog]]) and the meaning of the content are the game's.
+
+| Type                    | Kind                         | Role                                                         |
+|-------------------------+------------------------------+--------------------------------------------------------------|
+| =LrgActionSlot=         | reference-counted boxed      | a content: kind, id, label and icon captured when placed      |
+| =LrgActionSlotState=    | boxed struct                 | usable, available, active, count, cooldown remaining / length |
+| =LrgActionSlotProvider= | GInterface                   | the game: =query()= a content's state, =activate()= it        |
+| =LrgActionBar=          | final GObject                | slots per page, pages, the current page, visibility, contents |
+
+=LrgSpellbook= ([[file:../progression/spellbook.org][progression]]) keeps its own single-page bar of ability ids for server-side rules; =LrgActionBar= is the general one for a game's HUD.
+
+** LrgActionSlot
+:PROPERTIES:
+:CUSTOM_ID: action-slot
+:END:
+Immutable.  The kind is a word of the game's vocabulary ("spell", "item", "macro"), the id names the content within the kind (a spell's name, an item's stable id).  The label and icon are kept so a bar can still show a content the provider no longer finds (an item sold), dimmed.  =lrg_action_slot_equal()= compares kind and id only.  =lrg_action_slot_to_variant()= writes =(ssss)= (empty strings for no label or icon); =lrg_action_slot_new_from_variant()= returns =NULL= for another type or an empty kind.
+
+** LrgActionSlotState and LrgActionSlotProvider
+:PROPERTIES:
+:CUSTOM_ID: provider
+:END:
+=lrg_action_slot_state_init()= gives the default: usable, available, not active, no count (-1), no cooldown.  A provider's =query()= starts from that state and fills what it knows; it returns =FALSE= for kinds it does not know.  =activate()= uses the content or returns =FALSE= with an error the game shows the player (no magicka, none left).  =lrg_action_slot_state_get_cooldown_fraction()= is the part of the cooldown left (0 ready .. 1 just started) for a sweep.
+
+#+begin_src c
+static gboolean
+my_query (LrgActionSlotProvider *provider, const LrgActionSlot *slot, LrgActionSlotState *state)
+{
+    if (!lrg_action_slot_is_kind (slot, "potion"))
+        return FALSE;
+    state->count = count_potions (lrg_action_slot_get_id (slot));
+    state->usable = state->count > 0;
+    return TRUE;
+}
+#+end_src
+
+** LrgActionBar
+:PROPERTIES:
+:CUSTOM_ID: action-bar
+:END:
+- =lrg_action_bar_new (name, slots, pages)=: 1 .. =LRG_ACTION_BAR_MAX_SLOTS= (48) slots, 1 .. =LRG_ACTION_BAR_MAX_PAGES= (12) pages, page 0, visible.  =lrg_action_bar_resize()= keeps what fits.
+- Contents: =get_slot()= / =set_slot()= / =swap_slots()= act on the current page, the =_at= forms on any page; =find()= looks for a content, current page first; =clear()= empties all pages.  =LrgActionBar::slot-changed= (page, index) after every change.
+- Pages: =set_page()=, =next_page()= and =previous_page()= (both wrap); properties =page=, =pages=, =slots=, =visible= notify.
+- With a provider: =lrg_action_bar_query()= and =lrg_action_bar_activate()= for a slot of the current page; an empty slot does nothing.
+- Saving: =lrg_action_bar_to_variant()= writes =(uuuba(uu(ssss)))= (slots, pages, page, visible, the filled slots); =lrg_action_bar_restore()= validates everything first (type, layout, every slot inside it, no slot twice) and refuses with =G_IO_ERROR_INVALID_DATA= leaving the bar unchanged.
+
+Tests: =tests/test-action-bar.c=.

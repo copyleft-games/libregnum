@@ -467,6 +467,7 @@ lrg_scripting_call_function (LRG_SCRIPTING (ctx), "enemy_think", &result, 0, NUL
 - [[file:scripting-pygobject.org][LrgScriptingPyGObject]] - PyGObject implementation details
 - [[file:scripting-gjs.org][LrgScriptingGjs]] - Gjs (GNOME JavaScript) implementation details
 - [[file:scripting-native.org][LrgScriptingNative / LrgScriptingCrispy]] - Compiled C scripts and the native call ABI
+- [[file:script-scheduler.org][LrgScriptScheduler and script tasks]] - Coroutines and step tasks on a per-frame budget, waits, cancellation
 - [[file:scriptable.org][LrgScriptable]] - Custom script exposure interface
 - [[file:../../editor/level-model.org][Level Model]] - LrgScriptBinding authoring type
 - [[file:../editor/index.org][Editor Module Reference]] - editor integration

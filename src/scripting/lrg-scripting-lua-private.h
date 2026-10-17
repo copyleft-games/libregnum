@@ -54,4 +54,12 @@ typedef struct
  */
 lua_State * lrg_scripting_lua_get_state (LrgScriptingLua *self);
 
+/*
+ * lrg_scripting_lua_get_generation:
+ * @self: an #LrgScriptingLua
+ *
+ * Returns: the number of the current Lua state (reset makes a new one)
+ */
+guint lrg_scripting_lua_get_generation (LrgScriptingLua *self);
+
 G_END_DECLS

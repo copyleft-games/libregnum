@@ -74,6 +74,9 @@ TEST_SOURCES := \
 	test-tilemap.c \
 	test-save.c \
 	test-save-migrator.c \
+	test-script-scheduler.c \
+	test-binding-catalog.c \
+	test-action-bar.c \
 	test-dialog.c \
 	test-dialog-yaml.c \
 	test-quest.c \

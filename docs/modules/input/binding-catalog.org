@@ -1,0 +1,34 @@
+* LrgBindingCatalog
+:PROPERTIES:
+:CUSTOM_ID: binding-catalog
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+The model behind a key binding screen: rebindable actions in ordered groups ("Movement", "Combat", a mod's own), each with a label, an owner (the game, a mod id) and an ordered list of keys (primary first, at most =LRG_BINDING_CATALOG_MAX_KEYS=).  Keys are opaque names (="W"=, ="Shift+1"=, ="PadA"=) compared trimmed and without case (=lrg_binding_catalog_normalize_key()=), so the catalogue works with any input layer: the game applies the result to its own map (=LrgInputMap= or its own).
+
+** Groups and actions
+:PROPERTIES:
+:CUSTOM_ID: groups
+:END:
+- =lrg_binding_catalog_add_group (id, label)= adds a group at the end (or relabels it); an action added to an unknown group creates it.  =get_groups()= and =get_actions (group)= keep the order things were added in.
+- =lrg_binding_catalog_add_action (id, label, group, owner, keys)= refuses a duplicate id; duplicate and empty keys are dropped.  =remove_action()=, =remove_owner()= (a mod unloading).
+- =get_keys()= returns the keys (NULL-terminated, owned by the catalogue), =set_keys()= replaces them without looking at conflicts.
+
+** Conflicts
+:PROPERTIES:
+:CUSTOM_ID: conflicts
+:END:
+=lrg_binding_catalog_find_actions (key, except)= lists who holds a key.  =lrg_binding_catalog_bind (id, slot, key, policy, &conflicts)= binds a key into slot =slot= of an action (past the last slot: a new key) and reports who held it before; the =LrgBindingConflictPolicy= decides what happens to them:
+
+| Policy    | Others holding the key                                                  |
+|-----------+-------------------------------------------------------------------------|
+| =refuse=  | nothing changes, =bind()= returns =FALSE= (a screen asks the player)      |
+| =replace= | lose it                                                                 |
+| =swap=    | get the key the action had in that slot (or lose it when it had none)   |
+| =keep=    | keep it: one key, several actions                                       |
+
+=get_conflicted_keys()= lists every key bound twice.  =LrgBindingCatalog::changed= fires with the action id after a key change, with =NULL= when actions were added or removed.
+
+Tests: =tests/test-binding-catalog.c=.

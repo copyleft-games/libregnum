@@ -1488,10 +1488,82 @@ lrg_scripting_error_get_type (void)
             { LRG_SCRIPTING_ERROR_RUNTIME, "LRG_SCRIPTING_ERROR_RUNTIME", "runtime" },
             { LRG_SCRIPTING_ERROR_TYPE, "LRG_SCRIPTING_ERROR_TYPE", "type" },
             { LRG_SCRIPTING_ERROR_NOT_FOUND, "LRG_SCRIPTING_ERROR_NOT_FOUND", "not-found" },
+            { LRG_SCRIPTING_ERROR_GI_FAILED, "LRG_SCRIPTING_ERROR_GI_FAILED", "gi-failed" },
+            { LRG_SCRIPTING_ERROR_TYPELIB_NOT_FOUND, "LRG_SCRIPTING_ERROR_TYPELIB_NOT_FOUND", "typelib-not-found" },
+            { LRG_SCRIPTING_ERROR_BUDGET, "LRG_SCRIPTING_ERROR_BUDGET", "budget" },
+            { LRG_SCRIPTING_ERROR_UNSUPPORTED, "LRG_SCRIPTING_ERROR_UNSUPPORTED", "unsupported" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgScriptingError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_script_task_state_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SCRIPT_TASK_STATE_PENDING, "LRG_SCRIPT_TASK_STATE_PENDING", "pending" },
+            { LRG_SCRIPT_TASK_STATE_RUNNING, "LRG_SCRIPT_TASK_STATE_RUNNING", "running" },
+            { LRG_SCRIPT_TASK_STATE_WAITING, "LRG_SCRIPT_TASK_STATE_WAITING", "waiting" },
+            { LRG_SCRIPT_TASK_STATE_FINISHED, "LRG_SCRIPT_TASK_STATE_FINISHED", "finished" },
+            { LRG_SCRIPT_TASK_STATE_CANCELLED, "LRG_SCRIPT_TASK_STATE_CANCELLED", "cancelled" },
+            { LRG_SCRIPT_TASK_STATE_FAILED, "LRG_SCRIPT_TASK_STATE_FAILED", "failed" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgScriptTaskState"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_script_wait_kind_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SCRIPT_WAIT_NONE, "LRG_SCRIPT_WAIT_NONE", "none" },
+            { LRG_SCRIPT_WAIT_SECONDS, "LRG_SCRIPT_WAIT_SECONDS", "seconds" },
+            { LRG_SCRIPT_WAIT_FRAMES, "LRG_SCRIPT_WAIT_FRAMES", "frames" },
+            { LRG_SCRIPT_WAIT_CONDITION, "LRG_SCRIPT_WAIT_CONDITION", "condition" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgScriptWaitKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_binding_conflict_policy_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_BINDING_CONFLICT_REFUSE, "LRG_BINDING_CONFLICT_REFUSE", "refuse" },
+            { LRG_BINDING_CONFLICT_REPLACE, "LRG_BINDING_CONFLICT_REPLACE", "replace" },
+            { LRG_BINDING_CONFLICT_SWAP, "LRG_BINDING_CONFLICT_SWAP", "swap" },
+            { LRG_BINDING_CONFLICT_KEEP, "LRG_BINDING_CONFLICT_KEEP", "keep" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgBindingConflictPolicy"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
 

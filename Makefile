@@ -82,6 +82,10 @@ PUBLIC_HEADERS := \
 	src/input/lrg-input-binding.h \
 	src/input/lrg-input-action.h \
 	src/input/lrg-input-map.h \
+	src/input/lrg-binding-catalog.h \
+	src/actionbar/lrg-action-slot.h \
+	src/actionbar/lrg-action-slot-provider.h \
+	src/actionbar/lrg-action-bar.h \
 	src/shapes/lrg-shape.h \
 	src/shapes/lrg-shape2d.h \
 	src/shapes/lrg-shape3d.h \
@@ -256,6 +260,9 @@ PUBLIC_HEADERS := \
 	src/scripting/lrg-script-module.h \
 	src/scripting/lrg-scripting-native.h \
 	src/scripting/lrg-script-host.h \
+	src/scripting/lrg-script-task.h \
+	src/scripting/lrg-script-scheduler.h \
+	src/scripting/lrg-script-task-callback.h \
 	src/settings/lrg-settings-group.h \
 	src/settings/lrg-graphics-settings.h \
 	src/settings/lrg-audio-settings.h \
@@ -618,6 +625,10 @@ SOURCES := \
 	src/input/lrg-input-binding.c \
 	src/input/lrg-input-action.c \
 	src/input/lrg-input-map.c \
+	src/input/lrg-binding-catalog.c \
+	src/actionbar/lrg-action-slot.c \
+	src/actionbar/lrg-action-slot-provider.c \
+	src/actionbar/lrg-action-bar.c \
 	src/shapes/lrg-shape.c \
 	src/shapes/lrg-shape2d.c \
 	src/shapes/lrg-shape3d.c \
@@ -795,6 +806,9 @@ SOURCES := \
 	src/scripting/lrg-scripting-manager.c \
 	src/scripting/lrg-scripting-native.c \
 	src/scripting/lrg-script-host.c \
+	src/scripting/lrg-script-task.c \
+	src/scripting/lrg-script-scheduler.c \
+	src/scripting/lrg-script-task-callback.c \
 	src/settings/lrg-settings-group.c \
 	src/settings/lrg-graphics-settings.c \
 	src/settings/lrg-audio-settings.c \
@@ -1151,11 +1165,13 @@ SOURCES += \
 # Conditional scripting backends
 ifeq ($(HAS_LUAJIT),1)
 PUBLIC_HEADERS += \
-	src/scripting/lrg-scripting-lua.h
+	src/scripting/lrg-scripting-lua.h \
+	src/scripting/lrg-script-task-lua.h
 SOURCES += \
 	src/scripting/lrg-scripting-lua.c \
 	src/scripting/lrg-lua-bridge.c \
-	src/scripting/lrg-lua-api.c
+	src/scripting/lrg-lua-api.c \
+	src/scripting/lrg-script-task-lua.c
 endif
 
 ifeq ($(HAS_PYTHON),1)

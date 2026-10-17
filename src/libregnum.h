@@ -109,6 +109,12 @@
 #include "input/lrg-input-binding.h"
 #include "input/lrg-input-action.h"
 #include "input/lrg-input-map.h"
+#include "input/lrg-binding-catalog.h"
+
+/* Action bars (slots, the game's provider, bars with pages) */
+#include "actionbar/lrg-action-slot.h"
+#include "actionbar/lrg-action-slot-provider.h"
+#include "actionbar/lrg-action-bar.h"
 
 /* Shapes module */
 #include "shapes/lrg-shape.h"
@@ -339,11 +345,15 @@
 #include "scripting/lrg-script-module.h"
 #include "scripting/lrg-scripting-native.h"
 #include "scripting/lrg-script-host.h"
+#include "scripting/lrg-script-task.h"
+#include "scripting/lrg-script-scheduler.h"
+#include "scripting/lrg-script-task-callback.h"
 #ifdef LRG_HAS_CRISPY
 #include "scripting/lrg-scripting-crispy.h"
 #endif
 #ifdef LRG_HAS_LUAJIT
 #include "scripting/lrg-scripting-lua.h"
+#include "scripting/lrg-script-task-lua.h"
 #endif
 #ifdef LRG_HAS_GI
 #include "scripting/lrg-scripting-gi.h"

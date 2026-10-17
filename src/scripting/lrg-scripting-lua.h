@@ -199,4 +199,37 @@ void lrg_scripting_lua_set_engine (LrgScriptingLua *self,
 LRG_AVAILABLE_IN_ALL
 LrgEngine * lrg_scripting_lua_get_engine (LrgScriptingLua *self);
 
+/* ==========================================================================
+ * JIT
+ * ========================================================================== */
+
+/**
+ * lrg_scripting_lua_set_jit_enabled:
+ * @self: an #LrgScriptingLua
+ * @enabled: whether LuaJIT compiles hot code
+ *
+ * Switches LuaJIT's compiler for the whole context (and for the states
+ * later resets create).  Compiled traces run without debug hooks, so a
+ * context whose code must always be preemptible by an
+ * #LrgScriptScheduler (a macro runtime) turns it off; the interpreter
+ * is still fast.  Tasks themselves switch it off only for their own
+ * function and the functions defined inside it.
+ *
+ * Since: 0.2
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_scripting_lua_set_jit_enabled (LrgScriptingLua *self,
+                                        gboolean         enabled);
+
+/**
+ * lrg_scripting_lua_get_jit_enabled:
+ * @self: an #LrgScriptingLua
+ *
+ * Returns: whether the compiler is on (the default)
+ *
+ * Since: 0.2
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_scripting_lua_get_jit_enabled (LrgScriptingLua *self);
+
 G_END_DECLS

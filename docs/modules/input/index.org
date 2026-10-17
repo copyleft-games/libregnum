@@ -345,4 +345,5 @@ void game_update(void)
 - See [[file:input-action.org][Input Actions]] for action management
 - See [[file:input-map.org][Input Map]] for map/serialization features
 - See [[file:input-binding.org][Input Bindings]] for binding details
+- See [[file:binding-catalog.org][LrgBindingCatalog]] for a key binding screen's grouped catalogue and conflicts
 - See [[../examples/input-handling.md][Input Handling Example]] for complete code sample
