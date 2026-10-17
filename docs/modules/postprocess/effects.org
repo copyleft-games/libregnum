@@ -154,12 +154,38 @@ void lrg_color_grade_set_lift (LrgColorGrade *self, gfloat r, gfloat g, gfloat b
 
 /* Gamma (midtones) */
 void lrg_color_grade_get_gamma (LrgColorGrade *self, gfloat *r, gfloat *g, gfloat *b);
-void lrg_color_grade_set_gamma (LrgColorGrade *self, gfloat r, gfloat g, gfloat b);
+void lrg_color_grade_set_gamma (LrgColorGrade *self, gfloat r, gfloat g, gfloat b);  /* 0.1 - 4.0 */
 
 /* Gain (highlights) */
 void lrg_color_grade_get_gain (LrgColorGrade *self, gfloat *r, gfloat *g, gfloat *b);
-void lrg_color_grade_set_gain (LrgColorGrade *self, gfloat r, gfloat g, gfloat b);
+void lrg_color_grade_set_gain (LrgColorGrade *self, gfloat r, gfloat g, gfloat b);  /* 0.0 - 4.0 */
+
+/* Rendering */
+gboolean     lrg_color_grade_is_identity (LrgColorGrade *self);
+void         lrg_color_grade_apply_rgb (LrgColorGrade *self, const gfloat *in, gfloat *out);
+const gchar *lrg_color_grade_get_fragment_shader (void);
+GrlShader   *lrg_color_grade_get_shader (LrgColorGrade *self);
+gboolean     lrg_color_grade_draw_texture (LrgColorGrade *self, GrlTexture *texture,
+                                           const GrlRectangle *source, const GrlRectangle *dest);
 #+end_src
+
+*** The grade
+:PROPERTIES:
+:CUSTOM_ID: the-grade
+:END:
+The grade is a GLSL 330 fragment shader for raylib's default vertex shader; =lrg_color_grade_apply_rgb()= is the same arithmetic on the CPU (the reference the tests check, and a way to grade colours a game draws itself, such as a clear colour).  The steps, in order, for each channel of a colour in 0 .. 1:
+
+1. exposure: times 2^exposure (one stop doubles);
+2. white balance: red times 1 + 0.2 temperature, blue times 1 - 0.2 temperature, green times 1 - 0.2 tint (multiplicative, so black stays black);
+3. lift: added, then clamped at 0;
+4. gamma and gain: =pow(c, 1 / gamma) * gain= (gamma above 1 brightens the midtones and keeps black and white);
+5. contrast around 0.5;
+6. saturation: mixed against the Rec. 709 luminance (0 is grey, 1 unchanged);
+7. clamped to 0 .. 1, then mixed with the original by the effect's intensity.
+
+=lrg_color_grade_is_identity()= is true for the neutral parameters (exposure 0, contrast 1, saturation 1, temperature 0, tint 0, lift 0, gamma 1, gain 1) or an intensity of 0; =lrg_color_grade_draw_texture()= then draws the texture plainly, without a shader pass.
+
+The shader is compiled on first use (=lrg_color_grade_get_shader()=, %NULL without a window or when GLSL 330 does not compile; drawing then falls back to the plain texture and =lrg_color_grade_draw_texture()= returns =FALSE=).  As an =LrgPostEffect=, =apply= draws the source texture over the bound target through the shader.  A game without a post processor draws its 3D pass into a =GrlRenderTexture= and calls =lrg_color_grade_draw_texture()= with a negative source height (render textures are stored bottom up).
 
 *** Example
 :PROPERTIES:
@@ -172,6 +198,9 @@ g_autoptr(LrgColorGrade) grade = lrg_color_grade_new ();
 lrg_color_grade_set_temperature (grade, 0.2f);
 lrg_color_grade_set_saturation (grade, 0.9f);
 lrg_color_grade_set_contrast (grade, 1.1f);
+
+/* the 3D pass drawn into a render texture, graded onto the screen */
+lrg_color_grade_draw_texture (grade, grl_render_texture_get_texture (target), &flipped, &screen);
 
 /* Teal shadows, orange highlights (popular film look) */
 lrg_color_grade_set_lift (grade, 0.0f, 0.05f, 0.1f);    /* Teal shadows */
