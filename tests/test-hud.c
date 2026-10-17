@@ -104,6 +104,19 @@ test_hud_layout_pieces (void)
     g_assert_cmpint (anchor, ==, LRG_HUD_ANCHOR_BOTTOM);
     g_assert_cmpfloat (y, ==, -30.0f);
 
+    /* a new default keeps the player's placement; one equal to it is none */
+    changes = 0;
+    g_assert_true (lrg_hud_layout_set_default (layout, "feed", LRG_HUD_ANCHOR_TOP, 1.0f, 2.0f));
+    g_assert_cmpuint (changes, ==, 1);
+    g_assert_true (lrg_hud_layout_set_default (layout, "feed", LRG_HUD_ANCHOR_TOP, 1.0f, 2.0f));
+    g_assert_cmpuint (changes, ==, 1);
+    g_assert_true (lrg_hud_layout_is_modified (layout, "feed"));
+    g_assert_true (lrg_hud_layout_set_default (layout, "feed", LRG_HUD_ANCHOR_BOTTOM, 0.0f, -30.0f));
+    g_assert_false (lrg_hud_layout_is_modified (layout, "feed"));
+    g_assert_true (lrg_hud_layout_get_default (layout, "feed", &anchor, &x, &y));
+    g_assert_cmpint (anchor, ==, LRG_HUD_ANCHOR_BOTTOM);
+    g_assert_false (lrg_hud_layout_set_default (layout, "nothing", LRG_HUD_ANCHOR_TOP, 0.0f, 0.0f));
+
     lrg_hud_layout_reset_all (layout);
     g_assert_false (lrg_hud_layout_is_modified (layout, "feed"));
 }

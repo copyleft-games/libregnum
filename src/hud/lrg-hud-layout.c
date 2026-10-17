@@ -317,6 +317,32 @@ lrg_hud_layout_get_default (LrgHudLayout *self,
     return TRUE;
 }
 
+gboolean
+lrg_hud_layout_set_default (LrgHudLayout *self,
+                            const gchar  *piece_id,
+                            LrgHudAnchor  anchor,
+                            gfloat        x,
+                            gfloat        y)
+{
+    Entry *entry;
+
+    g_return_val_if_fail (LRG_IS_HUD_LAYOUT (self), FALSE);
+
+    entry = added_entry (self, piece_id);
+    if (entry == NULL || !valid_anchor ((gint) anchor) || !isfinite (x) || !isfinite (y))
+        return FALSE;
+    if (entry->default_anchor == anchor && entry->default_x == x && entry->default_y == y)
+        return TRUE;
+    entry->default_anchor = anchor;
+    entry->default_x = x;
+    entry->default_y = y;
+    if (entry->placed && entry->anchor == anchor && fabsf (entry->x - x) < 1e-4f &&
+        fabsf (entry->y - y) < 1e-4f)
+        entry->placed = FALSE;
+    emit_changed (self, piece_id);
+    return TRUE;
+}
+
 /* the placement itself; the default placement is no placement */
 static void
 place (Entry        *entry,

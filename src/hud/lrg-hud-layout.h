@@ -186,6 +186,29 @@ lrg_hud_layout_get_default (LrgHudLayout *self,
                             gfloat       *y);
 
 /**
+ * lrg_hud_layout_set_default:
+ * @self: an #LrgHudLayout
+ * @piece_id: a piece
+ * @anchor: the new default anchor
+ * @x: the new default horizontal offset
+ * @y: the new default vertical offset
+ *
+ * Changes a piece's default placement (a game that learns where a piece
+ * it places itself ends up, a canvas of another size).  The player's
+ * placement stays; one equal to the new default counts as none.
+ * #LrgHudLayout::changed fires only when the default changed.
+ *
+ * Returns: %TRUE for a known piece and a valid placement
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_hud_layout_set_default (LrgHudLayout *self,
+                            const gchar  *piece_id,
+                            LrgHudAnchor  anchor,
+                            gfloat        x,
+                            gfloat        y);
+
+/**
  * lrg_hud_layout_set_position:
  * @self: an #LrgHudLayout
  * @piece_id: a piece

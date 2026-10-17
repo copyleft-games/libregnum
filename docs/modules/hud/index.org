@@ -28,6 +28,7 @@ The model of a HUD layout editor (move, lock, reset).  Every piece has a string 
 - A placement is an =LrgHudAnchor= and an offset in canvas units: the piece's own anchor point sits at the canvas' anchor point moved by the offset (+X right, +Y down).  =lrg_hud_layout_resolve()= turns a placement, the piece's size and the canvas' size into the piece's top-left corner.
 - =lrg_hud_layout_set_position()= and =lrg_hud_layout_move_by()= place a piece; placing it exactly at its default counts as no placement (=lrg_hud_layout_is_modified()= is false again).
 - =lrg_hud_layout_place_rect()= is what a drag does: the rectangle is kept on the canvas, the anchor becomes the one of the canvas' thirds the piece's centre lies in (so a piece dragged to the bottom right keeps its distance from the bottom-right corner on a wider screen), the offset follows.
+- =lrg_hud_layout_set_default()= changes a piece's default (a game that learns where a piece it places itself ends up); the player's placement stays, one equal to the new default counts as none.
 - A locked piece refuses all three until it is unlocked or reset; a hidden piece is the player's (or an addon's) choice the game honours when drawing.
 - =lrg_hud_layout_reset()= drops the placement, the lock and the hidden flag of one piece, =lrg_hud_layout_reset_all()= of all.
 - The player's state of a piece the game has not added (a mod's piece, a layout loaded at start-up before the HUD exists) waits and applies when the piece is added; removing a piece keeps its state.  It is saved again meanwhile.
