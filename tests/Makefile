@@ -94,6 +94,7 @@ TEST_SOURCES := \
 	test-character-controller.c \
 	test-asset-model-cache.c \
 	test-gltf-info.c \
+	test-dds-image.c \
 	test-gltf-animation-roots.c \
 	test-model-animator.c \
 	test-static-batch.c \

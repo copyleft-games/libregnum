@@ -627,6 +627,13 @@ and client-side helpers for skinned and static models.
   several root joints (raylib applies the armature transform to bone 0
   only); the asset manager applies it to .glb/.gltf clips automatically.
 
+- **`LrgDdsImage`** (`graphics/lrg-dds-image.h`): headless DDS reader.
+  Decodes any mip level of DXT1/3/5 (legacy FourCC or DX10 header) and
+  masked uncompressed, luminance and alpha surfaces to RGBA8 on the CPU;
+  `get_mip_data()` returns the stored blocks for compressed uploads.
+  Malformed files fail with `LRG_DDS_ERROR`; a short mip chain keeps the
+  complete levels.
+
 - **`LrgModelAnimator`** (`graphics/lrg-model-animator.h`): one animator per
   shared model, one `LrgModelAnimState` per actor (embed by value, init with
   `lrg_model_anim_state_reset()`). `find_clip()` = exact, alias, then

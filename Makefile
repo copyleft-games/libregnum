@@ -58,6 +58,7 @@ PUBLIC_HEADERS := \
 	src/imageedit/lrg-image-document.h \
 	src/graphics/lrg-vector-image.h \
 	src/graphics/lrg-gltf-info.h \
+	src/graphics/lrg-dds-image.h \
 	src/graphics/lrg-model-animator.h \
 	src/graphics/lrg-static-batch.h \
 	src/graphics/lrg-billboard-batch.h \
@@ -608,6 +609,7 @@ SOURCES := \
 	src/imageedit/lrg-image-document.c \
 	src/graphics/lrg-vector-image.c \
 	src/graphics/lrg-gltf-info.c \
+	src/graphics/lrg-dds-image.c \
 	src/graphics/lrg-model-animator.c \
 	src/graphics/lrg-static-batch.c \
 	src/graphics/lrg-billboard-batch.c \

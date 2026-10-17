@@ -1,0 +1,81 @@
+* LrgDdsImage - DirectDraw Surface reader
+:PROPERTIES:
+:CUSTOM_ID: lrgddsimage---directdraw-surface-reader
+:END:
+=LrgDdsImage= reads DirectDraw Surface (=.dds=) files and decodes any mip level to tightly packed RGBA8 on the CPU, with no GL context.  Games that read data authored for Direct3D (Morrowind's textures in librefall, modding packs) get pixels they can inspect, convert to PNG or upload as an ordinary RGBA texture; =lrg_dds_image_get_mip_data()= gives the stored blocks for a compressed upload instead.  Written from Microsoft's public DDS programming guide and the block compression description.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgDdsImage= - *Final GObject Class*, =LRG_TYPE_DDS_IMAGE=, GIR =Libregnum.DdsImage=
+- =LrgDdsFormat= - stored pixel format (=dxt1=, =dxt3=, =dxt5=, =rgb=, =rgba=, =luminance=, =luminance-alpha=, =alpha=), =lrg-enums.h=
+- =LrgDdsError= - error enum in the =LRG_DDS_ERROR= domain (=invalid=, =truncated=, =unsupported=), =lrg-enums.h=
+- *Header* - =graphics/lrg-dds-image.h=
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+LrgDdsImage  *lrg_dds_image_new_from_bytes (GBytes *data, GError **error);
+LrgDdsImage  *lrg_dds_image_new_from_file  (const gchar *path, GError **error);
+
+guint         lrg_dds_image_get_width      (LrgDdsImage *self);
+guint         lrg_dds_image_get_height     (LrgDdsImage *self);
+LrgDdsFormat  lrg_dds_image_get_format     (LrgDdsImage *self);
+gboolean      lrg_dds_image_has_alpha      (LrgDdsImage *self);
+guint         lrg_dds_image_get_mip_count  (LrgDdsImage *self);
+gboolean      lrg_dds_image_get_mip_size   (LrgDdsImage *self, guint level,
+                                            guint *out_width, guint *out_height);
+GBytes       *lrg_dds_image_get_mip_data   (LrgDdsImage *self, guint level);
+GBytes       *lrg_dds_image_decode         (LrgDdsImage *self, guint level, GError **error);
+GrlImage     *lrg_dds_image_to_image       (LrgDdsImage *self, guint level, GError **error);
+#+end_src
+
+** Supported files
+:PROPERTIES:
+:CUSTOM_ID: supported-files
+:END:
+- *Legacy header*: FourCC =DXT1= (BC1), =DXT2= / =DXT3= (BC2), =DXT4= / =DXT5= (BC3); uncompressed 8, 16, 24 and 32-bit surfaces described by bit masks (=DDPF_RGB=, =DDPF_LUMINANCE=, =DDPF_ALPHA=, with or without =DDPF_ALPHAPIXELS=).  Channels of any width are scaled to 8 bits (5-bit red 31 becomes 255).
+- *DX10 header*: =DXGI_FORMAT_BC1/2/3_UNORM= (and =_SRGB=), =R8G8B8A8_UNORM=, =B8G8R8A8_UNORM= (and =_SRGB=); the colour values are returned as stored, no sRGB conversion.
+- *Mip chains*: =dwMipMapCount= when =DDSD_MIPMAPCOUNT= is set (at most 16 levels), each level half the previous, down to 1 x 1.  A cube map reads as its first face.
+- *Not supported* (=LRG_DDS_ERROR_UNSUPPORTED=): other FourCCs (=ATI1=, =ATI2=, floating point), BC4 .. BC7, volume textures.
+
+** Decoding rules
+:PROPERTIES:
+:CUSTOM_ID: decoding-rules
+:END:
+- BC1: =c0 > c1= selects four colours (two endpoints, two thirds between); otherwise three colours (the midpoint) and index 3 is transparent black.  BC2 and BC3 colour blocks always use four colours.
+- BC2: sixteen explicit 4-bit alphas, scaled by 17.
+- BC3: =a0 > a1= gives eight alphas (endpoints and six sevenths between); otherwise six (endpoints and four fifths) plus 0 and 255.
+- Blocks overhanging a width or height that is not a multiple of 4 are clipped.
+- Luminance surfaces decode to grey; alpha-only surfaces to black with their alpha.
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+Every failure is a =GError=, never a crash: a missing magic or a header whose sizes are not 124 / 32, a width or height of 0 or above =LRG_DDS_IMAGE_MAX_SIZE= (16384) and a request for a missing level are =invalid=; a file that ends before level 0's pixels (or inside the DX10 header) is =truncated=.  Levels after 0 that run past the end of the file are dropped, so =get_mip_count()= counts only complete levels.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgDdsImage) dds = lrg_dds_image_new_from_file ("tx_wood.dds", &error);
+g_autoptr(GrlImage) image = NULL;
+g_autoptr(GrlTexture) texture = NULL;
+
+if (dds == NULL)
+    g_warning ("%s", error->message);
+else if ((image = lrg_dds_image_to_image (dds, 0, &error)) != NULL)
+    texture = grl_texture_new_from_image (image);
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-dds-image.c=: BC1 four- and three-colour blocks, BC2 and both BC3 alpha modes, an odd-sized three-level chain with clipped blocks and raw level data, a chain cut short, 32/24/16-bit, luminance, luminance-alpha and alpha surfaces, the DX10 header (BC1, RGBA8, an unsupported BC7), the =GrlImage= wrapper, and malformed input: every truncation of a valid file, zero and oversized dimensions, a truncated level 0, unknown FourCC and bit counts, missing masks, a corrupted header size, a missing file.
