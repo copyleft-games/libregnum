@@ -353,4 +353,266 @@ void              lrg_debug_console_clear        (LrgDebugConsole *self);
 LRG_AVAILABLE_IN_ALL
 void              lrg_debug_console_clear_history (LrgDebugConsole *self);
 
+/* ==========================================================================
+ * Evaluator, history browsing, completion and the log (a drop-down
+ * console's model; a game draws it)
+ * ========================================================================== */
+
+/**
+ * LrgDebugEvalFunc:
+ * @console: the #LrgDebugConsole
+ * @line: the line that is no command (code for a scripting runtime)
+ * @user_data: (nullable): user data
+ * @error: return location for a #GError
+ *
+ * Runs a line that is not a command (lrg_debug_console_set_evaluator()).
+ *
+ * Returns: (transfer full) (nullable): output to print, %NULL for none
+ *   (with @error set on failure)
+ */
+typedef gchar * (*LrgDebugEvalFunc) (LrgDebugConsole  *console,
+                                     const gchar      *line,
+                                     gpointer          user_data,
+                                     GError          **error);
+
+/**
+ * LrgDebugCompleteFunc:
+ * @console: the #LrgDebugConsole
+ * @word: the word being completed (may be empty)
+ * @user_data: (nullable): user data
+ *
+ * Offers completions for @word (lrg_debug_console_set_completer()); the
+ * console keeps the ones that start with @word.
+ *
+ * Returns: (transfer full) (array zero-terminated=1) (nullable): candidates
+ */
+typedef gchar ** (*LrgDebugCompleteFunc) (LrgDebugConsole *console,
+                                          const gchar     *word,
+                                          gpointer         user_data);
+
+/**
+ * lrg_debug_console_set_evaluator:
+ * @self: a #LrgDebugConsole
+ * @func: (nullable) (scope notified) (closure user_data) (destroy destroy):
+ *   the evaluator, %NULL for none
+ * @user_data: (nullable): user data for @func
+ * @destroy: (nullable): frees @user_data
+ *
+ * With an evaluator, lrg_debug_console_execute() runs commands only when
+ * the line starts with a slash ("/help", "/clear") and hands every other
+ * line to @func whole (no shell parsing), printing its output, or its
+ * error as an error line.  Without one, every line is a command (the
+ * default).
+ */
+LRG_AVAILABLE_IN_ALL
+void              lrg_debug_console_set_evaluator (LrgDebugConsole  *self,
+                                                   LrgDebugEvalFunc  func,
+                                                   gpointer          user_data,
+                                                   GDestroyNotify    destroy);
+
+/**
+ * lrg_debug_console_has_evaluator:
+ * @self: a #LrgDebugConsole
+ *
+ * Returns: %TRUE when an evaluator is set
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean          lrg_debug_console_has_evaluator (LrgDebugConsole *self);
+
+/**
+ * lrg_debug_console_history_previous:
+ * @self: a #LrgDebugConsole
+ *
+ * Steps the history cursor one entry back (the Up key); the cursor starts
+ * after the newest entry and goes back there after every execute and
+ * lrg_debug_console_history_reset().
+ *
+ * Returns: (transfer none) (nullable): the entry, the oldest one again at
+ *   the start, %NULL with an empty history
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *     lrg_debug_console_history_previous (LrgDebugConsole *self);
+
+/**
+ * lrg_debug_console_history_next:
+ * @self: a #LrgDebugConsole
+ *
+ * Steps the history cursor one entry forward (the Down key).
+ *
+ * Returns: (transfer none) (nullable): the entry, %NULL once past the
+ *   newest one (an empty input line)
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *     lrg_debug_console_history_next (LrgDebugConsole *self);
+
+/**
+ * lrg_debug_console_history_reset:
+ * @self: a #LrgDebugConsole
+ *
+ * Puts the history cursor after the newest entry.
+ */
+LRG_AVAILABLE_IN_ALL
+void              lrg_debug_console_history_reset (LrgDebugConsole *self);
+
+/**
+ * lrg_debug_console_add_history:
+ * @self: a #LrgDebugConsole
+ * @entry: a line
+ *
+ * Appends @entry as execute() does (an empty line or a repeat of the
+ * newest entry is skipped; the oldest go beyond the maximum).
+ */
+LRG_AVAILABLE_IN_ALL
+void              lrg_debug_console_add_history (LrgDebugConsole *self,
+                                                 const gchar     *entry);
+
+/**
+ * lrg_debug_console_load_history:
+ * @self: a #LrgDebugConsole
+ * @path: a history file
+ * @error: return location for a #GError
+ *
+ * Replaces the history by @path's entries: one a line, oldest first,
+ * escaped with g_strescape() (so entries of several lines survive).  A
+ * missing file is an empty history.
+ *
+ * Returns: %TRUE on success; %FALSE with a #GFileError
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean          lrg_debug_console_load_history (LrgDebugConsole  *self,
+                                                  const gchar      *path,
+                                                  GError          **error);
+
+/**
+ * lrg_debug_console_save_history:
+ * @self: a #LrgDebugConsole
+ * @path: a history file
+ * @error: return location for a #GError
+ *
+ * Writes the history atomically in lrg_debug_console_load_history()'s
+ * format, creating the directory.
+ *
+ * Returns: %TRUE on success; %FALSE with a #GFileError
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean          lrg_debug_console_save_history (LrgDebugConsole  *self,
+                                                  const gchar      *path,
+                                                  GError          **error);
+
+/**
+ * lrg_debug_console_set_completer:
+ * @self: a #LrgDebugConsole
+ * @func: (nullable) (scope notified) (closure user_data) (destroy destroy):
+ *   the completer, %NULL for none
+ * @user_data: (nullable): user data for @func
+ * @destroy: (nullable): frees @user_data
+ *
+ * Adds candidates of the game's own (script function names, ...) to
+ * lrg_debug_console_complete().
+ */
+LRG_AVAILABLE_IN_ALL
+void              lrg_debug_console_set_completer (LrgDebugConsole      *self,
+                                                   LrgDebugCompleteFunc  func,
+                                                   gpointer              user_data,
+                                                   GDestroyNotify        destroy);
+
+/**
+ * lrg_debug_console_get_completion_word:
+ * @line: an input line
+ *
+ * The word lrg_debug_console_complete() completes: the trailing run of
+ * letters, digits, `_`, `.`, `:` and `/` of @line.
+ *
+ * Returns: (transfer full): the word, empty when @line ends otherwise
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *           lrg_debug_console_get_completion_word (const gchar *line);
+
+/**
+ * lrg_debug_console_complete:
+ * @self: a #LrgDebugConsole
+ * @line: the input line
+ *
+ * The candidates for @line's completion word: the commands (with a
+ * leading slash when an evaluator is set) and the completer's, those
+ * that start with the word, sorted, without repeats.
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the candidates
+ */
+LRG_AVAILABLE_IN_ALL
+gchar **          lrg_debug_console_complete (LrgDebugConsole *self,
+                                              const gchar     *line);
+
+/**
+ * lrg_debug_console_complete_line:
+ * @self: a #LrgDebugConsole
+ * @line: the input line
+ *
+ * The Tab key: @line with its completion word extended to the longest
+ * prefix every candidate shares (the one candidate whole).
+ *
+ * Returns: (transfer full): the new line (@line when nothing matches)
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *           lrg_debug_console_complete_line (LrgDebugConsole *self,
+                                                   const gchar     *line);
+
+/**
+ * lrg_debug_console_set_log_capture:
+ * @self: a #LrgDebugConsole
+ * @capture: whether @self collects the log
+ * @levels: the levels collected (%G_LOG_LEVEL_MASK for all)
+ *
+ * While @capture is set, every structured or classic g_log() message of
+ * @levels (from any thread) is also printed to @self as "[domain] text"
+ * (warnings and worse as error lines), then written as usual by
+ * g_log_writer_default().  The first capture installs libregnum's log
+ * writer with g_log_set_writer_func(), so an application that installs
+ * its own writer must not capture.  Messages from other threads are
+ * queued and printed by the next call on the console's thread
+ * (lrg_debug_console_get_output() or lrg_debug_console_flush_log()).
+ */
+LRG_AVAILABLE_IN_ALL
+void              lrg_debug_console_set_log_capture (LrgDebugConsole *self,
+                                                     gboolean         capture,
+                                                     GLogLevelFlags   levels);
+
+/**
+ * lrg_debug_console_get_log_capture:
+ * @self: a #LrgDebugConsole
+ *
+ * Returns: %TRUE while @self collects the log
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean          lrg_debug_console_get_log_capture (LrgDebugConsole *self);
+
+/**
+ * lrg_debug_console_flush_log:
+ * @self: a #LrgDebugConsole
+ *
+ * Prints the log messages queued since the last flush.
+ *
+ * Returns: the lines printed
+ */
+LRG_AVAILABLE_IN_ALL
+guint             lrg_debug_console_flush_log (LrgDebugConsole *self);
+
+/**
+ * lrg_debug_console_get_max_output:
+ * @self: a #LrgDebugConsole
+ *
+ * Returns: the most output lines kept (500 by default)
+ */
+LRG_AVAILABLE_IN_ALL
+guint             lrg_debug_console_get_max_output (LrgDebugConsole *self);
+
+/**
+ * lrg_debug_console_set_max_output:
+ * @self: a #LrgDebugConsole
+ * @max_output: the most output lines kept (at least 1)
+ */
+LRG_AVAILABLE_IN_ALL
+void              lrg_debug_console_set_max_output (LrgDebugConsole *self,
+                                                    guint            max_output);
+
 G_END_DECLS

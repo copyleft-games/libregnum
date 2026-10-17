@@ -13,6 +13,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_DEBUG
 #include "../lrg-log.h"
 
+#include <errno.h>
 #include <string.h>
 
 /* ==========================================================================
@@ -164,6 +165,26 @@ struct _LrgDebugConsole
     GHashTable  *commands;     /* name -> CommandData */
     GQueue      *output;       /* GQueue of LrgConsoleOutput */
     GQueue      *history;      /* GQueue of gchar* */
+
+    /* the history cursor: an index into history, or its length (after
+     * the newest entry) */
+    guint        history_cursor;
+
+    /* lines that are no command (set_evaluator) */
+    LrgDebugEvalFunc      eval_func;
+    gpointer              eval_data;
+    GDestroyNotify        eval_destroy;
+
+    /* the game's completions (set_completer) */
+    LrgDebugCompleteFunc  complete_func;
+    gpointer              complete_data;
+    GDestroyNotify        complete_destroy;
+
+    /* the log (set_log_capture); pending is guarded by log_lock */
+    gboolean              log_capture;
+    GLogLevelFlags        log_levels;
+    GMutex                log_lock;
+    GPtrArray            *log_pending;  /* LrgConsoleOutput */
 };
 
 #pragma GCC visibility push(default)
@@ -171,6 +192,11 @@ G_DEFINE_TYPE (LrgDebugConsole, lrg_debug_console, G_TYPE_OBJECT)
 #pragma GCC visibility pop
 
 static LrgDebugConsole *default_console = NULL;
+
+/* the consoles collecting the log, guarded by capture_lock: the writer
+ * runs on any thread */
+static GMutex  capture_lock;
+static GSList *capturing = NULL;
 
 /* ==========================================================================
  * Built-in Commands
@@ -292,9 +318,20 @@ lrg_debug_console_finalize (GObject *object)
 {
     LrgDebugConsole *self = LRG_DEBUG_CONSOLE (object);
 
+    /* no log line may reach a console being finalized */
+    g_mutex_lock (&capture_lock);
+    capturing = g_slist_remove (capturing, self);
+    g_mutex_unlock (&capture_lock);
+
     g_hash_table_destroy (self->commands);
     g_queue_free_full (self->output, (GDestroyNotify)lrg_console_output_free);
     g_queue_free_full (self->history, g_free);
+    if (self->eval_destroy != NULL && self->eval_data != NULL)
+        self->eval_destroy (self->eval_data);
+    if (self->complete_destroy != NULL && self->complete_data != NULL)
+        self->complete_destroy (self->complete_data);
+    g_ptr_array_unref (self->log_pending);
+    g_mutex_clear (&self->log_lock);
 
     if (default_console == self)
         default_console = NULL;
@@ -321,6 +358,17 @@ lrg_debug_console_init (LrgDebugConsole *self)
                                             NULL, (GDestroyNotify)command_data_free);
     self->output = g_queue_new ();
     self->history = g_queue_new ();
+    self->history_cursor = 0;
+    self->eval_func = NULL;
+    self->eval_data = NULL;
+    self->eval_destroy = NULL;
+    self->complete_func = NULL;
+    self->complete_data = NULL;
+    self->complete_destroy = NULL;
+    self->log_capture = FALSE;
+    self->log_levels = 0;
+    g_mutex_init (&self->log_lock);
+    self->log_pending = g_ptr_array_new_with_free_func ((GDestroyNotify)lrg_console_output_free);
 
     register_builtin_commands (self);
 
@@ -500,6 +548,33 @@ add_to_history (LrgDebugConsole *self,
         gchar *old = g_queue_pop_head (self->history);
         g_free (old);
     }
+    self->history_cursor = g_queue_get_length (self->history);
+}
+
+/*
+ * run_evaluator:
+ * A line that is no command goes to the evaluator whole; its output is
+ * printed, its error printed as an error line and returned.
+ */
+static gchar *
+run_evaluator (LrgDebugConsole  *self,
+               const gchar      *line,
+               GError          **error)
+{
+    g_autoptr(GError) local = NULL;
+    gchar *result;
+
+    result = self->eval_func (self, line, self->eval_data, &local);
+    if (local != NULL)
+    {
+        add_output (self, local->message, FALSE, TRUE);
+        g_propagate_error (error, g_steal_pointer (&local));
+        g_free (result);
+        return NULL;
+    }
+    if (result != NULL && result[0] != '\0')
+        add_output (self, result, FALSE, FALSE);
+    return result;
 }
 
 gchar *
@@ -525,6 +600,15 @@ lrg_debug_console_execute (LrgDebugConsole  *self,
     /* Add to output and history */
     add_output (self, command_line, TRUE, FALSE);
     add_to_history (self, command_line);
+    self->history_cursor = g_queue_get_length (self->history);
+
+    /* With an evaluator, only "/command" lines are commands */
+    if (self->eval_func != NULL)
+    {
+        if (command_line[0] != '/')
+            return run_evaluator (self, command_line, error);
+        command_line++;
+    }
 
     /* Parse command line */
     if (!g_shell_parse_argv (command_line, &argc, &argv, &parse_error))
@@ -617,6 +701,9 @@ GQueue *
 lrg_debug_console_get_output (LrgDebugConsole *self)
 {
     g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), NULL);
+
+    /* the log lines of other threads come in first */
+    lrg_debug_console_flush_log (self);
     return self->output;
 }
 
@@ -645,6 +732,488 @@ lrg_debug_console_clear_history (LrgDebugConsole *self)
 
     g_queue_free_full (self->history, g_free);
     self->history = g_queue_new ();
+    self->history_cursor = 0;
 
     lrg_debug (LRG_LOG_DOMAIN_DEBUG, "Console history cleared");
+}
+
+/* ==========================================================================
+ * Evaluator
+ * ========================================================================== */
+
+void
+lrg_debug_console_set_evaluator (LrgDebugConsole  *self,
+                                 LrgDebugEvalFunc  func,
+                                 gpointer          user_data,
+                                 GDestroyNotify    destroy)
+{
+    g_return_if_fail (LRG_IS_DEBUG_CONSOLE (self));
+
+    if (self->eval_destroy != NULL && self->eval_data != NULL)
+        self->eval_destroy (self->eval_data);
+    self->eval_func = func;
+    self->eval_data = func != NULL ? user_data : NULL;
+    self->eval_destroy = func != NULL ? destroy : NULL;
+}
+
+gboolean
+lrg_debug_console_has_evaluator (LrgDebugConsole *self)
+{
+    g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), FALSE);
+    return self->eval_func != NULL;
+}
+
+/* ==========================================================================
+ * History browsing and persistence
+ * ========================================================================== */
+
+const gchar *
+lrg_debug_console_history_previous (LrgDebugConsole *self)
+{
+    guint length;
+
+    g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), NULL);
+
+    length = g_queue_get_length (self->history);
+    if (length == 0)
+        return NULL;
+    /* the oldest entry stays when the cursor is at the start */
+    if (self->history_cursor > length)
+        self->history_cursor = length;
+    if (self->history_cursor > 0)
+        self->history_cursor--;
+    return (const gchar *)g_queue_peek_nth (self->history, self->history_cursor);
+}
+
+const gchar *
+lrg_debug_console_history_next (LrgDebugConsole *self)
+{
+    guint length;
+
+    g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), NULL);
+
+    length = g_queue_get_length (self->history);
+    if (self->history_cursor >= length)
+    {
+        self->history_cursor = length;
+        return NULL;
+    }
+    self->history_cursor++;
+    if (self->history_cursor >= length)
+        return NULL;
+    return (const gchar *)g_queue_peek_nth (self->history, self->history_cursor);
+}
+
+void
+lrg_debug_console_history_reset (LrgDebugConsole *self)
+{
+    g_return_if_fail (LRG_IS_DEBUG_CONSOLE (self));
+    self->history_cursor = g_queue_get_length (self->history);
+}
+
+void
+lrg_debug_console_add_history (LrgDebugConsole *self,
+                               const gchar     *entry)
+{
+    g_return_if_fail (LRG_IS_DEBUG_CONSOLE (self));
+    g_return_if_fail (entry != NULL);
+
+    if (entry[0] == '\0')
+        return;
+    add_to_history (self, entry);
+}
+
+gboolean
+lrg_debug_console_load_history (LrgDebugConsole  *self,
+                                const gchar      *path,
+                                GError          **error)
+{
+    g_autofree gchar *contents = NULL;
+    g_auto(GStrv) lines = NULL;
+    g_autoptr(GError) local = NULL;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), FALSE);
+    g_return_val_if_fail (path != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    if (!g_file_get_contents (path, &contents, NULL, &local))
+    {
+        /* no file yet: an empty history */
+        if (g_error_matches (local, G_FILE_ERROR, G_FILE_ERROR_NOENT))
+        {
+            lrg_debug_console_clear_history (self);
+            self->history_cursor = 0;
+            return TRUE;
+        }
+        g_propagate_error (error, g_steal_pointer (&local));
+        return FALSE;
+    }
+
+    /* the file is read whole first: a bad file leaves the history alone */
+    lines = g_strsplit (contents, "\n", -1);
+    lrg_debug_console_clear_history (self);
+    for (i = 0; lines[i] != NULL; i++)
+    {
+        g_autofree gchar *entry = NULL;
+
+        if (lines[i][0] == '\0')
+            continue;
+        entry = g_strcompress (lines[i]);
+        add_to_history (self, entry);
+    }
+    self->history_cursor = g_queue_get_length (self->history);
+    return TRUE;
+}
+
+gboolean
+lrg_debug_console_save_history (LrgDebugConsole  *self,
+                                const gchar      *path,
+                                GError          **error)
+{
+    g_autofree gchar *dir = NULL;
+    GString *text;
+    GList *l;
+    gboolean ok;
+
+    g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), FALSE);
+    g_return_val_if_fail (path != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    dir = g_path_get_dirname (path);
+    if (g_mkdir_with_parents (dir, 0755) != 0)
+    {
+        gint saved = errno;
+
+        g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (saved),
+                     "cannot create %s: %s", dir, g_strerror (saved));
+        return FALSE;
+    }
+
+    /* one escaped entry a line, oldest first */
+    text = g_string_new (NULL);
+    for (l = self->history->head; l != NULL; l = l->next)
+    {
+        g_autofree gchar *escaped = g_strescape ((const gchar *)l->data, NULL);
+
+        g_string_append (text, escaped);
+        g_string_append_c (text, '\n');
+    }
+    ok = g_file_set_contents (path, text->str, (gssize)text->len, error);
+    g_string_free (text, TRUE);
+    return ok;
+}
+
+/* ==========================================================================
+ * Completion
+ * ========================================================================== */
+
+void
+lrg_debug_console_set_completer (LrgDebugConsole      *self,
+                                 LrgDebugCompleteFunc  func,
+                                 gpointer              user_data,
+                                 GDestroyNotify        destroy)
+{
+    g_return_if_fail (LRG_IS_DEBUG_CONSOLE (self));
+
+    if (self->complete_destroy != NULL && self->complete_data != NULL)
+        self->complete_destroy (self->complete_data);
+    self->complete_func = func;
+    self->complete_data = func != NULL ? user_data : NULL;
+    self->complete_destroy = func != NULL ? destroy : NULL;
+}
+
+static gboolean
+is_word_char (gchar c)
+{
+    return g_ascii_isalnum (c) || c == '_' || c == '.' || c == ':' || c == '/';
+}
+
+gchar *
+lrg_debug_console_get_completion_word (const gchar *line)
+{
+    const gchar *start;
+    const gchar *end;
+
+    g_return_val_if_fail (line != NULL, NULL);
+
+    end = line + strlen (line);
+    start = end;
+    while (start > line && is_word_char (start[-1]))
+        start--;
+    return g_strndup (start, (gsize)(end - start));
+}
+
+/* adds @candidate when it extends @word and is new */
+static void
+offer (GPtrArray   *found,
+       GHashTable  *seen,
+       const gchar *word,
+       const gchar *candidate)
+{
+    if (candidate == NULL || !g_str_has_prefix (candidate, word))
+        return;
+    if (g_hash_table_contains (seen, candidate))
+        return;
+    g_hash_table_add (seen, g_strdup (candidate));
+    g_ptr_array_add (found, g_strdup (candidate));
+}
+
+static gint
+compare_strings (gconstpointer a,
+                 gconstpointer b)
+{
+    return g_strcmp0 (*(const gchar * const *)a, *(const gchar * const *)b);
+}
+
+gchar **
+lrg_debug_console_complete (LrgDebugConsole *self,
+                            const gchar     *line)
+{
+    g_autofree gchar *word = NULL;
+    g_autoptr(GHashTable) seen = NULL;
+    GPtrArray *found;
+    GList *commands;
+    GList *l;
+
+    g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), NULL);
+    g_return_val_if_fail (line != NULL, NULL);
+
+    word = lrg_debug_console_get_completion_word (line);
+    seen = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+    found = g_ptr_array_new ();
+
+    /* the commands: "/name" with an evaluator, where the line starts */
+    commands = lrg_debug_console_get_commands (self);
+    for (l = commands; l != NULL; l = l->next)
+    {
+        if (self->eval_func != NULL)
+        {
+            g_autofree gchar *slashed = g_strconcat ("/", (const gchar *)l->data, NULL);
+
+            if (strlen (word) == strlen (line))
+                offer (found, seen, word, slashed);
+        }
+        else
+        {
+            offer (found, seen, word, (const gchar *)l->data);
+        }
+    }
+    g_list_free (commands);
+
+    /* the game's */
+    if (self->complete_func != NULL)
+    {
+        g_auto(GStrv) extra = NULL;
+        guint i;
+
+        extra = self->complete_func (self, word, self->complete_data);
+        for (i = 0; extra != NULL && extra[i] != NULL; i++)
+            offer (found, seen, word, extra[i]);
+    }
+
+    g_ptr_array_sort (found, compare_strings);
+    g_ptr_array_add (found, NULL);
+    return (gchar **)g_ptr_array_free (found, FALSE);
+}
+
+gchar *
+lrg_debug_console_complete_line (LrgDebugConsole *self,
+                                 const gchar     *line)
+{
+    g_auto(GStrv) candidates = NULL;
+    g_autofree gchar *word = NULL;
+    gsize common;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), NULL);
+    g_return_val_if_fail (line != NULL, NULL);
+
+    candidates = lrg_debug_console_complete (self, line);
+    if (candidates[0] == NULL)
+        return g_strdup (line);
+
+    /* the longest prefix every candidate shares */
+    common = strlen (candidates[0]);
+    for (i = 1; candidates[i] != NULL; i++)
+    {
+        gsize n;
+
+        n = 0;
+        while (n < common && candidates[i][n] != '\0' && candidates[i][n] == candidates[0][n])
+            n++;
+        common = n;
+    }
+    word = lrg_debug_console_get_completion_word (line);
+    return g_strdup_printf ("%.*s%.*s", (gint)(strlen (line) - strlen (word)), line,
+                            (gint)common, candidates[0]);
+}
+
+/* ==========================================================================
+ * The log
+ * ========================================================================== */
+
+/* the default handler libregnum's chains to (classic g_log() calls) */
+static GLogFunc previous_handler = NULL;
+static gpointer previous_handler_data = NULL;
+
+/*
+ * capture_message:
+ * A copy of one message for every capturing console whose levels match,
+ * queued under the console's lock (any thread).  It never logs itself.
+ */
+static void
+capture_message (const gchar    *domain,
+                 GLogLevelFlags  log_level,
+                 const gchar    *message)
+{
+    GSList *l;
+
+    if (message == NULL)
+        return;
+    g_mutex_lock (&capture_lock);
+    for (l = capturing; l != NULL; l = l->next)
+    {
+        LrgDebugConsole *console = (LrgDebugConsole *)l->data;
+        g_autofree gchar *text = NULL;
+        gboolean is_error;
+
+        if ((console->log_levels & (log_level & G_LOG_LEVEL_MASK)) == 0)
+            continue;
+        is_error = (log_level & (G_LOG_LEVEL_ERROR | G_LOG_LEVEL_CRITICAL |
+                                 G_LOG_LEVEL_WARNING)) != 0;
+        text = g_strdup_printf ("[%s] %s", domain != NULL ? domain : "log", message);
+        g_mutex_lock (&console->log_lock);
+        g_ptr_array_add (console->log_pending, lrg_console_output_new (text, FALSE, is_error));
+        g_mutex_unlock (&console->log_lock);
+    }
+    g_mutex_unlock (&capture_lock);
+}
+
+/*
+ * capture_handler:
+ * Classic g_log() calls reach the default handler (GLib's own, or a test
+ * harness's): copied, then handed on.
+ */
+static void
+capture_handler (const gchar    *domain,
+                 GLogLevelFlags  log_level,
+                 const gchar    *message,
+                 gpointer        user_data)
+{
+    (void)user_data;
+    capture_message (domain, log_level, message);
+    if (previous_handler != NULL)
+        previous_handler (domain, log_level, message, previous_handler_data);
+    else
+        g_log_default_handler (domain, log_level, message, NULL);
+}
+
+/*
+ * capture_writer:
+ * Structured messages (g_log_structured()): copied, then written by the
+ * default writer.  Messages that came through the classic API carry
+ * GLIB_OLD_LOG_API and were copied by capture_handler() already.
+ */
+static GLogWriterOutput
+capture_writer (GLogLevelFlags   log_level,
+                const GLogField *fields,
+                gsize            n_fields,
+                gpointer         user_data)
+{
+    const gchar *domain;
+    const gchar *message;
+    gboolean classic;
+    gsize i;
+
+    domain = NULL;
+    message = NULL;
+    classic = FALSE;
+    for (i = 0; i < n_fields; i++)
+    {
+        if (g_strcmp0 (fields[i].key, "MESSAGE") == 0 && fields[i].length < 0)
+            message = (const gchar *)fields[i].value;
+        else if (g_strcmp0 (fields[i].key, "GLIB_DOMAIN") == 0 && fields[i].length < 0)
+            domain = (const gchar *)fields[i].value;
+        else if (g_strcmp0 (fields[i].key, "GLIB_OLD_LOG_API") == 0)
+            classic = TRUE;
+    }
+    if (!classic)
+        capture_message (domain, log_level, message);
+    return g_log_writer_default (log_level, fields, n_fields, user_data);
+}
+
+void
+lrg_debug_console_set_log_capture (LrgDebugConsole *self,
+                                   gboolean         capture,
+                                   GLogLevelFlags   levels)
+{
+    static gsize installed = 0;
+
+    g_return_if_fail (LRG_IS_DEBUG_CONSOLE (self));
+
+    /* the writer can be set once per process */
+    if (capture && g_once_init_enter (&installed))
+    {
+        g_log_set_writer_func (capture_writer, NULL, NULL);
+        previous_handler = g_log_set_default_handler (capture_handler, NULL);
+        /* GLib hands back its own handler; its data is unused */
+        previous_handler_data = NULL;
+        g_once_init_leave (&installed, 1);
+    }
+
+    g_mutex_lock (&capture_lock);
+    capturing = g_slist_remove (capturing, self);
+    if (capture)
+        capturing = g_slist_prepend (capturing, self);
+    self->log_capture = capture;
+    self->log_levels = levels;
+    g_mutex_unlock (&capture_lock);
+}
+
+gboolean
+lrg_debug_console_get_log_capture (LrgDebugConsole *self)
+{
+    g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), FALSE);
+    return self->log_capture;
+}
+
+guint
+lrg_debug_console_flush_log (LrgDebugConsole *self)
+{
+    g_autoptr(GPtrArray) pending = NULL;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), 0);
+
+    g_mutex_lock (&self->log_lock);
+    pending = g_steal_pointer (&self->log_pending);
+    self->log_pending = g_ptr_array_new_with_free_func ((GDestroyNotify)lrg_console_output_free);
+    g_mutex_unlock (&self->log_lock);
+
+    for (i = 0; i < pending->len; i++)
+    {
+        LrgConsoleOutput *output = (LrgConsoleOutput *)g_ptr_array_index (pending, i);
+
+        add_output (self, output->text, FALSE, output->is_error);
+    }
+    return pending->len;
+}
+
+guint
+lrg_debug_console_get_max_output (LrgDebugConsole *self)
+{
+    g_return_val_if_fail (LRG_IS_DEBUG_CONSOLE (self), 0);
+    return self->max_output;
+}
+
+void
+lrg_debug_console_set_max_output (LrgDebugConsole *self,
+                                  guint            max_output)
+{
+    g_return_if_fail (LRG_IS_DEBUG_CONSOLE (self));
+
+    self->max_output = MAX (1, max_output);
+    while (g_queue_get_length (self->output) > self->max_output)
+        lrg_console_output_free ((LrgConsoleOutput *)g_queue_pop_head (self->output));
 }
