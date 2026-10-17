@@ -10,6 +10,7 @@
 #define LIBREGNUM_COMPILATION 1
 
 #include <glib.h>
+#include <string.h>
 #include <glib-object.h>
 #include "../src/libregnum.h"
 
@@ -539,6 +540,124 @@ test_film_grain_properties (void)
 
 /*
  * ============================================================================
+ * LrgColorGrade
+ * ============================================================================
+ */
+
+static void
+assert_rgb (const gfloat *c,
+            gfloat        r,
+            gfloat        g,
+            gfloat        b)
+{
+    g_assert_cmpfloat_with_epsilon (c[0], r, 0.002f);
+    g_assert_cmpfloat_with_epsilon (c[1], g, 0.002f);
+    g_assert_cmpfloat_with_epsilon (c[2], b, 0.002f);
+}
+
+static void
+test_color_grade_identity (void)
+{
+    g_autoptr(LrgColorGrade) grade = lrg_color_grade_new ();
+    const gfloat samples[4][3] = {
+        { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, { 0.25f, 0.5f, 0.75f }, { 0.9f, 0.1f, 0.4f }
+    };
+    gfloat out[3];
+    guint i;
+
+    /* a new grade changes nothing */
+    g_assert_true (lrg_color_grade_is_identity (grade));
+    for (i = 0; i < G_N_ELEMENTS (samples); i++)
+    {
+        lrg_color_grade_apply_rgb (grade, samples[i], out);
+        assert_rgb (out, samples[i][0], samples[i][1], samples[i][2]);
+    }
+
+    /* any parameter breaks the identity, an intensity of 0 restores it */
+    lrg_color_grade_set_saturation (grade, 1.2f);
+    g_assert_false (lrg_color_grade_is_identity (grade));
+    lrg_post_effect_set_intensity (LRG_POST_EFFECT (grade), 0.0f);
+    g_assert_true (lrg_color_grade_is_identity (grade));
+    lrg_color_grade_apply_rgb (grade, samples[3], out);
+    assert_rgb (out, 0.9f, 0.1f, 0.4f);
+}
+
+static void
+test_color_grade_mapping (void)
+{
+    g_autoptr(LrgColorGrade) grade = NULL;
+    const gfloat grey[3] = { 0.25f, 0.25f, 0.25f };
+    const gfloat colour[3] = { 0.8f, 0.2f, 0.2f };
+    gfloat out[3];
+    gfloat lum;
+
+    /* exposure: one stop doubles, clamped at white */
+    grade = lrg_color_grade_new ();
+    lrg_color_grade_set_exposure (grade, 1.0f);
+    lrg_color_grade_apply_rgb (grade, grey, out);
+    assert_rgb (out, 0.5f, 0.5f, 0.5f);
+    lrg_color_grade_set_exposure (grade, 3.0f);
+    lrg_color_grade_apply_rgb (grade, grey, out);
+    assert_rgb (out, 1.0f, 1.0f, 1.0f);
+    g_clear_object (&grade);
+
+    /* gamma 2 lifts the midtones: 0.25 -> 0.5; black and white stay */
+    grade = lrg_color_grade_new ();
+    lrg_color_grade_set_gamma (grade, 2.0f, 2.0f, 2.0f);
+    lrg_color_grade_apply_rgb (grade, grey, out);
+    assert_rgb (out, 0.5f, 0.5f, 0.5f);
+    g_clear_object (&grade);
+
+    /* saturation 0 gives the Rec. 709 luminance */
+    grade = lrg_color_grade_new ();
+    lrg_color_grade_set_saturation (grade, 0.0f);
+    lrg_color_grade_apply_rgb (grade, colour, out);
+    lum = 0.8f * 0.2126f + 0.2f * 0.7152f + 0.2f * 0.0722f;
+    assert_rgb (out, lum, lum, lum);
+    g_clear_object (&grade);
+
+    /* warmth: red up, blue down by a fifth at full temperature */
+    grade = lrg_color_grade_new ();
+    lrg_color_grade_set_temperature (grade, 1.0f);
+    lrg_color_grade_apply_rgb (grade, grey, out);
+    assert_rgb (out, 0.3f, 0.25f, 0.2f);
+    g_clear_object (&grade);
+
+    /* half intensity is halfway between the original and the grade */
+    grade = lrg_color_grade_new ();
+    lrg_color_grade_set_exposure (grade, 1.0f);
+    lrg_post_effect_set_intensity (LRG_POST_EFFECT (grade), 0.5f);
+    lrg_color_grade_apply_rgb (grade, grey, out);
+    assert_rgb (out, 0.375f, 0.375f, 0.375f);
+}
+
+static void
+test_color_grade_ranges (void)
+{
+    g_autoptr(LrgColorGrade) grade = lrg_color_grade_new ();
+    gfloat r, g, b;
+
+    /* gamma never reaches 0 (it divides), gain may exceed 1 */
+    lrg_color_grade_set_gamma (grade, 0.0f, 2.2f, 9.0f);
+    lrg_color_grade_get_gamma (grade, &r, &g, &b);
+    g_assert_cmpfloat_with_epsilon (r, 0.1f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (g, 2.2f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (b, 4.0f, 0.0001f);
+    lrg_color_grade_set_gain (grade, -1.0f, 1.5f, 1.0f);
+    lrg_color_grade_get_gain (grade, &r, &g, &b);
+    g_assert_cmpfloat_with_epsilon (r, 0.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (g, 1.5f, 0.0001f);
+
+    /* the shader declares every uniform the grade uploads */
+    g_assert_nonnull (strstr (lrg_color_grade_get_fragment_shader (), "uniform float exposure"));
+    g_assert_nonnull (strstr (lrg_color_grade_get_fragment_shader (), "uniform vec3 gamma"));
+    g_assert_nonnull (strstr (lrg_color_grade_get_fragment_shader (), "uniform float intensity"));
+    /* headless: no context, no shader (drawing falls back to plain) */
+    g_assert_null (lrg_color_grade_get_shader (grade));
+}
+
+/*
+ * ============================================================================
  * Main
  * ============================================================================
  */
@@ -600,6 +719,11 @@ main (int   argc,
     /* LrgFilmGrain tests */
     g_test_add_func ("/postprocess/film-grain/new", test_film_grain_new);
     g_test_add_func ("/postprocess/film-grain/properties", test_film_grain_properties);
+
+    /* LrgColorGrade tests */
+    g_test_add_func ("/postprocess/color-grade/identity", test_color_grade_identity);
+    g_test_add_func ("/postprocess/color-grade/mapping", test_color_grade_mapping);
+    g_test_add_func ("/postprocess/color-grade/ranges", test_color_grade_ranges);
 
     return g_test_run ();
 }

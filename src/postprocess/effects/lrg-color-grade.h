@@ -14,6 +14,7 @@
 #endif
 
 #include <glib-object.h>
+#include <graylib.h>
 #include "../lrg-post-effect.h"
 
 G_BEGIN_DECLS
@@ -191,9 +192,9 @@ void                lrg_color_grade_get_gamma       (LrgColorGrade  *self,
 /**
  * lrg_color_grade_set_gamma:
  * @self: A #LrgColorGrade
- * @r: Red (-1.0 to 1.0)
- * @g: Green (-1.0 to 1.0)
- * @b: Blue (-1.0 to 1.0)
+ * @r: Red (0.1 to 4.0, 1.0 = neutral, higher brightens the midtones)
+ * @g: Green (0.1 to 4.0)
+ * @b: Blue (0.1 to 4.0)
  *
  * Sets the gamma (midtones) color adjustment.
  */
@@ -221,9 +222,9 @@ void                lrg_color_grade_get_gain        (LrgColorGrade  *self,
 /**
  * lrg_color_grade_set_gain:
  * @self: A #LrgColorGrade
- * @r: Red (-1.0 to 1.0)
- * @g: Green (-1.0 to 1.0)
- * @b: Blue (-1.0 to 1.0)
+ * @r: Red (0.0 to 4.0, 1.0 = neutral)
+ * @g: Green (0.0 to 4.0)
+ * @b: Blue (0.0 to 4.0)
  *
  * Sets the gain (highlights) color adjustment.
  */
@@ -232,5 +233,85 @@ void                lrg_color_grade_set_gain        (LrgColorGrade  *self,
                                                      gfloat          r,
                                                      gfloat          g,
                                                      gfloat          b);
+
+/**
+ * lrg_color_grade_is_identity:
+ * @self: A #LrgColorGrade
+ *
+ * Whether the grade leaves every colour unchanged: neutral exposure,
+ * contrast, saturation, temperature, tint, lift, gamma and gain, or an
+ * effect intensity of 0.  A game may skip the grading pass then.
+ *
+ * Returns: %TRUE when lrg_color_grade_apply_rgb() is the identity
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_color_grade_is_identity     (LrgColorGrade  *self);
+
+/**
+ * lrg_color_grade_apply_rgb:
+ * @self: A #LrgColorGrade
+ * @in: (array fixed-size=3): a colour, each channel 0.0 to 1.0
+ * @out: (out caller-allocates) (array fixed-size=3): the graded colour,
+ *   clamped to 0.0 to 1.0 (may be @in)
+ *
+ * The grade's reference on the CPU, the same steps in the same order as
+ * the fragment shader (lrg_color_grade_get_fragment_shader()): exposure
+ * (times 2^exposure), white balance (temperature scales red up and blue
+ * down by up to 20 %, tint scales green down by up to 20 %), lift (added,
+ * then clamped at 0), gamma (pow 1 / gamma) and gain (times), contrast
+ * around 0.5, saturation against the Rec. 709 luminance, then mixed with
+ * the original by the effect's intensity.  Used by tests and by games
+ * that grade colours they draw themselves (fog, a clear colour).
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_color_grade_apply_rgb       (LrgColorGrade  *self,
+                                                     const gfloat   *in,
+                                                     gfloat         *out);
+
+/**
+ * lrg_color_grade_get_fragment_shader:
+ *
+ * The GLSL 330 fragment shader of the grade, for raylib's default
+ * vertex shader (fragTexCoord, fragColor, texture0, colDiffuse)
+ * with the uniforms exposure, temperature, tint, lift, gamma,
+ * gain, contrast, saturation and intensity.
+ *
+ * Returns: (transfer none): the shader source
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *       lrg_color_grade_get_fragment_shader (void);
+
+/**
+ * lrg_color_grade_get_shader:
+ * @self: A #LrgColorGrade
+ *
+ * The compiled grading shader, built on first use.  Needs a window (an
+ * OpenGL context); without one, or when the shader does not compile,
+ * %NULL (and the effect draws its source unchanged).
+ *
+ * Returns: (transfer none) (nullable): the shader
+ */
+LRG_AVAILABLE_IN_ALL
+GrlShader *         lrg_color_grade_get_shader      (LrgColorGrade  *self);
+
+/**
+ * lrg_color_grade_draw_texture:
+ * @self: A #LrgColorGrade
+ * @texture: the texture to draw (a render texture's colour attachment)
+ * @source: the part of @texture, in texels (a negative height flips it,
+ *   as render textures are stored bottom up)
+ * @dest: where to draw it, in screen pixels
+ *
+ * Draws @texture graded into the current target (the screen or a render
+ * texture).  An identity grade draws it plainly; without a shader it is
+ * drawn plainly too and %FALSE is returned.
+ *
+ * Returns: %TRUE when the grade was applied (or was the identity)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_color_grade_draw_texture    (LrgColorGrade      *self,
+                                                     GrlTexture         *texture,
+                                                     const GrlRectangle *source,
+                                                     const GrlRectangle *dest);
 
 G_END_DECLS
