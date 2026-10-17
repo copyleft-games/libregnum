@@ -69,7 +69,10 @@ lrg_achievement_manager_register (LrgAchievementManager *self,
  * @self: an #LrgAchievementManager
  * @id: achievement ID to unregister
  *
- * Unregisters an achievement.
+ * Unregisters an achievement.  Its progress waits like loaded state of
+ * an unregistered achievement (lrg_achievement_manager_save_state()
+ * keeps it, a later registration of the same id gets it back) until
+ * its scope is reset.
  *
  * Returns: %TRUE if found and removed
  *

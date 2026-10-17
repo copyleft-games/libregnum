@@ -16,6 +16,7 @@
 #include "../lrg-log.h"
 
 static void lrg_saveable_interface_init (LrgSaveableInterface *iface);
+static GVariant *entry_for (LrgAchievement *achievement);
 
 struct _LrgAchievementManager
 {
@@ -451,9 +452,16 @@ lrg_achievement_manager_unregister (LrgAchievementManager *self,
 
     {
         LrgAchievement *achievement = g_hash_table_lookup (self->achievements, id);
+        GVariant *entry;
 
         if (achievement == NULL)
             return FALSE;
+        /* its progress waits for a later registration (a mod reloaded) */
+        entry = entry_for (achievement);
+        if (entry != NULL)
+            g_hash_table_replace (self->pending[lrg_achievement_get_scope (achievement) ==
+                                                LRG_ACHIEVEMENT_SCOPE_CHARACTER ? 1 : 0],
+                                  g_strdup (id), g_variant_ref_sink (entry));
         g_signal_handlers_disconnect_by_data (achievement, self);
         g_ptr_array_remove (self->order, achievement);
     }

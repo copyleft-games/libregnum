@@ -886,6 +886,20 @@ test_achievement_state_scopes (void)
     g_assert_true (lrg_achievement_is_unlocked (copy));
     g_assert_nonnull (lrg_achievement_get_unlock_time (copy));
     g_assert_cmpuint (unlocks, ==, 0);
+
+    /* unregistering keeps the progress for the next registration */
+    g_assert_true (lrg_achievement_manager_unregister (manager, "hero"));
+    {
+        g_autoptr(GVariant) kept = lrg_achievement_manager_save_state (manager, LRG_ACHIEVEMENT_SCOPE_CHARACTER);
+        g_autoptr(LrgAchievementCriterion) towns2 = lrg_achievement_criterion_new ("towns", NULL, 5);
+        LrgAchievement *hero2 = lrg_achievement_new ("hero", "Hero", NULL);
+
+        g_assert_cmpuint (g_variant_n_children (kept), ==, 1);
+        lrg_achievement_set_scope (hero2, LRG_ACHIEVEMENT_SCOPE_CHARACTER);
+        lrg_achievement_add_criterion (hero2, towns2);
+        lrg_achievement_manager_register (manager, hero2);
+        g_assert_cmpint (lrg_achievement_criterion_get_current (towns2), ==, 2);
+    }
 }
 
 static void
