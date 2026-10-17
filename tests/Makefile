@@ -177,6 +177,8 @@ TEST_SOURCES := \
 	test-editor.c \
 	test-gif-recorder.c \
 	test-text-baker.c \
+	test-font-atlas.c \
+	test-csv.c \
 	test-image-canvas.c \
 	test-image-document.c \
 	test-vector-image.c \

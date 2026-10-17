@@ -13,7 +13,9 @@
 
 #include "lrg-locale.h"
 #include "lrg-log.h"
+#include "lrg-csv.h"
 #include <yaml-glib.h>
+#include <string.h>
 
 typedef struct
 {
@@ -21,6 +23,7 @@ typedef struct
     gchar       *name;
     GHashTable  *strings;   /* key -> string */
     GHashTable  *plurals;   /* key -> GHashTable<form_key, string> */
+    LrgPluralRule rule;     /* of default_get_plural_form */
 } LrgLocalePrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgLocale, lrg_locale, G_TYPE_OBJECT)
@@ -110,7 +113,7 @@ parse_plural_form (const gchar *key)
  * @self: the locale
  * @count: the count
  *
- * Default English plural rules (one vs other).
+ * The locale's #LrgPluralRule (English, one vs other, by default).
  *
  * Returns: the plural form
  */
@@ -118,11 +121,10 @@ static LrgPluralForm
 default_get_plural_form (LrgLocale *self,
                          gint       count)
 {
-    (void)self;
+    LrgLocalePrivate *priv;
 
-    if (count == 1 || count == -1)
-        return LRG_PLURAL_ONE;
-    return LRG_PLURAL_OTHER;
+    priv = lrg_locale_get_instance_private (self);
+    return lrg_plural_rule_select (priv->rule, count);
 }
 
 /* ========================================================================== */
@@ -359,13 +361,17 @@ LrgLocale *
 lrg_locale_new (const gchar *code,
                 const gchar *name)
 {
+    LrgLocale *locale;
+
     g_return_val_if_fail (code != NULL, NULL);
     g_return_val_if_fail (name != NULL, NULL);
 
-    return g_object_new (LRG_TYPE_LOCALE,
-                         "code", code,
-                         "name", name,
-                         NULL);
+    locale = g_object_new (LRG_TYPE_LOCALE,
+                           "code", code,
+                           "name", name,
+                           NULL);
+    lrg_locale_set_plural_rule (locale, lrg_plural_rule_for_language (code));
+    return locale;
 }
 
 /*
@@ -719,4 +725,276 @@ lrg_locale_get_keys (LrgLocale *self)
     }
 
     return keys;
+}
+
+/* ========================================================================== */
+/* Plural rules                                                               */
+/* ========================================================================== */
+
+G_DEFINE_ENUM_TYPE (LrgPluralRule, lrg_plural_rule,
+    G_DEFINE_ENUM_VALUE (LRG_PLURAL_RULE_ONE_OTHER, "one-other"),
+    G_DEFINE_ENUM_VALUE (LRG_PLURAL_RULE_NONE, "none"),
+    G_DEFINE_ENUM_VALUE (LRG_PLURAL_RULE_ZERO_ONE_OTHER, "zero-one-other"),
+    G_DEFINE_ENUM_VALUE (LRG_PLURAL_RULE_EAST_SLAVIC, "east-slavic"),
+    G_DEFINE_ENUM_VALUE (LRG_PLURAL_RULE_POLISH, "polish"),
+    G_DEFINE_ENUM_VALUE (LRG_PLURAL_RULE_CZECH, "czech"))
+
+/* languages that are not LRG_PLURAL_RULE_ONE_OTHER, by ISO 639 code */
+static const struct
+{
+    const gchar   *language;
+    LrgPluralRule  rule;
+} plural_languages[] = {
+    { "ja", LRG_PLURAL_RULE_NONE },
+    { "zh", LRG_PLURAL_RULE_NONE },
+    { "ko", LRG_PLURAL_RULE_NONE },
+    { "vi", LRG_PLURAL_RULE_NONE },
+    { "th", LRG_PLURAL_RULE_NONE },
+    { "id", LRG_PLURAL_RULE_NONE },
+    { "ms", LRG_PLURAL_RULE_NONE },
+    { "lo", LRG_PLURAL_RULE_NONE },
+    { "my", LRG_PLURAL_RULE_NONE },
+    { "fr", LRG_PLURAL_RULE_ZERO_ONE_OTHER },
+    { "ru", LRG_PLURAL_RULE_EAST_SLAVIC },
+    { "uk", LRG_PLURAL_RULE_EAST_SLAVIC },
+    { "be", LRG_PLURAL_RULE_EAST_SLAVIC },
+    { "sr", LRG_PLURAL_RULE_EAST_SLAVIC },
+    { "hr", LRG_PLURAL_RULE_EAST_SLAVIC },
+    { "bs", LRG_PLURAL_RULE_EAST_SLAVIC },
+    { "pl", LRG_PLURAL_RULE_POLISH },
+    { "cs", LRG_PLURAL_RULE_CZECH },
+    { "sk", LRG_PLURAL_RULE_CZECH }
+};
+
+LrgPluralRule
+lrg_plural_rule_for_language (const gchar *code)
+{
+    gchar language[8];
+    gsize n;
+    gsize i;
+
+    if (code == NULL)
+        return LRG_PLURAL_RULE_ONE_OTHER;
+
+    /* the language part: up to the first '_', '-', '.' or '@' */
+    n = strcspn (code, "_-.@");
+    if (n == 0 || n >= sizeof (language))
+        return LRG_PLURAL_RULE_ONE_OTHER;
+    for (i = 0; i < n; i++)
+        language[i] = g_ascii_tolower (code[i]);
+    language[n] = '\0';
+
+    /* Brazilian Portuguese counts 0 as one, European Portuguese does not */
+    if (strcmp (language, "pt") == 0)
+    {
+        if (code[n] != '\0' && g_ascii_strncasecmp (code + n + 1, "BR", 2) == 0)
+            return LRG_PLURAL_RULE_ZERO_ONE_OTHER;
+        return LRG_PLURAL_RULE_ONE_OTHER;
+    }
+
+    for (i = 0; i < G_N_ELEMENTS (plural_languages); i++)
+    {
+        if (strcmp (plural_languages[i].language, language) == 0)
+            return plural_languages[i].rule;
+    }
+    return LRG_PLURAL_RULE_ONE_OTHER;
+}
+
+LrgPluralForm
+lrg_plural_rule_select (LrgPluralRule rule,
+                        gint          count)
+{
+    guint n;
+    guint mod10;
+    guint mod100;
+
+    n = (guint) ABS (count);
+    mod10 = n % 10;
+    mod100 = n % 100;
+
+    switch (rule)
+    {
+    case LRG_PLURAL_RULE_NONE:
+        return LRG_PLURAL_OTHER;
+    case LRG_PLURAL_RULE_ZERO_ONE_OTHER:
+        return n <= 1 ? LRG_PLURAL_ONE : LRG_PLURAL_OTHER;
+    case LRG_PLURAL_RULE_EAST_SLAVIC:
+        if (mod10 == 1 && mod100 != 11)
+            return LRG_PLURAL_ONE;
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14))
+            return LRG_PLURAL_FEW;
+        return LRG_PLURAL_MANY;
+    case LRG_PLURAL_RULE_POLISH:
+        if (n == 1)
+            return LRG_PLURAL_ONE;
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14))
+            return LRG_PLURAL_FEW;
+        return LRG_PLURAL_MANY;
+    case LRG_PLURAL_RULE_CZECH:
+        if (n == 1)
+            return LRG_PLURAL_ONE;
+        if (n >= 2 && n <= 4)
+            return LRG_PLURAL_FEW;
+        return LRG_PLURAL_OTHER;
+    case LRG_PLURAL_RULE_ONE_OTHER:
+    default:
+        return n == 1 ? LRG_PLURAL_ONE : LRG_PLURAL_OTHER;
+    }
+}
+
+void
+lrg_locale_set_plural_rule (LrgLocale     *self,
+                            LrgPluralRule  rule)
+{
+    LrgLocalePrivate *priv;
+
+    g_return_if_fail (LRG_IS_LOCALE (self));
+
+    priv = lrg_locale_get_instance_private (self);
+    priv->rule = rule;
+}
+
+LrgPluralRule
+lrg_locale_get_plural_rule (LrgLocale *self)
+{
+    LrgLocalePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_LOCALE (self), LRG_PLURAL_RULE_ONE_OTHER);
+
+    priv = lrg_locale_get_instance_private (self);
+    return priv->rule;
+}
+
+/* ========================================================================== */
+/* CSV string tables                                                          */
+/* ========================================================================== */
+
+/* "#one" etc. at the end of @key: the form and the base key length */
+static gboolean
+split_plural_key (const gchar   *key,
+                  LrgPluralForm *out_form,
+                  gsize         *out_base_len)
+{
+    static const struct
+    {
+        const gchar   *suffix;
+        LrgPluralForm  form;
+    } suffixes[] = {
+        { "#zero", LRG_PLURAL_ZERO },
+        { "#one", LRG_PLURAL_ONE },
+        { "#two", LRG_PLURAL_TWO },
+        { "#few", LRG_PLURAL_FEW },
+        { "#many", LRG_PLURAL_MANY },
+        { "#other", LRG_PLURAL_OTHER }
+    };
+    gsize len;
+    gsize i;
+
+    len = strlen (key);
+    for (i = 0; i < G_N_ELEMENTS (suffixes); i++)
+    {
+        gsize slen;
+
+        slen = strlen (suffixes[i].suffix);
+        if (len > slen && strcmp (key + len - slen, suffixes[i].suffix) == 0)
+        {
+            *out_form = suffixes[i].form;
+            *out_base_len = len - slen;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/* a copy of @value without its trailing CR / LF characters */
+static gchar *
+trim_value (const gchar *value)
+{
+    gsize len;
+
+    len = strlen (value);
+    while (len > 0 && (value[len - 1] == '\n' || value[len - 1] == '\r'))
+        len--;
+    return g_strndup (value, len);
+}
+
+gint
+lrg_locale_merge_csv (LrgLocale    *self,
+                      const gchar  *text,
+                      gssize        length,
+                      GError      **error)
+{
+    g_autoptr(GPtrArray) rows = NULL;
+    GError *local = NULL;
+    guint first;
+    guint i;
+    gint applied;
+
+    g_return_val_if_fail (LRG_IS_LOCALE (self), -1);
+    g_return_val_if_fail (text != NULL || length == 0, -1);
+    g_return_val_if_fail (error == NULL || *error == NULL, -1);
+
+    /* parse everything first: a broken table changes nothing */
+    rows = lrg_csv_parse (text != NULL ? text : "", length, ',', &local);
+    if (rows == NULL)
+    {
+        g_set_error (error, LRG_I18N_ERROR, LRG_I18N_ERROR_PARSE,
+                     "%s", local->message);
+        g_error_free (local);
+        return -1;
+    }
+
+    first = 0;
+    if (rows->len > 0)
+    {
+        gchar **header;
+
+        header = (gchar **) g_ptr_array_index (rows, 0);
+        if (g_strv_length (header) >= 2 &&
+            strcmp (header[0], "Key") == 0 && strcmp (header[1], "Value") == 0)
+            first = 1;
+    }
+
+    applied = 0;
+    for (i = first; i < rows->len; i++)
+    {
+        gchar **row;
+        g_autofree gchar *value = NULL;
+        LrgPluralForm form;
+        gsize base_len;
+
+        row = (gchar **) g_ptr_array_index (rows, i);
+        if (row[0] == NULL || row[0][0] == '\0')
+            continue;
+        value = trim_value (row[1] != NULL ? row[1] : "");
+        if (split_plural_key (row[0], &form, &base_len))
+        {
+            g_autofree gchar *base = g_strndup (row[0], base_len);
+
+            lrg_locale_set_plural (self, base, form, value);
+        }
+        else
+        {
+            lrg_locale_set_string (self, row[0], value);
+        }
+        applied++;
+    }
+    return applied;
+}
+
+gint
+lrg_locale_merge_csv_file (LrgLocale    *self,
+                           const gchar  *path,
+                           GError      **error)
+{
+    g_autofree gchar *contents = NULL;
+    gsize length;
+
+    g_return_val_if_fail (LRG_IS_LOCALE (self), -1);
+    g_return_val_if_fail (path != NULL, -1);
+    g_return_val_if_fail (error == NULL || *error == NULL, -1);
+
+    if (!g_file_get_contents (path, &contents, &length, error))
+        return -1;
+    return lrg_locale_merge_csv (self, contents, (gssize) length, error);
 }

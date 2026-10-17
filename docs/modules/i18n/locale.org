@@ -406,3 +406,34 @@ strings:
 :END:
 - [[file:localization.org][LrgLocalization]] - Locale management singleton
 - [[file:index.org][I18N Module Overview]] - Overview of localization system
+
+** Plural rules by language
+:PROPERTIES:
+:CUSTOM_ID: plural-rules-by-language
+:END:
+The default =get_plural_form= applies the locale's =LrgPluralRule=, which =lrg_locale_new()= (and so =lrg_locale_new_from_file()=) picks from the locale code with =lrg_plural_rule_for_language()=; =lrg_locale_set_plural_rule()= overrides it.  Subclasses may still override the virtual method for anything the families below do not cover.
+
+| Rule | Forms | Languages |
+|------+-------+-----------|
+| =LRG_PLURAL_RULE_ONE_OTHER= | one (1), other | English, German, Dutch, the Scandinavian languages, Spanish, Italian, European Portuguese, Greek, Hungarian, Turkish, and every unknown code |
+| =LRG_PLURAL_RULE_NONE= | other | Japanese, Chinese, Korean, Vietnamese, Thai, Indonesian, Malay, Lao, Burmese |
+| =LRG_PLURAL_RULE_ZERO_ONE_OTHER= | one (0, 1), other | French, Brazilian Portuguese (=pt_BR=) |
+| =LRG_PLURAL_RULE_EAST_SLAVIC= | one (…1 but not …11), few (…2-4 but not …12-14), many | Russian, Ukrainian, Belarusian, Serbian, Croatian, Bosnian |
+| =LRG_PLURAL_RULE_POLISH= | one (1), few (…2-4 but not …12-14), many | Polish |
+| =LRG_PLURAL_RULE_CZECH= | one (1), few (2-4), other | Czech, Slovak |
+
+Only the language part of the code counts (=de_DE.UTF-8= is =de=), except that =pt_BR= differs from =pt=.  =lrg_plural_rule_select()= applies a rule directly; negative counts use their absolute value.  A lookup whose form has no string falls back to the =other= form as before.
+
+** CSV string tables
+:PROPERTIES:
+:CUSTOM_ID: csv-string-tables
+:END:
+#+begin_src c
+g_autoptr(LrgLocale) fr = lrg_locale_new ("fr", "Français");
+g_autoptr(GError) error = NULL;
+
+if (lrg_locale_merge_csv_file (fr, "Text/Strings.csv", &error) < 0)
+    g_warning ("%s", error->message);
+#+end_src
+
+=lrg_locale_merge_csv()= applies a two-column =Key,Value= table ([[file:csv.org][csv.org]]): each row sets its key's string (replacing an earlier one); the =Key,Value= header row, rows with an empty key and columns past the second are ignored; =%d day#one= / =%d day#other= set plural forms of =%d day=; a value's trailing line breaks are removed.  It returns the number of rows applied, or -1 with an =LRG_I18N_ERROR_PARSE= error (the locale is then unchanged); the file variant reports file errors as they are.

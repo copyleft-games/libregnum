@@ -179,6 +179,7 @@ PUBLIC_HEADERS := \
 	src/inventory/lrg-inventory.h \
 	src/inventory/lrg-equipment.h \
 	src/i18n/lrg-locale.h \
+	src/i18n/lrg-csv.h \
 	src/i18n/lrg-localization.h \
 	src/pathfinding/lrg-nav-cell.h \
 	src/pathfinding/lrg-path.h \
@@ -350,6 +351,7 @@ PUBLIC_HEADERS := \
 	src/text/lrg-text-effect.h \
 	src/text/lrg-font-manager.h \
 	src/text/lrg-text-baker.h \
+	src/text/lrg-font-atlas.h \
 	src/text/lrg-rich-text.h \
 	src/video/lrg-video-texture.h \
 	src/video/lrg-video-subtitle-track.h \
@@ -730,6 +732,7 @@ SOURCES := \
 	src/inventory/lrg-inventory.c \
 	src/inventory/lrg-equipment.c \
 	src/i18n/lrg-locale.c \
+	src/i18n/lrg-csv.c \
 	src/i18n/lrg-localization.c \
 	src/pathfinding/lrg-nav-cell.c \
 	src/pathfinding/lrg-path.c \
@@ -903,6 +906,7 @@ SOURCES := \
 	src/text/lrg-text-effect.c \
 	src/text/lrg-font-manager.c \
 	src/text/lrg-text-baker.c \
+	src/text/lrg-font-atlas.c \
 	src/text/lrg-rich-text.c \
 	src/video/lrg-video-texture.c \
 	src/video/lrg-video-subtitle-track.c \
@@ -2250,7 +2254,7 @@ $(OBJDIR)/src/ui/lrg-theme.o: src/ui/lrg-theme.c src/ui/lrg-theme.h
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 # I18N module
-$(OBJDIR)/src/i18n/lrg-locale.o: src/i18n/lrg-locale.c src/i18n/lrg-locale.h
+$(OBJDIR)/src/i18n/lrg-locale.o: src/i18n/lrg-locale.c src/i18n/lrg-locale.h src/i18n/lrg-csv.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

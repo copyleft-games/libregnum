@@ -138,6 +138,7 @@ Complete skeletal animation system:
 BBCode-style text markup:
 
 - *[[file:text/font-manager.org][LrgFontManager]]* - Font loading and caching
+- *[[file:text/font-atlas.org][LrgFontAtlas]]* - Fallback glyphs baked from a TTF/OTF font
 - *[[file:text/rich-text.org][LrgRichText]]* - Markup parsing and rendering
 - *[[file:text/markup-reference.org][Markup Reference]]* - Tag documentation
 - *[[file:text/effects.org][LrgTextEffect]]* - Shake, wave, rainbow, typewriter effects

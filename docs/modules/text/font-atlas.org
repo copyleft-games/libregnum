@@ -1,0 +1,58 @@
+* LrgFontAtlas - fallback glyphs from a TTF/OTF font
+:PROPERTIES:
+:CUSTOM_ID: lrgfontatlas---fallback-glyphs-from-a-ttfotf-font
+:END:
+=LrgFontAtlas= (=src/text/lrg-font-atlas.h=, final GObject) bakes the glyphs a game asks for from a TrueType or OpenType font into one growing atlas image, on the CPU.  It is meant for drawing the characters a bitmap font lacks: a game with a fixed pixel font (a 256-glyph FNT, a sprite font) adds the characters of every string it draws that its own font cannot show, and draws those from the atlas with the font's baseline lined up.  (The terminal's =LrgGlyphAtlas= in =src/term/= is a different, GPU-paged cache for the terminal renderer.)
+
+** Creating
+:PROPERTIES:
+:CUSTOM_ID: creating
+:END:
+#+begin_src c
+g_autofree gchar *path = NULL;
+g_autoptr(LrgFontAtlas) atlas = NULL;
+g_autoptr(GError) error = NULL;
+
+/* a font the user configured, else an installed free face covering é */
+path = lrg_font_atlas_find_system_font (NULL, "é");
+atlas = lrg_font_atlas_new_from_file (path, 8.0f, &error);
+lrg_font_atlas_set_alpha_threshold (atlas, 128);   /* crisp pixels */
+#+end_src
+
+- =lrg_font_atlas_new_from_file()= loads a font (errors from the font loader, or =LRG_FONT_ATLAS_ERROR_INVALID_SIZE= for a pixel size of zero or less); =lrg_font_atlas_new_for_baker()= shares an =LrgTextBaker='s font ([[file:text-baker.org][text-baker.org]]).
+- The pixel size is the em height glyphs are baked at.  =lrg_font_atlas_get_line_height()= and =lrg_font_atlas_get_ascent()= give the font's metrics at that size.
+- =lrg_font_atlas_set_alpha_threshold()=: 0 (the default) keeps antialiased coverage; 1-255 turns coverage at or above the threshold into opaque pixels and the rest into clear ones, which suits nearest-neighbour pixel-art scaling.
+
+** Finding a font
+:PROPERTIES:
+:CUSTOM_ID: finding-a-font
+:END:
+=lrg_font_atlas_find_system_font(family, needed)= returns an installed font file:
+
+1. fontconfig's =fc-match= is asked for =family= (or =sans=) with a =charset= of every character of =needed=; the answer is used when it loads and covers them (fc-match always answers with its best match, so the coverage is checked).
+2. Otherwise =$XDG_DATA_HOME/fonts=, =~/.fonts= and every =$XDG_DATA_DIRS/fonts= are scanned (four levels deep) for common free faces, best first: DejaVu Sans, Noto Sans, Liberation Sans, GNU FreeSans, Cantarell, DejaVu Sans Mono, Liberation Mono.
+
+Nothing is linked against fontconfig: the command-line tool is optional, and without it (or without a match) the scan still works.  =NULL= means no installed font covers =needed=.
+
+** Adding and drawing glyphs
+:PROPERTIES:
+:CUSTOM_ID: adding-and-drawing-glyphs
+:END:
+#+begin_src c
+GrlRectangle cell;
+
+lrg_font_atlas_add_text (atlas, "Château, Straße, Œuvre");
+if (lrg_font_atlas_lookup (atlas, 0x00E2, &cell))
+    grl_draw_texture_pro (lrg_font_atlas_get_texture (atlas), &cell, &dst, &origin, 0.0f, &tint);
+#+end_src
+
+- =lrg_font_atlas_add_text()= admits every character of the text that the font has and the atlas lacks; spaces, control characters, invalid UTF-8 bytes and zero-width glyphs (combining marks) are skipped.  It returns how many were added.
+- The atlas is rebuilt lazily (one bake of every glyph, shelf packed into a 1024 pixel wide image) on the next =lrg_font_atlas_lookup()=, =lrg_font_atlas_get_image()= or =lrg_font_atlas_get_texture()=, so adding the characters of a whole string costs one rebuild.
+- =lrg_font_atlas_lookup()= gives a glyph's cell: its width is the glyph's advance, its height the line height, and the baseline is =ascent= below the cell's top.
+- The image is RGBA8, white with coverage alpha, so a tint colours it.  =lrg_font_atlas_get_texture()= uploads it (point filtered) when it changed and needs a graphics context; =lrg_font_atlas_release_texture()= drops the upload before the context goes away.  Everything else works headless.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-font-atlas.c=: baking accented letters headless, growth keeping earlier glyphs, non-overlapping cells, coverage pixels, the alpha threshold, invalid input (missing font, bad size, invalid UTF-8, control characters, unknown codepoints) and the system font search (an unassigned codepoint finds nothing).  The baking cases need an installed free font with Latin-1 coverage and skip without one.

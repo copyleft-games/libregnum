@@ -22,6 +22,8 @@ The I18N module consists of two main components:
 - *String Formatting*: Format strings with printf-style arguments
 - *Fallback Locales*: Fall back to another language for missing translations
 - *YAML-Based*: Load translations from YAML files
+- *CSV string tables*: Merge =Key,Value= CSV tables ([[file:csv.org][csv.org]])
+- *Plural rules by language*: =LrgPluralRule= families of the CLDR rules, picked from the locale code
 - *Dynamic Switching*: Change language at runtime
 - *Extendable*: Create custom locale subclasses with different pluralization rules
 
@@ -41,6 +43,12 @@ A locale represents a single language with its strings and pluralization rules. 
 - String lookup by key
 - Plural form handling (one, few, many, other, etc.)
 - Custom properties via subclassing
+
+*** [[file:csv.org][LrgCsv - CSV string tables]]
+:PROPERTIES:
+:CUSTOM_ID: lrgcsv---csv-string-tables
+:END:
+An RFC 4180 CSV reader (quoted fields, multiline values, byte order marks) and the two-column =Key,Value= string tables =lrg_locale_merge_csv()= loads into a locale, the format Unity's localization tools and Daggerfall Unity's translation packs export.
 
 *** [[file:localization.org][LrgLocalization - Localization Manager]]
 :PROPERTIES:
