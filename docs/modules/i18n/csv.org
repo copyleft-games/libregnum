@@ -1,0 +1,48 @@
+* LrgCsv - CSV string tables
+:PROPERTIES:
+:CUSTOM_ID: lrgcsv---csv-string-tables
+:END:
+=lrg_csv_parse()= is a small RFC 4180 reader for string tables and data files exported by spreadsheets and by Unity's localization tools (the format Daggerfall Unity's translation packs use). =lrg_locale_merge_csv()= builds on it to load two-column =Key,Value= tables into an =LrgLocale=.
+
+** Parsing
+:PROPERTIES:
+:CUSTOM_ID: parsing
+:END:
+#+begin_src c
+g_autoptr(GPtrArray) rows = NULL;
+g_autoptr(GError) error = NULL;
+
+rows = lrg_csv_parse (text, -1, ',', &error);
+if (rows == NULL)
+    g_printerr ("%s\n", error->message);
+/* rows: one GStrv per row */
+#+end_src
+
+- Fields are separated by the separator character (any byte except ="=, CR and LF).
+- A field that starts with ="= runs to the matching closing quote and may hold separators and line breaks; a doubled quote (=""=) inside it is one quote. Line breaks inside quotes are kept exactly as written (CRLF stays CRLF).
+- Rows end at LF, CRLF or a lone CR. Empty lines produce no row; the last row may lack a line end.
+- A leading UTF-8 byte order mark (Windows editors write one) is skipped.
+- Unquoted fields are taken verbatim: no trimming, and a quote inside an unquoted field is an ordinary character.
+- The text is validated as UTF-8 first, so every field is valid UTF-8.
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+| Code | When |
+|------+------|
+| =LRG_CSV_ERROR_INVALID_UTF8= | the text is not valid UTF-8 (the message names the byte offset) |
+| =LRG_CSV_ERROR_UNTERMINATED_QUOTE= | a quoted field is never closed (the message names the line it opened on) |
+| =LRG_CSV_ERROR_MALFORMED= | a closing quote is followed by something other than a separator or a line end |
+
+** String tables
+:PROPERTIES:
+:CUSTOM_ID: string-tables
+:END:
+=lrg_locale_merge_csv()= and =lrg_locale_merge_csv_file()= apply a =Key,Value= table to a locale ([[file:locale.org][locale.org]], "CSV string tables"): a first row of exactly =Key,Value= is a header, empty keys are skipped, extra columns are ignored, =key#one= / =#few= / ... set plural forms, and a value's trailing line break is removed (Daggerfall Unity trims it too). The whole table is parsed before anything is applied, so a broken file leaves the locale unchanged.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-csv.c=: plain and quoted fields, multiline values, CRLF / CR / LF, the byte order mark, other separators, every error, merging tables (header, replacement, plurals, unchanged on error, missing files) and the plural rules.

@@ -240,6 +240,7 @@
 
 /* I18N module */
 #include "i18n/lrg-locale.h"
+#include "i18n/lrg-csv.h"
 #include "i18n/lrg-localization.h"
 
 /* Pathfinding module */
@@ -482,6 +483,7 @@
 #include "text/lrg-text-effect.h"
 #include "text/lrg-font-manager.h"
 #include "text/lrg-text-baker.h"
+#include "text/lrg-font-atlas.h"
 #include "text/lrg-rich-text.h"
 
 /* Video Playback module (Phase 3) */

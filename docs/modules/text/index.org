@@ -85,6 +85,7 @@ draw (void)
 :END:
 - [[file:font-manager.org][Font Manager]] - Font loading and caching
 - [[file:text-baker.org][Text Baker]] - Headless TTF/OTF text to image/texture/atlas
+- [[file:font-atlas.org][Font Atlas]] - A growing atlas of fallback glyphs from a TTF/OTF font, and the system font search
 - [[file:rich-text.org][Rich Text]] - Markup parsing and rendering
 - [[file:markup-reference.org][Markup Reference]] - Complete tag documentation
 - [[file:effects.org][Text Effects]] - Animated effect types
