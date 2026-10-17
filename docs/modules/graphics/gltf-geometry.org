@@ -1,0 +1,107 @@
+* LrgGltfGeometry - headless glTF / GLB static geometry
+:PROPERTIES:
+:CUSTOM_ID: lrggltfgeometry---headless-gltf--glb-static-geometry
+:END:
+Reads the static geometry of a glTF 2.0 file into plain arrays without a graphics context: every triangle primitive of the scene, already placed with its node's world transform, with normals, texture coordinates, vertex colours and a triangle-list index buffer, plus the materials (name, base colour, alpha mode, double-sided flag, base colour image) and the images as encoded bytes or decoded =GrlImage=.  Games use it to merge glTF props into their own batches (=LrgStaticBatch=), to build collision from the very triangles they draw, to convert models into their own mesh formats, and to test all of that headlessly.  raylib's =LoadModel()= stays the path for skinned, animated models drawn as =GrlModel=; =LrgGltfGeometry= is written from the Khronos specification with json-glib and never calls raylib except to decode images.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgGltfGeometry= - *Final GObject Class*, =LRG_TYPE_GLTF_GEOMETRY=, GIR =Libregnum.GltfGeometry=
+- =LrgGltfAlphaMode= - =opaque=, =mask=, =blend= (=lrg-enums.h=)
+- =LrgGltfError= - shared with [[file:gltf-info.org][LrgGltfInfo]]; this reader adds =LRG_GLTF_ERROR_INVALID_DATA= and =LRG_GLTF_ERROR_UNSUPPORTED=
+- *Header* - =graphics/lrg-gltf-geometry.h=
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+LrgGltfGeometry *lrg_gltf_geometry_new_from_file  (const gchar *path, GError **error);
+LrgGltfGeometry *lrg_gltf_geometry_new_from_bytes (GBytes *data, const gchar *base_dir, GError **error);
+
+guint          lrg_gltf_geometry_get_primitive_count     (LrgGltfGeometry *self);
+guint          lrg_gltf_geometry_get_skipped_count       (LrgGltfGeometry *self);
+const gfloat  *lrg_gltf_geometry_get_positions           (LrgGltfGeometry *self, guint primitive, guint *n_vertices);
+const gfloat  *lrg_gltf_geometry_get_normals             (LrgGltfGeometry *self, guint primitive);
+const gfloat  *lrg_gltf_geometry_get_texcoords           (LrgGltfGeometry *self, guint primitive);
+const guint8  *lrg_gltf_geometry_get_colors              (LrgGltfGeometry *self, guint primitive);
+const guint32 *lrg_gltf_geometry_get_indices             (LrgGltfGeometry *self, guint primitive, guint *n_indices);
+gint           lrg_gltf_geometry_get_primitive_material  (LrgGltfGeometry *self, guint primitive);
+const gchar   *lrg_gltf_geometry_get_primitive_node_name (LrgGltfGeometry *self, guint primitive);
+guint          lrg_gltf_geometry_get_triangle_count      (LrgGltfGeometry *self);
+gboolean       lrg_gltf_geometry_get_bounds              (LrgGltfGeometry *self, gfloat *min, gfloat *max);
+
+guint            lrg_gltf_geometry_get_material_count        (LrgGltfGeometry *self);
+const gchar     *lrg_gltf_geometry_get_material_name         (LrgGltfGeometry *self, guint material);
+gboolean         lrg_gltf_geometry_get_material_color        (LrgGltfGeometry *self, guint material, gfloat *rgba);
+gint             lrg_gltf_geometry_get_material_image        (LrgGltfGeometry *self, guint material);
+LrgGltfAlphaMode lrg_gltf_geometry_get_material_alpha_mode   (LrgGltfGeometry *self, guint material, gfloat *cutoff);
+gboolean         lrg_gltf_geometry_get_material_double_sided (LrgGltfGeometry *self, guint material);
+
+guint     lrg_gltf_geometry_get_image_count (LrgGltfGeometry *self);
+GBytes   *lrg_gltf_geometry_get_image_data  (LrgGltfGeometry *self, guint image, const gchar **mime_type, GError **error);
+GrlImage *lrg_gltf_geometry_load_image      (LrgGltfGeometry *self, guint image, GError **error);
+#+end_src
+
+** What is read
+:PROPERTIES:
+:CUSTOM_ID: what-is-read
+:END:
+*** Scene and transforms
+The primitives come from the scene named by ="scene"= (scene 0 when it is absent); a file without =scenes= places every root node (a node no other node lists as a child).  Each node's local matrix is ="matrix"= verbatim or T * R * S from =translation=, =rotation= (x, y, z, w) and =scale=; children compose onto their parent.  Positions are transformed by the world matrix, normals by the inverse transpose of its upper 3x3 and renormalized.  When the determinant is negative (a mirroring node) every triangle's second and third index are swapped so counter-clockwise front faces stay front faces.  A mesh used by two nodes appears twice.  A node reached twice (a cycle, two parents, a root listed twice) is =LRG_GLTF_ERROR_INVALID_REFERENCE=.
+
+*** Primitives
+Triangle lists (mode 4, the default), strips (5) and fans (6) are read and unrolled into triangle lists with the specification's vertex order (strip triangle i is i, i + 1 + i % 2, i + 2 - i % 2; fan triangle i is i + 1, i + 2, 0).  Points and lines (modes 0 to 3) are skipped and counted.  Attributes:
+| Attribute    | Types accepted                                | Result                    |
+|--------------+-----------------------------------------------+---------------------------|
+| =POSITION=   | VEC3, any component type (KHR_mesh_quantization) | 3 floats, required        |
+| =NORMAL=     | VEC3                                          | 3 floats, unit length     |
+| =TEXCOORD_0= | VEC2, float or normalized integers            | 2 floats, V downwards     |
+| =COLOR_0=    | VEC3 / VEC4, float or normalized integers     | RGBA bytes (alpha 255 for VEC3) |
+| =indices=    | unsigned byte, short or int SCALAR             | 32-bit triangle list      |
+Primitives without =indices= get 0 .. n - 1.  Skins, morph targets and animations are ignored: the result is the bind pose.
+
+*** Buffers and URIs
+Buffers come from the GLB =BIN= chunk (a buffer without =uri=), from =data:= URIs (base64 or percent-encoded) or from files relative to the model's directory (=new_from_file()= uses the file's own directory, =new_from_bytes()= the given =base_dir=; without one, external files are =UNSUPPORTED=).  URIs are percent-decoded; absolute paths, =..= components and any other scheme are refused, so a model shipped in a mod cannot read files outside its folder.  A buffer shorter than its =byteLength= is =INVALID_DATA=.
+
+*** Materials and images
+For each material: =name=, =pbrMetallicRoughness.baseColorFactor= (white by default), the image behind =baseColorTexture= (the texture's =source=), =alphaMode= with =alphaCutoff= (0.5 by default) and =doubleSided=.  Images are kept as references: =get_image_data()= returns the encoded bytes (a buffer view slice, a =data:= payload or the file) and a mime type (=mimeType=, the =data:= URI's type, or sniffed from PNG / JPEG signatures and the file extension); =load_image()= decodes PNG and JPEG through graylib into a CPU =GrlImage=.
+
+** Validation
+:PROPERTIES:
+:CUSTOM_ID: validation
+:END:
+Everything is decoded and checked when the object is created, so the getters never fail and never read out of bounds:
+- buffer views lie inside their buffers; accessors (offset + stride * (count - 1) + element size) inside their views; the stride is at least one element;
+- attribute accessors have the right component count and the same element count as =POSITION=; every index is below the vertex count; values are finite;
+- accessor counts are capped at =LRG_GLTF_GEOMETRY_MAX_VERTICES= (16 777 216);
+- Draco (on a primitive or in =extensionsRequired=), meshopt compression and sparse accessors are =LRG_GLTF_ERROR_UNSUPPORTED=;
+- all reads go through =memcpy= with little-endian conversion: unaligned data is fine.
+=tests/test-gltf-geometry.c= covers placement, mirroring, scene choice, strips, fans and lines, every URI kind and the refusals, an embedded PNG, malformed files with their error codes, every truncation of a valid GLB and 2 000 random byte flips.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgGltfGeometry) geometry = lrg_gltf_geometry_new_from_file ("props/crate.glb", &error);
+guint p;
+
+for (p = 0; geometry != NULL && p < lrg_gltf_geometry_get_primitive_count (geometry); p++)
+{
+    guint n_vertices, n_indices;
+    const gfloat  *positions = lrg_gltf_geometry_get_positions (geometry, p, &n_vertices);
+    const guint32 *indices = lrg_gltf_geometry_get_indices (geometry, p, &n_indices);
+
+    lrg_static_batch_add_mesh (batch, positions,
+                               lrg_gltf_geometry_get_normals (geometry, p),
+                               lrg_gltf_geometry_get_texcoords (geometry, p),
+                               lrg_gltf_geometry_get_colors (geometry, p),
+                               n_vertices, indices, n_indices, NULL,
+                               my_material_for (lrg_gltf_geometry_get_primitive_material (geometry, p)),
+                               0, &error);
+}
+#+end_src

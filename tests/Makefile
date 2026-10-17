@@ -95,6 +95,7 @@ TEST_SOURCES := \
 	test-asset-model-cache.c \
 	test-gltf-info.c \
 	test-gltf-animation-roots.c \
+	test-gltf-geometry.c \
 	test-model-animator.c \
 	test-static-batch.c \
 	test-billboard-batch.c \

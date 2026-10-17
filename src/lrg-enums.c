@@ -5288,10 +5288,33 @@ lrg_gltf_error_get_type (void)
             { LRG_GLTF_ERROR_UNSUPPORTED_VERSION, "LRG_GLTF_ERROR_UNSUPPORTED_VERSION", "unsupported-version" },
             { LRG_GLTF_ERROR_INVALID_JSON, "LRG_GLTF_ERROR_INVALID_JSON", "invalid-json" },
             { LRG_GLTF_ERROR_INVALID_REFERENCE, "LRG_GLTF_ERROR_INVALID_REFERENCE", "invalid-reference" },
+            { LRG_GLTF_ERROR_INVALID_DATA, "LRG_GLTF_ERROR_INVALID_DATA", "invalid-data" },
+            { LRG_GLTF_ERROR_UNSUPPORTED, "LRG_GLTF_ERROR_UNSUPPORTED", "unsupported" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgGltfError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_gltf_alpha_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_GLTF_ALPHA_MODE_OPAQUE, "LRG_GLTF_ALPHA_MODE_OPAQUE", "opaque" },
+            { LRG_GLTF_ALPHA_MODE_MASK, "LRG_GLTF_ALPHA_MODE_MASK", "mask" },
+            { LRG_GLTF_ALPHA_MODE_BLEND, "LRG_GLTF_ALPHA_MODE_BLEND", "blend" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgGltfAlphaMode"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
 
