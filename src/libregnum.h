@@ -80,6 +80,7 @@
 #include "graphics/lrg-vector-image.h"
 #include "graphics/lrg-gltf-info.h"
 #include "graphics/lrg-dds-image.h"
+#include "graphics/lrg-gltf-geometry.h"
 #include "graphics/lrg-model-animator.h"
 #include "graphics/lrg-static-batch.h"
 #include "graphics/lrg-billboard-batch.h"

@@ -5603,20 +5603,50 @@ GQuark lrg_gltf_error_quark (void);
  *   top-level structure has the wrong types
  * @LRG_GLTF_ERROR_INVALID_REFERENCE: An index (mesh, accessor, material) is
  *   out of range or not an integer
+ * @LRG_GLTF_ERROR_INVALID_DATA: Geometry data is inconsistent: an accessor
+ *   or buffer view overruns its buffer, a buffer is missing or shorter than
+ *   declared, attribute counts differ, or an index exceeds the vertex count
+ *   (#LrgGltfGeometry)
+ * @LRG_GLTF_ERROR_UNSUPPORTED: The file needs a feature the reader does not
+ *   implement (Draco compression, sparse accessors, an external file
+ *   without a base directory) (#LrgGltfGeometry)
  *
- * Error codes for lrg_gltf_info_new_from_file() and friends.
+ * Error codes for lrg_gltf_info_new_from_file(),
+ * lrg_gltf_geometry_new_from_file() and friends.
  */
 typedef enum
 {
     LRG_GLTF_ERROR_INVALID_CONTAINER,
     LRG_GLTF_ERROR_UNSUPPORTED_VERSION,
     LRG_GLTF_ERROR_INVALID_JSON,
-    LRG_GLTF_ERROR_INVALID_REFERENCE
+    LRG_GLTF_ERROR_INVALID_REFERENCE,
+    LRG_GLTF_ERROR_INVALID_DATA,
+    LRG_GLTF_ERROR_UNSUPPORTED
 } LrgGltfError;
 
 LRG_AVAILABLE_IN_ALL
 GType lrg_gltf_error_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_GLTF_ERROR (lrg_gltf_error_get_type ())
+
+/**
+ * LrgGltfAlphaMode:
+ * @LRG_GLTF_ALPHA_MODE_OPAQUE: alpha is ignored ("OPAQUE", the default)
+ * @LRG_GLTF_ALPHA_MODE_MASK: texels below the material's alpha cutoff are
+ *   discarded ("MASK")
+ * @LRG_GLTF_ALPHA_MODE_BLEND: alpha blends ("BLEND")
+ *
+ * A glTF material's "alphaMode" (#LrgGltfGeometry).
+ */
+typedef enum
+{
+    LRG_GLTF_ALPHA_MODE_OPAQUE,
+    LRG_GLTF_ALPHA_MODE_MASK,
+    LRG_GLTF_ALPHA_MODE_BLEND
+} LrgGltfAlphaMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_gltf_alpha_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_GLTF_ALPHA_MODE (lrg_gltf_alpha_mode_get_type ())
 
 
 /**

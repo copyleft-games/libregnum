@@ -721,6 +721,7 @@ grl_gif_writer_close (gif, &error);
 Helpers for games that render many glTF characters and props with raylib:
 
 - *[[file:gltf-info.org][LrgGltfInfo]]* - Headless glTF/GLB inspection: raylib mesh order, node and mesh names, vertex counts, skins, animation names, Draco detection, per-node visibility masks, skin joints and the raylib multi-root animation fix
+- *[[file:gltf-geometry.org][LrgGltfGeometry]]* - Headless glTF/GLB static geometry: scene-space triangle primitives with normals, UVs, colours and indices, materials (name, base colour, alpha mode, image), embedded and external images decoded to GrlImage, strict validation
 - *[[file:static-batch.org][LrgStaticBatch]]* - CPU merge of static meshes into 16-bit-index chunks per (material, layer) with bounds, then GPU upload and layer-masked drawing
 - *[[file:billboard-batch.org][LrgBillboardBatch]]* - camera-facing textured quads (axis-locked or spherical), batched per material with an alpha-cutout shader; headless corner math for picking; per-quad CPU lighting from an LrgLightSet (own or bound), emissive quads
 - *[[file:terrain.org][LrgTerrain]]* - chunked heightfield terrain for streamed worlds: per-cell materials with 8 UV orientations, bilinear height queries, cross-chunk normals, floating origin, headless inspectable meshes

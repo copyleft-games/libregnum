@@ -96,6 +96,7 @@ TEST_SOURCES := \
 	test-gltf-info.c \
 	test-dds-image.c \
 	test-gltf-animation-roots.c \
+	test-gltf-geometry.c \
 	test-model-animator.c \
 	test-static-batch.c \
 	test-billboard-batch.c \
