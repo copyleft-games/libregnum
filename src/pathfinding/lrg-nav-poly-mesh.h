@@ -73,9 +73,9 @@ G_DECLARE_FINAL_TYPE (LrgNavPolyMesh, lrg_nav_poly_mesh, LRG, NAV_POLY_MESH, GOb
  *
  * Creates an empty mesh with the default agent (#LrgNavPolyMesh:cell-size
  * 0.25, cell-height 0.1, agent-radius 0.3, agent-height 1.8, max-climb
- * 0.45, max-slope 50 degrees, no drops).  Set the properties before
- * lrg_nav_poly_mesh_bake().  Every query fails until a bake succeeds.
- * Single-threaded.
+ * 0.45, max-slope 50 degrees, no drops, no corner margin).  Set the
+ * properties before lrg_nav_poly_mesh_bake().  Every query fails until
+ * a bake succeeds.  Single-threaded.
  *
  * Returns: (transfer full): a new #LrgNavPolyMesh
  */
