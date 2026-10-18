@@ -1011,6 +1011,9 @@ typedef struct _LrgVRController  LrgVRController;
 /* LrgVRComfortSettings is a final type - no Class forward declaration needed */
 typedef struct _LrgVRComfortSettings  LrgVRComfortSettings;
 
+/* LrgVRComfort is a final type - no Class forward declaration needed */
+typedef struct _LrgVRComfort  LrgVRComfort;
+
 /* ==========================================================================
  * Deckbuilder Module
  * ========================================================================== */
