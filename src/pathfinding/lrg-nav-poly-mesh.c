@@ -34,6 +34,7 @@
  */
 
 #include "lrg-nav-poly-mesh.h"
+#include "lrg-nav-poly-mesh-cache.h"
 #include <gio/gio.h>
 #include <math.h>
 #include <string.h>
@@ -630,6 +631,132 @@ nearest (LrgNavPolyMesh       *self,
     if (out_poly != NULL)
         *out_poly = best;
     return TRUE;
+}
+
+/*
+ * nearest_banded:
+ * nearest() for @n_bands boxes of the same X/Z extent around @point,
+ * band i centred at height band_y[i] with half height band_half[i], in
+ * one pass over the columns: the answer is the first band (in order)
+ * that has a floor, and within it what nearest() of that band's box
+ * would return (the same skips of consecutive cells of one polygon,
+ * band by band, and the same first-best tie rule).
+ */
+static gboolean
+nearest_banded (LrgNavPolyMesh *self,
+                const gfloat   *point,
+                gfloat          extent,
+                const gfloat   *band_y,
+                const gfloat   *band_half,
+                guint           n_bands,
+                gfloat         *out,
+                guint          *out_poly,
+                guint          *out_band)
+{
+    gint32 x0;
+    gint32 z0;
+    gint32 x1;
+    gint32 z1;
+    gint32 x;
+    gint32 z;
+    guint best[LRG_NAV_POLY_MESH_MAX_BANDS];
+    gfloat best_d[LRG_NAV_POLY_MESH_MAX_BANDS];
+    gfloat best_p[LRG_NAV_POLY_MESH_MAX_BANDS][3];
+    gint32 last_poly[LRG_NAV_POLY_MESH_MAX_BANDS];
+    gfloat lo = G_MAXFLOAT;
+    gfloat hi = -G_MAXFLOAT;
+    guint b;
+
+    if (!self->baked || !finite3 (point) || !isfinite (extent))
+        return FALSE;
+    for (b = 0; b < n_bands; b++)
+    {
+        if (!isfinite (band_y[b]) || !isfinite (band_half[b]))
+            return FALSE;
+        best[b] = LRG_NAV_POLY_MESH_INVALID;
+        best_d[b] = G_MAXFLOAT;
+        last_poly[b] = -1;
+        lo = MIN (lo, band_y[b] - fabsf (band_half[b]));
+        hi = MAX (hi, band_y[b] + fabsf (band_half[b]));
+    }
+    if (!column_of (self, point[0] - fabsf (extent), point[2] - fabsf (extent), &x0, &z0) ||
+        !column_of (self, point[0] + fabsf (extent), point[2] + fabsf (extent), &x1, &z1))
+        return FALSE;
+    x0 = MAX (x0, 0);
+    z0 = MAX (z0, 0);
+    x1 = MIN (x1, self->width - 1);
+    z1 = MIN (z1, self->depth - 1);
+    for (z = z0; z <= z1; z++)
+    {
+        for (x = x0; x <= x1; x++)
+        {
+            guint32 column;
+            guint32 i;
+
+            column = (guint32) z * (guint32) self->width + (guint32) x;
+            for (i = self->col_first[column]; i < self->col_first[column + 1]; i++)
+            {
+                const Cell *c = &g_array_index (self->cells, Cell, i);
+                const Poly *p = NULL;
+                gfloat rx0, rz0, rx1, rz1;
+                gfloat q[3];
+                gboolean usable = FALSE;
+                gboolean placed = FALSE;
+                gfloat y;
+
+                y = cell_y (self, c->y);
+                /* outside every band: no band looks at this cell */
+                if (y < lo || y > hi)
+                    continue;
+                for (b = 0; b < n_bands; b++)
+                {
+                    gfloat d;
+
+                    if (fabsf (y - band_y[b]) > fabsf (band_half[b]))
+                        continue;
+                    if (c->poly == last_poly[b])
+                        continue;
+                    if (p == NULL)
+                    {
+                        usable = poly_usable (self, (guint) c->poly, NULL, NULL, NULL);
+                        p = &g_array_index (self->polys, Poly, c->poly);
+                    }
+                    if (!usable)
+                        continue;
+                    last_poly[b] = c->poly;
+                    if (!placed)
+                    {
+                        poly_rect (self, p, &rx0, &rz0, &rx1, &rz1);
+                        q[0] = CLAMP (point[0], rx0 + 1e-3f, rx1 - 1e-3f);
+                        q[2] = CLAMP (point[2], rz0 + 1e-3f, rz1 - 1e-3f);
+                        q[1] = poly_height_at (self, (guint) c->poly, q[0], q[2]);
+                        placed = TRUE;
+                    }
+                    d = (q[0] - point[0]) * (q[0] - point[0]) + (q[1] - band_y[b]) * (q[1] - band_y[b]) +
+                        (q[2] - point[2]) * (q[2] - point[2]);
+                    if (d < best_d[b])
+                    {
+                        best_d[b] = d;
+                        best[b] = (guint) c->poly;
+                        memcpy (best_p[b], q, sizeof (q));
+                    }
+                }
+            }
+        }
+    }
+    for (b = 0; b < n_bands; b++)
+    {
+        if (best[b] == LRG_NAV_POLY_MESH_INVALID)
+            continue;
+        if (out != NULL)
+            memcpy (out, best_p[b], sizeof (best_p[b]));
+        if (out_poly != NULL)
+            *out_poly = best[b];
+        if (out_band != NULL)
+            *out_band = b;
+        return TRUE;
+    }
+    return FALSE;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1997,6 +2124,128 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
 }
 
 /* ------------------------------------------------------------------ */
+/* Input digest and cached bakes                                        */
+
+/* the digest's version: change it when the bake's inputs change */
+#define DIGEST_TAG "lrg-nav-poly-mesh-input-1"
+
+static void
+digest_u32 (GChecksum *sum,
+            guint32    v)
+{
+    guint32 le = GUINT32_TO_LE (v);
+
+    g_checksum_update (sum, (const guchar *) &le, sizeof (le));
+}
+
+/* floats by their bits, little-endian (the same input, the same digest) */
+static void
+digest_floats (GChecksum    *sum,
+               const gfloat *v,
+               guint         n)
+{
+    guint i;
+
+    for (i = 0; i < n; i++)
+    {
+        guint32 bits;
+
+        memcpy (&bits, &v[i], sizeof (bits));
+        digest_u32 (sum, bits);
+    }
+}
+
+gchar *
+lrg_nav_poly_mesh_get_input_digest (LrgNavPolyMesh *self)
+{
+    g_autoptr(GChecksum) sum = NULL;
+    gfloat props[8];
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), NULL);
+
+    sum = g_checksum_new (G_CHECKSUM_SHA256);
+    g_checksum_update (sum, (const guchar *) DIGEST_TAG, sizeof (DIGEST_TAG));
+
+    /* the bake properties */
+    props[0] = self->cell_size;
+    props[1] = self->cell_height;
+    props[2] = self->agent_radius;
+    props[3] = self->agent_height;
+    props[4] = self->max_climb;
+    props[5] = self->max_slope;
+    props[6] = self->max_drop;
+    props[7] = self->corner_margin;
+    digest_floats (sum, props, 8);
+
+    /* the triangles and their walkable flags */
+    digest_u32 (sum, self->walkable->len);
+    digest_floats (sum, (const gfloat *) (gpointer) self->triangles->data, self->triangles->len);
+    g_checksum_update (sum, (const guchar *) self->walkable->data, self->walkable->len);
+
+    /* the area boxes */
+    digest_u32 (sum, self->boxes->len);
+    for (i = 0; i < self->boxes->len; i++)
+    {
+        const AreaBox *box = &g_array_index (self->boxes, AreaBox, i);
+
+        digest_floats (sum, box->min, 3);
+        digest_floats (sum, box->max, 3);
+        digest_u32 (sum, box->tag);
+    }
+
+    /* the off-mesh links (their connections are the bake's) */
+    digest_u32 (sum, self->links->len);
+    for (i = 0; i < self->links->len; i++)
+    {
+        const Link *l = &g_array_index (self->links, Link, i);
+
+        digest_floats (sum, l->start, 3);
+        digest_floats (sum, l->end, 3);
+        digest_floats (sum, &l->cost, 1);
+        digest_u32 (sum, l->tag);
+        digest_u32 (sum, l->bidirectional ? 1u : 0u);
+        digest_u32 (sum, l->enabled ? 1u : 0u);
+    }
+    return g_strdup (g_checksum_get_string (sum));
+}
+
+gboolean
+lrg_nav_poly_mesh_bake_cached (LrgNavPolyMesh       *self,
+                               LrgNavPolyMeshCache  *cache,
+                               GError              **error)
+{
+    g_autofree gchar *digest = NULL;
+    g_autoptr(GBytes) bytes = NULL;
+    gint64 started;
+
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), FALSE);
+    g_return_val_if_fail (cache == NULL || LRG_IS_NAV_POLY_MESH_CACHE (cache), FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    if (cache == NULL)
+        return lrg_nav_poly_mesh_bake (self, error);
+
+    started = g_get_monotonic_time ();
+    digest = lrg_nav_poly_mesh_get_input_digest (self);
+    bytes = lrg_nav_poly_mesh_cache_lookup (cache, digest);
+    /* a hit: the bake's own bytes, so a load cannot fail; should it, bake */
+    if (bytes != NULL && lrg_nav_poly_mesh_load (self, bytes, NULL))
+    {
+        self->bake_seconds = (gdouble) (g_get_monotonic_time () - started) / (gdouble) G_USEC_PER_SEC;
+        return TRUE;
+    }
+
+    if (!lrg_nav_poly_mesh_bake (self, error))
+        return FALSE;
+    g_clear_pointer (&bytes, g_bytes_unref);
+    bytes = lrg_nav_poly_mesh_save (self);
+    lrg_nav_poly_mesh_cache_insert (cache, digest, bytes);
+    self->bake_seconds = (gdouble) (g_get_monotonic_time () - started) / (gdouble) G_USEC_PER_SEC;
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ */
 /* Statistics                                                           */
 
 guint
@@ -2095,6 +2344,25 @@ lrg_nav_poly_mesh_find_nearest (LrgNavPolyMesh *self,
     g_return_val_if_fail (point != NULL && extents != NULL, FALSE);
 
     return nearest (self, point, extents, 0, NULL, NULL, out, polygon);
+}
+
+gboolean
+lrg_nav_poly_mesh_find_nearest_banded (LrgNavPolyMesh *self,
+                                       const gfloat   *point,
+                                       gfloat          extent,
+                                       const gfloat   *band_y,
+                                       const gfloat   *band_half,
+                                       guint           n_bands,
+                                       gfloat         *out,
+                                       guint          *polygon,
+                                       guint          *band)
+{
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), FALSE);
+    g_return_val_if_fail (point != NULL, FALSE);
+    g_return_val_if_fail (n_bands >= 1 && n_bands <= LRG_NAV_POLY_MESH_MAX_BANDS, FALSE);
+    g_return_val_if_fail (band_y != NULL && band_half != NULL, FALSE);
+
+    return nearest_banded (self, point, extent, band_y, band_half, n_bands, out, polygon, band);
 }
 
 gboolean

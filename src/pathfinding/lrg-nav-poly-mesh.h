@@ -51,6 +51,13 @@ G_BEGIN_DECLS
 #define LRG_NAV_POLY_MESH_MAX_COLUMNS (64u * 1024u * 1024u)
 
 /**
+ * LRG_NAV_POLY_MESH_MAX_BANDS:
+ *
+ * Most height bands lrg_nav_poly_mesh_find_nearest_banded() takes.
+ */
+#define LRG_NAV_POLY_MESH_MAX_BANDS (8u)
+
+/**
  * LrgNavPolyFilterFunc:
  * @tag: the nonzero tag of a polygon or off-mesh link a query wants to cross
  * @user_data: data given to the query
@@ -194,6 +201,43 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
                         GError         **error);
 
 /**
+ * lrg_nav_poly_mesh_get_input_digest:
+ * @self: an #LrgNavPolyMesh
+ *
+ * A digest (SHA-256, lowercase hex) of everything a bake depends on: the
+ * bake properties, the staged triangles and their walkable flags, the
+ * area boxes and the off-mesh links with their enabled states.  Equal
+ * digests bake equal meshes; #LrgNavPolyMeshCache keys bakes by it.
+ *
+ * Returns: (transfer full): the digest
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *
+lrg_nav_poly_mesh_get_input_digest (LrgNavPolyMesh *self);
+
+/**
+ * lrg_nav_poly_mesh_bake_cached:
+ * @self: an #LrgNavPolyMesh
+ * @cache: (nullable): an #LrgNavPolyMeshCache, or %NULL to bake
+ * @error: (nullable): return location for a #GError
+ *
+ * Like lrg_nav_poly_mesh_bake(), but when @cache holds a bake of the
+ * same input (lrg_nav_poly_mesh_get_input_digest()) that bake is loaded
+ * (lrg_nav_poly_mesh_load()) instead; otherwise the mesh is baked and a
+ * successful bake is stored in @cache.  The result is the same mesh
+ * either way (polygons, portals, links and their connections, regions);
+ * lrg_nav_poly_mesh_get_bake_seconds() is the time this call took.
+ * Failed bakes are not cached.  The errors are lrg_nav_poly_mesh_bake()'s.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_poly_mesh_bake_cached (LrgNavPolyMesh       *self,
+                               LrgNavPolyMeshCache  *cache,
+                               GError              **error);
+
+/**
  * lrg_nav_poly_mesh_get_polygon_count:
  * @self: an #LrgNavPolyMesh
  *
@@ -311,6 +355,40 @@ lrg_nav_poly_mesh_find_nearest (LrgNavPolyMesh *self,
                                 const gfloat   *extents,
                                 gfloat         *out,
                                 guint          *polygon);
+
+/**
+ * lrg_nav_poly_mesh_find_nearest_banded:
+ * @self: an #LrgNavPolyMesh
+ * @point: (array fixed-size=3): the query point (its height is not used)
+ * @extent: half size of the box in X and Z
+ * @band_y: (array length=n_bands): each band's centre height
+ * @band_half: (array length=n_bands): each band's half height
+ * @n_bands: how many bands (1 .. %LRG_NAV_POLY_MESH_MAX_BANDS)
+ * @out: (out caller-allocates) (array fixed-size=3) (optional): the point
+ * @polygon: (out) (optional): its polygon
+ * @band: (out) (optional): the band it was found in
+ *
+ * Asks lrg_nav_poly_mesh_find_nearest() for several boxes of the same
+ * X/Z extent stacked in height, in order, and answers for the first box
+ * that has a floor, as that call would (box i centred at (@point x,
+ * @band_y[i], @point z) with extents (@extent, @band_half[i], @extent)).
+ * One pass over the columns instead of one per band: a projection that
+ * looks for the floor under the feet in bands going down costs one
+ * search.
+ *
+ * Returns: %TRUE when a band has a floor
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_poly_mesh_find_nearest_banded (LrgNavPolyMesh *self,
+                                       const gfloat   *point,
+                                       gfloat          extent,
+                                       const gfloat   *band_y,
+                                       const gfloat   *band_half,
+                                       guint           n_bands,
+                                       gfloat         *out,
+                                       guint          *polygon,
+                                       guint          *band);
 
 /**
  * lrg_nav_poly_mesh_find_nearest_in_region:
