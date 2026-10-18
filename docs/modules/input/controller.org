@@ -60,7 +60,7 @@ Raylib/GLFW only report the standard 17 buttons (=GrlGamepadButton=); the first 
 :PROPERTIES:
 :CUSTOM_ID: presets
 :END:
-Roles: =move-up/down/left/right= (left stick), =look-up/down/left/right= (right stick), =confirm=, =cancel=, =face-west=, =face-north=, =page-previous= (left bumper), =page-next= (right bumper), =trigger-left=, =trigger-right=, =view=, =menu=, =guide=, =stick-left-click=, =stick-right-click= and the four =dpad-*=. The families share the physical layout except the Switch Pro, whose =confirm= is the right face button (its A) and =cancel= the bottom one (its B). A game maps its own actions onto roles (librefall's preset does, see its controls manual).
+Roles: =move-up/down/left/right= (left stick), =look-up/down/left/right= (right stick), =confirm=, =cancel= (the family's own), =face-south=, =face-east=, =face-west=, =face-north= (by position, never swapped), =page-previous= (left bumper), =page-next= (right bumper), =trigger-left=, =trigger-right=, =view=, =menu=, =guide=, =stick-left-click=, =stick-right-click= and the four =dpad-*=. The families share the physical layout except the Switch Pro, whose =confirm= is the right face button (its A) and =cancel= the bottom one (its B). A game maps its own actions onto roles (librefall's preset does, see its controls manual).
 
 ** Monitor example
 :PROPERTIES:

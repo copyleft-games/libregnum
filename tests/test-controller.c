@@ -312,7 +312,7 @@ test_preset_lookup (void)
 			g_assert_true (lrg_controller_preset_lookup ((LrgControllerFamily)family, roles[i],
 			                                             &is_axis, &code, &positive));
 	}
-	g_assert_cmpuint (i, ==, 25);
+	g_assert_cmpuint (i, ==, 27);
 
 	g_assert_true (lrg_controller_preset_lookup (LRG_CONTROLLER_FAMILY_XBOX_ONE, "confirm", &is_axis, &code, &positive));
 	g_assert_false (is_axis);
@@ -347,7 +347,7 @@ test_preset_map (void)
 
 	map = lrg_controller_preset_new_map (LRG_CONTROLLER_FAMILY_DUALSENSE, 0);
 	g_assert_nonnull (map);
-	g_assert_cmpuint (lrg_input_map_get_action_count (map), ==, 25);
+	g_assert_cmpuint (lrg_input_map_get_action_count (map), ==, 27);
 	g_assert_true (lrg_input_map_has_action (map, "confirm"));
 	g_assert_true (lrg_input_map_has_action (map, "look-right"));
 

@@ -663,6 +663,8 @@ static const PresetRole preset_roles[] = {
 	{ "look-right",       TRUE,  GRL_GAMEPAD_AXIS_RIGHT_X, TRUE },
 	{ "confirm",          FALSE, GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN,  FALSE },
 	{ "cancel",           FALSE, GRL_GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, FALSE },
+	{ "face-south",       FALSE, GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN,  FALSE },
+	{ "face-east",        FALSE, GRL_GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, FALSE },
 	{ "face-west",        FALSE, GRL_GAMEPAD_BUTTON_RIGHT_FACE_LEFT,  FALSE },
 	{ "face-north",       FALSE, GRL_GAMEPAD_BUTTON_RIGHT_FACE_UP,    FALSE },
 	{ "page-previous",    FALSE, GRL_GAMEPAD_BUTTON_LEFT_TRIGGER_1,   FALSE },

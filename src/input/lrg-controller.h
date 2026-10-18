@@ -240,7 +240,9 @@ const gchar * lrg_controller_get_axis_glyph (LrgControllerFamily family,
  * The roles every family's preset defines, as a %NULL-terminated array:
  * "move-up", "move-down", "move-left", "move-right" (left stick),
  * "look-up", "look-down", "look-left", "look-right" (right stick),
- * "confirm", "cancel", "face-west", "face-north", "page-previous",
+ * "confirm", "cancel" (the family's confirm and cancel buttons), "face-south",
+ * "face-east", "face-west", "face-north" (the face buttons by position),
+ * "page-previous",
  * "page-next", "trigger-left", "trigger-right", "view", "menu", "guide",
  * "stick-left-click", "stick-right-click", "dpad-up", "dpad-down",
  * "dpad-left", "dpad-right".
@@ -262,7 +264,8 @@ const gchar * const * lrg_controller_preset_get_roles (void);
  * physical layout except that the Switch Pro controller confirms with its
  * right face button (its A) and cancels with the bottom one (its B), the
  * Nintendo convention, so a "confirm" press always lands on the button
- * whose glyph the family calls A, Cross or A.
+ * whose glyph the family calls A, Cross or A.  The positional roles
+ * ("face-south", "face-east", ...) never swap.
  *
  * Returns: %TRUE when @role is known
  */
