@@ -200,6 +200,193 @@ test_market (void)
     g_assert_no_error (error);
 }
 
+/* the test clock: a settable Unix time */
+static gint64
+test_clock (gpointer user_data)
+{
+    return *(gint64 *) user_data;
+}
+
+static gint64
+coins (LrgMmoMarket *market, const gchar *account)
+{
+    g_autoptr(GError) error = NULL;
+    gint64 value = lrg_mmo_market_get_balance (market, account, "coins", &error);
+    g_assert_no_error (error);
+    return value;
+}
+
+static gchar *
+owner_of (LrgMmoMarket *market, const gchar *item)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) record = lrg_mmo_market_get_item (market, item, &error);
+    gchar *owner = NULL;
+    g_assert_no_error (error);
+    g_variant_get (record, "(s&s@ay)", &owner, NULL, NULL);
+    return owner;
+}
+
+static guchar
+lot_state (LrgMmoMarket *market, const gchar *lot)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) record = lrg_mmo_market_lot_inspect (market, lot, &error);
+    guchar state;
+    g_assert_no_error (error);
+    g_variant_get (record, "(&s&s&s&sxxxxxuy)", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                   NULL, NULL, NULL, &state);
+    return state;
+}
+
+static void
+test_market_lots (void)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(LrgMmoStore) store = lrg_mmo_store_new (":memory:", &error);
+    g_autoptr(LrgMmoMarket) market = lrg_mmo_market_new (store);
+    g_autoptr(GBytes) metadata = g_bytes_new_static ("blade", 5);
+    g_autofree gchar *owner = NULL;
+    const gchar *alice_items[] = { "sword-1", NULL };
+    const gchar *bob_items[] = { "shield-1", NULL };
+    const gchar *stolen[] = { "shield-1", NULL };
+    gint64 now = 1000000;
+
+    lrg_mmo_market_set_clock (market, test_clock, &now, NULL);
+    g_assert_cmpint (lrg_mmo_market_now (market), ==, 1000000);
+    g_assert_true (lrg_mmo_market_mint_item (market, "sword-1", "alice", "sword", metadata, &error));
+    g_assert_true (lrg_mmo_market_mint_item (market, "shield-1", "bob", "shield", metadata, &error));
+    g_assert_true (lrg_mmo_market_mint_item (market, "axe-1", "alice", "axe", metadata, &error));
+    g_assert_true (lrg_mmo_market_grant (market, "alice", "coins", 100, "fund-alice", &error));
+    g_assert_true (lrg_mmo_market_grant (market, "bob", "coins", 1000, "fund-bob", &error));
+    g_assert_true (lrg_mmo_market_grant (market, "carol", "coins", 1000, "fund-carol", &error));
+
+    /* exchange: atomic, idempotent, refused when a side does not own its goods */
+    g_assert_false (lrg_mmo_market_exchange (market, "alice", alice_items, 0, "bob", alice_items, 0, "x-dup", &error));
+    clear_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_false (lrg_mmo_market_exchange (market, "alice", stolen, 0, "bob", NULL, 10, "x-steal", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_market_exchange (market, "alice", alice_items, 500, "bob", bob_items, 0, "x-poor", &error));
+    clear_error (&error, G_IO_ERROR_NO_SPACE);
+    owner = owner_of (market, "sword-1");
+    g_assert_cmpstr (owner, ==, "alice");
+    g_clear_pointer (&owner, g_free);
+    g_assert_true (lrg_mmo_market_exchange (market, "alice", alice_items, 10, "bob", bob_items, 30, "x-1", &error));
+    g_assert_true (lrg_mmo_market_exchange (market, "alice", alice_items, 10, "bob", bob_items, 30, "x-1", &error));
+    g_assert_false (lrg_mmo_market_exchange (market, "alice", alice_items, 11, "bob", bob_items, 30, "x-1", &error));
+    clear_error (&error, G_IO_ERROR_INVALID_DATA);
+    g_assert_cmpint (coins (market, "alice"), ==, 120);
+    g_assert_cmpint (coins (market, "bob"), ==, 980);
+    owner = owner_of (market, "sword-1");
+    g_assert_cmpstr (owner, ==, "bob");
+    g_clear_pointer (&owner, g_free);
+    owner = owner_of (market, "shield-1");
+    g_assert_cmpstr (owner, ==, "alice");
+    g_clear_pointer (&owner, g_free);
+
+    /* cut arithmetic: per mille, rounded down, no overflow */
+    g_assert_cmpint (lrg_mmo_market_lot_cut (1000, 50), ==, 50);
+    g_assert_cmpint (lrg_mmo_market_lot_cut (999, 50), ==, 49);
+    g_assert_cmpint (lrg_mmo_market_lot_cut (G_MAXINT64, 1000), ==, G_MAXINT64);
+    g_assert_cmpint (lrg_mmo_market_lot_cut (-5, 50), ==, 0);
+
+    /* a lot: deposit taken, item escrowed, bids refund the outbid */
+    g_assert_false (lrg_mmo_market_lot_create (market, "alice", "lot-x", "sword-1", "house", 10, 0, 0, 50, 60, &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_market_lot_create (market, "alice", "lot-x", "axe-1", "house", 10, 5, 0, 50, 60, &error));
+    clear_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_false (lrg_mmo_market_lot_create (market, "alice", "lot-x", "axe-1", "house", 10, 0, 500, 50, 60, &error));
+    clear_error (&error, G_IO_ERROR_NO_SPACE);
+    g_assert_true (lrg_mmo_market_lot_create (market, "alice", "lot-1", "axe-1", "house", 100, 400, 20, 50, 60, &error));
+    g_assert_false (lrg_mmo_market_lot_create (market, "alice", "lot-1", "shield-1", "house", 100, 0, 0, 50, 60, &error));
+    g_assert_nonnull (error);
+    g_clear_error (&error);
+    g_assert_cmpint (coins (market, "alice"), ==, 100);
+    owner = owner_of (market, "axe-1");
+    g_assert_cmpstr (owner, ==, LRG_MMO_MARKET_OWNER_LOT);
+    g_clear_pointer (&owner, g_free);
+    g_assert_false (lrg_mmo_market_burn_item (market, "alice", "axe-1", "burn-escrow", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_market_lot_bid (market, "alice", "lot-1", 150, "self-bid", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_market_lot_bid (market, "bob", "lot-1", 99, "low-bid", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_lot_bid (market, "bob", "lot-1", 150, "bid-1", &error));
+    g_assert_true (lrg_mmo_market_lot_bid (market, "bob", "lot-1", 150, "bid-1", &error));
+    g_assert_cmpint (coins (market, "bob"), ==, 830);
+    g_assert_false (lrg_mmo_market_lot_bid (market, "carol", "lot-1", 150, "tie-bid", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_lot_bid (market, "carol", "lot-1", 200, "bid-2", &error));
+    g_assert_cmpint (coins (market, "bob"), ==, 980);
+    g_assert_cmpint (coins (market, "carol"), ==, 800);
+    g_assert_false (lrg_mmo_market_lot_cancel (market, "alice", "lot-1", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_market_lot_settle (market, "lot-1", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+
+    /* the buyout: bob pays 400, carol is refunded, alice gets 400 - 20 + 20 */
+    g_assert_true (lrg_mmo_market_lot_buyout (market, "bob", "lot-1", "buy-1", &error));
+    g_assert_cmpint (lot_state (market, "lot-1"), ==, LRG_MMO_MARKET_LOT_SOLD);
+    g_assert_cmpint (coins (market, "bob"), ==, 580);
+    g_assert_cmpint (coins (market, "carol"), ==, 1000);
+    g_assert_cmpint (coins (market, "alice"), ==, 100 + 380 + 20);
+    g_assert_cmpint (coins (market, "house"), ==, 20);
+    owner = owner_of (market, "axe-1");
+    g_assert_cmpstr (owner, ==, "bob");
+    g_clear_pointer (&owner, g_free);
+    g_assert_false (lrg_mmo_market_lot_bid (market, "carol", "lot-1", 500, "late", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_lot_settle (market, "lot-1", &error));
+
+    /* expiry with a bid: sold to the highest bidder with the cut */
+    g_assert_true (lrg_mmo_market_lot_create (market, "alice", "lot-2", "shield-1", "house", 100, 0, 10, 100, 60, &error));
+    g_assert_true (lrg_mmo_market_lot_bid (market, "carol", "lot-2", 300, "bid-3", &error));
+    now += 61;
+    g_assert_false (lrg_mmo_market_lot_bid (market, "bob", "lot-2", 400, "bid-late", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_lot_settle (market, "lot-2", &error));
+    g_assert_cmpint (coins (market, "alice"), ==, 500 - 10 + 270 + 10);
+    g_assert_cmpint (coins (market, "house"), ==, 50);
+    owner = owner_of (market, "shield-1");
+    g_assert_cmpstr (owner, ==, "carol");
+    g_clear_pointer (&owner, g_free);
+
+    /* expiry without a bid: the item returns, the deposit is forfeited */
+    g_assert_true (lrg_mmo_market_lot_create (market, "bob", "lot-3", "sword-1", "house", 50, 0, 15, 50, 60, &error));
+    now += 61;
+    g_assert_true (lrg_mmo_market_lot_settle (market, "lot-3", &error));
+    g_assert_cmpint (lot_state (market, "lot-3"), ==, LRG_MMO_MARKET_LOT_UNSOLD);
+    g_assert_cmpint (coins (market, "bob"), ==, 565);
+    g_assert_cmpint (coins (market, "house"), ==, 65);
+    owner = owner_of (market, "sword-1");
+    g_assert_cmpstr (owner, ==, "bob");
+    g_clear_pointer (&owner, g_free);
+
+    /* cancel before any bid; then burn and revoke leave the market */
+    g_assert_true (lrg_mmo_market_lot_create (market, "bob", "lot-4", "sword-1", "house", 50, 0, 5, 50, 60, &error));
+    g_assert_false (lrg_mmo_market_lot_cancel (market, "carol", "lot-4", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_lot_cancel (market, "bob", "lot-4", &error));
+    g_assert_cmpint (lot_state (market, "lot-4"), ==, LRG_MMO_MARKET_LOT_CANCELLED);
+    g_assert_cmpint (coins (market, "house"), ==, 70);
+    g_assert_false (lrg_mmo_market_burn_item (market, "carol", "sword-1", "burn-other", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_burn_item (market, "bob", "sword-1", "burn-1", &error));
+    g_assert_true (lrg_mmo_market_burn_item (market, "bob", "sword-1", "burn-1", &error));
+    owner = owner_of (market, "sword-1");
+    g_assert_cmpstr (owner, ==, LRG_MMO_MARKET_OWNER_BURNED);
+    g_clear_pointer (&owner, g_free);
+    g_assert_false (lrg_mmo_market_mint_item (market, "sword-1", "bob", "sword", metadata, &error));
+    g_assert_nonnull (error);
+    g_clear_error (&error);
+    g_assert_false (lrg_mmo_market_revoke (market, "carol", "coins", 5000, "revoke-big", &error));
+    clear_error (&error, G_IO_ERROR_NO_SPACE);
+    g_assert_true (lrg_mmo_market_revoke (market, "carol", "coins", 100, "revoke-1", &error));
+    g_assert_true (lrg_mmo_market_revoke (market, "carol", "coins", 100, "revoke-1", &error));
+    g_assert_cmpint (coins (market, "carol"), ==, 600);
+    g_assert_no_error (error);
+}
+
 static void
 test_social (void)
 {
@@ -485,6 +672,7 @@ main (int argc, char **argv)
     g_test_add_func ("/mmo/services/receipts-backup", test_receipts_backup);
     g_test_add_func ("/mmo/services/fencing", test_fencing);
     g_test_add_func ("/mmo/services/market", test_market);
+    g_test_add_func ("/mmo/services/market-lots", test_market_lots);
     g_test_add_func ("/mmo/services/social", test_social);
     g_test_add_func ("/mmo/services/replica", test_replica);
     g_test_add_func ("/mmo/services/pages", test_pages);
