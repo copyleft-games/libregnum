@@ -120,6 +120,7 @@ TEST_SOURCES := \
 	test-mmo-replicator.c \
 	test-mmo-datagram.c \
 	test-mmo-runtime.c \
+	test-mmo-finder.c \
 	test-net-tls.c \
 	test-net-transport.c \
 	test-world3d.c \

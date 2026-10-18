@@ -98,4 +98,247 @@ lrg_mmo_matchmaker_take (LrgMmoMatchmaker *self,
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_mmo_matchmaker_enqueue_party (LrgMmoMatchmaker *self, GVariant *members,
                                            const gchar *mode, gint64 now_us, GError **error);
+
+/* --- role queues (group finders) --- */
+
+/**
+ * LRG_MMO_MATCHMAKER_MAX_ROLES:
+ *
+ * The most roles a role queue knows (role @i is the bit `1 << i` of a
+ * member's role mask).
+ */
+#define LRG_MMO_MATCHMAKER_MAX_ROLES (8)
+
+/**
+ * lrg_mmo_matchmaker_set_timeout:
+ * @self: matchmaking queue
+ * @timeout_us: how long a ticket stays queued, in microseconds (at least one second)
+ *
+ * Sets how long tickets wait before they expire (sixty seconds by default).
+ * Tickets already queued are measured against the new value.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_mmo_matchmaker_set_timeout (LrgMmoMatchmaker *self,
+                                gint64            timeout_us);
+
+/**
+ * lrg_mmo_matchmaker_get_timeout:
+ * @self: matchmaking queue
+ *
+ * Returns: how long a ticket stays queued, in microseconds
+ */
+LRG_AVAILABLE_IN_ALL
+gint64
+lrg_mmo_matchmaker_get_timeout (LrgMmoMatchmaker *self);
+
+/**
+ * lrg_mmo_matchmaker_enqueue_roles:
+ * @self: matchmaking queue
+ * @members: a(suu) account, trusted rating and role mask tuples, 1 to 128
+ *   unique accounts; a mask of 0 takes any role
+ * @mode: game mode ID
+ * @since_us: when the ticket was first queued (at most @now_us): a ticket
+ *   put back after a declined match or a restart keeps its place
+ * @now_us: trusted nonnegative monotonic microseconds
+ * @error: (nullable): error return
+ *
+ * Atomically enqueues a whole party for a role queue (see
+ * lrg_mmo_matchmaker_take_roles()).  The ticket is placed among the others
+ * by @since_us, oldest first.  The rules of lrg_mmo_matchmaker_enqueue_party()
+ * apply: duplicate or already queued accounts and capacity overflow fail
+ * and change nothing; a ticket whose age reaches the timeout expires.
+ *
+ * Returns: whether queued
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_matchmaker_enqueue_roles (LrgMmoMatchmaker *self,
+                                  GVariant         *members,
+                                  const gchar      *mode,
+                                  gint64            since_us,
+                                  gint64            now_us,
+                                  GError          **error);
+
+/**
+ * lrg_mmo_matchmaker_set_roles:
+ * @self: matchmaking queue
+ * @account: a queued account
+ * @roles: the new role mask (0: any role)
+ * @error: (nullable): error return
+ *
+ * Changes the roles a queued account offers (a role swap) without moving
+ * its ticket in the queue.
+ *
+ * Returns: whether changed; %G_IO_ERROR_NOT_FOUND when @account is not queued
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_matchmaker_set_roles (LrgMmoMatchmaker *self,
+                              const gchar      *account,
+                              guint             roles,
+                              GError          **error);
+
+/**
+ * lrg_mmo_matchmaker_take_roles:
+ * @self: matchmaking queue
+ * @mode: game mode ID
+ * @slots: (array length=n_slots): how many members each role needs
+ * @n_slots: number of roles, 1 to %LRG_MMO_MATCHMAKER_MAX_ROLES
+ * @spread: maximum difference between the lowest and highest rating
+ * @min_size: the fewest members a partial group may have (1 or more)
+ * @partial_after_us: a group may start short once its oldest ticket has
+ *   waited this long (%G_MAXINT64: never)
+ * @now_us: monotonic server microseconds
+ * @error: (nullable): error return
+ *
+ * Expires old tickets, then fills the role slots from whole FIFO tickets:
+ * starting with the oldest ticket of @mode, later tickets join while the
+ * ratings stay within @spread and every member still gets a slot of a role
+ * its mask offers (a maximum bipartite matching, so a flexible member never
+ * blocks a strict one).  The first group that fills every slot is taken.
+ * When none fills and the oldest ticket of @mode has waited
+ * @partial_after_us or longer, its group is taken short if it has at least
+ * @min_size members, so the host can fill the empty slots itself (with bots,
+ * for instance).  Parties are never split; taken tickets leave the queue.
+ *
+ * Returns: (transfer full): a(su) of account and role index for the group
+ *   taken, an empty array when no group could be formed, %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *
+lrg_mmo_matchmaker_take_roles (LrgMmoMatchmaker *self,
+                               const gchar      *mode,
+                               const guint      *slots,
+                               guint             n_slots,
+                               guint             spread,
+                               guint             min_size,
+                               gint64            partial_after_us,
+                               gint64            now_us,
+                               GError          **error);
+
+/**
+ * lrg_mmo_matchmaker_is_queued:
+ * @self: matchmaking queue
+ * @account: account ID
+ *
+ * Returns: whether @account is in a queued ticket
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_matchmaker_is_queued (LrgMmoMatchmaker *self,
+                              const gchar      *account);
+
+/**
+ * lrg_mmo_matchmaker_get_ticket:
+ * @self: matchmaking queue
+ * @account: account ID
+ * @mode: (out) (optional) (transfer none): the ticket's mode
+ * @since_us: (out) (optional): when the ticket was queued
+ * @roles: (out) (optional): the role mask of @account
+ *
+ * Returns: (transfer full) (element-type utf8) (nullable): the accounts of
+ *   the ticket holding @account, in their order, or %NULL when not queued
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *
+lrg_mmo_matchmaker_get_ticket (LrgMmoMatchmaker  *self,
+                               const gchar       *account,
+                               const gchar      **mode,
+                               gint64            *since_us,
+                               guint             *roles);
+
+/**
+ * lrg_mmo_matchmaker_get_queued:
+ * @self: matchmaking queue
+ * @mode: (nullable): a game mode ID, or %NULL for every mode
+ *
+ * Returns: the number of queued accounts (of @mode)
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_mmo_matchmaker_get_queued (LrgMmoMatchmaker *self,
+                               const gchar      *mode);
+
+/**
+ * lrg_mmo_matchmaker_list_modes:
+ * @self: matchmaking queue
+ *
+ * Returns: (transfer full) (element-type utf8): the modes that have queued
+ *   tickets, in the order of their oldest ticket
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *
+lrg_mmo_matchmaker_list_modes (LrgMmoMatchmaker *self);
+
+/**
+ * lrg_mmo_matchmaker_expire:
+ * @self: matchmaking queue
+ * @now_us: monotonic server microseconds (not earlier than the last call)
+ *
+ * Drops the tickets that waited as long as the timeout.
+ *
+ * Returns: (transfer full) (element-type utf8): the accounts whose tickets
+ *   expired, for the host to tell them
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *
+lrg_mmo_matchmaker_expire (LrgMmoMatchmaker *self,
+                           gint64            now_us);
+
+/**
+ * lrg_mmo_matchmaker_save:
+ * @self: matchmaking queue
+ * @now_us: monotonic server microseconds
+ *
+ * The queue as a value that survives a restart: a(sxa(suu)) of mode, the
+ * ticket's age in microseconds and its members (account, rating, roles),
+ * oldest first.  Clocks do not survive a restart, ages do.
+ *
+ * Returns: (transfer full): the queue
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *
+lrg_mmo_matchmaker_save (LrgMmoMatchmaker *self,
+                         gint64            now_us);
+
+/**
+ * lrg_mmo_matchmaker_load:
+ * @self: an empty matchmaking queue
+ * @saved: the value of lrg_mmo_matchmaker_save()
+ * @now_us: monotonic server microseconds of this process
+ * @error: (nullable): error return
+ *
+ * Queues every saved ticket again with its age.  Everything is checked
+ * first: a malformed value, a duplicate account, a queue that is not empty
+ * or too small fails and changes nothing.  Tickets that would be expired
+ * are dropped.
+ *
+ * Returns: whether loaded
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_matchmaker_load (LrgMmoMatchmaker *self,
+                         GVariant         *saved,
+                         gint64            now_us,
+                         GError          **error);
+/**
+ * lrg_mmo_matchmaker_roles_fit:
+ * @masks: (array length=n_masks): role masks of a party (0: any role)
+ * @n_masks: members of the party
+ * @slots: (array length=n_slots): how many members each role needs
+ * @n_slots: number of roles, 1 to %LRG_MMO_MATCHMAKER_MAX_ROLES
+ *
+ * Whether a party could be seated in the slots of a role queue (the check
+ * lrg_mmo_matchmaker_take_roles() applies), so a host can refuse a party
+ * that would never be matched before queueing it.
+ *
+ * Returns: whether every member gets a seat of a role it offers
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_matchmaker_roles_fit (const guint *masks,
+                              guint        n_masks,
+                              const guint *slots,
+                              guint        n_slots);
 G_END_DECLS
