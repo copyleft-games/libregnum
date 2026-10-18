@@ -245,6 +245,7 @@
 #include "audio/lrg-midi-output.h"
 #include "audio/lrg-midi-output-alsa.h"
 #include "audio/lrg-midi-sequencer.h"
+#include "audio/lrg-foley.h"
 
 /* Inventory module */
 #include "inventory/lrg-item-def.h"
