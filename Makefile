@@ -188,6 +188,7 @@ PUBLIC_HEADERS := \
 	src/pathfinding/lrg-nav-grid.h \
 	src/pathfinding/lrg-pathfinder.h \
 	src/pathfinding/lrg-nav-mesh.h \
+	src/pathfinding/lrg-nav-poly-mesh.h \
 	src/ai/lrg-blackboard.h \
 	src/ai/lrg-bt-node.h \
 	src/ai/lrg-bt-composite.h \
@@ -743,6 +744,7 @@ SOURCES := \
 	src/pathfinding/lrg-nav-grid.c \
 	src/pathfinding/lrg-pathfinder.c \
 	src/pathfinding/lrg-nav-mesh.c \
+	src/pathfinding/lrg-nav-poly-mesh.c \
 	src/ai/lrg-blackboard.c \
 	src/ai/lrg-bt-node.c \
 	src/ai/lrg-bt-composite.c \

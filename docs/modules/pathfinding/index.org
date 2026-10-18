@@ -14,6 +14,8 @@ The module is built around four core components:
 - *LrgNavGrid*: A grid data structure containing navigation cells with configurable movement options
 - *LrgPathfinder*: The A* algorithm implementation for finding optimal paths
 - *LrgPath*: A boxed type representing a sequence of waypoints from start to goal
+- *LrgNavMesh*: continuous A* over pre-cleaned walkable triangles
+- *LrgNavPolyMesh*: a navigation mesh voxel-baked from a level's raw triangles for an agent
 
 ** Key Features
 :PROPERTIES:
@@ -91,3 +93,7 @@ For complete working examples, see the [[../examples/pathfinding.md][Pathfinding
 ** Triangle mesh baking, projection, and A* navigation
 
 See [[file:nav-mesh.org][Triangle mesh baking, projection, and A* navigation]] for the API, examples, and tested behavior.
+
+** Voxel-baked polygon navigation meshes
+
+See [[file:nav-poly-mesh.org][Voxel-baked polygon navigation meshes]]: =LrgNavPolyMesh= bakes a level's raw collision triangles for an agent (radius, height, step, slope) into convex polygons with portals, off-mesh links, drop links and tagged areas (doors), with funnel-straightened paths, surface raycasts, random points, OBJ export and a binary cache form.
