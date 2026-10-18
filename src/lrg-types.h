@@ -444,6 +444,9 @@ typedef struct _LrgModelAnimState LrgModelAnimState;
 /* LrgStaticBatch is a final type - no Class forward declaration needed */
 typedef struct _LrgStaticBatch    LrgStaticBatch;
 
+/* LrgSkinnedMesh is a final type */
+typedef struct _LrgSkinnedMesh    LrgSkinnedMesh;
+
 /* ==========================================================================
  * Shapes Module
  * ========================================================================== */

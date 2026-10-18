@@ -83,6 +83,7 @@
 #include "graphics/lrg-gltf-geometry.h"
 #include "graphics/lrg-model-animator.h"
 #include "graphics/lrg-static-batch.h"
+#include "graphics/lrg-skinned-mesh.h"
 #include "graphics/lrg-billboard-batch.h"
 #include "graphics/lrg-terrain.h"
 #include "graphics/lrg-sky-dome.h"

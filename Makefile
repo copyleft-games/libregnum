@@ -62,6 +62,7 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-gltf-geometry.h \
 	src/graphics/lrg-model-animator.h \
 	src/graphics/lrg-static-batch.h \
+	src/graphics/lrg-skinned-mesh.h \
 	src/graphics/lrg-billboard-batch.h \
 	src/graphics/lrg-terrain.h \
 	src/graphics/lrg-sky-dome.h \
@@ -616,6 +617,7 @@ SOURCES := \
 	src/graphics/lrg-gltf-geometry.c \
 	src/graphics/lrg-model-animator.c \
 	src/graphics/lrg-static-batch.c \
+	src/graphics/lrg-skinned-mesh.c \
 	src/graphics/lrg-billboard-batch.c \
 	src/graphics/lrg-terrain.c \
 	src/graphics/lrg-sky-dome.c \

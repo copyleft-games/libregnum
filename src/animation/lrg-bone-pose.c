@@ -328,6 +328,121 @@ lrg_bone_pose_multiply (const LrgBonePose *parent,
     return result;
 }
 
+/* quat_rotate:
+ * Rotates (x, y, z) by the unit quaternion q: v + 2w(u x v) + 2u x (u x v). */
+static void
+quat_rotate (gfloat qx, gfloat qy, gfloat qz, gfloat qw,
+             gfloat *x, gfloat *y, gfloat *z)
+{
+    gfloat tx, ty, tz;
+
+    tx = 2.0f * (qy * *z - qz * *y);
+    ty = 2.0f * (qz * *x - qx * *z);
+    tz = 2.0f * (qx * *y - qy * *x);
+    *x += qw * tx + (qy * tz - qz * ty);
+    *y += qw * ty + (qz * tx - qx * tz);
+    *z += qw * tz + (qx * ty - qy * tx);
+}
+
+LrgBonePose *
+lrg_bone_pose_compose (const LrgBonePose *parent,
+                       const LrgBonePose *local)
+{
+    LrgBonePose *result;
+    gfloat       px, py, pz;
+    gfloat       len;
+    gfloat       qx, qy, qz, qw;
+
+    g_return_val_if_fail (parent != NULL, NULL);
+    g_return_val_if_fail (local != NULL, NULL);
+
+    result = lrg_bone_pose_new ();
+    quat_multiply (parent->rotation_x, parent->rotation_y,
+                   parent->rotation_z, parent->rotation_w,
+                   local->rotation_x, local->rotation_y,
+                   local->rotation_z, local->rotation_w,
+                   &result->rotation_x, &result->rotation_y,
+                   &result->rotation_z, &result->rotation_w);
+    lrg_bone_pose_normalize_rotation (result);
+
+    /* the child's offset lives in the parent's scaled, rotated frame */
+    qx = parent->rotation_x;
+    qy = parent->rotation_y;
+    qz = parent->rotation_z;
+    qw = parent->rotation_w;
+    len = sqrtf (qx * qx + qy * qy + qz * qz + qw * qw);
+    if (len > 1e-8f)
+    {
+        qx /= len;
+        qy /= len;
+        qz /= len;
+        qw /= len;
+    }
+    px = local->position_x * parent->scale_x;
+    py = local->position_y * parent->scale_y;
+    pz = local->position_z * parent->scale_z;
+    quat_rotate (qx, qy, qz, qw, &px, &py, &pz);
+    result->position_x = parent->position_x + px;
+    result->position_y = parent->position_y + py;
+    result->position_z = parent->position_z + pz;
+
+    result->scale_x = parent->scale_x * local->scale_x;
+    result->scale_y = parent->scale_y * local->scale_y;
+    result->scale_z = parent->scale_z * local->scale_z;
+    return result;
+}
+
+void
+lrg_bone_pose_to_matrix (const LrgBonePose *self,
+                         gfloat            *out_matrix)
+{
+    gfloat x, y, z, w;
+    gfloat len;
+    gfloat *m;
+
+    g_return_if_fail (self != NULL);
+    g_return_if_fail (out_matrix != NULL);
+
+    x = self->rotation_x;
+    y = self->rotation_y;
+    z = self->rotation_z;
+    w = self->rotation_w;
+    len = sqrtf (x * x + y * y + z * z + w * w);
+    if (len > 1e-8f)
+    {
+        x /= len;
+        y /= len;
+        z /= len;
+        w /= len;
+    }
+    else
+    {
+        x = 0.0f;
+        y = 0.0f;
+        z = 0.0f;
+        w = 1.0f;
+    }
+
+    /* column-major rotation columns, each scaled by its axis' scale */
+    m = out_matrix;
+    m[0] = (1.0f - 2.0f * (y * y + z * z)) * self->scale_x;
+    m[1] = (2.0f * (x * y + w * z)) * self->scale_x;
+    m[2] = (2.0f * (x * z - w * y)) * self->scale_x;
+    m[3] = 0.0f;
+    m[4] = (2.0f * (x * y - w * z)) * self->scale_y;
+    m[5] = (1.0f - 2.0f * (x * x + z * z)) * self->scale_y;
+    m[6] = (2.0f * (y * z + w * x)) * self->scale_y;
+    m[7] = 0.0f;
+    m[8] = (2.0f * (x * z + w * y)) * self->scale_z;
+    m[9] = (2.0f * (y * z - w * x)) * self->scale_z;
+    m[10] = (1.0f - 2.0f * (x * x + y * y)) * self->scale_z;
+    m[11] = 0.0f;
+    m[12] = self->position_x;
+    m[13] = self->position_y;
+    m[14] = self->position_z;
+    m[15] = 1.0f;
+}
+
 void
 lrg_bone_pose_normalize_rotation (LrgBonePose *self)
 {
