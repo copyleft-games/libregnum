@@ -814,6 +814,79 @@ test_save_load_obj (void)
     g_assert_cmpuint (l, ==, 1);
 }
 
+/* find_nearest_banded answers as find_nearest() band after band */
+static void
+test_nearest_banded (void)
+{
+    g_autoptr(GArray) tris = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    g_autoptr(LrgNavPolyMesh) mesh = lrg_nav_poly_mesh_new ();
+    g_autoptr(GError) error = NULL;
+    const gfloat band_half[4] = { 0.55f, 0.5f, 0.5f, 0.275f };
+    gfloat px;
+    gfloat pz;
+    gfloat py;
+    guint found = 0;
+    guint missed = 0;
+
+    /* three storeys overlapping in X/Z, a ramp-free stack of slabs */
+    floor_rect (tris, 0, 0, 12, 12, 0);
+    floor_rect (tris, 2, 2, 8, 8, 2.5f);
+    floor_rect (tris, 5, 1, 11, 6, 4.0f);
+    box (tris, 6, 0, 9, 7, 1, 10);
+    g_object_set (mesh, "cell-size", 0.25f, NULL);
+    lrg_nav_poly_mesh_add_triangles (mesh, (const gfloat *) tris->data, tris->len, TRUE);
+    g_assert_true (lrg_nav_poly_mesh_bake (mesh, &error));
+    g_assert_no_error (error);
+
+    for (py = -0.5f; py <= 6.0f; py += 0.7f)
+    {
+        for (pz = -1.0f; pz <= 13.0f; pz += 0.9f)
+        {
+            for (px = -1.0f; px <= 13.0f; px += 0.9f)
+            {
+                const gfloat point[3] = { px, py, pz };
+                gfloat band_y[4];
+                gfloat a[3];
+                gfloat b[3];
+                guint pa = 0;
+                guint pb = 0;
+                guint band = 99;
+                guint i;
+                gboolean expect = FALSE;
+                gboolean got;
+
+                /* the floor near the feet, then bands of a metre going down */
+                band_y[0] = py;
+                band_y[1] = py - 0.95f;
+                band_y[2] = py - 1.95f;
+                band_y[3] = py - 2.725f;
+                for (i = 0; i < 4 && !expect; i++)
+                {
+                    const gfloat centre[3] = { px, band_y[i], pz };
+                    const gfloat extents[3] = { 1.0f, band_half[i], 1.0f };
+
+                    expect = lrg_nav_poly_mesh_find_nearest (mesh, centre, extents, a, &pa);
+                }
+                got = lrg_nav_poly_mesh_find_nearest_banded (mesh, point, 1.0f, band_y, band_half, 4,
+                                                             b, &pb, &band);
+                g_assert_cmpint (got, ==, expect);
+                if (!got)
+                {
+                    missed++;
+                    continue;
+                }
+                found++;
+                g_assert_cmpuint (band, ==, i - 1);
+                g_assert_cmpuint (pa, ==, pb);
+                g_assert_cmpmem (a, sizeof (a), b, sizeof (b));
+            }
+        }
+    }
+    /* both outcomes were exercised */
+    g_assert_cmpuint (found, >, 100);
+    g_assert_cmpuint (missed, >, 10);
+}
+
 /* the level of the cache tests: two rooms, a corridor, a ladder link */
 static LrgNavPolyMesh *
 cache_level (gfloat corridor_z)
@@ -998,6 +1071,7 @@ main (int    argc,
     g_test_add_func ("/nav-poly-mesh/links", test_links);
     g_test_add_func ("/nav-poly-mesh/random-and-regions", test_random_and_regions);
     g_test_add_func ("/nav-poly-mesh/save-load-obj", test_save_load_obj);
+    g_test_add_func ("/nav-poly-mesh/nearest-banded", test_nearest_banded);
     g_test_add_func ("/nav-poly-mesh/cache/hit-equals-bake", test_cache_hit_equals_bake);
     g_test_add_func ("/nav-poly-mesh/cache/digest-follows-input", test_cache_digest_follows_input);
     g_test_add_func ("/nav-poly-mesh/cache/lru-and-failures", test_cache_lru_and_failures);

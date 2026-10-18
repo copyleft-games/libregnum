@@ -51,6 +51,13 @@ G_BEGIN_DECLS
 #define LRG_NAV_POLY_MESH_MAX_COLUMNS (64u * 1024u * 1024u)
 
 /**
+ * LRG_NAV_POLY_MESH_MAX_BANDS:
+ *
+ * Most height bands lrg_nav_poly_mesh_find_nearest_banded() takes.
+ */
+#define LRG_NAV_POLY_MESH_MAX_BANDS (8u)
+
+/**
  * LrgNavPolyFilterFunc:
  * @tag: the nonzero tag of a polygon or off-mesh link a query wants to cross
  * @user_data: data given to the query
@@ -348,6 +355,40 @@ lrg_nav_poly_mesh_find_nearest (LrgNavPolyMesh *self,
                                 const gfloat   *extents,
                                 gfloat         *out,
                                 guint          *polygon);
+
+/**
+ * lrg_nav_poly_mesh_find_nearest_banded:
+ * @self: an #LrgNavPolyMesh
+ * @point: (array fixed-size=3): the query point (its height is not used)
+ * @extent: half size of the box in X and Z
+ * @band_y: (array length=n_bands): each band's centre height
+ * @band_half: (array length=n_bands): each band's half height
+ * @n_bands: how many bands (1 .. %LRG_NAV_POLY_MESH_MAX_BANDS)
+ * @out: (out caller-allocates) (array fixed-size=3) (optional): the point
+ * @polygon: (out) (optional): its polygon
+ * @band: (out) (optional): the band it was found in
+ *
+ * Asks lrg_nav_poly_mesh_find_nearest() for several boxes of the same
+ * X/Z extent stacked in height, in order, and answers for the first box
+ * that has a floor, as that call would (box i centred at (@point x,
+ * @band_y[i], @point z) with extents (@extent, @band_half[i], @extent)).
+ * One pass over the columns instead of one per band: a projection that
+ * looks for the floor under the feet in bands going down costs one
+ * search.
+ *
+ * Returns: %TRUE when a band has a floor
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_poly_mesh_find_nearest_banded (LrgNavPolyMesh *self,
+                                       const gfloat   *point,
+                                       gfloat          extent,
+                                       const gfloat   *band_y,
+                                       const gfloat   *band_half,
+                                       guint           n_bands,
+                                       gfloat         *out,
+                                       guint          *polygon,
+                                       guint          *band);
 
 /**
  * lrg_nav_poly_mesh_find_nearest_in_region:
