@@ -164,6 +164,24 @@ a party to fill a smaller match. Expiry or any member's cancellation removes the
 entire ticket. The bounded greedy FIFO policy may leave an incomplete match
 queued even if another packing exists; it does not claim optimal global packing.
 
+** Team matches
+
+=Matchmaker.take_teams(mode, team_size, teams, spread, now)= assembles one match
+of =teams= (2–16) sides of exactly =team_size= (1–64) members: it collects whole
+FIFO tickets of the mode within the rating spread until the match is full, then
+places them on the sides, larger parties first and each to the open side with the
+lowest rating total, backtracking when a later party no longer fits (at most 4096
+placements per candidate set). Parties are never split across sides; solo players
+balance the sides by rating. It returns one array of account IDs per side (empty
+when nothing complete exists), and the chosen tickets leave the queue.
+
+Hosts that fill long queues with substitutes read the queue:
+=get_oldest_wait(mode, now)= (microseconds, -1 when empty),
+=get_oldest_rating(mode)= (the oldest ticket's mean rating and size),
+=get_wait(account, now)=, =is_queued(account)= and =get_queued(mode)=.
+=set_ticket_lifetime(us)= changes the sixty-second lifetime (at least one second)
+for new and queued tickets, for queues that outwait a substitute delay.
+
 * Ranked seasons and operator console
 
 =LrgMmoSeason= stores an immutable season interval and bounded entrants (2–1000).
@@ -173,7 +191,31 @@ match ID reject. New results are accepted only in =[start,end)= using trusted
 server time. Wins score three points, draws one. Standings sort by points, wins,
 then account ID for deterministic ties. Result counters reject overflow.
 Concurrent conflicting submissions must retry with the same match ID. This is a
-bounded reference league, not an Elo/skill estimator or a client result endpoint.
+bounded reference league, not a client result endpoint.
+
+** Rated seasons and team results
+
+=Season.create_rated(season, start, end, capacity, base_rating, k_factor)= creates
+a season and, in the same transaction, its rating record =season-rating/<id>=
+(=(uua(suu))=: base rating, K, then account, rating, games). Every result recorded
+in a rated season also moves ratings by Elo: each side's expected score is
+=1 / (1 + 10^((other - own) / 400))= of the two sides' mean ratings, and every
+member of a side moves by =round(K * (score - expected))= (win 1, draw 0.5, loss 0),
+never below zero; =games= counts the results taken part in. Ratings start at the
+base in each season, so starting the next season ID resets them while the old
+season keeps its final ratings.
+
+=Season.record_teams(season, first, second, result, match, now)= records one team
+result (sides of 1 to 64 distinct accounts sharing none): every member's wins,
+losses or draws, the ratings of a rated season, and the semantic receipt (intent
+=("season-teams", season, first, second, result)=), with the retry, closure and
+capacity rules of =record()=. =record()= of a rated season moves the two players'
+ratings the same way.
+
+=get_rating(season, account)= answers the rating and games (the base before the
+first result; =NOT_FOUND= for an unrated season), =ratings(season)= all of them by
+rating, games, then account, and =get_window(season)= the interval, capacity and
+whether it is rated, so a host can tell when a season ended and start the next.
 
 The operator console exposes =create-season=, =match-result= and =standings=.
 Match submissions require trusted server/operator authority. Players cannot grant
