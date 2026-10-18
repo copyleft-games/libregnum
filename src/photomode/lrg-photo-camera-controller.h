@@ -517,7 +517,7 @@ lrg_photo_camera_controller_focus_on (LrgPhotoCameraController *self,
 /**
  * lrg_photo_camera_controller_orbit:
  * @self: an #LrgPhotoCameraController
- * @delta_yaw: the turn to the right in degrees (before sensitivity)
+ * @delta_yaw: the turn in degrees, positive to the left (before sensitivity)
  * @delta_pitch: the turn upwards in degrees (before sensitivity)
  *
  * Swings the camera round the subject (the same as

@@ -898,9 +898,13 @@ lrg_photo_camera_controller_move_right (LrgPhotoCameraController *self,
     yaw_rad = self->yaw * (G_PI / 180.0f);
     move_amount = amount * self->move_speed;
 
-    /* Right vector is perpendicular to forward on XZ plane */
-    right_x = cosf (yaw_rad);
-    right_z = -sinf (yaw_rad);
+    /*
+     * Right is forward x up for raylib's right handed, Y up world: at yaw 0
+     * the camera looks along +z and right is -x.  (It used to be the
+     * mirror image, so strafing right went left.)
+     */
+    right_x = -cosf (yaw_rad);
+    right_z = sinf (yaw_rad);
 
     self->target_pos_x += right_x * move_amount;
     self->target_pos_z += right_z * move_amount;

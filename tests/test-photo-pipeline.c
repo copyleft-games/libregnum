@@ -848,6 +848,42 @@ test_camera_from_camera_keeps_direction (void)
 }
 
 static void
+test_camera_strafe_right_is_right (void)
+{
+    g_autoptr(LrgPhotoCameraController) c = lrg_photo_camera_controller_new ();
+    g_autoptr(GrlVector3) p = NULL;
+    g_autoptr(GrlVector3) up = NULL;
+    g_autoptr(GrlVector3) start = grl_vector3_new (0.0f, 0.0f, 0.0f);
+    gfloat fwd[3] = { 0.0f, 0.0f, 1.0f };
+    gfloat yaw;
+
+    /* right is forward x up: at yaw 0 (looking along +z) it is -x, and it
+     * turns with the yaw */
+    lrg_photo_camera_controller_set_smoothing (c, 0.0f);
+    for (yaw = 0.0f; yaw < 360.0f; yaw += 45.0f)
+    {
+        gfloat rad = yaw * (gfloat)G_PI / 180.0f;
+        gfloat want_x;
+        gfloat want_z;
+
+        lrg_photo_camera_controller_set_yaw (c, yaw);
+        lrg_photo_camera_controller_set_position (c, start);
+        lrg_photo_camera_controller_move_right (c, 1.0f);
+        lrg_photo_camera_controller_update (c, 1.0f);
+        p = lrg_photo_camera_controller_get_position (c);
+        fwd[0] = sinf (rad);
+        fwd[2] = cosf (rad);
+        /* forward x up = (-fwd.z, 0, fwd.x) */
+        want_x = -fwd[2] * 10.0f;
+        want_z = fwd[0] * 10.0f;
+        NEAR_F (p->x, want_x, 1e-3);
+        NEAR_F (p->z, want_z, 1e-3);
+        g_clear_pointer (&p, grl_vector3_free);
+    }
+    (void)up;
+}
+
+static void
 test_camera_orbit (void)
 {
     g_autoptr(LrgPhotoCameraController) c = lrg_photo_camera_controller_new ();
@@ -1713,6 +1749,7 @@ main (int    argc,
     g_test_add_func ("/photo/screenshot/metadata-failures", test_screenshot_metadata_none_and_failures);
     g_test_add_func ("/photo/camera/roll", test_camera_roll_sets_up_vector);
     g_test_add_func ("/photo/camera/from-camera", test_camera_from_camera_keeps_direction);
+    g_test_add_func ("/photo/camera/strafe-right", test_camera_strafe_right_is_right);
     g_test_add_func ("/photo/camera/orbit", test_camera_orbit);
     g_test_add_func ("/photo/camera/max-distance", test_camera_max_distance);
     g_test_add_func ("/photo/camera/collision", test_camera_collision);
