@@ -65,6 +65,7 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-billboard-batch.h \
 	src/graphics/lrg-terrain.h \
 	src/graphics/lrg-sky-dome.h \
+	src/graphics/lrg-sky-bodies.h \
 	src/graphics/lrg-light-set.h \
 	src/graphics/lrg-texture-sampling.h \
 	src/ecs/lrg-component.h \
@@ -402,6 +403,11 @@ PUBLIC_HEADERS := \
 	src/weather/lrg-weather.h \
 	src/weather/lrg-day-night-cycle.h \
 	src/weather/lrg-weather-manager.h \
+	src/weather/lrg-celestial.h \
+	src/weather/lrg-cloud-layer.h \
+	src/weather/lrg-snow-cover.h \
+	src/weather/lrg-weather-field.h \
+	src/weather/lrg-ground-overlay.h \
 	src/lighting/lrg-shadow-caster.h \
 	src/lighting/lrg-light2d.h \
 	src/lighting/lrg-point-light2d.h \
@@ -622,6 +628,7 @@ SOURCES := \
 	src/graphics/lrg-billboard-batch.c \
 	src/graphics/lrg-terrain.c \
 	src/graphics/lrg-sky-dome.c \
+	src/graphics/lrg-sky-bodies.c \
 	src/graphics/lrg-light-set.c \
 	src/graphics/lrg-texture-sampling.c \
 	src/ecs/lrg-component.c \
@@ -963,6 +970,11 @@ SOURCES := \
 	src/weather/lrg-weather.c \
 	src/weather/lrg-day-night-cycle.c \
 	src/weather/lrg-weather-manager.c \
+	src/weather/lrg-celestial.c \
+	src/weather/lrg-cloud-layer.c \
+	src/weather/lrg-snow-cover.c \
+	src/weather/lrg-weather-field.c \
+	src/weather/lrg-ground-overlay.c \
 	src/lighting/lrg-shadow-caster.c \
 	src/lighting/lrg-light2d.c \
 	src/lighting/lrg-point-light2d.c \

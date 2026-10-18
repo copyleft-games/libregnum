@@ -18,6 +18,12 @@ The weather system coordinates multiple effects for atmospheric immersion:
 - *LrgWeather* - Weather state definition combining effects
 - *LrgDayNightCycle* - Time-of-day system with color transitions
 - *LrgWeatherManager* - Coordinates weather states, crossfades, wind, the render passes and the scene fog
+- *LrgCelestial* - Pure sky maths: moon phases from a calendar day, the lit part of a moon disc, orbit directions, a deterministic star field, thunder delay over distance
+- *LrgCloudLayer* - A drifting cloud deck drawn as stacked slices of noise, with CPU-sampled cloud shadows and a baked shadow light map
+- *LrgSnowCover* - Lying snow that builds with snowfall, melts with warmth and takes footprint tracks
+- *LrgWeatherField* - A simulated weather map: moisture and storms carried by the wind, relaxing to each cell's climate, with seeded fronts
+- *LrgGroundOverlay* - A blended second terrain pass: lying snow and its tracks, and the cloud shadows
+- [[file:../graphics/sky-bodies.org][LrgSkyBodies]] (graphics) - Sun disc, phased moons and stars drawn over the sky dome
 
 ** Spaces and render passes
 :PROPERTIES:
@@ -323,6 +329,76 @@ g_signal_connect (day_night, "period-changed",
                   G_CALLBACK (on_time_period), NULL);
 #+end_src
 
+** Sky maths (LrgCelestial)
+:PROPERTIES:
+:CUSTOM_ID: celestial
+:END:
+=src/weather/lrg-celestial.h= holds pure functions, the same everywhere (an integer hash, no global random):
+
+| Function | Result |
+|----------+--------|
+| =lrg_celestial_moon_phase (day, period, offset)= | =frac ((day + offset) / period)= in [0, 1): 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter; negative days wrap upwards; 0 for invalid periods |
+| =lrg_celestial_moon_illumination (phase)= | lit fraction =(1 - cos 2 pi p) / 2= |
+| =lrg_celestial_moon_is_waxing (phase)= | phase in (0, 0.5) |
+| =lrg_celestial_moon_disc_span (phase, v, &l, &r)= | the lit span of row =v= of a unit disc lit from the right while waxing: between the limb =sqrt (1 - v^2)= and the terminator ellipse =sqrt (1 - v^2) cos 2 pi p= (mirrored while waning) |
+| =lrg_celestial_orbit_direction (angle, tilt, out)= | =(cos a, sin a cos t, sin a sin t)=: rising east at 0, top of the arc at pi/2; the sun of hour h is at =(h - 6) / 24 x 2 pi= |
+| =lrg_celestial_moon_orbit_angle (sun_angle, phase)= | a moon trails the sun by =2 pi phase= (full moons rise at sunset) |
+| =lrg_celestial_night_factor (sun_height)= | star visibility: 0 above 3 degrees of sun height, 1 below -9, smoothstep between |
+| =lrg_celestial_generate_stars (seed, count, dirs, bright)= | unit directions uniform on the sphere and brightness 0.15 .. 1 (cubed: few bright stars) |
+| =lrg_celestial_rotate_sky (dir, angle, tilt, out)= | turns a star about the orbit normal =(0, -sin t, cos t)=, the way the sun goes |
+| =lrg_celestial_thunder_delay (distance)= | =distance / LRG_SPEED_OF_SOUND= (343 m/s); 0 for negative or non-finite distances |
+
+** Distance-delayed thunder
+:PROPERTIES:
+:CUSTOM_ID: thunder-from-distance
+:END:
+=lrg_lightning_set_thunder_from_distance (TRUE)= (property =thunder-from-distance=, default off, so existing games keep the fixed =thunder-delay=) makes every strike queue its thunder for =lrg_celestial_thunder_delay (distance)= seconds.  Random strikes then land between half and one and a half times the bolt distance away, so delays vary from strike to strike.  Up to 8 thunders are in the air at once and a new strike never cancels an earlier one (with a full queue the soonest is dropped).  =lrg_lightning_strike_at (distance, bearing)= forces a strike now at a chosen place (a storm on the horizon), even while flashing.  In a =thunder= handler =lrg_lightning_get_thunder_distance()= gives the distance of the strike being heard (scale the volume by it); =get_strike_distance()= is the latest strike's, =get_pending_thunder_count()= the thunders not heard yet.
+
+** Cloud layer
+:PROPERTIES:
+:CUSTOM_ID: cloud-layer
+:END:
+=LrgCloudLayer= (=src/weather/lrg-cloud-layer.h=) is a cloud deck at an altitude (default 1200 m, 300 m thick) whose density is four-octave value noise on a 256-periodic integer lattice (one cell =scale= metres, default 1800), thresholded by the coverage over a softness of 0.35.  The CPU (=sample_density()=, =sample_shadow()=, =bake_shadow_image()=) and the GLSL (=LRG_CLOUD_NOISE_GLSL= in =lrg-cloud-layer-private.h=) compute the same noise: the hash is integer, and the shaders get the noise coordinate of the eye or of draw-space 0 folded into [0, 256) by the CPU in double precision, so floating origins far from 0 keep float precision.
+
+- *Wind*: =set_wind (vx, vz)= in metres per second, =advance (seconds)= moves the pattern (the offset is folded by one noise period, so it never loses precision); a time-lapse simply passes more seconds.  =get_offset()= / =set_offset()= save and restore it.
+- *Drawing*: =draw (eye, sky_radius, towards_sun)= after the sky dome and before the world, depth off.  The deck is =slices= (default 3) horizontal grids of 24 x 24 quads over a 12 km radius around the eye, scaled about the eye into 0.8 x the sky radius (directions are kept, the far plane never clips it).  The fragment shader thins the coverage towards the top of the deck (rounded tops), shades by the density a little towards the sun (thick clouds are dark underneath, thin edges bright), dims at night and fades with distance.  Decks below the eye (mountain tops) are not drawn.  A shader that fails is warned about once.
+- *Shadows*: =sample_shadow (x, y, z, towards_sun)= follows the ray to the sun up to the cloud base and returns density x shadow strength (default 0.5), faded out as the sun drops below 15 degrees and nothing below 3.  =bake_shadow_image()= writes the same as a light map (white is sun) over a square of ground: a renderer with its own shadow pass can project it (multiply its sun term) instead of using the ground overlay.
+
+** Snow cover
+:PROPERTIES:
+:CUSTOM_ID: snow-cover
+:END:
+=LrgSnowCover= (=src/weather/lrg-snow-cover.h=) is a linear accumulation model: =update (seconds, snowfall, warmth)= adds =(snowfall x build - warmth x melt) x hours= to a level clamped to 0 .. 1 (defaults: full snowfall fills it in 6 hours, full warmth melts it in 12; =set_rates()=).  Long times integrate in one step, so resting is the same as many small updates.  Tracks: =stamp (x, z, radius, depth)= walks a footprint into lying snow (nothing on bare ground); a stamp within half a radius of the newest track deepens it instead of adding one; the newest =LRG_SNOW_COVER_MAX_TRACKS= (64) are kept.  Tracks fill at 4 x the build rate while it snows and fade with the melt; bare ground drops them all.  =get_depth_at (x, z)= is the level less the deepest track there (full inside half the radius, smooth to nothing at the rim).
+
+** Weather field
+:PROPERTIES:
+:CUSTOM_ID: weather-field
+:END:
+=LrgWeatherField= (=src/weather/lrg-weather-field.h=) is a grid of cells holding moisture (0 .. 1) and storminess (0 .. 1) over a game world.  Every fixed step (=set_step()=, default one game hour):
+
+1. both grids are advected by the wind (=set_wind()=, cells per hour) semi-Lagrangian: each cell takes the bilinear value from where its air was a step ago, clamped at the edges;
+2. moisture relaxes towards the cell's base (=set_base()=, the climate: dry deserts, wet swamps) by =1 - (1 - relax)^hours= (=set_relaxation()=, default 4% an hour); storms decay twice as fast;
+3. a front forms with probability =fronts_per_day x step / 86400= (=set_fronts()=, default one a day, radius 6 cells, strength 0.6): a Gaussian blob of moisture at a hashed place, a third of them stormy.  The decision, the place and the storminess hash =(seed, step number)=, not a random stream.
+
+=advance (seconds)= runs every whole step that fits into the carried time and keeps the rest, so the same seed and the same total time give the same field bit for bit however the time was split.  =get_moisture (x, y)= / =get_storm (x, y)= sample bilinearly between cell centres; =set_cell()= forces a cell.  =save_state()= is an =a{sv}= (size, seed, step count, carry, wind, both grids as =ad=); =restore_state()= validates everything (size, ranges) before applying anything and fails with =G_IO_ERROR_INVALID_DATA=.  Bases are not saved: a game sets them from its climate.
+
+** Ground overlay
+:PROPERTIES:
+:CUSTOM_ID: ground-overlay
+:END:
+=LrgGroundOverlay= (=src/weather/lrg-ground-overlay.h=) draws lying snow and cloud shadows as a second, alpha-blended pass over terrain that is already drawn, so it works over any terrain shader (lit or not):
+
+#+begin_src C
+lrg_terrain_draw_chunk (terrain, cx, cz);           /* the lit terrain */
+if (lrg_ground_overlay_begin (overlay, terrain))   /* shader, blend, no depth writes */
+{
+    lrg_terrain_draw_chunk (terrain, cx, cz);       /* the same chunks again */
+    lrg_ground_overlay_end (overlay, terrain);
+}
+#+end_src
+
+The shader whitens flat ground (normal y from 0.55 to 0.85) by the snow level (patchy below full cover), less the newest 64 tracks, which also darken slightly as dents; and darkens ground under the clouds along the sun.  The two compose as one blend: =a = 1 - (1 - snow)(1 - shadow)=, =rgb = snow_colour x snow (1 - shadow) / a=.  =begin()= returns =FALSE= (draw nothing, do not call =end()=) with no snow and no visible shadow, without a window, or when the shader failed (warned once).  =end()= leaves the terrain without a shader.
+
 ** Key Classes
 :PROPERTIES:
 :CUSTOM_ID: key-classes
@@ -337,6 +413,10 @@ g_signal_connect (day_night, "period-changed",
 | =LrgWeather=        | Weather state                    |
 | =LrgDayNightCycle=  | Time-of-day                      |
 | =LrgWeatherManager= | Weather coordinator              |
+| =LrgCloudLayer=     | Cloud deck and cloud shadows     |
+| =LrgSnowCover=      | Lying snow and tracks            |
+| =LrgWeatherField=   | Weather map with fronts          |
+| =LrgGroundOverlay=  | Snow and cloud shadows on terrain |
 
 ** Files
 :PROPERTIES:
@@ -353,5 +433,13 @@ g_signal_connect (day_night, "period-changed",
 | =src/weather/lrg-day-night-cycle.h= | Day/night cycle   |
 | =src/weather/lrg-weather-manager.h= | Manager           |
 | =src/weather/lrg-weather-effect-private.h= | Internal: volume wrap, rlgl ribbons and sprites |
+| =src/weather/lrg-celestial.h=       | Moon phases, orbits, stars, thunder delay |
+| =src/weather/lrg-cloud-layer.h=     | Cloud deck and shadows |
+| =src/weather/lrg-cloud-layer-private.h= | Internal: the cloud noise in C and GLSL |
+| =src/weather/lrg-snow-cover.h=      | Snow cover and tracks |
+| =src/weather/lrg-weather-field.h=   | Weather field |
+| =src/weather/lrg-ground-overlay.h=  | Terrain overlay pass |
+| =src/graphics/lrg-sky-bodies.h=     | Sun disc, moons, stars |
 | =src/graphics/lrg-light-set.h=      | Fog for the lighting shader (=set_fog()=) |
-| =tests/test-weather-render.c=       | Renderer, fog and manager tests |
+| =tests/test-weather-render.c=       | Renderer, fog and manager tests; cloud, moon and overlay readbacks |
+| =tests/test-sky-weather.c=          | Celestial maths, thunder delay, field, snow, clouds, sway, sky bodies |
