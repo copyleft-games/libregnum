@@ -1,0 +1,62 @@
+* LrgColorLut - 3D Colour Lookup Tables
+:PROPERTIES:
+:CUSTOM_ID: lrgcolorlut---3d-colour-lookup-tables
+:END:
+An immutable, reference-counted boxed table of N x N x N output colours over the unit cube of input colours, sampled trilinearly. It reads and writes the =.cube= format, bakes a grade into a table, blends two tables, and is applied on the GPU by [[file:effects.org][LrgColorGrade]] (=lrg_color_grade_set_lut()=). Headless.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_color_lut_new_identity (size)= | a table that changes nothing (sizes 2 .. 64) |
+| =lrg_color_lut_new_from_data (size, rgb, title)= | from N^3 x 3 floats, red fastest |
+| =lrg_color_lut_new_from_cube (text, length, error)= | parse =.cube= text |
+| =lrg_color_lut_new_from_file (path, error)= | read a =.cube= file |
+| =lrg_color_lut_new_mix (a, b, t)= | the entrywise blend at =a='s size |
+| =lrg_color_lut_new_resampled (lut, size)= | sampled at another grid |
+| =ref()=, =unref()=, =get_size()=, =get_title()=, =get_entry()= | bookkeeping |
+| =sample (rgb, out)= | trilinear lookup, the CPU reference of the shader |
+| =apply_rgb (rgb, strength, out)= | the lookup mixed in by a strength |
+| =is_identity (tolerance)= | every entry at its grid point |
+| =to_cube()= | write =.cube= text that reads back |
+| =to_strip (&w, &h)= | RGBA8 pixels for the GPU |
+| =lrg_color_grade_set_lut (grade, lut, strength)=, =get_lut()=, =bake_lut (grade, size)= | the grade's side |
+
+Errors are in =LRG_COLOR_LUT_ERROR=: =PARSE= (a line that is neither a keyword nor three numbers, a keyword with the wrong number of values), =SIZE= (no size, a size out of range, the wrong number of entries), =DOMAIN= (a maximum not above its minimum), =IO= (the file cannot be read).
+
+** The .cube format
+:PROPERTIES:
+:CUSTOM_ID: the-cube-format
+:END:
+- =LUT_3D_SIZE N= (2 .. 64): N^3 lines of three numbers follow, red index fastest, then green, then blue.
+- =LUT_1D_SIZE N= (2 .. 65536): N lines, one curve per channel; it becomes a 33-sided 3D table.
+- =DOMAIN_MIN r g b=, =DOMAIN_MAX r g b= or =LUT_3D_INPUT_RANGE min max=: the input domain; anything but 0 .. 1 is resampled into 0 .. 1 at load, so every table answers for inputs 0 .. 1.
+- =TITLE "..."= is kept; =#= comments, blank lines and other keywords (=LUT_IN_VIDEO_RANGE=, ...) are skipped; CRLF line ends are fine.
+
+** On the GPU
+:PROPERTIES:
+:CUSTOM_ID: on-the-gpu
+:END:
+=to_strip()= lays the table out as an N^2 x N image: blue slices side by side, red across each slice, green down the rows. =LrgColorGrade= uploads it (linear filtering, clamped) when the table changes, binds it to texture unit 1 while it draws and looks the graded, clamped colour up with two bilinear taps in neighbouring blue slices mixed by the blue fraction, the same trilinear result as =sample()= up to the strip's 8-bit precision. The table comes after the grade's own steps and before its intensity; =lrg_color_grade_apply_rgb()= does the same on the CPU, and a grade with a table of strength above 0 is never the identity.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgColorLut) dusk = lrg_color_lut_new_from_file ("dusk.cube", &error);
+g_autoptr(LrgColorLut) night = lrg_color_lut_new_from_file ("night.cube", &error);
+g_autoptr(LrgColorLut) now = lrg_color_lut_new_mix (dusk, night, 0.3f);
+
+lrg_color_grade_set_lut (grade, now, 1.0f);
+lrg_color_grade_draw_texture (grade, scene_texture, &src, &dst);
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-postprocess.c= =/postprocess/color-lut/*= (parsing, round trip, identity, mix, resample, the strip layout, 1D tables, domains, every error) and =/postprocess/color-grade/lut= (the table after the grade, baking, identity); =tests/test-light-set.c= =/light-set/color-grade-lut-shader= draws through a red/blue swapping table on the GPU and checks the pixel against the CPU reference.

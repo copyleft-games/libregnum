@@ -104,6 +104,7 @@ TEST_SOURCES := \
 	test-terrain.c \
 	test-sky-dome.c \
 	test-light-set.c \
+	test-shadow-renderer.c \
 	test-audio.c \
 	test-audio-positional.c \
 	test-midi-synth.c \

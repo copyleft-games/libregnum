@@ -12,6 +12,7 @@ Post-processing effects are applied after the scene is rendered, modifying the f
 
 - *LrgPostEffect* - Base class for all effects (derivable)
 - *LrgPostProcessor* - Manages the effect chain and render targets
+- *LrgColorLut* - 3D colour lookup tables (=.cube= files) that [[file:effects.org][LrgColorGrade]] applies after its grade; see [[file:color-lut.org][color-lut.org]]
 
 ** Quick Start
 :PROPERTIES:

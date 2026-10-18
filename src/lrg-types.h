@@ -444,6 +444,8 @@ typedef struct _LrgModelAnimState LrgModelAnimState;
 
 /* LrgStaticBatch is a final type - no Class forward declaration needed */
 typedef struct _LrgStaticBatch    LrgStaticBatch;
+/* LrgShadowRenderer is a final type (lighting/, used by LrgLightSet) */
+typedef struct _LrgShadowRenderer LrgShadowRenderer;
 
 /* ==========================================================================
  * Shapes Module

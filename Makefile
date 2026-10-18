@@ -335,6 +335,7 @@ PUBLIC_HEADERS := \
 	src/postprocess/effects/lrg-screen-shake.h \
 	src/postprocess/effects/lrg-colorblind-filter.h \
 	src/postprocess/effects/lrg-color-grade.h \
+	src/postprocess/lrg-color-lut.h \
 	src/postprocess/effects/lrg-fxaa.h \
 	src/animation/lrg-bone-pose.h \
 	src/animation/lrg-bone.h \
@@ -407,6 +408,7 @@ PUBLIC_HEADERS := \
 	src/lighting/lrg-spot-light2d.h \
 	src/lighting/lrg-directional-light2d.h \
 	src/lighting/lrg-shadow-map.h \
+	src/lighting/lrg-shadow-renderer.h \
 	src/lighting/lrg-lightmap.h \
 	src/lighting/lrg-light-probe.h \
 	src/lighting/lrg-lighting-manager.h \
@@ -893,6 +895,7 @@ SOURCES := \
 	src/postprocess/effects/lrg-screen-shake.c \
 	src/postprocess/effects/lrg-colorblind-filter.c \
 	src/postprocess/effects/lrg-color-grade.c \
+	src/postprocess/lrg-color-lut.c \
 	src/postprocess/effects/lrg-fxaa.c \
 	src/animation/lrg-bone-pose.c \
 	src/animation/lrg-bone.c \
@@ -966,6 +969,7 @@ SOURCES := \
 	src/lighting/lrg-spot-light2d.c \
 	src/lighting/lrg-directional-light2d.c \
 	src/lighting/lrg-shadow-map.c \
+	src/lighting/lrg-shadow-renderer.c \
 	src/lighting/lrg-lightmap.c \
 	src/lighting/lrg-light-probe.c \
 	src/lighting/lrg-lighting-manager.c \
