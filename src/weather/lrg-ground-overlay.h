@@ -75,6 +75,26 @@ void                lrg_ground_overlay_set_sun_direction (LrgGroundOverlay *self
                                                           const gfloat     *towards_sun);
 
 /**
+ * lrg_ground_overlay_set_origin:
+ * @self: an #LrgGroundOverlay
+ * @x: world X of the draw space's origin
+ * @y: world Y
+ * @z: world Z
+ *
+ * Where the draw space's origin lies in the world (what
+ * lrg_terrain_set_origin() was given), for the overlay applied by an
+ * #LrgLightSet's lit shader (lrg_light_set_set_ground_overlay()): the
+ * clouds and the tracks are placed by it.  The blended passes take the
+ * terrain's origin or the one handed to
+ * lrg_ground_overlay_begin_objects() instead.  Zero at first.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_ground_overlay_set_origin       (LrgGroundOverlay *self,
+                                                         gdouble           x,
+                                                         gdouble           y,
+                                                         gdouble           z);
+
+/**
  * lrg_ground_overlay_set_snow_color:
  * @self: an #LrgGroundOverlay
  * @color: the colour of lying snow (lit by the scene's light level
@@ -124,6 +144,44 @@ gboolean            lrg_ground_overlay_begin            (LrgGroundOverlay *self,
 LRG_AVAILABLE_IN_ALL
 void                lrg_ground_overlay_end              (LrgGroundOverlay *self,
                                                          LrgTerrain       *terrain);
+
+/**
+ * lrg_ground_overlay_begin_objects:
+ * @self: an #LrgGroundOverlay
+ * @origin: (array fixed-size=3): the world position of the draw space's
+ *   origin, as lrg_terrain_get_origin() gives it for terrain drawn in the
+ *   same space
+ *
+ * The overlay over things that are not terrain: buildings, models,
+ * props, drawn a second time with the returned shader (for instance
+ * lrg_static_batch_set_shader()) after the first, lit draw.  Sets the
+ * uniforms (the clouds and the tracks placed by @origin), alpha
+ * blending and depth writes off; the depth test stays less-or-equal.
+ * Surfaces whose normal faces up take the snow, every surface the cloud
+ * shadows.  Draw under whatever rlgl matrix the first draw used (a scene
+ * translated to its place, a rotated object): raylib puts rlgl's stack
+ * into the shader's model matrix, so the clouds and the snow find the
+ * surface where it really is.  Finish with
+ * lrg_ground_overlay_end_objects().
+ *
+ * Returns: (transfer none) (nullable): the overlay shader, owned by
+ *   @self; %NULL when there is nothing to draw, no graphics context, or
+ *   the shader failed (warned once); then do not draw and do not call
+ *   end
+ */
+LRG_AVAILABLE_IN_ALL
+GrlShader *         lrg_ground_overlay_begin_objects    (LrgGroundOverlay *self,
+                                                         const gdouble    *origin);
+
+/**
+ * lrg_ground_overlay_end_objects:
+ * @self: an #LrgGroundOverlay
+ *
+ * Ends lrg_ground_overlay_begin_objects(): flushes and restores raylib's
+ * depth writes.  Take the shader off what you set it on first.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_ground_overlay_end_objects      (LrgGroundOverlay *self);
 
 /**
  * lrg_ground_overlay_release_gpu:

@@ -40,6 +40,7 @@
 #include "graphics/lrg-light-set-private.h"
 #include "lighting/lrg-shadow-renderer.h"
 #include "lighting/lrg-shadow-renderer-private.h"
+#include "weather/lrg-ground-overlay-private.h"
 
 typedef struct
 {
@@ -113,6 +114,10 @@ struct _LrgLightSet
     guint       air_steps;
     gfloat      air_distance;
     gfloat      air_tint[3];
+
+    /* M14 (U14.10): snow and cloud shadows applied in the lit shader */
+    LrgGroundOverlay          *overlay;
+    LrgGroundOverlayLocations  overlay_locs;
 
     GrlShader  *shader;
     gboolean    shader_tried;
@@ -208,6 +213,7 @@ static const gchar light_fs[] =
     LRG_FOG_GLSL
     LRG_SHADOW_GLSL
     LRG_LIGHT_AIR_GLSL
+    LRG_GROUND_OVERLAY_GLSL
     "out vec4 finalColor;\n"
     "vec3 point_light(vec3 n, vec3 p, float r, vec3 c, int slot) {\n"
     "    vec3 d = p - fragPosition;\n"
@@ -256,6 +262,7 @@ static const gchar light_fs[] =
     "        light = min(light, vec3(knee)) + (lightLimit - knee) * (1.0 - exp(-over / (lightLimit - knee)));\n"
     "    }\n"
     "    vec3 lit = texel.rgb * light + texture(emissionMap, fragTexCoord).rgb * emissionColor;\n"
+    "    if (ovOn != 0) lit = lrg_overlay_apply(fragPosition, n, lit);\n"
     "    if (airParams.x > 0.0) {\n"
     "        vec3 ins;\n"
     "        float tr = lrg_air(fragPosition, ins);\n"
@@ -275,6 +282,7 @@ lrg_light_set_finalize (GObject *object)
 
     g_clear_object (&self->shader);
     g_clear_object (&self->shadows);
+    g_clear_object (&self->overlay);
     g_clear_pointer (&self->lights, g_array_unref);
     g_clear_pointer (&self->grid_ids, g_free);
     g_clear_pointer (&self->grid_keys, g_free);
@@ -1067,6 +1075,7 @@ lrg_light_set_get_shader (LrgLightSet *self)
     self->loc_air_light_color = GetShaderLocation (*handle, "airLightColor");
     lrg_light_set_fog_locations (*handle, &self->fog_locs);
     lrg_shadow_locations (*handle, &self->shadow_locs);
+    lrg_ground_overlay_locations (*handle, &self->overlay_locs);
 
     /* The emission map is raylib's MATERIAL_MAP_EMISSION: DrawMesh()
      * binds a material's map to that unit and sets the sampler through
@@ -1345,6 +1354,9 @@ lrg_light_set_apply (LrgLightSet *self,
     lrg_shadow_renderer_upload (shadows_ready ? self->shadows : NULL, *handle,
                                 &self->shadow_locs);
     upload_air (self, handle);
+    /* snow and cloud shadows: placed by the overlay's own origin of the
+     * draw space (lrg_ground_overlay_set_origin()) */
+    lrg_ground_overlay_upload (self->overlay, *handle, &self->overlay_locs, NULL);
     if (self->grid_cells > 0 && self->grid_built)
     {
         upload_grid (self, handle);
@@ -1908,6 +1920,28 @@ lrg_light_set_pick_shadow_lights (LrgLightSet                *self,
 }
 
 /* ------------------------------------------------------------------------ */
+/* M14 (U14.10): the ground overlay in the lit shader                        */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_light_set_set_ground_overlay (LrgLightSet      *self,
+                                  LrgGroundOverlay *overlay)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (overlay == NULL || LRG_IS_GROUND_OVERLAY (overlay));
+
+    g_set_object (&self->overlay, overlay);
+}
+
+LrgGroundOverlay *
+lrg_light_set_get_ground_overlay (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), NULL);
+
+    return self->overlay;
+}
+
+/* ------------------------------------------------------------------------ */
 /* M14: volumetric air                                                      */
 /* ------------------------------------------------------------------------ */
 
@@ -1923,7 +1957,7 @@ lrg_light_set_set_air (LrgLightSet    *self,
     g_return_if_fail (LRG_IS_LIGHT_SET (self));
     g_return_if_fail (density > 0.0f && isfinite (density));
     g_return_if_fail (intensity >= 0.0f && isfinite (intensity));
-    g_return_if_fail (steps >= 1 && steps <= LRG_LIGHT_SET_AIR_MAX_STEPS);
+    g_return_if_fail (steps <= LRG_LIGHT_SET_AIR_MAX_STEPS);
     g_return_if_fail (max_distance > 0.0f && isfinite (max_distance));
 
     self->air_on = TRUE;
@@ -2008,7 +2042,8 @@ lrg_light_set_sample_air (LrgLightSet      *self,
     for (k = 0; k < 3; k++)
         dir[k] = ray[k] / len;
     dist = MIN (len, self->air_distance);
-    dt = dist / (gfloat)self->air_steps;
+    /* no steps: the closed form, one source at the middle of the ray */
+    dt = dist / (gfloat)MAX (self->air_steps, 1u);
     if (self->has_directional)
         sun_phase = lrg_light_set_air_phase (self->air_g,
                                              -(self->directional_dir[0] * dir[0]
@@ -2018,7 +2053,7 @@ lrg_light_set_sample_air (LrgLightSet      *self,
         n_points = lrg_shadow_renderer_get_point_count (self->shadows);
 
     /* the shader's march, steps at their middles, every point lit */
-    for (i = 0; i < self->air_steps; i++)
+    for (i = 0; i < MAX (self->air_steps, 1u); i++)
     {
         gfloat t = ((gfloat)i + 0.5f) * dt;
         gfloat x[3];
@@ -2054,7 +2089,8 @@ lrg_light_set_sample_air (LrgLightSet      *self,
             for (k = 0; k < 3; k++)
                 s[k] += pl->color[k] * pl->intensity * a * a * ph;
         }
-        w = expf (-self->air_density * t) * self->air_density * dt;
+        w = self->air_steps == 0 ? 1.0f - expf (-self->air_density * dist)
+                                 : expf (-self->air_density * t) * self->air_density * dt;
         for (k = 0; k < 3; k++)
             out_rgb[k] += s[k] * w;
     }

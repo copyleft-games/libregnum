@@ -1445,6 +1445,167 @@ test_draw_ground_overlay (void)
     g_assert_cmpuint (n_white, >, 64 * 64 / 2);
 }
 
+/* the object pass: the floor drawn under an rlgl matrix of its own */
+typedef struct
+{
+    LrgTerrain       *terrain;
+    LrgGroundOverlay *overlay;
+    const gfloat     *matrix;
+} ObjectScene;
+
+static void
+draw_object_ground (gpointer data)
+{
+    ObjectScene *scene = data;
+    gdouble      origin[3] = { -20.0, 0.0, -20.0 };
+    GrlShader   *shader;
+
+    rlPushMatrix ();
+    if (scene->matrix != NULL)
+        rlMultMatrixf (scene->matrix);
+    lrg_terrain_draw (scene->terrain);
+    shader = lrg_ground_overlay_begin_objects (scene->overlay, origin);
+    if (shader != NULL)
+    {
+        lrg_terrain_set_shader (scene->terrain, shader);
+        lrg_terrain_draw (scene->terrain);
+        lrg_terrain_set_shader (scene->terrain, NULL);
+        lrg_ground_overlay_end_objects (scene->overlay);
+    }
+    rlPopMatrix ();
+}
+
+static void
+test_draw_ground_overlay_objects (void)
+{
+    g_autoptr(LrgTerrain) terrain = lrg_terrain_new (4, 40.0f);
+    g_autoptr(LrgGroundOverlay) overlay = lrg_ground_overlay_new ();
+    g_autoptr(LrgSnowCover) snow = lrg_snow_cover_new ();
+    g_autoptr(GError) error = NULL;
+    GrlColor     grey = { 90, 90, 90, 255 };
+    /* a quarter turn about Z: the floor at y = -2 becomes a wall at x = 2,
+     * whose normal (what faced up) now faces -X */
+    const gfloat turned[16] = { 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    ObjectScene  scene;
+    gfloat       heights[25];
+    Image        upright;
+    Image        wall;
+    guint        i;
+    guint        n_upright;
+    guint        n_wall;
+
+    SKIP_WITHOUT_GRAPHICS ();
+
+    for (i = 0; i < 25; i++)
+        heights[i] = -2.0f;
+    g_assert_true (lrg_terrain_set_chunk (terrain, -1, -1, heights, 25, NULL, NULL, &error));
+    g_assert_no_error (error);
+    lrg_terrain_set_origin (terrain, -20.0, 0.0, -20.0);
+    lrg_terrain_set_tint (terrain, &grey);
+    g_assert_true (lrg_terrain_upload (terrain, &error));
+    lrg_ground_overlay_set_snow_cover (overlay, snow);
+    lrg_snow_cover_set_level (snow, 1.0);
+    scene.terrain = terrain;
+    scene.overlay = overlay;
+
+    /* the floor, no matrix: the surface faces up and is whitened */
+    scene.matrix = NULL;
+    upright = render_sky_view ((Vector3){ 0, -1, 0 }, draw_object_ground, &scene);
+    /* turned into a wall seen face on: raylib puts the matrix stack into
+     * the shader's model matrix, so its normal leaves "up" and nothing whitens */
+    scene.matrix = turned;
+    wall = render_sky_view ((Vector3){ 1, 0, 0 }, draw_object_ground, &scene);
+    n_upright = count_bright (upright, 180);
+    n_wall = count_bright (wall, 180);
+    UnloadImage (upright);
+    UnloadImage (wall);
+    lrg_ground_overlay_release_gpu (overlay);
+    lrg_terrain_unload (terrain);
+
+    g_assert_cmpuint (n_upright, >, 64 * 64 / 2);
+    g_assert_cmpuint (n_wall, ==, 0);
+
+    /* nothing to draw: no snow level, no shadows */
+    lrg_snow_cover_set_level (snow, 0.0);
+    {
+        gdouble origin[3] = { 0.0, 0.0, 0.0 };
+
+        g_assert_null (lrg_ground_overlay_begin_objects (overlay, origin));
+    }
+}
+
+/* the overlay in the lit shader: the same floor, no second pass */
+static void
+test_draw_light_set_overlay (void)
+{
+    g_autoptr(LrgLightSet)       lights = NULL;
+    g_autoptr(LrgStaticBatch)    batch = NULL;
+    g_autoptr(LrgGroundOverlay)  overlay = NULL;
+    g_autoptr(LrgSnowCover)      snow = NULL;
+    g_autoptr(LrgCloudLayer)     clouds = NULL;
+    GrlShader *shader;
+    GrlColor   grey = { 128, 128, 128, 255 };
+    gfloat     up[3] = { 0.0f, 1.0f, 0.0f };
+    Color      bare;
+    Color      white;
+    Color      dark;
+
+    SKIP_WITHOUT_GRAPHICS ();
+
+    lights = lrg_light_set_new ();
+    shader = lrg_light_set_get_shader (lights);
+    if (shader == NULL)
+    {
+        g_test_skip ("GLSL 330 unavailable");
+        return;
+    }
+    batch = floor_batch ();
+    lrg_static_batch_set_shader (batch, shader);
+    lrg_light_set_set_ambient (lights, &grey);
+    overlay = lrg_ground_overlay_new ();
+    snow = lrg_snow_cover_new ();
+    clouds = lrg_cloud_layer_new (4);
+
+    /* no overlay: the floor is the ambient grey */
+    g_assert_null (lrg_light_set_get_ground_overlay (lights));
+    lrg_light_set_apply (lights, 0, 10, 0);
+    bare = render_floor (batch);
+    g_assert_cmpuint (bare.g, >, 110);
+    g_assert_cmpuint (bare.g, <, 150);
+
+    /* an overlay with nothing to show costs nothing and changes nothing */
+    lrg_light_set_set_ground_overlay (lights, overlay);
+    g_assert_true (lrg_light_set_get_ground_overlay (lights) == overlay);
+    lrg_light_set_apply (lights, 0, 10, 0);
+    white = render_floor (batch);
+    g_assert_cmpuint (white.g, ==, bare.g);
+
+    /* snow lying: the floor faces up and takes it, in the one pass */
+    lrg_ground_overlay_set_snow_cover (overlay, snow);
+    lrg_snow_cover_set_level (snow, 1.0);
+    lrg_light_set_apply (lights, 0, 10, 0);
+    white = render_floor (batch);
+    g_assert_cmpuint (white.g, >, 215);
+
+    /* a thin cover is patchy: less white than a full one */
+    lrg_snow_cover_set_level (snow, 0.0);
+
+    /* the clouds' shadow darkens the floor under a full overcast */
+    lrg_ground_overlay_set_cloud_layer (overlay, clouds);
+    lrg_cloud_layer_set_coverage (clouds, 1.0f);
+    lrg_ground_overlay_set_sun_direction (overlay, up);
+    lrg_light_set_apply (lights, 0, 10, 0);
+    dark = render_floor (batch);
+    g_assert_cmpuint (dark.g, <, bare.g * 85 / 100);
+
+    /* detached: the floor is as bare as before */
+    lrg_light_set_set_ground_overlay (lights, NULL);
+    lrg_light_set_apply (lights, 0, 10, 0);
+    white = render_floor (batch);
+    g_assert_cmpuint (white.g, ==, bare.g);
+    lrg_static_batch_set_shader (batch, NULL);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1479,6 +1640,8 @@ main (int   argc,
     g_test_add_func ("/weather-render/draw/clouds", test_draw_clouds);
     g_test_add_func ("/weather-render/draw/moon-phase", test_draw_moon_phase);
     g_test_add_func ("/weather-render/draw/ground-overlay", test_draw_ground_overlay);
+    g_test_add_func ("/weather-render/draw/ground-overlay-objects", test_draw_ground_overlay_objects);
+    g_test_add_func ("/weather-render/draw/light-set-overlay", test_draw_light_set_overlay);
 
     result = g_test_run ();
 

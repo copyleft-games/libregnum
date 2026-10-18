@@ -255,7 +255,10 @@ lrg_light_set_upload_sample (LrgLightSet                      *self,
  * (density, g, intensity, steps), airTint = (rgb, march distance);
  * airLightColor[k] is the colour of the light in shadow slot k.  Each
  * step's offset is jittered per pixel; lrg_light_set_sample_air() is the
- * same sum with the steps at their middles and no shadows.
+ * same sum with the steps at their middles and no shadows.  With 0 steps
+ * there is no march: the closed form of a thin haze lit everywhere (the
+ * air's source at the middle of the ray, no shadow lookups), a few
+ * arithmetic operations a fragment.
  */
 #define LRG_LIGHT_AIR_GLSL \
     "uniform vec4 airParams;\n" \
@@ -274,10 +277,26 @@ lrg_light_set_upload_sample (LrgLightSet                      *self,
     "    vec3 dir = ray / len;\n" \
     "    float L = min(len, airTint.w);\n" \
     "    int steps = int(airParams.w + 0.5);\n" \
-    "    float dt = L / float(steps);\n" \
-    "    float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));\n" \
     "    float sunPhase = lrg_air_phase(airParams.y, dot(sunDirection, -dir));\n" \
     "    bool sunOn = dot(sunColor, sunColor) > 0.0;\n" \
+    "    if (steps <= 0) {\n" \
+    "        vec3 s = ambientColor * 0.0795775;\n" \
+    "        if (sunOn) s += sunColor * sunPhase;\n" \
+    "        vec3 x = airCamera + dir * (0.5 * L);\n" \
+    "        for (int k = 0; k < 8; k++) {\n" \
+    "            if (k >= pointShadowCount) break;\n" \
+    "            vec4 l = pointShadowLight[k];\n" \
+    "            vec3 v = x - l.xyz;\n" \
+    "            float d = length(v);\n" \
+    "            if (d >= l.w || d < 1e-4) continue;\n" \
+    "            float a = 1.0 - d / l.w;\n" \
+    "            s += airLightColor[k] * (a * a) * lrg_air_phase(airParams.y, dot(v / d, -dir));\n" \
+    "        }\n" \
+    "        ins = s * (1.0 - exp(-airParams.x * L)) * airParams.z * airTint.rgb;\n" \
+    "        return exp(-airParams.x * L);\n" \
+    "    }\n" \
+    "    float dt = L / float(steps);\n" \
+    "    float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));\n" \
     "    for (int i = 0; i < 32; i++) {\n" \
     "        if (i >= steps) break;\n" \
     "        float t = (float(i) + jitter) * dt;\n" \

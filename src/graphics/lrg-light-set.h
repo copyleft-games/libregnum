@@ -30,6 +30,7 @@
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
+#include "../weather/lrg-ground-overlay.h"
 
 G_BEGIN_DECLS
 
@@ -833,7 +834,9 @@ lrg_light_set_get_cluster_light (LrgLightSet *self,
  * @anisotropy: Henyey-Greenstein g, -0.95 .. 0.95 (> 0: brightest
  *   looking toward the light)
  * @intensity: multiplier of the scattered light (>= 0)
- * @steps: march steps per fragment, 1 .. %LRG_LIGHT_SET_AIR_MAX_STEPS
+ * @steps: march steps per fragment, 0 .. %LRG_LIGHT_SET_AIR_MAX_STEPS; 0 is
+ *   the closed form of a haze lit everywhere: no march and no shadow
+ *   lookups (no shafts), for thin air where they would not show
  * @max_distance: how far along the view ray the air is marched (> 0)
  * @tint: (nullable): colour of the air (alpha ignored), %NULL for white
  *
@@ -918,5 +921,37 @@ lrg_light_set_sample_air (LrgLightSet      *self,
                           const GrlVector3 *from,
                           const GrlVector3 *to,
                           gfloat           *out_rgb);
+
+/**
+ * lrg_light_set_set_ground_overlay:
+ * @self: an #LrgLightSet
+ * @overlay: (nullable) (transfer none): the overlay whose snow and cloud
+ *   shadows the lit shader applies, %NULL for none (the default)
+ *
+ * Lets the lit shader lay the overlay's snow (on surfaces that face up:
+ * terrain, roofs, ledges) and the clouds' shadows over everything it
+ * draws, in the same pass, so terrain, buildings, models and props get
+ * them without being drawn a second time through
+ * lrg_ground_overlay_begin() / lrg_ground_overlay_begin_objects().  The
+ * clouds and the tracks are placed by the overlay's own origin
+ * (lrg_ground_overlay_set_origin()), the draw space's origin in the world.
+ * The overlay's own settings (snow level, clouds, sun, colour) are read
+ * at every bind (lrg_light_set_bind()); an overlay with nothing to show
+ * costs one uniform.  The light set keeps a reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_ground_overlay (LrgLightSet      *self,
+                                  LrgGroundOverlay *overlay);
+
+/**
+ * lrg_light_set_get_ground_overlay:
+ * @self: an #LrgLightSet
+ *
+ * Returns: (transfer none) (nullable): the overlay the lit shader applies
+ */
+LRG_AVAILABLE_IN_ALL
+LrgGroundOverlay *
+lrg_light_set_get_ground_overlay (LrgLightSet *self);
 
 G_END_DECLS

@@ -190,6 +190,7 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-midi-output.h \
 	src/audio/lrg-midi-output-alsa.h \
 	src/audio/lrg-midi-sequencer.h \
+	src/audio/lrg-foley.h \
 	src/inventory/lrg-item-def.h \
 	src/inventory/lrg-item-stack.h \
 	src/inventory/lrg-inventory.h \
@@ -772,6 +773,7 @@ SOURCES := \
 	src/audio/lrg-midi-output.c \
 	src/audio/lrg-midi-output-alsa.c \
 	src/audio/lrg-midi-sequencer.c \
+	src/audio/lrg-foley.c \
 	src/inventory/lrg-item-def.c \
 	src/inventory/lrg-item-stack.c \
 	src/inventory/lrg-inventory.c \

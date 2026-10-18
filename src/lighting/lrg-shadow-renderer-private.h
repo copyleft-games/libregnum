@@ -59,9 +59,9 @@ G_BEGIN_DECLS
     "        float z = s.z - shadowParams.z * shadowCascadeInfo[i].y;\n" \
     "        float lit = 0.0;\n" \
     "        float taps = 0.0;\n" \
-    "        for (int y = -2; y <= 2; y++) {\n" \
-    "            for (int x = -2; x <= 2; x++) {\n" \
-    "                if (abs(x) > filt || abs(y) > filt) continue;\n" \
+    "        int r = clamp(filt, 0, 2);\n" \
+    "        for (int y = -r; y <= r; y++) {\n" \
+    "            for (int x = -r; x <= r; x++) {\n" \
     "                float d = texture(sunShadowMap, uv + vec2(float(x), float(y)) * shadowParams.xy).r;\n" \
     "                lit += z <= d ? 1.0 : 0.0;\n" \
     "                taps += 1.0;\n" \
@@ -97,9 +97,9 @@ G_BEGIN_DECLS
     "    float z = (length(d) - shadowParams.z) / l.w;\n" \
     "    float lit = 0.0;\n" \
     "    float taps = 0.0;\n" \
-    "    for (int y = -2; y <= 2; y++) {\n" \
-    "        for (int x = -2; x <= 2; x++) {\n" \
-    "            if (abs(x) > filt || abs(y) > filt) continue;\n" \
+    "    int r = clamp(filt, 0, 2);\n" \
+    "    for (int y = -r; y <= r; y++) {\n" \
+    "        for (int x = -r; x <= r; x++) {\n" \
     "            vec2 px = clamp(st * res + vec2(float(x), float(y)), vec2(0.5), vec2(res - 0.5));\n" \
     "            vec2 uv = (tile + px) / pointShadowParams.yz;\n" \
     "            float stored = texture(pointShadowMap, uv).r;\n" \

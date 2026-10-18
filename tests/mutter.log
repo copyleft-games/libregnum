@@ -1,0 +1,41 @@
+libmutter-Message: 16:54:58.775: Running Mutter (using mutter 50.6) as a Wayland display server
+libmutter-Message: 16:54:58.979: Added device '/dev/dri/renderD128' (i915) using no mode setting.
+libmutter-Message: 16:54:58.983: Created gbm renderer for '/dev/dri/renderD128'
+libmutter-Message: 16:54:58.983: Boot VGA GPU /dev/dri/renderD128 selected as primary
+** Message: 16:54:58.990: Obtained a high priority EGL context
+dbus-daemon[2258623]: [session uid=1000 pid=2258623 pidfd=5] Activating service name='org.gtk.vfs.Daemon' requested by ':1.0' (uid=1000 pid=2258624 comm="mutter --headless --wayland --no-x11 --virtual-mon" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[2258623]: [session uid=1000 pid=2258623 pidfd=5] Successfully activated service 'org.gtk.vfs.Daemon'
+libmutter-Message: 16:54:59.106: Added virtual monitor Meta-0
+libmutter-Message: 16:54:59.120: Using Wayland display name 'librefall-window-2258615'
+fusermount3: failed to access mountpoint /run/user/1000/gvfs: Permission denied
+dbus-daemon[2258623]: [session uid=1000 pid=2258623 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.2' (uid=1000 pid=2258676 comm="./build/release/tests/test-light-set" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[2258623]: [session uid=1000 pid=2258623 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.3' (uid=1000 pid=2258684 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[2258623]: [session uid=1000 pid=2258623 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[2258623]: [session uid=1000 pid=2258623 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=2258684 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[2258623]: [session uid=1000 pid=2258623 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+
+(/usr/libexec/xdg-desktop-portal:2258684): xdg-desktop-portal-WARNING **: 16:54:59.471: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback
+dbus-daemon[2258623]: [session uid=1000 pid=2258623 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=2258684 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[2258623]: [session uid=1000 pid=2258623 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+
+(/usr/libexec/xdg-desktop-portal:2258684): xdg-desktop-portal-WARNING **: 16:54:59.739: Choosing gtk.portal for org.freedesktop.impl.portal.Settings as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2258684): xdg-desktop-portal-WARNING **: 16:54:59.741: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2258684): xdg-desktop-portal-WARNING **: 16:54:59.743: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2258684): xdg-desktop-portal-WARNING **: 16:54:59.745: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2258684): xdg-desktop-portal-WARNING **: 16:54:59.750: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2258684): xdg-desktop-portal-WARNING **: 16:54:59.755: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2258684): xdg-desktop-portal-WARNING **: 16:54:59.763: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2258684): xdg-desktop-portal-WARNING **: 16:54:59.766: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:2258684): xdg-desktop-portal-WARNING **: 16:54:59.770: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback
+dbus-daemon[2258623]: [session uid=1000 pid=2258623 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+Gdk-Message: 16:55:00.471: Error reading events from display: Broken pipe
+libmutter-Message: 16:55:00.526: Removed virtual monitor Meta-0
+A connection to the bus can't be made

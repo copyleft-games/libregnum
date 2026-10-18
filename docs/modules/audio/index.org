@@ -18,6 +18,7 @@ The Audio module consists of these core classes:
 - *LrgAudioEffect*, *LrgReverb*, *LrgLowPass*, *LrgAudioEffectChain* - DSP effects and chains, on buffers or on the device mix ([[file:effects.org][effects.org]])
 - *LrgSoundBed* - Layered ambient loops and scattered one-shots with fades ([[file:sound-bed.org][sound-bed.org]])
 - *LrgMidiOutput*, *LrgMidiOutputBuffer*, *LrgMidiOutputAlsa*, *LrgMidiSequencer* - MIDI out to external synthesizers ([[file:midi-output.org][midi-output.org]])
+- *LrgFoley* - Synthesized footsteps, armour clinks and a looping rain as WAV images ([[file:foley.org][foley.org]])
 
 ** Key Features
 :PROPERTIES:

@@ -903,6 +903,18 @@ test_light_set_air (void)
     }
     g_assert_cmpfloat (rgb_toward[0], >, rgb_away[0] * 4.0f);
 
+    /* no steps: the closed form is the limit of the march in a lit haze */
+    lrg_light_set_set_air (lights, 0.02f, 0.5f, 1.0f, 32, 100.0f, NULL);
+    lrg_light_set_sample_air (lights, &from, &near_pt, rgb_near);
+    lrg_light_set_set_air (lights, 0.02f, 0.5f, 1.0f, 0, 100.0f, NULL);
+    g_assert_true (lrg_light_set_get_air (lights, &density, &g, &steps));
+    g_assert_cmpuint (steps, ==, 0);
+    t = lrg_light_set_sample_air (lights, &from, &near_pt, rgb_far);
+    g_assert_cmpfloat_with_epsilon (t, expf (-0.2f), 1e-5);
+    g_assert_cmpfloat_with_epsilon (rgb_far[0], rgb_near[0], rgb_near[0] * 0.02f);
+    lrg_light_set_sample_air (lights, &from, &(GrlVector3){ 0, 0, 10 }, rgb_away);
+    g_assert_cmpfloat (rgb_away[0], <, rgb_toward[0]);
+
     /* a tint colours it; clearing turns it off */
     lrg_light_set_set_air (lights, 0.02f, 0.5f, 1.0f, 16, 100.0f, &(GrlColor){ 255, 0, 0, 255 });
     lrg_light_set_sample_air (lights, &from, &near_pt, rgb_near);

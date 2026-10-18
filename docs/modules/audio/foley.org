@@ -1,0 +1,40 @@
+#+title: Synthesized foley
+#+description: LrgFoley: footsteps, armour clinks and a looping rain made by code as WAV images
+#+authors: Zach Podbielniak
+#+categories: libregnum audio
+#+created: 2026-10-18T15:00:00-04:00
+#+updated: 2026-10-18T15:00:00-04:00
+#+version: 0.1.0
+
+* LrgFoley
+:PROPERTIES:
+:CUSTOM_ID: lrgfoley
+:END:
+
+=lrg_foley_synthesize()= (=src/audio/lrg-foley.h=) makes a short sound clip from nothing but arithmetic, so a game has footsteps, armour clinks and rain without shipping a recording.  The result is a complete WAV file in memory (16-bit signed mono PCM at the asked rate, default 44100 Hz) that a game can hand to raylib's =LoadWaveFromMemory= (through graylib) or write to disk; a game that has recorded clips plays those instead.
+
+#+begin_src C
+g_autoptr(GBytes) wav = lrg_foley_synthesize (LRG_FOLEY_FOOTSTEP_STONE, variant, 0, &error);
+#+end_src
+
+** Kinds
+| Kind | Length | Made of |
+|------+--------+---------|
+| =FOOTSTEP_DIRT= | 0.24 s | a low thud falling in pitch, a muffled wash of noise, a soft grain |
+| =FOOTSTEP_STONE= | 0.22 s | a hard click, a short body (150 .. 230 Hz) and a ringing pair of partials near 1.1 .. 1.7 kHz |
+| =FOOTSTEP_WOOD= | 0.24 s | a hollow knock: a body (120 .. 170 Hz) with partials at 2.3x and 3.9x |
+| =FOOTSTEP_GRASS= | 0.26 s | a brush of band-limited noise (twice) over a soft thud |
+| =FOOTSTEP_GRAVEL= | 0.32 s | 7 .. 10 tiny high grains scattered over the first 0.18 s |
+| =FOOTSTEP_MUD= | 0.36 s | a slow body falling in pitch, a dark wash and a rising squelch |
+| =FOOTSTEP_SNOW= | 0.30 s | 9 .. 14 very high, quiet grains |
+| =FOOTSTEP_WATER= | 0.42 s | a bright splash wash and 3 .. 5 rising bubble chirps |
+| =ARMOR_CLINK= | 0.60 s | a tick and four inharmonic partials of a struck plate (ratios 1, 2.76, 5.4, 8.93) |
+| =RAIN_LOOP= | 4.0 s | high-passed noise with a drifting level and droplet ticks; the last quarter second is mixed onto the first so the loop has no seam |
+
+The /variant/ seeds the noise (and so the pitches, grains and gaps): the same kind and variant always give the same bytes, another variant a different take, which is how a game rolls several steps for a surface.  Clips fade in and out over 4 ms (the loop does not) and are peak-normalized to about 0.8.
+
+** Errors
+An unknown kind or a rate outside 8000 .. 96000 returns =NULL= with =G_IO_ERROR_INVALID_ARGUMENT=.
+
+** Tests
+=tests/test-foley.c=: the WAV header of every kind, the lengths and the peak; determinism and variants; the decaying envelopes and quiet ends; the loop's steady level and its seam; other sample rates and the errors; snow against stone in zero crossings.
