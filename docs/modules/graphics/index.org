@@ -30,7 +30,9 @@ The Graphics module provides:
 - *[[file:renderer.org][LrgRenderer]]* - Render management and layer system
 - *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
 - *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
+- *[[file:skinned-mesh.org][LrgSkinnedMesh]]* - Skinned meshes posed by a bone matrix palette: GPU skinning with a CPU reference and fallback
 - *[[file:dds-image.org][LrgDdsImage]]* - Read DirectDraw Surface files and decode DXT1/3/5 and uncompressed levels to RGBA8 on the CPU
+- *[[file:sky-bodies.org][LrgSkyBodies]]* - Sun disc, moons with phases and a turning star field drawn over the sky dome
 - *[[file:texture-sampling.org][Texture sampling]]* - Point, mipmapped point, bilinear and trilinear sampling (=lrg_texture_set_sampling()=)
 
 ** Architecture
@@ -489,6 +491,9 @@ lrg_camera3d_set_position_xyz (camera, x, y, z);
 lrg_camera3d_set_target_xyz (camera, x, y, z);
 lrg_camera3d_set_fovy (camera, degrees);
 lrg_camera3d_set_projection (camera, LRG_PROJECTION_PERSPECTIVE);
+/* the projection's width over height when it is not the target's own
+   (a 320 x 200 view stretched to 4:3); 0 = the target's */
+lrg_camera3d_set_aspect (camera, 4.0f / 3.0f);
 
 /* Isometric Camera */
 lrg_camera_isometric_set_tile_width (camera, width);
@@ -726,6 +731,7 @@ Helpers for games that render many glTF characters and props with raylib:
 - *[[file:billboard-batch.org][LrgBillboardBatch]]* - camera-facing textured quads (axis-locked or spherical), batched per material with an alpha-cutout shader; headless corner math for picking; per-quad CPU lighting from an LrgLightSet (own or bound), emissive quads
 - *[[file:terrain.org][LrgTerrain]]* - chunked heightfield terrain for streamed worlds: per-cell materials with 8 UV orientations, bilinear height queries, cross-chunk normals, floating origin, headless inspectable meshes
 - *[[file:sky-dome.org][LrgSkyDome]]* - camera-centred sky: zenith/horizon/ground gradient, textured horizon band (one panorama or two halves), sun disc and halo, time-of-day keyframes and sun arc; headless geometry
+- *[[file:world-look.org][World look]]* - =LrgTerrainDetail= landform noise, =LrgWaterSurface= Gerstner water with screen-space reflection, refraction and foam, =LrgGrassField= instanced grass, =LrgTreeMesh= procedural low-poly trees, =LrgHorizonRing= distant-terrain ring; headless geometry and math
 - *[[file:light-set.org][LrgLightSet]]* - forward lighting for LrgStaticBatch/LrgTerrain: ambient, one directional and up to 16 nearest point lights per frame (headless selection), GLSL 330 shader with optional alpha cutout and floating origin; CPU sampling of the same model and a process-wide bound set for billboards
 - *[[file:model-animator.org][LrgModelAnimator]]* - One shared skinned model for many actors: clip lookup (exact, alias, suffix), per-actor LrgModelAnimState with loop/clamp and crossfades, deduplicated posing and masked drawing
 - *[[file:../core/asset-manager.org::#models-and-animations][Model cache]]* - =lrg_asset_manager_load_model()= / =lrg_asset_manager_load_model_animations()=

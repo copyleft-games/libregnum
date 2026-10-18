@@ -52,6 +52,7 @@ See [[file:modules/core/timer-manager.org][timer API, examples, delivery rules, 
 - [[file:modules/pathfinding/nav-mesh.org][Navigation meshes]]: atomic walkable-triangle baking with slope filtering and
   shared-edge adjacency, nearest-surface projection, polygon blocking, and
   ordered-frontier A* returning a surface-contained waypoint corridor.
+- [[file:modules/pathfinding/nav-poly-mesh.org][Voxel-baked navigation meshes]]: =LrgNavPolyMesh= rasterises raw level triangles into a heightfield, erodes by the agent radius, builds rectangular polygons with portals, drop and off-mesh links and tagged areas; funnel paths, raycasts, random points, OBJ and binary cache.
 - [[file:modules/atlas/packing.org][Atlas algorithms]]: MaxRects and Guillotine implementations, candidate-bin
   search, rotation for all methods, padding/overflow safety, correct power-of-two
   limits, stale-result invalidation, and reproducible packing comparisons.

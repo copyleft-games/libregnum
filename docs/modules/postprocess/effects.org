@@ -187,6 +187,12 @@ The grade is a GLSL 330 fragment shader for raylib's default vertex shader; =lrg
 
 The shader is compiled on first use (=lrg_color_grade_get_shader()=, %NULL without a window or when GLSL 330 does not compile; drawing then falls back to the plain texture and =lrg_color_grade_draw_texture()= returns =FALSE=).  As an =LrgPostEffect=, =apply= draws the source texture over the bound target through the shader.  A game without a post processor draws its 3D pass into a =GrlRenderTexture= and calls =lrg_color_grade_draw_texture()= with a negative source height (render textures are stored bottom up).
 
+*** Lookup tables
+:PROPERTIES:
+:CUSTOM_ID: color-grade-lookup-tables
+:END:
+=lrg_color_grade_set_lut (grade, lut, strength)= adds a 3D lookup table ([[file:color-lut.org][LrgColorLut]]) after the grade's steps: the shader looks the graded, clamped colour up in the table (uploaded as a strip texture on unit 1 when it changes) and mixes it in by =strength=, before the effect's intensity; =lrg_color_grade_apply_rgb()= does the same on the CPU. A grade with a table is never the identity. =lrg_color_grade_bake_lut (grade, size)= samples the whole grade into a new table, e.g. to blend two grades or save one as a =.cube= file.
+
 *** Example
 :PROPERTIES:
 :CUSTOM_ID: example-2
@@ -404,3 +410,29 @@ lrg_screen_shake_add_trauma (shake, 0.8f);
 /* On small hit */
 lrg_screen_shake_add_trauma (shake, 0.2f);
 #+end_src
+
+--------------
+
+** LrgHeatHaze
+:PROPERTIES:
+:CUSTOM_ID: lrgheathaze
+:END:
+A shimmering distortion in a band about the horizon, for hot air over sand and stone (=postprocess/effects/lrg-heat-haze.h=, final, derives from =LrgPostEffect=).
+
+#+begin_src C
+G_DECLARE_FINAL_TYPE (LrgHeatHaze, lrg_heat_haze, LRG, HEAT_HAZE, LrgPostEffect)
+
+LrgHeatHaze *lrg_heat_haze_new (void);
+void     lrg_heat_haze_set_strength (LrgHeatHaze *self, gfloat strength);   /* 0 .. 0.05 of the screen */
+gfloat   lrg_heat_haze_get_strength (LrgHeatHaze *self);
+void     lrg_heat_haze_set_shape (LrgHeatHaze *self, gfloat scale, gfloat speed,
+                                  gfloat horizon, gfloat band);
+void     lrg_heat_haze_set_time (LrgHeatHaze *self, gfloat time);
+void     lrg_heat_haze_get_offset (LrgHeatHaze *self, gfloat u, gfloat v,
+                                   gfloat *out_du, gfloat *out_dv);
+gboolean lrg_heat_haze_is_identity (LrgHeatHaze *self);
+gboolean lrg_heat_haze_draw_texture (LrgHeatHaze *self, GrlTexture *texture,
+                                     const GrlRectangle *source, const GrlRectangle *dest);
+#+end_src
+
+Each pixel samples its source shifted by two crossed sine ripples (rising with time) times a band weight exp(-d^2 k), d = (v - horizon) / band, with k = 2.5 above the horizon line (thin air) and 0.6 below (the hot ground); the vertical shift is half the horizontal.  The shader reads the screen height from =gl_FragCoord=, so the band does not depend on how the source is flipped; =get_offset()= is the same arithmetic on the CPU, scaled by the effect's intensity.  In a post processor =apply()= also advances the time by the frame's delta; =draw_texture()= draws one texture through the haze (plainly without a shader), as =LrgColorGrade='s does.  Defaults: strength 0.004, scale 9, speed 2.2, horizon 0.55, band 0.18.

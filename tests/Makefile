@@ -62,6 +62,7 @@ TEST_SOURCES := \
 	test-timer-manager.c \
 	test-audio-mixer.c \
 	test-nav-mesh.c \
+	test-nav-poly-mesh.c \
 	test-atlas-packing.c \
 	test-registry.c \
 	test-data-loader.c \
@@ -99,13 +100,18 @@ TEST_SOURCES := \
 	test-gltf-geometry.c \
 	test-model-animator.c \
 	test-static-batch.c \
+	test-skinned-mesh.c \
 	test-billboard-batch.c \
 	test-terrain.c \
 	test-sky-dome.c \
+	test-world-look.c \
 	test-light-set.c \
+	test-shadow-renderer.c \
 	test-audio.c \
 	test-audio-positional.c \
 	test-midi-synth.c \
+	test-audio-effects.c \
+	test-midi-output.c \
 	test-inventory.c \
 	test-i18n.c \
 	test-pathfinding.c \
@@ -138,6 +144,7 @@ TEST_SOURCES := \
 	test-particles.c \
 	test-particle-billboard-renderer.c \
 	test-postprocess.c \
+	test-accessibility-filters.c \
 	test-animation.c \
 	test-text.c \
 	test-font-manager.c \
@@ -150,6 +157,7 @@ TEST_SOURCES := \
 	test-tutorial.c \
 	test-weather.c \
 	test-weather-render.c \
+	test-sky-weather.c \
 	test-lighting.c \
 	test-wave-data.c \
 	test-procedural-audio.c \

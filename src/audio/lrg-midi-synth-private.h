@@ -124,4 +124,21 @@ G_GNUC_INTERNAL GArray *
 lrg_midi_synth_events_load (const guint8 *data,
                             gsize         size);
 
+/*
+ * lrg_midi_synth_parse_song:
+ * Validates a Standard MIDI File and returns its channel events
+ * (#LrgMidiSynthEvent, by time, owned by the caller), its length and its
+ * loop range ("loopStart" / "loopEnd" markers, else the whole song), all
+ * in milliseconds.  A malformed file fails with
+ * %LRG_MIDI_SYNTH_ERROR_INVALID and returns nothing.  Shared by
+ * #LrgMidiSynth and #LrgMidiSequencer.
+ */
+G_GNUC_INTERNAL gboolean
+lrg_midi_synth_parse_song (GBytes         *smf,
+                           GArray        **out_events,
+                           gdouble        *out_length_ms,
+                           gdouble        *out_loop_start_ms,
+                           gdouble        *out_loop_end_ms,
+                           GError        **error);
+
 G_END_DECLS

@@ -19,6 +19,7 @@
 #include "config.h"
 
 #include <math.h>
+#include <string.h>
 #include <raylib.h>
 #include <rlgl.h>
 
@@ -28,9 +29,13 @@
 #include "lrg-lightning.h"
 #include "lrg-weather-effect-private.h"
 #include "../lrg-log.h"
+#include "lrg-celestial.h"
 
 /* Bolt polyline points: 2^5 segments. */
 #define BOLT_POINTS (33)
+
+/* Thunders still travelling to the listener. */
+#define MAX_PENDING_THUNDER (8)
 
 struct _LrgLightning
 {
@@ -69,6 +74,14 @@ struct _LrgLightning
     guint    flashes_remaining;
     gboolean flashing;
     gfloat   thunder_countdown;
+
+    /* Distance-delayed thunder */
+    gboolean thunder_from_distance;
+    gfloat   strike_distance;
+    gfloat   thunder_distance;
+    guint    n_pending;
+    gfloat   pending_delay[MAX_PENDING_THUNDER];
+    gfloat   pending_distance[MAX_PENDING_THUNDER];
 };
 
 G_DEFINE_FINAL_TYPE (LrgLightning, lrg_lightning, LRG_TYPE_WEATHER_EFFECT)
@@ -84,6 +97,7 @@ enum
     PROP_THUNDER_ENABLED,
     PROP_THUNDER_DELAY,
     PROP_BOLTS_ENABLED,
+    PROP_THUNDER_FROM_DISTANCE,
     N_PROPS
 };
 
@@ -117,10 +131,11 @@ random_interval (LrgLightning *self)
  * midpoint displacement halving the jitter each level, then anchored
  * around the effect's camera (world) and at a random screen column. */
 static void
-generate_bolt (LrgLightning *self)
+generate_bolt (LrgLightning *self,
+               gfloat        distance,
+               gfloat        bearing)
 {
     GrlVector3 cam;
-    gfloat     bearing;
     guint      step;
     guint      i;
 
@@ -144,39 +159,85 @@ generate_bolt (LrgLightning *self)
     /* World: bolt_distance away on a random bearing, its top
      * bolt_height above the camera; sideways is across the view. */
     lrg_weather_effect_get_camera_position (LRG_WEATHER_EFFECT (self), &cam);
-    bearing = rand_unit (self) * 2.0f * (gfloat)G_PI;
     self->bolt_depth[0] = cosf (bearing);
     self->bolt_depth[1] = 0.0f;
     self->bolt_depth[2] = sinf (bearing);
     self->bolt_side[0] = -self->bolt_depth[2];
     self->bolt_side[1] = 0.0f;
     self->bolt_side[2] = self->bolt_depth[0];
-    self->bolt_top[0] = cam.x + self->bolt_depth[0] * self->bolt_distance;
+    self->bolt_top[0] = cam.x + self->bolt_depth[0] * distance;
     self->bolt_top[1] = cam.y + self->bolt_height;
-    self->bolt_top[2] = cam.z + self->bolt_depth[2] * self->bolt_distance;
+    self->bolt_top[2] = cam.z + self->bolt_depth[2] * distance;
+    self->strike_distance = distance;
 
     self->bolt_screen_x = 0.15f + rand_unit (self) * 0.7f;
     self->has_bolt = TRUE;
 }
 
-/* start_strike:
- * Begins a strike of @flashes sub-flashes (signal, thunder countdown,
- * bolt). */
+/* queue_thunder:
+ * A thunder that reaches the listener after @delay seconds; with a
+ * full queue the soonest one is dropped (it would be drowned anyway). */
 static void
-start_strike (LrgLightning *self,
-              guint         flashes,
-              gfloat        thunder_delay)
+queue_thunder (LrgLightning *self,
+               gfloat        delay,
+               gfloat        distance)
+{
+    if (self->n_pending == MAX_PENDING_THUNDER)
+    {
+        memmove (&self->pending_delay[0], &self->pending_delay[1],
+                 sizeof (gfloat) * (MAX_PENDING_THUNDER - 1));
+        memmove (&self->pending_distance[0], &self->pending_distance[1],
+                 sizeof (gfloat) * (MAX_PENDING_THUNDER - 1));
+        self->n_pending--;
+    }
+    self->pending_delay[self->n_pending] = delay;
+    self->pending_distance[self->n_pending] = distance;
+    self->n_pending++;
+}
+
+/* start_strike_at:
+ * Begins a strike of @flashes sub-flashes (signal, thunder countdown,
+ * bolt) at @distance on @bearing.  With thunder from distance the
+ * thunder is queued at distance / speed of sound, else it takes
+ * @thunder_delay. */
+static void
+start_strike_at (LrgLightning *self,
+                 guint         flashes,
+                 gfloat        thunder_delay,
+                 gfloat        distance,
+                 gfloat        bearing)
 {
     self->flash_total = MAX (flashes, 1u);
     self->flashes_remaining = self->flash_total;
     self->current_flash_time = self->flash_duration;
     self->flashing = TRUE;
-    generate_bolt (self);
+    generate_bolt (self, distance, bearing);
 
     g_signal_emit (self, signals[SIGNAL_FLASH_STARTED], 0);
 
-    if (self->thunder_enabled)
+    if (!self->thunder_enabled)
+        return;
+    if (self->thunder_from_distance)
+        queue_thunder (self, (gfloat)lrg_celestial_thunder_delay (distance), distance);
+    else
         self->thunder_countdown = thunder_delay;
+}
+
+/* start_strike:
+ * A strike on a random bearing; with thunder from distance the
+ * distance varies from half to one and a half times the bolt distance,
+ * so the thunder delays do too. */
+static void
+start_strike (LrgLightning *self,
+              guint         flashes,
+              gfloat        thunder_delay)
+{
+    gfloat bearing = rand_unit (self) * 2.0f * (gfloat)G_PI;
+    gfloat distance = self->bolt_distance;
+
+    if (self->thunder_from_distance)
+        distance *= 0.5f + rand_unit (self);
+    start_strike_at (self, flashes, thunder_delay, distance, bearing);
 }
 
 /* bolt_point:
@@ -224,6 +285,7 @@ lrg_lightning_activate (LrgWeatherEffect *effect)
     self->flash_total = 0;
     self->has_bolt = FALSE;
     self->thunder_countdown = -1.0f;
+    self->n_pending = 0;
     LRG_WEATHER_EFFECT_CLASS (lrg_lightning_parent_class)->activate (effect);
 }
 
@@ -249,9 +311,34 @@ lrg_lightning_update (LrgWeatherEffect *effect,
         self->thunder_countdown -= delta_time;
         if (self->thunder_countdown <= 0.0f)
         {
+            self->thunder_distance = self->strike_distance;
             g_signal_emit (self, signals[SIGNAL_THUNDER], 0);
             self->thunder_countdown = -1.0f;
         }
+    }
+
+    /* Thunders travelling at the speed of sound, in queue order */
+    {
+        guint i;
+        guint kept = 0;
+
+        for (i = 0; i < self->n_pending; i++)
+            self->pending_delay[i] -= delta_time;
+        for (i = 0; i < self->n_pending; i++)
+        {
+            if (self->pending_delay[i] <= 0.0f)
+            {
+                self->thunder_distance = self->pending_distance[i];
+                g_signal_emit (self, signals[SIGNAL_THUNDER], 0);
+            }
+            else
+            {
+                self->pending_delay[kept] = self->pending_delay[i];
+                self->pending_distance[kept] = self->pending_distance[i];
+                kept++;
+            }
+        }
+        self->n_pending = kept;
     }
 
     /* Handle ongoing flash */
@@ -419,6 +506,7 @@ lrg_lightning_get_property (GObject *object, guint prop_id, GValue *value, GPara
     case PROP_FLASH_INTENSITY: g_value_set_float (value, self->flash_intensity); break;
     case PROP_THUNDER_ENABLED: g_value_set_boolean (value, self->thunder_enabled); break;
     case PROP_THUNDER_DELAY: g_value_set_float (value, self->thunder_delay); break;
+    case PROP_THUNDER_FROM_DISTANCE: g_value_set_boolean (value, self->thunder_from_distance); break;
     case PROP_BOLTS_ENABLED: g_value_set_boolean (value, self->bolts_enabled); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -437,6 +525,7 @@ lrg_lightning_set_property (GObject *object, guint prop_id, const GValue *value,
     case PROP_FLASH_INTENSITY: self->flash_intensity = g_value_get_float (value); break;
     case PROP_THUNDER_ENABLED: self->thunder_enabled = g_value_get_boolean (value); break;
     case PROP_THUNDER_DELAY: self->thunder_delay = g_value_get_float (value); break;
+    case PROP_THUNDER_FROM_DISTANCE: self->thunder_from_distance = g_value_get_boolean (value); break;
     case PROP_BOLTS_ENABLED: self->bolts_enabled = g_value_get_boolean (value); break;
     default: G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -465,6 +554,7 @@ lrg_lightning_class_init (LrgLightningClass *klass)
     properties[PROP_FLASH_INTENSITY] = g_param_spec_float ("flash-intensity", "Flash Intensity", "Flash brightness", 0, 1, 0.8f, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
     properties[PROP_THUNDER_ENABLED] = g_param_spec_boolean ("thunder-enabled", "Thunder Enabled", "Enable thunder sound", TRUE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
     properties[PROP_THUNDER_DELAY] = g_param_spec_float ("thunder-delay", "Thunder Delay", "Delay before thunder sound", 0, 30, 1, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+    properties[PROP_THUNDER_FROM_DISTANCE] = g_param_spec_boolean ("thunder-from-distance", "Thunder From Distance", "Delay each thunder by its strike's distance over the speed of sound", FALSE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
     properties[PROP_BOLTS_ENABLED] = g_param_spec_boolean ("bolts-enabled", "Bolts Enabled", "Render lightning bolts", FALSE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
@@ -533,6 +623,56 @@ lrg_lightning_trigger_flash (LrgLightning *self)
 
     if (!self->flashing)
         start_strike (self, self->flash_count, self->thunder_delay);
+}
+
+void
+lrg_lightning_strike_at (LrgLightning *self,
+                         gfloat        distance,
+                         gfloat        bearing)
+{
+    g_return_if_fail (LRG_IS_LIGHTNING (self));
+
+    if (!isfinite (distance) || distance < 0.0f || !isfinite (bearing))
+        return;
+    start_strike_at (self, self->flash_count, self->thunder_delay, distance, bearing);
+}
+
+void
+lrg_lightning_set_thunder_from_distance (LrgLightning *self,
+                                         gboolean      enabled)
+{
+    g_return_if_fail (LRG_IS_LIGHTNING (self));
+
+    self->thunder_from_distance = enabled;
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_THUNDER_FROM_DISTANCE]);
+}
+
+gboolean
+lrg_lightning_get_thunder_from_distance (LrgLightning *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHTNING (self), FALSE);
+    return self->thunder_from_distance;
+}
+
+gfloat
+lrg_lightning_get_strike_distance (LrgLightning *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHTNING (self), 0.0f);
+    return self->strike_distance;
+}
+
+gfloat
+lrg_lightning_get_thunder_distance (LrgLightning *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHTNING (self), 0.0f);
+    return self->thunder_distance;
+}
+
+guint
+lrg_lightning_get_pending_thunder_count (LrgLightning *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHTNING (self), 0);
+    return self->n_pending;
 }
 
 gboolean lrg_lightning_is_flashing (LrgLightning *self) { g_return_val_if_fail (LRG_IS_LIGHTNING (self), FALSE); return self->flashing; }

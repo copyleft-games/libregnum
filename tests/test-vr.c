@@ -526,6 +526,235 @@ test_vr_error_enum (void)
 }
 
 /* ==========================================================================
+ * Simulated headset (lrg_vr_stub_new_simulated)
+ * ========================================================================== */
+
+static void
+test_stub_simulated_frame_loop (void)
+{
+    g_autoptr(LrgVRStub) stub = lrg_vr_stub_new_simulated ();
+    LrgVRService *service = LRG_VR_SERVICE (stub);
+    g_autoptr(GError) error = NULL;
+    gfloat head[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0.5f, 1.6f, -1.0f, 1 };
+    gfloat eye[16], proj[16];
+    guint fbo = 99, w = 0, h = 0;
+
+    g_assert_true (lrg_vr_stub_get_simulated (stub));
+    g_assert_true (lrg_vr_service_is_available (service));
+    g_assert_false (lrg_vr_service_begin_frame (service));
+    g_assert_true (lrg_vr_service_initialize (service, &error));
+    g_assert_no_error (error);
+    g_assert_true (lrg_vr_service_is_hmd_present (service));
+    g_assert_true (lrg_vr_service_is_session_running (service));
+
+    lrg_vr_stub_set_hmd_pose (stub, head);
+    lrg_vr_stub_set_render_size (stub, 800, 600);
+    g_assert_true (lrg_vr_service_begin_frame (service));
+    g_assert_cmpuint (lrg_vr_service_get_view_count (service), ==, 2);
+
+    /* the left eye: the head moved by -IPD/2 along its X axis */
+    g_assert_true (lrg_vr_service_begin_view (service, 0, 0.1f, 100.0f, eye, proj,
+                                              &fbo, &w, &h));
+    g_assert_cmpuint (fbo, ==, 0);
+    g_assert_cmpuint (w, ==, 800);
+    g_assert_cmpuint (h, ==, 600);
+    g_assert_cmpfloat_with_epsilon (eye[12], 0.5f - 0.032f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (eye[13], 1.6f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (eye[14], -1.0f, 1e-5);
+    /* 45 degrees each way: a symmetric projection with focal length 1 */
+    g_assert_cmpfloat_with_epsilon (proj[0], 1.0f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (proj[5], 1.0f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (proj[8], 0.0f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (proj[11], -1.0f, 1e-5);
+    lrg_vr_service_end_view (service, 0);
+
+    /* the right eye */
+    g_assert_true (lrg_vr_service_begin_view (service, 1, 0.1f, 100.0f, eye, proj,
+                                              &fbo, &w, &h));
+    g_assert_cmpfloat_with_epsilon (eye[12], 0.5f + 0.032f, 1e-5);
+    g_assert_false (lrg_vr_service_begin_view (service, 2, 0.1f, 100.0f, eye, proj,
+                                               &fbo, &w, &h));
+    lrg_vr_service_end_frame (service);
+    g_assert_cmpuint (lrg_vr_stub_get_frame_count (stub), ==, 1);
+    g_assert_cmpuint (lrg_vr_service_get_view_count (service), ==, 0);
+
+    /* an asymmetric field of view shifts the projection's centre */
+    lrg_vr_stub_set_fov (stub, -50.0f, 40.0f, 45.0f, -45.0f);
+    lrg_vr_service_get_eye_projection (service, LRG_VR_EYE_LEFT, 0.1f, 100.0f, proj);
+    g_assert_cmpfloat (proj[8], <, 0.0f);
+
+    /* the dashboard's quit ends the session */
+    lrg_vr_stub_request_quit (stub);
+    g_assert_true (lrg_vr_service_should_quit (service));
+    g_assert_false (lrg_vr_service_is_session_running (service));
+    g_assert_false (lrg_vr_service_begin_frame (service));
+}
+
+static void
+test_stub_simulated_controllers (void)
+{
+    g_autoptr(LrgVRStub) stub = lrg_vr_stub_new_simulated ();
+    LrgVRService *service = LRG_VR_SERVICE (stub);
+    gfloat pose[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0.2f, 1.2f, -0.4f, 1 };
+    gfloat out[16];
+
+    g_assert_false (lrg_vr_service_is_controller_tracked (service, LRG_VR_HAND_RIGHT));
+    lrg_vr_stub_set_controller (stub, LRG_VR_HAND_RIGHT, pose, TRUE);
+    g_assert_true (lrg_vr_service_is_controller_tracked (service, LRG_VR_HAND_RIGHT));
+    g_assert_false (lrg_vr_service_is_controller_tracked (service, LRG_VR_HAND_LEFT));
+    lrg_vr_service_get_controller_pose (service, LRG_VR_HAND_RIGHT, out);
+    g_assert_cmpfloat_with_epsilon (out[13], 1.2f, 1e-6);
+
+    lrg_vr_stub_set_controller_buttons (stub, LRG_VR_HAND_RIGHT, LRG_VR_CONTROLLER_BUTTON_TRIGGER);
+    g_assert_cmpuint (lrg_vr_service_get_controller_buttons (service, LRG_VR_HAND_RIGHT), ==,
+                      LRG_VR_CONTROLLER_BUTTON_TRIGGER);
+    lrg_vr_stub_set_controller_axis (stub, LRG_VR_HAND_LEFT, LRG_VR_AXIS_THUMBSTICK_Y, 0.75f);
+    g_assert_cmpfloat_with_epsilon (lrg_vr_service_get_controller_axis (service, LRG_VR_HAND_LEFT,
+                                                                        LRG_VR_AXIS_THUMBSTICK_Y),
+                                    0.75f, 1e-6);
+    g_assert_cmpfloat (lrg_vr_service_get_controller_axis (service, LRG_VR_HAND_LEFT, 9), ==, 0.0f);
+
+    lrg_vr_service_trigger_haptic (service, LRG_VR_HAND_LEFT, 0.1f, 0.5f);
+    lrg_vr_service_trigger_haptic (service, LRG_VR_HAND_LEFT, 0.1f, 0.5f);
+    g_assert_cmpuint (lrg_vr_stub_get_haptic_count (stub, LRG_VR_HAND_LEFT), ==, 2);
+    g_assert_cmpuint (lrg_vr_stub_get_haptic_count (stub, LRG_VR_HAND_RIGHT), ==, 0);
+}
+
+/* ==========================================================================
+ * LrgVRComfort
+ * ========================================================================== */
+
+static void
+test_comfort_snap_turn (void)
+{
+    g_autoptr(LrgVRComfortSettings) settings = lrg_vr_comfort_settings_new ();
+    g_autoptr(LrgVRComfort) comfort = NULL;
+
+    lrg_vr_comfort_settings_set_turn_mode (settings, LRG_VR_TURN_MODE_SNAP);
+    lrg_vr_comfort_settings_set_snap_turn_angle (settings, 30.0f);
+    comfort = lrg_vr_comfort_new (settings);
+    g_assert_true (lrg_vr_comfort_get_settings (comfort) == settings);
+
+    /* below the threshold nothing; past it one snap; held, no more */
+    g_assert_cmpfloat (lrg_vr_comfort_turn (comfort, 0.5f, 0.016f), ==, 0.0f);
+    g_assert_cmpfloat (lrg_vr_comfort_turn (comfort, 0.9f, 0.016f), ==, 30.0f);
+    g_assert_false (lrg_vr_comfort_get_snap_armed (comfort));
+    g_assert_cmpfloat (lrg_vr_comfort_turn (comfort, 1.0f, 0.016f), ==, 0.0f);
+    /* half way back is not enough to re-arm (hysteresis) */
+    g_assert_cmpfloat (lrg_vr_comfort_turn (comfort, 0.5f, 0.016f), ==, 0.0f);
+    g_assert_cmpfloat (lrg_vr_comfort_turn (comfort, 0.9f, 0.016f), ==, 0.0f);
+    /* centred: armed again, and the left turns left */
+    g_assert_cmpfloat (lrg_vr_comfort_turn (comfort, 0.1f, 0.016f), ==, 0.0f);
+    g_assert_true (lrg_vr_comfort_get_snap_armed (comfort));
+    g_assert_cmpfloat (lrg_vr_comfort_turn (comfort, -0.8f, 0.016f), ==, -30.0f);
+}
+
+static void
+test_comfort_smooth_turn (void)
+{
+    g_autoptr(LrgVRComfort) comfort = lrg_vr_comfort_new (NULL);
+    LrgVRComfortSettings *settings = lrg_vr_comfort_get_settings (comfort);
+
+    lrg_vr_comfort_settings_set_smooth_turn_speed (settings, 100.0f);
+    g_assert_cmpfloat (lrg_vr_comfort_settings_get_smooth_turn_speed (settings), ==, 100.0f);
+    lrg_vr_comfort_settings_set_smooth_turn_speed (settings, 9000.0f);
+    g_assert_cmpfloat (lrg_vr_comfort_settings_get_smooth_turn_speed (settings), ==, 360.0f);
+    lrg_vr_comfort_settings_set_smooth_turn_speed (settings, 100.0f);
+
+    /* inside the dead zone nothing, full stick the whole speed */
+    g_assert_cmpfloat (lrg_vr_comfort_turn (comfort, 0.1f, 1.0f), ==, 0.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_vr_comfort_turn (comfort, 1.0f, 0.5f), 50.0f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (lrg_vr_comfort_turn (comfort, -1.0f, 0.5f), -50.0f, 1e-4);
+    /* half way past the dead zone: half the speed */
+    g_assert_cmpfloat_with_epsilon (lrg_vr_comfort_turn (comfort, 0.575f, 1.0f), 50.0f, 1e-3);
+}
+
+static void
+test_comfort_vignette (void)
+{
+    g_autoptr(LrgVRComfort) comfort = lrg_vr_comfort_new (NULL);
+    LrgVRComfortSettings *settings = lrg_vr_comfort_get_settings (comfort);
+    gfloat v;
+    gint i;
+
+    /* off: never closes */
+    g_assert_cmpfloat (lrg_vr_comfort_update_vignette (comfort, 5.0f, 0.0f, 1.0f), ==, 0.0f);
+
+    lrg_vr_comfort_settings_set_vignette_enabled (settings, TRUE);
+    lrg_vr_comfort_settings_set_vignette_intensity (settings, 0.8f);
+    /* running at full speed closes it at the rise rate, up to the intensity */
+    v = lrg_vr_comfort_update_vignette (comfort, 3.0f, 0.0f, 0.05f);
+    g_assert_cmpfloat_with_epsilon (v, 0.3f, 1e-5);
+    for (i = 0; i < 20; i++)
+        v = lrg_vr_comfort_update_vignette (comfort, 3.0f, 0.0f, 0.05f);
+    g_assert_cmpfloat_with_epsilon (v, 0.8f, 1e-5);
+    /* half speed: it opens to half at the (slower) fall rate */
+    v = lrg_vr_comfort_update_vignette (comfort, 1.5f, 0.0f, 0.05f);
+    g_assert_cmpfloat_with_epsilon (v, 0.65f, 1e-5);
+    /* standing still opens it fully */
+    for (i = 0; i < 40; i++)
+        v = lrg_vr_comfort_update_vignette (comfort, 0.0f, 0.0f, 0.05f);
+    g_assert_cmpfloat (v, ==, 0.0f);
+    /* turning by the stick closes it too */
+    for (i = 0; i < 40; i++)
+        v = lrg_vr_comfort_update_vignette (comfort, 0.0f, 120.0f, 0.05f);
+    g_assert_cmpfloat_with_epsilon (v, 0.8f, 1e-5);
+    lrg_vr_comfort_reset (comfort);
+    g_assert_cmpfloat (lrg_vr_comfort_get_vignette (comfort), ==, 0.0f);
+
+    /* a snap turn blinks it shut at once, then it fades */
+    lrg_vr_comfort_settings_set_turn_mode (settings, LRG_VR_TURN_MODE_SNAP);
+    g_assert_cmpfloat (lrg_vr_comfort_turn (comfort, 1.0f, 0.016f), !=, 0.0f);
+    v = lrg_vr_comfort_update_vignette (comfort, 0.0f, 0.0f, 0.016f);
+    g_assert_cmpfloat_with_epsilon (v, 0.8f, 1e-5);
+    for (i = 0; i < 40; i++)
+        v = lrg_vr_comfort_update_vignette (comfort, 0.0f, 0.0f, 0.05f);
+    g_assert_cmpfloat (v, ==, 0.0f);
+}
+
+static void
+test_comfort_height (void)
+{
+    g_autoptr(LrgVRComfort) comfort = lrg_vr_comfort_new (NULL);
+    LrgVRComfortSettings *settings = lrg_vr_comfort_get_settings (comfort);
+
+    /* standing: the tracked height as it is */
+    g_assert_false (lrg_vr_comfort_needs_calibration (comfort));
+    g_assert_cmpfloat_with_epsilon (lrg_vr_comfort_get_eye_height (comfort, 1.6f), 1.6f, 1e-6);
+
+    /* seated: calibrate a 1.2 m seated head to 1.7 m */
+    lrg_vr_comfort_settings_set_seated (settings, TRUE);
+    g_assert_true (lrg_vr_comfort_settings_get_seated (settings));
+    g_assert_true (lrg_vr_comfort_needs_calibration (comfort));
+    lrg_vr_comfort_calibrate_height (comfort, 1.2f, 1.7f);
+    g_assert_false (lrg_vr_comfort_needs_calibration (comfort));
+    g_assert_cmpfloat_with_epsilon (lrg_vr_comfort_settings_get_height_adjustment (settings),
+                                    0.5f, 1e-6);
+    g_assert_cmpfloat_with_epsilon (lrg_vr_comfort_get_eye_height (comfort, 1.1f), 1.6f, 1e-6);
+    /* never under the floor */
+    g_assert_cmpfloat (lrg_vr_comfort_get_eye_height (comfort, -5.0f), ==, 0.1f);
+    /* a recentre asks again */
+    lrg_vr_comfort_reset (comfort);
+    g_assert_true (lrg_vr_comfort_needs_calibration (comfort));
+}
+
+static void
+test_openxr_probe_without_runtime (void)
+{
+    g_autoptr(GError) error = NULL;
+    gchar *runtime = (gchar *) "unset";
+    gchar *system = (gchar *) "unset";
+
+    /* a runtime manifest that does not exist: the loader finds none */
+    g_setenv ("XR_RUNTIME_JSON", "/nonexistent/librefall-test-runtime.json", TRUE);
+    g_assert_false (lrg_openxr_service_probe ("test", &runtime, &system, &error));
+    g_assert_error (error, LRG_VR_ERROR, LRG_VR_ERROR_NOT_AVAILABLE);
+    g_assert_null (runtime);
+    g_assert_null (system);
+    g_unsetenv ("XR_RUNTIME_JSON");
+}
+
+/* ==========================================================================
  * Main
  * ========================================================================== */
 
@@ -600,6 +829,13 @@ main (int   argc,
     g_test_add_func ("/vr/openxr/initialize-without-gl",
                      test_openxr_service_initialize_without_gl);
     g_test_add_func ("/vr/stub/frame-loop", test_stub_frame_loop);
+    g_test_add_func ("/vr/stub/simulated-frame-loop", test_stub_simulated_frame_loop);
+    g_test_add_func ("/vr/stub/simulated-controllers", test_stub_simulated_controllers);
+    g_test_add_func ("/vr/comfort-state/snap-turn", test_comfort_snap_turn);
+    g_test_add_func ("/vr/comfort-state/smooth-turn", test_comfort_smooth_turn);
+    g_test_add_func ("/vr/comfort-state/vignette", test_comfort_vignette);
+    g_test_add_func ("/vr/comfort-state/height", test_comfort_height);
+    g_test_add_func ("/vr/openxr/probe-without-runtime", test_openxr_probe_without_runtime);
 
     return g_test_run ();
 }

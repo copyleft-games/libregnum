@@ -336,6 +336,7 @@ typedef struct _LrgNavGridClass  LrgNavGridClass;
 
 typedef struct _LrgPathfinder       LrgPathfinder;
 typedef struct _LrgNavMesh          LrgNavMesh;
+typedef struct _LrgNavPolyMesh      LrgNavPolyMesh;
 /* LrgPathfinderClass is not forward-declared (FINAL type) */
 
 /* ==========================================================================
@@ -444,6 +445,11 @@ typedef struct _LrgModelAnimState LrgModelAnimState;
 
 /* LrgStaticBatch is a final type - no Class forward declaration needed */
 typedef struct _LrgStaticBatch    LrgStaticBatch;
+/* LrgShadowRenderer is a final type (lighting/, used by LrgLightSet) */
+typedef struct _LrgShadowRenderer LrgShadowRenderer;
+
+/* LrgSkinnedMesh is a final type */
+typedef struct _LrgSkinnedMesh    LrgSkinnedMesh;
 
 /* ==========================================================================
  * Shapes Module
@@ -1005,6 +1011,9 @@ typedef struct _LrgVRController  LrgVRController;
 
 /* LrgVRComfortSettings is a final type - no Class forward declaration needed */
 typedef struct _LrgVRComfortSettings  LrgVRComfortSettings;
+
+/* LrgVRComfort is a final type - no Class forward declaration needed */
+typedef struct _LrgVRComfort  LrgVRComfort;
 
 /* ==========================================================================
  * Deckbuilder Module
