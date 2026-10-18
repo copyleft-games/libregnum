@@ -601,6 +601,33 @@ lrg_mmo_market_revoke (LrgMmoMarket *self, const gchar *account, const gchar *re
     return commit (self, &builder, error);
 }
 
+gboolean
+lrg_mmo_market_has_operation (LrgMmoMarket *self, const gchar *operation, gboolean *applied,
+                              GError **error)
+{
+    g_autofree gchar *key = NULL;
+    g_autoptr(GVariant) receipt = NULL;
+    g_autoptr(GError) local_error = NULL;
+    guint64 revision;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), FALSE);
+    g_return_val_if_fail (applied != NULL, FALSE);
+    *applied = FALSE;
+    if (operation == NULL || !_lrg_mmo_id_valid (operation))
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid durable operation ID");
+    /* the receipt _lrg_mmo_operation_add() commits with every operation */
+    key = g_strconcat ("service/operation/", operation, NULL);
+    receipt = _lrg_mmo_load (self->store, key, "s", &revision, &local_error);
+    if (receipt != NULL)
+    {
+        *applied = TRUE;
+        return TRUE;
+    }
+    if (g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+        return TRUE;
+    g_propagate_error (error, g_steal_pointer (&local_error));
+    return FALSE;
+}
+
 static gchar *
 item_key (const gchar *item)
 {

@@ -385,6 +385,23 @@ test_market_lots (void)
     g_assert_true (lrg_mmo_market_revoke (market, "carol", "coins", 100, "revoke-1", &error));
     g_assert_cmpint (coins (market, "carol"), ==, 600);
     g_assert_no_error (error);
+
+    /* has_operation: committed IDs, refused and unknown ones, bad IDs */
+    {
+        gboolean applied = FALSE;
+        g_assert_true (lrg_mmo_market_has_operation (market, "revoke-1", &applied, &error));
+        g_assert_true (applied);
+        g_assert_true (lrg_mmo_market_has_operation (market, "burn-1", &applied, &error));
+        g_assert_true (applied);
+        /* refused operations leave no receipt */
+        g_assert_true (lrg_mmo_market_has_operation (market, "revoke-big", &applied, &error));
+        g_assert_false (applied);
+        g_assert_true (lrg_mmo_market_has_operation (market, "never-used", &applied, &error));
+        g_assert_false (applied);
+        g_assert_false (lrg_mmo_market_has_operation (market, "", &applied, &error));
+        clear_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+        g_assert_false (applied);
+    }
 }
 
 static void
