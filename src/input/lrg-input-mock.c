@@ -41,6 +41,10 @@ struct _LrgInputMock
 	gboolean    gamepad_available[MAX_GAMEPADS];
 	LrgKeyState gamepad_button_states[MAX_GAMEPADS][MAX_GAMEPAD_BUTTONS];
 	gfloat      gamepad_axes[MAX_GAMEPADS][MAX_GAMEPAD_AXES];
+	gchar       gamepad_name[MAX_GAMEPADS][128];
+	gboolean    gamepad_has_ids[MAX_GAMEPADS];
+	guint16     gamepad_vendor[MAX_GAMEPADS];
+	guint16     gamepad_product[MAX_GAMEPADS];
 };
 
 G_DEFINE_FINAL_TYPE (LrgInputMock, lrg_input_mock, LRG_TYPE_INPUT)
@@ -232,6 +236,43 @@ lrg_input_mock_get_gamepad_axis (LrgInput       *self,
  * GObject Implementation
  * ========================================================================== */
 
+static const gchar *
+lrg_input_mock_get_gamepad_name (LrgInput *self,
+                                 gint      gamepad)
+{
+	LrgInputMock *mock = LRG_INPUT_MOCK (self);
+
+	if (gamepad < 0 || gamepad >= MAX_GAMEPADS)
+		return NULL;
+
+	if (!mock->gamepad_available[gamepad] || mock->gamepad_name[gamepad][0] == '\0')
+		return NULL;
+
+	return mock->gamepad_name[gamepad];
+}
+
+static gboolean
+lrg_input_mock_get_gamepad_ids (LrgInput *self,
+                                gint      gamepad,
+                                guint16  *vendor,
+                                guint16  *product)
+{
+	LrgInputMock *mock = LRG_INPUT_MOCK (self);
+
+	if (gamepad < 0 || gamepad >= MAX_GAMEPADS)
+		return FALSE;
+
+	if (!mock->gamepad_available[gamepad] || !mock->gamepad_has_ids[gamepad])
+		return FALSE;
+
+	if (vendor != NULL)
+		*vendor = mock->gamepad_vendor[gamepad];
+	if (product != NULL)
+		*product = mock->gamepad_product[gamepad];
+
+	return TRUE;
+}
+
 static void
 lrg_input_mock_class_init (LrgInputMockClass *klass)
 {
@@ -252,6 +293,8 @@ lrg_input_mock_class_init (LrgInputMockClass *klass)
 	input_class->is_gamepad_button_down    = lrg_input_mock_is_gamepad_button_down;
 	input_class->is_gamepad_button_released = lrg_input_mock_is_gamepad_button_released;
 	input_class->get_gamepad_axis          = lrg_input_mock_get_gamepad_axis;
+	input_class->get_gamepad_name          = lrg_input_mock_get_gamepad_name;
+	input_class->get_gamepad_ids           = lrg_input_mock_get_gamepad_ids;
 }
 
 static void
@@ -277,6 +320,10 @@ lrg_input_mock_init (LrgInputMock *self)
 	for (i = 0; i < MAX_GAMEPADS; i++)
 	{
 		self->gamepad_available[i] = FALSE;
+		self->gamepad_name[i][0] = '\0';
+		self->gamepad_has_ids[i] = FALSE;
+		self->gamepad_vendor[i] = 0;
+		self->gamepad_product[i] = 0;
 
 		for (j = 0; j < MAX_GAMEPAD_BUTTONS; j++)
 			self->gamepad_button_states[i][j] = LRG_KEY_STATE_UP;
@@ -444,6 +491,50 @@ lrg_input_mock_set_gamepad_available (LrgInputMock *self,
 	g_return_if_fail (gamepad >= 0 && gamepad < MAX_GAMEPADS);
 
 	self->gamepad_available[gamepad] = available;
+}
+
+/*
+ * lrg_input_mock_set_gamepad_name:
+ * @self: an #LrgInputMock
+ * @gamepad: the gamepad index (0-3)
+ * @name: (nullable): the name the pad reports
+ *
+ * Sets the controller name lrg_input_get_gamepad_name() returns.
+ */
+void
+lrg_input_mock_set_gamepad_name (LrgInputMock *self,
+                                 gint          gamepad,
+                                 const gchar  *name)
+{
+	g_return_if_fail (LRG_IS_INPUT_MOCK (self));
+	g_return_if_fail (gamepad >= 0 && gamepad < MAX_GAMEPADS);
+
+	/* truncated to the fixed buffer, always terminated */
+	g_strlcpy (self->gamepad_name[gamepad], name != NULL ? name : "",
+	           sizeof (self->gamepad_name[gamepad]));
+}
+
+/*
+ * lrg_input_mock_set_gamepad_ids:
+ * @self: an #LrgInputMock
+ * @gamepad: the gamepad index (0-3)
+ * @vendor: the USB vendor id
+ * @product: the USB product id
+ *
+ * Sets the ids lrg_input_get_gamepad_ids() returns.
+ */
+void
+lrg_input_mock_set_gamepad_ids (LrgInputMock *self,
+                                gint          gamepad,
+                                guint16       vendor,
+                                guint16       product)
+{
+	g_return_if_fail (LRG_IS_INPUT_MOCK (self));
+	g_return_if_fail (gamepad >= 0 && gamepad < MAX_GAMEPADS);
+
+	self->gamepad_has_ids[gamepad] = TRUE;
+	self->gamepad_vendor[gamepad] = vendor;
+	self->gamepad_product[gamepad] = product;
 }
 
 /*

@@ -380,6 +380,80 @@ lrg_gamepad_type_get_type (void)
     return g_define_type_id__volatile;
 }
 
+GType
+lrg_controller_family_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CONTROLLER_FAMILY_UNKNOWN, "LRG_CONTROLLER_FAMILY_UNKNOWN", "unknown" },
+            { LRG_CONTROLLER_FAMILY_GENERIC, "LRG_CONTROLLER_FAMILY_GENERIC", "generic" },
+            { LRG_CONTROLLER_FAMILY_XBOX_360, "LRG_CONTROLLER_FAMILY_XBOX_360", "xbox-360" },
+            { LRG_CONTROLLER_FAMILY_XBOX_ONE, "LRG_CONTROLLER_FAMILY_XBOX_ONE", "xbox-one" },
+            { LRG_CONTROLLER_FAMILY_XBOX_SERIES, "LRG_CONTROLLER_FAMILY_XBOX_SERIES", "xbox-series" },
+            { LRG_CONTROLLER_FAMILY_DUALSHOCK4, "LRG_CONTROLLER_FAMILY_DUALSHOCK4", "dualshock4" },
+            { LRG_CONTROLLER_FAMILY_DUALSENSE, "LRG_CONTROLLER_FAMILY_DUALSENSE", "dualsense" },
+            { LRG_CONTROLLER_FAMILY_DUALSENSE_EDGE, "LRG_CONTROLLER_FAMILY_DUALSENSE_EDGE", "dualsense-edge" },
+            { LRG_CONTROLLER_FAMILY_SWITCH_PRO, "LRG_CONTROLLER_FAMILY_SWITCH_PRO", "switch-pro" },
+            { LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER, "LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER", "steam-controller" },
+            { LRG_CONTROLLER_FAMILY_STEAM_DECK, "LRG_CONTROLLER_FAMILY_STEAM_DECK", "steam-deck" },
+            { LRG_CONTROLLER_FAMILY_STEAM_FRAME, "LRG_CONTROLLER_FAMILY_STEAM_FRAME", "steam-frame" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgControllerFamily"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_controller_control_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CONTROLLER_CONTROL_UNKNOWN, "LRG_CONTROLLER_CONTROL_UNKNOWN", "unknown" },
+            { LRG_CONTROLLER_CONTROL_DPAD_UP, "LRG_CONTROLLER_CONTROL_DPAD_UP", "dpad-up" },
+            { LRG_CONTROLLER_CONTROL_DPAD_RIGHT, "LRG_CONTROLLER_CONTROL_DPAD_RIGHT", "dpad-right" },
+            { LRG_CONTROLLER_CONTROL_DPAD_DOWN, "LRG_CONTROLLER_CONTROL_DPAD_DOWN", "dpad-down" },
+            { LRG_CONTROLLER_CONTROL_DPAD_LEFT, "LRG_CONTROLLER_CONTROL_DPAD_LEFT", "dpad-left" },
+            { LRG_CONTROLLER_CONTROL_FACE_NORTH, "LRG_CONTROLLER_CONTROL_FACE_NORTH", "face-north" },
+            { LRG_CONTROLLER_CONTROL_FACE_EAST, "LRG_CONTROLLER_CONTROL_FACE_EAST", "face-east" },
+            { LRG_CONTROLLER_CONTROL_FACE_SOUTH, "LRG_CONTROLLER_CONTROL_FACE_SOUTH", "face-south" },
+            { LRG_CONTROLLER_CONTROL_FACE_WEST, "LRG_CONTROLLER_CONTROL_FACE_WEST", "face-west" },
+            { LRG_CONTROLLER_CONTROL_LEFT_BUMPER, "LRG_CONTROLLER_CONTROL_LEFT_BUMPER", "left-bumper" },
+            { LRG_CONTROLLER_CONTROL_LEFT_TRIGGER, "LRG_CONTROLLER_CONTROL_LEFT_TRIGGER", "left-trigger" },
+            { LRG_CONTROLLER_CONTROL_RIGHT_BUMPER, "LRG_CONTROLLER_CONTROL_RIGHT_BUMPER", "right-bumper" },
+            { LRG_CONTROLLER_CONTROL_RIGHT_TRIGGER, "LRG_CONTROLLER_CONTROL_RIGHT_TRIGGER", "right-trigger" },
+            { LRG_CONTROLLER_CONTROL_VIEW, "LRG_CONTROLLER_CONTROL_VIEW", "view" },
+            { LRG_CONTROLLER_CONTROL_GUIDE, "LRG_CONTROLLER_CONTROL_GUIDE", "guide" },
+            { LRG_CONTROLLER_CONTROL_MENU, "LRG_CONTROLLER_CONTROL_MENU", "menu" },
+            { LRG_CONTROLLER_CONTROL_LEFT_STICK_CLICK, "LRG_CONTROLLER_CONTROL_LEFT_STICK_CLICK", "left-stick-click" },
+            { LRG_CONTROLLER_CONTROL_RIGHT_STICK_CLICK, "LRG_CONTROLLER_CONTROL_RIGHT_STICK_CLICK", "right-stick-click" },
+            { LRG_CONTROLLER_CONTROL_BACK_LEFT_UPPER, "LRG_CONTROLLER_CONTROL_BACK_LEFT_UPPER", "back-left-upper" },
+            { LRG_CONTROLLER_CONTROL_BACK_RIGHT_UPPER, "LRG_CONTROLLER_CONTROL_BACK_RIGHT_UPPER", "back-right-upper" },
+            { LRG_CONTROLLER_CONTROL_BACK_LEFT_LOWER, "LRG_CONTROLLER_CONTROL_BACK_LEFT_LOWER", "back-left-lower" },
+            { LRG_CONTROLLER_CONTROL_BACK_RIGHT_LOWER, "LRG_CONTROLLER_CONTROL_BACK_RIGHT_LOWER", "back-right-lower" },
+            { LRG_CONTROLLER_CONTROL_TOUCHPAD, "LRG_CONTROLLER_CONTROL_TOUCHPAD", "touchpad" },
+            { LRG_CONTROLLER_CONTROL_QUICK_ACCESS, "LRG_CONTROLLER_CONTROL_QUICK_ACCESS", "quick-access" },
+            { LRG_CONTROLLER_CONTROL_LEFT_STICK, "LRG_CONTROLLER_CONTROL_LEFT_STICK", "left-stick" },
+            { LRG_CONTROLLER_CONTROL_RIGHT_STICK, "LRG_CONTROLLER_CONTROL_RIGHT_STICK", "right-stick" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgControllerControl"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
 /* ==========================================================================
  * Behavior Tree GTypes
  * ========================================================================== */

@@ -13,6 +13,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_INPUT
 
 #include "lrg-input-gamepad.h"
+#include "lrg-controller.h"
 #include "../lrg-log.h"
 
 #include <math.h>
@@ -397,6 +398,33 @@ lrg_input_gamepad_get_gamepad_axis_impl (LrgInput       *self,
 	return sign * ((abs_value - gamepad_self->dead_zone) / range);
 }
 
+static const gchar *
+lrg_input_gamepad_get_gamepad_name_impl (LrgInput *self,
+                                         gint      gamepad)
+{
+	if (!grl_input_is_gamepad_available (gamepad))
+		return NULL;
+
+	return grl_input_get_gamepad_name (gamepad);
+}
+
+/*
+ * The ids are not in raylib's API: the Linux input subsystem has them under
+ * the same name the driver gave GLFW, so the sysfs probe finds them (and
+ * fails quietly on other systems).
+ */
+static gboolean
+lrg_input_gamepad_get_gamepad_ids_impl (LrgInput *self,
+                                        gint      gamepad,
+                                        guint16  *vendor,
+                                        guint16  *product)
+{
+	const gchar *name;
+
+	name = lrg_input_gamepad_get_gamepad_name_impl (self, gamepad);
+	return lrg_controller_probe_usb_ids (name, NULL, vendor, product);
+}
+
 /* ==========================================================================
  * GObject Implementation
  * ========================================================================== */
@@ -454,6 +482,8 @@ lrg_input_gamepad_class_init (LrgInputGamepadClass *klass)
 	input_class->is_gamepad_button_down     = lrg_input_gamepad_is_gamepad_button_down;
 	input_class->is_gamepad_button_released = lrg_input_gamepad_is_gamepad_button_released;
 	input_class->get_gamepad_axis           = lrg_input_gamepad_get_gamepad_axis_impl;
+	input_class->get_gamepad_name           = lrg_input_gamepad_get_gamepad_name_impl;
+	input_class->get_gamepad_ids            = lrg_input_gamepad_get_gamepad_ids_impl;
 
 	/**
 	 * LrgInputGamepad:dead-zone:
@@ -534,6 +564,38 @@ lrg_input_gamepad_detect_type (LrgInputGamepad *self,
 
 	name = grl_input_get_gamepad_name (gamepad);
 	return detect_gamepad_type_from_name (name);
+}
+
+/*
+ * lrg_input_gamepad_detect_family:
+ * @self: an #LrgInputGamepad
+ * @gamepad: the gamepad index (0-3)
+ *
+ * Detects the finer controller family of the pad at @gamepad.
+ *
+ * Returns: the #LrgControllerFamily
+ */
+LrgControllerFamily
+lrg_input_gamepad_detect_family (LrgInputGamepad *self,
+                                 gint             gamepad)
+{
+	const gchar *name;
+	guint16 vendor;
+	guint16 product;
+
+	g_return_val_if_fail (LRG_IS_INPUT_GAMEPAD (self), LRG_CONTROLLER_FAMILY_UNKNOWN);
+	g_return_val_if_fail (gamepad >= 0 && gamepad <= 3, LRG_CONTROLLER_FAMILY_UNKNOWN);
+
+	if (!grl_input_is_gamepad_available (gamepad))
+		return LRG_CONTROLLER_FAMILY_UNKNOWN;
+
+	name = grl_input_get_gamepad_name (gamepad);
+	vendor = 0;
+	product = 0;
+	lrg_controller_probe_usb_ids (name, NULL, &vendor, &product);
+
+	return lrg_controller_family_detect (name, vendor, product,
+	                                     lrg_controller_is_steam_deck_host ());
 }
 
 /*

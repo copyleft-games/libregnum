@@ -1,0 +1,99 @@
+* Controllers
+:PROPERTIES:
+:CUSTOM_ID: controllers
+:END:
+=lrg-controller.h= and =lrg-controller-rumble.h= tell a game which kind of pad is in the player's hands, so it can show the right button names, offer the right preset map and vibrate it. They extend the existing =LrgInputGamepad= (which keeps the coarse =LrgGamepadType=); nothing here replaces it.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+- =LrgControllerFamily= (registered enum, stable nicks): =unknown= (nothing connected), =generic=, =xbox-360=, =xbox-one=, =xbox-series=, =dualshock4=, =dualsense=, =dualsense-edge=, =switch-pro=, =steam-controller=, =steam-deck=, =steam-frame=.
+- =lrg_controller_family_detect()= is a pure function of the controller name, the USB vendor/product ids and a "this is a Steam Deck" flag.
+- =LrgControllerMonitor= watches one gamepad slot of any =LrgInput= (the real gamepad source or an =LrgInputMock=) and emits =family-changed(old, new)= when a pad connects, is swapped or removed.
+- Glyph names: =lrg_controller_get_glyph()= / =lrg_controller_get_button_glyph()= / =lrg_controller_get_axis_glyph()= (A/B/X/Y against Cross/Circle/Square/Triangle, the Deck's L4 R4 L5 R5 and "QAM", the Frame's grips, the DualSense Edge's paddles).
+- Preset input maps: =lrg_controller_preset_lookup()= (role to button or stick direction) and =lrg_controller_preset_new_map()= (an =LrgInputMap=, one action per role).
+- =LrgControllerRumble=: vibration through Linux force feedback.
+
+** Detection
+:PROPERTIES:
+:CUSTOM_ID: detection
+:END:
+The order is ids, then name, then the Steam Deck rule:
+
+1. The ids (=lrg_input_get_gamepad_ids()=). The real gamepad source has no ids from raylib, so it reads them from Linux sysfs: =lrg_controller_probe_usb_ids()= finds =class/input/input*= whose =name= equals the name raylib reports and reads =id/vendor= and =id/product=. This works for USB, Bluetooth and Steam Input pads whatever index GLFW gave them. Other systems fall through to the name.
+2. The name (case-insensitive substrings, most specific first). The bare "Wireless Controller" the Linux kernel names a DualShock 4 is a DualShock 4 only after every Xbox name was ruled out ("Xbox Wireless Controller" is an Xbox One pad).
+3. On a Steam Deck host, a pad that is only the Xbox 360 shaped virtual pad Steam Input presents (or one nothing matched) is =steam-deck=: those are the Deck's own controls. A pad that names itself as something else keeps its family. The host is =SteamDeck=1= in the environment (Steam sets it for games on the Deck) or the DMI product name =Jupiter= / =Galileo= with board vendor =Valve= (=lrg_controller_is_steam_deck_host()=).
+
+The environment variable =LRG_CONTROLLER_FAMILY= (a nick) forces the family of every monitor created afterwards; =lrg_controller_monitor_set_family_override()= does it for one monitor (a "my controller is..." menu item).
+
+*** Known ids
+:PROPERTIES:
+:CUSTOM_ID: known-ids
+:END:
+| Vendor | Product ids | Family |
+|--------+-------------+--------|
+| 045e Microsoft | 028e 028f 0291 02a0 02a1 0719 | xbox-360 |
+| 045e | 02d1 02dd 02e0 02e3 02ea 02fd 02ff 0b0a | xbox-one |
+| 045e | 0b00 0b05 0b12 0b13 0b20 0b21 0b22 | xbox-series |
+| 054c Sony | 0268 05c4 09cc 0ba0 | dualshock4 |
+| 054c | 0ce6 | dualsense |
+| 054c | 0df2 | dualsense-edge |
+| 057e Nintendo | 2006 2007 2009 200e | switch-pro |
+| 28de Valve | 1102 1142 | steam-controller |
+| 28de | 1205 | steam-deck |
+| 28de | 11ff (Steam Virtual Gamepad) | xbox-360 |
+
+*** Steam Frame (unverified)
+:PROPERTIES:
+:CUSTOM_ID: steam-frame
+:END:
+No Steam Frame hardware or documentation of its controllers' product ids was available when this was written. A pad is =steam-frame= only when its name says "steam frame" / "frame controller" (with or without Valve's vendor id 28de); an unknown Valve product id without such a name is =generic=, never guessed. Inside Steam's game mode the Frame's controllers reach a game as Steam Input's virtual pad, which reads as =xbox-360= away from a Deck; set =LRG_CONTROLLER_FAMILY=steam-frame= (or the game's own override option) there. The glyph labels for the Frame follow the Deck's L1/L2/R1/R2 and call the grips "Left Grip" and "Right Grip"; check them against real hardware.
+
+** Glyphs
+:PROPERTIES:
+:CUSTOM_ID: glyphs
+:END:
+Raylib/GLFW only report the standard 17 buttons (=GrlGamepadButton=); the first 18 values of =LrgControllerControl= equal them. The rest (back paddles, touchpad, quick access) are glyph-only: they reach a game only when Steam Input or the OS driver maps them to a standard button. =lrg_controller_has_control()= says whether a family has a control, and =lrg_controller_get_glyph()= returns =NULL= for one it lacks. Unknown and generic pads use the Xbox One labels, matching the SDL mapping raylib applies.
+
+** Presets
+:PROPERTIES:
+:CUSTOM_ID: presets
+:END:
+Roles: =move-up/down/left/right= (left stick), =look-up/down/left/right= (right stick), =confirm=, =cancel=, =face-west=, =face-north=, =page-previous= (left bumper), =page-next= (right bumper), =trigger-left=, =trigger-right=, =view=, =menu=, =guide=, =stick-left-click=, =stick-right-click= and the four =dpad-*=. The families share the physical layout except the Switch Pro, whose =confirm= is the right face button (its A) and =cancel= the bottom one (its B). A game maps its own actions onto roles (librefall's preset does, see its controls manual).
+
+** Monitor example
+:PROPERTIES:
+:CUSTOM_ID: monitor-example
+:END:
+#+begin_src C
+static void
+on_family_changed(
+    LrgControllerMonitor *monitor,
+    LrgControllerFamily   old_family,
+    LrgControllerFamily   new_family,
+    gpointer              user_data
+){
+    g_message("controller: %s", lrg_controller_family_get_display_name(new_family));
+}
+
+monitor = lrg_controller_monitor_new(input, 0);
+g_signal_connect(monitor, "family-changed", G_CALLBACK(on_family_changed), NULL);
+
+/* once per frame */
+lrg_controller_monitor_poll(monitor);
+#+end_src
+
+With an =LrgInputMock= a test sets the pad with =lrg_input_mock_set_gamepad_available()=, =lrg_input_mock_set_gamepad_name()= and =lrg_input_mock_set_gamepad_ids()=.
+
+** Rumble
+:PROPERTIES:
+:CUSTOM_ID: rumble
+:END:
+Raylib and GLFW have no rumble API. =LrgControllerRumble= finds the pad's input device by name under =class/input=, opens =/dev/input/eventN= and uploads an =FF_RUMBLE= effect (=lrg_controller_rumble_play(strong, weak, ms)=). Everything fails soft with a =GError= (no device, no permission, no rumble support, not Linux), and a failed open is remembered so a game does not retry on every hit. It does not reach pads Steam Input owns (a Deck or Frame in Steam's game mode) or Bluetooth pads whose kernel driver lacks force feedback. The tests cover the failure paths with fake sysfs and device trees; no pad with force feedback is attached to the test machine.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-controller.c= covers detection by name and ids, the sysfs probe against a fake tree, Deck host detection, glyph tables, preset lookup and maps driven through =LrgInputMock=, the monitor's connect/swap/remove signals, the environment override and the rumble failure paths.
