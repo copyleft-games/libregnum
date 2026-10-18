@@ -1,0 +1,80 @@
+#+title: Voxel-baked polygon navigation meshes
+
+=LrgNavPolyMesh= (=src/pathfinding/lrg-nav-poly-mesh.h=) bakes a navigation mesh from the raw triangle soup of a level, the same nine-floats-per-triangle layout =lrg_collision_mesh_set_triangles()= takes, for an agent of a given radius, height, step and slope.  Unlike =LrgNavMesh=, which expects pre-cleaned walkable surfaces, it finds the walkable surface itself: walls, low ceilings, steep slopes and narrow gaps are removed by the bake.  Paths run A* over convex polygons and are straightened with the funnel algorithm; off-mesh links (ladders, jumps, drops) and tagged areas (doors) are switched on and off without a rebake.
+
+The implementation was written from the public descriptions of voxel navigation mesh generation (solid heightfield, open spans, walkable filters, distance erosion) and of the "simple stupid funnel" algorithm; it copies no third-party code.
+
+* The agent and the grid
+
+The bake's parameters are properties, read when =lrg_nav_poly_mesh_bake()= runs:
+
+| Property | Default | Meaning |
+|----------+---------+---------|
+| =cell-size= | 0.25 | edge of a heightfield column (world units) |
+| =cell-height= | 0.1 | height of a heightfield layer |
+| =agent-radius= | 0.3 | the walkable surface is eroded by this, rounded up to whole cells |
+| =agent-height= | 1.8 | free height needed above a floor |
+| =max-climb= | 0.45 | largest step between neighbouring floors |
+| =max-slope= | 50 | steepest walkable triangle, degrees |
+| =max-drop= | 0 | highest ledge drop links are made down from (0: none) |
+| =corner-margin= | 0 | paths keep this far from the corners they turn round (read per query) |
+
+Head room is measured in =cell-height= layers; floors keep their real heights (the highest point of the triangles in the column), so steps are compared with =max-climb= exactly and reported floors are the real surface.  The number of columns is capped by =LRG_NAV_POLY_MESH_MAX_COLUMNS= (64 Mi); larger levels fail with =G_IO_ERROR_NO_SPACE= and need a larger =cell-size=.
+
+* Input
+
+- =lrg_nav_poly_mesh_add_triangles(mesh, vertices, n_floats, walkable)= stages triangles (copied; winding ignored; triangles with non-finite corners skipped).  =walkable= =FALSE= triangles only obstruct (water surfaces, furniture tops).
+- =lrg_nav_poly_mesh_add_area_box(mesh, min, max, tag)= stages a tagged area: the walkable cells whose centre lies in the box (floor within its Y range) become polygons of their own carrying =tag= (nonzero).  Queries cross them only when their filter allows the tag and the tag is enabled: a door.
+- =lrg_nav_poly_mesh_add_link(mesh, start, end, bidirectional, cost, tag)= adds an off-mesh link and returns its id.  Its ends snap to the nearest polygons within the agent radius plus two cells (=max-climb= vertically, twice that at the end); links added before a bake connect at the bake, links added after one connect at once.  =lrg_nav_poly_mesh_get_link_connected()= tells whether both ends found a polygon.
+- =lrg_nav_poly_mesh_clear_input()= drops staged triangles and boxes (links stay).  Staged input survives a bake, so a level can be rebaked with other properties.
+
+#+begin_src c
+g_autoptr(LrgNavPolyMesh) mesh = lrg_nav_poly_mesh_new ();
+g_autoptr(GError) error = NULL;
+
+g_object_set (mesh, "agent-radius", 0.35f, "max-drop", 2.5f, NULL);
+lrg_nav_poly_mesh_add_triangles (mesh, level_vertices, n_level_floats, TRUE);
+lrg_nav_poly_mesh_add_area_box (mesh, door_min, door_max, door_id);
+lrg_nav_poly_mesh_add_link (mesh, ladder_foot, ladder_top, TRUE, 2.0f, 0);
+if (!lrg_nav_poly_mesh_bake (mesh, &error))
+    g_warning ("navigation: %s", error->message);
+#+end_src
+
+* The bake
+
+1. Rasterise: each triangle is clipped against the column grid (Sutherland-Hodgman against axis-aligned lines) and each clipped piece adds a solid span to its column.  Overlapping spans merge; the merged span is walkable when the span with the higher top was, or either when their tops lie within =max-climb=.
+2. Filter: a non-walkable span whose top lies within =max-climb= above a walkable span becomes walkable (kerbs, stair risers).
+3. Open spans: the air above each solid span up to the next one.  Floors of walkable spans with =agent-height= of air are walked on; neighbours in the four directions connect when their real floor heights differ by at most =max-climb= and their air overlaps by =agent-height=.
+4. Erode: a two-pass chamfer distance transform (2 per orthogonal, 3 per diagonal step, in half cells) from the cells that miss a neighbour; cells nearer than the radius (rounded up to whole cells) are dropped.  Area boxes then tag the rest.
+5. Polygons: unassigned cells grow greedily into rectangles (along +X first, then whole rows along +Z, at most 32 cells a side) whose cells are connected to their neighbours inside the rectangle and share one tag.  Each rectangle is convex and holds one floor per column, so stairs inside one polygon keep their real heights.
+6. Portals: runs of connected cell pairs across a rectangle's side with the same neighbour become one portal (both directions are stored).
+7. Drops: with =max-drop= above =max-climb=, a cell at a ledge looks out up to radius + 2 cells for a lower polygon floor within =max-drop= with air over the ledge; the air must cross every column on the way (a cliff face's top or the void, never a wall).  One one-way link is kept per pair of polygons.  Then the staged links connect and regions (connected components over portals and links, whatever their state) are labelled.
+
+A failed bake (=G_IO_ERROR_INVALID_ARGUMENT= without triangles, =G_IO_ERROR_NO_SPACE= over the column limit, =G_IO_ERROR_NOT_FOUND= when nothing is walkable) keeps the previous mesh.  =lrg_nav_poly_mesh_get_bake_seconds()= reports the last bake's time.
+
+* Queries
+
+- =lrg_nav_poly_mesh_find_nearest(mesh, point, extents, out, &polygon)=: the nearest point (3D) of a usable polygon with a floor inside the box of half extents =extents=; =lrg_nav_poly_mesh_find_nearest_in_region()= only considers one region (where an agent stands to reach something off the mesh).
+- =lrg_nav_poly_mesh_find_path(mesh, start, goal, extents, max_nodes, filter, data, &expanded, &n_floats, &error)=: both ends snap with =extents=; A* runs over polygons (costs between portal midpoints, links add their length and cost) up to =max_nodes= expansions; the corridor is straightened with the funnel algorithm through its portals (each narrowed by =corner-margin= at both ends), broken at each link (the link's ends are in the path).  Different regions, unsnappable ends and exhausted searches are =G_IO_ERROR_NOT_FOUND= with =n_floats= 0.  The filter (=LrgNavPolyFilterFunc=) is asked about each nonzero tag once per query; =NULL= allows every tag.
+- =lrg_nav_poly_mesh_raycast(mesh, start, end, extents, filter, data, &fraction, hit)=: walks the straight line over the surface (X/Z, following the floors) through portals; returns =TRUE= with the fraction and point where an edge without a usable neighbour stopped it.  The start polygon is the one a probe a millimetre along the line falls in, so rays from path corners work.
+- =lrg_nav_poly_mesh_random_point(mesh, from, extents, seed, out)=: a point uniform over the usable surface of =from='s region (or of everything); the same seed gives the same point.
+- =lrg_nav_poly_mesh_get_polygon()=, =get_polygon_region()=, the counts (=polygon=, =portal=, =span=, =link=, =drop-link=, =region=).
+
+* Dynamic changes
+
+- =lrg_nav_poly_mesh_set_tag_enabled(mesh, tag, FALSE)= closes every polygon and link with that tag for every query whatever the filter says (a locked door); tags start enabled and keep their state across rebakes.
+- =lrg_nav_poly_mesh_set_link_enabled()= and =set_polygon_enabled()= switch single links and polygons.
+- =lrg_nav_poly_mesh_block_portal(mesh, from, toward)= disables (both ways) the portal of the polygon under =from= whose midpoint lies most nearly towards =toward=: path repair for agents whose body could not pass where the mesh offered a way.
+
+* Export and caching
+
+- =lrg_nav_poly_mesh_to_obj()= writes the polygons as Wavefront OBJ quads (corners at the floors of their corner cells, one group per region) and the links as line elements.
+- =lrg_nav_poly_mesh_save()= / =lrg_nav_poly_mesh_load()= keep a baked mesh (properties, cells, polygons, portals, links and their states) in a versioned little-endian binary form (magic =LRGNPM01=, format 2: format 1 stored quantised floors and is refused) for a disk cache.  Loading validates every count, index and rectangle before replacing anything; anything else is =G_IO_ERROR_INVALID_DATA= with the previous mesh kept.
+
+* Costs
+
+The bake is linear in the rasterised area (columns times spans per column) plus the triangles' footprints; the column index costs four bytes per column of the level's bounds.  Nearest-point searches visit the columns of the box; A* is O(P log P) over polygons.  One thread; no graphics context or physics world.
+
+* Tests
+
+=tests/test-nav-poly-mesh.c=: an open floor (erosion of the border rings, single-leg paths), a wall with a gap (raycasts blocked, the path through the gap with every leg walkable and near the shortest, the corner margin keeping it off the wall's end), rooms and a bent corridor (the bend's corner, repeatable results, the node limit, path repair by blocking portals), stairs between two floors and a cliff (stairs climbed, never through the cliff; with =max-drop= a one-way drop down and the stairs back up), clearance and slope (a slab too low to stand under, a steep ramp that fails then passes with a steeper limit, a failed bake keeping the previous mesh, empty and obstacle-only input), doors (tagged polygons, filter asked once per tag, the tag switched off overriding the filter), links (ladders both ways, disabled links, links added after the bake, one-way links), random points and regions (nearest points per region, determinism, region bounds, all polygons disabled), and the binary form and OBJ export (round trip with identical paths, truncated and corrupt data refused).
