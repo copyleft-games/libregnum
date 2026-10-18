@@ -47,6 +47,59 @@ test_realm_admission (void)
     g_assert_no_error (error);
 }
 
+/* Local sessions: realm-chosen IDs, seats and zones, never idle-expired. */
+static void
+test_realm_local (void)
+{
+    g_autoptr(LrgMmoRealm) realm = lrg_mmo_realm_new (3, 1000000);
+    g_autoptr(GError) error = NULL;
+    guint ended = 0;
+    guint32 bot;
+    guint32 other;
+    g_signal_connect (realm, "session-ended", G_CALLBACK (on_ended), &ended);
+    g_assert_true (lrg_mmo_realm_add_zone (realm, "a", 2, &error));
+    /* transports never use the local range */
+    g_assert_false (lrg_mmo_realm_login (realm, LRG_MMO_REALM_LOCAL_PEER_BASE, "alice", 0, &error));
+    assert_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_cmpuint (lrg_mmo_realm_login_local (realm, "", &error), ==, 0);
+    assert_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_true (lrg_mmo_realm_login (realm, 1, "alice", 0, &error));
+    bot = lrg_mmo_realm_login_local (realm, "bot-1", &error);
+    g_assert_no_error (error);
+    g_assert_cmpuint (bot, >=, LRG_MMO_REALM_LOCAL_PEER_BASE);
+    g_assert_true (lrg_mmo_realm_is_local (realm, bot));
+    g_assert_false (lrg_mmo_realm_is_local (realm, 1));
+    g_assert_cmpstr (lrg_mmo_realm_get_account (realm, bot), ==, "bot-1");
+    g_assert_cmpuint (lrg_mmo_realm_login_local (realm, "alice", &error), ==, 0);
+    assert_error (&error, G_IO_ERROR_EXISTS);
+    other = lrg_mmo_realm_login_local (realm, "bot-2", &error);
+    g_assert_no_error (error);
+    g_assert_cmpuint (other, !=, bot);
+    g_assert_cmpuint (lrg_mmo_realm_get_local_count (realm), ==, 2);
+    g_assert_cmpuint (lrg_mmo_realm_get_session_count (realm), ==, 3);
+    /* a full realm: the host makes room by logging a local session out */
+    g_assert_false (lrg_mmo_realm_login (realm, 2, "bob", 0, &error));
+    assert_error (&error, G_IO_ERROR_NO_SPACE);
+    g_assert_cmpuint (lrg_mmo_realm_login_local (realm, "bot-3", &error), ==, 0);
+    assert_error (&error, G_IO_ERROR_NO_SPACE);
+    /* zones count local sessions like any other */
+    g_assert_true (lrg_mmo_realm_enter_zone (realm, bot, "a", &error));
+    g_assert_true (lrg_mmo_realm_enter_zone (realm, other, "a", &error));
+    g_assert_false (lrg_mmo_realm_enter_zone (realm, 1, "a", &error));
+    assert_error (&error, G_IO_ERROR_NO_SPACE);
+    /* idle expiry passes local sessions by */
+    g_assert_cmpuint (lrg_mmo_realm_expire (realm, 5000000), ==, 1);
+    g_assert_cmpuint (ended, ==, 1);
+    g_assert_cmpuint (lrg_mmo_realm_get_local_count (realm), ==, 2);
+    lrg_mmo_realm_logout (realm, bot);
+    g_assert_cmpuint (ended, ==, 2);
+    g_assert_false (lrg_mmo_realm_is_local (realm, bot));
+    g_assert_cmpuint (lrg_mmo_realm_get_local_count (realm), ==, 1);
+    g_assert_true (lrg_mmo_realm_login (realm, 2, "bob", 5000000, &error));
+    g_assert_true (lrg_mmo_realm_enter_zone (realm, 2, "a", &error));
+    g_assert_no_error (error);
+}
+
 static void
 test_realm_zones (void)
 {
@@ -441,6 +494,7 @@ main (int argc, char **argv)
     g_test_init (&argc, &argv, NULL);
     g_test_add_func ("/mmo/realm/admission", test_realm_admission);
     g_test_add_func ("/mmo/realm/zones", test_realm_zones);
+    g_test_add_func ("/mmo/realm/local", test_realm_local);
     g_test_add_func ("/mmo/realm/commands", test_realm_commands);
     g_test_add_func ("/mmo/realm/ticks", test_realm_ticks);
     g_test_add_func ("/mmo/replication/ack", test_replication_ack);

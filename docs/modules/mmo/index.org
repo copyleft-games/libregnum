@@ -126,6 +126,18 @@ lookups borrow strings that expire at the next realm mutation.
    use the same command path. Reconnection requires reauthentication and a full
    baseline; use a verified unexpired auth token when admitting a new connection.
 
+Players the host runs itself (server-side bots, scripted NPC players) are
+/local sessions/: =lrg_mmo_realm_login_local()= admits one for an account the
+host chooses and returns a peer ID the realm picks from
+=LRG_MMO_REALM_LOCAL_PEER_BASE= (0x80000000) on; transports use IDs below it
+and =lrg_mmo_realm_login()= refuses IDs in the local range.  A local session
+takes a seat and zone occupancy like any session, is never expired as idle
+(it has no transport to fall silent) and leaves with =realm_logout()=.
+=lrg_mmo_realm_is_local()= and =lrg_mmo_realm_get_local_count()= tell them
+apart; a host that keeps seats for remote players logs a local session out
+when =lrg_mmo_realm_login()= reports =G_IO_ERROR_NO_SPACE= and admits the
+remote player again.
+
 An application must decide how to resolve an in-flight snapshot before changing
 viewer/zone context. On a world reset, forget the viewer and explicitly reset
 its client world before requesting a new full baseline. Do not mix epochs from

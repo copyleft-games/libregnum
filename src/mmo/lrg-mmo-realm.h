@@ -6,6 +6,14 @@
 #include <gio/gio.h>
 #include "../lrg-version.h"
 G_BEGIN_DECLS
+/**
+ * LRG_MMO_REALM_LOCAL_PEER_BASE:
+ *
+ * The first peer ID of local sessions (lrg_mmo_realm_login_local()).
+ * Transports use IDs below it; lrg_mmo_realm_login() refuses IDs from it on.
+ */
+#define LRG_MMO_REALM_LOCAL_PEER_BASE (0x80000000u)
+
 #define LRG_TYPE_MMO_REALM (lrg_mmo_realm_get_type ())
 LRG_AVAILABLE_IN_ALL
 G_DECLARE_FINAL_TYPE (LrgMmoRealm, lrg_mmo_realm, LRG, MMO_REALM, GObject)
@@ -182,5 +190,52 @@ lrg_mmo_realm_advance (LrgMmoRealm *self,
 LRG_AVAILABLE_IN_ALL
 guint
 lrg_mmo_realm_get_session_count (LrgMmoRealm *self);
+
+/**
+ * lrg_mmo_realm_login_local:
+ * @self: the instance
+ * @account: account ID chosen by the trusted host (a server-side bot or NPC player)
+ * @error: (nullable): return location for an error
+ *
+ * Admits a local session: a player the host runs itself, without a transport.
+ * The realm picks its peer ID (from %LRG_MMO_REALM_LOCAL_PEER_BASE on). Local
+ * sessions take a seat and zone occupancy like any session, are never expired
+ * as idle and leave with lrg_mmo_realm_logout(). A host that keeps seats for
+ * remote players logs a local session out when lrg_mmo_realm_login() reports
+ * %G_IO_ERROR_NO_SPACE (lrg_mmo_realm_get_local_count()).
+ *
+ * Returns: the new session's peer ID, or 0 with @error (%G_IO_ERROR_EXISTS,
+ *   %G_IO_ERROR_NO_SPACE, %G_IO_ERROR_INVALID_ARGUMENT)
+ */
+LRG_AVAILABLE_IN_ALL
+guint32
+lrg_mmo_realm_login_local (LrgMmoRealm *self,
+                           const gchar *account,
+                           GError **error);
+
+/**
+ * lrg_mmo_realm_is_local:
+ * @self: the instance
+ * @peer_id: session peer ID
+ *
+ * Returns: whether @peer_id is an admitted local session
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_realm_is_local (LrgMmoRealm *self,
+                        guint32 peer_id);
+
+/**
+ * lrg_mmo_realm_get_local_count:
+ * @self: the instance
+ *
+ * Gets the number of admitted local sessions (included in
+ * lrg_mmo_realm_get_session_count()).
+ *
+ * Returns: local session count
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_mmo_realm_get_local_count (LrgMmoRealm *self);
 
 G_END_DECLS
