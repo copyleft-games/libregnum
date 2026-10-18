@@ -30,6 +30,7 @@
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
+#include "../weather/lrg-ground-overlay.h"
 
 G_BEGIN_DECLS
 
@@ -918,5 +919,37 @@ lrg_light_set_sample_air (LrgLightSet      *self,
                           const GrlVector3 *from,
                           const GrlVector3 *to,
                           gfloat           *out_rgb);
+
+/**
+ * lrg_light_set_set_ground_overlay:
+ * @self: an #LrgLightSet
+ * @overlay: (nullable) (transfer none): the overlay whose snow and cloud
+ *   shadows the lit shader applies, %NULL for none (the default)
+ *
+ * Lets the lit shader lay the overlay's snow (on surfaces that face up:
+ * terrain, roofs, ledges) and the clouds' shadows over everything it
+ * draws, in the same pass, so terrain, buildings, models and props get
+ * them without being drawn a second time through
+ * lrg_ground_overlay_begin() / lrg_ground_overlay_begin_objects().  The
+ * clouds and the tracks are placed by the overlay's own origin
+ * (lrg_ground_overlay_set_origin()), the draw space's origin in the world.
+ * The overlay's own settings (snow level, clouds, sun, colour) are read
+ * at every bind (lrg_light_set_bind()); an overlay with nothing to show
+ * costs one uniform.  The light set keeps a reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_ground_overlay (LrgLightSet      *self,
+                                  LrgGroundOverlay *overlay);
+
+/**
+ * lrg_light_set_get_ground_overlay:
+ * @self: an #LrgLightSet
+ *
+ * Returns: (transfer none) (nullable): the overlay the lit shader applies
+ */
+LRG_AVAILABLE_IN_ALL
+LrgGroundOverlay *
+lrg_light_set_get_ground_overlay (LrgLightSet *self);
 
 G_END_DECLS

@@ -399,9 +399,20 @@ if (lrg_ground_overlay_begin (overlay, terrain))   /* shader, blend, no depth wr
 
 The shader whitens flat ground (normal y from 0.55 to 0.85) by the snow level (patchy below full cover), less the newest 64 tracks, which also darken slightly as dents; and darkens ground under the clouds along the sun.  The two compose as one blend: =a = 1 - (1 - snow)(1 - shadow)=, =rgb = snow_colour x snow (1 - shadow) / a=.  =begin()= returns =FALSE= (draw nothing, do not call =end()=) with no snow and no visible shadow, without a window, or when the shader failed (warned once).  =end()= leaves the terrain without a shader.
 
-*** Over objects
+*** In the lit shader
 
-Buildings, models and props take the same snow and cloud shadows: draw them a second time with the overlay's shader.
+The second pass costs a second draw of everything: the terrain's chunks and every building, model and prop again.  An #LrgLightSet can apply the same overlay in the pass that draws a surface:
+
+#+begin_src C
+lrg_light_set_set_ground_overlay (lights, overlay);   /* the lit shader lays the snow and the shadows itself */
+lrg_ground_overlay_set_origin (overlay, wx, wy, wz); /* the draw space's origin in the world, when it floats */
+#+end_src
+
+The overlay's GLSL (=LRG_GROUND_OVERLAY_GLSL= in =lrg-ground-overlay-private.h=, uniforms prefixed =ov=) is compiled into both shaders, so the two cannot disagree: =lrg_overlay_eval()= gives the snow's opacity and the cloud shadow at a draw-space position and normal, and the lit shader returns =(snow_colour x snow + lit x (1 - snow)) x (1 - shadow)= before the air and the fog, which is the blend of the pass in the shader's own output.  The terrain, the buildings, the models and the props, whatever the shader draws, get both with no extra draw call; surfaces whose normal faces up (terrain, roofs, ledges) take the snow, and the cloud shadow reaches everything along the sun.  =ovOn= (an overlay with nothing to show: no snow, no clouds, the sun low) is one uniform and a skipped branch.  The overlay's settings are read at every =lrg_light_set_bind()=.  =lrg_light_set_get_ground_overlay()= reads it back.
+
+*** Over objects with the blended pass
+
+For a game whose objects are not drawn with an #LrgLightSet, the blended pass also covers them: draw them a second time with the overlay's shader.
 
 #+begin_src C
 gdouble origin[3];                                  /* the draw space's origin in the world */
@@ -412,14 +423,15 @@ shader = lrg_ground_overlay_begin_objects (overlay, origin);
 if (shader != NULL)
 {
     lrg_static_batch_set_shader (batch, shader);
-    lrg_ground_overlay_set_model_matrix (overlay, matrix);   /* what the rlgl stack holds, or NULL */
-    lrg_static_batch_draw (batch, LRG_STATIC_BATCH_ALL_LAYERS);
+    lrg_static_batch_draw (batch, LRG_STATIC_BATCH_ALL_LAYERS);   /* under the same rlgl matrix as the first draw */
     lrg_static_batch_set_shader (batch, NULL);
     lrg_ground_overlay_end_objects (overlay);
 }
 #+end_src
 
-=rlgl='s matrix stack (=rlPushMatrix()=, a scene translated to its anchor, an object's rotation) moves the vertices but is not in the shader's =matModel=, so the caller hands the same matrix to =set_model_matrix()= (16 floats, OpenGL column-major, =NULL= for the identity; each draw group under its own matrix sets it again).  The shader multiplies it in before sampling the clouds and the snow patches, and rotates the normal with it: a roof (normal up) whitens, a wall does not, a sideways surface turned by the matrix does not.  Texels of the bound texture with alpha under 0.35 (fences, grates) get nothing, so cut-out models are not boxed in snow or shadow.  Same blend, same =FALSE= / =NULL= cases as for terrain.  =tests/test-weather-render.c= =/weather-render/draw/ground-overlay-objects= (a floor drawn identity, with no matrix and turned on its side).
+raylib multiplies rlgl's matrix stack (=rlPushMatrix()=, a scene translated to its anchor, an object's rotation) into the shader's model matrix, so the clouds and the snow find the surface where it really is: a roof (normal up) whitens, a wall does not, a surface turned onto its side by the matrix does not.  Texels of the bound texture with alpha under 0.35 (fences, grates) get nothing, so cut-out models are not boxed in snow or shadow.  Same blend, same =FALSE= / =NULL= cases as for terrain.
+
+Tests (=tests/test-weather-render.c=, with a display): =/weather-render/draw/ground-overlay-objects= (a floor, and the same floor turned by an rlgl matrix into a wall seen face on), =/weather-render/draw/light-set-overlay= (the lit floor bare, with an overlay that has nothing to show, under snow, under a full overcast, and detached).
 
 ** Key Classes
 :PROPERTIES:

@@ -75,6 +75,26 @@ void                lrg_ground_overlay_set_sun_direction (LrgGroundOverlay *self
                                                           const gfloat     *towards_sun);
 
 /**
+ * lrg_ground_overlay_set_origin:
+ * @self: an #LrgGroundOverlay
+ * @x: world X of the draw space's origin
+ * @y: world Y
+ * @z: world Z
+ *
+ * Where the draw space's origin lies in the world (what
+ * lrg_terrain_set_origin() was given), for the overlay applied by an
+ * #LrgLightSet's lit shader (lrg_light_set_set_ground_overlay()): the
+ * clouds and the tracks are placed by it.  The blended passes take the
+ * terrain's origin or the one handed to
+ * lrg_ground_overlay_begin_objects() instead.  Zero at first.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_ground_overlay_set_origin       (LrgGroundOverlay *self,
+                                                         gdouble           x,
+                                                         gdouble           y,
+                                                         gdouble           z);
+
+/**
  * lrg_ground_overlay_set_snow_color:
  * @self: an #LrgGroundOverlay
  * @color: the colour of lying snow (lit by the scene's light level
@@ -138,9 +158,11 @@ void                lrg_ground_overlay_end              (LrgGroundOverlay *self,
  * uniforms (the clouds and the tracks placed by @origin), alpha
  * blending and depth writes off; the depth test stays less-or-equal.
  * Surfaces whose normal faces up take the snow, every surface the cloud
- * shadows.  A draw under a matrix of its own (a scene translated to its
- * place, a rotated object) calls lrg_ground_overlay_set_model_matrix()
- * first.  Finish with lrg_ground_overlay_end_objects().
+ * shadows.  Draw under whatever rlgl matrix the first draw used (a scene
+ * translated to its place, a rotated object): raylib puts rlgl's stack
+ * into the shader's model matrix, so the clouds and the snow find the
+ * surface where it really is.  Finish with
+ * lrg_ground_overlay_end_objects().
  *
  * Returns: (transfer none) (nullable): the overlay shader, owned by
  *   @self; %NULL when there is nothing to draw, no graphics context, or
@@ -150,23 +172,6 @@ void                lrg_ground_overlay_end              (LrgGroundOverlay *self,
 LRG_AVAILABLE_IN_ALL
 GrlShader *         lrg_ground_overlay_begin_objects    (LrgGroundOverlay *self,
                                                          const gdouble    *origin);
-
-/**
- * lrg_ground_overlay_set_model_matrix:
- * @self: an #LrgGroundOverlay
- * @matrix: (array fixed-size=16) (nullable): the transform the next
- *   draws sit under (what the rlgl matrix stack holds), 16 floats in
- *   OpenGL's column-major order; %NULL for the identity
- *
- * Tells the overlay shader where the surfaces of the next draws really
- * are: rlgl's matrix stack reaches the vertex transform but not the
- * shader's model matrix, so the world position (the clouds, the snow's
- * patches and tracks) and the normal would be wrong without it.  Does
- * nothing before lrg_ground_overlay_begin_objects().
- */
-LRG_AVAILABLE_IN_ALL
-void                lrg_ground_overlay_set_model_matrix (LrgGroundOverlay *self,
-                                                         const gfloat     *matrix);
 
 /**
  * lrg_ground_overlay_end_objects:
