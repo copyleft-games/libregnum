@@ -518,8 +518,9 @@ lrg_shadow_renderer_get_caster_shader (LrgShadowRenderer *self);
  * lrg_shadow_renderer_is_ready:
  * @self: an #LrgShadowRenderer
  *
- * Returns: %TRUE when every pass of the last update was rendered, so a
- *   light set may sample the atlases
+ * Returns: %TRUE when every pass of the last update was rendered (or is
+ *   current, see lrg_shadow_renderer_set_refresh()), so a light set may
+ *   sample the atlases
  */
 LRG_AVAILABLE_IN_ALL
 gboolean
@@ -535,5 +536,57 @@ lrg_shadow_renderer_is_ready (LrgShadowRenderer *self);
 LRG_AVAILABLE_IN_ALL
 void
 lrg_shadow_renderer_release_gpu (LrgShadowRenderer *self);
+
+/**
+ * lrg_shadow_renderer_set_refresh:
+ * @self: an #LrgShadowRenderer
+ * @frames: 0 (the default) to render every pass every frame; else a
+ *   pass whose camera and light have not changed since its tile was
+ *   rendered is reused for up to @frames updates
+ *
+ * The pass cache: a still torch, a key light or a still camera's
+ * cascades cost nothing until they move or @frames updates passed (so
+ * moving casters, such as doors, show up within @frames frames).
+ * Skip the passes lrg_shadow_renderer_pass_is_current() names.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_shadow_renderer_set_refresh (LrgShadowRenderer *self,
+                                 guint              frames);
+
+/**
+ * lrg_shadow_renderer_get_refresh:
+ * @self: an #LrgShadowRenderer
+ *
+ * Returns: the cache's refresh in frames, 0 when off
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_shadow_renderer_get_refresh (LrgShadowRenderer *self);
+
+/**
+ * lrg_shadow_renderer_pass_is_current:
+ * @self: an #LrgShadowRenderer
+ * @pass: a pass index
+ *
+ * Returns: %TRUE when the last update found @pass's tile still good (the
+ *   same camera and light, younger than the refresh): it need not be
+ *   rendered this frame
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_shadow_renderer_pass_is_current (LrgShadowRenderer *self,
+                                     guint              pass);
+
+/**
+ * lrg_shadow_renderer_invalidate:
+ * @self: an #LrgShadowRenderer
+ *
+ * Forgets every cached tile (the casters changed: a new space, streamed
+ * geometry); the next update renders every pass.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_shadow_renderer_invalidate (LrgShadowRenderer *self);
 
 G_END_DECLS

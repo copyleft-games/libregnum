@@ -1007,6 +1007,7 @@ test_light_set_shader_shadows (void)
     Color  centre;
     Color  edge;
     guint  lamp;
+    guint  pass;
 
     if (!graphics_available)
     {
@@ -1069,6 +1070,37 @@ test_light_set_shader_shadows (void)
     UnloadImage (shot);
     g_assert_cmpuint (centre.r, <, 20);
     g_assert_cmpuint (edge.r, >, 40);
+
+    /* the pass cache: an unchanged light reuses its tiles */
+    lrg_shadow_renderer_set_refresh (shadows, 10);
+    g_assert_cmpuint (lrg_shadow_renderer_get_refresh (shadows), ==, 10);
+    lrg_shadow_renderer_update (shadows, lights, camera, forward, up, 30, 1, 0.1f);
+    render_casters (shadows, floor, occluder);
+    lrg_shadow_renderer_update (shadows, lights, camera, forward, up, 30, 1, 0.1f);
+    for (pass = 0; pass < 6; pass++)
+        g_assert_true (lrg_shadow_renderer_pass_is_current (shadows, pass));
+    g_assert_true (lrg_shadow_renderer_is_ready (shadows));
+    /* still shadowed without drawing a pass */
+    lrg_light_set_apply (lights, 0, 10, 0);
+    lrg_static_batch_set_shader (floor, shader);
+    lrg_static_batch_set_shader (occluder, shader);
+    shot = render_shot (floor, occluder);
+    centre = GetImageColor (shot, 8, 8);
+    UnloadImage (shot);
+    g_assert_cmpuint (centre.r, <, 20);
+    /* a moved light, an invalidation: render again */
+    lrg_light_set_set_point_light_position (lights, lamp, 0.01, 4, 0);
+    lrg_shadow_renderer_update (shadows, lights, camera, forward, up, 30, 1, 0.1f);
+    g_assert_false (lrg_shadow_renderer_pass_is_current (shadows, 0));
+    g_assert_false (lrg_shadow_renderer_is_ready (shadows));
+    render_casters (shadows, floor, occluder);
+    lrg_shadow_renderer_invalidate (shadows);
+    lrg_shadow_renderer_update (shadows, lights, camera, forward, up, 30, 1, 0.1f);
+    g_assert_false (lrg_shadow_renderer_pass_is_current (shadows, 0));
+    render_casters (shadows, floor, occluder);
+    lrg_light_set_apply (lights, 0, 10, 0);
+    lrg_static_batch_set_shader (floor, shader);
+    lrg_static_batch_set_shader (occluder, shader);
 
     /* strength 0: the shadow is gone */
     lrg_shadow_renderer_set_strength (shadows, 0.0f);

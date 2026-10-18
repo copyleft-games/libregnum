@@ -86,6 +86,14 @@ struct _LrgShadowRenderer
     gfloat   point_radius[LRG_SHADOW_MAX_POINT_LIGHTS];
     guint64  rendered;      /* bit per pass rendered since the update */
 
+    /* the pass cache: what each pass's tile holds and how old it is */
+    guint    refresh;       /* 0: render every pass every frame */
+    guint64  current;       /* bit per pass whose tile is still good */
+    gboolean cache_valid[MAX_PASSES];
+    gfloat   cache_vp[MAX_PASSES][16];
+    gfloat   cache_light[MAX_PASSES][4];
+    guint    cache_age[MAX_PASSES];
+
     /* GPU */
     Atlas      sun;
     Atlas      point;
@@ -644,6 +652,30 @@ fit_cascade (LrgShadowRenderer *self,
     self->depth_per_world[index] = 1.0f / (2.0f * radius + reach);
 }
 
+static LrgShadowPassKind
+pass_kind (LrgShadowRenderer *self,
+           guint              pass,
+           guint             *index,
+           guint             *face);
+
+/* the light a pass renders for (the cube's position and radius; zero
+ * for a cascade), part of the cache key */
+static void
+pass_light (LrgShadowRenderer *self,
+            guint              pass,
+            gfloat            *out)
+{
+    guint index;
+    guint face;
+
+    memset (out, 0, 4 * sizeof (gfloat));
+    if (pass_kind (self, pass, &index, &face) == LRG_SHADOW_PASS_CUBE_FACE)
+    {
+        memcpy (out, self->point_pos[index], 3 * sizeof (gfloat));
+        out[3] = self->point_radius[index];
+    }
+}
+
 guint
 lrg_shadow_renderer_update (LrgShadowRenderer *self,
                             LrgLightSet       *lights,
@@ -673,8 +705,7 @@ lrg_shadow_renderer_update (LrgShadowRenderer *self,
     self->n_cascades = 0;
     self->n_points = 0;
     self->rendered = 0;
-    self->sun.cleared = FALSE;
-    self->point.cleared = FALSE;
+    self->current = 0;
 
     lrg_light_set_get_origin (lights, &origin[0], &origin[1], &origin[2]);
     for (k = 0; k < 3; k++)
@@ -728,6 +759,28 @@ lrg_shadow_renderer_update (LrgShadowRenderer *self,
             self->point_ids[i] = picked[i].id;
             memcpy (self->point_pos[i], picked[i].position, sizeof (self->point_pos[i]));
             self->point_radius[i] = picked[i].radius;
+        }
+    }
+    /* 3. the cache: a pass whose camera and light are what its tile was
+     * rendered with, younger than the refresh, need not be drawn again */
+    {
+        guint n = lrg_shadow_renderer_get_pass_count (self);
+        guint pass;
+
+        for (pass = 0; pass < n && pass < MAX_PASSES; pass++)
+        {
+            gfloat vp[16];
+            gfloat light[4];
+
+            pass_light (self, pass, light);
+            lrg_shadow_renderer_get_pass (self, pass, NULL, NULL, vp);
+            if (self->cache_valid[pass])
+                self->cache_age[pass]++;
+            if (self->refresh > 0 && self->cache_valid[pass]
+                && self->cache_age[pass] < self->refresh
+                && memcmp (vp, self->cache_vp[pass], sizeof vp) == 0
+                && memcmp (light, self->cache_light[pass], sizeof light) == 0)
+                self->current |= G_GUINT64_CONSTANT (1) << pass;
         }
     }
     return lrg_shadow_renderer_get_pass_count (self);
@@ -810,6 +863,28 @@ point_pass_matrices (LrgShadowRenderer *self,
 {
     lrg_shadow_cube_face_matrices (face, self->point_pos[slot], self->point_radius[slot],
                                    view, proj);
+}
+
+static LrgShadowPassKind
+pass_kind (LrgShadowRenderer *self,
+           guint              pass,
+           guint             *index,
+           guint             *face)
+{
+    if (pass < self->n_cascades)
+    {
+        *index = pass;
+        *face = 0;
+        return LRG_SHADOW_PASS_CASCADE;
+    }
+    pass -= self->n_cascades;
+    if (pass < 6 * self->n_points)
+    {
+        *index = pass / 6;
+        *face = pass % 6;
+        return LRG_SHADOW_PASS_CUBE_FACE;
+    }
+    return LRG_SHADOW_PASS_NONE;
 }
 
 LrgShadowPassKind
@@ -933,6 +1008,14 @@ atlas_ensure (Atlas *atlas,
     return TRUE;
 }
 
+/* forgets every cached tile (a new atlas holds nothing) */
+static void
+drop_cache (LrgShadowRenderer *self)
+{
+    memset (self->cache_valid, 0, sizeof self->cache_valid);
+    self->current = 0;
+}
+
 /* the sun atlas: two cascades side by side, a second row for 3 and 4 */
 static void
 sun_layout (LrgShadowRenderer *self,
@@ -988,6 +1071,8 @@ lrg_shadow_renderer_begin_pass (LrgShadowRenderer *self,
         sun_layout (self, &cols, &rows);
         res = (gint)self->sun_resolution;
         atlas = &self->sun;
+        if (atlas->fbo == 0 || atlas->width != res * (gint)cols || atlas->height != res * (gint)rows)
+            drop_cache (self);
         if (!atlas_ensure (atlas, res * (gint)cols, res * (gint)rows))
             return FALSE;
         x = (gint)(index % 2) * res;
@@ -1000,6 +1085,9 @@ lrg_shadow_renderer_begin_pass (LrgShadowRenderer *self,
     {
         res = (gint)self->point_resolution;
         atlas = &self->point;
+        if (atlas->fbo == 0 || atlas->width != res * 3
+            || atlas->height != res * 2 * (gint)self->max_points)
+            drop_cache (self);
         if (!atlas_ensure (atlas, res * 3, res * 2 * (gint)self->max_points))
             return FALSE;
         x = (gint)(face % 3) * res;
@@ -1019,15 +1107,21 @@ lrg_shadow_renderer_begin_pass (LrgShadowRenderer *self,
     rlActiveTextureSlot (0);
 
     rlEnableFramebuffer (atlas->fbo);
+    rlClearColor (255, 255, 255, 255);
     if (!atlas->cleared)
     {
-        /* far everywhere: 1 is the farthest depth and a full radius */
+        /* a new atlas: far everywhere (1 is the farthest depth and a
+         * full radius) */
         rlViewport (0, 0, atlas->width, atlas->height);
-        rlClearColor (255, 255, 255, 255);
         rlClearScreenBuffers ();
         atlas->cleared = TRUE;
     }
+    /* this pass's tile only: the others may hold cached passes */
     rlViewport (x, y, res, res);
+    rlEnableScissorTest ();
+    rlScissor (x, y, res, res);
+    rlClearScreenBuffers ();
+    rlDisableScissorTest ();
     rlSetMatrixProjection (to_matrix (proj));
     rlSetMatrixModelview (to_matrix (view));
     rlEnableDepthTest ();
@@ -1056,7 +1150,14 @@ lrg_shadow_renderer_end_pass (LrgShadowRenderer *self)
     EndTextureMode ();
     self->in_pass = FALSE;
     if (self->pass < MAX_PASSES)
+    {
         self->rendered |= G_GUINT64_CONSTANT (1) << self->pass;
+        /* what the tile holds now */
+        self->cache_valid[self->pass] = TRUE;
+        self->cache_age[self->pass] = 0;
+        lrg_shadow_renderer_get_pass (self, self->pass, NULL, NULL, self->cache_vp[self->pass]);
+        pass_light (self, self->pass, self->cache_light[self->pass]);
+    }
 }
 
 gboolean
@@ -1071,7 +1172,7 @@ lrg_shadow_renderer_is_ready (LrgShadowRenderer *self)
     if (count == 0)
         return FALSE;
     all = count >= 64 ? G_MAXUINT64 : (G_GUINT64_CONSTANT (1) << count) - 1;
-    return (self->rendered & all) == all;
+    return ((self->rendered | self->current) & all) == all;
 }
 
 void
@@ -1086,6 +1187,45 @@ lrg_shadow_renderer_release_gpu (LrgShadowRenderer *self)
     g_clear_object (&self->caster);
     self->caster_tried = FALSE;
     self->rendered = 0;
+    drop_cache (self);
+}
+
+void
+lrg_shadow_renderer_set_refresh (LrgShadowRenderer *self,
+                                 guint              frames)
+{
+    g_return_if_fail (LRG_IS_SHADOW_RENDERER (self));
+
+    self->refresh = frames;
+    if (frames == 0)
+        drop_cache (self);
+}
+
+guint
+lrg_shadow_renderer_get_refresh (LrgShadowRenderer *self)
+{
+    g_return_val_if_fail (LRG_IS_SHADOW_RENDERER (self), 0);
+
+    return self->refresh;
+}
+
+gboolean
+lrg_shadow_renderer_pass_is_current (LrgShadowRenderer *self,
+                                     guint              pass)
+{
+    g_return_val_if_fail (LRG_IS_SHADOW_RENDERER (self), FALSE);
+
+    if (pass >= lrg_shadow_renderer_get_pass_count (self) || pass >= MAX_PASSES)
+        return FALSE;
+    return (self->current & (G_GUINT64_CONSTANT (1) << pass)) != 0;
+}
+
+void
+lrg_shadow_renderer_invalidate (LrgShadowRenderer *self)
+{
+    g_return_if_fail (LRG_IS_SHADOW_RENDERER (self));
+
+    drop_cache (self);
 }
 
 /* ------------------------------------------------------------------------ */
