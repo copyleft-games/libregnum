@@ -100,6 +100,7 @@ typedef struct
     guint8   tint[4];
     gboolean visible;
     gboolean emissive;
+    gfloat   sway;        /* 0 .. 1: how much the wind bends it */
     gint     gpu_slot;    /* quad index in the GPU pages, -1: loose */
     gboolean dynamic;     /* changed after an upload: always loose */
 } Billboard;
@@ -126,6 +127,12 @@ struct _LrgBillboardBatch
     LrgLightSet      *light_set;    /* own lights, NULL: the bound set */
     gboolean          lit;
 
+    /* wind sway: direction (x, z), lean and gust per metre of height,
+     * gust frequency (radians per second) and the clock */
+    gfloat            wind[4];
+    gfloat            wind_frequency;
+    gfloat            wind_time;
+
     /* GPU path (see the file comment) */
     GArray           *pages;        /* GpuPage */
     GArray           *ranges;       /* GpuRange, by material */
@@ -148,6 +155,8 @@ struct _LrgBillboardBatch
     gint              loc_cam_up;
     gint              loc_lit;
     gint              loc_cutoff;
+    gint              loc_wind;
+    gint              loc_wind_time;
     LrgLightSetSampleLocations light_locs;
     LrgLightSetFogLocations gpu_fog_locs;
 };
@@ -206,6 +215,8 @@ static const gchar gpu_vs[] =
     "uniform vec3 camRight;\n"
     "uniform vec3 camUp;\n"
     "uniform int lit;\n"
+    "uniform vec4 wind;\n"
+    "uniform vec2 windTime;\n"
     LRG_LIGHT_SAMPLE_GLSL
     "out vec3 fragPosition;\n"
     "out vec2 fragTexCoord;\n"
@@ -223,8 +234,15 @@ static const gchar gpu_vs[] =
     "        up = vec3(0.0, 1.0, 0.0);\n"
     "    }\n"
     "    vec3 local = vertexPosition + right * bbCorner.x + up * bbCorner.y;\n"
+    "    float emissive = mod(bbCorner.w, 2.0);\n"
+    "    float sway = floor(bbCorner.w * 0.5 + 0.25) / 255.0;\n"
+    "    if (sway > 0.0 && bbCorner.y > 0.0) {\n"
+    "        float phase = dot(vertexPosition.xz, vec2(0.37, 0.21));\n"
+    "        float bend = (wind.z + wind.w * sin(windTime.x * windTime.y + phase)) * sway * bbCorner.y;\n"
+    "        local.xz += wind.xy * bend;\n"
+    "    }\n"
     "    vec4 c = vertexColor;\n"
-    "    if (lit == 1 && bbCorner.w < 0.5) {\n"
+    "    if (lit == 1 && emissive < 0.5) {\n"
     "        vec3 centre = (matModel * vec4(vertexPosition + vec3(0.0, bbCorner.z, 0.0), 1.0)).xyz;\n"
     "        c.rgb = clamp(c.rgb * lrg_light_sample(centre), 0.0, 1.0);\n"
     "    }\n"
@@ -568,6 +586,84 @@ lrg_billboard_batch_set_tint (LrgBillboardBatch *self,
 }
 
 void
+lrg_billboard_batch_set_sway (LrgBillboardBatch *self,
+                              guint              index,
+                              gfloat             weight)
+{
+    Billboard *b;
+
+    g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
+
+    b = billboard_at (self, index);
+    g_return_if_fail (b != NULL);
+    if (!isfinite (weight))
+        return;
+    weight = CLAMP (weight, 0.0f, 1.0f);
+    if (weight == b->sway)
+        return;
+    touch (self, b);
+    b->sway = weight;
+}
+
+gfloat
+lrg_billboard_batch_get_sway (LrgBillboardBatch *self,
+                              guint              index)
+{
+    Billboard *b;
+
+    g_return_val_if_fail (LRG_IS_BILLBOARD_BATCH (self), 0.0f);
+
+    b = billboard_at (self, index);
+    g_return_val_if_fail (b != NULL, 0.0f);
+    return b->sway;
+}
+
+void
+lrg_billboard_batch_set_wind (LrgBillboardBatch *self,
+                              gfloat             direction_x,
+                              gfloat             direction_z,
+                              gfloat             lean,
+                              gfloat             gust,
+                              gfloat             frequency)
+{
+    gfloat len;
+
+    g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
+
+    if (!isfinite (direction_x) || !isfinite (direction_z) || !isfinite (lean) ||
+        !isfinite (gust) || !isfinite (frequency))
+        return;
+    len = sqrtf (direction_x * direction_x + direction_z * direction_z);
+    if (len < 1e-6f)
+    {
+        direction_x = 0.0f;
+        direction_z = 0.0f;
+    }
+    else
+    {
+        direction_x /= len;
+        direction_z /= len;
+    }
+    self->wind[0] = direction_x;
+    self->wind[1] = direction_z;
+    self->wind[2] = lean;
+    self->wind[3] = gust;
+    self->wind_frequency = frequency;
+}
+
+void
+lrg_billboard_batch_set_wind_time (LrgBillboardBatch *self,
+                                   gdouble            seconds)
+{
+    g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
+
+    /* folded to an hour so a float keeps sub-frame precision (the sway
+     * skips a little once an hour, unnoticeable in a gusting wind) */
+    if (isfinite (seconds))
+        self->wind_time = (gfloat)fmod (seconds, 3600.0);
+}
+
+void
 lrg_billboard_batch_set_visible (LrgBillboardBatch *self,
                                  guint              index,
                                  gboolean           visible)
@@ -665,10 +761,11 @@ compute_basis (LrgBillboardBatch *self,
  * Bottom-left, bottom-right, top-right, top-left, counter-clockwise as
  * seen from the camera (front-facing for raylib's default culling). */
 static void
-build_corners (const Billboard *b,
-               const gfloat    *right,
-               const gfloat    *up,
-               gfloat           out[4][3])
+build_corners (LrgBillboardBatch *self,
+               const Billboard   *b,
+               const gfloat      *right,
+               const gfloat      *up,
+               gfloat             out[4][3])
 {
     guint axis;
 
@@ -682,6 +779,27 @@ build_corners (const Billboard *b,
         out[1][axis] = bl + right[axis] * b->width;
         out[2][axis] = bl + right[axis] * b->width + up[axis] * b->height;
         out[3][axis] = bl + up[axis] * b->height;
+    }
+
+    /* wind: the corners above the pivot bend downwind by their height
+     * (the vertex shader does the same; the weight is quantized to
+     * 1/255 there, so it is here too) */
+    if (b->sway > 0.0f)
+    {
+        gfloat weight = floorf (b->sway * 255.0f + 0.5f) / 255.0f;
+        gfloat above = b->height * (1.0f - b->pivot_y);
+        gfloat phase = b->position[0] * 0.37f + b->position[2] * 0.21f;
+        gfloat bend;
+
+        if (above > 0.0f)
+        {
+            bend = (self->wind[2] + self->wind[3] *
+                    sinf (self->wind_time * self->wind_frequency + phase)) * weight * above;
+            out[2][0] += self->wind[0] * bend;
+            out[2][2] += self->wind[1] * bend;
+            out[3][0] += self->wind[0] * bend;
+            out[3][2] += self->wind[1] * bend;
+        }
     }
 }
 
@@ -727,7 +845,7 @@ lrg_billboard_batch_get_corners (LrgBillboardBatch *self,
                    camera_right != NULL ? cam_right : NULL,
                    camera_up != NULL ? cam_up : NULL,
                    right, up);
-    build_corners (b, right, up, out);
+    build_corners (self, b, right, up, out);
 
     for (i = 0; i < 4; i++)
     {
@@ -985,6 +1103,8 @@ gpu_ensure_shader (LrgBillboardBatch *self)
     self->loc_cam_up = GetShaderLocation (self->gpu_shader, "camUp");
     self->loc_lit = GetShaderLocation (self->gpu_shader, "lit");
     self->loc_cutoff = GetShaderLocation (self->gpu_shader, "alphaCutoff");
+    self->loc_wind = GetShaderLocation (self->gpu_shader, "wind");
+    self->loc_wind_time = GetShaderLocation (self->gpu_shader, "windTime");
     lrg_light_set_sample_locations (self->gpu_shader, &self->light_locs);
     lrg_light_set_fog_locations (self->gpu_shader, &self->gpu_fog_locs);
     SetShaderValue (self->gpu_shader, GetShaderLocation (self->gpu_shader, "texture0"),
@@ -1040,7 +1160,9 @@ fill_quad (const Billboard *b,
         v[k].corner[0] = cx[k];
         v[k].corner[1] = cy[k];
         v[k].corner[2] = (0.5f - b->pivot_y) * b->height;
-        v[k].corner[3] = b->emissive ? 1.0f : 0.0f;
+        /* w: emissive (0/1) plus twice the sway weight in 1/255 steps */
+        v[k].corner[3] = (b->emissive ? 1.0f : 0.0f) +
+                         2.0f * floorf (CLAMP (b->sway, 0.0f, 1.0f) * 255.0f + 0.5f);
     }
 }
 
@@ -1273,6 +1395,14 @@ gpu_draw (LrgBillboardBatch *self,
     SetShaderValue (self->gpu_shader, self->loc_cam_right, cam_right, SHADER_UNIFORM_VEC3);
     SetShaderValue (self->gpu_shader, self->loc_cam_up, cam_up, SHADER_UNIFORM_VEC3);
     SetShaderValue (self->gpu_shader, self->loc_cutoff, &self->cutoff, SHADER_UNIFORM_FLOAT);
+    {
+        gfloat wind_time[2];
+
+        wind_time[0] = self->wind_time;
+        wind_time[1] = self->wind_frequency;
+        SetShaderValue (self->gpu_shader, self->loc_wind, self->wind, SHADER_UNIFORM_VEC4);
+        SetShaderValue (self->gpu_shader, self->loc_wind_time, wind_time, SHADER_UNIFORM_VEC2);
+    }
     lit = lrg_light_set_upload_sample (lights, self->gpu_shader, &self->light_locs);
     SetShaderValue (self->gpu_shader, self->loc_lit, &lit, SHADER_UNIFORM_INT);
     lrg_light_set_upload_fog (lights, self->gpu_shader, &self->gpu_fog_locs);
@@ -1420,7 +1550,7 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
         }
 
         compute_basis (self, b, camera, cam_right, cam_up, right, up);
-        build_corners (b, right, up, q);
+        build_corners (self, b, right, up, q);
 
         {
             guint8 rgba[4];

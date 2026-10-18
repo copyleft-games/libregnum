@@ -634,6 +634,16 @@ and client-side helpers for skinned and static models.
   Malformed files fail with `LRG_DDS_ERROR`; a short mip chain keeps the
   complete levels.
 
+- **`LrgSkinnedMesh`** (`graphics/lrg-skinned-mesh.h`): a mesh posed by a
+  bone matrix palette (`world(bone) * inverse_bind(bone)`, column-major).
+  Geometry is validated and weights renormalised up front; `skin()` is the
+  CPU reference. `draw()` skins on the GPU (GLSL 3.30, 64 bones) by adding
+  the bone index/weight buffers to the raylib mesh's VAO itself, because
+  graylib's raylib is built without `SUPPORT_GPU_SKINNING`; more bones or
+  no VAO falls back to CPU skinning into dynamic buffers. Skeleton world
+  poses use `lrg_bone_pose_compose()` (child offsets rotated by the parent);
+  `lrg_bone_pose_multiply()` keeps its translation-only additive meaning.
+
 - **`LrgModelAnimator`** (`graphics/lrg-model-animator.h`): one animator per
   shared model, one `LrgModelAnimState` per actor (embed by value, init with
   `lrg_model_anim_state_reset()`). `find_clip()` = exact, alias, then
@@ -715,6 +725,18 @@ and client-side helpers for skinned and static models.
   terrain `LrgHeightFunc`: depenetration, wall sliding, step climbing
   (retry raised, keep when landing on a walkable face within a step),
   slope limit, ground snapping. Gravity and speeds stay with the caller.
+
+- **World look** (`graphics/lrg-terrain-detail.h`, `lrg-water-surface.h`,
+  `lrg-grass-field.h`, `lrg-tree-mesh.h`, `lrg-horizon-ring.h`,
+  `postprocess/effects/lrg-heat-haze.h`): landform noise to apply where
+  heights are made (collision then matches), Gerstner water with a
+  captured-frame screen-space reflection/refraction and shore foam,
+  hash-placed instanced grass (same cell = same blades, density only
+  adds), seeded low-poly tree meshes for an `LrgStaticBatch`, a
+  distant-terrain ring drawn with a light set's shader (fog = aerial
+  haze), and a horizon heat haze. All hashing is in
+  `graphics/lrg-hash-noise-private.h`; lit pieces read the bound light
+  set. See `docs/modules/graphics/world-look.org`.
 
 See `docs/modules/physics/wall-set.org`,
 `docs/modules/physics/collision-mesh.org`,

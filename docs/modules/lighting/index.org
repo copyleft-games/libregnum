@@ -20,6 +20,8 @@ The lighting system renders lights to a texture that composites with the scene:
 - *LrgLightProbe* - Samples ambient lighting
 - *LrgLightingManager* - Coordinates all lighting
 
+For 3D, [[file:shadow-renderer.org][LrgShadowRenderer]] renders cascaded sun shadows and point light cube shadows for [[file:../graphics/light-set.org][LrgLightSet]].
+
 ** Quick Start
 :PROPERTIES:
 :CUSTOM_ID: quick-start

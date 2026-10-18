@@ -62,9 +62,16 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-gltf-geometry.h \
 	src/graphics/lrg-model-animator.h \
 	src/graphics/lrg-static-batch.h \
+	src/graphics/lrg-terrain-detail.h \
+	src/graphics/lrg-water-surface.h \
+	src/graphics/lrg-grass-field.h \
+	src/graphics/lrg-tree-mesh.h \
+	src/graphics/lrg-horizon-ring.h \
+	src/graphics/lrg-skinned-mesh.h \
 	src/graphics/lrg-billboard-batch.h \
 	src/graphics/lrg-terrain.h \
 	src/graphics/lrg-sky-dome.h \
+	src/graphics/lrg-sky-bodies.h \
 	src/graphics/lrg-light-set.h \
 	src/graphics/lrg-texture-sampling.h \
 	src/ecs/lrg-component.h \
@@ -176,6 +183,13 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-audio-mixer.h \
 	src/audio/lrg-procedural-audio.h \
 	src/audio/lrg-midi-synth.h \
+	src/audio/lrg-audio-effect.h \
+	src/audio/lrg-reverb.h \
+	src/audio/lrg-low-pass.h \
+	src/audio/lrg-sound-bed.h \
+	src/audio/lrg-midi-output.h \
+	src/audio/lrg-midi-output-alsa.h \
+	src/audio/lrg-midi-sequencer.h \
 	src/inventory/lrg-item-def.h \
 	src/inventory/lrg-item-stack.h \
 	src/inventory/lrg-inventory.h \
@@ -188,6 +202,7 @@ PUBLIC_HEADERS := \
 	src/pathfinding/lrg-nav-grid.h \
 	src/pathfinding/lrg-pathfinder.h \
 	src/pathfinding/lrg-nav-mesh.h \
+	src/pathfinding/lrg-nav-poly-mesh.h \
 	src/ai/lrg-blackboard.h \
 	src/ai/lrg-bt-node.h \
 	src/ai/lrg-bt-composite.h \
@@ -329,11 +344,14 @@ PUBLIC_HEADERS := \
 	src/postprocess/lrg-post-effect.h \
 	src/postprocess/lrg-post-processor.h \
 	src/postprocess/effects/lrg-vignette.h \
+	src/postprocess/effects/lrg-heat-haze.h \
 	src/postprocess/effects/lrg-bloom.h \
 	src/postprocess/effects/lrg-film-grain.h \
 	src/postprocess/effects/lrg-screen-shake.h \
 	src/postprocess/effects/lrg-colorblind-filter.h \
 	src/postprocess/effects/lrg-color-grade.h \
+	src/postprocess/lrg-color-lut.h \
+	src/postprocess/effects/lrg-palettize.h \
 	src/postprocess/effects/lrg-fxaa.h \
 	src/animation/lrg-bone-pose.h \
 	src/animation/lrg-bone.h \
@@ -400,12 +418,18 @@ PUBLIC_HEADERS := \
 	src/weather/lrg-weather.h \
 	src/weather/lrg-day-night-cycle.h \
 	src/weather/lrg-weather-manager.h \
+	src/weather/lrg-celestial.h \
+	src/weather/lrg-cloud-layer.h \
+	src/weather/lrg-snow-cover.h \
+	src/weather/lrg-weather-field.h \
+	src/weather/lrg-ground-overlay.h \
 	src/lighting/lrg-shadow-caster.h \
 	src/lighting/lrg-light2d.h \
 	src/lighting/lrg-point-light2d.h \
 	src/lighting/lrg-spot-light2d.h \
 	src/lighting/lrg-directional-light2d.h \
 	src/lighting/lrg-shadow-map.h \
+	src/lighting/lrg-shadow-renderer.h \
 	src/lighting/lrg-lightmap.h \
 	src/lighting/lrg-light-probe.h \
 	src/lighting/lrg-lighting-manager.h \
@@ -475,6 +499,7 @@ PUBLIC_HEADERS := \
 	src/vr/lrg-vr-stub.h \
 	src/vr/lrg-vr-comfort.h \
 	src/vr/lrg-openxr-service.h \
+	src/vr/lrg-vr-draw.h \
 	src/template/lrg-game-template.h \
 	src/template/lrg-input-buffer.h \
 	src/template/states/lrg-template-main-menu-state.h \
@@ -616,9 +641,16 @@ SOURCES := \
 	src/graphics/lrg-gltf-geometry.c \
 	src/graphics/lrg-model-animator.c \
 	src/graphics/lrg-static-batch.c \
+	src/graphics/lrg-terrain-detail.c \
+	src/graphics/lrg-water-surface.c \
+	src/graphics/lrg-grass-field.c \
+	src/graphics/lrg-tree-mesh.c \
+	src/graphics/lrg-horizon-ring.c \
+	src/graphics/lrg-skinned-mesh.c \
 	src/graphics/lrg-billboard-batch.c \
 	src/graphics/lrg-terrain.c \
 	src/graphics/lrg-sky-dome.c \
+	src/graphics/lrg-sky-bodies.c \
 	src/graphics/lrg-light-set.c \
 	src/graphics/lrg-texture-sampling.c \
 	src/ecs/lrg-component.c \
@@ -731,6 +763,13 @@ SOURCES := \
 	src/audio/lrg-procedural-audio.c \
 	src/audio/lrg-midi-synth.c \
 	src/audio/lrg-midi-synth-vendor.c \
+	src/audio/lrg-audio-effect.c \
+	src/audio/lrg-reverb.c \
+	src/audio/lrg-low-pass.c \
+	src/audio/lrg-sound-bed.c \
+	src/audio/lrg-midi-output.c \
+	src/audio/lrg-midi-output-alsa.c \
+	src/audio/lrg-midi-sequencer.c \
 	src/inventory/lrg-item-def.c \
 	src/inventory/lrg-item-stack.c \
 	src/inventory/lrg-inventory.c \
@@ -743,6 +782,7 @@ SOURCES := \
 	src/pathfinding/lrg-nav-grid.c \
 	src/pathfinding/lrg-pathfinder.c \
 	src/pathfinding/lrg-nav-mesh.c \
+	src/pathfinding/lrg-nav-poly-mesh.c \
 	src/ai/lrg-blackboard.c \
 	src/ai/lrg-bt-node.c \
 	src/ai/lrg-bt-composite.c \
@@ -886,11 +926,14 @@ SOURCES := \
 	src/postprocess/lrg-post-effect.c \
 	src/postprocess/lrg-post-processor.c \
 	src/postprocess/effects/lrg-vignette.c \
+	src/postprocess/effects/lrg-heat-haze.c \
 	src/postprocess/effects/lrg-bloom.c \
 	src/postprocess/effects/lrg-film-grain.c \
 	src/postprocess/effects/lrg-screen-shake.c \
 	src/postprocess/effects/lrg-colorblind-filter.c \
 	src/postprocess/effects/lrg-color-grade.c \
+	src/postprocess/lrg-color-lut.c \
+	src/postprocess/effects/lrg-palettize.c \
 	src/postprocess/effects/lrg-fxaa.c \
 	src/animation/lrg-bone-pose.c \
 	src/animation/lrg-bone.c \
@@ -958,12 +1001,18 @@ SOURCES := \
 	src/weather/lrg-weather.c \
 	src/weather/lrg-day-night-cycle.c \
 	src/weather/lrg-weather-manager.c \
+	src/weather/lrg-celestial.c \
+	src/weather/lrg-cloud-layer.c \
+	src/weather/lrg-snow-cover.c \
+	src/weather/lrg-weather-field.c \
+	src/weather/lrg-ground-overlay.c \
 	src/lighting/lrg-shadow-caster.c \
 	src/lighting/lrg-light2d.c \
 	src/lighting/lrg-point-light2d.c \
 	src/lighting/lrg-spot-light2d.c \
 	src/lighting/lrg-directional-light2d.c \
 	src/lighting/lrg-shadow-map.c \
+	src/lighting/lrg-shadow-renderer.c \
 	src/lighting/lrg-lightmap.c \
 	src/lighting/lrg-light-probe.c \
 	src/lighting/lrg-lighting-manager.c \
@@ -1033,6 +1082,7 @@ SOURCES := \
 	src/vr/lrg-vr-stub.c \
 	src/vr/lrg-vr-comfort.c \
 	src/vr/lrg-openxr-service.c \
+	src/vr/lrg-vr-draw.c \
 	src/template/lrg-game-template.c \
 	src/template/lrg-input-buffer.c \
 	src/template/states/lrg-template-main-menu-state.c \
@@ -1891,6 +1941,15 @@ $(OBJDIR)/src/%.o: src/%.c | $(OBJDIR)
 $(OBJDIR)/src/audio/lrg-midi-synth-vendor.o: LIB_CFLAGS += -isystem $(CURDIR)/src/audio/vendor
 $(OBJDIR)/src/audio/lrg-midi-synth-vendor.o: src/audio/vendor/tsf.h src/audio/vendor/tml.h src/audio/lrg-midi-synth-private.h
 $(OBJDIR)/src/audio/lrg-midi-synth.o: src/audio/lrg-midi-synth-private.h
+$(OBJDIR)/src/audio/lrg-midi-sequencer.o: src/audio/lrg-midi-synth-private.h
+
+# The ALSA MIDI output compiles without its backend when ALSA=0 (or no
+# alsa.pc), so it rebuilds when that flips (as the OpenXR stamp below).
+ALSA_STAMP := $(OBJDIR)/.alsa-$(HAS_ALSA)
+$(ALSA_STAMP): | $(OBJDIR)
+	@rm -f $(OBJDIR)/.alsa-*
+	@touch $@
+$(OBJDIR)/src/audio/lrg-midi-output-alsa.o: $(ALSA_STAMP)
 
 # The OpenXR backend compiles to a stub without OPENXR=1, so it must rebuild
 # when the flag flips; the stamp's name carries the value.

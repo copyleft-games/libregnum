@@ -12,6 +12,7 @@ Post-processing effects are applied after the scene is rendered, modifying the f
 
 - *LrgPostEffect* - Base class for all effects (derivable)
 - *LrgPostProcessor* - Manages the effect chain and render targets
+- *LrgColorLut* - 3D colour lookup tables (=.cube= files) that [[file:effects.org][LrgColorGrade]] applies after its grade; see [[file:color-lut.org][color-lut.org]]
 
 ** Quick Start
 :PROPERTIES:
@@ -54,10 +55,12 @@ Each effect reads from one texture and writes to another, ping-ponging through t
 | LrgBloom            | Bright area glow  | Fire, magic, lights   |
 | LrgVignette         | Edge darkening    | Focus, cinematic look |
 | LrgColorGrade       | Color adjustments | Mood, style           |
+| LrgHeatHaze         | Horizon shimmer   | Deserts, hot days     |
 | LrgFxaa             | Anti-aliasing     | Smooth edges          |
 | LrgFilmGrain        | Film texture      | Retro, stylized       |
 | LrgScreenShake      | Camera shake      | Impacts, explosions   |
 | LrgColorblindFilter | Accessibility     | Color correction      |
+| LrgPalettize        | Palette, dither   | Retro 8-bit look      |
 
 ** Files
 :PROPERTIES:
@@ -69,3 +72,4 @@ Each effect reads from one texture and writes to another, ping-ponging through t
 | [[file:post-processor.org]] | LrgPostProcessor pipeline |
 | [[file:effects.org]]        | Built-in effect types     |
 | [[file:accessibility.org]]  | Colorblind filter         |
+| [[file:palettize.org]]      | Palettize and dither      |

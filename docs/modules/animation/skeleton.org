@@ -59,6 +59,8 @@ LrgBonePose *lrg_bone_pose_blend (const LrgBonePose *a, const LrgBonePose *b, gf
 
 /* Hierarchical combination */
 LrgBonePose *lrg_bone_pose_multiply (const LrgBonePose *parent, const LrgBonePose *local);
+LrgBonePose *lrg_bone_pose_compose (const LrgBonePose *parent, const LrgBonePose *local);  /* hierarchical: the child's offset is rotated and scaled by the parent */
+void lrg_bone_pose_to_matrix (const LrgBonePose *self, gfloat *out_matrix);  /* column-major T * R * S */
 #+end_src
 
 --------------
@@ -172,7 +174,7 @@ GList *lrg_skeleton_get_children (LrgSkeleton *self, LrgBone *bone);
 :CUSTOM_ID: pose-operations
 :END:
 #+begin_src C
-/* Calculate world poses from local poses */
+/* Calculate world poses from local poses (lrg_bone_pose_compose() down each chain) */
 void lrg_skeleton_calculate_world_poses (LrgSkeleton *self);
 
 /* Reset all bones to bind pose */

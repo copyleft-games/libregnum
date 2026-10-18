@@ -38,6 +38,8 @@
 #endif
 #include "graphics/lrg-light-set.h"
 #include "graphics/lrg-light-set-private.h"
+#include "lighting/lrg-shadow-renderer.h"
+#include "lighting/lrg-shadow-renderer-private.h"
 
 typedef struct
 {
@@ -47,6 +49,7 @@ typedef struct
     gfloat   color[3];      /* 0 .. 1 */
     gfloat   radius;
     gfloat   intensity;
+    guint    shadow;        /* shadow priority, 0: none (M14) */
 } PointLight;
 
 struct _LrgLightSet
@@ -89,10 +92,27 @@ struct _LrgLightSet
     guint       tex_data;        /* GL texture ids, 0 = none */
     gint        tex_data_height;
     guint       tex_grid;
-    gint        tex_grid_cells;
+    gint        tex_grid_w;
+    gint        tex_grid_h;
 
     gfloat      light_limit;
     gfloat      emission[3];
+
+    /* M14: clusters (grid layers and slots per cell) */
+    guint       grid_slots;
+    guint       grid_layers;
+    gfloat      grid_layer_height;
+    gdouble     grid_y0;         /* world base of layer 0 */
+
+    /* M14: shadows and the volumetric air */
+    LrgShadowRenderer *shadows;
+    gboolean    air_on;
+    gfloat      air_density;
+    gfloat      air_g;
+    gfloat      air_intensity;
+    guint       air_steps;
+    gfloat      air_distance;
+    gfloat      air_tint[3];
 
     GrlShader  *shader;
     gboolean    shader_tried;
@@ -110,7 +130,14 @@ struct _LrgLightSet
     gint        loc_grid_params;
     gint        loc_limit;
     gint        loc_emission_color;
+    gint        loc_grid_layers;
+    gint        loc_light_shadow;
+    gint        loc_air_params;
+    gint        loc_air_tint;
+    gint        loc_air_camera;
+    gint        loc_air_light_color;
     LrgLightSetFogLocations fog_locs;
+    LrgShadowLocations      shadow_locs;
 };
 
 /* texture units of the grid textures: above raylib's 12 material maps */
@@ -169,49 +196,58 @@ static const gchar light_fs[] =
     "uniform vec3 lightPosition[MAX_LIGHTS];\n"
     "uniform vec3 lightColor[MAX_LIGHTS];\n"
     "uniform float lightRadius[MAX_LIGHTS];\n"
+    "uniform float lightShadow[MAX_LIGHTS];\n"
     "uniform float alphaCutoff;\n"
     "uniform int useGrid;\n"
     "uniform sampler2D lightData;\n"
     "uniform sampler2D lightGrid;\n"
-    "uniform vec4 gridParams;\n"
+    LRG_LIGHT_CLUSTER_GLSL
     "uniform float lightLimit;\n"
     "uniform sampler2D emissionMap;\n"
     "uniform vec3 emissionColor;\n"
     LRG_FOG_GLSL
+    LRG_SHADOW_GLSL
+    LRG_LIGHT_AIR_GLSL
     "out vec4 finalColor;\n"
-    "vec3 point_light(vec3 n, vec3 p, float r, vec3 c) {\n"
+    "vec3 point_light(vec3 n, vec3 p, float r, vec3 c, int slot) {\n"
     "    vec3 d = p - fragPosition;\n"
     "    float dist = length(d);\n"
     "    float k = clamp(1.0 - dist / r, 0.0, 1.0);\n"
     "    float lambert = dist > 0.0001 ? max(dot(n, d / dist), 0.0) : 1.0;\n"
-    "    return c * (k * k * lambert);\n"
+    "    float f = k * k * lambert;\n"
+    "    if (slot >= 0 && f > 0.0) f *= lrg_point_shadow(slot, fragPosition, n);\n"
+    "    return c * f;\n"
     "}\n"
     "void main() {\n"
     "    vec4 texel = texture(texture0, fragTexCoord) * colDiffuse * fragColor;\n"
     "    if (texel.a < alphaCutoff) discard;\n"
     "    float nlen = length(fragNormal);\n"
     "    vec3 n = nlen > 0.0 ? fragNormal / nlen : vec3(0.0, 1.0, 0.0);\n"
-    "    vec3 light = ambientColor + sunColor * max(dot(n, -sunDirection), 0.0);\n"
+    "    float sunLit = max(dot(n, -sunDirection), 0.0);\n"
+    "    if (sunLit > 0.0) sunLit *= lrg_sun_shadow(fragPosition, n);\n"
+    "    vec3 light = ambientColor + sunColor * sunLit;\n"
     "    if (useGrid == 1) {\n"
-    "        vec2 cell = floor((fragPosition.xz - gridParams.xy) / gridParams.z);\n"
-    "        if (cell.x >= 0.0 && cell.y >= 0.0 && cell.x < gridParams.w && cell.y < gridParams.w) {\n"
-    "            ivec2 base = ivec2(int(cell.x) * 4, int(cell.y));\n"
+    "        ivec2 base;\n"
+    "        if (lrg_cluster_base(fragPosition, base)) {\n"
+    "            int per = int(gridLayers.w + 0.5) / 4;\n"
     "            bool done = false;\n"
-    "            for (int t = 0; t < 4 && !done; t++) {\n"
+    "            for (int t = 0; t < 8 && !done; t++) {\n"
+    "                if (t >= per) break;\n"
     "                vec4 ids = texelFetch(lightGrid, base + ivec2(t, 0), 0);\n"
     "                for (int j = 0; j < 4; j++) {\n"
     "                    if (ids[j] < 0.0) { done = true; break; }\n"
     "                    int id = int(ids[j] + 0.5);\n"
     "                    vec4 pr = texelFetch(lightData, ivec2(0, id), 0);\n"
     "                    vec4 col = texelFetch(lightData, ivec2(1, id), 0);\n"
-    "                    light += point_light(n, pr.xyz, pr.w, col.rgb);\n"
+    "                    light += point_light(n, pr.xyz, pr.w, col.rgb, int(floor(col.w + 0.5)));\n"
     "                }\n"
     "            }\n"
     "        }\n"
     "    } else {\n"
     "        for (int i = 0; i < MAX_LIGHTS; i++) {\n"
     "            if (i >= lightCount) break;\n"
-    "            light += point_light(n, lightPosition[i], lightRadius[i], lightColor[i]);\n"
+    "            light += point_light(n, lightPosition[i], lightRadius[i], lightColor[i],\n"
+    "                                 int(floor(lightShadow[i] + 0.5)));\n"
     "        }\n"
     "    }\n"
     "    if (lightLimit > 0.0) {\n"
@@ -220,6 +256,11 @@ static const gchar light_fs[] =
     "        light = min(light, vec3(knee)) + (lightLimit - knee) * (1.0 - exp(-over / (lightLimit - knee)));\n"
     "    }\n"
     "    vec3 lit = texel.rgb * light + texture(emissionMap, fragTexCoord).rgb * emissionColor;\n"
+    "    if (airParams.x > 0.0) {\n"
+    "        vec3 ins;\n"
+    "        float tr = lrg_air(fragPosition, ins);\n"
+    "        lit = lit * tr + ins;\n"
+    "    }\n"
     "    finalColor = vec4(mix(lit, fogColor.rgb, lrg_fog_amount(fragPosition)), texel.a);\n"
     "}\n";
 
@@ -233,6 +274,7 @@ lrg_light_set_finalize (GObject *object)
     LrgLightSet *self = LRG_LIGHT_SET (object);
 
     g_clear_object (&self->shader);
+    g_clear_object (&self->shadows);
     g_clear_pointer (&self->lights, g_array_unref);
     g_clear_pointer (&self->grid_ids, g_free);
     g_clear_pointer (&self->grid_keys, g_free);
@@ -265,6 +307,10 @@ lrg_light_set_init (LrgLightSet *self)
     self->max_active = LRG_LIGHT_SET_MAX_ACTIVE;
     self->fog_type = LRG_FOG_TYPE_LINEAR;
     self->fog_falloff = 1.0f;
+    self->grid_slots = LRG_LIGHT_SET_GRID_SLOTS;
+    self->grid_layers = 1;
+    self->grid_layer_height = 4.0f;
+    self->air_tint[0] = self->air_tint[1] = self->air_tint[2] = 1.0f;
 }
 
 LrgLightSet *
@@ -596,30 +642,75 @@ lrg_light_set_select (LrgLightSet *self,
 /* Light grid                                                               */
 /* ------------------------------------------------------------------------ */
 
-void
-lrg_light_set_set_grid (LrgLightSet *self,
-                        gfloat       cell_size,
-                        guint        cells)
+/* grid_alloc:
+ * (Re)allocates the cell lists for the current cells, layers and slots. */
+static void
+grid_alloc (LrgLightSet *self)
 {
     gsize n;
-
-    g_return_if_fail (LRG_IS_LIGHT_SET (self));
-    g_return_if_fail (cells == 0 || (cells >= 2 && cells <= LRG_LIGHT_SET_GRID_MAX_CELLS));
-    g_return_if_fail (cells == 0 || (cell_size > 0.0f && isfinite (cell_size)));
 
     g_clear_pointer (&self->grid_ids, g_free);
     g_clear_pointer (&self->grid_keys, g_free);
     g_clear_pointer (&self->grid_counts, g_free);
     self->grid_built = FALSE;
-    self->grid_cells = cells;
-    self->grid_cell = cell_size;
-    if (cells == 0)
+    if (self->grid_cells == 0)
         return;
 
-    n = (gsize)cells * cells;
-    self->grid_ids = g_new (guint, n * LRG_LIGHT_SET_GRID_SLOTS);
-    self->grid_keys = g_new (gfloat, n * LRG_LIGHT_SET_GRID_SLOTS);
+    n = (gsize)self->grid_cells * self->grid_cells * self->grid_layers;
+    self->grid_ids = g_new (guint, n * self->grid_slots);
+    self->grid_keys = g_new (gfloat, n * self->grid_slots);
     self->grid_counts = g_new0 (guint8, n);
+}
+
+void
+lrg_light_set_set_grid (LrgLightSet *self,
+                        gfloat       cell_size,
+                        guint        cells)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (cells == 0 || (cells >= 2 && cells <= LRG_LIGHT_SET_GRID_MAX_CELLS));
+    g_return_if_fail (cells == 0 || (cell_size > 0.0f && isfinite (cell_size)));
+
+    self->grid_cells = cells;
+    self->grid_cell = cell_size;
+    grid_alloc (self);
+}
+
+void
+lrg_light_set_set_grid_layers (LrgLightSet *self,
+                               gfloat       layer_height,
+                               guint        layers)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (layers >= 1 && layers <= LRG_LIGHT_SET_GRID_MAX_LAYERS);
+    g_return_if_fail (layer_height > 0.0f && isfinite (layer_height));
+
+    if (self->grid_layers == layers && self->grid_layer_height == layer_height)
+        return;
+    self->grid_layers = layers;
+    self->grid_layer_height = layer_height;
+    grid_alloc (self);
+}
+
+void
+lrg_light_set_set_grid_slots (LrgLightSet *self,
+                              guint        slots)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (slots >= 4 && slots <= LRG_LIGHT_SET_GRID_MAX_SLOTS && slots % 4 == 0);
+
+    if (self->grid_slots == slots)
+        return;
+    self->grid_slots = slots;
+    grid_alloc (self);
+}
+
+guint
+lrg_light_set_get_grid_slots (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
+
+    return self->grid_slots;
 }
 
 /* grid_insert:
@@ -631,14 +722,15 @@ grid_insert (LrgLightSet *self,
              guint        id,
              gfloat       key)
 {
-    guint  *ids = self->grid_ids + c * LRG_LIGHT_SET_GRID_SLOTS;
-    gfloat *keys = self->grid_keys + c * LRG_LIGHT_SET_GRID_SLOTS;
+    guint   stride = self->grid_slots;
+    guint  *ids = self->grid_ids + c * stride;
+    gfloat *keys = self->grid_keys + c * stride;
     guint   count = self->grid_counts[c];
     guint   slot;
 
-    if (count == LRG_LIGHT_SET_GRID_SLOTS && key >= keys[count - 1])
+    if (count == stride && key >= keys[count - 1])
         return;
-    slot = count < LRG_LIGHT_SET_GRID_SLOTS ? count : count - 1;
+    slot = count < stride ? count : count - 1;
     while (slot > 0 && keys[slot - 1] > key)
     {
         keys[slot] = keys[slot - 1];
@@ -647,15 +739,31 @@ grid_insert (LrgLightSet *self,
     }
     keys[slot] = key;
     ids[slot] = id;
-    if (count < LRG_LIGHT_SET_GRID_SLOTS)
+    if (count < stride)
         self->grid_counts[c] = (guint8)(count + 1);
 }
 
+/* layer_range:
+ * The world heights layer @l covers; the outer layers reach on without
+ * end (and a one-layer grid covers every height). */
+static void
+layer_range (LrgLightSet *self,
+             guint        l,
+             gdouble     *lo,
+             gdouble     *hi)
+{
+    gdouble h = (gdouble)self->grid_layer_height;
+
+    *lo = l == 0 ? -G_MAXDOUBLE : self->grid_y0 + (gdouble)l * h;
+    *hi = l + 1 >= self->grid_layers ? G_MAXDOUBLE : self->grid_y0 + (gdouble)(l + 1) * h;
+}
+
 /* build_grid:
- * Sorts every lit light into the cells its radius reaches, around the
- * camera's cell. A light's key in a cell is the distance from the light
- * to the cell's rectangle over its radius: 0 inside, 1 at the edge of
- * its reach, so strong lights win over weak ones at equal distance. */
+ * Sorts every lit light into the cells (clusters) its radius reaches,
+ * around the camera's cell and layer. A light's key in a cell is the
+ * distance from the light to the cell's box over its radius: 0 inside,
+ * 1 at the edge of its reach, so strong lights win over weak ones at
+ * equal distance. */
 static void
 build_grid (LrgLightSet *self,
             gdouble      camera_x,
@@ -663,13 +771,16 @@ build_grid (LrgLightSet *self,
             gdouble      camera_z)
 {
     guint   n = self->grid_cells;
+    guint   layers = self->grid_layers;
     gdouble cell = (gdouble)self->grid_cell;
     gdouble extent = cell * (gdouble)n;
+    gdouble lh = (gdouble)self->grid_layer_height;
     guint   id;
 
-    memset (self->grid_counts, 0, (gsize)n * n);
+    memset (self->grid_counts, 0, (gsize)n * n * layers);
     self->grid_x0 = (floor (camera_x / cell) - (gdouble)(n / 2)) * cell;
     self->grid_z0 = (floor (camera_z / cell) - (gdouble)(n / 2)) * cell;
+    self->grid_y0 = (floor (camera_y / lh) - (gdouble)(layers / 2)) * lh;
 
     for (id = 0; id < self->lights->len; id++)
     {
@@ -681,8 +792,11 @@ build_grid (LrgLightSet *self,
         gint        gx1;
         gint        gz0;
         gint        gz1;
+        gint        l0;
+        gint        l1;
         gint        gx;
         gint        gz;
+        gint        l;
 
         if (!pl->used || !pl->enabled || pl->intensity <= 0.0f)
             continue;
@@ -697,7 +811,7 @@ build_grid (LrgLightSet *self,
                 continue;
         }
 
-        /* the cells the light's circle overlaps, clipped to the grid */
+        /* the cells the light's sphere overlaps, clipped to the grid */
         lx = pl->position[0] - self->grid_x0;
         lz = pl->position[2] - self->grid_z0;
         if (lx + r < 0.0 || lz + r < 0.0 || lx - r >= extent || lz - r >= extent)
@@ -706,20 +820,36 @@ build_grid (LrgLightSet *self,
         gx1 = (gint)CLAMP (floor ((lx + r) / cell), 0.0, (gdouble)(n - 1));
         gz0 = (gint)CLAMP (floor ((lz - r) / cell), 0.0, (gdouble)(n - 1));
         gz1 = (gint)CLAMP (floor ((lz + r) / cell), 0.0, (gdouble)(n - 1));
+        l0 = (gint)CLAMP (floor ((pl->position[1] - r - self->grid_y0) / lh), 0.0,
+                          (gdouble)(layers - 1));
+        l1 = (gint)CLAMP (floor ((pl->position[1] + r - self->grid_y0) / lh), 0.0,
+                          (gdouble)(layers - 1));
+        if (layers == 1)
+            l0 = l1 = 0;
 
-        for (gz = gz0; gz <= gz1; gz++)
+        for (l = l0; l <= l1; l++)
         {
-            for (gx = gx0; gx <= gx1; gx++)
-            {
-                gdouble ax = (gdouble)gx * cell;
-                gdouble az = (gdouble)gz * cell;
-                gdouble dx = MAX (MAX (ax - lx, 0.0), lx - (ax + cell));
-                gdouble dz = MAX (MAX (az - lz, 0.0), lz - (az + cell));
-                gdouble d = sqrt (dx * dx + dz * dz);
+            gdouble lo;
+            gdouble hi;
+            gdouble dy;
 
-                if (d >= r)
-                    continue;
-                grid_insert (self, (gsize)gz * n + (gsize)gx, id, (gfloat)(d / r));
+            layer_range (self, (guint)l, &lo, &hi);
+            dy = MAX (MAX (lo - pl->position[1], 0.0), pl->position[1] - hi);
+            for (gz = gz0; gz <= gz1; gz++)
+            {
+                for (gx = gx0; gx <= gx1; gx++)
+                {
+                    gdouble ax = (gdouble)gx * cell;
+                    gdouble az = (gdouble)gz * cell;
+                    gdouble dx = MAX (MAX (ax - lx, 0.0), lx - (ax + cell));
+                    gdouble dz = MAX (MAX (az - lz, 0.0), lz - (az + cell));
+                    gdouble d = sqrt (dx * dx + dy * dy + dz * dz);
+
+                    if (d >= r)
+                        continue;
+                    grid_insert (self, ((gsize)l * n + (gsize)gz) * n + (gsize)gx, id,
+                                 (gfloat)(d / r));
+                }
             }
         }
     }
@@ -727,14 +857,16 @@ build_grid (LrgLightSet *self,
 }
 
 /* grid_cell_at:
- * The cell index of world (@x, @z), or -1 outside the built grid. */
+ * The cluster index of world (@x, @y, @z), or -1 outside the built grid. */
 static gssize
 grid_cell_at (LrgLightSet *self,
               gdouble      x,
+              gdouble      y,
               gdouble      z)
 {
     gdouble gx;
     gdouble gz;
+    gdouble l = 0.0;
 
     if (self->grid_cells == 0 || !self->grid_built)
         return -1;
@@ -743,7 +875,11 @@ grid_cell_at (LrgLightSet *self,
     if (!(gx >= 0.0 && gz >= 0.0 && gx < (gdouble)self->grid_cells
           && gz < (gdouble)self->grid_cells))
         return -1;
-    return (gssize)gz * (gssize)self->grid_cells + (gssize)gx;
+    if (self->grid_layers > 1)
+        l = CLAMP (floor ((y - self->grid_y0) / (gdouble)self->grid_layer_height), 0.0,
+                   (gdouble)(self->grid_layers - 1));
+    return ((gssize)l * (gssize)self->grid_cells + (gssize)gz) * (gssize)self->grid_cells
+           + (gssize)gx;
 }
 
 guint
@@ -751,12 +887,10 @@ lrg_light_set_get_grid_light_count (LrgLightSet *self,
                                     gdouble      x,
                                     gdouble      z)
 {
-    gssize c;
-
     g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
 
-    c = grid_cell_at (self, x, z);
-    return c < 0 ? 0 : self->grid_counts[c];
+    /* the camera's layer */
+    return lrg_light_set_get_cluster_light_count (self, x, self->camera[1], z);
 }
 
 guint
@@ -765,14 +899,40 @@ lrg_light_set_get_grid_light (LrgLightSet *self,
                               gdouble      z,
                               guint        index)
 {
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), LRG_LIGHT_SET_INVALID_LIGHT);
+
+    return lrg_light_set_get_cluster_light (self, x, self->camera[1], z, index);
+}
+
+guint
+lrg_light_set_get_cluster_light_count (LrgLightSet *self,
+                                       gdouble      x,
+                                       gdouble      y,
+                                       gdouble      z)
+{
+    gssize c;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
+
+    c = grid_cell_at (self, x, y, z);
+    return c < 0 ? 0 : self->grid_counts[c];
+}
+
+guint
+lrg_light_set_get_cluster_light (LrgLightSet *self,
+                                 gdouble      x,
+                                 gdouble      y,
+                                 gdouble      z,
+                                 guint        index)
+{
     gssize c;
 
     g_return_val_if_fail (LRG_IS_LIGHT_SET (self), LRG_LIGHT_SET_INVALID_LIGHT);
 
-    c = grid_cell_at (self, x, z);
+    c = grid_cell_at (self, x, y, z);
     if (c < 0 || index >= self->grid_counts[c])
         return LRG_LIGHT_SET_INVALID_LIGHT;
-    return self->grid_ids[(gsize)c * LRG_LIGHT_SET_GRID_SLOTS + index];
+    return self->grid_ids[(gsize)c * self->grid_slots + index];
 }
 
 /* ------------------------------------------------------------------------ */
@@ -899,7 +1059,14 @@ lrg_light_set_get_shader (LrgLightSet *self)
     self->loc_grid_params = GetShaderLocation (*handle, "gridParams");
     self->loc_limit = GetShaderLocation (*handle, "lightLimit");
     self->loc_emission_color = GetShaderLocation (*handle, "emissionColor");
+    self->loc_grid_layers = GetShaderLocation (*handle, "gridLayers");
+    self->loc_light_shadow = GetShaderLocation (*handle, "lightShadow");
+    self->loc_air_params = GetShaderLocation (*handle, "airParams");
+    self->loc_air_tint = GetShaderLocation (*handle, "airTint");
+    self->loc_air_camera = GetShaderLocation (*handle, "airCamera");
+    self->loc_air_light_color = GetShaderLocation (*handle, "airLightColor");
     lrg_light_set_fog_locations (*handle, &self->fog_locs);
+    lrg_shadow_locations (*handle, &self->shadow_locs);
 
     /* The emission map is raylib's MATERIAL_MAP_EMISSION: DrawMesh()
      * binds a material's map to that unit and sets the sampler through
@@ -948,6 +1115,19 @@ upload_texture (guint        *id,
     }
 }
 
+/* grid_layer_uniform:
+ * gridLayers of LRG_LIGHT_CLUSTER_GLSL: layer 0's base in draw space,
+ * the layer height, the layers and the slots per cell. */
+static void
+grid_layer_uniform (LrgLightSet *self,
+                    gfloat      *out)
+{
+    out[0] = (gfloat)(self->grid_y0 - self->origin[1]);
+    out[1] = self->grid_layer_height;
+    out[2] = (gfloat)self->grid_layers;
+    out[3] = (gfloat)self->grid_slots;
+}
+
 /* upload_grid:
  * The lights of the built grid (two texels each, in first-use order)
  * and the cell lists (four indices per texel, -1 terminated), bound to
@@ -966,24 +1146,29 @@ upload_grid (LrgLightSet *self,
     gint    unused_w;
     gint    use_grid = 1;
     gfloat  params[4];
+    gfloat  layers[4];
+    guint   stride;
+    gsize   n_cells;
 
     /* raylib leaves the last material slot active after DrawMesh();
      * uploads must not bind into a material unit */
     rlActiveTextureSlot (0);
-    grid_w = (gint)(n * (LRG_LIGHT_SET_GRID_SLOTS / 4));
+    stride = self->grid_slots;
+    n_cells = (gsize)n * n * self->grid_layers;
+    grid_w = (gint)(n * (stride / 4));
     data = g_new0 (gfloat, (gsize)LRG_LIGHT_SET_GRID_MAX_LIGHTS * 8);
-    cells = g_new (gfloat, (gsize)n * n * LRG_LIGHT_SET_GRID_SLOTS);
+    cells = g_new (gfloat, n_cells * stride);
     index_of = g_new (guint, MAX (self->lights->len, 1));
     memset (index_of, 0xff, sizeof (guint) * MAX (self->lights->len, 1));
 
-    for (c = 0; c < (gsize)n * n; c++)
+    for (c = 0; c < n_cells; c++)
     {
         guint written = 0;
         guint s;
 
         for (s = 0; s < self->grid_counts[c]; s++)
         {
-            guint       id = self->grid_ids[c * LRG_LIGHT_SET_GRID_SLOTS + s];
+            guint       id = self->grid_ids[c * stride + s];
             PointLight *pl = &g_array_index (self->lights, PointLight, id);
 
             if (index_of[id] == G_MAXUINT)
@@ -1001,25 +1186,32 @@ upload_grid (LrgLightSet *self,
                     t[4 + k] = pl->color[k] * pl->intensity;
                 }
                 t[3] = pl->radius;
+                /* M14: the light's shadow slot, -1 for none */
+                t[7] = self->shadows != NULL && lrg_shadow_renderer_is_ready (self->shadows)
+                       ? (gfloat)lrg_shadow_renderer_get_light_slot (self->shadows, id)
+                       : -1.0f;
                 n_data++;
             }
-            cells[c * LRG_LIGHT_SET_GRID_SLOTS + written++] = (gfloat)index_of[id];
+            cells[c * stride + written++] = (gfloat)index_of[id];
         }
-        for (; written < LRG_LIGHT_SET_GRID_SLOTS; written++)
-            cells[c * LRG_LIGHT_SET_GRID_SLOTS + written] = -1.0f;
+        for (; written < stride; written++)
+            cells[c * stride + written] = -1.0f;
     }
 
-    /* the cell texture is (n * 4) x n: cell (x, z) at texels 4x .. 4x+3
-     * of row z; the light texture 2 x lights */
+    /* the cell texture is (n * slots / 4) x (n * layers): cluster (x, z,
+     * layer) at texels x * slots / 4 onwards of row layer * n + z; the
+     * light texture 2 x lights */
     unused_w = 2;
     upload_texture (&self->tex_data, &unused_w, &self->tex_data_height,
                     2, (gint)MAX (n_data, 1u), data);
     {
-        gint have_w = self->tex_grid_cells * (LRG_LIGHT_SET_GRID_SLOTS / 4);
-        gint have_h = self->tex_grid_cells;
+        gint have_w = self->tex_grid_w;
+        gint have_h = self->tex_grid_h;
 
-        upload_texture (&self->tex_grid, &have_w, &have_h, grid_w, (gint)n, cells);
-        self->tex_grid_cells = (gint)n;
+        upload_texture (&self->tex_grid, &have_w, &have_h, grid_w,
+                        (gint)(n * self->grid_layers), cells);
+        self->tex_grid_w = grid_w;
+        self->tex_grid_h = (gint)(n * self->grid_layers);
     }
 
     rlActiveTextureSlot (GRID_DATA_UNIT);
@@ -1032,8 +1224,58 @@ upload_grid (LrgLightSet *self,
     params[1] = (gfloat)(self->grid_z0 - self->origin[2]);
     params[2] = self->grid_cell;
     params[3] = (gfloat)n;
+    grid_layer_uniform (self, layers);
     SetShaderValue (*handle, self->loc_use_grid, &use_grid, SHADER_UNIFORM_INT);
     SetShaderValue (*handle, self->loc_grid_params, params, SHADER_UNIFORM_VEC4);
+    SetShaderValue (*handle, self->loc_grid_layers, layers, SHADER_UNIFORM_VEC4);
+}
+
+/* upload_air:
+ * The air uniforms of LRG_LIGHT_AIR_GLSL: density 0 turns it off. */
+static void
+upload_air (LrgLightSet *self,
+            Shader      *handle)
+{
+    gfloat params[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    gfloat tint[4];
+    gfloat camera[3];
+    gfloat colors[LRG_SHADOW_MAX_POINT_LIGHTS * 3];
+    guint  n_points = 0;
+    guint  i;
+    guint  k;
+
+    if (self->air_on)
+    {
+        params[0] = self->air_density;
+        params[1] = self->air_g;
+        params[2] = self->air_intensity;
+        params[3] = (gfloat)self->air_steps;
+    }
+    for (k = 0; k < 3; k++)
+    {
+        tint[k] = self->air_tint[k];
+        camera[k] = (gfloat)(self->camera[k] - self->origin[k]);
+    }
+    tint[3] = self->air_distance;
+    SetShaderValue (*handle, self->loc_air_params, params, SHADER_UNIFORM_VEC4);
+    if (!self->air_on)
+        return;
+    SetShaderValue (*handle, self->loc_air_tint, tint, SHADER_UNIFORM_VEC4);
+    SetShaderValue (*handle, self->loc_air_camera, camera, SHADER_UNIFORM_VEC3);
+
+    /* the colours of the shadowed point lights the air scatters */
+    if (self->shadows != NULL && lrg_shadow_renderer_is_ready (self->shadows))
+        n_points = lrg_shadow_renderer_get_point_count (self->shadows);
+    for (i = 0; i < n_points; i++)
+    {
+        PointLight *pl = light_at (self, lrg_shadow_renderer_get_point_light (self->shadows, i));
+
+        for (k = 0; k < 3; k++)
+            colors[i * 3 + k] = pl != NULL ? pl->color[k] * pl->intensity : 0.0f;
+    }
+    if (n_points > 0)
+        SetShaderValueV (*handle, self->loc_air_light_color, colors, SHADER_UNIFORM_VEC3,
+                         (gint)n_points);
 }
 
 gboolean
@@ -1045,14 +1287,17 @@ lrg_light_set_apply (LrgLightSet *self,
     gfloat  positions[LRG_LIGHT_SET_MAX_ACTIVE * 3];
     gfloat  colors[LRG_LIGHT_SET_MAX_ACTIVE * 3];
     gfloat  radii[LRG_LIGHT_SET_MAX_ACTIVE];
+    gfloat  shadow_slots[LRG_LIGHT_SET_MAX_ACTIVE];
     gfloat  sun_dir[3] = { 0.0f, -1.0f, 0.0f };
     gfloat  sun_color[3] = { 0.0f, 0.0f, 0.0f };
+    gboolean shadows_ready;
     Shader *handle;
     gint    count;
     guint   i;
 
     g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
 
+    shadows_ready = self->shadows != NULL && lrg_shadow_renderer_is_ready (self->shadows);
     lrg_light_set_select (self, camera_x, camera_y, camera_z);
     if (lrg_light_set_get_shader (self) == NULL)
         return FALSE;
@@ -1070,6 +1315,10 @@ lrg_light_set_apply (LrgLightSet *self,
             colors[i * 3 + k] = pl->color[k] * pl->intensity;
         }
         radii[i] = pl->radius;
+        shadow_slots[i] = shadows_ready
+                          ? (gfloat)lrg_shadow_renderer_get_light_slot (self->shadows,
+                                                                        self->active[i])
+                          : -1.0f;
     }
     if (self->has_directional)
     {
@@ -1088,9 +1337,14 @@ lrg_light_set_apply (LrgLightSet *self,
         SetShaderValueV (*handle, self->loc_positions, positions, SHADER_UNIFORM_VEC3, count);
         SetShaderValueV (*handle, self->loc_colors, colors, SHADER_UNIFORM_VEC3, count);
         SetShaderValueV (*handle, self->loc_radii, radii, SHADER_UNIFORM_FLOAT, count);
+        SetShaderValueV (*handle, self->loc_light_shadow, shadow_slots, SHADER_UNIFORM_FLOAT, count);
     }
     SetShaderValue (*handle, self->loc_limit, &self->light_limit, SHADER_UNIFORM_FLOAT);
     SetShaderValue (*handle, self->loc_emission_color, self->emission, SHADER_UNIFORM_VEC3);
+    /* M14: the shadow atlases and the air */
+    lrg_shadow_renderer_upload (shadows_ready ? self->shadows : NULL, *handle,
+                                &self->shadow_locs);
+    upload_air (self, handle);
     if (self->grid_cells > 0 && self->grid_built)
     {
         upload_grid (self, handle);
@@ -1311,6 +1565,7 @@ lrg_light_set_sample_locations (Shader                      shader,
     out_locs->light_data = GetShaderLocation (shader, "lightData");
     out_locs->light_grid = GetShaderLocation (shader, "lightGrid");
     out_locs->grid_params = GetShaderLocation (shader, "gridParams");
+    out_locs->grid_layers = GetShaderLocation (shader, "gridLayers");
     out_locs->limit = GetShaderLocation (shader, "lightLimit");
 
     /* the samplers never move: point them at the grid units once */
@@ -1373,12 +1628,15 @@ lrg_light_set_upload_sample (LrgLightSet                      *self,
     if (use_grid)
     {
         gfloat params[4];
+        gfloat layers[4];
 
         params[0] = (gfloat)(self->grid_x0 - self->origin[0]);
         params[1] = (gfloat)(self->grid_z0 - self->origin[2]);
         params[2] = self->grid_cell;
         params[3] = (gfloat)self->grid_cells;
         SetShaderValue (shader, locs->grid_params, params, SHADER_UNIFORM_VEC4);
+        grid_layer_uniform (self, layers);
+        SetShaderValue (shader, locs->grid_layers, layers, SHADER_UNIFORM_VEC4);
         rlActiveTextureSlot (GRID_DATA_UNIT);
         rlEnableTexture (self->tex_data);
         rlActiveTextureSlot (GRID_CELLS_UNIT);
@@ -1447,7 +1705,8 @@ lrg_light_set_sample (LrgLightSet      *self,
     /* Point lights: the grid cell of @position when there is a grid,
      * else the last selection; origin-relative like the uniforms apply()
      * uploads. */
-    cell = grid_cell_at (self, (gdouble)p[0] + self->origin[0], (gdouble)p[2] + self->origin[2]);
+    cell = grid_cell_at (self, (gdouble)p[0] + self->origin[0], (gdouble)p[1] + self->origin[1],
+                         (gdouble)p[2] + self->origin[2]);
     if (self->grid_cells > 0 && self->grid_built)
         count = cell < 0 ? 0 : self->grid_counts[cell];
     else
@@ -1462,7 +1721,7 @@ lrg_light_set_sample (LrgLightSet      *self,
 
         if (self->grid_cells > 0 && self->grid_built)
             pl = &g_array_index (self->lights, PointLight,
-                                 self->grid_ids[(gsize)cell * LRG_LIGHT_SET_GRID_SLOTS + i]);
+                                 self->grid_ids[(gsize)cell * self->grid_slots + i]);
         else
             pl = &g_array_index (self->lights, PointLight, self->active[i]);
 
@@ -1500,4 +1759,306 @@ LrgLightSet *
 lrg_light_set_get_bound (void)
 {
     return bound_light_set;
+}
+
+/* ------------------------------------------------------------------------ */
+/* M14: origin, directional, shadows                                        */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_light_set_get_origin (LrgLightSet *self,
+                          gdouble     *out_x,
+                          gdouble     *out_y,
+                          gdouble     *out_z)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    if (out_x != NULL)
+        *out_x = self->origin[0];
+    if (out_y != NULL)
+        *out_y = self->origin[1];
+    if (out_z != NULL)
+        *out_z = self->origin[2];
+}
+
+gboolean
+lrg_light_set_get_directional (LrgLightSet *self,
+                               gfloat      *out_direction,
+                               gfloat      *out_rgb)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
+
+    if (!self->has_directional)
+        return FALSE;
+    if (out_direction != NULL)
+        memcpy (out_direction, self->directional_dir, sizeof self->directional_dir);
+    if (out_rgb != NULL)
+        memcpy (out_rgb, self->directional_color, sizeof self->directional_color);
+    return TRUE;
+}
+
+void
+lrg_light_set_set_point_light_shadow (LrgLightSet *self,
+                                      guint        light,
+                                      guint        priority)
+{
+    PointLight *pl;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    pl = light_at (self, light);
+    g_return_if_fail (pl != NULL);
+    pl->shadow = priority;
+}
+
+guint
+lrg_light_set_get_point_light_shadow (LrgLightSet *self,
+                                      guint        light)
+{
+    PointLight *pl;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
+
+    pl = light_at (self, light);
+    return pl != NULL ? pl->shadow : 0;
+}
+
+void
+lrg_light_set_set_shadow_renderer (LrgLightSet       *self,
+                                   LrgShadowRenderer *renderer)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (renderer == NULL || LRG_IS_SHADOW_RENDERER (renderer));
+
+    g_set_object (&self->shadows, renderer);
+}
+
+LrgShadowRenderer *
+lrg_light_set_get_shadow_renderer (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), NULL);
+
+    return self->shadows;
+}
+
+/* candidate_before:
+ * The pick order: higher priority, then smaller key, then lower id. */
+static gboolean
+candidate_before (const LrgLightSetShadowCandidate *a,
+                  const LrgLightSetShadowCandidate *b)
+{
+    if (a->priority != b->priority)
+        return a->priority > b->priority;
+    if (a->key != b->key)
+        return a->key < b->key;
+    return a->id < b->id;
+}
+
+guint
+lrg_light_set_pick_shadow_lights (LrgLightSet                *self,
+                                  const gdouble              *camera,
+                                  gfloat                      max_distance,
+                                  guint                       max,
+                                  LrgLightSetShadowCandidate *out)
+{
+    guint n = 0;
+    guint id;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
+    g_return_val_if_fail (camera != NULL, 0);
+
+    if (max == 0)
+        return 0;
+    for (id = 0; id < self->lights->len; id++)
+    {
+        PointLight *pl = &g_array_index (self->lights, PointLight, id);
+        LrgLightSetShadowCandidate c;
+        gdouble d[3];
+        guint   slot;
+        guint   k;
+
+        if (!pl->used || !pl->enabled || pl->intensity <= 0.0f || pl->shadow == 0)
+            continue;
+        for (k = 0; k < 3; k++)
+        {
+            d[k] = pl->position[k] - camera[k];
+            c.position[k] = (gfloat)(pl->position[k] - self->origin[k]);
+        }
+        c.id = id;
+        c.radius = pl->radius;
+        c.priority = pl->shadow;
+        c.key = (gfloat)(sqrt (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) - (gdouble)pl->radius);
+        if (max_distance > 0.0f && c.key > max_distance)
+            continue;
+
+        /* insertion into the sorted best-max */
+        if (n == max && !candidate_before (&c, &out[n - 1]))
+            continue;
+        slot = n < max ? n : n - 1;
+        while (slot > 0 && candidate_before (&c, &out[slot - 1]))
+        {
+            out[slot] = out[slot - 1];
+            slot--;
+        }
+        out[slot] = c;
+        if (n < max)
+            n++;
+    }
+    return n;
+}
+
+/* ------------------------------------------------------------------------ */
+/* M14: volumetric air                                                      */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_light_set_set_air (LrgLightSet    *self,
+                       gfloat          density,
+                       gfloat          anisotropy,
+                       gfloat          intensity,
+                       guint           steps,
+                       gfloat          max_distance,
+                       const GrlColor *tint)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (density > 0.0f && isfinite (density));
+    g_return_if_fail (intensity >= 0.0f && isfinite (intensity));
+    g_return_if_fail (steps >= 1 && steps <= LRG_LIGHT_SET_AIR_MAX_STEPS);
+    g_return_if_fail (max_distance > 0.0f && isfinite (max_distance));
+
+    self->air_on = TRUE;
+    self->air_density = density;
+    self->air_g = CLAMP (isfinite (anisotropy) ? anisotropy : 0.0f, -0.95f, 0.95f);
+    self->air_intensity = intensity;
+    self->air_steps = steps;
+    self->air_distance = max_distance;
+    if (tint != NULL)
+        color_to_rgb (tint, self->air_tint);
+    else
+        self->air_tint[0] = self->air_tint[1] = self->air_tint[2] = 1.0f;
+}
+
+void
+lrg_light_set_clear_air (LrgLightSet *self)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    self->air_on = FALSE;
+}
+
+gboolean
+lrg_light_set_get_air (LrgLightSet *self,
+                       gfloat      *out_density,
+                       gfloat      *out_anisotropy,
+                       guint       *out_steps)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
+
+    if (!self->air_on)
+        return FALSE;
+    if (out_density != NULL)
+        *out_density = self->air_density;
+    if (out_anisotropy != NULL)
+        *out_anisotropy = self->air_g;
+    if (out_steps != NULL)
+        *out_steps = self->air_steps;
+    return TRUE;
+}
+
+gfloat
+lrg_light_set_air_phase (gfloat anisotropy,
+                         gfloat cos_theta)
+{
+    gfloat g2 = anisotropy * anisotropy;
+    gfloat denom = MAX (1.0f + g2 - 2.0f * anisotropy * cos_theta, 1e-4f);
+
+    /* mirrors lrg_air_phase() in LRG_LIGHT_AIR_GLSL */
+    return (1.0f - g2) / (4.0f * (gfloat)G_PI * powf (denom, 1.5f));
+}
+
+gfloat
+lrg_light_set_sample_air (LrgLightSet      *self,
+                          const GrlVector3 *from,
+                          const GrlVector3 *to,
+                          gfloat           *out_rgb)
+{
+    gfloat ray[3];
+    gfloat dir[3];
+    gfloat len;
+    gfloat dist;
+    gfloat dt;
+    gfloat sun_phase = 0.0f;
+    guint  n_points = 0;
+    guint  i;
+    guint  k;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 1.0f);
+    g_return_val_if_fail (from != NULL && to != NULL && out_rgb != NULL, 1.0f);
+
+    out_rgb[0] = out_rgb[1] = out_rgb[2] = 0.0f;
+    if (!self->air_on)
+        return 1.0f;
+
+    ray[0] = to->x - from->x;
+    ray[1] = to->y - from->y;
+    ray[2] = to->z - from->z;
+    len = sqrtf (ray[0] * ray[0] + ray[1] * ray[1] + ray[2] * ray[2]);
+    if (!(len >= 1e-4f) || !isfinite (len))
+        return 1.0f;
+    for (k = 0; k < 3; k++)
+        dir[k] = ray[k] / len;
+    dist = MIN (len, self->air_distance);
+    dt = dist / (gfloat)self->air_steps;
+    if (self->has_directional)
+        sun_phase = lrg_light_set_air_phase (self->air_g,
+                                             -(self->directional_dir[0] * dir[0]
+                                               + self->directional_dir[1] * dir[1]
+                                               + self->directional_dir[2] * dir[2]));
+    if (self->shadows != NULL)
+        n_points = lrg_shadow_renderer_get_point_count (self->shadows);
+
+    /* the shader's march, steps at their middles, every point lit */
+    for (i = 0; i < self->air_steps; i++)
+    {
+        gfloat t = ((gfloat)i + 0.5f) * dt;
+        gfloat x[3];
+        gfloat s[3];
+        gfloat w;
+        guint  slot;
+
+        for (k = 0; k < 3; k++)
+        {
+            x[k] = (&from->x)[k] + dir[k] * t;
+            s[k] = self->ambient[k] * (1.0f / (4.0f * (gfloat)G_PI));
+            if (self->has_directional)
+                s[k] += self->directional_color[k] * sun_phase;
+        }
+        for (slot = 0; slot < n_points; slot++)
+        {
+            PointLight *pl = light_at (self, lrg_shadow_renderer_get_point_light (self->shadows, slot));
+            gfloat v[3];
+            gfloat d;
+            gfloat a;
+            gfloat ph;
+
+            if (pl == NULL)
+                continue;
+            for (k = 0; k < 3; k++)
+                v[k] = x[k] - (gfloat)(pl->position[k] - self->origin[k]);
+            d = sqrtf (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            if (d >= pl->radius || d < 1e-4f)
+                continue;
+            a = 1.0f - d / pl->radius;
+            ph = lrg_light_set_air_phase (self->air_g,
+                                          -(v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]) / d);
+            for (k = 0; k < 3; k++)
+                s[k] += pl->color[k] * pl->intensity * a * a * ph;
+        }
+        w = expf (-self->air_density * t) * self->air_density * dt;
+        for (k = 0; k < 3; k++)
+            out_rgb[k] += s[k] * w;
+    }
+    for (k = 0; k < 3; k++)
+        out_rgb[k] *= self->air_intensity * self->air_tint[k];
+    return expf (-self->air_density * dist);
 }

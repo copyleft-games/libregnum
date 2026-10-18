@@ -15,6 +15,9 @@ The Audio module consists of these core classes:
 - *LrgMusicTrack* - Music with optional custom loop points
 - *LrgWaveData* - Raw wave data manipulation
 - *LrgProceduralAudio* - Real-time procedural audio generation
+- *LrgAudioEffect*, *LrgReverb*, *LrgLowPass*, *LrgAudioEffectChain* - DSP effects and chains, on buffers or on the device mix ([[file:effects.org][effects.org]])
+- *LrgSoundBed* - Layered ambient loops and scattered one-shots with fades ([[file:sound-bed.org][sound-bed.org]])
+- *LrgMidiOutput*, *LrgMidiOutputBuffer*, *LrgMidiOutputAlsa*, *LrgMidiSequencer* - MIDI out to external synthesizers ([[file:midi-output.org][midi-output.org]])
 
 ** Key Features
 :PROPERTIES:
@@ -32,6 +35,9 @@ The Audio module consists of these core classes:
 - *Procedural audio* - Create custom synthesizers and sound generators
 - *Positional sound* - A listener and per-voice emitters with distance attenuation and stereo pan (compile-time probe: =LRG_AUDIO_HAS_POSITIONAL=)
 - *MIDI synthesis* - Standard MIDI Files through a SoundFont 2 bank, loop markers, crossfades, headless rendering (compile-time probe: =LRG_AUDIO_HAS_MIDI_SYNTH=)
+- *Effects* - Reverb with room presets and a gliding low-pass, alone, chained, or on the final mix (compile-time probe: =LRG_AUDIO_HAS_EFFECTS=)
+- *Sound beds* - Named ambient layers with fades, crossfades and scattered shots
+- *MIDI out* - A real-time sequencer into the ALSA sequencer or any =LrgMidiOutput= (ALSA optional at build time: Fedora =alsa-lib-devel=)
 
 ** Quick Start
 :PROPERTIES:

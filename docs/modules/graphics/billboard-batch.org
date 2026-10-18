@@ -61,6 +61,11 @@ gboolean     lrg_billboard_batch_get_lit       (LrgBillboardBatch *self);
 void         lrg_billboard_batch_set_emissive  (LrgBillboardBatch *self, guint index, gboolean emissive);
 gboolean     lrg_billboard_batch_get_emissive  (LrgBillboardBatch *self, guint index);
 gboolean     lrg_billboard_batch_get_lit_tint  (LrgBillboardBatch *self, guint index, GrlColor *out_tint);
+void         lrg_billboard_batch_set_sway      (LrgBillboardBatch *self, guint index, gfloat weight);
+gfloat       lrg_billboard_batch_get_sway      (LrgBillboardBatch *self, guint index);
+void         lrg_billboard_batch_set_wind      (LrgBillboardBatch *self, gfloat dir_x, gfloat dir_z,
+                                                gfloat lean, gfloat gust, gfloat frequency);
+void         lrg_billboard_batch_set_wind_time (LrgBillboardBatch *self, gdouble seconds);
 #+end_src
 
 ** Semantics
@@ -74,6 +79,7 @@ gboolean     lrg_billboard_batch_get_lit_tint  (LrgBillboardBatch *self, guint i
 - *Materials* without a texture are skipped. The batch keeps a reference to each texture.
 - Call =draw()= inside =BeginMode3D()= / =grl_camera3d_begin()=.
 - *Lighting*: a batch is lit by its own [[file:light-set.org][LrgLightSet]] (=set_light_set()=), else by the bound one (=lrg_light_set_bind()=), unless =set_lit (FALSE)=. The quads are immediate-mode geometry the light set's shader cannot light correctly (rlgl transforms their vertices on the CPU), so the batch lights them on the CPU instead: per quad, the centre (the pivot moved to mid-height along world up) is put through the current rlgl transform (=rlGetMatrixTransform()=, the space the static-geometry shader lights) and =lrg_light_set_sample()= is evaluated there without a normal (the quad faces the camera, so every light counts in full). The vertex colour becomes =tint × light=, clamped to 255 per channel; alpha is the tint's. Emissive billboards (flames, lamps) keep their plain tint. Lights come from the light set's last selection, so call =lrg_light_set_apply()= (or =select()=) first, as for the shader. =get_lit_tint()= returns the colour a draw would use with an identity transform (tests, tools).
+- *Wind sway*: =set_sway (index, weight)= (0 rigid, the default, .. 1, quantized to 1/255) marks plants that bend; =set_wind (dir_x, dir_z, lean, gust, frequency)= and =set_wind_time (seconds)= set the batch's wind.  A corner =h= metres above the pivot moves =(lean + gust × sin (time × frequency + phase)) × weight × h= downwind, the phase =0.37 x + 0.21 z= of the billboard's position so a wood does not wave in step; corners at or below the pivot stay put.  The immediate path, the GPU path's vertex shader (the weight rides in =bbCorner.w= next to the emissive flag) and =get_corners()= compute the same.  Changing a weight after an upload demotes that billboard like any other change.
 - *Fog*: when the batch's light set (own or bound, and only while lit) has fog (=lrg_light_set_set_fog()=), every quad - emissive ones included, fog is not light - is fogged per fragment with the light set's model and camera. The cutout shader does it (its vertex positions are already in the light set's draw space, as rlgl transformed them on the CPU), so a batch with cutoff 0 switches to that shader while fog is on; without GLSL 330 there is no fog.
 
 ** GPU path

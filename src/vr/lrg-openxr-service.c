@@ -1698,6 +1698,93 @@ lrg_openxr_service_real_trigger_haptic (LrgVRService *service,
     xrApplyHapticFeedback (self->session, &hi, (const XrHapticBaseHeader *) &vib);
 }
 
+
+gboolean
+lrg_openxr_service_probe (const gchar  *app_name,
+                          gchar       **runtime_name,
+                          gchar       **system_name,
+                          GError      **error)
+{
+    XrExtensionProperties *props = NULL;
+    guint32 n_props = 0, i;
+    gboolean graphics = FALSE;
+    XrInstanceCreateInfo ici = { .type = XR_TYPE_INSTANCE_CREATE_INFO };
+    XrInstanceProperties ip = { .type = XR_TYPE_INSTANCE_PROPERTIES };
+    XrSystemGetInfo sgi = { .type = XR_TYPE_SYSTEM_GET_INFO };
+    XrSystemProperties sp = { .type = XR_TYPE_SYSTEM_PROPERTIES };
+    XrInstance instance = XR_NULL_HANDLE;
+    XrSystemId system = XR_NULL_SYSTEM_ID;
+    XrResult result;
+
+    if (runtime_name != NULL)
+        *runtime_name = NULL;
+    if (system_name != NULL)
+        *system_name = NULL;
+
+    /* --- the loader finds a runtime, and it can draw with GL or EGL --- */
+    if (XR_FAILED (xrEnumerateInstanceExtensionProperties (NULL, 0, &n_props, NULL))
+        || n_props == 0)
+    {
+        g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_NOT_AVAILABLE,
+                     "no OpenXR runtime (is SteamVR or Monado installed and "
+                     "set as the active runtime?)");
+        return FALSE;
+    }
+    props = g_new0 (XrExtensionProperties, n_props);
+    for (i = 0; i < n_props; i++)
+        props[i].type = XR_TYPE_EXTENSION_PROPERTIES;
+    xrEnumerateInstanceExtensionProperties (NULL, n_props, &n_props, props);
+    graphics = has_extension (props, n_props, XR_KHR_OPENGL_ENABLE_EXTENSION_NAME)
+               || has_extension (props, n_props, XR_MNDX_EGL_ENABLE_EXTENSION_NAME);
+    g_free (props);
+    if (!graphics)
+    {
+        g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_NOT_AVAILABLE,
+                     "the OpenXR runtime supports neither OpenGL nor EGL");
+        return FALSE;
+    }
+
+    /* --- an instance without extensions: enough to ask for the HMD --- */
+    g_strlcpy (ici.applicationInfo.applicationName,
+               app_name != NULL ? app_name : "libregnum",
+               sizeof ici.applicationInfo.applicationName);
+    ici.applicationInfo.applicationVersion = 1;
+    g_strlcpy (ici.applicationInfo.engineName, "libregnum",
+               sizeof ici.applicationInfo.engineName);
+    ici.applicationInfo.engineVersion = 1;
+    ici.applicationInfo.apiVersion = XR_MAKE_VERSION (1, 0, 0);
+    result = xrCreateInstance (&ici, &instance);
+    if (XR_FAILED (result))
+    {
+        g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_NOT_AVAILABLE,
+                     "the OpenXR runtime could not start (xrCreateInstance: %d)",
+                     (gint) result);
+        return FALSE;
+    }
+    if (runtime_name != NULL && XR_SUCCEEDED (xrGetInstanceProperties (instance, &ip)))
+        *runtime_name = g_strdup_printf ("%s %u.%u.%u", ip.runtimeName,
+                                         XR_VERSION_MAJOR (ip.runtimeVersion),
+                                         XR_VERSION_MINOR (ip.runtimeVersion),
+                                         XR_VERSION_PATCH (ip.runtimeVersion));
+
+    sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
+    result = xrGetSystem (instance, &sgi, &system);
+    if (XR_FAILED (result))
+    {
+        g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_HMD_NOT_FOUND,
+                     "the OpenXR runtime has no headset (connect and switch on "
+                     "the headset; xrGetSystem: %d)", (gint) result);
+        xrDestroyInstance (instance);
+        if (runtime_name != NULL)
+            g_clear_pointer (runtime_name, g_free);
+        return FALSE;
+    }
+    if (system_name != NULL && XR_SUCCEEDED (xrGetSystemProperties (instance, system, &sp)))
+        *system_name = g_strdup (sp.systemName);
+    xrDestroyInstance (instance);
+    return TRUE;
+}
+
 #else /* !LRG_HAS_OPENXR */
 
 static gboolean
@@ -1707,6 +1794,24 @@ lrg_openxr_service_real_initialize (LrgVRService  *service,
     (void) service;
     g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_NOT_AVAILABLE,
                  "libregnum was built without OpenXR (rebuild with OPENXR=1)");
+    return FALSE;
+}
+
+
+gboolean
+lrg_openxr_service_probe (const gchar  *app_name,
+                          gchar       **runtime_name,
+                          gchar       **system_name,
+                          GError      **error)
+{
+    (void) app_name;
+    if (runtime_name != NULL)
+        *runtime_name = NULL;
+    if (system_name != NULL)
+        *system_name = NULL;
+    g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_NOT_AVAILABLE,
+                 "libregnum was built without OpenXR (install the OpenXR loader, "
+                 "e.g. openxr-devel, and rebuild with OPENXR=1)");
     return FALSE;
 }
 

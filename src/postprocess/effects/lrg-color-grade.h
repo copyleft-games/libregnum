@@ -16,6 +16,7 @@
 #include <glib-object.h>
 #include <graylib.h>
 #include "../lrg-post-effect.h"
+#include "../lrg-color-lut.h"
 
 G_BEGIN_DECLS
 
@@ -313,5 +314,48 @@ gboolean            lrg_color_grade_draw_texture    (LrgColorGrade      *self,
                                                      GrlTexture         *texture,
                                                      const GrlRectangle *source,
                                                      const GrlRectangle *dest);
+
+/**
+ * lrg_color_grade_set_lut:
+ * @self: A #LrgColorGrade
+ * @lut: (nullable): a lookup table applied after the grade's own steps,
+ *   or %NULL for none
+ * @strength: 0 (no table) .. 1 (the table's colours)
+ *
+ * Adds a 3D lookup table to the grade: the shader (and
+ * lrg_color_grade_apply_rgb()) looks the graded, clamped colour up in
+ * @lut and mixes it in by @strength, before the effect's intensity. The
+ * table is uploaded as a strip texture when it changes; a grade with a
+ * table is never the identity.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_color_grade_set_lut         (LrgColorGrade  *self,
+                                                     LrgColorLut    *lut,
+                                                     gfloat          strength);
+
+/**
+ * lrg_color_grade_get_lut:
+ * @self: A #LrgColorGrade
+ * @out_strength: (out) (optional): the table's strength (0 without one)
+ *
+ * Returns: (transfer none) (nullable): the lookup table
+ */
+LRG_AVAILABLE_IN_ALL
+LrgColorLut *       lrg_color_grade_get_lut         (LrgColorGrade  *self,
+                                                     gfloat         *out_strength);
+
+/**
+ * lrg_color_grade_bake_lut:
+ * @self: A #LrgColorGrade
+ * @size: the table's side
+ *
+ * The whole grade (its steps, its table and its intensity) sampled into
+ * a new table, e.g. to blend two grades or to save one as a .cube file.
+ *
+ * Returns: (transfer full): the table
+ */
+LRG_AVAILABLE_IN_ALL
+LrgColorLut *       lrg_color_grade_bake_lut        (LrgColorGrade  *self,
+                                                     guint           size);
 
 G_END_DECLS

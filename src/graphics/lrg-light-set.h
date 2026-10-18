@@ -640,4 +640,283 @@ LRG_AVAILABLE_IN_ALL
 LrgLightSet *
 lrg_light_set_get_bound (void);
 
+/* ------------------------------------------------------------------------ */
+/* M14: shadows, clusters, volumetric air                                   */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * LRG_LIGHT_SET_GRID_MAX_SLOTS:
+ *
+ * Most lights one grid (cluster) cell can list
+ * (lrg_light_set_set_grid_slots()).
+ */
+#define LRG_LIGHT_SET_GRID_MAX_SLOTS (32)
+
+/**
+ * LRG_LIGHT_SET_GRID_MAX_LAYERS:
+ *
+ * Most vertical layers of a clustered grid (lrg_light_set_set_grid_layers()).
+ */
+#define LRG_LIGHT_SET_GRID_MAX_LAYERS (16)
+
+/**
+ * LRG_LIGHT_SET_AIR_MAX_STEPS:
+ *
+ * Most march steps of the volumetric air (lrg_light_set_set_air()).
+ */
+#define LRG_LIGHT_SET_AIR_MAX_STEPS (32)
+
+/**
+ * lrg_light_set_get_origin:
+ * @self: an #LrgLightSet
+ * @out_x: (out) (optional): origin X
+ * @out_y: (out) (optional): origin Y
+ * @out_z: (out) (optional): origin Z
+ *
+ * The floating origin of lrg_light_set_set_origin().
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_get_origin (LrgLightSet *self,
+                          gdouble     *out_x,
+                          gdouble     *out_y,
+                          gdouble     *out_z);
+
+/**
+ * lrg_light_set_get_directional:
+ * @self: an #LrgLightSet
+ * @out_direction: (out caller-allocates) (optional) (array fixed-size=3):
+ *   the normalized direction the light travels
+ * @out_rgb: (out caller-allocates) (optional) (array fixed-size=3): its
+ *   colour, 0 .. 1
+ *
+ * Returns: %TRUE when the directional light is on (outputs untouched
+ *   otherwise)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_light_set_get_directional (LrgLightSet *self,
+                               gfloat      *out_direction,
+                               gfloat      *out_rgb);
+
+/**
+ * lrg_light_set_set_point_light_shadow:
+ * @self: an #LrgLightSet
+ * @light: a light id
+ * @priority: 0 (the default) for no shadow, else the light competes for
+ *   one of the shadow renderer's cubes: higher priorities first, then
+ *   the lights nearest the camera
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_point_light_shadow (LrgLightSet *self,
+                                      guint        light,
+                                      guint        priority);
+
+/**
+ * lrg_light_set_get_point_light_shadow:
+ * @self: an #LrgLightSet
+ * @light: a light id
+ *
+ * Returns: the light's shadow priority, 0 for none (or no such light)
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_light_set_get_point_light_shadow (LrgLightSet *self,
+                                      guint        light);
+
+/**
+ * lrg_light_set_set_shadow_renderer:
+ * @self: an #LrgLightSet
+ * @renderer: (nullable): the shadows to sample, or %NULL for none (the
+ *   default)
+ *
+ * With a renderer whose passes of the frame were all rendered
+ * (lrg_shadow_renderer_is_ready()), lrg_light_set_apply() binds its
+ * atlases and the shader darkens the directional light and the shadowed
+ * point lights where casters hide them. lrg_light_set_sample() does not
+ * look at shadows.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_shadow_renderer (LrgLightSet       *self,
+                                   LrgShadowRenderer *renderer);
+
+/**
+ * lrg_light_set_get_shadow_renderer:
+ * @self: an #LrgLightSet
+ *
+ * Returns: (transfer none) (nullable): the shadow renderer
+ */
+LRG_AVAILABLE_IN_ALL
+LrgShadowRenderer *
+lrg_light_set_get_shadow_renderer (LrgLightSet *self);
+
+/**
+ * lrg_light_set_set_grid_layers:
+ * @self: an #LrgLightSet
+ * @layer_height: height of one layer in world units (> 0)
+ * @layers: 1 .. %LRG_LIGHT_SET_GRID_MAX_LAYERS
+ *
+ * Turns the light grid into clusters: @layers stacked layers of cells,
+ * centred on the camera's height, so storeys above one another (a
+ * dungeon's levels) keep their own light lists. The lowest and highest
+ * layers reach down and up without end. 1 (the default) is the flat
+ * grid. Takes effect on the next selection.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_grid_layers (LrgLightSet *self,
+                               gfloat       layer_height,
+                               guint        layers);
+
+/**
+ * lrg_light_set_set_grid_slots:
+ * @self: an #LrgLightSet
+ * @slots: lights per cell, a multiple of 4 from 4 to
+ *   %LRG_LIGHT_SET_GRID_MAX_SLOTS (default %LRG_LIGHT_SET_GRID_SLOTS)
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_grid_slots (LrgLightSet *self,
+                              guint        slots);
+
+/**
+ * lrg_light_set_get_grid_slots:
+ * @self: an #LrgLightSet
+ *
+ * Returns: lights per grid cell
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_light_set_get_grid_slots (LrgLightSet *self);
+
+/**
+ * lrg_light_set_get_cluster_light_count:
+ * @self: an #LrgLightSet
+ * @x: world X
+ * @y: world Y
+ * @z: world Z
+ *
+ * Returns: the lights of the cluster holding (@x, @y, @z) after the last
+ *   selection (the grid cell's with one layer), 0 outside the grid
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_light_set_get_cluster_light_count (LrgLightSet *self,
+                                       gdouble      x,
+                                       gdouble      y,
+                                       gdouble      z);
+
+/**
+ * lrg_light_set_get_cluster_light:
+ * @self: an #LrgLightSet
+ * @x: world X
+ * @y: world Y
+ * @z: world Z
+ * @index: 0 .. lrg_light_set_get_cluster_light_count() - 1, closest first
+ *
+ * Returns: the light id, or %LRG_LIGHT_SET_INVALID_LIGHT
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_light_set_get_cluster_light (LrgLightSet *self,
+                                 gdouble      x,
+                                 gdouble      y,
+                                 gdouble      z,
+                                 guint        index);
+
+/**
+ * lrg_light_set_set_air:
+ * @self: an #LrgLightSet
+ * @density: scattering per world unit (> 0; e.g. 0.01 for haze)
+ * @anisotropy: Henyey-Greenstein g, -0.95 .. 0.95 (> 0: brightest
+ *   looking toward the light)
+ * @intensity: multiplier of the scattered light (>= 0)
+ * @steps: march steps per fragment, 1 .. %LRG_LIGHT_SET_AIR_MAX_STEPS
+ * @max_distance: how far along the view ray the air is marched (> 0)
+ * @tint: (nullable): colour of the air (alpha ignored), %NULL for white
+ *
+ * Turns on the volumetric air: between the eye and each fragment the
+ * shader marches the view ray, adding the directional light (in its
+ * shadow cascades, so shafts form behind casters), the shadowed point
+ * lights and a little ambient light scattered toward the eye, and dims
+ * the fragment by the air's transmittance exp (-@density x distance).
+ * The default is no air.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_air (LrgLightSet    *self,
+                       gfloat          density,
+                       gfloat          anisotropy,
+                       gfloat          intensity,
+                       guint           steps,
+                       gfloat          max_distance,
+                       const GrlColor *tint);
+
+/**
+ * lrg_light_set_clear_air:
+ * @self: an #LrgLightSet
+ *
+ * Turns the volumetric air off.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_clear_air (LrgLightSet *self);
+
+/**
+ * lrg_light_set_get_air:
+ * @self: an #LrgLightSet
+ * @out_density: (out) (optional): the density
+ * @out_anisotropy: (out) (optional): the phase function's g
+ * @out_steps: (out) (optional): march steps
+ *
+ * Returns: %TRUE when the air is on
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_light_set_get_air (LrgLightSet *self,
+                       gfloat      *out_density,
+                       gfloat      *out_anisotropy,
+                       guint       *out_steps);
+
+/**
+ * lrg_light_set_air_phase:
+ * @anisotropy: Henyey-Greenstein g
+ * @cos_theta: cosine of the angle between the light's travel and the
+ *   scattered ray toward the eye
+ *
+ * The Henyey-Greenstein phase function the air uses: (1 - g^2) /
+ * (4 pi (1 + g^2 - 2 g cos)^1.5); it integrates to 1 over the sphere.
+ *
+ * Returns: the phase value
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_light_set_air_phase (gfloat anisotropy,
+                         gfloat cos_theta);
+
+/**
+ * lrg_light_set_sample_air:
+ * @self: an #LrgLightSet
+ * @from: the eye, in draw space
+ * @to: a surface point, in draw space
+ * @out_rgb: (out caller-allocates) (array fixed-size=3): the light the
+ *   air between them scatters toward the eye
+ *
+ * The shader's air on the CPU, with every point of the march lit (no
+ * shadow lookups) and the march steps at their middles: the directional
+ * light, the point lights of the shadow renderer's slots and the
+ * ambient term, each through the phase function and the transmittance
+ * up to that step. Headless.
+ *
+ * Returns: the transmittance from @from to @to (1 without air)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_light_set_sample_air (LrgLightSet      *self,
+                          const GrlVector3 *from,
+                          const GrlVector3 *to,
+                          gfloat           *out_rgb);
+
 G_END_DECLS
