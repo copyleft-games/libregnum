@@ -240,6 +240,8 @@ PUBLIC_HEADERS := \
 	src/mmo/lrg-mmo-prediction.h \
 	src/mmo/lrg-mmo-gate.h \
 	src/mmo/lrg-mmo-matchmaker.h \
+	src/mmo/lrg-mmo-lockout.h \
+	src/mmo/lrg-mmo-tag-board.h \
 	src/mmo/lrg-mmo-protocol.h \
 	src/mmo/lrg-mmo-auth.h \
 	src/mmo/lrg-mmo-store.h \
@@ -797,6 +799,8 @@ SOURCES := \
 	src/mmo/lrg-mmo-prediction.c \
 	src/mmo/lrg-mmo-gate.c \
 	src/mmo/lrg-mmo-matchmaker.c \
+	src/mmo/lrg-mmo-lockout.c \
+	src/mmo/lrg-mmo-tag-board.c \
 	src/mmo/lrg-mmo-protocol.c \
 	src/mmo/lrg-mmo-auth.c \
 	src/mmo/lrg-mmo-store.c \
