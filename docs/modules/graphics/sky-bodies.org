@@ -1,0 +1,53 @@
+#+title: LrgSkyBodies
+#+description: The sun disc, phased moons and stars of a sky
+#+authors: Zach Podbielniak
+#+categories: libregnum graphics weather
+#+created: 2026-10-17T00:00:00-04:00
+#+updated: 2026-10-17T00:00:00-04:00
+#+version: 1
+
+* LrgSkyBodies
+:PROPERTIES:
+:CUSTOM_ID: lrg-sky-bodies
+:END:
+=LrgSkyBodies= (=src/graphics/lrg-sky-bodies.h=, final) draws what a sky shows besides its gradient: a deterministic star field that turns with the sky and fades in at night, up to =LRG_SKY_BODIES_MAX_MOONS= (4) moon discs lit by their phase from the side facing the sun, and an optional sun disc with a halo.  It is camera-centred like [[file:sky-dome.org][LrgSkyDome]] and drawn right after it, or after a painted band to put real bodies over painted art.  The maths lives in =LrgCelestial= (see [[file:../weather/index.org][the weather module]]); this type only draws.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src c
+LrgSkyBodies *lrg_sky_bodies_new                 (void);
+void          lrg_sky_bodies_set_radius          (LrgSkyBodies *self, gfloat radius);
+void          lrg_sky_bodies_set_sun             (LrgSkyBodies *self, const GrlVector3 *towards_sun,
+                                                  gfloat size_degrees, const GrlColor *color);
+void          lrg_sky_bodies_set_moon            (LrgSkyBodies *self, guint index,
+                                                  const GrlVector3 *towards_moon, gfloat size_degrees,
+                                                  const GrlColor *color, gdouble phase);
+void          lrg_sky_bodies_hide_moon           (LrgSkyBodies *self, guint index);
+gboolean      lrg_sky_bodies_get_moon            (LrgSkyBodies *self, guint index,
+                                                  gdouble *out_phase, GrlVector3 *out_direction);
+void          lrg_sky_bodies_set_moon_dark_color (LrgSkyBodies *self, const GrlColor *color);
+void          lrg_sky_bodies_set_stars           (LrgSkyBodies *self, guint count, guint32 seed);
+void          lrg_sky_bodies_set_star_rotation   (LrgSkyBodies *self, gdouble angle, gdouble tilt_degrees);
+void          lrg_sky_bodies_set_star_visibility (LrgSkyBodies *self, gfloat visibility);
+guint         lrg_sky_bodies_count_visible_stars (LrgSkyBodies *self);
+gboolean      lrg_sky_bodies_get_star            (LrgSkyBodies *self, guint index,
+                                                  GrlVector3 *out_direction, gfloat *out_brightness);
+void          lrg_sky_bodies_draw                (LrgSkyBodies *self, const GrlVector3 *camera_position);
+#+end_src
+
+** Semantics
+:PROPERTIES:
+:CUSTOM_ID: semantics
+:END:
+- *Draw order*: stars (additive blend), the sun's halo and disc, then the moons; depth test and writes off, culling off, the immediate rlgl batch flushed around it.  Bodies whose disc is wholly below the horizon are skipped; stars below the horizon are skipped and low ones dimmed (=min (1, 6 y + 0.2)=).
+- *Moons*: the dark side is drawn first in the dark colour (default near-black at alpha 230, scaled by the moon's alpha), so stars do not shine through a new moon; then the lit part as rows between the limb and the terminator (=lrg_celestial_moon_disc_span()=), with the disc's +x axis turned towards the sun's direction projected on the disc, so a crescent's horns point away from the sun.  The sun direction set with =set_sun()= is used even when the disc is hidden (size 0).
+- *Stars*: =set_stars (count, seed)= generates directions over the whole sphere once (=lrg_celestial_generate_stars()=, the same on every platform); =set_star_rotation (angle, tilt)= turns them about the orbit normal (=lrg_celestial_rotate_sky()=), so a game turning them by the sun's orbit angle plus a yearly drift shows other constellations by season.  Brightness 0.15 .. 1 scales size and level; visibility 0 skips the stars entirely.
+- Headless: everything but =draw()= runs without a window (tests).
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-sky-weather.c= (=/sky-weather/sky-bodies=: moons, invalid input, star counts and rotation) and =tests/test-weather-render.c= (=/weather-render/draw/moon-phase=: a quarter moon lights about half the pixels of a full one).

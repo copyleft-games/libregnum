@@ -149,6 +149,7 @@ TEST_SOURCES := \
 	test-tutorial.c \
 	test-weather.c \
 	test-weather-render.c \
+	test-sky-weather.c \
 	test-lighting.c \
 	test-wave-data.c \
 	test-procedural-audio.c \

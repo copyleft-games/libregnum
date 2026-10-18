@@ -1252,6 +1252,199 @@ test_draw_billboard_fog (void)
     UnloadRenderTexture (rt);
 }
 
+
+/* ------------------------------------------------------------------------ */
+/* Enhanced sky: clouds, moons, the ground overlay                          */
+/* ------------------------------------------------------------------------ */
+
+/* render_sky_view:
+ * Clears a 64 x 64 target to dark blue and runs @draw with a camera at
+ * the origin looking along @target. */
+static Image
+render_sky_view (Vector3 target,
+                 void   (*draw) (gpointer),
+                 gpointer data)
+{
+    RenderTexture2D rt = LoadRenderTexture (64, 64);
+    Camera3D        camera;
+    Image           shot;
+
+    memset (&camera, 0, sizeof camera);
+    camera.position = (Vector3){ 0, 0, 0 };
+    camera.target = target;
+    camera.up = (Vector3){ 0, 0, -1 };
+    if (fabsf (target.y) < 0.9f)
+        camera.up = (Vector3){ 0, 1, 0 };
+    camera.fovy = 60.0f;
+    camera.projection = CAMERA_PERSPECTIVE;
+
+    BeginTextureMode (rt);
+    ClearBackground ((Color){ 10, 10, 60, 255 });
+    BeginMode3D (camera);
+    draw (data);
+    EndMode3D ();
+    EndTextureMode ();
+
+    shot = LoadImageFromTexture (rt.texture);
+    UnloadRenderTexture (rt);
+    return shot;
+}
+
+/* count_bright:
+ * Pixels brighter than @min in every channel. */
+static guint
+count_bright (Image  image,
+              guint8 min)
+{
+    guint n = 0;
+    gint  x;
+    gint  y;
+
+    for (y = 0; y < image.height; y++)
+        for (x = 0; x < image.width; x++)
+        {
+            Color c = GetImageColor (image, x, y);
+
+            if (c.r > min && c.g > min && c.b > min)
+                n++;
+        }
+    return n;
+}
+
+static void
+draw_clouds (gpointer data)
+{
+    GrlVector3 eye = vec (0, 0, 0);
+    gfloat     sun[3] = { 0.0f, 1.0f, 0.0f };
+
+    lrg_cloud_layer_draw (LRG_CLOUD_LAYER (data), &eye, 500.0f, sun);
+}
+
+static void
+test_draw_clouds (void)
+{
+    g_autoptr(LrgCloudLayer) clouds = lrg_cloud_layer_new (4);
+    Image clear;
+    Image overcast;
+    guint before;
+    guint after;
+
+    SKIP_WITHOUT_GRAPHICS ();
+
+    /* looking straight up: nothing at coverage 0, a grey deck (its
+     * shaded underside) over the dark blue at 1 */
+    clear = render_sky_view ((Vector3){ 0, 1, 0 }, draw_clouds, clouds);
+    before = count_bright (clear, 80);
+    lrg_cloud_layer_set_coverage (clouds, 1.0f);
+    overcast = render_sky_view ((Vector3){ 0, 1, 0 }, draw_clouds, clouds);
+    after = count_bright (overcast, 80);
+    UnloadImage (clear);
+    UnloadImage (overcast);
+    g_assert_cmpuint (before, ==, 0);
+    g_assert_cmpuint (after, >, 64 * 64 / 2);
+}
+
+static void
+draw_moon (gpointer data)
+{
+    GrlVector3 eye = vec (0, 0, 0);
+
+    lrg_sky_bodies_draw (LRG_SKY_BODIES (data), &eye);
+}
+
+static void
+test_draw_moon_phase (void)
+{
+    g_autoptr(LrgSkyBodies) bodies = lrg_sky_bodies_new ();
+    GrlVector3 ahead = vec (0, 0, -1);
+    GrlVector3 sun = vec (1, 0, 0);
+    GrlColor   white = { 255, 255, 255, 255 };
+    Image      full;
+    Image      half;
+    guint      n_full;
+    guint      n_half;
+
+    SKIP_WITHOUT_GRAPHICS ();
+
+    lrg_sky_bodies_set_sun (bodies, &sun, 0.0f, NULL);
+    lrg_sky_bodies_set_moon (bodies, 0, &ahead, 10.0f, &white, 0.5);
+    full = render_sky_view ((Vector3){ 0, 0, -1 }, draw_moon, bodies);
+    lrg_sky_bodies_set_moon (bodies, 0, &ahead, 10.0f, &white, 0.25);
+    half = render_sky_view ((Vector3){ 0, 0, -1 }, draw_moon, bodies);
+    n_full = count_bright (full, 200);
+    n_half = count_bright (half, 200);
+    UnloadImage (full);
+    UnloadImage (half);
+
+    /* a quarter moon lights about half the full disc */
+    g_assert_cmpuint (n_full, >, 50);
+    g_assert_cmpuint (n_half, >, n_full * 35 / 100);
+    g_assert_cmpuint (n_half, <, n_full * 65 / 100);
+}
+
+typedef struct
+{
+    LrgTerrain       *terrain;
+    LrgGroundOverlay *overlay;
+} OverlayScene;
+
+static void
+draw_ground (gpointer data)
+{
+    OverlayScene *scene = data;
+
+    lrg_terrain_draw (scene->terrain);
+    if (lrg_ground_overlay_begin (scene->overlay, scene->terrain))
+    {
+        lrg_terrain_draw (scene->terrain);
+        lrg_ground_overlay_end (scene->overlay, scene->terrain);
+    }
+}
+
+static void
+test_draw_ground_overlay (void)
+{
+    g_autoptr(LrgTerrain) terrain = lrg_terrain_new (4, 40.0f);
+    g_autoptr(LrgGroundOverlay) overlay = lrg_ground_overlay_new ();
+    g_autoptr(LrgSnowCover) snow = lrg_snow_cover_new ();
+    g_autoptr(GError) error = NULL;
+    GrlColor     grey = { 90, 90, 90, 255 };
+    OverlayScene scene;
+    gfloat       heights[25];
+    Image        bare;
+    Image        white;
+    guint        i;
+    guint        n_bare;
+    guint        n_white;
+
+    SKIP_WITHOUT_GRAPHICS ();
+
+    /* a flat grey floor 2 below the eye, seen from above */
+    for (i = 0; i < 25; i++)
+        heights[i] = -2.0f;
+    g_assert_true (lrg_terrain_set_chunk (terrain, -1, -1, heights, 25, NULL, NULL, &error));
+    g_assert_no_error (error);
+    lrg_terrain_set_origin (terrain, -20.0, 0.0, -20.0);
+    lrg_terrain_set_tint (terrain, &grey);
+    g_assert_true (lrg_terrain_upload (terrain, &error));
+    lrg_ground_overlay_set_snow_cover (overlay, snow);
+    scene.terrain = terrain;
+    scene.overlay = overlay;
+
+    bare = render_sky_view ((Vector3){ 0, -1, 0 }, draw_ground, &scene);
+    lrg_snow_cover_set_level (snow, 1.0);
+    white = render_sky_view ((Vector3){ 0, -1, 0 }, draw_ground, &scene);
+    n_bare = count_bright (bare, 180);
+    n_white = count_bright (white, 180);
+    UnloadImage (bare);
+    UnloadImage (white);
+    lrg_ground_overlay_release_gpu (overlay);
+    lrg_terrain_unload (terrain);
+
+    g_assert_cmpuint (n_bare, ==, 0);
+    g_assert_cmpuint (n_white, >, 64 * 64 / 2);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1283,6 +1476,9 @@ main (int   argc,
     g_test_add_func ("/weather-render/draw/screen-passes", test_draw_screen_passes);
     g_test_add_func ("/weather-render/draw/light-set-fog", test_draw_light_set_fog);
     g_test_add_func ("/weather-render/draw/billboard-fog", test_draw_billboard_fog);
+    g_test_add_func ("/weather-render/draw/clouds", test_draw_clouds);
+    g_test_add_func ("/weather-render/draw/moon-phase", test_draw_moon_phase);
+    g_test_add_func ("/weather-render/draw/ground-overlay", test_draw_ground_overlay);
 
     result = g_test_run ();
 

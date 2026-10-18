@@ -86,6 +86,7 @@
 #include "graphics/lrg-billboard-batch.h"
 #include "graphics/lrg-terrain.h"
 #include "graphics/lrg-sky-dome.h"
+#include "graphics/lrg-sky-bodies.h"
 #include "graphics/lrg-light-set.h"
 #include "graphics/lrg-texture-sampling.h"
 #include "imageedit/lrg-image-layer.h"
@@ -544,6 +545,11 @@
 #include "weather/lrg-weather.h"
 #include "weather/lrg-day-night-cycle.h"
 #include "weather/lrg-weather-manager.h"
+#include "weather/lrg-celestial.h"
+#include "weather/lrg-cloud-layer.h"
+#include "weather/lrg-snow-cover.h"
+#include "weather/lrg-weather-field.h"
+#include "weather/lrg-ground-overlay.h"
 
 /* Lighting module (Phase 4) */
 #include "lighting/lrg-shadow-caster.h"
