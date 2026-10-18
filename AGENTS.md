@@ -87,6 +87,7 @@ libregnum/
 │   ├── settings/             # Settings, GraphicsSettings, AudioSettings, ControlSettings
 │   ├── accessibility/        # ColorFilter, SubtitleManager, ScreenReader
 │   ├── crash/                # CrashReporter, CrashDialog
+│   ├── sandbox/              # LrgSandbox (Landlock, seccomp, no_new_privs)
 │   ├── gamestate/            # GameState, GameStateManager, MainMenu, PauseMenu, LoadingScreen
 │   │
 │   │ # Enhancements

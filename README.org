@@ -221,6 +221,7 @@ engine.shutdown()
 | Settings     | Game settings with YAML persistence                          |
 | GameState    | Game state stack (menus, gameplay, pause)                    |
 | Crash        | Signal handling and crash reporting                          |
+| Sandbox      | Landlock + seccomp + no_new_privs for the running process    |
 
 *** Game Systems
 

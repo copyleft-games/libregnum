@@ -295,6 +295,7 @@ PUBLIC_HEADERS := \
 	src/crash/lrg-crash-dialog.h \
 	src/crash/lrg-crash-dialog-terminal.h \
 	src/crash/lrg-crash-reporter.h \
+	src/sandbox/lrg-sandbox.h \
 	src/accessibility/lrg-color-filter.h \
 	src/accessibility/lrg-accessibility-settings.h \
 	src/steam/lrg-steam-service.h \
@@ -877,6 +878,7 @@ SOURCES := \
 	src/crash/lrg-crash-dialog.c \
 	src/crash/lrg-crash-dialog-terminal.c \
 	src/crash/lrg-crash-reporter.c \
+	src/sandbox/lrg-sandbox.c \
 	src/accessibility/lrg-color-filter.c \
 	src/accessibility/lrg-accessibility-settings.c \
 	src/steam/lrg-steam-service.c \
@@ -2509,6 +2511,12 @@ $(OBJDIR)/src/crash/lrg-crash-dialog-terminal.o: src/crash/lrg-crash-dialog-term
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/crash/lrg-crash-reporter.o: src/crash/lrg-crash-reporter.c src/crash/lrg-crash-reporter.h src/crash/lrg-crash-dialog.h src/crash/lrg-crash-dialog-terminal.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# Sandbox module
+$(OBJDIR)/src/sandbox/lrg-sandbox.o: src/sandbox/lrg-sandbox.c src/sandbox/lrg-sandbox.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
