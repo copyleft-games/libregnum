@@ -3331,6 +3331,9 @@ lrg_photo_mode_error_get_type (void)
             { LRG_PHOTO_MODE_ERROR_SAVE, "LRG_PHOTO_MODE_ERROR_SAVE", "save" },
             { LRG_PHOTO_MODE_ERROR_INVALID_FORMAT, "LRG_PHOTO_MODE_ERROR_INVALID_FORMAT", "invalid-format" },
             { LRG_PHOTO_MODE_ERROR_ALREADY_ACTIVE, "LRG_PHOTO_MODE_ERROR_ALREADY_ACTIVE", "already-active" },
+            { LRG_PHOTO_MODE_ERROR_NOT_ACTIVE, "LRG_PHOTO_MODE_ERROR_NOT_ACTIVE", "not-active" },
+            { LRG_PHOTO_MODE_ERROR_BUSY, "LRG_PHOTO_MODE_ERROR_BUSY", "busy" },
+            { LRG_PHOTO_MODE_ERROR_INVALID_ARGUMENT, "LRG_PHOTO_MODE_ERROR_INVALID_ARGUMENT", "invalid-argument" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
@@ -3355,6 +3358,98 @@ lrg_screenshot_format_get_type (void)
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgScreenshotFormat"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_photo_camera_mode_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PHOTO_CAMERA_MODE_FREE, "LRG_PHOTO_CAMERA_MODE_FREE", "free" },
+            { LRG_PHOTO_CAMERA_MODE_ORBIT, "LRG_PHOTO_CAMERA_MODE_ORBIT", "orbit" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPhotoCameraMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_photo_preset_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PHOTO_PRESET_NONE, "LRG_PHOTO_PRESET_NONE", "none" },
+            { LRG_PHOTO_PRESET_VIVID, "LRG_PHOTO_PRESET_VIVID", "vivid" },
+            { LRG_PHOTO_PRESET_NOIR, "LRG_PHOTO_PRESET_NOIR", "noir" },
+            { LRG_PHOTO_PRESET_SEPIA, "LRG_PHOTO_PRESET_SEPIA", "sepia" },
+            { LRG_PHOTO_PRESET_FADED, "LRG_PHOTO_PRESET_FADED", "faded" },
+            { LRG_PHOTO_PRESET_WARM, "LRG_PHOTO_PRESET_WARM", "warm" },
+            { LRG_PHOTO_PRESET_COOL, "LRG_PHOTO_PRESET_COOL", "cool" },
+            { LRG_PHOTO_PRESET_DRAMATIC, "LRG_PHOTO_PRESET_DRAMATIC", "dramatic" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPhotoPreset"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_photo_frame_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PHOTO_FRAME_NONE, "LRG_PHOTO_FRAME_NONE", "none" },
+            { LRG_PHOTO_FRAME_THIN, "LRG_PHOTO_FRAME_THIN", "thin" },
+            { LRG_PHOTO_FRAME_WIDE, "LRG_PHOTO_FRAME_WIDE", "wide" },
+            { LRG_PHOTO_FRAME_POLAROID, "LRG_PHOTO_FRAME_POLAROID", "polaroid" },
+            { LRG_PHOTO_FRAME_CINEMA, "LRG_PHOTO_FRAME_CINEMA", "cinema" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPhotoFrame"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_photo_grid_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PHOTO_GRID_NONE, "LRG_PHOTO_GRID_NONE", "none" },
+            { LRG_PHOTO_GRID_THIRDS, "LRG_PHOTO_GRID_THIRDS", "thirds" },
+            { LRG_PHOTO_GRID_GOLDEN, "LRG_PHOTO_GRID_GOLDEN", "golden" },
+            { LRG_PHOTO_GRID_CENTER, "LRG_PHOTO_GRID_CENTER", "center" },
+            { LRG_PHOTO_GRID_DIAGONALS, "LRG_PHOTO_GRID_DIAGONALS", "diagonals" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPhotoGrid"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
 

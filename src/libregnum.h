@@ -599,6 +599,11 @@
 /* Photo Mode module (Phase 5) */
 #include "photomode/lrg-screenshot.h"
 #include "photomode/lrg-photo-camera-controller.h"
+#include "photomode/lrg-photo-host.h"
+#include "photomode/lrg-photo-look.h"
+#include "photomode/lrg-photo-depth-target.h"
+#include "photomode/lrg-photo-dof.h"
+#include "photomode/lrg-photo-overlay.h"
 #include "photomode/lrg-photo-mode.h"
 #include "photomode/lrg-gif-recorder.h"
 

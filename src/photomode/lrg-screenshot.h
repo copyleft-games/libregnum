@@ -195,4 +195,88 @@ LRG_AVAILABLE_IN_ALL
 GrlTexture *
 lrg_screenshot_to_texture (LrgScreenshot *self);
 
+/* ==========================================================================
+ * Metadata (PNG text chunks)
+ * ========================================================================== */
+
+/**
+ * lrg_screenshot_new_from_render_texture:
+ * @texture: a render texture that has been drawn into
+ *
+ * Reads @texture back from the GPU as a screenshot, flipped the right
+ * way up (render textures are stored bottom up).  Needs a window.
+ *
+ * Returns: (transfer full) (nullable): a new #LrgScreenshot, or %NULL
+ *   when the texture could not be read
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgScreenshot *
+lrg_screenshot_new_from_render_texture (GrlRenderTexture *texture);
+
+/**
+ * lrg_screenshot_set_metadata:
+ * @self: an #LrgScreenshot
+ * @key: the keyword, 1 to 79 Latin-1 characters (PNG's tEXt keyword)
+ * @value: (nullable): the text, or %NULL to remove the key
+ *
+ * Sets a text entry that lrg_screenshot_save_png() writes as a tEXt
+ * chunk (camera position, date, game): the keyword must not be empty or
+ * longer than 79 bytes and neither side may hold a NUL.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_screenshot_set_metadata (LrgScreenshot *self,
+                             const gchar   *key,
+                             const gchar   *value);
+
+/**
+ * lrg_screenshot_get_metadata:
+ * @self: an #LrgScreenshot
+ * @key: the keyword
+ *
+ * Returns: (transfer none) (nullable): the text, or %NULL
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *
+lrg_screenshot_get_metadata (LrgScreenshot *self,
+                             const gchar   *key);
+
+/**
+ * lrg_screenshot_get_metadata_keys:
+ * @self: an #LrgScreenshot
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the keywords in
+ *   the order they were first set
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar **
+lrg_screenshot_get_metadata_keys (LrgScreenshot *self);
+
+/**
+ * lrg_screenshot_read_png_metadata:
+ * @path: a PNG file
+ * @error: (nullable): a location for an error
+ *
+ * Reads the tEXt chunks of a PNG file (what lrg_screenshot_save_png()
+ * wrote, or any other).  Checks the signature and every chunk's CRC.
+ *
+ * Returns: (transfer full) (element-type utf8 utf8) (nullable): the
+ *   keyword to text table, or %NULL when the file is missing or not a
+ *   valid PNG
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GHashTable *
+lrg_screenshot_read_png_metadata (const gchar  *path,
+                                  GError      **error);
+
 G_END_DECLS
