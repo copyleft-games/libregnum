@@ -54,6 +54,7 @@ Each effect reads from one texture and writes to another, ping-ponging through t
 | LrgBloom            | Bright area glow  | Fire, magic, lights   |
 | LrgVignette         | Edge darkening    | Focus, cinematic look |
 | LrgColorGrade       | Color adjustments | Mood, style           |
+| LrgHeatHaze         | Horizon shimmer   | Deserts, hot days     |
 | LrgFxaa             | Anti-aliasing     | Smooth edges          |
 | LrgFilmGrain        | Film texture      | Retro, stylized       |
 | LrgScreenShake      | Camera shake      | Impacts, explosions   |
