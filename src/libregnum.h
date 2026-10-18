@@ -238,6 +238,13 @@
 #include "audio/lrg-audio-mixer.h"
 #include "audio/lrg-procedural-audio.h"
 #include "audio/lrg-midi-synth.h"
+#include "audio/lrg-audio-effect.h"
+#include "audio/lrg-reverb.h"
+#include "audio/lrg-low-pass.h"
+#include "audio/lrg-sound-bed.h"
+#include "audio/lrg-midi-output.h"
+#include "audio/lrg-midi-output-alsa.h"
+#include "audio/lrg-midi-sequencer.h"
 
 /* Inventory module */
 #include "inventory/lrg-item-def.h"

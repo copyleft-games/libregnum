@@ -183,6 +183,13 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-audio-mixer.h \
 	src/audio/lrg-procedural-audio.h \
 	src/audio/lrg-midi-synth.h \
+	src/audio/lrg-audio-effect.h \
+	src/audio/lrg-reverb.h \
+	src/audio/lrg-low-pass.h \
+	src/audio/lrg-sound-bed.h \
+	src/audio/lrg-midi-output.h \
+	src/audio/lrg-midi-output-alsa.h \
+	src/audio/lrg-midi-sequencer.h \
 	src/inventory/lrg-item-def.h \
 	src/inventory/lrg-item-stack.h \
 	src/inventory/lrg-inventory.h \
@@ -754,6 +761,13 @@ SOURCES := \
 	src/audio/lrg-procedural-audio.c \
 	src/audio/lrg-midi-synth.c \
 	src/audio/lrg-midi-synth-vendor.c \
+	src/audio/lrg-audio-effect.c \
+	src/audio/lrg-reverb.c \
+	src/audio/lrg-low-pass.c \
+	src/audio/lrg-sound-bed.c \
+	src/audio/lrg-midi-output.c \
+	src/audio/lrg-midi-output-alsa.c \
+	src/audio/lrg-midi-sequencer.c \
 	src/inventory/lrg-item-def.c \
 	src/inventory/lrg-item-stack.c \
 	src/inventory/lrg-inventory.c \
@@ -1923,6 +1937,15 @@ $(OBJDIR)/src/%.o: src/%.c | $(OBJDIR)
 $(OBJDIR)/src/audio/lrg-midi-synth-vendor.o: LIB_CFLAGS += -isystem $(CURDIR)/src/audio/vendor
 $(OBJDIR)/src/audio/lrg-midi-synth-vendor.o: src/audio/vendor/tsf.h src/audio/vendor/tml.h src/audio/lrg-midi-synth-private.h
 $(OBJDIR)/src/audio/lrg-midi-synth.o: src/audio/lrg-midi-synth-private.h
+$(OBJDIR)/src/audio/lrg-midi-sequencer.o: src/audio/lrg-midi-synth-private.h
+
+# The ALSA MIDI output compiles without its backend when ALSA=0 (or no
+# alsa.pc), so it rebuilds when that flips (as the OpenXR stamp below).
+ALSA_STAMP := $(OBJDIR)/.alsa-$(HAS_ALSA)
+$(ALSA_STAMP): | $(OBJDIR)
+	@rm -f $(OBJDIR)/.alsa-*
+	@touch $@
+$(OBJDIR)/src/audio/lrg-midi-output-alsa.o: $(ALSA_STAMP)
 
 # The OpenXR backend compiles to a stub without OPENXR=1, so it must rebuild
 # when the flag flips; the stamp's name carries the value.

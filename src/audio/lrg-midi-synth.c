@@ -1131,37 +1131,28 @@ lrg_midi_synth_get_sample_rate (LrgMidiSynth *self)
  * ========================================================================== */
 
 /*
- * lrg_midi_synth_play:
- * 1. scan the file (errors leave everything as it was);
- * 2. load its events and make a synthesizer instance;
- * 3. the loop range from the markers (or the whole song);
- * 4. swap: with a fade the current song becomes the outgoing one (an
- *    older outgoing song is dropped), without one everything else stops.
+ * lrg_midi_synth_parse_song:
+ * Shared by the synthesizer and LrgMidiSequencer (private header):
+ * 1. scan the file; 2. load its channel events; 3. the song's end (the
+ * scan's end tick or the last event) and the loop range from the
+ * markers, the whole song without them or with markers out of order.
  */
 gboolean
-lrg_midi_synth_play (LrgMidiSynth  *self,
-                     GBytes        *smf,
-                     gboolean       loop,
-                     gdouble        fade_in,
-                     GError       **error)
+lrg_midi_synth_parse_song (GBytes         *smf,
+                           GArray        **out_events,
+                           gdouble        *out_length_ms,
+                           gdouble        *out_loop_start_ms,
+                           gdouble        *out_loop_end_ms,
+                           GError        **error)
 {
     SmfScan       scan;
-    Song         *song;
     GArray       *events;
     const guint8 *data;
     gsize         size;
     gboolean      ok;
-
-    g_return_val_if_fail (LRG_IS_MIDI_SYNTH (self), FALSE);
-    g_return_val_if_fail (smf != NULL, FALSE);
-    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
-
-    if (self->font == NULL)
-    {
-        g_set_error (error, LRG_MIDI_SYNTH_ERROR, LRG_MIDI_SYNTH_ERROR_NO_SOUNDFONT,
-                     "no SoundFont loaded");
-        return FALSE;
-    }
+    gdouble       length_ms;
+    gdouble       loop_start_ms;
+    gdouble       loop_end_ms;
 
     /* 1. scan */
     data = g_bytes_get_data (smf, &size);
@@ -1179,7 +1170,7 @@ lrg_midi_synth_play (LrgMidiSynth  *self,
         return FALSE;
     }
 
-    /* 2. events and voices */
+    /* 2. events */
     events = lrg_midi_synth_events_load (data, size);
     if (events == NULL)
     {
@@ -1187,29 +1178,75 @@ lrg_midi_synth_play (LrgMidiSynth  *self,
         return smf_invalid (error, "TinyMidiLoader rejected the file");
     }
 
+    /* 3. the song's end and its loop */
+    length_ms = smf_tick_to_ms (&scan, scan.end_tick);
+    if (events->len > 0)
+        length_ms = MAX (length_ms,
+                         (gdouble)g_array_index (events, LrgMidiSynthEvent, events->len - 1).time_ms);
+    loop_start_ms = scan.loop_start_tick >= 0 ?
+                    smf_tick_to_ms (&scan, (guint64)scan.loop_start_tick) : 0.0;
+    loop_end_ms = scan.loop_end_tick >= 0 ?
+                  smf_tick_to_ms (&scan, (guint64)scan.loop_end_tick) : length_ms;
+    if (loop_end_ms <= loop_start_ms)
+    {
+        /* markers out of order: loop the whole song */
+        loop_start_ms = 0.0;
+        loop_end_ms = length_ms;
+    }
+    g_array_unref (scan.tempos);
+
+    *out_events = events;
+    *out_length_ms = length_ms;
+    *out_loop_start_ms = loop_start_ms;
+    *out_loop_end_ms = loop_end_ms;
+    return TRUE;
+}
+
+/*
+ * lrg_midi_synth_play:
+ * 1. parse the file (errors leave everything as it was);
+ * 2. make a synthesizer instance for it;
+ * 3. swap: with a fade the current song becomes the outgoing one (an
+ *    older outgoing song is dropped), without one everything else stops.
+ */
+gboolean
+lrg_midi_synth_play (LrgMidiSynth  *self,
+                     GBytes        *smf,
+                     gboolean       loop,
+                     gdouble        fade_in,
+                     GError       **error)
+{
+    Song   *song;
+    GArray *events;
+    gdouble length_ms;
+    gdouble loop_start_ms;
+    gdouble loop_end_ms;
+
+    g_return_val_if_fail (LRG_IS_MIDI_SYNTH (self), FALSE);
+    g_return_val_if_fail (smf != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    if (self->font == NULL)
+    {
+        g_set_error (error, LRG_MIDI_SYNTH_ERROR, LRG_MIDI_SYNTH_ERROR_NO_SOUNDFONT,
+                     "no SoundFont loaded");
+        return FALSE;
+    }
+
+    /* 1. parse */
+    if (!lrg_midi_synth_parse_song (smf, &events, &length_ms, &loop_start_ms, &loop_end_ms, error))
+        return FALSE;
+
+    /* 2. the song and its voices */
     song = g_new0 (Song, 1);
     song->events = events;
     song->voices = lrg_midi_synth_voices_new (self->font);
     song->loop = loop;
     song->gain = 1.0f;
     song->gain_target = 1.0f;
-
-    /* 3. the song's end and its loop */
-    song->length_ms = smf_tick_to_ms (&scan, scan.end_tick);
-    if (events->len > 0)
-        song->length_ms = MAX (song->length_ms,
-                               (gdouble)g_array_index (events, LrgMidiSynthEvent, events->len - 1).time_ms);
-    song->loop_start_ms = scan.loop_start_tick >= 0 ?
-                          smf_tick_to_ms (&scan, (guint64)scan.loop_start_tick) : 0.0;
-    song->loop_end_ms = scan.loop_end_tick >= 0 ?
-                        smf_tick_to_ms (&scan, (guint64)scan.loop_end_tick) : song->length_ms;
-    if (song->loop_end_ms <= song->loop_start_ms)
-    {
-        /* markers out of order: loop the whole song */
-        song->loop_start_ms = 0.0;
-        song->loop_end_ms = song->length_ms;
-    }
-    g_array_unref (scan.tempos);
+    song->length_ms = length_ms;
+    song->loop_start_ms = loop_start_ms;
+    song->loop_end_ms = loop_end_ms;
 
     if (song->voices == NULL)
     {
@@ -1217,7 +1254,7 @@ lrg_midi_synth_play (LrgMidiSynth  *self,
         return smf_invalid (error, "no synthesizer voices");
     }
 
-    /* 4. swap */
+    /* 3. swap */
     g_clear_pointer (&self->outgoing, song_free);
     if (fade_in > 0.0 && self->current != NULL)
     {
