@@ -24,7 +24,8 @@
 
 /* the foliage of every shape stays within this share of the height
  * from the axis (documented in lrg_tree_mesh_new()) */
-#define TREE_REACH (0.6f)
+#define TREE_REACH_TENTHS (6)
+#define TREE_REACH ((gfloat)TREE_REACH_TENTHS / 10.0f)
 #define TREE_SIDES (6)
 
 G_DEFINE_ENUM_TYPE (LrgTreeShape, lrg_tree_shape,
@@ -734,5 +735,7 @@ lrg_tree_mesh_add_to_batch (LrgTreeMesh     *self,
                                       transform, material, layer, error);
 }
 
-/* the reach is part of the documented contract (tests check it) */
-G_STATIC_ASSERT (TREE_REACH > 0.5f);
+/* the reach is part of the documented contract (tests check it); asserted
+ * on the integer tenths: a floating comparison is not an integer constant
+ * expression, which older GCCs (13) reject in G_STATIC_ASSERT under gnu89 */
+G_STATIC_ASSERT (TREE_REACH_TENTHS > 5);

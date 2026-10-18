@@ -24,6 +24,13 @@ argv, bridged to an =LrgGameTemplate= class vfunc + =args-applied= signal), and
 the generic =lrgldr= loader binary that forwards everything after =--= to the
 loaded module.
 
+*** [[file:sandbox/index.org][Sandbox Module]] - Landlock, seccomp and no_new_privs for the running process
+:PROPERTIES:
+:CUSTOM_ID: sandbox-module
+:END:
+
+=LrgSandbox=: a path / network / exec policy applied in-process with no_new_privs, a Landlock ruleset (filesystem, TCP/UDP ports, IPC scopes; masked by the kernel's ABI) and a seccomp filter on every thread; also builds a bubblewrap command line for an optional outer layer.
+
 *** [[file:reel/index.org][Reel Module]] - Programmatic Video Creation
 :PROPERTIES:
 :CUSTOM_ID: reel-module---programmatic-video-creation

@@ -406,6 +406,7 @@
 #include "crash/lrg-crash-dialog.h"
 #include "crash/lrg-crash-dialog-terminal.h"
 #include "crash/lrg-crash-reporter.h"
+#include "sandbox/lrg-sandbox.h"
 
 /* Accessibility module (Phase 1) */
 #include "accessibility/lrg-color-filter.h"

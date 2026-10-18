@@ -94,8 +94,16 @@ walk_ports (snd_seq_t     *seq,
     gboolean               have_through;
     snd_seq_addr_t         through;
 
-    snd_seq_client_info_alloca (&cinfo);
-    snd_seq_port_info_alloca (&pinfo);
+    /* heap, not snd_seq_*_alloca(): alloca defeats the stack protector
+     * (-Wstack-protector fails the build where -fstack-protector-strong
+     * is the compiler's default, e.g. Ubuntu) */
+    if (snd_seq_client_info_malloc (&cinfo) < 0)
+        return;
+    if (snd_seq_port_info_malloc (&pinfo) < 0)
+    {
+        snd_seq_client_info_free (cinfo);
+        return;
+    }
     have_through = FALSE;
     memset (&through, 0, sizeof (through));
     if (out_found != NULL)
@@ -150,6 +158,8 @@ walk_ports (snd_seq_t     *seq,
         *out_auto = through;
         *out_found = TRUE;
     }
+    snd_seq_port_info_free (pinfo);
+    snd_seq_client_info_free (cinfo);
 }
 
 static snd_seq_t *

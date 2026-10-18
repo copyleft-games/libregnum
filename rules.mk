@@ -11,7 +11,7 @@
 
 # Check if terminal supports colors
 ifneq ($(TERM),)
-    TPUT := $(shell which tput 2>/dev/null)
+    TPUT := $(shell command -v tput 2>/dev/null)
     ifneq ($(TPUT),)
         COLORS := $(shell $(TPUT) colors 2>/dev/null)
     endif
@@ -190,7 +190,7 @@ else
 	@$(PKG_CONFIG) --exists yaml-0.1 || (echo "Missing: libyaml-devel" && exit 1)
 	@$(PKG_CONFIG) --exists luajit || echo "Note: luajit-devel not found (scripting optional)"
 ifeq ($(BUILD_GIR),1)
-	@which $(GIR_SCANNER) > /dev/null || (echo "Missing: gobject-introspection-devel" && exit 1)
+	@command -v $(GIR_SCANNER) > /dev/null || (echo "Missing: gobject-introspection-devel" && exit 1)
 endif
 	$(call print_status,"All dependencies found")
 endif

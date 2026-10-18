@@ -134,6 +134,7 @@ TEST_SOURCES := \
 	test-settings.c \
 	test-gamestate.c \
 	test-crash.c \
+	test-sandbox.c \
 	test-accessibility.c \
 	test-steam.c \
 	test-economy.c \
