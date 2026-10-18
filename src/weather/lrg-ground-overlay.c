@@ -9,6 +9,11 @@
  * over the lit ground is dst' = snow a_s (1 - s) + dst (1 - a_s)(1 - s),
  * which is a single SRC_ALPHA / ONE_MINUS_SRC_ALPHA blend with
  * a = 1 - (1 - a_s)(1 - s) and rgb = snow a_s (1 - s) / a.
+ *
+ * Over terrain the vertices are in draw space; over objects (buildings,
+ * models, props) drawn under a matrix stack of their own the caller hands
+ * that matrix in (matStack), so the clouds and the snow are sampled where
+ * the surface really is and roofs (normals facing up) take the snow.
  */
 
 #include "config.h"
@@ -46,6 +51,8 @@ struct _LrgGroundOverlay
     gint           loc_snow_color;
     gint           loc_track_count;
     gint           loc_tracks;
+    gint           loc_stack;
+    gint           loc_cut;
 };
 
 G_DEFINE_FINAL_TYPE (LrgGroundOverlay, lrg_ground_overlay, G_TYPE_OBJECT)
@@ -54,13 +61,20 @@ static const gchar overlay_vs[] =
     "#version 330\n"
     "in vec3 vertexPosition;\n"
     "in vec3 vertexNormal;\n"
+    "in vec2 vertexTexCoord;\n"
     "uniform mat4 mvp;\n"
     "uniform mat4 matModel;\n"
+    "uniform mat4 matStack;\n"
     "out vec3 fragLocal;\n"
     "out vec3 fragNormal;\n"
+    "out vec2 fragUV;\n"
     "void main() {\n"
-    "    fragLocal = (matModel * vec4(vertexPosition, 1.0)).xyz;\n"
-    "    fragNormal = normalize(mat3(matModel) * vertexNormal);\n"
+    "    fragUV = vertexTexCoord;\n"
+    "    mat4 world = matStack * matModel;\n"
+    "    fragLocal = (world * vec4(vertexPosition, 1.0)).xyz;\n"
+    "    vec3 n = mat3(world) * vertexNormal;\n"
+    "    float nl = length(n);\n"
+    "    fragNormal = nl > 1e-6 ? n / nl : vec3(0.0);\n"
     "    gl_Position = mvp * vec4(vertexPosition, 1.0);\n"
     "}\n";
 
@@ -68,6 +82,9 @@ static const gchar overlay_fs[] =
     "#version 330\n"
     "in vec3 fragLocal;\n"
     "in vec3 fragNormal;\n"
+    "in vec2 fragUV;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform int cutAlpha;\n"
     "uniform vec2 noiseOrigin;\n"
     "uniform float invScale;\n"
     "uniform float coverage;\n"
@@ -81,6 +98,7 @@ static const gchar overlay_fs[] =
     LRG_CLOUD_NOISE_GLSL
     "out vec4 finalColor;\n"
     "void main() {\n"
+    "    if (cutAlpha != 0 && texture(texture0, fragUV).a < 0.35) discard;\n"
     "    float shadow = 0.0;\n"
     "    if (coverage > 0.0 && towardsSun.y > 0.05) {\n"
     "        float rise = max(altitude - fragLocal.y, 0.0);\n"
@@ -224,13 +242,22 @@ ensure_shader (LrgGroundOverlay *self)
     self->loc_snow_color = grl_shader_get_location (self->shader, "snowColor");
     self->loc_track_count = grl_shader_get_location (self->shader, "trackCount");
     self->loc_tracks = grl_shader_get_location (self->shader, "tracks");
+    self->loc_stack = grl_shader_get_location (self->shader, "matStack");
+    self->loc_cut = grl_shader_get_location (self->shader, "cutAlpha");
     return TRUE;
 }
 
-gboolean
-lrg_ground_overlay_begin (LrgGroundOverlay *self,
-                          LrgTerrain       *terrain)
+/*
+ * prepare:
+ * Everything both passes share: the shader, its uniforms for the draw
+ * space whose origin in the world is @origin, and the blend state.
+ */
+static gboolean
+prepare (LrgGroundOverlay *self,
+         const gdouble    *origin,
+         gboolean          objects)
 {
+    gint    cut = objects ? 1 : 0;
     gfloat  tracks[LRG_GROUND_OVERLAY_MAX_TRACKS * 4];
     gfloat  noise_origin[2] = { 0.0f, 0.0f };
     gfloat  inv_scale = 0.0f;
@@ -239,16 +266,10 @@ lrg_ground_overlay_begin (LrgGroundOverlay *self,
     gfloat  shadow = 0.0f;
     gfloat  level = 0.0f;
     gint    n_tracks = 0;
-    gdouble origin[3];
     Shader  sh;
-
-    g_return_val_if_fail (LRG_IS_GROUND_OVERLAY (self), FALSE);
-    g_return_val_if_fail (LRG_IS_TERRAIN (terrain), FALSE);
 
     if (!lrg_ground_overlay_is_visible (self) || !IsWindowReady () || !ensure_shader (self))
         return FALSE;
-
-    lrg_terrain_get_origin (terrain, &origin[0], &origin[1], &origin[2]);
 
     /* the clouds, sampled at draw-space origin */
     if (self->clouds != NULL)
@@ -295,15 +316,80 @@ lrg_ground_overlay_begin (LrgGroundOverlay *self,
     SetShaderValue (sh, self->loc_snow_level, &level, SHADER_UNIFORM_FLOAT);
     SetShaderValue (sh, self->loc_snow_color, self->snow_color, SHADER_UNIFORM_VEC4);
     SetShaderValue (sh, self->loc_track_count, &n_tracks, SHADER_UNIFORM_INT);
+    /* objects carry cut-out textures (fences, grates): their clear texels get nothing */
+    SetShaderValue (sh, self->loc_cut, &cut, SHADER_UNIFORM_INT);
     if (n_tracks > 0)
         SetShaderValueV (sh, self->loc_tracks, tracks, SHADER_UNIFORM_VEC4, n_tracks);
+    lrg_ground_overlay_set_model_matrix (self, NULL);
 
     rlDrawRenderBatchActive ();
     rlDisableDepthMask ();
     rlSetBlendMode (RL_BLEND_ALPHA);
     rlEnableColorBlend ();
+    return TRUE;
+}
+
+gboolean
+lrg_ground_overlay_begin (LrgGroundOverlay *self,
+                          LrgTerrain       *terrain)
+{
+    gdouble origin[3];
+
+    g_return_val_if_fail (LRG_IS_GROUND_OVERLAY (self), FALSE);
+    g_return_val_if_fail (LRG_IS_TERRAIN (terrain), FALSE);
+
+    lrg_terrain_get_origin (terrain, &origin[0], &origin[1], &origin[2]);
+    if (!prepare (self, origin, FALSE))
+        return FALSE;
     lrg_terrain_set_shader (terrain, self->shader);
     return TRUE;
+}
+
+GrlShader *
+lrg_ground_overlay_begin_objects (LrgGroundOverlay *self,
+                                  const gdouble    *origin)
+{
+    g_return_val_if_fail (LRG_IS_GROUND_OVERLAY (self), NULL);
+    g_return_val_if_fail (origin != NULL, NULL);
+
+    if (!prepare (self, origin, TRUE))
+        return NULL;
+    return self->shader;
+}
+
+void
+lrg_ground_overlay_set_model_matrix (LrgGroundOverlay *self,
+                                     const gfloat     *matrix)
+{
+    Matrix m;
+
+    g_return_if_fail (LRG_IS_GROUND_OVERLAY (self));
+
+    if (self->shader == NULL || self->loc_stack < 0)
+        return;
+
+    /* the array is OpenGL's column-major order: element i is raylib's "m<i>" */
+    if (matrix == NULL)
+    {
+        m = (Matrix){ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    }
+    else
+    {
+        m.m0 = matrix[0];   m.m1 = matrix[1];   m.m2 = matrix[2];   m.m3 = matrix[3];
+        m.m4 = matrix[4];   m.m5 = matrix[5];   m.m6 = matrix[6];   m.m7 = matrix[7];
+        m.m8 = matrix[8];   m.m9 = matrix[9];   m.m10 = matrix[10]; m.m11 = matrix[11];
+        m.m12 = matrix[12]; m.m13 = matrix[13]; m.m14 = matrix[14]; m.m15 = matrix[15];
+    }
+    SetShaderValueMatrix (*(Shader *)grl_shader_get_handle (self->shader), self->loc_stack, m);
+}
+
+void
+lrg_ground_overlay_end_objects (LrgGroundOverlay *self)
+{
+    g_return_if_fail (LRG_IS_GROUND_OVERLAY (self));
+
+    rlDrawRenderBatchActive ();
+    rlEnableDepthMask ();
 }
 
 void

@@ -1445,6 +1445,101 @@ test_draw_ground_overlay (void)
     g_assert_cmpuint (n_white, >, 64 * 64 / 2);
 }
 
+/* the object pass: the floor drawn under a matrix of its own */
+typedef struct
+{
+    LrgTerrain       *terrain;
+    LrgGroundOverlay *overlay;
+    const gfloat     *matrix;
+} ObjectScene;
+
+static void
+draw_object_ground (gpointer data)
+{
+    ObjectScene *scene = data;
+    gdouble      origin[3] = { -20.0, 0.0, -20.0 };
+    GrlShader   *shader;
+
+    lrg_terrain_draw (scene->terrain);
+    shader = lrg_ground_overlay_begin_objects (scene->overlay, origin);
+    if (shader != NULL)
+    {
+        lrg_ground_overlay_set_model_matrix (scene->overlay, scene->matrix);
+        lrg_terrain_set_shader (scene->terrain, shader);
+        lrg_terrain_draw (scene->terrain);
+        lrg_terrain_set_shader (scene->terrain, NULL);
+        lrg_ground_overlay_end_objects (scene->overlay);
+    }
+}
+
+static void
+test_draw_ground_overlay_objects (void)
+{
+    g_autoptr(LrgTerrain) terrain = lrg_terrain_new (4, 40.0f);
+    g_autoptr(LrgGroundOverlay) overlay = lrg_ground_overlay_new ();
+    g_autoptr(LrgSnowCover) snow = lrg_snow_cover_new ();
+    g_autoptr(GError) error = NULL;
+    GrlColor     grey = { 90, 90, 90, 255 };
+    /* a quarter turn about Z: what faced up now faces sideways */
+    const gfloat turned[16] = { 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    ObjectScene  scene;
+    gfloat       heights[25];
+    Image        upright;
+    Image        sideways;
+    Image        identity;
+    guint        i;
+    guint        n_upright;
+    guint        n_sideways;
+    guint        n_identity;
+
+    SKIP_WITHOUT_GRAPHICS ();
+
+    for (i = 0; i < 25; i++)
+        heights[i] = -2.0f;
+    g_assert_true (lrg_terrain_set_chunk (terrain, -1, -1, heights, 25, NULL, NULL, &error));
+    g_assert_no_error (error);
+    lrg_terrain_set_origin (terrain, -20.0, 0.0, -20.0);
+    lrg_terrain_set_tint (terrain, &grey);
+    g_assert_true (lrg_terrain_upload (terrain, &error));
+    lrg_ground_overlay_set_snow_cover (overlay, snow);
+    lrg_snow_cover_set_level (snow, 1.0);
+    scene.terrain = terrain;
+    scene.overlay = overlay;
+
+    /* no matrix and the identity: the surface faces up and is whitened */
+    scene.matrix = NULL;
+    upright = render_sky_view ((Vector3){ 0, -1, 0 }, draw_object_ground, &scene);
+    {
+        const gfloat one[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+
+        scene.matrix = one;
+        identity = render_sky_view ((Vector3){ 0, -1, 0 }, draw_object_ground, &scene);
+    }
+    /* turned on its side by the matrix: no roof, no snow */
+    scene.matrix = turned;
+    sideways = render_sky_view ((Vector3){ 0, -1, 0 }, draw_object_ground, &scene);
+    n_upright = count_bright (upright, 180);
+    n_identity = count_bright (identity, 180);
+    n_sideways = count_bright (sideways, 180);
+    UnloadImage (upright);
+    UnloadImage (identity);
+    UnloadImage (sideways);
+    lrg_ground_overlay_release_gpu (overlay);
+    lrg_terrain_unload (terrain);
+
+    g_assert_cmpuint (n_upright, >, 64 * 64 / 2);
+    g_assert_cmpuint (n_identity, ==, n_upright);
+    g_assert_cmpuint (n_sideways, ==, 0);
+
+    /* nothing to draw: no snow level, no shadows */
+    lrg_snow_cover_set_level (snow, 0.0);
+    {
+        gdouble origin[3] = { 0.0, 0.0, 0.0 };
+
+        g_assert_null (lrg_ground_overlay_begin_objects (overlay, origin));
+    }
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1479,6 +1574,7 @@ main (int   argc,
     g_test_add_func ("/weather-render/draw/clouds", test_draw_clouds);
     g_test_add_func ("/weather-render/draw/moon-phase", test_draw_moon_phase);
     g_test_add_func ("/weather-render/draw/ground-overlay", test_draw_ground_overlay);
+    g_test_add_func ("/weather-render/draw/ground-overlay-objects", test_draw_ground_overlay_objects);
 
     result = g_test_run ();
 
