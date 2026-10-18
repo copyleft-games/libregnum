@@ -194,4 +194,33 @@ gint lrg_openxr_service_start_frame_thread (LrgOpenXRService *self);
 LRG_AVAILABLE_IN_ALL
 gint lrg_openxr_service_get_frame_fd (LrgOpenXRService *self);
 
+/**
+ * lrg_openxr_service_probe:
+ * @app_name: (nullable): application name reported to the runtime
+ * @runtime_name: (out) (optional) (transfer full) (nullable): the runtime's
+ *   name and version
+ * @system_name: (out) (optional) (transfer full) (nullable): the headset's
+ *   name
+ * @error: return location for error
+ *
+ * Checks, without a GL context and without starting a session, that a
+ * headset can be used: libregnum was built with OpenXR, the loader finds
+ * an active runtime, an instance can be created and the runtime has a
+ * head-mounted display system.  The instance is destroyed again, so a
+ * program can call this before it opens a window and fail early with a
+ * clear message.
+ *
+ * Returns: %TRUE when a headset is ready; otherwise %FALSE with
+ *   %LRG_VR_ERROR_NOT_AVAILABLE (no OpenXR build, no runtime, no OpenGL
+ *   or EGL support) or %LRG_VR_ERROR_HMD_NOT_FOUND (a runtime without a
+ *   connected headset)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_openxr_service_probe (const gchar  *app_name,
+                                   gchar       **runtime_name,
+                                   gchar       **system_name,
+                                   GError      **error);
+
 G_END_DECLS
