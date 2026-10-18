@@ -442,9 +442,11 @@ draw_moon (LrgSkyBodies *self,
     guint  r;
     guint  k;
 
-    /* the dark side, as see-through as the moon is */
+    /* the dark side, as see-through as the moon is, and only against a
+     * dark sky (by day the unlit part is the sky's own colour) */
     memcpy (dark, self->dark, 4);
-    dark[3] = (guint8)((guint)dark[3] * m->color[3] / 255u);
+    dark[3] = (guint8)((gfloat)dark[3] * (gfloat)m->color[3] / 255.0f *
+                       lrg_celestial_night_factor (self->sun_dir[1]));
     disc (c, dist * 1.001f, m->dir, m->size, dark, 1.0f, 1.0f);
 
     basis (m->dir, self->sun_dir, right, up);
