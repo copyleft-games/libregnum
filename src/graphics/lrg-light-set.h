@@ -834,7 +834,9 @@ lrg_light_set_get_cluster_light (LrgLightSet *self,
  * @anisotropy: Henyey-Greenstein g, -0.95 .. 0.95 (> 0: brightest
  *   looking toward the light)
  * @intensity: multiplier of the scattered light (>= 0)
- * @steps: march steps per fragment, 1 .. %LRG_LIGHT_SET_AIR_MAX_STEPS
+ * @steps: march steps per fragment, 0 .. %LRG_LIGHT_SET_AIR_MAX_STEPS; 0 is
+ *   the closed form of a haze lit everywhere: no march and no shadow
+ *   lookups (no shafts), for thin air where they would not show
  * @max_distance: how far along the view ray the air is marched (> 0)
  * @tint: (nullable): colour of the air (alpha ignored), %NULL for white
  *

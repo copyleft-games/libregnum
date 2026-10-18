@@ -1957,7 +1957,7 @@ lrg_light_set_set_air (LrgLightSet    *self,
     g_return_if_fail (LRG_IS_LIGHT_SET (self));
     g_return_if_fail (density > 0.0f && isfinite (density));
     g_return_if_fail (intensity >= 0.0f && isfinite (intensity));
-    g_return_if_fail (steps >= 1 && steps <= LRG_LIGHT_SET_AIR_MAX_STEPS);
+    g_return_if_fail (steps <= LRG_LIGHT_SET_AIR_MAX_STEPS);
     g_return_if_fail (max_distance > 0.0f && isfinite (max_distance));
 
     self->air_on = TRUE;
@@ -2042,7 +2042,8 @@ lrg_light_set_sample_air (LrgLightSet      *self,
     for (k = 0; k < 3; k++)
         dir[k] = ray[k] / len;
     dist = MIN (len, self->air_distance);
-    dt = dist / (gfloat)self->air_steps;
+    /* no steps: the closed form, one source at the middle of the ray */
+    dt = dist / (gfloat)MAX (self->air_steps, 1u);
     if (self->has_directional)
         sun_phase = lrg_light_set_air_phase (self->air_g,
                                              -(self->directional_dir[0] * dir[0]
@@ -2052,7 +2053,7 @@ lrg_light_set_sample_air (LrgLightSet      *self,
         n_points = lrg_shadow_renderer_get_point_count (self->shadows);
 
     /* the shader's march, steps at their middles, every point lit */
-    for (i = 0; i < self->air_steps; i++)
+    for (i = 0; i < MAX (self->air_steps, 1u); i++)
     {
         gfloat t = ((gfloat)i + 0.5f) * dt;
         gfloat x[3];
@@ -2088,7 +2089,8 @@ lrg_light_set_sample_air (LrgLightSet      *self,
             for (k = 0; k < 3; k++)
                 s[k] += pl->color[k] * pl->intensity * a * a * ph;
         }
-        w = expf (-self->air_density * t) * self->air_density * dt;
+        w = self->air_steps == 0 ? 1.0f - expf (-self->air_density * dist)
+                                 : expf (-self->air_density * t) * self->air_density * dt;
         for (k = 0; k < 3; k++)
             out_rgb[k] += s[k] * w;
     }
