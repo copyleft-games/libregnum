@@ -47,6 +47,16 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+/* XR_MNDX_egl_enable's getProcAddress: version 2 of the extension (the
+ * OpenXR SDK 1.0.29+ headers) types it PFN_xrEglGetProcAddressMNDX,
+ * version 1 (older distributions' headers, e.g. Ubuntu 24.04) types it
+ * EGL's PFNEGLGETPROCADDRESSPROC */
+#if defined(XR_MNDX_egl_enable_SPEC_VERSION) && XR_MNDX_egl_enable_SPEC_VERSION >= 2
+typedef PFN_xrEglGetProcAddressMNDX LrgXrEglGetProcAddress;
+#else
+typedef PFNEGLGETPROCADDRESSPROC LrgXrEglGetProcAddress;
+#endif
+
 #define LRG_XR_MAX_VIEWS   2
 #define LRG_XR_MAX_IMAGES  8
 
@@ -358,8 +368,8 @@ create_session (LrgOpenXRService  *self,
             (LrgEglQueryContext) dlsym (RTLD_DEFAULT, "eglQueryContext");
         LrgEglChooseConfig choose =
             (LrgEglChooseConfig) dlsym (RTLD_DEFAULT, "eglChooseConfig");
-        PFN_xrEglGetProcAddressMNDX gpa =
-            (PFN_xrEglGetProcAddressMNDX) dlsym (RTLD_DEFAULT, "eglGetProcAddress");
+        LrgXrEglGetProcAddress gpa =
+            (LrgXrEglGetProcAddress) dlsym (RTLD_DEFAULT, "eglGetProcAddress");
         XrGraphicsBindingEGLMNDX gb = { .type = XR_TYPE_GRAPHICS_BINDING_EGL_MNDX };
         EGLContext ctx;
         EGLDisplay dpy;
