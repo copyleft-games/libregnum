@@ -34,6 +34,7 @@
  */
 
 #include "lrg-nav-poly-mesh.h"
+#include "lrg-nav-poly-mesh-cache.h"
 #include <gio/gio.h>
 #include <math.h>
 #include <string.h>
@@ -1992,6 +1993,128 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
         connect_link (self, i);
     index_links (self);
     label_regions (self);
+    self->bake_seconds = (gdouble) (g_get_monotonic_time () - started) / (gdouble) G_USEC_PER_SEC;
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ */
+/* Input digest and cached bakes                                        */
+
+/* the digest's version: change it when the bake's inputs change */
+#define DIGEST_TAG "lrg-nav-poly-mesh-input-1"
+
+static void
+digest_u32 (GChecksum *sum,
+            guint32    v)
+{
+    guint32 le = GUINT32_TO_LE (v);
+
+    g_checksum_update (sum, (const guchar *) &le, sizeof (le));
+}
+
+/* floats by their bits, little-endian (the same input, the same digest) */
+static void
+digest_floats (GChecksum    *sum,
+               const gfloat *v,
+               guint         n)
+{
+    guint i;
+
+    for (i = 0; i < n; i++)
+    {
+        guint32 bits;
+
+        memcpy (&bits, &v[i], sizeof (bits));
+        digest_u32 (sum, bits);
+    }
+}
+
+gchar *
+lrg_nav_poly_mesh_get_input_digest (LrgNavPolyMesh *self)
+{
+    g_autoptr(GChecksum) sum = NULL;
+    gfloat props[8];
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), NULL);
+
+    sum = g_checksum_new (G_CHECKSUM_SHA256);
+    g_checksum_update (sum, (const guchar *) DIGEST_TAG, sizeof (DIGEST_TAG));
+
+    /* the bake properties */
+    props[0] = self->cell_size;
+    props[1] = self->cell_height;
+    props[2] = self->agent_radius;
+    props[3] = self->agent_height;
+    props[4] = self->max_climb;
+    props[5] = self->max_slope;
+    props[6] = self->max_drop;
+    props[7] = self->corner_margin;
+    digest_floats (sum, props, 8);
+
+    /* the triangles and their walkable flags */
+    digest_u32 (sum, self->walkable->len);
+    digest_floats (sum, (const gfloat *) (gpointer) self->triangles->data, self->triangles->len);
+    g_checksum_update (sum, (const guchar *) self->walkable->data, self->walkable->len);
+
+    /* the area boxes */
+    digest_u32 (sum, self->boxes->len);
+    for (i = 0; i < self->boxes->len; i++)
+    {
+        const AreaBox *box = &g_array_index (self->boxes, AreaBox, i);
+
+        digest_floats (sum, box->min, 3);
+        digest_floats (sum, box->max, 3);
+        digest_u32 (sum, box->tag);
+    }
+
+    /* the off-mesh links (their connections are the bake's) */
+    digest_u32 (sum, self->links->len);
+    for (i = 0; i < self->links->len; i++)
+    {
+        const Link *l = &g_array_index (self->links, Link, i);
+
+        digest_floats (sum, l->start, 3);
+        digest_floats (sum, l->end, 3);
+        digest_floats (sum, &l->cost, 1);
+        digest_u32 (sum, l->tag);
+        digest_u32 (sum, l->bidirectional ? 1u : 0u);
+        digest_u32 (sum, l->enabled ? 1u : 0u);
+    }
+    return g_strdup (g_checksum_get_string (sum));
+}
+
+gboolean
+lrg_nav_poly_mesh_bake_cached (LrgNavPolyMesh       *self,
+                               LrgNavPolyMeshCache  *cache,
+                               GError              **error)
+{
+    g_autofree gchar *digest = NULL;
+    g_autoptr(GBytes) bytes = NULL;
+    gint64 started;
+
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), FALSE);
+    g_return_val_if_fail (cache == NULL || LRG_IS_NAV_POLY_MESH_CACHE (cache), FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    if (cache == NULL)
+        return lrg_nav_poly_mesh_bake (self, error);
+
+    started = g_get_monotonic_time ();
+    digest = lrg_nav_poly_mesh_get_input_digest (self);
+    bytes = lrg_nav_poly_mesh_cache_lookup (cache, digest);
+    /* a hit: the bake's own bytes, so a load cannot fail; should it, bake */
+    if (bytes != NULL && lrg_nav_poly_mesh_load (self, bytes, NULL))
+    {
+        self->bake_seconds = (gdouble) (g_get_monotonic_time () - started) / (gdouble) G_USEC_PER_SEC;
+        return TRUE;
+    }
+
+    if (!lrg_nav_poly_mesh_bake (self, error))
+        return FALSE;
+    g_clear_pointer (&bytes, g_bytes_unref);
+    bytes = lrg_nav_poly_mesh_save (self);
+    lrg_nav_poly_mesh_cache_insert (cache, digest, bytes);
     self->bake_seconds = (gdouble) (g_get_monotonic_time () - started) / (gdouble) G_USEC_PER_SEC;
     return TRUE;
 }

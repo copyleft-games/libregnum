@@ -96,4 +96,4 @@ See [[file:nav-mesh.org][Triangle mesh baking, projection, and A* navigation]] f
 
 ** Voxel-baked polygon navigation meshes
 
-See [[file:nav-poly-mesh.org][Voxel-baked polygon navigation meshes]]: =LrgNavPolyMesh= bakes a level's raw collision triangles for an agent (radius, height, step, slope) into convex polygons with portals, off-mesh links, drop links and tagged areas (doors), with funnel-straightened paths, surface raycasts, random points, OBJ export and a binary cache form.
+See [[file:nav-poly-mesh.org][Voxel-baked polygon navigation meshes]]: =LrgNavPolyMesh= bakes a level's raw collision triangles for an agent (radius, height, step, slope) into convex polygons with portals, off-mesh links, drop links and tagged areas (doors), with funnel-straightened paths, surface raycasts, random points, OBJ export, a binary cache form and =LrgNavPolyMeshCache=, an in-memory cache of bakes keyed by the digest of their input (=lrg_nav_poly_mesh_bake_cached()=).

@@ -194,6 +194,43 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
                         GError         **error);
 
 /**
+ * lrg_nav_poly_mesh_get_input_digest:
+ * @self: an #LrgNavPolyMesh
+ *
+ * A digest (SHA-256, lowercase hex) of everything a bake depends on: the
+ * bake properties, the staged triangles and their walkable flags, the
+ * area boxes and the off-mesh links with their enabled states.  Equal
+ * digests bake equal meshes; #LrgNavPolyMeshCache keys bakes by it.
+ *
+ * Returns: (transfer full): the digest
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *
+lrg_nav_poly_mesh_get_input_digest (LrgNavPolyMesh *self);
+
+/**
+ * lrg_nav_poly_mesh_bake_cached:
+ * @self: an #LrgNavPolyMesh
+ * @cache: (nullable): an #LrgNavPolyMeshCache, or %NULL to bake
+ * @error: (nullable): return location for a #GError
+ *
+ * Like lrg_nav_poly_mesh_bake(), but when @cache holds a bake of the
+ * same input (lrg_nav_poly_mesh_get_input_digest()) that bake is loaded
+ * (lrg_nav_poly_mesh_load()) instead; otherwise the mesh is baked and a
+ * successful bake is stored in @cache.  The result is the same mesh
+ * either way (polygons, portals, links and their connections, regions);
+ * lrg_nav_poly_mesh_get_bake_seconds() is the time this call took.
+ * Failed bakes are not cached.  The errors are lrg_nav_poly_mesh_bake()'s.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_poly_mesh_bake_cached (LrgNavPolyMesh       *self,
+                               LrgNavPolyMeshCache  *cache,
+                               GError              **error);
+
+/**
  * lrg_nav_poly_mesh_get_polygon_count:
  * @self: an #LrgNavPolyMesh
  *

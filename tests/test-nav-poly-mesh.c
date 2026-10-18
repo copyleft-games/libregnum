@@ -6,7 +6,8 @@
  *
  * LrgNavPolyMesh on synthetic levels: floors, walls with gaps, rooms
  * and corridors, stairs, ledges and drops, low ceilings, steep ramps,
- * tagged doors, off-mesh links, queries and the binary form.
+ * tagged doors, off-mesh links, queries, the binary form and the
+ * bake cache (LrgNavPolyMeshCache).
  */
 
 #include <libregnum.h>
@@ -813,6 +814,176 @@ test_save_load_obj (void)
     g_assert_cmpuint (l, ==, 1);
 }
 
+/* the level of the cache tests: two rooms, a corridor, a ladder link */
+static LrgNavPolyMesh *
+cache_level (gfloat corridor_z)
+{
+    g_autoptr(GArray) tris = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    LrgNavPolyMesh *mesh;
+    const gfloat bottom[3] = { 3.0f, 0.0f, 5.0f };
+    const gfloat top[3] = { 13.0f, 0.0f, 9.0f };
+
+    floor_rect (tris, 0, 0, 6, 6, 0);
+    floor_rect (tris, 6, corridor_z, 13.5f, corridor_z + 2.0f, 0);
+    floor_rect (tris, 11.5f, 4, 13.5f, 10, 0);
+    floor_rect (tris, 10, 10, 16, 16, 0);
+    box (tris, 2, 0, 2, 3, 1, 3);
+    mesh = lrg_nav_poly_mesh_new ();
+    g_object_set (mesh, "cell-size", 0.2f, "max-drop", 2.0f, NULL);
+    lrg_nav_poly_mesh_add_triangles (mesh, (const gfloat *) tris->data, tris->len, TRUE);
+    lrg_nav_poly_mesh_add_link (mesh, bottom, top, TRUE, 1.0f, 3);
+    return mesh;
+}
+
+static void
+test_cache_hit_equals_bake (void)
+{
+    g_autoptr(LrgNavPolyMeshCache) cache = lrg_nav_poly_mesh_cache_new (4);
+    g_autoptr(LrgNavPolyMesh) baked = cache_level (2.0f);
+    g_autoptr(LrgNavPolyMesh) loaded = cache_level (2.0f);
+    g_autoptr(LrgNavPolyMesh) plain = cache_level (2.0f);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *d1 = NULL;
+    g_autofree gchar *d2 = NULL;
+    g_autofree gchar *obj1 = NULL;
+    g_autofree gchar *obj2 = NULL;
+    g_autofree gfloat *p1 = NULL;
+    g_autofree gfloat *p2 = NULL;
+    const gfloat a[3] = { 1.0f, 0.0f, 1.0f };
+    const gfloat b[3] = { 15.0f, 0.0f, 15.0f };
+    guint n1;
+    guint n2;
+
+    /* the same input, the same digest (64 hex digits) */
+    d1 = lrg_nav_poly_mesh_get_input_digest (baked);
+    d2 = lrg_nav_poly_mesh_get_input_digest (loaded);
+    g_assert_cmpstr (d1, ==, d2);
+    g_assert_cmpuint (strlen (d1), ==, 64);
+
+    /* a miss bakes and stores, the same input then hits */
+    g_assert_true (lrg_nav_poly_mesh_bake_cached (baked, cache, &error));
+    g_assert_no_error (error);
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_misses (cache), ==, 1);
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_hits (cache), ==, 0);
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_size (cache), ==, 1);
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_bytes (cache), >, 0);
+    g_assert_true (lrg_nav_poly_mesh_bake_cached (loaded, cache, &error));
+    g_assert_no_error (error);
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_hits (cache), ==, 1);
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_size (cache), ==, 1);
+    g_assert_cmpfloat (lrg_nav_poly_mesh_get_bake_seconds (loaded), >=, 0.0);
+
+    /* no cache: a plain bake */
+    g_assert_true (lrg_nav_poly_mesh_bake_cached (plain, NULL, &error));
+    g_assert_no_error (error);
+
+    /* the loaded mesh is the baked one */
+    g_assert_cmpuint (lrg_nav_poly_mesh_get_polygon_count (loaded), ==, lrg_nav_poly_mesh_get_polygon_count (plain));
+    g_assert_cmpuint (lrg_nav_poly_mesh_get_portal_count (loaded), ==, lrg_nav_poly_mesh_get_portal_count (plain));
+    g_assert_cmpuint (lrg_nav_poly_mesh_get_span_count (loaded), ==, lrg_nav_poly_mesh_get_span_count (plain));
+    g_assert_cmpuint (lrg_nav_poly_mesh_get_link_count (loaded), ==, lrg_nav_poly_mesh_get_link_count (plain));
+    g_assert_cmpuint (lrg_nav_poly_mesh_get_drop_link_count (loaded), ==,
+                      lrg_nav_poly_mesh_get_drop_link_count (plain));
+    g_assert_cmpuint (lrg_nav_poly_mesh_get_region_count (loaded), ==, lrg_nav_poly_mesh_get_region_count (plain));
+    g_assert_cmpint (lrg_nav_poly_mesh_get_link_connected (loaded, 0), ==,
+                     lrg_nav_poly_mesh_get_link_connected (plain, 0));
+    obj1 = lrg_nav_poly_mesh_to_obj (plain);
+    obj2 = lrg_nav_poly_mesh_to_obj (loaded);
+    g_assert_cmpstr (obj1, ==, obj2);
+    p1 = path (plain, a, b, &n1);
+    p2 = path (loaded, a, b, &n2);
+    g_assert_cmpmem (p1, n1 * sizeof (gfloat), p2, n2 * sizeof (gfloat));
+}
+
+static void
+test_cache_digest_follows_input (void)
+{
+    g_autoptr(LrgNavPolyMesh) mesh = cache_level (2.0f);
+    g_autoptr(LrgNavPolyMesh) moved = cache_level (2.5f);
+    g_autofree gchar *base = lrg_nav_poly_mesh_get_input_digest (mesh);
+    g_autofree gchar *other = NULL;
+    g_autoptr(GError) error = NULL;
+    const gfloat lo[3] = { 0.0f, -1.0f, 0.0f };
+    const gfloat hi[3] = { 1.0f, 1.0f, 1.0f };
+
+    /* moved geometry */
+    other = lrg_nav_poly_mesh_get_input_digest (moved);
+    g_assert_cmpstr (base, !=, other);
+    g_clear_pointer (&other, g_free);
+
+    /* a bake property */
+    g_object_set (mesh, "agent-radius", 0.4f, NULL);
+    other = lrg_nav_poly_mesh_get_input_digest (mesh);
+    g_assert_cmpstr (base, !=, other);
+    g_clear_pointer (&other, g_free);
+    g_object_set (mesh, "agent-radius", 0.3f, NULL);
+    other = lrg_nav_poly_mesh_get_input_digest (mesh);
+    g_assert_cmpstr (base, ==, other);
+    g_clear_pointer (&other, g_free);
+
+    /* a link switched off (needs a bake for the link to exist as such) */
+    g_assert_true (lrg_nav_poly_mesh_bake (mesh, &error));
+    g_assert_true (lrg_nav_poly_mesh_set_link_enabled (mesh, 0, FALSE));
+    other = lrg_nav_poly_mesh_get_input_digest (mesh);
+    g_assert_cmpstr (base, !=, other);
+    g_clear_pointer (&other, g_free);
+    g_assert_true (lrg_nav_poly_mesh_set_link_enabled (mesh, 0, TRUE));
+
+    /* an area box */
+    lrg_nav_poly_mesh_add_area_box (mesh, lo, hi, 7);
+    other = lrg_nav_poly_mesh_get_input_digest (mesh);
+    g_assert_cmpstr (base, !=, other);
+}
+
+static void
+test_cache_lru_and_failures (void)
+{
+    g_autoptr(LrgNavPolyMeshCache) cache = lrg_nav_poly_mesh_cache_new (2);
+    g_autoptr(LrgNavPolyMesh) empty = lrg_nav_poly_mesh_new ();
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GBytes) gone = NULL;
+    g_autoptr(GBytes) kept = NULL;
+    gchar *digests[3];
+    gfloat zs[3] = { 2.0f, 2.5f, 3.0f };
+    guint i;
+
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_max_entries (cache), ==, 2);
+    for (i = 0; i < 3; i++)
+    {
+        g_autoptr(LrgNavPolyMesh) mesh = cache_level (zs[i]);
+
+        digests[i] = lrg_nav_poly_mesh_get_input_digest (mesh);
+        g_assert_true (lrg_nav_poly_mesh_bake_cached (mesh, cache, &error));
+        g_assert_no_error (error);
+    }
+    /* the least recently used went first */
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_size (cache), ==, 2);
+    gone = lrg_nav_poly_mesh_cache_lookup (cache, digests[0]);
+    g_assert_null (gone);
+    kept = lrg_nav_poly_mesh_cache_lookup (cache, digests[1]);
+    g_assert_nonnull (kept);
+    /* digests[1] is now the most recent: a new entry drops digests[2] */
+    lrg_nav_poly_mesh_cache_insert (cache, digests[0], kept);
+    g_clear_pointer (&gone, g_bytes_unref);
+    gone = lrg_nav_poly_mesh_cache_lookup (cache, digests[2]);
+    g_assert_null (gone);
+    /* replacing an entry keeps the size */
+    lrg_nav_poly_mesh_cache_insert (cache, digests[0], kept);
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_size (cache), ==, 2);
+
+    /* a failed bake is not cached; the error is the bake's */
+    g_assert_false (lrg_nav_poly_mesh_bake_cached (empty, cache, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_size (cache), ==, 2);
+
+    /* clear: nothing held */
+    lrg_nav_poly_mesh_cache_clear (cache);
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_size (cache), ==, 0);
+    g_assert_cmpuint (lrg_nav_poly_mesh_cache_get_bytes (cache), ==, 0);
+    for (i = 0; i < 3; i++)
+        g_free (digests[i]);
+}
+
 int
 main (int    argc,
       char **argv)
@@ -827,5 +998,8 @@ main (int    argc,
     g_test_add_func ("/nav-poly-mesh/links", test_links);
     g_test_add_func ("/nav-poly-mesh/random-and-regions", test_random_and_regions);
     g_test_add_func ("/nav-poly-mesh/save-load-obj", test_save_load_obj);
+    g_test_add_func ("/nav-poly-mesh/cache/hit-equals-bake", test_cache_hit_equals_bake);
+    g_test_add_func ("/nav-poly-mesh/cache/digest-follows-input", test_cache_digest_follows_input);
+    g_test_add_func ("/nav-poly-mesh/cache/lru-and-failures", test_cache_lru_and_failures);
     return g_test_run ();
 }
