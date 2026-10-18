@@ -309,13 +309,36 @@ gjs_eval_quiet (const gchar  *code,
  * build tree (`<libdir>/../gir`) and install layout
  * (`<libdir>/girepository-1.0`) next to the loaded libregnum object.
  */
+/*
+ * add_typelib_dir:
+ * GLib >= 2.86: prepend to the shared default repository gjs uses.
+ * Older GLib (Ubuntu 24.04's 2.80): gjs still runs on gobject-
+ * introspection's own repository, which this library cannot reach, so
+ * the directory is prepended to GI_TYPELIB_PATH, which that repository
+ * reads when gjs creates it (this runs before the first context).
+ */
+static void
+add_typelib_dir (const gchar *dir)
+{
+#if GLIB_CHECK_VERSION (2, 86, 0)
+    g_autoptr(GIRepository) repository = gi_repository_dup_default ();
+
+    gi_repository_prepend_search_path (repository, dir);
+#else
+    const gchar      *old = g_getenv ("GI_TYPELIB_PATH");
+    g_autofree gchar *value = NULL;
+
+    value = (old != NULL && old[0] != '\0')
+        ? g_strconcat (dir, G_SEARCHPATH_SEPARATOR_S, old, NULL)
+        : g_strdup (dir);
+    g_setenv ("GI_TYPELIB_PATH", value, TRUE);
+#endif
+}
+
 static void
 gjs_add_typelib_paths (void)
 {
-    g_autoptr(GIRepository) repository = NULL;
-    const gchar            *env;
-
-    repository = gi_repository_dup_default ();
+    const gchar *env;
 
     env = g_getenv ("LRG_TYPELIB_PATH");
     if (env != NULL && env[0] != '\0')
@@ -327,7 +350,7 @@ gjs_add_typelib_paths (void)
         {
             if (dirs[i][0] != '\0')
             {
-                gi_repository_prepend_search_path (repository, dirs[i]);
+                add_typelib_dir (dirs[i]);
             }
         }
     }
@@ -345,11 +368,11 @@ gjs_add_typelib_paths (void)
 
             if (g_file_test (installed, G_FILE_TEST_IS_DIR))
             {
-                gi_repository_prepend_search_path (repository, installed);
+                add_typelib_dir (installed);
             }
             if (g_file_test (build_gir, G_FILE_TEST_IS_DIR))
             {
-                gi_repository_prepend_search_path (repository, build_gir);
+                add_typelib_dir (build_gir);
             }
         }
     }
