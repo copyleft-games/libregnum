@@ -21,7 +21,7 @@ provide shared-world coordination or authorize client-originated mutations.
 | Interest management | Transport broadcast sent to everyone | Spatial cell index, zone isolation and radius queries |
 | Replication | No entity IDs, baselines or acknowledgment history | Stable 64-bit IDs, revisions, spawn/update/despawn deltas, one pending acknowledged baseline per viewer |
 | Shared persistence | =save/= stores game saves, with no concurrent record transaction API | SQLite record batches with compare-and-swap revisions and all-or-nothing commits |
-| Parties / social membership | No party or guild membership authority | Capacity-limited groups, leader-only admission, self-leave, deterministic leadership succession |
+| Parties / social membership | No party or guild membership authority | Capacity-limited groups, leader-only admission, self-leave, deterministic leadership succession; promotion, invitations with deadlines, resizing and raid subgroups |
 | Public integration | No MMO module | Four GObjects, umbrella header, GIR, tests and headless example |
 
 * Service expansion
@@ -232,6 +232,17 @@ guarantees, not a backup or replicated failover guarantee. Use a local filesyste
 and an application-controlled database path. =:memory:= is useful for tests.
 SQLite is a required build dependency (=sqlite-devel= on Fedora,
 =libsqlite3-dev= on Debian/Ubuntu).
+
+* Groups
+
+=LrgMmoGroup= is the membership authority of a party or a raid.  It holds the members in ascending ID order, the leader, the capacity, optional subgroups and pending invitations; every mutation names the authenticated actor, and the host maps its own identities (accounts, characters) to the nonzero IDs.
+
+- Admission: only the leader adds (=lrg_mmo_group_add()=) or invites (=lrg_mmo_group_invite()=, with a deadline in the host's clock).  Members plus pending invitations never exceed the capacity, so =lrg_mmo_group_accept()= always finds a seat; an accepted invitation past its deadline is dropped and fails with =G_IO_ERROR_TIMED_OUT=, a missing one with =G_IO_ERROR_NOT_FOUND=.  =lrg_mmo_group_decline()= answers no (or withdraws the invitation); =lrg_mmo_group_expire_invites()= drops and returns the lapsed ones for the host to notify.
+- Leaving: a member leaves itself, the leader removes others (=lrg_mmo_group_remove()=); when the leader leaves, the lowest remaining ID leads.  =lrg_mmo_group_promote()= passes leadership to a member.  An empty group is closed and refuses everything.
+- Raids: =lrg_mmo_group_set_capacity()= grows a party into a raid and back (never below the members and invitations); =lrg_mmo_group_set_subgroup_size()= splits it into numbered subgroups (from 1; capacity / size of them, rounded up).  Members keep a subgroup that still exists and has room; the rest, and every newcomer, fill the lowest subgroup with room.  =lrg_mmo_group_move()= moves a member (a full subgroup fails with =G_IO_ERROR_NO_SPACE=).
+- Errors: =G_IO_ERROR_PERMISSION_DENIED= for a non-leader, =G_IO_ERROR_EXISTS= for a member or invitee added again, =G_IO_ERROR_NO_SPACE= for a full group or subgroup.  A failed call changes nothing.
+
+Loot rules, ready checks and what the members see are game policy and stay in the host (librefall's =LfServerGroups= builds them on this type).
 
 * Running the headless example and tests
 
