@@ -41,3 +41,4 @@ g-ir-cpp-*.c
 
 # ignore mcp config
 .mcp.json
+tests/mutter.log
