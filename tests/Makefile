@@ -137,6 +137,7 @@ TEST_SOURCES := \
 	test-particles.c \
 	test-particle-billboard-renderer.c \
 	test-postprocess.c \
+	test-accessibility-filters.c \
 	test-animation.c \
 	test-text.c \
 	test-font-manager.c \

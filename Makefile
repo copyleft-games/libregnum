@@ -334,6 +334,7 @@ PUBLIC_HEADERS := \
 	src/postprocess/effects/lrg-screen-shake.h \
 	src/postprocess/effects/lrg-colorblind-filter.h \
 	src/postprocess/effects/lrg-color-grade.h \
+	src/postprocess/effects/lrg-palettize.h \
 	src/postprocess/effects/lrg-fxaa.h \
 	src/animation/lrg-bone-pose.h \
 	src/animation/lrg-bone.h \
@@ -891,6 +892,7 @@ SOURCES := \
 	src/postprocess/effects/lrg-screen-shake.c \
 	src/postprocess/effects/lrg-colorblind-filter.c \
 	src/postprocess/effects/lrg-color-grade.c \
+	src/postprocess/effects/lrg-palettize.c \
 	src/postprocess/effects/lrg-fxaa.c \
 	src/animation/lrg-bone-pose.c \
 	src/animation/lrg-bone.c \
