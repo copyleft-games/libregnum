@@ -1,0 +1,39 @@
+#+title: LrgSoundBed: layered ambient loops
+#+description: Named ambient layers (seamless loops or scattered one-shots) mixed into one stereo stream, with per-layer fades and crossfades, an effect chain on the bed's mix, headless rendering and a graylib audio stream
+
+* Overview
+
+A sound bed is the ambience of a place built from layers: wind, rain, a crowd, birdsong, drips.  Each layer is a clip with a level that fades over time; the game sets the levels as the place, the time and the weather change, and the bed mixes the audible layers into one interleaved stereo stream.  A layer either loops seamlessly or is *scattered*: it plays once, then stays silent for a random gap between two bounds, then plays again.  Silent layers cost nothing and keep their place.
+
+Rendering is headless (=lrg_sound_bed_render()=, used by the tests); a running game opens a graylib audio stream with =lrg_sound_bed_start_stream()= (on an open device; the call opens raylib's default device when it is not open yet, so headless code must not call it) and feeds it with =lrg_sound_bed_update()= every frame, as =LrgMidiSynth= does.  Rendering runs on the caller's thread, so the bed has no lock.
+
+* Layers
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_sound_bed_new (sample_rate)= | an empty bed |
+| =add_layer_samples (name, samples, n_samples, channels, rate)= | a looping layer at level 0 from interleaved floats (1 or 2 channels), resampled linearly to the bed's rate; =EXISTS= for a duplicate name, =INVALID= for empty data, three or more channels or a rate below 1000 Hz |
+| =add_layer (name, wave)= | the same from an =LrgWaveData= |
+| =remove_layer= / =has_layer= / =get_layer_names= | inspect (names in insertion order) |
+| =set_scatter (name, min_gap, max_gap)= | scattered: one play, then a gap uniform in the bounds (seconds) from the bed's generator; the first play waits a gap too; =0 .. 0= is a loop again |
+| =set_level (name, level, fade)= | the target gain (0 .. 1), reached linearly in =fade= seconds (0: at once) |
+| =get_level= / =get_gain= | the target, and where the fade is now |
+| =crossfade (from, to, seconds)= | =from= to 0 and =to= to 1, starting and ending together |
+| =get_play_count (name)= | how often the clip started from its beginning while audible (each loop pass counts) |
+| =set_volume= / =get_volume= | the bed's master gain |
+| =set_seed= | the scatter gaps' seed (reproducible ambience) |
+| =get_effects= | the =LrgAudioEffectChain= run on the bed's mix after the master gain |
+
+* Rendering
+
+For every audible layer (gain or target above 0), frame by frame:
+
+1. a scattered layer between two plays counts its gap down and adds silence; when the gap ends the clip starts at its first frame;
+2. otherwise the clip's frame at the layer's position is added (a mono clip to both sides) x gain x master volume; at the clip's end a loop wraps to its first frame (seamless: the next frame is the clip's first) and a scattered layer rolls its next gap;
+3. the gain takes one step of its linear fade.
+
+Then the bed's effect chain processes the block (a low-pass makes rain sound as if heard through a wall).
+
+* Tests
+
+=tests/test-audio-effects.c= (=/audio-effects/sound-bed/*=): two constant layers add up and a silent one adds nothing, loops wrap and count their passes, the master volume scales; a stereo ramp loops sample for sample; a one-second crossfade is half and half after half a second and complete after it; scattered 0.1 s shots with 0.5 .. 1 s gaps come 9 .. 17 times in ten seconds with every gap inside its bounds; the bed's low-pass removes a resampled 11 kHz buzz; bad layers fail with their error codes; a wave data clip goes in.
