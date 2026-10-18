@@ -276,4 +276,29 @@ void lrg_camera3d_slerp_to (LrgCamera3D         *self,
                             const GrlQuaternion *target,
                             gfloat               amount);
 
+/**
+ * lrg_camera3d_get_aspect:
+ * @self: an #LrgCamera3D
+ *
+ * Returns: the projection's aspect override, 0 for the target's own
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_camera3d_get_aspect (LrgCamera3D *self);
+
+/**
+ * lrg_camera3d_set_aspect:
+ * @self: an #LrgCamera3D
+ * @aspect: width over height of the perspective projection, or 0 (or
+ *   anything not positive) for the bound target's own; at most 16
+ *
+ * Overrides the projection's aspect ratio.  raylib takes it from the
+ * target being drawn into; a game that draws its view into a target of
+ * another shape and stretches it onto the screen (a 320 x 200 view shown
+ * at 4:3, pixels 1.2 times as tall as wide) gives the screen's ratio so
+ * the stretched picture is undistorted.  Perspective only.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_camera3d_set_aspect (LrgCamera3D *self,
+                              gfloat       aspect);
+
 G_END_DECLS

@@ -1,0 +1,61 @@
+* World look: landforms, water, grass, trees and the horizon ring
+:PROPERTIES:
+:CUSTOM_ID: world-look
+:END:
+Five helpers for outdoor scenes that a streamed-terrain game layers over its own data: =LrgTerrainDetail= (landform noise for heightfields), =LrgWaterSurface= (the water shader), =LrgGrassField= (instanced grass), =LrgTreeMesh= (procedural low-poly trees) and =LrgHorizonRing= (a distant-terrain impostor). Each keeps its geometry or arithmetic on the CPU, headless and covered by =tests/test-world-look.c=; only the draw calls need GL. Lit and fogged pieces read the bound =LrgLightSet= (=lrg_light_set_bind()=), so they match the rest of a lit scene by day, by night and in fog. The heat haze post effect that goes with them is =LrgHeatHaze= ([[file:../postprocess/effects.org::#lrgheathaze][postprocess/effects.org]]).
+
+All randomness is integer hashing of (seed, coordinates) in =graphics/lrg-hash-noise-private.h= (lowbias32 mixing, quintic value noise): no global random state, the same answer on every thread, in any order.
+
+** LrgTerrainDetail
+:PROPERTIES:
+:CUSTOM_ID: lrgterraindetail
+:END:
+- *Final GObject*, =LRG_TYPE_TERRAIN_DETAIL=, header =graphics/lrg-terrain-detail.h=, GIR =Libregnum.TerrainDetail=
+- =lrg_terrain_detail_new (seed)=; setters and getters for the amplitude (world units, default 1), wavelength (default 64), octaves (1 .. =LRG_TERRAIN_DETAIL_MAX_OCTAVES= = 8, default 4), ridge (0 .. 1, default 0.5) and warp (0 .. 1 of the wavelength, default 0.25).
+- =lrg_terrain_detail_sample (self, x, z)= is the offset at a world point, continuous and within [-amplitude, amplitude]; =lrg_terrain_detail_apply()= adds it, weighted per sample and scaled, to a row-major heightfield.
+
+The detail is a blend of two sums over the same octaves (each half the wavelength and weight of the last): signed fractal value noise (rolling relief) and a ridged multifractal, in which each octave's signal (1 - |n|)^2 is weighted by the previous one's (gain 2), so fine relief gathers on the crests and fades in the valleys, as erosion leaves it.  A domain warp by two low-frequency noises bends the ridges off the lattice.  Both sums are normalised by their largest possible value, so the result never leaves the amplitude.
+
+Use it where the heights are made, not where they are drawn: a game that applies it in its terrain sampler gets the same heights in its collision and its meshes.
+
+** LrgWaterSurface
+:PROPERTIES:
+:CUSTOM_ID: lrgwatersurface
+:END:
+- *Final GObject*, =LRG_TYPE_WATER_SURFACE=, header =graphics/lrg-water-surface.h=; boxed-less struct =LrgWaterWave= (direction, amplitude, wavelength, speed, steepness); callback =LrgWaterFoamFunc=.
+- Waves: up to =LRG_WATER_SURFACE_MAX_WAVES= (4) Gerstner waves (three gentle defaults), =set_wave()=, =get_wave()=, =set_wave_count()=, =set_wave_scale()= (calm pools, storms), =set_origin()= (the floating origin: the waves stay in place when the draw space moves), =evaluate()= (the vertex shader's sum on the CPU: displacement and unit normal), =get_max_height()=.
+- Looks: =set_colors()= (shallow, deep, foam), =set_sky()= (horizon and zenith the surface reflects), =set_sun()= (direction of travel and glint colour), =set_optics()= (transparency without a scene copy, reflection share, refraction shift, reflection distance).
+- Geometry: =add_grid()= adds a patch of (columns + 1) x (rows + 1) vertices (at most =LRG_WATER_SURFACE_MAX_PATCH_VERTICES=) with a shore factor per vertex from the foam callback; =clear()=, =get_patch_count()=, =get_vertex_count()=, =get_triangle_count()=, =get_patch_foam()=.
+- Drawing: =capture_scene()= copies the colour of the framebuffer being drawn (screen or render texture) into the surface's texture (=glBlitFramebuffer=); =draw()= uploads new patches and draws them two-sided, depth tested, without depth writes; =drop_scene()=; =release_gpu()=.
+
+Wave i with direction D, amplitude A, wavelength L, speed c and steepness s uses k = 2 pi / L, omega = c k and Q = s / (k A n) (n waves), and moves a rest point P by (Q A D cos th, A sin th) with th = k D.P + phase - omega t; the origin enters as a per-wave phase reduced in double on the CPU, so the shader only ever sees small draw-space coordinates.  The normal is (-sum D k A cos th, 1 - sum Q k A sin th), plus two small analytic ripples in the fragment shader.
+
+The fragment shader mixes refraction and reflection by Schlick's Fresnel term (F0 = 0.02).  With a captured scene the reflection is screen space: the point at the reflection distance along the reflected ray is projected and sampled, faded at the screen edges and rejected where it lands below the fragment (that is the water itself), with the sky gradient behind; the refraction samples the scene through the normal's tilt, tinted towards the water's body colour.  Without a capture the water blends over the frame with its own colours (alpha from the transparency, Fresnel and foam).  A sun glint, shoreline foam (the shore factor broken up by moving noise) and crest foam follow; light comes from the bound light set (=LRG_LIGHT_SAMPLE_GLSL=, per vertex) and fog from its fog.  The copy belongs to the frame it was taken in: =draw()= forgets it.
+
+** LrgGrassField
+:PROPERTIES:
+:CUSTOM_ID: lrggrassfield
+:END:
+- *Final GObject*, =LRG_TYPE_GRASS_FIELD=, header =graphics/lrg-grass-field.h=; boxed =LrgGrassBlade= (position, yaw, height, width, shade); callback =LrgGrassHeightFunc=.
+- Settings: cell size (default 2), blades per full cell (default 24, at most =LRG_GRASS_FIELD_MAX_BLADES_PER_CELL= = 256), blade size ranges, fade distances (default 30 .. 45), wind (tip sway and speed), base and tip colours.
+- =place_cell (self, cell_x, cell_z, density, draw_offset_x, draw_offset_z, height_func, data, out)= appends a cell's blades; =set_blades()= turns blades into instance transforms; =get_instance_count()=, =get_card()= (the unit card: =LRG_GRASS_FIELD_CARD_VERTICES= = 12 vertices, =LRG_GRASS_FIELD_CARD_TRIANGLES= = 8); =draw (self, eye, time)=; =release_gpu()=.
+
+Every blade slot of a cell hashes (seed, cell, slot) into its own short stream whose first value decides whether the slot is used (below the density): the same cell always gets the same blades, cells can be placed in any order, and a higher density only adds blades.  The draw is one =DrawMeshInstanced()= of two crossed, tapering quads; the vertex shader sways the card by its height squared, colours it from base to tip with a per-blade shade, lights it with the bound light set and computes the fade, which the fragment shader turns into a screen-space dithered discard (no sorting, no blending).
+
+** LrgTreeMesh
+:PROPERTIES:
+:CUSTOM_ID: lrgtreemesh
+:END:
+- *Final GObject*, =LRG_TYPE_TREE_MESH=, header =graphics/lrg-tree-mesh.h=; enum =LrgTreeShape= (=conifer=, =broadleaf=, =palm=, =dead=, =shrub=).
+- =lrg_tree_mesh_new (shape, seed, height)=; =set_colors()= (trunk and foliage, %NULL for the defaults); =get_vertex_count()=, =get_triangle_count()=, =get_positions()=, =get_normals()=, =get_colors()=, =get_indices()=, =get_bounds()=; =add_to_batch()= merges a placed copy into an =LrgStaticBatch=.
+
+Trees are built from prisms, frustums and cones (conifer tiers with closed undersides), jittered icosahedra (crowns and shrub clumps, shrunk only), curved trunk segments and two-sided drooping fronds (palms), and thin branch prisms (dead trees), all from one xorshift stream seeded by (seed, shape).  Triangles are unshared and wound to face away from their part's centre, with a face normal and a per-face shade of +-12 %, so the facets read without a texture.  Every tree stands on the origin, its top at the given height and its foliage within 0.6 of the height from the axis (tests check every shape).  A tree has tens to a few hundred triangles (the tests bound every shape to 20 .. 400).
+
+** LrgHorizonRing
+:PROPERTIES:
+:CUSTOM_ID: lrghorizonring
+:END:
+- *Final GObject*, =LRG_TYPE_HORIZON_RING=, header =graphics/lrg-horizon-ring.h=; callback =LrgHorizonSampleFunc= (height and RGBA at a placement point).
+- =set_radii()= (default 1000 .. 8000), =set_resolution()= (segments 8 .. 1024, rings 1 .. 64), =set_sink()=, =build (self, centre_x, centre_z, offset_x, offset_y, offset_z, func, data, error)=, =is_built()=, =get_centre()=, =get_vertex_count()=, =get_triangle_count()=, =get_batch()=, =draw (self, shader)=, =release_gpu()=.
+
+Vertex (s, j) lies at angle 2 pi s / S and radius inner (outer / inner)^(j / rings), geometric so the rings are dense where the ring meets the detailed terrain; the inner edge is lowered by the sink (fading out half way) so the streamed terrain covers the seam.  Normals come from the neighbours around and outwards.  Drawn with an =LrgLightSet='s shader the ring is lit like the terrain and its far rings fade into the fog colour: aerial perspective comes from the scene's fog, not from a second haze model.

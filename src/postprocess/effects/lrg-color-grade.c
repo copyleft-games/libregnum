@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "lrg-color-grade.h"
+#include "../lrg-color-lut.h"
 #include <math.h>
 #include <raylib.h>
 #include <rlgl.h>
@@ -46,7 +47,19 @@ static const gchar grade_fs[] =
     "uniform float contrast;\n"
     "uniform float saturation;\n"
     "uniform float intensity;\n"
+    "uniform sampler2D lutMap;\n"
+    "uniform vec2 lutParams;\n"
     "out vec4 finalColor;\n"
+    "vec3 lrg_lut(vec3 c) {\n"
+    "    float n = lutParams.x;\n"
+    "    vec3 s = clamp(c, 0.0, 1.0) * (n - 1.0);\n"
+    "    float b0 = floor(s.b);\n"
+    "    float b1 = min(b0 + 1.0, n - 1.0);\n"
+    "    float f = s.b - b0;\n"
+    "    vec2 uv0 = vec2((b0 * n + s.r + 0.5) / (n * n), (s.g + 0.5) / n);\n"
+    "    vec2 uv1 = vec2((b1 * n + s.r + 0.5) / (n * n), (s.g + 0.5) / n);\n"
+    "    return mix(texture(lutMap, uv0).rgb, texture(lutMap, uv1).rgb, f);\n"
+    "}\n"
     "void main()\n"
     "{\n"
     "    vec4 texel = texture(texture0, fragTexCoord) * colDiffuse * fragColor;\n"
@@ -58,6 +71,7 @@ static const gchar grade_fs[] =
     "    float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
     "    c = mix(vec3(lum), c, saturation);\n"
     "    c = clamp(c, 0.0, 1.0);\n"
+    "    if (lutParams.y > 0.0) c = mix(c, lrg_lut(c), lutParams.y);\n"
     "    finalColor = vec4(mix(texel.rgb, c, intensity), texel.a);\n"
     "}\n";
 
@@ -92,7 +106,18 @@ struct _LrgColorGrade
     gint           loc_contrast;
     gint           loc_saturation;
     gint           loc_intensity;
+
+    /* M14: the lookup table after the grade (unit LUT_UNIT) */
+    LrgColorLut   *lut;
+    gfloat         lut_strength;
+    guint          lut_texture;     /* GL id of the uploaded strip, 0: none */
+    LrgColorLut   *lut_uploaded;    /* the table the texture holds */
+    gint           loc_lut_map;
+    gint           loc_lut_params;
 };
+
+/* the table's texture unit while the grade draws (unit 0 is the source) */
+#define LUT_UNIT (1)
 
 G_DEFINE_TYPE (LrgColorGrade, lrg_color_grade, LRG_TYPE_POST_EFFECT)
 
@@ -126,6 +151,66 @@ lrg_color_grade_real_shutdown (LrgPostEffect *effect)
     /* the shader belongs to the context being shut down */
     g_clear_object (&self->shader);
     self->shader_tried = FALSE;
+    if (self->lut_texture != 0 && IsWindowReady ())
+        rlUnloadTexture (self->lut_texture);
+    self->lut_texture = 0;
+    g_clear_pointer (&self->lut_uploaded, lrg_color_lut_unref);
+}
+
+/*
+ * upload_lut:
+ * Uploads the table as an RGBA8 strip (linear, clamped) when it changed,
+ * binds it to LUT_UNIT and sets lutParams; strength 0 without a table.
+ * The strip stays bound until the grade's draw is flushed (the shader's
+ * end), which is when rlgl draws.
+ */
+static void
+upload_lut (LrgColorGrade *self)
+{
+    Shader *handle = grl_shader_get_handle (self->shader);
+    gfloat  params[2] = { 2.0f, 0.0f };
+    gint    unit = LUT_UNIT;
+
+    if (self->lut != NULL && self->lut_strength > 0.0f)
+    {
+        if (self->lut_uploaded != self->lut || self->lut_texture == 0)
+        {
+            g_autoptr(GBytes) strip = NULL;
+            guint w;
+            guint h;
+
+            if (self->lut_texture != 0)
+                rlUnloadTexture (self->lut_texture);
+            strip = lrg_color_lut_to_strip (self->lut, &w, &h);
+            self->lut_texture = rlLoadTexture (g_bytes_get_data (strip, NULL), (int)w, (int)h,
+                                               RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+            rlTextureParameters (self->lut_texture, RL_TEXTURE_MIN_FILTER, RL_TEXTURE_FILTER_LINEAR);
+            rlTextureParameters (self->lut_texture, RL_TEXTURE_MAG_FILTER, RL_TEXTURE_FILTER_LINEAR);
+            rlTextureParameters (self->lut_texture, RL_TEXTURE_WRAP_S, RL_TEXTURE_WRAP_CLAMP);
+            rlTextureParameters (self->lut_texture, RL_TEXTURE_WRAP_T, RL_TEXTURE_WRAP_CLAMP);
+            g_clear_pointer (&self->lut_uploaded, lrg_color_lut_unref);
+            self->lut_uploaded = lrg_color_lut_ref (self->lut);
+        }
+        if (self->lut_texture != 0)
+        {
+            params[0] = (gfloat)lrg_color_lut_get_size (self->lut);
+            params[1] = self->lut_strength;
+            rlActiveTextureSlot (LUT_UNIT);
+            rlEnableTexture (self->lut_texture);
+            rlActiveTextureSlot (0);
+        }
+    }
+    SetShaderValue (*handle, self->loc_lut_map, &unit, SHADER_UNIFORM_INT);
+    SetShaderValue (*handle, self->loc_lut_params, params, SHADER_UNIFORM_VEC2);
+}
+
+/* the table's unit is left empty after a draw */
+static void
+unbind_lut (void)
+{
+    rlActiveTextureSlot (LUT_UNIT);
+    rlDisableTexture ();
+    rlActiveTextureSlot (0);
 }
 
 /* uploads the parameters; the shader must be valid */
@@ -143,6 +228,7 @@ upload_uniforms (LrgColorGrade *self)
     grl_shader_set_value_float (self->shader, self->loc_saturation, self->saturation);
     grl_shader_set_value_float (self->shader, self->loc_intensity,
                                 lrg_post_effect_get_intensity (LRG_POST_EFFECT (self)));
+    upload_lut (self);
 }
 
 /*
@@ -193,7 +279,10 @@ lrg_color_grade_real_apply (LrgPostEffect *effect,
     }
     DrawTexturePro (source, src, dst, origin, 0.0f, WHITE);
     if (shader != NULL)
+    {
         grl_shader_end (shader);
+        unbind_lut ();
+    }
 }
 
 static const gchar *
@@ -279,6 +368,11 @@ lrg_color_grade_dispose (GObject *object)
     LrgColorGrade *self = LRG_COLOR_GRADE (object);
 
     g_clear_object (&self->shader);
+    if (self->lut_texture != 0 && IsWindowReady ())
+        rlUnloadTexture (self->lut_texture);
+    self->lut_texture = 0;
+    g_clear_pointer (&self->lut_uploaded, lrg_color_lut_unref);
+    g_clear_pointer (&self->lut, lrg_color_lut_unref);
     G_OBJECT_CLASS (lrg_color_grade_parent_class)->dispose (object);
 }
 
@@ -556,6 +650,8 @@ lrg_color_grade_is_identity (LrgColorGrade *self)
 
     if (lrg_post_effect_get_intensity (LRG_POST_EFFECT (self)) <= 0.0f)
         return TRUE;
+    if (self->lut != NULL && self->lut_strength > 0.0f)
+        return FALSE;
     return self->exposure == 0.0f && self->contrast == 1.0f && self->saturation == 1.0f &&
            self->temperature == 0.0f && self->tint == 0.0f &&
            self->lift_r == 0.0f && self->lift_g == 0.0f && self->lift_b == 0.0f &&
@@ -614,8 +710,12 @@ lrg_color_grade_apply_rgb (LrgColorGrade *self,
     {
         c[k] = lum + (c[k] - lum) * self->saturation;
         c[k] = CLAMP (c[k], 0.0f, 1.0f);
-        out[k] = original[k] + (c[k] - original[k]) * intensity;
     }
+    /* M14: the table after the grade, as the shader */
+    if (self->lut != NULL && self->lut_strength > 0.0f)
+        lrg_color_lut_apply_rgb (self->lut, c, self->lut_strength, c);
+    for (k = 0; k < 3; k++)
+        out[k] = original[k] + (c[k] - original[k]) * intensity;
 }
 
 const gchar *
@@ -661,6 +761,8 @@ lrg_color_grade_get_shader (LrgColorGrade *self)
     self->loc_contrast = grl_shader_get_location (self->shader, "contrast");
     self->loc_saturation = grl_shader_get_location (self->shader, "saturation");
     self->loc_intensity = grl_shader_get_location (self->shader, "intensity");
+    self->loc_lut_map = grl_shader_get_location (self->shader, "lutMap");
+    self->loc_lut_params = grl_shader_get_location (self->shader, "lutParams");
     return self->shader;
 }
 
@@ -692,6 +794,69 @@ lrg_color_grade_draw_texture (LrgColorGrade      *self,
     }
     grl_draw_texture_pro (texture, source, dest, &origin, 0.0f, white);
     if (shader != NULL)
+    {
         grl_shader_end (shader);
+        unbind_lut ();
+    }
     return identity || shader != NULL;
+}
+
+/* ------------------------------------------------------------------------ */
+/* M14: lookup tables                                                       */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_color_grade_set_lut (LrgColorGrade *self,
+                         LrgColorLut   *lut,
+                         gfloat         strength)
+{
+    g_return_if_fail (LRG_IS_COLOR_GRADE (self));
+
+    if (lut != self->lut)
+    {
+        g_clear_pointer (&self->lut, lrg_color_lut_unref);
+        if (lut != NULL)
+            self->lut = lrg_color_lut_ref (lut);
+    }
+    self->lut_strength = CLAMP (isfinite (strength) ? strength : 0.0f, 0.0f, 1.0f);
+}
+
+LrgColorLut *
+lrg_color_grade_get_lut (LrgColorGrade *self,
+                         gfloat        *out_strength)
+{
+    g_return_val_if_fail (LRG_IS_COLOR_GRADE (self), NULL);
+
+    if (out_strength != NULL)
+        *out_strength = self->lut != NULL ? self->lut_strength : 0.0f;
+    return self->lut;
+}
+
+LrgColorLut *
+lrg_color_grade_bake_lut (LrgColorGrade *self,
+                          guint          size)
+{
+    g_autofree gfloat *data = NULL;
+    guint r;
+    guint g;
+    guint b;
+
+    g_return_val_if_fail (LRG_IS_COLOR_GRADE (self), NULL);
+    g_return_val_if_fail (size >= LRG_COLOR_LUT_MIN_SIZE && size <= LRG_COLOR_LUT_MAX_SIZE, NULL);
+
+    /* the grade with its own table and intensity, at every grid point */
+    data = g_new (gfloat, (gsize)size * size * size * 3);
+    for (b = 0; b < size; b++)
+        for (g = 0; g < size; g++)
+            for (r = 0; r < size; r++)
+            {
+                gfloat in[3];
+
+                in[0] = (gfloat)r / (gfloat)(size - 1);
+                in[1] = (gfloat)g / (gfloat)(size - 1);
+                in[2] = (gfloat)b / (gfloat)(size - 1);
+                lrg_color_grade_apply_rgb (self, in, data + ((gsize)r + (gsize)g * size
+                                                             + (gsize)b * size * size) * 3);
+            }
+    return lrg_color_lut_new_from_data (size, data, NULL);
 }

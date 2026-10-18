@@ -1,0 +1,101 @@
+#+title: Audio effects: LrgAudioEffect, LrgReverb, LrgLowPass, LrgAudioEffectChain
+#+description: DSP effects on interleaved float buffers (an algorithmic reverb with room presets, a gliding resonant low-pass), chains of them, and running a chain on the audio device's final mix
+
+* Overview
+
+=LrgAudioEffect= is the abstract base of a sample processor: it receives a block of interleaved 32-bit float frames and rewrites it in place.  libregnum ships two effects, =LrgReverb= (rooms, caves, halls) and =LrgLowPass= (underwater, behind a wall), and =LrgAudioEffectChain= runs several in order.  Everything is headless: the tests feed impulses and sines and look at what comes out.  A chain can also run on the audio device's final stereo mix (every sound, music stream and voice) through raylib's mixed-audio processor; raylib's =raudio= is wrapped, never modified.
+
+Applications probe for the API with =#ifdef LRG_AUDIO_HAS_EFFECTS= (which also covers =LrgSoundBed= and the MIDI output types).
+
+* LrgAudioEffect
+
+| Member | Purpose |
+|--------+---------|
+| =process (frames, n_frames, channels, sample_rate)= (vfunc) | rewrite the block in place; called only while enabled, with a layout the base class has checked (1 .. =LRG_AUDIO_EFFECT_MAX_CHANNELS= channels, 8000 .. 192000 Hz) |
+| =reset ()= (vfunc) | forget the history (delay lines, filter state) |
+| =lrg_audio_effect_process()= | the checked entry point; a disabled effect, an empty block or an unsupported layout leaves the samples untouched |
+| =lrg_audio_effect_reset()= | clear the history: the next block starts from silence |
+| =lrg_audio_effect_set_enabled()= / =get_enabled()=, property =enabled= | disabling resets |
+
+Threading: an effect in an attached chain processes on miniaudio's thread.  =process= must not block, and it reads the effect's parameters as plain floats once per block; setters on the main thread store them (a block may see the old value, never a torn one).  Delay lines are allocated when the sample rate first changes, which in a running game happens once.
+
+* LrgReverb
+
+An algorithmic room reverb, the Schroeder-Moorer design as popularised by Jezar's public-domain Freeverb (written for libregnum from the published description, not copied): per lane eight damped feedback comb filters in parallel and four all-pass diffusers in series; two lanes (left and right tails) whose delays differ by 23 samples, which decorrelates them.
+
+Signal flow per frame:
+
+1. the input channels are summed to mono, scaled by 0.015 and delayed by the pre-delay (up to =LRG_REVERB_MAX_PRE_DELAY=, 0.25 s);
+2. both lanes run (comb feedback = room size x 0.28 + 0.7, damping x 0.4 into the combs' one-pole low-pass);
+3. each output channel gets its dry input x dry plus its own lane x wet x 3 x (width / 2 + 0.5) plus the other lane x wet x 3 x ((1 - width) / 2); a mono block gets the average of the lanes.
+
+Wet and dry glide to new values over 30 ms, so a preset change never clicks; the previous room's tail rings out.  The delay lengths are the classic 44.1 kHz tunings scaled to the block's rate.
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_reverb_new()= | a reverb with the =room= preset |
+| =lrg_reverb_set_preset()= / =get_preset()= | load room size, damping, wet, dry, width and pre-delay together |
+| =set_room_size= / =set_damping= / =set_wet= / =set_dry= / =set_width= (0 .. 1, clamped) and their getters | the parameters one by one |
+| =set_pre_delay= / =get_pre_delay= | seconds, 0 .. 0.25 |
+
+Presets (=LrgReverbPreset=, nicks in brackets; the values are libregnum's own, named after the classic environmental-audio presets):
+
+| Preset | Room | Damping | Wet | Dry | Width | Pre-delay |
+|--------+------+---------+-----+-----+-------+-----------|
+| =off= | 0.50 | 0.50 | 0.00 | 1.00 | 1.0 | 0 |
+| =room= | 0.45 | 0.60 | 0.16 | 1.00 | 1.0 | 5 ms |
+| =stone-room= | 0.68 | 0.30 | 0.28 | 0.95 | 1.0 | 10 ms |
+| =cave= | 0.88 | 0.22 | 0.40 | 0.85 | 1.0 | 20 ms |
+| =quarry= | 0.95 | 0.15 | 0.48 | 0.80 | 1.0 | 45 ms |
+| =hall= | 0.82 | 0.40 | 0.34 | 0.90 | 1.0 | 25 ms |
+| =underwater= | 0.70 | 0.90 | 0.50 | 0.60 | 0.5 | 0 |
+
+* LrgLowPass
+
+A second-order (12 dB per octave) low-pass, the biquad of Robert Bristow-Johnson's Audio EQ Cookbook (=b0 = b2 = (1 - cos w0) / 2=, =b1 = 1 - cos w0=, =a0 = 1 + alpha=, =a1 = -2 cos w0=, =a2 = 1 - alpha=, =alpha = sin w0 / 2Q=), in transposed direct form II with one state pair per channel.
+
+- The cut-off glides geometrically (an octave takes the same time anywhere in the range) with a time constant of 0.08 s by default (=set_glide=, 0 .. 5 s); while it glides the coefficients are recomputed every 32 frames.
+- A cut-off at or above =LRG_LOW_PASS_OPEN= (20 kHz) is open: once the glide gets there the samples pass untouched and the state is cleared.
+- Below Nyquist the cut-off is capped at 0.45 x the rate (the bilinear transform warps above).
+- The Q (=set_resonance=, 0.1 .. 10) defaults to 0.7071: flat, Butterworth, -3 dB at the cut-off.
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_low_pass_new (cutoff)= | a filter starting at =cutoff= Hz (no glide from elsewhere) |
+| =set_cutoff= / =get_cutoff= | the target, clamped to 20 Hz .. 20 kHz |
+| =get_current_cutoff= | where the glide is |
+| =set_resonance= / =get_resonance=, =set_glide= / =get_glide= | Q and glide time |
+
+* LrgAudioEffectChain
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_audio_effect_chain_new()= | an empty chain |
+| =add (effect)= / =remove (effect)= | append (a second add is ignored), remove |
+| =get_count= / =get_effect (index)= | inspect |
+| =process (frames, n_frames, channels, sample_rate)= | every effect in order; safe against concurrent =add= / =remove= (one mutex) |
+| =reset= | reset every effect |
+| =attach_mix (sample_rate)= | run on the device's final mix from now on; =FALSE= without an open device |
+| =detach_mix= / =is_attached= | stop / ask; disposing an attached chain detaches it |
+
+raylib's mixed-audio processor is a plain C callback without user data, run with raudio's lock held, so there is one process-wide slot: attaching a chain detaches the previous one.  raudio is never called while libregnum's slot lock is held (the callback takes raudio's lock first), which rules out a lock-order deadlock.  raylib does not report the device's rate; =attach_mix (0)= assumes =LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE= (48000 Hz, the PipeWire and PulseAudio default).  A wrong guess only scales delay lengths and cut-offs by the ratio of the rates.
+
+* Example
+
+#+begin_src C
+g_autoptr(LrgAudioEffectChain) mix = lrg_audio_effect_chain_new ();
+g_autoptr(LrgLowPass) muffle = lrg_low_pass_new (LRG_LOW_PASS_OPEN);
+g_autoptr(LrgReverb) room = lrg_reverb_new ();
+
+lrg_audio_effect_chain_add (mix, LRG_AUDIO_EFFECT (muffle));
+lrg_audio_effect_chain_add (mix, LRG_AUDIO_EFFECT (room));
+lrg_audio_effect_chain_attach_mix (mix, 0);
+
+/* entering a cave, then diving */
+lrg_reverb_set_preset (room, LRG_REVERB_PRESET_CAVE);
+lrg_low_pass_set_cutoff (muffle, 600.0f);
+#+end_src
+
+* Tests
+
+=tests/test-audio-effects.c=: the dry reverb is the identity; a cave's impulse response is silent until the shortest comb plus the pre-delay, then decays half second by half second and differs between left and right; a quarry keeps more late energy than a room; reset and disable; parameter clamps and the dry glide; the low-pass impulse response sums to its DC gain; a decade below the cut-off passes, the cut-off is -3 dB and a decade above is below -36 dB; the glide and the open filter; a chain equals its effects run one after the other, and refuses the device mix headless.

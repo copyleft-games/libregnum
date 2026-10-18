@@ -662,6 +662,231 @@ test_color_grade_ranges (void)
  * ============================================================================
  */
 
+/*
+ * ============================================================================
+ * M14: colour lookup tables
+ * ============================================================================
+ */
+
+/* a 2-sided table that swaps red and blue */
+static const gchar swap_cube[] =
+    "# a comment\n"
+    "TITLE \"swap red and blue\"\n"
+    "LUT_3D_SIZE 2\n"
+    "LUT_IN_VIDEO_RANGE\n"
+    "\n"
+    "0 0 0\n"
+    "0 0 1\n"     /* r = 1, g = 0, b = 0 -> blue */
+    "0 1 0\n"
+    "0 1 1\n"
+    "1 0 0\n"     /* r = 0, g = 0, b = 1 -> red */
+    "1 0 1\n"
+    "1 1 0\n"
+    "1 1 1\r\n";
+
+static void
+test_color_lut_parse (void)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(LrgColorLut) lut = NULL;
+    g_autoptr(LrgColorLut) back = NULL;
+    g_autofree gchar *text = NULL;
+    gfloat in[3] = { 0.8f, 0.3f, 0.1f };
+    gfloat out[3];
+    gfloat e[3];
+
+    lut = lrg_color_lut_new_from_cube (swap_cube, -1, &error);
+    g_assert_no_error (error);
+    g_assert_cmpuint (lrg_color_lut_get_size (lut), ==, 2);
+    g_assert_cmpstr (lrg_color_lut_get_title (lut), ==, "swap red and blue");
+    g_assert_true (lrg_color_lut_get_entry (lut, 1, 0, 0, e));
+    g_assert_cmpfloat (e[2], ==, 1.0f);
+    g_assert_cmpfloat (e[0], ==, 0.0f);
+    g_assert_false (lrg_color_lut_get_entry (lut, 2, 0, 0, e));
+    g_assert_false (lrg_color_lut_is_identity (lut, 0.01f));
+
+    /* trilinear on a 2-sided linear table is exact */
+    lrg_color_lut_sample (lut, in, out);
+    g_assert_cmpfloat_with_epsilon (out[0], 0.1f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (out[1], 0.3f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (out[2], 0.8f, 1e-5);
+    lrg_color_lut_apply_rgb (lut, in, 0.5f, out);
+    g_assert_cmpfloat_with_epsilon (out[0], 0.45f, 1e-5);
+
+    /* the writer round-trips */
+    text = lrg_color_lut_to_cube (lut);
+    g_assert_nonnull (strstr (text, "LUT_3D_SIZE 2"));
+    back = lrg_color_lut_new_from_cube (text, -1, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (lrg_color_lut_get_title (back), ==, "swap red and blue");
+    lrg_color_lut_sample (back, in, out);
+    g_assert_cmpfloat_with_epsilon (out[0], 0.1f, 1e-5);
+
+    /* inputs outside 0 .. 1 are clamped */
+    in[0] = 2.0f;
+    in[1] = -1.0f;
+    lrg_color_lut_sample (lut, in, out);
+    g_assert_cmpfloat_with_epsilon (out[2], 1.0f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (out[1], 0.0f, 1e-5);
+}
+
+static void
+test_color_lut_identity_mix (void)
+{
+    g_autoptr(LrgColorLut) id = lrg_color_lut_new_identity (17);
+    g_autoptr(LrgColorLut) swap = lrg_color_lut_new_from_cube (swap_cube, -1, NULL);
+    g_autoptr(LrgColorLut) half = NULL;
+    g_autoptr(LrgColorLut) big = NULL;
+    g_autoptr(GBytes) strip = NULL;
+    gfloat in[3] = { 0.37f, 0.62f, 0.05f };
+    gfloat out[3];
+    const guint8 *px;
+    guint w;
+    guint h;
+
+    g_assert_true (lrg_color_lut_is_identity (id, 1e-6f));
+    lrg_color_lut_sample (id, in, out);
+    g_assert_cmpfloat_with_epsilon (out[0], 0.37f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (out[1], 0.62f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (out[2], 0.05f, 1e-5);
+
+    /* half way between the identity and the swap, at the identity's size */
+    half = lrg_color_lut_new_mix (id, swap, 0.5f);
+    g_assert_cmpuint (lrg_color_lut_get_size (half), ==, 17);
+    lrg_color_lut_sample (half, in, out);
+    g_assert_cmpfloat_with_epsilon (out[0], (0.37f + 0.05f) / 2.0f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (out[2], (0.05f + 0.37f) / 2.0f, 1e-4);
+
+    /* resampling keeps a linear table exact */
+    big = lrg_color_lut_new_resampled (swap, 9);
+    lrg_color_lut_sample (big, in, out);
+    g_assert_cmpfloat_with_epsilon (out[0], 0.05f, 1e-5);
+
+    /* the GPU strip: blue slices side by side, red across, green down */
+    strip = lrg_color_lut_to_strip (swap, &w, &h);
+    g_assert_cmpuint (w, ==, 4);
+    g_assert_cmpuint (h, ==, 2);
+    px = g_bytes_get_data (strip, NULL);
+    /* texel (r = 1, b = 0) of row g = 0 is entry (1, 0, 0): blue */
+    g_assert_cmpuint (px[(0 * 4 + 0 * 2 + 1) * 4 + 2], ==, 255);
+    g_assert_cmpuint (px[(0 * 4 + 0 * 2 + 1) * 4 + 0], ==, 0);
+    /* texel (r = 0, b = 1) of row g = 1 is entry (0, 1, 1): r = 1, g = 1 */
+    g_assert_cmpuint (px[(1 * 4 + 1 * 2 + 0) * 4 + 0], ==, 255);
+    g_assert_cmpuint (px[(1 * 4 + 1 * 2 + 0) * 4 + 1], ==, 255);
+    g_assert_cmpuint (px[(1 * 4 + 1 * 2 + 0) * 4 + 2], ==, 0);
+}
+
+static void
+test_color_lut_1d_domain (void)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(LrgColorLut) inv = NULL;
+    g_autoptr(LrgColorLut) dom = NULL;
+    gfloat in[3] = { 0.25f, 0.5f, 1.0f };
+    gfloat out[3];
+
+    /* a 1D table inverting each channel */
+    inv = lrg_color_lut_new_from_cube ("LUT_1D_SIZE 3\n1 1 1\n0.5 0.5 0.5\n0 0 0\n", -1, &error);
+    g_assert_no_error (error);
+    g_assert_cmpuint (lrg_color_lut_get_size (inv), ==, 33);
+    lrg_color_lut_sample (inv, in, out);
+    g_assert_cmpfloat_with_epsilon (out[0], 0.75f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (out[1], 0.5f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (out[2], 0.0f, 1e-4);
+
+    /* an identity over the domain 0 .. 2: inputs 0 .. 1 read its lower half */
+    dom = lrg_color_lut_new_from_cube ("LUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 2 2 2\n"
+                                       "0 0 0\n2 0 0\n0 2 0\n2 2 0\n0 0 2\n2 0 2\n0 2 2\n2 2 2\n",
+                                       -1, &error);
+    g_assert_no_error (error);
+    lrg_color_lut_sample (dom, in, out);
+    g_assert_cmpfloat_with_epsilon (out[0], 0.25f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (out[1], 0.5f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (out[2], 1.0f, 1e-4);
+}
+
+static void
+test_color_lut_errors (void)
+{
+    static const struct
+    {
+        const gchar *text;
+        gint         code;
+    } bad[] = {
+        { "0 0 0\n1 1 1\n", LRG_COLOR_LUT_ERROR_SIZE },
+        { "LUT_3D_SIZE 2\n0 0 0\n", LRG_COLOR_LUT_ERROR_SIZE },
+        { "LUT_3D_SIZE 1\n0 0 0\n", LRG_COLOR_LUT_ERROR_SIZE },
+        { "LUT_3D_SIZE 65\n", LRG_COLOR_LUT_ERROR_SIZE },
+        { "LUT_3D_SIZE\n", LRG_COLOR_LUT_ERROR_SIZE },
+        { "LUT_1D_SIZE 2\n0 0\n1 1 1\n", LRG_COLOR_LUT_ERROR_PARSE },
+        { "LUT_1D_SIZE 2\n0 0 0\n1 x 1\n", LRG_COLOR_LUT_ERROR_PARSE },
+        { "LUT_1D_SIZE 2\n0 0 0 0\n1 1 1\n", LRG_COLOR_LUT_ERROR_PARSE },
+        { "LUT_1D_SIZE 2\nDOMAIN_MIN 1 1 1\nDOMAIN_MAX 1 1 1\n0 0 0\n1 1 1\n",
+          LRG_COLOR_LUT_ERROR_DOMAIN },
+        { "LUT_1D_SIZE 2\nDOMAIN_MIN 0 0\n0 0 0\n1 1 1\n", LRG_COLOR_LUT_ERROR_PARSE },
+        { "LUT_1D_SIZE 2\n0 0 nan\n1 1 1\n", LRG_COLOR_LUT_ERROR_PARSE }
+    };
+    g_autoptr(GError) error = NULL;
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (bad); i++)
+    {
+        g_autoptr(GError) e = NULL;
+        LrgColorLut *lut = lrg_color_lut_new_from_cube (bad[i].text, -1, &e);
+
+        g_assert_null (lut);
+        g_assert_error (e, LRG_COLOR_LUT_ERROR, bad[i].code);
+    }
+    g_assert_null (lrg_color_lut_new_from_file ("/nonexistent/dir/x.cube", &error));
+    g_assert_error (error, LRG_COLOR_LUT_ERROR, LRG_COLOR_LUT_ERROR_IO);
+}
+
+static void
+test_color_grade_lut (void)
+{
+    g_autoptr(LrgColorGrade) grade = lrg_color_grade_new ();
+    g_autoptr(LrgColorLut) swap = lrg_color_lut_new_from_cube (swap_cube, -1, NULL);
+    g_autoptr(LrgColorLut) baked = NULL;
+    gfloat in[3] = { 0.8f, 0.3f, 0.1f };
+    gfloat out[3];
+    gfloat strength;
+
+    g_assert_true (lrg_color_grade_is_identity (grade));
+    lrg_color_grade_set_lut (grade, swap, 1.0f);
+    g_assert_true (lrg_color_grade_get_lut (grade, &strength) == swap);
+    g_assert_cmpfloat (strength, ==, 1.0f);
+    g_assert_false (lrg_color_grade_is_identity (grade));
+    lrg_color_grade_apply_rgb (grade, in, out);
+    g_assert_cmpfloat_with_epsilon (out[0], 0.1f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (out[2], 0.8f, 1e-5);
+
+    /* the table follows the grade's own steps */
+    lrg_color_grade_set_saturation (grade, 0.0f);
+    lrg_color_grade_apply_rgb (grade, in, out);
+    g_assert_cmpfloat_with_epsilon (out[0], out[2], 1e-5);
+
+    /* baking samples the whole grade (with its table) */
+    baked = lrg_color_grade_bake_lut (grade, 17);
+    {
+        gfloat a[3];
+        gfloat b[3];
+        gfloat p[3] = { 0.5f, 0.25f, 0.75f };
+
+        lrg_color_grade_apply_rgb (grade, p, a);
+        lrg_color_lut_sample (baked, p, b);
+        g_assert_cmpfloat_with_epsilon (a[0], b[0], 1e-3);
+        g_assert_cmpfloat_with_epsilon (a[1], b[1], 1e-3);
+    }
+
+    /* strength 0 and no table are the identity again */
+    lrg_color_grade_set_saturation (grade, 1.0f);
+    lrg_color_grade_set_lut (grade, swap, 0.0f);
+    g_assert_true (lrg_color_grade_is_identity (grade));
+    lrg_color_grade_set_lut (grade, NULL, 1.0f);
+    g_assert_null (lrg_color_grade_get_lut (grade, &strength));
+    g_assert_cmpfloat (strength, ==, 0.0f);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -724,6 +949,11 @@ main (int   argc,
     g_test_add_func ("/postprocess/color-grade/identity", test_color_grade_identity);
     g_test_add_func ("/postprocess/color-grade/mapping", test_color_grade_mapping);
     g_test_add_func ("/postprocess/color-grade/ranges", test_color_grade_ranges);
+    g_test_add_func ("/postprocess/color-lut/parse", test_color_lut_parse);
+    g_test_add_func ("/postprocess/color-lut/identity-mix", test_color_lut_identity_mix);
+    g_test_add_func ("/postprocess/color-lut/1d-domain", test_color_lut_1d_domain);
+    g_test_add_func ("/postprocess/color-lut/errors", test_color_lut_errors);
+    g_test_add_func ("/postprocess/color-grade/lut", test_color_grade_lut);
 
     return g_test_run ();
 }

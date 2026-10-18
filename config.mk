@@ -392,6 +392,26 @@ else
     HAS_OPENXR := 0
 endif
 
+# ALSA sequencer MIDI output (LrgMidiOutputAlsa).  ALSA=auto (the default)
+# enables it when pkg-config finds `alsa' (Fedora: alsa-lib-devel; Debian:
+# libasound2-dev); ALSA=0 builds the type without its backend, and
+# lrg_midi_output_alsa_new() then reports LRG_MIDI_OUTPUT_ERROR_UNSUPPORTED.
+ALSA ?= auto
+
+ifeq ($(ALSA),auto)
+    ALSA := $(shell $(PKG_CONFIG) --exists alsa 2>/dev/null && echo 1 || echo 0)
+endif
+
+ifeq ($(ALSA),1)
+    ALSA_CFLAGS := $(shell $(PKG_CONFIG) --cflags alsa) -DLRG_HAS_ALSA=1
+    ALSA_LIBS := $(shell $(PKG_CONFIG) --libs alsa)
+    HAS_ALSA := 1
+else
+    ALSA_CFLAGS :=
+    ALSA_LIBS :=
+    HAS_ALSA := 0
+endif
+
 # =============================================================================
 # Library Names (Platform-Specific)
 # =============================================================================
@@ -716,6 +736,7 @@ LIB_CFLAGS += $(MCP_CFLAGS)
 LIB_CFLAGS += $(CAD_CFLAGS)
 LIB_CFLAGS += $(FFMPEG_CFLAGS)
 LIB_CFLAGS += $(OPENXR_CFLAGS)
+LIB_CFLAGS += $(ALSA_CFLAGS)
 
 # Library link flags (use platform-specific flags)
 LIB_LDFLAGS := $(LIB_LDFLAGS_PLATFORM)
@@ -760,6 +781,7 @@ ALL_LIBS += $(MCP_LIBS)
 ALL_LIBS += $(CAD_LIBS)
 ALL_LIBS += $(FFMPEG_LIBS)
 ALL_LIBS += $(OPENXR_LIBS)
+ALL_LIBS += $(ALSA_LIBS)
 
 # =============================================================================
 # GIR Scanner Flags

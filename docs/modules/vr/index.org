@@ -11,8 +11,10 @@ The VR module provides virtual reality support for Libregnum games through an ab
 The VR module follows an interface pattern allowing different VR runtime implementations:
 
 - *LrgVRService* - Abstract interface for VR backends
-- *LrgVRStub* - No-op implementation when VR is unavailable
+- *LrgVRStub* - No-op implementation when VR is unavailable, or a simulated headset for headless tests (=lrg_vr_stub_new_simulated()=)
+- *LrgOpenXRService* - The OpenXR backend (optional: built when =pkg-config openxr= finds the loader, Fedora package =openxr-devel=), with =lrg_openxr_service_probe()= to check for a runtime and a headset before a window opens
 - *LrgVRComfortSettings* - VR comfort options for motion sickness mitigation
+- *LrgVRComfort* - The comfort state machine that applies the settings frame by frame: snap and smooth turning, the movement vignette, the seated height calibration
 
 ** Architecture
 :PROPERTIES:
@@ -21,10 +23,11 @@ The VR module follows an interface pattern allowing different VR runtime impleme
 #+begin_example
 LrgVRService (Interface)
     │
-    ├── LrgVRStub (No-op fallback)
-    └── [Future: LrgOpenVRBackend, etc.]
+    ├── LrgVRStub (No-op fallback; simulated headset for tests)
+    └── LrgOpenXRService (OpenXR, optional at build time)
 
 LrgVRComfortSettings (Standalone)
+    └── LrgVRComfort (frame-by-frame state over the settings)
 #+end_example
 
 ** Core Types
@@ -125,6 +128,41 @@ The stub implementation:
 - Matrix functions return identity matrices
 - Controller queries return no input
 
+**** The simulated headset
+:PROPERTIES:
+:CUSTOM_ID: simulated-headset
+:END:
+=lrg_vr_stub_new_simulated()= makes a stub that behaves like a connected headset, so VR code can be tested headless without a runtime:
+
+- =initialize()= succeeds, =is_available()= and (once initialised) =is_hmd_present()= and =is_session_running()= are =TRUE=;
+- the runtime-paced frame loop runs: =begin_frame()= is =TRUE=, =get_view_count()= is 2, =begin_view()= reports framebuffer 0 (nothing is bound: draw into the current target), the size from =lrg_vr_stub_set_render_size()= (1024 x 1024), the eye pose (the head pose times the eye's offset of -IPD/2 or +IPD/2 along the head's X axis) and the projection from the field of view;
+- =lrg_vr_stub_set_hmd_pose()=, =set_ipd()= (0.064 m), =set_fov()= (degrees, as an =XrFovf=; 45 each way), =set_controller()= (pose and tracked), =set_controller_buttons()= and =set_controller_axis()= set what the service reports;
+- =get_haptic_count()= counts =trigger_haptic()= calls per hand, =get_frame_count()= the submitted frames, and =request_quit()= ends the session as a dashboard quit does (=should_quit()=).
+
+#+begin_src C
+g_autoptr(LrgVRStub) hmd = lrg_vr_stub_new_simulated ();
+gfloat head[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,1.6f,0,1 };
+
+lrg_vr_service_initialize (LRG_VR_SERVICE (hmd), NULL);
+lrg_vr_stub_set_hmd_pose (hmd, head);
+lrg_vr_stub_set_controller_buttons (hmd, LRG_VR_HAND_RIGHT, LRG_VR_CONTROLLER_BUTTON_TRIGGER);
+/* ... run the game's VR frame: it sees a standing player pulling the trigger */
+#+end_src
+
+*** LrgOpenXRService
+:PROPERTIES:
+:CUSTOM_ID: lrgopenxrservice
+:END:
+The OpenXR backend binds to the GL context current at =initialize()= (GLX through =XR_KHR_opengl_enable=, or EGL through =XR_MNDX_egl_enable=), renders through one swapchain per eye and reads the controllers through an action set.  It is compiled when =OPENXR=auto= (the default) finds =pkg-config openxr= (Fedora: =openxr-devel=; the loader at run time is =openxr-libs=); otherwise the type exists and =initialize()= fails with =LRG_VR_ERROR_NOT_AVAILABLE=.
+
+=lrg_openxr_service_probe (app_name, &runtime, &system, &error)= checks without a GL context and without a session that a headset can be used: an OpenXR build, an active runtime (the loader's =active_runtime.json= or =XR_RUNTIME_JSON=), OpenGL or EGL support and a head-mounted display system.  It fails with =LRG_VR_ERROR_NOT_AVAILABLE= (no build, no runtime, no GL) or =LRG_VR_ERROR_HMD_NOT_FOUND= (a runtime with no headset connected), so a game can refuse =--vr= before opening its window.
+
+*** Drawing a UI panel
+:PROPERTIES:
+:CUSTOM_ID: lrg-vr-draw-quad
+:END:
+=lrg_vr_draw_quad (texture, centre, right, up, flip_v, tint)= draws a textured quad with corners =centre +- right +- up= into the current camera, both faces, flushing the batch: the panel a VR game shows its 2D interface on.  Draw the interface into a =GrlRenderTexture= each frame, then in every eye's view call it with that render texture's texture and =flip_v= =TRUE= (render textures are stored bottom up).  It needs a GL context; =right= and =up= are half extents, so a 1.6 m wide panel passes a =right= of length 0.8.
+
 *** LrgVRComfortSettings
 :PROPERTIES:
 :CUSTOM_ID: lrgvrcomfortsettings
@@ -164,7 +202,50 @@ void lrg_vr_comfort_settings_set_vignette_intensity (LrgVRComfortSettings *self,
 gfloat lrg_vr_comfort_settings_get_height_adjustment (LrgVRComfortSettings *self);
 void lrg_vr_comfort_settings_set_height_adjustment (LrgVRComfortSettings *self,
                                                      gfloat                adjustment);
+
+/* Smooth turn rate at full stick (10-360 degrees per second) */
+gfloat lrg_vr_comfort_settings_get_smooth_turn_speed (LrgVRComfortSettings *self);
+void lrg_vr_comfort_settings_set_smooth_turn_speed (LrgVRComfortSettings *self,
+                                                     gfloat                speed);
+
+/* Seated play: the eye height comes from a calibration */
+gboolean lrg_vr_comfort_settings_get_seated (LrgVRComfortSettings *self);
+void lrg_vr_comfort_settings_set_seated (LrgVRComfortSettings *self,
+                                          gboolean              seated);
 #+end_src
+
+*** LrgVRComfort
+:PROPERTIES:
+:CUSTOM_ID: lrgvrcomfort
+:END:
+The run-time half of the comfort options.  It reads no device: the caller feeds it the turn stick, the player's speeds and the tracked head height each frame.
+
+#+begin_src C
+LrgVRComfort *lrg_vr_comfort_new (LrgVRComfortSettings *settings);   /* NULL: new defaults */
+
+/* degrees to turn this frame, positive to the right */
+gfloat lrg_vr_comfort_turn (LrgVRComfort *self, gfloat stick_x, gfloat delta);
+
+/* the vignette now, 0 open .. 1 closed */
+gfloat lrg_vr_comfort_update_vignette (LrgVRComfort *self, gfloat linear_speed,
+                                       gfloat turn_rate, gfloat delta);
+
+/* seated: the tracked head at the wanted eye height */
+void     lrg_vr_comfort_calibrate_height (LrgVRComfort *self, gfloat tracked, gfloat target);
+gboolean lrg_vr_comfort_needs_calibration (LrgVRComfort *self);
+gfloat   lrg_vr_comfort_get_eye_height (LrgVRComfort *self, gfloat tracked);
+void     lrg_vr_comfort_reset (LrgVRComfort *self);   /* a recentre */
+#+end_src
+
+| Rule | Value |
+|------+-------|
+| Snap turn fires past | =LRG_VR_COMFORT_SNAP_THRESHOLD= (0.7) of the stick, once |
+| Snap turn re-arms under | =LRG_VR_COMFORT_SNAP_REARM= (0.3): a held stick never turns twice |
+| Smooth turn dead zone | =LRG_VR_COMFORT_STICK_DEADZONE= (0.15), the rest rescaled to 0 .. 1 times =smooth-turn-speed= |
+| Vignette target | the intensity times the larger of speed / =LRG_VR_COMFORT_VIGNETTE_SPEED= (3 m/s) and stick turn rate / =LRG_VR_COMFORT_VIGNETTE_TURN= (120 deg/s), clamped to 1; zero when the vignette is off |
+| Vignette closes / opens | at =LRG_VR_COMFORT_VIGNETTE_RISE= (6 per second) / =LRG_VR_COMFORT_VIGNETTE_FALL= (3 per second) |
+| Snap blink | the vignette shuts at once to the intensity for =LRG_VR_COMFORT_SNAP_BLINK= (0.12 s) after a snap turn, then fades |
+| Eye height | tracked height plus =height-adjustment=, at least 0.1 m; =calibrate_height()= sets the adjustment, seated mode asks for it until it ran |
 
 ** Enumerations
 :PROPERTIES:
@@ -434,6 +515,8 @@ if (!lrg_vr_service_initialize (vr, &error))
 | =vignette-enabled=   | gboolean            | -        | FALSE   | Enable comfort vignette     |
 | =vignette-intensity= | gfloat              | 0.0-1.0  | 0.5     | Vignette intensity          |
 | =height-adjustment=  | gfloat              | -2.0-2.0 | 0.0     | Height adjustment in meters |
+| =smooth-turn-speed=  | gfloat              | 10-360   | 120.0   | Smooth turn degrees per second at full stick |
+| =seated=             | gboolean            | -        | FALSE   | Seated play (height from a calibration) |
 
 ** Future Extensions
 :PROPERTIES:
@@ -441,9 +524,7 @@ if (!lrg_vr_service_initialize (vr, &error))
 :END:
 The VR module is designed to support additional backends:
 
-- *OpenVR/SteamVR* - For HTC Vive, Valve Index, and compatible headsets
-- *OpenXR* - Cross-platform VR standard
-- *Oculus SDK* - For Oculus/Meta headsets
+- *OpenVR/SteamVR* - For HTC Vive, Valve Index, and compatible headsets (SteamVR also serves OpenXR, which =LrgOpenXRService= covers)
 
 Implementing a new backend requires implementing the =LrgVRService= interface with the appropriate SDK calls.
 
