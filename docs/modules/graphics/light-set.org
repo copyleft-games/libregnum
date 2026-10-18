@@ -175,6 +175,24 @@ The same evaluation exists on the GPU for libregnum's own shaders (=graphics/lrg
 :END:
 =bind()= makes a light set the process-wide bound set (a reference is held until =unbind()= or the next =bind()=), like raylib's current shader. Billboard batches without a light set of their own are lit by it, so a game can light every billboard drawn between =bind()= and =unbind()= (scenery, monsters, loot) without handing the set to each batch. Drawing is single threaded; so is the binding.
 
+*** Clusters (M14)
+:PROPERTIES:
+:CUSTOM_ID: clusters
+:END:
+=lrg_light_set_set_grid_layers (layer_height, layers)= stacks the grid into =layers= layers of cells centred on the camera's height, so storeys above one another (a dungeon's levels) keep their own lists instead of sharing one column; the lowest and highest layers reach down and up without end, and one layer (the default) is the flat grid. =lrg_light_set_set_grid_slots (slots)= sets how many lights a cell lists (4 .. =LRG_LIGHT_SET_GRID_MAX_SLOTS= (32), default 16). A light joins a cluster when its sphere reaches the cluster's box; the list keeps the closest relative to their radius. =lrg_light_set_get_cluster_light_count (x, y, z)= and =get_cluster_light()= read a cluster; the older XZ queries read the camera's layer. The cell texture is (cells x slots / 4) x (cells x layers); both the mesh shader and the billboard sampler (=LRG_LIGHT_CLUSTER_GLSL=) find a fragment's cluster the same way, and =lrg_light_set_sample()= reads the cluster of its point's own height.
+
+*** Shadows (M14)
+:PROPERTIES:
+:CUSTOM_ID: shadows
+:END:
+=lrg_light_set_set_shadow_renderer()= gives the set an [[file:../lighting/shadow-renderer.org][LrgShadowRenderer]]; =lrg_light_set_set_point_light_shadow (id, priority)= lets a point light compete for one of its cubes. Once the renderer's passes are rendered, =apply()= binds its atlases (units 12 and 13) and the shader darkens the directional light's Lambert term and every shadowed point light where casters hide them (the light's shadow slot travels in the light texel's fourth channel with a grid, in =lightShadow[]= without). =lrg_light_set_get_origin()= and =lrg_light_set_get_directional()= read back what the renderer plans with. =sample()= does not look at shadows.
+
+*** Volumetric air (M14)
+:PROPERTIES:
+:CUSTOM_ID: volumetric-air
+:END:
+=lrg_light_set_set_air (density, anisotropy, intensity, steps, max_distance, tint)= marches each fragment's view ray from the camera (up to =max_distance=) in =steps= jittered steps. Each step adds the light scattered toward the eye: the directional light through the Henyey-Greenstein phase function (=lrg_light_set_air_phase()=, g = =anisotropy=) and its cascade lookup, so shafts form behind casters at dawn and dusk; the renderer's shadowed point lights by their falloff, phase and cube lookup; and the ambient colour over 4 pi. Each step is weighted by =density= and the transmittance up to it; the fragment is then dimmed by the transmittance =exp (-density x distance)=, and the air's colour is =tint=. =lrg_light_set_sample_air()= is the same sum on the CPU (steps at their middles, no shadows). =clear_air()= turns it off (the default).
+
 ** Example
 :PROPERTIES:
 :CUSTOM_ID: example

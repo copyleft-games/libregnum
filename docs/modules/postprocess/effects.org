@@ -187,6 +187,12 @@ The grade is a GLSL 330 fragment shader for raylib's default vertex shader; =lrg
 
 The shader is compiled on first use (=lrg_color_grade_get_shader()=, %NULL without a window or when GLSL 330 does not compile; drawing then falls back to the plain texture and =lrg_color_grade_draw_texture()= returns =FALSE=).  As an =LrgPostEffect=, =apply= draws the source texture over the bound target through the shader.  A game without a post processor draws its 3D pass into a =GrlRenderTexture= and calls =lrg_color_grade_draw_texture()= with a negative source height (render textures are stored bottom up).
 
+*** Lookup tables
+:PROPERTIES:
+:CUSTOM_ID: color-grade-lookup-tables
+:END:
+=lrg_color_grade_set_lut (grade, lut, strength)= adds a 3D lookup table ([[file:color-lut.org][LrgColorLut]]) after the grade's steps: the shader looks the graded, clamped colour up in the table (uploaded as a strip texture on unit 1 when it changes) and mixes it in by =strength=, before the effect's intensity; =lrg_color_grade_apply_rgb()= does the same on the CPU. A grade with a table is never the identity. =lrg_color_grade_bake_lut (grade, size)= samples the whole grade into a new table, e.g. to blend two grades or save one as a =.cube= file.
+
 *** Example
 :PROPERTIES:
 :CUSTOM_ID: example-2

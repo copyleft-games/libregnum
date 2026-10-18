@@ -1,0 +1,102 @@
+* LrgShadowRenderer - 3D Shadow Maps
+:PROPERTIES:
+:CUSTOM_ID: lrgshadowrenderer---3d-shadow-maps
+:END:
+Shadow maps for [[file:../graphics/light-set.org][LrgLightSet]]: cascaded shadow maps for the directional light (the sun or moon) and cube shadow maps for a budget of point lights (a torch, spell lights, key lights in a dungeon). The planning is headless (splits, light matrices, which point lights get a cube); the passes and the two atlases need GL.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+| Type | Kind | Notes |
+|------+------+-------|
+| =LrgShadowRenderer= | final GObject | settings, the frame's plan, the atlases, the caster shader |
+| =LrgShadowPassKind= | enum (=none=, =cascade=, =cube-face=) | what a pass renders |
+
+Constants: =LRG_SHADOW_MAX_CASCADES= (4), =LRG_SHADOW_MAX_POINT_LIGHTS= (8), =LRG_SHADOW_NO_SLOT= (-1), =LRG_SHADOW_SUN_UNIT= (12) and =LRG_SHADOW_POINT_UNIT= (13), the texture units of the two atlases while a light set draws.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_shadow_renderer_new()= | one 2048-texel cascade to 80 units, no point shadows, bias 0.05 units, normal offset 1.5 texels, 3 x 3 filter, strength 1 |
+| =set_sun (res, cascades, distance, lambda)= / =get_sun()= | the directional shadow: cascade side (0: off), 1 .. 4 cascades, reach, split blend |
+| =set_points (res, max_lights, max_distance)= / =get_points()= | cube face side and the budget of shadowed point lights |
+| =set_bias (depth, normal_offset)= | depth bias in world units, normal offset in texels |
+| =set_filter (radius)= | percentage-closer filter: 0 (1 tap) .. 2 (5 x 5) |
+| =set_strength()= / =get_strength()= | how much light a shadow removes |
+| =update (lights, camera, forward, up, fovy, aspect, near)= | plans the frame (headless); returns the pass count |
+| =get_cascade_count()=, =get_cascade (i, &near, &far, matrix)= | the planned cascades (draw space) |
+| =get_point_count()=, =get_point_light (slot)=, =get_light_slot (id)= | the shadowed point lights |
+| =get_pass_count()=, =get_pass (pass, &index, &face, view_proj)= | the passes: cascades first, then six faces per light |
+| =begin_pass (pass)= / =end_pass()= | bind the pass's atlas tile and matrices; restore the screen |
+| =get_caster_shader()= | the depth shader casters draw with |
+| =is_ready()= | every pass of the last update was rendered |
+| =release_gpu()= | free the atlases and the shader (before the window closes) |
+
+Matrix helpers (column-major 4 x 4 like OpenGL and raylib's =Matrix=): =lrg_shadow_look_at()=, =lrg_shadow_ortho()=, =lrg_shadow_perspective()=, =lrg_shadow_multiply()=, =lrg_shadow_transform_point()=, =lrg_shadow_split_distances()=, =lrg_shadow_cube_face_matrices()=.
+
+** Semantics
+:PROPERTIES:
+:CUSTOM_ID: semantics
+:END:
+*** Cascades
+:PROPERTIES:
+:CUSTOM_ID: cascades
+:END:
+The view from =near= to the shadow distance is split by the practical split scheme: split /i/ of /N/ is =lambda * n (f/n)^(i/N) + (1 - lambda) (n + (f - n) i/N)=, so near cascades are small and sharp. Each slice's eight corners get a bounding sphere (its radius rounded up to 1/16 so it does not breathe while the camera turns); an orthographic camera looks along the light at the sphere's centre from =radius + max (2 radius, 60)= behind it, so tall casters outside the view still throw their shadow into it. The projection is then moved so the draw-space origin lands on a texel corner: every point keeps its texel while the camera moves by whole texels, and shadow edges do not crawl. A fragment uses the first cascade whose box holds it (with a margin of the filter's reach), so there is no view-depth uniform.
+
+*** Point lights
+:PROPERTIES:
+:CUSTOM_ID: point-lights
+:END:
+A light competes for a cube when its shadow priority (=lrg_light_set_set_point_light_shadow()=) is above 0: highest priority first, then the smallest distance from the camera to its sphere, then the lowest id, up to the budget and within the =max_distance= reach. Each cube is six 90 degree faces (+X, -X, +Y, -Y, +Z, -Z; up is +Y except +Z for the Y faces) that store the distance to the light over its radius. The light shader finds the face and its coordinates with the same axes (=LRG_SHADOW_GLSL=; =tests/test-shadow-renderer.c= checks the two agree).
+
+*** Atlases and passes
+:PROPERTIES:
+:CUSTOM_ID: atlases-and-passes
+:END:
+Both atlases are a 32-bit float colour texture with a depth renderbuffer on a framebuffer of their own: the sun atlas holds the cascades two per row, the point atlas three by two faces per light, one light above the other. =begin_pass()= clears an atlas at its first pass of the frame, sets the tile's viewport, loads the pass's view and projection into rlgl (so =DrawMesh()= and any frustum culling that reads rlgl's matrices follow the light), turns depth testing on and face culling off (one-sided models cast from both sides) and points the caster shader at the pass. =end_pass()= flushes and restores the screen as =EndTextureMode()= does. Call the passes outside =BeginMode3D()= and any texture mode, with the screen as the target.
+
+The caster shader uses raylib's attribute and uniform names; texels whose alpha is below 0.5 cast nothing (cut-out foliage, fences).
+
+*** Lookups
+:PROPERTIES:
+:CUSTOM_ID: lookups
+:END:
+A light set with a renderer (=lrg_light_set_set_shadow_renderer()=) binds both atlases in =lrg_light_set_apply()= once the renderer =is_ready()=, and its shader multiplies the directional light's Lambert term by the cascade lookup and each shadowed point light by its cube lookup. Before the lookup the fragment is pushed along its normal by =normal_offset= texels (against acne on slopes) and its depth reduced by the depth bias (in world units, converted per cascade). =strength= mixes the filtered result toward lit. Billboards (=LrgBillboardBatch=) are lit without shadows.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgShadowRenderer) shadows = lrg_shadow_renderer_new ();
+guint pass;
+
+lrg_shadow_renderer_set_sun (shadows, 2048, 3, 120.0f, 0.6f);
+lrg_shadow_renderer_set_points (shadows, 512, 2, 40.0f);
+lrg_light_set_set_point_light_shadow (lights, torch, 10);
+lrg_light_set_set_shadow_renderer (lights, shadows);
+
+/* each frame, before BeginMode3D () */
+lrg_shadow_renderer_update (shadows, lights, eye, forward, up, 65.0f, aspect, 0.1f);
+for (pass = 0; pass < lrg_shadow_renderer_get_pass_count (shadows); pass++)
+{
+    if (!lrg_shadow_renderer_begin_pass (shadows, pass))
+        break;
+    lrg_static_batch_set_shader (world, lrg_shadow_renderer_get_caster_shader (shadows));
+    lrg_static_batch_draw (world, LRG_STATIC_BATCH_ALL_LAYERS);
+    lrg_shadow_renderer_end_pass (shadows);
+}
+lrg_static_batch_set_shader (world, lrg_light_set_get_shader (lights));
+/* then BeginMode3D (), lrg_light_set_apply (), draw as usual */
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-shadow-renderer.c=: the matrix helpers, the split scheme, every slice corner inside its cascade with a floating origin, texel snapping, the cube faces against the shader's lookup, the point plan (priority, budget, reach, removal). =tests/test-light-set.c= =/light-set/shader-shadows=: the sun and a point light behind an occluder darken the floor under it in a hidden window, the open floor stays lit, strength 0 removes the shadow.

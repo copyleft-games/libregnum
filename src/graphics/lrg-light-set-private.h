@@ -112,6 +112,31 @@ lrg_light_set_upload_fog (LrgLightSet                   *self,
                           const LrgLightSetFogLocations *locs);
 
 /*
+ * LRG_LIGHT_CLUSTER_GLSL:
+ * The light grid's uniforms and lrg_cluster_base (vec3 p, out ivec2
+ * base): FALSE outside the grid, else the cell texel of @p's first four
+ * light indices (the cell's lights continue in the next texels of the
+ * row, gridLayers.w / 4 in all).  gridParams = (corner X, corner Z, cell
+ * size, cells per side) in draw space; gridLayers = (lowest layer's
+ * base height, layer height, layers, slots per cell).  With one layer
+ * the height is ignored; with more, @p's layer is clamped into range
+ * (the outer layers reach on without end), as in build_grid().
+ */
+#define LRG_LIGHT_CLUSTER_GLSL \
+    "uniform vec4 gridParams;\n" \
+    "uniform vec4 gridLayers;\n" \
+    "bool lrg_cluster_base(vec3 p, out ivec2 base) {\n" \
+    "    vec2 cell = floor((p.xz - gridParams.xy) / gridParams.z);\n" \
+    "    base = ivec2(0);\n" \
+    "    if (cell.x < 0.0 || cell.y < 0.0 || cell.x >= gridParams.w || cell.y >= gridParams.w) return false;\n" \
+    "    float layer = 0.0;\n" \
+    "    if (gridLayers.z > 1.0) layer = clamp(floor((p.y - gridLayers.x) / gridLayers.y), 0.0, gridLayers.z - 1.0);\n" \
+    "    int per = int(gridLayers.w + 0.5) / 4;\n" \
+    "    base = ivec2(int(cell.x) * per, int(layer * gridParams.w + cell.y));\n" \
+    "    return true;\n" \
+    "}\n"
+
+/*
  * LRG_LIGHT_SAMPLE_GLSL:
  * GLSL 330 light uniforms plus lrg_light_sample (vec3 p), the light
  * reaching draw-space position @p from every direction (no normal, so
@@ -133,7 +158,7 @@ lrg_light_set_upload_fog (LrgLightSet                   *self,
     "uniform int useGrid;\n" \
     "uniform sampler2D lightData;\n" \
     "uniform sampler2D lightGrid;\n" \
-    "uniform vec4 gridParams;\n" \
+    LRG_LIGHT_CLUSTER_GLSL \
     "uniform float lightLimit;\n" \
     "vec3 lrg_point_reach(vec3 p, vec3 lp, float r, vec3 c) {\n" \
     "    float k = clamp(1.0 - length(lp - p) / r, 0.0, 1.0);\n" \
@@ -142,11 +167,12 @@ lrg_light_set_upload_fog (LrgLightSet                   *self,
     "vec3 lrg_light_sample(vec3 p) {\n" \
     "    vec3 light = ambientColor + sunColor;\n" \
     "    if (useGrid == 1) {\n" \
-    "        vec2 cell = floor((p.xz - gridParams.xy) / gridParams.z);\n" \
-    "        if (cell.x >= 0.0 && cell.y >= 0.0 && cell.x < gridParams.w && cell.y < gridParams.w) {\n" \
-    "            ivec2 base = ivec2(int(cell.x) * 4, int(cell.y));\n" \
+    "        ivec2 base;\n" \
+    "        if (lrg_cluster_base(p, base)) {\n" \
+    "            int per = int(gridLayers.w + 0.5) / 4;\n" \
     "            bool done = false;\n" \
-    "            for (int t = 0; t < 4 && !done; t++) {\n" \
+    "            for (int t = 0; t < 8 && !done; t++) {\n" \
+    "                if (t >= per) break;\n" \
     "                vec4 ids = texelFetch(lightGrid, base + ivec2(t, 0), 0);\n" \
     "                for (int j = 0; j < 4; j++) {\n" \
     "                    if (ids[j] < 0.0) { done = true; break; }\n" \
@@ -192,6 +218,7 @@ typedef struct
     gint light_data;
     gint light_grid;
     gint grid_params;
+    gint grid_layers;
     gint limit;
 } LrgLightSetSampleLocations;
 
@@ -217,5 +244,90 @@ gboolean
 lrg_light_set_upload_sample (LrgLightSet                      *self,
                              Shader                            shader,
                              const LrgLightSetSampleLocations *locs);
+
+/*
+ * LRG_LIGHT_AIR_GLSL:
+ * The volumetric air (lrg_light_set_set_air()): uniforms and
+ * float lrg_air (vec3 p, out vec3 ins), the transmittance from the eye
+ * (airCamera) to draw-space @p and the light scattered toward the eye on
+ * the way (@ins).  Needs LRG_SHADOW_GLSL and the light shader's
+ * ambientColor, sunColor and sunDirection above it.  airParams =
+ * (density, g, intensity, steps), airTint = (rgb, march distance);
+ * airLightColor[k] is the colour of the light in shadow slot k.  Each
+ * step's offset is jittered per pixel; lrg_light_set_sample_air() is the
+ * same sum with the steps at their middles and no shadows.
+ */
+#define LRG_LIGHT_AIR_GLSL \
+    "uniform vec4 airParams;\n" \
+    "uniform vec4 airTint;\n" \
+    "uniform vec3 airCamera;\n" \
+    "uniform vec3 airLightColor[8];\n" \
+    "float lrg_air_phase(float g, float c) {\n" \
+    "    float g2 = g * g;\n" \
+    "    return (1.0 - g2) / (12.566371 * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));\n" \
+    "}\n" \
+    "float lrg_air(vec3 p, out vec3 ins) {\n" \
+    "    ins = vec3(0.0);\n" \
+    "    vec3 ray = p - airCamera;\n" \
+    "    float len = length(ray);\n" \
+    "    if (len < 1e-4) return 1.0;\n" \
+    "    vec3 dir = ray / len;\n" \
+    "    float L = min(len, airTint.w);\n" \
+    "    int steps = int(airParams.w + 0.5);\n" \
+    "    float dt = L / float(steps);\n" \
+    "    float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));\n" \
+    "    float sunPhase = lrg_air_phase(airParams.y, dot(sunDirection, -dir));\n" \
+    "    bool sunOn = dot(sunColor, sunColor) > 0.0;\n" \
+    "    for (int i = 0; i < 32; i++) {\n" \
+    "        if (i >= steps) break;\n" \
+    "        float t = (float(i) + jitter) * dt;\n" \
+    "        vec3 x = airCamera + dir * t;\n" \
+    "        vec3 s = ambientColor * 0.0795775;\n" \
+    "        if (sunOn) s += sunColor * sunPhase * lrg_sun_shadow_f(x, vec3(0.0), 0);\n" \
+    "        for (int k = 0; k < 8; k++) {\n" \
+    "            if (k >= pointShadowCount) break;\n" \
+    "            vec4 l = pointShadowLight[k];\n" \
+    "            vec3 v = x - l.xyz;\n" \
+    "            float d = length(v);\n" \
+    "            if (d >= l.w || d < 1e-4) continue;\n" \
+    "            float a = 1.0 - d / l.w;\n" \
+    "            s += airLightColor[k] * (a * a) * lrg_air_phase(airParams.y, dot(v / d, -dir))\n" \
+    "                 * lrg_point_shadow_f(k, x, vec3(0.0), 0);\n" \
+    "        }\n" \
+    "        ins += s * exp(-airParams.x * t) * airParams.x * dt;\n" \
+    "    }\n" \
+    "    ins *= airParams.z * airTint.rgb;\n" \
+    "    return exp(-airParams.x * L);\n" \
+    "}\n"
+
+/*
+ * LrgLightSetShadowCandidate:
+ * A point light that may get a shadow cube: its id, draw-space position,
+ * radius, shadow priority and its distance key (distance from the
+ * camera to the light's sphere).
+ */
+typedef struct
+{
+    guint  id;
+    gfloat position[3];
+    gfloat radius;
+    guint  priority;
+    gfloat key;
+} LrgLightSetShadowCandidate;
+
+/*
+ * lrg_light_set_pick_shadow_lights:
+ * Fills @out with up to @max enabled, lit lights of shadow priority > 0
+ * (highest priority first, then smallest key, then lowest id), leaving
+ * out lights whose key exceeds @max_distance (0: no limit).  @camera is
+ * in world space.  Returns how many were picked.
+ */
+G_GNUC_INTERNAL
+guint
+lrg_light_set_pick_shadow_lights (LrgLightSet                *self,
+                                  const gdouble              *camera,
+                                  gfloat                      max_distance,
+                                  guint                       max,
+                                  LrgLightSetShadowCandidate *out);
 
 G_END_DECLS

@@ -459,6 +459,7 @@
 #include "postprocess/effects/lrg-film-grain.h"
 #include "postprocess/effects/lrg-screen-shake.h"
 #include "postprocess/effects/lrg-colorblind-filter.h"
+#include "postprocess/lrg-color-lut.h"
 #include "postprocess/effects/lrg-color-grade.h"
 #include "postprocess/effects/lrg-fxaa.h"
 
@@ -552,6 +553,7 @@
 #include "lighting/lrg-spot-light2d.h"
 #include "lighting/lrg-directional-light2d.h"
 #include "lighting/lrg-shadow-map.h"
+#include "lighting/lrg-shadow-renderer.h"
 #include "lighting/lrg-lightmap.h"
 #include "lighting/lrg-light-probe.h"
 #include "lighting/lrg-lighting-manager.h"
