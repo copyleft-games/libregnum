@@ -716,6 +716,18 @@ and client-side helpers for skinned and static models.
   (retry raised, keep when landing on a walkable face within a step),
   slope limit, ground snapping. Gravity and speeds stay with the caller.
 
+- **World look** (`graphics/lrg-terrain-detail.h`, `lrg-water-surface.h`,
+  `lrg-grass-field.h`, `lrg-tree-mesh.h`, `lrg-horizon-ring.h`,
+  `postprocess/effects/lrg-heat-haze.h`): landform noise to apply where
+  heights are made (collision then matches), Gerstner water with a
+  captured-frame screen-space reflection/refraction and shore foam,
+  hash-placed instanced grass (same cell = same blades, density only
+  adds), seeded low-poly tree meshes for an `LrgStaticBatch`, a
+  distant-terrain ring drawn with a light set's shader (fog = aerial
+  haze), and a horizon heat haze. All hashing is in
+  `graphics/lrg-hash-noise-private.h`; lit pieces read the bound light
+  set. See `docs/modules/graphics/world-look.org`.
+
 See `docs/modules/physics/wall-set.org`,
 `docs/modules/physics/collision-mesh.org`,
 `docs/modules/physics/character-controller.org`,

@@ -62,6 +62,11 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-gltf-geometry.h \
 	src/graphics/lrg-model-animator.h \
 	src/graphics/lrg-static-batch.h \
+	src/graphics/lrg-terrain-detail.h \
+	src/graphics/lrg-water-surface.h \
+	src/graphics/lrg-grass-field.h \
+	src/graphics/lrg-tree-mesh.h \
+	src/graphics/lrg-horizon-ring.h \
 	src/graphics/lrg-billboard-batch.h \
 	src/graphics/lrg-terrain.h \
 	src/graphics/lrg-sky-dome.h \
@@ -331,6 +336,7 @@ PUBLIC_HEADERS := \
 	src/postprocess/lrg-post-effect.h \
 	src/postprocess/lrg-post-processor.h \
 	src/postprocess/effects/lrg-vignette.h \
+	src/postprocess/effects/lrg-heat-haze.h \
 	src/postprocess/effects/lrg-bloom.h \
 	src/postprocess/effects/lrg-film-grain.h \
 	src/postprocess/effects/lrg-screen-shake.h \
@@ -625,6 +631,11 @@ SOURCES := \
 	src/graphics/lrg-gltf-geometry.c \
 	src/graphics/lrg-model-animator.c \
 	src/graphics/lrg-static-batch.c \
+	src/graphics/lrg-terrain-detail.c \
+	src/graphics/lrg-water-surface.c \
+	src/graphics/lrg-grass-field.c \
+	src/graphics/lrg-tree-mesh.c \
+	src/graphics/lrg-horizon-ring.c \
 	src/graphics/lrg-billboard-batch.c \
 	src/graphics/lrg-terrain.c \
 	src/graphics/lrg-sky-dome.c \
@@ -897,6 +908,7 @@ SOURCES := \
 	src/postprocess/lrg-post-effect.c \
 	src/postprocess/lrg-post-processor.c \
 	src/postprocess/effects/lrg-vignette.c \
+	src/postprocess/effects/lrg-heat-haze.c \
 	src/postprocess/effects/lrg-bloom.c \
 	src/postprocess/effects/lrg-film-grain.c \
 	src/postprocess/effects/lrg-screen-shake.c \

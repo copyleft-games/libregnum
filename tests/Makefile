@@ -103,6 +103,7 @@ TEST_SOURCES := \
 	test-billboard-batch.c \
 	test-terrain.c \
 	test-sky-dome.c \
+	test-world-look.c \
 	test-light-set.c \
 	test-shadow-renderer.c \
 	test-audio.c \
