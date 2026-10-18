@@ -5453,3 +5453,25 @@ lrg_dds_format_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+GType
+lrg_nav_door_state_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_NAV_DOOR_STATE_OPEN, "LRG_NAV_DOOR_STATE_OPEN", "open" },
+            { LRG_NAV_DOOR_STATE_CLOSED, "LRG_NAV_DOOR_STATE_CLOSED", "closed" },
+            { LRG_NAV_DOOR_STATE_LOCKED, "LRG_NAV_DOOR_STATE_LOCKED", "locked" },
+            { LRG_NAV_DOOR_STATE_SEALED, "LRG_NAV_DOOR_STATE_SEALED", "sealed" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgNavDoorState"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

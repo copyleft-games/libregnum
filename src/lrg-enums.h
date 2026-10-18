@@ -5790,4 +5790,30 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_dds_format_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_DDS_FORMAT (lrg_dds_format_get_type ())
 
+/**
+ * LrgNavDoorState:
+ * @LRG_NAV_DOOR_STATE_OPEN: open: walked through and seen through
+ * @LRG_NAV_DOOR_STATE_CLOSED: closed: blocks sight; walked through only
+ *   by agents that open doors
+ * @LRG_NAV_DOOR_STATE_LOCKED: locked: blocks sight; walked through only
+ *   by agents that unlock doors (pick or break them)
+ * @LRG_NAV_DOOR_STATE_SEALED: held shut (by magic, by a bar on the other
+ *   side): blocks sight and every walker that does not pass sealed doors
+ *
+ * The state of a door of an #LrgNavLevel, from the most open to the most
+ * closed: a path query crosses a door whose state is at most the one its
+ * agent passes.
+ */
+typedef enum
+{
+    LRG_NAV_DOOR_STATE_OPEN,
+    LRG_NAV_DOOR_STATE_CLOSED,
+    LRG_NAV_DOOR_STATE_LOCKED,
+    LRG_NAV_DOOR_STATE_SEALED
+} LrgNavDoorState;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_nav_door_state_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_NAV_DOOR_STATE (lrg_nav_door_state_get_type ())
+
 G_END_DECLS

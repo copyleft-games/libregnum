@@ -336,6 +336,7 @@ typedef struct _LrgNavGridClass  LrgNavGridClass;
 typedef struct _LrgPathfinder       LrgPathfinder;
 typedef struct _LrgNavMesh          LrgNavMesh;
 typedef struct _LrgNavPolyMesh      LrgNavPolyMesh;
+typedef struct _LrgNavLevel         LrgNavLevel;
 /* LrgPathfinderClass is not forward-declared (FINAL type) */
 
 /* ==========================================================================
