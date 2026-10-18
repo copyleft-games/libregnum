@@ -196,7 +196,9 @@ authoritative position. Hosts compute/validate movement separately. It is not
 physics rollback, lag-compensated combat or deterministic world replay.
 
 =LrgMmoMatchmaker= is an expiring, bounded, in-memory FIFO queue. Tickets are
-unique by account, last 60 seconds, and match within a mode and rating spread.
+unique by account, last 60 seconds (=set_ticket_lifetime()=), and match within a
+mode and rating spread; =take_teams()= splits a match into balanced sides without
+splitting parties ([[file:runtime.org][runtime.org]], "Team matches").
 Only complete groups are removed. Matching is greedy and can miss another
 possible combination; it does not promise globally optimal matchmaking.
 Restart loses pending tickets, so clients must requeue under host policy.

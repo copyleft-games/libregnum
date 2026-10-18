@@ -41,7 +41,7 @@ and deployment]] for configuration, wire formats, permissions and failure handli
 | Economy | Fungible resource balances, transfers, buyout listings, escrow and cancellation |
 | Clients | Atomic snapshot application, interpolation, paginated acknowledged baselines, prediction/reconciliation |
 | Protocol | Versioned bounded envelope and bounded optional zlib compression |
-| Matchmaking | Bounded expiring FIFO queue with mode/rating matching |
+| Matchmaking | Bounded expiring FIFO queue with mode/rating matching, team matches with whole parties, queue waits |
 | Operations | TLS reference host, worker-thread storage, health/metrics, systemd example, end-to-end smoke test |
 
 * Completion pass
