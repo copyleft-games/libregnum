@@ -1,0 +1,58 @@
+#+title: LrgPalettize
+#+description: Palette quantization with an ordered dither: the 8-bit look of a VGA game as a post effect
+#+authors: Zach Podbielniak
+#+categories: libregnum postprocess
+#+created: 2026-10-17T23:30:00-04:00
+#+updated: 2026-10-17T23:30:00-04:00
+#+version: 0.1.0
+
+* LrgPalettize
+:PROPERTIES:
+:CUSTOM_ID: lrgpalettize
+:END:
+=LrgPalettize= (=src/postprocess/effects/lrg-palettize.h=, a final =LrgPostEffect=) draws a picture with the colours of a fixed palette of up to 256 entries: each pixel takes the nearest palette colour.  An optional ordered dither moves each pixel by its 8 x 8 Bayer threshold first, so a gradient between two palette colours becomes a pattern instead of a band.  Without a palette the effect is the identity.
+
+#+begin_src C
+LrgPalettize *fx = lrg_palettize_new ();
+g_autoptr(GBytes) rgb = g_bytes_new (palette_bytes, 768);   /* 256 RGB triples */
+
+if (!lrg_palettize_set_palette (fx, rgb, &error))
+    g_warning ("%s", error->message);   /* not 1 .. 256 whole triples */
+lrg_palettize_set_dither (fx, TRUE);
+lrg_palettize_set_dither_strength (fx, 0.08f);
+
+/* draw a render texture through it, into the screen or another target */
+lrg_palettize_draw_texture (fx, texture, &source, &dest);
+#+end_src
+
+** The nearest colour
+:PROPERTIES:
+:CUSTOM_ID: the-nearest-colour
+:END:
+=lrg_palettize_find_nearest()= is the exact search: the smallest squared distance in 8-bit RGB, the lowest index on a tie (a palette with a colour twice maps it to the first).  =lrg_palettize_set_palette()= precomputes it into a 32 x 32 x 32 lookup table (=LRG_PALETTIZE_LUT_SIZE=): the cell of levels (r, g, b) holds the nearest colour to (level * 255 / 31, rounded) per channel, read back with =lrg_palettize_get_lut_index()=.  The shader samples the table as a 1024 x 32 texture (column r + 32 b, row g, point sampled), so its cost is the same for any palette size; a palette that is not 1 .. 256 whole triples fails with =G_IO_ERROR_INVALID_DATA= and leaves the old palette in place.
+
+** The ordered dither
+:PROPERTIES:
+:CUSTOM_ID: the-ordered-dither
+:END:
+=lrg_palettize_get_bayer()= is the classic 8 x 8 Bayer matrix (each of 0 .. 63 once per tile, the tile repeating every eight pixels).  With =dither= on, each channel moves by =((threshold + 0.5) / 64 - 0.5) * dither-strength= before the colour is rounded to the table's levels; with black and white only and a strength of 1, a grey of =v= becomes a share =v= of white pixels in every tile.  =dither-scale= is the target pixels per dither cell (=gl_FragCoord / scale=): a game drawing a low-resolution view straight onto a large screen gives the view's pixel size, a game palettizing at the view's own resolution keeps 1.
+
+| Property          | Type    | Default | Meaning                               |
+|-------------------+---------+---------+---------------------------------------|
+| =dither=          | boolean | false   | the ordered dither before the lookup  |
+| =dither-strength= | float   | 0.1     | the spread, 0 .. 1 of the channel     |
+| =dither-scale=    | float   | 1       | target pixels per dither cell, 1 .. 64 |
+
+** CPU reference and the shader
+:PROPERTIES:
+:CUSTOM_ID: cpu-reference-and-the-shader
+:END:
+=lrg_palettize_apply_rgb(self, x, y, in, out)= runs the shader's steps on the CPU (the dither for cell x, y, clamp, rounding to 31 levels, the table's colour, mixed with the original by the effect's intensity).  The GLSL 330 source is =lrg_palettize_get_fragment_shader()= (uniforms =lut=, =dither=, =ditherStrength=, =ditherScale=, =intensity=); the shader and the table texture are made on first draw, need a window, and are released by the effect's =shutdown= and on finalize.  The shader counts rows from the bottom (=gl_FragCoord=), so its pattern is the CPU's mirrored vertically: the same thresholds.
+
+Tests: =tests/test-accessibility-filters.c= (the nearest colour against a brute force over a random 256-colour palette, palette colours mapping to themselves, ties, every table cell, the apply with and without a palette and at half intensity, the Bayer matrix, the dither's share of white, the error paths).
+
+* LrgCamera3D's aspect override
+:PROPERTIES:
+:CUSTOM_ID: lrgcamera3d-aspect-override
+:END:
+A palettized retro view is often drawn at the original game's resolution and stretched: Daggerfall's 320 x 200 on a 4:3 screen has pixels 1.2 times as tall as wide.  raylib takes the projection's aspect from the target being drawn into, which would squash such a view; =lrg_camera3d_set_aspect()= (property =aspect=, 0 = the target's own, at most 16) loads the perspective frustum again with the given ratio, the same field of view and the cull distances, so the stretched picture is undistorted.  See [[file:../graphics/index.org][graphics]].

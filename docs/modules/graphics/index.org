@@ -491,6 +491,9 @@ lrg_camera3d_set_position_xyz (camera, x, y, z);
 lrg_camera3d_set_target_xyz (camera, x, y, z);
 lrg_camera3d_set_fovy (camera, degrees);
 lrg_camera3d_set_projection (camera, LRG_PROJECTION_PERSPECTIVE);
+/* the projection's width over height when it is not the target's own
+   (a 320 x 200 view stretched to 4:3); 0 = the target's */
+lrg_camera3d_set_aspect (camera, 4.0f / 3.0f);
 
 /* Isometric Camera */
 lrg_camera_isometric_set_tile_width (camera, width);

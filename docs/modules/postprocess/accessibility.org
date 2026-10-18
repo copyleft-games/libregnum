@@ -54,7 +54,31 @@ void lrg_colorblind_filter_set_mode (LrgColorblindFilter *self, LrgColorblindMod
 
 gfloat lrg_colorblind_filter_get_strength (LrgColorblindFilter *self);
 void lrg_colorblind_filter_set_strength (LrgColorblindFilter *self, gfloat strength);
+
+/* the effective 3x3 matrix (row-major, linear light), the CPU reference,
+   the shader and a direct draw */
+void lrg_colorblind_filter_get_matrix (LrgColorblindFilter *self, gfloat *matrix);
+gboolean lrg_colorblind_filter_is_identity (LrgColorblindFilter *self);
+void lrg_colorblind_filter_apply_rgb (LrgColorblindFilter *self, const gfloat *in, gfloat *out);
+const gchar *lrg_colorblind_filter_get_fragment_shader (void);
+GrlShader *lrg_colorblind_filter_get_shader (LrgColorblindFilter *self);
+gboolean lrg_colorblind_filter_draw_texture (LrgColorblindFilter *self, GrlTexture *texture,
+                                            const GrlRectangle *source, const GrlRectangle *dest);
 #+end_src
+
+** The matrices
+:PROPERTIES:
+:CUSTOM_ID: the-matrices
+:END:
+The filter is a single 3x3 matrix applied in linear light: the colour is raised to the power 2.2, multiplied, clamped to 0 .. 1 and taken back with the power 1 / 2.2, then mixed with the original by the effect's intensity (=lrg_post_effect_set_intensity()=).  The GLSL 330 shader (uniforms =row0=, =row1=, =row2=, =intensity=) and =lrg_colorblind_filter_apply_rgb()= run the same steps, so tests check the CPU reference and games may filter colours they draw themselves (UI fills and text).
+
+- Simulation uses the full-severity matrices of Machado, Oliveira and Fernandes, "A Physiologically-based Model for Simulation of Color Vision Deficiency" (2009) for protanopia, deuteranopia and tritanopia; achromatopsia puts the Rec. 709 luminance on every channel.
+- Correction is daltonization: the error a viewer cannot see, =I - S=, is shifted into channels they still tell apart, =M = I + D (I - S)=.  For protanopia and deuteranopia =D= moves the error into green and blue (rows =0 0 0=, =0.7 1 0=, =0.7 0 1=), for tritanopia into red and green (=1 0 0.7=, =0 1 0.7=, =0 0 0=).  Achromatopsia has no channel left: its correction is the identity.
+- The strength mixes the matrix with the identity, =I + strength (M - I)=.
+
+White and black stay themselves under every matrix (each row sums to 1).  =lrg_colorblind_filter_is_identity()= is true for no type, a strength or intensity of 0, and corrected achromatopsia; a game may skip the pass then.  =lrg_colorblind_filter_draw_texture()= draws a texture (a render texture's colour attachment) through the shader into the current target, plainly when the filter is the identity or no shader compiled.
+
+Tests: =tests/test-accessibility-filters.c= (the identity cases, white and black, the simulations of the primaries worked by hand, half strength, correction separating red from green and blue from teal as the viewer sees them).
 
 ** Usage
 :PROPERTIES:

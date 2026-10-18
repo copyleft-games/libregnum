@@ -477,6 +477,7 @@
 #include "postprocess/effects/lrg-colorblind-filter.h"
 #include "postprocess/lrg-color-lut.h"
 #include "postprocess/effects/lrg-color-grade.h"
+#include "postprocess/effects/lrg-palettize.h"
 #include "postprocess/effects/lrg-fxaa.h"
 
 /* Animation module (Phase 3) */

@@ -60,6 +60,7 @@ Each effect reads from one texture and writes to another, ping-ponging through t
 | LrgFilmGrain        | Film texture      | Retro, stylized       |
 | LrgScreenShake      | Camera shake      | Impacts, explosions   |
 | LrgColorblindFilter | Accessibility     | Color correction      |
+| LrgPalettize        | Palette, dither   | Retro 8-bit look      |
 
 ** Files
 :PROPERTIES:
@@ -71,3 +72,4 @@ Each effect reads from one texture and writes to another, ping-ponging through t
 | [[file:post-processor.org]] | LrgPostProcessor pipeline |
 | [[file:effects.org]]        | Built-in effect types     |
 | [[file:accessibility.org]]  | Colorblind filter         |
+| [[file:palettize.org]]      | Palettize and dither      |
