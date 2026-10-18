@@ -46,6 +46,7 @@
 #include "mmo/lrg-mmo-shard-directory.h"
 #include "mmo/lrg-mmo-replica.h"
 #include "mmo/lrg-mmo-market.h"
+#include "mmo/lrg-mmo-holdings.h"
 #include "mmo/lrg-mmo-social.h"
 
 

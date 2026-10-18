@@ -62,6 +62,10 @@ See [[file:completion.org][completion contracts, executable checks and deploymen
 | Recovery and measurement | PostgreSQL dump/restore drill, killed-worker tests, concurrent TLS latency sample |
 | Operational visibility | Existing health/metrics host plus Prometheus scrape/alert and dashboard examples |
 
+* Holdings
+
+See [[file:holdings.org][deeds, leases and ventures]] (=LrgMmoHoldings=): unique assets owned by accounts, sold for coins with the deed in escrow, leased for rent settled per period while both sides are offline, and ventures whose units pay dividends, every operation one store transaction over the =LrgMmoMarket= purses.
+
 * Runtime integration and deployment boundaries
 
 The remaining reference integrations are covered in [[file:runtime.org][Runtime and Operations]]:

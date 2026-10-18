@@ -1,0 +1,48 @@
+#+TITLE: Holdings: deeds, leases and ventures
+
+=LrgMmoHoldings= (=src/mmo/lrg-mmo-holdings.h=) keeps server-authoritative ownership of unique assets between accounts.  A game decides what an asset is (a house, a shop, a ship, a plot); the service decides who owns it, who rents it and who holds a share of it, and moves the coins for every change in the same transaction as the change.  It was written for librefall's online real estate and player businesses (M18) but knows nothing about houses.
+
+* Model
+
+| Thing | Record | What it holds |
+|-------+--------+---------------|
+| Deed | =holdings/deed/ID= | owner, definition (catalog ID), immutable metadata (at most 64 KiB), the sale offer (price, the one buyer or anyone, expiry) and the lease (state, tenant, rent, period, term, periods settled, start, paid until, deposit, unpaid periods in a row, owed rent, rent earned) |
+| Venture | =holdings/venture/ID= | manager, the deed it runs on (optional), unit price, units on offer, units sold, dividends paid, open, the holders and their units (at most =LRG_MMO_HOLDINGS_MAX_HOLDERS=, 64) |
+| Index | =holdings/index/NAME= | a sorted list of IDs: =owner/A=, =tenant/A=, =manager/A=, =investor/A=, =sales=, =leases=, =ventures= (at most =LRG_MMO_HOLDINGS_MAX_INDEX=, 4096 each) |
+| Purse | =market/balance/A/coins= | the account's coins: the same record =LrgMmoMarket= reads and writes, so a game has one purse per account for its market and its holdings |
+
+The store has no key scan, so the indexes are the way to find an account's deeds, the open sales or the leases a host must settle; they change in the same batch as the deed.
+
+* Operations
+
+| Call | Who | What happens, atomically |
+|------+-----+--------------------------|
+| =issue()= | host (trusted) | creates a deed for an owner; with a price the owner pays the treasury account; an existing deed is =G_IO_ERROR_EXISTS= |
+| =offer_sale()= | owner | the deed goes into escrow for sale at a price, to anyone or one buyer, for up to 30 days; another offer while one stands is refused |
+| =buy()= | buyer | the buyer pays the asking price (which must equal the price it agreed to), the seller receives it less the host's cut (per mille, rounded down) and the deed changes owner and indexes; the lease carries over, except that a tenant buying its own home ends its lease first |
+| =cancel_sale()= | owner | the offer is withdrawn (an expired one too) |
+| =offer_lease()= | owner | rent per period (1 s to a year), a term of 1 to 520 periods, a deposit, to anyone or one tenant |
+| =take_lease()= | tenant | the first period's rent goes to the owner and the deposit into the deed |
+| =collect()= | host | every due period (at most 64 per call) the tenant pays what it owes, as far as it can; a short period adds to the arrears; reaching the host's limit ends the lease with the deposit paying the owner what it can (the rest of the debt is written off) and the end of the term returns the deposit less anything owed |
+| =end_lease()= | tenant or owner | the tenant leaves (no refund of the current period, the deposit back less anything owed); the owner withdraws an offer or evicts a tenant who owes rent |
+| =open_venture()= | manager | units at a price, optionally on a deed the manager owns |
+| =invest()= | investor | the investor's coins go to the manager at once (capital) and the units to the investor |
+| =pay_dividend()= | manager (or the host for it) | every holder receives =floor(amount × units / sold)= from the manager's coins; rounding stays with the manager |
+| =close_venture()= | manager | the units are bought back at a price per unit (0: worthless) and the venture closes |
+
+=get_deed()=, =get_venture()=, =list()= and =get_coins()= read.  =set_clock()= fixes "now" (tests, replays); 0 returns to the real time.
+
+* Guarantees
+
+- One transaction per operation: the deed (or venture), every purse and every index it touches, and the operation receipt are one =lrg_mmo_store_commit()= batch at the revisions read.  A crash before the commit changes nothing; after it, everything.  Two buyers racing for one deed: one commits, the other's batch conflicts (or finds the deed sold) and keeps its coins (=tests/test-mmo-holdings.c=, =race-restart=, on two connections to one SQLite file).
+- Durable operation IDs for everything a client retries after a lost answer (=issue=, =buy=, =take_lease=, =invest=, =pay_dividend=, =close_venture=): an identical retry succeeds without repeating; the same ID for another intent is =G_IO_ERROR_INVALID_DATA=.  =pay_dividend()= returns 0 for a retry.
+- Offers, withdrawals and =collect()= need no operation ID: repeating them is harmless (=collect()= settles only periods that are due).
+- No negative purse and no overflow: every movement checks both sides; a refusal (=G_IO_ERROR_NO_SPACE=, =G_IO_ERROR_PERMISSION_DENIED=, =G_IO_ERROR_INVALID_ARGUMENT=) leaves every record as it was.
+- A stored deed or venture that does not hold together (an active lease without a tenant or period, negative amounts) is =G_IO_ERROR_INVALID_DATA=; nothing acts on it.
+- Thread confinement and trusted actors as every MMO service ([[file:services.org][services]]): the host resolves =actor= from the authenticated connection.
+
+* What hosts do
+
+- Schedule =collect()= for every ID of the =leases= index (a minute's sweep is plenty; one call settles up to 64 periods).
+- Decide fees (=buy()='s cut and fee account), the arrears limit and the treasury that =issue()= pays.
+- Keep their own catalog of what a definition and its metadata mean, and validate it before =issue()=.

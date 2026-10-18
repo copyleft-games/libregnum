@@ -237,6 +237,7 @@ PUBLIC_HEADERS := \
 	src/mmo/lrg-mmo-shard-directory.h \
 	src/mmo/lrg-mmo-replica.h \
 	src/mmo/lrg-mmo-market.h \
+	src/mmo/lrg-mmo-holdings.h \
 	src/mmo/lrg-mmo-social.h \
 	src/mmo/lrg-mmo-prediction.h \
 	src/mmo/lrg-mmo-gate.h \
@@ -795,6 +796,7 @@ SOURCES := \
 	src/mmo/lrg-mmo-shard-directory.c \
 	src/mmo/lrg-mmo-replica.c \
 	src/mmo/lrg-mmo-market.c \
+	src/mmo/lrg-mmo-holdings.c \
 	src/mmo/lrg-mmo-social.c \
 	src/mmo/lrg-mmo-prediction.c \
 	src/mmo/lrg-mmo-gate.c \
