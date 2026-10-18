@@ -1,0 +1,107 @@
+* LrgSkinnedMesh - Skinned Meshes with a Bone Palette
+:PROPERTIES:
+:CUSTOM_ID: lrgskinnedmesh---skinned-meshes-with-a-bone-palette
+:END:
+A triangle mesh whose vertices follow bones: each vertex carries up to four bone indices and weights, and a pose is a *palette* of one matrix per bone, =world(bone) * inverse_bind(bone)=. A posed vertex is the weighted sum of =palette(bone) * position=. Characters, creatures and first-person arms built from any skeletal format (glTF skins, NetImmerse =NiSkinData=, IQM) reduce to this: bind-space geometry, an inverse bind per bone and the bone world matrices of the current frame.
+
+The palette math, the weight validation and a CPU reference skinning run headlessly; =upload()= and =draw()= need a GL context. Drawing skins on the GPU with a GLSL 3.30 vertex shader (=uniform mat4 boneMatrices[64]=); a mesh with more bones than the palette holds, or a context without vertex arrays, is skinned on the CPU into a dynamic position and normal buffer instead, so every mesh draws.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgSkinnedMesh= - *Final GObject Class*, =LRG_TYPE_SKINNED_MESH=, GIR =Libregnum.SkinnedMesh=
+- *Header* - =graphics/lrg-skinned-mesh.h=
+
+| Constant                       | Value | Meaning                                      |
+|--------------------------------+-------+----------------------------------------------|
+| =LRG_SKINNED_MESH_MAX_BONES=   |    64 | GPU palette size; more bones skin on the CPU |
+| =LRG_SKINNED_MESH_INFLUENCES=  |     4 | Bone influences per vertex                   |
+
+Matrices are 16 floats, column-major (=m[12..14]= is the translation), the same as =lrg_bone_pose_to_matrix()=.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src C
+LrgSkinnedMesh *lrg_skinned_mesh_new (guint n_bones);   /* 1 .. 255, else NULL */
+gboolean lrg_skinned_mesh_set_geometry (LrgSkinnedMesh *self, guint n_vertices,
+                                        const gfloat *positions, const gfloat *normals,
+                                        const gfloat *texcoords, const guint8 *colors,
+                                        const guint8 *bone_indices, const gfloat *bone_weights,
+                                        guint n_indices, const guint32 *indices, GError **error);
+guint    lrg_skinned_mesh_get_bone_count (LrgSkinnedMesh *self);
+guint    lrg_skinned_mesh_get_vertex_count (LrgSkinnedMesh *self);
+guint    lrg_skinned_mesh_get_triangle_count (LrgSkinnedMesh *self);
+const gfloat *lrg_skinned_mesh_get_bind_positions (LrgSkinnedMesh *self);
+const gfloat *lrg_skinned_mesh_get_weights (LrgSkinnedMesh *self, const guint8 **out_bone_indices);
+
+gboolean lrg_skinned_mesh_set_inverse_bind (LrgSkinnedMesh *self, guint bone, const gfloat *matrix);
+const gfloat *lrg_skinned_mesh_get_inverse_bind (LrgSkinnedMesh *self, guint bone);
+void     lrg_skinned_mesh_compute_palette (LrgSkinnedMesh *self, const gfloat *bone_world, gfloat *out_palette);
+gboolean lrg_skinned_mesh_compute_palette_from_skeleton (LrgSkinnedMesh *self, LrgSkeleton *skeleton,
+                                                         gfloat *out_palette);
+void     lrg_skinned_mesh_set_palette (LrgSkinnedMesh *self, const gfloat *palette);
+const gfloat *lrg_skinned_mesh_get_palette (LrgSkinnedMesh *self);
+void     lrg_skinned_mesh_skin (LrgSkinnedMesh *self, gfloat *out_positions, gfloat *out_normals);
+gboolean lrg_skinned_mesh_get_skinned_bounds (LrgSkinnedMesh *self, gfloat *out_min, gfloat *out_max);
+gboolean lrg_skinned_mesh_uses_gpu (LrgSkinnedMesh *self);
+
+void     lrg_skinned_mesh_set_texture (LrgSkinnedMesh *self, GrlTexture *texture);
+void     lrg_skinned_mesh_set_tint (LrgSkinnedMesh *self, guint8 r, guint8 g, guint8 b, guint8 a);
+void     lrg_skinned_mesh_set_alpha_cutoff (LrgSkinnedMesh *self, gfloat cutoff);
+void     lrg_skinned_mesh_set_shader (LrgSkinnedMesh *self, GrlShader *shader);
+const gchar *lrg_skinned_mesh_get_vertex_shader_source (void);
+gboolean lrg_skinned_mesh_upload (LrgSkinnedMesh *self, GError **error);
+gboolean lrg_skinned_mesh_is_uploaded (LrgSkinnedMesh *self);
+void     lrg_skinned_mesh_unload (LrgSkinnedMesh *self);
+void     lrg_skinned_mesh_draw (LrgSkinnedMesh *self, const GrlMatrix *transform);
+#+end_src
+
+** Geometry
+:PROPERTIES:
+:CUSTOM_ID: geometry
+:END:
+=set_geometry()= copies the arrays and validates everything first: 1 .. 65535 vertices, a whole triangle list whose indices name existing vertices, finite non-negative weights, and every weighted bone index below the bone count. A failure is =G_IO_ERROR_INVALID_DATA= and leaves the mesh as it was. Weights are renormalised to sum to one; a vertex whose weights are all zero follows bone 0. Unweighted slots get index 0 so the shader never reads past the palette.
+
+** Palette
+:PROPERTIES:
+:CUSTOM_ID: palette
+:END:
+Every bone starts with an identity inverse bind and the palette starts as identities, the bind pose. =compute_palette()= multiplies the caller's bone world matrices by the inverse binds without posing the mesh; =set_palette()= poses it. =compute_palette_from_skeleton()= takes an =LrgSkeleton= whose world poses are current (=lrg_skeleton_calculate_world_poses()=) and maps mesh bone /i/ to skeleton bone /i/; it fails when the skeleton has fewer bones.
+
+=lrg_skinned_mesh_skin()= is the reference: positions are the weighted sum of =palette * p=, normals of the palette's upper 3x3 times =n=, renormalised. The GPU shader computes the same sum, which the tests check by readback.
+
+** Drawing
+:PROPERTIES:
+:CUSTOM_ID: drawing
+:END:
+=upload()= hands raylib the usual attributes and adds two buffers to the mesh's vertex array at raylib's bone attribute locations (=RL_DEFAULT_SHADER_ATTRIB_LOCATION_BONEINDICES= / =BONEWEIGHTS=, bound to the names =vertexBoneIndices= and =vertexBoneWeights= by every raylib shader program). raylib's own GPU skinning path is compiled out of graylib's raylib (=SUPPORT_GPU_SKINNING 0=), so the mesh does this itself rather than changing the third-party build. =draw()= sets =boneMatrices=, =useSkinning= and =alphaCutoff= on the shader and calls =DrawMesh()= with the albedo texture (or white) and the tint.
+
+The built-in fragment shader multiplies the texture, tint and vertex colour, discards fragments below the alpha cutoff (hair, fur) and shades with a fixed key light. A custom shader (=set_shader()=) starts from =get_vertex_shader_source()= and keeps those attribute and uniform names. The built-in program is shared by every mesh and released with the last upload.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgSkinnedMesh) arm = lrg_skinned_mesh_new (2);
+gfloat world[32];
+gfloat palette[32];
+
+lrg_skinned_mesh_set_geometry (arm, n, positions, normals, uvs, NULL, bones, weights,
+                               n_indices, indices, &error);
+lrg_skinned_mesh_set_inverse_bind (arm, 1, forearm_inverse_bind);
+
+/* every frame: pose the skeleton, then */
+lrg_skinned_mesh_compute_palette (arm, world, palette);
+lrg_skinned_mesh_set_palette (arm, palette);
+lrg_skinned_mesh_draw (arm, &model);
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-skinned-mesh.c=: bone count limits, every geometry failure leaving the mesh unchanged, weight renormalisation, the palette product, CPU skinning of a two-bone arm bent 90 degrees at the elbow (positions, normals, blended joint, bounds), =lrg_bone_pose_to_matrix()=, a palette from an =LrgSkeleton= (which needs the hierarchical =lrg_bone_pose_compose()=), the CPU fallback past 64 bones, upload without a context, and two readbacks: a square on bone 3 of 4 drawn by the GPU path moves when its bone does, and one on bone 69 of 70 drawn by the CPU fallback does the same.

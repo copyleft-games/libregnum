@@ -447,6 +447,9 @@ typedef struct _LrgStaticBatch    LrgStaticBatch;
 /* LrgShadowRenderer is a final type (lighting/, used by LrgLightSet) */
 typedef struct _LrgShadowRenderer LrgShadowRenderer;
 
+/* LrgSkinnedMesh is a final type */
+typedef struct _LrgSkinnedMesh    LrgSkinnedMesh;
+
 /* ==========================================================================
  * Shapes Module
  * ========================================================================== */

@@ -100,6 +100,7 @@ TEST_SOURCES := \
 	test-gltf-geometry.c \
 	test-model-animator.c \
 	test-static-batch.c \
+	test-skinned-mesh.c \
 	test-billboard-batch.c \
 	test-terrain.c \
 	test-sky-dome.c \

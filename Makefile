@@ -67,6 +67,7 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-grass-field.h \
 	src/graphics/lrg-tree-mesh.h \
 	src/graphics/lrg-horizon-ring.h \
+	src/graphics/lrg-skinned-mesh.h \
 	src/graphics/lrg-billboard-batch.h \
 	src/graphics/lrg-terrain.h \
 	src/graphics/lrg-sky-dome.h \
@@ -636,6 +637,7 @@ SOURCES := \
 	src/graphics/lrg-grass-field.c \
 	src/graphics/lrg-tree-mesh.c \
 	src/graphics/lrg-horizon-ring.c \
+	src/graphics/lrg-skinned-mesh.c \
 	src/graphics/lrg-billboard-batch.c \
 	src/graphics/lrg-terrain.c \
 	src/graphics/lrg-sky-dome.c \

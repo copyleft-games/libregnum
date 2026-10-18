@@ -88,6 +88,7 @@
 #include "graphics/lrg-grass-field.h"
 #include "graphics/lrg-tree-mesh.h"
 #include "graphics/lrg-horizon-ring.h"
+#include "graphics/lrg-skinned-mesh.h"
 #include "graphics/lrg-billboard-batch.h"
 #include "graphics/lrg-terrain.h"
 #include "graphics/lrg-sky-dome.h"

@@ -634,6 +634,16 @@ and client-side helpers for skinned and static models.
   Malformed files fail with `LRG_DDS_ERROR`; a short mip chain keeps the
   complete levels.
 
+- **`LrgSkinnedMesh`** (`graphics/lrg-skinned-mesh.h`): a mesh posed by a
+  bone matrix palette (`world(bone) * inverse_bind(bone)`, column-major).
+  Geometry is validated and weights renormalised up front; `skin()` is the
+  CPU reference. `draw()` skins on the GPU (GLSL 3.30, 64 bones) by adding
+  the bone index/weight buffers to the raylib mesh's VAO itself, because
+  graylib's raylib is built without `SUPPORT_GPU_SKINNING`; more bones or
+  no VAO falls back to CPU skinning into dynamic buffers. Skeleton world
+  poses use `lrg_bone_pose_compose()` (child offsets rotated by the parent);
+  `lrg_bone_pose_multiply()` keeps its translation-only additive meaning.
+
 - **`LrgModelAnimator`** (`graphics/lrg-model-animator.h`): one animator per
   shared model, one `LrgModelAnimState` per actor (embed by value, init with
   `lrg_model_anim_state_reset()`). `find_clip()` = exact, alias, then
