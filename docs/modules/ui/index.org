@@ -543,4 +543,5 @@ g_autoptr(LrgCanvas) create_main_menu(void)
 - See [[file:tab-view.org][Tab View]] for tabbed interfaces
 - See [[file:ui-event.org][UI Events]] for event handling
 - See [[file:theme.org][Theming]] for styling
+- See [[file:tooltip.org][Rich tooltips]] for =LrgTooltip=, =LrgTooltipLayout= and tooltip placement
 - See [[../examples/ui-basics.md][UI Basics Example]] for complete sample

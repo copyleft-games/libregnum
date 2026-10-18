@@ -339,6 +339,12 @@ typedef struct _LrgNavPolyMesh      LrgNavPolyMesh;
 typedef struct _LrgNavPolyMeshCache LrgNavPolyMeshCache;
 /* LrgPathfinderClass is not forward-declared (FINAL type) */
 
+/* Rich tooltips (ui module) */
+typedef struct _LrgTooltip       LrgTooltip;
+typedef struct _LrgTooltipLine   LrgTooltipLine;
+typedef struct _LrgTooltipLayout LrgTooltipLayout;
+typedef struct _LrgTooltipStyle  LrgTooltipStyle;
+
 /* ==========================================================================
  * Physics Module
  * ========================================================================== */

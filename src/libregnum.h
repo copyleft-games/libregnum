@@ -155,6 +155,8 @@
 #include "ui/lrg-widget.h"
 #include "ui/lrg-container.h"
 #include "ui/lrg-label.h"
+#include "ui/lrg-tooltip.h"
+#include "ui/lrg-tooltip-layout.h"
 #include "ui/lrg-button.h"
 #include "ui/lrg-panel.h"
 #include "ui/lrg-vbox.h"

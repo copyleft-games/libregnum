@@ -72,6 +72,7 @@ TEST_SOURCES := \
 	test-ecs.c \
 	test-input.c \
 	test-ui.c \
+	test-tooltip.c \
 	test-tilemap.c \
 	test-save.c \
 	test-save-migrator.c \

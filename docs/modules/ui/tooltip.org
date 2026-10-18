@@ -1,0 +1,40 @@
+#+title: Rich tooltips
+#+description: LrgTooltip, LrgTooltipLayout and the placement helpers
+#+authors: Zach Podbielniak
+#+categories: ui
+#+created: 2026-10-18T00:00:00-04:00
+#+updated: 2026-10-18T00:00:00-04:00
+#+version: 1
+
+* Overview
+
+=LrgTooltip= is a rich tooltip model in the style of World of Warcraft's =GameTooltip=: an ordered list of lines, each a single text, a left/right pair ("Two-Hand" ... "Sword"), an icon with text, a separator rule or a spacer, with a colour per text, an optional stable id and a wrap flag for flavour text.  The model draws nothing.  =LrgTooltipLayout= sizes it with a text measure the caller supplies (any font), wraps it, aligns the pairs, places it clamped to the screen (and a comparison tooltip beside it) and draws it through three callbacks, so a graylib scene, a skin, or a test that records calls can show it.  No graphics context is needed to build or lay out a tooltip.
+
+Headers: =src/ui/lrg-tooltip.h=, =src/ui/lrg-tooltip-layout.h=.
+
+* The model
+
+- =lrg_tooltip_add_line()= (=AddLine=), =lrg_tooltip_add_double_line()= (=AddDoubleLine=), =lrg_tooltip_add_wrapped_line()= (flavour text), =lrg_tooltip_add_icon_line()=, =lrg_tooltip_add_separator()= and =lrg_tooltip_add_spacer()= append a line and return it (owned by the tooltip) so its id, colours or wrap flag can be set at once.
+- Colours are =guint32= 0xRRGGBBAA; =lrg_tooltip_color_parse()= reads "#RRGGBB" and "#RRGGBBAA" (a bad spec leaves the output alone and returns FALSE).
+- Lines carry an id (=lrg_tooltip_line_set_id()=): =lrg_tooltip_find_line()= and =lrg_tooltip_remove_by_id()= find and remove them, =lrg_tooltip_replace_line()= and =lrg_tooltip_insert_line()= copy a line in at an index.  Several lines may share an id.
+- =lrg_tooltip_copy()= is deep; =lrg_tooltip_to_string()= prints one row per line for logs and tests.
+
+* Layout
+
+=lrg_tooltip_layout_new(tooltip, style, measure, user_data, error)= produces an immutable snapshot:
+
+- The width is that of the widest non-wrapping row plus padding, never below =min_width= or above =max_width=; flavour (wrap-flagged) text wraps at that width and never widens the tooltip.  Any other text wider than =max_width= wraps too; explicit newlines break rows; a word wider than the box is cut between characters, so nothing is lost.
+- A pair puts its left text at the left inset and its right text flush with the right inset; a wrap-flagged pair wraps its left text around the right one.
+- Each drawn row (=LrgTooltipRow=) records its kind, top, height, texts, colours and the x of each text; a wrapped line yields several rows with the same =line_index=.
+- Failure: =G_IO_ERROR_INVALID_ARGUMENT= for no measure function, an empty tooltip or an unusable style (a negative size, =min_width= above =max_width=, a maximum too narrow for its padding).
+
+=lrg_tooltip_layout_draw()= fills the border, the background, then every row through =LrgTooltipDrawFuncs= (=fill_rect=, =draw_text=, =draw_icon=); a missing callback skips that part.
+
+* Placement
+
+- =lrg_tooltip_place()=: right of and below the anchor, flipping to the left or above when it would leave the screen, then clamped (the top left wins for a tooltip larger than the screen).
+- =lrg_tooltip_place_pair()=: a main tooltip and a comparison tooltip side by side, main first, tops level: right of the anchor when both fit, else left of it; when the pair is wider than the screen the comparison goes under the main one (the function returns FALSE).
+
+* Tests
+
+=tests/test-tooltip.c=: line kinds, ids, find, replace, insert and remove, deep copies, colour parsing and its failures, sizes and pair alignment, flavour wrapping without widening, long words, newlines, the maximum width, recorded drawing with and without callbacks, layout failures and the placement flips and clamps.
