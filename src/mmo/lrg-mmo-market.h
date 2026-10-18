@@ -444,6 +444,29 @@ lrg_mmo_market_revoke (LrgMmoMarket *self,
                        GError **error);
 
 /**
+ * lrg_mmo_market_has_operation:
+ * @self: the service
+ * @operation: a durable operation ID
+ * @applied: (out): whether a committed operation holds this ID
+ * @error: (nullable): return location for error
+ *
+ * Asks whether an operation with this ID was committed, whatever its
+ * intent.  A host that hands goods to a game character outside the
+ * market (a client that lost its connection before the answer arrived)
+ * uses it to learn whether a deposit, withdrawal or burn it derived from
+ * the request happened, without repeating it.
+ *
+ * Returns: %TRUE when the answer is in @applied, %FALSE with @error for
+ *   an invalid ID or a store failure
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_has_operation (LrgMmoMarket *self,
+                              const gchar *operation,
+                              gboolean *applied,
+                              GError **error);
+
+/**
  * lrg_mmo_market_burn_item:
  * @self: market service
  * @actor: authenticated owner
