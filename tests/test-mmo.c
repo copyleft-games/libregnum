@@ -251,6 +251,100 @@ test_group (void)
     g_assert_no_error (error);
 }
 
+static void
+test_group_raid (void)
+{
+    g_autoptr(LrgMmoGroup) group = lrg_mmo_group_new (10, 5);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GArray) members = NULL;
+    g_autoptr(GArray) expired = NULL;
+    guint64 id;
+
+    /* promotion: leader only, to a member */
+    g_assert_true (lrg_mmo_group_add (group, 10, 20, &error));
+    g_assert_false (lrg_mmo_group_promote (group, 20, 20, &error));
+    assert_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_group_promote (group, 10, 99, &error));
+    assert_error (&error, G_IO_ERROR_NOT_FOUND);
+    g_assert_true (lrg_mmo_group_promote (group, 10, 20, &error));
+    g_assert_cmpuint (lrg_mmo_group_get_leader (group), ==, 20);
+    g_assert_true (lrg_mmo_group_has_member (group, 10));
+    g_assert_false (lrg_mmo_group_has_member (group, 0));
+
+    /* invitations hold seats and lapse */
+    g_assert_false (lrg_mmo_group_invite (group, 10, 30, 100, &error));
+    assert_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_group_invite (group, 20, 30, 100, &error));
+    g_assert_false (lrg_mmo_group_invite (group, 20, 30, 100, &error));
+    assert_error (&error, G_IO_ERROR_EXISTS);
+    g_assert_false (lrg_mmo_group_invite (group, 20, 10, 100, &error));
+    assert_error (&error, G_IO_ERROR_EXISTS);
+    g_assert_true (lrg_mmo_group_invite (group, 20, 40, 50, &error));
+    g_assert_true (lrg_mmo_group_invite (group, 20, 50, 100, &error));
+    g_assert_false (lrg_mmo_group_invite (group, 20, 60, 100, &error));
+    assert_error (&error, G_IO_ERROR_NO_SPACE);
+    g_assert_false (lrg_mmo_group_set_capacity (group, 20, 4, &error));
+    assert_error (&error, G_IO_ERROR_NO_SPACE);
+    g_assert_true (lrg_mmo_group_has_invite (group, 30, 10));
+    g_assert_false (lrg_mmo_group_has_invite (group, 40, 60));
+    g_assert_false (lrg_mmo_group_accept (group, 40, 60, &error));
+    assert_error (&error, G_IO_ERROR_TIMED_OUT);
+    g_assert_false (lrg_mmo_group_accept (group, 40, 61, &error));
+    assert_error (&error, G_IO_ERROR_NOT_FOUND);
+    g_assert_true (lrg_mmo_group_accept (group, 30, 10, &error));
+    g_assert_true (lrg_mmo_group_decline (group, 50));
+    g_assert_false (lrg_mmo_group_decline (group, 50));
+    g_assert_cmpuint (lrg_mmo_group_get_size (group), ==, 3);
+    g_assert_true (lrg_mmo_group_invite (group, 20, 70, 5, &error));
+    expired = lrg_mmo_group_expire_invites (group, 5);
+    g_assert_cmpuint (expired->len, ==, 1);
+    g_assert_cmpuint (g_array_index (expired, guint64, 0), ==, 70);
+
+    /* a raid: 40 seats in subgroups of 5 */
+    g_assert_false (lrg_mmo_group_set_capacity (group, 10, 40, &error));
+    assert_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_group_set_capacity (group, 20, 40, &error));
+    g_assert_true (lrg_mmo_group_set_subgroup_size (group, 20, 5, &error));
+    g_assert_cmpuint (lrg_mmo_group_get_subgroup_count (group), ==, 8);
+    g_assert_cmpuint (lrg_mmo_group_get_subgroup (group, 10), ==, 1);
+    for (id = 100; id < 104; id++)
+        g_assert_true (lrg_mmo_group_add (group, 20, id, &error));
+    /* 10, 20, 30, 100, 101 fill subgroup 1 */
+    g_assert_cmpuint (lrg_mmo_group_get_subgroup (group, 101), ==, 1);
+    g_assert_cmpuint (lrg_mmo_group_get_subgroup (group, 102), ==, 2);
+    g_assert_false (lrg_mmo_group_move (group, 20, 102, 1, &error));
+    assert_error (&error, G_IO_ERROR_NO_SPACE);
+    g_assert_false (lrg_mmo_group_move (group, 20, 102, 9, &error));
+    assert_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_true (lrg_mmo_group_move (group, 20, 101, 8, &error));
+    g_assert_true (lrg_mmo_group_move (group, 20, 102, 1, &error));
+    members = lrg_mmo_group_get_subgroup_members (group, 8);
+    g_assert_cmpuint (members->len, ==, 1);
+    g_assert_cmpuint (g_array_index (members, guint64, 0), ==, 101);
+    g_clear_pointer (&members, g_array_unref);
+
+    /* back to a party: the members in subgroup 8 move down */
+    g_assert_true (lrg_mmo_group_remove (group, 20, 103, &error));
+    g_assert_true (lrg_mmo_group_remove (group, 20, 100, &error));
+    g_assert_true (lrg_mmo_group_set_capacity (group, 20, 5, &error));
+    g_assert_cmpuint (lrg_mmo_group_get_subgroup_count (group), ==, 1);
+    g_assert_cmpuint (lrg_mmo_group_get_subgroup (group, 101), ==, 1);
+    g_assert_true (lrg_mmo_group_set_subgroup_size (group, 20, 0, &error));
+    g_assert_cmpuint (lrg_mmo_group_get_subgroup (group, 101), ==, 0);
+    g_assert_cmpuint (lrg_mmo_group_get_capacity (group), ==, 5);
+
+    /* a closed group refuses everything */
+    members = lrg_mmo_group_get_members (group);
+    for (id = 0; id < members->len; id++)
+        g_assert_true (lrg_mmo_group_remove (group, g_array_index (members, guint64, id),
+                                             g_array_index (members, guint64, id), &error));
+    g_assert_false (lrg_mmo_group_invite (group, 0, 5, 100, &error));
+    assert_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_group_accept (group, 5, 0, &error));
+    assert_error (&error, G_IO_ERROR_NOT_FOUND);
+    g_assert_no_error (error);
+}
+
 static GVariant *
 changes (const gchar *key,
          guint64      revision,
@@ -353,6 +447,7 @@ main (int argc, char **argv)
     g_test_add_func ("/mmo/replication/motion", test_replication_motion);
     g_test_add_func ("/mmo/replication/budget", test_replication_budget);
     g_test_add_func ("/mmo/group/membership", test_group);
+    g_test_add_func ("/mmo/group/raid", test_group_raid);
     g_test_add_func ("/mmo/store/transaction", test_store_transaction);
     g_test_add_func ("/mmo/store/persistence", test_store_persistence);
     g_test_add_func ("/mmo/store/validation", test_store_validation);
