@@ -157,6 +157,12 @@ The OpenXR backend binds to the GL context current at =initialize()= (GLX throug
 
 =lrg_openxr_service_probe (app_name, &runtime, &system, &error)= checks without a GL context and without a session that a headset can be used: an OpenXR build, an active runtime (the loader's =active_runtime.json= or =XR_RUNTIME_JSON=), OpenGL or EGL support and a head-mounted display system.  It fails with =LRG_VR_ERROR_NOT_AVAILABLE= (no build, no runtime, no GL) or =LRG_VR_ERROR_HMD_NOT_FOUND= (a runtime with no headset connected), so a game can refuse =--vr= before opening its window.
 
+*** Drawing a UI panel
+:PROPERTIES:
+:CUSTOM_ID: lrg-vr-draw-quad
+:END:
+=lrg_vr_draw_quad (texture, centre, right, up, flip_v, tint)= draws a textured quad with corners =centre +- right +- up= into the current camera, both faces, flushing the batch: the panel a VR game shows its 2D interface on.  Draw the interface into a =GrlRenderTexture= each frame, then in every eye's view call it with that render texture's texture and =flip_v= =TRUE= (render textures are stored bottom up).  It needs a GL context; =right= and =up= are half extents, so a 1.6 m wide panel passes a =right= of length 0.8.
+
 *** LrgVRComfortSettings
 :PROPERTIES:
 :CUSTOM_ID: lrgvrcomfortsettings
