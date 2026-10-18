@@ -83,6 +83,14 @@ test_model_lines (void)
     g_assert_cmpuint (lrg_tooltip_line_get_right_color (lrg_tooltip_get_line (tip, 1)), ==, 0xC0C0C0FFu);
     g_assert_null (lrg_tooltip_get_line (tip, 6));
 
+    /* a text line given a right side becomes a double line */
+    line = lrg_tooltip_get_line (tip, 0);
+    lrg_tooltip_line_set_kind (line, LRG_TOOLTIP_LINE_DOUBLE);
+    lrg_tooltip_line_set_right (line, "R");
+    g_assert_cmpint (lrg_tooltip_line_get_kind (line), ==, LRG_TOOLTIP_LINE_DOUBLE);
+    lrg_tooltip_line_set_kind (line, LRG_TOOLTIP_LINE_TEXT);
+    lrg_tooltip_line_set_right (line, NULL);
+
     /* find, replace, insert, remove */
     g_assert_cmpint (lrg_tooltip_find_line (tip, "name"), ==, 0);
     g_assert_cmpint (lrg_tooltip_find_line (tip, "nope"), ==, -1);

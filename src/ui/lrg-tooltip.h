@@ -94,6 +94,17 @@ LRG_AVAILABLE_IN_ALL
 LrgTooltipLineKind lrg_tooltip_line_get_kind (const LrgTooltipLine *self);
 
 /**
+ * lrg_tooltip_line_set_kind:
+ * @self: a #LrgTooltipLine
+ * @kind: the new kind
+ *
+ * Changes what the line shows (a text line given a right text becomes a
+ * double line); the texts, colours and id stay.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_tooltip_line_set_kind (LrgTooltipLine *self, LrgTooltipLineKind kind);
+
+/**
  * lrg_tooltip_line_get_left:
  * @self: a #LrgTooltipLine
  *

@@ -98,6 +98,13 @@ lrg_tooltip_line_get_kind (const LrgTooltipLine *self)
     return self->kind;
 }
 
+void
+lrg_tooltip_line_set_kind (LrgTooltipLine *self, LrgTooltipLineKind kind)
+{
+    g_return_if_fail (self != NULL);
+    self->kind = kind;
+}
+
 const gchar *
 lrg_tooltip_line_get_left (const LrgTooltipLine *self)
 {
