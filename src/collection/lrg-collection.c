@@ -19,8 +19,8 @@
 #endif
 #include "collection/lrg-collection.h"
 
-/* Number of LrgCollectibleKind values (MOUNT, PET, TITLE, TOY). */
-#define COLLECTION_N_KINDS ((guint)LRG_COLLECTIBLE_KIND_TOY + 1)
+/* Number of LrgCollectibleKind values (MOUNT, PET, TITLE, TOY, APPEARANCE). */
+#define COLLECTION_N_KINDS ((guint)LRG_COLLECTIBLE_KIND_APPEARANCE + 1)
 
 typedef struct
 {

@@ -22,7 +22,7 @@ The Collection module models the things a character collects in an MMO — mount
 :PROPERTIES:
 :CUSTOM_ID: kinds
 :END:
-=LrgCollectibleKind= has four values: =MOUNT=, =PET=, =TITLE= and =TOY=. A definition's kind is construct-only. =LrgMountDef= instances always report =MOUNT= and =LrgPetDef= instances always report =PET=, even if a different =kind= was passed to =g_object_new()= (the subclass pins it in =constructed=). Titles and toys use the plain =LrgCollectibleDef=.
+=LrgCollectibleKind= has five values: =MOUNT=, =PET=, =TITLE=, =TOY= and =APPEARANCE= (a wearable look collected for transmogrification; added for librefall's appearance collection, it has no definition class: games key their own look ids). A definition's kind is construct-only. =LrgMountDef= instances always report =MOUNT= and =LrgPetDef= instances always report =PET=, even if a different =kind= was passed to =g_object_new()= (the subclass pins it in =constructed=). Titles, toys and appearances use the plain =LrgCollectibleDef=.
 
 *** Ownership versus definition
 :PROPERTIES:
