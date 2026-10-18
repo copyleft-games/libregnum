@@ -269,6 +269,37 @@ LrgBonePose *   lrg_bone_pose_multiply          (const LrgBonePose  *parent,
                                                  const LrgBonePose  *local);
 
 /**
+ * lrg_bone_pose_compose:
+ * @parent: the parent's world pose
+ * @local: the child's pose relative to the parent
+ *
+ * The hierarchical composition parent * local: the child's position is
+ * scaled and rotated by the parent before the parent's position is
+ * added, rotations multiply and scales multiply (component-wise, so
+ * exact for uniform scale). This is what a bone chain's world pose is;
+ * lrg_bone_pose_multiply() keeps its older translation-only behaviour for
+ * additive layers.
+ *
+ * Returns: (transfer full): a new composed pose
+ */
+LRG_AVAILABLE_IN_ALL
+LrgBonePose *   lrg_bone_pose_compose           (const LrgBonePose  *parent,
+                                                 const LrgBonePose  *local);
+
+/**
+ * lrg_bone_pose_to_matrix:
+ * @self: A #LrgBonePose
+ * @out_matrix: (array fixed-size=16) (out caller-allocates): the
+ *   column-major matrix translation * rotation * scale
+ *
+ * Converts the pose to a 4x4 matrix (the rotation quaternion is
+ * normalised first).
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_bone_pose_to_matrix         (const LrgBonePose  *self,
+                                                 gfloat             *out_matrix);
+
+/**
  * lrg_bone_pose_normalize_rotation:
  * @self: A #LrgBonePose
  *

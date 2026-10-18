@@ -129,6 +129,79 @@ void                lrg_lightning_set_color             (LrgLightning *self,
                                                          guint8        g,
                                                          guint8        b);
 
+/* Distance-delayed thunder */
+
+/**
+ * lrg_lightning_set_thunder_from_distance:
+ * @self: A #LrgLightning
+ * @enabled: %TRUE to delay every thunder by its strike's distance over
+ *   %LRG_SPEED_OF_SOUND (lrg_celestial_thunder_delay()) instead of the
+ *   thunder delay; random strikes then land between half and one and a
+ *   half times the bolt distance away, so near strikes rumble at once
+ *   and far ones seconds later
+ *
+ * Thunders travel independently: a new strike does not cancel the
+ * thunder of the previous one (up to 8 are in the air).
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_lightning_set_thunder_from_distance (LrgLightning *self,
+                                                             gboolean      enabled);
+
+/**
+ * lrg_lightning_get_thunder_from_distance:
+ * @self: A #LrgLightning
+ *
+ * Returns: whether thunder is delayed by distance
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_lightning_get_thunder_from_distance (LrgLightning *self);
+
+/**
+ * lrg_lightning_strike_at:
+ * @self: A #LrgLightning
+ * @distance: horizontal distance of the bolt from the camera, world
+ *   units (metres)
+ * @bearing: radians around the camera: 0 along +X, pi/2 along +Z
+ *
+ * A strike now at a chosen place (a distant storm on the horizon),
+ * even while flashing.  Its thunder follows by distance when thunder
+ * from distance is on, else after the thunder delay.  Invalid values
+ * are ignored.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_lightning_strike_at             (LrgLightning *self,
+                                                         gfloat        distance,
+                                                         gfloat        bearing);
+
+/**
+ * lrg_lightning_get_strike_distance:
+ * @self: A #LrgLightning
+ *
+ * Returns: the horizontal distance of the latest strike
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat              lrg_lightning_get_strike_distance   (LrgLightning *self);
+
+/**
+ * lrg_lightning_get_thunder_distance:
+ * @self: A #LrgLightning
+ *
+ * Read in a #LrgLightning::thunder handler to scale the sound.
+ *
+ * Returns: the distance of the strike whose thunder was heard last
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat              lrg_lightning_get_thunder_distance  (LrgLightning *self);
+
+/**
+ * lrg_lightning_get_pending_thunder_count:
+ * @self: A #LrgLightning
+ *
+ * Returns: distance-delayed thunders not heard yet
+ */
+LRG_AVAILABLE_IN_ALL
+guint               lrg_lightning_get_pending_thunder_count (LrgLightning *self);
+
 /* Flash level and bolt */
 
 /**

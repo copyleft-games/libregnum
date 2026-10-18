@@ -14,6 +14,7 @@
 #include <string.h>
 #include <raylib.h>
 #include <raymath.h>
+#include <rlgl.h>
 
 /**
  * SECTION:lrg-camera3d
@@ -62,6 +63,7 @@ typedef struct
 	gfloat            up_z;
 	gfloat            fovy;
 	LrgProjectionType projection;
+	gfloat            aspect;      /* 0: the target's own */
 } LrgCamera3DPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgCamera3D, lrg_camera3d, LRG_TYPE_CAMERA)
@@ -80,6 +82,7 @@ enum
 	PROP_UP_Z,
 	PROP_FOVY,
 	PROP_PROJECTION,
+	PROP_ASPECT,
 	N_PROPS
 };
 
@@ -151,6 +154,29 @@ lrg_camera3d_begin (LrgCamera *camera)
 
 	lrg_camera3d_sync_to_grl (self);
 	grl_camera3d_begin (priv->grl_camera);
+
+	/*
+	 * raylib's BeginMode3D takes the aspect from the bound target; with
+	 * an override the perspective frustum is loaded again with the same
+	 * field of view and cull distances, so a view drawn into a target of
+	 * another shape (non-square pixels) is stretched back undistorted.
+	 */
+	if (priv->aspect > 0.0f && priv->projection == LRG_PROJECTION_PERSPECTIVE)
+	{
+		gdouble near_plane;
+		gdouble far_plane;
+		gdouble top;
+		gdouble right;
+
+		near_plane = rlGetCullDistanceNear ();
+		far_plane = rlGetCullDistanceFar ();
+		top = near_plane * tan ((gdouble)priv->fovy * 0.5 * DEG2RAD);
+		right = top * (gdouble)priv->aspect;
+		rlMatrixMode (RL_PROJECTION);
+		rlLoadIdentity ();
+		rlFrustum (-right, right, -top, top, near_plane, far_plane);
+		rlMatrixMode (RL_MODELVIEW);
+	}
 }
 
 static void
@@ -265,6 +291,9 @@ lrg_camera3d_get_property (GObject    *object,
 	case PROP_PROJECTION:
 		g_value_set_enum (value, priv->projection);
 		break;
+	case PROP_ASPECT:
+		g_value_set_float (value, priv->aspect);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -315,6 +344,9 @@ lrg_camera3d_set_property (GObject      *object,
 		break;
 	case PROP_PROJECTION:
 		priv->projection = g_value_get_enum (value);
+		break;
+	case PROP_ASPECT:
+		lrg_camera3d_set_aspect (self, g_value_get_float (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -417,6 +449,19 @@ lrg_camera3d_class_init (LrgCamera3DClass *klass)
 		                   LRG_TYPE_PROJECTION_TYPE,
 		                   LRG_PROJECTION_PERSPECTIVE,
 		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+	/**
+	 * LrgCamera3D:aspect:
+	 *
+	 * The perspective projection's width over height; 0 takes the bound
+	 * target's own (raylib's default).
+	 */
+	properties[PROP_ASPECT] =
+		g_param_spec_float ("aspect",
+		                    "Aspect",
+		                    "Projection aspect ratio (0: the target's)",
+		                    0.0f, 16.0f, 0.0f,
+		                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
@@ -622,6 +667,36 @@ lrg_camera3d_set_projection (LrgCamera3D       *self,
 	priv->projection = projection;
 
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PROJECTION]);
+}
+
+gfloat
+lrg_camera3d_get_aspect (LrgCamera3D *self)
+{
+	LrgCamera3DPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_CAMERA3D (self), 0.0f);
+
+	priv = lrg_camera3d_get_instance_private (self);
+	return priv->aspect;
+}
+
+void
+lrg_camera3d_set_aspect (LrgCamera3D *self,
+                         gfloat       aspect)
+{
+	LrgCamera3DPrivate *priv;
+
+	g_return_if_fail (LRG_IS_CAMERA3D (self));
+
+	priv = lrg_camera3d_get_instance_private (self);
+	/* anything not a positive finite ratio is "the target's own" */
+	if (!isfinite (aspect) || aspect <= 0.0f)
+		aspect = 0.0f;
+	aspect = MIN (aspect, 16.0f);
+	if (priv->aspect == aspect)
+		return;
+	priv->aspect = aspect;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ASPECT]);
 }
 
 /* ==========================================================================

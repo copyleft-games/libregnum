@@ -99,8 +99,9 @@ lrg_skeleton_real_calculate_world_poses (LrgSkeleton *self)
             parent_world = lrg_bone_get_world_pose (parent);
             local = lrg_bone_get_local_pose (bone);
 
-            /* Combine parent world pose with local pose */
-            combined = lrg_bone_pose_multiply (parent_world, local);
+            /* Combine parent world pose with local pose: the child's
+             * offset is rotated and scaled by the parent */
+            combined = lrg_bone_pose_compose (parent_world, local);
             lrg_bone_set_world_pose (bone, combined);
             lrg_bone_pose_free (combined);
 

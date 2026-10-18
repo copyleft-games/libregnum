@@ -1,0 +1,51 @@
+#+title: MIDI out: LrgMidiOutput, LrgMidiOutputBuffer, LrgMidiOutputAlsa, LrgMidiSequencer
+#+description: Sending a game's MIDI music to an external synthesizer: the abstract output, a recording output for tests, the ALSA sequencer backend (optional at build time) and a real-time Standard MIDI File sequencer with look-ahead scheduling
+
+* Overview
+
+=LrgMidiSynth= renders MIDI music itself through a SoundFont.  Players with a hardware synthesizer (a Roland module behind a USB MIDI interface) or a software one (FluidSynth, TiMidity++, Munt) want the MIDI stream instead.  =LrgMidiSequencer= plays the same Standard MIDI Files, with the same validated parser (tempo map, =loopStart= / =loopEnd= markers), into an =LrgMidiOutput=:
+
+- =LrgMidiOutput= (abstract): one validated MIDI message at a time, with a delay;
+- =LrgMidiOutputBuffer=: records what it is sent and when (tests, tools);
+- =LrgMidiOutputAlsa=: a port of the ALSA sequencer (Linux).
+
+* LrgMidiOutput
+
+| Member | Purpose |
+|--------+---------|
+| =send (message, length, delay)= (vfunc) | deliver one complete message =delay= seconds from now |
+| =flush ()= (vfunc) | drop what is scheduled and not delivered yet |
+| =lrg_midi_output_send()= | the checked entry point: a status byte first, exactly the length the status implies (channel messages, system common and real-time bytes; no SysEx), data bytes below 0x80; anything else is refused before a backend sees it |
+| =note_on= / =note_off= / =control_change= / =program_change= / =pitch_bend= | the channel messages |
+| =all_notes_off()= | flush, then Sustain off (CC 64), All Notes Off (CC 123) and All Sound Off (CC 120) on all 16 channels |
+| =get_sent_count()= | messages accepted |
+
+* LrgMidiOutputBuffer
+
+Keeps every message with its due time: the buffer's clock (=set_clock=) plus the delay.  A flush drops the messages due after the clock, as a real output drops what it has not played yet.  =get_count=, =get_message (index, &status, &data1, &data2, &time)=, =count_status (kind)= (a note on with velocity 0 counts as a note off), =get_flush_count=, =clear=.
+
+* LrgMidiOutputAlsa
+
+Built when pkg-config finds =alsa= (Fedora: =alsa-lib-devel=; =make ALSA=0= turns it off); without it the type exists, =lrg_midi_output_alsa_is_available()= is =FALSE= and the constructor fails with =LRG_MIDI_OUTPUT_ERROR_UNSUPPORTED=.
+
+- =lrg_midi_output_alsa_new (port)=: opens a sequencer client named =libregnum=, creates an output port and connects it to =port=: =client:port= numbers (=128:0=), a client name or prefix (=FLUID Synth=, =TiMidity:0=, parsed by =snd_seq_parse_address()=), or =auto= for the first port that accepts output, software and hardware synthesizers before the kernel's Midi Through.  Errors: =NOT_FOUND= for an unknown port, =FAILED= when the sequencer refuses.
+- Messages with a delay are scheduled on the client's own real-time queue (relative time), so the timing does not depend on when the game's frame runs; without a delay they go direct.  A flush drops the client's pending output and removes its events from the queue.
+- =lrg_midi_output_alsa_list_ports()=: =client:port client name:port name= lines; =get_destination()=: the connected =client:port=.
+
+* LrgMidiSequencer
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_midi_sequencer_new (output)= | a sequencer without a song |
+| =play (smf, loop)= | silence the current song and start this one; a malformed file fails with =LRG_MIDI_SYNTH_ERROR_INVALID= and the current song plays on |
+| =stop= | drop the song, silence the output |
+| =advance (seconds)= | move the clock and send what is due (call every frame) |
+| =is_playing= / =is_finished= / =get_position= / =get_length= / =get_loop_points= | state |
+| =set_volume= / =get_volume= | scales the song's CC 7 values and resends them on the channels in use |
+| =set_lookahead= / =get_lookahead= | 0 .. 1 s |
+
+=advance()= sends every event at or before clock + look-ahead, each with the delay event time - clock (0 when it is already due, at most a frame late without a look-ahead).  With a loop the dispatch stops before the loop end until the clock reaches it; then the notes of the channels in use are released (CC 123), the clock wraps by the loop's length and the cursor jumps to the loop start.  TinyMidiLoader stores event times truncated to whole milliseconds while the markers are exact, so the seam is matched with a 1 ms tolerance (an event on a marker belongs to the bars after it).  A song without a loop finishes after its last event and releases its notes.
+
+* Tests
+
+=tests/test-midi-output.c=: the helpers build the right bytes and malformed messages are refused; a flush drops what is not due and all-notes-off covers 16 channels; the ALSA output fails cleanly for a port that cannot exist (or reports a build without ALSA); a four-note song advanced in 60 Hz frames sends every note within a frame of its time and finishes; with a 0.6 s look-ahead the second note is handed over at once with its exact time, and stopping drops it; a loop over two notes replays its first note at every wrap, releases the channel each time and never plays past the loop; the volume scales CC 7 and resends it; malformed files leave the current song playing.

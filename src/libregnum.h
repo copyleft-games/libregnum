@@ -85,9 +85,16 @@
 #include "graphics/lrg-gltf-geometry.h"
 #include "graphics/lrg-model-animator.h"
 #include "graphics/lrg-static-batch.h"
+#include "graphics/lrg-terrain-detail.h"
+#include "graphics/lrg-water-surface.h"
+#include "graphics/lrg-grass-field.h"
+#include "graphics/lrg-tree-mesh.h"
+#include "graphics/lrg-horizon-ring.h"
+#include "graphics/lrg-skinned-mesh.h"
 #include "graphics/lrg-billboard-batch.h"
 #include "graphics/lrg-terrain.h"
 #include "graphics/lrg-sky-dome.h"
+#include "graphics/lrg-sky-bodies.h"
 #include "graphics/lrg-light-set.h"
 #include "graphics/lrg-texture-sampling.h"
 #include "imageedit/lrg-image-layer.h"
@@ -233,6 +240,13 @@
 #include "audio/lrg-audio-mixer.h"
 #include "audio/lrg-procedural-audio.h"
 #include "audio/lrg-midi-synth.h"
+#include "audio/lrg-audio-effect.h"
+#include "audio/lrg-reverb.h"
+#include "audio/lrg-low-pass.h"
+#include "audio/lrg-sound-bed.h"
+#include "audio/lrg-midi-output.h"
+#include "audio/lrg-midi-output-alsa.h"
+#include "audio/lrg-midi-sequencer.h"
 
 /* Inventory module */
 #include "inventory/lrg-item-def.h"
@@ -251,6 +265,7 @@
 #include "pathfinding/lrg-nav-grid.h"
 #include "pathfinding/lrg-pathfinder.h"
 #include "pathfinding/lrg-nav-mesh.h"
+#include "pathfinding/lrg-nav-poly-mesh.h"
 
 /* AI module */
 #include "ai/lrg-blackboard.h"
@@ -457,11 +472,14 @@
 #include "postprocess/lrg-post-effect.h"
 #include "postprocess/lrg-post-processor.h"
 #include "postprocess/effects/lrg-vignette.h"
+#include "postprocess/effects/lrg-heat-haze.h"
 #include "postprocess/effects/lrg-bloom.h"
 #include "postprocess/effects/lrg-film-grain.h"
 #include "postprocess/effects/lrg-screen-shake.h"
 #include "postprocess/effects/lrg-colorblind-filter.h"
+#include "postprocess/lrg-color-lut.h"
 #include "postprocess/effects/lrg-color-grade.h"
+#include "postprocess/effects/lrg-palettize.h"
 #include "postprocess/effects/lrg-fxaa.h"
 
 /* Animation module (Phase 3) */
@@ -546,6 +564,11 @@
 #include "weather/lrg-weather.h"
 #include "weather/lrg-day-night-cycle.h"
 #include "weather/lrg-weather-manager.h"
+#include "weather/lrg-celestial.h"
+#include "weather/lrg-cloud-layer.h"
+#include "weather/lrg-snow-cover.h"
+#include "weather/lrg-weather-field.h"
+#include "weather/lrg-ground-overlay.h"
 
 /* Lighting module (Phase 4) */
 #include "lighting/lrg-shadow-caster.h"
@@ -554,6 +577,7 @@
 #include "lighting/lrg-spot-light2d.h"
 #include "lighting/lrg-directional-light2d.h"
 #include "lighting/lrg-shadow-map.h"
+#include "lighting/lrg-shadow-renderer.h"
 #include "lighting/lrg-lightmap.h"
 #include "lighting/lrg-light-probe.h"
 #include "lighting/lrg-lighting-manager.h"
@@ -635,6 +659,7 @@
 #include "vr/lrg-vr-stub.h"
 #include "vr/lrg-vr-comfort.h"
 #include "vr/lrg-openxr-service.h"
+#include "vr/lrg-vr-draw.h"
 
 /* Template module - Base game templates for rapid development */
 #include "template/lrg-game-template.h"

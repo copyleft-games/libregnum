@@ -189,6 +189,69 @@ lrg_billboard_batch_set_tint (LrgBillboardBatch *self,
                               const GrlColor    *tint);
 
 /**
+ * lrg_billboard_batch_set_sway:
+ * @self: an #LrgBillboardBatch
+ * @index: a billboard index
+ * @weight: how much the wind bends this billboard, 0 (rigid, the
+ *   default) .. 1; quantized to 1/255
+ *
+ * Plants and trees sway; signs and lamps do not.  The corners above the
+ * pivot move downwind (lrg_billboard_batch_set_wind()) by their height
+ * above it times the weight; both draw paths and
+ * lrg_billboard_batch_get_corners() agree.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_billboard_batch_set_sway (LrgBillboardBatch *self,
+                              guint              index,
+                              gfloat             weight);
+
+/**
+ * lrg_billboard_batch_get_sway:
+ * @self: an #LrgBillboardBatch
+ * @index: a billboard index
+ *
+ * Returns: the sway weight
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_billboard_batch_get_sway (LrgBillboardBatch *self,
+                              guint              index);
+
+/**
+ * lrg_billboard_batch_set_wind:
+ * @self: an #LrgBillboardBatch
+ * @direction_x: downwind direction, x (normalized; zero is calm)
+ * @direction_z: downwind direction, z
+ * @lean: steady bend per metre of height (0.05 is a breeze)
+ * @gust: oscillating bend per metre of height on top of the lean
+ * @frequency: radians per second of the oscillation
+ *
+ * The wind the swaying billboards bend in: a corner h metres above the
+ * pivot moves (lean + gust sin (time x frequency + phase)) x weight x h
+ * downwind, the phase varying with the billboard's position so a wood
+ * does not wave in step.  Non-finite values are ignored.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_billboard_batch_set_wind (LrgBillboardBatch *self,
+                              gfloat             direction_x,
+                              gfloat             direction_z,
+                              gfloat             lean,
+                              gfloat             gust,
+                              gfloat             frequency);
+
+/**
+ * lrg_billboard_batch_set_wind_time:
+ * @self: an #LrgBillboardBatch
+ * @seconds: the sway clock (any running time; folded to an hour)
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_billboard_batch_set_wind_time (LrgBillboardBatch *self,
+                                   gdouble            seconds);
+
+/**
  * lrg_billboard_batch_set_visible:
  * @self: an #LrgBillboardBatch
  * @index: a billboard index
