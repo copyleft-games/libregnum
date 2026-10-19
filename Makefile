@@ -1965,7 +1965,12 @@ $(OBJECTS): $(CFLAGS_STAMP)
 $(OBJDIR)/src/%.o: src/%.c | $(OBJDIR)
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
-	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+	@$(CC) $(LIB_CFLAGS) -MMD -MP -c -o $@ $<
+
+# Header dependencies: the compiler writes one .d file per object (-MMD -MP
+# above, system headers left out), so editing a header (a private one included)
+# rebuilds every object that includes it.
+-include $(DEPENDS)
 
 # The vendored, unmodified TinySoundFont / TinyMidiLoader single headers
 # (src/audio/vendor/) are compiled in this one translation unit only.  They
