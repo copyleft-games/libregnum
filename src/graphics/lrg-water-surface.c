@@ -160,6 +160,7 @@ typedef struct
     guint    rows;
     gfloat  *positions;   /* (columns + 1) * (rows + 1) * 3 */
     gfloat  *foam;        /* one per vertex */
+    guint8  *cells;       /* columns * rows wet flags (heightfields), NULL: all */
     Mesh     mesh;
     gboolean uploaded;
 } Patch;
@@ -233,6 +234,7 @@ patch_free (gpointer data)
     }
     g_free (patch->positions);
     g_free (patch->foam);
+    g_free (patch->cells);
     g_free (patch);
 }
 
@@ -624,6 +626,86 @@ lrg_water_surface_add_grid (LrgWaterSurface   *self,
     return TRUE;
 }
 
+/* patch_triangles: the triangles a patch draws (2 per wet cell) */
+static guint
+patch_triangles (const Patch *p)
+{
+    guint n;
+    guint k;
+
+    if (p->cells == NULL)
+        return p->columns * p->rows * 2;
+    n = 0;
+    for (k = 0; k < p->columns * p->rows; k++)
+        n += p->cells[k] != 0 ? 2 : 0;
+    return n;
+}
+
+gboolean
+lrg_water_surface_add_heightfield (LrgWaterSurface   *self,
+                                   gfloat             x0,
+                                   gfloat             z0,
+                                   gfloat             x1,
+                                   gfloat             z1,
+                                   guint              columns,
+                                   guint              rows,
+                                   const gfloat      *heights,
+                                   const guint8      *cells,
+                                   LrgWaterFoamFunc   foam_func,
+                                   gpointer           user_data,
+                                   GError           **error)
+{
+    Patch  *patch;
+    guint64 n;
+    guint   k;
+    guint   wet;
+
+    g_return_val_if_fail (LRG_IS_WATER_SURFACE (self), FALSE);
+    g_return_val_if_fail (heights != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    n = (guint64)(columns + 1) * (guint64)(rows + 1);
+    if (columns == 0 || rows == 0 || n > LRG_WATER_SURFACE_MAX_PATCH_VERTICES)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                     "water patch of %u x %u cells: 1 .. %u vertices allowed",
+                     columns, rows, (guint)LRG_WATER_SURFACE_MAX_PATCH_VERTICES);
+        return FALSE;
+    }
+    for (k = 0; k < (guint)n; k++)
+    {
+        if (!isfinite (heights[k]))
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                         "water heightfield: height %u is not finite", k);
+            return FALSE;
+        }
+    }
+    wet = columns * rows;
+    if (cells != NULL)
+    {
+        wet = 0;
+        for (k = 0; k < columns * rows; k++)
+            wet += cells[k] != 0 ? 1u : 0u;
+    }
+    if (wet == 0)
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                             "water heightfield has no wet cell");
+        return FALSE;
+    }
+    /* the grid's corners and checks, then the heights over the plane */
+    if (!lrg_water_surface_add_grid (self, x0, z0, x1, z1, 0.0f, columns, rows, foam_func,
+                                     user_data, error))
+        return FALSE;
+    patch = g_ptr_array_index (self->patches, self->patches->len - 1);
+    for (k = 0; k < (guint)n; k++)
+        patch->positions[k * 3 + 1] = heights[k];
+    if (cells != NULL)
+        patch->cells = g_memdup2 (cells, (gsize)columns * rows);
+    return TRUE;
+}
+
 guint
 lrg_water_surface_get_patch_count (LrgWaterSurface *self)
 {
@@ -662,7 +744,7 @@ lrg_water_surface_get_triangle_count (LrgWaterSurface *self)
     {
         Patch *p = g_ptr_array_index (self->patches, i);
 
-        sum += p->columns * p->rows * 2;
+        sum += patch_triangles (p);
     }
     return sum;
 }
@@ -744,7 +826,7 @@ upload_patch (Patch *patch)
     n = (patch->columns + 1) * (patch->rows + 1);
     memset (&patch->mesh, 0, sizeof (patch->mesh));
     patch->mesh.vertexCount = (gint)n;
-    patch->mesh.triangleCount = (gint)(patch->columns * patch->rows * 2);
+    patch->mesh.triangleCount = (gint)patch_triangles (patch);
     patch->mesh.vertices = MemAlloc (sizeof (gfloat) * 3 * n);
     patch->mesh.texcoords = MemAlloc (sizeof (gfloat) * 2 * n);
     patch->mesh.colors = MemAlloc (4 * n);
@@ -769,6 +851,9 @@ upload_patch (Patch *patch)
             gushort d = (gushort)(a + patch->columns + 1);
             gushort e = (gushort)(d + 1);
 
+            /* a heightfield draws its wet cells only */
+            if (patch->cells != NULL && patch->cells[r * patch->columns + c] == 0)
+                continue;
             patch->mesh.indices[t++] = a;
             patch->mesh.indices[t++] = d;
             patch->mesh.indices[t++] = e;

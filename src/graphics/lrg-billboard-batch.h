@@ -19,6 +19,7 @@
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
 #include "lrg-light-set.h"
+#include "../lighting/lrg-shadow-renderer.h"
 
 G_BEGIN_DECLS
 
@@ -346,6 +347,56 @@ lrg_billboard_batch_set_light_set (LrgBillboardBatch *self,
 LRG_AVAILABLE_IN_ALL
 LrgLightSet *
 lrg_billboard_batch_get_light_set (LrgBillboardBatch *self);
+
+/**
+ * lrg_billboard_batch_set_receive_shadows:
+ * @self: an #LrgBillboardBatch
+ * @receive: %TRUE to darken the batch's GPU quads by the light set's sun
+ *   shadow map and cloud shadows
+ *
+ * Off by default.  A quad's tint is lit at its centre; with this on the
+ * fragment shader takes the sun's share of that light away where the
+ * shadow map (lrg_light_set_set_shadow_renderer()) hides the fragment
+ * and where a cloud's shadow (lrg_light_set_set_ground_overlay()) lies.
+ * Only the settled GPU quads receive; the loose ones (actors that move
+ * every frame) keep their plain tint.  Snow is not laid over upright
+ * quads.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_billboard_batch_set_receive_shadows (LrgBillboardBatch *self,
+                                         gboolean           receive);
+
+/**
+ * lrg_billboard_batch_get_receive_shadows:
+ * @self: an #LrgBillboardBatch
+ *
+ * Returns: whether the batch receives shadows
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_billboard_batch_get_receive_shadows (LrgBillboardBatch *self);
+
+/**
+ * lrg_billboard_batch_draw_shadow:
+ * @self: an #LrgBillboardBatch
+ * @renderer: the #LrgShadowRenderer whose pass is open
+ * @camera_position: the viewer (in the batch's space), for the cascades'
+ *   far stand-in of the sun
+ *
+ * Draws the batch as a shadow caster inside an open pass
+ * (lrg_shadow_renderer_begin_pass()): every quad stands upright facing
+ * the light (a cube face faces its light, a cascade the sun's side, the
+ * batch's mode aside), cut out by its texture's alpha, written as the
+ * caster shader does.  Settled quads go through the GPU path with the
+ * wind sway; loose ones are rebuilt as in lrg_billboard_batch_draw().
+ * Does nothing outside a pass.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_billboard_batch_draw_shadow (LrgBillboardBatch *self,
+                                 LrgShadowRenderer *renderer,
+                                 const GrlVector3  *camera_position);
 
 /**
  * lrg_billboard_batch_set_lit:

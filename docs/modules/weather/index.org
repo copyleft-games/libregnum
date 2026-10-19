@@ -477,3 +477,9 @@ Tests (=tests/test-weather-render.c=, with a display): =/weather-render/draw/gro
 | =src/graphics/lrg-light-set.h=      | Fog for the lighting shader (=set_fog()=) |
 | =tests/test-weather-render.c=       | Renderer, fog and manager tests; cloud, moon and overlay readbacks |
 | =tests/test-sky-weather.c=          | Celestial maths, thunder delay, field, snow, clouds, sway, sky bodies |
+
+** LrgCloudLayer as a volume (gaps G8)
+:PROPERTIES:
+:CUSTOM_ID: cloud-volume
+:END:
+=lrg_cloud_layer_set_volume (TRUE)= (off by default) raymarches the deck instead of drawing slices: one quad deck at the base altitude, and the fragment shader marches 12 samples through the deck along the eye ray.  Each sample's density is the slices' (coverage thinning with height) times a vertical profile that rounds the tops and lifts the bases, absorbs by Beer's law along the ray's path length (a grazing ray crosses more cloud) and is lit by the density one step toward the sun; the colour is accumulated front to back with the transmittance, output as a straight-alpha colour.  =lrg_cloud_layer_sample_volume()= is the same arithmetic on the CPU (the tests: clear at coverage 0, overcast hides a vertical ray, coverage never hides less, a base below the eye and non-finite rays give 0).  Without GLSL 330 the slices are drawn.  The CPU density used for the ground's cloud shadows is unchanged.

@@ -77,9 +77,28 @@ Everything is decoded and checked when the object is created, so the getters nev
 - buffer views lie inside their buffers; accessors (offset + stride * (count - 1) + element size) inside their views; the stride is at least one element;
 - attribute accessors have the right component count and the same element count as =POSITION=; every index is below the vertex count; values are finite;
 - accessor counts are capped at =LRG_GLTF_GEOMETRY_MAX_VERTICES= (16 777 216);
-- Draco (on a primitive or in =extensionsRequired=), meshopt compression and sparse accessors are =LRG_GLTF_ERROR_UNSUPPORTED=;
+- =EXT_meshopt_compression= buffer views are decoded while the views are read (=lrg_meshopt_decode()=, below): each compressed view gets a buffer of its own and the fallback buffer (no =uri=, marked =fallback=) is a zero-filled placeholder, so the accessors read the decoded data as if the file were plain;
+- Draco (on a primitive or in =extensionsRequired=) and sparse accessors are =LRG_GLTF_ERROR_UNSUPPORTED=: a Draco decoder (edgebreaker connectivity, prediction schemes, rANS entropy coding) is a project of its own, so a game falls back to its plain model;
 - all reads go through =memcpy= with little-endian conversion: unaligned data is fine.
 =tests/test-gltf-geometry.c= covers placement, mirroring, scene choice, strips, fans and lines, every URI kind and the refusals, an embedded PNG, malformed files with their error codes, every truncation of a valid GLB and 2 000 random byte flips.
+
+** Rigging: skins, animations and morph targets
+:PROPERTIES:
+:CUSTOM_ID: rigging
+:END:
+The reader keeps the whole node graph, the skins (joints and inverse bind matrices, a =MAT4= accessor), the clips (translation, rotation, scale and weights channels with =LINEAR=, =STEP= and =CUBICSPLINE= samplers) and the primitives' =JOINTS_0=, =WEIGHTS_0= and morph targets (=POSITION= and =NORMAL= deltas, the mesh's and node's default weights).  A file with none of them keeps no extra data.
+
+- =lrg_gltf_geometry_is_animated()=, =get_animation_count/name/duration()=, =get_skin_count()=, =get_primitive_skin()=, =get_primitive_morph_target_count()=;
+- =lrg_gltf_geometry_pose (animation, time, loop)= evaluates a clip (-1: the rest pose) over the node graph and the skin matrices; rotations are spherical, cubic splines Hermite, a clip's time wraps with =loop= or clamps at the end;
+- =lrg_gltf_geometry_get_posed (primitive, positions, normals)= gives the primitive in scene space: the morph targets mixed with their weights, then skinned (the weights renormalised; a skinned mesh's own node transform is ignored, as the specification says) or placed by its node;
+- the static getters (=get_positions()= and the bounds) are the rest pose, so a skinned model that is only drawn static stands where its joints put it;
+- validation: a joint outside the node list is =LRG_GLTF_ERROR_INVALID_REFERENCE=, a sampler whose output does not fit its keys or its channel's path (4 per key for a rotation, 3 for a translation or scale) is =LRG_GLTF_ERROR_INVALID_DATA=.
+
+** Material slots
+:PROPERTIES:
+:CUSTOM_ID: material-slots
+:END:
+=get_material_normal_image()= (with the =scale=), =get_material_metallic_image()= (the metallic-roughness texture, green roughness and blue metallic, with the factors), =get_material_occlusion_image()= (red, with the strength) and =get_material_emissive_image()= (with the factor) name the images of a material's other slots (-1 for none); =get_material_uv_transform()= gives the base colour texture's =KHR_texture_transform= as a 2x3 matrix (offset, rotation and scale; the identity when absent).  =tests/test-gltf-rig.c= covers the bind pose, a clip at several times with looping and clamping, the three interpolations, morph weights (default and animated), the slots and the transform, and the refused skins and samplers.
 
 ** Example
 :PROPERTIES:
@@ -105,3 +124,14 @@ for (p = 0; geometry != NULL && p < lrg_gltf_geometry_get_primitive_count (geome
                                0, &error);
 }
 #+end_src
+
+* Meshopt decoding (=lrg-meshopt.h=)
+
+=lrg_meshopt_decode (mode, filter, source, size, count, stride, error)= decodes one =EXT_meshopt_compression= buffer view into =count x stride= bytes, little endian.  Written in C from the extension's specification and meshoptimizer's reference decoder (MIT, Arseny Kapoulkine; reference by Jasper St. Pierre); no code is vendored.
+
+- =LRG_MESHOPT_MODE_ATTRIBUTES= (header =0xa0=): blocks of up to =min ((8192 / stride) & ~15, 256)= elements; each block holds every byte lane in turn: a header of two bits per group of sixteen (0 zeros, 1 two-bit and 2 four-bit sentinel packing with the high bits first and an escaped byte after the packed ones, 3 raw), then the groups; the bytes are zigzag deltas against the previous element's byte, starting from the last =stride= bytes of the stream (the tail, =max (stride, 32)= bytes, which the data must end at exactly).
+- =LRG_MESHOPT_MODE_TRIANGLES= (=0xe1=): a code byte per triangle (an edge of a 16-entry edge FIFO plus a new vertex, one of a 16-entry vertex FIFO, =last= +-1 or a varint delta; or a free triangle through the 16-byte aux table at the end or an explicit aux byte), then the varints.
+- =LRG_MESHOPT_MODE_INDICES= (=0xd1=): varints whose low bit picks one of two baselines and whose rest is a zigzag delta; a 4-byte tail.
+- Filters after the attribute codec: =OCTAHEDRAL= (stride 4 or 8: x, y and the encoded one, the lower hemisphere folded back, normalized to 127 or 32767; the fourth component kept), =QUATERNION= (stride 8: the three smallest components times 1/sqrt 2 over =packed | 3=, w recovered, the components placed after the largest's index), =EXPONENTIAL= (=mantissa x 2^exponent=, 24 and 8 signed bits).
+
+Every read is checked against =size=; a wrong header, a stride or count the extension does not allow, a stream that ends early or one that does not end at its tail is =LRG_GLTF_ERROR_INVALID_DATA=.  =tests/test-meshopt.c= decodes streams produced by meshoptimizer's own encoder (version 0.21, generated once and stored as bytes in the test) for each mode and filter, a GLB whose views are compressed, and the malformed cases.

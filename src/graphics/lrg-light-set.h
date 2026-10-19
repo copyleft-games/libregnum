@@ -76,6 +76,47 @@ G_BEGIN_DECLS
 #define LRG_LIGHT_SET_EMISSION_UNIT (5)
 
 /**
+ * LRG_LIGHT_SET_NORMAL_UNIT:
+ *
+ * The texture unit (raylib's %MATERIAL_MAP_NORMAL) the shader reads a
+ * material's tangent-space normal map from.
+ */
+#define LRG_LIGHT_SET_NORMAL_UNIT (2)
+
+/**
+ * LRG_LIGHT_SET_METALLIC_UNIT:
+ *
+ * The texture unit (raylib's %MATERIAL_MAP_METALNESS) of a material's
+ * metallic-gloss map (metallic in red, smoothness in alpha, as Unity's
+ * MetallicGloss).
+ */
+#define LRG_LIGHT_SET_METALLIC_UNIT (1)
+
+/**
+ * LRG_LIGHT_SET_HEIGHT_UNIT:
+ *
+ * The texture unit (raylib's %MATERIAL_MAP_HEIGHT) of a material's
+ * height map (red channel, 0.5 is the surface), applied as parallax.
+ */
+#define LRG_LIGHT_SET_HEIGHT_UNIT (6)
+
+/**
+ * LRG_LIGHT_SET_HEIGHT_SCALE:
+ *
+ * The parallax depth, in texture coordinates, of a full-range height map.
+ */
+#define LRG_LIGHT_SET_HEIGHT_SCALE (0.04f)
+
+/**
+ * LRG_LIGHT_SET_MAP_NORMAL:
+ *
+ * Bit of the shader's map flags for a bound normal map; the metallic
+ * map is 2 and the height map 4.  #LrgStaticBatch sets the flags while a
+ * material with maps draws.
+ */
+#define LRG_LIGHT_SET_MAP_NORMAL (1)
+
+/**
  * LRG_LIGHT_SET_INVALID_LIGHT:
  *
  * Returned for a light id that does not exist.

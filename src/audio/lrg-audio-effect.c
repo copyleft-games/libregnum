@@ -20,6 +20,7 @@
 
 #include "config.h"
 
+#include <math.h>
 #include <string.h>
 
 #include <raylib.h>
@@ -207,12 +208,86 @@ static LrgAudioEffectChain *mix_chain;      /* borrowed: cleared by detach */
 static guint                mix_rate;
 static gboolean             mix_processor;  /* our callback is attached */
 
+/* the measured device rate: raylib opens the device at the system's rate
+ * and does not report it, so when the caller did not name a rate the
+ * callback counts the frames it is handed against the monotonic clock */
+static gboolean             mix_auto;        /* attached with rate 0: measure */
+static gboolean             mix_measured;    /* mix_rate came from a measurement */
+static gint64               measure_start;   /* us, 0 = no window open */
+static guint64              measure_frames;  /* frames since measure_start */
+static guint                measure_last;    /* the previous window's snapped rate */
+
+#define MEASURE_WINDOW_US (2 * G_USEC_PER_SEC)
+
+guint
+lrg_audio_snap_sample_rate (gdouble measured)
+{
+    static const guint standard[] = {
+        8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000, 176400, 192000
+    };
+    guint best = 0;
+    gdouble best_error = 1.0e30;
+    guint i;
+
+    if (!(measured > 0.0))
+        return 0;
+    for (i = 0; i < G_N_ELEMENTS (standard); i++)
+    {
+        gdouble error = fabs (measured - (gdouble)standard[i]) / (gdouble)standard[i];
+
+        if (error < best_error)
+        {
+            best_error = error;
+            best = standard[i];
+        }
+    }
+    /* a rate no standard one is close to is not believed */
+    return best_error <= 0.06 ? best : 0;
+}
+
+/* measure_block: called with mix_lock held for every device block */
+static void
+measure_block (guint frames)
+{
+    gint64 now = g_get_monotonic_time ();
+
+    if (measure_start == 0)
+    {
+        measure_start = now;
+        measure_frames = 0;
+        return;
+    }
+    measure_frames += frames;
+    if (now - measure_start >= MEASURE_WINDOW_US)
+    {
+        guint snapped = lrg_audio_snap_sample_rate ((gdouble)measure_frames * 1.0e6 /
+                                                    (gdouble)(now - measure_start));
+
+        /* two windows in a row must agree (a burst of prefilled buffers
+         * at the start would overestimate once) */
+        if (snapped != 0 && snapped == measure_last && snapped != mix_rate)
+        {
+            mix_rate = snapped;
+            mix_measured = TRUE;
+        }
+        else if (snapped != 0 && snapped == measure_last)
+        {
+            mix_measured = TRUE;
+        }
+        measure_last = snapped;
+        measure_start = now;
+        measure_frames = 0;
+    }
+}
+
 /* raylib's mixed-audio processor: frames x 2 floats, the device mix */
 static void
 mix_process (void         *buffer,
              unsigned int  frames)
 {
     g_mutex_lock (&mix_lock);
+    if (mix_auto)
+        measure_block ((guint)frames);
     if (mix_chain != NULL)
         lrg_audio_effect_chain_process (mix_chain, (gfloat *)buffer, (guint)frames, 2, mix_rate);
     g_mutex_unlock (&mix_lock);
@@ -367,6 +442,13 @@ lrg_audio_effect_chain_attach_mix (LrgAudioEffectChain *self,
 
     if (!IsAudioDeviceReady ())
         return FALSE;
+    g_mutex_lock (&mix_lock);
+    /* no rate named: assume the default and let the callback measure it */
+    mix_auto = sample_rate == 0;
+    mix_measured = FALSE;
+    measure_start = 0;
+    measure_last = 0;
+    g_mutex_unlock (&mix_lock);
     if (sample_rate == 0)
         sample_rate = LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE;
 
@@ -424,4 +506,20 @@ lrg_audio_effect_chain_is_attached (LrgAudioEffectChain *self)
     attached = self->attached;
     g_mutex_unlock (&mix_lock);
     return attached;
+}
+
+guint
+lrg_audio_effect_chain_get_mix_rate (LrgAudioEffectChain *self,
+                                     gboolean            *out_measured)
+{
+    guint rate;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_EFFECT_CHAIN (self), 0);
+
+    g_mutex_lock (&mix_lock);
+    rate = self->attached ? mix_rate : 0;
+    if (out_measured != NULL)
+        *out_measured = self->attached && mix_measured;
+    g_mutex_unlock (&mix_lock);
+    return rate;
 }

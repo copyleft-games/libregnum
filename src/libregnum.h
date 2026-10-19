@@ -85,6 +85,7 @@
 #include "graphics/lrg-gltf-info.h"
 #include "graphics/lrg-dds-image.h"
 #include "graphics/lrg-gltf-geometry.h"
+#include "graphics/lrg-meshopt.h"
 #include "graphics/lrg-model-animator.h"
 #include "graphics/lrg-static-batch.h"
 #include "graphics/lrg-terrain-detail.h"
@@ -287,6 +288,7 @@
 /* Physics module */
 #include "physics/lrg-collision-info.h"
 #include "physics/lrg-rigid-body.h"
+#include "physics/lrg-rope.h"
 #include "physics/lrg-physics-world.h"
 #include "physics/lrg-wall-set.h"
 #include "physics/lrg-collision-mesh.h"
@@ -487,6 +489,7 @@
 #include "postprocess/effects/lrg-film-grain.h"
 #include "postprocess/effects/lrg-screen-shake.h"
 #include "postprocess/effects/lrg-colorblind-filter.h"
+#include "postprocess/effects/lrg-sharpen.h"
 #include "postprocess/lrg-color-lut.h"
 #include "postprocess/effects/lrg-color-grade.h"
 #include "postprocess/effects/lrg-palettize.h"

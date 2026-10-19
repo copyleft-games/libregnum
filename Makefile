@@ -60,6 +60,7 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-gltf-info.h \
 	src/graphics/lrg-dds-image.h \
 	src/graphics/lrg-gltf-geometry.h \
+	src/graphics/lrg-meshopt.h \
 	src/graphics/lrg-model-animator.h \
 	src/graphics/lrg-static-batch.h \
 	src/graphics/lrg-terrain-detail.h \
@@ -218,6 +219,7 @@ PUBLIC_HEADERS := \
 	src/ai/lrg-behavior-tree.h \
 	src/physics/lrg-collision-info.h \
 	src/physics/lrg-rigid-body.h \
+	src/physics/lrg-rope.h \
 	src/physics/lrg-physics-world.h \
 	src/physics/lrg-wall-set.h \
 	src/physics/lrg-collision-mesh.h \
@@ -361,6 +363,7 @@ PUBLIC_HEADERS := \
 	src/postprocess/effects/lrg-film-grain.h \
 	src/postprocess/effects/lrg-screen-shake.h \
 	src/postprocess/effects/lrg-colorblind-filter.h \
+	src/postprocess/effects/lrg-sharpen.h \
 	src/postprocess/effects/lrg-color-grade.h \
 	src/postprocess/lrg-color-lut.h \
 	src/postprocess/effects/lrg-palettize.h \
@@ -656,6 +659,7 @@ SOURCES := \
 	src/graphics/lrg-gltf-info.c \
 	src/graphics/lrg-dds-image.c \
 	src/graphics/lrg-gltf-geometry.c \
+	src/graphics/lrg-meshopt.c \
 	src/graphics/lrg-model-animator.c \
 	src/graphics/lrg-static-batch.c \
 	src/graphics/lrg-terrain-detail.c \
@@ -815,6 +819,7 @@ SOURCES := \
 	src/ai/lrg-behavior-tree.c \
 	src/physics/lrg-collision-info.c \
 	src/physics/lrg-rigid-body.c \
+	src/physics/lrg-rope.c \
 	src/physics/lrg-physics-world.c \
 	src/physics/lrg-wall-set.c \
 	src/physics/lrg-collision-mesh.c \
@@ -960,6 +965,7 @@ SOURCES := \
 	src/postprocess/effects/lrg-film-grain.c \
 	src/postprocess/effects/lrg-screen-shake.c \
 	src/postprocess/effects/lrg-colorblind-filter.c \
+	src/postprocess/effects/lrg-sharpen.c \
 	src/postprocess/effects/lrg-color-grade.c \
 	src/postprocess/lrg-color-lut.c \
 	src/postprocess/effects/lrg-palettize.c \
@@ -1965,7 +1971,12 @@ $(OBJECTS): $(CFLAGS_STAMP)
 $(OBJDIR)/src/%.o: src/%.c | $(OBJDIR)
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
-	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+	@$(CC) $(LIB_CFLAGS) -MMD -MP -c -o $@ $<
+
+# Header dependencies: the compiler writes one .d file per object (-MMD -MP
+# above, system headers left out), so editing a header (a private one included)
+# rebuilds every object that includes it.
+-include $(DEPENDS)
 
 # The vendored, unmodified TinySoundFont / TinyMidiLoader single headers
 # (src/audio/vendor/) are compiled in this one translation unit only.  They

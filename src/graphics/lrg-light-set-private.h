@@ -16,6 +16,8 @@
 #include <glib-object.h>
 #include <raylib.h>
 #include "graphics/lrg-light-set.h"
+#include "lighting/lrg-shadow-renderer-private.h"
+#include "weather/lrg-ground-overlay-private.h"
 
 G_BEGIN_DECLS
 
@@ -244,6 +246,24 @@ gboolean
 lrg_light_set_upload_sample (LrgLightSet                      *self,
                              Shader                            shader,
                              const LrgLightSetSampleLocations *locs);
+
+/*
+ * lrg_light_set_upload_receive:
+ * Uploads the shadow atlases, the sun direction and the ground overlay
+ * (snow and cloud shadows) of @self to a shader that receives them
+ * outside the lit mesh shader (LrgBillboardBatch's GPU quads).
+ * @recv_sun (3 floats) gets the direction the sun's light travels,
+ * @self's last selected origin applies.  @shader must be the active
+ * rlgl shader.  Returns whether the shadow atlases are ready (the
+ * shader's receive switch should follow it).
+ */
+G_GNUC_INTERNAL
+gboolean
+lrg_light_set_upload_receive (LrgLightSet                     *self,
+                              Shader                           shader,
+                              const LrgShadowLocations        *shadow_locs,
+                              const LrgGroundOverlayLocations *overlay_locs,
+                              gint                             sun_dir_loc);
 
 /*
  * LRG_LIGHT_AIR_GLSL:

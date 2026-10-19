@@ -633,6 +633,57 @@ test_sky_bodies (void)
     g_assert_cmpuint (lrg_sky_bodies_get_star_count (bodies), ==, LRG_SKY_BODIES_MAX_STARS);
 }
 
+/* gaps G8: the raymarched deck's CPU mirror */
+static void
+test_cloud_volume (void)
+{
+    g_autoptr(LrgCloudLayer) clouds = lrg_cloud_layer_new (5);
+    gfloat prev;
+    gfloat vertical;
+    gfloat grazing;
+    gfloat cover;
+
+    g_assert_false (lrg_cloud_layer_get_volume (clouds));
+    lrg_cloud_layer_set_volume (clouds, TRUE);
+    g_assert_true (lrg_cloud_layer_get_volume (clouds));
+
+    /* a clear sky hides nothing, whatever the ray */
+    lrg_cloud_layer_set_coverage (clouds, 0.0f);
+    g_assert_cmpfloat (lrg_cloud_layer_sample_volume (clouds, 0, 0, 1200, 0, 0), ==, 0.0f);
+
+    /* an overcast deck hides a vertical ray almost fully, and more coverage never hides less */
+    lrg_cloud_layer_set_coverage (clouds, 1.0f);
+    g_assert_cmpfloat (lrg_cloud_layer_sample_volume (clouds, 0, 0, 1200, 0, 0), >, 0.5f);
+    prev = 0.0f;
+    for (cover = 0.1f; cover <= 1.0f; cover += 0.15f)
+    {
+        gfloat a;
+        gfloat total = 0.0f;
+        guint  i;
+
+        lrg_cloud_layer_set_coverage (clouds, cover);
+        for (i = 0; i < 64; i++)
+            total += lrg_cloud_layer_sample_volume (clouds, (gfloat)i * 150.0f - 4800.0f, 300.0f, 1200,
+                                                    0, 0);
+        a = total / 64.0f;
+        g_assert_cmpfloat (a, >=, prev - 1e-4f);
+        prev = a;
+    }
+
+    /* a grazing ray crosses more cloud than a vertical one through the same noise */
+    lrg_cloud_layer_set_coverage (clouds, 0.7f);
+    vertical = lrg_cloud_layer_sample_volume (clouds, 0.0f, 0.0f, 1200, 100.0, 100.0);
+    grazing = lrg_cloud_layer_sample_volume (clouds, 4000.0f, 0.0f, 1200, 100.0, 100.0);
+    g_assert_cmpfloat (vertical, >=, 0.0f);
+    g_assert_cmpfloat (grazing, >=, 0.0f);
+    g_assert_cmpfloat (vertical, <=, 1.0f);
+    g_assert_cmpfloat (grazing, <=, 1.0f);
+
+    /* a base below the eye is nothing to look through; non-finite rays too */
+    g_assert_cmpfloat (lrg_cloud_layer_sample_volume (clouds, 0, 0, 0.5f, 0, 0), ==, 0.0f);
+    g_assert_cmpfloat (lrg_cloud_layer_sample_volume (clouds, NAN, 0, 1200, 0, 0), ==, 0.0f);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -652,6 +703,7 @@ main (int   argc,
     g_test_add_func ("/sky-weather/snow/tracks", test_snow_tracks);
     g_test_add_func ("/sky-weather/clouds/density", test_clouds);
     g_test_add_func ("/sky-weather/clouds/ground-overlay", test_ground_overlay);
+    g_test_add_func ("/sky-weather/cloud-volume", test_cloud_volume);
     g_test_add_func ("/sky-weather/billboard/sway", test_billboard_sway);
     g_test_add_func ("/sky-weather/sky-bodies", test_sky_bodies);
 

@@ -488,6 +488,45 @@ lrg_shadow_renderer_begin_pass (LrgShadowRenderer *self,
                                 guint              pass);
 
 /**
+ * lrg_shadow_renderer_get_pass_state:
+ * @self: an #LrgShadowRenderer
+ * @out_mode: (out) (optional): 0 for a cascade pass, 1 for a cube face
+ * @out_light: (out caller-allocates) (optional) (array fixed-size=4): the
+ *   cube's light position and radius (zeros for a cascade)
+ * @out_direction: (out caller-allocates) (optional) (array fixed-size=3):
+ *   the way the light travels in a cascade pass (unit, draw space)
+ *
+ * What the open pass renders, for casters that bring their own program
+ * (a billboard batch faces its quads to the light with it) and must
+ * write the caster shader's numbers: the window depth for mode 0, the
+ * distance to the light over its radius for mode 1.
+ *
+ * Returns: %FALSE outside a pass (nothing written)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_shadow_renderer_get_pass_state (LrgShadowRenderer *self,
+                                    gint              *out_mode,
+                                    gfloat            *out_light,
+                                    gfloat            *out_direction);
+
+/**
+ * lrg_shadow_renderer_mark_rendered:
+ * @self: an #LrgShadowRenderer
+ * @pass: a pass index of the last lrg_shadow_renderer_update()
+ *
+ * Records @pass as rendered with the view-projection and light the last
+ * update planned: what lrg_shadow_renderer_end_pass() does for the pass it
+ * closes, for games that fill a tile by other means and for headless
+ * tests of the pass cache (lrg_shadow_renderer_pass_is_current(), the
+ * refresh and its staggering).  Out-of-range passes are ignored.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_shadow_renderer_mark_rendered (LrgShadowRenderer *self,
+                                   guint              pass);
+
+/**
  * lrg_shadow_renderer_end_pass:
  * @self: an #LrgShadowRenderer
  *

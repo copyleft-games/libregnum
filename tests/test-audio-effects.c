@@ -647,6 +647,33 @@ test_bed_wave_data (void)
     g_assert_cmpfloat_with_epsilon (out[10], 0.5f, 1e-3);
 }
 
+/* the device rate measured by the mix callback snaps to a standard rate */
+static void
+test_snap_sample_rate (void)
+{
+    g_assert_cmpuint (lrg_audio_snap_sample_rate (48000.0), ==, 48000);
+    g_assert_cmpuint (lrg_audio_snap_sample_rate (47210.0), ==, 48000);
+    g_assert_cmpuint (lrg_audio_snap_sample_rate (44873.0), ==, 44100);
+    g_assert_cmpuint (lrg_audio_snap_sample_rate (96500.0), ==, 96000);
+    g_assert_cmpuint (lrg_audio_snap_sample_rate (22100.0), ==, 22050);
+    /* nothing near: not believed */
+    g_assert_cmpuint (lrg_audio_snap_sample_rate (65000.0), ==, 0);
+    g_assert_cmpuint (lrg_audio_snap_sample_rate (0.0), ==, 0);
+    g_assert_cmpuint (lrg_audio_snap_sample_rate (-5.0), ==, 0);
+    g_assert_cmpuint (lrg_audio_snap_sample_rate (1.0e9), ==, 0);
+}
+
+/* a chain that is not attached has no mix rate */
+static void
+test_mix_rate_unattached (void)
+{
+    g_autoptr(LrgAudioEffectChain) chain = lrg_audio_effect_chain_new ();
+    gboolean measured = TRUE;
+
+    g_assert_cmpuint (lrg_audio_effect_chain_get_mix_rate (chain, &measured), ==, 0);
+    g_assert_false (measured);
+}
+
 gint
 main (gint   argc,
       gchar *argv[])
@@ -668,6 +695,8 @@ main (gint   argc,
     g_test_add_func ("/audio-effects/sound-bed/scatter", test_bed_scatter);
     g_test_add_func ("/audio-effects/sound-bed/effects-and-errors", test_bed_effects_and_errors);
     g_test_add_func ("/audio-effects/sound-bed/wave-data", test_bed_wave_data);
+    g_test_add_func ("/audio-effects/mix-rate/snap", test_snap_sample_rate);
+    g_test_add_func ("/audio-effects/mix-rate/unattached", test_mix_rate_unattached);
 
     return g_test_run ();
 }

@@ -54,8 +54,13 @@ struct _LrgCloudLayer
     guint8     shade[4];
     gdouble    origin[3];
 
+    gboolean   volume;          /* raymarched through the deck instead of slices */
+
     GrlShader *shader;
     gboolean   shader_failed;
+    GrlShader *vshader;         /* the volume shader */
+    gboolean   vshader_failed;
+    gint       vloc[9];
     gint       loc_noise_eye;
     gint       loc_inv_scale;
     gint       loc_coverage;
@@ -111,12 +116,70 @@ static const gchar cloud_fs[] =
     "    finalColor = vec4(rgb, d * fragColor.a * litColor.a * fade);\n"
     "}\n";
 
+/* the volume path: one quad deck at the base, and per fragment a march of
+ * VOLUME_STEPS samples through the deck along the eye ray.  fragReal is the
+ * ray's horizontal offset (metres) where it crosses the base; a point u
+ * metres up lies at fragReal * (H + u) / H.  Each sample's density is the
+ * slices' (coverage thinning with height, a profile that rounds the top and
+ * lifts the base) and absorbs by Beer's law along the ray's path length; the
+ * light toward the sun is the density one step toward it. */
+#define VOLUME_STEPS (12)
+#define VOLUME_SIGMA (3.0f)
+
+static const gchar volume_fs[] =
+    "#version 330\n"
+    "in vec2 fragReal;\n"
+    "in vec4 fragColor;\n"
+    "uniform vec2 noiseEye;\n"
+    "uniform float invScale;\n"
+    "uniform float coverage;\n"
+    "uniform vec3 towardsSun;\n"
+    "uniform vec4 litColor;\n"
+    "uniform vec4 shadeColor;\n"
+    "uniform float drawRadius;\n"
+    "uniform float baseHeight;\n"
+    "uniform float deckThickness;\n"
+    LRG_CLOUD_NOISE_GLSL
+    "out vec4 finalColor;\n"
+    "void main() {\n"
+    "    float H = max(baseHeight, 1.0);\n"
+    "    float dist = length(vec3(fragReal.x, H, fragReal.y));\n"
+    "    float step_u = deckThickness / 12.0;\n"
+    "    float seg = step_u * dist / H;\n"
+    "    vec2 s = normalize(towardsSun.xz + vec2(1e-5)) * 0.35;\n"
+    "    float day = clamp(towardsSun.y * 4.0 + 0.4, 0.15, 1.0);\n"
+    "    float T = 1.0;\n"
+    "    vec3 col = vec3(0.0);\n"
+    "    for (int i = 0; i < 12; i++) {\n"
+    "        float u = (float(i) + 0.5) * step_u;\n"
+    "        float h = u / deckThickness;\n"
+    "        vec2 p = noiseEye + fragReal * ((H + u) / H) * invScale;\n"
+    "        float cov = coverage * (1.0 - 0.45 * h);\n"
+    "        float d = lrg_cloud_density(p, cov);\n"
+    "        d *= smoothstep(0.0, 0.15, h) * (1.0 - 0.6 * smoothstep(0.6, 1.0, h));\n"
+    "        if (d > 0.002) {\n"
+    "            float toward = lrg_cloud_density(p + s, cov);\n"
+    "            float light = clamp(1.0 - 0.7 * toward + 0.3 * h, 0.0, 1.0);\n"
+    "            vec3 c = mix(shadeColor.rgb, litColor.rgb, light) * day;\n"
+    "            float a = 1.0 - exp(-d * 3.0 * seg / deckThickness);\n"
+    "            col += T * a * c;\n"
+    "            T *= 1.0 - a;\n"
+    "            if (T < 0.03) break;\n"
+    "        }\n"
+    "    }\n"
+    "    float fade = 1.0 - smoothstep(0.45 * drawRadius, drawRadius, length(fragReal));\n"
+    "    float alpha = (1.0 - T) * fade * litColor.a;\n"
+    "    if (alpha <= 0.002) discard;\n"
+    "    finalColor = vec4(col / max(1.0 - T, 1e-3), alpha);\n"
+    "}\n";
+
 static void
 lrg_cloud_layer_dispose (GObject *object)
 {
     LrgCloudLayer *self = LRG_CLOUD_LAYER (object);
 
     g_clear_object (&self->shader);
+    g_clear_object (&self->vshader);
     G_OBJECT_CLASS (lrg_cloud_layer_parent_class)->dispose (object);
 }
 
@@ -481,6 +544,103 @@ ensure_shader (LrgCloudLayer *self)
     return TRUE;
 }
 
+/* ensure_volume_shader: the raymarch shader, compiled once */
+static gboolean
+ensure_volume_shader (LrgCloudLayer *self)
+{
+    if (self->vshader != NULL)
+        return TRUE;
+    if (self->vshader_failed)
+        return FALSE;
+
+    self->vshader = grl_shader_new_from_memory (cloud_vs, volume_fs, NULL);
+    if (self->vshader == NULL || !grl_shader_is_valid (self->vshader))
+    {
+        lrg_warning (LRG_LOG_DOMAIN_WEATHER, "cloud layer: the volume shader did not compile; "
+                     "the slices are drawn instead");
+        g_clear_object (&self->vshader);
+        self->vshader_failed = TRUE;
+        return FALSE;
+    }
+    self->vloc[0] = grl_shader_get_location (self->vshader, "noiseEye");
+    self->vloc[1] = grl_shader_get_location (self->vshader, "invScale");
+    self->vloc[2] = grl_shader_get_location (self->vshader, "coverage");
+    self->vloc[3] = grl_shader_get_location (self->vshader, "towardsSun");
+    self->vloc[4] = grl_shader_get_location (self->vshader, "litColor");
+    self->vloc[5] = grl_shader_get_location (self->vshader, "shadeColor");
+    self->vloc[6] = grl_shader_get_location (self->vshader, "drawRadius");
+    self->vloc[7] = grl_shader_get_location (self->vshader, "baseHeight");
+    self->vloc[8] = grl_shader_get_location (self->vshader, "deckThickness");
+    return TRUE;
+}
+
+void
+lrg_cloud_layer_set_volume (LrgCloudLayer *self,
+                            gboolean       volume)
+{
+    g_return_if_fail (LRG_IS_CLOUD_LAYER (self));
+    self->volume = volume;
+}
+
+gboolean
+lrg_cloud_layer_get_volume (LrgCloudLayer *self)
+{
+    g_return_val_if_fail (LRG_IS_CLOUD_LAYER (self), FALSE);
+    return self->volume;
+}
+
+gfloat
+lrg_cloud_layer_sample_volume (LrgCloudLayer *self,
+                               gfloat         real_x,
+                               gfloat         real_z,
+                               gfloat         base_height,
+                               gdouble        wx,
+                               gdouble        wz)
+{
+    gdouble noise_x;
+    gdouble noise_z;
+    gdouble inv;
+    gfloat  height;
+    gfloat  dist;
+    gfloat  step_u;
+    gfloat  seg;
+    gfloat  trans = 1.0f;
+    guint   i;
+
+    g_return_val_if_fail (LRG_IS_CLOUD_LAYER (self), 0.0f);
+
+    if (self->coverage <= 0.0f || !isfinite (real_x) || !isfinite (real_z) || base_height < 1.0f)
+        return 0.0f;
+    noise_coord (self, wx, wz, &noise_x, &noise_z);
+    inv = 1.0 / (gdouble)self->scale;
+    height = base_height;
+    dist = sqrtf (real_x * real_x + height * height + real_z * real_z);
+    step_u = self->thickness / (gfloat)VOLUME_STEPS;
+    seg = step_u * dist / height;
+    for (i = 0; i < VOLUME_STEPS; i++)
+    {
+        gfloat  u = ((gfloat)i + 0.5f) * step_u;
+        gfloat  h = u / self->thickness;
+        gdouble k = (gdouble)((height + u) / height) * inv;
+        gfloat  cov = self->coverage * (1.0f - 0.45f * h);
+        gfloat  d = (gfloat)lrg_cloud_density_at (noise_x + real_x * k, noise_z + real_z * k, cov);
+        gfloat  lo = CLAMP (h / 0.15f, 0.0f, 1.0f);
+        gfloat  hi = CLAMP ((h - 0.6f) / 0.4f, 0.0f, 1.0f);
+        gfloat  a;
+
+        lo = lo * lo * (3.0f - 2.0f * lo);
+        hi = hi * hi * (3.0f - 2.0f * hi);
+        d *= lo * (1.0f - 0.6f * hi);
+        if (d <= 0.002f)
+            continue;
+        a = 1.0f - expf (-d * VOLUME_SIGMA * seg / self->thickness);
+        trans *= 1.0f - a;
+        if (trans < 0.03f)
+            break;
+    }
+    return 1.0f - trans;
+}
+
 void
 lrg_cloud_layer_draw (LrgCloudLayer    *self,
                       const GrlVector3 *eye,
@@ -505,6 +665,70 @@ lrg_cloud_layer_draw (LrgCloudLayer    *self,
                                      noise_eye);
     /* real metres to draw units: the deck's edge lands inside the sky */
     k = sky_radius * CLOUD_SKY_FRACTION / CLOUD_DRAW_RADIUS;
+
+    /* the raymarched volume: one quad deck at the base, the shader marches through */
+    if (self->volume && ensure_volume_shader (self))
+    {
+        gfloat base = self->altitude - (gfloat)self->origin[1] - eye->y;
+
+        if (base > 1.0f)
+        {
+            Shader *handle = (Shader *)grl_shader_get_handle (self->vshader);
+            gfloat  inv = 1.0f / self->scale;
+            gfloat  lit[4];
+            gfloat  shade[4];
+            gfloat  radius = CLOUD_DRAW_RADIUS;
+            guint   c;
+
+            for (c = 0; c < 4; c++)
+            {
+                lit[c] = (gfloat)self->lit[c] / 255.0f;
+                shade[c] = (gfloat)self->shade[c] / 255.0f;
+            }
+            rlDrawRenderBatchActive ();
+            rlDisableDepthTest ();
+            rlDisableDepthMask ();
+            rlDisableBackfaceCulling ();
+            grl_shader_begin (self->vshader);
+            SetShaderValue (*handle, self->vloc[0], noise_eye, SHADER_UNIFORM_VEC2);
+            SetShaderValue (*handle, self->vloc[1], &inv, SHADER_UNIFORM_FLOAT);
+            SetShaderValue (*handle, self->vloc[2], &self->coverage, SHADER_UNIFORM_FLOAT);
+            SetShaderValue (*handle, self->vloc[3], towards_sun, SHADER_UNIFORM_VEC3);
+            SetShaderValue (*handle, self->vloc[4], lit, SHADER_UNIFORM_VEC4);
+            SetShaderValue (*handle, self->vloc[5], shade, SHADER_UNIFORM_VEC4);
+            SetShaderValue (*handle, self->vloc[6], &radius, SHADER_UNIFORM_FLOAT);
+            SetShaderValue (*handle, self->vloc[7], &base, SHADER_UNIFORM_FLOAT);
+            SetShaderValue (*handle, self->vloc[8], &self->thickness, SHADER_UNIFORM_FLOAT);
+            rlBegin (RL_QUADS);
+            rlColor4ub (0, 0, 0, 255);
+            for (i = 0; i < CLOUD_GRID; i++)
+            {
+                for (j = 0; j < CLOUD_GRID; j++)
+                {
+                    gfloat x0 = -CLOUD_DRAW_RADIUS + 2.0f * CLOUD_DRAW_RADIUS * (gfloat)i / CLOUD_GRID;
+                    gfloat x1 = -CLOUD_DRAW_RADIUS + 2.0f * CLOUD_DRAW_RADIUS * (gfloat)(i + 1) / CLOUD_GRID;
+                    gfloat z0 = -CLOUD_DRAW_RADIUS + 2.0f * CLOUD_DRAW_RADIUS * (gfloat)j / CLOUD_GRID;
+                    gfloat z1 = -CLOUD_DRAW_RADIUS + 2.0f * CLOUD_DRAW_RADIUS * (gfloat)(j + 1) / CLOUD_GRID;
+
+                    rlTexCoord2f (x0, z0);
+                    rlVertex3f (eye->x + x0 * k, eye->y + base * k, eye->z + z0 * k);
+                    rlTexCoord2f (x0, z1);
+                    rlVertex3f (eye->x + x0 * k, eye->y + base * k, eye->z + z1 * k);
+                    rlTexCoord2f (x1, z1);
+                    rlVertex3f (eye->x + x1 * k, eye->y + base * k, eye->z + z1 * k);
+                    rlTexCoord2f (x1, z0);
+                    rlVertex3f (eye->x + x1 * k, eye->y + base * k, eye->z + z0 * k);
+                }
+            }
+            rlEnd ();
+            grl_shader_end (self->vshader);
+            rlDrawRenderBatchActive ();
+            rlEnableBackfaceCulling ();
+            rlEnableDepthMask ();
+            rlEnableDepthTest ();
+        }
+        return;
+    }
 
     rlDrawRenderBatchActive ();
     rlDisableDepthTest ();
@@ -588,4 +812,6 @@ lrg_cloud_layer_release_gpu (LrgCloudLayer *self)
 
     g_clear_object (&self->shader);
     self->shader_failed = FALSE;
+    g_clear_object (&self->vshader);
+    self->vshader_failed = FALSE;
 }

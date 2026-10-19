@@ -58,7 +58,8 @@ G_DECLARE_FINAL_TYPE (LrgGltfGeometry, lrg_gltf_geometry, LRG, GLTF_GEOMETRY, GO
  * winding of a mirroring transform is reversed so front faces stay front
  * faces. Triangle lists, strips and fans become triangle lists; points
  * and lines are skipped (lrg_gltf_geometry_get_skipped_count()). Skins,
- * morph targets and animations are ignored.
+ * morph targets and animations are read as well
+ * (lrg_gltf_geometry_pose()); the static getters give the rest pose.
  *
  * Errors: %G_FILE_ERROR when the file cannot be read, otherwise
  * %LRG_GLTF_ERROR (%LRG_GLTF_ERROR_INVALID_DATA for overrunning
@@ -373,5 +374,210 @@ GrlImage *
 lrg_gltf_geometry_load_image (LrgGltfGeometry  *self,
                               guint             image,
                               GError          **error);
+
+/**
+ * lrg_gltf_geometry_is_animated:
+ * @self: an #LrgGltfGeometry
+ *
+ * Returns: whether the file has animations, skinned primitives or morph
+ *   targets (then lrg_gltf_geometry_pose() and
+ *   lrg_gltf_geometry_get_posed() give moving geometry)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_gltf_geometry_is_animated (LrgGltfGeometry *self);
+
+/**
+ * lrg_gltf_geometry_get_animation_count:
+ * @self: an #LrgGltfGeometry
+ *
+ * Returns: the number of animations (clips) of the file
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_gltf_geometry_get_animation_count (LrgGltfGeometry *self);
+
+/**
+ * lrg_gltf_geometry_get_animation_name:
+ * @self: an #LrgGltfGeometry
+ * @animation: animation index
+ *
+ * Returns: (transfer none) (nullable): the clip's name, %NULL when
+ *   unnamed or out of range
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *
+lrg_gltf_geometry_get_animation_name (LrgGltfGeometry *self,
+                                      guint            animation);
+
+/**
+ * lrg_gltf_geometry_get_animation_duration:
+ * @self: an #LrgGltfGeometry
+ * @animation: animation index
+ *
+ * Returns: the clip's length in seconds (the last key of any sampler),
+ *   0 when out of range
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_gltf_geometry_get_animation_duration (LrgGltfGeometry *self,
+                                          guint            animation);
+
+/**
+ * lrg_gltf_geometry_get_skin_count:
+ * @self: an #LrgGltfGeometry
+ *
+ * Returns: the number of skins of the file
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_gltf_geometry_get_skin_count (LrgGltfGeometry *self);
+
+/**
+ * lrg_gltf_geometry_get_primitive_skin:
+ * @self: an #LrgGltfGeometry
+ * @primitive: primitive index
+ *
+ * Returns: the skin that deforms the primitive, -1 for a rigid one
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_gltf_geometry_get_primitive_skin (LrgGltfGeometry *self,
+                                      guint            primitive);
+
+/**
+ * lrg_gltf_geometry_get_primitive_morph_target_count:
+ * @self: an #LrgGltfGeometry
+ * @primitive: primitive index
+ *
+ * Returns: the primitive's morph targets (blend shapes)
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_gltf_geometry_get_primitive_morph_target_count (LrgGltfGeometry *self,
+                                                    guint            primitive);
+
+/**
+ * lrg_gltf_geometry_pose:
+ * @self: an #LrgGltfGeometry
+ * @animation: animation index, or -1 for the rest pose
+ * @time: seconds into the clip
+ * @loop: %TRUE to wrap @time into the clip's length (else it is clamped
+ *   at the end)
+ *
+ * Evaluates the file's pose: every channel of the clip (translation,
+ * rotation, scale and morph weights; linear, step and cubic spline
+ * interpolation, rotations spherically) over the node graph, then the
+ * skins' joint matrices.  The result is kept in @self for
+ * lrg_gltf_geometry_get_posed(); the object is not safe to pose from two
+ * threads at once.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_gltf_geometry_pose (LrgGltfGeometry *self,
+                        gint             animation,
+                        gdouble          time,
+                        gboolean         loop);
+
+/**
+ * lrg_gltf_geometry_get_posed:
+ * @self: an #LrgGltfGeometry
+ * @primitive: primitive index
+ * @out_positions: (out caller-allocates) (array): 3 floats per vertex
+ *   (lrg_gltf_geometry_get_positions()'s vertex count)
+ * @out_normals: (out caller-allocates) (nullable) (array): 3 floats per
+ *   vertex, written only when the primitive has normals
+ *
+ * The primitive as the last lrg_gltf_geometry_pose() left it, in scene
+ * space: morph targets mixed with their weights, then skinned by the
+ * joints (a skinned primitive's own node transform is ignored, as the
+ * specification says) or placed by its node.  Before any pose the rest
+ * pose.  A primitive of a file without animation data copies its static
+ * geometry.
+ *
+ * Returns: %FALSE when @primitive is out of range
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_gltf_geometry_get_posed (LrgGltfGeometry *self,
+                             guint            primitive,
+                             gfloat          *out_positions,
+                             gfloat          *out_normals);
+
+/**
+ * lrg_gltf_geometry_get_material_normal_image:
+ * @self: an #LrgGltfGeometry
+ * @material: material index
+ * @scale: (out) (optional): the normalTexture's scale (1 when absent)
+ *
+ * Returns: the image of the material's normal map, -1 for none
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_gltf_geometry_get_material_normal_image (LrgGltfGeometry *self,
+                                             guint            material,
+                                             gfloat          *scale);
+
+/**
+ * lrg_gltf_geometry_get_material_metallic_image:
+ * @self: an #LrgGltfGeometry
+ * @material: material index
+ * @metallic: (out) (optional): metallicFactor (1 when absent)
+ * @roughness: (out) (optional): roughnessFactor (1 when absent)
+ *
+ * Returns: the image of the metallicRoughnessTexture (green roughness,
+ *   blue metallic), -1 for none
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_gltf_geometry_get_material_metallic_image (LrgGltfGeometry *self,
+                                               guint            material,
+                                               gfloat          *metallic,
+                                               gfloat          *roughness);
+
+/**
+ * lrg_gltf_geometry_get_material_occlusion_image:
+ * @self: an #LrgGltfGeometry
+ * @material: material index
+ * @strength: (out) (optional): the occlusionTexture's strength (1)
+ *
+ * Returns: the image of the occlusion map (red channel), -1 for none
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_gltf_geometry_get_material_occlusion_image (LrgGltfGeometry *self,
+                                                guint            material,
+                                                gfloat          *strength);
+
+/**
+ * lrg_gltf_geometry_get_material_emissive_image:
+ * @self: an #LrgGltfGeometry
+ * @material: material index
+ * @rgb: (out caller-allocates) (optional) (array fixed-size=3): the
+ *   emissiveFactor (black when absent), times KHR_materials_emissive_strength
+ *
+ * Returns: the image of the emissive map, -1 for none
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_gltf_geometry_get_material_emissive_image (LrgGltfGeometry *self,
+                                               guint            material,
+                                               gfloat          *rgb);
+
+/**
+ * lrg_gltf_geometry_get_material_uv_transform:
+ * @self: an #LrgGltfGeometry
+ * @material: material index
+ * @matrix: (out caller-allocates) (array fixed-size=6): the base colour
+ *   texture's KHR_texture_transform as u' = m0 u + m1 v + m2,
+ *   v' = m3 u + m4 v + m5 (the identity when the material has none)
+ *
+ * Returns: whether the material has a texture transform
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_gltf_geometry_get_material_uv_transform (LrgGltfGeometry *self,
+                                             guint            material,
+                                             gfloat          *matrix);
 
 G_END_DECLS

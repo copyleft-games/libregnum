@@ -461,6 +461,28 @@ test_batch_upload_headless (void)
     lrg_static_batch_unload (batch);
 }
 
+/* A material's own emission colour (glTF emissiveFactor): stored times its
+ * strength, cleared by NULL or a strength of 0, absent for other materials. */
+static void
+test_batch_emission_color (void)
+{
+    g_autoptr(LrgStaticBatch) batch = lrg_static_batch_new ();
+    GrlColor colour = { 255, 128, 0, 255 };
+    gfloat   rgb[3];
+
+    g_assert_false (lrg_static_batch_get_material_emission_color (batch, 3, rgb));
+    lrg_static_batch_set_material_emission_color (batch, 3, &colour, 2.0f);
+    g_assert_true (lrg_static_batch_get_material_emission_color (batch, 3, rgb));
+    g_assert_cmpfloat_with_epsilon (rgb[0], 2.0f, 1e-5f);
+    g_assert_cmpfloat_with_epsilon (rgb[1], 128.0f / 255.0f * 2.0f, 1e-5f);
+    g_assert_cmpfloat_with_epsilon (rgb[2], 0.0f, 1e-5f);
+    g_assert_false (lrg_static_batch_get_material_emission_color (batch, 4, NULL));
+    lrg_static_batch_set_material_emission_color (batch, 3, &colour, 0.0f);
+    g_assert_false (lrg_static_batch_get_material_emission_color (batch, 3, NULL));
+    lrg_static_batch_set_material_emission_color (batch, 3, &colour, 1.0f);
+    lrg_static_batch_set_material_emission_color (batch, 3, NULL, 1.0f);
+    g_assert_false (lrg_static_batch_get_material_emission_color (batch, 3, NULL));
+}
 
 /* ========================================================================== */
 /*                     Reference geometry (independent math)                  */
@@ -1140,6 +1162,7 @@ main (int   argc,
     g_test_add_func ("/static-batch/split/triangles", test_batch_split_triangles);
     g_test_add_func ("/static-batch/split/u16-limit", test_batch_split_u16_limit);
     g_test_add_func ("/static-batch/invalid", test_batch_invalid);
+    g_test_add_func ("/static-batch/emission-color", test_batch_emission_color);
     g_test_add_func ("/static-batch/matches-sources", test_batch_matches_sources);
     g_test_add_func ("/static-batch/upload-headless", test_batch_upload_headless);
     g_test_add_func ("/static-batch/gl/upload-draw", test_batch_gl);

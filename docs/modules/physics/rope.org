@@ -1,0 +1,34 @@
+* LrgRope - Verlet Ropes and Chains
+:PROPERTIES:
+:CUSTOM_ID: rope
+:END:
+
+=LrgRope= (=src/physics/lrg-rope.h=, GIR =Libregnum.Rope=) is a rope or chain as a verlet point chain: two anchored ends (a wagon's singletree and a horse's collar, a drawbridge chain), gravity, a fixed length kept by iterated distance constraints, and an optional floor.  It is headless: the game steps it with its frame time and draws the points (thin cylinders, a line strip).
+
+** Model
+:PROPERTIES:
+:CUSTOM_ID: model
+:END:
+=lrg_rope_new (segments, length)= makes =segments + 1= points (2 .. =LRG_ROPE_MAX_SEGMENTS=).  =set_anchors()= pins the first and last point exactly at the given positions on every step; the first call lays the rope out along the line between them, sagged by its slack (a parabola of the right arc length), so it never starts as a tangle.  =step (delta)= (clamped to 1/20 s pieces) integrates with gravity (=set_gravity()=, default -9.8) and damping (=set_damping()=, the share of velocity kept per second, default 0.2), then runs =set_iterations()= (default 12) passes of the segment constraints, a pinned end taking none of the correction, with the floor (=set_floor()=) applied in each pass.  Anchors further apart than the rope are stretched straight between them; =get_tension()= is =chord / length= clamped to 0 .. 1.
+
+A Gauss-Seidel chain is only as stiff as its iterations: an exactly taut rope of five metres keeps a 0.1 m sag at 64 passes (0.3 percent stretch); raise the passes for stiffer chains.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Use |
+|---+---|
+| =new (segments, length)= | the rope hanging from the origin |
+| =set_anchors (start, end)= | pin the ends |
+| =set_gravity()=, =set_damping()=, =set_iterations()=, =set_floor()= | the parameters |
+| =step (delta)= | advance |
+| =reset()= | forget the shape; the next =set_anchors()= lays it out |
+| =get_points (&count)= | 3 floats a point, the first at the start anchor |
+| =get_point_count()=, =get_length()=, =get_tension()= | inspection |
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-rope.c=: the ends stay exactly at the anchors and a 6 m rope over 4 m sags about 1.4 m; a taut rope is straight and stretched toward the far anchor; segment lengths stay within 10 percent of rest; slack lies on a floor and no point goes under it; an anchor moving 10 m drags the rope along; reset and non-finite or absurd arguments.

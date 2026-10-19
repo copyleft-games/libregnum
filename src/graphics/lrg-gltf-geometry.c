@@ -28,6 +28,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "graphics/lrg-gltf-geometry.h"
+#include "graphics/lrg-meshopt.h"
 
 #define GLB_MAGIC         (0x46546C67u)  /* "glTF" */
 #define GLB_CHUNK_JSON    (0x4E4F534Au)  /* "JSON" */
@@ -65,6 +66,19 @@ typedef struct
     guint    n_indices;
     gint     material;
     gchar   *node_name;
+
+    /* rigging (animated files only): the mesh-space data the pose is
+     * rebuilt from, the placing node and its skin */
+    gint     node;            /* node index, -1 */
+    gint     skin;            /* skin index, -1 */
+    gint     mesh;            /* mesh index, -1 */
+    gfloat  *rest_positions;  /* 3 per vertex, mesh space, nullable */
+    gfloat  *rest_normals;    /* 3 per vertex, nullable */
+    guint16 *joints;          /* 4 per vertex, nullable */
+    gfloat  *weights;         /* 4 per vertex, nullable */
+    guint    n_targets;
+    gfloat **target_positions;   /* per target: 3 per vertex deltas, nullable entries */
+    gfloat **target_normals;
 } Primitive;
 
 typedef struct
@@ -75,7 +89,88 @@ typedef struct
     LrgGltfAlphaMode  alpha_mode;
     gfloat            cutoff;
     gboolean          double_sided;
+
+    /* the other PBR slots (images, -1 for none) and KHR_texture_transform */
+    gint              normal_image;
+    gfloat            normal_scale;
+    gint              metallic_image;     /* metallicRoughnessTexture: green rough, blue metal */
+    gfloat            metallic;
+    gfloat            roughness;
+    gint              occlusion_image;
+    gfloat            occlusion_strength;
+    gint              emissive_image;
+    gfloat            emissive[3];
+    gboolean          has_transform;
+    gfloat            uv_matrix[6];       /* u' = m0 u + m1 v + m2, v' = m3 u + m4 v + m5 */
 } Material;
+
+/* a node of the file's graph (every node, not only the scene's) */
+typedef struct
+{
+    gchar    *name;
+    gint      parent;      /* -1 for a root */
+    gint      mesh;
+    gint      skin;
+    gboolean  has_matrix;
+    gfloat    matrix[16];
+    gfloat    t[3];
+    gfloat    q[4];
+    gfloat    s[3];
+    gfloat   *weights;     /* node.weights, nullable */
+    guint     n_weights;
+} Node;
+
+typedef struct
+{
+    gint   *joints;        /* node indices */
+    guint   n_joints;
+    gfloat *inverse_bind;  /* 16 per joint */
+} Skin;
+
+typedef struct
+{
+    gfloat *weights;       /* mesh.weights, nullable */
+    guint   n_weights;
+} MeshInfo;
+
+typedef enum
+{
+    PATH_TRANSLATION,
+    PATH_ROTATION,
+    PATH_SCALE,
+    PATH_WEIGHTS
+} ChannelPath;
+
+typedef enum
+{
+    INTERP_LINEAR,
+    INTERP_STEP,
+    INTERP_CUBIC
+} Interpolation;
+
+typedef struct
+{
+    gfloat       *times;
+    guint         n_keys;
+    gfloat       *values;        /* n_keys * stride (cubic: three of them) */
+    guint         stride;        /* components of one value */
+    Interpolation interpolation;
+} Sampler;
+
+typedef struct
+{
+    gint        sampler;
+    gint        node;
+    ChannelPath path;
+} Channel;
+
+typedef struct
+{
+    gchar  *name;
+    GArray *samplers;     /* Sampler */
+    GArray *channels;     /* Channel */
+    gdouble duration;
+} Animation;
 
 typedef struct
 {
@@ -101,6 +196,15 @@ struct _LrgGltfGeometry
     GPtrArray *primitives;   /* Primitive* */
     GArray    *materials;    /* Material */
     GArray    *images;       /* Image */
+    GArray    *nodes;        /* Node */
+    GArray    *skins;        /* Skin */
+    GArray    *meshes;       /* MeshInfo */
+    GArray    *animations;   /* Animation */
+    gboolean   keep_rest;    /* the file has skins or animations: keep mesh-space data */
+    gfloat    *node_world;   /* 16 per node: the current pose */
+    gfloat   **node_morph;   /* per node: the current morph weights, nullable */
+    gfloat    *joint_mats;   /* the current pose's skin matrices, skins in order */
+    gboolean   posed;
     gchar     *base_dir;     /* nullable */
     guint      skipped;
     guint      triangles;
@@ -122,7 +226,70 @@ primitive_free (gpointer data)
     g_free (p->colors);
     g_free (p->indices);
     g_free (p->node_name);
+    g_free (p->rest_positions);
+    g_free (p->rest_normals);
+    g_free (p->joints);
+    g_free (p->weights);
+    if (p->target_positions != NULL || p->target_normals != NULL)
+    {
+        guint t;
+
+        for (t = 0; t < p->n_targets; t++)
+        {
+            if (p->target_positions != NULL)
+                g_free (p->target_positions[t]);
+            if (p->target_normals != NULL)
+                g_free (p->target_normals[t]);
+        }
+    }
+    g_free (p->target_positions);
+    g_free (p->target_normals);
     g_free (p);
+}
+
+static void
+node_clear (gpointer data)
+{
+    Node *n = data;
+
+    g_free (n->name);
+    g_free (n->weights);
+}
+
+static void
+skin_clear (gpointer data)
+{
+    Skin *k = data;
+
+    g_free (k->joints);
+    g_free (k->inverse_bind);
+}
+
+static void
+mesh_info_clear (gpointer data)
+{
+    MeshInfo *m = data;
+
+    g_free (m->weights);
+}
+
+static void
+sampler_clear (gpointer data)
+{
+    Sampler *sm = data;
+
+    g_free (sm->times);
+    g_free (sm->values);
+}
+
+static void
+animation_clear (gpointer data)
+{
+    Animation *a = data;
+
+    g_free (a->name);
+    g_clear_pointer (&a->samplers, g_array_unref);
+    g_clear_pointer (&a->channels, g_array_unref);
 }
 
 static void
@@ -152,6 +319,20 @@ lrg_gltf_geometry_finalize (GObject *object)
     g_clear_pointer (&self->primitives, g_ptr_array_unref);
     g_clear_pointer (&self->materials, g_array_unref);
     g_clear_pointer (&self->images, g_array_unref);
+    g_clear_pointer (&self->skins, g_array_unref);
+    g_clear_pointer (&self->meshes, g_array_unref);
+    g_clear_pointer (&self->animations, g_array_unref);
+    if (self->node_morph != NULL && self->nodes != NULL)
+    {
+        guint i;
+
+        for (i = 0; i < self->nodes->len; i++)
+            g_free (self->node_morph[i]);
+    }
+    g_clear_pointer (&self->node_morph, g_free);
+    g_clear_pointer (&self->nodes, g_array_unref);
+    g_clear_pointer (&self->node_world, g_free);
+    g_clear_pointer (&self->joint_mats, g_free);
     g_clear_pointer (&self->base_dir, g_free);
 
     G_OBJECT_CLASS (lrg_gltf_geometry_parent_class)->finalize (object);
@@ -175,6 +356,14 @@ lrg_gltf_geometry_init (LrgGltfGeometry *self)
     g_array_set_clear_func (self->materials, material_clear);
     self->images = g_array_new (FALSE, TRUE, sizeof (Image));
     g_array_set_clear_func (self->images, image_clear);
+    self->nodes = g_array_new (FALSE, TRUE, sizeof (Node));
+    g_array_set_clear_func (self->nodes, node_clear);
+    self->skins = g_array_new (FALSE, TRUE, sizeof (Skin));
+    g_array_set_clear_func (self->skins, skin_clear);
+    self->meshes = g_array_new (FALSE, TRUE, sizeof (MeshInfo));
+    g_array_set_clear_func (self->meshes, mesh_info_clear);
+    self->animations = g_array_new (FALSE, TRUE, sizeof (Animation));
+    g_array_set_clear_func (self->animations, animation_clear);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -677,6 +866,130 @@ resolve_uri (LrgGltfGeometry  *self,
     return g_bytes_new_take (contents, length);
 }
 
+/* is_meshopt_fallback:
+ * A buffer marked as EXT_meshopt_compression's fallback (its views are
+ * all compressed). */
+static gboolean
+is_meshopt_fallback (JsonObject *buffer)
+{
+    JsonNode *extensions = json_object_get_member (buffer, "extensions");
+    JsonNode *meshopt;
+
+    if (extensions == NULL || !JSON_NODE_HOLDS_OBJECT (extensions))
+        return FALSE;
+    meshopt = json_object_get_member (json_node_get_object (extensions), "EXT_meshopt_compression");
+    return meshopt != NULL && JSON_NODE_HOLDS_OBJECT (meshopt);
+}
+
+/* decode_meshopt_view:
+ * A buffer view with EXT_meshopt_compression: decodes the compressed
+ * range it names into a buffer of its own (appended to self->buffers)
+ * and points @view at it.  A view without the extension is left alone. */
+static gboolean
+decode_meshopt_view (LrgGltfGeometry *self,
+                     JsonObject      *object,
+                     guint            index,
+                     View            *view,
+                     GError         **error)
+{
+    JsonNode         *extensions = json_object_get_member (object, "extensions");
+    JsonNode         *node;
+    JsonObject       *meshopt;
+    g_autofree gchar *mode_name = NULL;
+    g_autofree gchar *filter_name = NULL;
+    g_autoptr(GBytes) decoded = NULL;
+    LrgMeshoptMode    mode;
+    LrgMeshoptFilter  filter;
+    gint              buffer;
+    gint64            offset;
+    gint64            length;
+    gint64            stride;
+    gint64            count;
+    const guint8     *data;
+    gsize             size;
+
+    if (extensions == NULL || !JSON_NODE_HOLDS_OBJECT (extensions))
+        return TRUE;
+    node = json_object_get_member (json_node_get_object (extensions), "EXT_meshopt_compression");
+    if (node == NULL)
+        return TRUE;
+    if (!JSON_NODE_HOLDS_OBJECT (node))
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_JSON,
+                     "bufferView %u: EXT_meshopt_compression is not an object", index);
+        return FALSE;
+    }
+    meshopt = json_node_get_object (node);
+    if (!get_index (meshopt, "buffer", self->buffers->len, &buffer, error) ||
+        !get_count (meshopt, "byteOffset", (gdouble)G_MAXUINT32 + 1.0, 0, &offset, error) ||
+        !get_count (meshopt, "byteLength", (gdouble)G_MAXUINT32 + 1.0, -1, &length, error) ||
+        !get_count (meshopt, "byteStride", 256.0, -1, &stride, error) ||
+        !get_count (meshopt, "count", (gdouble)LRG_GLTF_GEOMETRY_MAX_VERTICES, -1, &count, error) ||
+        !get_string (meshopt, "mode", &mode_name, error) ||
+        !get_string (meshopt, "filter", &filter_name, error))
+        return FALSE;
+    if (buffer < 0 || length < 0 || stride <= 0 || count < 0 || mode_name == NULL)
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_JSON,
+                     "bufferView %u: EXT_meshopt_compression needs buffer, byteLength, "
+                     "byteStride, count and mode", index);
+        return FALSE;
+    }
+    if (g_strcmp0 (mode_name, "ATTRIBUTES") == 0)
+        mode = LRG_MESHOPT_MODE_ATTRIBUTES;
+    else if (g_strcmp0 (mode_name, "TRIANGLES") == 0)
+        mode = LRG_MESHOPT_MODE_TRIANGLES;
+    else if (g_strcmp0 (mode_name, "INDICES") == 0)
+        mode = LRG_MESHOPT_MODE_INDICES;
+    else
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_UNSUPPORTED,
+                     "bufferView %u: meshopt mode %s", index, mode_name);
+        return FALSE;
+    }
+    if (filter_name == NULL || g_strcmp0 (filter_name, "NONE") == 0)
+        filter = LRG_MESHOPT_FILTER_NONE;
+    else if (g_strcmp0 (filter_name, "OCTAHEDRAL") == 0)
+        filter = LRG_MESHOPT_FILTER_OCTAHEDRAL;
+    else if (g_strcmp0 (filter_name, "QUATERNION") == 0)
+        filter = LRG_MESHOPT_FILTER_QUATERNION;
+    else if (g_strcmp0 (filter_name, "EXPONENTIAL") == 0)
+        filter = LRG_MESHOPT_FILTER_EXPONENTIAL;
+    else
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_UNSUPPORTED,
+                     "bufferView %u: meshopt filter %s", index, filter_name);
+        return FALSE;
+    }
+    data = g_bytes_get_data (g_ptr_array_index (self->buffers, buffer), &size);
+    if ((guint64)offset + (guint64)length > (guint64)size)
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_DATA,
+                     "bufferView %u: the compressed range overruns buffer %d", index, buffer);
+        return FALSE;
+    }
+    decoded = lrg_meshopt_decode (mode, filter, data + offset, (gsize)length, (guint)count,
+                                  (guint)stride, error);
+    if (decoded == NULL)
+    {
+        g_prefix_error (error, "bufferView %u: ", index);
+        return FALSE;
+    }
+    if (g_bytes_get_size (decoded) < view->length)
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_DATA,
+                     "bufferView %u: %" G_GSIZE_FORMAT " bytes decoded for a %" G_GSIZE_FORMAT
+                     "-byte view", index, g_bytes_get_size (decoded), view->length);
+        return FALSE;
+    }
+    g_ptr_array_add (self->buffers, g_steal_pointer (&decoded));
+    view->buffer = (gint)self->buffers->len - 1;
+    view->offset = 0;
+    if (view->stride == 0 && mode == LRG_MESHOPT_MODE_ATTRIBUTES)
+        view->stride = (gsize)stride;
+    return TRUE;
+}
+
 static gboolean
 parse_buffers (LrgGltfGeometry *self,
                JsonArray       *buffers,
@@ -703,6 +1016,14 @@ parse_buffers (LrgGltfGeometry *self,
             return FALSE;
         }
 
+        if (uri == NULL && (i > 0 || bin == NULL) && is_meshopt_fallback (buffer))
+        {
+            /* EXT_meshopt_compression's placeholder: no data of its own,
+             * the compressed views decode into buffers of their own */
+            g_ptr_array_add (self->buffers, g_bytes_new_take (g_malloc0 ((gsize)MAX (declared, 1)),
+                                                              (gsize)declared));
+            continue;
+        }
         if (uri == NULL)
         {
             /* the GLB binary chunk */
@@ -776,6 +1097,8 @@ parse_views (LrgGltfGeometry *self,
         view.offset = (gsize)offset;
         view.length = (gsize)length;
         view.stride = (gsize)stride;
+        if (!decode_meshopt_view (self, object, i, &view, error))
+            return FALSE;
         g_array_append_val (self->views, view);
     }
     return TRUE;
@@ -831,6 +1154,8 @@ type_components (const gchar *type)
         return 3;
     if (g_strcmp0 (type, "VEC4") == 0)
         return 4;
+    if (g_strcmp0 (type, "MAT4") == 0)
+        return 16;
     return 0;
 }
 
@@ -1260,6 +1585,9 @@ typedef struct
     JsonArray *accessors;
     guint      n_materials;
     guint8    *visited;   /* one flag per node */
+    gint       node;      /* the node whose mesh is being read */
+    gint       skin;      /* its skin, -1 */
+    gint       mesh;      /* its mesh */
 } SceneContext;
 
 static void
@@ -1307,6 +1635,9 @@ add_primitive (LrgGltfGeometry *self,
     gfloat             nm[9];
     gfloat             det;
     Accessor           probe;
+    gint               joints_index;
+    gint               weights_index;
+    JsonArray         *targets = NULL;
     guint              i;
 
     if (!get_count (object, "mode", 7.0, MODE_TRIANGLES, &mode, error))
@@ -1336,6 +1667,9 @@ add_primitive (LrgGltfGeometry *self,
         !get_index (attributes, "NORMAL", n_accessors, &normal, error) ||
         !get_index (attributes, "TEXCOORD_0", n_accessors, &texcoord, error) ||
         !get_index (attributes, "COLOR_0", n_accessors, &color, error) ||
+        !get_index (attributes, "JOINTS_0", n_accessors, &joints_index, error) ||
+        !get_index (attributes, "WEIGHTS_0", n_accessors, &weights_index, error) ||
+        !get_array (object, "targets", &targets, error) ||
         !get_index (object, "indices", n_accessors, &indices, error))
         return FALSE;
     if (position < 0)
@@ -1382,6 +1716,66 @@ add_primitive (LrgGltfGeometry *self,
     if (raw == NULL)
         return FALSE;
     p->indices = to_triangle_list (raw, n_raw, (gint)mode, &p->n_indices);
+
+    /* rigging: joints and weights, and the morph targets' deltas */
+    p->node = ctx->node;
+    p->skin = ctx->skin;
+    p->mesh = ctx->mesh;
+    if (joints_index >= 0 && weights_index >= 0)
+    {
+        g_autofree gfloat *jf = NULL;
+
+        jf = read_floats (self, ctx->accessors, joints_index, 4, p->n_vertices, "JOINTS_0", error);
+        if (jf == NULL)
+            return FALSE;
+        p->weights = read_floats (self, ctx->accessors, weights_index, 4, p->n_vertices,
+                                  "WEIGHTS_0", error);
+        if (p->weights == NULL)
+            return FALSE;
+        p->joints = g_new (guint16, (gsize)MAX (p->n_vertices, 1u) * 4);
+        for (i = 0; i < p->n_vertices * 4; i++)
+            p->joints[i] = (guint16)CLAMP (jf[i], 0.0f, 65535.0f);
+    }
+    if (array_length (targets) > 0)
+    {
+        guint t;
+
+        p->n_targets = array_length (targets);
+        p->target_positions = g_new0 (gfloat *, p->n_targets);
+        p->target_normals = g_new0 (gfloat *, p->n_targets);
+        for (t = 0; t < p->n_targets; t++)
+        {
+            JsonObject *target = array_object (targets, t, "morph target", error);
+            gint        tp;
+            gint        tn;
+
+            if (target == NULL ||
+                !get_index (target, "POSITION", n_accessors, &tp, error) ||
+                !get_index (target, "NORMAL", n_accessors, &tn, error))
+                return FALSE;
+            if (tp >= 0)
+            {
+                p->target_positions[t] = read_floats (self, ctx->accessors, tp, 3, p->n_vertices,
+                                                      "morph POSITION", error);
+                if (p->target_positions[t] == NULL)
+                    return FALSE;
+            }
+            if (tn >= 0)
+            {
+                p->target_normals[t] = read_floats (self, ctx->accessors, tn, 3, p->n_vertices,
+                                                    "morph NORMAL", error);
+                if (p->target_normals[t] == NULL)
+                    return FALSE;
+            }
+        }
+    }
+    if (self->keep_rest || p->n_targets > 0)
+    {
+        p->rest_positions = g_memdup2 (p->positions, (gsize)MAX (p->n_vertices, 1u) * 3 * sizeof (gfloat));
+        if (p->normals != NULL)
+            p->rest_normals = g_memdup2 (p->normals, (gsize)MAX (p->n_vertices, 1u) * 3 * sizeof (gfloat));
+        self->keep_rest = TRUE;
+    }
 
     /* place into scene space */
     det = normal_matrix (world, nm);
@@ -1450,6 +1844,7 @@ visit_node (LrgGltfGeometry *self,
     gfloat             local[16];
     gfloat             world[16];
     gint               mesh;
+    gint               skin;
     guint              i;
 
     if (ctx->visited[index] || depth > MAX_NODE_DEPTH)
@@ -1465,6 +1860,7 @@ visit_node (LrgGltfGeometry *self,
         !get_string (node, "name", &name, error) ||
         !node_local_matrix (node, local, error) ||
         !get_index (node, "mesh", array_length (ctx->meshes), &mesh, error) ||
+        !get_index (node, "skin", self->skins->len, &skin, error) ||
         !get_array (node, "children", &children, error))
         return FALSE;
     mat_mul (parent, local, world);
@@ -1476,6 +1872,9 @@ visit_node (LrgGltfGeometry *self,
 
         if (object == NULL || !get_array (object, "primitives", &primitives, error))
             return FALSE;
+        ctx->node = index;
+        ctx->skin = skin;
+        ctx->mesh = mesh;
         for (i = 0; i < array_length (primitives); i++)
         {
             JsonObject *primitive = array_object (primitives, i, "primitive", error);
@@ -1580,9 +1979,966 @@ parse_scene (LrgGltfGeometry *self,
     return TRUE;
 }
 
+
+/* ------------------------------------------------------------------------ */
+/* Rigging: nodes, skins, morph weights and animations                      */
+/* ------------------------------------------------------------------------ */
+
+/* parse_nodes:
+ * Every node of the file: its name, parent, mesh, skin and rest pose (the
+ * matrix, or translation / rotation / scale kept apart so an animation
+ * can drive them) and its morph weights. */
+static gboolean
+parse_nodes (LrgGltfGeometry *self,
+             JsonArray       *nodes,
+             JsonArray       *meshes,
+             GError         **error)
+{
+    guint n = array_length (nodes);
+    guint i;
+    guint j;
+
+    for (i = 0; i < n; i++)
+    {
+        Node empty;
+
+        memset (&empty, 0, sizeof empty);
+        empty.parent = -1;
+        empty.mesh = -1;
+        empty.skin = -1;
+        empty.q[3] = 1.0f;
+        empty.s[0] = empty.s[1] = empty.s[2] = 1.0f;
+        g_array_append_val (self->nodes, empty);
+    }
+    for (i = 0; i < n; i++)
+    {
+        JsonObject *object = array_object (nodes, i, "node", error);
+        JsonArray  *children = NULL;
+        JsonArray  *weights = NULL;
+        Node       *node;
+
+        if (object == NULL)
+            return FALSE;
+        node = &g_array_index (self->nodes, Node, i);
+        if (!get_string (object, "name", &node->name, error) ||
+            !get_index (object, "mesh", array_length (meshes), &node->mesh, error) ||
+            !get_array (object, "children", &children, error) ||
+            !get_array (object, "weights", &weights, error) ||
+            !get_floats (object, "translation", 3, node->t, error) ||
+            !get_floats (object, "rotation", 4, node->q, error) ||
+            !get_floats (object, "scale", 3, node->s, error))
+            return FALSE;
+        if (json_object_has_member (object, "matrix"))
+        {
+            node->has_matrix = TRUE;
+            if (!get_floats (object, "matrix", 16, node->matrix, error))
+                return FALSE;
+        }
+        if (array_length (weights) > 0)
+        {
+            node->n_weights = array_length (weights);
+            node->weights = g_new0 (gfloat, node->n_weights);
+            for (j = 0; j < node->n_weights; j++)
+            {
+                JsonNode *w = json_array_get_element (weights, j);
+
+                node->weights[j] = node_is_number (w) ? (gfloat)node_number (w) : 0.0f;
+            }
+        }
+        for (j = 0; j < array_length (children); j++)
+        {
+            gint child;
+
+            if (!element_index (children, j, n, "child node", &child, error))
+                return FALSE;
+            /* a second parent keeps the first; visit_node reports it for the scene */
+            if (g_array_index (self->nodes, Node, child).parent < 0)
+                g_array_index (self->nodes, Node, child).parent = (gint)i;
+        }
+    }
+    return TRUE;
+}
+
+/* parse_mesh_infos: the meshes' default morph weights */
+static gboolean
+parse_mesh_infos (LrgGltfGeometry *self,
+                  JsonArray       *meshes,
+                  GError         **error)
+{
+    guint i;
+    guint j;
+
+    for (i = 0; i < array_length (meshes); i++)
+    {
+        JsonObject *object = array_object (meshes, i, "mesh", error);
+        JsonArray  *weights = NULL;
+        MeshInfo    info;
+
+        memset (&info, 0, sizeof info);
+        if (object == NULL || !get_array (object, "weights", &weights, error))
+            return FALSE;
+        if (array_length (weights) > 0)
+        {
+            info.n_weights = array_length (weights);
+            info.weights = g_new0 (gfloat, info.n_weights);
+            for (j = 0; j < info.n_weights; j++)
+            {
+                JsonNode *w = json_array_get_element (weights, j);
+
+                info.weights[j] = node_is_number (w) ? (gfloat)node_number (w) : 0.0f;
+            }
+        }
+        g_array_append_val (self->meshes, info);
+    }
+    return TRUE;
+}
+
+/* read_all_floats:
+ * A whole accessor as floats, whatever its components (out count and
+ * components); NULL with @error for a bad one. */
+static gfloat *
+read_all_floats (LrgGltfGeometry *self,
+                 JsonArray       *accessors,
+                 gint             index,
+                 guint           *out_count,
+                 guint           *out_components,
+                 GError         **error)
+{
+    Accessor a;
+    gfloat  *out;
+    guint    i;
+    guint    c;
+
+    if (!open_accessor (self, accessors, index, &a, error))
+        return NULL;
+    out = g_new (gfloat, (gsize)MAX (a.count, 1u) * a.components);
+    for (i = 0; i < a.count; i++)
+    {
+        for (c = 0; c < a.components; c++)
+        {
+            gdouble v = read_component (&a, i, c);
+
+            if (!isfinite (v))
+            {
+                g_free (out);
+                g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_DATA,
+                             "accessor %d holds a non-finite value", index);
+                return NULL;
+            }
+            out[i * a.components + c] = (gfloat)v;
+        }
+    }
+    *out_count = a.count;
+    *out_components = a.components;
+    return out;
+}
+
+/* parse_skins:
+ * Each skin's joint nodes and inverse bind matrices (identity when the
+ * accessor is absent). */
+static gboolean
+parse_skins (LrgGltfGeometry *self,
+             JsonArray       *skins,
+             JsonArray       *accessors,
+             guint            n_nodes,
+             GError         **error)
+{
+    guint i;
+    guint j;
+
+    for (i = 0; i < array_length (skins); i++)
+    {
+        JsonObject *object = array_object (skins, i, "skin", error);
+        JsonArray  *joints = NULL;
+        gint        ibm = -1;
+        Skin        skin;
+
+        memset (&skin, 0, sizeof skin);
+        if (object == NULL || !get_array (object, "joints", &joints, error) ||
+            !get_index (object, "inverseBindMatrices", array_length (accessors), &ibm, error))
+            return FALSE;
+        skin.n_joints = array_length (joints);
+        if (skin.n_joints == 0 || skin.n_joints > 4096)
+        {
+            g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_DATA,
+                         "skin %u has %u joints", i, skin.n_joints);
+            return FALSE;
+        }
+        skin.joints = g_new0 (gint, skin.n_joints);
+        skin.inverse_bind = g_new0 (gfloat, (gsize)skin.n_joints * 16);
+        g_array_append_val (self->skins, skin);   /* freed with the array on error */
+        for (j = 0; j < skin.n_joints; j++)
+        {
+            Skin *k = &g_array_index (self->skins, Skin, i);
+
+            if (!element_index (joints, j, n_nodes, "skin joint", &k->joints[j], error))
+                return FALSE;
+            k->inverse_bind[j * 16 + 0] = k->inverse_bind[j * 16 + 5] =
+                k->inverse_bind[j * 16 + 10] = k->inverse_bind[j * 16 + 15] = 1.0f;
+        }
+        if (ibm >= 0)
+        {
+            g_autofree gfloat *m = NULL;
+            guint count = 0;
+            guint components = 0;
+
+            m = read_all_floats (self, accessors, ibm, &count, &components, error);
+            if (m == NULL)
+                return FALSE;
+            if (components != 16 || count < skin.n_joints)
+            {
+                g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_DATA,
+                             "skin %u: inverseBindMatrices too short", i);
+                return FALSE;
+            }
+            memcpy (g_array_index (self->skins, Skin, i).inverse_bind, m,
+                    (gsize)skin.n_joints * 16 * sizeof (gfloat));
+        }
+    }
+    return TRUE;
+}
+
+/* parse_animations:
+ * Samplers (times, values, interpolation) and channels (node and path);
+ * a channel on a missing node, or on KHR_animation_pointer, is dropped. */
+static gboolean
+parse_animations (LrgGltfGeometry *self,
+                  JsonArray       *animations,
+                  JsonArray       *accessors,
+                  guint            n_nodes,
+                  GError         **error)
+{
+    guint i;
+    guint j;
+
+    for (i = 0; i < array_length (animations); i++)
+    {
+        JsonObject *object = array_object (animations, i, "animation", error);
+        JsonArray  *samplers = NULL;
+        JsonArray  *channels = NULL;
+        Animation   animation;
+
+        memset (&animation, 0, sizeof animation);
+        if (object == NULL || !get_array (object, "samplers", &samplers, error) ||
+            !get_array (object, "channels", &channels, error))
+            return FALSE;
+        animation.samplers = g_array_new (FALSE, TRUE, sizeof (Sampler));
+        g_array_set_clear_func (animation.samplers, sampler_clear);
+        animation.channels = g_array_new (FALSE, TRUE, sizeof (Channel));
+        if (!get_string (object, "name", &animation.name, error))
+        {
+            animation_clear (&animation);
+            return FALSE;
+        }
+        g_array_append_val (self->animations, animation);
+        for (j = 0; j < array_length (samplers); j++)
+        {
+            Animation        *a = &g_array_index (self->animations, Animation, i);
+            JsonObject       *so = array_object (samplers, j, "animation sampler", error);
+            g_autofree gchar *interp = NULL;
+            gint              in_index;
+            gint              out_index;
+            guint             n_in = 0;
+            guint             c_in = 0;
+            guint             n_out = 0;
+            guint             c_out = 0;
+            Sampler           sampler;
+
+            memset (&sampler, 0, sizeof sampler);
+            if (so == NULL ||
+                !get_index (so, "input", array_length (accessors), &in_index, error) ||
+                !get_index (so, "output", array_length (accessors), &out_index, error) ||
+                !get_string (so, "interpolation", &interp, error))
+                return FALSE;
+            if (in_index < 0 || out_index < 0)
+            {
+                g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_DATA,
+                             "animation %u sampler %u lacks input or output", i, j);
+                return FALSE;
+            }
+            sampler.times = read_all_floats (self, accessors, in_index, &n_in, &c_in, error);
+            if (sampler.times == NULL)
+                return FALSE;
+            sampler.values = read_all_floats (self, accessors, out_index, &n_out, &c_out, error);
+            if (sampler.values == NULL)
+            {
+                g_free (sampler.times);
+                return FALSE;
+            }
+            sampler.n_keys = n_in;
+            sampler.interpolation = g_strcmp0 (interp, "STEP") == 0 ? INTERP_STEP
+                                  : g_strcmp0 (interp, "CUBICSPLINE") == 0 ? INTERP_CUBIC
+                                  : INTERP_LINEAR;
+            /* the values per key: the output's elements over the keys (a
+             * weights output is a SCALAR run of keys x targets) */
+            sampler.stride = n_in > 0 ? (n_out * c_out) / (n_in * (sampler.interpolation == INTERP_CUBIC ? 3u : 1u)) : 0;
+            if (c_in != 1 || n_in == 0 || sampler.stride == 0 ||
+                (guint64)sampler.stride * n_in * (sampler.interpolation == INTERP_CUBIC ? 3u : 1u) !=
+                (guint64)n_out * c_out)
+            {
+                g_free (sampler.times);
+                g_free (sampler.values);
+                g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_DATA,
+                             "animation %u sampler %u: %u keys do not fit %u output values", i, j,
+                             n_in, n_out * c_out);
+                return FALSE;
+            }
+            g_array_append_val (a->samplers, sampler);
+            a->duration = MAX (a->duration, (gdouble)sampler.times[n_in - 1]);
+        }
+        for (j = 0; j < array_length (channels); j++)
+        {
+            Animation        *a = &g_array_index (self->animations, Animation, i);
+            JsonObject       *co = array_object (channels, j, "animation channel", error);
+            JsonObject       *target = NULL;
+            g_autofree gchar *path = NULL;
+            gint              sampler;
+            gint              node = -1;
+            Channel           channel;
+
+            if (co == NULL ||
+                !get_index (co, "sampler", a->samplers->len, &sampler, error) ||
+                !get_object (co, "target", &target, error) || target == NULL ||
+                !get_index (target, "node", n_nodes, &node, error) ||
+                !get_string (target, "path", &path, error))
+                return FALSE;
+            if (sampler < 0 || node < 0 || path == NULL)
+                continue;   /* pointer animations and the like */
+            memset (&channel, 0, sizeof channel);
+            channel.sampler = sampler;
+            channel.node = node;
+            if (g_strcmp0 (path, "translation") == 0)
+                channel.path = PATH_TRANSLATION;
+            else if (g_strcmp0 (path, "rotation") == 0)
+                channel.path = PATH_ROTATION;
+            else if (g_strcmp0 (path, "scale") == 0)
+                channel.path = PATH_SCALE;
+            else if (g_strcmp0 (path, "weights") == 0)
+                channel.path = PATH_WEIGHTS;
+            else
+                continue;
+            {
+                const Sampler *sm = &g_array_index (a->samplers, Sampler, sampler);
+
+                if ((channel.path == PATH_ROTATION && sm->stride != 4) ||
+                    ((channel.path == PATH_TRANSLATION || channel.path == PATH_SCALE) &&
+                     sm->stride != 3))
+                {
+                    g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_DATA,
+                                 "animation %u channel %u: %u values per key do not fit '%s'",
+                                 i, j, sm->stride, path);
+                    return FALSE;
+                }
+            }
+            g_array_append_val (a->channels, channel);
+        }
+    }
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Posing                                                                   */
+/* ------------------------------------------------------------------------ */
+
+static void
+quat_to_matrix (const gfloat *q,
+                const gfloat *t,
+                const gfloat *sc,
+                gfloat       *m)
+{
+    m[0] = (1 - 2 * q[1] * q[1] - 2 * q[2] * q[2]) * sc[0];
+    m[1] = (2 * q[0] * q[1] + 2 * q[2] * q[3]) * sc[0];
+    m[2] = (2 * q[0] * q[2] - 2 * q[1] * q[3]) * sc[0];
+    m[3] = 0.0f;
+    m[4] = (2 * q[0] * q[1] - 2 * q[2] * q[3]) * sc[1];
+    m[5] = (1 - 2 * q[0] * q[0] - 2 * q[2] * q[2]) * sc[1];
+    m[6] = (2 * q[1] * q[2] + 2 * q[0] * q[3]) * sc[1];
+    m[7] = 0.0f;
+    m[8] = (2 * q[0] * q[2] + 2 * q[1] * q[3]) * sc[2];
+    m[9] = (2 * q[1] * q[2] - 2 * q[0] * q[3]) * sc[2];
+    m[10] = (1 - 2 * q[0] * q[0] - 2 * q[1] * q[1]) * sc[2];
+    m[11] = 0.0f;
+    m[12] = t[0];
+    m[13] = t[1];
+    m[14] = t[2];
+    m[15] = 1.0f;
+}
+
+/* sample_channel:
+ * The value of @sampler at @time into @out (stride floats): linear
+ * (spherical for rotations), step or cubic spline, clamped to the
+ * first and last keys. */
+static void
+sample_channel (const Sampler *sm,
+                ChannelPath    path,
+                gdouble        time,
+                gfloat        *out)
+{
+    guint stride = sm->stride;
+    guint cubic = sm->interpolation == INTERP_CUBIC ? 3u : 1u;
+    guint lo = 0;
+    guint hi = sm->n_keys - 1;
+    guint k;
+
+    #define KEY(i, part) (sm->values + ((gsize)(i) * cubic + (cubic == 3 ? (part) : 0)) * stride)
+    if (time <= (gdouble)sm->times[0] || sm->n_keys == 1)
+    {
+        memcpy (out, KEY (0, 1), stride * sizeof (gfloat));
+        return;
+    }
+    if (time >= (gdouble)sm->times[hi])
+    {
+        memcpy (out, KEY (hi, 1), stride * sizeof (gfloat));
+        return;
+    }
+    /* the key pair around @time (binary search) */
+    while (hi - lo > 1)
+    {
+        guint mid = (lo + hi) / 2;
+
+        if ((gdouble)sm->times[mid] <= time)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    {
+        gdouble t0 = sm->times[lo];
+        gdouble t1 = sm->times[hi];
+        gdouble dt = t1 - t0;
+        gfloat  u = dt > 1e-9 ? (gfloat)((time - t0) / dt) : 0.0f;
+        const gfloat *a = KEY (lo, 1);
+        const gfloat *b = KEY (hi, 1);
+
+        if (sm->interpolation == INTERP_STEP)
+        {
+            memcpy (out, a, stride * sizeof (gfloat));
+            return;
+        }
+        if (sm->interpolation == INTERP_CUBIC)
+        {
+            const gfloat *out_tan = KEY (lo, 2);
+            const gfloat *in_tan = KEY (hi, 0);
+            gfloat u2 = u * u;
+            gfloat u3 = u2 * u;
+            gfloat h00 = 2 * u3 - 3 * u2 + 1;
+            gfloat h10 = u3 - 2 * u2 + u;
+            gfloat h01 = -2 * u3 + 3 * u2;
+            gfloat h11 = u3 - u2;
+
+            for (k = 0; k < stride; k++)
+                out[k] = h00 * a[k] + h10 * (gfloat)dt * out_tan[k] + h01 * b[k] +
+                         h11 * (gfloat)dt * in_tan[k];
+        }
+        else if (path == PATH_ROTATION && stride == 4)
+        {
+            /* the shorter arc: flip @b when the quaternions point apart */
+            gfloat dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+            gfloat sign = dot < 0.0f ? -1.0f : 1.0f;
+            gfloat wa;
+            gfloat wb;
+
+            dot = fabsf (dot);
+            if (dot > 0.9995f)
+            {
+                wa = 1.0f - u;
+                wb = u * sign;
+            }
+            else
+            {
+                gfloat theta = acosf (dot);
+                gfloat st = sinf (theta);
+
+                wa = sinf ((1.0f - u) * theta) / st;
+                wb = sinf (u * theta) / st * sign;
+            }
+            for (k = 0; k < 4; k++)
+                out[k] = wa * a[k] + wb * b[k];
+        }
+        else
+        {
+            for (k = 0; k < stride; k++)
+                out[k] = a[k] + (b[k] - a[k]) * u;
+        }
+        if (path == PATH_ROTATION && stride == 4)
+        {
+            gfloat length = sqrtf (out[0] * out[0] + out[1] * out[1] + out[2] * out[2] +
+                                   out[3] * out[3]);
+
+            if (length > 1e-12f)
+                for (k = 0; k < 4; k++)
+                    out[k] /= length;
+        }
+    }
+    #undef KEY
+}
+
+/* rest_local: the local matrix of node @i from its (possibly animated) TRS */
+static void
+world_of (LrgGltfGeometry *self,
+          const gfloat    *trs,           /* 10 floats per node: t, q, s */
+          const guint8    *use_trs,       /* per node: animated, use trs */
+          guint            i,
+          guint            depth,
+          guint8          *done)
+{
+    Node   *node = &g_array_index (self->nodes, Node, i);
+    gfloat  local[16];
+    gfloat *world = self->node_world + (gsize)i * 16;
+
+    if (done[i])
+        return;
+    if (node->has_matrix && !use_trs[i])
+        memcpy (local, node->matrix, sizeof local);
+    else
+        quat_to_matrix (trs + (gsize)i * 10 + 3, trs + (gsize)i * 10, trs + (gsize)i * 10 + 7, local);
+    if (node->parent >= 0 && depth < MAX_NODE_DEPTH)
+    {
+        gfloat parent_world[16];
+
+        world_of (self, trs, use_trs, (guint)node->parent, depth + 1, done);
+        memcpy (parent_world, self->node_world + (gsize)node->parent * 16, sizeof parent_world);
+        mat_mul (parent_world, local, world);
+    }
+    else
+    {
+        memcpy (world, local, sizeof local);
+    }
+    done[i] = 1;
+}
+
+static void
+apply_skin_matrices (LrgGltfGeometry *self)
+{
+    gsize offset = 0;
+    guint s;
+    guint j;
+
+    for (s = 0; s < self->skins->len; s++)
+    {
+        Skin *skin = &g_array_index (self->skins, Skin, s);
+
+        for (j = 0; j < skin->n_joints; j++)
+            mat_mul (self->node_world + (gsize)skin->joints[j] * 16, skin->inverse_bind + j * 16,
+                     self->joint_mats + (offset + j) * 16);
+        offset += skin->n_joints;
+    }
+}
+
+/* pose_apply:
+ * The current pose (node worlds, skin matrices, morph weights) for
+ * @animation at @time. */
+static void
+pose_apply (LrgGltfGeometry *self,
+            gint             animation,
+            gdouble          time,
+            gboolean         loop)
+{
+    guint n = self->nodes->len;
+    g_autofree gfloat *trs = NULL;
+    g_autofree guint8 *use_trs = NULL;
+    g_autofree guint8 *done = NULL;
+    guint i;
+
+    if (self->node_world == NULL)
+    {
+        gsize joints = 0;
+        guint s;
+
+        self->node_world = g_new0 (gfloat, (gsize)MAX (n, 1u) * 16);
+        self->node_morph = g_new0 (gfloat *, MAX (n, 1u));
+        for (s = 0; s < self->skins->len; s++)
+            joints += g_array_index (self->skins, Skin, s).n_joints;
+        self->joint_mats = g_new0 (gfloat, MAX (joints, (gsize)1) * 16);
+    }
+    trs = g_new0 (gfloat, (gsize)MAX (n, 1u) * 10);
+    use_trs = g_new0 (guint8, MAX (n, 1u));
+    done = g_new0 (guint8, MAX (n, 1u));
+    for (i = 0; i < n; i++)
+    {
+        Node *node = &g_array_index (self->nodes, Node, i);
+        gsize w;
+        guint k;
+
+        memcpy (trs + (gsize)i * 10, node->t, 3 * sizeof (gfloat));
+        memcpy (trs + (gsize)i * 10 + 3, node->q, 4 * sizeof (gfloat));
+        memcpy (trs + (gsize)i * 10 + 7, node->s, 3 * sizeof (gfloat));
+        /* the node's morph weights: its own, else its mesh's */
+        g_clear_pointer (&self->node_morph[i], g_free);
+        w = node->n_weights;
+        if (w == 0 && node->mesh >= 0)
+            w = g_array_index (self->meshes, MeshInfo, node->mesh).n_weights;
+        if (w > 0)
+        {
+            self->node_morph[i] = g_new0 (gfloat, w);
+            for (k = 0; k < w; k++)
+                self->node_morph[i][k] = node->n_weights > 0
+                    ? node->weights[k]
+                    : g_array_index (self->meshes, MeshInfo, node->mesh).weights[k];
+        }
+    }
+
+    if (animation >= 0 && (guint)animation < self->animations->len)
+    {
+        Animation *a = &g_array_index (self->animations, Animation, animation);
+        guint c;
+
+        if (loop && a->duration > 1e-9)
+            time = fmod (time, a->duration);
+        if (time < 0.0)
+            time = 0.0;
+        for (c = 0; c < a->channels->len; c++)
+        {
+            Channel       *ch = &g_array_index (a->channels, Channel, c);
+            const Sampler *sm = &g_array_index (a->samplers, Sampler, ch->sampler);
+            gfloat         value[64];
+
+            if (sm->stride > 64)
+                continue;
+            sample_channel (sm, ch->path, time, value);
+            switch (ch->path)
+            {
+            case PATH_TRANSLATION:
+                if (sm->stride == 3)
+                    memcpy (trs + (gsize)ch->node * 10, value, 3 * sizeof (gfloat));
+                use_trs[ch->node] = 1;
+                break;
+            case PATH_ROTATION:
+                if (sm->stride == 4)
+                    memcpy (trs + (gsize)ch->node * 10 + 3, value, 4 * sizeof (gfloat));
+                use_trs[ch->node] = 1;
+                break;
+            case PATH_SCALE:
+                if (sm->stride == 3)
+                    memcpy (trs + (gsize)ch->node * 10 + 7, value, 3 * sizeof (gfloat));
+                use_trs[ch->node] = 1;
+                break;
+            case PATH_WEIGHTS:
+            default:
+            {
+                guint k;
+
+                if (self->node_morph[ch->node] == NULL)
+                    self->node_morph[ch->node] = g_new0 (gfloat, sm->stride);
+                for (k = 0; k < sm->stride; k++)
+                    self->node_morph[ch->node][k] = value[k];
+                break;
+            }
+            }
+        }
+    }
+    /* a matrix node whose TRS an animation drives, and a node without a
+     * matrix, take the trs; the rest keep their matrix */
+    for (i = 0; i < n; i++)
+        if (!g_array_index (self->nodes, Node, i).has_matrix)
+            use_trs[i] = 1;
+    for (i = 0; i < n; i++)
+        world_of (self, trs, use_trs, i, 0, done);
+    apply_skin_matrices (self);
+    self->posed = TRUE;
+}
+
+/* posed_primitive:
+ * The current pose of one primitive into @out_positions (3 per vertex)
+ * and @out_normals (nullable): the morph targets mixed into the mesh-space
+ * rest data, then skinned by the joints or placed by the node. */
+static void
+posed_primitive (LrgGltfGeometry *self,
+                 Primitive       *p,
+                 gfloat          *out_positions,
+                 gfloat          *out_normals)
+{
+    const gfloat *weights = (p->node >= 0 && self->node_morph != NULL) ? self->node_morph[p->node] : NULL;
+    gsize          joint_base = 0;
+    const gfloat  *world = (p->node >= 0 && self->node_world != NULL)
+                           ? self->node_world + (gsize)p->node * 16 : NULL;
+    gfloat         nm[9];
+    gboolean       skinned = p->skin >= 0 && p->joints != NULL && p->weights != NULL;
+    guint          i;
+    guint          t;
+
+    if (p->rest_positions == NULL)
+    {
+        /* nothing to rebuild from: the static placement */
+        memcpy (out_positions, p->positions, (gsize)p->n_vertices * 3 * sizeof (gfloat));
+        if (out_normals != NULL && p->normals != NULL)
+            memcpy (out_normals, p->normals, (gsize)p->n_vertices * 3 * sizeof (gfloat));
+        return;
+    }
+    if (skinned)
+    {
+        guint s;
+
+        for (s = 0; s < (guint)p->skin; s++)
+            joint_base += g_array_index (self->skins, Skin, s).n_joints;
+    }
+    if (world != NULL && !skinned)
+        normal_matrix (world, nm);
+
+    for (i = 0; i < p->n_vertices; i++)
+    {
+        gfloat v[3];
+        gfloat n[3] = { 0.0f, 0.0f, 0.0f };
+        gfloat pos[3];
+        gfloat nrm[3] = { 0.0f, 0.0f, 0.0f };
+
+        memcpy (v, p->rest_positions + i * 3, sizeof v);
+        if (p->rest_normals != NULL)
+            memcpy (n, p->rest_normals + i * 3, sizeof n);
+        for (t = 0; t < p->n_targets && weights != NULL; t++)
+        {
+            gfloat w = weights[t];
+            guint  k;
+
+            if (fabsf (w) < 1e-6f)
+                continue;
+            for (k = 0; k < 3; k++)
+            {
+                if (p->target_positions[t] != NULL)
+                    v[k] += w * p->target_positions[t][i * 3 + k];
+                if (p->target_normals[t] != NULL)
+                    n[k] += w * p->target_normals[t][i * 3 + k];
+            }
+        }
+
+        if (skinned)
+        {
+            gfloat m[12] = { 0 };
+            gfloat total = 0.0f;
+            guint  j;
+
+            for (j = 0; j < 4; j++)
+            {
+                gfloat        w = p->weights[i * 4 + j];
+                guint         joint = p->joints[i * 4 + j];
+                const gfloat *jm;
+                guint         r;
+
+                if (w <= 0.0f)
+                    continue;
+                if (joint >= g_array_index (self->skins, Skin, p->skin).n_joints)
+                    continue;
+                jm = self->joint_mats + (joint_base + joint) * 16;
+                total += w;
+                for (r = 0; r < 4; r++)
+                {
+                    /* the upper 3x4 of the column-major joint matrix, weighted */
+                    m[r * 3 + 0] += w * jm[r * 4 + 0];
+                    m[r * 3 + 1] += w * jm[r * 4 + 1];
+                    m[r * 3 + 2] += w * jm[r * 4 + 2];
+                }
+            }
+            if (total <= 1e-8f)
+            {
+                /* an unweighted vertex stays where the node puts it */
+                if (world != NULL)
+                {
+                    pos[0] = world[0] * v[0] + world[4] * v[1] + world[8] * v[2] + world[12];
+                    pos[1] = world[1] * v[0] + world[5] * v[1] + world[9] * v[2] + world[13];
+                    pos[2] = world[2] * v[0] + world[6] * v[1] + world[10] * v[2] + world[14];
+                }
+                else
+                {
+                    memcpy (pos, v, sizeof pos);
+                }
+                memcpy (nrm, n, sizeof nrm);
+            }
+            else
+            {
+                /* the weights should sum to 1; renormalize the drift */
+                gfloat inv = 1.0f / total;
+
+                pos[0] = (m[0] * v[0] + m[3] * v[1] + m[6] * v[2] + m[9]) * inv;
+                pos[1] = (m[1] * v[0] + m[4] * v[1] + m[7] * v[2] + m[10]) * inv;
+                pos[2] = (m[2] * v[0] + m[5] * v[1] + m[8] * v[2] + m[11]) * inv;
+                nrm[0] = (m[0] * n[0] + m[3] * n[1] + m[6] * n[2]) * inv;
+                nrm[1] = (m[1] * n[0] + m[4] * n[1] + m[7] * n[2]) * inv;
+                nrm[2] = (m[2] * n[0] + m[5] * n[1] + m[8] * n[2]) * inv;
+            }
+        }
+        else if (world != NULL)
+        {
+            pos[0] = world[0] * v[0] + world[4] * v[1] + world[8] * v[2] + world[12];
+            pos[1] = world[1] * v[0] + world[5] * v[1] + world[9] * v[2] + world[13];
+            pos[2] = world[2] * v[0] + world[6] * v[1] + world[10] * v[2] + world[14];
+            nrm[0] = nm[0] * n[0] + nm[1] * n[1] + nm[2] * n[2];
+            nrm[1] = nm[3] * n[0] + nm[4] * n[1] + nm[5] * n[2];
+            nrm[2] = nm[6] * n[0] + nm[7] * n[1] + nm[8] * n[2];
+        }
+        else
+        {
+            memcpy (pos, v, sizeof pos);
+            memcpy (nrm, n, sizeof nrm);
+        }
+        memcpy (out_positions + i * 3, pos, sizeof pos);
+        if (out_normals != NULL && p->normals != NULL)
+        {
+            gfloat length = sqrtf (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]);
+
+            if (length > 1e-20f)
+            {
+                nrm[0] /= length;
+                nrm[1] /= length;
+                nrm[2] /= length;
+            }
+            memcpy (out_normals + i * 3, nrm, sizeof nrm);
+        }
+    }
+}
+
+/* rest_pose_bake:
+ * After parsing, the static positions of skinned or morphing primitives
+ * become the rest pose (a skinned mesh's node transform is ignored by
+ * the specification; the joints place it), and the bounds are rebuilt. */
+static void
+rest_pose_bake (LrgGltfGeometry *self)
+{
+    guint i;
+    guint v;
+
+    if (!self->keep_rest)
+        return;
+    pose_apply (self, -1, 0.0, FALSE);
+    self->has_bounds = FALSE;
+    for (i = 0; i < self->primitives->len; i++)
+    {
+        Primitive *p = g_ptr_array_index (self->primitives, i);
+
+        if (p->rest_positions != NULL && (p->skin >= 0 || p->n_targets > 0))
+            posed_primitive (self, p, p->positions, p->normals);
+        for (v = 0; v < p->n_vertices; v++)
+            grow_bounds (self, p->positions + v * 3);
+    }
+}
+
 /* ------------------------------------------------------------------------ */
 /* Materials and images                                                     */
 /* ------------------------------------------------------------------------ */
+
+/* texture_image:
+ * The image a "textureInfo" object (an object with "index") names, -1
+ * when @info is NULL. */
+static gboolean
+texture_image (LrgGltfGeometry *self,
+               JsonObject      *info,
+               JsonArray       *textures,
+               gint            *out,
+               GError         **error)
+{
+    gint texture = -1;
+
+    *out = -1;
+    if (info == NULL)
+        return TRUE;
+    if (!get_index (info, "index", array_length (textures), &texture, error))
+        return FALSE;
+    if (texture >= 0)
+    {
+        JsonObject *tex = array_object (textures, (guint)texture, "texture", error);
+
+        if (tex == NULL || !get_index (tex, "source", self->images->len, out, error))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/* optional_number: a number member or @fallback */
+static gfloat
+optional_number (JsonObject  *object,
+                 const gchar *member,
+                 gfloat       fallback)
+{
+    JsonNode *node = json_object_get_member (object, member);
+
+    return node_is_number (node) ? (gfloat)node_number (node) : fallback;
+}
+
+/* parse_material_slots:
+ * The normal, metallic-roughness, occlusion and emissive textures and
+ * factors, and KHR_texture_transform of the base colour texture. */
+static gboolean
+parse_material_slots (LrgGltfGeometry *self,
+                      Material        *m,
+                      JsonObject      *object,
+                      JsonObject      *pbr,
+                      JsonObject      *base,
+                      JsonArray       *textures,
+                      GError         **error)
+{
+    JsonObject *info = NULL;
+    JsonObject *extensions = NULL;
+    JsonObject *transform = NULL;
+
+    if (!get_object (object, "normalTexture", &info, error) ||
+        !texture_image (self, info, textures, &m->normal_image, error))
+        return FALSE;
+    if (info != NULL)
+        m->normal_scale = optional_number (info, "scale", 1.0f);
+    info = NULL;
+    if (!get_object (object, "occlusionTexture", &info, error) ||
+        !texture_image (self, info, textures, &m->occlusion_image, error))
+        return FALSE;
+    if (info != NULL)
+        m->occlusion_strength = optional_number (info, "strength", 1.0f);
+    info = NULL;
+    if (!get_object (object, "emissiveTexture", &info, error) ||
+        !texture_image (self, info, textures, &m->emissive_image, error) ||
+        !get_floats (object, "emissiveFactor", 3, m->emissive, error))
+        return FALSE;
+    /* KHR_materials_emissive_strength scales the factor past 1 */
+    {
+        JsonObject *material_extensions = NULL;
+        JsonObject *strength = NULL;
+
+        if (!get_object (object, "extensions", &material_extensions, error))
+            return FALSE;
+        if (material_extensions != NULL &&
+            !get_object (material_extensions, "KHR_materials_emissive_strength", &strength, error))
+            return FALSE;
+        if (strength != NULL)
+        {
+            gfloat k = optional_number (strength, "emissiveStrength", 1.0f);
+            guint  c;
+
+            if (isfinite (k) && k >= 0.0f)
+                for (c = 0; c < 3; c++)
+                    m->emissive[c] *= k;
+        }
+    }
+    if (pbr != NULL)
+    {
+        info = NULL;
+        if (!get_object (pbr, "metallicRoughnessTexture", &info, error) ||
+            !texture_image (self, info, textures, &m->metallic_image, error))
+            return FALSE;
+        m->metallic = optional_number (pbr, "metallicFactor", 1.0f);
+        m->roughness = optional_number (pbr, "roughnessFactor", 1.0f);
+    }
+
+    /* KHR_texture_transform on the base colour texture: offset, rotation
+     * and scale as the extension's matrix (translation x rotation x
+     * scale) applied to the texture coordinates */
+    if (base != NULL && get_object (base, "extensions", &extensions, error) && extensions != NULL &&
+        get_object (extensions, "KHR_texture_transform", &transform, error) && transform != NULL)
+    {
+        gfloat offset[2] = { 0.0f, 0.0f };
+        gfloat scale[2] = { 1.0f, 1.0f };
+        gfloat rotation = optional_number (transform, "rotation", 0.0f);
+        gfloat c = cosf (rotation);
+        gfloat sn = sinf (rotation);
+
+        if (!get_floats (transform, "offset", 2, offset, error) ||
+            !get_floats (transform, "scale", 2, scale, error))
+            return FALSE;
+        m->has_transform = TRUE;
+        m->uv_matrix[0] = c * scale[0];
+        m->uv_matrix[1] = -sn * scale[1];
+        m->uv_matrix[2] = offset[0];
+        m->uv_matrix[3] = sn * scale[0];
+        m->uv_matrix[4] = c * scale[1];
+        m->uv_matrix[5] = offset[1];
+    }
+    return error == NULL || *error == NULL;
+}
 
 static gboolean
 parse_materials (LrgGltfGeometry *self,
@@ -1605,6 +2961,12 @@ parse_materials (LrgGltfGeometry *self,
         m.color[0] = m.color[1] = m.color[2] = m.color[3] = 1.0f;
         m.image = -1;
         m.cutoff = 0.5f;
+        m.normal_image = m.metallic_image = m.occlusion_image = m.emissive_image = -1;
+        m.normal_scale = 1.0f;
+        m.metallic = 1.0f;
+        m.roughness = 1.0f;
+        m.occlusion_strength = 1.0f;
+        m.uv_matrix[0] = m.uv_matrix[4] = 1.0f;
         g_array_append_val (self->materials, m);   /* cleared with the array */
         if (object == NULL ||
             !get_string (object, "name", &g_array_index (self->materials, Material, i).name,
@@ -1634,6 +2996,10 @@ parse_materials (LrgGltfGeometry *self,
                     return FALSE;
             }
         }
+
+        if (!parse_material_slots (self, &g_array_index (self->materials, Material, i), object,
+                                   pbr, base, textures, error))
+            return FALSE;
 
         if (g_strcmp0 (mode, "MASK") == 0)
             g_array_index (self->materials, Material, i).alpha_mode = LRG_GLTF_ALPHA_MODE_MASK;
@@ -1695,14 +3061,23 @@ parse_document (LrgGltfGeometry *self,
     JsonArray   *materials = NULL;
     JsonArray   *textures = NULL;
     JsonArray   *images = NULL;
+    JsonArray   *skins = NULL;
+    JsonArray   *animations = NULL;
     SceneContext ctx;
+    guint        m;
+    guint        k;
 
     memset (&ctx, 0, sizeof (ctx));
-    if (string_array_contains (root, "extensionsRequired", "KHR_draco_mesh_compression") ||
-        string_array_contains (root, "extensionsRequired", "EXT_meshopt_compression"))
+    ctx.skin = -1;
+    ctx.mesh = -1;
+    ctx.node = -1;
+    /* meshopt views are decoded (lrg-meshopt.c); Draco needs a decoder of
+     * its own (edgebreaker, prediction schemes, entropy coding) and is
+     * refused, so callers take their uncompressed fallback */
+    if (string_array_contains (root, "extensionsRequired", "KHR_draco_mesh_compression"))
     {
         g_set_error_literal (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_UNSUPPORTED,
-                             "The file requires mesh compression (Draco or meshopt)");
+                             "The file requires Draco mesh compression");
         return FALSE;
     }
 
@@ -1713,15 +3088,46 @@ parse_document (LrgGltfGeometry *self,
         !get_array (root, "nodes", &ctx.nodes, error) ||
         !get_array (root, "materials", &materials, error) ||
         !get_array (root, "textures", &textures, error) ||
-        !get_array (root, "images", &images, error))
+        !get_array (root, "images", &images, error) ||
+        !get_array (root, "skins", &skins, error) ||
+        !get_array (root, "animations", &animations, error))
         return FALSE;
 
     ctx.n_materials = array_length (materials);
+
+    /* a file with skins, animations or morph targets keeps its mesh-space
+     * data so a pose can be rebuilt */
+    self->keep_rest = array_length (skins) > 0 || array_length (animations) > 0;
+    for (m = 0; m < array_length (ctx.meshes) && !self->keep_rest; m++)
+    {
+        JsonNode *mesh = json_array_get_element (ctx.meshes, m);
+        JsonNode *prims;
+
+        if (!JSON_NODE_HOLDS_OBJECT (mesh))
+            continue;
+        prims = json_object_get_member (json_node_get_object (mesh), "primitives");
+        if (prims == NULL || !JSON_NODE_HOLDS_ARRAY (prims))
+            continue;
+        for (k = 0; k < json_array_get_length (json_node_get_array (prims)); k++)
+        {
+            JsonNode *prim = json_array_get_element (json_node_get_array (prims), k);
+
+            if (JSON_NODE_HOLDS_OBJECT (prim) &&
+                json_object_has_member (json_node_get_object (prim), "targets"))
+                self->keep_rest = TRUE;
+        }
+    }
+
     return parse_buffers (self, buffers, bin, error) &&
         parse_views (self, views, error) &&
         parse_images (self, images, error) &&
         parse_materials (self, materials, textures, error) &&
-        parse_scene (self, root, &ctx, error);
+        parse_skins (self, skins, ctx.accessors, array_length (ctx.nodes), error) &&
+        parse_nodes (self, ctx.nodes, ctx.meshes, error) &&
+        parse_mesh_infos (self, ctx.meshes, error) &&
+        parse_animations (self, animations, ctx.accessors, array_length (ctx.nodes), error) &&
+        parse_scene (self, root, &ctx, error) &&
+        (rest_pose_bake (self), TRUE);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1915,6 +3321,108 @@ lrg_gltf_geometry_get_bounds (LrgGltfGeometry *self,
     }
     memcpy (min, self->min, sizeof (self->min));
     memcpy (max, self->max, sizeof (self->max));
+    return TRUE;
+}
+
+gboolean
+lrg_gltf_geometry_is_animated (LrgGltfGeometry *self)
+{
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), FALSE);
+    if (self->animations->len > 0)
+        return TRUE;
+    for (i = 0; i < self->primitives->len; i++)
+    {
+        Primitive *p = g_ptr_array_index (self->primitives, i);
+
+        if (p->skin >= 0 || p->n_targets > 0)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+guint
+lrg_gltf_geometry_get_animation_count (LrgGltfGeometry *self)
+{
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), 0);
+    return self->animations->len;
+}
+
+const gchar *
+lrg_gltf_geometry_get_animation_name (LrgGltfGeometry *self,
+                                      guint            animation)
+{
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), NULL);
+    return animation < self->animations->len
+        ? g_array_index (self->animations, Animation, animation).name : NULL;
+}
+
+gdouble
+lrg_gltf_geometry_get_animation_duration (LrgGltfGeometry *self,
+                                          guint            animation)
+{
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), 0.0);
+    return animation < self->animations->len
+        ? g_array_index (self->animations, Animation, animation).duration : 0.0;
+}
+
+guint
+lrg_gltf_geometry_get_skin_count (LrgGltfGeometry *self)
+{
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), 0);
+    return self->skins->len;
+}
+
+gint
+lrg_gltf_geometry_get_primitive_skin (LrgGltfGeometry *self,
+                                      guint            primitive)
+{
+    Primitive *p;
+
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), -1);
+    p = primitive_at (self, primitive);
+    return p != NULL && p->joints != NULL ? p->skin : -1;
+}
+
+guint
+lrg_gltf_geometry_get_primitive_morph_target_count (LrgGltfGeometry *self,
+                                                    guint            primitive)
+{
+    Primitive *p;
+
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), 0);
+    p = primitive_at (self, primitive);
+    return p != NULL ? p->n_targets : 0;
+}
+
+void
+lrg_gltf_geometry_pose (LrgGltfGeometry *self,
+                        gint             animation,
+                        gdouble          time,
+                        gboolean         loop)
+{
+    g_return_if_fail (LRG_IS_GLTF_GEOMETRY (self));
+    pose_apply (self, animation, time, loop);
+}
+
+gboolean
+lrg_gltf_geometry_get_posed (LrgGltfGeometry *self,
+                             guint            primitive,
+                             gfloat          *out_positions,
+                             gfloat          *out_normals)
+{
+    Primitive *p;
+
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), FALSE);
+    g_return_val_if_fail (out_positions != NULL, FALSE);
+
+    p = primitive_at (self, primitive);
+    if (p == NULL)
+        return FALSE;
+    if (!self->posed && self->keep_rest)
+        pose_apply (self, -1, 0.0, FALSE);
+    posed_primitive (self, p, out_positions, out_normals);
     return TRUE;
 }
 
@@ -2124,4 +3632,84 @@ lrg_gltf_geometry_load_image (LrgGltfGeometry  *self,
         return NULL;
     }
     return g_steal_pointer (&decoded);
+}
+
+gint
+lrg_gltf_geometry_get_material_normal_image (LrgGltfGeometry *self,
+                                             guint            material,
+                                             gfloat          *scale)
+{
+    Material *m;
+
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), -1);
+    m = material_at (self, material);
+    if (scale != NULL)
+        *scale = m != NULL ? m->normal_scale : 1.0f;
+    return m != NULL ? m->normal_image : -1;
+}
+
+gint
+lrg_gltf_geometry_get_material_metallic_image (LrgGltfGeometry *self,
+                                               guint            material,
+                                               gfloat          *metallic,
+                                               gfloat          *roughness)
+{
+    Material *m;
+
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), -1);
+    m = material_at (self, material);
+    if (metallic != NULL)
+        *metallic = m != NULL ? m->metallic : 1.0f;
+    if (roughness != NULL)
+        *roughness = m != NULL ? m->roughness : 1.0f;
+    return m != NULL ? m->metallic_image : -1;
+}
+
+gint
+lrg_gltf_geometry_get_material_occlusion_image (LrgGltfGeometry *self,
+                                                guint            material,
+                                                gfloat          *strength)
+{
+    Material *m;
+
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), -1);
+    m = material_at (self, material);
+    if (strength != NULL)
+        *strength = m != NULL ? m->occlusion_strength : 1.0f;
+    return m != NULL ? m->occlusion_image : -1;
+}
+
+gint
+lrg_gltf_geometry_get_material_emissive_image (LrgGltfGeometry *self,
+                                               guint            material,
+                                               gfloat          *rgb)
+{
+    Material *m;
+
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), -1);
+    m = material_at (self, material);
+    if (rgb != NULL)
+        memcpy (rgb, m != NULL ? m->emissive : (const gfloat[3]){ 0.0f, 0.0f, 0.0f },
+                3 * sizeof (gfloat));
+    return m != NULL ? m->emissive_image : -1;
+}
+
+gboolean
+lrg_gltf_geometry_get_material_uv_transform (LrgGltfGeometry *self,
+                                             guint            material,
+                                             gfloat          *matrix)
+{
+    Material *m;
+
+    g_return_val_if_fail (LRG_IS_GLTF_GEOMETRY (self), FALSE);
+    g_return_val_if_fail (matrix != NULL, FALSE);
+    m = material_at (self, material);
+    if (m == NULL)
+    {
+        memset (matrix, 0, 6 * sizeof (gfloat));
+        matrix[0] = matrix[4] = 1.0f;
+        return FALSE;
+    }
+    memcpy (matrix, m->uv_matrix, 6 * sizeof (gfloat));
+    return m->has_transform;
 }

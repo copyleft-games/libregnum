@@ -66,6 +66,10 @@ A second-order (12 dB per octave) low-pass, the biquad of Robert Bristow-Johnson
 | =get_current_cutoff= | where the glide is |
 | =set_resonance= / =get_resonance=, =set_glide= / =get_glide= | Q and glide time |
 
+* The device rate (gaps G8)
+
+raylib opens the device at the system's rate and does not report it.  =lrg_audio_effect_chain_attach_mix (chain, 0)= assumes =LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE= (48000) and the mix callback then counts the frames it is handed against the monotonic clock: after two windows of two seconds that snap (=lrg_audio_snap_sample_rate()=: the nearest of 8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000, 176400, 192000 within 6 percent) to the same rate, that rate replaces the guess.  =lrg_audio_effect_chain_get_mix_rate (chain, &measured)= reports the rate in use and whether it was measured.  Naming a rate in =attach_mix()= turns the measurement off.  =tests/test-audio-effects.c= covers the snapping and the unattached chain.
+
 * LrgAudioEffectChain
 
 | Function | Purpose |
