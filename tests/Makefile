@@ -123,6 +123,7 @@ TEST_SOURCES := \
 	test-net.c \
 	test-mmo.c \
 	test-mmo-services.c \
+	test-mmo-holdings.c \
 	test-mmo-completion.c \
 	test-mmo-replicator.c \
 	test-mmo-datagram.c \
