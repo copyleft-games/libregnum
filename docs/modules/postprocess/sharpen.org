@@ -1,0 +1,38 @@
+* LrgSharpen - Contrast-Adaptive Sharpening
+:PROPERTIES:
+:CUSTOM_ID: sharpen
+:END:
+
+=LrgSharpen= (=src/postprocess/effects/lrg-sharpen.h=, GIR =Libregnum.Sharpen=) is a post effect for the upscale of a reduced render target: the centre pixel is pushed away from its four neighbours by an amount that falls to zero where the neighbourhood already touches black or white, so edges do not ring and flat areas are untouched.
+
+** Arithmetic
+:PROPERTIES:
+:CUSTOM_ID: arithmetic
+:END:
+Per colour channel, with =mn= and =mx= the minimum and maximum of the centre and its up, down, left and right neighbours:
+
+- amplitude =a = sqrt (clamp (min (mn, 1 - mx) / max (mx, 1e-4), 0, 1))=
+- weight =w = a x mix (-0.125, -0.2, sharpness)=
+- result =(centre + sum of neighbours x w) / (1 + 4 w)=, mixed with the centre by the effect's intensity.
+
+=lrg_sharpen_pixel()= is the same arithmetic on the CPU (the reference the tests check); the GLSL 330 fragment shader (=lrg_sharpen_get_fragment_shader()=) reads the neighbours one texel away (=1 / textureSize (texture0, 0)=).
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Use |
+|---+---|
+| =lrg_sharpen_new()= | sharpness 0.5, intensity 1 |
+| =get/set_sharpness()=, property =sharpness= | 0 .. 1 |
+| =lrg_sharpen_is_identity()= | intensity 0: the picture is drawn plainly |
+| =lrg_sharpen_draw_texture (texture, source, dest)= | draws through the shader (plainly when it is unavailable) |
+| =lrg_sharpen_pixel()= | the CPU reference |
+
+As a =LrgPostEffect= it also works inside a =LrgPostProcessor= chain (=apply()= draws the source through the shader, flipped as render textures are).
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-sharpen.c=: a flat area is unchanged; an edge in mid-grey gains contrast and more sharpness gains more; a full-range edge is left alone; results stay in range; the properties, the identity rule and the shader's uniforms.

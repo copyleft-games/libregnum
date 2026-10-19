@@ -487,6 +487,7 @@
 #include "postprocess/effects/lrg-film-grain.h"
 #include "postprocess/effects/lrg-screen-shake.h"
 #include "postprocess/effects/lrg-colorblind-filter.h"
+#include "postprocess/effects/lrg-sharpen.h"
 #include "postprocess/lrg-color-lut.h"
 #include "postprocess/effects/lrg-color-grade.h"
 #include "postprocess/effects/lrg-palettize.h"

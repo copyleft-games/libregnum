@@ -361,6 +361,7 @@ PUBLIC_HEADERS := \
 	src/postprocess/effects/lrg-film-grain.h \
 	src/postprocess/effects/lrg-screen-shake.h \
 	src/postprocess/effects/lrg-colorblind-filter.h \
+	src/postprocess/effects/lrg-sharpen.h \
 	src/postprocess/effects/lrg-color-grade.h \
 	src/postprocess/lrg-color-lut.h \
 	src/postprocess/effects/lrg-palettize.h \
@@ -960,6 +961,7 @@ SOURCES := \
 	src/postprocess/effects/lrg-film-grain.c \
 	src/postprocess/effects/lrg-screen-shake.c \
 	src/postprocess/effects/lrg-colorblind-filter.c \
+	src/postprocess/effects/lrg-sharpen.c \
 	src/postprocess/effects/lrg-color-grade.c \
 	src/postprocess/lrg-color-lut.c \
 	src/postprocess/effects/lrg-palettize.c \

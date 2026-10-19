@@ -72,4 +72,5 @@ Each effect reads from one texture and writes to another, ping-ponging through t
 | [[file:post-processor.org]] | LrgPostProcessor pipeline |
 | [[file:effects.org]]        | Built-in effect types     |
 | [[file:accessibility.org]]  | Colorblind filter         |
+| [[file:sharpen.org]]        | Contrast-adaptive sharpening |
 | [[file:palettize.org]]      | Palettize and dither      |
