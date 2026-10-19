@@ -81,6 +81,24 @@ Everything is decoded and checked when the object is created, so the getters nev
 - all reads go through =memcpy= with little-endian conversion: unaligned data is fine.
 =tests/test-gltf-geometry.c= covers placement, mirroring, scene choice, strips, fans and lines, every URI kind and the refusals, an embedded PNG, malformed files with their error codes, every truncation of a valid GLB and 2 000 random byte flips.
 
+** Rigging: skins, animations and morph targets
+:PROPERTIES:
+:CUSTOM_ID: rigging
+:END:
+The reader keeps the whole node graph, the skins (joints and inverse bind matrices, a =MAT4= accessor), the clips (translation, rotation, scale and weights channels with =LINEAR=, =STEP= and =CUBICSPLINE= samplers) and the primitives' =JOINTS_0=, =WEIGHTS_0= and morph targets (=POSITION= and =NORMAL= deltas, the mesh's and node's default weights).  A file with none of them keeps no extra data.
+
+- =lrg_gltf_geometry_is_animated()=, =get_animation_count/name/duration()=, =get_skin_count()=, =get_primitive_skin()=, =get_primitive_morph_target_count()=;
+- =lrg_gltf_geometry_pose (animation, time, loop)= evaluates a clip (-1: the rest pose) over the node graph and the skin matrices; rotations are spherical, cubic splines Hermite, a clip's time wraps with =loop= or clamps at the end;
+- =lrg_gltf_geometry_get_posed (primitive, positions, normals)= gives the primitive in scene space: the morph targets mixed with their weights, then skinned (the weights renormalised; a skinned mesh's own node transform is ignored, as the specification says) or placed by its node;
+- the static getters (=get_positions()= and the bounds) are the rest pose, so a skinned model that is only drawn static stands where its joints put it;
+- validation: a joint outside the node list is =LRG_GLTF_ERROR_INVALID_REFERENCE=, a sampler whose output does not fit its keys or its channel's path (4 per key for a rotation, 3 for a translation or scale) is =LRG_GLTF_ERROR_INVALID_DATA=.
+
+** Material slots
+:PROPERTIES:
+:CUSTOM_ID: material-slots
+:END:
+=get_material_normal_image()= (with the =scale=), =get_material_metallic_image()= (the metallic-roughness texture, green roughness and blue metallic, with the factors), =get_material_occlusion_image()= (red, with the strength) and =get_material_emissive_image()= (with the factor) name the images of a material's other slots (-1 for none); =get_material_uv_transform()= gives the base colour texture's =KHR_texture_transform= as a 2x3 matrix (offset, rotation and scale; the identity when absent).  =tests/test-gltf-rig.c= covers the bind pose, a clip at several times with looping and clamping, the three interpolations, morph weights (default and animated), the slots and the transform, and the refused skins and samplers.
+
 ** Example
 :PROPERTIES:
 :CUSTOM_ID: example

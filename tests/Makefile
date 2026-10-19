@@ -100,6 +100,7 @@ TEST_SOURCES := \
 	test-dds-image.c \
 	test-gltf-animation-roots.c \
 	test-gltf-geometry.c \
+	test-gltf-rig.c \
 	test-model-animator.c \
 	test-static-batch.c \
 	test-skinned-mesh.c \
