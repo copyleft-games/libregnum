@@ -341,4 +341,110 @@ lrg_mmo_matchmaker_roles_fit (const guint *masks,
                               guint        n_masks,
                               const guint *slots,
                               guint        n_slots);
+/**
+ * lrg_mmo_matchmaker_set_ticket_lifetime:
+ * @self: the service; confine to its owning thread
+ * @lifetime_us: how long a ticket waits before it expires, in microseconds;
+ *   at least one second (shorter values are raised to one second)
+ *
+ * The same lifetime as lrg_mmo_matchmaker_set_timeout(). Changes how long
+ * new and already queued tickets wait (sixty seconds by
+ * default). Battleground-style queues that fill with substitutes after a wait
+ * need tickets that outlive that wait.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_mmo_matchmaker_set_ticket_lifetime (LrgMmoMatchmaker *self,
+                                        gint64            lifetime_us);
+
+/**
+ * lrg_mmo_matchmaker_get_ticket_lifetime:
+ * @self: the service
+ *
+ * Returns: the ticket lifetime in microseconds
+ */
+LRG_AVAILABLE_IN_ALL
+gint64
+lrg_mmo_matchmaker_get_ticket_lifetime (LrgMmoMatchmaker *self);
+
+/**
+ * lrg_mmo_matchmaker_get_wait:
+ * @self: the service
+ * @account: account ID
+ * @now_us: monotonic server microseconds
+ *
+ * Returns: how long @account's ticket has waited in microseconds, or -1 when
+ *   it is not queued
+ */
+LRG_AVAILABLE_IN_ALL
+gint64
+lrg_mmo_matchmaker_get_wait (LrgMmoMatchmaker *self,
+                             const gchar      *account,
+                             gint64            now_us);
+
+/**
+ * lrg_mmo_matchmaker_get_oldest_wait:
+ * @self: the service
+ * @mode: a game mode ID
+ * @now_us: monotonic server microseconds
+ *
+ * The wait of the oldest ticket of @mode: a host may fill a long-waiting
+ * queue with substitutes (bots) of that ticket's rating.
+ *
+ * Returns: microseconds, or -1 when nothing waits for @mode
+ */
+LRG_AVAILABLE_IN_ALL
+gint64
+lrg_mmo_matchmaker_get_oldest_wait (LrgMmoMatchmaker *self,
+                                    const gchar      *mode,
+                                    gint64            now_us);
+
+/**
+ * lrg_mmo_matchmaker_get_oldest_rating:
+ * @self: the service
+ * @mode: a game mode ID
+ * @out_rating: (out): the mean rating of the oldest ticket of @mode
+ * @out_size: (out) (optional): its member count
+ *
+ * Returns: %TRUE when a ticket of @mode waits
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_matchmaker_get_oldest_rating (LrgMmoMatchmaker *self,
+                                      const gchar      *mode,
+                                      guint            *out_rating,
+                                      guint            *out_size);
+
+/**
+ * lrg_mmo_matchmaker_take_teams:
+ * @self: the service; confine to its owning thread
+ * @mode: game mode ID
+ * @team_size: members per team, 1 to 64
+ * @teams: number of teams, 2 to 16
+ * @spread: maximum difference between the lowest and highest rating of all
+ *   participants
+ * @now_us: monotonic server microseconds
+ * @error: (nullable): return location for error
+ *
+ * Expires old tickets, then assembles one match of @teams teams of exactly
+ * @team_size members from whole FIFO tickets within the rating bound, never
+ * splitting a party across teams. Among the packings it tries, larger parties
+ * are placed first and each ticket goes to the open team with the lowest rating
+ * total, so solo players balance the teams. The search is bounded; like
+ * lrg_mmo_matchmaker_take() it does not optimize global match quality.
+ * The chosen tickets leave the queue; incomplete matches stay queued.
+ *
+ * Returns: (transfer full) (element-type GPtrArray) (nullable): one array of
+ *   account IDs (utf8) per team, empty when no full match exists, %NULL on a
+ *   bad request
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *
+lrg_mmo_matchmaker_take_teams (LrgMmoMatchmaker *self,
+                               const gchar      *mode,
+                               guint             team_size,
+                               guint             teams,
+                               guint             spread,
+                               gint64            now_us,
+                               GError          **error);
 G_END_DECLS
