@@ -651,7 +651,7 @@ test_collection_empty (void)
     guint                    k;
 
     g_assert_cmpuint (lrg_collection_get_total_count (c), ==, 0);
-    for (k = LRG_COLLECTIBLE_KIND_MOUNT; k <= LRG_COLLECTIBLE_KIND_TOY; k++)
+    for (k = LRG_COLLECTIBLE_KIND_MOUNT; k <= LRG_COLLECTIBLE_KIND_APPEARANCE; k++)
     {
         g_autoptr(GPtrArray) kind_ids = lrg_collection_get_ids (c, (LrgCollectibleKind)k);
 
@@ -740,7 +740,7 @@ test_collection_add_rejections (CollectionFixture *fixture,
     (void)user_data;
 
     /* Unknown kind. */
-    g_assert_false (lrg_collection_add (c, (LrgCollectibleKind)4, "new_thing", &error));
+    g_assert_false (lrg_collection_add (c, (LrgCollectibleKind)5, "new_thing", &error));
     g_assert_error (error, LRG_PROGRESSION_ERROR, LRG_PROGRESSION_ERROR_INVALID);
     g_clear_error (&error);
     assert_unchanged (c, before);
@@ -1046,6 +1046,35 @@ test_collection_variant_round_trip (CollectionFixture *fixture,
     g_assert_cmpuint (lrg_collection_get_count (restored, LRG_COLLECTIBLE_KIND_MOUNT), ==, 3);
 }
 
+/* the appearance kind: owned, counted, favourited and restored like any */
+static void
+test_collection_appearance_kind (void)
+{
+    g_autoptr(LrgCollection) c = lrg_collection_new ();
+    g_autoptr(LrgCollection) back = NULL;
+    g_autoptr(GVariant)      state = NULL;
+    g_autoptr(GError)        error = NULL;
+    LrgCollectibleKind       kind;
+
+    g_assert_true (lrg_collection_add (c, LRG_COLLECTIBLE_KIND_APPEARANCE, "g2.t100.m512.v0", &error));
+    g_assert_no_error (error);
+    g_assert_true (lrg_collection_add (c, LRG_COLLECTIBLE_KIND_TOY, "toy_a", NULL));
+    g_assert_cmpuint (lrg_collection_get_count (c, LRG_COLLECTIBLE_KIND_APPEARANCE), ==, 1);
+    g_assert_cmpuint (lrg_collection_get_count (c, LRG_COLLECTIBLE_KIND_TOY), ==, 1);
+    g_assert_true (lrg_collection_set_favorite (c, "g2.t100.m512.v0", TRUE, NULL));
+    g_assert_true (lrg_collection_set_active (c, LRG_COLLECTIBLE_KIND_APPEARANCE, "g2.t100.m512.v0", NULL));
+
+    state = g_variant_ref_sink (lrg_collection_to_variant (c));
+    back = lrg_collection_new_from_variant (state, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (back);
+    g_assert_true (lrg_collection_get_kind (back, "g2.t100.m512.v0", &kind));
+    g_assert_cmpint (kind, ==, LRG_COLLECTIBLE_KIND_APPEARANCE);
+    g_assert_true (lrg_collection_is_favorite (back, "g2.t100.m512.v0"));
+    g_assert_cmpstr (lrg_collection_get_active (back, LRG_COLLECTIBLE_KIND_APPEARANCE), ==, "g2.t100.m512.v0");
+    g_assert_cmpuint (lrg_collection_get_count (back, LRG_COLLECTIBLE_KIND_APPEARANCE), ==, 1);
+}
+
 static void
 test_collection_variant_empty_and_unsorted (void)
 {
@@ -1195,7 +1224,7 @@ test_collection_variant_hostile_entries (void)
 
     /* Unknown kind value in an entry. */
     {
-        const guint     kinds[] = { 4 };
+        const guint     kinds[] = { 5 };
         const gchar    *ids[] = { "thing" };
         const gboolean  favs[] = { FALSE };
         g_autoptr(GVariant) v = build_variant (1, kinds, ids, favs, 0, NULL, NULL);
@@ -1302,9 +1331,9 @@ test_collection_variant_hostile_actives (void)
     }
     /* More active rows than kinds. */
     {
-        const guint  ak[] = { 0, 1, 2, 3, 0 };
-        const gchar *ai[] = { "mount_a", "pet_a", "title_a", "toy_a", "mount_a" };
-        g_autoptr(GVariant) v = build_variant (4, kinds, ids, favs, 5, ak, ai);
+        const guint  ak[] = { 0, 1, 2, 3, 4, 0 };
+        const gchar *ai[] = { "mount_a", "pet_a", "title_a", "toy_a", "look_a", "mount_a" };
+        g_autoptr(GVariant) v = build_variant (4, kinds, ids, favs, 6, ak, ai);
         assert_restore_invalid (v);
     }
     /* Every kind active at once is fine. */
@@ -2136,6 +2165,7 @@ main (int   argc,
     g_test_add ("/collection/collection/variant-round-trip", CollectionFixture, NULL,
                 collection_fixture_setup, test_collection_variant_round_trip,
                 collection_fixture_teardown);
+    g_test_add_func ("/collection/collection/appearance-kind", test_collection_appearance_kind);
     g_test_add_func ("/collection/collection/variant-empty-unsorted", test_collection_variant_empty_and_unsorted);
     g_test_add_func ("/collection/collection/variant-floating", test_collection_variant_floating_consumed);
     g_test_add_func ("/collection/collection/variant-wrong-type", test_collection_variant_wrong_type);

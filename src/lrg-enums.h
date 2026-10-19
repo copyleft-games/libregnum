@@ -5598,6 +5598,8 @@ GType lrg_skill_difficulty_get_type (void) G_GNUC_CONST;
  * @LRG_COLLECTIBLE_KIND_PET: A companion pet
  * @LRG_COLLECTIBLE_KIND_TITLE: A character title
  * @LRG_COLLECTIBLE_KIND_TOY: A cosmetic toy
+ * @LRG_COLLECTIBLE_KIND_APPEARANCE: A wearable appearance (a look of an
+ *   armour, weapon or garment, collected for transmogrification)
  *
  * Kind of collectible.
  */
@@ -5606,7 +5608,8 @@ typedef enum
     LRG_COLLECTIBLE_KIND_MOUNT,
     LRG_COLLECTIBLE_KIND_PET,
     LRG_COLLECTIBLE_KIND_TITLE,
-    LRG_COLLECTIBLE_KIND_TOY
+    LRG_COLLECTIBLE_KIND_TOY,
+    LRG_COLLECTIBLE_KIND_APPEARANCE
 } LrgCollectibleKind;
 
 LRG_AVAILABLE_IN_ALL

@@ -5235,6 +5235,7 @@ lrg_collectible_kind_get_type (void)
             { LRG_COLLECTIBLE_KIND_PET, "LRG_COLLECTIBLE_KIND_PET", "pet" },
             { LRG_COLLECTIBLE_KIND_TITLE, "LRG_COLLECTIBLE_KIND_TITLE", "title" },
             { LRG_COLLECTIBLE_KIND_TOY, "LRG_COLLECTIBLE_KIND_TOY", "toy" },
+            { LRG_COLLECTIBLE_KIND_APPEARANCE, "LRG_COLLECTIBLE_KIND_APPEARANCE", "appearance" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
