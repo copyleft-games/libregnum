@@ -512,7 +512,8 @@ test_malformed (void)
                     "{\"KHR_draco_mesh_compression\":{}},");
     assert_quad_error (json, LRG_GLTF_ERROR, LRG_GLTF_ERROR_UNSUPPORTED);
     g_free (json);
-    json = replace (base, "\"asset\":", "\"extensionsRequired\":[\"EXT_meshopt_compression\"],"
+    /* Draco required by the file (meshopt is decoded: test-meshopt.c) */
+    json = replace (base, "\"asset\":", "\"extensionsRequired\":[\"KHR_draco_mesh_compression\"],"
                     "\"asset\":");
     assert_quad_error (json, LRG_GLTF_ERROR, LRG_GLTF_ERROR_UNSUPPORTED);
     g_free (json);

@@ -554,7 +554,7 @@ lrg_gltf_geometry_get_material_occlusion_image (LrgGltfGeometry *self,
  * @self: an #LrgGltfGeometry
  * @material: material index
  * @rgb: (out caller-allocates) (optional) (array fixed-size=3): the
- *   emissiveFactor (black when absent)
+ *   emissiveFactor (black when absent), times KHR_materials_emissive_strength
  *
  * Returns: the image of the emissive map, -1 for none
  */

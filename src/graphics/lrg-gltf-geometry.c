@@ -28,6 +28,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "graphics/lrg-gltf-geometry.h"
+#include "graphics/lrg-meshopt.h"
 
 #define GLB_MAGIC         (0x46546C67u)  /* "glTF" */
 #define GLB_CHUNK_JSON    (0x4E4F534Au)  /* "JSON" */
@@ -865,6 +866,130 @@ resolve_uri (LrgGltfGeometry  *self,
     return g_bytes_new_take (contents, length);
 }
 
+/* is_meshopt_fallback:
+ * A buffer marked as EXT_meshopt_compression's fallback (its views are
+ * all compressed). */
+static gboolean
+is_meshopt_fallback (JsonObject *buffer)
+{
+    JsonNode *extensions = json_object_get_member (buffer, "extensions");
+    JsonNode *meshopt;
+
+    if (extensions == NULL || !JSON_NODE_HOLDS_OBJECT (extensions))
+        return FALSE;
+    meshopt = json_object_get_member (json_node_get_object (extensions), "EXT_meshopt_compression");
+    return meshopt != NULL && JSON_NODE_HOLDS_OBJECT (meshopt);
+}
+
+/* decode_meshopt_view:
+ * A buffer view with EXT_meshopt_compression: decodes the compressed
+ * range it names into a buffer of its own (appended to self->buffers)
+ * and points @view at it.  A view without the extension is left alone. */
+static gboolean
+decode_meshopt_view (LrgGltfGeometry *self,
+                     JsonObject      *object,
+                     guint            index,
+                     View            *view,
+                     GError         **error)
+{
+    JsonNode         *extensions = json_object_get_member (object, "extensions");
+    JsonNode         *node;
+    JsonObject       *meshopt;
+    g_autofree gchar *mode_name = NULL;
+    g_autofree gchar *filter_name = NULL;
+    g_autoptr(GBytes) decoded = NULL;
+    LrgMeshoptMode    mode;
+    LrgMeshoptFilter  filter;
+    gint              buffer;
+    gint64            offset;
+    gint64            length;
+    gint64            stride;
+    gint64            count;
+    const guint8     *data;
+    gsize             size;
+
+    if (extensions == NULL || !JSON_NODE_HOLDS_OBJECT (extensions))
+        return TRUE;
+    node = json_object_get_member (json_node_get_object (extensions), "EXT_meshopt_compression");
+    if (node == NULL)
+        return TRUE;
+    if (!JSON_NODE_HOLDS_OBJECT (node))
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_JSON,
+                     "bufferView %u: EXT_meshopt_compression is not an object", index);
+        return FALSE;
+    }
+    meshopt = json_node_get_object (node);
+    if (!get_index (meshopt, "buffer", self->buffers->len, &buffer, error) ||
+        !get_count (meshopt, "byteOffset", (gdouble)G_MAXUINT32 + 1.0, 0, &offset, error) ||
+        !get_count (meshopt, "byteLength", (gdouble)G_MAXUINT32 + 1.0, -1, &length, error) ||
+        !get_count (meshopt, "byteStride", 256.0, -1, &stride, error) ||
+        !get_count (meshopt, "count", (gdouble)LRG_GLTF_GEOMETRY_MAX_VERTICES, -1, &count, error) ||
+        !get_string (meshopt, "mode", &mode_name, error) ||
+        !get_string (meshopt, "filter", &filter_name, error))
+        return FALSE;
+    if (buffer < 0 || length < 0 || stride <= 0 || count < 0 || mode_name == NULL)
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_JSON,
+                     "bufferView %u: EXT_meshopt_compression needs buffer, byteLength, "
+                     "byteStride, count and mode", index);
+        return FALSE;
+    }
+    if (g_strcmp0 (mode_name, "ATTRIBUTES") == 0)
+        mode = LRG_MESHOPT_MODE_ATTRIBUTES;
+    else if (g_strcmp0 (mode_name, "TRIANGLES") == 0)
+        mode = LRG_MESHOPT_MODE_TRIANGLES;
+    else if (g_strcmp0 (mode_name, "INDICES") == 0)
+        mode = LRG_MESHOPT_MODE_INDICES;
+    else
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_UNSUPPORTED,
+                     "bufferView %u: meshopt mode %s", index, mode_name);
+        return FALSE;
+    }
+    if (filter_name == NULL || g_strcmp0 (filter_name, "NONE") == 0)
+        filter = LRG_MESHOPT_FILTER_NONE;
+    else if (g_strcmp0 (filter_name, "OCTAHEDRAL") == 0)
+        filter = LRG_MESHOPT_FILTER_OCTAHEDRAL;
+    else if (g_strcmp0 (filter_name, "QUATERNION") == 0)
+        filter = LRG_MESHOPT_FILTER_QUATERNION;
+    else if (g_strcmp0 (filter_name, "EXPONENTIAL") == 0)
+        filter = LRG_MESHOPT_FILTER_EXPONENTIAL;
+    else
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_UNSUPPORTED,
+                     "bufferView %u: meshopt filter %s", index, filter_name);
+        return FALSE;
+    }
+    data = g_bytes_get_data (g_ptr_array_index (self->buffers, buffer), &size);
+    if ((guint64)offset + (guint64)length > (guint64)size)
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_DATA,
+                     "bufferView %u: the compressed range overruns buffer %d", index, buffer);
+        return FALSE;
+    }
+    decoded = lrg_meshopt_decode (mode, filter, data + offset, (gsize)length, (guint)count,
+                                  (guint)stride, error);
+    if (decoded == NULL)
+    {
+        g_prefix_error (error, "bufferView %u: ", index);
+        return FALSE;
+    }
+    if (g_bytes_get_size (decoded) < view->length)
+    {
+        g_set_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_DATA,
+                     "bufferView %u: %" G_GSIZE_FORMAT " bytes decoded for a %" G_GSIZE_FORMAT
+                     "-byte view", index, g_bytes_get_size (decoded), view->length);
+        return FALSE;
+    }
+    g_ptr_array_add (self->buffers, g_steal_pointer (&decoded));
+    view->buffer = (gint)self->buffers->len - 1;
+    view->offset = 0;
+    if (view->stride == 0 && mode == LRG_MESHOPT_MODE_ATTRIBUTES)
+        view->stride = (gsize)stride;
+    return TRUE;
+}
+
 static gboolean
 parse_buffers (LrgGltfGeometry *self,
                JsonArray       *buffers,
@@ -891,6 +1016,14 @@ parse_buffers (LrgGltfGeometry *self,
             return FALSE;
         }
 
+        if (uri == NULL && (i > 0 || bin == NULL) && is_meshopt_fallback (buffer))
+        {
+            /* EXT_meshopt_compression's placeholder: no data of its own,
+             * the compressed views decode into buffers of their own */
+            g_ptr_array_add (self->buffers, g_bytes_new_take (g_malloc0 ((gsize)MAX (declared, 1)),
+                                                              (gsize)declared));
+            continue;
+        }
         if (uri == NULL)
         {
             /* the GLB binary chunk */
@@ -964,6 +1097,8 @@ parse_views (LrgGltfGeometry *self,
         view.offset = (gsize)offset;
         view.length = (gsize)length;
         view.stride = (gsize)stride;
+        if (!decode_meshopt_view (self, object, i, &view, error))
+            return FALSE;
         g_array_append_val (self->views, view);
     }
     return TRUE;
@@ -2749,6 +2884,26 @@ parse_material_slots (LrgGltfGeometry *self,
         !texture_image (self, info, textures, &m->emissive_image, error) ||
         !get_floats (object, "emissiveFactor", 3, m->emissive, error))
         return FALSE;
+    /* KHR_materials_emissive_strength scales the factor past 1 */
+    {
+        JsonObject *material_extensions = NULL;
+        JsonObject *strength = NULL;
+
+        if (!get_object (object, "extensions", &material_extensions, error))
+            return FALSE;
+        if (material_extensions != NULL &&
+            !get_object (material_extensions, "KHR_materials_emissive_strength", &strength, error))
+            return FALSE;
+        if (strength != NULL)
+        {
+            gfloat k = optional_number (strength, "emissiveStrength", 1.0f);
+            guint  c;
+
+            if (isfinite (k) && k >= 0.0f)
+                for (c = 0; c < 3; c++)
+                    m->emissive[c] *= k;
+        }
+    }
     if (pbr != NULL)
     {
         info = NULL;
@@ -2916,11 +3071,13 @@ parse_document (LrgGltfGeometry *self,
     ctx.skin = -1;
     ctx.mesh = -1;
     ctx.node = -1;
-    if (string_array_contains (root, "extensionsRequired", "KHR_draco_mesh_compression") ||
-        string_array_contains (root, "extensionsRequired", "EXT_meshopt_compression"))
+    /* meshopt views are decoded (lrg-meshopt.c); Draco needs a decoder of
+     * its own (edgebreaker, prediction schemes, entropy coding) and is
+     * refused, so callers take their uncompressed fallback */
+    if (string_array_contains (root, "extensionsRequired", "KHR_draco_mesh_compression"))
     {
         g_set_error_literal (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_UNSUPPORTED,
-                             "The file requires mesh compression (Draco or meshopt)");
+                             "The file requires Draco mesh compression");
         return FALSE;
     }
 

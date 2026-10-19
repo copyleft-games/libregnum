@@ -414,7 +414,9 @@ test_material_slots (void)
         "\"normalTexture\":{\"index\":2,\"scale\":0.5},"
         "\"occlusionTexture\":{\"index\":3,\"strength\":0.8},"
         "\"emissiveTexture\":{\"index\":4},\"emissiveFactor\":[1,0.5,0.25]},"
-        "{\"name\":\"Plain\"}]}";
+        "{\"name\":\"Plain\"},"
+        "{\"name\":\"Bright\",\"emissiveFactor\":[1,0.5,0],"
+        "\"extensions\":{\"KHR_materials_emissive_strength\":{\"emissiveStrength\":4}}}]}";
     g_autoptr(GBytes) bytes = g_bytes_new_static (json, sizeof json - 1);
     g_autoptr(GError) error = NULL;
     g_autoptr(LrgGltfGeometry) g = load (bytes, &error);
@@ -435,6 +437,10 @@ test_material_slots (void)
     assert_near (a, 0.8f, "occlusion strength");
     g_assert_cmpint (lrg_gltf_geometry_get_material_emissive_image (g, 0, rgb), ==, 4);
     assert_near (rgb[1], 0.5f, "emissive g");
+    /* KHR_materials_emissive_strength scales the factor */
+    g_assert_cmpint (lrg_gltf_geometry_get_material_emissive_image (g, 2, rgb), ==, -1);
+    assert_near (rgb[0], 4.0f, "emissive strength r");
+    assert_near (rgb[1], 2.0f, "emissive strength g");
     g_assert_true (lrg_gltf_geometry_get_material_uv_transform (g, 0, m));
     assert_near (m[0], 2.0f, "uv m0");
     assert_near (m[2], 0.25f, "uv offset u");
