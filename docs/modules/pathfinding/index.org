@@ -71,6 +71,8 @@ g_object_unref(grid);
 pathfinding/
 ├── lrg-nav-cell.h/.c       # Navigation cell boxed type
 ├── lrg-nav-grid.h/.c       # Navigation grid GObject
+├── lrg-nav-poly-mesh.h/.c  # Voxel-baked polygon navigation mesh
+├── lrg-nav-level.h/.c      # Walk and sight queries of one level (doors)
 ├── lrg-path.h/.c           # Path result boxed type
 └── lrg-pathfinder.h/.c     # A* pathfinder GObject
 #+end_example
@@ -97,3 +99,7 @@ See [[file:nav-mesh.org][Triangle mesh baking, projection, and A* navigation]] f
 ** Voxel-baked polygon navigation meshes
 
 See [[file:nav-poly-mesh.org][Voxel-baked polygon navigation meshes]]: =LrgNavPolyMesh= bakes a level's raw collision triangles for an agent (radius, height, step, slope) into convex polygons with portals, off-mesh links, drop links and tagged areas (doors), with funnel-straightened paths, surface raycasts, random points, OBJ export, a binary cache form and =LrgNavPolyMeshCache=, an in-memory cache of bakes keyed by the digest of their input (=lrg_nav_poly_mesh_bake_cached()=).
+
+** Level walk and sight queries
+
+See [[file:nav-level.org][Level walk and sight queries]]: =LrgNavLevel= bakes one level's triangles into a walk mesh (=LrgNavPolyMesh=) and a sight mesh (=LrgCollisionMesh=) with doors that are both (open, closed for door openers only, locked), paths that respect them, the doors a path crosses, walk rays, line of sight and an asynchronous bake for servers.

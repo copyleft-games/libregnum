@@ -1,0 +1,46 @@
+#+title: Level walk and sight queries (LrgNavLevel)
+
+=LrgNavLevel= (=src/pathfinding/lrg-nav-level.h=) answers the two questions a headless simulation asks about a level nobody draws (a game server running its rooms): /how do I walk there/ and /can I see (or shoot) that/.  It stages the level's triangle soup once and builds two structures from it at the bake:
+
+- *walk*: an =LrgNavPolyMesh= ([[file:nav-poly-mesh.org][nav-poly-mesh.org]]) for the agent configured on it (=lrg_nav_level_get_nav_mesh()=, its properties);
+- *sight*: an =LrgCollisionMesh= of the same triangles for rays.
+
+Doors are both at once: the floor under a door's box is a tagged area of the navigation mesh, and while the door is not open its box is an instance (of one shared unit box) in the sight mesh.  Changing a door's state is immediate for paths, walk rays and sight; nothing is rebaked.
+
+* Door states (=LrgNavDoorState=)
+
+| State | Paths | Walk ray | Sight |
+|-------+-------+----------+-------|
+| =open= | every agent | passes | passes |
+| =closed= | agents that pass =closed= or =locked= doors (they open them) | blocked | blocked |
+| =locked= | agents that pass =locked= doors (they pick or break them) | blocked | blocked |
+| =sealed= | agents that pass =sealed= doors only (a magically held door, a bar on the far side) | blocked | blocked |
+
+The states are ordered (open < closed < locked < sealed) and each path query names the most closed door its agent gets through.
+
+* Building a level
+
+- =lrg_nav_level_add_triangles(level, vertices, n_floats)=: the static triangles (nine floats each, Y up; the layout of =lrg_collision_mesh_set_triangles()=).  Leave the doors' own triangles out: a door is its box.  Triangles with a corner that is not finite are dropped.
+- =lrg_nav_level_add_door(level, tag, min, max, state)=: a door with a nonzero tag and its box (the doorway it fills, from the floor up).  The navigation area reaches =max-climb= below the box so the floor under it is inside, and one =cell-size= further on each side so a door slab thinner than a cell still covers the cells of its doorway.  Boxes thinner than a centimetre are widened to one.  Adding a door with an existing tag replaces it.
+- =lrg_nav_level_bake(level, &error)=: bakes both structures; errors are the navigation mesh's (=G_IO_ERROR_INVALID_ARGUMENT= without triangles, =G_IO_ERROR_NO_SPACE=, =G_IO_ERROR_NOT_FOUND=), =G_IO_ERROR_PENDING= while an asynchronous bake runs.  A failed bake keeps the level as it was.
+- =lrg_nav_level_bake_async()= / =lrg_nav_level_bake_finish()=: the same on a worker thread (=GTask=), so a server's tick goes on while a large level bakes.  Until it ends the level answers as an unbaked one (no paths, no walk, everything in sight) and takes no triangles or doors; door states set meanwhile are applied when it ends, before the callback runs.
+
+#+begin_src c
+g_autoptr(LrgNavLevel) level = lrg_nav_level_new ();
+
+g_object_set (lrg_nav_level_get_nav_mesh (level), "agent-radius", 0.35f, NULL);
+lrg_nav_level_add_triangles (level, room_vertices, n_room_floats);
+lrg_nav_level_add_door (level, door_id, door_min, door_max, LRG_NAV_DOOR_STATE_CLOSED);
+lrg_nav_level_bake_async (level, NULL, on_level_baked, server);
+#+end_src
+
+* Queries
+
+- =lrg_nav_level_find_path(level, start, goal, extents, passes, max_nodes, &n_floats, &error)=: =lrg_nav_poly_mesh_find_path()= with the doors' states as its filter (a door is crossed when its state is at most =passes=); =G_IO_ERROR_NOT_FOUND= when there is no way or the level is not baked.
+- =lrg_nav_level_find_doors_on_path(level, points, n_floats, &n_doors)=: the doors whose boxes a path's legs pass through, in the order it meets them: the doors a walker opens on its way.
+- =lrg_nav_level_can_walk(level, from, to, extents, &fraction)=: whether the straight walk over the surface stays on the mesh through open doors only and ends on the floor under =to= (within =extents='s height: a goal on the storey below or above in the same X and Z is no straight walk); a chaser that can walk straight needs no path.
+- =lrg_nav_level_has_line_of_sight(level, from, to, &hit)=: whether the segment meets no triangle and no door that is not open; the hit's =instance_id= is the door's tag (0 for the level's own triangles).  An unbaked level sees everything, so a simulation without geometry behaves as before.
+
+* Tests
+
+=tests/test-nav-level.c=: a path round the end of a wall (half again the straight distance, through the gap), the straight walk and look blocked by the wall and clear through the gap, a walk to a point under the floor refused; a door closed (only door openers path through it; =find_doors_on_path= names it; sight blocked with its tag), open (everyone, no rebake), locked (door openers stop, unlocking agents pass), sealed (unlocking agents stop too), states kept by a rebake; the asynchronous bake (unbaked answers while it runs, a second bake =G_IO_ERROR_PENDING=, a lock set meanwhile holds); the failures (unbaked queries, bad doors and triangles, a bake without triangles).

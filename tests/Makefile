@@ -63,6 +63,7 @@ TEST_SOURCES := \
 	test-audio-mixer.c \
 	test-nav-mesh.c \
 	test-nav-poly-mesh.c \
+	test-nav-level.c \
 	test-atlas-packing.c \
 	test-registry.c \
 	test-data-loader.c \
