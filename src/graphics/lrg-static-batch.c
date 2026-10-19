@@ -63,6 +63,7 @@ struct _LrgStaticBatch
     GHashTable *normals;         /* material -> MaterialTexture*, tangent-space normal maps */
     GHashTable *metallics;       /* material -> MaterialTexture*, metallic (r) gloss (a) maps */
     GHashTable *heights;         /* material -> MaterialTexture*, height (r) maps */
+    GHashTable *emission_colors; /* material -> gfloat[4] (rgb x strength, w = 1), own emission */
     Color       tints[LRG_STATIC_BATCH_MAX_LAYERS];
     GrlShader  *shader;
 };
@@ -484,6 +485,7 @@ lrg_static_batch_finalize (GObject *object)
     g_clear_pointer (&self->normals, g_hash_table_unref);
     g_clear_pointer (&self->metallics, g_hash_table_unref);
     g_clear_pointer (&self->heights, g_hash_table_unref);
+    g_clear_pointer (&self->emission_colors, g_hash_table_unref);
     g_clear_object (&self->shader);
     if (self->no_emission != 0 && IsWindowReady ())
         rlUnloadTexture (self->no_emission);
@@ -516,6 +518,7 @@ lrg_static_batch_init (LrgStaticBatch *self)
                                              material_texture_free);
     self->heights = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL,
                                            material_texture_free);
+    self->emission_colors = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_free);
     self->max_vertices = LRG_STATIC_BATCH_MAX_VERTICES;
     for (i = 0; i < LRG_STATIC_BATCH_MAX_LAYERS; i++)
         self->tints[i] = (Color) { 255, 255, 255, 255 };
@@ -1011,6 +1014,44 @@ lrg_static_batch_set_material_emission (LrgStaticBatch *self,
     g_hash_table_replace (self->emissions, GUINT_TO_POINTER (material), entry);
 }
 
+void
+lrg_static_batch_set_material_emission_color (LrgStaticBatch *self,
+                                              guint           material,
+                                              const GrlColor *color,
+                                              gfloat          strength)
+{
+    gfloat *own;
+
+    g_return_if_fail (LRG_IS_STATIC_BATCH (self));
+
+    if (color == NULL || !isfinite (strength) || strength <= 0.0f)
+    {
+        g_hash_table_remove (self->emission_colors, GUINT_TO_POINTER (material));
+        return;
+    }
+    own = g_new (gfloat, 4);
+    own[0] = (gfloat)color->r / 255.0f * strength;
+    own[1] = (gfloat)color->g / 255.0f * strength;
+    own[2] = (gfloat)color->b / 255.0f * strength;
+    own[3] = 1.0f;
+    g_hash_table_replace (self->emission_colors, GUINT_TO_POINTER (material), own);
+}
+
+gboolean
+lrg_static_batch_get_material_emission_color (LrgStaticBatch *self,
+                                              guint           material,
+                                              gfloat         *out_rgb)
+{
+    const gfloat *own;
+
+    g_return_val_if_fail (LRG_IS_STATIC_BATCH (self), FALSE);
+
+    own = g_hash_table_lookup (self->emission_colors, GUINT_TO_POINTER (material));
+    if (own != NULL && out_rgb != NULL)
+        memcpy (out_rgb, own, sizeof (gfloat) * 3);
+    return own != NULL;
+}
+
 /* set_slot_map:
  * Shared body of the material-slot setters: stores (or removes) @texture
  * in @table for @material. */
@@ -1222,6 +1263,7 @@ draw_one (LrgStaticBatch *self,
     MaterialTexture *entry;
     Mesh             mesh;
     gint             flags;
+    const gfloat    *own;
 
     if (!chunk->uploaded || chunk->indices->len == 0)
         return;
@@ -1258,8 +1300,19 @@ draw_one (LrgStaticBatch *self,
     }
     maps[MATERIAL_MAP_ALBEDO].color = self->tints[chunk->layer];
     entry = g_hash_table_lookup (self->emissions, GUINT_TO_POINTER (chunk->material));
+    own = self->shader != NULL
+        ? g_hash_table_lookup (self->emission_colors, GUINT_TO_POINTER (chunk->material)) : NULL;
     if (entry != NULL)
         maps[MATERIAL_MAP_EMISSION].texture = entry->texture;
+    else if (own != NULL)
+    {
+        /* an own colour without a map glows evenly: raylib's white texture */
+        maps[MATERIAL_MAP_EMISSION].texture.id = rlGetTextureIdDefault ();
+        maps[MATERIAL_MAP_EMISSION].texture.width = 1;
+        maps[MATERIAL_MAP_EMISSION].texture.height = 1;
+        maps[MATERIAL_MAP_EMISSION].texture.mipmaps = 1;
+        maps[MATERIAL_MAP_EMISSION].texture.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    }
     else if (self->shader != NULL)
         maps[MATERIAL_MAP_EMISSION].texture = no_emission_texture (self);
     /* material slots: bound (and the shader told) only for a material
@@ -1293,8 +1346,20 @@ draw_one (LrgStaticBatch *self,
                             &flags, SHADER_UNIFORM_INT);
     }
     material.maps = maps;
+    /* an own emission colour (glTF emissiveFactor) replaces the shared one
+     * for this draw only */
+    if (own != NULL)
+        SetShaderValue (material.shader, GetShaderLocation (material.shader, "emissionOwn"),
+                        own, SHADER_UNIFORM_VEC4);
 
     DrawMesh (mesh, material, matrix_identity ());
+    if (own != NULL)
+    {
+        static const gfloat none[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+        SetShaderValue (material.shader, GetShaderLocation (material.shader, "emissionOwn"),
+                        none, SHADER_UNIFORM_VEC4);
+    }
     if (flags != 0)
     {
         gint off = 0;

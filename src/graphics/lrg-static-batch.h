@@ -392,6 +392,43 @@ lrg_static_batch_set_material_emission (LrgStaticBatch *self,
                                         GrlTexture     *texture);
 
 /**
+ * lrg_static_batch_set_material_emission_color:
+ * @self: an #LrgStaticBatch
+ * @material: material id
+ * @color: (nullable): the material's own emission colour (alpha is
+ *   ignored; channels may exceed 1 through @strength), %NULL to unset
+ * @strength: multiplier of @color (a glTF emissiveStrength), >= 0
+ *
+ * Gives @material an emission colour of its own: #LrgLightSet's shader
+ * multiplies the material's emission map (or white when it has none, see
+ * lrg_static_batch_set_material_emission()) by it instead of the light
+ * set's shared emission colour (the night windows' glow).  Materials
+ * without one keep the shared colour.  A material with an own colour and
+ * no emission map glows evenly.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_static_batch_set_material_emission_color (LrgStaticBatch *self,
+                                              guint           material,
+                                              const GrlColor *color,
+                                              gfloat          strength);
+
+/**
+ * lrg_static_batch_get_material_emission_color:
+ * @self: an #LrgStaticBatch
+ * @material: material id
+ * @out_rgb: (out caller-allocates) (array fixed-size=3) (optional): the
+ *   colour times its strength, 0 .. 1 per unit of strength
+ *
+ * Returns: whether @material has an emission colour of its own
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_static_batch_get_material_emission_color (LrgStaticBatch *self,
+                                              guint           material,
+                                              gfloat         *out_rgb);
+
+/**
  * lrg_static_batch_set_material_normal:
  * @self: an #LrgStaticBatch
  * @material: material id
