@@ -142,6 +142,12 @@ Lots are auctions of one unique item with the policy an auction house needs: =lo
 
 =revoke()= (coins or fungible resources) and =burn_item()= (a unique item: owner =LRG_MMO_MARKET_OWNER_BURNED=, metadata kept, the ID never minted again) are the trusted, idempotent withdrawals of goods leaving the market for a game character, the counterparts of =grant()= and =mint_item()=.  =has_operation()= tells a host whether an operation ID was committed (whatever its intent), so a host whose client lost the answer to a deposit, withdrawal or burn can learn whether it happened without repeating it.
 
+** Conversions and work orders
+
+=convert()= is the trusted transformation of one account's goods (a craft, a refinement): every resource of =take= (an =a{sx}=, coins allowed) is debited, every resource of =give= credited, and an optional unique item minted to the account, in one commit with the operation receipt; a short balance, an overflow, a resource both taken and given or an item ID already minted changes nothing.  The intent names the sets, the item ID, its definition and a digest of its metadata, so a retry with other goods is refused.
+
+Work orders are commissions between accounts (a crafting order): =order_create()= escrows the requester's resources (=a{sx}=, at most =LRG_MMO_MARKET_MAX_RESOURCES=, no coins) and a fee in coins in the commit that writes the order (an existing ID is refused); =order_claim()= gives the order to one worker for a while (never the requester or the house; an expired claim may be taken by anyone, the holder may renew it, two racing claims commit against the same revision so exactly one wins); =order_release()= gives it up; =order_fulfil()= (the holder, before the claim runs out) consumes the escrow, pays the worker the fee less the house's cut (=lot_cut()= rounding), the house the cut, and credits the requester the product (resources, and an optional unique item minted to the requester) in one commit; =order_cancel()= (the requester, while no claim holds it) and =order_settle()= (after expiry, whoever held it) return the escrow and the fee.  =order_inspect()= reads =(ssa{sx}xuxsxy)=: requester, house, escrow, fee, cut, expiry, worker, claim expiry, state (=LRG_MMO_MARKET_ORDER_OPEN=, =_FULFILLED=, =_CANCELLED=, =_EXPIRED=).  Hosts keep their own index of orders (a notice board) and schedule settlement.
+
 =set_clock()= replaces the real clock every deadline is measured with (a server's clock, or a test's); =now()= reads it.
 Trusted administrative grants/mints must never be exposed to arbitrary clients.
 

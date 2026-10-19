@@ -668,4 +668,242 @@ GVariant *
 lrg_mmo_market_lot_inspect (LrgMmoMarket *self,
                             const gchar *lot,
                             GError **error);
+/* ------------------------------------------------------------------ */
+/* Conversions and work orders                                        */
+
+/**
+ * LRG_MMO_MARKET_MAX_RESOURCES:
+ *
+ * The most distinct resources one side of a conversion, an order's
+ * escrow or an order's product may name.
+ */
+#define LRG_MMO_MARKET_MAX_RESOURCES (32)
+
+/**
+ * lrg_mmo_market_convert:
+ * @self: market service
+ * @account: the authenticated account whose resources change
+ * @take: (nullable): an a{sx} of resources debited (each at least the
+ *   given quantity must be held; coins allowed)
+ * @give: (nullable): an a{sx} of resources credited
+ * @item: (nullable): a unique item minted to @account in the same commit
+ * @definition: (nullable): the minted item's catalog definition (needed
+ *   with @item)
+ * @metadata: (nullable): the minted item's immutable metadata, at most
+ *   64 KiB (needed with @item)
+ * @operation: durable retry ID
+ * @error: (nullable): return location for error
+ *
+ * Trusted transformation of one account's goods, such as a craft: every
+ * debit, every credit and the optional mint commit together, or nothing
+ * changes (a short balance, an overflow, an existing item ID).  A
+ * resource may not be both taken and given.  At least one of @take,
+ * @give and @item must be non-empty.
+ *
+ * Returns: whether converted or identical retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_convert (LrgMmoMarket *self,
+                        const gchar *account,
+                        GVariant *take,
+                        GVariant *give,
+                        const gchar *item,
+                        const gchar *definition,
+                        GBytes *metadata,
+                        const gchar *operation,
+                        GError **error);
+
+/**
+ * LRG_MMO_MARKET_ORDER_OPEN:
+ *
+ * Work order state: posted, waiting for (or held by) a worker.
+ */
+#define LRG_MMO_MARKET_ORDER_OPEN (0)
+
+/**
+ * LRG_MMO_MARKET_ORDER_FULFILLED:
+ *
+ * Work order state: a worker delivered; the escrow was consumed and the
+ * fee paid.
+ */
+#define LRG_MMO_MARKET_ORDER_FULFILLED (1)
+
+/**
+ * LRG_MMO_MARKET_ORDER_CANCELLED:
+ *
+ * Work order state: withdrawn by its requester; the escrow and the fee
+ * went back.
+ */
+#define LRG_MMO_MARKET_ORDER_CANCELLED (2)
+
+/**
+ * LRG_MMO_MARKET_ORDER_EXPIRED:
+ *
+ * Work order state: its time ran out unfulfilled; the escrow and the
+ * fee went back.
+ */
+#define LRG_MMO_MARKET_ORDER_EXPIRED (3)
+
+/**
+ * lrg_mmo_market_order_create:
+ * @self: market service
+ * @actor: the authenticated requester
+ * @order: unique order ID
+ * @house: the account that receives the cut of the fee, not the
+ *   requester
+ * @escrow: (nullable): an a{sx} of resources (not coins) the worker
+ *   consumes, debited from @actor now
+ * @fee: coins paid to the worker on delivery, debited now; zero or more
+ * @cut: the house's share of the fee per %LRG_MMO_MARKET_CUT_SCALE
+ * @duration: seconds until the order expires, 1 to 604800
+ * @error: (nullable): return location for error
+ *
+ * Posts a work order (a crafting order, a commission): the requester's
+ * resources and the fee are escrowed in the same commit that writes the
+ * order.  An existing order ID is refused.
+ *
+ * Returns: whether created
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_order_create (LrgMmoMarket *self,
+                             const gchar *actor,
+                             const gchar *order,
+                             const gchar *house,
+                             GVariant *escrow,
+                             gint64 fee,
+                             guint cut,
+                             guint duration,
+                             GError **error);
+
+/**
+ * lrg_mmo_market_order_claim:
+ * @self: market service
+ * @actor: the authenticated worker, neither the requester nor the house
+ * @order: an open, unexpired order
+ * @claim_seconds: how long the claim holds, 1 to 604800 (never past the
+ *   order's expiry)
+ * @operation: durable retry ID
+ * @error: (nullable): return location for error
+ *
+ * Takes an order for @actor: exactly one worker holds an order at a
+ * time.  An order whose claim ran out may be claimed again (by anyone);
+ * the holder may renew its own claim.  Two workers racing for one order
+ * commit against the same revision, so exactly one wins.
+ *
+ * Returns: whether claimed or identical retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_order_claim (LrgMmoMarket *self,
+                            const gchar *actor,
+                            const gchar *order,
+                            guint claim_seconds,
+                            const gchar *operation,
+                            GError **error);
+
+/**
+ * lrg_mmo_market_order_release:
+ * @self: market service
+ * @actor: the worker holding the order
+ * @order: order ID
+ * @error: (nullable): return location for error
+ *
+ * Gives a claimed order up: it is open to every worker again.
+ *
+ * Returns: whether released
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_order_release (LrgMmoMarket *self,
+                              const gchar *actor,
+                              const gchar *order,
+                              GError **error);
+
+/**
+ * lrg_mmo_market_order_fulfil:
+ * @self: market service
+ * @actor: the worker holding the order, before its claim runs out
+ * @order: order ID
+ * @give: (nullable): an a{sx} of resources the requester receives (the
+ *   product)
+ * @item: (nullable): a unique item minted to the requester (the product)
+ * @definition: (nullable): its catalog definition (needed with @item)
+ * @metadata: (nullable): its immutable metadata (needed with @item)
+ * @operation: durable retry ID
+ * @error: (nullable): return location for error
+ *
+ * Delivers an order in one commit: the escrowed resources are consumed,
+ * the worker receives the fee less the cut, the house the cut, the
+ * requester the product, and the order is closed as fulfilled.
+ *
+ * Returns: whether fulfilled or identical retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_order_fulfil (LrgMmoMarket *self,
+                             const gchar *actor,
+                             const gchar *order,
+                             GVariant *give,
+                             const gchar *item,
+                             const gchar *definition,
+                             GBytes *metadata,
+                             const gchar *operation,
+                             GError **error);
+
+/**
+ * lrg_mmo_market_order_cancel:
+ * @self: market service
+ * @actor: the requester
+ * @order: an open order no worker holds (or whose claim ran out)
+ * @error: (nullable): return location for error
+ *
+ * Withdraws an order: the escrow and the fee return to the requester.
+ *
+ * Returns: whether cancelled
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_order_cancel (LrgMmoMarket *self,
+                             const gchar *actor,
+                             const gchar *order,
+                             GError **error);
+
+/**
+ * lrg_mmo_market_order_settle:
+ * @self: market service
+ * @order: order ID
+ * @error: (nullable): return location for error
+ *
+ * Closes an expired open order: the escrow and the fee return to the
+ * requester, whoever held it.  Settling a closed order is harmless; an
+ * unexpired open one is refused.
+ *
+ * Returns: whether settled
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_order_settle (LrgMmoMarket *self,
+                             const gchar *order,
+                             GError **error);
+
+/**
+ * lrg_mmo_market_order_inspect:
+ * @self: market service
+ * @order: order ID
+ * @error: (nullable): return location for error
+ *
+ * Reads an order: requester, house, escrow (a{sx}), fee, cut, expiry
+ * (Unix seconds), worker ("" for none), claim expiry (Unix seconds, 0
+ * for none), state (%LRG_MMO_MARKET_ORDER_OPEN ..).  A claim is held
+ * while its expiry is in the future.
+ *
+ * Returns: (transfer full) (nullable): "(ssa{sx}xuxsxy)" record
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *
+lrg_mmo_market_order_inspect (LrgMmoMarket *self,
+                              const gchar *order,
+                              GError **error);
 G_END_DECLS

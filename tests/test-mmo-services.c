@@ -638,6 +638,180 @@ purchase_thread (gpointer data)
     return NULL;
 }
 
+static gint64
+held (LrgMmoMarket *market, const gchar *account, const gchar *resource)
+{
+    g_autoptr(GError) error = NULL;
+    gint64 value = lrg_mmo_market_get_balance (market, account, resource, &error);
+    g_assert_no_error (error);
+    return value;
+}
+
+static guchar
+order_state (LrgMmoMarket *market, const gchar *order, gchar **worker)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) record = lrg_mmo_market_order_inspect (market, order, &error);
+    guchar state;
+    g_assert_no_error (error);
+    g_variant_get (record, "(&s&s@a{sx}xuxsxy)", NULL, NULL, NULL, NULL, NULL, NULL, worker, NULL, &state);
+    return state;
+}
+
+/* a{sx} from "name=quantity" pairs */
+static GVariant *
+resources (const gchar *first, ...)
+{
+    GVariantBuilder builder;
+    const gchar *name;
+    va_list args;
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sx}"));
+    va_start (args, first);
+    for (name = first; name != NULL; name = va_arg (args, const gchar *))
+        g_variant_builder_add (&builder, "{sx}", name, va_arg (args, gint64));
+    va_end (args);
+    return g_variant_ref_sink (g_variant_builder_end (&builder));
+}
+
+static void
+test_market_orders (void)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(LrgMmoStore) store = lrg_mmo_store_new (":memory:", &error);
+    g_autoptr(LrgMmoMarket) market = lrg_mmo_market_new (store);
+    g_autoptr(GBytes) metadata = g_bytes_new_static ("ingot", 5);
+    g_autoptr(GVariant) ore = resources ("ore", (gint64) 4, NULL);
+    g_autoptr(GVariant) ingot = resources ("ingot", (gint64) 2, NULL);
+    g_autoptr(GVariant) both = resources ("ore", (gint64) 1, "ingot", (gint64) 1, NULL);
+    g_autoptr(GVariant) twice = resources ("ore", (gint64) 1, "ore", (gint64) 1, NULL);
+    g_autoptr(GVariant) coin_escrow = resources ("coins", (gint64) 5, NULL);
+    g_autoptr(GVariant) much_ore = resources ("ore", (gint64) 99, NULL);
+    g_autofree gchar *worker = NULL;
+    g_autofree gchar *owner = NULL;
+    gint64 now = 2000000;
+
+    lrg_mmo_market_set_clock (market, test_clock, &now, NULL);
+    g_assert_true (lrg_mmo_market_grant (market, "alice", "ore", 10, "ore-alice", &error));
+    g_assert_true (lrg_mmo_market_grant (market, "alice", "coins", 100, "coins-alice", &error));
+
+    /* convert: all or nothing, idempotent, bad sets refused */
+    g_assert_false (lrg_mmo_market_convert (market, "alice", both, ingot, NULL, NULL, NULL, "c-overlap", &error));
+    clear_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_false (lrg_mmo_market_convert (market, "alice", twice, NULL, NULL, NULL, NULL, "c-twice", &error));
+    clear_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_false (lrg_mmo_market_convert (market, "alice", NULL, NULL, NULL, NULL, NULL, "c-empty", &error));
+    clear_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_false (lrg_mmo_market_convert (market, "alice", much_ore, ingot, NULL, NULL, NULL, "c-short", &error));
+    clear_error (&error, G_IO_ERROR_NO_SPACE);
+    g_assert_cmpint (held (market, "alice", "ingot"), ==, 0);
+    g_assert_true (lrg_mmo_market_convert (market, "alice", ore, ingot, NULL, NULL, NULL, "c-1", &error));
+    g_assert_true (lrg_mmo_market_convert (market, "alice", ore, ingot, NULL, NULL, NULL, "c-1", &error));
+    g_assert_cmpint (held (market, "alice", "ore"), ==, 6);
+    g_assert_cmpint (held (market, "alice", "ingot"), ==, 2);
+    g_assert_false (lrg_mmo_market_convert (market, "alice", ingot, NULL, NULL, NULL, NULL, "c-1", &error));
+    clear_error (&error, G_IO_ERROR_INVALID_DATA);
+    /* a conversion that mints: the mint and the debit commit together */
+    g_assert_true (lrg_mmo_market_convert (market, "alice", ingot, NULL, "bar-1", "bar", metadata, "c-2", &error));
+    owner = owner_of (market, "bar-1");
+    g_assert_cmpstr (owner, ==, "alice");
+    g_clear_pointer (&owner, g_free);
+    g_assert_true (lrg_mmo_market_grant (market, "alice", "ingot", 2, "ingot-again", &error));
+    g_assert_false (lrg_mmo_market_convert (market, "alice", ingot, NULL, "bar-1", "bar", metadata, "c-3", &error));
+    clear_error (&error, G_IO_ERROR_EXISTS);
+    g_assert_cmpint (held (market, "alice", "ingot"), ==, 2);
+
+    /* create: escrow and fee taken with the order, no coins in escrow */
+    g_assert_false (lrg_mmo_market_order_create (market, "alice", "o-x", "guild", coin_escrow, 10, 50, 600, &error));
+    clear_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_false (lrg_mmo_market_order_create (market, "alice", "o-x", "alice", ore, 10, 50, 600, &error));
+    clear_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_false (lrg_mmo_market_order_create (market, "alice", "o-x", "guild", much_ore, 10, 50, 600, &error));
+    clear_error (&error, G_IO_ERROR_NO_SPACE);
+    g_assert_false (lrg_mmo_market_order_create (market, "alice", "o-x", "guild", ore, 1000, 50, 600, &error));
+    clear_error (&error, G_IO_ERROR_NO_SPACE);
+    g_assert_true (lrg_mmo_market_order_create (market, "alice", "o-1", "guild", ore, 40, 100, 600, &error));
+    g_assert_false (lrg_mmo_market_order_create (market, "alice", "o-1", "guild", ore, 1, 100, 600, &error));
+    g_assert_nonnull (error);
+    g_clear_error (&error);
+    g_assert_cmpint (held (market, "alice", "ore"), ==, 2);
+    g_assert_cmpint (held (market, "alice", "coins"), ==, 60);
+
+    /* claim: never by the requester or the house; exactly one holder */
+    g_assert_false (lrg_mmo_market_order_claim (market, "alice", "o-1", 60, "claim-self", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_market_order_claim (market, "guild", "o-1", 60, "claim-house", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_order_claim (market, "bob", "o-1", 60, "claim-bob", &error));
+    g_assert_true (lrg_mmo_market_order_claim (market, "bob", "o-1", 60, "claim-bob", &error));
+    g_assert_false (lrg_mmo_market_order_claim (market, "carol", "o-1", 60, "claim-carol", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_market_order_cancel (market, "alice", "o-1", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_market_order_fulfil (market, "carol", "o-1", ingot, NULL, NULL, NULL, "f-carol", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    /* a lapsed claim: another worker may claim, the old one may not deliver */
+    now += 61;
+    g_assert_false (lrg_mmo_market_order_fulfil (market, "bob", "o-1", ingot, NULL, NULL, NULL, "f-late", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_order_claim (market, "carol", "o-1", 60, "claim-carol-2", &error));
+    g_assert_false (lrg_mmo_market_order_release (market, "bob", "o-1", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_order_release (market, "carol", "o-1", &error));
+    g_assert_cmpint (order_state (market, "o-1", &worker), ==, LRG_MMO_MARKET_ORDER_OPEN);
+    g_assert_cmpstr (worker, ==, "");
+    g_clear_pointer (&worker, g_free);
+    g_assert_true (lrg_mmo_market_order_claim (market, "carol", "o-1", 60, "claim-carol-3", &error));
+
+    /* fulfil: escrow consumed, fee less the cut to the worker, product to the requester */
+    g_assert_true (lrg_mmo_market_order_fulfil (market, "carol", "o-1", ingot, "plate-1", "plate", metadata,
+                                                "f-1", &error));
+    g_assert_true (lrg_mmo_market_order_fulfil (market, "carol", "o-1", ingot, "plate-1", "plate", metadata,
+                                                "f-1", &error));
+    g_assert_cmpint (order_state (market, "o-1", &worker), ==, LRG_MMO_MARKET_ORDER_FULFILLED);
+    g_assert_cmpstr (worker, ==, "carol");
+    g_clear_pointer (&worker, g_free);
+    g_assert_cmpint (held (market, "carol", "coins"), ==, 36);
+    g_assert_cmpint (held (market, "guild", "coins"), ==, 4);
+    g_assert_cmpint (held (market, "alice", "ingot"), ==, 4);
+    g_assert_cmpint (held (market, "alice", "ore"), ==, 2);
+    g_assert_cmpint (held (market, "carol", "ore"), ==, 0);
+    owner = owner_of (market, "plate-1");
+    g_assert_cmpstr (owner, ==, "alice");
+    g_clear_pointer (&owner, g_free);
+    g_assert_false (lrg_mmo_market_order_cancel (market, "alice", "o-1", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_order_settle (market, "o-1", &error));
+
+    /* cancel: everything back */
+    g_assert_true (lrg_mmo_market_order_create (market, "alice", "o-2", "guild", ingot, 10, 100, 600, &error));
+    g_assert_cmpint (held (market, "alice", "ingot"), ==, 2);
+    g_assert_false (lrg_mmo_market_order_cancel (market, "bob", "o-2", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_order_cancel (market, "alice", "o-2", &error));
+    g_assert_cmpint (order_state (market, "o-2", NULL), ==, LRG_MMO_MARKET_ORDER_CANCELLED);
+    g_assert_cmpint (held (market, "alice", "ingot"), ==, 4);
+    g_assert_cmpint (held (market, "alice", "coins"), ==, 60);
+
+    /* expiry: refused before, refunded after, even while claimed */
+    g_assert_true (lrg_mmo_market_order_create (market, "alice", "o-3", "guild", ingot, 20, 100, 600, &error));
+    g_assert_true (lrg_mmo_market_order_claim (market, "bob", "o-3", 6000, "claim-o3", &error));
+    g_assert_false (lrg_mmo_market_order_settle (market, "o-3", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    now += 601;
+    g_assert_false (lrg_mmo_market_order_fulfil (market, "bob", "o-3", NULL, NULL, NULL, NULL, "f-o3", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_false (lrg_mmo_market_order_claim (market, "carol", "o-3", 60, "claim-expired", &error));
+    clear_error (&error, G_IO_ERROR_PERMISSION_DENIED);
+    g_assert_true (lrg_mmo_market_order_settle (market, "o-3", &error));
+    g_assert_true (lrg_mmo_market_order_settle (market, "o-3", &error));
+    g_assert_cmpint (order_state (market, "o-3", NULL), ==, LRG_MMO_MARKET_ORDER_EXPIRED);
+    g_assert_cmpint (held (market, "alice", "ingot"), ==, 4);
+    g_assert_cmpint (held (market, "alice", "coins"), ==, 60);
+    g_assert_null (lrg_mmo_market_order_inspect (market, "o-none", &error));
+    clear_error (&error, G_IO_ERROR_NOT_FOUND);
+}
+
+
 static void
 test_concurrent_purchase (void)
 {
@@ -681,6 +855,75 @@ test_concurrent_purchase (void)
     g_mutex_clear (&mutex);
 }
 
+typedef struct
+{
+    const gchar *path;
+    const gchar *worker;
+    GMutex *mutex;
+    GCond *condition;
+    guint *ready;
+    gboolean success;
+    GError *error;
+} Claim;
+
+static gpointer
+claim_thread (gpointer data)
+{
+    Claim *claim = data;
+    g_autoptr(LrgMmoStore) store = lrg_mmo_store_new (claim->path, &claim->error);
+    g_autoptr(LrgMmoMarket) market = store != NULL ? lrg_mmo_market_new (store) : NULL;
+    g_mutex_lock (claim->mutex);
+    (*claim->ready)++;
+    g_cond_broadcast (claim->condition);
+    while (*claim->ready < 2)
+        g_cond_wait (claim->condition, claim->mutex);
+    g_mutex_unlock (claim->mutex);
+    if (market != NULL)
+        claim->success = lrg_mmo_market_order_claim (market, claim->worker, "only-order", 600,
+                                                     claim->worker, &claim->error);
+    return NULL;
+}
+
+/* two workers on two connections claim one order: exactly one holds it */
+static void
+test_concurrent_claim (void)
+{
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *dir = g_dir_make_tmp ("lrg-claim-XXXXXX", &error);
+    g_autofree gchar *path = g_build_filename (dir, "market.db", NULL);
+    g_autoptr(LrgMmoStore) store = lrg_mmo_store_new (path, &error);
+    g_autoptr(LrgMmoMarket) market = lrg_mmo_market_new (store);
+    g_autoptr(GVariant) ore = resources ("ore", (gint64) 3, NULL);
+    g_autofree gchar *worker = NULL;
+    GMutex mutex;
+    GCond condition;
+    guint ready = 0;
+    Claim a = { path, "anna", &mutex, &condition, &ready, FALSE, NULL };
+    Claim b = { path, "bert", &mutex, &condition, &ready, FALSE, NULL };
+    GThread *first, *second;
+    g_mutex_init (&mutex);
+    g_cond_init (&condition);
+    g_assert_true (lrg_mmo_market_grant (market, "req", "ore", 3, "seed-ore", &error));
+    g_assert_true (lrg_mmo_market_order_create (market, "req", "only-order", "guild", ore, 0, 0, 600, &error));
+    g_assert_no_error (error);
+    first = g_thread_new ("worker-a", claim_thread, &a);
+    second = g_thread_new ("worker-b", claim_thread, &b);
+    g_thread_join (first);
+    g_thread_join (second);
+    g_assert_cmpuint (a.success + b.success, ==, 1);
+    g_assert_nonnull (a.success ? b.error : a.error);
+    g_clear_error (&a.error);
+    g_clear_error (&b.error);
+    order_state (market, "only-order", &worker);
+    g_assert_cmpstr (worker, ==, a.success ? "anna" : "bert");
+    g_clear_object (&market);
+    g_clear_object (&store);
+    g_assert_cmpint (g_remove (path), ==, 0);
+    g_assert_cmpint (g_rmdir (dir), ==, 0);
+    g_cond_clear (&condition);
+    g_mutex_clear (&mutex);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -690,6 +933,7 @@ main (int argc, char **argv)
     g_test_add_func ("/mmo/services/fencing", test_fencing);
     g_test_add_func ("/mmo/services/market", test_market);
     g_test_add_func ("/mmo/services/market-lots", test_market_lots);
+    g_test_add_func ("/mmo/services/market-orders", test_market_orders);
     g_test_add_func ("/mmo/services/social", test_social);
     g_test_add_func ("/mmo/services/replica", test_replica);
     g_test_add_func ("/mmo/services/pages", test_pages);
@@ -698,5 +942,6 @@ main (int argc, char **argv)
     g_test_add_func ("/mmo/services/gate", test_gate);
     g_test_add_func ("/mmo/services/matchmaker", test_matchmaker);
     g_test_add_func ("/mmo/services/concurrent-purchase", test_concurrent_purchase);
+    g_test_add_func ("/mmo/services/concurrent-claim", test_concurrent_claim);
     return g_test_run ();
 }
