@@ -85,6 +85,10 @@ world content and policy using the existing engine modules. The checkpoint-only
 worker remains available; the new runtime supplies the connected gameplay path.
 TLS/TCP and DTLS/UDP are implemented alternatives; QUIC is not implemented.
 
+* Raid building blocks
+
+=LrgMmoLockout= (per-account lockouts that end at a reset boundary) and =LrgMmoTagBoard= (who contributed to a shared target) are described in [[file:raids.org][raids.org]].
+
 * Threading and ownership
 
 Include =<libregnum.h>=. Realm, replicator, group and net objects are owned by

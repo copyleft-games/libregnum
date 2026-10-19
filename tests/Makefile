@@ -129,6 +129,7 @@ TEST_SOURCES := \
 	test-mmo-datagram.c \
 	test-mmo-runtime.c \
 	test-mmo-finder.c \
+	test-mmo-raid.c \
 	test-net-tls.c \
 	test-net-transport.c \
 	test-world3d.c \

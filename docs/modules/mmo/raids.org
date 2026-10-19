@@ -1,0 +1,35 @@
+#+TITLE: Raid Building Blocks: Lockouts and Tag Boards
+#+DESCRIPTION: LrgMmoLockout (per-account lockouts that end at a reset boundary) and LrgMmoTagBoard (who contributed to a shared target) for world bosses, raids and dungeons
+
+* Overview
+
+Two small, clock-free building blocks for shared-world content: a *lockout book* (one reward per account per key per reset period: a weekly world boss, a daily dungeon) and a *tag board* (everyone who hurt or stood near a shared target counts, not only the first to hit it).  Neither reads a clock and neither does any I/O: every time is an argument (Unix seconds from the host's trusted clock), the state is a =GVariant= the host stores wherever it keeps its records (=LrgMmoStore=, a save file), and both are thread confined like the rest of the MMO module.
+
+Both are generic; librefall's world raids (=docs/online/raids.org= there) are the first user.
+
+* LrgMmoLockout
+
+Built on [[file:../core/reset-schedule.org][LrgResetSchedule]]: a lock made at time T lasts until the first boundary of the schedule after T, so "weekly, Tuesday 04:00" means exactly that whatever hour the boss fell.
+
+| Function | Meaning |
+|----------+---------|
+| =lrg_mmo_lockout_new (schedule, period)= | a book on a schedule (NULL: weekly, Tuesday 00:00 UTC) and a cadence (=LRG_RESET_PERIOD_DAILY= or =_WEEKLY=) |
+| =lrg_mmo_lockout_is_locked (self, account, key, now)= | locked in the reset period =now= is in |
+| =lrg_mmo_lockout_lock (self, account, key, now)= | lock until the next boundary; =FALSE= when already locked (nothing changes) or a name is invalid |
+| =lrg_mmo_lockout_unlock= | lifts a lock (an administrator's mercy) |
+| =lrg_mmo_lockout_get_reset= | the boundary the lock ends at, 0 when not locked |
+| =lrg_mmo_lockout_list (self, account, now)= | =a(sx)= of the keys locked at =now= with their end, sorted by key |
+| =lrg_mmo_lockout_purge= | drops locks of earlier periods |
+| =lrg_mmo_lockout_to_variant= / =_restore= | the book as =a(ssx)= (account, key, period index), sorted so equal books are equal bytes |
+
+Names (account and key) are 1 to 128 bytes of valid UTF-8 without the unit separator (0x1f, which joins them inside the table).  =lrg_mmo_lockout_restore()= stages the whole state first: a wrong type, an invalid name or a repeated (account, key) is refused with =G_IO_ERROR_INVALID_ARGUMENT= or =G_IO_ERROR_INVALID_DATA= and the live book is untouched; =NULL= restores an empty book.  A period index is the schedule's own (=lrg_reset_schedule_get_period()=), so a book restored under a changed schedule simply reads its old locks in the new periods: store the schedule's settings next to it if they may change.
+
+* LrgMmoTagBoard
+
+A board of contributions per target (a caller-chosen 64-bit id: an entity, a boss cycle).  An account tags a target by dealing damage (=lrg_mmo_tag_board_tag()=, amount at least 0) or by standing in range (=lrg_mmo_tag_board_add_presence()=, seconds above 0); the first account ever to tag is the target's *first tagger* (=lrg_mmo_tag_board_get_first()=).  A target keeps up to =LRG_MMO_TAG_BOARD_MAX_CONTRIBUTORS= (4096) accounts; further newcomers are refused, accounts already in keep contributing.
+
+=lrg_mmo_tag_board_get_eligible (self, target, min_share, min_presence)= answers who earns the rewards: an account qualifies by doing at least =min_share= of the total damage (and more than none), or by standing in range for =min_presence= seconds; someone who only passed by earns nothing.  The list is sorted by damage descending then account, so a host that hands out something once (a mount) can walk it in a fixed order.  =lrg_mmo_tag_board_list()= is the full table as =a(sdd)= (account, damage, seconds); =_clear()= forgets one target when it falls or resets, =_clear_all()= everything.
+
+* Tests
+
+=tests/test-mmo-raid.c=: the lock's span to the boundary (the last second locked, the boundary open), a new week replacing the old lock, other accounts and keys, the sorted list, unlock and purge, invalid names, the persistence round trip (equal bytes) and its refusals (wrong type, empty name, duplicates) leaving the book as it was, the board's tags, presence, first tagger, totals, eligibility by damage share and by presence, refusals (empty name, negative or NaN amount, zero seconds), clearing, and the 4096 cap.

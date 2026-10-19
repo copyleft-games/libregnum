@@ -42,6 +42,8 @@
 #include "mmo/lrg-mmo-gate.h"
 #include "mmo/lrg-mmo-matchmaker.h"
 #include "mmo/lrg-mmo-instances.h"
+#include "mmo/lrg-mmo-lockout.h"
+#include "mmo/lrg-mmo-tag-board.h"
 #include "mmo/lrg-mmo-protocol.h"
 
 #include "mmo/lrg-mmo-shard-directory.h"
