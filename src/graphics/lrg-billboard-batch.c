@@ -43,6 +43,9 @@
 #endif
 #include "graphics/lrg-billboard-batch.h"
 #include "graphics/lrg-light-set-private.h"
+#include "lighting/lrg-shadow-renderer.h"
+#include "lighting/lrg-shadow-renderer-private.h"
+#include "weather/lrg-ground-overlay-private.h"
 
 /* Below this horizontal distance the camera is "above" the billboard and
  * the axis-locked facing is undefined; a fixed basis is used instead. */
@@ -159,6 +162,24 @@ struct _LrgBillboardBatch
     gint              loc_wind_time;
     LrgLightSetSampleLocations light_locs;
     LrgLightSetFogLocations gpu_fog_locs;
+
+    /* shadows (U14.1): receiving rides the GPU program, casting has a
+     * program of its own (the same quads, written as the caster shader) */
+    gboolean          receive;
+    gint              loc_recv_on;
+    gint              loc_recv_sun;
+    LrgShadowLocations recv_shadow_locs;
+    LrgGroundOverlayLocations recv_overlay_locs;
+    Shader            cast_shader;
+    gboolean          cast_tried;
+    gboolean          cast_loaded;
+    gint              cast_loc_mvp;
+    gint              cast_loc_model;
+    gint              cast_loc_eye;
+    gint              cast_loc_wind;
+    gint              cast_loc_wind_time;
+    gint              cast_loc_mode;
+    gint              cast_loc_light;
 };
 
 G_DEFINE_TYPE (LrgBillboardBatch, lrg_billboard_batch, G_TYPE_OBJECT)
@@ -221,6 +242,8 @@ static const gchar gpu_vs[] =
     "out vec3 fragPosition;\n"
     "out vec2 fragTexCoord;\n"
     "out vec4 fragColor;\n"
+    "out vec3 fragFacing;\n"
+    "out float fragSunShare;\n"
     "void main() {\n"
     "    vec3 right;\n"
     "    vec3 up;\n"
@@ -242,29 +265,72 @@ static const gchar gpu_vs[] =
     "        local.xz += wind.xy * bend;\n"
     "    }\n"
     "    vec4 c = vertexColor;\n"
+    "    float share = 0.0;\n"
     "    if (lit == 1 && emissive < 0.5) {\n"
     "        vec3 centre = (matModel * vec4(vertexPosition + vec3(0.0, bbCorner.z, 0.0), 1.0)).xyz;\n"
-    "        c.rgb = clamp(c.rgb * lrg_light_sample(centre), 0.0, 1.0);\n"
+    "        vec3 sampled = lrg_light_sample(centre);\n"
+    "        c.rgb = clamp(c.rgb * sampled, 0.0, 1.0);\n"
+    "        vec3 w = vec3(0.299, 0.587, 0.114);\n"
+    "        share = clamp(dot(sunColor, w) / max(dot(sampled, w), 1e-4), 0.0, 1.0);\n"
     "    }\n"
+    "    fragSunShare = share;\n"
+    "    fragFacing = normalize((matModel * vec4(cross(right, up), 0.0)).xyz);\n"
     "    fragColor = c;\n"
     "    fragTexCoord = vertexTexCoord;\n"
     "    fragPosition = (matModel * vec4(local, 1.0)).xyz;\n"
     "    gl_Position = mvp * vec4(local, 1.0);\n"
     "}\n";
 
+/* Receiving (U14.1): the sun's shadow map and the cloud shadows darken the
+ * quad by the share of its light that comes from the sun; the quad is
+ * pulled toward the sun first so it does not shadow itself. */
 static const gchar gpu_fs[] =
     "#version 330\n"
     "in vec3 fragPosition;\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
+    "in vec3 fragFacing;\n"
+    "in float fragSunShare;\n"
     "uniform sampler2D texture0;\n"
     "uniform float alphaCutoff;\n"
+    "uniform int recvOn;\n"
+    "uniform vec3 recvSun;\n"
     LRG_FOG_GLSL
+    LRG_SHADOW_GLSL
+    LRG_GROUND_OVERLAY_GLSL
     "out vec4 finalColor;\n"
     "void main() {\n"
     "    vec4 texel = texture(texture0, fragTexCoord) * fragColor;\n"
     "    if (texel.a < alphaCutoff) discard;\n"
+    "    if (recvOn != 0 && fragSunShare > 0.0) {\n"
+    "        vec3 p = fragPosition - recvSun * 0.6;\n"
+    "        float sh = shadowCascades > 0 ? lrg_sun_shadow(p, fragFacing) : 1.0;\n"
+    "        float snow;\n"
+    "        float cloud = 0.0;\n"
+    "        if (ovOn != 0) lrg_overlay_eval(fragPosition, vec3(0.0), snow, cloud);\n"
+    "        texel.rgb *= (1.0 - fragSunShare * (1.0 - sh)) * (1.0 - cloud);\n"
+    "    }\n"
     "    finalColor = vec4(mix(texel.rgb, fogColor.rgb, lrg_fog_amount(fragPosition)), texel.a);\n"
+    "}\n";
+
+/* The caster program: gpu_vs with the facing pinned to axis-Y around the
+ * light (eyeLocal is the light's side), written as the shadow renderer's
+ * caster shader does: the window depth (mode 0) or the distance to the
+ * light over its radius (mode 1). */
+static const gchar cast_fs[] =
+    "#version 330\n"
+    "in vec3 fragPosition;\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform int casterMode;\n"
+    "uniform vec4 casterLight;\n"
+    "out vec4 finalColor;\n"
+    "void main() {\n"
+    "    if (texture(texture0, fragTexCoord).a < 0.5) discard;\n"
+    "    float d = casterMode == 1 ? length(fragPosition - casterLight.xyz) / casterLight.w\n"
+    "                              : gl_FragCoord.z;\n"
+    "    finalColor = vec4(d, 0.0, 0.0, 1.0);\n"
     "}\n";
 
 static void gpu_release (LrgBillboardBatch *self);
@@ -292,6 +358,8 @@ lrg_billboard_batch_finalize (GObject *object)
         UnloadShader (self->shader);
     if (self->gpu_loaded && IsWindowReady ())
         UnloadShader (self->gpu_shader);
+    if (self->cast_loaded && IsWindowReady ())
+        UnloadShader (self->cast_shader);
     gpu_release (self);
     g_clear_pointer (&self->pages, g_array_unref);
     g_clear_pointer (&self->ranges, g_array_unref);
@@ -878,6 +946,21 @@ lrg_billboard_batch_get_light_set (LrgBillboardBatch *self)
 }
 
 void
+lrg_billboard_batch_set_receive_shadows (LrgBillboardBatch *self,
+                                         gboolean           receive)
+{
+    g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
+    self->receive = receive;
+}
+
+gboolean
+lrg_billboard_batch_get_receive_shadows (LrgBillboardBatch *self)
+{
+    g_return_val_if_fail (LRG_IS_BILLBOARD_BATCH (self), FALSE);
+    return self->receive;
+}
+
+void
 lrg_billboard_batch_set_lit (LrgBillboardBatch *self,
                              gboolean           lit)
 {
@@ -1105,6 +1188,10 @@ gpu_ensure_shader (LrgBillboardBatch *self)
     self->loc_cutoff = GetShaderLocation (self->gpu_shader, "alphaCutoff");
     self->loc_wind = GetShaderLocation (self->gpu_shader, "wind");
     self->loc_wind_time = GetShaderLocation (self->gpu_shader, "windTime");
+    self->loc_recv_on = GetShaderLocation (self->gpu_shader, "recvOn");
+    self->loc_recv_sun = GetShaderLocation (self->gpu_shader, "recvSun");
+    lrg_shadow_locations (self->gpu_shader, &self->recv_shadow_locs);
+    lrg_ground_overlay_locations (self->gpu_shader, &self->recv_overlay_locs);
     lrg_light_set_sample_locations (self->gpu_shader, &self->light_locs);
     lrg_light_set_fog_locations (self->gpu_shader, &self->gpu_fog_locs);
     SetShaderValue (self->gpu_shader, GetShaderLocation (self->gpu_shader, "texture0"),
@@ -1405,6 +1492,17 @@ gpu_draw (LrgBillboardBatch *self,
     }
     lit = lrg_light_set_upload_sample (lights, self->gpu_shader, &self->light_locs);
     SetShaderValue (self->gpu_shader, self->loc_lit, &lit, SHADER_UNIFORM_INT);
+    {
+        /* shadows and cloud shadows, only when asked for and the lights are there */
+        gint recv = 0;
+
+        if (lit && self->receive)
+            recv = lrg_light_set_upload_receive (lights, self->gpu_shader,
+                                                 &self->recv_shadow_locs,
+                                                 &self->recv_overlay_locs,
+                                                 self->loc_recv_sun) ? 1 : 0;
+        SetShaderValue (self->gpu_shader, self->loc_recv_on, &recv, SHADER_UNIFORM_INT);
+    }
     lrg_light_set_upload_fog (lights, self->gpu_shader, &self->gpu_fog_locs);
 
     rlActiveTextureSlot (0);
@@ -1578,6 +1676,214 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     if (use_shader)
     {
         /* Flush while the cutout shader is still bound. */
+        rlDrawRenderBatchActive ();
+        EndShaderMode ();
+    }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Casting shadows                                                          */
+/* ------------------------------------------------------------------------ */
+
+/* cast_ensure_shader:
+ * Compiles the caster program once (the GPU path's vertex stage, the
+ * caster's fragment stage); FALSE when it did not compile. */
+static gboolean
+cast_ensure_shader (LrgBillboardBatch *self)
+{
+    gint unit = 0;
+
+    if (self->cast_tried)
+        return self->cast_loaded;
+    self->cast_tried = TRUE;
+
+    self->cast_shader = LoadShaderFromMemory (gpu_vs, cast_fs);
+    if (self->cast_shader.id == 0 || self->cast_shader.id == rlGetShaderIdDefault ())
+        return FALSE;
+    self->cast_loc_mvp = GetShaderLocation (self->cast_shader, "mvp");
+    self->cast_loc_model = GetShaderLocation (self->cast_shader, "matModel");
+    self->cast_loc_eye = GetShaderLocation (self->cast_shader, "eyeLocal");
+    self->cast_loc_wind = GetShaderLocation (self->cast_shader, "wind");
+    self->cast_loc_wind_time = GetShaderLocation (self->cast_shader, "windTime");
+    self->cast_loc_mode = GetShaderLocation (self->cast_shader, "casterMode");
+    self->cast_loc_light = GetShaderLocation (self->cast_shader, "casterLight");
+    SetShaderValue (self->cast_shader, GetShaderLocation (self->cast_shader, "texture0"),
+                    &unit, SHADER_UNIFORM_INT);
+    self->cast_loaded = TRUE;
+    return TRUE;
+}
+
+void
+lrg_billboard_batch_draw_shadow (LrgBillboardBatch *self,
+                                 LrgShadowRenderer *renderer,
+                                 const GrlVector3  *camera_position)
+{
+    g_autoptr(GPtrArray) order = NULL;
+    Matrix   transform;
+    gint     mode;
+    gfloat   light[4];
+    gfloat   direction[3];
+    gfloat   eye[3];
+    gfloat   offset[3];
+    guint    i;
+
+    g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
+    g_return_if_fail (LRG_IS_SHADOW_RENDERER (renderer));
+    g_return_if_fail (camera_position != NULL);
+
+    if (self->billboards->len == 0 || !IsWindowReady ()
+        || !lrg_shadow_renderer_get_pass_state (renderer, &mode, light, direction))
+        return;
+
+    /* the side the quads face: a cube face looks at its light; a cascade
+     * stands far off along the way the light came from */
+    transform = rlGetMatrixTransform ();
+    offset[0] = transform.m12;
+    offset[1] = transform.m13;
+    offset[2] = transform.m14;
+    if (mode == 1)
+    {
+        eye[0] = light[0] - offset[0];
+        eye[1] = light[1] - offset[1];
+        eye[2] = light[2] - offset[2];
+    }
+    else
+    {
+        eye[0] = camera_position->x - direction[0] * 1.0e5f;
+        eye[1] = camera_position->y - direction[1] * 1.0e5f;
+        eye[2] = camera_position->z - direction[2] * 1.0e5f;
+    }
+
+    /* the settled quads, as they are drawn lit */
+    if (self->settle < G_MAXUINT)
+        self->settle++;
+    gpu_maybe_build (self);
+    if (self->gpu_quads > 0 && cast_ensure_shader (self))
+    {
+        Matrix   modelview = rlGetMatrixModelview ();
+        Matrix   projection = rlGetMatrixProjection ();
+        Matrix   mvp;
+        gfloat   wind_time[2];
+        guint    page_bound = G_MAXUINT;
+
+        rlDrawRenderBatchActive ();
+        mvp = mat_mul (&transform, &modelview);
+        mvp = mat_mul (&mvp, &projection);
+        rlEnableShader (self->cast_shader.id);
+        rlSetUniformMatrix (self->cast_loc_mvp, mvp);
+        rlSetUniformMatrix (self->cast_loc_model, transform);
+        SetShaderValue (self->cast_shader, self->cast_loc_eye, eye, SHADER_UNIFORM_VEC3);
+        wind_time[0] = self->wind_time;
+        wind_time[1] = self->wind_frequency;
+        SetShaderValue (self->cast_shader, self->cast_loc_wind, self->wind, SHADER_UNIFORM_VEC4);
+        SetShaderValue (self->cast_shader, self->cast_loc_wind_time, wind_time,
+                        SHADER_UNIFORM_VEC2);
+        {
+            gint spherical = 0;
+            gint off = 0;
+
+            SetShaderValue (self->cast_shader,
+                            GetShaderLocation (self->cast_shader, "spherical"), &spherical,
+                            SHADER_UNIFORM_INT);
+            SetShaderValue (self->cast_shader, GetShaderLocation (self->cast_shader, "lit"),
+                            &off, SHADER_UNIFORM_INT);
+        }
+        SetShaderValue (self->cast_shader, self->cast_loc_mode, &mode, SHADER_UNIFORM_INT);
+        SetShaderValue (self->cast_shader, self->cast_loc_light, light, SHADER_UNIFORM_VEC4);
+
+        rlActiveTextureSlot (0);
+        for (i = 0; i < self->ranges->len; i++)
+        {
+            GpuRange        *range = &g_array_index (self->ranges, GpuRange, i);
+            MaterialTexture *entry;
+            guint            q;
+            guint            end;
+
+            entry = g_hash_table_lookup (self->textures, GUINT_TO_POINTER (range->material));
+            if (entry == NULL)
+                continue;
+            rlEnableTexture (entry->texture.id);
+            end = range->first + range->count;
+            for (q = range->first; q < end;)
+            {
+                guint page = q / PAGE_QUADS;
+                guint in_page = q % PAGE_QUADS;
+                guint n = MIN (end - q, PAGE_QUADS - in_page);
+
+                if (page != page_bound)
+                {
+                    rlEnableVertexArray (g_array_index (self->pages, GpuPage, page).vao);
+                    page_bound = page;
+                }
+                rlDrawVertexArrayElements ((gint)(in_page * 6), (gint)(n * 6), NULL);
+                q += n;
+            }
+        }
+        rlDisableVertexArray ();
+        rlDisableTexture ();
+        rlDisableShader ();
+    }
+
+    /* the loose quads (the ones that move): rebuilt facing the light
+     * side, drawn under the renderer's own caster shader */
+    {
+        GrlShader *caster = lrg_shadow_renderer_get_caster_shader (renderer);
+        guint      n_candidates = self->gpu_quads > 0 ? self->loose->len : self->billboards->len;
+        guint      current = 0;
+        gboolean   open = FALSE;
+
+        if (caster == NULL)
+            return;
+        order = g_ptr_array_sized_new (n_candidates);
+        for (i = 0; i < n_candidates; i++)
+        {
+            guint      index = self->gpu_quads > 0 ? g_array_index (self->loose, guint, i) : i;
+            Billboard *b = &g_array_index (self->billboards, Billboard, index);
+
+            if (b->visible && g_hash_table_contains (self->textures,
+                                                     GUINT_TO_POINTER (b->material)))
+                g_ptr_array_add (order, b);
+        }
+        if (order->len == 0)
+            return;
+        g_ptr_array_sort (order, compare_material);
+
+        BeginShaderMode (*(Shader *)grl_shader_get_handle (caster));
+        for (i = 0; i < order->len; i++)
+        {
+            Billboard *b = g_ptr_array_index (order, i);
+            gfloat     right[3];
+            gfloat     up[3];
+            gfloat     q[4][3];
+
+            if (!open || b->material != current)
+            {
+                MaterialTexture *entry;
+
+                if (open)
+                    rlEnd ();
+                entry = g_hash_table_lookup (self->textures, GUINT_TO_POINTER (b->material));
+                rlSetTexture (entry->texture.id);
+                rlBegin (RL_QUADS);
+                open = TRUE;
+                current = b->material;
+            }
+            /* axis-Y around the light side, whatever the batch's mode */
+            compute_basis (self, b, eye, NULL, NULL, right, up);
+            build_corners (self, b, right, up, q);
+            rlColor4ub (255, 255, 255, 255);
+            rlTexCoord2f (b->uv[0], b->uv[3]);
+            rlVertex3f (q[0][0], q[0][1], q[0][2]);
+            rlTexCoord2f (b->uv[2], b->uv[3]);
+            rlVertex3f (q[1][0], q[1][1], q[1][2]);
+            rlTexCoord2f (b->uv[2], b->uv[1]);
+            rlVertex3f (q[2][0], q[2][1], q[2][2]);
+            rlTexCoord2f (b->uv[0], b->uv[1]);
+            rlVertex3f (q[3][0], q[3][1], q[3][2]);
+        }
+        if (open)
+            rlEnd ();
+        rlSetTexture (0);
         rlDrawRenderBatchActive ();
         EndShaderMode ();
     }

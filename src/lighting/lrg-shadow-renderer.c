@@ -103,6 +103,9 @@ struct _LrgShadowRenderer
     gint       loc_light;
     gboolean   in_pass;
     guint      pass;
+    gint       pass_mode;       /* 0 cascade, 1 cube face */
+    gfloat     pass_light[4];   /* cube: position, radius */
+    gfloat     pass_dir[3];     /* cascade: the way the light travels */
 };
 
 G_DEFINE_TYPE (LrgShadowRenderer, lrg_shadow_renderer, G_TYPE_OBJECT)
@@ -762,10 +765,19 @@ lrg_shadow_renderer_update (LrgShadowRenderer *self,
         }
     }
     /* 3. the cache: a pass whose camera and light are what its tile was
-     * rendered with, younger than the refresh, need not be drawn again */
+     * rendered with, younger than the refresh, need not be drawn again.
+     * A pass that is only stale by age (nothing moved) is staggered: the
+     * passes of a still view all come due on the same frame (the moon's
+     * cascades and the torch's six faces at midnight), so at most
+     * ceil (passes / refresh) of them render per frame, oldest first, and
+     * the rest keep their tile for up to twice the refresh. */
     {
         guint n = lrg_shadow_renderer_get_pass_count (self);
         guint pass;
+        guint due[MAX_PASSES];
+        guint n_due = 0;
+        guint budget;
+        guint k;
 
         for (pass = 0; pass < n && pass < MAX_PASSES; pass++)
         {
@@ -777,11 +789,31 @@ lrg_shadow_renderer_update (LrgShadowRenderer *self,
             if (self->cache_valid[pass])
                 self->cache_age[pass]++;
             if (self->refresh > 0 && self->cache_valid[pass]
-                && self->cache_age[pass] < self->refresh
                 && memcmp (vp, self->cache_vp[pass], sizeof vp) == 0
                 && memcmp (light, self->cache_light[pass], sizeof light) == 0)
-                self->current |= G_GUINT64_CONSTANT (1) << pass;
+            {
+                if (self->cache_age[pass] < self->refresh)
+                    self->current |= G_GUINT64_CONSTANT (1) << pass;
+                else if (self->cache_age[pass] < 2 * self->refresh)
+                    due[n_due++] = pass;
+            }
         }
+        /* the oldest first (a stable insertion sort of a few entries) */
+        for (k = 1; k < n_due; k++)
+        {
+            guint v = due[k];
+            guint j = k;
+
+            while (j > 0 && self->cache_age[due[j - 1]] < self->cache_age[v])
+            {
+                due[j] = due[j - 1];
+                j--;
+            }
+            due[j] = v;
+        }
+        budget = self->refresh > 0 ? MAX (1u, (n + self->refresh - 1) / self->refresh) : 0;
+        for (k = budget; k < n_due; k++)
+            self->current |= G_GUINT64_CONSTANT (1) << due[k];
     }
     return lrg_shadow_renderer_get_pass_count (self);
 }
@@ -1128,11 +1160,37 @@ lrg_shadow_renderer_begin_pass (LrgShadowRenderer *self,
     rlEnableDepthMask ();
     rlDisableBackfaceCulling ();
 
+    /* what a caster outside the caster shader (a billboard batch's own
+     * program) needs to write the same numbers */
+    self->pass_mode = mode;
+    memcpy (self->pass_light, light, sizeof self->pass_light);
+    self->pass_dir[0] = -view[2];
+    self->pass_dir[1] = -view[6];
+    self->pass_dir[2] = -view[10];
     handle = grl_shader_get_handle (self->caster);
     SetShaderValue (*handle, self->loc_mode, &mode, SHADER_UNIFORM_INT);
     SetShaderValue (*handle, self->loc_light, light, SHADER_UNIFORM_VEC4);
     self->in_pass = TRUE;
     self->pass = pass;
+    return TRUE;
+}
+
+gboolean
+lrg_shadow_renderer_get_pass_state (LrgShadowRenderer *self,
+                                    gint              *out_mode,
+                                    gfloat            *out_light,
+                                    gfloat            *out_direction)
+{
+    g_return_val_if_fail (LRG_IS_SHADOW_RENDERER (self), FALSE);
+
+    if (!self->in_pass)
+        return FALSE;
+    if (out_mode != NULL)
+        *out_mode = self->pass_mode;
+    if (out_light != NULL)
+        memcpy (out_light, self->pass_light, sizeof self->pass_light);
+    if (out_direction != NULL)
+        memcpy (out_direction, self->pass_dir, sizeof self->pass_dir);
     return TRUE;
 }
 

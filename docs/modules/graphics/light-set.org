@@ -145,6 +145,10 @@ With only the 16 nearest lights a large scene (a dungeon with 90 torches, a city
 :END:
 The model sums ambient, sun and point lights without tonemapping, so a bright light next to a wall can push the texel to white, brighter than daylight. =set_light_limit (m)= (0 = off, the default) rolls the summed light off per channel: values up to =0.75 m= pass unchanged, above that =knee + (m - knee) (1 - exp(-(l - knee) / (m - knee)))= approaches =m= with slope 1 at the knee, so ordinary levels are untouched. =limit_light (m, value)= is the same curve on the CPU; =sample()= applies it.
 
+*** Material slots (gaps G8)
+
+The lit shader reads three more raylib material maps when a material has them: =normalMap= (unit 2, tangent space, green up), =metallicMap= (unit 1, metallic in red, smoothness in alpha, as Unity's MetallicGloss) and =heightMap= (unit 6, red, 0.5 is the surface).  The tangent frame comes from screen-space derivatives of position and texture coordinate, so meshes need no tangents.  The normal map perturbs the lighting normal (the shadow lookups keep the geometric one); the height map shifts the texture coordinates by a parallax offset of the view ray (=LRG_LIGHT_SET_HEIGHT_SCALE=); a metallic map dims the diffuse by 90 % of its red and adds a Blinn-Phong highlight of the sun and the point lights, tinted by the albedo as metallic grows and sharper with smoothness.  =lrg_static_batch_set_material_normal/metallic/height()= bind the maps per material; the batch sets the shader's =mapFlags= only while such a material draws, so every other draw runs the old path.
+
 *** Emission
 :PROPERTIES:
 :CUSTOM_ID: emission

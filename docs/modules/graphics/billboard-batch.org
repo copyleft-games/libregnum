@@ -113,3 +113,10 @@ grl_camera3d_begin (camera);
 lrg_billboard_batch_draw (flats, &camera_position);
 grl_camera3d_end (camera);
 #+end_src
+
+** Shadows
+:PROPERTIES:
+:CUSTOM_ID: shadows
+:END:
+- *Casting*: =lrg_billboard_batch_draw_shadow (batch, renderer, camera)= inside an open shadow pass draws every quad upright, facing the light (a cube face looks at its light; a cascade stands far off along the way the light came from), cut out at alpha 0.5, written as the caster shader does (=lrg_shadow_renderer_get_pass_state()=).  Settled quads go through a caster program built from the GPU path's vertex stage, wind sway included; loose quads are rebuilt on the CPU under the renderer's own caster shader.
+- *Receiving*: =set_receive_shadows (TRUE)= lets the GPU quads take the sun's share of their light away where the light set's shadow map hides them and where a cloud's shadow lies (=lrg_light_set_set_ground_overlay()=).  The vertex stage passes the share of the quad's light that comes from the sun; the fragment stage multiplies the colour by =1 - share x (1 - shadow)= and by =1 - cloud=.  The lookup point is pulled 0.6 m toward the sun so the quad does not shadow itself.  Loose quads keep their plain tint, and snow is not laid over upright quads.

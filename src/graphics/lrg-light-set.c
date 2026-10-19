@@ -141,6 +141,7 @@ struct _LrgLightSet
     gint        loc_air_tint;
     gint        loc_air_camera;
     gint        loc_air_light_color;
+    gint        loc_map_camera;
     LrgLightSetFogLocations fog_locs;
     LrgShadowLocations      shadow_locs;
 };
@@ -210,6 +211,15 @@ static const gchar light_fs[] =
     "uniform float lightLimit;\n"
     "uniform sampler2D emissionMap;\n"
     "uniform vec3 emissionColor;\n"
+    "uniform sampler2D normalMap;\n"
+    "uniform sampler2D metallicMap;\n"
+    "uniform sampler2D heightMap;\n"
+    "uniform int mapFlags;\n"
+    "uniform vec3 mapCamera;\n"
+    "uniform float heightScale;\n"
+    "vec3 gView = vec3(0.0, 1.0, 0.0);\n"
+    "float gShin = 8.0;\n"
+    "vec3 gSpec = vec3(0.0);\n"
     LRG_FOG_GLSL
     LRG_SHADOW_GLSL
     LRG_LIGHT_AIR_GLSL
@@ -222,15 +232,56 @@ static const gchar light_fs[] =
     "    float lambert = dist > 0.0001 ? max(dot(n, d / dist), 0.0) : 1.0;\n"
     "    float f = k * k * lambert;\n"
     "    if (slot >= 0 && f > 0.0) f *= lrg_point_shadow(slot, fragPosition, n);\n"
+    "    if (mapFlags != 0 && f > 0.0 && dist > 0.0001) {\n"
+    "        vec3 h = normalize(d / dist + gView);\n"
+    "        gSpec += c * (f / max(lambert, 0.001)) * step(0.0001, lambert) * pow(max(dot(n, h), 0.0), gShin);\n"
+    "    }\n"
     "    return c * f;\n"
     "}\n"
     "void main() {\n"
-    "    vec4 texel = texture(texture0, fragTexCoord) * colDiffuse * fragColor;\n"
-    "    if (texel.a < alphaCutoff) discard;\n"
     "    float nlen = length(fragNormal);\n"
-    "    vec3 n = nlen > 0.0 ? fragNormal / nlen : vec3(0.0, 1.0, 0.0);\n"
-    "    float sunLit = max(dot(n, -sunDirection), 0.0);\n"
-    "    if (sunLit > 0.0) sunLit *= lrg_sun_shadow(fragPosition, n);\n"
+    "    vec3 ng = nlen > 0.0 ? fragNormal / nlen : vec3(0.0, 1.0, 0.0);\n"
+    "    vec3 n = ng;\n"
+    "    vec2 uv = fragTexCoord;\n"
+    "    float metal = 0.0;\n"
+    "    float gloss = 0.0;\n"
+    "    if (mapFlags != 0) {\n"
+    "        vec3 dp1 = dFdx(fragPosition);\n"
+    "        vec3 dp2 = dFdy(fragPosition);\n"
+    "        vec2 du1 = dFdx(fragTexCoord);\n"
+    "        vec2 du2 = dFdy(fragTexCoord);\n"
+    "        vec3 p2 = cross(dp2, ng);\n"
+    "        vec3 p1 = cross(ng, dp1);\n"
+    "        vec3 tt = p2 * du1.x + p1 * du2.x;\n"
+    "        vec3 bb = p2 * du1.y + p1 * du2.y;\n"
+    "        float inv = inversesqrt(max(max(dot(tt, tt), dot(bb, bb)), 1e-12));\n"
+    "        mat3 tbn = mat3(tt * inv, bb * inv, ng);\n"
+    "        gView = normalize(mapCamera - fragPosition);\n"
+    "        if ((mapFlags & 4) != 0) {\n"
+    "            vec3 vt = gView * tbn;\n"
+    "            float h = texture(heightMap, uv).r;\n"
+    "            uv -= vt.xy / max(vt.z, 0.25) * (h - 0.5) * heightScale;\n"
+    "        }\n"
+    "        if ((mapFlags & 1) != 0) {\n"
+    "            vec3 nm = texture(normalMap, uv).rgb * 2.0 - 1.0;\n"
+    "            n = normalize(tbn * nm);\n"
+    "        }\n"
+    "        if ((mapFlags & 2) != 0) {\n"
+    "            vec4 mg = texture(metallicMap, uv);\n"
+    "            metal = mg.r;\n"
+    "            gloss = mg.a;\n"
+    "        }\n"
+    "        gShin = mix(6.0, 256.0, gloss * gloss);\n"
+    "    }\n"
+    "    vec4 texel = texture(texture0, uv) * colDiffuse * fragColor;\n"
+    "    if (texel.a < alphaCutoff) discard;\n"
+    "    float sunShadow = 1.0;\n"
+    "    if (dot(ng, -sunDirection) > 0.0 || dot(n, -sunDirection) > 0.0) sunShadow = lrg_sun_shadow(fragPosition, ng);\n"
+    "    float sunLit = max(dot(n, -sunDirection), 0.0) * sunShadow;\n"
+    "    if (mapFlags != 0 && sunLit > 0.0) {\n"
+    "        vec3 h = normalize(-sunDirection + gView);\n"
+    "        gSpec += sunColor * sunShadow * pow(max(dot(n, h), 0.0), gShin);\n"
+    "    }\n"
     "    vec3 light = ambientColor + sunColor * sunLit;\n"
     "    if (useGrid == 1) {\n"
     "        ivec2 base;\n"
@@ -261,7 +312,8 @@ static const gchar light_fs[] =
     "        vec3 over = max(light - knee, 0.0);\n"
     "        light = min(light, vec3(knee)) + (lightLimit - knee) * (1.0 - exp(-over / (lightLimit - knee)));\n"
     "    }\n"
-    "    vec3 lit = texel.rgb * light + texture(emissionMap, fragTexCoord).rgb * emissionColor;\n"
+    "    vec3 lit = texel.rgb * light * (1.0 - metal * 0.9) + texture(emissionMap, uv).rgb * emissionColor;\n"
+    "    if (mapFlags != 0) lit += gSpec * mix(vec3(0.04), texel.rgb, metal) * (0.25 + 2.0 * gloss);\n"
     "    if (ovOn != 0) lit = lrg_overlay_apply(fragPosition, n, lit);\n"
     "    if (airParams.x > 0.0) {\n"
     "        vec3 ins;\n"
@@ -1086,6 +1138,27 @@ lrg_light_set_get_shader (LrgLightSet *self)
 
         handle->locs[SHADER_LOC_MAP_EMISSION] = GetShaderLocation (*handle, "emissionMap");
         SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_EMISSION], &unit, SHADER_UNIFORM_INT);
+        /* material slots (U9.1): normal, metallic-gloss and height maps
+         * ride raylib's MATERIAL_MAP_NORMAL / METALNESS / HEIGHT units */
+        unit = LRG_LIGHT_SET_NORMAL_UNIT;
+        handle->locs[SHADER_LOC_MAP_NORMAL] = GetShaderLocation (*handle, "normalMap");
+        SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_NORMAL], &unit, SHADER_UNIFORM_INT);
+        unit = LRG_LIGHT_SET_METALLIC_UNIT;
+        handle->locs[SHADER_LOC_MAP_METALNESS] = GetShaderLocation (*handle, "metallicMap");
+        SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_METALNESS], &unit, SHADER_UNIFORM_INT);
+        unit = LRG_LIGHT_SET_HEIGHT_UNIT;
+        handle->locs[SHADER_LOC_MAP_HEIGHT] = GetShaderLocation (*handle, "heightMap");
+        SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_HEIGHT], &unit, SHADER_UNIFORM_INT);
+        {
+            gfloat scale = LRG_LIGHT_SET_HEIGHT_SCALE;
+            gint   off = 0;
+
+            SetShaderValue (*handle, GetShaderLocation (*handle, "heightScale"), &scale,
+                            SHADER_UNIFORM_FLOAT);
+            SetShaderValue (*handle, GetShaderLocation (*handle, "mapFlags"), &off,
+                            SHADER_UNIFORM_INT);
+        }
+        self->loc_map_camera = GetShaderLocation (*handle, "mapCamera");
         unit = GRID_DATA_UNIT;
         SetShaderValue (*handle, self->loc_light_data, &unit, SHADER_UNIFORM_INT);
         unit = GRID_CELLS_UNIT;
@@ -1350,6 +1423,15 @@ lrg_light_set_apply (LrgLightSet *self,
     }
     SetShaderValue (*handle, self->loc_limit, &self->light_limit, SHADER_UNIFORM_FLOAT);
     SetShaderValue (*handle, self->loc_emission_color, self->emission, SHADER_UNIFORM_VEC3);
+    {
+        /* the camera, origin-relative, for the material slots' view vector */
+        gfloat cam[3];
+
+        cam[0] = (gfloat)(camera_x - self->origin[0]);
+        cam[1] = (gfloat)(camera_y - self->origin[1]);
+        cam[2] = (gfloat)(camera_z - self->origin[2]);
+        SetShaderValue (*handle, self->loc_map_camera, cam, SHADER_UNIFORM_VEC3);
+    }
     /* M14: the shadow atlases and the air */
     lrg_shadow_renderer_upload (shadows_ready ? self->shadows : NULL, *handle,
                                 &self->shadow_locs);
@@ -1585,6 +1667,27 @@ lrg_light_set_sample_locations (Shader                      shader,
     SetShaderValue (shader, out_locs->light_data, &unit, SHADER_UNIFORM_INT);
     unit = GRID_CELLS_UNIT;
     SetShaderValue (shader, out_locs->light_grid, &unit, SHADER_UNIFORM_INT);
+}
+
+gboolean
+lrg_light_set_upload_receive (LrgLightSet                     *self,
+                              Shader                           shader,
+                              const LrgShadowLocations        *shadow_locs,
+                              const LrgGroundOverlayLocations *overlay_locs,
+                              gint                             sun_dir_loc)
+{
+    gfloat   sun_dir[3] = { 0.0f, -1.0f, 0.0f };
+    gboolean ready;
+
+    if (self == NULL)
+        return FALSE;
+    ready = self->shadows != NULL && lrg_shadow_renderer_is_ready (self->shadows);
+    if (self->has_directional)
+        memcpy (sun_dir, self->directional_dir, sizeof sun_dir);
+    SetShaderValue (shader, sun_dir_loc, sun_dir, SHADER_UNIFORM_VEC3);
+    lrg_shadow_renderer_upload (ready ? self->shadows : NULL, shader, shadow_locs);
+    lrg_ground_overlay_upload (self->overlay, shader, overlay_locs, NULL);
+    return ready || (self->overlay != NULL && lrg_ground_overlay_is_visible (self->overlay));
 }
 
 gboolean
