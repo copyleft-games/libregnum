@@ -392,6 +392,83 @@ test_shadow_point_plan (void)
     }
 }
 
+/*
+ * gaps G8: the pass cache's refresh is staggered.  A still view with a sun
+ * (3 cascades) and a torch (6 cube faces): after the first round every pass
+ * is rendered once; with refresh 4 they all expire together, but at most
+ * ceil (9 / 4) = 3 render per frame, the oldest first, and none waits more
+ * than twice the refresh.  A moved camera makes the cascades render at once.
+ */
+static void
+test_stagger (void)
+{
+    g_autoptr(LrgLightSet) lights = lrg_light_set_new ();
+    g_autoptr(LrgShadowRenderer) shadows = lrg_shadow_renderer_new ();
+    GrlVector3 sun = { 0.4f, -0.8f, 0.3f };
+    GrlColor   white = { 255, 255, 255, 255 };
+    gfloat camera[3] = { 0.0f, 2.0f, 0.0f };
+    gfloat forward[3] = { 0.0f, 0.0f, -1.0f };
+    gfloat up[3] = { 0, 1, 0 };
+    guint  passes;
+    guint  frame;
+    guint  last_render[16];
+    guint  max_per_frame = 0;
+    guint  max_gap = 0;
+    guint  rendered_total = 0;
+    guint  i;
+
+    lrg_shadow_renderer_set_sun (shadows, 512, 3, 60.0f, 0.6f);
+    lrg_shadow_renderer_set_points (shadows, 256, 1, 30.0f);
+    lrg_shadow_renderer_set_refresh (shadows, 4);
+    lrg_light_set_set_directional (lights, &sun, &white);
+    lrg_light_set_add_point_light (lights, 1.0, 1.5, -2.0, &white, 12.0f);
+    for (i = 0; i < 16; i++)
+        last_render[i] = 0;
+
+    for (frame = 1; frame <= 60; frame++)
+    {
+        guint per_frame = 0;
+
+        lrg_light_set_select (lights, camera[0], camera[1], camera[2]);
+        passes = lrg_shadow_renderer_update (shadows, lights, camera, forward, up, 60.0f, 1.0f, 0.1f);
+        g_assert_cmpuint (passes, >=, 3);
+        for (i = 0; i < passes && i < 16; i++)
+        {
+            if (lrg_shadow_renderer_pass_is_current (shadows, i))
+                continue;
+            lrg_shadow_renderer_mark_rendered (shadows, i);
+            per_frame++;
+            rendered_total++;
+            if (last_render[i] != 0)
+                max_gap = MAX (max_gap, frame - last_render[i]);
+            last_render[i] = frame;
+        }
+        if (frame > 1)
+            max_per_frame = MAX (max_per_frame, per_frame);
+        /* the first frame renders everything; later ones are rationed */
+        if (frame == 1)
+            g_assert_cmpuint (per_frame, ==, passes);
+    }
+    /* after the first round: no frame renders more than the ration */
+    g_assert_cmpuint (max_per_frame, <=, (passes + 3) / 4);
+    /* nobody waits more than twice the refresh (8 frames) plus the ration's turn */
+    g_assert_cmpuint (max_gap, <=, 8);
+    /* and they do render again (the cache is not frozen) */
+    g_assert_cmpuint (rendered_total, >, passes * 3);
+
+    /* a moved camera: the cascades' matrices changed, so they render at once */
+    {
+        guint rendered_now = 0;
+
+        camera[0] += 20.0f;
+        lrg_shadow_renderer_update (shadows, lights, camera, forward, up, 60.0f, 1.0f, 0.1f);
+        for (i = 0; i < 3; i++)
+            if (!lrg_shadow_renderer_pass_is_current (shadows, i))
+                rendered_now++;
+        g_assert_cmpuint (rendered_now, ==, 3);
+    }
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -401,6 +478,7 @@ main (int   argc,
     g_test_add_func ("/shadow/matrices", test_shadow_matrices);
     g_test_add_func ("/shadow/splits", test_shadow_splits);
     g_test_add_func ("/shadow/cascades", test_shadow_cascades);
+    g_test_add_func ("/shadow/stagger", test_stagger);
     g_test_add_func ("/shadow/cube-faces", test_shadow_cube_faces);
     g_test_add_func ("/shadow/point-plan", test_shadow_point_plan);
 

@@ -1207,15 +1207,23 @@ lrg_shadow_renderer_end_pass (LrgShadowRenderer *self)
     /* the screen, its viewport and 2D matrices, as after a texture mode */
     EndTextureMode ();
     self->in_pass = FALSE;
-    if (self->pass < MAX_PASSES)
-    {
-        self->rendered |= G_GUINT64_CONSTANT (1) << self->pass;
-        /* what the tile holds now */
-        self->cache_valid[self->pass] = TRUE;
-        self->cache_age[self->pass] = 0;
-        lrg_shadow_renderer_get_pass (self, self->pass, NULL, NULL, self->cache_vp[self->pass]);
-        pass_light (self, self->pass, self->cache_light[self->pass]);
-    }
+    lrg_shadow_renderer_mark_rendered (self, self->pass);
+}
+
+void
+lrg_shadow_renderer_mark_rendered (LrgShadowRenderer *self,
+                                   guint              pass)
+{
+    g_return_if_fail (LRG_IS_SHADOW_RENDERER (self));
+
+    if (pass >= MAX_PASSES || pass >= lrg_shadow_renderer_get_pass_count (self))
+        return;
+    self->rendered |= G_GUINT64_CONSTANT (1) << pass;
+    /* what the tile holds now */
+    self->cache_valid[pass] = TRUE;
+    self->cache_age[pass] = 0;
+    lrg_shadow_renderer_get_pass (self, pass, NULL, NULL, self->cache_vp[pass]);
+    pass_light (self, pass, self->cache_light[pass]);
 }
 
 gboolean

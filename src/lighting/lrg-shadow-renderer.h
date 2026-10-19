@@ -511,6 +511,22 @@ lrg_shadow_renderer_get_pass_state (LrgShadowRenderer *self,
                                     gfloat            *out_direction);
 
 /**
+ * lrg_shadow_renderer_mark_rendered:
+ * @self: an #LrgShadowRenderer
+ * @pass: a pass index of the last lrg_shadow_renderer_update()
+ *
+ * Records @pass as rendered with the view-projection and light the last
+ * update planned: what lrg_shadow_renderer_end_pass() does for the pass it
+ * closes, for games that fill a tile by other means and for headless
+ * tests of the pass cache (lrg_shadow_renderer_pass_is_current(), the
+ * refresh and its staggering).  Out-of-range passes are ignored.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_shadow_renderer_mark_rendered (LrgShadowRenderer *self,
+                                   guint              pass);
+
+/**
  * lrg_shadow_renderer_end_pass:
  * @self: an #LrgShadowRenderer
  *
