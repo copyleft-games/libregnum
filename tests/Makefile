@@ -170,6 +170,7 @@ TEST_SOURCES := \
 	test-analytics.c \
 	test-achievement.c \
 	test-photomode.c \
+	test-photo-pipeline.c \
 	test-workshop.c \
 	test-demo.c \
 	test-dlc.c \

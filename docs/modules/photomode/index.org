@@ -444,3 +444,136 @@ lrg_gif_recorder_finish (rec, NULL);
 
 Errors use the =LRG_GIF_RECORDER_ERROR= domain (=FAILED=, =OPEN=, =WRITE=,
 =ALREADY_CLOSED=).
+
+* Complete photo mode (look, lens, overlays, capture, host)
+:PROPERTIES:
+:CUSTOM_ID: complete-photo-mode
+:END:
+Added with librefall's photo mode (M21).  Everything here is generic: a game implements one interface, =LrgPhotoHost=, and drives =LrgPhotoMode=; the types below do the rest.  All of the arithmetic has a CPU reference and no step needs a window, so the whole pipeline is tested headless (=tests/test-photo-pipeline.c=); only the shaders and the depth target need a GL context.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: v2-types
+:END:
+| Type                       | Role                                                                    |
+|----------------------------+-------------------------------------------------------------------------|
+| =LrgPhotoMode=             | the state machine: enter/exit, host contract, capture, timer, settings  |
+| =LrgPhotoHost=             | GInterface the game implements (freeze, HUD, time of day, weather)      |
+| =LrgPhotoCameraController= | free and orbit camera, roll, max distance, optional collision           |
+| =LrgPhotoLook=             | exposure, contrast, saturation, white balance, lift/gamma, LUT, vignette, grain, presets |
+| =LrgPhotoDof=              | thin-lens depth of field (focus distance, f-number, field of view)      |
+| =LrgPhotoDepthTarget=      | render target with a readable depth texture (what the DoF samples)      |
+| photo overlay functions    | frames and borders (baked), composition grids (preview only)            |
+| =LrgScreenshot=            | now with PNG text metadata and =lrg_screenshot_read_png_metadata()=     |
+
+** The camera
+:PROPERTIES:
+:CUSTOM_ID: v2-camera
+:END:
+- *Free mode* flies anywhere.  *Orbit mode* circles a subject: forward and back zoom, right and up pan the subject, rotate swings the camera round it.  =lrg_photo_camera_controller_focus_on()= enters orbit round a point without moving the camera; =set_mode()= switches without the view jumping.
+- *Roll* tilts the camera's up vector about the view direction (the old controller stored the angle but never applied it).
+- *Maximum distance*: =set_max_distance()= keeps the camera (and, in orbit mode, the subject) inside a sphere round the anchor.  =LrgPhotoMode= anchors it at the host's player position on entering.  The edge slides, there is no wind-up.
+- *Collision is optional.*  Off (the default) the camera passes through walls.  On, it asks =LrgPhotoCollisionFunc= (a ray or sphere cast into the game's collision world): in free mode the sweep runs from the previous camera to the wanted one, in orbit mode from the subject to the camera (a spring arm).  Without a function nothing blocks either way.
+- =new_from_camera()= now copies the source camera's direction (it used to start at yaw 0), and =reset()= returns to that view.
+- Field of view is =set_fov()=; =LrgPhotoMode= feeds it to the depth of field.
+
+** Colour: LrgPhotoLook
+:PROPERTIES:
+:CUSTOM_ID: v2-look
+:END:
+The look configures M14's =LrgColorGrade= (=lrg_photo_look_configure_grade()=), including its lookup table (=LrgColorLut=: =.cube= files or the built-in looks), so a host that already grades its view mixes the two in one pass.  The vignette and the grain are one extra shader (=lrg_photo_look_draw_finish()=).
+
+| Property        | Range         | Meaning                                       |
+|-----------------+---------------+-----------------------------------------------|
+| exposure        | -3 .. 3       | stops, the shader multiplies by 2^exposure    |
+| contrast        | 0.25 .. 2.5   | around mid grey                               |
+| saturation      | 0 .. 2.5      | against Rec. 709 luminance                    |
+| temperature     | -1 .. 1       | white balance, cool to warm                   |
+| tint            | -1 .. 1       | green to magenta                              |
+| lift, gamma     | -0.2..0.3, 0.5..2 | shadow lift, midtone gamma                |
+| vignette        | 0 .. 1        | strength; =vignette-radius= where it starts   |
+| grain           | 0 .. 1        | film grain amount                             |
+| lut-strength    | 0 .. 1        | mix of the table                              |
+
+Presets (=LrgPhotoPreset=): none, vivid, noir, sepia, faded, warm, cool, dramatic.  A preset replaces the adjustments, vignette and grain and keeps the table; edits afterwards are "preset plus edits".
+
+CPU references: =lrg_photo_look_apply_rgb()=, =lrg_photo_look_get_vignette_factor()= (distance from the centre as a fraction of the half diagonal, smoothstep from the radius to the corners), =lrg_photo_look_get_grain_value()= (an integer hash the shader repeats exactly, so a photo graded on the CPU has the same grain), and =lrg_photo_look_apply_image()= for the whole look.
+
+** Depth of field: LrgPhotoDof
+:PROPERTIES:
+:CUSTOM_ID: v2-dof
+:END:
+Thin-lens maths: the blur radius of a point at distance d is the aperture diameter (focal length / f-number) times the relative defocus |d - focus| / d times f / (focus - f), measured on a 24 mm tall sensor, scaled to the picture's height.  The focal length follows the field of view (12 mm / tan(fov/2)), so a narrow view blurs more.  The radius is zero at the focus distance, grows on both sides, and is capped by =max-blur= (pixels of a 1080 tall picture, scaled with the picture).  =meters-per-unit= is the world's scale; =strength= (default 8) exaggerates the physical blur, because a real 24 mm sensor at a game's wide view barely blurs anything.
+
+The effect is a gather shader: 32 golden-angle taps over the pixel's radius, each weighted by whether its own blur reaches the pixel, so a sharp subject does not smear into a blurred background.  The scene is drawn into an =LrgPhotoDepthTarget= (colour texture plus a depth *texture*; a =GrlRenderTexture= only has a depth renderbuffer a shader cannot read), then =lrg_photo_dof_draw_target()= draws it through the shader.  =lrg_photo_dof_set_clip()= tells the shader the camera's near and far planes so the depth buffer becomes distances.  =lrg_photo_dof_apply_image()= is the CPU reference with the same weights.
+
+Known limit (gather blur): a blurred object in front of a sharp one does not bleed over it, because the sharp pixel has no radius of its own.  Off (the default), nothing about the depth target is needed.
+
+** Overlays
+:PROPERTIES:
+:CUSTOM_ID: v2-overlays
+:END:
+- Frames (=LrgPhotoFrame=): none, thin (1.2 % of the shorter side), wide (5 %), polaroid (wide with a 16 % bottom), cinema (letterbox to 2.39:1, bars above and below a narrower picture, beside a wider one).  They cover the picture's edges, they do not shrink it, so the preview and the photo match.  =lrg_photo_overlay_apply_frame()= bakes one into an image, =lrg_photo_overlay_draw_frame()= previews it, =get_frame_borders()= and =get_picture_rect()= expose the geometry.
+- Grids (=LrgPhotoGrid=): rule of thirds, golden ratio, centre cross, diagonals; =get_grid_lines()= returns the segments, =draw_grid()= draws them in translucent white over the open part of the frame.  Grids are never in a photo.
+
+** The host contract
+:PROPERTIES:
+:CUSTOM_ID: v2-host
+:END:
+=LrgPhotoHost= is the game's side; every method is optional and the wrappers are safe on a host that leaves it out (a game implements only what it can).
+| Method                            | Used for                                          |
+|-----------------------------------+---------------------------------------------------|
+| =freeze_world (freeze)=           | stop the simulation; return whether it really is frozen |
+| =set_hud_visible (visible)=       | hide the game's HUD                               |
+| =get/set/clear_time_of_day=       | hour override (0..24, wraps), reverted on exit    |
+| =get_weather, list_weathers, set_weather, clear_weather= | weather override from a listed set, reverted on exit |
+| =get_anchor (xyz)=                | the point the camera's max distance is measured from (the player) |
+| =describe (table)=                | the game's own text entries for the photo's metadata |
+
+*Pause-the-world contract.*  =lrg_photo_mode_enter()= does, in order: create the camera, anchor it at the host's anchor, ask the host to freeze the world (unless =pause-world= is off), hide the HUD (unless =hud-visible=).  =world-frozen= tells whether the host really froze it.  A game whose world cannot stop (an online session) returns FALSE from =freeze_world=: photo mode then only detaches the camera, the world runs on behind it, and exiting does not "unfreeze" what was never frozen.  =lrg_photo_mode_exit()= clears the time and weather overrides, shows the HUD again, resumes the world if it froze it, and drops a running timer and a pending capture.  Settings (look, lens, frame, grid, capture scale) survive an exit, so the next photo starts as the last one ended.
+
+** Capture
+:PROPERTIES:
+:CUSTOM_ID: v2-capture
+:END:
+The photo mode never renders; the host does, and the exchange is a small state machine:
+1. =lrg_photo_mode_shoot()= (the shutter): with no timer set it calls =request_capture()=; with =timer-seconds= it starts a countdown (=lrg_photo_mode_update()= counts it down on the real clock, =timer-tick= reports whole seconds, then the capture is requested at 0).  Errors: =NOT_ACTIVE=, =BUSY= (a countdown or capture is under way).
+2. =request_capture()= marks the capture pending and emits =capture-requested (scale)=.
+3. The host renders one frame at =lrg_photo_mode_get_capture_size()= (the window's size times =capture-scale=, 2 or 4 for supersampling; the scale is lowered until the longest side fits =max-capture-side=, the GPU texture limit), through its look and depth of field, without the HUD.
+4. The host reads the render texture back (=lrg_screenshot_new_from_render_texture()= or =grl_texture_to_image()=) and calls =lrg_photo_mode_finish_capture (image, apply_look)=: the frame is painted on a copy (and, with =apply_look=, the look is graded on the CPU, for a host that has no shaders), text entries are added, and a PNG is written under =screenshot-directory= (created if missing; names are =<prefix>_<time>_<n>.png= and never overwrite).  Emits =screenshot-taken= and =photo-saved (path)=.  =abort_capture()= drops a request the host cannot serve.
+
+PNG metadata (tEXt chunks, readable with any PNG tool or =lrg_screenshot_read_png_metadata()=, which checks every chunk's CRC): =Software=, =Creation Time= (ISO 8601 UTC), =Photo.Size=, =Photo.CaptureScale=, =Camera.Position=, =Camera.YawPitchRoll=, =Camera.Fov=, =Camera.Mode=, =Look.Preset=, =Look.Exposure=, =Photo.FocusDistance= and =Photo.Aperture= (when the depth of field is on), =World.TimeOfDay= and =World.Weather= (when overridden), then the host's =describe()= entries and the entries set with =lrg_photo_mode_set_extra_metadata()=.
+
+** Minimal host
+:PROPERTIES:
+:CUSTOM_ID: v2-host-example
+:END:
+#+begin_src C
+static gboolean
+my_freeze (LrgPhotoHost *host, gboolean freeze)
+{
+    my_game_set_paused (MY_GAME (host), freeze);
+    return freeze;
+}
+
+static void
+my_host_iface_init (LrgPhotoHostInterface *iface)
+{
+    iface->freeze_world = my_freeze;
+}
+
+/* in the game */
+LrgPhotoMode *mode = lrg_photo_mode_get_default ();
+
+lrg_photo_mode_set_host (mode, LRG_PHOTO_HOST (game));
+g_signal_connect (mode, "capture-requested", G_CALLBACK (render_and_finish), game);
+lrg_photo_mode_enter (mode, game_camera, &error);
+/* each frame: lrg_photo_mode_update (mode, delta), draw through
+ * lrg_photo_mode_get_look () and get_dof (), overlays last */
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: v2-tests
+:END:
+=tests/test-photo-pipeline.c= (37 cases, no window): enums, look (clamping, presets, CPU grade equals =LrgColorGrade=, vignette, grain, image grading, LUT), depth of field (clamping, circle of confusion, blur of an image, a sharp subject in a blurred scene, the depth target refusing without a window), overlays (borders, grid lines, baked frame), PNG metadata (round trip, CRC and format failures), the camera (roll, from-camera, orbit, max distance, collision with and without a function, destroy notify), and photo mode against a mock host (world contract, an online host that refuses the freeze, time and weather, capture size, the capture state machine, failures, the timer).

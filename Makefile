@@ -458,6 +458,11 @@ PUBLIC_HEADERS := \
 	src/achievement/lrg-achievement-toasts.h \
 	src/photomode/lrg-screenshot.h \
 	src/photomode/lrg-photo-camera-controller.h \
+	src/photomode/lrg-photo-host.h \
+	src/photomode/lrg-photo-look.h \
+	src/photomode/lrg-photo-depth-target.h \
+	src/photomode/lrg-photo-dof.h \
+	src/photomode/lrg-photo-overlay.h \
 	src/photomode/lrg-photo-mode.h \
 	src/photomode/lrg-gif-recorder.h \
 	src/reel/lrg-reel-anim.h \
@@ -1053,6 +1058,11 @@ SOURCES := \
 	src/achievement/lrg-achievement-toasts.c \
 	src/photomode/lrg-screenshot.c \
 	src/photomode/lrg-photo-camera-controller.c \
+	src/photomode/lrg-photo-host.c \
+	src/photomode/lrg-photo-look.c \
+	src/photomode/lrg-photo-depth-target.c \
+	src/photomode/lrg-photo-dof.c \
+	src/photomode/lrg-photo-overlay.c \
 	src/photomode/lrg-photo-mode.c \
 	src/photomode/lrg-gif-recorder.c \
 	src/reel/lrg-reel-anim.c \

@@ -20,6 +20,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../lrg-enums.h"
 #include "../graphics/lrg-camera3d.h"
 
 G_BEGIN_DECLS
@@ -408,5 +409,292 @@ LRG_AVAILABLE_IN_ALL
 void
 lrg_photo_camera_controller_update (LrgPhotoCameraController *self,
                                     gfloat                    delta);
+
+/* ==========================================================================
+ * Orbit mode and limits
+ * ========================================================================== */
+
+/**
+ * LrgPhotoCollisionFunc:
+ * @from: (array fixed-size=3): where the sweep starts: the previous camera
+ *   position in free mode, the subject in orbit mode
+ * @to: (array fixed-size=3): where the camera wants to be
+ * @radius: the camera's collision radius
+ * @out_position: (out caller-allocates) (array fixed-size=3): receives the
+ *   allowed position when the sweep was blocked
+ * @user_data: the data given to
+ *   lrg_photo_camera_controller_set_collision_func()
+ *
+ * Asks the game whether the camera may move from @from to @to (a ray or
+ * sphere cast into its collision world).
+ *
+ * Returns: %TRUE when blocked, with @out_position set to where the
+ *   camera may be (before the obstacle); %FALSE leaves @to as it is
+ *
+ * Since: 1.0
+ */
+typedef gboolean (*LrgPhotoCollisionFunc) (const gfloat *from,
+                                           const gfloat *to,
+                                           gfloat        radius,
+                                           gfloat       *out_position,
+                                           gpointer      user_data);
+
+/**
+ * lrg_photo_camera_controller_get_mode:
+ * @self: an #LrgPhotoCameraController
+ *
+ * Returns: the camera mode
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPhotoCameraMode
+lrg_photo_camera_controller_get_mode (LrgPhotoCameraController *self);
+
+/**
+ * lrg_photo_camera_controller_set_mode:
+ * @self: an #LrgPhotoCameraController
+ * @mode: the mode
+ *
+ * Switches between the free camera and orbit mode.  The view does not
+ * jump: entering orbit mode puts the subject orbit-distance ahead of the
+ * camera; leaving it keeps the camera where it is.  In orbit mode
+ * forward and back zoom, right and up pan the subject, rotate swings the
+ * camera round it.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_set_mode (LrgPhotoCameraController *self,
+                                      LrgPhotoCameraMode         mode);
+
+/**
+ * lrg_photo_camera_controller_get_orbit_distance:
+ * @self: an #LrgPhotoCameraController
+ *
+ * Returns: the distance from the subject in orbit mode
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_photo_camera_controller_get_orbit_distance (LrgPhotoCameraController *self);
+
+/**
+ * lrg_photo_camera_controller_set_orbit_distance:
+ * @self: an #LrgPhotoCameraController
+ * @distance: the distance, clamped to 0.5 .. 500
+ *
+ * Sets the orbit distance at once.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_set_orbit_distance (LrgPhotoCameraController *self,
+                                                gfloat                    distance);
+
+/**
+ * lrg_photo_camera_controller_focus_on:
+ * @self: an #LrgPhotoCameraController
+ * @x: the subject's x
+ * @y: the subject's y
+ * @z: the subject's z
+ *
+ * Enters orbit mode round a point: the camera stays where it is, turns
+ * to face the subject and orbits it at the current distance.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_focus_on (LrgPhotoCameraController *self,
+                                      gfloat                    x,
+                                      gfloat                    y,
+                                      gfloat                    z);
+
+/**
+ * lrg_photo_camera_controller_orbit:
+ * @self: an #LrgPhotoCameraController
+ * @delta_yaw: the turn in degrees, positive to the left (before sensitivity)
+ * @delta_pitch: the turn upwards in degrees (before sensitivity)
+ *
+ * Swings the camera round the subject (the same as
+ * lrg_photo_camera_controller_rotate(), named for orbit mode).
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_orbit (LrgPhotoCameraController *self,
+                                   gfloat                    delta_yaw,
+                                   gfloat                    delta_pitch);
+
+/**
+ * lrg_photo_camera_controller_zoom:
+ * @self: an #LrgPhotoCameraController
+ * @amount: positive zooms in
+ *
+ * In orbit mode moves the camera towards the subject; in free mode
+ * narrows the field of view (10 degrees per unit).
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_zoom (LrgPhotoCameraController *self,
+                                  gfloat                    amount);
+
+/**
+ * lrg_photo_camera_controller_set_anchor:
+ * @self: an #LrgPhotoCameraController
+ * @x: the anchor's x
+ * @y: the anchor's y
+ * @z: the anchor's z
+ *
+ * Sets the centre of the maximum distance sphere (the player, usually).
+ * A controller made from a camera anchors at that camera.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_set_anchor (LrgPhotoCameraController *self,
+                                        gfloat                    x,
+                                        gfloat                    y,
+                                        gfloat                    z);
+
+/**
+ * lrg_photo_camera_controller_get_anchor:
+ * @self: an #LrgPhotoCameraController
+ * @x: (out) (optional): the anchor's x
+ * @y: (out) (optional): the anchor's y
+ * @z: (out) (optional): the anchor's z
+ *
+ * Gets the anchor.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_get_anchor (LrgPhotoCameraController *self,
+                                        gfloat                   *x,
+                                        gfloat                   *y,
+                                        gfloat                   *z);
+
+/**
+ * lrg_photo_camera_controller_get_max_distance:
+ * @self: an #LrgPhotoCameraController
+ *
+ * Returns: the largest distance from the anchor, 0 for no limit
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_photo_camera_controller_get_max_distance (LrgPhotoCameraController *self);
+
+/**
+ * lrg_photo_camera_controller_set_max_distance:
+ * @self: an #LrgPhotoCameraController
+ * @distance: world units, 0 for no limit
+ *
+ * Keeps the camera (and in orbit mode the subject) inside a sphere of
+ * this radius round the anchor, so a photo cannot leave the area the
+ * game wants to show.  Moving against the edge slides along it.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_set_max_distance (LrgPhotoCameraController *self,
+                                              gfloat                    distance);
+
+/**
+ * lrg_photo_camera_controller_get_distance_to_anchor:
+ * @self: an #LrgPhotoCameraController
+ *
+ * Returns: how far the camera is from the anchor
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_photo_camera_controller_get_distance_to_anchor (LrgPhotoCameraController *self);
+
+/**
+ * lrg_photo_camera_controller_get_collision_enabled:
+ * @self: an #LrgPhotoCameraController
+ *
+ * Returns: whether the collision function is used
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_photo_camera_controller_get_collision_enabled (LrgPhotoCameraController *self);
+
+/**
+ * lrg_photo_camera_controller_set_collision_enabled:
+ * @self: an #LrgPhotoCameraController
+ * @enabled: whether to ask the collision function
+ *
+ * Collision is optional: off, the camera passes through walls (the
+ * default); on, it is stopped by what the game's function reports.
+ * Without a function nothing blocks it either way.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_set_collision_enabled (LrgPhotoCameraController *self,
+                                                   gboolean                  enabled);
+
+/**
+ * lrg_photo_camera_controller_get_collision_radius:
+ * @self: an #LrgPhotoCameraController
+ *
+ * Returns: the camera's collision radius
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_photo_camera_controller_get_collision_radius (LrgPhotoCameraController *self);
+
+/**
+ * lrg_photo_camera_controller_set_collision_radius:
+ * @self: an #LrgPhotoCameraController
+ * @radius: world units, clamped to 0 .. 100
+ *
+ * Sets the radius handed to the collision function.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_set_collision_radius (LrgPhotoCameraController *self,
+                                                  gfloat                    radius);
+
+/**
+ * lrg_photo_camera_controller_set_collision_func:
+ * @self: an #LrgPhotoCameraController
+ * @func: (nullable) (scope notified) (closure user_data) (destroy notify): the
+ *   collision query, or %NULL
+ * @user_data: data for @func
+ * @notify: called with @user_data when @func is replaced or the
+ *   controller is finalized
+ *
+ * Sets the game's collision query.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_photo_camera_controller_set_collision_func (LrgPhotoCameraController *self,
+                                                LrgPhotoCollisionFunc     func,
+                                                gpointer                  user_data,
+                                                GDestroyNotify            notify);
 
 G_END_DECLS

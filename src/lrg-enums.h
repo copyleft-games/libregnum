@@ -3549,6 +3549,9 @@ GQuark lrg_photo_mode_error_quark (void);
  * @LRG_PHOTO_MODE_ERROR_SAVE: Screenshot save failed
  * @LRG_PHOTO_MODE_ERROR_INVALID_FORMAT: Invalid image format
  * @LRG_PHOTO_MODE_ERROR_ALREADY_ACTIVE: Photo mode already active
+ * @LRG_PHOTO_MODE_ERROR_NOT_ACTIVE: Photo mode is not active
+ * @LRG_PHOTO_MODE_ERROR_BUSY: A capture is already in progress
+ * @LRG_PHOTO_MODE_ERROR_INVALID_ARGUMENT: An argument was out of range
  *
  * Error codes for the photo mode system.
  *
@@ -3560,7 +3563,10 @@ typedef enum
     LRG_PHOTO_MODE_ERROR_CAPTURE,
     LRG_PHOTO_MODE_ERROR_SAVE,
     LRG_PHOTO_MODE_ERROR_INVALID_FORMAT,
-    LRG_PHOTO_MODE_ERROR_ALREADY_ACTIVE
+    LRG_PHOTO_MODE_ERROR_ALREADY_ACTIVE,
+    LRG_PHOTO_MODE_ERROR_NOT_ACTIVE,
+    LRG_PHOTO_MODE_ERROR_BUSY,
+    LRG_PHOTO_MODE_ERROR_INVALID_ARGUMENT
 } LrgPhotoModeError;
 
 LRG_AVAILABLE_IN_ALL
@@ -3585,6 +3591,115 @@ typedef enum
 LRG_AVAILABLE_IN_ALL
 GType lrg_screenshot_format_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_SCREENSHOT_FORMAT (lrg_screenshot_format_get_type ())
+
+/**
+ * LrgPhotoCameraMode:
+ * @LRG_PHOTO_CAMERA_MODE_FREE: Free fly camera (move and look anywhere)
+ * @LRG_PHOTO_CAMERA_MODE_ORBIT: Orbit camera around a subject point
+ *
+ * How the photo camera moves.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_PHOTO_CAMERA_MODE_FREE,
+    LRG_PHOTO_CAMERA_MODE_ORBIT
+} LrgPhotoCameraMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_photo_camera_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PHOTO_CAMERA_MODE (lrg_photo_camera_mode_get_type ())
+
+/**
+ * LrgPhotoPreset:
+ * @LRG_PHOTO_PRESET_NONE: No colour grading
+ * @LRG_PHOTO_PRESET_VIVID: Saturated, punchy colours
+ * @LRG_PHOTO_PRESET_NOIR: Black and white with high contrast
+ * @LRG_PHOTO_PRESET_SEPIA: Warm brown monochrome
+ * @LRG_PHOTO_PRESET_FADED: Lifted blacks, low contrast, muted
+ * @LRG_PHOTO_PRESET_WARM: Golden hour warmth
+ * @LRG_PHOTO_PRESET_COOL: Cold blue cast
+ * @LRG_PHOTO_PRESET_DRAMATIC: Dark, contrasty and desaturated
+ *
+ * Colour grading presets of #LrgPhotoLook.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_PHOTO_PRESET_NONE,
+    LRG_PHOTO_PRESET_VIVID,
+    LRG_PHOTO_PRESET_NOIR,
+    LRG_PHOTO_PRESET_SEPIA,
+    LRG_PHOTO_PRESET_FADED,
+    LRG_PHOTO_PRESET_WARM,
+    LRG_PHOTO_PRESET_COOL,
+    LRG_PHOTO_PRESET_DRAMATIC
+} LrgPhotoPreset;
+
+/**
+ * LRG_PHOTO_PRESET_COUNT:
+ *
+ * The number of #LrgPhotoPreset values.
+ *
+ * Since: 1.0
+ */
+#define LRG_PHOTO_PRESET_COUNT (8)
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_photo_preset_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PHOTO_PRESET (lrg_photo_preset_get_type ())
+
+/**
+ * LrgPhotoFrame:
+ * @LRG_PHOTO_FRAME_NONE: No frame
+ * @LRG_PHOTO_FRAME_THIN: A thin border all round
+ * @LRG_PHOTO_FRAME_WIDE: A wide border all round
+ * @LRG_PHOTO_FRAME_POLAROID: Wide border with a thicker bottom edge
+ * @LRG_PHOTO_FRAME_CINEMA: Letterbox bars to a 2.39:1 picture
+ *
+ * Frame overlays baked into a captured photo.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_PHOTO_FRAME_NONE,
+    LRG_PHOTO_FRAME_THIN,
+    LRG_PHOTO_FRAME_WIDE,
+    LRG_PHOTO_FRAME_POLAROID,
+    LRG_PHOTO_FRAME_CINEMA
+} LrgPhotoFrame;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_photo_frame_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PHOTO_FRAME (lrg_photo_frame_get_type ())
+
+/**
+ * LrgPhotoGrid:
+ * @LRG_PHOTO_GRID_NONE: No composition grid
+ * @LRG_PHOTO_GRID_THIRDS: Rule of thirds
+ * @LRG_PHOTO_GRID_GOLDEN: Golden ratio (phi) grid
+ * @LRG_PHOTO_GRID_CENTER: Centre cross
+ * @LRG_PHOTO_GRID_DIAGONALS: Both diagonals and the centre
+ *
+ * Composition guides drawn over the preview (never baked into a photo).
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_PHOTO_GRID_NONE,
+    LRG_PHOTO_GRID_THIRDS,
+    LRG_PHOTO_GRID_GOLDEN,
+    LRG_PHOTO_GRID_CENTER,
+    LRG_PHOTO_GRID_DIAGONALS
+} LrgPhotoGrid;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_photo_grid_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PHOTO_GRID (lrg_photo_grid_get_type ())
 
 /* ==========================================================================
  * Steam Workshop Module (Phase 5)
