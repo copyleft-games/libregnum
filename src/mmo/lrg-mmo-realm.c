@@ -16,6 +16,7 @@ typedef struct
     gint64 refill_time;
     guint64 sequence;
     gdouble tokens;
+    gboolean local;
 } Session;
 
 struct _LrgMmoRealm
@@ -25,6 +26,8 @@ struct _LrgMmoRealm
     GHashTable *accounts;
     GHashTable *zones;
     guint capacity;
+    guint locals;
+    guint32 next_local;
     gint64 timeout;
     gdouble accumulator;
     guint64 tick;
@@ -145,7 +148,7 @@ lrg_mmo_realm_login (LrgMmoRealm  *self,
 {
     Session *session;
     g_return_val_if_fail (LRG_IS_MMO_REALM (self), FALSE);
-    if (peer_id == 0 || !valid_id (account) || now_us < 0)
+    if (peer_id == 0 || peer_id >= LRG_MMO_REALM_LOCAL_PEER_BASE || !valid_id (account) || now_us < 0)
         return fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid admission parameters");
     if (g_hash_table_contains (self->sessions, GUINT_TO_POINTER (peer_id)) ||
         g_hash_table_contains (self->accounts, account))
@@ -176,9 +179,67 @@ lrg_mmo_realm_logout (LrgMmoRealm *self,
         Zone *zone = g_hash_table_lookup (self->zones, session->zone);
         zone->occupants--;
     }
+    if (session->local)
+        self->locals--;
     g_hash_table_remove (self->accounts, session->account);
     g_hash_table_remove (self->sessions, GUINT_TO_POINTER (peer_id));
     g_signal_emit (self, session_ended_signal, 0, peer_id);
+}
+
+guint32
+lrg_mmo_realm_login_local (LrgMmoRealm  *self,
+                           const gchar  *account,
+                           GError      **error)
+{
+    Session *session;
+    guint32 peer_id;
+    g_return_val_if_fail (LRG_IS_MMO_REALM (self), 0);
+    if (!valid_id (account))
+    {
+        fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid admission parameters");
+        return 0;
+    }
+    if (g_hash_table_contains (self->accounts, account))
+    {
+        fail (error, G_IO_ERROR_EXISTS, "Account already admitted");
+        return 0;
+    }
+    if (g_hash_table_size (self->sessions) >= self->capacity)
+    {
+        fail (error, G_IO_ERROR_NO_SPACE, "Realm is full");
+        return 0;
+    }
+    /* The next free ID of the local range; it wraps within the range. */
+    do
+    {
+        peer_id = LRG_MMO_REALM_LOCAL_PEER_BASE + self->next_local;
+        self->next_local = (self->next_local + 1) & (LRG_MMO_REALM_LOCAL_PEER_BASE - 1);
+    } while (g_hash_table_contains (self->sessions, GUINT_TO_POINTER (peer_id)));
+    session = g_new0 (Session, 1);
+    session->account = g_strdup (account);
+    session->local = TRUE;
+    session->tokens = 100;
+    g_hash_table_insert (self->sessions, GUINT_TO_POINTER (peer_id), session);
+    g_hash_table_insert (self->accounts, g_strdup (account), GUINT_TO_POINTER (peer_id));
+    self->locals++;
+    return peer_id;
+}
+
+gboolean
+lrg_mmo_realm_is_local (LrgMmoRealm *self,
+                        guint32      peer_id)
+{
+    Session *session;
+    g_return_val_if_fail (LRG_IS_MMO_REALM (self), FALSE);
+    session = g_hash_table_lookup (self->sessions, GUINT_TO_POINTER (peer_id));
+    return session != NULL && session->local;
+}
+
+guint
+lrg_mmo_realm_get_local_count (LrgMmoRealm *self)
+{
+    g_return_val_if_fail (LRG_IS_MMO_REALM (self), 0);
+    return self->locals;
 }
 
 gboolean
@@ -280,7 +341,9 @@ lrg_mmo_realm_expire (LrgMmoRealm *self,
     while (g_hash_table_iter_next (&iter, &key, &value))
     {
         Session *session = value;
-        if (now_us >= session->last_seen && now_us - session->last_seen >= self->timeout)
+        /* Local sessions have no transport to fall silent. */
+        if (!session->local && now_us >= session->last_seen &&
+            now_us - session->last_seen >= self->timeout)
         {
             guint32 id = GPOINTER_TO_UINT (key);
             g_array_append_val (expired, id);
@@ -291,7 +354,7 @@ lrg_mmo_realm_expire (LrgMmoRealm *self,
         guint32 id = g_array_index (expired, guint32, i);
         Session *session = g_hash_table_lookup (self->sessions, GUINT_TO_POINTER (id));
         /* Signal handlers may refresh or replace another session. */
-        if (session != NULL && now_us >= session->last_seen &&
+        if (session != NULL && !session->local && now_us >= session->last_seen &&
             now_us - session->last_seen >= self->timeout)
         {
             lrg_mmo_realm_logout (self, id);
