@@ -41,7 +41,7 @@ and deployment]] for configuration, wire formats, permissions and failure handli
 | Economy | Fungible resource balances, transfers, buyout listings, escrow and cancellation |
 | Clients | Atomic snapshot application, interpolation, paginated acknowledged baselines, prediction/reconciliation |
 | Protocol | Versioned bounded envelope and bounded optional zlib compression |
-| Matchmaking | Bounded expiring FIFO queue with mode/rating matching |
+| Matchmaking | Bounded expiring FIFO queue with mode/rating matching; role queues with partial groups, role swaps and restart-safe ages; instances with seats and expiry |
 | Operations | TLS reference host, worker-thread storage, health/metrics, systemd example, end-to-end smoke test |
 
 * Completion pass
@@ -259,6 +259,32 @@ SQLite is a required build dependency (=sqlite-devel= on Fedora,
 - Errors: =G_IO_ERROR_PERMISSION_DENIED= for a non-leader, =G_IO_ERROR_EXISTS= for a member or invitee added again, =G_IO_ERROR_NO_SPACE= for a full group or subgroup.  A failed call changes nothing.
 
 Loot rules, ready checks and what the members see are game policy and stay in the host (librefall's =LfServerGroups= builds them on this type).
+
+* Group finders: role queues and instances
+
+A group finder (dungeon finders, raid finders, battleground and arena queues) is two pieces: a queue that forms groups by role, and private copies of content for the groups it forms.  Both are ephemeral, confined to one thread, and give a value that survives a restart.
+
+** Role queues on LrgMmoMatchmaker
+
+=LrgMmoMatchmaker= also queues tickets with roles.  =lrg_mmo_matchmaker_enqueue_roles()= takes a party as =a(suu)= (account, trusted rating, role mask; role /i/ is the bit =1 << i=, a mask of 0 takes any role, at most =LRG_MMO_MATCHMAKER_MAX_ROLES= roles) and the time it was first queued, so a ticket put back after a declined match or a restart keeps its place (tickets are ordered by that time, oldest first).
+
+=lrg_mmo_matchmaker_take_roles()= fills role slots (e.g. one tank, one healer, three damage): from the oldest ticket of a mode, later tickets join while the ratings stay within the spread and every member still gets a seat of a role its mask offers.  The seats are assigned by a maximum bipartite matching (Kuhn's augmenting paths), so a flexible member never blocks a strict one and a party that cannot be seated (two strict tanks for one tank seat) is never taken.  The first group that fills every seat is taken; otherwise, once the oldest ticket has waited =partial_after_us=, its group is taken short if it has at least =min_size= members, and the host fills the empty seats itself (with bots, for instance).  The result is =a(su)=: account and role index.  Parties are never split.
+
+- =lrg_mmo_matchmaker_set_timeout()=: how long tickets wait (60 s by default); =lrg_mmo_matchmaker_expire()= drops the expired ones and returns their accounts for the host to tell.
+- =lrg_mmo_matchmaker_set_roles()= swaps a queued account's roles in place; =lrg_mmo_matchmaker_is_queued()=, =lrg_mmo_matchmaker_get_ticket()= (the ticket's accounts, mode, queued time and roles), =lrg_mmo_matchmaker_get_queued()= (by mode), =lrg_mmo_matchmaker_list_modes()= for the host's status and its loop over modes; =lrg_mmo_matchmaker_roles_fit()= tells whether a party could ever be seated, so the host refuses it before queueing.
+- =lrg_mmo_matchmaker_save()= gives =a(sxa(suu))= (mode, age, members) and =lrg_mmo_matchmaker_load()= queues them again in an empty queue with their ages (clocks do not survive a restart, ages do); everything is checked first and a refusal changes nothing; tickets that expired meanwhile are dropped.
+
+** Instances on LrgMmoInstances
+
+=LrgMmoInstances= holds the open instances: an ID (never 0, growing), the host's content ID, a capacity and the member accounts; an account belongs to one instance at most.
+
+- =lrg_mmo_instances_create()= opens one (=G_IO_ERROR_NO_SPACE= when the table is full or for more members than seats, =G_IO_ERROR_EXISTS= when a member is in another instance); =lrg_mmo_instances_close()=.
+- =lrg_mmo_instances_add_member()= gives a seat to a newcomer or a replacement; a full instance refuses with =G_IO_ERROR_NO_SPACE=; =lrg_mmo_instances_remove_member()= frees one.
+- =lrg_mmo_instances_enter()= admits members only (=G_IO_ERROR_PERMISSION_DENIED=); =lrg_mmo_instances_leave()=, =_is_inside()=, =_get_inside()= follow who is inside.
+- =lrg_mmo_instances_expire()= closes instances that stood empty for a while (one nobody entered counts from its creation) or outlived a lifetime.
+- =lrg_mmo_instances_save()= / =_load()=: =(ta(tsuxas))= (the next ID; ID, content, capacity, age, members); after a restart nobody is inside.
+
+The policy (which content, rewards, lockouts, what a group sees) stays in the host: librefall's =LfServerFinder= builds its group finder on these two types.  =tests/test-mmo-finder.c= covers role filling and flexible members, parties that cannot be seated, rating spread, short groups after a wait, role swaps, expiry, saving and loading with ages, and the instance table's admission, seats, expiry and restart.
 
 * Running the headless example and tests
 

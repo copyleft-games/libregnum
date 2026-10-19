@@ -21,6 +21,7 @@ G_BEGIN_DECLS
 typedef struct _LrgMmoPrediction LrgMmoPrediction;
 typedef struct _LrgMmoGate LrgMmoGate;
 typedef struct _LrgMmoMatchmaker LrgMmoMatchmaker;
+typedef struct _LrgMmoInstances LrgMmoInstances;
 
 typedef struct _LrgMmoShardDirectory LrgMmoShardDirectory;
 typedef struct _LrgMmoReplica LrgMmoReplica;

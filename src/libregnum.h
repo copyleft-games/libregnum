@@ -41,6 +41,7 @@
 #include "mmo/lrg-mmo-prediction.h"
 #include "mmo/lrg-mmo-gate.h"
 #include "mmo/lrg-mmo-matchmaker.h"
+#include "mmo/lrg-mmo-instances.h"
 #include "mmo/lrg-mmo-protocol.h"
 
 #include "mmo/lrg-mmo-shard-directory.h"
