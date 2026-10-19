@@ -250,6 +250,8 @@ actions:
 - =lrg-input-binding.h= - Individual input binding type
 - =lrg-input-action.h= - Named action with multiple bindings
 - =lrg-input-map.h= - Container for actions with persistence
+- =lrg-controller.h= - Controller families, glyph names, preset maps and the family monitor (see [[file:controller.org][Controllers]])
+- =lrg-controller-rumble.h= - Linux force feedback rumble
 
 *** Related Types
 :PROPERTIES:
@@ -257,6 +259,7 @@ actions:
 :END:
 - =LrgInputBindingType= - Enumeration for binding types
 - =LrgInputModifiers= - Flags for keyboard modifiers
+- =LrgControllerFamily=, =LrgControllerControl= - Which pad is connected and which control a glyph names
 
 ** Common Patterns
 :PROPERTIES:
@@ -345,5 +348,6 @@ void game_update(void)
 - See [[file:input-action.org][Input Actions]] for action management
 - See [[file:input-map.org][Input Map]] for map/serialization features
 - See [[file:input-binding.org][Input Bindings]] for binding details
+- See [[file:controller.org][Controllers]] for family detection (Xbox, PlayStation, Steam Deck, Steam Frame), glyphs, presets and rumble
 - See [[file:binding-catalog.org][LrgBindingCatalog]] for a key binding screen's grouped catalogue and conflicts
 - See [[../examples/input-handling.md][Input Handling Example]] for complete code sample

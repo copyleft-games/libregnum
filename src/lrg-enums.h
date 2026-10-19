@@ -251,6 +251,124 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_gamepad_type_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_GAMEPAD_TYPE (lrg_gamepad_type_get_type ())
 
+/**
+ * LrgControllerFamily:
+ * @LRG_CONTROLLER_FAMILY_UNKNOWN: no controller connected
+ * @LRG_CONTROLLER_FAMILY_GENERIC: a controller that matches no family
+ *   (uses the Xbox glyphs, which is what the SDL/GLFW mapping gives)
+ * @LRG_CONTROLLER_FAMILY_XBOX_360: Xbox 360 controller (also the pad Steam
+ *   Input and xpad present for any controller)
+ * @LRG_CONTROLLER_FAMILY_XBOX_ONE: Xbox One controller
+ * @LRG_CONTROLLER_FAMILY_XBOX_SERIES: Xbox Series X|S / Elite Series 2
+ * @LRG_CONTROLLER_FAMILY_DUALSHOCK4: Sony DualShock 4
+ * @LRG_CONTROLLER_FAMILY_DUALSENSE: Sony DualSense
+ * @LRG_CONTROLLER_FAMILY_DUALSENSE_EDGE: Sony DualSense Edge
+ * @LRG_CONTROLLER_FAMILY_SWITCH_PRO: Nintendo Switch Pro controller and
+ *   Joy-Con pairs
+ * @LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER: Valve's original Steam Controller
+ * @LRG_CONTROLLER_FAMILY_STEAM_DECK: the Steam Deck's built-in controls
+ * @LRG_CONTROLLER_FAMILY_STEAM_FRAME: the Steam Frame's controllers
+ *
+ * The finer-grained family of a connected controller, which decides the
+ * button glyphs a game shows and the preset input map it offers.  Values
+ * are append-only; the nicks are stable (config files and scripts use them).
+ * #LrgGamepadType stays the coarse grouping (see
+ * lrg_controller_family_get_gamepad_type()).
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CONTROLLER_FAMILY_UNKNOWN,
+    LRG_CONTROLLER_FAMILY_GENERIC,
+    LRG_CONTROLLER_FAMILY_XBOX_360,
+    LRG_CONTROLLER_FAMILY_XBOX_ONE,
+    LRG_CONTROLLER_FAMILY_XBOX_SERIES,
+    LRG_CONTROLLER_FAMILY_DUALSHOCK4,
+    LRG_CONTROLLER_FAMILY_DUALSENSE,
+    LRG_CONTROLLER_FAMILY_DUALSENSE_EDGE,
+    LRG_CONTROLLER_FAMILY_SWITCH_PRO,
+    LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER,
+    LRG_CONTROLLER_FAMILY_STEAM_DECK,
+    LRG_CONTROLLER_FAMILY_STEAM_FRAME
+} LrgControllerFamily;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_controller_family_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CONTROLLER_FAMILY (lrg_controller_family_get_type ())
+
+/**
+ * LrgControllerControl:
+ * @LRG_CONTROLLER_CONTROL_UNKNOWN: no control
+ * @LRG_CONTROLLER_CONTROL_DPAD_UP: d-pad up (the first 17 values equal
+ *   #GrlGamepadButton, so a button casts straight to a control)
+ * @LRG_CONTROLLER_CONTROL_DPAD_RIGHT: d-pad right
+ * @LRG_CONTROLLER_CONTROL_DPAD_DOWN: d-pad down
+ * @LRG_CONTROLLER_CONTROL_DPAD_LEFT: d-pad left
+ * @LRG_CONTROLLER_CONTROL_FACE_NORTH: the top face button (Y, Triangle)
+ * @LRG_CONTROLLER_CONTROL_FACE_EAST: the right face button (B, Circle)
+ * @LRG_CONTROLLER_CONTROL_FACE_SOUTH: the bottom face button (A, Cross)
+ * @LRG_CONTROLLER_CONTROL_FACE_WEST: the left face button (X, Square)
+ * @LRG_CONTROLLER_CONTROL_LEFT_BUMPER: left shoulder (LB, L1)
+ * @LRG_CONTROLLER_CONTROL_LEFT_TRIGGER: left trigger (LT, L2)
+ * @LRG_CONTROLLER_CONTROL_RIGHT_BUMPER: right shoulder (RB, R1)
+ * @LRG_CONTROLLER_CONTROL_RIGHT_TRIGGER: right trigger (RT, R2)
+ * @LRG_CONTROLLER_CONTROL_VIEW: the small left centre button (View, Share)
+ * @LRG_CONTROLLER_CONTROL_GUIDE: the centre button (Guide, PS, Steam)
+ * @LRG_CONTROLLER_CONTROL_MENU: the small right centre button (Menu, Options)
+ * @LRG_CONTROLLER_CONTROL_LEFT_STICK_CLICK: left stick pressed in
+ * @LRG_CONTROLLER_CONTROL_RIGHT_STICK_CLICK: right stick pressed in
+ * @LRG_CONTROLLER_CONTROL_BACK_LEFT_UPPER: upper left back paddle or grip
+ *   (Deck L4, Frame left grip, DualSense Edge function buttons)
+ * @LRG_CONTROLLER_CONTROL_BACK_RIGHT_UPPER: upper right back paddle or grip
+ * @LRG_CONTROLLER_CONTROL_BACK_LEFT_LOWER: lower left back paddle (Deck L5)
+ * @LRG_CONTROLLER_CONTROL_BACK_RIGHT_LOWER: lower right back paddle (Deck R5)
+ * @LRG_CONTROLLER_CONTROL_TOUCHPAD: the DualShock 4 / DualSense touchpad click
+ * @LRG_CONTROLLER_CONTROL_QUICK_ACCESS: the Deck's "..." quick access button
+ * @LRG_CONTROLLER_CONTROL_LEFT_STICK: the left stick's motion
+ * @LRG_CONTROLLER_CONTROL_RIGHT_STICK: the right stick's motion
+ *
+ * A physical control a glyph can be looked up for.  Raylib/GLFW only report
+ * the standard gamepad buttons (the first values); the back paddles, the
+ * touchpad and the quick access button reach a game through Steam Input or
+ * the OS driver mapping them to a standard button, so they are glyph-only.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_CONTROLLER_CONTROL_UNKNOWN,
+    LRG_CONTROLLER_CONTROL_DPAD_UP,
+    LRG_CONTROLLER_CONTROL_DPAD_RIGHT,
+    LRG_CONTROLLER_CONTROL_DPAD_DOWN,
+    LRG_CONTROLLER_CONTROL_DPAD_LEFT,
+    LRG_CONTROLLER_CONTROL_FACE_NORTH,
+    LRG_CONTROLLER_CONTROL_FACE_EAST,
+    LRG_CONTROLLER_CONTROL_FACE_SOUTH,
+    LRG_CONTROLLER_CONTROL_FACE_WEST,
+    LRG_CONTROLLER_CONTROL_LEFT_BUMPER,
+    LRG_CONTROLLER_CONTROL_LEFT_TRIGGER,
+    LRG_CONTROLLER_CONTROL_RIGHT_BUMPER,
+    LRG_CONTROLLER_CONTROL_RIGHT_TRIGGER,
+    LRG_CONTROLLER_CONTROL_VIEW,
+    LRG_CONTROLLER_CONTROL_GUIDE,
+    LRG_CONTROLLER_CONTROL_MENU,
+    LRG_CONTROLLER_CONTROL_LEFT_STICK_CLICK,
+    LRG_CONTROLLER_CONTROL_RIGHT_STICK_CLICK,
+    LRG_CONTROLLER_CONTROL_BACK_LEFT_UPPER,
+    LRG_CONTROLLER_CONTROL_BACK_RIGHT_UPPER,
+    LRG_CONTROLLER_CONTROL_BACK_LEFT_LOWER,
+    LRG_CONTROLLER_CONTROL_BACK_RIGHT_LOWER,
+    LRG_CONTROLLER_CONTROL_TOUCHPAD,
+    LRG_CONTROLLER_CONTROL_QUICK_ACCESS,
+    LRG_CONTROLLER_CONTROL_LEFT_STICK,
+    LRG_CONTROLLER_CONTROL_RIGHT_STICK
+} LrgControllerControl;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_controller_control_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CONTROLLER_CONTROL (lrg_controller_control_get_type ())
+
 /* ==========================================================================
  * Dialog System
  * ========================================================================== */

@@ -47,6 +47,8 @@ G_DECLARE_DERIVABLE_TYPE (LrgInput, lrg_input, LRG, INPUT, GObject)
  * @is_gamepad_button_down: Check if gamepad button is currently held
  * @is_gamepad_button_released: Check if gamepad button was just released
  * @get_gamepad_axis: Get gamepad axis value (-1.0 to 1.0)
+ * @get_gamepad_name: Get the connected controller's name (may be %NULL)
+ * @get_gamepad_ids: Get the controller's USB vendor and product ids
  *
  * The class structure for #LrgInput.
  *
@@ -96,9 +98,15 @@ struct _LrgInputClass
 	gfloat   (*get_gamepad_axis)          (LrgInput       *self,
 	                                       gint            gamepad,
 	                                       GrlGamepadAxis  axis);
+	const gchar * (*get_gamepad_name)     (LrgInput       *self,
+	                                       gint            gamepad);
+	gboolean (*get_gamepad_ids)           (LrgInput       *self,
+	                                       gint            gamepad,
+	                                       guint16        *vendor,
+	                                       guint16        *product);
 
 	/*< private >*/
-	gpointer _reserved[8];
+	gpointer _reserved[6];
 };
 
 /* ==========================================================================
@@ -365,5 +373,40 @@ LRG_AVAILABLE_IN_ALL
 gfloat lrg_input_get_gamepad_axis (LrgInput       *self,
                                    gint            gamepad,
                                    GrlGamepadAxis  axis);
+
+/**
+ * lrg_input_get_gamepad_name:
+ * @self: an #LrgInput
+ * @gamepad: the gamepad index (0-3)
+ *
+ * Gets the name the system reports for a connected controller (the
+ * SDL/GLFW name such as "Xbox Series X Controller").
+ *
+ * Returns: (transfer none) (nullable): the name, or %NULL when no controller
+ *   is connected at @gamepad or the source cannot tell
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_input_get_gamepad_name (LrgInput *self,
+                                          gint      gamepad);
+
+/**
+ * lrg_input_get_gamepad_ids:
+ * @self: an #LrgInput
+ * @gamepad: the gamepad index (0-3)
+ * @vendor: (out) (optional): the USB vendor id
+ * @product: (out) (optional): the USB product id
+ *
+ * Gets the USB vendor and product ids of a connected controller when the
+ * source can reach them (on Linux the real gamepad source reads them from
+ * sysfs, see lrg_controller_probe_usb_ids(); the mock returns what a test
+ * set).  Bluetooth and virtual pads may have none.
+ *
+ * Returns: %TRUE when the ids are known
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_input_get_gamepad_ids (LrgInput *self,
+                                    gint      gamepad,
+                                    guint16  *vendor,
+                                    guint16  *product);
 
 G_END_DECLS

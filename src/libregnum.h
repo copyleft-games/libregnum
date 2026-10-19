@@ -118,6 +118,8 @@
 #include "input/lrg-input-keyboard.h"
 #include "input/lrg-input-mouse.h"
 #include "input/lrg-input-gamepad.h"
+#include "input/lrg-controller.h"
+#include "input/lrg-controller-rumble.h"
 #include "input/lrg-input-mock.h"
 #include "input/lrg-input-software.h"
 #include "input/lrg-input-binding.h"

@@ -174,6 +174,36 @@ void lrg_input_mock_set_gamepad_available (LrgInputMock *self,
                                            gboolean      available);
 
 /**
+ * lrg_input_mock_set_gamepad_name:
+ * @self: an #LrgInputMock
+ * @gamepad: the gamepad index (0-3)
+ * @name: (nullable): the name the pad reports (up to 127 bytes)
+ *
+ * Sets the controller name lrg_input_get_gamepad_name() reports while the
+ * gamepad is available.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_input_mock_set_gamepad_name (LrgInputMock *self,
+                                      gint          gamepad,
+                                      const gchar  *name);
+
+/**
+ * lrg_input_mock_set_gamepad_ids:
+ * @self: an #LrgInputMock
+ * @gamepad: the gamepad index (0-3)
+ * @vendor: the USB vendor id
+ * @product: the USB product id
+ *
+ * Sets the USB ids lrg_input_get_gamepad_ids() reports while the gamepad
+ * is available.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_input_mock_set_gamepad_ids (LrgInputMock *self,
+                                     gint          gamepad,
+                                     guint16       vendor,
+                                     guint16       product);
+
+/**
  * lrg_input_mock_set_gamepad_button_state:
  * @self: an #LrgInputMock
  * @gamepad: the gamepad index (0-3)

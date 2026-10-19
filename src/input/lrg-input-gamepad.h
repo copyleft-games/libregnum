@@ -20,6 +20,7 @@
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
 #include "lrg-input.h"
+#include "lrg-controller.h"
 
 G_BEGIN_DECLS
 
@@ -63,6 +64,22 @@ LrgInput * lrg_input_gamepad_new (void);
 LRG_AVAILABLE_IN_ALL
 LrgGamepadType lrg_input_gamepad_detect_type (LrgInputGamepad *self,
                                                gint             gamepad);
+
+/**
+ * lrg_input_gamepad_detect_family:
+ * @self: an #LrgInputGamepad
+ * @gamepad: the gamepad index (0-3)
+ *
+ * Detects the finer #LrgControllerFamily of the controller at @gamepad from
+ * its USB ids (read from sysfs on Linux) and its name, see
+ * lrg_controller_family_detect().  A Steam Deck host (SteamDeck=1) reports
+ * its built-in and virtual pads as %LRG_CONTROLLER_FAMILY_STEAM_DECK.
+ *
+ * Returns: the family, %LRG_CONTROLLER_FAMILY_UNKNOWN without a controller
+ */
+LRG_AVAILABLE_IN_ALL
+LrgControllerFamily lrg_input_gamepad_detect_family (LrgInputGamepad *self,
+                                                      gint             gamepad);
 
 /**
  * lrg_input_gamepad_get_name:

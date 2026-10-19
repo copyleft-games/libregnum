@@ -154,6 +154,22 @@ lrg_input_real_get_gamepad_axis (LrgInput       *self,
 	return 0.0f;
 }
 
+static const gchar *
+lrg_input_real_get_gamepad_name (LrgInput *self,
+                                 gint      gamepad)
+{
+	return NULL;
+}
+
+static gboolean
+lrg_input_real_get_gamepad_ids (LrgInput *self,
+                                gint      gamepad,
+                                guint16  *vendor,
+                                guint16  *product)
+{
+	return FALSE;
+}
+
 /* ==========================================================================
  * GObject Overrides
  * ========================================================================== */
@@ -246,6 +262,8 @@ lrg_input_class_init (LrgInputClass *klass)
 	klass->is_gamepad_button_down    = lrg_input_real_is_gamepad_button_down;
 	klass->is_gamepad_button_released = lrg_input_real_is_gamepad_button_released;
 	klass->get_gamepad_axis          = lrg_input_real_get_gamepad_axis;
+	klass->get_gamepad_name          = lrg_input_real_get_gamepad_name;
+	klass->get_gamepad_ids           = lrg_input_real_get_gamepad_ids;
 
 	/**
 	 * LrgInput:name:
@@ -776,4 +794,61 @@ lrg_input_get_gamepad_axis (LrgInput       *self,
 		return klass->get_gamepad_axis (self, gamepad, axis);
 
 	return 0.0f;
+}
+
+/*
+ * lrg_input_get_gamepad_name:
+ * @self: an #LrgInput
+ * @gamepad: the gamepad index (0-3)
+ *
+ * Gets the system's name for a connected controller, or %NULL.
+ *
+ * Returns: (transfer none) (nullable): the name
+ */
+const gchar *
+lrg_input_get_gamepad_name (LrgInput *self,
+                            gint      gamepad)
+{
+	LrgInputClass *klass;
+
+	g_return_val_if_fail (LRG_IS_INPUT (self), NULL);
+
+	klass = LRG_INPUT_GET_CLASS (self);
+	if (klass->get_gamepad_name != NULL)
+		return klass->get_gamepad_name (self, gamepad);
+
+	return NULL;
+}
+
+/*
+ * lrg_input_get_gamepad_ids:
+ * @self: an #LrgInput
+ * @gamepad: the gamepad index (0-3)
+ * @vendor: (out) (optional): the USB vendor id
+ * @product: (out) (optional): the USB product id
+ *
+ * Gets the USB ids of a connected controller when the source can.
+ *
+ * Returns: %TRUE when the ids are known
+ */
+gboolean
+lrg_input_get_gamepad_ids (LrgInput *self,
+                           gint      gamepad,
+                           guint16  *vendor,
+                           guint16  *product)
+{
+	LrgInputClass *klass;
+
+	g_return_val_if_fail (LRG_IS_INPUT (self), FALSE);
+
+	if (vendor != NULL)
+		*vendor = 0;
+	if (product != NULL)
+		*product = 0;
+
+	klass = LRG_INPUT_GET_CLASS (self);
+	if (klass->get_gamepad_ids != NULL)
+		return klass->get_gamepad_ids (self, gamepad, vendor, product);
+
+	return FALSE;
 }
