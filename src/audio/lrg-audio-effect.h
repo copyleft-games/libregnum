@@ -55,8 +55,10 @@ G_BEGIN_DECLS
  * The rate lrg_audio_effect_chain_attach_mix() assumes when the caller
  * passes 0: raylib opens the device at the system's default rate and does
  * not report it, and 48000 Hz is that default on PipeWire and
- * PulseAudio.  A wrong guess only scales the effects' delay lengths and
- * cut-off frequencies by the ratio of the two rates.
+ * PulseAudio.  The device callback then measures the real rate
+ * (lrg_audio_effect_chain_get_mix_rate()); until it has, a wrong guess
+ * only scales the effects' delay lengths and cut-off frequencies by the
+ * ratio of the two rates.
  */
 #define LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE (48000)
 
@@ -264,5 +266,37 @@ void lrg_audio_effect_chain_detach_mix (LrgAudioEffectChain *self);
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_audio_effect_chain_is_attached (LrgAudioEffectChain *self);
+
+/**
+ * lrg_audio_effect_chain_get_mix_rate:
+ * @self: an #LrgAudioEffectChain
+ * @out_measured: (out) (optional): whether the rate was measured
+ *
+ * The rate the attached chain's effects run at.  When
+ * lrg_audio_effect_chain_attach_mix() got 0 the rate starts as
+ * %LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE and the device callback then
+ * counts the frames it is handed against the monotonic clock: after two
+ * windows of two seconds that agree, the nearest standard rate
+ * (lrg_audio_snap_sample_rate()) replaces the guess and @out_measured is
+ * %TRUE.  Backends that hand the callback bursts the clock cannot tell
+ * from real time keep the guess.
+ *
+ * Returns: the rate in Hz, 0 while @self is not attached
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_audio_effect_chain_get_mix_rate (LrgAudioEffectChain *self,
+                                           gboolean            *out_measured);
+
+/**
+ * lrg_audio_snap_sample_rate:
+ * @measured: a measured rate in Hz
+ *
+ * The standard device rate (8000, 11025, 16000, 22050, 24000, 32000,
+ * 44100, 48000, 88200, 96000, 176400, 192000) nearest to @measured.
+ *
+ * Returns: that rate, or 0 when @measured is not within 6 percent of any
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_audio_snap_sample_rate (gdouble measured);
 
 G_END_DECLS
