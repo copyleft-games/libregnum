@@ -109,6 +109,56 @@ LRG_AVAILABLE_IN_ALL
 gfloat              lrg_cloud_layer_get_scale           (LrgCloudLayer *self);
 
 /**
+ * lrg_cloud_layer_set_volume:
+ * @self: an #LrgCloudLayer
+ * @volume: %TRUE to raymarch the deck instead of drawing slices
+ *
+ * Off by default.  The volume draws one quad deck at the base and the
+ * fragment shader marches 12 samples through the deck along the eye ray:
+ * the slices' coverage and sun shading, a vertical profile that rounds
+ * the tops and lifts the bases, and Beer's-law absorption by the path
+ * length, so clouds darken toward their middles and thin at the edges
+ * from any angle (the slices show their layers at grazing angles).  It
+ * costs more fragments' worth of noise than three slices; without GLSL
+ * 330 the slices are drawn.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_cloud_layer_set_volume          (LrgCloudLayer *self,
+                                                         gboolean       volume);
+
+/**
+ * lrg_cloud_layer_get_volume:
+ * @self: an #LrgCloudLayer
+ *
+ * Returns: whether the deck is raymarched
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_cloud_layer_get_volume          (LrgCloudLayer *self);
+
+/**
+ * lrg_cloud_layer_sample_volume:
+ * @self: an #LrgCloudLayer
+ * @real_x: the eye ray's horizontal offset in X (metres) where it crosses
+ *   the deck's base plane
+ * @real_z: the same in Z
+ * @base_height: the base plane's height above the eye (metres, >= 1)
+ * @wx: absolute world X of the eye (metres)
+ * @wz: absolute world Z of the eye
+ *
+ * The raymarch's arithmetic on the CPU (the shader mirrors it): how much
+ * of the sky along that ray the deck hides.  Headless, for tests.
+ *
+ * Returns: 0 (clear) .. 1 (opaque)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat              lrg_cloud_layer_sample_volume       (LrgCloudLayer *self,
+                                                         gfloat         real_x,
+                                                         gfloat         real_z,
+                                                         gfloat         base_height,
+                                                         gdouble        wx,
+                                                         gdouble        wz);
+
+/**
  * lrg_cloud_layer_set_slices:
  * @self: an #LrgCloudLayer
  * @slices: slices drawn through the deck, 1 .. %LRG_CLOUD_LAYER_MAX_SLICES
