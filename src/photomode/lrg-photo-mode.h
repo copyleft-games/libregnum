@@ -354,7 +354,9 @@ lrg_photo_mode_get_host (LrgPhotoMode *self);
  *
  * Sets the game's #LrgPhotoHost, which freezes the world, hides the
  * HUD and overrides time and weather.  Without a host photo mode only
- * moves the camera and captures.  Not allowed while active.
+ * moves the camera and captures.  Not allowed while active.  The mode
+ * keeps a weak reference: the host usually owns the mode, and a host
+ * that is finalized reads as none.
  *
  * Since: 1.0
  */

@@ -1317,6 +1317,29 @@ test_mode_world_contract (void)
     g_assert_false (lrg_photo_mode_is_active (mode));
 }
 
+/*
+ * The mode keeps its host weakly: a host that owns the mode (librefall's
+ * photo mode) is not kept alive by it, and a host that goes away reads
+ * as none.
+ */
+static void
+test_mode_host_is_weak (void)
+{
+    g_autoptr(LrgPhotoMode) mode = new_mode ("/tmp");
+    MockHost *host = g_object_new (TYPE_MOCK_HOST, NULL);
+    gpointer watch = host;
+
+    g_object_add_weak_pointer (G_OBJECT (host), &watch);
+    lrg_photo_mode_set_host (mode, LRG_PHOTO_HOST (host));
+    g_assert_true (lrg_photo_mode_get_host (mode) == LRG_PHOTO_HOST (host));
+    g_object_unref (host);
+    g_assert_null (watch);
+    g_assert_null (lrg_photo_mode_get_host (mode));
+    /* entering without a host only moves the camera */
+    g_assert_true (lrg_photo_mode_enter (mode, NULL, NULL));
+    lrg_photo_mode_exit (mode);
+}
+
 static void
 test_mode_online_host_refuses_freeze (void)
 {
@@ -1757,6 +1780,7 @@ main (int    argc,
     g_test_add_func ("/photo/camera/orbit-max-distance", test_camera_orbit_respects_max_distance);
     g_test_add_func ("/photo/mode/world-contract", test_mode_world_contract);
     g_test_add_func ("/photo/mode/online-host", test_mode_online_host_refuses_freeze);
+    g_test_add_func ("/photo/mode/host-is-weak", test_mode_host_is_weak);
     g_test_add_func ("/photo/mode/pause-world-off", test_mode_pause_world_off);
     g_test_add_func ("/photo/mode/without-host", test_mode_without_host);
     g_test_add_func ("/photo/mode/time-and-weather", test_mode_time_and_weather);

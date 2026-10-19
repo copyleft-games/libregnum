@@ -122,7 +122,7 @@ lrg_photo_mode_finalize (GObject *object)
     g_clear_pointer (&self->extra_meta, g_hash_table_unref);
     g_clear_object (&self->look);
     g_clear_object (&self->dof);
-    g_clear_object (&self->host);
+    g_clear_weak_pointer (&self->host);
 
     if (default_instance == self)
         default_instance = NULL;
@@ -945,7 +945,12 @@ lrg_photo_mode_set_host (LrgPhotoMode *self,
     if (self->host == host)
         return;
     g_return_if_fail (!self->active);
-    g_set_object (&self->host, host);
+    /*
+     * A weak reference: the host is usually the game object that owns
+     * this mode (librefall's LfPhoto), and a strong one both ways would
+     * keep both alive forever.  A host that goes away reads as none.
+     */
+    g_set_weak_pointer (&self->host, host);
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_HOST]);
 }
 
