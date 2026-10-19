@@ -189,6 +189,15 @@ family_from_ids (guint16 vendor,
 		case 0x1102: case 0x1142:
 			return LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER;
 
+		/*
+		 * the Steam Controller (2026, "Ibex" / "Triton"): wired, Bluetooth,
+		 * the "Proteus" puck and the Steam Machine's "Nereid" receiver
+		 * (Linux hid-ids.h USB_DEVICE_ID_STEAM_CONTROLLER_IBEX .. _NEREID,
+		 * SDL's controller_list.h)
+		 */
+		case 0x1302: case 0x1303: case 0x1304: case 0x1305:
+			return LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER;
+
 		/* Steam Deck (LCD and OLED share the id) */
 		case 0x1205:
 			return LRG_CONTROLLER_FAMILY_STEAM_DECK;

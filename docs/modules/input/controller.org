@@ -40,7 +40,7 @@ The environment variable =LRG_CONTROLLER_FAMILY= (a nick) forces the family of e
 | 054c | 0ce6 | dualsense |
 | 054c | 0df2 | dualsense-edge |
 | 057e Nintendo | 2006 2007 2009 200e | switch-pro |
-| 28de Valve | 1102 1142 | steam-controller |
+| 28de Valve | 1102 1142 (the first Steam Controller), 1302 1303 1304 1305 (the Steam Controller of 2026: wired, Bluetooth, the puck, the Steam Machine's receiver; Linux =hid-ids.h=, SDL =controller_list.h=) | steam-controller |
 | 28de | 1205 | steam-deck |
 | 28de | 11ff (Steam Virtual Gamepad) | xbox-360 |
 
@@ -48,7 +48,7 @@ The environment variable =LRG_CONTROLLER_FAMILY= (a nick) forces the family of e
 :PROPERTIES:
 :CUSTOM_ID: steam-frame
 :END:
-No Steam Frame hardware or documentation of its controllers' product ids was available when this was written. A pad is =steam-frame= only when its name says "steam frame" / "frame controller" (with or without Valve's vendor id 28de); an unknown Valve product id without such a name is =generic=, never guessed. Inside Steam's game mode the Frame's controllers reach a game as Steam Input's virtual pad, which reads as =xbox-360= away from a Deck; set =LRG_CONTROLLER_FAMILY=steam-frame= (or the game's own override option) there. The glyph labels for the Frame follow the Deck's L1/L2/R1/R2 and call the grips "Left Grip" and "Right Grip"; check them against real hardware.
+No Steam Frame hardware or documentation of its controllers' product ids was available when this was written, and none was found when it was checked again (October 2026): the Linux kernel (=hid-ids.h=, =hid-steam.c=), SDL (=usb_ids.h=, =controller_list.h=) and Valve's =steam-devices= udev rules list no gamepad id for the Frame or its controllers (the only Frame id upstream is its Wi-Fi adapter, 28de:2432, not a pad); its controllers most likely reach a game through the headset and SteamVR / Steam Input rather than as a HID pad of their own.  The new 0x13xx Valve ids are the 2026 Steam Controller's, matched above. A pad is =steam-frame= only when its name says "steam frame" / "frame controller" (with or without Valve's vendor id 28de); an unknown Valve product id without such a name is =generic=, never guessed. Inside Steam's game mode the Frame's controllers reach a game as Steam Input's virtual pad, which reads as =xbox-360= away from a Deck; set =LRG_CONTROLLER_FAMILY=steam-frame= (or the game's own override option) there. The glyph labels for the Frame follow the Deck's L1/L2/R1/R2 and call the grips "Left Grip" and "Right Grip"; check them against real hardware.
 
 ** Glyphs
 :PROPERTIES:

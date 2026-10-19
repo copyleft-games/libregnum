@@ -68,6 +68,11 @@ test_detect_ids (void)
 	g_assert_cmpint (lrg_controller_family_detect ("pad", 0x054c, 0x09cc, FALSE), ==, LRG_CONTROLLER_FAMILY_DUALSHOCK4);
 	g_assert_cmpint (lrg_controller_family_detect ("pad", 0x054c, 0x0ce6, FALSE), ==, LRG_CONTROLLER_FAMILY_DUALSENSE);
 	g_assert_cmpint (lrg_controller_family_detect ("pad", 0x054c, 0x0df2, FALSE), ==, LRG_CONTROLLER_FAMILY_DUALSENSE_EDGE);
+	/* the Steam Controller (2026): wired, Bluetooth, puck, Steam Machine receiver */
+	g_assert_cmpint (lrg_controller_family_detect ("pad", 0x28de, 0x1302, FALSE), ==, LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER);
+	g_assert_cmpint (lrg_controller_family_detect ("pad", 0x28de, 0x1303, FALSE), ==, LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER);
+	g_assert_cmpint (lrg_controller_family_detect ("pad", 0x28de, 0x1304, FALSE), ==, LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER);
+	g_assert_cmpint (lrg_controller_family_detect ("pad", 0x28de, 0x1305, FALSE), ==, LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER);
 	g_assert_cmpint (lrg_controller_family_detect ("pad", 0x057e, 0x2009, FALSE), ==, LRG_CONTROLLER_FAMILY_SWITCH_PRO);
 	g_assert_cmpint (lrg_controller_family_detect ("pad", 0x28de, 0x1205, FALSE), ==, LRG_CONTROLLER_FAMILY_STEAM_DECK);
 	g_assert_cmpint (lrg_controller_family_detect ("pad", 0x28de, 0x1102, FALSE), ==, LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER);
