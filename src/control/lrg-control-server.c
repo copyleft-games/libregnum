@@ -24,6 +24,12 @@
 #include <gio/gunixsocketaddress.h>
 #include <glib/gstdio.h>
 
+#ifdef __linux__
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <sys/socket.h>
+#endif
 #ifdef G_OS_UNIX
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -1319,13 +1325,28 @@ accept_clients (LrgControlServer *self)
             break;
 
         /* --- the owner only (SO_PEERCRED) --- */
+#ifdef __linux__
+        {
+            /* read directly: GCredentials fails when the peer's pid has no
+             * number in this pid namespace (a game inside bubblewrap) */
+            struct ucred peer;
+            socklen_t length = sizeof (peer);
+
+            if (getsockopt (g_socket_get_fd (socket), SOL_SOCKET, SO_PEERCRED, &peer, &length) == 0)
+            {
+                uid = (gint)peer.uid;
+                pid = (gint)peer.pid;
+            }
+        }
+#else
         credentials = g_socket_get_credentials (socket, NULL);
-#ifdef G_OS_UNIX
         if (credentials != NULL)
         {
             uid = (gint)g_credentials_get_unix_user (credentials, NULL);
             pid = (gint)g_credentials_get_unix_pid (credentials, NULL);
         }
+#endif
+#ifdef G_OS_UNIX
         if (uid != (gint)getuid ())
         {
             g_debug ("control: refused a connection from uid %d", uid);
