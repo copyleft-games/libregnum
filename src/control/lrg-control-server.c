@@ -945,8 +945,14 @@ client_read (LrgControlServer *self,
         }
         if (got == 0)
         {
-            /* the peer half-closed: answer what it asked, then hang up */
-            client->closing = TRUE;
+            /*
+             * a half-close (shutdown for writing) still gets every reply;
+             * a peer that went away entirely (HUP) cancels what it asked
+             */
+            if (g_socket_condition_check (client->socket, G_IO_HUP | G_IO_ERR) != 0)
+                client->dead = TRUE;
+            else
+                client->closing = TRUE;
             break;
         }
         g_string_append_len (client->in, buffer, got);
@@ -1208,6 +1214,13 @@ lrg_control_server_listen (LrgControlServer  *self,
     if (self->listener != NULL)
     {
         g_set_error (error, G_IO_ERROR, G_IO_ERROR_EXISTS, "already listening on %s", self->path);
+        return FALSE;
+    }
+    /* sockaddr_un holds 108 bytes with the terminator: longer paths cannot be bound */
+    if (strlen (path) >= 108)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FILENAME_TOO_LONG,
+                     "the socket path %s is longer than a Unix socket allows (107 bytes)", path);
         return FALSE;
     }
 

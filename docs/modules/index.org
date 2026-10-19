@@ -31,6 +31,13 @@ loaded module.
 
 =LrgSandbox=: a path / network / exec policy applied in-process with no_new_privs, a Landlock ruleset (filesystem, TCP/UDP ports, IPC scopes; masked by the kernel's ABI) and a seccomp filter on every thread; also builds a bubblewrap command line for an optional outer layer.
 
+*** [[file:control/index.org][Control Module]] - commands, a control socket (text + JSON-RPC) and its client
+:PROPERTIES:
+:CUSTOM_ID: control-module
+:END:
+
+=LrgCommand=, =LrgCommandParam=, =LrgCommandCall= and =LrgCommandRegistry=: named commands with typed parameters (JSON schemas), help, results that complete at once or later, and an event stream with topics; =LrgControlServer= serves a registry on an owner-only Unix socket (a text dialect and JSON-RPC 2.0, batches, an optional token, event subscriptions) without a main loop; =LrgControlClient= is the blocking client a =*ctl= tool or a test uses.  The registry is what an MCP bridge serves as tools.
+
 *** [[file:reel/index.org][Reel Module]] - Programmatic Video Creation
 :PROPERTIES:
 :CUSTOM_ID: reel-module---programmatic-video-creation
