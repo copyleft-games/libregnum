@@ -19,7 +19,7 @@ LIBREGNUM_LIB := ../$(LIBOUTDIR)/$(LIB_SHARED)
 # Static library paths
 LIBREGNUM_STATIC := ../$(LIBOUTDIR)/$(LIB_STATIC)
 GRAYLIB_STATIC := $(GRAYLIB_DIR)/build/lib/libgraylib.a
-YAMLGLIB_STATIC := $(YAMLGLIB_DIR)/build/libyaml-glib.a
+# YAMLGLIB_STATIC comes from config.mk (build/<debug|release>/libyaml-glib-1.0.a)
 RAYLIB_STATIC := $(GRAYLIB_DIR)/deps/raylib/src/libraylib.a
 
 EXAMPLE_CFLAGS := $(COMMON_CFLAGS) $(WARN_CFLAGS) $(OPT_CFLAGS)
@@ -121,7 +121,7 @@ else
     EXAMPLE_LIBS += $(EXAMPLE_OPT_LIBS)
     ifeq ($(TARGET_PLATFORM),windows)
         # Windows: graylib/yaml-glib are still separate DLLs
-        EXAMPLE_LIBS += -lgraylib -lyaml-glib
+        EXAMPLE_LIBS += -lgraylib -lyaml-glib-1.0
     endif
 endif
 
@@ -202,7 +202,7 @@ ifeq ($(TARGET_PLATFORM),windows)
 	$(call print_status,"Copying DLLs for Windows...")
 	@cp ../$(LIBOUTDIR)/libregnum.dll $(EXAMPLES_BUILDDIR)/
 	@cp $(GRAYLIB_DIR)/build/lib/graylib.dll $(EXAMPLES_BUILDDIR)/
-	@cp $(YAMLGLIB_DIR)/build/yaml-glib.dll $(EXAMPLES_BUILDDIR)/
+	@cp $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/yaml-glib-1.0.dll $(EXAMPLES_BUILDDIR)/
 	@cp $(MINGW_BIN)/libglib-2.0-0.dll $(EXAMPLES_BUILDDIR)/
 	@cp $(MINGW_BIN)/libgobject-2.0-0.dll $(EXAMPLES_BUILDDIR)/
 	@cp $(MINGW_BIN)/libgio-2.0-0.dll $(EXAMPLES_BUILDDIR)/

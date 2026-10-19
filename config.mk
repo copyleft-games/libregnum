@@ -653,7 +653,9 @@ YAMLGLIB_CFLAGS := -I$(YAMLGLIB_DIR)/src
 # Static archives for embedding graylib, raylib, and yaml-glib into libregnum
 GRAYLIB_STATIC  := $(GRAYLIB_DIR)/build/lib/libgraylib.a
 RAYLIB_STATIC   := $(GRAYLIB_DIR)/deps/raylib/src/libraylib.a
-YAMLGLIB_STATIC := $(YAMLGLIB_DIR)/build/libyaml-glib.a
+# yaml-glib (its three-file Makefile) builds into build/<debug|release>/,
+# keyed on DEBUG like crispy: DEP_BUILD_FLAGS forwards DEBUG to it
+YAMLGLIB_STATIC := $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/libyaml-glib-1.0.a
 CRISPY_STATIC   := $(CRISPY_DIR)/build/$(DEP_BUILD_TYPE)/libcrispy.a
 
 # =============================================================================
@@ -754,7 +756,7 @@ ifeq ($(TARGET_PLATFORM),windows)
     # Windows: link against import libraries for DLLs
     # Note: libregnum.dll requires graylib.dll and yaml-glib.dll at runtime
     ALL_LIBS += -L$(GRAYLIB_DIR)/build/lib -lgraylib
-    ALL_LIBS += -L$(YAMLGLIB_DIR)/build -lyaml-glib
+    ALL_LIBS += -L$(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE) -lyaml-glib-1.0
 else
     # Unix: embed graylib, raylib, and yaml-glib directly into libregnum (self-contained).
     # --whole-archive ensures all graylib/yaml-glib symbols are included.
@@ -811,7 +813,7 @@ GIR_SCANNER_FLAGS := \
     -I$(GRAYLIB_DIR)/src \
     -I$(YAMLGLIB_DIR)/src \
     --add-include-path=$(GRAYLIB_DIR)/build/gir \
-    --add-include-path=$(YAMLGLIB_DIR)/build/release/gir
+    --add-include-path=$(YAMLGLIB_DIR)/build/release
 
 # MCP GIR additions (when MCP=1)
 ifeq ($(MCP),1)
@@ -823,4 +825,4 @@ endif
 
 GIR_COMPILER_FLAGS := \
     --includedir=$(GRAYLIB_DIR)/build/gir \
-    --includedir=$(YAMLGLIB_DIR)/build/release/gir
+    --includedir=$(YAMLGLIB_DIR)/build/release

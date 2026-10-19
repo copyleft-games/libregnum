@@ -1475,11 +1475,11 @@ endif
 # Pass cross-compilation settings to dependencies
 ifeq ($(TARGET_PLATFORM),windows)
     GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/graylib.dll
-    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/yaml-glib.dll
+    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/yaml-glib-1.0.dll
     DEP_BUILD_FLAGS := WINDOWS=1
 else
     GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/libgraylib.a
-    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/libyaml-glib.a
+    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/libyaml-glib-1.0.a
     # Forward DEBUG to the bundled deps (graylib/yaml-glib/mcp-glib) so a
     # `make DEBUG=1` libregnum also gets debug-instrumented graylib etc.
     # (they build to build/ regardless, so only the flags change).
