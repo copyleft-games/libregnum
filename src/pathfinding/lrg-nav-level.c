@@ -935,17 +935,21 @@ lrg_nav_level_in_water (LrgNavLevel  *self,
                         const gfloat *point,
                         gfloat       *out_surface)
 {
+    gfloat cell_height = 0.0f;
     guint i;
 
     g_return_val_if_fail (LRG_IS_NAV_LEVEL (self), FALSE);
     g_return_val_if_fail (point != NULL, FALSE);
 
+    g_object_get (self->nav, "cell-height", &cell_height, NULL);
     for (i = 0; i + 6 <= self->water->len; i += 6)
     {
         const gfloat *w = &g_array_index (self->water, gfloat, i);
 
+        /* a swimmer on the surface stands up to two cells above it (the
+         * walk mesh's surface polygons, as the water area reaches) */
         if (point[0] >= w[0] && point[0] <= w[3] && point[2] >= w[2] && point[2] <= w[5] &&
-            point[1] >= w[1] && point[1] <= w[4])
+            point[1] >= w[1] && point[1] <= w[4] + cell_height * 2.0f)
         {
             if (out_surface != NULL)
                 *out_surface = w[4];

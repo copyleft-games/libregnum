@@ -466,8 +466,9 @@ lrg_nav_level_get_water_count (LrgNavLevel *self);
  * @point: (array fixed-size=3): a feet position
  * @out_surface: (out) (optional): the surface height of the water it is in
  *
- * Whether @point lies in a swim volume (inside its box, at most at its
- * surface): a walker there swims.
+ * Whether @point lies in a swim volume (inside its box, at most two
+ * cell heights above its surface, where the walk mesh's surface
+ * polygons lie): a walker there swims.
  *
  * Returns: %TRUE in water
  */
