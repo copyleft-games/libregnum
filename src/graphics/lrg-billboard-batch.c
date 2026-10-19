@@ -170,6 +170,11 @@ struct _LrgBillboardBatch
     gint              loc_recv_sun;
     LrgShadowLocations recv_shadow_locs;
     LrgGroundOverlayLocations recv_overlay_locs;
+    /* the loose quads' receiving (gaps G8): the cutout program's own */
+    gint              loose_loc_recv_on;
+    gint              loose_loc_recv_sun;
+    LrgShadowLocations loose_shadow_locs;
+    LrgGroundOverlayLocations loose_overlay_locs;
     Shader            cast_shader;
     gboolean          cast_tried;
     gboolean          cast_loaded;
@@ -187,16 +192,25 @@ G_DEFINE_TYPE (LrgBillboardBatch, lrg_billboard_batch, G_TYPE_OBJECT)
 /* raylib's default vertex shader inputs, plus an alpha test and the
  * light set's fog. rlVertex3f() applies the rlgl transform on the CPU,
  * so vertexPosition is already in the light set's draw space. */
+/* The loose quads' normal is the facing times 1 + the share of the quad's
+ * light that comes from the sun (gaps G8): the receiving fragment stage
+ * reads both back. */
 static const gchar cutout_vs[] =
     "#version 330\n"
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
+    "in vec3 vertexNormal;\n"
     "in vec4 vertexColor;\n"
     "uniform mat4 mvp;\n"
     "out vec3 fragPosition;\n"
     "out vec2 fragTexCoord;\n"
     "out vec4 fragColor;\n"
+    "out vec3 fragFacing;\n"
+    "out float fragSunShare;\n"
     "void main() {\n"
+    "    float len = length(vertexNormal);\n"
+    "    fragFacing = len > 1e-6 ? vertexNormal / len : vec3(0.0, 0.0, 1.0);\n"
+    "    fragSunShare = clamp(len - 1.0, 0.0, 1.0);\n"
     "    fragPosition = vertexPosition;\n"
     "    fragTexCoord = vertexTexCoord;\n"
     "    fragColor = vertexColor;\n"
@@ -208,14 +222,27 @@ static const gchar cutout_fs[] =
     "in vec3 fragPosition;\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
+    "in vec3 fragFacing;\n"
+    "in float fragSunShare;\n"
     "uniform sampler2D texture0;\n"
     "uniform vec4 colDiffuse;\n"
     "uniform float alphaCutoff;\n"
+    "uniform int recvOn;\n"
+    "uniform vec3 recvSun;\n"
     LRG_FOG_GLSL
+    LRG_SHADOW_GLSL
+    LRG_GROUND_OVERLAY_GLSL
     "out vec4 finalColor;\n"
     "void main() {\n"
     "    vec4 texel = texture(texture0, fragTexCoord) * colDiffuse * fragColor;\n"
     "    if (texel.a < alphaCutoff) discard;\n"
+    "    if (recvOn != 0 && fragSunShare > 0.0) {\n"
+    "        float sh = shadowCascades > 0 ? lrg_sun_shadow(fragPosition - recvSun * 0.6, fragFacing) : 1.0;\n"
+    "        float snow;\n"
+    "        float cloud = 0.0;\n"
+    "        if (ovOn != 0) lrg_overlay_eval(fragPosition, vec3(0.0), snow, cloud);\n"
+    "        texel.rgb *= (1.0 - fragSunShare * (1.0 - sh)) * (1.0 - cloud);\n"
+    "    }\n"
     "    finalColor = vec4(mix(texel.rgb, fogColor.rgb, lrg_fog_amount(fragPosition)), texel.a);\n"
     "}\n";
 
@@ -238,12 +265,15 @@ static const gchar gpu_vs[] =
     "uniform int lit;\n"
     "uniform vec4 wind;\n"
     "uniform vec2 windTime;\n"
+    "uniform int recvOn;\n"
+    "uniform vec3 recvSun;\n"
     LRG_LIGHT_SAMPLE_GLSL
+    LRG_SHADOW_GLSL
+    LRG_GROUND_OVERLAY_GLSL
     "out vec3 fragPosition;\n"
     "out vec2 fragTexCoord;\n"
     "out vec4 fragColor;\n"
-    "out vec3 fragFacing;\n"
-    "out float fragSunShare;\n"
+    "out vec4 fragSnow;\n"
     "void main() {\n"
     "    vec3 right;\n"
     "    vec3 up;\n"
@@ -265,51 +295,55 @@ static const gchar gpu_vs[] =
     "        local.xz += wind.xy * bend;\n"
     "    }\n"
     "    vec4 c = vertexColor;\n"
-    "    float share = 0.0;\n"
+    "    vec3 world = (matModel * vec4(local, 1.0)).xyz;\n"
+    "    vec4 snowOut = vec4(0.0);\n"
     "    if (lit == 1 && emissive < 0.5) {\n"
     "        vec3 centre = (matModel * vec4(vertexPosition + vec3(0.0, bbCorner.z, 0.0), 1.0)).xyz;\n"
     "        vec3 sampled = lrg_light_sample(centre);\n"
     "        c.rgb = clamp(c.rgb * sampled, 0.0, 1.0);\n"
-    "        vec3 w = vec3(0.299, 0.587, 0.114);\n"
-    "        share = clamp(dot(sunColor, w) / max(dot(sampled, w), 1e-4), 0.0, 1.0);\n"
+    "        if (recvOn != 0) {\n"
+    "            vec3 w = vec3(0.299, 0.587, 0.114);\n"
+    "            float share = clamp(dot(sunColor, w) / max(dot(sampled, w), 1e-4), 0.0, 1.0);\n"
+    "            vec3 facing = normalize((matModel * vec4(cross(right, up), 0.0)).xyz);\n"
+    "            float sh = shadowCascades > 0 && share > 0.0 ? lrg_sun_shadow(world - recvSun * 0.6, facing) : 1.0;\n"
+    "            float snow = 0.0;\n"
+    "            float cloud = 0.0;\n"
+    "            if (ovOn != 0) lrg_overlay_eval(world, vec3(0.0, 1.0, 0.0), snow, cloud);\n"
+    "            c.rgb *= (1.0 - share * (1.0 - sh)) * (1.0 - cloud * share);\n"
+    "            if (sway > 0.0)\n"
+    "                snowOut = vec4(clamp(ovSnowColor.rgb * sampled, 0.0, 1.0) * (1.0 - share * (1.0 - sh)),\n"
+    "                               bbCorner.y > 0.0 ? snow * 0.6 : 0.0);\n"
+    "        }\n"
     "    }\n"
-    "    fragSunShare = share;\n"
-    "    fragFacing = normalize((matModel * vec4(cross(right, up), 0.0)).xyz);\n"
+    "    fragSnow = snowOut;\n"
     "    fragColor = c;\n"
     "    fragTexCoord = vertexTexCoord;\n"
-    "    fragPosition = (matModel * vec4(local, 1.0)).xyz;\n"
+    "    fragPosition = world;\n"
     "    gl_Position = mvp * vec4(local, 1.0);\n"
     "}\n";
 
-/* Receiving (U14.1): the sun's shadow map and the cloud shadows darken the
- * quad by the share of its light that comes from the sun; the quad is
- * pulled toward the sun first so it does not shadow itself. */
+/* Receiving (U14.1, gaps G8): the sun's shadow map and the cloud shadows
+ * darken the quad by the share of its light that comes from the sun; the
+ * quad is pulled toward the sun first so it does not shadow itself.  The
+ * lookups run per corner in the vertex stage (a settled batch is tens of
+ * thousands of quads with much overdraw, and the filtered cascade lookup
+ * per fragment cost milliseconds on ultra), so a quad's shade is the
+ * blend of its corners'.  Swaying quads (plants) take snow on their upper
+ * corners, lit as the quad is. */
 static const gchar gpu_fs[] =
     "#version 330\n"
     "in vec3 fragPosition;\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
-    "in vec3 fragFacing;\n"
-    "in float fragSunShare;\n"
+    "in vec4 fragSnow;\n"
     "uniform sampler2D texture0;\n"
     "uniform float alphaCutoff;\n"
-    "uniform int recvOn;\n"
-    "uniform vec3 recvSun;\n"
     LRG_FOG_GLSL
-    LRG_SHADOW_GLSL
-    LRG_GROUND_OVERLAY_GLSL
     "out vec4 finalColor;\n"
     "void main() {\n"
     "    vec4 texel = texture(texture0, fragTexCoord) * fragColor;\n"
     "    if (texel.a < alphaCutoff) discard;\n"
-    "    if (recvOn != 0 && fragSunShare > 0.0) {\n"
-    "        vec3 p = fragPosition - recvSun * 0.6;\n"
-    "        float sh = shadowCascades > 0 ? lrg_sun_shadow(p, fragFacing) : 1.0;\n"
-    "        float snow;\n"
-    "        float cloud = 0.0;\n"
-    "        if (ovOn != 0) lrg_overlay_eval(fragPosition, vec3(0.0), snow, cloud);\n"
-    "        texel.rgb *= (1.0 - fragSunShare * (1.0 - sh)) * (1.0 - cloud);\n"
-    "    }\n"
+    "    texel.rgb = mix(texel.rgb, fragSnow.rgb, fragSnow.a);\n"
     "    finalColor = vec4(mix(texel.rgb, fogColor.rgb, lrg_fog_amount(fragPosition)), texel.a);\n"
     "}\n";
 
@@ -1015,15 +1049,15 @@ active_light_set (LrgBillboardBatch *self)
     return self->light_set != NULL ? self->light_set : lrg_light_set_get_bound ();
 }
 
-/* lit_tint:
- * The billboard's tint times the light at its centre (pivot moved to
- * the middle of the quad along world up, then through @transform, the
- * rlgl matrix vertices go through), clamped per channel. */
-static void
-lit_tint (const Billboard *b,
-          LrgLightSet     *lights,
-          const Matrix    *transform,
-          guint8          *out)
+/* lit_tint_light:
+ * lit_tint() that also hands back the sampled light (3 floats); FALSE
+ * (and @out_light untouched) for an unlit or emissive quad. */
+static gboolean
+lit_tint_light (const Billboard *b,
+                LrgLightSet     *lights,
+                const Matrix    *transform,
+                guint8          *out,
+                gfloat          *out_light)
 {
     GrlVector3 centre;
     gfloat     local[3];
@@ -1032,7 +1066,7 @@ lit_tint (const Billboard *b,
 
     memcpy (out, b->tint, 4);
     if (lights == NULL || b->emissive)
-        return;
+        return FALSE;
 
     local[0] = b->position[0];
     local[1] = b->position[1] + (0.5f - b->pivot_y) * b->height;
@@ -1051,6 +1085,44 @@ lit_tint (const Billboard *b,
 
         out[k] = (guint8)CLAMP (v + 0.5f, 0.0f, 255.0f);
     }
+    if (out_light != NULL)
+        memcpy (out_light, light, sizeof light);
+    return TRUE;
+}
+
+/* lit_tint:
+ * The billboard's tint times the light at its centre (pivot moved to
+ * the middle of the quad along world up, then through @transform, the
+ * rlgl matrix vertices go through), clamped per channel. */
+static void
+lit_tint (const Billboard *b,
+          LrgLightSet     *lights,
+          const Matrix    *transform,
+          guint8          *out)
+{
+    (void)lit_tint_light (b, lights, transform, out, NULL);
+}
+
+/* lit_tint_share:
+ * lit_tint() that also returns the share of the light at the quad's centre
+ * that comes from the sun (@sun_rgb, NULL when it is off or not received):
+ * the luminance of the sun's colour over the sampled light's, as the GPU
+ * path computes it.  0 for an unlit or emissive quad. */
+static gfloat
+lit_tint_share (const Billboard *b,
+                LrgLightSet     *lights,
+                const Matrix    *transform,
+                const gfloat    *sun_rgb,
+                guint8          *out)
+{
+    gfloat light[3];
+    gfloat sampled;
+
+    if (!lit_tint_light (b, lights, transform, out, light) || sun_rgb == NULL)
+        return 0.0f;
+    sampled = 0.299f * light[0] + 0.587f * light[1] + 0.114f * light[2];
+    return CLAMP ((0.299f * sun_rgb[0] + 0.587f * sun_rgb[1] + 0.114f * sun_rgb[2])
+                  / MAX (sampled, 1e-4f), 0.0f, 1.0f);
 }
 
 gboolean
@@ -1101,6 +1173,10 @@ ensure_shader (LrgBillboardBatch *self)
     self->shader_loaded = TRUE;
     self->cutoff_loc = GetShaderLocation (self->shader, "alphaCutoff");
     lrg_light_set_fog_locations (self->shader, &self->fog_locs);
+    self->loose_loc_recv_on = GetShaderLocation (self->shader, "recvOn");
+    self->loose_loc_recv_sun = GetShaderLocation (self->shader, "recvSun");
+    lrg_shadow_locations (self->shader, &self->loose_shadow_locs);
+    lrg_ground_overlay_locations (self->shader, &self->loose_overlay_locs);
 }
 
 static gint
@@ -1553,6 +1629,9 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     gfloat    cam_right[3];
     gfloat    cam_up[3];
     gboolean  use_shader;
+    gboolean  receive;
+    gboolean  sun_on;
+    gfloat    sun_rgb[3];
     LrgLightSet *lights;
     Matrix    transform;
     guint     current;
@@ -1612,7 +1691,8 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     /* The shader is needed for the cutout or for the light set's fog;
      * without either the default shader blends plainly. */
     use_shader = FALSE;
-    if (self->cutoff > 0.0f
+    receive = lights != NULL && self->receive;
+    if (self->cutoff > 0.0f || receive
         || (lights != NULL && lrg_light_set_get_fog (lights, NULL, NULL, NULL, NULL, NULL)))
     {
         ensure_shader (self);
@@ -1620,10 +1700,20 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     }
     if (use_shader)
     {
+        gint recv = 0;
+
         BeginShaderMode (self->shader);
         SetShaderValue (self->shader, self->cutoff_loc, &self->cutoff, SHADER_UNIFORM_FLOAT);
         lrg_light_set_upload_fog (lights, self->shader, &self->fog_locs);
+        /* gaps G8: the loose quads (actors, loot, a batch that never
+         * settles) receive per fragment: they are few */
+        if (receive)
+            recv = lrg_light_set_upload_receive (lights, self->shader, &self->loose_shadow_locs,
+                                                 &self->loose_overlay_locs,
+                                                 self->loose_loc_recv_sun) ? 1 : 0;
+        SetShaderValue (self->shader, self->loose_loc_recv_on, &recv, SHADER_UNIFORM_INT);
     }
+    sun_on = receive && lrg_light_set_get_directional (lights, NULL, sun_rgb);
 
     open = FALSE;
     current = 0;
@@ -1652,14 +1742,19 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
 
         {
             guint8 rgba[4];
+            gfloat share = 0.0f;
+            gfloat scale;
 
-            lit_tint (b, lights, &transform, rgba);
+            share = lit_tint_share (b, lights, &transform, sun_on ? sun_rgb : NULL, rgba);
             rlColor4ub (rgba[0], rgba[1], rgba[2], rgba[3]);
+            /* facing normal = right x up (points at the camera), its
+             * length 1 + the sun's share of the light (the receiving
+             * shader reads it back) */
+            scale = 1.0f + share;
+            rlNormal3f ((right[1] * up[2] - right[2] * up[1]) * scale,
+                        (right[2] * up[0] - right[0] * up[2]) * scale,
+                        (right[0] * up[1] - right[1] * up[0]) * scale);
         }
-        /* facing normal = right x up (points at the camera) */
-        rlNormal3f (right[1] * up[2] - right[2] * up[1],
-                    right[2] * up[0] - right[0] * up[2],
-                    right[0] * up[1] - right[1] * up[0]);
         rlTexCoord2f (b->uv[0], b->uv[3]);
         rlVertex3f (q[0][0], q[0][1], q[0][2]);
         rlTexCoord2f (b->uv[2], b->uv[3]);
