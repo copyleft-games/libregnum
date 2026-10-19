@@ -230,6 +230,38 @@ edge_foam (gfloat   x,
     return 1.0f - x / 10.0f;
 }
 
+/* a heightfield patch: per-vertex heights, only its wet cells drawn,
+ * refused with a non-finite height or no wet cell */
+static void
+test_water_heightfield (void)
+{
+    g_autoptr(LrgWaterSurface) water = lrg_water_surface_new ();
+    g_autoptr(GError) error = NULL;
+    gfloat heights[9] = { 0, 0.5f, 1, 0, 0.5f, 1, 0, 0.5f, 1 };
+    guint8 cells[4] = { 1, 0, 0, 1 };
+    guint8 dry[4] = { 0, 0, 0, 0 };
+
+    g_assert_true (lrg_water_surface_add_heightfield (water, 0, 0, 2, 2, 2, 2, heights, cells,
+                                                      NULL, NULL, &error));
+    g_assert_no_error (error);
+    g_assert_cmpuint (lrg_water_surface_get_patch_count (water), ==, 1);
+    g_assert_cmpuint (lrg_water_surface_get_vertex_count (water), ==, 9);
+    g_assert_cmpuint (lrg_water_surface_get_triangle_count (water), ==, 4);
+    g_assert_true (lrg_water_surface_add_heightfield (water, 0, 0, 2, 2, 2, 2, heights, NULL,
+                                                      NULL, NULL, &error));
+    g_assert_cmpuint (lrg_water_surface_get_triangle_count (water), ==, 12);
+
+    g_assert_false (lrg_water_surface_add_heightfield (water, 0, 0, 2, 2, 2, 2, heights, dry,
+                                                       NULL, NULL, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_clear_error (&error);
+    heights[4] = NAN;
+    g_assert_false (lrg_water_surface_add_heightfield (water, 0, 0, 2, 2, 2, 2, heights, NULL,
+                                                       NULL, NULL, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_cmpuint (lrg_water_surface_get_patch_count (water), ==, 2);
+}
+
 static void
 test_water_patches (void)
 {
@@ -678,6 +710,7 @@ main (int   argc,
     g_test_add_func ("/world-look/water/waves", test_water_waves);
     g_test_add_func ("/world-look/water/origin", test_water_origin);
     g_test_add_func ("/world-look/water/patches", test_water_patches);
+    g_test_add_func ("/world-look/water/heightfield", test_water_heightfield);
     g_test_add_func ("/world-look/grass/placement", test_grass_placement);
     g_test_add_func ("/world-look/trees/meshes", test_tree_meshes);
     g_test_add_func ("/world-look/trees/batch-and-colors", test_tree_batch_and_colors);

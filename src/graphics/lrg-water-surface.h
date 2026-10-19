@@ -305,6 +305,45 @@ lrg_water_surface_add_grid (LrgWaterSurface   *self,
                             GError           **error);
 
 /**
+ * lrg_water_surface_add_heightfield:
+ * @self: an #LrgWaterSurface
+ * @x0: draw-space X of one corner
+ * @z0: draw-space Z of that corner
+ * @x1: X of the opposite corner
+ * @z1: Z of the opposite corner
+ * @columns: grid cells along X (>= 1)
+ * @rows: grid cells along Z (>= 1)
+ * @heights: (array): the rest height of each of the (@columns + 1) x
+ *   (@rows + 1) vertices, row by row from (@x0, @z0)
+ * @cells: (array) (nullable): @columns x @rows flags, non-zero for the
+ *   cells that hold water; %NULL for all
+ * @foam_func: (scope call) (closure user_data) (nullable): the shore factor per vertex, or %NULL for 0
+ * @user_data: data for @foam_func
+ * @error: return location for a #GError
+ *
+ * Adds a patch like lrg_water_surface_add_grid() whose rest surface
+ * follows @heights (a stream running down a valley) and that draws only
+ * its wet cells.  The waves ride on each vertex's own height.  Refused
+ * (%G_IO_ERROR_INVALID_ARGUMENT) with a non-finite height or no wet cell.
+ *
+ * Returns: %TRUE when the patch was added
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_water_surface_add_heightfield (LrgWaterSurface   *self,
+                                   gfloat             x0,
+                                   gfloat             z0,
+                                   gfloat             x1,
+                                   gfloat             z1,
+                                   guint              columns,
+                                   guint              rows,
+                                   const gfloat      *heights,
+                                   const guint8      *cells,
+                                   LrgWaterFoamFunc   foam_func,
+                                   gpointer           user_data,
+                                   GError           **error);
+
+/**
  * lrg_water_surface_get_patch_count:
  * @self: an #LrgWaterSurface
  *
