@@ -122,6 +122,8 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-widget.h \
 	src/ui/lrg-container.h \
 	src/ui/lrg-label.h \
+	src/ui/lrg-tooltip.h \
+	src/ui/lrg-tooltip-layout.h \
 	src/ui/lrg-button.h \
 	src/ui/lrg-panel.h \
 	src/ui/lrg-vbox.h \
@@ -711,6 +713,8 @@ SOURCES := \
 	src/ui/lrg-widget.c \
 	src/ui/lrg-container.c \
 	src/ui/lrg-label.c \
+	src/ui/lrg-tooltip.c \
+	src/ui/lrg-tooltip-layout.c \
 	src/ui/lrg-button.c \
 	src/ui/lrg-panel.c \
 	src/ui/lrg-vbox.c \
