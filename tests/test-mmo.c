@@ -445,6 +445,44 @@ test_store_transaction (void)
 }
 
 static void
+test_store_remove (void)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(LrgMmoStore) store = lrg_mmo_store_new (":memory:", &error);
+    g_autoptr(GVariant) batch = changes ("room/a", 0, "one", TRUE);
+    g_autoptr(GBytes) bytes = NULL;
+    g_autoptr(GVariant) audit = NULL;
+    guint64 revision;
+
+    g_assert_no_error (error);
+    g_assert_true (lrg_mmo_store_commit (store, batch, &error));
+    /* a stale revision, a missing key, a bad key */
+    g_assert_false (lrg_mmo_store_remove (store, "room/a", 7, &error));
+    assert_error (&error, G_IO_ERROR_WRONG_ETAG);
+    g_assert_false (lrg_mmo_store_remove (store, "room/none", 0, &error));
+    assert_error (&error, G_IO_ERROR_NOT_FOUND);
+    g_assert_false (lrg_mmo_store_remove (store, "", 0, &error));
+    assert_error (&error, G_IO_ERROR_INVALID_ARGUMENT);
+    bytes = lrg_mmo_store_read (store, "room/a", &revision, &error);
+    g_assert_nonnull (bytes);
+    g_assert_cmpuint (revision, ==, 1);
+    /* the right revision: gone, and audited */
+    g_assert_true (lrg_mmo_store_remove (store, "room/a", 1, &error));
+    g_assert_no_error (error);
+    g_clear_pointer (&bytes, g_bytes_unref);
+    g_assert_null (lrg_mmo_store_read (store, "room/a", &revision, &error));
+    assert_error (&error, G_IO_ERROR_NOT_FOUND);
+    audit = lrg_mmo_store_read_audit (store, 0, 100, &error);
+    g_assert_no_error (error);
+    g_assert_cmpuint (g_variant_n_children (audit), ==, 2);
+    /* the key is new again: revision 0 creates it */
+    g_clear_pointer (&batch, g_variant_unref);
+    batch = changes ("room/a", 0, "two", FALSE);
+    g_assert_true (lrg_mmo_store_commit (store, batch, &error));
+    g_assert_true (lrg_mmo_store_remove (store, "room/a", 0, &error));
+}
+
+static void
 test_store_persistence (void)
 {
     g_autoptr(GError) error = NULL;
@@ -503,6 +541,7 @@ main (int argc, char **argv)
     g_test_add_func ("/mmo/group/membership", test_group);
     g_test_add_func ("/mmo/group/raid", test_group_raid);
     g_test_add_func ("/mmo/store/transaction", test_store_transaction);
+    g_test_add_func ("/mmo/store/remove", test_store_remove);
     g_test_add_func ("/mmo/store/persistence", test_store_persistence);
     g_test_add_func ("/mmo/store/validation", test_store_validation);
     return g_test_run ();

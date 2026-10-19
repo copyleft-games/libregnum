@@ -345,6 +345,83 @@ out:
 }
 
 gboolean
+lrg_mmo_store_remove (LrgMmoStore *self, const gchar *key, guint64 revision, GError **error)
+{
+    sqlite3_stmt *statement = NULL;
+    sqlite3_stmt *audit = NULL;
+    g_autofree gchar *digest = NULL;
+    g_autofree gchar *what = NULL;
+    gboolean success = FALSE;
+    gint64 stored;
+    gint result;
+
+    g_return_val_if_fail (LRG_IS_MMO_STORE (self), FALSE);
+    if (!valid_key (key) || revision >= G_MAXINT64)
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid record key or revision");
+        return FALSE;
+    }
+    what = g_strdup_printf ("remove\n%s\n%" G_GUINT64_FORMAT, key, revision);
+    digest = g_compute_checksum_for_string (G_CHECKSUM_SHA256, what, -1);
+    if (self->postgres != NULL)
+        return _lrg_mmo_pg_remove (self->postgres, key, revision, digest, error);
+    if (sqlite3_exec (self->db, "BEGIN IMMEDIATE", NULL, NULL, NULL) != SQLITE_OK)
+        return sql_error (self, error);
+    /* the record and its revision, then the deletion, in one transaction */
+    if (sqlite3_prepare_v2 (self->db, "SELECT revision FROM lrg_records WHERE key=?1", -1, &statement,
+                            NULL) != SQLITE_OK)
+    {
+        sql_error (self, error);
+        goto out;
+    }
+    sqlite3_bind_text (statement, 1, key, -1, SQLITE_TRANSIENT);
+    result = sqlite3_step (statement);
+    if (result == SQLITE_DONE)
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Record not found");
+        goto out;
+    }
+    if (result != SQLITE_ROW)
+    {
+        sql_error (self, error);
+        goto out;
+    }
+    stored = sqlite3_column_int64 (statement, 0);
+    sqlite3_finalize (statement);
+    statement = NULL;
+    if (revision != 0 && (guint64) stored != revision)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_WRONG_ETAG, "Revision conflict for %s", key);
+        goto out;
+    }
+    if (sqlite3_prepare_v2 (self->db, "DELETE FROM lrg_records WHERE key=?1", -1, &statement, NULL) != SQLITE_OK ||
+        sqlite3_prepare_v2 (self->db,
+                            "INSERT INTO lrg_audit(operation,digest,created) VALUES (NULL,?1,CAST(strftime('%s','now') AS INTEGER))",
+                            -1, &audit, NULL) != SQLITE_OK)
+    {
+        sql_error (self, error);
+        goto out;
+    }
+    sqlite3_bind_text (statement, 1, key, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text (audit, 1, digest, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step (statement) != SQLITE_DONE || sqlite3_step (audit) != SQLITE_DONE)
+    {
+        sql_error (self, error);
+        goto out;
+    }
+    if (sqlite3_exec (self->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK)
+        sql_error (self, error);
+    else
+        success = TRUE;
+out:
+    sqlite3_finalize (statement);
+    sqlite3_finalize (audit);
+    if (!success)
+        sqlite3_exec (self->db, "ROLLBACK", NULL, NULL, NULL);
+    return success;
+}
+
+gboolean
 lrg_mmo_store_commit (LrgMmoStore *self, GVariant *changes, GError **error)
 {
     return commit_internal (self, changes, NULL, NULL, NULL, NULL, 0, error);

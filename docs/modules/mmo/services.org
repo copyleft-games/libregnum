@@ -134,6 +134,12 @@ retry after rereading to observe its receipt. Do not generate a fresh ID blindly
 Receipts and audit rows are durable and currently unbounded: define a retention
 policy whose retry horizon is explicit before implementing compaction.
 
+=remove()= deletes one record (at the revision the caller read, or at whatever
+revision with zero): a host forgets what no longer exists, such as the memory of
+a group's instance that closed. It is one transaction with an audit row whose
+digest names the key and the revision; a missing record is =NOT_FOUND=, another
+revision =WRONG_ETAG=. A later commit at revision zero creates the key afresh.
+
 Every newly committed record batch appends an audit sequence, operation label
 (if available), digest and timestamp. Payloads/tokens are not logged. =read_audit()=
 is cursor-paginated, at most 1000 entries. These digests establish ordering and

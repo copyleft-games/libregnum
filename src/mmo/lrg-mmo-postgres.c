@@ -193,6 +193,43 @@ rollback:
     return FALSE;
 }
 
+gboolean
+_lrg_mmo_pg_remove (PGconn *db, const gchar *key, guint64 revision, const gchar *digest, GError **error)
+{
+    g_autoptr(PGresult) result = NULL;
+    g_autofree gchar *serial = g_strdup_printf ("%" G_GUINT64_FORMAT, revision);
+    const gchar *values[] = { key, serial };
+    const gchar *audit[] = { NULL, digest };
+
+    if (!command (db, "BEGIN", error))
+        return FALSE;
+    result = query (db, "SELECT revision FROM lrg_records WHERE key=$1 FOR UPDATE", 1, values, error);
+    if (result == NULL)
+        goto rollback;
+    if (PQntuples (result) != 1)
+    {
+        _lrg_mmo_fail (error, G_IO_ERROR_NOT_FOUND, "Record not found");
+        goto rollback;
+    }
+    if (revision != 0 && g_ascii_strtoull (PQgetvalue (result, 0, 0), NULL, 10) != revision)
+    {
+        _lrg_mmo_fail (error, G_IO_ERROR_WRONG_ETAG, "Record revision conflict");
+        goto rollback;
+    }
+    g_clear_pointer (&result, PQclear);
+    result = query (db, "DELETE FROM lrg_records WHERE key=$1", 1, values, error);
+    if (result == NULL)
+        goto rollback;
+    g_clear_pointer (&result, PQclear);
+    result = query (db, "INSERT INTO lrg_audit(operation,digest,created) VALUES "
+                        "($1,$2,floor(extract(epoch FROM clock_timestamp())))", 2, audit, error);
+    if (result != NULL && command (db, "COMMIT", error))
+        return TRUE;
+rollback:
+    command (db, "ROLLBACK", NULL);
+    return FALSE;
+}
+
 GVariant *
 _lrg_mmo_pg_audit (PGconn *db, guint64 after, guint limit, GError **error)
 {

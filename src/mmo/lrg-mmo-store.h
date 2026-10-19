@@ -111,6 +111,26 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_mmo_store_backup (LrgMmoStore *self, const gchar *path, GError **error);
 
 /**
+ * lrg_mmo_store_remove:
+ * @self: the store
+ * @key: the record's key
+ * @revision: the revision it must have, or zero for whatever it has
+ * @error: (nullable): return location for an error
+ *
+ * Deletes one record (a host forgets what no longer exists: an instance
+ * that closed).  A later read is %G_IO_ERROR_NOT_FOUND and a later
+ * commit creates the key afresh at revision 1.  The removal is written to
+ * the audit trail like a commit (its digest is that of the key and the
+ * revision).
+ *
+ * Returns: %TRUE when removed; %FALSE with %G_IO_ERROR_NOT_FOUND for a
+ *   missing record, %G_IO_ERROR_WRONG_ETAG for another revision,
+ *   %G_IO_ERROR_INVALID_ARGUMENT for a bad key
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mmo_store_remove (LrgMmoStore *self, const gchar *key, guint64 revision, GError **error);
+
+/**
  * lrg_mmo_store_read_audit:
  * @self: the store
  * @after: last seen sequence, or zero
