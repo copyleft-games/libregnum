@@ -287,6 +287,7 @@
 /* Physics module */
 #include "physics/lrg-collision-info.h"
 #include "physics/lrg-rigid-body.h"
+#include "physics/lrg-rope.h"
 #include "physics/lrg-physics-world.h"
 #include "physics/lrg-wall-set.h"
 #include "physics/lrg-collision-mesh.h"

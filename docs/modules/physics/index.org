@@ -15,6 +15,7 @@ The Physics module consists of three main components:
 - *LrgCollisionInfo*: Detailed information about collisions between bodies
 - *[[file:wall-set.org][LrgWallSet]]*: Static XZ box collision world for authoritative servers (swept square agents, wall sliding, line of sight, camera raycasts, interior volumes, grid broadphase)
 - *[[file:collision-mesh.org][LrgCollisionMesh]]*: 3D triangle collision in a binned-SAH BVH with transformed instances (ray casts, sphere and capsule sweeps without tunnelling, capsule overlap, floating origin)
+- *[[file:rope.org][LrgRope]]*: a verlet rope or chain between two anchored ends (gravity, fixed length, a floor), headless
 - *[[file:character-controller.org][LrgCharacterController]]*: capsule move-and-slide on an =LrgCollisionMesh= and terrain (wall sliding, steps, slope limit, ground snapping, moving platforms)
 
 ** Core Concepts

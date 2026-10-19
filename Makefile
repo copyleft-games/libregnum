@@ -218,6 +218,7 @@ PUBLIC_HEADERS := \
 	src/ai/lrg-behavior-tree.h \
 	src/physics/lrg-collision-info.h \
 	src/physics/lrg-rigid-body.h \
+	src/physics/lrg-rope.h \
 	src/physics/lrg-physics-world.h \
 	src/physics/lrg-wall-set.h \
 	src/physics/lrg-collision-mesh.h \
@@ -816,6 +817,7 @@ SOURCES := \
 	src/ai/lrg-behavior-tree.c \
 	src/physics/lrg-collision-info.c \
 	src/physics/lrg-rigid-body.c \
+	src/physics/lrg-rope.c \
 	src/physics/lrg-physics-world.c \
 	src/physics/lrg-wall-set.c \
 	src/physics/lrg-collision-mesh.c \
