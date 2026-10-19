@@ -59,3 +59,9 @@ Trees are built from prisms, frustums and cones (conifer tiers with closed under
 - =set_radii()= (default 1000 .. 8000), =set_resolution()= (segments 8 .. 1024, rings 1 .. 64), =set_sink()=, =build (self, centre_x, centre_z, offset_x, offset_y, offset_z, func, data, error)=, =is_built()=, =get_centre()=, =get_vertex_count()=, =get_triangle_count()=, =get_batch()=, =draw (self, shader)=, =release_gpu()=.
 
 Vertex (s, j) lies at angle 2 pi s / S and radius inner (outer / inner)^(j / rings), geometric so the rings are dense where the ring meets the detailed terrain; the inner edge is lowered by the sink (fading out half way) so the streamed terrain covers the seam.  Normals come from the neighbours around and outwards.  Drawn with an =LrgLightSet='s shader the ring is lit like the terrain and its far rings fade into the fog colour: aerial perspective comes from the scene's fog, not from a second haze model.
+
+** River beds (gaps G8)
+:PROPERTIES:
+:CUSTOM_ID: river-beds
+:END:
+=lrg_terrain_detail_set_rivers (depth, width, wavelength)= cuts river beds into the relief: channels along the level line of a domain-warped two-octave noise (the guiding noise runs at =wavelength=, default 1200 m, and the bed's half width is =width= of its range, default 0.04), a smooth profile deepest in the middle, subtracted from what the relief gives.  The channel is a function of the world position, so it meanders, never ends inside the land and is continuous across tiles and heightfield pixels; =lrg_terrain_detail_apply()= works with an amplitude of 0 when only the rivers are on, and its weights (the sea floor) are honoured.  =lrg_terrain_detail_sample_river()= is the channel alone, 0 .. 1, for placing a water surface or a decal in the bed.  =tests/test-world-look.c= (=/world-look/detail/rivers=) checks the bounds, the exact subtraction without relief, continuity, determinism, the weights and the seed.

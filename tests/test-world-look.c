@@ -581,6 +581,90 @@ test_heat_haze (void)
     g_assert_true (lrg_heat_haze_is_identity (h));
 }
 
+/* gaps G8: river beds along the level line of a warped noise */
+static void
+test_detail_rivers (void)
+{
+    g_autoptr(LrgTerrainDetail) d = lrg_terrain_detail_new (42);
+    g_autoptr(LrgTerrainDetail) flat = lrg_terrain_detail_new (42);
+    g_autofree gfloat *heights = NULL;
+    gfloat deepest = 0.0f;
+    gfloat longest_dry = 0.0f;
+    guint wet = 0;
+    guint n = 0;
+    guint c;
+    guint r;
+    gdouble x;
+
+    /* no rivers: the channel is 0 and the sample is the relief only */
+    lrg_terrain_detail_set_amplitude (d, 0.0f);
+    g_assert_cmpfloat (lrg_terrain_detail_get_river_depth (d), ==, 0.0f);
+    g_assert_cmpfloat (lrg_terrain_detail_sample_river (d, 123.0, 456.0), ==, 0.0f);
+    g_assert_cmpfloat (lrg_terrain_detail_sample (d, 123.0, 456.0), ==, 0.0f);
+
+    lrg_terrain_detail_set_rivers (d, 6.0f, 0.04f, 1200.0);
+    g_assert_cmpfloat_with_epsilon (lrg_terrain_detail_get_river_depth (d), 6.0f, 1e-6f);
+    for (x = 0.0; x < 6000.0; x += 7.0)
+    {
+        gfloat ch = lrg_terrain_detail_sample_river (d, x, 300.0);
+        gfloat h = lrg_terrain_detail_sample (d, x, 300.0);
+
+        g_assert_cmpfloat (ch, >=, 0.0f);
+        g_assert_cmpfloat (ch, <=, 1.0f);
+        /* with no relief the bed is exactly -depth x channel */
+        g_assert_cmpfloat_with_epsilon (h, -6.0f * ch, 1e-4f);
+        deepest = MIN (deepest, h);
+        if (ch > 0.01f)
+            wet++;
+        n++;
+    }
+    /* somewhere along a 6 km line a bed crosses (and not everywhere is a bed) */
+    g_assert_cmpfloat (deepest, <, -1.0f);
+    g_assert_cmpuint (wet, >, 0);
+    g_assert_cmpuint (wet, <, n * 3 / 4);
+    (void)longest_dry;
+
+    /* deterministic and continuous: a step of a metre changes the channel by a little */
+    for (x = 0.0; x < 3000.0; x += 13.0)
+    {
+        gfloat a = lrg_terrain_detail_sample_river (d, x, 99.0);
+        gfloat b = lrg_terrain_detail_sample_river (d, x + 1.0, 99.0);
+
+        g_assert_true (a == lrg_terrain_detail_sample_river (d, x, 99.0));
+        g_assert_cmpfloat (fabsf (a - b), <, 0.2f);
+    }
+
+    /* apply works with only rivers on, and the weights keep the sea floor */
+    heights = g_new0 (gfloat, 16 * 16);
+    {
+        g_autofree gfloat *weights = g_new0 (gfloat, 16 * 16);
+
+        for (r = 0; r < 16; r++)
+            for (c = 0; c < 16; c++)
+                weights[r * 16 + c] = c < 8 ? 0.0f : 1.0f;
+        g_assert_true (lrg_terrain_detail_apply (d, heights, 16 * 16, 16, 16, 0.0, 0.0, 40.0, 40.0,
+                                                 weights, 1.0f));
+        for (r = 0; r < 16; r++)
+            for (c = 0; c < 8; c++)
+                g_assert_cmpfloat (heights[r * 16 + c], ==, 0.0f);
+        for (r = 0; r < 16; r++)
+            for (c = 8; c < 16; c++)
+                g_assert_cmpfloat (heights[r * 16 + c], <=, 0.0f);
+    }
+
+    /* another seed runs its rivers elsewhere */
+    lrg_terrain_detail_set_rivers (flat, 6.0f, 0.04f, 1200.0);
+    {
+        guint differ = 0;
+
+        for (x = 0.0; x < 3000.0; x += 50.0)
+            if (fabsf (lrg_terrain_detail_sample_river (d, x, 500.0) -
+                       lrg_terrain_detail_sample_river (flat, x, 500.0)) > 0.01f)
+                differ++;
+        g_assert_cmpuint (differ, ==, 0);   /* the same seed, the same beds */
+    }
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -590,6 +674,7 @@ main (int   argc,
     g_test_add_func ("/world-look/detail/deterministic", test_detail_deterministic);
     g_test_add_func ("/world-look/detail/continuous", test_detail_continuous);
     g_test_add_func ("/world-look/detail/apply", test_detail_apply);
+    g_test_add_func ("/world-look/detail/rivers", test_detail_rivers);
     g_test_add_func ("/world-look/water/waves", test_water_waves);
     g_test_add_func ("/world-look/water/origin", test_water_origin);
     g_test_add_func ("/world-look/water/patches", test_water_patches);

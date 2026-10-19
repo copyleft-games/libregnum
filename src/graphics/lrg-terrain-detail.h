@@ -172,6 +172,55 @@ gfloat
 lrg_terrain_detail_get_warp (LrgTerrainDetail *self);
 
 /**
+ * lrg_terrain_detail_set_rivers:
+ * @self: an #LrgTerrainDetail
+ * @depth: how far below the relief the middle of a river bed lies, world
+ *   units; 0 (the default) means no rivers
+ * @width: the bed's half width as a share of the guiding noise's range
+ *   (0.005 .. 0.4, default 0.04: a few tens of metres)
+ * @wavelength: the guiding noise's wavelength, world units (> 0, default
+ *   1200): how far apart the rivers run
+ *
+ * River beds: channels along the level line of a domain-warped noise, so
+ * they meander, never end inside the land and are continuous across tiles
+ * and heightfield pixels.  lrg_terrain_detail_sample() and
+ * lrg_terrain_detail_apply() subtract the channel (a smooth profile, deepest
+ * in the middle) from the relief, and apply() works with an amplitude of 0
+ * when only rivers are on.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_terrain_detail_set_rivers (LrgTerrainDetail *self,
+                               gfloat            depth,
+                               gfloat            width,
+                               gdouble           wavelength);
+
+/**
+ * lrg_terrain_detail_get_river_depth:
+ * @self: an #LrgTerrainDetail
+ *
+ * Returns: the river bed depth (0: no rivers)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_terrain_detail_get_river_depth (LrgTerrainDetail *self);
+
+/**
+ * lrg_terrain_detail_sample_river:
+ * @self: an #LrgTerrainDetail
+ * @x: world X
+ * @z: world Z
+ *
+ * Returns: the river channel at the point, 0 (dry land) .. 1 (the middle
+ *   of a bed); 0 without rivers
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_terrain_detail_sample_river (LrgTerrainDetail *self,
+                                 gdouble           x,
+                                 gdouble           z);
+
+/**
  * lrg_terrain_detail_sample:
  * @self: an #LrgTerrainDetail
  * @x: world X

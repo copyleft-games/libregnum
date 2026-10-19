@@ -33,6 +33,11 @@ struct _LrgTerrainDetail
     guint    octaves;
     gfloat   ridge;
     gfloat   warp;
+
+    /* river beds: channels along the level line of a warped noise */
+    gfloat   river_depth;
+    gfloat   river_width;       /* half width as a share of the noise's range */
+    gdouble  river_wavelength;
 };
 
 G_DEFINE_FINAL_TYPE (LrgTerrainDetail, lrg_terrain_detail, G_TYPE_OBJECT)
@@ -50,6 +55,9 @@ lrg_terrain_detail_init (LrgTerrainDetail *self)
     self->octaves = 4;
     self->ridge = 0.5f;
     self->warp = 0.25f;
+    self->river_depth = 0.0f;
+    self->river_width = 0.04f;
+    self->river_wavelength = 1200.0;
 }
 
 LrgTerrainDetail *
@@ -215,17 +223,88 @@ detail_unit (LrgTerrainDetail *self,
     return CLAMP (result, -1.0, 1.0);
 }
 
+void
+lrg_terrain_detail_set_rivers (LrgTerrainDetail *self,
+                               gfloat            depth,
+                               gfloat            width,
+                               gdouble           wavelength)
+{
+    g_return_if_fail (LRG_IS_TERRAIN_DETAIL (self));
+
+    self->river_depth = isfinite (depth) ? MAX (depth, 0.0f) : 0.0f;
+    self->river_width = isfinite (width) ? CLAMP (width, 0.005f, 0.4f) : 0.04f;
+    if (isfinite (wavelength) && wavelength > 0.0)
+        self->river_wavelength = wavelength;
+}
+
+gfloat
+lrg_terrain_detail_get_river_depth (LrgTerrainDetail *self)
+{
+    g_return_val_if_fail (LRG_IS_TERRAIN_DETAIL (self), 0.0f);
+    return self->river_depth;
+}
+
+/*
+ * river_channel:
+ * The channel profile at (x, z) in [0, 1]: 1 along the level line of a
+ * domain-warped two-octave noise (the river's middle), falling smoothly to
+ * 0 at a half width either side, so a stream meanders where the warp sends
+ * the line and stays continuous across any tile or pixel.
+ */
+static gdouble
+river_channel (LrgTerrainDetail *self,
+               gdouble           x,
+               gdouble           z)
+{
+    gdouble u = x / self->river_wavelength;
+    gdouble v = z / self->river_wavelength;
+    gdouble wu;
+    gdouble wv;
+    gdouble n;
+    gdouble t;
+
+    wu = lrg_value_noise (self->seed ^ 0x7a31c5d3U, u * 2.0 + 3.7, v * 2.0 - 8.2) * 2.0 - 1.0;
+    wv = lrg_value_noise (self->seed ^ 0x1d93f2b7U, u * 2.0 - 5.1, v * 2.0 + 12.4) * 2.0 - 1.0;
+    u += wu * 0.35;
+    v += wv * 0.35;
+    n = lrg_value_noise (self->seed ^ 0x3e1f9a55U, u, v) * 0.75 +
+        lrg_value_noise (self->seed ^ 0x6b4d2c01U, u * 2.0, v * 2.0) * 0.25;
+    /* the noise's range is about 0.15 .. 0.85: distance from its middle */
+    t = 1.0 - fabs (n - 0.5) / (gdouble)self->river_width;
+    t = CLAMP (t, 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+gfloat
+lrg_terrain_detail_sample_river (LrgTerrainDetail *self,
+                                 gdouble           x,
+                                 gdouble           z)
+{
+    g_return_val_if_fail (LRG_IS_TERRAIN_DETAIL (self), 0.0f);
+
+    if (self->river_depth <= 0.0f || !isfinite (x) || !isfinite (z))
+        return 0.0f;
+    return (gfloat)river_channel (self, x, z);
+}
+
 gfloat
 lrg_terrain_detail_sample (LrgTerrainDetail *self,
                            gdouble           x,
                            gdouble           z)
 {
+    gdouble offset = 0.0;
+
     g_return_val_if_fail (LRG_IS_TERRAIN_DETAIL (self), 0.0f);
 
-    if (self->amplitude <= 0.0f || !isfinite (x) || !isfinite (z))
+    if (!isfinite (x) || !isfinite (z))
         return 0.0f;
-    return (gfloat)(detail_unit (self, x / self->wavelength, z / self->wavelength) *
-                    (gdouble)self->amplitude);
+    if (self->amplitude > 0.0f)
+        offset = detail_unit (self, x / self->wavelength, z / self->wavelength) *
+                 (gdouble)self->amplitude;
+    /* the river bed cuts below whatever the relief makes */
+    if (self->river_depth > 0.0f)
+        offset -= river_channel (self, x, z) * (gdouble)self->river_depth;
+    return (gfloat)offset;
 }
 
 gboolean
@@ -248,7 +327,8 @@ lrg_terrain_detail_apply (LrgTerrainDetail *self,
     g_return_val_if_fail (heights != NULL || n_heights == 0, FALSE);
 
     if (columns == 0 || rows == 0 || n_heights != (gsize)columns * rows ||
-        self->amplitude <= 0.0f || !isfinite (scale) || scale == 0.0f)
+        (self->amplitude <= 0.0f && self->river_depth <= 0.0f) || !isfinite (scale) ||
+        scale == 0.0f)
         return FALSE;
     for (r = 0; r < rows; r++)
     {
