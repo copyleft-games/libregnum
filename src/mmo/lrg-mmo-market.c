@@ -1599,3 +1599,532 @@ lrg_mmo_market_order_fulfil (LrgMmoMarket *self, const gchar *actor, const gchar
     _lrg_mmo_operation_add (&builder, operation, intent);
     return commit (self, &builder, error);
 }
+
+/* ------------------------------------------------------------------ */
+/* Splits, stocks (bulk lots) and buy orders                          */
+
+#define STOCK_TYPE "(sssxuuxxuy)"
+#define BUY_TYPE "(ssxuuxuy)"
+#define MAX_UNITS (1000000)
+
+/* the definition of a loaded item record (borrowed from @record) */
+static const gchar *
+item_definition (GVariant *record)
+{
+    const gchar *definition;
+    g_variant_get (record, "(&s&s@ay)", NULL, &definition, NULL);
+    return definition;
+}
+
+gboolean
+lrg_mmo_market_split_item (LrgMmoMarket *self, const gchar *actor, const gchar *item,
+                           GVariant *parts, const gchar *operation, GError **error)
+{
+    g_autoptr(GVariant) value = NULL, intent = NULL;
+    g_autoptr(GHashTable) seen = NULL;
+    GVariantBuilder intent_parts, builder;
+    GVariantIter iter;
+    const gchar *owner, *part;
+    GVariant *metadata;
+    guint64 revision;
+    gsize count;
+    gint status;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), FALSE);
+    if (!_lrg_mmo_id_valid (actor) || !_lrg_mmo_id_valid (item) || parts == NULL ||
+        !g_variant_is_of_type (parts, G_VARIANT_TYPE ("a(say)")))
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid split");
+    count = g_variant_n_children (parts);
+    if (count < 2 || count > LRG_MMO_MARKET_MAX_EXCHANGE_ITEMS)
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "A split makes 2 to 64 items");
+    /* the intent: the item and every part's ID and metadata digest */
+    seen = g_hash_table_new (g_str_hash, g_str_equal);
+    g_variant_builder_init (&intent_parts, G_VARIANT_TYPE ("a(ss)"));
+    g_variant_iter_init (&iter, parts);
+    while (g_variant_iter_next (&iter, "(&s@ay)", &part, &metadata))
+    {
+        g_autoptr(GBytes) bytes = g_variant_get_data_as_bytes (metadata);
+        g_autofree gchar *digest = metadata_digest (bytes);
+        gboolean fresh = _lrg_mmo_id_valid (part) && !g_str_equal (part, item) &&
+                         g_hash_table_add (seen, (gpointer) part);
+        g_variant_unref (metadata);
+        if (!fresh)
+        {
+            g_variant_builder_clear (&intent_parts);
+            return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid or repeated split part");
+        }
+        g_variant_builder_add (&intent_parts, "(ss)", part, digest);
+    }
+    intent = g_variant_ref_sink (g_variant_new ("(sssa(ss))", "split", actor, item, &intent_parts));
+    status = _lrg_mmo_operation_check (self->store, operation, intent, error);
+    if (status != 0)
+        return status > 0;
+    value = item_load (self, item, &revision, error);
+    if (value == NULL)
+        return FALSE;
+    g_variant_get (value, "(&s&s@ay)", &owner, NULL, NULL);
+    if (!g_str_equal (owner, actor))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Split item belongs to another account");
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    item_change_owner (&builder, item, revision, value, LRG_MMO_MARKET_OWNER_BURNED);
+    g_variant_iter_init (&iter, parts);
+    while (g_variant_iter_next (&iter, "(&s@ay)", &part, &metadata))
+    {
+        g_autoptr(GBytes) bytes = g_variant_get_data_as_bytes (metadata);
+        gboolean ok = mint_in_batch (self, &builder, part, actor, item_definition (value), bytes, error);
+        g_variant_unref (metadata);
+        if (!ok)
+        {
+            g_variant_builder_clear (&builder);
+            return FALSE;
+        }
+    }
+    _lrg_mmo_operation_add (&builder, operation, intent);
+    return commit (self, &builder, error);
+}
+
+static gchar *
+stock_key (const gchar *stock)
+{
+    return g_strconcat ("market/stock/", stock, NULL);
+}
+
+static GVariant *
+stock_load (LrgMmoMarket *self, const gchar *stock, guint64 *revision, GError **error)
+{
+    g_autofree gchar *key = NULL;
+    if (!_lrg_mmo_id_valid (stock))
+    {
+        _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid stock ID");
+        return NULL;
+    }
+    key = stock_key (stock);
+    return _lrg_mmo_load (self->store, key, STOCK_TYPE, revision, error);
+}
+
+/* a stock record's fields; strings borrowed from the record */
+typedef struct
+{
+    const gchar *seller;
+    const gchar *item;
+    const gchar *house;
+    gint64 unit_price;
+    guint32 units;
+    guint32 sold;
+    gint64 deposit;
+    gint64 expiry;
+    guint32 cut;
+    guchar state;
+} Stock;
+
+static void
+stock_read (GVariant *record, Stock *out)
+{
+    g_variant_get (record, "(&s&s&sxuuxxuy)", &out->seller, &out->item, &out->house, &out->unit_price,
+                   &out->units, &out->sold, &out->deposit, &out->expiry, &out->cut, &out->state);
+}
+
+static GVariant *
+stock_record (const Stock *s, const gchar *item, guint32 units, guint32 sold, guchar state)
+{
+    return g_variant_new (STOCK_TYPE, s->seller, item, s->house, s->unit_price, units, sold,
+                          s->deposit, s->expiry, s->cut, state);
+}
+
+/* adds @amount coins to @account in @batch (a key not otherwise in it) */
+static gboolean
+credit_coins (LrgMmoMarket *self, GVariantBuilder *batch, const gchar *account, gint64 amount,
+              GError **error)
+{
+    guint64 revision;
+    gint64 funds;
+    if (amount <= 0)
+        return TRUE;
+    funds = balance (self, account, "coins", &revision, error);
+    if (funds < 0)
+        return FALSE;
+    if (amount > G_MAXINT64 - funds)
+        return _lrg_mmo_fail (error, G_IO_ERROR_NO_SPACE, "Balance overflow");
+    change_balance (batch, account, "coins", revision, funds + amount);
+    return TRUE;
+}
+
+gboolean
+lrg_mmo_market_stock_create (LrgMmoMarket *self, const gchar *actor, const gchar *stock,
+                             const gchar *item, guint units, const gchar *house, gint64 unit_price,
+                             gint64 deposit, guint cut, guint duration, GError **error)
+{
+    g_autoptr(GVariant) value = NULL;
+    g_autofree gchar *key = NULL;
+    const gchar *owner;
+    guint64 item_revision, funds_revision = 0;
+    gint64 funds = 0;
+    GVariantBuilder builder;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), FALSE);
+    if (!_lrg_mmo_id_valid (actor) || !_lrg_mmo_id_valid (stock) || !_lrg_mmo_id_valid (item) ||
+        !_lrg_mmo_id_valid (house) || g_str_equal (actor, house) || units == 0 || units > MAX_UNITS ||
+        unit_price <= 0 || unit_price > G_MAXINT64 / units || deposit < 0 ||
+        cut > LRG_MMO_MARKET_CUT_SCALE || duration == 0 || duration > 604800)
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid stock");
+    value = item_load (self, item, &item_revision, error);
+    if (value == NULL)
+        return FALSE;
+    g_variant_get (value, "(&s&s@ay)", &owner, NULL, NULL);
+    if (!g_str_equal (owner, actor))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Stock item belongs to another account");
+    if (deposit > 0)
+    {
+        funds = balance (self, actor, "coins", &funds_revision, error);
+        if (funds < 0)
+            return FALSE;
+        if (funds < deposit)
+            return _lrg_mmo_fail (error, G_IO_ERROR_NO_SPACE, "Insufficient coins for the deposit");
+    }
+    key = stock_key (stock);
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    item_change_owner (&builder, item, item_revision, value, LRG_MMO_MARKET_OWNER_LOT);
+    if (deposit > 0)
+        change_balance (&builder, actor, "coins", funds_revision, funds - deposit);
+    /* revision 0: the commit fails when the stock ID exists */
+    _lrg_mmo_change (&builder, key, 0, g_variant_new (STOCK_TYPE, actor, item, house, unit_price,
+                     (guint32) units, (guint32) 0, deposit, lrg_mmo_market_now (self) + duration,
+                     (guint32) cut, (guchar) LRG_MMO_MARKET_STOCK_OPEN));
+    return commit (self, &builder, error);
+}
+
+GVariant *
+lrg_mmo_market_stock_inspect (LrgMmoMarket *self, const gchar *stock, GError **error)
+{
+    guint64 revision;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), NULL);
+    return stock_load (self, stock, &revision, error);
+}
+
+gboolean
+lrg_mmo_market_stock_buy (LrgMmoMarket *self, const gchar *actor, const gchar *stock, guint units,
+                          const gchar *piece, GBytes *piece_metadata, const gchar *rest,
+                          GBytes *rest_metadata, const gchar *operation, GError **error)
+{
+    g_autoptr(GVariant) value = NULL, item_value = NULL, intent = NULL;
+    g_autofree gchar *key = NULL, *piece_digest = NULL, *rest_digest = NULL;
+    GVariantBuilder builder;
+    Stock s;
+    guint64 revision, item_revision, funds_revision;
+    gint64 price, cut_amount, proceeds, funds;
+    gboolean sells_out, ok;
+    gint status;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), FALSE);
+    if (!_lrg_mmo_id_valid (actor) || units == 0 || (piece != NULL && piece_metadata == NULL) ||
+        (rest != NULL && rest_metadata == NULL) || (rest != NULL && piece == NULL))
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid stock purchase");
+    piece_digest = metadata_digest (piece_metadata);
+    rest_digest = metadata_digest (rest_metadata);
+    intent = g_variant_ref_sink (g_variant_new ("(sssussss)", "stock-buy", actor, stock, (guint32) units,
+                                                piece != NULL ? piece : "", piece_digest,
+                                                rest != NULL ? rest : "", rest_digest));
+    status = _lrg_mmo_operation_check (self->store, operation, intent, error);
+    if (status != 0)
+        return status > 0;
+    value = stock_load (self, stock, &revision, error);
+    if (value == NULL)
+        return FALSE;
+    stock_read (value, &s);
+    if (s.state != LRG_MMO_MARKET_STOCK_OPEN || s.expiry <= lrg_mmo_market_now (self) ||
+        g_str_equal (s.seller, actor) || g_str_equal (s.house, actor) || units > s.units)
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Purchase is not eligible");
+    sells_out = units == s.units;
+    /* a partial purchase splits the stack in two; the last units take it whole or split it into the
+     * piece alone */
+    if (sells_out ? rest != NULL : (piece == NULL || rest == NULL))
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Purchase pieces do not match the units");
+    price = s.unit_price * (gint64) units;
+    funds = balance (self, actor, "coins", &funds_revision, error);
+    if (funds < 0)
+        return FALSE;
+    if (funds < price)
+        return _lrg_mmo_fail (error, G_IO_ERROR_NO_SPACE, "Insufficient coins");
+    cut_amount = lrg_mmo_market_lot_cut (price, s.cut);
+    proceeds = price - cut_amount;
+    if (sells_out)
+    {
+        if (proceeds > G_MAXINT64 - s.deposit)
+            return _lrg_mmo_fail (error, G_IO_ERROR_NO_SPACE, "Stock proceeds overflow");
+        proceeds += s.deposit;
+    }
+    item_value = item_load (self, s.item, &item_revision, error);
+    if (item_value == NULL)
+        return FALSE;
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    change_balance (&builder, actor, "coins", funds_revision, funds - price);
+    ok = credit_coins (self, &builder, s.seller, proceeds, error) &&
+         credit_coins (self, &builder, s.house, cut_amount, error);
+    if (ok && piece == NULL)
+    {
+        /* sold out whole: the stock's item itself goes to the buyer */
+        item_change_owner (&builder, s.item, item_revision, item_value, actor);
+    }
+    else if (ok)
+    {
+        item_change_owner (&builder, s.item, item_revision, item_value, LRG_MMO_MARKET_OWNER_BURNED);
+        ok = mint_in_batch (self, &builder, piece, actor, item_definition (item_value), piece_metadata, error) &&
+             (rest == NULL || mint_in_batch (self, &builder, rest, LRG_MMO_MARKET_OWNER_LOT,
+                                             item_definition (item_value), rest_metadata, error));
+    }
+    if (!ok)
+    {
+        g_variant_builder_clear (&builder);
+        return FALSE;
+    }
+    key = stock_key (stock);
+    _lrg_mmo_change (&builder, key, revision, stock_record (&s, sells_out ? (piece != NULL ? piece : s.item) : rest,
+                     s.units - units, s.sold + units,
+                     sells_out ? LRG_MMO_MARKET_STOCK_SOLD : LRG_MMO_MARKET_STOCK_OPEN));
+    _lrg_mmo_operation_add (&builder, operation, intent);
+    return commit (self, &builder, error);
+}
+
+/* closes a stock with units left: they return, the deposit is forfeited */
+static gboolean
+stock_close (LrgMmoMarket *self, const gchar *stock, guint64 revision, const Stock *s, guchar state,
+             GError **error)
+{
+    g_autoptr(GVariant) item_value = NULL;
+    g_autofree gchar *key = stock_key (stock);
+    GVariantBuilder builder;
+    guint64 item_revision;
+    item_value = item_load (self, s->item, &item_revision, error);
+    if (item_value == NULL)
+        return FALSE;
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    item_change_owner (&builder, s->item, item_revision, item_value, s->seller);
+    if (!credit_coins (self, &builder, s->house, s->deposit, error))
+    {
+        g_variant_builder_clear (&builder);
+        return FALSE;
+    }
+    _lrg_mmo_change (&builder, key, revision, stock_record (s, s->item, s->units, s->sold, state));
+    return commit (self, &builder, error);
+}
+
+gboolean
+lrg_mmo_market_stock_settle (LrgMmoMarket *self, const gchar *stock, GError **error)
+{
+    g_autoptr(GVariant) value = NULL;
+    guint64 revision;
+    Stock s;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), FALSE);
+    value = stock_load (self, stock, &revision, error);
+    if (value == NULL)
+        return FALSE;
+    stock_read (value, &s);
+    if (s.state != LRG_MMO_MARKET_STOCK_OPEN)
+        return TRUE;
+    if (s.expiry > lrg_mmo_market_now (self))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Stock not ready for settlement");
+    return stock_close (self, stock, revision, &s, LRG_MMO_MARKET_STOCK_UNSOLD, error);
+}
+
+gboolean
+lrg_mmo_market_stock_cancel (LrgMmoMarket *self, const gchar *actor, const gchar *stock, GError **error)
+{
+    g_autoptr(GVariant) value = NULL;
+    guint64 revision;
+    Stock s;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), FALSE);
+    if (!_lrg_mmo_id_valid (actor))
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid actor");
+    value = stock_load (self, stock, &revision, error);
+    if (value == NULL)
+        return FALSE;
+    stock_read (value, &s);
+    if (s.state != LRG_MMO_MARKET_STOCK_OPEN || !g_str_equal (actor, s.seller))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Stock cannot be cancelled by this actor");
+    return stock_close (self, stock, revision, &s, LRG_MMO_MARKET_STOCK_CANCELLED, error);
+}
+
+static gchar *
+buy_key (const gchar *order)
+{
+    return g_strconcat ("market/buy/", order, NULL);
+}
+
+static GVariant *
+buy_load (LrgMmoMarket *self, const gchar *order, guint64 *revision, GError **error)
+{
+    g_autofree gchar *key = NULL;
+    if (!_lrg_mmo_id_valid (order))
+    {
+        _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid buy order ID");
+        return NULL;
+    }
+    key = buy_key (order);
+    return _lrg_mmo_load (self->store, key, BUY_TYPE, revision, error);
+}
+
+/* a buy order record's fields; strings borrowed from the record */
+typedef struct
+{
+    const gchar *buyer;
+    const gchar *house;
+    gint64 unit_price;
+    guint32 units;
+    guint32 bought;
+    gint64 expiry;
+    guint32 cut;
+    guchar state;
+} Buy;
+
+static void
+buy_read (GVariant *record, Buy *out)
+{
+    g_variant_get (record, "(&s&sxuuxuy)", &out->buyer, &out->house, &out->unit_price, &out->units,
+                   &out->bought, &out->expiry, &out->cut, &out->state);
+}
+
+static GVariant *
+buy_record (const Buy *b, guint32 bought, guchar state)
+{
+    return g_variant_new (BUY_TYPE, b->buyer, b->house, b->unit_price, b->units, bought, b->expiry,
+                          b->cut, state);
+}
+
+gboolean
+lrg_mmo_market_buy_order_create (LrgMmoMarket *self, const gchar *actor, const gchar *order,
+                                 const gchar *house, gint64 unit_price, guint units, guint cut,
+                                 guint duration, GError **error)
+{
+    g_autofree gchar *key = NULL;
+    GVariantBuilder builder;
+    guint64 revision;
+    gint64 funds, escrow;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), FALSE);
+    if (!_lrg_mmo_id_valid (actor) || !_lrg_mmo_id_valid (order) || !_lrg_mmo_id_valid (house) ||
+        g_str_equal (actor, house) || units == 0 || units > MAX_UNITS || unit_price <= 0 ||
+        unit_price > G_MAXINT64 / units || cut > LRG_MMO_MARKET_CUT_SCALE || duration == 0 ||
+        duration > 604800)
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid buy order");
+    escrow = unit_price * (gint64) units;
+    funds = balance (self, actor, "coins", &revision, error);
+    if (funds < 0)
+        return FALSE;
+    if (funds < escrow)
+        return _lrg_mmo_fail (error, G_IO_ERROR_NO_SPACE, "Insufficient coins for the buy order");
+    key = buy_key (order);
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    change_balance (&builder, actor, "coins", revision, funds - escrow);
+    /* revision 0: the commit fails when the order ID exists */
+    _lrg_mmo_change (&builder, key, 0, g_variant_new (BUY_TYPE, actor, house, unit_price, (guint32) units,
+                     (guint32) 0, lrg_mmo_market_now (self) + duration, (guint32) cut,
+                     (guchar) LRG_MMO_MARKET_BUY_OPEN));
+    return commit (self, &builder, error);
+}
+
+GVariant *
+lrg_mmo_market_buy_order_inspect (LrgMmoMarket *self, const gchar *order, GError **error)
+{
+    guint64 revision;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), NULL);
+    return buy_load (self, order, &revision, error);
+}
+
+gboolean
+lrg_mmo_market_buy_order_fill (LrgMmoMarket *self, const gchar *actor, const gchar *order,
+                               const gchar *item, guint units, const gchar *operation, GError **error)
+{
+    g_autoptr(GVariant) value = NULL, item_value = NULL, intent = NULL;
+    g_autofree gchar *key = NULL;
+    GVariantBuilder builder;
+    const gchar *owner;
+    Buy b;
+    guint64 revision, item_revision;
+    gint64 price, cut_amount;
+    gint status;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), FALSE);
+    if (!_lrg_mmo_id_valid (actor) || !_lrg_mmo_id_valid (item) || units == 0)
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid buy order sale");
+    intent = g_variant_ref_sink (g_variant_new ("(ssssu)", "buy-fill", actor, order, item, (guint32) units));
+    status = _lrg_mmo_operation_check (self->store, operation, intent, error);
+    if (status != 0)
+        return status > 0;
+    value = buy_load (self, order, &revision, error);
+    if (value == NULL)
+        return FALSE;
+    buy_read (value, &b);
+    if (b.state != LRG_MMO_MARKET_BUY_OPEN || b.expiry <= lrg_mmo_market_now (self) ||
+        g_str_equal (b.buyer, actor) || g_str_equal (b.house, actor) || units > b.units - b.bought)
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Sale is not eligible");
+    item_value = item_load (self, item, &item_revision, error);
+    if (item_value == NULL)
+        return FALSE;
+    g_variant_get (item_value, "(&s&s@ay)", &owner, NULL, NULL);
+    if (!g_str_equal (owner, actor))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Sold item belongs to another account");
+    /* the escrow pays: the seller the price less the cut, the house the cut */
+    price = b.unit_price * (gint64) units;
+    cut_amount = lrg_mmo_market_lot_cut (price, b.cut);
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    item_change_owner (&builder, item, item_revision, item_value, b.buyer);
+    if (!credit_coins (self, &builder, actor, price - cut_amount, error) ||
+        !credit_coins (self, &builder, b.house, cut_amount, error))
+    {
+        g_variant_builder_clear (&builder);
+        return FALSE;
+    }
+    key = buy_key (order);
+    _lrg_mmo_change (&builder, key, revision, buy_record (&b, b.bought + units,
+                     b.bought + units == b.units ? LRG_MMO_MARKET_BUY_FILLED : LRG_MMO_MARKET_BUY_OPEN));
+    _lrg_mmo_operation_add (&builder, operation, intent);
+    return commit (self, &builder, error);
+}
+
+/* closes a buy order: the coins of the units not bought go back */
+static gboolean
+buy_close (LrgMmoMarket *self, const gchar *order, guint64 revision, const Buy *b, guchar state,
+           GError **error)
+{
+    g_autofree gchar *key = buy_key (order);
+    GVariantBuilder builder;
+    g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(stay)"));
+    if (!credit_coins (self, &builder, b->buyer, b->unit_price * (gint64) (b->units - b->bought), error))
+    {
+        g_variant_builder_clear (&builder);
+        return FALSE;
+    }
+    _lrg_mmo_change (&builder, key, revision, buy_record (b, b->bought, state));
+    return commit (self, &builder, error);
+}
+
+gboolean
+lrg_mmo_market_buy_order_cancel (LrgMmoMarket *self, const gchar *actor, const gchar *order, GError **error)
+{
+    g_autoptr(GVariant) value = NULL;
+    guint64 revision;
+    Buy b;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), FALSE);
+    if (!_lrg_mmo_id_valid (actor))
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid actor");
+    value = buy_load (self, order, &revision, error);
+    if (value == NULL)
+        return FALSE;
+    buy_read (value, &b);
+    if (b.state != LRG_MMO_MARKET_BUY_OPEN || !g_str_equal (actor, b.buyer))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Buy order cannot be cancelled by this actor");
+    return buy_close (self, order, revision, &b, LRG_MMO_MARKET_BUY_CANCELLED, error);
+}
+
+gboolean
+lrg_mmo_market_buy_order_settle (LrgMmoMarket *self, const gchar *order, GError **error)
+{
+    g_autoptr(GVariant) value = NULL;
+    guint64 revision;
+    Buy b;
+    g_return_val_if_fail (LRG_IS_MMO_MARKET (self), FALSE);
+    value = buy_load (self, order, &revision, error);
+    if (value == NULL)
+        return FALSE;
+    buy_read (value, &b);
+    if (b.state != LRG_MMO_MARKET_BUY_OPEN)
+        return TRUE;
+    if (b.expiry > lrg_mmo_market_now (self))
+        return _lrg_mmo_fail (error, G_IO_ERROR_PERMISSION_DENIED, "Buy order not ready for settlement");
+    return buy_close (self, order, revision, &b, LRG_MMO_MARKET_BUY_EXPIRED, error);
+}

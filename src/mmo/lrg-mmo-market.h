@@ -906,4 +906,334 @@ GVariant *
 lrg_mmo_market_order_inspect (LrgMmoMarket *self,
                               const gchar *order,
                               GError **error);
+/* ------------------------------------------------------------------ */
+/* Splits, stocks (bulk lots) and buy orders                          */
+
+/**
+ * lrg_mmo_market_split_item:
+ * @self: market service
+ * @actor: authenticated owner of @item
+ * @item: the unique item split (a stack)
+ * @parts: an a(say) of the new items: ID and metadata, two to
+ *   %LRG_MMO_MARKET_MAX_EXCHANGE_ITEMS of them, each with the definition
+ *   of @item
+ * @operation: durable retry ID
+ * @error: (nullable): return location for error
+ *
+ * Splits a stack: @item is burned (its owner becomes
+ * %LRG_MMO_MARKET_OWNER_BURNED, its metadata stays as a tombstone) and
+ * every part is minted to @actor, in one commit.  The ledger does not
+ * read metadata: the host vouches that the parts hold what @item held.
+ *
+ * Returns: whether split or identical retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_split_item (LrgMmoMarket *self,
+                           const gchar *actor,
+                           const gchar *item,
+                           GVariant *parts,
+                           const gchar *operation,
+                           GError **error);
+
+/**
+ * LRG_MMO_MARKET_STOCK_OPEN:
+ *
+ * Stock state: units left for sale.
+ */
+#define LRG_MMO_MARKET_STOCK_OPEN (0)
+
+/**
+ * LRG_MMO_MARKET_STOCK_SOLD:
+ *
+ * Stock state: every unit sold; the deposit went back to the seller.
+ */
+#define LRG_MMO_MARKET_STOCK_SOLD (1)
+
+/**
+ * LRG_MMO_MARKET_STOCK_UNSOLD:
+ *
+ * Stock state: expired with units left; they went back to the seller,
+ * the deposit to the house.
+ */
+#define LRG_MMO_MARKET_STOCK_UNSOLD (2)
+
+/**
+ * LRG_MMO_MARKET_STOCK_CANCELLED:
+ *
+ * Stock state: withdrawn by the seller; the units left went back, the
+ * deposit to the house.
+ */
+#define LRG_MMO_MARKET_STOCK_CANCELLED (3)
+
+/**
+ * lrg_mmo_market_stock_create:
+ * @self: market service
+ * @actor: authenticated seller, owner of @item
+ * @stock: unique stock ID (it shares no namespace with lots)
+ * @item: the unique item sold: a stack of @units
+ * @units: the units in @item, 1 to 1000000
+ * @house: the account that receives cuts and a forfeited deposit
+ * @unit_price: coins per unit, positive
+ * @deposit: coins taken from the seller now, returned when every unit
+ *   sold, forfeited to @house when the stock closes with units left
+ * @cut: the house's share of each sale per %LRG_MMO_MARKET_CUT_SCALE
+ * @duration: seconds until expiry, 1 to 604800
+ * @error: (nullable): return location for error
+ *
+ * A bulk listing: the stack is escrowed (owner
+ * %LRG_MMO_MARKET_OWNER_LOT) and sold by the unit, each sale splitting
+ * it (lrg_mmo_market_stock_buy()).
+ *
+ * Returns: whether created
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_stock_create (LrgMmoMarket *self,
+                             const gchar *actor,
+                             const gchar *stock,
+                             const gchar *item,
+                             guint units,
+                             const gchar *house,
+                             gint64 unit_price,
+                             gint64 deposit,
+                             guint cut,
+                             guint duration,
+                             GError **error);
+
+/**
+ * lrg_mmo_market_stock_buy:
+ * @self: market service
+ * @actor: authenticated buyer, neither the seller nor the house
+ * @stock: an open, unexpired stock
+ * @units: units bought, 1 to the units left
+ * @piece: the unique item minted to @actor (@units of the stack); with
+ *   @units equal to the units left it may be %NULL: the stock's item
+ *   itself goes to @actor
+ * @piece_metadata: (nullable): @piece's metadata
+ * @rest: (nullable): the unique item now held by the stock (the units
+ *   left); %NULL exactly when the stock sells out
+ * @rest_metadata: (nullable): @rest's metadata
+ * @operation: durable retry ID
+ * @error: (nullable): return location for error
+ *
+ * Buys units of a stock in one commit: the buyer pays @units times the
+ * unit price, the seller receives it less the cut, the house the cut;
+ * the stock's item is burned and split into @piece (to the buyer) and
+ * @rest (held by the stock), both with its definition.  The last units
+ * close the stock as sold and return the deposit.
+ *
+ * Returns: whether bought or identical retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_stock_buy (LrgMmoMarket *self,
+                          const gchar *actor,
+                          const gchar *stock,
+                          guint units,
+                          const gchar *piece,
+                          GBytes *piece_metadata,
+                          const gchar *rest,
+                          GBytes *rest_metadata,
+                          const gchar *operation,
+                          GError **error);
+
+/**
+ * lrg_mmo_market_stock_settle:
+ * @self: market service
+ * @stock: stock ID
+ * @error: (nullable): return location for error
+ *
+ * Closes an expired stock: the units left (the stock's item) return to
+ * the seller and the deposit goes to the house.  Settling a closed stock
+ * is harmless; an open unexpired one is refused.
+ *
+ * Returns: whether settled
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_stock_settle (LrgMmoMarket *self,
+                             const gchar *stock,
+                             GError **error);
+
+/**
+ * lrg_mmo_market_stock_cancel:
+ * @self: market service
+ * @actor: the seller
+ * @stock: an open stock
+ * @error: (nullable): return location for error
+ *
+ * Withdraws a stock: the units left return to the seller, the deposit
+ * goes to the house; the units sold stay sold.
+ *
+ * Returns: whether cancelled
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_stock_cancel (LrgMmoMarket *self,
+                             const gchar *actor,
+                             const gchar *stock,
+                             GError **error);
+
+/**
+ * lrg_mmo_market_stock_inspect:
+ * @self: market service
+ * @stock: stock ID
+ * @error: (nullable): return location for error
+ *
+ * Reads a stock: seller, item (the units left; the last one sold after a
+ * sell-out), house, unit price, units left, units sold, deposit, expiry
+ * (Unix seconds), cut, state (%LRG_MMO_MARKET_STOCK_OPEN ..).
+ *
+ * Returns: (transfer full) (nullable): "(sssxuuxxuy)" record
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *
+lrg_mmo_market_stock_inspect (LrgMmoMarket *self,
+                              const gchar *stock,
+                              GError **error);
+
+/**
+ * LRG_MMO_MARKET_BUY_OPEN:
+ *
+ * Buy order state: standing, its coins escrowed.
+ */
+#define LRG_MMO_MARKET_BUY_OPEN (0)
+
+/**
+ * LRG_MMO_MARKET_BUY_FILLED:
+ *
+ * Buy order state: every unit bought.
+ */
+#define LRG_MMO_MARKET_BUY_FILLED (1)
+
+/**
+ * LRG_MMO_MARKET_BUY_CANCELLED:
+ *
+ * Buy order state: withdrawn; the coins of the units not bought went
+ * back.
+ */
+#define LRG_MMO_MARKET_BUY_CANCELLED (2)
+
+/**
+ * LRG_MMO_MARKET_BUY_EXPIRED:
+ *
+ * Buy order state: its time ran out; the coins of the units not bought
+ * went back.
+ */
+#define LRG_MMO_MARKET_BUY_EXPIRED (3)
+
+/**
+ * lrg_mmo_market_buy_order_create:
+ * @self: market service
+ * @actor: the authenticated buyer
+ * @order: unique buy order ID (it shares no namespace with work orders)
+ * @house: the account that receives the cut of each sale, not @actor
+ * @unit_price: coins paid per unit, positive
+ * @units: units wanted, 1 to 1000000
+ * @cut: the house's share of each sale per %LRG_MMO_MARKET_CUT_SCALE
+ *   (paid by the seller)
+ * @duration: seconds until expiry, 1 to 604800
+ * @error: (nullable): return location for error
+ *
+ * Posts a standing bid: @unit_price times @units coins are escrowed from
+ * @actor in the commit that writes the order.  An existing ID is
+ * refused.
+ *
+ * Returns: whether created
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_buy_order_create (LrgMmoMarket *self,
+                                 const gchar *actor,
+                                 const gchar *order,
+                                 const gchar *house,
+                                 gint64 unit_price,
+                                 guint units,
+                                 guint cut,
+                                 guint duration,
+                                 GError **error);
+
+/**
+ * lrg_mmo_market_buy_order_fill:
+ * @self: market service
+ * @actor: the authenticated seller, neither the buyer nor the house
+ * @order: an open, unexpired buy order
+ * @item: a unique item @actor owns, holding @units (the host vouches)
+ * @units: units sold, 1 to the units still wanted
+ * @operation: durable retry ID
+ * @error: (nullable): return location for error
+ *
+ * Sells into a buy order in one commit: @item goes to the buyer, the
+ * seller receives @units times the unit price from the escrow less the
+ * cut, the house the cut.  The last unit closes the order as filled.
+ * Two sellers racing for the last units commit against the same
+ * revision, so exactly one wins.
+ *
+ * Returns: whether filled or identical retry
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_buy_order_fill (LrgMmoMarket *self,
+                               const gchar *actor,
+                               const gchar *order,
+                               const gchar *item,
+                               guint units,
+                               const gchar *operation,
+                               GError **error);
+
+/**
+ * lrg_mmo_market_buy_order_cancel:
+ * @self: market service
+ * @actor: the buyer
+ * @order: an open buy order
+ * @error: (nullable): return location for error
+ *
+ * Withdraws a buy order: the coins of the units not bought return to
+ * the buyer.
+ *
+ * Returns: whether cancelled
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_buy_order_cancel (LrgMmoMarket *self,
+                                 const gchar *actor,
+                                 const gchar *order,
+                                 GError **error);
+
+/**
+ * lrg_mmo_market_buy_order_settle:
+ * @self: market service
+ * @order: buy order ID
+ * @error: (nullable): return location for error
+ *
+ * Closes an expired open buy order: the coins of the units not bought
+ * return to the buyer.  Settling a closed order is harmless; an
+ * unexpired open one is refused.
+ *
+ * Returns: whether settled
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_mmo_market_buy_order_settle (LrgMmoMarket *self,
+                                 const gchar *order,
+                                 GError **error);
+
+/**
+ * lrg_mmo_market_buy_order_inspect:
+ * @self: market service
+ * @order: buy order ID
+ * @error: (nullable): return location for error
+ *
+ * Reads a buy order: buyer, house, unit price, units wanted, units
+ * bought, expiry (Unix seconds), cut, state (%LRG_MMO_MARKET_BUY_OPEN
+ * ..).  The escrow left is the unit price times the units not bought.
+ *
+ * Returns: (transfer full) (nullable): "(ssxuuxuy)" record
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *
+lrg_mmo_market_buy_order_inspect (LrgMmoMarket *self,
+                                  const gchar *order,
+                                  GError **error);
 G_END_DECLS
