@@ -34,6 +34,17 @@ lrg_nav_level_add_door (level, door_id, door_min, door_max, LRG_NAV_DOOR_STATE_C
 lrg_nav_level_bake_async (level, NULL, on_level_baked, server);
 #+end_src
 
+* Ladders and water
+
+- =lrg_nav_level_add_ladder(level, foot, top)=: a ladder is an off-mesh link both ways between its foot (on the lower floor) and its top (on the floor or ledge it leads onto), with a cost of twice its height and the reserved tag =LRG_NAV_LEVEL_LADDER_TAG=.  It is added to the walk mesh at once (links survive a rebake's cleared input) and connects at the next bake; =lrg_nav_level_get_ladder_connected()= says whether both ends found a floor.  A top that is not above the foot, or a point that is not finite, is refused (=G_MAXUINT=).
+- =lrg_nav_level_add_water(level, min, max)=: a swim volume.  Its top (=max='s height) is the water's surface: the bake adds the surface as two walkable triangles to the walk mesh only (the sight mesh never sees it), so a swimmer crosses a pool at the top and climbs out where a bank lies within =max-climb= of the surface.  Everything walkable inside the box (the surface and the floor under it, from =max-climb= below =min= to two cell heights above the surface) is the area =LRG_NAV_LEVEL_WATER_TAG=.  Water is staged before the doors, so a door's area wins where both overlap.  An empty or non-finite box is refused.
+- =lrg_nav_level_find_path_full(level, start, goal, extents, passes, climbs, swims, max_nodes, &n, &error)=: the path query of an agent that may not climb (ladder links refused) or swim (water areas refused).  =lrg_nav_level_find_path()= is this query with both =TRUE=, so a level without ladders or water answers as before.
+- =lrg_nav_level_is_ladder_leg(level, from, to)=: whether two consecutive path points are a ladder's foot and top (either way, within a centimetre): the walker climbs that leg instead of walking it.
+- =lrg_nav_level_in_water(level, point, &surface)=: whether a feet position lies in a swim volume (inside its box, at most at its surface): the walker swims there.
+- =lrg_nav_level_can_walk()= wades into water (the straight walk passes water areas) but never takes a ladder (links are not walked).
+
+The two reserved tags are no door's: =lrg_nav_level_add_door()= refuses them.
+
 * Queries
 
 - =lrg_nav_level_find_path(level, start, goal, extents, passes, max_nodes, &n_floats, &error)=: =lrg_nav_poly_mesh_find_path()= with the doors' states as its filter (a door is crossed when its state is at most =passes=); =G_IO_ERROR_NOT_FOUND= when there is no way or the level is not baked.
@@ -43,4 +54,4 @@ lrg_nav_level_bake_async (level, NULL, on_level_baked, server);
 
 * Tests
 
-=tests/test-nav-level.c=: a path round the end of a wall (half again the straight distance, through the gap), the straight walk and look blocked by the wall and clear through the gap, a walk to a point under the floor refused; a door closed (only door openers path through it; =find_doors_on_path= names it; sight blocked with its tag), open (everyone, no rebake), locked (door openers stop, unlocking agents pass), sealed (unlocking agents stop too), states kept by a rebake; the asynchronous bake (unbaked answers while it runs, a second bake =G_IO_ERROR_PENDING=, a lock set meanwhile holds); the failures (unbaked queries, bad doors and triangles, a bake without triangles).
+=tests/test-nav-level.c=: a path round the end of a wall (half again the straight distance, through the gap), the straight walk and look blocked by the wall and clear through the gap, a walk to a point under the floor refused; a door closed (only door openers path through it; =find_doors_on_path= names it; sight blocked with its tag), open (everyone, no rebake), locked (door openers stop, unlocking agents pass), sealed (unlocking agents stop too), states kept by a rebake; the asynchronous bake (unbaked answers while it runs, a second bake =G_IO_ERROR_PENDING=, a lock set meanwhile holds); the failures (unbaked queries, bad doors and triangles, a bake without triangles); a ledge reached only by a ladder (a climber's path has the ladder leg and ends on the ledge, the plain query climbs both ways, a non-climber has no way, the straight walk never climbs); a pit full of water between two banks (no way across without the water; a swimmer crosses and climbs out, a non-swimmer stays on its bank, =in_water= with the surface height, the surface hides nothing); the refused ladders, water boxes and reserved door tags.

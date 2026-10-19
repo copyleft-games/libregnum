@@ -16,6 +16,12 @@
  *          moved onto the door's box, so opening a door only removes an
  *          instance.
  *
+ * Ladders are off-mesh links of the walk mesh (tag LADDER_TAG) added
+ * at once (links survive the mesh's clear_input); swim volumes add
+ * their surface as walkable triangles to the walk mesh only and tag
+ * everything walkable inside their box WATER_TAG.  The path filter
+ * crosses ladders and water by the query's agent.
+ *
  * An asynchronous bake runs both builds on a worker thread; until it
  * ends the level answers as an unbaked one and the door states set in
  * the meantime are applied when it does.
@@ -37,6 +43,16 @@ typedef struct
     guint           instance;   /* sight instance, INVALID while open */
 } Door;
 
+typedef struct
+{
+    gfloat foot[3];
+    gfloat top[3];
+    guint  link;        /* the walk mesh's link id */
+} Ladder;
+
+/* how close a path point lies to a ladder's end to be it */
+#define LADDER_POINT_TOLERANCE (0.01f)
+
 struct _LrgNavLevel
 {
     GObject           parent_instance;
@@ -45,6 +61,8 @@ struct _LrgNavLevel
     LrgCollisionMesh *door_shape;  /* the unit box every door instance uses */
     GArray           *triangles;   /* gfloat, nine per triangle */
     GHashTable       *doors;       /* GUINT tag -> Door* */
+    GArray           *ladders;     /* Ladder */
+    GArray           *water;       /* gfloat min[3] max[3] per volume */
     gboolean          baked;
     gboolean          baking;
 };
@@ -161,6 +179,9 @@ typedef struct
 {
     GArray *triangles;   /* a copy: the worker owns it */
     GArray *boxes;       /* gfloat min[3] max[3] and the tag as a float bit pattern */
+    GArray *water;       /* gfloat min[3] max[3] per swim volume */
+    gfloat  climb;
+    gfloat  cell_height;
 } BakeInput;
 
 static void
@@ -170,6 +191,7 @@ bake_input_free (gpointer data)
 
     g_array_unref (input->triangles);
     g_array_unref (input->boxes);
+    g_array_unref (input->water);
     g_free (input);
 }
 
@@ -187,7 +209,11 @@ bake_input_new (LrgNavLevel *self)
     input->triangles = g_array_sized_new (FALSE, FALSE, sizeof (gfloat), self->triangles->len);
     g_array_append_vals (input->triangles, self->triangles->data, self->triangles->len);
     input->boxes = g_array_new (FALSE, FALSE, sizeof (gfloat));
-    g_object_get (self->nav, "max-climb", &climb, "cell-size", &cell, NULL);
+    input->water = g_array_sized_new (FALSE, FALSE, sizeof (gfloat), self->water->len);
+    g_array_append_vals (input->water, self->water->data, self->water->len);
+    g_object_get (self->nav, "max-climb", &climb, "cell-size", &cell,
+                  "cell-height", &input->cell_height, NULL);
+    input->climb = climb;
     g_hash_table_iter_init (&iter, self->doors);
     while (g_hash_table_iter_next (&iter, NULL, &value))
     {
@@ -223,6 +249,30 @@ bake_run (LrgNavPolyMesh    *nav,
     lrg_nav_poly_mesh_clear_input (nav);
     lrg_nav_poly_mesh_add_triangles (nav, (const gfloat *) input->triangles->data,
                                      input->triangles->len, TRUE);
+    /* swim volumes: the surface is a floor of the walk mesh (not of the
+     * sight mesh), and the box down to its bottom (and a cell above the
+     * surface) is the water area; staged before the doors, so a door's
+     * area wins where both overlap */
+    for (i = 0; i + 6 <= input->water->len; i += 6)
+    {
+        const gfloat *w = &g_array_index (input->water, gfloat, i);
+        gfloat surface[18];
+        gfloat lo[3];
+        gfloat hi[3];
+
+        surface[0] = w[0];  surface[1] = w[4];  surface[2] = w[2];
+        surface[3] = w[3];  surface[4] = w[4];  surface[5] = w[2];
+        surface[6] = w[3];  surface[7] = w[4];  surface[8] = w[5];
+        surface[9] = w[0];  surface[10] = w[4]; surface[11] = w[2];
+        surface[12] = w[3]; surface[13] = w[4]; surface[14] = w[5];
+        surface[15] = w[0]; surface[16] = w[4]; surface[17] = w[5];
+        lrg_nav_poly_mesh_add_triangles (nav, surface, 18, TRUE);
+        memcpy (lo, w, sizeof (gfloat) * 3);
+        memcpy (hi, w + 3, sizeof (gfloat) * 3);
+        lo[1] -= input->climb;
+        hi[1] += input->cell_height * 2.0f;
+        lrg_nav_poly_mesh_add_area_box (nav, lo, hi, LRG_NAV_LEVEL_WATER_TAG);
+    }
     for (i = 0; i + 7 <= input->boxes->len; i += 7)
     {
         const gfloat *box = &g_array_index (input->boxes, gfloat, i);
@@ -267,6 +317,8 @@ lrg_nav_level_finalize (GObject *object)
     g_clear_object (&self->door_shape);
     g_clear_pointer (&self->triangles, g_array_unref);
     g_clear_pointer (&self->doors, g_hash_table_unref);
+    g_clear_pointer (&self->ladders, g_array_unref);
+    g_clear_pointer (&self->water, g_array_unref);
     G_OBJECT_CLASS (lrg_nav_level_parent_class)->finalize (object);
 }
 
@@ -284,6 +336,8 @@ lrg_nav_level_init (LrgNavLevel *self)
     self->door_shape = unit_box ();
     self->triangles = g_array_new (FALSE, FALSE, sizeof (gfloat));
     self->doors = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_free);
+    self->ladders = g_array_new (FALSE, FALSE, sizeof (Ladder));
+    self->water = g_array_new (FALSE, FALSE, sizeof (gfloat));
 }
 
 /* ------------------------------------------------------------------ */
@@ -351,7 +405,7 @@ lrg_nav_level_add_door (LrgNavLevel     *self,
     g_return_val_if_fail (min != NULL && max != NULL, FALSE);
     g_return_val_if_fail (!self->baking, FALSE);
 
-    if (tag == 0)
+    if (tag == 0 || tag == LRG_NAV_LEVEL_LADDER_TAG || tag == LRG_NAV_LEVEL_WATER_TAG)
         return FALSE;
     for (i = 0; i < 3; i++)
         if (!isfinite (min[i]) || !isfinite (max[i]) || min[i] > max[i])
@@ -526,9 +580,12 @@ typedef struct
 {
     LrgNavLevel     *level;
     LrgNavDoorState  passes;
+    gboolean         climbs;
+    gboolean         swims;
 } Filter;
 
-/* tagged polygons: a door no more closed than the agent passes */
+/* tagged polygons and links: a door no more closed than the agent
+ * passes, ladders for climbers, water for swimmers */
 static gboolean
 door_filter (guint32  tag,
              gpointer user_data)
@@ -536,6 +593,10 @@ door_filter (guint32  tag,
     Filter *filter = (Filter *) user_data;
     Door *door;
 
+    if (tag == LRG_NAV_LEVEL_LADDER_TAG)
+        return filter->climbs;
+    if (tag == LRG_NAV_LEVEL_WATER_TAG)
+        return filter->swims;
     door = (Door *) g_hash_table_lookup (filter->level->doors, GUINT_TO_POINTER (tag));
     return door == NULL || (gint) door->state <= (gint) filter->passes;
 }
@@ -549,6 +610,22 @@ lrg_nav_level_find_path (LrgNavLevel   *self,
                          guint          max_nodes,
                          guint         *n_floats,
                          GError       **error)
+{
+    return lrg_nav_level_find_path_full (self, start, goal, extents, passes, TRUE, TRUE,
+                                         max_nodes, n_floats, error);
+}
+
+gfloat *
+lrg_nav_level_find_path_full (LrgNavLevel     *self,
+                              const gfloat    *start,
+                              const gfloat    *goal,
+                              const gfloat    *extents,
+                              LrgNavDoorState  passes,
+                              gboolean         climbs,
+                              gboolean         swims,
+                              guint            max_nodes,
+                              guint           *n_floats,
+                              GError         **error)
 {
     Filter filter;
 
@@ -565,6 +642,8 @@ lrg_nav_level_find_path (LrgNavLevel   *self,
     }
     filter.level = self;
     filter.passes = passes;
+    filter.climbs = climbs;
+    filter.swims = swims;
     return lrg_nav_poly_mesh_find_path (self->nav, start, goal, extents, max_nodes, door_filter,
                                         &filter, NULL, n_floats, error);
 }
@@ -700,6 +779,9 @@ lrg_nav_level_can_walk (LrgNavLevel  *self,
     }
     filter.level = self;
     filter.passes = LRG_NAV_DOOR_STATE_OPEN;
+    /* a straight walk may wade into water; ladders are links, never walked */
+    filter.climbs = FALSE;
+    filter.swims = TRUE;
     blocked = lrg_nav_poly_mesh_raycast (self->nav, from, to, extents, door_filter, &filter,
                                          &fraction, end);
     /* the walk follows the floor: it must end on the floor under @to, not
@@ -736,4 +818,139 @@ lrg_nav_level_has_line_of_sight (LrgNavLevel     *self,
     if (!isfinite (length) || length < 1e-5f)
         return TRUE;
     return !lrg_collision_mesh_raycast (self->collision, from, direction, length, out_hit);
+}
+
+/* ------------------------------------------------------------------ */
+/* Ladders and water                                                    */
+
+guint
+lrg_nav_level_add_ladder (LrgNavLevel  *self,
+                          const gfloat *foot,
+                          const gfloat *top)
+{
+    Ladder ladder;
+    gfloat height;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_NAV_LEVEL (self), G_MAXUINT);
+    g_return_val_if_fail (foot != NULL && top != NULL, G_MAXUINT);
+    g_return_val_if_fail (!self->baking, G_MAXUINT);
+
+    for (i = 0; i < 3; i++)
+        if (!isfinite (foot[i]) || !isfinite (top[i]))
+            return G_MAXUINT;
+    height = top[1] - foot[1];
+    if (!(height > 0.0f))
+        return G_MAXUINT;
+    memcpy (ladder.foot, foot, sizeof (ladder.foot));
+    memcpy (ladder.top, top, sizeof (ladder.top));
+    /* links survive the walk mesh's clear_input, so the ladder is added
+     * once, here, and connects at the next bake */
+    ladder.link = lrg_nav_poly_mesh_add_link (self->nav, foot, top, TRUE, height * 2.0f,
+                                              LRG_NAV_LEVEL_LADDER_TAG);
+    if (ladder.link == LRG_NAV_POLY_MESH_INVALID)
+        return G_MAXUINT;
+    g_array_append_val (self->ladders, ladder);
+    return self->ladders->len - 1;
+}
+
+guint
+lrg_nav_level_get_ladder_count (LrgNavLevel *self)
+{
+    g_return_val_if_fail (LRG_IS_NAV_LEVEL (self), 0);
+    return self->ladders->len;
+}
+
+gboolean
+lrg_nav_level_get_ladder_connected (LrgNavLevel *self,
+                                    guint        ladder)
+{
+    g_return_val_if_fail (LRG_IS_NAV_LEVEL (self), FALSE);
+
+    if (ladder >= self->ladders->len || !lrg_nav_level_is_baked (self))
+        return FALSE;
+    return lrg_nav_poly_mesh_get_link_connected (self->nav,
+                                                 g_array_index (self->ladders, Ladder, ladder).link);
+}
+
+/* whether @a and @b are within LADDER_POINT_TOLERANCE on every axis */
+static gboolean
+same_point (const gfloat *a,
+            const gfloat *b)
+{
+    return fabsf (a[0] - b[0]) <= LADDER_POINT_TOLERANCE &&
+           fabsf (a[1] - b[1]) <= LADDER_POINT_TOLERANCE &&
+           fabsf (a[2] - b[2]) <= LADDER_POINT_TOLERANCE;
+}
+
+gboolean
+lrg_nav_level_is_ladder_leg (LrgNavLevel  *self,
+                             const gfloat *from,
+                             const gfloat *to)
+{
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_NAV_LEVEL (self), FALSE);
+    g_return_val_if_fail (from != NULL && to != NULL, FALSE);
+
+    for (i = 0; i < self->ladders->len; i++)
+    {
+        const Ladder *l = &g_array_index (self->ladders, Ladder, i);
+
+        if ((same_point (from, l->foot) && same_point (to, l->top)) ||
+            (same_point (from, l->top) && same_point (to, l->foot)))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+gboolean
+lrg_nav_level_add_water (LrgNavLevel  *self,
+                         const gfloat *min,
+                         const gfloat *max)
+{
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_NAV_LEVEL (self), FALSE);
+    g_return_val_if_fail (min != NULL && max != NULL, FALSE);
+    g_return_val_if_fail (!self->baking, FALSE);
+
+    for (i = 0; i < 3; i++)
+        if (!isfinite (min[i]) || !isfinite (max[i]) || !(min[i] < max[i]))
+            return FALSE;
+    g_array_append_vals (self->water, min, 3);
+    g_array_append_vals (self->water, max, 3);
+    return TRUE;
+}
+
+guint
+lrg_nav_level_get_water_count (LrgNavLevel *self)
+{
+    g_return_val_if_fail (LRG_IS_NAV_LEVEL (self), 0);
+    return self->water->len / 6;
+}
+
+gboolean
+lrg_nav_level_in_water (LrgNavLevel  *self,
+                        const gfloat *point,
+                        gfloat       *out_surface)
+{
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_NAV_LEVEL (self), FALSE);
+    g_return_val_if_fail (point != NULL, FALSE);
+
+    for (i = 0; i + 6 <= self->water->len; i += 6)
+    {
+        const gfloat *w = &g_array_index (self->water, gfloat, i);
+
+        if (point[0] >= w[0] && point[0] <= w[3] && point[2] >= w[2] && point[2] <= w[5] &&
+            point[1] >= w[1] && point[1] <= w[4])
+        {
+            if (out_surface != NULL)
+                *out_surface = w[4];
+            return TRUE;
+        }
+    }
+    return FALSE;
 }

@@ -114,7 +114,8 @@ lrg_nav_level_add_triangles (LrgNavLevel  *self,
  * %LRG_NAV_DOOR_STATE_OPEN.  A door added after a bake takes effect at
  * the next bake.  Boxes thinner than a centimetre are widened to one.
  *
- * Returns: %FALSE when @tag is 0 or the box is empty or not finite
+ * Returns: %FALSE when @tag is 0, %LRG_NAV_LEVEL_LADDER_TAG or
+ *   %LRG_NAV_LEVEL_WATER_TAG, or the box is empty or not finite
  */
 LRG_AVAILABLE_IN_ALL
 gboolean
@@ -258,6 +259,8 @@ lrg_nav_level_is_baked (LrgNavLevel *self);
  *
  * lrg_nav_poly_mesh_find_path() with the doors' states: a door is crossed
  * when its state is at most @passes (open < closed < locked < sealed).
+ * Ladders and water are crossed (an agent that climbs and swims;
+ * lrg_nav_level_find_path_full() for others).
  * %G_IO_ERROR_NOT_FOUND when there is no way (or the level is not
  * baked).
  *
@@ -341,5 +344,171 @@ lrg_nav_level_has_line_of_sight (LrgNavLevel     *self,
                                  const gfloat    *from,
                                  const gfloat    *to,
                                  LrgCollisionHit *out_hit);
+
+/**
+ * LRG_NAV_LEVEL_LADDER_TAG:
+ *
+ * The tag every ladder link of a level carries (lrg_nav_level_add_ladder());
+ * a door may not use it.
+ */
+#define LRG_NAV_LEVEL_LADDER_TAG (0xfffffffeu)
+
+/**
+ * LRG_NAV_LEVEL_WATER_TAG:
+ *
+ * The area tag of every swim volume of a level (lrg_nav_level_add_water()):
+ * the water's surface and the floor under it; a door may not use it.
+ */
+#define LRG_NAV_LEVEL_WATER_TAG (0xfffffffdu)
+
+/**
+ * lrg_nav_level_add_ladder:
+ * @self: an #LrgNavLevel
+ * @foot: (array fixed-size=3): the ladder's foot, on the lower floor
+ * @top: (array fixed-size=3): its top, on the upper floor (or the
+ *   ledge it leads onto)
+ *
+ * Adds a ladder: an off-mesh link both ways between @foot and @top
+ * (lrg_nav_poly_mesh_add_link(), cost twice its height, tag
+ * %LRG_NAV_LEVEL_LADDER_TAG), connected at the next bake.  Paths of
+ * agents that climb (lrg_nav_level_find_path_full()) may use it; their
+ * points carry the foot and the top as a leg of its own
+ * (lrg_nav_level_is_ladder_leg()).
+ *
+ * Returns: the ladder's index (0, 1, ...), or %G_MAXUINT for points
+ *   that are not finite or a top not above the foot
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_nav_level_add_ladder (LrgNavLevel  *self,
+                          const gfloat *foot,
+                          const gfloat *top);
+
+/**
+ * lrg_nav_level_get_ladder_count:
+ * @self: an #LrgNavLevel
+ *
+ * Returns: the number of ladders added
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_nav_level_get_ladder_count (LrgNavLevel *self);
+
+/**
+ * lrg_nav_level_get_ladder_connected:
+ * @self: an #LrgNavLevel
+ * @ladder: a ladder index
+ *
+ * Returns: whether both ends of the ladder found a floor at the last
+ *   bake (%FALSE out of range or unbaked)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_level_get_ladder_connected (LrgNavLevel *self,
+                                    guint        ladder);
+
+/**
+ * lrg_nav_level_is_ladder_leg:
+ * @self: an #LrgNavLevel
+ * @from: (array fixed-size=3): a path point
+ * @to: (array fixed-size=3): the next one
+ *
+ * Whether the leg from @from to @to is a ladder's (its foot and its top,
+ * either way, each within a centimetre): a walker climbs it instead of
+ * walking.
+ *
+ * Returns: %TRUE for a ladder leg
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_level_is_ladder_leg (LrgNavLevel  *self,
+                             const gfloat *from,
+                             const gfloat *to);
+
+/**
+ * lrg_nav_level_add_water:
+ * @self: an #LrgNavLevel
+ * @min: (array fixed-size=3): minimum corner of the water (its bottom
+ *   may lie anywhere below the deepest floor it covers)
+ * @max: (array fixed-size=3): maximum corner; its height is the
+ *   water's surface
+ *
+ * Adds a swim volume, taking effect at the next bake: its surface
+ * becomes walkable for the navigation mesh (a swimmer crosses a pool at
+ * the top and climbs out where a bank lies within max-climb of the
+ * surface) and everything walkable inside the box, the surface and the
+ * floor under it, is the area %LRG_NAV_LEVEL_WATER_TAG, which only paths
+ * of agents that swim cross (lrg_nav_level_find_path_full()).  The
+ * surface is not part of the sight mesh.  Door boxes win over water
+ * where they overlap.
+ *
+ * Returns: %FALSE when the box is empty or not finite
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_level_add_water (LrgNavLevel  *self,
+                         const gfloat *min,
+                         const gfloat *max);
+
+/**
+ * lrg_nav_level_get_water_count:
+ * @self: an #LrgNavLevel
+ *
+ * Returns: the number of swim volumes added
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_nav_level_get_water_count (LrgNavLevel *self);
+
+/**
+ * lrg_nav_level_in_water:
+ * @self: an #LrgNavLevel
+ * @point: (array fixed-size=3): a feet position
+ * @out_surface: (out) (optional): the surface height of the water it is in
+ *
+ * Whether @point lies in a swim volume (inside its box, at most at its
+ * surface): a walker there swims.
+ *
+ * Returns: %TRUE in water
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_level_in_water (LrgNavLevel  *self,
+                        const gfloat *point,
+                        gfloat       *out_surface);
+
+/**
+ * lrg_nav_level_find_path_full:
+ * @self: an #LrgNavLevel
+ * @start: (array fixed-size=3): start (feet)
+ * @goal: (array fixed-size=3): goal (feet)
+ * @extents: (array fixed-size=3): half extents for snapping both ends
+ * @passes: the most closed door the agent gets through (as
+ *   lrg_nav_level_find_path())
+ * @climbs: whether the agent climbs ladders
+ * @swims: whether the agent swims (crosses water areas)
+ * @max_nodes: polygons expanded at most, 0 for no limit
+ * @n_floats: (out): number of floats returned, three per point
+ * @error: (nullable): return location for a #GError
+ *
+ * lrg_nav_level_find_path() for an agent that may not climb or swim:
+ * ladder links are crossed only when @climbs, water areas only when
+ * @swims.  lrg_nav_level_find_path() is this call with both %TRUE.
+ *
+ * Returns: (transfer full) (array length=n_floats) (nullable): the
+ *   points, %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat *
+lrg_nav_level_find_path_full (LrgNavLevel     *self,
+                              const gfloat    *start,
+                              const gfloat    *goal,
+                              const gfloat    *extents,
+                              LrgNavDoorState  passes,
+                              gboolean         climbs,
+                              gboolean         swims,
+                              guint            max_nodes,
+                              guint           *n_floats,
+                              GError         **error);
 
 G_END_DECLS
