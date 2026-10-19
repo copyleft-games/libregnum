@@ -418,6 +418,12 @@
 #include "crash/lrg-crash-reporter.h"
 #include "sandbox/lrg-sandbox.h"
 
+/* Control module: commands, the control socket and its client */
+#include "control/lrg-command.h"
+#include "control/lrg-command-registry.h"
+#include "control/lrg-control-server.h"
+#include "control/lrg-control-client.h"
+
 /* Accessibility module (Phase 1) */
 #include "accessibility/lrg-color-filter.h"
 #include "accessibility/lrg-accessibility-settings.h"
