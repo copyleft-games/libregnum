@@ -171,6 +171,9 @@ struct _LrgBillboardBatch
     LrgShadowLocations recv_shadow_locs;
     LrgGroundOverlayLocations recv_overlay_locs;
     /* the loose quads' receiving (gaps G8): the cutout program's own */
+    gboolean          gpu_has_bounds;   /* the settled quads' box, the batch's space */
+    gfloat            gpu_min[3];
+    gfloat            gpu_max[3];
     gint              loose_loc_recv_on;
     gint              loose_loc_recv_sun;
     LrgShadowLocations loose_shadow_locs;
@@ -305,7 +308,7 @@ static const gchar gpu_vs[] =
     "            vec3 w = vec3(0.299, 0.587, 0.114);\n"
     "            float share = clamp(dot(sunColor, w) / max(dot(sampled, w), 1e-4), 0.0, 1.0);\n"
     "            vec3 facing = normalize((matModel * vec4(cross(right, up), 0.0)).xyz);\n"
-    "            float sh = shadowCascades > 0 && share > 0.0 ? lrg_sun_shadow(world - recvSun * 0.6, facing) : 1.0;\n"
+    "            float sh = shadowCascades > 0 && share > 0.0 ? lrg_sun_shadow_f(world - recvSun * 0.6, facing, 0) : 1.0;\n"
     "            float snow = 0.0;\n"
     "            float cloud = 0.0;\n"
     "            if (ovOn != 0) lrg_overlay_eval(world, vec3(0.0, 1.0, 0.0), snow, cloud);\n"
@@ -1203,6 +1206,8 @@ gpu_release (LrgBillboardBatch *self)
     gboolean ready = IsWindowReady ();
     guint    i;
 
+    self->gpu_has_bounds = FALSE;
+
     for (i = 0; self->pages != NULL && i < self->pages->len; i++)
     {
         GpuPage *page = &g_array_index (self->pages, GpuPage, i);
@@ -1390,6 +1395,24 @@ gpu_build (LrgBillboardBatch *self)
 
             fill_quad (b, vertices + (gsize)i * 4);
             b->gpu_slot = (gint)(first + i);
+            /* the box the casting passes cull against (a quad reaches its
+             * width or height around its pivot) */
+            {
+                gfloat reach = MAX (b->width, b->height);
+                guint  k;
+
+                for (k = 0; k < 3; k++)
+                {
+                    gfloat lo = b->position[k] - reach;
+                    gfloat hi = b->position[k] + reach;
+
+                    if (!self->gpu_has_bounds || lo < self->gpu_min[k])
+                        self->gpu_min[k] = lo;
+                    if (!self->gpu_has_bounds || hi > self->gpu_max[k])
+                        self->gpu_max[k] = hi;
+                }
+                self->gpu_has_bounds = TRUE;
+            }
         }
 
         page.quads = n;
@@ -1820,6 +1843,7 @@ lrg_billboard_batch_draw_shadow (LrgBillboardBatch *self,
     gfloat   direction[3];
     gfloat   eye[3];
     gfloat   offset[3];
+    gboolean far_from_light = FALSE;
     guint    i;
 
     g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
@@ -1849,11 +1873,29 @@ lrg_billboard_batch_draw_shadow (LrgBillboardBatch *self,
         eye[2] = camera_position->z - direction[2] * 1.0e5f;
     }
 
-    /* the settled quads, as they are drawn lit */
+    /* the settled quads, as they are drawn lit; a cube face's pass skips
+     * a batch whose quads all lie beyond its light's reach (a town's
+     * torches reach one or two of the pixels' batches) */
     if (self->settle < G_MAXUINT)
         self->settle++;
     gpu_maybe_build (self);
-    if (self->gpu_quads > 0 && cast_ensure_shader (self))
+    if (self->gpu_quads > 0 && mode == 1 && self->gpu_has_bounds)
+    {
+        gfloat d2 = 0.0f;
+        guint  k;
+
+        for (k = 0; k < 3; k++)
+        {
+            gfloat v = eye[k];
+            gfloat e = v < self->gpu_min[k] ? self->gpu_min[k] - v
+                     : v > self->gpu_max[k] ? v - self->gpu_max[k] : 0.0f;
+
+            d2 += e * e;
+        }
+        if (d2 > light[3] * light[3])
+            far_from_light = TRUE;
+    }
+    if (self->gpu_quads > 0 && !far_from_light && cast_ensure_shader (self))
     {
         Matrix   modelview = rlGetMatrixModelview ();
         Matrix   projection = rlGetMatrixProjection ();
