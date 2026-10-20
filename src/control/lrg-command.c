@@ -1353,6 +1353,75 @@ accepted_names (LrgCommand *self)
     return g_string_free (text, FALSE);
 }
 
+/* 2^63. Every gint64 is strictly below this double; -2^63 is
+ * G_MININT64 and is exact in a double. Comparing a full id to a
+ * double rounds it, so the range checks stay in integer space. */
+#define INT64_DOUBLE_LIMIT (9223372036854775808.0)
+
+/* TRUE when @i is strictly less than @bound. @i is never rounded. */
+static gboolean
+int_below_double (gint64  i,
+                  gdouble bound)
+{
+    gdouble floored;
+    gint64 limit;
+
+    if (isnan (bound) || bound >= INT64_DOUBLE_LIMIT)
+        return TRUE;
+    /* @bound <= -2^63: no gint64 is smaller */
+    if (bound <= -INT64_DOUBLE_LIMIT)
+        return FALSE;
+    floored = floor (bound);
+    limit = (gint64)floored;
+    if (floored == bound)
+        return i < limit;
+    return i <= limit;
+}
+
+/* TRUE when @i is strictly greater than @bound. @i is never rounded. */
+static gboolean
+int_above_double (gint64  i,
+                  gdouble bound)
+{
+    gdouble ceiled;
+    gint64 limit;
+
+    if (isnan (bound))
+        return TRUE;
+    if (bound >= INT64_DOUBLE_LIMIT)
+        return FALSE;
+    if (bound < -INT64_DOUBLE_LIMIT)
+        return TRUE;
+    ceiled = ceil (bound);
+    /* ceil(-2^63) is -2^63; the cast of that magnitude is G_MININT64 */
+    if (ceiled <= -INT64_DOUBLE_LIMIT)
+        return i != G_MININT64;
+    if (ceiled >= INT64_DOUBLE_LIMIT)
+        return FALSE;
+    limit = (gint64)ceiled;
+    if (ceiled == bound)
+        return i > limit;
+    return i >= limit;
+}
+
+/* A finite double that is a whole number and exactly one gint64. */
+static gboolean
+double_to_exact_int (gdouble  number,
+                     gint64  *out)
+{
+    gint64 value;
+
+    if (!isfinite (number) || number != floor (number))
+        return FALSE;
+    if (number < -INT64_DOUBLE_LIMIT || number >= INT64_DOUBLE_LIMIT)
+        return FALSE;
+    value = (gint64)number;
+    if ((gdouble)value != number)
+        return FALSE;
+    *out = value;
+    return TRUE;
+}
+
 /* checks one given value; returns the (possibly converted) copy */
 static JsonNode *
 check_value (LrgCommand      *self,
@@ -1383,6 +1452,41 @@ check_value (LrgCommand      *self,
         return json_node_copy (node);
 
     case LRG_COMMAND_PARAM_INT:
+    {
+        /* Kept as gint64. A double only stands in when it is an exact
+         * integer (3.0); ids past 2^53 never go through a double. */
+        gint64 ival;
+
+        if (value_type == G_TYPE_INT64)
+            ival = json_node_get_int (node);
+        else if (value_type == G_TYPE_DOUBLE)
+        {
+            if (!double_to_exact_int (json_node_get_double (node), &ival))
+            {
+                param_fail (error, self, "%s must be an integer", param->name);
+                return NULL;
+            }
+        }
+        else
+        {
+            param_fail (error, self, "%s must be an integer", param->name);
+            return NULL;
+        }
+        if (param->has_range &&
+            (int_below_double (ival, param->minimum) || int_above_double (ival, param->maximum)))
+        {
+            param_fail (error, self, "%s must be between %g and %g", param->name,
+                        param->minimum, param->maximum);
+            return NULL;
+        }
+        {
+            JsonNode *out = json_node_new (JSON_NODE_VALUE);
+
+            json_node_set_int (out, ival);
+            return out;
+        }
+    }
+
     case LRG_COMMAND_PARAM_NUMBER:
         if (value_type == G_TYPE_INT64)
             number = (gdouble)json_node_get_int (node);
@@ -1390,18 +1494,12 @@ check_value (LrgCommand      *self,
             number = json_node_get_double (node);
         else
         {
-            param_fail (error, self, "%s must be a%s", param->name,
-                        param->type == LRG_COMMAND_PARAM_INT ? "n integer" : " number");
+            param_fail (error, self, "%s must be a number", param->name);
             return NULL;
         }
         if (!isfinite (number))
         {
             param_fail (error, self, "%s must be finite", param->name);
-            return NULL;
-        }
-        if (param->type == LRG_COMMAND_PARAM_INT && number != floor (number))
-        {
-            param_fail (error, self, "%s must be an integer", param->name);
             return NULL;
         }
         if (param->has_range && (number < param->minimum || number > param->maximum))
@@ -1413,10 +1511,7 @@ check_value (LrgCommand      *self,
         {
             JsonNode *out = json_node_new (JSON_NODE_VALUE);
 
-            if (param->type == LRG_COMMAND_PARAM_INT)
-                json_node_set_int (out, (gint64)number);
-            else
-                json_node_set_double (out, number);
+            json_node_set_double (out, number);
             return out;
         }
 
@@ -1543,14 +1638,17 @@ word_to_node (LrgCommand       *self,
         value = g_ascii_strtoll (word, &end, 10);
         if (errno != 0 || end == word || *end != '\0')
         {
-            gdouble d = g_ascii_strtod (word, &end);
+            gdouble d;
 
-            if (end == word || *end != '\0' || d != floor (d))
+            /* "3.0" is a whole number; a magnitude a double cannot hold
+             * exactly is refused instead of rounded. */
+            errno = 0;
+            d = g_ascii_strtod (word, &end);
+            if (errno != 0 || end == word || *end != '\0' || !double_to_exact_int (d, &value))
             {
                 param_fail (error, self, "%s must be an integer, not '%s'", param->name, word);
                 return NULL;
             }
-            value = (gint64)d;
         }
         node = json_node_new (JSON_NODE_VALUE);
         json_node_set_int (node, value);

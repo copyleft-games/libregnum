@@ -832,8 +832,9 @@ JsonNode *lrg_command_describe (LrgCommand *self);
  *
  * Checks @params against the declaration: unknown names, missing
  * required ones, types (an int given as 3.0 is accepted, a number as
- * an int is converted), choices and ranges.  Defaults fill the absent
- * ones; null members count as absent.
+ * an int is converted, and an int is kept as a full 64-bit value),
+ * choices and ranges.  Defaults fill the absent ones; null members
+ * count as absent.
  *
  * Returns: (transfer full) (nullable): the checked parameters, %NULL
  *   with %LRG_COMMAND_ERROR_INVALID_PARAMS

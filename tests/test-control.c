@@ -260,6 +260,114 @@ test_check_params (void)
     g_assert_cmpfloat (json_object_get_double_member (out, "b"), ==, 2.0);
 }
 
+/* ids past 2^53 (world-quest uids, entity ids) stay exact */
+static void
+test_int64_ids (void)
+{
+    g_autoptr(LrgCommandRegistry) registry = NULL;
+    LrgCommand *command;
+    LrgCommandParam *param;
+    g_autoptr(JsonObject) in = NULL;
+    g_autoptr(JsonObject) out = NULL;
+    g_autoptr(GError) error = NULL;
+    const gint64 quest = G_GINT64_CONSTANT (4611686018427387906);       /* 2^62 + 2 */
+    const gint64 past_mantissa = G_GINT64_CONSTANT (9007199254740993);  /* 2^53 + 1 */
+    const gint64 negative = G_GINT64_CONSTANT (-9223372036854775764);
+
+    registry = lrg_command_registry_new ();
+    command = lrg_command_registry_add (registry, "mark", "act", "Mark an id", cmd_echo, NULL, NULL);
+    param = lrg_command_add_param_full (command, "quest", LRG_COMMAND_PARAM_INT,
+                                        LRG_COMMAND_PARAM_FLAG_NONE, NULL);
+
+    in = json_object_new ();
+    json_object_set_int_member (in, "quest", quest);
+    out = lrg_command_check_params (command, in, &error);
+    g_assert_no_error (error);
+    g_assert_true (json_object_get_int_member (out, "quest") == quest);
+    g_clear_pointer (&out, json_object_unref);
+
+    json_object_set_int_member (in, "quest", past_mantissa);
+    out = lrg_command_check_params (command, in, &error);
+    g_assert_no_error (error);
+    g_assert_true (json_object_get_int_member (out, "quest") == past_mantissa);
+    g_clear_pointer (&out, json_object_unref);
+
+    json_object_set_int_member (in, "quest", negative);
+    out = lrg_command_check_params (command, in, &error);
+    g_assert_no_error (error);
+    g_assert_true (json_object_get_int_member (out, "quest") == negative);
+    g_clear_pointer (&out, json_object_unref);
+
+    /* 3.0 is an integer; 1.5 and a magnitude past gint64 are not */
+    json_object_set_double_member (in, "quest", 3.0);
+    out = lrg_command_check_params (command, in, &error);
+    g_assert_no_error (error);
+    g_assert_true (json_object_get_int_member (out, "quest") == 3);
+    g_clear_pointer (&out, json_object_unref);
+    json_object_set_double_member (in, "quest", 1.5);
+    g_assert_null (lrg_command_check_params (command, in, &error));
+    g_assert_error (error, LRG_COMMAND_ERROR, LRG_COMMAND_ERROR_INVALID_PARAMS);
+    g_clear_error (&error);
+    json_object_set_double_member (in, "quest", 1e20);
+    g_assert_null (lrg_command_check_params (command, in, &error));
+    g_assert_error (error, LRG_COMMAND_ERROR, LRG_COMMAND_ERROR_INVALID_PARAMS);
+    g_clear_error (&error);
+
+    json_object_set_double_member (in, "quest", 9007199254740992.0);
+    out = lrg_command_check_params (command, in, &error);
+    g_assert_no_error (error);
+    g_assert_true (json_object_get_int_member (out, "quest") == G_GINT64_CONSTANT (9007199254740992));
+    g_clear_pointer (&out, json_object_unref);
+
+    /* the text form still goes through the same check */
+    {
+        g_autofree gchar *line = NULL;
+        g_autofree gchar *name = NULL;
+        g_autoptr(JsonObject) params = NULL;
+        g_autoptr(JsonObject) checked = NULL;
+
+        line = g_strdup_printf ("mark quest=%" G_GINT64_FORMAT, quest);
+        g_assert_true (lrg_command_registry_parse_line (registry, line, &name, &params, &error));
+        g_assert_no_error (error);
+        g_assert_true (json_object_get_int_member (params, "quest") == quest);
+        checked = lrg_command_check_params (command, params, &error);
+        g_assert_no_error (error);
+        g_assert_true (json_object_get_int_member (checked, "quest") == quest);
+    }
+    {
+        g_autofree gchar *name = NULL;
+        g_autoptr(JsonObject) params = NULL;
+
+        g_assert_true (lrg_command_registry_parse_line (registry, "mark quest=3.0", &name, &params, &error));
+        g_assert_no_error (error);
+        g_assert_true (json_object_get_int_member (params, "quest") == 3);
+        g_clear_pointer (&name, g_free);
+        g_clear_pointer (&params, json_object_unref);
+        g_assert_false (lrg_command_registry_parse_line (registry,
+                                                         "mark quest=999999999999999999999",
+                                                         &name, &params, &error));
+        g_assert_error (error, LRG_COMMAND_ERROR, LRG_COMMAND_ERROR_INVALID_PARAMS);
+        g_clear_error (&error);
+    }
+
+    /* a small range still refuses the id; a wide one keeps it */
+    lrg_command_param_set_range (param, 0, 10);
+    json_object_set_int_member (in, "quest", quest);
+    g_assert_null (lrg_command_check_params (command, in, &error));
+    g_assert_error (error, LRG_COMMAND_ERROR, LRG_COMMAND_ERROR_INVALID_PARAMS);
+    g_clear_error (&error);
+    json_object_set_int_member (in, "quest", 10);
+    out = lrg_command_check_params (command, in, &error);
+    g_assert_no_error (error);
+    g_assert_true (json_object_get_int_member (out, "quest") == 10);
+    g_clear_pointer (&out, json_object_unref);
+    lrg_command_param_set_range (param, 0, 1e19);
+    json_object_set_int_member (in, "quest", quest);
+    out = lrg_command_check_params (command, in, &error);
+    g_assert_no_error (error);
+    g_assert_true (json_object_get_int_member (out, "quest") == quest);
+}
+
 static void
 test_parse_arguments (void)
 {
@@ -882,6 +990,7 @@ main (int    argc,
 
     g_test_add_func ("/control/param/schema", test_param_schema);
     g_test_add_func ("/control/param/check", test_check_params);
+    g_test_add_func ("/control/param/int64", test_int64_ids);
     g_test_add_func ("/control/param/arguments", test_parse_arguments);
     g_test_add_func ("/control/registry/invoke", test_registry_invoke);
     g_test_add_func ("/control/registry/events", test_events);
