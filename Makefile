@@ -309,6 +309,10 @@ PUBLIC_HEADERS := \
 	src/crash/lrg-crash-dialog-terminal.h \
 	src/crash/lrg-crash-reporter.h \
 	src/sandbox/lrg-sandbox.h \
+	src/control/lrg-command.h \
+	src/control/lrg-command-registry.h \
+	src/control/lrg-control-server.h \
+	src/control/lrg-control-client.h \
 	src/accessibility/lrg-color-filter.h \
 	src/accessibility/lrg-accessibility-settings.h \
 	src/steam/lrg-steam-service.h \
@@ -911,6 +915,10 @@ SOURCES := \
 	src/crash/lrg-crash-dialog-terminal.c \
 	src/crash/lrg-crash-reporter.c \
 	src/sandbox/lrg-sandbox.c \
+	src/control/lrg-command.c \
+	src/control/lrg-command-registry.c \
+	src/control/lrg-control-server.c \
+	src/control/lrg-control-client.c \
 	src/accessibility/lrg-color-filter.c \
 	src/accessibility/lrg-accessibility-settings.c \
 	src/steam/lrg-steam-service.c \

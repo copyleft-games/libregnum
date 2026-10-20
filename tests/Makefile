@@ -43,7 +43,7 @@ TEST_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(LIBOUTDIR)'
 
 # Test libraries (graylib and yaml-glib are embedded in libregnum)
 TEST_LIBS := -l$(LIB_NAME)
-TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 girepository-2.0)
+TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 girepository-2.0 json-glib-1.0)
 TEST_LIBS += $(PYTHON_LIBS) $(GJS_LIBS)
 TEST_LIBS += -lm
 # Link sanitizers into the test binaries when SANITIZE/ASAN/UBSAN is active
@@ -144,6 +144,7 @@ TEST_SOURCES := \
 	test-gamestate.c \
 	test-crash.c \
 	test-sandbox.c \
+	test-control.c \
 	test-accessibility.c \
 	test-steam.c \
 	test-economy.c \

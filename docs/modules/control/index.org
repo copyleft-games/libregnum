@@ -1,0 +1,95 @@
+#+title: Control (LrgCommandRegistry, LrgControlServer)
+#+description: Named commands with typed parameters and JSON schemas, async completion and an event stream; an owner-only Unix control socket speaking a text dialect and JSON-RPC 2.0; a blocking client for tools
+
+* Control
+:PROPERTIES:
+:CUSTOM_ID: control
+:END:
+The control module lets something outside the game drive it: an agent, a script, a person at a shell (a game's =*ctl= tool), an MCP bridge, a test.  A game registers *commands* in an =LrgCommandRegistry= ("status", "walk-to", "attack"), publishes *events* on it ("messages", "combat"), and serves it on a Unix socket with =LrgControlServer=.  Nothing here knows about any particular game.
+
+| Type | Header | What |
+|------+--------+------|
+| =LrgCommandParam= | =src/control/lrg-command.h= | one parameter: name, =LrgCommandParamType=, =LrgCommandParamFlags= (required, rest), description, default, choices, range; =lrg_command_param_to_json_schema()= |
+| =LrgCommand= | =src/control/lrg-command.h= | derivable: name, group, summary, description, example, =LrgCommandFlags= (read-only, async, hidden, destructive), parameters, the =invoke= vfunc (or a handler) |
+| =LrgCommandCall= | =src/control/lrg-command.h= | one invocation: the checked parameters, typed getters, =return_value= / =return_error= now or later, =completed= and =cancelled= signals |
+| =LrgCommandRegistry= | =src/control/lrg-command-registry.h= | the commands by name, =invoke()= / =invoke_line()=, listings and =describe()=, topics and =publish()= (signal =event=) |
+| =LrgControlServer= | =src/control/lrg-control-server.h= | the socket: owner only (0600 in a 0700 directory, peer uid checked), an optional token, text and JSON-RPC, never blocks (=poll()= once per frame, or =attach()= to a main context) |
+| =LrgControlClient= | =src/control/lrg-control-client.h= | a blocking client: =call()=, =call_line()=, =subscribe()=, =read_event()= |
+
+* Commands
+:PROPERTIES:
+:CUSTOM_ID: commands
+:END:
+#+begin_src c
+static void
+cmd_walk_to (LrgCommand *command, LrgCommandCall *call, gpointer user_data)
+{
+    MyGame *game = user_data;
+
+    /* keep the call; complete it when the walk ends (or fails) */
+    my_game_walk (game, lrg_command_call_get_double (call, "x", 0),
+                  lrg_command_call_get_double (call, "z", 0), g_object_ref (call));
+}
+
+LrgCommand *walk = lrg_command_registry_add (registry, "walk-to", "act", "Walk to a point",
+                                             cmd_walk_to, game, NULL);
+lrg_command_set_flags (walk, LRG_COMMAND_FLAG_ASYNC);
+lrg_command_add_param_full (walk, "x", LRG_COMMAND_PARAM_NUMBER, LRG_COMMAND_PARAM_FLAG_REQUIRED, "east");
+lrg_command_add_param_full (walk, "z", LRG_COMMAND_PARAM_NUMBER, LRG_COMMAND_PARAM_FLAG_REQUIRED, "north");
+#+end_src
+
+- Parameters are checked before the handler runs (=lrg_command_check_params()=): unknown names (the message lists the accepted ones), missing required ones, types (an integer given as =3.0= is accepted, =3.5= is not), choices and ranges.  Defaults fill the absent ones; =null= counts as absent.
+- The text form (=lrg_command_parse_arguments()=, =lrg_command_registry_parse_line()=) splits like a shell, takes =name=value= for a known name and fills the other parameters in order; a =REST= parameter takes the remaining words (=say hello there=).  Negative numbers are values.
+- A handler completes its call at once, or keeps a reference and completes it later.  A command without =ASYNC= whose handler left the call pending is completed with =null=.  =lrg_command_call_cancel()= emits =cancelled= (stop what you started) and fails the call with =LRG_COMMAND_ERROR_CANCELLED= unless the handler completed it.  A call completes once.
+- Errors are =LRG_COMMAND_ERROR= codes; =lrg_command_error_to_jsonrpc_code()= maps them: unknown command -32601, invalid parameters -32602, failed -32000, not found -32001, refused -32002, unsupported -32003, cancelled -32004, unauthorized -32005.
+- =lrg_command_get_input_schema()= is a JSON schema object (=type=, =properties=, =required=, =additionalProperties: false=), what an MCP tool's =inputSchema= holds; =lrg_command_describe()= adds the name, group, help, flags and parameter list.
+- Names: lower case words joined by =-= or =.= (=walk-to=, =window.focus=).  =rpc.*=, =events.*= and =auth= are reserved for the protocol.
+
+* Events
+:PROPERTIES:
+:CUSTOM_ID: events
+:END:
+=lrg_command_registry_publish (registry, "combat", data)= emits =event= (topic, data, seq) with a sequence number that grows by one per event.  =lrg_command_registry_add_topic()= declares topics for listings.  Subscribers name topics or globs (=lrg_command_topic_matches()=: =*=, =quest.*=).
+
+* The socket
+:PROPERTIES:
+:CUSTOM_ID: socket
+:END:
+=lrg_control_server_listen()= creates the directory (0700), removes a stale socket (one nobody answers on; a live one fails with =G_IO_ERROR_ADDRESS_IN_USE=), binds with umask 077 (the socket is 0600 from its first moment) and listens.  Paths longer than 107 bytes fail with =G_IO_ERROR_FILENAME_TOO_LONG=.  Connections from another uid are hung up on (=SO_PEERCRED=).  =lrg_control_runtime_dir (app)= is =$XDG_RUNTIME_DIR/<app>= (else =<tmp>/<app>-<uid>=); =lrg_control_list_instances()= lists the sockets there (=live_only= asks each).
+
+=lrg_control_server_poll()= never blocks: it accepts, reads, runs complete lines, turns finished calls into replies in request order and writes what the peer takes.  A game calls it once per frame; a program with a main loop uses =lrg_control_server_attach()=.  Calls complete from the game's own thread, so commands may touch any game state.
+
+** Wire protocol (version 1)
+:PROPERTIES:
+:CUSTOM_ID: protocol
+:END:
+One line in, one line out; a line starting with ={= is a JSON-RPC 2.0 request, =[= a batch, anything else the text dialect.  Lines up to =LRG_CONTROL_MAX_LINE= (1 MiB); unread output past =LRG_CONTROL_MAX_PENDING_OUTPUT= (16 MiB) drops the connection.
+
+- JSON-RPC: =jsonrpc= optional (="2.0"= when present), =id= a string, an integer or null, =params= an object (arrays are refused, -32602).  No =id=: a notification, nothing is sent back.  Batches run in order and answer in one line (notifications left out; =[]= is -32600).  Not JSON: -32700.  Errors carry =data.method=.
+- Built-in methods: =rpc.ping= ("pong"), =rpc.discover= (=protocol= ="lrg-control"=, =version=, =server=, =instance=, =auth_required=, =caller=, =info=, =methods=, =events=), =rpc.describe= (={method}=: one command's description, else all), =auth= (={token}=), =events.subscribe= (={events: [...], add?}=), =events.unsubscribe=.
+- Text dialect: =COMMAND ARGS...= answers =OK <json>= or =ERROR <code> <message>=; built in: =ping=, =help [COMMAND]=, =discover=, =auth TOKEN=, =subscribe [TOPIC...]=, =unsubscribe=.
+- Events: JSON subscribers get ={"jsonrpc":"2.0","method":"event","params":{"event","seq","time","data"}}=, text subscribers =EVENT <topic> <json>=.  The events a request causes go out before its reply.
+- Replies keep request order per connection: a call that completes later holds the replies after it.  A peer that half-closes still gets every reply; a peer that hangs up cancels its pending calls.
+- With a token, everything but =rpc.ping=, =rpc.discover=, =auth= (=ping=, =discover=, =auth= in text) answers -32005 until =auth= succeeds (compared in constant time).
+
+* The client
+:PROPERTIES:
+:CUSTOM_ID: client
+:END:
+#+begin_src c
+g_autoptr(LrgControlClient) client = lrg_control_client_new ();
+
+lrg_control_client_connect (client, path, &error);
+result = lrg_control_client_call (client, "status", NULL, &error);   /* waits for its own reply */
+reply = lrg_control_client_call_line (client, "walk-to 12 0 4.5", &error); /* "OK {...}" */
+lrg_control_client_subscribe (client, topics, &error);
+event = lrg_control_client_read_event (client, 1000, &error);        /* NULL on a timeout */
+#+end_src
+
+Events read while a call waits are kept for =read_event()=.  A JSON-RPC error becomes an =LRG_COMMAND_ERROR= (=lrg_command_error_from_jsonrpc_code()=); a timeout =G_IO_ERROR_TIMED_OUT=; a closed connection =G_IO_ERROR_CLOSED=.
+
+* Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-control.c=: parameter schemas, checking and text arguments; calls completed at once, later and cancelled; the registry's listings, reserved names, events and globs; the server over a real socket in a short temporary runtime directory with the server polling in its own thread: permissions, a stale socket replaced and a live one refused, the text dialect, JSON-RPC (errors, notifications, batches, protocol errors), async replies in request order, cancellation when the peer hangs up, the token, subscriptions (JSON and text), too long paths.
