@@ -45,6 +45,13 @@ loaded module.
 
 =LrgByteReader= and =LrgByteWriter=: cursors over little- or big-endian binary data for file formats and network packets.  Every read is bounds-checked and fails with an =LRG_BYTE_ERROR= without moving the cursor; sub-readers confine chunk parsing; slices share data without copying; the writer patches length fields written afterwards.
 
+*** [[file:crypto/index.org][Cryptographic Primitives Module]] - big integers, SRP-6a, ARC4
+:PROPERTIES:
+:CUSTOM_ID: crypto-module
+:END:
+
+=LrgBigNum=: immutable, reference-counted non-negative big integers over OpenSSL (bytes in either order, hex, random, modular arithmetic with a constant-time =mod_exp=, wiped on free).  =LrgSrp6Client=: the client side of SRP-6a with an =LrgSrp6Style= selecting RFC 5054 encodings or the World of Warcraft login variant (little-endian, k = 3, upper-cased credentials, interleaved-hash session key).  =LrgArc4=: the ARC4 stream cipher with drop-N, for legacy protocols.
+
 *** [[file:reel/index.org][Reel Module]] - Programmatic Video Creation
 :PROPERTIES:
 :CUSTOM_ID: reel-module---programmatic-video-creation

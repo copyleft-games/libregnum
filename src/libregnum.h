@@ -430,6 +430,11 @@
 #include "io/lrg-byte-reader.h"
 #include "io/lrg-byte-writer.h"
 
+/* Cryptographic primitives */
+#include "crypto/lrg-big-num.h"
+#include "crypto/lrg-srp6-client.h"
+#include "crypto/lrg-arc4.h"
+
 /* Accessibility module (Phase 1) */
 #include "accessibility/lrg-color-filter.h"
 #include "accessibility/lrg-accessibility-settings.h"
