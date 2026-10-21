@@ -430,6 +430,11 @@
 #include "io/lrg-byte-reader.h"
 #include "io/lrg-byte-writer.h"
 
+/* Virtual file system */
+#include "vfs/lrg-vfs-source.h"
+#include "vfs/lrg-vfs.h"
+#include "vfs/lrg-vfs-dir-source.h"
+
 /* Accessibility module (Phase 1) */
 #include "accessibility/lrg-color-filter.h"
 #include "accessibility/lrg-accessibility-settings.h"
