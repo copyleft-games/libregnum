@@ -147,6 +147,7 @@ TEST_SOURCES := \
 	test-control.c \
 	test-byte-io.c \
 	test-vfs.c \
+	test-crypto.c \
 	test-accessibility.c \
 	test-steam.c \
 	test-economy.c \

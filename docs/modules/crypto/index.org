@@ -1,0 +1,151 @@
+#+title: Cryptographic primitives (LrgBigNum, LrgSrp6Client, LrgArc4)
+#+description: Big integers, an SRP-6a client parameterised for RFC 5054 and the World of Warcraft login protocol, and the ARC4 stream cipher
+
+* Cryptographic primitives
+:PROPERTIES:
+:CUSTOM_ID: crypto
+:END:
+Online games authenticate players and encrypt traffic with a small, stable set of primitives. This module provides the ones whose exact behaviour matters for interoperability with existing protocols, generic enough for any game:
+
+| Type | Header | What |
+|------+--------+------|
+| =LrgBigNum= | =src/crypto/lrg-big-num.h= | Immutable, reference-counted, non-negative big integers (OpenSSL =BIGNUM=): bytes in either order, hex, random, add/sub/mul/mod, modular add/sub/mul/exp |
+| =LrgSrp6Client= | =src/crypto/lrg-srp6-client.h= | The client side of SRP-6a with an =LrgSrp6Style= choosing RFC 5054 or World of Warcraft encodings |
+| =LrgArc4= | =src/crypto/lrg-arc4.h= | The ARC4 (RC4) stream cipher, with the drop-N variant |
+| =LRG_BIG_NUM_ERROR= | =src/crypto/lrg-big-num.h= | =PARSE=, =NEGATIVE=, =DIVISION_BY_ZERO=, =RANDOM=, =FAILED= |
+| =LRG_SRP6_ERROR= | =src/crypto/lrg-srp6-client.h= | =NOT_READY=, =INVALID_PARAMETERS=, =BAD_SERVER_KEY=, =BAD_SCRAMBLER=, =BAD_SERVER_PROOF=, =FAILED= |
+
+All error codes and =LrgSrp6Style= are registered enum types, so they are visible through GObject Introspection. Hashes come from GLib (=GChecksum=); arithmetic and randomness (=RAND_bytes()=) from OpenSSL, which libregnum already links. None of the OpenSSL types appear in public headers.
+
+* LrgBigNum
+:PROPERTIES:
+:CUSTOM_ID: crypto-bignum
+:END:
+A boxed, reference-counted wrapper around one OpenSSL =BIGNUM= that is never modified after construction: every operation returns a new value, so numbers can be shared between objects and threads without copying. When the last reference goes, the value is wiped (=BN_clear_free()=), which is what you want for private keys and shared secrets.
+
+** Value range
+Only non-negative integers exist. =lrg_big_num_sub()= fails with =LRG_BIG_NUM_ERROR_NEGATIVE= when the subtrahend is larger, instead of producing a negative number; for cryptographic work use =lrg_big_num_mod_sub()=, which always returns the residue in =[0, m)=. A zero modulus fails with =LRG_BIG_NUM_ERROR_DIVISION_BY_ZERO=.
+
+** Construction and encoding
+| Function | Notes |
+|----------+-------|
+| =lrg_big_num_new_from_uint64()= | |
+| =lrg_big_num_new_from_data()= / =_from_bytes()= | Unsigned magnitude in =LRG_BYTE_ORDER_LITTLE_ENDIAN= or =LRG_BYTE_ORDER_BIG_ENDIAN= (the =LrgByteOrder= of the binary I/O module). Zero-length input is zero; redundant zero bytes are ignored |
+| =lrg_big_num_new_from_hex()= | Most significant digit first, optional =0x=; any sign, space or other character is =LRG_BIG_NUM_ERROR_PARSE= |
+| =lrg_big_num_new_random()= | Uniform in =[0, 2^n)= from =RAND_bytes()= |
+| =lrg_big_num_to_data()= / =_to_bytes()= | Padded with zeros on the most significant side to =min_length=; never truncated (a longer value comes out at its natural length). Zero with =min_length= 0 is empty |
+| =lrg_big_num_to_hex()= | Upper case, no prefix, no leading zeros; zero is ="0"= |
+| =lrg_big_num_to_uint64()= | =FALSE= when the value needs more than 64 bits |
+
+** Arithmetic
+=add=, =sub=, =mul=, =mod=, =mod_add=, =mod_sub=, =mod_mul=, =mod_exp=, plus =compare=, =equal=, =is_zero=, =get_num_bytes= and =get_num_bits=.
+
+=lrg_big_num_mod_exp()= treats the exponent as a secret: for an odd modulus (every prime group) it sets =BN_FLG_CONSTTIME= on a private copy of the exponent, so OpenSSL uses its constant-time Montgomery exponentiation. OpenSSL has no constant-time path for even moduli, so those use the ordinary algorithm.
+
+* LrgSrp6Client
+:PROPERTIES:
+:CUSTOM_ID: crypto-srp6
+:END:
+SRP-6a is a password-authenticated key exchange: the server stores only a salt =s= and a verifier =v = g^x mod N=; the client proves knowledge of the password and both sides end with a shared session key =K=, without the password or a password-equivalent crossing the wire.
+
+** Common math
+All styles compute the same core; they differ only in how integers become bytes and in =k= and =K=.
+
+| Symbol | Meaning |
+|--------+---------|
+| =N=, =g= | The group: a safe prime and a generator (=lrg_srp6_client_set_parameters()=). =len(N)= is the byte length of =N= |
+| =H= | The hash (=GChecksumType=, default SHA-1; =lrg_srp6_client_set_hash_type()=) |
+| =I=, =P= | Username and password (=lrg_srp6_client_set_identity()=) |
+| =s= | The salt, used exactly as the server sent it |
+| =a=, =A= | Client secret and public key, =A = g^a mod N= |
+| =B= | Server public key, =B = k*v + g^b mod N= |
+| =x= | =H(s, H(I ":" P))= read as an integer |
+| =u= | =H(PAD(A), PAD(B))= read as an integer |
+| =S= | =(B - k * g^x) ^ (a + u * x) mod N= (the server computes the same value as =(A * v^u)^b=) |
+| =M1= | Client proof: =H(H(N) xor H(g), H(I), s, A, B, K)= |
+| =M2= | Server proof: =H(A, M1, K)= |
+
+=PAD(z)= writes =z= at exactly =len(N)= bytes. Commas inside =H(...)= denote concatenation of the byte strings.
+
+The client refuses (=LRG_SRP6_ERROR_BAD_SERVER_KEY=) a =B= that is zero modulo =N= or not below =N=: with =B mod N = 0= the session key no longer depends on the password, so a fake server could impersonate any account. It also refuses =u = 0= (=LRG_SRP6_ERROR_BAD_SCRAMBLER=), which would drop the password from =S=. The server proof is compared in constant time (=CRYPTO_memcmp()=).
+
+The ephemeral =a= is drawn with =RAND_bytes()= (at least 256 bits and at least as wide as =N=) unless =lrg_srp6_client_set_private_key()= fixed it for a test.
+
+** =LRG_SRP6_STYLE_RFC5054=
+Big-endian throughout, following RFC 5054 for =k= and =u= and RFC 2945 for =K=, =M1= and =M2= (the same choices as the =srp= Python package and =csrp=):
+
+| Value | Bytes |
+|-------+-------|
+| =k= | =H(PAD(N), PAD(g))=, big-endian integer |
+| =x=, =u= | digest read big-endian |
+| =A= (wire) | =PAD(A)=, big-endian |
+| =K= | =H(S)=, =S= without leading zeros; one digest long |
+| =M1= | =H(N)= and =H(g)= over the numbers without leading zeros; =A= and =B= without leading zeros |
+| =M2= | =A= without leading zeros |
+| =I=, =P= | used as given |
+
+** =LRG_SRP6_STYLE_WOW= (World of Warcraft "Grunt" login, 1.x to 3.x)
+Every integer is little-endian, on the wire and inside every hash, and =A=, =B=, =N= and =S= are always written at =len(N)= bytes (32 for the standard group). The server's =AUTH_LOGON_CHALLENGE= response carries =B= (32 bytes), =g= (1 byte, 7), =N= (32 bytes) and =s= (32 bytes), all little-endian; the client answers with =AUTH_LOGON_PROOF= carrying =A= (32 bytes) and =M1= (20 bytes); the server's proof response carries =M2=.
+
+| Value | Bytes |
+|-------+-------|
+| =I=, =P= | upper-cased with =g_ascii_strup()= (ASCII letters only) before any hashing |
+| =k= | 3 |
+| =x= | =H(s, H(upper(I) ":" upper(P)))= read little-endian |
+| =u= | =H(LE32(A), LE32(B))= read little-endian |
+| =K= | =lrg_srp6_hash_interleave(LE32(S))=: 40 bytes with SHA-1 |
+| =M1= | =H(H(LE32(N)) xor H(g as 1 byte), H(upper(I)), s, LE32(A), LE32(B), K)= |
+| =M2= | =H(LE32(A), M1, K)= |
+
+Clients that store a "remembered" credential hash instead of the password use =lrg_srp6_client_set_identity_hash()= with =H(upper(I) ":" upper(P))=; the username is still upper-cased for =H(I)=. The 40-byte =K= is what WoW derives its world-session keys from (in 3.x the ARC4-drop1024 header-encryption keys are =HMAC-SHA1(seed, K)=; the =CMSG_AUTH_SESSION= digest also covers =K=).
+
+*** The interleaved hash
+=lrg_srp6_hash_interleave()= takes =S= little-endian at =len(N)= bytes and:
+1. skips the zero bytes at the start of the buffer (the least significant bytes of =S=);
+2. if an odd number of bytes remain, skips one more (non-zero) byte, so the rest splits evenly;
+3. hashes the bytes at even offsets into =E= and those at odd offsets into =O=;
+4. returns =E[0] O[0] E[1] O[1] ...=, twice the digest length.
+
+So one or two zero bytes at the start both leave bytes 2 onward, and three leave bytes 4 onward. This is RFC 2945's =SHA_Interleave= applied to the little-endian buffer, as the WoW client does it.
+
+** Usage
+#+begin_src c
+g_autoptr(LrgSrp6Client) srp = lrg_srp6_client_new (LRG_SRP6_STYLE_WOW);
+g_autoptr(LrgBigNum) N = lrg_big_num_new_from_bytes (n_le, LRG_BYTE_ORDER_LITTLE_ENDIAN);
+g_autoptr(LrgBigNum) g = lrg_big_num_new_from_bytes (g_le, LRG_BYTE_ORDER_LITTLE_ENDIAN);
+
+lrg_srp6_client_set_identity (srp, username, password);
+lrg_srp6_client_set_parameters (srp, N, g);
+if (!lrg_srp6_client_process_challenge (srp, salt, B, error))
+    return FALSE;                     /* bad B, or u == 0 */
+
+A  = lrg_srp6_client_get_public_key (srp);    /* 32 bytes, LE */
+M1 = lrg_srp6_client_get_client_proof (srp);  /* 20 bytes */
+/* ... send A, M1; receive M2 ... */
+if (!lrg_srp6_client_verify_server_proof (srp, M2, error))
+    return FALSE;
+K = lrg_srp6_client_get_session_key (srp);    /* 40 bytes */
+#+end_src
+
+Protocols where the client sends =A= first call =lrg_srp6_client_generate_public_key()= before the challenge. =lrg_srp6_client_set_multiplier()= overrides =k= (for example SRP-6 with =k = 3= over RFC 5054 encodings). Changing parameters, identity, hash or private key discards computed results.
+
+** Secrets
+The password is hashed immediately and its normalised copy wiped; =H(I ":" P)=, =K=, =M1= and =M2= live in instance buffers wiped on reset and finalize; intermediate integers (=x=, =v=, =S=, the exponent) are =LrgBigNum= values wiped on release. Getters return copies the caller owns.
+
+* LrgArc4
+:PROPERTIES:
+:CUSTOM_ID: crypto-arc4
+:END:
+ARC4 is broken and must not protect new protocols; it is here because legacy game protocols need it bit for bit (World of Warcraft 3.x encrypts world-packet headers with ARC4-drop1024). OpenSSL 3 moved RC4 to its legacy provider, so libregnum implements the textbook algorithm itself.
+
+- =lrg_arc4_new(key)=: the key schedule; keys are 1 to 256 bytes.
+- =lrg_arc4_new_drop(key, n)=: RC4-drop[n], the key schedule followed by discarding =n= keystream bytes. WoW 3.3.5 uses =n= = 1024.
+- =lrg_arc4_process()= XORs a buffer in place; =lrg_arc4_process_bytes()= returns a new =GBytes= (for bindings). Each call continues the keystream, so one state serves one direction of a stream; encryption and decryption are the same operation.
+- =lrg_arc4_discard()= advances the keystream without output.
+- Value semantics: =LrgArc4= is a boxed type whose =lrg_arc4_copy()= duplicates the state, after which both copies produce the same keystream independently. =lrg_arc4_free()= wipes the state. Not thread-safe.
+
+* Tests
+=tests/test-crypto.c=:
+- =LrgBigNum=: hex and byte round trips in both orders with padding, error cases, small arithmetic checked by hand, large =mul= and =mod_exp= (odd and even moduli) checked against Python.
+- =LrgArc4=: the RFC 6229 keystream vectors for 40-, 128- and 256-bit keys at all listed offsets; drop-N against the offset-1024 vector; piecewise processing, decryption and copies.
+- =LrgSrp6Client=: a test server written from the formulas runs full exchanges in both styles (fixed and random =a=); fixed vectors for both styles computed with an independent Python implementation; the interleaved hash with zero, one, two and three leading zero bytes; =set_identity_hash()=; bad =B= (0, =N=, above =N=), wrong and short =M2=, wrong password, and missing inputs.
