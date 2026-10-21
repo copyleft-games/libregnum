@@ -1,0 +1,113 @@
+#+title: Virtual File System (LrgVfs, LrgVfsSource, LrgVfsDirSource)
+#+description: A layered virtual file system: directories, archives and mod overlays mounted by priority, with path normalization, optional case-insensitive matching and merged listings
+
+* Virtual File System
+:PROPERTIES:
+:CUSTOM_ID: vfs
+:END:
+Games read their data from more than one place: base archives, patch archives that replace some of their files, a loose directory for development, and mods layered on top. =LrgVfs= stacks those places (/sources/) and answers each lookup from the highest-priority source that has the path, so overriding a file is a matter of mounting something above it. Nothing about it is specific to one game: any format that can say "do you have this path?" and "give me its bytes" can be a source.
+
+| Type | Header | What |
+|------+--------+------|
+| =LrgVfsSource= | =src/vfs/lrg-vfs-source.h= | The interface a source implements: =get_name=, =has_file=, =read_file= (required: =has_file=, =read_file=), =list_files=, =get_file_size= (optional) |
+| =LrgVfs= | =src/vfs/lrg-vfs.h= | The mount stack: priorities, mount ids, owner tags, path normalization, lookups, merged listings, =source-added= / =source-removed= signals |
+| =LrgVfsDirSource= | =src/vfs/lrg-vfs-dir-source.h= | A directory on disk as a source, optionally matching names ignoring ASCII case, confined to its root |
+| =LRG_VFS_ERROR= | =src/vfs/lrg-vfs-source.h= | =NOT_FOUND=, =INVALID_PATH=, =IO=, =NOT_SUPPORTED= (=LrgVfsError=, with a =GType=) |
+
+* Mounting
+#+begin_src c
+g_autoptr(LrgVfs) vfs = lrg_vfs_new (TRUE);          /* case-insensitive */
+g_autoptr(LrgVfsDirSource) data = lrg_vfs_dir_source_new ("/games/x/Data", TRUE);
+g_autoptr(LrgVfsDirSource) mod = lrg_vfs_dir_source_new ("/mods/hd/files", TRUE);
+guint base_id;
+
+base_id = lrg_vfs_add_source (vfs, LRG_VFS_SOURCE (data), 0, "game");
+lrg_vfs_add_source (vfs, LRG_VFS_SOURCE (mod), 100, "mod:hd");
+
+bytes = lrg_vfs_read_file (vfs, "Textures\\Sky.png", &error);   /* the mod's, if it has one */
+
+lrg_vfs_remove_owner (vfs, "mod:hd");                 /* every mount of the mod at once */
+#+end_src
+
+** Order
+- Mounts are ordered by *descending priority*. Among *equal priorities the most recently added mount comes first*, so a later mount overrides an earlier one, as overlays do.
+- =lrg_vfs_add_source()= returns a mount id: never 0, never reused by the same VFS. The same source may be mounted several times (each mount has its own id).
+- =lrg_vfs_get_mount_ids()= returns the ids in lookup order; =lrg_vfs_get_source()= maps an id back to its source.
+- =lrg_vfs_remove_source()= removes one mount; =lrg_vfs_remove_owner()= removes every mount added with that owner tag (exact comparison) and returns how many it removed.
+- =LrgVfs::source-added= and =LrgVfs::source-removed= carry the source and the mount id. They are emitted after the mount list has changed, outside the lock.
+
+** Lookups
+- =lrg_vfs_has_file()=: some source has the path (an invalid path is simply =FALSE=).
+- =lrg_vfs_find_source()=: which mount wins for a path, returning the source and its mount id; =NOT_FOUND= when none has it.
+- =lrg_vfs_read_file()=: the winning source's bytes. If the winner fails to read (=IO=), that error is returned, prefixed with the source's name and mount id; lower sources are *not* tried, since silently serving the overridden file would hide a broken override.
+- =lrg_vfs_get_file_size()=: the size from the winning source.
+
+* Paths
+Every path given to =LrgVfs= is normalized once, by =lrg_vfs_normalize_path()=, before any source sees it:
+
+| Input | Normalized |
+|-------+------------|
+| =\World\Maps\x.adt= | =World/Maps/x.adt= |
+| =/a//b///c/= | =a/b/c= |
+| =./a/./b= | =a/b= |
+| =a/../b=, =..= | =LRG_VFS_ERROR_INVALID_PATH= |
+| a NUL byte inside an explicit length | =LRG_VFS_ERROR_INVALID_PATH= |
+
+- =\= becomes =/=; leading, trailing and repeated separators and "." components are dropped; case is kept.
+- A ".." component is rejected rather than resolved, so no path can climb out of a source.
+- =lrg_vfs_normalize_path()= takes an explicit length (or -1) so a source building paths from binary data (an archive's name list) can pass a length-delimited name and have an embedded NUL rejected.
+- Normalizing to "" (the root) is valid for a listing prefix but names no file, so lookups reject it.
+- Bytes are not otherwise validated: archive listings are not always UTF-8.
+
+* Case sensitivity
+=lrg_vfs_new (TRUE)= (the construct-only =case-insensitive= property) makes the VFS compare paths ignoring ASCII case. It affects what the VFS itself compares:
+- listing prefixes match ignoring case;
+- merged listings are de-duplicated on the ASCII-folded path, keeping the spelling of the highest-priority source;
+- listings are sorted on the folded path.
+
+Lookups pass the path, as spelled, to each source, which matches names its own way: an archive whose name hash ignores case is naturally case-insensitive, and =LrgVfsDirSource= ignores case when created with =case_insensitive= =TRUE=. A case-insensitive VFS should therefore be given case-insensitive sources. Only ASCII is folded (=g_ascii_strdown()=), never locale-dependent case.
+
+* Listing
+=lrg_vfs_list_files (vfs, prefix, &error)= returns the files *below* the directory =prefix= (=NULL= or "" for all):
+- a file named exactly like the prefix is not below it, and =World= does not match =WorldX/...=;
+- results from every source are normalized (entries that cannot be normalized are dropped), filtered, de-duplicated and sorted bytewise (on the folded path when case-insensitive);
+- a source that cannot list (=NOT_SUPPORTED=) contributes nothing; any other source error fails the whole call, prefixed with the source's name and mount id.
+
+* Writing a source
+Implement =LrgVfsSourceInterface=:
+
+| vfunc | Required | Without it |
+|-------+----------+------------|
+| =get_name= | no | the type name is used in messages |
+| =has_file= | yes | =lrg_vfs_source_has_file()= warns and returns =FALSE= |
+| =read_file= | yes | =lrg_vfs_source_read_file()= fails with =NOT_SUPPORTED= |
+| =list_files= | no | =lrg_vfs_source_list_files()= fails with =NOT_SUPPORTED= (never an empty success) |
+| =get_file_size= | no | =lrg_vfs_source_get_file_size()= reads the whole file and measures it |
+
+- Paths arrive normalized (see [[Paths]]). =list_files= gets a normalized prefix ("" for everything) and may return more than asked; the VFS filters again.
+- =read_file= returns =NULL= with =NOT_FOUND= when the file is missing and =IO= when it exists but cannot be read.
+- =list_files= returns a =GPtrArray= of newly allocated strings with =g_free= as its free function.
+- The public wrappers =lrg_vfs_source_*()= check that a vfunc exists before calling it, so callers can use any source directly, without a VFS.
+
+* LrgVfsDirSource
+=lrg_vfs_dir_source_new (root, case_insensitive)= serves the regular files below =root=. The root need not exist yet; until it does the source has no files.
+
+** Lookup
+Paths are re-normalized (the source can be used without an =LrgVfs=) and resolved one component at a time. When case-insensitive, a component that does not exist with the exact spelling is found by scanning its directory for a name equal ignoring ASCII case; with several candidates (=Foo= and =FOO= for =foo=) the bytewise-smallest name is used, so the answer never depends on directory order. An exact match always wins. =lrg_vfs_dir_source_resolve()= exposes the result: the full path on disk of an existing regular file, or =NULL=.
+
+** Containment
+- ".." never reaches the file system: =LrgVfs= and the source's own normalization reject it.
+- Every resolved file is checked with =realpath()= to lie inside the real path of the root, so a symbolic link pointing outside the root is treated as absent. Links inside the root work.
+- Listing walks the tree recursively with =lstat()=: it does not descend into linked directories (no loops), lists linked files only when they resolve inside the root, and stops 64 levels deep. Paths are returned relative to the root in on-disk spelling.
+- A missing prefix directory lists as empty; an unreadable directory is an =IO= error.
+- This keeps a mod's data inside its directory; it is not a sandbox against a hostile process changing the tree while it is read (see the =sandbox= module for that).
+
+Files are read whole with =g_file_get_contents()=; sizes come from =stat()=.
+
+* Thread safety
+- =LrgVfs= guards its mount list with a =GMutex=: mounting, unmounting and lookups may run from several threads.
+- A lookup works on a snapshot of the mounts (reference-counted) taken when it starts and calls sources outside the lock, so a slow source never blocks mounting, and a source unmounted mid-lookup stays alive until the lookup is done with it.
+- Calls into sources are not serialized: a source shared between threads must be thread-safe. =LrgVfsDirSource= is immutable after construction and therefore thread-safe.
+- Signals are emitted in the thread that changed the mounts.
+
+Tests: =tests/test-vfs.c= (in-memory test sources, one lacking the optional vfuncs, and a temporary directory tree with nested directories, case variants and symbolic links).

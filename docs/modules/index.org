@@ -45,6 +45,13 @@ loaded module.
 
 =LrgByteReader= and =LrgByteWriter=: cursors over little- or big-endian binary data for file formats and network packets.  Every read is bounds-checked and fails with an =LRG_BYTE_ERROR= without moving the cursor; sub-readers confine chunk parsing; slices share data without copying; the writer patches length fields written afterwards.
 
+*** [[file:vfs/index.org][Virtual File System Module]] - layered sources mounted by priority
+:PROPERTIES:
+:CUSTOM_ID: vfs-module
+:END:
+
+=LrgVfs=, =LrgVfsSource= and =LrgVfsDirSource=: directories, archives and mod overlays mounted by priority (newest first among equals), each with a mount id and an optional owner tag for removing a mod's mounts at once.  Paths are normalized once (=\= to =/=, no =..=), the VFS can compare them ignoring ASCII case, listings are merged, de-duplicated and sorted, and the directory source matches names case-insensitively without ever leaving its root.
+
 *** [[file:reel/index.org][Reel Module]] - Programmatic Video Creation
 :PROPERTIES:
 :CUSTOM_ID: reel-module---programmatic-video-creation

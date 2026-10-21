@@ -315,6 +315,9 @@ PUBLIC_HEADERS := \
 	src/control/lrg-control-client.h \
 	src/io/lrg-byte-reader.h \
 	src/io/lrg-byte-writer.h \
+	src/vfs/lrg-vfs-source.h \
+	src/vfs/lrg-vfs.h \
+	src/vfs/lrg-vfs-dir-source.h \
 	src/accessibility/lrg-color-filter.h \
 	src/accessibility/lrg-accessibility-settings.h \
 	src/steam/lrg-steam-service.h \
@@ -923,6 +926,9 @@ SOURCES := \
 	src/control/lrg-control-client.c \
 	src/io/lrg-byte-reader.c \
 	src/io/lrg-byte-writer.c \
+	src/vfs/lrg-vfs-source.c \
+	src/vfs/lrg-vfs.c \
+	src/vfs/lrg-vfs-dir-source.c \
 	src/accessibility/lrg-color-filter.c \
 	src/accessibility/lrg-accessibility-settings.c \
 	src/steam/lrg-steam-service.c \
