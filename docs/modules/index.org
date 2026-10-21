@@ -38,6 +38,13 @@ loaded module.
 
 =LrgCommand=, =LrgCommandParam=, =LrgCommandCall= and =LrgCommandRegistry=: named commands with typed parameters (JSON schemas), help, results that complete at once or later, and an event stream with topics; =LrgControlServer= serves a registry on an owner-only Unix socket (a text dialect and JSON-RPC 2.0, batches, an optional token, event subscriptions) without a main loop; =LrgControlClient= is the blocking client a =*ctl= tool or a test uses.  The registry is what an MCP bridge serves as tools.
 
+*** [[file:io/index.org][Binary I/O Module]] - bounds-checked binary readers and writers
+:PROPERTIES:
+:CUSTOM_ID: io-module
+:END:
+
+=LrgByteReader= and =LrgByteWriter=: cursors over little- or big-endian binary data for file formats and network packets.  Every read is bounds-checked and fails with an =LRG_BYTE_ERROR= without moving the cursor; sub-readers confine chunk parsing; slices share data without copying; the writer patches length fields written afterwards.
+
 *** [[file:reel/index.org][Reel Module]] - Programmatic Video Creation
 :PROPERTIES:
 :CUSTOM_ID: reel-module---programmatic-video-creation

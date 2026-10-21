@@ -1,0 +1,57 @@
+#+title: Binary I/O (LrgByteReader, LrgByteWriter)
+#+description: Bounds-checked cursors for reading and building little- and big-endian binary data: game file formats, network packets, save files
+
+* Binary I/O
+:PROPERTIES:
+:CUSTOM_ID: io
+:END:
+Game file formats and network protocols are sequences of fixed-width integers, floats, strings and nested blocks, in little- or big-endian byte order. =LrgByteReader= reads them from a =GBytes= and never runs past the end: every read either succeeds or returns =FALSE= with an =LRG_BYTE_ERROR=, and a failed read leaves the cursor where it was. A parser fed truncated or hostile data therefore fails cleanly instead of reading out of bounds. =LrgByteWriter= is its counterpart for building packets, save files and test fixtures.
+
+| Type | Header | What |
+|------+--------+------|
+| =LrgByteReader= | =src/io/lrg-byte-reader.h= | A reference-counted cursor over a =GBytes=: integers (8, 16, 24, 32 and 64 bit), floats, four-character codes, magic checks, C strings, fixed-width strings, strings at an offset, zero-copy slices and sub-readers |
+| =LrgByteWriter= | =src/io/lrg-byte-writer.h= | A growable buffer: the same value types, NUL-padded fixed strings, zero fill, and patching earlier fields (lengths written afterwards) |
+| =LrgByteOrder= | =src/io/lrg-byte-reader.h= | =little-endian= or =big-endian=; per reader or writer, switchable per field |
+| =LRG_BYTE_ERROR= | =src/io/lrg-byte-reader.h= | =EOF= (not enough bytes), =RANGE= (a position or slice outside the data), =INVALID= (an unterminated string, a wrong magic number) |
+
+Both are boxed types, so they work in collections, signals and through GObject Introspection.
+
+* Reading a chunked file
+Each chunk is read with its own sub-reader, so a corrupt chunk size can never make one chunk read into its neighbour:
+
+#+begin_src c
+g_autoptr(LrgByteReader) file = lrg_byte_reader_new (bytes, LRG_BYTE_ORDER_LITTLE_ENDIAN);
+
+while (lrg_byte_reader_get_remaining (file) > 0)
+  {
+    g_autoptr(LrgByteReader) chunk = NULL;
+    guint32 tag, size;
+
+    if (!lrg_byte_reader_read_fourcc (file, &tag, error) ||
+        !lrg_byte_reader_read_u32 (file, &size, error))
+      return FALSE;
+    chunk = lrg_byte_reader_read_sub_reader (file, size, error);
+    if (chunk == NULL)
+      return FALSE;
+    /* parse chunk; reads cannot leave it */
+  }
+#+end_src
+
+- =lrg_byte_reader_read_fourcc()= returns the four bytes as a 32-bit value in the reader's byte order. A little-endian format that stores the tag "MVER" reversed (=REVM= on disk) reads as ='MVER'=.
+- =lrg_byte_reader_read_bytes()= and sub-readers share the data without copying.
+- =lrg_byte_reader_get_cstring_at()= reads string tables by offset without moving the cursor.
+
+* Building a packet
+#+begin_src c
+g_autoptr(LrgByteWriter) w = lrg_byte_writer_new (LRG_BYTE_ORDER_BIG_ENDIAN);
+
+lrg_byte_writer_write_u16 (w, 0);               /* length, patched below */
+lrg_byte_writer_write_u32 (w, opcode);
+lrg_byte_writer_write_cstring (w, name);
+lrg_byte_writer_patch_u16 (w, 0, lrg_byte_writer_get_size (w) - 2, NULL);
+packet = lrg_byte_writer_steal_bytes (w);       /* no copy */
+#+end_src
+
+Values are assembled byte by byte, so results do not depend on the host's endianness or alignment (x86_64 and aarch64 behave the same).
+
+Tests: =tests/test-byte-io.c=.

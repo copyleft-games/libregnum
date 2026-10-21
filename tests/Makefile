@@ -145,6 +145,7 @@ TEST_SOURCES := \
 	test-crash.c \
 	test-sandbox.c \
 	test-control.c \
+	test-byte-io.c \
 	test-accessibility.c \
 	test-steam.c \
 	test-economy.c \

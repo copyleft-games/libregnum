@@ -313,6 +313,8 @@ PUBLIC_HEADERS := \
 	src/control/lrg-command-registry.h \
 	src/control/lrg-control-server.h \
 	src/control/lrg-control-client.h \
+	src/io/lrg-byte-reader.h \
+	src/io/lrg-byte-writer.h \
 	src/accessibility/lrg-color-filter.h \
 	src/accessibility/lrg-accessibility-settings.h \
 	src/steam/lrg-steam-service.h \
@@ -919,6 +921,8 @@ SOURCES := \
 	src/control/lrg-command-registry.c \
 	src/control/lrg-control-server.c \
 	src/control/lrg-control-client.c \
+	src/io/lrg-byte-reader.c \
+	src/io/lrg-byte-writer.c \
 	src/accessibility/lrg-color-filter.c \
 	src/accessibility/lrg-accessibility-settings.c \
 	src/steam/lrg-steam-service.c \
