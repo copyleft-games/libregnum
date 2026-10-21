@@ -426,6 +426,10 @@
 #include "control/lrg-control-server.h"
 #include "control/lrg-control-client.h"
 
+/* Binary I/O */
+#include "io/lrg-byte-reader.h"
+#include "io/lrg-byte-writer.h"
+
 /* Accessibility module (Phase 1) */
 #include "accessibility/lrg-color-filter.h"
 #include "accessibility/lrg-accessibility-settings.h"
