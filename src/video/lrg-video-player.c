@@ -102,6 +102,10 @@ lrg_video_player_dispose (GObject *object)
 {
     LrgVideoPlayer *self = LRG_VIDEO_PLAYER (object);
 
+#ifdef LRG_HAS_FFMPEG
+    /* A player dropped without close() still owns its decoder. */
+    g_clear_pointer (&self->decoder, lrg_video_decoder_free);
+#endif
     g_clear_object (&self->texture);
     g_clear_object (&self->subtitles);
 
