@@ -9,10 +9,13 @@
  * Reads a DDS file's header and mip chain (legacy DDS_PIXELFORMAT
  * headers and the DX10 extension) and decodes any level to tightly
  * packed RGBA8: DXT1 (BC1, with 1-bit alpha), DXT3 (BC2), DXT5 (BC3),
- * and uncompressed RGB, RGBA, luminance and alpha surfaces described by
- * bit masks.  Written from Microsoft's public DDS and block compression
- * documentation.  No GL context is needed; lrg_dds_image_to_image()
- * wraps a decoded level in a #GrlImage for upload.
+ * BC7 (BPTC, through the DX10 header), and uncompressed RGB, RGBA,
+ * luminance and alpha surfaces described by bit masks.  Written from
+ * Microsoft's public DDS and block compression documentation and the
+ * Khronos Data Format Specification (BPTC).  No GL context is needed;
+ * lrg_dds_image_to_image() wraps a decoded level in a #GrlImage for
+ * upload, and lrg_dds_decode_bc7() decodes bare BC7 blocks that come
+ * without a DDS header (Unity texture assets, for example).
  *
  * Malformed input (bad magic, impossible header, truncated level 0,
  * unsupported formats) fails with an %LRG_DDS_ERROR; a mip chain cut
@@ -112,7 +115,7 @@ lrg_dds_image_get_format (LrgDdsImage *self);
  * @self: an #LrgDdsImage
  *
  * Whether the format can carry transparency (DXT1 always may, through
- * its three-colour blocks).
+ * its three-colour blocks; BC7 always may, through its alpha modes).
  *
  * Returns: %TRUE when decoded pixels may have alpha below 255
  */
@@ -199,5 +202,43 @@ GrlImage *
 lrg_dds_image_to_image (LrgDdsImage  *self,
                         guint         level,
                         GError      **error);
+
+/**
+ * LRG_DDS_BC7_BLOCK_SIZE:
+ *
+ * Bytes in one BC7 block, which holds a 4x4 tile of pixels.
+ */
+#define LRG_DDS_BC7_BLOCK_SIZE (16)
+
+/**
+ * lrg_dds_decode_bc7:
+ * @blocks: (array length=length): BC7 blocks, row-major, 16 bytes per
+ *   4x4 tile
+ * @length: the number of bytes in @blocks
+ * @width: the image width in pixels (1 .. %LRG_DDS_IMAGE_MAX_SIZE)
+ * @height: the image height in pixels (1 .. %LRG_DDS_IMAGE_MAX_SIZE)
+ * @error: return location for a #GError
+ *
+ * Decodes one BC7 (BPTC, DXGI_FORMAT_BC7_UNORM) surface that has no
+ * DDS header.  @blocks holds ceil(@width / 4) * ceil(@height / 4)
+ * blocks, rows of blocks top to bottom; tiles that overhang a width or
+ * height that is not a multiple of 4 are clipped.  Bytes past the last
+ * block are ignored.  All eight modes are decoded; a block in the
+ * reserved mode (first byte 0) decodes to transparent black, as the
+ * format specification requires.  Colour values are returned as stored
+ * (no sRGB conversion).
+ *
+ * Returns: (transfer full) (nullable): @width * @height * 4 bytes of
+ *   RGBA8, rows top to bottom, or %NULL with %LRG_DDS_ERROR_INVALID
+ *   for a zero or oversized size and %LRG_DDS_ERROR_TRUNCATED when
+ *   @length is short of the blocks the size needs
+ */
+LRG_AVAILABLE_IN_ALL
+GBytes *
+lrg_dds_decode_bc7 (const guint8  *blocks,
+                    gsize          length,
+                    guint          width,
+                    guint          height,
+                    GError       **error);
 
 G_END_DECLS

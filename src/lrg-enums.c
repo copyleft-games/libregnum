@@ -5614,6 +5614,7 @@ lrg_dds_format_get_type (void)
             { LRG_DDS_FORMAT_LUMINANCE, "LRG_DDS_FORMAT_LUMINANCE", "luminance" },
             { LRG_DDS_FORMAT_LUMINANCE_ALPHA, "LRG_DDS_FORMAT_LUMINANCE_ALPHA", "luminance-alpha" },
             { LRG_DDS_FORMAT_ALPHA, "LRG_DDS_FORMAT_ALPHA", "alpha" },
+            { LRG_DDS_FORMAT_BC7, "LRG_DDS_FORMAT_BC7", "bc7" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =

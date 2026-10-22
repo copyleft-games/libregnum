@@ -31,7 +31,7 @@ The Graphics module provides:
 - *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
 - *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
 - *[[file:skinned-mesh.org][LrgSkinnedMesh]]* - Skinned meshes posed by a bone matrix palette: GPU skinning with a CPU reference and fallback
-- *[[file:dds-image.org][LrgDdsImage]]* - Read DirectDraw Surface files and decode DXT1/3/5 and uncompressed levels to RGBA8 on the CPU
+- *[[file:dds-image.org][LrgDdsImage]]* - Read DirectDraw Surface files and decode DXT1/3/5, BC7 and uncompressed levels to RGBA8 on the CPU (bare BC7 blocks too)
 - *[[file:sky-bodies.org][LrgSkyBodies]]* - Sun disc, moons with phases and a turning star field drawn over the sky dome
 - *[[file:texture-sampling.org][Texture sampling]]* - Point, mipmapped point, bilinear and trilinear sampling (=lrg_texture_set_sampling()=)
 
