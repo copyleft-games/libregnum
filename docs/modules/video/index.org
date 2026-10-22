@@ -2,7 +2,7 @@
 :PROPERTIES:
 :CUSTOM_ID: video-playback-module
 :END:
-The video module provides FFmpeg-based video playback with subtitle support.
+The video module provides FFmpeg-based video playback with subtitle support.  The audio stream is decoded to 16-bit PCM that the host pulls and plays through its own sound system (the player opens no audio device).
 
 ** Overview
 :PROPERTIES:
@@ -17,8 +17,8 @@ The video module provides FFmpeg-based video playback with subtitle support.
 │  └──────┬───────┘  └───────┬────────┘  └──────┬──────┘ │
 │         ↓                  ↓                  ↓        │
 │  ┌──────────────┐  ┌────────────────┐  ┌─────────────┐ │
-│  │ VideoTexture │  │  Audio Output  │  │ Subtitle    │ │
-│  │   (RGBA)     │  │                │  │  Renderer   │ │
+│  │ VideoTexture │  │  PCM (s16) for │  │ Subtitle    │ │
+│  │   (RGBA)     │  │  the host      │  │  Renderer   │ │
 │  └──────────────┘  └────────────────┘  └─────────────┘ │
 └─────────────────────────────────────────────────────────┘
 #+end_example
@@ -116,6 +116,6 @@ draw (void)
 :PROPERTIES:
 :CUSTOM_ID: documentation
 :END:
-- [[file:video-player.org][Video Player]] - Playback control and rendering
+- [[file:video-player.org][Video Player]] - Playback control, rendering and audio (PCM for the host)
 - [[file:subtitles.org][Subtitles]] - Subtitle tracks and rendering
 - [[file:ffmpeg-setup.org][FFmpeg Setup]] - Dependency installation
