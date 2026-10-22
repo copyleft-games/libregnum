@@ -18,6 +18,16 @@
  *   end_view     release the image.
  *   end_frame    xrEndFrame with one projection layer.
  *
+ * Hands (XR_EXT_hand_tracking, when the runtime offers it): two hand
+ * trackers are made with the session.  Their 26 joints are located at
+ * each frame's predicted display time on the frame-wait thread, straight
+ * after xrWaitFrame returns -- the thread that already blocks, so Emacs's
+ * never does -- and handed over with the frame in begin_frame, which then
+ * derives the aim ray and the pinch latch on the caller's thread (the
+ * latch's history lives there).  XR_FB_hand_tracking_aim, where offered,
+ * supplies the runtime's own aim pose and pinch strength; without it both
+ * are computed from the joints (lrg-vr-hand.c).
+ *
  * Every xrBeginFrame is matched by an xrEndFrame even when the runtime asks us
  * not to render (shouldRender == false) -- skipping it wedges the session.
  */
@@ -161,6 +171,20 @@ struct _LrgOpenXRService
     XrAction    act_view;
     XrAction    act_haptic;
     LrgXrHand   hands[2];
+
+    /* Articulated hands.  @hand_state is the current frame's (caller's
+       thread); @pending_hands is what the waiter located with the frame it
+       waited for, under @frame_lock. */
+    gboolean                    has_hand_ext;
+    gboolean                    has_hand_aim_ext;
+    gboolean                    hand_tracking;   /* trackers exist */
+    XrHandTrackerEXT            hand_trackers[2];
+    PFN_xrCreateHandTrackerEXT  create_hand_tracker;
+    PFN_xrDestroyHandTrackerEXT destroy_hand_tracker;
+    PFN_xrLocateHandJointsEXT   locate_hand_joints;
+    LrgVRHandState              hand_state[2];
+    LrgVRHandState              pending_hands[2];
+    gboolean                    pending_hands_valid;
 #endif
 };
 
@@ -947,6 +971,155 @@ sync_input (LrgOpenXRService *self,
     }
 }
 
+/* ------------------------------------------------------------------- hands - */
+
+/* Make a tracker per hand.  Hand tracking is a bonus: any failure leaves
+   it off and the service otherwise working. */
+static void
+create_hand_trackers (LrgOpenXRService *self)
+{
+    guint h;
+
+    self->hand_tracking = FALSE;
+    if (!self->has_hand_ext)
+        return;
+    if (XR_FAILED (xrGetInstanceProcAddr (self->instance, "xrCreateHandTrackerEXT",
+                       (PFN_xrVoidFunction *) &self->create_hand_tracker))
+        || XR_FAILED (xrGetInstanceProcAddr (self->instance, "xrDestroyHandTrackerEXT",
+                          (PFN_xrVoidFunction *) &self->destroy_hand_tracker))
+        || XR_FAILED (xrGetInstanceProcAddr (self->instance, "xrLocateHandJointsEXT",
+                          (PFN_xrVoidFunction *) &self->locate_hand_joints))
+        || self->create_hand_tracker == NULL || self->destroy_hand_tracker == NULL
+        || self->locate_hand_joints == NULL)
+    {
+        lrg_debug (LRG_LOG_DOMAIN_VR, "hand tracking: entry points missing");
+        return;
+    }
+    for (h = 0; h < 2; h++)
+    {
+        XrHandTrackerCreateInfoEXT ci = { .type = XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT };
+
+        ci.hand = h == 0 ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
+        ci.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
+        if (!xr_ok (self, self->create_hand_tracker (self->session, &ci,
+                                                     &self->hand_trackers[h]),
+                    "xrCreateHandTrackerEXT", NULL))
+        {
+            if (h == 1 && self->hand_trackers[0] != XR_NULL_HANDLE)
+                self->destroy_hand_tracker (self->hand_trackers[0]);
+            self->hand_trackers[0] = self->hand_trackers[1] = XR_NULL_HANDLE;
+            return;
+        }
+    }
+    self->hand_tracking = TRUE;
+    lrg_info (LRG_LOG_DOMAIN_VR, "OpenXR: hand tracking on%s",
+              self->has_hand_aim_ext ? " (with XR_FB_hand_tracking_aim)" : "");
+}
+
+static void
+destroy_hand_trackers (LrgOpenXRService *self)
+{
+    guint h;
+
+    for (h = 0; h < 2; h++)
+    {
+        if (self->hand_trackers[h] != XR_NULL_HANDLE && self->destroy_hand_tracker != NULL)
+            self->destroy_hand_tracker (self->hand_trackers[h]);
+        self->hand_trackers[h] = XR_NULL_HANDLE;
+        lrg_vr_hand_state_reset (&self->hand_state[h]);
+        lrg_vr_hand_state_reset (&self->pending_hands[h]);
+    }
+    self->hand_tracking = FALSE;
+    self->pending_hands_valid = FALSE;
+}
+
+/* Locate both hands' joints at WHEN into OUT -- raw joints, plus the
+   runtime's aim and pinch strength where XR_FB_hand_tracking_aim gives
+   them; aim and latch are finished later by finish_hands.  Called on the
+   frame-wait thread (or begin_frame's, unthreaded); touches nothing in
+   SELF but the immutable trackers. */
+static void
+locate_hands (LrgOpenXRService *self,
+              XrTime            when,
+              LrgVRHandState   *out)
+{
+    guint h, j;
+
+    for (h = 0; h < 2; h++)
+    {
+        XrHandJointsLocateInfoEXT li = { .type = XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
+        XrHandJointLocationsEXT locs = { .type = XR_TYPE_HAND_JOINT_LOCATIONS_EXT };
+        XrHandTrackingAimStateFB aim = { .type = XR_TYPE_HAND_TRACKING_AIM_STATE_FB };
+        XrHandJointLocationEXT joints[XR_HAND_JOINT_COUNT_EXT];
+        LrgVRHandState *st = &out[h];
+
+        lrg_vr_hand_state_reset (st);
+        if (self->hand_trackers[h] == XR_NULL_HANDLE)
+            continue;
+
+        memset (joints, 0, sizeof joints);
+        li.baseSpace = self->local_space;
+        li.time = when;
+        locs.jointCount = XR_HAND_JOINT_COUNT_EXT;
+        locs.jointLocations = joints;
+        if (self->has_hand_aim_ext)
+            locs.next = &aim;
+        if (XR_FAILED (self->locate_hand_joints (self->hand_trackers[h], &li, &locs))
+            || !locs.isActive)
+            continue;
+
+        st->active = TRUE;
+        for (j = 0; j < XR_HAND_JOINT_COUNT_EXT && j < LRG_VR_HAND_JOINT_COUNT; j++)
+        {
+            const XrHandJointLocationEXT *jl = &joints[j];
+
+            if (jl->locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)
+            {
+                st->valid |= 1u << j;
+                st->positions[j * 3 + 0] = jl->pose.position.x;
+                st->positions[j * 3 + 1] = jl->pose.position.y;
+                st->positions[j * 3 + 2] = jl->pose.position.z;
+            }
+            if (jl->locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)
+            {
+                st->orientations[j * 4 + 0] = jl->pose.orientation.x;
+                st->orientations[j * 4 + 1] = jl->pose.orientation.y;
+                st->orientations[j * 4 + 2] = jl->pose.orientation.z;
+                st->orientations[j * 4 + 3] = jl->pose.orientation.w;
+            }
+            st->radii[j] = jl->radius;
+        }
+        if (self->has_hand_aim_ext && (aim.status & XR_HAND_TRACKING_AIM_COMPUTED_BIT_FB))
+        {
+            pose_to_matrix (&aim.aimPose, st->aim);
+            st->aim_valid = (aim.status & XR_HAND_TRACKING_AIM_VALID_BIT_FB) != 0;
+            st->aim_from_runtime = TRUE;
+            st->pinch_strength = CLAMP (aim.pinchStrengthIndex, 0.0f, 1.0f);
+        }
+    }
+}
+
+/* Finish this frame's hands on the caller's thread: an unfocused session
+   has no hands (as it has no controllers, see sync_input), and each hand
+   gets its aim (from the head just located) and its pinch latch, whose
+   history WAS holds. */
+static void
+finish_hands (LrgOpenXRService *self,
+              const gboolean   *was)
+{
+    guint h;
+
+    for (h = 0; h < 2; h++)
+    {
+        LrgVRHandState *st = &self->hand_state[h];
+
+        if (self->state != XR_SESSION_STATE_FOCUSED)
+            lrg_vr_hand_state_reset (st);
+        lrg_vr_hand_state_compute_aim (st, (LrgVRHand) h, self->hmd);
+        lrg_vr_hand_state_update_pinch (st, was[h]);
+    }
+}
+
 /* ------------------------------------------------------------------ events - */
 
 static void
@@ -1051,6 +1224,7 @@ static gpointer
 frame_waiter (gpointer data)
 {
     LrgOpenXRService *self = data;
+    LrgVRHandState located[2];
 
     g_mutex_lock (&self->frame_lock);
     for (;;)
@@ -1070,6 +1244,10 @@ frame_waiter (gpointer data)
         g_mutex_unlock (&self->frame_lock);
 
         r = xrWaitFrame (self->session, &wi, &fs);
+        /* The hands for the frame just waited for, still outside the lock
+           and still "busy" so the session cannot end under the locate. */
+        if (XR_SUCCEEDED (r) && self->hand_tracking)
+            locate_hands (self, fs.predictedDisplayTime, located);
 
         g_mutex_lock (&self->frame_lock);
         self->waiter_busy = FALSE;
@@ -1078,6 +1256,11 @@ frame_waiter (gpointer data)
             guint64 one = 1;
 
             self->pending_state = fs;
+            if (self->hand_tracking)
+            {
+                memcpy (self->pending_hands, located, sizeof self->pending_hands);
+                self->pending_hands_valid = TRUE;
+            }
             self->frame_ready = TRUE;
             if (write (self->frame_fd, &one, sizeof one) < 0 && errno != EAGAIN)
                 lrg_debug (LRG_LOG_DOMAIN_VR, "frame fd write: %s",
@@ -1125,13 +1308,15 @@ lrg_openxr_service_real_initialize (LrgVRService  *service,
     LrgOpenXRService *self = LRG_OPENXR_SERVICE (service);
     XrExtensionProperties *props = NULL;
     guint32 n_props = 0, i;
-    const gchar *exts[5];
+    const gchar *exts[8];
     guint32 n_exts = 0;
     gboolean have_egl;
     XrInstanceCreateInfo ici = { .type = XR_TYPE_INSTANCE_CREATE_INFO };
     XrInstanceProperties ip = { .type = XR_TYPE_INSTANCE_PROPERTIES };
     XrSystemGetInfo sgi = { .type = XR_TYPE_SYSTEM_GET_INFO };
     XrSystemProperties sp = { .type = XR_TYPE_SYSTEM_PROPERTIES };
+    XrSystemHandTrackingPropertiesEXT hand_props =
+        { .type = XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT };
     PFN_xrGetOpenGLGraphicsRequirementsKHR get_req = NULL;
     XrGraphicsRequirementsOpenGLKHR req = { .type = XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR };
     XrReferenceSpaceCreateInfo rsci = { .type = XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
@@ -1172,6 +1357,14 @@ lrg_openxr_service_real_initialize (LrgVRService  *service,
     /* The Steam Frame's own controller profile (see profiles[]). */
     if (has_extension (props, n_props, "XR_VALVE_frame_controller_interaction"))
         exts[n_exts++] = "XR_VALVE_frame_controller_interaction";
+    /* Articulated hands, and the runtime's own aim and pinch for them. */
+    self->has_hand_ext = has_extension (props, n_props, XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+    if (self->has_hand_ext)
+        exts[n_exts++] = XR_EXT_HAND_TRACKING_EXTENSION_NAME;
+    self->has_hand_aim_ext = self->has_hand_ext
+        && has_extension (props, n_props, XR_FB_HAND_TRACKING_AIM_EXTENSION_NAME);
+    if (self->has_hand_aim_ext)
+        exts[n_exts++] = XR_FB_HAND_TRACKING_AIM_EXTENSION_NAME;
     g_free (props);
 
     g_strlcpy (ici.applicationInfo.applicationName,
@@ -1198,8 +1391,18 @@ lrg_openxr_service_real_initialize (LrgVRService  *service,
     if (!xr_ok (self, xrGetSystem (self->instance, &sgi, &self->system),
                 "xrGetSystem", error))
         goto fail;
+    if (self->has_hand_ext)
+        sp.next = &hand_props;
     if (XR_SUCCEEDED (xrGetSystemProperties (self->instance, self->system, &sp)))
         self->system_name = g_strdup (sp.systemName);
+    /* The extension can be present with no hand-tracking hardware. */
+    if (self->has_hand_ext && !hand_props.supportsHandTracking)
+    {
+        lrg_debug (LRG_LOG_DOMAIN_VR, "runtime has %s, the system cannot track hands",
+                   XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+        self->has_hand_ext = FALSE;
+        self->has_hand_aim_ext = FALSE;
+    }
 
     /* Required before xrCreateSession, even though we accept any version. */
     if (glXGetCurrentContext () != NULL)
@@ -1233,6 +1436,7 @@ lrg_openxr_service_real_initialize (LrgVRService  *service,
 
     if (!create_swapchains (self, error) || !create_actions (self, error))
         goto fail;
+    create_hand_trackers (self);
 
     self->refresh_rate = 90.0f;
     if (self->has_refresh_rate_ext)
@@ -1293,6 +1497,8 @@ lrg_openxr_service_real_shutdown (LrgVRService *service)
         if (self->hands[h].aim_space != XR_NULL_HANDLE)
             xrDestroySpace (self->hands[h].aim_space);
     memset (self->hands, 0, sizeof self->hands);
+    destroy_hand_trackers (self);
+    self->has_hand_ext = self->has_hand_aim_ext = FALSE;
 
     if (self->action_set != XR_NULL_HANDLE)
         xrDestroyActionSet (self->action_set);   /* destroys its actions too */
@@ -1427,6 +1633,7 @@ lrg_openxr_service_real_begin_frame (LrgVRService *service)
     XrViewState vs = { .type = XR_TYPE_VIEW_STATE };
     XrSpaceLocation head = { .type = XR_TYPE_SPACE_LOCATION };
     guint32 n = 0, i;
+    gboolean was[2];
 
     if (!self->initialized)
         return FALSE;
@@ -1449,6 +1656,13 @@ lrg_openxr_service_real_begin_frame (LrgVRService *service)
         }
         self->frame_state = self->pending_state;
         self->frame_ready = FALSE;
+        was[0] = self->hand_state[0].pinched;
+        was[1] = self->hand_state[1].pinched;
+        if (self->pending_hands_valid)
+        {
+            memcpy (self->hand_state, self->pending_hands, sizeof self->hand_state);
+            self->pending_hands_valid = FALSE;
+        }
         g_mutex_unlock (&self->frame_lock);
         while (read (self->frame_fd, &drained, sizeof drained) > 0)
             ;
@@ -1460,6 +1674,11 @@ lrg_openxr_service_real_begin_frame (LrgVRService *service)
         if (!xr_ok (self, xrWaitFrame (self->session, &wi, &self->frame_state),
                     "xrWaitFrame", NULL))
             return FALSE;
+        was[0] = self->hand_state[0].pinched;
+        was[1] = self->hand_state[1].pinched;
+        if (self->hand_tracking)
+            locate_hands (self, self->frame_state.predictedDisplayTime,
+                          self->hand_state);
     }
     if (!xr_ok (self, xrBeginFrame (self->session, &bi), "xrBeginFrame", NULL))
     {
@@ -1492,6 +1711,8 @@ lrg_openxr_service_real_begin_frame (LrgVRService *service)
         pose_to_matrix (&head.pose, self->hmd);
 
     sync_input (self, self->frame_state.predictedDisplayTime);
+    if (self->hand_tracking)
+        finish_hands (self, was);
     return TRUE;
 }
 
@@ -1686,6 +1907,25 @@ lrg_openxr_service_real_get_controller_axis (LrgVRService *service,
     if ((guint) hand > 1 || axis > 3)
         return 0.0f;
     return self->hands[hand].axes[axis];
+}
+
+static gboolean
+lrg_openxr_service_real_is_hand_tracking_supported (LrgVRService *service)
+{
+    return LRG_OPENXR_SERVICE (service)->hand_tracking;
+}
+
+static gboolean
+lrg_openxr_service_real_get_hand_state (LrgVRService   *service,
+                                        LrgVRHand       hand,
+                                        LrgVRHandState *state)
+{
+    LrgOpenXRService *self = LRG_OPENXR_SERVICE (service);
+
+    if (!self->hand_tracking || (guint) hand > 1)
+        return FALSE;
+    *state = self->hand_state[hand];
+    return state->active;
 }
 
 static void
@@ -1963,6 +2203,17 @@ lrg_openxr_service_get_session_state_name (LrgOpenXRService *self)
 #endif
 }
 
+gboolean
+lrg_openxr_service_has_hand_aim (LrgOpenXRService *self)
+{
+    g_return_val_if_fail (LRG_IS_OPENXR_SERVICE (self), FALSE);
+#ifdef LRG_HAS_OPENXR
+    return self->hand_tracking && self->has_hand_aim_ext;
+#else
+    return FALSE;
+#endif
+}
+
 gchar *
 lrg_openxr_service_get_interaction_profile (LrgOpenXRService *self,
                                             LrgVRHand         hand)
@@ -2036,6 +2287,8 @@ lrg_openxr_service_vr_service_init (LrgVRServiceInterface *iface)
     iface->is_session_running = lrg_openxr_service_real_is_session_running;
     iface->should_quit = lrg_openxr_service_real_should_quit;
     iface->is_controller_tracked = lrg_openxr_service_real_is_controller_tracked;
+    iface->is_hand_tracking_supported = lrg_openxr_service_real_is_hand_tracking_supported;
+    iface->get_hand_state = lrg_openxr_service_real_get_hand_state;
 #endif
 }
 
@@ -2053,6 +2306,8 @@ lrg_openxr_service_init (LrgOpenXRService *self)
     g_cond_init (&self->frame_cond);
     self->frame_fd = -1;
     self->resolution_scale = 1.0f;
+    lrg_vr_hand_state_reset (&self->hand_state[0]);
+    lrg_vr_hand_state_reset (&self->hand_state[1]);
 #else
     (void) self;
 #endif

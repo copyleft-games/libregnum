@@ -560,3 +560,40 @@ lrg_vr_service_is_controller_tracked (LrgVRService *self,
 
     return iface->is_controller_tracked (self, hand);
 }
+
+gboolean
+lrg_vr_service_is_hand_tracking_supported (LrgVRService *self)
+{
+    LrgVRServiceInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_VR_SERVICE (self), FALSE);
+
+    iface = LRG_VR_SERVICE_GET_IFACE (self);
+    if (iface->is_hand_tracking_supported == NULL)
+        return FALSE;
+
+    return iface->is_hand_tracking_supported (self);
+}
+
+gboolean
+lrg_vr_service_get_hand_state (LrgVRService   *self,
+                               LrgVRHand       hand,
+                               LrgVRHandState *state)
+{
+    LrgVRServiceInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_VR_SERVICE (self), FALSE);
+    g_return_val_if_fail (state != NULL, FALSE);
+
+    lrg_vr_hand_state_reset (state);
+    iface = LRG_VR_SERVICE_GET_IFACE (self);
+    if (iface->get_hand_state == NULL || (guint) hand > LRG_VR_HAND_RIGHT)
+        return FALSE;
+
+    if (!iface->get_hand_state (self, hand, state))
+    {
+        lrg_vr_hand_state_reset (state);
+        return FALSE;
+    }
+    return state->active;
+}

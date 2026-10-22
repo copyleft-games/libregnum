@@ -693,6 +693,7 @@
 #include "demo/lrg-demo-manager.h"
 
 /* VR module (Phase 5) */
+#include "vr/lrg-vr-hand.h"
 #include "vr/lrg-vr-service.h"
 #include "vr/lrg-vr-stub.h"
 #include "vr/lrg-vr-comfort.h"

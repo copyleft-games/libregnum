@@ -20,6 +20,7 @@
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
+#include "lrg-vr-hand.h"
 
 G_BEGIN_DECLS
 
@@ -52,6 +53,8 @@ G_DECLARE_INTERFACE (LrgVRService, lrg_vr_service, LRG, VR_SERVICE, GObject)
  * @is_session_running: whether frames are being accepted
  * @should_quit: whether the runtime asked the application to exit
  * @is_controller_tracked: whether a hand's controller pose is valid
+ * @is_hand_tracking_supported: whether articulated hands can be tracked
+ * @get_hand_state: fills a hand's #LrgVRHandState for the current frame
  *
  * Interface structure for #LrgVRService.
  *
@@ -132,6 +135,12 @@ struct _LrgVRServiceInterface
     gboolean (*should_quit)        (LrgVRService *self);
     gboolean (*is_controller_tracked) (LrgVRService *self,
                                        LrgVRHand     hand);
+
+    /* Articulated hands (optional; NULL means no hand tracking) */
+    gboolean (*is_hand_tracking_supported) (LrgVRService *self);
+    gboolean (*get_hand_state)             (LrgVRService   *self,
+                                            LrgVRHand       hand,
+                                            LrgVRHandState *state);
 };
 
 /**
@@ -492,5 +501,42 @@ gboolean lrg_vr_service_should_quit (LrgVRService *self);
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_vr_service_is_controller_tracked (LrgVRService *self,
                                                LrgVRHand     hand);
+
+/**
+ * lrg_vr_service_is_hand_tracking_supported:
+ * @self: a #LrgVRService
+ *
+ * Whether this backend can track articulated hands: for OpenXR, the
+ * runtime offers XR_EXT_hand_tracking and the system supports it.  A
+ * supported backend still reports a hand inactive while it is not seen
+ * (or is holding a controller the runtime prefers to track).
+ *
+ * Returns: %TRUE when lrg_vr_service_get_hand_state() can report hands
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_vr_service_is_hand_tracking_supported (LrgVRService *self);
+
+/**
+ * lrg_vr_service_get_hand_state:
+ * @self: a #LrgVRService
+ * @hand: which hand
+ * @state: (out caller-allocates): the hand's state this frame
+ *
+ * Copies @hand's tracking state as of the current frame: joints located
+ * at the frame's predicted display time, the aim ray, and the pinch with
+ * its hysteresis already applied.  Cheap -- a copy of state the backend
+ * gathered when the frame began -- so call it as often as needed.
+ *
+ * Returns: %TRUE when @hand is tracked this frame (@state is reset to an
+ *   inactive hand otherwise)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_vr_service_get_hand_state (LrgVRService   *self,
+                                        LrgVRHand       hand,
+                                        LrgVRHandState *state);
 
 G_END_DECLS

@@ -11,8 +11,9 @@ The VR module provides virtual reality support for Libregnum games through an ab
 The VR module follows an interface pattern allowing different VR runtime implementations:
 
 - *LrgVRService* - Abstract interface for VR backends
-- *LrgVRStub* - No-op implementation when VR is unavailable, or a simulated headset for headless tests (=lrg_vr_stub_new_simulated()=)
-- *LrgOpenXRService* - The OpenXR backend (optional: built when =pkg-config openxr= finds the loader, Fedora package =openxr-devel=), with =lrg_openxr_service_probe()= to check for a runtime and a headset before a window opens
+- *LrgVRStub* - No-op implementation when VR is unavailable, or a simulated headset for headless tests (=lrg_vr_stub_new_simulated()=), with deterministic fake hands (=lrg_vr_stub_set_hand()=)
+- *LrgOpenXRService* - The OpenXR backend (optional: built when =pkg-config openxr= finds the loader, Fedora package =openxr-devel=), with =lrg_openxr_service_probe()= to check for a runtime and a headset before a window opens; runtime-paced frames, controllers, and articulated hands
+- *LrgVRHandState* - one tracked hand for one frame: 26 joints, aim ray, pinch (see [[#hand-tracking][Hand tracking]])
 - *LrgVRComfortSettings* - VR comfort options for motion sickness mitigation
 - *LrgVRComfort* - The comfort state machine that applies the settings frame by frame: snap and smooth turning, the movement vignette, the seated height calibration
 
@@ -23,9 +24,10 @@ The VR module follows an interface pattern allowing different VR runtime impleme
 #+begin_example
 LrgVRService (Interface)
     │
-    ├── LrgVRStub (No-op fallback; simulated headset for tests)
-    └── LrgOpenXRService (OpenXR, optional at build time)
+    ├── LrgVRStub (No-op fallback; simulated headset and fake hands for tests)
+    └── LrgOpenXRService (OpenXR, optional at build time: SteamVR, Monado, ...)
 
+LrgVRHandState (boxed value, filled by a backend)
 LrgVRComfortSettings (Standalone)
     └── LrgVRComfort (frame-by-frame state over the settings)
 #+end_example
@@ -518,6 +520,88 @@ if (!lrg_vr_service_initialize (vr, &error))
 | =smooth-turn-speed=  | gfloat              | 10-360   | 120.0   | Smooth turn degrees per second at full stick |
 | =seated=             | gboolean            | -        | FALSE   | Seated play (height from a calibration) |
 
+** Hand tracking
+:PROPERTIES:
+:CUSTOM_ID: hand-tracking
+:END:
+Articulated hands come through two optional interface methods, so a
+backend without them simply reports none:
+
+#+begin_src C
+gboolean lrg_vr_service_is_hand_tracking_supported (LrgVRService *self);
+gboolean lrg_vr_service_get_hand_state (LrgVRService   *self,
+                                        LrgVRHand       hand,
+                                        LrgVRHandState *state);  /* out, caller-allocates */
+#+end_src
+
+=get_hand_state= copies the hand as of the current frame and returns
+=TRUE= while it is tracked.  An =LrgVRHandState= is a plain value type
+(boxed for GIR): the 26 joints of =LrgVRHandJoint= -- the numbering and
+joint frames of OpenXR's =XrHandJointEXT=, +Z back along the bone, +Y out
+of the back of the hand -- with a validity bit each, an aim pose (a
+column-major 4x4 whose -Z axis is the ray, like a controller's aim), and
+a pinch.
+
+#+begin_src C
+LrgVRHandState st;
+gfloat aim[16];
+
+if (lrg_vr_service_get_hand_state (svc, LRG_VR_HAND_RIGHT, &st))
+{
+    if (lrg_vr_hand_state_get_aim (&st, aim))
+        point_laser (aim);
+    if (lrg_vr_hand_state_is_pinched (&st))
+        click ();
+    if (lrg_vr_hand_state_is_palm_up (&st, 0.7f))
+        show_menu ();
+}
+#+end_src
+
+*** The pinch
+The latch runs over a 0..1 strength: the runtime's own where it reports
+one (=XR_FB_hand_tracking_aim=), else one derived from the thumb-tip to
+index-tip distance -- 1 at =LRG_VR_PINCH_CLOSED_M= (1.5 cm; fingertip
+joints sit inside the finger) or nearer, 0 at =LRG_VR_PINCH_OPEN_M= (6 cm),
+linear between.  It closes at =LRG_VR_PINCH_PRESS= (0.85) and opens at
+=LRG_VR_PINCH_RELEASE= (0.60); the band between keeps the previous state,
+so a hand held at a threshold does not chatter into a stream of clicks.
+=lrg_vr_hand_pinch_strength_from_distance()= and =lrg_vr_hand_pinch_update()=
+are the pure halves; =lrg_vr_hand_state_update_pinch()= applies both.
+
+*** The aim
+Where the runtime gives no aim, =lrg_vr_hand_state_compute_aim()= makes
+one: from between the thumb and index knuckles -- a point that barely
+moves as the fingers close, so a pinch does not jog the pointer -- in the
+direction away from an estimated shoulder (0.18 m to the hand's side of
+the head and 0.20 m below it, the head's yaw only).  Without a head pose
+it follows the palm's forward axis.
+
+*** The OpenXR backend
+=LrgOpenXRService= enables =XR_EXT_hand_tracking= when the runtime offers
+it *and* the system reports hand-tracking support, and
+=XR_FB_hand_tracking_aim= alongside when present; it creates a tracker
+per hand with the session.  Any failure leaves hand tracking off and the
+rest of the service working.
+
+Joints are located at each frame's predicted display time on the
+frame-wait thread (=lrg_openxr_service_start_frame_thread()=), straight
+after =xrWaitFrame= returns and while the waiter is still marked busy, so
+the session cannot end underneath the locate; they are handed over with
+the frame.  =begin_frame= then finishes them on the caller's thread --
+aim from the head pose just located, pinch from the previous frame's
+latch -- because the latch's history belongs to that thread.  An
+unfocused session reports no hands, as it reports no controllers.
+=lrg_openxr_service_has_hand_aim()= says whether the runtime's aim is in
+use.
+
+*** Testing without a headset
+=lrg_vr_stub_set_hand()= gives the stub a deterministic fake hand
+(=lrg_vr_hand_state_set_synthetic()=: wrist position, fingertip distance,
+palm up or down) and advances it one frame exactly as the OpenXR backend
+does, so a sequence of calls walks the pinch through its hysteresis;
+=lrg_vr_stub_clear_hand()= takes it out of view.  =tests/test-vr-hand.c=
+covers the joint math, the latch, the aim and palm tests, and the stub.
+
 ** Future Extensions
 :PROPERTIES:
 :CUSTOM_ID: future-extensions
@@ -525,6 +609,10 @@ if (!lrg_vr_service_initialize (vr, &error))
 The VR module is designed to support additional backends:
 
 - *OpenVR/SteamVR* - For HTC Vive, Valve Index, and compatible headsets (SteamVR also serves OpenXR, which =LrgOpenXRService= covers)
+- *Camera-based hand tracking* - an ONNX hand-pose model (onnxruntime)
+  over a desktop camera, filling the same =LrgVRHandState=
+- *Hand mesh / joint velocities* - =XR_FB_hand_tracking_mesh=,
+  =XrHandJointVelocitiesEXT= for throws and flicks
 
 Implementing a new backend requires implementing the =LrgVRService= interface with the appropriate SDK calls.
 

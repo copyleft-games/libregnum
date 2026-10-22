@@ -6,8 +6,10 @@
  *
  * #LrgVRService over OpenXR.  Binds to the GL context current at
  * lrg_vr_service_initialize() time (GLX through XR_KHR_opengl_enable, or EGL
- * through XR_MNDX_egl_enable), renders through one swapchain per eye, and
- * reads motion controllers through an action set.
+ * through XR_MNDX_egl_enable), renders through one swapchain per eye,
+ * reads motion controllers through an action set, and tracks articulated
+ * hands through XR_EXT_hand_tracking (XR_FB_hand_tracking_aim for the
+ * runtime's aim and pinch) when the runtime offers it.
  *
  * Built only with OPENXR=1 (pkg-config openxr).  Without it the type still
  * exists and lrg_vr_service_initialize() fails with
@@ -129,6 +131,21 @@ const gchar * lrg_openxr_service_get_session_state_name (LrgOpenXRService *self)
 LRG_AVAILABLE_IN_ALL
 gchar * lrg_openxr_service_get_interaction_profile (LrgOpenXRService *self,
                                                     LrgVRHand         hand);
+
+/**
+ * lrg_openxr_service_has_hand_aim:
+ * @self: a #LrgOpenXRService
+ *
+ * Whether hands are tracked with the runtime's own aim pose and pinch
+ * strength (XR_FB_hand_tracking_aim), rather than ones derived from the
+ * joints.  See lrg_vr_service_get_hand_state().
+ *
+ * Returns: %TRUE while hand tracking runs with XR_FB_hand_tracking_aim
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_openxr_service_has_hand_aim (LrgOpenXRService *self);
 
 /**
  * lrg_openxr_service_set_resolution_scale:

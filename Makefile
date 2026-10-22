@@ -527,6 +527,7 @@ PUBLIC_HEADERS := \
 	src/reel/lrg-reel-path.h \
 	src/demo/lrg-demo-gatable.h \
 	src/demo/lrg-demo-manager.h \
+	src/vr/lrg-vr-hand.h \
 	src/vr/lrg-vr-service.h \
 	src/vr/lrg-vr-stub.h \
 	src/vr/lrg-vr-comfort.h \
@@ -1142,6 +1143,7 @@ SOURCES := \
 	src/reel/lrg-reel-path.c \
 	src/demo/lrg-demo-gatable.c \
 	src/demo/lrg-demo-manager.c \
+	src/vr/lrg-vr-hand.c \
 	src/vr/lrg-vr-service.c \
 	src/vr/lrg-vr-stub.c \
 	src/vr/lrg-vr-comfort.c \

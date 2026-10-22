@@ -183,6 +183,7 @@ TEST_SOURCES := \
 	test-demo.c \
 	test-dlc.c \
 	test-vr.c \
+	test-vr-hand.c \
 	test-deckbuilder.c \
 	test-object-pool.c \
 	test-template-2d.c \

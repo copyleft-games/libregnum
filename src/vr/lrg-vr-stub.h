@@ -239,4 +239,49 @@ guint lrg_vr_stub_get_frame_count (LrgVRStub *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_vr_stub_request_quit (LrgVRStub *self);
 
+/**
+ * lrg_vr_stub_set_hand:
+ * @self: a #LrgVRStub
+ * @hand: which hand
+ * @x: wrist x, metres
+ * @y: wrist y, metres
+ * @z: wrist z, metres
+ * @pinch_distance: thumb-tip to index-tip distance, metres
+ * @palm_up: %TRUE to turn the palm up
+ *
+ * Gives the stub a deterministic fake for @hand
+ * (lrg_vr_hand_state_set_synthetic()) and advances it one frame: the aim
+ * is derived from the stub's head pose (the tracking origin, unless a
+ * simulated headset was given one with lrg_vr_stub_set_hmd_pose()) and
+ * the pinch latch is updated from its previous value, exactly as the
+ * OpenXR backend does per frame.  So a sequence of calls is a sequence of
+ * frames, and tests can walk the pinch through its hysteresis.  From the
+ * first call the stub reports hand tracking as supported.  A simulated
+ * headset reports the hands only while its session runs (initialised and
+ * not quit), as OpenXR reports none outside a focused session.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_vr_stub_set_hand (LrgVRStub *self,
+                           LrgVRHand  hand,
+                           gfloat     x,
+                           gfloat     y,
+                           gfloat     z,
+                           gfloat     pinch_distance,
+                           gboolean   palm_up);
+
+/**
+ * lrg_vr_stub_clear_hand:
+ * @self: a #LrgVRStub
+ * @hand: which hand
+ *
+ * Stops reporting @hand, as if it left the cameras' view; its pinch opens.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_vr_stub_clear_hand (LrgVRStub *self,
+                             LrgVRHand  hand);
+
 G_END_DECLS

@@ -28,6 +28,8 @@
  * - is_hmd_present() returns FALSE
  * - initialize() returns FALSE with error
  * - Controller queries return no input
+ * - Hands are untracked, unless a test gives it deterministic fake ones
+ *   with lrg_vr_stub_set_hand()
  *
  * A stub made with lrg_vr_stub_new_simulated() is a simulated headset
  * instead: it initialises, runs the runtime-paced frame loop with two
@@ -61,6 +63,10 @@ struct _LrgVRStub
     gfloat   axes[2][4];
     guint    haptics[2];
     guint    frames;
+
+    /* Fake hands (lrg_vr_stub_set_hand). */
+    gboolean       hands_enabled;
+    LrgVRHandState hands[2];
 };
 
 static void lrg_vr_stub_vr_service_init (LrgVRServiceInterface *iface);
@@ -399,6 +405,30 @@ lrg_vr_stub_is_controller_tracked (LrgVRService *service,
     return self->simulated && self->tracked[hand];
 }
 
+static gboolean
+lrg_vr_stub_is_hand_tracking_supported (LrgVRService *self)
+{
+    return LRG_VR_STUB (self)->hands_enabled;
+}
+
+static gboolean
+lrg_vr_stub_get_hand_state (LrgVRService   *self,
+                            LrgVRHand       hand,
+                            LrgVRHandState *state)
+{
+    LrgVRStub *stub = LRG_VR_STUB (self);
+
+    if (!stub->hands_enabled)
+        return FALSE;
+    /* A simulated headset reports hands only while its session runs, as
+       OpenXR reports none outside a focused session.  The plain stub's
+       fake hands are always there: tests drive them directly. */
+    if (stub->simulated && (!stub->initialized || stub->quit))
+        return FALSE;
+    *state = stub->hands[hand];
+    return state->active;
+}
+
 static void
 lrg_vr_stub_vr_service_init (LrgVRServiceInterface *iface)
 {
@@ -424,6 +454,8 @@ lrg_vr_stub_vr_service_init (LrgVRServiceInterface *iface)
     iface->is_session_running = lrg_vr_stub_is_session_running;
     iface->should_quit = lrg_vr_stub_should_quit;
     iface->is_controller_tracked = lrg_vr_stub_is_controller_tracked;
+    iface->is_hand_tracking_supported = lrg_vr_stub_is_hand_tracking_supported;
+    iface->get_hand_state = lrg_vr_stub_get_hand_state;
 }
 
 /* ==========================================================================
@@ -452,6 +484,8 @@ lrg_vr_stub_init (LrgVRStub *self)
     self->fov[3] = -half;
     self->width = LRG_VR_STUB_DEFAULT_SIZE;
     self->height = LRG_VR_STUB_DEFAULT_SIZE;
+    lrg_vr_hand_state_reset (&self->hands[0]);
+    lrg_vr_hand_state_reset (&self->hands[1]);
 }
 
 /* ==========================================================================
@@ -612,4 +646,40 @@ lrg_vr_stub_request_quit (LrgVRStub *self)
     g_return_if_fail (LRG_IS_VR_STUB (self));
 
     self->quit = TRUE;
+}
+
+void
+lrg_vr_stub_set_hand (LrgVRStub *self,
+                      LrgVRHand  hand,
+                      gfloat     x,
+                      gfloat     y,
+                      gfloat     z,
+                      gfloat     pinch_distance,
+                      gboolean   palm_up)
+{
+    LrgVRHandState *st;
+    gboolean was;
+
+    g_return_if_fail (LRG_IS_VR_STUB (self));
+    g_return_if_fail ((guint) hand <= LRG_VR_HAND_RIGHT);
+
+    st = &self->hands[hand];
+    was = st->active && st->pinched;
+    lrg_vr_hand_state_set_synthetic (st, hand, x, y, z, pinch_distance, palm_up);
+    /* Aimed from the stub's head: the tracking origin looking down -Z,
+       unless a simulated headset was given a pose
+       (lrg_vr_stub_set_hmd_pose). */
+    lrg_vr_hand_state_compute_aim (st, hand, self->hmd);
+    lrg_vr_hand_state_update_pinch (st, was);
+    self->hands_enabled = TRUE;
+}
+
+void
+lrg_vr_stub_clear_hand (LrgVRStub *self,
+                        LrgVRHand  hand)
+{
+    g_return_if_fail (LRG_IS_VR_STUB (self));
+    g_return_if_fail ((guint) hand <= LRG_VR_HAND_RIGHT);
+
+    lrg_vr_hand_state_reset (&self->hands[hand]);
 }
