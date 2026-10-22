@@ -8,6 +8,7 @@
 #include "config.h"
 #include "lrg-video-player.h"
 #include <gio/gio.h>
+#include <math.h>
 #include <string.h>
 
 #ifdef LRG_HAS_FFMPEG
@@ -15,6 +16,15 @@
 
 /* Sentinel "no frame decoded yet" PTS, well below any real timestamp. */
 #define LRG_VIDEO_PLAYER_PTS_NONE (-1.0e30)
+
+/* Audio is never delivered more than this far (s) ahead of the position. */
+#define LRG_VIDEO_PLAYER_AUDIO_LEAD (0.3)
+
+/* Audio this far (s) behind the position is dropped to catch up. */
+#define LRG_VIDEO_PLAYER_AUDIO_CATCHUP (0.2)
+
+/* Frames discarded per decoder read while catching up. */
+#define LRG_VIDEO_PLAYER_AUDIO_DROP_CHUNK (4096)
 #endif
 
 /**
@@ -28,8 +38,15 @@
  * The player decodes video frames into a texture that can be rendered
  * with standard 2D drawing routines.
  *
+ * When the file has an audio stream, the player can also decode it to
+ * interleaved signed 16-bit PCM for the host to play through its own audio
+ * output (it never opens an audio device itself): enable it with
+ * lrg_video_player_set_audio_enabled() and pull it with
+ * lrg_video_player_read_audio() from the update thread.  The audio is kept
+ * in step with the playback position and follows seeks, stops and loops.
+ *
  * Note: Actual video decoding requires FFmpeg. Without it, the player
- * provides a stub implementation for testing.
+ * provides a stub implementation for testing (and never has audio).
  */
 
 struct _LrgVideoPlayer
@@ -54,6 +71,7 @@ struct _LrgVideoPlayer
     gboolean           muted;
     gboolean           loop;
     gfloat             playback_rate;
+    gboolean           audio_enabled;
 
     /* Rendering */
     LrgVideoTexture   *texture;
@@ -81,6 +99,7 @@ enum
     PROP_MUTED,
     PROP_LOOP,
     PROP_PLAYBACK_RATE,
+    PROP_AUDIO_ENABLED,
     N_PROPS
 };
 
@@ -163,6 +182,9 @@ lrg_video_player_get_property (GObject    *object,
         case PROP_PLAYBACK_RATE:
             g_value_set_float (value, self->playback_rate);
             break;
+        case PROP_AUDIO_ENABLED:
+            g_value_set_boolean (value, self->audio_enabled);
+            break;
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -189,6 +211,10 @@ lrg_video_player_set_property (GObject      *object,
             break;
         case PROP_PLAYBACK_RATE:
             lrg_video_player_set_playback_rate (self, g_value_get_float (value));
+            break;
+        case PROP_AUDIO_ENABLED:
+            lrg_video_player_set_audio_enabled (self,
+                                                g_value_get_boolean (value));
             break;
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -300,6 +326,21 @@ lrg_video_player_class_init (LrgVideoPlayerClass *klass)
                             0.1f, 4.0f, 1.0f,
                             G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
+    /**
+     * LrgVideoPlayer:audio-enabled:
+     *
+     * Whether the audio stream is decoded for
+     * lrg_video_player_read_audio().  Off by default, so a player nobody
+     * pulls audio from never buffers PCM.
+     */
+    properties[PROP_AUDIO_ENABLED] =
+        g_param_spec_boolean ("audio-enabled",
+                              "Audio Enabled",
+                              "Whether the audio stream is decoded for the host",
+                              FALSE,
+                              G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+                              G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
     /**
@@ -375,6 +416,7 @@ lrg_video_player_init (LrgVideoPlayer *self)
     self->muted = FALSE;
     self->loop = FALSE;
     self->playback_rate = 1.0f;
+    self->audio_enabled = FALSE;
     self->texture = NULL;
     self->subtitles = lrg_video_subtitles_new ();
 #ifdef LRG_HAS_FFMPEG
@@ -480,6 +522,8 @@ lrg_video_player_open (LrgVideoPlayer  *player,
         GError *derr = NULL;
 
         player->decoder = lrg_video_decoder_new ();
+        lrg_video_decoder_set_audio_enabled (player->decoder,
+                                             player->audio_enabled);
         if (!lrg_video_decoder_open (player->decoder, path, &derr))
         {
             const gchar *msg = (derr != NULL) ? derr->message
@@ -828,6 +872,219 @@ lrg_video_player_update (LrgVideoPlayer *player,
 
     /* Update subtitles */
     lrg_video_subtitles_update (player->subtitles, player->position);
+}
+
+#ifdef LRG_HAS_FFMPEG
+/* The decoder when it can deliver audio right now, else NULL. */
+static LrgVideoDecoder *
+video_player_audio_decoder (LrgVideoPlayer *self)
+{
+    if (!self->audio_enabled || self->decoder == NULL)
+        return NULL;
+    if (!lrg_video_decoder_has_audio (self->decoder))
+        return NULL;
+    return self->decoder;
+}
+
+/* Pull up to N_FRAMES frames that are due at the current position into
+ * SAMPLES (see lrg_video_player_read_audio() for the rules). */
+static guint
+video_player_pull_audio (LrgVideoPlayer *self,
+                         gint16         *samples,
+                         guint           n_frames)
+{
+    LrgVideoDecoder *dec = video_player_audio_decoder (self);
+    gdouble rate;
+    gdouble t = 0.0;
+    gdouble limit;
+    gdouble allowed;
+    guint channels;
+    guint want;
+    guint got;
+    gsize i;
+
+    if (dec == NULL || n_frames == 0 ||
+        self->state != LRG_VIDEO_STATE_PLAYING)
+        return 0;
+
+    rate = (gdouble) lrg_video_decoder_get_audio_sample_rate (dec);
+    channels = lrg_video_decoder_get_audio_channels (dec);
+
+    /* Find the time of the next buffered frame (demuxing if needed). */
+    if (lrg_video_decoder_fill_audio (dec, 1) == 0 ||
+        !lrg_video_decoder_get_audio_time (dec, &t))
+        return 0;
+
+    /* Fallen behind the picture: drop audio until it is level again. */
+    if (t < self->position - LRG_VIDEO_PLAYER_AUDIO_CATCHUP)
+    {
+        gdouble drop = (self->position - t) * rate;
+
+        while (drop >= 1.0)
+        {
+            guint chunk = (guint) MIN (drop,
+                                       (gdouble) LRG_VIDEO_PLAYER_AUDIO_DROP_CHUNK);
+            guint dropped = lrg_video_decoder_read_audio (dec, NULL, chunk);
+
+            if (dropped == 0)
+                break;
+            drop -= (gdouble) dropped;
+        }
+        if (lrg_video_decoder_fill_audio (dec, 1) == 0 ||
+            !lrg_video_decoder_get_audio_time (dec, &t))
+            return 0;
+    }
+
+    /* Never run more than the lead ahead of the position. */
+    limit = self->position + LRG_VIDEO_PLAYER_AUDIO_LEAD;
+    if (t >= limit)
+        return 0;
+    allowed = ceil ((limit - t) * rate);
+    want = (allowed < (gdouble) n_frames) ? (guint) allowed : n_frames;
+
+    got = lrg_video_decoder_read_audio (dec, samples, want);
+
+    /* Volume and mute.  Muted frames are still consumed so the audio keeps
+     * its place. */
+    if (self->muted || self->volume <= 0.0f)
+    {
+        memset (samples, 0, (gsize) got * channels * sizeof (gint16));
+    }
+    else if (self->volume < 1.0f)
+    {
+        for (i = 0; i < (gsize) got * channels; i++)
+            samples[i] = (gint16) lrintf ((gfloat) samples[i] * self->volume);
+    }
+
+    return got;
+}
+#endif /* LRG_HAS_FFMPEG */
+
+gboolean
+lrg_video_player_has_audio (LrgVideoPlayer *player)
+{
+    g_return_val_if_fail (LRG_IS_VIDEO_PLAYER (player), FALSE);
+#ifdef LRG_HAS_FFMPEG
+    return player->decoder != NULL &&
+           lrg_video_decoder_has_audio (player->decoder);
+#else
+    return FALSE;
+#endif
+}
+
+guint
+lrg_video_player_get_audio_sample_rate (LrgVideoPlayer *player)
+{
+    g_return_val_if_fail (LRG_IS_VIDEO_PLAYER (player), 0);
+#ifdef LRG_HAS_FFMPEG
+    if (player->decoder == NULL)
+        return 0;
+    return lrg_video_decoder_get_audio_sample_rate (player->decoder);
+#else
+    return 0;
+#endif
+}
+
+guint
+lrg_video_player_get_audio_channels (LrgVideoPlayer *player)
+{
+    g_return_val_if_fail (LRG_IS_VIDEO_PLAYER (player), 0);
+#ifdef LRG_HAS_FFMPEG
+    if (player->decoder == NULL)
+        return 0;
+    return lrg_video_decoder_get_audio_channels (player->decoder);
+#else
+    return 0;
+#endif
+}
+
+void
+lrg_video_player_set_audio_enabled (LrgVideoPlayer *player,
+                                    gboolean        enabled)
+{
+    g_return_if_fail (LRG_IS_VIDEO_PLAYER (player));
+
+    enabled = !!enabled;
+    if (player->audio_enabled == enabled)
+        return;
+
+    player->audio_enabled = enabled;
+#ifdef LRG_HAS_FFMPEG
+    if (player->decoder != NULL)
+        lrg_video_decoder_set_audio_enabled (player->decoder, enabled);
+#endif
+    g_object_notify_by_pspec (G_OBJECT (player),
+                              properties[PROP_AUDIO_ENABLED]);
+}
+
+gboolean
+lrg_video_player_get_audio_enabled (LrgVideoPlayer *player)
+{
+    g_return_val_if_fail (LRG_IS_VIDEO_PLAYER (player), FALSE);
+    return player->audio_enabled;
+}
+
+guint
+lrg_video_player_read_audio (LrgVideoPlayer *player,
+                             gint16         *samples,
+                             guint           n_frames)
+{
+    g_return_val_if_fail (LRG_IS_VIDEO_PLAYER (player), 0);
+    g_return_val_if_fail (samples != NULL || n_frames == 0, 0);
+
+#ifdef LRG_HAS_FFMPEG
+    return video_player_pull_audio (player, samples, n_frames);
+#else
+    return 0;
+#endif
+}
+
+GBytes *
+lrg_video_player_read_audio_bytes (LrgVideoPlayer *player,
+                                   guint           n_frames)
+{
+    gint16 *buf;
+    guint channels;
+    guint got;
+
+    g_return_val_if_fail (LRG_IS_VIDEO_PLAYER (player), NULL);
+
+    channels = lrg_video_player_get_audio_channels (player);
+    if (channels == 0 || n_frames == 0)
+        return g_bytes_new (NULL, 0);
+
+    buf = g_new (gint16, (gsize) n_frames * channels);
+    got = lrg_video_player_read_audio (player, buf, n_frames);
+    if (got == 0)
+    {
+        g_free (buf);
+        return g_bytes_new (NULL, 0);
+    }
+
+    return g_bytes_new_take (buf, (gsize) got * channels * sizeof (gint16));
+}
+
+gdouble
+lrg_video_player_get_audio_time (LrgVideoPlayer *player)
+{
+#ifdef LRG_HAS_FFMPEG
+    LrgVideoDecoder *dec;
+    gdouble t = 0.0;
+#endif
+
+    g_return_val_if_fail (LRG_IS_VIDEO_PLAYER (player), -1.0);
+
+#ifdef LRG_HAS_FFMPEG
+    dec = video_player_audio_decoder (player);
+    if (dec == NULL)
+        return -1.0;
+    if (lrg_video_decoder_fill_audio (dec, 1) == 0 ||
+        !lrg_video_decoder_get_audio_time (dec, &t))
+        return -1.0;
+    return t;
+#else
+    return -1.0;
+#endif
 }
 
 LrgVideoTexture *

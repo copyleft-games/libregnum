@@ -8,9 +8,19 @@
  *
  * A small, SYNCHRONOUS libav wrapper that opens a media file, reports its
  * video stream info, decodes frames sequentially into an RGBA8 buffer, and
- * seeks.  It performs no threading and touches no GObject signals, so it is
- * deterministic and safe to call from any single thread (the player drives it
- * from the engine/main thread; the reel video source can use it for
+ * seeks.  When the file also carries an audio stream it decodes that too
+ * (opt-in, see lrg_video_decoder_set_audio_enabled()) into a FIFO of
+ * interleaved signed 16-bit PCM at the stream's native rate.
+ *
+ * Packets are demuxed once for both streams: a video packet met while audio
+ * is being pulled waits in a bounded queue that the video path drains before
+ * it reads the file again, and an audio packet met while video is being
+ * decoded goes straight into the PCM FIFO (bounded too, oldest audio
+ * dropped first).
+ *
+ * It performs no threading and touches no GObject signals, so it is
+ * deterministic and safe to call from any single thread (the player drives
+ * it from the engine/main thread; the reel video source can use it for
  * decode-on-demand).
  *
  * This is an INTERNAL header: it is NOT part of the public <libregnum.h>
@@ -71,8 +81,39 @@ guint    lrg_video_decoder_get_height (LrgVideoDecoder *self);
 gdouble  lrg_video_decoder_get_duration (LrgVideoDecoder *self);
 /* Average frame rate in FPS (0 if unknown). */
 gdouble  lrg_video_decoder_get_frame_rate (LrgVideoDecoder *self);
-/* TRUE if the container has at least one audio stream. */
+/* TRUE if the file has an audio stream whose decoder opened (audio is best
+ * effort: a missing or broken audio codec never fails open()). */
 gboolean lrg_video_decoder_has_audio (LrgVideoDecoder *self);
+/* Native sample rate of the audio stream in Hz (0 without audio). */
+guint    lrg_video_decoder_get_audio_sample_rate (LrgVideoDecoder *self);
+/* Output channels: 1 for mono, 2 for anything else (more than two channels
+ * are folded down to stereo).  0 without audio. */
+guint    lrg_video_decoder_get_audio_channels (LrgVideoDecoder *self);
+
+/* Enable or disable audio decoding.  While disabled (the default) audio
+ * packets are dropped as they are demuxed, so a caller that never reads
+ * audio pays nothing.  Disabling clears the PCM FIFO. */
+void     lrg_video_decoder_set_audio_enabled (LrgVideoDecoder *self,
+                                              gboolean         enabled);
+gboolean lrg_video_decoder_get_audio_enabled (LrgVideoDecoder *self);
+
+/* Demux until at least MIN_FRAMES PCM frames are buffered, the file ends,
+ * or the video packet queue is full.  Returns the frames now buffered
+ * (0 when audio is disabled or unavailable). */
+guint    lrg_video_decoder_fill_audio (LrgVideoDecoder *self,
+                                       guint            min_frames);
+
+/* Presentation time in seconds of the next buffered PCM frame.  Returns
+ * FALSE (and leaves *OUT_TIME alone) when nothing is buffered. */
+gboolean lrg_video_decoder_get_audio_time (LrgVideoDecoder *self,
+                                           gdouble         *out_time);
+
+/* Take up to MAX_FRAMES frames from the PCM FIFO (demuxing more when it
+ * holds fewer) into OUT, which holds MAX_FRAMES * channels samples.  OUT may
+ * be NULL to discard the frames.  Returns the frames taken. */
+guint    lrg_video_decoder_read_audio (LrgVideoDecoder *self,
+                                       gint16          *out,
+                                       guint            max_frames);
 
 /* Decode the next video frame.
  *
@@ -92,8 +133,10 @@ gboolean lrg_video_decoder_next_frame (LrgVideoDecoder  *self,
                                        GError          **error);
 
 /* Seek so that the next next_frame() returns the first frame at or after
- * POSITION seconds (decoding forward from the preceding keyframe).  Returns
- * FALSE / sets ERROR on failure. */
+ * POSITION seconds (decoding forward from the preceding keyframe).  The
+ * audio decoder is flushed, the PCM FIFO and the video packet queue are
+ * cleared, and audio before POSITION is dropped, so audio resumes at the
+ * target too.  Returns FALSE / sets ERROR on failure. */
 gboolean lrg_video_decoder_seek (LrgVideoDecoder  *self,
                                  gdouble           position,
                                  GError          **error);

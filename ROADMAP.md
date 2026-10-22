@@ -143,7 +143,9 @@ implementations and should no longer be treated as absent:
   requires the corresponding engine window or audio manager.
 - Line, pie, surface, and scatter 3D charts (`src/chart/`).
 - FFmpeg-backed video decoding, seeking, and playback (`src/video/`), enabled
-  with `FFMPEG=1`. The fallback when FFmpeg is disabled is intentional.
+  with `FFMPEG=1`. The fallback when FFmpeg is disabled is intentional. The
+  audio stream is decoded to 16-bit PCM that the host pulls in sync with the
+  picture (`lrg_video_player_read_audio()`); the player opens no audio device.
 
 Presence of an implementation does not imply every platform/rendering path has
 been validated. Headless tests skip cases requiring a display or hardware.

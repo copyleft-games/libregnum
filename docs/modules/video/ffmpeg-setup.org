@@ -14,7 +14,8 @@ The video module requires FFmpeg for decoding. This guide covers installation an
 | =libavcodec=    | Video/audio decoding                |
 | =libavutil=     | Utility functions                   |
 | =libswscale=    | Pixel format conversion             |
-| =libswresample= | Audio resampling                    |
+
+=libswresample= is not needed: the player converts audio samples to 16-bit PCM itself and leaves resampling to the host's audio output (see [[file:video-player.org::#audio-format][Audio format]]).  Static links of libregnum therefore need exactly =libavformat libavcodec libavutil libswscale=.
 
 ** Installation
 :PROPERTIES:
@@ -34,7 +35,7 @@ sudo dnf install ffmpeg-libs ffmpeg-devel
 :END:
 #+begin_src sh
 sudo apt install libavformat-dev libavcodec-dev libavutil-dev \
-                 libswscale-dev libswresample-dev
+                 libswscale-dev
 #+end_src
 
 *** Arch Linux
@@ -94,8 +95,8 @@ ffmpeg -codecs | grep -E "(h264|hevc|vp[89]|aac|mp3)"
 Libregnum uses pkg-config to find FFmpeg:
 
 #+begin_src makefile
-FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil libswscale libswresample)
-FFMPEG_LIBS := $(shell pkg-config --libs libavformat libavcodec libavutil libswscale libswresample)
+FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil libswscale)
+FFMPEG_LIBS := $(shell pkg-config --libs libavformat libavcodec libavutil libswscale)
 #+end_src
 
 *** Verifying Installation
@@ -144,11 +145,12 @@ Built into macOS, no additional setup needed.
 :END:
 | Library       | Minimum Version |
 |---------------+-----------------|
-| libavformat   | 58.0            |
-| libavcodec    | 58.0            |
-| libavutil     | 56.0            |
-| libswscale    | 5.0             |
-| libswresample | 3.0             |
+| libavformat   | 59.27           |
+| libavcodec    | 59.37           |
+| libavutil     | 57.28           |
+| libswscale    | 6.7             |
+
+These are FFmpeg 5.1, the first release with the =AVChannelLayout= API the audio path uses.
 
 Check versions:
 
@@ -196,7 +198,14 @@ ffmpeg -formats | grep -i mp4
 :PROPERTIES:
 :CUSTOM_ID: audio-not-playing
 :END:
-Check audio device configuration:
+The player only produces PCM; the host plays it.  Check, in order:
+
+1. =lrg_video_player_set_audio_enabled (player, TRUE)= was called (audio is off by default).
+2. =lrg_video_player_has_audio()= is TRUE (FALSE: no audio stream, or its codec is not in your FFmpeg build).
+3. The host calls =lrg_video_player_read_audio()= while the player is =PLAYING=, on the update thread, and feeds the frames to its audio output at =get_audio_sample_rate()= with =get_audio_channels()= channels.
+4. Volume is above 0 and the player is not muted.
+
+Then check the audio device configuration:
 
 #+begin_src sh
 # List audio devices

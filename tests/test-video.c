@@ -338,6 +338,38 @@ test_video_player_mute (VideoPlayerFixture *fixture,
 }
 
 static void
+test_video_player_audio_defaults (VideoPlayerFixture *fixture,
+                                  gconstpointer       user_data)
+{
+    g_autoptr(GBytes) bytes = NULL;
+    gint16 buf[64];
+    gboolean enabled = TRUE;
+
+    (void) user_data;
+
+    /* Audio is opt-in and a player without a video has none. */
+    g_assert_false (lrg_video_player_get_audio_enabled (fixture->player));
+    g_object_get (fixture->player, "audio-enabled", &enabled, NULL);
+    g_assert_false (enabled);
+    g_assert_false (lrg_video_player_has_audio (fixture->player));
+    g_assert_cmpuint (lrg_video_player_get_audio_sample_rate (fixture->player), ==, 0);
+    g_assert_cmpuint (lrg_video_player_get_audio_channels (fixture->player), ==, 0);
+
+    lrg_video_player_set_audio_enabled (fixture->player, TRUE);
+    g_assert_true (lrg_video_player_get_audio_enabled (fixture->player));
+
+    /* Nothing to deliver, in every build. */
+    g_assert_cmpuint (lrg_video_player_read_audio (fixture->player, buf, 32), ==, 0);
+    g_assert_cmpfloat (lrg_video_player_get_audio_time (fixture->player), ==, -1.0);
+    bytes = lrg_video_player_read_audio_bytes (fixture->player, 32);
+    g_assert_nonnull (bytes);
+    g_assert_cmpuint (g_bytes_get_size (bytes), ==, 0);
+
+    g_object_set (fixture->player, "audio-enabled", FALSE, NULL);
+    g_assert_false (lrg_video_player_get_audio_enabled (fixture->player));
+}
+
+static void
 test_video_player_loop (VideoPlayerFixture *fixture,
                         gconstpointer       user_data)
 {
@@ -473,6 +505,8 @@ main (int   argc,
                 video_player_fixture_set_up, test_video_player_volume, video_player_fixture_tear_down);
     g_test_add ("/video/player/mute", VideoPlayerFixture, NULL,
                 video_player_fixture_set_up, test_video_player_mute, video_player_fixture_tear_down);
+    g_test_add ("/video/player/audio-defaults", VideoPlayerFixture, NULL,
+                video_player_fixture_set_up, test_video_player_audio_defaults, video_player_fixture_tear_down);
     g_test_add ("/video/player/loop", VideoPlayerFixture, NULL,
                 video_player_fixture_set_up, test_video_player_loop, video_player_fixture_tear_down);
     g_test_add ("/video/player/playback-rate", VideoPlayerFixture, NULL,

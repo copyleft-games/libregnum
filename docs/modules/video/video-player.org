@@ -2,7 +2,7 @@
 :PROPERTIES:
 :CUSTOM_ID: video-player
 :END:
-=LrgVideoPlayer= provides video playback with audio synchronization and subtitle support.
+=LrgVideoPlayer= provides video playback with subtitle support, and decodes the audio stream into PCM the host plays in sync (see [[#audio][Audio]]).
 
 ** Type
 :PROPERTIES:
@@ -86,13 +86,125 @@ gfloat lrg_video_player_get_frame_rate (LrgVideoPlayer *player);
 :PROPERTIES:
 :CUSTOM_ID: audio
 :END:
-#+begin_src C
-void lrg_video_player_set_volume (LrgVideoPlayer *player, gfloat volume);
-gfloat lrg_video_player_get_volume (LrgVideoPlayer *player);
+The player decodes the file's audio stream into PCM and hands it to the host; it never opens an audio device itself.  The host plays the PCM through its own sound system, so the game's sound settings (a master mute, a "no sound" option, its mixer) apply to movies too.
 
-void lrg_video_player_set_muted (LrgVideoPlayer *player, gboolean muted);
+*** API
+:PROPERTIES:
+:CUSTOM_ID: audio-api
+:END:
+#+begin_src C
+/* What the open file offers (FALSE / 0 without decodable audio). */
+gboolean lrg_video_player_has_audio (LrgVideoPlayer *player);
+guint    lrg_video_player_get_audio_sample_rate (LrgVideoPlayer *player);
+guint    lrg_video_player_get_audio_channels (LrgVideoPlayer *player);
+
+/* Opt in; also the "audio-enabled" property (default FALSE). */
+void     lrg_video_player_set_audio_enabled (LrgVideoPlayer *player,
+                                             gboolean        enabled);
+gboolean lrg_video_player_get_audio_enabled (LrgVideoPlayer *player);
+
+/* Pull PCM that is due now.  SAMPLES holds n_frames * channels samples. */
+guint    lrg_video_player_read_audio (LrgVideoPlayer *player,
+                                      gint16         *samples,
+                                      guint           n_frames);
+/* The same for language bindings (GIR name: read_audio). */
+GBytes  *lrg_video_player_read_audio_bytes (LrgVideoPlayer *player,
+                                            guint           n_frames);
+
+/* Time (s) of the next frame read_audio() delivers, -1.0 when unknown. */
+gdouble  lrg_video_player_get_audio_time (LrgVideoPlayer *player);
+
+/* Gain applied to the PCM. */
+void     lrg_video_player_set_volume (LrgVideoPlayer *player, gfloat volume);
+gfloat   lrg_video_player_get_volume (LrgVideoPlayer *player);
+void     lrg_video_player_set_muted (LrgVideoPlayer *player, gboolean muted);
 gboolean lrg_video_player_get_muted (LrgVideoPlayer *player);
 #+end_src
+
+Without FFmpeg (=FFMPEG=0=) the same functions exist: there is never audio, =read_audio()= returns 0 and =read_audio_bytes()= an empty #GBytes.
+
+*** Format
+:PROPERTIES:
+:CUSTOM_ID: audio-format
+:END:
+| Aspect      | Value                                                                    |
+|-------------+--------------------------------------------------------------------------|
+| Samples     | signed 16-bit, native endian, interleaved (L R L R ... for stereo)       |
+| Sample rate | the stream's native rate (no resampling): 44100, 48000, 22050, ...       |
+| Channels    | 1 for mono streams, 2 for stereo; more channels are folded down to 2     |
+| Source      | every libav sample format (u8, s16, s32, s64, flt, dbl, packed/planar)   |
+
+Floating-point sources are clamped to [-1, 1] before conversion.  The fold-down sends left-side channels left, right-side channels right, centre and unknown channels to both at -3 dB, drops the LFE, and normalises by the weights so it does not clip.  The conversion is done in libregnum itself, without =libswresample=.
+
+*** Enabling
+:PROPERTIES:
+:CUSTOM_ID: audio-enabling
+:END:
+Audio is off by default.  While it is off the player drops audio packets as it demuxes them, so existing callers that never read audio see no change and no extra memory.  Turn it on before or after =open()= (the setting survives =open()= and =close()=); turning it off discards buffered audio.  A file whose audio codec is missing or broken still opens and plays its video; =has_audio()= is then FALSE.
+
+*** Delivery and sync
+:PROPERTIES:
+:CUSTOM_ID: audio-sync
+:END:
+=read_audio()= writes at most =n_frames= frames and returns how many it wrote.  The rules, against the playback clock (=lrg_video_player_get_position()=):
+
+- Audio is delivered only while the state is =PLAYING=.  Paused, stopped, finished and closed players deliver 0 frames; pausing keeps the buffered audio for the resume.
+- Lead bound: the player never delivers audio more than 0.3 s ahead of the position.  A host that asks for more gets fewer frames (possibly 0) and asks again on a later tick.
+- Catch-up: when the next frame's time has fallen more than 0.2 s behind the position (the host stopped pulling, the update tick stalled), the late audio is dropped and delivery resumes at the position.
+- Volume is applied to the samples; muted audio is still consumed but written as zeros, so unmuting resumes in sync.
+- Seeking, =stop()=, looping and =play()= after =FINISHED= flush the audio decoder and restart the audio with the picture; =get_audio_time()= right after a seek is the seek target.
+- The audio plays at its native speed: with a playback rate other than 1.0 the lead and catch-up rules keep it near the picture by holding back or dropping audio, which is audible.  Use rate 1.0 with audio.
+
+Internally the decoder demuxes each packet once for both streams.  Video packets met while audio is pulled wait in a bounded queue (512 packets) that the video path drains first; audio packets met while video is decoded go into a PCM FIFO bounded to 4 s (oldest dropped first).  The end of the file drains the audio decoder too.
+
+*** Threading
+:PROPERTIES:
+:CUSTOM_ID: audio-threading
+:END:
+The player is single-threaded: call =read_audio()= from the thread that calls =lrg_video_player_update()= (the host's main loop or update tick), never from an audio device callback thread.  A host with a callback-driven device copies the pulled PCM into its own ring buffer on the update thread.
+
+*** Playing it through a GrlAudioStream
+:PROPERTIES:
+:CUSTOM_ID: audio-grl-stream
+:END:
+A graylib =GrlAudioStream= accepts any sample rate (the device converts), so it can be opened at the movie's rate.  Refill it on each update tick when it has processed a buffer, padding a short read with silence:
+
+#+begin_src C
+#define MOVIE_SUBBUFFER (4096)  /* frames per refill, the stream's buffer size */
+
+g_autoptr(LrgVideoPlayer) player = lrg_video_player_new ();
+g_autoptr(GrlAudioStream) stream = NULL;
+gint16 *pcm = NULL;
+guint channels = 0;
+
+lrg_video_player_set_audio_enabled (player, sound_enabled);
+lrg_video_player_open (player, "Interface/Cinematics/intro.avi", NULL);
+
+if (sound_enabled && lrg_video_player_has_audio (player))
+{
+    channels = lrg_video_player_get_audio_channels (player);
+    stream = grl_audio_stream_new (lrg_video_player_get_audio_sample_rate (player),
+                                   16, channels);
+    pcm = g_new0 (gint16, (gsize) MOVIE_SUBBUFFER * channels);
+    grl_audio_stream_play (stream);
+}
+lrg_video_player_play (player);
+
+/* Each update tick, on the same thread: */
+lrg_video_player_update (player, delta_time);
+if (stream != NULL && grl_audio_stream_is_processed (stream))
+{
+    guint got = lrg_video_player_read_audio (player, pcm, MOVIE_SUBBUFFER);
+
+    /* Fewer frames than asked (lead bound, end of file): fill with silence
+     * so the stream never replays stale samples. */
+    memset (pcm + (gsize) got * channels, 0,
+            (gsize) (MOVIE_SUBBUFFER - got) * channels * sizeof (gint16));
+    grl_audio_stream_update (stream, pcm, MOVIE_SUBBUFFER);
+}
+#+end_src
+
+Pause or stop the stream with the player, and free it when the movie ends.  The refill size plus the device's own buffering should stay under the 0.3 s lead, or the stream is fed a little silence while the picture catches up.
 
 ** Playback Options
 :PROPERTIES:
@@ -204,7 +316,7 @@ lrg_video_player_close (player);
 g_autoptr(LrgVideoPlayer) bg_video = lrg_video_player_new ();
 lrg_video_player_open (bg_video, "menu_background.mp4", NULL);
 lrg_video_player_set_loop (bg_video, TRUE);
-lrg_video_player_set_volume (bg_video, 0.0f);  /* Mute background video */
+/* Audio stays disabled (the default): nothing is decoded or buffered. */
 lrg_video_player_play (bg_video);
 #+end_src
 
