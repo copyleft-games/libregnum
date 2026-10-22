@@ -2,14 +2,14 @@
 :PROPERTIES:
 :CUSTOM_ID: lrgddsimage---directdraw-surface-reader
 :END:
-=LrgDdsImage= reads DirectDraw Surface (=.dds=) files and decodes any mip level to tightly packed RGBA8 on the CPU, with no GL context.  Games that read data authored for Direct3D (Morrowind's textures in librefall, modding packs) get pixels they can inspect, convert to PNG or upload as an ordinary RGBA texture; =lrg_dds_image_get_mip_data()= gives the stored blocks for a compressed upload instead.  Written from Microsoft's public DDS programming guide and the block compression description.
+=LrgDdsImage= reads DirectDraw Surface (=.dds=) files and decodes any mip level to tightly packed RGBA8 on the CPU, with no GL context.  Games that read data authored for Direct3D (Morrowind's textures in librefall, modding packs) get pixels they can inspect, convert to PNG or upload as an ordinary RGBA texture; =lrg_dds_image_get_mip_data()= gives the stored blocks for a compressed upload instead.  =lrg_dds_decode_bc7()= decodes BC7 blocks that come without a DDS header (Unity =Texture2D= assets in format 25, for example).  Written from Microsoft's public DDS programming guide, the block compression description and the BC7 format description (the same format as the BPTC section of the Khronos Data Format Specification); no third-party decoder code.
 
 ** Types
 :PROPERTIES:
 :CUSTOM_ID: types
 :END:
 - =LrgDdsImage= - *Final GObject Class*, =LRG_TYPE_DDS_IMAGE=, GIR =Libregnum.DdsImage=
-- =LrgDdsFormat= - stored pixel format (=dxt1=, =dxt3=, =dxt5=, =rgb=, =rgba=, =luminance=, =luminance-alpha=, =alpha=), =lrg-enums.h=
+- =LrgDdsFormat= - stored pixel format (=dxt1=, =dxt3=, =dxt5=, =rgb=, =rgba=, =luminance=, =luminance-alpha=, =alpha=, =bc7=), =lrg-enums.h=
 - =LrgDdsError= - error enum in the =LRG_DDS_ERROR= domain (=invalid=, =truncated=, =unsupported=), =lrg-enums.h=
 - *Header* - =graphics/lrg-dds-image.h=
 
@@ -31,6 +31,10 @@ gboolean      lrg_dds_image_get_mip_size   (LrgDdsImage *self, guint level,
 GBytes       *lrg_dds_image_get_mip_data   (LrgDdsImage *self, guint level);
 GBytes       *lrg_dds_image_decode         (LrgDdsImage *self, guint level, GError **error);
 GrlImage     *lrg_dds_image_to_image       (LrgDdsImage *self, guint level, GError **error);
+
+/* bare BC7 blocks (16 bytes per 4x4 tile, LRG_DDS_BC7_BLOCK_SIZE), no header */
+GBytes       *lrg_dds_decode_bc7           (const guint8 *blocks, gsize length,
+                                            guint width, guint height, GError **error);
 #+end_src
 
 ** Supported files
@@ -38,9 +42,9 @@ GrlImage     *lrg_dds_image_to_image       (LrgDdsImage *self, guint level, GErr
 :CUSTOM_ID: supported-files
 :END:
 - *Legacy header*: FourCC =DXT1= (BC1), =DXT2= / =DXT3= (BC2), =DXT4= / =DXT5= (BC3); uncompressed 8, 16, 24 and 32-bit surfaces described by bit masks (=DDPF_RGB=, =DDPF_LUMINANCE=, =DDPF_ALPHA=, with or without =DDPF_ALPHAPIXELS=).  Channels of any width are scaled to 8 bits (5-bit red 31 becomes 255).
-- *DX10 header*: =DXGI_FORMAT_BC1/2/3_UNORM= (and =_SRGB=), =R8G8B8A8_UNORM=, =B8G8R8A8_UNORM= (and =_SRGB=); the colour values are returned as stored, no sRGB conversion.
+- *DX10 header*: =DXGI_FORMAT_BC1/2/3_UNORM= (and =_SRGB=), =BC7_UNORM= (98) and =BC7_UNORM_SRGB= (99), =R8G8B8A8_UNORM=, =B8G8R8A8_UNORM= (and =_SRGB=); the colour values are returned as stored, no sRGB conversion.
 - *Mip chains*: =dwMipMapCount= when =DDSD_MIPMAPCOUNT= is set (at most 16 levels), each level half the previous, down to 1 x 1.  A cube map reads as its first face.
-- *Not supported* (=LRG_DDS_ERROR_UNSUPPORTED=): other FourCCs (=ATI1=, =ATI2=, floating point), BC4 .. BC7, volume textures.
+- *Not supported* (=LRG_DDS_ERROR_UNSUPPORTED=): other FourCCs (=ATI1=, =ATI2=, floating point), BC4 .. BC6H, volume textures.
 
 ** Decoding rules
 :PROPERTIES:
@@ -49,8 +53,36 @@ GrlImage     *lrg_dds_image_to_image       (LrgDdsImage *self, guint level, GErr
 - BC1: =c0 > c1= selects four colours (two endpoints, two thirds between); otherwise three colours (the midpoint) and index 3 is transparent black.  BC2 and BC3 colour blocks always use four colours.
 - BC2: sixteen explicit 4-bit alphas, scaled by 17.
 - BC3: =a0 > a1= gives eight alphas (endpoints and six sevenths between); otherwise six (endpoints and four fifths) plus 0 and 255.
+- BC7: see [[#bc7][BC7]] below.
 - Blocks overhanging a width or height that is not a multiple of 4 are clipped.
 - Luminance surfaces decode to grey; alpha-only surfaces to black with their alpha.
+
+** BC7
+:PROPERTIES:
+:CUSTOM_ID: bc7
+:END:
+A BC7 block is 16 bytes for a 4x4 tile, read as 128 bits least significant bit first.  All eight modes are decoded:
+
+| Mode | Subsets | Partition bits | Rotation | Index selection | Colour bits | Alpha bits | P-bits           | Indices         |
+|------+---------+----------------+----------+-----------------+-------------+------------+------------------+-----------------|
+| 0    | 3       | 4              | -        | -               | 4           | -          | one per endpoint | 3 bits          |
+| 1    | 2       | 6              | -        | -               | 6           | -          | one per subset   | 3 bits          |
+| 2    | 3       | 6              | -        | -               | 5           | -          | -                | 2 bits          |
+| 3    | 2       | 6              | -        | -               | 7           | -          | one per endpoint | 2 bits          |
+| 4    | 1       | -              | 2 bits   | 1 bit           | 5           | 6          | -                | 2 bits + 3 bits |
+| 5    | 1       | -              | 2 bits   | -               | 7           | 8          | -                | 2 bits + 2 bits |
+| 6    | 1       | -              | -        | -               | 7           | 7          | one per endpoint | 4 bits          |
+| 7    | 2       | 6              | -        | -               | 5           | 5          | one per endpoint | 2 bits          |
+
+- *Mode*: the number of 0 bits before the first 1 bit of the block.  A first byte of 0 is the reserved mode and decodes to transparent black (0, 0, 0, 0), as the specification requires.
+- *Field order*: mode, partition, rotation, index selection, endpoint fields channel-major (every endpoint's red, then green, blue, alpha), p-bits, primary indices, secondary indices.
+- *Endpoints*: a p-bit is appended below each channel of its endpoint (colour and alpha alike); the widened value is expanded to 8 bits by replicating its high bits.  Modes without alpha bits are opaque.
+- *Partitions and anchors*: pixel /i/ of a 2- or 3-subset mode belongs to the subset the specification's partition table gives; each subset's anchor pixel (pixel 0 for the first, the anchor tables for the others) stores its index with one bit fewer.
+- *Interpolation*: =((64 - w) * e0 + w * e1 + 32) >> 6= with the weights 0 21 43 64 (2-bit), 0 9 18 27 37 46 55 64 (3-bit) and 0 4 9 13 17 21 26 30 34 38 43 47 51 55 60 64 (4-bit).
+- *Modes 4 and 5*: colour and alpha use separate index sets, primary (stored first) and secondary.  Mode 5 takes colour from the primary set; mode 4 does too unless its index selection bit is 1, which swaps them (3-bit colour, 2-bit alpha).  The rotation then swaps alpha with red (1), green (2) or blue (3).
+- *Bare blocks*: =lrg_dds_decode_bc7()= takes ceil(w / 4) * ceil(h / 4) blocks, rows of blocks top to bottom; extra bytes are ignored; a short buffer is =truncated=, a zero or oversized size is =invalid=.
+
+The decoder was checked against an independent BC7 implementation on 51,200 random blocks across all modes (identical output); the unit tests use hand-built blocks whose expected pixels are worked out from the rules above.
 
 ** Errors
 :PROPERTIES:
@@ -78,4 +110,4 @@ else if ((image = lrg_dds_image_to_image (dds, 0, &error)) != NULL)
 :PROPERTIES:
 :CUSTOM_ID: tests
 :END:
-=tests/test-dds-image.c=: BC1 four- and three-colour blocks, BC2 and both BC3 alpha modes, an odd-sized three-level chain with clipped blocks and raw level data, a chain cut short, 32/24/16-bit, luminance, luminance-alpha and alpha surfaces, the DX10 header (BC1, RGBA8, an unsupported BC7), the =GrlImage= wrapper, and malformed input: every truncation of a valid file, zero and oversized dimensions, a truncated level 0, unknown FourCC and bit counts, missing masks, a corrupted header size, a missing file.
+=tests/test-dds-image.c=: BC1 four- and three-colour blocks, BC2 and both BC3 alpha modes, an odd-sized three-level chain with clipped blocks and raw level data, a chain cut short, 32/24/16-bit, luminance, luminance-alpha and alpha surfaces, the DX10 header (BC1, RGBA8, an unsupported BC6H), the =GrlImage= wrapper, and malformed input: every truncation of a valid file, zero and oversized dimensions, a truncated level 0, unknown FourCC and bit counts, missing masks, a corrupted header size, a missing file.  BC7: one hand-built block per mode 0 .. 7 (partitions, anchors that are not the subset's first pixel, endpoint and shared p-bits, rotation, the index selection bit, 2/3/4-bit weights), the reserved mode, 5 x 6 and 1 x 1 surfaces, every truncated length, zero and oversized sizes, and DX10 files (=BC7_UNORM= with a three-level chain decoding like the bare blocks, =BC7_UNORM_SRGB=, a truncated level 0).

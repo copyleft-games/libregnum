@@ -5982,7 +5982,7 @@ GQuark lrg_dds_error_quark (void);
  *   mip level that does not exist
  * @LRG_DDS_ERROR_TRUNCATED: the file ends before level 0's pixels
  * @LRG_DDS_ERROR_UNSUPPORTED: a valid DDS in a format the decoder does
- *   not handle (BC4 .. BC7, floating point, volume textures)
+ *   not handle (BC4 .. BC6H, floating point, volume textures)
  *
  * Error codes of lrg_dds_image_new_from_bytes() and lrg_dds_image_decode().
  */
@@ -6007,6 +6007,8 @@ GType lrg_dds_error_get_type (void) G_GNUC_CONST;
  * @LRG_DDS_FORMAT_LUMINANCE: uncompressed luminance
  * @LRG_DDS_FORMAT_LUMINANCE_ALPHA: uncompressed luminance with alpha
  * @LRG_DDS_FORMAT_ALPHA: uncompressed alpha only
+ * @LRG_DDS_FORMAT_BC7: BC7 (BPTC) blocks, colour with optional alpha,
+ *   read through the DX10 header (DXGI_FORMAT_BC7_UNORM / _SRGB)
  *
  * How an #LrgDdsImage stores its pixels.
  */
@@ -6019,7 +6021,8 @@ typedef enum
     LRG_DDS_FORMAT_RGBA,
     LRG_DDS_FORMAT_LUMINANCE,
     LRG_DDS_FORMAT_LUMINANCE_ALPHA,
-    LRG_DDS_FORMAT_ALPHA
+    LRG_DDS_FORMAT_ALPHA,
+    LRG_DDS_FORMAT_BC7
 } LrgDdsFormat;
 
 LRG_AVAILABLE_IN_ALL
