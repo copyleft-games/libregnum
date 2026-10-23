@@ -37,7 +37,7 @@ The Audio module consists of these core classes:
 - *Procedural audio* - Create custom synthesizers and sound generators
 - *Positional sound* - A listener and per-voice emitters with distance attenuation and stereo pan (compile-time probe: =LRG_AUDIO_HAS_POSITIONAL=)
 - *MIDI synthesis* - Standard MIDI Files through a SoundFont 2 bank, loop markers, crossfades, headless rendering (compile-time probe: =LRG_AUDIO_HAS_MIDI_SYNTH=)
-- *Effects* - Reverb with room presets, a gliding low-pass, echo, chorus and pitch shift, alone, chained, on the final mix or on a bus (compile-time probe: =LRG_AUDIO_HAS_EFFECTS=)
+- *Effects* - Reverb with room presets, a gliding low-pass and high-pass, echo, chorus and pitch shift, alone, chained, on the final mix or on a bus (compile-time probe: =LRG_AUDIO_HAS_EFFECTS=)
 - *Per-voice effects* - Submix buses a voice is sent or inserted into: a reverb only some voices reach, a filter on a group of voices
 - *Sound beds* - Named ambient layers with fades, crossfades and scattered shots
 - *MIDI out* - A real-time sequencer into the ALSA sequencer or any =LrgMidiOutput= (ALSA optional at build time: Fedora =alsa-lib-devel=)

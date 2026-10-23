@@ -191,6 +191,7 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-audio-effect.h \
 	src/audio/lrg-reverb.h \
 	src/audio/lrg-low-pass.h \
+	src/audio/lrg-high-pass.h \
 	src/audio/lrg-echo.h \
 	src/audio/lrg-chorus.h \
 	src/audio/lrg-pitch-shift.h \
@@ -808,6 +809,7 @@ SOURCES := \
 	src/audio/lrg-audio-effect.c \
 	src/audio/lrg-reverb.c \
 	src/audio/lrg-low-pass.c \
+	src/audio/lrg-high-pass.c \
 	src/audio/lrg-echo.c \
 	src/audio/lrg-chorus.c \
 	src/audio/lrg-pitch-shift.c \

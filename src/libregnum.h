@@ -250,6 +250,7 @@
 #include "audio/lrg-audio-effect.h"
 #include "audio/lrg-reverb.h"
 #include "audio/lrg-low-pass.h"
+#include "audio/lrg-high-pass.h"
 #include "audio/lrg-echo.h"
 #include "audio/lrg-chorus.h"
 #include "audio/lrg-pitch-shift.h"

@@ -1,9 +1,9 @@
-#+title: Audio effects: LrgAudioEffect, LrgReverb, LrgLowPass, LrgEcho, LrgChorus, LrgPitchShift, LrgAudioEffectChain
-#+description: DSP effects on interleaved float buffers (an algorithmic reverb with room presets, a gliding resonant low-pass, a feedback echo, a three-tap chorus, a pitch shifter), chains of them, and running a chain on the audio device's final mix
+#+title: Audio effects: LrgAudioEffect, LrgReverb, LrgLowPass, LrgHighPass, LrgEcho, LrgChorus, LrgPitchShift, LrgAudioEffectChain
+#+description: DSP effects on interleaved float buffers (an algorithmic reverb with room presets, a gliding resonant low-pass and high-pass, a feedback echo, a three-tap chorus, a pitch shifter), chains of them, and running a chain on the audio device's final mix
 
 * Overview
 
-=LrgAudioEffect= is the abstract base of a sample processor: it receives a block of interleaved 32-bit float frames and rewrites it in place.  libregnum ships =LrgReverb= (rooms, caves, halls), =LrgLowPass= (underwater, behind a wall), =LrgEcho= (repeats, voice doubling), =LrgChorus= (thickened, many-throated voices) and =LrgPitchShift= (deeper or higher voices), and =LrgAudioEffectChain= runs several in order.  Everything is headless: the tests feed impulses and sines and look at what comes out.  A chain can also run on the audio device's final stereo mix (every sound, music stream and voice) through raylib's mixed-audio processor, or on a submix bus that only some voices reach ([[file:buses.org][buses.org]]); raylib's =raudio= is wrapped, never modified.
+=LrgAudioEffect= is the abstract base of a sample processor: it receives a block of interleaved 32-bit float frames and rewrites it in place.  libregnum ships =LrgReverb= (rooms, caves, halls), =LrgLowPass= (underwater, behind a wall), =LrgHighPass= (radios, telephones, small speakers), =LrgEcho= (repeats, voice doubling), =LrgChorus= (thickened, many-throated voices) and =LrgPitchShift= (deeper or higher voices), and =LrgAudioEffectChain= runs several in order.  Everything is headless: the tests feed impulses and sines and look at what comes out.  A chain can also run on the audio device's final stereo mix (every sound, music stream and voice) through raylib's mixed-audio processor, or on a submix bus that only some voices reach ([[file:buses.org][buses.org]]); raylib's =raudio= is wrapped, never modified.
 
 Applications probe for the API with =#ifdef LRG_AUDIO_HAS_EFFECTS= (which also covers =LrgSoundBed= and the MIDI output types).
 
@@ -62,6 +62,21 @@ A second-order (12 dB per octave) low-pass, the biquad of Robert Bristow-Johnson
 | Function | Purpose |
 |----------+---------|
 | =lrg_low_pass_new (cutoff)= | a filter starting at =cutoff= Hz (no glide from elsewhere) |
+| =set_cutoff= / =get_cutoff= | the target, clamped to 20 Hz .. 20 kHz |
+| =get_current_cutoff= | where the glide is |
+| =set_resonance= / =get_resonance=, =set_glide= / =get_glide= | Q and glide time |
+
+* LrgHighPass
+
+The low-pass's counterpart: the same second-order biquad and machinery with the cookbook's high-pass coefficients (=b0 = b2 = (1 + cos w0) / 2=, =b1 = -(1 + cos w0)=, =a0 = 1 + alpha=, =a1 = -2 cos w0=, =a2 = 1 - alpha=): 12 dB per octave below the cut-off, unity gain well above it, no DC through.
+
+- The cut-off glides geometrically as the low-pass's does (0.08 s by default, =set_glide= 0 .. 5 s, coefficients every 32 frames while gliding).
+- A cut-off at or below =LRG_HIGH_PASS_OPEN= (20 Hz, also the lowest cut-off) is open: once the glide gets there the samples pass untouched and the state is cleared.  The highest cut-off is =LRG_HIGH_PASS_MAX_CUTOFF= (20 kHz), capped at 0.45 x the rate.
+- The Q (=set_resonance=, 0.1 .. 10) defaults to 0.7071 (Butterworth, -3 dB at the cut-off); a higher Q peaks just above it.
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_high_pass_new (cutoff)= | a filter starting at =cutoff= Hz (no glide from elsewhere) |
 | =set_cutoff= / =get_cutoff= | the target, clamped to 20 Hz .. 20 kHz |
 | =get_current_cutoff= | where the glide is |
 | =set_resonance= / =get_resonance=, =set_glide= / =get_glide= | Q and glide time |
@@ -135,6 +150,8 @@ lrg_low_pass_set_cutoff (muffle, 600.0f);
 #+end_src
 
 * Tests
+
+=tests/test-audio-effects.c= (=/audio-effects/high-pass/*=): the high-pass's impulse response sums to zero (no DC) and a constant input decays to nothing; a decade above the cut-off passes, the cut-off is -3 dB and a decade below loses about 40 dB; the glide from open to 500 Hz, an open filter passing a low sine untouched, the clamps.
 
 =tests/test-audio-bus.c=: the echo's repeats at one and two delays with the feedback, its reset, clamps and a regrown ring in stereo; the chorus's taps at the base delay without swing, the dry level alone, a swinging stereo chorus bounded and different between the channels, clamps; the pitch shifter's ratio 1 as the identity, the clamps, and a 400 Hz sine shifted by 0.5, 0.88, 1.13 and 2 within 5 percent.
 
