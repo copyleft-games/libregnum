@@ -14,6 +14,12 @@
  * ever called with mix_lock released: the callback takes raudio's lock
  * first and mix_lock second, attaching in the other order would
  * deadlock.
+ *
+ * The same callback mixes the attached submix buses (lrg-audio-bus.c)
+ * into the device output before the chain runs, so the processor is on
+ * raylib's list while a chain or any bus is attached (sync_processor()).
+ * Lock order on the device thread: raudio's lock, mix_lock, a bus's
+ * lock, a chain's lock.
  */
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_AUDIO
@@ -26,6 +32,8 @@
 #include <raylib.h>
 
 #include "lrg-audio-effect.h"
+#include "lrg-audio-bus.h"
+#include "lrg-audio-mix-private.h"
 #include "../lrg-log.h"
 
 /* ==========================================================================
@@ -207,6 +215,7 @@ static GMutex               mix_lock;
 static LrgAudioEffectChain *mix_chain;      /* borrowed: cleared by detach */
 static guint                mix_rate;
 static gboolean             mix_processor;  /* our callback is attached */
+static GPtrArray           *mix_buses;      /* LrgAudioBus *, borrowed: removed on detach */
 
 /* the measured device rate: raylib opens the device at the system's rate
  * and does not report it, so when the caller did not name a rate the
@@ -285,9 +294,18 @@ static void
 mix_process (void         *buffer,
              unsigned int  frames)
 {
+    guint i;
+
     g_mutex_lock (&mix_lock);
     if (mix_auto)
         measure_block ((guint)frames);
+    /* the buses' returns join the mix first, the chain sees them too */
+    if (mix_buses != NULL)
+    {
+        for (i = 0; i < mix_buses->len; i++)
+            lrg_audio_bus_mix_device_private (g_ptr_array_index (mix_buses, i),
+                                              (gfloat *)buffer, (guint)frames, mix_rate);
+    }
     if (mix_chain != NULL)
         lrg_audio_effect_chain_process (mix_chain, (gfloat *)buffer, (guint)frames, 2, mix_rate);
     g_mutex_unlock (&mix_lock);
@@ -426,6 +444,99 @@ lrg_audio_effect_chain_reset (LrgAudioEffectChain *self)
 }
 
 /*
+ * sync_processor:
+ * Puts raylib's mixed processor on (or off) its list to match whether a
+ * chain or a bus needs it; raudio is called with mix_lock released.
+ */
+static void
+sync_processor (void)
+{
+    gboolean attach;
+    gboolean detach;
+    gboolean want;
+
+    g_mutex_lock (&mix_lock);
+    want = mix_chain != NULL || (mix_buses != NULL && mix_buses->len > 0);
+    attach = want && !mix_processor;
+    detach = !want && mix_processor;
+    mix_processor = want;
+    g_mutex_unlock (&mix_lock);
+
+    if (attach)
+        AttachAudioMixedProcessor (mix_process);
+    /* the device may have closed since (raylib then holds no processor) */
+    if (detach && IsAudioDeviceReady ())
+        DetachAudioMixedProcessor (mix_process);
+}
+
+/*
+ * the rate for a new user of the mix: a named rate wins; 0 assumes the
+ * default and measures, unless the mix already runs measuring
+ */
+static void
+claim_rate (guint sample_rate)
+{
+    if (sample_rate != 0)
+    {
+        mix_auto = FALSE;
+        mix_measured = FALSE;
+        mix_rate = sample_rate;
+        return;
+    }
+    if (mix_processor && mix_auto)
+        return;
+    mix_auto = TRUE;
+    mix_measured = FALSE;
+    measure_start = 0;
+    measure_last = 0;
+    mix_rate = LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE;
+}
+
+gboolean
+lrg_audio_mix_add_bus_private (LrgAudioBus *bus,
+                               guint        sample_rate)
+{
+    if (!IsAudioDeviceReady ())
+        return FALSE;
+    g_mutex_lock (&mix_lock);
+    claim_rate (sample_rate);
+    if (mix_buses == NULL)
+        mix_buses = g_ptr_array_new ();
+    if (!g_ptr_array_find (mix_buses, bus, NULL))
+        g_ptr_array_add (mix_buses, bus);
+    g_mutex_unlock (&mix_lock);
+    sync_processor ();
+    lrg_debug (LRG_LOG_DOMAIN_AUDIO, "audio bus: on the device mix at %u Hz", mix_rate);
+    return TRUE;
+}
+
+void
+lrg_audio_mix_remove_bus_private (LrgAudioBus *bus)
+{
+    gboolean removed;
+
+    g_mutex_lock (&mix_lock);
+    removed = mix_buses != NULL && g_ptr_array_remove (mix_buses, bus);
+    g_mutex_unlock (&mix_lock);
+    /* once mix_lock was taken and released the callback no longer runs it */
+    if (removed)
+        sync_processor ();
+}
+
+guint
+lrg_audio_mix_get_rate_private (gboolean *out_measured)
+{
+    guint rate;
+
+    g_mutex_lock (&mix_lock);
+    rate = mix_processor ? mix_rate : 0;
+    if (out_measured != NULL)
+        *out_measured = mix_processor && mix_measured;
+    g_mutex_unlock (&mix_lock);
+    return rate;
+}
+
+/*
  * lrg_audio_effect_chain_attach_mix:
  * raylib's processor list is attached to once (mix_processor) and the
  * slot switched under mix_lock afterwards, with raudio never called
@@ -436,63 +547,48 @@ lrg_audio_effect_chain_attach_mix (LrgAudioEffectChain *self,
                                    guint                sample_rate)
 {
     LrgAudioEffectChain *previous;
-    gboolean             need_processor;
 
     g_return_val_if_fail (LRG_IS_AUDIO_EFFECT_CHAIN (self), FALSE);
 
     if (!IsAudioDeviceReady ())
         return FALSE;
+
     g_mutex_lock (&mix_lock);
     /* no rate named: assume the default and let the callback measure it */
     mix_auto = sample_rate == 0;
     mix_measured = FALSE;
     measure_start = 0;
     measure_last = 0;
-    g_mutex_unlock (&mix_lock);
-    if (sample_rate == 0)
-        sample_rate = LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE;
-
-    g_mutex_lock (&mix_lock);
-    need_processor = !mix_processor;
-    mix_processor = TRUE;
-    g_mutex_unlock (&mix_lock);
-    if (need_processor)
-        AttachAudioMixedProcessor (mix_process);
-
-    g_mutex_lock (&mix_lock);
+    mix_rate = sample_rate != 0 ? sample_rate : LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE;
     previous = mix_chain;
     mix_chain = self;
-    mix_rate = sample_rate;
     self->attached = TRUE;
     if (previous != NULL && previous != self)
         previous->attached = FALSE;
     g_mutex_unlock (&mix_lock);
+    sync_processor ();
 
-    lrg_debug (LRG_LOG_DOMAIN_AUDIO, "effect chain: on the device mix at %u Hz", sample_rate);
+    lrg_debug (LRG_LOG_DOMAIN_AUDIO, "effect chain: on the device mix at %u Hz",
+               sample_rate != 0 ? sample_rate : LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE);
     return TRUE;
 }
 
 void
 lrg_audio_effect_chain_detach_mix (LrgAudioEffectChain *self)
 {
-    gboolean drop_processor;
+    gboolean was_slot;
 
     g_return_if_fail (LRG_IS_AUDIO_EFFECT_CHAIN (self));
 
     g_mutex_lock (&mix_lock);
-    drop_processor = FALSE;
-    if (mix_chain == self)
-    {
+    was_slot = mix_chain == self;
+    if (was_slot)
         mix_chain = NULL;
-        drop_processor = mix_processor;
-        mix_processor = FALSE;
-    }
     self->attached = FALSE;
     g_mutex_unlock (&mix_lock);
 
-    /* the device may have closed since (raylib then holds no processor) */
-    if (drop_processor && IsAudioDeviceReady ())
-        DetachAudioMixedProcessor (mix_process);
+    if (was_slot)
+        sync_processor ();
 }
 
 gboolean

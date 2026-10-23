@@ -191,6 +191,10 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-audio-effect.h \
 	src/audio/lrg-reverb.h \
 	src/audio/lrg-low-pass.h \
+	src/audio/lrg-echo.h \
+	src/audio/lrg-chorus.h \
+	src/audio/lrg-pitch-shift.h \
+	src/audio/lrg-audio-bus.h \
 	src/audio/lrg-sound-bed.h \
 	src/audio/lrg-midi-output.h \
 	src/audio/lrg-midi-output-alsa.h \
@@ -804,6 +808,10 @@ SOURCES := \
 	src/audio/lrg-audio-effect.c \
 	src/audio/lrg-reverb.c \
 	src/audio/lrg-low-pass.c \
+	src/audio/lrg-echo.c \
+	src/audio/lrg-chorus.c \
+	src/audio/lrg-pitch-shift.c \
+	src/audio/lrg-audio-bus.c \
 	src/audio/lrg-sound-bed.c \
 	src/audio/lrg-midi-output.c \
 	src/audio/lrg-midi-output-alsa.c \

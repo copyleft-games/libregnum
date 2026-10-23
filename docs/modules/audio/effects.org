@@ -1,9 +1,9 @@
-#+title: Audio effects: LrgAudioEffect, LrgReverb, LrgLowPass, LrgAudioEffectChain
-#+description: DSP effects on interleaved float buffers (an algorithmic reverb with room presets, a gliding resonant low-pass), chains of them, and running a chain on the audio device's final mix
+#+title: Audio effects: LrgAudioEffect, LrgReverb, LrgLowPass, LrgEcho, LrgChorus, LrgPitchShift, LrgAudioEffectChain
+#+description: DSP effects on interleaved float buffers (an algorithmic reverb with room presets, a gliding resonant low-pass, a feedback echo, a three-tap chorus, a pitch shifter), chains of them, and running a chain on the audio device's final mix
 
 * Overview
 
-=LrgAudioEffect= is the abstract base of a sample processor: it receives a block of interleaved 32-bit float frames and rewrites it in place.  libregnum ships two effects, =LrgReverb= (rooms, caves, halls) and =LrgLowPass= (underwater, behind a wall), and =LrgAudioEffectChain= runs several in order.  Everything is headless: the tests feed impulses and sines and look at what comes out.  A chain can also run on the audio device's final stereo mix (every sound, music stream and voice) through raylib's mixed-audio processor; raylib's =raudio= is wrapped, never modified.
+=LrgAudioEffect= is the abstract base of a sample processor: it receives a block of interleaved 32-bit float frames and rewrites it in place.  libregnum ships =LrgReverb= (rooms, caves, halls), =LrgLowPass= (underwater, behind a wall), =LrgEcho= (repeats, voice doubling), =LrgChorus= (thickened, many-throated voices) and =LrgPitchShift= (deeper or higher voices), and =LrgAudioEffectChain= runs several in order.  Everything is headless: the tests feed impulses and sines and look at what comes out.  A chain can also run on the audio device's final stereo mix (every sound, music stream and voice) through raylib's mixed-audio processor, or on a submix bus that only some voices reach ([[file:buses.org][buses.org]]); raylib's =raudio= is wrapped, never modified.
 
 Applications probe for the API with =#ifdef LRG_AUDIO_HAS_EFFECTS= (which also covers =LrgSoundBed= and the MIDI output types).
 
@@ -66,6 +66,40 @@ A second-order (12 dB per octave) low-pass, the biquad of Robert Bristow-Johnson
 | =get_current_cutoff= | where the glide is |
 | =set_resonance= / =get_resonance=, =set_glide= / =get_glide= | Q and glide time |
 
+* LrgEcho
+
+A feedback delay: one ring per channel of =delay x rate= frames.  Per sample the ring's oldest value =d= comes out at the wet level next to the dry input, and =x + feedback x d= goes back in, so the first repeat follows after exactly one delay and each later one is =feedback= times the one before.
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_echo_new (delay, feedback)= | an echo with dry and wet at 1 |
+| =set_delay= / =get_delay= | seconds, =LRG_ECHO_MIN_DELAY= (1 ms) .. =LRG_ECHO_MAX_DELAY= (5 s); a longer delay than the ring holds regrows it on the next block (forgetting the repeats) |
+| =set_feedback= / =get_feedback= | 0 (one repeat) .. 1 (forever), clamped |
+| =set_dry= / =set_wet= and their getters | 0 .. 1, clamped |
+
+* LrgChorus
+
+Three delayed taps whose delays sway around a base delay with a sine oscillator; the taps are a third of a cycle apart and the channels a quarter, which spreads them across the stereo field.  Tap =k= of channel =c= reads =delay x (1 + depth x sin (2 pi (phase + k / 3 + c / 4)))= seconds back (at least one frame) with linear interpolation; the line takes =x + feedback x mean (taps)=, the output is =dry x + sum (wet[k] x tap[k])=.  The ring holds twice =LRG_CHORUS_MAX_DELAY= (0.1 s) and is sized when the rate or the channel count changes.
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_chorus_new ()= | 40 ms, 0.8 Hz, depth 0.03, no feedback, dry 1, every tap 0.5 |
+| =set_delay= / =get_delay= | the base delay, 0 .. 0.1 s |
+| =set_rate= / =get_rate= | the oscillator, 0 .. =LRG_CHORUS_MAX_RATE= (20 Hz) |
+| =set_depth= / =get_depth= | the swing as a fraction of the delay, 0 .. 1 |
+| =set_feedback= / =get_feedback= | 0 .. 0.95 |
+| =set_dry= / =get_dry=, =set_tap_wet (tap, wet)= / =get_tap_wet (tap)= | 0 .. 1 each; =LRG_CHORUS_N_TAPS= (3) taps |
+
+* LrgPitchShift
+
+The classic two-head delay-line shifter, which keeps the duration.  The input goes into a ring; two read heads trail the write by delays that sweep through one window =W= at the speed =1 - ratio= (a delay that shrinks by =ratio - 1= frames per frame plays the signal =ratio= times as fast).  A head that runs off the window's end jumps to the other end; each head is weighted by =sin^2 (pi x its place in the window)= and the heads are half a window apart, so the weights always sum to 1 and a head is silent when it jumps.  The output lags by about half a window.
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_pitch_shift_new (ratio)= | a shifter with a 40 ms window |
+| =set_ratio= / =get_ratio= | =LRG_PITCH_SHIFT_MIN_RATIO= (0.5, an octave down) .. =LRG_PITCH_SHIFT_MAX_RATIO= (2); exactly 1 passes the samples untouched (the ring keeps filling) |
+| =set_window= / =get_window= | 5 ms .. 0.2 s; longer windows flutter less on steady tones and smear transients more; a new window forgets the ring |
+
 * The device rate (gaps G8)
 
 raylib opens the device at the system's rate and does not report it.  =lrg_audio_effect_chain_attach_mix (chain, 0)= assumes =LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE= (48000) and the mix callback then counts the frames it is handed against the monotonic clock: after two windows of two seconds that snap (=lrg_audio_snap_sample_rate()=: the nearest of 8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000, 176400, 192000 within 6 percent) to the same rate, that rate replaces the guess.  =lrg_audio_effect_chain_get_mix_rate (chain, &measured)= reports the rate in use and whether it was measured.  Naming a rate in =attach_mix()= turns the measurement off.  =tests/test-audio-effects.c= covers the snapping and the unattached chain.
@@ -82,7 +116,7 @@ raylib opens the device at the system's rate and does not report it.  =lrg_audio
 | =attach_mix (sample_rate)= | run on the device's final mix from now on; =FALSE= without an open device |
 | =detach_mix= / =is_attached= | stop / ask; disposing an attached chain detaches it |
 
-raylib's mixed-audio processor is a plain C callback without user data, run with raudio's lock held, so there is one process-wide slot: attaching a chain detaches the previous one.  raudio is never called while libregnum's slot lock is held (the callback takes raudio's lock first), which rules out a lock-order deadlock.  raylib does not report the device's rate; =attach_mix (0)= assumes =LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE= (48000 Hz, the PipeWire and PulseAudio default).  A wrong guess only scales delay lengths and cut-offs by the ratio of the rates.
+raylib's mixed-audio processor is a plain C callback without user data, run with raudio's lock held, so there is one process-wide slot: attaching a chain detaches the previous one.  The same callback mixes the attached submix buses into the device block before the chain runs ([[file:buses.org][buses.org]]); it stays on raylib's list while a chain or any bus is attached.  raudio is never called while libregnum's slot lock is held (the callback takes raudio's lock first), which rules out a lock-order deadlock.  raylib does not report the device's rate; =attach_mix (0)= assumes =LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE= (48000 Hz, the PipeWire and PulseAudio default).  A wrong guess only scales delay lengths and cut-offs by the ratio of the rates.
 
 * Example
 
@@ -101,5 +135,7 @@ lrg_low_pass_set_cutoff (muffle, 600.0f);
 #+end_src
 
 * Tests
+
+=tests/test-audio-bus.c=: the echo's repeats at one and two delays with the feedback, its reset, clamps and a regrown ring in stereo; the chorus's taps at the base delay without swing, the dry level alone, a swinging stereo chorus bounded and different between the channels, clamps; the pitch shifter's ratio 1 as the identity, the clamps, and a 400 Hz sine shifted by 0.5, 0.88, 1.13 and 2 within 5 percent.
 
 =tests/test-audio-effects.c=: the dry reverb is the identity; a cave's impulse response is silent until the shortest comb plus the pre-delay, then decays half second by half second and differs between left and right; a quarry keeps more late energy than a room; reset and disable; parameter clamps and the dry glide; the low-pass impulse response sums to its DC gain; a decade below the cut-off passes, the cut-off is -3 dB and a decade above is below -36 dB; the glide and the open filter; a chain equals its effects run one after the other, and refuses the device mix headless.

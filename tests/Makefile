@@ -117,6 +117,7 @@ TEST_SOURCES := \
 	test-audio-positional.c \
 	test-midi-synth.c \
 	test-audio-effects.c \
+	test-audio-bus.c \
 	test-midi-output.c \
 	test-inventory.c \
 	test-i18n.c \
