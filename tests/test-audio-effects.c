@@ -338,6 +338,115 @@ test_low_pass_glide_and_open (void)
 }
 
 /* ==========================================================================
+ * High-pass
+ * ========================================================================== */
+
+/* no DC passes: the impulse response sums to 0 and a constant decays */
+static void
+test_high_pass_impulse_response (void)
+{
+    g_autoptr(LrgHighPass) filter = NULL;
+    g_autofree gfloat     *frames = NULL;
+    gdouble                sum;
+    guint                  n;
+    guint                  f;
+
+    n = RATE / 4;
+    filter = lrg_high_pass_new (1000.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_cutoff (filter), ==, 1000.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_current_cutoff (filter), ==, 1000.0f);
+    frames = impulse (n, 1);
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, n, 1, RATE);
+    sum = 0.0;
+    for (f = 0; f < n; f++)
+        sum += frames[f];
+    g_assert_cmpfloat_with_epsilon (sum, 0.0, 1e-3);
+    /* the edge goes through: the first sample is most of the impulse */
+    g_assert_cmpfloat (frames[0], >, 0.8f);
+    g_assert_cmpfloat_with_epsilon (frames[n - 1], 0.0f, 1e-6);
+
+    /* a constant input (DC, stereo) dies away in both channels */
+    g_free (frames);
+    frames = g_new (gfloat, (gsize)n * 2);
+    for (f = 0; f < 2 * n; f++)
+        frames[f] = 0.5f;
+    lrg_audio_effect_reset (LRG_AUDIO_EFFECT (filter));
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, n, 2, RATE);
+    g_assert_cmpfloat_with_epsilon (frames[2 * n - 2], 0.0f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (frames[2 * n - 1], 0.0f, 1e-5);
+}
+
+/* a decade above the cut-off passes, a decade below loses ~40 dB */
+static void
+test_high_pass_frequency_response (void)
+{
+    g_autoptr(LrgHighPass) filter = NULL;
+    gdouble                low;
+    gdouble                high;
+    gdouble                at_cutoff;
+
+    filter = lrg_high_pass_new (800.0f);
+    low = sine_gain (LRG_AUDIO_EFFECT (filter), 80.0);
+    at_cutoff = sine_gain (LRG_AUDIO_EFFECT (filter), 800.0);
+    /* 7900 Hz: not a divisor of the rate, so the samples reach the peak */
+    high = sine_gain (LRG_AUDIO_EFFECT (filter), 7900.0);
+    g_assert_cmpfloat_with_epsilon (high, 1.0, 0.03);
+    g_assert_cmpfloat_with_epsilon (at_cutoff, 0.7071, 0.03);  /* -3 dB, Butterworth */
+    g_assert_cmpfloat (low, <, 0.015);                         /* below -36 dB */
+
+    /* resonance peaks just above the cut-off */
+    lrg_high_pass_set_resonance (filter, 4.0f);
+    g_assert_cmpfloat (sine_gain (LRG_AUDIO_EFFECT (filter), 820.0), >, 2.0);
+}
+
+/* the cut-off glides geometrically, and an open filter is transparent */
+static void
+test_high_pass_glide_and_open (void)
+{
+    g_autoptr(LrgHighPass) filter = NULL;
+    g_autofree gfloat     *frames = NULL;
+    g_autofree gfloat     *copy = NULL;
+    gfloat                 mid;
+    guint                  f;
+
+    filter = lrg_high_pass_new (LRG_HIGH_PASS_OPEN);
+    frames = g_new0 (gfloat, RATE);
+    for (f = 0; f < RATE; f++)
+        frames[f] = (gfloat)(0.5 * sin (2.0 * G_PI * 30.0 * (gdouble)f / RATE));
+    copy = g_memdup2 (frames, sizeof (gfloat) * RATE);
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, RATE, 1, RATE);
+    for (f = 0; f < RATE; f++)
+        g_assert_cmpfloat (frames[f], ==, copy[f]);
+
+    /* 20 Hz -> 500 Hz over the glide (0.08 s time constant) */
+    lrg_high_pass_set_cutoff (filter, 500.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_current_cutoff (filter), ==, LRG_HIGH_PASS_OPEN);
+    memset (frames, 0, sizeof (gfloat) * RATE);
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, (guint)(0.08 * RATE), 1, RATE);
+    mid = lrg_high_pass_get_current_cutoff (filter);
+    g_assert_cmpfloat (mid, >, LRG_HIGH_PASS_OPEN);
+    g_assert_cmpfloat (mid, <, 500.0f);
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, RATE, 1, RATE);
+    g_assert_cmpfloat (lrg_high_pass_get_current_cutoff (filter), ==, 500.0f);
+
+    /* clamping */
+    lrg_high_pass_set_cutoff (filter, 1.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_cutoff (filter), ==, LRG_HIGH_PASS_OPEN);
+    lrg_high_pass_set_cutoff (filter, 96000.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_cutoff (filter), ==, LRG_HIGH_PASS_MAX_CUTOFF);
+    lrg_high_pass_set_resonance (filter, 100.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_resonance (filter), ==, 10.0f);
+    lrg_high_pass_set_resonance (filter, 0.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_high_pass_get_resonance (filter), 0.1f, 1e-6);
+    lrg_high_pass_set_glide (filter, 9.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_glide (filter), ==, 5.0f);
+    lrg_high_pass_set_glide (filter, 0.0f);
+    lrg_high_pass_set_cutoff (filter, 2000.0f);
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, 32, 1, RATE);
+    g_assert_cmpfloat (lrg_high_pass_get_current_cutoff (filter), ==, 2000.0f);
+}
+
+/* ==========================================================================
  * Chain
  * ========================================================================== */
 
@@ -688,6 +797,9 @@ main (gint   argc,
     g_test_add_func ("/audio-effects/low-pass/impulse-response", test_low_pass_impulse_response);
     g_test_add_func ("/audio-effects/low-pass/frequency-response", test_low_pass_frequency_response);
     g_test_add_func ("/audio-effects/low-pass/glide-and-open", test_low_pass_glide_and_open);
+    g_test_add_func ("/audio-effects/high-pass/impulse-response", test_high_pass_impulse_response);
+    g_test_add_func ("/audio-effects/high-pass/frequency-response", test_high_pass_frequency_response);
+    g_test_add_func ("/audio-effects/high-pass/glide-and-open", test_high_pass_glide_and_open);
     g_test_add_func ("/audio-effects/chain", test_chain);
     g_test_add_func ("/audio-effects/sound-bed/layering", test_bed_layering);
     g_test_add_func ("/audio-effects/sound-bed/loop-seam", test_bed_loop_seam);
