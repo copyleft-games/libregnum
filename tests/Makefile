@@ -205,6 +205,7 @@ TEST_SOURCES := \
 	test-editor-core.c \
 	test-editor-tools.c \
 	test-editor-server.c \
+	test-gui.c \
 	test-gif-recorder.c \
 	test-text-baker.c \
 	test-font-atlas.c \

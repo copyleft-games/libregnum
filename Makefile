@@ -1354,6 +1354,20 @@ SOURCES += \
 	src/scripting/lrg-scripting-crispy.c
 endif
 
+# Immediate-mode GUI toolkit (used by the editor; always built)
+PUBLIC_HEADERS += \
+	src/gui/lrg-gui-types.h \
+	src/gui/lrg-gui-draw-list.h \
+	src/gui/lrg-gui-context.h \
+	src/gui/lrg-gui-dock.h \
+	src/gui/lrg-gui-raylib.h
+SOURCES += \
+	src/gui/lrg-gui-draw-list.c \
+	src/gui/lrg-gui-context.c \
+	src/gui/lrg-gui-widgets.c \
+	src/gui/lrg-gui-dock.c \
+	src/gui/lrg-gui-raylib.c
+
 # Editor / level authoring module (conditional on BUILD_EDITOR=1)
 ifeq ($(BUILD_EDITOR),1)
 PUBLIC_HEADERS += \

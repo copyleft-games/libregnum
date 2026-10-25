@@ -332,6 +332,13 @@
 #include "scene/lrg-scene-serializer-blender.h"
 
 /* Editor / level authoring module */
+/* Immediate-mode GUI toolkit */
+#include "gui/lrg-gui-types.h"
+#include "gui/lrg-gui-draw-list.h"
+#include "gui/lrg-gui-context.h"
+#include "gui/lrg-gui-dock.h"
+#include "gui/lrg-gui-raylib.h"
+
 #ifdef LRG_BUILD_EDITOR
 #include "editor/lrg-component-desc.h"
 #include "editor/lrg-script-binding.h"
