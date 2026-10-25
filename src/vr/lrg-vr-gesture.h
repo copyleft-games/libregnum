@@ -43,6 +43,15 @@ G_BEGIN_DECLS
 #define LRG_VR_GESTURE_PULL "pull"
 
 /**
+ * LRG_VR_GESTURE_SAMPLES:
+ *
+ * The points a drawing and every template are resampled to: the length
+ * of lrg_vr_gesture_recognizer_get_template()'s pairs and
+ * lrg_vr_gesture_recognizer_fit_template()'s triples.
+ */
+#define LRG_VR_GESTURE_SAMPLES 48
+
+/**
  * LrgVRGesture:
  * @name: (nullable): the template matched, %LRG_VR_GESTURE_PUSH or
  *   %LRG_VR_GESTURE_PULL; %NULL when nothing was recognised
@@ -52,6 +61,10 @@ G_BEGIN_DECLS
  * @width: metres the drawing spans sideways (in the view plane)
  * @height: metres it spans up and down
  * @depth: metres it moved away from the head (negative: towards)
+ * @nearest: (nullable): the closest template's name, whether or not it
+ *   reached the threshold (%NULL without templates or a drawing to
+ *   match; a push or a pull names itself): what a drawing was most like,
+ *   for a hint
  *
  * One recognised (or unrecognised) drawing.
  *
@@ -66,6 +79,7 @@ typedef struct
     gfloat  width;
     gfloat  height;
     gfloat  depth;
+    gchar  *nearest;
 } LrgVRGesture;
 
 #define LRG_TYPE_VR_GESTURE (lrg_vr_gesture_get_type ())
@@ -334,6 +348,67 @@ const gfloat * lrg_vr_gesture_recognizer_get_points (LrgVRGestureRecognizer *sel
  */
 LRG_AVAILABLE_IN_ALL
 LrgVRGesture * lrg_vr_gesture_recognizer_end (LrgVRGestureRecognizer *self);
+
+/**
+ * lrg_vr_gesture_recognizer_peek:
+ * @self: a #LrgVRGestureRecognizer
+ *
+ * Names the drawing so far as lrg_vr_gesture_recognizer_end() would,
+ * without ending it: a live guess to show while the hand still draws.
+ *
+ * Returns: (transfer full): what the drawing is so far (its name %NULL
+ *   when it would be nothing yet; @nearest still says what it is most
+ *   like)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgVRGesture * lrg_vr_gesture_recognizer_peek (LrgVRGestureRecognizer *self);
+
+/**
+ * lrg_vr_gesture_recognizer_get_frame:
+ * @self: a #LrgVRGestureRecognizer
+ * @out_centre: (out caller-allocates) (array fixed-size=3): the middle of
+ *   the drawing's box in the view plane (in the points' space)
+ * @out_right: (out caller-allocates) (array fixed-size=3): the plane's
+ *   sideways axis, unit
+ * @out_up: (out caller-allocates) (array fixed-size=3): its up axis, unit
+ * @out_size: (out) (optional): the box's larger side, metres
+ *
+ * Where the drawing in progress is: to put something round it or over it.
+ *
+ * Returns: %FALSE (nothing written) without a drawing of two points
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_vr_gesture_recognizer_get_frame (LrgVRGestureRecognizer *self,
+                                              gfloat                 *out_centre,
+                                              gfloat                 *out_right,
+                                              gfloat                 *out_up,
+                                              gfloat                 *out_size);
+
+/**
+ * lrg_vr_gesture_recognizer_fit_template:
+ * @self: a #LrgVRGestureRecognizer
+ * @name: a shape's name
+ * @out_points: (out caller-allocates) (array fixed-size=144): room for
+ *   %LRG_VR_GESTURE_SAMPLES x, y, z triples
+ *
+ * The shape @name as the drawing in progress would match it, laid over
+ * the drawing: of its templates the nearest (the way round, the start of
+ * a closed one), centred and scaled as the drawing is, in the drawing's
+ * plane and space.  A guide to show what the hand is being read as.
+ *
+ * Returns: %FALSE (nothing written) without a drawing to fit to or a
+ *   template of that name
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_vr_gesture_recognizer_fit_template (LrgVRGestureRecognizer *self,
+                                                 const gchar            *name,
+                                                 gfloat                 *out_points);
 
 /**
  * lrg_vr_gesture_recognizer_cancel:
