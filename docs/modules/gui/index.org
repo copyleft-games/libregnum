@@ -925,7 +925,7 @@ The editor scales by its UI-scale and font-size settings together: =lrg_gui_styl
 :PROPERTIES:
 :CUSTOM_ID: draw-lists
 :END:
-Widgets never draw directly; they append =LrgGuiCommand= structs to an =LrgGuiDrawList=. Internally the context records three layers (base UI, popups, overlay for tooltips and drag previews) and concatenates them at =end_frame= into the list returned by =lrg_gui_context_get_draw_list()=, so later layers paint over earlier ones.
+Widgets never draw directly; they append =LrgGuiCommand= structs to an =LrgGuiDrawList=. Internally the context records three layers (base UI, popups, overlay for tooltips and drag previews) and concatenates them at =end_frame= into the list returned by =lrg_gui_context_get_draw_list()=, so later layers paint over earlier ones. The layers are moved, not copied: the base layer's storage is swapped into the output and the later layers' commands are transferred with their texture refs, leaving the layers empty until the next =begin_frame= clears them anyway.
 
 *** Commands
 :PROPERTIES:
@@ -1031,9 +1031,9 @@ const LrgGuiCommand *lrg_gui_draw_list_find_text    (LrgGuiDrawList     *self,
                                                      const gchar        *text);
 #+end_src
 
-- =lrg_gui_draw_list_clear()= removes every command but keeps the allocation.
+- =lrg_gui_draw_list_clear()= removes every command but keeps the allocation, including the list's text arena.
 - The rectangle functions return the command index; =lrg_gui_draw_list_set_rect()= patches that rectangle later, which is how a popup background is recorded before its content is measured.
-- =lrg_gui_draw_list_text()= copies =length= bytes (=-1= = NUL-terminated).
+- =lrg_gui_draw_list_text()= copies =length= bytes (=-1= = NUL-terminated) into a per-list text arena: blocks of 16 KiB kept across clears, so recording text is a copy rather than an allocation. A command's =text= stays valid until the list is cleared or finalized; never free it.
 - =lrg_gui_draw_list_append()= copies =other='s commands onto the end.
 - =lrg_gui_draw_list_find_text()= is a test helper returning the first text command whose text is exactly =text=.
 

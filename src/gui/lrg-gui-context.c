@@ -861,8 +861,10 @@ lrg_gui_context_end_frame (LrgGuiContext *self)
 	if (self->dnd_active && !self->input.mouse_down[LRG_GUI_MOUSE_LEFT])
 		self->dnd_active = FALSE;
 
+	/* Move (not copy) the layers into the output, in replay order; they
+	 * are cleared at the next begin_frame anyway. */
 	for (i = 0; i < GUI_N_LAYERS; i++)
-		lrg_gui_draw_list_append (self->output, self->layers[i]);
+		lrg_gui_draw_list_steal_append (self->output, self->layers[i]);
 
 	self->in_frame = FALSE;
 }
