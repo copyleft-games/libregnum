@@ -249,26 +249,31 @@ lrg_2d_surface_draw_glyph (LrgFrameSurface   *surface,
     {
         gint bx = lrg_glyph_metrics_get_bearing_x (m);
         gint by = lrg_glyph_metrics_get_bearing_y (m);
-        g_autoptr(GrlRectangle) src = grl_rectangle_new (px, py, gw, gh);
-        g_autoptr(GrlRectangle) dst =
-            grl_rectangle_new (x + (gfloat) bx, y - (gfloat) by,
-                               (gfloat) gw, (gfloat) gh);
-        g_autoptr(GrlVector2) origin = grl_vector2_new (0.0f, 0.0f);
-        g_autoptr(GrlColor) white = NULL;
+        /* Stack values: this runs once per visible cell per frame */
+        static const GrlColor white = { 255, 255, 255, 255 };
+        GrlRectangle    src;
+        GrlRectangle    dst;
+        GrlVector2      origin;
         const GrlColor *tint;
 
+        src.x = (gfloat) px;
+        src.y = (gfloat) py;
+        src.width = (gfloat) gw;
+        src.height = (gfloat) gh;
+        dst.x = x + (gfloat) bx;
+        dst.y = y - (gfloat) by;
+        dst.width = (gfloat) gw;
+        dst.height = (gfloat) gh;
+        origin.x = 0.0f;
+        origin.y = 0.0f;
+
         if (lrg_glyph_metrics_get_is_color (m) || fg == NULL)
-        {
-            white = grl_color_new_white ();
-            tint = white;
-        }
+            tint = &white;
         else
-        {
             tint = fg;
-        }
 
         grl_draw_begin_blend_mode (GRL_BLEND_ALPHA);
-        grl_draw_texture_pro (tex, src, dst, origin, 0.0f, tint);
+        grl_draw_texture_pro (tex, &src, &dst, &origin, 0.0f, tint);
         grl_draw_end_blend_mode ();
     }
 }

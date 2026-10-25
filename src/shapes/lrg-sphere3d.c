@@ -11,6 +11,8 @@
 
 #include <rlgl.h>
 
+#include "lrg-shape3d-mesh-private.h"
+
 #ifndef RAD2DEG
 #define RAD2DEG (180.0f / 3.14159265358979323846f)
 #endif
@@ -29,6 +31,12 @@ struct _LrgSphere3D
 	gfloat radius;
 	gint   rings;
 	gint   slices;
+
+	/* the shared unit-sphere mesh of (mesh_rings, mesh_slices), drawn
+	 * scaled by the radius instead of re-tessellating every frame */
+	LrgShape3DMesh *gpu_mesh;
+	gint            mesh_rings;
+	gint            mesh_slices;
 };
 
 G_DEFINE_FINAL_TYPE (LrgSphere3D, lrg_sphere3d, LRG_TYPE_SHAPE3D)
@@ -47,6 +55,28 @@ static GParamSpec *properties[N_PROPS];
 /* ==========================================================================
  * Virtual Method Implementation
  * ========================================================================== */
+
+/*
+ * lrg_sphere3d_draw_mesh:
+ * Draws the solid sphere from the shared mesh of its rings and slices
+ * (the triangles DrawSphereEx() would emit), made on first use and again
+ * when they change. Returns FALSE when the immediate path must draw.
+ */
+static gboolean
+lrg_sphere3d_draw_mesh (LrgSphere3D *self,
+                        GrlColor    *color)
+{
+	if (self->gpu_mesh == NULL || self->mesh_rings != self->rings
+	    || self->mesh_slices != self->slices)
+	{
+		g_clear_pointer (&self->gpu_mesh, lrg_shape3d_mesh_release);
+		self->gpu_mesh = lrg_shape3d_mesh_acquire_sphere (self->rings, self->slices);
+		self->mesh_rings = self->rings;
+		self->mesh_slices = self->slices;
+	}
+	return self->gpu_mesh != NULL
+	       && lrg_shape3d_mesh_draw (self->gpu_mesh, color, self->radius);
+}
 
 static void
 lrg_sphere3d_draw (LrgShape *shape,
@@ -78,7 +108,7 @@ lrg_sphere3d_draw (LrgShape *shape,
 		                       self->slices,
 		                       color);
 	}
-	else
+	else if (!lrg_sphere3d_draw_mesh (self, color))
 	{
 		grl_draw_sphere_ex (origin,
 		                    self->radius,
@@ -145,11 +175,22 @@ lrg_sphere3d_set_property (GObject      *object,
 }
 
 static void
+lrg_sphere3d_finalize (GObject *object)
+{
+	LrgSphere3D *self = LRG_SPHERE3D (object);
+
+	g_clear_pointer (&self->gpu_mesh, lrg_shape3d_mesh_release);
+
+	G_OBJECT_CLASS (lrg_sphere3d_parent_class)->finalize (object);
+}
+
+static void
 lrg_sphere3d_class_init (LrgSphere3DClass *klass)
 {
 	GObjectClass  *object_class = G_OBJECT_CLASS (klass);
 	LrgShapeClass *shape_class  = LRG_SHAPE_CLASS (klass);
 
+	object_class->finalize     = lrg_sphere3d_finalize;
 	object_class->get_property = lrg_sphere3d_get_property;
 	object_class->set_property = lrg_sphere3d_set_property;
 

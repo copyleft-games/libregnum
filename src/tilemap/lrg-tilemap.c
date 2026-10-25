@@ -13,6 +13,7 @@
 
 #include "lrg-tilemap.h"
 #include "../lrg-log.h"
+#include "../graphics/lrg-draw-cull-private.h"
 
 /* ==========================================================================
  * Private Data
@@ -446,14 +447,24 @@ draw_layer_internal (LrgTilemap      *self,
 {
     LrgTilemapPrivate *priv = lrg_tilemap_get_instance_private (self);
     GrlTexture        *texture;
+    const guint       *tiles;
+    gsize              tiles_len;
     guint              layer_width;
     guint              layer_height;
     guint              tile_width;
     guint              tile_height;
+    guint              columns;
+    guint              tile_count;
     guint              x;
     guint              y;
+    guint              x0;
+    guint              y0;
+    guint              x1;
+    guint              y1;
     gfloat             opacity;
     GrlColor           tint;
+    GrlRectangle       view;
+    GrlVector2         origin;
 
     if (!lrg_tilemap_layer_get_visible (layer))
     {
@@ -473,8 +484,17 @@ draw_layer_internal (LrgTilemap      *self,
 
     tile_width = lrg_tileset_get_tile_width (priv->tileset);
     tile_height = lrg_tileset_get_tile_height (priv->tileset);
+    columns = lrg_tileset_get_columns (priv->tileset);
+    tile_count = lrg_tileset_get_tile_count (priv->tileset);
     layer_width = lrg_tilemap_layer_get_width (layer);
     layer_height = lrg_tilemap_layer_get_height (layer);
+    tiles = lrg_tilemap_layer_get_tiles (layer, &tiles_len);
+
+    if (tiles == NULL || tile_width == 0 || tile_height == 0 || columns == 0 ||
+        tiles_len < (gsize) layer_width * layer_height)
+    {
+        return;
+    }
 
     /* Apply opacity to tint */
     opacity = lrg_tilemap_layer_get_opacity (layer);
@@ -482,18 +502,51 @@ draw_layer_internal (LrgTilemap      *self,
     tint.g = 255;
     tint.b = 255;
     tint.a = (guint8)(opacity * 255.0f);
-
-    /* Draw each tile */
-    for (y = 0; y < layer_height; y++)
+    if (tint.a == 0)
     {
-        for (x = 0; x < layer_width; x++)
+        return;
+    }
+
+    /*
+     * Only the tiles that can land in the viewport are drawn. The visible
+     * area comes from the live rlgl matrices, so it covers any camera,
+     * render target or transform the caller has set up; when it cannot be
+     * worked out (a perspective projection) every tile is drawn as before.
+     * One tile of slack on each side absorbs rounding at the edges.
+     */
+    x0 = 0;
+    y0 = 0;
+    x1 = layer_width;
+    y1 = layer_height;
+    if (lrg_draw_cull_visible_rect_2d (&view))
+    {
+        gdouble fx0 = floor ((view.x - offset_x) / (gdouble) tile_width) - 1.0;
+        gdouble fy0 = floor ((view.y - offset_y) / (gdouble) tile_height) - 1.0;
+        gdouble fx1 = ceil ((view.x + view.width - offset_x) / (gdouble) tile_width) + 1.0;
+        gdouble fy1 = ceil ((view.y + view.height - offset_y) / (gdouble) tile_height) + 1.0;
+
+        x0 = (guint) CLAMP (fx0, 0.0, (gdouble) layer_width);
+        y0 = (guint) CLAMP (fy0, 0.0, (gdouble) layer_height);
+        x1 = (guint) CLAMP (fx1, 0.0, (gdouble) layer_width);
+        y1 = (guint) CLAMP (fy1, 0.0, (gdouble) layer_height);
+    }
+
+    origin.x = 0.0f;
+    origin.y = 0.0f;
+
+    /* Draw each visible tile, reading the tile array directly */
+    for (y = y0; y < y1; y++)
+    {
+        const guint *row = tiles + (gsize) y * layer_width;
+
+        for (x = x0; x < x1; x++)
         {
             guint         tile_id;
+            guint         index;
             GrlRectangle  source;
             GrlRectangle  dest;
-            GrlVector2    origin;
 
-            tile_id = lrg_tilemap_layer_get_tile (layer, x, y);
+            tile_id = row[x];
 
             /* Skip empty tiles */
             if (tile_id == LRG_TILEMAP_EMPTY_TILE)
@@ -502,18 +555,21 @@ draw_layer_internal (LrgTilemap      *self,
             }
 
             /* Tile IDs start at 1 in most formats, tileset indices start at 0 */
-            if (!lrg_tileset_get_tile_rect_to (priv->tileset, tile_id - 1, &source))
+            index = tile_id - 1;
+            if (index >= tile_count)
             {
                 continue;
             }
+
+            source.x = (gfloat)((index % columns) * tile_width);
+            source.y = (gfloat)((index / columns) * tile_height);
+            source.width = (gfloat)tile_width;
+            source.height = (gfloat)tile_height;
 
             dest.x = offset_x + (gfloat)(x * tile_width);
             dest.y = offset_y + (gfloat)(y * tile_height);
             dest.width = (gfloat)tile_width;
             dest.height = (gfloat)tile_height;
-
-            origin.x = 0.0f;
-            origin.y = 0.0f;
 
             grl_draw_texture_pro (texture, &source, &dest, &origin, 0.0f, &tint);
         }

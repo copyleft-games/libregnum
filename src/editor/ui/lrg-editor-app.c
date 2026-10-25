@@ -101,6 +101,8 @@ lrg_editor_app_finalize (GObject *object)
 	g_string_free (self->rename_buf, TRUE);
 	g_free (self->range_anchor);
 	g_ptr_array_unref (self->visible_rows);
+	g_clear_pointer (&self->hierarchy_shown, g_hash_table_unref);
+	g_free (self->hierarchy_shown_needle);
 	g_string_free (self->component_search, TRUE);
 	g_string_free (self->param_key, TRUE);
 	g_string_free (self->scratch, TRUE);
@@ -113,6 +115,9 @@ lrg_editor_app_finalize (GObject *object)
 	g_string_free (self->console_input, TRUE);
 	g_string_free (self->console_filter, TRUE);
 	g_ptr_array_unref (self->console_history);
+	g_clear_pointer (&self->console_shown, g_ptr_array_unref);
+	g_clear_pointer (&self->console_rows, g_ptr_array_unref);
+	g_free (self->console_shown_needle);
 	g_ptr_array_unref (self->problems);
 	g_free (self->file_dir);
 	g_string_free (self->file_name, TRUE);
@@ -1654,7 +1659,7 @@ draw_status_bar (LrgEditorApp *self)
 	clients = lrg_editor_server_get_n_clients (self->server);
 	right = g_strdup_printf ("%u selected   %u nodes   %s%u errors  %u warnings   %s%s   %.0f fps",
 	                         lrg_editor_selection_get_count (lrg_editor_get_selection (self->editor)),
-	                         lrg_level_count_nodes (lrg_editor_get_level (self->editor)),
+	                         editor_app_count_nodes (self),
 	                         "", errors, warnings,
 	                         lrg_editor_server_get_socket_path (self->server) != NULL ? "IPC " : "",
 	                         lrg_editor_server_get_socket_path (self->server) != NULL

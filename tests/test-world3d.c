@@ -529,6 +529,79 @@ test_portal_system_visibility (void)
 }
 
 static void
+count_visibility_changed (LrgPortalSystem *system,
+                          gpointer         user_data)
+{
+    guint *count = user_data;
+
+    (*count)++;
+}
+
+/* visibility-changed fires when the visible set changes, not every update. */
+static void
+test_portal_system_visibility_changed (void)
+{
+    g_autoptr(LrgPortalSystem) system = lrg_portal_system_new ();
+    g_autoptr(LrgSector) sector1 = NULL;
+    g_autoptr(LrgSector) sector2 = NULL;
+    g_autoptr(LrgPortal) portal = NULL;
+    g_autoptr(LrgBoundingBox3D) bounds1 = NULL;
+    g_autoptr(LrgBoundingBox3D) bounds2 = NULL;
+    g_autoptr(LrgBoundingBox3D) portal_bounds = NULL;
+    GrlVector3 min1 = { 0.0f, 0.0f, 0.0f };
+    GrlVector3 max1 = { 100.0f, 50.0f, 100.0f };
+    GrlVector3 min2 = { 100.0f, 0.0f, 0.0f };
+    GrlVector3 max2 = { 200.0f, 50.0f, 100.0f };
+    GrlVector3 portal_min = { 100.0f, 0.0f, 40.0f };
+    GrlVector3 portal_max = { 100.0f, 50.0f, 60.0f };
+    GrlVector3 normal = { -1.0f, 0.0f, 0.0f };
+    GrlVector3 inside = { 50.0f, 25.0f, 50.0f };
+    GrlVector3 inside_moved = { 60.0f, 25.0f, 40.0f };
+    GrlVector3 beyond = { 150.0f, 25.0f, 50.0f };
+    GrlVector3 nowhere = { -50.0f, 25.0f, 50.0f };
+    guint changes = 0;
+
+    bounds1 = lrg_bounding_box3d_new_from_vectors (&min1, &max1);
+    sector1 = lrg_sector_new ("sector1", bounds1);
+    lrg_sector_add_portal (sector1, "portal1");
+    bounds2 = lrg_bounding_box3d_new_from_vectors (&min2, &max2);
+    sector2 = lrg_sector_new ("sector2", bounds2);
+    lrg_sector_add_portal (sector2, "portal1");
+    portal_bounds = lrg_bounding_box3d_new_from_vectors (&portal_min, &portal_max);
+    /* Faces sector1: seen from sector1, not from sector2. */
+    portal = lrg_portal_new_with_normal ("portal1", portal_bounds, "sector1", "sector2", &normal);
+    lrg_portal_system_add_sector (system, sector1);
+    lrg_portal_system_add_sector (system, sector2);
+    lrg_portal_system_add_portal (system, portal);
+    g_signal_connect (system, "visibility-changed",
+                      G_CALLBACK (count_visibility_changed), &changes);
+
+    lrg_portal_system_update (system, &inside);
+    g_assert_cmpuint (changes, ==, 1);
+    g_assert_cmpuint (lrg_portal_system_get_visible_sector_count (system), ==, 2);
+    g_assert_true (lrg_portal_system_is_sector_visible (system, "sector2"));
+
+    /* Same set, still or moving within the sector: no signal. */
+    lrg_portal_system_update (system, &inside);
+    lrg_portal_system_update (system, &inside_moved);
+    g_assert_cmpuint (changes, ==, 1);
+
+    /* Into sector2, whose side of the portal sees nothing else. */
+    lrg_portal_system_update (system, &beyond);
+    g_assert_cmpuint (changes, ==, 2);
+    g_assert_cmpuint (lrg_portal_system_get_visible_sector_count (system), ==, 1);
+    g_assert_false (lrg_portal_system_is_sector_visible (system, "sector1"));
+
+    /* Back, then out of every sector (once), then still out (no change). */
+    lrg_portal_system_update (system, &inside);
+    g_assert_cmpuint (changes, ==, 3);
+    lrg_portal_system_update (system, &nowhere);
+    lrg_portal_system_update (system, &nowhere);
+    g_assert_cmpuint (changes, ==, 4);
+    g_assert_cmpuint (lrg_portal_system_get_visible_sector_count (system), ==, 0);
+}
+
+static void
 test_portal_system_clear (void)
 {
     g_autoptr(LrgPortalSystem) system = NULL;
@@ -600,6 +673,7 @@ main (int   argc,
     g_test_add_func ("/world3d/portal-system/new", test_portal_system_new);
     g_test_add_func ("/world3d/portal-system/sectors", test_portal_system_sectors);
     g_test_add_func ("/world3d/portal-system/visibility", test_portal_system_visibility);
+    g_test_add_func ("/world3d/portal-system/visibility-changed", test_portal_system_visibility_changed);
     g_test_add_func ("/world3d/portal-system/clear", test_portal_system_clear);
 
     return g_test_run ();

@@ -13,6 +13,7 @@
  */
 
 #include "lrg-editor-app-private.h"
+#include "../lrg-node-private.h"
 #include <string.h>
 
 static gpointer
@@ -26,6 +27,8 @@ typedef struct
 {
 	gchar      *needle;    /* casefolded filter, or NULL */
 	GHashTable *shown;     /* nodes to show while filtering */
+	gfloat      view_y0;   /* rows entirely outside [view_y0, view_y1) */
+	gfloat      view_y1;   /* are culled (see draw_row_culled()) */
 } Filter;
 
 /* Marks @node (and returns TRUE) if it or a descendant matches. */
@@ -53,6 +56,63 @@ mark_matches (LrgNode *node,
 	if (any)
 		g_hash_table_add (f->shown, node);
 	return any;
+}
+
+/*
+ * editor_app_count_nodes:
+ *
+ * lrg_level_count_nodes() of the edited level, walked only when the node
+ * tree changed (the status bar, the outliner header and the viewport ask
+ * every frame).
+ */
+guint
+editor_app_count_nodes (LrgEditorApp *self)
+{
+	LrgLevel *level = lrg_editor_get_level (self->editor);
+	LrgNode  *root = lrg_level_get_root (level);
+	guint     serial = lrg_node_get_tree_serial ();
+
+	if (self->node_count_serial != serial || self->node_count_root != root)
+	{
+		self->node_count = lrg_level_count_nodes (level);
+		self->node_count_serial = serial;
+		self->node_count_root = root;
+	}
+	return self->node_count;
+}
+
+/*
+ * filter_shown:
+ *
+ * The set of nodes to show for @needle (matches and their ancestors),
+ * rebuilt only when the filter text or the node tree changed.
+ */
+static GHashTable *
+filter_shown (LrgEditorApp *self,
+              LrgNode      *root,
+              gchar        *needle)
+{
+	guint serial = lrg_node_get_tree_serial ();
+
+	if (self->hierarchy_shown == NULL)
+		self->hierarchy_shown = g_hash_table_new (g_direct_hash, g_direct_equal);
+
+	if (self->hierarchy_shown_serial != serial || self->hierarchy_shown_root != root ||
+	    g_strcmp0 (self->hierarchy_shown_needle, needle) != 0)
+	{
+		Filter f;
+
+		g_hash_table_remove_all (self->hierarchy_shown);
+		f.needle = needle;
+		f.shown = self->hierarchy_shown;
+		if (needle != NULL)
+			mark_matches (root, &f);
+		g_free (self->hierarchy_shown_needle);
+		self->hierarchy_shown_needle = g_strdup (needle);
+		self->hierarchy_shown_serial = serial;
+		self->hierarchy_shown_root = root;
+	}
+	return self->hierarchy_shown;
 }
 
 static gboolean
@@ -341,48 +401,86 @@ kind_tag (LrgNode *node)
 	}
 }
 
+/* Starts a drag of @node (or of the selection containing it) when its
+ * row is held and moved: call right after the row's tree node. */
 static void
-draw_node (LrgEditorApp *self,
-           LrgNode      *node,
-           Filter       *filter,
-           LrgNode      *reveal)
+row_drag_source (LrgEditorApp *self,
+                 LrgNode      *node,
+                 gboolean      selected)
+{
+	const gchar *name = lrg_node_get_name (node);
+
+	if (lrg_gui_begin_drag_source (self->gui))
+	{
+		guint             n = selected ? lrg_editor_selection_get_count (lrg_editor_get_selection (self->editor)) : 1;
+		g_autofree gchar *preview = (n > 1) ? g_strdup_printf ("%u nodes", n)
+		                                    : g_strdup (name != NULL ? name : "node");
+
+		lrg_gui_set_drag_payload (self->gui, "node", lrg_node_get_guid (node), preview);
+		lrg_gui_end_drag_source (self->gui);
+	}
+}
+
+/*
+ * draw_row_culled:
+ *
+ * A row outside the view: submits only its tree node (labelled by GUID
+ * alone, which is all the tree node's identity depends on) so layout,
+ * open state, the ID scope of its children and a held row (still active,
+ * maybe starting a drag) behave exactly as for a drawn row, and skips the
+ * toggles, label formatting, measuring, drop targets and context menu
+ * that only matter under the pointer.
+ */
+static gboolean
+draw_row_culled (LrgEditorApp    *self,
+                 LrgNode         *node,
+                 LrgGuiTreeFlags  flags,
+                 gfloat           avail,
+                 gfloat           h,
+                 gboolean         selected)
+{
+	const gchar      *guid = lrg_node_get_guid (node);
+	gchar             buf[96];
+	g_autofree gchar *heap = NULL;
+	const gchar      *label;
+	gboolean          open;
+
+	if (strlen (guid) + 4 <= sizeof buf)
+	{
+		g_snprintf (buf, sizeof buf, "###%s", guid);
+		label = buf;
+	}
+	else
+		label = heap = g_strconcat ("###", guid, NULL);
+
+	lrg_gui_set_next_item_width (self->gui, MAX (40.0f, avail - h * 2.0f));
+	open = lrg_gui_tree_node (self->gui, label, flags);
+	if (lrg_gui_is_item_active (self->gui))
+		row_drag_source (self, node, selected);
+	return open;
+}
+
+/* A row inside the view, with everything. Returns whether it is open. */
+static gboolean
+draw_row_full (LrgEditorApp    *self,
+               LrgNode         *node,
+               LrgGuiTreeFlags  flags,
+               LrgNode         *reveal,
+               gfloat           x,
+               gfloat           y,
+               gfloat           avail,
+               gfloat           h,
+               gboolean         selected,
+               gboolean         renaming)
 {
 	LrgGuiStyle      *style = lrg_gui_context_get_style (self->gui);
-	GPtrArray        *children = lrg_node_get_children (node);
 	const gchar      *name = lrg_node_get_name (node);
 	const gchar      *guid = lrg_node_get_guid (node);
-	gboolean          selected = is_selected (self, node);
-	gboolean          renaming = (self->rename_guid != NULL && g_strcmp0 (self->rename_guid, guid) == 0);
-	gboolean          has_kids = children->len > 0;
-	LrgGuiTreeFlags   flags = LRG_GUI_TREE_OPEN_ON_ARROW;
+	gboolean          has_kids = lrg_node_get_n_children (node) > 0;
 	g_autofree gchar *label = NULL;
 	LrgGuiRect        row;
-	gfloat            x, y, avail, h, tag_w = 0.0f;
+	gfloat            tag_w = 0.0f;
 	gboolean          open;
-	guint             i;
-
-	if (filter->needle != NULL && !g_hash_table_contains (filter->shown, node))
-		return;
-
-	g_ptr_array_add (self->visible_rows, node);
-	lrg_gui_push_id (self->gui, guid);
-
-	if (!has_kids)
-		flags |= LRG_GUI_TREE_LEAF;
-	if (selected)
-		flags |= LRG_GUI_TREE_SELECTED;
-	if (!lrg_node_get_visible (node))
-		flags |= LRG_GUI_TREE_DIMMED;
-
-	/* Open the path to the node being revealed, and everything while
-	 * filtering. */
-	if ((reveal != NULL && node != reveal && lrg_node_is_ancestor_of (node, reveal)) ||
-	    (filter->needle != NULL && has_kids))
-		lrg_gui_set_next_item_open (self->gui, TRUE);
-
-	lrg_gui_get_cursor (self->gui, &x, &y);
-	lrg_gui_get_content_avail (self->gui, &avail, NULL);
-	h = lrg_gui_get_frame_height (self->gui);
 
 	row_toggles (self, node, x + avail, y, h);
 
@@ -478,15 +576,7 @@ draw_node (LrgEditorApp *self,
 		lrg_editor_select (self->editor, node, FALSE);
 
 	/* Drag source. */
-	if (lrg_gui_begin_drag_source (self->gui))
-	{
-		guint             n = selected ? lrg_editor_selection_get_count (lrg_editor_get_selection (self->editor)) : 1;
-		g_autofree gchar *preview = (n > 1) ? g_strdup_printf ("%u nodes", n)
-		                                    : g_strdup (name != NULL ? name : "node");
-
-		lrg_gui_set_drag_payload (self->gui, "node", guid, preview);
-		lrg_gui_end_drag_source (self->gui);
-	}
+	row_drag_source (self, node, selected);
 
 	/* Drop targets: before / into / after by pointer height. */
 	{
@@ -535,6 +625,60 @@ draw_node (LrgEditorApp *self,
 		node_context_menu (self, node);
 		lrg_gui_end_popup (self->gui);
 	}
+
+	return open;
+}
+
+static void
+draw_node (LrgEditorApp *self,
+           LrgNode      *node,
+           Filter       *filter,
+           LrgNode      *reveal)
+{
+	LrgGuiStyle      *style = lrg_gui_context_get_style (self->gui);
+	GPtrArray        *children = lrg_node_get_children (node);
+	const gchar      *guid = lrg_node_get_guid (node);
+	gboolean          selected = is_selected (self, node);
+	gboolean          renaming = (self->rename_guid != NULL && g_strcmp0 (self->rename_guid, guid) == 0);
+	gboolean          has_kids = children->len > 0;
+	LrgGuiTreeFlags   flags = LRG_GUI_TREE_OPEN_ON_ARROW;
+	gfloat            x, y, avail, h, row_h;
+	gboolean          open;
+	guint             i;
+
+	if (filter->needle != NULL && !g_hash_table_contains (filter->shown, node))
+		return;
+
+	g_ptr_array_add (self->visible_rows, node);
+	lrg_gui_push_id (self->gui, guid);
+
+	if (!has_kids)
+		flags |= LRG_GUI_TREE_LEAF;
+	if (selected)
+		flags |= LRG_GUI_TREE_SELECTED;
+	if (!lrg_node_get_visible (node))
+		flags |= LRG_GUI_TREE_DIMMED;
+
+	/* Open the path to the node being revealed, and everything while
+	 * filtering. */
+	if ((reveal != NULL && node != reveal && lrg_node_is_ancestor_of (node, reveal)) ||
+	    (filter->needle != NULL && has_kids))
+		lrg_gui_set_next_item_open (self->gui, TRUE);
+
+	lrg_gui_get_cursor (self->gui, &x, &y);
+	lrg_gui_get_content_avail (self->gui, &avail, NULL);
+	h = lrg_gui_get_frame_height (self->gui);
+	row_h = MAX (h, style->font_size + style->frame_padding_y * 2.0f);
+
+	/* Rows outside the view are culled, except the ones that must run in
+	 * full wherever they are: the row being renamed (its text field), the
+	 * one being revealed (scrolls to itself) and one whose context menu
+	 * is open (the menu is built from its row). */
+	if ((y + row_h < filter->view_y0 || y >= filter->view_y1) && !renaming && node != reveal &&
+	    !lrg_gui_is_popup_open (self->gui, "##node-menu"))
+		open = draw_row_culled (self, node, flags, avail, h, selected);
+	else
+		open = draw_row_full (self, node, flags, reveal, x, y, avail, h, selected, renaming);
 
 	if (open)
 	{
@@ -589,15 +733,13 @@ editor_panel_hierarchy (LrgEditorApp *self)
 		LrgLevel         *level = lrg_editor_get_level (self->editor);
 		g_autofree gchar *head = g_strdup_printf ("%s  (%u)", lrg_level_get_name (level) != NULL
 		                                                      ? lrg_level_get_name (level) : "level",
-		                                          lrg_level_count_nodes (level));
+		                                          editor_app_count_nodes (self));
 
 		lrg_gui_text_disabled (self->gui, head);
 	}
 
 	filter.needle = (self->hierarchy_filter->len > 0) ? g_utf8_casefold (self->hierarchy_filter->str, -1) : NULL;
-	filter.shown = g_hash_table_new (g_direct_hash, g_direct_equal);
-	if (filter.needle != NULL)
-		mark_matches (root, &filter);
+	filter.shown = filter_shown (self, root, filter.needle);
 
 	if (self->reveal_pending)
 		reveal = lrg_editor_selection_get_primary (lrg_editor_get_selection (self->editor));
@@ -606,6 +748,13 @@ editor_panel_hierarchy (LrgEditorApp *self)
 
 	lrg_gui_get_content_avail (self->gui, NULL, &avail_h);
 	lrg_gui_begin_child (self->gui, "##tree", 0.0f, 0.0f, LRG_GUI_REGION_SCROLL_Y | LRG_GUI_REGION_NO_PADDING);
+	{
+		LrgGuiRect view;
+
+		lrg_gui_get_region_rect (self->gui, &view);
+		filter.view_y0 = view.y;
+		filter.view_y1 = view.y + view.h;
+	}
 
 	top = g_ptr_array_copy (lrg_node_get_children (root), ref_copy, NULL);
 	g_ptr_array_set_free_func (top, g_object_unref);
@@ -697,5 +846,4 @@ editor_panel_hierarchy (LrgEditorApp *self)
 	lrg_gui_end_region (self->gui);
 
 	g_free (filter.needle);
-	g_hash_table_unref (filter.shown);
 }

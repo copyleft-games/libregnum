@@ -239,6 +239,8 @@ void lrg_tilemap_draw (LrgTilemap *self);
 
 Draws all visible layers of the tilemap at position (0, 0).
 
+All draw functions cull: only tiles that can land in the current viewport are submitted. The visible area is read from rlgl's live matrices, so it is correct inside a =BeginMode2D= camera, a render target or a pushed transform without passing them in; under a perspective projection culling is off and every tile is drawn.
+
 *Parameters:*
 
 - =self= - An =LrgTilemap=

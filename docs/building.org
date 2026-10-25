@@ -305,6 +305,8 @@ make test
 
 This builds and runs all unit tests using the GLib testing framework.
 
+Frame-time benchmarks live in =bench/= (=make -C bench run=); see [[file:performance.org][Performance]].
+
 To run tests manually:
 
 #+begin_src sh

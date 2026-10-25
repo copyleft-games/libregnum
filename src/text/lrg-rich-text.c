@@ -422,12 +422,16 @@ lrg_rich_text_real_draw (LrgRichText *text,
 {
     LrgRichTextPrivate *priv;
     LrgFontManager *font_mgr;
+    GrlFont *font;
     gfloat cursor_x, cursor_y;
     guint i;
     guint global_char_index;
 
     priv = lrg_rich_text_get_instance_private (text);
     font_mgr = lrg_font_manager_get_default ();
+
+    /* Resolve the default font once, not twice per glyph */
+    font = lrg_font_manager_get_font (font_mgr, NULL);
 
     cursor_x = x;
     cursor_y = y;
@@ -489,16 +493,37 @@ lrg_rich_text_real_draw (LrgRichText *text,
             /* Draw character */
             if (cha > 0)
             {
-                lrg_font_manager_draw_text (font_mgr, NULL, char_buf,
-                                            cursor_x + offset_x,
-                                            cursor_y + offset_y,
-                                            span_font_size,
-                                            chr, chg, chb, cha);
+                if (font != NULL)
+                {
+                    GrlVector2 pos;
+                    GrlColor   color;
+
+                    pos.x = cursor_x + offset_x;
+                    pos.y = cursor_y + offset_y;
+                    color.r = chr;
+                    color.g = chg;
+                    color.b = chb;
+                    color.a = cha;
+                    grl_draw_text_ex (font, char_buf, &pos, span_font_size,
+                                      1.0f, &color);
+                }
+                else
+                {
+                    lrg_font_manager_draw_text (font_mgr, NULL, char_buf,
+                                                cursor_x + offset_x,
+                                                cursor_y + offset_y,
+                                                span_font_size,
+                                                chr, chg, chb, cha);
+                }
             }
 
             /* Advance cursor */
-            lrg_font_manager_measure_text (font_mgr, NULL, char_buf, span_font_size,
-                                           &char_width, NULL);
+            if (font != NULL)
+                grl_font_measure_text_xy (font, char_buf, span_font_size, 1.0f,
+                                          &char_width, NULL);
+            else
+                lrg_font_manager_measure_text (font_mgr, NULL, char_buf,
+                                               span_font_size, &char_width, NULL);
             cursor_x += char_width;
 
             /* Handle word wrap */

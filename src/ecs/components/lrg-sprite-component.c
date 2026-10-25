@@ -449,16 +449,12 @@ void
 lrg_sprite_component_draw (LrgSpriteComponent *self)
 {
     LrgGameObject    *owner;
-    GrlRectangle     *source;
-    GrlRectangle     *dest;
-    g_autoptr(GrlVector2) origin = NULL;
-    gfloat            x;
-    gfloat            y;
+    GrlEntity        *entity;
+    GrlRectangle      source;
+    GrlRectangle      dest;
+    GrlVector2        origin;
     gfloat            width;
     gfloat            height;
-    gfloat            rotation;
-    gfloat            src_width;
-    gfloat            src_height;
 
     g_return_if_fail (LRG_IS_SPRITE_COMPONENT (self));
 
@@ -474,66 +470,56 @@ lrg_sprite_component_draw (LrgSpriteComponent *self)
     {
         return;
     }
+    entity = GRL_ENTITY (owner);
 
-    /* Get transform from owner */
-    x = grl_entity_get_x (GRL_ENTITY (owner));
-    y = grl_entity_get_y (GRL_ENTITY (owner));
-    width = grl_entity_get_width (GRL_ENTITY (owner));
-    height = grl_entity_get_height (GRL_ENTITY (owner));
-    rotation = grl_entity_get_rotation (GRL_ENTITY (owner));
-    origin = grl_entity_get_origin (GRL_ENTITY (owner));
-
-    /* Use entity size if set, otherwise use texture/source size */
+    /* Source region: the explicit source rect, or the whole texture.
+     * Everything here is on the stack; sprites draw every frame. */
     if (self->source_rect != NULL)
     {
-        src_width = self->source_rect->width;
-        src_height = self->source_rect->height;
+        source = *self->source_rect;
     }
     else
     {
-        src_width = (gfloat)grl_texture_get_width (self->texture);
-        src_height = (gfloat)grl_texture_get_height (self->texture);
+        source.x = 0.0f;
+        source.y = 0.0f;
+        source.width = (gfloat)grl_texture_get_width (self->texture);
+        source.height = (gfloat)grl_texture_get_height (self->texture);
     }
 
+    /* Use entity size if set, otherwise use texture/source size */
+    width = grl_entity_get_width (entity);
+    height = grl_entity_get_height (entity);
     if (width <= 0)
     {
-        width = src_width;
+        width = source.width;
     }
     if (height <= 0)
     {
-        height = src_height;
+        height = source.height;
     }
 
-    /* Build source rectangle (apply flipping by negating dimensions) */
-    if (self->source_rect != NULL)
+    /* Apply flipping by negating the source dimensions */
+    if (self->flip_h)
     {
-        source = grl_rectangle_new (
-            self->source_rect->x,
-            self->source_rect->y,
-            self->flip_h ? -self->source_rect->width : self->source_rect->width,
-            self->flip_v ? -self->source_rect->height : self->source_rect->height
-        );
+        source.width = -source.width;
     }
-    else
+    if (self->flip_v)
     {
-        source = grl_rectangle_new (
-            0, 0,
-            self->flip_h ? -src_width : src_width,
-            self->flip_v ? -src_height : src_height
-        );
+        source.height = -source.height;
     }
 
-    /* Build destination rectangle */
-    dest = grl_rectangle_new (x, y, width, height);
+    /* Destination rectangle from the owner's transform */
+    dest.x = grl_entity_get_x (entity);
+    dest.y = grl_entity_get_y (entity);
+    dest.width = width;
+    dest.height = height;
+    grl_entity_get_origin_xy (entity, &origin.x, &origin.y);
 
     /* Draw the texture */
     grl_draw_texture_pro (self->texture,
-                          source,
-                          dest,
-                          origin,
-                          rotation,
+                          &source,
+                          &dest,
+                          &origin,
+                          grl_entity_get_rotation (entity),
                           self->tint);
-
-    grl_rectangle_free (source);
-    grl_rectangle_free (dest);
 }

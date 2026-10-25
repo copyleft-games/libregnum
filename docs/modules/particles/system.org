@@ -27,7 +27,7 @@ This is a derivable type, allowing subclasses to override behavior.
 LrgParticleSystem *lrg_particle_system_new (guint max_particles);
 #+end_src
 
-Creates a particle system with the specified maximum capacity. The internal pool is sized to this limit.
+Creates a particle system with the specified maximum capacity. The internal pool is sized to this limit and never grows: once =max_particles= particles are alive, rate and burst emission stop until some die (=lrg_particle_system_emit()= returns how many it could emit). Live particles are kept in a flat array, newest first when iterated (=foreach_active=, =draw=), as before.
 
 The capacity is the construct-only property =max-particles= (default 1000); the pool is created in =constructed()=, so a subclass built with =g_object_new (MY_TYPE_SYSTEM, "max-particles", 256, NULL)= gets its pool as well.  =lrg_particle_system_emit()= and =emit_at()= call the class's =on_particle_spawn= for every particle they emit, like rate emission during =update()=.
 

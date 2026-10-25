@@ -357,6 +357,35 @@ test_emitter_emit (EmitterFixture *fixture,
  * Main
  * ============================================================================ */
 
+/* Emitting more than max-particles used to grow the pool, reallocating
+ * the particles out from under the system's active list (a crash a few
+ * frames later). The system's capacity is now fixed at max-particles. */
+static void
+test_system_respects_max_particles (void)
+{
+    g_autoptr(LrgParticleSystem)  system = lrg_particle_system_new (300);
+    g_autoptr(LrgParticleEmitter) emitter = lrg_particle_emitter_new ();
+    guint                         i;
+
+    lrg_particle_emitter_set_emission_rate (emitter, 20000.0f);
+    lrg_particle_emitter_set_initial_lifetime (emitter, 2.0f, 3.0f);
+    lrg_particle_system_add_emitter (system, emitter);
+    lrg_particle_system_play (system);
+
+    for (i = 0; i < 120; i++)
+    {
+        lrg_particle_system_update (system, 1.0f / 60.0f);
+        g_assert_cmpuint (lrg_particle_system_get_active_count (system), <=, 300);
+    }
+    g_assert_cmpuint (lrg_particle_system_get_active_count (system), ==, 300);
+
+    /* Burst emission is capped too, and clear() empties the system */
+    g_assert_cmpuint (lrg_particle_system_emit (system, 50), ==, 0);
+    lrg_particle_system_clear (system);
+    g_assert_cmpuint (lrg_particle_system_get_active_count (system), ==, 0);
+    g_assert_cmpuint (lrg_particle_system_emit (system, 50), ==, 50);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -394,6 +423,9 @@ main (int   argc,
                 emitter_fixture_set_up, test_emitter_position, emitter_fixture_tear_down);
     g_test_add ("/particles/emitter/emit", EmitterFixture, NULL,
                 emitter_fixture_set_up, test_emitter_emit, emitter_fixture_tear_down);
+
+    g_test_add_func ("/particles/system/respects-max-particles",
+                     test_system_respects_max_particles);
 
     return g_test_run ();
 }

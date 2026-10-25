@@ -77,8 +77,7 @@ lrg_button_draw (LrgWidget *widget)
     LrgButton    *self = LRG_BUTTON (widget);
     GrlRectangle  rect;
     GrlColor              *bg_color;
-    g_autoptr(GrlVector2)  text_pos = NULL;
-    g_autoptr(GrlVector2)  text_size = NULL;
+    GrlVector2             text_pos;
     gfloat                 text_width;
 
     rect.x = lrg_widget_get_world_x (widget);
@@ -122,9 +121,9 @@ lrg_button_draw (LrgWidget *widget)
     {
         if (self->font != NULL)
         {
-            text_size = grl_font_measure_text (self->font, self->text,
-                                               self->font_size, 1.0f);
-            text_width = text_size->x;
+            grl_font_measure_text_xy (self->font, self->text,
+                                      self->font_size, 1.0f,
+                                      &text_width, NULL);
         }
         else
         {
@@ -132,17 +131,17 @@ lrg_button_draw (LrgWidget *widget)
                          (self->font_size * 0.6f);
         }
 
-        text_pos = grl_vector2_new (rect.x + (rect.width - text_width) / 2.0f,
-                                    rect.y + (rect.height - self->font_size) / 2.0f);
+        text_pos.x = rect.x + (rect.width - text_width) / 2.0f;
+        text_pos.y = rect.y + (rect.height - self->font_size) / 2.0f;
 
         if (self->font != NULL)
         {
-            grl_draw_text_ex (self->font, self->text, text_pos,
+            grl_draw_text_ex (self->font, self->text, &text_pos,
                               self->font_size, 1.0f, &self->text_color);
         }
         else
         {
-            grl_draw_text (self->text, (gint)text_pos->x, (gint)text_pos->y,
+            grl_draw_text (self->text, (gint)text_pos.x, (gint)text_pos.y,
                            (gint)self->font_size, &self->text_color);
         }
     }

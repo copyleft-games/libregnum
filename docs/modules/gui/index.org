@@ -337,7 +337,7 @@ void lrg_gui_text_wrapped  (LrgGuiContext *self,
                             const gchar   *text);
 #+end_src
 
-Text items are not interactive and their strings are not parsed for =##=. =lrg_gui_text_disabled()= uses =LRG_GUI_COL_TEXT_DISABLED= for secondary information; =lrg_gui_text_mono()= uses the monospace font (logs, code, paths); =lrg_gui_text_wrapped()= wraps at the region width. Colours are =LrgGuiColor= values; build them with =LRG_GUI_RGBA (r, g, b, a)= or =LRG_GUI_HEX (0xRRGGBB)=, or take them from the style (=style->colors[LRG_GUI_COL_ERROR]=).
+Text items are not interactive and their strings are not parsed for =##=. =lrg_gui_text_disabled()= uses =LRG_GUI_COL_TEXT_DISABLED= for secondary information; =lrg_gui_text_mono()= uses the monospace font (logs, code, paths); =lrg_gui_text_wrapped()= wraps at the region width (greedy: each line breaks at the last space before the first character that does not fit, or inside a word longer than the line; the break is found by galloping and bisecting over prefix widths, so a paragraph costs O(n log line) measurements rather than one per character). Colours are =LrgGuiColor= values; build them with =LRG_GUI_RGBA (r, g, b, a)= or =LRG_GUI_HEX (0xRRGGBB)=, or take them from the style (=style->colors[LRG_GUI_COL_ERROR]=).
 
 ** Buttons, toggles and selectables
 :PROPERTIES:
@@ -925,7 +925,7 @@ The editor scales by its UI-scale and font-size settings together: =lrg_gui_styl
 :PROPERTIES:
 :CUSTOM_ID: draw-lists
 :END:
-Widgets never draw directly; they append =LrgGuiCommand= structs to an =LrgGuiDrawList=. Internally the context records three layers (base UI, popups, overlay for tooltips and drag previews) and concatenates them at =end_frame= into the list returned by =lrg_gui_context_get_draw_list()=, so later layers paint over earlier ones.
+Widgets never draw directly; they append =LrgGuiCommand= structs to an =LrgGuiDrawList=. Internally the context records three layers (base UI, popups, overlay for tooltips and drag previews) and concatenates them at =end_frame= into the list returned by =lrg_gui_context_get_draw_list()=, so later layers paint over earlier ones. The layers are moved, not copied: the base layer's storage is swapped into the output and the later layers' commands are transferred with their texture refs, leaving the layers empty until the next =begin_frame= clears them anyway.
 
 *** Commands
 :PROPERTIES:
@@ -1031,9 +1031,9 @@ const LrgGuiCommand *lrg_gui_draw_list_find_text    (LrgGuiDrawList     *self,
                                                      const gchar        *text);
 #+end_src
 
-- =lrg_gui_draw_list_clear()= removes every command but keeps the allocation.
+- =lrg_gui_draw_list_clear()= removes every command but keeps the allocation, including the list's text arena.
 - The rectangle functions return the command index; =lrg_gui_draw_list_set_rect()= patches that rectangle later, which is how a popup background is recorded before its content is measured.
-- =lrg_gui_draw_list_text()= copies =length= bytes (=-1= = NUL-terminated).
+- =lrg_gui_draw_list_text()= copies =length= bytes (=-1= = NUL-terminated) into a per-list text arena: blocks of 16 KiB kept across clears, so recording text is a copy rather than an allocation. A command's =text= stays valid until the list is cleared or finalized; never free it.
 - =lrg_gui_draw_list_append()= copies =other='s commands onto the end.
 - =lrg_gui_draw_list_find_text()= is a test helper returning the first text command whose text is exactly =text=.
 
@@ -1326,7 +1326,7 @@ gchar *lrg_gui_context_get_clipboard       (LrgGuiContext          *self);
 - Fast input is never lost: =lrg_gui_raylib_attach()= chains GLFW mouse-button and key callbacks in front of raylib's (raylib only samples state once per frame). A press released before the next poll is still reported as "down" for one frame, so it produces a click, and every key press carries the modifiers GLFW reported with it, so a chord typed faster than a frame (Ctrl down, A, Ctrl up) keeps its Ctrl. Without a GLFW window the backend falls back to raylib's queue and sampled modifiers.
 - While the window is unfocused, held buttons, keys and modifiers read as released (GLFW delivers no releases then), so a drag cannot stay stuck after Alt+Tab.
 - raylib calls returning =bool= must see raylib's one-byte =_Bool=: libregnum builds with =-include stdbool.h= and =<libregnum.h>= includes =<stdbool.h>= before raylib (see AGENTS.md).
-- =lrg_gui_raylib_render()= replays a draw list; call it between =BeginDrawing()= and =EndDrawing()=. Clip push/pop become nested scissor rectangles; images draw a =GrlTexture='s raylib handle; callbacks run with scissoring suspended and the clip restored afterwards.
+- =lrg_gui_raylib_render()= replays a draw list; call it between =BeginDrawing()= and =EndDrawing()=. Clip push/pop become nested scissor rectangles (a change to the scissor rectangle already in effect is skipped, since ending and restarting scissor mode flushes raylib's batch); images draw a =GrlTexture='s raylib handle; callbacks run with scissoring suspended and the clip restored afterwards. While replaying, the backend points raylib's shapes texture (=SetShapesTexture()=) at the 3x3 white block raylib paints into every generated font atlas, using the UI font's atlas, so rectangles, circles and UI text use one texture and batch into far fewer draw calls; the previous shapes texture is restored around callbacks and when the replay ends. Without a loaded UI font nothing changes.
 - =lrg_gui_raylib_apply_cursor()= maps =LrgGuiCursor= to raylib mouse cursors and only calls =SetMouseCursor()= when the shape changes.
 
 *** Complete host loop

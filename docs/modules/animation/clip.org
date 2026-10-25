@@ -89,6 +89,8 @@ void lrg_animation_clip_sample_track (LrgAnimationClip *self, guint track_index,
                                        gfloat time, LrgBonePose *out_pose);
 #+end_src
 
+Sampling a track interpolates between the last keyframe at or before the time and the first keyframe after it. Keyframes are stored in the order they were added; while a track's keyframe times never decrease (the usual case) the pair is found by bisection, O(log k). A track that ever received a keyframe earlier than its predecessor keeps the original linear scan (the first later keyframe ends the search), so out-of-order tracks sample exactly as before.
+
 ** Animation Events
 :PROPERTIES:
 :CUSTOM_ID: animation-events

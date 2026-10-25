@@ -21,7 +21,19 @@ struct _LrgEditorLog
 	guint                count;
 	guint64              next_serial;
 	GMainContext        *context;   /* where signals are emitted */
+
+	/* Running per-level tallies of the held records, so
+	 * lrg_editor_log_count_level() (status bar badges, every frame)
+	 * does not walk the ring. One entry per distinct level value seen;
+	 * records normally carry a single level bit, so this stays tiny. */
+	GArray              *level_counts;   /* LevelCount */
 };
+
+typedef struct
+{
+	GLogLevelFlags level;
+	guint          count;
+} LevelCount;
 
 G_DEFINE_FINAL_TYPE (LrgEditorLog, lrg_editor_log, G_TYPE_OBJECT)
 
@@ -86,6 +98,39 @@ lrg_editor_log_level_to_string (GLogLevelFlags level)
 }
 
 /* ==========================================================================
+ * Level tallies (call with the lock held)
+ * ========================================================================== */
+
+/* Adds @delta (+1 or -1) to the tally of records whose level is exactly
+ * @level, creating the entry on first use. */
+static void
+level_count_adjust (LrgEditorLog   *self,
+                    GLogLevelFlags  level,
+                    gint            delta)
+{
+	LevelCount entry;
+	guint      i;
+
+	for (i = 0; i < self->level_counts->len; i++)
+	{
+		LevelCount *c = &g_array_index (self->level_counts, LevelCount, i);
+
+		if (c->level == level)
+		{
+			c->count = (guint) ((gint) c->count + delta);
+			return;
+		}
+	}
+
+	if (delta > 0)
+	{
+		entry.level = level;
+		entry.count = (guint) delta;
+		g_array_append_val (self->level_counts, entry);
+	}
+}
+
+/* ==========================================================================
  * GObject
  * ========================================================================== */
 
@@ -98,6 +143,7 @@ lrg_editor_log_finalize (GObject *object)
 	for (i = 0; i < self->count; i++)
 		lrg_editor_log_record_free (self->ring[(self->head + i) % self->capacity]);
 	g_free (self->ring);
+	g_array_unref (self->level_counts);
 	g_main_context_unref (self->context);
 	g_mutex_clear (&self->lock);
 
@@ -143,6 +189,7 @@ lrg_editor_log_init (LrgEditorLog *self)
 {
 	g_mutex_init (&self->lock);
 	self->context = g_main_context_ref (g_main_context_default ());
+	self->level_counts = g_array_new (FALSE, FALSE, sizeof (LevelCount));
 }
 
 LrgEditorLog *
@@ -190,6 +237,7 @@ append_record (LrgEditorLog       *self,
 	if (self->count == self->capacity)
 	{
 		/* Full: overwrite the oldest. */
+		level_count_adjust (self, self->ring[self->head]->level, -1);
 		lrg_editor_log_record_free (self->ring[self->head]);
 		self->ring[self->head] = record;
 		self->head = (self->head + 1) % self->capacity;
@@ -199,6 +247,7 @@ append_record (LrgEditorLog       *self,
 		self->ring[(self->head + self->count) % self->capacity] = record;
 		self->count++;
 	}
+	level_count_adjust (self, record->level, 1);
 	copy = lrg_editor_log_record_copy (record);
 	g_mutex_unlock (&self->lock);
 
@@ -261,10 +310,16 @@ lrg_editor_log_count_level (LrgEditorLog   *self,
 
 	g_return_val_if_fail (LRG_IS_EDITOR_LOG (self), 0);
 
+	/* Sum the running tallies of every level value that matches; same
+	 * result as testing each held record against @levels. */
 	g_mutex_lock (&self->lock);
-	for (i = 0; i < self->count; i++)
-		if (self->ring[(self->head + i) % self->capacity]->level & levels)
-			n++;
+	for (i = 0; i < self->level_counts->len; i++)
+	{
+		const LevelCount *c = &g_array_index (self->level_counts, LevelCount, i);
+
+		if (c->level & levels)
+			n += c->count;
+	}
 	g_mutex_unlock (&self->lock);
 
 	return n;
@@ -282,6 +337,7 @@ lrg_editor_log_clear (LrgEditorLog *self)
 		lrg_editor_log_record_free (self->ring[(self->head + i) % self->capacity]);
 	self->head = 0;
 	self->count = 0;
+	g_array_set_size (self->level_counts, 0);
 	g_mutex_unlock (&self->lock);
 
 	g_signal_emit (self, signals[SIGNAL_CLEARED], 0);

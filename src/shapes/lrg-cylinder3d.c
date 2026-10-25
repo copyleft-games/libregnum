@@ -11,6 +11,8 @@
 
 #include <rlgl.h>
 
+#include "lrg-shape3d-mesh-private.h"
+
 #ifndef RAD2DEG
 #define RAD2DEG (180.0f / 3.14159265358979323846f)
 #endif
@@ -32,6 +34,13 @@ struct _LrgCylinder3D
 	gfloat   height;
 	gint     slices;
 	gboolean cap_ends;
+
+	/* the shared mesh of (mesh_radius, mesh_height, mesh_slices): the
+	 * triangles DrawCylinder() draws, made once instead of every frame */
+	LrgShape3DMesh *gpu_mesh;
+	gfloat          mesh_radius;
+	gfloat          mesh_height;
+	gint            mesh_slices;
 };
 
 G_DEFINE_FINAL_TYPE (LrgCylinder3D, lrg_cylinder3d, LRG_TYPE_SHAPE3D)
@@ -51,6 +60,30 @@ static GParamSpec *properties[N_PROPS];
 /* ==========================================================================
  * Virtual Method Implementation
  * ========================================================================== */
+
+/*
+ * lrg_cylinder3d_draw_mesh:
+ * Draws the solid cylinder from the shared mesh of its radius, height
+ * and slices, made on first use and again when they change. Returns
+ * FALSE when the immediate path must draw.
+ */
+static gboolean
+lrg_cylinder3d_draw_mesh (LrgCylinder3D *self,
+                          GrlColor      *color)
+{
+	if (self->gpu_mesh == NULL || self->mesh_radius != self->radius
+	    || self->mesh_height != self->height || self->mesh_slices != self->slices)
+	{
+		g_clear_pointer (&self->gpu_mesh, lrg_shape3d_mesh_release);
+		self->gpu_mesh = lrg_shape3d_mesh_acquire_cylinder (self->radius, self->radius,
+		                                                    self->height, self->slices);
+		self->mesh_radius = self->radius;
+		self->mesh_height = self->height;
+		self->mesh_slices = self->slices;
+	}
+	return self->gpu_mesh != NULL
+	       && lrg_shape3d_mesh_draw (self->gpu_mesh, color, 1.0f);
+}
 
 static void
 lrg_cylinder3d_draw (LrgShape *shape,
@@ -83,7 +116,7 @@ lrg_cylinder3d_draw (LrgShape *shape,
 		                         self->slices,
 		                         color);
 	}
-	else
+	else if (!lrg_cylinder3d_draw_mesh (self, color))
 	{
 		grl_draw_cylinder (origin,
 		                   self->radius,
@@ -157,11 +190,22 @@ lrg_cylinder3d_set_property (GObject      *object,
 }
 
 static void
+lrg_cylinder3d_finalize (GObject *object)
+{
+	LrgCylinder3D *self = LRG_CYLINDER3D (object);
+
+	g_clear_pointer (&self->gpu_mesh, lrg_shape3d_mesh_release);
+
+	G_OBJECT_CLASS (lrg_cylinder3d_parent_class)->finalize (object);
+}
+
+static void
 lrg_cylinder3d_class_init (LrgCylinder3DClass *klass)
 {
 	GObjectClass  *object_class = G_OBJECT_CLASS (klass);
 	LrgShapeClass *shape_class  = LRG_SHAPE_CLASS (klass);
 
+	object_class->finalize     = lrg_cylinder3d_finalize;
 	object_class->get_property = lrg_cylinder3d_get_property;
 	object_class->set_property = lrg_cylinder3d_set_property;
 

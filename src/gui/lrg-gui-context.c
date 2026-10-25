@@ -861,8 +861,10 @@ lrg_gui_context_end_frame (LrgGuiContext *self)
 	if (self->dnd_active && !self->input.mouse_down[LRG_GUI_MOUSE_LEFT])
 		self->dnd_active = FALSE;
 
+	/* Move (not copy) the layers into the output, in replay order; they
+	 * are cleared at the next begin_frame anyway. */
 	for (i = 0; i < GUI_N_LAYERS; i++)
-		lrg_gui_draw_list_append (self->output, self->layers[i]);
+		lrg_gui_draw_list_steal_append (self->output, self->layers[i]);
 
 	self->in_frame = FALSE;
 }
@@ -1861,13 +1863,124 @@ lrg_gui_text_mono (LrgGuiContext *self,
 	text_item (self, text, color, TRUE);
 }
 
+/* Start of character @k of a wrapped line; @ends[j] is the end of
+ * character j. */
+static const gchar *
+wrap_char_start (const gchar  *line,
+                 const GArray *ends,
+                 guint         k)
+{
+	return (k == 0) ? line : g_array_index (ends, const gchar *, k - 1);
+}
+
+/* Makes the end of character @k known; FALSE if the line (up to a
+ * newline or the end of the text) has no character @k. */
+static gboolean
+wrap_extend (const gchar *line,
+             GArray      *ends,
+             guint        k)
+{
+	while (ends->len <= k)
+	{
+		const gchar *c = wrap_char_start (line, ends, ends->len);
+		const gchar *next;
+
+		if (*c == '\0' || *c == '\n')
+			return FALSE;
+		next = g_utf8_next_char (c);
+		g_array_append_val (ends, next);
+	}
+	return TRUE;
+}
+
+/* Whether the prefix of @line through character @k is wider than @avail. */
+static gboolean
+wrap_too_wide (LrgGuiContext *self,
+               const gchar   *line,
+               const GArray  *ends,
+               guint          k,
+               gfloat         avail)
+{
+	return gui_text_width (self, line, g_array_index (ends, const gchar *, k) - line, FALSE) > avail;
+}
+
+/*
+ * wrap_line_end:
+ *
+ * Where the wrapped line starting at @line ends. Same result as the
+ * greedy scan that measured the prefix through every character: break
+ * before the first character k >= 1 whose prefix is wider than @avail,
+ * at the last space among characters 0..k if there is one, else at k;
+ * with no such character the line runs to the newline or the end.
+ * Prefix widths never shrink as characters are added, so k is found by
+ * galloping (1, 2, 4, ...) and then bisecting: O(log n) measurements of
+ * about a line's length instead of one per character.
+ */
+static const gchar *
+wrap_line_end (LrgGuiContext *self,
+               const gchar   *line,
+               gfloat         avail,
+               GArray        *ends)
+{
+	guint        lo = 0;    /* characters 1..lo are known to fit */
+	guint        hi = 1;
+	guint        n = G_MAXUINT;
+	guint        k, j;
+	const gchar *last_space = NULL;
+
+	g_array_set_size (ends, 0);
+
+	/* Gallop until a prefix is too wide (k in (lo, hi]) or the line
+	 * ends after n characters (k in (lo, n - 1], if anywhere). */
+	for (;;)
+	{
+		if (!wrap_extend (line, ends, hi))
+		{
+			n = ends->len;
+			hi = n;           /* sentinel: "no character breaks" */
+			break;
+		}
+		if (wrap_too_wide (self, line, ends, hi, avail))
+			break;
+		lo = hi;
+		hi *= 2;
+	}
+
+	/* Bisect: characters <= lo fit, hi is too wide (or the sentinel). */
+	while (hi - lo > 1)
+	{
+		guint mid = lo + (hi - lo) / 2;
+
+		if (wrap_too_wide (self, line, ends, mid, avail))
+			hi = mid;
+		else
+			lo = mid;
+	}
+
+	if (hi == n)
+		return wrap_char_start (line, ends, n);   /* the newline or NUL */
+
+	k = hi;
+	for (j = k + 1; j-- > 0; )
+	{
+		const gchar *c = wrap_char_start (line, ends, j);
+
+		if (*c == ' ')
+		{
+			last_space = c;
+			break;
+		}
+	}
+	return (last_space != NULL) ? last_space : wrap_char_start (line, ends, k);
+}
+
 void
 lrg_gui_text_wrapped (LrgGuiContext *self,
                       const gchar   *text)
 {
 	gfloat       avail;
 	const gchar *line;
-	const gchar *p;
+	GArray      *ends;
 
 	g_return_if_fail (LRG_IS_GUI_CONTEXT (self));
 	g_return_if_fail (text != NULL);
@@ -1876,36 +1989,20 @@ lrg_gui_text_wrapped (LrgGuiContext *self,
 	avail = MAX (avail, self->style.font_size * 4.0f);
 
 	/* Greedy word wrap; explicit newlines force breaks. */
+	ends = g_array_new (FALSE, FALSE, sizeof (const gchar *));
 	line = text;
 	while (*line != '\0')
 	{
-		const gchar *last_space = NULL;
-		const gchar *end = line;
-		g_autofree gchar *chunk = NULL;
+		const gchar      *end = wrap_line_end (self, line, avail, ends);
+		g_autofree gchar *chunk = g_strndup (line, end - line);
 
-		for (p = line; *p != '\0' && *p != '\n'; p = g_utf8_next_char (p))
-		{
-			const gchar *next = g_utf8_next_char (p);
-
-			if (*p == ' ')
-				last_space = p;
-			if (gui_text_width (self, line, next - line, FALSE) > avail && p > line)
-			{
-				end = (last_space != NULL) ? last_space : p;
-				break;
-			}
-			end = next;
-		}
-		if (*p == '\0' || *p == '\n')
-			end = p;
-
-		chunk = g_strndup (line, end - line);
 		lrg_gui_text (self, chunk);
 
 		line = end;
 		if (*line == ' ' || *line == '\n')
 			line++;
 	}
+	g_array_unref (ends);
 }
 
 /* ==========================================================================

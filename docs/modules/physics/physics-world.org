@@ -133,19 +133,21 @@ gfloat delta_time = get_frame_delta_time ();
 lrg_physics_world_step (world, delta_time);
 #+end_src
 
-For consistent physics, use a fixed time step:
+The world already runs a fixed-time-step accumulator: =delta_time= is added to it and as many whole =time_step= steps as it holds are simulated, so passing the raw frame delta is the intended use.
 
-#+begin_src C
-static gfloat accumulator = 0.0f;
-gfloat fixed_step = 1.0f / 60.0f;
+**** Catch-up limit
+:PROPERTIES:
+:CUSTOM_ID: catch-up-limit
+:END:
+One call simulates at most 5/60 s worth of steps (at least 5 steps; 5 at the default 60 Hz, 50 at 600 Hz). If a frame owes more -- a hitch, a debugger pause, a machine too slow for the scene -- the excess whole steps are dropped and only the sub-step remainder carries over, so the simulation slows down instead of entering a "spiral of death" where each slow frame owes more steps than the last. Earlier versions simulated every owed step (a 10 s pause meant 600 steps in one call).
 
-accumulator += delta_time;
-while (accumulator >= fixed_step)
-{
-    lrg_physics_world_step (world, fixed_step);
-    accumulator -= fixed_step;
-}
-#+end_src
+**** Broadphase and contact reporting
+:PROPERTIES:
+:CUSTOM_ID: broadphase
+:END:
+Each step snapshots the bodies' AABBs after integration and finds candidate pairs with a sort-and-sweep (O(n log n + contacts) instead of testing all n^2 pairs). Contacts are then reported exactly as the all-pairs loop did: in world-order (i, j) pairs, each re-checked on live state (at least one dynamic body, collision layer/mask, AABB overlap -- touching counts, and a body with a NaN coordinate overlaps everything) right before its signals are emitted. The =collision= signal's #LrgCollisionInfo is only valid during the emission (it is stack-allocated and static-scope); copy it with =lrg_collision_info_copy()= to keep it.
+
+Collision handlers may change the world mid-step. Bodies are referenced for the step, so removing one never frees it under the loop; pairs with a body removed earlier in the step are skipped; bodies added by a handler, and pairs that only start overlapping because a handler moved a body, are reported from the next step.
 
 *** Pausing Simulation
 :PROPERTIES:

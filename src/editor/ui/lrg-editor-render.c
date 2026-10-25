@@ -48,6 +48,18 @@ typedef struct
 	Mesh            disc;
 	GHashTable     *models;     /* abs path -> Model*, NULL value = failed */
 	GHashTable     *textures;   /* abs path -> Texture2D*, NULL value = failed */
+	/* Per-frame lookups by the node's asset string as written (no path
+	 * building): values are borrowed from models/textures, NULL = failed.
+	 * Valid for asset_base only; cleared when the base directory that
+	 * relative paths resolve against changes. */
+	GHashTable     *model_by_asset;
+	GHashTable     *texture_by_asset;
+	gchar          *asset_base;
+	/* grid-size / grid-extent, refreshed on notify instead of a
+	 * g_object_get() by name every frame. */
+	gdouble         grid_size;
+	guint           grid_extent;
+	gboolean        grid_dirty;
 	guint           drawn;
 } EditorRender;
 
@@ -162,6 +174,16 @@ v2 (gfloat x,
 /* ==========================================================================
  * Setup
  * ========================================================================== */
+
+static void
+grid_settings_changed (GObject    *settings,
+                       GParamSpec *pspec,
+                       gpointer    user_data)
+{
+	EditorRender *r = user_data;
+
+	r->grid_dirty = TRUE;
+}
 
 static const gchar *lit_vs =
 	"#version 330\n"
@@ -288,6 +310,12 @@ editor_render_init (LrgEditorApp *self)
 
 	r->models = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, model_free);
 	r->textures = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, texture_free);
+	r->model_by_asset = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+	r->texture_by_asset = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+
+	r->grid_dirty = TRUE;
+	g_signal_connect (self->settings, "notify::grid-size", G_CALLBACK (grid_settings_changed), r);
+	g_signal_connect (self->settings, "notify::grid-extent", G_CALLBACK (grid_settings_changed), r);
 }
 
 void
@@ -298,6 +326,11 @@ editor_render_shutdown (LrgEditorApp *self)
 	if (r == NULL)
 		return;
 
+	g_signal_handlers_disconnect_by_data (self->settings, r);
+	/* The by-asset maps borrow their values: drop them first. */
+	g_hash_table_unref (r->model_by_asset);
+	g_hash_table_unref (r->texture_by_asset);
+	g_free (r->asset_base);
 	g_hash_table_unref (r->models);
 	g_hash_table_unref (r->textures);
 	UnloadMesh (r->cube);
@@ -340,9 +373,25 @@ material_color (LrgNodeVisual *visual)
 	                 (guchar) (CLAMP (rgba[2], 0.0f, 1.0f) * 255.0f), (guchar) (CLAMP (rgba[3], 0.0f, 1.0f) * 255.0f) };
 }
 
+/* Clears the by-asset maps when relative asset paths would now resolve
+ * somewhere else (project or level directory changed). Once per frame. */
+static void
+sync_asset_base (LrgEditorApp *self)
+{
+	EditorRender *r = self->render;
+	const gchar  *base = editor_app_base_dir (self);
+
+	if (g_strcmp0 (base, r->asset_base) == 0)
+		return;
+	g_hash_table_remove_all (r->model_by_asset);
+	g_hash_table_remove_all (r->texture_by_asset);
+	g_free (r->asset_base);
+	r->asset_base = g_strdup (base);
+}
+
 static Model *
-get_model (LrgEditorApp *self,
-           const gchar  *asset)
+load_model (LrgEditorApp *self,
+            const gchar  *asset)
 {
 	EditorRender     *r = self->render;
 	g_autofree gchar *abs = editor_app_project_path (self, asset);
@@ -376,9 +425,30 @@ get_model (LrgEditorApp *self,
 	return model;
 }
 
+/* The model for a node's asset string: one hash lookup per node per
+ * frame; the path is resolved (and the model loaded) on first use. A
+ * project-less editor resolves against the working directory, which is
+ * not tracked, so it always takes the resolving path. */
+static Model *
+get_model (LrgEditorApp *self,
+           const gchar  *asset)
+{
+	EditorRender *r = self->render;
+	gpointer      value;
+	Model        *model;
+
+	if (r->asset_base == NULL && !g_path_is_absolute (asset))
+		return load_model (self, asset);
+	if (g_hash_table_lookup_extended (r->model_by_asset, asset, NULL, &value))
+		return value;
+	model = load_model (self, asset);
+	g_hash_table_insert (r->model_by_asset, g_strdup (asset), model);
+	return model;
+}
+
 static Texture2D *
-get_texture (LrgEditorApp *self,
-             const gchar  *asset)
+load_texture (LrgEditorApp *self,
+              const gchar  *asset)
 {
 	EditorRender     *r = self->render;
 	g_autofree gchar *abs = editor_app_project_path (self, asset);
@@ -398,6 +468,24 @@ get_texture (LrgEditorApp *self,
 	if (tex == NULL)
 		lrg_editor_log_append (self->log, G_LOG_LEVEL_WARNING, "render", abs);
 	g_hash_table_insert (r->textures, g_steal_pointer (&abs), tex);
+	return tex;
+}
+
+/* As get_model(), for sprite textures. */
+static Texture2D *
+get_texture (LrgEditorApp *self,
+             const gchar  *asset)
+{
+	EditorRender *r = self->render;
+	gpointer      value;
+	Texture2D    *tex;
+
+	if (r->asset_base == NULL && !g_path_is_absolute (asset))
+		return load_texture (self, asset);
+	if (g_hash_table_lookup_extended (r->texture_by_asset, asset, NULL, &value))
+		return value;
+	tex = load_texture (self, asset);
+	g_hash_table_insert (r->texture_by_asset, g_strdup (asset), tex);
 	return tex;
 }
 
@@ -655,8 +743,12 @@ draw_node_icon (LrgEditorApp *self,
 	if (selected)
 		color = (Color) { 250, 179, 135, 255 };
 
-	/* Icons keep a constant on-screen size, oriented like the node. */
-	lrg_editor_node_get_world_position (node, pos);
+	/* Icons keep a constant on-screen size, oriented like the node. The
+	 * world position is the translation column of @world (what
+	 * lrg_editor_node_get_world_position() would recompute). */
+	pos[0] = world[12];
+	pos[1] = world[13];
+	pos[2] = world[14];
 	scale = lrg_editor_view_pixel_world_size (&self->view, pos) * 120.0f;
 	{
 		gfloat loc[3], rot[3], scl[3], m[16];
@@ -679,11 +771,16 @@ typedef struct
 	LrgNode            *primary;
 } SceneWalk;
 
+/* Draws @node and its visible descendants. @parent_world is the world
+ * matrix of @node's parent, so each node composes one local matrix onto
+ * it instead of walking back to the root (O(n), not O(n * depth)). */
 static void
-draw_subtree (SceneWalk *walk,
-              LrgNode   *node)
+draw_subtree (SceneWalk    *walk,
+              LrgNode      *node,
+              const gfloat *parent_world)
 {
 	GPtrArray *children;
+	gfloat     local[16];
 	gfloat     world[16];
 	gboolean   selected;
 	guint      i;
@@ -691,7 +788,8 @@ draw_subtree (SceneWalk *walk,
 	if (!lrg_node_get_visible (node))
 		return;
 
-	lrg_editor_node_get_world_matrix (node, world);
+	lrg_editor_node_get_local_matrix (node, local);
+	lrg_editor_math_multiply (parent_world, local, world);
 	selected = lrg_editor_selection_contains (walk->selection, node);
 
 	draw_node_geometry (walk->self, node, world);
@@ -713,7 +811,7 @@ draw_subtree (SceneWalk *walk,
 
 	children = lrg_node_get_children (node);
 	for (i = 0; children != NULL && i < children->len; i++)
-		draw_subtree (walk, g_ptr_array_index (children, i));
+		draw_subtree (walk, g_ptr_array_index (children, i), world);
 }
 
 /* An infinite-looking grid whose spacing follows the zoom level. */
@@ -724,13 +822,22 @@ draw_grid (LrgEditorApp *self)
 	gint    slices;
 	gfloat  ext;
 	gfloat  cx, cy;
-	gdouble size = 1.0;
-	guint   extent = 50;
+	EditorRender *r = self->render;
+	gdouble       size;
+	guint         extent;
 
 	/* Cells are grid-size times a power of ten that follows the zoom;
-	 * grid-extent is the half width in cells. */
-	g_object_get (self->settings, "grid-size", &size, "grid-extent", &extent, NULL);
-	size = MAX (size, 0.0001);
+	 * grid-extent is the half width in cells. Read from the settings
+	 * only after they changed (see grid_settings_changed()). */
+	if (r->grid_dirty)
+	{
+		r->grid_size = 1.0;
+		r->grid_extent = 50;
+		g_object_get (self->settings, "grid-size", &r->grid_size, "grid-extent", &r->grid_extent, NULL);
+		r->grid_dirty = FALSE;
+	}
+	size = MAX (r->grid_size, 0.0001);
+	extent = r->grid_extent;
 	slices = (gint) CLAMP (extent * 2, 2, 400);
 
 	if (self->view.orthographic)
@@ -779,12 +886,16 @@ editor_render_viewport (LrgEditorApp *self)
 	EditorRender *r = self->render;
 	SceneWalk     walk;
 	GPtrArray    *top;
+	LrgNode      *root;
+	gfloat        root_world[16];
 	gfloat        view[16], proj[16];
 	gint          w, h;
 	guint         i;
 
 	if (r == NULL || !self->viewport_visible)
 		return;
+
+	sync_asset_base (self);
 
 	w = MAX (1, (gint) self->viewport_rect.w);
 	h = MAX (1, (gint) self->viewport_rect.h);
@@ -839,9 +950,11 @@ editor_render_viewport (LrgEditorApp *self)
 	walk.selection = lrg_editor_get_selection (self->editor);
 	walk.primary = lrg_editor_selection_get_primary (walk.selection);
 	r->drawn = 0;
-	top = lrg_node_get_children (lrg_level_get_root (lrg_editor_get_level (self->editor)));
+	root = lrg_level_get_root (lrg_editor_get_level (self->editor));
+	lrg_editor_node_get_world_matrix (root, root_world);
+	top = lrg_node_get_children (root);
 	for (i = 0; top != NULL && i < top->len; i++)
-		draw_subtree (&walk, g_ptr_array_index (top, i));
+		draw_subtree (&walk, g_ptr_array_index (top, i), root_world);
 	rlDrawRenderBatchActive ();
 	if (self->wireframe)
 		rlDisableWireMode ();

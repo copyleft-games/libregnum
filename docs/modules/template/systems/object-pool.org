@@ -175,9 +175,16 @@ The pool and captured objects stay alive until iteration ends. This prevents
 callbacks from receiving freed objects after =clear()= or owner destruction.
 Object state is still mutable: a reference snapshot is not a copy of each
 object's properties. Storage order can change after releases and is not a
-stable acquisition order. Iteration uses O(N) temporary memory. Each acquisition
-allocates a small bookkeeping record; prewarming avoids constructing gameplay
-objects, but does not make acquisition or iteration allocation-free.
+stable acquisition order. Iteration takes an O(N) snapshot into a buffer the
+pool keeps for reuse (a nested iteration allocates its own), and checks each
+captured acquisition's validity in O(1). Each acquisition allocates a small
+bookkeeping record; prewarming avoids constructing gameplay objects, but does
+not make acquisition allocation-free.
+
+=lrg_object_pool_release()= is O(1): each acquisition remembers its storage
+slot, and the swap-remove that fills the hole updates the moved acquisition's
+slot. (It used to search the active list, O(N) per release and O(N^2) for a
+wave of releases.)
 
 Changing =LrgPoolable='s active flag alone does not return an object to the
 pool; call =lrg_object_pool_release()= to update pool membership.

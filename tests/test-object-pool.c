@@ -825,6 +825,70 @@ test_pool_iteration_mutation (gconstpointer data)
  * Main
  * ========================================================================== */
 
+static gboolean
+collect_object (LrgPoolable *object,
+                gpointer     user_data)
+{
+    g_ptr_array_add (user_data, object);
+    return TRUE;
+}
+
+/* Releases swap-remove from storage, and foreach walks storage backwards;
+ * releasing out of order, many times, must keep both exactly as the
+ * linear-search implementation left them. */
+static void
+test_pool_release_storage_order (void)
+{
+    g_autoptr(LrgObjectPool) pool = lrg_object_pool_new (TEST_TYPE_POOLABLE_OBJECT, 64,
+                                                          LRG_POOL_GROWTH_FIXED);
+    g_autoptr(GPtrArray) model = g_ptr_array_new ();
+    g_autoptr(GPtrArray) seen = g_ptr_array_new ();
+    g_autoptr(GRand) rng = g_rand_new_with_seed (5);
+    g_autoptr(TestPoolableObject) stranger = g_object_new (TEST_TYPE_POOLABLE_OBJECT, NULL);
+    guint round;
+    guint i;
+
+    for (round = 0; round < 200; round++)
+    {
+        /* Acquire or release at random, mirroring storage in @model. */
+        if (model->len == 0 || (model->len < 64 && g_rand_boolean (rng)))
+        {
+            GObject *object = lrg_object_pool_acquire (pool);
+
+            g_assert_nonnull (object);
+            g_ptr_array_add (model, object);
+        }
+        else
+        {
+            guint victim = (guint) g_rand_int_range (rng, 0, (gint32) model->len);
+
+            lrg_object_pool_release (pool, LRG_POOLABLE (model->pdata[victim]));
+            g_ptr_array_remove_index_fast (model, victim);
+        }
+
+        g_ptr_array_set_size (seen, 0);
+        lrg_object_pool_foreach_active (pool, collect_object, seen);
+        g_assert_cmpuint (seen->len, ==, model->len);
+        for (i = 0; i < model->len; i++)
+            g_assert_true (seen->pdata[i] == model->pdata[model->len - 1 - i]);
+        g_assert_cmpuint (lrg_object_pool_get_active_count (pool), ==, model->len);
+    }
+
+    /* Releasing twice, or an object from elsewhere, is still refused. */
+    if (model->len > 0)
+    {
+        GObject *object = model->pdata[0];
+
+        lrg_object_pool_release (pool, LRG_POOLABLE (object));
+        g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "*not from this pool*");
+        lrg_object_pool_release (pool, LRG_POOLABLE (object));
+        g_test_assert_expected_messages ();
+    }
+    g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "*not from this pool*");
+    lrg_object_pool_release (pool, LRG_POOLABLE (stranger));
+    g_test_assert_expected_messages ();
+}
+
 int
 main (int    argc,
       char **argv)
@@ -898,6 +962,7 @@ main (int    argc,
                 pool_fixture_tear_down);
 
     g_test_add_data_func ("/object-pool/iteration/release-other", GINT_TO_POINTER (0), test_pool_iteration_mutation);
+    g_test_add_func ("/object-pool/pool/release-storage-order", test_pool_release_storage_order);
     g_test_add_data_func ("/object-pool/iteration/clear", GINT_TO_POINTER (1), test_pool_iteration_mutation);
     g_test_add_data_func ("/object-pool/iteration/reacquire", GINT_TO_POINTER (2), test_pool_iteration_mutation);
     g_test_add_data_func ("/object-pool/iteration/nested", GINT_TO_POINTER (3), test_pool_iteration_mutation);

@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "lrg-bone-pose.h"
+#include "lrg-bone-pose-private.h"
 #include <math.h>
 
 /**
@@ -344,26 +345,24 @@ quat_rotate (gfloat qx, gfloat qy, gfloat qz, gfloat qw,
     *z += qw * tz + (qx * ty - qy * tx);
 }
 
-LrgBonePose *
-lrg_bone_pose_compose (const LrgBonePose *parent,
-                       const LrgBonePose *local)
+void
+lrg_bone_pose_compose_into (const LrgBonePose *parent,
+                            const LrgBonePose *local,
+                            LrgBonePose       *result)
 {
-    LrgBonePose *result;
+    LrgBonePose  out;
     gfloat       px, py, pz;
     gfloat       len;
     gfloat       qx, qy, qz, qw;
 
-    g_return_val_if_fail (parent != NULL, NULL);
-    g_return_val_if_fail (local != NULL, NULL);
-
-    result = lrg_bone_pose_new ();
+    /* Built in a local so @result may alias either input. */
     quat_multiply (parent->rotation_x, parent->rotation_y,
                    parent->rotation_z, parent->rotation_w,
                    local->rotation_x, local->rotation_y,
                    local->rotation_z, local->rotation_w,
-                   &result->rotation_x, &result->rotation_y,
-                   &result->rotation_z, &result->rotation_w);
-    lrg_bone_pose_normalize_rotation (result);
+                   &out.rotation_x, &out.rotation_y,
+                   &out.rotation_z, &out.rotation_w);
+    lrg_bone_pose_normalize_rotation (&out);
 
     /* the child's offset lives in the parent's scaled, rotated frame */
     qx = parent->rotation_x;
@@ -382,13 +381,27 @@ lrg_bone_pose_compose (const LrgBonePose *parent,
     py = local->position_y * parent->scale_y;
     pz = local->position_z * parent->scale_z;
     quat_rotate (qx, qy, qz, qw, &px, &py, &pz);
-    result->position_x = parent->position_x + px;
-    result->position_y = parent->position_y + py;
-    result->position_z = parent->position_z + pz;
+    out.position_x = parent->position_x + px;
+    out.position_y = parent->position_y + py;
+    out.position_z = parent->position_z + pz;
 
-    result->scale_x = parent->scale_x * local->scale_x;
-    result->scale_y = parent->scale_y * local->scale_y;
-    result->scale_z = parent->scale_z * local->scale_z;
+    out.scale_x = parent->scale_x * local->scale_x;
+    out.scale_y = parent->scale_y * local->scale_y;
+    out.scale_z = parent->scale_z * local->scale_z;
+    *result = out;
+}
+
+LrgBonePose *
+lrg_bone_pose_compose (const LrgBonePose *parent,
+                       const LrgBonePose *local)
+{
+    LrgBonePose *result;
+
+    g_return_val_if_fail (parent != NULL, NULL);
+    g_return_val_if_fail (local != NULL, NULL);
+
+    result = g_new (LrgBonePose, 1);
+    lrg_bone_pose_compose_into (parent, local, result);
     return result;
 }
 
