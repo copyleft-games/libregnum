@@ -185,6 +185,7 @@ TEST_SOURCES := \
 	test-dlc.c \
 	test-vr.c \
 	test-vr-hand.c \
+	test-vr-gesture.c \
 	test-deckbuilder.c \
 	test-object-pool.c \
 	test-template-2d.c \
