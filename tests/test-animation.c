@@ -655,6 +655,269 @@ test_ik_solver_look_at_up_vector (void)
 
 /*
  * ============================================================================
+ * World pose / binding regression tests
+ * ============================================================================
+ */
+
+/* A chain of @n bones listed leaf first, each offset +1 on Y from its
+ * parent. */
+static LrgSkeleton *
+make_reversed_chain (guint n)
+{
+    LrgSkeleton *skeleton = lrg_skeleton_new ();
+    guint i;
+
+    for (i = n; i > 0; i--)
+    {
+        g_autofree gchar *name = g_strdup_printf ("b%u", i - 1);
+        g_autoptr(LrgBone) bone = lrg_bone_new (name, (gint) (i - 1));
+        LrgBonePose pose;
+
+        lrg_bone_set_parent_index (bone, (gint) i - 2);
+        lrg_bone_pose_set_identity (&pose);
+        lrg_bone_pose_set_position (&pose, 0.0f, 1.0f, 0.0f);
+        lrg_bone_set_local_pose (bone, &pose);
+        lrg_skeleton_add_bone (skeleton, bone);
+    }
+    return skeleton;
+}
+
+static void
+test_skeleton_deep_chain_world_poses (void)
+{
+    /* Deeper than the old 100-pass limit and listed child first: the old
+     * algorithm left the deep end of the chain unconverged. */
+    g_autoptr(LrgSkeleton) skeleton = make_reversed_chain (150);
+    const LrgBonePose *leaf;
+    const LrgBonePose *mid;
+
+    lrg_skeleton_calculate_world_poses (skeleton);
+    leaf = lrg_bone_get_world_pose (lrg_skeleton_get_bone (skeleton, 149));
+    mid = lrg_bone_get_world_pose (lrg_skeleton_get_bone (skeleton, 49));
+    g_assert_cmpfloat_with_epsilon (leaf->position_y, 150.0f, 0.001f);
+    g_assert_cmpfloat_with_epsilon (mid->position_y, 50.0f, 0.001f);
+}
+
+static void
+test_skeleton_world_poses_match_compose (void)
+{
+    g_autoptr(LrgSkeleton) skeleton = lrg_skeleton_new ();
+    guint i;
+
+    /* A rotated, scaled tree three wide, listed in shuffled order; every
+     * world pose must equal lrg_bone_pose_compose() of its parent's. */
+    for (i = 0; i < 40; i++)
+    {
+        guint idx = (i * 17) % 40;
+        g_autofree gchar *name = g_strdup_printf ("n%u", idx);
+        g_autoptr(LrgBone) bone = lrg_bone_new (name, (gint) idx);
+        LrgBonePose pose;
+
+        lrg_bone_set_parent_index (bone, idx == 0 ? -1 : (gint) ((idx - 1) / 3));
+        lrg_bone_pose_set_identity (&pose);
+        lrg_bone_pose_set_position (&pose, 0.5f, 1.0f, 0.25f * (gfloat) idx);
+        lrg_bone_pose_set_rotation_euler (&pose, 0.1f * (gfloat) idx, 0.2f, -0.3f);
+        lrg_bone_pose_set_scale (&pose, 1.1f, 0.9f, 1.0f);
+        lrg_bone_set_local_pose (bone, &pose);
+        lrg_skeleton_add_bone (skeleton, bone);
+    }
+    lrg_skeleton_calculate_world_poses (skeleton);
+
+    for (i = 1; i < 40; i++)
+    {
+        LrgBone *bone = lrg_skeleton_get_bone (skeleton, (gint) i);
+        LrgBone *parent = lrg_skeleton_get_bone (skeleton, (gint) ((i - 1) / 3));
+        g_autoptr(LrgBonePose) expected = NULL;
+
+        expected = lrg_bone_pose_compose (lrg_bone_get_world_pose (parent),
+                                          lrg_bone_get_local_pose (bone));
+        g_assert_true (lrg_bone_pose_equal (expected, lrg_bone_get_world_pose (bone)));
+    }
+}
+
+static void
+test_skeleton_reparent_and_lookup (void)
+{
+    g_autoptr(LrgSkeleton) skeleton = make_reversed_chain (4);
+    g_autoptr(LrgBone) dup = lrg_bone_new ("dup", 2);
+    g_autoptr(LrgBone) orphan = lrg_bone_new ("orphan", 7);
+    LrgBonePose stale;
+    LrgBone *b3;
+
+    /* A later bone sharing index 2 never shadows the first one. */
+    lrg_skeleton_add_bone (skeleton, dup);
+    g_assert_true (lrg_skeleton_get_bone (skeleton, 2) != dup);
+    g_assert_cmpstr (lrg_bone_get_name (lrg_skeleton_get_bone (skeleton, 2)), ==, "b2");
+    g_assert_null (lrg_skeleton_get_bone (skeleton, 99));
+    g_assert_null (lrg_skeleton_get_bone (skeleton, -5));
+
+    /* A bone whose parent is missing keeps its world pose. */
+    lrg_bone_set_parent_index (orphan, 42);
+    lrg_bone_pose_set_identity (&stale);
+    lrg_bone_pose_set_position (&stale, 9.0f, 9.0f, 9.0f);
+    lrg_bone_set_world_pose (orphan, &stale);
+    lrg_skeleton_add_bone (skeleton, orphan);
+    lrg_skeleton_calculate_world_poses (skeleton);
+    g_assert_cmpfloat (lrg_bone_get_world_pose (orphan)->position_x, ==, 9.0f);
+
+    /* Reparenting after a pass is picked up by the next one. */
+    b3 = lrg_skeleton_get_bone (skeleton, 3);
+    g_assert_cmpfloat_with_epsilon (lrg_bone_get_world_pose (b3)->position_y, 4.0f, 0.001f);
+    lrg_bone_set_parent_index (b3, 0);
+    lrg_skeleton_calculate_world_poses (skeleton);
+    g_assert_cmpfloat_with_epsilon (lrg_bone_get_world_pose (b3)->position_y, 2.0f, 0.001f);
+
+    /* Removing a bone drops it from lookups. */
+    lrg_skeleton_remove_bone (skeleton, b3);
+    g_assert_null (lrg_skeleton_get_bone (skeleton, 3));
+    g_assert_cmpuint (lrg_skeleton_get_bone_count (skeleton), ==, 5);
+}
+
+static void
+test_skeleton_cycle_terminates (void)
+{
+    g_autoptr(LrgSkeleton) skeleton = lrg_skeleton_new ();
+    g_autoptr(LrgBone) a = lrg_bone_new ("a", 0);
+    g_autoptr(LrgBone) b = lrg_bone_new ("b", 1);
+
+    lrg_bone_set_parent_index (a, 1);
+    lrg_bone_set_parent_index (b, 0);
+    lrg_skeleton_add_bone (skeleton, a);
+    lrg_skeleton_add_bone (skeleton, b);
+    lrg_skeleton_calculate_world_poses (skeleton);
+    g_assert_nonnull (lrg_bone_get_world_pose (a));
+}
+
+/* Two clips animating the same bones with their tracks in opposite order;
+ * a crossfade must lerp each bone's own pair of tracks. */
+static void
+test_animator_crossfade_matches_tracks (void)
+{
+    g_autoptr(LrgSkeleton) skeleton = lrg_skeleton_new ();
+    g_autoptr(LrgAnimator) animator = NULL;
+    g_autoptr(LrgAnimationClip) idle = lrg_animation_clip_new ("idle");
+    g_autoptr(LrgAnimationClip) wave = lrg_animation_clip_new ("wave");
+    g_autoptr(LrgBone) late = NULL;
+    const gchar *names[3] = { "hip", "arm", "hand" };
+    guint i;
+
+    for (i = 0; i < 3; i++)
+    {
+        g_autoptr(LrgBone) bone = lrg_bone_new (names[i], (gint) i);
+        LrgAnimationKeyframe kf = { 0 };
+        guint track;
+
+        lrg_skeleton_add_bone (skeleton, bone);
+
+        lrg_bone_pose_set_identity (&kf.pose);
+        lrg_bone_pose_set_position (&kf.pose, (gfloat) i, 0.0f, 0.0f);
+        track = lrg_animation_clip_add_track (idle, names[i]);
+        lrg_animation_clip_add_keyframe (idle, track, &kf);
+
+        lrg_bone_pose_set_position (&kf.pose, 0.0f, 10.0f * (gfloat) (2 - i), 0.0f);
+        track = lrg_animation_clip_add_track (wave, names[2 - i]);
+        lrg_animation_clip_add_keyframe (wave, track, &kf);
+    }
+    /* A track for a bone the skeleton does not have yet. */
+    {
+        LrgAnimationKeyframe kf = { 0 };
+        guint track = lrg_animation_clip_add_track (idle, "tail");
+
+        lrg_bone_pose_set_identity (&kf.pose);
+        lrg_bone_pose_set_position (&kf.pose, 0.0f, 0.0f, 5.0f);
+        lrg_animation_clip_add_keyframe (idle, track, &kf);
+    }
+
+    animator = lrg_animator_new (skeleton);
+    lrg_animator_add_clip (animator, "idle", idle);
+    lrg_animator_add_clip (animator, "wave", wave);
+    lrg_animator_play (animator, "idle");
+    lrg_animator_update (animator, 0.1f);
+    g_assert_cmpfloat_with_epsilon (lrg_bone_get_local_pose (
+        lrg_skeleton_get_bone (skeleton, 2))->position_x, 2.0f, 0.0001f);
+
+    /* Half way through a one-second crossfade. */
+    lrg_animator_crossfade (animator, "wave", 1.0f);
+    lrg_animator_update (animator, 0.5f);
+    for (i = 0; i < 3; i++)
+    {
+        const LrgBonePose *pose = lrg_bone_get_local_pose (
+            lrg_skeleton_get_bone (skeleton, (gint) i));
+
+        /* wave puts bone k at y = 10 * k (its track for names[k] was
+         * added with 2 - (2 - k)). */
+        g_assert_cmpfloat_with_epsilon (pose->position_x, (gfloat) i * 0.5f, 0.0001f);
+        g_assert_cmpfloat_with_epsilon (pose->position_y, 10.0f * (gfloat) i * 0.5f, 0.0001f);
+    }
+
+    /* Adding the missing bone later binds its track on the next update. */
+    lrg_animator_play (animator, "idle");
+    late = lrg_bone_new ("tail", 3);
+    lrg_skeleton_add_bone (skeleton, late);
+    lrg_animator_update (animator, 0.1f);
+    g_assert_cmpfloat_with_epsilon (lrg_bone_get_local_pose (late)->position_z, 5.0f, 0.0001f);
+}
+
+static void
+test_clip_sample_keyframe_search (void)
+{
+    g_autoptr(LrgAnimationClip) sorted = lrg_animation_clip_new ("sorted");
+    g_autoptr(LrgAnimationClip) unsorted = lrg_animation_clip_new ("unsorted");
+    const gfloat sorted_times[5] = { 0.0f, 0.25f, 0.25f, 0.5f, 1.0f };
+    const gfloat unsorted_times[5] = { 0.0f, 0.7f, 0.1f, 0.2f, 0.3f };
+    LrgBonePose pose;
+    LrgBonePose expected;
+    guint track;
+    guint i;
+
+    track = lrg_animation_clip_add_track (sorted, "b");
+    for (i = 0; i < 5; i++)
+    {
+        LrgAnimationKeyframe kf = { 0 };
+
+        kf.time = sorted_times[i];
+        lrg_bone_pose_set_identity (&kf.pose);
+        lrg_bone_pose_set_position (&kf.pose, (gfloat) i, 0.0f, 0.0f);
+        lrg_animation_clip_add_keyframe (sorted, track, &kf);
+    }
+    lrg_animation_clip_set_loop_mode (sorted, LRG_ANIMATION_LOOP_NONE);
+
+    /* Exactly on a duplicated time: the later of the pair is "prev". */
+    lrg_animation_clip_sample_track (sorted, track, 0.25f, &pose);
+    g_assert_cmpfloat_with_epsilon (pose.position_x, 2.0f, 0.0001f);
+    /* Between keys 3 and 4. */
+    lrg_animation_clip_sample_track (sorted, track, 0.75f, &pose);
+    g_assert_cmpfloat_with_epsilon (pose.position_x, 3.5f, 0.0001f);
+    /* Before the first and after the last. */
+    lrg_animation_clip_sample_track (sorted, track, -1.0f, &pose);
+    g_assert_cmpfloat_with_epsilon (pose.position_x, 0.0f, 0.0001f);
+    lrg_animation_clip_sample_track (sorted, track, 5.0f, &pose);
+    g_assert_cmpfloat_with_epsilon (pose.position_x, 4.0f, 0.0001f);
+
+    /* Out-of-order keys keep the original first-later-key scan: at 0.65
+     * key 1 (t = 0.7) is the first later key, so it blends keys 0 and 1
+     * (a bisection would land on key 4 instead). */
+    track = lrg_animation_clip_add_track (unsorted, "b");
+    for (i = 0; i < 5; i++)
+    {
+        LrgAnimationKeyframe kf = { 0 };
+
+        kf.time = unsorted_times[i];
+        lrg_bone_pose_set_identity (&kf.pose);
+        lrg_bone_pose_set_position (&kf.pose, (gfloat) i * 4.0f, 0.0f, 0.0f);
+        lrg_animation_clip_add_keyframe (unsorted, track, &kf);
+    }
+    lrg_animation_clip_set_loop_mode (unsorted, LRG_ANIMATION_LOOP_NONE);
+    lrg_animation_clip_sample_track (unsorted, track, 0.65f, &pose);
+    lrg_animation_keyframe_cubic (lrg_animation_clip_get_keyframe (unsorted, track, 0),
+                                  lrg_animation_clip_get_keyframe (unsorted, track, 1),
+                                  0.65f / 0.7f, &expected);
+    g_assert_cmpfloat_with_epsilon (pose.position_x, expected.position_x, 0.0001f);
+    g_assert_cmpfloat (pose.position_x, <, 16.0f);
+}
+
+/*
+ * ============================================================================
  * Main
  * ============================================================================
  */
@@ -690,6 +953,12 @@ main (int   argc,
                 skeleton_fixture_set_up, test_skeleton_children, skeleton_fixture_tear_down);
     g_test_add ("/animation/skeleton/reset-to-bind", SkeletonFixture, NULL,
                 skeleton_fixture_set_up, test_skeleton_reset_to_bind, skeleton_fixture_tear_down);
+    g_test_add_func ("/animation/skeleton/deep-chain", test_skeleton_deep_chain_world_poses);
+    g_test_add_func ("/animation/skeleton/world-poses-compose", test_skeleton_world_poses_match_compose);
+    g_test_add_func ("/animation/skeleton/reparent-lookup", test_skeleton_reparent_and_lookup);
+    g_test_add_func ("/animation/skeleton/cycle", test_skeleton_cycle_terminates);
+    g_test_add_func ("/animation/animator/crossfade-tracks", test_animator_crossfade_matches_tracks);
+    g_test_add_func ("/animation/clip/keyframe-search", test_clip_sample_keyframe_search);
 
     /* LrgAnimationClip tests */
     g_test_add_func ("/animation/clip/new", test_clip_new);

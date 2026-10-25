@@ -2463,6 +2463,7 @@ struct _TestEventListener
     TestEventListener *register_other;
     void (*action) (TestEventListener *self, LrgEvent *event, gpointer data);
     gpointer action_data;
+    guint64 mask;
 };
 
 static void test_event_listener_iface_init (LrgEventListenerInterface *iface);
@@ -2486,7 +2487,7 @@ test_event_listener_get_priority (LrgEventListener *listener)
 static guint64
 test_event_listener_get_mask (LrgEventListener *listener)
 {
-    return G_MAXUINT64;
+    return TEST_EVENT_LISTENER (listener)->mask;
 }
 
 typedef struct
@@ -2545,6 +2546,7 @@ test_event_listener_class_init (TestEventListenerClass *klass)
 static void
 test_event_listener_init (TestEventListener *self)
 {
+    self->mask = G_MAXUINT64;
 }
 
 static void
@@ -2668,6 +2670,117 @@ record_listener (TestEventListener *self,
                  gpointer          data)
 {
     g_ptr_array_add (data, self);
+}
+
+/* Many listeners (past the on-stack snapshot and the insertion-sort
+ * sizes), most filtered out by mask: the ones that match run by priority,
+ * then registration order. */
+static void
+test_event_bus_mask_filter_order (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    g_autoptr(GPtrArray) order = g_ptr_array_new ();
+    g_autoptr(GPtrArray) listeners = g_ptr_array_new_with_free_func (g_object_unref);
+    TestEventDispatch dispatch = { bus, priorities };
+    guint64 turn_start = lrg_card_event_get_event_type_mask (LRG_CARD_EVENT_TURN_START);
+    guint n_matching = 0;
+    guint i;
+
+    for (i = 0; i < 300; i++)
+    {
+        TestEventListener *listener = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+
+        listener->priority = (gint) ((i * 7) % 5) - 2;
+        listener->mask = (i % 3 == 0) ? G_MAXUINT64 : ~turn_start;
+        listener->action = record_listener;
+        listener->action_data = order;
+        if (i % 3 == 0)
+            n_matching++;
+        lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listener));
+        g_ptr_array_add (listeners, listener);
+    }
+
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (order->len, ==, n_matching);
+    for (i = 0; i < order->len; i++)
+    {
+        TestEventListener *listener = order->pdata[i];
+
+        g_assert_cmpuint (listener->mask, ==, G_MAXUINT64);
+        if (i > 0)
+        {
+            TestEventListener *prev = order->pdata[i - 1];
+            guint prev_pos = 0;
+            guint pos = 0;
+
+            g_assert_cmpint (prev->priority, >=, listener->priority);
+            g_assert_true (g_ptr_array_find (listeners, prev, &prev_pos));
+            g_assert_true (g_ptr_array_find (listeners, listener, &pos));
+            if (prev->priority == listener->priority)
+                g_assert_cmpuint (prev_pos, <, pos);
+        }
+    }
+
+    /* A small set takes the insertion-sort path with the same order. */
+    g_ptr_array_set_size (order, 0);
+    lrg_event_bus_clear (bus);
+    for (i = 0; i < 6; i++)
+        lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listeners->pdata[i * 3]));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (order->len, ==, 6);
+    for (i = 1; i < order->len; i++)
+        g_assert_cmpint (((TestEventListener *) order->pdata[i - 1])->priority, >=,
+                         ((TestEventListener *) order->pdata[i])->priority);
+}
+
+static void
+change_masks (TestEventListener *self,
+              LrgEvent         *event,
+              gpointer          data)
+{
+    TestEventListener **others = data;
+
+    others[0]->mask = 0;            /* stops matching before its turn */
+    others[1]->mask = G_MAXUINT64;  /* starts matching mid-emission */
+}
+
+static void
+test_event_bus_mask_changes_during_emit (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    g_autoptr(TestEventListener) first = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(TestEventListener) muted = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    g_autoptr(TestEventListener) late = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    TestEventListener *others[2];
+    TestEventDispatch dispatch = { bus, priorities };
+
+    first->priority = 10;
+    muted->priority = 5;
+    late->priority = 1;
+    late->mask = 0;
+    others[0] = muted;
+    others[1] = late;
+    first->action = change_masks;
+    first->action_data = others;
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (first));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (muted));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (late));
+
+    /* Masks are captured at the start: only first runs. */
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 1);
+    g_assert_cmpint (g_array_index (priorities, gint, 0), ==, 10);
+
+    /* The next emission sees the new masks. */
+    first->action = NULL;
+    g_array_set_size (priorities, 0);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 2);
+    g_assert_cmpint (g_array_index (priorities, gint, 1), ==, 1);
 }
 
 static void
@@ -6905,6 +7018,8 @@ main (int   argc,
     g_test_add_func ("/deckbuilder/card-event/copy", test_card_event_copy);
     g_test_add_func ("/deckbuilder/event-bus/new", test_event_bus_new);
     g_test_add_func ("/deckbuilder/event-bus/live-priorities", test_event_bus_live_priorities);
+    g_test_add_func ("/deckbuilder/event-bus/mask-filter-order", test_event_bus_mask_filter_order);
+    g_test_add_func ("/deckbuilder/event-bus/mask-changes-during-emit", test_event_bus_mask_changes_during_emit);
     g_test_add_func ("/deckbuilder/event-bus/nested-priorities", test_event_bus_nested_priorities);
     g_test_add_data_func ("/deckbuilder/event-bus/reregister", GINT_TO_POINTER (FALSE), test_event_bus_reregister);
     g_test_add_data_func ("/deckbuilder/event-bus/nested-reregister", GINT_TO_POINTER (TRUE), test_event_bus_reregister);

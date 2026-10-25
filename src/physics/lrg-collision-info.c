@@ -9,22 +9,8 @@
 
 #include "config.h"
 #include "lrg-collision-info.h"
+#include "lrg-collision-info-private.h"
 
-/*
- * LrgCollisionInfo:
- *
- * Structure containing collision information between two bodies.
- */
-struct _LrgCollisionInfo
-{
-    GObject *body_a;        /* First body in collision */
-    GObject *body_b;        /* Second body in collision */
-    gfloat   normal_x;      /* Normal X (from A to B) */
-    gfloat   normal_y;      /* Normal Y (from A to B) */
-    gfloat   penetration;   /* Penetration depth */
-    gfloat   contact_x;     /* Contact point X */
-    gfloat   contact_y;     /* Contact point Y */
-};
 
 G_DEFINE_BOXED_TYPE (LrgCollisionInfo, lrg_collision_info,
                      lrg_collision_info_copy,

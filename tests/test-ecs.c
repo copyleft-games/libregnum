@@ -909,6 +909,48 @@ test_transform_component_world_position (void)
 }
 
 static void
+test_transform_component_world_chain (void)
+{
+    g_autoptr(LrgTransformComponent) grandparent = lrg_transform_component_new_at (5.0f, 0.0f);
+    g_autoptr(LrgTransformComponent) parent = lrg_transform_component_new_at (1.0f, 0.0f);
+    g_autoptr(LrgTransformComponent) child = lrg_transform_component_new_at (1.0f, 1.0f);
+    g_autoptr(GrlVector2) pos = NULL;
+    g_autoptr(GrlVector2) scale = NULL;
+
+    /* Scale, rotation and position fold down a three-level chain:
+     * parent at (5,0) + R90 (1*2, 0) = (5,2), child at (5,2) + R180 (1*2, 1*6). */
+    lrg_transform_component_set_local_rotation (grandparent, 90.0f);
+    lrg_transform_component_set_local_scale_uniform (grandparent, 2.0f);
+    lrg_transform_component_set_local_rotation (parent, 90.0f);
+    lrg_transform_component_set_local_scale_xy (parent, 1.0f, 3.0f);
+    lrg_transform_component_set_local_rotation (child, 10.0f);
+    lrg_transform_component_set_local_scale_xy (child, 0.5f, 1.0f);
+    lrg_transform_component_set_parent (parent, grandparent);
+    lrg_transform_component_set_parent (child, parent);
+
+    pos = lrg_transform_component_get_world_position (parent);
+    g_assert_cmpfloat_with_epsilon (pos->x, 5.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (pos->y, 2.0f, 0.0001f);
+    g_clear_pointer (&pos, grl_vector2_free);
+
+    pos = lrg_transform_component_get_world_position (child);
+    scale = lrg_transform_component_get_world_scale (child);
+    g_assert_cmpfloat_with_epsilon (pos->x, 3.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (pos->y, -4.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (scale->x, 1.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (scale->y, 6.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (lrg_transform_component_get_world_rotation (child),
+                                    190.0f, 0.0001f);
+
+    /* Changing an ancestor is seen immediately (nothing is cached). */
+    lrg_transform_component_set_local_position_xy (grandparent, 0.0f, 0.0f);
+    g_clear_pointer (&pos, grl_vector2_free);
+    pos = lrg_transform_component_get_world_position (child);
+    g_assert_cmpfloat_with_epsilon (pos->x, -2.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (pos->y, -4.0f, 0.0001f);
+}
+
+static void
 test_transform_component_translate (void)
 {
     g_autoptr(LrgTransformComponent) transform = NULL;
@@ -1368,6 +1410,7 @@ main (int   argc,
     g_test_add_func ("/ecs/transform-component/local-scale", test_transform_component_local_scale);
     g_test_add_func ("/ecs/transform-component/hierarchy", test_transform_component_hierarchy);
     g_test_add_func ("/ecs/transform-component/world-position", test_transform_component_world_position);
+    g_test_add_func ("/ecs/transform-component/world-chain", test_transform_component_world_chain);
     g_test_add_func ("/ecs/transform-component/translate", test_transform_component_translate);
     g_test_add_func ("/ecs/transform-component/rotate", test_transform_component_rotate);
 

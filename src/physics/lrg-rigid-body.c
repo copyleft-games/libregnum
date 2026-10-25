@@ -9,51 +9,12 @@
 
 #include "config.h"
 #include "lrg-rigid-body.h"
+#include "lrg-rigid-body-private.h"
 #include "lrg-log.h"
 #include <math.h>
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_PHYSICS
 
-typedef struct
-{
-    /* Body properties */
-    LrgRigidBodyType  body_type;
-    gfloat            mass;
-    gfloat            inv_mass;       /* 1/mass, cached */
-    gfloat            restitution;
-    gfloat            friction;
-    gfloat            linear_damping;
-    gfloat            angular_damping;
-    gfloat            gravity_scale;
-    gboolean          is_trigger;
-    guint32           collision_layer;
-    guint32           collision_mask;
-
-    /* Transform */
-    gfloat            pos_x;
-    gfloat            pos_y;
-    gfloat            rotation;
-
-    /* Motion */
-    gfloat            vel_x;
-    gfloat            vel_y;
-    gfloat            angular_velocity;
-
-    /* Forces (accumulated each frame) */
-    gfloat            force_x;
-    gfloat            force_y;
-    gfloat            torque;
-
-    /* Collision shape */
-    LrgCollisionShape shape_type;
-    gfloat            shape_width;
-    gfloat            shape_height;
-    gfloat            shape_radius;
-
-    /* State */
-    gboolean          sleeping;
-    gfloat            sleep_time;     /* Time with low motion */
-} LrgRigidBodyPrivate;
 
 #pragma GCC visibility push(default)
 G_DEFINE_TYPE_WITH_PRIVATE (LrgRigidBody, lrg_rigid_body, G_TYPE_OBJECT)
@@ -1073,4 +1034,20 @@ lrg_rigid_body_can_collide (LrgRigidBody *self,
     b = lrg_rigid_body_get_instance_private (other);
     return (a->collision_layer & b->collision_mask) != 0 &&
            (b->collision_layer & a->collision_mask) != 0;
+}
+
+/* ==========================================================================
+ * Internal (lrg-rigid-body-private.h)
+ * ========================================================================== */
+
+LrgRigidBodyPrivate *
+lrg_rigid_body_peek_private (LrgRigidBody *self)
+{
+    return lrg_rigid_body_get_instance_private (self);
+}
+
+guint
+lrg_rigid_body_get_collision_signal_id (void)
+{
+    return signals[SIGNAL_COLLISION];
 }

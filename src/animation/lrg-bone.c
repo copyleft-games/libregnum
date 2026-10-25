@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "lrg-bone.h"
+#include "lrg-bone-private.h"
 
 /**
  * SECTION:lrg-bone
@@ -23,20 +24,6 @@
  * Bones are organized in a parent-child hierarchy where the root bone(s)
  * have no parent (parent_index = -1).
  */
-
-struct _LrgBone
-{
-    GObject parent_instance;
-
-    gchar       *name;
-    gint         index;
-    gint         parent_index;
-    gfloat       length;
-
-    LrgBonePose  bind_pose;
-    LrgBonePose  local_pose;
-    LrgBonePose  world_pose;
-};
 
 G_DEFINE_FINAL_TYPE (LrgBone, lrg_bone, G_TYPE_OBJECT)
 

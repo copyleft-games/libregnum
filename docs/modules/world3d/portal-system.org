@@ -255,6 +255,8 @@ This is the core function that computes which sectors are visible. It:
 
 *Call Frequency:* Once per frame, before rendering
 
+=visibility-changed= is emitted only when the resulting visible list (its sectors or their order) differs from the previous update's; a camera standing still or moving without crossing a portal's plane emits nothing. Earlier versions emitted it on every update while the camera was inside a sector. The traversal reuses its scratch tables and reads sector portal lists in place, so a steady-state update allocates nothing; the list of visible IDs is only rebuilt when it changes.
+
 *Example:*
 
 #+begin_src C

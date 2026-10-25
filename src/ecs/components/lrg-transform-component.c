@@ -649,6 +649,84 @@ lrg_transform_component_set_local_scale_uniform (LrgTransformComponent *self,
  * ========================================================================== */
 
 /*
+ * transform_world:
+ * @priv: the transform's private data
+ * @want_position: also compute the world position (needs trig per level)
+ * @out_x: (out): world X (only written when @want_position)
+ * @out_y: (out): world Y (only written when @want_position)
+ * @out_rotation: (out): world rotation in degrees
+ * @out_scale_x: (out): world X scale
+ * @out_scale_y: (out): world Y scale
+ *
+ * Folds the parent chain once from the root down, with the same float
+ * operations, in the same order, as the public getters always used:
+ *   rotation = parent rotation + local rotation
+ *   scale    = local scale * parent scale
+ *   position = parent position + rotate (local position * parent scale,
+ *                                        parent rotation)
+ * The getters used to recurse separately for each quantity at every level
+ * (O(depth^2)) and allocate a boxed vector per level; this is O(depth)
+ * and allocation-free.
+ */
+static void
+transform_world (LrgTransformComponentPrivate *priv,
+                 gboolean                      want_position,
+                 gfloat                       *out_x,
+                 gfloat                       *out_y,
+                 gfloat                       *out_rotation,
+                 gfloat                       *out_scale_x,
+                 gfloat                       *out_scale_y)
+{
+    LrgTransformComponentPrivate *parent_priv;
+    gfloat parent_x = 0.0f;
+    gfloat parent_y = 0.0f;
+    gfloat parent_rot;
+    gfloat parent_scale_x;
+    gfloat parent_scale_y;
+
+    if (priv->parent == NULL)
+    {
+        /* No parent - local is world */
+        if (want_position)
+        {
+            *out_x = priv->local_x;
+            *out_y = priv->local_y;
+        }
+        *out_rotation = priv->local_rotation;
+        *out_scale_x = priv->scale_x;
+        *out_scale_y = priv->scale_y;
+        return;
+    }
+
+    parent_priv = lrg_transform_component_get_instance_private (priv->parent);
+    transform_world (parent_priv, want_position, &parent_x, &parent_y,
+                     &parent_rot, &parent_scale_x, &parent_scale_y);
+
+    *out_rotation = parent_rot + priv->local_rotation;
+    *out_scale_x = priv->scale_x * parent_scale_x;
+    *out_scale_y = priv->scale_y * parent_scale_y;
+
+    if (want_position)
+    {
+        /* Transform local position by parent scale and rotation */
+        gfloat rad = deg_to_rad (parent_rot);
+        gfloat cos_r = cosf (rad);
+        gfloat sin_r = sinf (rad);
+
+        /* Scale first, then rotate */
+        gfloat scaled_x = priv->local_x * parent_scale_x;
+        gfloat scaled_y = priv->local_y * parent_scale_y;
+
+        gfloat rotated_x = scaled_x * cos_r - scaled_y * sin_r;
+        gfloat rotated_y = scaled_x * sin_r + scaled_y * cos_r;
+
+        /* Translate by parent position */
+        *out_x = parent_x + rotated_x;
+        *out_y = parent_y + rotated_y;
+    }
+}
+
+/*
  * lrg_transform_component_get_world_position:
  * @self: an #LrgTransformComponent
  *
@@ -662,41 +740,17 @@ lrg_transform_component_get_world_position (LrgTransformComponent *self)
     LrgTransformComponentPrivate *priv;
     gfloat                        world_x;
     gfloat                        world_y;
+    gfloat                        world_rot;
+    gfloat                        world_scale_x;
+    gfloat                        world_scale_y;
 
     g_return_val_if_fail (LRG_IS_TRANSFORM_COMPONENT (self), NULL);
 
     priv = lrg_transform_component_get_instance_private (self);
+    transform_world (priv, TRUE, &world_x, &world_y, &world_rot,
+                     &world_scale_x, &world_scale_y);
 
-    if (priv->parent == NULL)
-    {
-        /* No parent - local is world */
-        return grl_vector2_new (priv->local_x, priv->local_y);
-    }
-    else
-    {
-        /* Get parent world transform */
-        g_autoptr(GrlVector2) parent_pos = lrg_transform_component_get_world_position (priv->parent);
-        g_autoptr(GrlVector2) parent_scale = lrg_transform_component_get_world_scale (priv->parent);
-        gfloat parent_rot = lrg_transform_component_get_world_rotation (priv->parent);
-
-        /* Transform local position by parent scale and rotation */
-        gfloat rad = deg_to_rad (parent_rot);
-        gfloat cos_r = cosf (rad);
-        gfloat sin_r = sinf (rad);
-
-        /* Scale first, then rotate */
-        gfloat scaled_x = priv->local_x * parent_scale->x;
-        gfloat scaled_y = priv->local_y * parent_scale->y;
-
-        gfloat rotated_x = scaled_x * cos_r - scaled_y * sin_r;
-        gfloat rotated_y = scaled_x * sin_r + scaled_y * cos_r;
-
-        /* Translate by parent position */
-        world_x = parent_pos->x + rotated_x;
-        world_y = parent_pos->y + rotated_y;
-
-        return grl_vector2_new (world_x, world_y);
-    }
+    return grl_vector2_new (world_x, world_y);
 }
 
 /*
@@ -711,19 +765,17 @@ gfloat
 lrg_transform_component_get_world_rotation (LrgTransformComponent *self)
 {
     LrgTransformComponentPrivate *priv;
+    gfloat                        world_rot;
+    gfloat                        world_scale_x;
+    gfloat                        world_scale_y;
 
     g_return_val_if_fail (LRG_IS_TRANSFORM_COMPONENT (self), 0.0f);
 
     priv = lrg_transform_component_get_instance_private (self);
+    transform_world (priv, FALSE, NULL, NULL, &world_rot,
+                     &world_scale_x, &world_scale_y);
 
-    if (priv->parent == NULL)
-    {
-        return priv->local_rotation;
-    }
-    else
-    {
-        return lrg_transform_component_get_world_rotation (priv->parent) + priv->local_rotation;
-    }
+    return world_rot;
 }
 
 /*
@@ -738,21 +790,17 @@ GrlVector2 *
 lrg_transform_component_get_world_scale (LrgTransformComponent *self)
 {
     LrgTransformComponentPrivate *priv;
+    gfloat                        world_rot;
+    gfloat                        world_scale_x;
+    gfloat                        world_scale_y;
 
     g_return_val_if_fail (LRG_IS_TRANSFORM_COMPONENT (self), NULL);
 
     priv = lrg_transform_component_get_instance_private (self);
+    transform_world (priv, FALSE, NULL, NULL, &world_rot,
+                     &world_scale_x, &world_scale_y);
 
-    if (priv->parent == NULL)
-    {
-        return grl_vector2_new (priv->scale_x, priv->scale_y);
-    }
-    else
-    {
-        g_autoptr(GrlVector2) parent_scale = lrg_transform_component_get_world_scale (priv->parent);
-        return grl_vector2_new (priv->scale_x * parent_scale->x,
-                                priv->scale_y * parent_scale->y);
-    }
+    return grl_vector2_new (world_scale_x, world_scale_y);
 }
 
 /* ==========================================================================
@@ -987,9 +1035,11 @@ void
 lrg_transform_component_sync_to_entity (LrgTransformComponent *self)
 {
     LrgGameObject         *owner;
-    g_autoptr(GrlVector2)  world_pos = NULL;
-    g_autoptr(GrlVector2)  world_scale = NULL;
+    gfloat                 world_x;
+    gfloat                 world_y;
     gfloat                 world_rot;
+    gfloat                 world_scale_x;
+    gfloat                 world_scale_y;
 
     g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
 
@@ -999,16 +1049,17 @@ lrg_transform_component_sync_to_entity (LrgTransformComponent *self)
         return;
     }
 
-    world_pos = lrg_transform_component_get_world_position (self);
-    world_rot = lrg_transform_component_get_world_rotation (self);
-    world_scale = lrg_transform_component_get_world_scale (self);
+    /* One walk up the hierarchy for all three quantities */
+    transform_world (lrg_transform_component_get_instance_private (self), TRUE,
+                     &world_x, &world_y, &world_rot,
+                     &world_scale_x, &world_scale_y);
 
     /* Sync to entity */
-    grl_entity_set_position (GRL_ENTITY (owner), world_pos);
+    grl_entity_set_position_xy (GRL_ENTITY (owner), world_x, world_y);
     grl_entity_set_rotation (GRL_ENTITY (owner), world_rot);
 
     /* GrlEntity has uniform scale, use average */
-    grl_entity_set_scale (GRL_ENTITY (owner), (world_scale->x + world_scale->y) / 2.0f);
+    grl_entity_set_scale (GRL_ENTITY (owner), (world_scale_x + world_scale_y) / 2.0f);
 }
 
 /* ==========================================================================

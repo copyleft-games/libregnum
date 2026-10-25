@@ -972,6 +972,677 @@ gui_teardown (gpointer state)
 }
 
 /* ==========================================================================
+ * Simulation scenarios: CPU-only per-frame work (nothing is drawn). The
+ * begin/end drawing around frame() is a constant, tiny cost here.
+ * ========================================================================== */
+
+/* --------------------------------------------------------------------------
+ * animator: skeletal animators on 60-bone skeletons, crossfading
+ * -------------------------------------------------------------------------- */
+
+#define ANIM_ACTORS     (16)
+#define ANIM_BONES      (60)
+#define ANIM_KEYFRAMES  (24)
+
+typedef struct
+{
+	LrgAnimator *animators[ANIM_ACTORS];
+} AnimState;
+
+/* A clip with one track per bone and ANIM_KEYFRAMES keys over one second. */
+static LrgAnimationClip *
+anim_make_clip (const gchar *name,
+                gfloat       phase)
+{
+	LrgAnimationClip *clip;
+	guint             b;
+	guint             k;
+
+	clip = lrg_animation_clip_new (name);
+	lrg_animation_clip_set_loop_mode (clip, LRG_ANIMATION_LOOP_REPEAT);
+	for (b = 0; b < ANIM_BONES; b++)
+	{
+		g_autofree gchar *bone_name = g_strdup_printf ("bone%02u", b);
+		guint             track;
+
+		track = lrg_animation_clip_add_track (clip, bone_name);
+		for (k = 0; k < ANIM_KEYFRAMES; k++)
+		{
+			LrgAnimationKeyframe kf;
+			gfloat               t;
+
+			memset (&kf, 0, sizeof kf);
+			t = (gfloat) k / (gfloat) (ANIM_KEYFRAMES - 1);
+			kf.time = t;
+			lrg_bone_pose_set_identity (&kf.pose);
+			lrg_bone_pose_set_position (&kf.pose, 0.0f, 1.0f, 0.0f);
+			lrg_bone_pose_set_rotation_euler (&kf.pose,
+			                                  sinf ((t + phase) * 6.28f) * 0.3f,
+			                                  0.1f * (gfloat) b, 0.0f);
+			lrg_animation_clip_add_keyframe (clip, track, &kf);
+		}
+	}
+	return clip;
+}
+
+static gpointer
+anim_setup (void)
+{
+	AnimState *st;
+	g_autoptr(LrgAnimationClip) walk = NULL;
+	g_autoptr(LrgAnimationClip) run = NULL;
+	guint      a;
+	guint      b;
+
+	st = g_new0 (AnimState, 1);
+	walk = anim_make_clip ("walk", 0.0f);
+	run = anim_make_clip ("run", 0.5f);
+	for (a = 0; a < ANIM_ACTORS; a++)
+	{
+		g_autoptr(LrgSkeleton) skeleton = lrg_skeleton_new ();
+
+		/* A tree three bones wide, children listed after parents. */
+		for (b = 0; b < ANIM_BONES; b++)
+		{
+			g_autofree gchar *bone_name = g_strdup_printf ("bone%02u", b);
+			g_autoptr(LrgBone) bone = lrg_bone_new (bone_name, (gint) b);
+
+			lrg_bone_set_parent_index (bone, b == 0 ? -1 : (gint) ((b - 1) / 3));
+			lrg_skeleton_add_bone (skeleton, bone);
+		}
+		st->animators[a] = lrg_animator_new (skeleton);
+		lrg_animator_add_clip (st->animators[a], "walk", walk);
+		lrg_animator_add_clip (st->animators[a], "run", run);
+		lrg_animator_play (st->animators[a], "walk");
+	}
+	return st;
+}
+
+static void
+anim_frame (gpointer state,
+            guint    frame_index)
+{
+	AnimState *st = state;
+	guint      a;
+
+	for (a = 0; a < ANIM_ACTORS; a++)
+	{
+		/* Crossfade every second so half the frames blend two clips. */
+		if ((frame_index + a) % 60 == 0)
+			lrg_animator_crossfade (st->animators[a],
+			                        ((frame_index / 60) % 2) ? "walk" : "run",
+			                        0.5f);
+		lrg_animator_update (st->animators[a], 1.0f / 60.0f);
+	}
+}
+
+static void
+anim_teardown (gpointer state)
+{
+	AnimState *st = state;
+	guint      a;
+
+	for (a = 0; a < ANIM_ACTORS; a++)
+		g_clear_object (&st->animators[a]);
+	g_free (st);
+}
+
+/* --------------------------------------------------------------------------
+ * physics: 500 dynamic boxes drifting in a 2D world
+ * -------------------------------------------------------------------------- */
+
+#define PHYS_BODIES (500)
+
+typedef struct
+{
+	LrgPhysicsWorld *world;
+	guint            contacts;
+} PhysState;
+
+static void
+phys_on_collision (LrgPhysicsWorld  *world,
+                   LrgCollisionInfo *info,
+                   gpointer          user_data)
+{
+	PhysState *st = user_data;
+
+	st->contacts++;
+}
+
+static gpointer
+phys_setup (void)
+{
+	PhysState *st;
+	GRand     *rng;
+	guint      i;
+
+	st = g_new0 (PhysState, 1);
+	st->world = lrg_physics_world_new ();
+	lrg_physics_world_set_gravity (st->world, 0.0f, 0.0f);
+	rng = g_rand_new_with_seed (1234);
+	for (i = 0; i < PHYS_BODIES; i++)
+	{
+		g_autoptr(LrgRigidBody) body = lrg_rigid_body_new (LRG_RIGID_BODY_DYNAMIC);
+
+		lrg_rigid_body_set_box_shape (body, 8.0f, 8.0f);
+		lrg_rigid_body_set_position (body,
+		                             (gfloat) g_rand_double_range (rng, 0.0, 1000.0),
+		                             (gfloat) g_rand_double_range (rng, 0.0, 1000.0));
+		lrg_rigid_body_set_velocity (body,
+		                             (gfloat) g_rand_double_range (rng, -20.0, 20.0),
+		                             (gfloat) g_rand_double_range (rng, -20.0, 20.0));
+		lrg_physics_world_add_body (st->world, body);
+	}
+	g_rand_free (rng);
+	g_signal_connect (st->world, "collision", G_CALLBACK (phys_on_collision), st);
+	return st;
+}
+
+static void
+phys_frame (gpointer state,
+            guint    frame_index)
+{
+	PhysState *st = state;
+
+	lrg_physics_world_step (st->world, 1.0f / 60.0f);
+}
+
+static void
+phys_teardown (gpointer state)
+{
+	PhysState *st = state;
+
+	g_clear_object (&st->world);
+	g_free (st);
+}
+
+/* --------------------------------------------------------------------------
+ * tweens: 2000 property tweens on transform components
+ * -------------------------------------------------------------------------- */
+
+#define TWEEN_COUNT (2000)
+
+typedef struct
+{
+	LrgTweenManager       *manager;
+	LrgTransformComponent *targets[TWEEN_COUNT];
+} TweenState;
+
+static gpointer
+tween_setup (void)
+{
+	TweenState *st;
+	guint       i;
+
+	st = g_new0 (TweenState, 1);
+	st->manager = lrg_tween_manager_new ();
+	for (i = 0; i < TWEEN_COUNT; i++)
+	{
+		LrgTween *tween;
+
+		st->targets[i] = lrg_transform_component_new ();
+		tween = lrg_tween_new (G_OBJECT (st->targets[i]), "local-x",
+		                       0.5f + (gfloat) (i % 7) * 0.25f);
+		lrg_tween_set_from_float (tween, 0.0f);
+		lrg_tween_set_to_float (tween, 100.0f);
+		lrg_tween_base_set_loop_count (LRG_TWEEN_BASE (tween), -1);
+		lrg_tween_base_set_loop_mode (LRG_TWEEN_BASE (tween), LRG_TWEEN_LOOP_PING_PONG);
+		lrg_tween_base_set_easing (LRG_TWEEN_BASE (tween), LRG_EASING_EASE_IN_OUT_QUAD);
+		lrg_tween_manager_add (st->manager, LRG_TWEEN_BASE (tween));
+		lrg_tween_base_start (LRG_TWEEN_BASE (tween));
+		g_object_unref (tween);
+	}
+	return st;
+}
+
+static void
+tween_frame (gpointer state,
+             guint    frame_index)
+{
+	TweenState *st = state;
+
+	lrg_tween_manager_update (st->manager, 1.0f / 60.0f);
+}
+
+static void
+tween_teardown (gpointer state)
+{
+	TweenState *st = state;
+	guint       i;
+
+	g_clear_object (&st->manager);
+	for (i = 0; i < TWEEN_COUNT; i++)
+		g_clear_object (&st->targets[i]);
+	g_free (st);
+}
+
+/* --------------------------------------------------------------------------
+ * event-bus: 256 listeners on 32 event types, 256 events a frame
+ * -------------------------------------------------------------------------- */
+
+#define BUS_LISTENERS (256)
+#define BUS_EVENTS    (256)
+#define BUS_TYPES     (32)
+
+#define BENCH_TYPE_LISTENER (bench_listener_get_type ())
+G_DECLARE_FINAL_TYPE (BenchListener, bench_listener, BENCH, LISTENER, GObject)
+
+struct _BenchListener
+{
+	GObject parent_instance;
+	guint64 mask;
+	gint    priority;
+	guint   hits;
+};
+
+static void bench_listener_iface_init (LrgEventListenerInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (BenchListener, bench_listener, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_EVENT_LISTENER,
+                                                bench_listener_iface_init))
+
+static const gchar *
+bench_listener_get_id (LrgEventListener *listener)
+{
+	return "bench";
+}
+
+static gint
+bench_listener_get_priority (LrgEventListener *listener)
+{
+	return BENCH_LISTENER (listener)->priority;
+}
+
+static guint64
+bench_listener_get_mask (LrgEventListener *listener)
+{
+	return BENCH_LISTENER (listener)->mask;
+}
+
+static gboolean
+bench_listener_on_event (LrgEventListener *listener,
+                         LrgEvent         *event,
+                         gpointer          context)
+{
+	BENCH_LISTENER (listener)->hits++;
+	return TRUE;
+}
+
+static void
+bench_listener_iface_init (LrgEventListenerInterface *iface)
+{
+	iface->get_id = bench_listener_get_id;
+	iface->get_priority = bench_listener_get_priority;
+	iface->get_event_mask = bench_listener_get_mask;
+	iface->on_event = bench_listener_on_event;
+}
+
+static void
+bench_listener_class_init (BenchListenerClass *klass)
+{
+}
+
+static void
+bench_listener_init (BenchListener *self)
+{
+}
+
+typedef struct
+{
+	LrgEventBus  *bus;
+	LrgCardEvent *events[BUS_TYPES];
+} BusState;
+
+static gpointer
+bus_setup (void)
+{
+	BusState *st;
+	guint     i;
+
+	st = g_new0 (BusState, 1);
+	st->bus = lrg_event_bus_new ();
+	for (i = 0; i < BUS_LISTENERS; i++)
+	{
+		g_autoptr(BenchListener) listener = g_object_new (BENCH_TYPE_LISTENER, NULL);
+
+		/* Each listener cares about one or two of the 32 types. */
+		listener->mask = ((guint64) 1 << (i % BUS_TYPES)) |
+		                 ((guint64) 1 << ((i * 7) % BUS_TYPES));
+		listener->priority = (gint) (i % 5);
+		lrg_event_bus_register (st->bus, LRG_EVENT_LISTENER (listener));
+	}
+	for (i = 0; i < BUS_TYPES; i++)
+		st->events[i] = lrg_card_event_new ((LrgCardEventType) i);
+	return st;
+}
+
+static void
+bus_frame (gpointer state,
+           guint    frame_index)
+{
+	BusState *st = state;
+	guint     i;
+
+	for (i = 0; i < BUS_EVENTS; i++)
+		lrg_event_bus_emit (st->bus, LRG_EVENT (st->events[i % BUS_TYPES]), NULL);
+}
+
+static void
+bus_teardown (gpointer state)
+{
+	BusState *st = state;
+	guint     i;
+
+	for (i = 0; i < BUS_TYPES; i++)
+		g_clear_object (&st->events[i]);
+	g_clear_object (&st->bus);
+	g_free (st);
+}
+
+/* --------------------------------------------------------------------------
+ * transforms: world transforms of 128 transform chains 16 deep
+ * -------------------------------------------------------------------------- */
+
+#define XFORM_CHAINS (128)
+#define XFORM_DEPTH  (16)
+
+typedef struct
+{
+	LrgTransformComponent *nodes[XFORM_CHAINS * XFORM_DEPTH];
+	gfloat                 sink;
+} XformState;
+
+static gpointer
+xform_setup (void)
+{
+	XformState *st;
+	guint       c;
+	guint       d;
+
+	st = g_new0 (XformState, 1);
+	for (c = 0; c < XFORM_CHAINS; c++)
+		for (d = 0; d < XFORM_DEPTH; d++)
+		{
+			LrgTransformComponent *node = lrg_transform_component_new ();
+
+			lrg_transform_component_set_local_position_xy (node, 1.0f, 0.5f);
+			lrg_transform_component_set_local_rotation (node, 5.0f);
+			lrg_transform_component_set_local_scale_xy (node, 1.01f, 0.99f);
+			if (d > 0)
+				lrg_transform_component_set_parent (node,
+				                                    st->nodes[c * XFORM_DEPTH + d - 1]);
+			st->nodes[c * XFORM_DEPTH + d] = node;
+		}
+	return st;
+}
+
+static void
+xform_frame (gpointer state,
+             guint    frame_index)
+{
+	XformState *st = state;
+	guint       i;
+
+	for (i = 0; i < XFORM_CHAINS * XFORM_DEPTH; i++)
+	{
+		g_autoptr(GrlVector2) pos = NULL;
+		g_autoptr(GrlVector2) scale = NULL;
+
+		if (i % XFORM_DEPTH == 0)
+			lrg_transform_component_set_local_rotation (st->nodes[i],
+			                                            (gfloat) (frame_index % 360));
+		pos = lrg_transform_component_get_world_position (st->nodes[i]);
+		scale = lrg_transform_component_get_world_scale (st->nodes[i]);
+		st->sink += pos->x + scale->y +
+		            lrg_transform_component_get_world_rotation (st->nodes[i]);
+	}
+}
+
+static void
+xform_teardown (gpointer state)
+{
+	XformState *st = state;
+	guint       i;
+
+	/* Children first, so no parent dies under a live child. */
+	for (i = XFORM_CHAINS * XFORM_DEPTH; i > 0; i--)
+		g_clear_object (&st->nodes[i - 1]);
+	g_free (st);
+}
+
+/* --------------------------------------------------------------------------
+ * object-pool: 4000 acquisitions and releases a frame plus iteration
+ * -------------------------------------------------------------------------- */
+
+#define POOL_SIZE    (6000)
+#define POOL_CHURN   (4000)
+
+#define BENCH_TYPE_POOLED (bench_pooled_get_type ())
+G_DECLARE_FINAL_TYPE (BenchPooled, bench_pooled, BENCH, POOLED, GObject)
+
+struct _BenchPooled
+{
+	GObject  parent_instance;
+	gboolean active;
+	guint    value;
+};
+
+static void bench_pooled_iface_init (LrgPoolableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (BenchPooled, bench_pooled, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_POOLABLE,
+                                                bench_pooled_iface_init))
+
+static void
+bench_pooled_reset (LrgPoolable *poolable)
+{
+	BENCH_POOLED (poolable)->value = 0;
+}
+
+static gboolean
+bench_pooled_is_active (LrgPoolable *poolable)
+{
+	return BENCH_POOLED (poolable)->active;
+}
+
+static void
+bench_pooled_set_active (LrgPoolable *poolable,
+                         gboolean     active)
+{
+	BENCH_POOLED (poolable)->active = active;
+}
+
+static void
+bench_pooled_iface_init (LrgPoolableInterface *iface)
+{
+	iface->reset = bench_pooled_reset;
+	iface->is_active = bench_pooled_is_active;
+	iface->set_active = bench_pooled_set_active;
+}
+
+static void
+bench_pooled_class_init (BenchPooledClass *klass)
+{
+}
+
+static void
+bench_pooled_init (BenchPooled *self)
+{
+}
+
+typedef struct
+{
+	LrgObjectPool *pool;
+	GObject       *held[POOL_CHURN];
+	guint          visited;
+} PoolState;
+
+static gboolean
+pool_visit (LrgPoolable *object,
+            gpointer     user_data)
+{
+	PoolState *st = user_data;
+
+	st->visited++;
+	return TRUE;
+}
+
+static gpointer
+pool_setup (void)
+{
+	PoolState *st;
+
+	st = g_new0 (PoolState, 1);
+	st->pool = lrg_object_pool_new (BENCH_TYPE_POOLED, POOL_SIZE,
+	                                LRG_POOL_GROWTH_FIXED);
+	return st;
+}
+
+static void
+pool_frame (gpointer state,
+            guint    frame_index)
+{
+	PoolState *st = state;
+	guint      i;
+
+	/* Spawn a wave, walk it a few times, then retire it oldest first. */
+	for (i = 0; i < POOL_CHURN; i++)
+		st->held[i] = lrg_object_pool_acquire (st->pool);
+	for (i = 0; i < 4; i++)
+		lrg_object_pool_foreach_active (st->pool, pool_visit, st);
+	for (i = 0; i < POOL_CHURN; i++)
+		if (st->held[i] != NULL)
+			lrg_object_pool_release (st->pool, LRG_POOLABLE (st->held[i]));
+}
+
+static void
+pool_teardown (gpointer state)
+{
+	PoolState *st = state;
+
+	g_clear_object (&st->pool);
+	g_free (st);
+}
+
+/* --------------------------------------------------------------------------
+ * portals: 24x24 grid of sectors, camera wandering inside one corner sector
+ * -------------------------------------------------------------------------- */
+
+#define PORTAL_GRID   (24)
+#define PORTAL_CELL   (100.0f)
+#define PORTAL_PASSES (64)
+
+typedef struct
+{
+	LrgPortalSystem *system;
+} PortalState;
+
+/* Adds the portal between two neighbouring cells, facing the -x/-z corner
+ * so the camera there sees through every portal in the grid. */
+static void
+portal_link (LrgPortalSystem *system,
+             LrgSector       *sector_a,
+             LrgSector       *sector_b,
+             const gchar     *id_a,
+             const gchar     *id_b,
+             gfloat           min_x,
+             gfloat           min_z,
+             gfloat           max_x,
+             gfloat           max_z)
+{
+	g_autofree gchar *portal_id = g_strdup_printf ("%s|%s", id_a, id_b);
+	g_autoptr(LrgBoundingBox3D) bounds = NULL;
+	g_autoptr(LrgPortal) portal = NULL;
+	GrlVector3 normal;
+
+	normal.x = -1.0f;
+	normal.y = 0.0f;
+	normal.z = -1.0f;
+	bounds = lrg_bounding_box3d_new (min_x, 0.0f, min_z, max_x, 50.0f, max_z);
+	portal = lrg_portal_new_with_normal (portal_id, bounds, id_a, id_b, &normal);
+	lrg_sector_add_portal (sector_a, portal_id);
+	lrg_sector_add_portal (sector_b, portal_id);
+	lrg_portal_system_add_portal (system, portal);
+}
+
+static gpointer
+portal_setup (void)
+{
+	PortalState *st;
+	LrgSector   *cells[PORTAL_GRID * PORTAL_GRID];
+	gchar       *ids[PORTAL_GRID * PORTAL_GRID];
+	guint        x;
+	guint        z;
+	guint        i;
+
+	st = g_new0 (PortalState, 1);
+	st->system = lrg_portal_system_new ();
+	lrg_portal_system_set_max_portal_depth (st->system, 8);
+	for (z = 0; z < PORTAL_GRID; z++)
+		for (x = 0; x < PORTAL_GRID; x++)
+		{
+			g_autoptr(LrgBoundingBox3D) bounds = NULL;
+
+			i = z * PORTAL_GRID + x;
+			ids[i] = g_strdup_printf ("cell-%u-%u", x, z);
+			bounds = lrg_bounding_box3d_new ((gfloat) x * PORTAL_CELL, 0.0f,
+			                                 (gfloat) z * PORTAL_CELL,
+			                                 (gfloat) (x + 1) * PORTAL_CELL, 50.0f,
+			                                 (gfloat) (z + 1) * PORTAL_CELL);
+			cells[i] = lrg_sector_new (ids[i], bounds);
+		}
+	for (z = 0; z < PORTAL_GRID; z++)
+		for (x = 0; x < PORTAL_GRID; x++)
+		{
+			i = z * PORTAL_GRID + x;
+			if (x + 1 < PORTAL_GRID)
+				portal_link (st->system, cells[i], cells[i + 1], ids[i], ids[i + 1],
+				             (gfloat) (x + 1) * PORTAL_CELL, (gfloat) z * PORTAL_CELL + 40.0f,
+				             (gfloat) (x + 1) * PORTAL_CELL, (gfloat) z * PORTAL_CELL + 60.0f);
+			if (z + 1 < PORTAL_GRID)
+				portal_link (st->system, cells[i], cells[i + PORTAL_GRID], ids[i],
+				             ids[i + PORTAL_GRID],
+				             (gfloat) x * PORTAL_CELL + 40.0f, (gfloat) (z + 1) * PORTAL_CELL,
+				             (gfloat) x * PORTAL_CELL + 60.0f, (gfloat) (z + 1) * PORTAL_CELL);
+		}
+	for (i = 0; i < PORTAL_GRID * PORTAL_GRID; i++)
+	{
+		lrg_portal_system_add_sector (st->system, cells[i]);
+		lrg_sector_free (cells[i]);
+		g_free (ids[i]);
+	}
+	return st;
+}
+
+static void
+portal_frame (gpointer state,
+              guint    frame_index)
+{
+	PortalState *st = state;
+	guint        pass;
+
+	/* Several cameras' worth of updates, all in the corner sector. */
+	for (pass = 0; pass < PORTAL_PASSES; pass++)
+	{
+		GrlVector3 camera;
+
+		camera.x = 10.0f + (gfloat) ((frame_index + pass) % 30);
+		camera.y = 20.0f;
+		camera.z = 10.0f + (gfloat) (pass % 30);
+		lrg_portal_system_update (st->system, &camera);
+	}
+}
+
+static void
+portal_teardown (gpointer state)
+{
+	PortalState *st = state;
+
+	g_clear_object (&st->system);
+	g_free (st);
+}
+
+/* ==========================================================================
  * Driver
  * ========================================================================== */
 
@@ -1004,6 +1675,20 @@ static const BenchScenario scenarios[] = {
 	  grl_draw_setup, grl_draw_frame, grl_draw_teardown },
 	{ "gui", "immediate-mode GUI panel, 64 rows of widgets",
 	  gui_setup, gui_frame, gui_teardown },
+	{ "animator", "16 animators on 60-bone skeletons, crossfading every second",
+	  anim_setup, anim_frame, anim_teardown },
+	{ "physics", "500 dynamic boxes in a 2D physics world, one step a frame",
+	  phys_setup, phys_frame, phys_teardown },
+	{ "tweens", "2000 ping-pong property tweens through a tween manager",
+	  tween_setup, tween_frame, tween_teardown },
+	{ "event-bus", "256 events a frame to 256 listeners over 32 event types",
+	  bus_setup, bus_frame, bus_teardown },
+	{ "transforms", "world position/rotation/scale of 128 transform chains 16 deep",
+	  xform_setup, xform_frame, xform_teardown },
+	{ "object-pool", "4000 pool acquisitions, 4 active walks, 4000 releases a frame",
+	  pool_setup, pool_frame, pool_teardown },
+	{ "portals", "64 portal-visibility updates a frame in a 24x24 sector grid",
+	  portal_setup, portal_frame, portal_teardown },
 };
 
 static gint
