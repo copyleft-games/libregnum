@@ -1909,6 +1909,13 @@ test-emacs: lrg-editor
 		echo "emacs not found; skipping the Emacs package tests"; \
 	fi
 
+# Drives a real lrg-editor window with real X events (Xvfb + xdotool) and
+# checks it over IPC: menus, shortcuts, viewport navigation. Skips when
+# Xvfb, xdotool, socat or yq is missing.
+.PHONY: test-editor-x11
+test-editor-x11: lrg-editor
+	@tests/editor-x11-smoke.sh $(LRG_EDITOR_BIN)
+
 # =============================================================================
 # Reel CLI (renders YAML-defined reels to video/stills)
 # =============================================================================

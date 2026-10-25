@@ -19,8 +19,7 @@
  */
 
 #include "lrg-editor-app-private.h"
-#include <raylib.h>
-#include <rlgl.h>
+#include "../../gui/lrg-gui-raylib-private.h"
 #include <math.h>
 #include <string.h>
 

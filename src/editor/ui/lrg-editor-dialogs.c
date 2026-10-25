@@ -834,6 +834,16 @@ prefs_viewport (LrgEditorApp *self)
 	uint_pref (self, "Half extent (cells)", "grid-extent", 1, 200);
 
 	lrg_gui_separator_text (self->gui, "Camera");
+	{
+		static const gchar *schemes[] = { "default", "blender", "trackpad" };
+		static const gchar *labels[] = {
+			"Default (right drag fly, middle pan, Alt+left orbit)",
+			"Blender (middle orbit, Shift+middle pan, Ctrl+middle zoom)",
+			"Trackpad (scroll orbits, Shift+scroll pans, Ctrl+scroll zooms)"
+		};
+
+		choice_pref (self, "Navigation", "camera-navigation", schemes, labels, 3);
+	}
 	double_pref (self, "Field of view", "camera-fov", 0.5f, 10.0f, 150.0f, "%.0f deg");
 	double_pref (self, "Fly speed (m/s)", "camera-fly-speed", 0.1f, 0.1f, 500.0f, "%.1f");
 	double_pref (self, "Orbit speed", "camera-orbit-speed", 0.01f, 0.01f, 5.0f, "%.2f");
@@ -1370,9 +1380,11 @@ draw_shortcuts (LrgEditorApp *self)
 	{
 		static const gchar *nav[][2] = {
 			{ "Fly look / move", "Right drag + W A S D Q E (Shift: faster, wheel: speed)" },
-			{ "Orbit", "Alt + left drag" },
-			{ "Pan", "Middle drag" },
-			{ "Zoom", "Mouse wheel" },
+			{ "Orbit", "Drag the axis gizmo (bottom left), Alt + left drag, Num4/6/8/2" },
+			{ "Look along an axis", "Click an end of the axis gizmo, Num7/1/3 (+Ctrl opposite)" },
+			{ "Pan", "Middle drag, Alt + Shift + left drag" },
+			{ "Zoom", "Mouse wheel, = and - (numpad + and -)" },
+			{ "Other schemes", "Preferences > Viewport > Navigation: Blender, Trackpad" },
 			{ "Select / cycle overlapping", "Left click (Shift add, Ctrl toggle)" },
 			{ "Box select", "Left drag on empty space" },
 			{ "Invert snapping", "Hold Ctrl while dragging a gizmo" },

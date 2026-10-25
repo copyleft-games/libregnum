@@ -13,6 +13,7 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <gio/gio.h>
+#include <stdio.h>
 #include <string.h>
 #include <libregnum.h>
 
@@ -432,6 +433,241 @@ test_app_quit_confirm (Fixture       *f,
 	g_assert_true (lrg_editor_app_should_quit (f->app));
 }
 
+
+/* Moves the pointer and sets button states for the next frame. */
+static void
+mouse3 (Fixture *f,
+        gfloat   x,
+        gfloat   y,
+        gboolean left,
+        gboolean middle,
+        gboolean right)
+{
+	f->input.mouse_x = x;
+	f->input.mouse_y = y;
+	f->input.mouse_down[LRG_GUI_MOUSE_LEFT] = left;
+	f->input.mouse_down[LRG_GUI_MOUSE_MIDDLE] = middle;
+	f->input.mouse_down[LRG_GUI_MOUSE_RIGHT] = right;
+	frame (f);
+}
+
+static void
+mouse (Fixture *f,
+       gfloat   x,
+       gfloat   y,
+       gboolean left,
+       gboolean right)
+{
+	mouse3 (f, x, y, left, FALSE, right);
+}
+
+/* The camera as JSON, to compare before/after. */
+static gchar *
+view_json (Fixture *f)
+{
+	g_autofree gchar *reply = lrg_editor_server_dispatch (lrg_editor_app_get_server (f->app),
+	                                                      "{\"id\":1,\"method\":\"view.get\"}");
+
+	return g_strdup (strchr (reply, '{') != NULL ? strstr (reply, "\"result\"") : reply);
+}
+
+static gboolean
+view_ortho (Fixture *f)
+{
+	g_autofree gchar *v = view_json (f);
+
+	return strstr (v, "\"orthographic\":true") != NULL;
+}
+
+/* Rect of the viewport panel, from ui.state. */
+static void
+viewport_rect (Fixture *f,
+               gfloat  *x,
+               gfloat  *y,
+               gfloat  *w,
+               gfloat  *h)
+{
+	g_autofree gchar *reply = lrg_editor_server_dispatch (lrg_editor_app_get_server (f->app),
+	                                                      "{\"id\":1,\"method\":\"ui.state\"}");
+	const gchar      *p = strstr (reply, "\"viewport\":[");
+
+	g_assert_nonnull (p);
+	g_assert_cmpint (sscanf (p, "\"viewport\":[%f,%f,%f,%f]", x, y, w, h), ==, 4);
+}
+
+static void
+test_app_menubar_click (Fixture       *f,
+                        gconstpointer  data)
+{
+	LrgGuiContext *gui = lrg_editor_app_get_gui (f->app);
+
+	new_project (f);
+	frames (f, 2);
+
+	/* Press opens, release keeps it open, clicking the header closes it. */
+	mouse (f, 20.0f, 12.0f, FALSE, FALSE);
+	mouse (f, 20.0f, 12.0f, TRUE, FALSE);
+	g_assert_true (lrg_gui_is_popup_open (gui, "File"));
+	mouse (f, 20.0f, 12.0f, FALSE, FALSE);
+	frames (f, 2);
+	g_assert_true (lrg_gui_is_popup_open (gui, "File"));
+	mouse (f, 20.0f, 12.0f, TRUE, FALSE);
+	mouse (f, 20.0f, 12.0f, FALSE, FALSE);
+	g_assert_false (lrg_gui_is_popup_open (gui, "File"));
+
+	/* Alt + letter opens a menu from the keyboard; Escape closes it. */
+	mouse (f, 700.0f, 500.0f, FALSE, FALSE);
+	press (f, LRG_GUI_KEY_V, LRG_GUI_MOD_ALT);
+	frame (f);
+	g_assert_true (lrg_gui_is_popup_open (gui, "View"));
+	press (f, LRG_GUI_KEY_ESCAPE, LRG_GUI_MOD_NONE);
+	g_assert_false (lrg_gui_is_popup_open (gui, "View"));
+
+	/* Ctrl+Alt+E is an action, not the Edit menu. */
+	press (f, LRG_GUI_KEY_E, LRG_GUI_MOD_CTRL | LRG_GUI_MOD_ALT);
+	frame (f);
+	g_assert_false (lrg_gui_is_popup_open (gui, "Edit"));
+}
+
+static void
+test_app_viewport_rotate (Fixture       *f,
+                          gconstpointer  data)
+{
+	g_autofree gchar *before = NULL;
+	g_autofree gchar *after = NULL;
+	gfloat            vx, vy, vw, vh, cx, cy;
+	gint              i;
+
+	new_project (f);
+	frames (f, 2);
+	viewport_rect (f, &vx, &vy, &vw, &vh);
+	cx = vx + vw * 0.5f;
+	cy = vy + vh * 0.5f;
+
+	/* Right drag flies the camera (look). */
+	before = view_json (f);
+	mouse (f, cx, cy, FALSE, FALSE);
+	mouse (f, cx, cy, FALSE, TRUE);
+	for (i = 1; i <= 10; i++)
+		mouse (f, cx + i * 10.0f, cy + i * 3.0f, FALSE, TRUE);
+	mouse (f, cx + 100.0f, cy + 30.0f, FALSE, FALSE);
+	after = view_json (f);
+	g_assert_cmpstr (before, !=, after);
+
+	/* A right click without motion leaves the camera alone (it opens the
+	 * context menu) and ends navigation. */
+	{
+		g_autofree gchar *still = NULL;
+		g_autofree gchar *state = NULL;
+
+		g_free (before);
+		before = view_json (f);
+		mouse (f, cx, cy, FALSE, TRUE);
+		mouse (f, cx, cy, FALSE, FALSE);
+		still = view_json (f);
+		g_assert_cmpstr (before, ==, still);
+		state = lrg_editor_server_dispatch (lrg_editor_app_get_server (f->app),
+		                                    "{\"id\":1,\"method\":\"ui.state\"}");
+		g_assert_nonnull (strstr (state, "\"nav\":\"none\""));
+	}
+}
+
+static void
+test_app_nav_gizmo (Fixture       *f,
+                    gconstpointer  data)
+{
+	g_autofree gchar *before = NULL;
+	g_autofree gchar *after = NULL;
+	gfloat            vx, vy, vw, vh, gx, gy;
+	gint              i;
+
+	new_project (f);
+	frames (f, 2);
+	viewport_rect (f, &vx, &vy, &vw, &vh);
+	gx = vx + 46.0f + 3.0f;
+	gy = vy + vh - 46.0f + 3.0f;
+
+	/* Dragging the orientation gizmo orbits... */
+	before = view_json (f);
+	mouse (f, gx, gy, FALSE, FALSE);
+	mouse (f, gx, gy, TRUE, FALSE);
+	for (i = 1; i <= 8; i++)
+		mouse (f, gx + i * 6.0f, gy, TRUE, FALSE);
+	mouse (f, gx + 48.0f, gy, FALSE, FALSE);
+	after = view_json (f);
+	g_assert_cmpstr (before, !=, after);
+
+	/* ...and never selects or box-selects. */
+	g_assert_cmpuint (n_selected (f), ==, 0);
+}
+
+static void
+test_app_nav_keys_and_auto_perspective (Fixture       *f,
+                                        gconstpointer  data)
+{
+	g_autofree gchar *before = NULL;
+	g_autofree gchar *after = NULL;
+
+	new_project (f);
+	frames (f, 2);
+
+	/* Num7: top view, orthographic. */
+	press (f, LRG_GUI_KEY_KP_7, LRG_GUI_MOD_NONE);
+	g_assert_true (view_ortho (f));
+
+	/* Num4 orbits and returns to perspective. */
+	before = view_json (f);
+	press (f, LRG_GUI_KEY_KP_4, LRG_GUI_MOD_NONE);
+	after = view_json (f);
+	g_assert_cmpstr (before, !=, after);
+	g_assert_false (view_ortho (f));
+
+	/* Num5 toggles ortho explicitly; orbiting then keeps it. */
+	press (f, LRG_GUI_KEY_KP_5, LRG_GUI_MOD_NONE);
+	g_assert_true (view_ortho (f));
+	press (f, LRG_GUI_KEY_KP_6, LRG_GUI_MOD_NONE);
+	g_assert_true (view_ortho (f));
+}
+
+static void
+test_app_nav_schemes (Fixture       *f,
+                      gconstpointer  data)
+{
+	LrgEditorSettings *settings = lrg_editor_app_get_settings (f->app);
+	g_autofree gchar  *a = NULL;
+	g_autofree gchar  *b = NULL;
+	g_autofree gchar  *c = NULL;
+	gfloat             vx, vy, vw, vh, cx, cy;
+	gint               i;
+
+	new_project (f);
+	frames (f, 2);
+	viewport_rect (f, &vx, &vy, &vw, &vh);
+	cx = vx + vw * 0.5f;
+	cy = vy + vh * 0.5f;
+	mouse (f, cx, cy, FALSE, FALSE);
+
+	/* Trackpad: two-finger scroll orbits rather than zooming. */
+	g_object_set (settings, "camera-navigation", "trackpad", NULL);
+	a = view_json (f);
+	f->input.wheel_x = 2.0f;
+	f->input.wheel_y = 1.0f;
+	frame (f);
+	f->input.wheel_x = 0.0f;
+	f->input.wheel_y = 0.0f;
+	b = view_json (f);
+	g_assert_cmpstr (a, !=, b);
+
+	/* Blender: middle drag orbits. */
+	g_object_set (settings, "camera-navigation", "blender", NULL);
+	mouse3 (f, cx, cy, FALSE, TRUE, FALSE);
+	for (i = 1; i <= 8; i++)
+		mouse3 (f, cx + i * 8.0f, cy, FALSE, TRUE, FALSE);
+	mouse3 (f, cx + 64.0f, cy, FALSE, FALSE, FALSE);
+	c = view_json (f);
+	g_assert_cmpstr (b, !=, c);
+}
+
 #endif /* LRG_BUILD_EDITOR_UI */
 
 int
@@ -455,6 +691,11 @@ main (int   argc,
 	ADD ("live-reload", test_app_live_reload);
 	ADD ("ipc", test_app_ipc);
 	ADD ("quit", test_app_quit_confirm);
+	ADD ("menubar-click", test_app_menubar_click);
+	ADD ("viewport-rotate", test_app_viewport_rotate);
+	ADD ("nav-gizmo", test_app_nav_gizmo);
+	ADD ("nav-keys", test_app_nav_keys_and_auto_perspective);
+	ADD ("nav-schemes", test_app_nav_schemes);
 #undef ADD
 #endif
 

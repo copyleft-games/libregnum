@@ -13,7 +13,7 @@
 
 #include "lrg-editor-app-private.h"
 #include "../../core/lrg-engine.h"
-#include <raylib.h>
+#include "../../gui/lrg-gui-raylib-private.h"
 #include <glib/gstdio.h>
 #include <glib-unix.h>
 #include <math.h>
@@ -211,6 +211,8 @@ lrg_editor_app_init (LrgEditorApp *self)
 	self->show_icons = TRUE;
 	self->show_stats = TRUE;
 	self->fly_speed = 8.0f;
+	self->nav_axis = -1;
+	self->axis_hot = -1;
 	self->width = 1600.0f;
 	self->height = 960.0f;
 	self->headless = TRUE;   /* until a window exists */
@@ -1377,6 +1379,19 @@ editor_app_menu_create (LrgEditorApp *self,
 	editor_app_menu_item_action (self, "node.instantiate-prefab");
 }
 
+/* Top-level menu header; remembers where it is for ui.state. */
+static gboolean
+begin_top_menu (LrgEditorApp *self,
+                gint          index,
+                const gchar  *label)
+{
+	gboolean open = lrg_gui_begin_menu (self->gui, label, TRUE);
+
+	/* Opening the menu adds no item, so this is still the header. */
+	lrg_gui_get_item_rect (self->gui, &self->menu_rects[index]);
+	return open;
+}
+
 static void
 draw_menu_bar (LrgEditorApp *self)
 {
@@ -1419,7 +1434,28 @@ draw_menu_bar (LrgEditorApp *self)
 
 	lrg_gui_begin_menu_bar (self->gui, &bar);
 
-	if (lrg_gui_begin_menu (self->gui, "File", TRUE))
+	/* Alt + the first letter opens a menu from the keyboard, under its
+	 * header (where it was drawn last frame). */
+	if (self->dialog == EDITOR_DIALOG_NONE && !self->palette_open &&
+	    !lrg_gui_context_wants_keyboard (self->gui))
+	{
+		static const struct { LrgGuiKey key; const gchar *label; } keys[] = {
+			{ LRG_GUI_KEY_F, "File" }, { LRG_GUI_KEY_E, "Edit" }, { LRG_GUI_KEY_C, "Create" },
+			{ LRG_GUI_KEY_N, "Node" }, { LRG_GUI_KEY_V, "View" }, { LRG_GUI_KEY_P, "Play" },
+			{ LRG_GUI_KEY_T, "Tools" }, { LRG_GUI_KEY_H, "Help" }
+		};
+
+		for (i = 0; i < G_N_ELEMENTS (keys); i++)
+			if (lrg_gui_shortcut (self->gui, LRG_GUI_MOD_ALT, keys[i].key) && self->menu_rects[i].w > 0.0f)
+			{
+				lrg_gui_close_all_popups (self->gui);
+				lrg_gui_set_next_popup_pos (self->gui, self->menu_rects[i].x,
+				                            self->menu_rects[i].y + self->menu_rects[i].h);
+				lrg_gui_open_popup (self->gui, keys[i].label);
+			}
+	}
+
+	if (begin_top_menu (self, 0, "File"))
 	{
 		menu_items (self, file_items);
 		lrg_gui_separator (self->gui);
@@ -1447,22 +1483,22 @@ draw_menu_bar (LrgEditorApp *self)
 		}
 		lrg_gui_end_menu (self->gui);
 	}
-	if (lrg_gui_begin_menu (self->gui, "Edit", TRUE))
+	if (begin_top_menu (self, 1, "Edit"))
 	{
 		menu_items (self, edit_items);
 		lrg_gui_end_menu (self->gui);
 	}
-	if (lrg_gui_begin_menu (self->gui, "Create", TRUE))
+	if (begin_top_menu (self, 2, "Create"))
 	{
 		editor_app_menu_create (self, NULL);
 		lrg_gui_end_menu (self->gui);
 	}
-	if (lrg_gui_begin_menu (self->gui, "Node", TRUE))
+	if (begin_top_menu (self, 3, "Node"))
 	{
 		menu_items (self, node_items);
 		lrg_gui_end_menu (self->gui);
 	}
-	if (lrg_gui_begin_menu (self->gui, "View", TRUE))
+	if (begin_top_menu (self, 4, "View"))
 	{
 		menu_items (self, view_items);
 		lrg_gui_separator (self->gui);
@@ -1484,17 +1520,17 @@ draw_menu_bar (LrgEditorApp *self)
 		editor_app_menu_item_action (self, "view.reset-layout");
 		lrg_gui_end_menu (self->gui);
 	}
-	if (lrg_gui_begin_menu (self->gui, "Play", TRUE))
+	if (begin_top_menu (self, 5, "Play"))
 	{
 		menu_items (self, play_items);
 		lrg_gui_end_menu (self->gui);
 	}
-	if (lrg_gui_begin_menu (self->gui, "Tools", TRUE))
+	if (begin_top_menu (self, 6, "Tools"))
 	{
 		menu_items (self, tool_items);
 		lrg_gui_end_menu (self->gui);
 	}
-	if (lrg_gui_begin_menu (self->gui, "Help", TRUE))
+	if (begin_top_menu (self, 7, "Help"))
 	{
 		menu_items (self, help_items);
 		lrg_gui_end_menu (self->gui);
@@ -1717,6 +1753,7 @@ lrg_editor_app_frame (LrgEditorApp      *self,
 
 	lrg_gui_context_begin_frame (self->gui, input, width, height);
 	self->cur_input = input;
+	self->last_input = *input;
 
 	/* Shortcuts first, while focus state is still last frame's. */
 	editor_app_process_shortcuts (self);
