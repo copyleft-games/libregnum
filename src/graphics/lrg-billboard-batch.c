@@ -43,6 +43,7 @@
 #endif
 #include "graphics/lrg-billboard-batch.h"
 #include "graphics/lrg-light-set-private.h"
+#include "graphics/lrg-draw-cull-private.h"
 #include "lighting/lrg-shadow-renderer.h"
 #include "lighting/lrg-shadow-renderer-private.h"
 #include "weather/lrg-ground-overlay-private.h"
@@ -53,6 +54,10 @@
 
 /* GPU path: quads per vertex page (16-bit indices: 4 vertices each) */
 #define PAGE_QUADS (16384u)
+
+/* GPU path: most quads of one culling cluster (a run of one material
+ * in upload order, tested against the frustum as one box) */
+#define CLUSTER_QUADS (256u)
 
 /* GPU path: smallest batch worth its own buffers */
 #define GPU_MIN_QUADS (64u)
@@ -87,9 +92,23 @@ typedef struct
 typedef struct
 {
     guint material;
-    guint first;     /* quad index over all pages */
+    guint first;          /* quad index over all pages */
     guint count;
+    guint cluster_first;  /* its clusters in GpuCluster order */
+    guint cluster_count;
 } GpuRange;
+
+/* up to CLUSTER_QUADS consecutive quads of one range and the box they
+ * can reach in the batch's space: the pivots grown by the farthest
+ * corner (in any facing), plus the wind's bend at draw time */
+typedef struct
+{
+    guint  first;         /* quad index over all pages */
+    guint  count;
+    gfloat min[3];
+    gfloat max[3];
+    gfloat sway_reach;    /* most sway weight x corner height above a pivot */
+} GpuCluster;
 
 typedef struct
 {
@@ -139,6 +158,7 @@ struct _LrgBillboardBatch
     /* GPU path (see the file comment) */
     GArray           *pages;        /* GpuPage */
     GArray           *ranges;       /* GpuRange, by material */
+    GArray           *clusters;     /* GpuCluster, in quad order */
     GArray           *loose;        /* guint billboard indices drawn immediately */
     guint             ebo;          /* shared quad index pattern */
     guint             gpu_quads;    /* quads uploaded */
@@ -188,6 +208,8 @@ struct _LrgBillboardBatch
     gint              cast_loc_wind_time;
     gint              cast_loc_mode;
     gint              cast_loc_light;
+    gint              cast_loc_spherical;
+    gint              cast_loc_lit;
 };
 
 G_DEFINE_TYPE (LrgBillboardBatch, lrg_billboard_batch, G_TYPE_OBJECT)
@@ -400,6 +422,7 @@ lrg_billboard_batch_finalize (GObject *object)
     gpu_release (self);
     g_clear_pointer (&self->pages, g_array_unref);
     g_clear_pointer (&self->ranges, g_array_unref);
+    g_clear_pointer (&self->clusters, g_array_unref);
     g_clear_pointer (&self->loose, g_array_unref);
 
     g_clear_object (&self->light_set);
@@ -428,6 +451,7 @@ lrg_billboard_batch_init (LrgBillboardBatch *self)
     self->lit = TRUE;
     self->pages = g_array_new (FALSE, TRUE, sizeof (GpuPage));
     self->ranges = g_array_new (FALSE, TRUE, sizeof (GpuRange));
+    self->clusters = g_array_new (FALSE, TRUE, sizeof (GpuCluster));
     self->loose = g_array_new (FALSE, FALSE, sizeof (guint));
 }
 
@@ -1225,6 +1249,8 @@ gpu_release (LrgBillboardBatch *self)
         g_array_set_size (self->pages, 0);
     if (self->ranges != NULL)
         g_array_set_size (self->ranges, 0);
+    if (self->clusters != NULL)
+        g_array_set_size (self->clusters, 0);
     if (self->loose != NULL)
         g_array_set_size (self->loose, 0);
     for (i = 0; self->billboards != NULL && i < self->billboards->len; i++)
@@ -1331,6 +1357,78 @@ fill_quad (const Billboard *b,
         /* w: emissive (0/1) plus twice the sway weight in 1/255 steps */
         v[k].corner[3] = (b->emissive ? 1.0f : 0.0f) +
                          2.0f * floorf (CLAMP (b->sway, 0.0f, 1.0f) * 255.0f + 0.5f);
+    }
+}
+
+/* cluster_add_quad:
+ * Grows @cluster by the reach of @b: the pivot plus the farthest corner
+ * offset in any direction (sqrt (cx^2 + cy^2): the facing basis is
+ * orthonormal in both modes), and the most a corner above the pivot can
+ * be bent by the wind (sway weight x height). */
+static void
+cluster_add_quad (GpuCluster      *cluster,
+                  const Billboard *b)
+{
+    gfloat left = -b->width * b->pivot_x;
+    gfloat right = b->width * (1.0f - b->pivot_x);
+    gfloat bottom = -b->height * b->pivot_y;
+    gfloat top = b->height * (1.0f - b->pivot_y);
+    gfloat reach;
+    gfloat above;
+    guint  k;
+
+    reach = sqrtf (MAX (left * left, right * right) + MAX (bottom * bottom, top * top));
+    for (k = 0; k < 3; k++)
+    {
+        cluster->min[k] = MIN (cluster->min[k], b->position[k] - reach);
+        cluster->max[k] = MAX (cluster->max[k], b->position[k] + reach);
+    }
+    /* the shader's sway weight is rounded to 1/255 steps */
+    above = MAX (MAX (top, bottom), 0.0f);
+    cluster->sway_reach = MAX (cluster->sway_reach,
+                               (CLAMP (b->sway, 0.0f, 1.0f) + 0.01f) * above);
+}
+
+/* gpu_build_clusters:
+ * Cuts every material run into clusters of at most CLUSTER_QUADS quads
+ * and records their boxes; @order maps quad indices to billboards. */
+static void
+gpu_build_clusters (LrgBillboardBatch *self,
+                    GArray            *order)
+{
+    guint r;
+
+    g_array_set_size (self->clusters, 0);
+    for (r = 0; r < self->ranges->len; r++)
+    {
+        GpuRange *range = &g_array_index (self->ranges, GpuRange, r);
+        guint     q;
+
+        range->cluster_first = self->clusters->len;
+        for (q = 0; q < range->count; q += CLUSTER_QUADS)
+        {
+            GpuCluster cluster;
+            guint      n = MIN (range->count - q, CLUSTER_QUADS);
+            guint      i;
+            guint      k;
+
+            cluster.first = range->first + q;
+            cluster.count = n;
+            cluster.sway_reach = 0.0f;
+            for (k = 0; k < 3; k++)
+            {
+                cluster.min[k] = G_MAXFLOAT;
+                cluster.max[k] = -G_MAXFLOAT;
+            }
+            for (i = 0; i < n; i++)
+            {
+                guint index = g_array_index (order, guint, cluster.first + i);
+
+                cluster_add_quad (&cluster, &g_array_index (self->billboards, Billboard, index));
+            }
+            g_array_append_val (self->clusters, cluster);
+        }
+        range->cluster_count = self->clusters->len - range->cluster_first;
     }
 }
 
@@ -1461,9 +1559,12 @@ gpu_build (LrgBillboardBatch *self)
             range.material = material;
             range.first = i;
             range.count = 1;
+            range.cluster_first = 0;
+            range.cluster_count = 0;
             g_array_append_val (self->ranges, range);
         }
     }
+    gpu_build_clusters (self, order);
     self->gpu_quads = order->len;
 }
 
@@ -1543,6 +1644,106 @@ mat_mul (const Matrix *a,
     return mat_from_array (o);
 }
 
+/* gpu_draw_span:
+ * Draws quads @first .. @first + @count - 1 of the pages, split at page
+ * edges; *@page_bound is the vertex array bound so far. */
+static void
+gpu_draw_span (LrgBillboardBatch *self,
+               guint              first,
+               guint              count,
+               guint             *page_bound)
+{
+    guint end = first + count;
+    guint q;
+
+    for (q = first; q < end;)
+    {
+        guint page = q / PAGE_QUADS;
+        guint in_page = q % PAGE_QUADS;
+        guint n = MIN (end - q, PAGE_QUADS - in_page);
+
+        if (page != *page_bound)
+        {
+            rlEnableVertexArray (g_array_index (self->pages, GpuPage, page).vao);
+            *page_bound = page;
+        }
+        rlDrawVertexArrayElements ((gint)(in_page * 6), (gint)(n * 6), NULL);
+        q += n;
+    }
+}
+
+/* gpu_draw_ranges:
+ * Every material run with its texture, under the program the caller
+ * bound. Clusters wholly outside the live rlgl frustum (the camera's, or
+ * a shadow pass's light: the program's mvp is that same P x MV x T) are
+ * skipped; the visible ones of a run are drawn in their upload order,
+ * neighbours merged into one call, so what is drawn is drawn exactly as
+ * before. */
+static void
+gpu_draw_ranges (LrgBillboardBatch *self)
+{
+    LrgDrawFrustum frustum;
+    gboolean       cull;
+    gfloat         bend;
+    guint          page_bound = G_MAXUINT;
+    guint          i;
+
+    /* the most a corner can move per metre of sway reach */
+    bend = sqrtf (self->wind[0] * self->wind[0] + self->wind[1] * self->wind[1])
+           * (fabsf (self->wind[2]) + fabsf (self->wind[3]));
+    cull = isfinite (bend) && lrg_draw_cull_frustum_current (&frustum);
+
+    rlActiveTextureSlot (0);
+    for (i = 0; i < self->ranges->len; i++)
+    {
+        GpuRange        *range = &g_array_index (self->ranges, GpuRange, i);
+        MaterialTexture *entry;
+        guint            span_first = 0;
+        guint            span_count = 0;
+        guint            c;
+
+        entry = g_hash_table_lookup (self->textures, GUINT_TO_POINTER (range->material));
+        if (entry == NULL)
+            continue;
+        rlEnableTexture (entry->texture.id);
+
+        for (c = 0; c < range->cluster_count; c++)
+        {
+            GpuCluster *cl = &g_array_index (self->clusters, GpuCluster,
+                                             range->cluster_first + c);
+
+            if (cull)
+            {
+                gfloat pad = bend * cl->sway_reach;
+                gfloat lo[3];
+                gfloat hi[3];
+
+                lo[0] = cl->min[0] - pad;
+                lo[1] = cl->min[1];
+                lo[2] = cl->min[2] - pad;
+                hi[0] = cl->max[0] + pad;
+                hi[1] = cl->max[1];
+                hi[2] = cl->max[2] + pad;
+                if (!lrg_draw_cull_frustum_box_visible (&frustum, lo, hi))
+                    continue;
+            }
+            if (span_count > 0 && span_first + span_count == cl->first)
+            {
+                span_count += cl->count;
+                continue;
+            }
+            if (span_count > 0)
+                gpu_draw_span (self, span_first, span_count, &page_bound);
+            span_first = cl->first;
+            span_count = cl->count;
+        }
+        if (span_count > 0)
+            gpu_draw_span (self, span_first, span_count, &page_bound);
+    }
+    rlDisableVertexArray ();
+    rlDisableTexture ();
+}
+
 /* gpu_draw:
  * One indexed draw per material run (split at page edges) under the
  * GPU path's shader, with the rlgl transform, the eye in the batch's
@@ -1560,8 +1761,6 @@ gpu_draw (LrgBillboardBatch *self,
     Matrix   mvp;
     gint     spherical;
     gint     lit;
-    guint    page_bound = G_MAXUINT;
-    guint    i;
 
     /* the immediate batch so far belongs before these draws */
     rlDrawRenderBatchActive ();
@@ -1604,37 +1803,7 @@ gpu_draw (LrgBillboardBatch *self,
     }
     lrg_light_set_upload_fog (lights, self->gpu_shader, &self->gpu_fog_locs);
 
-    rlActiveTextureSlot (0);
-    for (i = 0; i < self->ranges->len; i++)
-    {
-        GpuRange        *range = &g_array_index (self->ranges, GpuRange, i);
-        MaterialTexture *entry;
-        guint            q;
-        guint            end;
-
-        entry = g_hash_table_lookup (self->textures, GUINT_TO_POINTER (range->material));
-        if (entry == NULL)
-            continue;
-        rlEnableTexture (entry->texture.id);
-
-        end = range->first + range->count;
-        for (q = range->first; q < end;)
-        {
-            guint page = q / PAGE_QUADS;
-            guint in_page = q % PAGE_QUADS;
-            guint n = MIN (end - q, PAGE_QUADS - in_page);
-
-            if (page != page_bound)
-            {
-                rlEnableVertexArray (g_array_index (self->pages, GpuPage, page).vao);
-                page_bound = page;
-            }
-            rlDrawVertexArrayElements ((gint)(in_page * 6), (gint)(n * 6), NULL);
-            q += n;
-        }
-    }
-    rlDisableVertexArray ();
-    rlDisableTexture ();
+    gpu_draw_ranges (self);
     rlDisableShader ();
 }
 
@@ -1825,6 +1994,8 @@ cast_ensure_shader (LrgBillboardBatch *self)
     self->cast_loc_wind_time = GetShaderLocation (self->cast_shader, "windTime");
     self->cast_loc_mode = GetShaderLocation (self->cast_shader, "casterMode");
     self->cast_loc_light = GetShaderLocation (self->cast_shader, "casterLight");
+    self->cast_loc_spherical = GetShaderLocation (self->cast_shader, "spherical");
+    self->cast_loc_lit = GetShaderLocation (self->cast_shader, "lit");
     SetShaderValue (self->cast_shader, GetShaderLocation (self->cast_shader, "texture0"),
                     &unit, SHADER_UNIFORM_INT);
     self->cast_loaded = TRUE;
@@ -1901,7 +2072,6 @@ lrg_billboard_batch_draw_shadow (LrgBillboardBatch *self,
         Matrix   projection = rlGetMatrixProjection ();
         Matrix   mvp;
         gfloat   wind_time[2];
-        guint    page_bound = G_MAXUINT;
 
         rlDrawRenderBatchActive ();
         mvp = mat_mul (&transform, &modelview);
@@ -1919,45 +2089,14 @@ lrg_billboard_batch_draw_shadow (LrgBillboardBatch *self,
             gint spherical = 0;
             gint off = 0;
 
-            SetShaderValue (self->cast_shader,
-                            GetShaderLocation (self->cast_shader, "spherical"), &spherical,
+            SetShaderValue (self->cast_shader, self->cast_loc_spherical, &spherical,
                             SHADER_UNIFORM_INT);
-            SetShaderValue (self->cast_shader, GetShaderLocation (self->cast_shader, "lit"),
-                            &off, SHADER_UNIFORM_INT);
+            SetShaderValue (self->cast_shader, self->cast_loc_lit, &off, SHADER_UNIFORM_INT);
         }
         SetShaderValue (self->cast_shader, self->cast_loc_mode, &mode, SHADER_UNIFORM_INT);
         SetShaderValue (self->cast_shader, self->cast_loc_light, light, SHADER_UNIFORM_VEC4);
 
-        rlActiveTextureSlot (0);
-        for (i = 0; i < self->ranges->len; i++)
-        {
-            GpuRange        *range = &g_array_index (self->ranges, GpuRange, i);
-            MaterialTexture *entry;
-            guint            q;
-            guint            end;
-
-            entry = g_hash_table_lookup (self->textures, GUINT_TO_POINTER (range->material));
-            if (entry == NULL)
-                continue;
-            rlEnableTexture (entry->texture.id);
-            end = range->first + range->count;
-            for (q = range->first; q < end;)
-            {
-                guint page = q / PAGE_QUADS;
-                guint in_page = q % PAGE_QUADS;
-                guint n = MIN (end - q, PAGE_QUADS - in_page);
-
-                if (page != page_bound)
-                {
-                    rlEnableVertexArray (g_array_index (self->pages, GpuPage, page).vao);
-                    page_bound = page;
-                }
-                rlDrawVertexArrayElements ((gint)(in_page * 6), (gint)(n * 6), NULL);
-                q += n;
-            }
-        }
-        rlDisableVertexArray ();
-        rlDisableTexture ();
+        gpu_draw_ranges (self);
         rlDisableShader ();
     }
 

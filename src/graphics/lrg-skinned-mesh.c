@@ -69,6 +69,13 @@ struct _LrgSkinnedMesh
     guint       bone_weight_vbo;
     gfloat     *scratch_positions;
     gfloat     *scratch_normals;
+
+    /* uniform locations of the program drawn last, looked up once per
+     * program (loc_shader_id 0: not looked up yet) */
+    guint       loc_shader_id;
+    gint        loc_use_skinning;
+    gint        loc_alpha_cutoff;
+    gint        loc_bone_matrices;
 };
 
 G_DEFINE_FINAL_TYPE (LrgSkinnedMesh, lrg_skinned_mesh, G_TYPE_OBJECT)
@@ -651,6 +658,8 @@ lrg_skinned_mesh_set_shader (LrgSkinnedMesh *self,
     g_return_if_fail (LRG_IS_SKINNED_MESH (self));
     g_return_if_fail (shader == NULL || GRL_IS_SHADER (shader));
     g_set_object (&self->shader, shader);
+    /* a released program's id may come back for another one */
+    self->loc_shader_id = 0;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -793,6 +802,7 @@ lrg_skinned_mesh_unload (LrgSkinnedMesh *self)
         builtin_shader_release ();
         self->holds_shader = FALSE;
     }
+    self->loc_shader_id = 0;
 }
 
 void
@@ -843,11 +853,19 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
     /* the uniforms DrawMesh() does not set: the palette, the skinning
      * switch and the alpha cutoff (set on the active program) */
     rlEnableShader (material.shader.id);
+    if (self->loc_shader_id != material.shader.id)
+    {
+        /* looked up by name once per program, not every draw */
+        self->loc_shader_id = material.shader.id;
+        self->loc_use_skinning = rlGetLocationUniform (material.shader.id, "useSkinning");
+        self->loc_alpha_cutoff = rlGetLocationUniform (material.shader.id, "alphaCutoff");
+        self->loc_bone_matrices = rlGetLocationUniform (material.shader.id, "boneMatrices");
+    }
     use_skinning = self->gpu ? 1 : 0;
-    loc = rlGetLocationUniform (material.shader.id, "useSkinning");
+    loc = self->loc_use_skinning;
     if (loc >= 0)
         rlSetUniform (loc, &use_skinning, RL_SHADER_UNIFORM_INT, 1);
-    loc = rlGetLocationUniform (material.shader.id, "alphaCutoff");
+    loc = self->loc_alpha_cutoff;
     if (loc >= 0)
         rlSetUniform (loc, &self->alpha_cutoff, RL_SHADER_UNIFORM_FLOAT, 1);
     if (self->gpu)
@@ -857,7 +875,7 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
 
         for (b = 0; b < self->n_bones; b++)
             palette[b] = to_raylib_matrix (self->palette + 16 * b);
-        loc = rlGetLocationUniform (material.shader.id, "boneMatrices");
+        loc = self->loc_bone_matrices;
         if (loc >= 0)
             rlSetUniformMatrices (loc, palette, (gint)self->n_bones);
     }
