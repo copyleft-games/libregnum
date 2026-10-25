@@ -130,8 +130,8 @@ With texture repeat =R= (default 1) a texture covers =R × R= cells. For a cell 
 :CUSTOM_ID: drawing
 :END:
 - =upload()= builds and uploads new or changed chunks and refreshes stale normals (=G_IO_ERROR_NOT_INITIALIZED= without a window); =is_uploaded()= is =TRUE= when nothing is pending (stale normals count as pending); =unload()= frees GPU meshes but keeps CPU data.
-- =draw()= draws every uploaded mesh with its material texture (raylib's white texture when unset), the tint and the terrain shader (raylib's default when unset). Call inside =BeginMode3D()=. Chunks whose meshes are stale keep drawing their previous meshes until the next =upload()=.
-- =draw_chunk()= draws one chunk, for callers that cull with =get_chunk_bounds()= (bounds are world coordinates: subtract the origin for the draw space). librefall's overworld draws only the chunks inside the camera's frustum this way.
+- =draw()= draws every uploaded mesh with its material texture (raylib's white texture when unset), the tint and the terrain shader (raylib's default when unset). Call inside =BeginMode3D()=. Chunks whose meshes are stale keep drawing their previous meshes until the next =upload()=. Chunks wholly outside the frustum of rlgl's live =P x MV x T= are skipped: a chunk's box is its square and height range moved by the same translation (corner minus origin) that is its model matrix. The GPU would have clipped them whole, so the picture is unchanged; shadow passes (light matrices set through rlgl) are culled the same way.
+- =draw_chunk()= draws one chunk unconditionally, for callers that pick chunks with =get_chunk_bounds()= themselves (bounds are world coordinates: subtract the origin for the draw space).
 - Material textures are referenced by the terrain.
 
 ** Example

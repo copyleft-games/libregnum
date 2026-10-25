@@ -23,6 +23,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "graphics/lrg-static-batch.h"
+#include "graphics/lrg-draw-cull-private.h"
 
 /* Transforms with a smaller |determinant| are treated as singular. */
 #define BATCH_SINGULAR_EPSILON (1e-12)
@@ -66,6 +67,12 @@ struct _LrgStaticBatch
     GHashTable *emission_colors; /* material -> gfloat[4] (rgb x strength, w = 1), own emission */
     Color       tints[LRG_STATIC_BATCH_MAX_LAYERS];
     GrlShader  *shader;
+
+    /* uniform locations of the shader above, looked up once per program
+     * (loc_shader_id 0: not looked up yet) */
+    guint       loc_shader_id;
+    gint        loc_map_flags;
+    gint        loc_emission_own;
 };
 
 G_DEFINE_TYPE (LrgStaticBatch, lrg_static_batch, G_TYPE_OBJECT)
@@ -1141,6 +1148,8 @@ lrg_static_batch_set_shader (LrgStaticBatch *self,
     g_return_if_fail (shader == NULL || GRL_IS_SHADER (shader));
 
     g_set_object (&self->shader, shader);
+    /* a released program's id may come back for another one */
+    self->loc_shader_id = 0;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1251,6 +1260,21 @@ no_emission_texture (LrgStaticBatch *self)
     return texture;
 }
 
+/* shader_locations:
+ * The material-slot uniforms of @shader, looked up by name only when the
+ * program changes. The batch holds a reference on its shader, so the id
+ * cannot be reused for another program while it is cached. */
+static void
+shader_locations (LrgStaticBatch *self,
+                  Shader          shader)
+{
+    if (self->loc_shader_id == shader.id)
+        return;
+    self->loc_shader_id = shader.id;
+    self->loc_map_flags = GetShaderLocation (shader, "mapFlags");
+    self->loc_emission_own = GetShaderLocation (shader, "emissionOwn");
+}
+
 /* draw_one:
  * DrawMesh() with a stack material: batch shader (or raylib's default),
  * the material texture (or raylib's white texture) and the layer tint. */
@@ -1342,30 +1366,32 @@ draw_one (LrgStaticBatch *self,
             flags |= 4;
         }
         if (flags != 0)
-            SetShaderValue (material.shader, GetShaderLocation (material.shader, "mapFlags"),
-                            &flags, SHADER_UNIFORM_INT);
+        {
+            shader_locations (self, material.shader);
+            SetShaderValue (material.shader, self->loc_map_flags, &flags, SHADER_UNIFORM_INT);
+        }
     }
     material.maps = maps;
     /* an own emission colour (glTF emissiveFactor) replaces the shared one
      * for this draw only */
     if (own != NULL)
-        SetShaderValue (material.shader, GetShaderLocation (material.shader, "emissionOwn"),
-                        own, SHADER_UNIFORM_VEC4);
+    {
+        shader_locations (self, material.shader);
+        SetShaderValue (material.shader, self->loc_emission_own, own, SHADER_UNIFORM_VEC4);
+    }
 
     DrawMesh (mesh, material, matrix_identity ());
     if (own != NULL)
     {
         static const gfloat none[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
-        SetShaderValue (material.shader, GetShaderLocation (material.shader, "emissionOwn"),
-                        none, SHADER_UNIFORM_VEC4);
+        SetShaderValue (material.shader, self->loc_emission_own, none, SHADER_UNIFORM_VEC4);
     }
     if (flags != 0)
     {
         gint off = 0;
 
-        SetShaderValue (material.shader, GetShaderLocation (material.shader, "mapFlags"),
-                        &off, SHADER_UNIFORM_INT);
+        SetShaderValue (material.shader, self->loc_map_flags, &off, SHADER_UNIFORM_INT);
     }
 }
 
@@ -1373,16 +1399,27 @@ void
 lrg_static_batch_draw (LrgStaticBatch *self,
                        guint32         layer_mask)
 {
-    guint i;
+    LrgDrawFrustum frustum;
+    gboolean       cull;
+    guint          i;
 
     g_return_if_fail (LRG_IS_STATIC_BATCH (self));
 
+    /* Chunks hold world-space vertices drawn with an identity model
+     * matrix, so their boxes are tested against the live rlgl matrices
+     * as they are: the camera's in the main pass, the light's in a
+     * shadow pass. A chunk wholly outside draws no pixel. */
+    cull = lrg_draw_cull_frustum_current (&frustum);
     for (i = 0; i < self->chunks->len; i++)
     {
         Chunk *chunk = g_ptr_array_index (self->chunks, i);
 
-        if ((layer_mask >> chunk->layer) & 1u)
-            draw_one (self, chunk);
+        if (((layer_mask >> chunk->layer) & 1u) == 0)
+            continue;
+        if (cull && chunk->indices->len > 0
+            && !lrg_draw_cull_frustum_box_visible (&frustum, chunk->min, chunk->max))
+            continue;
+        draw_one (self, chunk);
     }
 }
 
