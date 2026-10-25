@@ -1,0 +1,1485 @@
+#+title: GUI Module Reference
+#+description: LrgGuiContext, LrgGuiDrawList, LrgGuiDock and LrgGuiRaylib: libregnum's immediate-mode GUI toolkit
+#+authors: Zach Podbielniak
+#+categories: libregnum gui
+#+created: 2026-10-24T22:15:00-04:00
+#+updated: 2026-10-24T22:15:00-04:00
+#+version: 1.0
+
+* GUI Module Reference
+:PROPERTIES:
+:CUSTOM_ID: gui-module-reference
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > GUI
+#+end_quote
+
+The GUI module (=src/gui/=) is a small immediate-mode UI toolkit in the spirit of Dear ImGui, written for libregnum's own tools. The editor application (=lrg-editor=, see [[file:../../editor/editor-app.org][The libregnum Editor Application]]) is built entirely from it, and it is equally usable for in-game debug overlays, consoles and tool windows. It is always built (no build flag) and its headers are pulled in by =<libregnum.h>=.
+
+It is a different thing from the retained-mode widget tree in [[file:../ui/index.org][the UI module]] (=LrgWidget= and friends): there are no widget objects here. Each frame the program calls widget functions in the order they appear; each call lays itself out, reacts to the input snapshot, records drawing commands and returns what happened ("clicked", "value changed").
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+*** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+| Type | Kind | Header | Description |
+|------+------+--------+-------------|
+| =LrgGuiContext= | Final GObject | =lrg-gui-context.h= | The toolkit: frame lifecycle, layout, widgets, persistent per-ID state |
+| =LrgGuiInput= | Plain struct | =lrg-gui-context.h= | Everything read from the platform for one frame |
+| =LrgGuiStyle= | Plain struct | =lrg-gui-context.h= | Colour palette and metrics |
+| =LrgGuiDrawList= | Final GObject | =lrg-gui-draw-list.h= | Recorded 2D drawing commands |
+| =LrgGuiCommand= | Plain struct | =lrg-gui-draw-list.h= | One recorded command |
+| =LrgGuiDock= | Final GObject | =lrg-gui-dock.h= | Tree of resizable splits whose leaves are tab stacks of named panels |
+| =LrgGuiRaylib= | Final GObject | =lrg-gui-raylib.h= | Backend for the engine window: fonts, input, rendering, cursor, clipboard |
+| =LrgGuiId= | =guint32= | =lrg-gui-types.h= | Hashed widget identity |
+| =LrgGuiColor= | =guint32= | =lrg-gui-types.h= | Colour packed as =0xRRGGBBAA= |
+| =LrgGuiRect= | Plain struct | =lrg-gui-types.h= | ={ x, y, w, h }= in window pixels |
+
+*** The immediate-mode model
+:PROPERTIES:
+:CUSTOM_ID: immediate-mode-model
+:END:
+The UI is a function of the application state, re-run every frame. There is no "create a button, connect a signal, destroy the button": the code that describes the UI is also the code that handles it.
+
+#+begin_src c
+lrg_gui_context_begin_frame (ctx, &input, width, height);
+lrg_gui_begin_region (ctx, "panel", &rect, LRG_GUI_REGION_SCROLL_Y);
+if (lrg_gui_button (ctx, "Save"))
+	save ();
+lrg_gui_drag_float3 (ctx, "Position", pos, 0.05f, "%.2f");
+lrg_gui_end_region (ctx);
+lrg_gui_context_end_frame (ctx);
+lrg_gui_raylib_render (backend, lrg_gui_context_get_draw_list (ctx));
+#+end_src
+
+State that must survive between frames (tree open flags, scroll offsets, the text being edited, open popups, the selected tab, the widget being dragged) lives inside the context in a hash table keyed by widget identity (see [[#identity][Identity and the ID stack]]). Application data (the float being edited, the boolean behind a checkbox) stays in the application and is passed by pointer.
+
+*** Backend-agnostic split
+:PROPERTIES:
+:CUSTOM_ID: backend-split
+:END:
+The toolkit never touches a window, a GPU or a font file. Work flows in one direction:
+
+#+begin_example
+platform ──> LrgGuiInput ──> LrgGuiContext widgets ──> LrgGuiDrawList ──> backend renders
+             (snapshot)       (layout + logic)          (plain structs)
+#+end_example
+
+- *Input* is a plain struct (=LrgGuiInput=) that a backend fills (=lrg_gui_raylib_poll_input()=) or a test constructs by hand.
+- *Output* is a list of plain command structs (=LrgGuiCommand=) that a backend replays (=lrg_gui_raylib_render()=) or a test inspects (=lrg_gui_draw_list_find_text()=).
+- *Text measurement* and the *clipboard* are callbacks. Without them the context uses a fixed 0.55 em per character and an internal clipboard buffer, so layout is deterministic headless.
+
+*** Why it exists
+:PROPERTIES:
+:CUSTOM_ID: why
+:END:
+- *The editor.* An editor needs docking, trees, inspectors, drag and drop, menus, modals and a 3D viewport composited under overlays; the toolkit was shaped by those needs.
+- *In-game tools.* Debug panels, consoles and cheat menus can be dropped into any game loop with a handful of calls, sharing the engine's raylib window.
+- *Headless tests.* Because input and output are plain data, every widget is exercised by =tests/test-gui.c= without a display: inject synthetic frames, assert on return values and recorded draw commands.
+
+** Frame loop
+:PROPERTIES:
+:CUSTOM_ID: frame-loop
+:END:
+#+begin_src c
+LrgGuiContext * lrg_gui_context_new            (void);
+void            lrg_gui_context_begin_frame    (LrgGuiContext     *self,
+                                                const LrgGuiInput *input,
+                                                gfloat             width,
+                                                gfloat             height);
+void            lrg_gui_context_end_frame      (LrgGuiContext     *self);
+LrgGuiDrawList *lrg_gui_context_get_draw_list  (LrgGuiContext     *self);
+guint64         lrg_gui_context_get_frame      (LrgGuiContext     *self);
+LrgGuiCursor    lrg_gui_context_get_cursor     (LrgGuiContext     *self);
+gboolean        lrg_gui_context_wants_mouse    (LrgGuiContext     *self);
+gboolean        lrg_gui_context_wants_keyboard (LrgGuiContext     *self);
+gboolean        lrg_gui_context_needs_redraw   (LrgGuiContext     *self);
+#+end_src
+
+=lrg_gui_context_begin_frame()= copies the input, derives per-button click/release/double-click transitions (double-click: second press within 0.30 s and 6 px), clears the draw layers, resets the ID stack and region stack, and processes popup dismissal: a mouse press outside the top-most popups closes them (modals are never closed this way), and Escape closes the top popup unless a text field has focus. It then opens an implicit root region covering the whole window (=LRG_GUI_REGION_NO_PADDING=), so widgets can be called without any explicit region.
+
+=lrg_gui_context_end_frame()= closes any regions left open, drops popups that were not built this frame, releases the active/focused widget if it was not submitted this frame (a widget that vanished cannot keep the pointer captured), emits the tooltip or drag preview, ends a drag when the left button is up, and merges the internal layers (base, popup, overlay) into the final draw list in that order. The returned list stays valid until the next =begin_frame=.
+
+The queries after =end_frame= are what a host uses to route input and schedule frames:
+
+| Function | Meaning |
+|----------+---------|
+| =lrg_gui_context_wants_mouse()= | Pointer is over UI or a widget is active: the 3D scene should ignore the mouse |
+| =lrg_gui_context_wants_keyboard()= | A text field has keyboard focus: game/editor hotkeys should not fire |
+| =lrg_gui_context_needs_redraw()= | Something animates (caret blink, drags): an event-driven host should schedule another frame |
+| =lrg_gui_context_get_cursor()= | Pointer shape requested this frame (pass to =lrg_gui_raylib_apply_cursor()=) |
+| =lrg_gui_context_get_frame()= | Number of frames begun |
+
+Coordinates everywhere are window pixels with the origin at the top left.
+
+** Input snapshot
+:PROPERTIES:
+:CUSTOM_ID: input-snapshot
+:END:
+#+begin_src c
+#define LRG_GUI_MAX_INPUT_EVENTS (64)
+
+typedef struct
+{
+	LrgGuiKey       key;
+	LrgGuiModifiers mods;
+	gboolean        repeat;
+} LrgGuiKeyEvent;
+
+typedef struct
+{
+	gfloat          mouse_x;
+	gfloat          mouse_y;
+	gboolean        mouse_down[LRG_GUI_MOUSE_BUTTON_COUNT];
+	gfloat          wheel_x;
+	gfloat          wheel_y;
+	LrgGuiModifiers mods;
+	LrgGuiKeyEvent  keys[LRG_GUI_MAX_INPUT_EVENTS];
+	guint           n_keys;
+	gunichar        chars[LRG_GUI_MAX_INPUT_EVENTS];
+	guint           n_chars;
+	gboolean        key_down[LRG_GUI_KEY_COUNT];
+	gdouble         time;
+	gfloat          delta;
+} LrgGuiInput;
+
+void lrg_gui_input_init      (LrgGuiInput     *input);
+void lrg_gui_input_new_frame (LrgGuiInput     *input,
+                              gfloat           delta);
+void lrg_gui_input_add_key   (LrgGuiInput     *input,
+                              LrgGuiKey        key,
+                              LrgGuiModifiers  mods);
+void lrg_gui_input_add_text  (LrgGuiInput     *input,
+                              const gchar     *text);
+#+end_src
+
+The snapshot mixes *held state* (=mouse_down=, =key_down=, =mods=, pointer position) with *per-frame events* (=keys=, =chars=, wheel deltas). =lrg_gui_input_init()= zeroes the struct and parks the pointer far outside any window. =lrg_gui_input_new_frame()= clears only the per-frame events and advances =time= by =delta=, keeping held state, so a host (or test) calls it once at the top of each frame and then updates what changed. =lrg_gui_input_add_key()= appends a press and also marks the key held; =lrg_gui_input_add_text()= appends the UTF-8 text as typed characters. Clicks are not events: the context detects them from =mouse_down= changing between consecutive frames, so a click takes two frames (down, then up).
+
+=wheel_y= is positive when the wheel moves away from the user. Keys are backend-independent =LrgGuiKey= values (=LRG_GUI_KEY_TAB= ... =LRG_GUI_KEY_A= .. =LRG_GUI_KEY_Z=, =LRG_GUI_KEY_0= .. =LRG_GUI_KEY_9=, =LRG_GUI_KEY_F1= .. =LRG_GUI_KEY_F12=, punctuation, keypad, with =LRG_GUI_KEY_COUNT= as the array size); keypad Enter maps to =LRG_GUI_KEY_ENTER=. Modifiers are the bits =LRG_GUI_MOD_CTRL=, =LRG_GUI_MOD_SHIFT=, =LRG_GUI_MOD_ALT=, =LRG_GUI_MOD_SUPER=. Mouse buttons are =LRG_GUI_MOUSE_LEFT=, =LRG_GUI_MOUSE_RIGHT=, =LRG_GUI_MOUSE_MIDDLE= (=LRG_GUI_MOUSE_BUTTON_COUNT= = 3).
+
+** Identity and the ID stack
+:PROPERTIES:
+:CUSTOM_ID: identity
+:END:
+#+begin_src c
+LrgGuiId lrg_gui_get_id      (LrgGuiContext *self,
+                              const gchar   *str);
+void     lrg_gui_push_id     (LrgGuiContext *self,
+                              const gchar   *str);
+void     lrg_gui_push_id_int (LrgGuiContext *self,
+                              gint64         value);
+void     lrg_gui_push_id_ptr (LrgGuiContext *self,
+                              gconstpointer  ptr);
+void     lrg_gui_pop_id      (LrgGuiContext *self);
+#+end_src
+
+Every interactive widget has an =LrgGuiId=: an FNV-1a hash of its label seeded with the hash on top of the ID stack. Two widgets with the same label in the same scope share state (and fight over the pointer), so repeated rows push a scope first:
+
+#+begin_src c
+for (i = 0; i < n_nodes; i++)
+{
+	lrg_gui_push_id_ptr (ctx, nodes[i]);
+	if (lrg_gui_button (ctx, "Delete"))
+		delete_node (nodes[i]);
+	lrg_gui_pop_id (ctx);
+}
+#+end_src
+
+Label rules:
+
+| Label | Displayed | Identity hashed |
+|-------+-----------+-----------------|
+| ="Save"= | =Save= | ="Save"= |
+| ="Delete##node42"= | =Delete= | ="Delete##node42"= (whole string) |
+| ="##rename"= | nothing | ="##rename"= |
+| ="Inspector (3)###inspector"= | =Inspector (3)= | ="inspector"= only |
+
+- *"##"*: everything from =##= on is hidden but stays part of the identity. Use it to give identical visible labels distinct identities, or to make a label-less field.
+- *"###"*: only the part after =###= is hashed, so the visible text can change frame to frame (counts, dirty markers, dynamic tab titles) while the widget keeps its state.
+- =lrg_gui_text()= and friends are not parsed for =##=; =lrg_gui_calc_text_width()= ignores the hidden part.
+- The ID stack is reset at every =begin_frame=; =lrg_gui_tree_node()= and =lrg_gui_dock_begin_panel()= push their own scope.
+
+** Regions and layout
+:PROPERTIES:
+:CUSTOM_ID: regions-and-layout
+:END:
+*** Regions
+:PROPERTIES:
+:CUSTOM_ID: regions
+:END:
+#+begin_src c
+typedef enum
+{
+	LRG_GUI_REGION_NONE       = 0,
+	LRG_GUI_REGION_SCROLL_Y   = 1 << 0,
+	LRG_GUI_REGION_SCROLL_X   = 1 << 1,
+	LRG_GUI_REGION_BORDER     = 1 << 2,
+	LRG_GUI_REGION_BACKGROUND = 1 << 3,
+	LRG_GUI_REGION_NO_PADDING = 1 << 4,
+	LRG_GUI_REGION_HORIZONTAL = 1 << 5
+} LrgGuiRegionFlags;
+
+void lrg_gui_begin_region      (LrgGuiContext     *self,
+                                const gchar       *str_id,
+                                const LrgGuiRect  *rect,
+                                LrgGuiRegionFlags  flags);
+void lrg_gui_begin_child       (LrgGuiContext     *self,
+                                const gchar       *str_id,
+                                gfloat             width,
+                                gfloat             height,
+                                LrgGuiRegionFlags  flags);
+void lrg_gui_end_region        (LrgGuiContext     *self);
+void lrg_gui_get_region_rect   (LrgGuiContext     *self,
+                                LrgGuiRect        *rect);
+void lrg_gui_get_content_avail (LrgGuiContext     *self,
+                                gfloat            *width,
+                                gfloat            *height);
+#+end_src
+
+A region is a clipped layout area with its own cursor. Scroll offsets are kept per =str_id=.
+
+| Flag | Effect |
+|------+--------|
+| =LRG_GUI_REGION_NONE= | Plain clipped area with padding |
+| =LRG_GUI_REGION_SCROLL_Y= | Vertical scrolling via wheel and scrollbar |
+| =LRG_GUI_REGION_SCROLL_X= | Horizontal scrolling via Shift+wheel and scrollbar |
+| =LRG_GUI_REGION_BORDER= | Draw a border |
+| =LRG_GUI_REGION_BACKGROUND= | Fill with =LRG_GUI_COL_PANEL_BG= |
+| =LRG_GUI_REGION_NO_PADDING= | Content starts at the edge (no =region_padding=) |
+| =LRG_GUI_REGION_HORIZONTAL= | Items flow left to right on one line (toolbars, menu bars) |
+
+=lrg_gui_begin_region()= with an explicit =rect= places the region absolutely; with =rect= = =NULL= it takes the rest of the current region as a child. =lrg_gui_begin_child()= lays out a child region as an item of the current region: a =width= or =height= =<= 0 means "available size plus that value", so =lrg_gui_begin_child (ctx, "log", 0, -lrg_gui_get_frame_height (ctx) - 6, LRG_GUI_REGION_SCROLL_Y)= leaves room for one input row below. Both are closed with =lrg_gui_end_region()=. The wheel delta consumed by a scrolling region is not reported by =lrg_gui_get_mouse_wheel()=.
+
+*** Cursor and line layout
+:PROPERTIES:
+:CUSTOM_ID: cursor-layout
+:END:
+#+begin_src c
+void   lrg_gui_get_cursor          (LrgGuiContext *self,
+                                    gfloat        *x,
+                                    gfloat        *y);
+void   lrg_gui_set_cursor          (LrgGuiContext *self,
+                                    gfloat         x,
+                                    gfloat         y);
+void   lrg_gui_same_line           (LrgGuiContext *self,
+                                    gfloat         spacing);
+void   lrg_gui_spacing             (LrgGuiContext *self);
+void   lrg_gui_dummy               (LrgGuiContext *self,
+                                    gfloat         width,
+                                    gfloat         height);
+void   lrg_gui_separator           (LrgGuiContext *self);
+void   lrg_gui_separator_text      (LrgGuiContext *self,
+                                    const gchar   *label);
+void   lrg_gui_indent              (LrgGuiContext *self,
+                                    gfloat         width);
+void   lrg_gui_unindent            (LrgGuiContext *self,
+                                    gfloat         width);
+void   lrg_gui_set_next_item_width (LrgGuiContext *self,
+                                    gfloat         width);
+void   lrg_gui_property_label      (LrgGuiContext *self,
+                                    const gchar   *label);
+void   lrg_gui_scroll_to_item      (LrgGuiContext *self,
+                                    gfloat         align);
+gfloat lrg_gui_calc_text_width     (LrgGuiContext *self,
+                                    const gchar   *text);
+gfloat lrg_gui_get_frame_height    (LrgGuiContext *self);
+#+end_src
+
+By default items stack vertically, one per row, separated by =item_spacing_y=.
+
+- =lrg_gui_same_line()= puts the next item to the right of the previous one, =spacing= pixels away (=< 0= = style =item_spacing_x=).
+- =lrg_gui_set_cursor()= places the *next item exactly at (x, y)* in window pixels, in any region, including the x coordinate in an ordinary vertical region; layout then continues on the row below that item. This is how the editor overlays controls on a panel: the viewport sets the cursor to the panel's top-left and submits a full-size =lrg_gui_invisible_button()=, and the hierarchy places the visibility and lock toggles at the right edge of each row.
+- =lrg_gui_get_cursor()= returns where the next item would go.
+- =lrg_gui_indent()= / =lrg_gui_unindent()= shift the left edge (=<= 0 = style =indent=); pass the same value to both.
+- =lrg_gui_set_next_item_width()= sets the next widget's width; =<= 0 means available width plus that value.
+- =lrg_gui_property_label()= draws a label in the left column of a two-column grid (=label_ratio= of the width) and positions the next widget in the right column with its width set to fill it. Inspector rows are =property_label= followed by a value editor with a =##= label.
+- =lrg_gui_scroll_to_item()= scrolls the current region from the next frame so the last item is visible: =align= 0 top, 0.5 centre, 1 bottom, =< 0= only if it is not already fully visible.
+- =lrg_gui_dummy()= reserves empty space; =lrg_gui_separator()= draws a rule; =lrg_gui_separator_text()= draws a rule with a heading in it.
+- =lrg_gui_get_frame_height()= is the height of a button or field (font size plus vertical frame padding), useful for sizing custom rows.
+
+*** Custom drawing inside the layout
+:PROPERTIES:
+:CUSTOM_ID: custom-drawing
+:END:
+#+begin_src c
+LrgGuiDrawList *lrg_gui_get_draw_list (LrgGuiContext      *self);
+void            lrg_gui_draw_callback (LrgGuiContext      *self,
+                                       const LrgGuiRect   *rect,
+                                       LrgGuiDrawCallback  callback,
+                                       gpointer            user_data);
+#+end_src
+
+=lrg_gui_get_draw_list()= returns the layer currently being drawn (base or popup), for custom widgets: reserve the space with a widget such as =lrg_gui_invisible_button()= or =lrg_gui_dummy()=, read =lrg_gui_get_item_rect()=, and draw only within that rectangle or the region. =lrg_gui_draw_callback()= records a [[#draw-callbacks][callback command]] in draw order.
+
+** Text
+:PROPERTIES:
+:CUSTOM_ID: text
+:END:
+#+begin_src c
+void lrg_gui_text          (LrgGuiContext *self,
+                            const gchar   *text);
+void lrg_gui_textf         (LrgGuiContext *self,
+                            const gchar   *format,
+                            ...) G_GNUC_PRINTF (2, 3);
+void lrg_gui_text_colored  (LrgGuiContext *self,
+                            LrgGuiColor    color,
+                            const gchar   *text);
+void lrg_gui_text_disabled (LrgGuiContext *self,
+                            const gchar   *text);
+void lrg_gui_text_mono     (LrgGuiContext *self,
+                            LrgGuiColor    color,
+                            const gchar   *text);
+void lrg_gui_text_wrapped  (LrgGuiContext *self,
+                            const gchar   *text);
+#+end_src
+
+Text items are not interactive and their strings are not parsed for =##=. =lrg_gui_text_disabled()= uses =LRG_GUI_COL_TEXT_DISABLED= for secondary information; =lrg_gui_text_mono()= uses the monospace font (logs, code, paths); =lrg_gui_text_wrapped()= wraps at the region width. Colours are =LrgGuiColor= values; build them with =LRG_GUI_RGBA (r, g, b, a)= or =LRG_GUI_HEX (0xRRGGBB)=, or take them from the style (=style->colors[LRG_GUI_COL_ERROR]=).
+
+** Buttons, toggles and selectables
+:PROPERTIES:
+:CUSTOM_ID: buttons
+:END:
+#+begin_src c
+gboolean lrg_gui_button           (LrgGuiContext         *self,
+                                   const gchar           *label);
+gboolean lrg_gui_button_sized     (LrgGuiContext         *self,
+                                   const gchar           *label,
+                                   gfloat                 width,
+                                   gfloat                 height);
+gboolean lrg_gui_toggle_button    (LrgGuiContext         *self,
+                                   const gchar           *label,
+                                   gboolean              *active);
+gboolean lrg_gui_invisible_button (LrgGuiContext         *self,
+                                   const gchar           *str_id,
+                                   gfloat                 width,
+                                   gfloat                 height);
+gboolean lrg_gui_checkbox         (LrgGuiContext         *self,
+                                   const gchar           *label,
+                                   gboolean              *value);
+gboolean lrg_gui_radio_button     (LrgGuiContext         *self,
+                                   const gchar           *label,
+                                   gboolean               active);
+gboolean lrg_gui_selectable       (LrgGuiContext         *self,
+                                   const gchar           *label,
+                                   gboolean               selected,
+                                   LrgGuiSelectableFlags  flags);
+#+end_src
+
+| Widget | Returns =TRUE= when | Notes |
+|--------+---------------------+-------|
+| =lrg_gui_button= | Clicked (press and release over it) | Width fits the text |
+| =lrg_gui_button_sized= | Clicked | =width= =<= 0 fits text; =height= =<= 0 = frame height |
+| =lrg_gui_toggle_button= | Toggled (=*active= flipped) | Stays highlighted while active (toolbar tools) |
+| =lrg_gui_invisible_button= | Left-clicked | No visuals; item queries work for every button (custom widgets, the viewport) |
+| =lrg_gui_checkbox= | Toggled (=*value= flipped) | |
+| =lrg_gui_radio_button= | Clicked | Caller owns the selection: =if (lrg_gui_radio_button (ctx, "A", mode == 0)) mode = 0;= |
+| =lrg_gui_selectable= | Clicked | Full-width row for lists and combo entries |
+
+A press that is released outside the button is not a click. Selectable flags:
+
+| Flag | Effect |
+|------+--------|
+| =LRG_GUI_SELECTABLE_NONE= | Defaults |
+| =LRG_GUI_SELECTABLE_DISABLED= | Greyed out, not clickable |
+| =LRG_GUI_SELECTABLE_DONT_CLOSE_POPUP= | Clicking it inside a popup keeps the popup open |
+| =LRG_GUI_SELECTABLE_MONOSPACE= | Monospace label |
+
+** Trees and collapsing headers
+:PROPERTIES:
+:CUSTOM_ID: trees
+:END:
+#+begin_src c
+gboolean lrg_gui_tree_node          (LrgGuiContext   *self,
+                                     const gchar     *label,
+                                     LrgGuiTreeFlags  flags);
+void     lrg_gui_tree_pop           (LrgGuiContext   *self);
+void     lrg_gui_set_next_item_open (LrgGuiContext   *self,
+                                     gboolean         open);
+gboolean lrg_gui_collapsing_header  (LrgGuiContext   *self,
+                                     const gchar     *label,
+                                     gboolean         default_open);
+#+end_src
+
+=lrg_gui_tree_node()= draws a collapsible row and returns =TRUE= if it is open; the children follow and *must* be closed with =lrg_gui_tree_pop()=, which undoes the indentation and ID scope the node pushed. The open flag is stored in the context per identity. Without =OPEN_ON_ARROW= a click anywhere on the row toggles it, and Right / Left arrow open / close the hovered row when no text field has focus. Item queries (left and right clicks) after the node report clicks on the label, which is how outliners implement selection.
+
+| Flag | Effect |
+|------+--------|
+| =LRG_GUI_TREE_LEAF= | No children and no arrow; never opens, so it returns =FALSE= and needs no =tree_pop()= |
+| =LRG_GUI_TREE_SELECTED= | Highlight as selected |
+| =LRG_GUI_TREE_DEFAULT_OPEN= | Open the first time it appears |
+| =LRG_GUI_TREE_OPEN_ON_ARROW= | Only the arrow (or a double-click on the label) toggles; a single click on the label selects (outliner rows) |
+| =LRG_GUI_TREE_FRAMED= | Draw as a header bar |
+| =LRG_GUI_TREE_DIMMED= | Label in the disabled colour (hidden nodes) |
+
+=lrg_gui_set_next_item_open()= forces the open state of the next tree node or header (the hierarchy uses it to expand ancestors of a node selected in the viewport). =lrg_gui_collapsing_header()= is a framed section header that needs no =tree_pop()=; the inspector uses one per component.
+
+#+begin_src c
+open = lrg_gui_tree_node (ctx, name, LRG_GUI_TREE_OPEN_ON_ARROW |
+                                     (selected ? LRG_GUI_TREE_SELECTED : 0) |
+                                     (has_kids ? 0 : LRG_GUI_TREE_LEAF));
+if (lrg_gui_is_item_clicked (ctx, LRG_GUI_MOUSE_LEFT))
+	select_node (node);
+if (open)
+{
+	draw_children (node);
+	lrg_gui_tree_pop (ctx);
+}
+#+end_src
+
+** Value editors
+:PROPERTIES:
+:CUSTOM_ID: value-editors
+:END:
+All value editors edit application data in place and return =TRUE= on the frame the value changed. Pair them with [[#item-queries][item queries]] for undo: begin an undo step on =lrg_gui_is_item_activated()= and commit it on =lrg_gui_is_item_deactivated()=, so a whole drag becomes one step.
+
+*** Drag fields and sliders
+:PROPERTIES:
+:CUSTOM_ID: drag-and-slider
+:END:
+#+begin_src c
+gboolean lrg_gui_drag_float   (LrgGuiContext *self,
+                               const gchar   *label,
+                               gfloat        *value,
+                               gfloat         speed,
+                               gfloat         min,
+                               gfloat         max,
+                               const gchar   *format);
+gboolean lrg_gui_drag_float3  (LrgGuiContext *self,
+                               const gchar   *label,
+                               gfloat        *value,
+                               gfloat         speed,
+                               const gchar   *format);
+gboolean lrg_gui_drag_int     (LrgGuiContext *self,
+                               const gchar   *label,
+                               gint          *value,
+                               gfloat         speed,
+                               gint           min,
+                               gint           max);
+gboolean lrg_gui_slider_float (LrgGuiContext *self,
+                               const gchar   *label,
+                               gfloat        *value,
+                               gfloat         min,
+                               gfloat         max,
+                               const gchar   *format);
+#+end_src
+
+- *Drag fields* scrub by dragging horizontally: =speed= is the change per pixel, Shift multiplies by 10 and Alt by 0.1. Double-click or Ctrl+click turns the field into a text entry for typing an exact value. =min >= max= disables clamping. The label is shown inside the field unless hidden with =##= (the usual case after =lrg_gui_property_label()=).
+- =lrg_gui_drag_float3()= draws three fields tinted with =LRG_GUI_COL_AXIS_X/Y/Z= for transform rows; it returns =TRUE= if any component changed.
+- =lrg_gui_slider_float()= maps the field width to =[min, max]=.
+- =format= (=NULL= = ="%.3f"=) holds exactly one numeric conversion (=%f=, =%g=, =%e= or =%d=, with an optional precision) plus literal prefix/suffix text, e.g. ="%.1f deg"= or ="%d%%"=. Formats are interpreted by the toolkit, never passed to printf, so user-supplied formats are safe.
+
+*** Text fields
+:PROPERTIES:
+:CUSTOM_ID: input-text
+:END:
+#+begin_src c
+gboolean lrg_gui_input_text              (LrgGuiContext        *self,
+                                          const gchar          *label,
+                                          const gchar          *hint,
+                                          GString              *buffer,
+                                          LrgGuiInputTextFlags  flags);
+void     lrg_gui_set_keyboard_focus_here (LrgGuiContext        *self);
+void     lrg_gui_request_focus           (LrgGuiContext        *self,
+                                          const gchar          *label);
+void     lrg_gui_clear_keyboard_focus    (LrgGuiContext        *self);
+#+end_src
+
+A single-line field editing a =GString= in place, with selection, Ctrl+arrows word movement, Ctrl+A/C/X/V, Home/End, Escape to revert and Tab to move to the next field. =hint= is a placeholder shown while the field is empty and unfocused.
+
+| Flag | Effect |
+|------+--------|
+| =LRG_GUI_INPUT_TEXT_NONE= | Return =TRUE= on every edit |
+| =LRG_GUI_INPUT_TEXT_ENTER_RETURNS_TRUE= | Return =TRUE= only on Enter, or on focus loss after an edit |
+| =LRG_GUI_INPUT_TEXT_READ_ONLY= | Selectable and copyable only |
+| =LRG_GUI_INPUT_TEXT_PASSWORD= | Show dots |
+| =LRG_GUI_INPUT_TEXT_AUTO_SELECT_ALL= | Select everything on focus |
+| =LRG_GUI_INPUT_TEXT_MONOSPACE= | Monospace font (console, paths) |
+| =LRG_GUI_INPUT_TEXT_KEEP_FOCUS= | Keep focus after Enter (console input) |
+
+Focus control: =lrg_gui_set_keyboard_focus_here()= focuses whichever text field is submitted next (opening a rename box or the command palette); =lrg_gui_request_focus()= targets a specific field by label in the current ID scope, focusing it with everything selected when it is next drawn; =lrg_gui_clear_keyboard_focus()= drops focus without committing pending edits (callers that replace a field's text programmatically clear focus, then re-enter it with =set_keyboard_focus_here=). While a field has focus =lrg_gui_context_wants_keyboard()= is =TRUE=.
+
+*** Combos, colours, progress and images
+:PROPERTIES:
+:CUSTOM_ID: combo-color
+:END:
+#+begin_src c
+gboolean lrg_gui_combo        (LrgGuiContext       *self,
+                               const gchar         *label,
+                               gint                *current,
+                               const gchar * const *items,
+                               gint                 n_items);
+gboolean lrg_gui_begin_combo  (LrgGuiContext       *self,
+                               const gchar         *label,
+                               const gchar         *preview);
+void     lrg_gui_end_combo    (LrgGuiContext       *self);
+gboolean lrg_gui_color_edit   (LrgGuiContext       *self,
+                               const gchar         *label,
+                               gfloat              *rgba,
+                               gboolean             alpha);
+void     lrg_gui_progress_bar (LrgGuiContext       *self,
+                               gfloat               fraction,
+                               const gchar         *overlay);
+void     lrg_gui_image        (LrgGuiContext       *self,
+                               GObject             *texture,
+                               gfloat               width,
+                               gfloat               height);
+#+end_src
+
+- =lrg_gui_combo()= picks an index out of a string array and returns =TRUE= when =*current= changed.
+- =lrg_gui_begin_combo()= / =lrg_gui_end_combo()= build a custom list: when it returns =TRUE= the list is open; add =lrg_gui_selectable()= rows and close it.
+- =lrg_gui_color_edit()= edits =rgba[4]= (components 0..1; alpha only if =alpha= is =TRUE=) as a swatch plus R/G/B(/A) drag fields; clicking the swatch opens a popup with a palette and hex entry.
+- =lrg_gui_progress_bar()= draws =fraction= (0..1) with optional overlay text.
+- =lrg_gui_image()= draws a =GrlTexture= (passed as =GObject *=, transfer none) at the given size.
+
+#+begin_src c
+if (lrg_gui_begin_combo (ctx, "##shape", shape_names[shape]))
+{
+	gint i;
+
+	for (i = 0; i < N_SHAPES; i++)
+		if (lrg_gui_selectable (ctx, shape_names[i], i == shape, LRG_GUI_SELECTABLE_NONE))
+			shape = i;
+	lrg_gui_end_combo (ctx);
+}
+#+end_src
+
+** Item queries and tooltips
+:PROPERTIES:
+:CUSTOM_ID: item-queries
+:END:
+These ask about the most recently submitted widget.
+
+#+begin_src c
+gboolean lrg_gui_is_item_hovered        (LrgGuiContext     *self);
+gboolean lrg_gui_is_item_active         (LrgGuiContext     *self);
+gboolean lrg_gui_is_item_activated      (LrgGuiContext     *self);
+gboolean lrg_gui_is_item_deactivated    (LrgGuiContext     *self);
+gboolean lrg_gui_is_item_clicked        (LrgGuiContext     *self,
+                                         LrgGuiMouseButton  button);
+gboolean lrg_gui_is_item_double_clicked (LrgGuiContext     *self);
+void     lrg_gui_get_item_rect          (LrgGuiContext     *self,
+                                         LrgGuiRect        *rect);
+LrgGuiId lrg_gui_get_item_id            (LrgGuiContext     *self);
+void     lrg_gui_set_item_tooltip       (LrgGuiContext     *self,
+                                         const gchar       *text);
+void     lrg_gui_set_tooltip            (LrgGuiContext     *self,
+                                         const gchar       *text);
+#+end_src
+
+| Query | =TRUE= when |
+|-------+-------------|
+| =is_item_hovered= | Pointer is over the item and not blocked by a popup above it |
+| =is_item_active= | Item is held, dragged or edited |
+| =is_item_activated= | The frame the item became active (start an undo step) |
+| =is_item_deactivated= | The frame the item stopped being active (commit it) |
+| =is_item_clicked (button)= | =button= was pressed on the item this frame |
+| =is_item_double_clicked= | Left double-click on the item |
+
+=lrg_gui_set_item_tooltip()= shows text near the pointer after hovering the last item for about 0.45 s; =lrg_gui_set_tooltip()= shows it this frame unconditionally. Tooltips may contain newlines, are drawn on the overlay layer and are kept on screen.
+
+** Menus, popups and modals
+:PROPERTIES:
+:CUSTOM_ID: popups
+:END:
+#+begin_src c
+void     lrg_gui_begin_menu_bar             (LrgGuiContext    *self,
+                                             const LrgGuiRect *rect);
+void     lrg_gui_end_menu_bar               (LrgGuiContext    *self);
+gboolean lrg_gui_begin_menu                 (LrgGuiContext    *self,
+                                             const gchar      *label,
+                                             gboolean          enabled);
+void     lrg_gui_end_menu                   (LrgGuiContext    *self);
+gboolean lrg_gui_menu_item                  (LrgGuiContext    *self,
+                                             const gchar      *label,
+                                             const gchar      *shortcut,
+                                             gboolean          checked,
+                                             gboolean          enabled);
+void     lrg_gui_open_popup                 (LrgGuiContext    *self,
+                                             const gchar      *str_id);
+gboolean lrg_gui_is_popup_open              (LrgGuiContext    *self,
+                                             const gchar      *str_id);
+gboolean lrg_gui_begin_popup                (LrgGuiContext    *self,
+                                             const gchar      *str_id);
+gboolean lrg_gui_begin_popup_context_item   (LrgGuiContext    *self,
+                                             const gchar      *str_id);
+gboolean lrg_gui_begin_popup_context_region (LrgGuiContext    *self,
+                                             const gchar      *str_id);
+gboolean lrg_gui_begin_popup_modal          (LrgGuiContext    *self,
+                                             const gchar      *title,
+                                             gboolean         *open);
+void     lrg_gui_end_popup                  (LrgGuiContext    *self);
+void     lrg_gui_close_current_popup        (LrgGuiContext    *self);
+void     lrg_gui_close_all_popups           (LrgGuiContext    *self);
+void     lrg_gui_set_next_popup_size        (LrgGuiContext    *self,
+                                             gfloat            width,
+                                             gfloat            height);
+void     lrg_gui_set_next_popup_pos         (LrgGuiContext    *self,
+                                             gfloat            x,
+                                             gfloat            y);
+#+end_src
+
+*** How popups work
+:PROPERTIES:
+:CUSTOM_ID: popup-model
+:END:
+- Open popups form a stack by nesting level. =lrg_gui_open_popup()= opens one at the pointer (or at =lrg_gui_set_next_popup_pos()=) at the current nesting level, closing any deeper popups; reopening an already-open popup is a no-op.
+- A popup is *rebuilt every frame* by calling its =begin_*= function. When it returns =TRUE= build the contents and call =lrg_gui_end_popup()=. A popup that is not built during a frame is closed at =end_frame=.
+- =open_popup= and =begin_popup= must use the same =str_id= in the same ID scope.
+- Popups are drawn on their own layer above the base UI; hover queries for widgets underneath are blocked.
+- Dismissal: a press outside the top-most popups closes them; Escape closes the top one (unless a text field has focus); activating a =lrg_gui_menu_item()= or a =lrg_gui_selectable()= (without =DONT_CLOSE_POPUP=) closes the menu; =lrg_gui_close_current_popup()= closes the popup being built and its children; =lrg_gui_close_all_popups()= closes everything.
+- Size: popups fit their content (default minimum width 180 px) unless =lrg_gui_set_next_popup_size()= requests a size (0 = fit); a requested height makes the popup scroll. The background is recorded first and patched to the measured size at =end_popup= (=lrg_gui_draw_list_set_rect()=).
+- Placement is clamped to the window.
+
+*** Context menus
+:PROPERTIES:
+:CUSTOM_ID: context-menus
+:END:
+=lrg_gui_begin_popup_context_item()= opens on a right-click over the last item (a =NULL= id derives one from the item); =lrg_gui_begin_popup_context_region()= opens on a right-click over empty space in the current region.
+
+#+begin_src c
+lrg_gui_selectable (ctx, name, selected, LRG_GUI_SELECTABLE_NONE);
+if (lrg_gui_begin_popup_context_item (ctx, NULL))
+{
+	if (lrg_gui_menu_item (ctx, "Rename", "F2", FALSE, TRUE))
+		start_rename (node);
+	lrg_gui_separator (ctx);
+	if (lrg_gui_begin_menu (ctx, "Create Child", TRUE))
+	{
+		create_menu (node);
+		lrg_gui_end_menu (ctx);
+	}
+	if (lrg_gui_menu_item (ctx, "Copy GUID", NULL, FALSE, TRUE))
+		lrg_gui_context_set_clipboard (ctx, guid);
+	lrg_gui_end_popup (ctx);
+}
+#+end_src
+
+*** Menu bars
+:PROPERTIES:
+:CUSTOM_ID: menu-bars
+:END:
+=lrg_gui_begin_menu_bar()= opens a horizontal region at =rect=. Inside it, =lrg_gui_begin_menu()= is a top-level menu; inside a menu it is a submenu that opens to the side. Call =lrg_gui_end_menu()= only when it returned =TRUE=. Clicking an open menu's header closes it; once one menu is open, hovering a sibling header switches to it. =lrg_gui_menu_item()= draws =shortcut= right-aligned as a hint only; binding the key is up to the application (see [[#raw-input][Raw input and shortcuts]]).
+
+#+begin_src c
+LrgGuiRect bar = { 0, 0, width, lrg_gui_get_frame_height (ctx) + 4 };
+
+lrg_gui_begin_menu_bar (ctx, &bar);
+if (lrg_gui_begin_menu (ctx, "File", TRUE))
+{
+	if (lrg_gui_menu_item (ctx, "Save", "Ctrl+S", FALSE, dirty))
+		save ();
+	lrg_gui_end_menu (ctx);
+}
+lrg_gui_end_menu_bar (ctx);
+#+end_src
+
+*** Modals
+:PROPERTIES:
+:CUSTOM_ID: modals
+:END:
+=lrg_gui_begin_popup_modal()= is a dialog centred in the window over a dimmed backdrop (=LRG_GUI_COL_MODAL_DIM=) that blocks everything behind it and is never dismissed by clicking outside. Open it with =lrg_gui_open_popup (ctx, title)=. The title (which follows the =##= / =###= rules) is drawn as a title bar; when =open= is non-=NULL= a close button is shown and Escape also closes it, setting =*open= to =FALSE=.
+
+#+begin_src c
+if (want_confirm)
+{
+	lrg_gui_open_popup (ctx, "Discard changes?");
+	want_confirm = FALSE;
+}
+lrg_gui_set_next_popup_size (ctx, 360, 0);
+if (lrg_gui_begin_popup_modal (ctx, "Discard changes?", &confirm_open))
+{
+	lrg_gui_text_wrapped (ctx, "The level has unsaved changes.");
+	if (lrg_gui_button (ctx, "Discard"))
+	{
+		discard ();
+		lrg_gui_close_current_popup (ctx);
+	}
+	lrg_gui_same_line (ctx, -1);
+	if (lrg_gui_button (ctx, "Cancel"))
+		lrg_gui_close_current_popup (ctx);
+	lrg_gui_end_popup (ctx);
+}
+#+end_src
+
+** Tabs
+:PROPERTIES:
+:CUSTOM_ID: tabs
+:END:
+#+begin_src c
+gboolean lrg_gui_begin_tab_bar (LrgGuiContext *self,
+                                const gchar   *str_id);
+gboolean lrg_gui_tab_item      (LrgGuiContext *self,
+                                const gchar   *label,
+                                gboolean      *open);
+void     lrg_gui_end_tab_bar   (LrgGuiContext *self);
+#+end_src
+
+=lrg_gui_begin_tab_bar()= always returns =TRUE=; always pair it with =lrg_gui_end_tab_bar()=. =lrg_gui_tab_item()= returns =TRUE= for the selected tab (draw its content below); the selection is kept per tab bar and defaults to the first tab. When =open= is non-=NULL= the tab shows a close button that sets =*open= to =FALSE=; a tab whose =*open= is already =FALSE= is skipped.
+
+#+begin_src c
+lrg_gui_begin_tab_bar (ctx, "settings-tabs");
+if (lrg_gui_tab_item (ctx, "General", NULL))
+	draw_general ();
+if (lrg_gui_tab_item (ctx, "Input", NULL))
+	draw_input ();
+lrg_gui_end_tab_bar (ctx);
+#+end_src
+
+For full-window dockable tab stacks use [[#docking][LrgGuiDock]] instead.
+
+** Drag and drop
+:PROPERTIES:
+:CUSTOM_ID: drag-and-drop
+:END:
+#+begin_src c
+gboolean     lrg_gui_begin_drag_source   (LrgGuiContext  *self);
+void         lrg_gui_set_drag_payload    (LrgGuiContext  *self,
+                                          const gchar    *type,
+                                          const gchar    *data,
+                                          const gchar    *preview);
+void         lrg_gui_end_drag_source     (LrgGuiContext  *self);
+const gchar *lrg_gui_accept_drop         (LrgGuiContext  *self,
+                                          const gchar    *type);
+const gchar *lrg_gui_get_drag_payload    (LrgGuiContext  *self,
+                                          const gchar   **type);
+gboolean     lrg_gui_was_payload_dropped (LrgGuiContext  *self);
+#+end_src
+
+Payloads are a *type* string plus a *data* string (both copied), so they survive any frame without lifetime concerns. The editor uses type ="node"= with a node GUID, ="asset"= with an asset path, and the dock uses its own internal type for tabs.
+
+- *Source*: right after a widget, =lrg_gui_begin_drag_source()= returns =TRUE= once the left button has been held on that item and the pointer moved more than 4 px, and on every frame of the drag after that. Set the payload and call =lrg_gui_end_drag_source()= (which keeps the source capturing the pointer and requests the move cursor). =preview= is drawn next to the pointer on the overlay layer.
+- *Target*: right after the target widget, =lrg_gui_accept_drop (ctx, type)= highlights the item (=LRG_GUI_COL_DROP_TARGET= outline) while a matching payload hovers it, and returns the payload data on the frame the button is released over it, otherwise =NULL=. An item is never a target for its own drag. The returned string is valid until the next frame begins; copy it if you need it longer.
+- *Anywhere*: =lrg_gui_get_drag_payload()= returns the payload (and its type) while a drag is active, for custom feedback such as insertion lines; =lrg_gui_was_payload_dropped()= is =TRUE= on the frame a payload was released anywhere, accepted or not.
+- Releasing the button always ends the drag.
+
+#+begin_src c
+lrg_gui_selectable (ctx, asset_name, FALSE, LRG_GUI_SELECTABLE_NONE);
+if (lrg_gui_begin_drag_source (ctx))
+{
+	lrg_gui_set_drag_payload (ctx, "asset", asset_path, asset_name);
+	lrg_gui_end_drag_source (ctx);
+}
+
+/* ... elsewhere, a row that accepts assets ... */
+lrg_gui_tree_node (ctx, node_name, flags);
+if ((dropped = lrg_gui_accept_drop (ctx, "asset")) != NULL)
+{
+	g_autofree gchar *path = g_strdup (dropped);
+
+	attach_asset (node, path);
+}
+#+end_src
+
+** Raw input and shortcuts
+:PROPERTIES:
+:CUSTOM_ID: raw-input
+:END:
+#+begin_src c
+gboolean        lrg_gui_is_key_pressed          (LrgGuiContext     *self,
+                                                 LrgGuiKey          key,
+                                                 gboolean           repeat);
+gboolean        lrg_gui_is_key_down             (LrgGuiContext     *self,
+                                                 LrgGuiKey          key);
+gboolean        lrg_gui_shortcut                (LrgGuiContext     *self,
+                                                 LrgGuiModifiers    mods,
+                                                 LrgGuiKey          key);
+LrgGuiModifiers lrg_gui_get_mods                (LrgGuiContext     *self);
+gboolean        lrg_gui_is_mouse_clicked        (LrgGuiContext     *self,
+                                                 LrgGuiMouseButton  button);
+gboolean        lrg_gui_is_mouse_released       (LrgGuiContext     *self,
+                                                 LrgGuiMouseButton  button);
+gboolean        lrg_gui_is_mouse_down           (LrgGuiContext     *self,
+                                                 LrgGuiMouseButton  button);
+gboolean        lrg_gui_is_mouse_double_clicked (LrgGuiContext     *self,
+                                                 LrgGuiMouseButton  button);
+void            lrg_gui_get_mouse               (LrgGuiContext     *self,
+                                                 gfloat            *x,
+                                                 gfloat            *y);
+void            lrg_gui_get_mouse_delta         (LrgGuiContext     *self,
+                                                 gfloat            *dx,
+                                                 gfloat            *dy);
+gfloat          lrg_gui_get_mouse_wheel         (LrgGuiContext     *self);
+gfloat          lrg_gui_get_delta_time          (LrgGuiContext     *self);
+void            lrg_gui_set_cursor_shape        (LrgGuiContext     *self,
+                                                 LrgGuiCursor       cursor);
+gboolean        lrg_gui_is_rect_hovered         (LrgGuiContext     *self,
+                                                 const LrgGuiRect  *rect);
+gboolean        lrg_gui_splitter                (LrgGuiContext     *self,
+                                                 const gchar       *str_id,
+                                                 const LrgGuiRect  *rect,
+                                                 gboolean           vertical,
+                                                 gfloat            *delta);
+#+end_src
+
+These read the frame's input snapshot directly, for things that are not widgets: viewport camera controls, global hotkeys, custom widgets.
+
+- =lrg_gui_is_key_pressed()= checks this frame's key events (=repeat= = also count auto-repeats); =lrg_gui_is_key_down()= checks held state (continuous controls such as a fly camera).
+- =lrg_gui_shortcut (ctx, mods, key)= fires when the chord was pressed this frame with *exactly* =mods= held (Ctrl+Shift+S does not trigger Ctrl+S). While a text field has focus, chords without Ctrl never fire, and neither do the Ctrl chords text editing owns (A, C, V, X, Z, Y, Left, Right, Backspace, Delete); other Ctrl chords such as Ctrl+S still work while typing.
+- =lrg_gui_get_mouse_wheel()= returns the vertical wheel delta not consumed by a scrolling region, so a viewport under a scroll panel only zooms when the panel did not scroll.
+- =lrg_gui_is_rect_hovered()= is =TRUE= when the pointer is inside =rect=, inside the current clip and not blocked by a popup.
+- =lrg_gui_set_cursor_shape()= requests a pointer shape for this frame (=LRG_GUI_CURSOR_ARROW=, =TEXT=, =HAND=, =RESIZE_EW=, =RESIZE_NS=, =RESIZE_ALL=, =NOT_ALLOWED=). Do not confuse it with =lrg_gui_set_cursor()=, which moves the layout cursor.
+- =lrg_gui_splitter()= is a draggable divider at =rect=: =vertical= = =TRUE= for a vertical bar dragged horizontally; it returns =TRUE= while dragged and writes the pixels moved this frame along the drag axis into =*delta=. The dock is built on it.
+
+#+begin_src c
+if (lrg_gui_shortcut (ctx, LRG_GUI_MOD_CTRL, LRG_GUI_KEY_S))
+	save ();
+if (lrg_gui_shortcut (ctx, LRG_GUI_MOD_CTRL | LRG_GUI_MOD_SHIFT, LRG_GUI_KEY_Z))
+	redo ();
+#+end_src
+
+** Style and themes
+:PROPERTIES:
+:CUSTOM_ID: style
+:END:
+#+begin_src c
+typedef struct
+{
+	LrgGuiColor colors[LRG_GUI_COL_COUNT];
+	gfloat      font_size;
+	gfloat      frame_padding_x;
+	gfloat      frame_padding_y;
+	gfloat      item_spacing_x;
+	gfloat      item_spacing_y;
+	gfloat      region_padding;
+	gfloat      indent;
+	gfloat      rounding;
+	gfloat      scrollbar_size;
+	gfloat      label_ratio;
+} LrgGuiStyle;
+
+void         lrg_gui_style_init        (LrgGuiStyle   *style,
+                                        const gchar   *theme,
+                                        gfloat         scale);
+LrgGuiStyle *lrg_gui_context_get_style (LrgGuiContext *self);
+#+end_src
+
+=lrg_gui_context_get_style()= returns the live style (transfer none); modify it between frames. =lrg_gui_style_init()= fills a style from one of the four Catppuccin flavours, ="mocha"= (the default, also used for =NULL= or an unknown name), ="macchiato"=, ="frappe"= and ="latte"= (the light theme), matched case-insensitively, and multiplies every metric by =scale= (=<= 0 = 1.0). A new context starts with the default style.
+
+Metrics at scale 1.0 (each rounded after scaling):
+
+| Field | Default | Meaning |
+|-------+---------+---------|
+| =font_size= | 15 | Text size in pixels |
+| =frame_padding_x= | 6 | Horizontal padding inside buttons and fields |
+| =frame_padding_y= | 3 | Vertical padding inside buttons and fields |
+| =item_spacing_x= | 6 | Gap between items on one line |
+| =item_spacing_y= | 4 | Gap between rows |
+| =region_padding= | 6 | Padding inside regions |
+| =indent= | 16 | Tree indentation per level |
+| =rounding= | 3 | Frame corner radius |
+| =scrollbar_size= | 10 | Scrollbar width |
+| =label_ratio= | 0.38 | Share of the width used by =lrg_gui_property_label()= labels (not scaled) |
+
+The editor scales by its UI-scale and font-size settings together: =lrg_gui_style_init (style, theme, ui_scale * font_size / 15.0f)=, then reloads the backend fonts at =style->font_size=.
+
+*** Colour slots
+:PROPERTIES:
+:CUSTOM_ID: color-slots
+:END:
+=colors= is indexed by =LrgGuiStyleColor=. The Catppuccin column is the palette entry =lrg_gui_style_init()= assigns (alpha in hex where not opaque).
+
+| Slot | Used for | Catppuccin |
+|------+----------+------------|
+| =LRG_GUI_COL_TEXT= | Normal text | text |
+| =LRG_GUI_COL_TEXT_DISABLED= | Disabled / secondary text | overlay0 |
+| =LRG_GUI_COL_WINDOW_BG= | Application background | crust |
+| =LRG_GUI_COL_PANEL_BG= | Panel background | base |
+| =LRG_GUI_COL_POPUP_BG= | Popup, menu and tooltip background | mantle |
+| =LRG_GUI_COL_BORDER= | Borders | surface0 |
+| =LRG_GUI_COL_FRAME_BG= | Input field background | surface0 |
+| =LRG_GUI_COL_FRAME_BG_HOVERED= | Hovered field | surface1 |
+| =LRG_GUI_COL_FRAME_BG_ACTIVE= | Active field | surface2 |
+| =LRG_GUI_COL_BUTTON= | Button | surface0 |
+| =LRG_GUI_COL_BUTTON_HOVERED= | Hovered button | surface1 |
+| =LRG_GUI_COL_BUTTON_ACTIVE= | Pressed button | surface2 |
+| =LRG_GUI_COL_HEADER= | Selected row / header | blue @ 0x50 |
+| =LRG_GUI_COL_HEADER_HOVERED= | Hovered row | surface1 @ 0xc0 |
+| =LRG_GUI_COL_HEADER_ACTIVE= | Pressed row | blue @ 0x80 |
+| =LRG_GUI_COL_CHECK_MARK= | Check marks and radio dots | blue |
+| =LRG_GUI_COL_SLIDER_GRAB= | Slider handles | blue |
+| =LRG_GUI_COL_SEPARATOR= | Separators and splitters | surface1 |
+| =LRG_GUI_COL_SCROLLBAR_BG= | Scrollbar track | mantle |
+| =LRG_GUI_COL_SCROLLBAR_GRAB= | Scrollbar thumb | surface1 |
+| =LRG_GUI_COL_TAB= | Inactive tab, tab strip | mantle |
+| =LRG_GUI_COL_TAB_HOVERED= | Hovered tab | surface0 |
+| =LRG_GUI_COL_TAB_ACTIVE= | Selected tab | base |
+| =LRG_GUI_COL_MENUBAR_BG= | Menu bar | mantle |
+| =LRG_GUI_COL_TEXT_SELECTION= | Selected text background | blue @ 0x60 |
+| =LRG_GUI_COL_DROP_TARGET= | Drag-and-drop target highlight | peach |
+| =LRG_GUI_COL_MODAL_DIM= | Modal backdrop | crust @ 0xa8 (0x80 for latte) |
+| =LRG_GUI_COL_ACCENT= | Focus rings, active tool, selected-tab line, dock drop preview | lavender |
+| =LRG_GUI_COL_ERROR= | Error text | red |
+| =LRG_GUI_COL_WARNING= | Warning text | yellow |
+| =LRG_GUI_COL_SUCCESS= | Success text | green |
+| =LRG_GUI_COL_AXIS_X= | X axis | red |
+| =LRG_GUI_COL_AXIS_Y= | Y axis | green |
+| =LRG_GUI_COL_AXIS_Z= | Z axis | blue |
+
+=LRG_GUI_COL_COUNT= (34) is the array size.
+
+** Draw lists
+:PROPERTIES:
+:CUSTOM_ID: draw-lists
+:END:
+Widgets never draw directly; they append =LrgGuiCommand= structs to an =LrgGuiDrawList=. Internally the context records three layers (base UI, popups, overlay for tooltips and drag previews) and concatenates them at =end_frame= into the list returned by =lrg_gui_context_get_draw_list()=, so later layers paint over earlier ones.
+
+*** Commands
+:PROPERTIES:
+:CUSTOM_ID: commands
+:END:
+#+begin_src c
+typedef struct
+{
+	LrgGuiCommandKind   kind;
+	LrgGuiRect          rect;
+	gfloat              points[6];
+	LrgGuiColor         color;
+	gfloat              thickness;
+	gfloat              rounding;
+	gfloat              font_size;
+	gboolean            monospace;
+	gchar              *text;
+	GObject            *texture;
+	LrgGuiDrawCallback  callback;
+	gpointer            user_data;
+} LrgGuiCommand;
+#+end_src
+
+| Kind | Fields used |
+|------+-------------|
+| =LRG_GUI_CMD_RECT_FILLED= | =rect=, =color=, =rounding= |
+| =LRG_GUI_CMD_RECT_OUTLINE= | =rect=, =color=, =thickness=, =rounding= |
+| =LRG_GUI_CMD_LINE= | =points[0..3]= (x0, y0, x1, y1), =color=, =thickness= |
+| =LRG_GUI_CMD_TRIANGLE= | =points[0..5]=, =color= (filled, any winding) |
+| =LRG_GUI_CMD_CIRCLE_FILLED= | Centre in =rect.x/y=, radius in =thickness=, =color= |
+| =LRG_GUI_CMD_CIRCLE_OUTLINE= | As above, 1 px outline |
+| =LRG_GUI_CMD_TEXT= | Top-left in =rect.x/y=, =text= (owned by the list), =font_size=, =color=, =monospace= |
+| =LRG_GUI_CMD_CLIP_PUSH= | =rect= intersected with the current clip at replay |
+| =LRG_GUI_CMD_CLIP_POP= | Restore the previous clip |
+| =LRG_GUI_CMD_IMAGE= | =texture= (a =GrlTexture=, ref held by the list) stretched into =rect=, tinted by =color= |
+| =LRG_GUI_CMD_CALLBACK= | =callback (&rect, user_data)= run in draw order |
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: draw-list-api
+:END:
+#+begin_src c
+LrgGuiDrawList      *lrg_gui_draw_list_new          (void);
+void                 lrg_gui_draw_list_clear        (LrgGuiDrawList     *self);
+guint                lrg_gui_draw_list_get_length   (LrgGuiDrawList     *self);
+const LrgGuiCommand *lrg_gui_draw_list_get_command  (LrgGuiDrawList     *self,
+                                                     guint               index);
+guint                lrg_gui_draw_list_rect_filled  (LrgGuiDrawList     *self,
+                                                     const LrgGuiRect   *rect,
+                                                     LrgGuiColor         color,
+                                                     gfloat              rounding);
+guint                lrg_gui_draw_list_rect_outline (LrgGuiDrawList     *self,
+                                                     const LrgGuiRect   *rect,
+                                                     LrgGuiColor         color,
+                                                     gfloat              thickness,
+                                                     gfloat              rounding);
+void                 lrg_gui_draw_list_line         (LrgGuiDrawList     *self,
+                                                     gfloat              x0,
+                                                     gfloat              y0,
+                                                     gfloat              x1,
+                                                     gfloat              y1,
+                                                     LrgGuiColor         color,
+                                                     gfloat              thickness);
+void                 lrg_gui_draw_list_triangle     (LrgGuiDrawList     *self,
+                                                     gfloat              x0,
+                                                     gfloat              y0,
+                                                     gfloat              x1,
+                                                     gfloat              y1,
+                                                     gfloat              x2,
+                                                     gfloat              y2,
+                                                     LrgGuiColor         color);
+void                 lrg_gui_draw_list_circle       (LrgGuiDrawList     *self,
+                                                     gfloat              cx,
+                                                     gfloat              cy,
+                                                     gfloat              radius,
+                                                     LrgGuiColor         color,
+                                                     gboolean            filled);
+void                 lrg_gui_draw_list_text         (LrgGuiDrawList     *self,
+                                                     gfloat              x,
+                                                     gfloat              y,
+                                                     const gchar        *text,
+                                                     gssize              length,
+                                                     gfloat              font_size,
+                                                     LrgGuiColor         color,
+                                                     gboolean            monospace);
+void                 lrg_gui_draw_list_push_clip    (LrgGuiDrawList     *self,
+                                                     const LrgGuiRect   *rect);
+void                 lrg_gui_draw_list_pop_clip     (LrgGuiDrawList     *self);
+void                 lrg_gui_draw_list_image        (LrgGuiDrawList     *self,
+                                                     const LrgGuiRect   *rect,
+                                                     GObject            *texture,
+                                                     LrgGuiColor         tint);
+void                 lrg_gui_draw_list_callback     (LrgGuiDrawList     *self,
+                                                     const LrgGuiRect   *rect,
+                                                     LrgGuiDrawCallback  callback,
+                                                     gpointer            user_data);
+void                 lrg_gui_draw_list_set_rect     (LrgGuiDrawList     *self,
+                                                     guint               index,
+                                                     const LrgGuiRect   *rect);
+void                 lrg_gui_draw_list_append       (LrgGuiDrawList     *self,
+                                                     LrgGuiDrawList     *other);
+const LrgGuiCommand *lrg_gui_draw_list_find_text    (LrgGuiDrawList     *self,
+                                                     const gchar        *text);
+#+end_src
+
+- =lrg_gui_draw_list_clear()= removes every command but keeps the allocation.
+- The rectangle functions return the command index; =lrg_gui_draw_list_set_rect()= patches that rectangle later, which is how a popup background is recorded before its content is measured.
+- =lrg_gui_draw_list_text()= copies =length= bytes (=-1= = NUL-terminated).
+- =lrg_gui_draw_list_append()= copies =other='s commands onto the end.
+- =lrg_gui_draw_list_find_text()= is a test helper returning the first text command whose text is exactly =text=.
+
+*** Callbacks and the 3D viewport
+:PROPERTIES:
+:CUSTOM_ID: draw-callbacks
+:END:
+#+begin_src c
+typedef void (*LrgGuiDrawCallback) (const LrgGuiRect *rect,
+                                    gpointer          user_data);
+#+end_src
+
+A callback command lets arbitrary rendering happen at a precise point in the UI's paint order, so UI drawn later in the same layer (overlay toolbars, the gizmo, hints) composites on top of it and popups still cover it. The raylib backend ends its scissor mode before calling the hook (the hook manages its own GPU state) and restores the GUI clip afterwards. =user_data= must outlive the replay.
+
+The editor viewport renders the 3D scene into a render texture before the UI pass, then inside its dock panel records a callback that blits that texture into the panel rectangle, and finally covers the panel with an invisible button for input:
+
+#+begin_src c
+static void
+viewport_blit (const LrgGuiRect *rect,
+               gpointer          user_data)
+{
+	Viewport *vp = user_data;
+
+	/* Render textures are stored upside down. */
+	DrawTextureRec (vp->target.texture,
+	                (Rectangle) { 0.0f, 0.0f, (gfloat) vp->tw, -(gfloat) vp->th },
+	                (Vector2) { rect->x, rect->y }, WHITE);
+}
+
+static void
+viewport_panel (Viewport      *vp,
+                LrgGuiContext *ctx)
+{
+	LrgGuiRect rect;
+
+	lrg_gui_get_region_rect (ctx, &rect);
+	lrg_gui_draw_callback (ctx, &rect, viewport_blit, vp);
+
+	/* One interactive surface covering the panel. */
+	lrg_gui_set_cursor (ctx, rect.x, rect.y);
+	lrg_gui_invisible_button (ctx, "##viewport", rect.w, rect.h);
+	if (lrg_gui_is_item_hovered (ctx) || lrg_gui_is_item_active (ctx))
+		viewport_handle_camera (vp, ctx);
+}
+#+end_src
+
+** Docking
+:PROPERTIES:
+:CUSTOM_ID: docking
+:END:
+=LrgGuiDock= arranges named panels in a binary tree of resizable splits whose leaves are tab stacks, the layout model of the Godot, Unreal and Unity editors. Users drag a splitter to resize, click a tab to show that panel, drag a tab onto another stack's centre to join it or onto one of its edges to split it, and close a tab with its "x" or a middle-click. Removing the last tab of a stack collapses it into its sibling, so the tree never holds empty stacks (except an empty root).
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: dock-api
+:END:
+#+begin_src c
+typedef enum
+{
+	LRG_GUI_DOCK_CENTER,
+	LRG_GUI_DOCK_LEFT,
+	LRG_GUI_DOCK_RIGHT,
+	LRG_GUI_DOCK_TOP,
+	LRG_GUI_DOCK_BOTTOM
+} LrgGuiDockSide;
+
+LrgGuiDock *lrg_gui_dock_new              (void);
+gboolean    lrg_gui_dock_load_string      (LrgGuiDock        *self,
+                                           const gchar       *layout,
+                                           GError           **error);
+gchar      *lrg_gui_dock_to_string        (LrgGuiDock        *self);
+void        lrg_gui_dock_dock_panel       (LrgGuiDock        *self,
+                                           const gchar       *panel,
+                                           const gchar       *target,
+                                           LrgGuiDockSide     side,
+                                           gfloat             ratio);
+void        lrg_gui_dock_open_panel       (LrgGuiDock        *self,
+                                           const gchar       *panel);
+void        lrg_gui_dock_close_panel      (LrgGuiDock        *self,
+                                           const gchar       *panel);
+gboolean    lrg_gui_dock_has_panel        (LrgGuiDock        *self,
+                                           const gchar       *panel);
+gboolean    lrg_gui_dock_is_panel_visible (LrgGuiDock        *self,
+                                           const gchar       *panel);
+gboolean    lrg_gui_dock_get_panel_rect   (LrgGuiDock        *self,
+                                           const gchar       *panel,
+                                           LrgGuiRect        *rect);
+void        lrg_gui_dock_set_closable     (LrgGuiDock        *self,
+                                           const gchar       *panel,
+                                           gboolean           closable);
+void        lrg_gui_dock_set_panel_flags  (LrgGuiDock        *self,
+                                           const gchar       *panel,
+                                           LrgGuiRegionFlags  flags);
+void        lrg_gui_dock_begin            (LrgGuiDock        *self,
+                                           LrgGuiContext     *ctx,
+                                           const LrgGuiRect  *rect);
+gboolean    lrg_gui_dock_begin_panel      (LrgGuiDock        *self,
+                                           LrgGuiContext     *ctx,
+                                           const gchar       *panel,
+                                           const gchar       *title);
+void        lrg_gui_dock_end_panel        (LrgGuiDock        *self,
+                                           LrgGuiContext     *ctx);
+void        lrg_gui_dock_end              (LrgGuiDock        *self,
+                                           LrgGuiContext     *ctx);
+#+end_src
+
+| Function | Behaviour |
+|----------+-----------|
+| =lrg_gui_dock_new= | An empty dock: one empty tab stack |
+| =lrg_gui_dock_dock_panel= | Moves =panel= (removed from wherever it is first) next to =target= (=NULL= or unknown = the whole dock, or its first stack for =CENTER=). =CENTER= joins the target's stack as the active tab; the other sides split the target's stack and give =panel= =ratio= of the split (=<= 0 = 0.5, clamped to 0.05..0.95). Docking into an empty dock just fills it |
+| =lrg_gui_dock_open_panel= | Activates the panel's tab if docked, otherwise adds it to the largest stack (View menu) |
+| =lrg_gui_dock_close_panel= | Removes the panel; empty stacks collapse |
+| =lrg_gui_dock_has_panel= | Panel is in the layout (shown or behind another tab) |
+| =lrg_gui_dock_is_panel_visible= | Panel is the active tab of its stack |
+| =lrg_gui_dock_get_panel_rect= | Content rectangle as of the last =lrg_gui_dock_begin()=; returns =TRUE= if visible |
+| =lrg_gui_dock_set_closable= | Whether the tab shows a close button and closes on middle-click (default =TRUE=) |
+| =lrg_gui_dock_set_panel_flags= | Region flags for the panel's content; the default is =SCROLL_Y= + =BACKGROUND= with padding, and =BACKGROUND= is always added |
+
+*** Per-frame usage
+:PROPERTIES:
+:CUSTOM_ID: dock-frame
+:END:
+=lrg_gui_dock_begin()= fills =rect= with =LRG_GUI_COL_WINDOW_BG=, lays the tree out for this frame and draws splitters and tab strips. For every panel, =lrg_gui_dock_begin_panel()= returns =TRUE= only if that panel is the active tab of its stack and has a non-empty area; it then opens the panel's content region and pushes the panel id as an ID scope, and the caller builds the content and calls =lrg_gui_dock_end_panel()=. Panels that are not visible cost nothing. The =title= is remembered for the next frame's tab strip and follows the =###= rule, so ="Console (3 errors)###console"= can change while the tab keeps its identity. =lrg_gui_dock_end()= handles tab drags: it draws the drop-zone preview (an accent-tinted half or whole of the target stack) and performs the dock when the tab is released. Drop zones are the outer 25% bands of a stack (left, right, top, bottom) and its centre.
+
+#+begin_src c
+lrg_gui_dock_begin (dock, ctx, &area);
+
+if (lrg_gui_dock_begin_panel (dock, ctx, "hierarchy", "Hierarchy"))
+{
+	draw_hierarchy ();
+	lrg_gui_dock_end_panel (dock, ctx);
+}
+
+title = g_strdup_printf ("Console (%u)###console", n_messages);
+if (lrg_gui_dock_begin_panel (dock, ctx, "console", title))
+{
+	draw_console ();
+	lrg_gui_dock_end_panel (dock, ctx);
+}
+
+lrg_gui_dock_end (dock, ctx);
+#+end_src
+
+*** Building a default layout
+:PROPERTIES:
+:CUSTOM_ID: dock-default-layout
+:END:
+The editor's default layout (also what View > Reset Layout restores):
+
+#+begin_src c
+dock = lrg_gui_dock_new ();
+
+lrg_gui_dock_dock_panel (dock, "viewport", NULL, LRG_GUI_DOCK_CENTER, 0.0f);
+lrg_gui_dock_dock_panel (dock, "hierarchy", "viewport", LRG_GUI_DOCK_LEFT, 0.18f);
+lrg_gui_dock_dock_panel (dock, "inspector", "viewport", LRG_GUI_DOCK_RIGHT, 0.27f);
+lrg_gui_dock_dock_panel (dock, "assets", "viewport", LRG_GUI_DOCK_BOTTOM, 0.30f);
+lrg_gui_dock_dock_panel (dock, "console", "assets", LRG_GUI_DOCK_CENTER, 0.0f);
+lrg_gui_dock_dock_panel (dock, "problems", "assets", LRG_GUI_DOCK_CENTER, 0.0f);
+lrg_gui_dock_dock_panel (dock, "history", "inspector", LRG_GUI_DOCK_CENTER, 0.0f);
+lrg_gui_dock_open_panel (dock, "assets");
+lrg_gui_dock_open_panel (dock, "inspector");
+
+/* The viewport can never be closed and draws edge to edge. */
+lrg_gui_dock_set_closable (dock, "viewport", FALSE);
+lrg_gui_dock_set_panel_flags (dock, "viewport", LRG_GUI_REGION_NO_PADDING);
+lrg_gui_dock_set_panel_flags (dock, "console", LRG_GUI_REGION_NONE);
+#+end_src
+
+Closable state and panel flags are per dock object and are not part of the layout string; set them again after creating a fresh dock.
+
+*** Layout string grammar
+:PROPERTIES:
+:CUSTOM_ID: dock-grammar
+:END:
+=lrg_gui_dock_to_string()= serializes the tree to a compact string the application stores in its settings; =lrg_gui_dock_load_string()= parses one back. The editor's default layout serializes to:
+
+#+begin_example
+split(v,0.180,tabs(0,hierarchy),split(v,0.730,split(h,0.700,tabs(0,viewport),tabs(0,assets,console,problems)),tabs(0,inspector,history)))
+#+end_example
+
+Grammar (whitespace between tokens is ignored):
+
+#+begin_example
+node      := split | tabs
+split     := "split(" dir "," ratio "," node "," node ")"
+dir       := "v" | "h"
+ratio     := decimal number             ; share of the FIRST child, clamped to [0.05, 0.95]
+tabs      := "tabs(" active { "," panel-id } ")"
+active    := integer                    ; index of the shown tab, clamped to the tab count
+panel-id  := 1*( ALNUM | "_" | "-" | "." )
+#+end_example
+
+- =v= means the children sit side by side (left, right) separated by a vertical bar; =h= means they are stacked (top, bottom).
+- The ratio is written with =%.3f= in the C locale; a missing ratio defaults to 0.5. On screen the first child gets =ratio= of the size minus the 4 px splitter, and each pane is kept at least 48 px where possible.
+- =tabs(0)= is an empty stack (only meaningful as the root).
+- Panel ids should therefore be restricted to letters, digits, =_=, =-= and =.=.
+- Nesting deeper than 64 levels, an unknown direction, an empty panel id, an unexpected token or trailing data is a =G_IO_ERROR_INVALID_DATA= error, and on any error the current layout is kept unchanged.
+
+*** Saving and restoring
+:PROPERTIES:
+:CUSTOM_ID: dock-save-restore
+:END:
+#+begin_src c
+/* Save. */
+g_autofree gchar *layout = lrg_gui_dock_to_string (dock);
+g_object_set (settings, "layout", layout, NULL);
+
+/* Restore: fall back to the default layout on a bad string, and make
+ * sure panels that must exist are present. */
+if (layout != NULL && *layout != '\0')
+{
+	g_autoptr(GError) error = NULL;
+
+	if (!lrg_gui_dock_load_string (dock, layout, &error))
+		g_warning ("%s", error->message);
+	else if (!lrg_gui_dock_has_panel (dock, "viewport"))
+		lrg_gui_dock_open_panel (dock, "viewport");
+}
+#+end_src
+
+** raylib backend
+:PROPERTIES:
+:CUSTOM_ID: raylib-backend
+:END:
+#+begin_src c
+LrgGuiRaylib *lrg_gui_raylib_new              (void);
+gchar        *lrg_gui_raylib_find_system_font (gboolean        monospace);
+void          lrg_gui_raylib_load_fonts       (LrgGuiRaylib   *self,
+                                               const gchar    *ui_path,
+                                               const gchar    *mono_path,
+                                               gfloat          size);
+const gchar  *lrg_gui_raylib_get_font_path    (LrgGuiRaylib   *self);
+void          lrg_gui_raylib_attach           (LrgGuiRaylib   *self,
+                                               LrgGuiContext  *ctx);
+void          lrg_gui_raylib_poll_input       (LrgGuiRaylib   *self,
+                                               LrgGuiInput    *input);
+void          lrg_gui_raylib_render           (LrgGuiRaylib   *self,
+                                               LrgGuiDrawList *list);
+void          lrg_gui_raylib_apply_cursor     (LrgGuiRaylib   *self,
+                                               LrgGuiCursor    cursor);
+#+end_src
+
+=LrgGuiRaylib= connects a context to the engine's raylib window. A window (=GrlWindow=, or raylib's =InitWindow()=) must be open before fonts are loaded.
+
+*** Fonts
+:PROPERTIES:
+:CUSTOM_ID: raylib-fonts
+:END:
+=lrg_gui_raylib_load_fonts()= (re)loads a proportional UI font and a monospace font rasterized at =size= pixels (pass =style->font_size=; reload when the scale changes). An explicit path wins; a =NULL= or empty path calls =lrg_gui_raylib_find_system_font()=, which probes a fixed list of common TrueType locations across distributions: DejaVu Sans, Noto Sans, Liberation Sans, Adwaita Sans and Open Sans for the UI font, and DejaVu Sans Mono, Noto Sans Mono, Liberation Mono and Source Code Pro for monospace (=/usr/share/fonts/...= paths as laid out by Fedora, Debian and Arch packages). It does not run =fc-match=; fontconfig-based fallback lookup lives in =LrgFontAtlas= ([[file:../text/font-atlas.org][Rich Text: LrgFontAtlas]]). The glyph set covers ASCII, Latin-1, Latin Extended-A and the symbols the editor draws (arrows, bullets, check marks, triangles, gear, warning sign, x, degree). A file that is missing or fails to load falls back to raylib's built-in font (for monospace, to the UI font first). =lrg_gui_raylib_get_font_path()= returns the UI font file actually in use, or =NULL= when the built-in font is used.
+
+On Fedora, =dejavu-sans-fonts= and =dejavu-sans-mono-fonts= satisfy the first candidates.
+
+*** Attach: measurement and clipboard
+:PROPERTIES:
+:CUSTOM_ID: raylib-attach
+:END:
+=lrg_gui_raylib_attach()= installs the backend's text measurement (raylib =MeasureTextEx()= with the loaded fonts; the context holds a reference to the backend) and the system clipboard (raylib =GetClipboardText()= / =SetClipboardText()=) into the context. The equivalent hooks for another backend are:
+
+#+begin_src c
+typedef gfloat  (*LrgGuiMeasureFunc)      (const gchar *text,
+                                           gssize       length,
+                                           gfloat       font_size,
+                                           gboolean     monospace,
+                                           gpointer     user_data);
+typedef gchar * (*LrgGuiClipboardGetFunc) (gpointer     user_data);
+typedef void    (*LrgGuiClipboardSetFunc) (const gchar *text,
+                                           gpointer     user_data);
+
+void   lrg_gui_context_set_measure_func    (LrgGuiContext          *self,
+                                            LrgGuiMeasureFunc       func,
+                                            gpointer                user_data,
+                                            GDestroyNotify          destroy);
+void   lrg_gui_context_set_clipboard_funcs (LrgGuiContext          *self,
+                                            LrgGuiClipboardGetFunc  get_func,
+                                            LrgGuiClipboardSetFunc  set_func,
+                                            gpointer                user_data,
+                                            GDestroyNotify          destroy);
+void   lrg_gui_context_set_clipboard       (LrgGuiContext          *self,
+                                            const gchar            *text);
+gchar *lrg_gui_context_get_clipboard       (LrgGuiContext          *self);
+#+end_src
+
+=lrg_gui_context_set_clipboard()= / =lrg_gui_context_get_clipboard()= (transfer full) are what text fields use and what applications call for Copy GUID / Paste; they go through the installed functions or, without them, an internal buffer.
+
+*** Input, rendering and cursor
+:PROPERTIES:
+:CUSTOM_ID: raylib-frame
+:END:
+- =lrg_gui_raylib_poll_input()= calls =lrg_gui_input_new_frame()= with =GetFrameTime()=, sets =time= from =GetTime()=, reads modifiers (left or right Ctrl/Shift/Alt/Super), key presses, auto-repeats of the editing keys (Backspace, Delete, arrows, Page Up/Down, Enter, Tab), typed characters, held state of every mapped key, pointer position, the three buttons and both wheel axes.
+- Fast input is never lost: =lrg_gui_raylib_attach()= chains GLFW mouse-button and key callbacks in front of raylib's (raylib only samples state once per frame). A press released before the next poll is still reported as "down" for one frame, so it produces a click, and every key press carries the modifiers GLFW reported with it, so a chord typed faster than a frame (Ctrl down, A, Ctrl up) keeps its Ctrl. Without a GLFW window the backend falls back to raylib's queue and sampled modifiers.
+- While the window is unfocused, held buttons, keys and modifiers read as released (GLFW delivers no releases then), so a drag cannot stay stuck after Alt+Tab.
+- raylib calls returning =bool= must see raylib's one-byte =_Bool=: libregnum builds with =-include stdbool.h= and =<libregnum.h>= includes =<stdbool.h>= before raylib (see AGENTS.md).
+- =lrg_gui_raylib_render()= replays a draw list; call it between =BeginDrawing()= and =EndDrawing()=. Clip push/pop become nested scissor rectangles; images draw a =GrlTexture='s raylib handle; callbacks run with scissoring suspended and the clip restored afterwards.
+- =lrg_gui_raylib_apply_cursor()= maps =LrgGuiCursor= to raylib mouse cursors and only calls =SetMouseCursor()= when the shape changes.
+
+*** Complete host loop
+:PROPERTIES:
+:CUSTOM_ID: raylib-loop
+:END:
+#+begin_src c
+#include <libregnum.h>
+#include <raylib.h>
+
+int
+main (int    argc,
+      char **argv)
+{
+	g_autoptr(LrgGuiContext) ctx = NULL;
+	g_autoptr(LrgGuiRaylib)  backend = NULL;
+	LrgGuiInput              input;
+	gfloat                   speed = 1.0f;
+	gboolean                 god_mode = FALSE;
+
+	InitWindow (1280, 720, "debug tools");
+	SetTargetFPS (60);
+
+	ctx = lrg_gui_context_new ();
+	lrg_gui_style_init (lrg_gui_context_get_style (ctx), "mocha", 1.0f);
+	backend = lrg_gui_raylib_new ();
+	lrg_gui_raylib_attach (backend, ctx);
+	lrg_gui_raylib_load_fonts (backend, NULL, NULL, lrg_gui_context_get_style (ctx)->font_size);
+	lrg_gui_input_init (&input);
+
+	while (!WindowShouldClose ())
+	{
+		LrgGuiRect panel = { 16, 16, 280, 160 };
+
+		/* Build the UI from this frame's input. */
+		lrg_gui_raylib_poll_input (backend, &input);
+		lrg_gui_context_begin_frame (ctx, &input, GetScreenWidth (), GetScreenHeight ());
+		lrg_gui_begin_region (ctx, "debug", &panel,
+		                      LRG_GUI_REGION_BACKGROUND | LRG_GUI_REGION_BORDER);
+		lrg_gui_separator_text (ctx, "Player");
+		lrg_gui_property_label (ctx, "Speed");
+		lrg_gui_slider_float (ctx, "##speed", &speed, 0.0f, 10.0f, "%.1f");
+		lrg_gui_checkbox (ctx, "God mode", &god_mode);
+		lrg_gui_end_region (ctx);
+		lrg_gui_context_end_frame (ctx);
+		lrg_gui_raylib_apply_cursor (backend, lrg_gui_context_get_cursor (ctx));
+
+		/* The game only sees the mouse when the UI does not want it. */
+		if (!lrg_gui_context_wants_mouse (ctx))
+			game_handle_mouse ();
+
+		BeginDrawing ();
+		ClearBackground (BLACK);
+		game_draw ();
+		lrg_gui_raylib_render (backend, lrg_gui_context_get_draw_list (ctx));
+		EndDrawing ();
+	}
+
+	g_clear_object (&backend);
+	CloseWindow ();
+	return 0;
+}
+#+end_src
+
+The backend is cleared before =CloseWindow()= so its fonts are unloaded while the GL context still exists.
+
+** Headless testing
+:PROPERTIES:
+:CUSTOM_ID: headless-testing
+:END:
+Without a backend, a context measures text at 0.55 em per character and uses an internal clipboard, so the whole toolkit runs in a plain GTest binary. The pattern used by =tests/test-gui.c=:
+
+1. Keep one =LrgGuiInput= across frames; at the top of each frame call =lrg_gui_input_new_frame()= and set the pointer and button state.
+2. Run a frame that builds the UI, then inspect return values, item queries, =lrg_gui_context_wants_*()= and the draw list.
+3. Locate widgets in a first frame with the pointer parked away (=lrg_gui_get_item_rect()=), then drive them in later frames. A click is two frames: one with the button down over the item, one with it up.
+4. Inject keys with =lrg_gui_input_add_key()= and typing with =lrg_gui_input_add_text()=; clear =key_down= and =mods= yourself to model a release.
+5. Assert on visuals with =lrg_gui_draw_list_find_text()= or by walking =lrg_gui_draw_list_get_command()=.
+
+#+begin_src c
+#include <glib.h>
+#include <libregnum.h>
+
+static const LrgGuiRect panel = { 10.0f, 10.0f, 400.0f, 300.0f };
+
+/* One frame with the pointer at (x, y); returns whether "Save" was clicked. */
+static gboolean
+save_frame (LrgGuiContext *ctx,
+            LrgGuiInput   *input,
+            gfloat         x,
+            gfloat         y,
+            gboolean       down,
+            LrgGuiRect    *rect)
+{
+	gboolean clicked;
+
+	lrg_gui_input_new_frame (input, 1.0f / 60.0f);
+	input->mouse_x = x;
+	input->mouse_y = y;
+	input->mouse_down[LRG_GUI_MOUSE_LEFT] = down;
+
+	lrg_gui_context_begin_frame (ctx, input, 800.0f, 600.0f);
+	lrg_gui_begin_region (ctx, "p", &panel, LRG_GUI_REGION_NONE);
+	clicked = lrg_gui_button (ctx, "Save##btn");
+	if (rect != NULL)
+		lrg_gui_get_item_rect (ctx, rect);
+	lrg_gui_end_region (ctx);
+	lrg_gui_context_end_frame (ctx);
+
+	return clicked;
+}
+
+static void
+test_save_button (void)
+{
+	g_autoptr(LrgGuiContext) ctx = lrg_gui_context_new ();
+	LrgGuiDrawList          *dl;
+	LrgGuiInput              input;
+	LrgGuiRect               r;
+	gfloat                   cx, cy;
+
+	lrg_gui_input_init (&input);
+
+	/* Frame 1: lay out with the pointer away, check what was drawn. */
+	g_assert_false (save_frame (ctx, &input, -1.0f, -1.0f, FALSE, &r));
+	dl = lrg_gui_context_get_draw_list (ctx);
+	g_assert_nonnull (lrg_gui_draw_list_find_text (dl, "Save"));
+	g_assert_null (lrg_gui_draw_list_find_text (dl, "Save##btn"));
+	cx = r.x + r.w * 0.5f;
+	cy = r.y + r.h * 0.5f;
+
+	/* Frame 2: press; frame 3: release over it = click. */
+	g_assert_false (save_frame (ctx, &input, cx, cy, TRUE, NULL));
+	g_assert_true (lrg_gui_context_wants_mouse (ctx));
+	g_assert_true (save_frame (ctx, &input, cx, cy, FALSE, NULL));
+}
+
+int
+main (int    argc,
+      char **argv)
+{
+	g_test_init (&argc, &argv, NULL);
+	g_test_add_func ("/gui/save-button", test_save_button);
+	return g_test_run ();
+}
+#+end_src
+
+=tests/test-gui.c= covers buttons and clicks, same-line layout and IDs, checkboxes and toggles, region scrolling and clipping, text editing (including Enter-returns-true mode and a rebuilt buffer), drag floats and format strings, trees, menu bars, modals blocking the base layer, combos, tabs, drag and drop, dock layout serialization and splitter dragging; the editor application's own headless suite (=tests/test-editor-app.c=) drives whole editor frames the same way.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../../editor/editor-app.org][The libregnum Editor Application]] -- the main user of this toolkit
+- [[file:../editor/index.org][Editor Module Reference]] -- the editor runtime the application drives
+- [[file:../text/font-atlas.org][LrgFontAtlas]] -- fontconfig-based glyph fallback
+- Sources: =src/gui/lrg-gui-types.h=, =lrg-gui-draw-list.h=, =lrg-gui-context.h=, =lrg-gui-dock.h=, =lrg-gui-raylib.h=; widgets in =lrg-gui-widgets.c=; tests in =tests/test-gui.c=

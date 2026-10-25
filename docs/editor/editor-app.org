@@ -1,0 +1,317 @@
+#+title: The libregnum Editor Application
+#+description: lrg-editor: the level, scene and world editor built from libregnum itself
+#+authors: Zach Podbielniak
+#+categories: libregnum editor
+#+created: 2026-10-24T22:10:00-04:00
+#+updated: 2026-10-24T22:10:00-04:00
+#+version: 1.0
+
+* The libregnum Editor Application
+:PROPERTIES:
+:CUSTOM_ID: editor-app
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Editor Application
+#+end_quote
+
+=lrg-editor= is the libregnum editor: a level, scene and world editor in the spirit of the Unity, Godot and Unreal editors, built entirely from libregnum. Its UI is drawn by libregnum's own immediate-mode GUI toolkit (=LrgGuiContext=, =src/gui/=), its viewport renders with the engine's raylib backend, its documents are =LrgEditor= / =LrgLevel= and its play mode runs an =LrgWorld=. Code and data files open in your own editor (=$EDITOR= by default, with first-party Emacs integration), and every editor feature can be driven over a local socket.
+
+The application lives in =src/editor/ui/= (=LrgEditorApp=, public header =lrg-editor-app.h=) and the program in =src/launcher/lrg-editor.c=.
+
+** Building and running
+:PROPERTIES:
+:CUSTOM_ID: building
+:END:
+The editor is built by default (=BUILD_EDITOR=1=, =BUILD_EDITOR_UI=1= in =config.mk=):
+
+#+begin_src sh
+make -j"$(nproc)"                 # library, GIR, lrgldr and lrg-editor
+make lrg-editor                   # just the editor program
+make test-emacs                   # Emacs package byte-compile + ERT suite
+make test-editor-x11              # real window + real X input (Xvfb, xdotool) checked over IPC
+make BUILD_EDITOR_UI=0            # embedded hosts that bring their own UI
+#+end_src
+
+Fedora packages needed beyond the base libregnum build (fold these into the image build):
+
+| Package                         | Why                                               |
+|---------------------------------+---------------------------------------------------|
+| =json-glib-devel=               | IPC server (=LrgEditorServer=)                    |
+| =glib2-devel=                   | GIO sockets, file monitors, subprocesses          |
+| =mesa-libGL-devel=, =libglvnd-devel= | raylib/OpenGL 3.3 viewport                   |
+| =wayland-devel=, =libxkbcommon-devel=, =libX11-devel=, =libXrandr-devel=, =libXinerama-devel=, =libXcursor-devel=, =libXi-devel= | GLFW window backends (already required by graylib) |
+| =google-noto-sans-fonts= or =dejavu-sans-fonts= (runtime) | UI font (searched at fixed paths; raylib's built-in font otherwise) |
+| =emacs= (optional)              | =make test-emacs=, the first-party integration    |
+| =xorg-x11-server-Xvfb=, =xdotool=, =socat=, =yq= (optional) | =make test-editor-x11= (real window, real input) |
+
+Run it on a project folder or a level:
+
+#+begin_src sh
+lrg-editor ~/games/mygame                       # project folder
+lrg-editor levels/arena.rlevel                  # a level; its folder is the root
+lrg-editor -p ~/games/mygame -l levels/arena.rlevel
+lrg-editor --new-project ~/games/newgame --name "New Game"
+lrg-editor --editor emacsclient ~/games/mygame  # external editor for this session
+lrg-editor --editor 'codium --goto {file}:{line}:{col}' .
+lrg-editor --module build/libmygame.so .        # register the game's component types
+lrg-editor --headless --socket /tmp/lrg.sock .  # IPC server only, no window
+lrg-editor --validate levels/arena.rlevel       # CI: problems on stdout, status 1 on errors
+#+end_src
+
+| Option                   | Meaning                                                                   |
+|--------------------------+---------------------------------------------------------------------------|
+| =-p=, =--project DIR=    | Open a project (a folder with =project.ryaml=, or any folder)             |
+| =-l=, =--level FILE=     | Open a level (relative to the project)                                    |
+| =-n=, =--new-project DIR= | Create a project (levels/, scripts/, assets/, prefabs/, starter level)   |
+| =--name NAME=            | Name for =--new-project=                                                  |
+| =-s=, =--settings FILE=  | Preferences file (default =$XDG_CONFIG_HOME/libregnum/editor.yaml=)       |
+| =-e=, =--editor EDITOR=  | External editor preset id, or a command template                          |
+| =-m=, =--module SO=      | Load a game module so its component types can be edited and played        |
+| =--socket PATH=          | IPC socket (default =$XDG_RUNTIME_DIR/libregnum/editor-PID.sock=)         |
+| =--no-server=            | Do not start the IPC server                                               |
+| =--headless=             | No window; serve IPC until SIGINT/SIGTERM or =editor.quit=                |
+| =--validate=             | Validate the level and exit                                               |
+| =-W=, =-H=               | Initial window size                                                       |
+| =--license=, =--version= | Print and exit                                                            |
+
+With no project or level, the last project is reopened (=restore-last-session=).
+
+** Feature map
+:PROPERTIES:
+:CUSTOM_ID: feature-map
+:END:
+What the established editors offer and where it lives here.
+
+| Feature (Unity / Godot / Unreal)                     | lrg-editor                                                                 |
+|------------------------------------------------------+----------------------------------------------------------------------------|
+| Dockable panels, saved layout                        | =LrgGuiDock=: drag tabs to split/merge; layout saved in =editor.yaml=; View > Reset Layout |
+| Scene view: fly, orbit, pan, zoom, frame             | Right-drag fly + WASDQE, Alt+drag orbit, middle pan, wheel zoom, F / Home   |
+| Ortho views, 2D mode                                 | Numpad 7/1/3 (+Ctrl opposite), Num5 ortho, Ctrl+Shift+2 2D mode            |
+| Move / rotate / scale gizmos, local/world, snapping  | Q/W/E/R, T space, Y snap, Ctrl inverts snapping during a drag, Esc cancels |
+| Click, box, additive select; cycle overlapping       | Click (Shift add, Ctrl toggle), click again cycles, drag on empty space    |
+| Hierarchy: reparent by drag, reorder, filter         | Drag onto a node (child) or between rows (sibling); filter by name or GUID |
+| Inspector: transform, materials, components, scripts | Multi-selection editing, color pickers, enum combos, component props       |
+| Undo history panel, jump to state                    | History panel; click a row to jump; merged drags; limit configurable       |
+| Prefabs                                              | Save selection as prefab, instantiate, open or revert instances from the inspector |
+| Asset browser, drag into scene                       | Assets panel: grid/list, filter, type filter, rename, trash, new folder/script |
+| Console, warnings/errors, commands                   | Console with level filters, search, history, built-in commands             |
+| Problems / validation                                | Problems panel (live), =--validate= for CI                                 |
+| Play in editor, pause, step, revert on stop          | F5 / F7 / F10 / Shift+F5; edits undone on stop and kept on the redo stack  |
+| Run the game standalone                              | F6 runs the project run command; output streams into the console          |
+| Command palette, quick open                          | Ctrl+Shift+P (F1), "@name" jumps to nodes; Ctrl+P opens files              |
+| Rebindable shortcuts                                 | Preferences > Keybindings, or =keybindings:= in =editor.yaml=              |
+| Autosave, crash recovery                             | =.lrg-editor/autosave/=; offered on open when newer than the file          |
+| External code editor                                 | =$VISUAL= / =$EDITOR= or a preset; Emacs first-party (=libregnum.el=)      |
+| Live reload of files changed elsewhere               | Levels reload when clean, otherwise a "changed on disk" prompt             |
+| Editor scripting / automation                        | JSON-lines IPC: every action, node edit, play control, screenshots         |
+
+** Window layout
+:PROPERTIES:
+:CUSTOM_ID: layout
+:END:
+#+begin_example
+ File Edit Create Node View Play Tools Help
+ [Select][Move][Rotate][Scale] [World][Snap] 1.00 m 15 deg 0.10  [3D]  [Play][Pause][Step][Stop] [Run Game]
++-----------+-------------------------------------+-------------+
+| Hierarchy | Viewport                            | Inspector   |
+|           |                                     | History     |
+|           +-------------------------------------+             |
+|           | Assets | Console | Problems         |             |
++-----------+-------------------------------------+-------------+
+ main.rlevel *  status message             3 selected  12 nodes  0 errors  IPC emacs  60 fps
+#+end_example
+
+- *Menu bar*: every menu item is an action, showing its current shortcut and enabled/checked state. Alt + the first letter (Alt+F, Alt+E, Alt+C, Alt+N, Alt+V, Alt+P, Alt+T, Alt+H) opens a menu from the keyboard; Escape closes it.
+- *Toolbar*: tools, space, snap with live-editable increments, 2D/3D, play controls, run game.
+- *Status bar*: document and dirty marker, play state, a "changed on disk: Reload / Keep mine" prompt, the last status message, selection and node counts, log counters (click to open the console), IPC state ("emacs" when libregnum.el is connected), frame rate.
+- *Toasts*: transient notifications in the bottom right (info, success, warning, error).
+
+Panels can be closed (except the viewport), reopened from View > Panels, dragged by their tab onto another panel's edge or centre to split or tab them, and resized with the splitters. The layout is saved with the preferences.
+
+** Viewport
+:PROPERTIES:
+:CUSTOM_ID: viewport
+:END:
+| Input                           | Action                                                         |
+|---------------------------------+----------------------------------------------------------------|
+| Drag the axis gizmo (bottom left) | Orbit; works with any mouse or touchpad                      |
+| Click an end of the axis gizmo  | Look along that axis (orthographic until the next orbit)       |
+| Right drag                      | Fly look; W A S D move, Q E down/up, Shift faster, wheel speed |
+| Right click (no drag)           | Context menu: create, focus, delete, duplicate...              |
+| Middle drag                     | Pan                                                            |
+| Alt + left drag                 | Orbit around the focus point (Alt + Shift + left drag pans)    |
+| Wheel, = / -, numpad + / -      | Zoom (dolly; ortho height in orthographic views)               |
+| Num4 / Num6 / Num8 / Num2       | Orbit in 15 degree steps                                       |
+| Num7 / Num1 / Num3 (+Ctrl)      | Top / front / right (opposite) views; Num5 toggles ortho       |
+| Left click                      | Select (Shift add, Ctrl toggle); again on the same spot cycles |
+| Left drag on empty space        | Box select (Shift adds)                                        |
+| Left drag on the gizmo          | Move / rotate / scale; Ctrl inverts snapping; Esc/right cancels |
+| Drop an asset                   | Model/texture: new node; prefab: instance; script: attach to the node under the pointer |
+
+In 2D mode right and middle drag both pan and new nodes are created flat on the XY plane.
+
+*Navigation schemes* (Preferences > Viewport > Navigation, =camera-navigation=): =default= is the table above; =blender= makes middle drag orbit, Shift + middle drag pan and Ctrl + middle drag zoom; =trackpad= makes two-finger scroll orbit, Shift + scroll pan and Ctrl + scroll zoom, for touchpads that cannot right- or middle-drag. The axis gizmo, the numpad and Alt + left drag work in every scheme. Orbiting out of an axis view returns to perspective (Blender's auto-perspective); an orthographic view chosen with Num5 stays orthographic.
+
+Pointer movement made before a press never counts as part of the drag, so a press after a fast move does not snap the camera. A button or key held when the window loses focus is released (GLFW reports no releases while unfocused), so navigation cannot get stuck. Clicks and key chords faster than a frame (touchpad taps, xdotool) are latched by the input backend and never lost. Show Stats (View menu) adds a line with the pointer, buttons and modifiers as the editor sees them, the quickest way to diagnose an input device.
+
+Rendering: primitives are unit-sized meshes matching the picking bounds (cube, spheres, plane, cylinder, cone, torus, disc, grid, 2D rectangle and circle), lit by a small GLSL 3.3 shader (flat colour fallback); mesh assets (glTF/OBJ/...) and sprite textures load on demand and are cached; missing assets show as magenta boxes and are reported once in the console. Lights, cameras, audio emitters and empty nodes draw as constant-size icons. Selection draws the bounds (primary brighter). The grid adapts to the zoom (=grid-size= times a power of ten, =grid-extent= cells each way) and shows the world axes. The gizmo is drawn in screen space from the same geometry its hit test uses. An overlay shows the view mode, stats (node count, selection, fps) and an orientation axis.
+
+** Hierarchy, inspector, assets
+:PROPERTIES:
+:CUSTOM_ID: panels
+:END:
+- *Hierarchy*: tree with kind glyphs, visibility/lock toggles, inline rename (F2 or double click), drag to reparent (drop on a row) or reorder (drop between rows), Shift-click range and Ctrl-click toggle selection, filter by name or GUID (Ctrl+F), context menu (create submenu, copy GUID/path...), and the selection is revealed and scrolled to when it changes elsewhere.
+- *Inspector*: name, flags, path, GUID; transform with world readout (edits apply to every selected node); visual kind, primitive, asset path (with picker and drop target), material colour/roughness/metallic/emission, custom parameters (number, text, bool, colour); components (add with a searchable list of registered types, edit properties with type-aware widgets, remove); scripts (new script from a template, attach existing, open in the external editor, enable, remove); prefab instances can open their prefab or be reverted to it. Drags merge into a single undo step.
+- *Assets*: breadcrumb navigation, list or grid view, name filter and type filter, double click to open (levels and prefabs open in the editor, media in the desktop application, everything else in the external editor), drag into the viewport or the inspector, rename, move to the trash (never deleted), copy path, new folder, new script; refreshes itself through a file monitor.
+
+** Console, history, problems
+:PROPERTIES:
+:CUSTOM_ID: console
+:END:
+The console shows every GLib log message (the editor installs a log writer), messages from the game when run with F6, and IPC activity. Filter by level and text, toggle auto-scroll, copy, clear. The input line (history with Up/Down) takes:
+
+| Input                          | Effect                                                        |
+|--------------------------------+---------------------------------------------------------------|
+| =help=                         | List the commands and every IPC method                        |
+| =clear=                        | Clear the log                                                 |
+| =:ID=                          | Run an editor action, e.g. =:view.top=                        |
+| =::= (or =:=)                  | List action ids                                               |
+| =METHOD key=value ...=         | Call an IPC method, e.g. =node.find query=Door=, =node.rename node=Door name=Gate= |
+| ={"method": ...}=              | A raw JSON request                                            |
+
+The reply is printed in the console, so anything the IPC protocol can do is available from the console too.
+
+The *History* panel lists undo steps (newest last) and the redo stack; clicking a row jumps there. *Problems* lists validation results for the open level (codes: =missing-guid=, =duplicate-guid=, =duplicate-name=, =unnamed=, =slash-in-name=, =non-finite-transform=, =zero-scale=, =missing-asset-ref=, =missing-asset=, =component-no-type=, =unknown-component=, =script-no-path=, =script-no-language=, =script-disabled=, =missing-script=); clicking one selects the node.
+
+** Play in editor and running the game
+:PROPERTIES:
+:CUSTOM_ID: play
+:END:
+F5 starts play-in-editor: the level is materialised into a private =LrgWorld= with =lrg_level_instantiate()= (component descriptions resolved through the engine registry, script bindings as =LrgScriptComponent=), the world ticks every frame, and what the simulation moves is written back to the nodes so the viewport shows the game running. F7 pauses, F10 steps one frame, Shift+F5 (or F8) stops. Stopping restores the level exactly: edits made while playing are undone (and stay on the redo stack, so a change worth keeping is one Ctrl+Shift+Z away), transforms the simulation wrote are restored from a snapshot, and the document's dirty state is put back.
+
+F6 runs the game as its own process. The command comes from the project (Project Settings > Run command), a template with ={project}=, ={level}= and ={module}= placeholders; the default is =lrgldr {module} -- --level {level}= with ={module}= the project's game output. The level is saved first, the template is split like a shell command before substitution (paths with spaces stay one argument), and the game's output streams into the console with warnings and errors highlighted. Shift+F6 stops it.
+
+** Documents, autosave and live reload
+:PROPERTIES:
+:CUSTOM_ID: documents
+:END:
+- Unsaved work is never discarded silently: opening, creating, reloading or quitting asks Save / Don't Save / Cancel (=confirm-on-close=). Saving an untitled level goes through Save As and then carries on with what was asked.
+- Autosave writes the open level every =autosave-interval= seconds while it has changes, into =<project>/.lrg-editor/autosave/<name>-<hash>.autosave= (next to the level without a project). Opening a level whose autosave is newer offers Restore / Discard (moves it to the trash) / Later.
+- The open level file is watched. When it changes on disk (for example saved from Emacs) the editor reloads it if it has no unsaved changes (=reload-on-external-change=), keeping the selection by GUID; otherwise the status bar offers Reload / Keep mine.
+- File > Import Scene reads a Blender-exported scene YAML into a new untitled level.
+
+** Preferences (editor.yaml)
+:PROPERTIES:
+:CUSTOM_ID: preferences
+:END:
+Preferences are edited live in Edit > Preferences (Ctrl+,) and written when the dialog closes; "Edit editor.yaml" opens the file in your editor. The file is =$XDG_CONFIG_HOME/libregnum/editor.yaml= (override with =--settings= or =LRG_EDITOR_CONFIG=). Unknown keys are preserved.
+
+#+begin_src yaml
+external-editor: auto            # auto | emacsclient | emacs | nvim | vim | gvim | helix | kakoune |
+                                 # micro | nano | codium | code-oss | kate | geany | gedit |
+                                 # gnome-text-editor | zed | xdg-open | custom
+external-editor-command: null    # template for "custom": {file} {line} {col} {project} {dir}
+terminal-command: null           # wrapper for terminal editors, e.g. "gst -e"
+editor-in-terminal: auto         # auto | always | never
+emacs-integration: true          # open files in a connected Emacs first
+emacs-server-name: null          # emacsclient -s NAME
+theme: mocha                     # mocha | macchiato | frappe | latte
+ui-scale: 1
+font-size: 16
+font-path: null                  # default: DejaVu / Noto / Liberation / Adwaita / Open Sans if installed
+autosave-interval: 120           # seconds, 0 = off
+history-limit: 1000
+reload-on-external-change: true
+confirm-on-close: true
+restore-last-session: true
+snap-enabled: false
+snap-translate: 1                # metres
+snap-rotate-degrees: 15
+snap-scale: 0.1
+grid-visible: true
+grid-size: 1
+grid-extent: 50
+camera-fly-speed: 8
+camera-orbit-speed: 0.35         # degrees per pixel
+camera-invert-y: false
+camera-navigation: default       # default | blender | trackpad
+camera-fov: 50
+server-enabled: true
+server-socket: null              # default $XDG_RUNTIME_DIR/libregnum/editor-PID.sock
+keybindings:                     # action id -> shortcut; "" unbinds; "A|B" alternatives
+  tool.scale: Ctrl+Alt+K
+  edit.redo: Ctrl+Y|Ctrl+Shift+Z
+recent-projects: []
+recent-levels: []
+layout: split(v,0.180,tabs(0,hierarchy),...)   # managed by the editor
+#+end_src
+
+** Default shortcuts
+:PROPERTIES:
+:CUSTOM_ID: shortcuts
+:END:
+Help > Keyboard Shortcuts (Ctrl+/) shows the live table; every one can be rebound.
+
+| Area  | Shortcut                       | Action                         |
+|-------+--------------------------------+--------------------------------|
+| File  | Ctrl+N / Ctrl+O / Ctrl+S       | New / open / save level        |
+| File  | Ctrl+Shift+S / Ctrl+Shift+O    | Save as / open project         |
+| File  | Ctrl+Q                         | Quit                           |
+| Edit  | Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y  | Undo / redo                    |
+| Edit  | Ctrl+X / Ctrl+C / Ctrl+V       | Cut / copy / paste             |
+| Edit  | Ctrl+D / Delete                | Duplicate / delete             |
+| Edit  | Ctrl+A / Ctrl+Shift+A          | Select all / deselect          |
+| Edit  | Ctrl+F / Ctrl+,                | Find in hierarchy / preferences |
+| Node  | F2 / H / Ctrl+L                | Rename / visibility / lock     |
+| Node  | Ctrl+G / Ctrl+Shift+G          | Group / ungroup                |
+| Node  | Alt+Up / Alt+Down              | Reorder among siblings         |
+| Node  | Ctrl+Shift+I / Ctrl+E          | Instantiate prefab / open scripts |
+| View  | F / Home                       | Focus selection / frame all    |
+| View  | Num7 Num1 Num3 (+Ctrl) / Num5  | Top, front, right (opposite) / ortho |
+| View  | Ctrl+Shift+2 / Shift+G / Shift+Z | 2D mode / grid / wireframe   |
+| Tool  | Q / W / E / R                  | Select / move / rotate / scale |
+| Tool  | T / Y                          | Local-world space / snapping   |
+| Play  | F5 / F7 / F10 / Shift+F5, F8   | Play / pause / step / stop     |
+| Play  | F6 / Shift+F6                  | Run game / stop game           |
+| Tools | Ctrl+Shift+P, F1 / Ctrl+P      | Command palette / quick open   |
+| Tools | Ctrl+Alt+E                     | Edit the level YAML externally |
+| Help  | Ctrl+/                         | Keyboard shortcuts             |
+
+** Projects
+:PROPERTIES:
+:CUSTOM_ID: projects
+:END:
+File > New Project creates =levels/=, =scripts/=, =assets/=, =prefabs/=, a =project.ryaml= and a starter level (sun, camera, ground). File > Project Settings edits the name, default level, game module (=game_output=), run command and scripts folder. See [[file:projects-and-assets.org][Projects and Assets]] for the manifest format.
+
+** Embedding and automation
+:PROPERTIES:
+:CUSTOM_ID: embedding
+:END:
+=LrgEditorApp= is public API (and introspectable), so tools can host the editor and extend it:
+
+#+begin_src c
+g_autoptr(LrgEditor)    editor = lrg_editor_new ();
+g_autoptr(LrgEditorApp) app = lrg_editor_app_new (editor);
+
+lrg_editor_app_load_settings (app, NULL, NULL);
+lrg_editor_actions_add (lrg_editor_app_get_actions (app), "mytool.bake", "Bake Lighting",
+                        "My Tool", "Ctrl+Alt+B", bake_cb, NULL, NULL, editor);
+lrg_editor_server_register_method (lrg_editor_app_get_server (app), "mytool.bake",
+                                   bake_method, editor, NULL);
+lrg_editor_app_start_server (app, NULL, NULL);
+return lrg_editor_app_run (app);
+#+end_src
+
+Custom actions appear in menus (via the palette), the keybinding editor and =action.run=. See =examples/editor-standalone.c=.
+
+The app can also be driven without a window, one frame at a time, with =lrg_editor_app_frame()= and a synthetic =LrgGuiInput= -- this is how =tests/test-editor-app.c= exercises shortcuts, the palette, dialogs, play mode, saving and live reload. =lrg_editor_app_run_headless()= serves IPC only.
+
+** Related documentation
+:PROPERTIES:
+:CUSTOM_ID: related
+:END:
+- [[file:external-editor.org][External code editor]] -- =$EDITOR=, presets, templates, terminals
+- [[file:emacs.org][Emacs integration]] -- =libregnum.el=
+- [[file:ipc-protocol.org][IPC protocol]] -- every method and event
+- [[file:editor-runtime.org][Editor runtime]] -- =LrgEditor=, commands, selection, gizmo math
+- [[file:../modules/gui/index.org][Immediate-mode GUI]] -- the toolkit the editor is drawn with

@@ -36,4 +36,18 @@ G_BEGIN_DECLS
 LRG_AVAILABLE_IN_ALL
 LrgLevel * lrg_level_from_scene (LrgScene *scene);
 
+/**
+ * lrg_level_import_scene_file:
+ * @path: a scene YAML file (the Blender exporter's format)
+ * @error: (nullable): return location for an error
+ *
+ * Loads a scene file with #LrgSceneSerializerYaml and converts it with
+ * lrg_level_from_scene().
+ *
+ * Returns: (transfer full) (nullable): a new #LrgLevel, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLevel * lrg_level_import_scene_file (const gchar  *path,
+                                        GError      **error);
+
 G_END_DECLS

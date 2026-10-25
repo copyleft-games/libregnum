@@ -4799,6 +4799,52 @@ lrg_script_language_get_type (void)
 }
 
 GType
+lrg_editor_space_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_EDITOR_SPACE_LOCAL, "LRG_EDITOR_SPACE_LOCAL", "local" },
+            { LRG_EDITOR_SPACE_WORLD, "LRG_EDITOR_SPACE_WORLD", "world" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgEditorSpace"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_editor_gizmo_handle_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_EDITOR_GIZMO_HANDLE_NONE, "LRG_EDITOR_GIZMO_HANDLE_NONE", "none" },
+            { LRG_EDITOR_GIZMO_HANDLE_X, "LRG_EDITOR_GIZMO_HANDLE_X", "x" },
+            { LRG_EDITOR_GIZMO_HANDLE_Y, "LRG_EDITOR_GIZMO_HANDLE_Y", "y" },
+            { LRG_EDITOR_GIZMO_HANDLE_Z, "LRG_EDITOR_GIZMO_HANDLE_Z", "z" },
+            { LRG_EDITOR_GIZMO_HANDLE_XY, "LRG_EDITOR_GIZMO_HANDLE_XY", "xy" },
+            { LRG_EDITOR_GIZMO_HANDLE_YZ, "LRG_EDITOR_GIZMO_HANDLE_YZ", "yz" },
+            { LRG_EDITOR_GIZMO_HANDLE_XZ, "LRG_EDITOR_GIZMO_HANDLE_XZ", "xz" },
+            { LRG_EDITOR_GIZMO_HANDLE_CENTER, "LRG_EDITOR_GIZMO_HANDLE_CENTER", "center" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgEditorGizmoHandle"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
 lrg_editor_tool_get_type (void)
 {
     static volatile gsize g_define_type_id__volatile = 0;

@@ -177,4 +177,49 @@ gboolean lrg_component_desc_has (LrgComponentDesc *self,
 LRG_AVAILABLE_IN_ALL
 GList * lrg_component_desc_get_keys (LrgComponentDesc *self);
 
+/**
+ * lrg_component_desc_remove:
+ * @self: an #LrgComponentDesc
+ * @name: the property name
+ *
+ * Removes the stored value for @name.
+ *
+ * Returns: %TRUE if a value was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_component_desc_remove (LrgComponentDesc *self,
+                                    const gchar      *name);
+
+/**
+ * lrg_component_desc_get_sorted_keys:
+ * @self: an #LrgComponentDesc
+ *
+ * Like lrg_component_desc_get_keys() but sorted alphabetically, which gives
+ * inspectors and serializers a stable order.
+ *
+ * Returns: (transfer container) (element-type utf8): sorted property names
+ */
+LRG_AVAILABLE_IN_ALL
+GList * lrg_component_desc_get_sorted_keys (LrgComponentDesc *self);
+
+/**
+ * lrg_component_desc_copy:
+ * @self: an #LrgComponentDesc
+ *
+ * Returns: (transfer full): a deep copy of @self
+ */
+LRG_AVAILABLE_IN_ALL
+LrgComponentDesc * lrg_component_desc_copy (LrgComponentDesc *self);
+
+/**
+ * lrg_component_desc_equal:
+ * @a: (nullable): an #LrgComponentDesc
+ * @b: (nullable): another #LrgComponentDesc
+ *
+ * Returns: %TRUE if both have the same type name and property values
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_component_desc_equal (LrgComponentDesc *a,
+                                   LrgComponentDesc *b);
+
 G_END_DECLS

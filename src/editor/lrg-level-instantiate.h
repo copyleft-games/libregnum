@@ -49,7 +49,11 @@ LrgScene * lrg_level_to_scene (LrgLevel *level);
  * @error: (nullable): return location for an error
  *
  * Creates one #LrgGameObject per node in @level, applies the node's component
- * descriptions via the engine registry, and adds the objects to @world.
+ * descriptions via the engine registry, attaches enabled script bindings as
+ * #LrgScriptComponent instances, runs the node's #LrgNodeClass.instantiate
+ * hook and adds the objects to @world. Each object is tagged with its
+ * node's GUID (lrg_world_find_by_tag()), which is how play-in-editor maps
+ * runtime objects back to the authoring nodes.
  *
  * Returns: %TRUE on success
  */

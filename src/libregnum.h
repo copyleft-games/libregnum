@@ -12,6 +12,9 @@
 
 #define LIBREGNUM_INSIDE
 
+/* Before anything pulls in <raylib.h>: see the note on BASE_CFLAGS in
+ * config.mk. Games built with -std=gnu89 need raylib's real _Bool. */
+#include <stdbool.h>
 #include <glib.h>
 #include <glib-object.h>
 #include <gio/gio.h>
@@ -332,6 +335,13 @@
 #include "scene/lrg-scene-serializer-blender.h"
 
 /* Editor / level authoring module */
+/* Immediate-mode GUI toolkit */
+#include "gui/lrg-gui-types.h"
+#include "gui/lrg-gui-draw-list.h"
+#include "gui/lrg-gui-context.h"
+#include "gui/lrg-gui-dock.h"
+#include "gui/lrg-gui-raylib.h"
+
 #ifdef LRG_BUILD_EDITOR
 #include "editor/lrg-component-desc.h"
 #include "editor/lrg-script-binding.h"
@@ -345,6 +355,14 @@
 #include "editor/lrg-editor-selection.h"
 #include "editor/lrg-editor.h"
 #include "editor/lrg-editor-host.h"
+#include "editor/lrg-editor-math.h"
+#include "editor/lrg-editor-gizmo.h"
+#include "editor/lrg-editor-settings.h"
+#include "editor/lrg-external-editor.h"
+#include "editor/lrg-editor-log.h"
+#include "editor/lrg-editor-server.h"
+#include "editor/lrg-editor-actions.h"
+#include "editor/lrg-editor-validate.h"
 #include "editor/lrg-asset-database.h"
 #include "editor/lrg-project.h"
 #include "editor/lrg-prefab.h"

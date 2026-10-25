@@ -117,4 +117,24 @@ LRG_AVAILABLE_IN_ALL
 void lrg_script_binding_set_enabled (LrgScriptBinding *self,
                                      gboolean          enabled);
 
+/**
+ * lrg_script_binding_copy:
+ * @self: an #LrgScriptBinding
+ *
+ * Returns: (transfer full): a copy of @self
+ */
+LRG_AVAILABLE_IN_ALL
+LrgScriptBinding * lrg_script_binding_copy (LrgScriptBinding *self);
+
+/**
+ * lrg_script_binding_equal:
+ * @a: (nullable): an #LrgScriptBinding
+ * @b: (nullable): another #LrgScriptBinding
+ *
+ * Returns: %TRUE if both bind the same script, language and enabled state
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_script_binding_equal (LrgScriptBinding *a,
+                                   LrgScriptBinding *b);
+
 G_END_DECLS

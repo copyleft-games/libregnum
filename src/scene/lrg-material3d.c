@@ -8,6 +8,7 @@
  */
 
 #include "lrg-material3d.h"
+#include <string.h>
 
 /**
  * LrgMaterial3D:
@@ -454,4 +455,39 @@ lrg_material3d_set_emission_strength (LrgMaterial3D *self,
 		self->emission_strength = MAX (strength, 0.0f);
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_EMISSION_STRENGTH]);
 	}
+}
+
+LrgMaterial3D *
+lrg_material3d_copy (LrgMaterial3D *self)
+{
+	LrgMaterial3D *copy;
+
+	g_return_val_if_fail (LRG_IS_MATERIAL3D (self), NULL);
+
+	copy = lrg_material3d_new ();
+	memcpy (copy->color, self->color, sizeof copy->color);
+	copy->roughness = self->roughness;
+	copy->metallic = self->metallic;
+	memcpy (copy->emission_color, self->emission_color,
+	        sizeof copy->emission_color);
+	copy->emission_strength = self->emission_strength;
+
+	return copy;
+}
+
+gboolean
+lrg_material3d_equal (LrgMaterial3D *a,
+                      LrgMaterial3D *b)
+{
+	if (a == b)
+		return TRUE;
+	if (a == NULL || b == NULL)
+		return FALSE;
+
+	return memcmp (a->color, b->color, sizeof a->color) == 0 &&
+	       a->roughness == b->roughness &&
+	       a->metallic == b->metallic &&
+	       memcmp (a->emission_color, b->emission_color,
+	               sizeof a->emission_color) == 0 &&
+	       a->emission_strength == b->emission_strength;
 }

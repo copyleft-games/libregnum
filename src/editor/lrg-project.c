@@ -11,6 +11,7 @@
 #include "lrg-asset-database.h"
 #include "../lrg-enums.h"
 #include <yaml-glib.h>
+#include <string.h>
 
 struct _LrgProject
 {
@@ -20,6 +21,8 @@ struct _LrgProject
 	gchar     *name;
 	gchar     *default_level;
 	gchar     *game_output;
+	gchar     *run_command;
+	gchar     *scripts_dir;
 	GPtrArray *asset_dirs;   /* gchar* */
 };
 
@@ -34,6 +37,8 @@ lrg_project_finalize (GObject *object)
 	g_clear_pointer (&self->name, g_free);
 	g_clear_pointer (&self->default_level, g_free);
 	g_clear_pointer (&self->game_output, g_free);
+	g_clear_pointer (&self->run_command, g_free);
+	g_clear_pointer (&self->scripts_dir, g_free);
 	g_clear_pointer (&self->asset_dirs, g_ptr_array_unref);
 
 	G_OBJECT_CLASS (lrg_project_parent_class)->finalize (object);
@@ -105,6 +110,10 @@ lrg_project_open (const gchar  *dir,
 	self = lrg_project_new (dir, yaml_mapping_get_string_member (proj_map, "name"));
 	self->default_level = g_strdup (yaml_mapping_get_string_member (proj_map, "default_level"));
 	self->game_output = g_strdup (yaml_mapping_get_string_member (proj_map, "game_output"));
+	if (yaml_mapping_has_member (proj_map, "run_command"))
+		self->run_command = g_strdup (yaml_mapping_get_string_member (proj_map, "run_command"));
+	if (yaml_mapping_has_member (proj_map, "scripts_dir"))
+		self->scripts_dir = g_strdup (yaml_mapping_get_string_member (proj_map, "scripts_dir"));
 
 	dirs_node = yaml_mapping_get_member (proj_map, "asset_dirs");
 	if (dirs_node != NULL && yaml_node_get_node_type (dirs_node) == YAML_NODE_SEQUENCE)
@@ -152,6 +161,10 @@ lrg_project_save (LrgProject  *self,
 		yaml_mapping_set_string_member (proj_map, "default_level", self->default_level);
 	if (self->game_output != NULL)
 		yaml_mapping_set_string_member (proj_map, "game_output", self->game_output);
+	if (self->run_command != NULL)
+		yaml_mapping_set_string_member (proj_map, "run_command", self->run_command);
+	if (self->scripts_dir != NULL)
+		yaml_mapping_set_string_member (proj_map, "scripts_dir", self->scripts_dir);
 
 	for (i = 0; i < self->asset_dirs->len; i++)
 		yaml_sequence_add_string_element (dirs_seq, g_ptr_array_index (self->asset_dirs, i));
@@ -263,4 +276,83 @@ lrg_project_create_asset_database (LrgProject *self)
 	}
 
 	return db;
+}
+
+const gchar *
+lrg_project_get_run_command (LrgProject *self)
+{
+	g_return_val_if_fail (LRG_IS_PROJECT (self), NULL);
+	return self->run_command;
+}
+
+void
+lrg_project_set_run_command (LrgProject  *self,
+                             const gchar *command)
+{
+	g_return_if_fail (LRG_IS_PROJECT (self));
+	g_clear_pointer (&self->run_command, g_free);
+	if (command != NULL && *command != '\0')
+		self->run_command = g_strdup (command);
+}
+
+const gchar *
+lrg_project_get_scripts_dir (LrgProject *self)
+{
+	g_return_val_if_fail (LRG_IS_PROJECT (self), NULL);
+	return (self->scripts_dir != NULL) ? self->scripts_dir : "scripts";
+}
+
+void
+lrg_project_set_scripts_dir (LrgProject  *self,
+                             const gchar *dir)
+{
+	g_return_if_fail (LRG_IS_PROJECT (self));
+	g_clear_pointer (&self->scripts_dir, g_free);
+	if (dir != NULL && *dir != '\0')
+		self->scripts_dir = g_strdup (dir);
+}
+
+void
+lrg_project_clear_asset_dirs (LrgProject *self)
+{
+	g_return_if_fail (LRG_IS_PROJECT (self));
+	g_ptr_array_set_size (self->asset_dirs, 0);
+}
+
+gchar *
+lrg_project_resolve (LrgProject  *self,
+                     const gchar *path)
+{
+	g_return_val_if_fail (LRG_IS_PROJECT (self), NULL);
+	g_return_val_if_fail (path != NULL, NULL);
+
+	if (g_path_is_absolute (path) || self->root == NULL)
+		return g_canonicalize_filename (path, NULL);
+	return g_canonicalize_filename (path, self->root);
+}
+
+gchar *
+lrg_project_relativize (LrgProject  *self,
+                        const gchar *path)
+{
+	g_autofree gchar *root = NULL;
+	g_autofree gchar *abs = NULL;
+	gsize             len;
+
+	g_return_val_if_fail (LRG_IS_PROJECT (self), NULL);
+	g_return_val_if_fail (path != NULL, NULL);
+
+	if (self->root == NULL)
+		return g_strdup (path);
+
+	root = g_canonicalize_filename (self->root, NULL);
+	abs = g_canonicalize_filename (path, root);
+	len = strlen (root);
+
+	/* Inside the root: strip "root/" */
+	if (g_str_has_prefix (abs, root) && abs[len] == G_DIR_SEPARATOR)
+		return g_strdup (abs + len + 1);
+	if (g_strcmp0 (abs, root) == 0)
+		return g_strdup (".");
+	return g_strdup (path);
 }
