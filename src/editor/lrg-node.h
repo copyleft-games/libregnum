@@ -573,9 +573,9 @@ gboolean lrg_node_state_equal (LrgNode *self,
 /**
  * lrg_node_foreach:
  * @self: an #LrgNode
- * @func: (scope call): function called for @self and every descendant in
- *   depth-first pre-order; return %FALSE to stop the walk
- * @user_data: (closure): data passed to @func
+ * @func: (scope call) (closure user_data): function called for @self and
+ *   every descendant in depth-first pre-order; return %FALSE to stop the walk
+ * @user_data: data passed to @func
  *
  * Walks the subtree rooted at @self.
  *

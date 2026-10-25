@@ -357,9 +357,11 @@ void lrg_gui_context_set_measure_func (LrgGuiContext     *self,
 /**
  * lrg_gui_context_set_clipboard_funcs:
  * @self: an #LrgGuiContext
- * @get_func: (scope notified) (nullable): reads the system clipboard
- * @set_func: (scope notified) (nullable): writes the system clipboard
- * @user_data: (closure): data for both
+ * @get_func: (scope notified) (closure user_data) (nullable): reads the
+ *   system clipboard
+ * @set_func: (scope notified) (closure user_data) (nullable): writes the
+ *   system clipboard
+ * @user_data: data for both
  * @destroy: (nullable): frees @user_data
  *
  * Without functions, copy/paste uses an internal buffer.

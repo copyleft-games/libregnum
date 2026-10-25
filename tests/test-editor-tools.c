@@ -403,6 +403,176 @@ test_open_emacs_first_and_spawn (void)
 	g_assert_nonnull (error);
 }
 
+/* ==========================================================================
+ * Actions and shortcuts
+ * ========================================================================== */
+
+static void
+test_shortcut_parse_format (void)
+{
+	LrgGuiModifiers  m;
+	LrgGuiKey        k;
+	g_autofree gchar *f1 = NULL;
+	g_autofree gchar *f2 = NULL;
+
+	g_assert_true (lrg_editor_shortcut_parse ("Ctrl+Shift+S", &m, &k));
+	g_assert_cmpint (m, ==, LRG_GUI_MOD_CTRL | LRG_GUI_MOD_SHIFT);
+	g_assert_cmpint (k, ==, LRG_GUI_KEY_S);
+	f1 = lrg_editor_shortcut_format (m, k);
+	g_assert_cmpstr (f1, ==, "Ctrl+Shift+S");
+
+	g_assert_true (lrg_editor_shortcut_parse ("control + del", &m, &k));
+	g_assert_cmpint (k, ==, LRG_GUI_KEY_DELETE);
+	g_assert_true (lrg_editor_shortcut_parse ("F12", NULL, &k));
+	g_assert_cmpint (k, ==, LRG_GUI_KEY_F12);
+	g_assert_true (lrg_editor_shortcut_parse ("Shift+Num7", &m, &k));
+	g_assert_cmpint (k, ==, LRG_GUI_KEY_KP_7);
+	g_assert_true (lrg_editor_shortcut_parse ("Ctrl++", &m, &k));
+	g_assert_cmpint (k, ==, LRG_GUI_KEY_EQUAL);
+	f2 = lrg_editor_shortcut_format (LRG_GUI_MOD_ALT, LRG_GUI_KEY_UP);
+	g_assert_cmpstr (f2, ==, "Alt+Up");
+
+	g_assert_false (lrg_editor_shortcut_parse ("", NULL, NULL));
+	g_assert_false (lrg_editor_shortcut_parse ("Ctrl+", NULL, NULL));
+	g_assert_false (lrg_editor_shortcut_parse ("Hyper+X", NULL, NULL));
+	g_assert_false (lrg_editor_shortcut_parse ("F13", NULL, NULL));
+	g_assert_false (lrg_editor_shortcut_parse ("A+B", NULL, NULL));
+}
+
+static void
+bump (gpointer data)
+{
+	(*(gint *) data)++;
+}
+
+static gboolean
+is_even (gpointer data)
+{
+	return (*(gint *) data) % 2 == 0;
+}
+
+static void
+test_actions_registry (void)
+{
+	g_autoptr(LrgEditorSettings) settings = lrg_editor_settings_new ();
+	g_autoptr(LrgEditorActions)  actions = lrg_editor_actions_new (settings);
+	g_autoptr(GPtrArray)         conflicts = NULL;
+	GList                       *ids;
+	gint                         counter = 0;
+
+	lrg_editor_actions_add (actions, "file.save", "Save", "File", "Ctrl+S", bump, NULL, NULL, &counter);
+	lrg_editor_actions_add (actions, "edit.duplicate", "Duplicate", "Edit", "Ctrl+D", bump, is_even, NULL, &counter);
+	lrg_editor_actions_add (actions, "view.grid", "Show Grid", "View", "G", bump, NULL, is_even, &counter);
+
+	g_assert_true (lrg_editor_actions_activate (actions, "file.save"));
+	g_assert_cmpint (counter, ==, 1);
+	g_assert_false (lrg_editor_actions_is_enabled (actions, "edit.duplicate"));
+	g_assert_false (lrg_editor_actions_activate (actions, "edit.duplicate"));
+	g_assert_false (lrg_editor_actions_activate (actions, "nope"));
+	g_assert_false (lrg_editor_actions_is_checked (actions, "view.grid"));
+
+	g_assert_cmpstr (lrg_editor_actions_find_by_shortcut (actions, LRG_GUI_MOD_CTRL, LRG_GUI_KEY_S),
+	                 ==, "file.save");
+	/* Disabled actions do not claim their chord. */
+	g_assert_null (lrg_editor_actions_find_by_shortcut (actions, LRG_GUI_MOD_CTRL, LRG_GUI_KEY_D));
+
+	/* User overrides rebind, an empty override unbinds. */
+	lrg_editor_settings_set_keybinding (settings, "file.save", "Ctrl+Alt+S");
+	lrg_editor_settings_set_keybinding (settings, "view.grid", "");
+	g_assert_cmpstr (lrg_editor_actions_get_shortcut (actions, "file.save"), ==, "Ctrl+Alt+S");
+	g_assert_cmpstr (lrg_editor_actions_get_default_shortcut (actions, "file.save"), ==, "Ctrl+S");
+	g_assert_null (lrg_editor_actions_get_shortcut (actions, "view.grid"));
+	g_assert_null (lrg_editor_actions_find_by_shortcut (actions, LRG_GUI_MOD_CTRL, LRG_GUI_KEY_S));
+
+	ids = lrg_editor_actions_list (actions);
+	g_assert_cmpstr (ids->data, ==, "edit.duplicate");   /* Edit < File < View */
+	g_list_free (ids);
+
+	ids = lrg_editor_actions_search (actions, "dup");
+	g_assert_nonnull (ids);
+	g_assert_cmpstr (ids->data, ==, "edit.duplicate");
+	g_list_free (ids);
+	ids = lrg_editor_actions_search (actions, "zzz");
+	g_assert_null (ids);
+
+	lrg_editor_settings_set_keybinding (settings, "view.grid", "Ctrl+Alt+S");
+	conflicts = lrg_editor_actions_find_conflicts (actions);
+	g_assert_cmpuint (conflicts->len, ==, 1);
+}
+
+static void
+test_fuzzy_score (void)
+{
+	g_assert_cmpint (lrg_editor_fuzzy_score ("sv", "Save Level"), >, 0);
+	g_assert_cmpint (lrg_editor_fuzzy_score ("xq", "Save Level"), ==, 0);
+	g_assert_cmpint (lrg_editor_fuzzy_score ("save", "File: Save"), >,
+	                 lrg_editor_fuzzy_score ("save", "View: Show All Events"));
+	g_assert_cmpint (lrg_editor_fuzzy_score ("pl", "player.lua"), >,
+	                 lrg_editor_fuzzy_score ("pl", "simple.lua"));
+}
+
+/* ==========================================================================
+ * Validation
+ * ========================================================================== */
+
+static gboolean
+has_code (GPtrArray   *problems,
+          const gchar *code)
+{
+	guint i;
+
+	for (i = 0; i < problems->len; i++)
+		if (g_strcmp0 (((LrgEditorProblem *) g_ptr_array_index (problems, i))->code, code) == 0)
+			return TRUE;
+	return FALSE;
+}
+
+static void
+test_validate_level (void)
+{
+	g_autoptr(LrgLevel)         level = lrg_level_new ("v");
+	g_autoptr(LrgNode)          a = lrg_node_new ("A");
+	g_autoptr(LrgNode)          b = lrg_node_new ("A");
+	g_autoptr(LrgNode)          c = lrg_node_new (NULL);
+	g_autoptr(LrgNodeVisual)    mesh = lrg_node_visual_new (LRG_NODE_VISUAL_MESH_ASSET);
+	g_autoptr(LrgScriptBinding) script = lrg_script_binding_new (LRG_SCRIPT_LANGUAGE_LUA, "missing.lua");
+	g_autoptr(LrgComponentDesc) comp = lrg_component_desc_new ("nonexistent-type");
+	g_autoptr(LrgRegistry)      registry = lrg_registry_new ();
+	g_autoptr(GPtrArray)        problems = NULL;
+	g_autofree gchar           *dir = g_dir_make_tmp ("lrg-validate-XXXXXX", NULL);
+
+	lrg_node_visual_set_asset (mesh, "models/nope.glb");
+	lrg_node_set_visual (a, mesh);
+	lrg_node_add_script (a, script);
+	lrg_node_add_component (b, comp);
+	lrg_node_set_guid (c, lrg_node_get_guid (a));
+	lrg_node_set_scale_xyz (c, 1.0f, 0.0f, 1.0f);
+	lrg_level_add_node (level, a, NULL);
+	lrg_level_add_node (level, b, NULL);
+	lrg_level_add_node (level, c, NULL);
+
+	problems = lrg_editor_validate_level (level, dir, registry);
+	g_assert_true (has_code (problems, "missing-asset"));
+	g_assert_true (has_code (problems, "missing-script"));
+	g_assert_true (has_code (problems, "unknown-component"));
+	g_assert_true (has_code (problems, "duplicate-name"));
+	g_assert_true (has_code (problems, "duplicate-guid"));
+	g_assert_true (has_code (problems, "unnamed"));
+	g_assert_true (has_code (problems, "zero-scale"));
+
+	/* Errors come first. */
+	g_assert_cmpint (((LrgEditorProblem *) g_ptr_array_index (problems, 0))->severity, ==,
+	                 LRG_EDITOR_PROBLEM_ERROR);
+
+	/* Without a base dir, file checks are skipped. */
+	g_clear_pointer (&problems, g_ptr_array_unref);
+	problems = lrg_editor_validate_level (level, NULL, NULL);
+	g_assert_false (has_code (problems, "missing-asset"));
+	g_assert_false (has_code (problems, "unknown-component"));
+
+	g_rmdir (dir);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -420,6 +590,11 @@ main (int   argc,
 	g_test_add_func ("/editor-tools/external/argv-environment", test_build_argv_environment);
 	g_test_add_func ("/editor-tools/external/argv-custom", test_build_argv_custom_and_errors);
 	g_test_add_func ("/editor-tools/external/open", test_open_emacs_first_and_spawn);
+
+	g_test_add_func ("/editor-tools/actions/shortcut-parse", test_shortcut_parse_format);
+	g_test_add_func ("/editor-tools/actions/registry", test_actions_registry);
+	g_test_add_func ("/editor-tools/actions/fuzzy", test_fuzzy_score);
+	g_test_add_func ("/editor-tools/validate/level", test_validate_level);
 
 	return g_test_run ();
 }

@@ -1389,6 +1389,8 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-external-editor.h \
 	src/editor/lrg-editor-log.h \
 	src/editor/lrg-editor-server.h \
+	src/editor/lrg-editor-actions.h \
+	src/editor/lrg-editor-validate.h \
 	src/editor/lrg-asset-database.h \
 	src/editor/lrg-project.h \
 	src/editor/lrg-prefab.h
@@ -1411,6 +1413,8 @@ SOURCES += \
 	src/editor/lrg-external-editor.c \
 	src/editor/lrg-editor-log.c \
 	src/editor/lrg-editor-server.c \
+	src/editor/lrg-editor-actions.c \
+	src/editor/lrg-editor-validate.c \
 	src/editor/lrg-asset-database.c \
 	src/editor/lrg-project.c \
 	src/editor/lrg-prefab.c

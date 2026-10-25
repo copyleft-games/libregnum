@@ -358,6 +358,8 @@
 #include "editor/lrg-external-editor.h"
 #include "editor/lrg-editor-log.h"
 #include "editor/lrg-editor-server.h"
+#include "editor/lrg-editor-actions.h"
+#include "editor/lrg-editor-validate.h"
 #include "editor/lrg-asset-database.h"
 #include "editor/lrg-project.h"
 #include "editor/lrg-prefab.h"
