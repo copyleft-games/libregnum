@@ -1,0 +1,171 @@
+#+title: Emacs Integration (libregnum.el)
+#+description: First-party Emacs package for the libregnum editor: open files, outline, inspect, edit and drive the editor from Emacs
+#+authors: Zach Podbielniak
+#+categories: libregnum editor emacs
+#+created: 2026-10-24T22:25:00-04:00
+#+updated: 2026-10-24T22:25:00-04:00
+#+version: 1.0
+
+* Emacs Integration (libregnum.el)
+:PROPERTIES:
+:CUSTOM_ID: emacs
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Emacs Integration
+#+end_quote
+
+=editors/emacs/libregnum.el= connects Emacs to a running =lrg-editor= over its IPC socket. Once connected:
+
+- files the editor would hand to =$EDITOR= (scripts, level YAML, manifests) open in this Emacs at the right line and column, in-process;
+- the level shows as an outline buffer kept in sync with the editor's selection, where nodes can be selected, inspected, renamed, created, duplicated, deleted and edited;
+- every editor action, save, undo/redo, play/pause/step/stop, run the game, validation and screenshots are commands;
+- the editor log streams into =*libregnum-log*=;
+- =.rlevel=, =.rprefab= and =.ryaml= files get =libregnum-rlevel-mode=, and saving one is enough for the editor to reload it.
+
+The package needs Emacs 28.1 or newer, has no dependencies, is lexical-binding and byte-compiles without warnings.
+
+** Installation
+:PROPERTIES:
+:CUSTOM_ID: install
+:END:
+=make install= puts =libregnum.el= in =$(PREFIX)/share/emacs/site-lisp/=. From a checkout:
+
+#+begin_src emacs-lisp
+(add-to-list 'load-path "~/source/projects/libregnum/editors/emacs")
+(require 'libregnum)
+(libregnum-global-mode 1)          ; C-c L prefix and the mode-line lighter
+#+end_src
+
+Doom Emacs (=packages.el= / =config.el=):
+
+#+begin_src emacs-lisp
+;; packages.el
+(package! libregnum :recipe (:local-repo "~/source/projects/libregnum/editors/emacs"))
+
+;; config.el
+(use-package! libregnum
+  :commands (libregnum-connect libregnum-start-editor libregnum-outline)
+  :config (libregnum-global-mode 1))
+#+end_src
+
+** Connecting
+:PROPERTIES:
+:CUSTOM_ID: connecting
+:END:
+- =M-x libregnum-connect= connects to the most recently started editor (newest =editor-*.sock= in =$XDG_RUNTIME_DIR/libregnum/=); with =C-u= it asks for a socket. Set =libregnum-socket= to always use one path.
+- =M-x libregnum-start-editor= starts =lrg-editor= on a project folder or level with a private socket and connects; with =C-u= the editor runs headless (no window: Emacs becomes the front end).
+- =M-x libregnum-status= shows the level, dirty state, node and selection counts and the active tool.
+- =M-x libregnum-disconnect= closes the connection. The mode-line shows =LRG= while connected.
+
+On connect the package says =hello= with the =open-file= capability and subscribes to the events in =libregnum-subscribe=. With the editor's =external-editor= on =auto= and =EDITOR=emacsclient...=, or on an Emacs preset, files then open here; when this Emacs is not connected the editor falls back to launching =emacsclient=.
+
+** Commands
+:PROPERTIES:
+:CUSTOM_ID: commands
+:END:
+All commands are under =libregnum-keymap-prefix= (default =C-c L=) in =libregnum-global-mode=:
+
+| Key         | Command                     | Does                                                |
+|-------------+-----------------------------+-----------------------------------------------------|
+| =C-c L c=   | =libregnum-connect=         | Connect to the newest editor                        |
+| =C-c L C=   | =libregnum-start-editor=    | Start an editor and connect (=C-u=: headless)       |
+| =C-c L q=   | =libregnum-disconnect=      | Disconnect                                          |
+| =C-c L ?=   | =libregnum-status=          | Level, nodes, selection, tool                       |
+| =C-c L o=   | =libregnum-outline=         | Outline of the level                                |
+| =C-c L i=   | =libregnum-inspect=         | Everything about a node                             |
+| =C-c L e=   | =libregnum-set-property=    | Edit name, location, rotation, scale, flags         |
+| =C-c L x=   | =libregnum-action=          | Run any editor action, completing on labels         |
+| =C-c L s=   | =libregnum-save=            | Save the level                                      |
+| =C-c L u=   | =libregnum-undo=            | Undo                                                |
+| =C-c L U=   | =libregnum-redo=            | Redo                                                |
+| =C-c L p=   | =libregnum-play=            | Play in editor                                      |
+| =C-c L P=   | =libregnum-stop=            | Stop (the level is restored)                        |
+| =C-c L SPC= | =libregnum-pause=           | Pause / resume                                      |
+| =C-c L n=   | =libregnum-step=            | Step one frame                                      |
+| =C-c L r=   | =libregnum-run-game=        | Run the game; output goes to the log                |
+| =C-c L l=   | =libregnum-log=             | Show =*libregnum-log*= (with recent history)        |
+| =C-c L v=   | =libregnum-validate=        | Problems in a =compilation-mode= buffer             |
+| =C-c L f=   | =libregnum-visit-level=     | Visit the level's YAML                              |
+| =C-c L t=   | =libregnum-set-tool=        | Select / translate / rotate / scale gizmo           |
+
+Also available: =libregnum-select-node=, =libregnum-rename-node=, =libregnum-create-node=, =libregnum-duplicate-node=, =libregnum-delete-node=, =libregnum-open-scripts=, =libregnum-screenshot=. Commands that take a node complete over slash-separated node paths, defaulting to the editor's selection; in the outline they act on the node at point.
+
+** The outline
+:PROPERTIES:
+:CUSTOM_ID: outline
+:END:
+=libregnum-outline= shows the node tree with each node's kind and hidden/locked flags; the editor's selection is highlighted and follows changes made in the editor (events refresh the buffer, debounced).
+
+| Key            | Action                                        |
+|----------------+-----------------------------------------------|
+| =RET=          | Select the node in the editor (=C-u=: add)    |
+| =TAB=, =i=     | Inspect                                       |
+| =r=            | Rename                                        |
+| =e=            | Edit a property                               |
+| =c=            | Create a node (child of the node at point)    |
+| =y=            | Duplicate                                     |
+| =D=            | Delete                                        |
+| =o=            | Open the node's scripts                       |
+| =u= / =C-r=    | Undo / redo                                   |
+| =s=            | Save                                          |
+| =g=            | Refresh                                       |
+
+Every edit goes through the editor's undo stack, so =C-z= in the editor undoes what was done from Emacs and vice versa. Under evil the same keys are bound in normal state with =evil-define-key*= (=gr= refreshes, =q= quits).
+
+** Level files
+:PROPERTIES:
+:CUSTOM_ID: rlevel-mode
+:END:
+=libregnum-rlevel-mode= is used for =.rlevel=, =.rprefab= and =.ryaml=. It derives from =yaml-mode= when installed, =yaml-ts-mode= when the tree-sitter yaml grammar is available, and =prog-mode= with basic highlighting otherwise; indentation uses spaces.
+
+| Key       | Action                                 |
+|-----------+----------------------------------------|
+| =C-c C-c= | Save and open this level in the editor |
+| =C-c C-v= | Validate the editor's level            |
+
+Hand-editing a level is a first-class workflow: save the file and the editor reloads it when it has no unsaved changes (and offers Reload / Keep mine when it does). When the editor saves a level, unmodified buffers visiting it are reverted (=libregnum-revert-on-save=).
+
+** Customization
+:PROPERTIES:
+:CUSTOM_ID: customization
+:END:
+=M-x customize-group RET libregnum=:
+
+| Variable                         | Default                         | Meaning                                       |
+|----------------------------------+---------------------------------+-----------------------------------------------|
+| =libregnum-editor-program=       | ="lrg-editor"=                  | Editor executable                             |
+| =libregnum-editor-arguments=     | =nil=                           | Extra arguments for =libregnum-start-editor=  |
+| =libregnum-socket=               | =nil=                           | Fixed socket (nil: newest editor)             |
+| =libregnum-socket-directory=     | =$XDG_RUNTIME_DIR/libregnum=    | Where editors put their sockets               |
+| =libregnum-request-timeout=      | =5.0=                           | Seconds to wait for a reply                   |
+| =libregnum-open-file-function=   | =libregnum-default-open-file=   | Called with FILE LINE COLUMN                  |
+| =libregnum-raise-frame=          | =t=                             | Focus the frame when a file opens             |
+| =libregnum-subscribe=            | all events                      | Events to receive                             |
+| =libregnum-log-buffer-name=      | ="*libregnum-log*"=             | Log buffer                                    |
+| =libregnum-log-max-lines=        | =5000=                          | Log buffer size                               |
+| =libregnum-revert-on-save=       | =t=                             | Revert level buffers when the editor saves    |
+| =libregnum-keymap-prefix=        | =C-c L=                         | Prefix of =libregnum-command-map=             |
+
+=libregnum-event-functions= is an abnormal hook run with every event name and payload, for your own reactions (e.g. a notification when a game run exits).
+
+** Programming against the editor
+:PROPERTIES:
+:CUSTOM_ID: programming
+:END:
+=libregnum-request= calls any IPC method synchronously and returns its result (alists, vectors for arrays); =libregnum-send= is the asynchronous form with a callback. See [[file:ipc-protocol.org][IPC protocol]] for the methods.
+
+#+begin_src emacs-lisp
+;; Raise every node whose path starts with "Torch" by one metre.
+(dolist (pair (libregnum--node-candidates))
+  (when (string-match-p "\\`Torch" (car pair))
+    (let* ((node (libregnum-request "node.get" `((node . ,(cdr pair)))))
+           (loc (alist-get 'location node)))
+      (libregnum-request "node.set" `((node . ,(cdr pair))
+                                      (location . ,(vector (aref loc 0) (1+ (aref loc 1)) (aref loc 2))))))))
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=make test-emacs= byte-compiles the package with warnings as errors and runs =editors/emacs/libregnum-tests.el=: protocol tests against a fake editor served from Emacs (hello capabilities, requests and errors, open-file and log events, the outline, node completion, socket discovery, the level mode) and an end-to-end session with a real headless =lrg-editor= (create, undo, redo, save, check the file).

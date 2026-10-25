@@ -15,6 +15,8 @@
 #include "../scene/lrg-scene-entity.h"
 #include "../scene/lrg-scene-object.h"
 #include "../scene/lrg-material3d.h"
+#include "../scene/lrg-scene-serializer.h"
+#include "../scene/lrg-scene-serializer-yaml.h"
 #include <graylib.h>
 
 static LrgMaterial3D *
@@ -134,5 +136,27 @@ lrg_level_from_scene (LrgScene *scene)
 	}
 	g_list_free (names);
 
+	return level;
+}
+
+LrgLevel *
+lrg_level_import_scene_file (const gchar  *path,
+                             GError      **error)
+{
+	g_autoptr(LrgSceneSerializerYaml) ser = NULL;
+	g_autoptr(LrgScene)               scene = NULL;
+	LrgLevel                         *level;
+
+	g_return_val_if_fail (path != NULL, NULL);
+
+	ser = lrg_scene_serializer_yaml_new ();
+	scene = lrg_scene_serializer_load_from_file (LRG_SCENE_SERIALIZER (ser), path, error);
+	if (scene == NULL)
+		return NULL;
+
+	level = lrg_level_from_scene (scene);
+	if (level == NULL)
+		g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+		             "%s could not be converted to a level", path);
 	return level;
 }

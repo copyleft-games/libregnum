@@ -5187,6 +5187,57 @@ GType lrg_editor_tool_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_EDITOR_TOOL (lrg_editor_tool_get_type ())
 
 /**
+ * LrgEditorSpace:
+ * @LRG_EDITOR_SPACE_LOCAL: gizmo axes follow the node's own rotation
+ * @LRG_EDITOR_SPACE_WORLD: gizmo axes are the world axes
+ *
+ * The coordinate space transform gizmos operate in.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_EDITOR_SPACE_LOCAL,
+    LRG_EDITOR_SPACE_WORLD
+} LrgEditorSpace;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_editor_space_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_EDITOR_SPACE (lrg_editor_space_get_type ())
+
+/**
+ * LrgEditorGizmoHandle:
+ * @LRG_EDITOR_GIZMO_HANDLE_NONE: no handle
+ * @LRG_EDITOR_GIZMO_HANDLE_X: the X axis arrow, ring or scale handle
+ * @LRG_EDITOR_GIZMO_HANDLE_Y: the Y axis arrow, ring or scale handle
+ * @LRG_EDITOR_GIZMO_HANDLE_Z: the Z axis arrow, ring or scale handle
+ * @LRG_EDITOR_GIZMO_HANDLE_XY: the XY plane square (translate)
+ * @LRG_EDITOR_GIZMO_HANDLE_YZ: the YZ plane square (translate)
+ * @LRG_EDITOR_GIZMO_HANDLE_XZ: the XZ plane square (translate)
+ * @LRG_EDITOR_GIZMO_HANDLE_CENTER: the centre: screen-plane move, uniform
+ *   scale, or the view-axis ring when rotating
+ *
+ * A grabbable part of the transform gizmo.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_EDITOR_GIZMO_HANDLE_NONE,
+    LRG_EDITOR_GIZMO_HANDLE_X,
+    LRG_EDITOR_GIZMO_HANDLE_Y,
+    LRG_EDITOR_GIZMO_HANDLE_Z,
+    LRG_EDITOR_GIZMO_HANDLE_XY,
+    LRG_EDITOR_GIZMO_HANDLE_YZ,
+    LRG_EDITOR_GIZMO_HANDLE_XZ,
+    LRG_EDITOR_GIZMO_HANDLE_CENTER
+} LrgEditorGizmoHandle;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_editor_gizmo_handle_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_EDITOR_GIZMO_HANDLE (lrg_editor_gizmo_handle_get_type ())
+
+/**
  * LrgAssetType:
  * @LRG_ASSET_TYPE_UNKNOWN: unrecognized asset
  * @LRG_ASSET_TYPE_TEXTURE: image/texture (png, jpg, tga, bmp)

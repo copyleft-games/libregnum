@@ -36,6 +36,9 @@ libregnum/
 │   │
 │   │ # Game Systems
 │   ├── ui/                   # 8 widgets, 3 layouts, Theme, Canvas
+│   ├── gui/                  # Immediate-mode GUI (GuiContext, DrawList, Dock, raylib backend); the editor is drawn with it
+│   ├── editor/               # Level/Node authoring, LrgEditor (undo, selection), math, gizmo, settings, external editor, IPC server, actions, validation
+│   │   └── ui/               # LrgEditorApp: the lrg-editor application (panels, viewport render, dialogs, play mode)
 │   ├── tilemap/              # Tileset, TilemapLayer, Tilemap
 │   ├── dialog/               # DialogNode, DialogTree, DialogRunner
 │   ├── quest/                # QuestDef, QuestObjective, QuestInstance, QuestLog, QuestChain
@@ -372,6 +375,8 @@ glib2-devel gobject-introspection-devel libdex-devel
 libyaml-devel json-glib-devel
 ```
 
+Optional, for the editor's tests: `emacs` (`make test-emacs`), `xorg-x11-server-Xvfb` (windowed smoke runs).
+
 ### Submodules
 
 - `deps/graylib/` - Raylib GObject wrapper
@@ -593,6 +598,17 @@ bounds", "Cost of a page").
 - One thread owns a replicator. Pages are byte-for-byte what the original
   implementation produced (`tests/test-mmo-replicator.c` keeps it as a
   reference model and fuzzes both; its benchmark prints ms a cycle).
+
+### Editor Application (`editor/ui/`, `gui/`, `launcher/lrg-editor.c`)
+
+- `lrg-editor` is built by default (`BUILD_EDITOR_UI=1`); the app is `LrgEditorApp`, split across `src/editor/ui/lrg-editor-*.c` with shared state in `lrg-editor-app-private.h` (internal functions are `G_GNUC_INTERNAL`, prefixed `editor_`).
+- Everything the UI does is an action (`lrg-editor-app-actions.c`, `LrgEditorActions`): add new features as actions so they get a menu entry, palette entry, rebindable shortcut and `action.run` over IPC for free.
+- The app runs headless frame by frame (`lrg_editor_app_frame()` with a synthetic `LrgGuiInput`); add app tests to `tests/test-editor-app.c`. In tests, release keys after a press (`input.key_down[key] = FALSE`) or the next press counts as a repeat.
+- Viewport rendering (`lrg-editor-render.c`) uses raw raylib/rlgl with matrices from `LrgEditorView`; raylib `Matrix` fields are named by storage index but declared in row order, so convert by name (`to_matrix`/`from_matrix`), never `memcpy`. `raymath.h` is not gnu89-clean; do not include it.
+- `g_ptr_array_copy (src, NULL, NULL)` inherits `src`'s free function: copying a node's children that way and freeing the copy unrefs the live nodes. Pass a ref-copy function or use the original array.
+- Unix socket paths must fit `sun_path` (107 bytes); the server rejects longer ones. Keep test sockets under `$XDG_RUNTIME_DIR`.
+- The Emacs package is `editors/emacs/libregnum.el` (+ `libregnum-tests.el`); `make test-emacs` byte-compiles with warnings as errors and runs ERT, including a headless editor end to end.
+- Docs: `docs/editor/editor-app.org`, `external-editor.org`, `emacs.org`, `ipc-protocol.org`, `docs/modules/gui/index.org`.
 
 ### Static World Collision and Model Rendering
 

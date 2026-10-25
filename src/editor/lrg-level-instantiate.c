@@ -218,6 +218,12 @@ instantiate_node (LrgNode     *node,
 		g_object_unref (sc);
 	}
 
+	/* Tag with the node GUID so tools (play-in-editor) can map runtime
+	 * objects back to their authoring nodes, then let node subclasses add
+	 * their own runtime pieces. */
+	grl_entity_set_tag (GRL_ENTITY (object), lrg_node_get_guid (node));
+	lrg_node_instantiate (node, object);
+
 	lrg_world_add_object (world, object);
 	g_object_unref (object);
 

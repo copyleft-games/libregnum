@@ -214,4 +214,42 @@ gdouble lrg_node_visual_get_param_double (LrgNodeVisual *self,
 LRG_AVAILABLE_IN_ALL
 GList * lrg_node_visual_get_param_names (LrgNodeVisual *self);
 
+/**
+ * lrg_node_visual_remove_param:
+ * @self: an #LrgNodeVisual
+ * @name: the parameter name
+ *
+ * Removes a stored kind-specific parameter.
+ *
+ * Returns: %TRUE if a parameter was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_visual_remove_param (LrgNodeVisual *self,
+                                       const gchar   *name);
+
+/**
+ * lrg_node_visual_copy:
+ * @self: an #LrgNodeVisual
+ *
+ * Creates a deep copy: kind, primitive, asset, a copied material and a
+ * copied parameter bag.
+ *
+ * Returns: (transfer full): a new #LrgNodeVisual
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNodeVisual * lrg_node_visual_copy (LrgNodeVisual *self);
+
+/**
+ * lrg_node_visual_equal:
+ * @a: (nullable): an #LrgNodeVisual
+ * @b: (nullable): another #LrgNodeVisual
+ *
+ * Deep comparison of two visual payloads. Two %NULL payloads are equal.
+ *
+ * Returns: %TRUE if both describe the same visual
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_visual_equal (LrgNodeVisual *a,
+                                LrgNodeVisual *b);
+
 G_END_DECLS
