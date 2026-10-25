@@ -1383,6 +1383,9 @@ typedef struct _LrgLevelSerializer  LrgLevelSerializer;
 typedef struct _LrgEditorCommand  LrgEditorCommand;
 
 /* LrgEditorSelection is a final type - no Class forward declaration needed */
+typedef struct _LrgEditorSettings  LrgEditorSettings;
+typedef struct _LrgExternalEditor  LrgExternalEditor;
+typedef struct _LrgEditorGizmo  LrgEditorGizmo;
 typedef struct _LrgEditorSelection  LrgEditorSelection;
 
 /* LrgEditor is a final type - no Class forward declaration needed */

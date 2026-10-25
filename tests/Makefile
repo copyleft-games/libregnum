@@ -203,6 +203,7 @@ TEST_SOURCES := \
 	test-standalone-host.c \
 	test-editor.c \
 	test-editor-core.c \
+	test-editor-tools.c \
 	test-gif-recorder.c \
 	test-text-baker.c \
 	test-font-atlas.c \
