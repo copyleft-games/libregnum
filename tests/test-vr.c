@@ -489,6 +489,40 @@ test_openxr_service_before_initialize (void)
     g_assert_cmpint (lrg_openxr_service_start_frame_thread (xr), ==, -1);
 }
 
+/* The composition-layer, grip and recentre API before initialisation:
+   nothing to make or show, no tracked grip, no recentre pending. */
+static void
+test_openxr_service_layers_before_initialize (void)
+{
+    g_autoptr(LrgOpenXRService) xr = lrg_openxr_service_new ("test");
+    g_autoptr(GError) error = NULL;
+    gfloat pose[16];
+    gfloat grip[16];
+    guint fbo = 7, w = 7, h = 7;
+    gint i;
+
+    for (i = 0; i < 16; i++)
+        pose[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+
+    g_assert_cmpuint (lrg_openxr_service_create_layer (xr, 64, 64, &error), ==, 0);
+    g_assert_nonnull (error);
+    g_assert_false (lrg_openxr_service_begin_layer (xr, 1, &fbo, &w, &h));
+    lrg_openxr_service_end_layer (xr, 1);   /* no-op, no crash */
+    g_assert_false (lrg_openxr_service_submit_layer_quad (xr, 1, NULL, pose,
+                                                          1.0f, 1.0f, TRUE));
+    g_assert_false (lrg_openxr_service_submit_layer_cylinder (xr, 1, NULL, pose,
+                                                              1.5f, 1.0f, 1.6f, TRUE));
+    g_assert_false (lrg_openxr_service_has_cylinder_layers (xr));
+    g_assert_false (lrg_openxr_service_get_grip_pose (xr, LRG_VR_HAND_LEFT, grip));
+    for (i = 0; i < 16; i++)
+    {
+        gfloat want = (i % 5 == 0) ? 1.0f : 0.0f;
+
+        g_assert_cmpfloat (grip[i], ==, want);
+    }
+    g_assert_false (lrg_openxr_service_take_recentered (xr));
+}
+
 static void
 test_openxr_service_initialize_without_gl (void)
 {
@@ -826,6 +860,8 @@ main (int   argc,
     g_test_add_func ("/vr/enums/error", test_vr_error_enum);
     g_test_add_func ("/vr/openxr/before-initialize",
                      test_openxr_service_before_initialize);
+    g_test_add_func ("/vr/openxr/layers-before-initialize",
+                     test_openxr_service_layers_before_initialize);
     g_test_add_func ("/vr/openxr/initialize-without-gl",
                      test_openxr_service_initialize_without_gl);
     g_test_add_func ("/vr/stub/frame-loop", test_stub_frame_loop);

@@ -16,7 +16,19 @@
  *                runtime's pacing) + xrBeginFrame, locate views, sync input.
  *   begin_view   acquire + wait the eye's swapchain image, bind its FBO.
  *   end_view     release the image.
- *   end_frame    xrEndFrame with one projection layer.
+ *   end_frame    xrEndFrame with the projection layer, then any quad or
+ *                cylinder layers submitted this frame (lrg_openxr_service_
+ *                submit_layer_quad / _cylinder), in submission order.
+ *
+ * Composition layers: an application can make extra swapchains
+ * (lrg_openxr_service_create_layer) for flat content -- a UI, a video, a
+ * text panel -- and hand them to the compositor as quads (core OpenXR) or
+ * cylinders (XR_KHR_composition_layer_cylinder, enabled when offered).  The
+ * compositor samples them once, at their own resolution, straight into the
+ * display; text stays far sharper than it does drawn into the eye images and
+ * resampled by the lens warp.  Several placements may share one swapchain
+ * through sub-image rectangles (e.g. a whole UI on a panel, and parts of it
+ * on a wrist).
  *
  * Hands (XR_EXT_hand_tracking, when the runtime offers it): two hand
  * trackers are made with the session.  Their 26 joints are located at
@@ -69,6 +81,8 @@ typedef PFNEGLGETPROCADDRESSPROC LrgXrEglGetProcAddress;
 
 #define LRG_XR_MAX_VIEWS   2
 #define LRG_XR_MAX_IMAGES  8
+#define LRG_XR_MAX_LAYERS  4    /* layer swapchains */
+#define LRG_XR_MAX_PLACED  15   /* quad/cylinder placements per frame (+1 projection) */
 
 /* GL_SRGB8_ALPHA8 / GL_RGBA8: sRGB storage is preferred -- raylib writes
    display-referred values, and an sRGB swapchain makes the compositor read
@@ -97,11 +111,27 @@ typedef struct
 {
     XrPath   path;
     XrSpace  aim_space;
+    XrSpace  grip_space;
     gboolean tracked;
+    gboolean grip_tracked;
     gfloat   aim[16];
+    gfloat   grip[16];
     guint    buttons;
     gfloat   axes[4];
 } LrgXrHand;
+
+/* A composition-layer swapchain (lrg_openxr_service_create_layer).  @valid
+   is set once an image has been rendered and released: OpenXR rejects a
+   layer whose swapchain has never released one. */
+typedef LrgXrView LrgXrLayer;
+
+/* One quad or cylinder placement queued for the current frame. */
+typedef union
+{
+    XrCompositionLayerBaseHeader     base;
+    XrCompositionLayerQuad           quad;
+    XrCompositionLayerCylinderKHR    cylinder;
+} LrgXrPlaced;
 
 #endif /* LRG_HAS_OPENXR */
 
@@ -124,7 +154,15 @@ struct _LrgOpenXRService
     gboolean       running;
     gboolean       quit_requested;
     gboolean       has_refresh_rate_ext;
+    gboolean       has_cylinder_ext;
     gfloat         refresh_rate;
+    gboolean       recentered;      /* LOCAL space was recentred by the runtime */
+
+    LrgXrLayer     layers[LRG_XR_MAX_LAYERS];
+    gboolean       layer_valid[LRG_XR_MAX_LAYERS];
+    guint          n_layers;
+    LrgXrPlaced    placed[LRG_XR_MAX_PLACED];
+    guint          n_placed;
 
     XrViewConfigurationView config[LRG_XR_MAX_VIEWS];
     LrgXrView               views[LRG_XR_MAX_VIEWS];
@@ -157,6 +195,7 @@ struct _LrgOpenXRService
 
     XrActionSet action_set;
     XrAction    act_aim;
+    XrAction    act_grip;
     XrAction    act_trigger;
     XrAction    act_squeeze;
     XrAction    act_stick;
@@ -449,6 +488,13 @@ scaled_extent (guint32 recommended,
     return (guint32) (want + 0.5);
 }
 
+static gboolean create_swapchain (LrgOpenXRService  *self,
+                                  LrgXrView         *view,
+                                  guint32            width,
+                                  guint32            height,
+                                  gboolean           depth,
+                                  GError           **error);
+
 static gboolean
 create_swapchains (LrgOpenXRService  *self,
                    GError           **error)
@@ -487,7 +533,34 @@ create_swapchains (LrgOpenXRService  *self,
 
     for (v = 0; v < self->view_count; v++)
     {
-        LrgXrView *view = &self->views[v];
+        if (!create_swapchain (self, &self->views[v],
+                               scaled_extent (self->config[v].recommendedImageRectWidth,
+                                              self->config[v].maxImageRectWidth,
+                                              self->resolution_scale),
+                               scaled_extent (self->config[v].recommendedImageRectHeight,
+                                              self->config[v].maxImageRectHeight,
+                                              self->resolution_scale),
+                               TRUE, error))
+            return FALSE;
+        lrg_debug (LRG_LOG_DOMAIN_VR, "view %u: %ux%u, %u images", v,
+                   self->views[v].width, self->views[v].height,
+                   self->views[v].n_images);
+    }
+    return TRUE;
+}
+
+/* One swapchain of @width x @height in the chosen format, with an FBO per
+   image (and a depth renderbuffer per FBO when @depth).  On failure the
+   parts made so far stay in @view for shutdown to free. */
+static gboolean
+create_swapchain (LrgOpenXRService  *self,
+                  LrgXrView         *view,
+                  guint32            width,
+                  guint32            height,
+                  gboolean           depth,
+                  GError           **error)
+{
+    {
         XrSwapchainCreateInfo c = { .type = XR_TYPE_SWAPCHAIN_CREATE_INFO };
         XrSwapchainImageOpenGLKHR imgs[LRG_XR_MAX_IMAGES];
         guint32 k;
@@ -496,12 +569,8 @@ create_swapchains (LrgOpenXRService  *self,
                        | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
         c.format = self->format;
         c.sampleCount = 1;
-        c.width = scaled_extent (self->config[v].recommendedImageRectWidth,
-                                 self->config[v].maxImageRectWidth,
-                                 self->resolution_scale);
-        c.height = scaled_extent (self->config[v].recommendedImageRectHeight,
-                                  self->config[v].maxImageRectHeight,
-                                  self->resolution_scale);
+        c.width = width;
+        c.height = height;
         c.faceCount = 1;
         c.arraySize = 1;
         c.mipCount = 1;
@@ -527,25 +596,27 @@ create_swapchains (LrgOpenXRService  *self,
         for (k = 0; k < view->n_images; k++)
         {
             guint fbo = rlLoadFramebuffer ();
-            guint depth = rlLoadTextureDepth ((gint) view->width,
-                                              (gint) view->height, true);
 
             view->images[k] = imgs[k].image;
             rlFramebufferAttach (fbo, imgs[k].image, RL_ATTACHMENT_COLOR_CHANNEL0,
                                  RL_ATTACHMENT_TEXTURE2D, 0);
-            rlFramebufferAttach (fbo, depth, RL_ATTACHMENT_DEPTH,
-                                 RL_ATTACHMENT_RENDERBUFFER, 0);
+            if (depth)
+            {
+                guint rb = rlLoadTextureDepth ((gint) view->width,
+                                               (gint) view->height, true);
+
+                rlFramebufferAttach (fbo, rb, RL_ATTACHMENT_DEPTH,
+                                     RL_ATTACHMENT_RENDERBUFFER, 0);
+            }
             if (!rlFramebufferComplete (fbo))
             {
                 g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_COMPOSITOR,
-                             "swapchain framebuffer %u/%u is incomplete", v, k);
+                             "swapchain framebuffer %u is incomplete", k);
                 rlUnloadFramebuffer (fbo);
                 return FALSE;
             }
             view->fbos[k] = fbo;
         }
-        lrg_debug (LRG_LOG_DOMAIN_VR, "view %u: %ux%u, %u images", v,
-                   view->width, view->height, view->n_images);
     }
     return TRUE;
 }
@@ -564,6 +635,7 @@ action_by_name (LrgOpenXRService *self,
                 const gchar      *name)
 {
     if (g_strcmp0 (name, "aim") == 0)             return self->act_aim;
+    if (g_strcmp0 (name, "grip") == 0)            return self->act_grip;
     if (g_strcmp0 (name, "trigger") == 0)         return self->act_trigger;
     if (g_strcmp0 (name, "squeeze") == 0)         return self->act_squeeze;
     if (g_strcmp0 (name, "thumbstick") == 0)      return self->act_stick;
@@ -591,6 +663,8 @@ static const LrgXrProfile profiles[] = {
     { "/interaction_profiles/valve/index_controller", {
         { "aim", "/user/hand/left/input/aim/pose" },
         { "aim", "/user/hand/right/input/aim/pose" },
+        { "grip", "/user/hand/left/input/grip/pose" },
+        { "grip", "/user/hand/right/input/grip/pose" },
         { "trigger", "/user/hand/left/input/trigger/value" },
         { "trigger", "/user/hand/right/input/trigger/value" },
         { "squeeze", "/user/hand/left/input/squeeze/value" },
@@ -616,6 +690,8 @@ static const LrgXrProfile profiles[] = {
     { "/interaction_profiles/valve/frame_controller_valve", {
         { "aim", "/user/hand/left/input/aim/pose" },
         { "aim", "/user/hand/right/input/aim/pose" },
+        { "grip", "/user/hand/left/input/grip/pose" },
+        { "grip", "/user/hand/right/input/grip/pose" },
         { "trigger", "/user/hand/left/input/trigger/value" },
         { "trigger", "/user/hand/right/input/trigger/value" },
         { "squeeze", "/user/hand/left/input/squeeze/value" },
@@ -642,6 +718,8 @@ static const LrgXrProfile profiles[] = {
     { "/interaction_profiles/valve/frame_controller_valve", {
         { "aim", "/user/hand/left/input/aim/pose" },
         { "aim", "/user/hand/right/input/aim/pose" },
+        { "grip", "/user/hand/left/input/grip/pose" },
+        { "grip", "/user/hand/right/input/grip/pose" },
         { "trigger", "/user/hand/left/input/trigger/value" },
         { "trigger", "/user/hand/right/input/trigger/value" },
         { "squeeze", "/user/hand/left/input/grip/value" },
@@ -668,6 +746,8 @@ static const LrgXrProfile profiles[] = {
     { "/interaction_profiles/oculus/touch_controller", {
         { "aim", "/user/hand/left/input/aim/pose" },
         { "aim", "/user/hand/right/input/aim/pose" },
+        { "grip", "/user/hand/left/input/grip/pose" },
+        { "grip", "/user/hand/right/input/grip/pose" },
         { "trigger", "/user/hand/left/input/trigger/value" },
         { "trigger", "/user/hand/right/input/trigger/value" },
         { "squeeze", "/user/hand/left/input/squeeze/value" },
@@ -687,6 +767,8 @@ static const LrgXrProfile profiles[] = {
     { "/interaction_profiles/htc/vive_controller", {
         { "aim", "/user/hand/left/input/aim/pose" },
         { "aim", "/user/hand/right/input/aim/pose" },
+        { "grip", "/user/hand/left/input/grip/pose" },
+        { "grip", "/user/hand/right/input/grip/pose" },
         { "trigger", "/user/hand/left/input/trigger/value" },
         { "trigger", "/user/hand/right/input/trigger/value" },
         { "squeeze", "/user/hand/left/input/squeeze/click" },
@@ -703,6 +785,8 @@ static const LrgXrProfile profiles[] = {
     { "/interaction_profiles/khr/simple_controller", {
         { "aim", "/user/hand/left/input/aim/pose" },
         { "aim", "/user/hand/right/input/aim/pose" },
+        { "grip", "/user/hand/left/input/grip/pose" },
+        { "grip", "/user/hand/right/input/grip/pose" },
         { "trigger", "/user/hand/left/input/select/click" },
         { "trigger", "/user/hand/right/input/select/click" },
         { "menu", "/user/hand/left/input/menu/click" },
@@ -711,6 +795,30 @@ static const LrgXrProfile profiles[] = {
         { "haptic", "/user/hand/right/output/haptic" },
         { NULL, NULL } } },
 };
+
+/* @app_name as an OpenXR path component: lower-case letters, digits, '-',
+   '_' and '.', never empty (falls back to "libregnum"). */
+static void
+action_set_name (const gchar *app_name,
+                 gchar       *out,
+                 gsize        size)
+{
+    gsize n = 0;
+    const gchar *p;
+
+    for (p = app_name; p != NULL && *p != '\0' && n + 1 < size; p++)
+    {
+        gchar c = g_ascii_tolower (*p);
+
+        if (g_ascii_isalnum (c) || c == '-' || c == '_' || c == '.')
+            out[n++] = c;
+        else if (c == ' ' && n > 0)
+            out[n++] = '-';
+    }
+    out[n] = '\0';
+    if (n == 0)
+        g_strlcpy (out, "libregnum", size);
+}
 
 static gboolean
 make_action (LrgOpenXRService  *self,
@@ -742,8 +850,14 @@ create_actions (LrgOpenXRService  *self,
     XrSessionActionSetsAttachInfo att = { .type = XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
     guint i, h;
 
-    g_strlcpy (si.actionSetName, "cmacs", sizeof si.actionSetName);
-    g_strlcpy (si.localizedActionSetName, "Editor", sizeof si.localizedActionSetName);
+    /* The action set is what SteamVR's binding UI lists and keys saved
+       bindings by: name it after the application ("cmacs", "librewow"), in
+       the lower-case path-safe form OpenXR requires. */
+    action_set_name (self->app_name, si.actionSetName, sizeof si.actionSetName);
+    g_strlcpy (si.localizedActionSetName,
+               self->app_name != NULL && self->app_name[0] != '\0'
+                   ? self->app_name : "libregnum",
+               sizeof si.localizedActionSetName);
     if (!xr_ok (self, xrCreateActionSet (self->instance, &si, &self->action_set),
                 "xrCreateActionSet", error))
         return FALSE;
@@ -753,6 +867,8 @@ create_actions (LrgOpenXRService  *self,
 
     if (!make_action (self, "aim", "Pointer", XR_ACTION_TYPE_POSE_INPUT,
                       &self->act_aim, error)
+        || !make_action (self, "grip-pose", "Hand", XR_ACTION_TYPE_POSE_INPUT,
+                         &self->act_grip, error)
         || !make_action (self, "trigger", "Click", XR_ACTION_TYPE_FLOAT_INPUT,
                          &self->act_trigger, error)
         || !make_action (self, "squeeze", "Grab", XR_ACTION_TYPE_FLOAT_INPUT,
@@ -792,20 +908,32 @@ create_actions (LrgOpenXRService  *self,
         XrActionSuggestedBinding sb[32];
         XrInteractionProfileSuggestedBinding s =
             { .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
-        guint n = 0, b;
-        XrResult r;
+        guint n, b, pass;
+        XrResult r = XR_SUCCESS;
 
-        for (b = 0; profiles[i].bindings[b][0] != NULL; b++)
+        /* Pass 0 suggests everything; a runtime that rejects one path
+           rejects the whole suggestion, so pass 1 retries without the grip
+           pose -- the newest addition, and the one a vendor profile is most
+           likely to spell differently -- rather than lose the profile. */
+        for (pass = 0; pass < 2; pass++)
         {
-            sb[n].action = action_by_name (self, profiles[i].bindings[b][0]);
-            sb[n].binding = str_path (self, profiles[i].bindings[b][1]);
-            if (sb[n].binding != XR_NULL_PATH)
-                n++;
+            n = 0;
+            for (b = 0; profiles[i].bindings[b][0] != NULL; b++)
+            {
+                if (pass == 1 && g_strcmp0 (profiles[i].bindings[b][0], "grip") == 0)
+                    continue;
+                sb[n].action = action_by_name (self, profiles[i].bindings[b][0]);
+                sb[n].binding = str_path (self, profiles[i].bindings[b][1]);
+                if (sb[n].binding != XR_NULL_PATH)
+                    n++;
+            }
+            s.interactionProfile = str_path (self, profiles[i].profile);
+            s.countSuggestedBindings = n;
+            s.suggestedBindings = sb;
+            r = xrSuggestInteractionProfileBindings (self->instance, &s);
+            if (XR_SUCCEEDED (r))
+                break;
         }
-        s.interactionProfile = str_path (self, profiles[i].profile);
-        s.countSuggestedBindings = n;
-        s.suggestedBindings = sb;
-        r = xrSuggestInteractionProfileBindings (self->instance, &s);
         /* A profile this runtime does not know is not an error. */
         if (XR_FAILED (r))
             lrg_debug (LRG_LOG_DOMAIN_VR, "no bindings for %s (XrResult %d)",
@@ -824,6 +952,14 @@ create_actions (LrgOpenXRService  *self,
                     "xrCreateActionSpace", error))
             return FALSE;
         identity (self->hands[h].aim);
+
+        /* The grip pose: where the palm is, for things worn on the hand. */
+        asi.action = self->act_grip;
+        if (!xr_ok (self, xrCreateActionSpace (self->session, &asi,
+                                               &self->hands[h].grip_space),
+                    "xrCreateActionSpace (grip)", error))
+            return FALSE;
+        identity (self->hands[h].grip);
     }
 
     att.countActionSets = 1;
@@ -892,6 +1028,7 @@ sync_input (LrgOpenXRService *self,
             self->hands[h].buttons = 0;
             memset (self->hands[h].axes, 0, sizeof self->hands[h].axes);
             self->hands[h].tracked = FALSE;
+            self->hands[h].grip_tracked = FALSE;
         }
         return;
     }
@@ -918,6 +1055,16 @@ sync_input (LrgOpenXRService *self,
         {
             pose_to_matrix (&loc.pose, hand->aim);
             hand->tracked = TRUE;
+        }
+        hand->grip_tracked = FALSE;
+        loc.locationFlags = 0;
+        if (hand->grip_space != XR_NULL_HANDLE
+            && XR_SUCCEEDED (xrLocateSpace (hand->grip_space, self->local_space, when, &loc))
+            && (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)
+            && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT))
+        {
+            pose_to_matrix (&loc.pose, hand->grip);
+            hand->grip_tracked = TRUE;
         }
 
         trig = float_action (self, self->act_trigger, hand->path);
@@ -1211,6 +1358,17 @@ poll_xr_events (LrgOpenXRService *self)
         case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
             lrg_debug (LRG_LOG_DOMAIN_VR, "interaction profile changed");
             break;
+        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
+            /* SteamVR's "recenter" (a long press of the Steam button) moves
+               the LOCAL origin under the app; anything the app anchored in
+               LOCAL space (a panel, its own recentre) wants to follow. */
+            if (((XrEventDataReferenceSpaceChangePending *) &ev)->referenceSpaceType
+                == XR_REFERENCE_SPACE_TYPE_LOCAL)
+            {
+                lrg_debug (LRG_LOG_DOMAIN_VR, "LOCAL space recentred");
+                self->recentered = TRUE;
+            }
+            break;
         default:
             break;
         }
@@ -1308,7 +1466,7 @@ lrg_openxr_service_real_initialize (LrgVRService  *service,
     LrgOpenXRService *self = LRG_OPENXR_SERVICE (service);
     XrExtensionProperties *props = NULL;
     guint32 n_props = 0, i;
-    const gchar *exts[8];
+    const gchar *exts[10];
     guint32 n_exts = 0;
     gboolean have_egl;
     XrInstanceCreateInfo ici = { .type = XR_TYPE_INSTANCE_CREATE_INFO };
@@ -1365,6 +1523,11 @@ lrg_openxr_service_real_initialize (LrgVRService  *service,
         && has_extension (props, n_props, XR_FB_HAND_TRACKING_AIM_EXTENSION_NAME);
     if (self->has_hand_aim_ext)
         exts[n_exts++] = XR_FB_HAND_TRACKING_AIM_EXTENSION_NAME;
+    /* Curved panels (lrg_openxr_service_submit_layer_cylinder). */
+    self->has_cylinder_ext =
+        has_extension (props, n_props, XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
+    if (self->has_cylinder_ext)
+        exts[n_exts++] = XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME;
     g_free (props);
 
     g_strlcpy (ici.applicationInfo.applicationName,
@@ -1493,9 +1656,28 @@ lrg_openxr_service_real_shutdown (LrgVRService *service)
             xrDestroySwapchain (view->swapchain);
         memset (view, 0, sizeof *view);
     }
+    for (v = 0; v < LRG_XR_MAX_LAYERS; v++)
+    {
+        LrgXrLayer *layer = &self->layers[v];
+
+        for (k = 0; k < layer->n_images; k++)
+            if (layer->fbos[k] != 0)
+                rlUnloadFramebuffer (layer->fbos[k]);
+        if (layer->swapchain != XR_NULL_HANDLE)
+            xrDestroySwapchain (layer->swapchain);
+        memset (layer, 0, sizeof *layer);
+        self->layer_valid[v] = FALSE;
+    }
+    self->n_layers = 0;
+    self->n_placed = 0;
+    self->has_cylinder_ext = FALSE;
     for (h = 0; h < 2; h++)
+    {
         if (self->hands[h].aim_space != XR_NULL_HANDLE)
             xrDestroySpace (self->hands[h].aim_space);
+        if (self->hands[h].grip_space != XR_NULL_HANDLE)
+            xrDestroySpace (self->hands[h].grip_space);
+    }
     memset (self->hands, 0, sizeof self->hands);
     destroy_hand_trackers (self);
     self->has_hand_ext = self->has_hand_aim_ext = FALSE;
@@ -1690,6 +1872,7 @@ lrg_openxr_service_real_begin_frame (LrgVRService *service)
     }
     self->frame_begun = TRUE;
     self->views_rendered = 0;
+    self->n_placed = 0;
 
     for (i = 0; i < LRG_XR_MAX_VIEWS; i++)
     {
@@ -1818,31 +2001,43 @@ lrg_openxr_service_real_end_frame (LrgVRService *service)
     LrgOpenXRService *self = LRG_OPENXR_SERVICE (service);
     XrFrameEndInfo ei = { .type = XR_TYPE_FRAME_END_INFO };
     XrCompositionLayerProjection layer = { .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION };
-    const XrCompositionLayerBaseHeader *layers[1];
+    const XrCompositionLayerBaseHeader *layers[1 + LRG_XR_MAX_PLACED];
     guint all = (1u << self->view_count) - 1u;
-    guint v;
+    guint v, n = 0;
 
     if (!self->frame_begun)
         return;
 
-    /* A view begun but never ended still holds its image. */
+    /* A view or layer begun but never ended still holds its image. */
     for (v = 0; v < self->view_count; v++)
         if (self->views[v].open)
             lrg_openxr_service_real_end_view (service, v);
+    for (v = 0; v < self->n_layers; v++)
+        if (self->layers[v].open)
+            lrg_openxr_service_end_layer (self, v + 1);
 
     layer.space = self->local_space;
     layer.viewCount = self->view_count;
     layer.views = self->layer_views;
-    layers[0] = (const XrCompositionLayerBaseHeader *) &layer;
+
+    /* The projection layer only if every view was drawn this frame; the
+       flat layers on top of it, in submission order (and on their own when
+       the views were not drawn -- a menu panel still shows over black). */
+    if (self->frame_state.shouldRender)
+    {
+        if (self->views_rendered == all)
+            layers[n++] = (const XrCompositionLayerBaseHeader *) &layer;
+        for (v = 0; v < self->n_placed; v++)
+            layers[n++] = &self->placed[v].base;
+    }
 
     ei.displayTime = self->frame_state.predictedDisplayTime;
     ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-    /* Submit the layer only if every view was drawn this frame. */
-    ei.layerCount = (self->frame_state.shouldRender && self->views_rendered == all)
-                        ? 1 : 0;
+    ei.layerCount = n;
     ei.layers = layers;
     xr_ok (self, xrEndFrame (self->session, &ei), "xrEndFrame", NULL);
     self->frame_begun = FALSE;
+    self->n_placed = 0;
 
     g_mutex_lock (&self->frame_lock);
     self->want_wait = TRUE;
@@ -2239,6 +2434,395 @@ lrg_openxr_service_get_interaction_profile (LrgOpenXRService *self,
 #else
     (void) hand;
     return NULL;
+#endif
+}
+
+/* ---------------------------------------------------- composition layers -- */
+
+#ifdef LRG_HAS_OPENXR
+/* @id (1-based) as a layer, or NULL. */
+static LrgXrLayer *
+layer_by_id (LrgOpenXRService *self,
+             guint             id)
+{
+    if (id == 0 || id > self->n_layers)
+        return NULL;
+    return &self->layers[id - 1];
+}
+
+/* The sub-image of @layer, @rect (x, y, w, h in pixels) or all of it. */
+static void
+layer_sub_image (LrgXrLayer           *layer,
+                 const gint           *rect,
+                 XrSwapchainSubImage  *sub)
+{
+    memset (sub, 0, sizeof *sub);
+    sub->swapchain = layer->swapchain;
+    if (rect != NULL)
+    {
+        gint x = CLAMP (rect[0], 0, (gint) layer->width - 1);
+        gint y = CLAMP (rect[1], 0, (gint) layer->height - 1);
+
+        sub->imageRect.offset.x = x;
+        sub->imageRect.offset.y = y;
+        sub->imageRect.extent.width = CLAMP (rect[2], 1, (gint) layer->width - x);
+        sub->imageRect.extent.height = CLAMP (rect[3], 1, (gint) layer->height - y);
+    }
+    else
+    {
+        sub->imageRect.extent.width = (gint32) layer->width;
+        sub->imageRect.extent.height = (gint32) layer->height;
+    }
+}
+
+/* Column-major @m (rotation + translation, no scale) as an OpenXR pose. */
+static void
+matrix_to_pose (const gfloat *m,
+                XrPosef      *p)
+{
+    gfloat tr = m[0] + m[5] + m[10];
+    gfloat x, y, z, w, len;
+
+    /* Shepperd's method: pick the largest diagonal term for stability. */
+    if (tr > 0.0f)
+    {
+        gfloat r = sqrtf (1.0f + tr) * 2.0f;
+        w = 0.25f * r;
+        x = (m[6] - m[9]) / r;
+        y = (m[8] - m[2]) / r;
+        z = (m[1] - m[4]) / r;
+    }
+    else if (m[0] > m[5] && m[0] > m[10])
+    {
+        gfloat r = sqrtf (1.0f + m[0] - m[5] - m[10]) * 2.0f;
+        w = (m[6] - m[9]) / r;
+        x = 0.25f * r;
+        y = (m[4] + m[1]) / r;
+        z = (m[8] + m[2]) / r;
+    }
+    else if (m[5] > m[10])
+    {
+        gfloat r = sqrtf (1.0f + m[5] - m[0] - m[10]) * 2.0f;
+        w = (m[8] - m[2]) / r;
+        x = (m[4] + m[1]) / r;
+        y = 0.25f * r;
+        z = (m[9] + m[6]) / r;
+    }
+    else
+    {
+        gfloat r = sqrtf (1.0f + m[10] - m[0] - m[5]) * 2.0f;
+        w = (m[1] - m[4]) / r;
+        x = (m[8] + m[2]) / r;
+        y = (m[9] + m[6]) / r;
+        z = 0.25f * r;
+    }
+    len = sqrtf (x * x + y * y + z * z + w * w);
+    if (len < 1e-6f)
+    {
+        x = y = z = 0.0f;
+        w = len = 1.0f;
+    }
+    p->orientation.x = x / len;
+    p->orientation.y = y / len;
+    p->orientation.z = z / len;
+    p->orientation.w = w / len;
+    p->position.x = m[12];
+    p->position.y = m[13];
+    p->position.z = m[14];
+}
+
+/* The next free placement for this frame, or NULL (logged once). */
+static LrgXrPlaced *
+next_placement (LrgOpenXRService *self)
+{
+    if (!self->frame_begun)
+        return NULL;
+    if (self->n_placed >= LRG_XR_MAX_PLACED)
+    {
+        lrg_debug (LRG_LOG_DOMAIN_VR, "too many layers this frame; dropped one");
+        return NULL;
+    }
+    memset (&self->placed[self->n_placed], 0, sizeof self->placed[0]);
+    return &self->placed[self->n_placed++];
+}
+
+static XrCompositionLayerFlags
+layer_flags (gboolean blend)
+{
+    /* Premultiplied alpha: content drawn over a transparent clear with
+       separate alpha blending (colour SRC_ALPHA/ONE_MINUS_SRC_ALPHA, alpha
+       ONE/ONE_MINUS_SRC_ALPHA) comes out premultiplied. */
+    return blend ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT : 0;
+}
+#endif
+
+guint
+lrg_openxr_service_create_layer (LrgOpenXRService  *self,
+                                 guint              width,
+                                 guint              height,
+                                 GError           **error)
+{
+    g_return_val_if_fail (LRG_IS_OPENXR_SERVICE (self), 0);
+    g_return_val_if_fail (width > 0 && height > 0, 0);
+#ifdef LRG_HAS_OPENXR
+    if (!self->initialized)
+    {
+        g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_FAILED,
+                     "the OpenXR service is not initialised");
+        return 0;
+    }
+    if (self->n_layers >= LRG_XR_MAX_LAYERS)
+    {
+        g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_FAILED,
+                     "at most %d layer swapchains", LRG_XR_MAX_LAYERS);
+        return 0;
+    }
+    if (!create_swapchain (self, &self->layers[self->n_layers], width, height,
+                           FALSE, error))
+    {
+        /* free what was made; the slot stays unused */
+        LrgXrLayer *layer = &self->layers[self->n_layers];
+        guint k;
+
+        for (k = 0; k < layer->n_images; k++)
+            if (layer->fbos[k] != 0)
+                rlUnloadFramebuffer (layer->fbos[k]);
+        if (layer->swapchain != XR_NULL_HANDLE)
+            xrDestroySwapchain (layer->swapchain);
+        memset (layer, 0, sizeof *layer);
+        return 0;
+    }
+    self->layer_valid[self->n_layers] = FALSE;
+    self->n_layers++;
+    lrg_debug (LRG_LOG_DOMAIN_VR, "layer %u: %ux%u", self->n_layers, width, height);
+    return self->n_layers;
+#else
+    (void) width;
+    (void) height;
+    g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_NOT_AVAILABLE,
+                 "libregnum was built without OpenXR");
+    return 0;
+#endif
+}
+
+gboolean
+lrg_openxr_service_begin_layer (LrgOpenXRService *self,
+                                guint             id,
+                                guint            *framebuffer,
+                                guint            *width,
+                                guint            *height)
+{
+#ifdef LRG_HAS_OPENXR
+    XrSwapchainImageAcquireInfo ai = { .type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+    XrSwapchainImageWaitInfo wi = { .type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+    LrgXrLayer *layer;
+#endif
+
+    g_return_val_if_fail (LRG_IS_OPENXR_SERVICE (self), FALSE);
+#ifdef LRG_HAS_OPENXR
+    layer = layer_by_id (self, id);
+    if (layer == NULL || layer->open || !self->running)
+        return FALSE;
+    if (!xr_ok (self, xrAcquireSwapchainImage (layer->swapchain, &ai, &layer->acquired),
+                "xrAcquireSwapchainImage (layer)", NULL))
+        return FALSE;
+    wi.timeout = XR_INFINITE_DURATION;
+    if (!xr_ok (self, xrWaitSwapchainImage (layer->swapchain, &wi),
+                "xrWaitSwapchainImage (layer)", NULL))
+    {
+        XrSwapchainImageReleaseInfo ri = { .type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+        xrReleaseSwapchainImage (layer->swapchain, &ri);
+        return FALSE;
+    }
+    layer->open = TRUE;
+    rlEnableFramebuffer (layer->fbos[layer->acquired]);
+    rlViewport (0, 0, (gint) layer->width, (gint) layer->height);
+    if (framebuffer != NULL)
+        *framebuffer = layer->fbos[layer->acquired];
+    if (width != NULL)
+        *width = layer->width;
+    if (height != NULL)
+        *height = layer->height;
+    return TRUE;
+#else
+    (void) id;
+    (void) framebuffer;
+    (void) width;
+    (void) height;
+    return FALSE;
+#endif
+}
+
+void
+lrg_openxr_service_end_layer (LrgOpenXRService *self,
+                              guint             id)
+{
+#ifdef LRG_HAS_OPENXR
+    XrSwapchainImageReleaseInfo ri = { .type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+    LrgXrLayer *layer;
+#endif
+
+    g_return_if_fail (LRG_IS_OPENXR_SERVICE (self));
+#ifdef LRG_HAS_OPENXR
+    layer = layer_by_id (self, id);
+    if (layer == NULL || !layer->open)
+        return;
+    rlDrawRenderBatchActive ();
+    rlDisableFramebuffer ();
+    xrReleaseSwapchainImage (layer->swapchain, &ri);
+    glFlush ();   /* after the release, as in end_view */
+    layer->open = FALSE;
+    self->layer_valid[id - 1] = TRUE;
+#else
+    (void) id;
+#endif
+}
+
+gboolean
+lrg_openxr_service_submit_layer_quad (LrgOpenXRService *self,
+                                      guint             id,
+                                      const gint       *rect,
+                                      const gfloat     *pose,
+                                      gfloat            width,
+                                      gfloat            height,
+                                      gboolean          blend)
+{
+#ifdef LRG_HAS_OPENXR
+    LrgXrLayer *layer;
+    LrgXrPlaced *pl;
+#endif
+
+    g_return_val_if_fail (LRG_IS_OPENXR_SERVICE (self), FALSE);
+    g_return_val_if_fail (pose != NULL, FALSE);
+#ifdef LRG_HAS_OPENXR
+    layer = layer_by_id (self, id);
+    if (layer == NULL || !self->layer_valid[id - 1] || width <= 0.0f || height <= 0.0f)
+        return FALSE;
+    pl = next_placement (self);
+    if (pl == NULL)
+        return FALSE;
+    pl->quad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+    pl->quad.layerFlags = layer_flags (blend);
+    pl->quad.space = self->local_space;
+    pl->quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    layer_sub_image (layer, rect, &pl->quad.subImage);
+    matrix_to_pose (pose, &pl->quad.pose);
+    pl->quad.size.width = width;
+    pl->quad.size.height = height;
+    return TRUE;
+#else
+    (void) id;
+    (void) rect;
+    (void) width;
+    (void) height;
+    (void) blend;
+    return FALSE;
+#endif
+}
+
+gboolean
+lrg_openxr_service_submit_layer_cylinder (LrgOpenXRService *self,
+                                          guint             id,
+                                          const gint       *rect,
+                                          const gfloat     *pose,
+                                          gfloat            radius,
+                                          gfloat            central_angle,
+                                          gfloat            aspect_ratio,
+                                          gboolean          blend)
+{
+#ifdef LRG_HAS_OPENXR
+    LrgXrLayer *layer;
+    LrgXrPlaced *pl;
+#endif
+
+    g_return_val_if_fail (LRG_IS_OPENXR_SERVICE (self), FALSE);
+    g_return_val_if_fail (pose != NULL, FALSE);
+#ifdef LRG_HAS_OPENXR
+    layer = layer_by_id (self, id);
+    if (layer == NULL || !self->layer_valid[id - 1] || !self->has_cylinder_ext
+        || radius <= 0.0f || central_angle <= 0.0f || aspect_ratio <= 0.0f)
+        return FALSE;
+    pl = next_placement (self);
+    if (pl == NULL)
+        return FALSE;
+    pl->cylinder.type = XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR;
+    pl->cylinder.layerFlags = layer_flags (blend);
+    pl->cylinder.space = self->local_space;
+    pl->cylinder.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    layer_sub_image (layer, rect, &pl->cylinder.subImage);
+    matrix_to_pose (pose, &pl->cylinder.pose);
+    pl->cylinder.radius = radius;
+    pl->cylinder.centralAngle = central_angle;
+    pl->cylinder.aspectRatio = aspect_ratio;
+    return TRUE;
+#else
+    (void) id;
+    (void) rect;
+    (void) radius;
+    (void) central_angle;
+    (void) aspect_ratio;
+    (void) blend;
+    return FALSE;
+#endif
+}
+
+gboolean
+lrg_openxr_service_has_cylinder_layers (LrgOpenXRService *self)
+{
+    g_return_val_if_fail (LRG_IS_OPENXR_SERVICE (self), FALSE);
+#ifdef LRG_HAS_OPENXR
+    return self->has_cylinder_ext;
+#else
+    return FALSE;
+#endif
+}
+
+gboolean
+lrg_openxr_service_get_grip_pose (LrgOpenXRService *self,
+                                  LrgVRHand         hand,
+                                  gfloat           *matrix)
+{
+    g_return_val_if_fail (LRG_IS_OPENXR_SERVICE (self), FALSE);
+    g_return_val_if_fail (matrix != NULL, FALSE);
+#ifdef LRG_HAS_OPENXR
+    if ((guint) hand > 1)
+    {
+        identity (matrix);
+        return FALSE;
+    }
+    /* never located (or shut down): identity, as for an untracked aim */
+    if (self->hands[hand].grip_space == XR_NULL_HANDLE)
+    {
+        identity (matrix);
+        return FALSE;
+    }
+    memcpy (matrix, self->hands[hand].grip, 16 * sizeof (gfloat));
+    return self->hands[hand].grip_tracked;
+#else
+    {
+        gint i;
+
+        for (i = 0; i < 16; i++)
+            matrix[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+    }
+    (void) hand;
+    return FALSE;
+#endif
+}
+
+gboolean
+lrg_openxr_service_take_recentered (LrgOpenXRService *self)
+{
+    g_return_val_if_fail (LRG_IS_OPENXR_SERVICE (self), FALSE);
+#ifdef LRG_HAS_OPENXR
+    {
+        gboolean was = self->recentered;
+
+        self->recentered = FALSE;
+        return was;
+    }
+#else
+    return FALSE;
 #endif
 }
 

@@ -240,4 +240,177 @@ gboolean lrg_openxr_service_probe (const gchar  *app_name,
                                    gchar       **system_name,
                                    GError      **error);
 
+/**
+ * lrg_openxr_service_create_layer:
+ * @self: an initialised #LrgOpenXRService
+ * @width: image width in pixels
+ * @height: image height in pixels
+ * @error: return location for a #GError
+ *
+ * Makes a swapchain for a flat composition layer -- a UI, a text panel, a
+ * video -- in the eye swapchains' format (sRGB when offered), at most four
+ * per service.  Render into it with lrg_openxr_service_begin_layer() /
+ * lrg_openxr_service_end_layer() (once is enough for static content), and
+ * show it each frame with lrg_openxr_service_submit_layer_quad() or
+ * lrg_openxr_service_submit_layer_cylinder().  The compositor samples the
+ * layer straight into the display at its own resolution, which keeps text
+ * much sharper than drawing it into the eye images.
+ *
+ * Returns: the layer's id (1 or more), or 0 on error
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_openxr_service_create_layer (LrgOpenXRService  *self,
+                                       guint              width,
+                                       guint              height,
+                                       GError           **error);
+
+/**
+ * lrg_openxr_service_begin_layer:
+ * @self: a #LrgOpenXRService
+ * @id: a layer id from lrg_openxr_service_create_layer()
+ * @framebuffer: (out) (optional): the bound FBO
+ * @width: (out) (optional): its width
+ * @height: (out) (optional): its height
+ *
+ * Acquires the layer's next image and binds its framebuffer (with the
+ * viewport set to all of it).  Draw, then call
+ * lrg_openxr_service_end_layer().  Needs a running session.
+ *
+ * Returns: %TRUE when an image is bound
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_openxr_service_begin_layer (LrgOpenXRService *self,
+                                         guint             id,
+                                         guint            *framebuffer,
+                                         guint            *width,
+                                         guint            *height);
+
+/**
+ * lrg_openxr_service_end_layer:
+ * @self: a #LrgOpenXRService
+ * @id: the layer begun with lrg_openxr_service_begin_layer()
+ *
+ * Flushes, unbinds and releases the layer's image.  From then on the layer
+ * can be submitted, and keeps showing that image until it is drawn again.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_openxr_service_end_layer (LrgOpenXRService *self,
+                                   guint             id);
+
+/**
+ * lrg_openxr_service_submit_layer_quad:
+ * @self: a #LrgOpenXRService
+ * @id: a layer that has been drawn at least once
+ * @rect: (nullable) (array fixed-size=4): the part of the layer to show,
+ *   x, y, width, height in pixels from the image's top-left, or %NULL for
+ *   all of it
+ * @pose: (array fixed-size=16): the quad's centre and orientation in
+ *   tracking space, column-major, no scale; it faces +Z
+ * @width: the quad's width in metres
+ * @height: the quad's height in metres
+ * @blend: blend by the image's (premultiplied) alpha instead of covering
+ *
+ * Shows @rect of the layer as a flat quad for the current frame (between
+ * lrg_vr_service_begin_frame() and lrg_vr_service_end_frame()).  Several
+ * placements may use one layer.  Layers composite above the projection
+ * layer in submission order, with no depth test against the scene.
+ *
+ * Returns: %TRUE when queued
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_openxr_service_submit_layer_quad (LrgOpenXRService *self,
+                                               guint             id,
+                                               const gint       *rect,
+                                               const gfloat     *pose,
+                                               gfloat            width,
+                                               gfloat            height,
+                                               gboolean          blend);
+
+/**
+ * lrg_openxr_service_submit_layer_cylinder:
+ * @self: a #LrgOpenXRService
+ * @id: a layer that has been drawn at least once
+ * @rect: (nullable) (array fixed-size=4): the part of the layer to show, as
+ *   for lrg_openxr_service_submit_layer_quad()
+ * @pose: (array fixed-size=16): the cylinder's centre (the viewer's spot)
+ *   and orientation; the panel sits @radius along -Z, its axis along +Y
+ * @radius: the cylinder's radius in metres
+ * @central_angle: the arc the panel covers, in radians
+ * @aspect_ratio: the panel's width over its height
+ * @blend: blend by the image's (premultiplied) alpha
+ *
+ * Shows @rect of the layer on the inside of a cylinder for the current
+ * frame -- a curved panel at a constant distance from the viewer, the
+ * comfortable way to read a wide UI.  Needs
+ * XR_KHR_composition_layer_cylinder (lrg_openxr_service_has_cylinder_layers());
+ * without it this returns %FALSE and the caller falls back to a quad.
+ *
+ * Returns: %TRUE when queued
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_openxr_service_submit_layer_cylinder (LrgOpenXRService *self,
+                                                   guint             id,
+                                                   const gint       *rect,
+                                                   const gfloat     *pose,
+                                                   gfloat            radius,
+                                                   gfloat            central_angle,
+                                                   gfloat            aspect_ratio,
+                                                   gboolean          blend);
+
+/**
+ * lrg_openxr_service_has_cylinder_layers:
+ * @self: an initialised #LrgOpenXRService
+ *
+ * Returns: %TRUE when the runtime composites cylinder layers
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_openxr_service_has_cylinder_layers (LrgOpenXRService *self);
+
+/**
+ * lrg_openxr_service_get_grip_pose:
+ * @self: a #LrgOpenXRService
+ * @hand: which hand
+ * @matrix: (out caller-allocates) (array fixed-size=16): the grip pose,
+ *   column-major, in tracking space
+ *
+ * The controller's grip pose -- the palm, where something held or worn on
+ * the hand sits -- as opposed to the aim pose lrg_vr_service_get_controller_pose()
+ * gives (the pointing ray).  Updated in each begin_frame while focused.
+ *
+ * Returns: %TRUE when the pose is tracked this frame
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_openxr_service_get_grip_pose (LrgOpenXRService *self,
+                                           LrgVRHand         hand,
+                                           gfloat           *matrix);
+
+/**
+ * lrg_openxr_service_take_recentered:
+ * @self: a #LrgOpenXRService
+ *
+ * Whether the runtime has moved the tracking origin since the last call --
+ * the user recentred (on SteamVR, a long press of the Steam button) -- and
+ * clears the flag.  Content anchored in tracking space may want to follow.
+ *
+ * Returns: %TRUE once per recentre
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_openxr_service_take_recentered (LrgOpenXRService *self);
+
 G_END_DECLS
