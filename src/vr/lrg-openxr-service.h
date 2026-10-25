@@ -248,8 +248,9 @@ gboolean lrg_openxr_service_probe (const gchar  *app_name,
  * @error: return location for a #GError
  *
  * Makes a swapchain for a flat composition layer -- a UI, a text panel, a
- * video -- in the eye swapchains' format (sRGB when offered), at most four
- * per service.  Render into it with lrg_openxr_service_begin_layer() /
+ * video -- in the eye swapchains' format (sRGB when offered), with a depth
+ * buffer per image (for 3D models drawn into it), at most four per
+ * service.  Render into it with lrg_openxr_service_begin_layer() /
  * lrg_openxr_service_end_layer() (once is enough for static content), and
  * show it each frame with lrg_openxr_service_submit_layer_quad() or
  * lrg_openxr_service_submit_layer_cylinder().  The compositor samples the

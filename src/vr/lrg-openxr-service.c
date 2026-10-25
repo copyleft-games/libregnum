@@ -372,6 +372,27 @@ typedef EGLBoolean (*LrgEglQueryContext) (EGLDisplay, EGLContext, EGLint, EGLint
 typedef EGLBoolean (*LrgEglChooseConfig) (EGLDisplay, const EGLint *, EGLConfig *,
                                          EGLint, EGLint *);
 
+/* An EGL entry point from the libEGL the process already has.  GLFW opens
+   libEGL itself with dlopen (RTLD_LOCAL), so on Wayland its symbols are
+   not in the global scope and dlsym (RTLD_DEFAULT) misses them: ask the
+   already-loaded library by name then (RTLD_NOLOAD never loads a second
+   one).  NULL when no libEGL is loaded at all. */
+static gpointer
+egl_symbol (const gchar *name)
+{
+    static void *egl = NULL;
+    gpointer sym;
+
+    sym = dlsym (RTLD_DEFAULT, name);
+    if (sym != NULL)
+        return sym;
+    if (egl == NULL)
+        egl = dlopen ("libEGL.so.1", RTLD_NOW | RTLD_NOLOAD);
+    if (egl == NULL)
+        egl = dlopen ("libEGL.so", RTLD_NOW | RTLD_NOLOAD);
+    return egl != NULL ? dlsym (egl, name) : NULL;
+}
+
 /* Create the session against whichever GL context raylib made current: GLX
    (GLFW's default on X11, e.g. gamescope's Xwayland) through
    XR_KHR_opengl_enable, or EGL (GLFW on Wayland) through XR_MNDX_egl_enable.
@@ -424,15 +445,15 @@ create_session (LrgOpenXRService  *self,
     else
     {
         LrgEglGetCurrentContext get_ctx =
-            (LrgEglGetCurrentContext) dlsym (RTLD_DEFAULT, "eglGetCurrentContext");
+            (LrgEglGetCurrentContext) egl_symbol ("eglGetCurrentContext");
         LrgEglGetCurrentDisplay get_dpy =
-            (LrgEglGetCurrentDisplay) dlsym (RTLD_DEFAULT, "eglGetCurrentDisplay");
+            (LrgEglGetCurrentDisplay) egl_symbol ("eglGetCurrentDisplay");
         LrgEglQueryContext query =
-            (LrgEglQueryContext) dlsym (RTLD_DEFAULT, "eglQueryContext");
+            (LrgEglQueryContext) egl_symbol ("eglQueryContext");
         LrgEglChooseConfig choose =
-            (LrgEglChooseConfig) dlsym (RTLD_DEFAULT, "eglChooseConfig");
+            (LrgEglChooseConfig) egl_symbol ("eglChooseConfig");
         LrgXrEglGetProcAddress gpa =
-            (LrgXrEglGetProcAddress) dlsym (RTLD_DEFAULT, "eglGetProcAddress");
+            (LrgXrEglGetProcAddress) egl_symbol ("eglGetProcAddress");
         XrGraphicsBindingEGLMNDX gb = { .type = XR_TYPE_GRAPHICS_BINDING_EGL_MNDX };
         EGLContext ctx;
         EGLDisplay dpy;
@@ -1567,21 +1588,25 @@ lrg_openxr_service_real_initialize (LrgVRService  *service,
         self->has_hand_aim_ext = FALSE;
     }
 
-    /* Required before xrCreateSession, even though we accept any version. */
-    if (glXGetCurrentContext () != NULL)
+    /* Required before xrCreateSession, even though we accept any version --
+       on the EGL path too: SteamVR answers xrCreateSession with
+       XR_ERROR_GRAPHICS_REQUIREMENTS_CALL_MISSING without it (seen on the
+       Steam Frame, GLFW on gamescope's Wayland).  A runtime that offers
+       EGL without XR_KHR_opengl_enable has nothing to call. */
+    if (XR_SUCCEEDED (xrGetInstanceProcAddr (self->instance,
+                          "xrGetOpenGLGraphicsRequirementsKHR",
+                          (PFN_xrVoidFunction *) &get_req))
+        && get_req != NULL)
     {
-        if (XR_FAILED (xrGetInstanceProcAddr (self->instance,
-                           "xrGetOpenGLGraphicsRequirementsKHR",
-                           (PFN_xrVoidFunction *) &get_req))
-            || get_req == NULL)
-        {
-            g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_FAILED,
-                         "runtime does not expose xrGetOpenGLGraphicsRequirementsKHR");
-            goto fail;
-        }
         if (!xr_ok (self, get_req (self->instance, self->system, &req),
                     "xrGetOpenGLGraphicsRequirementsKHR", error))
             goto fail;
+    }
+    else if (glXGetCurrentContext () != NULL)
+    {
+        g_set_error (error, LRG_VR_ERROR, LRG_VR_ERROR_FAILED,
+                     "runtime does not expose xrGetOpenGLGraphicsRequirementsKHR");
+        goto fail;
     }
 
     if (!create_session (self, have_egl, error))
@@ -2577,8 +2602,10 @@ lrg_openxr_service_create_layer (LrgOpenXRService  *self,
                      "at most %d layer swapchains", LRG_XR_MAX_LAYERS);
         return 0;
     }
+    /* with a depth buffer: a UI draws 3D models (portraits, a character
+       on a menu) into its layer */
     if (!create_swapchain (self, &self->layers[self->n_layers], width, height,
-                           FALSE, error))
+                           TRUE, error))
     {
         /* free what was made; the slot stays unused */
         LrgXrLayer *layer = &self->layers[self->n_layers];
