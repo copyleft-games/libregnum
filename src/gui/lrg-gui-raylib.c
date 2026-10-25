@@ -13,7 +13,7 @@
 
 #include "lrg-gui-raylib.h"
 #include <graylib.h>
-#include <raylib.h>
+#include "lrg-gui-raylib-private.h"
 #include <math.h>
 #include <string.h>
 
@@ -33,6 +33,125 @@ struct _LrgGuiRaylib
 };
 
 G_DEFINE_FINAL_TYPE (LrgGuiRaylib, lrg_gui_raylib, G_TYPE_OBJECT)
+
+/* ==========================================================================
+ * Click latching
+ *
+ * raylib samples button state once per frame, so a press and release that
+ * both land between two frames (a touchpad tap, a fast click on a busy
+ * frame) is never seen. A GLFW button callback chained in front of
+ * raylib's counts presses; poll_input reports a latched press as "down"
+ * for one frame, which gives the GUI its click edge. GLFW is linked into
+ * libregnum through raylib's desktop platform; only the two entry points
+ * used here are declared.
+ * ========================================================================== */
+
+typedef struct GLFWwindow GLFWwindow;
+typedef void (*GLFWmousebuttonfun) (GLFWwindow *window, int button, int action, int mods);
+typedef void (*GLFWkeyfun) (GLFWwindow *window, int key, int scancode, int action, int mods);
+
+GLFWwindow *       glfwGetCurrentContext      (void);
+GLFWmousebuttonfun glfwSetMouseButtonCallback (GLFWwindow *window, GLFWmousebuttonfun callback);
+GLFWkeyfun         glfwSetKeyCallback         (GLFWwindow *window, GLFWkeyfun callback);
+
+#define LATCH_GLFW_PRESS     (1)
+#define LATCH_GLFW_REPEAT    (2)
+#define LATCH_GLFW_MOD_SHIFT (0x0001)
+#define LATCH_GLFW_MOD_CTRL  (0x0002)
+#define LATCH_GLFW_MOD_ALT   (0x0004)
+#define LATCH_GLFW_MOD_SUPER (0x0008)
+#define LATCH_MAX_KEYS       (64)
+
+/* A key press with the modifiers GLFW reported for it. A chord typed
+ * faster than a frame (Ctrl down, A, Ctrl up) keeps its Ctrl this way;
+ * sampling IsKeyDown(CTRL) at poll time would have lost it. */
+typedef struct
+{
+	gint            key;     /* raylib key code (= GLFW key code) */
+	LrgGuiModifiers mods;
+	gboolean        repeat;
+} LatchedKey;
+
+static GLFWwindow         *latch_window = NULL;
+static GLFWmousebuttonfun  latch_chain = NULL;
+static GLFWkeyfun          latch_key_chain = NULL;
+static guint               latch_presses[LRG_GUI_MOUSE_BUTTON_COUNT];
+static LatchedKey          latch_keys[LATCH_MAX_KEYS];
+static guint               latch_n_keys = 0;
+
+static void
+latch_mouse_button (GLFWwindow *window,
+                    int         button,
+                    int         action,
+                    int         mods)
+{
+	/* GLFW numbers left/right/middle 0/1/2, like LrgGuiMouseButton. */
+	if (action == LATCH_GLFW_PRESS && button >= 0 && button < LRG_GUI_MOUSE_BUTTON_COUNT)
+		latch_presses[button]++;
+	if (latch_chain != NULL)
+		latch_chain (window, button, action, mods);
+}
+
+static void
+latch_key (GLFWwindow *window,
+           int         key,
+           int         scancode,
+           int         action,
+           int         mods)
+{
+	if ((action == LATCH_GLFW_PRESS || action == LATCH_GLFW_REPEAT) && latch_n_keys < LATCH_MAX_KEYS)
+	{
+		LatchedKey *k = &latch_keys[latch_n_keys++];
+
+		k->key = key;
+		k->repeat = (action == LATCH_GLFW_REPEAT);
+		k->mods = LRG_GUI_MOD_NONE;
+		if (mods & LATCH_GLFW_MOD_SHIFT)
+			k->mods |= LRG_GUI_MOD_SHIFT;
+		if (mods & LATCH_GLFW_MOD_CTRL)
+			k->mods |= LRG_GUI_MOD_CTRL;
+		if (mods & LATCH_GLFW_MOD_ALT)
+			k->mods |= LRG_GUI_MOD_ALT;
+		if (mods & LATCH_GLFW_MOD_SUPER)
+			k->mods |= LRG_GUI_MOD_SUPER;
+	}
+	if (latch_key_chain != NULL)
+		latch_key_chain (window, key, scancode, action, mods);
+}
+
+static void
+latch_install (void)
+{
+	GLFWwindow *window;
+
+	if (latch_window != NULL || !IsWindowReady ())
+		return;
+	window = glfwGetCurrentContext ();
+	if (window == NULL)
+		return;
+
+	latch_window = window;
+	latch_chain = glfwSetMouseButtonCallback (window, latch_mouse_button);
+	latch_key_chain = glfwSetKeyCallback (window, latch_key);
+	memset (latch_presses, 0, sizeof latch_presses);
+	latch_n_keys = 0;
+}
+
+static void
+latch_uninstall (void)
+{
+	if (latch_window == NULL)
+		return;
+	if (IsWindowReady () && glfwGetCurrentContext () == latch_window)
+	{
+		glfwSetMouseButtonCallback (latch_window, latch_chain);
+		glfwSetKeyCallback (latch_window, latch_key_chain);
+	}
+	latch_window = NULL;
+	latch_chain = NULL;
+	latch_key_chain = NULL;
+	latch_n_keys = 0;
+}
 
 /* ==========================================================================
  * Fonts
@@ -193,6 +312,7 @@ lrg_gui_raylib_finalize (GObject *object)
 	/* Fonts live on the GL context; only unload while it exists. */
 	if (IsWindowReady ())
 		unload_fonts (self);
+	latch_uninstall ();
 	g_free (self->ui_path);
 	g_array_unref (self->clip_stack);
 
@@ -282,6 +402,7 @@ lrg_gui_raylib_attach (LrgGuiRaylib  *self,
 
 	lrg_gui_context_set_measure_func (ctx, measure, g_object_ref (self), g_object_unref);
 	lrg_gui_context_set_clipboard_funcs (ctx, clip_get, clip_set, NULL, NULL);
+	latch_install ();
 }
 
 /* ==========================================================================
@@ -301,6 +422,7 @@ static const struct
 	{ KEY_ENTER, LRG_GUI_KEY_ENTER }, { KEY_KP_ENTER, LRG_GUI_KEY_ENTER },
 	{ KEY_ESCAPE, LRG_GUI_KEY_ESCAPE },
 	{ KEY_MINUS, LRG_GUI_KEY_MINUS }, { KEY_EQUAL, LRG_GUI_KEY_EQUAL },
+	{ KEY_KP_SUBTRACT, LRG_GUI_KEY_MINUS }, { KEY_KP_ADD, LRG_GUI_KEY_EQUAL },
 	{ KEY_LEFT_BRACKET, LRG_GUI_KEY_LEFT_BRACKET }, { KEY_RIGHT_BRACKET, LRG_GUI_KEY_RIGHT_BRACKET },
 	{ KEY_SLASH, LRG_GUI_KEY_SLASH }, { KEY_BACKSLASH, LRG_GUI_KEY_BACKSLASH },
 	{ KEY_COMMA, LRG_GUI_KEY_COMMA }, { KEY_PERIOD, LRG_GUI_KEY_PERIOD },
@@ -391,12 +513,41 @@ lrg_gui_raylib_poll_input (LrgGuiRaylib *self,
 		mods |= LRG_GUI_MOD_SUPER;
 	input->mods = mods;
 
-	/* Fresh presses, then auto-repeats of editing keys. */
-	while ((k = GetKeyPressed ()) != 0)
-		push_key (input, map_key (k), mods, FALSE);
-	for (i = 0; i < G_N_ELEMENTS (repeating); i++)
-		if (IsKeyPressedRepeat (unmap_key (repeating[i])))
-			push_key (input, repeating[i], mods, TRUE);
+	/* Key presses in order, each with its own modifiers (the GLFW latch),
+	 * or raylib's queue and sampled modifiers when no latch is installed. */
+	latch_install ();
+	if (latch_window != NULL)
+	{
+		guint n;
+
+		while (GetKeyPressed () != 0)
+			;   /* keep raylib's queue drained */
+		for (n = 0; n < latch_n_keys; n++)
+		{
+			LrgGuiKey key = map_key (latch_keys[n].key);
+
+			/* Only editing keys auto-repeat. */
+			if (latch_keys[n].repeat)
+			{
+				gboolean editing = FALSE;
+
+				for (i = 0; i < G_N_ELEMENTS (repeating); i++)
+					editing = editing || repeating[i] == key;
+				if (!editing)
+					continue;
+			}
+			push_key (input, key, latch_keys[n].mods, latch_keys[n].repeat);
+		}
+		latch_n_keys = 0;
+	}
+	else
+	{
+		while ((k = GetKeyPressed ()) != 0)
+			push_key (input, map_key (k), mods, FALSE);
+		for (i = 0; i < G_N_ELEMENTS (repeating); i++)
+			if (IsKeyPressedRepeat (unmap_key (repeating[i])))
+				push_key (input, repeating[i], mods, TRUE);
+	}
 
 	while ((c = GetCharPressed ()) != 0 && input->n_chars < LRG_GUI_MAX_INPUT_EVENTS)
 		input->chars[input->n_chars++] = (gunichar) c;
@@ -411,12 +562,23 @@ lrg_gui_raylib_poll_input (LrgGuiRaylib *self,
 
 	input->mouse_x = (gfloat) GetMouseX ();
 	input->mouse_y = (gfloat) GetMouseY ();
-	input->mouse_down[LRG_GUI_MOUSE_LEFT] = IsMouseButtonDown (MOUSE_BUTTON_LEFT);
-	input->mouse_down[LRG_GUI_MOUSE_RIGHT] = IsMouseButtonDown (MOUSE_BUTTON_RIGHT);
-	input->mouse_down[LRG_GUI_MOUSE_MIDDLE] = IsMouseButtonDown (MOUSE_BUTTON_MIDDLE);
+	/* Held now, or pressed (and maybe already released) since last poll. */
+	input->mouse_down[LRG_GUI_MOUSE_LEFT] = IsMouseButtonDown (MOUSE_BUTTON_LEFT) || latch_presses[0] > 0;
+	input->mouse_down[LRG_GUI_MOUSE_RIGHT] = IsMouseButtonDown (MOUSE_BUTTON_RIGHT) || latch_presses[1] > 0;
+	input->mouse_down[LRG_GUI_MOUSE_MIDDLE] = IsMouseButtonDown (MOUSE_BUTTON_MIDDLE) || latch_presses[2] > 0;
+	memset (latch_presses, 0, sizeof latch_presses);
 	wheel = GetMouseWheelMoveV ();
 	input->wheel_x = wheel.x;
 	input->wheel_y = wheel.y;
+
+	/* Without focus GLFW reports no releases: a button or key held while
+	 * the window lost focus (Alt+Tab mid-drag) would stay down forever. */
+	if (!IsWindowFocused ())
+	{
+		memset (input->key_down, 0, sizeof input->key_down);
+		memset (input->mouse_down, 0, sizeof input->mouse_down);
+		input->mods = LRG_GUI_MOD_NONE;
+	}
 }
 
 /* ==========================================================================

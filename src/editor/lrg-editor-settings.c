@@ -63,6 +63,7 @@ struct _LrgEditorSettings
 	gdouble     camera_fly_speed;
 	gdouble     camera_orbit_speed;
 	gboolean    camera_invert_y;
+	gchar      *camera_navigation;
 	gdouble     camera_fov;
 
 	/* Server */
@@ -105,6 +106,7 @@ enum
 	PROP_CAMERA_FLY_SPEED,
 	PROP_CAMERA_ORBIT_SPEED,
 	PROP_CAMERA_INVERT_Y,
+	PROP_CAMERA_NAVIGATION,
 	PROP_CAMERA_FOV,
 	PROP_SERVER_ENABLED,
 	PROP_SERVER_SOCKET,
@@ -140,6 +142,7 @@ lrg_editor_settings_finalize (GObject *object)
 	g_free (self->external_editor_command);
 	g_free (self->terminal_command);
 	g_free (self->editor_in_terminal);
+	g_free (self->camera_navigation);
 	g_free (self->emacs_server_name);
 	g_free (self->theme);
 	g_free (self->font_path);
@@ -186,6 +189,7 @@ lrg_editor_settings_get_property (GObject    *object,
 	case PROP_CAMERA_FLY_SPEED:         g_value_set_double (value, self->camera_fly_speed); break;
 	case PROP_CAMERA_ORBIT_SPEED:       g_value_set_double (value, self->camera_orbit_speed); break;
 	case PROP_CAMERA_INVERT_Y:          g_value_set_boolean (value, self->camera_invert_y); break;
+	case PROP_CAMERA_NAVIGATION:        g_value_set_string (value, self->camera_navigation); break;
 	case PROP_CAMERA_FOV:               g_value_set_double (value, self->camera_fov); break;
 	case PROP_SERVER_ENABLED:           g_value_set_boolean (value, self->server_enabled); break;
 	case PROP_SERVER_SOCKET:            g_value_set_string (value, self->server_socket); break;
@@ -251,6 +255,7 @@ lrg_editor_settings_set_property (GObject      *object,
 	case PROP_CAMERA_FLY_SPEED:         self->camera_fly_speed = g_value_get_double (value); break;
 	case PROP_CAMERA_ORBIT_SPEED:       self->camera_orbit_speed = g_value_get_double (value); break;
 	case PROP_CAMERA_INVERT_Y:          self->camera_invert_y = g_value_get_boolean (value); break;
+	case PROP_CAMERA_NAVIGATION:        set_str (&self->camera_navigation, value); break;
 	case PROP_CAMERA_FOV:               self->camera_fov = g_value_get_double (value); break;
 	case PROP_SERVER_ENABLED:           self->server_enabled = g_value_get_boolean (value); break;
 	case PROP_SERVER_SOCKET:            set_str (&self->server_socket, value); break;
@@ -506,6 +511,19 @@ lrg_editor_settings_class_init (LrgEditorSettingsClass *klass)
 	properties[PROP_CAMERA_INVERT_Y] =
 		g_param_spec_boolean ("camera-invert-y", "Camera Invert Y",
 		                      "Invert vertical look", FALSE, RW);
+
+	/**
+	 * LrgEditorSettings:camera-navigation:
+	 *
+	 * Viewport mouse scheme: "default" (right drag flies, middle drag
+	 * pans, Alt + left drag orbits), "blender" (middle drag orbits,
+	 * Shift + middle pans, Ctrl + middle zooms) or "trackpad" (two-finger
+	 * scroll orbits, Shift + scroll pans, Ctrl + scroll zooms). The
+	 * orientation gizmo and the numpad work in every scheme.
+	 */
+	properties[PROP_CAMERA_NAVIGATION] =
+		g_param_spec_string ("camera-navigation", "Camera Navigation",
+		                     "Viewport navigation scheme", "default", RW);
 
 	/**
 	 * LrgEditorSettings:camera-fov:

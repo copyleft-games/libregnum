@@ -53,6 +53,165 @@ editor_view_reset (LrgEditorApp *self)
 	}
 }
 
+/* Camera on an axis (direction = where the camera sits), orthographic;
+ * the next orbit returns to perspective (Blender's auto-perspective). */
+void
+editor_view_align (LrgEditorApp *self,
+                   gfloat        x,
+                   gfloat        y,
+                   gfloat        z)
+{
+	const gfloat dir[3] = { x, y, z };
+
+	lrg_editor_view_align (&self->view, dir);
+	if (!self->view_2d)
+	{
+		self->view.orthographic = TRUE;
+		self->ortho_from_align = TRUE;
+	}
+}
+
+/* Orbits around the target (radians); leaves an aligned ortho view. */
+void
+editor_view_orbit (LrgEditorApp *self,
+                   gfloat        yaw,
+                   gfloat        pitch)
+{
+	if (self->view_2d)
+		return;
+	if (self->ortho_from_align)
+	{
+		self->view.orthographic = FALSE;
+		self->ortho_from_align = FALSE;
+	}
+	lrg_editor_view_orbit (&self->view, yaw, pitch);
+}
+
+/* ==========================================================================
+ * Orientation gizmo (bottom left): drag to orbit, click an axis to look
+ * along it. It works with any pointing device, including touchpads that
+ * cannot right- or middle-drag.
+ * ========================================================================== */
+
+#define NAV_GIZMO_RADIUS  (30.0f)
+#define NAV_GIZMO_MARGIN  (46.0f)
+#define NAV_GIZMO_END_HIT (9.0f)
+
+static void
+nav_gizmo_center (const LrgGuiRect *rect,
+                  gfloat           *cx,
+                  gfloat           *cy)
+{
+	*cx = rect->x + NAV_GIZMO_MARGIN;
+	*cy = rect->y + rect->h - NAV_GIZMO_MARGIN;
+}
+
+/* Screen offset of axis end @index: 0..2 = +X +Y +Z, 3..5 = -X -Y -Z. */
+static void
+nav_gizmo_end (LrgEditorApp *self,
+               gint          index,
+               gfloat       *dx,
+               gfloat       *dy)
+{
+	gfloat view[16];
+	gint   axis = index % 3;
+	gfloat sign = (index < 3) ? 1.0f : -1.0f;
+
+	/* Column @axis of the view rotation = that world axis in camera space. */
+	lrg_editor_view_get_view_matrix (&self->view, view);
+	*dx = view[axis * 4 + 0] * sign * NAV_GIZMO_RADIUS;
+	*dy = -view[axis * 4 + 1] * sign * NAV_GIZMO_RADIUS;
+}
+
+/* -1: outside; -2: on the gizmo background; 0..5: an axis end. */
+static gint
+nav_gizmo_hit (LrgEditorApp     *self,
+               const LrgGuiRect *rect,
+               gfloat            mx,
+               gfloat            my)
+{
+	gfloat cx, cy, best = NAV_GIZMO_END_HIT;
+	gint   hit = -1, i;
+
+	if (self->view_2d)
+		return -1;
+	nav_gizmo_center (rect, &cx, &cy);
+	for (i = 0; i < 6; i++)
+	{
+		gfloat dx, dy, d;
+
+		nav_gizmo_end (self, i, &dx, &dy);
+		d = hypotf (mx - (cx + dx), my - (cy + dy));
+		if (d < best)
+		{
+			best = d;
+			hit = i;
+		}
+	}
+	if (hit >= 0)
+		return hit;
+	return (hypotf (mx - cx, my - cy) <= NAV_GIZMO_RADIUS + NAV_GIZMO_END_HIT) ? -2 : -1;
+}
+
+static void
+nav_gizmo_draw (LrgEditorApp     *self,
+                const LrgGuiRect *rect)
+{
+	static const gchar *names[3] = { "X", "Y", "Z" };
+	LrgGuiStyle        *style = lrg_gui_context_get_style (self->gui);
+	LrgGuiDrawList     *dl = lrg_gui_get_draw_list (self->gui);
+	gfloat              cx, cy, depth[6];
+	gint                order[6], i, j;
+	gfloat              view[16];
+
+	if (self->view_2d)
+		return;
+	nav_gizmo_center (rect, &cx, &cy);
+
+	/* A faint disc shows the drag area. */
+	lrg_gui_draw_list_circle (dl, cx, cy, NAV_GIZMO_RADIUS + NAV_GIZMO_END_HIT,
+	                          (style->colors[LRG_GUI_COL_PANEL_BG] & 0xffffff00u) |
+	                          (self->nav == EDITOR_NAV_GIZMO || self->axis_hot != -1 ? 0xb0u : 0x60u), TRUE);
+
+	/* Far ends first so near ones draw on top. */
+	lrg_editor_view_get_view_matrix (&self->view, view);
+	for (i = 0; i < 6; i++)
+	{
+		order[i] = i;
+		depth[i] = view[(i % 3) * 4 + 2] * (i < 3 ? 1.0f : -1.0f);
+	}
+	for (i = 0; i < 6; i++)
+		for (j = i + 1; j < 6; j++)
+			if (depth[order[j]] < depth[order[i]])
+			{
+				gint t = order[i];
+
+				order[i] = order[j];
+				order[j] = t;
+			}
+
+	for (i = 0; i < 6; i++)
+	{
+		gint        e = order[i];
+		gfloat      dx, dy;
+		LrgGuiColor col = style->colors[LRG_GUI_COL_AXIS_X + e % 3];
+		gboolean    hot = (self->axis_hot == e);
+
+		nav_gizmo_end (self, e, &dx, &dy);
+		if (e < 3)
+		{
+			lrg_gui_draw_list_line (dl, cx, cy, cx + dx, cy + dy, col, 2.0f);
+			lrg_gui_draw_list_circle (dl, cx + dx, cy + dy, hot ? 9.0f : 7.5f, col, TRUE);
+			lrg_gui_draw_list_text (dl, cx + dx - 4.0f, cy + dy - style->font_size * 0.45f, names[e], -1,
+			                        style->font_size * 0.8f, LRG_GUI_RGBA (17, 17, 27, 255), FALSE);
+		}
+		else
+		{
+			lrg_gui_draw_list_circle (dl, cx + dx, cy + dy, hot ? 7.5f : 6.0f, (col & 0xffffff00u) | 0x90u, TRUE);
+		}
+	}
+}
+
 /* World point on the ground (y = 0, or z = 0 in 2D) under a pixel. */
 static gboolean
 ground_point (LrgEditorApp *self,
@@ -297,29 +456,29 @@ overlays (LrgEditorApp     *self,
 
 		lrg_gui_draw_list_text (dl, rect->x + rect->w - tw - pad * 2.0f, rect->y + pad * 1.5f, text, -1,
 		                        style->font_size, style->colors[LRG_GUI_COL_TEXT_DISABLED], FALSE);
-	}
 
-	/* Orientation axes, bottom left. */
-	{
-		gfloat       cx = rect->x + 40.0f, cy = rect->y + rect->h - 40.0f, len = 26.0f;
-		gfloat       view[16];
-		const gchar *names[3] = { "X", "Y", "Z" };
-		gint         i;
-
-		lrg_editor_view_get_view_matrix (&self->view, view);
-		for (i = 0; i < 3; i++)
+		/* Input as the editor sees it, for diagnosing devices. */
+		if (self->cur_input != NULL)
 		{
-			/* Column i of the rotation = world axis i in camera space. */
-			gfloat ax = view[i * 4 + 0];
-			gfloat ay = view[i * 4 + 1];
+			const LrgGuiInput *in = self->cur_input;
+			g_autofree gchar  *line = g_strdup_printf ("pointer %.0f,%.0f  buttons %c%c%c  mods %c%c%c",
+			                                           in->mouse_x, in->mouse_y,
+			                                           in->mouse_down[LRG_GUI_MOUSE_LEFT] ? 'L' : '-',
+			                                           in->mouse_down[LRG_GUI_MOUSE_MIDDLE] ? 'M' : '-',
+			                                           in->mouse_down[LRG_GUI_MOUSE_RIGHT] ? 'R' : '-',
+			                                           (in->mods & LRG_GUI_MOD_CTRL) ? 'C' : '-',
+			                                           (in->mods & LRG_GUI_MOD_SHIFT) ? 'S' : '-',
+			                                           (in->mods & LRG_GUI_MOD_ALT) ? 'A' : '-');
+			gfloat             lw = lrg_gui_calc_text_width (self->gui, line);
 
-			lrg_gui_draw_list_line (dl, cx, cy, cx + ax * len, cy - ay * len,
-			                        style->colors[LRG_GUI_COL_AXIS_X + i], 2.0f);
-			lrg_gui_draw_list_text (dl, cx + ax * (len + 6.0f) - 4.0f, cy - ay * (len + 6.0f) - 7.0f,
-			                        names[i], -1, style->font_size * 0.85f,
-			                        style->colors[LRG_GUI_COL_AXIS_X + i], FALSE);
+			lrg_gui_draw_list_text (dl, rect->x + rect->w - lw - pad * 2.0f,
+			                        rect->y + pad * 1.5f + style->font_size + 4.0f, line, -1,
+			                        style->font_size, style->colors[LRG_GUI_COL_TEXT_DISABLED], FALSE);
 		}
 	}
+
+	/* Orientation gizmo, bottom left. */
+	nav_gizmo_draw (self, rect);
 
 	/* Play mode frame. */
 	if (self->playing)
@@ -345,13 +504,14 @@ overlays (LrgEditorApp     *self,
 void
 editor_panel_viewport (LrgEditorApp *self)
 {
-	LrgGuiStyle *style = lrg_gui_context_get_style (self->gui);
-	LrgGuiRect   rect;
-	gfloat       mx, my, lx, ly, dx, dy;
-	gboolean     hovered;
-	gdouble      orbit_speed = 0.35;
-	gboolean     invert_y = FALSE;
-	const gchar *dropped;
+	LrgGuiStyle      *style = lrg_gui_context_get_style (self->gui);
+	LrgGuiRect        rect;
+	gfloat            mx, my, lx, ly, dx, dy;
+	gboolean          hovered;
+	gdouble           orbit_speed = 0.35;
+	gboolean          invert_y = FALSE;
+	const gchar      *dropped;
+	g_autofree gchar *navigation = NULL;
 
 	lrg_gui_get_region_rect (self->gui, &rect);
 	self->viewport_rect = rect;
@@ -359,7 +519,8 @@ editor_panel_viewport (LrgEditorApp *self)
 	self->view.width = MAX (rect.w, 1.0f);
 	self->view.height = MAX (rect.h, 1.0f);
 
-	g_object_get (self->settings, "camera-orbit-speed", &orbit_speed, "camera-invert-y", &invert_y, NULL);
+	g_object_get (self->settings, "camera-orbit-speed", &orbit_speed, "camera-invert-y", &invert_y,
+	              "camera-navigation", &navigation, NULL);
 
 	/* The 3D image (rendered before the UI pass) goes under everything. */
 	if (!self->headless)
@@ -378,34 +539,93 @@ editor_panel_viewport (LrgEditorApp *self)
 	lx = mx - rect.x;
 	ly = my - rect.y;
 
+	/* --- Orientation gizmo -------------------------------------------- */
+	if (self->nav == EDITOR_NAV_NONE && !lrg_editor_gizmo_is_dragging (self->gizmo))
+	{
+		gint hit = hovered ? nav_gizmo_hit (self, &rect, mx, my) : -1;
+
+		self->axis_hot = (hit >= 0) ? hit : (hit == -2 ? 6 : -1);
+		if (hit != -1 && lrg_gui_is_mouse_clicked (self->gui, LRG_GUI_MOUSE_LEFT))
+		{
+			self->nav = EDITOR_NAV_GIZMO;
+			self->nav_button = LRG_GUI_MOUSE_LEFT;
+			self->nav_moved = FALSE;
+			self->nav_axis = hit;
+			self->press_x = mx;
+			self->press_y = my;
+			dx = dy = 0.0f;
+		}
+	}
+
 	/* --- Navigation start ------------------------------------------------ */
 	if (hovered && self->nav == EDITOR_NAV_NONE && !lrg_editor_gizmo_is_dragging (self->gizmo))
 	{
+		LrgGuiModifiers   mods = lrg_gui_get_mods (self->gui);
+		EditorNav         start = EDITOR_NAV_NONE;
+		LrgGuiMouseButton button = LRG_GUI_MOUSE_LEFT;
+
 		if (lrg_gui_is_mouse_clicked (self->gui, LRG_GUI_MOUSE_RIGHT))
 		{
-			self->nav = self->view_2d ? EDITOR_NAV_PAN : EDITOR_NAV_FLY;
-			self->press_x = mx;
-			self->press_y = my;
+			/* Fly look (pan in 2D); a click without motion opens the menu. */
+			start = self->view_2d ? EDITOR_NAV_PAN : EDITOR_NAV_FLY;
+			button = LRG_GUI_MOUSE_RIGHT;
 		}
 		else if (lrg_gui_is_mouse_clicked (self->gui, LRG_GUI_MOUSE_MIDDLE))
-			self->nav = EDITOR_NAV_PAN;
-		else if (lrg_gui_is_mouse_clicked (self->gui, LRG_GUI_MOUSE_LEFT) &&
-		         (lrg_gui_get_mods (self->gui) & LRG_GUI_MOD_ALT) && !self->view_2d)
-			self->nav = EDITOR_NAV_ORBIT;
+		{
+			button = LRG_GUI_MOUSE_MIDDLE;
+			if (g_strcmp0 (navigation, "blender") == 0 && !self->view_2d)
+				start = (mods & LRG_GUI_MOD_SHIFT) ? EDITOR_NAV_PAN
+				        : (mods & LRG_GUI_MOD_CTRL) ? EDITOR_NAV_ZOOM : EDITOR_NAV_ORBIT;
+			else
+				start = EDITOR_NAV_PAN;
+		}
+		else if (lrg_gui_is_mouse_clicked (self->gui, LRG_GUI_MOUSE_LEFT) && (mods & LRG_GUI_MOD_ALT))
+		{
+			/* Alt + left: orbit (pan in 2D); Alt + Shift + left pans. */
+			start = (self->view_2d || (mods & LRG_GUI_MOD_SHIFT)) ? EDITOR_NAV_PAN : EDITOR_NAV_ORBIT;
+			button = LRG_GUI_MOUSE_LEFT;
+		}
+
+		if (start != EDITOR_NAV_NONE)
+		{
+			self->nav = start;
+			self->nav_button = button;
+			self->nav_moved = FALSE;
+			self->press_x = mx;
+			self->press_y = my;
+			/* Motion before the press is not part of the drag. */
+			dx = dy = 0.0f;
+		}
 	}
 
 	/* --- Navigation update ---------------------------------------------- */
+	if (self->nav != EDITOR_NAV_NONE && self->nav != EDITOR_NAV_BOX)
+	{
+		if (fabsf (mx - self->press_x) >= CLICK_SLOP || fabsf (my - self->press_y) >= CLICK_SLOP)
+			self->nav_moved = TRUE;
+
+		if (!lrg_gui_is_mouse_down (self->gui, self->nav_button))
+		{
+			/* Released: a right click that never moved opens the menu, a
+			 * click on a gizmo axis looks along it. */
+			if (!self->nav_moved && self->nav_button == LRG_GUI_MOUSE_RIGHT)
+				lrg_gui_open_popup (self->gui, "##viewport-menu");
+			if (!self->nav_moved && self->nav == EDITOR_NAV_GIZMO && self->nav_axis >= 0)
+			{
+				gfloat sign = (self->nav_axis < 3) ? 1.0f : -1.0f;
+				gint   axis = self->nav_axis % 3;
+
+				editor_view_align (self, axis == 0 ? sign : 0.0f, axis == 1 ? sign : 0.0f,
+				                   axis == 2 ? sign : 0.0f);
+			}
+			self->nav = EDITOR_NAV_NONE;
+			self->nav_axis = -1;
+		}
+	}
+
 	switch (self->nav)
 	{
 	case EDITOR_NAV_FLY:
-		if (!lrg_gui_is_mouse_down (self->gui, LRG_GUI_MOUSE_RIGHT))
-		{
-			/* A right click without motion opens the context menu. */
-			if (fabsf (mx - self->press_x) < CLICK_SLOP && fabsf (my - self->press_y) < CLICK_SLOP)
-				lrg_gui_open_popup (self->gui, "##viewport-menu");
-			self->nav = EDITOR_NAV_NONE;
-			break;
-		}
 		{
 			gfloat dt = lrg_gui_get_delta_time (self->gui);
 			gfloat speed = self->fly_speed * dt * ((lrg_gui_get_mods (self->gui) & LRG_GUI_MOD_SHIFT) ? FLY_FAST : 1.0f);
@@ -419,6 +639,11 @@ editor_panel_viewport (LrgEditorApp *self)
 			if (lrg_gui_is_key_down (self->gui, LRG_GUI_KEY_E)) up += speed;
 			if (lrg_gui_is_key_down (self->gui, LRG_GUI_KEY_Q)) up -= speed;
 
+			if (self->ortho_from_align && (dx != 0.0f || dy != 0.0f || fwd != 0.0f || right != 0.0f))
+			{
+				self->view.orthographic = FALSE;
+				self->ortho_from_align = FALSE;
+			}
 			lrg_editor_view_fly (&self->view, fwd, right, up, dx * sens, (invert_y ? -dy : dy) * sens);
 
 			/* The wheel tunes the fly speed while flying. */
@@ -430,35 +655,47 @@ editor_panel_viewport (LrgEditorApp *self)
 		break;
 
 	case EDITOR_NAV_ORBIT:
-		if (!lrg_gui_is_mouse_down (self->gui, LRG_GUI_MOUSE_LEFT))
-		{
-			self->nav = EDITOR_NAV_NONE;
-			break;
-		}
-		lrg_editor_view_orbit (&self->view, -dx * (gfloat) orbit_speed * DEG2RAD,
-		                       (invert_y ? -dy : dy) * (gfloat) orbit_speed * DEG2RAD);
+	case EDITOR_NAV_GIZMO:
+		if (self->nav_moved)
+			editor_view_orbit (self, -dx * (gfloat) orbit_speed * DEG2RAD,
+			                   (invert_y ? -dy : dy) * (gfloat) orbit_speed * DEG2RAD);
+		lrg_gui_set_cursor_shape (self->gui, LRG_GUI_CURSOR_RESIZE_ALL);
 		break;
 
 	case EDITOR_NAV_PAN:
-		if (!lrg_gui_is_mouse_down (self->gui, LRG_GUI_MOUSE_MIDDLE) &&
-		    !lrg_gui_is_mouse_down (self->gui, LRG_GUI_MOUSE_RIGHT))
-		{
-			if (self->view_2d && fabsf (mx - self->press_x) < CLICK_SLOP &&
-			    fabsf (my - self->press_y) < CLICK_SLOP)
-				lrg_gui_open_popup (self->gui, "##viewport-menu");
-			self->nav = EDITOR_NAV_NONE;
-			break;
-		}
 		lrg_editor_view_pan (&self->view, dx, dy);
+		lrg_gui_set_cursor_shape (self->gui, LRG_GUI_CURSOR_RESIZE_ALL);
+		break;
+
+	case EDITOR_NAV_ZOOM:
+		if (dy != 0.0f)
+			lrg_editor_view_dolly (&self->view, powf (1.01f, dy));
+		lrg_gui_set_cursor_shape (self->gui, LRG_GUI_CURSOR_RESIZE_NS);
 		break;
 
 	default:
 		break;
 	}
 
-	/* Zoom. */
-	if (hovered && self->nav != EDITOR_NAV_FLY && lrg_gui_get_mouse_wheel (self->gui) != 0.0f)
-		lrg_editor_view_dolly (&self->view, powf (0.87f, lrg_gui_get_mouse_wheel (self->gui)));
+	/* Wheel: zoom; in the trackpad scheme two-finger scroll orbits, Shift
+	 * pans and Ctrl zooms. */
+	if (hovered && self->nav != EDITOR_NAV_FLY && self->cur_input != NULL &&
+	    (self->cur_input->wheel_x != 0.0f || self->cur_input->wheel_y != 0.0f))
+	{
+		gfloat          wx = self->cur_input->wheel_x;
+		gfloat          wy = self->cur_input->wheel_y;
+		LrgGuiModifiers mods = lrg_gui_get_mods (self->gui);
+
+		if (g_strcmp0 (navigation, "trackpad") == 0 && !(mods & LRG_GUI_MOD_CTRL))
+		{
+			if ((mods & LRG_GUI_MOD_SHIFT) || self->view_2d)
+				lrg_editor_view_pan (&self->view, wx * 12.0f, wy * 12.0f);
+			else
+				editor_view_orbit (self, wx * 4.0f * DEG2RAD, wy * 4.0f * DEG2RAD);
+		}
+		else if (wy != 0.0f)
+			lrg_editor_view_dolly (&self->view, powf (0.87f, wy));
+	}
 
 	/* --- Gizmo and selection -------------------------------------------- */
 	if (self->nav == EDITOR_NAV_NONE || self->nav == EDITOR_NAV_BOX)

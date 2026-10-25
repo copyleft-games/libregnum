@@ -157,6 +157,7 @@ Available when the server belongs to =lrg-editor= / =LrgEditorApp=:
 | =level.validate=  |                                                     | =[{severity code node path message file}]=          |
 | =level.import=    | =path= (Blender scene YAML)                         | =true=                                              |
 | =ui.notify=       | =message=, =level= (0 info, 1 success, 2 warning, 3 error) | =true=; shows a toast                        |
+| =ui.state=        |                                                     | =menu= (open top-level menu or null), =dialog=, =palette=, =nav= (=none fly orbit pan box zoom gizmo=), =viewport_hovered=, =window=, =fps=, =frame_height=, =menubar= (header rects by label), =viewport= (rect), =input= (=x y buttons [left right middle] mods=) as last seen |
 | =editor.quit=     | =force= (discard unsaved changes)                   | =true=                                              |
 
 ** Examples

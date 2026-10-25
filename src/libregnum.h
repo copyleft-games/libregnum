@@ -12,6 +12,9 @@
 
 #define LIBREGNUM_INSIDE
 
+/* Before anything pulls in <raylib.h>: see the note on BASE_CFLAGS in
+ * config.mk. Games built with -std=gnu89 need raylib's real _Bool. */
+#include <stdbool.h>
 #include <glib.h>
 #include <glib-object.h>
 #include <gio/gio.h>

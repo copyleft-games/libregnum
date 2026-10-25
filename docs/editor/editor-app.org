@@ -28,6 +28,7 @@ The editor is built by default (=BUILD_EDITOR=1=, =BUILD_EDITOR_UI=1= in =config
 make -j"$(nproc)"                 # library, GIR, lrgldr and lrg-editor
 make lrg-editor                   # just the editor program
 make test-emacs                   # Emacs package byte-compile + ERT suite
+make test-editor-x11              # real window + real X input (Xvfb, xdotool) checked over IPC
 make BUILD_EDITOR_UI=0            # embedded hosts that bring their own UI
 #+end_src
 
@@ -41,7 +42,7 @@ Fedora packages needed beyond the base libregnum build (fold these into the imag
 | =wayland-devel=, =libxkbcommon-devel=, =libX11-devel=, =libXrandr-devel=, =libXinerama-devel=, =libXcursor-devel=, =libXi-devel= | GLFW window backends (already required by graylib) |
 | =google-noto-sans-fonts= or =dejavu-sans-fonts= (runtime) | UI font (searched at fixed paths; raylib's built-in font otherwise) |
 | =emacs= (optional)              | =make test-emacs=, the first-party integration    |
-| =xorg-x11-server-Xvfb= (optional) | windowed smoke tests without a desktop          |
+| =xorg-x11-server-Xvfb=, =xdotool=, =socat=, =yq= (optional) | =make test-editor-x11= (real window, real input) |
 
 Run it on a project folder or a level:
 
@@ -120,7 +121,7 @@ What the established editors offer and where it lives here.
  main.rlevel *  status message             3 selected  12 nodes  0 errors  IPC emacs  60 fps
 #+end_example
 
-- *Menu bar*: every menu item is an action, showing its current shortcut and enabled/checked state.
+- *Menu bar*: every menu item is an action, showing its current shortcut and enabled/checked state. Alt + the first letter (Alt+F, Alt+E, Alt+C, Alt+N, Alt+V, Alt+P, Alt+T, Alt+H) opens a menu from the keyboard; Escape closes it.
 - *Toolbar*: tools, space, snap with live-editable increments, 2D/3D, play controls, run game.
 - *Status bar*: document and dirty marker, play state, a "changed on disk: Reload / Keep mine" prompt, the last status message, selection and node counts, log counters (click to open the console), IPC state ("emacs" when libregnum.el is connected), frame rate.
 - *Toasts*: transient notifications in the bottom right (info, success, warning, error).
@@ -133,17 +134,25 @@ Panels can be closed (except the viewport), reopened from View > Panels, dragged
 :END:
 | Input                           | Action                                                         |
 |---------------------------------+----------------------------------------------------------------|
+| Drag the axis gizmo (bottom left) | Orbit; works with any mouse or touchpad                      |
+| Click an end of the axis gizmo  | Look along that axis (orthographic until the next orbit)       |
 | Right drag                      | Fly look; W A S D move, Q E down/up, Shift faster, wheel speed |
 | Right click (no drag)           | Context menu: create, focus, delete, duplicate...              |
 | Middle drag                     | Pan                                                            |
-| Alt + left drag                 | Orbit around the focus point                                   |
-| Wheel                           | Zoom (dolly; ortho height in orthographic views)               |
+| Alt + left drag                 | Orbit around the focus point (Alt + Shift + left drag pans)    |
+| Wheel, = / -, numpad + / -      | Zoom (dolly; ortho height in orthographic views)               |
+| Num4 / Num6 / Num8 / Num2       | Orbit in 15 degree steps                                       |
+| Num7 / Num1 / Num3 (+Ctrl)      | Top / front / right (opposite) views; Num5 toggles ortho       |
 | Left click                      | Select (Shift add, Ctrl toggle); again on the same spot cycles |
 | Left drag on empty space        | Box select (Shift adds)                                        |
 | Left drag on the gizmo          | Move / rotate / scale; Ctrl inverts snapping; Esc/right cancels |
 | Drop an asset                   | Model/texture: new node; prefab: instance; script: attach to the node under the pointer |
 
 In 2D mode right and middle drag both pan and new nodes are created flat on the XY plane.
+
+*Navigation schemes* (Preferences > Viewport > Navigation, =camera-navigation=): =default= is the table above; =blender= makes middle drag orbit, Shift + middle drag pan and Ctrl + middle drag zoom; =trackpad= makes two-finger scroll orbit, Shift + scroll pan and Ctrl + scroll zoom, for touchpads that cannot right- or middle-drag. The axis gizmo, the numpad and Alt + left drag work in every scheme. Orbiting out of an axis view returns to perspective (Blender's auto-perspective); an orthographic view chosen with Num5 stays orthographic.
+
+Pointer movement made before a press never counts as part of the drag, so a press after a fast move does not snap the camera. A button or key held when the window loses focus is released (GLFW reports no releases while unfocused), so navigation cannot get stuck. Clicks and key chords faster than a frame (touchpad taps, xdotool) are latched by the input backend and never lost. Show Stats (View menu) adds a line with the pointer, buttons and modifiers as the editor sees them, the quickest way to diagnose an input device.
 
 Rendering: primitives are unit-sized meshes matching the picking bounds (cube, spheres, plane, cylinder, cone, torus, disc, grid, 2D rectangle and circle), lit by a small GLSL 3.3 shader (flat colour fallback); mesh assets (glTF/OBJ/...) and sprite textures load on demand and are cached; missing assets show as magenta boxes and are reported once in the console. Lights, cameras, audio emitters and empty nodes draw as constant-size icons. Selection draws the bounds (primary brighter). The grid adapts to the zoom (=grid-size= times a power of ten, =grid-extent= cells each way) and shows the world axes. The gizmo is drawn in screen space from the same geometry its hit test uses. An overlay shows the view mode, stats (node count, selection, fps) and an orientation axis.
 
@@ -225,6 +234,7 @@ grid-extent: 50
 camera-fly-speed: 8
 camera-orbit-speed: 0.35         # degrees per pixel
 camera-invert-y: false
+camera-navigation: default       # default | blender | trackpad
 camera-fov: 50
 server-enabled: true
 server-socket: null              # default $XDG_RUNTIME_DIR/libregnum/editor-PID.sock

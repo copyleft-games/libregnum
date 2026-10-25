@@ -620,26 +620,23 @@ a_frame_all (gpointer data)
 	editor_app_frame_all (APP (data));
 }
 
-static void
-align_view (LrgEditorApp *self,
-            gfloat        x,
-            gfloat        y,
-            gfloat        z,
-            gboolean      ortho)
-{
-	const gfloat dir[3] = { x, y, z };
+/* Axis views look at the target from the given side (orthographic until
+ * the next orbit). */
+static void a_view_top (gpointer d)    { editor_view_align (APP (d), 0, 1, 0); }
+static void a_view_bottom (gpointer d) { editor_view_align (APP (d), 0, -1, 0); }
+static void a_view_front (gpointer d)  { editor_view_align (APP (d), 0, 0, 1); }
+static void a_view_back (gpointer d)   { editor_view_align (APP (d), 0, 0, -1); }
+static void a_view_right (gpointer d)  { editor_view_align (APP (d), 1, 0, 0); }
+static void a_view_left (gpointer d)   { editor_view_align (APP (d), -1, 0, 0); }
 
-	lrg_editor_view_align (&self->view, dir);
-	if (ortho)
-		self->view.orthographic = TRUE;
-}
-
-static void a_view_top (gpointer d)    { align_view (APP (d), 0, 1, 0, TRUE); }
-static void a_view_bottom (gpointer d) { align_view (APP (d), 0, -1, 0, TRUE); }
-static void a_view_front (gpointer d)  { align_view (APP (d), 0, 0, 1, TRUE); }
-static void a_view_back (gpointer d)   { align_view (APP (d), 0, 0, -1, TRUE); }
-static void a_view_right (gpointer d)  { align_view (APP (d), 1, 0, 0, TRUE); }
-static void a_view_left (gpointer d)   { align_view (APP (d), -1, 0, 0, TRUE); }
+/* Numpad orbiting in 15 degree steps, and keyboard zoom. */
+#define ORBIT_STEP ((gfloat) G_PI / 12.0f)
+static void a_orbit_left (gpointer d)  { editor_view_orbit (APP (d), ORBIT_STEP, 0.0f); }
+static void a_orbit_right (gpointer d) { editor_view_orbit (APP (d), -ORBIT_STEP, 0.0f); }
+static void a_orbit_up (gpointer d)    { editor_view_orbit (APP (d), 0.0f, -ORBIT_STEP); }
+static void a_orbit_down (gpointer d)  { editor_view_orbit (APP (d), 0.0f, ORBIT_STEP); }
+static void a_zoom_in (gpointer d)     { lrg_editor_view_dolly (&APP (d)->view, 0.8f); }
+static void a_zoom_out (gpointer d)    { lrg_editor_view_dolly (&APP (d)->view, 1.25f); }
 
 static void
 a_view_persp (gpointer data)
@@ -649,6 +646,7 @@ a_view_persp (gpointer data)
 	if (self->view_2d)
 		return;
 	self->view.orthographic = !self->view.orthographic;
+	self->ortho_from_align = FALSE;
 }
 
 static void
@@ -883,6 +881,12 @@ editor_app_register_actions (LrgEditorApp *self)
 		{ "view.right", "Right View", "View", "Num3", a_view_right, NULL, NULL },
 		{ "view.left", "Left View", "View", "Ctrl+Num3", a_view_left, NULL, NULL },
 		{ "view.perspective", "Orthographic", "View", "Num5", a_view_persp, NULL, is_ortho },
+		{ "view.orbit-left", "Orbit Left", "View", "Num4", a_orbit_left, NULL, NULL },
+		{ "view.orbit-right", "Orbit Right", "View", "Num6", a_orbit_right, NULL, NULL },
+		{ "view.orbit-up", "Orbit Up", "View", "Num8", a_orbit_up, NULL, NULL },
+		{ "view.orbit-down", "Orbit Down", "View", "Num2", a_orbit_down, NULL, NULL },
+		{ "view.zoom-in", "Zoom In", "View", "=", a_zoom_in, NULL, NULL },
+		{ "view.zoom-out", "Zoom Out", "View", "-", a_zoom_out, NULL, NULL },
 		{ "view.toggle-2d", "2D Mode", "View", "Ctrl+Shift+2", a_toggle_2d, NULL, is_2d },
 		{ "view.grid", "Show Grid", "View", "Shift+G", a_grid, NULL, grid_on },
 		{ "view.icons", "Show Icons", "View", NULL, a_icons, NULL, icons_on },
@@ -1450,6 +1454,75 @@ m_level_validate (LrgEditorServer  *server,
 	return n;
 }
 
+/* What the UI is doing and the input it last saw: for tools, tests and
+ * diagnosing "my clicks do nothing". */
+static JsonNode *
+m_ui_state (LrgEditorServer  *server,
+            JsonObject       *params,
+            gpointer          user_data,
+            GError          **error)
+{
+	static const gchar *menus[] = { "File", "Edit", "Create", "Node", "View", "Play", "Tools", "Help" };
+	static const gchar *dialogs[] = {
+		NULL, "preferences", "project-settings", "file", "confirm", "new-project", "new-script",
+		"about", "shortcuts", "recover"
+	};
+	static const gchar *navs[] = { "none", "fly", "orbit", "pan", "box", "zoom", "gizmo" };
+	LrgEditorApp *self = APP (user_data);
+	JsonObject   *o = json_object_new ();
+	JsonObject   *in = json_object_new ();
+	JsonArray    *buttons = json_array_new ();
+	const gchar  *menu = NULL;
+	gsize         i;
+
+	for (i = 0; i < G_N_ELEMENTS (menus); i++)
+		if (lrg_gui_is_popup_open (self->gui, menus[i]))
+			menu = menus[i];
+
+	json_object_set_member (o, "menu", str_node (menu));
+	json_object_set_member (o, "dialog", str_node ((gint) self->dialog < (gint) G_N_ELEMENTS (dialogs)
+	                                               ? dialogs[self->dialog] : NULL));
+	json_object_set_boolean_member (o, "palette", self->palette_open);
+	json_object_set_string_member (o, "nav", (gint) self->nav < (gint) G_N_ELEMENTS (navs) ? navs[self->nav] : "?");
+	json_object_set_boolean_member (o, "viewport_hovered", self->viewport_hovered);
+	json_object_set_boolean_member (o, "window", self->window_open);
+	json_object_set_double_member (o, "fps", self->fps);
+	json_object_set_double_member (o, "frame_height", lrg_gui_get_frame_height (self->gui));
+	{
+		JsonObject *bar = json_object_new ();
+
+		for (i = 0; i < G_N_ELEMENTS (menus); i++)
+		{
+			JsonArray *r = json_array_new ();
+
+			json_array_add_double_element (r, self->menu_rects[i].x);
+			json_array_add_double_element (r, self->menu_rects[i].y);
+			json_array_add_double_element (r, self->menu_rects[i].w);
+			json_array_add_double_element (r, self->menu_rects[i].h);
+			json_object_set_array_member (bar, menus[i], r);
+		}
+		json_object_set_object_member (o, "menubar", bar);
+	}
+	{
+		JsonArray *r = json_array_new ();
+
+		json_array_add_double_element (r, self->viewport_rect.x);
+		json_array_add_double_element (r, self->viewport_rect.y);
+		json_array_add_double_element (r, self->viewport_rect.w);
+		json_array_add_double_element (r, self->viewport_rect.h);
+		json_object_set_array_member (o, "viewport", r);
+	}
+
+	json_object_set_double_member (in, "x", self->last_input.mouse_x);
+	json_object_set_double_member (in, "y", self->last_input.mouse_y);
+	for (i = 0; i < LRG_GUI_MOUSE_BUTTON_COUNT; i++)
+		json_array_add_boolean_element (buttons, self->last_input.mouse_down[i]);
+	json_object_set_array_member (in, "buttons", buttons);
+	json_object_set_int_member (in, "mods", self->last_input.mods);
+	json_object_set_object_member (o, "input", in);
+	return obj_node (o);
+}
+
 static JsonNode *
 m_ui_notify (LrgEditorServer  *server,
              JsonObject       *params,
@@ -1547,6 +1620,7 @@ editor_app_register_methods (LrgEditorApp *self)
 		{ "level.validate", m_level_validate },
 		{ "level.import", m_level_import },
 		{ "ui.notify", m_ui_notify },
+		{ "ui.state", m_ui_state },
 		{ "editor.quit", m_editor_quit },
 	};
 	gsize i;

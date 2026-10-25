@@ -664,7 +664,14 @@ CRISPY_STATIC   := $(CRISPY_DIR)/build/$(DEP_BUILD_TYPE)/libcrispy.a
 # =============================================================================
 
 # Base CFLAGS
-BASE_CFLAGS := -std=$(CSTD) $(WARN_CFLAGS) $(FEATURE_CFLAGS)
+#
+# -include stdbool.h: under gnu89 <raylib.h> declares `bool` as an int-sized
+# enum, but raylib (C99) returns and stores a one-byte _Bool. Callers then
+# read garbage from the upper bytes (IsMouseButtonDown() "held" forever,
+# RayCollision.hit and Music.looping read through padding). GCC accepts
+# _Bool in gnu89, so defining `bool` first makes the prototypes and struct
+# layouts match raylib's ABI.
+BASE_CFLAGS := -std=$(CSTD) -include stdbool.h $(WARN_CFLAGS) $(FEATURE_CFLAGS)
 
 # Debug/Release flags
 ifeq ($(DEBUG),1)

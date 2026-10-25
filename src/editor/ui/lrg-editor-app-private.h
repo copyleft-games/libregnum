@@ -101,7 +101,9 @@ typedef enum
 	EDITOR_NAV_FLY,     /* right mouse: look + WASD */
 	EDITOR_NAV_ORBIT,   /* Alt + left mouse */
 	EDITOR_NAV_PAN,     /* middle mouse (or Shift + middle) */
-	EDITOR_NAV_BOX      /* left drag on empty space: box select */
+	EDITOR_NAV_BOX,     /* left drag on empty space: box select */
+	EDITOR_NAV_ZOOM,    /* drag to dolly (blender scheme: Ctrl + middle) */
+	EDITOR_NAV_GIZMO    /* left drag on the orientation gizmo: orbit */
 } EditorNav;
 
 typedef struct
@@ -166,6 +168,11 @@ struct _LrgEditorApp
 	gboolean           show_stats;
 	gfloat             fly_speed;
 	EditorNav          nav;
+	LrgGuiMouseButton  nav_button;    /* the button driving nav */
+	gboolean           nav_moved;     /* nav passed the click slop */
+	gint               nav_axis;      /* orientation-gizmo end pressed, -1 none */
+	gint               axis_hot;      /* orientation-gizmo end hovered, -1 none */
+	gboolean           ortho_from_align; /* orbiting returns to perspective */
 	gfloat             box_x0;
 	gfloat             box_y0;
 	gfloat             press_x;
@@ -273,6 +280,8 @@ struct _LrgEditorApp
 	gchar             *window_shot;        /* pending full-window screenshot */
 	gchar             *level_dir;          /* base dir cache without a project */
 	const LrgGuiInput *cur_input;          /* input of the frame being built */
+	LrgGuiInput        last_input;         /* copy of the last frame's input (ui.state) */
+	LrgGuiRect         menu_rects[8];      /* menubar headers, for ui.state */
 };
 
 /* --- lrg-editor-app.c --- */
@@ -321,6 +330,8 @@ G_GNUC_INTERNAL const gchar * editor_asset_glyph    (gint type, gboolean is_dir)
 G_GNUC_INTERNAL void     editor_console_execute     (LrgEditorApp *self, const gchar *line);
 G_GNUC_INTERNAL void     editor_viewport_drop_asset (LrgEditorApp *self, const gchar *path, gfloat x, gfloat y);
 G_GNUC_INTERNAL void     editor_view_reset          (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_view_align          (LrgEditorApp *self, gfloat x, gfloat y, gfloat z);
+G_GNUC_INTERNAL void     editor_view_orbit          (LrgEditorApp *self, gfloat yaw, gfloat pitch);
 
 /* --- lrg-editor-render.c --- */
 G_GNUC_INTERNAL void     editor_render_init         (LrgEditorApp *self);
