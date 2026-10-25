@@ -223,6 +223,8 @@ Gets the world-space scale (combining all parent scales).
 
 Returns: (transfer full) A new =GrlVector2= with the world scale
 
+World values are not cached: each getter walks the parent chain once, root to leaf, without allocating (O(depth)), so ancestor changes are always reflected. Earlier versions recursed separately for position, rotation and scale at every level (O(depth^2)) and allocated a vector per level. =lrg_transform_component_sync_to_entity()= computes all three in a single walk.
+
 *** Parent/Child Hierarchy
 :PROPERTIES:
 :CUSTOM_ID: parentchild-hierarchy
