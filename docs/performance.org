@@ -1,0 +1,105 @@
+#+title: Performance
+#+description: Frame-time benchmarks, the engine's per-frame cost rules, and what changed in the framerate pass
+#+authors: Zach Podbielniak
+#+categories: libregnum performance benchmarks graylib
+#+created: 2026-10-25T16:00:00-04:00
+#+updated: 2026-10-25T16:00:00-04:00
+#+version: 1.0
+
+* Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+#+begin_quote
+*[[file:index.org][Home]]* > Performance
+#+end_quote
+
+This page covers measuring frame cost (=lrg-bench=), the rules the engine's per-frame code follows, and the framerate pass of October 2026 (what changed, with numbers). Editor-specific frame cost is in [[file:editor/editor-app.org][the editor app page]]; graylib's own rules are in graylib's =docs/best_practices.org=.
+
+** Measuring: lrg-bench
+:PROPERTIES:
+:CUSTOM_ID: lrg-bench
+:END:
+=bench/lrg-bench.c= runs CPU-bound scenarios with the frame cap off in a 320x240 window, small on purpose so fill rate stays out of the numbers and the engine's own per-frame work dominates. For each scenario it prints the whole-frame mean, median, p95 and FPS, and the *work* median: the scenario's update and draw submission alone, without the driver's flush and buffer swap. Under a software rasterizer (Xvfb + llvmpipe) the work column is the one that tracks engine changes; whole-frame times are dominated by the rasterizer.
+
+#+begin_src sh
+make -C bench                                    # bench/build/release/bench/lrg-bench
+make -C bench run                                # all scenarios (Xvfb when DISPLAY is unset)
+make -C bench run BENCH_ARGS='-s tilemap -f 600' # one scenario, longer
+LRG_BENCH_XVFB=1 bench/run-bench.sh bench/build/release/bench/lrg-bench -o yaml   # private Xvfb even with a display, YAML out
+bench/build/release/bench/lrg-bench -l           # list scenarios
+#+end_src
+
+| Scenario        | What it exercises                                                         |
+|-----------------+---------------------------------------------------------------------------|
+| =ecs-sprites=   | 4000 game objects with sprite components: =lrg_world_update/draw=         |
+| =ui-labels=     | retained UI canvas with 600 labels, one changing per frame                |
+| =particles=     | 20000-particle system update                                              |
+| =tilemap=       | 512x512 two-layer tilemap through a panning 2D camera                     |
+| =shapes3d=      | 3000 =LrgCube3D=                                                          |
+| =shapes-round=  | 600 spheres, 300 cylinders, 300 cones                                     |
+| =static-batch=  | 3600 boxes in 90 chunks, walking camera                                   |
+| =terrain=       | 256 terrain chunks and 256 water patches                                  |
+| =billboards=    | 60000 swaying billboards                                                  |
+| =grass=         | ~150000 grass blades                                                      |
+| =world-shadows= | lit batch + terrain + billboards, 14 shadow passes, light grid            |
+| =light-grid=    | light set apply, 256 lights                                               |
+| =graylib-draw=  | 20000 graylib rectangle/texture draws + 200 texts                         |
+| =gui=           | the editor's immediate-mode GUI, 64 rows of widgets                       |
+
+Adding a scenario: write =setup= / =frame= / =teardown= functions and add a row to the =scenarios[]= table at the bottom of =lrg-bench.c=. Keep scenarios deterministic (fixed seeds, scripted cameras) so runs compare.
+
+** Rules for per-frame code
+:PROPERTIES:
+:CUSTOM_ID: rules
+:END:
+- *No heap values in draw loops.* =GrlColor=, =GrlVector2/3=, =GrlRectangle= are plain structs: declare them on the stack (or =static const= for constant colours) and pass addresses. Use the non-allocating getters: =grl_entity_get_origin_xy()=, =grl_font_measure_text_xy()=, =lrg_tileset_get_tile_rect_to()=.
+- *Cull before submitting.* =src/graphics/lrg-draw-cull-private.h= gives the visible area of the z = 0 plane (=lrg_draw_cull_visible_rect_2d()=) and frustum tests for 3D boxes, both read from rlgl's live projection x modelview x transform, so they are right inside any camera, render target, letterbox viewport or shadow pass without the caller passing anything in.
+- *Cache what does not change between frames.* Sort orders (=LrgWorld=), measured text (=LrgLabel=), uniform locations, light grids, instance buffers and GPU meshes are kept and invalidated on change, not rebuilt per frame.
+- *Batch-friendly order.* raylib flushes its batch whenever the texture, shader, blend mode or scissor changes; group draws by texture.
+- *No per-frame logging or string formatting* on paths that run every frame.
+
+** Build flags
+:PROPERTIES:
+:CUSTOM_ID: build-flags
+:END:
+Release builds (=DEBUG=0=) of libregnum and graylib use =-O2 -fno-semantic-interposition -DG_DISABLE_CAST_CHECKS=: calls between a library's own functions can be inlined although it is built =-fPIC=, and GObject cast macros compile to plain casts (=g_return_if_fail()= argument checks stay on). =DEBUG=1= builds keep full cast checks. The bundled raylib is built at =-O2= (its Makefile defaults to =-O1= for desktop release builds; graylib passes =CUSTOM_CFLAGS=-O2=, raylib's sources are unchanged). At =-O2= raylib's own =rcore.c= emits three =-Wstringop-truncation= warnings; they are raylib's, like the =m3d.h= warning that was already there.
+
+The extra inlining lets GCC see through more calls, which surfaced latent paths where an output argument stayed unset after a failed =g_return_if_fail()= or a constructor's =NULL= return was dereferenced; those were fixed at the source, not silenced.
+
+** The October 2026 framerate pass
+:PROPERTIES:
+:CUSTOM_ID: framerate-pass
+:END:
+Measured with =lrg-bench= under Xvfb + llvmpipe on a 20-thread Alder Lake laptop, 300 frames per scenario, before (master =46a6583=) and after. Work = scenario CPU time per frame (median); frame = whole-frame mean.
+
+| Scenario        | Before                     | After                     | Change                               |
+|-----------------+----------------------------+---------------------------+--------------------------------------|
+| =tilemap=       | work 52.3 ms, frame 53.6 ms | work 1.2 ms, frame 1.9 ms | ~28x (viewport culling)             |
+| =ui-labels=     | work 3.07 ms, frame 4.19 ms | work 1.50 ms, frame 2.65 ms | 2x (graylib text layout)          |
+| =ecs-sprites=   | crashed                    | work 0.95 ms              | fixed (=lrg_world_draw= NULL vfunc)  |
+| =particles=     | crashed                    | work 0.12 ms              | fixed (pool realloc under live list) |
+| =grass=         | frame 69.2 ms              | frame 14.1 ms             | ~5x (persistent instances, culling)  |
+| =world-shadows= | frame 135.7 ms             | frame 74.8 ms             | ~1.8x (frustum culling per pass)     |
+| =billboards=    | frame 12.4 ms              | frame 7.9 ms              | cluster culling                      |
+| =terrain=       | frame 11.0 ms              | frame 8.7 ms              | chunk/patch culling                  |
+| =shapes-round=  | frame 37.1 ms              | frame 27.6 ms             | cached GPU meshes                    |
+| =light-grid=    | 0.615 ms                   | 0.213 ms                  | skip unchanged rebuild/upload        |
+| =graylib-draw=  | work 7.5 ms (raylib -O1)   | work 5.4 ms               | raylib at -O2                        |
+| editor frame (5050 nodes, 4000 log lines) | 11.8 ms | 0.35 ms         | console/hierarchy culling and caches |
+
+What changed, by area:
+- *2D*: tilemap draws only tiles that can land in the viewport; =LrgWorld= keeps its draw order between frames (stable by z-index then insertion) and insertion-sorts it in place; sprite components and =GrlSprite= draw without allocating; =LrgGame2DTemplate= paints letterbox bars instead of a second full-window clear; labels cache their measured size; text everywhere goes through graylib's O(1)-lookup layout.
+- *3D*: frustum culling in static batches, terrain, water, billboard clusters and grass, for the camera and every shadow pass; uniform locations cached per shader; the light grid rebuilds and uploads only on change; grass keeps a persistent instance buffer; spheres, cylinders and cones draw cached GPU meshes.
+- *Simulation*: see the animation, physics, tween, event bus, transform, object pool and portal notes in their module pages.
+- *Editor*: see [[file:editor/editor-app.org][Frame cost]].
+
+Bugs fixed on the way (each has a regression test):
+- =lrg_world_draw()= crashed on any world with objects: =LrgGameObject::draw= chained up to =GrlEntity='s =NULL= draw vfunc. It now draws the object's enabled sprite components (=/ecs/world/draw-order=).
+- =LrgParticleSystem= let its pool grow past =max-particles=, reallocating the particles under its active list (a crash once emission outran the capacity). The pool is now fixed at =max-particles= (=/particles/system/respects-max-particles=).
+- =GrlSprite= =flip-h=/=flip-v= were negated twice and never flipped.
+- =GrlScene= ignored z-index changes made after an entity was added (graylib =/scene/draw-order-follows-z-index=).
+
+Behaviour changes to know about:
+- =max-particles= is now a hard cap on a particle system's live particles (it was documented as one but not enforced).
+- Solid =LrgSphere3D=, =LrgCylinder3D= and =LrgCone3D= draw cached meshes with raylib's default shader, like =LrgIcosphere3D= and =LrgTorus3D= already did, so a =BeginShaderMode()= around them no longer applies; their output can differ from the old immediate-mode path by a pixel at a triangle edge (GPU vs CPU vertex transform).

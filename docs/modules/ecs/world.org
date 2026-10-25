@@ -259,7 +259,7 @@ Update order:
 void lrg_world_draw (LrgWorld *self);
 #+end_src
 
-Draws all visible game objects in the world. Objects are drawn in z-index order (lowest first).
+Draws all visible game objects in the world. Objects are drawn in z-index order (lowest first), objects with equal z-index in the order they were added. The order is kept between frames and re-sorted in place (a single linear pass while z-indices are stable), so a z-index change takes effect on the next draw. Each =LrgGameObject= draws its enabled =LrgSpriteComponent=s, in component order; objects must not be added or removed from inside a draw.
 
 Parameters:
 
