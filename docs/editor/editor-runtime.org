@@ -4,7 +4,9 @@
 :END:
 This document covers =LrgEditor= (the host-agnostic editor runtime), the undo/redo
 command system (=LrgEditorCommand=), the selection model (=LrgEditorSelection=), and
-the host embedding contract (=LrgEditorHost= / =LrgEditorSoftwareHost=).
+the host embedding contract (=LrgEditorHost= / =LrgEditorSoftwareHost=). It also covers the headless building blocks every editor frontend shares: viewport math and the =LrgEditorView= camera, ray picking and box selection, the =LrgEditorGizmo= transform controller, the =LrgEditorActions= command registry and level validation (=LrgEditorProblem=).
+
+The full editor application (=lrg-editor=, =LrgEditorApp=) is built on top of this runtime and drawn with libregnum's own immediate-mode GUI (=LrgGuiContext=); it is documented in [[file:editor-app.org][Editor Application]]. Everything in this document is window-less and unit-testable, so an IDE such as cmacs can reuse it without the application.
 
 #+begin_quote
 *[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Editor Runtime
@@ -40,6 +42,108 @@ lrg_editor_save_level (editor, "dungeon.rlevel", &error);
 LrgLevel *level = lrg_editor_get_level (editor);  /* (transfer none) */
 #+end_src
 
+The editor also tracks the document's own file path, so a frontend can offer plain Save / Reload without carrying the path around:
+
+#+begin_src C
+/* Fresh empty level; clears path, selection and history */
+lrg_editor_new_level (editor, "untitled");
+
+/* Path-based save / reload */
+lrg_editor_set_path (editor, "levels/dungeon.rlevel");
+if (!lrg_editor_save (editor, &error))      /* G_IO_ERROR_INVALID_FILENAME if no path */
+	g_warning ("save failed: %s", error->message);
+
+/* Re-read from disk (file edited in Emacs); selection is restored by GUID */
+lrg_editor_reload (editor, &error);
+
+const gchar *path = lrg_editor_get_path (editor);   /* (transfer none) (nullable) */
+
+/* The whole document as .rlevel YAML, without touching disk */
+g_autofree gchar *yaml = lrg_editor_serialize (editor);
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_new_level= | =void (LrgEditor *self, const gchar *name)= |
+| =lrg_editor_save= | =gboolean (LrgEditor *self, GError **error)= |
+| =lrg_editor_reload= | =gboolean (LrgEditor *self, GError **error)= |
+| =lrg_editor_get_path= | =const gchar * (LrgEditor *self)= |
+| =lrg_editor_set_path= | =void (LrgEditor *self, const gchar *path)= |
+| =lrg_editor_serialize= | =gchar * (LrgEditor *self)= |
+
+*** Dirty Tracking and Save Signals
+:PROPERTIES:
+:CUSTOM_ID: dirty-tracking
+:END:
+Dirty state is derived from the undo history rather than a free-standing flag. Every =LrgEditorCommand= carries a process-unique modification serial (=lrg_editor_command_get_serial()=), refreshed whenever another command is merged into it. =lrg_editor_mark_clean()= records the serial at the top of the undo stack as the saved state; the document is dirty whenever the current top differs. Undoing back to the saved point therefore makes the document clean again, and redoing past it makes it dirty.
+
+#+begin_src C
+gboolean dirty = lrg_editor_is_dirty (editor);
+
+/* Declare the current history position as "saved" (save/load do this) */
+lrg_editor_mark_clean (editor);
+
+/* Force dirty without a history entry, e.g. after restoring an autosave
+   over the file it belongs to */
+lrg_editor_mark_modified (editor);
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_is_dirty= | =gboolean (LrgEditor *self)= |
+| =lrg_editor_mark_clean= | =void (LrgEditor *self)= |
+| =lrg_editor_mark_modified= | =void (LrgEditor *self)= |
+
+Note that =lrg_editor_clear_history()= keeps the dirty state: clearing history does not make unsaved changes disappear.
+
+*** Properties and Signals
+:PROPERTIES:
+:CUSTOM_ID: properties-and-signals
+:END:
+| Property | Type | Access | Description |
+|----------+------+--------+-------------|
+| =level= | =LrgLevel= | read | The edited level; replaced by =set_level=, =load_level=, =new_level= |
+| =path= | =gchar *= | read/write | File the document was loaded from or last saved to |
+| =dirty= | =gboolean= | read | Unsaved changes; notified when it flips |
+| =tool= | =LrgEditorTool= | read/write | Active manipulation tool (default =SELECT=) |
+| =space= | =LrgEditorSpace= | read/write | Gizmo coordinate space (default =WORLD=) |
+| =snap-enabled= | =gboolean= | read/write | Whether gizmo snapping is active |
+| =history-limit= | =guint= | read/write | Maximum undo steps kept (0 = unlimited) |
+
+| Signal | Arguments | Emitted when |
+|--------+-----------+--------------|
+| =changed= | none | After any operation that mutates the document or the history |
+| =level-replaced= | =LrgLevel *level= | The whole document was replaced (new, open, reload); views holding =LrgNode= pointers must drop them |
+| =saved= | =const gchar *path= | The document was written to disk |
+
+#+begin_src C
+static void
+on_dirty_changed (
+	GObject    *object,
+	GParamSpec *pspec,
+	gpointer    user_data
+){
+	LrgEditor *editor;
+
+	editor = LRG_EDITOR (object);
+	/* update the window title with a trailing "*" */
+	update_title (lrg_editor_get_path (editor), lrg_editor_is_dirty (editor));
+}
+
+static void
+on_level_replaced (
+	LrgEditor *editor,
+	LrgLevel  *level,
+	gpointer   user_data
+){
+	/* node pointers cached by the view are now dangling: rebuild */
+	rebuild_tree_view (user_data, level);
+}
+
+g_signal_connect (editor, "notify::dirty", G_CALLBACK (on_dirty_changed), NULL);
+g_signal_connect (editor, "level-replaced", G_CALLBACK (on_level_replaced), view);
+#+end_src
+
 *** Mutating Operations
 :PROPERTIES:
 :CUSTOM_ID: mutating-operations
@@ -72,6 +176,177 @@ lrg_editor_set_node_property (editor, node, "name", &name_val);
 g_value_unset (&name_val);
 #+end_src
 
+Further operations added for the editor application. Every one records exactly one undo step; functions taking a =merge= flag coalesce with the previous command when it targets the same thing, so a whole slider or gizmo drag is a single undo.
+
+#+begin_src C
+/* Insert at a child index (-1 appends) and select */
+lrg_editor_insert_node (editor, node, parent, 0);
+
+/* Reparent and/or reorder; keep_world preserves the world placement
+   (Godot/Unity behaviour). index is counted after removal from the old slot. */
+lrg_editor_move_node (editor, node, new_parent, -1, TRUE);
+
+/* Rename */
+lrg_editor_rename_node (editor, node, "crate_02");
+
+/* Any subset of TRS channels; NULL keeps a channel. merge=TRUE while dragging */
+const gfloat loc[3] = { 2.0f, 0.0f, 0.0f };
+lrg_editor_transform_node (editor, node, loc, NULL, NULL, TRUE);
+
+/* Generic reflection setter for any GObject in the document
+   (node, visual, material, level); the value is transformed if needed */
+lrg_editor_set_object_property (editor, G_OBJECT (visual), "asset", &asset_val, FALSE);
+
+/* Numeric visual param bag ("cad:thickness"), slider drags coalesce */
+lrg_editor_set_visual_param (editor, node, "cad:thickness", 0.25, TRUE);
+
+/* Replace the visual payload (copied); NULL turns the node into a group */
+lrg_editor_set_visual (editor, node, new_visual);
+
+/* Components and scripts (descriptions/bindings are copied) */
+lrg_editor_add_component (editor, node, desc);
+lrg_editor_set_component_value (editor, node, 0, "speed", &speed_val, TRUE);
+lrg_editor_remove_component (editor, node, 0);
+lrg_editor_add_script (editor, node, binding);
+lrg_editor_remove_script (editor, node, 0);
+
+/* Instantiate a .rprefab with fresh GUIDs under parent (NULL = root) */
+LrgNode *inst = lrg_editor_instantiate_prefab (editor, "prefabs/torch.rprefab", NULL, &error);
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_insert_node= | =void (LrgEditor *self, LrgNode *node, LrgNode *parent, gint index)= |
+| =lrg_editor_move_node= | =gboolean (LrgEditor *self, LrgNode *node, LrgNode *new_parent, gint index, gboolean keep_world)= |
+| =lrg_editor_rename_node= | =void (LrgEditor *self, LrgNode *node, const gchar *name)= |
+| =lrg_editor_transform_node= | =void (LrgEditor *self, LrgNode *node, const gfloat *location, const gfloat *rotation, const gfloat *scale, gboolean merge)= |
+| =lrg_editor_set_object_property= | =gboolean (LrgEditor *self, GObject *object, const gchar *prop_name, const GValue *value, gboolean merge)= |
+| =lrg_editor_set_visual_param= | =void (LrgEditor *self, LrgNode *node, const gchar *param, gdouble value, gboolean merge)= |
+| =lrg_editor_set_visual= | =void (LrgEditor *self, LrgNode *node, LrgNodeVisual *visual)= |
+| =lrg_editor_add_component= | =void (LrgEditor *self, LrgNode *node, LrgComponentDesc *desc)= |
+| =lrg_editor_remove_component= | =gboolean (LrgEditor *self, LrgNode *node, guint index)= |
+| =lrg_editor_set_component_value= | =gboolean (LrgEditor *self, LrgNode *node, guint index, const gchar *key, const GValue *value, gboolean merge)= |
+| =lrg_editor_add_script= | =void (LrgEditor *self, LrgNode *node, LrgScriptBinding *binding)= |
+| =lrg_editor_remove_script= | =gboolean (LrgEditor *self, LrgNode *node, guint index)= |
+| =lrg_editor_instantiate_prefab= | =LrgNode * (LrgEditor *self, const gchar *path, LrgNode *parent, GError **error)= |
+
+When a prefab instance root has no visual of its own it gets a visual of kind =LRG_NODE_VISUAL_PREFAB_INSTANCE= remembering its source; otherwise the source path is stored in the =prefab:source= visual param.
+
+*** Undo Groups and Custom Commands
+:PROPERTIES:
+:CUSTOM_ID: undo-groups
+:END:
+=lrg_editor_begin_group()= opens a compound undo step. Every command executed until the matching =lrg_editor_end_group()= is applied immediately and recorded as a child of one =LRG_EDITOR_CMD_GROUP= command, which undoes back-to-front. Groups nest; only the outermost one reaches the history. An empty group is discarded.
+
+#+begin_src C
+/* Align every selected node to y = 0 as one undo step */
+g_autoptr(GPtrArray) roots = NULL;
+guint i;
+
+roots = lrg_editor_get_selected_roots (editor);
+lrg_editor_begin_group (editor, "Drop to Floor");
+for (i = 0; i < roots->len; i++)
+{
+	LrgNode *n;
+	GrlVector3 *p;
+	gfloat loc[3];
+
+	n = (LrgNode *)g_ptr_array_index (roots, i);
+	p = lrg_node_get_location (n);
+	loc[0] = p->x;
+	loc[1] = 0.0f;
+	loc[2] = p->z;
+	lrg_editor_transform_node (editor, n, loc, NULL, NULL, FALSE);
+}
+lrg_editor_end_group (editor);
+#+end_src
+
+=lrg_editor_execute()= runs a command you built yourself: it applies the command and records it in the history, or in the open group if one is open. Ownership of the command is transferred.
+
+#+begin_src C
+LrgEditorCommand *cmd;
+
+cmd = lrg_editor_command_new_move (node, new_parent, 0);   /* NULL if it would create a cycle */
+if (cmd != NULL)
+{
+	lrg_editor_command_set_label (cmd, "Move to Top");
+	lrg_editor_execute (editor, cmd);                       /* (transfer full) */
+}
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_begin_group= | =void (LrgEditor *self, const gchar *label)= |
+| =lrg_editor_end_group= | =void (LrgEditor *self)= |
+| =lrg_editor_execute= | =void (LrgEditor *self, LrgEditorCommand *command)= |
+
+*** Node-State Snapshots (Making Any Edit Undoable)
+:PROPERTIES:
+:CUSTOM_ID: node-state-snapshots
+:END:
+Not every edit has a dedicated command. The catch-all path is snapshot / mutate / commit: capture the node's own state, change the node directly with the plain =lrg_node_*= setters, then commit. The editor compares the snapshot with the live node (=lrg_node_state_equal()=) and, if anything changed, records an =LRG_EDITOR_CMD_NODE_STATE= command whose undo and redo restore the before/after state with =lrg_node_copy_state()=.
+
+A node's "own state" is its name, flags (visible, locked, 2D), local transform, and deep copies of its visual payload, component descriptions and script bindings. The GUID, parent and children are never part of it, so snapshots are only for edits of a single node, not structural changes.
+
+#+begin_src C
+g_autoptr(LrgNode) before = NULL;
+g_autoptr(LrgComponentDesc) desc = NULL;
+
+before = lrg_editor_snapshot_node (node);      /* (transfer full), detached copy */
+
+/* mutate in place with any combination of plain setters */
+lrg_node_set_locked (node, TRUE);
+desc = lrg_component_desc_new ("RigidBody");
+lrg_node_add_component (node, desc);
+
+/* records one undo step named "Make Physical"; FALSE if nothing changed */
+lrg_editor_commit_node_state (editor, node, before, "Make Physical", FALSE);
+#+end_src
+
+Pass =merge= = =TRUE= to coalesce with the previous commit of the same node and label, e.g. while a colour picker or text field is being dragged/typed. The command can also be built directly with =lrg_editor_command_new_node_state()=, which copies both snapshots.
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_snapshot_node= | =LrgNode * (LrgNode *node)= |
+| =lrg_editor_commit_node_state= | =gboolean (LrgEditor *self, LrgNode *node, LrgNode *before, const gchar *label, gboolean merge)= |
+
+*** Clipboard
+:PROPERTIES:
+:CUSTOM_ID: clipboard
+:END:
+Copy and cut serialize the selected subtrees as =.rlevel= YAML and store it as the editor clipboard; the text is also returned so a host can put it on the system clipboard (and pasting it into a =.rlevel= in a text editor works). Paste and duplicate insert copies with fresh GUIDs and unique sibling names, as one undo step, and select the result. All of them act on =lrg_editor_get_selected_roots()=, so a selected child of a selected parent is not copied twice.
+
+#+begin_src C
+g_autofree gchar *text = lrg_editor_copy_selection (editor);  /* NULL if nothing selected */
+g_autofree gchar *cut  = lrg_editor_cut_selection (editor);   /* copy then delete */
+
+/* NULL data pastes the editor clipboard; NULL parent pastes under the root */
+g_autoptr(GPtrArray) pasted = lrg_editor_paste (editor, NULL, NULL, &error);
+
+/* Paste YAML from elsewhere (system clipboard, a file) */
+g_autoptr(GPtrArray) more = lrg_editor_paste (editor, system_text, target_parent, &error);
+
+/* Duplicate next to the originals */
+g_autoptr(GPtrArray) copies = lrg_editor_duplicate_selection (editor);
+
+/* Delete the selection with subtrees */
+guint n_deleted = lrg_editor_delete_selection (editor);
+
+/* Direct clipboard access */
+const gchar *clip = lrg_editor_get_clipboard (editor);
+lrg_editor_set_clipboard (editor, system_text);
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_copy_selection= | =gchar * (LrgEditor *self)= |
+| =lrg_editor_cut_selection= | =gchar * (LrgEditor *self)= |
+| =lrg_editor_paste= | =GPtrArray * (LrgEditor *self, const gchar *data, LrgNode *parent, GError **error)= |
+| =lrg_editor_duplicate_selection= | =GPtrArray * (LrgEditor *self)= |
+| =lrg_editor_delete_selection= | =guint (LrgEditor *self)= |
+| =lrg_editor_get_clipboard= | =const gchar * (LrgEditor *self)= |
+| =lrg_editor_set_clipboard= | =void (LrgEditor *self, const gchar *data)= |
+
 *** Selection
 :PROPERTIES:
 :CUSTOM_ID: selection
@@ -90,6 +365,40 @@ lrg_editor_select (editor, NULL, FALSE);
 LrgEditorSelection *sel = lrg_editor_get_selection (editor);
 #+end_src
 
+**** Selection Helpers
+:PROPERTIES:
+:CUSTOM_ID: selection-helpers
+:END:
+#+begin_src C
+/* Ctrl-click: add, or remove if already selected */
+lrg_editor_toggle_selected (editor, node);
+
+/* Several nodes at once (box select, range select); last = primary */
+lrg_editor_select_nodes (editor, nodes, FALSE);
+
+lrg_editor_select_all (editor);
+
+/* Selected nodes minus any whose ancestor is also selected, in
+   depth-first tree order: the set delete/duplicate/copy act on */
+g_autoptr(GPtrArray) roots = lrg_editor_get_selected_roots (editor);
+
+/* Search: case-insensitive name substring, or a GUID */
+g_autoptr(GPtrArray) hits = lrg_editor_find_nodes (editor, "torch");
+
+/* Resolve a reference as used by IPC and the console:
+   a GUID or a slash-separated name path such as "House/Door" */
+LrgNode *door = lrg_editor_find_node (editor, "House/Door");
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_toggle_selected= | =void (LrgEditor *self, LrgNode *node)= |
+| =lrg_editor_select_nodes= | =void (LrgEditor *self, GPtrArray *nodes, gboolean additive)= |
+| =lrg_editor_select_all= | =void (LrgEditor *self)= |
+| =lrg_editor_get_selected_roots= | =GPtrArray * (LrgEditor *self)= (transfer container) |
+| =lrg_editor_find_nodes= | =GPtrArray * (LrgEditor *self, const gchar *query)= (transfer container) |
+| =lrg_editor_find_node= | =LrgNode * (LrgEditor *self, const gchar *ref)= (transfer none) |
+
 *** Undo / Redo
 :PROPERTIES:
 :CUSTOM_ID: undo-redo
@@ -102,23 +411,89 @@ if (lrg_editor_can_redo (editor))
     lrg_editor_redo (editor);
 #+end_src
 
-*** Tool and Snap
+*** History API
+:PROPERTIES:
+:CUSTOM_ID: history-api
+:END:
+The undo and redo stacks are inspectable, which is what the History panel and the IPC =edit.history= / =edit.jump= methods are built on. Undo index 0 is the oldest step; redo index 0 is the step =lrg_editor_redo()= would apply next.
+
+#+begin_src C
+guint n_undo;
+guint n_redo;
+guint i;
+
+n_undo = lrg_editor_get_undo_count (editor);
+n_redo = lrg_editor_get_redo_count (editor);
+
+for (i = 0; i < n_undo; i++)
+{
+	LrgEditorCommand *cmd;
+	g_autofree gchar *desc = NULL;
+
+	cmd = lrg_editor_get_undo_command (editor, i);   /* (transfer none) */
+	desc = lrg_editor_command_describe (cmd);
+	g_print ("%2u  %s\n", i + 1, desc);
+}
+
+/* Click-to-jump: undo/redo until exactly 3 steps are applied
+   (0 = the initial document) */
+lrg_editor_jump_to_history (editor, 3);
+
+/* Drop all steps (the dirty state is kept) */
+lrg_editor_clear_history (editor);
+
+/* Bound memory use; 0 = unlimited */
+lrg_editor_set_history_limit (editor, 500);
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_get_undo_count= | =guint (LrgEditor *self)= |
+| =lrg_editor_get_redo_count= | =guint (LrgEditor *self)= |
+| =lrg_editor_get_undo_command= | =LrgEditorCommand * (LrgEditor *self, guint index)= |
+| =lrg_editor_get_redo_command= | =LrgEditorCommand * (LrgEditor *self, guint index)= |
+| =lrg_editor_jump_to_history= | =void (LrgEditor *self, guint undo_count)= |
+| =lrg_editor_clear_history= | =void (LrgEditor *self)= |
+| =lrg_editor_set_history_limit= | =void (LrgEditor *self, guint limit)= |
+| =lrg_editor_get_history_limit= | =guint (LrgEditor *self)= |
+
+*** Tool, Space and Snap
 :PROPERTIES:
 :CUSTOM_ID: tool-and-snap
 :END:
 The active tool determines which gizmo is drawn and which drag operations are
-sent to the editor. Snap increments of 0 disable snapping for that axis.
+sent to the editor. Snap increments of 0 disable snapping for that channel; on top of that, =snap-enabled= switches snapping on and off as a whole while keeping the increments (the gizmo's Ctrl modifier inverts it per drag update). The space selects whether the translate/rotate gizmo axes are world axes or the node's own rotated axes; the scale gizmo always uses local axes.
 
 #+begin_src C
 lrg_editor_set_tool (editor, LRG_EDITOR_TOOL_TRANSLATE);
 LrgEditorTool tool = lrg_editor_get_tool (editor);
 
-/* Enable translation snap of 0.5 units, disable rotation/scale snap */
-lrg_editor_set_snap (editor, 0.5, 0.0, 0.0);
+/* Translation snap of 0.5 units, rotation snap of 15 degrees, no scale snap */
+lrg_editor_set_snap (editor, 0.5, G_PI / 12.0, 0.0);
+lrg_editor_set_snap_enabled (editor, TRUE);
 
 gdouble snap_t, snap_r, snap_s;
 lrg_editor_get_snap (editor, &snap_t, &snap_r, &snap_s);
+
+lrg_editor_set_space (editor, LRG_EDITOR_SPACE_LOCAL);
+LrgEditorSpace space = lrg_editor_get_space (editor);
 #+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_get_snap_enabled= | =gboolean (LrgEditor *self)= |
+| =lrg_editor_set_snap_enabled= | =void (LrgEditor *self, gboolean enabled)= |
+| =lrg_editor_get_space= | =LrgEditorSpace (LrgEditor *self)= |
+| =lrg_editor_set_space= | =void (LrgEditor *self, LrgEditorSpace space)= |
+
+**** LrgEditorSpace values
+:PROPERTIES:
+:CUSTOM_ID: lrgeditorspace-values
+:END:
+| Enum | Description |
+|------+-------------|
+| =LRG_EDITOR_SPACE_LOCAL= | Gizmo axes follow the node's own rotation |
+| =LRG_EDITOR_SPACE_WORLD= | Gizmo axes are the world axes (default) |
 
 **** LrgEditorTool values
 :PROPERTIES:
@@ -136,8 +511,8 @@ lrg_editor_get_snap (editor, &snap_t, &snap_r, &snap_s);
 :CUSTOM_ID: lrgeditorcommand
 :END:
 =LrgEditorCommand= is the discriminated undo record. =LrgEditor= creates commands
-internally; direct use is only needed when building a custom editor or when
-implementing merge coalescing for drag operations.
+internally; direct use is only needed when building a custom editor, running a
+custom command through =lrg_editor_execute()=, or inspecting the history.
 
 *** LrgEditorCommandKind
 :PROPERTIES:
@@ -145,11 +520,14 @@ implementing merge coalescing for drag operations.
 :END:
 | Enum | Created by |
 |------+------------|
-| =LRG_EDITOR_CMD_TRANSFORM= | =lrg_editor_set_node_transform()= |
-| =LRG_EDITOR_CMD_SET_PROPERTY= | =lrg_editor_set_node_property()= |
-| =LRG_EDITOR_CMD_ADD_NODE= | =lrg_editor_add_node()= |
+| =LRG_EDITOR_CMD_TRANSFORM= | =lrg_editor_set_node_transform()=, =lrg_editor_transform_node()=, gizmo drags |
+| =LRG_EDITOR_CMD_SET_PROPERTY= | =lrg_editor_set_node_property()=, =lrg_editor_set_object_property()= |
+| =LRG_EDITOR_CMD_ADD_NODE= | =lrg_editor_add_node()=, =lrg_editor_insert_node()= |
 | =LRG_EDITOR_CMD_DELETE_NODE= | =lrg_editor_delete_node()= |
-| =LRG_EDITOR_CMD_REPARENT= | =lrg_editor_reparent_node()= |
+| =LRG_EDITOR_CMD_REPARENT= | =lrg_editor_reparent_node()=, =lrg_editor_move_node()= |
+| =LRG_EDITOR_CMD_SET_VISUAL_PARAM= | =lrg_editor_set_visual_param()= (numeric visual param bag; drags coalesce) |
+| =LRG_EDITOR_CMD_GROUP= | =lrg_editor_begin_group()= / =end_group()=, multi-node operations (delete/duplicate/paste selection); children apply front-to-back, undo back-to-front |
+| =LRG_EDITOR_CMD_NODE_STATE= | =lrg_editor_commit_node_state()= and the generic inspector edits (visual, components, scripts); restores before/after snapshots |
 
 *** Command Operations
 :PROPERTIES:
@@ -161,13 +539,24 @@ lrg_editor_command_apply (cmd);
 lrg_editor_command_undo (cmd);
 
 /* Merge — folds a newer command's "after" state into an older one
-   (only works for same-kind, same-target TRANSFORM and SET_PROPERTY) */
+   (same kind and target for TRANSFORM, SET_PROPERTY and SET_VISUAL_PARAM;
+   same node and label for NODE_STATE). Refreshes the serial of old_cmd. */
 gboolean merged = lrg_editor_command_merge (old_cmd, new_cmd);
 
-/* Human-readable description for an undo menu */
+/* Human-readable description for an undo menu (the label if one is set) */
 g_autofree gchar *desc = lrg_editor_command_describe (cmd);
 
 LrgEditorCommandKind kind = lrg_editor_command_get_kind (cmd);
+
+/* Subject node (for groups: the first child that has one), label, serial */
+LrgNode     *subject = lrg_editor_command_get_node (cmd);   /* (transfer none) (nullable) */
+const gchar *label   = lrg_editor_command_get_label (cmd);  /* explicit label or NULL */
+lrg_editor_command_set_label (cmd, "Nudge");
+guint64      serial  = lrg_editor_command_get_serial (cmd); /* drives dirty tracking */
+
+/* Groups */
+guint n = lrg_editor_command_group_get_n_children (group);
+LrgEditorCommand *child = lrg_editor_command_group_get_child (group, 0);
 #+end_src
 
 *** Constructors (advanced use)
@@ -184,6 +573,30 @@ LrgEditorCommand *cmd = lrg_editor_command_new_set_property (
 LrgEditorCommand *cmd = lrg_editor_command_new_add_node (level, node, parent);
 LrgEditorCommand *cmd = lrg_editor_command_new_delete_node (level, node, parent);
 LrgEditorCommand *cmd = lrg_editor_command_new_reparent (node, old_parent, new_parent);
+#+end_src
+
+Constructors added on this branch:
+
+| Constructor | Signature | Notes |
+|-------------+-----------+-------|
+| =lrg_editor_command_new_insert_node= | =LrgEditorCommand * (LrgLevel *level, LrgNode *node, LrgNode *parent, gint index)= | ADD_NODE at a child index (-1 appends) |
+| =lrg_editor_command_new_move= | =LrgEditorCommand * (LrgNode *node, LrgNode *new_parent, gint new_index)= | REPARENT/reorder; captures the old parent and index; =NULL= if the node has no parent or the move would create a cycle; =new_index= counts after removal |
+| =lrg_editor_command_new_set_visual_param= | =LrgEditorCommand * (LrgNode *node, const gchar *param, gdouble before, gdouble after)= | SET_VISUAL_PARAM |
+| =lrg_editor_command_new_group= | =LrgEditorCommand * (const gchar *label)= | Empty GROUP |
+| =lrg_editor_command_group_append= | =void (LrgEditorCommand *self, LrgEditorCommand *child)= | Takes ownership; does not apply the child |
+| =lrg_editor_command_new_node_state= | =LrgEditorCommand * (LrgNode *node, LrgNode *before, LrgNode *after, const gchar *label)= | NODE_STATE; both snapshots are copied |
+
+A group built by hand from not-yet-applied children is a normal command: hand it to =lrg_editor_execute()= and it applies every child in order. Constructors capture "before" state when they are called, so build children whose before-state does not depend on an earlier sibling (or use =lrg_editor_begin_group()=, which applies each child as it is executed).
+
+#+begin_src C
+/* Swap the local transforms of two nodes as one undo step.
+   a_trs / b_trs are 9-float TRS arrays read from the nodes. */
+LrgEditorCommand *group;
+
+group = lrg_editor_command_new_group ("Swap Transforms");
+lrg_editor_command_group_append (group, lrg_editor_command_new_transform (a, a_trs, b_trs));
+lrg_editor_command_group_append (group, lrg_editor_command_new_transform (b, b_trs, a_trs));
+lrg_editor_execute (editor, group);   /* (transfer full) */
 #+end_src
 
 ** LrgEditorSelection
@@ -276,10 +689,540 @@ surface. On each Emacs redisplay tick it calls
 to input events it injects them via the software input source. When the engine
 calls =lrg_editor_host_request_redraw()=, cmacs schedules a redisplay.
 
+** LrgNode Tree Helpers
+:PROPERTIES:
+:CUSTOM_ID: lrgnode-tree-helpers
+:END:
+The editor operations above are built on a set of plain (non-undoable) =LrgNode= helpers that are also useful to frontends and tools. Mutating a node directly with these bypasses the history; wrap such edits in a snapshot/commit (see [[#node-state-snapshots][Node-State Snapshots]]) when they should be undoable.
+
+#+begin_src C
+/* Ordered insertion and queries */
+lrg_node_insert_child (parent, child, 2);            /* -1 or out of range appends */
+gint     idx   = lrg_node_get_child_index (parent, child);   /* -1 if not a child */
+gboolean above = lrg_node_is_ancestor_of (house, door);      /* TRUE also for house == door */
+guint    depth = lrg_node_get_depth (door);                  /* 0 for root or detached */
+
+/* Name paths, as used by IPC and the console */
+g_autofree gchar *path = lrg_node_get_path (door);           /* "world/house/door" */
+LrgNode *found = lrg_node_find_by_path (root, "world/house/door");
+
+/* Components and scripts by index */
+lrg_node_insert_component (node, desc, 0);
+lrg_node_remove_component_at (node, 0);
+LrgComponentDesc *hp = lrg_node_find_component (node, "health");
+lrg_node_insert_script (node, binding, -1);
+lrg_node_remove_script_at (node, 0);
+
+/* Own-state copy/compare (snapshot undo primitives) */
+lrg_node_copy_state (dest, source);                  /* GUID, parent, children untouched */
+gboolean same = lrg_node_state_equal (a, b);
+#+end_src
+
+=lrg_node_foreach()= walks a subtree depth-first in pre-order; returning =FALSE= from the callback stops the walk:
+
+#+begin_src C
+static gboolean
+count_visible (
+	LrgNode  *node,
+	gpointer  user_data
+){
+	guint *count;
+
+	count = (guint *)user_data;
+	if (lrg_node_get_visible (node))
+		(*count)++;
+	return TRUE;   /* keep walking */
+}
+
+guint n_visible = 0;
+lrg_node_foreach (lrg_level_get_root (level), count_visible, &n_visible);
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_node_insert_child= | =void (LrgNode *self, LrgNode *child, gint index)= |
+| =lrg_node_get_child_index= | =gint (LrgNode *self, LrgNode *child)= |
+| =lrg_node_is_ancestor_of= | =gboolean (LrgNode *self, LrgNode *node)= |
+| =lrg_node_get_depth= | =guint (LrgNode *self)= |
+| =lrg_node_get_path= | =gchar * (LrgNode *self)= |
+| =lrg_node_find_by_path= | =LrgNode * (LrgNode *self, const gchar *path)= |
+| =lrg_node_insert_component= | =void (LrgNode *self, LrgComponentDesc *desc, gint index)= |
+| =lrg_node_remove_component_at= | =gboolean (LrgNode *self, guint index)= |
+| =lrg_node_find_component= | =LrgComponentDesc * (LrgNode *self, const gchar *type_name)= |
+| =lrg_node_insert_script= | =void (LrgNode *self, LrgScriptBinding *binding, gint index)= |
+| =lrg_node_remove_script_at= | =gboolean (LrgNode *self, guint index)= |
+| =lrg_node_copy_state= | =void (LrgNode *self, LrgNode *source)= |
+| =lrg_node_state_equal= | =gboolean (LrgNode *self, LrgNode *other)= |
+| =lrg_node_foreach= | =gboolean (LrgNode *self, LrgNodeForeachFunc func, gpointer user_data)= |
+
+** Viewport Math and LrgEditorView
+:PROPERTIES:
+:CUSTOM_ID: viewport-math
+:END:
+=lrg-editor-math.h= is the headless 3D math every viewport, the gizmo and the picker use. Nothing in it needs a window or GL context.
+
+*** Conventions
+:PROPERTIES:
+:CUSTOM_ID: math-conventions
+:END:
+- Matrices are 4x4, column-major, stored as 16 floats (=m[col * 4 + row]=), matching raylib / graylib.
+- Points are column vectors: =world = M * local=.
+- Euler rotations are radians applied X, then Y, then Z (=R = Rz * Ry * Rx=), like raylib's =MatrixRotateXYZ=; =lrg_editor_math_compose()= builds =T * Rz * Ry * Rx * S=.
+- Y is up; the camera looks down its local -Z.
+- Screen coordinates are viewport pixels with the origin at the top-left.
+
+*** Matrix and Node Transform Helpers
+:PROPERTIES:
+:CUSTOM_ID: matrix-helpers
+:END:
+| Function | Signature | Description |
+|----------+-----------+-------------|
+| =lrg_editor_math_identity= | =void (gfloat *out)= | Identity matrix |
+| =lrg_editor_math_compose= | =void (const gfloat *location, const gfloat *rotation, const gfloat *scale, gfloat *out)= | TRS to matrix |
+| =lrg_editor_math_decompose= | =gboolean (const gfloat *m, gfloat *location, gfloat *rotation, gfloat *scale)= | Inverse of compose; =FALSE= for a zero scale axis; mirroring yields negative X scale |
+| =lrg_editor_math_multiply= | =void (const gfloat *a, const gfloat *b, gfloat *out)= | =a * b= (=out= may alias) |
+| =lrg_editor_math_invert= | =gboolean (const gfloat *m, gfloat *out)= | =FALSE= if singular (=out= is then identity) |
+| =lrg_editor_math_transform_point= | =void (const gfloat *m, const gfloat *p, gfloat *out)= | w = 1 with perspective divide |
+| =lrg_editor_math_transform_direction= | =void (const gfloat *m, const gfloat *d, gfloat *out)= | w = 0 |
+| =lrg_editor_node_get_local_matrix= | =void (LrgNode *node, gfloat *out)= | Node local TRS matrix |
+| =lrg_editor_node_get_world_matrix= | =void (LrgNode *node, gfloat *out)= | Product of all ancestor local matrices and the node's |
+| =lrg_editor_node_get_world_position= | =void (LrgNode *node, gfloat *out)= | World-space origin |
+| =lrg_editor_world_to_local= | =gboolean (LrgNode *parent, const gfloat *world, gfloat *location, gfloat *rotation, gfloat *scale)= | Local TRS a child of =parent= (=NULL= = world) needs for a given world matrix |
+| =lrg_editor_node_get_local_bounds= | =gboolean (LrgNode *node, gfloat *min, gfloat *max)= | Pickable local AABB; =FALSE= when it is an icon box for a node without geometry |
+
+=lrg_editor_world_to_local()= is what =lrg_editor_move_node()= with =keep_world= = =TRUE= uses:
+
+#+begin_src C
+gfloat world[16];
+gfloat loc[3];
+gfloat rot[3];
+gfloat scl[3];
+
+lrg_editor_node_get_world_matrix (node, world);
+if (lrg_editor_world_to_local (new_parent, world, loc, rot, scl))
+	lrg_editor_set_node_transform (editor, node, loc, rot, scl);
+#+end_src
+
+*** LrgEditorView
+:PROPERTIES:
+:CUSTOM_ID: lrgeditorview
+:END:
+=LrgEditorView= is a plain boxed struct describing what a viewport shows. It converts between world space and viewport pixels and implements the standard editor camera navigation. Frontends keep one per viewport and copy it into whatever camera their renderer uses.
+
+#+begin_src C
+typedef struct
+{
+	gfloat   position[3];    /* camera position */
+	gfloat   target[3];      /* point the camera looks at */
+	gfloat   up[3];          /* up vector */
+	gfloat   fovy;           /* vertical FOV in degrees (perspective) */
+	gfloat   ortho_height;   /* visible world height (orthographic) */
+	gboolean orthographic;
+	gfloat   near_plane;
+	gfloat   far_plane;
+	gfloat   width;          /* viewport size in pixels */
+	gfloat   height;
+} LrgEditorView;
+#+end_src
+
+#+begin_src C
+LrgEditorView view;
+gfloat sx;
+gfloat sy;
+gfloat depth;
+gfloat origin[3];
+gfloat dir[3];
+const gfloat top[3] = { 0.0f, 1.0f, 0.0f };
+
+/* Perspective at (8, 6, 8) looking at the origin, 45 degree FOV */
+lrg_editor_view_init_default (&view, 1280.0f, 720.0f);
+
+/* World -> pixels; FALSE when the point is behind the camera */
+if (lrg_editor_view_project (&view, world_point, &sx, &sy, &depth))
+	draw_label (sx, sy, "spawn");
+
+/* Pixels -> world ray (for picking) */
+lrg_editor_view_get_ray (&view, mouse_x, mouse_y, origin, dir);
+
+/* World units per pixel at a depth: keeps handles a constant screen size */
+gfloat px = lrg_editor_view_pixel_world_size (&view, world_point);
+
+/* Navigation */
+lrg_editor_view_orbit (&view, -dx * 0.01f, -dy * 0.01f);   /* MMB / Alt+LMB */
+lrg_editor_view_pan (&view, dx, dy);                       /* Shift+MMB, cursor-locked */
+lrg_editor_view_dolly (&view, 0.87f);                      /* wheel; < 1 zooms in */
+lrg_editor_view_fly (&view, fwd, right, up, yaw, pitch);   /* RMB + WASD */
+lrg_editor_view_frame (&view, center, radius);             /* Focus Selection ("F") */
+lrg_editor_view_align (&view, top);                        /* numpad top view */
+
+/* Matrices for a renderer */
+gfloat v[16];
+gfloat p[16];
+lrg_editor_view_get_view_matrix (&view, v);
+lrg_editor_view_get_projection_matrix (&view, p);
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_view_init_default= | =void (LrgEditorView *view, gfloat width, gfloat height)= |
+| =lrg_editor_view_copy= | =LrgEditorView * (const LrgEditorView *view)= |
+| =lrg_editor_view_free= | =void (LrgEditorView *view)= (=g_autoptr= supported) |
+| =lrg_editor_view_get_view_matrix= | =void (const LrgEditorView *view, gfloat *out)= |
+| =lrg_editor_view_get_projection_matrix= | =void (const LrgEditorView *view, gfloat *out)= |
+| =lrg_editor_view_project= | =gboolean (const LrgEditorView *view, const gfloat *world, gfloat *screen_x, gfloat *screen_y, gfloat *depth)= |
+| =lrg_editor_view_get_ray= | =void (const LrgEditorView *view, gfloat screen_x, gfloat screen_y, gfloat *origin, gfloat *direction)= |
+| =lrg_editor_view_pixel_world_size= | =gfloat (const LrgEditorView *view, const gfloat *world)= |
+| =lrg_editor_view_orbit= | =void (LrgEditorView *view, gfloat yaw, gfloat pitch)= — pitch clamped short of the poles |
+| =lrg_editor_view_pan= | =void (LrgEditorView *view, gfloat dx, gfloat dy)= |
+| =lrg_editor_view_dolly= | =void (LrgEditorView *view, gfloat factor)= — scales =ortho_height= when orthographic |
+| =lrg_editor_view_fly= | =void (LrgEditorView *view, gfloat forward, gfloat right, gfloat up, gfloat yaw, gfloat pitch)= |
+| =lrg_editor_view_frame= | =void (LrgEditorView *view, const gfloat *center, gfloat radius)= |
+| =lrg_editor_view_align= | =void (LrgEditorView *view, const gfloat *direction)= — direction from target to camera |
+
+** Picking and Box Selection
+:PROPERTIES:
+:CUSTOM_ID: picking
+:END:
+Picking tests a world ray against each node's oriented bounds (its local bounds in its world frame). Nodes without geometry (groups, lights, cameras, emitters) get a small icon box so they stay clickable; real geometry wins over icon boxes at equal depth, and a node hidden by an invisible ancestor is not pickable.
+
+#+begin_src C
+gfloat o[3];
+gfloat d[3];
+LrgNode *hit;
+
+lrg_editor_view_get_ray (&view, mouse_x, mouse_y, o, d);
+
+/* Nearest visible node (locked nodes excluded) */
+hit = lrg_editor_pick (level, o, d, FALSE, NULL);
+if (hit != NULL)
+	lrg_editor_select (editor, hit, shift_held);
+else if (!shift_held)
+	lrg_editor_select (editor, NULL, FALSE);
+
+/* Everything under the cursor, near to far (click-cycling, "pick from overlapping") */
+g_autoptr(GPtrArray) stack = lrg_editor_pick_all (level, o, d, FALSE);
+
+/* Rubber-band: nodes whose world origin projects inside the rectangle */
+g_autoptr(GPtrArray) boxed = lrg_editor_box_select (level, &view, x0, y0, x1, y1, FALSE);
+lrg_editor_select_nodes (editor, boxed, shift_held);
+
+/* Frame the selection */
+gfloat center[3];
+gfloat radius;
+g_autoptr(GPtrArray) roots = lrg_editor_get_selected_roots (editor);
+if (lrg_editor_compute_bounds (roots, center, &radius))
+	lrg_editor_view_frame (&view, center, radius);
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_ray_aabb= | =gboolean (const gfloat *origin, const gfloat *direction, const gfloat *min, const gfloat *max, gfloat *t)= |
+| =lrg_editor_ray_plane= | =gboolean (const gfloat *origin, const gfloat *direction, const gfloat *point, const gfloat *normal, gfloat *t)= |
+| =lrg_editor_ray_node= | =gboolean (LrgNode *node, const gfloat *origin, const gfloat *direction, gfloat *distance)= |
+| =lrg_editor_pick= | =LrgNode * (LrgLevel *level, const gfloat *origin, const gfloat *direction, gboolean include_locked, gfloat *distance)= |
+| =lrg_editor_pick_all= | =GPtrArray * (LrgLevel *level, const gfloat *origin, const gfloat *direction, gboolean include_locked)= |
+| =lrg_editor_box_select= | =GPtrArray * (LrgLevel *level, const LrgEditorView *view, gfloat x0, gfloat y0, gfloat x1, gfloat y1, gboolean include_locked)= |
+| =lrg_editor_compute_bounds= | =gboolean (GPtrArray *nodes, gfloat *center, gfloat *radius)= — sphere radius at least 0.5 |
+| =lrg_editor_snap_value= | =gfloat (gfloat value, gfloat increment)= — increment <= 0 returns =value= |
+
+** LrgEditorGizmo
+:PROPERTIES:
+:CUSTOM_ID: lrgeditorgizmo
+:END:
+=LrgEditorGizmo= is the headless interaction model of the translate, rotate and scale gizmos for an =LrgEditor='s selection. It reads the editor's tool, space and snap settings, computes the gizmo frame (pivot, axes, on-screen size), hit-tests the mouse against the handles in viewport pixels, and turns a drag into node transforms. Nodes are updated live while dragging; ending the drag records a single undo step for the whole selection, and cancelling restores the original transforms without touching the history. Rendering is left to the host.
+
+*** Drag Model
+:PROPERTIES:
+:CUSTOM_ID: gizmo-drag-model
+:END:
+- The gizmo is visible (=lrg_editor_gizmo_is_visible()=) when a manipulation tool is active and an unlocked node is selected.
+- The pivot (=get_origin=) is the primary selection's world origin. Axes (=get_axis=) are world axes in world space and the primary node's rotated axes in local space; the scale tool always uses local axes.
+- =get_size= returns the world-space arm length that makes the gizmo =LRG_EDITOR_GIZMO_SIZE_PIXELS= (96) pixels long on screen; a handle counts as hovered within =LRG_EDITOR_GIZMO_PICK_PIXELS= (8) pixels.
+- Per frame: when not dragging, =update_hover= stores the handle under the mouse (unchanged while dragging). On press, =begin_drag= grabs the handle under the mouse and returns =FALSE= if there is none, in which case the click falls through to picking / box selection. While the button is held, =drag= updates the transforms; =invert_snap= (Ctrl held) toggles the editor's snap setting for that update. On release, =end_drag= records the undo step. Escape or a right click calls =cancel_drag=.
+- =begin_drag_handle= starts a drag on a specific handle regardless of the mouse position (keyboard modal transforms such as G then X).
+- =get_drag_delta= gives the current amount for an on-screen readout: translation in world units, rotation in radians (x only), or scale factors.
+
+*** LrgEditorGizmoHandle values
+:PROPERTIES:
+:CUSTOM_ID: lrgeditorgizmohandle-values
+:END:
+| Enum | Description |
+|------+-------------|
+| =LRG_EDITOR_GIZMO_HANDLE_NONE= | No handle |
+| =LRG_EDITOR_GIZMO_HANDLE_X= | X axis arrow, ring or scale handle |
+| =LRG_EDITOR_GIZMO_HANDLE_Y= | Y axis arrow, ring or scale handle |
+| =LRG_EDITOR_GIZMO_HANDLE_Z= | Z axis arrow, ring or scale handle |
+| =LRG_EDITOR_GIZMO_HANDLE_XY= | XY plane square (translate) |
+| =LRG_EDITOR_GIZMO_HANDLE_YZ= | YZ plane square (translate) |
+| =LRG_EDITOR_GIZMO_HANDLE_XZ= | XZ plane square (translate) |
+| =LRG_EDITOR_GIZMO_HANDLE_CENTER= | Centre: screen-plane move, uniform scale, or the view-axis ring when rotating |
+
+*** Per-Frame Usage
+:PROPERTIES:
+:CUSTOM_ID: gizmo-usage
+:END:
+The input arguments below are whatever the host's input layer reports for this frame; =x= / =y= are in viewport pixels (top-left origin), the same space the =LrgEditorView= uses.
+
+#+begin_src C
+/*
+ * viewport_update_gizmo:
+ * @gizmo: the gizmo controller
+ * @view: this viewport's view
+ * @x: mouse x in viewport pixels
+ * @y: mouse y in viewport pixels
+ * @pressed: left button went down this frame
+ * @down: left button is held
+ * @cancel: Escape pressed or right button clicked this frame
+ * @ctrl: snap-invert modifier held
+ *
+ * Drives the gizmo for one frame.
+ *
+ * Returns: %TRUE if the gizmo consumed the mouse (no picking this frame)
+ */
+static gboolean
+viewport_update_gizmo (
+	LrgEditorGizmo      *gizmo,
+	const LrgEditorView *view,
+	gfloat               x,
+	gfloat               y,
+	gboolean             pressed,
+	gboolean             down,
+	gboolean             cancel,
+	gboolean             ctrl
+){
+	/* idle: track the hovered handle for highlighting */
+	if (!lrg_editor_gizmo_is_dragging (gizmo))
+		lrg_editor_gizmo_update_hover (gizmo, view, x, y);
+
+	/* press: grab the handle under the mouse; FALSE lets the click
+	 * fall through to lrg_editor_pick() / box selection */
+	if (pressed && !lrg_editor_gizmo_begin_drag (gizmo, view, x, y))
+		return FALSE;
+
+	if (!lrg_editor_gizmo_is_dragging (gizmo))
+		return FALSE;
+
+	/* dragging: cancel restores the originals, release commits one
+	 * undo step for the whole selection, otherwise update live */
+	if (cancel)
+		lrg_editor_gizmo_cancel_drag (gizmo);
+	else if (down)
+		lrg_editor_gizmo_drag (gizmo, view, x, y, ctrl);
+	else
+		lrg_editor_gizmo_end_drag (gizmo);
+
+	return TRUE;
+}
+#+end_src
+
+Drawing reads the frame and highlights the hovered / active handle:
+
+#+begin_src C
+gfloat origin[3];
+gfloat axis[3];
+gfloat size;
+guint i;
+
+if (lrg_editor_gizmo_is_visible (gizmo))
+{
+	lrg_editor_gizmo_get_origin (gizmo, origin);
+	size = lrg_editor_gizmo_get_size (gizmo, &view);
+	for (i = 0; i < 3; i++)
+	{
+		LrgEditorGizmoHandle h;
+
+		h = (LrgEditorGizmoHandle)(LRG_EDITOR_GIZMO_HANDLE_X + i);
+		lrg_editor_gizmo_get_axis (gizmo, i, axis);
+		draw_arrow (origin, axis, size,
+		            h == lrg_editor_gizmo_get_active (gizmo) ||
+		            h == lrg_editor_gizmo_get_hovered (gizmo));
+	}
+}
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_gizmo_new= | =LrgEditorGizmo * (LrgEditor *editor)= |
+| =lrg_editor_gizmo_is_visible= | =gboolean (LrgEditorGizmo *self)= |
+| =lrg_editor_gizmo_get_origin= | =void (LrgEditorGizmo *self, gfloat *out)= |
+| =lrg_editor_gizmo_get_axis= | =void (LrgEditorGizmo *self, guint index, gfloat *out)= |
+| =lrg_editor_gizmo_get_size= | =gfloat (LrgEditorGizmo *self, const LrgEditorView *view)= |
+| =lrg_editor_gizmo_hit_test= | =LrgEditorGizmoHandle (LrgEditorGizmo *self, const LrgEditorView *view, gfloat x, gfloat y)= |
+| =lrg_editor_gizmo_update_hover= | =LrgEditorGizmoHandle (LrgEditorGizmo *self, const LrgEditorView *view, gfloat x, gfloat y)= |
+| =lrg_editor_gizmo_get_hovered= | =LrgEditorGizmoHandle (LrgEditorGizmo *self)= |
+| =lrg_editor_gizmo_get_active= | =LrgEditorGizmoHandle (LrgEditorGizmo *self)= |
+| =lrg_editor_gizmo_is_dragging= | =gboolean (LrgEditorGizmo *self)= |
+| =lrg_editor_gizmo_begin_drag= | =gboolean (LrgEditorGizmo *self, const LrgEditorView *view, gfloat x, gfloat y)= |
+| =lrg_editor_gizmo_begin_drag_handle= | =gboolean (LrgEditorGizmo *self, const LrgEditorView *view, LrgEditorGizmoHandle handle, gfloat x, gfloat y)= |
+| =lrg_editor_gizmo_drag= | =void (LrgEditorGizmo *self, const LrgEditorView *view, gfloat x, gfloat y, gboolean invert_snap)= |
+| =lrg_editor_gizmo_end_drag= | =gboolean (LrgEditorGizmo *self)= — =TRUE= if a command was recorded |
+| =lrg_editor_gizmo_cancel_drag= | =void (LrgEditorGizmo *self)= |
+| =lrg_editor_gizmo_get_drag_delta= | =void (LrgEditorGizmo *self, gfloat *out)= |
+
+** LrgEditorActions
+:PROPERTIES:
+:CUSTOM_ID: lrgeditoractions
+:END:
+=LrgEditorActions= is the registry of named editor commands. Every user-facing operation ("file.save", "edit.duplicate", "view.focus", "play.start", ...) is registered once with a label, a category and a default shortcut; menus, the command palette, keyboard handling and the IPC =action.run= method all go through it, so a rebinding or a new action shows up everywhere. User overrides come from the =keybindings= mapping of =LrgEditorSettings= (=editor.yaml=).
+
+*** Shortcuts
+:PROPERTIES:
+:CUSTOM_ID: shortcuts
+:END:
+Shortcuts are text such as ="Ctrl+Shift+S"=, ="F2"=, ="Delete"=, ="Alt+Up"=, ="Ctrl+="=, ="Shift+Num7"=. Modifier names: Ctrl/Control, Shift, Alt/Meta, Super/Win/Logo. Key names: letters, digits, F1-F12, Num0-Num9, Up/Down/Left/Right, Home, End, PageUp, PageDown, Insert, Delete/Del, Backspace, Enter/Return, Escape/Esc, Tab, Space and the punctuation characters =- = [ ] / \ , . ; ' `=. Case is ignored. Several alternatives are separated by =|= (="Ctrl+Shift+Z|Ctrl+Y"=); menus show the first. In settings, an empty string unbinds an action and a missing entry restores the default.
+
+#+begin_src C
+LrgGuiModifiers mods;
+LrgGuiKey key;
+
+if (lrg_editor_shortcut_parse ("ctrl+shift+s", &mods, &key))
+{
+	g_autofree gchar *canon = lrg_editor_shortcut_format (mods, key);   /* "Ctrl+Shift+S" */
+}
+
+/* Fuzzy subsequence score used by the palette and quick open; 0 = no match */
+gint score = lrg_editor_fuzzy_score ("dupsel", "Edit: Duplicate Selection");
+#+end_src
+
+*** Registry
+:PROPERTIES:
+:CUSTOM_ID: actions-registry
+:END:
+#+begin_src C
+static void
+action_drop_to_floor (gpointer user_data)
+{
+	drop_selection_to_floor ((LrgEditor *)user_data);
+}
+
+static gboolean
+action_has_selection (gpointer user_data)
+{
+	return lrg_editor_selection_get_count (
+		lrg_editor_get_selection ((LrgEditor *)user_data)) > 0;
+}
+
+g_autoptr(LrgEditorActions) actions = lrg_editor_actions_new (settings);
+
+lrg_editor_actions_add (actions, "edit.drop_to_floor", "Drop to Floor", "Edit",
+                        "End", action_drop_to_floor, action_has_selection,
+                        NULL /* not a toggle */, editor);
+
+/* Keyboard dispatch: the enabled action bound to this chord */
+const gchar *id = lrg_editor_actions_find_by_shortcut (actions, mods, key);
+if (id != NULL)
+	lrg_editor_actions_activate (actions, id);   /* emits ::activated */
+
+/* Command palette */
+GList *matches = lrg_editor_actions_search (actions, "drop");  /* best first */
+g_list_free (matches);
+
+/* Preferences dialog: shortcuts bound to more than one action */
+g_autoptr(GPtrArray) conflicts = lrg_editor_actions_find_conflicts (actions);
+#+end_src
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_shortcut_parse= | =gboolean (const gchar *text, LrgGuiModifiers *mods, LrgGuiKey *key)= |
+| =lrg_editor_shortcut_format= | =gchar * (LrgGuiModifiers mods, LrgGuiKey key)= |
+| =lrg_editor_fuzzy_score= | =gint (const gchar *pattern, const gchar *text)= |
+| =lrg_editor_actions_new= | =LrgEditorActions * (LrgEditorSettings *settings)= |
+| =lrg_editor_actions_add= | =void (LrgEditorActions *self, const gchar *id, const gchar *label, const gchar *category, const gchar *shortcut, LrgEditorActionFunc activate, LrgEditorActionStateFunc enabled, LrgEditorActionStateFunc checked, gpointer user_data)= |
+| =lrg_editor_actions_has= | =gboolean (LrgEditorActions *self, const gchar *id)= |
+| =lrg_editor_actions_get_label= | =const gchar * (LrgEditorActions *self, const gchar *id)= |
+| =lrg_editor_actions_get_category= | =const gchar * (LrgEditorActions *self, const gchar *id)= |
+| =lrg_editor_actions_get_shortcut= | =const gchar * (LrgEditorActions *self, const gchar *id)= — effective (override or default) |
+| =lrg_editor_actions_get_default_shortcut= | =const gchar * (LrgEditorActions *self, const gchar *id)= |
+| =lrg_editor_actions_is_enabled= | =gboolean (LrgEditorActions *self, const gchar *id)= |
+| =lrg_editor_actions_is_checked= | =gboolean (LrgEditorActions *self, const gchar *id)= |
+| =lrg_editor_actions_activate= | =gboolean (LrgEditorActions *self, const gchar *id)= |
+| =lrg_editor_actions_list= | =GList * (LrgEditorActions *self)= — ids sorted by category then label |
+| =lrg_editor_actions_search= | =GList * (LrgEditorActions *self, const gchar *query)= |
+| =lrg_editor_actions_find_by_shortcut= | =const gchar * (LrgEditorActions *self, LrgGuiModifiers mods, LrgGuiKey key)= |
+| =lrg_editor_actions_find_conflicts= | =GPtrArray * (LrgEditorActions *self)= |
+
+Signal: =activated= (=const gchar *id=), emitted after an action ran.
+
+** Level Validation
+:PROPERTIES:
+:CUSTOM_ID: level-validation
+:END:
+=lrg_editor_validate_level()= checks a level for mistakes that would make it misbehave at runtime or in other tools. The Problems panel, =lrg-editor --validate= and the =level.validate= IPC method all use it. Results are sorted errors first, then in tree order.
+
+#+begin_src C
+g_autoptr(GPtrArray) problems = NULL;
+guint i;
+
+/* base_dir NULL skips file checks; registry NULL skips component-type checks */
+problems = lrg_editor_validate_level (level, project_root,
+                                      lrg_engine_get_registry (engine));
+for (i = 0; i < problems->len; i++)
+{
+	LrgEditorProblem *p;
+
+	p = (LrgEditorProblem *)g_ptr_array_index (problems, i);
+	g_printerr ("%s: [%s] %s: %s\n",
+	            lrg_editor_problem_severity_to_string (p->severity),
+	            p->code,
+	            p->node_path != NULL ? p->node_path : "(level)",
+	            p->message);
+}
+#+end_src
+
+=LrgEditorProblem= is a boxed struct (=lrg_editor_problem_copy()= / =lrg_editor_problem_free()=, =g_autoptr= supported) with the fields =severity=, =code= (stable, machine-readable), =node_guid=, =node_path=, =message= and =file= (the related asset or script, if any).
+
+| Function | Signature |
+|----------+-----------|
+| =lrg_editor_validate_level= | =GPtrArray * (LrgLevel *level, const gchar *base_dir, LrgRegistry *registry)= |
+| =lrg_editor_problem_copy= | =LrgEditorProblem * (const LrgEditorProblem *problem)= |
+| =lrg_editor_problem_free= | =void (LrgEditorProblem *problem)= |
+| =lrg_editor_problem_severity_to_string= | =const gchar * (LrgEditorProblemSeverity severity)= — "info", "warning", "error" |
+
+*** Problem Codes
+:PROPERTIES:
+:CUSTOM_ID: problem-codes
+:END:
+| Code | Severity | Meaning |
+|------+----------+---------|
+| =missing-guid= | error | Node has no GUID |
+| =duplicate-guid= | error | Two nodes share a GUID |
+| =unnamed= | warning | Node has no name (cannot be referenced by path) |
+| =slash-in-name= | warning | Name contains =/=, which breaks name paths |
+| =duplicate-name= | warning | Siblings share a name (ambiguous path) |
+| =non-finite-transform= | error | NaN or infinite location/rotation/scale |
+| =zero-scale= | warning | A scale axis is zero |
+| =missing-asset-ref= | error | Visual expects an asset path but has none |
+| =missing-asset= | error | Referenced asset file does not exist |
+| =component-no-type= | error | Component description has no type name |
+| =unknown-component= | warning | Component type is not registered |
+| =script-no-path= | error | Script binding has no path |
+| =script-no-language= | warning | Script binding has no language |
+| =missing-script= | error | Script file does not exist |
+| =script-disabled= | info | Script binding is disabled |
+
+** Editor Services
+:PROPERTIES:
+:CUSTOM_ID: editor-services
+:END:
+The editor application composes these runtime services; each is usable on its own.
+
+| Type | Header | Purpose | Details |
+|------+--------+---------+---------|
+| =LrgEditorSettings= | =lrg-editor-settings.h= | Per-user preferences in =$XDG_CONFIG_HOME/libregnum/editor.yaml= (or =$LRG_EDITOR_CONFIG=): external editor, terminal, Emacs integration, theme, snap defaults, autosave, recent files, keybinding overrides, layout. Signal =keybindings-changed= | [[file:external-editor.org][External Editor]] |
+| =LrgExternalEditor= | =lrg-external-editor.h= | Opens a file at a line/column in =$VISUAL= / =$EDITOR=, a preset or a custom template; first-party Emacs path via the =open-file= signal | [[file:external-editor.org][External Editor]], [[file:emacs.org][Emacs]] |
+| =LrgEditorLog= | =lrg-editor-log.h= | Ring buffer of =LrgEditorLogRecord= fed by the GLib structured log writer (=lrg_editor_log_install()=); signals =message=, =cleared= | [[file:editor-app.org][Editor Application]] |
+| =LrgEditorServer= | =lrg-editor-server.h= | JSON-lines IPC over a Unix socket exposing an =LrgEditor=; =lrg_editor_server_dispatch()= runs a request in-process | [[file:ipc-protocol.org][IPC Protocol]] |
+
+Related bridges: =lrg_level_import_scene_file()= (=lrg-scene-import.h=) loads a Blender scene YAML and converts it with =lrg_level_from_scene()=, and =lrg_level_instantiate()= tags every runtime =LrgGameObject= with its node's GUID, so play-in-editor maps objects back to authoring nodes with =lrg_world_find_by_tag()=. Projects gained =lrg_project_get_run_command()= / =set_run_command()= (=Run Game= template with ={project}=, ={level}=, ={module}=), =get_scripts_dir()= / =set_scripts_dir()=, =clear_asset_dirs()=, and =lrg_project_resolve()= / =lrg_project_relativize()= for root-relative asset paths; see [[file:projects-and-assets.org][Projects and Assets]].
+
 ** See Also
 :PROPERTIES:
 :CUSTOM_ID: see-also
 :END:
 - [[file:level-model.org][Level Model]] — the document being edited
 - [[file:overview.org][Editor Overview]] — dual-frontend architecture
+- [[file:editor-app.org][Editor Application]] — =lrg-editor= / =LrgEditorApp=, drawn with =LrgGuiContext=
+- [[file:external-editor.org][External Editor]] — =LrgEditorSettings= and =LrgExternalEditor=
+- [[file:emacs.org][Emacs Integration]] — =libregnum.el=
+- [[file:ipc-protocol.org][IPC Protocol]] — =LrgEditorServer= methods and events
 - [[file:../modules/editor/index.org][Editor Module Reference]]

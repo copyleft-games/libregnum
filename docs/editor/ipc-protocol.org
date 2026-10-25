@@ -1,0 +1,202 @@
+#+title: Editor IPC Protocol
+#+description: The JSON-lines protocol lrg-editor serves on a Unix socket for Emacs, scripts and tools
+#+authors: Zach Podbielniak
+#+categories: libregnum editor ipc
+#+created: 2026-10-24T22:30:00-04:00
+#+updated: 2026-10-24T22:30:00-04:00
+#+version: 1.0
+
+* Editor IPC Protocol
+:PROPERTIES:
+:CUSTOM_ID: ipc-protocol
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > IPC Protocol
+#+end_quote
+
+The editor exposes its document and its UI over a local socket, so anything can drive it: the first-party Emacs package, shell scripts, test harnesses, build tools, other editors. Protocol version 1 (=LRG_EDITOR_SERVER_PROTOCOL_VERSION=).
+
+The server is =LrgEditorServer= (=src/editor/lrg-editor-server.h=); =LrgEditorApp= registers additional methods (actions, view, play, run, project, assets) on top of the document methods.
+
+** Transport
+:PROPERTIES:
+:CUSTOM_ID: transport
+:END:
+- A Unix stream socket, mode 0600, at =$XDG_RUNTIME_DIR/libregnum/editor-PID.sock= by default; =--socket PATH=, the =server-socket= preference or =LRG_EDITOR_SOCKET= choose another. Paths longer than the =sun_path= limit (107 bytes) are rejected instead of truncated. A stale socket file is replaced; a live one (another editor) is an error.
+- Many clients can be connected at once.
+- Each message is one JSON object on one line, UTF-8, terminated by =\n=.
+- The editor processes requests on its main loop between frames, in order, one connection at a time; replies come back in request order per connection.
+
+** Messages
+:PROPERTIES:
+:CUSTOM_ID: messages
+:END:
+#+begin_example
+request   {"id": 7, "method": "node.get", "params": {"node": "House/Door"}}
+result    {"id": 7, "result": {...}}
+error     {"id": 7, "error": {"code": "not-found", "message": "No node 'House/Door'"}}
+event     {"event": "selection", "data": {"nodes": ["8c1e..."], "primary": "8c1e..."}}
+#+end_example
+
+- =id= is any JSON number or string chosen by the client; it is echoed back. A request without an =id= is a notification: it runs and gets no reply.
+- =params= is an object (may be omitted).
+- Events never carry an =id=.
+
+Error codes:
+
+| Code               | Meaning                                         |
+|--------------------+-------------------------------------------------|
+| =parse=            | The line is not JSON                            |
+| =invalid-request=  | Not a request object / no method                |
+| =method-not-found= | Unknown method                                  |
+| =invalid-params=   | Missing or mistyped parameter                   |
+| =not-found=        | The node, file, action or path does not exist   |
+| =failed=           | The operation failed (message says why)         |
+
+Node parameters (=node=, =parent=) accept either a GUID or a slash-separated name path from the top of the level (="House/Door"=).
+
+** Session
+:PROPERTIES:
+:CUSTOM_ID: session
+:END:
+Start with =hello=:
+
+#+begin_example
+-> {"id":1,"method":"hello","params":{"client":"emacs","capabilities":["open-file"],
+                                     "subscribe":["changed","selection","level","saved","log"]}}
+<- {"id":1,"result":{"server":"libregnum-editor","protocol":1,"pid":4242,
+                     "project":"/home/me/games/mygame","level":"/home/me/games/mygame/levels/main.rlevel",
+                     "client_id":3}}
+#+end_example
+
+- =client= names the client in the editor's console.
+- =capabilities=: =open-file= means "I can visit files for the user"; the editor then sends =open-file= events to the most recently active such client instead of launching an external editor (see [[file:external-editor.org][External code editor]]).
+- =subscribe= lists the events wanted; ="*"= means all. Without =subscribe= a client gets every event except =log= (chatty, opt-in).
+
+** Events
+:PROPERTIES:
+:CUSTOM_ID: events
+:END:
+| Event       | Data                                                                       | When                                   |
+|-------------+----------------------------------------------------------------------------+----------------------------------------|
+| =changed=   | =dirty=, =undo=, =redo=, =nodes=, =last= (label of the last command)       | After edits, undo, redo (coalesced)    |
+| =selection= | =nodes= (GUIDs), =primary=                                                 | The selection changed                  |
+| =level=     | =path=, =name=                                                             | A level was opened, created, reloaded  |
+| =saved=     | =path=                                                                     | The level was written                  |
+| =tool=      | =tool=, =space=, =snap=                                                    | Gizmo tool, space or snapping changed  |
+| =log=       | =serial=, =time=, =level=, =domain=, =message=                             | A log record (subscribe explicitly)    |
+| =play=      | (none)                                                                     | Play started, paused, stopped          |
+| =run=       | (none)                                                                     | An external game run started or ended  |
+| =open-file= | =file=, =line=, =col=                                                      | Sent only to one =open-file= client    |
+
+** Document methods
+:PROPERTIES:
+:CUSTOM_ID: document-methods
+:END:
+Every editing method goes through the editor's undo stack.
+
+| Method               | Params                                                     | Result                                       |
+|----------------------+------------------------------------------------------------+----------------------------------------------|
+| =hello=              | =client=, =capabilities=, =subscribe=                      | server info (above)                          |
+| =ping=               |                                                            | ="pong"=                                     |
+| =methods=            |                                                            | array of method names                        |
+| =editor.info=        |                                                            | =pid project level name dirty nodes undo redo tool space snap snap_translate snap_rotate snap_scale selection clients= |
+| =level.new=          | =name=                                                     | =true=                                       |
+| =level.open=         | =path=, =force= (discard unsaved changes)                  | =true=                                       |
+| =level.save=         | =path= (optional: save as)                                 | the path                                     |
+| =level.reload=       |                                                            | =true=                                       |
+| =level.serialize=    |                                                            | the level as =.rlevel= YAML text             |
+| =node.tree=          | =node= (optional subtree)                                  | nested =[{guid name kind visible locked children nodes}]= |
+| =node.list=          |                                                            | flat summaries                               |
+| =node.get=           | =node=, =recursive=                                        | =guid name path location rotation scale visible locked visual components scripts (children)= |
+| =node.find=          | =query= (name substring or GUID)                           | summaries                                    |
+| =node.set=           | =node=, any of =name location rotation rotation_degrees scale visible locked visual=, =merge= (fold into the previous step, for drags) | the node |
+| =node.create=        | =name=, =parent=, =index=, =kind= and/or =primitive= (shorthand), or a =visual= spec | the node              |
+| =node.delete=        | =node=                                                     | =true=                                       |
+| =node.duplicate=     | =node=                                                     | the copy                                     |
+| =node.move=          | =node=, =parent=, =index=, =keep_world=                    | the node                                     |
+| =node.rename=        | =node=, =name=                                             | the node                                     |
+| =component.add=      | =node=, =type=, =props=                                    | the node                                     |
+| =component.remove=   | =node=, =index=                                            | the node                                     |
+| =component.set=      | =node=, =index=, =key=, =value=, =merge=                   | the node                                     |
+| =script.add=         | =node=, =script= (path), =language=, =enabled=             | the node                                     |
+| =script.remove=      | =node=, =index=                                            | the node                                     |
+| =script.open=        | =node=, =index=, =line=, =col=                             | =true= (opens in the external editor)        |
+| =file.open=          | =path=, =line=, =col=                                      | =true=                                       |
+| =selection.get=      |                                                            | =nodes=, =primary=                           |
+| =selection.set=      | =nodes= (array), =additive=                                | selection                                    |
+| =selection.clear=    |                                                            | =true=                                       |
+| =edit.undo= / =edit.redo= |                                                       | =true= if something was undone/redone        |
+| =edit.history=       |                                                            | undo and redo labels                         |
+| =edit.jump=          | =index= (position in the history)                          | =true=                                       |
+| =edit.copy= / =edit.cut= / =edit.paste= |                                         | clipboard text / =true= / pasted nodes       |
+| =tool.set=           | =tool= (=select translate rotate scale=), =space= (=world local=), =snap= | editor info          |
+| =prefab.instantiate= | =path=, =parent=                                           | the instance                                 |
+| =prefab.save=        | =node=, =path=                                             | the path                                     |
+| =log.tail=           | =count=                                                    | recent log records                           |
+
+** Application methods
+:PROPERTIES:
+:CUSTOM_ID: app-methods
+:END:
+Available when the server belongs to =lrg-editor= / =LrgEditorApp=:
+
+| Method            | Params                                              | Result                                              |
+|-------------------+-----------------------------------------------------+-----------------------------------------------------|
+| =action.list=     |                                                     | =[{id label category shortcut enabled checked}]=    |
+| =action.run=      | =id=                                                | =true=; =not-found= if unknown or disabled          |
+| =view.get=        |                                                     | camera =position target fovy orthographic ortho_height mode_2d= |
+| =view.set=        | any of =position=, =target= (arrays), =orthographic=, =ortho_height=, =mode_2d= | the view          |
+| =view.focus=      | =node= (optional: frame the selection or all)       | the view                                            |
+| =view.screenshot= | =path= (.png), =window= (whole window, written after the next frame) | the path; fails headless         |
+| =play.start= / =play.stop= / =play.pause= / =play.step= / =play.state= |        | =playing paused time running=                       |
+| =run.start= / =run.stop= |                                              | play state                                          |
+| =project.info=    |                                                     | =root name default_level game_output run_command scripts_dir asset_dirs= |
+| =project.open=    | =path=, =force=                                     | project info                                        |
+| =asset.list=      | =type= (=level prefab texture model audio script ...=) | =[{path type}]=                                  |
+| =level.validate=  |                                                     | =[{severity code node path message file}]=          |
+| =level.import=    | =path= (Blender scene YAML)                         | =true=                                              |
+| =ui.notify=       | =message=, =level= (0 info, 1 success, 2 warning, 3 error) | =true=; shows a toast                        |
+| =editor.quit=     | =force= (discard unsaved changes)                   | =true=                                              |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+With =socat= from a shell:
+
+#+begin_src sh
+sock="$(ls -t "${XDG_RUNTIME_DIR}"/libregnum/editor-*.sock | head -n 1)"
+
+lrg () {
+	if [[ $# -lt 1 ]]
+	then
+		echo 'lrg <method> [params-json]'
+		return 1
+	fi
+
+	local method="${1}"
+	local params="${2:-{\}}"
+
+	printf '{"id":1,"method":"%s","params":%s}\n' "${method}" "${params}" \
+		| socat -t 2 - UNIX-CONNECT:"${sock}"
+}
+
+lrg editor.info
+lrg node.create '{"name":"Crate","primitive":"cube","parent":"Props"}'
+lrg node.set '{"node":"Props/Crate","location":[2,0.5,-3]}'
+lrg action.run '{"id":"view.focus"}'
+lrg view.screenshot '{"path":"/tmp/viewport.png"}'
+lrg level.save
+#+end_src
+
+Watching events (one long-lived connection):
+
+#+begin_src sh
+{ echo '{"id":1,"method":"hello","params":{"subscribe":["*"]}}'; cat; } \
+	| socat - UNIX-CONNECT:"${sock}" | yq -p json -o yaml
+#+end_src
+
+From the editor's own console the short form works too: =node.rename node=Props/Crate name=Barrel=.
+
+From C, in-process, =lrg_editor_server_dispatch()= runs one request line exactly as a client would; =lrg_editor_server_register_method()= adds methods (the editor's own app methods are registered this way).
