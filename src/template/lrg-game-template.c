@@ -1180,8 +1180,8 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
     properties[PROP_TARGET_FPS] =
         g_param_spec_int ("target-fps",
                           "Target FPS",
-                          "Target frame rate",
-                          1, 240, 60,
+                          "Target frame rate (0: no limit; with vsync the display's rate)",
+                          0, 1000, 60,
                           G_PARAM_READWRITE |
                           G_PARAM_STATIC_STRINGS |
                           G_PARAM_CONSTRUCT);

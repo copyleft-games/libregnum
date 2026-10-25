@@ -131,7 +131,7 @@ my_game_class_init (MyGameClass *klass)
 | =window-height=      | =gint=       | 720              | Initial window height                     |
 | =fullscreen=         | =gboolean=   | FALSE            | Start in fullscreen                       |
 | =vsync=              | =gboolean=   | TRUE             | Enable vertical sync                      |
-| =target-fps=         | =gint=       | 60               | Target frame rate                         |
+| =target-fps=         | =gint=       | 60               | Target frame rate, 0 to 1000 (0: no limit) |
 | =fixed-timestep=     | =gdouble=    | 1.0/60.0         | Physics update interval                   |
 | =auto-save-interval= | =gint=       | 300              | Seconds between auto-saves (0 = disabled) |
 
