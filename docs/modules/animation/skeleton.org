@@ -185,6 +185,16 @@ void lrg_skeleton_set_pose (LrgSkeleton *self, gint bone_index, const LrgBonePos
 void lrg_skeleton_blend_pose (LrgSkeleton *self, gint bone_index, const LrgBonePose *pose, gfloat weight);
 #+end_src
 
+*** World Pose Calculation
+:PROPERTIES:
+:CUSTOM_ID: world-pose-calculation
+:END:
+~lrg_skeleton_calculate_world_poses()~ walks the bones once, parents before children: a root's (parent index < 0) world pose is its local pose, a child's is ~lrg_bone_pose_compose (parent world, local)~, and a bone whose parent index names no bone keeps its previous world pose. The parent of a bone is the first bone in list order with that index, the same bone ~lrg_skeleton_get_bone()~ returns.
+
+The walk order and an index lookup table are cached. Adding or removing bones rebuilds them; reparenting (~lrg_bone_set_parent_index()~ or the ~parent-index~ property) is detected on the next call by comparing each bone's parent index with the cached one (O(n)). ~lrg_skeleton_get_bone()~, ~set_pose()~ and ~blend_pose()~ are O(1).
+
+If parent chains form a cycle there is no valid order; the skeleton then falls back to the original fixed 100-pass relaxation, which terminates but gives meaningless poses. Earlier versions always ran those 100 passes (with a list walk per lookup and an allocation per bone), and chains deeper than 100 bones listed child-first never converged; they now come out right.
+
 *** Update
 :PROPERTIES:
 :CUSTOM_ID: update

@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "lrg-animator.h"
+#include "lrg-skeleton-private.h"
 
 /**
  * SECTION:lrg-animator
@@ -17,6 +18,20 @@
  * It supports playing clips, crossfading between animations,
  * and fires events at the correct times.
  */
+
+/*
+ * TrackBinding: what one track of the current clip drives, resolved once
+ * per (clip, blend clip, skeleton) instead of per track per frame.
+ * bound is FALSE when the track's bone is not in the skeleton (the track
+ * is skipped); blend_track is the first blend-clip track animating the
+ * same bone name, or -1.
+ */
+typedef struct
+{
+    gboolean bound;
+    gint     bone_index;
+    gint     blend_track;
+} TrackBinding;
 
 typedef struct
 {
@@ -31,6 +46,20 @@ typedef struct
     gfloat               speed;
     gfloat               prev_time;     /* For event detection */
     LrgAnimatorState     state;
+
+    /*
+     * Track binding cache. The clip pointers are borrowed from @clips;
+     * any change to @clips or to the skeleton drops the cache, so a freed
+     * clip's address can never be mistaken for a live one. Clips only
+     * ever gain tracks, so a track count change also rebuilds.
+     */
+    GArray              *bindings;          /* TrackBinding per current-clip track */
+    LrgAnimationClip    *bound_clip;
+    LrgAnimationClip    *bound_blend_clip;  /* NULL: blend_track not resolved */
+    guint                bound_track_count;
+    guint                bound_blend_track_count;
+    guint                bound_generation;
+    gboolean             bindings_valid;
 } LrgAnimatorPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgAnimator, lrg_animator, G_TYPE_OBJECT)
@@ -51,6 +80,108 @@ enum
 
 static GParamSpec *properties[N_PROPS];
 static guint       signals[N_SIGNALS];
+
+/*
+ * animator_bind_tracks:
+ *
+ * Resolves each track of @clip to a bone index of the skeleton the same
+ * way the update loop used to every frame (name -> bone -> index; the
+ * pose is later set by index), and, when @blend_clip is given, to the
+ * first track of @blend_clip with the same bone name. Rebuilds only when
+ * the clip, the blend clip, a track count or the skeleton's bone set
+ * changed.
+ */
+static void
+animator_bind_tracks (LrgAnimatorPrivate *priv,
+                      LrgAnimationClip   *clip,
+                      LrgAnimationClip   *blend_clip)
+{
+    guint track_count;
+    guint blend_track_count;
+    guint generation;
+    guint i;
+
+    track_count = lrg_animation_clip_get_track_count (clip);
+    blend_track_count = blend_clip != NULL
+        ? lrg_animation_clip_get_track_count (blend_clip) : 0;
+    generation = lrg_skeleton_get_generation (priv->skeleton);
+
+    if (!priv->bindings_valid ||
+        priv->bound_clip != clip ||
+        priv->bound_track_count != track_count ||
+        priv->bound_generation != generation)
+    {
+        g_array_set_size (priv->bindings, track_count);
+        for (i = 0; i < track_count; i++)
+        {
+            TrackBinding *binding = &g_array_index (priv->bindings, TrackBinding, i);
+            const gchar  *bone_name;
+            LrgBone      *bone;
+
+            binding->bound = FALSE;
+            binding->bone_index = -1;
+            binding->blend_track = -1;
+
+            bone_name = lrg_animation_clip_get_track_bone_name (clip, i);
+            if (bone_name == NULL)
+                continue;
+            bone = lrg_skeleton_get_bone_by_name (priv->skeleton, bone_name);
+            if (bone == NULL)
+                continue;
+            binding->bound = TRUE;
+            binding->bone_index = lrg_bone_get_index (bone);
+        }
+        priv->bound_clip = clip;
+        priv->bound_track_count = track_count;
+        priv->bound_generation = generation;
+        priv->bound_blend_clip = NULL;
+        priv->bindings_valid = TRUE;
+    }
+
+    if (blend_clip == NULL)
+        return;
+    if (priv->bound_blend_clip == blend_clip &&
+        priv->bound_blend_track_count == blend_track_count)
+        return;
+
+    /* Bone name -> first blend track with it (the old inner loop broke on
+     * the first match). */
+    {
+        g_autoptr(GHashTable) by_name = g_hash_table_new (g_str_hash, g_str_equal);
+
+        for (i = 0; i < blend_track_count; i++)
+        {
+            const gchar *name = lrg_animation_clip_get_track_bone_name (blend_clip, i);
+
+            if (name != NULL && !g_hash_table_contains (by_name, name))
+                g_hash_table_insert (by_name, (gpointer) name, GUINT_TO_POINTER (i + 1));
+        }
+        for (i = 0; i < track_count; i++)
+        {
+            TrackBinding *binding = &g_array_index (priv->bindings, TrackBinding, i);
+            const gchar  *bone_name;
+            gpointer      found;
+
+            binding->blend_track = -1;
+            if (!binding->bound)
+                continue;
+            bone_name = lrg_animation_clip_get_track_bone_name (clip, i);
+            found = g_hash_table_lookup (by_name, bone_name);
+            if (found != NULL)
+                binding->blend_track = (gint) GPOINTER_TO_UINT (found) - 1;
+        }
+    }
+    priv->bound_blend_clip = blend_clip;
+    priv->bound_blend_track_count = blend_track_count;
+}
+
+static void
+animator_invalidate_bindings (LrgAnimatorPrivate *priv)
+{
+    priv->bindings_valid = FALSE;
+    priv->bound_clip = NULL;
+    priv->bound_blend_clip = NULL;
+}
 
 static void
 lrg_animator_real_update (LrgAnimator *self,
@@ -116,55 +247,35 @@ lrg_animator_real_update (LrgAnimator *self,
     if (priv->skeleton == NULL)
         return;
 
-    (void)lrg_skeleton_get_bone_count (priv->skeleton);
+    /* Resolve the blend clip once; it is only sampled while blending. */
+    blend_clip = NULL;
+    if (priv->blend_clip != NULL && priv->blend_progress > 0.0f)
+        blend_clip = g_hash_table_lookup (priv->clips, priv->blend_clip);
+
+    animator_bind_tracks (priv, clip, blend_clip);
 
     /* Sample current clip */
-    for (i = 0; i < lrg_animation_clip_get_track_count (clip); i++)
+    for (i = 0; i < priv->bindings->len; i++)
     {
-        const gchar *bone_name;
-        gint bone_index;
+        const TrackBinding *binding = &g_array_index (priv->bindings, TrackBinding, i);
         LrgBonePose pose;
 
-        bone_name = lrg_animation_clip_get_track_bone_name (clip, i);
-        if (bone_name == NULL)
+        if (!binding->bound)
             continue;
-
-        {
-            LrgBone *bone;
-            bone = lrg_skeleton_get_bone_by_name (priv->skeleton, bone_name);
-            if (bone == NULL)
-                continue;
-            bone_index = lrg_bone_get_index (bone);
-        }
 
         lrg_animation_clip_sample_track (clip, i, priv->time, &pose);
 
-        /* Blend with second clip if crossfading */
-        if (priv->blend_clip != NULL && priv->blend_progress > 0.0f)
+        /* Blend with the matching track of the second clip if crossfading */
+        if (blend_clip != NULL && binding->blend_track >= 0)
         {
             LrgBonePose blend_pose;
-            guint j;
 
-            blend_clip = g_hash_table_lookup (priv->clips, priv->blend_clip);
-            if (blend_clip != NULL)
-            {
-                /* Find matching track in blend clip */
-                for (j = 0; j < lrg_animation_clip_get_track_count (blend_clip); j++)
-                {
-                    const gchar *blend_bone_name;
-
-                    blend_bone_name = lrg_animation_clip_get_track_bone_name (blend_clip, j);
-                    if (blend_bone_name != NULL && g_strcmp0 (blend_bone_name, bone_name) == 0)
-                    {
-                        lrg_animation_clip_sample_track (blend_clip, j, priv->blend_time, &blend_pose);
-                        lrg_bone_pose_lerp_to (&pose, &blend_pose, priv->blend_progress, &pose);
-                        break;
-                    }
-                }
-            }
+            lrg_animation_clip_sample_track (blend_clip, (guint) binding->blend_track,
+                                             priv->blend_time, &blend_pose);
+            lrg_bone_pose_lerp_to (&pose, &blend_pose, priv->blend_progress, &pose);
         }
 
-        lrg_skeleton_set_pose (priv->skeleton, bone_index, &pose);
+        lrg_skeleton_set_pose (priv->skeleton, binding->bone_index, &pose);
     }
 
     /* Calculate world transforms */
@@ -181,6 +292,7 @@ lrg_animator_finalize (GObject *object)
     g_clear_pointer (&priv->clips, g_hash_table_unref);
     g_free (priv->current_clip);
     g_free (priv->blend_clip);
+    g_clear_pointer (&priv->bindings, g_array_unref);
 
     G_OBJECT_CLASS (lrg_animator_parent_class)->finalize (object);
 }
@@ -293,6 +405,8 @@ lrg_animator_init (LrgAnimator *self)
     priv->speed = 1.0f;
     priv->prev_time = 0.0f;
     priv->state = LRG_ANIMATOR_STOPPED;
+    priv->bindings = g_array_new (FALSE, FALSE, sizeof (TrackBinding));
+    animator_invalidate_bindings (priv);
 }
 
 LrgAnimator *
@@ -331,6 +445,7 @@ lrg_animator_set_skeleton (LrgAnimator *self,
     g_clear_object (&priv->skeleton);
     if (skeleton != NULL)
         priv->skeleton = g_object_ref (skeleton);
+    animator_invalidate_bindings (priv);
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SKELETON]);
 }
@@ -349,6 +464,7 @@ lrg_animator_add_clip (LrgAnimator      *self,
     priv = lrg_animator_get_instance_private (self);
 
     g_hash_table_insert (priv->clips, g_strdup (name), g_object_ref (clip));
+    animator_invalidate_bindings (priv);
 }
 
 void
@@ -362,7 +478,8 @@ lrg_animator_remove_clip (LrgAnimator *self,
 
     priv = lrg_animator_get_instance_private (self);
 
-    g_hash_table_remove (priv->clips, name);
+    if (g_hash_table_remove (priv->clips, name))
+        animator_invalidate_bindings (priv);
 }
 
 LrgAnimationClip *
