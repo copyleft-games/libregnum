@@ -308,6 +308,15 @@ Custom actions appear in menus (via the palette), the keybinding editor and =act
 
 The app can also be driven without a window, one frame at a time, with =lrg_editor_app_frame()= and a synthetic =LrgGuiInput= -- this is how =tests/test-editor-app.c= exercises shortcuts, the palette, dialogs, play mode, saving and live reload. =lrg_editor_app_run_headless()= serves IPC only.
 
+** Frame cost
+:PROPERTIES:
+:CUSTOM_ID: frame-cost
+:END:
+The editor redraws every frame, so panels avoid work proportional to the whole level or log when only a screenful is visible:
+
+- *Console*: each log record is formatted (timestamp, level, domain), casefolded for the filter and measured once, when it first appears, into a row cache mirrored from the log ring; the filtered row list is extended incrementally and rebuilt only when the level toggles or the filter text change. Only the rows inside the scroll view are laid out; the rows above and below become one spacer each, of the same total height and of the widest row's width, so scrolling and the horizontal extent are unchanged. A row whose context menu is open keeps building it while it scrolls out of view. =LrgEditorLog= keeps running per-level tallies, so the console tab and status bar badges (=lrg_editor_log_count_level()=) do not walk the ring.
+- *Hierarchy*: rows outside the tree's view submit only their tree node (keyed by GUID, so open state, layout, keyboard navigation order and a held row behave as before) and skip the toggles, label, measuring, drop targets and menu; the row being renamed, the one being revealed and one with an open context menu are always drawn in full. The node count (outliner header, status bar, viewport overlay) and the filter's match set are cached against a process-wide node tree serial (bumped when nodes are created, destroyed, re-parented, renamed or given a new GUID) and recomputed only when it or the filter text changes. =LrgEditorSelection= keeps a hash set beside its ordered array, so the per-row "is selected" test is constant time.
+
 ** Related documentation
 :PROPERTIES:
 :CUSTOM_ID: related
