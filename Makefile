@@ -538,6 +538,7 @@ PUBLIC_HEADERS := \
 	src/vr/lrg-vr-comfort.h \
 	src/vr/lrg-openxr-service.h \
 	src/vr/lrg-vr-draw.h \
+	src/vr/lrg-vr-gesture.h \
 	src/template/lrg-game-template.h \
 	src/template/lrg-input-buffer.h \
 	src/template/states/lrg-template-main-menu-state.h \
@@ -1159,6 +1160,7 @@ SOURCES := \
 	src/vr/lrg-vr-comfort.c \
 	src/vr/lrg-openxr-service.c \
 	src/vr/lrg-vr-draw.c \
+	src/vr/lrg-vr-gesture.c \
 	src/template/lrg-game-template.c \
 	src/template/lrg-input-buffer.c \
 	src/template/states/lrg-template-main-menu-state.c \
