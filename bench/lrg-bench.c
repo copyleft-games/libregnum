@@ -387,6 +387,471 @@ shapes_teardown (gpointer state)
 }
 
 /* ==========================================================================
+ * 3D world scenarios: a camera walking low through a large world, so most
+ * of it lies outside the view (as in a streamed open world)
+ * ========================================================================== */
+
+#define WORLD_HALF (120.0f)
+
+/* bench_world_camera: a camera circling the world's middle at eye height,
+ * looking along its path; *eye gets its position */
+static void
+bench_world_camera (GrlCamera3D *camera,
+                    guint        frame_index,
+                    gfloat      *eye)
+{
+	gfloat a = (gfloat) frame_index * 0.01f;
+
+	eye[0] = cosf (a) * 40.0f;
+	eye[1] = 6.0f;
+	eye[2] = sinf (a) * 40.0f;
+	grl_camera3d_set_position_xyz (camera, eye[0], eye[1], eye[2]);
+	grl_camera3d_set_target_xyz (camera, eye[0] - sinf (a) * 10.0f, 4.0f,
+	                             eye[2] + cosf (a) * 10.0f);
+}
+
+/* bench_box: a unit box (8 corners, 12 triangles) scaled by @s */
+static void
+bench_box (gfloat  *pos,
+           gfloat  *nrm,
+           guint32 *idx,
+           gfloat   s)
+{
+	static const gfloat  c[8][3] = {
+		{ -1, -1, -1 }, { 1, -1, -1 }, { 1, 1, -1 }, { -1, 1, -1 },
+		{ -1, -1, 1 }, { 1, -1, 1 }, { 1, 1, 1 }, { -1, 1, 1 } };
+	static const guint32 t[36] = {
+		0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4,
+		2, 3, 7, 2, 7, 6, 1, 2, 6, 1, 6, 5, 0, 4, 7, 0, 7, 3 };
+	guint i;
+
+	for (i = 0; i < 8; i++)
+	{
+		pos[i * 3 + 0] = c[i][0] * s;
+		pos[i * 3 + 1] = c[i][1] * s;
+		pos[i * 3 + 2] = c[i][2] * s;
+		nrm[i * 3 + 0] = c[i][0] * 0.577f;
+		nrm[i * 3 + 1] = c[i][1] * 0.577f;
+		nrm[i * 3 + 2] = c[i][2] * 0.577f;
+	}
+	memcpy (idx, t, sizeof t);
+}
+
+/* bench_static_batch: 3600 boxes over the world, added tile by tile (4 x
+ * 10 boxes, one chunk each per material, as a streamed world adds them) */
+static LrgStaticBatch *
+bench_static_batch (void)
+{
+	LrgStaticBatch *batch;
+	gfloat          pos[24];
+	gfloat          nrm[24];
+	guint32         idx[36];
+	guint           n;
+
+	batch = lrg_static_batch_new ();
+	lrg_static_batch_set_max_chunk_vertices (batch, 8 * 40);
+	bench_box (pos, nrm, idx, 1.0f);
+	for (n = 0; n < 3600; n++)
+	{
+		guint     tile = n / 40;
+		guint     i = (tile % 15) * 4 + (n % 40) % 4;
+		guint     j = (tile / 15) * 10 + (n % 40) / 4;
+		GrlMatrix m;
+
+		memset (&m, 0, sizeof m);
+		m.m0 = 1.0f;
+		m.m5 = 1.0f + (gfloat) ((i * 7 + j) % 5) * 0.5f;
+		m.m10 = 1.0f;
+		m.m15 = 1.0f;
+		m.m12 = (gfloat) i * 4.0f - WORLD_HALF;
+		m.m13 = m.m5;
+		m.m14 = (gfloat) j * 4.0f - WORLD_HALF;
+		lrg_static_batch_add_mesh (batch, pos, nrm, NULL, NULL, 8, idx, 36, &m,
+		                           tile % 3, 0, NULL);
+	}
+	lrg_static_batch_upload (batch, NULL);
+	return batch;
+}
+
+/* bench_terrain: 16 x 16 chunks of 16 x 16 cells, rolling hills */
+static LrgTerrain *
+bench_terrain (void)
+{
+	LrgTerrain *terrain;
+	gint        i;
+	gint        j;
+
+	terrain = lrg_terrain_new (16, 16.0f);
+	for (i = -8; i < 8; i++)
+	{
+		for (j = -8; j < 8; j++)
+		{
+			gfloat heights[17 * 17];
+			guint  k;
+
+			for (k = 0; k < 17 * 17; k++)
+			{
+				gfloat x = (gfloat) i * 16.0f + (gfloat) (k % 17);
+				gfloat z = (gfloat) j * 16.0f + (gfloat) (k / 17);
+
+				heights[k] = 2.0f * sinf (x * 0.13f) * cosf (z * 0.11f) - 1.0f;
+			}
+			lrg_terrain_set_chunk (terrain, i, j, heights, 17 * 17, NULL, NULL, NULL);
+		}
+	}
+	lrg_terrain_upload (terrain, NULL);
+	return terrain;
+}
+
+/* bench_billboards: 60000 swaying, alpha-tested billboards, added in
+ * 16 x 16 tiles (as a streamed landscape adds them) */
+static LrgBillboardBatch *
+bench_billboards (GrlTexture *texture)
+{
+	LrgBillboardBatch *batch;
+	guint              i;
+
+	batch = lrg_billboard_batch_new ();
+	lrg_billboard_batch_set_material_texture (batch, 0, texture);
+	lrg_billboard_batch_set_wind (batch, 0.8f, 0.6f, 0.08f, 0.05f, 1.3f);
+	for (i = 0; i < 60000; i++)
+	{
+		g_autoptr(GrlVector3) p = NULL;
+		guint                 id;
+
+		p = grl_vector3_new ((gfloat) ((i / 256) % 15 * 16 + i % 16) - WORLD_HALF, 0.0f,
+		                     (gfloat) ((i / 256) / 15 * 16 + (i % 256) / 16) * 0.96f
+		                     - WORLD_HALF);
+		id = lrg_billboard_batch_add (batch, 0, p, 1.0f, 2.0f);
+		lrg_billboard_batch_set_sway (batch, id, 0.5f);
+	}
+	return batch;
+}
+
+typedef struct
+{
+	GrlCamera3D       *camera;
+	GrlTexture        *texture;
+	LrgStaticBatch    *batch;
+	LrgTerrain        *terrain;
+	LrgWaterSurface   *water;
+	LrgBillboardBatch *billboards;
+	LrgGrassField     *grass;
+	LrgLightSet       *lights;
+	LrgShadowRenderer *shadows;
+} WorldState;
+
+static WorldState *
+world_state_new (void)
+{
+	WorldState *st;
+
+	st = g_new0 (WorldState, 1);
+	st->camera = grl_camera3d_new ();
+	return st;
+}
+
+static void
+world_teardown (gpointer state)
+{
+	WorldState *st = state;
+
+	if (st->grass != NULL)
+		lrg_grass_field_release_gpu (st->grass);
+	if (st->water != NULL)
+		lrg_water_surface_release_gpu (st->water);
+	if (st->shadows != NULL)
+		lrg_shadow_renderer_release_gpu (st->shadows);
+	g_clear_object (&st->grass);
+	g_clear_object (&st->water);
+	g_clear_object (&st->billboards);
+	g_clear_object (&st->terrain);
+	g_clear_object (&st->batch);
+	g_clear_object (&st->shadows);
+	g_clear_object (&st->lights);
+	g_clear_object (&st->texture);
+	g_clear_object (&st->camera);
+	g_free (st);
+}
+
+/* --- static-batch: 3600 boxes in 450 chunks */
+
+static gpointer
+static_batch_setup (void)
+{
+	WorldState *st = world_state_new ();
+
+	st->batch = bench_static_batch ();
+	return st;
+}
+
+static void
+static_batch_frame (gpointer state,
+                    guint    frame_index)
+{
+	WorldState *st = state;
+	gfloat      eye[3];
+
+	bench_world_camera (st->camera, frame_index, eye);
+	grl_camera3d_begin (st->camera);
+	lrg_static_batch_draw (st->batch, LRG_STATIC_BATCH_ALL_LAYERS);
+	grl_camera3d_end (st->camera);
+}
+
+/* --- terrain: 256 chunks, plus 256 water patches */
+
+static gpointer
+terrain_setup (void)
+{
+	WorldState *st = world_state_new ();
+	gint        i;
+	gint        j;
+
+	st->terrain = bench_terrain ();
+	st->water = lrg_water_surface_new ();
+	for (i = -8; i < 8; i++)
+		for (j = -8; j < 8; j++)
+			lrg_water_surface_add_grid (st->water, (gfloat) i * 16.0f, (gfloat) j * 16.0f,
+			                            (gfloat) i * 16.0f + 16.0f, (gfloat) j * 16.0f + 16.0f,
+			                            -0.5f, 16, 16, NULL, NULL, NULL);
+	return st;
+}
+
+static void
+terrain_frame (gpointer state,
+               guint    frame_index)
+{
+	WorldState *st = state;
+	gfloat      eye[3];
+
+	bench_world_camera (st->camera, frame_index, eye);
+	grl_camera3d_begin (st->camera);
+	lrg_terrain_draw (st->terrain);
+	lrg_water_surface_draw (st->water, eye, (gfloat) frame_index / 60.0f);
+	grl_camera3d_end (st->camera);
+}
+
+/* --- billboards: 60000 settled (GPU) billboards */
+
+static gpointer
+billboards_setup (void)
+{
+	WorldState *st = world_state_new ();
+
+	st->texture = bench_make_texture (8);
+	st->billboards = bench_billboards (st->texture);
+	return st;
+}
+
+static void
+billboards_frame (gpointer state,
+                  guint    frame_index)
+{
+	WorldState           *st = state;
+	gfloat                eye[3];
+	g_autoptr(GrlVector3) camera = NULL;
+
+	bench_world_camera (st->camera, frame_index, eye);
+	camera = grl_vector3_new (eye[0], eye[1], eye[2]);
+	grl_camera3d_begin (st->camera);
+	lrg_billboard_batch_set_wind_time (st->billboards, (gdouble) frame_index / 60.0);
+	lrg_billboard_batch_draw (st->billboards, camera);
+	grl_camera3d_end (st->camera);
+}
+
+/* --- grass: ~150000 blades over the world */
+
+static gpointer
+grass_setup (void)
+{
+	WorldState       *st = world_state_new ();
+	g_autoptr(GArray) blades = NULL;
+	gint              i;
+	gint              j;
+
+	st->grass = lrg_grass_field_new (7);
+	blades = g_array_new (FALSE, FALSE, sizeof (LrgGrassBlade));
+	for (i = -60; i < 60; i++)
+		for (j = -60; j < 60; j++)
+			lrg_grass_field_place_cell (st->grass, i, j, 0.5f, 0.0, 0.0, NULL, NULL, blades);
+	lrg_grass_field_set_blades (st->grass, (const LrgGrassBlade *) (gconstpointer) blades->data,
+	                            blades->len);
+	return st;
+}
+
+static void
+grass_frame (gpointer state,
+             guint    frame_index)
+{
+	WorldState *st = state;
+	gfloat      eye[3];
+
+	bench_world_camera (st->camera, frame_index, eye);
+	grl_camera3d_begin (st->camera);
+	lrg_grass_field_draw (st->grass, eye, (gfloat) frame_index / 60.0f);
+	grl_camera3d_end (st->camera);
+}
+
+/* --- world-shadows: the lit world with a 2-cascade sun and 2 point light
+ * cubes (14 shadow passes), a 16 x 16 light grid and 64 point lights */
+
+static gpointer
+world_shadows_setup (void)
+{
+	WorldState          *st = world_state_new ();
+	g_autoptr(GrlColor)  ambient = NULL;
+	g_autoptr(GrlColor)  sun = NULL;
+	g_autoptr(GrlVector3) direction = NULL;
+	guint                i;
+
+	st->batch = bench_static_batch ();
+	st->terrain = bench_terrain ();
+	st->texture = bench_make_texture (8);
+	st->billboards = bench_billboards (st->texture);
+	st->lights = lrg_light_set_new ();
+	ambient = grl_color_new (60, 60, 70, 255);
+	sun = grl_color_new (230, 220, 200, 255);
+	direction = grl_vector3_new (-0.4f, -1.0f, -0.3f);
+	lrg_light_set_set_ambient (st->lights, ambient);
+	lrg_light_set_set_directional (st->lights, direction, sun);
+	for (i = 0; i < 64; i++)
+	{
+		g_autoptr(GrlColor) color = NULL;
+		guint               id;
+
+		color = grl_color_new ((guint8) (i * 37), (guint8) (i * 59), 200, 255);
+		id = lrg_light_set_add_point_light (st->lights, (gdouble) (i % 8) * 30.0 - 105.0, 3.0,
+		                                    (gdouble) (i / 8) * 30.0 - 105.0, color, 14.0f);
+		if (i == 27 || i == 36)
+			lrg_light_set_set_point_light_shadow (st->lights, id, 1);
+	}
+	lrg_light_set_set_grid (st->lights, 8.0f, 16);
+	st->shadows = lrg_shadow_renderer_new ();
+	lrg_shadow_renderer_set_sun (st->shadows, 1024, 2, 80.0f, 0.5f);
+	lrg_shadow_renderer_set_points (st->shadows, 256, 2, 0.0f);
+	return st;
+}
+
+static void
+world_shadows_frame (gpointer state,
+                     guint    frame_index)
+{
+	WorldState           *st = state;
+	gfloat                eye[3];
+	gfloat                forward[3];
+	gfloat                up[3] = { 0.0f, 1.0f, 0.0f };
+	gfloat                a = (gfloat) frame_index * 0.01f;
+	guint                 n_passes;
+	guint                 p;
+	GrlShader            *caster;
+	g_autoptr(GrlVector3) camera = NULL;
+
+	bench_world_camera (st->camera, frame_index, eye);
+	camera = grl_vector3_new (eye[0], eye[1], eye[2]);
+	forward[0] = -sinf (a);
+	forward[1] = -0.196f;
+	forward[2] = cosf (a);
+
+	/* the shadow passes first (they leave the screen's 2D state behind) */
+	lrg_light_set_set_shadow_renderer (st->lights, NULL);
+	n_passes = lrg_shadow_renderer_update (st->shadows, st->lights, eye, forward, up,
+	                                       45.0f, (gfloat) BENCH_WIDTH / BENCH_HEIGHT, 0.1f);
+	caster = lrg_shadow_renderer_get_caster_shader (st->shadows);
+	for (p = 0; p < n_passes; p++)
+	{
+		if (!lrg_shadow_renderer_begin_pass (st->shadows, p))
+			continue;
+		lrg_static_batch_set_shader (st->batch, caster);
+		lrg_static_batch_draw (st->batch, LRG_STATIC_BATCH_ALL_LAYERS);
+		lrg_terrain_set_shader (st->terrain, caster);
+		lrg_terrain_draw (st->terrain);
+		lrg_billboard_batch_draw_shadow (st->billboards, st->shadows, camera);
+		lrg_shadow_renderer_end_pass (st->shadows);
+	}
+	lrg_light_set_set_shadow_renderer (st->lights, st->shadows);
+
+	grl_camera3d_begin (st->camera);
+	lrg_light_set_apply (st->lights, eye[0], eye[1], eye[2]);
+	lrg_light_set_bind (st->lights);
+	lrg_static_batch_set_shader (st->batch, lrg_light_set_get_shader (st->lights));
+	lrg_terrain_set_shader (st->terrain, lrg_light_set_get_shader (st->lights));
+	lrg_static_batch_draw (st->batch, LRG_STATIC_BATCH_ALL_LAYERS);
+	lrg_terrain_draw (st->terrain);
+	lrg_billboard_batch_set_wind_time (st->billboards, (gdouble) frame_index / 60.0);
+	lrg_billboard_batch_draw (st->billboards, camera);
+	grl_camera3d_end (st->camera);
+	lrg_light_set_unbind ();
+}
+
+/* --- light-grid: lrg_light_set_apply() of a still camera, 256 lights in a
+ * 32 x 32 grid of 4 layers (the per-frame cost of the lit shader's lists) */
+
+static gpointer
+light_grid_setup (void)
+{
+	WorldState *st = world_state_new ();
+	guint       i;
+
+	st->lights = lrg_light_set_new ();
+	for (i = 0; i < 256; i++)
+	{
+		g_autoptr(GrlColor) color = NULL;
+
+		color = grl_color_new ((guint8) (i * 37), (guint8) (i * 59), 200, 255);
+		lrg_light_set_add_point_light (st->lights, (gdouble) (i % 16) * 8.0 - 64.0,
+		                               (gdouble) (i % 3), (gdouble) (i / 16) * 8.0 - 64.0,
+		                               color, 10.0f);
+	}
+	lrg_light_set_set_grid (st->lights, 4.0f, 32);
+	lrg_light_set_set_grid_layers (st->lights, 4, 4.0f);
+	return st;
+}
+
+static void
+light_grid_frame (gpointer state,
+                  guint    frame_index)
+{
+	WorldState *st = state;
+
+	lrg_light_set_apply (st->lights, 1.0, 2.0, 3.0);
+}
+
+/* --- shapes-round: 600 spheres, 300 cylinders and 300 cones */
+
+#define ROUND_SHAPES (1200)
+
+static gpointer
+shapes_round_setup (void)
+{
+	ShapesState *st;
+	guint        i;
+
+	st = g_new0 (ShapesState, 1);
+	st->shapes = g_ptr_array_new_with_free_func (g_object_unref);
+	for (i = 0; i < ROUND_SHAPES; i++)
+	{
+		g_autoptr(GrlColor) color = NULL;
+		gfloat              x = (gfloat) (i % 40) - 20.0f;
+		gfloat              z = (gfloat) (i / 40) - 15.0f;
+
+		color = grl_color_new ((guint8) (i * 7), (guint8) (i * 13), (guint8) (i * 29), 255);
+		if (i % 2 == 0)
+			g_ptr_array_add (st->shapes, lrg_sphere3d_new_full (x, 0.0f, z, 0.4f, color));
+		else if (i % 4 == 1)
+			g_ptr_array_add (st->shapes,
+			                 lrg_cylinder3d_new_full (x, 0.0f, z, 0.3f, 0.8f, 32, color));
+		else
+			g_ptr_array_add (st->shapes,
+			                 lrg_cone3d_new_full (x, 0.0f, z, 0.4f, 0.0f, 0.8f, 32, color));
+	}
+
+	st->camera = grl_camera3d_new ();
+	grl_camera3d_set_position_xyz (st->camera, 0.0f, 20.0f, 30.0f);
+	grl_camera3d_set_target_xyz (st->camera, 0.0f, 0.0f, 0.0f);
+	return st;
+}
+
+/* ==========================================================================
  * graylib-draw: raw graylib 2D draw calls with boxed colours and rects
  * ========================================================================== */
 
@@ -515,6 +980,20 @@ static const BenchScenario scenarios[] = {
 	  tilemap_setup, tilemap_frame, tilemap_teardown },
 	{ "shapes3d", "3000 LrgCube3D shapes in a 3D camera",
 	  shapes_setup, shapes_frame, shapes_teardown },
+	{ "shapes-round", "600 spheres, 300 cylinders, 300 cones in a 3D camera",
+	  shapes_round_setup, shapes_frame, shapes_teardown },
+	{ "static-batch", "3600 boxes in 90 static batch chunks (tiles), walking camera",
+	  static_batch_setup, static_batch_frame, world_teardown },
+	{ "terrain", "256 terrain chunks and 256 water patches, walking camera",
+	  terrain_setup, terrain_frame, world_teardown },
+	{ "billboards", "60000 settled swaying billboards, walking camera",
+	  billboards_setup, billboards_frame, world_teardown },
+	{ "grass", "~150000 grass blades, walking camera",
+	  grass_setup, grass_frame, world_teardown },
+	{ "world-shadows", "lit batch + terrain + billboards, 14 shadow passes, light grid",
+	  world_shadows_setup, world_shadows_frame, world_teardown },
+	{ "light-grid", "light set apply, 256 lights in a 32x32x4 grid, still camera",
+	  light_grid_setup, light_grid_frame, world_teardown },
 	{ "graylib-draw", "20000 graylib rectangle/texture draws + 200 texts",
 	  grl_draw_setup, grl_draw_frame, grl_draw_teardown },
 	{ "gui", "immediate-mode GUI panel, 64 rows of widgets",
