@@ -157,6 +157,8 @@ lrg_vr_stub_set_controller_buttons (hmd, LRG_VR_HAND_RIGHT, LRG_VR_CONTROLLER_BU
 :END:
 The OpenXR backend binds to the GL context current at =initialize()= (GLX through =XR_KHR_opengl_enable=, or EGL through =XR_MNDX_egl_enable=), renders through one swapchain per eye and reads the controllers through an action set.  It is compiled when =OPENXR=auto= (the default) finds =pkg-config openxr= (Fedora: =openxr-devel=; the loader at run time is =openxr-libs=); otherwise the type exists and =initialize()= fails with =LRG_VR_ERROR_NOT_AVAILABLE=.
 
+Binding to EGL (GLFW on Wayland: the Steam Frame's gamescope session) has two traps, both handled: GLFW opens libEGL with =dlopen= locally, so the EGL entry points are looked up in the already-loaded library (=RTLD_NOLOAD=) when the global scope lacks them; and SteamVR refuses =xrCreateSession= (=XR_ERROR_GRAPHICS_REQUIREMENTS_CALL_MISSING=) unless =xrGetOpenGLGraphicsRequirementsKHR= was called first, on the EGL path too.
+
 =lrg_openxr_service_probe (app_name, &runtime, &system, &error)= checks without a GL context and without a session that a headset can be used: an OpenXR build, an active runtime (the loader's =active_runtime.json= or =XR_RUNTIME_JSON=), OpenGL or EGL support and a head-mounted display system.  It fails with =LRG_VR_ERROR_NOT_AVAILABLE= (no build, no runtime, no GL) or =LRG_VR_ERROR_HMD_NOT_FOUND= (a runtime with no headset connected), so a game can refuse =--vr= before opening its window.
 
 **** Composition layers
