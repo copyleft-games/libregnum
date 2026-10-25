@@ -23,7 +23,7 @@
 
 ;;; Commentary:
 
-;; First-party Emacs integration for `lrg-editor', the libregnum level,
+;; First-party Emacs integration for `lrgeditor', the libregnum level,
 ;; scene and world editor.
 ;;
 ;; The editor serves a JSON-lines protocol on a Unix socket
@@ -47,7 +47,7 @@
 ;;
 ;;   (require 'libregnum)
 ;;   (libregnum-global-mode 1)          ; C-c L prefix, auto-mode for .rlevel
-;;   M-x libregnum-start-editor RET     ; or start lrg-editor yourself, then
+;;   M-x libregnum-start-editor RET     ; or start lrgeditor yourself, then
 ;;   M-x libregnum-connect RET
 ;;
 ;; In the editor, set Preferences > External Editor to "Emacs (client)"
@@ -70,7 +70,7 @@
   :group 'tools
   :prefix "libregnum-")
 
-(defcustom libregnum-editor-program "lrg-editor"
+(defcustom libregnum-editor-program "lrgeditor"
   "The libregnum editor executable."
   :type 'string)
 
@@ -260,7 +260,7 @@ Signals an error when the editor replies with one."
            (read-file-name "Editor socket: " libregnum-socket-directory nil t))))
   (let ((path (or socket (libregnum-find-socket))))
     (unless path
-      (user-error "No libregnum editor found in %s (start lrg-editor first)" libregnum-socket-directory))
+      (user-error "No libregnum editor found in %s (start lrgeditor first)" libregnum-socket-directory))
     (libregnum-disconnect)
     (setq libregnum--process
           (make-network-process :name "libregnum"
@@ -299,7 +299,7 @@ Signals an error when the editor replies with one."
 
 ;;;###autoload
 (defun libregnum-start-editor (target &optional headless)
-  "Start `lrg-editor' on TARGET (a project folder or level) and connect.
+  "Start `lrgeditor' on TARGET (a project folder or level) and connect.
 With a prefix argument (HEADLESS), run it without a window."
   (interactive
    (list (read-file-name "Project folder or level: " nil default-directory t)
@@ -309,15 +309,15 @@ With a prefix argument (HEADLESS), run it without a window."
                        (list "--socket" socket)
                        (when headless (list "--headless"))
                        (list (expand-file-name target))))
-         (proc (apply #'start-process "lrg-editor" (get-buffer-create "*lrg-editor*")
+         (proc (apply #'start-process "lrgeditor" (get-buffer-create "*lrgeditor*")
                       libregnum-editor-program args))
          (deadline (+ (float-time) 10.0)))
     (set-process-query-on-exit-flag proc nil)
     (while (and (not (file-exists-p socket)) (process-live-p proc) (< (float-time) deadline))
       (accept-process-output proc 0.1))
     (unless (file-exists-p socket)
-      (pop-to-buffer "*lrg-editor*")
-      (error "libregnum: the editor did not start (see *lrg-editor*)"))
+      (pop-to-buffer "*lrgeditor*")
+      (error "libregnum: the editor did not start (see *lrgeditor*)"))
     (libregnum-connect socket)))
 
 (defun libregnum-status ()

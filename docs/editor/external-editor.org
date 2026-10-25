@@ -28,7 +28,7 @@ The launcher is =LrgExternalEditor= (=src/editor/lrg-external-editor.h=); its co
 - a preset id -- one of the table below.
 - =custom= -- the template in =external-editor-command=.
 
-=lrg-editor --editor ID-OR-TEMPLATE= overrides the choice for one session.
+=lrgeditor --editor ID-OR-TEMPLATE= overrides the choice for one session.
 
 ** Presets
 :PROPERTIES:

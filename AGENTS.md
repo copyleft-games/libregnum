@@ -38,7 +38,7 @@ libregnum/
 │   ├── ui/                   # 8 widgets, 3 layouts, Theme, Canvas
 │   ├── gui/                  # Immediate-mode GUI (GuiContext, DrawList, Dock, raylib backend); the editor is drawn with it
 │   ├── editor/               # Level/Node authoring, LrgEditor (undo, selection), math, gizmo, settings, external editor, IPC server, actions, validation
-│   │   └── ui/               # LrgEditorApp: the lrg-editor application (panels, viewport render, dialogs, play mode)
+│   │   └── ui/               # LrgEditorApp: the lrgeditor application (panels, viewport render, dialogs, play mode)
 │   ├── tilemap/              # Tileset, TilemapLayer, Tilemap
 │   ├── dialog/               # DialogNode, DialogTree, DialogRunner
 │   ├── quest/                # QuestDef, QuestObjective, QuestInstance, QuestLog, QuestChain
@@ -599,9 +599,9 @@ bounds", "Cost of a page").
   implementation produced (`tests/test-mmo-replicator.c` keeps it as a
   reference model and fuzzes both; its benchmark prints ms a cycle).
 
-### Editor Application (`editor/ui/`, `gui/`, `launcher/lrg-editor.c`)
+### Editor Application (`editor/ui/`, `gui/`, `launcher/lrgeditor.c`)
 
-- `lrg-editor` is built by default (`BUILD_EDITOR_UI=1`); the app is `LrgEditorApp`, split across `src/editor/ui/lrg-editor-*.c` with shared state in `lrg-editor-app-private.h` (internal functions are `G_GNUC_INTERNAL`, prefixed `editor_`).
+- `lrgeditor` is built by default (`BUILD_EDITOR_UI=1`); the app is `LrgEditorApp`, split across `src/editor/ui/lrg-editor-*.c` with shared state in `lrg-editor-app-private.h` (internal functions are `G_GNUC_INTERNAL`, prefixed `editor_`).
 - Everything the UI does is an action (`lrg-editor-app-actions.c`, `LrgEditorActions`): add new features as actions so they get a menu entry, palette entry, rebindable shortcut and `action.run` over IPC for free.
 - The app runs headless frame by frame (`lrg_editor_app_frame()` with a synthetic `LrgGuiInput`); add app tests to `tests/test-editor-app.c`. In tests, release keys after a press (`input.key_down[key] = FALSE`) or the next press counts as a repeat.
 - **raylib `bool` under gnu89**: `<raylib.h>` without `<stdbool.h>` typedefs `bool` as an int-sized enum while raylib returns/stores a one-byte `_Bool`, so callers read garbage (this made `IsMouseButtonDown()` always "held": the editor's menus never opened and the camera never rotated; `RayCollision.hit` and `Music.looping` read padding). `BASE_CFLAGS` now has `-include stdbool.h` and `libregnum.h` includes it first; new code needs nothing special. `src/gui/lrg-gui-raylib-private.h` asserts `sizeof (bool) == 1`.
@@ -610,6 +610,7 @@ bounds", "Cost of a page").
 - Viewport rendering (`lrg-editor-render.c`) uses raw raylib/rlgl with matrices from `LrgEditorView`; raylib `Matrix` fields are named by storage index but declared in row order, so convert by name (`to_matrix`/`from_matrix`), never `memcpy`. `raymath.h` is not gnu89-clean; do not include it.
 - `g_ptr_array_copy (src, NULL, NULL)` inherits `src`'s free function: copying a node's children that way and freeing the copy unrefs the live nodes. Pass a ref-copy function or use the original array.
 - Unix socket paths must fit `sun_path` (107 bytes); the server rejects longer ones. Keep test sockets under `$XDG_RUNTIME_DIR`.
+- `lrgeditorctl` (`src/editorctl/`) is the kubectl-like CLI over the IPC socket and the MCP bridge (`lrgeditorctl mcp`); `lrgeditor --mcp` serves the same tool table in-process (it reserves stdout: never print to fd 1 on paths that run under it). Add MCP tools as rows in `src/editorctl/lrgeditorctl-mcp.c`. `make test-editorctl` exercises every verb and both MCP servers. The agent skill lives in `skills/skill-libregnum/` (`make install-skills`); keep it in sync with the CLI and tools.
 - The Emacs package is `editors/emacs/libregnum.el` (+ `libregnum-tests.el`); `make test-emacs` byte-compiles with warnings as errors and runs ERT, including a headless editor end to end.
 - Docs: `docs/editor/editor-app.org`, `external-editor.org`, `emacs.org`, `ipc-protocol.org`, `docs/modules/gui/index.org`.
 

@@ -14,7 +14,7 @@
 *[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Emacs Integration
 #+end_quote
 
-=editors/emacs/libregnum.el= connects Emacs to a running =lrg-editor= over its IPC socket. Once connected:
+=editors/emacs/libregnum.el= connects Emacs to a running =lrgeditor= over its IPC socket. Once connected:
 
 - files the editor would hand to =$EDITOR= (scripts, level YAML, manifests) open in this Emacs at the right line and column, in-process;
 - the level shows as an outline buffer kept in sync with the editor's selection, where nodes can be selected, inspected, renamed, created, duplicated, deleted and edited;
@@ -53,7 +53,7 @@ Doom Emacs (=packages.el= / =config.el=):
 :CUSTOM_ID: connecting
 :END:
 - =M-x libregnum-connect= connects to the most recently started editor (newest =editor-*.sock= in =$XDG_RUNTIME_DIR/libregnum/=); with =C-u= it asks for a socket. Set =libregnum-socket= to always use one path.
-- =M-x libregnum-start-editor= starts =lrg-editor= on a project folder or level with a private socket and connects; with =C-u= the editor runs headless (no window: Emacs becomes the front end).
+- =M-x libregnum-start-editor= starts =lrgeditor= on a project folder or level with a private socket and connects; with =C-u= the editor runs headless (no window: Emacs becomes the front end).
 - =M-x libregnum-status= shows the level, dirty state, node and selection counts and the active tool.
 - =M-x libregnum-disconnect= closes the connection. The mode-line shows =LRG= while connected.
 
@@ -133,7 +133,7 @@ Hand-editing a level is a first-class workflow: save the file and the editor rel
 
 | Variable                         | Default                         | Meaning                                       |
 |----------------------------------+---------------------------------+-----------------------------------------------|
-| =libregnum-editor-program=       | ="lrg-editor"=                  | Editor executable                             |
+| =libregnum-editor-program=       | ="lrgeditor"=                  | Editor executable                             |
 | =libregnum-editor-arguments=     | =nil=                           | Extra arguments for =libregnum-start-editor=  |
 | =libregnum-socket=               | =nil=                           | Fixed socket (nil: newest editor)             |
 | =libregnum-socket-directory=     | =$XDG_RUNTIME_DIR/libregnum=    | Where editors put their sockets               |
@@ -168,4 +168,4 @@ Hand-editing a level is a first-class workflow: save the file and the editor rel
 :PROPERTIES:
 :CUSTOM_ID: tests
 :END:
-=make test-emacs= byte-compiles the package with warnings as errors and runs =editors/emacs/libregnum-tests.el=: protocol tests against a fake editor served from Emacs (hello capabilities, requests and errors, open-file and log events, the outline, node completion, socket discovery, the level mode) and an end-to-end session with a real headless =lrg-editor= (create, undo, redo, save, check the file).
+=make test-emacs= byte-compiles the package with warnings as errors and runs =editors/emacs/libregnum-tests.el=: protocol tests against a fake editor served from Emacs (hello capabilities, requests and errors, open-file and log events, the outline, node completion, socket discovery, the level mode) and an end-to-end session with a real headless =lrgeditor= (create, undo, redo, save, check the file).
