@@ -23,7 +23,11 @@ The order is ids, then name, then the Steam Deck rule:
 
 1. The ids (=lrg_input_get_gamepad_ids()=). The real gamepad source has no ids from raylib, so it reads them from Linux sysfs: =lrg_controller_probe_usb_ids()= finds =class/input/input*= whose =name= equals the name raylib reports and reads =id/vendor= and =id/product=. This works for USB, Bluetooth and Steam Input pads whatever index GLFW gave them. Other systems fall through to the name.
 2. The name (case-insensitive substrings, most specific first). The bare "Wireless Controller" the Linux kernel names a DualShock 4 is a DualShock 4 only after every Xbox name was ruled out ("Xbox Wireless Controller" is an Xbox One pad).
-3. On a Steam Deck host, a pad that is only the Xbox 360 shaped virtual pad Steam Input presents (or one nothing matched) is =steam-deck=: those are the Deck's own controls. A pad that names itself as something else keeps its family. The host is =SteamDeck=1= in the environment (Steam sets it for games on the Deck) or the DMI product name =Jupiter= / =Galileo= with board vendor =Valve= (=lrg_controller_is_steam_deck_host()=).
+3. On a Steam Deck or a Steam Frame host, a pad that is only the Xbox 360 shaped virtual pad Steam Input presents (or one nothing matched) is =steam-deck=: those are the Deck's own controls (=steam-frame= on a Frame: the Frame's two controllers). A pad that names itself as something else keeps its family. =lrg_controller_host_family()= says which host this is, and =lrg_controller_family_detect_on_host()= takes it (=lrg_controller_family_detect()= is the same with a Deck flag).
+   - Deck: =SteamDeck=1= in the environment (Steam sets it for games on the Deck) or the DMI product name =Jupiter= / =Galileo= with board vendor =Valve= (=lrg_controller_is_steam_deck_host()=).
+   - Frame: =ID=steamos= with =VARIANT_ID=vr= in =/etc/os-release= or =/usr/lib/os-release=, or in the host's copies under =/run/host= so a game in a distrobox or toolbox on the Frame knows it too (=lrg_controller_is_steam_frame_host()=). The Frame is an arm64 machine with no DMI. It is checked before the Deck, since Steam may set =SteamDeck=1= on the Frame as well.
+
+GLFW, and so raylib, takes any input device with keys and absolute axes for a joystick. On a Steam Frame the ambient light sensor (=als31300=) and a Bluetooth keyboard with an axis are slots 0 and 1 ahead of Steam Input's pad, so a game that uses the first slot reads a sensor. =lrg_controller_probe_is_gamepad()= reads the device's =capabilities/key= from sysfs and says whether it has any joystick or gamepad button (=BTN_JOYSTICK= 0x120 to =BTN_THUMBR= 0x13e); a game skips the slots it rejects. The key bitmap is printed as long words, most significant first, so bit /n/ is bit /n/ mod 64 of the word /n/ / 64 counted from the end. A device with several nodes of one name (a pad and its motion sensors) is a pad when any of them has the buttons; a name sysfs does not know is taken as a pad.
 
 The environment variable =LRG_CONTROLLER_FAMILY= (a nick) forces the family of every monitor created afterwards; =lrg_controller_monitor_set_family_override()= does it for one monitor (a "my controller is..." menu item).
 
@@ -42,13 +46,22 @@ The environment variable =LRG_CONTROLLER_FAMILY= (a nick) forces the family of e
 | 057e Nintendo | 2006 2007 2009 200e | switch-pro |
 | 28de Valve | 1102 1142 (the first Steam Controller), 1302 1303 1304 1305 (the Steam Controller of 2026: wired, Bluetooth, the puck, the Steam Machine's receiver; Linux =hid-ids.h=, SDL =controller_list.h=) | steam-controller |
 | 28de | 1205 | steam-deck |
-| 28de | 11ff (Steam Virtual Gamepad) | xbox-360 |
+| 28de | 11ff (Steam Virtual Gamepad) | xbox-360 (the host's family on a Deck or a Frame) |
+| 28de | 11e0 ("Steam Frame Controllers", SteamVR's =/steamvr/virtual= device on the Frame) | steam-frame |
 
-*** Steam Frame (unverified)
+*** Steam Frame
 :PROPERTIES:
 :CUSTOM_ID: steam-frame
 :END:
-No Steam Frame hardware or documentation of its controllers' product ids was available when this was written, and none was found when it was checked again (October 2026): the Linux kernel (=hid-ids.h=, =hid-steam.c=), SDL (=usb_ids.h=, =controller_list.h=) and Valve's =steam-devices= udev rules list no gamepad id for the Frame or its controllers (the only Frame id upstream is its Wi-Fi adapter, 28de:2432, not a pad); its controllers most likely reach a game through the headset and SteamVR / Steam Input rather than as a HID pad of their own.  The new 0x13xx Valve ids are the 2026 Steam Controller's, matched above. A pad is =steam-frame= only when its name says "steam frame" / "frame controller" (with or without Valve's vendor id 28de); an unknown Valve product id without such a name is =generic=, never guessed. Inside Steam's game mode the Frame's controllers reach a game as Steam Input's virtual pad, which reads as =xbox-360= away from a Deck; set =LRG_CONTROLLER_FAMILY=steam-frame= (or the game's own override option) there. The glyph labels for the Frame follow the Deck's L1/L2/R1/R2 and call the grips "Left Grip" and "Right Grip"; check them against real hardware.
+Checked on a Steam Frame (SteamOS, =VARIANT_ID="vr"=, =VERSION_ID=0.4.5=, October 2026). The Frame's two controllers are not HID pads a game can open: they pair with the headset and reach SteamVR, which hands them to Steam as one virtual device, "Steam Frame Controllers" (28de:11e0, =/steamvr/virtual=). Steam Input then gives a game the usual uinput pad, "Microsoft X-Box 360 pad 0" (28de:11ff), which GLFW maps as "Steam Virtual Gamepad". What the game sees in =/dev/input= on the Frame:
+| Slot | Device | Ids | A pad? |
+|------+--------+-----+--------|
+| 0 | =als31300= (ambient light sensor) | 0000:0000 | no: no keys |
+| 1 | a Bluetooth keyboard, if paired (here an MX Keys Mini) | 046d:b369 | no: no joystick or gamepad buttons |
+| 2 | =Microsoft X-Box 360 pad 0= | 28de:11ff | yes |
+So a game must skip non-pads (=lrg_controller_probe_is_gamepad()=) and name the virtual pad after the host (=steam-frame=). The upstream lists (Linux =hid-ids.h= / =hid-steam.c=, SDL, Valve's =steam-devices= rules) still have no pad id for the Frame; 28de:11e0 is matched because the device does show up under that id when a process sees SteamVR's devices directly. An unknown Valve product id without a Frame name is still =generic=, never guessed.
+
+Steam Input decides what the virtual pad sends from the focused app's controller configuration. A program started from a terminal or the desktop (not as a Steam game) gets the desktop configuration, which maps the controllers to mouse and keyboard and leaves the pad silent; add the game to Steam as a non-Steam game (=steamos-add-to-steam=) or pick a gamepad template for it. The glyph labels for the Frame follow the Deck's L1/L2/R1/R2 and call the grips "Left Grip" and "Right Grip".
 
 ** Glyphs
 :PROPERTIES:
@@ -96,4 +109,4 @@ Raylib and GLFW have no rumble API. =LrgControllerRumble= finds the pad's input 
 :PROPERTIES:
 :CUSTOM_ID: tests
 :END:
-=tests/test-controller.c= covers detection by name and ids, the sysfs probe against a fake tree, Deck host detection, glyph tables, preset lookup and maps driven through =LrgInputMock=, the monitor's connect/swap/remove signals, the environment override and the rumble failure paths.
+=tests/test-controller.c= covers detection by name and ids, the sysfs probe against a fake tree, Deck and Frame host detection (fake DMI and os-release trees, including =/run/host=), the gamepad check against fake =capabilities/key= files shaped like the Frame's, glyph tables, preset lookup and maps driven through =LrgInputMock=, the monitor's connect/swap/remove signals, the environment override and the rumble failure paths.

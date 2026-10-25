@@ -189,6 +189,11 @@ family_from_ids (guint16 vendor,
 		case 0x1102: case 0x1142:
 			return LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER;
 
+		/* the Steam Frame's two controllers as SteamVR hands them to
+		 * Steam ("Steam Frame Controllers", /steamvr/virtual) */
+		case 0x11e0:
+			return LRG_CONTROLLER_FAMILY_STEAM_FRAME;
+
 		/*
 		 * the Steam Controller (2026, "Ibex" / "Triton"): wired, Bluetooth,
 		 * the "Proteus" puck and the Steam Machine's "Nereid" receiver
@@ -293,6 +298,17 @@ lrg_controller_family_detect (const gchar *name,
                               guint16      product,
                               gboolean     steam_deck_host)
 {
+	return lrg_controller_family_detect_on_host (name, vendor, product,
+	                                             steam_deck_host ? LRG_CONTROLLER_FAMILY_STEAM_DECK
+	                                                             : LRG_CONTROLLER_FAMILY_UNKNOWN);
+}
+
+LrgControllerFamily
+lrg_controller_family_detect_on_host (const gchar         *name,
+                                      guint16              vendor,
+                                      guint16              product,
+                                      LrgControllerFamily  host)
+{
 	g_autofree gchar *lower = NULL;
 	LrgControllerFamily family;
 	gboolean virtual_pad;
@@ -322,14 +338,16 @@ lrg_controller_family_detect (const gchar *name,
 	/*
 	 * On a Deck, Steam Input hands a game one virtual pad that is Xbox 360
 	 * shaped (or unnamed) for the Deck's own controls and for any pad
-	 * plugged in: those are the Deck.  A pad that names itself as something
-	 * else (a DualSense over USB the game sees directly) keeps its family.
+	 * plugged in: those are the Deck.  On a Frame the same pad stands for
+	 * the Frame's two controllers (Steam builds it from SteamVR's "Steam
+	 * Frame Controllers").  A pad that names itself as something else (a
+	 * DualSense over USB the game sees directly) keeps its family.
 	 */
 	virtual_pad = family == LRG_CONTROLLER_FAMILY_UNKNOWN ||
 	              family == LRG_CONTROLLER_FAMILY_XBOX_360 ||
 	              family == LRG_CONTROLLER_FAMILY_STEAM_CONTROLLER;
-	if (steam_deck_host && virtual_pad)
-		return LRG_CONTROLLER_FAMILY_STEAM_DECK;
+	if ((host == LRG_CONTROLLER_FAMILY_STEAM_DECK || host == LRG_CONTROLLER_FAMILY_STEAM_FRAME) && virtual_pad)
+		return host;
 
 	if (family == LRG_CONTROLLER_FAMILY_UNKNOWN)
 		return LRG_CONTROLLER_FAMILY_GENERIC;
@@ -387,6 +405,174 @@ gboolean
 lrg_controller_is_steam_deck_host (void)
 {
 	return lrg_controller_is_steam_deck_host_at (NULL);
+}
+
+/* whether the os-release file at @path says SteamOS's "vr" variant */
+static gboolean
+os_release_is_frame (const gchar *path)
+{
+	g_autofree gchar *contents = NULL;
+	g_auto(GStrv) lines = NULL;
+	gboolean steamos;
+	gboolean vr;
+	guint i;
+
+	if (!g_file_get_contents (path, &contents, NULL, NULL))
+		return FALSE;
+
+	steamos = FALSE;
+	vr = FALSE;
+	lines = g_strsplit (contents, "\n", -1);
+	for (i = 0; lines[i] != NULL; i++)
+	{
+		g_autofree gchar *value = NULL;
+		gchar *eq;
+
+		eq = strchr (lines[i], '=');
+		if (eq == NULL)
+			continue;
+		/* the value without its quotes */
+		value = g_strstrip (g_strdup (eq + 1));
+		if (value[0] == '"' || value[0] == '\'')
+		{
+			gsize len = strlen (value);
+
+			if (len >= 2)
+			{
+				memmove (value, value + 1, len - 2);
+				value[len - 2] = '\0';
+			}
+		}
+		*eq = '\0';
+		if (g_strcmp0 (g_strstrip (lines[i]), "ID") == 0 && g_ascii_strcasecmp (value, "steamos") == 0)
+			steamos = TRUE;
+		else if (g_strcmp0 (lines[i], "VARIANT_ID") == 0 && g_ascii_strcasecmp (value, "vr") == 0)
+			vr = TRUE;
+	}
+
+	return steamos && vr;
+}
+
+gboolean
+lrg_controller_is_steam_frame_host_at (const gchar *root)
+{
+	static const gchar * const files[] = {
+		"etc/os-release", "usr/lib/os-release", "run/host/etc/os-release", "run/host/usr/lib/os-release"
+	};
+	guint i;
+
+	if (root == NULL)
+		root = "/";
+
+	/* this system's, then the host's of a container */
+	for (i = 0; i < G_N_ELEMENTS (files); i++)
+	{
+		g_autofree gchar *path = g_build_filename (root, files[i], NULL);
+
+		if (os_release_is_frame (path))
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
+gboolean
+lrg_controller_is_steam_frame_host (void)
+{
+	return lrg_controller_is_steam_frame_host_at (NULL);
+}
+
+LrgControllerFamily
+lrg_controller_host_family (void)
+{
+	/* the Frame first: Steam may set SteamDeck=1 for its games there too */
+	if (lrg_controller_is_steam_frame_host ())
+		return LRG_CONTROLLER_FAMILY_STEAM_FRAME;
+	if (lrg_controller_is_steam_deck_host ())
+		return LRG_CONTROLLER_FAMILY_STEAM_DECK;
+
+	return LRG_CONTROLLER_FAMILY_UNKNOWN;
+}
+
+/*
+ * key_bits_have_buttons:
+ * Whether a sysfs capabilities/key line ("7cdb000000000000 0 0 0 0":
+ * long words, most significant first) sets a bit of BTN_JOYSTICK (0x120)
+ * .. BTN_THUMBR (0x13e).
+ */
+static gboolean
+key_bits_have_buttons (const gchar *line)
+{
+	g_auto(GStrv) words = NULL;
+	guint n;
+	guint bits;
+	guint bit;
+
+	words = g_strsplit_set (line, " \t", -1);
+	n = g_strv_length (words);
+	/* a word of 64 bits on 64-bit kernels; the words' count says which */
+	bits = 64;
+	for (bit = 0x120; bit <= 0x13e; bit++)
+	{
+		guint index;
+		guint64 word;
+
+		index = bit / bits;
+		if (index >= n)
+			return FALSE;
+		/* the last word holds bits 0 .. 63 */
+		if (!g_ascii_string_to_unsigned (words[n - 1 - index], 16, 0, G_MAXUINT64, &word, NULL))
+			return FALSE;
+		if ((word >> (bit % bits)) & 1)
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
+gboolean
+lrg_controller_probe_is_gamepad (const gchar *name,
+                                 const gchar *sysfs_root)
+{
+	g_autofree gchar *input_dir = NULL;
+	g_autoptr(GDir) dir = NULL;
+	const gchar *entry;
+	gboolean found;
+
+	if (name == NULL || name[0] == '\0')
+		return TRUE;
+	if (sysfs_root == NULL)
+		sysfs_root = "/sys";
+
+	input_dir = g_build_filename (sysfs_root, "class", "input", NULL);
+	dir = g_dir_open (input_dir, 0, NULL);
+	if (dir == NULL)
+		return TRUE;
+
+	/* every device of that name (a pad and its motion sensors share
+	 * one): a pad when any of them has the buttons */
+	found = FALSE;
+	while ((entry = g_dir_read_name (dir)) != NULL)
+	{
+		g_autofree gchar *name_path = NULL;
+		g_autofree gchar *dev_name = NULL;
+		g_autofree gchar *key_path = NULL;
+		g_autofree gchar *keys = NULL;
+
+		if (!g_str_has_prefix (entry, "input"))
+			continue;
+		name_path = g_build_filename (input_dir, entry, "name", NULL);
+		dev_name = read_sysfs_line (name_path);
+		if (dev_name == NULL || g_strcmp0 (dev_name, name) != 0)
+			continue;
+		found = TRUE;
+		key_path = g_build_filename (input_dir, entry, "capabilities", "key", NULL);
+		keys = read_sysfs_line (key_path);
+		if (keys != NULL && key_bits_have_buttons (keys))
+			return TRUE;
+	}
+
+	return !found;
 }
 
 gboolean
@@ -801,7 +987,7 @@ struct _LrgControllerMonitor
 	guint16              vendor;
 	guint16              product;
 	gchar               *name;            /* owned, NULL when none */
-	gboolean             steam_deck_host;
+	LrgControllerFamily  host_family;     /* the Deck or the Frame, else UNKNOWN */
 	gboolean             dirty;           /* detect again at the next poll */
 };
 
@@ -862,7 +1048,7 @@ lrg_controller_monitor_init (LrgControllerMonitor *self)
 	self->family = LRG_CONTROLLER_FAMILY_UNKNOWN;
 	self->override_family = LRG_CONTROLLER_FAMILY_UNKNOWN;
 	self->dirty = TRUE;
-	self->steam_deck_host = lrg_controller_is_steam_deck_host ();
+	self->host_family = lrg_controller_host_family ();
 
 	/* the environment forces a family for hardware the tables lack */
 	env = g_getenv (LRG_CONTROLLER_ENV_FAMILY);
@@ -932,8 +1118,8 @@ lrg_controller_monitor_poll (LrgControllerMonitor *self)
 	else if (self->override_family != LRG_CONTROLLER_FAMILY_UNKNOWN)
 		family = self->override_family;
 	else
-		family = lrg_controller_family_detect (name, self->vendor, self->product,
-		                                       self->steam_deck_host);
+		family = lrg_controller_family_detect_on_host (name, self->vendor, self->product,
+		                                               self->host_family);
 
 	/* chunk 4: tell the game */
 	old_family = self->family;
@@ -990,7 +1176,7 @@ lrg_controller_monitor_get_steam_deck_host (LrgControllerMonitor *self)
 {
 	g_return_val_if_fail (LRG_IS_CONTROLLER_MONITOR (self), FALSE);
 
-	return self->steam_deck_host;
+	return self->host_family == LRG_CONTROLLER_FAMILY_STEAM_DECK;
 }
 
 void
@@ -999,7 +1185,25 @@ lrg_controller_monitor_set_steam_deck_host (LrgControllerMonitor *self,
 {
 	g_return_if_fail (LRG_IS_CONTROLLER_MONITOR (self));
 
-	self->steam_deck_host = steam_deck_host;
+	self->host_family = steam_deck_host ? LRG_CONTROLLER_FAMILY_STEAM_DECK : LRG_CONTROLLER_FAMILY_UNKNOWN;
+	self->dirty = TRUE;
+}
+
+LrgControllerFamily
+lrg_controller_monitor_get_host_family (LrgControllerMonitor *self)
+{
+	g_return_val_if_fail (LRG_IS_CONTROLLER_MONITOR (self), LRG_CONTROLLER_FAMILY_UNKNOWN);
+
+	return self->host_family;
+}
+
+void
+lrg_controller_monitor_set_host_family (LrgControllerMonitor *self,
+                                        LrgControllerFamily   host)
+{
+	g_return_if_fail (LRG_IS_CONTROLLER_MONITOR (self));
+
+	self->host_family = host;
 	self->dirty = TRUE;
 }
 

@@ -594,8 +594,7 @@ lrg_input_gamepad_detect_family (LrgInputGamepad *self,
 	product = 0;
 	lrg_controller_probe_usb_ids (name, NULL, &vendor, &product);
 
-	return lrg_controller_family_detect (name, vendor, product,
-	                                     lrg_controller_is_steam_deck_host ());
+	return lrg_controller_family_detect_on_host (name, vendor, product, lrg_controller_host_family ());
 }
 
 /*
