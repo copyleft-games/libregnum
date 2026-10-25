@@ -1,5 +1,5 @@
 #+title: The libregnum Editor Application
-#+description: lrg-editor: the level, scene and world editor built from libregnum itself
+#+description: lrgeditor: the level, scene and world editor built from libregnum itself
 #+authors: Zach Podbielniak
 #+categories: libregnum editor
 #+created: 2026-10-24T22:10:00-04:00
@@ -14,9 +14,9 @@
 *[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Editor Application
 #+end_quote
 
-=lrg-editor= is the libregnum editor: a level, scene and world editor in the spirit of the Unity, Godot and Unreal editors, built entirely from libregnum. Its UI is drawn by libregnum's own immediate-mode GUI toolkit (=LrgGuiContext=, =src/gui/=), its viewport renders with the engine's raylib backend, its documents are =LrgEditor= / =LrgLevel= and its play mode runs an =LrgWorld=. Code and data files open in your own editor (=$EDITOR= by default, with first-party Emacs integration), and every editor feature can be driven over a local socket.
+=lrgeditor= is the libregnum editor: a level, scene and world editor in the spirit of the Unity, Godot and Unreal editors, built entirely from libregnum. Its UI is drawn by libregnum's own immediate-mode GUI toolkit (=LrgGuiContext=, =src/gui/=), its viewport renders with the engine's raylib backend, its documents are =LrgEditor= / =LrgLevel= and its play mode runs an =LrgWorld=. Code and data files open in your own editor (=$EDITOR= by default, with first-party Emacs integration), and every editor feature can be driven over a local socket.
 
-The application lives in =src/editor/ui/= (=LrgEditorApp=, public header =lrg-editor-app.h=) and the program in =src/launcher/lrg-editor.c=.
+The application lives in =src/editor/ui/= (=LrgEditorApp=, public header =lrg-editor-app.h=) and the program in =src/launcher/lrgeditor.c=.
 
 ** Building and running
 :PROPERTIES:
@@ -25,8 +25,8 @@ The application lives in =src/editor/ui/= (=LrgEditorApp=, public header =lrg-ed
 The editor is built by default (=BUILD_EDITOR=1=, =BUILD_EDITOR_UI=1= in =config.mk=):
 
 #+begin_src sh
-make -j"$(nproc)"                 # library, GIR, lrgldr and lrg-editor
-make lrg-editor                   # just the editor program
+make -j"$(nproc)"                 # library, GIR, lrgldr and lrgeditor
+make lrgeditor                   # just the editor program
 make test-emacs                   # Emacs package byte-compile + ERT suite
 make test-editor-x11              # real window + real X input (Xvfb, xdotool) checked over IPC
 make BUILD_EDITOR_UI=0            # embedded hosts that bring their own UI
@@ -47,15 +47,16 @@ Fedora packages needed beyond the base libregnum build (fold these into the imag
 Run it on a project folder or a level:
 
 #+begin_src sh
-lrg-editor ~/games/mygame                       # project folder
-lrg-editor levels/arena.rlevel                  # a level; its folder is the root
-lrg-editor -p ~/games/mygame -l levels/arena.rlevel
-lrg-editor --new-project ~/games/newgame --name "New Game"
-lrg-editor --editor emacsclient ~/games/mygame  # external editor for this session
-lrg-editor --editor 'codium --goto {file}:{line}:{col}' .
-lrg-editor --module build/libmygame.so .        # register the game's component types
-lrg-editor --headless --socket /tmp/lrg.sock .  # IPC server only, no window
-lrg-editor --validate levels/arena.rlevel       # CI: problems on stdout, status 1 on errors
+lrgeditor ~/games/mygame                       # project folder
+lrgeditor levels/arena.rlevel                  # a level; its folder is the root
+lrgeditor -p ~/games/mygame -l levels/arena.rlevel
+lrgeditor --new-project ~/games/newgame --name "New Game"
+lrgeditor --editor emacsclient ~/games/mygame  # external editor for this session
+lrgeditor --editor 'codium --goto {file}:{line}:{col}' .
+lrgeditor --module build/libmygame.so .        # register the game's component types
+lrgeditor --headless --socket /tmp/lrg.sock .  # IPC server only, no window
+lrgeditor --mcp ~/games/mygame                # an AI agent drives it over MCP (stdio)
+lrgeditor --validate levels/arena.rlevel       # CI: problems on stdout, status 1 on errors
 #+end_src
 
 | Option                   | Meaning                                                                   |
@@ -70,6 +71,7 @@ lrg-editor --validate levels/arena.rlevel       # CI: problems on stdout, status
 | =--socket PATH=          | IPC socket (default =$XDG_RUNTIME_DIR/libregnum/editor-PID.sock=)         |
 | =--no-server=            | Do not start the IPC server                                               |
 | =--headless=             | No window; serve IPC until SIGINT/SIGTERM or =editor.quit=                |
+| =--mcp=                  | Serve MCP on stdin/stdout for an AI agent (headless without a display); see [[file:lrgeditorctl.org::#mcp][MCP]] |
 | =--validate=             | Validate the level and exit                                               |
 | =-W=, =-H=               | Initial window size                                                       |
 | =--license=, =--version= | Print and exit                                                            |
@@ -82,7 +84,7 @@ With no project or level, the last project is reopened (=restore-last-session=).
 :END:
 What the established editors offer and where it lives here.
 
-| Feature (Unity / Godot / Unreal)                     | lrg-editor                                                                 |
+| Feature (Unity / Godot / Unreal)                     | lrgeditor                                                                 |
 |------------------------------------------------------+----------------------------------------------------------------------------|
 | Dockable panels, saved layout                        | =LrgGuiDock=: drag tabs to split/merge; layout saved in =editor.yaml=; View > Reset Layout |
 | Scene view: fly, orbit, pan, zoom, frame             | Right-drag fly + WASDQE, Alt+drag orbit, middle pan, wheel zoom, F / Home   |
@@ -313,5 +315,6 @@ The app can also be driven without a window, one frame at a time, with =lrg_edit
 - [[file:external-editor.org][External code editor]] -- =$EDITOR=, presets, templates, terminals
 - [[file:emacs.org][Emacs integration]] -- =libregnum.el=
 - [[file:ipc-protocol.org][IPC protocol]] -- every method and event
+- [[file:lrgeditorctl.org][lrgeditorctl and MCP]] -- kubectl-style control of running editors; AI agents
 - [[file:editor-runtime.org][Editor runtime]] -- =LrgEditor=, commands, selection, gizmo math
 - [[file:../modules/gui/index.org][Immediate-mode GUI]] -- the toolkit the editor is drawn with

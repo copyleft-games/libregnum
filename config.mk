@@ -73,7 +73,7 @@ BUILD_DOCS ?= 0
 # or minimal builds; the rest of the engine builds without it.
 BUILD_EDITOR ?= 1
 
-# Build the standalone editor application (src/editor/ui/ and the lrg-editor
+# Build the standalone editor application (src/editor/ui/ and the lrgeditor
 # binary, needs BUILD_EDITOR). Embedded hosts (e.g. cmacs) that provide their
 # own panels can turn it off with BUILD_EDITOR_UI=0.
 BUILD_EDITOR_UI ?= 1

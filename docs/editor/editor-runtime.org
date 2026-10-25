@@ -6,7 +6,7 @@ This document covers =LrgEditor= (the host-agnostic editor runtime), the undo/re
 command system (=LrgEditorCommand=), the selection model (=LrgEditorSelection=), and
 the host embedding contract (=LrgEditorHost= / =LrgEditorSoftwareHost=). It also covers the headless building blocks every editor frontend shares: viewport math and the =LrgEditorView= camera, ray picking and box selection, the =LrgEditorGizmo= transform controller, the =LrgEditorActions= command registry and level validation (=LrgEditorProblem=).
 
-The full editor application (=lrg-editor=, =LrgEditorApp=) is built on top of this runtime and drawn with libregnum's own immediate-mode GUI (=LrgGuiContext=); it is documented in [[file:editor-app.org][Editor Application]]. Everything in this document is window-less and unit-testable, so an IDE such as cmacs can reuse it without the application.
+The full editor application (=lrgeditor=, =LrgEditorApp=) is built on top of this runtime and drawn with libregnum's own immediate-mode GUI (=LrgGuiContext=); it is documented in [[file:editor-app.org][Editor Application]]. Everything in this document is window-less and unit-testable, so an IDE such as cmacs can reuse it without the application.
 
 #+begin_quote
 *[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Editor Runtime
@@ -1147,7 +1147,7 @@ Signal: =activated= (=const gchar *id=), emitted after an action ran.
 :PROPERTIES:
 :CUSTOM_ID: level-validation
 :END:
-=lrg_editor_validate_level()= checks a level for mistakes that would make it misbehave at runtime or in other tools. The Problems panel, =lrg-editor --validate= and the =level.validate= IPC method all use it. Results are sorted errors first, then in tree order.
+=lrg_editor_validate_level()= checks a level for mistakes that would make it misbehave at runtime or in other tools. The Problems panel, =lrgeditor --validate= and the =level.validate= IPC method all use it. Results are sorted errors first, then in tree order.
 
 #+begin_src C
 g_autoptr(GPtrArray) problems = NULL;
@@ -1221,7 +1221,7 @@ Related bridges: =lrg_level_import_scene_file()= (=lrg-scene-import.h=) loads a 
 :END:
 - [[file:level-model.org][Level Model]] — the document being edited
 - [[file:overview.org][Editor Overview]] — dual-frontend architecture
-- [[file:editor-app.org][Editor Application]] — =lrg-editor= / =LrgEditorApp=, drawn with =LrgGuiContext=
+- [[file:editor-app.org][Editor Application]] — =lrgeditor= / =LrgEditorApp=, drawn with =LrgGuiContext=
 - [[file:external-editor.org][External Editor]] — =LrgEditorSettings= and =LrgExternalEditor=
 - [[file:emacs.org][Emacs Integration]] — =libregnum.el=
 - [[file:ipc-protocol.org][IPC Protocol]] — =LrgEditorServer= methods and events

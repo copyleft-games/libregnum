@@ -22,7 +22,7 @@
 ;;
 ;; The protocol tests use a fake editor served from this Emacs.  The
 ;; end-to-end test starts a real headless editor when $LRG_EDITOR names
-;; the lrg-editor binary (e.g. build/release/lrg-editor); it is skipped
+;; the lrgeditor binary (e.g. build/release/lrgeditor); it is skipped
 ;; otherwise.
 
 ;;; Code:
@@ -224,7 +224,7 @@
           (progn
             (should (= 0 (call-process program nil nil nil "--settings" settings
                                        "--new-project" project "--validate")))
-            (setq proc (start-process "lrg-editor" nil program "--settings" settings
+            (setq proc (start-process "lrgeditor" nil program "--settings" settings
                                       "--headless" "--socket" socket project))
             (should (libregnum-tests--wait (lambda () (file-exists-p socket))))
             (libregnum-connect socket)

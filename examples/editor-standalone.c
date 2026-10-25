@@ -9,7 +9,7 @@
  * Usage:
  *   editor-standalone [file.rlevel]
  *
- * The full editor ships as the `lrg-editor` program; this example shows
+ * The full editor ships as the `lrgeditor` program; this example shows
  * how a tool of your own can host the same LrgEditorApp: create an
  * LrgEditor document, wrap it in the app, load the user's preferences,
  * add a custom action (it appears in menus, the command palette and the

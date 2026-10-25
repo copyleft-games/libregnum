@@ -773,8 +773,14 @@ on_line_read (GObject      *source,
 
 	if (line == NULL)
 	{
-		/* EOF, invalid UTF-8 or a socket error: drop the client. */
-		if (error != NULL && !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+		/* EOF, invalid UTF-8 or a socket error: drop the client. A
+		 * one-shot client (lrgeditorctl) that hangs up with event lines
+		 * still unread resets the connection; that is a normal goodbye. */
+		if (error != NULL && !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED) &&
+		    !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED) &&
+		    !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_BROKEN_PIPE) &&
+		    !(error->domain == G_IO_ERROR && error->code == G_IO_ERROR_FAILED &&
+		      strstr (error->message, "reset by peer") != NULL))
 			g_message ("editor server: client %u: %s", c->id, error->message);
 		client_close (c);
 		client_unref (c);
@@ -1368,8 +1374,9 @@ m_node_find (LrgEditorServer  *self,
 /*
  * apply_visual_params:
  *
- * Applies "kind", "primitive", "asset", "color", "roughness", "metallic"
- * and "params" from @spec onto @visual (creating the material on demand).
+ * Applies "kind", "primitive", "asset", "color", "roughness", "metallic",
+ * "material" {color, roughness, metallic} and "params" from @spec onto
+ * @visual (creating the material on demand).
  */
 static gboolean
 apply_visual_spec (LrgNodeVisual  *visual,
@@ -1401,6 +1408,12 @@ apply_visual_spec (LrgNodeVisual  *visual,
 	}
 	if (param_has (spec, "asset"))
 		lrg_node_visual_set_asset (visual, param_string (spec, "asset"));
+
+	/* "material": {color, roughness, metallic} is accepted as well as the
+	 * flat form (it is how .rlevel files spell it). */
+	if (param_has (spec, "material") && JSON_NODE_HOLDS_OBJECT (json_object_get_member (spec, "material")) &&
+	    !apply_visual_spec (visual, json_object_get_object_member (spec, "material"), error))
+		return FALSE;
 
 	if (param_has (spec, "color") || param_has (spec, "roughness") || param_has (spec, "metallic"))
 	{

@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# Drives a real lrg-editor window with real X input events (Xvfb + xdotool)
+# Drives a real lrgeditor window with real X input events (Xvfb + xdotool)
 # and checks the results over the editor's IPC socket. The headless app
 # tests inject input straight into the GUI; this one goes through raylib
 # and GLFW, which is where a menubar that never opened and a viewport that
@@ -26,12 +26,12 @@
 set -euo pipefail
 
 usage () {
-	echo 'editor-x11-smoke.sh - drive lrg-editor with real X events and check it over IPC'
+	echo 'editor-x11-smoke.sh - drive lrgeditor with real X events and check it over IPC'
 	echo ''
 	echo 'Usage: editor-x11-smoke.sh [-h|--help] [--license] [LRG_EDITOR_BINARY]'
 	echo ''
 	echo 'Examples:'
-	echo '  tests/editor-x11-smoke.sh build/release/lrg-editor'
+	echo '  tests/editor-x11-smoke.sh build/release/lrgeditor'
 	echo '  make test-editor-x11'
 }
 
@@ -46,7 +46,7 @@ case "${1:-}" in
 		;;
 esac
 
-editor="${1:-build/release/lrg-editor}"
+editor="${1:-build/release/lrgeditor}"
 display_num=":${LRG_SMOKE_DISPLAY:-97}"
 
 for tool in Xvfb xdotool socat yq

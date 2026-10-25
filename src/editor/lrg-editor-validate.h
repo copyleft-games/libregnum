@@ -10,7 +10,7 @@
  * it misbehave at runtime or in other tools: duplicate GUIDs, missing
  * asset and script files, unregistered component types, empty or
  * ambiguous names, invalid transforms. The editor's Problems panel, the
- * `lrg-editor --validate` command and the "level.validate" IPC method all
+ * `lrgeditor --validate` command and the "level.validate" IPC method all
  * use it.
  */
 

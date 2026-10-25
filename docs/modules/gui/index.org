@@ -14,7 +14,7 @@
 *[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > GUI
 #+end_quote
 
-The GUI module (=src/gui/=) is a small immediate-mode UI toolkit in the spirit of Dear ImGui, written for libregnum's own tools. The editor application (=lrg-editor=, see [[file:../../editor/editor-app.org][The libregnum Editor Application]]) is built entirely from it, and it is equally usable for in-game debug overlays, consoles and tool windows. It is always built (no build flag) and its headers are pulled in by =<libregnum.h>=.
+The GUI module (=src/gui/=) is a small immediate-mode UI toolkit in the spirit of Dear ImGui, written for libregnum's own tools. The editor application (=lrgeditor=, see [[file:../../editor/editor-app.org][The libregnum Editor Application]]) is built entirely from it, and it is equally usable for in-game debug overlays, consoles and tool windows. It is always built (no build flag) and its headers are pulled in by =<libregnum.h>=.
 
 It is a different thing from the retained-mode widget tree in [[file:../ui/index.org][the UI module]] (=LrgWidget= and friends): there are no widget objects here. Each frame the program calls widget functions in the order they appear; each call lays itself out, reacts to the input snapshot, records drawing commands and returns what happened ("clicked", "value changed").
 

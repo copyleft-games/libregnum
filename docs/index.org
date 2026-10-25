@@ -65,8 +65,9 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 :CUSTOM_ID: editor-and-level-authoring
 :END:
 - *[[file:editor/overview.org][Editor Module]]* - Level/Scene/World three-layer model; bake and instantiate
-- *[[file:editor/editor-app.org][Editor Application]]* - =lrg-editor=, the level/scene/world editor built from libregnum
+- *[[file:editor/editor-app.org][Editor Application]]* - =lrgeditor=, the level/scene/world editor built from libregnum
 - *[[file:editor/emacs.org][Emacs Integration]]* - =libregnum.el=; [[file:editor/external-editor.org][External code editor]]; [[file:editor/ipc-protocol.org][IPC protocol]]
+- *[[file:editor/lrgeditorctl.org][lrgeditorctl and MCP]]* - =lrgeditorctl= (kubectl-style CLI for running editors) and the editor MCP server
 - *Level Model* - =LrgLevel=, =LrgNode=, =LrgNodeVisual= authoring types
 - *=.rlevel= Format* - YAML serialization schema for levels and prefabs
 - *Prefabs* - Reusable saved node subtrees (=.rprefab=)

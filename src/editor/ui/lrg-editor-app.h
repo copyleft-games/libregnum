@@ -15,7 +15,7 @@
  * recovery, live reload of files edited elsewhere, an IPC server for
  * Emacs and other tools, and $EDITOR / Emacs integration for code.
  *
- * Typical use is the `lrg-editor` program (lrg_editor_app_run()). The
+ * Typical use is the `lrgeditor` program (lrg_editor_app_run()). The
  * app can also be driven frame by frame without a window
  * (lrg_editor_app_frame()), which is how it is tested, and run as a
  * window-less IPC server (lrg_editor_app_run_headless()).
