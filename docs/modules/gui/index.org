@@ -337,7 +337,7 @@ void lrg_gui_text_wrapped  (LrgGuiContext *self,
                             const gchar   *text);
 #+end_src
 
-Text items are not interactive and their strings are not parsed for =##=. =lrg_gui_text_disabled()= uses =LRG_GUI_COL_TEXT_DISABLED= for secondary information; =lrg_gui_text_mono()= uses the monospace font (logs, code, paths); =lrg_gui_text_wrapped()= wraps at the region width. Colours are =LrgGuiColor= values; build them with =LRG_GUI_RGBA (r, g, b, a)= or =LRG_GUI_HEX (0xRRGGBB)=, or take them from the style (=style->colors[LRG_GUI_COL_ERROR]=).
+Text items are not interactive and their strings are not parsed for =##=. =lrg_gui_text_disabled()= uses =LRG_GUI_COL_TEXT_DISABLED= for secondary information; =lrg_gui_text_mono()= uses the monospace font (logs, code, paths); =lrg_gui_text_wrapped()= wraps at the region width (greedy: each line breaks at the last space before the first character that does not fit, or inside a word longer than the line; the break is found by galloping and bisecting over prefix widths, so a paragraph costs O(n log line) measurements rather than one per character). Colours are =LrgGuiColor= values; build them with =LRG_GUI_RGBA (r, g, b, a)= or =LRG_GUI_HEX (0xRRGGBB)=, or take them from the style (=style->colors[LRG_GUI_COL_ERROR]=).
 
 ** Buttons, toggles and selectables
 :PROPERTIES:
