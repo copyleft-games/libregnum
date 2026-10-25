@@ -707,6 +707,12 @@ lrg_talent_loadout_validate (LrgTalentLoadout  *self,
 
     /* Fresh loadout with identical rules; @self is never touched */
     replay = lrg_talent_loadout_new (self->class_id);
+    if (replay == NULL)
+    {
+        g_set_error_literal (error, LRG_PROGRESSION_ERROR, LRG_PROGRESSION_ERROR_INVALID,
+                             "Talent loadout has no class id");
+        return FALSE;
+    }
     replay->first_level = self->first_level;
     replay->points_per_level = self->points_per_level;
 
@@ -883,6 +889,12 @@ lrg_talent_loadout_new_from_variant (GVariant  *variant,
     }
 
     self = lrg_talent_loadout_new (class_id);
+    if (self == NULL)
+    {
+        g_set_error_literal (error, LRG_PROGRESSION_ERROR, LRG_PROGRESSION_ERROR_INVALID,
+                             "Talent loadout has no class id");
+        return NULL;
+    }
     self->spec = g_strdup (spec);
 
     /* Rows: valid ids, rank 1..max, no duplicates */

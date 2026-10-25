@@ -44,7 +44,7 @@ typedef struct
     /* Particle storage */
     LrgParticlePool     *pool;
     guint                max_particles;     /* construct-only capacity */
-    GList               *active_particles;  /* List of LrgParticle * */
+    GPtrArray           *active_particles;  /* LrgParticle *, oldest first */
     guint                active_count;
 
     /* Components */
@@ -86,6 +86,24 @@ enum
 
 static GParamSpec *properties[N_PROPS];
 
+/* Drops the NULL holes left by released particles, keeping order. */
+static void
+active_compact (GPtrArray *active)
+{
+    guint read;
+    guint write;
+
+    write = 0;
+    for (read = 0; read < active->len; read++)
+    {
+        gpointer p = g_ptr_array_index (active, read);
+
+        if (p != NULL)
+            g_ptr_array_index (active, write++) = p;
+    }
+    g_ptr_array_set_size (active, write);
+}
+
 static void
 lrg_particle_system_real_update (LrgParticleSystem *self,
                                  gfloat             delta_time)
@@ -93,8 +111,9 @@ lrg_particle_system_real_update (LrgParticleSystem *self,
     LrgParticleSystemPrivate *priv = lrg_particle_system_get_instance_private (self);
     LrgParticleSystemClass   *klass = LRG_PARTICLE_SYSTEM_GET_CLASS (self);
     GList *l;
-    GList *next;
     gfloat scaled_dt;
+    guint  i;
+    guint  removed;
 
     if (!priv->playing)
         return;
@@ -142,7 +161,7 @@ lrg_particle_system_real_update (LrgParticleSystem *self,
             particle->position_y += priv->position_y;
             particle->position_z += priv->position_z;
 
-            priv->active_particles = g_list_prepend (priv->active_particles, particle);
+            g_ptr_array_add (priv->active_particles, particle);
             priv->active_count++;
 
             /* Callback for custom spawn behavior */
@@ -158,15 +177,20 @@ lrg_particle_system_real_update (LrgParticleSystem *self,
         lrg_particle_force_update (force, scaled_dt);
     }
 
-    /* Update active particles */
-    l = priv->active_particles;
-    while (l != NULL)
+    /*
+     * Update active particles, newest first (the order the list used to
+     * hold them in, so force, callback and draw order are unchanged).
+     * Particles live in the pool's fixed array, so the pointers stay
+     * valid; dead ones are released and NULLed here, then the array is
+     * compacted in one stable pass.
+     */
+    removed = 0;
+    for (i = priv->active_particles->len; i > 0; i--)
     {
         LrgParticle *particle;
         GList *force_iter;
 
-        next = l->next;
-        particle = (LrgParticle *)l->data;
+        particle = (LrgParticle *)g_ptr_array_index (priv->active_particles, i - 1);
 
         /* Apply all forces */
         for (force_iter = priv->forces; force_iter != NULL; force_iter = force_iter->next)
@@ -186,19 +210,21 @@ lrg_particle_system_real_update (LrgParticleSystem *self,
                 klass->on_particle_death (self, particle);
 
             lrg_particle_pool_release (priv->pool, particle);
-            priv->active_particles = g_list_delete_link (priv->active_particles, l);
+            g_ptr_array_index (priv->active_particles, i - 1) = NULL;
             priv->active_count--;
+            removed++;
         }
-
-        l = next;
     }
+
+    if (removed > 0)
+        active_compact (priv->active_particles);
 }
 
 static void
 lrg_particle_system_real_draw (LrgParticleSystem *self)
 {
     LrgParticleSystemPrivate *priv = lrg_particle_system_get_instance_private (self);
-    GList *l;
+    guint i;
 
     /*
      * Default implementation does nothing.
@@ -207,9 +233,9 @@ lrg_particle_system_real_draw (LrgParticleSystem *self)
      */
 
     /* Iterate active particles for drawing */
-    for (l = priv->active_particles; l != NULL; l = l->next)
+    for (i = priv->active_particles->len; i > 0; i--)
     {
-        LrgParticle *particle = (LrgParticle *)l->data;
+        LrgParticle *particle = (LrgParticle *)g_ptr_array_index (priv->active_particles, i - 1);
 
         /* In a real implementation, you would draw the particle here
          * based on render_mode and blend_mode */
@@ -224,7 +250,7 @@ lrg_particle_system_finalize (GObject *object)
     LrgParticleSystemPrivate *priv = lrg_particle_system_get_instance_private (self);
 
     g_clear_object (&priv->pool);
-    g_list_free (priv->active_particles);
+    g_clear_pointer (&priv->active_particles, g_ptr_array_unref);
     g_list_free_full (priv->emitters, g_object_unref);
     g_list_free_full (priv->forces, g_object_unref);
 
@@ -315,10 +341,20 @@ lrg_particle_system_constructed (GObject *object)
 {
     LrgParticleSystem        *self = LRG_PARTICLE_SYSTEM (object);
     LrgParticleSystemPrivate *priv = lrg_particle_system_get_instance_private (self);
+    guint                     capacity;
 
     G_OBJECT_CLASS (lrg_particle_system_parent_class)->constructed (object);
 
-    priv->pool = lrg_particle_pool_new (priv->max_particles > 0 ? priv->max_particles : 1000);
+    /*
+     * A fixed-size pool: max-particles is the system's capacity, and the
+     * active array holds pointers into the pool's storage, which a
+     * growing pool would reallocate out from under them.
+     */
+    capacity = priv->max_particles > 0 ? priv->max_particles : 1000;
+    priv->pool = lrg_particle_pool_new_with_policy (capacity,
+                                                    LRG_POOL_GROW_NONE,
+                                                    capacity);
+    priv->active_particles = g_ptr_array_sized_new (capacity);
 }
 
 static void
@@ -417,7 +453,7 @@ lrg_particle_system_init (LrgParticleSystem *self)
 {
     LrgParticleSystemPrivate *priv = lrg_particle_system_get_instance_private (self);
 
-    priv->pool = NULL;  /* Created in _new() */
+    priv->pool = NULL;  /* Created in constructed() */
     priv->active_particles = NULL;
     priv->active_count = 0;
     priv->emitters = NULL;
@@ -475,7 +511,7 @@ lrg_particle_system_foreach_active (LrgParticleSystem *self,
                                     gpointer           user_data)
 {
     LrgParticleSystemPrivate *priv;
-    GList *l;
+    guint i;
 
     g_return_if_fail (LRG_IS_PARTICLE_SYSTEM (self));
     g_return_if_fail (func != NULL);
@@ -485,9 +521,10 @@ lrg_particle_system_foreach_active (LrgParticleSystem *self,
     /* The active list only holds live particles: dead ones are released
      * during update.  Skip a particle killed by a direct lrg_particle_kill()
      * since the last update all the same. */
-    for (l = priv->active_particles; l != NULL; l = l->next)
+    for (i = priv->active_particles->len; i > 0; i--)
     {
-        const LrgParticle *particle = (const LrgParticle *)l->data;
+        const LrgParticle *particle =
+            (const LrgParticle *)g_ptr_array_index (priv->active_particles, i - 1);
 
         if (particle->alive)
             func (particle, user_data);
@@ -647,7 +684,7 @@ lrg_particle_system_emit (LrgParticleSystem *self,
         particle->position_y += priv->position_y;
         particle->position_z += priv->position_z;
 
-        priv->active_particles = g_list_prepend (priv->active_particles, particle);
+        g_ptr_array_add (priv->active_particles, particle);
         priv->active_count++;
         emitted++;
 
@@ -698,20 +735,19 @@ void
 lrg_particle_system_clear (LrgParticleSystem *self)
 {
     LrgParticleSystemPrivate *priv;
-    GList *l;
+    guint i;
 
     g_return_if_fail (LRG_IS_PARTICLE_SYSTEM (self));
 
     priv = lrg_particle_system_get_instance_private (self);
 
-    for (l = priv->active_particles; l != NULL; l = l->next)
+    for (i = 0; i < priv->active_particles->len; i++)
     {
-        LrgParticle *particle = (LrgParticle *)l->data;
+        LrgParticle *particle = (LrgParticle *)g_ptr_array_index (priv->active_particles, i);
         lrg_particle_pool_release (priv->pool, particle);
     }
 
-    g_list_free (priv->active_particles);
-    priv->active_particles = NULL;
+    g_ptr_array_set_size (priv->active_particles, 0);
     priv->active_count = 0;
 }
 

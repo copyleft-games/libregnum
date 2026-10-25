@@ -22,11 +22,27 @@ struct _LrgWorld
 {
     GObject    parent_instance;
 
-    GrlScene  *scene;    /* Underlying graylib scene */
-    GList     *objects;  /* List of LrgGameObject (owned references) */
-    gboolean   active;   /* Whether the world processes updates/draws */
-    gboolean   paused;   /* Whether updates are paused (drawing continues) */
+    GrlScene   *scene;        /* Underlying graylib scene */
+    GList      *objects;      /* List of LrgGameObject (owned references) */
+    GList      *objects_tail; /* Last link of @objects, for O(1) append */
+    GHashTable *object_set;   /* Membership set over @objects (no refs) */
+    guint       object_count; /* Length of @objects */
+    gboolean    active;       /* Whether the world processes updates/draws */
+    gboolean    paused;       /* Whether updates are paused (drawing continues) */
+
+    /* Draw order, kept between frames: entries sorted by (z-index,
+     * position in @objects). Rebuilt when objects come or go, otherwise
+     * re-sorted in place, which is linear while z-indices are stable. */
+    GArray     *draw_order;   /* DrawEntry */
+    gboolean    draw_order_dirty;
 };
+
+typedef struct
+{
+    LrgGameObject *object;
+    guint          seq;   /* index in @objects when the order was built */
+    gint           z;     /* z-index sampled this frame */
+} DrawEntry;
 
 G_DEFINE_TYPE (LrgWorld, lrg_world, G_TYPE_OBJECT)
 
@@ -45,18 +61,75 @@ static GParamSpec *properties[N_PROPS];
  * ========================================================================== */
 
 /*
- * compare_z_index:
+ * draw_entry_before:
  *
- * Comparison function for sorting objects by z-index.
+ * Strict "draws before" order: lower z-index first, insertion order among
+ * equal z-indices (what a stable sort of @objects by z-index gives).
  */
-static gint
-compare_z_index (gconstpointer a,
-                 gconstpointer b)
+static inline gboolean
+draw_entry_before (const DrawEntry *a,
+                   const DrawEntry *b)
 {
-    GrlEntity *entity_a = GRL_ENTITY ((gpointer)a);
-    GrlEntity *entity_b = GRL_ENTITY ((gpointer)b);
+    if (a->z != b->z)
+        return a->z < b->z;
+    return a->seq < b->seq;
+}
 
-    return grl_entity_get_z_index (entity_a) - grl_entity_get_z_index (entity_b);
+/*
+ * world_update_draw_order:
+ *
+ * Brings @self->draw_order up to date: rebuilds it from the object list
+ * when membership changed, samples every object's z-index, then insertion
+ * sorts. Objects rarely change z between frames, so this is a single
+ * linear pass in the common case instead of copying and merge-sorting the
+ * whole list every frame.
+ */
+static void
+world_update_draw_order (LrgWorld *self)
+{
+    DrawEntry *entries;
+    GList     *l;
+    guint      n;
+    guint      i;
+
+    if (self->draw_order_dirty)
+    {
+        g_array_set_size (self->draw_order, 0);
+        for (l = self->objects, i = 0; l != NULL; l = l->next, i++)
+        {
+            DrawEntry entry;
+
+            entry.object = (LrgGameObject *)l->data;
+            entry.seq = i;
+            entry.z = 0;
+            g_array_append_val (self->draw_order, entry);
+        }
+        self->draw_order_dirty = FALSE;
+    }
+
+    entries = (DrawEntry *)(gpointer)self->draw_order->data;
+    n = self->draw_order->len;
+
+    for (i = 0; i < n; i++)
+        entries[i].z = grl_entity_get_z_index (GRL_ENTITY (entries[i].object));
+
+    for (i = 1; i < n; i++)
+    {
+        DrawEntry key;
+        guint     j;
+
+        if (!draw_entry_before (&entries[i], &entries[i - 1]))
+            continue;
+
+        key = entries[i];
+        j = i;
+        while (j > 0 && draw_entry_before (&key, &entries[j - 1]))
+        {
+            entries[j] = entries[j - 1];
+            j--;
+        }
+        entries[j] = key;
+    }
 }
 
 /* ==========================================================================
@@ -71,6 +144,8 @@ lrg_world_dispose (GObject *object)
     lrg_world_clear (self);
 
     g_clear_object (&self->scene);
+    g_clear_pointer (&self->object_set, g_hash_table_unref);
+    g_clear_pointer (&self->draw_order, g_array_unref);
 
     G_OBJECT_CLASS (lrg_world_parent_class)->dispose (object);
 }
@@ -166,6 +241,11 @@ lrg_world_init (LrgWorld *self)
 {
     self->scene = grl_scene_new ();
     self->objects = NULL;
+    self->objects_tail = NULL;
+    self->object_set = g_hash_table_new (g_direct_hash, g_direct_equal);
+    self->object_count = 0;
+    self->draw_order = g_array_new (FALSE, FALSE, sizeof (DrawEntry));
+    self->draw_order_dirty = TRUE;
     self->active = TRUE;
     self->paused = FALSE;
 }
@@ -206,7 +286,7 @@ lrg_world_add_object (LrgWorld      *self,
     g_return_if_fail (LRG_IS_GAME_OBJECT (object));
 
     /* Check if already in the world */
-    if (g_list_find (self->objects, object) != NULL)
+    if (g_hash_table_contains (self->object_set, object))
     {
         lrg_warning (LRG_LOG_DOMAIN_ECS,
                      "Game object is already in this world");
@@ -215,14 +295,26 @@ lrg_world_add_object (LrgWorld      *self,
 
     /* Take reference and add to list */
     g_object_ref (object);
-    self->objects = g_list_append (self->objects, object);
+    if (self->objects_tail == NULL)
+    {
+        self->objects = g_list_append (NULL, object);
+        self->objects_tail = self->objects;
+    }
+    else
+    {
+        /* g_list_append() on the tail link is O(1) */
+        self->objects_tail = g_list_append (self->objects_tail, object)->next;
+    }
+    g_hash_table_add (self->object_set, object);
+    self->object_count++;
+    self->draw_order_dirty = TRUE;
 
     /* Add to graylib scene as well */
     grl_scene_add_entity (self->scene, GRL_ENTITY (object));
 
     lrg_debug (LRG_LOG_DOMAIN_ECS,
                "Added game object to world (count: %u)",
-               g_list_length (self->objects));
+               self->object_count);
 }
 
 /*
@@ -241,7 +333,9 @@ lrg_world_remove_object (LrgWorld      *self,
     g_return_if_fail (LRG_IS_WORLD (self));
     g_return_if_fail (LRG_IS_GAME_OBJECT (object));
 
-    link = g_list_find (self->objects, object);
+    link = NULL;
+    if (g_hash_table_contains (self->object_set, object))
+        link = g_list_find (self->objects, object);
     if (link == NULL)
     {
         lrg_warning (LRG_LOG_DOMAIN_ECS,
@@ -250,14 +344,19 @@ lrg_world_remove_object (LrgWorld      *self,
     }
 
     /* Remove from list */
+    if (link == self->objects_tail)
+        self->objects_tail = link->prev;
     self->objects = g_list_delete_link (self->objects, link);
+    g_hash_table_remove (self->object_set, object);
+    self->object_count--;
+    self->draw_order_dirty = TRUE;
 
     /* Remove from graylib scene */
     grl_scene_remove_entity (self->scene, GRL_ENTITY (object));
 
     lrg_debug (LRG_LOG_DOMAIN_ECS,
                "Removed game object from world (count: %u)",
-               g_list_length (self->objects));
+               self->object_count);
 
     /* Release reference */
     g_object_unref (object);
@@ -286,6 +385,11 @@ lrg_world_clear (LrgWorld *self)
 
     g_clear_pointer (&self->objects, g_list_free);
     self->objects = NULL;
+    self->objects_tail = NULL;
+    self->object_count = 0;
+    if (self->object_set != NULL)
+        g_hash_table_remove_all (self->object_set);
+    self->draw_order_dirty = TRUE;
 
     lrg_debug (LRG_LOG_DOMAIN_ECS, "World cleared");
 }
@@ -319,7 +423,7 @@ lrg_world_get_object_count (LrgWorld *self)
 {
     g_return_val_if_fail (LRG_IS_WORLD (self), 0);
 
-    return g_list_length (self->objects);
+    return self->object_count;
 }
 
 /* ==========================================================================
@@ -434,8 +538,8 @@ lrg_world_update (LrgWorld *self,
 void
 lrg_world_draw (LrgWorld *self)
 {
-    GList *sorted;
-    GList *l;
+    const DrawEntry *entries;
+    guint            i;
 
     g_return_if_fail (LRG_IS_WORLD (self));
 
@@ -445,21 +549,21 @@ lrg_world_draw (LrgWorld *self)
         return;
     }
 
-    /* Sort objects by z-index for proper draw order */
-    sorted = g_list_copy (self->objects);
-    sorted = g_list_sort (sorted, compare_z_index);
+    /* Sort objects by z-index for proper draw order (stable) */
+    world_update_draw_order (self);
 
-    /* Draw all visible objects */
-    for (l = sorted; l != NULL; l = l->next)
+    /* Draw all visible objects. Drawing must not add or remove objects;
+     * the order array is only rebuilt at the start of the next draw. */
+    entries = (const DrawEntry *)(gconstpointer)self->draw_order->data;
+    for (i = 0; i < self->draw_order->len; i++)
     {
-        LrgGameObject *object = LRG_GAME_OBJECT (l->data);
-        if (grl_entity_get_visible (GRL_ENTITY (object)))
+        GrlEntity *entity = GRL_ENTITY (entries[i].object);
+
+        if (grl_entity_get_visible (entity))
         {
-            grl_drawable_draw (GRL_DRAWABLE (object));
+            grl_drawable_draw (GRL_DRAWABLE (entity));
         }
     }
-
-    g_list_free (sorted);
 }
 
 /* ==========================================================================

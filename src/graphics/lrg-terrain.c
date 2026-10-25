@@ -786,6 +786,10 @@ lrg_terrain_height_at (LrgTerrain *self,
     if (!isfinite (x) || !isfinite (z))
         return FALSE;
 
+    /* world_to_chunk() leaves its outputs untouched when its argument
+     * checks fail, so give them a defined value first. */
+    cx = 0;
+    cz = 0;
     lrg_terrain_world_to_chunk (self, x, z, &cx, &cz);
     chunk = lookup_chunk (self, cx, cz);
     if (chunk == NULL)

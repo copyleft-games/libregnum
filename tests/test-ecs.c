@@ -1100,6 +1100,129 @@ test_animator_component_default_animation (void)
  * Main
  * ========================================================================== */
 
+/* ==========================================================================
+ * World draw order
+ * ========================================================================== */
+
+/* A game object that records the order it is drawn in, then chains up to
+ * LrgGameObject's draw (whose own parent, GrlEntity, has no draw vfunc). */
+#define TEST_TYPE_DRAW_RECORDER (test_draw_recorder_get_type ())
+G_DECLARE_FINAL_TYPE (TestDrawRecorder, test_draw_recorder, TEST, DRAW_RECORDER, LrgGameObject)
+
+struct _TestDrawRecorder
+{
+    LrgGameObject parent_instance;
+};
+
+G_DEFINE_TYPE (TestDrawRecorder, test_draw_recorder, LRG_TYPE_GAME_OBJECT)
+
+static GPtrArray *draw_log = NULL;
+
+static void
+test_draw_recorder_draw (GrlEntity *entity)
+{
+    g_ptr_array_add (draw_log, entity);
+    GRL_ENTITY_CLASS (test_draw_recorder_parent_class)->draw (entity);
+}
+
+static void
+test_draw_recorder_class_init (TestDrawRecorderClass *klass)
+{
+    GRL_ENTITY_CLASS (klass)->draw = test_draw_recorder_draw;
+}
+
+static void
+test_draw_recorder_init (TestDrawRecorder *self)
+{
+}
+
+static LrgGameObject *
+add_recorder (LrgWorld *world,
+              gint      z)
+{
+    g_autoptr(LrgGameObject) obj = g_object_new (TEST_TYPE_DRAW_RECORDER, NULL);
+    g_autoptr(LrgSpriteComponent) sprite = lrg_sprite_component_new ();
+
+    /* A sprite without a texture: drawn through the component path, but
+     * draws nothing, so no GL context is needed */
+    lrg_game_object_add_component (obj, LRG_COMPONENT (sprite));
+    grl_entity_set_z_index (GRL_ENTITY (obj), z);
+    lrg_world_add_object (world, obj);
+    return obj;
+}
+
+/* lrg_world_draw() used to crash on any world with objects (it chained
+ * up to a NULL GrlEntity draw vfunc). Draw order is z-index, stable for
+ * equal z-indices, and follows z changes and membership changes. */
+static void
+test_world_draw_order (void)
+{
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    LrgGameObject      *a;
+    LrgGameObject      *b;
+    LrgGameObject      *c;
+
+    draw_log = g_ptr_array_new ();
+
+    a = add_recorder (world, 0);
+    b = add_recorder (world, 0);
+    c = add_recorder (world, -1);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 3);
+
+    lrg_world_draw (world);
+    g_assert_cmpuint (draw_log->len, ==, 3);
+    g_assert_true (draw_log->pdata[0] == c);
+    g_assert_true (draw_log->pdata[1] == a);
+    g_assert_true (draw_log->pdata[2] == b);
+
+    /* z-index change after adding */
+    g_ptr_array_set_size (draw_log, 0);
+    grl_entity_set_z_index (GRL_ENTITY (a), 3);
+    lrg_world_draw (world);
+    g_assert_true (draw_log->pdata[0] == c);
+    g_assert_true (draw_log->pdata[1] == b);
+    g_assert_true (draw_log->pdata[2] == a);
+
+    /* back to equal z: insertion order again (a before b) */
+    g_ptr_array_set_size (draw_log, 0);
+    grl_entity_set_z_index (GRL_ENTITY (a), 0);
+    lrg_world_draw (world);
+    g_assert_true (draw_log->pdata[1] == a);
+    g_assert_true (draw_log->pdata[2] == b);
+
+    /* removal, re-adding (goes to the end of insertion order) */
+    g_ptr_array_set_size (draw_log, 0);
+    g_object_ref (a);
+    lrg_world_remove_object (world, a);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 2);
+    lrg_world_add_object (world, a);
+    g_object_unref (a);
+    g_test_expect_message ("Libregnum-ECS", G_LOG_LEVEL_WARNING,
+                           "*already in this world*");
+    lrg_world_add_object (world, a);   /* duplicate: ignored */
+    g_test_assert_expected_messages ();
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 3);
+    lrg_world_draw (world);
+    g_assert_cmpuint (draw_log->len, ==, 3);
+    g_assert_true (draw_log->pdata[0] == c);
+    g_assert_true (draw_log->pdata[1] == b);
+    g_assert_true (draw_log->pdata[2] == a);
+
+    /* invisible objects are skipped */
+    g_ptr_array_set_size (draw_log, 0);
+    grl_entity_set_visible (GRL_ENTITY (b), FALSE);
+    lrg_world_draw (world);
+    g_assert_cmpuint (draw_log->len, ==, 2);
+
+    lrg_world_clear (world);
+    g_ptr_array_set_size (draw_log, 0);
+    lrg_world_draw (world);
+    g_assert_cmpuint (draw_log->len, ==, 0);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 0);
+
+    g_clear_pointer (&draw_log, g_ptr_array_unref);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1257,6 +1380,8 @@ main (int   argc,
     g_test_add_func ("/ecs/animator-component/speed", test_animator_component_speed);
     g_test_add_func ("/ecs/animator-component/animation-names", test_animator_component_animation_names);
     g_test_add_func ("/ecs/animator-component/default-animation", test_animator_component_default_animation);
+
+    g_test_add_func ("/ecs/world/draw-order", test_world_draw_order);
 
     return g_test_run ();
 }

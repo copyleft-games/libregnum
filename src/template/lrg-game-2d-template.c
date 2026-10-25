@@ -587,6 +587,9 @@ lrg_game_2d_template_pointer_transform (gfloat   *x,
     gfloat virtual_x;
     gfloat virtual_y;
 
+    /* screen_to_virtual() leaves its outputs unset when its checks fail */
+    virtual_x = *x;
+    virtual_y = *y;
     lrg_game_2d_template_screen_to_virtual (self, *x, *y,
                                             &virtual_x, &virtual_y);
     *x = virtual_x;
@@ -647,6 +650,75 @@ lrg_game_2d_template_pre_update (LrgGameTemplate *self,
         parent_class->pre_update (self, delta);
 }
 
+/*
+ * template_draw_letterbox:
+ *
+ * Paints the letterbox colour over whatever part of the window the
+ * scaled viewport does not cover (up to four bars). Nothing is drawn
+ * when the viewport fills the window.
+ */
+static void
+template_draw_letterbox (LrgGame2DTemplate        *self,
+                         LrgGame2DTemplatePrivate *priv)
+{
+    GrlRectangle bar;
+    gint         window_width;
+    gint         window_height;
+    gfloat       win_w;
+    gfloat       win_h;
+    gfloat       right;
+    gfloat       bottom;
+
+    if (priv->letterbox_color == NULL)
+        return;
+
+    /* Same window size the scaling (offset/viewport) was computed from */
+    window_width = 0;
+    window_height = 0;
+    lrg_game_template_get_window_size (LRG_GAME_TEMPLATE (self),
+                                       &window_width, &window_height);
+    win_w = (gfloat) window_width;
+    win_h = (gfloat) window_height;
+    right = priv->offset_x + priv->viewport_width;
+    bottom = priv->offset_y + priv->viewport_height;
+
+    /* Left and right bars span the full height */
+    if (priv->offset_x > 0.0f)
+    {
+        bar.x = 0.0f;
+        bar.y = 0.0f;
+        bar.width = priv->offset_x;
+        bar.height = win_h;
+        grl_draw_rectangle_rec (&bar, priv->letterbox_color);
+    }
+    if (right < win_w)
+    {
+        bar.x = right;
+        bar.y = 0.0f;
+        bar.width = win_w - right;
+        bar.height = win_h;
+        grl_draw_rectangle_rec (&bar, priv->letterbox_color);
+    }
+
+    /* Top and bottom bars between them */
+    if (priv->offset_y > 0.0f)
+    {
+        bar.x = priv->offset_x;
+        bar.y = 0.0f;
+        bar.width = priv->viewport_width;
+        bar.height = priv->offset_y;
+        grl_draw_rectangle_rec (&bar, priv->letterbox_color);
+    }
+    if (bottom < win_h)
+    {
+        bar.x = priv->offset_x;
+        bar.y = bottom;
+        bar.width = priv->viewport_width;
+        bar.height = win_h - bottom;
+        grl_draw_rectangle_rec (&bar, priv->letterbox_color);
+    }
+}
+
 static void
 lrg_game_2d_template_pre_draw (LrgGameTemplate *self)
 {
@@ -673,10 +745,10 @@ lrg_game_2d_template_pre_draw (LrgGameTemplate *self)
     }
 
     /*
-     * Clear screen with letterbox color first.
-     * Parent already cleared with background_color, but we want letterbox bars.
+     * The host has already cleared the window. The letterbox bars are
+     * painted in post_draw() around the blitted viewport, which costs a
+     * few rectangles instead of a second full-window clear every frame.
      */
-    grl_draw_clear_background (priv->letterbox_color);
 
     /* Begin rendering to the virtual resolution texture */
     grl_render_texture_begin (priv->render_target);
@@ -711,10 +783,10 @@ lrg_game_2d_template_post_draw (LrgGameTemplate *self)
     LrgGame2DTemplatePrivate *priv;
     LrgGameTemplateClass *parent_class;
     g_autoptr(GrlTexture) rt_texture = NULL;
-    g_autoptr(GrlRectangle) src_rect = NULL;
-    g_autoptr(GrlRectangle) dst_rect = NULL;
-    g_autoptr(GrlVector2) origin = NULL;
-    g_autoptr(GrlColor) white = NULL;
+    GrlRectangle src_rect;
+    GrlRectangle dst_rect;
+    GrlVector2   origin;
+    GrlColor     white;
 
     template = LRG_GAME_2D_TEMPLATE (self);
     klass = LRG_GAME_2D_TEMPLATE_GET_CLASS (template);
@@ -737,21 +809,26 @@ lrg_game_2d_template_post_draw (LrgGameTemplate *self)
         if (rt_texture != NULL)
         {
             /* Source rectangle (flipped Y for OpenGL) */
-            src_rect = grl_rectangle_new (0.0f,
-                                           (gfloat) priv->virtual_height,
-                                           (gfloat) priv->virtual_width,
-                                           -(gfloat) priv->virtual_height);
+            src_rect.x = 0.0f;
+            src_rect.y = (gfloat) priv->virtual_height;
+            src_rect.width = (gfloat) priv->virtual_width;
+            src_rect.height = -(gfloat) priv->virtual_height;
 
             /* Destination rectangle */
-            dst_rect = grl_rectangle_new (priv->offset_x,
-                                           priv->offset_y,
-                                           priv->viewport_width,
-                                           priv->viewport_height);
+            dst_rect.x = priv->offset_x;
+            dst_rect.y = priv->offset_y;
+            dst_rect.width = priv->viewport_width;
+            dst_rect.height = priv->viewport_height;
 
-            origin = grl_vector2_new (0.0f, 0.0f);
-            white = grl_color_new (255, 255, 255, 255);
+            origin.x = 0.0f;
+            origin.y = 0.0f;
+            white.r = 255;
+            white.g = 255;
+            white.b = 255;
+            white.a = 255;
 
-            grl_draw_texture_pro (rt_texture, src_rect, dst_rect, origin, 0.0f, white);
+            grl_draw_texture_pro (rt_texture, &src_rect, &dst_rect, &origin, 0.0f, &white);
+            template_draw_letterbox (template, priv);
         }
     }
 

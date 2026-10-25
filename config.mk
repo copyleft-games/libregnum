@@ -678,6 +678,10 @@ ifeq ($(DEBUG),1)
     OPT_CFLAGS := -g3 -O0 -DLRG_DEBUG=1
 else
     OPT_CFLAGS := -O2 -DNDEBUG
+    # Bind calls between our own functions locally even though the
+    # library is -fPIC, and compile GObject cast macros (LRG_WIDGET (x)...)
+    # to plain casts; g_return_if_fail() argument checks stay on.
+    OPT_CFLAGS += -fno-semantic-interposition -DG_DISABLE_CAST_CHECKS
 endif
 
 # Trace flag

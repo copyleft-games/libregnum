@@ -405,7 +405,17 @@ grl_draw_frame (gpointer state,
 	GrlTexture *texture = state;
 	guint       i;
 
-	for (i = 0; i < GRL_DRAW_CALLS; i++)
+	/* Shapes first, then textures: alternating the two would make raylib
+	 * flush its batch on every call, which measures the GL driver rather
+	 * than graylib's wrappers. */
+	for (i = 0; i < GRL_DRAW_CALLS / 2; i++)
+	{
+		GrlColor color = { (guint8) i, (guint8) (i >> 3), 200, 255 };
+
+		grl_draw_rectangle ((gint) (i % 300), (gint) ((i / 300) % 220),
+		                    3, 3, &color);
+	}
+	for (i = 0; i < GRL_DRAW_CALLS / 2; i++)
 	{
 		GrlColor     color = { (guint8) i, (guint8) (i >> 3), 200, 255 };
 		GrlRectangle src = { 0.0f, 0.0f, 8.0f, 8.0f };
@@ -413,11 +423,7 @@ grl_draw_frame (gpointer state,
 		                     4.0f, 4.0f };
 		GrlVector2   origin = { 0.0f, 0.0f };
 
-		if ((i & 1) == 0)
-			grl_draw_rectangle ((gint) (i % 300), (gint) ((i / 300) % 220),
-			                    3, 3, &color);
-		else
-			grl_draw_texture_pro (texture, &src, &dst, &origin, 0.0f, &color);
+		grl_draw_texture_pro (texture, &src, &dst, &origin, 0.0f, &color);
 	}
 	for (i = 0; i < 200; i++)
 	{
@@ -552,49 +558,66 @@ run_scenario (GrlWindow           *window,
               gboolean             yaml)
 {
 	g_autofree gdouble *samples = NULL;
+	g_autofree gdouble *work = NULL;
 	gpointer            state;
 	gdouble             total;
+	gdouble             work_total;
 	guint               i;
 	guint               n;
 	g_autoptr(GrlColor) bg = NULL;
 
 	n = (guint) opt_frames;
 	samples = g_new0 (gdouble, n);
+	work = g_new0 (gdouble, n);
 	bg = grl_color_new (20, 20, 30, 255);
 	state = sc->setup ();
 
 	total = 0.0;
+	work_total = 0.0;
 	for (i = 0; i < n + BENCH_WARMUP_FRAMES; i++)
 	{
 		gint64 t0;
+		gint64 w0;
+		gint64 w1;
 		gint64 t1;
 
+		/* Whole frame (t0..t1), and the scenario's own CPU work (w0..w1):
+		 * its update and draw submission, without the driver's flush and
+		 * buffer swap, which dominate under a software rasterizer. */
 		t0 = g_get_monotonic_time ();
 		grl_window_begin_drawing (window);
 		grl_draw_clear_background (bg);
+		w0 = g_get_monotonic_time ();
 		sc->frame (state, i);
+		w1 = g_get_monotonic_time ();
 		grl_window_end_drawing (window);
 		t1 = g_get_monotonic_time ();
 
 		if (i >= BENCH_WARMUP_FRAMES)
 		{
 			samples[i - BENCH_WARMUP_FRAMES] = (gdouble) (t1 - t0) / 1000.0;
+			work[i - BENCH_WARMUP_FRAMES] = (gdouble) (w1 - w0) / 1000.0;
 			total += samples[i - BENCH_WARMUP_FRAMES];
+			work_total += work[i - BENCH_WARMUP_FRAMES];
 		}
 	}
 
 	sc->teardown (state);
 
 	qsort (samples, n, sizeof (gdouble), compare_double);
+	qsort (work, n, sizeof (gdouble), compare_double);
 	if (yaml)
 		g_print ("- scenario: %s\n  frames: %u\n  mean_ms: %.3f\n"
-		         "  median_ms: %.3f\n  p95_ms: %.3f\n  fps: %.1f\n",
+		         "  median_ms: %.3f\n  p95_ms: %.3f\n  fps: %.1f\n"
+		         "  work_mean_ms: %.3f\n  work_median_ms: %.3f\n",
 		         sc->name, n, total / n, samples[n / 2],
-		         samples[(n * 95) / 100], 1000.0 / (total / n));
+		         samples[(n * 95) / 100], 1000.0 / (total / n),
+		         work_total / n, work[n / 2]);
 	else
-		g_print ("%-14s mean %8.3f ms  median %8.3f ms  p95 %8.3f ms  %8.1f fps\n",
+		g_print ("%-14s frame mean %8.3f ms  median %8.3f ms  p95 %8.3f ms  %8.1f fps"
+		         " | work median %8.3f ms\n",
 		         sc->name, total / n, samples[n / 2],
-		         samples[(n * 95) / 100], 1000.0 / (total / n));
+		         samples[(n * 95) / 100], 1000.0 / (total / n), work[n / 2]);
 }
 
 static const gchar *license_text =
