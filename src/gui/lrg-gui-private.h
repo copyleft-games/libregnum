@@ -183,6 +183,7 @@ struct _LrgGuiContext
 	LrgGuiId            focus_id;
 	gboolean            focus_seen;
 	gboolean            focus_request;     /* set_keyboard_focus_here */
+	LrgGuiId            focus_request_id;  /* request_focus (specific field) */
 	gboolean            focus_next;        /* Tab pressed in a field */
 	LrgGuiId            focus_from;
 	GString            *edit_buf;

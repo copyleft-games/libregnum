@@ -656,6 +656,18 @@ LRG_AVAILABLE_IN_ALL
 void lrg_gui_spacing (LrgGuiContext *self);
 
 /**
+ * lrg_gui_scroll_to_item:
+ * @self: an #LrgGuiContext
+ * @align: where the last item should end up: 0 top, 0.5 centre, 1 bottom;
+ *   < 0 scrolls only if the item is not fully visible
+ *
+ * Scrolls the current region (from the next frame) to show the last item.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_gui_scroll_to_item (LrgGuiContext *self,
+                             gfloat         align);
+
+/**
  * lrg_gui_dummy:
  * @self: an #LrgGuiContext
  * @width: width
@@ -1178,6 +1190,30 @@ gboolean lrg_gui_input_text (LrgGuiContext        *self,
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_gui_set_keyboard_focus_here (LrgGuiContext *self);
+
+/**
+ * lrg_gui_request_focus:
+ * @self: an #LrgGuiContext
+ * @label: the label of a text field in the current ID scope
+ *
+ * Gives keyboard focus to that specific field when it is next drawn
+ * (select-all), unlike lrg_gui_set_keyboard_focus_here() which targets
+ * whichever field comes next.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_gui_request_focus (LrgGuiContext *self,
+                            const gchar   *label);
+
+/**
+ * lrg_gui_clear_keyboard_focus:
+ * @self: an #LrgGuiContext
+ *
+ * Drops keyboard focus from the focused text field without committing
+ * pending edits (callers that replace the field's text programmatically
+ * clear focus, then lrg_gui_set_keyboard_focus_here() to re-enter it).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_gui_clear_keyboard_focus (LrgGuiContext *self);
 
 /**
  * lrg_gui_combo:

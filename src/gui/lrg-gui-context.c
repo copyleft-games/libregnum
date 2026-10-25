@@ -1211,12 +1211,15 @@ lrg_gui_set_cursor (LrgGuiContext *self,
 
 	g_return_if_fail (LRG_IS_GUI_CONTEXT (self));
 
+	/* The next item goes exactly here (x included, also in vertical
+	 * regions), then layout continues below it. */
 	r = gui_region (self);
 	r->cursor_x = x;
 	r->cursor_y = y;
 	r->line_y = y;
+	r->prev_line_y = y;
 	r->line_h = 0.0f;
-	r->same_line = FALSE;
+	r->same_line = TRUE;
 }
 
 /*
@@ -1312,6 +1315,44 @@ lrg_gui_spacing (LrgGuiContext *self)
 	g_return_if_fail (LRG_IS_GUI_CONTEXT (self));
 
 	lrg_gui_dummy (self, 0.0f, self->style.item_spacing_y);
+}
+
+void
+lrg_gui_scroll_to_item (LrgGuiContext *self,
+                        gfloat         align)
+{
+	GuiRegion *r;
+	GuiState  *st;
+	gfloat     pad, content_top, item_top, visible_h, target;
+
+	g_return_if_fail (LRG_IS_GUI_CONTEXT (self));
+
+	r = gui_region (self);
+	if (!(r->flags & LRG_GUI_REGION_SCROLL_Y))
+		return;
+
+	st = gui_state (self, r->id);
+	pad = (r->flags & LRG_GUI_REGION_NO_PADDING) ? 0.0f : self->style.region_padding;
+	visible_h = r->rect.h - pad * 2.0f;
+	content_top = r->origin_y - r->scroll_y;
+	item_top = self->item.rect.y - content_top;
+
+	if (align < 0.0f)
+	{
+		/* Minimal scroll: only when (partly) hidden. */
+		if (item_top < r->scroll_y)
+			target = item_top;
+		else if (item_top + self->item.rect.h > r->scroll_y + visible_h)
+			target = item_top + self->item.rect.h - visible_h;
+		else
+			return;
+	}
+	else
+	{
+		target = item_top - (visible_h - self->item.rect.h) * CLAMP (align, 0.0f, 1.0f);
+	}
+
+	st->f1 = MAX (0.0f, target);
 }
 
 void

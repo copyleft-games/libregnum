@@ -571,13 +571,24 @@ lrg_editor_actions_find_by_shortcut (LrgEditorActions *self,
 	{
 		Action         *a = v;
 		const gchar    *text = lrg_editor_actions_get_shortcut (self, a->id);
-		LrgGuiModifiers m;
-		LrgGuiKey       sk;
+		g_auto(GStrv)   alts = NULL;
+		guint           i;
 
-		if (text == NULL || !lrg_editor_shortcut_parse (text, &m, &sk))
+		if (text == NULL)
 			continue;
-		if (m == mods && sk == key && (a->enabled == NULL || a->enabled (a->user_data)))
-			return a->id;
+
+		/* "Ctrl+Shift+Z|Ctrl+Y": any alternative triggers the action. */
+		alts = g_strsplit (text, "|", -1);
+		for (i = 0; alts[i] != NULL; i++)
+		{
+			LrgGuiModifiers m;
+			LrgGuiKey       sk;
+
+			if (!lrg_editor_shortcut_parse (alts[i], &m, &sk))
+				continue;
+			if (m == mods && sk == key && (a->enabled == NULL || a->enabled (a->user_data)))
+				return a->id;
+		}
 	}
 
 	return NULL;
@@ -598,20 +609,31 @@ lrg_editor_actions_find_conflicts (LrgEditorActions *self)
 	ids = lrg_editor_actions_list (self);
 	for (l = ids; l != NULL; l = l->next)
 	{
-		const gchar     *text = lrg_editor_actions_get_shortcut (self, l->data);
-		LrgGuiModifiers  m;
-		LrgGuiKey        k;
-		g_autofree gchar *canon = NULL;
-		const gchar     *prev;
+		const gchar   *text = lrg_editor_actions_get_shortcut (self, l->data);
+		g_auto(GStrv)  alts = NULL;
+		guint          i;
 
-		if (text == NULL || !lrg_editor_shortcut_parse (text, &m, &k))
+		if (text == NULL)
 			continue;
-		canon = lrg_editor_shortcut_format (m, k);
-		prev = g_hash_table_lookup (by_chord, canon);
-		if (prev != NULL)
-			g_ptr_array_add (out, g_strdup_printf ("%s: %s and %s", canon, prev, (const gchar *) l->data));
-		else
-			g_hash_table_insert (by_chord, g_strdup (canon), g_strdup (l->data));
+
+		alts = g_strsplit (text, "|", -1);
+		for (i = 0; alts[i] != NULL; i++)
+		{
+			LrgGuiModifiers   m;
+			LrgGuiKey         k;
+			g_autofree gchar *canon = NULL;
+			const gchar      *prev;
+
+			if (!lrg_editor_shortcut_parse (alts[i], &m, &k))
+				continue;
+			canon = lrg_editor_shortcut_format (m, k);
+			prev = g_hash_table_lookup (by_chord, canon);
+			if (prev != NULL)
+				g_ptr_array_add (out, g_strdup_printf ("%s: %s and %s", canon, prev,
+				                                       (const gchar *) l->data));
+			else
+				g_hash_table_insert (by_chord, g_strdup (canon), g_strdup (l->data));
+		}
 	}
 	g_list_free (ids);
 

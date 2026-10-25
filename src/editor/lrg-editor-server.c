@@ -38,6 +38,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/un.h>
 
 #define MAX_LINE_BYTES   (16 * 1024 * 1024)
 #define MAX_QUEUED_BYTES (32 * 1024 * 1024)
@@ -2678,6 +2679,15 @@ lrg_editor_server_start (LrgEditorServer  *self,
 
 	path = (socket_path != NULL) ? g_strdup (socket_path)
 	                             : lrg_editor_server_get_default_socket_path ();
+
+	/* sockaddr_un holds ~108 bytes; GLib would silently truncate. */
+	if (strlen (path) >= sizeof (((struct sockaddr_un *) NULL)->sun_path))
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_FILENAME_TOO_LONG,
+		             "Socket path is too long (%" G_GSIZE_FORMAT " bytes, the limit is %" G_GSIZE_FORMAT "): %s",
+		             strlen (path), sizeof (((struct sockaddr_un *) NULL)->sun_path) - 1, path);
+		return FALSE;
+	}
 	dir = g_path_get_dirname (path);
 	if (g_mkdir_with_parents (dir, 0700) != 0)
 	{

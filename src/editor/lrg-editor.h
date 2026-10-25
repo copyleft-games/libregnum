@@ -178,6 +178,16 @@ LRG_AVAILABLE_IN_ALL
 void lrg_editor_mark_clean (LrgEditor *self);
 
 /**
+ * lrg_editor_mark_modified:
+ * @self: an #LrgEditor
+ *
+ * Marks the document as having unsaved changes even without history
+ * (e.g. after restoring an autosave over the file it belongs to).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_mark_modified (LrgEditor *self);
+
+/**
  * lrg_editor_serialize:
  * @self: an #LrgEditor
  *

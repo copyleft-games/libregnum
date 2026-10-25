@@ -713,6 +713,17 @@ lrg_editor_mark_clean (LrgEditor *self)
 	update_dirty (self);
 }
 
+void
+lrg_editor_mark_modified (LrgEditor *self)
+{
+	g_return_if_fail (LRG_IS_EDITOR (self));
+
+	/* No command ever has this serial: dirty until the next save. */
+	self->clean_serial = G_MAXUINT64;
+	update_dirty (self);
+	g_signal_emit (self, signals[SIGNAL_CHANGED], 0);
+}
+
 gchar *
 lrg_editor_serialize (LrgEditor *self)
 {

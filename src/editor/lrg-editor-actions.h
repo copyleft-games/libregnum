@@ -15,7 +15,9 @@
  * "keybindings" mapping of editor.yaml).
  *
  * Shortcuts are written like "Ctrl+Shift+S", "F2", "Delete", "Alt+Up";
- * see lrg_editor_shortcut_parse() for the accepted names.
+ * see lrg_editor_shortcut_parse() for the accepted names. Several
+ * alternatives are separated by "|" ("Ctrl+Shift+Z|Ctrl+Y"); menus show
+ * the first.
  */
 
 #pragma once

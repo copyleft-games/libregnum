@@ -1422,7 +1422,16 @@ ifeq ($(BUILD_EDITOR_UI),1)
 PUBLIC_HEADERS += \
 	src/editor/ui/lrg-editor-app.h
 SOURCES += \
-	src/editor/ui/lrg-editor-app.c
+	src/editor/ui/lrg-editor-app.c \
+	src/editor/ui/lrg-editor-app-actions.c \
+	src/editor/ui/lrg-editor-panel-hierarchy.c \
+	src/editor/ui/lrg-editor-panel-inspector.c \
+	src/editor/ui/lrg-editor-panel-viewport.c \
+	src/editor/ui/lrg-editor-panel-assets.c \
+	src/editor/ui/lrg-editor-panel-console.c \
+	src/editor/ui/lrg-editor-render.c \
+	src/editor/ui/lrg-editor-dialogs.c \
+	src/editor/ui/lrg-editor-play.c
 endif
 endif
 
@@ -1517,6 +1526,9 @@ ifeq ($(BUILD_GIR),1)
 endif
 ifeq ($(BUILD_SHARED),1)
 	@$(MAKE) --no-print-directory lrgldr
+ifeq ($(BUILD_EDITOR_UI),1)
+	@$(MAKE) --no-print-directory lrg-editor
+endif
 endif
 
 # Internal target for actual library build (called after generate)
@@ -1868,6 +1880,36 @@ $(LRGLDR_BIN): src/launcher/lrgldr.c $(LIBOUTDIR)/$(LIB_SHARED)
 	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
 
 # =============================================================================
+# lrg-editor (the level / scene / world editor application)
+# =============================================================================
+
+LRG_EDITOR_BIN := $(BUILDDIR)/lrg-editor$(EXE_EXT)
+
+# Same linkage as lrgldr: the shared library, so game modules and the
+# editor share one engine, type registry and raylib state.
+.PHONY: lrg-editor
+lrg-editor: lib-shared $(LRG_EDITOR_BIN)
+
+$(LRG_EDITOR_BIN): src/launcher/lrg-editor.c $(LIBOUTDIR)/$(LIB_SHARED)
+	$(call print_link,lrg-editor)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
+
+# Byte-compiles the Emacs package (warnings are errors) and runs its ERT
+# suite, including an end-to-end session with a headless lrg-editor.
+.PHONY: test-emacs
+test-emacs: lrg-editor
+	@if command -v emacs >/dev/null 2>&1; then \
+		emacs -Q --batch -L editors/emacs --eval '(setq byte-compile-error-on-warn t)' \
+			-f batch-byte-compile editors/emacs/libregnum.el editors/emacs/libregnum-tests.el && \
+		LRG_EDITOR=$(LRG_EDITOR_BIN) emacs -Q --batch -L editors/emacs -l libregnum-tests.el \
+			-f ert-run-tests-batch-and-exit < /dev/null; \
+		status=$$?; rm -f editors/emacs/*.elc; exit $$status; \
+	else \
+		echo "emacs not found; skipping the Emacs package tests"; \
+	fi
+
+# =============================================================================
 # Reel CLI (renders YAML-defined reels to video/stills)
 # =============================================================================
 
@@ -1950,6 +1992,12 @@ ifeq ($(BUILD_SHARED),1)
 	@$(MAKE) --no-print-directory lrgldr
 	@$(MKDIR_P) $(DESTDIR)$(BINDIR)
 	$(INSTALL_PROGRAM) $(LRGLDR_BIN) $(DESTDIR)$(BINDIR)/
+ifeq ($(BUILD_EDITOR_UI),1)
+	@$(MAKE) --no-print-directory lrg-editor
+	$(INSTALL_PROGRAM) $(LRG_EDITOR_BIN) $(DESTDIR)$(BINDIR)/
+	@$(MKDIR_P) $(DESTDIR)$(DATADIR)/emacs/site-lisp
+	$(INSTALL_DATA) editors/emacs/libregnum.el $(DESTDIR)$(DATADIR)/emacs/site-lisp/
+endif
 endif
 	# Install pkg-config
 	$(INSTALL_DATA) $(BUILDDIR)/$(PC_FILE) $(DESTDIR)$(PKGCONFIGDIR)/
@@ -1981,6 +2029,9 @@ uninstall:
 	$(RM) $(DESTDIR)$(LIBDIR)/$(LIB_SHARED_VERSION)
 	$(RMDIR) $(DESTDIR)$(INCLUDEDIR)/libregnum
 	$(RM) $(DESTDIR)$(PKGCONFIGDIR)/$(PC_FILE)
+	$(RM) $(DESTDIR)$(BINDIR)/lrgldr$(EXE_EXT)
+	$(RM) $(DESTDIR)$(BINDIR)/lrg-editor$(EXE_EXT)
+	$(RM) $(DESTDIR)$(DATADIR)/emacs/site-lisp/libregnum.el
 ifeq ($(BUILD_GIR),1)
 	$(RM) $(DESTDIR)$(GIRDIR)/$(GIR_NAME)
 	$(RM) $(DESTDIR)$(TYPELIBDIR)/$(TYPELIB_NAME)

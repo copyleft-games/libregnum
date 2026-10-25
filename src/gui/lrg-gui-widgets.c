@@ -363,15 +363,21 @@ gui_input_text_ex (LrgGuiContext        *self,
 	inner.w = rect->w - pad * 2.0f;
 	inner.h = rect->h;
 
+	/* A focus request for a field that already has focus is satisfied. */
+	if (self->focus_id == id)
+		self->focus_request = FALSE;
+
 	/* Focus by click, explicit request or Tab from the previous field. */
 	if (self->focus_id != id &&
 	    ((hovered && self->mouse_clicked[LRG_GUI_MOUSE_LEFT]) || self->focus_request ||
-	     (self->focus_next && self->focus_from != id)))
+	     self->focus_request_id == id || (self->focus_next && self->focus_from != id)))
 	{
-		gboolean select_all = self->focus_request || self->focus_next ||
+		gboolean select_all = self->focus_request || self->focus_next || self->focus_request_id == id ||
 		                      (flags & LRG_GUI_INPUT_TEXT_AUTO_SELECT_ALL);
 
 		self->focus_request = FALSE;
+		if (self->focus_request_id == id)
+			self->focus_request_id = 0;
 		self->focus_next = FALSE;
 		gui_focus_text (self, id, buffer->str, select_all);
 
@@ -734,6 +740,25 @@ lrg_gui_input_text (LrgGuiContext        *self,
 
 	gui_item_add (self, id, w, gui_frame_height (self), &rect);
 	return gui_input_text_ex (self, id, &rect, hint, buffer, flags, NULL);
+}
+
+void
+lrg_gui_request_focus (LrgGuiContext *self,
+                       const gchar   *label)
+{
+	g_return_if_fail (LRG_IS_GUI_CONTEXT (self));
+	g_return_if_fail (label != NULL);
+
+	self->focus_request_id = gui_hash_label (self, label);
+}
+
+void
+lrg_gui_clear_keyboard_focus (LrgGuiContext *self)
+{
+	g_return_if_fail (LRG_IS_GUI_CONTEXT (self));
+
+	self->focus_id = 0;
+	self->drag_edit_id = 0;
 }
 
 void
