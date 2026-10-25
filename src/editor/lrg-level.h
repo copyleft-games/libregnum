@@ -122,6 +122,30 @@ void lrg_level_add_node (LrgLevel *self,
                          LrgNode  *parent);
 
 /**
+ * lrg_level_insert_node:
+ * @self: an #LrgLevel
+ * @node: (transfer none): the node to insert
+ * @parent: (nullable): the parent node, or %NULL for the root
+ * @index: position among the parent's children, or -1 to append
+ *
+ * Inserts @node under @parent at @index and emits #LrgLevel::node-added.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_insert_node (LrgLevel *self,
+                            LrgNode  *node,
+                            LrgNode  *parent,
+                            gint      index);
+
+/**
+ * lrg_level_count_nodes:
+ * @self: an #LrgLevel
+ *
+ * Returns: the number of nodes in the level, excluding the implicit root
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_level_count_nodes (LrgLevel *self);
+
+/**
  * lrg_level_remove_node:
  * @self: an #LrgLevel
  * @node: the node to remove

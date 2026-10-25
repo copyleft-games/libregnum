@@ -8,6 +8,7 @@
  */
 
 #include "lrg-component-desc.h"
+#include "lrg-editor-value-private.h"
 
 /**
  * LrgComponentDesc:
@@ -371,4 +372,58 @@ lrg_component_desc_get_keys (LrgComponentDesc *self)
 	g_return_val_if_fail (LRG_IS_COMPONENT_DESC (self), NULL);
 
 	return g_hash_table_get_keys (self->props);
+}
+
+/* ==========================================================================
+ * Copy / compare
+ * ========================================================================== */
+
+gboolean
+lrg_component_desc_remove (LrgComponentDesc *self,
+                           const gchar      *name)
+{
+	g_return_val_if_fail (LRG_IS_COMPONENT_DESC (self), FALSE);
+	g_return_val_if_fail (name != NULL, FALSE);
+
+	return g_hash_table_remove (self->props, name);
+}
+
+GList *
+lrg_component_desc_get_sorted_keys (LrgComponentDesc *self)
+{
+	g_return_val_if_fail (LRG_IS_COMPONENT_DESC (self), NULL);
+
+	return g_list_sort (g_hash_table_get_keys (self->props),
+	                    (GCompareFunc) g_strcmp0);
+}
+
+LrgComponentDesc *
+lrg_component_desc_copy (LrgComponentDesc *self)
+{
+	LrgComponentDesc *copy;
+	GHashTableIter    iter;
+	gpointer          key;
+	gpointer          value;
+
+	g_return_val_if_fail (LRG_IS_COMPONENT_DESC (self), NULL);
+
+	copy = lrg_component_desc_new (self->type_name);
+	g_hash_table_iter_init (&iter, self->props);
+	while (g_hash_table_iter_next (&iter, &key, &value))
+		lrg_component_desc_set_value (copy, key, value);
+
+	return copy;
+}
+
+gboolean
+lrg_component_desc_equal (LrgComponentDesc *a,
+                          LrgComponentDesc *b)
+{
+	if (a == b)
+		return TRUE;
+	if (a == NULL || b == NULL)
+		return FALSE;
+
+	return g_strcmp0 (a->type_name, b->type_name) == 0 &&
+	       lrg_editor_param_tables_equal (a->props, b->props);
 }

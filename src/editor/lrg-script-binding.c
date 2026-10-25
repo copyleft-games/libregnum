@@ -291,3 +291,34 @@ lrg_script_binding_set_enabled (LrgScriptBinding *self,
 	self->enabled = enabled;
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ENABLED]);
 }
+
+/* ==========================================================================
+ * Copy / compare
+ * ========================================================================== */
+
+LrgScriptBinding *
+lrg_script_binding_copy (LrgScriptBinding *self)
+{
+	LrgScriptBinding *copy;
+
+	g_return_val_if_fail (LRG_IS_SCRIPT_BINDING (self), NULL);
+
+	copy = lrg_script_binding_new (self->language, self->script);
+	copy->enabled = self->enabled;
+
+	return copy;
+}
+
+gboolean
+lrg_script_binding_equal (LrgScriptBinding *a,
+                          LrgScriptBinding *b)
+{
+	if (a == b)
+		return TRUE;
+	if (a == NULL || b == NULL)
+		return FALSE;
+
+	return a->language == b->language &&
+	       g_strcmp0 (a->script, b->script) == 0 &&
+	       (!!a->enabled) == (!!b->enabled);
+}

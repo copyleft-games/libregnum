@@ -8,6 +8,7 @@
  */
 
 #include "lrg-node-visual.h"
+#include "lrg-editor-value-private.h"
 
 /**
  * LrgNodeVisual:
@@ -488,4 +489,58 @@ lrg_node_visual_get_param_names (LrgNodeVisual *self)
 	g_return_val_if_fail (LRG_IS_NODE_VISUAL (self), NULL);
 
 	return g_hash_table_get_keys (self->params);
+}
+
+/* ==========================================================================
+ * Copy / compare
+ * ========================================================================== */
+
+gboolean
+lrg_node_visual_remove_param (LrgNodeVisual *self,
+                              const gchar   *name)
+{
+	g_return_val_if_fail (LRG_IS_NODE_VISUAL (self), FALSE);
+	g_return_val_if_fail (name != NULL, FALSE);
+
+	return g_hash_table_remove (self->params, name);
+}
+
+LrgNodeVisual *
+lrg_node_visual_copy (LrgNodeVisual *self)
+{
+	LrgNodeVisual  *copy;
+	GHashTableIter  iter;
+	gpointer        key;
+	gpointer        value;
+
+	g_return_val_if_fail (LRG_IS_NODE_VISUAL (self), NULL);
+
+	copy = lrg_node_visual_new (self->kind);
+	copy->primitive = self->primitive;
+	copy->asset = g_strdup (self->asset);
+	if (self->material != NULL)
+		copy->material = lrg_material3d_copy (self->material);
+
+	/* Param bag: copy every typed value. */
+	g_hash_table_iter_init (&iter, self->params);
+	while (g_hash_table_iter_next (&iter, &key, &value))
+		lrg_node_visual_set_param (copy, key, value);
+
+	return copy;
+}
+
+gboolean
+lrg_node_visual_equal (LrgNodeVisual *a,
+                       LrgNodeVisual *b)
+{
+	if (a == b)
+		return TRUE;
+	if (a == NULL || b == NULL)
+		return FALSE;
+
+	return a->kind == b->kind &&
+	       a->primitive == b->primitive &&
+	       g_strcmp0 (a->asset, b->asset) == 0 &&
+	       lrg_material3d_equal (a->material, b->material) &&
+	       lrg_editor_param_tables_equal (a->params, b->params);
 }

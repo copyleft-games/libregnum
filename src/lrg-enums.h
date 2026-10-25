@@ -5187,6 +5187,25 @@ GType lrg_editor_tool_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_EDITOR_TOOL (lrg_editor_tool_get_type ())
 
 /**
+ * LrgEditorSpace:
+ * @LRG_EDITOR_SPACE_LOCAL: gizmo axes follow the node's own rotation
+ * @LRG_EDITOR_SPACE_WORLD: gizmo axes are the world axes
+ *
+ * The coordinate space transform gizmos operate in.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_EDITOR_SPACE_LOCAL,
+    LRG_EDITOR_SPACE_WORLD
+} LrgEditorSpace;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_editor_space_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_EDITOR_SPACE (lrg_editor_space_get_type ())
+
+/**
  * LrgAssetType:
  * @LRG_ASSET_TYPE_UNKNOWN: unrecognized asset
  * @LRG_ASSET_TYPE_TEXTURE: image/texture (png, jpg, tga, bmp)

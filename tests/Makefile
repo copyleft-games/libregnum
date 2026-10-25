@@ -202,6 +202,7 @@ TEST_SOURCES := \
 	test-lrgldr.c \
 	test-standalone-host.c \
 	test-editor.c \
+	test-editor-core.c \
 	test-gif-recorder.c \
 	test-text-baker.c \
 	test-font-atlas.c \

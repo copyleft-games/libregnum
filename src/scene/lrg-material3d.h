@@ -223,4 +223,28 @@ LRG_AVAILABLE_IN_ALL
 void lrg_material3d_set_emission_strength (LrgMaterial3D *self,
                                            gfloat         strength);
 
+/**
+ * lrg_material3d_copy:
+ * @self: an #LrgMaterial3D
+ *
+ * Creates a deep copy of @self (colour, roughness, metallic and emission).
+ *
+ * Returns: (transfer full): a new #LrgMaterial3D
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial3D * lrg_material3d_copy (LrgMaterial3D *self);
+
+/**
+ * lrg_material3d_equal:
+ * @a: (nullable): an #LrgMaterial3D
+ * @b: (nullable): another #LrgMaterial3D
+ *
+ * Compares two materials field by field. Two %NULL materials are equal.
+ *
+ * Returns: %TRUE if both materials describe the same surface
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_material3d_equal (LrgMaterial3D *a,
+                               LrgMaterial3D *b);
+
 G_END_DECLS

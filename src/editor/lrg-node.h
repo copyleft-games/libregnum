@@ -32,6 +32,18 @@ G_BEGIN_DECLS
 
 #define LRG_TYPE_NODE (lrg_node_get_type ())
 
+/**
+ * LrgNodeForeachFunc:
+ * @node: the node being visited
+ * @user_data: (closure): user data
+ *
+ * Callback for lrg_node_foreach().
+ *
+ * Returns: %TRUE to continue walking, %FALSE to stop
+ */
+typedef gboolean (*LrgNodeForeachFunc) (LrgNode  *node,
+                                        gpointer  user_data);
+
 LRG_AVAILABLE_IN_ALL
 G_DECLARE_DERIVABLE_TYPE (LrgNode, lrg_node, LRG, NODE, GObject)
 
@@ -391,6 +403,188 @@ void lrg_node_add_script (LrgNode          *self,
  */
 LRG_AVAILABLE_IN_ALL
 GPtrArray * lrg_node_get_scripts (LrgNode *self);
+
+/**
+ * lrg_node_insert_component:
+ * @self: an #LrgNode
+ * @desc: (transfer none): the component description to insert
+ * @index: position to insert at, or -1 to append
+ *
+ * Inserts a component description at @index. A reference is taken on @desc.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_insert_component (LrgNode          *self,
+                                LrgComponentDesc *desc,
+                                gint              index);
+
+/**
+ * lrg_node_remove_component_at:
+ * @self: an #LrgNode
+ * @index: index of the component description to remove
+ *
+ * Removes the component description at @index.
+ *
+ * Returns: %TRUE if a component was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_remove_component_at (LrgNode *self,
+                                       guint    index);
+
+/**
+ * lrg_node_find_component:
+ * @self: an #LrgNode
+ * @type_name: the registry type name to look for
+ *
+ * Returns: (transfer none) (nullable): the first component description whose
+ *   type name is @type_name, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgComponentDesc * lrg_node_find_component (LrgNode     *self,
+                                            const gchar *type_name);
+
+/**
+ * lrg_node_insert_script:
+ * @self: an #LrgNode
+ * @binding: (transfer none): the script binding to insert
+ * @index: position to insert at, or -1 to append
+ *
+ * Inserts a script binding at @index. A reference is taken on @binding.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_insert_script (LrgNode          *self,
+                             LrgScriptBinding *binding,
+                             gint              index);
+
+/**
+ * lrg_node_remove_script_at:
+ * @self: an #LrgNode
+ * @index: index of the script binding to remove
+ *
+ * Removes the script binding at @index.
+ *
+ * Returns: %TRUE if a script binding was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_remove_script_at (LrgNode *self,
+                                    guint    index);
+
+/* ==========================================================================
+ * Tree editing helpers
+ * ========================================================================== */
+
+/**
+ * lrg_node_insert_child:
+ * @self: an #LrgNode
+ * @child: (transfer none): the node to insert
+ * @index: position among the children, or -1 to append
+ *
+ * Inserts @child into the children of @self at @index. An out-of-range
+ * @index appends. A reference is taken on @child.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_insert_child (LrgNode *self,
+                            LrgNode *child,
+                            gint     index);
+
+/**
+ * lrg_node_get_child_index:
+ * @self: an #LrgNode
+ * @child: a node
+ *
+ * Returns: the index of @child among the children of @self, or -1
+ */
+LRG_AVAILABLE_IN_ALL
+gint lrg_node_get_child_index (LrgNode *self,
+                               LrgNode *child);
+
+/**
+ * lrg_node_is_ancestor_of:
+ * @self: an #LrgNode
+ * @node: a node
+ *
+ * Returns: %TRUE if @self is @node or one of its ancestors
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_is_ancestor_of (LrgNode *self,
+                                  LrgNode *node);
+
+/**
+ * lrg_node_get_depth:
+ * @self: an #LrgNode
+ *
+ * Returns: the number of ancestors of @self (0 for a detached or root node)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_node_get_depth (LrgNode *self);
+
+/**
+ * lrg_node_get_path:
+ * @self: an #LrgNode
+ *
+ * Builds a slash-separated path of node names from the top-most named
+ * ancestor down to @self (the unnamed implicit level root is skipped), for
+ * example `"world/house/door"`. Unnamed nodes appear as `"(node)"`.
+ *
+ * Returns: (transfer full): the node path
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_node_get_path (LrgNode *self);
+
+/**
+ * lrg_node_find_by_path:
+ * @self: the node to search under
+ * @path: a slash-separated path of child names relative to @self
+ *
+ * Returns: (transfer none) (nullable): the first node matching @path
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_node_find_by_path (LrgNode     *self,
+                                 const gchar *path);
+
+/**
+ * lrg_node_copy_state:
+ * @self: the destination node
+ * @source: the node to copy from
+ *
+ * Copies the node's own editable state from @source into @self: name, flags,
+ * local transform, and deep copies of the visual payload, component
+ * descriptions and script bindings. The GUID, parent and children of @self
+ * are left untouched. This is the primitive behind the editor's
+ * snapshot-based undo (see lrg_editor_snapshot_node()).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_copy_state (LrgNode *self,
+                          LrgNode *source);
+
+/**
+ * lrg_node_state_equal:
+ * @self: an #LrgNode
+ * @other: another #LrgNode
+ *
+ * Compares the own editable state of two nodes (everything
+ * lrg_node_copy_state() copies). Children and GUIDs are ignored.
+ *
+ * Returns: %TRUE if the states are equal
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_state_equal (LrgNode *self,
+                               LrgNode *other);
+
+/**
+ * lrg_node_foreach:
+ * @self: an #LrgNode
+ * @func: (scope call): function called for @self and every descendant in
+ *   depth-first pre-order; return %FALSE to stop the walk
+ * @user_data: (closure): data passed to @func
+ *
+ * Walks the subtree rooted at @self.
+ *
+ * Returns: %FALSE if @func stopped the walk early
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_foreach (LrgNode         *self,
+                           LrgNodeForeachFunc func,
+                           gpointer         user_data);
 
 /* ==========================================================================
  * Instantiation
