@@ -449,7 +449,7 @@ overlays (LrgEditorApp     *self,
 	if (self->show_stats)
 	{
 		g_autofree gchar *text = g_strdup_printf ("%u nodes  %u selected  %.0f fps",
-		                                          lrg_level_count_nodes (lrg_editor_get_level (self->editor)),
+		                                          editor_app_count_nodes (self),
 		                                          lrg_editor_selection_get_count (lrg_editor_get_selection (self->editor)),
 		                                          self->fps);
 		gfloat            tw = lrg_gui_calc_text_width (self->gui, text);
@@ -491,7 +491,7 @@ overlays (LrgEditorApp     *self,
 	}
 
 	/* Empty-level hint. */
-	if (lrg_level_count_nodes (lrg_editor_get_level (self->editor)) == 0)
+	if (editor_app_count_nodes (self) == 0)
 	{
 		const gchar *hint = "Empty level: right-click or use Create to add nodes, drag assets here";
 		gfloat       tw = lrg_gui_calc_text_width (self->gui, hint);

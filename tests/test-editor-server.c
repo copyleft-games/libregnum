@@ -678,8 +678,19 @@ test_log_methods (Fixture       *f,
 	g_assert_cmpstr (json_object_get_string_member (json_array_get_object_element (arr, 1), "level"),
 	                 ==, "warning");
 
+	/* The running per-level tallies follow records out of the ring. */
+	lrg_editor_log_append (log, G_LOG_LEVEL_CRITICAL, "game", "bad");
+	lrg_editor_log_append (log, G_LOG_LEVEL_MESSAGE, "game", "hello");
+	g_assert_cmpuint (lrg_editor_log_count_level (log, G_LOG_LEVEL_WARNING), ==, 1);
+	g_assert_cmpuint (lrg_editor_log_count_level (log, G_LOG_LEVEL_ERROR | G_LOG_LEVEL_CRITICAL), ==, 1);
+	g_assert_cmpuint (lrg_editor_log_count_level (log, G_LOG_LEVEL_WARNING | G_LOG_LEVEL_MESSAGE), ==, 2);
+	g_assert_cmpuint (lrg_editor_log_count_level (log, G_LOG_LEVEL_DEBUG), ==, 0);
+
 	lrg_editor_log_clear (log);
 	g_assert_cmpuint (lrg_editor_log_get_n_records (log), ==, 0);
+	g_assert_cmpuint (lrg_editor_log_count_level (log, G_LOG_LEVEL_MASK), ==, 0);
+	lrg_editor_log_append (log, G_LOG_LEVEL_WARNING, "game", "again");
+	g_assert_cmpuint (lrg_editor_log_count_level (log, G_LOG_LEVEL_WARNING), ==, 1);
 	pump (10);
 }
 

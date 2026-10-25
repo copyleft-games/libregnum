@@ -192,6 +192,15 @@ struct _LrgEditorApp
 	gchar             *range_anchor;
 	GPtrArray         *visible_rows;  /* LrgNode* in display order (borrowed) */
 	LrgNode           *last_primary;  /* to detect selection changes (no ref) */
+	/* Per-frame derived data, cached against lrg_node_get_tree_serial()
+	 * and the level root (identity only, never dereferenced). */
+	LrgNode           *node_count_root;
+	guint              node_count_serial;     /* 0 = not cached */
+	guint              node_count;
+	GHashTable        *hierarchy_shown;       /* LrgNode* matching the filter (borrowed) */
+	gchar             *hierarchy_shown_needle;
+	LrgNode           *hierarchy_shown_root;
+	guint              hierarchy_shown_serial; /* 0 = not cached */
 
 	/* Inspector */
 	GString           *component_search;
@@ -221,6 +230,13 @@ struct _LrgEditorApp
 	GPtrArray         *console_history;    /* gchar* */
 	gint               console_history_pos;
 	guint              console_seen;       /* records seen (scroll on new) */
+	GPtrArray         *console_rows;       /* EditorConsoleRow*, mirrors the log ring (lazy) */
+	GPtrArray         *console_shown;      /* borrowed rows passing the level/text filter */
+	gchar             *console_shown_needle; /* casefolded filter console_shown was built for */
+	guint              console_shown_levels; /* level mask console_shown was built for */
+	gfloat             console_shown_w;    /* widest row in console_shown */
+	gfloat             console_font_size;  /* font size the row widths were measured at */
+	guint64            console_popup_serial; /* row whose context menu is open, 0 = none */
 
 	/* Problems */
 	GPtrArray         *problems;           /* LrgEditorProblem* */
@@ -316,6 +332,7 @@ G_GNUC_INTERNAL void     editor_app_process_shortcuts (LrgEditorApp *self);
 
 /* --- panels --- */
 G_GNUC_INTERNAL void     editor_panel_hierarchy     (LrgEditorApp *self);
+G_GNUC_INTERNAL guint    editor_app_count_nodes     (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_panel_inspector     (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_panel_viewport      (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_panel_assets        (LrgEditorApp *self);

@@ -30,6 +30,15 @@ struct _LrgGuiRaylib
 	gint      cursor;        /* raylib cursor last applied */
 
 	GArray   *clip_stack;    /* Rectangle */
+
+	/* The scissor state last set during lrg_gui_raylib_render(), so a
+	 * clip change to the same rectangle (common: a region pops back to
+	 * its parent's clip) does not end and restart scissor mode, each of
+	 * which flushes raylib's batch. scissor_known is FALSE when the GL
+	 * state is not ours to assume (frame start, after a callback). */
+	gboolean  scissor_known;
+	gboolean  scissor_on;
+	gint      scissor[4];    /* x, y, w, h as given to BeginScissorMode */
 };
 
 G_DEFINE_FINAL_TYPE (LrgGuiRaylib, lrg_gui_raylib, G_TYPE_OBJECT)
@@ -600,14 +609,30 @@ to_color (LrgGuiColor c)
 static void
 apply_clip (LrgGuiRaylib *self)
 {
-	EndScissorMode ();
-	if (self->clip_stack->len > 0)
+	gint want[4] = { 0, 0, 0, 0 };
+	gboolean on = self->clip_stack->len > 0;
+
+	if (on)
 	{
 		Rectangle r = g_array_index (self->clip_stack, Rectangle, self->clip_stack->len - 1);
 
-		BeginScissorMode ((gint) floorf (r.x), (gint) floorf (r.y),
-		                  (gint) ceilf (MAX (0.0f, r.width)), (gint) ceilf (MAX (0.0f, r.height)));
+		want[0] = (gint) floorf (r.x);
+		want[1] = (gint) floorf (r.y);
+		want[2] = (gint) ceilf (MAX (0.0f, r.width));
+		want[3] = (gint) ceilf (MAX (0.0f, r.height));
 	}
+
+	/* Already in that state: nothing to do (and no batch flush). */
+	if (self->scissor_known && self->scissor_on == on &&
+	    (!on || memcmp (self->scissor, want, sizeof want) == 0))
+		return;
+
+	EndScissorMode ();
+	if (on)
+		BeginScissorMode (want[0], want[1], want[2], want[3]);
+	self->scissor_known = TRUE;
+	self->scissor_on = on;
+	memcpy (self->scissor, want, sizeof want);
 }
 
 static void
@@ -648,17 +673,57 @@ roundness_for (const LrgGuiRect *r,
 	return (m > 0.0f) ? CLAMP (radius * 2.0f / m, 0.0f, 1.0f) : 0.0f;
 }
 
+/*
+ * shapes_atlas_rect:
+ *
+ * raylib's GenImageFontAtlas() paints a 3x3 opaque white block in the
+ * bottom-right corner of every font atlas, for SetShapesTexture(). Using
+ * the UI font's atlas (its centre texel, so bilinear filtering only ever
+ * blends white with white) as the shapes texture while replaying lets
+ * rectangles, circles and UI text share one texture, so raylib batches
+ * them instead of flushing at every switch between a shape and a label.
+ * Returns FALSE (keep raylib's default) without a loaded UI font.
+ */
+static gboolean
+shapes_atlas_rect (LrgGuiRaylib *self,
+                   Rectangle    *rect)
+{
+	if (!self->ui_loaded || self->ui_font.texture.id == 0 ||
+	    self->ui_font.texture.width < 3 || self->ui_font.texture.height < 3)
+		return FALSE;
+
+	rect->x = (gfloat) (self->ui_font.texture.width - 2);
+	rect->y = (gfloat) (self->ui_font.texture.height - 2);
+	rect->width = 1.0f;
+	rect->height = 1.0f;
+	return TRUE;
+}
+
 void
 lrg_gui_raylib_render (LrgGuiRaylib   *self,
                        LrgGuiDrawList *list)
 {
-	guint i, n;
+	guint     i, n;
+	Texture2D prev_shapes;
+	Rectangle prev_shapes_rect;
+	Rectangle atlas_rect;
+	gboolean  use_atlas;
 
 	g_return_if_fail (LRG_IS_GUI_RAYLIB (self));
 	g_return_if_fail (LRG_IS_GUI_DRAW_LIST (list));
 
 	g_array_set_size (self->clip_stack, 0);
+	self->scissor_known = FALSE;
 	n = lrg_gui_draw_list_get_length (list);
+
+	/* Shapes sample the font atlas' white block during the replay only;
+	 * the previous shapes texture is restored around callbacks and at
+	 * the end, so nothing outside the GUI sees the change. */
+	prev_shapes = GetShapesTexture ();
+	prev_shapes_rect = GetShapesTextureRectangle ();
+	use_atlas = shapes_atlas_rect (self, &atlas_rect);
+	if (use_atlas)
+		SetShapesTexture (self->ui_font.texture, atlas_rect);
 
 	for (i = 0; i < n; i++)
 	{
@@ -764,7 +829,12 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 				/* Custom renderers (3D viewports) manage their own state;
 				 * restore our clip afterwards. */
 				EndScissorMode ();
+				if (use_atlas)
+					SetShapesTexture (prev_shapes, prev_shapes_rect);
 				cmd->callback (&cmd->rect, cmd->user_data);
+				if (use_atlas)
+					SetShapesTexture (self->ui_font.texture, atlas_rect);
+				self->scissor_known = FALSE;
 				apply_clip (self);
 			}
 			break;
@@ -776,6 +846,9 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 
 	g_array_set_size (self->clip_stack, 0);
 	EndScissorMode ();
+	self->scissor_known = FALSE;
+	if (use_atlas)
+		SetShapesTexture (prev_shapes, prev_shapes_rect);
 }
 
 void

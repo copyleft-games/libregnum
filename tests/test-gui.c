@@ -954,6 +954,53 @@ test_dock_splitter_drag (Gui           *g,
 	g_assert_cmpfloat_with_epsilon (hr2.w, hr.w + 100.0f, 2.0f);
 }
 
+/* 10 px per character, so the wrap width below is exactly 10 characters. */
+static gfloat
+ten_px_measure (const gchar *text,
+                gssize       length,
+                gfloat       font_size,
+                gboolean     monospace,
+                gpointer     user_data)
+{
+	return 10.0f * (gfloat) ((length < 0) ? g_utf8_strlen (text, -1) : g_utf8_strlen (text, length));
+}
+
+static void
+test_text_wrapped (Gui           *g,
+                   gconstpointer  data)
+{
+	const LrgGuiRect  narrow = { 0.0f, 0.0f, 100.0f, 400.0f };
+	LrgGuiDrawList   *dl;
+	const gchar      *expected[] = { "aaaa bbbb", "cccc", "dd", "eeeeeeeeee", "eeee", "", "f" };
+	guint             i, n_text = 0;
+
+	/* Breaks at the last space before the first character that does not
+	 * fit, splits words longer than a line, and keeps explicit newlines
+	 * (including an empty line). */
+	lrg_gui_context_set_measure_func (g->ctx, ten_px_measure, NULL, NULL);
+	begin (g, -1, -1, FALSE);
+	lrg_gui_begin_region (g->ctx, "p", &narrow, LRG_GUI_REGION_NO_PADDING);
+	lrg_gui_text_wrapped (g->ctx, "aaaa bbbb cccc\ndd eeeeeeeeeeeeee\n\nf");
+	lrg_gui_end_region (g->ctx);
+	end (g);
+
+	dl = lrg_gui_context_get_draw_list (g->ctx);
+	for (i = 0; i < lrg_gui_draw_list_get_length (dl); i++)
+	{
+		const LrgGuiCommand *cmd = lrg_gui_draw_list_get_command (dl, i);
+
+		if (cmd->kind != LRG_GUI_CMD_TEXT)
+			continue;
+		/* Empty chunks record no text command. */
+		while (n_text < G_N_ELEMENTS (expected) && *expected[n_text] == '\0')
+			n_text++;
+		g_assert_cmpuint (n_text, <, G_N_ELEMENTS (expected));
+		g_assert_cmpstr (cmd->text, ==, expected[n_text]);
+		n_text++;
+	}
+	g_assert_cmpuint (n_text, ==, G_N_ELEMENTS (expected));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -978,6 +1025,7 @@ main (int   argc,
 	ADD ("/gui/drag-and-drop", test_drag_and_drop);
 	ADD ("/gui/dock/layout", test_dock_layout);
 	ADD ("/gui/dock/splitter", test_dock_splitter_drag);
+	ADD ("/gui/text/wrapped", test_text_wrapped);
 #undef ADD
 
 	return g_test_run ();

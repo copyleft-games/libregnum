@@ -8,25 +8,102 @@
  */
 
 #include "lrg-gui-draw-list.h"
+#include "lrg-gui-private.h"
 #include <string.h>
+
+/* Text arena block size; a busy editor frame records a few tens of KiB
+ * of text, so a handful of blocks serve every frame after the first. */
+#define TEXT_BLOCK_SIZE (16384)
+
+/* One block of the text arena. */
+typedef struct
+{
+	gchar *data;
+	gsize  size;
+	gsize  used;
+} TextBlock;
 
 struct _LrgGuiDrawList
 {
 	GObject  parent_instance;
 
 	GArray  *commands;   /* LrgGuiCommand */
+
+	/* Text of LRG_GUI_CMD_TEXT commands. Blocks are kept across clears
+	 * (only their fill level is reset), so recording text costs a copy,
+	 * not an allocation, and clearing frees nothing. */
+	GArray  *text_blocks;   /* TextBlock */
+	guint    text_block;    /* block currently being filled */
 };
 
 G_DEFINE_FINAL_TYPE (LrgGuiDrawList, lrg_gui_draw_list, G_TYPE_OBJECT)
 
-/* Releases what a command owns (text, texture ref). */
+/* Releases what a command owns (a texture ref; text lives in the arena). */
 static void
 command_clear (gpointer data)
 {
 	LrgGuiCommand *cmd = data;
 
-	g_clear_pointer (&cmd->text, g_free);
+	cmd->text = NULL;
 	g_clear_object (&cmd->texture);
+}
+
+/* Copies @len bytes of @text plus a NUL into the arena. The copy stays
+ * valid until the list is cleared or finalized. */
+static gchar *
+text_store (LrgGuiDrawList *self,
+            const gchar    *text,
+            gsize           len)
+{
+	gsize      need = len + 1;
+	TextBlock *b;
+	TextBlock  fresh;
+	gchar     *out;
+
+	/* Fill the current block, moving on to later (already allocated)
+	 * blocks when it is full. */
+	while (self->text_block < self->text_blocks->len)
+	{
+		b = &g_array_index (self->text_blocks, TextBlock, self->text_block);
+		if (b->size - b->used >= need)
+		{
+			out = b->data + b->used;
+			memcpy (out, text, len);
+			out[len] = '\0';
+			b->used += need;
+			return out;
+		}
+		self->text_block++;
+	}
+
+	/* Out of blocks: add one (big enough for very long strings too). */
+	fresh.size = MAX ((gsize) TEXT_BLOCK_SIZE, need);
+	fresh.data = g_malloc (fresh.size);
+	fresh.used = need;
+	g_array_append_val (self->text_blocks, fresh);
+	self->text_block = self->text_blocks->len - 1;
+	memcpy (fresh.data, text, len);
+	fresh.data[len] = '\0';
+	return fresh.data;
+}
+
+/* Forgets every string in the arena, keeping the blocks. */
+static void
+text_reset (LrgGuiDrawList *self)
+{
+	guint i;
+
+	for (i = 0; i < self->text_blocks->len; i++)
+		g_array_index (self->text_blocks, TextBlock, i).used = 0;
+	self->text_block = 0;
+}
+
+static void
+text_block_clear (gpointer data)
+{
+	TextBlock *b = data;
+
+	g_free (b->data);
 }
 
 static void
@@ -35,6 +112,7 @@ lrg_gui_draw_list_finalize (GObject *object)
 	LrgGuiDrawList *self = LRG_GUI_DRAW_LIST (object);
 
 	g_array_unref (self->commands);
+	g_array_unref (self->text_blocks);
 
 	G_OBJECT_CLASS (lrg_gui_draw_list_parent_class)->finalize (object);
 }
@@ -50,6 +128,8 @@ lrg_gui_draw_list_init (LrgGuiDrawList *self)
 {
 	self->commands = g_array_sized_new (FALSE, TRUE, sizeof (LrgGuiCommand), 512);
 	g_array_set_clear_func (self->commands, command_clear);
+	self->text_blocks = g_array_new (FALSE, FALSE, sizeof (TextBlock));
+	g_array_set_clear_func (self->text_blocks, text_block_clear);
 }
 
 LrgGuiDrawList *
@@ -64,6 +144,7 @@ lrg_gui_draw_list_clear (LrgGuiDrawList *self)
 	g_return_if_fail (LRG_IS_GUI_DRAW_LIST (self));
 
 	g_array_set_size (self->commands, 0);
+	text_reset (self);
 }
 
 guint
@@ -223,7 +304,7 @@ lrg_gui_draw_list_text (LrgGuiDrawList *self,
 	cmd = push (self, LRG_GUI_CMD_TEXT);
 	cmd->rect.x = x;
 	cmd->rect.y = y;
-	cmd->text = (length < 0) ? g_strdup (text) : g_strndup (text, length);
+	cmd->text = text_store (self, text, (length < 0) ? strlen (text) : strnlen (text, (gsize) length));
 	cmd->font_size = font_size;
 	cmd->color = color;
 	cmd->monospace = monospace;
@@ -312,11 +393,62 @@ lrg_gui_draw_list_append (LrgGuiDrawList *self,
 	{
 		LrgGuiCommand  copy = g_array_index (other->commands, LrgGuiCommand, i);
 
-		copy.text = g_strdup (copy.text);
+		if (copy.text != NULL)
+			copy.text = text_store (self, copy.text, strlen (copy.text));
 		if (copy.texture != NULL)
 			g_object_ref (copy.texture);
 		g_array_append_val (self->commands, copy);
 	}
+}
+
+/*
+ * lrg_gui_draw_list_steal_append:
+ *
+ * Moves every command of @other to the end of @self and leaves @other
+ * empty: what lrg_gui_draw_list_append() followed by clearing @other
+ * would produce, without copying when @self is empty (the arrays and
+ * text arenas are swapped) and without texture ref churn otherwise.
+ */
+void
+lrg_gui_draw_list_steal_append (LrgGuiDrawList *self,
+                                LrgGuiDrawList *other)
+{
+	guint i;
+
+	g_return_if_fail (LRG_IS_GUI_DRAW_LIST (self));
+	g_return_if_fail (LRG_IS_GUI_DRAW_LIST (other));
+
+	if (self->commands->len == 0)
+	{
+		GArray *tmp;
+		guint   block;
+
+		tmp = self->commands;
+		self->commands = other->commands;
+		other->commands = tmp;
+		tmp = self->text_blocks;
+		self->text_blocks = other->text_blocks;
+		other->text_blocks = tmp;
+		block = self->text_block;
+		self->text_block = other->text_block;
+		other->text_block = block;
+		text_reset (other);
+		return;
+	}
+
+	for (i = 0; i < other->commands->len; i++)
+	{
+		LrgGuiCommand *src = &g_array_index (other->commands, LrgGuiCommand, i);
+		LrgGuiCommand  moved = *src;
+
+		/* Text is copied into our arena; the texture ref moves. */
+		if (moved.text != NULL)
+			moved.text = text_store (self, moved.text, strlen (moved.text));
+		src->texture = NULL;
+		g_array_append_val (self->commands, moved);
+	}
+	g_array_set_size (other->commands, 0);
+	text_reset (other);
 }
 
 const LrgGuiCommand *

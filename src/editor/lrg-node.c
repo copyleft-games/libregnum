@@ -8,6 +8,7 @@
  */
 
 #include "lrg-node.h"
+#include "lrg-node-private.h"
 #include "lrg-node-visual.h"
 #include "lrg-component-desc.h"
 #include "lrg-script-binding.h"
@@ -51,6 +52,22 @@ enum
 
 static GParamSpec *properties[N_PROPS];
 
+/* See lrg_node_get_tree_serial() (lrg-node-private.h). */
+static guint tree_serial = 1;
+
+static void
+tree_changed (void)
+{
+	if (++tree_serial == 0)
+		tree_serial = 1;
+}
+
+guint
+lrg_node_get_tree_serial (void)
+{
+	return tree_serial;
+}
+
 /* ==========================================================================
  * GObject Overrides
  * ========================================================================== */
@@ -70,6 +87,7 @@ lrg_node_finalize (GObject *object)
 	g_clear_object (&priv->visual);
 	g_clear_pointer (&priv->components, g_ptr_array_unref);
 	g_clear_pointer (&priv->scripts, g_ptr_array_unref);
+	tree_changed ();
 
 	G_OBJECT_CLASS (lrg_node_parent_class)->finalize (object);
 }
@@ -123,12 +141,14 @@ lrg_node_set_property (GObject      *object,
 	case PROP_NAME:
 		g_clear_pointer (&priv->name, g_free);
 		priv->name = g_value_dup_string (value);
+		tree_changed ();
 		break;
 	case PROP_GUID:
 		if (g_value_get_string (value) != NULL)
 		{
 			g_clear_pointer (&priv->guid, g_free);
 			priv->guid = g_value_dup_string (value);
+			tree_changed ();
 		}
 		break;
 	case PROP_VISIBLE:
@@ -263,6 +283,7 @@ lrg_node_init (LrgNode *self)
 	priv->visible    = TRUE;
 	priv->locked     = FALSE;
 	priv->is_2d      = FALSE;
+	tree_changed ();
 	priv->visual     = NULL;
 	priv->components = g_ptr_array_new_with_free_func (g_object_unref);
 	priv->scripts    = g_ptr_array_new_with_free_func (g_object_unref);
@@ -312,6 +333,7 @@ lrg_node_set_name (LrgNode     *self,
 	priv = lrg_node_get_instance_private (self);
 	g_clear_pointer (&priv->name, g_free);
 	priv->name = g_strdup (name);
+	tree_changed ();
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_NAME]);
 }
 
@@ -335,6 +357,7 @@ lrg_node_set_guid (LrgNode     *self,
 	priv = lrg_node_get_instance_private (self);
 	g_clear_pointer (&priv->guid, g_free);
 	priv->guid = g_strdup (guid);
+	tree_changed ();
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_GUID]);
 }
 
@@ -506,6 +529,7 @@ lrg_node_add_child (LrgNode *self,
 
 	child_priv->parent = self;
 	g_ptr_array_add (priv->children, g_object_ref (child));
+	tree_changed ();
 }
 
 gboolean
@@ -525,6 +549,7 @@ lrg_node_remove_child (LrgNode *self,
 		child_priv->parent = NULL;
 
 	/* g_ptr_array_remove drops the array's reference via the free func. */
+	tree_changed ();
 	return g_ptr_array_remove (priv->children, child);
 }
 
@@ -774,6 +799,7 @@ lrg_node_insert_child (LrgNode *self,
 
 	child_priv->parent = self;
 	g_ptr_array_insert (priv->children, index, g_object_ref (child));
+	tree_changed ();
 }
 
 gint
@@ -923,6 +949,7 @@ lrg_node_copy_state (LrgNode *self,
 	 * node, which keeps its own identity). */
 	g_free (dst->name);
 	dst->name    = g_strdup (src->name);
+	tree_changed ();
 	dst->visible = src->visible;
 	dst->locked  = src->locked;
 	dst->is_2d   = src->is_2d;

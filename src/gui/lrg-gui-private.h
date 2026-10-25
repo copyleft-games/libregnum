@@ -283,4 +283,8 @@ G_GNUC_INTERNAL void          gui_format_value      (gchar *buf, gsize size, con
 G_GNUC_INTERNAL gboolean      gui_key_pressed       (LrgGuiContext *self, LrgGuiKey key, gboolean repeat,
                                      LrgGuiModifiers *mods);
 
+/* --- implemented in lrg-gui-draw-list.c --- */
+
+G_GNUC_INTERNAL void          lrg_gui_draw_list_steal_append (LrgGuiDrawList *self, LrgGuiDrawList *other);
+
 G_END_DECLS
