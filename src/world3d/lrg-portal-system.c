@@ -9,6 +9,9 @@
 
 #include "config.h"
 #include "lrg-portal-system.h"
+#include "lrg-sector-private.h"
+
+#include <string.h>
 
 #define DEFAULT_MAX_PORTAL_DEPTH 4
 
@@ -23,6 +26,12 @@ struct _LrgPortalSystem
     GPtrArray       *visible_sectors;  /* gchar* sector IDs currently visible */
 
     guint            max_portal_depth; /* Recursion limit for portal traversal */
+
+    /* update() scratch, reused every call: the traversal's visited set
+     * and the visible IDs it found, both borrowing the sector table's
+     * keys for the duration of the call. */
+    GHashTable      *visit_set;
+    GPtrArray       *visit_order;
 };
 
 G_DEFINE_FINAL_TYPE (LrgPortalSystem, lrg_portal_system, G_TYPE_OBJECT)
@@ -56,6 +65,8 @@ lrg_portal_system_finalize (GObject *object)
     g_clear_pointer (&self->portals, g_hash_table_unref);
     g_clear_pointer (&self->current_sector, g_free);
     g_clear_pointer (&self->visible_sectors, g_ptr_array_unref);
+    g_clear_pointer (&self->visit_set, g_hash_table_unref);
+    g_clear_pointer (&self->visit_order, g_ptr_array_unref);
 
     G_OBJECT_CLASS (lrg_portal_system_parent_class)->finalize (object);
 }
@@ -216,6 +227,8 @@ lrg_portal_system_init (LrgPortalSystem *self)
     self->current_sector = NULL;
     self->visible_sectors = g_ptr_array_new_with_free_func (g_free);
     self->max_portal_depth = DEFAULT_MAX_PORTAL_DEPTH;
+    self->visit_set = g_hash_table_new (g_str_hash, g_str_equal);
+    self->visit_order = g_ptr_array_new ();
 }
 
 /*
@@ -490,40 +503,43 @@ lrg_portal_system_get_portal_count (LrgPortalSystem *self)
 /*
  * traverse_portals_recursive:
  *
- * Recursively traverse portals from a sector to find all visible sectors.
+ * Recursively traverse portals from a sector to find all visible sectors,
+ * appending each newly reached sector's ID (the sector table's key) to
+ * self->visit_order in discovery order.
  */
 static void
-traverse_portals_recursive (LrgPortalSystem *self,
-                            const gchar     *sector_id,
+traverse_portals_recursive (LrgPortalSystem  *self,
+                            const gchar      *sector_id,
                             const GrlVector3 *camera_pos,
-                            GHashTable      *visited,
-                            guint            depth)
+                            guint             depth)
 {
+    gpointer key;
+    gpointer value;
     const LrgSector *sector;
-    GPtrArray *portal_ids;
+    const GPtrArray *portal_ids;
     guint i;
 
     if (depth >= self->max_portal_depth)
         return;
 
-    if (g_hash_table_contains (visited, sector_id))
+    if (g_hash_table_contains (self->visit_set, sector_id))
         return;
 
-    sector = lrg_portal_system_get_sector (self, sector_id);
-    if (sector == NULL)
+    if (!g_hash_table_lookup_extended (self->sectors, sector_id, &key, &value))
         return;
+    sector = value;
 
     /* Mark as visited */
-    g_hash_table_add (visited, (gpointer)sector_id);
-    g_ptr_array_add (self->visible_sectors, g_strdup (sector_id));
+    g_hash_table_add (self->visit_set, key);
+    g_ptr_array_add (self->visit_order, key);
 
-    /* Traverse connected portals */
-    portal_ids = lrg_sector_get_portal_ids (sector);
+    /* Traverse connected portals (borrowed: no copy of the ID list) */
+    portal_ids = lrg_sector_peek_portal_ids (sector);
 
     for (i = 0; i < portal_ids->len; i++)
     {
         const gchar *portal_id = g_ptr_array_index (portal_ids, i);
-        const LrgPortal *portal = lrg_portal_system_get_portal (self, portal_id);
+        const LrgPortal *portal = g_hash_table_lookup (self->portals, portal_id);
 
         if (portal == NULL)
             continue;
@@ -531,13 +547,31 @@ traverse_portals_recursive (LrgPortalSystem *self,
         /* Check if portal is visible from camera */
         if (lrg_portal_is_visible_from (portal, camera_pos))
         {
-            const gchar *other_sector = lrg_portal_get_other_sector (portal, sector_id);
+            const gchar *other_sector = lrg_portal_get_other_sector (portal, key);
             if (other_sector != NULL)
-                traverse_portals_recursive (self, other_sector, camera_pos, visited, depth + 1);
+                traverse_portals_recursive (self, other_sector, camera_pos, depth + 1);
         }
     }
+}
 
-    g_ptr_array_unref (portal_ids);
+/*
+ * visible_set_matches:
+ *
+ * Whether the traversal just done found exactly the visible list we hold
+ * (same IDs, same order).
+ */
+static gboolean
+visible_set_matches (LrgPortalSystem *self)
+{
+    guint i;
+
+    if (self->visit_order->len != self->visible_sectors->len)
+        return FALSE;
+    for (i = 0; i < self->visit_order->len; i++)
+        if (strcmp (g_ptr_array_index (self->visit_order, i),
+                    g_ptr_array_index (self->visible_sectors, i)) != 0)
+            return FALSE;
+    return TRUE;
 }
 
 /*
@@ -547,6 +581,8 @@ traverse_portals_recursive (LrgPortalSystem *self,
  *
  * Updates sector visibility based on camera position.
  * This traverses portals to determine which sectors are visible.
+ * #LrgPortalSystem::visibility-changed is emitted only when the visible
+ * set (or its order) differs from the previous update's.
  */
 void
 lrg_portal_system_update (LrgPortalSystem  *self,
@@ -555,7 +591,7 @@ lrg_portal_system_update (LrgPortalSystem  *self,
     const LrgSector *current;
     const gchar *new_sector_id;
     g_autofree gchar *old_sector = NULL;
-    g_autoptr(GHashTable) visited = NULL;
+    guint i;
 
     g_return_if_fail (LRG_IS_PORTAL_SYSTEM (self));
     g_return_if_fail (camera_pos != NULL);
@@ -598,14 +634,34 @@ lrg_portal_system_update (LrgPortalSystem  *self,
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CURRENT_SECTOR]);
     }
 
-    /* Clear and rebuild visibility */
-    g_ptr_array_set_size (self->visible_sectors, 0);
+    /*
+     * Traverse portals into the reusable scratch (no allocation once it
+     * has grown), then replace the visible list only if it changed: the
+     * camera usually sits still or moves within a sector, and the set
+     * then stays the same frame after frame. Visibility depends on the
+     * camera position, not just its sector, so the traversal itself
+     * runs every update.
+     */
+    g_hash_table_remove_all (self->visit_set);
+    g_ptr_array_set_size (self->visit_order, 0);
+    traverse_portals_recursive (self, new_sector_id, camera_pos, 0);
 
-    /* Traverse portals to find visible sectors */
-    visited = g_hash_table_new (g_str_hash, g_str_equal);
-    traverse_portals_recursive (self, new_sector_id, camera_pos, visited, 0);
-
-    g_signal_emit (self, signals[SIGNAL_VISIBILITY_CHANGED], 0);
+    if (!visible_set_matches (self))
+    {
+        g_ptr_array_set_size (self->visible_sectors, 0);
+        for (i = 0; i < self->visit_order->len; i++)
+            g_ptr_array_add (self->visible_sectors,
+                             g_strdup (g_ptr_array_index (self->visit_order, i)));
+        g_ptr_array_set_size (self->visit_order, 0);
+        g_hash_table_remove_all (self->visit_set);
+        g_signal_emit (self, signals[SIGNAL_VISIBILITY_CHANGED], 0);
+    }
+    else
+    {
+        /* Drop the borrowed keys before handlers can touch the tables. */
+        g_ptr_array_set_size (self->visit_order, 0);
+        g_hash_table_remove_all (self->visit_set);
+    }
 }
 
 /*
