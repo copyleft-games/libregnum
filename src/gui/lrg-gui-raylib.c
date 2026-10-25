@@ -30,6 +30,15 @@ struct _LrgGuiRaylib
 	gint      cursor;        /* raylib cursor last applied */
 
 	GArray   *clip_stack;    /* Rectangle */
+
+	/* The scissor state last set during lrg_gui_raylib_render(), so a
+	 * clip change to the same rectangle (common: a region pops back to
+	 * its parent's clip) does not end and restart scissor mode, each of
+	 * which flushes raylib's batch. scissor_known is FALSE when the GL
+	 * state is not ours to assume (frame start, after a callback). */
+	gboolean  scissor_known;
+	gboolean  scissor_on;
+	gint      scissor[4];    /* x, y, w, h as given to BeginScissorMode */
 };
 
 G_DEFINE_FINAL_TYPE (LrgGuiRaylib, lrg_gui_raylib, G_TYPE_OBJECT)
@@ -600,14 +609,30 @@ to_color (LrgGuiColor c)
 static void
 apply_clip (LrgGuiRaylib *self)
 {
-	EndScissorMode ();
-	if (self->clip_stack->len > 0)
+	gint want[4] = { 0, 0, 0, 0 };
+	gboolean on = self->clip_stack->len > 0;
+
+	if (on)
 	{
 		Rectangle r = g_array_index (self->clip_stack, Rectangle, self->clip_stack->len - 1);
 
-		BeginScissorMode ((gint) floorf (r.x), (gint) floorf (r.y),
-		                  (gint) ceilf (MAX (0.0f, r.width)), (gint) ceilf (MAX (0.0f, r.height)));
+		want[0] = (gint) floorf (r.x);
+		want[1] = (gint) floorf (r.y);
+		want[2] = (gint) ceilf (MAX (0.0f, r.width));
+		want[3] = (gint) ceilf (MAX (0.0f, r.height));
 	}
+
+	/* Already in that state: nothing to do (and no batch flush). */
+	if (self->scissor_known && self->scissor_on == on &&
+	    (!on || memcmp (self->scissor, want, sizeof want) == 0))
+		return;
+
+	EndScissorMode ();
+	if (on)
+		BeginScissorMode (want[0], want[1], want[2], want[3]);
+	self->scissor_known = TRUE;
+	self->scissor_on = on;
+	memcpy (self->scissor, want, sizeof want);
 }
 
 static void
@@ -658,6 +683,7 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 	g_return_if_fail (LRG_IS_GUI_DRAW_LIST (list));
 
 	g_array_set_size (self->clip_stack, 0);
+	self->scissor_known = FALSE;
 	n = lrg_gui_draw_list_get_length (list);
 
 	for (i = 0; i < n; i++)
@@ -765,6 +791,7 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 				 * restore our clip afterwards. */
 				EndScissorMode ();
 				cmd->callback (&cmd->rect, cmd->user_data);
+				self->scissor_known = FALSE;
 				apply_clip (self);
 			}
 			break;
@@ -776,6 +803,7 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 
 	g_array_set_size (self->clip_stack, 0);
 	EndScissorMode ();
+	self->scissor_known = FALSE;
 }
 
 void

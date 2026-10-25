@@ -1326,7 +1326,7 @@ gchar *lrg_gui_context_get_clipboard       (LrgGuiContext          *self);
 - Fast input is never lost: =lrg_gui_raylib_attach()= chains GLFW mouse-button and key callbacks in front of raylib's (raylib only samples state once per frame). A press released before the next poll is still reported as "down" for one frame, so it produces a click, and every key press carries the modifiers GLFW reported with it, so a chord typed faster than a frame (Ctrl down, A, Ctrl up) keeps its Ctrl. Without a GLFW window the backend falls back to raylib's queue and sampled modifiers.
 - While the window is unfocused, held buttons, keys and modifiers read as released (GLFW delivers no releases then), so a drag cannot stay stuck after Alt+Tab.
 - raylib calls returning =bool= must see raylib's one-byte =_Bool=: libregnum builds with =-include stdbool.h= and =<libregnum.h>= includes =<stdbool.h>= before raylib (see AGENTS.md).
-- =lrg_gui_raylib_render()= replays a draw list; call it between =BeginDrawing()= and =EndDrawing()=. Clip push/pop become nested scissor rectangles; images draw a =GrlTexture='s raylib handle; callbacks run with scissoring suspended and the clip restored afterwards.
+- =lrg_gui_raylib_render()= replays a draw list; call it between =BeginDrawing()= and =EndDrawing()=. Clip push/pop become nested scissor rectangles (a change to the scissor rectangle already in effect is skipped, since ending and restarting scissor mode flushes raylib's batch); images draw a =GrlTexture='s raylib handle; callbacks run with scissoring suspended and the clip restored afterwards.
 - =lrg_gui_raylib_apply_cursor()= maps =LrgGuiCursor= to raylib mouse cursors and only calls =SetMouseCursor()= when the shape changes.
 
 *** Complete host loop
