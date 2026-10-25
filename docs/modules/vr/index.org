@@ -157,7 +157,37 @@ lrg_vr_stub_set_controller_buttons (hmd, LRG_VR_HAND_RIGHT, LRG_VR_CONTROLLER_BU
 :END:
 The OpenXR backend binds to the GL context current at =initialize()= (GLX through =XR_KHR_opengl_enable=, or EGL through =XR_MNDX_egl_enable=), renders through one swapchain per eye and reads the controllers through an action set.  It is compiled when =OPENXR=auto= (the default) finds =pkg-config openxr= (Fedora: =openxr-devel=; the loader at run time is =openxr-libs=); otherwise the type exists and =initialize()= fails with =LRG_VR_ERROR_NOT_AVAILABLE=.
 
+Binding to EGL (GLFW on Wayland: the Steam Frame's gamescope session) has two traps, both handled: GLFW opens libEGL with =dlopen= locally, so the EGL entry points are looked up in the already-loaded library (=RTLD_NOLOAD=) when the global scope lacks them; and SteamVR refuses =xrCreateSession= (=XR_ERROR_GRAPHICS_REQUIREMENTS_CALL_MISSING=) unless =xrGetOpenGLGraphicsRequirementsKHR= was called first, on the EGL path too.
+
 =lrg_openxr_service_probe (app_name, &runtime, &system, &error)= checks without a GL context and without a session that a headset can be used: an OpenXR build, an active runtime (the loader's =active_runtime.json= or =XR_RUNTIME_JSON=), OpenGL or EGL support and a head-mounted display system.  It fails with =LRG_VR_ERROR_NOT_AVAILABLE= (no build, no runtime, no GL) or =LRG_VR_ERROR_HMD_NOT_FOUND= (a runtime with no headset connected), so a game can refuse =--vr= before opening its window.
+
+**** Composition layers
+:PROPERTIES:
+:CUSTOM_ID: openxr-layers
+:END:
+Flat content -- a game's 2D interface, a text panel, a video -- reads far better as a composition layer than drawn into the eye images: the compositor samples a layer once, at its own resolution, straight into the display, while anything in the eye images is resampled again by the lens warp.  =LrgOpenXRService= keeps up to four layer swapchains and up to fifteen placements of them per frame, composited above the projection layer in submission order (with no depth test against the scene).
+
+- =lrg_openxr_service_create_layer (xr, width, height, &error)= makes a swapchain in the eye format (sRGB when offered) with an FBO per image and returns its id (1 or more; 0 on error).
+- =lrg_openxr_service_begin_layer (xr, id, &fbo, &w, &h)= acquires the next image and binds it with the viewport set to all of it; =lrg_openxr_service_end_layer (xr, id)= flushes, releases (=glFlush= after the release, as for the eyes) and marks the layer drawable.  Static content needs drawing only once.
+- Between =begin_frame= and =end_frame=, =lrg_openxr_service_submit_layer_quad (xr, id, rect, pose, width_m, height_m, blend)= shows the layer -- or the =rect= (=x, y, w, h= pixels from the top-left) of it -- as a quad facing +Z, and =lrg_openxr_service_submit_layer_cylinder (xr, id, rect, pose, radius, central_angle, aspect, blend)= on the inside of a cylinder centred on =pose= (needs =XR_KHR_composition_layer_cylinder=, enabled when offered; =lrg_openxr_service_has_cylinder_layers()=; it returns =FALSE= without it so the caller can fall back to a quad).  Several placements may share a swapchain through =rect=: a whole UI on a panel and parts of it on a wrist cost one render.
+- =blend= composites by the image's alpha, taken as premultiplied: draw over a transparent clear with separate alpha blending (colour =SRC_ALPHA, ONE_MINUS_SRC_ALPHA=, alpha =ONE, ONE_MINUS_SRC_ALPHA=) and the result is.
+- Layers still show when the projection layer is not submitted (a frame whose views were not all drawn), so a menu panel can stand over black during a load.
+
+**** Grip pose and recentring
+:PROPERTIES:
+:CUSTOM_ID: openxr-grip-recenter
+:END:
+=lrg_vr_service_get_controller_pose()= is the *aim* pose, the pointing ray.  =lrg_openxr_service_get_grip_pose (xr, hand, m)= is the *grip* pose -- the palm -- for things held or worn on the hand (a wrist panel, a held model); it returns whether the pose is tracked this frame.  A vendor profile that rejects the grip-pose path still gets its other bindings: each profile is suggested again without it.
+
+=lrg_openxr_service_take_recentered (xr)= returns =TRUE= once after the runtime moved the LOCAL origin (=XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING=; on SteamVR a long press of the Steam button), so content the application anchored in tracking space can follow.
+
+The action set the runtime lists (and SteamVR's binding UI keys saved bindings by) is named after the application name given to =lrg_openxr_service_new()=, in OpenXR's lower-case path form (="librewow"=, ="cmacs"=).
+
+**** Not presenting the desktop window
+:PROPERTIES:
+:CUSTOM_ID: no-present
+:END:
+While the headset shows the frames, swap the desktop window no more: under a compositor that does not show it (gamescope with the headset active) the swap can block the GL queue, and the semaphore SteamVR waits on in =xrEndFrame= sits behind it, hanging the loop.  =lrg_grl_window_set_present (window, FALSE)= makes =lrg_window_end_frame()= flush the batch and poll window input once, with no swap and no sleep to the target FPS (=xrWaitFrame= paces the loop), and makes =lrg_window_get_frame_time()= report the time measured between those calls.  =LrgGameTemplate= games reach their window through =lrg_game_template_get_window()=.
 
 *** Drawing a UI panel
 :PROPERTIES:

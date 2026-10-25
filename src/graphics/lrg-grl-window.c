@@ -10,6 +10,8 @@
 #include "config.h"
 #include "lrg-grl-window.h"
 
+#include <rlgl.h>	/* rlDrawRenderBatchActive (end_frame without a present) */
+
 /**
  * SECTION:lrg-grl-window
  * @title: LrgGrlWindow
@@ -45,6 +47,12 @@ struct _LrgGrlWindow
 
 	GrlWindow  *grl_window;
 	gboolean    vsync;
+
+	/* FALSE while another display (a VR headset) shows the frames: end_frame
+	   then flushes and polls input but never swaps (see set_present) */
+	gboolean    present;
+	gint64      last_end_us;	/* monotonic time of the last non-presenting end_frame */
+	gfloat      frame_time;		/* the delta it measured, reported by get_frame_time */
 };
 
 G_DEFINE_TYPE (LrgGrlWindow, lrg_grl_window, LRG_TYPE_WINDOW)
@@ -74,8 +82,26 @@ static void
 lrg_grl_window_end_frame (LrgWindow *window)
 {
 	LrgGrlWindow *self = LRG_GRL_WINDOW (window);
+	gint64        now;
 
-	grl_window_end_drawing (self->grl_window);
+	if (self->present)
+	{
+		grl_window_end_drawing (self->grl_window);
+		return;
+	}
+
+	/* No present: flush what was queued (into whatever is bound), poll the
+	   window once, and measure the frame ourselves -- raylib only advances
+	   GetFrameTime inside EndDrawing, and it would also sleep to the target
+	   FPS there, which a runtime-paced display (xrWaitFrame) must not do. */
+	rlDrawRenderBatchActive ();
+	grl_window_poll_events (self->grl_window);
+
+	now = g_get_monotonic_time ();
+	self->frame_time = self->last_end_us > 0
+		? (gfloat) ((gdouble) (now - self->last_end_us) / (gdouble) G_USEC_PER_SEC)
+		: 0.0f;
+	self->last_end_us = now;
 }
 
 static gboolean
@@ -108,6 +134,8 @@ lrg_grl_window_get_frame_time_impl (LrgWindow *window)
 {
 	LrgGrlWindow *self = LRG_GRL_WINDOW (window);
 
+	if (!self->present)
+		return self->frame_time;
 	return grl_window_get_frame_time (self->grl_window);
 }
 
@@ -293,6 +321,9 @@ lrg_grl_window_init (LrgGrlWindow *self)
 {
 	self->grl_window = NULL;
 	self->vsync = FALSE;
+	self->present = TRUE;
+	self->last_end_us = 0;
+	self->frame_time = 0.0f;
 }
 
 /* ==========================================================================
@@ -394,4 +425,41 @@ lrg_grl_window_get_grl_window (LrgGrlWindow *self)
 	g_return_val_if_fail (LRG_IS_GRL_WINDOW (self), NULL);
 
 	return self->grl_window;
+}
+
+/*
+ * lrg_grl_window_set_present:
+ * @self: an #LrgGrlWindow
+ * @present: whether end_frame swaps the window's buffers
+ *
+ * Turn presenting the window on or off.  See the header.
+ */
+void
+lrg_grl_window_set_present (LrgGrlWindow *self,
+                            gboolean      present)
+{
+	g_return_if_fail (LRG_IS_GRL_WINDOW (self));
+
+	present = !!present;
+	if (self->present == present)
+		return;
+
+	self->present = present;
+	/* the next non-presenting frame starts a fresh measurement */
+	self->last_end_us = 0;
+	self->frame_time = 0.0f;
+}
+
+/*
+ * lrg_grl_window_get_present:
+ * @self: an #LrgGrlWindow
+ *
+ * Returns: whether end_frame presents the window
+ */
+gboolean
+lrg_grl_window_get_present (LrgGrlWindow *self)
+{
+	g_return_val_if_fail (LRG_IS_GRL_WINDOW (self), TRUE);
+
+	return self->present;
 }
