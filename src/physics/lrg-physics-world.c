@@ -9,6 +9,8 @@
 
 #include "config.h"
 #include "lrg-physics-world.h"
+#include "lrg-rigid-body-private.h"
+#include "lrg-collision-info-private.h"
 #include "lrg-log.h"
 #include <math.h>
 
@@ -29,7 +31,35 @@ typedef struct
     /* Simulation state */
     gboolean  paused;
     gfloat    accumulator;  /* Time accumulator for fixed timestep */
+
+    /*
+     * Broadphase scratch, reused across steps (see do_physics_step):
+     * sweep   - SweepEntry per body, snapshot of the step
+     * order   - indices into sweep, sorted by min_x
+     * pairs   - candidate pairs, (i << 32) | j with i < j
+     * generation counts add/remove/clear, so a step can tell whether a
+     * collision handler changed the body list under it.
+     */
+    GArray   *sweep;
+    GArray   *order;
+    GArray   *pairs;
+    guint     generation;
 } LrgPhysicsWorldPrivate;
+
+/*
+ * SweepEntry: one body of the broadphase snapshot. The interval is the
+ * body's AABB padded outwards (see sweep_fill_entry) so it is a superset
+ * of what check_aabb_overlap() accepts.
+ */
+typedef struct
+{
+    LrgRigidBody *body;     /* reference held for the step */
+    gdouble       min_x;
+    gdouble       max_x;
+    gdouble       min_y;
+    gdouble       max_y;
+    gboolean      finite;   /* FALSE: NaN/inf position or extent */
+} SweepEntry;
 
 #pragma GCC visibility push(default)
 G_DEFINE_TYPE_WITH_PRIVATE (LrgPhysicsWorld, lrg_physics_world, G_TYPE_OBJECT)
@@ -58,6 +88,15 @@ static guint signals[N_SIGNALS];
 #define DEFAULT_VELOCITY_ITERS    8
 #define DEFAULT_POSITION_ITERS    3
 
+/*
+ * Catch-up limit for lrg_physics_world_step(): one call simulates at most
+ * MAX_CATCHUP_SECONDS (at least MIN_STEPS_PER_CALL fixed steps); the rest
+ * of a long frame is dropped. Without it a frame slower than the steps it
+ * owes makes the next frame owe more ("spiral of death").
+ */
+#define MAX_CATCHUP_SECONDS       (5.0f / 60.0f)
+#define MIN_STEPS_PER_CALL        5
+
 static void
 lrg_physics_world_dispose (GObject *object)
 {
@@ -69,6 +108,9 @@ lrg_physics_world_dispose (GObject *object)
         g_ptr_array_unref (priv->bodies);
         priv->bodies = NULL;
     }
+    g_clear_pointer (&priv->sweep, g_array_unref);
+    g_clear_pointer (&priv->order, g_array_unref);
+    g_clear_pointer (&priv->pairs, g_array_unref);
 
     G_OBJECT_CLASS (lrg_physics_world_parent_class)->dispose (object);
 }
@@ -138,7 +180,7 @@ lrg_physics_world_class_init (LrgPhysicsWorldClass *klass)
     /**
      * LrgPhysicsWorld::collision:
      * @self: The physics world
-     * @info: The collision info
+     * @info: The collision info, valid only during the emission (copy it to keep it)
      *
      * Emitted when a collision is detected.
      */
@@ -151,7 +193,9 @@ lrg_physics_world_class_init (LrgPhysicsWorldClass *klass)
                       NULL,
                       G_TYPE_NONE,
                       1,
-                      LRG_TYPE_COLLISION_INFO);
+                      /* The info lives on the step's stack for the
+                       * emission; handlers that keep it copy it. */
+                      LRG_TYPE_COLLISION_INFO | G_SIGNAL_TYPE_STATIC_SCOPE);
 }
 
 static void
@@ -169,6 +213,11 @@ lrg_physics_world_init (LrgPhysicsWorld *self)
 
     priv->paused = FALSE;
     priv->accumulator = 0.0f;
+
+    priv->sweep = g_array_new (FALSE, FALSE, sizeof (SweepEntry));
+    priv->order = g_array_new (FALSE, FALSE, sizeof (guint));
+    priv->pairs = g_array_new (FALSE, FALSE, sizeof (guint64));
+    priv->generation = 0;
 
     lrg_debug (LRG_LOG_DOMAIN, "Created physics world");
 }
@@ -309,6 +358,7 @@ lrg_physics_world_add_body (LrgPhysicsWorld *self,
     priv = lrg_physics_world_get_instance_private (self);
 
     g_ptr_array_add (priv->bodies, g_object_ref (body));
+    priv->generation++;
 
     lrg_debug (LRG_LOG_DOMAIN, "Added body to physics world (count: %u)",
                priv->bodies->len);
@@ -327,6 +377,8 @@ lrg_physics_world_remove_body (LrgPhysicsWorld *self,
     priv = lrg_physics_world_get_instance_private (self);
 
     removed = g_ptr_array_remove (priv->bodies, body);
+    if (removed)
+        priv->generation++;
 
     if (removed)
     {
@@ -369,6 +421,7 @@ lrg_physics_world_clear (LrgPhysicsWorld *self)
     priv = lrg_physics_world_get_instance_private (self);
 
     g_ptr_array_set_size (priv->bodies, 0);
+    priv->generation++;
 
     lrg_debug (LRG_LOG_DOMAIN, "Cleared physics world");
 }
@@ -442,38 +495,179 @@ integrate_body (LrgRigidBody *body,
 }
 
 /*
- * Check AABB overlap between two bodies.
+ * Check AABB overlap between two bodies. Touching counts; a NaN anywhere
+ * makes both comparisons false, so such a body "overlaps" everything.
  */
 static gboolean
-check_aabb_overlap (LrgRigidBody *a,
-                    LrgRigidBody *b)
+check_aabb_overlap (const LrgRigidBodyPrivate *a,
+                    const LrgRigidBodyPrivate *b)
 {
-    gfloat a_x, a_y, a_w, a_h;
-    gfloat b_x, b_y, b_w, b_h;
-
-    lrg_rigid_body_get_position (a, &a_x, &a_y);
-    lrg_rigid_body_get_shape_bounds (a, &a_w, &a_h);
-
-    lrg_rigid_body_get_position (b, &b_x, &b_y);
-    lrg_rigid_body_get_shape_bounds (b, &b_w, &b_h);
+    gfloat a_w, a_h;
+    gfloat b_w, b_h;
 
     /* Half-widths */
-    a_w *= 0.5f;
-    a_h *= 0.5f;
-    b_w *= 0.5f;
-    b_h *= 0.5f;
+    a_w = a->shape_width * 0.5f;
+    a_h = a->shape_height * 0.5f;
+    b_w = b->shape_width * 0.5f;
+    b_h = b->shape_height * 0.5f;
 
     /* Check overlap */
-    if (fabsf (a_x - b_x) > (a_w + b_w))
+    if (fabsf (a->pos_x - b->pos_x) > (a_w + b_w))
         return FALSE;
-    if (fabsf (a_y - b_y) > (a_h + b_h))
+    if (fabsf (a->pos_y - b->pos_y) > (a_h + b_h))
         return FALSE;
 
     return TRUE;
 }
 
 /*
+ * sweep_fill_entry:
+ *
+ * Snapshots @body's AABB as a double interval per axis. The half extent
+ * is taken by magnitude and the interval padded by a relative 1e-5, so
+ * it contains every pair check_aabb_overlap()'s float arithmetic accepts
+ * (its rounding is far below that) and negative extents never shrink it.
+ */
+static void
+sweep_fill_entry (SweepEntry   *entry,
+                  LrgRigidBody *body)
+{
+    const LrgRigidBodyPrivate *p = lrg_rigid_body_peek_private (body);
+    gdouble hx, hy;
+    gdouble pad_x, pad_y;
+
+    entry->body = g_object_ref (body);
+    entry->finite = isfinite (p->pos_x) && isfinite (p->pos_y) &&
+                    isfinite (p->shape_width) && isfinite (p->shape_height);
+    hx = fabs ((gdouble) p->shape_width * 0.5);
+    hy = fabs ((gdouble) p->shape_height * 0.5);
+    pad_x = (fabs ((gdouble) p->pos_x) + hx) * 1e-5 + 1e-30;
+    pad_y = (fabs ((gdouble) p->pos_y) + hy) * 1e-5 + 1e-30;
+    entry->min_x = (gdouble) p->pos_x - hx - pad_x;
+    entry->max_x = (gdouble) p->pos_x + hx + pad_x;
+    entry->min_y = (gdouble) p->pos_y - hy - pad_y;
+    entry->max_y = (gdouble) p->pos_y + hy + pad_y;
+}
+
+static gint
+compare_sweep_order (gconstpointer a,
+                     gconstpointer b,
+                     gpointer      user_data)
+{
+    const SweepEntry *sweep = user_data;
+    guint ia = *(const guint *) a;
+    guint ib = *(const guint *) b;
+    gdouble ma = sweep[ia].min_x;
+    gdouble mb = sweep[ib].min_x;
+
+    if (ma != mb)
+        return ma < mb ? -1 : 1;
+    return (ia > ib) - (ia < ib);
+}
+
+static gint
+compare_pair (gconstpointer a,
+              gconstpointer b)
+{
+    guint64 pa = *(const guint64 *) a;
+    guint64 pb = *(const guint64 *) b;
+
+    return (pa > pb) - (pa < pb);
+}
+
+static void
+add_pair (GArray *pairs,
+          guint   i,
+          guint   j)
+{
+    guint64 key;
+
+    if (i > j)
+    {
+        guint t = i;
+
+        i = j;
+        j = t;
+    }
+    key = ((guint64) i << 32) | (guint64) j;
+    g_array_append_val (pairs, key);
+}
+
+/*
+ * collect_candidate_pairs:
+ *
+ * Sort and sweep on X over the snapshot, keeping pairs whose padded
+ * intervals overlap on both axes; bodies with a non-finite AABB are
+ * paired with everyone (check_aabb_overlap() treats NaN as overlapping).
+ * Leaves priv->pairs sorted (i, j) ascending and unique: the order the
+ * old all-pairs loop visited them in.
+ */
+static void
+collect_candidate_pairs (GArray *sweep_arr,
+                         GArray *order_arr,
+                         GArray *pairs)
+{
+    SweepEntry *sweep = (SweepEntry *) (gpointer) sweep_arr->data;
+    guint n = sweep_arr->len;
+    guint n_order;
+    guint *order;
+    guint a, b, i;
+
+    g_array_set_size (pairs, 0);
+    g_array_set_size (order_arr, 0);
+
+    for (i = 0; i < n; i++)
+    {
+        if (sweep[i].finite)
+        {
+            g_array_append_val (order_arr, i);
+        }
+        else
+        {
+            guint k;
+
+            for (k = 0; k < n; k++)
+                if (k != i && (sweep[k].finite || k > i))
+                    add_pair (pairs, i, k);
+        }
+    }
+
+    g_array_sort_with_data (order_arr, compare_sweep_order, sweep);
+    order = (guint *) (gpointer) order_arr->data;
+    n_order = order_arr->len;
+
+    for (a = 0; a < n_order; a++)
+    {
+        const SweepEntry *ea = &sweep[order[a]];
+
+        for (b = a + 1; b < n_order; b++)
+        {
+            const SweepEntry *eb = &sweep[order[b]];
+
+            if (eb->min_x > ea->max_x)
+                break;
+            if (eb->min_y <= ea->max_y && ea->min_y <= eb->max_y)
+                add_pair (pairs, order[a], order[b]);
+        }
+    }
+
+    g_array_sort (pairs, compare_pair);
+}
+
+/*
  * Perform a single fixed timestep simulation.
+ *
+ * Contacts are reported exactly as the original all-pairs loop reported
+ * them -- same pairs, same (i, j) order, same live checks (body types,
+ * collision filters, AABB overlap) at each pair's turn -- but the pairs
+ * come from a sort-and-sweep over a snapshot taken after integration,
+ * O(n log n + contacts) instead of O(n^2). Differences only show when a
+ * collision handler changes the world mid-step: a pair that starts
+ * overlapping because a handler moved a body is reported next step
+ * rather than this one, bodies added by a handler join next step, and
+ * pairs involving a body a handler removed are skipped (the old loop read
+ * a shifted array and could touch a freed body). Snapshot bodies are
+ * referenced for the step.
  */
 static void
 do_physics_step (LrgPhysicsWorld *self,
@@ -481,7 +675,12 @@ do_physics_step (LrgPhysicsWorld *self,
 {
     LrgPhysicsWorldPrivate *priv = lrg_physics_world_get_instance_private (self);
     LrgPhysicsWorldClass *klass = LRG_PHYSICS_WORLD_GET_CLASS (self);
-    guint i, j;
+    g_autoptr(GHashTable) alive = NULL;
+    SweepEntry *sweep;
+    guint body_signal;
+    guint generation;
+    guint n;
+    guint i;
 
     /* Pre-step callback */
     if (klass->pre_step)
@@ -494,82 +693,132 @@ do_physics_step (LrgPhysicsWorld *self,
         integrate_body (body, priv->gravity_x, priv->gravity_y, dt);
     }
 
-    /* Broad phase collision detection (simple N^2 for now) */
-    for (i = 0; i < priv->bodies->len; i++)
+    /* Broad phase: snapshot, sort and sweep. The scratch arrays are taken
+     * out of priv for the step, so a handler that steps the world again
+     * gets fresh ones instead of trampling this step's. */
+    n = priv->bodies->len;
+    if (n >= 2)
     {
-        LrgRigidBody *body_a = g_ptr_array_index (priv->bodies, i);
+        GArray *sweep_arr = priv->sweep != NULL ? g_steal_pointer (&priv->sweep)
+                                                : g_array_new (FALSE, FALSE, sizeof (SweepEntry));
+        GArray *order_arr = priv->order != NULL ? g_steal_pointer (&priv->order)
+                                                : g_array_new (FALSE, FALSE, sizeof (guint));
+        GArray *pairs_arr = priv->pairs != NULL ? g_steal_pointer (&priv->pairs)
+                                                : g_array_new (FALSE, FALSE, sizeof (guint64));
 
-        for (j = i + 1; j < priv->bodies->len; j++)
+        g_array_set_size (sweep_arr, n);
+        sweep = (SweepEntry *) (gpointer) sweep_arr->data;
+        for (i = 0; i < n; i++)
+            sweep_fill_entry (&sweep[i], g_ptr_array_index (priv->bodies, i));
+        collect_candidate_pairs (sweep_arr, order_arr, pairs_arr);
+
+        body_signal = lrg_rigid_body_get_collision_signal_id ();
+        generation = priv->generation;
+
+        for (i = 0; i < pairs_arr->len; i++)
         {
-            LrgRigidBody *body_b = g_ptr_array_index (priv->bodies, j);
+            guint64 key = g_array_index (pairs_arr, guint64, i);
+            LrgRigidBody *body_a = sweep[key >> 32].body;
+            LrgRigidBody *body_b = sweep[key & G_MAXUINT32].body;
+            LrgRigidBodyPrivate *pa = lrg_rigid_body_peek_private (body_a);
+            LrgRigidBodyPrivate *pb = lrg_rigid_body_peek_private (body_b);
+            gfloat dx, dy;
+            gfloat len;
+            gfloat nx, ny;
+
+            /* A handler changed the body list: from then on skip pairs
+             * with a body that is no longer in the world. */
+            if (priv->generation != generation || priv->bodies->len != n)
+            {
+                guint k;
+
+                g_clear_pointer (&alive, g_hash_table_unref);
+                alive = g_hash_table_new (g_direct_hash, g_direct_equal);
+                for (k = 0; k < priv->bodies->len; k++)
+                    g_hash_table_add (alive, g_ptr_array_index (priv->bodies, k));
+                generation = priv->generation;
+                n = priv->bodies->len;
+            }
+            if (alive != NULL &&
+                (!g_hash_table_contains (alive, body_a) ||
+                 !g_hash_table_contains (alive, body_b)))
+                continue;
 
             /* Skip if both are static/kinematic */
-            if (lrg_rigid_body_get_body_type (body_a) != LRG_RIGID_BODY_DYNAMIC &&
-                lrg_rigid_body_get_body_type (body_b) != LRG_RIGID_BODY_DYNAMIC)
+            if (pa->body_type != LRG_RIGID_BODY_DYNAMIC &&
+                pb->body_type != LRG_RIGID_BODY_DYNAMIC)
                 continue;
 
-            if (!lrg_rigid_body_can_collide (body_a, body_b))
+            /* Collision layers/masks (lrg_rigid_body_can_collide) */
+            if ((pa->collision_layer & pb->collision_mask) == 0 ||
+                (pb->collision_layer & pa->collision_mask) == 0)
                 continue;
 
-            /* Check AABB overlap */
-            if (check_aabb_overlap (body_a, body_b))
+            /* Exact AABB overlap on live state */
+            if (!check_aabb_overlap (pa, pb))
+                continue;
+
+            /* Compute simple normal (from A to B) */
+            dx = pb->pos_x - pa->pos_x;
+            dy = pb->pos_y - pa->pos_y;
+            len = sqrtf (dx * dx + dy * dy);
+
+            if (len > 0.0001f)
             {
-                gfloat a_x, a_y, b_x, b_y;
-                gfloat dx, dy;
-                gfloat len;
-                gfloat nx, ny;
-                LrgCollisionInfo *info;
+                nx = dx / len;
+                ny = dy / len;
+            }
+            else
+            {
+                nx = 1.0f;
+                ny = 0.0f;
+            }
 
-                /* Get positions */
-                lrg_rigid_body_get_position (body_a, &a_x, &a_y);
-                lrg_rigid_body_get_position (body_b, &b_x, &b_y);
+            /* Emit collision signal for triggers, or apply response */
+            if (pa->is_trigger || pb->is_trigger)
+            {
+                /* Trigger: just emit signal */
+                g_signal_emit (body_a, body_signal, 0, body_b, nx, ny);
+                g_signal_emit (body_b, body_signal, 0, body_a, -nx, -ny);
+            }
+            else
+            {
+                LrgCollisionInfo info;
 
-                /* Compute simple normal (from A to B) */
-                dx = b_x - a_x;
-                dy = b_y - a_y;
-                len = sqrtf (dx * dx + dy * dy);
+                /* Physical collision: emit world signal. The bodies are
+                 * referenced by the snapshot for the whole emission. */
+                info.body_a = G_OBJECT (body_a);
+                info.body_b = G_OBJECT (body_b);
+                info.normal_x = nx;
+                info.normal_y = ny;
+                info.penetration = 0.0f;
+                info.contact_x = (pa->pos_x + pb->pos_x) * 0.5f;
+                info.contact_y = (pa->pos_y + pb->pos_y) * 0.5f;
+                g_signal_emit (self, signals[SIGNAL_COLLISION], 0, &info);
 
-                if (len > 0.0001f)
-                {
-                    nx = dx / len;
-                    ny = dy / len;
-                }
-                else
-                {
-                    nx = 1.0f;
-                    ny = 0.0f;
-                }
-
-                /* Emit collision signal for triggers, or apply response */
-                if (lrg_rigid_body_get_is_trigger (body_a) ||
-                    lrg_rigid_body_get_is_trigger (body_b))
-                {
-                    /* Trigger: just emit signal */
-                    g_signal_emit (body_a, g_signal_lookup ("collision", LRG_TYPE_RIGID_BODY),
-                                   0, body_b, nx, ny);
-                    g_signal_emit (body_b, g_signal_lookup ("collision", LRG_TYPE_RIGID_BODY),
-                                   0, body_a, -nx, -ny);
-                }
-                else
-                {
-                    /* Physical collision: emit world signal */
-                    info = lrg_collision_info_new (G_OBJECT (body_a),
-                                                   G_OBJECT (body_b),
-                                                   nx, ny,
-                                                   0.0f,  /* penetration */
-                                                   (a_x + b_x) * 0.5f,
-                                                   (a_y + b_y) * 0.5f);
-                    g_signal_emit (self, signals[SIGNAL_COLLISION], 0, info);
-                    lrg_collision_info_free (info);
-
-                    /* Emit on bodies */
-                    g_signal_emit (body_a, g_signal_lookup ("collision", LRG_TYPE_RIGID_BODY),
-                                   0, body_b, nx, ny);
-                    g_signal_emit (body_b, g_signal_lookup ("collision", LRG_TYPE_RIGID_BODY),
-                                   0, body_a, -nx, -ny);
-                }
+                /* Emit on bodies */
+                g_signal_emit (body_a, body_signal, 0, body_b, nx, ny);
+                g_signal_emit (body_b, body_signal, 0, body_a, -nx, -ny);
             }
         }
+
+        /* Drop the snapshot and hand the scratch back for the next step
+         * (unless a nested step already put its own back). */
+        for (i = 0; i < sweep_arr->len; i++)
+            g_object_unref (sweep[i].body);
+        g_array_set_size (sweep_arr, 0);
+        if (priv->sweep == NULL)
+            priv->sweep = sweep_arr;
+        else
+            g_array_unref (sweep_arr);
+        if (priv->order == NULL)
+            priv->order = order_arr;
+        else
+            g_array_unref (order_arr);
+        if (priv->pairs == NULL)
+            priv->pairs = pairs_arr;
+        else
+            g_array_unref (pairs_arr);
     }
 
     /* Post-step callback */
@@ -586,6 +835,8 @@ lrg_physics_world_step (LrgPhysicsWorld *self,
                         gfloat           delta_time)
 {
     LrgPhysicsWorldPrivate *priv;
+    guint max_steps;
+    guint steps;
 
     g_return_if_fail (LRG_IS_PHYSICS_WORLD (self));
 
@@ -597,10 +848,28 @@ lrg_physics_world_step (LrgPhysicsWorld *self,
     /* Fixed timestep with accumulator */
     priv->accumulator += delta_time;
 
+    /* Catch up at most MAX_CATCHUP_SECONDS (>= MIN_STEPS_PER_CALL steps)
+     * per call; under overload the excess whole steps are dropped and
+     * only the sub-step remainder carries over. */
+    max_steps = (guint) ceilf (MAX_CATCHUP_SECONDS / priv->time_step);
+    if (max_steps < MIN_STEPS_PER_CALL)
+        max_steps = MIN_STEPS_PER_CALL;
+
+    steps = 0;
     while (priv->accumulator >= priv->time_step)
     {
+        if (steps == max_steps)
+        {
+            priv->accumulator = fmodf (priv->accumulator, priv->time_step);
+            if (!isfinite (priv->accumulator))
+                priv->accumulator = 0.0f;
+            lrg_debug (LRG_LOG_DOMAIN,
+                       "Physics step fell behind; dropped the excess time");
+            break;
+        }
         do_physics_step (self, priv->time_step);
         priv->accumulator -= priv->time_step;
+        steps++;
     }
 }
 

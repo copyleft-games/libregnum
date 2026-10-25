@@ -218,7 +218,10 @@ void                lrg_physics_world_clear              (LrgPhysicsWorld *self)
  * @self: an #LrgPhysicsWorld
  * @delta_time: Time since last step
  *
- * Advances the physics simulation.
+ * Advances the physics simulation by as many fixed time steps as the
+ * accumulated time holds. One call simulates at most 5/60 s of steps (at
+ * least 5 steps); excess whole steps are dropped so a slow frame cannot
+ * make the next one slower.
  */
 LRG_AVAILABLE_IN_ALL
 void                lrg_physics_world_step               (LrgPhysicsWorld *self,
