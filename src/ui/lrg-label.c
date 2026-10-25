@@ -28,6 +28,14 @@ struct _LrgLabel
     gfloat            font_size;
     GrlColor          color;
     LrgTextAlignment  alignment;
+
+    /* Measured text size, reused while text, font and size are unchanged
+     * (labels are drawn every frame; their text rarely changes) */
+    GrlFont          *measured_font;   /* font measured with (owned ref) */
+    gfloat            measured_size;
+    gfloat            measured_width;
+    gfloat            measured_height;
+    gboolean          measured_valid;
 };
 
 G_DEFINE_TYPE (LrgLabel, lrg_label, LRG_TYPE_WIDGET)
@@ -52,21 +60,60 @@ static const GrlColor DEFAULT_COLOR = { 255, 255, 255, 255 };
  * Virtual Method Implementations
  * ========================================================================== */
 
+/*
+ * label_text_size:
+ *
+ * Size of the label's text in @font (NULL: the raylib default font,
+ * estimated), measured once and cached until the text, font or size
+ * changes.
+ */
+static void
+label_text_size (LrgLabel *self,
+                 GrlFont  *font,
+                 gfloat   *width,
+                 gfloat   *height)
+{
+    if (!self->measured_valid || self->measured_font != font ||
+        self->measured_size != self->font_size)
+    {
+        if (font != NULL)
+        {
+            grl_font_measure_text_xy (font, self->text, self->font_size, 1.0f,
+                                      &self->measured_width,
+                                      &self->measured_height);
+        }
+        else
+        {
+            /* Estimate for raylib default font */
+            self->measured_width = (gfloat)g_utf8_strlen (self->text, -1) *
+                                   (self->font_size * 0.6f);
+            self->measured_height = self->font_size;
+        }
+        g_set_object (&self->measured_font, font);
+        self->measured_size = self->font_size;
+        self->measured_valid = TRUE;
+    }
+
+    *width = self->measured_width;
+    *height = self->measured_height;
+}
+
 static void
 lrg_label_draw (LrgWidget *widget)
 {
     LrgLabel              *self = LRG_LABEL (widget);
-    g_autoptr(GrlVector2)  pos = NULL;
+    GrlVector2             pos;
     GrlFont               *font_to_use;
     gfloat                 text_width;
+    gfloat                 text_height;
 
     if (self->text == NULL || self->text[0] == '\0')
     {
         return;
     }
 
-    pos = grl_vector2_new (lrg_widget_get_world_x (widget),
-                           lrg_widget_get_world_y (widget));
+    pos.x = lrg_widget_get_world_x (widget);
+    pos.y = lrg_widget_get_world_y (widget);
 
     /* Determine which font to use: widget font -> theme font -> raylib default */
     if (self->font != NULL)
@@ -82,39 +129,28 @@ lrg_label_draw (LrgWidget *widget)
     /* Handle text alignment */
     if (self->alignment != LRG_TEXT_ALIGN_LEFT)
     {
-        if (font_to_use != NULL)
-        {
-            g_autoptr(GrlVector2) measured = NULL;
-            measured = grl_font_measure_text (font_to_use, self->text,
-                                              self->font_size, 1.0f);
-            text_width = measured->x;
-        }
-        else
-        {
-            /* Estimate for raylib default font */
-            text_width = (gfloat)g_utf8_strlen (self->text, -1) * (self->font_size * 0.6f);
-        }
+        label_text_size (self, font_to_use, &text_width, &text_height);
 
         if (self->alignment == LRG_TEXT_ALIGN_CENTER)
         {
-            pos->x += (lrg_widget_get_width (widget) - text_width) / 2.0f;
+            pos.x += (lrg_widget_get_width (widget) - text_width) / 2.0f;
         }
         else if (self->alignment == LRG_TEXT_ALIGN_RIGHT)
         {
-            pos->x += lrg_widget_get_width (widget) - text_width;
+            pos.x += lrg_widget_get_width (widget) - text_width;
         }
     }
 
     /* Draw with font or fallback to raylib default */
     if (font_to_use != NULL)
     {
-        grl_draw_text_ex (font_to_use, self->text, pos,
+        grl_draw_text_ex (font_to_use, self->text, &pos,
                           self->font_size, 1.0f, &self->color);
     }
     else
     {
         /* Last resort: raylib default bitmap font */
-        grl_draw_text (self->text, (gint)pos->x, (gint)pos->y,
+        grl_draw_text (self->text, (gint)pos.x, (gint)pos.y,
                        (gint)self->font_size, &self->color);
     }
 }
@@ -125,8 +161,9 @@ lrg_label_measure (LrgWidget *widget,
                    gfloat    *preferred_height)
 {
     LrgLabel              *self = LRG_LABEL (widget);
-    g_autoptr(GrlVector2)  size = NULL;
     GrlFont               *font_to_use;
+    gfloat                 width;
+    gfloat                 height;
 
     if (self->text == NULL || self->text[0] == '\0')
     {
@@ -152,25 +189,15 @@ lrg_label_measure (LrgWidget *widget,
         font_to_use = lrg_theme_get_default_font (theme);
     }
 
-    if (font_to_use != NULL)
-    {
-        size = grl_font_measure_text (font_to_use, self->text,
-                                      self->font_size, 1.0f);
-    }
-    else
-    {
-        /* Estimate for raylib default font */
-        size = grl_vector2_new ((gfloat)g_utf8_strlen (self->text, -1) * (self->font_size * 0.6f),
-                                self->font_size);
-    }
+    label_text_size (self, font_to_use, &width, &height);
 
     if (preferred_width != NULL)
     {
-        *preferred_width = size->x;
+        *preferred_width = width;
     }
     if (preferred_height != NULL)
     {
-        *preferred_height = size->y;
+        *preferred_height = height;
     }
 }
 
@@ -183,6 +210,7 @@ lrg_label_finalize (GObject *object)
 {
     LrgLabel *self = LRG_LABEL (object);
 
+    g_clear_object (&self->measured_font);
     g_free (self->text);
     g_clear_object (&self->font);
 
@@ -404,6 +432,7 @@ lrg_label_set_text (LrgLabel    *self,
     {
         g_free (self->text);
         self->text = g_strdup (text);
+        self->measured_valid = FALSE;
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TEXT]);
     }
 }

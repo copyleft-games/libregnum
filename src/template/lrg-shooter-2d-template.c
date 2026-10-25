@@ -357,6 +357,8 @@ lrg_shooter_2d_template_draw_world (LrgGame2DTemplate *template)
     LrgShooter2DTemplatePrivate *priv;
     LrgGame2DTemplateClass *parent_class;
     guint i;
+    static const GrlColor projectile_color = { 255, 255, 0, 255 };
+    static const GrlColor player_color = { 0, 255, 0, 255 };
 
     self = LRG_SHOOTER_2D_TEMPLATE (template);
     priv = lrg_shooter_2d_template_get_private (self);
@@ -375,19 +377,13 @@ lrg_shooter_2d_template_draw_world (LrgGame2DTemplate *template)
         if (!p->active)
             continue;
 
-        {
-            g_autoptr(GrlColor) color = grl_color_new (255, 255, 0, 255);
-            grl_draw_circle ((gint) p->x, (gint) p->y, 4.0f, color);
-        }
+        grl_draw_circle ((gint) p->x, (gint) p->y, 4.0f, &projectile_color);
     }
 
     /* Draw player (simple rectangle for now) */
-    {
-        g_autoptr(GrlColor) player_color = grl_color_new (0, 255, 0, 255);
-        grl_draw_rectangle ((gint) (priv->player_x - 16),
-                            (gint) (priv->player_y - 16),
-                            32, 32, player_color);
-    }
+    grl_draw_rectangle ((gint) (priv->player_x - 16),
+                        (gint) (priv->player_y - 16),
+                        32, 32, &player_color);
 }
 
 /* ==========================================================================
