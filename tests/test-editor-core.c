@@ -813,6 +813,195 @@ test_bounds_and_snap (void)
 	g_assert_cmpfloat_with_epsilon (lrg_editor_snap_value (-0.6f, 0.5f), -0.5f, EPS);
 }
 
+/* ==========================================================================
+ * Gizmo
+ * ========================================================================== */
+
+/* Projects a world point to viewport pixels. */
+static void
+px_of (const LrgEditorView *view,
+       gfloat               x,
+       gfloat               y,
+       gfloat               z,
+       gfloat              *sx,
+       gfloat              *sy)
+{
+	const gfloat p[3] = { x, y, z };
+
+	g_assert_true (lrg_editor_view_project (view, p, sx, sy, NULL));
+}
+
+static void
+test_gizmo_translate_axis (void)
+{
+	g_autoptr(LrgEditor)      ed = lrg_editor_new ();
+	g_autoptr(LrgEditorGizmo) gz = lrg_editor_gizmo_new (ed);
+	LrgEditorView             view;
+	LrgNode                  *a;
+	gfloat                    size, gx, gy, tx, ty;
+
+	lrg_editor_view_init_default (&view, 800.0f, 600.0f);
+	a = add_cube (ed, "a", NULL, 0);
+	lrg_editor_select (ed, a, FALSE);
+
+	/* Select tool shows no gizmo. */
+	g_assert_false (lrg_editor_gizmo_is_visible (gz));
+	lrg_editor_set_tool (ed, LRG_EDITOR_TOOL_TRANSLATE);
+	g_assert_true (lrg_editor_gizmo_is_visible (gz));
+
+	size = lrg_editor_gizmo_get_size (gz, &view);
+	px_of (&view, size * 0.7f, 0, 0, &gx, &gy);
+	g_assert_cmpint (lrg_editor_gizmo_update_hover (gz, &view, gx, gy), ==, LRG_EDITOR_GIZMO_HANDLE_X);
+
+	g_assert_true (lrg_editor_gizmo_begin_drag (gz, &view, gx, gy));
+	px_of (&view, size * 0.7f + 2.0f, 0, 0, &tx, &ty);
+	lrg_editor_gizmo_drag (gz, &view, tx, ty, FALSE);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_location (a)->x, 2.0f, 1e-2);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_location (a)->y, 0.0f, 1e-3);
+
+	/* Holding Ctrl inverts snapping (off -> on with the 1.0 default). */
+	px_of (&view, size * 0.7f + 2.3f, 0, 0, &tx, &ty);
+	lrg_editor_gizmo_drag (gz, &view, tx, ty, TRUE);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_location (a)->x, 2.0f, 1e-4);
+
+	g_assert_true (lrg_editor_gizmo_end_drag (gz));
+	g_assert_cmpuint (lrg_editor_get_undo_count (ed), ==, 2);
+	lrg_editor_undo (ed);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_location (a)->x, 0.0f, 1e-5);
+
+	/* Cancel restores and records nothing. */
+	g_assert_true (lrg_editor_gizmo_begin_drag (gz, &view, gx, gy));
+	lrg_editor_gizmo_drag (gz, &view, tx, ty, FALSE);
+	lrg_editor_gizmo_cancel_drag (gz);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_location (a)->x, 0.0f, 1e-5);
+	g_assert_cmpuint (lrg_editor_get_undo_count (ed), ==, 1);
+
+	/* A click without motion records nothing either. */
+	g_assert_true (lrg_editor_gizmo_begin_drag (gz, &view, gx, gy));
+	g_assert_false (lrg_editor_gizmo_end_drag (gz));
+}
+
+static void
+test_gizmo_translate_plane_and_center (void)
+{
+	g_autoptr(LrgEditor)      ed = lrg_editor_new ();
+	g_autoptr(LrgEditorGizmo) gz = lrg_editor_gizmo_new (ed);
+	LrgEditorView             view;
+	LrgNode                  *a;
+	gfloat                    size, gx, gy, tx, ty, ox, oy;
+
+	lrg_editor_view_init_default (&view, 800.0f, 600.0f);
+	a = add_cube (ed, "a", NULL, 0);
+	lrg_editor_select (ed, a, FALSE);
+	lrg_editor_set_tool (ed, LRG_EDITOR_TOOL_TRANSLATE);
+	size = lrg_editor_gizmo_get_size (gz, &view);
+
+	/* Inside the XZ square. */
+	px_of (&view, size * 0.32f, 0, size * 0.32f, &gx, &gy);
+	g_assert_cmpint (lrg_editor_gizmo_hit_test (gz, &view, gx, gy), ==, LRG_EDITOR_GIZMO_HANDLE_XZ);
+	g_assert_true (lrg_editor_gizmo_begin_drag (gz, &view, gx, gy));
+	px_of (&view, size * 0.32f + 1.0f, 0, size * 0.32f - 3.0f, &tx, &ty);
+	lrg_editor_gizmo_drag (gz, &view, tx, ty, FALSE);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_location (a)->x, 1.0f, 1e-2);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_location (a)->y, 0.0f, 1e-3);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_location (a)->z, -3.0f, 1e-2);
+	lrg_editor_gizmo_end_drag (gz);
+
+	/* The centre is reported when on the pivot. */
+	px_of (&view, 1.0f, 0.0f, -3.0f, &ox, &oy);
+	g_assert_cmpint (lrg_editor_gizmo_hit_test (gz, &view, ox + 2, oy - 1), ==, LRG_EDITOR_GIZMO_HANDLE_CENTER);
+	g_assert_cmpint (lrg_editor_gizmo_hit_test (gz, &view, ox + 300, oy + 200), ==, LRG_EDITOR_GIZMO_HANDLE_NONE);
+}
+
+static void
+test_gizmo_rotate_and_scale (void)
+{
+	g_autoptr(LrgEditor)      ed = lrg_editor_new ();
+	g_autoptr(LrgEditorGizmo) gz = lrg_editor_gizmo_new (ed);
+	LrgEditorView             view;
+	LrgNode                  *a;
+	gfloat                    size, gx, gy, tx, ty;
+
+	lrg_editor_view_init_default (&view, 800.0f, 600.0f);
+	a = add_cube (ed, "a", NULL, 0);
+	lrg_editor_select (ed, a, FALSE);
+
+	/* Rotate +90 degrees about Y: +X swings to -Z. */
+	lrg_editor_set_tool (ed, LRG_EDITOR_TOOL_ROTATE);
+	size = lrg_editor_gizmo_get_size (gz, &view);
+	px_of (&view, size, 0, 0, &gx, &gy);
+	g_assert_true (lrg_editor_gizmo_begin_drag_handle (gz, &view, LRG_EDITOR_GIZMO_HANDLE_Y, gx, gy));
+	px_of (&view, 0, 0, -size, &tx, &ty);
+	lrg_editor_gizmo_drag (gz, &view, tx, ty, FALSE);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_rotation (a)->y, G_PI_2, 1e-2);
+	g_assert_true (lrg_editor_gizmo_end_drag (gz));
+
+	/* Scale the local X axis (now pointing at world -Z) by two. */
+	lrg_editor_set_tool (ed, LRG_EDITOR_TOOL_SCALE);
+	size = lrg_editor_gizmo_get_size (gz, &view);
+	px_of (&view, 0, 0, -size * 0.5f, &gx, &gy);
+	g_assert_cmpint (lrg_editor_gizmo_hit_test (gz, &view, gx, gy), ==, LRG_EDITOR_GIZMO_HANDLE_X);
+	g_assert_true (lrg_editor_gizmo_begin_drag (gz, &view, gx, gy));
+	px_of (&view, 0, 0, -size, &tx, &ty);
+	lrg_editor_gizmo_drag (gz, &view, tx, ty, FALSE);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_scale (a)->x, 2.0f, 2e-2);
+	g_assert_cmpfloat_with_epsilon (lrg_node_get_scale (a)->y, 1.0f, 1e-5);
+	g_assert_true (lrg_editor_gizmo_end_drag (gz));
+
+	g_assert_cmpuint (lrg_editor_get_undo_count (ed), ==, 3);
+}
+
+static void
+test_gizmo_multi_selection_and_locked (void)
+{
+	g_autoptr(LrgEditor)      ed = lrg_editor_new ();
+	g_autoptr(LrgEditorGizmo) gz = lrg_editor_gizmo_new (ed);
+	LrgEditorView             view;
+	LrgNode                  *parent, *child, *other;
+	gfloat                    before_c[3], after_c[3], before_o[3], after_o[3];
+	gfloat                    size, gx, gy, tx, ty;
+
+	lrg_editor_view_init_default (&view, 800.0f, 600.0f);
+	parent = add_cube (ed, "parent", NULL, 0);
+	lrg_node_set_location_xyz (parent, 3.0f, 0.0f, 0.0f);
+	lrg_node_set_rotation_xyz (parent, 0.0f, 1.0f, 0.0f);
+	lrg_node_set_scale_xyz (parent, 2.0f, 2.0f, 2.0f);
+	child = add_cube (ed, "child", parent, 0);
+	lrg_node_set_location_xyz (child, 0.5f, 0.0f, 0.0f);
+	other = add_cube (ed, "other", NULL, 0);
+	lrg_node_set_location_xyz (other, 0.0f, 0.0f, 0.0f);
+
+	/* Primary (pivot) is the last selected: "other" at the origin. */
+	lrg_editor_select (ed, child, FALSE);
+	lrg_editor_select (ed, other, TRUE);
+	lrg_editor_set_tool (ed, LRG_EDITOR_TOOL_TRANSLATE);
+
+	lrg_editor_node_get_world_position (child, before_c);
+	lrg_editor_node_get_world_position (other, before_o);
+
+	size = lrg_editor_gizmo_get_size (gz, &view);
+	px_of (&view, 0, size * 0.7f, 0, &gx, &gy);
+	g_assert_true (lrg_editor_gizmo_begin_drag (gz, &view, gx, gy));
+	px_of (&view, 0, size * 0.7f + 1.5f, 0, &tx, &ty);
+	lrg_editor_gizmo_drag (gz, &view, tx, ty, FALSE);
+	g_assert_true (lrg_editor_gizmo_end_drag (gz));
+
+	lrg_editor_node_get_world_position (child, after_c);
+	lrg_editor_node_get_world_position (other, after_o);
+	g_assert_cmpfloat_with_epsilon (after_c[1] - before_c[1], 1.5f, 2e-2);
+	g_assert_cmpfloat_with_epsilon (after_o[1] - before_o[1], 1.5f, 2e-2);
+	g_assert_cmpfloat_with_epsilon (after_c[0], before_c[0], 1e-3);
+
+	/* One undo step for the whole selection. */
+	lrg_editor_undo (ed);
+	lrg_editor_node_get_world_position (child, after_c);
+	g_assert_cmpfloat_with_epsilon (after_c[1], before_c[1], 1e-4);
+
+	/* A locked primary hides the gizmo. */
+	lrg_node_set_locked (other, TRUE);
+	g_assert_false (lrg_editor_gizmo_is_visible (gz));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -845,6 +1034,11 @@ main (int   argc,
 	g_test_add_func ("/editor-core/math/view-navigation", test_view_navigation);
 	g_test_add_func ("/editor-core/math/pick-box", test_pick_and_box_select);
 	g_test_add_func ("/editor-core/math/bounds-snap", test_bounds_and_snap);
+
+	g_test_add_func ("/editor-core/gizmo/translate-axis", test_gizmo_translate_axis);
+	g_test_add_func ("/editor-core/gizmo/translate-plane-center", test_gizmo_translate_plane_and_center);
+	g_test_add_func ("/editor-core/gizmo/rotate-scale", test_gizmo_rotate_and_scale);
+	g_test_add_func ("/editor-core/gizmo/multi-locked", test_gizmo_multi_selection_and_locked);
 
 	return g_test_run ();
 }

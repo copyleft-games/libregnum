@@ -1370,6 +1370,7 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor.h \
 	src/editor/lrg-editor-host.h \
 	src/editor/lrg-editor-math.h \
+	src/editor/lrg-editor-gizmo.h \
 	src/editor/lrg-asset-database.h \
 	src/editor/lrg-project.h \
 	src/editor/lrg-prefab.h
@@ -1387,6 +1388,7 @@ SOURCES += \
 	src/editor/lrg-editor.c \
 	src/editor/lrg-editor-host.c \
 	src/editor/lrg-editor-math.c \
+	src/editor/lrg-editor-gizmo.c \
 	src/editor/lrg-asset-database.c \
 	src/editor/lrg-project.c \
 	src/editor/lrg-prefab.c

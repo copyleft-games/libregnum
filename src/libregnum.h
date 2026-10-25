@@ -346,6 +346,7 @@
 #include "editor/lrg-editor.h"
 #include "editor/lrg-editor-host.h"
 #include "editor/lrg-editor-math.h"
+#include "editor/lrg-editor-gizmo.h"
 #include "editor/lrg-asset-database.h"
 #include "editor/lrg-project.h"
 #include "editor/lrg-prefab.h"
