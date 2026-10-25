@@ -325,6 +325,91 @@ test_ambiguous (void)
 }
 
 static void
+test_peek_and_fit (void)
+{
+    g_autoptr(LrgVRGestureRecognizer) gestures = builtin ();
+    g_autoptr(LrgVRGesture) half = NULL;
+    g_autoptr(LrgVRGesture) whole = NULL;
+    g_autoptr(LrgVRGesture) ended = NULL;
+    gfloat fitted[LRG_VR_GESTURE_SAMPLES * 3];
+    gfloat centre[3];
+    gfloat right[3];
+    gfloat up[3];
+    gfloat size;
+    gfloat worst;
+    guint i;
+
+    /* nothing drawn: nothing to peek at, frame or fit */
+    g_assert_false (lrg_vr_gesture_recognizer_get_frame (gestures, centre, right, up, &size));
+    g_assert_false (lrg_vr_gesture_recognizer_fit_template (gestures, "circle", fitted));
+
+    /* a circle 30 cm across round (0.2, 1.3, -0.4), begun at the top */
+    lrg_vr_gesture_recognizer_begin (gestures, NULL);
+    for (i = 0; i <= 40; i++)
+    {
+        gfloat a = (gfloat)i * (gfloat)(2.0 * G_PI / 40.0);
+        gfloat p[3];
+
+        p[0] = 0.2f + 0.15f * sinf (a);
+        p[1] = 1.3f + 0.15f * cosf (a);
+        p[2] = -0.4f;
+        lrg_vr_gesture_recognizer_add_point (gestures, p, (gdouble)i / 90.0);
+        if (i == 10)
+        {
+            /* a quarter in: an arc, most like something, not yet a circle */
+            half = lrg_vr_gesture_recognizer_peek (gestures);
+            g_assert_nonnull (half->nearest);
+            g_assert_cmpstr (half->name, !=, "circle");
+        }
+    }
+    whole = lrg_vr_gesture_recognizer_peek (gestures);
+    g_assert_cmpstr (whole->name, ==, "circle");
+    g_assert_cmpstr (whole->nearest, ==, "circle");
+    g_assert_true (lrg_vr_gesture_recognizer_is_drawing (gestures));
+
+    /* its box: centred on the circle, 30 cm, in the -Z facing plane */
+    g_assert_true (lrg_vr_gesture_recognizer_get_frame (gestures, centre, right, up, &size));
+    g_assert_cmpfloat_with_epsilon (centre[0], 0.2f, 1e-3f);
+    g_assert_cmpfloat_with_epsilon (centre[1], 1.3f, 1e-3f);
+    g_assert_cmpfloat_with_epsilon (centre[2], -0.4f, 1e-3f);
+    g_assert_cmpfloat_with_epsilon (size, 0.3f, 1e-3f);
+    g_assert_cmpfloat_with_epsilon (right[0], 1.0f, 1e-5f);
+    g_assert_cmpfloat_with_epsilon (up[1], 1.0f, 1e-5f);
+
+    /* the circle template laid over it: every point on the drawn ring */
+    g_assert_true (lrg_vr_gesture_recognizer_fit_template (gestures, "circle", fitted));
+    g_assert_false (lrg_vr_gesture_recognizer_fit_template (gestures, "hook", fitted));
+    worst = 0.0f;
+    for (i = 0; i < LRG_VR_GESTURE_SAMPLES; i++)
+    {
+        gfloat r = hypotf (fitted[i * 3] - 0.2f, fitted[i * 3 + 1] - 1.3f);
+
+        worst = MAX (worst, fabsf (r - 0.15f));
+        g_assert_cmpfloat_with_epsilon (fitted[i * 3 + 2], -0.4f, 1e-4f);
+    }
+    g_assert_cmpfloat (worst, <, 0.02f);
+
+    /* ending names it the same */
+    ended = lrg_vr_gesture_recognizer_end (gestures);
+    g_assert_cmpstr (ended->name, ==, "circle");
+}
+
+static void
+test_nearest_below_threshold (void)
+{
+    g_autoptr(LrgVRGestureRecognizer) gestures = builtin ();
+    static const gfloat diagonal[] = { 0.0f, 0.0f, 1.0f, 1.0f };
+    g_autoptr(LrgVRGesture) drawn = NULL;
+    g_autoptr(LrgVRGesture) copy = NULL;
+
+    drawn = draw (gestures, diagonal, 2, 0.4f, 0.0f);
+    g_assert_null (drawn->name);
+    g_assert_nonnull (drawn->nearest);
+    copy = lrg_vr_gesture_copy (drawn);
+    g_assert_cmpstr (copy->nearest, ==, drawn->nearest);
+}
+
+static void
 test_points_kept (void)
 {
     g_autoptr(LrgVRGestureRecognizer) gestures = builtin ();
@@ -362,6 +447,8 @@ main (int   argc,
     g_test_add_func ("/vr/gesture/push-pull", test_push_pull);
     g_test_add_func ("/vr/gesture/templates", test_templates);
     g_test_add_func ("/vr/gesture/ambiguous", test_ambiguous);
+    g_test_add_func ("/vr/gesture/peek-and-fit", test_peek_and_fit);
+    g_test_add_func ("/vr/gesture/nearest-below-threshold", test_nearest_below_threshold);
     g_test_add_func ("/vr/gesture/points-kept", test_points_kept);
 
     return g_test_run ();

@@ -56,7 +56,7 @@
  */
 
 /* points every drawing and template is resampled to */
-#define N_SAMPLES (48)
+#define N_SAMPLES LRG_VR_GESTURE_SAMPLES
 /* the starts a closed template is also tried from */
 #define N_SHIFTS (16)
 /* the mean distance (of shapes 1 across) at which the score reaches 0 */
@@ -111,6 +111,7 @@ lrg_vr_gesture_copy (const LrgVRGesture *self)
     copy = g_new (LrgVRGesture, 1);
     *copy = *self;
     copy->name = g_strdup (self->name);
+    copy->nearest = g_strdup (self->nearest);
     return copy;
 }
 
@@ -120,6 +121,7 @@ lrg_vr_gesture_free (LrgVRGesture *self)
     if (self == NULL)
         return;
     g_free (self->name);
+    g_free (self->nearest);
     g_free (self);
 }
 
@@ -218,7 +220,10 @@ resample (const gfloat *points,
  * Returns: %FALSE when they span nothing
  */
 static gboolean
-normalize (gfloat *points)
+normalize_frame (gfloat *points,
+                 gfloat *out_cx,
+                 gfloat *out_cy,
+                 gfloat *out_side)
 {
     gfloat cx = 0.0f;
     gfloat cy = 0.0f;
@@ -248,7 +253,19 @@ normalize (gfloat *points)
         points[i * 2] = (points[i * 2] - cx) / side;
         points[i * 2 + 1] = (points[i * 2 + 1] - cy) / side;
     }
+    if (out_cx != NULL)
+        *out_cx = cx;
+    if (out_cy != NULL)
+        *out_cy = cy;
+    if (out_side != NULL)
+        *out_side = side;
     return TRUE;
+}
+
+static gboolean
+normalize (gfloat *points)
+{
+    return normalize_frame (points, NULL, NULL, NULL);
 }
 
 /* the mean distance between a drawing and a template begun @shift
@@ -273,18 +290,37 @@ mean_distance (const gfloat *drawing,
 
 /* the best (smallest) distance to @t, over its starts when closed */
 static gfloat
-template_distance (const Template *t,
-                   const gfloat   *drawing)
+template_distance_shift (const Template *t,
+                         const gfloat   *drawing,
+                         guint          *out_shift)
 {
     gfloat best;
     guint s;
 
     best = mean_distance (drawing, t->points, 0);
+    if (out_shift != NULL)
+        *out_shift = 0;
     if (!t->closed)
         return best;
     for (s = 1; s < N_SHIFTS; s++)
-        best = MIN (best, mean_distance (drawing, t->points, s * N_SAMPLES / N_SHIFTS));
+    {
+        gfloat d = mean_distance (drawing, t->points, s * N_SAMPLES / N_SHIFTS);
+
+        if (d < best)
+        {
+            best = d;
+            if (out_shift != NULL)
+                *out_shift = s * N_SAMPLES / N_SHIFTS;
+        }
+    }
     return best;
+}
+
+static gfloat
+template_distance (const Template *t,
+                   const gfloat   *drawing)
+{
+    return template_distance_shift (t, drawing, NULL);
 }
 
 static gfloat
@@ -675,40 +711,41 @@ lrg_vr_gesture_recognizer_recognize (LrgVRGestureRecognizer *self,
     if (best == NULL)
         return out;
     out->score = score_of (best_distance);
+    out->nearest = g_strdup (best->name);
     if (out->score >= self->threshold &&
         (runner_up == G_MAXFLOAT || score_of (runner_up) <= out->score - AMBIGUITY))
         out->name = g_strdup (best->name);
     return out;
 }
 
-LrgVRGesture *
-lrg_vr_gesture_recognizer_end (LrgVRGestureRecognizer *self)
+/*
+ * flatten:
+ * The drawing in progress in the view plane, from its first point:
+ * @n x, y pairs (g_free), its box, the path's length and its depth.
+ *
+ * Returns: %NULL without a drawing of two points
+ */
+static gfloat *
+flatten (LrgVRGestureRecognizer *self,
+         guint                  *out_n,
+         gfloat                 *out_box,
+         gfloat                 *out_length,
+         gfloat                 *out_depth)
 {
-    g_autofree gfloat *flat = NULL;
-    LrgVRGesture *out;
+    gfloat *flat;
     const gfloat *p;
-    gfloat min_x = G_MAXFLOAT;
-    gfloat max_x = -G_MAXFLOAT;
-    gfloat min_y = G_MAXFLOAT;
-    gfloat max_y = -G_MAXFLOAT;
     gfloat length = 0.0f;
-    gfloat spread;
-    gfloat depth;
+    gfloat depth = 0.0f;
     guint n;
     guint i;
 
-    g_return_val_if_fail (LRG_IS_VR_GESTURE_RECOGNIZER (self), NULL);
-
     n = self->points->len / 3;
     if (!self->drawing || n < 2)
-    {
-        lrg_vr_gesture_recognizer_cancel (self);
-        return g_new0 (LrgVRGesture, 1);
-    }
-
-    /* the drawing in the view plane (from its first point) and its depth */
+        return NULL;
     p = (const gfloat *)self->points->data;
     flat = g_new (gfloat, n * 2);
+    out_box[0] = out_box[2] = G_MAXFLOAT;
+    out_box[1] = out_box[3] = -G_MAXFLOAT;
     for (i = 0; i < n; i++)
     {
         gfloat d[3];
@@ -718,19 +755,43 @@ lrg_vr_gesture_recognizer_end (LrgVRGestureRecognizer *self)
             d[k] = p[i * 3 + k] - p[k];
         flat[i * 2] = d[0] * self->right[0] + d[1] * self->right[1] + d[2] * self->right[2];
         flat[i * 2 + 1] = d[0] * self->up[0] + d[1] * self->up[1] + d[2] * self->up[2];
-        min_x = MIN (min_x, flat[i * 2]);
-        max_x = MAX (max_x, flat[i * 2]);
-        min_y = MIN (min_y, flat[i * 2 + 1]);
-        max_y = MAX (max_y, flat[i * 2 + 1]);
+        out_box[0] = MIN (out_box[0], flat[i * 2]);
+        out_box[1] = MAX (out_box[1], flat[i * 2]);
+        out_box[2] = MIN (out_box[2], flat[i * 2 + 1]);
+        out_box[3] = MAX (out_box[3], flat[i * 2 + 1]);
         if (i > 0)
-            length += sqrtf ((p[i * 3] - p[(i - 1) * 3]) * (p[i * 3] - p[(i - 1) * 3]) +
-                             (p[i * 3 + 1] - p[(i - 1) * 3 + 1]) * (p[i * 3 + 1] - p[(i - 1) * 3 + 1]) +
-                             (p[i * 3 + 2] - p[(i - 1) * 3 + 2]) * (p[i * 3 + 2] - p[(i - 1) * 3 + 2]));
+        {
+            gfloat e[3];
+
+            for (k = 0; k < 3; k++)
+                e[k] = p[i * 3 + k] - p[(i - 1) * 3 + k];
+            length += sqrtf (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
+        }
     }
-    depth = 0.0f;
     for (i = 0; i < 3; i++)
         depth += (p[(n - 1) * 3 + i] - p[i]) * self->forward[i];
-    spread = MAX (max_x - min_x, max_y - min_y);
+    *out_n = n;
+    *out_length = length;
+    *out_depth = depth;
+    return flat;
+}
+
+/* names the drawing in progress (end() and peek() alike) */
+static LrgVRGesture *
+name_drawing (LrgVRGestureRecognizer *self)
+{
+    g_autofree gfloat *flat = NULL;
+    LrgVRGesture *out;
+    gfloat box[4];
+    gfloat length;
+    gfloat depth;
+    gfloat spread;
+    guint n;
+
+    flat = flatten (self, &n, box, &length, &depth);
+    if (flat == NULL)
+        return g_new0 (LrgVRGesture, 1);
+    spread = MAX (box[1] - box[0], box[3] - box[2]);
 
     /* a thrust: mostly away from (or towards) the head; otherwise the
        shape in the plane, when it is large enough to be one */
@@ -738,21 +799,159 @@ lrg_vr_gesture_recognizer_end (LrgVRGestureRecognizer *self)
     {
         out = g_new0 (LrgVRGesture, 1);
         out->name = g_strdup (depth > 0.0f ? LRG_VR_GESTURE_PUSH : LRG_VR_GESTURE_PULL);
+        out->nearest = g_strdup (out->name);
         out->score = CLAMP (1.0f - spread / fabsf (depth), 0.0f, 1.0f);
-    }
-    else if (spread >= self->min_size)
-    {
-        out = lrg_vr_gesture_recognizer_recognize (self, flat, n);
     }
     else
     {
-        out = g_new0 (LrgVRGesture, 1);
+        out = lrg_vr_gesture_recognizer_recognize (self, flat, n);
+        if (spread < self->min_size)
+            g_clear_pointer (&out->name, g_free);
     }
     out->length = length;
     out->duration = (gfloat)(self->last_time - self->first_time);
-    out->width = max_x - min_x;
-    out->height = max_y - min_y;
+    out->width = box[1] - box[0];
+    out->height = box[3] - box[2];
     out->depth = depth;
+    return out;
+}
+
+LrgVRGesture *
+lrg_vr_gesture_recognizer_end (LrgVRGestureRecognizer *self)
+{
+    LrgVRGesture *out;
+
+    g_return_val_if_fail (LRG_IS_VR_GESTURE_RECOGNIZER (self), NULL);
+
+    out = name_drawing (self);
     lrg_vr_gesture_recognizer_cancel (self);
     return out;
+}
+
+LrgVRGesture *
+lrg_vr_gesture_recognizer_peek (LrgVRGestureRecognizer *self)
+{
+    g_return_val_if_fail (LRG_IS_VR_GESTURE_RECOGNIZER (self), NULL);
+
+    return name_drawing (self);
+}
+
+/* the point at x, y of the view plane through the drawing's first point,
+   at the drawing's mean depth */
+static void
+plane_point (LrgVRGestureRecognizer *self,
+             gfloat                  x,
+             gfloat                  y,
+             gfloat                  depth,
+             gfloat                 *out)
+{
+    const gfloat *p0 = (const gfloat *)self->points->data;
+    gint k;
+
+    for (k = 0; k < 3; k++)
+        out[k] = p0[k] + self->right[k] * x + self->up[k] * y + self->forward[k] * depth;
+}
+
+/* the drawing's mean depth from its first point */
+static gfloat
+mean_depth (LrgVRGestureRecognizer *self)
+{
+    const gfloat *p = (const gfloat *)self->points->data;
+    guint n = self->points->len / 3;
+    gfloat sum = 0.0f;
+    guint i;
+    gint k;
+
+    for (i = 0; i < n; i++)
+        for (k = 0; k < 3; k++)
+            sum += (p[i * 3 + k] - p[k]) * self->forward[k];
+    return n > 0 ? sum / (gfloat)n : 0.0f;
+}
+
+gboolean
+lrg_vr_gesture_recognizer_get_frame (LrgVRGestureRecognizer *self,
+                                     gfloat                 *out_centre,
+                                     gfloat                 *out_right,
+                                     gfloat                 *out_up,
+                                     gfloat                 *out_size)
+{
+    g_autofree gfloat *flat = NULL;
+    gfloat box[4];
+    gfloat length;
+    gfloat depth;
+    guint n;
+
+    g_return_val_if_fail (LRG_IS_VR_GESTURE_RECOGNIZER (self), FALSE);
+    g_return_val_if_fail (out_centre != NULL && out_right != NULL && out_up != NULL, FALSE);
+
+    flat = flatten (self, &n, box, &length, &depth);
+    if (flat == NULL)
+        return FALSE;
+    plane_point (self, 0.5f * (box[0] + box[1]), 0.5f * (box[2] + box[3]), mean_depth (self), out_centre);
+    memcpy (out_right, self->right, 3 * sizeof (gfloat));
+    memcpy (out_up, self->up, 3 * sizeof (gfloat));
+    if (out_size != NULL)
+        *out_size = MAX (box[1] - box[0], box[3] - box[2]);
+    return TRUE;
+}
+
+gboolean
+lrg_vr_gesture_recognizer_fit_template (LrgVRGestureRecognizer *self,
+                                        const gchar            *name,
+                                        gfloat                 *out_points)
+{
+    g_autofree gfloat *flat = NULL;
+    gfloat drawing[N_SAMPLES * 2];
+    const Template *best;
+    gfloat best_distance;
+    guint best_shift;
+    gfloat box[4];
+    gfloat length;
+    gfloat depth;
+    gfloat cx;
+    gfloat cy;
+    gfloat side;
+    guint n;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_VR_GESTURE_RECOGNIZER (self), FALSE);
+    g_return_val_if_fail (name != NULL && out_points != NULL, FALSE);
+
+    flat = flatten (self, &n, box, &length, &depth);
+    if (flat == NULL || !resample (flat, n, drawing) || !normalize_frame (drawing, &cx, &cy, &side))
+        return FALSE;
+
+    /* the template of that name the drawing is nearest, from its best start */
+    best = NULL;
+    best_distance = G_MAXFLOAT;
+    best_shift = 0;
+    for (i = 0; i < self->templates->len; i++)
+    {
+        const Template *t = g_ptr_array_index (self->templates, i);
+        guint shift;
+        gfloat d;
+
+        if (g_strcmp0 (t->name, name) != 0)
+            continue;
+        d = template_distance_shift (t, drawing, &shift);
+        if (d < best_distance)
+        {
+            best_distance = d;
+            best = t;
+            best_shift = shift;
+        }
+    }
+    if (best == NULL)
+        return FALSE;
+
+    /* laid over the drawing: its centroid, its size, its plane */
+    depth = mean_depth (self);
+    for (i = 0; i < N_SAMPLES; i++)
+    {
+        guint j = (i + best_shift) % N_SAMPLES;
+
+        plane_point (self, cx + best->points[j * 2] * side, cy + best->points[j * 2 + 1] * side, depth,
+                     &out_points[i * 3]);
+    }
+    return TRUE;
 }
