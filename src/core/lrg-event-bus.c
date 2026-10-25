@@ -10,9 +10,13 @@
 #include "lrg-event-bus.h"
 #include "../lrg-log.h"
 
+#include <stdlib.h>
+#include <string.h>
+
 typedef struct
 {
     LrgEventListener *listener;
+    LrgEventListenerInterface *iface;   /* the listener's vtable, looked up once */
     gboolean active;
 } Registration;
 
@@ -220,6 +224,7 @@ lrg_event_bus_register (LrgEventBus      *self,
 
     registration = g_rc_box_new0 (Registration);
     registration->listener = g_object_ref (listener);
+    registration->iface = LRG_EVENT_LISTENER_GET_IFACE (listener);
     registration->active = TRUE;
     g_ptr_array_add (self->listeners, registration);
 }
@@ -337,6 +342,47 @@ lrg_event_bus_get_listener_count (LrgEventBus *self)
  * ========================================================================== */
 
 /*
+ * Dispatch snapshots up to this many listeners live on the stack; larger
+ * ones spill to the heap.
+ */
+#define DISPATCH_STACK_ENTRIES (32)
+
+/*
+ * sort_dispatch_entries:
+ *
+ * Orders a snapshot by priority (highest first), then registration order.
+ * Snapshots are built in registration order, so a stable insertion sort on
+ * priority alone gives exactly compare_listener_priority()'s order, in
+ * linear time when priorities are already non-increasing (the common
+ * case: all equal). Large snapshots use the general sort.
+ */
+static void
+sort_dispatch_entries (DispatchEntry *entries,
+                       guint          n_entries)
+{
+    guint i;
+
+    if (n_entries > 64)
+    {
+        qsort (entries, n_entries, sizeof (DispatchEntry), compare_listener_priority);
+        return;
+    }
+
+    for (i = 1; i < n_entries; i++)
+    {
+        DispatchEntry key = entries[i];
+        guint j = i;
+
+        while (j > 0 && entries[j - 1].priority < key.priority)
+        {
+            entries[j] = entries[j - 1];
+            j--;
+        }
+        entries[j] = key;
+    }
+}
+
+/*
  * lrg_event_bus_emit:
  * @self: an #LrgEventBus
  * @event: (transfer none): the event to emit
@@ -352,9 +398,13 @@ lrg_event_bus_get_listener_count (LrgEventBus *self)
  * Removing and re-registering the same listener does not revive the removed
  * registration in a dispatch already in progress.
  *
- * Priorities are captured at the start of each emission. Equal priorities use
- * registration order. Priority changes during callbacks take effect on the
- * next emission; nested emissions have independent snapshots.
+ * Event masks and priorities are captured at the start of each emission:
+ * only listeners whose mask matches the event then take part. A listener
+ * whose mask stops matching before its turn is skipped; one whose mask
+ * starts matching during the emission waits for the next one. Equal
+ * priorities use registration order. Priority and mask changes during
+ * callbacks take effect on the next emission; nested emissions have
+ * independent snapshots.
  *
  * The bus, event, and snapshotted listeners remain alive through completion
  * signals even if callbacks release their owners' references. Access must be
@@ -372,7 +422,10 @@ lrg_event_bus_emit (LrgEventBus *self,
 {
     g_autoptr(LrgEventBus) bus_ref = NULL;
     g_autoptr(LrgEvent) event_ref = NULL;
-    g_autoptr(GArray) listeners = NULL;
+    DispatchEntry stack_entries[DISPATCH_STACK_ENTRIES];
+    DispatchEntry *entries;
+    guint n_entries;
+    guint capacity;
     guint64 event_mask;
     guint i;
     gboolean result;
@@ -384,34 +437,56 @@ lrg_event_bus_emit (LrgEventBus *self,
     bus_ref = g_object_ref (self);
     event_ref = g_object_ref (event);
 
-    /* Snapshot registration identities, not just listener identities: removing
-     * and re-registering a listener must not revive its old dispatch entry. */
-    listeners = g_array_new (FALSE, FALSE, sizeof (DispatchEntry));
-    g_array_set_clear_func (listeners, dispatch_entry_clear);
-    for (i = 0; i < self->listeners->len; i++)
-    {
-        DispatchEntry entry;
-
-        entry.registration = g_rc_box_acquire (g_ptr_array_index (self->listeners, i));
-        entry.priority = 0;
-        entry.order = i;
-        g_array_append_val (listeners, entry);
-    }
-    for (i = 0; i < listeners->len; i++)
-    {
-        DispatchEntry *entry = &g_array_index (listeners, DispatchEntry, i);
-
-        entry->priority = lrg_event_listener_get_priority (entry->registration->listener);
-    }
-    g_array_sort (listeners, compare_listener_priority);
-
     event_mask = lrg_event_get_type_mask (event);
     result = !lrg_event_is_cancelled (event);
 
-    /* Dispatch to all matching listeners in priority order */
-    for (i = 0; result && i < listeners->len; i++)
+    /* Snapshot the registrations whose listener wants this event type.
+     * Registration identities, not just listener identities: removing and
+     * re-registering a listener must not revive its old dispatch entry.
+     * Non-matching listeners cost one mask read and nothing else. */
+    entries = stack_entries;
+    n_entries = 0;
+    capacity = DISPATCH_STACK_ENTRIES;
+    for (i = 0; result && i < self->listeners->len; i++)
     {
-        DispatchEntry *entry = &g_array_index (listeners, DispatchEntry, i);
+        Registration *registration = g_ptr_array_index (self->listeners, i);
+        guint64 listener_mask;
+
+        /* Straight through the cached vtable: this runs for every
+         * registration on every emission. */
+        if (G_LIKELY (registration->iface->get_event_mask != NULL))
+            listener_mask = registration->iface->get_event_mask (registration->listener);
+        else
+            listener_mask = lrg_event_listener_get_event_mask (registration->listener);
+        if ((listener_mask & event_mask) == 0)
+            continue;
+
+        if (n_entries == capacity)
+        {
+            capacity *= 2;
+            if (entries == stack_entries)
+            {
+                entries = g_new (DispatchEntry, capacity);
+                memcpy (entries, stack_entries, sizeof (stack_entries));
+            }
+            else
+            {
+                entries = g_renew (DispatchEntry, entries, capacity);
+            }
+        }
+        entries[n_entries].registration = g_rc_box_acquire (registration);
+        entries[n_entries].priority = 0;
+        entries[n_entries].order = i;
+        n_entries++;
+    }
+    for (i = 0; i < n_entries; i++)
+        entries[i].priority = lrg_event_listener_get_priority (entries[i].registration->listener);
+    sort_dispatch_entries (entries, n_entries);
+
+    /* Dispatch to all matching listeners in priority order */
+    for (i = 0; result && i < n_entries; i++)
+    {
+        DispatchEntry *entry = &entries[i];
         LrgEventListener *listener = entry->registration->listener;
         guint64 listener_mask;
 
@@ -420,7 +495,7 @@ lrg_event_bus_emit (LrgEventBus *self,
 
         listener_mask = lrg_event_listener_get_event_mask (listener);
 
-        /* Skip if listener doesn't care about this event type */
+        /* Skip if listener stopped caring about this event type */
         if ((listener_mask & event_mask) == 0)
             continue;
 
@@ -446,6 +521,13 @@ lrg_event_bus_emit (LrgEventBus *self,
     }
 
     g_signal_emit (self, signals[SIGNAL_EVENT_EMITTED], 0, event);
+
+    /* Release the snapshot only now: listeners stay alive through the
+     * completion signal. */
+    for (i = 0; i < n_entries; i++)
+        dispatch_entry_clear (&entries[i]);
+    if (entries != stack_entries)
+        g_free (entries);
 
     return result;
 }
