@@ -86,12 +86,17 @@ Measured with =lrg-bench= under Xvfb + llvmpipe on a 20-thread Alder Lake laptop
 | =shapes-round=  | frame 37.1 ms              | frame 27.6 ms             | cached GPU meshes                    |
 | =light-grid=    | 0.615 ms                   | 0.213 ms                  | skip unchanged rebuild/upload        |
 | =graylib-draw=  | work 7.5 ms (raylib -O1)   | work 5.4 ms               | raylib at -O2                        |
+| =animator=      | 6.86 ms                    | 0.31 ms                   | single-pass skeleton, cached track maps |
+| =physics=       | 4.17 ms                    | 0.24 ms                   | sort-and-sweep broadphase            |
+| =event-bus=     | 5.42 ms                    | 0.87 ms                   | mask filter before snapshot          |
+| =transforms=    | 2.63 ms                    | ~0.85 ms                  | one parent walk, no allocation       |
+| =object-pool=   | 3.04 ms                    | 1.6 ms                    | O(1) release, reused snapshot        |
 | editor frame (5050 nodes, 4000 log lines) | 11.8 ms | 0.35 ms         | console/hierarchy culling and caches |
 
 What changed, by area:
 - *2D*: tilemap draws only tiles that can land in the viewport; =LrgWorld= keeps its draw order between frames (stable by z-index then insertion) and insertion-sorts it in place; sprite components and =GrlSprite= draw without allocating; =LrgGame2DTemplate= paints letterbox bars instead of a second full-window clear; labels cache their measured size; text everywhere goes through graylib's O(1)-lookup layout.
 - *3D*: frustum culling in static batches, terrain, water, billboard clusters and grass, for the camera and every shadow pass; uniform locations cached per shader; the light grid rebuilds and uploads only on change; grass keeps a persistent instance buffer; spheres, cylinders and cones draw cached GPU meshes.
-- *Simulation*: see the animation, physics, tween, event bus, transform, object pool and portal notes in their module pages.
+- *Simulation*: skeletons compute world poses in one parent-before-child pass without allocating; animators cache track-to-bone maps and binary-search keyframes; physics uses a sort-and-sweep broadphase with the same pairs in the same order; the event bus filters by mask before snapshotting listeners; transform components walk the parent chain once; object pools release in O(1); portals reuse their scratch tables. Details in each module's page.
 - *Editor*: see [[file:editor/editor-app.org][Frame cost]].
 
 Bugs fixed on the way (each has a regression test):
@@ -99,7 +104,12 @@ Bugs fixed on the way (each has a regression test):
 - =LrgParticleSystem= let its pool grow past =max-particles=, reallocating the particles under its active list (a crash once emission outran the capacity). The pool is now fixed at =max-particles= (=/particles/system/respects-max-particles=).
 - =GrlSprite= =flip-h=/=flip-v= were negated twice and never flipped.
 - =GrlScene= ignored z-index changes made after an entity was added (graylib =/scene/draw-order-follows-z-index=).
+- Skeleton chains deeper than 100 bones listed child-first never converged.
+- A collision handler that removed a body mid-step could make the physics step use the freed body.
+- The portal system emitted =visibility-changed= on every update, not only when the visible set changed.
 
 Behaviour changes to know about:
+- =lrg_physics_world_step()= simulates at most 5/60 s per call (at least 5 fixed steps) and drops the excess, so one slow frame cannot snowball into ever longer steps.
+- The event bus captures listener masks at the start of an emission, as it already did priorities.
 - =max-particles= is now a hard cap on a particle system's live particles (it was documented as one but not enforced).
 - Solid =LrgSphere3D=, =LrgCylinder3D= and =LrgCone3D= draw cached meshes with raylib's default shader, like =LrgIcosphere3D= and =LrgTorus3D= already did, so a =BeginShaderMode()= around them no longer applies; their output can differ from the old immediate-mode path by a pixel at a triangle edge (GPU vs CPU vertex transform).
