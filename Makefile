@@ -736,6 +736,7 @@ SOURCES := \
 	src/shapes/lrg-circle3d.c \
 	src/shapes/lrg-torus3d.c \
 	src/shapes/lrg-icosphere3d.c \
+	src/shapes/lrg-shape3d-mesh.c \
 	src/ui/lrg-ui-event.c \
 	src/ui/lrg-widget.c \
 	src/ui/lrg-container.c \

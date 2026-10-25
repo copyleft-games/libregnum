@@ -11,6 +11,8 @@
 
 #include <rlgl.h>
 
+#include "lrg-shape3d-mesh-private.h"
+
 #ifndef RAD2DEG
 #define RAD2DEG (180.0f / 3.14159265358979323846f)
 #endif
@@ -33,6 +35,14 @@ struct _LrgCone3D
 	gfloat radius_top;
 	gfloat height;
 	gint   slices;
+
+	/* the shared mesh of the mesh_* parameters: the triangles
+	 * DrawCylinder() draws, made once instead of every frame */
+	LrgShape3DMesh *gpu_mesh;
+	gfloat          mesh_bottom;
+	gfloat          mesh_top;
+	gfloat          mesh_height;
+	gint            mesh_slices;
 };
 
 G_DEFINE_FINAL_TYPE (LrgCone3D, lrg_cone3d, LRG_TYPE_SHAPE3D)
@@ -52,6 +62,33 @@ static GParamSpec *properties[N_PROPS];
 /* ==========================================================================
  * Virtual Method Implementation
  * ========================================================================== */
+
+/*
+ * lrg_cone3d_draw_mesh:
+ * Draws the solid cone from the shared mesh of its radii, height and
+ * slices, made on first use and again when they change. Returns FALSE
+ * when the immediate path must draw.
+ */
+static gboolean
+lrg_cone3d_draw_mesh (LrgCone3D *self,
+                      GrlColor  *color)
+{
+	if (self->gpu_mesh == NULL || self->mesh_bottom != self->radius_bottom
+	    || self->mesh_top != self->radius_top || self->mesh_height != self->height
+	    || self->mesh_slices != self->slices)
+	{
+		g_clear_pointer (&self->gpu_mesh, lrg_shape3d_mesh_release);
+		self->gpu_mesh = lrg_shape3d_mesh_acquire_cylinder (self->radius_top,
+		                                                    self->radius_bottom,
+		                                                    self->height, self->slices);
+		self->mesh_bottom = self->radius_bottom;
+		self->mesh_top = self->radius_top;
+		self->mesh_height = self->height;
+		self->mesh_slices = self->slices;
+	}
+	return self->gpu_mesh != NULL
+	       && lrg_shape3d_mesh_draw (self->gpu_mesh, color, 1.0f);
+}
 
 static void
 lrg_cone3d_draw (LrgShape *shape,
@@ -84,7 +121,7 @@ lrg_cone3d_draw (LrgShape *shape,
 		                         self->slices,
 		                         color);
 	}
-	else
+	else if (!lrg_cone3d_draw_mesh (self, color))
 	{
 		grl_draw_cylinder (origin,
 		                   self->radius_top,
@@ -158,11 +195,22 @@ lrg_cone3d_set_property (GObject      *object,
 }
 
 static void
+lrg_cone3d_finalize (GObject *object)
+{
+	LrgCone3D *self = LRG_CONE3D (object);
+
+	g_clear_pointer (&self->gpu_mesh, lrg_shape3d_mesh_release);
+
+	G_OBJECT_CLASS (lrg_cone3d_parent_class)->finalize (object);
+}
+
+static void
 lrg_cone3d_class_init (LrgCone3DClass *klass)
 {
 	GObjectClass  *object_class = G_OBJECT_CLASS (klass);
 	LrgShapeClass *shape_class  = LRG_SHAPE_CLASS (klass);
 
+	object_class->finalize     = lrg_cone3d_finalize;
 	object_class->get_property = lrg_cone3d_get_property;
 	object_class->set_property = lrg_cone3d_set_property;
 
