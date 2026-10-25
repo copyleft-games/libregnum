@@ -65,7 +65,7 @@ See [[file:../../editor/editor-runtime.org][Editor Runtime]] for usage of all of
 | =LrgEditorLog= | Final | Ring buffer of captured GLib log records for the console and IPC |
 | =LrgEditorLogRecord= | Boxed struct | One captured log message |
 | =LrgEditorServer= | Final | JSON-lines IPC server on a Unix socket exposing an =LrgEditor= |
-| =LrgEditorApp= | Final | The full editor application (=lrg-editor=), drawn with =LrgGuiContext= |
+| =LrgEditorApp= | Final | The full editor application (=lrgeditor=), drawn with =LrgGuiContext= |
 
 ** Editor Runtime Functions
 :PROPERTIES:
@@ -222,7 +222,7 @@ gboolean     lrg_node_foreach           (LrgNode *, LrgNodeForeachFunc func, gpo
 - [[file:../../editor/level-model.org][Level Model]] — types in depth
 - [[file:../../editor/yaml-format.org][.rlevel Format]] — YAML schema
 - [[file:../../editor/editor-runtime.org][Editor Runtime]] — LrgEditor / commands / host
-- [[file:../../editor/editor-app.org][Editor Application]] — =lrg-editor= / =LrgEditorApp=
+- [[file:../../editor/editor-app.org][Editor Application]] — =lrgeditor= / =LrgEditorApp=
 - [[file:../../editor/external-editor.org][External Editor]] — =LrgEditorSettings= / =LrgExternalEditor=
 - [[file:../../editor/emacs.org][Emacs Integration]] — =libregnum.el=
 - [[file:../../editor/ipc-protocol.org][IPC Protocol]] — =LrgEditorServer= methods and events

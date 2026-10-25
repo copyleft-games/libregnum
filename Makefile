@@ -1527,8 +1527,11 @@ endif
 ifeq ($(BUILD_SHARED),1)
 	@$(MAKE) --no-print-directory lrgldr
 ifeq ($(BUILD_EDITOR_UI),1)
-	@$(MAKE) --no-print-directory lrg-editor
+	@$(MAKE) --no-print-directory lrgeditor
 endif
+endif
+ifeq ($(BUILD_EDITOR),1)
+	@$(MAKE) --no-print-directory lrgeditorctl
 endif
 
 # Internal target for actual library build (called after generate)
@@ -1880,25 +1883,134 @@ $(LRGLDR_BIN): src/launcher/lrgldr.c $(LIBOUTDIR)/$(LIB_SHARED)
 	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
 
 # =============================================================================
-# lrg-editor (the level / scene / world editor application)
+# lrgeditor (the level / scene / world editor application)
 # =============================================================================
 
-LRG_EDITOR_BIN := $(BUILDDIR)/lrg-editor$(EXE_EXT)
+LRG_EDITOR_BIN := $(BUILDDIR)/lrgeditor$(EXE_EXT)
 
 # Same linkage as lrgldr: the shared library, so game modules and the
 # editor share one engine, type registry and raylib state.
-.PHONY: lrg-editor
-lrg-editor: lib-shared $(LRG_EDITOR_BIN)
+.PHONY: lrgeditor
+lrgeditor: lib-shared $(LRG_EDITOR_BIN)
 
-$(LRG_EDITOR_BIN): src/launcher/lrg-editor.c $(LIBOUTDIR)/$(LIB_SHARED)
-	$(call print_link,lrg-editor)
+# MCP (Model Context Protocol) for the editor: `lrgeditorctl mcp` and
+# `lrgeditor --mcp`, on the bundled mcp-glib. On by default when its
+# Linux dependencies (libsoup-3.0, libdex-1) are installed; EDITOR_MCP=0
+# builds both programs without it.
+EDITOR_MCP ?= $(shell $(PKG_CONFIG) --exists libsoup-3.0 libdex-1 2>/dev/null && echo 1 || echo 0)
+EDITOR_MCP_DIR := $(PROJECT_ROOT)/deps/mcp-glib
+EDITOR_MCP_STATIC := $(EDITOR_MCP_DIR)/build/libmcp-glib-1.0.a
+EDITOR_MCP_SOURCES := src/editorctl/lrgeditorctl-mcp.c src/editorctl/lrgeditorctl-client.c
+
+ifeq ($(EDITOR_MCP),1)
+EDITOR_MCP_CFLAGS := -I$(EDITOR_MCP_DIR)/src -Isrc/editorctl \
+	$(shell $(PKG_CONFIG) --cflags libsoup-3.0 libdex-1)
+EDITOR_MCP_LIBS := $(EDITOR_MCP_STATIC) $(shell $(PKG_CONFIG) --libs libsoup-3.0 libdex-1 gio-unix-2.0 json-glib-1.0)
+EDITOR_MCP_DEP := $(EDITOR_MCP_STATIC)
+else
+EDITOR_MCP_CFLAGS :=
+EDITOR_MCP_LIBS :=
+EDITOR_MCP_DEP :=
+endif
+
+$(EDITOR_MCP_STATIC):
+	$(call print_status,"Building mcp-glib for the editor...")
+	@$(MAKE) -C $(EDITOR_MCP_DIR) $(DEP_BUILD_FLAGS)
+
+ifeq ($(EDITOR_MCP),1)
+$(LRG_EDITOR_BIN): src/launcher/lrgeditor.c $(EDITOR_MCP_SOURCES) $(LIBOUTDIR)/$(LIB_SHARED) $(EDITOR_MCP_DEP)
+	$(call print_link,lrgeditor)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(LRGLDR_CFLAGS) $(EDITOR_MCP_CFLAGS) -DLRG_EDITOR_HAVE_MCP=1 -o $@ \
+		src/launcher/lrgeditor.c $(EDITOR_MCP_SOURCES) $(EDITOR_MCP_LIBS) $(LRGLDR_LIBS)
+else
+$(LRG_EDITOR_BIN): src/launcher/lrgeditor.c $(LIBOUTDIR)/$(LIB_SHARED)
+	$(call print_link,lrgeditor)
 	@$(MKDIR_P) $(dir $@)
 	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
+endif
+
+# =============================================================================
+# lrgeditorctl (kubectl-like control of running editors; MCP bridge)
+# =============================================================================
+#
+# Standalone: GLib, GIO, json-glib and the bundled yaml-glib, no engine or
+# GL, so it starts instantly and runs anywhere a session socket is reachable.
+
+LRGEDITORCTL_BIN := $(BUILDDIR)/lrgeditorctl$(EXE_EXT)
+LRGEDITORCTL_SOURCES := \
+	src/editorctl/lrgeditorctl.c \
+	src/editorctl/lrgeditorctl-client.c \
+	src/editorctl/lrgeditorctl-format.c
+LRGEDITORCTL_HEADERS := \
+	src/editorctl/lrgeditorctl-client.h \
+	src/editorctl/lrgeditorctl-format.h \
+	src/editorctl/lrgeditorctl-mcp.h
+
+LRGEDITORCTL_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -Isrc/editorctl
+LRGEDITORCTL_CFLAGS += $(GLIB_CFLAGS) $(JSON_CFLAGS) $(shell $(PKG_CONFIG) --cflags gio-unix-2.0)
+LRGEDITORCTL_CFLAGS += -isystem $(YAMLGLIB_DIR)/src $(YAML_CFLAGS)
+LRGEDITORCTL_CFLAGS += -DLRG_EDITORCTL_VERSION=\"$(VERSION)\"
+LRGEDITORCTL_LIBS := $(YAMLGLIB_STATIC) $(YAML_LIBS) $(JSON_LIBS) $(GLIB_LIBS)
+
+ifeq ($(EDITOR_MCP),1)
+LRGEDITORCTL_SOURCES += src/editorctl/lrgeditorctl-mcp.c
+LRGEDITORCTL_CFLAGS += $(EDITOR_MCP_CFLAGS) -DLRG_EDITORCTL_HAVE_MCP=1
+LRGEDITORCTL_LIBS := $(EDITOR_MCP_LIBS) $(LRGEDITORCTL_LIBS)
+endif
+
+.PHONY: lrgeditorctl
+lrgeditorctl: $(LRGEDITORCTL_BIN)
+
+$(LRGEDITORCTL_BIN): $(LRGEDITORCTL_SOURCES) $(LRGEDITORCTL_HEADERS) $(YAMLGLIB_STATIC) $(EDITOR_MCP_DEP)
+	$(call print_link,lrgeditorctl)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(LRGEDITORCTL_CFLAGS) -o $@ $(LRGEDITORCTL_SOURCES) $(LRGEDITORCTL_LIBS)
+
+# Agent skills (skills/<name>/SKILL.md + references) for Claude Code and
+# compatible tools. SKILLS_LINK=1 symlinks instead of copying, so edits
+# in the checkout show up immediately.
+SKILLS_SRC_DIR := skills
+SKILLS_DIR ?= $(HOME)/.claude/skills
+SKILLS := $(notdir $(patsubst %/SKILL.md,%,$(wildcard $(SKILLS_SRC_DIR)/*/SKILL.md)))
+
+.PHONY: install-skills uninstall-skills
+install-skills:
+	@test -n "$(SKILLS)" || { echo "no skills under $(SKILLS_SRC_DIR)/"; exit 1; }
+	@$(MKDIR_P) $(DESTDIR)$(SKILLS_DIR)
+	@for s in $(SKILLS); do \
+		dst="$(DESTDIR)$(SKILLS_DIR)/$$s"; \
+		if [ -L "$$dst" ]; then \
+			rm -f "$$dst" || exit 1; \
+		elif [ -e "$$dst" ]; then \
+			if ! grep -qx "name: $$s" "$$dst/SKILL.md" 2>/dev/null; then \
+				echo "$$dst exists and is not this skill; leaving it"; \
+				exit 1; \
+			fi; \
+			rm -rf "$$dst" || exit 1; \
+		fi; \
+		if [ "$(SKILLS_LINK)" = "1" ]; then \
+			ln -s "$(abspath $(SKILLS_SRC_DIR))/$$s" "$$dst" || exit 1; \
+			echo "  linked    $$dst -> $(abspath $(SKILLS_SRC_DIR))/$$s"; \
+		else \
+			cp -R "$(SKILLS_SRC_DIR)/$$s" "$$dst" || exit 1; \
+			chmod -R u+rwX,go+rX "$$dst" || exit 1; \
+			echo "  installed $$dst"; \
+		fi; \
+	done
+
+uninstall-skills:
+	@for s in $(SKILLS); do \
+		dst="$(DESTDIR)$(SKILLS_DIR)/$$s"; \
+		if [ -L "$$dst" ] || grep -qx "name: $$s" "$$dst/SKILL.md" 2>/dev/null; then \
+			rm -rf "$$dst" && echo "  removed   $$dst" || exit 1; \
+		fi; \
+	done
 
 # Byte-compiles the Emacs package (warnings are errors) and runs its ERT
-# suite, including an end-to-end session with a headless lrg-editor.
+# suite, including an end-to-end session with a headless lrgeditor.
 .PHONY: test-emacs
-test-emacs: lrg-editor
+test-emacs: lrgeditor
 	@if command -v emacs >/dev/null 2>&1; then \
 		emacs -Q --batch -L editors/emacs --eval '(setq byte-compile-error-on-warn t)' \
 			-f batch-byte-compile editors/emacs/libregnum.el editors/emacs/libregnum-tests.el && \
@@ -1909,11 +2021,17 @@ test-emacs: lrg-editor
 		echo "emacs not found; skipping the Emacs package tests"; \
 	fi
 
-# Drives a real lrg-editor window with real X events (Xvfb + xdotool) and
+# lrgeditorctl against a headless lrgeditor: every verb, apply/edit,
+# events, and both MCP servers (bridge and in-process).
+.PHONY: test-editorctl
+test-editorctl: lrgeditor lrgeditorctl
+	@tests/editorctl-smoke.sh $(BUILDDIR)
+
+# Drives a real lrgeditor window with real X events (Xvfb + xdotool) and
 # checks it over IPC: menus, shortcuts, viewport navigation. Skips when
 # Xvfb, xdotool, socat or yq is missing.
 .PHONY: test-editor-x11
-test-editor-x11: lrg-editor
+test-editor-x11: lrgeditor
 	@tests/editor-x11-smoke.sh $(LRG_EDITOR_BIN)
 
 # =============================================================================
@@ -2000,11 +2118,18 @@ ifeq ($(BUILD_SHARED),1)
 	@$(MKDIR_P) $(DESTDIR)$(BINDIR)
 	$(INSTALL_PROGRAM) $(LRGLDR_BIN) $(DESTDIR)$(BINDIR)/
 ifeq ($(BUILD_EDITOR_UI),1)
-	@$(MAKE) --no-print-directory lrg-editor
+	@$(MAKE) --no-print-directory lrgeditor
 	$(INSTALL_PROGRAM) $(LRG_EDITOR_BIN) $(DESTDIR)$(BINDIR)/
 	@$(MKDIR_P) $(DESTDIR)$(DATADIR)/emacs/site-lisp
 	$(INSTALL_DATA) editors/emacs/libregnum.el $(DESTDIR)$(DATADIR)/emacs/site-lisp/
 endif
+endif
+ifeq ($(BUILD_EDITOR),1)
+	@$(MAKE) --no-print-directory lrgeditorctl
+	@$(MKDIR_P) $(DESTDIR)$(BINDIR)
+	$(INSTALL_PROGRAM) $(LRGEDITORCTL_BIN) $(DESTDIR)$(BINDIR)/
+	@$(MKDIR_P) $(DESTDIR)$(DATADIR)/bash-completion/completions
+	$(LRGEDITORCTL_BIN) completion bash > $(DESTDIR)$(DATADIR)/bash-completion/completions/lrgeditorctl
 endif
 	# Install pkg-config
 	$(INSTALL_DATA) $(BUILDDIR)/$(PC_FILE) $(DESTDIR)$(PKGCONFIGDIR)/
@@ -2037,8 +2162,10 @@ uninstall:
 	$(RMDIR) $(DESTDIR)$(INCLUDEDIR)/libregnum
 	$(RM) $(DESTDIR)$(PKGCONFIGDIR)/$(PC_FILE)
 	$(RM) $(DESTDIR)$(BINDIR)/lrgldr$(EXE_EXT)
-	$(RM) $(DESTDIR)$(BINDIR)/lrg-editor$(EXE_EXT)
+	$(RM) $(DESTDIR)$(BINDIR)/lrgeditor$(EXE_EXT)
 	$(RM) $(DESTDIR)$(DATADIR)/emacs/site-lisp/libregnum.el
+	$(RM) $(DESTDIR)$(BINDIR)/lrgeditorctl$(EXE_EXT)
+	$(RM) $(DESTDIR)$(DATADIR)/bash-completion/completions/lrgeditorctl
 ifeq ($(BUILD_GIR),1)
 	$(RM) $(DESTDIR)$(GIRDIR)/$(GIR_NAME)
 	$(RM) $(DESTDIR)$(TYPELIBDIR)/$(TYPELIB_NAME)

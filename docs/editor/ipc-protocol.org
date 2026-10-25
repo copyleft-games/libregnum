@@ -1,5 +1,5 @@
 #+title: Editor IPC Protocol
-#+description: The JSON-lines protocol lrg-editor serves on a Unix socket for Emacs, scripts and tools
+#+description: The JSON-lines protocol lrgeditor serves on a Unix socket for Emacs, scripts and tools
 #+authors: Zach Podbielniak
 #+categories: libregnum editor ipc
 #+created: 2026-10-24T22:30:00-04:00
@@ -17,6 +17,8 @@
 The editor exposes its document and its UI over a local socket, so anything can drive it: the first-party Emacs package, shell scripts, test harnesses, build tools, other editors. Protocol version 1 (=LRG_EDITOR_SERVER_PROTOCOL_VERSION=).
 
 The server is =LrgEditorServer= (=src/editor/lrg-editor-server.h=); =LrgEditorApp= registers additional methods (actions, view, play, run, project, assets) on top of the document methods.
+
+For the command line, =lrgeditorctl= wraps every method below (see [[file:lrgeditorctl.org][lrgeditorctl and MCP]]); AI agents get the same operations as MCP tools.
 
 ** Transport
 :PROPERTIES:
@@ -139,7 +141,7 @@ Every editing method goes through the editor's undo stack.
 :PROPERTIES:
 :CUSTOM_ID: app-methods
 :END:
-Available when the server belongs to =lrg-editor= / =LrgEditorApp=:
+Available when the server belongs to =lrgeditor= / =LrgEditorApp=:
 
 | Method            | Params                                              | Result                                              |
 |-------------------+-----------------------------------------------------+-----------------------------------------------------|

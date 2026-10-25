@@ -1915,7 +1915,7 @@ lrg_editor_app_run (LrgEditorApp *self)
 
 	if (!has_display ())
 	{
-		g_printerr ("lrg-editor: no graphical display (DISPLAY/WAYLAND_DISPLAY unset); "
+		g_printerr ("lrgeditor: no graphical display (DISPLAY/WAYLAND_DISPLAY unset); "
 		            "use --headless to run the IPC server only.\n");
 		return 1;
 	}
@@ -1925,7 +1925,7 @@ lrg_editor_app_run (LrgEditorApp *self)
 	InitWindow ((gint) self->width, (gint) self->height, "libregnum editor");
 	if (!IsWindowReady ())
 	{
-		g_printerr ("lrg-editor: could not open a window\n");
+		g_printerr ("lrgeditor: could not open a window\n");
 		return 1;
 	}
 	SetWindowMinSize (960, 600);
@@ -1978,7 +1978,7 @@ lrg_editor_app_run (LrgEditorApp *self)
 		g_autoptr(GError) error = NULL;
 
 		if (!lrg_editor_app_save_settings (self, &error))
-			g_printerr ("lrg-editor: could not save settings: %s\n", error->message);
+			g_printerr ("lrgeditor: could not save settings: %s\n", error->message);
 	}
 
 	editor_render_shutdown (self);

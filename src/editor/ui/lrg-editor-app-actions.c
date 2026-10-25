@@ -800,7 +800,7 @@ static void a_shortcuts (gpointer d) { editor_dialog_open (APP (d), EDITOR_DIALO
 static void a_about (gpointer d)     { editor_dialog_open (APP (d), EDITOR_DIALOG_ABOUT); }
 
 /* The editor docs: next to the binary in a source tree
- * (build/<type>/lrg-editor -> docs/editor), or installed. */
+ * (build/<type>/lrgeditor -> docs/editor), or installed. */
 static void
 a_docs (gpointer data)
 {
