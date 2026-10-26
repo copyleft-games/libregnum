@@ -429,6 +429,49 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_bt_status_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_BT_STATUS (lrg_bt_status_get_type ())
 
+/**
+ * LrgJudgmentBand:
+ * @LRG_JUDGMENT_BAND_MISSING: the question was not answered
+ * @LRG_JUDGMENT_BAND_NO: the probability is at or below the "no" threshold
+ * @LRG_JUDGMENT_BAND_UNSETTLED: between the thresholds: the state did not
+ *   settle the question
+ * @LRG_JUDGMENT_BAND_YES: at or above the "yes" threshold
+ *
+ * A decision model's Noul read against two thresholds (lrg-decision.h).
+ */
+typedef enum
+{
+    LRG_JUDGMENT_BAND_MISSING,
+    LRG_JUDGMENT_BAND_NO,
+    LRG_JUDGMENT_BAND_UNSETTLED,
+    LRG_JUDGMENT_BAND_YES
+} LrgJudgmentBand;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_judgment_band_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_JUDGMENT_BAND (lrg_judgment_band_get_type ())
+
+/**
+ * LrgDeciderError:
+ * @LRG_DECIDER_ERROR_FAILED: the decision failed (the model, the network)
+ * @LRG_DECIDER_ERROR_UNSUPPORTED: no such decision model in this build
+ * @LRG_DECIDER_ERROR_INVALID: a request or a response that is not one
+ * @LRG_DECIDER_ERROR_BUSY: a decision on that topic is already asked
+ *
+ * Errors of LrgDecider and LrgDecisionBrain.
+ */
+typedef enum
+{
+    LRG_DECIDER_ERROR_FAILED,
+    LRG_DECIDER_ERROR_UNSUPPORTED,
+    LRG_DECIDER_ERROR_INVALID,
+    LRG_DECIDER_ERROR_BUSY
+} LrgDeciderError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_decider_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DECIDER_ERROR (lrg_decider_error_get_type ())
+
 /* ==========================================================================
  * Quest System
  * ========================================================================== */

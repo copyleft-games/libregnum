@@ -186,6 +186,7 @@ TEST_SOURCES := \
 	test-vr.c \
 	test-vr-hand.c \
 	test-vr-gesture.c \
+	test-decision.c \
 	test-deckbuilder.c \
 	test-object-pool.c \
 	test-template-2d.c \

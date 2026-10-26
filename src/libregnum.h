@@ -292,6 +292,10 @@
 #include "ai/lrg-bt-decorator.h"
 #include "ai/lrg-bt-leaf.h"
 #include "ai/lrg-behavior-tree.h"
+#include "ai/lrg-decision.h"
+#include "ai/lrg-decider.h"
+#include "ai/lrg-decision-brain.h"
+#include "ai/lrg-bt-judgment.h"
 
 /* Physics module */
 #include "physics/lrg-collision-info.h"
