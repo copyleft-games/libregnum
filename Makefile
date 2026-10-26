@@ -222,6 +222,10 @@ PUBLIC_HEADERS := \
 	src/ai/lrg-bt-decorator.h \
 	src/ai/lrg-bt-leaf.h \
 	src/ai/lrg-behavior-tree.h \
+	src/ai/lrg-decision.h \
+	src/ai/lrg-decider.h \
+	src/ai/lrg-decision-brain.h \
+	src/ai/lrg-bt-judgment.h \
 	src/physics/lrg-collision-info.h \
 	src/physics/lrg-rigid-body.h \
 	src/physics/lrg-rope.h \
@@ -842,6 +846,10 @@ SOURCES := \
 	src/ai/lrg-bt-decorator.c \
 	src/ai/lrg-bt-leaf.c \
 	src/ai/lrg-behavior-tree.c \
+	src/ai/lrg-decision.c \
+	src/ai/lrg-decider.c \
+	src/ai/lrg-decision-brain.c \
+	src/ai/lrg-bt-judgment.c \
 	src/physics/lrg-collision-info.c \
 	src/physics/lrg-rigid-body.c \
 	src/physics/lrg-rope.c \
@@ -1545,7 +1553,7 @@ _lib: lib-static lib-shared
 # Dependencies (Submodules)
 # =============================================================================
 
-.PHONY: deps deps-graylib deps-yamlglib deps-mcp deps-crispy deps-cad-glib
+.PHONY: deps deps-graylib deps-yamlglib deps-mcp deps-crispy deps-cad-glib deps-ai-glib
 
 deps: deps-graylib deps-yamlglib
 ifeq ($(MCP),1)
@@ -1559,6 +1567,13 @@ endif
 ifeq ($(CAD),1)
 ifeq ($(CAD_GLIB_DIR),$(CAD_GLIB_BUNDLED))
 deps: deps-cad-glib
+endif
+endif
+
+# The bundled ai-glib only for an AI=1 build of the bundled copy.
+ifeq ($(AI),1)
+ifeq ($(AI_GLIB_DIR),$(AI_GLIB_BUNDLED))
+deps: deps-ai-glib
 endif
 endif
 
@@ -1608,6 +1623,11 @@ deps-cad-glib:
 		$(call print_status,"Building cad-glib..."); \
 		$(MAKE) -C $(CAD_GLIB_DIR) deps && $(MAKE) -C $(CAD_GLIB_DIR) $(DEP_DEBUG_FLAG); \
 	fi
+
+# ai-glib: the decision models' library (deps/ai-glib submodule, AI=1).
+# Only its static archive: its own sub-make decides what is stale.
+deps-ai-glib:
+	@$(MAKE) -C $(AI_GLIB_DIR) $(DEP_DEBUG_FLAG) static
 
 ifeq ($(MCP),1)
 ifeq ($(TARGET_PLATFORM),windows)

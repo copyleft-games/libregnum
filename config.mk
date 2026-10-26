@@ -326,6 +326,36 @@ else
     CAD_LIBS :=
 endif
 
+# =============================================================================
+# AI decisions (Opt-In): typed questions to decision models
+# =============================================================================
+# Opt-in (AI=1).  ai-glib (deps/ai-glib submodule, git@gitlab.com:
+# zachpodbielniak/ai-glib.git) answers LrgDecider's typed questions
+# through its AiDecider backends: TypeSafe's Jev, a local Ollama decision
+# model, a Laya server (src/ai/lrg-decider.c).  Its static archive is
+# linked into libregnum (only the objects the decision path uses), with
+# the system libraries ai-glib builds against.  AI_GLIB_DIR points at
+# another checkout.  Without it LrgDecider has only its scripted backend.
+
+AI ?= 0
+
+AI_GLIB_BUNDLED := $(PROJECT_ROOT)/deps/ai-glib
+AI_PKG_DEPS := libsoup-3.0 json-glib-1.0 libxml-2.0 gio-unix-2.0 libdex-1 gstreamer-1.0 gstreamer-app-1.0
+
+ifeq ($(AI),1)
+    ifeq ($(AI_GLIB_DIR),)
+        AI_GLIB_DIR := $(AI_GLIB_BUNDLED)
+    endif
+    AI_GLIB_STATIC := $(AI_GLIB_DIR)/build/$(DEP_BUILD_TYPE)/libai-glib-1.0.a
+    AI_CFLAGS := -isystem $(AI_GLIB_DIR)/src -isystem $(AI_GLIB_DIR)/build/$(DEP_BUILD_TYPE) \
+                 $(shell $(PKG_CONFIG) --cflags $(AI_PKG_DEPS)) -DLRG_ENABLE_AI=1
+    # only the libraries the decision path's objects use stay needed
+    AI_LIBS := $(AI_GLIB_STATIC) -Wl,--as-needed $(shell $(PKG_CONFIG) --libs $(AI_PKG_DEPS)) -lm -Wl,--no-as-needed
+else
+    AI_CFLAGS :=
+    AI_LIBS :=
+endif
+
 MCP ?= 0
 
 ifeq ($(MCP),1)
@@ -748,6 +778,7 @@ LIB_CFLAGS += -I$(CURDIR)/src
 LIB_CFLAGS += $(STEAM_CFLAGS)
 LIB_CFLAGS += $(MCP_CFLAGS)
 LIB_CFLAGS += $(CAD_CFLAGS)
+LIB_CFLAGS += $(AI_CFLAGS)
 LIB_CFLAGS += $(FFMPEG_CFLAGS)
 LIB_CFLAGS += $(OPENXR_CFLAGS)
 LIB_CFLAGS += $(ALSA_CFLAGS)
@@ -793,6 +824,7 @@ ALL_LIBS += $(DEP_LIBS) $(PLATFORM_LIBS)
 ALL_LIBS += $(STEAM_LIBS)
 ALL_LIBS += $(MCP_LIBS)
 ALL_LIBS += $(CAD_LIBS)
+ALL_LIBS += $(AI_LIBS)
 ALL_LIBS += $(FFMPEG_LIBS)
 ALL_LIBS += $(OPENXR_LIBS)
 ALL_LIBS += $(ALSA_LIBS)

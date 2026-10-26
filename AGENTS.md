@@ -382,6 +382,15 @@ Optional, for the editor's tests: `emacs` (`make test-emacs`), `xorg-x11-server-
 - `deps/graylib/` - Raylib GObject wrapper
 - `deps/yaml-glib/` - YAML parsing library
 
+`deps/ai-glib` (opt-in, `make AI=1`: the decision models behind `src/ai/lrg-decider.c`) is
+cloned from its GitLab mirror, `git@gitlab.com:zachpodbielniak/ai-glib.git`. Never commit in
+the submodule: a fix ai-glib needs is made in its canonical checkout (`../ai-glib` beside the
+consuming project; origin `git@git-ssh.podbielniak.com:zachpodbielniak/ai-glib`, which mirrors
+every push to GitLab), committed and pushed there; once GitLab has it, the submodule is moved to
+that commit (`git -C deps/ai-glib fetch && git -C deps/ai-glib checkout <commit>`) and the
+pointer committed here. It needs its own submodules: `git submodule update --init --recursive
+deps/ai-glib`.
+
 ## Key Type Patterns
 
 ### Engine Singleton

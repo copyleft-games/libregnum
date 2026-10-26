@@ -480,6 +480,50 @@ lrg_bt_status_get_type (void)
     return g_define_type_id__volatile;
 }
 
+GType
+lrg_judgment_band_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_JUDGMENT_BAND_MISSING, "LRG_JUDGMENT_BAND_MISSING", "missing" },
+            { LRG_JUDGMENT_BAND_NO, "LRG_JUDGMENT_BAND_NO", "no" },
+            { LRG_JUDGMENT_BAND_UNSETTLED, "LRG_JUDGMENT_BAND_UNSETTLED", "unsettled" },
+            { LRG_JUDGMENT_BAND_YES, "LRG_JUDGMENT_BAND_YES", "yes" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgJudgmentBand"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_decider_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_DECIDER_ERROR_FAILED, "LRG_DECIDER_ERROR_FAILED", "failed" },
+            { LRG_DECIDER_ERROR_UNSUPPORTED, "LRG_DECIDER_ERROR_UNSUPPORTED", "unsupported" },
+            { LRG_DECIDER_ERROR_INVALID, "LRG_DECIDER_ERROR_INVALID", "invalid" },
+            { LRG_DECIDER_ERROR_BUSY, "LRG_DECIDER_ERROR_BUSY", "busy" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgDeciderError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
 /* ==========================================================================
  * Quest GTypes
  * ========================================================================== */
