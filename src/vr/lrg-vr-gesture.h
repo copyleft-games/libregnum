@@ -411,6 +411,27 @@ gboolean lrg_vr_gesture_recognizer_fit_template (LrgVRGestureRecognizer *self,
                                                  gfloat                 *out_points);
 
 /**
+ * lrg_vr_gesture_recognizer_score_template:
+ * @self: a #LrgVRGestureRecognizer
+ * @name: a shape's name, or %LRG_VR_GESTURE_PUSH / %LRG_VR_GESTURE_PULL
+ *
+ * How well the drawing in progress matches the shape @name, whatever it
+ * is nearest: the score lrg_vr_gesture_recognizer_end() would give it
+ * were @name the only shape known (a thrust: how straight it goes, the
+ * right way, 0 the wrong way or not deep enough to be one).  For a
+ * practice of a shape: how close the hand came to the one asked for,
+ * even when it read as another.
+ *
+ * Returns: 0 .. 1, or -1 without a drawing of two points or a shape of
+ *   that name
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_vr_gesture_recognizer_score_template (LrgVRGestureRecognizer *self,
+                                                 const gchar            *name);
+
+/**
  * lrg_vr_gesture_recognizer_cancel:
  * @self: a #LrgVRGestureRecognizer
  *

@@ -955,3 +955,55 @@ lrg_vr_gesture_recognizer_fit_template (LrgVRGestureRecognizer *self,
     }
     return TRUE;
 }
+
+gfloat
+lrg_vr_gesture_recognizer_score_template (LrgVRGestureRecognizer *self,
+                                          const gchar            *name)
+{
+    g_autofree gfloat *flat = NULL;
+    gfloat drawing[N_SAMPLES * 2];
+    gfloat best_distance;
+    gboolean known;
+    gfloat box[4];
+    gfloat length;
+    gfloat depth;
+    gfloat spread;
+    guint n;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_VR_GESTURE_RECOGNIZER (self), -1.0f);
+    g_return_val_if_fail (name != NULL, -1.0f);
+
+    flat = flatten (self, &n, box, &length, &depth);
+    if (flat == NULL)
+        return -1.0f;
+    spread = MAX (box[1] - box[0], box[3] - box[2]);
+
+    /* a thrust: deep enough, the right way, scored as end() scores one */
+    if (g_strcmp0 (name, LRG_VR_GESTURE_PUSH) == 0 || g_strcmp0 (name, LRG_VR_GESTURE_PULL) == 0)
+    {
+        gboolean away = g_strcmp0 (name, LRG_VR_GESTURE_PUSH) == 0;
+
+        if ((away ? depth : -depth) < self->min_size * THRUST_MIN)
+            return 0.0f;
+        return CLAMP (1.0f - spread / fabsf (depth), 0.0f, 1.0f);
+    }
+
+    /* a shape in the plane: its nearest template of that name */
+    known = FALSE;
+    for (i = 0; i < self->templates->len && !known; i++)
+        known = g_strcmp0 (((const Template *)g_ptr_array_index (self->templates, i))->name, name) == 0;
+    if (!known)
+        return -1.0f;
+    if (!resample (flat, n, drawing) || !normalize (drawing))
+        return 0.0f;
+    best_distance = G_MAXFLOAT;
+    for (i = 0; i < self->templates->len; i++)
+    {
+        const Template *t = g_ptr_array_index (self->templates, i);
+
+        if (g_strcmp0 (t->name, name) == 0)
+            best_distance = MIN (best_distance, template_distance (t, drawing));
+    }
+    return score_of (best_distance);
+}

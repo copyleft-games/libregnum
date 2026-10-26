@@ -656,6 +656,7 @@ For an app that guides the hand (librewow's gesture assist), the recognizer answ
 - =nearest= (in every =LrgVRGesture=) is the closest template's name even below the threshold, so a hint can say what a drawing was most like.
 - =lrg_vr_gesture_recognizer_get_frame()= gives the drawing's box in the view plane: its centre, the plane's right and up axes, and its larger side. Use it to put a circle round the drawing or a label over it.
 - =lrg_vr_gesture_recognizer_fit_template(recognizer, name, out)= lays the shape =name= over the drawing as it would be matched: its nearest template (the way round, the start of a closed one), centred and scaled as the drawing is, as =LRG_VR_GESTURE_SAMPLES= (48) x, y, z points in the drawing's own space. This is the guide to show what the hand is being read as.
+- =lrg_vr_gesture_recognizer_score_template(recognizer, name)= scores the drawing in progress against the shape =name= alone, 0 to 1, whatever it is nearest: the score =end()= would give were =name= the only shape known. For =push= and =pull= it is the thrust score, 0 when the drawing does not go deep enough the right way. It returns -1 without a drawing or a shape of that name. A practice drill uses it to say how close the hand came to the shape asked for, even when the drawing read as another.
 
 *** How shapes are matched
 The matching is the $1 unistroke recognizer (Wobbrock, Wilson and Li, 2007) without its rotation search, which means a drawing's orientation and direction count: a line up is not a line down, and a Z is not an N.
