@@ -431,6 +431,55 @@ test_points_kept (void)
     g_assert_null (lrg_vr_gesture_recognizer_get_points (gestures, &n));
 }
 
+static void
+test_score_template (void)
+{
+    g_autoptr(LrgVRGestureRecognizer) gestures = builtin ();
+    g_autoptr(LrgVRGesture) ended = NULL;
+    gfloat circle;
+    gfloat square;
+    guint i;
+
+    /* nothing drawn: no score */
+    g_assert_cmpfloat (lrg_vr_gesture_recognizer_score_template (gestures, "circle"), ==, -1.0f);
+
+    /* a circle 30 cm across: its own score is end()'s, the others lower */
+    lrg_vr_gesture_recognizer_begin (gestures, NULL);
+    for (i = 0; i <= 40; i++)
+    {
+        gfloat a = (gfloat)i * (gfloat)(2.0 * G_PI / 40.0);
+        gfloat p[3];
+
+        p[0] = 0.15f * sinf (a);
+        p[1] = 1.3f + 0.15f * cosf (a);
+        p[2] = -0.4f;
+        lrg_vr_gesture_recognizer_add_point (gestures, p, (gdouble)i / 90.0);
+    }
+    circle = lrg_vr_gesture_recognizer_score_template (gestures, "circle");
+    square = lrg_vr_gesture_recognizer_score_template (gestures, "square");
+    g_assert_cmpfloat (circle, >, 0.9f);
+    g_assert_cmpfloat (square, >=, 0.0f);
+    g_assert_cmpfloat (square, <, circle);
+    g_assert_cmpfloat (lrg_vr_gesture_recognizer_score_template (gestures, "zigzag"), <, circle);
+    g_assert_cmpfloat (lrg_vr_gesture_recognizer_score_template (gestures, "hook"), ==, -1.0f);
+    /* flat in the plane: not a thrust either way */
+    g_assert_cmpfloat (lrg_vr_gesture_recognizer_score_template (gestures, LRG_VR_GESTURE_PUSH), ==, 0.0f);
+    ended = lrg_vr_gesture_recognizer_end (gestures);
+    g_assert_cmpfloat_with_epsilon (ended->score, circle, 1e-5f);
+
+    /* a straight push away from the head: a push, never a pull */
+    lrg_vr_gesture_recognizer_begin (gestures, NULL);
+    for (i = 0; i <= 20; i++)
+    {
+        gfloat p[3] = { 0.0f, 1.3f, -0.3f - 0.02f * (gfloat)i };
+
+        lrg_vr_gesture_recognizer_add_point (gestures, p, (gdouble)i / 90.0);
+    }
+    g_assert_cmpfloat (lrg_vr_gesture_recognizer_score_template (gestures, LRG_VR_GESTURE_PUSH), >, 0.9f);
+    g_assert_cmpfloat (lrg_vr_gesture_recognizer_score_template (gestures, LRG_VR_GESTURE_PULL), ==, 0.0f);
+    lrg_vr_gesture_recognizer_cancel (gestures);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -450,6 +499,7 @@ main (int   argc,
     g_test_add_func ("/vr/gesture/peek-and-fit", test_peek_and_fit);
     g_test_add_func ("/vr/gesture/nearest-below-threshold", test_nearest_below_threshold);
     g_test_add_func ("/vr/gesture/points-kept", test_points_kept);
+    g_test_add_func ("/vr/gesture/score-template", test_score_template);
 
     return g_test_run ();
 }
