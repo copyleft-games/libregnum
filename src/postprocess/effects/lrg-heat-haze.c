@@ -17,6 +17,7 @@
 #include <math.h>
 #include <raylib.h>
 #include <rlgl.h>
+#include "core/lrg-prewarm.h"
 
 static const gchar haze_fs[] =
     "#version 330\n"
@@ -57,7 +58,11 @@ struct _LrgHeatHaze
     gint           loc_params;
 };
 
-G_DEFINE_FINAL_TYPE (LrgHeatHaze, lrg_heat_haze, LRG_TYPE_POST_EFFECT)
+static void lrg_heat_haze_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgHeatHaze, lrg_heat_haze, LRG_TYPE_POST_EFFECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_heat_haze_prewarmable_init))
 
 /* the distortion at (u, v) before the intensity: see the shader */
 static void
@@ -227,6 +232,10 @@ lrg_heat_haze_init (LrgHeatHaze *self)
     self->speed = 2.2f;
     self->horizon = 0.55f;
     self->band = 0.18f;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgHeatHaze *
@@ -333,4 +342,23 @@ lrg_heat_haze_draw_texture (LrgHeatHaze        *self,
     if (shader != NULL)
         grl_shader_end (shader);
     return identity || shader != NULL;
+}
+
+/* ========================================================================== */
+/* Prewarm                                                                    */
+/* ========================================================================== */
+
+/* lrg_heat_haze_prewarm: compiles the haze shader now, not on the first
+ * frame the haze shows */
+static gboolean
+lrg_heat_haze_prewarm (LrgPrewarmable *prewarmable)
+{
+    get_shader (LRG_HEAT_HAZE (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_heat_haze_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_heat_haze_prewarm;
 }

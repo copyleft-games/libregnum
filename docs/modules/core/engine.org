@@ -77,6 +77,18 @@ LrgDataLoader *loader = lrg_engine_get_data_loader (engine);
 LrgAssetManager *manager = lrg_engine_get_asset_manager (engine);
 #+end_src
 
+*** GPU-resource prewarm
+:PROPERTIES:
+:CUSTOM_ID: prewarm
+:END:
+=lrg_engine_get_prewarm()= returns the prewarm queue (the default =LrgPrewarm=, created by the engine's constructor; its thread is the one whose new renderers are tracked). =lrg_engine_prewarm (engine, budget_us)= runs it for up to =budget_us= microseconds and returns =TRUE= while work remains; =lrg_engine_prewarm_all()= runs it to the end. Both must be called on the GL thread and do nothing without a window. See [[file:prewarm.org][Prewarm]].
+
+#+begin_src C
+/* one budget of shader compiles and uploads per loading-screen frame */
+if (!lrg_engine_prewarm (engine, 8000))
+    start_level ();
+#+end_src
+
 ** API Reference
 :PROPERTIES:
 :CUSTOM_ID: api-reference

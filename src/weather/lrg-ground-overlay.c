@@ -33,6 +33,7 @@
 #include "weather/lrg-ground-overlay-private.h"
 #include "weather/lrg-cloud-layer-private.h"
 #include "../lrg-log.h"
+#include "core/lrg-prewarm.h"
 
 struct _LrgGroundOverlay
 {
@@ -50,7 +51,11 @@ struct _LrgGroundOverlay
     gint           loc_cut;
 };
 
-G_DEFINE_FINAL_TYPE (LrgGroundOverlay, lrg_ground_overlay, G_TYPE_OBJECT)
+static void lrg_ground_overlay_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgGroundOverlay, lrg_ground_overlay, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_ground_overlay_prewarmable_init))
 
 /* the blended pass: the vertices in draw space, rlgl's matrix stack
  * already in matModel (raylib multiplies it in), the fragments through
@@ -118,6 +123,10 @@ lrg_ground_overlay_init (LrgGroundOverlay *self)
     self->snow_color[1] = 0.94f;
     self->snow_color[2] = 0.98f;
     self->snow_color[3] = 1.0f;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgGroundOverlay *
@@ -391,4 +400,19 @@ lrg_ground_overlay_release_gpu (LrgGroundOverlay *self)
 
     g_clear_object (&self->shader);
     self->shader_failed = FALSE;
+}
+
+/* lrg_ground_overlay_prewarm: compiles the overlay shader now (what the
+ * first visible draw would do) */
+static gboolean
+lrg_ground_overlay_prewarm (LrgPrewarmable *prewarmable)
+{
+    ensure_shader (LRG_GROUND_OVERLAY (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_ground_overlay_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_ground_overlay_prewarm;
 }

@@ -29,6 +29,8 @@ The Core module provides:
 
 - *[[file:reset-schedule.org][LrgResetSchedule]]* - Deterministic daily and weekly reset periods for repeatable content
 
+- *[[file:prewarm.org][LrgPrewarm / LrgPrewarmable]]* - Build shaders and GPU buffers behind a loading screen instead of on a feature's first draw
+
 ** Essential Concepts
 :PROPERTIES:
 :CUSTOM_ID: essential-concepts

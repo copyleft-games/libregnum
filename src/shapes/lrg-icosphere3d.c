@@ -10,6 +10,7 @@
 #include "lrg-icosphere3d.h"
 
 #include <rlgl.h>
+#include "core/lrg-prewarm.h"
 
 #ifndef RAD2DEG
 #define RAD2DEG (180.0f / 3.14159265358979323846f)
@@ -37,7 +38,11 @@ struct _LrgIcoSphere3D
 	gboolean  mesh_dirty;
 };
 
-G_DEFINE_FINAL_TYPE (LrgIcoSphere3D, lrg_icosphere3d, LRG_TYPE_SHAPE3D)
+static void lrg_icosphere3d_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgIcoSphere3D, lrg_icosphere3d, LRG_TYPE_SHAPE3D,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_icosphere3d_prewarmable_init))
 
 enum
 {
@@ -247,6 +252,10 @@ lrg_icosphere3d_init (LrgIcoSphere3D *self)
 	self->mesh         = NULL;
 	self->model        = NULL;
 	self->mesh_dirty   = TRUE;
+
+	/* build the GPU resources behind a loading screen, not on the
+	 * first draw (see lrg_prewarm_track()) */
+	lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 /* ==========================================================================
@@ -402,4 +411,23 @@ lrg_icosphere3d_set_subdivisions (LrgIcoSphere3D *self,
 		self->mesh_dirty = TRUE;
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SUBDIVISIONS]);
 	}
+}
+
+/* ==========================================================================
+ * Prewarm
+ * ========================================================================== */
+
+/* lrg_icosphere3d_prewarm: generates and uploads the mesh now, not at the first
+ * draw */
+static gboolean
+lrg_icosphere3d_prewarm (LrgPrewarmable *prewarmable)
+{
+	lrg_icosphere3d_update_mesh (LRG_ICOSPHERE3D (prewarmable));
+	return TRUE;
+}
+
+static void
+lrg_icosphere3d_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+	iface->prewarm = lrg_icosphere3d_prewarm;
 }

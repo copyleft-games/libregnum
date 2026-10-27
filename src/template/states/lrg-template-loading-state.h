@@ -385,6 +385,62 @@ void
 lrg_template_loading_state_set_show_percentage (LrgTemplateLoadingState *self,
                                                 gboolean                 show);
 
+/**
+ * lrg_template_loading_state_get_prewarm:
+ * @self: an #LrgTemplateLoadingState
+ *
+ * Gets whether the state builds the queued GPU resources (the default
+ * #LrgPrewarm, see lrg_engine_get_prewarm()) after its tasks and before
+ * it completes.
+ *
+ * Returns: %TRUE when the state prewarms
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_template_loading_state_get_prewarm (LrgTemplateLoadingState *self);
+
+/**
+ * lrg_template_loading_state_set_prewarm:
+ * @self: an #LrgTemplateLoadingState
+ * @prewarm: whether to prewarm
+ *
+ * Sets #LrgTemplateLoadingState:prewarm. On (the default), once the tasks
+ * are done the state runs the engine's prewarm queue for
+ * #LrgTemplateLoadingState:prewarm-budget each frame, so the shaders and
+ * buffers of everything the tasks built are ready when the game starts;
+ * it completes when the queue is empty.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_template_loading_state_set_prewarm (LrgTemplateLoadingState *self,
+                                        gboolean                 prewarm);
+
+/**
+ * lrg_template_loading_state_get_prewarm_budget:
+ * @self: an #LrgTemplateLoadingState
+ *
+ * Gets the time spent prewarming per frame.
+ *
+ * Returns: the budget in microseconds
+ */
+LRG_AVAILABLE_IN_ALL
+gint64
+lrg_template_loading_state_get_prewarm_budget (LrgTemplateLoadingState *self);
+
+/**
+ * lrg_template_loading_state_set_prewarm_budget:
+ * @self: an #LrgTemplateLoadingState
+ * @budget_us: microseconds of GPU-resource work per frame
+ *
+ * Sets #LrgTemplateLoadingState:prewarm-budget. One entry (one shader
+ * compile, one mesh upload) always runs per frame and is never cut short;
+ * 0 runs exactly one a frame.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_template_loading_state_set_prewarm_budget (LrgTemplateLoadingState *self,
+                                               gint64                   budget_us);
+
 G_END_DECLS
 
 #endif /* LRG_TEMPLATE_LOADING_STATE_H */

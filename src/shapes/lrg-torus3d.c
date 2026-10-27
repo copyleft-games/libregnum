@@ -10,6 +10,7 @@
 #include "lrg-torus3d.h"
 
 #include <rlgl.h>
+#include "core/lrg-prewarm.h"
 
 #ifndef RAD2DEG
 #define RAD2DEG (180.0f / 3.14159265358979323846f)
@@ -39,7 +40,11 @@ struct _LrgTorus3D
 	gboolean  mesh_dirty;
 };
 
-G_DEFINE_FINAL_TYPE (LrgTorus3D, lrg_torus3d, LRG_TYPE_SHAPE3D)
+static void lrg_torus3d_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgTorus3D, lrg_torus3d, LRG_TYPE_SHAPE3D,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_torus3d_prewarmable_init))
 
 enum
 {
@@ -298,6 +303,10 @@ lrg_torus3d_init (LrgTorus3D *self)
 	self->mesh           = NULL;
 	self->model          = NULL;
 	self->mesh_dirty     = TRUE;
+
+	/* build the GPU resources behind a loading screen, not on the
+	 * first draw (see lrg_prewarm_track()) */
+	lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 /* ==========================================================================
@@ -538,4 +547,23 @@ lrg_torus3d_set_minor_segments (LrgTorus3D *self,
 		self->mesh_dirty = TRUE;
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MINOR_SEGMENTS]);
 	}
+}
+
+/* ==========================================================================
+ * Prewarm
+ * ========================================================================== */
+
+/* lrg_torus3d_prewarm: generates and uploads the mesh now, not at the first
+ * draw */
+static gboolean
+lrg_torus3d_prewarm (LrgPrewarmable *prewarmable)
+{
+	lrg_torus3d_update_mesh (LRG_TORUS3D (prewarmable));
+	return TRUE;
+}
+
+static void
+lrg_torus3d_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+	iface->prewarm = lrg_torus3d_prewarm;
 }

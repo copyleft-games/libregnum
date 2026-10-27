@@ -47,6 +47,7 @@
 #include "lighting/lrg-shadow-renderer.h"
 #include "lighting/lrg-shadow-renderer-private.h"
 #include "weather/lrg-ground-overlay-private.h"
+#include "core/lrg-prewarm.h"
 
 /* Below this horizontal distance the camera is "above" the billboard and
  * the axis-locked facing is undefined; a fixed basis is used instead. */
@@ -214,7 +215,11 @@ struct _LrgBillboardBatch
     gint              cast_loc_lit;
 };
 
-G_DEFINE_TYPE (LrgBillboardBatch, lrg_billboard_batch, G_TYPE_OBJECT)
+static void lrg_billboard_batch_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgBillboardBatch, lrg_billboard_batch, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_billboard_batch_prewarmable_init))
 
 /* raylib's default vertex shader inputs, plus an alpha test and the
  * light set's fog. rlVertex3f() applies the rlgl transform on the CPU,
@@ -457,6 +462,10 @@ lrg_billboard_batch_init (LrgBillboardBatch *self)
     self->clusters = g_array_new (FALSE, TRUE, sizeof (GpuCluster));
     self->loose = g_array_new (FALSE, FALSE, sizeof (guint));
     self->order = g_ptr_array_new ();
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgBillboardBatch *
@@ -2169,4 +2178,34 @@ lrg_billboard_batch_draw_shadow (LrgBillboardBatch *self,
         rlDrawRenderBatchActive ();
         EndShaderMode ();
     }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Prewarm                                                                  */
+/* ------------------------------------------------------------------------ */
+
+/* lrg_billboard_batch_prewarm:
+ * What the first draws build: the cutout, GPU-path and caster shaders,
+ * and the GPU pages of a batch big enough for them, uploaded as if the
+ * batch had settled (it has, when a loading screen runs this). Later
+ * additions follow the usual rules. */
+static gboolean
+lrg_billboard_batch_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgBillboardBatch *self = LRG_BILLBOARD_BATCH (prewarmable);
+
+    ensure_shader (self);
+    if (!gpu_ensure_shader (self))
+        return TRUE;
+    cast_ensure_shader (self);
+    if (self->settle < GPU_SETTLE_DRAWS)
+        self->settle = GPU_SETTLE_DRAWS;
+    gpu_maybe_build (self);
+    return TRUE;
+}
+
+static void
+lrg_billboard_batch_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_billboard_batch_prewarm;
 }

@@ -682,6 +682,26 @@ bounds", "Cost of a page").
 - The Emacs package is `editors/emacs/libregnum.el` (+ `libregnum-tests.el`); `make test-emacs` byte-compiles with warnings as errors and runs ERT, including a headless editor end to end.
 - Docs: `docs/editor/editor-app.org`, `external-editor.org`, `emacs.org`, `ipc-protocol.org`, `docs/modules/gui/index.org`.
 
+### GPU-Resource Prewarm (`core/lrg-prewarm.h`, `core/lrg-prewarmable.h`)
+
+Renderers that build GPU resources lazily (compile a shader, upload buffers on
+their first draw) implement **`LrgPrewarmable`** and call
+`lrg_prewarm_track (LRG_PREWARMABLE (self))` in their instance init, which
+queues them (weakly) on the default **`LrgPrewarm`** (`lrg_engine_get_prewarm()`).
+`LrgTemplateLoadingState` runs that queue with a per-frame budget after its
+tasks, then emits `prewarm-draw` inside `lrg_prewarm_begin/end_hidden_draw()`
+(empty scissor) for the driver's draw-time variants.
+
+- A new renderer with a lazy `ensure_shader()`/upload path must implement
+  `prewarm()` by calling that same path (idempotent, no visible change, no
+  extra work on the next draw) and track itself; list it in
+  `docs/modules/core/prewarm.org`.
+- `prewarm()` only runs with a window (`lrg_prewarmable_prewarm()` checks);
+  never set a "tried" flag before `IsWindowReady()`.
+- Only objects created on the default queue's thread are tracked; running the
+  queue makes GL calls and belongs to the GL thread.
+- Docs: `docs/modules/core/prewarm.org`, `docs/performance.org` § prewarm.
+
 ### Static World Collision and Model Rendering
 
 Generic building blocks for MMO-style worlds: a server-side collision world

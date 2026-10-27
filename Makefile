@@ -40,6 +40,8 @@ PUBLIC_HEADERS := \
 	src/core/lrg-event-bus.h \
 	src/core/lrg-random-stream.h \
 	src/core/lrg-cpu-affinity.h \
+	src/core/lrg-prewarmable.h \
+	src/core/lrg-prewarm.h \
 	src/core/lrg-timer-manager.h \
 	src/graphics/lrg-drawable.h \
 	src/graphics/lrg-window.h \
@@ -663,6 +665,8 @@ SOURCES := \
 	src/core/lrg-event-bus.c \
 	src/core/lrg-random-stream.c \
 	src/core/lrg-cpu-affinity.c \
+	src/core/lrg-prewarmable.c \
+	src/core/lrg-prewarm.c \
 	src/core/lrg-timer-manager.c \
 	src/graphics/lrg-drawable.c \
 	src/graphics/lrg-window.c \

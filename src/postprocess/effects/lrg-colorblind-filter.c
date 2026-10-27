@@ -10,6 +10,7 @@
 #include <math.h>
 #include <raylib.h>
 #include <rlgl.h>
+#include "core/lrg-prewarm.h"
 
 /**
  * SECTION:lrg-colorblind-filter
@@ -116,7 +117,11 @@ struct _LrgColorblindFilter
     gint               loc_intensity;
 };
 
-G_DEFINE_TYPE (LrgColorblindFilter, lrg_colorblind_filter, LRG_TYPE_POST_EFFECT)
+static void lrg_colorblind_filter_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgColorblindFilter, lrg_colorblind_filter, LRG_TYPE_POST_EFFECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_colorblind_filter_prewarmable_init))
 
 enum
 {
@@ -560,6 +565,10 @@ lrg_colorblind_filter_init (LrgColorblindFilter *self)
     self->loc_row1 = -1;
     self->loc_row2 = -1;
     self->loc_intensity = -1;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgColorblindFilter *
@@ -635,4 +644,23 @@ lrg_colorblind_filter_set_strength (LrgColorblindFilter *self,
 
     self->strength = strength;
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STRENGTH]);
+}
+
+/* ========================================================================== */
+/* Prewarm                                                                    */
+/* ========================================================================== */
+
+/* lrg_colorblind_filter_prewarm: compiles the filter shader now, not on
+ * the first frame a filter is chosen */
+static gboolean
+lrg_colorblind_filter_prewarm (LrgPrewarmable *prewarmable)
+{
+    lrg_colorblind_filter_get_shader (LRG_COLORBLIND_FILTER (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_colorblind_filter_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_colorblind_filter_prewarm;
 }

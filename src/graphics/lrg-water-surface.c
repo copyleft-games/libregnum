@@ -27,6 +27,7 @@
 #include "graphics/lrg-light-set-private.h"
 #include "graphics/lrg-draw-cull-private.h"
 #include "lrg-log.h"
+#include "core/lrg-prewarm.h"
 
 /* the material map the scene copy is bound to (raylib binds every map
  * with a texture to its own unit); the albedo map stays the default */
@@ -217,7 +218,11 @@ struct _LrgWaterSurface
     gboolean        scene_valid;   /* captured for the next draw */
 };
 
-G_DEFINE_FINAL_TYPE (LrgWaterSurface, lrg_water_surface, G_TYPE_OBJECT)
+static void lrg_water_surface_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgWaterSurface, lrg_water_surface, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_water_surface_prewarmable_init))
 
 static void
 patch_free (gpointer data)
@@ -299,6 +304,10 @@ lrg_water_surface_init (LrgWaterSurface *self)
     wave.direction[0] = -0.7f; wave.direction[1] = 0.6f;
     wave.amplitude = 0.04f; wave.wavelength = 2.6f; wave.speed = 0.9f; wave.steepness = 0.4f;
     lrg_water_surface_set_wave (self, 2, &wave);
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgWaterSurface *
@@ -1137,4 +1146,33 @@ lrg_water_surface_release_gpu (LrgWaterSurface *self)
         UnloadRenderTexture (self->scene);
     memset (&self->scene, 0, sizeof (self->scene));
     self->scene_valid = FALSE;
+}
+
+/* --- prewarm --- */
+
+/* lrg_water_surface_prewarm: what the first draw builds (the shader and
+ * every patch's mesh), built now */
+static gboolean
+lrg_water_surface_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgWaterSurface *self = LRG_WATER_SURFACE (prewarmable);
+    guint            i;
+
+    /* the shader even without patches: they may come later */
+    if (!ensure_shader (self))
+        return TRUE;
+    for (i = 0; i < self->patches->len; i++)
+    {
+        Patch *p = g_ptr_array_index (self->patches, i);
+
+        if (!p->uploaded)
+            upload_patch (p);
+    }
+    return TRUE;
+}
+
+static void
+lrg_water_surface_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_water_surface_prewarm;
 }
