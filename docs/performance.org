@@ -121,6 +121,29 @@ Behaviour changes to know about:
 - =max-particles= is now a hard cap on a particle system's live particles (it was documented as one but not enforced).
 - Solid =LrgSphere3D=, =LrgCylinder3D= and =LrgCone3D= draw cached meshes with raylib's default shader, like =LrgIcosphere3D= and =LrgTorus3D= already did, so a =BeginShaderMode()= around them no longer applies; their output can differ from the old immediate-mode path by a pixel at a triangle edge (GPU vs CPU vertex transform).
 
+** Lows and jitter: the core-affinity and timing pass
+:PROPERTIES:
+:CUSTOM_ID: lows-pass
+:END:
+=lrg-bench= reports, per scenario, the frame rate, the *1% and 5% lows* (frame rate of the mean of the slowest 1% / 5% of frames), p99 and max frame time, *jitter* (standard deviation of the change in frame time from one frame to the next) and the scenario's own work time; frame times are intervals between consecutive returns from end-drawing. =--fps N= caps the frame rate and the =pacing= scenario measures the limiter (raylib's limiter holds 60.0 fps with 0.045 ms jitter here, so it was left alone).
+
+On a hybrid CPU the largest source of lows was the scheduler moving the main thread between performance and efficiency cores. =LrgEngine= now keeps it (and the driver threads started after it) on the performance cores ([[file:modules/core/engine.org::#performance-cores][details]]). Same binary, =--no-pin= vs default, Alder Lake laptop, Xvfb + llvmpipe:
+
+| Scenario        | fps (no pin -> pinned) | 1% low          | jitter          |
+|-----------------+------------------------+-----------------+-----------------|
+| =ecs-sprites=   | 366 -> 430             | 205 -> 356      | 0.47 -> 0.10 ms |
+| =tilemap=       | 574 -> 558             | 342 -> 422      | 0.29 -> 0.23 ms |
+| =physics=       | 2943 -> 4675           | 1661 -> 2857    | 0.08 -> 0.04 ms |
+| =gui=           | 847 -> 1399            | 445 -> 717      | 0.31 -> 0.16 ms |
+| =world-shadows= | 28.2 -> 31.2           | 20.8 -> 26.5    | 4.78 -> 1.13 ms |
+
+Timing fixes in the same pass:
+- *Delta snapping* (=LrgGameTemplate:snap-frame-delta=): with the default 1/60 s fixed step, frame deltas within 0.2 ms of a whole number of steps are snapped, so a 60 Hz display gets exactly one fixed update every frame instead of an occasional 0 or 2 (stutter at a steady frame rate).
+- *Editor pacing*: vsync plus a cap at an even divisor of the refresh rate (72 on 144 Hz) instead of a fixed 60, which alternated two- and three-vblank frames.
+- *GLib main context*: standalone games now dispatch it every frame (it was never iterated), so timeouts, async completions and the background save/analytics notifications run.
+
+Tried and dropped: link-time optimisation across raylib, graylib and libregnum (=-flto=, fat objects) changed no scenario by more than noise (one +15% on =physics= work, everything else within 2%) and made the build about 2.5x slower.
+
 ** GPU skinning for animated glTF models
 :PROPERTIES:
 :CUSTOM_ID: gpu-skinning
