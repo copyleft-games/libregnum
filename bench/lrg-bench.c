@@ -49,6 +49,7 @@ struct _BenchScenario
 };
 
 static gint    opt_frames = 300;
+static gint    opt_fps = 0;
 static gchar **opt_scenarios = NULL;
 static gchar  *opt_output = NULL;
 static gboolean opt_list = FALSE;
@@ -1643,6 +1644,39 @@ portal_teardown (gpointer state)
 }
 
 /* ==========================================================================
+ * pacing: constant light work, for measuring the frame limiter (--fps N)
+ * ========================================================================== */
+
+static gpointer
+pacing_setup (void)
+{
+	return NULL;
+}
+
+static void
+pacing_frame (gpointer state,
+              guint    frame_index)
+{
+	guint i;
+
+	/* About a millisecond of steady CPU work and a few quads: what is left
+	 * of the frame is the limiter's wait, whose accuracy this measures */
+	for (i = 0; i < 64; i++)
+	{
+		GrlColor color = { (guint8) (i * 4), 120, 200, 255 };
+
+		grl_draw_rectangle ((gint) ((i * 5 + frame_index) % 300),
+		                    (gint) ((i * 3) % 220), 8, 8, &color);
+	}
+	g_usleep (1000);
+}
+
+static void
+pacing_teardown (gpointer state)
+{
+}
+
+/* ==========================================================================
  * Driver
  * ========================================================================== */
 
@@ -1675,6 +1709,8 @@ static const BenchScenario scenarios[] = {
 	  grl_draw_setup, grl_draw_frame, grl_draw_teardown },
 	{ "gui", "immediate-mode GUI panel, 64 rows of widgets",
 	  gui_setup, gui_frame, gui_teardown },
+	{ "pacing", "1 ms of steady work per frame; run with --fps N to measure pacing",
+	  pacing_setup, pacing_frame, pacing_teardown },
 	{ "animator", "16 animators on 60-bone skeletons, crossfading every second",
 	  anim_setup, anim_frame, anim_teardown },
 	{ "physics", "500 dynamic boxes in a 2D physics world, one step a frame",
@@ -1714,8 +1750,97 @@ scenario_selected (const gchar *name)
 	return FALSE;
 }
 
-/* Runs one scenario: warm up, then time opt_frames whole frames (begin
- * drawing, scenario work, end drawing including the buffer swap). */
+/* Frame statistics over one run. "Lows" follow the usual definition:
+ * the frame rate of the average of the slowest 1% (5%) of frames. Jitter
+ * is the standard deviation of the change in frame time from one frame to
+ * the next: steady 20 ms frames have none, alternating 10/30 ms frames a
+ * lot, though both average 50 fps. */
+typedef struct
+{
+	gdouble mean_ms;
+	gdouble median_ms;
+	gdouble p95_ms;
+	gdouble p99_ms;
+	gdouble max_ms;
+	gdouble fps;
+	gdouble low1_fps;
+	gdouble low5_fps;
+	gdouble jitter_ms;
+	gdouble work_median_ms;
+	gdouble work_p99_ms;
+} BenchStats;
+
+/* Mean of the slowest @fraction of @sorted (ascending), as a frame rate. */
+static gdouble
+low_fps (const gdouble *sorted,
+         guint          n,
+         gdouble        fraction)
+{
+	guint   count;
+	guint   i;
+	gdouble sum;
+
+	count = (guint) ((gdouble) n * fraction);
+	if (count < 1)
+		count = 1;
+	sum = 0.0;
+	for (i = n - count; i < n; i++)
+		sum += sorted[i];
+	return 1000.0 / (sum / (gdouble) count);
+}
+
+static void
+bench_stats (const gdouble *frames,
+             const gdouble *work,
+             guint          n,
+             BenchStats    *out)
+{
+	g_autofree gdouble *sorted = NULL;
+	g_autofree gdouble *wsorted = NULL;
+	gdouble             total;
+	gdouble             dsum;
+	gdouble             dsq;
+	guint               i;
+
+	sorted = g_memdup2 (frames, sizeof (gdouble) * n);
+	wsorted = g_memdup2 (work, sizeof (gdouble) * n);
+	qsort (sorted, n, sizeof (gdouble), compare_double);
+	qsort (wsorted, n, sizeof (gdouble), compare_double);
+
+	total = 0.0;
+	for (i = 0; i < n; i++)
+		total += frames[i];
+
+	/* frame-to-frame change in frame time */
+	dsum = 0.0;
+	dsq = 0.0;
+	for (i = 1; i < n; i++)
+	{
+		gdouble d = frames[i] - frames[i - 1];
+
+		dsum += d;
+		dsq += d * d;
+	}
+
+	out->mean_ms = total / n;
+	out->median_ms = sorted[n / 2];
+	out->p95_ms = sorted[(n * 95) / 100];
+	out->p99_ms = sorted[MIN (n - 1, (n * 99) / 100)];
+	out->max_ms = sorted[n - 1];
+	out->fps = 1000.0 / out->mean_ms;
+	out->low1_fps = low_fps (sorted, n, 0.01);
+	out->low5_fps = low_fps (sorted, n, 0.05);
+	out->jitter_ms = n > 2
+		? sqrt (MAX (0.0, dsq / (n - 1) - (dsum / (n - 1)) * (dsum / (n - 1))))
+		: 0.0;
+	out->work_median_ms = wsorted[n / 2];
+	out->work_p99_ms = wsorted[MIN (n - 1, (n * 99) / 100)];
+}
+
+/* Runs one scenario: warm up, then time opt_frames frames. A frame's time
+ * is the interval between consecutive returns from end-drawing (so it
+ * includes the buffer swap and, with --fps, the frame limiter's wait),
+ * the way a player experiences it. */
 static void
 run_scenario (GrlWindow           *window,
               const BenchScenario *sc,
@@ -1724,8 +1849,8 @@ run_scenario (GrlWindow           *window,
 	g_autofree gdouble *samples = NULL;
 	g_autofree gdouble *work = NULL;
 	gpointer            state;
-	gdouble             total;
-	gdouble             work_total;
+	BenchStats          st;
+	gint64              last_end;
 	guint               i;
 	guint               n;
 	g_autoptr(GrlColor) bg = NULL;
@@ -1736,19 +1861,16 @@ run_scenario (GrlWindow           *window,
 	bg = grl_color_new (20, 20, 30, 255);
 	state = sc->setup ();
 
-	total = 0.0;
-	work_total = 0.0;
+	last_end = 0;
 	for (i = 0; i < n + BENCH_WARMUP_FRAMES; i++)
 	{
-		gint64 t0;
 		gint64 w0;
 		gint64 w1;
 		gint64 t1;
 
-		/* Whole frame (t0..t1), and the scenario's own CPU work (w0..w1):
-		 * its update and draw submission, without the driver's flush and
-		 * buffer swap, which dominate under a software rasterizer. */
-		t0 = g_get_monotonic_time ();
+		/* The scenario's own CPU work (w0..w1) is also recorded: its update
+		 * and draw submission without the driver's flush and swap, which
+		 * dominate under a software rasterizer. */
 		grl_window_begin_drawing (window);
 		grl_draw_clear_background (bg);
 		w0 = g_get_monotonic_time ();
@@ -1759,29 +1881,29 @@ run_scenario (GrlWindow           *window,
 
 		if (i >= BENCH_WARMUP_FRAMES)
 		{
-			samples[i - BENCH_WARMUP_FRAMES] = (gdouble) (t1 - t0) / 1000.0;
+			samples[i - BENCH_WARMUP_FRAMES] = (gdouble) (t1 - last_end) / 1000.0;
 			work[i - BENCH_WARMUP_FRAMES] = (gdouble) (w1 - w0) / 1000.0;
-			total += samples[i - BENCH_WARMUP_FRAMES];
-			work_total += work[i - BENCH_WARMUP_FRAMES];
 		}
+		last_end = t1;
 	}
 
 	sc->teardown (state);
 
-	qsort (samples, n, sizeof (gdouble), compare_double);
-	qsort (work, n, sizeof (gdouble), compare_double);
+	bench_stats (samples, work, n, &st);
 	if (yaml)
-		g_print ("- scenario: %s\n  frames: %u\n  mean_ms: %.3f\n"
-		         "  median_ms: %.3f\n  p95_ms: %.3f\n  fps: %.1f\n"
-		         "  work_mean_ms: %.3f\n  work_median_ms: %.3f\n",
-		         sc->name, n, total / n, samples[n / 2],
-		         samples[(n * 95) / 100], 1000.0 / (total / n),
-		         work_total / n, work[n / 2]);
+		g_print ("- scenario: %s\n  frames: %u\n  target_fps: %d\n"
+		         "  fps: %.1f\n  low1_fps: %.1f\n  low5_fps: %.1f\n"
+		         "  mean_ms: %.3f\n  median_ms: %.3f\n  p95_ms: %.3f\n"
+		         "  p99_ms: %.3f\n  max_ms: %.3f\n  jitter_ms: %.3f\n"
+		         "  work_median_ms: %.3f\n  work_p99_ms: %.3f\n",
+		         sc->name, n, opt_fps, st.fps, st.low1_fps, st.low5_fps,
+		         st.mean_ms, st.median_ms, st.p95_ms, st.p99_ms, st.max_ms,
+		         st.jitter_ms, st.work_median_ms, st.work_p99_ms);
 	else
-		g_print ("%-14s frame mean %8.3f ms  median %8.3f ms  p95 %8.3f ms  %8.1f fps"
-		         " | work median %8.3f ms\n",
-		         sc->name, total / n, samples[n / 2],
-		         samples[(n * 95) / 100], 1000.0 / (total / n), work[n / 2]);
+		g_print ("%-14s %8.1f fps  1%% low %8.1f  5%% low %8.1f  p99 %7.3f ms"
+		         "  max %7.3f ms  jitter %6.3f ms | work median %7.3f p99 %7.3f ms\n",
+		         sc->name, st.fps, st.low1_fps, st.low5_fps, st.p99_ms,
+		         st.max_ms, st.jitter_ms, st.work_median_ms, st.work_p99_ms);
 }
 
 static const gchar *license_text =
@@ -1810,6 +1932,8 @@ main (int    argc,
 		  "Run only this scenario (repeatable)", "NAME" },
 		{ "frames", 'f', 0, G_OPTION_ARG_INT, &opt_frames,
 		  "Measured frames per scenario (default 300)", "N" },
+		{ "fps", 0, 0, G_OPTION_ARG_INT, &opt_fps,
+		  "Cap the frame rate (default 0: uncapped); measures pacing", "N" },
 		{ "output", 'o', 0, G_OPTION_ARG_STRING, &opt_output,
 		  "Output format: text (default) or yaml", "FORMAT" },
 		{ "list", 'l', 0, G_OPTION_ARG_NONE, &opt_list,
@@ -1826,6 +1950,7 @@ main (int    argc,
 		"  lrg-bench                       run every scenario\n"
 		"  lrg-bench -s ecs-sprites -s gui run two scenarios\n"
 		"  lrg-bench -f 1000 -o yaml       longer run, YAML results\n"
+		"  lrg-bench -s pacing --fps 60    frame pacing at a 60 fps cap\n"
 		"\nRuns uncapped in a small window; needs a display (make run-bench\n"
 		"starts Xvfb when DISPLAY is unset).\n");
 	if (!g_option_context_parse (octx, &argc, &argv, &error))
@@ -1850,7 +1975,7 @@ main (int    argc,
 
 	SetTraceLogLevel (LOG_WARNING);
 	window = grl_window_new (BENCH_WIDTH, BENCH_HEIGHT, "lrg-bench");
-	grl_window_set_target_fps (window, 0);
+	grl_window_set_target_fps (window, opt_fps > 0 ? opt_fps : 0);
 
 	for (i = 0; i < G_N_ELEMENTS (scenarios); i++)
 		if (scenario_selected (scenarios[i].name))
