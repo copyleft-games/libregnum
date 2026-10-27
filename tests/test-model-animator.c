@@ -7,7 +7,9 @@
  * Unit tests for LrgModelAnimator / LrgModelAnimState. Clip lookup,
  * aliases, suffix matching, truncated-name repair, loop wrap / clamp,
  * crossfade weights and the apply() pose-key dedupe run headlessly; a
- * hidden-window test poses and draws a real skinned GLB fixture.
+ * hidden-window test poses and draws a real skinned GLB fixture, and the
+ * skinning tests render a multi-bone tube on the GPU and on the CPU and
+ * compare the images.
  */
 
 #include <glib.h>
@@ -15,6 +17,7 @@
 #include <math.h>
 #include <libregnum.h>
 #include <raylib.h>
+#include <rlgl.h>
 
 #include "lrg-test-glb.h"
 
@@ -580,6 +583,354 @@ test_real_model (void)
     g_remove (path);
 }
 
+/* ========================================================================== */
+/*                     GPU vs CPU skinning (display)                          */
+/* ========================================================================== */
+
+#define SKIN_IMAGE_SIZE (160)
+
+/* raylib's default program, as a custom shader: no skinning inputs */
+static const gchar plain_vertex_source[] =
+    "#version 330\n"
+    "in vec3 vertexPosition;\n"
+    "in vec2 vertexTexCoord;\n"
+    "in vec4 vertexColor;\n"
+    "out vec2 fragTexCoord;\n"
+    "out vec4 fragColor;\n"
+    "uniform mat4 mvp;\n"
+    "void main()\n"
+    "{\n"
+    "    fragTexCoord = vertexTexCoord;\n"
+    "    fragColor = vertexColor;\n"
+    "    gl_Position = mvp*vec4(vertexPosition, 1.0);\n"
+    "}\n";
+
+/* raylib-convention skinning shader with %d bone matrices */
+static const gchar skin_vertex_format[] =
+    "#version 330\n"
+    "in vec3 vertexPosition;\n"
+    "in vec2 vertexTexCoord;\n"
+    "in vec4 vertexColor;\n"
+    "in vec4 vertexBoneIndices;\n"
+    "in vec4 vertexBoneWeights;\n"
+    "out vec2 fragTexCoord;\n"
+    "out vec4 fragColor;\n"
+    "uniform mat4 mvp;\n"
+    "uniform mat4 boneMatrices[%d];\n"
+    "void main()\n"
+    "{\n"
+    "    mat4 skin = vertexBoneWeights.x*boneMatrices[int(vertexBoneIndices.x)]\n"
+    "              + vertexBoneWeights.y*boneMatrices[int(vertexBoneIndices.y)]\n"
+    "              + vertexBoneWeights.z*boneMatrices[int(vertexBoneIndices.z)]\n"
+    "              + vertexBoneWeights.w*boneMatrices[int(vertexBoneIndices.w)];\n"
+    "    fragTexCoord = vertexTexCoord;\n"
+    "    fragColor = vertexColor;\n"
+    "    gl_Position = mvp*(skin*vec4(vertexPosition, 1.0));\n"
+    "}\n";
+
+static const gchar plain_fragment_source[] =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "out vec4 finalColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec4 colDiffuse;\n"
+    "void main()\n"
+    "{\n"
+    "    finalColor = texture(texture0, fragTexCoord)*colDiffuse*fragColor;\n"
+    "}\n";
+
+typedef struct
+{
+    gchar             *path;
+    LrgAssetManager   *manager;
+    GrlModel          *model;
+    LrgModelAnimator  *animator;
+    RenderTexture2D    target;
+} SkinFixture;
+
+static gboolean
+skin_fixture_init (SkinFixture *fx)
+{
+    static const gchar *const clips[] = { "Curl", "Sway" };
+    g_autoptr(GError)         error = NULL;
+    GPtrArray                *animations;
+
+    memset (fx, 0, sizeof *fx);
+    fx->path = g_build_filename (g_get_tmp_dir (), "lrg-animator-tube.glb", NULL);
+    test_glb_write_skinned_tube (fx->path, 24, 12, 8, clips, 2);
+
+    fx->manager = lrg_asset_manager_new ();
+    fx->model = lrg_asset_manager_load_model (fx->manager, fx->path, &error);
+    g_assert_no_error (error);
+    animations = lrg_asset_manager_load_model_animations (fx->manager, fx->path, &error);
+    g_assert_no_error (error);
+    g_assert_cmpuint (animations->len, ==, 2);
+    g_assert_cmpint (grl_model_get_bone_count (fx->model), ==, 8);
+    fx->animator = lrg_model_animator_new (fx->model, animations);
+    g_assert_cmpint (lrg_model_animator_get_clip_frame_count (fx->animator, 0), ==, 61);
+
+    fx->target = LoadRenderTexture (SKIN_IMAGE_SIZE, SKIN_IMAGE_SIZE);
+    return fx->target.id != 0;
+}
+
+static void
+skin_fixture_clear (SkinFixture *fx)
+{
+    if (fx->target.id != 0)
+        UnloadRenderTexture (fx->target);
+    g_clear_object (&fx->animator);
+    g_clear_object (&fx->manager);
+    if (fx->path != NULL)
+        g_remove (fx->path);
+    g_clear_pointer (&fx->path, g_free);
+}
+
+/* skin_render:
+ * Poses @state (always, the key cache is dropped first) unless @state is
+ * NULL, draws two tubes and reads the pixels back. */
+static Image
+skin_render (SkinFixture             *fx,
+             const LrgModelAnimState *state)
+{
+    GrlColor tint = { 255, 220, 200, 255 };
+    Camera3D camera;
+
+    memset (&camera, 0, sizeof camera);
+    camera.position = (Vector3) { 1.6f, 1.6f, 3.4f };
+    camera.target = (Vector3) { 0.0f, 1.0f, 0.0f };
+    camera.up = (Vector3) { 0, 1, 0 };
+    camera.fovy = 45;
+    camera.projection = CAMERA_PERSPECTIVE;
+
+    lrg_model_animator_invalidate (fx->animator);
+    if (state != NULL)
+        g_assert_true (lrg_model_animator_apply (fx->animator, state));
+
+    BeginTextureMode (fx->target);
+    ClearBackground (BLACK);
+    BeginMode3D (camera);
+    lrg_model_animator_draw_masked_ex (fx->animator, NULL, -0.5f, 0, 0, 0, 1, NULL);
+    lrg_model_animator_draw_masked_ex (fx->animator, NULL, 0.5f, 0, 0, 0.8f, 1, &tint);
+    EndMode3D ();
+    EndTextureMode ();
+    return LoadImageFromTexture (fx->target.texture);
+}
+
+/* image_diff:
+ * Counts the pixels covered (not black) in either image and those whose
+ * colour differs by more than a rounding step in any channel. */
+static void
+image_diff (Image  a,
+            Image  b,
+            guint *covered,
+            guint *differing)
+{
+    Color *pa = LoadImageColors (a);
+    Color *pb = LoadImageColors (b);
+    gint   i;
+
+    *covered = 0;
+    *differing = 0;
+    for (i = 0; i < a.width * a.height; i++)
+    {
+        gint dr = ABS ((gint)pa[i].r - (gint)pb[i].r);
+        gint dg = ABS ((gint)pa[i].g - (gint)pb[i].g);
+        gint db = ABS ((gint)pa[i].b - (gint)pb[i].b);
+
+        if (pa[i].r + pa[i].g + pa[i].b > 0 || pb[i].r + pb[i].g + pb[i].b > 0)
+            (*covered)++;
+        if (MAX (dr, MAX (dg, db)) > 4)
+            (*differing)++;
+    }
+    UnloadImageColors (pa);
+    UnloadImageColors (pb);
+}
+
+/* assert_same_picture:
+ * GPU and CPU skinning round differently, which can flip a pixel on a
+ * triangle edge; anything beyond a thin sliver of edge pixels means
+ * misplaced geometry. */
+static void
+assert_same_picture (Image        a,
+                     Image        b,
+                     const gchar *what)
+{
+    guint covered;
+    guint differing;
+
+    image_diff (a, b, &covered, &differing);
+    g_test_message ("%s: %u covered, %u differing pixels", what, covered, differing);
+    g_assert_cmpuint (covered, >, SKIN_IMAGE_SIZE * SKIN_IMAGE_SIZE / 25);
+    g_assert_cmpuint (differing * 100, <=, covered);
+}
+
+static gboolean
+gl_can_skin (void)
+{
+    return rlGetVersion () == RL_OPENGL_33 || rlGetVersion () == RL_OPENGL_43;
+}
+
+static void
+test_gpu_matches_cpu (void)
+{
+    SkinFixture       fx;
+    LrgModelAnimState states[3];
+    Image             rest;
+    guint             i;
+
+    if (!graphics_available)
+    {
+        g_test_skip ("Graphics context not available");
+        return;
+    }
+    if (!skin_fixture_init (&fx))
+    {
+        skin_fixture_clear (&fx);
+        g_test_skip ("Render textures not available");
+        return;
+    }
+
+    /* a single-clip frame, another clip, and a half-way crossfade */
+    lrg_model_anim_state_reset (&states[0]);
+    lrg_model_animator_play (fx.animator, &states[0], 0, TRUE, 0);
+    lrg_model_animator_advance (fx.animator, &states[0], 0.5);
+    lrg_model_anim_state_reset (&states[1]);
+    lrg_model_animator_play (fx.animator, &states[1], 1, TRUE, 0);
+    lrg_model_animator_advance (fx.animator, &states[1], 0.35);
+    states[2] = states[0];
+    lrg_model_animator_play (fx.animator, &states[2], 1, TRUE, 1.0);
+    lrg_model_animator_advance (fx.animator, &states[2], 0.5);
+    g_assert_cmpint (states[2].previous_clip, ==, 0);
+
+    rest = skin_render (&fx, NULL);
+    for (i = 0; i < G_N_ELEMENTS (states); i++)
+    {
+        Image    gpu;
+        Image    cpu;
+        Image    again;
+        guint    covered;
+        guint    differing;
+        gchar    what[32];
+
+        lrg_model_animator_set_gpu_skinning (fx.animator, TRUE);
+        gpu = skin_render (&fx, &states[i]);
+        if (gl_can_skin ())
+            g_assert_true (lrg_model_animator_uses_gpu_skinning (fx.animator));
+
+        lrg_model_animator_set_gpu_skinning (fx.animator, FALSE);
+        g_assert_false (lrg_model_animator_get_gpu_skinning (fx.animator));
+        cpu = skin_render (&fx, &states[i]);
+        g_assert_false (lrg_model_animator_uses_gpu_skinning (fx.animator));
+
+        /* back to the GPU after the CPU wrote a pose into the buffers */
+        lrg_model_animator_set_gpu_skinning (fx.animator, TRUE);
+        again = skin_render (&fx, &states[i]);
+
+        g_snprintf (what, sizeof what, "pose %u gpu/cpu", i);
+        assert_same_picture (gpu, cpu, what);
+        g_snprintf (what, sizeof what, "pose %u gpu/gpu", i);
+        assert_same_picture (gpu, again, what);
+
+        /* the pose really moves the tubes away from the rest pose */
+        image_diff (cpu, rest, &covered, &differing);
+        g_assert_cmpuint (differing * 10, >, covered);
+
+        UnloadImage (gpu);
+        UnloadImage (cpu);
+        UnloadImage (again);
+    }
+    UnloadImage (rest);
+    skin_fixture_clear (&fx);
+}
+
+/* set_shader: puts @shader on every material of @model, returning the
+ * previous shader of material 0 */
+static Shader
+set_shader (GrlModel *model,
+            Shader    shader)
+{
+    Model *raw = grl_model_get_handle (model);
+    Shader previous = raw->materials[0].shader;
+    gint   i;
+
+    for (i = 0; i < raw->materialCount; i++)
+        raw->materials[i].shader = shader;
+    return previous;
+}
+
+static void
+test_shader_selection (void)
+{
+    SkinFixture       fx;
+    LrgModelAnimState state;
+    g_autofree gchar *small_source = NULL;
+    g_autofree gchar *large_source = NULL;
+    Shader            plain;
+    Shader            small;
+    Shader            large;
+    Shader            original;
+    Image             reference;
+    Image             custom;
+
+    if (!graphics_available || !gl_can_skin ())
+    {
+        g_test_skip ("OpenGL 3.3 context not available");
+        return;
+    }
+    if (!skin_fixture_init (&fx))
+    {
+        skin_fixture_clear (&fx);
+        g_test_skip ("Render textures not available");
+        return;
+    }
+
+    lrg_model_anim_state_reset (&state);
+    lrg_model_animator_play (fx.animator, &state, 1, TRUE, 0);
+    lrg_model_animator_advance (fx.animator, &state, 0.4);
+
+    /* the CPU reference, drawn with raylib's default shader */
+    lrg_model_animator_set_gpu_skinning (fx.animator, FALSE);
+    reference = skin_render (&fx, &state);
+    lrg_model_animator_set_gpu_skinning (fx.animator, TRUE);
+
+    small_source = g_strdup_printf (skin_vertex_format, 4);
+    large_source = g_strdup_printf (skin_vertex_format, 16);
+    plain = LoadShaderFromMemory (plain_vertex_source, plain_fragment_source);
+    small = LoadShaderFromMemory (small_source, plain_fragment_source);
+    large = LoadShaderFromMemory (large_source, plain_fragment_source);
+    g_assert_cmpuint (plain.id, !=, rlGetShaderIdDefault ());
+    g_assert_cmpuint (small.id, !=, rlGetShaderIdDefault ());
+    g_assert_cmpuint (large.id, !=, rlGetShaderIdDefault ());
+
+    /* a custom shader without skinning inputs: CPU */
+    original = set_shader (fx.model, plain);
+    custom = skin_render (&fx, &state);
+    g_assert_false (lrg_model_animator_uses_gpu_skinning (fx.animator));
+    assert_same_picture (reference, custom, "plain shader");
+    UnloadImage (custom);
+
+    /* a skinning shader whose array holds 4 of the 8 bones: CPU */
+    set_shader (fx.model, small);
+    lrg_model_animator_invalidate (fx.animator);
+    g_assert_true (lrg_model_animator_apply (fx.animator, &state));
+    g_assert_false (lrg_model_animator_uses_gpu_skinning (fx.animator));
+
+    /* a skinning shader with room for every bone: GPU, same picture */
+    set_shader (fx.model, large);
+    custom = skin_render (&fx, &state);
+    g_assert_true (lrg_model_animator_uses_gpu_skinning (fx.animator));
+    assert_same_picture (reference, custom, "skinning shader");
+    UnloadImage (custom);
+
+    set_shader (fx.model, original);
+    UnloadShader (plain);
+    UnloadShader (small);
+    UnloadShader (large);
+    UnloadImage (reference);
+    skin_fixture_clear (&fx);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -601,6 +952,8 @@ main (int   argc,
     g_test_add_func ("/model-animator/apply/non-finite", test_apply_non_finite);
     g_test_add_func ("/model-animator/headless-mask-and-draw", test_headless_mask_and_draw);
     g_test_add_func ("/model-animator/gl/real-model", test_real_model);
+    g_test_add_func ("/model-animator/gl/gpu-matches-cpu", test_gpu_matches_cpu);
+    g_test_add_func ("/model-animator/gl/shader-selection", test_shader_selection);
 
     result = g_test_run ();
     g_clear_object (&test_window);

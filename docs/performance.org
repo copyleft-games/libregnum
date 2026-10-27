@@ -113,3 +113,18 @@ Behaviour changes to know about:
 - The event bus captures listener masks at the start of an emission, as it already did priorities.
 - =max-particles= is now a hard cap on a particle system's live particles (it was documented as one but not enforced).
 - Solid =LrgSphere3D=, =LrgCylinder3D= and =LrgCone3D= draw cached meshes with raylib's default shader, like =LrgIcosphere3D= and =LrgTorus3D= already did, so a =BeginShaderMode()= around them no longer applies; their output can differ from the old immediate-mode path by a pixel at a triangle edge (GPU vs CPU vertex transform).
+
+** GPU skinning for animated glTF models
+:PROPERTIES:
+:CUSTOM_ID: gpu-skinning
+:END:
+=LrgModelAnimator= used to pose through raylib's =UpdateModelAnimation()=, which skins every vertex and normal on the CPU (a matrix inverse per influence for the normals) and re-uploads the position and normal buffers, once per actor per frame when actors are on different frames. It now poses the bones only and skins in the vertex shader whenever the materials allow it, with the CPU path as the fallback; see [[file:modules/graphics/model-animator.org::#skinning][GPU and CPU Skinning]] for the rules and the image comparison tests.
+
+=lrg-bench= scenarios =skinned-models= (GPU, the default) and =skinned-models-cpu= (=set_gpu_skinning (FALSE)=, the code path every model took before): 50 actors on one 3880-vertex, 32-bone glTF tube, each on its own clip and frame, crossfading every two seconds. Xvfb + llvmpipe, =taskset -c 0-11=, 600 frames, three runs each (range):
+
+| Scenario             | fps       | 1% low    | p99 frame      | work median    |
+|----------------------+-----------+-----------+----------------+----------------|
+| =skinned-models-cpu= | 46.5-47.8 | 36.2-38.7 | 25.2-25.8 ms   | 20.1-20.6 ms   |
+| =skinned-models=     | 63.0-66.1 | 50.2-54.7 | 17.7-19.0 ms   | 14.0-14.8 ms   |
+
+That is about +38 % fps and +40 % on the 1 % low on a software rasterizer, where the vertex shader itself runs on the CPU (llvmpipe's vertex stage is single threaded); on a hardware GPU the skinning is close to free. The shader skips zero weights: the first version summed four weighted matrices per vertex and was /slower/ than CPU skinning on llvmpipe (34.6 fps), because the dynamically indexed matrix fetches are gathers there.

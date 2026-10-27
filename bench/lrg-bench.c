@@ -26,6 +26,7 @@
 #include <libregnum.h>
 
 #include "gui/lrg-gui-raylib.h"
+#include "../tests/lrg-test-glb.h"
 
 #define BENCH_WIDTH          (320)
 #define BENCH_HEIGHT         (240)
@@ -1089,6 +1090,116 @@ anim_teardown (gpointer state)
 }
 
 /* --------------------------------------------------------------------------
+ * skinned-models: 50 actors sharing one skinned glTF model, each playing
+ * its own clip and crossfading every two seconds; skinned on the GPU, or
+ * on the CPU (skinned-models-cpu, the path every model took before)
+ * -------------------------------------------------------------------------- */
+
+#define SKIN_ACTORS (50)
+#define SKIN_CLIPS  (4)
+#define SKIN_RINGS  (96)
+#define SKIN_SIDES  (40)
+#define SKIN_BONES  (32)
+
+typedef struct
+{
+	gchar             *path;
+	LrgAssetManager   *manager;
+	LrgModelAnimator  *animator;
+	GrlCamera3D       *camera;
+	LrgModelAnimState  actors[SKIN_ACTORS];
+} SkinState;
+
+static gpointer
+skin_setup_mode (gboolean gpu)
+{
+	static const gchar *const clips[SKIN_CLIPS] = { "Curl", "Sway", "Twist", "Wave" };
+	g_autoptr(GError) error = NULL;
+	SkinState        *st;
+	GrlModel         *model;
+	GPtrArray        *animations;
+	guint             a;
+
+	/* A tube of 3880 vertices on a 32-joint chain: a small character. */
+	st = g_new0 (SkinState, 1);
+	st->path = g_build_filename (g_get_tmp_dir (), "lrg-bench-skinned.glb", NULL);
+	test_glb_write_skinned_tube (st->path, SKIN_RINGS, SKIN_SIDES, SKIN_BONES, clips, SKIN_CLIPS);
+	st->manager = lrg_asset_manager_new ();
+	model = lrg_asset_manager_load_model (st->manager, st->path, &error);
+	if (model == NULL)
+		g_error ("skinned-models: %s", error->message);
+	animations = lrg_asset_manager_load_model_animations (st->manager, st->path, &error);
+	if (animations == NULL)
+		g_error ("skinned-models: %s", error->message);
+	st->animator = lrg_model_animator_new (model, animations);
+	lrg_model_animator_set_gpu_skinning (st->animator, gpu);
+
+	for (a = 0; a < SKIN_ACTORS; a++)
+	{
+		lrg_model_anim_state_reset (&st->actors[a]);
+		lrg_model_animator_play (st->animator, &st->actors[a], (gint) (a % SKIN_CLIPS), TRUE, 0);
+		st->actors[a].rate = 0.8 + 0.1 * (gdouble) (a % 5);
+		lrg_model_animator_advance (st->animator, &st->actors[a], 0.07 * (gdouble) a);
+	}
+
+	st->camera = grl_camera3d_new ();
+	grl_camera3d_set_position_xyz (st->camera, 0.0f, 7.0f, 16.0f);
+	grl_camera3d_set_target_xyz (st->camera, 0.0f, 1.0f, 0.0f);
+	return st;
+}
+
+static gpointer
+skin_setup (void)
+{
+	return skin_setup_mode (TRUE);
+}
+
+static gpointer
+skin_cpu_setup (void)
+{
+	return skin_setup_mode (FALSE);
+}
+
+static void
+skin_frame (gpointer state,
+            guint    frame_index)
+{
+	SkinState *st = state;
+	guint      a;
+
+	grl_camera3d_begin (st->camera);
+	for (a = 0; a < SKIN_ACTORS; a++)
+	{
+		LrgModelAnimState *actor = &st->actors[a];
+
+		/* Each actor crossfades to the next clip every two seconds. */
+		if ((frame_index + a * 7) % 120 == 0)
+			lrg_model_animator_play (st->animator, actor,
+			                         (actor->clip + 1) % SKIN_CLIPS, TRUE, 0.3);
+		lrg_model_animator_advance (st->animator, actor, 1.0 / 60.0);
+		lrg_model_animator_apply (st->animator, actor);
+		lrg_model_animator_draw_masked_ex (st->animator, NULL,
+		                                   ((gfloat) (a % 10) - 4.5f) * 1.4f, 0.0f,
+		                                   ((gfloat) (a / 10) - 2.0f) * 1.4f,
+		                                   (gfloat) a * 0.6f, 1.0f, NULL);
+	}
+	grl_camera3d_end (st->camera);
+}
+
+static void
+skin_teardown (gpointer state)
+{
+	SkinState *st = state;
+
+	g_clear_object (&st->animator);
+	g_clear_object (&st->manager);
+	g_clear_object (&st->camera);
+	g_remove (st->path);
+	g_free (st->path);
+	g_free (st);
+}
+
+/* --------------------------------------------------------------------------
  * physics: 500 dynamic boxes drifting in a 2D world
  * -------------------------------------------------------------------------- */
 
@@ -1713,6 +1824,10 @@ static const BenchScenario scenarios[] = {
 	  pacing_setup, pacing_frame, pacing_teardown },
 	{ "animator", "16 animators on 60-bone skeletons, crossfading every second",
 	  anim_setup, anim_frame, anim_teardown },
+	{ "skinned-models", "50 actors on one 3880-vertex 32-bone glTF model, GPU skinning",
+	  skin_setup, skin_frame, skin_teardown },
+	{ "skinned-models-cpu", "skinned-models with GPU skinning off (CPU skin + VBO upload)",
+	  skin_cpu_setup, skin_frame, skin_teardown },
 	{ "physics", "500 dynamic boxes in a 2D physics world, one step a frame",
 	  phys_setup, phys_frame, phys_teardown },
 	{ "tweens", "2000 ping-pong property tweens through a tween manager",

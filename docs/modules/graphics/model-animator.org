@@ -65,6 +65,11 @@ gboolean lrg_model_animator_is_finished       (LrgModelAnimator *self, const Lrg
 /* Posing and drawing */
 gboolean lrg_model_animator_apply      (LrgModelAnimator *self, const LrgModelAnimState *state);
 void     lrg_model_animator_invalidate (LrgModelAnimator *self);
+
+/* Skinning path (GPU by default when possible) */
+void     lrg_model_animator_set_gpu_skinning  (LrgModelAnimator *self, gboolean enabled);
+gboolean lrg_model_animator_get_gpu_skinning  (LrgModelAnimator *self);
+gboolean lrg_model_animator_uses_gpu_skinning (LrgModelAnimator *self);
 GBytes  *lrg_model_animator_build_node_mask (LrgModelAnimator *self, LrgGltfInfo *info,
                                              const gchar *const *hidden_nodes);
 void     lrg_model_animator_draw_masked    (LrgModelAnimator *self, GBytes *mask,
@@ -101,17 +106,39 @@ void     lrg_model_animator_draw_masked_ex (LrgModelAnimator *self, GBytes *mask
 :PROPERTIES:
 :CUSTOM_ID: posing
 :END:
-=apply()= computes a key of *(clip, frame, previous clip, previous frame, quantized blend)*. The blend weight is quantized to 64 levels (=LRG_MODEL_ANIMATOR_BLEND_LEVELS=); a weight that rounds to full degrades to the plain current pose (same key as a finished fade). If the key equals the last key the animator applied, nothing happens and =apply()= returns =FALSE=. Otherwise it poses the model — =grl_model_animation_update()= for a single clip or =grl_model_animation_blend()= (previous → current at the quantized weight) while fading — and returns =TRUE=.
+=apply()= computes a key of *(clip, frame, previous clip, previous frame, quantized blend)*. The blend weight is quantized to 64 levels (=LRG_MODEL_ANIMATOR_BLEND_LEVELS=); a weight that rounds to full degrades to the plain current pose (same key as a finished fade). If the key equals the last key the animator applied, nothing happens and =apply()= returns =FALSE=. Otherwise it poses the model — a single clip or a blend (previous → current at the quantized weight) while fading — and returns =TRUE=. On the GPU path (below) that means posing the bones only (=grl_model_animation_update_bones()= / =grl_model_animation_blend_bones()=); on the CPU path =grl_model_animation_update()= / =grl_model_animation_blend()= also skin every vertex and re-upload the buffers.
 
-Because the key is stored in the animator, actors that share a clip and frame share one skinning pass. Use *one animator per model*, shared by all actors of that model. Call =invalidate()= if anything else changed the model's pose.
+Because the key is stored in the animator, actors that share a clip and frame share one posing pass. Use *one animator per model*, shared by all actors of that model. Call =invalidate()= if anything else changed the model's pose.
 
 A clip whose skeleton does not match the model (=clip_is_valid()= false) is never applied. Headless animators track keys without posing, which is how the key logic is unit tested.
+
+** GPU and CPU Skinning
+:PROPERTIES:
+:CUSTOM_ID: skinning
+:END:
+raylib skins animated models on the CPU: every pose transforms each vertex and normal of each skinned mesh and re-uploads the position and normal buffers. With many actors on different frames that runs once per actor per frame and dominates the frame. The animator skins in the vertex shader instead whenever it can, and keeps the CPU path as the fallback.
+
+*When the GPU path is used.* On every =apply()= that poses, all of these must hold, else the whole model is skinned on the CPU (=apply()= poses all meshes at once, so a model goes one way):
+- GPU skinning is allowed (=set_gpu_skinning()=, default =TRUE=);
+- the model has a skeleton and at least one mesh with bone data;
+- =grl_model_prepare_gpu_skinning()= succeeds: OpenGL 3.3 or 4.3 with vertex arrays (it uploads the bone indices and weights into the meshes' vertex arrays at raylib's bone attribute locations, since the embedded raylib has =SUPPORT_GPU_SKINNING 0=);
+- every material used by a skinned mesh either uses raylib's default shader — drawn with the animator's skinning variant of it, which holds =LRG_MODEL_ANIMATOR_MAX_GPU_BONES= (128) bone matrices, so the model may have at most that many bones, and the variant must compile — or a custom shader that reads raylib's skinning inputs: the =boneMatrices= uniform array with room for every bone (probed by looking up =boneMatrices[bone_count - 1]=) and the =vertexBoneIndices= / =vertexBoneWeights= attributes at raylib's default locations 7 and 8. Verdicts on custom shaders are cached per program until =invalidate()=.
+
+Custom shaders without those inputs, too many bones, or no vertex arrays fall back to the CPU. =uses_gpu_skinning()= tells which way the last pose went.
+
+*Same picture.* The skinning variant is raylib's default vertex stage with the skinning in front of the MVP transform, and raylib's fragment stage unchanged. It mirrors raylib's CPU loop: zero weights are skipped, the weighted positions =w_i * (boneMatrices[i] * p)= are summed, and the result gets =w = 1=, so even weights that do not add up to one move a vertex identically. The test =/model-animator/gl/gpu-matches-cpu= renders a 300-vertex, 8-bone tube in three poses (a clip frame, another clip, a half-way crossfade) on both paths, then on the GPU again after the CPU wrote a pose, and compares the images: 0 differing pixels on llvmpipe (the test allows 1 % of the covered pixels for edge rounding). =/model-animator/gl/shader-selection= checks the shader rules: a plain custom shader goes CPU, a skinning shader with a 4-matrix array on the 8-bone model goes CPU, one with 16 matrices goes GPU and matches the CPU picture.
+
+*CPU-side data.* =Mesh.vertices= and =Mesh.normals= always hold the bind pose on both paths (raylib's ray/mesh collision and bounding boxes read those, so nothing changes for picking). With GPU skinning the posed positions exist only on the GPU and =animVertices= holds the bind pose; nothing in libregnum or graylib reads =animVertices=. Switching paths on a shared model is safe: graylib restores the bind pose in the buffers the first time the GPU path follows a CPU pose.
+
+*Drawing the model elsewhere.* After a GPU pose the model's buffers hold the bind pose, so drawing it with =grl_model_draw()= and the default shader shows the rest pose; draw animated models through =draw_masked()= / =draw_masked_ex()=, or turn GPU skinning off for that animator.
+
+=set_gpu_skinning (animator, FALSE)= forces the CPU path (for debugging, or for code that wants posed vertices in =animVertices=); it drops the pose key so the next =apply()= re-poses.
 
 ** Drawing Subsets of a Model
 :PROPERTIES:
 :CUSTOM_ID: drawing
 :END:
-=draw_masked()= replicates raylib's =DrawModelEx()= for the meshes whose mask byte is non-zero: material diffuse tint, GPU-skinning bone upload (=SHADER_LOC_MATRIX_BONETRANSFORMS=), =DrawMesh()= with =model.transform × transform=. A =NULL= mask, or bytes missing past its end, draw everything. =draw_masked_ex()= builds the transform from position, yaw (radians about +Y, raylib's rotation convention) and uniform scale in DrawModelEx order. Both do nothing headless and must run inside a 3D mode.
+=draw_masked()= replicates raylib's =DrawModelEx()= for the meshes whose mask byte is non-zero: material diffuse tint, bone matrix upload (=SHADER_LOC_MATRIX_BONETRANSFORMS=, once per program per call), =DrawMesh()= with =model.transform × transform=. After a GPU pose, skinned meshes on raylib's default shader are drawn with its skinning variant. A =NULL= mask, or bytes missing past its end, draw everything. =draw_masked_ex()= builds the transform from position, yaw (radians about +Y, raylib's rotation convention) and uniform scale in DrawModelEx order. Both do nothing headless and must run inside a 3D mode.
 
 Masks usually come from node names — accessory nodes in character packs:
 
