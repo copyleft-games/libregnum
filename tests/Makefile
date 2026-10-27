@@ -113,6 +113,7 @@ TEST_SOURCES := \
 	test-sky-dome.c \
 	test-world-look.c \
 	test-light-set.c \
+	test-prewarm.c \
 	test-shadow-renderer.c \
 	test-audio.c \
 	test-audio-positional.c \
