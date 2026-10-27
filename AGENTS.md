@@ -1500,6 +1500,20 @@ struct _LrgGame2DTemplateClass
 };
 ```
 
+### Render Interpolation
+
+With a fixed timestep (default 1/60 s) `LrgGameTemplate` drives graylib's interpolation clock
+(`grl-interpolation.h`; template property `interpolate`, default TRUE): `GrlEntity`/`LrgGameObject`,
+`LrgTransformComponent`, `LrgShape2D`/`LrgShape3D` and `LrgCamera2D`/`LrgCamera3D` moved in
+`fixed_update` are drawn between their last two simulated poses. Getters return the true state;
+draw code uses the render getters (`grl_entity_get_render_pose()`,
+`lrg_transform_component_get_render_transform()`, `lrg_shape3d_get_render_transform()`, ...).
+Use `*_teleport()` / `*_reset_interpolation()` for warps and camera cuts, the per-object
+`interpolate` property to opt out. A new interpolated type embeds a `GrlInterpolationTrack`,
+captures its previous pose when `grl_interpolation_track_begin_write()` returns TRUE and stores
+fields with `grl_interpolation_track_write_float()`. See
+`docs/modules/template/templates/game-template.org` (Render Interpolation).
+
 ### Related Documentation
 
 - Full template documentation: `docs/modules/template/index.org`

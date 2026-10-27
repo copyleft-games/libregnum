@@ -53,9 +53,15 @@ lrg_grid3d_draw (LrgShape *shape,
                  gfloat    delta)
 {
 	LrgGrid3D  *self = LRG_GRID3D (shape);
-	GrlVector3 *pos  = lrg_shape3d_get_position (LRG_SHAPE3D (self));
-	GrlVector3 *rot  = lrg_shape3d_get_rotation (LRG_SHAPE3D (self));
-	GrlVector3 *scl  = lrg_shape3d_get_scale (LRG_SHAPE3D (self));
+	GrlVector3  render_pos;
+	GrlVector3  render_rot;
+	GrlVector3  render_scl;
+	GrlVector3 *pos  = &render_pos;
+	GrlVector3 *rot  = &render_rot;
+	GrlVector3 *scl  = &render_scl;
+
+	/* Draw at the render (interpolated) transform */
+	lrg_shape3d_get_render_transform (LRG_SHAPE3D (self), pos, rot, scl);
 
 	rlPushMatrix ();
 

@@ -9,6 +9,7 @@
 #ifndef LRG_GAME_TEMPLATE_PRIVATE_H
 #define LRG_GAME_TEMPLATE_PRIVATE_H
 
+#include <graylib.h>
 #include "lrg-game-template.h"
 #include "../lrg-enums.h"
 
@@ -63,6 +64,7 @@ typedef struct _LrgGameTemplatePrivate
     gboolean             snap_frame_delta;      /* Default: TRUE */
     gdouble              accumulator;
     gdouble              interpolation_alpha;   /* For render interpolation */
+    gboolean             interpolate;           /* Default: TRUE */
 
     /* Hit stop / time scale */
     gdouble              hit_stop_remaining;
@@ -138,6 +140,9 @@ typedef struct _LrgGameTemplatePrivate
     gfloat               camera_follow_target_x;
     gfloat               camera_follow_target_y;
     gfloat               camera_follow_smoothing;
+    gfloat               camera_follow_prev_x;  /* Render interpolation */
+    gfloat               camera_follow_prev_y;
+    GrlInterpolationTrack camera_follow_interp;
     gfloat               camera_deadzone_x;
     gfloat               camera_deadzone_y;
 

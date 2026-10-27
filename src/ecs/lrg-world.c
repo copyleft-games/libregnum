@@ -294,7 +294,9 @@ lrg_world_new (void)
  * @self: an #LrgWorld
  * @object: the game object to add
  *
- * Adds a game object to this world.
+ * Adds a game object to this world. Its render interpolation is reset,
+ * so it is drawn at its current pose rather than blended from where it
+ * was (e.g. when reused from an object pool).
  */
 void
 lrg_world_add_object (LrgWorld      *self,
@@ -329,6 +331,10 @@ lrg_world_add_object (LrgWorld      *self,
 
     /* Add to graylib scene as well */
     grl_scene_add_entity (self->scene, GRL_ENTITY (object));
+
+    /* An object entering the world (new, or reused from a pool) is drawn
+     * where it is, not blended from wherever it was before */
+    grl_entity_reset_interpolation (GRL_ENTITY (object));
 
     lrg_debug (LRG_LOG_DOMAIN_ECS,
                "Added game object to world (count: %u)",

@@ -54,8 +54,11 @@ lrg_rectangle2d_draw (LrgShape *shape,
 {
 	LrgRectangle2D *self  = LRG_RECTANGLE2D (shape);
 	GrlColor       *color = lrg_shape_get_color (shape);
-	gfloat          x     = lrg_shape2d_get_x (LRG_SHAPE2D (self));
-	gfloat          y     = lrg_shape2d_get_y (LRG_SHAPE2D (self));
+	gfloat          x;
+	gfloat          y;
+
+	/* Draw at the render (interpolated) position */
+	lrg_shape2d_get_render_position (LRG_SHAPE2D (self), &x, &y);
 
 	if (self->corner_radius > 0.0f)
 	{

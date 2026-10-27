@@ -617,7 +617,10 @@ lrg_game_template_set_time_scale (LrgGameTemplate *self,
  *
  * Gets the interpolation alpha for render interpolation.
  * This is the fraction of a fixed timestep that has elapsed
- * since the last fixed update.
+ * since the last fixed update. The same value is published for draw
+ * code without a template pointer through grl_interpolation_get_alpha()
+ * (which reads 1 while #LrgGameTemplate:interpolate is off or the
+ * timestep is variable).
  *
  * Returns: interpolation alpha (0.0 to 1.0)
  *
@@ -805,7 +808,9 @@ lrg_game_template_set_camera_deadzone (LrgGameTemplate *self,
  * @target_y: target Y position
  *
  * Updates the camera follow target position. Call this each frame
- * when camera follow is enabled.
+ * when camera follow is enabled. A target set from fixed_update (the
+ * object's true position) is interpolated for the view, like the object
+ * itself.
  *
  * Since: 1.0
  */
@@ -822,6 +827,8 @@ lrg_game_template_update_camera_follow_target (LrgGameTemplate *self,
  * @y: (out) (optional): return location for camera Y
  *
  * Gets the current smoothed camera position (after follow and shake).
+ * With render interpolation active this follows the interpolated
+ * target, so the view moves with the drawn objects.
  *
  * Since: 1.0
  */

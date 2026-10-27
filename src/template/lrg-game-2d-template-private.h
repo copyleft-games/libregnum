@@ -66,6 +66,9 @@ typedef struct _LrgGame2DTemplatePrivate
     /* Camera follow settings */
     gfloat camera_target_x;
     gfloat camera_target_y;
+    gfloat camera_target_prev_x;           /* Render interpolation */
+    gfloat camera_target_prev_y;
+    GrlInterpolationTrack camera_target_interp;
     gfloat camera_smoothing;
 
     /* Camera deadzone */

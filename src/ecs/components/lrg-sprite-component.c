@@ -443,7 +443,9 @@ lrg_sprite_component_get_flip_v (LrgSpriteComponent *self)
  * lrg_sprite_component_draw:
  * @self: an #LrgSpriteComponent
  *
- * Draws the sprite at the owning game object's position.
+ * Draws the sprite at the owning game object's render pose (its
+ * interpolated position and rotation while a fixed-timestep template
+ * drives render interpolation, see grl_entity_get_render_pose()).
  */
 void
 lrg_sprite_component_draw (LrgSpriteComponent *self)
@@ -455,6 +457,7 @@ lrg_sprite_component_draw (LrgSpriteComponent *self)
     GrlVector2        origin;
     gfloat            width;
     gfloat            height;
+    gfloat            rotation;
 
     g_return_if_fail (LRG_IS_SPRITE_COMPONENT (self));
 
@@ -508,9 +511,9 @@ lrg_sprite_component_draw (LrgSpriteComponent *self)
         source.height = -source.height;
     }
 
-    /* Destination rectangle from the owner's transform */
-    dest.x = grl_entity_get_x (entity);
-    dest.y = grl_entity_get_y (entity);
+    /* Destination rectangle from the owner's render pose (interpolated
+     * between fixed steps; the true pose otherwise) */
+    grl_entity_get_render_pose (entity, &dest.x, &dest.y, &rotation, NULL);
     dest.width = width;
     dest.height = height;
     grl_entity_get_origin_xy (entity, &origin.x, &origin.y);
@@ -520,6 +523,6 @@ lrg_sprite_component_draw (LrgSpriteComponent *self)
                           &source,
                           &dest,
                           &origin,
-                          grl_entity_get_rotation (entity),
+                          rotation,
                           self->tint);
 }

@@ -314,6 +314,35 @@ void lrg_transform_component_sync_to_entity (LrgTransformComponent *self);
 #+end_src
 
 Syncs the world transform to the owning game object's entity transform. Call this after modifying the transform to update the entity's display position.
+If this transform (or a parent) was teleported in the current fixed step, the entity is teleported too (=grl_entity_reset_interpolation()=), so the jump is not drawn as a streak.
+
+*** Render Interpolation
+:PROPERTIES:
+:CUSTOM_ID: render-interpolation
+:END:
+While a fixed-timestep =LrgGameTemplate= drives render interpolation (=LrgGameTemplate:interpolate=, on by default; see [[file:../../template/templates/game-template.org::#render-interpolation][Render Interpolation]]) a transform changed in =fixed_update= keeps its local transform from the start of the latest step, and draw code reads a blend of the two. The getters above keep returning the true state; gameplay, physics and collision use them.
+
+#+begin_src C
+gfloat x, y, rotation, scale_x, scale_y;
+
+/* Drawn world pose: every level of the parent chain is blended, so a
+ * child follows its parent's drawn pose (one walk of the chain) */
+lrg_transform_component_get_render_transform (transform, &x, &y, &rotation,
+                                              &scale_x, &scale_y);
+lrg_transform_component_get_render_position (transform, &x, &y);
+rotation = lrg_transform_component_get_render_rotation (transform);
+
+/* Spawns, respawns, warps: move without a blend */
+lrg_transform_component_teleport (transform, 400.0f, 120.0f);
+
+/* Or after any setters, for a cut */
+lrg_transform_component_reset_interpolation (transform);
+
+/* Opt this transform out (drawn at its true pose) */
+lrg_transform_component_set_interpolate (transform, FALSE);
+#+end_src
+
+Position and scale blend linearly, rotation along the shorter arc. With a variable timestep or interpolation off the render getters return the world transform. The previous transform is captured on the first write in a step, so transforms that do not move cost nothing.
 
 ** Properties
 :PROPERTIES:
@@ -327,6 +356,7 @@ Syncs the world transform to the owning game object's entity transform. Call thi
 | =local-rotation= | =gfloat=                 | RW     | 0       | Rotation in degrees         |
 | =local-scale=    | =GrlVector2*=            | RW     | (1, 1)  | Scale factors               |
 | =parent=         | =LrgTransformComponent*= | RW     | =NULL=  | Parent transform            |
+| =interpolate=    | =gboolean=               | RW     | TRUE    | Interpolate for drawing between fixed steps |
 
 ** World vs Local Space
 :PROPERTIES:

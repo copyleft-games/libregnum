@@ -489,6 +489,7 @@ lrg_game_2d_template_real_update_camera (LrgGame2DTemplate *self,
     gfloat new_x;
     gfloat new_y;
     gfloat lerp_factor;
+    gfloat alpha;
     g_autoptr(GrlVector2) cam_target = NULL;
 
     priv = lrg_game_2d_template_get_instance_private (self);
@@ -496,8 +497,15 @@ lrg_game_2d_template_real_update_camera (LrgGame2DTemplate *self,
     if (priv->camera == NULL)
         return;
 
+    /* Follow the drawn (interpolated) target; update_camera runs per frame
+     * in pre_update, after the fixed steps and the alpha are known */
     target_x = priv->camera_target_x;
     target_y = priv->camera_target_y;
+    if (grl_interpolation_track_get_blend (&priv->camera_target_interp, &alpha))
+    {
+        target_x = grl_interpolation_lerp (priv->camera_target_prev_x, target_x, alpha);
+        target_y = grl_interpolation_lerp (priv->camera_target_prev_y, target_y, alpha);
+    }
 
     /* Apply deadzone */
     template_apply_camera_deadzone (self, priv, &target_x, &target_y);
@@ -1186,6 +1194,9 @@ lrg_game_2d_template_init (LrgGame2DTemplate *self)
 
     priv->camera_target_x = 0.0f;
     priv->camera_target_y = 0.0f;
+    priv->camera_target_prev_x = 0.0f;
+    priv->camera_target_prev_y = 0.0f;
+    grl_interpolation_track_init (&priv->camera_target_interp);
     priv->camera_smoothing = LRG_2D_TEMPLATE_DEFAULT_CAMERA_SMOOTHING;
 
     priv->deadzone_width = 0.0f;
@@ -1418,8 +1429,20 @@ lrg_game_2d_template_set_camera_target (LrgGame2DTemplate *self,
     g_return_if_fail (LRG_IS_GAME_2D_TEMPLATE (self));
 
     priv = lrg_game_2d_template_get_instance_private (self);
-    priv->camera_target_x = x;
-    priv->camera_target_y = y;
+
+    /* Set from fixed_update, the target is interpolated like the object it
+     * follows, so the view moves with the drawn object */
+    if (grl_interpolation_track_begin_write (&priv->camera_target_interp))
+    {
+        priv->camera_target_prev_x = priv->camera_target_x;
+        priv->camera_target_prev_y = priv->camera_target_y;
+    }
+    grl_interpolation_track_write_float (&priv->camera_target_interp,
+                                         &priv->camera_target_x,
+                                         &priv->camera_target_prev_x, x);
+    grl_interpolation_track_write_float (&priv->camera_target_interp,
+                                         &priv->camera_target_y,
+                                         &priv->camera_target_prev_y, y);
 }
 
 gfloat

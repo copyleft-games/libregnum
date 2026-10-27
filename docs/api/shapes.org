@@ -59,6 +59,7 @@ Abstract base class for 2D shapes (screen-space coordinates).
 
 - =x= (gfloat) - Screen X position
 - =y= (gfloat) - Screen Y position
+- =interpolate= (gboolean, default TRUE) - Draw at the interpolated position between fixed steps
 
 *Methods:*
 
@@ -69,7 +70,15 @@ gfloat lrg_shape2d_get_y        (LrgShape2D *self);
 void   lrg_shape2d_set_y        (LrgShape2D *self, gfloat y);
 void   lrg_shape2d_set_position (LrgShape2D *self, gfloat x, gfloat y);
 void   lrg_shape2d_get_position (LrgShape2D *self, gfloat *x, gfloat *y);
+
+/* Render interpolation (see the game template's Render Interpolation) */
+void     lrg_shape2d_get_render_position  (LrgShape2D *self, gfloat *x, gfloat *y);
+void     lrg_shape2d_reset_interpolation  (LrgShape2D *self);   /* teleport */
+gboolean lrg_shape2d_get_interpolate      (LrgShape2D *self);
+void     lrg_shape2d_set_interpolate      (LrgShape2D *self, gboolean interpolate);
 #+end_src
+
+The built-in 2D shapes draw at =lrg_shape2d_get_render_position()=: while a fixed-timestep =LrgGameTemplate= drives render interpolation, a shape moved in =fixed_update= is drawn between its position at the start of the latest step and its current one; otherwise at its position.
 
 *** LrgShape3D
 :PROPERTIES:
@@ -81,6 +90,7 @@ Abstract base class for 3D shapes (world-space coordinates).
 
 - =position= (GrlVector3*) - World position
 - =wireframe= (gboolean) - Whether to render in wireframe mode
+- =interpolate= (gboolean, default TRUE) - Draw at the interpolated transform between fixed steps
 
 *Methods:*
 
@@ -93,7 +103,16 @@ gfloat      lrg_shape3d_get_y            (LrgShape3D *self);
 gfloat      lrg_shape3d_get_z            (LrgShape3D *self);
 gboolean    lrg_shape3d_get_wireframe    (LrgShape3D *self);
 void        lrg_shape3d_set_wireframe    (LrgShape3D *self, gboolean wireframe);
+
+/* Render interpolation (see the game template's Render Interpolation) */
+void        lrg_shape3d_get_render_transform (LrgShape3D *self, GrlVector3 *position,
+                                              GrlVector3 *rotation, GrlVector3 *scale);
+void        lrg_shape3d_reset_interpolation  (LrgShape3D *self);   /* teleport */
+gboolean    lrg_shape3d_get_interpolate      (LrgShape3D *self);
+void        lrg_shape3d_set_interpolate      (LrgShape3D *self, gboolean interpolate);
 #+end_src
+
+The built-in 3D shapes draw with =lrg_shape3d_get_render_transform()= (caller-allocated outputs, any may be =NULL=): position and scale blend linearly, each Euler angle along its shorter arc. The setters now write the shape's vectors in place, so the pointer returned by =lrg_shape3d_get_position()= (and the rotation/scale getters) stays valid across sets.
 
 ** 3D Shapes
 :PROPERTIES:
