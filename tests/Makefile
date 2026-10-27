@@ -303,12 +303,16 @@ SANITIZE_BINARIES ?= $(filter-out $(TEST_BUILDDIR)/test-scripting%,$(TEST_BINARI
 # Targets
 # =============================================================================
 
-.PHONY: all run run-sanitize run-valgrind check-build-config check-sanitize-exit clean
+.PHONY: all run run-sanitize run-valgrind check-build-config check-version-lockstep check-sanitize-exit clean
 
 all: $(TEST_BINARIES)
 
 check-build-config:
 	@sh $(CURDIR)/test-build-config.sh
+
+# libregnum and the bundled graylib share MAJOR.MINOR (AGENTS.md, Versioning)
+check-version-lockstep:
+	@bash $(CURDIR)/test-version-lockstep.sh $(CURDIR)/..
 
 check-sanitize-exit:
 	@if [ "$(SANITIZER_EXIT_CHECK)" != "0" ]; then \
@@ -322,7 +326,7 @@ else
 MCP_LD_PATH :=
 endif
 
-run: check-build-config all
+run: check-build-config check-version-lockstep all
 	$(call print_status,"Running tests...")
 	@failed=0; \
 	for test in $(TEST_BINARIES); do \
