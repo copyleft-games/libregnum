@@ -2476,6 +2476,7 @@ first_use_teardown (gpointer state)
 	g_free (st);
 }
 
+/* ==========================================================================
  * audio: streamed synthesis and music decoding during a 3 ms frame
  *
  * Each frame spins 3 ms on the clock (a ~300 fps game's steady work, so a
