@@ -198,6 +198,9 @@ lrg_game_template_snap_delta (gdouble delta,
  */
 #define LRG_FRAME_DELTA_SNAP_TOLERANCE (0.0002)
 
+/* Most main-context iterations the standalone loop runs per frame */
+#define LRG_MAIN_CONTEXT_DISPATCH_LIMIT (8)
+
 /* Maximum delta time before clamping (prevents physics explosion) */
 #define LRG_DEFAULT_MAX_FRAME_TIME (0.25)
 

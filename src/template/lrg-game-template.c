@@ -1910,6 +1910,19 @@ lrg_game_run_standalone (LrgGameTemplate *self,
     while (!lrg_game_template_should_quit (self))
     {
         gdouble delta;
+        guint   dispatched;
+
+        /* Dispatch what the default GLib main context has ready -- timeouts,
+         * idles, async (GTask/GIO) completions, file monitors, background
+         * save notifications -- without blocking. The loop used to never
+         * iterate it, so none of those ever ran in a standalone game. The
+         * cap keeps a source that re-arms itself every time from eating the
+         * frame. */
+        for (dispatched = 0;
+             dispatched < LRG_MAIN_CONTEXT_DISPATCH_LIMIT &&
+             g_main_context_iteration (NULL, FALSE);
+             dispatched++)
+            ;
 
         delta = lrg_game_host_get_frame_delta (LRG_GAME_HOST (host));
 

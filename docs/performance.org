@@ -160,6 +160,7 @@ Bugs fixed on the way (each has a regression test):
 - =grl_scene_sort_entities_by_z()= left the scene's tail link stale, so the next =grl_scene_add_entity()= appended after a node that might not be last, or freed (graylib =/scene/remove-after-sort=).
 
 Behaviour changes to know about:
+- The standalone game loop now dispatches the default GLib main context every frame (bounded, non-blocking). Timeouts, idles, async completions and file monitors used to never run in standalone games; they now do, on the game thread, before the frame's update.
 - =lrg_analytics_backend_send_event()= on the HTTP backend no longer sends a full batch itself and so no longer returns its network error; failures are logged from the sender thread and reported by =lrg_analytics_flush()=. Disposing of the backend drops batches not yet sent (it always dropped pending events); =lrg_analytics_end_session()= flushes first.
 
 Looked at and fine: achievements (signals only, no I/O), settings (written at shutdown), template statistics and daily rewards (saveables only), the timer manager (no catch-up bursts, due timers sorted only), the event bus (no queued flush), net receive (non-blocking, bounded per poll), hot reload (=GFileMonitor=, no polling), logging (plain =g_log=; a dropped debug message costs ~0.1 µs), Lua (default incremental GC, no forced collections; the update hook does not allocate).
