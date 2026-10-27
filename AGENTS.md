@@ -525,7 +525,10 @@ LrgProceduralAudio *synth = g_object_new (MY_TYPE_SYNTH,
                                            "channels", 2,
                                            NULL);
 lrg_procedural_audio_play (synth);
-/* Call lrg_procedural_audio_update() each frame */
+/* generate() runs on the audio device's thread (the "audio-thread"
+ * property, default TRUE): change the state it reads with
+ * lrg_procedural_audio_queue_command () (or atomics), never directly;
+ * lrg_procedural_audio_update () each frame stays harmless */
 ```
 
 ### Wave Data (Audio Samples)

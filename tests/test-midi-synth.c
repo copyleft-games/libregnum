@@ -779,6 +779,227 @@ test_stream (void)
     }
 }
 
+/*
+ * open_device:
+ * The default audio device at master volume 0 (the mix still runs), or
+ * NULL after skipping the test: opt-in with LRG_TEST_AUDIO_DEVICE=1.
+ */
+static GrlAudioDevice *
+open_device (void)
+{
+    GrlAudioDevice *device;
+
+    if (g_strcmp0 (g_getenv ("LRG_TEST_AUDIO_DEVICE"), "1") != 0)
+    {
+        g_test_skip ("set LRG_TEST_AUDIO_DEVICE=1 to open the audio device");
+        return NULL;
+    }
+    device = grl_audio_device_get_default ();
+    if (device != NULL && !grl_audio_device_is_ready (device))
+        grl_audio_device_init_audio (device);   /* an earlier test closed it */
+    if (device == NULL || !grl_audio_device_is_ready (device))
+    {
+        g_test_skip ("no audio device");
+        return NULL;
+    }
+    grl_audio_device_set_master_volume (device, 0.0f);
+    return device;
+}
+
+/* waits up to @seconds for the audio thread to move the song */
+static gboolean
+wait_position (LrgMidiSynth *synth,
+               gdouble       seconds)
+{
+    gint64 deadline;
+
+    deadline = g_get_monotonic_time () + (gint64)(seconds * G_USEC_PER_SEC);
+    while (g_get_monotonic_time () < deadline)
+    {
+        lrg_midi_synth_update (synth);
+        if (lrg_midi_synth_get_position (synth) > 0.0)
+            return TRUE;
+        g_usleep (5000);
+    }
+    return FALSE;
+}
+
+/*
+ * The audio thread renders; calls queue commands it applies in order.
+ * Each call reads back at once (before the audio thread got to it), and
+ * after stop_stream () (the renderer back on this thread) the state is
+ * the one the last calls asked for, with the volume applied.
+ */
+static void
+test_stream_commands (void)
+{
+    g_autoptr(LrgMidiSynth) synth = NULL;
+    g_autoptr(LrgMidiSynth) reference = NULL;
+    g_autoptr(GBytes) song_a = NULL;
+    g_autoptr(GBytes) song_b = NULL;
+    g_autoptr(GBytes) song_c = NULL;
+    g_autoptr(GError) error = NULL;
+    GrlAudioDevice *device;
+    gfloat buffer[2 * 64];
+    gdouble start;
+    gdouble end;
+    gdouble level;
+    gdouble reference_level;
+
+    device = open_device ();
+    if (device == NULL)
+        return;
+
+    synth = new_synth_with_font ();
+    song_a = build_note_song (60, 16, -1, -1);
+    song_b = build_note_song (48, 16, 2, 6);
+    song_c = build_note_song (72, 8, -1, -1);
+    g_assert_true (lrg_midi_synth_start_stream (synth, &error));
+    g_assert_no_error (error);
+
+    /* the renderer is the audio thread's: offline rendering is silent */
+    buffer[0] = 1.0f;
+    g_assert_cmpuint (lrg_midi_synth_render (synth, buffer, 64), ==, 0);
+    g_assert_cmpfloat (buffer[0], ==, 0.0f);
+
+    /* every call reads back what it did, applied or not */
+    g_assert_true (lrg_midi_synth_play (synth, song_a, TRUE, 0.0, &error));
+    g_assert_true (lrg_midi_synth_is_playing (synth));
+    g_assert_false (lrg_midi_synth_is_finished (synth));
+    g_assert_true (lrg_midi_synth_get_loop_points (synth, &start, &end));
+    g_assert_cmpfloat_with_epsilon (start, 0.0, 1e-6);
+    g_assert_cmpfloat_with_epsilon (end, 8.0, 1e-6);
+    lrg_midi_synth_set_volume (synth, 0.25f);
+    g_assert_cmpfloat (lrg_midi_synth_get_volume (synth), ==, 0.25f);
+    g_assert_true (lrg_midi_synth_play (synth, song_b, TRUE, 0.5, &error));
+    g_assert_true (lrg_midi_synth_get_loop_points (synth, &start, &end));
+    g_assert_cmpfloat_with_epsilon (start, 1.0, 1e-6);
+    g_assert_cmpfloat_with_epsilon (end, 3.0, 1e-6);
+    lrg_midi_synth_stop (synth, 0.0);
+    g_assert_false (lrg_midi_synth_is_playing (synth));
+    g_assert_cmpfloat (lrg_midi_synth_get_position (synth), ==, 0.0);
+    g_assert_false (lrg_midi_synth_get_loop_points (synth, NULL, NULL));
+    g_assert_true (lrg_midi_synth_play (synth, song_c, TRUE, 0.0, &error));
+    g_assert_no_error (error);
+    g_assert_true (lrg_midi_synth_is_playing (synth));
+    g_assert_true (lrg_midi_synth_get_loop_points (synth, &start, &end));
+    g_assert_cmpfloat_with_epsilon (start, 0.0, 1e-6);
+    g_assert_cmpfloat_with_epsilon (end, 4.0, 1e-6);
+
+    /* the audio thread applies them and plays the last song (its note
+     * sustains for 4 s, so the level compares with a fresh render) */
+    g_assert_true (wait_position (synth, 3.0));
+    g_assert_true (lrg_midi_synth_is_playing (synth));
+
+    /* back on this thread: the last song at the volume set, in order */
+    lrg_midi_synth_stop_stream (synth);
+    g_assert_false (lrg_midi_synth_has_stream (synth));
+    g_assert_true (lrg_midi_synth_is_playing (synth));
+    g_assert_cmpfloat (lrg_midi_synth_get_position (synth), >, 0.0);
+    (void)render_rms (synth, 0.3);              /* past the note's attack */
+    level = render_rms (synth, 0.2);
+
+    reference = new_synth_with_font ();
+    g_assert_true (lrg_midi_synth_play (reference, song_c, TRUE, 0.0, &error));
+    (void)render_rms (reference, 0.3);
+    reference_level = render_rms (reference, 0.2);
+    g_assert_cmpfloat (reference_level, >, 0.01);
+    g_assert_cmpfloat_with_epsilon (level / reference_level, 0.25, 0.05);
+
+    grl_audio_device_close (device);
+}
+
+/*
+ * Many calls racing the audio thread: nothing is lost or reordered (the
+ * state after the renderer comes back is the last call's), and every
+ * song handed over is freed (run under the sanitizers).
+ */
+static void
+test_stream_stress (void)
+{
+    g_autoptr(LrgMidiSynth) synth = NULL;
+    g_autoptr(GBytes) song = NULL;
+    g_autoptr(GRand) rand = NULL;
+    g_autoptr(GError) error = NULL;
+    GrlAudioDevice *device;
+    gboolean expect_playing;
+    gfloat expect_volume;
+    guint i;
+
+    device = open_device ();
+    if (device == NULL)
+        return;
+
+    synth = new_synth_with_font ();
+    song = build_note_song (64, 4, -1, -1);
+    rand = g_rand_new_with_seed (42);
+    g_assert_true (lrg_midi_synth_start_stream (synth, &error));
+
+    expect_playing = FALSE;
+    expect_volume = 1.0f;
+    for (i = 0; i < 400; i++)
+    {
+        switch (g_rand_int_range (rand, 0, 4))
+        {
+        case 0:
+            g_assert_true (lrg_midi_synth_play (synth, song, TRUE,
+                                                g_rand_boolean (rand) ? 0.05 : 0.0, &error));
+            expect_playing = TRUE;
+            break;
+        case 1:
+            lrg_midi_synth_stop (synth, g_rand_boolean (rand) ? 0.05 : 0.0);
+            expect_playing = FALSE;
+            break;
+        case 2:
+            expect_volume = (gfloat)g_rand_double_range (rand, 0.1, 1.0);
+            lrg_midi_synth_set_volume (synth, expect_volume);
+            break;
+        default:
+            lrg_midi_synth_update (synth);
+            break;
+        }
+        g_assert_true (lrg_midi_synth_is_playing (synth) == expect_playing);
+        if (g_rand_int_range (rand, 0, 8) == 0)
+            g_usleep ((gulong)g_rand_int_range (rand, 0, 3000));
+    }
+
+    lrg_midi_synth_stop_stream (synth);
+    g_assert_true (lrg_midi_synth_is_playing (synth) == expect_playing);
+    g_assert_cmpfloat (lrg_midi_synth_get_volume (synth), ==, expect_volume);
+    grl_audio_device_close (device);
+}
+
+/* a song that does not loop finishes on the audio thread */
+static void
+test_stream_finish (void)
+{
+    g_autoptr(LrgMidiSynth) synth = NULL;
+    g_autoptr(GBytes) song = NULL;
+    g_autoptr(GError) error = NULL;
+    GrlAudioDevice *device;
+    gint64 deadline;
+
+    device = open_device ();
+    if (device == NULL)
+        return;
+
+    synth = new_synth_with_font ();
+    song = build_silent_song (1);                   /* 0.5 s */
+    g_assert_true (lrg_midi_synth_start_stream (synth, &error));
+    g_assert_true (lrg_midi_synth_play (synth, song, FALSE, 0.0, &error));
+    g_assert_true (lrg_midi_synth_is_playing (synth));
+    deadline = g_get_monotonic_time () + 4 * G_USEC_PER_SEC;
+    while (!lrg_midi_synth_is_finished (synth) && g_get_monotonic_time () < deadline)
+    {
+        lrg_midi_synth_update (synth);
+        g_usleep (10000);
+    }
+    g_assert_true (lrg_midi_synth_is_finished (synth));
+    g_assert_false (lrg_midi_synth_is_playing (synth));
+    lrg_midi_synth_stop_stream (synth);
+    grl_audio_device_close (device);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -798,6 +1019,9 @@ main (int   argc,
     g_test_add_func ("/midi-synth/malformed-midi", test_malformed_midi);
     g_test_add_func ("/midi-synth/mutations", test_mutations);
     g_test_add_func ("/midi-synth/stream", test_stream);
+    g_test_add_func ("/midi-synth/stream-commands", test_stream_commands);
+    g_test_add_func ("/midi-synth/stream-stress", test_stream_stress);
+    g_test_add_func ("/midi-synth/stream-finish", test_stream_finish);
 
     return g_test_run ();
 }

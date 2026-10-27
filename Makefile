@@ -823,6 +823,7 @@ SOURCES := \
 	src/audio/lrg-pitch-shift.c \
 	src/audio/lrg-audio-bus.c \
 	src/audio/lrg-sound-bed.c \
+	src/audio/lrg-audio-thread-private.c \
 	src/audio/lrg-midi-output.c \
 	src/audio/lrg-midi-output-alsa.c \
 	src/audio/lrg-midi-sequencer.c \
