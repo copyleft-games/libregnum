@@ -488,7 +488,7 @@ McpServer *
 lrg_ctl_mcp_server_new (LrgCtlCallFunc call,
                         gpointer       call_data)
 {
-	McpServer *server = mcp_server_new (LRG_CTL_MCP_SERVER_NAME, "0.2.0");
+	McpServer *server = mcp_server_new (LRG_CTL_MCP_SERVER_NAME, LRG_EDITORCTL_VERSION);
 	gsize      i;
 
 	mcp_server_set_instructions (server, instructions);

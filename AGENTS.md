@@ -121,6 +121,57 @@ make clean        # Remove build artifacts
 make help         # Show all targets
 ```
 
+## Versioning
+
+The version lives in `config.mk` (`VERSION_MAJOR`, `VERSION_MINOR`, `VERSION_MICRO`; it feeds
+`lrg-version.h`, `LRG_VERSION_STRING`, the `.pc` file and the library file name) and every
+release on master carries an annotated tag `v<MAJOR>.<MINOR>.<MICRO>` (e.g. `v0.1.0`) on the
+commit that sets it. `v0.1.0` is the first tagged release.
+
+- **Micro** (+1): every change landing on master that changes what is built: bug fixes, patches,
+  performance work, small features, options, polish (`fix`, `perf`, small `feat`, `refactor`,
+  `build`). Changes that touch only docs, tests or tooling (`docs`, `test`, `ci`, `chore`) do not
+  bump; they ride with the next release.
+- **Minor** (+1, micro back to 0): a major feature (a new module or subsystem, a new tool such
+  as the editor) or anything that breaks compatibility with earlier versions: public C API or
+  ABI, GIR API, YAML/data formats (`.rlevel`, `.rprefab`, `project.ryaml`, save files), IPC/MCP
+  protocol, signals, property names.
+- **Major**: never bumped without asking the user first.
+- `API_VERSION` (GIR namespace, `.pc` name, parallel installability) and `SO_VERSION` are
+  separate and not changed by these bumps; they move only on an ABI break, and only when asked.
+
+One bump per landing, the highest kind it contains: a merge that brings in several commits or
+branches bumps once (minor if any part is a major feature, else micro).
+
+- **Every landing is released at once.** Each landing on master that changes the build bumps,
+  is tagged and is pushed immediately; nothing that changes the build waits on master untagged
+  for a later release. Pushing is otherwise only done when asked, but a version bump is always
+  pushed with its tag.
+- **Submodules first.** When a landing moves a submodule we own (`deps/graylib`, `deps/yaml-glib`,
+  `deps/mcp-glib`, `deps/ai-glib`, `deps/crispy`, `deps/cad-glib`), that repository's commits are
+  pushed (and tagged under its own rules) before the libregnum commit that points at them.
+- **Merging a branch** (the usual case): bump in the merge commit itself, so the tag marks the
+  merge and the branch never carries a version:
+
+  ```bash
+  git merge --no-ff --no-commit feat/x     # resolve conflicts if any
+  $EDITOR config.mk                        # bump VERSION_MINOR or VERSION_MICRO
+  make clean && make -j"$(nproc)" && make test   # plus the targets the change needs
+  git commit                               # merge message names the new version
+  git tag -a v0.2.0 -m 'v0.2.0'
+  git push origin master v0.2.0
+  ```
+
+  Fast-forward merges have no commit to hold the bump; use `--no-ff`. A merge that lands only
+  docs/tests may fast-forward and is not tagged.
+- **Working directly on master**: bump `config.mk` in the change's own commit (or, for a run of
+  commits, in the last one), then tag that commit and push it with the tag.
+- Tag only a commit whose `config.mk` matches the tag, after its build and tests pass with zero
+  warnings; never move or delete a pushed tag; a broken release is fixed by the next micro.
+- Code that reports the version uses `LRG_VERSION_STRING` (or the `LRG_VERSION_*` macros), never a
+  literal; code built outside the library (`lrgeditorctl`, the MCP tool table) gets it as
+  `-DLRG_EDITORCTL_VERSION="$(VERSION)"` from the Makefile.
+
 ## C Standard and Compiler Flags
 
 - **Standard**: `gnu89` (GNU C89 extensions)

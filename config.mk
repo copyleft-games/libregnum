@@ -19,8 +19,11 @@ PROJECT_ROOT := $(realpath $(CONFIG_MK_PATH))
 # Version Information
 # =============================================================================
 
+# Single source of truth for the release version: feeds lrg-version.h, the
+# .pc file and the shared library name. Bump rules and tagging: AGENTS.md,
+# "Versioning". API_VERSION and SO_VERSION below are separate.
 VERSION_MAJOR := 0
-VERSION_MINOR := 2
+VERSION_MINOR := 1
 VERSION_MICRO := 0
 VERSION := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)
 

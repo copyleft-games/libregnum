@@ -1944,7 +1944,8 @@ ifeq ($(EDITOR_MCP),1)
 $(LRG_EDITOR_BIN): src/launcher/lrgeditor.c $(EDITOR_MCP_SOURCES) $(LIBOUTDIR)/$(LIB_SHARED) $(EDITOR_MCP_DEP)
 	$(call print_link,lrgeditor)
 	@$(MKDIR_P) $(dir $@)
-	@$(CC) $(LRGLDR_CFLAGS) $(EDITOR_MCP_CFLAGS) -DLRG_EDITOR_HAVE_MCP=1 -o $@ \
+	@$(CC) $(LRGLDR_CFLAGS) $(EDITOR_MCP_CFLAGS) -DLRG_EDITOR_HAVE_MCP=1 \
+		-DLRG_EDITORCTL_VERSION=\"$(VERSION)\" -o $@ \
 		src/launcher/lrgeditor.c $(EDITOR_MCP_SOURCES) $(EDITOR_MCP_LIBS) $(LRGLDR_LIBS)
 else
 $(LRG_EDITOR_BIN): src/launcher/lrgeditor.c $(LIBOUTDIR)/$(LIB_SHARED)
