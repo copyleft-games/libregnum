@@ -67,6 +67,7 @@
 #include "core/lrg-event-listener.h"
 #include "core/lrg-event-bus.h"
 #include "core/lrg-random-stream.h"
+#include "core/lrg-cpu-affinity.h"
 #include "core/lrg-timer-manager.h"
 
 /* Graphics module */

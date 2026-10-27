@@ -15,6 +15,7 @@
 #include "lrg-registry.h"
 #include "lrg-data-loader.h"
 #include "lrg-asset-manager.h"
+#include "lrg-cpu-affinity.h"
 #include "../lrg-log.h"
 #include "../graphics/lrg-window.h"
 #include "../graphics/lrg-renderer.h"
@@ -38,14 +39,31 @@ typedef struct
     LrgWindow        *window;
     LrgRenderer      *renderer;
     GHashTable       *worlds;
+    gboolean          pin_performance_cores;
+    gboolean          pinned;          /* this engine changed the affinity */
 } LrgEnginePrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgEngine, lrg_engine, G_TYPE_OBJECT)
+
+/* LRG_CPU_AFFINITY=none (or off, 0, false) turns main-thread pinning off */
+static gboolean
+cpu_affinity_disabled_by_env (void)
+{
+    const gchar *value = g_getenv ("LRG_CPU_AFFINITY");
+
+    if (value == NULL)
+        return FALSE;
+    return g_ascii_strcasecmp (value, "none") == 0 ||
+           g_ascii_strcasecmp (value, "off") == 0 ||
+           g_ascii_strcasecmp (value, "false") == 0 ||
+           g_strcmp0 (value, "0") == 0;
+}
 
 enum
 {
     PROP_0,
     PROP_STATE,
+    PROP_PIN_PERFORMANCE_CORES,
     N_PROPS
 };
 
@@ -203,6 +221,32 @@ lrg_engine_get_property (GObject    *object,
     case PROP_STATE:
         g_value_set_enum (value, priv->state);
         break;
+    case PROP_PIN_PERFORMANCE_CORES:
+        g_value_set_boolean (value, priv->pin_performance_cores);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static void
+lrg_engine_set_property (GObject      *object,
+                         guint         prop_id,
+                         const GValue *value,
+                         GParamSpec   *pspec)
+{
+    LrgEngine        *self = LRG_ENGINE (object);
+    LrgEnginePrivate *priv = lrg_engine_get_instance_private (self);
+
+    switch (prop_id)
+    {
+    case PROP_PIN_PERFORMANCE_CORES:
+        if (priv->pin_performance_cores != g_value_get_boolean (value))
+        {
+            priv->pin_performance_cores = g_value_get_boolean (value);
+            g_object_notify_by_pspec (object, pspec);
+        }
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -215,6 +259,7 @@ lrg_engine_class_init (LrgEngineClass *klass)
 
     object_class->finalize = lrg_engine_finalize;
     object_class->get_property = lrg_engine_get_property;
+    object_class->set_property = lrg_engine_set_property;
 
     /* Virtual methods */
     klass->startup = lrg_engine_real_startup;
@@ -234,6 +279,27 @@ lrg_engine_class_init (LrgEngineClass *klass)
                            LRG_ENGINE_STATE_UNINITIALIZED,
                            G_PARAM_READABLE |
                            G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgEngine:pin-performance-cores:
+     *
+     * Whether lrg_engine_startup() keeps the calling (main) thread, and
+     * the threads it starts afterwards (GL driver threads included), on
+     * the fast cores of a hybrid CPU. Moving between fast and slow cores
+     * is the largest source of frame-time spikes on such CPUs; see
+     * lrg_cpu_affinity_pin_to_performance_cores(). It has no effect on
+     * CPUs whose cores are alike or outside Linux, and the environment
+     * variable `LRG_CPU_AFFINITY=none` turns it off without code changes.
+     * Set it before startup; shutdown restores the original affinity.
+     */
+    properties[PROP_PIN_PERFORMANCE_CORES] =
+        g_param_spec_boolean ("pin-performance-cores",
+                              "Pin performance cores",
+                              "Keep the main thread on a hybrid CPU's fast cores",
+                              TRUE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_EXPLICIT_NOTIFY);
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
@@ -306,6 +372,8 @@ lrg_engine_init (LrgEngine *self)
     LrgEnginePrivate *priv = lrg_engine_get_instance_private (self);
 
     priv->state = LRG_ENGINE_STATE_UNINITIALIZED;
+    priv->pin_performance_cores = TRUE;
+    priv->pinned = FALSE;
     priv->registry = NULL;
     priv->data_loader = NULL;
     priv->asset_manager = NULL;
@@ -380,6 +448,17 @@ lrg_engine_startup (LrgEngine  *self,
 
     priv->state = LRG_ENGINE_STATE_INITIALIZING;
 
+    /* Keep the main thread on a hybrid CPU's fast cores before anything
+     * (the window, the GL driver) starts threads, so they inherit it */
+    if (priv->pin_performance_cores && !cpu_affinity_disabled_by_env ())
+    {
+        g_autoptr(GError) affinity_error = NULL;
+
+        priv->pinned = lrg_cpu_affinity_pin_to_performance_cores (&affinity_error);
+        if (affinity_error != NULL)
+            lrg_warning (LRG_LOG_DOMAIN_CORE, "%s", affinity_error->message);
+    }
+
     /* Call virtual method */
     klass = LRG_ENGINE_GET_CLASS (self);
     if (klass->startup != NULL)
@@ -442,6 +521,12 @@ lrg_engine_shutdown (LrgEngine *self)
     }
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STATE]);
+
+    if (priv->pinned)
+    {
+        lrg_cpu_affinity_restore ();
+        priv->pinned = FALSE;
+    }
 
     lrg_info (LRG_LOG_DOMAIN_CORE, "Libregnum engine shutdown complete");
 }

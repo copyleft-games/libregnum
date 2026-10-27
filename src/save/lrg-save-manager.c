@@ -10,8 +10,38 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_SAVE
 
 #include "lrg-save-manager.h"
+#include "lrg-save-context-private.h"
 #include "../lrg-log.h"
 #include <gio/gio.h>
+
+/*
+ * Background writer state, shared by the manager, its queued jobs and the
+ * completion sources it posts to the caller's main context. It is
+ * reference counted (atomically) so a completion source that runs after
+ * the manager is gone finds valid memory; it reaches the manager only
+ * through a weak reference.
+ */
+typedef struct
+{
+    gint          ref_count;
+    GMutex        lock;
+    GCond         cond;
+    guint         pending;      /* jobs queued or being written */
+    GQueue       *finished;     /* SaveJob *: written, not yet reported */
+    GError       *first_error;  /* first failed write since the last flush */
+    GWeakRef      manager;
+    GMainContext *context;      /* where save-completed is emitted */
+} SaveWriter;
+
+/* One background save: the finished document and where it goes. */
+typedef struct
+{
+    SaveWriter   *writer;
+    gchar        *slot_name;
+    gchar        *path;
+    YamlDocument *document;
+    gboolean      success;
+} SaveJob;
 
 struct _LrgSaveManager
 {
@@ -22,6 +52,10 @@ struct _LrgSaveManager
 
     /* Registered saveables: save_id -> LrgSaveable* */
     GHashTable *saveables;
+
+    /* Background saves: one writer thread (created on first use) */
+    SaveWriter  *writer;
+    GThreadPool *write_pool;
 };
 
 G_DEFINE_FINAL_TYPE (LrgSaveManager, lrg_save_manager, G_TYPE_OBJECT)
@@ -75,10 +109,189 @@ ensure_directory_exists (const gchar *directory)
     }
 }
 
+/* ==========================================================================
+ * Background Writer
+ *
+ * A save has two halves. Collecting the state (each saveable's save
+ * method) must run on the thread that owns the game state, but generating
+ * the YAML text and writing the file (g_file_set_contents() fsyncs when it
+ * replaces a file: several milliseconds on a laptop SSD, far more on a
+ * busy or spinning disk) need not. lrg_save_manager_save_in_background()
+ * collects on the caller's thread and hands the rest to a single writer
+ * thread, so saves land in the order they were made.
+ * ========================================================================== */
+
+static SaveWriter *
+save_writer_new (LrgSaveManager *manager)
+{
+    SaveWriter *writer;
+
+    writer = g_new0 (SaveWriter, 1);
+    writer->ref_count = 1;
+    g_mutex_init (&writer->lock);
+    g_cond_init (&writer->cond);
+    writer->finished = g_queue_new ();
+    g_weak_ref_init (&writer->manager, manager);
+    writer->context = g_main_context_ref_thread_default ();
+    return writer;
+}
+
+static void
+save_job_free (SaveJob *job)
+{
+    g_clear_pointer (&job->document, g_object_unref);
+    g_free (job->slot_name);
+    g_free (job->path);
+    g_free (job);
+}
+
+static SaveWriter *
+save_writer_ref (SaveWriter *writer)
+{
+    g_atomic_int_inc (&writer->ref_count);
+    return writer;
+}
+
+static void
+save_writer_unref (SaveWriter *writer)
+{
+    if (!g_atomic_int_dec_and_test (&writer->ref_count))
+        return;
+
+    g_queue_free_full (writer->finished, (GDestroyNotify) save_job_free);
+    g_clear_error (&writer->first_error);
+    g_weak_ref_clear (&writer->manager);
+    g_main_context_unref (writer->context);
+    g_cond_clear (&writer->cond);
+    g_mutex_clear (&writer->lock);
+    g_free (writer);
+}
+
+/*
+ * Emits save-completed for every finished background save, oldest first,
+ * on the calling thread. Called from the completion source, from
+ * lrg_save_manager_flush() and before every synchronous operation.
+ */
+static void
+save_writer_report (SaveWriter *writer)
+{
+    g_autoptr(LrgSaveManager) manager = NULL;
+    GQueue                     done = G_QUEUE_INIT;
+    SaveJob                   *job;
+
+    g_mutex_lock (&writer->lock);
+    while ((job = g_queue_pop_head (writer->finished)) != NULL)
+        g_queue_push_tail (&done, job);
+    g_mutex_unlock (&writer->lock);
+
+    manager = g_weak_ref_get (&writer->manager);
+    while ((job = g_queue_pop_head (&done)) != NULL)
+    {
+        if (manager != NULL)
+        {
+            if (job->success)
+                lrg_log_info ("Saved successfully to: %s", job->slot_name);
+            g_signal_emit (manager, signals[SIGNAL_SAVE_COMPLETED], 0,
+                           job->slot_name, job->success);
+        }
+        save_job_free (job);
+    }
+}
+
+static gboolean
+save_writer_report_source (gpointer user_data)
+{
+    save_writer_report (user_data);
+    return G_SOURCE_REMOVE;
+}
+
+/* Writer thread: generate the text and write the file. */
+static void
+save_writer_run (gpointer data,
+                 gpointer user_data)
+{
+    SaveJob           *job = data;
+    SaveWriter        *writer = job->writer;
+    g_autoptr(GError)  error = NULL;
+    g_autofree gchar  *yaml_str = NULL;
+    GSource           *source;
+
+    yaml_str = lrg_save_context_document_to_string (job->document, &error);
+    g_clear_pointer (&job->document, g_object_unref);
+    job->success = yaml_str != NULL &&
+                   g_file_set_contents (job->path, yaml_str, -1, &error);
+    if (!job->success)
+        lrg_log_warning ("Background save to %s failed: %s", job->path,
+                         error != NULL ? error->message : "unknown error");
+
+    g_mutex_lock (&writer->lock);
+    if (!job->success && writer->first_error == NULL && error != NULL)
+        writer->first_error = g_steal_pointer (&error);
+    g_queue_push_tail (writer->finished, job);
+    writer->pending--;
+    g_cond_broadcast (&writer->cond);
+    g_mutex_unlock (&writer->lock);
+
+    /* Report on the saving thread's main context, if it runs one; the
+     * manager also reports on its next flush or synchronous call. */
+    source = g_idle_source_new ();
+    g_source_set_priority (source, G_PRIORITY_DEFAULT);
+    g_source_set_callback (source, save_writer_report_source,
+                           save_writer_ref (writer),
+                           (GDestroyNotify) save_writer_unref);
+    g_source_set_static_name (source, "[libregnum] save-completed");
+    g_source_attach (source, writer->context);
+    g_source_unref (source);
+    save_writer_unref (writer);
+}
+
+/* Blocks until every queued background save is written; returns (and
+ * clears) the first write error since the last call when @error is set. */
+static gboolean
+save_writer_wait (LrgSaveManager  *self,
+                  GError         **error)
+{
+    SaveWriter *writer = self->writer;
+    GError     *first;
+
+    if (writer == NULL)
+        return TRUE;
+
+    g_mutex_lock (&writer->lock);
+    while (writer->pending > 0)
+        g_cond_wait (&writer->cond, &writer->lock);
+    first = NULL;
+    if (error != NULL)
+    {
+        first = writer->first_error;
+        writer->first_error = NULL;
+    }
+    g_mutex_unlock (&writer->lock);
+
+    save_writer_report (writer);
+    if (first != NULL)
+    {
+        g_propagate_error (error, first);
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static void
 lrg_save_manager_finalize (GObject *object)
 {
     LrgSaveManager *self = LRG_SAVE_MANAGER (object);
+
+    /* Finish queued background saves (no completion signals: the manager
+     * is going away), then drop the writer. */
+    if (self->write_pool != NULL)
+        g_thread_pool_free (self->write_pool, FALSE, TRUE);
+    self->write_pool = NULL;
+    if (self->writer != NULL)
+    {
+        g_weak_ref_set (&self->writer->manager, NULL);
+        g_clear_pointer (&self->writer, save_writer_unref);
+    }
 
     g_clear_pointer (&self->save_directory, g_free);
     g_clear_pointer (&self->saveables, g_hash_table_unref);
@@ -467,22 +680,22 @@ lrg_save_manager_save (LrgSaveManager *self,
     return lrg_save_manager_save_with_description (self, slot_name, NULL, error);
 }
 
-gboolean
-lrg_save_manager_save_with_description (LrgSaveManager *self,
-                                        const gchar *slot_name,
-                                        const gchar *description,
-                                        GError **error)
+/*
+ * save_collect:
+ * Runs every registered saveable into a fresh context on the calling
+ * thread and finishes it into a document. Emits save-started. On failure
+ * returns %NULL with @error set and leaves save-completed to the caller.
+ */
+static YamlDocument *
+save_collect (LrgSaveManager  *self,
+              const gchar     *slot_name,
+              const gchar     *description,
+              GError         **error)
 {
     g_autoptr(LrgSaveContext) context = NULL;
-    g_autofree gchar          *path = NULL;
     GHashTableIter             iter;
     gpointer                   key;
     gpointer                   value;
-    gboolean                   success = TRUE;
-
-    g_return_val_if_fail (LRG_IS_SAVE_MANAGER (self), FALSE);
-    g_return_val_if_fail (slot_name != NULL, FALSE);
-    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
     ensure_directory_exists (self->save_directory);
 
@@ -517,17 +730,42 @@ lrg_save_manager_save_with_description (LrgSaveManager *self,
         if (!lrg_saveable_save (saveable, context, error))
         {
             lrg_log_error ("Failed to save object: %s", save_id);
-            success = FALSE;
-            break;
+            return NULL;
         }
 
         lrg_save_context_end_section (context);
     }
 
-    if (success)
+    return lrg_save_context_take_document (context, error);
+}
+
+gboolean
+lrg_save_manager_save_with_description (LrgSaveManager *self,
+                                        const gchar *slot_name,
+                                        const gchar *description,
+                                        GError **error)
+{
+    g_autoptr(YamlDocument) doc = NULL;
+    g_autofree gchar       *path = NULL;
+    g_autofree gchar       *yaml_str = NULL;
+    gboolean                success = FALSE;
+
+    g_return_val_if_fail (LRG_IS_SAVE_MANAGER (self), FALSE);
+    g_return_val_if_fail (slot_name != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    /* An earlier background save of this slot must not land after this one. */
+    save_writer_wait (self, NULL);
+
+    doc = save_collect (self, slot_name, description, error);
+    if (doc != NULL)
     {
         path = get_slot_path (self, slot_name);
-        success = lrg_save_context_to_file (context, path, error);
+        yaml_str = lrg_save_context_document_to_string (doc, error);
+        success = yaml_str != NULL &&
+                  g_file_set_contents (path, yaml_str, -1, error);
+        if (success)
+            lrg_log_info ("Saved context to %s", path);
     }
 
     g_signal_emit (self, signals[SIGNAL_SAVE_COMPLETED], 0, slot_name, success);
@@ -538,6 +776,105 @@ lrg_save_manager_save_with_description (LrgSaveManager *self,
     }
 
     return success;
+}
+
+/*
+ * lrg_save_manager_save_in_background:
+ * @self: a #LrgSaveManager
+ * @slot_name: the slot identifier
+ * @description: (nullable): the user-visible save description
+ * @error: return location for a #GError
+ *
+ * Collects the state on this thread and writes it on the writer thread.
+ *
+ * Returns: %TRUE if the save was collected and queued
+ */
+gboolean
+lrg_save_manager_save_in_background (LrgSaveManager  *self,
+                                     const gchar     *slot_name,
+                                     const gchar     *description,
+                                     GError         **error)
+{
+    g_autoptr(YamlDocument) doc = NULL;
+    SaveJob                *job;
+
+    g_return_val_if_fail (LRG_IS_SAVE_MANAGER (self), FALSE);
+    g_return_val_if_fail (slot_name != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    doc = save_collect (self, slot_name, description, error);
+    if (doc == NULL)
+    {
+        g_signal_emit (self, signals[SIGNAL_SAVE_COMPLETED], 0, slot_name, FALSE);
+        return FALSE;
+    }
+
+    /* One writer thread per manager keeps the saves in order. */
+    if (self->writer == NULL)
+        self->writer = save_writer_new (self);
+    if (self->write_pool == NULL)
+    {
+        self->write_pool = g_thread_pool_new (save_writer_run, NULL, 1, FALSE, error);
+        if (self->write_pool == NULL)
+        {
+            g_signal_emit (self, signals[SIGNAL_SAVE_COMPLETED], 0, slot_name, FALSE);
+            return FALSE;
+        }
+    }
+
+    job = g_new0 (SaveJob, 1);
+    job->writer = save_writer_ref (self->writer);
+    job->slot_name = g_strdup (slot_name);
+    job->path = get_slot_path (self, slot_name);
+    job->document = g_steal_pointer (&doc);
+
+    g_mutex_lock (&self->writer->lock);
+    self->writer->pending++;
+    g_mutex_unlock (&self->writer->lock);
+
+    /* Cannot fail: the pool exists and runs on non-exclusive threads. */
+    g_thread_pool_push (self->write_pool, job, NULL);
+    return TRUE;
+}
+
+/*
+ * lrg_save_manager_flush:
+ * @self: a #LrgSaveManager
+ * @error: return location for a #GError
+ *
+ * Waits for queued background saves and reports them.
+ *
+ * Returns: %TRUE if every background save since the last flush was written
+ */
+gboolean
+lrg_save_manager_flush (LrgSaveManager  *self,
+                        GError         **error)
+{
+    g_return_val_if_fail (LRG_IS_SAVE_MANAGER (self), FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    return save_writer_wait (self, error);
+}
+
+/*
+ * lrg_save_manager_is_saving:
+ * @self: a #LrgSaveManager
+ *
+ * Returns: %TRUE while a background save is queued or being written
+ */
+gboolean
+lrg_save_manager_is_saving (LrgSaveManager *self)
+{
+    gboolean saving;
+
+    g_return_val_if_fail (LRG_IS_SAVE_MANAGER (self), FALSE);
+
+    if (self->writer == NULL)
+        return FALSE;
+    g_mutex_lock (&self->writer->lock);
+    saving = self->writer->pending > 0;
+    g_mutex_unlock (&self->writer->lock);
+    return saving;
 }
 
 /*
@@ -565,6 +902,9 @@ lrg_save_manager_load (LrgSaveManager  *self,
     g_return_val_if_fail (LRG_IS_SAVE_MANAGER (self), FALSE);
     g_return_val_if_fail (slot_name != NULL, FALSE);
     g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    /* Read what a queued background save is about to write, not the old file. */
+    save_writer_wait (self, NULL);
 
     path = get_slot_path (self, slot_name);
 
@@ -859,6 +1199,9 @@ lrg_save_manager_delete_save (LrgSaveManager  *self,
     g_return_val_if_fail (LRG_IS_SAVE_MANAGER (self), FALSE);
     g_return_val_if_fail (slot_name != NULL, FALSE);
     g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    /* A queued background save must not recreate the slot after this. */
+    save_writer_wait (self, NULL);
 
     path = get_slot_path (self, slot_name);
 

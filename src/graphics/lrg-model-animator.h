@@ -8,7 +8,9 @@
  * The animator owns the clip table (lookup, aliases) and the model's
  * current pose; every actor keeps its own LrgModelAnimState (clip, time,
  * crossfade). apply() poses the shared model for one actor right before
- * drawing it and skips re-skinning when the pose would not change.
+ * drawing it and skips re-posing when the pose would not change. Models
+ * whose skinned meshes can be skinned by a shader are posed bones-only
+ * and skinned on the GPU; the rest are skinned on the CPU.
  */
 
 #pragma once
@@ -43,6 +45,14 @@ G_BEGIN_DECLS
  * slow fade does not re-skin the model on every frame.
  */
 #define LRG_MODEL_ANIMATOR_BLEND_LEVELS (64)
+
+/**
+ * LRG_MODEL_ANIMATOR_MAX_GPU_BONES:
+ *
+ * Bone matrices the built-in GPU skinning shader holds. Models drawn with
+ * raylib's default shader and more bones than this are skinned on the CPU.
+ */
+#define LRG_MODEL_ANIMATOR_MAX_GPU_BONES (128)
 
 /**
  * LrgModelAnimState:
@@ -411,6 +421,12 @@ lrg_model_animator_is_finished (LrgModelAnimator        *self,
  * Poses the shared model for @state: grl_model_animation_update() for a
  * single clip, grl_model_animation_blend() while crossfading (with the
  * blend weight quantized to %LRG_MODEL_ANIMATOR_BLEND_LEVELS steps).
+ * When GPU skinning is enabled and possible (see
+ * lrg_model_animator_set_gpu_skinning()) only the bone matrices are
+ * posed (grl_model_animation_update_bones(),
+ * grl_model_animation_blend_bones()) and the draw functions skin the
+ * vertices in a shader; otherwise every vertex is skinned on the CPU and
+ * re-uploaded.
  * Re-skinning is skipped when the pose key (clip, frame, previous clip,
  * previous frame, quantized blend) equals the last applied key, so actors
  * sharing a frame cost one skinning pass. Headless animators track the
@@ -423,6 +439,51 @@ LRG_AVAILABLE_IN_ALL
 gboolean
 lrg_model_animator_apply (LrgModelAnimator        *self,
                           const LrgModelAnimState *state);
+
+/**
+ * lrg_model_animator_set_gpu_skinning:
+ * @self: an #LrgModelAnimator
+ * @enabled: whether apply() may skin on the GPU
+ *
+ * Allows (the default) or forbids GPU skinning. When allowed, apply()
+ * skins on the GPU if the model has a skeleton, the context is OpenGL 3.3
+ * or 4.3, and every material used by a skinned mesh either is raylib's
+ * default shader (drawn with a skinning variant of it while the model has
+ * at most %LRG_MODEL_ANIMATOR_MAX_GPU_BONES bones) or a shader that reads
+ * raylib's skinning inputs: the "boneMatrices" uniform array with room
+ * for every bone, and the "vertexBoneIndices" / "vertexBoneWeights"
+ * attributes at raylib's default locations. Anything else (a custom
+ * shader without skinning, too many bones, no vertex arrays) is skinned
+ * on the CPU. The model's vertex data on the CPU (Mesh.vertices) is bind
+ * pose either way; with GPU skinning the posed positions exist only on
+ * the GPU. Forbidding GPU skinning forces the next apply() to re-pose.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_model_animator_set_gpu_skinning (LrgModelAnimator *self,
+                                     gboolean          enabled);
+
+/**
+ * lrg_model_animator_get_gpu_skinning:
+ * @self: an #LrgModelAnimator
+ *
+ * Returns: whether GPU skinning is allowed (see
+ *   lrg_model_animator_set_gpu_skinning())
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_model_animator_get_gpu_skinning (LrgModelAnimator *self);
+
+/**
+ * lrg_model_animator_uses_gpu_skinning:
+ * @self: an #LrgModelAnimator
+ *
+ * Returns: %TRUE when the last pose apply() set is skinned on the GPU,
+ *   %FALSE when it was skinned on the CPU or nothing was posed yet
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_model_animator_uses_gpu_skinning (LrgModelAnimator *self);
 
 /**
  * lrg_model_animator_invalidate:
@@ -463,9 +524,12 @@ lrg_model_animator_build_node_mask (LrgModelAnimator   *self,
  *   colour; %NULL is white
  *
  * Draws the model's visible meshes with its current pose (call
- * lrg_model_animator_apply() first). Uploads bone matrices for GPU
- * skinning shaders exactly like raylib's DrawModelEx(). Must be called
- * inside a 3D mode; does nothing when headless.
+ * lrg_model_animator_apply() first). When the pose is skinned on the GPU,
+ * skinned meshes using raylib's default shader are drawn with its
+ * skinning variant and the bone matrices are uploaded to the shader;
+ * otherwise bone matrices go to shaders that expose them exactly like
+ * raylib's DrawModelEx(). Must be called inside a 3D mode; does nothing
+ * when headless.
  */
 LRG_AVAILABLE_IN_ALL
 void

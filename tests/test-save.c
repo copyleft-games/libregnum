@@ -660,6 +660,111 @@ test_save_version_compatibility (SaveManagerFixture *fixture, gconstpointer data
     g_signal_handlers_disconnect_by_data (fixture->manager, &failures);
 }
 
+
+/* save-completed counter for the background-save tests */
+static void
+on_save_completed_count (LrgSaveManager *manager,
+                         const gchar    *slot_name,
+                         gboolean        success,
+                         gpointer        user_data)
+{
+    gint *counts = user_data;
+
+    if (success)
+        counts[0]++;
+    else
+        counts[1]++;
+}
+
+/* A background save writes the same file a synchronous one would, in
+ * order, and reports through save-completed once flushed. */
+static void
+test_save_manager_background (SaveManagerFixture *fixture,
+                              gconstpointer       user_data)
+{
+    g_autoptr(GError) error = NULL;
+    gint              counts[2] = { 0, 0 };
+    gint              i;
+
+    lrg_save_manager_register (fixture->manager, LRG_SAVEABLE (fixture->object));
+    g_signal_connect (fixture->manager, "save-completed",
+                      G_CALLBACK (on_save_completed_count), counts);
+
+    /* Several queued saves of one slot: the last state must win. */
+    for (i = 1; i <= 5; i++)
+    {
+        fixture->object->score = i * 100;
+        g_assert_true (lrg_save_manager_save_in_background (fixture->manager,
+                                                            "bg-slot", "Auto",
+                                                            &error));
+        g_assert_no_error (error);
+    }
+
+    g_assert_true (lrg_save_manager_flush (fixture->manager, &error));
+    g_assert_no_error (error);
+    g_assert_false (lrg_save_manager_is_saving (fixture->manager));
+    g_assert_cmpint (counts[0], ==, 5);
+    g_assert_cmpint (counts[1], ==, 0);
+
+    fixture->object->score = 0;
+    g_assert_true (lrg_save_manager_load (fixture->manager, "bg-slot", &error));
+    g_assert_no_error (error);
+    g_assert_cmpint (fixture->object->score, ==, 500);
+
+    /* The description reaches the file like the synchronous path's. */
+    {
+        g_autoptr(LrgSaveGame) save = lrg_save_manager_get_save (fixture->manager, "bg-slot");
+
+        g_assert_nonnull (save);
+        g_assert_cmpstr (lrg_save_game_get_display_name (save), ==, "Auto");
+    }
+}
+
+/* A synchronous load right after a background save sees the new state
+ * (it waits for the writer), and a write failure surfaces at flush. */
+static void
+test_save_manager_background_ordering (SaveManagerFixture *fixture,
+                                       gconstpointer       user_data)
+{
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *blocker = NULL;
+    gint              counts[2] = { 0, 0 };
+    GLogLevelFlags    fatal_mask;
+
+    lrg_save_manager_register (fixture->manager, LRG_SAVEABLE (fixture->object));
+    g_signal_connect (fixture->manager, "save-completed",
+                      G_CALLBACK (on_save_completed_count), counts);
+
+    fixture->object->score = 42;
+    g_assert_true (lrg_save_manager_save_in_background (fixture->manager,
+                                                        "order", NULL, &error));
+    fixture->object->score = 0;
+    g_assert_true (lrg_save_manager_load (fixture->manager, "order", &error));
+    g_assert_no_error (error);
+    g_assert_cmpint (fixture->object->score, ==, 42);
+    g_assert_cmpint (counts[0], ==, 1);
+
+    /* A directory where the slot file should go makes the write fail. */
+    blocker = g_build_filename (fixture->temp_dir, "blocked.yaml", NULL);
+    g_assert_cmpint (g_mkdir_with_parents (blocker, 0755), ==, 0);
+    /* The failure warnings come from another thread, where neither
+     * g_test_expect_message() nor a fatal handler applies: make warnings
+     * non-fatal for this test. */
+    fatal_mask = g_log_set_always_fatal (G_LOG_FATAL_MASK);
+    g_assert_true (lrg_save_manager_save_in_background (fixture->manager,
+                                                        "blocked", NULL, &error));
+    g_assert_false (lrg_save_manager_flush (fixture->manager, &error));
+    g_assert_nonnull (error);
+    g_assert_cmpint (counts[1], ==, 1);
+    g_log_set_always_fatal (fatal_mask);
+    g_rmdir (blocker);
+
+    /* The error was consumed: the next flush is clean. */
+    g_clear_error (&error);
+    g_assert_true (lrg_save_manager_flush (fixture->manager, &error));
+    g_assert_no_error (error);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -748,6 +853,18 @@ main (int   argc,
 
     /* Saveable Interface tests */
     g_test_add_func ("/save/interface/basic", test_saveable_interface);
+
+    g_test_add ("/save/manager/background",
+                SaveManagerFixture, NULL,
+                save_manager_fixture_setup,
+                test_save_manager_background,
+                save_manager_fixture_teardown);
+
+    g_test_add ("/save/manager/background-ordering",
+                SaveManagerFixture, NULL,
+                save_manager_fixture_setup,
+                test_save_manager_background_ordering,
+                save_manager_fixture_teardown);
 
     g_test_add_func ("/save/context/version-validation", test_save_version_validation);
     g_test_add ("/save/manager/version-compatibility", SaveManagerFixture, NULL,

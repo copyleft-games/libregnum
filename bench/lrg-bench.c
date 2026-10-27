@@ -21,11 +21,14 @@
 #include <math.h>
 
 #include <glib.h>
+#include <glib/gstdio.h>
+#include <gio/gio.h>
 #include <raylib.h>
 #include <graylib.h>
 #include <libregnum.h>
 
 #include "gui/lrg-gui-raylib.h"
+#include "../tests/lrg-test-glb.h"
 
 #define BENCH_WIDTH          (320)
 #define BENCH_HEIGHT         (240)
@@ -49,6 +52,8 @@ struct _BenchScenario
 };
 
 static gint    opt_frames = 300;
+static gint    opt_fps = 0;
+static gboolean opt_no_pin = FALSE;
 static gchar **opt_scenarios = NULL;
 static gchar  *opt_output = NULL;
 static gboolean opt_list = FALSE;
@@ -1088,6 +1093,116 @@ anim_teardown (gpointer state)
 }
 
 /* --------------------------------------------------------------------------
+ * skinned-models: 50 actors sharing one skinned glTF model, each playing
+ * its own clip and crossfading every two seconds; skinned on the GPU, or
+ * on the CPU (skinned-models-cpu, the path every model took before)
+ * -------------------------------------------------------------------------- */
+
+#define SKIN_ACTORS (50)
+#define SKIN_CLIPS  (4)
+#define SKIN_RINGS  (96)
+#define SKIN_SIDES  (40)
+#define SKIN_BONES  (32)
+
+typedef struct
+{
+	gchar             *path;
+	LrgAssetManager   *manager;
+	LrgModelAnimator  *animator;
+	GrlCamera3D       *camera;
+	LrgModelAnimState  actors[SKIN_ACTORS];
+} SkinState;
+
+static gpointer
+skin_setup_mode (gboolean gpu)
+{
+	static const gchar *const clips[SKIN_CLIPS] = { "Curl", "Sway", "Twist", "Wave" };
+	g_autoptr(GError) error = NULL;
+	SkinState        *st;
+	GrlModel         *model;
+	GPtrArray        *animations;
+	guint             a;
+
+	/* A tube of 3880 vertices on a 32-joint chain: a small character. */
+	st = g_new0 (SkinState, 1);
+	st->path = g_build_filename (g_get_tmp_dir (), "lrg-bench-skinned.glb", NULL);
+	test_glb_write_skinned_tube (st->path, SKIN_RINGS, SKIN_SIDES, SKIN_BONES, clips, SKIN_CLIPS);
+	st->manager = lrg_asset_manager_new ();
+	model = lrg_asset_manager_load_model (st->manager, st->path, &error);
+	if (model == NULL)
+		g_error ("skinned-models: %s", error->message);
+	animations = lrg_asset_manager_load_model_animations (st->manager, st->path, &error);
+	if (animations == NULL)
+		g_error ("skinned-models: %s", error->message);
+	st->animator = lrg_model_animator_new (model, animations);
+	lrg_model_animator_set_gpu_skinning (st->animator, gpu);
+
+	for (a = 0; a < SKIN_ACTORS; a++)
+	{
+		lrg_model_anim_state_reset (&st->actors[a]);
+		lrg_model_animator_play (st->animator, &st->actors[a], (gint) (a % SKIN_CLIPS), TRUE, 0);
+		st->actors[a].rate = 0.8 + 0.1 * (gdouble) (a % 5);
+		lrg_model_animator_advance (st->animator, &st->actors[a], 0.07 * (gdouble) a);
+	}
+
+	st->camera = grl_camera3d_new ();
+	grl_camera3d_set_position_xyz (st->camera, 0.0f, 7.0f, 16.0f);
+	grl_camera3d_set_target_xyz (st->camera, 0.0f, 1.0f, 0.0f);
+	return st;
+}
+
+static gpointer
+skin_setup (void)
+{
+	return skin_setup_mode (TRUE);
+}
+
+static gpointer
+skin_cpu_setup (void)
+{
+	return skin_setup_mode (FALSE);
+}
+
+static void
+skin_frame (gpointer state,
+            guint    frame_index)
+{
+	SkinState *st = state;
+	guint      a;
+
+	grl_camera3d_begin (st->camera);
+	for (a = 0; a < SKIN_ACTORS; a++)
+	{
+		LrgModelAnimState *actor = &st->actors[a];
+
+		/* Each actor crossfades to the next clip every two seconds. */
+		if ((frame_index + a * 7) % 120 == 0)
+			lrg_model_animator_play (st->animator, actor,
+			                         (actor->clip + 1) % SKIN_CLIPS, TRUE, 0.3);
+		lrg_model_animator_advance (st->animator, actor, 1.0 / 60.0);
+		lrg_model_animator_apply (st->animator, actor);
+		lrg_model_animator_draw_masked_ex (st->animator, NULL,
+		                                   ((gfloat) (a % 10) - 4.5f) * 1.4f, 0.0f,
+		                                   ((gfloat) (a / 10) - 2.0f) * 1.4f,
+		                                   (gfloat) a * 0.6f, 1.0f, NULL);
+	}
+	grl_camera3d_end (st->camera);
+}
+
+static void
+skin_teardown (gpointer state)
+{
+	SkinState *st = state;
+
+	g_clear_object (&st->animator);
+	g_clear_object (&st->manager);
+	g_clear_object (&st->camera);
+	g_remove (st->path);
+	g_free (st->path);
+	g_free (st);
+}
+
+/* --------------------------------------------------------------------------
  * physics: 500 dynamic boxes drifting in a 2D world
  * -------------------------------------------------------------------------- */
 
@@ -1643,6 +1758,414 @@ portal_teardown (gpointer state)
 }
 
 /* ==========================================================================
+ * pacing: constant light work, for measuring the frame limiter (--fps N)
+ * ========================================================================== */
+
+static gpointer
+pacing_setup (void)
+{
+	return NULL;
+}
+
+static void
+pacing_frame (gpointer state,
+              guint    frame_index)
+{
+	guint i;
+
+	/* About a millisecond of steady CPU work and a few quads: what is left
+	 * of the frame is the limiter's wait, whose accuracy this measures */
+	for (i = 0; i < 64; i++)
+	{
+		GrlColor color = { (guint8) (i * 4), 120, 200, 255 };
+
+		grl_draw_rectangle ((gint) ((i * 5 + frame_index) % 300),
+		                    (gint) ((i * 3) % 220), 8, 8, &color);
+	}
+	g_usleep (1000);
+}
+
+static void
+pacing_teardown (gpointer state)
+{
+}
+
+/* ==========================================================================
+ * autosave: light frames with a save-manager save every 60 frames
+ * ========================================================================== */
+
+#define AUTOSAVE_KEYS     (4000)
+#define AUTOSAVE_INTERVAL (60)
+
+#define BENCH_TYPE_SAVE_STATE (bench_save_state_get_type ())
+G_DECLARE_FINAL_TYPE (BenchSaveState, bench_save_state, BENCH, SAVE_STATE, GObject)
+
+struct _BenchSaveState
+{
+	GObject parent_instance;
+	guint   generation;
+};
+
+static void bench_save_state_iface_init (LrgSaveableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (BenchSaveState, bench_save_state, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_SAVEABLE,
+                                                bench_save_state_iface_init))
+
+static const gchar *
+bench_save_state_get_save_id (LrgSaveable *saveable)
+{
+	return "world";
+}
+
+/* A few thousand keys: a mid-sized game's inventory, flags and stats. */
+static gboolean
+bench_save_state_save (LrgSaveable     *saveable,
+                       LrgSaveContext  *context,
+                       GError         **error)
+{
+	BenchSaveState *self = BENCH_SAVE_STATE (saveable);
+	gchar           key[32];
+	guint           i;
+
+	self->generation++;
+	for (i = 0; i < AUTOSAVE_KEYS; i++)
+	{
+		g_snprintf (key, sizeof key, "entry_%u", i);
+		if (i % 2 == 0)
+			lrg_save_context_write_int (context, key, (gint64) (i * self->generation));
+		else
+			lrg_save_context_write_string (context, key, "some saved string value");
+	}
+	return TRUE;
+}
+
+static gboolean
+bench_save_state_load (LrgSaveable     *saveable,
+                       LrgSaveContext  *context,
+                       GError         **error)
+{
+	return TRUE;
+}
+
+static void
+bench_save_state_iface_init (LrgSaveableInterface *iface)
+{
+	iface->get_save_id = bench_save_state_get_save_id;
+	iface->save = bench_save_state_save;
+	iface->load = bench_save_state_load;
+}
+
+static void
+bench_save_state_class_init (BenchSaveStateClass *klass)
+{
+}
+
+static void
+bench_save_state_init (BenchSaveState *self)
+{
+}
+
+typedef struct
+{
+	LrgSaveManager *manager;
+	BenchSaveState *world;
+	gchar          *dir;
+	gboolean        sync;
+} AutosaveState;
+
+/* Light steady per-frame work, so a hitch stands out against it. */
+static void
+bench_light_frame (guint frame_index)
+{
+	guint i;
+
+	for (i = 0; i < 64; i++)
+	{
+		GrlColor color = { (guint8) (i * 4), 120, 200, 255 };
+
+		grl_draw_rectangle ((gint) ((i * 5 + frame_index) % 300),
+		                    (gint) ((i * 3) % 220), 8, 8, &color);
+	}
+}
+
+/* Saves go to a real disk (the user cache dir), not a tmpfs, so the write
+ * costs what it would in a game. */
+static gpointer
+autosave_setup (void)
+{
+	AutosaveState *st;
+
+	st = g_new0 (AutosaveState, 1);
+	st->dir = g_build_filename (g_get_user_cache_dir (), "lrg-bench-saves", NULL);
+	st->manager = lrg_save_manager_new ();
+	lrg_save_manager_set_save_directory (st->manager, st->dir);
+	st->world = g_object_new (BENCH_TYPE_SAVE_STATE, NULL);
+	lrg_save_manager_register (st->manager, LRG_SAVEABLE (st->world));
+	return st;
+}
+
+static void
+autosave_frame (gpointer state,
+                guint    frame_index)
+{
+	AutosaveState *st = state;
+
+	bench_light_frame (frame_index);
+	if (frame_index % AUTOSAVE_INTERVAL != AUTOSAVE_INTERVAL - 1)
+		return;
+	if (st->sync)
+		lrg_save_manager_save (st->manager, "autosave", NULL);
+	else
+		lrg_save_manager_save_in_background (st->manager, "autosave", NULL, NULL);
+}
+
+/* The same save made synchronously: generation and the file write (with
+ * its fsync) land on the frame. */
+static gpointer
+autosave_sync_setup (void)
+{
+	AutosaveState *st = autosave_setup ();
+
+	st->sync = TRUE;
+	return st;
+}
+
+static void
+autosave_teardown (gpointer state)
+{
+	AutosaveState    *st = state;
+	g_autofree gchar *path = NULL;
+
+	lrg_save_manager_flush (st->manager, NULL);
+	lrg_save_manager_unregister_all (st->manager);
+	g_clear_object (&st->manager);
+	g_clear_object (&st->world);
+	path = g_build_filename (st->dir, "autosave.yaml", NULL);
+	g_unlink (path);
+	g_rmdir (st->dir);
+	g_free (st->dir);
+	g_free (st);
+}
+
+/* ==========================================================================
+ * despawn: a 4000-object world where a quarter dies and respawns at once
+ * ========================================================================== */
+
+#define DESPAWN_OBJECTS  (4000)
+#define DESPAWN_WAVE     (1000)
+#define DESPAWN_INTERVAL (60)
+
+typedef struct
+{
+	LrgWorld       *world;
+	GrlTexture     *texture;
+	LrgGameObject **live;     /* borrowed: the world holds the references */
+	guint           next;     /* next wave starts here (oldest first) */
+} DespawnState;
+
+static LrgGameObject *
+despawn_spawn (DespawnState *st,
+               guint         i)
+{
+	g_autoptr(LrgGameObject)      obj = NULL;
+	g_autoptr(LrgSpriteComponent) sprite = NULL;
+
+	obj = lrg_game_object_new_at ((gfloat) (i % 64) * 5.0f, (gfloat) ((i / 64) % 60) * 4.0f);
+	sprite = lrg_sprite_component_new_with_texture (st->texture);
+	lrg_game_object_add_component (obj, LRG_COMPONENT (sprite));
+	grl_entity_set_z_index (GRL_ENTITY (obj), (gint) ((i * 7919) % 7));
+	lrg_world_add_object (st->world, obj);
+	return obj;
+}
+
+static gpointer
+despawn_setup (void)
+{
+	DespawnState *st;
+	guint         i;
+
+	st = g_new0 (DespawnState, 1);
+	st->world = lrg_world_new ();
+	st->texture = bench_make_texture (4);
+	st->live = g_new0 (LrgGameObject *, DESPAWN_OBJECTS);
+	for (i = 0; i < DESPAWN_OBJECTS; i++)
+		st->live[i] = despawn_spawn (st, i);
+	return st;
+}
+
+static void
+despawn_frame (gpointer state,
+               guint    frame_index)
+{
+	DespawnState *st = state;
+	guint         i;
+
+	/* A wave of the oldest objects dies (an explosion, a level section
+	 * unloading) and as many spawn, all in one frame. */
+	if (frame_index % DESPAWN_INTERVAL == DESPAWN_INTERVAL - 1)
+	{
+		for (i = 0; i < DESPAWN_WAVE; i++)
+		{
+			guint slot = (st->next + i) % DESPAWN_OBJECTS;
+
+			lrg_world_remove_object (st->world, st->live[slot]);
+			st->live[slot] = despawn_spawn (st, slot + frame_index);
+		}
+		st->next = (st->next + DESPAWN_WAVE) % DESPAWN_OBJECTS;
+	}
+	lrg_world_update (st->world, 1.0f / 60.0f);
+	lrg_world_draw (st->world);
+}
+
+static void
+despawn_teardown (gpointer state)
+{
+	DespawnState *st = state;
+
+	g_clear_object (&st->world);
+	g_clear_object (&st->texture);
+	g_free (st->live);
+	g_free (st);
+}
+
+/* ==========================================================================
+ * analytics: an event a frame to an HTTP backend behind a 20 ms server
+ * ========================================================================== */
+
+#define ANALYTICS_SERVER_DELAY_MS (20)
+
+/* A one-thread HTTP/1.1 server on localhost that answers every request
+ * with 200 after ANALYTICS_SERVER_DELAY_MS: a stand-in for a remote
+ * collector's round trip. */
+typedef struct
+{
+	GSocketListener *listener;
+	GCancellable    *cancellable;
+	GThread         *thread;
+	guint16          port;
+} BenchHttpServer;
+
+static void
+bench_http_serve (BenchHttpServer   *server,
+                  GSocketConnection *connection)
+{
+	static const gchar          reply[] = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+	g_autoptr(GDataInputStream) data = NULL;
+	GOutputStream              *out;
+
+	data = g_data_input_stream_new (g_io_stream_get_input_stream (G_IO_STREAM (connection)));
+	g_data_input_stream_set_newline_type (data, G_DATA_STREAM_NEWLINE_TYPE_CR_LF);
+	out = g_io_stream_get_output_stream (G_IO_STREAM (connection));
+
+	for (;;)
+	{
+		gsize    length = 0;
+		gboolean any = FALSE;
+		gchar   *line;
+
+		while ((line = g_data_input_stream_read_line (data, NULL, server->cancellable,
+		                                              NULL)) != NULL)
+		{
+			gboolean end = line[0] == '\0';
+
+			any = TRUE;
+			if (g_ascii_strncasecmp (line, "Content-Length:", 15) == 0)
+				length = (gsize) g_ascii_strtoull (line + 15, NULL, 10);
+			g_free (line);
+			if (end)
+				break;
+		}
+		if (!any)
+			return;
+		if (length > 0)
+		{
+			g_autofree gchar *body = g_malloc (length);
+
+			if (!g_input_stream_read_all (G_INPUT_STREAM (data), body, length, NULL,
+			                              server->cancellable, NULL))
+				return;
+		}
+		g_usleep (ANALYTICS_SERVER_DELAY_MS * 1000);
+		if (!g_output_stream_write_all (out, reply, sizeof reply - 1, NULL,
+		                                server->cancellable, NULL))
+			return;
+	}
+}
+
+static gpointer
+bench_http_thread (gpointer user_data)
+{
+	BenchHttpServer *server = user_data;
+
+	for (;;)
+	{
+		g_autoptr(GSocketConnection) connection = NULL;
+
+		connection = g_socket_listener_accept (server->listener, NULL,
+		                                       server->cancellable, NULL);
+		if (connection == NULL)
+			return NULL;
+		bench_http_serve (server, connection);
+	}
+}
+
+typedef struct
+{
+	BenchHttpServer          server;
+	LrgAnalyticsBackendHttp *backend;
+} AnalyticsState;
+
+static gpointer
+analytics_setup (void)
+{
+	AnalyticsState   *st;
+	g_autofree gchar *url = NULL;
+
+	st = g_new0 (AnalyticsState, 1);
+	st->server.cancellable = g_cancellable_new ();
+	st->server.listener = g_socket_listener_new ();
+	st->server.port = g_socket_listener_add_any_inet_port (st->server.listener, NULL, NULL);
+	st->server.thread = g_thread_new ("bench-http", bench_http_thread, &st->server);
+
+	/* Default batching (10 events) and retries; the flush timer is off
+	 * (it needs a main loop, which the bench does not run). */
+	url = g_strdup_printf ("http://127.0.0.1:%u/collect", st->server.port);
+	st->backend = lrg_analytics_backend_http_new (url);
+	lrg_analytics_backend_http_set_flush_interval (st->backend, 0);
+	return st;
+}
+
+static void
+analytics_frame (gpointer state,
+                 guint    frame_index)
+{
+	AnalyticsState               *st = state;
+	g_autoptr(LrgAnalyticsEvent)  event = NULL;
+
+	bench_light_frame (frame_index);
+
+	/* One gameplay event a frame (a pickup, a kill, a checkpoint). */
+	event = lrg_analytics_event_new ("pickup");
+	lrg_analytics_event_set_property_int (event, "frame", (gint64) frame_index);
+	lrg_analytics_backend_send_event (LRG_ANALYTICS_BACKEND (st->backend), event, NULL);
+}
+
+static void
+analytics_teardown (gpointer state)
+{
+	AnalyticsState *st = state;
+
+	g_clear_object (&st->backend);
+	g_cancellable_cancel (st->server.cancellable);
+	g_thread_join (st->server.thread);
+	g_socket_listener_close (st->server.listener);
+	g_clear_object (&st->server.listener);
+	g_clear_object (&st->server.cancellable);
+	g_free (st);
+}
+
+/* ==========================================================================
  * Driver
  * ========================================================================== */
 
@@ -1675,8 +2198,14 @@ static const BenchScenario scenarios[] = {
 	  grl_draw_setup, grl_draw_frame, grl_draw_teardown },
 	{ "gui", "immediate-mode GUI panel, 64 rows of widgets",
 	  gui_setup, gui_frame, gui_teardown },
+	{ "pacing", "1 ms of steady work per frame; run with --fps N to measure pacing",
+	  pacing_setup, pacing_frame, pacing_teardown },
 	{ "animator", "16 animators on 60-bone skeletons, crossfading every second",
 	  anim_setup, anim_frame, anim_teardown },
+	{ "skinned-models", "50 actors on one 3880-vertex 32-bone glTF model, GPU skinning",
+	  skin_setup, skin_frame, skin_teardown },
+	{ "skinned-models-cpu", "skinned-models with GPU skinning off (CPU skin + VBO upload)",
+	  skin_cpu_setup, skin_frame, skin_teardown },
 	{ "physics", "500 dynamic boxes in a 2D physics world, one step a frame",
 	  phys_setup, phys_frame, phys_teardown },
 	{ "tweens", "2000 ping-pong property tweens through a tween manager",
@@ -1689,6 +2218,14 @@ static const BenchScenario scenarios[] = {
 	  pool_setup, pool_frame, pool_teardown },
 	{ "portals", "64 portal-visibility updates a frame in a 24x24 sector grid",
 	  portal_setup, portal_frame, portal_teardown },
+	{ "autosave", "light frames, a 4000-key background save every 60 frames",
+	  autosave_setup, autosave_frame, autosave_teardown },
+	{ "autosave-sync", "as autosave, saving synchronously (lrg_save_manager_save)",
+	  autosave_sync_setup, autosave_frame, autosave_teardown },
+	{ "analytics", "an analytics event a frame, HTTP backend, 20 ms localhost server",
+	  analytics_setup, analytics_frame, analytics_teardown },
+	{ "despawn", "4000 sprite objects, 1000 removed and 1000 added every 60 frames",
+	  despawn_setup, despawn_frame, despawn_teardown },
 };
 
 static gint
@@ -1714,8 +2251,97 @@ scenario_selected (const gchar *name)
 	return FALSE;
 }
 
-/* Runs one scenario: warm up, then time opt_frames whole frames (begin
- * drawing, scenario work, end drawing including the buffer swap). */
+/* Frame statistics over one run. "Lows" follow the usual definition:
+ * the frame rate of the average of the slowest 1% (5%) of frames. Jitter
+ * is the standard deviation of the change in frame time from one frame to
+ * the next: steady 20 ms frames have none, alternating 10/30 ms frames a
+ * lot, though both average 50 fps. */
+typedef struct
+{
+	gdouble mean_ms;
+	gdouble median_ms;
+	gdouble p95_ms;
+	gdouble p99_ms;
+	gdouble max_ms;
+	gdouble fps;
+	gdouble low1_fps;
+	gdouble low5_fps;
+	gdouble jitter_ms;
+	gdouble work_median_ms;
+	gdouble work_p99_ms;
+} BenchStats;
+
+/* Mean of the slowest @fraction of @sorted (ascending), as a frame rate. */
+static gdouble
+low_fps (const gdouble *sorted,
+         guint          n,
+         gdouble        fraction)
+{
+	guint   count;
+	guint   i;
+	gdouble sum;
+
+	count = (guint) ((gdouble) n * fraction);
+	if (count < 1)
+		count = 1;
+	sum = 0.0;
+	for (i = n - count; i < n; i++)
+		sum += sorted[i];
+	return 1000.0 / (sum / (gdouble) count);
+}
+
+static void
+bench_stats (const gdouble *frames,
+             const gdouble *work,
+             guint          n,
+             BenchStats    *out)
+{
+	g_autofree gdouble *sorted = NULL;
+	g_autofree gdouble *wsorted = NULL;
+	gdouble             total;
+	gdouble             dsum;
+	gdouble             dsq;
+	guint               i;
+
+	sorted = g_memdup2 (frames, sizeof (gdouble) * n);
+	wsorted = g_memdup2 (work, sizeof (gdouble) * n);
+	qsort (sorted, n, sizeof (gdouble), compare_double);
+	qsort (wsorted, n, sizeof (gdouble), compare_double);
+
+	total = 0.0;
+	for (i = 0; i < n; i++)
+		total += frames[i];
+
+	/* frame-to-frame change in frame time */
+	dsum = 0.0;
+	dsq = 0.0;
+	for (i = 1; i < n; i++)
+	{
+		gdouble d = frames[i] - frames[i - 1];
+
+		dsum += d;
+		dsq += d * d;
+	}
+
+	out->mean_ms = total / n;
+	out->median_ms = sorted[n / 2];
+	out->p95_ms = sorted[(n * 95) / 100];
+	out->p99_ms = sorted[MIN (n - 1, (n * 99) / 100)];
+	out->max_ms = sorted[n - 1];
+	out->fps = 1000.0 / out->mean_ms;
+	out->low1_fps = low_fps (sorted, n, 0.01);
+	out->low5_fps = low_fps (sorted, n, 0.05);
+	out->jitter_ms = n > 2
+		? sqrt (MAX (0.0, dsq / (n - 1) - (dsum / (n - 1)) * (dsum / (n - 1))))
+		: 0.0;
+	out->work_median_ms = wsorted[n / 2];
+	out->work_p99_ms = wsorted[MIN (n - 1, (n * 99) / 100)];
+}
+
+/* Runs one scenario: warm up, then time opt_frames frames. A frame's time
+ * is the interval between consecutive returns from end-drawing (so it
+ * includes the buffer swap and, with --fps, the frame limiter's wait),
+ * the way a player experiences it. */
 static void
 run_scenario (GrlWindow           *window,
               const BenchScenario *sc,
@@ -1724,8 +2350,8 @@ run_scenario (GrlWindow           *window,
 	g_autofree gdouble *samples = NULL;
 	g_autofree gdouble *work = NULL;
 	gpointer            state;
-	gdouble             total;
-	gdouble             work_total;
+	BenchStats          st;
+	gint64              last_end;
 	guint               i;
 	guint               n;
 	g_autoptr(GrlColor) bg = NULL;
@@ -1736,19 +2362,16 @@ run_scenario (GrlWindow           *window,
 	bg = grl_color_new (20, 20, 30, 255);
 	state = sc->setup ();
 
-	total = 0.0;
-	work_total = 0.0;
+	last_end = 0;
 	for (i = 0; i < n + BENCH_WARMUP_FRAMES; i++)
 	{
-		gint64 t0;
 		gint64 w0;
 		gint64 w1;
 		gint64 t1;
 
-		/* Whole frame (t0..t1), and the scenario's own CPU work (w0..w1):
-		 * its update and draw submission, without the driver's flush and
-		 * buffer swap, which dominate under a software rasterizer. */
-		t0 = g_get_monotonic_time ();
+		/* The scenario's own CPU work (w0..w1) is also recorded: its update
+		 * and draw submission without the driver's flush and swap, which
+		 * dominate under a software rasterizer. */
 		grl_window_begin_drawing (window);
 		grl_draw_clear_background (bg);
 		w0 = g_get_monotonic_time ();
@@ -1759,29 +2382,29 @@ run_scenario (GrlWindow           *window,
 
 		if (i >= BENCH_WARMUP_FRAMES)
 		{
-			samples[i - BENCH_WARMUP_FRAMES] = (gdouble) (t1 - t0) / 1000.0;
+			samples[i - BENCH_WARMUP_FRAMES] = (gdouble) (t1 - last_end) / 1000.0;
 			work[i - BENCH_WARMUP_FRAMES] = (gdouble) (w1 - w0) / 1000.0;
-			total += samples[i - BENCH_WARMUP_FRAMES];
-			work_total += work[i - BENCH_WARMUP_FRAMES];
 		}
+		last_end = t1;
 	}
 
 	sc->teardown (state);
 
-	qsort (samples, n, sizeof (gdouble), compare_double);
-	qsort (work, n, sizeof (gdouble), compare_double);
+	bench_stats (samples, work, n, &st);
 	if (yaml)
-		g_print ("- scenario: %s\n  frames: %u\n  mean_ms: %.3f\n"
-		         "  median_ms: %.3f\n  p95_ms: %.3f\n  fps: %.1f\n"
-		         "  work_mean_ms: %.3f\n  work_median_ms: %.3f\n",
-		         sc->name, n, total / n, samples[n / 2],
-		         samples[(n * 95) / 100], 1000.0 / (total / n),
-		         work_total / n, work[n / 2]);
+		g_print ("- scenario: %s\n  frames: %u\n  target_fps: %d\n"
+		         "  fps: %.1f\n  low1_fps: %.1f\n  low5_fps: %.1f\n"
+		         "  mean_ms: %.3f\n  median_ms: %.3f\n  p95_ms: %.3f\n"
+		         "  p99_ms: %.3f\n  max_ms: %.3f\n  jitter_ms: %.3f\n"
+		         "  work_median_ms: %.3f\n  work_p99_ms: %.3f\n",
+		         sc->name, n, opt_fps, st.fps, st.low1_fps, st.low5_fps,
+		         st.mean_ms, st.median_ms, st.p95_ms, st.p99_ms, st.max_ms,
+		         st.jitter_ms, st.work_median_ms, st.work_p99_ms);
 	else
-		g_print ("%-14s frame mean %8.3f ms  median %8.3f ms  p95 %8.3f ms  %8.1f fps"
-		         " | work median %8.3f ms\n",
-		         sc->name, total / n, samples[n / 2],
-		         samples[(n * 95) / 100], 1000.0 / (total / n), work[n / 2]);
+		g_print ("%-14s %8.1f fps  1%% low %8.1f  5%% low %8.1f  p99 %7.3f ms"
+		         "  max %7.3f ms  jitter %6.3f ms | work median %7.3f p99 %7.3f ms\n",
+		         sc->name, st.fps, st.low1_fps, st.low5_fps, st.p99_ms,
+		         st.max_ms, st.jitter_ms, st.work_median_ms, st.work_p99_ms);
 }
 
 static const gchar *license_text =
@@ -1810,6 +2433,10 @@ main (int    argc,
 		  "Run only this scenario (repeatable)", "NAME" },
 		{ "frames", 'f', 0, G_OPTION_ARG_INT, &opt_frames,
 		  "Measured frames per scenario (default 300)", "N" },
+		{ "fps", 0, 0, G_OPTION_ARG_INT, &opt_fps,
+		  "Cap the frame rate (default 0: uncapped); measures pacing", "N" },
+		{ "no-pin", 0, 0, G_OPTION_ARG_NONE, &opt_no_pin,
+		  "Do not keep the main thread on performance cores (as LRG_CPU_AFFINITY=none)", NULL },
 		{ "output", 'o', 0, G_OPTION_ARG_STRING, &opt_output,
 		  "Output format: text (default) or yaml", "FORMAT" },
 		{ "list", 'l', 0, G_OPTION_ARG_NONE, &opt_list,
@@ -1826,6 +2453,7 @@ main (int    argc,
 		"  lrg-bench                       run every scenario\n"
 		"  lrg-bench -s ecs-sprites -s gui run two scenarios\n"
 		"  lrg-bench -f 1000 -o yaml       longer run, YAML results\n"
+		"  lrg-bench -s pacing --fps 60    frame pacing at a 60 fps cap\n"
 		"\nRuns uncapped in a small window; needs a display (make run-bench\n"
 		"starts Xvfb when DISPLAY is unset).\n");
 	if (!g_option_context_parse (octx, &argc, &argv, &error))
@@ -1848,9 +2476,14 @@ main (int    argc,
 		opt_frames = 10;
 	yaml = g_strcmp0 (opt_output, "yaml") == 0;
 
+	/* What LrgEngine does at startup: keep the main thread (and the GL
+	 * driver threads the window starts) on a hybrid CPU's fast cores */
+	if (!opt_no_pin)
+		lrg_cpu_affinity_pin_to_performance_cores (NULL);
+
 	SetTraceLogLevel (LOG_WARNING);
 	window = grl_window_new (BENCH_WIDTH, BENCH_HEIGHT, "lrg-bench");
-	grl_window_set_target_fps (window, 0);
+	grl_window_set_target_fps (window, opt_fps > 0 ? opt_fps : 0);
 
 	for (i = 0; i < G_N_ELEMENTS (scenarios); i++)
 		if (scenario_selected (scenarios[i].name))

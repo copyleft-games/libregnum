@@ -14,6 +14,7 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <math.h>
 #include <string.h>
 
 #define TEST_GLB_MAGIC      (0x46546C67u)  /* "glTF" */
@@ -313,4 +314,264 @@ test_glb_write_two_mesh_model (const gchar *path)
         "{\"bufferView\":1,\"componentType\":5123,\"count\":6,\"type\":\"SCALAR\"},"
         "{\"bufferView\":2,\"componentType\":5126,\"count\":6,\"type\":\"VEC3\",\"min\":[0,0,0],\"max\":[1,0,1]}]}",
         bin, sizeof bin);
+}
+
+/* test_glb_put_floats / test_glb_put_bytes:
+ * Append raw little-endian payload to a BIN chunk under construction. */
+G_GNUC_UNUSED static void
+test_glb_put_floats (GByteArray   *out,
+                     const gfloat *values,
+                     guint         n)
+{
+    g_byte_array_append (out, (const guint8 *)values, n * (guint)sizeof (gfloat));
+}
+
+G_GNUC_UNUSED static void
+test_glb_pad4 (GByteArray *out)
+{
+    guint8 zero = 0;
+
+    while (out->len % 4 != 0)
+        g_byte_array_append (out, &zero, 1);
+}
+
+/*
+ * test_glb_write_skinned_tube:
+ * @path: destination
+ * @rings: segments along the tube (rings + 1 vertex rings)
+ * @sides: vertices around each ring
+ * @bones: joints in the chain, 1..255
+ * @clip_names: (array length=n_clips): animation names
+ * @n_clips: number of animations
+ *
+ * A vertical tube 2 units tall and 0.25 in radius, standing on the origin,
+ * skinned to a chain of @bones joints ("Bone0" at the origin, each next
+ * one 2 / @bones higher) under an "Armature" root. Vertices blend
+ * linearly between the two nearest joints, so most carry two influences.
+ * Vertex colours alternate in a checker of rings and sides, normals point
+ * outwards. Every clip lasts 1 s (61 raylib keyframes) and rotates each
+ * joint from rest to a clip- and joint-dependent angle and back, about Z
+ * for even clips and X for odd ones, so the tube curls and sways.
+ *
+ * Binary layout: positions | normals | colours (u8 RGBA) | joints (u8) |
+ * weights (f32) | indices (u16, padded) | key times | one rotation
+ * output (3 quaternions) per clip and joint.
+ */
+G_GNUC_UNUSED static void
+test_glb_write_skinned_tube (const gchar        *path,
+                             guint               rings,
+                             guint               sides,
+                             guint               bones,
+                             const gchar *const *clip_names,
+                             guint               n_clips)
+{
+    static const gfloat times[3] = { 0.0f, 0.5f, 1.0f };
+    GByteArray *bin = g_byte_array_new ();
+    GString    *json = g_string_new (NULL);
+    guint       n_vertices = (rings + 1) * sides;
+    guint       n_indices = rings * sides * 6;
+    gfloat      height = 2.0f;
+    gfloat      radius = 0.25f;
+    gfloat      segment;
+    gsize       off_normals, off_colors, off_joints, off_weights, off_indices;
+    gsize       off_times, off_rotations;
+    guint       r, k, c, b;
+
+    g_assert_cmpuint (bones, >=, 1);
+    g_assert_cmpuint (bones, <=, 255);
+    g_assert_cmpuint (sides, >=, 3);
+    g_assert_cmpuint (n_vertices, <=, 65535);
+    segment = height / (gfloat)bones;
+
+    /* positions */
+    for (r = 0; r <= rings; r++)
+        for (k = 0; k < sides; k++)
+        {
+            gfloat a = 2.0f * (gfloat)G_PI * (gfloat)k / (gfloat)sides;
+            gfloat v[3];
+
+            v[0] = radius * cosf (a);
+            v[1] = height * (gfloat)r / (gfloat)rings;
+            v[2] = radius * sinf (a);
+            test_glb_put_floats (bin, v, 3);
+        }
+    /* normals */
+    off_normals = bin->len;
+    for (r = 0; r <= rings; r++)
+        for (k = 0; k < sides; k++)
+        {
+            gfloat a = 2.0f * (gfloat)G_PI * (gfloat)k / (gfloat)sides;
+            gfloat n[3];
+
+            n[0] = cosf (a);
+            n[1] = 0.0f;
+            n[2] = sinf (a);
+            test_glb_put_floats (bin, n, 3);
+        }
+    /* colours: a checker of rings and sides */
+    off_colors = bin->len;
+    for (r = 0; r <= rings; r++)
+        for (k = 0; k < sides; k++)
+        {
+            guint8 rgba[4];
+
+            rgba[0] = ((r / 2 + k / 2) % 2 == 0) ? 255 : 60;
+            rgba[1] = (guint8)(80 + (175 * r) / MAX (rings, 1));
+            rgba[2] = (guint8)(255 - (200 * k) / sides);
+            rgba[3] = 255;
+            g_byte_array_append (bin, rgba, 4);
+        }
+    /* joints and weights: linear between the two nearest joint centres */
+    off_joints = bin->len;
+    for (r = 0; r <= rings; r++)
+        for (k = 0; k < sides; k++)
+        {
+            gfloat f = (height * (gfloat)r / (gfloat)rings) / segment;
+            guint  j = MIN ((guint)floorf (f), bones - 1);
+            guint8 ids[4] = { 0, 0, 0, 0 };
+
+            ids[0] = (guint8)j;
+            if (f - (gfloat)j > 0.5f && j + 1 < bones)
+                ids[1] = (guint8)(j + 1);
+            else if (f - (gfloat)j < 0.5f && j > 0)
+                ids[1] = (guint8)(j - 1);
+            g_byte_array_append (bin, ids, 4);
+        }
+    off_weights = bin->len;
+    for (r = 0; r <= rings; r++)
+        for (k = 0; k < sides; k++)
+        {
+            gfloat f = (height * (gfloat)r / (gfloat)rings) / segment;
+            guint  j = MIN ((guint)floorf (f), bones - 1);
+            gfloat frac = f - (gfloat)j;
+            gfloat w[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+
+            if (frac > 0.5f && j + 1 < bones)
+            {
+                w[0] = 1.5f - frac;
+                w[1] = frac - 0.5f;
+            }
+            else if (frac < 0.5f && j > 0)
+            {
+                w[0] = 0.5f + frac;
+                w[1] = 0.5f - frac;
+            }
+            test_glb_put_floats (bin, w, 4);
+        }
+    /* indices */
+    off_indices = bin->len;
+    for (r = 0; r < rings; r++)
+        for (k = 0; k < sides; k++)
+        {
+            guint16 a = (guint16)(r * sides + k);
+            guint16 b2 = (guint16)(r * sides + (k + 1) % sides);
+            guint16 c2 = (guint16)((r + 1) * sides + k);
+            guint16 d = (guint16)((r + 1) * sides + (k + 1) % sides);
+            guint16 tri[6];
+
+            tri[0] = a;  tri[1] = c2; tri[2] = b2;
+            tri[3] = b2; tri[4] = c2; tri[5] = d;
+            g_byte_array_append (bin, (const guint8 *)tri, sizeof tri);
+        }
+    test_glb_pad4 (bin);
+    off_times = bin->len;
+    test_glb_put_floats (bin, times, 3);
+    /* rotations: rest, bent, rest for every clip and joint */
+    off_rotations = bin->len;
+    for (c = 0; c < n_clips; c++)
+        for (b = 0; b < bones; b++)
+        {
+            gfloat angle = 0.6f * sinf ((gfloat)b * 0.7f + (gfloat)c * 1.3f + 0.5f);
+            gfloat s = sinf (angle * 0.5f);
+            gfloat q[12] = { 0, 0, 0, 1,  0, 0, 0, 1,  0, 0, 0, 1 };
+
+            q[7] = cosf (angle * 0.5f);
+            if (c % 2 == 0)
+                q[6] = s;
+            else
+                q[4] = s;
+            test_glb_put_floats (bin, q, 12);
+        }
+
+    /* nodes: Armature, the joint chain, then the body */
+    g_string_append_printf (json,
+        "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
+        "\"nodes\":[{\"name\":\"Armature\",\"children\":[1,%u]}", bones + 1);
+    for (b = 0; b < bones; b++)
+    {
+        gchar y[G_ASCII_DTOSTR_BUF_SIZE];
+
+        /* locale-independent: JSON wants a decimal point */
+        g_ascii_dtostr (y, sizeof y, b == 0 ? 0.0 : (gdouble)segment);
+        g_string_append_printf (json, ",{\"name\":\"Bone%u\",\"translation\":[0,%s,0]", b, y);
+        if (b + 1 < bones)
+            g_string_append_printf (json, ",\"children\":[%u]", b + 2);
+        g_string_append (json, "}");
+    }
+    g_string_append (json,
+        ",{\"name\":\"Body\",\"mesh\":0,\"skin\":0}],"
+        "\"meshes\":[{\"name\":\"Body\",\"primitives\":[{\"attributes\":{"
+        "\"POSITION\":0,\"NORMAL\":1,\"COLOR_0\":2,\"JOINTS_0\":3,\"WEIGHTS_0\":4},"
+        "\"indices\":5}]}],"
+        "\"skins\":[{\"joints\":[");
+    for (b = 0; b < bones; b++)
+        g_string_append_printf (json, "%s%u", b > 0 ? "," : "", b + 1);
+    g_string_append (json, "]}],\"animations\":[");
+    for (c = 0; c < n_clips; c++)
+    {
+        g_string_append_printf (json, "%s{\"name\":\"%s\",\"channels\":[",
+                                c > 0 ? "," : "", clip_names[c]);
+        for (b = 0; b < bones; b++)
+            g_string_append_printf (json,
+                "%s{\"sampler\":%u,\"target\":{\"node\":%u,\"path\":\"rotation\"}}",
+                b > 0 ? "," : "", b, b + 1);
+        g_string_append (json, "],\"samplers\":[");
+        for (b = 0; b < bones; b++)
+            g_string_append_printf (json,
+                "%s{\"input\":6,\"output\":%u,\"interpolation\":\"LINEAR\"}",
+                b > 0 ? "," : "", 7 + c * bones + b);
+        g_string_append (json, "]}");
+    }
+
+    /* buffer views 0..6, then one per rotation output */
+    g_string_append_printf (json,
+        "],\"buffers\":[{\"byteLength\":%u}],\"bufferViews\":["
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":%u},"
+        "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":%u},"
+        "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":%u},"
+        "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":%u},"
+        "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":%u},"
+        "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":%u},"
+        "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":12}",
+        bin->len, n_vertices * 12,
+        (guint)off_normals, n_vertices * 12,
+        (guint)off_colors, n_vertices * 4,
+        (guint)off_joints, n_vertices * 4,
+        (guint)off_weights, n_vertices * 16,
+        (guint)off_indices, n_indices * 2,
+        (guint)off_times);
+    for (c = 0; c < n_clips * bones; c++)
+        g_string_append_printf (json, ",{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":48}",
+                                (guint)off_rotations + c * 48);
+    g_string_append_printf (json,
+        "],\"accessors\":["
+        "{\"bufferView\":0,\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\","
+        "\"min\":[-0.25,0,-0.25],\"max\":[0.25,2,0.25]},"
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"},"
+        "{\"bufferView\":2,\"componentType\":5121,\"normalized\":true,\"count\":%u,\"type\":\"VEC4\"},"
+        "{\"bufferView\":3,\"componentType\":5121,\"count\":%u,\"type\":\"VEC4\"},"
+        "{\"bufferView\":4,\"componentType\":5126,\"count\":%u,\"type\":\"VEC4\"},"
+        "{\"bufferView\":5,\"componentType\":5123,\"count\":%u,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":6,\"componentType\":5126,\"count\":3,\"type\":\"SCALAR\",\"min\":[0],\"max\":[1]}",
+        n_vertices,
+        n_vertices, n_vertices, n_vertices, n_vertices, n_indices);
+    for (c = 0; c < n_clips * bones; c++)
+        g_string_append_printf (json,
+            ",{\"bufferView\":%u,\"componentType\":5126,\"count\":3,\"type\":\"VEC4\"}",
+            7 + c);
+    g_string_append (json, "]}");
+
+    test_glb_write (path, json->str, bin->data, bin->len);
+    g_string_free (json, TRUE);
+    g_byte_array_unref (bin);
 }

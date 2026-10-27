@@ -73,7 +73,7 @@ lrg_decider_new (const gchar  *provider,
 /**
  * lrg_decider_new_scripted:
  * @func: (scope notified): what answers
- * @user_data: (closure): its data
+ * @user_data: its data
  * @destroy: (nullable): frees @user_data with the decider
  *
  * A decider that answers from @func, at once (on the next main loop
@@ -155,7 +155,7 @@ lrg_decider_set_timeout_ms (LrgDecider *self,
  * @cancellable: (nullable): a #GCancellable
  * @callback: (scope async): called with the answer, on the thread-default
  *   main context of this call
- * @user_data: (closure): its data
+ * @user_data: its data
  *
  * Asks the model.
  */

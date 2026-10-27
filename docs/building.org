@@ -313,6 +313,8 @@ Frame-time benchmarks live in =bench/= (=make -C bench run=); see [[file:perform
 :END:
 The release version is =VERSION_MAJOR=, =VERSION_MINOR= and =VERSION_MICRO= in =config.mk=; it is compiled in as =LRG_VERSION_STRING= / =LRG_VERSION_*= (=lrg-version.h=) and written to the =.pc= file. Every release on master is an annotated tag =v<MAJOR>.<MINOR>.<MICRO>= on the commit that sets it, starting at =v0.1.0=. Micro bumps for fixes and small changes that alter the build, minor for major features or compatibility breaks; the full rules are in =AGENTS.md= ("Versioning"). =API_VERSION= (GIR namespace, =libregnum-1.pc=) and =SO_VERSION= are independent of the release version.
 
+The bundled graylib (=deps/graylib=) follows the same scheme and always shares libregnum's MAJOR.MINOR: libregnum =v0.2.x= ships graylib =v0.2.x=, and only the micro versions move independently. =make test= checks it (=tests/test-version-lockstep.sh=).
+
 To run tests manually:
 
 #+begin_src sh

@@ -140,6 +140,14 @@ commit that sets it. `v0.1.0` is the first tagged release.
 - `API_VERSION` (GIR namespace, `.pc` name, parallel installability) and `SO_VERSION` are
   separate and not changed by these bumps; they move only on an ABI break, and only when asked.
 
+**graylib moves in lockstep on MAJOR.MINOR.** libregnum `vX.Y.*` always bundles a graylib
+`vX.Y.*`; only the micro versions move independently (graylib's rules are in its `CLAUDE.md`).
+When libregnum bumps its minor, graylib is bumped to the same `X.Y.0` in the same landing (a
+version-only graylib commit is fine), tagged and pushed first; when a graylib change is worth a
+minor, libregnum takes the same minor bump when it adopts it. `make test` runs
+`tests/test-version-lockstep.sh`, which fails when `config.mk` and `deps/graylib/config.mk`
+disagree on MAJOR.MINOR.
+
 One bump per landing, the highest kind it contains: a merge that brings in several commits or
 branches bumps once (minor if any part is a major feature, else micro).
 

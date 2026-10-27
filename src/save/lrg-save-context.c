@@ -10,6 +10,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_SAVE
 
 #include "lrg-save-context.h"
+#include "lrg-save-context-private.h"
 #include "../lrg-log.h"
 #include <yaml-glib.h>
 #include <gio/gio.h>
@@ -704,21 +705,23 @@ lrg_save_context_has_key (LrgSaveContext *self,
  * ========================================================================== */
 
 /*
- * lrg_save_context_to_string:
- * @self: a #LrgSaveContext
+ * lrg_save_context_take_document:
+ * @self: a #LrgSaveContext in save mode
  * @error: return location for a #GError
  *
- * Generates the YAML string from the save context.
+ * Finishes the document (the version key and the root mapping's end) and
+ * returns it. Generating text from the returned document touches nothing
+ * in @self, so the save manager can do that, and the file write, on its
+ * writer thread. A context is finished once: call this or
+ * lrg_save_context_to_string(), not both.
  *
- * Returns: (transfer full) (nullable): the YAML string
+ * Returns: (transfer full) (nullable): the finished document
  */
-gchar *
-lrg_save_context_to_string (LrgSaveContext  *self,
-                            GError         **error)
+YamlDocument *
+lrg_save_context_take_document (LrgSaveContext  *self,
+                                GError         **error)
 {
-    g_autoptr(YamlGenerator) generator = NULL;
-    g_autoptr(YamlDocument) doc = NULL;
-    gchar                    *yaml_str;
+    YamlDocument *doc;
 
     g_return_val_if_fail (LRG_IS_SAVE_CONTEXT (self), NULL);
     g_return_val_if_fail (self->mode == LRG_SAVE_CONTEXT_MODE_SAVE, NULL);
@@ -742,11 +745,57 @@ lrg_save_context_to_string (LrgSaveContext  *self,
         return NULL;
     }
 
+    return doc;
+}
+
+/*
+ * lrg_save_context_document_to_string:
+ * @doc: a document from lrg_save_context_take_document()
+ * @error: return location for a #GError
+ *
+ * Generates the YAML text of a finished save document. Safe to call on
+ * any thread that owns @doc.
+ *
+ * Returns: (transfer full) (nullable): the YAML string
+ */
+gchar *
+lrg_save_context_document_to_string (YamlDocument  *doc,
+                                     GError       **error)
+{
+    g_autoptr(YamlGenerator) generator = NULL;
+
+    g_return_val_if_fail (doc != NULL, NULL);
+
     generator = yaml_generator_new ();
     yaml_generator_set_document (generator, doc);
-    yaml_str = yaml_generator_to_data (generator, NULL, error);
+    return yaml_generator_to_data (generator, NULL, error);
+}
 
-    return yaml_str;
+/*
+ * lrg_save_context_to_string:
+ * @self: a #LrgSaveContext
+ * @error: return location for a #GError
+ *
+ * Generates the YAML string from the save context.
+ *
+ * Returns: (transfer full) (nullable): the YAML string
+ */
+gchar *
+lrg_save_context_to_string (LrgSaveContext  *self,
+                            GError         **error)
+{
+    g_autoptr(YamlDocument) doc = NULL;
+
+    g_return_val_if_fail (LRG_IS_SAVE_CONTEXT (self), NULL);
+    g_return_val_if_fail (self->mode == LRG_SAVE_CONTEXT_MODE_SAVE, NULL);
+    g_return_val_if_fail (self->builder != NULL, NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    doc = lrg_save_context_take_document (self, error);
+    if (doc == NULL)
+        return NULL;
+
+    return lrg_save_context_document_to_string (doc, error);
 }
 
 /*
