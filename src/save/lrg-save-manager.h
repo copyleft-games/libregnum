@@ -188,6 +188,68 @@ gboolean lrg_save_manager_save_with_description (LrgSaveManager *self,
                                                   GError **error);
 
 /**
+ * lrg_save_manager_save_in_background:
+ * @self: a #LrgSaveManager
+ * @slot_name: the slot identifier
+ * @description: (nullable): the user-visible save description
+ * @error: return location for a #GError
+ *
+ * Saves without stalling the frame: like
+ * lrg_save_manager_save_with_description(), the registered saveables'
+ * save methods run now, on the calling thread, but generating the YAML
+ * text and writing the file (which fsyncs when it replaces a save) happen
+ * on the manager's writer thread. Background saves are written one at a
+ * time, in the order they were made; a later synchronous save, load or
+ * delete first waits for them.
+ *
+ * #LrgSaveManager::save-started is emitted now. #LrgSaveManager::save-completed
+ * is emitted on the calling thread once the file is written: from the
+ * thread-default main context current at the first background save, when
+ * that context is iterated, or else from the next lrg_save_manager_flush()
+ * or synchronous save, load or delete. A loop that never iterates a main
+ * context (the standalone game loop) gets its completions from those calls.
+ *
+ * Use it from #LrgGameTemplateClass.on_auto_save or any save made during
+ * play; call lrg_save_manager_flush() before quitting to be sure the last
+ * save is on disk.
+ *
+ * Returns: %TRUE if the state was collected and the write queued; %FALSE
+ *   with @error set if a saveable failed (nothing is written then). Write
+ *   errors are reported by save-completed and lrg_save_manager_flush().
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_save_manager_save_in_background (LrgSaveManager  *self,
+                                              const gchar     *slot_name,
+                                              const gchar     *description,
+                                              GError         **error);
+
+/**
+ * lrg_save_manager_flush:
+ * @self: a #LrgSaveManager
+ * @error: return location for a #GError
+ *
+ * Blocks until every queued background save is written, then emits
+ * #LrgSaveManager::save-completed for those not yet reported.
+ *
+ * Returns: %TRUE if every background save since the previous flush was
+ *   written; %FALSE with @error set to the first write error otherwise
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_save_manager_flush (LrgSaveManager  *self,
+                                 GError         **error);
+
+/**
+ * lrg_save_manager_is_saving:
+ * @self: a #LrgSaveManager
+ *
+ * Whether a background save is queued or being written.
+ *
+ * Returns: %TRUE while a background save is in progress
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_save_manager_is_saving (LrgSaveManager *self);
+
+/**
  * lrg_save_manager_load:
  * @self: a #LrgSaveManager
  * @slot_name: the slot identifier
