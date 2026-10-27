@@ -50,6 +50,7 @@ struct _BenchScenario
 
 static gint    opt_frames = 300;
 static gint    opt_fps = 0;
+static gboolean opt_no_pin = FALSE;
 static gchar **opt_scenarios = NULL;
 static gchar  *opt_output = NULL;
 static gboolean opt_list = FALSE;
@@ -1934,6 +1935,8 @@ main (int    argc,
 		  "Measured frames per scenario (default 300)", "N" },
 		{ "fps", 0, 0, G_OPTION_ARG_INT, &opt_fps,
 		  "Cap the frame rate (default 0: uncapped); measures pacing", "N" },
+		{ "no-pin", 0, 0, G_OPTION_ARG_NONE, &opt_no_pin,
+		  "Do not keep the main thread on performance cores (as LRG_CPU_AFFINITY=none)", NULL },
 		{ "output", 'o', 0, G_OPTION_ARG_STRING, &opt_output,
 		  "Output format: text (default) or yaml", "FORMAT" },
 		{ "list", 'l', 0, G_OPTION_ARG_NONE, &opt_list,
@@ -1972,6 +1975,11 @@ main (int    argc,
 	if (opt_frames < 10)
 		opt_frames = 10;
 	yaml = g_strcmp0 (opt_output, "yaml") == 0;
+
+	/* What LrgEngine does at startup: keep the main thread (and the GL
+	 * driver threads the window starts) on a hybrid CPU's fast cores */
+	if (!opt_no_pin)
+		lrg_cpu_affinity_pin_to_performance_cores (NULL);
 
 	SetTraceLogLevel (LOG_WARNING);
 	window = grl_window_new (BENCH_WIDTH, BENCH_HEIGHT, "lrg-bench");

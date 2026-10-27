@@ -56,6 +56,7 @@ enum
     PROP_FIXED_TIMESTEP,
     PROP_MAX_FRAME_TIME,
     PROP_MAX_UPDATES_PER_FRAME,
+    PROP_SNAP_FRAME_DELTA,
 
     /* Application */
     PROP_APP_ID,
@@ -360,6 +361,31 @@ template_handle_global_input_default (LrgGameTemplate *self)
     return FALSE;
 }
 
+/*
+ * lrg_game_template_snap_delta:
+ *
+ * @delta snapped to the nearest whole number (1..@max_steps) of @step
+ * when it is within LRG_FRAME_DELTA_SNAP_TOLERANCE of it; otherwise
+ * @delta unchanged.
+ */
+gdouble
+lrg_game_template_snap_delta (gdouble delta,
+                              gdouble step,
+                              gint    max_steps)
+{
+    gdouble steps;
+
+    if (step <= 0.0 || delta <= 0.0)
+        return delta;
+
+    steps = floor (delta / step + 0.5);
+    if (steps >= 1.0 && steps <= (gdouble) MAX (max_steps, 1) &&
+        fabs (delta - steps * step) < LRG_FRAME_DELTA_SNAP_TOLERANCE)
+        return steps * step;
+
+    return delta;
+}
+
 void
 lrg_game_template_update (LrgGameTemplate *self,
                           gdouble          delta)
@@ -384,6 +410,12 @@ lrg_game_template_update (LrgGameTemplate *self,
                    "Frame drop: delta %.3f clamped to %.3f",
                    raw_delta, delta);
     }
+
+    /* Snap timing noise away so a display at the step rate gets exactly
+     * one fixed update per frame (see LrgGameTemplate:snap-frame-delta) */
+    if (priv->use_fixed_timestep && priv->snap_frame_delta)
+        delta = lrg_game_template_snap_delta (delta, priv->fixed_timestep,
+                                              priv->max_updates_per_frame);
 
     /* Apply time scale (for hit stop) */
     if (priv->hit_stop_remaining > 0)
@@ -868,6 +900,9 @@ lrg_game_template_get_property (GObject    *object,
     case PROP_USE_FIXED_TIMESTEP:
         g_value_set_boolean (value, priv->use_fixed_timestep);
         break;
+    case PROP_SNAP_FRAME_DELTA:
+        g_value_set_boolean (value, priv->snap_frame_delta);
+        break;
     case PROP_FIXED_TIMESTEP:
         g_value_set_double (value, priv->fixed_timestep);
         break;
@@ -992,6 +1027,9 @@ lrg_game_template_set_property (GObject      *object,
         break;
     case PROP_USE_FIXED_TIMESTEP:
         priv->use_fixed_timestep = g_value_get_boolean (value);
+        break;
+    case PROP_SNAP_FRAME_DELTA:
+        priv->snap_frame_delta = g_value_get_boolean (value);
         break;
     case PROP_FIXED_TIMESTEP:
         priv->fixed_timestep = g_value_get_double (value);
@@ -1205,6 +1243,27 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
                               G_PARAM_CONSTRUCT);
 
     /* Frame timing properties */
+
+    /**
+     * LrgGameTemplate:snap-frame-delta:
+     *
+     * With a fixed timestep, snap a frame's delta to a whole number of
+     * steps when it is within 0.2 ms of one. A display (or frame cap) at the
+     * step rate delivers frames 16.6-16.8 ms apart rather than exactly
+     * 1/60 s; fed raw to the accumulator, that noise makes some frames run
+     * no update and the next run two, which reads as stutter at a steady
+     * frame rate. Snapping keeps one update per frame. Deltas further from a
+     * multiple (other refresh rates, slow frames) are used unchanged.
+     */
+    properties[PROP_SNAP_FRAME_DELTA] =
+        g_param_spec_boolean ("snap-frame-delta",
+                              "Snap Frame Delta",
+                              "Snap frame deltas close to whole fixed steps",
+                              TRUE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_CONSTRUCT);
+
     properties[PROP_USE_FIXED_TIMESTEP] =
         g_param_spec_boolean ("use-fixed-timestep",
                               "Use Fixed Timestep",
@@ -1505,6 +1564,7 @@ lrg_game_template_init (LrgGameTemplate *self)
     priv->allow_alt_enter = TRUE;
 
     priv->use_fixed_timestep = TRUE;
+    priv->snap_frame_delta = TRUE;
     priv->fixed_timestep = LRG_DEFAULT_FIXED_TIMESTEP;
     priv->max_frame_time = LRG_DEFAULT_MAX_FRAME_TIME;
     priv->max_updates_per_frame = LRG_DEFAULT_MAX_UPDATES_PER_FRAME;

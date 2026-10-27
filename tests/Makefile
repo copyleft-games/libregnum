@@ -59,6 +59,7 @@ TEST_SOURCES := \
 	test-gameplay-utilities.c \
 	test-engine.c \
 	test-random-stream.c \
+	test-cpu-affinity.c \
 	test-timer-manager.c \
 	test-audio-mixer.c \
 	test-nav-mesh.c \

@@ -13,6 +13,7 @@
 
 #include "lrg-editor-app-private.h"
 #include "../../core/lrg-engine.h"
+#include "../../core/lrg-cpu-affinity.h"
 #include "../../gui/lrg-gui-raylib-private.h"
 #include <glib/gstdio.h>
 #include <glib-unix.h>
@@ -1911,6 +1912,42 @@ lrg_editor_app_set_window_size (LrgEditorApp *self,
 	self->height = (gfloat) MAX (height, 240);
 }
 
+/*
+ * editor_frame_cap:
+ *
+ * The editor's frame cap for a monitor refreshing at @refresh Hz: the
+ * largest whole fraction of the refresh rate that is at most 75 fps
+ * (60 on 60/120 Hz, 72 on 144 Hz, 55 on 165 Hz). With vsync on, a cap
+ * that does not divide the refresh rate (60 on 144 Hz) alternates two-
+ * and three-vblank frames, which judders; an even divisor paces evenly.
+ * Unknown refresh rates get 60.
+ */
+static gint
+editor_frame_cap (gint refresh)
+{
+	gint divisor;
+
+	if (refresh <= 0)
+		return 60;
+
+	for (divisor = 1; refresh / divisor > 75; divisor++)
+		;
+	return MAX (refresh / divisor, 30);
+}
+
+/* LRG_CPU_AFFINITY=none (or off, false, 0) keeps the default affinity */
+static gboolean
+editor_cpu_affinity_disabled (void)
+{
+	const gchar *value = g_getenv ("LRG_CPU_AFFINITY");
+
+	return value != NULL &&
+	       (g_ascii_strcasecmp (value, "none") == 0 ||
+	        g_ascii_strcasecmp (value, "off") == 0 ||
+	        g_ascii_strcasecmp (value, "false") == 0 ||
+	        g_strcmp0 (value, "0") == 0);
+}
+
 gint
 lrg_editor_app_run (LrgEditorApp *self)
 {
@@ -1925,6 +1962,12 @@ lrg_editor_app_run (LrgEditorApp *self)
 		return 1;
 	}
 
+	/* Keep the UI thread (and the GL driver threads the window starts) on
+	 * a hybrid CPU's fast cores, as LrgEngine does for games; honours
+	 * LRG_CPU_AFFINITY=none */
+	if (!editor_cpu_affinity_disabled ())
+		lrg_cpu_affinity_pin_to_performance_cores (NULL);
+
 	SetConfigFlags (FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
 	SetTraceLogLevel (LOG_WARNING);
 	InitWindow ((gint) self->width, (gint) self->height, "libregnum editor");
@@ -1935,7 +1978,7 @@ lrg_editor_app_run (LrgEditorApp *self)
 	}
 	SetWindowMinSize (960, 600);
 	SetExitKey (KEY_NULL);
-	SetTargetFPS (60);
+	SetTargetFPS (editor_frame_cap (GetMonitorRefreshRate (GetCurrentMonitor ())));
 	self->window_open = TRUE;
 	self->headless = FALSE;
 

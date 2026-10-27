@@ -133,6 +133,7 @@ my_game_class_init (MyGameClass *klass)
 | =vsync=              | =gboolean=   | TRUE             | Enable vertical sync                      |
 | =target-fps=         | =gint=       | 60               | Target frame rate, 0 to 1000 (0: no limit) |
 | =fixed-timestep=     | =gdouble=    | 1.0/60.0         | Physics update interval                   |
+| =snap-frame-delta=   | =gboolean=   | TRUE             | Snap deltas within 0.2 ms of whole fixed steps |
 | =auto-save-interval= | =gint=       | 300              | Seconds between auto-saves (0 = disabled) |
 
 ** Virtual Methods
@@ -352,6 +353,10 @@ my_game_fixed_update (LrgGameTemplate *template, gdouble fixed_delta)
 gdouble alpha = lrg_game_template_get_interpolation_alpha (template);
 gfloat render_x = prev_x + (curr_x - prev_x) * alpha;
 #+end_src
+
+*Delta snapping.* A display (or frame cap) at the step rate delivers frames 16.6--16.8 ms apart, not exactly 1/60 s. Fed raw to the accumulator that noise makes some frames run no =fixed_update= and the next run two: visible stutter at a steady frame rate. With =snap-frame-delta= (the default) a delta within 0.2 ms of a whole number of steps (1 to =max-updates-per-frame=) is snapped to it, so a 60 Hz display gets exactly one update per frame and a missed vblank exactly two. Deltas further from a multiple (a 144 Hz display, a slow frame) are used unchanged, and timers advance by the same snapped delta as the simulation. Turn it off for frame-exact real-time measurement.
+
+*Higher refresh rates.* With the default 60 Hz step on a 120/144 Hz display, objects move on 60 Hz steps while frames are shown at the display rate; interpolate drawn positions with the alpha above (or raise =fixed-timestep= to the refresh rate) for smooth motion.
 
 ** Window Properties
 :PROPERTIES:

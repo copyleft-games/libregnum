@@ -26,6 +26,13 @@ The engine is *derivable* - subclasses can override virtual methods to customize
 :PROPERTIES:
 :CUSTOM_ID: key-concepts
 :END:
+*** Main thread on performance cores
+:PROPERTIES:
+:CUSTOM_ID: performance-cores
+:END:
+On hybrid CPUs (Intel P/E cores, ARM big.LITTLE, Apple silicon under Asahi), =lrg_engine_startup()= keeps the calling (main) thread on the fast cores before the window and GL driver start their threads, which inherit the restriction (=LrgEngine:pin-performance-cores=, default =TRUE=; =lrg_cpu_affinity_pin_to_performance_cores()=). The scheduler otherwise moves the game loop between core types, onto cold caches and slower clocks, which shows up as frame-time spikes rather than a lower average. On an Alder Lake laptop in =lrg-bench= this raised 1% lows by 25--75% and cut frame-to-frame jitter 2--4x (see [[file:../../performance.org][Performance]]). Cores are ranked by the kernel's =cpu_capacity=, else =cpuinfo_max_freq=; CPUs whose cores are alike, platforms other than Linux and threads already confined (=taskset=, cgroups) are left alone. Set the property to =FALSE= before startup, or run with =LRG_CPU_AFFINITY=none=, to opt out; shutdown restores the original affinity.
+
+
 *** Singleton Pattern
 :PROPERTIES:
 :CUSTOM_ID: singleton-pattern
