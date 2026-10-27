@@ -2166,6 +2166,219 @@ analytics_teardown (gpointer state)
 }
 
 /* ==========================================================================
+ * first-use: features that appear mid-run (the first-use GPU work hitch)
+ * ========================================================================== */
+
+/* the measured frame the features first draw on */
+#define FIRST_USE_FRAME (BENCH_WARMUP_FRAMES + 100)
+
+typedef struct
+{
+	WorldState    *world;
+	SkinState     *skin;
+	LrgCloudLayer *clouds;
+	LrgColorGrade *grade;
+	LrgHeatHaze   *haze;
+	LrgSharpen    *sharpen;
+	GrlTexture    *screen;     /* what the post effects draw through */
+} FirstUseState;
+
+/* how first-use is warmed before it is measured */
+typedef enum
+{
+	FIRST_USE_COLD,     /* not at all: the first draw builds everything */
+	FIRST_USE_QUEUE,    /* the prewarm queue run to the end */
+	FIRST_USE_HIDDEN    /* the queue, then one hidden draw of the scene */
+} FirstUseWarm;
+
+/* the hidden draw of FIRST_USE_HIDDEN draws a frame of the scenario */
+static void first_use_frame (gpointer state,
+                             guint    frame_index);
+
+/*
+ * first_use_setup_mode:
+ * Water (64 patches), 20000 billboards, ~40000 grass blades, a cloud
+ * layer, a lit static batch, 50 GPU-skinned actors and three post effects
+ * (colour grade, heat haze, sharpen): all built here, none drawn before
+ * FIRST_USE_FRAME. FIRST_USE_COLD leaves the shader compiles and uploads
+ * to their first draw; FIRST_USE_QUEUE runs the default prewarm queue
+ * (which they all joined when created) to the end here, as a loading
+ * screen would; FIRST_USE_HIDDEN also draws the scene once hidden, as a
+ * loading screen's prewarm-draw handler would (the driver's draw-time
+ * shader variants).
+ */
+
+static gpointer
+first_use_setup_mode (FirstUseWarm prewarm)
+{
+	FirstUseState        *st;
+	WorldState           *world;
+	g_autoptr(GrlColor)   sun = NULL;
+	g_autoptr(GrlVector3) direction = NULL;
+	g_autoptr(GArray)     blades = NULL;
+	gint                  i;
+	gint                  j;
+
+	st = g_new0 (FirstUseState, 1);
+	st->world = world = world_state_new ();
+	world->texture = bench_make_texture (8);
+
+	world->water = lrg_water_surface_new ();
+	for (i = -4; i < 4; i++)
+		for (j = -4; j < 4; j++)
+			lrg_water_surface_add_grid (world->water, (gfloat) i * 16.0f, (gfloat) j * 16.0f,
+			                            (gfloat) i * 16.0f + 16.0f, (gfloat) j * 16.0f + 16.0f,
+			                            -0.5f, 16, 16, NULL, NULL, NULL);
+
+	world->billboards = lrg_billboard_batch_new ();
+	lrg_billboard_batch_set_material_texture (world->billboards, 0, world->texture);
+	for (i = 0; i < 20000; i++)
+	{
+		g_autoptr(GrlVector3) p = NULL;
+
+		p = grl_vector3_new ((gfloat) (i % 160) - 80.0f, 0.0f, (gfloat) (i / 160) - 60.0f);
+		lrg_billboard_batch_add (world->billboards, 0, p, 1.0f, 2.0f);
+	}
+
+	world->grass = lrg_grass_field_new (7);
+	blades = g_array_new (FALSE, FALSE, sizeof (LrgGrassBlade));
+	for (i = -20; i < 20; i++)
+		for (j = -20; j < 20; j++)
+			lrg_grass_field_place_cell (world->grass, i, j, 0.5f, 0.0, 0.0, NULL, NULL, blades);
+	lrg_grass_field_set_blades (world->grass,
+	                            (const LrgGrassBlade *) (gconstpointer) blades->data, blades->len);
+
+	world->batch = bench_static_batch ();
+	world->lights = lrg_light_set_new ();
+	sun = grl_color_new (230, 220, 200, 255);
+	direction = grl_vector3_new (-0.4f, -1.0f, -0.3f);
+	lrg_light_set_set_directional (world->lights, direction, sun);
+
+	st->clouds = lrg_cloud_layer_new (7);
+	lrg_cloud_layer_set_coverage (st->clouds, 0.6f);
+
+	st->skin = skin_setup_mode (TRUE);
+
+	st->grade = lrg_color_grade_new ();
+	lrg_color_grade_set_exposure (st->grade, 0.3f);
+	st->haze = lrg_heat_haze_new ();
+	st->sharpen = lrg_sharpen_new ();
+	st->screen = bench_make_texture (64);
+
+	if (prewarm != FIRST_USE_COLD)
+	{
+		LrgPrewarm *queue = lrg_prewarm_get_default ();
+		gint64      t0 = g_get_monotonic_time ();
+		guint       pending = lrg_prewarm_get_pending (queue);
+
+		lrg_prewarm_run_all (queue);
+		g_printerr ("%s: %u queued entries warmed in %.1f ms (setup, untimed)\n",
+		            prewarm == FIRST_USE_QUEUE ? "first-use-queue" : "first-use-prewarm",
+		            pending, (gdouble) (g_get_monotonic_time () - t0) / 1000.0);
+	}
+	if (prewarm == FIRST_USE_HIDDEN)
+	{
+		gint64 t0 = g_get_monotonic_time ();
+
+		/* what LrgTemplateLoadingState::prewarm-draw is for: the scene
+		 * drawn once, scissored away, on a loading-screen frame */
+		BeginDrawing ();
+		lrg_prewarm_begin_hidden_draw ();
+		first_use_frame (st, FIRST_USE_FRAME);
+		lrg_prewarm_end_hidden_draw ();
+		ClearBackground (BLACK);
+		EndDrawing ();
+		g_printerr ("first-use-prewarm: hidden draw %.1f ms (setup, untimed)\n",
+		            (gdouble) (g_get_monotonic_time () - t0) / 1000.0);
+	}
+	return st;
+}
+
+static gpointer
+first_use_setup (void)
+{
+	return first_use_setup_mode (FIRST_USE_COLD);
+}
+
+static gpointer
+first_use_queue_setup (void)
+{
+	return first_use_setup_mode (FIRST_USE_QUEUE);
+}
+
+static gpointer
+first_use_prewarm_setup (void)
+{
+	return first_use_setup_mode (FIRST_USE_HIDDEN);
+}
+
+static void
+first_use_frame (gpointer state,
+                 guint    frame_index)
+{
+	FirstUseState        *st = state;
+	WorldState           *world = st->world;
+	gfloat                eye[3];
+	gfloat                towards_sun[3] = { 0.4f, 0.8f, 0.3f };
+	GrlRectangle          rect;
+	g_autoptr(GrlVector3) camera = NULL;
+
+	bench_world_camera (world->camera, frame_index, eye);
+	if (frame_index < FIRST_USE_FRAME)
+	{
+		/* the plain world before the features appear */
+		grl_camera3d_begin (world->camera);
+		lrg_static_batch_set_shader (world->batch, NULL);
+		lrg_static_batch_draw (world->batch, LRG_STATIC_BATCH_ALL_LAYERS);
+		grl_camera3d_end (world->camera);
+		return;
+	}
+
+	camera = grl_vector3_new (eye[0], eye[1], eye[2]);
+	grl_camera3d_begin (world->camera);
+	lrg_light_set_apply (world->lights, eye[0], eye[1], eye[2]);
+	lrg_light_set_bind (world->lights);
+	lrg_static_batch_set_shader (world->batch, lrg_light_set_get_shader (world->lights));
+	lrg_static_batch_draw (world->batch, LRG_STATIC_BATCH_ALL_LAYERS);
+	lrg_grass_field_draw (world->grass, eye, (gfloat) frame_index / 60.0f);
+	lrg_billboard_batch_draw (world->billboards, camera);
+	lrg_cloud_layer_draw (st->clouds, camera, 400.0f, towards_sun);
+	lrg_water_surface_draw (world->water, eye, (gfloat) frame_index / 60.0f);
+	grl_camera3d_end (world->camera);
+	lrg_light_set_unbind ();
+
+	skin_frame (st->skin, frame_index);
+
+	/* the post effects, each through a small quad of the screen */
+	rect.x = 0.0f;
+	rect.y = 0.0f;
+	rect.width = 64.0f;
+	rect.height = 64.0f;
+	lrg_color_grade_draw_texture (st->grade, st->screen, &rect, &rect);
+	rect.x = 64.0f;
+	lrg_heat_haze_draw_texture (st->haze, st->screen, &rect, &rect);
+	rect.x = 128.0f;
+	lrg_sharpen_draw_texture (st->sharpen, st->screen, &rect, &rect);
+}
+
+static void
+first_use_teardown (gpointer state)
+{
+	FirstUseState *st = state;
+
+	skin_teardown (st->skin);
+	if (st->clouds != NULL)
+		lrg_cloud_layer_release_gpu (st->clouds);
+	g_clear_object (&st->clouds);
+	g_clear_object (&st->grade);
+	g_clear_object (&st->haze);
+	g_clear_object (&st->sharpen);
+	g_clear_object (&st->screen);
+	world_teardown (st->world);
+	g_free (st);
+}
+
+/* ==========================================================================
  * Driver
  * ========================================================================== */
 
@@ -2226,6 +2439,12 @@ static const BenchScenario scenarios[] = {
 	  analytics_setup, analytics_frame, analytics_teardown },
 	{ "despawn", "4000 sprite objects, 1000 removed and 1000 added every 60 frames",
 	  despawn_setup, despawn_frame, despawn_teardown },
+	{ "first-use", "water, billboards, grass, clouds, lit batch, skinned actors, 3 post effects first drawn at frame 100",
+	  first_use_setup, first_use_frame, first_use_teardown },
+	{ "first-use-queue", "first-use with the prewarm queue run in setup (a loading screen)",
+	  first_use_queue_setup, first_use_frame, first_use_teardown },
+	{ "first-use-prewarm", "first-use-queue plus one hidden draw of the scene in setup",
+	  first_use_prewarm_setup, first_use_frame, first_use_teardown },
 };
 
 static gint
