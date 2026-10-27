@@ -33,6 +33,8 @@ bench/build/release/bench/lrg-bench -l           # list scenarios
 | Scenario        | What it exercises                                                         |
 |-----------------+---------------------------------------------------------------------------|
 | =ecs-sprites=   | 4000 game objects with sprite components: =lrg_world_update/draw=         |
+| =ecs-moving=    | =ecs-sprites= moving in 60 Hz fixed steps, drawn at 144 Hz, interpolated  |
+| =ecs-moving-raw= | the same with render interpolation off                                   |
 | =ui-labels=     | retained UI canvas with 600 labels, one changing per frame                |
 | =particles=     | 20000-particle system update                                              |
 | =tilemap=       | 512x512 two-layer tilemap through a panning 2D camera                     |
@@ -64,6 +66,7 @@ Adding a scenario: write =setup= / =frame= / =teardown= functions and add a row 
 - *No per-frame logging or string formatting* on paths that run every frame.
 - *No blocking I/O on the frame thread.* File writes that fsync, network requests and retries with sleeps go to a worker thread (the save manager's writer, the HTTP analytics sender); the frame thread only collects state. Results come back without a main loop (the standalone game loop does not iterate a =GMainContext=): through an explicit flush or the next call, or a main-context source where one is iterated.
 - *Keep scratch buffers across frames.* A per-frame =g_new= / =g_array_sized_new= of 128 KiB or more is an =mmap=, page faults and an =munmap= every frame (glibc's mmap threshold); keep the array on the object and reset its length.
+- *Draw at render poses, simulate on true state.* Draw code reads =grl_entity_get_render_pose()=, =lrg_transform_component_get_render_transform()=, =lrg_shape3d_get_render_transform()= and friends (smooth on displays faster than the fixed step, see [[#render-interpolation][Render interpolation]]); gameplay, physics and collision read the plain getters. Never do per-step work over all objects to keep previous poses: capture lazily on write (=GrlInterpolationTrack=).
 - *Membership changes are O(1) or O(log n) per object.* Many objects come and go in the same frame (explosions, wave spawns, level streaming); a linear search per removal turns that frame into O(n·k).
 
 ** Build flags
@@ -198,3 +201,29 @@ Looked at and fine: achievements (signals only, no I/O), settings (written at sh
 - *Bursty game logic by design.* =LrgObjectPool= with =LRG_POOL_GROWTH_DOUBLE= constructs the whole growth step in one =acquire()= (prewarm the pool); =LrgWaveDirector= spawns every zero-interval entry in one frame and catches up after a long frame; =LrgAutomation= fires an interval rule once per missed interval after a stall; particle emitters keep their accumulated time while the pool is full and emit the backlog later.
 - *Script hosts.* The GJS update hook evaluates generated JS twice per hook per frame, steady garbage that SpiderMonkey collects on its own schedule. LuaJIT count hooks do not fire inside compiled traces, so the scheduler's per-frame instruction budget is not enforced for hot compiled loops.
 - *Networking.* =_lrg_net_buffer_flush()= shifts the whole remaining output queue (up to 4 MiB) after each partial write; the MMO SQLite store commits with =synchronous=FULL= and the Postgres store blocks on queries, which matters if a server shares a thread with its simulation tick.
+
+** Render interpolation
+:PROPERTIES:
+:CUSTOM_ID: render-interpolation
+:END:
+With the default 1/60 s fixed step, a 144 Hz display runs 0 or 1 steps per frame, so anything moved in =fixed_update= advanced on a 2,3,2,3 frame cadence. =LrgGameTemplate= now drives graylib's render interpolation clock and game objects, transforms, shapes and cameras are drawn between their last two simulated poses ([[file:modules/template/templates/game-template.org::#render-interpolation][how it works]]).
+
+Smoothness, =tests/test-interpolation.c= (an object at 60 units/s moved in =fixed_update=, drawn position recorded every frame; judder = standard deviation of the per-frame displacement over its mean):
+
+| Display        | Without interpolation | With interpolation |
+|----------------+-----------------------+--------------------|
+| 144 Hz (1/144) | 1.18                  | 0.00001            |
+| 60 Hz (1/60)   | 0                     | 0 (drawn one step behind) |
+
+CPU cost, work median in ms, Xvfb + llvmpipe, 5 alternating runs of 600 frames (=before= is the v0.2.0 build):
+
+| Scenario                     | before | after | note                                                     |
+|------------------------------+--------+-------+----------------------------------------------------------|
+| =ecs-sprites= (static)       | 0.81   | 0.78  | one render-pose call per sprite instead of three getters |
+| =ecs-moving= vs =-raw=       | --     | 0.62 vs 0.62 | 4000 objects moved every step: no measurable cost |
+| =shapes3d=                   | 5.5-6.3 | 5.5-6.3 | noise; the render transform is filled on the stack     |
+| =transforms=                 | 0.409  | 0.421 | +3%: the private struct grew by the previous pose        |
+
+A direct microbenchmark (4000 =GrlEntity= moved in 60 Hz steps, render pose read for each every 144 Hz frame, no drawing) costs 41 µs per frame with interpolation and 37 µs without: about 1 ns per object per frame. Two things made that so: the previous pose is captured lazily on the first write in a step (no per-step pass over all objects, nothing for objects at rest), and graylib's own hot paths (entity setters, =grl_entity_get_render_pose()=) use inline forms of the clock checks instead of exported calls. A first version spent 0.1 ms per frame on =ecs-moving= in the shortest-arc angle blend, which always called =fmodf()= (an x87 =fprem= loop); it now folds only differences past half a turn.
+
+Found on the way: =liblibregnum.so= did not depend on the embedded graylib/raylib/yaml-glib archives (the static library did), so a graylib-only change left the shared library linked against the old graylib until something in libregnum changed. Both libraries now depend on them.

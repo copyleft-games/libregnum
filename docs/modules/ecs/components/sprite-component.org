@@ -251,7 +251,7 @@ Returns: =TRUE= if flipped vertically
 void lrg_sprite_component_draw (LrgSpriteComponent *self);
 #+end_src
 
-Draws the sprite at the owning game object's position. This is typically called by the game object during its draw phase. The component must be attached to a game object for this to work.
+Draws the sprite at the owning game object's render pose (=grl_entity_get_render_pose()=: its interpolated position and rotation while a fixed-timestep template drives render interpolation, its true pose otherwise). This is typically called by the game object during its draw phase. The component must be attached to a game object for this to work.
 
 ** Properties
 :PROPERTIES:

@@ -47,8 +47,11 @@ lrg_circle2d_draw (LrgShape *shape,
 {
 	LrgCircle2D *self  = LRG_CIRCLE2D (shape);
 	GrlColor    *color = lrg_shape_get_color (shape);
-	gfloat       x     = lrg_shape2d_get_x (LRG_SHAPE2D (self));
-	gfloat       y     = lrg_shape2d_get_y (LRG_SHAPE2D (self));
+	gfloat       x;
+	gfloat       y;
+
+	/* Draw at the render (interpolated) position */
+	lrg_shape2d_get_render_position (LRG_SHAPE2D (self), &x, &y);
 
 	if (self->filled)
 	{

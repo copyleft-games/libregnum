@@ -54,7 +54,9 @@ LrgWorld *      lrg_world_new               (void);
  * @self: an #LrgWorld
  * @object: (transfer none): the game object to add
  *
- * Adds a game object to this world.
+ * Adds a game object to this world. Its render interpolation is reset
+ * (grl_entity_reset_interpolation()), so it is drawn at its current pose
+ * rather than blended from where it was (e.g. when reused from a pool).
  *
  * The world takes a reference to the object.
  */

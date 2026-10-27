@@ -436,4 +436,110 @@ void         lrg_transform_component_slerp_rotation          (LrgTransformCompon
                                                                const GrlQuaternion   *target,
                                                                gfloat                 amount);
 
+/* ==========================================================================
+ * Render Interpolation
+ * ========================================================================== */
+
+/**
+ * lrg_transform_component_get_render_position:
+ * @self: an #LrgTransformComponent
+ * @x: (out) (optional): return location for the world X to draw at
+ * @y: (out) (optional): return location for the world Y to draw at
+ *
+ * Gets the world position to draw at. While a fixed-timestep
+ * #LrgGameTemplate drives render interpolation, each level of the parent
+ * chain is blended between its local transform at the start of the latest
+ * fixed step and its current one (see grl_interpolation_get_alpha());
+ * otherwise this equals lrg_transform_component_get_world_position().
+ * Gameplay and physics keep using the world getters.
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_get_render_position     (LrgTransformComponent *self,
+                                                               gfloat                *x,
+                                                               gfloat                *y);
+
+/**
+ * lrg_transform_component_get_render_rotation:
+ * @self: an #LrgTransformComponent
+ *
+ * Gets the world rotation to draw with (interpolated along the shorter
+ * arc); see lrg_transform_component_get_render_position().
+ *
+ * Returns: the drawn world rotation in degrees
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat       lrg_transform_component_get_render_rotation     (LrgTransformComponent *self);
+
+/**
+ * lrg_transform_component_get_render_transform:
+ * @self: an #LrgTransformComponent
+ * @x: (out) (optional): return location for the world X to draw at
+ * @y: (out) (optional): return location for the world Y to draw at
+ * @rotation: (out) (optional): return location for the drawn world
+ *   rotation in degrees
+ * @scale_x: (out) (optional): return location for the drawn world X scale
+ * @scale_y: (out) (optional): return location for the drawn world Y scale
+ *
+ * Gets the whole world transform to draw with in one walk of the parent
+ * chain; see lrg_transform_component_get_render_position().
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_get_render_transform    (LrgTransformComponent *self,
+                                                               gfloat                *x,
+                                                               gfloat                *y,
+                                                               gfloat                *rotation,
+                                                               gfloat                *scale_x,
+                                                               gfloat                *scale_y);
+
+/**
+ * lrg_transform_component_teleport:
+ * @self: an #LrgTransformComponent
+ * @x: the new local X position
+ * @y: the new local Y position
+ *
+ * Sets the local position without interpolating the move, for spawns,
+ * respawns and warps: the transform (and its children) is drawn at the
+ * new place at once instead of streaking there. A later
+ * lrg_transform_component_sync_to_entity() in the same step teleports the
+ * owner entity too.
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_teleport                (LrgTransformComponent *self,
+                                                               gfloat                 x,
+                                                               gfloat                 y);
+
+/**
+ * lrg_transform_component_reset_interpolation:
+ * @self: an #LrgTransformComponent
+ *
+ * Drops the in-flight blend: the transform is drawn at its current local
+ * transform, and further changes in the current fixed step are not
+ * blended either. Call it after the setters for a cut.
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_reset_interpolation     (LrgTransformComponent *self);
+
+/**
+ * lrg_transform_component_get_interpolate:
+ * @self: an #LrgTransformComponent
+ *
+ * Gets whether the transform is interpolated for drawing.
+ *
+ * Returns: the value of #LrgTransformComponent:interpolate
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean     lrg_transform_component_get_interpolate         (LrgTransformComponent *self);
+
+/**
+ * lrg_transform_component_set_interpolate:
+ * @self: an #LrgTransformComponent
+ * @interpolate: whether to interpolate the transform for drawing
+ *
+ * Opts the transform in or out of render interpolation; either way its
+ * blend is reset.
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_set_interpolate         (LrgTransformComponent *self,
+                                                               gboolean               interpolate);
+
 G_END_DECLS

@@ -24,6 +24,13 @@ typedef struct
 	GrlVector3 *rotation;
 	GrlVector3 *scale;
 	gboolean    wireframe;
+
+	/* Render interpolation: the transform at the start of the latest
+	 * fixed step it changed in (see grl-interpolation.h) */
+	GrlVector3            prev_position;
+	GrlVector3            prev_rotation;
+	GrlVector3            prev_scale;
+	GrlInterpolationTrack interp;
 } LrgShape3DPrivate;
 
 G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (LrgShape3D, lrg_shape3d, LRG_TYPE_SHAPE)
@@ -35,10 +42,46 @@ enum
 	PROP_ROTATION,
 	PROP_SCALE,
 	PROP_WIREFRAME,
+	PROP_INTERPOLATE,
 	N_PROPS
 };
 
 static GParamSpec *properties[N_PROPS];
+
+/* ==========================================================================
+ * Render Interpolation Helpers
+ * ========================================================================== */
+
+/* The first write in a fixed step keeps the transform the step began with */
+static void
+shape3d_capture_previous (LrgShape3DPrivate *priv)
+{
+	priv->prev_position = *priv->position;
+	priv->prev_rotation = *priv->rotation;
+	priv->prev_scale = *priv->scale;
+}
+
+/*
+ * shape3d_store:
+ *
+ * Writes one of the transform vectors (in place, so the pointer handed
+ * out by the getters stays valid) through the interpolation track.
+ */
+static void
+shape3d_store (LrgShape3DPrivate *priv,
+               GrlVector3        *current,
+               GrlVector3        *previous,
+               gfloat             x,
+               gfloat             y,
+               gfloat             z)
+{
+	if (grl_interpolation_track_begin_write (&priv->interp))
+		shape3d_capture_previous (priv);
+
+	grl_interpolation_track_write_float (&priv->interp, &current->x, &previous->x, x);
+	grl_interpolation_track_write_float (&priv->interp, &current->y, &previous->y, y);
+	grl_interpolation_track_write_float (&priv->interp, &current->z, &previous->z, z);
+}
 
 /* ==========================================================================
  * GObject Overrides
@@ -80,6 +123,9 @@ lrg_shape3d_get_property (GObject    *object,
 	case PROP_WIREFRAME:
 		g_value_set_boolean (value, priv->wireframe);
 		break;
+	case PROP_INTERPOLATE:
+		g_value_set_boolean (value, priv->interp.enabled);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -98,16 +144,31 @@ lrg_shape3d_set_property (GObject      *object,
 	switch (prop_id)
 	{
 	case PROP_POSITION:
-		g_clear_pointer (&priv->position, grl_vector3_free);
-		priv->position = g_value_dup_boxed (value);
+		{
+			const GrlVector3 *v = g_value_get_boxed (value);
+
+			if (v != NULL)
+				shape3d_store (priv, priv->position, &priv->prev_position, v->x, v->y, v->z);
+		}
 		break;
 	case PROP_ROTATION:
-		g_clear_pointer (&priv->rotation, grl_vector3_free);
-		priv->rotation = g_value_dup_boxed (value);
+		{
+			const GrlVector3 *v = g_value_get_boxed (value);
+
+			if (v != NULL)
+				shape3d_store (priv, priv->rotation, &priv->prev_rotation, v->x, v->y, v->z);
+		}
 		break;
 	case PROP_SCALE:
-		g_clear_pointer (&priv->scale, grl_vector3_free);
-		priv->scale = g_value_dup_boxed (value);
+		{
+			const GrlVector3 *v = g_value_get_boxed (value);
+
+			if (v != NULL)
+				shape3d_store (priv, priv->scale, &priv->prev_scale, v->x, v->y, v->z);
+		}
+		break;
+	case PROP_INTERPOLATE:
+		lrg_shape3d_set_interpolate (self, g_value_get_boolean (value));
 		break;
 	case PROP_WIREFRAME:
 		priv->wireframe = g_value_get_boolean (value);
@@ -182,6 +243,22 @@ lrg_shape3d_class_init (LrgShape3DClass *klass)
 		                      G_PARAM_CONSTRUCT |
 		                      G_PARAM_STATIC_STRINGS);
 
+	/**
+	 * LrgShape3D:interpolate:
+	 *
+	 * Whether position, rotation and scale are interpolated for drawing
+	 * while a fixed-timestep #LrgGameTemplate drives render interpolation
+	 * (see lrg_shape3d_get_render_transform()).
+	 */
+	properties[PROP_INTERPOLATE] =
+		g_param_spec_boolean ("interpolate",
+		                      "Interpolate",
+		                      "Whether the transform is interpolated for drawing",
+		                      TRUE,
+		                      G_PARAM_READWRITE |
+		                      G_PARAM_STATIC_STRINGS |
+		                      G_PARAM_EXPLICIT_NOTIFY);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -194,6 +271,10 @@ lrg_shape3d_init (LrgShape3D *self)
 	priv->rotation  = grl_vector3_new (0.0f, 0.0f, 0.0f);
 	priv->scale     = grl_vector3_new (1.0f, 1.0f, 1.0f);
 	priv->wireframe = FALSE;
+
+	/* New shapes start with previous == current */
+	shape3d_capture_previous (priv);
+	grl_interpolation_track_init (&priv->interp);
 }
 
 /* ==========================================================================
@@ -237,8 +318,8 @@ lrg_shape3d_set_position (LrgShape3D *self,
 
 	priv = lrg_shape3d_get_instance_private (self);
 
-	g_clear_pointer (&priv->position, grl_vector3_free);
-	priv->position = grl_vector3_copy (position);
+	shape3d_store (priv, priv->position, &priv->prev_position,
+	               position->x, position->y, position->z);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_POSITION]);
 }
 
@@ -257,16 +338,13 @@ lrg_shape3d_set_position_xyz (LrgShape3D *self,
                               gfloat      y,
                               gfloat      z)
 {
-	LrgShape3DPrivate    *priv;
-	g_autoptr(GrlVector3) new_pos = NULL;
+	LrgShape3DPrivate *priv;
 
 	g_return_if_fail (LRG_IS_SHAPE3D (self));
 
 	priv = lrg_shape3d_get_instance_private (self);
 
-	new_pos = grl_vector3_new (x, y, z);
-	g_clear_pointer (&priv->position, grl_vector3_free);
-	priv->position = g_steal_pointer (&new_pos);
+	shape3d_store (priv, priv->position, &priv->prev_position, x, y, z);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_POSITION]);
 }
 
@@ -411,8 +489,8 @@ lrg_shape3d_set_rotation (LrgShape3D *self,
 
 	priv = lrg_shape3d_get_instance_private (self);
 
-	g_clear_pointer (&priv->rotation, grl_vector3_free);
-	priv->rotation = grl_vector3_copy (rotation);
+	shape3d_store (priv, priv->rotation, &priv->prev_rotation,
+	               rotation->x, rotation->y, rotation->z);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ROTATION]);
 }
 
@@ -431,16 +509,13 @@ lrg_shape3d_set_rotation_xyz (LrgShape3D *self,
                               gfloat      ry,
                               gfloat      rz)
 {
-	LrgShape3DPrivate    *priv;
-	g_autoptr(GrlVector3) new_rot = NULL;
+	LrgShape3DPrivate *priv;
 
 	g_return_if_fail (LRG_IS_SHAPE3D (self));
 
 	priv = lrg_shape3d_get_instance_private (self);
 
-	new_rot = grl_vector3_new (rx, ry, rz);
-	g_clear_pointer (&priv->rotation, grl_vector3_free);
-	priv->rotation = g_steal_pointer (&new_rot);
+	shape3d_store (priv, priv->rotation, &priv->prev_rotation, rx, ry, rz);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ROTATION]);
 }
 
@@ -542,8 +617,8 @@ lrg_shape3d_set_scale (LrgShape3D *self,
 
 	priv = lrg_shape3d_get_instance_private (self);
 
-	g_clear_pointer (&priv->scale, grl_vector3_free);
-	priv->scale = grl_vector3_copy (scale);
+	shape3d_store (priv, priv->scale, &priv->prev_scale,
+	               scale->x, scale->y, scale->z);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCALE]);
 }
 
@@ -562,16 +637,13 @@ lrg_shape3d_set_scale_xyz (LrgShape3D *self,
                            gfloat      sy,
                            gfloat      sz)
 {
-	LrgShape3DPrivate    *priv;
-	g_autoptr(GrlVector3) new_scale = NULL;
+	LrgShape3DPrivate *priv;
 
 	g_return_if_fail (LRG_IS_SHAPE3D (self));
 
 	priv = lrg_shape3d_get_instance_private (self);
 
-	new_scale = grl_vector3_new (sx, sy, sz);
-	g_clear_pointer (&priv->scale, grl_vector3_free);
-	priv->scale = g_steal_pointer (&new_scale);
+	shape3d_store (priv, priv->scale, &priv->prev_scale, sx, sy, sz);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCALE]);
 }
 
@@ -644,4 +716,101 @@ lrg_shape3d_get_scale_z (LrgShape3D *self)
 
 	priv = lrg_shape3d_get_instance_private (self);
 	return priv->scale->z;
+}
+
+/* ==========================================================================
+ * Render Interpolation
+ * ========================================================================== */
+
+void
+lrg_shape3d_get_render_transform (LrgShape3D *self,
+                                  GrlVector3 *position,
+                                  GrlVector3 *rotation,
+                                  GrlVector3 *scale)
+{
+	LrgShape3DPrivate *priv;
+	gfloat             alpha;
+	gfloat             full_turn;
+
+	g_return_if_fail (LRG_IS_SHAPE3D (self));
+
+	priv = lrg_shape3d_get_instance_private (self);
+
+	/* Not changed in the latest step (or interpolation off): true pose */
+	if (!grl_interpolation_track_get_blend (&priv->interp, &alpha))
+	{
+		if (position != NULL)
+			*position = *priv->position;
+		if (rotation != NULL)
+			*rotation = *priv->rotation;
+		if (scale != NULL)
+			*scale = *priv->scale;
+		return;
+	}
+
+	if (position != NULL)
+	{
+		position->x = grl_interpolation_lerp (priv->prev_position.x, priv->position->x, alpha);
+		position->y = grl_interpolation_lerp (priv->prev_position.y, priv->position->y, alpha);
+		position->z = grl_interpolation_lerp (priv->prev_position.z, priv->position->z, alpha);
+	}
+
+	/* Each Euler angle (radians) along its shorter arc: for the small
+	 * change of one fixed step this matches a quaternion slerp */
+	if (rotation != NULL)
+	{
+		full_turn = (gfloat) (2.0 * G_PI);
+		rotation->x = grl_interpolation_lerp_angle (priv->prev_rotation.x, priv->rotation->x, alpha, full_turn);
+		rotation->y = grl_interpolation_lerp_angle (priv->prev_rotation.y, priv->rotation->y, alpha, full_turn);
+		rotation->z = grl_interpolation_lerp_angle (priv->prev_rotation.z, priv->rotation->z, alpha, full_turn);
+	}
+
+	if (scale != NULL)
+	{
+		scale->x = grl_interpolation_lerp (priv->prev_scale.x, priv->scale->x, alpha);
+		scale->y = grl_interpolation_lerp (priv->prev_scale.y, priv->scale->y, alpha);
+		scale->z = grl_interpolation_lerp (priv->prev_scale.z, priv->scale->z, alpha);
+	}
+}
+
+void
+lrg_shape3d_reset_interpolation (LrgShape3D *self)
+{
+	LrgShape3DPrivate *priv;
+
+	g_return_if_fail (LRG_IS_SHAPE3D (self));
+
+	priv = lrg_shape3d_get_instance_private (self);
+	shape3d_capture_previous (priv);
+	grl_interpolation_track_reset (&priv->interp);
+}
+
+gboolean
+lrg_shape3d_get_interpolate (LrgShape3D *self)
+{
+	LrgShape3DPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_SHAPE3D (self), FALSE);
+
+	priv = lrg_shape3d_get_instance_private (self);
+	return priv->interp.enabled;
+}
+
+void
+lrg_shape3d_set_interpolate (LrgShape3D *self,
+                             gboolean    interpolate)
+{
+	LrgShape3DPrivate *priv;
+
+	g_return_if_fail (LRG_IS_SHAPE3D (self));
+
+	priv = lrg_shape3d_get_instance_private (self);
+
+	interpolate = (interpolate != FALSE);
+	if (priv->interp.enabled == interpolate)
+		return;
+
+	priv->interp.enabled = interpolate;
+	lrg_shape3d_reset_interpolation (self);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_INTERPOLATE]);
 }

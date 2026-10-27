@@ -130,6 +130,103 @@ ecs_teardown (gpointer state)
 }
 
 /* ==========================================================================
+ * ecs-moving: ecs-sprites with every object moving in 60 Hz fixed steps,
+ * drawn at 144 Hz with render interpolation (ecs-moving-raw: without)
+ * ========================================================================== */
+
+#define MOVING_STEP  (1.0 / 60.0)
+#define MOVING_FRAME (1.0 / 144.0)
+
+typedef struct
+{
+	EcsState        ecs;
+	LrgGameObject **objects;     /* borrowed: the world holds the references */
+	gdouble         accumulator;
+	gboolean        interpolate;
+} MovingState;
+
+static gpointer
+moving_setup_common (gboolean interpolate)
+{
+	MovingState *st;
+	EcsState    *ecs;
+	GList       *objects;
+	GList       *l;
+	guint        i;
+
+	ecs = ecs_setup ();
+	st = g_new0 (MovingState, 1);
+	st->ecs = *ecs;
+	g_free (ecs);
+	st->interpolate = interpolate;
+	st->objects = g_new0 (LrgGameObject *, ECS_OBJECTS);
+
+	objects = lrg_world_get_objects (st->ecs.world);
+	for (l = objects, i = 0; l != NULL && i < ECS_OBJECTS; l = l->next, i++)
+		st->objects[i] = l->data;
+	g_list_free (objects);
+
+	/* What LrgGameTemplate does: the clock is on with a fixed timestep
+	 * and interpolation, off otherwise */
+	grl_interpolation_set_enabled (interpolate);
+	return st;
+}
+
+static gpointer
+moving_setup (void)
+{
+	return moving_setup_common (TRUE);
+}
+
+static gpointer
+moving_raw_setup (void)
+{
+	return moving_setup_common (FALSE);
+}
+
+static void
+moving_frame (gpointer state,
+              guint    frame_index)
+{
+	MovingState *st = state;
+	guint        i;
+
+	/* A 144 Hz frame: 0 or 1 fixed steps, each moving every object (a
+	 * slow circle, so they stay on screen), as LrgGameTemplate runs them */
+	st->accumulator += MOVING_FRAME;
+	while (st->accumulator >= MOVING_STEP)
+	{
+		grl_interpolation_begin_step ();
+		for (i = 0; i < ECS_OBJECTS; i++)
+		{
+			gfloat phase = (gfloat) (i + frame_index) * 0.01f;
+
+			grl_entity_move_xy (GRL_ENTITY (st->objects[i]),
+			                    cosf (phase) * 30.0f, sinf (phase) * 30.0f,
+			                    (gfloat) MOVING_STEP);
+		}
+		grl_interpolation_end_step ();
+		st->accumulator -= MOVING_STEP;
+	}
+	grl_interpolation_set_alpha ((gfloat) (st->accumulator / MOVING_STEP));
+
+	/* Sprite components draw at the render pose */
+	lrg_world_draw (st->ecs.world);
+}
+
+static void
+moving_teardown (gpointer state)
+{
+	MovingState *st = state;
+
+	grl_interpolation_set_enabled (FALSE);
+	g_clear_object (&st->ecs.world);
+	g_clear_object (&st->ecs.texture);
+	g_free (st->objects);
+	g_free (st);
+}
+
+/* ==========================================================================
  * ui-labels: a retained-mode canvas full of labels in a vbox
  * ========================================================================== */
 
@@ -2172,6 +2269,10 @@ analytics_teardown (gpointer state)
 static const BenchScenario scenarios[] = {
 	{ "ecs-sprites", "4000 game objects with sprite components (world update + draw)",
 	  ecs_setup, ecs_frame, ecs_teardown },
+	{ "ecs-moving", "ecs-sprites moving in 60 Hz fixed steps, drawn at 144 Hz, interpolated",
+	  moving_setup, moving_frame, moving_teardown },
+	{ "ecs-moving-raw", "ecs-moving with render interpolation off",
+	  moving_raw_setup, moving_frame, moving_teardown },
 	{ "ui-labels", "retained UI canvas with 600 labels, one changing per frame",
 	  ui_setup, ui_frame, ui_teardown },
 	{ "particles", "20000-particle 2D system with 4 emitters",

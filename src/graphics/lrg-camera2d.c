@@ -50,6 +50,16 @@ typedef struct
 	gfloat       target_y;
 	gfloat       rotation;
 	gfloat       zoom;
+
+	/* Render interpolation: the view at the start of the latest fixed
+	 * step it changed in (see grl-interpolation.h) */
+	gfloat                prev_offset_x;
+	gfloat                prev_offset_y;
+	gfloat                prev_target_x;
+	gfloat                prev_target_y;
+	gfloat                prev_rotation;
+	gfloat                prev_zoom;
+	GrlInterpolationTrack interp;
 } LrgCamera2DPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgCamera2D, lrg_camera2d, LRG_TYPE_CAMERA)
@@ -63,6 +73,7 @@ enum
 	PROP_TARGET_Y,
 	PROP_ROTATION,
 	PROP_ZOOM,
+	PROP_INTERPOLATE,
 	N_PROPS
 };
 
@@ -72,15 +83,65 @@ static GParamSpec *properties[N_PROPS];
  * Helper Functions
  * ========================================================================== */
 
+/* The first write in a fixed step keeps the view the step began with */
+static void
+camera2d_capture_previous (LrgCamera2DPrivate *priv)
+{
+	priv->prev_offset_x = priv->offset_x;
+	priv->prev_offset_y = priv->offset_y;
+	priv->prev_target_x = priv->target_x;
+	priv->prev_target_y = priv->target_y;
+	priv->prev_rotation = priv->rotation;
+	priv->prev_zoom = priv->zoom;
+}
+
+/* Stores one interpolated view field */
+static void
+camera2d_write (LrgCamera2DPrivate *priv,
+                gfloat             *current,
+                gfloat             *previous,
+                gfloat              value)
+{
+	if (grl_interpolation_track_begin_write (&priv->interp))
+		camera2d_capture_previous (priv);
+
+	grl_interpolation_track_write_float (&priv->interp, current, previous, value);
+}
+
+/*
+ * lrg_camera2d_sync_to_grl:
+ *
+ * Pushes the view to the graylib camera: the render (interpolated) view
+ * when the camera moved in the latest fixed step, else the true one. Used
+ * for drawing and for the world/screen conversions, so picking matches
+ * what is on screen.
+ */
 static void
 lrg_camera2d_sync_to_grl (LrgCamera2D *self)
 {
 	LrgCamera2DPrivate *priv = lrg_camera2d_get_instance_private (self);
+	gfloat              alpha;
 
-	grl_camera2d_set_offset_xy (priv->grl_camera, priv->offset_x, priv->offset_y);
-	grl_camera2d_set_target_xy (priv->grl_camera, priv->target_x, priv->target_y);
-	grl_camera2d_set_rotation (priv->grl_camera, priv->rotation);
-	grl_camera2d_set_zoom (priv->grl_camera, priv->zoom);
+	if (!grl_interpolation_track_get_blend (&priv->interp, &alpha))
+	{
+		grl_camera2d_set_offset_xy (priv->grl_camera, priv->offset_x, priv->offset_y);
+		grl_camera2d_set_target_xy (priv->grl_camera, priv->target_x, priv->target_y);
+		grl_camera2d_set_rotation (priv->grl_camera, priv->rotation);
+		grl_camera2d_set_zoom (priv->grl_camera, priv->zoom);
+		return;
+	}
+
+	grl_camera2d_set_offset_xy (priv->grl_camera,
+	                            grl_interpolation_lerp (priv->prev_offset_x, priv->offset_x, alpha),
+	                            grl_interpolation_lerp (priv->prev_offset_y, priv->offset_y, alpha));
+	grl_camera2d_set_target_xy (priv->grl_camera,
+	                            grl_interpolation_lerp (priv->prev_target_x, priv->target_x, alpha),
+	                            grl_interpolation_lerp (priv->prev_target_y, priv->target_y, alpha));
+	grl_camera2d_set_rotation (priv->grl_camera,
+	                           grl_interpolation_lerp_angle (priv->prev_rotation, priv->rotation,
+	                                                         alpha, 360.0f));
+	grl_camera2d_set_zoom (priv->grl_camera,
+	                       grl_interpolation_lerp (priv->prev_zoom, priv->zoom, alpha));
 }
 
 /* ==========================================================================
@@ -189,6 +250,9 @@ lrg_camera2d_get_property (GObject    *object,
 	case PROP_ZOOM:
 		g_value_set_float (value, priv->zoom);
 		break;
+	case PROP_INTERPOLATE:
+		g_value_set_boolean (value, priv->interp.enabled);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -206,24 +270,30 @@ lrg_camera2d_set_property (GObject      *object,
 	switch (prop_id)
 	{
 	case PROP_OFFSET_X:
-		priv->offset_x = g_value_get_float (value);
+		camera2d_write (priv, &priv->offset_x, &priv->prev_offset_x, g_value_get_float (value));
 		break;
 	case PROP_OFFSET_Y:
-		priv->offset_y = g_value_get_float (value);
+		camera2d_write (priv, &priv->offset_y, &priv->prev_offset_y, g_value_get_float (value));
 		break;
 	case PROP_TARGET_X:
-		priv->target_x = g_value_get_float (value);
+		camera2d_write (priv, &priv->target_x, &priv->prev_target_x, g_value_get_float (value));
 		break;
 	case PROP_TARGET_Y:
-		priv->target_y = g_value_get_float (value);
+		camera2d_write (priv, &priv->target_y, &priv->prev_target_y, g_value_get_float (value));
 		break;
 	case PROP_ROTATION:
-		priv->rotation = g_value_get_float (value);
+		camera2d_write (priv, &priv->rotation, &priv->prev_rotation, g_value_get_float (value));
 		break;
 	case PROP_ZOOM:
-		priv->zoom = g_value_get_float (value);
-		if (priv->zoom <= 0.0f)
-			priv->zoom = 0.01f;
+		{
+			gfloat zoom = g_value_get_float (value);
+
+			camera2d_write (priv, &priv->zoom, &priv->prev_zoom,
+			                zoom <= 0.0f ? 0.01f : zoom);
+		}
+		break;
+	case PROP_INTERPOLATE:
+		lrg_camera2d_set_interpolate (self, g_value_get_boolean (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -287,6 +357,23 @@ lrg_camera2d_class_init (LrgCamera2DClass *klass)
 		                    0.01f, G_MAXFLOAT, 1.0f,
 		                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
+	/**
+	 * LrgCamera2D:interpolate:
+	 *
+	 * Whether the view is interpolated for drawing when it is moved in
+	 * fixed steps (a camera following a target from fixed_update), so it
+	 * moves smoothly with the interpolated objects on a display faster
+	 * than the step rate.
+	 */
+	properties[PROP_INTERPOLATE] =
+		g_param_spec_boolean ("interpolate",
+		                      "Interpolate",
+		                      "Whether the view is interpolated for drawing",
+		                      TRUE,
+		                      G_PARAM_READWRITE |
+		                      G_PARAM_STATIC_STRINGS |
+		                      G_PARAM_EXPLICIT_NOTIFY);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -302,6 +389,10 @@ lrg_camera2d_init (LrgCamera2D *self)
 	priv->target_y = 0.0f;
 	priv->rotation = 0.0f;
 	priv->zoom = 1.0f;
+
+	/* New cameras start with previous == current */
+	camera2d_capture_previous (priv);
+	grl_interpolation_track_init (&priv->interp);
 }
 
 /* ==========================================================================
@@ -345,8 +436,8 @@ lrg_camera2d_set_offset_xy (LrgCamera2D *self,
 	g_return_if_fail (LRG_IS_CAMERA2D (self));
 
 	priv = lrg_camera2d_get_instance_private (self);
-	priv->offset_x = x;
-	priv->offset_y = y;
+	camera2d_write (priv, &priv->offset_x, &priv->prev_offset_x, x);
+	camera2d_write (priv, &priv->offset_y, &priv->prev_offset_y, y);
 
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_OFFSET_X]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_OFFSET_Y]);
@@ -383,8 +474,8 @@ lrg_camera2d_set_target_xy (LrgCamera2D *self,
 	g_return_if_fail (LRG_IS_CAMERA2D (self));
 
 	priv = lrg_camera2d_get_instance_private (self);
-	priv->target_x = x;
-	priv->target_y = y;
+	camera2d_write (priv, &priv->target_x, &priv->prev_target_x, x);
+	camera2d_write (priv, &priv->target_y, &priv->prev_target_y, y);
 
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TARGET_X]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TARGET_Y]);
@@ -410,7 +501,7 @@ lrg_camera2d_set_rotation (LrgCamera2D *self,
 	g_return_if_fail (LRG_IS_CAMERA2D (self));
 
 	priv = lrg_camera2d_get_instance_private (self);
-	priv->rotation = rotation;
+	camera2d_write (priv, &priv->rotation, &priv->prev_rotation, rotation);
 
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ROTATION]);
 }
@@ -436,7 +527,49 @@ lrg_camera2d_set_zoom (LrgCamera2D *self,
 	g_return_if_fail (zoom > 0.0f);
 
 	priv = lrg_camera2d_get_instance_private (self);
-	priv->zoom = zoom;
+	camera2d_write (priv, &priv->zoom, &priv->prev_zoom, zoom);
 
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ZOOM]);
+}
+
+void
+lrg_camera2d_reset_interpolation (LrgCamera2D *self)
+{
+	LrgCamera2DPrivate *priv;
+
+	g_return_if_fail (LRG_IS_CAMERA2D (self));
+
+	priv = lrg_camera2d_get_instance_private (self);
+	camera2d_capture_previous (priv);
+	grl_interpolation_track_reset (&priv->interp);
+}
+
+gboolean
+lrg_camera2d_get_interpolate (LrgCamera2D *self)
+{
+	LrgCamera2DPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_CAMERA2D (self), FALSE);
+
+	priv = lrg_camera2d_get_instance_private (self);
+	return priv->interp.enabled;
+}
+
+void
+lrg_camera2d_set_interpolate (LrgCamera2D *self,
+                              gboolean     interpolate)
+{
+	LrgCamera2DPrivate *priv;
+
+	g_return_if_fail (LRG_IS_CAMERA2D (self));
+
+	priv = lrg_camera2d_get_instance_private (self);
+
+	interpolate = (interpolate != FALSE);
+	if (priv->interp.enabled == interpolate)
+		return;
+
+	priv->interp.enabled = interpolate;
+	lrg_camera2d_reset_interpolation (self);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_INTERPOLATE]);
 }

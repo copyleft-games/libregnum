@@ -20,6 +20,12 @@ typedef struct
 {
 	gfloat x;
 	gfloat y;
+
+	/* Render interpolation: the position at the start of the latest
+	 * fixed step it changed in (see grl-interpolation.h) */
+	gfloat                prev_x;
+	gfloat                prev_y;
+	GrlInterpolationTrack interp;
 } LrgShape2DPrivate;
 
 G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (LrgShape2D, lrg_shape2d, LRG_TYPE_SHAPE)
@@ -29,10 +35,28 @@ enum
 	PROP_0,
 	PROP_X,
 	PROP_Y,
+	PROP_INTERPOLATE,
 	N_PROPS
 };
 
 static GParamSpec *properties[N_PROPS];
+
+/* Stores one coordinate through the interpolation track; the first write
+ * in a fixed step keeps the position the step began with */
+static void
+shape2d_write (LrgShape2DPrivate *priv,
+               gfloat            *current,
+               gfloat            *previous,
+               gfloat             value)
+{
+	if (grl_interpolation_track_begin_write (&priv->interp))
+	{
+		priv->prev_x = priv->x;
+		priv->prev_y = priv->y;
+	}
+
+	grl_interpolation_track_write_float (&priv->interp, current, previous, value);
+}
 
 /* ==========================================================================
  * GObject Overrides
@@ -55,6 +79,9 @@ lrg_shape2d_get_property (GObject    *object,
 	case PROP_Y:
 		g_value_set_float (value, priv->y);
 		break;
+	case PROP_INTERPOLATE:
+		g_value_set_boolean (value, priv->interp.enabled);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -73,10 +100,13 @@ lrg_shape2d_set_property (GObject      *object,
 	switch (prop_id)
 	{
 	case PROP_X:
-		priv->x = g_value_get_float (value);
+		shape2d_write (priv, &priv->x, &priv->prev_x, g_value_get_float (value));
 		break;
 	case PROP_Y:
-		priv->y = g_value_get_float (value);
+		shape2d_write (priv, &priv->y, &priv->prev_y, g_value_get_float (value));
+		break;
+	case PROP_INTERPOLATE:
+		lrg_shape2d_set_interpolate (self, g_value_get_boolean (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -120,6 +150,22 @@ lrg_shape2d_class_init (LrgShape2DClass *klass)
 		                    G_PARAM_CONSTRUCT |
 		                    G_PARAM_STATIC_STRINGS);
 
+	/**
+	 * LrgShape2D:interpolate:
+	 *
+	 * Whether the position is interpolated for drawing while a
+	 * fixed-timestep #LrgGameTemplate drives render interpolation (see
+	 * lrg_shape2d_get_render_position()).
+	 */
+	properties[PROP_INTERPOLATE] =
+		g_param_spec_boolean ("interpolate",
+		                      "Interpolate",
+		                      "Whether the position is interpolated for drawing",
+		                      TRUE,
+		                      G_PARAM_READWRITE |
+		                      G_PARAM_STATIC_STRINGS |
+		                      G_PARAM_EXPLICIT_NOTIFY);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -130,6 +176,11 @@ lrg_shape2d_init (LrgShape2D *self)
 
 	priv->x = 0.0f;
 	priv->y = 0.0f;
+
+	/* New shapes start with previous == current */
+	priv->prev_x = 0.0f;
+	priv->prev_y = 0.0f;
+	grl_interpolation_track_init (&priv->interp);
 }
 
 /* ==========================================================================
@@ -174,7 +225,7 @@ lrg_shape2d_set_x (LrgShape2D *self,
 
 	if (priv->x != x)
 	{
-		priv->x = x;
+		shape2d_write (priv, &priv->x, &priv->prev_x, x);
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_X]);
 	}
 }
@@ -217,7 +268,7 @@ lrg_shape2d_set_y (LrgShape2D *self,
 
 	if (priv->y != y)
 	{
-		priv->y = y;
+		shape2d_write (priv, &priv->y, &priv->prev_y, y);
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_Y]);
 	}
 }
@@ -245,12 +296,12 @@ lrg_shape2d_set_position (LrgShape2D *self,
 
 	if (priv->x != x)
 	{
-		priv->x = x;
+		shape2d_write (priv, &priv->x, &priv->prev_x, x);
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_X]);
 	}
 	if (priv->y != y)
 	{
-		priv->y = y;
+		shape2d_write (priv, &priv->y, &priv->prev_y, y);
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_Y]);
 	}
 
@@ -280,4 +331,78 @@ lrg_shape2d_get_position (LrgShape2D *self,
 		*x = priv->x;
 	if (y != NULL)
 		*y = priv->y;
+}
+
+/* ==========================================================================
+ * Render Interpolation
+ * ========================================================================== */
+
+void
+lrg_shape2d_get_render_position (LrgShape2D *self,
+                                 gfloat     *x,
+                                 gfloat     *y)
+{
+	LrgShape2DPrivate *priv;
+	gfloat             alpha;
+
+	g_return_if_fail (LRG_IS_SHAPE2D (self));
+
+	priv = lrg_shape2d_get_instance_private (self);
+
+	if (!grl_interpolation_track_get_blend (&priv->interp, &alpha))
+	{
+		if (x != NULL)
+			*x = priv->x;
+		if (y != NULL)
+			*y = priv->y;
+		return;
+	}
+
+	if (x != NULL)
+		*x = grl_interpolation_lerp (priv->prev_x, priv->x, alpha);
+	if (y != NULL)
+		*y = grl_interpolation_lerp (priv->prev_y, priv->y, alpha);
+}
+
+void
+lrg_shape2d_reset_interpolation (LrgShape2D *self)
+{
+	LrgShape2DPrivate *priv;
+
+	g_return_if_fail (LRG_IS_SHAPE2D (self));
+
+	priv = lrg_shape2d_get_instance_private (self);
+	priv->prev_x = priv->x;
+	priv->prev_y = priv->y;
+	grl_interpolation_track_reset (&priv->interp);
+}
+
+gboolean
+lrg_shape2d_get_interpolate (LrgShape2D *self)
+{
+	LrgShape2DPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_SHAPE2D (self), FALSE);
+
+	priv = lrg_shape2d_get_instance_private (self);
+	return priv->interp.enabled;
+}
+
+void
+lrg_shape2d_set_interpolate (LrgShape2D *self,
+                             gboolean    interpolate)
+{
+	LrgShape2DPrivate *priv;
+
+	g_return_if_fail (LRG_IS_SHAPE2D (self));
+
+	priv = lrg_shape2d_get_instance_private (self);
+
+	interpolate = (interpolate != FALSE);
+	if (priv->interp.enabled == interpolate)
+		return;
+
+	priv->interp.enabled = interpolate;
+	lrg_shape2d_reset_interpolation (self);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_INTERPOLATE]);
 }
