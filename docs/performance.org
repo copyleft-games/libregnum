@@ -3,8 +3,8 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum performance benchmarks graylib
 #+created: 2026-10-25T16:00:00-04:00
-#+updated: 2026-10-27T16:00:00-04:00
-#+version: 1.1
+#+updated: 2026-10-27T22:00:00-04:00
+#+version: 1.2
 
 * Performance
 :PROPERTIES:
@@ -55,8 +55,15 @@ bench/build/release/bench/lrg-bench -l           # list scenarios
 | =first-use=     | water, billboards, grass, clouds, lit batch, skinned actors, colour grade, heat haze, sharpen: built in setup, first drawn at measured frame 100 |
 | =first-use-queue= | =first-use= with the prewarm queue run to the end in setup             |
 | =first-use-prewarm= | =first-use-queue= plus one hidden draw of the scene in setup (the full loading-screen path) |
+| =midi-synth=    | 3 ms frames, a streamed busy MIDI song (~60 voices) through =LrgMidiSynth= |
+| =sound-bed=     | 3 ms frames, a streamed 6-layer =LrgSoundBed=, always crossfading, reverb  |
+| =procedural=    | 3 ms frames, a streamed =LrgProceduralAudio= subclass (48 sine partials)   |
+| =music-ogg=     | 3 ms frames, a streamed Vorbis track through =LrgMusicTrack=               |
+| =music-mp3=     | 3 ms frames, a streamed MP3 track through =LrgMusicTrack=                  |
 
 Adding a scenario: write =setup= / =frame= / =teardown= functions and add a row to the =scenarios[]= table at the bottom of =lrg-bench.c=. Keep scenarios deterministic (fixed seeds, scripted cameras) so runs compare.
+
+The audio scenarios spin 3 ms on the clock each frame (a ~300 fps game, so a stream buffer lasts as many frames as in a game) and open the audio device at master volume 0; anything above 3 ms in the work column is audio on the game thread.  The music fixtures are written to the user cache dir (=lrg-bench-audio/=): a generated 30 s WAV, encoded with =ffmpeg= (=libvorbis=, =libmp3lame=) when it is on =PATH=, else the WAV is streamed and the bench says so.  Under =run-bench.sh='s private Xvfb (private =XDG_RUNTIME_DIR=) miniaudio's ALSA backend reaches PipeWire through its ALSA plugin, which waits a long time for a socket it cannot find; pass the session's =PIPEWIRE_RUNTIME_DIR= (=PIPEWIRE_RUNTIME_DIR=/run/user/$(id -u)=) to open the device at once.
 
 ** Rules for per-frame code
 :PROPERTIES:
@@ -217,8 +224,7 @@ Looked at and fine: achievements (signals only, no I/O), settings (written at sh
 :PROPERTIES:
 :CUSTOM_ID: known-hitches
 :END:
-- *Streamed synthesis in 4096-frame bursts.* =LrgMidiSynth=, =LrgSoundBed= and =LrgProceduralAudio= render a whole 4096-frame stream buffer (~85 ms of audio) on the frame the previous one is consumed, so about one frame in five pays it all (estimated 1.5-5 ms for a busy MIDI song, double while crossfading); after a long frame both buffers refill at once. Spreading the render over frames means rendering ahead of the stream, which delays live notes by up to a buffer; smaller stream buffers trade the burst for underrun risk. Left as is; a game that needs it can pump these from its own thread with a lock.
-- *Music decoding.* raylib's =UpdateMusicStream()= decodes a whole sub-buffer per refill (4096 frames once a synth or sound bed set the default buffer size, else ~sample-rate/30 · 4 frames); 1-3 ms of Vorbis every few frames. raylib's, not changed.
+- *raylib's audio lock.* Streamed synthesis and music decoding left the game thread ([[#audio-thread-pass][the audio thread pass]]), but both still run inside raylib's one audio lock: graylib's stream callback is called from raylib's mixer with the lock held, and raylib's =UpdateMusicStream()= holds it for a whole sub-buffer decode (up to ~2 ms of Vorbis or MP3) on graylib's streaming thread.  A game-thread raylib audio call (=PlaySound=, =SetSoundVolume=, =IsSoundPlaying=, positional voice updates) that lands in such a window waits for it.  The decode window is about 1% of the time with raylib's default music buffers; the synth blocks are a fraction of a millisecond.  raylib's, not changed.
 - *First-use GPU work, when nothing prewarms.* The renderers still build lazily on their first draw (shaders of the light set, shadow casters, billboards, grass, water, clouds, ground overlay, GPU skinning, the post effects on their first non-identity frame; uploads of water patches, the horizon ring's batch, round shapes, skinned meshes, billboard GPU pages), so a game that neither runs the [[#prewarm][prewarm queue]] nor uses =LrgTemplateLoadingState= still hitches when a feature first appears, and anything *created* mid-game compiles when it is created and drawn (shaders are per instance; a renderer made during play is only warm if the game queues and runs it, e.g. behind a transition). Billboards added after the upload, and large later additions, rebuild the GPU pages on the second draw after they stop, as before. The driver's draw-time shader variants are only warmed by a real draw (the hidden draw).
 - *Bursty game logic by design.* =LrgObjectPool= with =LRG_POOL_GROWTH_DOUBLE= constructs the whole growth step in one =acquire()= (prewarm the pool); =LrgWaveDirector= spawns every zero-interval entry in one frame and catches up after a long frame; =LrgAutomation= fires an interval rule once per missed interval after a stall; particle emitters keep their accumulated time while the pool is full and emit the backlog later.
 - *Script hosts.* The GJS update hook evaluates generated JS twice per hook per frame, steady garbage that SpiderMonkey collects on its own schedule. LuaJIT count hooks do not fire inside compiled traces, so the scheduler's per-frame instruction budget is not enforced for hot compiled loops.
@@ -249,3 +255,34 @@ CPU cost, work median in ms, Xvfb + llvmpipe, 5 alternating runs of 600 frames (
 A direct microbenchmark (4000 =GrlEntity= moved in 60 Hz steps, render pose read for each every 144 Hz frame, no drawing) costs 41 µs per frame with interpolation and 37 µs without: about 1 ns per object per frame. Two things made that so: the previous pose is captured lazily on the first write in a step (no per-step pass over all objects, nothing for objects at rest), and graylib's own hot paths (entity setters, =grl_entity_get_render_pose()=) use inline forms of the clock checks instead of exported calls. A first version spent 0.1 ms per frame on =ecs-moving= in the shortest-arc angle blend, which always called =fmodf()= (an x87 =fprem= loop); it now folds only differences past half a turn.
 
 Found on the way: =liblibregnum.so= did not depend on the embedded graylib/raylib/yaml-glib archives (the static library did), so a graylib-only change left the shared library linked against the old graylib until something in libregnum changed. Both libraries now depend on them.
+** The audio thread pass
+:PROPERTIES:
+:CUSTOM_ID: audio-thread-pass
+:END:
+Two hitch sources of the [[#known-hitches][hitch pass]] list moved off the game thread: streamed synthesis, which rendered a whole 4096-frame stream buffer (~93 ms of audio) on the frame the device consumed one, and music decoding, which raylib's =UpdateMusicStream()= did a sub-buffer at a time inside the game's per-frame update.  Measured with the audio scenarios of =lrg-bench= (3 ms spin per frame, see [[#lrg-bench][Measuring]]) under Xvfb + llvmpipe, =taskset -c 0-11=, 1000 frames, the device through PipeWire at master volume 0; before = the scenarios on the code before this change.  "Work" is the scenario's own time per frame, so 3.0 ms is no audio cost at all.
+
+| Scenario     | Before: work p99 / max, 1% low | After: work p99 / max, 1% low | What changed                                  |
+|--------------+--------------------------------+-------------------------------+-----------------------------------------------|
+| =midi-synth= | 4.35 / 4.46 ms, 202 fps        | 3.01 / 3.12 ms, 267 fps       | renders in the stream callback (audio thread) |
+| =sound-bed=  | 3.24 / 3.26 ms, 217 fps        | 3.02 / 3.13 ms, 268 fps       | the same                                      |
+| =procedural= | 4.30 / 5.02 ms, 152 fps        | 3.01 / 3.10 ms, 265 fps       | =generate()= in the stream callback           |
+| =music-ogg=  | 3.48 / 4.95 ms, 152 fps        | 3.01 / 3.03 ms, 272 fps       | decoded on graylib's streaming thread         |
+| =music-mp3=  | 3.28 / 5.51 ms, 152 fps        | 3.01 / 3.03 ms, 271 fps       | the same                                      |
+
+(Medians were 3.005 ms throughout: the costs were all in the spikes.  An earlier run without the PipeWire variable, through raw ALSA, gave the same before numbers within 0.1 ms.  The odd 4-5 ms work frame after the change is scheduler noise: it does not reproduce run to run.)
+
+What changed:
+- *graylib: stream callbacks* (=grl_audio_stream_set_callback()=, graylib's [[file:../deps/graylib/docs/api/audio.org::#callback-based-streaming][audio docs]]).  raylib's =SetAudioStreamCallback()= without user data, wrapped through 64 trampolines as the processors are; removal detaches under raylib's lock, so a removed callback is not running.  With a callback, =grl_audio_stream_update()= and =is_processed()= do nothing, so an old pump loop costs nothing.
+- *graylib: background music streaming* (=grl_music_set_background_streaming()=, [[file:../deps/graylib/docs/api/audio.org::#background-streaming][graylib's docs]]).  One process-wide thread (=grl-music=), started by the first background play, refills every active background music about every 5 ms; it sleeps when none plays and is joined before the device closes.  Control calls take its lock (they never run during that music's decode); =is_playing()= / =get_time_played()= read what it last published.  =LrgMusicTrack= switches its music on, so =lrg_music_track_update()= no longer decodes.
+- *libregnum: synthesizers on the audio thread.*  =LrgMidiSynth=, =LrgSoundBed= and =LrgProceduralAudio= render in the stream callback.  The game thread's calls become commands on a lock-free list (=src/audio/lrg-audio-thread-private.h=: Treiber stacks of intrusive nodes, a compare-and-swap push, a take that swaps the head) applied in order at the start of each block; what the audio thread drops comes back on a second list and is freed by the game thread, so the audio thread never allocates, frees or blocks.  Getters read back at once: the MIDI synth publishes its song state under a mutex the audio thread only try-locks, with a serial per song change so a getter called before the audio thread caught up reports the song just asked for; the sound bed publishes each layer's gain and play count in atomics; loop points, levels and volumes are the game thread's copies.  Details: [[file:modules/audio/midi-synth.org::#the-audio-thread][LrgMidiSynth]], [[file:modules/audio/sound-bed.org::#threads][LrgSoundBed]], [[file:modules/audio/procedural-audio.org::#audio-thread][LrgProceduralAudio]].
+
+Behaviour changes to know about:
+- *Latency is lower.*  A pushed stream ran up to two 4096-frame buffers (~186 ms) ahead of what was heard; a call is now heard within about one device period after the audio thread's next block.
+- =LrgProceduralAudio= subclasses: =generate()= runs on the audio device's thread by default (the construct-only =audio-thread= property).  State it reads must be changed through the new =lrg_procedural_audio_queue_command()= (or atomics), and freed in =finalize=, not =dispose=.  =audio-thread= =FALSE= keeps the old =update()= pump.
+- =lrg_midi_synth_render()= and =lrg_sound_bed_render()= write silence and return 0 while their stream renders (the audio thread owns the songs / layers); after =stop_stream()= they render offline again.
+- Background music: =grl_music_get_time_played()= is up to ~5 ms old, and the end of a non-looping track is reported within that period.
+- A =GrlMusic= now follows its =looping= property from load (raylib loads music looping, and =GrlMusic:looping= starts =FALSE=, so a music never set looping used to repeat).  =LrgMusicTrack= now hands graylib its own =looping= (it used to pass =FALSE= when it had loop points, which raylib ignored): looping tracks behave as before (custom loop points seek back before the end, raylib's loop is the fallback at the end), and a track set not to loop now stops at its end instead of repeating.
+- The synth streams keep setting raylib's process-wide default stream buffer size to 4096 frames (now only used by the fallback path, when graylib has no free callback slot, which pumps from =update()= as before).
+
+Thread safety was checked with ThreadSanitizer: a focused harness compiles the audio sources of libregnum and graylib with =-fsanitize=thread= (raylib uninstrumented, its locks seen through TSan's pthread interceptors; GLib's futex-based =GMutex= / =GCond= replaced by pthread ones in the harness so TSan sees them) and runs =test-midi-synth=, =test-procedural-audio=, =test-audio-effects= (sound bed), and graylib's =test-audio-stream= and =test-music= with the device tests on.  No race in libregnum or graylib.  The one report is raylib's =CloseAudioDevice()=, which destroys its mixing mutex before it stops the device thread; raylib's, not changed.
+

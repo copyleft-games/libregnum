@@ -3,7 +3,7 @@
 
 * Overview
 
-=LrgMidiSynth= plays Standard MIDI Files (format 0 and 1) through a SoundFont 2 bank.  It is built on two vendored, *unmodified* single-header libraries by Bernhard Schelling: TinySoundFont (=tsf.h=, the synthesizer) and TinyMidiLoader (=tml.h=, the MIDI file reader).  Rendering is headless: =lrg_midi_synth_render()= writes interleaved stereo floats without an audio device, which is how the tests (and offline tools) use it.  A running game opens a graylib audio stream with =lrg_midi_synth_start_stream()= and keeps it fed by calling =lrg_midi_synth_update()= every frame.  graylib and raylib are not modified.
+=LrgMidiSynth= plays Standard MIDI Files (format 0 and 1) through a SoundFont 2 bank.  It is built on two vendored, *unmodified* single-header libraries by Bernhard Schelling: TinySoundFont (=tsf.h=, the synthesizer) and TinyMidiLoader (=tml.h=, the MIDI file reader).  Rendering is headless: =lrg_midi_synth_render()= writes interleaved stereo floats without an audio device, which is how the tests (and offline tools) use it.  A running game opens a graylib audio stream with =lrg_midi_synth_start_stream()=; the audio device's thread then renders the songs in small blocks (see [[#the-audio-thread][The audio thread]]) and =lrg_midi_synth_update()=, called every frame, only frees what that thread let go of.  raylib is not modified (graylib's stream callback wraps raylib's own).
 
 Applications can probe for this API at compile time with =#ifdef LRG_AUDIO_HAS_MIDI_SYNTH=.
 
@@ -30,8 +30,8 @@ What it adds over a bare TinySoundFont player:
 | =lrg_midi_synth_set_volume= / =get_volume= | output volume 0 .. 1 (also the =volume= property) |
 | =lrg_midi_synth_get_position= | seconds into the current song, wrapping with the loop |
 | =lrg_midi_synth_get_loop_points= | the loop of the current song, in seconds |
-| =lrg_midi_synth_render (frames, n_frames)= | headless: advance and mix =n_frames= frames |
-| =lrg_midi_synth_start_stream= / =update= / =stop_stream= / =has_stream= | the graylib audio stream |
+| =lrg_midi_synth_render (frames, n_frames)= | headless: advance and mix =n_frames= frames (silence and 0 while a stream renders) |
+| =lrg_midi_synth_start_stream= / =update= / =stop_stream= / =has_stream= | the graylib audio stream, rendered on the audio thread |
 
 Errors are in =LRG_MIDI_SYNTH_ERROR=: =INVALID= (malformed bank or song), =NO_SOUNDFONT= (=play()= before a bank), =NO_DEVICE= (=start_stream()= without the audio device).
 
@@ -56,9 +56,9 @@ if (!lrg_midi_synth_play (synth, song, TRUE, 1.5, &error))   /* loop, 1.5 s cros
 /* in a game: once, after grl_audio_device_init_audio () */
 lrg_midi_synth_start_stream (synth, NULL);
 
-/* every frame */
+/* every frame: cheap, the audio thread renders */
 lrg_midi_synth_set_volume (synth, music_volume * master_volume);
-lrg_midi_synth_update (synth);
+lrg_midi_synth_update (synth);   /* frees what the audio thread let go of */
 
 /* headless (tests, offline export) instead of the stream */
 gfloat buffer[2 * 1024];
@@ -93,7 +93,24 @@ Without =loop= a song finishes once its last message played, its time reached it
 
 ** The audio stream
 
-=start_stream()= needs the audio device (=grl_audio_device_init_audio()=, or =grl_audio_device_get_default()= which opens it).  It opens a 32-bit float stereo stream of =LRG_MIDI_SYNTH_STREAM_FRAMES= (4096) frames per buffer, double buffered (about 186 ms of latency at 44100 Hz), and starts it.  raylib sizes stream buffers from a process-wide default; =start_stream()= sets it to 4096 frames so each write fills a buffer exactly (shorter writes would be padded with silence, audible as gaps).  raylib cannot report the previous default, so streams opened later get 4096-frame buffers too, which matches =LrgProceduralAudio='s write size.  =update()= renders one buffer for every buffer the device consumed (at most two per call).  The synthesizer renders on the caller's thread; raylib's mixer thread only copies the finished buffers.
+=start_stream()= needs the audio device (=grl_audio_device_init_audio()=, or =grl_audio_device_get_default()= which opens it).  It opens a 32-bit float stereo stream and sets graylib's stream callback (=grl_audio_stream_set_callback()=) on it, so miniaudio's mixer thread pulls the synthesizer directly, a few hundred frames at a time, just before it plays them.  Nothing renders on the game's frame: before this change =update()= rendered a whole 4096-frame buffer (about 93 ms of audio, 1.5-5 ms of work for a busy song) on the frame the device consumed one, about one frame in five, and both buffers after a long frame.
+
+*Latency.*  A pushed stream ran up to two 4096-frame buffers (about 186 ms at 44100 Hz) ahead of what was heard; now a call is heard within one device period (typically 10-70 ms, the period raylib's device was opened with) after the audio thread picks it up at its next block.
+
+raylib still sizes the stream's (now unused) buffers from its process-wide default, which =start_stream()= sets to =LRG_MIDI_SYNTH_STREAM_FRAMES= (4096) as before (streams opened later inherit it; raylib cannot report the previous value).  If graylib has no free callback slot (=GRL_AUDIO_STREAM_MAX_CALLBACKS=), the stream falls back to the old model: =update()= renders one 4096-frame buffer for every buffer the device consumed (at most two per call), on the caller's thread.
+
+** The audio thread
+:PROPERTIES:
+:CUSTOM_ID: the-audio-thread
+:END:
+
+While the stream runs, the songs, the master volume ramp and the mixing scratch belong to the audio thread.  The game thread never touches them and never waits for it:
+
+- *Commands.*  =play()= parses and validates the file and builds the song (its TinySoundFont copy) on the game thread, then hands the song over in a command; =stop()=, a new SoundFont and =set_volume()= are commands too.  They go on a lock-free list (a compare-and-swap push; =src/audio/lrg-audio-thread-private.h=) that the audio thread takes whole at the start of each block and applies oldest first, so calls take effect in the order they were made.
+- *Garbage.*  What the audio thread is done with (applied commands, a song replaced or faded out) goes back on a second lock-free list; the game thread frees it on its next call (=update()=, =play()=, ...).  The audio thread never allocates, frees, locks a contended lock or calls raylib.  TinySoundFont's shared-sample reference count is only touched on the game thread (copies are made in =play()= and closed from the garbage), and an old bank's samples live until the last song using them is freed.
+- *Read-back.*  After each block the audio thread publishes the current song's position and whether it finished under a mutex it only /try/-locks (a busy lock skips one publication).  Every song-changing call carries a serial; until the published state carries the latest one the getters report the song just asked for: =is_playing()= =TRUE= after =play()= and =FALSE= after =stop()=, position 0, not finished.  The loop points and the volume (the target last set) are the game thread's own copies.  So every call reads back what the previous call did, applied or not; the position moves in steps of one device block.
+- *Ownership moves* only when graylib attaches or detaches the callback, which it does under raylib's audio lock (the happens-before edge).  =stop_stream()= detaches it, then applies whatever is still pending on the game thread, so after it the state is exactly what the calls asked for, and =render()= works offline again.  Without a stream (tests, offline export) the game thread is the renderer and every call applies at once, as before.
+- *What still blocks.*  graylib's callback runs inside raylib's mixer with raylib's audio lock held, as raylib's own stream reads always did; a game-thread raylib audio call (=PlaySound=, =SetSoundVolume=, ...) made during a block waits for that block (a fraction of a millisecond for a busy song, versus a whole buffer's render on the frame before).
 
 * Validation details
 
@@ -114,7 +131,7 @@ After TinySoundFont loaded the bank, every region's sample range (start, end, lo
 
 * Tests
 
-=tests/test-midi-synth.c= writes a tiny SoundFont (one looped 100 Hz sine sample, one preset) and small MIDI files byte by byte, then checks: defaults and silence without a song; =NO_SOUNDFONT=; loading from bytes and from a file (and =G_IO_ERROR_NOT_FOUND=); a held note renders a non-silent sine and a non-looping song finishes; loop markers wrap the position (=loopStart= / =loopEnd=, =loopStart= alone, the whole song); crossfades (loud to silent falls along the fade, silent to loud rises, loud to loud never drops out, an immediate switch replaces both); stop with and without a fade; the volume ramp halves the level; twelve malformed SoundFonts and thirteen malformed MIDI files fail with =LRG_MIDI_SYNTH_ERROR_INVALID= and leave the previous bank or song in place; a deterministic mutation sweep of 600 truncated or corrupted files either loads and renders or fails cleanly.  The device case runs only with =LRG_TEST_AUDIO_DEVICE=1=.  Run it under the sanitizers with =make test-sanitize=.
+=tests/test-midi-synth.c= writes a tiny SoundFont (one looped 100 Hz sine sample, one preset) and small MIDI files byte by byte, then checks: defaults and silence without a song; =NO_SOUNDFONT=; loading from bytes and from a file (and =G_IO_ERROR_NOT_FOUND=); a held note renders a non-silent sine and a non-looping song finishes; loop markers wrap the position (=loopStart= / =loopEnd=, =loopStart= alone, the whole song); crossfades (loud to silent falls along the fade, silent to loud rises, loud to loud never drops out, an immediate switch replaces both); stop with and without a fade; the volume ramp halves the level; twelve malformed SoundFonts and thirteen malformed MIDI files fail with =LRG_MIDI_SYNTH_ERROR_INVALID= and leave the previous bank or song in place; a deterministic mutation sweep of 600 truncated or corrupted files either loads and renders or fails cleanly.  The device cases run only with =LRG_TEST_AUDIO_DEVICE=1=: the stream renders (=stream=); every call reads back at once while the audio thread renders, offline rendering is silent, and after =stop_stream()= the last song plays at the volume set, in order (=stream-commands=); 400 random =play= / =stop= / =set_volume= / =update= calls racing the audio thread end in the state the last ones asked for, with every handed-over song freed (=stream-stress=); a non-looping song finishes on the audio thread (=stream-finish=).  Run it under the sanitizers with =make test-sanitize= (and with ThreadSanitizer, see [[file:../../performance.org::#audio-thread-pass][the performance page]]).
 
 * Vendored code and licenses
 

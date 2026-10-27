@@ -14,7 +14,25 @@
  * 1. Subclass LrgProceduralAudio
  * 2. Override the generate() virtual method
  * 3. Fill the buffer with audio samples (-1.0 to 1.0)
- * 4. Call lrg_procedural_audio_update() each frame during playback
+ * 4. Change the state generate() reads through
+ *    lrg_procedural_audio_queue_command() (or atomics)
+ *
+ * Threads: by default (#LrgProceduralAudio:audio-thread) generate() runs
+ * on the audio device's thread, pulled in small blocks (a few hundred
+ * frames) by graylib's stream callback while the source plays, so
+ * synthesis never costs the game's frame and a parameter change is heard
+ * within one device period.  generate() then must not block or call
+ * graylib's / raylib's audio functions, and the state it reads belongs
+ * to that thread: a game-thread setter hands the change over with
+ * lrg_procedural_audio_queue_command(), which runs it on the audio
+ * thread just before the next block (or at once while the source does
+ * not play).  lrg_procedural_audio_update() then does nothing.  With
+ * #LrgProceduralAudio:audio-thread %FALSE the old model applies:
+ * lrg_procedural_audio_update(), called every frame, renders a whole
+ * stream buffer (4096 frames) on the caller's thread whenever the device
+ * consumed one.  The audio thread lets go of the source in its dispose,
+ * before any finalize runs: a subclass frees the state generate() reads
+ * in its finalize, not in its dispose.
  *
  * Example subclass:
  * |[<!-- language="C" -->
@@ -36,6 +54,22 @@
  *         for (guint c = 0; c < channels; c++)
  *             buffer[i * channels + c] = sample;
  *     }
+ * }
+ *
+ * /<!-- -->* the game thread's setter: the audio thread applies it *<!-- -->/
+ * static void
+ * apply_frequency (LrgProceduralAudio *self,
+ *                  gpointer            user_data)
+ * {
+ *     MY_SYNTH (self)->frequency = *(gfloat *)user_data;
+ * }
+ *
+ * void
+ * my_synth_set_frequency (MySynth *synth,
+ *                         gfloat   frequency)
+ * {
+ *     lrg_procedural_audio_queue_command (LRG_PROCEDURAL_AUDIO (synth), apply_frequency,
+ *                                         g_memdup2 (&frequency, sizeof frequency), g_free);
  * }
  * ]|
  */
@@ -80,7 +114,9 @@ struct _LrgProceduralAudioClass
      * @buffer: (array length=frame_count): output buffer for audio samples
      * @frame_count: number of frames to generate (samples = frames * channels)
      *
-     * Virtual method to generate audio samples.
+     * Virtual method to generate audio samples.  Runs on the audio
+     * device's thread unless #LrgProceduralAudio:audio-thread is %FALSE
+     * (see the section documentation).
      *
      * Subclasses must override this method to produce audio data.
      * Fill the buffer with normalized float samples in the range
@@ -94,6 +130,17 @@ struct _LrgProceduralAudioClass
     /*< private >*/
     gpointer _reserved[8];
 };
+
+/**
+ * LrgProceduralAudioCommand:
+ * @self: the procedural audio source
+ * @user_data: the data given to lrg_procedural_audio_queue_command()
+ *
+ * A change to the state generate() reads, run on the thread that
+ * renders (see lrg_procedural_audio_queue_command()).  Must not block.
+ */
+typedef void (*LrgProceduralAudioCommand) (LrgProceduralAudio *self,
+                                           gpointer            user_data);
 
 /* ==========================================================================
  * Construction
@@ -185,8 +232,9 @@ gboolean lrg_procedural_audio_is_valid (LrgProceduralAudio *self);
  *
  * Starts playing the procedural audio.
  *
- * After calling this, you must call lrg_procedural_audio_update()
- * each frame to generate and feed audio data to the stream.
+ * On the audio thread (the default) the device pulls generate() from
+ * here on; otherwise call lrg_procedural_audio_update() each frame to
+ * generate and feed audio data to the stream.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_procedural_audio_play (LrgProceduralAudio *self);
@@ -235,14 +283,50 @@ gboolean lrg_procedural_audio_is_playing (LrgProceduralAudio *self);
  *
  * Updates the audio stream by generating new samples if needed.
  *
- * This should be called every frame while the audio is playing.
- * It checks if the audio buffer needs more data, and if so,
- * calls the generate() virtual method to produce samples.
+ * With #LrgProceduralAudio:audio-thread %FALSE this should be called
+ * every frame while the audio is playing: it checks if the audio buffer
+ * needs more data, and if so, calls the generate() virtual method to
+ * produce samples.  On the audio thread (the default) the device pulls
+ * the samples itself and this only frees the data of commands the audio
+ * thread has run; calling it every frame stays harmless.
  *
  * If subclasses do not override generate(), silence is produced.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_procedural_audio_update (LrgProceduralAudio *self);
+
+/**
+ * lrg_procedural_audio_get_audio_thread:
+ * @self: a #LrgProceduralAudio
+ *
+ * Returns: %TRUE when generate() runs on the audio device's thread
+ *   (#LrgProceduralAudio:audio-thread and a stream with a callback)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_procedural_audio_get_audio_thread (LrgProceduralAudio *self);
+
+/**
+ * lrg_procedural_audio_queue_command:
+ * @self: a #LrgProceduralAudio
+ * @func: (scope notified) (closure user_data) (destroy destroy): the change
+ * @user_data: data for @func
+ * @destroy: (nullable): frees @user_data, on the caller's thread, after
+ *   @func ran
+ *
+ * Changes the state generate() reads without racing it.  While the
+ * source plays on the audio thread, @func runs there just before the
+ * next block (within one device period), after every command queued
+ * before it; @destroy runs later on the game thread (from the next call
+ * on @self, such as lrg_procedural_audio_update()).  Otherwise (not
+ * playing, paused, or #LrgProceduralAudio:audio-thread %FALSE) @func and
+ * @destroy run at once on the caller's thread.  Commands are never
+ * dropped: stopping or disposing of the source runs the pending ones.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_procedural_audio_queue_command (LrgProceduralAudio        *self,
+                                         LrgProceduralAudioCommand  func,
+                                         gpointer                   user_data,
+                                         GDestroyNotify             destroy);
 
 /* ==========================================================================
  * Audio Parameters

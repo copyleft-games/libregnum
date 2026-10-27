@@ -21,210 +21,14 @@
 #include <glib/gstdio.h>
 #include <libregnum.h>
 
-#define RATE            (44100)
-#define SINE_PERIOD     (441)       /* one cycle of 100 Hz at 44100 Hz */
-#define SINE_CYCLES     (10)
-#define SINE_PADDING    (46)        /* SoundFont rule: 46 zero samples after each */
-#define DIVISION        (480)       /* ticks per quarter; 120 bpm: 500 ms per quarter */
+#include "lrg-test-midi.h"
+
+#define RATE            TEST_MIDI_RATE
+#define DIVISION        TEST_MIDI_DIVISION
 
 /* ==========================================================================
- * Byte writers
+ * Fixture helpers (the writers are in lrg-test-midi.h)
  * ========================================================================== */
-
-static void
-put_u8 (GByteArray *out,
-        guint       value)
-{
-    guint8 b = (guint8)value;
-
-    g_byte_array_append (out, &b, 1);
-}
-
-static void
-put_u16le (GByteArray *out,
-           guint       value)
-{
-    put_u8 (out, value & 0xff);
-    put_u8 (out, (value >> 8) & 0xff);
-}
-
-static void
-put_u32le (GByteArray *out,
-           guint32     value)
-{
-    put_u16le (out, value & 0xffff);
-    put_u16le (out, (value >> 16) & 0xffff);
-}
-
-static void
-put_u32be (GByteArray *out,
-           guint32     value)
-{
-    put_u8 (out, (value >> 24) & 0xff);
-    put_u8 (out, (value >> 16) & 0xff);
-    put_u8 (out, (value >> 8) & 0xff);
-    put_u8 (out, value & 0xff);
-}
-
-static void
-put_id (GByteArray  *out,
-        const gchar *id)
-{
-    g_byte_array_append (out, (const guint8 *)id, 4);
-}
-
-/* a fixed-size, zero padded name field */
-static void
-put_name (GByteArray  *out,
-          const gchar *name,
-          guint        size)
-{
-    guint i;
-    gsize len;
-
-    len = strlen (name);
-    for (i = 0; i < size; i++)
-        put_u8 (out, i < len ? (guint)(guchar)name[i] : 0);
-}
-
-/* starts a RIFF chunk, returns the offset of its size field */
-static guint
-chunk_begin (GByteArray  *out,
-             const gchar *id,
-             const gchar *list_type)
-{
-    guint at;
-
-    put_id (out, id);
-    at = out->len;
-    put_u32le (out, 0);
-    if (list_type != NULL)
-        put_id (out, list_type);
-    return at;
-}
-
-static void
-chunk_end (GByteArray *out,
-           guint       size_at)
-{
-    guint32 size;
-
-    size = (guint32)(out->len - size_at - 4);
-    out->data[size_at] = size & 0xff;
-    out->data[size_at + 1] = (size >> 8) & 0xff;
-    out->data[size_at + 2] = (size >> 16) & 0xff;
-    out->data[size_at + 3] = (size >> 24) & 0xff;
-}
-
-/* ==========================================================================
- * A synthetic SoundFont
- * ========================================================================== */
-
-/*
- * build_sf2:
- * One preset ("Sine", bank 0 program 0) -> one instrument -> one sample:
- * SINE_CYCLES cycles of a 100 Hz sine, looped as a whole (sample mode 1),
- * root key 60, so every note sustains while held.
- */
-static GBytes *
-build_sf2 (void)
-{
-    GByteArray *out;
-    guint riff;
-    guint list;
-    guint sub;
-    guint i;
-    guint32 n_samples;
-
-    n_samples = SINE_PERIOD * SINE_CYCLES;
-    out = g_byte_array_new ();
-    riff = chunk_begin (out, "RIFF", "sfbk");
-
-    /* INFO: the version, which TinySoundFont skips */
-    list = chunk_begin (out, "LIST", "INFO");
-    sub = chunk_begin (out, "ifil", NULL);
-    put_u16le (out, 2);
-    put_u16le (out, 1);
-    chunk_end (out, sub);
-    chunk_end (out, list);
-
-    /* sdta: the sine and its padding */
-    list = chunk_begin (out, "LIST", "sdta");
-    sub = chunk_begin (out, "smpl", NULL);
-    for (i = 0; i < n_samples; i++)
-    {
-        gdouble v;
-
-        v = sin (2.0 * G_PI * (gdouble)(i % SINE_PERIOD) / (gdouble)SINE_PERIOD);
-        put_u16le (out, (guint)(guint16)(gint16)(v * 26000.0));
-    }
-    for (i = 0; i < SINE_PADDING; i++)
-        put_u16le (out, 0);
-    chunk_end (out, sub);
-    chunk_end (out, list);
-
-    /* pdta: the nine tables, each with its terminal record */
-    list = chunk_begin (out, "LIST", "pdta");
-
-    sub = chunk_begin (out, "phdr", NULL);
-    put_name (out, "Sine", 20); put_u16le (out, 0); put_u16le (out, 0); put_u16le (out, 0);
-    put_u32le (out, 0); put_u32le (out, 0); put_u32le (out, 0);
-    put_name (out, "EOP", 20); put_u16le (out, 0); put_u16le (out, 0); put_u16le (out, 1);
-    put_u32le (out, 0); put_u32le (out, 0); put_u32le (out, 0);
-    chunk_end (out, sub);
-
-    sub = chunk_begin (out, "pbag", NULL);
-    put_u16le (out, 0); put_u16le (out, 0);
-    put_u16le (out, 1); put_u16le (out, 0);
-    chunk_end (out, sub);
-
-    sub = chunk_begin (out, "pmod", NULL);
-    for (i = 0; i < 10; i++)
-        put_u8 (out, 0);
-    chunk_end (out, sub);
-
-    sub = chunk_begin (out, "pgen", NULL);
-    put_u16le (out, 41); put_u16le (out, 0);    /* instrument 0 */
-    put_u16le (out, 0); put_u16le (out, 0);     /* terminal */
-    chunk_end (out, sub);
-
-    sub = chunk_begin (out, "inst", NULL);
-    put_name (out, "SineInst", 20); put_u16le (out, 0);
-    put_name (out, "EOI", 20); put_u16le (out, 1);
-    chunk_end (out, sub);
-
-    sub = chunk_begin (out, "ibag", NULL);
-    put_u16le (out, 0); put_u16le (out, 0);
-    put_u16le (out, 2); put_u16le (out, 0);
-    chunk_end (out, sub);
-
-    sub = chunk_begin (out, "imod", NULL);
-    for (i = 0; i < 10; i++)
-        put_u8 (out, 0);
-    chunk_end (out, sub);
-
-    sub = chunk_begin (out, "igen", NULL);
-    put_u16le (out, 54); put_u16le (out, 1);    /* sampleModes: loop */
-    put_u16le (out, 53); put_u16le (out, 0);    /* sampleID 0 */
-    put_u16le (out, 0); put_u16le (out, 0);     /* terminal */
-    chunk_end (out, sub);
-
-    sub = chunk_begin (out, "shdr", NULL);
-    put_name (out, "Sine", 20);
-    put_u32le (out, 0); put_u32le (out, n_samples);
-    put_u32le (out, 0); put_u32le (out, n_samples);
-    put_u32le (out, RATE);
-    put_u8 (out, 60); put_u8 (out, 0); put_u16le (out, 0); put_u16le (out, 1);
-    put_name (out, "EOS", 20);
-    for (i = 0; i < 5; i++)
-        put_u32le (out, 0);
-    put_u8 (out, 0); put_u8 (out, 0); put_u16le (out, 0); put_u16le (out, 0);
-    chunk_end (out, sub);
-
-    chunk_end (out, list);
-    chunk_end (out, riff);
-    return g_byte_array_free_to_bytes (out);
-}
 
 /* the offset of a four-character code in @bytes (first match) */
 static gsize
@@ -259,96 +63,6 @@ patch_u16 (GBytes *bytes,
     copy[offset + 1] = (value >> 8) & 0xff;
     return g_bytes_new_take (copy, size);
 }
-
-/* ==========================================================================
- * Synthetic MIDI files
- * ========================================================================== */
-
-static void
-put_varlen (GByteArray *out,
-            guint32     value)
-{
-    guint8 buf[4];
-    gint n;
-
-    n = 0;
-    buf[n++] = value & 0x7f;
-    while ((value >>= 7) != 0)
-        buf[n++] = (guint8)(0x80 | (value & 0x7f));
-    while (n > 0)
-        put_u8 (out, buf[--n]);
-}
-
-/* an event at @delta ticks: up to three status/data bytes */
-static void
-put_event (GByteArray *track,
-           guint32     delta,
-           guint       status,
-           gint        data1,
-           gint        data2)
-{
-    put_varlen (track, delta);
-    put_u8 (track, status);
-    if (data1 >= 0)
-        put_u8 (track, (guint)data1);
-    if (data2 >= 0)
-        put_u8 (track, (guint)data2);
-}
-
-static void
-put_meta (GByteArray  *track,
-          guint32      delta,
-          guint        type,
-          const guint8 *data,
-          guint        length)
-{
-    put_varlen (track, delta);
-    put_u8 (track, 0xff);
-    put_u8 (track, type);
-    put_varlen (track, length);
-    if (length > 0)
-        g_byte_array_append (track, data, length);
-}
-
-static void
-put_marker (GByteArray  *track,
-            guint32      delta,
-            const gchar *text)
-{
-    put_meta (track, delta, 0x06, (const guint8 *)text, (guint)strlen (text));
-}
-
-static void
-put_end (GByteArray *track,
-         guint32     delta)
-{
-    put_meta (track, delta, 0x2f, NULL, 0);
-}
-
-/* a format 1 file of the given tracks (consumed) */
-static GBytes *
-build_smf (GByteArray **tracks,
-           guint        n_tracks)
-{
-    GByteArray *out;
-    guint i;
-
-    out = g_byte_array_new ();
-    put_id (out, "MThd");
-    put_u32be (out, 6);
-    put_u8 (out, 0); put_u8 (out, 1);
-    put_u8 (out, 0); put_u8 (out, n_tracks);
-    put_u8 (out, DIVISION >> 8); put_u8 (out, DIVISION & 0xff);
-    for (i = 0; i < n_tracks; i++)
-    {
-        put_id (out, "MTrk");
-        put_u32be (out, tracks[i]->len);
-        g_byte_array_append (out, tracks[i]->data, tracks[i]->len);
-        g_byte_array_unref (tracks[i]);
-    }
-    return g_byte_array_free_to_bytes (out);
-}
-
 /*
  * build_note_song:
  * One note of @key held for @quarters quarter notes (500 ms each), with
@@ -368,32 +82,32 @@ build_note_song (guint key,
     {
         const guint8 tempo[3] = { 0x07, 0xa1, 0x20 };   /* 500000 us */
 
-        put_meta (tracks[0], 0, 0x51, tempo, 3);
+        test_midi_put_meta (tracks[0], 0, 0x51, tempo, 3);
     }
     last = 0;
     if (loop_start >= 0)
     {
-        put_marker (tracks[0], (guint32)loop_start * DIVISION - last, "loopStart");
+        test_midi_put_marker (tracks[0], (guint32)loop_start * DIVISION - last, "loopStart");
         last = (guint32)loop_start * DIVISION;
     }
     if (loop_end >= 0)
     {
-        put_marker (tracks[0], (guint32)loop_end * DIVISION - last, "loopEnd");
+        test_midi_put_marker (tracks[0], (guint32)loop_end * DIVISION - last, "loopEnd");
         last = (guint32)loop_end * DIVISION;
     }
-    put_end (tracks[0], quarters * DIVISION > last ? quarters * DIVISION - last : 0);
+    test_midi_put_end (tracks[0], quarters * DIVISION > last ? quarters * DIVISION - last : 0);
 
     /* track 1: the note (running status for the note off) */
     tracks[1] = g_byte_array_new ();
-    put_event (tracks[1], 0, 0xc0, 0, -1);
-    put_event (tracks[1], 0, 0xb0, 7, 127);
-    put_event (tracks[1], 0, 0x90, (gint)key, 127);
-    put_varlen (tracks[1], quarters * DIVISION);
-    put_u8 (tracks[1], (guint)key);     /* running status 0x90, velocity 0 */
-    put_u8 (tracks[1], 0);
-    put_end (tracks[1], 0);
+    test_midi_put_event (tracks[1], 0, 0xc0, 0, -1);
+    test_midi_put_event (tracks[1], 0, 0xb0, 7, 127);
+    test_midi_put_event (tracks[1], 0, 0x90, (gint)key, 127);
+    test_midi_put_varlen (tracks[1], quarters * DIVISION);
+    test_midi_put_u8 (tracks[1], (guint)key);     /* running status 0x90, velocity 0 */
+    test_midi_put_u8 (tracks[1], 0);
+    test_midi_put_end (tracks[1], 0);
 
-    return build_smf (tracks, 2);
+    return test_midi_build_smf (tracks, 2);
 }
 
 /* a valid song with no notes at all, @quarters long */
@@ -403,9 +117,9 @@ build_silent_song (guint quarters)
     GByteArray *tracks[1];
 
     tracks[0] = g_byte_array_new ();
-    put_event (tracks[0], 0, 0xc0, 0, -1);
-    put_end (tracks[0], quarters * DIVISION);
-    return build_smf (tracks, 1);
+    test_midi_put_event (tracks[0], 0, 0xc0, 0, -1);
+    test_midi_put_end (tracks[0], quarters * DIVISION);
+    return test_midi_build_smf (tracks, 1);
 }
 
 /* ==========================================================================
@@ -420,7 +134,7 @@ new_synth_with_font (void)
     LrgMidiSynth *synth;
 
     synth = lrg_midi_synth_new (RATE);
-    sf2 = build_sf2 ();
+    sf2 = test_midi_build_sf2 ();
     g_assert_true (lrg_midi_synth_load_soundfont_bytes (synth, sf2, &error));
     g_assert_no_error (error);
     return synth;
@@ -518,7 +232,7 @@ test_load_soundfont (void)
     dir = g_dir_make_tmp ("lrg-midi-XXXXXX", &error);
     g_assert_no_error (error);
     path = g_build_filename (dir, "sine.sf2", NULL);
-    sf2 = build_sf2 ();
+    sf2 = test_midi_build_sf2 ();
     g_assert_true (g_file_set_contents (path, g_bytes_get_data (sf2, NULL),
                                         (gssize)g_bytes_get_size (sf2), &error));
     g_assert_true (lrg_midi_synth_load_soundfont (synth, path, &error));
@@ -753,7 +467,7 @@ test_malformed_soundfont (void)
     guint i;
 
     synth = lrg_midi_synth_new (RATE);
-    good = build_sf2 ();
+    good = test_midi_build_sf2 ();
     data = g_bytes_get_data (good, &size);
 
     /* cases built from the good file */
@@ -877,39 +591,39 @@ test_malformed_midi (void)
 
         /* running status before any status byte */
         tracks[0] = g_byte_array_new ();
-        put_varlen (tracks[0], 0);
-        put_u8 (tracks[0], 0x3c);
-        put_u8 (tracks[0], 0x40);
-        put_end (tracks[0], 0);
-        g_ptr_array_add (cases, build_smf (tracks, 1));
+        test_midi_put_varlen (tracks[0], 0);
+        test_midi_put_u8 (tracks[0], 0x3c);
+        test_midi_put_u8 (tracks[0], 0x40);
+        test_midi_put_end (tracks[0], 0);
+        g_ptr_array_add (cases, test_midi_build_smf (tracks, 1));
 
         /* a tempo event of a wrong length */
         tracks[0] = g_byte_array_new ();
-        put_meta (tracks[0], 0, 0x51, (const guint8 *)"\x07\xa1", 2);
-        put_end (tracks[0], 0);
-        g_ptr_array_add (cases, build_smf (tracks, 1));
+        test_midi_put_meta (tracks[0], 0, 0x51, (const guint8 *)"\x07\xa1", 2);
+        test_midi_put_end (tracks[0], 0);
+        g_ptr_array_add (cases, test_midi_build_smf (tracks, 1));
 
         /* a variable-length quantity of five bytes */
         tracks[0] = g_byte_array_new ();
-        put_u8 (tracks[0], 0x81); put_u8 (tracks[0], 0x81); put_u8 (tracks[0], 0x81);
-        put_u8 (tracks[0], 0x81); put_u8 (tracks[0], 0x01);
-        put_u8 (tracks[0], 0x90); put_u8 (tracks[0], 0x3c); put_u8 (tracks[0], 0x40);
-        g_ptr_array_add (cases, build_smf (tracks, 1));
+        test_midi_put_u8 (tracks[0], 0x81); test_midi_put_u8 (tracks[0], 0x81); test_midi_put_u8 (tracks[0], 0x81);
+        test_midi_put_u8 (tracks[0], 0x81); test_midi_put_u8 (tracks[0], 0x01);
+        test_midi_put_u8 (tracks[0], 0x90); test_midi_put_u8 (tracks[0], 0x3c); test_midi_put_u8 (tracks[0], 0x40);
+        g_ptr_array_add (cases, test_midi_build_smf (tracks, 1));
 
         /* a SysEx overrunning its track */
         tracks[0] = g_byte_array_new ();
-        put_varlen (tracks[0], 0);
-        put_u8 (tracks[0], 0xf0);
-        put_varlen (tracks[0], 200);
-        put_u8 (tracks[0], 0x7f);
-        g_ptr_array_add (cases, build_smf (tracks, 1));
+        test_midi_put_varlen (tracks[0], 0);
+        test_midi_put_u8 (tracks[0], 0xf0);
+        test_midi_put_varlen (tracks[0], 200);
+        test_midi_put_u8 (tracks[0], 0x7f);
+        g_ptr_array_add (cases, test_midi_build_smf (tracks, 1));
 
         /* a channel message cut short */
         tracks[0] = g_byte_array_new ();
-        put_varlen (tracks[0], 0);
-        put_u8 (tracks[0], 0x90);
-        put_u8 (tracks[0], 0x3c);
-        g_ptr_array_add (cases, build_smf (tracks, 1));
+        test_midi_put_varlen (tracks[0], 0);
+        test_midi_put_u8 (tracks[0], 0x90);
+        test_midi_put_u8 (tracks[0], 0x3c);
+        g_ptr_array_add (cases, test_midi_build_smf (tracks, 1));
     }
 
     for (i = 0; i < cases->len; i++)
@@ -950,7 +664,7 @@ test_mutations (void)
     if (g_getenv ("LRG_TEST_MUTATIONS") != NULL)
         rounds = (guint)MAX (g_ascii_strtoull (g_getenv ("LRG_TEST_MUTATIONS"), NULL, 10), 1);
 
-    sf2 = build_sf2 ();
+    sf2 = test_midi_build_sf2 ();
     smf = build_note_song (64, 2, 1, 2);
     sf2_data = g_bytes_get_data (sf2, &sf2_size);
     smf_data = g_bytes_get_data (smf, &smf_size);
@@ -1065,6 +779,227 @@ test_stream (void)
     }
 }
 
+/*
+ * open_device:
+ * The default audio device at master volume 0 (the mix still runs), or
+ * NULL after skipping the test: opt-in with LRG_TEST_AUDIO_DEVICE=1.
+ */
+static GrlAudioDevice *
+open_device (void)
+{
+    GrlAudioDevice *device;
+
+    if (g_strcmp0 (g_getenv ("LRG_TEST_AUDIO_DEVICE"), "1") != 0)
+    {
+        g_test_skip ("set LRG_TEST_AUDIO_DEVICE=1 to open the audio device");
+        return NULL;
+    }
+    device = grl_audio_device_get_default ();
+    if (device != NULL && !grl_audio_device_is_ready (device))
+        grl_audio_device_init_audio (device);   /* an earlier test closed it */
+    if (device == NULL || !grl_audio_device_is_ready (device))
+    {
+        g_test_skip ("no audio device");
+        return NULL;
+    }
+    grl_audio_device_set_master_volume (device, 0.0f);
+    return device;
+}
+
+/* waits up to @seconds for the audio thread to move the song */
+static gboolean
+wait_position (LrgMidiSynth *synth,
+               gdouble       seconds)
+{
+    gint64 deadline;
+
+    deadline = g_get_monotonic_time () + (gint64)(seconds * G_USEC_PER_SEC);
+    while (g_get_monotonic_time () < deadline)
+    {
+        lrg_midi_synth_update (synth);
+        if (lrg_midi_synth_get_position (synth) > 0.0)
+            return TRUE;
+        g_usleep (5000);
+    }
+    return FALSE;
+}
+
+/*
+ * The audio thread renders; calls queue commands it applies in order.
+ * Each call reads back at once (before the audio thread got to it), and
+ * after stop_stream () (the renderer back on this thread) the state is
+ * the one the last calls asked for, with the volume applied.
+ */
+static void
+test_stream_commands (void)
+{
+    g_autoptr(LrgMidiSynth) synth = NULL;
+    g_autoptr(LrgMidiSynth) reference = NULL;
+    g_autoptr(GBytes) song_a = NULL;
+    g_autoptr(GBytes) song_b = NULL;
+    g_autoptr(GBytes) song_c = NULL;
+    g_autoptr(GError) error = NULL;
+    GrlAudioDevice *device;
+    gfloat buffer[2 * 64];
+    gdouble start;
+    gdouble end;
+    gdouble level;
+    gdouble reference_level;
+
+    device = open_device ();
+    if (device == NULL)
+        return;
+
+    synth = new_synth_with_font ();
+    song_a = build_note_song (60, 16, -1, -1);
+    song_b = build_note_song (48, 16, 2, 6);
+    song_c = build_note_song (72, 8, -1, -1);
+    g_assert_true (lrg_midi_synth_start_stream (synth, &error));
+    g_assert_no_error (error);
+
+    /* the renderer is the audio thread's: offline rendering is silent */
+    buffer[0] = 1.0f;
+    g_assert_cmpuint (lrg_midi_synth_render (synth, buffer, 64), ==, 0);
+    g_assert_cmpfloat (buffer[0], ==, 0.0f);
+
+    /* every call reads back what it did, applied or not */
+    g_assert_true (lrg_midi_synth_play (synth, song_a, TRUE, 0.0, &error));
+    g_assert_true (lrg_midi_synth_is_playing (synth));
+    g_assert_false (lrg_midi_synth_is_finished (synth));
+    g_assert_true (lrg_midi_synth_get_loop_points (synth, &start, &end));
+    g_assert_cmpfloat_with_epsilon (start, 0.0, 1e-6);
+    g_assert_cmpfloat_with_epsilon (end, 8.0, 1e-6);
+    lrg_midi_synth_set_volume (synth, 0.25f);
+    g_assert_cmpfloat (lrg_midi_synth_get_volume (synth), ==, 0.25f);
+    g_assert_true (lrg_midi_synth_play (synth, song_b, TRUE, 0.5, &error));
+    g_assert_true (lrg_midi_synth_get_loop_points (synth, &start, &end));
+    g_assert_cmpfloat_with_epsilon (start, 1.0, 1e-6);
+    g_assert_cmpfloat_with_epsilon (end, 3.0, 1e-6);
+    lrg_midi_synth_stop (synth, 0.0);
+    g_assert_false (lrg_midi_synth_is_playing (synth));
+    g_assert_cmpfloat (lrg_midi_synth_get_position (synth), ==, 0.0);
+    g_assert_false (lrg_midi_synth_get_loop_points (synth, NULL, NULL));
+    g_assert_true (lrg_midi_synth_play (synth, song_c, TRUE, 0.0, &error));
+    g_assert_no_error (error);
+    g_assert_true (lrg_midi_synth_is_playing (synth));
+    g_assert_true (lrg_midi_synth_get_loop_points (synth, &start, &end));
+    g_assert_cmpfloat_with_epsilon (start, 0.0, 1e-6);
+    g_assert_cmpfloat_with_epsilon (end, 4.0, 1e-6);
+
+    /* the audio thread applies them and plays the last song (its note
+     * sustains for 4 s, so the level compares with a fresh render) */
+    g_assert_true (wait_position (synth, 3.0));
+    g_assert_true (lrg_midi_synth_is_playing (synth));
+
+    /* back on this thread: the last song at the volume set, in order */
+    lrg_midi_synth_stop_stream (synth);
+    g_assert_false (lrg_midi_synth_has_stream (synth));
+    g_assert_true (lrg_midi_synth_is_playing (synth));
+    g_assert_cmpfloat (lrg_midi_synth_get_position (synth), >, 0.0);
+    (void)render_rms (synth, 0.3);              /* past the note's attack */
+    level = render_rms (synth, 0.2);
+
+    reference = new_synth_with_font ();
+    g_assert_true (lrg_midi_synth_play (reference, song_c, TRUE, 0.0, &error));
+    (void)render_rms (reference, 0.3);
+    reference_level = render_rms (reference, 0.2);
+    g_assert_cmpfloat (reference_level, >, 0.01);
+    g_assert_cmpfloat_with_epsilon (level / reference_level, 0.25, 0.05);
+
+    grl_audio_device_close (device);
+}
+
+/*
+ * Many calls racing the audio thread: nothing is lost or reordered (the
+ * state after the renderer comes back is the last call's), and every
+ * song handed over is freed (run under the sanitizers).
+ */
+static void
+test_stream_stress (void)
+{
+    g_autoptr(LrgMidiSynth) synth = NULL;
+    g_autoptr(GBytes) song = NULL;
+    g_autoptr(GRand) rand = NULL;
+    g_autoptr(GError) error = NULL;
+    GrlAudioDevice *device;
+    gboolean expect_playing;
+    gfloat expect_volume;
+    guint i;
+
+    device = open_device ();
+    if (device == NULL)
+        return;
+
+    synth = new_synth_with_font ();
+    song = build_note_song (64, 4, -1, -1);
+    rand = g_rand_new_with_seed (42);
+    g_assert_true (lrg_midi_synth_start_stream (synth, &error));
+
+    expect_playing = FALSE;
+    expect_volume = 1.0f;
+    for (i = 0; i < 400; i++)
+    {
+        switch (g_rand_int_range (rand, 0, 4))
+        {
+        case 0:
+            g_assert_true (lrg_midi_synth_play (synth, song, TRUE,
+                                                g_rand_boolean (rand) ? 0.05 : 0.0, &error));
+            expect_playing = TRUE;
+            break;
+        case 1:
+            lrg_midi_synth_stop (synth, g_rand_boolean (rand) ? 0.05 : 0.0);
+            expect_playing = FALSE;
+            break;
+        case 2:
+            expect_volume = (gfloat)g_rand_double_range (rand, 0.1, 1.0);
+            lrg_midi_synth_set_volume (synth, expect_volume);
+            break;
+        default:
+            lrg_midi_synth_update (synth);
+            break;
+        }
+        g_assert_true (lrg_midi_synth_is_playing (synth) == expect_playing);
+        if (g_rand_int_range (rand, 0, 8) == 0)
+            g_usleep ((gulong)g_rand_int_range (rand, 0, 3000));
+    }
+
+    lrg_midi_synth_stop_stream (synth);
+    g_assert_true (lrg_midi_synth_is_playing (synth) == expect_playing);
+    g_assert_cmpfloat (lrg_midi_synth_get_volume (synth), ==, expect_volume);
+    grl_audio_device_close (device);
+}
+
+/* a song that does not loop finishes on the audio thread */
+static void
+test_stream_finish (void)
+{
+    g_autoptr(LrgMidiSynth) synth = NULL;
+    g_autoptr(GBytes) song = NULL;
+    g_autoptr(GError) error = NULL;
+    GrlAudioDevice *device;
+    gint64 deadline;
+
+    device = open_device ();
+    if (device == NULL)
+        return;
+
+    synth = new_synth_with_font ();
+    song = build_silent_song (1);                   /* 0.5 s */
+    g_assert_true (lrg_midi_synth_start_stream (synth, &error));
+    g_assert_true (lrg_midi_synth_play (synth, song, FALSE, 0.0, &error));
+    g_assert_true (lrg_midi_synth_is_playing (synth));
+    deadline = g_get_monotonic_time () + 4 * G_USEC_PER_SEC;
+    while (!lrg_midi_synth_is_finished (synth) && g_get_monotonic_time () < deadline)
+    {
+        lrg_midi_synth_update (synth);
+        g_usleep (10000);
+    }
+    g_assert_true (lrg_midi_synth_is_finished (synth));
+    g_assert_false (lrg_midi_synth_is_playing (synth));
+    lrg_midi_synth_stop_stream (synth);
+    grl_audio_device_close (device);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1084,6 +1019,9 @@ main (int   argc,
     g_test_add_func ("/midi-synth/malformed-midi", test_malformed_midi);
     g_test_add_func ("/midi-synth/mutations", test_mutations);
     g_test_add_func ("/midi-synth/stream", test_stream);
+    g_test_add_func ("/midi-synth/stream-commands", test_stream_commands);
+    g_test_add_func ("/midi-synth/stream-stress", test_stream_stress);
+    g_test_add_func ("/midi-synth/stream-finish", test_stream_finish);
 
     return g_test_run ();
 }

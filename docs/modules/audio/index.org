@@ -154,6 +154,17 @@ lrg_music_track_set_looping(track, TRUE);
 lrg_audio_manager_play_music(audio, track);
 #+end_src
 
+** Threads: what runs off the frame
+:PROPERTIES:
+:CUSTOM_ID: audio-threads
+:END:
+The expensive audio work does not run on the game thread:
+
+- *Synthesis.*  =LrgMidiSynth=, =LrgSoundBed= and =LrgProceduralAudio= render on the audio device's thread, pulled in small blocks through graylib's stream callback.  Game-thread calls become commands applied in order at the start of the next block; getters read back at once (see [[file:midi-synth.org::#the-audio-thread][LrgMidiSynth's audio thread]], [[file:sound-bed.org::#threads][the sound bed's]], and [[file:procedural-audio.org::#audio-thread][LrgProceduralAudio's]], which asks subclasses to hand parameter changes over with =lrg_procedural_audio_queue_command()=).  Their =update()= functions only free what the audio thread let go of.
+- *Music decoding.*  =LrgMusicTrack= switches its =GrlMusic= to graylib's background streaming: one graylib thread (=grl-music=) refills every playing background music about every 5 ms with raylib's =UpdateMusicStream()=, so Vorbis / MP3 / FLAC decoding never costs a frame.  =lrg_music_track_update()= keeps fades and loop points; control calls take the streaming thread's lock (they may wait for one decode of that music), the position and playing state are what that thread last saw (at most ~5 ms old).  The thread sleeps while no background music plays and stops when the audio device closes.
+
+Frame cost before and after: [[file:../../performance.org::#audio-thread-pass][the performance page]].
+
 ** API Reference
 :PROPERTIES:
 :CUSTOM_ID: api-reference

@@ -130,6 +130,9 @@ lrg_music_track_set_property (GObject      *object,
     case PROP_MUSIC:
         g_clear_object (&self->music);
         self->music = g_value_dup_object (value);
+        /* decoded on graylib's streaming thread, never on the frame */
+        if (self->music != NULL)
+            grl_music_set_background_streaming (self->music, TRUE);
         break;
     case PROP_NAME:
         lrg_music_track_set_name (self, g_value_get_string (value));
@@ -540,7 +543,13 @@ lrg_music_track_play (LrgMusicTrack *self)
     }
 
     grl_music_set_pitch (self->music, self->pitch);
-    grl_music_set_looping (self->music, self->looping && !self->has_loop_points);
+    /*
+     * raylib loops at the track's end; custom loop points seek back
+     * before that (update ()), and a loop end at or past the end falls
+     * back to raylib's loop from the start.  A track that does not loop
+     * stops at its end (graylib honours the looping property).
+     */
+    grl_music_set_looping (self->music, self->looping);
     grl_music_play (self->music);
 }
 
@@ -595,7 +604,9 @@ lrg_music_track_resume (LrgMusicTrack *self)
  * lrg_music_track_update:
  * @self: a #LrgMusicTrack
  *
- * Updates the music stream and handles loop point checking.
+ * Handles fades and loop point checking.  The decoding itself happens
+ * on graylib's streaming thread (grl_music_update() is a no-op for a
+ * background-streamed music and stays here for a music switched back).
  *
  * This must be called every frame while music is playing.
  */
@@ -718,8 +729,8 @@ lrg_music_track_set_looping (LrgMusicTrack *self,
     {
         self->looping = looping;
 
-        /* If we have custom loop points, we handle looping manually */
-        if (self->music != NULL && !self->has_loop_points)
+        /* raylib's loop backs up the custom loop points (see play ()) */
+        if (self->music != NULL)
             grl_music_set_looping (self->music, looping);
 
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOOPING]);

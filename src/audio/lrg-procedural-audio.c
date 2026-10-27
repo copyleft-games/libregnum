@@ -6,11 +6,34 @@
  */
 
 #include "config.h"
+#include <string.h>
+#include <raylib.h>
+
 #include "lrg-procedural-audio.h"
+#include "lrg-audio-thread-private.h"
 #include "../lrg-log.h"
 
 /* Default buffer size for procedural audio (frames per update) */
 #define DEFAULT_BUFFER_SIZE 4096
+
+/*
+ * Threads: with audio_thread (the default) generate() runs in graylib's
+ * stream callback on the audio device's thread while the stream plays
+ * (rendering).  The subclass's state then belongs to that thread;
+ * queue_command() hands changes over on a lock-free list
+ * (lrg-audio-thread-private.h) that the callback drains before each
+ * block, and the applied commands come back on the garbage list so
+ * their destroy notifies run on the game thread.  While the stream does
+ * not play, raylib does not call the callback (play, stop, pause and
+ * resume take raylib's lock), so the game thread runs commands itself.
+ */
+typedef struct
+{
+    LrgAudioNode              node;  /* first: the lists link it */
+    LrgProceduralAudioCommand func;
+    gpointer                  user_data;
+    GDestroyNotify            destroy;
+} Command;
 
 typedef struct
 {
@@ -20,6 +43,12 @@ typedef struct
     guint           channels;
     gfloat         *buffer;
     gsize           buffer_size;
+
+    gboolean        audio_thread;  /* the construct property */
+    gboolean        threaded;      /* the stream has our callback */
+    gboolean        rendering;     /* ... and plays: the audio thread owns the state */
+    LrgAudioNode   *commands;      /* atomic */
+    LrgAudioNode   *garbage;       /* atomic */
 } LrgProceduralAudioPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgProceduralAudio, lrg_procedural_audio, G_TYPE_OBJECT)
@@ -35,10 +64,98 @@ enum
     PROP_PAN,
     PROP_PLAYING,
     PROP_VALID,
+    PROP_AUDIO_THREAD,
     N_PROPS
 };
 
 static GParamSpec *properties[N_PROPS];
+
+/* ==========================================================================
+ * Commands and the audio thread
+ * ========================================================================== */
+
+/* raylib's bool read through a byte (graylib's bool/gboolean rule) */
+static gboolean
+device_ready (void)
+{
+    unsigned char raw;
+
+    raw = IsAudioDeviceReady ();
+    return raw != 0;
+}
+
+static void
+command_free (gpointer data)
+{
+    Command *command = data;
+
+    if (command->destroy != NULL)
+        command->destroy (command->user_data);
+    g_free (command);
+}
+
+/* runs every pending command, oldest first; they go back as garbage */
+static void
+drain_commands (LrgProceduralAudio        *self,
+                LrgProceduralAudioPrivate *priv)
+{
+    LrgAudioNode *first;
+    LrgAudioNode *last;
+    LrgAudioNode *node;
+
+    first = lrg_audio_list_take_fifo (&priv->commands);
+    last = NULL;
+    for (node = first; node != NULL; node = node->next)
+    {
+        Command *command = (Command *)node;
+
+        command->func (self, command->user_data);
+        last = node;
+    }
+    if (first != NULL)
+        lrg_audio_list_push_chain (&priv->garbage, first, last);
+}
+
+/* the game thread: runs the destroy notifies of the commands that ran */
+static void
+collect_garbage (LrgProceduralAudioPrivate *priv)
+{
+    lrg_audio_list_free_all (&priv->garbage);
+}
+
+/* graylib's stream callback, on the audio device's thread: the stream is
+ * 32-bit float with the source's channels, as generate() writes */
+static void
+stream_fill (gpointer buffer,
+             guint    n_frames,
+             gpointer user_data)
+{
+    LrgProceduralAudio        *self = user_data;
+    LrgProceduralAudioPrivate *priv = lrg_procedural_audio_get_instance_private (self);
+    LrgProceduralAudioClass   *klass = LRG_PROCEDURAL_AUDIO_GET_CLASS (self);
+
+    drain_commands (self, priv);
+    if (klass->generate != NULL)
+        klass->generate (self, (gfloat *)buffer, (gint)n_frames);
+    else
+        memset (buffer, 0, sizeof (gfloat) * (gsize)n_frames * priv->channels);
+}
+
+/*
+ * sync_rendering:
+ * After a play / stop / pause / resume: whether the audio thread renders
+ * now.  When it does not, the commands still pending are this thread's
+ * to run (the callback is not called while the stream does not play).
+ */
+static void
+sync_rendering (LrgProceduralAudio        *self,
+                LrgProceduralAudioPrivate *priv)
+{
+    priv->rendering = priv->threaded && grl_audio_stream_is_playing (priv->stream);
+    if (!priv->rendering)
+        drain_commands (self, priv);
+    collect_garbage (priv);
+}
 
 /* ==========================================================================
  * Default generate() implementation - produces silence
@@ -84,13 +201,44 @@ lrg_procedural_audio_constructed (GObject *object)
         return;
     }
 
-    /* Allocate buffer for generate() calls */
+    /* Allocate buffer for generate() calls (the update () pump) */
     priv->buffer_size = DEFAULT_BUFFER_SIZE * priv->channels;
     priv->buffer = g_new0 (gfloat, priv->buffer_size);
+
+    /* the device pulls generate () on its thread; without an open device
+     * (nothing would pull) or a free graylib callback slot, update ()
+     * pumps the stream as before */
+    if (priv->audio_thread && device_ready ())
+    {
+        grl_audio_stream_set_callback (priv->stream, stream_fill, self, NULL);
+        priv->threaded = grl_audio_stream_has_callback (priv->stream);
+    }
 
     lrg_debug (LRG_LOG_DOMAIN_AUDIO,
                "Created procedural audio: %u Hz, %u channels",
                priv->sample_rate, priv->channels);
+}
+
+/*
+ * The audio thread lets go before anything is torn down: dispose runs
+ * (the whole chain) before any subclass's finalize, so generate() never
+ * sees freed state as long as subclasses free it in finalize.  The
+ * commands still pending run here and their data is freed.
+ */
+static void
+lrg_procedural_audio_dispose (GObject *object)
+{
+    LrgProceduralAudio        *self = LRG_PROCEDURAL_AUDIO (object);
+    LrgProceduralAudioPrivate *priv = lrg_procedural_audio_get_instance_private (self);
+
+    if (priv->stream != NULL && priv->threaded)
+        grl_audio_stream_set_callback (priv->stream, NULL, NULL, NULL);
+    priv->threaded = FALSE;
+    priv->rendering = FALSE;
+    drain_commands (self, priv);
+    collect_garbage (priv);
+
+    G_OBJECT_CLASS (lrg_procedural_audio_parent_class)->dispose (object);
 }
 
 static void
@@ -151,6 +299,9 @@ lrg_procedural_audio_get_property (GObject    *object,
     case PROP_VALID:
         g_value_set_boolean (value, lrg_procedural_audio_is_valid (self));
         break;
+    case PROP_AUDIO_THREAD:
+        g_value_set_boolean (value, priv->audio_thread);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -185,6 +336,9 @@ lrg_procedural_audio_set_property (GObject      *object,
     case PROP_PAN:
         lrg_procedural_audio_set_pan (self, g_value_get_float (value));
         break;
+    case PROP_AUDIO_THREAD:
+        priv->audio_thread = g_value_get_boolean (value);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -196,6 +350,7 @@ lrg_procedural_audio_class_init (LrgProceduralAudioClass *klass)
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
     object_class->constructed = lrg_procedural_audio_constructed;
+    object_class->dispose = lrg_procedural_audio_dispose;
     object_class->finalize = lrg_procedural_audio_finalize;
     object_class->get_property = lrg_procedural_audio_get_property;
     object_class->set_property = lrg_procedural_audio_set_property;
@@ -313,6 +468,23 @@ lrg_procedural_audio_class_init (LrgProceduralAudioClass *klass)
                               G_PARAM_READABLE |
                               G_PARAM_STATIC_STRINGS);
 
+    /**
+     * LrgProceduralAudio:audio-thread:
+     *
+     * Whether generate() runs on the audio device's thread, pulled by
+     * the stream (the default), instead of on the thread that calls
+     * lrg_procedural_audio_update().  See the section documentation for
+     * what that asks of a subclass.
+     */
+    properties[PROP_AUDIO_THREAD] =
+        g_param_spec_boolean ("audio-thread",
+                              "Audio Thread",
+                              "Whether generate() runs on the audio device's thread",
+                              TRUE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_CONSTRUCT_ONLY |
+                              G_PARAM_STATIC_STRINGS);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -327,6 +499,7 @@ lrg_procedural_audio_init (LrgProceduralAudio *self)
     priv->channels = 2;
     priv->buffer = NULL;
     priv->buffer_size = 0;
+    priv->audio_thread = TRUE;
 }
 
 /* ==========================================================================
@@ -501,6 +674,7 @@ lrg_procedural_audio_play (LrgProceduralAudio *self)
         return;
 
     grl_audio_stream_play (priv->stream);
+    sync_rendering (self, priv);
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PLAYING]);
 
     lrg_debug (LRG_LOG_DOMAIN_AUDIO,
@@ -527,6 +701,7 @@ lrg_procedural_audio_stop (LrgProceduralAudio *self)
         return;
 
     grl_audio_stream_stop (priv->stream);
+    sync_rendering (self, priv);
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PLAYING]);
 
     lrg_debug (LRG_LOG_DOMAIN_AUDIO,
@@ -553,6 +728,7 @@ lrg_procedural_audio_pause (LrgProceduralAudio *self)
         return;
 
     grl_audio_stream_pause (priv->stream);
+    sync_rendering (self, priv);
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PLAYING]);
 }
 
@@ -575,6 +751,7 @@ lrg_procedural_audio_resume (LrgProceduralAudio *self)
         return;
 
     grl_audio_stream_resume (priv->stream);
+    sync_rendering (self, priv);
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PLAYING]);
 }
 
@@ -617,6 +794,12 @@ lrg_procedural_audio_update (LrgProceduralAudio *self)
     g_return_if_fail (LRG_IS_PROCEDURAL_AUDIO (self));
 
     priv = lrg_procedural_audio_get_instance_private (self);
+
+    /* on the audio thread the device pulls the samples: only the data of
+     * the commands it ran is freed here */
+    collect_garbage (priv);
+    if (priv->threaded)
+        return;
 
     if (priv->stream == NULL || !grl_audio_stream_is_playing (priv->stream))
         return;
@@ -810,4 +993,49 @@ lrg_procedural_audio_get_audio_stream (LrgProceduralAudio *self)
 
     priv = lrg_procedural_audio_get_instance_private (self);
     return priv->stream;
+}
+
+/* ==========================================================================
+ * The audio thread
+ * ========================================================================== */
+
+gboolean
+lrg_procedural_audio_get_audio_thread (LrgProceduralAudio *self)
+{
+    LrgProceduralAudioPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_PROCEDURAL_AUDIO (self), FALSE);
+
+    priv = lrg_procedural_audio_get_instance_private (self);
+    return priv->threaded;
+}
+
+/*
+ * lrg_procedural_audio_queue_command:
+ * Queued behind the commands before it either way; while the audio
+ * thread does not render, this thread runs the queue (this command
+ * included) at once.
+ */
+void
+lrg_procedural_audio_queue_command (LrgProceduralAudio        *self,
+                                    LrgProceduralAudioCommand  func,
+                                    gpointer                   user_data,
+                                    GDestroyNotify             destroy)
+{
+    LrgProceduralAudioPrivate *priv;
+    Command                   *command;
+
+    g_return_if_fail (LRG_IS_PROCEDURAL_AUDIO (self));
+    g_return_if_fail (func != NULL);
+
+    priv = lrg_procedural_audio_get_instance_private (self);
+    command = g_new0 (Command, 1);
+    command->node.free_func = command_free;
+    command->func = func;
+    command->user_data = user_data;
+    command->destroy = destroy;
+    lrg_audio_list_push (&priv->commands, &command->node);
+    if (!priv->rendering)
+        drain_commands (self, priv);
+    collect_garbage (priv);
 }

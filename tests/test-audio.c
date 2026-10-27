@@ -230,6 +230,23 @@ test_music_track_loop_points (void)
     g_assert_false (lrg_music_track_has_loop_points (track));
 }
 
+/* a track decodes its music on graylib's streaming thread */
+static void
+test_music_track_background_streaming (void)
+{
+    g_autoptr(GrlMusic)      music = NULL;
+    g_autoptr(LrgMusicTrack) track = NULL;
+
+    music = g_object_new (GRL_TYPE_MUSIC, NULL);
+    g_assert_false (grl_music_get_background_streaming (music));
+    track = lrg_music_track_new (music);
+    g_assert_true (grl_music_get_background_streaming (music));
+
+    /* the per-frame update stays harmless (nothing to decode here) */
+    lrg_music_track_update (track);
+    g_assert_false (lrg_music_track_is_playing (track));
+}
+
 static void
 test_music_track_fade (void)
 {
@@ -658,6 +675,7 @@ main (int   argc,
     g_test_add_func ("/audio/music-track/properties", test_music_track_properties);
     g_test_add_func ("/audio/music-track/loop-points", test_music_track_loop_points);
     g_test_add_func ("/audio/music-track/fade", test_music_track_fade);
+    g_test_add_func ("/audio/music-track/background-streaming", test_music_track_background_streaming);
 
     /* Audio manager tests */
     g_test_add_func ("/audio/manager/singleton", test_audio_manager_singleton);
