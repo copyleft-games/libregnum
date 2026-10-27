@@ -13,6 +13,7 @@
 
 #include "lrg-photo-look.h"
 #include "../lrg-log.h"
+#include "core/lrg-prewarm.h"
 
 /**
  * SECTION:lrg-photo-look
@@ -146,7 +147,11 @@ enum
 
 static GParamSpec *properties[N_PROPS];
 
-G_DEFINE_TYPE (LrgPhotoLook, lrg_photo_look, G_TYPE_OBJECT)
+static void lrg_photo_look_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgPhotoLook, lrg_photo_look, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_photo_look_prewarmable_init))
 
 static gfloat
 clampf (gfloat value, gfloat lo, gfloat hi)
@@ -1026,6 +1031,10 @@ lrg_photo_look_init (LrgPhotoLook *self)
     self->vignette_radius = 0.5f;
     self->grain = 0.0f;
     self->lut_strength = 1.0f;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgPhotoLook *
@@ -1042,4 +1051,23 @@ lrg_photo_look_new_for_preset (LrgPhotoPreset preset)
     self = lrg_photo_look_new ();
     lrg_photo_look_apply_preset (self, preset);
     return self;
+}
+
+/* ========================================================================== */
+/* Prewarm                                                                    */
+/* ========================================================================== */
+
+/* lrg_photo_look_prewarm: compiles the finishing shader now, not on the
+ * first photo-mode frame that needs it */
+static gboolean
+lrg_photo_look_prewarm (LrgPrewarmable *prewarmable)
+{
+    get_shader (LRG_PHOTO_LOOK (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_photo_look_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_photo_look_prewarm;
 }

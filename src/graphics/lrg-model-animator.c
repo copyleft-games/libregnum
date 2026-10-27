@@ -31,6 +31,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "graphics/lrg-model-animator.h"
+#include "core/lrg-prewarm.h"
 
 /* ------------------------------------------------------------------------ */
 /* LrgModelAnimState                                                        */
@@ -151,7 +152,11 @@ typedef struct
     gboolean ok;
 } ShaderProbe;
 
-G_DEFINE_TYPE (LrgModelAnimator, lrg_model_animator, G_TYPE_OBJECT)
+static void lrg_model_animator_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgModelAnimator, lrg_model_animator, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_model_animator_prewarmable_init))
 
 /* ------------------------------------------------------------------------ */
 /* GPU skinning variant of raylib's default shader                          */
@@ -300,6 +305,10 @@ lrg_model_animator_init (LrgModelAnimator *self)
     self->aliases = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
     self->probes = g_array_new (FALSE, FALSE, sizeof (ShaderProbe));
     self->gpu_allowed = TRUE;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 static Clip *
@@ -1196,4 +1205,31 @@ lrg_model_animator_draw_masked_ex (LrgModelAnimator *self,
 
     transform = matrix_scale_yaw_translate (x, y, z, yaw, scale);
     draw_meshes (self, mask, transform, tint_or_white (tint));
+}
+
+/* ------------------------------------------------------------------------ */
+/* Prewarm                                                                  */
+/* ------------------------------------------------------------------------ */
+
+/* lrg_model_animator_prewarm:
+ * What the first GPU-skinned apply() builds: the default skinning shader
+ * (or the probe of the material's own) and the bone attribute buffers.
+ * A model the CPU posed last is left alone: preparing it would put its
+ * buffers back in bind pose under the pose it shows. */
+static gboolean
+lrg_model_animator_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgModelAnimator *self = LRG_MODEL_ANIMATOR (prewarmable);
+
+    if (self->model == NULL || (self->has_key && !self->gpu_pose))
+        return TRUE;
+    if (gpu_skinning_possible (self))
+        grl_model_prepare_gpu_skinning (self->model);
+    return TRUE;
+}
+
+static void
+lrg_model_animator_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_model_animator_prewarm;
 }

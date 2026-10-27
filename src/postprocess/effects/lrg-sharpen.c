@@ -20,6 +20,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "postprocess/effects/lrg-sharpen.h"
+#include "core/lrg-prewarm.h"
 
 /* the shader mirrors lrg_sharpen_pixel() below; one texel is 1 / textureSize */
 static const gchar sharpen_fs[] =
@@ -58,7 +59,11 @@ struct _LrgSharpen
     gint           loc_intensity;
 };
 
-G_DEFINE_TYPE (LrgSharpen, lrg_sharpen, LRG_TYPE_POST_EFFECT)
+static void lrg_sharpen_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgSharpen, lrg_sharpen, LRG_TYPE_POST_EFFECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_sharpen_prewarmable_init))
 
 enum
 {
@@ -341,6 +346,10 @@ lrg_sharpen_init (LrgSharpen *self)
     self->sharpness = 0.5f;
     self->loc_sharpness = -1;
     self->loc_intensity = -1;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgSharpen *
@@ -367,4 +376,23 @@ lrg_sharpen_set_sharpness (LrgSharpen *self,
         return;
     self->sharpness = sharpness;
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHARPNESS]);
+}
+
+/* ========================================================================== */
+/* Prewarm                                                                    */
+/* ========================================================================== */
+
+/* lrg_sharpen_prewarm: compiles the sharpen shader now, not on the first
+ * frame it sharpens */
+static gboolean
+lrg_sharpen_prewarm (LrgPrewarmable *prewarmable)
+{
+    sharpen_get_shader (LRG_SHARPEN (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_sharpen_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_sharpen_prewarm;
 }

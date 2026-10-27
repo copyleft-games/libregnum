@@ -11,6 +11,7 @@
 #include <math.h>
 #include <raylib.h>
 #include <rlgl.h>
+#include "core/lrg-prewarm.h"
 
 /**
  * SECTION:lrg-color-grade
@@ -119,7 +120,11 @@ struct _LrgColorGrade
 /* the table's texture unit while the grade draws (unit 0 is the source) */
 #define LUT_UNIT (1)
 
-G_DEFINE_TYPE (LrgColorGrade, lrg_color_grade, LRG_TYPE_POST_EFFECT)
+static void lrg_color_grade_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgColorGrade, lrg_color_grade, LRG_TYPE_POST_EFFECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_color_grade_prewarmable_init))
 
 enum
 {
@@ -451,6 +456,10 @@ lrg_color_grade_init (LrgColorGrade *self)
     self->lift_r = self->lift_g = self->lift_b = 0.0f;
     self->gamma_r = self->gamma_g = self->gamma_b = 1.0f;
     self->gain_r = self->gain_g = self->gain_b = 1.0f;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgColorGrade *
@@ -859,4 +868,23 @@ lrg_color_grade_bake_lut (LrgColorGrade *self,
                                                              + (gsize)b * size * size) * 3);
             }
     return lrg_color_lut_new_from_data (size, data, NULL);
+}
+
+/* ========================================================================== */
+/* Prewarm                                                                    */
+/* ========================================================================== */
+
+/* lrg_color_grade_prewarm: compiles the grade shader now, not on the first
+ * frame the grade is not identity */
+static gboolean
+lrg_color_grade_prewarm (LrgPrewarmable *prewarmable)
+{
+    lrg_color_grade_get_shader (LRG_COLOR_GRADE (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_color_grade_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_color_grade_prewarm;
 }

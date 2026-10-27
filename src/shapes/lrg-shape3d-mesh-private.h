@@ -75,6 +75,19 @@ void
 lrg_shape3d_mesh_release (LrgShape3DMesh *mesh);
 
 /*
+ * lrg_shape3d_mesh_prepare:
+ * @mesh: a shared mesh
+ *
+ * Makes sure @mesh's buffers live in the current context (re-uploading
+ * them after the window was recreated), as its draw would. Used to
+ * prewarm the shapes.
+ *
+ * Returns: %FALSE without a window or when the upload failed
+ */
+gboolean
+lrg_shape3d_mesh_prepare (LrgShape3DMesh *mesh);
+
+/*
  * lrg_shape3d_mesh_draw:
  * @mesh: a mesh
  * @color: the shape's colour

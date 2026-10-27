@@ -28,6 +28,7 @@
 #include "weather/lrg-cloud-layer.h"
 #include "weather/lrg-cloud-layer-private.h"
 #include "../lrg-log.h"
+#include "core/lrg-prewarm.h"
 
 /* real radius of the drawn deck around the eye, metres */
 #define CLOUD_DRAW_RADIUS (12000.0f)
@@ -70,7 +71,11 @@ struct _LrgCloudLayer
     gint       loc_radius;
 };
 
-G_DEFINE_FINAL_TYPE (LrgCloudLayer, lrg_cloud_layer, G_TYPE_OBJECT)
+static void lrg_cloud_layer_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgCloudLayer, lrg_cloud_layer, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_cloud_layer_prewarmable_init))
 
 static const gchar cloud_vs[] =
     "#version 330\n"
@@ -200,6 +205,10 @@ lrg_cloud_layer_init (LrgCloudLayer *self)
     self->shadow_strength = 0.5f;
     self->lit[0] = 250; self->lit[1] = 250; self->lit[2] = 255; self->lit[3] = 255;
     self->shade[0] = 120; self->shade[1] = 126; self->shade[2] = 140; self->shade[3] = 255;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgCloudLayer *
@@ -814,4 +823,22 @@ lrg_cloud_layer_release_gpu (LrgCloudLayer *self)
     self->shader_failed = FALSE;
     g_clear_object (&self->vshader);
     self->vshader_failed = FALSE;
+}
+
+/* lrg_cloud_layer_prewarm: compiles the slice and volume shaders now
+ * (both: the volume can be switched on later) */
+static gboolean
+lrg_cloud_layer_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgCloudLayer *self = LRG_CLOUD_LAYER (prewarmable);
+
+    if (ensure_shader (self))
+        ensure_volume_shader (self);
+    return TRUE;
+}
+
+static void
+lrg_cloud_layer_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_cloud_layer_prewarm;
 }

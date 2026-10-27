@@ -414,6 +414,23 @@ lrg_shape3d_mesh_release (LrgShape3DMesh *mesh)
 }
 
 gboolean
+lrg_shape3d_mesh_prepare (LrgShape3DMesh *mesh)
+{
+	g_return_val_if_fail (mesh != NULL, FALSE);
+
+	if (!IsWindowReady ())
+		return FALSE;
+	if (mesh->window != GetWindowHandle () || mesh->mesh.vaoId == 0)
+	{
+		/* a new context: the old buffers died with the old one */
+		unload (mesh);
+		if (!build_and_upload (mesh))
+			return FALSE;
+	}
+	return TRUE;
+}
+
+gboolean
 lrg_shape3d_mesh_draw (LrgShape3DMesh *mesh,
                        const GrlColor *color,
                        gfloat          scale)
@@ -425,15 +442,8 @@ lrg_shape3d_mesh_draw (LrgShape3DMesh *mesh,
 	g_return_val_if_fail (mesh != NULL, FALSE);
 	g_return_val_if_fail (color != NULL, FALSE);
 
-	if (!IsWindowReady ())
+	if (!lrg_shape3d_mesh_prepare (mesh))
 		return FALSE;
-	if (mesh->window != GetWindowHandle () || mesh->mesh.vaoId == 0)
-	{
-		/* a new context: the old buffers died with the old one */
-		unload (mesh);
-		if (!build_and_upload (mesh))
-			return FALSE;
-	}
 
 	/* what rlgl queued before this shape is drawn before it */
 	rlDrawRenderBatchActive ();
