@@ -112,6 +112,35 @@ DexFuture *future = lrg_save_manager_load_async(manager, "slot1");
 dex_future_then(future, on_load_complete, NULL, NULL);
 #+end_src
 
+** Saving During Play (Background Saves)
+:PROPERTIES:
+:CUSTOM_ID: background-saves
+:END:
+=lrg_save_manager_save()= does the whole save on the calling thread: every saveable's =save= method, YAML generation and the file write. Replacing an existing save fsyncs (=g_file_set_contents()=), which costs several milliseconds on a laptop SSD and far more on a busy or spinning disk; with a 4000-key state the whole save took about 9 ms, a visible hitch when an autosave fires mid-game.
+
+=lrg_save_manager_save_in_background()= splits it. The saveables still run on the calling thread (they read live game state, which only that thread may touch), but the YAML generation and the file write run on the manager's writer thread. Background saves are written one at a time in the order they were made, and a later synchronous save, load or delete of any slot first waits for them, so a save never lands on top of a newer one and a load never reads a half-written slot.
+
+#+begin_src C
+static gboolean
+my_game_on_auto_save (LrgGameTemplate  *template,
+                      GError          **error)
+{
+    /* Collects now (about 1.4 ms for 4000 keys), writes on the writer thread */
+    return lrg_save_manager_save_in_background (lrg_save_manager_get_default (),
+                                                "autosave", "Autosave", error);
+}
+
+/* Before quitting (or when the result matters): wait for the writes */
+if (!lrg_save_manager_flush (lrg_save_manager_get_default (), &error))
+    g_warning ("Last save failed: %s", error->message);
+#+end_src
+
+Reporting:
+- =save-started= is emitted at once; =save-completed= when the file is written. It is emitted on the thread that saved: from the thread-default main context current at the first background save when that context is iterated (the editor, a =GMainLoop= app), and otherwise from the next =lrg_save_manager_flush()= or synchronous save, load or delete. The standalone game loop does not iterate a main context, so there completions arrive at those calls.
+- The return value covers collection only (a saveable that fails means nothing is written). Write errors come through =save-completed= (=success= FALSE), a warning in the log, and =lrg_save_manager_flush()=, which returns the first write error since the previous flush.
+- =lrg_save_manager_is_saving()= is TRUE while a background save is queued or being written, e.g. to show a save icon.
+- Disposing of the manager finishes its queued writes first.
+
 ** YAML Format
 :PROPERTIES:
 :CUSTOM_ID: yaml-format

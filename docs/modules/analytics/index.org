@@ -259,6 +259,20 @@ lrg_analytics_backend_http_set_retry_count (http, 3);
 guint pending = lrg_analytics_backend_http_get_pending_count (http);
 #+end_src
 
+*** Sending happens off the game thread
+:PROPERTIES:
+:CUSTOM_ID: http-sender-thread
+:END:
+A batch is one HTTP POST with up to =retry-count= retries =retry-delay-ms= apart: tens of milliseconds against a healthy collector, seconds against an unreachable one (3 retries of 1 s by default). The backend used to send synchronously from the call that filled the batch, which froze the game every =batch-size= events (a 20 ms collector cut the 1% low of the =analytics= bench scenario to 47 fps).
+
+Batches now go to a sender thread with its own =SoupSession=:
+- When =batch-size= events are pending, or the flush timer fires, the events are taken as one batch and handed to the sender; =lrg_analytics_track_event()= returns at once.
+- One batch is out at a time. Events tracked while it is being sent collect and form the next batch, so a slow collector means fewer, larger posts, not a growing queue.
+- A batch whose attempts all fail stays queued and is retried when the next batch fills or on a flush, as unsent events always were; =lrg_analytics_backend_http_get_pending_count()= counts its events until they are delivered. Failures are logged (warnings) from the sender thread.
+- =lrg_analytics_flush()= (and =lrg_analytics_end_session()=) still block until everything is sent and report the outcome.
+- Disposing of the backend stops the sender promptly (an in-flight request is cancelled, a retry wait is cut short) and drops unsent batches, as it always dropped pending events; end the session first to deliver them.
+- The flush timer is a =GMainContext= timeout: it only fires where the main context is iterated (the editor, a =GMainLoop= app). The standalone game loop does not iterate one, so there batches go out by size and on flush.
+
 ** Event Serialization
 :PROPERTIES:
 :CUSTOM_ID: event-serialization

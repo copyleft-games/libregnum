@@ -25,7 +25,7 @@ struct _LrgWorld
     GrlScene   *scene;        /* Underlying graylib scene */
     GList      *objects;      /* List of LrgGameObject (owned references) */
     GList      *objects_tail; /* Last link of @objects, for O(1) append */
-    GHashTable *object_set;   /* Membership set over @objects (no refs) */
+    GHashTable *object_set;   /* object -> its link in @objects (no refs) */
     guint       object_count; /* Length of @objects */
     gboolean    active;       /* Whether the world processes updates/draws */
     gboolean    paused;       /* Whether updates are paused (drawing continues) */
@@ -75,14 +75,28 @@ draw_entry_before (const DrawEntry *a,
     return a->seq < b->seq;
 }
 
+static gint
+draw_entry_compare (gconstpointer a,
+                    gconstpointer b)
+{
+    const DrawEntry *ea = a;
+    const DrawEntry *eb = b;
+
+    if (draw_entry_before (ea, eb))
+        return -1;
+    return draw_entry_before (eb, ea) ? 1 : 0;
+}
+
 /*
  * world_update_draw_order:
  *
- * Brings @self->draw_order up to date: rebuilds it from the object list
- * when membership changed, samples every object's z-index, then insertion
- * sorts. Objects rarely change z between frames, so this is a single
- * linear pass in the common case instead of copying and merge-sorting the
- * whole list every frame.
+ * Brings @self->draw_order up to date. When membership changed it is
+ * rebuilt from the object list with each object's z-index and sorted
+ * (O(n log n); rebuilding with every z at 0 and insertion sorting was
+ * O(n^2) for mixed z-indices, a multi-millisecond hitch on the frame after
+ * a wave of spawns or deaths). Otherwise every z-index is resampled and
+ * the order insertion sorted, a single linear pass while objects keep
+ * their z-index.
  */
 static void
 world_update_draw_order (LrgWorld *self)
@@ -101,10 +115,14 @@ world_update_draw_order (LrgWorld *self)
 
             entry.object = (LrgGameObject *)l->data;
             entry.seq = i;
-            entry.z = 0;
+            entry.z = grl_entity_get_z_index (GRL_ENTITY (entry.object));
             g_array_append_val (self->draw_order, entry);
         }
+        /* (seq is unique, so the order is total and qsort's instability
+         * does not matter) */
+        g_array_sort (self->draw_order, draw_entry_compare);
         self->draw_order_dirty = FALSE;
+        return;
     }
 
     entries = (DrawEntry *)(gpointer)self->draw_order->data;
@@ -305,7 +323,7 @@ lrg_world_add_object (LrgWorld      *self,
         /* g_list_append() on the tail link is O(1) */
         self->objects_tail = g_list_append (self->objects_tail, object)->next;
     }
-    g_hash_table_add (self->object_set, object);
+    g_hash_table_insert (self->object_set, object, self->objects_tail);
     self->object_count++;
     self->draw_order_dirty = TRUE;
 
@@ -333,9 +351,9 @@ lrg_world_remove_object (LrgWorld      *self,
     g_return_if_fail (LRG_IS_WORLD (self));
     g_return_if_fail (LRG_IS_GAME_OBJECT (object));
 
-    link = NULL;
-    if (g_hash_table_contains (self->object_set, object))
-        link = g_list_find (self->objects, object);
+    /* The stored link makes this O(1): removing a wave of objects in one
+     * frame no longer walks the list once per object. */
+    link = g_hash_table_lookup (self->object_set, object);
     if (link == NULL)
     {
         lrg_warning (LRG_LOG_DOMAIN_ECS,

@@ -160,6 +160,8 @@ struct _LrgBillboardBatch
     GArray           *ranges;       /* GpuRange, by material */
     GArray           *clusters;     /* GpuCluster, in quad order */
     GArray           *loose;        /* guint billboard indices drawn immediately */
+    GPtrArray        *order;        /* Billboard *: draw/shadow sort list, reused
+                                     * (a fresh one per pass mmaps past ~16k) */
     guint             ebo;          /* shared quad index pattern */
     guint             gpu_quads;    /* quads uploaded */
     guint             demoted;      /* uploaded quads zeroed since */
@@ -424,6 +426,7 @@ lrg_billboard_batch_finalize (GObject *object)
     g_clear_pointer (&self->ranges, g_array_unref);
     g_clear_pointer (&self->clusters, g_array_unref);
     g_clear_pointer (&self->loose, g_array_unref);
+    g_clear_pointer (&self->order, g_ptr_array_unref);
 
     g_clear_object (&self->light_set);
     g_clear_pointer (&self->billboards, g_array_unref);
@@ -453,6 +456,7 @@ lrg_billboard_batch_init (LrgBillboardBatch *self)
     self->ranges = g_array_new (FALSE, TRUE, sizeof (GpuRange));
     self->clusters = g_array_new (FALSE, TRUE, sizeof (GpuCluster));
     self->loose = g_array_new (FALSE, FALSE, sizeof (guint));
+    self->order = g_ptr_array_new ();
 }
 
 LrgBillboardBatch *
@@ -1815,7 +1819,7 @@ void
 lrg_billboard_batch_draw (LrgBillboardBatch *self,
                           const GrlVector3  *camera_position)
 {
-    g_autoptr(GPtrArray) order = NULL;
+    GPtrArray *order;
     Matrix    view;
     gfloat    camera[3];
     gfloat    cam_right[3];
@@ -1862,7 +1866,8 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     /* The loose part (everything without an upload): visible, textured
      * billboards grouped by material, one bind each. */
     n_candidates = self->gpu_quads > 0 ? self->loose->len : self->billboards->len;
-    order = g_ptr_array_sized_new (n_candidates);
+    order = self->order;
+    g_ptr_array_set_size (order, 0);
     for (i = 0; i < n_candidates; i++)
     {
         guint      index = self->gpu_quads > 0 ? g_array_index (self->loose, guint, i) : i;
@@ -2007,7 +2012,7 @@ lrg_billboard_batch_draw_shadow (LrgBillboardBatch *self,
                                  LrgShadowRenderer *renderer,
                                  const GrlVector3  *camera_position)
 {
-    g_autoptr(GPtrArray) order = NULL;
+    GPtrArray *order;
     Matrix   transform;
     gint     mode;
     gfloat   light[4];
@@ -2110,7 +2115,8 @@ lrg_billboard_batch_draw_shadow (LrgBillboardBatch *self,
 
         if (caster == NULL)
             return;
-        order = g_ptr_array_sized_new (n_candidates);
+        order = self->order;
+        g_ptr_array_set_size (order, 0);
         for (i = 0; i < n_candidates; i++)
         {
             guint      index = self->gpu_quads > 0 ? g_array_index (self->loose, guint, i) : i;

@@ -55,6 +55,7 @@ struct _LrgParticleBillboardRenderer
     gboolean    dot_loaded;
 
     GArray     *scratch;      /* gfloat vertices reused by draw() */
+    GArray     *sprites;      /* Sprite: build()'s sort list, reused */
 };
 
 G_DEFINE_TYPE (LrgParticleBillboardRenderer, lrg_particle_billboard_renderer, G_TYPE_OBJECT)
@@ -71,6 +72,7 @@ lrg_particle_billboard_renderer_finalize (GObject *object)
     lrg_particle_billboard_renderer_release_gpu (self);
     g_clear_object (&self->texture);
     g_clear_pointer (&self->scratch, g_array_unref);
+    g_clear_pointer (&self->sprites, g_array_unref);
 
     G_OBJECT_CLASS (lrg_particle_billboard_renderer_parent_class)->finalize (object);
 }
@@ -88,6 +90,7 @@ lrg_particle_billboard_renderer_init (LrgParticleBillboardRenderer *self)
     self->rows = 1;
     self->fps = 0.0f;
     self->scratch = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    self->sprites = g_array_new (FALSE, FALSE, sizeof (Sprite));
 }
 
 LrgParticleBillboardRenderer *
@@ -343,7 +346,7 @@ lrg_particle_billboard_renderer_build (LrgParticleBillboardRenderer *self,
                                        gfloat                       *vertices,
                                        guint                         max_quads)
 {
-    g_autoptr(GArray) sprites = NULL;
+    GArray     *sprites;
     CollectData data;
     guint       first;
     guint       count;
@@ -353,9 +356,11 @@ lrg_particle_billboard_renderer_build (LrgParticleBillboardRenderer *self,
     g_return_val_if_fail (LRG_IS_PARTICLE_SYSTEM (system), 0);
     g_return_val_if_fail (eye != NULL && up != NULL, 0);
 
-    /* Collect and sort back to front. */
-    sprites = g_array_sized_new (FALSE, FALSE, sizeof (Sprite),
-                                 lrg_particle_system_get_active_count (system));
+    /* Collect and sort back to front, into a list kept between frames:
+     * 52 bytes a particle is past glibc's 128 KiB mmap threshold at ~2500
+     * particles, and a fresh array would mmap and fault it in every frame. */
+    sprites = self->sprites;
+    g_array_set_size (sprites, 0);
     data.sprites = sprites;
     data.eye = eye;
     lrg_particle_system_foreach_active (system, collect_particle, &data);

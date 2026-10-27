@@ -171,11 +171,40 @@ test_clipping_and_conversion (void)
     g_assert_cmpfloat (out[1], ==, 1);
 }
 
+/* The mixer reuses its bus scratch between renders: a render after the
+ * voice ended is silent (nothing left over), also after a bus is added
+ * (the scratch grows) and for a smaller block than before. */
+static void
+test_scratch_reuse (void)
+{
+    const gfloat pcm[] = { 0.5f, 0.5f, 0.5f, 0.5f };
+    g_autoptr (LrgAudioMixer) mixer = lrg_audio_mixer_new (8000, 1);
+    g_autoptr (LrgWaveData) wave = wave_from (pcm, 4, 1);
+    gsize count;
+    guint round;
+
+    g_assert_cmpuint (lrg_audio_mixer_play (mixer, wave, "master", 1, FALSE), >, 0);
+    for (round = 0; round < 3; round++)
+    {
+        g_autofree gfloat *out = NULL;
+        guint frames = round == 2 ? 2 : 4;
+        guint k;
+
+        if (round == 1)
+            g_assert_true (lrg_audio_mixer_add_bus (mixer, "sfx", "master"));
+        out = lrg_audio_mixer_render (mixer, frames, &count);
+        g_assert_cmpuint (count, ==, frames);
+        for (k = 0; k < count; k++)
+            g_assert_cmpfloat_with_epsilon (out[k], round == 0 ? 0.5 : 0.0, 1e-6);
+    }
+}
+
 int
 main (int argc, char **argv)
 {
     g_test_init (&argc, &argv, NULL);
     g_test_add_func ("/mixer/routing", test_routing);
+    g_test_add_func ("/mixer/scratch-reuse", test_scratch_reuse);
     g_test_add_func ("/mixer/graph-validation", test_graph_validation);
     g_test_add_func ("/mixer/voices", test_voices);
     g_test_add_func ("/mixer/delay", test_delay);

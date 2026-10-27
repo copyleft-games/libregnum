@@ -8,6 +8,7 @@
  */
 
 #include <glib.h>
+#include <gio/gio.h>
 #include <libregnum.h>
 
 /* ==========================================================================
@@ -364,6 +365,233 @@ test_analytics_backend_flush (void)
 }
 
 /* ==========================================================================
+ * Test Cases - HTTP backend against a local, deliberately slow server
+ * ========================================================================== */
+
+/* A one-thread HTTP/1.1 server: answers every POST with 200 after
+ * @delay_ms, counting requests. Enough for libsoup's keep-alive client. */
+typedef struct
+{
+    GSocketListener *listener;
+    guint16          port;
+    guint            delay_ms;
+    gint             requests;
+    GThread         *thread;
+    GCancellable    *cancellable;
+} SlowServer;
+
+static void
+slow_server_serve (SlowServer        *server,
+                   GSocketConnection *connection)
+{
+    GInputStream               *in;
+    GOutputStream              *out;
+    g_autoptr(GDataInputStream) data = NULL;
+
+    in = g_io_stream_get_input_stream (G_IO_STREAM (connection));
+    out = g_io_stream_get_output_stream (G_IO_STREAM (connection));
+    data = g_data_input_stream_new (in);
+    g_data_input_stream_set_newline_type (data, G_DATA_STREAM_NEWLINE_TYPE_CR_LF);
+
+    for (;;)
+    {
+        gsize   content_length = 0;
+        gchar  *line;
+        gboolean got_request = FALSE;
+        static const gchar reply[] = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+
+        /* Request line and headers, up to the empty line. */
+        while ((line = g_data_input_stream_read_line (data, NULL, server->cancellable,
+                                                      NULL)) != NULL)
+        {
+            gboolean end = line[0] == '\0';
+
+            got_request = TRUE;
+            if (g_ascii_strncasecmp (line, "Content-Length:", 15) == 0)
+                content_length = (gsize) g_ascii_strtoull (line + 15, NULL, 10);
+            g_free (line);
+            if (end)
+                break;
+        }
+        if (!got_request)
+            return;
+        if (content_length > 0)
+        {
+            g_autofree gchar *body = g_malloc (content_length);
+
+            if (!g_input_stream_read_all (G_INPUT_STREAM (data), body, content_length,
+                                          NULL, NULL, NULL))
+                return;
+        }
+
+        g_usleep ((gulong) server->delay_ms * 1000);
+        g_atomic_int_inc (&server->requests);
+        if (!g_output_stream_write_all (out, reply, sizeof reply - 1, NULL, NULL, NULL))
+            return;
+    }
+}
+
+static gpointer
+slow_server_thread (gpointer user_data)
+{
+    SlowServer *server = user_data;
+
+    for (;;)
+    {
+        g_autoptr(GSocketConnection) connection = NULL;
+
+        connection = g_socket_listener_accept (server->listener, NULL,
+                                               server->cancellable, NULL);
+        if (connection == NULL)
+            return NULL;
+        slow_server_serve (server, connection);
+    }
+}
+
+static SlowServer *
+slow_server_new (guint delay_ms)
+{
+    SlowServer *server;
+
+    server = g_new0 (SlowServer, 1);
+    server->delay_ms = delay_ms;
+    server->cancellable = g_cancellable_new ();
+    server->listener = g_socket_listener_new ();
+    server->port = g_socket_listener_add_any_inet_port (server->listener, NULL, NULL);
+    g_assert_cmpuint (server->port, !=, 0);
+    server->thread = g_thread_new ("slow-server", slow_server_thread, server);
+    return server;
+}
+
+/* Cancelling wakes the server thread from accept() or a read. */
+static void
+slow_server_free (SlowServer *server)
+{
+    g_cancellable_cancel (server->cancellable);
+    g_thread_join (server->thread);
+    g_socket_listener_close (server->listener);
+    g_object_unref (server->listener);
+    g_object_unref (server->cancellable);
+    g_free (server);
+}
+
+/* A full batch must not wait on the network: the POST happens on the
+ * sender thread, and flush waits for it. */
+static void
+test_analytics_http_batch_does_not_block (void)
+{
+    g_autoptr(LrgAnalyticsBackendHttp) backend = NULL;
+    g_autoptr(GError)                  error = NULL;
+    g_autofree gchar                  *url = NULL;
+    SlowServer                        *server;
+    gint64                             start;
+    gint64                             elapsed;
+    guint                              i;
+
+    server = slow_server_new (300);
+    url = g_strdup_printf ("http://127.0.0.1:%u/events", server->port);
+    backend = lrg_analytics_backend_http_new (url);
+    lrg_analytics_backend_http_set_batch_size (backend, 4);
+    lrg_analytics_backend_http_set_flush_interval (backend, 0);
+
+    start = g_get_monotonic_time ();
+    for (i = 0; i < 8; i++)
+    {
+        g_autoptr(LrgAnalyticsEvent) event = lrg_analytics_event_new ("tick");
+
+        g_assert_true (lrg_analytics_backend_send_event (LRG_ANALYTICS_BACKEND (backend),
+                                                         event, &error));
+        g_assert_no_error (error);
+    }
+    elapsed = g_get_monotonic_time () - start;
+
+    /* Two full batches were queued; nothing waited out a 300 ms reply. */
+    g_assert_cmpint (elapsed, <, 150 * G_TIME_SPAN_MILLISECOND);
+    g_assert_cmpuint (lrg_analytics_backend_http_get_pending_count (backend), >, 0);
+
+    g_assert_true (lrg_analytics_backend_flush (LRG_ANALYTICS_BACKEND (backend), &error));
+    g_assert_no_error (error);
+    g_assert_cmpint (g_atomic_int_get (&server->requests), ==, 2);
+    g_assert_cmpuint (lrg_analytics_backend_http_get_pending_count (backend), ==, 0);
+
+    g_clear_object (&backend);
+    slow_server_free (server);
+}
+
+/* A batch that cannot be delivered is kept, counted as pending, reported
+ * by flush, and does not block the event that filled it. */
+static void
+test_analytics_http_failed_batch_kept (void)
+{
+    g_autoptr(LrgAnalyticsBackendHttp) backend = NULL;
+    g_autoptr(GError)                  error = NULL;
+    g_autoptr(GSocketListener)         probe = NULL;
+    g_autofree gchar                  *url = NULL;
+    guint16                            port;
+    guint                              i;
+    GLogLevelFlags                     fatal_mask;
+
+    /* A port that was free a moment ago: connections are refused. */
+    probe = g_socket_listener_new ();
+    port = g_socket_listener_add_any_inet_port (probe, NULL, NULL);
+    g_socket_listener_close (probe);
+
+    /* The failure warnings come from another thread, where neither
+     * g_test_expect_message() nor a fatal handler applies: make warnings
+     * non-fatal for this test. */
+    fatal_mask = g_log_set_always_fatal (G_LOG_FATAL_MASK);
+    url = g_strdup_printf ("http://127.0.0.1:%u/events", port);
+
+    /* With a 10 s retry delay a synchronous send would stall here. */
+    backend = lrg_analytics_backend_http_new (url);
+    lrg_analytics_backend_http_set_batch_size (backend, 3);
+    lrg_analytics_backend_http_set_flush_interval (backend, 0);
+    lrg_analytics_backend_http_set_retry_count (backend, 1);
+    g_object_set (backend, "retry-delay-ms", 10000, NULL);
+    for (i = 0; i < 3; i++)
+    {
+        g_autoptr(LrgAnalyticsEvent) event = lrg_analytics_event_new ("tick");
+        gint64 start = g_get_monotonic_time ();
+
+        g_assert_true (lrg_analytics_backend_send_event (LRG_ANALYTICS_BACKEND (backend),
+                                                         event, &error));
+        g_assert_cmpint (g_get_monotonic_time () - start, <, G_TIME_SPAN_SECOND);
+    }
+    g_assert_cmpuint (lrg_analytics_backend_http_get_pending_count (backend), ==, 3);
+
+    /* Finalizing while the sender sleeps between retries returns promptly. */
+    {
+        gint64 start = g_get_monotonic_time ();
+
+        g_clear_object (&backend);
+        g_assert_cmpint (g_get_monotonic_time () - start, <, 5 * G_TIME_SPAN_SECOND);
+    }
+
+    /* Without retries: flush reports the failure and keeps the batch,
+     * and the next flush tries it again. */
+    backend = lrg_analytics_backend_http_new (url);
+    lrg_analytics_backend_http_set_batch_size (backend, 3);
+    lrg_analytics_backend_http_set_flush_interval (backend, 0);
+    lrg_analytics_backend_http_set_retry_count (backend, 0);
+    for (i = 0; i < 3; i++)
+    {
+        g_autoptr(LrgAnalyticsEvent) event = lrg_analytics_event_new ("tick");
+
+        g_assert_true (lrg_analytics_backend_send_event (LRG_ANALYTICS_BACKEND (backend),
+                                                         event, &error));
+    }
+    g_assert_false (lrg_analytics_backend_flush (LRG_ANALYTICS_BACKEND (backend), &error));
+    g_assert_error (error, LRG_ANALYTICS_ERROR, LRG_ANALYTICS_ERROR_NETWORK);
+    g_clear_error (&error);
+    g_assert_cmpuint (lrg_analytics_backend_http_get_pending_count (backend), ==, 3);
+    g_assert_false (lrg_analytics_backend_flush (LRG_ANALYTICS_BACKEND (backend), &error));
+    g_assert_cmpuint (lrg_analytics_backend_http_get_pending_count (backend), ==, 3);
+
+    g_clear_object (&backend);
+    g_log_set_always_fatal (fatal_mask);
+}
+
+/* ==========================================================================
  * Test Cases - LrgAnalytics Manager
  * ========================================================================== */
 
@@ -631,6 +859,10 @@ main (int   argc,
     g_test_add_func ("/analytics/backend/name", test_analytics_backend_name);
     g_test_add_func ("/analytics/backend/send_event", test_analytics_backend_send_event);
     g_test_add_func ("/analytics/backend/flush", test_analytics_backend_flush);
+    g_test_add_func ("/analytics/http/batch-does-not-block",
+                     test_analytics_http_batch_does_not_block);
+    g_test_add_func ("/analytics/http/failed-batch-kept",
+                     test_analytics_http_failed_batch_kept);
 
     /* LrgAnalytics manager tests */
     g_test_add_func ("/analytics/manager/singleton", test_analytics_singleton);
