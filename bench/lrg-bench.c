@@ -21,6 +21,8 @@
 #include <math.h>
 
 #include <glib.h>
+#include <glib/gstdio.h>
+#include <gio/gio.h>
 #include <raylib.h>
 #include <graylib.h>
 #include <libregnum.h>
@@ -1677,6 +1679,381 @@ pacing_teardown (gpointer state)
 }
 
 /* ==========================================================================
+ * autosave: light frames with a save-manager save every 60 frames
+ * ========================================================================== */
+
+#define AUTOSAVE_KEYS     (4000)
+#define AUTOSAVE_INTERVAL (60)
+
+#define BENCH_TYPE_SAVE_STATE (bench_save_state_get_type ())
+G_DECLARE_FINAL_TYPE (BenchSaveState, bench_save_state, BENCH, SAVE_STATE, GObject)
+
+struct _BenchSaveState
+{
+	GObject parent_instance;
+	guint   generation;
+};
+
+static void bench_save_state_iface_init (LrgSaveableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (BenchSaveState, bench_save_state, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_SAVEABLE,
+                                                bench_save_state_iface_init))
+
+static const gchar *
+bench_save_state_get_save_id (LrgSaveable *saveable)
+{
+	return "world";
+}
+
+/* A few thousand keys: a mid-sized game's inventory, flags and stats. */
+static gboolean
+bench_save_state_save (LrgSaveable     *saveable,
+                       LrgSaveContext  *context,
+                       GError         **error)
+{
+	BenchSaveState *self = BENCH_SAVE_STATE (saveable);
+	gchar           key[32];
+	guint           i;
+
+	self->generation++;
+	for (i = 0; i < AUTOSAVE_KEYS; i++)
+	{
+		g_snprintf (key, sizeof key, "entry_%u", i);
+		if (i % 2 == 0)
+			lrg_save_context_write_int (context, key, (gint64) (i * self->generation));
+		else
+			lrg_save_context_write_string (context, key, "some saved string value");
+	}
+	return TRUE;
+}
+
+static gboolean
+bench_save_state_load (LrgSaveable     *saveable,
+                       LrgSaveContext  *context,
+                       GError         **error)
+{
+	return TRUE;
+}
+
+static void
+bench_save_state_iface_init (LrgSaveableInterface *iface)
+{
+	iface->get_save_id = bench_save_state_get_save_id;
+	iface->save = bench_save_state_save;
+	iface->load = bench_save_state_load;
+}
+
+static void
+bench_save_state_class_init (BenchSaveStateClass *klass)
+{
+}
+
+static void
+bench_save_state_init (BenchSaveState *self)
+{
+}
+
+typedef struct
+{
+	LrgSaveManager *manager;
+	BenchSaveState *world;
+	gchar          *dir;
+	gboolean        sync;
+} AutosaveState;
+
+/* Light steady per-frame work, so a hitch stands out against it. */
+static void
+bench_light_frame (guint frame_index)
+{
+	guint i;
+
+	for (i = 0; i < 64; i++)
+	{
+		GrlColor color = { (guint8) (i * 4), 120, 200, 255 };
+
+		grl_draw_rectangle ((gint) ((i * 5 + frame_index) % 300),
+		                    (gint) ((i * 3) % 220), 8, 8, &color);
+	}
+}
+
+/* Saves go to a real disk (the user cache dir), not a tmpfs, so the write
+ * costs what it would in a game. */
+static gpointer
+autosave_setup (void)
+{
+	AutosaveState *st;
+
+	st = g_new0 (AutosaveState, 1);
+	st->dir = g_build_filename (g_get_user_cache_dir (), "lrg-bench-saves", NULL);
+	st->manager = lrg_save_manager_new ();
+	lrg_save_manager_set_save_directory (st->manager, st->dir);
+	st->world = g_object_new (BENCH_TYPE_SAVE_STATE, NULL);
+	lrg_save_manager_register (st->manager, LRG_SAVEABLE (st->world));
+	return st;
+}
+
+static void
+autosave_frame (gpointer state,
+                guint    frame_index)
+{
+	AutosaveState *st = state;
+
+	bench_light_frame (frame_index);
+	if (frame_index % AUTOSAVE_INTERVAL != AUTOSAVE_INTERVAL - 1)
+		return;
+	if (st->sync)
+		lrg_save_manager_save (st->manager, "autosave", NULL);
+	else
+		lrg_save_manager_save_in_background (st->manager, "autosave", NULL, NULL);
+}
+
+/* The same save made synchronously: generation and the file write (with
+ * its fsync) land on the frame. */
+static gpointer
+autosave_sync_setup (void)
+{
+	AutosaveState *st = autosave_setup ();
+
+	st->sync = TRUE;
+	return st;
+}
+
+static void
+autosave_teardown (gpointer state)
+{
+	AutosaveState    *st = state;
+	g_autofree gchar *path = NULL;
+
+	lrg_save_manager_flush (st->manager, NULL);
+	lrg_save_manager_unregister_all (st->manager);
+	g_clear_object (&st->manager);
+	g_clear_object (&st->world);
+	path = g_build_filename (st->dir, "autosave.yaml", NULL);
+	g_unlink (path);
+	g_rmdir (st->dir);
+	g_free (st->dir);
+	g_free (st);
+}
+
+/* ==========================================================================
+ * despawn: a 4000-object world where a quarter dies and respawns at once
+ * ========================================================================== */
+
+#define DESPAWN_OBJECTS  (4000)
+#define DESPAWN_WAVE     (1000)
+#define DESPAWN_INTERVAL (60)
+
+typedef struct
+{
+	LrgWorld       *world;
+	GrlTexture     *texture;
+	LrgGameObject **live;     /* borrowed: the world holds the references */
+	guint           next;     /* next wave starts here (oldest first) */
+} DespawnState;
+
+static LrgGameObject *
+despawn_spawn (DespawnState *st,
+               guint         i)
+{
+	g_autoptr(LrgGameObject)      obj = NULL;
+	g_autoptr(LrgSpriteComponent) sprite = NULL;
+
+	obj = lrg_game_object_new_at ((gfloat) (i % 64) * 5.0f, (gfloat) ((i / 64) % 60) * 4.0f);
+	sprite = lrg_sprite_component_new_with_texture (st->texture);
+	lrg_game_object_add_component (obj, LRG_COMPONENT (sprite));
+	grl_entity_set_z_index (GRL_ENTITY (obj), (gint) ((i * 7919) % 7));
+	lrg_world_add_object (st->world, obj);
+	return obj;
+}
+
+static gpointer
+despawn_setup (void)
+{
+	DespawnState *st;
+	guint         i;
+
+	st = g_new0 (DespawnState, 1);
+	st->world = lrg_world_new ();
+	st->texture = bench_make_texture (4);
+	st->live = g_new0 (LrgGameObject *, DESPAWN_OBJECTS);
+	for (i = 0; i < DESPAWN_OBJECTS; i++)
+		st->live[i] = despawn_spawn (st, i);
+	return st;
+}
+
+static void
+despawn_frame (gpointer state,
+               guint    frame_index)
+{
+	DespawnState *st = state;
+	guint         i;
+
+	/* A wave of the oldest objects dies (an explosion, a level section
+	 * unloading) and as many spawn, all in one frame. */
+	if (frame_index % DESPAWN_INTERVAL == DESPAWN_INTERVAL - 1)
+	{
+		for (i = 0; i < DESPAWN_WAVE; i++)
+		{
+			guint slot = (st->next + i) % DESPAWN_OBJECTS;
+
+			lrg_world_remove_object (st->world, st->live[slot]);
+			st->live[slot] = despawn_spawn (st, slot + frame_index);
+		}
+		st->next = (st->next + DESPAWN_WAVE) % DESPAWN_OBJECTS;
+	}
+	lrg_world_update (st->world, 1.0f / 60.0f);
+	lrg_world_draw (st->world);
+}
+
+static void
+despawn_teardown (gpointer state)
+{
+	DespawnState *st = state;
+
+	g_clear_object (&st->world);
+	g_clear_object (&st->texture);
+	g_free (st->live);
+	g_free (st);
+}
+
+/* ==========================================================================
+ * analytics: an event a frame to an HTTP backend behind a 20 ms server
+ * ========================================================================== */
+
+#define ANALYTICS_SERVER_DELAY_MS (20)
+
+/* A one-thread HTTP/1.1 server on localhost that answers every request
+ * with 200 after ANALYTICS_SERVER_DELAY_MS: a stand-in for a remote
+ * collector's round trip. */
+typedef struct
+{
+	GSocketListener *listener;
+	GCancellable    *cancellable;
+	GThread         *thread;
+	guint16          port;
+} BenchHttpServer;
+
+static void
+bench_http_serve (BenchHttpServer   *server,
+                  GSocketConnection *connection)
+{
+	static const gchar          reply[] = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+	g_autoptr(GDataInputStream) data = NULL;
+	GOutputStream              *out;
+
+	data = g_data_input_stream_new (g_io_stream_get_input_stream (G_IO_STREAM (connection)));
+	g_data_input_stream_set_newline_type (data, G_DATA_STREAM_NEWLINE_TYPE_CR_LF);
+	out = g_io_stream_get_output_stream (G_IO_STREAM (connection));
+
+	for (;;)
+	{
+		gsize    length = 0;
+		gboolean any = FALSE;
+		gchar   *line;
+
+		while ((line = g_data_input_stream_read_line (data, NULL, server->cancellable,
+		                                              NULL)) != NULL)
+		{
+			gboolean end = line[0] == '\0';
+
+			any = TRUE;
+			if (g_ascii_strncasecmp (line, "Content-Length:", 15) == 0)
+				length = (gsize) g_ascii_strtoull (line + 15, NULL, 10);
+			g_free (line);
+			if (end)
+				break;
+		}
+		if (!any)
+			return;
+		if (length > 0)
+		{
+			g_autofree gchar *body = g_malloc (length);
+
+			if (!g_input_stream_read_all (G_INPUT_STREAM (data), body, length, NULL,
+			                              server->cancellable, NULL))
+				return;
+		}
+		g_usleep (ANALYTICS_SERVER_DELAY_MS * 1000);
+		if (!g_output_stream_write_all (out, reply, sizeof reply - 1, NULL,
+		                                server->cancellable, NULL))
+			return;
+	}
+}
+
+static gpointer
+bench_http_thread (gpointer user_data)
+{
+	BenchHttpServer *server = user_data;
+
+	for (;;)
+	{
+		g_autoptr(GSocketConnection) connection = NULL;
+
+		connection = g_socket_listener_accept (server->listener, NULL,
+		                                       server->cancellable, NULL);
+		if (connection == NULL)
+			return NULL;
+		bench_http_serve (server, connection);
+	}
+}
+
+typedef struct
+{
+	BenchHttpServer          server;
+	LrgAnalyticsBackendHttp *backend;
+} AnalyticsState;
+
+static gpointer
+analytics_setup (void)
+{
+	AnalyticsState   *st;
+	g_autofree gchar *url = NULL;
+
+	st = g_new0 (AnalyticsState, 1);
+	st->server.cancellable = g_cancellable_new ();
+	st->server.listener = g_socket_listener_new ();
+	st->server.port = g_socket_listener_add_any_inet_port (st->server.listener, NULL, NULL);
+	st->server.thread = g_thread_new ("bench-http", bench_http_thread, &st->server);
+
+	/* Default batching (10 events) and retries; the flush timer is off
+	 * (it needs a main loop, which the bench does not run). */
+	url = g_strdup_printf ("http://127.0.0.1:%u/collect", st->server.port);
+	st->backend = lrg_analytics_backend_http_new (url);
+	lrg_analytics_backend_http_set_flush_interval (st->backend, 0);
+	return st;
+}
+
+static void
+analytics_frame (gpointer state,
+                 guint    frame_index)
+{
+	AnalyticsState               *st = state;
+	g_autoptr(LrgAnalyticsEvent)  event = NULL;
+
+	bench_light_frame (frame_index);
+
+	/* One gameplay event a frame (a pickup, a kill, a checkpoint). */
+	event = lrg_analytics_event_new ("pickup");
+	lrg_analytics_event_set_property_int (event, "frame", (gint64) frame_index);
+	lrg_analytics_backend_send_event (LRG_ANALYTICS_BACKEND (st->backend), event, NULL);
+}
+
+static void
+analytics_teardown (gpointer state)
+{
+	AnalyticsState *st = state;
+
+	g_clear_object (&st->backend);
+	g_cancellable_cancel (st->server.cancellable);
+	g_thread_join (st->server.thread);
+	g_socket_listener_close (st->server.listener);
+	g_clear_object (&st->server.listener);
+	g_clear_object (&st->server.cancellable);
+	g_free (st);
+}
+
+/* ==========================================================================
  * Driver
  * ========================================================================== */
 
@@ -1725,6 +2102,14 @@ static const BenchScenario scenarios[] = {
 	  pool_setup, pool_frame, pool_teardown },
 	{ "portals", "64 portal-visibility updates a frame in a 24x24 sector grid",
 	  portal_setup, portal_frame, portal_teardown },
+	{ "autosave", "light frames, a 4000-key background save every 60 frames",
+	  autosave_setup, autosave_frame, autosave_teardown },
+	{ "autosave-sync", "as autosave, saving synchronously (lrg_save_manager_save)",
+	  autosave_sync_setup, autosave_frame, autosave_teardown },
+	{ "analytics", "an analytics event a frame, HTTP backend, 20 ms localhost server",
+	  analytics_setup, analytics_frame, analytics_teardown },
+	{ "despawn", "4000 sprite objects, 1000 removed and 1000 added every 60 frames",
+	  despawn_setup, despawn_frame, despawn_teardown },
 };
 
 static gint

@@ -3,8 +3,8 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum performance benchmarks graylib
 #+created: 2026-10-25T16:00:00-04:00
-#+updated: 2026-10-25T16:00:00-04:00
-#+version: 1.0
+#+updated: 2026-10-27T16:00:00-04:00
+#+version: 1.1
 
 * Performance
 :PROPERTIES:
@@ -14,7 +14,7 @@
 *[[file:index.org][Home]]* > Performance
 #+end_quote
 
-This page covers measuring frame cost (=lrg-bench=), the rules the engine's per-frame code follows, and the framerate pass of October 2026 (what changed, with numbers). Editor-specific frame cost is in [[file:editor/editor-app.org][the editor app page]]; graylib's own rules are in graylib's =docs/best_practices.org=.
+This page covers measuring frame cost (=lrg-bench=), the rules the engine's per-frame code follows, the framerate pass of October 2026 (what changed, with numbers) and the hitch pass that followed it (frames that occasionally cost far more than the median). Editor-specific frame cost is in [[file:editor/editor-app.org][the editor app page]]; graylib's own rules are in graylib's =docs/best_practices.org=.
 
 ** Measuring: lrg-bench
 :PROPERTIES:
@@ -46,6 +46,10 @@ bench/build/release/bench/lrg-bench -l           # list scenarios
 | =light-grid=    | light set apply, 256 lights                                               |
 | =graylib-draw=  | 20000 graylib rectangle/texture draws + 200 texts                         |
 | =gui=           | the editor's immediate-mode GUI, 64 rows of widgets                       |
+| =autosave=      | light frames, a 4000-key background save every 60 frames                  |
+| =autosave-sync= | the same save made with =lrg_save_manager_save()= (on the frame)          |
+| =analytics=     | an analytics event a frame, HTTP backend, 20 ms localhost collector       |
+| =despawn=       | 4000 sprite objects, 1000 removed and 1000 spawned every 60 frames        |
 
 Adding a scenario: write =setup= / =frame= / =teardown= functions and add a row to the =scenarios[]= table at the bottom of =lrg-bench.c=. Keep scenarios deterministic (fixed seeds, scripted cameras) so runs compare.
 
@@ -58,6 +62,9 @@ Adding a scenario: write =setup= / =frame= / =teardown= functions and add a row 
 - *Cache what does not change between frames.* Sort orders (=LrgWorld=), measured text (=LrgLabel=), uniform locations, light grids, instance buffers and GPU meshes are kept and invalidated on change, not rebuilt per frame.
 - *Batch-friendly order.* raylib flushes its batch whenever the texture, shader, blend mode or scissor changes; group draws by texture.
 - *No per-frame logging or string formatting* on paths that run every frame.
+- *No blocking I/O on the frame thread.* File writes that fsync, network requests and retries with sleeps go to a worker thread (the save manager's writer, the HTTP analytics sender); the frame thread only collects state. Results come back without a main loop (the standalone game loop does not iterate a =GMainContext=): through an explicit flush or the next call, or a main-context source where one is iterated.
+- *Keep scratch buffers across frames.* A per-frame =g_new= / =g_array_sized_new= of 128 KiB or more is an =mmap=, page faults and an =munmap= every frame (glibc's mmap threshold); keep the array on the object and reset its length.
+- *Membership changes are O(1) or O(log n) per object.* Many objects come and go in the same frame (explosions, wave spawns, level streaming); a linear search per removal turns that frame into O(n·k).
 
 ** Build flags
 :PROPERTIES:
@@ -113,3 +120,42 @@ Behaviour changes to know about:
 - The event bus captures listener masks at the start of an emission, as it already did priorities.
 - =max-particles= is now a hard cap on a particle system's live particles (it was documented as one but not enforced).
 - Solid =LrgSphere3D=, =LrgCylinder3D= and =LrgCone3D= draw cached meshes with raylib's default shader, like =LrgIcosphere3D= and =LrgTorus3D= already did, so a =BeginShaderMode()= around them no longer applies; their output can differ from the old immediate-mode path by a pixel at a triangle edge (GPU vs CPU vertex transform).
+
+** The October 2026 hitch pass
+:PROPERTIES:
+:CUSTOM_ID: hitch-pass
+:END:
+Hitches are frames that cost far more than the median: they barely move the average but set the 1% / 5% lows and the jitter. Measured with =lrg-bench= under Xvfb + llvmpipe, =taskset -c 0-11=, 1000 frames, before (master =c49b031=) and after; each scenario reproduces one hitch.
+
+| Scenario      | Before: fps, 1% low, p99            | After: fps, 1% low, p99            | What changed                                   |
+|---------------+-------------------------------------+------------------------------------+------------------------------------------------|
+| =autosave=    | 3545 fps, 1% low 104, p99 8.9 ms    | 6378 fps, 1% low 529, p99 1.6 ms   | file write (fsync) off the frame thread        |
+| =analytics=   | 437 fps, 1% low 47, p99 21.2 ms     | 7302 fps, 1% low 694, p99 0.55 ms  | HTTP POST on a sender thread                   |
+| =despawn=     | 417 fps, 1% low 174, p99 5.6 ms     | 436 fps, 1% low 232, p99 4.1 ms    | O(1) removal, sorted draw-order rebuild        |
+
+(=autosave= before is the synchronous save; =autosave-sync= keeps measuring that path: 1% low ~100, p99 ~9 ms. The remaining =autosave= spike is collection, about 1.4 ms for 4000 keys through the YAML builder. The remaining =despawn= spike is creating 1000 objects with components.)
+
+Fixed:
+- *Save writes* (=src/save/lrg-save-manager.c=). A save replacing an existing file costs ~1.2 ms collecting, ~0.9 ms generating YAML and 6-9 ms in =g_file_set_contents()= (fsync), all on the frame. New =lrg_save_manager_save_in_background()= collects on the caller's thread and generates + writes on a per-manager writer thread, in order; =lrg_save_manager_flush()= waits and reports; synchronous save/load/delete wait for queued writes first. =lrg_save_manager_save()= is unchanged. See [[file:modules/save/index.org::#background-saves][Saving During Play]].
+- *HTTP analytics* (=src/analytics/lrg-analytics-backend-http.c=). Every =batch-size= (10) events the backend POSTed synchronously from =lrg_analytics_track_event()=, with up to 3 retries 1 s apart when the collector was down: a 20 ms freeze per batch against a healthy collector, 3+ s against a dead one. Batches now go to a sender thread, one at a time; flush still blocks and reports. See [[file:modules/analytics/index.org::#http-sender-thread][the analytics page]].
+- *Mass removal from a world* (=lrg_world_remove_object()=, graylib =grl_scene_remove_entity()=). Each removal walked the object list twice (=g_list_find= in the world and again in the scene), so removing k of n objects was O(k·n); both now keep the list link in their membership table. The draw order after any spawn or despawn was rebuilt with every z-index at 0 and insertion-sorted, O(n²) for mixed z-indices; it is now rebuilt with the real z-indices and sorted.
+- *Per-frame large allocations*: the particle billboard renderer's sort list (52 B a particle, past 128 KiB at ~2500 particles), the billboard batch's draw and shadow-pass sort lists (8 B a candidate, once per shadow pass too) and the audio mixer's per-bus mix (64 KiB a bus per 4096-frame refill) and pump output are kept between frames instead of allocated per frame or refill.
+
+Bugs fixed on the way (each has a regression test):
+- =grl_scene_sort_entities_by_z()= left the scene's tail link stale, so the next =grl_scene_add_entity()= appended after a node that might not be last, or freed (graylib =/scene/remove-after-sort=).
+
+Behaviour changes to know about:
+- =lrg_analytics_backend_send_event()= on the HTTP backend no longer sends a full batch itself and so no longer returns its network error; failures are logged from the sender thread and reported by =lrg_analytics_flush()=. Disposing of the backend drops batches not yet sent (it always dropped pending events); =lrg_analytics_end_session()= flushes first.
+
+Looked at and fine: achievements (signals only, no I/O), settings (written at shutdown), template statistics and daily rewards (saveables only), the timer manager (no catch-up bursts, due timers sorted only), the event bus (no queued flush), net receive (non-blocking, bounded per poll), hot reload (=GFileMonitor=, no polling), logging (plain =g_log=; a dropped debug message costs ~0.1 µs), Lua (default incremental GC, no forced collections; the update hook does not allocate).
+
+*** Known hitch sources not fixed
+:PROPERTIES:
+:CUSTOM_ID: known-hitches
+:END:
+- *Streamed synthesis in 4096-frame bursts.* =LrgMidiSynth=, =LrgSoundBed= and =LrgProceduralAudio= render a whole 4096-frame stream buffer (~85 ms of audio) on the frame the previous one is consumed, so about one frame in five pays it all (estimated 1.5-5 ms for a busy MIDI song, double while crossfading); after a long frame both buffers refill at once. Spreading the render over frames means rendering ahead of the stream, which delays live notes by up to a buffer; smaller stream buffers trade the burst for underrun risk. Left as is; a game that needs it can pump these from its own thread with a lock.
+- *Music decoding.* raylib's =UpdateMusicStream()= decodes a whole sub-buffer per refill (4096 frames once a synth or sound bed set the default buffer size, else ~sample-rate/30 · 4 frames); 1-3 ms of Vorbis every few frames. raylib's, not changed.
+- *First-use GPU work.* Shaders compile the first time their feature draws: the light set, shadow casters, billboard cutout/GPU/caster shaders, grass, water, clouds, ground overlay, skinned meshes, and each post effect (colour grade, colourblind filter, heat haze, palettize, sharpen, photo DOF/look) on the first frame it is not identity. Water patches, static batches, round shapes and skinned meshes upload on first draw; the billboard batch builds its GPU pages on the second draw after additions stop (and on large later additions), several ms for tens of thousands of billboards. Draw one frame of each (off screen or behind the loading screen) to prewarm.
+- *Bursty game logic by design.* =LrgObjectPool= with =LRG_POOL_GROWTH_DOUBLE= constructs the whole growth step in one =acquire()= (prewarm the pool); =LrgWaveDirector= spawns every zero-interval entry in one frame and catches up after a long frame; =LrgAutomation= fires an interval rule once per missed interval after a stall; particle emitters keep their accumulated time while the pool is full and emit the backlog later.
+- *Script hosts.* The GJS update hook evaluates generated JS twice per hook per frame, steady garbage that SpiderMonkey collects on its own schedule. LuaJIT count hooks do not fire inside compiled traces, so the scheduler's per-frame instruction budget is not enforced for hot compiled loops.
+- *Networking.* =_lrg_net_buffer_flush()= shifts the whole remaining output queue (up to 4 MiB) after each partial write; the MMO SQLite store commits with =synchronous=FULL= and the Postgres store blocks on queries, which matters if a server shares a thread with its simulation tick.
