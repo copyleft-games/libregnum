@@ -141,16 +141,49 @@ if (lrg_procedural_audio_is_playing (audio)) {
 }
 #+end_src
 
-*** Update (Required)
+*** Update
 :PROPERTIES:
 :CUSTOM_ID: update-required
 :END:
-Call every frame to keep the audio buffer filled:
+Harmless to call every frame.  On the audio thread (the default, see [[#audio-thread][The audio thread]]) it only runs the destroy notifies of commands the audio thread has run; with =audio-thread= =FALSE= it is required and keeps the buffer filled on the caller's thread:
 
 #+begin_src C
 /* In game loop */
 lrg_procedural_audio_update (audio);
 #+end_src
+
+*** The audio thread
+:PROPERTIES:
+:CUSTOM_ID: audio-thread
+:END:
+By default (the construct-only =audio-thread= property, =TRUE=) =generate()= runs on the audio device's thread: graylib's stream callback (=grl_audio_stream_set_callback()=) pulls a few hundred frames at a time while the source plays, just before the device plays them.  Before this change =update()= rendered a whole 4096-frame buffer (about 93 ms of audio) on the frame the device consumed one, about one frame in five.  Now synthesis never costs the frame, and a parameter change is heard within one device period instead of up to two buffers later.
+
+What this asks of a subclass:
+
+- =generate()= must not block, allocate heavily, or call graylib's or raylib's audio functions (it runs inside raylib's mixer, raylib's audio lock held).
+- The state =generate()= reads belongs to the audio thread.  Change it with =lrg_procedural_audio_queue_command (audio, func, user_data, destroy)=: =func (audio, user_data)= runs on the audio thread just before the next block, after every command queued before it (a lock-free list, =src/audio/lrg-audio-thread-private.h=); =destroy= runs later on the game thread (from the next call on the source, such as =update()=).  While the source does not play (never played, stopped or paused: raylib then does not call the callback) commands run at once on the caller's thread.  Plain atomics (=g_atomic_int_set=) are fine for single values too.
+- The audio thread lets go of the source in =dispose= (before any =finalize=), running the commands still pending; free what =generate()= reads in =finalize=, not in =dispose=.
+- =lrg_procedural_audio_get_audio_thread()= tells whether the audio thread renders (the property is on, the device was open when the source was made, and graylib had a callback slot).  Otherwise the old model applies and =update()= pumps 4096-frame buffers on the caller's thread.
+
+#+begin_src C
+static void
+apply_frequency (LrgProceduralAudio *audio, gpointer user_data)
+{
+    MY_SYNTH (audio)->frequency = *(gfloat *)user_data;   /* on the audio thread */
+}
+
+void
+my_synth_set_frequency (MySynth *self, gfloat frequency)
+{
+    lrg_procedural_audio_queue_command (LRG_PROCEDURAL_AUDIO (self), apply_frequency,
+                                        g_memdup2 (&frequency, sizeof frequency), g_free);
+}
+
+/* the old model (generate () on the thread that calls update ()) */
+g_autoptr(LrgProceduralAudio) pumped = g_object_new (MY_TYPE_SYNTH, "audio-thread", FALSE, NULL);
+#+end_src
+
+Tests: =tests/test-procedural-audio.c= (=audio-thread-property=, =commands-direct=: commands run at once and in order without the audio thread; with =LRG_TEST_AUDIO_DEVICE=1=, =stream=: =generate()= and commands run on the device's thread in order, their destroy notifies on the game thread, pausing hands the state back, dispose runs a pending command).
 
 *** Volume and Effects
 :PROPERTIES:
@@ -188,7 +221,8 @@ lrg_audio_manager_add_procedural (manager, "lead-synth", LRG_PROCEDURAL_AUDIO (s
 /* Play via manager */
 lrg_audio_manager_play_procedural (manager, "lead-synth");
 
-/* Manager calls update() automatically in lrg_audio_manager_update() */
+/* Manager calls update() in lrg_audio_manager_update() (nothing to render
+ * there on the audio thread) */
 
 /* Stop and remove when done */
 lrg_audio_manager_stop_procedural (manager, "lead-synth");

@@ -633,6 +633,10 @@ lrg_camera_firstperson_set_body_position (LrgCameraFirstPerson *self,
 	priv->body_x = x;
 	priv->body_y = y;
 	priv->body_z = z;
+
+	/* Move the eye now: set from fixed_update, the eye and target then
+	 * change inside the step and are interpolated for drawing */
+	sync_camera_orientation (self);
 }
 
 gfloat

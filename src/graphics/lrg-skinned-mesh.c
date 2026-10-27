@@ -32,6 +32,7 @@
 #include "animation/lrg-skeleton.h"
 #include "animation/lrg-bone.h"
 #include "animation/lrg-bone-pose.h"
+#include "core/lrg-prewarm.h"
 
 /* raylib binds up to MAX_MATERIAL_MAPS (12) maps; keep headroom. */
 #define SKIN_MATERIAL_MAPS (16)
@@ -78,7 +79,11 @@ struct _LrgSkinnedMesh
     gint        loc_bone_matrices;
 };
 
-G_DEFINE_FINAL_TYPE (LrgSkinnedMesh, lrg_skinned_mesh, G_TYPE_OBJECT)
+static void lrg_skinned_mesh_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgSkinnedMesh, lrg_skinned_mesh, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_skinned_mesh_prewarmable_init))
 
 /* ------------------------------------------------------------------------ */
 /* The built-in shader                                                      */
@@ -268,6 +273,10 @@ lrg_skinned_mesh_init (LrgSkinnedMesh *self)
     self->tint.a = 255;
     self->alpha_cutoff = 0.0f;
     memset (&self->mesh, 0, sizeof self->mesh);
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgSkinnedMesh *
@@ -894,4 +903,26 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
         model = to_raylib_matrix (identity);
     }
     DrawMesh (mesh, material, model);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Prewarm                                                                  */
+/* ------------------------------------------------------------------------ */
+
+/* lrg_skinned_mesh_prewarm: uploads the mesh (and loads the built-in
+ * skinning shader with the first one) now instead of at its first draw */
+static gboolean
+lrg_skinned_mesh_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgSkinnedMesh *self = LRG_SKINNED_MESH (prewarmable);
+
+    if (!self->uploaded && self->n_vertices > 0)
+        lrg_skinned_mesh_upload (self, NULL);
+    return TRUE;
+}
+
+static void
+lrg_skinned_mesh_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_skinned_mesh_prewarm;
 }

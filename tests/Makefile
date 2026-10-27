@@ -113,6 +113,7 @@ TEST_SOURCES := \
 	test-sky-dome.c \
 	test-world-look.c \
 	test-light-set.c \
+	test-prewarm.c \
 	test-shadow-renderer.c \
 	test-audio.c \
 	test-audio-positional.c \
@@ -193,6 +194,7 @@ TEST_SOURCES := \
 	test-template-2d.c \
 	test-template-3d.c \
 	test-template.c \
+	test-interpolation.c \
 	test-wave-director.c \
 	test-input-buffer.c \
 	test-template-states.c \

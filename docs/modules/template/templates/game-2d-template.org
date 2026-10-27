@@ -253,6 +253,10 @@ lrg_game_2d_template_set_camera (template, NULL);
 :END:
 #+begin_src C
 /* Set target position (camera follows smoothly) */
+/* Set target position (camera follows smoothly). Called from
+ * fixed_update with the player's true position, the target is render-
+ * interpolated like the player, so the view does not judder on a
+ * 144 Hz display (see the base template's Render Interpolation). */
 lrg_game_2d_template_set_camera_target (template, player_x, player_y);
 
 /* Configure smoothing (0.0 = instant, higher = slower) */

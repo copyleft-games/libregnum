@@ -5,7 +5,7 @@
 
 A sound bed is the ambience of a place built from layers: wind, rain, a crowd, birdsong, drips.  Each layer is a clip with a level that fades over time; the game sets the levels as the place, the time and the weather change, and the bed mixes the audible layers into one interleaved stereo stream.  A layer either loops seamlessly or is *scattered*: it plays once, then stays silent for a random gap between two bounds, then plays again.  Silent layers cost nothing and keep their place.
 
-Rendering is headless (=lrg_sound_bed_render()=, used by the tests); a running game opens a graylib audio stream with =lrg_sound_bed_start_stream()= (on an open device; the call opens raylib's default device when it is not open yet, so headless code must not call it) and feeds it with =lrg_sound_bed_update()= every frame, as =LrgMidiSynth= does.  Rendering runs on the caller's thread, so the bed has no lock.
+Rendering is headless (=lrg_sound_bed_render()=, used by the tests); a running game opens a graylib audio stream with =lrg_sound_bed_start_stream()= (on an open device; the call opens raylib's default device when it is not open yet, so headless code must not call it) and from then on the audio device's thread renders it in small blocks through graylib's stream callback, as =LrgMidiSynth= does; =lrg_sound_bed_update()=, called every frame, only frees what that thread let go of (see [[#threads][Threads]]).
 
 * Layers
 
@@ -34,6 +34,21 @@ For every audible layer (gain or target above 0), frame by frame:
 
 Then the bed's effect chain processes the block (a low-pass makes rain sound as if heard through a wall).
 
+* Threads
+:PROPERTIES:
+:CUSTOM_ID: threads
+:END:
+
+With a stream, the layers' playback state (positions, gains and fades, scatter gaps), the master volume the mix uses and the scatter dice belong to the audio device's thread, which renders a few hundred frames per block just before the device plays them.  Before this change =update()= rendered a whole 4096-frame buffer (about 93 ms) on the frame the device consumed one, twice the work during crossfades, both buffers after a long frame.
+
+- Every call that changes the bed (=add_layer*=, =remove_layer=, =set_scatter=, =set_level= and =crossfade=, =set_volume=, =set_seed=) becomes a command on a lock-free list that the audio thread applies in order at the start of its next block (=src/audio/lrg-audio-thread-private.h=, as in [[file:midi-synth.org::#the-audio-thread][LrgMidiSynth]]).  A layer's clip is resampled and allocated on the game thread before it is handed over; a removed layer comes back on the garbage list and is freed by the game thread's next call.  The audio thread never allocates, frees or blocks.
+- The game thread keeps its own list of the layers: =has_layer=, =get_layer_names=, =get_level= and =get_volume= read it, so they reflect every call at once.  =get_gain= and =get_play_count= read what the audio thread published after its last block (atomics); an instant =set_level()= (no fade) reads back its level at once even before the audio thread applied it (a serial per layer tells), a fade starts from the gain last published.
+- The effect chain runs on the audio thread under its own lock, as the device mix's chain always has; changing it from the game thread is safe.
+- =render()= writes silence and returns 0 while the stream renders; =stop_stream()= detaches the callback (under raylib's lock) and applies whatever is still pending on the game thread, after which the bed renders offline again with exactly the state the calls asked for.  Without a stream every call applies at once, as before.
+- If graylib has no free callback slot the stream falls back to the old model: =update()= renders 4096-frame buffers on the caller's thread.
+
+*Latency*: a level change is heard within about one device period instead of up to two 4096-frame buffers later.
+
 * Tests
 
-=tests/test-audio-effects.c= (=/audio-effects/sound-bed/*=): two constant layers add up and a silent one adds nothing, loops wrap and count their passes, the master volume scales; a stereo ramp loops sample for sample; a one-second crossfade is half and half after half a second and complete after it; scattered 0.1 s shots with 0.5 .. 1 s gaps come 9 .. 17 times in ten seconds with every gap inside its bounds; the bed's low-pass removes a resampled 11 kHz buzz; bad layers fail with their error codes; a wave data clip goes in.
+=tests/test-audio-effects.c= (=/audio-effects/sound-bed/*=): two constant layers add up and a silent one adds nothing, loops wrap and count their passes, the master volume scales; a stereo ramp loops sample for sample; a one-second crossfade is half and half after half a second and complete after it; scattered 0.1 s shots with 0.5 .. 1 s gaps come 9 .. 17 times in ten seconds with every gap inside its bounds; the bed's low-pass removes a resampled 11 kHz buzz; bad layers fail with their error codes; a wave data clip goes in.  With =LRG_TEST_AUDIO_DEVICE=1=, =/audio-effects/sound-bed/stream= runs the bed on the audio thread: offline rendering is silent, levels, layers and the volume read back at once, play counts and a crossfade advance with no game-thread rendering, a removal and a re-add take effect in order, and after =stop_stream()= the offline mix is exactly what the calls asked for.

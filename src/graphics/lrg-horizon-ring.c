@@ -20,6 +20,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "graphics/lrg-horizon-ring.h"
+#include "core/lrg-prewarm.h"
 
 struct _LrgHorizonRing
 {
@@ -38,7 +39,11 @@ struct _LrgHorizonRing
     LrgStaticBatch *batch;
 };
 
-G_DEFINE_FINAL_TYPE (LrgHorizonRing, lrg_horizon_ring, G_TYPE_OBJECT)
+static void lrg_horizon_ring_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgHorizonRing, lrg_horizon_ring, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_horizon_ring_prewarmable_init))
 
 static void
 lrg_horizon_ring_finalize (GObject *object)
@@ -63,6 +68,10 @@ lrg_horizon_ring_init (LrgHorizonRing *self)
     self->segments = 96;
     self->rings = 12;
     self->batch = lrg_static_batch_new ();
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgHorizonRing *
@@ -336,4 +345,22 @@ lrg_horizon_ring_release_gpu (LrgHorizonRing *self)
 {
     g_return_if_fail (LRG_IS_HORIZON_RING (self));
     lrg_static_batch_unload (self->batch);
+}
+
+/* lrg_horizon_ring_prewarm: uploads the built ring's batch now (what the
+ * first draw would do) */
+static gboolean
+lrg_horizon_ring_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgHorizonRing *self = LRG_HORIZON_RING (prewarmable);
+
+    if (self->built && !lrg_static_batch_is_uploaded (self->batch))
+        lrg_static_batch_upload (self->batch, NULL);
+    return TRUE;
+}
+
+static void
+lrg_horizon_ring_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_horizon_ring_prewarm;
 }

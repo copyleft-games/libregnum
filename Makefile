@@ -40,6 +40,8 @@ PUBLIC_HEADERS := \
 	src/core/lrg-event-bus.h \
 	src/core/lrg-random-stream.h \
 	src/core/lrg-cpu-affinity.h \
+	src/core/lrg-prewarmable.h \
+	src/core/lrg-prewarm.h \
 	src/core/lrg-timer-manager.h \
 	src/graphics/lrg-drawable.h \
 	src/graphics/lrg-window.h \
@@ -663,6 +665,8 @@ SOURCES := \
 	src/core/lrg-event-bus.c \
 	src/core/lrg-random-stream.c \
 	src/core/lrg-cpu-affinity.c \
+	src/core/lrg-prewarmable.c \
+	src/core/lrg-prewarm.c \
 	src/core/lrg-timer-manager.c \
 	src/graphics/lrg-drawable.c \
 	src/graphics/lrg-window.c \
@@ -823,6 +827,7 @@ SOURCES := \
 	src/audio/lrg-pitch-shift.c \
 	src/audio/lrg-audio-bus.c \
 	src/audio/lrg-sound-bed.c \
+	src/audio/lrg-audio-thread-private.c \
 	src/audio/lrg-midi-output.c \
 	src/audio/lrg-midi-output-alsa.c \
 	src/audio/lrg-midi-sequencer.c \
@@ -1697,7 +1702,10 @@ $(LIBOUTDIR)/$(LIB_SHARED): $(OBJECTS) | $(LIBOUTDIR)
 	@$(CC) $(LIB_LDFLAGS) -o $(LIBOUTDIR)/$(LIB_SHARED) $(OBJECTS) $(ALL_LIBS)
 	@echo "Built: $(LIB_SHARED) and $(LIB_IMPORT)"
 else
-$(LIBOUTDIR)/$(LIB_SHARED): $(OBJECTS) | $(LIBOUTDIR)
+# The embedded archives are prerequisites here too (see the static library
+# above): without them a graylib-only change left the .so linked against
+# the old graylib.
+$(LIBOUTDIR)/$(LIB_SHARED): $(OBJECTS) $(wildcard $(_STATIC_EMBED_DEPS)) | $(LIBOUTDIR)
 	$(call print_link,$(LIB_SHARED))
 	@$(CC) $(LIB_LDFLAGS) -o $(LIBOUTDIR)/$(LIB_SHARED_VERSION) $(OBJECTS) $(ALL_LIBS)
 	@cd $(LIBOUTDIR) && ln -sf $(LIB_SHARED_VERSION) $(LIB_SHARED_SONAME)

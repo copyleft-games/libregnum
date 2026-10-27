@@ -525,7 +525,10 @@ LrgProceduralAudio *synth = g_object_new (MY_TYPE_SYNTH,
                                            "channels", 2,
                                            NULL);
 lrg_procedural_audio_play (synth);
-/* Call lrg_procedural_audio_update() each frame */
+/* generate() runs on the audio device's thread (the "audio-thread"
+ * property, default TRUE): change the state it reads with
+ * lrg_procedural_audio_queue_command () (or atomics), never directly;
+ * lrg_procedural_audio_update () each frame stays harmless */
 ```
 
 ### Wave Data (Audio Samples)
@@ -681,6 +684,26 @@ bounds", "Cost of a page").
 - `lrgeditorctl` (`src/editorctl/`) is the kubectl-like CLI over the IPC socket and the MCP bridge (`lrgeditorctl mcp`); `lrgeditor --mcp` serves the same tool table in-process (it reserves stdout: never print to fd 1 on paths that run under it). Add MCP tools as rows in `src/editorctl/lrgeditorctl-mcp.c`. `make test-editorctl` exercises every verb and both MCP servers. The agent skill lives in `skills/skill-libregnum/` (`make install-skills`); keep it in sync with the CLI and tools.
 - The Emacs package is `editors/emacs/libregnum.el` (+ `libregnum-tests.el`); `make test-emacs` byte-compiles with warnings as errors and runs ERT, including a headless editor end to end.
 - Docs: `docs/editor/editor-app.org`, `external-editor.org`, `emacs.org`, `ipc-protocol.org`, `docs/modules/gui/index.org`.
+
+### GPU-Resource Prewarm (`core/lrg-prewarm.h`, `core/lrg-prewarmable.h`)
+
+Renderers that build GPU resources lazily (compile a shader, upload buffers on
+their first draw) implement **`LrgPrewarmable`** and call
+`lrg_prewarm_track (LRG_PREWARMABLE (self))` in their instance init, which
+queues them (weakly) on the default **`LrgPrewarm`** (`lrg_engine_get_prewarm()`).
+`LrgTemplateLoadingState` runs that queue with a per-frame budget after its
+tasks, then emits `prewarm-draw` inside `lrg_prewarm_begin/end_hidden_draw()`
+(empty scissor) for the driver's draw-time variants.
+
+- A new renderer with a lazy `ensure_shader()`/upload path must implement
+  `prewarm()` by calling that same path (idempotent, no visible change, no
+  extra work on the next draw) and track itself; list it in
+  `docs/modules/core/prewarm.org`.
+- `prewarm()` only runs with a window (`lrg_prewarmable_prewarm()` checks);
+  never set a "tried" flag before `IsWindowReady()`.
+- Only objects created on the default queue's thread are tracked; running the
+  queue makes GL calls and belongs to the GL thread.
+- Docs: `docs/modules/core/prewarm.org`, `docs/performance.org` § prewarm.
 
 ### Static World Collision and Model Rendering
 
@@ -1499,6 +1522,20 @@ struct _LrgGame2DTemplateClass
     gpointer _reserved[8];
 };
 ```
+
+### Render Interpolation
+
+With a fixed timestep (default 1/60 s) `LrgGameTemplate` drives graylib's interpolation clock
+(`grl-interpolation.h`; template property `interpolate`, default TRUE): `GrlEntity`/`LrgGameObject`,
+`LrgTransformComponent`, `LrgShape2D`/`LrgShape3D` and `LrgCamera2D`/`LrgCamera3D` moved in
+`fixed_update` are drawn between their last two simulated poses. Getters return the true state;
+draw code uses the render getters (`grl_entity_get_render_pose()`,
+`lrg_transform_component_get_render_transform()`, `lrg_shape3d_get_render_transform()`, ...).
+Use `*_teleport()` / `*_reset_interpolation()` for warps and camera cuts, the per-object
+`interpolate` property to opt out. A new interpolated type embeds a `GrlInterpolationTrack`,
+captures its previous pose when `grl_interpolation_track_begin_write()` returns TRUE and stores
+fields with `grl_interpolation_track_write_float()`. See
+`docs/modules/template/templates/game-template.org` (Render Interpolation).
 
 ### Related Documentation
 

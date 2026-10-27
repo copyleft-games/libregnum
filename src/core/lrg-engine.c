@@ -16,6 +16,7 @@
 #include "lrg-data-loader.h"
 #include "lrg-asset-manager.h"
 #include "lrg-cpu-affinity.h"
+#include "lrg-prewarm.h"
 #include "../lrg-log.h"
 #include "../graphics/lrg-window.h"
 #include "../graphics/lrg-renderer.h"
@@ -39,6 +40,7 @@ typedef struct
     LrgWindow        *window;
     LrgRenderer      *renderer;
     GHashTable       *worlds;
+    LrgPrewarm       *prewarm;         /* the default queue, held */
     gboolean          pin_performance_cores;
     gboolean          pinned;          /* this engine changed the affinity */
 } LrgEnginePrivate;
@@ -196,6 +198,7 @@ lrg_engine_finalize (GObject *object)
     g_clear_object (&priv->asset_manager);
     g_clear_object (&priv->data_loader);
     g_clear_object (&priv->registry);
+    g_clear_object (&priv->prewarm);
     g_clear_pointer (&priv->worlds, g_hash_table_unref);
 
     /* Clear singleton reference */
@@ -382,6 +385,9 @@ lrg_engine_init (LrgEngine *self)
     priv->renderer = NULL;
     priv->worlds = g_hash_table_new_full (g_str_hash, g_str_equal,
                                          g_free, g_object_unref);
+    /* made here first, on the thread that makes the engine: the thread
+     * whose new renderers are tracked (lrg_prewarm_track()) */
+    priv->prewarm = g_object_ref (lrg_prewarm_get_default ());
 }
 
 /* ==========================================================================
@@ -823,6 +829,38 @@ lrg_engine_get_renderer (LrgEngine *self)
     priv = lrg_engine_get_instance_private (self);
 
     return priv->renderer;
+}
+
+/* ==========================================================================
+ * GPU-resource prewarm
+ * ========================================================================== */
+
+LrgPrewarm *
+lrg_engine_get_prewarm (LrgEngine *self)
+{
+    LrgEnginePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ENGINE (self), NULL);
+
+    priv = lrg_engine_get_instance_private (self);
+    return priv->prewarm;
+}
+
+gboolean
+lrg_engine_prewarm (LrgEngine *self,
+                    gint64     budget_us)
+{
+    g_return_val_if_fail (LRG_IS_ENGINE (self), FALSE);
+
+    return lrg_prewarm_run (lrg_engine_get_prewarm (self), budget_us);
+}
+
+void
+lrg_engine_prewarm_all (LrgEngine *self)
+{
+    g_return_if_fail (LRG_IS_ENGINE (self));
+
+    lrg_prewarm_run_all (lrg_engine_get_prewarm (self));
 }
 
 /* ==========================================================================

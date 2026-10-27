@@ -177,4 +177,43 @@ LRG_AVAILABLE_IN_ALL
 void lrg_camera2d_set_zoom (LrgCamera2D *self,
                             gfloat       zoom);
 
+/* ==========================================================================
+ * Render Interpolation
+ * ========================================================================== */
+
+/**
+ * lrg_camera2d_reset_interpolation:
+ * @self: an #LrgCamera2D
+ *
+ * Drops the in-flight blend of the view (target, offset, rotation, zoom): the camera is drawn at its
+ * current pose, and further changes in the current fixed step are not
+ * blended either. Use it for camera cuts made from fixed_update (the
+ * camera is otherwise interpolated like the objects it follows).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_camera2d_reset_interpolation (LrgCamera2D *self);
+
+/**
+ * lrg_camera2d_get_interpolate:
+ * @self: an #LrgCamera2D
+ *
+ * Gets whether the camera is interpolated for drawing.
+ *
+ * Returns: the value of #LrgCamera2D:interpolate
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_camera2d_get_interpolate (LrgCamera2D *self);
+
+/**
+ * lrg_camera2d_set_interpolate:
+ * @self: an #LrgCamera2D
+ * @interpolate: whether to interpolate the camera for drawing
+ *
+ * Opts the camera in or out of render interpolation; either way its
+ * blend is reset.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_camera2d_set_interpolate (LrgCamera2D *self,
+                                   gboolean     interpolate);
+
 G_END_DECLS

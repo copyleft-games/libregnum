@@ -7,6 +7,7 @@
  */
 
 #include "../../config.h"
+#include <raylib.h>
 #include "lrg-template-loading-state.h"
 #include "../../ui/lrg-canvas.h"
 #include "../../ui/lrg-vbox.h"
@@ -16,6 +17,7 @@
 #include "../../ui/lrg-container.h"
 #include "../../core/lrg-engine.h"
 #include "../../core/lrg-asset-manager.h"
+#include "../../core/lrg-prewarm.h"
 #include "../../graphics/lrg-window.h"
 #include "../../lrg-log.h"
 
@@ -35,6 +37,25 @@
  *
  * Loading tasks run synchronously, one per frame. Progress updates between
  * tasks; a single expensive task can still delay a frame.
+ *
+ * ## Prewarm
+ *
+ * After the last task the state builds the GPU resources of what the
+ * tasks created: it runs the engine's #LrgPrewarm queue (see
+ * lrg_engine_get_prewarm()) for #LrgTemplateLoadingState:prewarm-budget
+ * each frame until it is empty, so shader compiles and buffer uploads
+ * happen behind the loading screen instead of freezing the game when a
+ * feature first appears. The engine's renderers queue themselves when
+ * they are created; queue a game's own objects or work with
+ * lrg_prewarm_add_object() and lrg_prewarm_add_func(). Turn it off with
+ * lrg_template_loading_state_set_prewarm().
+ *
+ * Many drivers (llvmpipe among them) compile part of a shader only at its
+ * first draw, for the state it is drawn with. To move that behind the
+ * screen too, connect to #LrgTemplateLoadingState::prewarm-draw and draw
+ * the game's scene once in it: it is emitted once, after the queue is
+ * empty, inside the loading screen's draw with a hidden draw active (see
+ * lrg_prewarm_begin_hidden_draw()), so nothing shows.
  *
  * ## Minimum Display Time
  *
@@ -73,6 +94,12 @@ typedef struct _LrgTemplateLoadingStatePrivate
     gboolean         loading_complete;
     gboolean         minimum_time_reached;
 
+    /* GPU-resource prewarm after the tasks */
+    gboolean         prewarm;
+    gint64           prewarm_budget;    /* microseconds a frame */
+    gboolean         prewarm_done;
+    gboolean         hidden_drawn;      /* ::prewarm-draw was emitted */
+
     /* Appearance */
     GrlColor        *background_color;
     gchar           *status_text;
@@ -99,6 +126,8 @@ enum
     PROP_SHOW_PROGRESS_BAR,
     PROP_SHOW_PERCENTAGE,
     PROP_PROGRESS,
+    PROP_PREWARM,
+    PROP_PREWARM_BUDGET,
     N_PROPS
 };
 
@@ -109,6 +138,7 @@ enum
     SIGNAL_PROGRESS,
     SIGNAL_COMPLETE,
     SIGNAL_FAILED,
+    SIGNAL_PREWARM_DRAW,
     N_SIGNALS
 };
 
@@ -118,6 +148,7 @@ static guint signals[N_SIGNALS];
 #define DEFAULT_MINIMUM_DISPLAY_TIME (0.5)
 #define DEFAULT_PROGRESS_BAR_WIDTH   (400.0f)
 #define DEFAULT_PROGRESS_BAR_HEIGHT  (30.0f)
+#define DEFAULT_PREWARM_BUDGET       (8000)    /* microseconds a frame */
 
 /* ========================================================================== */
 /* Private Helpers                                                            */
@@ -270,6 +301,27 @@ execute_next_task (LrgTemplateLoadingState *self)
     return TRUE;
 }
 
+/*
+ * prewarm_finished:
+ * Whether the prewarm part of loading is over: off, or the queue is empty
+ * and the hidden draw happened (or nobody draws in it, or there is no
+ * window to draw in).
+ */
+static gboolean
+prewarm_finished (LrgTemplateLoadingState *self)
+{
+    LrgTemplateLoadingStatePrivate *priv;
+
+    priv = lrg_template_loading_state_get_instance_private (self);
+
+    if (!priv->prewarm)
+        return TRUE;
+    if (!priv->prewarm_done)
+        return FALSE;
+    return priv->hidden_drawn || !IsWindowReady () ||
+           !g_signal_has_handler_pending (self, signals[SIGNAL_PREWARM_DRAW], 0, TRUE);
+}
+
 /* ========================================================================== */
 /* Virtual Method Implementations                                             */
 /* ========================================================================== */
@@ -317,6 +369,8 @@ lrg_template_loading_state_enter (LrgGameState *state)
     priv->loading_failed = FALSE;
     priv->completion_emitted = FALSE;
     priv->minimum_time_reached = FALSE;
+    priv->prewarm_done = FALSE;
+    priv->hidden_drawn = FALSE;
 
     /* Create UI */
     priv->canvas = lrg_canvas_new ();
@@ -454,12 +508,30 @@ lrg_template_loading_state_update (LrgGameState *state,
     {
         execute_next_task (self);
     }
+    else if (priv->loading_complete && priv->prewarm && !priv->prewarm_done)
+    {
+        /* then the GPU resources of what the tasks built, a budget's
+         * worth a frame so the screen keeps animating */
+        if (priv->task_label != NULL)
+            lrg_label_set_text (priv->task_label, "Preparing graphics");
+        if (!lrg_prewarm_run (lrg_prewarm_get_default (), priv->prewarm_budget))
+        {
+            priv->prewarm_done = TRUE;
+            lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Loading: prewarm complete");
+        }
+    }
+
+    /* nothing queued, or no window to build it in: done at once, in the
+     * frame the last task finished */
+    if (priv->loading_complete && !priv->prewarm_done &&
+        (!IsWindowReady () || lrg_prewarm_get_pending (lrg_prewarm_get_default ()) == 0))
+        priv->prewarm_done = TRUE;
 
     if (generation != priv->task_generation)
         return;
 
     /* Check if we can signal completion */
-    if (priv->loading_complete && priv->minimum_time_reached &&
+    if (lrg_template_loading_state_is_complete (self) &&
         !priv->completion_emitted)
     {
         priv->completion_emitted = TRUE;
@@ -479,6 +551,16 @@ lrg_template_loading_state_draw (LrgGameState *state)
     LrgTemplateLoadingStatePrivate *priv;
 
     priv = lrg_template_loading_state_get_instance_private (self);
+
+    /* once the queue is empty: the game's scene drawn once, hidden, so
+     * the driver's draw-time shader work happens here too */
+    if (priv->prewarm && priv->prewarm_done && !priv->hidden_drawn)
+    {
+        priv->hidden_drawn = TRUE;
+        lrg_prewarm_begin_hidden_draw ();
+        g_signal_emit (self, signals[SIGNAL_PREWARM_DRAW], 0);
+        lrg_prewarm_end_hidden_draw ();
+    }
 
     /* Draw background */
     if (priv->background_color != NULL)
@@ -537,6 +619,12 @@ lrg_template_loading_state_set_property (GObject      *object,
     case PROP_SHOW_PERCENTAGE:
         lrg_template_loading_state_set_show_percentage (self, g_value_get_boolean (value));
         break;
+    case PROP_PREWARM:
+        lrg_template_loading_state_set_prewarm (self, g_value_get_boolean (value));
+        break;
+    case PROP_PREWARM_BUDGET:
+        lrg_template_loading_state_set_prewarm_budget (self, g_value_get_int64 (value));
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
         break;
@@ -573,6 +661,12 @@ lrg_template_loading_state_get_property (GObject    *object,
         break;
     case PROP_PROGRESS:
         g_value_set_double (value, lrg_template_loading_state_get_progress (self));
+        break;
+    case PROP_PREWARM:
+        g_value_set_boolean (value, priv->prewarm);
+        break;
+    case PROP_PREWARM_BUDGET:
+        g_value_set_int64 (value, priv->prewarm_budget);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -705,6 +799,34 @@ lrg_template_loading_state_class_init (LrgTemplateLoadingStateClass *klass)
                              0.0, 1.0, 0.0,
                              G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
+    /**
+     * LrgTemplateLoadingState:prewarm:
+     *
+     * Whether the state runs the engine's #LrgPrewarm queue after its
+     * tasks and completes only when it is empty (shader compiles and
+     * buffer uploads behind the loading screen).
+     */
+    properties[PROP_PREWARM] =
+        g_param_spec_boolean ("prewarm",
+                              "Prewarm",
+                              "Whether to build queued GPU resources before completing",
+                              TRUE,
+                              G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY |
+                              G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgTemplateLoadingState:prewarm-budget:
+     *
+     * Microseconds of prewarm work per frame (one entry always runs).
+     */
+    properties[PROP_PREWARM_BUDGET] =
+        g_param_spec_int64 ("prewarm-budget",
+                            "Prewarm Budget",
+                            "Microseconds of GPU-resource work per frame",
+                            0, G_MAXINT64, DEFAULT_PREWARM_BUDGET,
+                            G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY |
+                            G_PARAM_STATIC_STRINGS);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
     /**
@@ -761,6 +883,26 @@ lrg_template_loading_state_class_init (LrgTemplateLoadingStateClass *klass)
                       NULL,
                       G_TYPE_NONE, 1,
                       G_TYPE_ERROR);
+
+    /**
+     * LrgTemplateLoadingState::prewarm-draw:
+     * @self: the #LrgTemplateLoadingState
+     *
+     * Emitted once per loading, from the state's draw after the prewarm
+     * queue is empty, with a hidden draw active
+     * (lrg_prewarm_begin_hidden_draw()): draw the scene the game is about
+     * to show, as it will be drawn (same render targets, cameras and
+     * effects), and the driver compiles what it compiles at a first draw
+     * while nothing reaches the screen. The state completes after it.
+     */
+    signals[SIGNAL_PREWARM_DRAW] =
+        g_signal_new ("prewarm-draw",
+                      G_TYPE_FROM_CLASS (klass),
+                      G_SIGNAL_RUN_LAST,
+                      0,
+                      NULL, NULL,
+                      NULL,
+                      G_TYPE_NONE, 0);
 }
 
 static void
@@ -785,6 +927,10 @@ lrg_template_loading_state_init (LrgTemplateLoadingState *self)
     priv->status_text = g_strdup ("Loading...");
     priv->show_progress_bar = TRUE;
     priv->show_percentage = TRUE;
+
+    priv->prewarm = TRUE;
+    priv->prewarm_budget = DEFAULT_PREWARM_BUDGET;
+    priv->prewarm_done = FALSE;
 
     lrg_game_state_set_name (LRG_GAME_STATE (self), "Loading");
 }
@@ -987,7 +1133,7 @@ lrg_template_loading_state_is_complete (LrgTemplateLoadingState *self)
     g_return_val_if_fail (LRG_IS_TEMPLATE_LOADING_STATE (self), FALSE);
 
     priv = lrg_template_loading_state_get_instance_private (self);
-    return priv->loading_complete && priv->minimum_time_reached;
+    return priv->loading_complete && priv->minimum_time_reached && prewarm_finished (self);
 }
 
 gdouble
@@ -1136,5 +1282,64 @@ lrg_template_loading_state_set_show_percentage (LrgTemplateLoadingState *self,
     {
         priv->show_percentage = show;
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHOW_PERCENTAGE]);
+    }
+}
+
+gboolean
+lrg_template_loading_state_get_prewarm (LrgTemplateLoadingState *self)
+{
+    LrgTemplateLoadingStatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_TEMPLATE_LOADING_STATE (self), FALSE);
+
+    priv = lrg_template_loading_state_get_instance_private (self);
+    return priv->prewarm;
+}
+
+void
+lrg_template_loading_state_set_prewarm (LrgTemplateLoadingState *self,
+                                        gboolean                 prewarm)
+{
+    LrgTemplateLoadingStatePrivate *priv;
+
+    g_return_if_fail (LRG_IS_TEMPLATE_LOADING_STATE (self));
+
+    priv = lrg_template_loading_state_get_instance_private (self);
+
+    prewarm = !!prewarm;
+
+    if (priv->prewarm != prewarm)
+    {
+        priv->prewarm = prewarm;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PREWARM]);
+    }
+}
+
+gint64
+lrg_template_loading_state_get_prewarm_budget (LrgTemplateLoadingState *self)
+{
+    LrgTemplateLoadingStatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_TEMPLATE_LOADING_STATE (self), DEFAULT_PREWARM_BUDGET);
+
+    priv = lrg_template_loading_state_get_instance_private (self);
+    return priv->prewarm_budget;
+}
+
+void
+lrg_template_loading_state_set_prewarm_budget (LrgTemplateLoadingState *self,
+                                               gint64                   budget_us)
+{
+    LrgTemplateLoadingStatePrivate *priv;
+
+    g_return_if_fail (LRG_IS_TEMPLATE_LOADING_STATE (self));
+    g_return_if_fail (budget_us >= 0);
+
+    priv = lrg_template_loading_state_get_instance_private (self);
+
+    if (priv->prewarm_budget != budget_us)
+    {
+        priv->prewarm_budget = budget_us;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PREWARM_BUDGET]);
     }
 }

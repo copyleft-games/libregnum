@@ -301,4 +301,63 @@ LRG_AVAILABLE_IN_ALL
 void lrg_camera3d_set_aspect (LrgCamera3D *self,
                               gfloat       aspect);
 
+/* ==========================================================================
+ * Render Interpolation
+ * ========================================================================== */
+
+/**
+ * lrg_camera3d_get_render_pose:
+ * @self: an #LrgCamera3D
+ * @position: (out caller-allocates) (optional): return location for the
+ *   eye position the view is drawn from
+ * @target: (out caller-allocates) (optional): return location for the
+ *   point the drawn view looks at
+ *
+ * Gets the eye and target the camera renders with: while a
+ * fixed-timestep #LrgGameTemplate drives render interpolation and the
+ * camera moved in the latest fixed step, a blend of its pose at the start
+ * of that step and its current one; otherwise the current pose. Useful
+ * for draw code that needs the drawn eye (billboards, sorting); the
+ * getters keep returning the true pose.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_camera3d_get_render_pose (LrgCamera3D *self,
+                                   GrlVector3  *position,
+                                   GrlVector3  *target);
+
+/**
+ * lrg_camera3d_reset_interpolation:
+ * @self: an #LrgCamera3D
+ *
+ * Drops the in-flight blend of the eye and target: the camera is drawn at its
+ * current pose, and further changes in the current fixed step are not
+ * blended either. Use it for camera cuts made from fixed_update (the
+ * camera is otherwise interpolated like the objects it follows).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_camera3d_reset_interpolation (LrgCamera3D *self);
+
+/**
+ * lrg_camera3d_get_interpolate:
+ * @self: an #LrgCamera3D
+ *
+ * Gets whether the camera is interpolated for drawing.
+ *
+ * Returns: the value of #LrgCamera3D:interpolate
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_camera3d_get_interpolate (LrgCamera3D *self);
+
+/**
+ * lrg_camera3d_set_interpolate:
+ * @self: an #LrgCamera3D
+ * @interpolate: whether to interpolate the camera for drawing
+ *
+ * Opts the camera in or out of render interpolation; either way its
+ * blend is reset.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_camera3d_set_interpolate (LrgCamera3D *self,
+                                   gboolean     interpolate);
+
 G_END_DECLS

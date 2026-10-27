@@ -57,6 +57,7 @@ enum
     PROP_MAX_FRAME_TIME,
     PROP_MAX_UPDATES_PER_FRAME,
     PROP_SNAP_FRAME_DELTA,
+    PROP_INTERPOLATE,
 
     /* Application */
     PROP_APP_ID,
@@ -436,6 +437,10 @@ lrg_game_template_update (LrgGameTemplate *self,
         delta *= priv->time_scale;
     }
 
+    /* Render interpolation runs only on top of fixed steps; the clock is
+     * process-wide, so the running template (re)asserts it every frame */
+    grl_interpolation_set_enabled (priv->use_fixed_timestep && priv->interpolate);
+
     /* Sample once per host frame, before consumers and outside fixed steps. */
     lrg_input_manager_poll (lrg_input_manager_get_default ());
     template_check_focus_state (self);
@@ -462,6 +467,10 @@ lrg_game_template_update (LrgGameTemplate *self,
         {
             priv->in_state_transition = TRUE;
 
+            /* Interpolated objects capture their pre-step pose on their
+             * first write inside the step */
+            grl_interpolation_begin_step ();
+
             if (klass->fixed_update != NULL)
                 klass->fixed_update (self, priv->fixed_timestep);
 
@@ -471,6 +480,8 @@ lrg_game_template_update (LrgGameTemplate *self,
 
             priv->in_state_transition = FALSE;
             template_process_deferred_ops (self);
+
+            grl_interpolation_end_step ();
 
             priv->accumulator -= priv->fixed_timestep;
             updates++;
@@ -485,8 +496,10 @@ lrg_game_template_update (LrgGameTemplate *self,
             priv->accumulator = 0;
         }
 
-        /* Calculate interpolation alpha for rendering */
+        /* Calculate interpolation alpha for rendering and publish it for
+         * draw code (and the camera updates in pre_update below) */
         priv->interpolation_alpha = priv->accumulator / priv->fixed_timestep;
+        grl_interpolation_set_alpha ((gfloat) priv->interpolation_alpha);
     }
     else
     {
@@ -903,6 +916,9 @@ lrg_game_template_get_property (GObject    *object,
     case PROP_SNAP_FRAME_DELTA:
         g_value_set_boolean (value, priv->snap_frame_delta);
         break;
+    case PROP_INTERPOLATE:
+        g_value_set_boolean (value, priv->interpolate);
+        break;
     case PROP_FIXED_TIMESTEP:
         g_value_set_double (value, priv->fixed_timestep);
         break;
@@ -1030,6 +1046,9 @@ lrg_game_template_set_property (GObject      *object,
         break;
     case PROP_SNAP_FRAME_DELTA:
         priv->snap_frame_delta = g_value_get_boolean (value);
+        break;
+    case PROP_INTERPOLATE:
+        priv->interpolate = g_value_get_boolean (value);
         break;
     case PROP_FIXED_TIMESTEP:
         priv->fixed_timestep = g_value_get_double (value);
@@ -1259,6 +1278,29 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
         g_param_spec_boolean ("snap-frame-delta",
                               "Snap Frame Delta",
                               "Snap frame deltas close to whole fixed steps",
+                              TRUE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_CONSTRUCT);
+
+    /**
+     * LrgGameTemplate:interpolate:
+     *
+     * With a fixed timestep, draw interpolated objects at a blend of
+     * their pose at the start of the latest step and their true pose, by
+     * the fraction of a step left in the accumulator (render
+     * interpolation). Without it, a display whose rate differs from the
+     * step rate (e.g. 144 Hz with 60 steps a second) shows motion on an
+     * uneven 2,3,2,3 frame cadence. #GrlEntity (so #LrgGameObject),
+     * #LrgTransformComponent, #LrgShape2D, #LrgShape3D, #LrgCamera2D and
+     * #LrgCamera3D are interpolated; the cost is a lazy per-object copy of
+     * the pose on its first write in a step, and drawing one fixed step
+     * (at most) behind the simulation. Ignored with a variable timestep.
+     */
+    properties[PROP_INTERPOLATE] =
+        g_param_spec_boolean ("interpolate",
+                              "Interpolate",
+                              "Interpolate drawn poses between fixed steps",
                               TRUE,
                               G_PARAM_READWRITE |
                               G_PARAM_STATIC_STRINGS |
@@ -1570,6 +1612,7 @@ lrg_game_template_init (LrgGameTemplate *self)
     priv->max_updates_per_frame = LRG_DEFAULT_MAX_UPDATES_PER_FRAME;
     priv->accumulator = 0.0;
     priv->interpolation_alpha = 0.0;
+    priv->interpolate = TRUE;
 
     priv->hit_stop_remaining = 0.0;
     priv->saved_time_scale = 1.0;
@@ -1634,6 +1677,9 @@ lrg_game_template_init (LrgGameTemplate *self)
     priv->camera_follow_enabled = FALSE;
     priv->camera_follow_target_x = 0.0f;
     priv->camera_follow_target_y = 0.0f;
+    priv->camera_follow_prev_x = 0.0f;
+    priv->camera_follow_prev_y = 0.0f;
+    grl_interpolation_track_init (&priv->camera_follow_interp);
     priv->camera_follow_smoothing = LRG_DEFAULT_CAMERA_SMOOTHING;
     priv->camera_deadzone_x = LRG_DEFAULT_CAMERA_DEADZONE;
     priv->camera_deadzone_y = LRG_DEFAULT_CAMERA_DEADZONE;
@@ -1792,6 +1838,9 @@ lrg_game_template_shutdown_game (LrgGameTemplate *self)
     klass = LRG_GAME_TEMPLATE_GET_CLASS (self);
 
     priv->is_running = FALSE;
+
+    /* Leave nothing blended for code that draws after the game stopped */
+    grl_interpolation_set_enabled (FALSE);
 
     /* Shutdown hook (vfunc) */
     if (klass->shutdown != NULL)
@@ -3009,8 +3058,20 @@ lrg_game_template_update_camera_follow_target (LrgGameTemplate *self,
 
     priv = lrg_game_template_get_instance_private (self);
 
-    priv->camera_follow_target_x = target_x;
-    priv->camera_follow_target_y = target_y;
+    /* Set in fixed_update, the target is interpolated like an object */
+    if (grl_interpolation_track_begin_write (&priv->camera_follow_interp))
+    {
+        priv->camera_follow_prev_x = priv->camera_follow_target_x;
+        priv->camera_follow_prev_y = priv->camera_follow_target_y;
+    }
+    grl_interpolation_track_write_float (&priv->camera_follow_interp,
+                                         &priv->camera_follow_target_x,
+                                         &priv->camera_follow_prev_x,
+                                         target_x);
+    grl_interpolation_track_write_float (&priv->camera_follow_interp,
+                                         &priv->camera_follow_target_y,
+                                         &priv->camera_follow_prev_y,
+                                         target_y);
 }
 
 /*
@@ -3041,8 +3102,16 @@ lrg_game_template_get_camera_position (LrgGameTemplate *self,
     /* Start with follow target if enabled, otherwise 0 */
     if (priv->camera_follow_enabled)
     {
+        gfloat alpha;
+
+        /* The view follows the drawn (interpolated) target */
         cam_x = priv->camera_follow_target_x;
         cam_y = priv->camera_follow_target_y;
+        if (grl_interpolation_track_get_blend (&priv->camera_follow_interp, &alpha))
+        {
+            cam_x = grl_interpolation_lerp (priv->camera_follow_prev_x, cam_x, alpha);
+            cam_y = grl_interpolation_lerp (priv->camera_follow_prev_y, cam_y, alpha);
+        }
     }
     else
     {

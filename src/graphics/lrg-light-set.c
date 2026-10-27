@@ -41,6 +41,7 @@
 #include "lighting/lrg-shadow-renderer.h"
 #include "lighting/lrg-shadow-renderer-private.h"
 #include "weather/lrg-ground-overlay-private.h"
+#include "core/lrg-prewarm.h"
 
 typedef struct
 {
@@ -173,7 +174,11 @@ struct _LrgLightSet
 /* the soft light limit passes values up to this share of the limit */
 #define LIMIT_KNEE      (0.75f)
 
-G_DEFINE_TYPE (LrgLightSet, lrg_light_set, G_TYPE_OBJECT)
+static void lrg_light_set_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgLightSet, lrg_light_set, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_light_set_prewarmable_init))
 
 static void build_grid (LrgLightSet *self,
                         gdouble      camera_x,
@@ -397,6 +402,10 @@ lrg_light_set_init (LrgLightSet *self)
     self->grid_layers = 1;
     self->grid_layer_height = 4.0f;
     self->air_tint[0] = self->air_tint[1] = self->air_tint[2] = 1.0f;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgLightSet *
@@ -2309,4 +2318,23 @@ lrg_light_set_sample_air (LrgLightSet      *self,
     for (k = 0; k < 3; k++)
         out_rgb[k] *= self->air_intensity * self->air_tint[k];
     return expf (-self->air_density * dist);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Prewarm                                                                  */
+/* ------------------------------------------------------------------------ */
+
+/* lrg_light_set_prewarm: compiles the lit shader now (what the first
+ * lrg_light_set_get_shader() would do) */
+static gboolean
+lrg_light_set_prewarm (LrgPrewarmable *prewarmable)
+{
+    lrg_light_set_get_shader (LRG_LIGHT_SET (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_light_set_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_light_set_prewarm;
 }

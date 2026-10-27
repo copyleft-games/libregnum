@@ -68,6 +68,11 @@ typedef struct _LrgEventBus  LrgEventBus;
 typedef struct _LrgRandomStream LrgRandomStream;
 typedef struct _LrgTimerManager LrgTimerManager;
 
+/* GPU-resource prewarm: LrgPrewarm is a final type, LrgPrewarmable an interface */
+typedef struct _LrgPrewarm                LrgPrewarm;
+typedef struct _LrgPrewarmable            LrgPrewarmable;
+typedef struct _LrgPrewarmableInterface   LrgPrewarmableInterface;
+
 /* ==========================================================================
  * ECS Module
  * ========================================================================== */

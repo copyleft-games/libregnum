@@ -64,6 +64,16 @@ typedef struct
 	gfloat            fovy;
 	LrgProjectionType projection;
 	gfloat            aspect;      /* 0: the target's own */
+
+	/* Render interpolation: eye and target at the start of the latest
+	 * fixed step they changed in (see grl-interpolation.h) */
+	gfloat                prev_position_x;
+	gfloat                prev_position_y;
+	gfloat                prev_position_z;
+	gfloat                prev_target_x;
+	gfloat                prev_target_y;
+	gfloat                prev_target_z;
+	GrlInterpolationTrack interp;
 } LrgCamera3DPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgCamera3D, lrg_camera3d, LRG_TYPE_CAMERA)
@@ -83,6 +93,7 @@ enum
 	PROP_FOVY,
 	PROP_PROJECTION,
 	PROP_ASPECT,
+	PROP_INTERPOLATE,
 	N_PROPS
 };
 
@@ -120,20 +131,51 @@ grl_projection_to_lrg (GrlCameraProjection projection)
 	}
 }
 
+/* The first write in a fixed step keeps the eye and target the step
+ * began with */
+static void
+camera3d_capture_previous (LrgCamera3DPrivate *priv)
+{
+	priv->prev_position_x = priv->position_x;
+	priv->prev_position_y = priv->position_y;
+	priv->prev_position_z = priv->position_z;
+	priv->prev_target_x = priv->target_x;
+	priv->prev_target_y = priv->target_y;
+	priv->prev_target_z = priv->target_z;
+}
+
+/* Stores one interpolated eye/target coordinate */
+static void
+camera3d_write (LrgCamera3DPrivate *priv,
+                gfloat             *current,
+                gfloat             *previous,
+                gfloat              value)
+{
+	if (grl_interpolation_track_begin_write (&priv->interp))
+		camera3d_capture_previous (priv);
+
+	grl_interpolation_track_write_float (&priv->interp, current, previous, value);
+}
+
+/*
+ * lrg_camera3d_sync_to_grl:
+ *
+ * Pushes the camera to graylib. Eye and target are the render
+ * (interpolated) ones when the camera moved in the latest fixed step, so
+ * a camera following a target from fixed_update moves with the drawn
+ * objects; the up vector, field of view and projection are not blended.
+ */
 static void
 lrg_camera3d_sync_to_grl (LrgCamera3D *self)
 {
 	LrgCamera3DPrivate *priv = lrg_camera3d_get_instance_private (self);
 	g_autoptr(GrlVector3) up = NULL;
+	GrlVector3 position;
+	GrlVector3 target;
 
-	grl_camera3d_set_position_xyz (priv->grl_camera,
-	                               priv->position_x,
-	                               priv->position_y,
-	                               priv->position_z);
-	grl_camera3d_set_target_xyz (priv->grl_camera,
-	                             priv->target_x,
-	                             priv->target_y,
-	                             priv->target_z);
+	lrg_camera3d_get_render_pose (self, &position, &target);
+	grl_camera3d_set_position_xyz (priv->grl_camera, position.x, position.y, position.z);
+	grl_camera3d_set_target_xyz (priv->grl_camera, target.x, target.y, target.z);
 
 	up = grl_vector3_new (priv->up_x, priv->up_y, priv->up_z);
 	grl_camera3d_set_up (priv->grl_camera, up);
@@ -311,22 +353,22 @@ lrg_camera3d_set_property (GObject      *object,
 	switch (prop_id)
 	{
 	case PROP_POSITION_X:
-		priv->position_x = g_value_get_float (value);
+		camera3d_write (priv, &priv->position_x, &priv->prev_position_x, g_value_get_float (value));
 		break;
 	case PROP_POSITION_Y:
-		priv->position_y = g_value_get_float (value);
+		camera3d_write (priv, &priv->position_y, &priv->prev_position_y, g_value_get_float (value));
 		break;
 	case PROP_POSITION_Z:
-		priv->position_z = g_value_get_float (value);
+		camera3d_write (priv, &priv->position_z, &priv->prev_position_z, g_value_get_float (value));
 		break;
 	case PROP_TARGET_X:
-		priv->target_x = g_value_get_float (value);
+		camera3d_write (priv, &priv->target_x, &priv->prev_target_x, g_value_get_float (value));
 		break;
 	case PROP_TARGET_Y:
-		priv->target_y = g_value_get_float (value);
+		camera3d_write (priv, &priv->target_y, &priv->prev_target_y, g_value_get_float (value));
 		break;
 	case PROP_TARGET_Z:
-		priv->target_z = g_value_get_float (value);
+		camera3d_write (priv, &priv->target_z, &priv->prev_target_z, g_value_get_float (value));
 		break;
 	case PROP_UP_X:
 		priv->up_x = g_value_get_float (value);
@@ -347,6 +389,9 @@ lrg_camera3d_set_property (GObject      *object,
 		break;
 	case PROP_ASPECT:
 		lrg_camera3d_set_aspect (self, g_value_get_float (value));
+		break;
+	case PROP_INTERPOLATE:
+		lrg_camera3d_set_interpolate (self, g_value_get_boolean (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -463,6 +508,22 @@ lrg_camera3d_class_init (LrgCamera3DClass *klass)
 		                    0.0f, 16.0f, 0.0f,
 		                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
+	/**
+	 * LrgCamera3D:interpolate:
+	 *
+	 * Whether the eye and target are interpolated for drawing when the
+	 * camera is moved in fixed steps, so it moves smoothly with the
+	 * interpolated objects on a display faster than the step rate.
+	 */
+	properties[PROP_INTERPOLATE] =
+		g_param_spec_boolean ("interpolate",
+		                      "Interpolate",
+		                      "Whether the eye and target are interpolated for drawing",
+		                      TRUE,
+		                      G_PARAM_READWRITE |
+		                      G_PARAM_STATIC_STRINGS |
+		                      G_PARAM_EXPLICIT_NOTIFY);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -483,6 +544,10 @@ lrg_camera3d_init (LrgCamera3D *self)
 	priv->up_z = 0.0f;
 	priv->fovy = 45.0f;
 	priv->projection = LRG_PROJECTION_PERSPECTIVE;
+
+	/* New cameras start with previous == current */
+	camera3d_capture_previous (priv);
+	grl_interpolation_track_init (&priv->interp);
 }
 
 /* ==========================================================================
@@ -527,9 +592,9 @@ lrg_camera3d_set_position_xyz (LrgCamera3D *self,
 	g_return_if_fail (LRG_IS_CAMERA3D (self));
 
 	priv = lrg_camera3d_get_instance_private (self);
-	priv->position_x = x;
-	priv->position_y = y;
-	priv->position_z = z;
+	camera3d_write (priv, &priv->position_x, &priv->prev_position_x, x);
+	camera3d_write (priv, &priv->position_y, &priv->prev_position_y, y);
+	camera3d_write (priv, &priv->position_z, &priv->prev_position_z, z);
 
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_POSITION_X]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_POSITION_Y]);
@@ -568,9 +633,9 @@ lrg_camera3d_set_target_xyz (LrgCamera3D *self,
 	g_return_if_fail (LRG_IS_CAMERA3D (self));
 
 	priv = lrg_camera3d_get_instance_private (self);
-	priv->target_x = x;
-	priv->target_y = y;
-	priv->target_z = z;
+	camera3d_write (priv, &priv->target_x, &priv->prev_target_x, x);
+	camera3d_write (priv, &priv->target_y, &priv->prev_target_y, y);
+	camera3d_write (priv, &priv->target_z, &priv->prev_target_z, z);
 
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TARGET_X]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TARGET_Y]);
@@ -915,4 +980,90 @@ lrg_camera3d_slerp_to (LrgCamera3D         *self,
 
 	/* Apply interpolated orientation */
 	lrg_camera3d_set_orientation (self, result);
+}
+
+void
+lrg_camera3d_reset_interpolation (LrgCamera3D *self)
+{
+	LrgCamera3DPrivate *priv;
+
+	g_return_if_fail (LRG_IS_CAMERA3D (self));
+
+	priv = lrg_camera3d_get_instance_private (self);
+	camera3d_capture_previous (priv);
+	grl_interpolation_track_reset (&priv->interp);
+}
+
+gboolean
+lrg_camera3d_get_interpolate (LrgCamera3D *self)
+{
+	LrgCamera3DPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_CAMERA3D (self), FALSE);
+
+	priv = lrg_camera3d_get_instance_private (self);
+	return priv->interp.enabled;
+}
+
+void
+lrg_camera3d_set_interpolate (LrgCamera3D *self,
+                              gboolean     interpolate)
+{
+	LrgCamera3DPrivate *priv;
+
+	g_return_if_fail (LRG_IS_CAMERA3D (self));
+
+	priv = lrg_camera3d_get_instance_private (self);
+
+	interpolate = (interpolate != FALSE);
+	if (priv->interp.enabled == interpolate)
+		return;
+
+	priv->interp.enabled = interpolate;
+	lrg_camera3d_reset_interpolation (self);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_INTERPOLATE]);
+}
+
+void
+lrg_camera3d_get_render_pose (LrgCamera3D *self,
+                              GrlVector3  *position,
+                              GrlVector3  *target)
+{
+	LrgCamera3DPrivate *priv;
+	gfloat              alpha;
+
+	g_return_if_fail (LRG_IS_CAMERA3D (self));
+
+	priv = lrg_camera3d_get_instance_private (self);
+
+	/* Not moved in the latest step (or interpolation off): true pose */
+	if (!grl_interpolation_track_get_blend (&priv->interp, &alpha))
+	{
+		if (position != NULL)
+		{
+			position->x = priv->position_x;
+			position->y = priv->position_y;
+			position->z = priv->position_z;
+		}
+		if (target != NULL)
+		{
+			target->x = priv->target_x;
+			target->y = priv->target_y;
+			target->z = priv->target_z;
+		}
+		return;
+	}
+
+	if (position != NULL)
+	{
+		position->x = grl_interpolation_lerp (priv->prev_position_x, priv->position_x, alpha);
+		position->y = grl_interpolation_lerp (priv->prev_position_y, priv->position_y, alpha);
+		position->z = grl_interpolation_lerp (priv->prev_position_z, priv->position_z, alpha);
+	}
+	if (target != NULL)
+	{
+		target->x = grl_interpolation_lerp (priv->prev_target_x, priv->target_x, alpha);
+		target->y = grl_interpolation_lerp (priv->prev_target_y, priv->target_y, alpha);
+		target->z = grl_interpolation_lerp (priv->prev_target_z, priv->target_z, alpha);
+	}
 }

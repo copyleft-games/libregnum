@@ -12,6 +12,7 @@
 #include <rlgl.h>
 
 #include "lrg-shape3d-mesh-private.h"
+#include "core/lrg-prewarm.h"
 
 #ifndef RAD2DEG
 #define RAD2DEG (180.0f / 3.14159265358979323846f)
@@ -43,7 +44,11 @@ struct _LrgCylinder3D
 	gint            mesh_slices;
 };
 
-G_DEFINE_FINAL_TYPE (LrgCylinder3D, lrg_cylinder3d, LRG_TYPE_SHAPE3D)
+static void lrg_cylinder3d_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgCylinder3D, lrg_cylinder3d, LRG_TYPE_SHAPE3D,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_cylinder3d_prewarmable_init))
 
 enum
 {
@@ -62,14 +67,13 @@ static GParamSpec *properties[N_PROPS];
  * ========================================================================== */
 
 /*
- * lrg_cylinder3d_draw_mesh:
- * Draws the solid cylinder from the shared mesh of its radius, height
- * and slices, made on first use and again when they change. Returns
- * FALSE when the immediate path must draw.
+ * lrg_cylinder3d_ensure_mesh / lrg_cylinder3d_draw_mesh:
+ * The solid cylinder is drawn from the shared mesh of its radius, height
+ * and slices, made on first use and again when they change. NULL
+ * (FALSE) when it could not be made: the immediate path draws then.
  */
-static gboolean
-lrg_cylinder3d_draw_mesh (LrgCylinder3D *self,
-                          GrlColor      *color)
+static LrgShape3DMesh *
+lrg_cylinder3d_ensure_mesh (LrgCylinder3D *self)
 {
 	if (self->gpu_mesh == NULL || self->mesh_radius != self->radius
 	    || self->mesh_height != self->height || self->mesh_slices != self->slices)
@@ -81,8 +85,16 @@ lrg_cylinder3d_draw_mesh (LrgCylinder3D *self,
 		self->mesh_height = self->height;
 		self->mesh_slices = self->slices;
 	}
-	return self->gpu_mesh != NULL
-	       && lrg_shape3d_mesh_draw (self->gpu_mesh, color, 1.0f);
+	return self->gpu_mesh;
+}
+
+static gboolean
+lrg_cylinder3d_draw_mesh (LrgCylinder3D *self,
+                          GrlColor      *color)
+{
+	LrgShape3DMesh *mesh = lrg_cylinder3d_ensure_mesh (self);
+
+	return mesh != NULL && lrg_shape3d_mesh_draw (mesh, color, 1.0f);
 }
 
 static void
@@ -90,12 +102,18 @@ lrg_cylinder3d_draw (LrgShape *shape,
                      gfloat    delta)
 {
 	LrgCylinder3D         *self      = LRG_CYLINDER3D (shape);
-	GrlVector3            *pos       = lrg_shape3d_get_position (LRG_SHAPE3D (self));
-	GrlVector3            *rot       = lrg_shape3d_get_rotation (LRG_SHAPE3D (self));
-	GrlVector3            *scl       = lrg_shape3d_get_scale (LRG_SHAPE3D (self));
+	GrlVector3             render_pos;
+	GrlVector3             render_rot;
+	GrlVector3             render_scl;
+	GrlVector3            *pos       = &render_pos;
+	GrlVector3            *rot       = &render_rot;
+	GrlVector3            *scl       = &render_scl;
 	GrlColor              *color     = lrg_shape_get_color (shape);
 	gboolean               wireframe = lrg_shape3d_get_wireframe (LRG_SHAPE3D (self));
 	g_autoptr(GrlVector3)  origin    = grl_vector3_new (0.0f, 0.0f, 0.0f);
+
+	/* Draw at the render (interpolated) transform */
+	lrg_shape3d_get_render_transform (LRG_SHAPE3D (self), pos, rot, scl);
 
 	rlPushMatrix ();
 
@@ -277,6 +295,10 @@ lrg_cylinder3d_init (LrgCylinder3D *self)
 	self->height   = 2.0f;
 	self->slices   = 32;
 	self->cap_ends = TRUE;
+
+	/* build the GPU resources behind a loading screen, not on the
+	 * first draw (see lrg_prewarm_track()) */
+	lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 /* ==========================================================================
@@ -511,4 +533,26 @@ lrg_cylinder3d_set_cap_ends (LrgCylinder3D *self,
 		self->cap_ends = cap_ends;
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CAP_ENDS]);
 	}
+}
+
+/* ==========================================================================
+ * Prewarm
+ * ========================================================================== */
+
+/* lrg_cylinder3d_prewarm: makes the shared mesh (in this context) now, not at the
+ * first solid draw */
+static gboolean
+lrg_cylinder3d_prewarm (LrgPrewarmable *prewarmable)
+{
+	LrgShape3DMesh *mesh = lrg_cylinder3d_ensure_mesh (LRG_CYLINDER3D (prewarmable));
+
+	if (mesh != NULL)
+		lrg_shape3d_mesh_prepare (mesh);
+	return TRUE;
+}
+
+static void
+lrg_cylinder3d_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+	iface->prewarm = lrg_cylinder3d_prewarm;
 }

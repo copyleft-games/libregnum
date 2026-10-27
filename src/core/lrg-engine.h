@@ -16,6 +16,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "lrg-prewarm.h"
 #include "../lrg-enums.h"
 
 G_BEGIN_DECLS
@@ -256,6 +257,49 @@ LrgWindow * lrg_engine_get_window (LrgEngine *self);
  */
 LRG_AVAILABLE_IN_ALL
 LrgRenderer * lrg_engine_get_renderer (LrgEngine *self);
+
+/* ==========================================================================
+ * GPU-resource prewarm
+ * ========================================================================== */
+
+/**
+ * lrg_engine_get_prewarm:
+ * @self: an #LrgEngine
+ *
+ * Gets the prewarm queue: the default #LrgPrewarm, which the engine's
+ * renderers add themselves to when they are created. Queue a game's own
+ * objects and work on it with lrg_prewarm_add_object() and
+ * lrg_prewarm_add_func().
+ *
+ * Returns: (transfer none): the engine's #LrgPrewarm
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPrewarm * lrg_engine_get_prewarm (LrgEngine *self);
+
+/**
+ * lrg_engine_prewarm:
+ * @self: an #LrgEngine
+ * @budget_us: microseconds to spend; 0 or less runs one entry
+ *
+ * Builds queued GPU resources (shaders, buffers) for up to @budget_us,
+ * the way a loading screen calls it once per frame; see lrg_prewarm_run().
+ * Must be called on the GL thread. Without an open window it does nothing.
+ *
+ * Returns: %TRUE when work remains, %FALSE when done (or no window)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_engine_prewarm (LrgEngine *self,
+                             gint64     budget_us);
+
+/**
+ * lrg_engine_prewarm_all:
+ * @self: an #LrgEngine
+ *
+ * Builds every queued GPU resource now, blocking until the queue is
+ * empty; see lrg_prewarm_run_all(). Must be called on the GL thread.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_engine_prewarm_all (LrgEngine *self);
 
 /* ==========================================================================
  * Version Functions (implementations from lrg-version.h.in)

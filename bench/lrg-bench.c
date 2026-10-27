@@ -29,6 +29,7 @@
 
 #include "gui/lrg-gui-raylib.h"
 #include "../tests/lrg-test-glb.h"
+#include "../tests/lrg-test-midi.h"
 
 #define BENCH_WIDTH          (320)
 #define BENCH_HEIGHT         (240)
@@ -126,6 +127,103 @@ ecs_teardown (gpointer state)
 
 	g_clear_object (&st->world);
 	g_clear_object (&st->texture);
+	g_free (st);
+}
+
+/* ==========================================================================
+ * ecs-moving: ecs-sprites with every object moving in 60 Hz fixed steps,
+ * drawn at 144 Hz with render interpolation (ecs-moving-raw: without)
+ * ========================================================================== */
+
+#define MOVING_STEP  (1.0 / 60.0)
+#define MOVING_FRAME (1.0 / 144.0)
+
+typedef struct
+{
+	EcsState        ecs;
+	LrgGameObject **objects;     /* borrowed: the world holds the references */
+	gdouble         accumulator;
+	gboolean        interpolate;
+} MovingState;
+
+static gpointer
+moving_setup_common (gboolean interpolate)
+{
+	MovingState *st;
+	EcsState    *ecs;
+	GList       *objects;
+	GList       *l;
+	guint        i;
+
+	ecs = ecs_setup ();
+	st = g_new0 (MovingState, 1);
+	st->ecs = *ecs;
+	g_free (ecs);
+	st->interpolate = interpolate;
+	st->objects = g_new0 (LrgGameObject *, ECS_OBJECTS);
+
+	objects = lrg_world_get_objects (st->ecs.world);
+	for (l = objects, i = 0; l != NULL && i < ECS_OBJECTS; l = l->next, i++)
+		st->objects[i] = l->data;
+	g_list_free (objects);
+
+	/* What LrgGameTemplate does: the clock is on with a fixed timestep
+	 * and interpolation, off otherwise */
+	grl_interpolation_set_enabled (interpolate);
+	return st;
+}
+
+static gpointer
+moving_setup (void)
+{
+	return moving_setup_common (TRUE);
+}
+
+static gpointer
+moving_raw_setup (void)
+{
+	return moving_setup_common (FALSE);
+}
+
+static void
+moving_frame (gpointer state,
+              guint    frame_index)
+{
+	MovingState *st = state;
+	guint        i;
+
+	/* A 144 Hz frame: 0 or 1 fixed steps, each moving every object (a
+	 * slow circle, so they stay on screen), as LrgGameTemplate runs them */
+	st->accumulator += MOVING_FRAME;
+	while (st->accumulator >= MOVING_STEP)
+	{
+		grl_interpolation_begin_step ();
+		for (i = 0; i < ECS_OBJECTS; i++)
+		{
+			gfloat phase = (gfloat) (i + frame_index) * 0.01f;
+
+			grl_entity_move_xy (GRL_ENTITY (st->objects[i]),
+			                    cosf (phase) * 30.0f, sinf (phase) * 30.0f,
+			                    (gfloat) MOVING_STEP);
+		}
+		grl_interpolation_end_step ();
+		st->accumulator -= MOVING_STEP;
+	}
+	grl_interpolation_set_alpha ((gfloat) (st->accumulator / MOVING_STEP));
+
+	/* Sprite components draw at the render pose */
+	lrg_world_draw (st->ecs.world);
+}
+
+static void
+moving_teardown (gpointer state)
+{
+	MovingState *st = state;
+
+	grl_interpolation_set_enabled (FALSE);
+	g_clear_object (&st->ecs.world);
+	g_clear_object (&st->ecs.texture);
+	g_free (st->objects);
 	g_free (st);
 }
 
@@ -2166,12 +2264,605 @@ analytics_teardown (gpointer state)
 }
 
 /* ==========================================================================
+ * first-use: features that appear mid-run (the first-use GPU work hitch)
+ * ========================================================================== */
+
+/* the measured frame the features first draw on */
+#define FIRST_USE_FRAME (BENCH_WARMUP_FRAMES + 100)
+
+typedef struct
+{
+	WorldState    *world;
+	SkinState     *skin;
+	LrgCloudLayer *clouds;
+	LrgColorGrade *grade;
+	LrgHeatHaze   *haze;
+	LrgSharpen    *sharpen;
+	GrlTexture    *screen;     /* what the post effects draw through */
+} FirstUseState;
+
+/* how first-use is warmed before it is measured */
+typedef enum
+{
+	FIRST_USE_COLD,     /* not at all: the first draw builds everything */
+	FIRST_USE_QUEUE,    /* the prewarm queue run to the end */
+	FIRST_USE_HIDDEN    /* the queue, then one hidden draw of the scene */
+} FirstUseWarm;
+
+/* the hidden draw of FIRST_USE_HIDDEN draws a frame of the scenario */
+static void first_use_frame (gpointer state,
+                             guint    frame_index);
+
+/*
+ * first_use_setup_mode:
+ * Water (64 patches), 20000 billboards, ~40000 grass blades, a cloud
+ * layer, a lit static batch, 50 GPU-skinned actors and three post effects
+ * (colour grade, heat haze, sharpen): all built here, none drawn before
+ * FIRST_USE_FRAME. FIRST_USE_COLD leaves the shader compiles and uploads
+ * to their first draw; FIRST_USE_QUEUE runs the default prewarm queue
+ * (which they all joined when created) to the end here, as a loading
+ * screen would; FIRST_USE_HIDDEN also draws the scene once hidden, as a
+ * loading screen's prewarm-draw handler would (the driver's draw-time
+ * shader variants).
+ */
+
+static gpointer
+first_use_setup_mode (FirstUseWarm prewarm)
+{
+	FirstUseState        *st;
+	WorldState           *world;
+	g_autoptr(GrlColor)   sun = NULL;
+	g_autoptr(GrlVector3) direction = NULL;
+	g_autoptr(GArray)     blades = NULL;
+	gint                  i;
+	gint                  j;
+
+	st = g_new0 (FirstUseState, 1);
+	st->world = world = world_state_new ();
+	world->texture = bench_make_texture (8);
+
+	world->water = lrg_water_surface_new ();
+	for (i = -4; i < 4; i++)
+		for (j = -4; j < 4; j++)
+			lrg_water_surface_add_grid (world->water, (gfloat) i * 16.0f, (gfloat) j * 16.0f,
+			                            (gfloat) i * 16.0f + 16.0f, (gfloat) j * 16.0f + 16.0f,
+			                            -0.5f, 16, 16, NULL, NULL, NULL);
+
+	world->billboards = lrg_billboard_batch_new ();
+	lrg_billboard_batch_set_material_texture (world->billboards, 0, world->texture);
+	for (i = 0; i < 20000; i++)
+	{
+		g_autoptr(GrlVector3) p = NULL;
+
+		p = grl_vector3_new ((gfloat) (i % 160) - 80.0f, 0.0f, (gfloat) (i / 160) - 60.0f);
+		lrg_billboard_batch_add (world->billboards, 0, p, 1.0f, 2.0f);
+	}
+
+	world->grass = lrg_grass_field_new (7);
+	blades = g_array_new (FALSE, FALSE, sizeof (LrgGrassBlade));
+	for (i = -20; i < 20; i++)
+		for (j = -20; j < 20; j++)
+			lrg_grass_field_place_cell (world->grass, i, j, 0.5f, 0.0, 0.0, NULL, NULL, blades);
+	lrg_grass_field_set_blades (world->grass,
+	                            (const LrgGrassBlade *) (gconstpointer) blades->data, blades->len);
+
+	world->batch = bench_static_batch ();
+	world->lights = lrg_light_set_new ();
+	sun = grl_color_new (230, 220, 200, 255);
+	direction = grl_vector3_new (-0.4f, -1.0f, -0.3f);
+	lrg_light_set_set_directional (world->lights, direction, sun);
+
+	st->clouds = lrg_cloud_layer_new (7);
+	lrg_cloud_layer_set_coverage (st->clouds, 0.6f);
+
+	st->skin = skin_setup_mode (TRUE);
+
+	st->grade = lrg_color_grade_new ();
+	lrg_color_grade_set_exposure (st->grade, 0.3f);
+	st->haze = lrg_heat_haze_new ();
+	st->sharpen = lrg_sharpen_new ();
+	st->screen = bench_make_texture (64);
+
+	if (prewarm != FIRST_USE_COLD)
+	{
+		LrgPrewarm *queue = lrg_prewarm_get_default ();
+		gint64      t0 = g_get_monotonic_time ();
+		guint       pending = lrg_prewarm_get_pending (queue);
+
+		lrg_prewarm_run_all (queue);
+		g_printerr ("%s: %u queued entries warmed in %.1f ms (setup, untimed)\n",
+		            prewarm == FIRST_USE_QUEUE ? "first-use-queue" : "first-use-prewarm",
+		            pending, (gdouble) (g_get_monotonic_time () - t0) / 1000.0);
+	}
+	if (prewarm == FIRST_USE_HIDDEN)
+	{
+		gint64 t0 = g_get_monotonic_time ();
+
+		/* what LrgTemplateLoadingState::prewarm-draw is for: the scene
+		 * drawn once, scissored away, on a loading-screen frame */
+		BeginDrawing ();
+		lrg_prewarm_begin_hidden_draw ();
+		first_use_frame (st, FIRST_USE_FRAME);
+		lrg_prewarm_end_hidden_draw ();
+		ClearBackground (BLACK);
+		EndDrawing ();
+		g_printerr ("first-use-prewarm: hidden draw %.1f ms (setup, untimed)\n",
+		            (gdouble) (g_get_monotonic_time () - t0) / 1000.0);
+	}
+	return st;
+}
+
+static gpointer
+first_use_setup (void)
+{
+	return first_use_setup_mode (FIRST_USE_COLD);
+}
+
+static gpointer
+first_use_queue_setup (void)
+{
+	return first_use_setup_mode (FIRST_USE_QUEUE);
+}
+
+static gpointer
+first_use_prewarm_setup (void)
+{
+	return first_use_setup_mode (FIRST_USE_HIDDEN);
+}
+
+static void
+first_use_frame (gpointer state,
+                 guint    frame_index)
+{
+	FirstUseState        *st = state;
+	WorldState           *world = st->world;
+	gfloat                eye[3];
+	gfloat                towards_sun[3] = { 0.4f, 0.8f, 0.3f };
+	GrlRectangle          rect;
+	g_autoptr(GrlVector3) camera = NULL;
+
+	bench_world_camera (world->camera, frame_index, eye);
+	if (frame_index < FIRST_USE_FRAME)
+	{
+		/* the plain world before the features appear */
+		grl_camera3d_begin (world->camera);
+		lrg_static_batch_set_shader (world->batch, NULL);
+		lrg_static_batch_draw (world->batch, LRG_STATIC_BATCH_ALL_LAYERS);
+		grl_camera3d_end (world->camera);
+		return;
+	}
+
+	camera = grl_vector3_new (eye[0], eye[1], eye[2]);
+	grl_camera3d_begin (world->camera);
+	lrg_light_set_apply (world->lights, eye[0], eye[1], eye[2]);
+	lrg_light_set_bind (world->lights);
+	lrg_static_batch_set_shader (world->batch, lrg_light_set_get_shader (world->lights));
+	lrg_static_batch_draw (world->batch, LRG_STATIC_BATCH_ALL_LAYERS);
+	lrg_grass_field_draw (world->grass, eye, (gfloat) frame_index / 60.0f);
+	lrg_billboard_batch_draw (world->billboards, camera);
+	lrg_cloud_layer_draw (st->clouds, camera, 400.0f, towards_sun);
+	lrg_water_surface_draw (world->water, eye, (gfloat) frame_index / 60.0f);
+	grl_camera3d_end (world->camera);
+	lrg_light_set_unbind ();
+
+	skin_frame (st->skin, frame_index);
+
+	/* the post effects, each through a small quad of the screen */
+	rect.x = 0.0f;
+	rect.y = 0.0f;
+	rect.width = 64.0f;
+	rect.height = 64.0f;
+	lrg_color_grade_draw_texture (st->grade, st->screen, &rect, &rect);
+	rect.x = 64.0f;
+	lrg_heat_haze_draw_texture (st->haze, st->screen, &rect, &rect);
+	rect.x = 128.0f;
+	lrg_sharpen_draw_texture (st->sharpen, st->screen, &rect, &rect);
+}
+
+static void
+first_use_teardown (gpointer state)
+{
+	FirstUseState *st = state;
+
+	skin_teardown (st->skin);
+	if (st->clouds != NULL)
+		lrg_cloud_layer_release_gpu (st->clouds);
+	g_clear_object (&st->clouds);
+	g_clear_object (&st->grade);
+	g_clear_object (&st->haze);
+	g_clear_object (&st->sharpen);
+	g_clear_object (&st->screen);
+	world_teardown (st->world);
+	g_free (st);
+}
+
+/* ==========================================================================
+ * audio: streamed synthesis and music decoding during a 3 ms frame
+ *
+ * Each frame spins 3 ms on the clock (a ~300 fps game's steady work, so a
+ * stream buffer lasts as many frames as it would in a game) and then makes
+ * the audio calls a game makes every frame.  Whatever the audio costs on
+ * the game thread shows up as work above 3 ms.  The device is opened once
+ * at master volume 0 (the mix still runs, silently); without a device the
+ * scenarios measure nothing but the spin and say so.
+ * ========================================================================== */
+
+#define AUDIO_FRAME_SPIN_US  (3000)
+#define AUDIO_RATE           (44100)
+#define AUDIO_MUSIC_SECONDS  (30)
+
+static gboolean
+bench_audio_device (void)
+{
+	GrlAudioDevice *device;
+
+	device = grl_audio_device_get_default ();
+	if (device == NULL)
+		return FALSE;
+	if (!grl_audio_device_is_ready (device))
+		grl_audio_device_init_audio (device);
+	if (!grl_audio_device_is_ready (device))
+	{
+		g_printerr ("lrg-bench: no audio device, the audio scenarios measure nothing\n");
+		return FALSE;
+	}
+	grl_audio_device_set_master_volume (device, 0.0f);
+	return TRUE;
+}
+
+static void
+bench_audio_spin (void)
+{
+	gint64 until;
+
+	until = g_get_monotonic_time () + AUDIO_FRAME_SPIN_US;
+	while (g_get_monotonic_time () < until)
+		;
+}
+
+/* -- midi-synth: a busy General MIDI song (~60 voices) -------------------- */
+
+static gpointer
+midi_setup (void)
+{
+	LrgMidiSynth      *synth;
+	g_autoptr(GBytes)  sf2 = NULL;
+	g_autoptr(GBytes)  song = NULL;
+
+	synth = lrg_midi_synth_new (TEST_MIDI_RATE);
+	sf2 = test_midi_build_sf2 ();
+	song = test_midi_build_busy_song (15, 64);
+	if (!lrg_midi_synth_load_soundfont_bytes (synth, sf2, NULL) ||
+	    !lrg_midi_synth_play (synth, song, TRUE, 0.0, NULL))
+		g_printerr ("lrg-bench: midi-synth: the song did not load\n");
+	if (bench_audio_device ())
+		(void) lrg_midi_synth_start_stream (synth, NULL);
+	return synth;
+}
+
+static void
+midi_frame (gpointer state,
+            guint    frame_index)
+{
+	bench_light_frame (frame_index);
+	bench_audio_spin ();
+	lrg_midi_synth_update (LRG_MIDI_SYNTH (state));
+}
+
+static void
+midi_teardown (gpointer state)
+{
+	g_object_unref (state);
+}
+
+/* -- sound-bed: six layers, always crossfading, through a reverb ---------- */
+
+#define BED_LAYERS     (6)
+#define BED_SWAP_EVERY (60)
+
+typedef struct
+{
+	LrgSoundBed *bed;
+	guint        from;
+} BedState;
+
+static gpointer
+bed_setup (void)
+{
+	BedState           *st;
+	g_autoptr(GRand)    rand = NULL;
+	g_autofree gfloat  *samples = NULL;
+	g_autoptr(LrgReverb) reverb = NULL;
+	gsize               n;
+	guint               layer;
+
+	st = g_new0 (BedState, 1);
+	st->bed = lrg_sound_bed_new (AUDIO_RATE);
+	rand = g_rand_new_with_seed (7);
+	n = (gsize) AUDIO_RATE * 2 * 2;   /* two seconds of stereo */
+	samples = g_new (gfloat, n);
+	for (layer = 0; layer < BED_LAYERS; layer++)
+	{
+		g_autofree gchar *name = g_strdup_printf ("layer-%u", layer);
+		gsize             i;
+
+		/* filtered noise plus a tone: a wind / water / hum loop */
+		for (i = 0; i < n; i++)
+			samples[i] = 0.2f * (gfloat) g_rand_double_range (rand, -1.0, 1.0) +
+			             0.2f * sinf ((gfloat) (i / 2) * 0.01f * (gfloat) (layer + 1));
+		(void) lrg_sound_bed_add_layer_samples (st->bed, name, samples, n, 2, AUDIO_RATE, NULL);
+		(void) lrg_sound_bed_set_level (st->bed, name, layer < 3 ? 1.0f : 0.0f, 0.0);
+	}
+	reverb = lrg_reverb_new ();
+	lrg_audio_effect_chain_add (lrg_sound_bed_get_effects (st->bed), LRG_AUDIO_EFFECT (reverb));
+	if (bench_audio_device ())
+		(void) lrg_sound_bed_start_stream (st->bed, NULL);
+	return st;
+}
+
+static void
+bed_frame (gpointer state,
+           guint    frame_index)
+{
+	BedState *st = state;
+
+	bench_light_frame (frame_index);
+	bench_audio_spin ();
+
+	/* a crossfade starts every second while the last one still runs */
+	if (frame_index % BED_SWAP_EVERY == 0)
+	{
+		g_autofree gchar *from = g_strdup_printf ("layer-%u", st->from % BED_LAYERS);
+		g_autofree gchar *to = g_strdup_printf ("layer-%u", (st->from + 3) % BED_LAYERS);
+
+		lrg_sound_bed_crossfade (st->bed, from, to, 1.5);
+		st->from++;
+	}
+	lrg_sound_bed_update (st->bed);
+}
+
+static void
+bed_teardown (gpointer state)
+{
+	BedState *st = state;
+
+	g_clear_object (&st->bed);
+	g_free (st);
+}
+
+/* -- procedural: an additive synth, 48 sine partials ---------------------- */
+
+#define BENCH_PARTIALS (48)
+
+#define BENCH_TYPE_ADDITIVE (bench_additive_get_type ())
+G_DECLARE_FINAL_TYPE (BenchAdditive, bench_additive, BENCH, ADDITIVE, LrgProceduralAudio)
+
+struct _BenchAdditive
+{
+	LrgProceduralAudio parent_instance;
+	gfloat             phase[BENCH_PARTIALS];
+};
+
+G_DEFINE_TYPE (BenchAdditive, bench_additive, LRG_TYPE_PROCEDURAL_AUDIO)
+
+static void
+bench_additive_generate (LrgProceduralAudio *audio,
+                         gfloat             *buffer,
+                         gint                frame_count)
+{
+	BenchAdditive *self = BENCH_ADDITIVE (audio);
+	gint           f;
+	guint          p;
+
+	for (f = 0; f < frame_count; f++)
+	{
+		gfloat sample = 0.0f;
+
+		for (p = 0; p < BENCH_PARTIALS; p++)
+		{
+			sample += sinf (self->phase[p]) / (gfloat) (p + 1);
+			self->phase[p] += 2.0f * G_PI * 110.0f * (gfloat) (p + 1) / (gfloat) AUDIO_RATE;
+			if (self->phase[p] > 2.0f * G_PI)
+				self->phase[p] -= 2.0f * G_PI;
+		}
+		buffer[2 * f] = sample * 0.1f;
+		buffer[2 * f + 1] = sample * 0.1f;
+	}
+}
+
+static void
+bench_additive_class_init (BenchAdditiveClass *klass)
+{
+	LRG_PROCEDURAL_AUDIO_CLASS (klass)->generate = bench_additive_generate;
+}
+
+static void
+bench_additive_init (BenchAdditive *self)
+{
+}
+
+static gpointer
+procedural_setup (void)
+{
+	LrgProceduralAudio *audio;
+
+	(void) bench_audio_device ();
+	audio = g_object_new (BENCH_TYPE_ADDITIVE, "sample-rate", AUDIO_RATE, "channels", 2, NULL);
+	lrg_procedural_audio_play (audio);
+	return audio;
+}
+
+static void
+procedural_frame (gpointer state,
+                  guint    frame_index)
+{
+	bench_light_frame (frame_index);
+	bench_audio_spin ();
+	lrg_procedural_audio_update (LRG_PROCEDURAL_AUDIO (state));
+}
+
+static void
+procedural_teardown (gpointer state)
+{
+	lrg_procedural_audio_stop (LRG_PROCEDURAL_AUDIO (state));
+	g_object_unref (state);
+}
+
+/* -- music-ogg / music-mp3: a streamed track through LrgMusicTrack -------- */
+
+/* A 16-bit stereo WAV of AUDIO_MUSIC_SECONDS: chords and noise, so a
+ * lossy encoder has real work and the decoder too. */
+static gboolean
+bench_write_wav (const gchar *path)
+{
+	g_autoptr(GByteArray) out = NULL;
+	g_autoptr(GRand)      rand = NULL;
+	guint32               frames;
+	guint32               bytes;
+	guint32               i;
+
+	frames = AUDIO_RATE * AUDIO_MUSIC_SECONDS;
+	bytes = frames * 4;
+	out = g_byte_array_sized_new (bytes + 44);
+	rand = g_rand_new_with_seed (11);
+	{
+		guint8 header[44];
+		guint32 v;
+
+		memcpy (header, "RIFF", 4);
+		v = 36 + bytes;
+		memcpy (header + 4, &v, 4);
+		memcpy (header + 8, "WAVEfmt ", 8);
+		v = 16;
+		memcpy (header + 16, &v, 4);
+		header[20] = 1; header[21] = 0;                 /* PCM */
+		header[22] = 2; header[23] = 0;                 /* stereo */
+		v = AUDIO_RATE;
+		memcpy (header + 24, &v, 4);
+		v = AUDIO_RATE * 4;
+		memcpy (header + 28, &v, 4);
+		header[32] = 4; header[33] = 0;                 /* block align */
+		header[34] = 16; header[35] = 0;                /* bits */
+		memcpy (header + 36, "data", 4);
+		memcpy (header + 40, &bytes, 4);
+		g_byte_array_append (out, header, 44);
+	}
+	for (i = 0; i < frames; i++)
+	{
+		gdouble t = (gdouble) i / AUDIO_RATE;
+		gdouble chord = sin (2.0 * G_PI * 220.0 * t) + sin (2.0 * G_PI * 277.2 * t) +
+		                sin (2.0 * G_PI * (329.6 + 20.0 * sin (t)) * t);
+		gint16  left = (gint16) (6000.0 * chord + 3000.0 * g_rand_double_range (rand, -1.0, 1.0));
+		gint16  right = (gint16) (6000.0 * chord * 0.8 + 3000.0 * g_rand_double_range (rand, -1.0, 1.0));
+
+		g_byte_array_append (out, (const guint8 *) &left, 2);
+		g_byte_array_append (out, (const guint8 *) &right, 2);
+	}
+	return g_file_set_contents (path, (const gchar *) out->data, out->len, NULL);
+}
+
+/* The fixture in the user cache dir: the encoded file when ffmpeg can make
+ * it (made once), else the WAV itself (and a note that WAV is measured). */
+static gchar *
+bench_music_fixture (const gchar *extension,
+                     const gchar *codec)
+{
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *wav = NULL;
+	gchar            *encoded;
+	g_autofree gchar *ffmpeg = NULL;
+
+	dir = g_build_filename (g_get_user_cache_dir (), "lrg-bench-audio", NULL);
+	g_mkdir_with_parents (dir, 0755);
+	wav = g_build_filename (dir, "music.wav", NULL);
+	encoded = g_strdup_printf ("%s/music.%s", dir, extension);
+	if (g_file_test (encoded, G_FILE_TEST_EXISTS))
+		return encoded;
+	if (!g_file_test (wav, G_FILE_TEST_EXISTS) && !bench_write_wav (wav))
+	{
+		g_free (encoded);
+		return NULL;
+	}
+	ffmpeg = g_find_program_in_path ("ffmpeg");
+	if (ffmpeg != NULL)
+	{
+		const gchar *argv[] = { ffmpeg, "-loglevel", "error", "-y", "-i", wav,
+		                        "-c:a", codec, "-b:a", "160k", encoded, NULL };
+		gint         status = 0;
+
+		if (g_spawn_sync (NULL, (gchar **) argv, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+		                  NULL, NULL, &status, NULL) &&
+		    g_spawn_check_wait_status (status, NULL))
+			return encoded;
+	}
+	g_printerr ("lrg-bench: no encoder for .%s (ffmpeg -c:a %s); streaming the WAV instead\n",
+	            extension, codec);
+	g_free (encoded);
+	return g_strdup (wav);
+}
+
+static gpointer
+music_setup_format (const gchar *extension,
+                    const gchar *codec)
+{
+	g_autofree gchar *path = NULL;
+	LrgMusicTrack    *track;
+
+	if (!bench_audio_device ())
+		return NULL;
+	path = bench_music_fixture (extension, codec);
+	if (path == NULL)
+		return NULL;
+	track = lrg_music_track_new_from_file (path, NULL);
+	if (track == NULL)
+		return NULL;
+	lrg_music_track_set_looping (track, TRUE);
+	lrg_music_track_play (track);
+	return track;
+}
+
+static gpointer
+music_ogg_setup (void)
+{
+	return music_setup_format ("ogg", "libvorbis");
+}
+
+static gpointer
+music_mp3_setup (void)
+{
+	return music_setup_format ("mp3", "libmp3lame");
+}
+
+static void
+music_frame (gpointer state,
+             guint    frame_index)
+{
+	bench_light_frame (frame_index);
+	bench_audio_spin ();
+	if (state != NULL)
+		lrg_music_track_update (LRG_MUSIC_TRACK (state));
+}
+
+static void
+music_teardown (gpointer state)
+{
+	if (state == NULL)
+		return;
+	lrg_music_track_stop (LRG_MUSIC_TRACK (state));
+	g_object_unref (state);
+}
+
+/* ==========================================================================
  * Driver
  * ========================================================================== */
 
 static const BenchScenario scenarios[] = {
 	{ "ecs-sprites", "4000 game objects with sprite components (world update + draw)",
 	  ecs_setup, ecs_frame, ecs_teardown },
+	{ "ecs-moving", "ecs-sprites moving in 60 Hz fixed steps, drawn at 144 Hz, interpolated",
+	  moving_setup, moving_frame, moving_teardown },
+	{ "ecs-moving-raw", "ecs-moving with render interpolation off",
+	  moving_raw_setup, moving_frame, moving_teardown },
 	{ "ui-labels", "retained UI canvas with 600 labels, one changing per frame",
 	  ui_setup, ui_frame, ui_teardown },
 	{ "particles", "20000-particle 2D system with 4 emitters",
@@ -2226,6 +2917,22 @@ static const BenchScenario scenarios[] = {
 	  analytics_setup, analytics_frame, analytics_teardown },
 	{ "despawn", "4000 sprite objects, 1000 removed and 1000 added every 60 frames",
 	  despawn_setup, despawn_frame, despawn_teardown },
+	{ "first-use", "water, billboards, grass, clouds, lit batch, skinned actors, 3 post effects first drawn at frame 100",
+	  first_use_setup, first_use_frame, first_use_teardown },
+	{ "first-use-queue", "first-use with the prewarm queue run in setup (a loading screen)",
+	  first_use_queue_setup, first_use_frame, first_use_teardown },
+	{ "first-use-prewarm", "first-use-queue plus one hidden draw of the scene in setup",
+	  first_use_prewarm_setup, first_use_frame, first_use_teardown },
+	{ "midi-synth", "3 ms frames, a streamed busy MIDI song (~60 voices, LrgMidiSynth)",
+	  midi_setup, midi_frame, midi_teardown },
+	{ "sound-bed", "3 ms frames, a streamed 6-layer sound bed, always crossfading, reverb",
+	  bed_setup, bed_frame, bed_teardown },
+	{ "procedural", "3 ms frames, a streamed LrgProceduralAudio (48 sine partials)",
+	  procedural_setup, procedural_frame, procedural_teardown },
+	{ "music-ogg", "3 ms frames, a streamed Vorbis track (LrgMusicTrack)",
+	  music_ogg_setup, music_frame, music_teardown },
+	{ "music-mp3", "3 ms frames, a streamed MP3 track (LrgMusicTrack)",
+	  music_mp3_setup, music_frame, music_teardown },
 };
 
 static gint
@@ -2269,6 +2976,7 @@ typedef struct
 	gdouble jitter_ms;
 	gdouble work_median_ms;
 	gdouble work_p99_ms;
+	gdouble work_max_ms;
 } BenchStats;
 
 /* Mean of the slowest @fraction of @sorted (ascending), as a frame rate. */
@@ -2336,6 +3044,7 @@ bench_stats (const gdouble *frames,
 		: 0.0;
 	out->work_median_ms = wsorted[n / 2];
 	out->work_p99_ms = wsorted[MIN (n - 1, (n * 99) / 100)];
+	out->work_max_ms = wsorted[n - 1];
 }
 
 /* Runs one scenario: warm up, then time opt_frames frames. A frame's time
@@ -2396,15 +3105,15 @@ run_scenario (GrlWindow           *window,
 		         "  fps: %.1f\n  low1_fps: %.1f\n  low5_fps: %.1f\n"
 		         "  mean_ms: %.3f\n  median_ms: %.3f\n  p95_ms: %.3f\n"
 		         "  p99_ms: %.3f\n  max_ms: %.3f\n  jitter_ms: %.3f\n"
-		         "  work_median_ms: %.3f\n  work_p99_ms: %.3f\n",
+		         "  work_median_ms: %.3f\n  work_p99_ms: %.3f\n  work_max_ms: %.3f\n",
 		         sc->name, n, opt_fps, st.fps, st.low1_fps, st.low5_fps,
 		         st.mean_ms, st.median_ms, st.p95_ms, st.p99_ms, st.max_ms,
-		         st.jitter_ms, st.work_median_ms, st.work_p99_ms);
+		         st.jitter_ms, st.work_median_ms, st.work_p99_ms, st.work_max_ms);
 	else
 		g_print ("%-14s %8.1f fps  1%% low %8.1f  5%% low %8.1f  p99 %7.3f ms"
-		         "  max %7.3f ms  jitter %6.3f ms | work median %7.3f p99 %7.3f ms\n",
+		         "  max %7.3f ms  jitter %6.3f ms | work median %7.3f p99 %7.3f max %7.3f ms\n",
 		         sc->name, st.fps, st.low1_fps, st.low5_fps, st.p99_ms,
-		         st.max_ms, st.jitter_ms, st.work_median_ms, st.work_p99_ms);
+		         st.max_ms, st.jitter_ms, st.work_median_ms, st.work_p99_ms, st.work_max_ms);
 }
 
 static const gchar *license_text =

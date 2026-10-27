@@ -432,6 +432,14 @@ reload behavior, and retry semantics.
 | =show-progress-bar=    | boolean | TRUE         | Show progress bar                   |
 | =show-percentage=      | boolean | TRUE         | Show numeric progress               |
 | =minimum-display-time= | double  | 0.5          | Minimum seconds before completion   |
+| =prewarm=              | boolean | TRUE         | Build queued GPU resources first    |
+| =prewarm-budget=       | int64   | 8000         | Prewarm microseconds per frame      |
+
+After the tasks the state runs the engine's prewarm queue (the renderers the
+tasks created queue themselves) for =prewarm-budget= each frame, then emits
+=prewarm-draw= once inside a hidden draw so the game can draw its scene for
+the driver's draw-time shader work, and completes after that. See
+[[file:../core/prewarm.org::#loading-state][Prewarm: the loading state]].
 
 *** Example: Asset Loading
 :PROPERTIES:

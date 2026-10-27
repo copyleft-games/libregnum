@@ -37,6 +37,7 @@
 #include "lighting/lrg-shadow-renderer.h"
 #include "lighting/lrg-shadow-renderer-private.h"
 #include "graphics/lrg-light-set-private.h"
+#include "core/lrg-prewarm.h"
 
 /* how far behind the fitted sphere the light camera starts, so tall
  * casters outside the view still throw their shadow into it */
@@ -108,7 +109,11 @@ struct _LrgShadowRenderer
     gfloat     pass_dir[3];     /* cascade: the way the light travels */
 };
 
-G_DEFINE_TYPE (LrgShadowRenderer, lrg_shadow_renderer, G_TYPE_OBJECT)
+static void lrg_shadow_renderer_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgShadowRenderer, lrg_shadow_renderer, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_shadow_renderer_prewarmable_init))
 
 G_DEFINE_ENUM_TYPE (LrgShadowPassKind, lrg_shadow_pass_kind,
                     G_DEFINE_ENUM_VALUE (LRG_SHADOW_PASS_NONE, "none"),
@@ -455,6 +460,10 @@ lrg_shadow_renderer_init (LrgShadowRenderer *self)
     self->normal_offset = 1.5f;
     self->filter = 1;
     self->strength = 1.0f;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgShadowRenderer *
@@ -1419,4 +1428,24 @@ lrg_shadow_renderer_upload (LrgShadowRenderer        *self,
         rlActiveTextureSlot (0);
     }
     SetShaderValue (shader, locs->point_count, &points, SHADER_UNIFORM_INT);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Prewarm                                                                  */
+/* ------------------------------------------------------------------------ */
+
+/* lrg_shadow_renderer_prewarm: compiles the caster shader now (what the
+ * first pass would do). The atlases are left to the first pass: their
+ * size follows the lights that cast at the time. */
+static gboolean
+lrg_shadow_renderer_prewarm (LrgPrewarmable *prewarmable)
+{
+    lrg_shadow_renderer_get_caster_shader (LRG_SHADOW_RENDERER (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_shadow_renderer_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_shadow_renderer_prewarm;
 }

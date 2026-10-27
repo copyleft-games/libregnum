@@ -14,6 +14,7 @@
 #include "lrg-photo-dof.h"
 #include "../lrg-enums.h"
 #include "../lrg-log.h"
+#include "core/lrg-prewarm.h"
 
 /**
  * SECTION:lrg-photo-dof
@@ -119,7 +120,11 @@ enum
 
 static GParamSpec *properties[N_PROPS];
 
-G_DEFINE_TYPE (LrgPhotoDof, lrg_photo_dof, G_TYPE_OBJECT)
+static void lrg_photo_dof_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgPhotoDof, lrg_photo_dof, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_photo_dof_prewarmable_init))
 
 static gfloat
 clampf (gfloat value, gfloat lo, gfloat hi)
@@ -632,10 +637,33 @@ lrg_photo_dof_init (LrgPhotoDof *self)
     self->strength = 8.0f;
     self->near_clip = 0.1f;
     self->far_clip = 1000.0f;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgPhotoDof *
 lrg_photo_dof_new (void)
 {
     return g_object_new (LRG_TYPE_PHOTO_DOF, NULL);
+}
+
+/* ========================================================================== */
+/* Prewarm                                                                    */
+/* ========================================================================== */
+
+/* lrg_photo_dof_prewarm: compiles the depth-of-field shader now, not when
+ * photo mode first enables it */
+static gboolean
+lrg_photo_dof_prewarm (LrgPrewarmable *prewarmable)
+{
+    get_shader (LRG_PHOTO_DOF (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_photo_dof_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_photo_dof_prewarm;
 }

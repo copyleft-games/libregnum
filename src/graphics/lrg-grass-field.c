@@ -37,6 +37,7 @@
 #include "graphics/lrg-light-set-private.h"
 #include "graphics/lrg-hash-noise-private.h"
 #include "graphics/lrg-draw-cull-private.h"
+#include "core/lrg-prewarm.h"
 
 /* the material maps LoadMaterialDefault() allocates and the draw walks:
  * raylib's MAX_MATERIAL_MAPS (rmodels.c, not exported) */
@@ -146,7 +147,11 @@ struct _LrgGrassField
     LrgLightSetFogLocations    fog_locs;
 };
 
-G_DEFINE_FINAL_TYPE (LrgGrassField, lrg_grass_field, G_TYPE_OBJECT)
+static void lrg_grass_field_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgGrassField, lrg_grass_field, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_grass_field_prewarmable_init))
 
 LrgGrassBlade *
 lrg_grass_blade_copy (const LrgGrassBlade *blade)
@@ -198,6 +203,10 @@ lrg_grass_field_init (LrgGrassField *self)
     self->tip[0] = 0.45f; self->tip[1] = 0.62f; self->tip[2] = 0.25f;
     self->instances = g_array_new (FALSE, FALSE, sizeof (Matrix));
     self->groups = g_array_new (FALSE, FALSE, sizeof (GrassGroup));
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgGrassField *
@@ -875,4 +884,25 @@ lrg_grass_field_release_gpu (LrgGrassField *self)
     memset (&self->shader, 0, sizeof (self->shader));
     self->gpu_loaded = FALSE;
     self->gpu_tried = FALSE;
+}
+
+/* lrg_grass_field_prewarm: what the first draw builds (the shader, the
+ * card mesh and the instance buffer), built now */
+static gboolean
+lrg_grass_field_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgGrassField *self = LRG_GRASS_FIELD (prewarmable);
+
+    /* the shader and card even without blades: they may come later */
+    if (!ensure_gpu (self))
+        return TRUE;
+    if (self->instances->len > 0 && (self->instances_dirty || self->instance_vbo == 0))
+        upload_instances (self);
+    return TRUE;
+}
+
+static void
+lrg_grass_field_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_grass_field_prewarm;
 }

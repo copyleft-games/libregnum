@@ -783,6 +783,89 @@ test_mix_rate_unattached (void)
     g_assert_false (measured);
 }
 
+/*
+ * The bed on the audio thread (LRG_TEST_AUDIO_DEVICE=1): calls read back
+ * at once, the audio thread renders (the play counts move without any
+ * render() or update() call rendering), commands apply in order, and
+ * after stop_stream () the renderer is back on this thread with the
+ * state the calls asked for.
+ */
+static void
+test_bed_stream (void)
+{
+    g_autoptr(LrgSoundBed) bed = NULL;
+    g_autoptr(GError) error = NULL;
+    g_auto(GStrv) names = NULL;
+    GrlAudioDevice *device;
+    gfloat buffer[2 * 64];
+    gint64 deadline;
+
+    if (g_strcmp0 (g_getenv ("LRG_TEST_AUDIO_DEVICE"), "1") != 0)
+    {
+        g_test_skip ("set LRG_TEST_AUDIO_DEVICE=1 to open the audio device");
+        return;
+    }
+    device = grl_audio_device_get_default ();
+    if (device != NULL && !grl_audio_device_is_ready (device))
+        grl_audio_device_init_audio (device);
+    if (device == NULL || !grl_audio_device_is_ready (device))
+    {
+        g_test_skip ("no audio device");
+        return;
+    }
+    grl_audio_device_set_master_volume (device, 0.0f);
+
+    bed = lrg_sound_bed_new (RATE);
+    g_assert_true (lrg_sound_bed_start_stream (bed, &error));
+    g_assert_no_error (error);
+
+    /* offline rendering is silent while the audio thread renders */
+    buffer[0] = 1.0f;
+    g_assert_cmpuint (lrg_sound_bed_render (bed, buffer, 64), ==, 0);
+    g_assert_cmpfloat (buffer[0], ==, 0.0f);
+
+    /* calls read back at once */
+    g_assert_true (add_constant (bed, "wind", 0.25f, RATE / 100, RATE));
+    g_assert_true (add_constant (bed, "rain", 0.5f, RATE / 100, RATE));
+    g_assert_true (lrg_sound_bed_has_layer (bed, "wind"));
+    g_assert_true (lrg_sound_bed_set_level (bed, "wind", 0.75f, 0.0));
+    g_assert_cmpfloat (lrg_sound_bed_get_level (bed, "wind"), ==, 0.75f);
+    g_assert_cmpfloat (lrg_sound_bed_get_gain (bed, "wind"), ==, 0.75f);
+    lrg_sound_bed_crossfade (bed, NULL, "rain", 0.2);
+    g_assert_cmpfloat (lrg_sound_bed_get_level (bed, "rain"), ==, 1.0f);
+    lrg_sound_bed_set_volume (bed, 0.5f);
+    g_assert_cmpfloat (lrg_sound_bed_get_volume (bed), ==, 0.5f);
+
+    /* the audio thread plays them: 10 ms clips loop, the counts climb */
+    deadline = g_get_monotonic_time () + 3 * G_USEC_PER_SEC;
+    while ((lrg_sound_bed_get_play_count (bed, "wind") < 10 ||
+            lrg_sound_bed_get_gain (bed, "rain") < 1.0f) &&
+           g_get_monotonic_time () < deadline)
+    {
+        lrg_sound_bed_update (bed);
+        g_usleep (10000);
+    }
+    g_assert_cmpuint (lrg_sound_bed_get_play_count (bed, "wind"), >=, 10);
+    g_assert_cmpfloat (lrg_sound_bed_get_gain (bed, "rain"), ==, 1.0f);
+
+    /* a removal is seen at once; the layer is freed by a later call */
+    g_assert_true (lrg_sound_bed_remove_layer (bed, "rain"));
+    g_assert_false (lrg_sound_bed_has_layer (bed, "rain"));
+    names = lrg_sound_bed_get_layer_names (bed);
+    g_assert_cmpuint (g_strv_length (names), ==, 1);
+    g_assert_true (add_constant (bed, "rain", 1.0f, RATE / 100, RATE));
+    g_assert_true (lrg_sound_bed_set_level (bed, "rain", 0.5f, 0.0));
+
+    /* back on this thread: wind 0.25 x 0.75 + rain 1.0 x 0.5, x volume 0.5 */
+    lrg_sound_bed_stop_stream (bed);
+    g_assert_false (lrg_sound_bed_has_stream (bed));
+    g_assert_cmpuint (lrg_sound_bed_render (bed, buffer, 64), ==, 64);
+    g_assert_cmpfloat_with_epsilon (buffer[0], 0.5f * (0.25f * 0.75f + 1.0f * 0.5f), 1e-5);
+    g_assert_cmpfloat_with_epsilon (buffer[1], buffer[0], 1e-6);
+
+    grl_audio_device_close (device);
+}
+
 gint
 main (gint   argc,
       gchar *argv[])
@@ -807,6 +890,7 @@ main (gint   argc,
     g_test_add_func ("/audio-effects/sound-bed/scatter", test_bed_scatter);
     g_test_add_func ("/audio-effects/sound-bed/effects-and-errors", test_bed_effects_and_errors);
     g_test_add_func ("/audio-effects/sound-bed/wave-data", test_bed_wave_data);
+    g_test_add_func ("/audio-effects/sound-bed/stream", test_bed_stream);
     g_test_add_func ("/audio-effects/mix-rate/snap", test_snap_sample_rate);
     g_test_add_func ("/audio-effects/mix-rate/unattached", test_mix_rate_unattached);
 
