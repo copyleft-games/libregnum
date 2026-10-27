@@ -1193,6 +1193,58 @@ add_recorder (LrgWorld *world,
     return obj;
 }
 
+/* A wave of removals and spawns in one frame (removal through the stored
+ * list link, draw order rebuilt by sorting): membership, insertion order
+ * and the draw order (z, then insertion) all stay right. */
+static void
+test_world_mass_remove (void)
+{
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    LrgGameObject      *objs[64];
+    GList              *l;
+    guint               i;
+    guint               n;
+
+    draw_log = g_ptr_array_new ();
+    for (i = 0; i < 64; i++)
+        objs[i] = add_recorder (world, (gint) ((i * 7) % 5));
+
+    /* Remove every other object, oldest first, then spawn 8 more */
+    for (i = 0; i < 64; i += 2)
+        lrg_world_remove_object (world, objs[i]);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 32);
+    for (i = 0; i < 8; i++)
+        add_recorder (world, (gint) (i % 3) - 1);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 40);
+
+    /* Insertion order: the 32 survivors in order, then the 8 new ones */
+    l = lrg_world_get_objects (world);
+    for (i = 1; i < 64; i += 2, l = l->next)
+        g_assert_true (l->data == objs[i]);
+    g_assert_cmpuint (g_list_length (l), ==, 8);
+
+    /* Draw order: non-decreasing z; equal z keeps insertion order */
+    lrg_world_draw (world);
+    g_assert_cmpuint (draw_log->len, ==, 40);
+    for (n = 1; n < draw_log->len; n++)
+    {
+        gint za = grl_entity_get_z_index (GRL_ENTITY (draw_log->pdata[n - 1]));
+        gint zb = grl_entity_get_z_index (GRL_ENTITY (draw_log->pdata[n]));
+
+        g_assert_cmpint (za, <=, zb);
+        if (za == zb)
+            g_assert_cmpint (g_list_index (lrg_world_get_objects (world), draw_log->pdata[n - 1]), <,
+                             g_list_index (lrg_world_get_objects (world), draw_log->pdata[n]));
+    }
+
+    /* Removing the rest through the stored links empties the world */
+    while (lrg_world_get_objects (world) != NULL)
+        lrg_world_remove_object (world, lrg_world_get_objects (world)->data);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 0);
+
+    g_clear_pointer (&draw_log, g_ptr_array_unref);
+}
+
 /* lrg_world_draw() used to crash on any world with objects (it chained
  * up to a NULL GrlEntity draw vfunc). Draw order is z-index, stable for
  * equal z-indices, and follows z changes and membership changes. */
@@ -1425,6 +1477,7 @@ main (int   argc,
     g_test_add_func ("/ecs/animator-component/default-animation", test_animator_component_default_animation);
 
     g_test_add_func ("/ecs/world/draw-order", test_world_draw_order);
+    g_test_add_func ("/ecs/world/mass-remove", test_world_mass_remove);
 
     return g_test_run ();
 }
