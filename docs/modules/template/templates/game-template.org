@@ -132,6 +132,7 @@ my_game_class_init (MyGameClass *klass)
 | =fullscreen=         | =gboolean=   | FALSE            | Start in fullscreen                       |
 | =vsync=              | =gboolean=   | TRUE             | Enable vertical sync                      |
 | =target-fps=         | =gint=       | 60               | Target frame rate, 0 to 1000 (0: no limit) |
+| =max-frames-in-flight= | =guint=    | 2                | Frames in flight bounded with GL fences, 0-4 (0: driver default; [[#input-latency][details]]) |
 | =fixed-timestep=     | =gdouble=    | 1.0/60.0         | Physics update interval                   |
 | =snap-frame-delta=   | =gboolean=   | TRUE             | Snap deltas within 0.2 ms of whole fixed steps |
 | =interpolate=        | =gboolean=   | TRUE             | Render interpolation between fixed steps ([[#render-interpolation][details]]) |
@@ -393,6 +394,18 @@ Not interpolated, on purpose: particles, UI, tweens and skeletal/model animation
 *Latency.* Interpolation draws between the last two simulated states, so what is drawn trails the simulation by up to one fixed step (16.7 ms at 60 Hz). On a 60 Hz display with delta snapping the accumulator is empty after every frame, the alpha is 0 and objects are drawn exactly one step behind: motion is as even as before (each frame moves one step) but one step later. Turn =interpolate= off when that matters more than smoothness on faster displays, or raise =fixed-timestep= to the display rate.
 
 *Measured* (=tests/test-interpolation.c=, 60 Hz steps, an object at constant speed, judder = standard deviation of the drawn per-frame displacement over its mean): 144 Hz display 1.18 without interpolation, 0.00001 with it; 60 Hz display 0 either way. The CPU cost is in [[file:../../../performance.org::#render-interpolation][Performance]].
+
+*** Input Latency
+:PROPERTIES:
+:CUSTOM_ID: input-latency
+:END:
+The standalone loop is: dispatch the main context, =update= (fixed steps reading the input), draw, then end the frame, which flushes the draws, waits on the GPU if needed, swaps, runs raylib's frame limiter and only then polls input. So the input a frame reads is sampled after every wait of the previous frame: the limiter's sleep never makes it stale.
+
+=max-frames-in-flight= bounds how far the CPU may run ahead of the GPU, through graylib's frame sync (a GL fence per frame, waited on before the swap; graylib's =docs/api/core.org=, "Frames in Flight"). With the default 2 one earlier frame may still be on the GPU while the next is built: CPU and GPU work overlap, and a driver that would queue three frames (three frames of input lag) is held to one. 1 makes the GPU finish each frame before its swap, so input is polled with the GPU idle: the lowest latency, at a frame-rate cost when the game is GPU-bound. 0 leaves it to the driver. The environment variable =LRG_MAX_FRAMES_IN_FLIGHT= (=0=-=4=, or =off=) overrides the property without code changes, like =LRG_CPU_AFFINITY= does core pinning.
+
+On Mesa (measured on an Iris Xe, [[file:../../../performance.org::#input-latency][numbers]]) the driver already holds frames to about one in the queue, so 2 changes nothing but a fence per frame; 1 cut input-to-GPU-done latency by about 30% on an uncapped GPU-bound scene and cost about 19% of its frame rate, and changed nothing with vsync on.
+
+*Render interpolation adds latency too*: drawn poses trail the simulation by up to one fixed step ([[#render-interpolation][above]]); turn =interpolate= off or raise the step rate where that matters more.
 
 ** Window Properties
 :PROPERTIES:

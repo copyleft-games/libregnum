@@ -191,6 +191,7 @@ lrg_standalone_host_new (LrgGameTemplate  *game,
     gint               target_fps = 0;
     gboolean           vsync = FALSE;
     gboolean           allow_resize = FALSE;
+    guint              max_frames_in_flight = 0;
     LrgFullscreenMode  fullscreen_mode = LRG_FULLSCREEN_WINDOWED;
 
     g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (game), NULL);
@@ -217,6 +218,7 @@ lrg_standalone_host_new (LrgGameTemplate  *game,
                   "vsync", &vsync,
                   "target-fps", &target_fps,
                   "allow-resize", &allow_resize,
+                  "max-frames-in-flight", &max_frames_in_flight,
                   NULL);
 
     /* Create + configure the window (migrated from lrg_game_template_run). */
@@ -244,6 +246,11 @@ lrg_standalone_host_new (LrgGameTemplate  *game,
 
     if (vsync)
         lrg_grl_window_set_vsync (grl_win, TRUE);
+
+    /* Bound the frames queued ahead of the GPU (input latency); the
+     * environment's LRG_MAX_FRAMES_IN_FLIGHT overrides the game */
+    lrg_grl_window_set_max_frames_in_flight (
+        grl_win, lrg_grl_window_resolve_max_frames_in_flight (max_frames_in_flight));
 
     if (allow_resize)
         grl_window_set_state (raw_window, GRL_FLAG_WINDOW_RESIZABLE);

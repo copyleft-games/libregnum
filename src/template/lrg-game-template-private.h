@@ -55,6 +55,7 @@ typedef struct _LrgGameTemplatePrivate
     gint                 target_fps;
     gboolean             allow_resize;
     gboolean             allow_alt_enter;
+    guint                max_frames_in_flight;  /* Default: 2 */
 
     /* Frame timing */
     gboolean             use_fixed_timestep;
@@ -205,6 +206,14 @@ lrg_game_template_snap_delta (gdouble delta,
 
 /* Most main-context iterations the standalone loop runs per frame */
 #define LRG_MAIN_CONTEXT_DISPATCH_LIMIT (8)
+
+/*
+ * Default bound on frames in flight (graylib frame sync): 2 keeps one
+ * frame of CPU/GPU overlap and caps drivers that queue up to three frames;
+ * on Mesa it costs a fence per frame and changes nothing (see
+ * docs/performance.org, "Input latency").
+ */
+#define LRG_DEFAULT_MAX_FRAMES_IN_FLIGHT (2)
 
 /* Maximum delta time before clamping (prevents physics explosion) */
 #define LRG_DEFAULT_MAX_FRAME_TIME (0.25)
