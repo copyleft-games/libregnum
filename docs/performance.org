@@ -3,8 +3,8 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum performance benchmarks graylib
 #+created: 2026-10-25T16:00:00-04:00
-#+updated: 2026-10-27T22:00:00-04:00
-#+version: 1.2
+#+updated: 2026-10-27T23:30:00-04:00
+#+version: 1.3
 
 * Performance
 :PROPERTIES:
@@ -60,6 +60,7 @@ bench/build/release/bench/lrg-bench -l           # list scenarios
 | =procedural=    | 3 ms frames, a streamed =LrgProceduralAudio= subclass (48 sine partials)   |
 | =music-ogg=     | 3 ms frames, a streamed Vorbis track through =LrgMusicTrack=               |
 | =music-mp3=     | 3 ms frames, a streamed MP3 track through =LrgMusicTrack=                  |
+| =gpu-bound=     | almost no CPU work, =--gpu-load= (600) blended full-window quads: GPU-bound frames, for =--frames-in-flight= ([[#input-latency][input latency]]) |
 
 Adding a scenario: write =setup= / =frame= / =teardown= functions and add a row to the =scenarios[]= table at the bottom of =lrg-bench.c=. Keep scenarios deterministic (fixed seeds, scripted cameras) so runs compare.
 
@@ -286,3 +287,48 @@ Behaviour changes to know about:
 
 Thread safety was checked with ThreadSanitizer: a focused harness compiles the audio sources of libregnum and graylib with =-fsanitize=thread= (raylib uninstrumented, its locks seen through TSan's pthread interceptors; GLib's futex-based =GMutex= / =GCond= replaced by pthread ones in the harness so TSan sees them) and runs =test-midi-synth=, =test-procedural-audio=, =test-audio-effects= (sound bed), and graylib's =test-audio-stream= and =test-music= with the device tests on.  No race in libregnum or graylib.  The one report is raylib's =CloseAudioDevice()=, which destroys its mixing mutex before it stops the device thread; raylib's, not changed.
 
+** Input latency: frames in flight and the frame-end path
+:PROPERTIES:
+:CUSTOM_ID: input-latency
+:END:
+The v0.3.1 latency pass looked at what happens between a frame's last draw and the next frame's input poll, for input-to-photon latency and frame-time jitter.
+
+*What the frame end already did right.* raylib's =EndDrawing()= is flush, swap, frame limiter (=WaitTime()=: sleep 95% of the remaining time, spin the rest, =SUPPORT_PARTIALBUSY_WAIT_LOOP=), then =PollInputEvents()=. The standalone loop (=lrg_game_run_standalone()=: main context, =update=, draw, end frame) and the editor both end with it, so the input a frame reads is polled after every wait of the previous frame; nothing in libregnum sleeps before the swap or after the poll. The limiter is precise here (60.0 fps, 0.02-0.05 ms jitter on the =pacing= scenario at a 60 or 144 cap, Xvfb), so it was left alone.
+
+*New: bounded frames in flight.* A driver lets the CPU queue frames ahead of the GPU; each queued frame is a frame of input lag. graylib's new frame sync (=grl_frame_sync_*=, =GrlWindow:max-frames-in-flight=; graylib's =docs/api/core.org=, "Frames in Flight") fences each frame before its swap and waits until at most N - 1 earlier frames are unfinished on the GPU. The wait is before =EndDrawing()='s swap and poll, so input stays fresh; a fence the GPU already passed is checked without a flush. libregnum turns it on with =LrgGameTemplate:max-frames-in-flight= (default 2, applied by the standalone host to =LrgGrlWindow:max-frames-in-flight=) and in the editor (2); =LRG_MAX_FRAMES_IN_FLIGHT= (=0=-=4= or =off=) overrides both, as =LRG_CPU_AFFINITY= does pinning.
+
+*New bench options.* =lrg-bench --frames-in-flight N= sets the bound and reports the GPU wait per frame; =--vsync= opens the window with vsync; the =gpu-bound= scenario draws =--gpu-load= (default 600) blended full-window quads with almost no CPU work. Every scenario now also reports *input-to-GPU-done latency*: a GL timestamp query after the frame's draws (before its swap), converted to the CPU clock, minus the time of the input poll the frame was built from. It leaves out scanout (vblank wait, compositor), so it shows the GPU queue that frames in flight add, not full photon latency.
+
+Measured on the Intel Iris Xe (Mesa iris, GNOME Wayland session, 60 Hz panel), 320x240 window, medians of 5-7 interleaved runs of 300 frames (other benchmarks were running on the machine, so absolute frame rates moved ±30% between sets; compare within a row group):
+
+| Case                                   | Bound | fps   | latency median | GPU wait median |
+|----------------------------------------+-------+-------+----------------+-----------------|
+| =gpu-bound=, uncapped, Wayland         | off   | 539   | 3.51 ms        | --              |
+|                                        | 1     | 439   | 2.47 ms        | 2.06 ms         |
+|                                        | 2     | 483   | 4.14 ms        | 1.85 ms         |
+| =gpu-bound=, uncapped, XWayland        | off   | 529   | 3.61 ms        | --              |
+|                                        | 1     | 417   | 2.79 ms        | 2.02 ms         |
+|                                        | 2     | 502   | 3.95 ms        | 1.63 ms         |
+| =pacing=, vsync                        | off   | 60.0  | 1.65 ms        | --              |
+|                                        | 1     | 60.0  | 1.58 ms        | 0.50 ms         |
+|                                        | 2     | 60.0  | 1.62 ms        | 0.001 ms        |
+| =gpu-bound --gpu-load 3000=, vsync     | off   | 59.9  | 11.75 ms       | --              |
+|                                        | 1     | 59.9  | 11.01 ms       | 10.6 ms         |
+|                                        | 2     | 59.9  | 11.75 ms       | 0.003 ms        |
+| =ecs-sprites=, uncapped                | off   | 956   | 1.48 ms        | --              |
+|                                        | 1     | 564   | 1.47 ms        | 0.75 ms         |
+|                                        | 2     | 996   | 1.45 ms        | 0.000 ms        |
+
+What it shows:
+- *Mesa already queues about one frame.* GPU-bound and uncapped, the driver's own latency is about two GPU frames (one queued, one drawing): the same as a bound of 2. With vsync, Mesa's swap throttles before the next frame starts, so no bound changes the latency at all. On this hardware 2 is a no-op; it is the default as a guard for drivers that queue up to three frames, at the cost of one fence a frame (=ecs-sprites= at ~1000 fps: no measurable change, after the already-signaled fast path; before that path the extra flush cost ~3%).
+- *1 is a real trade, not a default.* The GPU finishes each frame before its swap, so CPU and GPU work stop overlapping: on the uncapped GPU-bound scene latency dropped about 30% (3.5 -> 2.5 ms) and frame rate about 19%; a CPU-heavy uncapped scene (=ecs-sprites=) lost 40% of its frame rate for nothing. Worth it for a competitive game that is GPU-bound below the display rate; set =max-frames-in-flight= to 1 or run with =LRG_MAX_FRAMES_IN_FLIGHT=1=.
+- *No cost on llvmpipe* (Xvfb): the GPU wait median is 2 µs at a 60 fps cap with a bound of 2; fps, lows and jitter are within run-to-run noise.
+
+*Timer slack, evaluated and not adopted.* The main thread's default timer slack (50 µs) delays every =nanosleep()= wake-up; =prctl(PR_SET_TIMERSLACK, 1)= removes that. Measured with an =LD_PRELOAD= shim on the =pacing= scenario (Xvfb, 3 runs each): at a 60 fps cap jitter 0.023-0.046 ms with the default and 0.014-0.033 ms with 1 ns; at 144 fps 0.019-0.036 vs 0.019-0.022 ms; frame rate and 1% lows unchanged. raylib's limiter spins the last 5% of each wait, which already absorbs the slack, so the gain is within noise; the only visible effect was the scenario's own 1 ms =g_usleep()= ending ~50 µs sooner. Not worth a process-wide side effect.
+
+*Other frame-end latency, documented, not changed:*
+- *Input to the fixed step.* Input is polled once per frame, at its end; the next frame's fixed steps all read that one sample. Polling between steps would only help when a frame runs two or more steps (a frame-rate drop); not worth the extra poll (which would also break press/release edge detection, which raylib keys to one poll per frame).
+- *Render interpolation* draws up to one fixed step (16.7 ms at 60 steps a second) behind the simulation ([[#render-interpolation][above]]). It is the largest latency in the loop; the options stay as documented: =interpolate= off, or a step rate at the display rate.
+- *vsync plus a frame cap that is not a divisor of the refresh rate* (the template's default 60 on a 144 Hz display) alternates two- and three-vblank frames, as the editor did before it capped at a divisor. It could not be validated here (60 Hz panel); a host-side snap of the cap to a divisor of the refresh rate is the candidate fix.
+
+Validate on other hardware: a discrete GPU or a driver with a deeper queue (where 2 should cut latency against the driver default), a 120/144 Hz panel with vsync (cap/refresh interaction), and full photon latency with a camera or an input-to-photon tool, which this probe does not see.
