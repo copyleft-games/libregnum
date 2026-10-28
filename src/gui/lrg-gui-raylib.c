@@ -14,6 +14,10 @@
 #include "lrg-gui-raylib.h"
 #include <graylib.h>
 #include "lrg-gui-raylib-private.h"
+/* graylib's O(1)-glyph-lookup forms of DrawTextEx()/MeasureTextEx():
+ * header-only, on raylib's public API, same quads and measurements.
+ * raylib's own functions scan the glyph table linearly per character. */
+#include "text/grl-text-layout-private.h"
 #include <math.h>
 #include <string.h>
 
@@ -365,7 +369,7 @@ measure (const gchar *text,
 	const gchar  *s = text;
 	Vector2       v;
 
-	/* MeasureTextEx wants a NUL-terminated string. */
+	/* The measure wants a NUL-terminated string. */
 	if (length >= 0)
 	{
 		if ((gsize) length < sizeof stack)
@@ -381,8 +385,9 @@ measure (const gchar *text,
 		}
 	}
 
-	v = MeasureTextEx (font, s, font_size, (font.texture.id == GetFontDefault ().texture.id)
-	                                       ? font_size / 10.0f : 0.0f);
+	v = grl_text_measure_ex (font, s, font_size,
+	                         (font.texture.id == GetFontDefault ().texture.id)
+	                         ? font_size / 10.0f : 0.0f);
 	g_free (heap);
 	return v.x;
 }
@@ -795,7 +800,7 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 				gfloat  spacing = (font.texture.id == GetFontDefault ().texture.id)
 				                  ? cmd->font_size / 10.0f : 0.0f;
 
-				DrawTextEx (font, cmd->text, pos, cmd->font_size, spacing, col);
+				grl_text_draw_ex (font, cmd->text, pos, cmd->font_size, spacing, col);
 			}
 			break;
 

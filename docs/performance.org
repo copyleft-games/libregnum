@@ -255,6 +255,42 @@ CPU cost, work median in ms, Xvfb + llvmpipe, 5 alternating runs of 600 frames (
 A direct microbenchmark (4000 =GrlEntity= moved in 60 Hz steps, render pose read for each every 144 Hz frame, no drawing) costs 41 µs per frame with interpolation and 37 µs without: about 1 ns per object per frame. Two things made that so: the previous pose is captured lazily on the first write in a step (no per-step pass over all objects, nothing for objects at rest), and graylib's own hot paths (entity setters, =grl_entity_get_render_pose()=) use inline forms of the clock checks instead of exported calls. A first version spent 0.1 ms per frame on =ecs-moving= in the shortest-arc angle blend, which always called =fmodf()= (an x87 =fprem= loop); it now folds only differences past half a turn.
 
 Found on the way: =liblibregnum.so= did not depend on the embedded graylib/raylib/yaml-glib archives (the static library did), so a graylib-only change left the shared library linked against the old graylib until something in libregnum changed. Both libraries now depend on them.
+** The v0.3.1 CPU hot-path pass
+:PROPERTIES:
+:CUSTOM_ID: cpu-hot-path-pass
+:END:
+CPU time the engine itself spends per frame in 2D, ECS, UI and simulation paths. Measured with =lrg-bench= under Xvfb + llvmpipe, 600 frames, base (v0.3.0, =34f3f30=) and new alternating on the same machine, each run started once the machine was >= 85% idle; median of 3 runs (5 for the ECS rows). The machine was shared with other builds, so frame rates and lows are noisy; the work median (scenario CPU time per frame) is the stable column, and the ECS rows also give the best run.
+
+| Scenario       | Base: work, fps, 1% low         | New: work, fps, 1% low          | What changed                                            |
+|----------------+---------------------------------+---------------------------------+---------------------------------------------------------|
+| =object-pool=  | 1.02 ms, 757 fps, 1% low 373    | 0.20 ms, 2691 fps, 1% low 704   | no per-acquire allocation or hash insert/remove         |
+| =ui-labels=    | 2.11 ms, 308 fps, 1% low 198    | 0.09 ms, 1832 fps, 1% low 637   | off-target labels skipped                               |
+| =ecs-sprites=  | 1.23 ms (best 0.84), 271 fps    | 0.65 ms (best 0.53), 375 fps    | cached type checks, one vtable lookup, unchecked loops  |
+| =ecs-moving=   | 0.77 ms (best 0.76), 349 fps    | 0.54 ms (best 0.50), 383 fps    | same                                                    |
+| =transforms=   | 0.42 ms, 1563 fps               | 0.17 ms, 3237 fps               | version-validated world transform cache                 |
+| =portals=      | 0.39 ms, 1595 fps               | 0.043 ms, 6230 fps              | index-resolved topology cache                           |
+| =event-bus=    | 0.46 ms, 1486 fps               | 0.24 ms, 2213 fps               | dispatch through cached vtables                         |
+| =gui=          | 0.47 ms                         | 0.38 ms                         | O(1) glyph lookup for GUI text                          |
+| =tweens=       | 0.39 ms                         | 0.35 ms                         | cached =LrgTweenBase= check                             |
+| =despawn=      | 1.12 ms, work p99 3.60 ms       | 0.68 ms, work p99 3.29 ms       | the per-object savings above; spike see below           |
+| =tilemap=      | 1.25 ms                         | 1.28 ms                         | unchanged (noise)                                       |
+
+What changed:
+- *Object pool* (=src/template/lrg-object-pool.c=). Every acquisition allocated a refcounted lease and inserted it into an object -> lease hash table that release removed again, so with thousands of acquisitions a frame the table resized every frame (=g_hash_table_resize= was the top symbol). Now each pooled object has a permanent member record (the table's key set only changes when objects are created or dropped), the available list holds members (acquire is a pop, release one lookup), leases are recycled through a free list with a plain counter, the object reference moves between member and lease without ref/unref, and the =LrgPoolable= vtable is peeked once per pool. Release type-checks its argument only when the lookup misses. See [[file:modules/template/systems/object-pool.org::#iteration][Iteration]].
+- *Labels* (=src/ui/lrg-label.c=). A label whose measured text box, widened by two ems, misses the visible area from rlgl's live matrices (=lrg_draw_cull_visible_rect_2d()=) is not drawn: the GPU would have clipped all of it. In the bench 600 labels lie in a 20000-pixel-tall box; ~20 are on screen. No cache of glyph quads or render textures was needed: once off-target labels cost nothing, the visible ones are a small fraction of the frame, and a render-texture cache would cost GPU memory per label and risk filtering differences. Pixel equality is tested in =/ui/label/offscreen-cull= (partly visible, off target, and brought into view by a 2D camera).
+- *Type checks in per-object loops*. GLib's instance check only has an inline fast path for an exact type match; game objects are subclasses and interfaces always miss it. graylib's entity accessors and =GrlUpdatable= / =GrlDrawable= entry points (=src/grl-type-check-private.h=) and =LrgTweenBase= (=src/lrg-type-check-private.h=) cache the last instance type that passed, which is exact because conformance never stops being true; criticals and their text are unchanged. =grl_updatable_update()= and =grl_drawable_draw()= look their vtable up once instead of again through a checked public call. =LrgGameObject='s update/draw loops call unchecked component internals (=lrg-component-private.h=) for components validated when they were added.
+- *Transforms* (=src/ecs/components/lrg-transform-component.c=). World transforms are cached per node and validated by a local version (bumped by every local or parent change) and the parent's world version (bumped by every recompute): a query walks up comparing versions and recomputes only changed levels, with the same float operations. See [[file:modules/ecs/components/transform-component.org::#world-transform-absolute-computed-from-hierarchy][World Transform]].
+- *Portals* (=src/world3d/lrg-portal-system.c=). The traversal used three string-hashed table operations per step and the point lookup iterated the sector table; both now run over a cache of the topology (sectors in table iteration order, so the same first match; portal links resolved to sector indices; visit stamps), rebuilt after any add or remove.
+- *Event bus*. Priorities, the per-turn mask and =on_event= go through the registration's cached listener vtable, the event's vtable is looked up once per emission.
+- *GUI text*. The raylib GUI backend draws and measures with graylib's O(1)-lookup text layout instead of =DrawTextEx()= / =MeasureTextEx()= (a linear glyph table scan per character).
+
+Looked at and left:
+- *rlgl immediate mode* (=rlVertex3f= is the top engine symbol in every 2D scenario, and =graylib-draw= is bound by llvmpipe). rlgl already continues one draw call while the texture and mode do not change (=rlSetTexture()= / =rlBegin()= only start a new draw on a change; =rlSetTexture (0)= after each quad only checks the batch limit), so graylib cannot drop calls without writing raylib's batch itself, which would need raylib's private state. raylib is not modified.
+- *=despawn= spike*. The wave frame (1000 removals + 1000 new objects with a sprite component each) is ~1.8 ms of GObject construction and destruction (property notifies, qdata bit locks, signals) and 2000 =lrg_debug()= calls that GLib formats before dropping. The debug messages stay: custom log writers (the editor log, the debug console) may want them. Games spawning in waves should pool their objects.
+- *Tweens* are dominated by =g_object_set()= by property name and its notify; that is the documented behaviour of property tweens.
+
+Found on the way: none of the changed paths had a correctness bug; the =LrgPortalSystem= update used a sector ID pointer into a sector that a =sector-entered= handler could have removed, it now traverses from its own copy of the ID.
+
 ** The audio thread pass
 :PROPERTIES:
 :CUSTOM_ID: audio-thread-pass

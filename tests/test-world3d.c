@@ -627,6 +627,162 @@ test_portal_system_clear (void)
  * =============================================================================
  */
 
+/* Reference traversal for test_portal_system_topology_cache(), straight
+ * off the public lookups, as the system did before its topology cache. */
+static void
+reference_traverse (LrgPortalSystem  *system,
+                    const gchar      *sector_id,
+                    const GrlVector3 *camera,
+                    guint             depth,
+                    guint             max_depth,
+                    GHashTable       *visited,
+                    GPtrArray        *order)
+{
+    const LrgSector *sector;
+    g_autoptr(GPtrArray) portal_ids = NULL;
+    guint i;
+
+    if (depth >= max_depth || g_hash_table_contains (visited, sector_id))
+        return;
+    sector = lrg_portal_system_get_sector (system, sector_id);
+    if (sector == NULL)
+        return;
+    g_hash_table_add (visited, g_strdup (sector_id));
+    g_ptr_array_add (order, g_strdup (sector_id));
+
+    portal_ids = lrg_sector_get_portal_ids (sector);
+    for (i = 0; i < portal_ids->len; i++)
+    {
+        const LrgPortal *portal = lrg_portal_system_get_portal (system,
+                                                               portal_ids->pdata[i]);
+        const gchar *other;
+
+        if (portal == NULL || !lrg_portal_is_visible_from (portal, camera))
+            continue;
+        other = lrg_portal_get_other_sector (portal, sector_id);
+        if (other != NULL)
+            reference_traverse (system, other, camera, depth + 1, max_depth,
+                                visited, order);
+    }
+}
+
+/* Checks find_sector_at() and the visible list against the references for
+ * a batch of random camera positions. */
+static void
+check_portal_system (LrgPortalSystem *system,
+                     GRand           *rng)
+{
+    guint round;
+
+    for (round = 0; round < 50; round++)
+    {
+        g_autoptr(GPtrArray) sectors = lrg_portal_system_get_sectors (system);
+        g_autoptr(GPtrArray) visible = NULL;
+        g_autoptr(GPtrArray) order = g_ptr_array_new_with_free_func (g_free);
+        g_autoptr(GHashTable) visited = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                                               g_free, NULL);
+        const LrgSector *expected = NULL;
+        GrlVector3 camera;
+        guint i;
+
+        camera.x = (gfloat) g_rand_double_range (rng, -5.0, 65.0);
+        camera.y = 5.0f;
+        camera.z = (gfloat) g_rand_double_range (rng, -5.0, 65.0);
+
+        /* First containing sector in table order */
+        for (i = 0; i < sectors->len && expected == NULL; i++)
+            if (lrg_sector_contains_point (sectors->pdata[i], &camera))
+                expected = sectors->pdata[i];
+        g_assert_true (lrg_portal_system_find_sector_at (system, &camera) == expected);
+
+        lrg_portal_system_update (system, &camera);
+        if (expected != NULL)
+            reference_traverse (system, lrg_sector_get_id (expected), &camera, 0,
+                                lrg_portal_system_get_max_portal_depth (system),
+                                visited, order);
+        visible = lrg_portal_system_get_visible_sectors (system);
+        g_assert_cmpuint (visible->len, ==, order->len);
+        for (i = 0; i < order->len; i++)
+            g_assert_cmpstr (lrg_sector_get_id (visible->pdata[i]), ==, order->pdata[i]);
+    }
+}
+
+/* The traversal runs over a cached, index-resolved copy of the topology;
+ * with overlapping sectors (first match wins), dangling portal and sector
+ * IDs, and edits between updates it must match the reference exactly. */
+static void
+test_portal_system_topology_cache (void)
+{
+    g_autoptr(LrgPortalSystem) system = lrg_portal_system_new ();
+    g_autoptr(GRand) rng = g_rand_new_with_seed (7);
+    guint x;
+    guint z;
+
+    lrg_portal_system_set_max_portal_depth (system, 6);
+    for (z = 0; z < 6; z++)
+        for (x = 0; x < 6; x++)
+        {
+            g_autofree gchar *id = g_strdup_printf ("s-%u-%u", x, z);
+            g_autoptr(LrgBoundingBox3D) bounds = NULL;
+            g_autoptr(LrgSector) sector = NULL;
+            guint k;
+
+            /* 12-unit cells on a 10-unit pitch: neighbours overlap */
+            bounds = lrg_bounding_box3d_new ((gfloat) x * 10.0f, 0.0f, (gfloat) z * 10.0f,
+                                             (gfloat) x * 10.0f + 12.0f, 10.0f,
+                                             (gfloat) z * 10.0f + 12.0f);
+            sector = lrg_sector_new (id, bounds);
+            for (k = 0; k < 4; k++)
+            {
+                g_autofree gchar *pid = NULL;
+                guint nx = (k == 0 && x < 5) ? x + 1 : (k == 1 && x > 0) ? x - 1 : x;
+                guint nz = (k == 2 && z < 5) ? z + 1 : (k == 3 && z > 0) ? z - 1 : z;
+                g_autofree gchar *other = g_strdup_printf ("s-%u-%u", nx, nz);
+                g_autoptr(LrgPortal) portal = NULL;
+                g_autoptr(LrgBoundingBox3D) pb = NULL;
+                GrlVector3 normal;
+
+                pid = g_strdup_printf ("p-%u-%u-%u", x, z, k);
+                lrg_sector_add_portal (sector, pid);
+                /* Every fifth portal ID is left dangling */
+                if (g_rand_int_range (rng, 0, 5) == 0)
+                    continue;
+                normal.x = (gfloat) g_rand_double_range (rng, -1.0, 1.0);
+                normal.y = 0.0f;
+                normal.z = (gfloat) g_rand_double_range (rng, -1.0, 1.0);
+                pb = lrg_bounding_box3d_new ((gfloat) nx * 10.0f, 0.0f, (gfloat) nz * 10.0f,
+                                             (gfloat) nx * 10.0f + 2.0f, 10.0f,
+                                             (gfloat) nz * 10.0f + 2.0f);
+                portal = lrg_portal_new_with_normal (pid, pb, id,
+                                                     g_rand_int_range (rng, 0, 8) == 0 ?
+                                                     "nowhere" : other, &normal);
+                lrg_portal_system_add_portal (system, portal);
+            }
+            lrg_portal_system_add_sector (system, sector);
+        }
+
+    check_portal_system (system, rng);
+
+    /* Edits invalidate the cache */
+    g_assert_true (lrg_portal_system_remove_sector (system, "s-2-2"));
+    g_assert_true (lrg_portal_system_remove_sector (system, "s-0-0"));
+    check_portal_system (system, rng);
+    lrg_portal_system_remove_portal (system, "p-1-1-0");
+    lrg_portal_system_remove_portal (system, "p-3-3-2");
+    check_portal_system (system, rng);
+    {
+        g_autoptr(LrgBoundingBox3D) bounds = lrg_bounding_box3d_new (0.0f, 0.0f, 0.0f,
+                                                                     60.0f, 10.0f, 60.0f);
+        g_autoptr(LrgSector) big = lrg_sector_new ("s-2-2", bounds);
+
+        lrg_sector_add_portal (big, "p-2-1-2");
+        lrg_portal_system_add_sector (system, big);
+    }
+    check_portal_system (system, rng);
+    lrg_portal_system_clear (system);
+    check_portal_system (system, rng);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -675,6 +831,7 @@ main (int   argc,
     g_test_add_func ("/world3d/portal-system/visibility", test_portal_system_visibility);
     g_test_add_func ("/world3d/portal-system/visibility-changed", test_portal_system_visibility_changed);
     g_test_add_func ("/world3d/portal-system/clear", test_portal_system_clear);
+    g_test_add_func ("/world3d/portal-system/topology-cache", test_portal_system_topology_cache);
 
     return g_test_run ();
 }

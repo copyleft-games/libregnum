@@ -395,3 +395,10 @@ lrg_sector_peek_portal_ids (const LrgSector *self)
 {
     return self->portal_ids;
 }
+
+/* Internal (lrg-sector-private.h) */
+const LrgBoundingBox3D *
+lrg_sector_peek_bounds (const LrgSector *self)
+{
+    return &self->bounds;
+}

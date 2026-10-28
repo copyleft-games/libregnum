@@ -208,9 +208,16 @@ lrg_component_init (LrgComponent *self)
 LrgGameObject *
 lrg_component_get_owner (LrgComponent *self)
 {
-    LrgComponentPrivate *priv;
-
     g_return_val_if_fail (LRG_IS_COMPONENT (self), NULL);
+
+    return _lrg_component_get_owner_unchecked (self);
+}
+
+/* See lrg-component-private.h. */
+LrgGameObject *
+_lrg_component_get_owner_unchecked (LrgComponent *self)
+{
+    LrgComponentPrivate *priv;
 
     priv = lrg_component_get_instance_private (self);
     return priv->owner;
@@ -227,9 +234,16 @@ lrg_component_get_owner (LrgComponent *self)
 gboolean
 lrg_component_get_enabled (LrgComponent *self)
 {
-    LrgComponentPrivate *priv;
-
     g_return_val_if_fail (LRG_IS_COMPONENT (self), FALSE);
+
+    return _lrg_component_get_enabled_unchecked (self);
+}
+
+/* See lrg-component-private.h. */
+gboolean
+_lrg_component_get_enabled_unchecked (LrgComponent *self)
+{
+    LrgComponentPrivate *priv;
 
     priv = lrg_component_get_instance_private (self);
     return priv->enabled;
@@ -278,10 +292,18 @@ void
 lrg_component_update (LrgComponent *self,
                       gfloat        delta)
 {
+    g_return_if_fail (LRG_IS_COMPONENT (self));
+
+    _lrg_component_update_unchecked (self, delta);
+}
+
+/* See lrg-component-private.h. */
+void
+_lrg_component_update_unchecked (LrgComponent *self,
+                                 gfloat        delta)
+{
     LrgComponentPrivate *priv;
     LrgComponentClass   *klass;
-
-    g_return_if_fail (LRG_IS_COMPONENT (self));
 
     priv = lrg_component_get_instance_private (self);
 

@@ -13,6 +13,7 @@
 
 #include "lrg-sprite-component.h"
 #include "../lrg-game-object.h"
+#include "../lrg-component-private.h"
 #include "../../lrg-log.h"
 
 /* ==========================================================================
@@ -468,7 +469,8 @@ lrg_sprite_component_draw (LrgSpriteComponent *self)
     }
 
     /* Need an owner to get position from */
-    owner = lrg_component_get_owner (LRG_COMPONENT (self));
+    /* self passed the sprite check above, so it is a component */
+    owner = _lrg_component_get_owner_unchecked (LRG_COMPONENT (self));
     if (owner == NULL)
     {
         return;
