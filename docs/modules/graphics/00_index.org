@@ -1,0 +1,5 @@
+#+title: Graphics documentation index
+
+- [[file:index.org][Graphics module guide]]
+- [[file:static-batch.org][Static batching API]]
+- [[file:aux-uv-contract.org][Auxiliary UV integration and verification contract]]

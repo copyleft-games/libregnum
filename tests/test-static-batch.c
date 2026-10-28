@@ -12,6 +12,7 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <girepository/girepository.h>
 #include <math.h>
 #include <string.h>
 #include <libregnum.h>
@@ -441,6 +442,79 @@ test_batch_invalid (void)
     g_assert_cmpuint (lrg_static_batch_get_chunk_count (batch), ==, 0);
 }
 
+/* Streams are copied, independent, and survive rejected replacements. Growing
+ * geometry must report a stale stream rather than read beyond the GPU buffer. */
+static void
+test_batch_aux_uv (void)
+{
+	g_autoptr(LrgStaticBatch) batch = lrg_static_batch_new ();
+	g_autoptr(GError) error = NULL;
+	gfloat source[8] = { .25f, .75f, .25f, .75f, .25f, .75f, .25f, .75f };
+	g_autofree gfloat *heap_source = NULL;
+	gfloat grown[16] = { 0 };
+	const gfloat *retained;
+	guint n;
+	guint channel;
+
+	g_assert_true (add_quad (batch, NULL, 0, 0));
+	heap_source = g_memdup2 (source, sizeof source);
+	for (channel = 1; channel <= 7; channel++) {
+		g_assert_true (lrg_static_batch_set_chunk_texcoords (batch, 0, channel, heap_source, 8, &error));
+		g_assert_no_error (error);
+	}
+	/* Releasing the caller's heap proves that no stream borrows its buffer. */
+	g_clear_pointer (&heap_source, g_free);
+	source[0] = NAN;
+	retained = lrg_static_batch_get_chunk_texcoords (batch, 0, 7, &n);
+	g_assert_cmpuint (n, ==, 8);
+	g_assert_cmpfloat (retained[0], ==, .25f);
+	g_assert_false (lrg_static_batch_set_chunk_texcoords (batch, 0, 7, source, 8, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+	g_clear_error (&error);
+	g_assert_false (lrg_static_batch_set_chunk_texcoords (batch, 0, 7, source, 6, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+	g_clear_error (&error);
+	g_assert_false (lrg_static_batch_set_chunk_texcoords (batch, 0, 8, source, 8, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+	g_clear_error (&error);
+	g_assert_false (lrg_static_batch_set_chunk_texcoords (batch, 0, 0, source, 8, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+	g_clear_error (&error);
+	g_assert_false (lrg_static_batch_set_chunk_texcoords (batch, 1, 1, source, 8, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+	g_clear_error (&error);
+	g_assert_false (lrg_static_batch_set_chunk_texcoords (batch, 0, 1, NULL, 8, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+	g_clear_error (&error);
+	source[0] = 1e10f;
+	g_assert_false (lrg_static_batch_set_chunk_texcoords (batch, 0, 7, source, 8, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+	g_clear_error (&error);
+	g_assert_true (retained == lrg_static_batch_get_chunk_texcoords (batch, 0, 7, &n));
+	retained = lrg_static_batch_get_chunk_texcoords (batch, 0, 0, &n);
+	g_assert_cmpmem (retained, n * sizeof (gfloat), quad_uvs, sizeof quad_uvs);
+	g_assert_true (add_quad (batch, NULL, 0, 0));
+	g_assert_false (lrg_static_batch_upload (batch, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+	g_clear_error (&error);
+	/* Replace every stale stream and retain independent copies over unload. */
+	for (channel = 1; channel <= 7; channel++) {
+		grown[0] = (gfloat)channel;
+		g_assert_true (lrg_static_batch_set_chunk_texcoords (batch, 0, channel, grown, 16, &error));
+		g_assert_no_error (error);
+	}
+	lrg_static_batch_unload (batch);
+	lrg_static_batch_unload (batch);
+	for (channel = 1; channel <= 7; channel++) {
+		retained = lrg_static_batch_get_chunk_texcoords (batch, 0, channel, &n);
+		g_assert_cmpuint (n, ==, 16);
+		g_assert_cmpfloat (retained[0], ==, (gfloat)channel);
+	}
+	lrg_static_batch_clear (batch);
+	g_assert_null (lrg_static_batch_get_chunk_texcoords (batch, 0, 1, &n));
+	g_assert_cmpuint (n, ==, 0);
+}
+
 static void
 test_batch_upload_headless (void)
 {
@@ -459,6 +533,62 @@ test_batch_upload_headless (void)
     /* Drawing un-uploaded chunks is a no-op. */
     lrg_static_batch_draw (batch, LRG_STATIC_BATCH_ALL_LAYERS);
     lrg_static_batch_unload (batch);
+}
+
+/* Inspect the consumer's actual typelib: scalar counts must describe float
+ * components, optional arrays stay nullable, and public APIs stay callable. */
+static void
+test_batch_introspection (void)
+{
+	g_autoptr(GIRepository) repository = gi_repository_new ();
+	g_autoptr(GError) error = NULL;
+	g_autoptr(GIBaseInfo) batch = NULL;
+	g_autoptr(GIFunctionInfo) setter = NULL;
+	g_autoptr(GIFunctionInfo) getter = NULL;
+	g_autoptr(GIFunctionInfo) add = NULL;
+	g_autoptr(GIArgInfo) coordinates = NULL;
+	g_autoptr(GITypeInfo) array = NULL;
+	g_autoptr(GITypeInfo) element = NULL;
+	guint length_index = 0;
+	guint i;
+
+	gi_repository_prepend_search_path (repository, g_getenv ("LRG_TEST_GIR_DIR"));
+	g_assert_nonnull (gi_repository_require (repository, "Libregnum", "1", 0, &error));
+	g_assert_no_error (error);
+	batch = gi_repository_find_by_name (repository, "Libregnum", "StaticBatch");
+	g_assert_true (GI_IS_OBJECT_INFO (batch));
+	setter = gi_object_info_find_method ((GIObjectInfo *)batch, "set_chunk_texcoords");
+	getter = gi_object_info_find_method ((GIObjectInfo *)batch, "get_chunk_texcoords");
+	add = gi_object_info_find_method ((GIObjectInfo *)batch, "add_mesh");
+	g_assert_nonnull (setter);
+	g_assert_nonnull (getter);
+	g_assert_nonnull (add);
+	g_assert_true (gi_callable_info_can_throw_gerror ((GICallableInfo *)setter));
+	coordinates = gi_callable_info_get_arg ((GICallableInfo *)setter, 2);
+	array = gi_arg_info_get_type_info (coordinates);
+	g_assert_cmpint (gi_type_info_get_tag (array), ==, GI_TYPE_TAG_ARRAY);
+	g_assert_true (gi_type_info_get_array_length_index (array, &length_index));
+	g_assert_cmpuint (length_index, ==, 3);
+	g_assert_cmpint (gi_arg_info_get_ownership_transfer (coordinates), ==, GI_TRANSFER_NOTHING);
+	element = gi_type_info_get_param_type (array, 0);
+	g_assert_cmpint (gi_type_info_get_tag (element), ==, GI_TYPE_TAG_FLOAT);
+	g_clear_pointer (&array, gi_base_info_unref);
+	array = gi_callable_info_get_return_type ((GICallableInfo *)getter);
+	g_assert_true (gi_type_info_get_array_length_index (array, &length_index));
+	g_assert_cmpuint (length_index, ==, 2);
+	g_assert_true (gi_callable_info_may_return_null ((GICallableInfo *)getter));
+	g_assert_cmpint (gi_callable_info_get_caller_owns ((GICallableInfo *)getter), ==, GI_TRANSFER_NOTHING);
+	/* Multiplicative component counts have no direct GIR length expression;
+	 * they must not accidentally become a vertex-sized or terminated array. */
+	for (i = 0; i < 4; i++) {
+		g_autoptr(GIArgInfo) arg = gi_callable_info_get_arg ((GICallableInfo *)add, i);
+		g_autoptr(GITypeInfo) type = gi_arg_info_get_type_info (arg);
+
+		g_assert_cmpint (gi_type_info_get_tag (type), ==, GI_TYPE_TAG_ARRAY);
+		g_assert_false (gi_type_info_is_zero_terminated (type));
+		g_assert_false (gi_type_info_get_array_length_index (type, &length_index));
+		g_assert_true (gi_arg_info_may_be_null (arg));
+	}
 }
 
 /* A material's own emission colour (glTF emissiveFactor): stored times its
@@ -738,6 +868,110 @@ test_batch_matches_sources (void)
 /* ========================================================================== */
 /*                               GL (display)                                 */
 /* ========================================================================== */
+
+/* Read back independently chosen UV1/UV7 values. This catches accidental
+ * primary-UV aliases, wrong attribute locations, and stale re-upload buffers. */
+static void
+test_batch_gl_aux_uv (void)
+{
+	static const gchar vs[] = "#version 330\n"
+		"layout(location=0) in vec3 vertexPosition;\n"
+		"layout(location=5) in vec2 uv1; layout(location=13) in vec2 uv7;\n"
+		"uniform mat4 mvp; out vec2 coordinates;\n"
+		"void main(){gl_Position=mvp*vec4(vertexPosition,1); coordinates=vec2(uv1.x,uv7.y);}\n";
+	static const gchar fs[] = "#version 330\n"
+		"in vec2 coordinates; out vec4 finalColor;\n"
+		"void main(){finalColor=vec4(coordinates,0,1);}\n";
+	g_autoptr(LrgStaticBatch) batch = NULL;
+	g_autoptr(GrlShader) shader = NULL;
+	g_autoptr(GError) error = NULL;
+	gfloat uv1[16], uv7[16];
+	const gfloat *retained;
+	RenderTexture2D target;
+	Camera3D camera;
+	Image image;
+	Color pixel;
+	guint phase, i, n, count;
+
+	if (!graphics_available) {
+		g_test_skip ("Graphics context not available");
+		return;
+	}
+	batch = lrg_static_batch_new ();
+	shader = grl_shader_new_from_memory (vs, fs, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (shader);
+	g_assert_true (add_quad (batch, NULL, 0, 0));
+	lrg_static_batch_set_shader (batch, shader);
+	memset (&camera, 0, sizeof camera);
+	camera.position = (Vector3) { .5f, .5f, 2 };
+	camera.target = (Vector3) { .5f, .5f, 0 };
+	camera.up = (Vector3) { 0, 1, 0 };
+	camera.fovy = 1.5f;
+	camera.projection = CAMERA_ORTHOGRAPHIC;
+	target = LoadRenderTexture (8, 8);
+	g_assert_true (IsRenderTextureValid (target));
+	for (phase = 0; phase < 5; phase++) {
+		/* Growth first rejects stale lengths, then recovers by replacement. */
+		if (phase == 3) {
+			g_assert_true (add_quad (batch, NULL, 0, 0));
+			g_assert_false (lrg_static_batch_upload (batch, &error));
+			g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+			g_clear_error (&error);
+		}
+		if (phase == 4) {
+			lrg_static_batch_clear (batch);
+			g_assert_null (lrg_static_batch_get_chunk_texcoords (batch, 0, 1, &n));
+			g_assert_cmpuint (n, ==, 0);
+			g_assert_true (add_quad (batch, NULL, 0, 0));
+		}
+		count = lrg_static_batch_get_chunk_vertex_count (batch, 0) * 2;
+		for (i = 0; i < count; i++) {
+			uv1[i] = phase ? .5f : .25f;
+			uv7[i] = phase ? .125f : .75f;
+		}
+		g_assert_true (lrg_static_batch_set_chunk_texcoords (batch, 0, 1, uv1, count, &error));
+		g_assert_true (lrg_static_batch_set_chunk_texcoords (batch, 0, 7, uv7, count, &error));
+		g_assert_false (lrg_static_batch_is_uploaded (batch));
+		g_assert_true (lrg_static_batch_upload (batch, &error));
+		g_assert_no_error (error);
+		g_assert_true (lrg_static_batch_is_uploaded (batch));
+		retained = lrg_static_batch_get_chunk_texcoords (batch, 0, 7, &n);
+		/* Invalid replacement preserves both the CPU view and live GPU data. */
+		uv7[0] = INFINITY;
+		g_assert_false (lrg_static_batch_set_chunk_texcoords (batch, 0, 7, uv7, count, &error));
+		g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+		g_clear_error (&error);
+		g_assert_true (lrg_static_batch_is_uploaded (batch));
+		g_assert_true (retained == lrg_static_batch_get_chunk_texcoords (batch, 0, 7, &n));
+		if (phase == 2) {
+			lrg_static_batch_unload (batch);
+			lrg_static_batch_unload (batch);
+			g_assert_false (lrg_static_batch_is_uploaded (batch));
+			g_assert_true (retained == lrg_static_batch_get_chunk_texcoords (batch, 0, 7, &n));
+			g_assert_true (lrg_static_batch_upload (batch, &error));
+			g_assert_no_error (error);
+		}
+		BeginTextureMode (target);
+		ClearBackground (BLACK);
+		BeginMode3D (camera);
+		lrg_static_batch_draw_chunk (batch, 0);
+		EndMode3D ();
+		EndTextureMode ();
+		image = LoadImageFromTexture (target.texture);
+		pixel = GetImageColor (image, 4, 4);
+		g_assert_cmpint (ABS ((gint)pixel.r - (phase ? 128 : 64)), <=, 1);
+		g_assert_cmpint (ABS ((gint)pixel.g - (phase ? 32 : 191)), <=, 1);
+		g_assert_cmpint (pixel.b, ==, 0);
+		if (phase == 4 && g_getenv ("LRG_STATIC_BATCH_SCREENSHOT") != NULL)
+			g_assert_true (ExportImage (image, g_getenv ("LRG_STATIC_BATCH_SCREENSHOT")));
+		UnloadImage (image);
+	}
+	UnloadRenderTexture (target);
+	/* Release GPU resources while the fixture's private context is current. */
+	g_clear_object (&batch);
+	g_clear_object (&shader);
+}
 
 static void
 test_batch_gl (void)
@@ -1153,6 +1387,9 @@ main (int   argc,
 
     g_test_init (&argc, &argv, NULL);
     graphics_available = init_graphics_context ();
+	/* Metadata is an opt-in device-free check against a selected full build. */
+	if (g_getenv ("LRG_TEST_GIR_DIR") != NULL)
+		g_test_add_func ("/static-batch/introspection", test_batch_introspection);
 
     g_test_add_func ("/static-batch/empty", test_batch_empty);
     g_test_add_func ("/static-batch/merge-groups", test_batch_merge_groups);
@@ -1162,6 +1399,8 @@ main (int   argc,
     g_test_add_func ("/static-batch/split/triangles", test_batch_split_triangles);
     g_test_add_func ("/static-batch/split/u16-limit", test_batch_split_u16_limit);
     g_test_add_func ("/static-batch/invalid", test_batch_invalid);
+    g_test_add_func ("/static-batch/aux-uv", test_batch_aux_uv);
+    g_test_add_func ("/static-batch/gl/aux-uv", test_batch_gl_aux_uv);
     g_test_add_func ("/static-batch/emission-color", test_batch_emission_color);
     g_test_add_func ("/static-batch/matches-sources", test_batch_matches_sources);
     g_test_add_func ("/static-batch/upload-headless", test_batch_upload_headless);

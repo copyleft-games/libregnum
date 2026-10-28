@@ -1617,7 +1617,9 @@ $(LIBOUTDIR)/$(LIB_SHARED): $(OBJECTS) | $(LIBOUTDIR)
 	@$(CC) $(LIB_LDFLAGS) -o $(LIBOUTDIR)/$(LIB_SHARED) $(OBJECTS) $(ALL_LIBS)
 	@echo "Built: $(LIB_SHARED) and $(LIB_IMPORT)"
 else
-$(LIBOUTDIR)/$(LIB_SHARED): $(OBJECTS) | $(LIBOUTDIR)
+# The shared library embeds the same archives as the static library. Rebuilt
+# dependencies must trigger a relink even when their public C ABI is unchanged.
+$(LIBOUTDIR)/$(LIB_SHARED): $(OBJECTS) $(wildcard $(_STATIC_EMBED_DEPS)) | $(LIBOUTDIR)
 	$(call print_link,$(LIB_SHARED))
 	@$(CC) $(LIB_LDFLAGS) -o $(LIBOUTDIR)/$(LIB_SHARED_VERSION) $(OBJECTS) $(ALL_LIBS)
 	@cd $(LIBOUTDIR) && ln -sf $(LIB_SHARED_VERSION) $(LIB_SHARED_SONAME)

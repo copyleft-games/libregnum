@@ -1,0 +1,46 @@
+#+title: Auxiliary UV integration and verification contract
+
+* Boundary and acceptance
+LrgStaticBatch owns copied auxiliary UV streams, per-chunk lifetime, GPU buffers and the shader attribute contract. Game-specific lightmaps/material semantics remain consumer policy. Channels 1..7 contain two finite scalar float components per merged vertex and use attributes 5,8..13; channel zero is the existing primary UV stream. Replacing a valid stream invalidates its GPU upload; invalid replacements preserve CPU views and GPU state. Growing geometry leaves an explicitly stale stream until replaced. Repeated GPU unload preserves CPU streams; clear/finalization release them. GPU resources must be released before their context closes.
+
+Public headers describe array ownership, nullability, output lengths and GError. The low-level =add_mesh()= remains visible to introspection: its four component arrays are nonterminated, optional where documented, and sized by 3/3/2/4 times the scalar vertex count. GIR cannot encode these multipliers; callers/bindings must validate them. The index array has its exact index-count length. Auxiliary setters/getters have exact float-component length parameters, a copied input and a borrowed nullable output; no vertex/scalar length is conflated.
+
+* Owned identities and isolation
+Engine base =0f7ec4e85dbf06dd785df982d5138eefb37974a9= has origin =git@gitlab.com:copyleft-games/libregnum.git=. The independently owned Graylib worktree =../graylib-visual-gir= starts at exact engine gitlink =3857bbadd15bfc1b6982ab17f314124596cd6ca7=, origin =git@gitlab.com:copyleft-games/graylib.git=. Its source annotation repairs, full GIR and independent raylib build are selected with =GRAYLIB_DIR=; see its [[file:../../../../graylib-visual-gir/docs/gir-contract.org][ownership contract]]. All initialized recursive third-party remotes were checked; vendor source is unmodified.
+
+The engine's six temporary dependency symlinks remain exactly as supplied, unstaged. Their index entries remain mode 160000 at the original gitlinks. =git status --ignore-submodules=all= avoids Git's rejection of symlinked submodule directories; this option is not permission to stage those paths. Dependency builds/cleans are never invoked in the borrowed checkouts. The engine builds below consume prebuilt yaml-glib and other optional dependencies, and the owned Graylib. No version, README, parent source, parent configuration, commit, tag, push, shell configuration or host package change is part of this work.
+
+* Actual dependency and parent-consumer recipe
+Fedora requirements: =gcc make pkgconf-pkg-config glib2-devel gobject-introspection-devel libdex-devel libyaml-devel json-glib-devel libsoup3-devel openssl-devel sqlite-devel libpq-devel zlib-devel mesa-libGL-devel libX11-devel wayland-devel libxkbcommon-devel=. Optional engine features auto-detected in this normal build additionally use installed =luajit-devel python3-devel gjs-devel openxr-devel alsa-lib-devel= where available. Private GPU verification uses =mutter dbus-daemon=; no host installation or session changes are performed.
+
+From this engine worktree, the following exact selection has been built. The engine lacks a BUILD_DEPS switch, so GNU Make's explicit old-target options prevent its phony dependency recipes from entering borrowed directories. =lib= and =gir= can also be built directly, but normal =all= was verified.
+
+The Unix shared-library target now depends on its embedded Graylib/raylib/yaml-glib/optional-Crispy archives, matching the static-library prerequisite contract. Previously a dependency-only rebuild could leave the shared engine stale. The retained =make --trace= run verifies that the rebuilt owned Graylib triggers engine relinking, full engine metadata regeneration and parent-consumer relinking/metadata regeneration.
+
+#+begin_src bash
+workspace=/var/home/zach/source/projects/libre-tournament-2004/trees
+make -C "$workspace/graylib-visual-gir" -j8 CC=gcc all
+make -j8 CC=gcc GRAYLIB_DIR="$workspace/graylib-visual-gir" \
+    -o deps-graylib -o deps-yamlglib -o deps-crispy all
+make -C tests CC=gcc GRAYLIB_DIR="$workspace/graylib-visual-gir" \
+    build/release/tests/test-static-batch
+make -C "$workspace/completion" -j8 BUILD_DEPS=0 BUILD_GIR=1 \
+    LIBREGNUM_DIR="$workspace/libregnum-visual" \
+    USCRIPT_GLIB_DIR="$workspace/uscript-visual" \
+    OUT="$workspace/libregnum-visual/build/parent-consumer" all
+#+end_src
+
+The portable prebuilt source is =uscript-visual= base =a06c8965469195e99ceaddb0f36b95f5f7e38676=, with verified =git@git-ssh.podbielniak.com:zachpodbielniak/uscript-glib.git= origin and no recursive submodules. The parent consumer's build output is entirely under this owned engine's ignored build directory. Parent include paths still use the engine's supplied borrowed Graylib headers, which have the same C declarations as the exact pinned base; annotation-only Graylib repairs do not change the ABI. Its linked engine embeds the rebuilt owned Graylib. No parent automatic dependency build is used.
+
+Outputs: owned Graylib =build/gir/Graylib-1.{gir,typelib}=; engine =build/release/lib/liblibregnum.{a,so}= and =build/release/gir/Libregnum-1.{gir,typelib}=; parent consumer =build/parent-consumer/liblt2004.so=, =libre-tournament-2004= and =LibreTournament-1.{gir,typelib}=. The engine's copied =build/release/gir/Graylib-1.typelib= is byte-for-byte the selected owned Graylib typelib. Full engine and parent scans use =--warn-all --warn-error= and pass without warnings. The parent namespace imports Uscript; it does not itself import the full engine namespace.
+
+* Verification results
+- Engine: twelve CPU behavioral checks plus one compiled-typelib contract check pass. Four GL cases excluded from the CPU run are separately run and pass in private Mutter on Mesa Intel Arc B390; these are not counted as CPU passes. The auxiliary GPU case reads five lifecycle phases, including invalid replacement preservation, replacement, repeated unload/re-upload, growth rejection/recovery and clear/rebuild. All resources are released before the private fixture window closes.
+- ASan/UBSan with leak detection: the same thirteen device-free CPU/metadata checks pass. Engine code and its test binary are instrumented; the owned Graylib, raylib, borrowed yaml-glib and system dependencies are not instrumented. The sanitizer build selects the borrowed release yaml archive explicitly and disables Crispy. It is not a sanitizer claim for dependencies or GPU/window teardown.
+- Graylib: twelve selected existing CPU suites pass 283 checks, plus five compiled-typelib checks, for 288 without skips. The metadata-only audio contract check never starts playback or opens a device.
+- Silent runs pass =--no-sound= through a temporary wrapper with isolated HOME/config/data/cache/state directories and an LD_PRELOAD guard that fails any InitAudioDevice call. CPU runs remove DISPLAY and WAYLAND_DISPLAY. GPU runs use only =../completion/scripts/test-display auto=, which owns and cleans its private runtime; no host-display fallback is permitted. Invocation environment overrides are process-scoped.
+- Screenshot =build/aux-uv.png= was read/reviewed: the synthetic 8x8 target contains the expected central UV-color patch against black. Pixel assertions independently verify the two chosen auxiliary channels. The private Wayland backend emits its existing unsupported-window-position runtime diagnostics; these are separate from compiler/GIR warnings.
+- Local logs in =build/aux-uv-verification/= retain complete wrapper builds, full scanner invocations, typelib checks, CPU tests, sanitizer tests, GPU readbacks/private cleanup and the isolated parent-consumer build. Graylib's initial independent upstream raylib bootstrap emitted an existing =external/m3d.h= maybe-uninitialized warning; no third-party source was patched or warning flag reduced. Final Graylib wrapper, engine and parent builds/GIR are warning-free against the prepared archives. No current standard GIR blocker remains.
+
+* Open scope
+No original-game visual parity or original-runtime behavior is established by these generic stream tests. Low-level array cardinalities that GIR cannot express remain caller validation obligations. A fully instrumented dependency/window run and resolution of upstream strict naming diagnostics or upstream M3D compiler warnings are separate work. Releases and dependency-first publication belong to the parent reviewer.

@@ -791,6 +791,7 @@ ALL_LIBS += $(ALSA_LIBS)
 
 GIR_SCANNER_FLAGS := \
     --warn-all \
+    --warn-error \
     --namespace=Libregnum \
     --nsversion=$(API_VERSION) \
     --identifier-prefix=Lrg \

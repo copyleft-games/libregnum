@@ -28,6 +28,7 @@ The Graphics module provides:
 - *[[file:camera-thirdperson.org][LrgCameraThirdPerson]]* - Third-person camera with orbit and collision avoidance
 - *[[file:camera-zoom.org][LrgCameraZoom]]* - Spring-arm zoom from the farthest third-person distance into first person
 - *[[file:renderer.org][LrgRenderer]]* - Render management and layer system
+- *[[file:static-batch.org][LrgStaticBatch]]* - Static geometry and copied auxiliary UV streams; [[file:aux-uv-contract.org][integration contract and verification]]
 - *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
 - *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
 - *[[file:skinned-mesh.org][LrgSkinnedMesh]]* - Skinned meshes posed by a bone matrix palette: GPU skinning with a CPU reference and fallback

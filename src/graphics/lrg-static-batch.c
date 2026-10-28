@@ -38,6 +38,8 @@ typedef struct
     GArray  *texcoords;   /* gfloat x2 */
     GArray  *colors;      /* guint8 x4 */
     GArray  *indices;     /* guint16 */
+    GArray  *aux_uv[7];   /* independent gfloat x2 streams */
+    guint    aux_vbo[7];
     gfloat   min[3];
     gfloat   max[3];
     Mesh     mesh;        /* GPU handles only */
@@ -80,13 +82,21 @@ G_DEFINE_TYPE (LrgStaticBatch, lrg_static_batch, G_TYPE_OBJECT)
 static void
 chunk_unload_gpu (Chunk *chunk)
 {
+    guint channel;
+
     if (!chunk->uploaded)
         return;
     if (IsWindowReady ())
+    {
+        for (channel = 0; channel < G_N_ELEMENTS (chunk->aux_vbo); channel++)
+            if (chunk->aux_vbo[channel] != 0)
+                rlUnloadVertexBuffer (chunk->aux_vbo[channel]);
         UnloadMesh (chunk->mesh);
+    }
     else
         RL_FREE (chunk->mesh.vboId);
     memset (&chunk->mesh, 0, sizeof chunk->mesh);
+    memset (chunk->aux_vbo, 0, sizeof chunk->aux_vbo);
     chunk->uploaded = FALSE;
     chunk->dirty = TRUE;
 }
@@ -95,6 +105,7 @@ static void
 chunk_free (gpointer data)
 {
     Chunk *chunk = data;
+    guint channel;
 
     chunk_unload_gpu (chunk);
     g_array_unref (chunk->positions);
@@ -102,6 +113,8 @@ chunk_free (gpointer data)
     g_array_unref (chunk->texcoords);
     g_array_unref (chunk->colors);
     g_array_unref (chunk->indices);
+    for (channel = 0; channel < G_N_ELEMENTS (chunk->aux_uv); channel++)
+        g_clear_pointer (&chunk->aux_uv[channel], g_array_unref);
     g_free (chunk);
 }
 
@@ -1147,6 +1160,74 @@ lrg_static_batch_set_shader (LrgStaticBatch *self,
 /* GPU                                                                      */
 /* ------------------------------------------------------------------------ */
 
+/* Auxiliary streams are independent of the merging API: validate and copy
+ * every component before invalidating existing GPU state. */
+gboolean
+lrg_static_batch_set_chunk_texcoords(
+	LrgStaticBatch *self,
+	guint chunk_index,
+	guint channel,
+	const gfloat *coordinates,
+	guint n_coordinates,
+	GError **error
+)
+{
+	Chunk *chunk;
+	GArray *candidate;
+	guint i;
+
+	g_return_val_if_fail (LRG_IS_STATIC_BATCH (self), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+	if (chunk_index >= self->chunks->len || channel < 1 || channel > 7 || coordinates == NULL) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                     "Auxiliary UV stream requires an existing chunk and channel 1..7");
+		return FALSE;
+	}
+	chunk = g_ptr_array_index (self->chunks, chunk_index);
+	if (n_coordinates != chunk_vertex_count (chunk) * 2) {
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                     "Auxiliary UV stream/chunk vertex counts differ");
+		return FALSE;
+	}
+	for (i = 0; i < n_coordinates; i++) {
+		if (!isfinite (coordinates[i]) || fabsf (coordinates[i]) > 1e9f) {
+			g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+			                     "Nonfinite or excessive auxiliary UV coordinate");
+			return FALSE;
+		}
+	}
+	candidate = g_array_sized_new (FALSE, FALSE, sizeof (gfloat), n_coordinates);
+	g_array_append_vals (candidate, coordinates, n_coordinates);
+	chunk_unload_gpu (chunk);
+	g_clear_pointer (&chunk->aux_uv[channel - 1], g_array_unref);
+	chunk->aux_uv[channel - 1] = candidate;
+	chunk->dirty = TRUE;
+	return TRUE;
+}
+
+const gfloat *
+lrg_static_batch_get_chunk_texcoords(
+	LrgStaticBatch *self,
+	guint chunk_index,
+	guint channel,
+	guint *n_coordinates
+)
+{
+	Chunk *chunk;
+	GArray *stream;
+	g_return_val_if_fail (LRG_IS_STATIC_BATCH (self), NULL);
+	g_return_val_if_fail (n_coordinates != NULL, NULL);
+	*n_coordinates = 0;
+	if (chunk_index >= self->chunks->len || channel > 7)
+		return NULL;
+	chunk = g_ptr_array_index (self->chunks, chunk_index);
+	stream = channel ? chunk->aux_uv[channel - 1] : chunk->texcoords;
+	if (stream == NULL)
+		return NULL;
+	*n_coordinates = stream->len;
+	return (const gfloat *)stream->data;
+}
+
 gboolean
 lrg_static_batch_upload (LrgStaticBatch  *self,
                          GError         **error)
@@ -1155,6 +1236,26 @@ lrg_static_batch_upload (LrgStaticBatch  *self,
 
     g_return_val_if_fail (LRG_IS_STATIC_BATCH (self), FALSE);
     g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	/* Geometry may have grown after a stream was set. Reject stale lengths
+	 * before uploading any chunk, including when no GL context exists. */
+	for (i = 0; i < self->chunks->len; i++)
+	{
+		Chunk *chunk = g_ptr_array_index (self->chunks, i);
+		guint channel;
+
+		for (channel = 0; channel < G_N_ELEMENTS (chunk->aux_uv); channel++)
+		{
+			if (chunk->aux_uv[channel] != NULL &&
+			    chunk->aux_uv[channel]->len != chunk_vertex_count (chunk) * 2)
+			{
+				g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+				             "Chunk %u auxiliary UV channel %u has a stale vertex count",
+				             i, channel + 1);
+				return FALSE;
+			}
+		}
+	}
 
     if (!IsWindowReady ())
     {
@@ -1191,6 +1292,40 @@ lrg_static_batch_upload (LrgStaticBatch  *self,
         chunk->mesh = mesh;
         chunk->uploaded = TRUE;
         chunk->dirty = FALSE;
+		{
+			guint channel;
+
+			/* Separate VBOs preserve the primary UV, normals and color slots. */
+			for (channel = 0; channel < G_N_ELEMENTS (chunk->aux_uv); channel++)
+			{
+				guint location = channel == 0 ? 5 : channel + 7;
+
+				if (chunk->aux_uv[channel] == NULL)
+					continue;
+				if (!chunk->mesh.vaoId || !rlEnableVertexArray (chunk->mesh.vaoId))
+				{
+					chunk_unload_gpu (chunk);
+					g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+					                     "Auxiliary UV upload requires vertex array objects");
+					return FALSE;
+				}
+				chunk->aux_vbo[channel] = rlLoadVertexBuffer (chunk->aux_uv[channel]->data,
+					(gint)(chunk->aux_uv[channel]->len * sizeof (gfloat)), false);
+				if (!chunk->aux_vbo[channel])
+				{
+					rlDisableVertexArray ();
+					chunk_unload_gpu (chunk);
+					g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+					                     "Cannot allocate auxiliary UV buffer");
+					return FALSE;
+				}
+				rlEnableVertexBuffer (chunk->aux_vbo[channel]);
+				rlSetVertexAttribute (location, 2, RL_FLOAT, false, 2 * sizeof (gfloat), 0);
+				rlEnableVertexAttribute (location);
+				rlDisableVertexBuffer ();
+				rlDisableVertexArray ();
+			}
+		}
     }
     return TRUE;
 }

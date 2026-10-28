@@ -89,6 +89,15 @@ void     lrg_static_batch_draw_chunk  (LrgStaticBatch *self, guint chunk);
 - *Validation*: layers above 31, index counts that are not multiples of 3 (or unindexed vertex counts that are not), out-of-range indices, non-finite positions and non-finite or singular transforms fail with =G_IO_ERROR_INVALID_ARGUMENT= and add nothing.
 - =set_max_chunk_vertices()= lowers the limit (clamped to 3 .. 65535) for finer culling; it applies to later additions.
 
+** Auxiliary texture coordinates
+=set_chunk_texcoords(batch, chunk, channel, coordinates, n_coordinates, error)= copies one auxiliary stream after merging. Channels 1 through 7 are independent UV pairs; the existing primary channel remains channel 0. The array contains exactly twice the chunk vertex count in finite float components with magnitude at most 1e9. Failed replacements preserve all existing streams and GPU state. =get_chunk_texcoords()= returns borrowed CPU components and their count, or NULL/count zero for unavailable channels.
+
+Set streams after the final geometry merge. If later additions grow a chunk, upload rejects the stale stream length before doing GPU work; replace every affected stream before uploading again. Successful replacement invalidates that chunk's upload. Streams survive explicit GPU unload and are released with the chunk.
+
+Shaders use explicit vertex attribute location 5 for channel 1 and locations 8 through 13 for channels 2 through 7. The upload requires vertex array objects and allocates separate buffers without repurposing normals, colors, or primary texture coordinates. Unsupported contexts and failed buffer allocations report errors. These locations belong to static batches; they are not a skinned-mesh attribute contract. Headless tests cover copy lifetime, rejected replacements and stale lengths; the GL auxiliary test reads distinct UV1/UV7 values before and after replacement.
+
+See the [[file:aux-uv-contract.org][integration contract]] for exact owned dependency selection, full GIR/public-array metadata, thirteen CPU/metadata checks, four private-GPU checks, sanitizer scope and the isolated parent-consumer build recipe.
+
 ** Models
 :PROPERTIES:
 :CUSTOM_ID: models
