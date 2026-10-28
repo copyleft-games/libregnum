@@ -58,6 +58,7 @@ static gint    opt_fps = 0;
 static gboolean opt_no_pin = FALSE;
 static gint    opt_frames_in_flight = 0;
 static gboolean opt_vsync = FALSE;
+static gboolean opt_latency = FALSE;
 static gint    opt_gpu_load = 600;
 static gchar **opt_scenarios = NULL;
 static gchar  *opt_output = NULL;
@@ -3348,7 +3349,11 @@ run_scenario (GrlWindow           *window,
 	lat = g_new0 (gdouble, n + LATENCY_RING);
 	bg = grl_color_new (20, 20, 30, 255);
 	state = sc->setup ();
-	latency_init (&probe);
+	/* the probe costs a synchronous GPU clock read and a batch flush per
+	 * frame (~0.1 ms on hardware), so it only runs when asked for */
+	memset (&probe, 0, sizeof (probe));
+	if (opt_latency)
+		latency_init (&probe);
 
 	last_end = 0;
 	last_poll = g_get_monotonic_time ();
@@ -3466,6 +3471,8 @@ main (int    argc,
 		  "Open the window with vsync on", NULL },
 		{ "gpu-load", 0, 0, G_OPTION_ARG_INT, &opt_gpu_load,
 		  "Full-window blended quads per gpu-bound frame (default 600)", "N" },
+		{ "latency", 0, 0, G_OPTION_ARG_NONE, &opt_latency,
+		  "Report input-to-GPU-done latency (GL timestamp queries; adds ~0.1 ms a frame)", NULL },
 		{ "frames-in-flight", 0, 0, G_OPTION_ARG_INT, &opt_frames_in_flight,
 		  "Bound frames in flight with GL fences (default 0: driver default); reports the GPU wait", "N" },
 		{ "output", 'o', 0, G_OPTION_ARG_STRING, &opt_output,
@@ -3485,7 +3492,7 @@ main (int    argc,
 		"  lrg-bench -s ecs-sprites -s gui run two scenarios\n"
 		"  lrg-bench -f 1000 -o yaml       longer run, YAML results\n"
 		"  lrg-bench -s pacing --fps 60    frame pacing at a 60 fps cap\n"
-		"  lrg-bench -s pacing --fps 60 --frames-in-flight 1\n"
+		"  lrg-bench -s pacing --fps 60 --frames-in-flight 1 --latency\n"
 		"                                  the same with 1 frame in flight (low latency)\n"
 		"\nRuns uncapped in a small window; needs a display (make run-bench\n"
 		"starts Xvfb when DISPLAY is unset).\n");
