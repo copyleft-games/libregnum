@@ -948,6 +948,25 @@ test_game_template_snap_frame_delta (void)
     lrg_engine_shutdown (lrg_engine_get_default ());
 }
 
+/* lrg_game_template_pace_fps() picks the whole fraction of the refresh
+ * rate nearest the requested cap, so vsync paces evenly. */
+static void
+test_game_template_pace_fps (void)
+{
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 60), ==, 60);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 120), ==, 60);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 240), ==, 60);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 144), ==, 72);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 165), ==, 55);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 75), ==, 75);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 100), ==, 50);
+    g_assert_cmpint (lrg_game_template_pace_fps (30, 144), ==, 29);
+    g_assert_cmpint (lrg_game_template_pace_fps (144, 60), ==, 60);
+    /* no cap and unknown refresh rates pass through */
+    g_assert_cmpint (lrg_game_template_pace_fps (0, 144), ==, 0);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 0), ==, 60);
+}
+
 /* LrgGameTemplate:max-frames-in-flight defaults to 2 (one frame of
  * CPU/GPU overlap) and round-trips. */
 static void
@@ -1088,6 +1107,8 @@ main (int   argc,
                      test_game_template_snap_frame_delta);
     g_test_add_func ("/template/base/max-frames-in-flight",
                      test_game_template_max_frames_in_flight);
+    g_test_add_func ("/template/base/pace-fps",
+                     test_game_template_pace_fps);
     g_test_add_func ("/template/base/max-frames-in-flight-env",
                      test_max_frames_in_flight_env);
     g_test_add_func ("/template/base/has-focus",

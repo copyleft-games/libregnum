@@ -239,6 +239,15 @@ lrg_standalone_host_new (LrgGameTemplate  *game,
 
     raw_window = lrg_grl_window_get_grl_window (grl_win);
 
+    /* With vsync, a cap that does not divide the refresh rate (60 on a
+     * 144 Hz display) alternates two- and three-vblank frames: use the
+     * nearest whole fraction of the refresh rate instead */
+    if (vsync)
+        target_fps = lrg_game_template_pace_fps (
+            target_fps,
+            grl_window_get_monitor_refresh_rate (
+                raw_window, grl_window_get_current_monitor (raw_window)));
+
     /* LrgWindow only records the rate; raylib paces EndDrawing() by its
      * own target, which the window set from the default at creation */
     lrg_window_set_target_fps (self->window, target_fps);

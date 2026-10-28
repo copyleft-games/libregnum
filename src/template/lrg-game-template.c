@@ -388,6 +388,43 @@ lrg_game_template_snap_delta (gdouble delta,
     return delta;
 }
 
+/*
+ * lrg_game_template_pace_fps:
+ *
+ * Walks the fractions of the refresh rate (refresh / 1, / 2, ...) down
+ * to the first one at or below the target, and returns that one or
+ * the fraction just above it, whichever is nearer (the higher on a tie).
+ */
+gint
+lrg_game_template_pace_fps (gint target_fps,
+                            gint refresh_rate)
+{
+    gint divisor;
+    gint above;
+    gint below;
+
+    if (target_fps <= 0 || refresh_rate <= 0)
+        return target_fps;
+
+    /* the refresh rate itself (or more) is already even pacing */
+    if (target_fps >= refresh_rate)
+        return refresh_rate;
+
+    /* first fraction at or below the target; the one before is above it.
+     * Fractions are rounded up (144 / 5 = 28.8 -> 29): a cap a little
+     * faster than n vblanks still waits for the n-th, a slower one would
+     * miss it now and then */
+    for (divisor = 2; refresh_rate > target_fps * divisor; divisor++)
+        ;
+    below = (refresh_rate + divisor - 1) / divisor;
+    above = (refresh_rate + divisor - 2) / (divisor - 1);
+
+    if (below == target_fps)
+        return below;
+
+    return (above - target_fps <= target_fps - below) ? above : below;
+}
+
 void
 lrg_game_template_update (LrgGameTemplate *self,
                           gdouble          delta)

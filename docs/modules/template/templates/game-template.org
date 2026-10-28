@@ -131,7 +131,7 @@ my_game_class_init (MyGameClass *klass)
 | =window-height=      | =gint=       | 720              | Initial window height                     |
 | =fullscreen=         | =gboolean=   | FALSE            | Start in fullscreen                       |
 | =vsync=              | =gboolean=   | TRUE             | Enable vertical sync                      |
-| =target-fps=         | =gint=       | 60               | Target frame rate, 0 to 1000 (0: no limit) |
+| =target-fps=         | =gint=       | 60               | Target frame rate, 0 to 1000 (0: no limit); with =vsync= the standalone host rounds it to the nearest even divisor of the refresh rate (72 for 60 on 144 Hz, see =lrg_game_template_pace_fps()=) |
 | =max-frames-in-flight= | =guint=    | 2                | Frames in flight bounded with GL fences, 0-4 (0: driver default; [[#input-latency][details]]) |
 | =fixed-timestep=     | =gdouble=    | 1.0/60.0         | Physics update interval                   |
 | =snap-frame-delta=   | =gboolean=   | TRUE             | Snap deltas within 0.2 ms of whole fixed steps |
@@ -400,6 +400,8 @@ Not interpolated, on purpose: particles, UI, tweens and skeletal/model animation
 :CUSTOM_ID: input-latency
 :END:
 The standalone loop is: dispatch the main context, =update= (fixed steps reading the input), draw, then end the frame, which flushes the draws, waits on the GPU if needed, swaps, runs raylib's frame limiter and only then polls input. So the input a frame reads is sampled after every wait of the previous frame: the limiter's sleep never makes it stale.
+
+With =vsync= on, the standalone host paces =target-fps= with =lrg_game_template_pace_fps()=: a cap that does not divide the display's refresh rate (60 on a 144 Hz panel) makes vsync alternate two- and three-vblank frames, so the cap becomes the fraction of the refresh rate (refresh / n, rounded up) nearest the request — 72 on 144 Hz, 55 on 165 Hz, unchanged on 60/120/240 Hz. The fixed step and interpolation do not change; only the presented rate does.
 
 =max-frames-in-flight= bounds how far the CPU may run ahead of the GPU, through graylib's frame sync (a GL fence per frame, waited on before the swap; graylib's =docs/api/core.org=, "Frames in Flight"). With the default 2 one earlier frame may still be on the GPU while the next is built: CPU and GPU work overlap, and a driver that would queue three frames (three frames of input lag) is held to one. 1 makes the GPU finish each frame before its swap, so input is polled with the GPU idle: the lowest latency, at a frame-rate cost when the game is GPU-bound. 0 leaves it to the driver. The environment variable =LRG_MAX_FRAMES_IN_FLIGHT= (=0=-=4=, or =off=) overrides the property without code changes, like =LRG_CPU_AFFINITY= does core pinning.
 
