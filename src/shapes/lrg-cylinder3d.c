@@ -94,7 +94,7 @@ lrg_cylinder3d_draw_mesh (LrgCylinder3D *self,
 {
 	LrgShape3DMesh *mesh = lrg_cylinder3d_ensure_mesh (self);
 
-	return mesh != NULL && lrg_shape3d_mesh_draw (mesh, color, 1.0f);
+	return mesh != NULL && lrg_shape3d_mesh_draw (mesh, color, 1.0f, 1.0f, 1.0f);
 }
 
 static void
@@ -110,19 +110,14 @@ lrg_cylinder3d_draw (LrgShape *shape,
 	GrlVector3            *scl       = &render_scl;
 	GrlColor              *color     = lrg_shape_get_color (shape);
 	gboolean               wireframe = lrg_shape3d_get_wireframe (LRG_SHAPE3D (self));
-	g_autoptr(GrlVector3)  origin    = grl_vector3_new (0.0f, 0.0f, 0.0f);
+	GrlVector3             origin_at = { 0.0f, 0.0f, 0.0f };
+	GrlVector3            *origin = &origin_at;
 
 	/* Draw at the render (interpolated) transform */
 	lrg_shape3d_get_render_transform (LRG_SHAPE3D (self), pos, rot, scl);
 
-	rlPushMatrix ();
-
 	/* Apply transforms: translate, rotate (XYZ order), scale */
-	rlTranslatef (pos->x, pos->y, pos->z);
-	rlRotatef (rot->x * RAD2DEG, 1.0f, 0.0f, 0.0f);
-	rlRotatef (rot->y * RAD2DEG, 0.0f, 1.0f, 0.0f);
-	rlRotatef (rot->z * RAD2DEG, 0.0f, 0.0f, 1.0f);
-	rlScalef (scl->x, scl->y, scl->z);
+	lrg_shape3d_mesh_push_transform (pos, rot, scl);
 
 	/* Draw at origin (position handled by matrix) */
 	if (wireframe)

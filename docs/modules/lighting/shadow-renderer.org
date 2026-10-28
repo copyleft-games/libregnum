@@ -35,7 +35,7 @@ Constants: =LRG_SHADOW_MAX_CASCADES= (4), =LRG_SHADOW_MAX_POINT_LIGHTS= (8), =LR
 | =get_caster_shader()= | the depth shader casters draw with |
 | =is_ready()= | every pass of the last update was rendered |
 | =release_gpu()= | free the atlases and the shader (before the window closes) |
-| =set_refresh (frames)=, =get_refresh()=, =pass_is_current (pass)=, =invalidate()= | the pass cache (below) |
+| =set_refresh (frames)=, =get_refresh()=, =pass_is_current (pass)=, =invalidate()=, =invalidate_box (min, max)= | the pass cache (below); =LRG_SHADOW_REFRESH_NEVER= keeps tiles until they change |
 
 Matrix helpers (column-major 4 x 4 like OpenGL and raylib's =Matrix=): =lrg_shadow_look_at()=, =lrg_shadow_ortho()=, =lrg_shadow_perspective()=, =lrg_shadow_multiply()=, =lrg_shadow_transform_point()=, =lrg_shadow_split_distances()=, =lrg_shadow_cube_face_matrices()=.
 
@@ -69,6 +69,8 @@ The caster shader uses raylib's attribute and uniform names; texels whose alpha 
 :END:
 Each tile is cleared on its own (a scissored clear), so a tile keeps what it holds until its pass is rendered again.  With =set_refresh (frames)= above 0, =update()= marks a pass /current/ when its view-projection and light are exactly what its tile was rendered with and it is younger than =frames= updates; the game skips current passes (=pass_is_current()=) and =is_ready()= counts them as rendered.  Still key lights and a still camera then cost nothing; moving casters show within =frames= frames; =invalidate()= forgets every tile when the casters change (a new space), and a new atlas forgets them too.
 
+*Kept until something changes.*  =set_refresh (LRG_SHADOW_REFRESH_NEVER)= never ages a tile out: a pass is re-rendered only when its view-projection or light changes or its tile is forgotten.  =lrg_shadow_renderer_invalidate_box (min, max)= forgets exactly the tiles whose light camera (as the tile was rendered) sees part of an axis-aligned box in draw space: a door that swung, a crate that fell, a character walking past a torch.  Name the space the caster left and the space it entered (one box around both); the faces of torches that cannot see it, and cascades that do not cover it, stay cached.  The test is the usual conservative one: a tile is kept only when all eight corners lie beyond one of its six clip planes (linear in the world point, so it holds for the cube faces' perspective as well as the cascades' orthographic projection).  An unordered box, or one with a NaN, forgets every tile; the call returns how many it forgot.  Casters animated in their vertex shader (swaying billboards, grass) keep the pose of the frame their tile was drawn in until the tile is re-rendered, so pair them with an age-based refresh, or accept frozen sway in still lights' shadows.  The cascades follow the camera and are texel-snapped, so a moving camera re-renders them every frame whatever the refresh; the cache pays for still torches and key lights, and for every pass while the camera stands still.  =tests/test-shadow-renderer.c= =/shadow/invalidate-box=: two torches under a sun, 500 still updates with every pass current, a box beside one torch forgetting some of its faces and none of the far torch's, and a NaN box forgetting all.
+
 *Staggering.*  The passes of a still view all come due on the same frame (at midnight the moon's cascades and the torch's six faces).  A pass that is only stale by age is therefore rationed: =update()= lets at most =ceil (passes / frames)= of them render per frame, the oldest first, and the others keep their tile until they are next in line, never past twice the refresh.  A pass whose view or light changed always renders.  =lrg_shadow_renderer_mark_rendered (pass)= records a pass as rendered (what =end_pass()= does) for games that fill a tile by other means and for the headless test of the cache and its staggering (=tests/test-shadow-renderer.c=, =/shadow/stagger=: nine passes, refresh 4, at most three a frame, none waiting past twice the refresh, a moved camera re-rendering its cascades at once).
 
 *Casters with their own program.*  =get_pass_state()= gives the open pass's mode (0 cascade, 1 cube face), the cube's light position and radius and the way a cascade's light travels, so a caster whose geometry is built on the GPU (=lrg_billboard_batch_draw_shadow()=: upright quads facing the light, alpha cut out) writes the caster shader's depth or distance itself.
@@ -89,13 +91,18 @@ guint pass;
 
 lrg_shadow_renderer_set_sun (shadows, 2048, 3, 120.0f, 0.6f);
 lrg_shadow_renderer_set_points (shadows, 512, 2, 40.0f);
+lrg_shadow_renderer_set_refresh (shadows, LRG_SHADOW_REFRESH_NEVER);
 lrg_light_set_set_point_light_shadow (lights, torch, 10);
 lrg_light_set_set_shadow_renderer (lights, shadows);
 
-/* each frame, before BeginMode3D () */
+/* each frame, before BeginMode3D (): what moved (in draw space) */
+lrg_shadow_renderer_invalidate_box (shadows, door_min, door_max);
 lrg_shadow_renderer_update (shadows, lights, eye, forward, up, 65.0f, aspect, 0.1f);
 for (pass = 0; pass < lrg_shadow_renderer_get_pass_count (shadows); pass++)
 {
+    /* with a refresh set: a current pass's tile is still good */
+    if (lrg_shadow_renderer_pass_is_current (shadows, pass))
+        continue;
     if (!lrg_shadow_renderer_begin_pass (shadows, pass))
         break;
     lrg_static_batch_set_shader (world, lrg_shadow_renderer_get_caster_shader (shadows));

@@ -39,12 +39,15 @@ bench/build/release/bench/lrg-bench -l           # list scenarios
 | =particles=     | 20000-particle system update                                              |
 | =tilemap=       | 512x512 two-layer tilemap through a panning 2D camera                     |
 | =shapes3d=      | 3000 =LrgCube3D=                                                          |
+| =shapes3d-batched= | =shapes3d= inside a shape batch (=lrg_shape3d_begin_batch()=)          |
 | =shapes-round=  | 600 spheres, 300 cylinders, 300 cones                                     |
+| =shapes-round-batched= | =shapes-round= inside a shape batch                                 |
 | =static-batch=  | 3600 boxes in 90 chunks, walking camera                                   |
 | =terrain=       | 256 terrain chunks and 256 water patches                                  |
 | =billboards=    | 60000 swaying billboards                                                  |
 | =grass=         | ~150000 grass blades                                                      |
 | =world-shadows= | lit batch + terrain + billboards, 14 shadow passes, light grid            |
+| =world-shadows-cached= | =world-shadows= with tiles kept until they change (=LRG_SHADOW_REFRESH_NEVER=) and a box circling torch 27, invalidating its box every frame |
 | =light-grid=    | light set apply, 256 lights                                               |
 | =graylib-draw=  | 20000 graylib rectangle/texture draws + 200 texts                         |
 | =gui=           | the editor's immediate-mode GUI, 64 rows of widgets                       |
@@ -291,6 +294,35 @@ Looked at and left:
 - *Tweens* are dominated by =g_object_set()= by property name and its notify; that is the documented behaviour of property tweens.
 
 Found on the way: none of the changed paths had a correctness bug; the =LrgPortalSystem= update used a sector ID pointer into a sector that a =sector-entered= handler could have removed, it now traverses from its own copy of the ID.
+
+** The v0.3.1 3D render pass
+:PROPERTIES:
+:CUSTOM_ID: render3d-pass
+:END:
+Goal: less CPU submission and fewer draws and passes for 3D. Measured with =lrg-bench= under Xvfb + llvmpipe on the 20-thread Alder Lake laptop, 600 frames, while other builds shared the machine: each scenario ran five times alternating the master library (=34f3f30=, the same bench binary through =LD_LIBRARY_PATH=) and this branch, and the table gives the medians. Load moved single runs by 20 % and more, so only the paired medians are quoted.
+
+| Scenario                                    | Before (master)                  | After                            | Change                       |
+|---------------------------------------------+----------------------------------+----------------------------------+------------------------------|
+| =shapes-round=                              | 39.2 fps, 1% low 27.0, work 24.9 ms | 50.3 fps, 1% low 36.5, work 17.1 ms | +28 % fps (indexed meshes)  |
+| =shapes-round-batched= (vs =shapes-round=)  | 39.2 fps, work 24.9 ms           | 75.6 fps, 1% low 58.7, work 10.7 ms | 1.9x fps (shape batch)    |
+| =shapes3d=                                  | 131.5 fps, 1% low 96.7, work 6.5 ms | 132.0 fps, 1% low 99.4, work 6.3 ms | unchanged (immediate path) |
+| =shapes3d-batched= (vs =shapes3d=)          | 131.5 fps, work 6.5 ms           | 297.1 fps, 1% low 224.1, work 2.6 ms | 2.3x fps (shape batch)    |
+| =world-shadows-cached= (vs =world-shadows=, same loop) | 18.9 fps, 1% low 14.2  | 22.0 fps, 1% low 15.2            | +6-16 % (12 of 14 passes cached) |
+| =grass=, =terrain=, =billboards=, =static-batch=, =skinned-models=, =world-shadows= | | | within noise (code not touched or not on their path) |
+
+What changed:
+- *Indexed shape meshes.* The cached meshes of =LrgSphere3D=, =LrgCylinder3D= and =LrgCone3D= stored every triangle corner (a 16 x 16 sphere: 1632 positions); each distinct position is now stored once (bit for bit equal ones merged; the sphere: a few hundred) and the same triangles, in the same order, index them. The GPU transforms a shared corner once instead of up to six times; on llvmpipe the vertex shader (which runs on the main thread) dropped out of the profile. Pixel output is unchanged: same positions, same triangles.
+- *Shape batches* (=lrg_shape3d_begin_batch()= / =lrg_shape3d_end_batch()=, see [[file:api/shapes.org::#shape-batches][Shape batches]]). Opaque solid cubes, spheres, cylinders and cones drawn inside a batch are queued with the model-view-projection =DrawMesh()= would have computed and drawn at the end with one instanced call per shared mesh through a two-line program equivalent to raylib's default shader for these meshes. 3000 cubes become one draw call instead of ~108000 CPU-transformed immediate vertices; 1200 round shapes three calls instead of 1200 =DrawMesh()= (each of which costs uniform uploads and driver state validation: the =memmove= / mutex / =malloc= in the old profile). It is opt-in because it reorders draws (fine under the depth test, not for arbitrary interleaved translucent drawing); translucent shapes flush the queue first. =tests/test-shape-batch.c= compares batched and one-by-one renders pixel for pixel.
+- *Per-draw shape costs.* The 3D shapes no longer allocate a boxed origin vector per draw, and skip =rlRotatef()= for zero angles and =rlScalef()= for a unit scale (each multiplies by the identity, which changes no bit).
+- *Shadow tiles kept until they change.* =lrg_shadow_renderer_set_refresh (LRG_SHADOW_REFRESH_NEVER)= keeps a cached tile until its light camera changes, and =lrg_shadow_renderer_invalidate_box()= forgets only the tiles whose light camera sees a box (a moved caster's old and new space), see [[file:modules/lighting/shadow-renderer.org::#semantics][the shadow renderer]]. In =world-shadows-cached= the two shadowed torches' 12 cube faces are reused except the few that see the box circling torch 27.
+
+Findings, not changed:
+- *=grass= =malloc= / =free=.* The ~3.5 % of the process in =malloc=, =free= and =memset= is llvmpipe's: =llvm_pipeline_generic()= allocates its vertex output for every instance of an instanced draw (=draw_instances()= loops over instances; checked with a breakpoint on =malloc= after warm-up). The engine allocates nothing per frame there; a hardware driver does not have this cost.
+- *=world-shadows= cascades.* With every point light cached, the cost left is the two sun cascades (the far one, 1024 x 1024 over 80 m with the 60000 alpha-tested billboards, is most of it), which follow the walking camera and re-render every frame by design; on llvmpipe that is rasterizer time on the worker threads, not submission. Reusing cascade tiles across camera moves (scrolling the texel-snapped tile and rendering only the exposed strips) would be the next step.
+- *=shapes3d= one by one.* =draw_reset_vertex_ids= in llvmpipe and =rlVertex3f()= dominate the immediate cube path; a =DrawMesh()= per cube would be slower, so unbatched cubes keep the immediate path and the batch is the fast one.
+- The =__memcmp_avx2_movbe= in the 3D profiles is Mesa's own state comparison (under 0.3 %).
+
+To validate on a real GPU: the batches' instance buffer is rewritten with =glBufferSubData()= at offset 0 on every flush (drivers ghost a buffer still in flight; several flushes of one mesh per frame could stall on some drivers), and the gain there is in draw-call count and driver CPU rather than triangle setup.
 
 ** The audio thread pass
 :PROPERTIES:

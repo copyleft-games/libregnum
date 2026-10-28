@@ -483,6 +483,24 @@ shapes_frame (gpointer state,
 	grl_camera3d_end (st->camera);
 }
 
+/* shapes_batched_frame: the same draws inside a shape batch (one
+ * instanced call per shared mesh at the end) */
+static void
+shapes_batched_frame (gpointer state,
+                      guint    frame_index)
+{
+	ShapesState *st = state;
+	guint        i;
+
+	grl_camera3d_begin (st->camera);
+	lrg_shape3d_begin_batch ();
+	for (i = 0; i < st->shapes->len; i++)
+		lrg_drawable_draw (LRG_DRAWABLE (g_ptr_array_index (st->shapes, i)),
+		                   1.0f / 60.0f);
+	lrg_shape3d_end_batch ();
+	grl_camera3d_end (st->camera);
+}
+
 static void
 shapes_teardown (gpointer state)
 {
@@ -646,6 +664,8 @@ typedef struct
 	LrgGrassField     *grass;
 	LrgLightSet       *lights;
 	LrgShadowRenderer *shadows;
+	LrgStaticBatch    *mover;       /* world-shadows-cached: a moving caster */
+	gfloat             mover_at[3]; /* where it was drawn last frame */
 } WorldState;
 
 static WorldState *
@@ -674,6 +694,7 @@ world_teardown (gpointer state)
 	g_clear_object (&st->billboards);
 	g_clear_object (&st->terrain);
 	g_clear_object (&st->batch);
+	g_clear_object (&st->mover);
 	g_clear_object (&st->shadows);
 	g_clear_object (&st->lights);
 	g_clear_object (&st->texture);
@@ -859,6 +880,27 @@ world_shadows_frame (gpointer state,
 	forward[1] = -0.196f;
 	forward[2] = cosf (a);
 
+	if (st->mover != NULL)
+	{
+		gfloat t = (gfloat) frame_index * 0.03f;
+		gfloat at[3];
+		gfloat lo[3];
+		gfloat hi[3];
+		guint  k;
+
+		/* the box circles torch 27; the tiles that saw where it was or
+		 * where it is now are rendered again, the rest stay cached */
+		at[0] = -15.0f + 5.0f * cosf (t);
+		at[1] = 1.5f;
+		at[2] = -15.0f + 5.0f * sinf (t);
+		for (k = 0; k < 3; k++)
+		{
+			lo[k] = MIN (at[k], st->mover_at[k]) - 1.0f;
+			hi[k] = MAX (at[k], st->mover_at[k]) + 1.0f;
+			st->mover_at[k] = at[k];
+		}
+		lrg_shadow_renderer_invalidate_box (st->shadows, lo, hi);
+	}
 	/* the shadow passes first (they leave the screen's 2D state behind) */
 	lrg_light_set_set_shadow_renderer (st->lights, NULL);
 	n_passes = lrg_shadow_renderer_update (st->shadows, st->lights, eye, forward, up,
@@ -866,13 +908,22 @@ world_shadows_frame (gpointer state,
 	caster = lrg_shadow_renderer_get_caster_shader (st->shadows);
 	for (p = 0; p < n_passes; p++)
 	{
-		if (!lrg_shadow_renderer_begin_pass (st->shadows, p))
+		if (lrg_shadow_renderer_pass_is_current (st->shadows, p)
+		    || !lrg_shadow_renderer_begin_pass (st->shadows, p))
 			continue;
 		lrg_static_batch_set_shader (st->batch, caster);
 		lrg_static_batch_draw (st->batch, LRG_STATIC_BATCH_ALL_LAYERS);
 		lrg_terrain_set_shader (st->terrain, caster);
 		lrg_terrain_draw (st->terrain);
 		lrg_billboard_batch_draw_shadow (st->billboards, st->shadows, camera);
+		if (st->mover != NULL)
+		{
+			lrg_static_batch_set_shader (st->mover, caster);
+			rlPushMatrix ();
+			rlTranslatef (st->mover_at[0], st->mover_at[1], st->mover_at[2]);
+			lrg_static_batch_draw (st->mover, LRG_STATIC_BATCH_ALL_LAYERS);
+			rlPopMatrix ();
+		}
 		lrg_shadow_renderer_end_pass (st->shadows);
 	}
 	lrg_light_set_set_shadow_renderer (st->lights, st->shadows);
@@ -884,10 +935,49 @@ world_shadows_frame (gpointer state,
 	lrg_terrain_set_shader (st->terrain, lrg_light_set_get_shader (st->lights));
 	lrg_static_batch_draw (st->batch, LRG_STATIC_BATCH_ALL_LAYERS);
 	lrg_terrain_draw (st->terrain);
+	if (st->mover != NULL)
+	{
+		lrg_static_batch_set_shader (st->mover, lrg_light_set_get_shader (st->lights));
+		rlPushMatrix ();
+		rlTranslatef (st->mover_at[0], st->mover_at[1], st->mover_at[2]);
+		lrg_static_batch_draw (st->mover, LRG_STATIC_BATCH_ALL_LAYERS);
+		rlPopMatrix ();
+	}
 	lrg_billboard_batch_set_wind_time (st->billboards, (gdouble) frame_index / 60.0);
 	lrg_billboard_batch_draw (st->billboards, camera);
 	grl_camera3d_end (st->camera);
 	lrg_light_set_unbind ();
+}
+
+/* --- world-shadows-cached: world-shadows with the pass cache kept until
+ * something changes (LRG_SHADOW_REFRESH_NEVER), plus a box circling torch
+ * 27 whose old and new space is invalidated every frame: the torches'
+ * faces that cannot see it are reused, the cascades (they follow the
+ * walking camera) render every frame */
+
+static gpointer
+world_shadows_cached_setup (void)
+{
+	WorldState *st = world_shadows_setup ();
+	gfloat      pos[24];
+	gfloat      nrm[24];
+	guint32     idx[36];
+	GrlMatrix   m;
+
+	bench_box (pos, nrm, idx, 1.0f);
+	memset (&m, 0, sizeof m);
+	m.m0 = 1.0f;
+	m.m5 = 1.0f;
+	m.m10 = 1.0f;
+	m.m15 = 1.0f;
+	st->mover = lrg_static_batch_new ();
+	lrg_static_batch_add_mesh (st->mover, pos, nrm, NULL, NULL, 8, idx, 36, &m, 0, 0, NULL);
+	lrg_static_batch_upload (st->mover, NULL);
+	st->mover_at[0] = -10.0f;
+	st->mover_at[1] = 1.5f;
+	st->mover_at[2] = -15.0f;
+	lrg_shadow_renderer_set_refresh (st->shadows, LRG_SHADOW_REFRESH_NEVER);
+	return st;
 }
 
 /* --- light-grid: lrg_light_set_apply() of a still camera, 256 lights in a
@@ -3011,8 +3101,12 @@ static const BenchScenario scenarios[] = {
 	  tilemap_setup, tilemap_frame, tilemap_teardown },
 	{ "shapes3d", "3000 LrgCube3D shapes in a 3D camera",
 	  shapes_setup, shapes_frame, shapes_teardown },
+	{ "shapes3d-batched", "shapes3d inside a shape batch (instanced)",
+	  shapes_setup, shapes_batched_frame, shapes_teardown },
 	{ "shapes-round", "600 spheres, 300 cylinders, 300 cones in a 3D camera",
 	  shapes_round_setup, shapes_frame, shapes_teardown },
+	{ "shapes-round-batched", "shapes-round inside a shape batch (instanced)",
+	  shapes_round_setup, shapes_batched_frame, shapes_teardown },
 	{ "static-batch", "3600 boxes in 90 static batch chunks (tiles), walking camera",
 	  static_batch_setup, static_batch_frame, world_teardown },
 	{ "terrain", "256 terrain chunks and 256 water patches, walking camera",
@@ -3023,6 +3117,8 @@ static const BenchScenario scenarios[] = {
 	  grass_setup, grass_frame, world_teardown },
 	{ "world-shadows", "lit batch + terrain + billboards, 14 shadow passes, light grid",
 	  world_shadows_setup, world_shadows_frame, world_teardown },
+	{ "world-shadows-cached", "world-shadows, static tiles cached, a moving caster invalidating its box",
+	  world_shadows_cached_setup, world_shadows_frame, world_teardown },
 	{ "light-grid", "light set apply, 256 lights in a 32x32x4 grid, still camera",
 	  light_grid_setup, light_grid_frame, world_teardown },
 	{ "graylib-draw", "20000 graylib rectangle/texture draws + 200 texts",
