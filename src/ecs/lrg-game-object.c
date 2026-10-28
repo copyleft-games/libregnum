@@ -55,7 +55,9 @@ lrg_game_object_update (GrlEntity *entity,
     for (l = priv->components; l != NULL; l = l->next)
     {
         LrgComponent *component = LRG_COMPONENT (l->data);
-        lrg_component_update (component, delta);
+
+        /* Validated when added (see lrg-component-private.h) */
+        _lrg_component_update_unchecked (component, delta);
     }
 }
 
@@ -80,7 +82,7 @@ lrg_game_object_draw (GrlEntity *entity)
         LrgComponent *component = l->data;
 
         if (LRG_IS_SPRITE_COMPONENT (component) &&
-            lrg_component_get_enabled (component))
+            _lrg_component_get_enabled_unchecked (component))
         {
             lrg_sprite_component_draw (LRG_SPRITE_COMPONENT (component));
         }

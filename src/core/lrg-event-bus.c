@@ -383,6 +383,20 @@ sort_dispatch_entries (DispatchEntry *entries,
 }
 
 /*
+ * event_is_cancelled:
+ *
+ * lrg_event_is_cancelled() through @event's already looked-up vtable.
+ */
+static inline gboolean
+event_is_cancelled (LrgEvent          *event,
+                    LrgEventInterface *iface)
+{
+    if (G_LIKELY (iface->is_cancelled != NULL))
+        return iface->is_cancelled (event);
+    return lrg_event_is_cancelled (event);
+}
+
+/*
  * lrg_event_bus_emit:
  * @self: an #LrgEventBus
  * @event: (transfer none): the event to emit
@@ -424,6 +438,7 @@ lrg_event_bus_emit (LrgEventBus *self,
     g_autoptr(LrgEvent) event_ref = NULL;
     DispatchEntry stack_entries[DISPATCH_STACK_ENTRIES];
     DispatchEntry *entries;
+    LrgEventInterface *event_iface;
     guint n_entries;
     guint capacity;
     guint64 event_mask;
@@ -437,8 +452,12 @@ lrg_event_bus_emit (LrgEventBus *self,
     bus_ref = g_object_ref (self);
     event_ref = g_object_ref (event);
 
+    /* The event's vtable, looked up once: it is asked whether it was
+     * cancelled after every listener. */
+    event_iface = LRG_EVENT_GET_IFACE (event);
+
     event_mask = lrg_event_get_type_mask (event);
-    result = !lrg_event_is_cancelled (event);
+    result = !event_is_cancelled (event, event_iface);
 
     /* Snapshot the registrations whose listener wants this event type.
      * Registration identities, not just listener identities: removing and
@@ -480,7 +499,14 @@ lrg_event_bus_emit (LrgEventBus *self,
         n_entries++;
     }
     for (i = 0; i < n_entries; i++)
-        entries[i].priority = lrg_event_listener_get_priority (entries[i].registration->listener);
+    {
+        Registration *registration = entries[i].registration;
+
+        if (G_LIKELY (registration->iface->get_priority != NULL))
+            entries[i].priority = registration->iface->get_priority (registration->listener);
+        else
+            entries[i].priority = lrg_event_listener_get_priority (registration->listener);
+    }
     sort_dispatch_entries (entries, n_entries);
 
     /* Dispatch to all matching listeners in priority order */
@@ -488,19 +514,30 @@ lrg_event_bus_emit (LrgEventBus *self,
     {
         DispatchEntry *entry = &entries[i];
         LrgEventListener *listener = entry->registration->listener;
+        LrgEventListenerInterface *iface = entry->registration->iface;
         guint64 listener_mask;
+        gboolean keep_going;
 
         if (!entry->registration->active)
             continue;
 
-        listener_mask = lrg_event_listener_get_event_mask (listener);
+        /* The registration's cached vtable, as in the snapshot pass; the
+         * public wrappers (and their criticals) only for missing vfuncs */
+        if (G_LIKELY (iface->get_event_mask != NULL))
+            listener_mask = iface->get_event_mask (listener);
+        else
+            listener_mask = lrg_event_listener_get_event_mask (listener);
 
         /* Skip if listener stopped caring about this event type */
         if ((listener_mask & event_mask) == 0)
             continue;
 
         /* Notify the listener */
-        if (!lrg_event_listener_on_event (listener, event, context))
+        if (G_LIKELY (iface->on_event != NULL))
+            keep_going = iface->on_event (listener, event, context);
+        else
+            keep_going = lrg_event_listener_on_event (listener, event, context);
+        if (!keep_going)
         {
             /* Listener cancelled the event */
             lrg_event_cancel (event);
@@ -511,7 +548,7 @@ lrg_event_bus_emit (LrgEventBus *self,
         }
 
         /* Check if event was cancelled during processing */
-        if (lrg_event_is_cancelled (event))
+        if (event_is_cancelled (event, event_iface))
         {
             g_signal_emit (self, signals[SIGNAL_EVENT_CANCELLED], 0,
                            event, listener);
