@@ -8,6 +8,7 @@
  */
 
 #include "lrg-shape3d.h"
+#include "lrg-shape3d-mesh-private.h"
 
 /**
  * LrgShape3DPrivate:
@@ -813,4 +814,32 @@ lrg_shape3d_set_interpolate (LrgShape3D *self,
 	priv->interp.enabled = interpolate;
 	lrg_shape3d_reset_interpolation (self);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_INTERPOLATE]);
+}
+
+/* ==========================================================================
+ * Shape batches
+ * ========================================================================== */
+
+void
+lrg_shape3d_begin_batch (void)
+{
+	lrg_shape3d_mesh_batch_begin ();
+}
+
+void
+lrg_shape3d_end_batch (void)
+{
+	lrg_shape3d_mesh_batch_end ();
+}
+
+void
+lrg_shape3d_flush_batch (void)
+{
+	lrg_shape3d_mesh_batch_flush ();
+}
+
+gboolean
+lrg_shape3d_is_batching (void)
+{
+	return lrg_shape3d_mesh_batching ();
 }

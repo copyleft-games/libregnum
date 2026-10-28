@@ -65,7 +65,8 @@ lrg_circle3d_draw (LrgShape *shape,
 	GrlVector3            *rot    = &render_rot;
 	GrlVector3            *scl    = &render_scl;
 	GrlColor              *color  = lrg_shape_get_color (shape);
-	g_autoptr(GrlVector3)  origin = grl_vector3_new (0.0f, 0.0f, 0.0f);
+	GrlVector3             origin_at = { 0.0f, 0.0f, 0.0f };
+	GrlVector3            *origin = &origin_at;
 
 	/* Draw at the render (interpolated) transform */
 	lrg_shape3d_get_render_transform (LRG_SHAPE3D (self), pos, rot, scl);
