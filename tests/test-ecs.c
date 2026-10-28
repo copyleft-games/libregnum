@@ -942,12 +942,125 @@ test_transform_component_world_chain (void)
     g_assert_cmpfloat_with_epsilon (lrg_transform_component_get_world_rotation (child),
                                     190.0f, 0.0001f);
 
-    /* Changing an ancestor is seen immediately (nothing is cached). */
+    /* Changing an ancestor is seen immediately (the cached world
+     * transforms below it are invalidated). */
     lrg_transform_component_set_local_position_xy (grandparent, 0.0f, 0.0f);
     g_clear_pointer (&pos, grl_vector2_free);
     pos = lrg_transform_component_get_world_position (child);
     g_assert_cmpfloat_with_epsilon (pos->x, -2.0f, 0.0001f);
     g_assert_cmpfloat_with_epsilon (pos->y, -4.0f, 0.0001f);
+}
+
+/* Reference fold for test_transform_component_world_cache(), computed
+ * from the public local getters with no caching at all. */
+static void
+reference_world (LrgTransformComponent *t,
+                 gfloat                *x,
+                 gfloat                *y,
+                 gfloat                *rot,
+                 gfloat                *sx,
+                 gfloat                *sy)
+{
+    LrgTransformComponent *parent = lrg_transform_component_get_parent (t);
+    g_autoptr(GrlVector2) local_scale = lrg_transform_component_get_local_scale (t);
+    gfloat lx = lrg_transform_component_get_local_x (t);
+    gfloat ly = lrg_transform_component_get_local_y (t);
+    gfloat px, py, prot, psx, psy;
+    gfloat rad, c, s;
+
+    if (parent == NULL)
+    {
+        *x = lx;
+        *y = ly;
+        *rot = lrg_transform_component_get_local_rotation (t);
+        *sx = local_scale->x;
+        *sy = local_scale->y;
+        return;
+    }
+    reference_world (parent, &px, &py, &prot, &psx, &psy);
+    rad = prot * (G_PI / 180.0f);
+    c = cosf (rad);
+    s = sinf (rad);
+    *x = px + (lx * psx * c - ly * psy * s);
+    *y = py + (lx * psx * s + ly * psy * c);
+    *rot = prot + lrg_transform_component_get_local_rotation (t);
+    *sx = local_scale->x * psx;
+    *sy = local_scale->y * psy;
+}
+
+#define CACHE_NODES (12)
+
+/* World transforms are cached per node and invalidated by version: random
+ * edits, reparenting and detaching anywhere in a forest must always be
+ * reflected by every descendant's getters, interleaved with the reads. */
+static void
+test_transform_component_world_cache (void)
+{
+    LrgTransformComponent *nodes[CACHE_NODES];
+    g_autoptr(GRand) rng = g_rand_new_with_seed (42);
+    guint round;
+    guint i;
+
+    for (i = 0; i < CACHE_NODES; i++)
+    {
+        nodes[i] = lrg_transform_component_new_at ((gfloat) i, (gfloat) (i * 2));
+        if (i > 0)
+            lrg_transform_component_set_parent (nodes[i], nodes[(i - 1) / 2]);
+    }
+
+    for (round = 0; round < 2000; round++)
+    {
+        guint n = (guint) g_rand_int_range (rng, 0, CACHE_NODES);
+        gfloat v = (gfloat) g_rand_double_range (rng, -4.0, 4.0);
+
+        /* One random edit (parents are always lower-numbered: no cycles) */
+        switch (g_rand_int_range (rng, 0, 7))
+        {
+        case 0:
+            lrg_transform_component_set_local_x (nodes[n], v);
+            break;
+        case 1:
+            lrg_transform_component_set_local_position_xy (nodes[n], v, -v);
+            break;
+        case 2:
+            lrg_transform_component_set_local_rotation (nodes[n], v * 45.0f);
+            break;
+        case 3:
+            lrg_transform_component_set_local_scale_xy (nodes[n], v, 1.0f + v * v);
+            break;
+        case 4:
+            g_object_set (nodes[n], "scale-y", v, NULL);
+            break;
+        case 5:
+            lrg_transform_component_set_parent (nodes[n], n > 0 ?
+                nodes[g_rand_int_range (rng, 0, (gint32) n)] : NULL);
+            break;
+        default:
+            if (g_rand_int_range (rng, 0, 4) == 0)
+                lrg_transform_component_detach_children (nodes[n]);
+            break;
+        }
+
+        /* Read a few nodes back (filling caches between edits) */
+        for (i = 0; i < 3; i++)
+        {
+            LrgTransformComponent *t = nodes[g_rand_int_range (rng, 0, CACHE_NODES)];
+            g_autoptr(GrlVector2) pos = lrg_transform_component_get_world_position (t);
+            g_autoptr(GrlVector2) scale = lrg_transform_component_get_world_scale (t);
+            gfloat x, y, rot, sx, sy;
+
+            reference_world (t, &x, &y, &rot, &sx, &sy);
+            g_assert_cmpfloat_with_epsilon (pos->x, x, 1e-3f * (1.0f + fabsf (x)));
+            g_assert_cmpfloat_with_epsilon (pos->y, y, 1e-3f * (1.0f + fabsf (y)));
+            g_assert_cmpfloat_with_epsilon (lrg_transform_component_get_world_rotation (t),
+                                            rot, 1e-3f * (1.0f + fabsf (rot)));
+            g_assert_cmpfloat_with_epsilon (scale->x, sx, 1e-3f * (1.0f + fabsf (sx)));
+            g_assert_cmpfloat_with_epsilon (scale->y, sy, 1e-3f * (1.0f + fabsf (sy)));
+        }
+    }
+
+    for (i = CACHE_NODES; i > 0; i--)
+        g_object_unref (nodes[i - 1]);
 }
 
 static void
@@ -1463,6 +1576,7 @@ main (int   argc,
     g_test_add_func ("/ecs/transform-component/hierarchy", test_transform_component_hierarchy);
     g_test_add_func ("/ecs/transform-component/world-position", test_transform_component_world_position);
     g_test_add_func ("/ecs/transform-component/world-chain", test_transform_component_world_chain);
+    g_test_add_func ("/ecs/transform-component/world-cache", test_transform_component_world_cache);
     g_test_add_func ("/ecs/transform-component/translate", test_transform_component_translate);
     g_test_add_func ("/ecs/transform-component/rotate", test_transform_component_rotate);
 

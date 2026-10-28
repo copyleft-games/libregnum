@@ -274,7 +274,10 @@ vtable, cached at registration) and captures only the M matching ones: O(N + M
 log M), with no allocation for up to 32 matches. Matching listeners are already
 in registration order, so equal or non-increasing priorities sort in O(M).
 Checking whether a registration was removed is O(1), including after callback
-mutations.
+mutations. Priorities, the per-turn mask check and =on_event= go through the
+same cached listener vtable, and the event's vtable is looked up once per
+emission for the cancellation checks; the public wrappers (and their
+criticals) are only used for an implementation that leaves a vfunc =NULL=.
 
 To preserve an original event, copy it using the concrete event type's copy
 function and emit that copy. There is no generic =lrg_event_bus_emit_copy()= API.

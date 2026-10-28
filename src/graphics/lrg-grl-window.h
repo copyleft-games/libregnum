@@ -73,6 +73,37 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_grl_window_get_vsync (LrgGrlWindow *self);
 
 /**
+ * lrg_grl_window_set_max_frames_in_flight:
+ * @self: an #LrgGrlWindow
+ * @frames: frames in flight, 0 (driver default) to %GRL_FRAME_SYNC_MAX_FRAMES
+ *
+ * Bound the frames in flight with GL fences (graylib's frame sync).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_grl_window_set_max_frames_in_flight (LrgGrlWindow *self,
+                                              guint         frames);
+
+/**
+ * lrg_grl_window_get_max_frames_in_flight:
+ * @self: an #LrgGrlWindow
+ *
+ * Returns: the frames-in-flight bound (0: driver default)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_grl_window_get_max_frames_in_flight (LrgGrlWindow *self);
+
+/**
+ * lrg_grl_window_resolve_max_frames_in_flight:
+ * @requested: the bound the game asked for
+ *
+ * Apply the `LRG_MAX_FRAMES_IN_FLIGHT` environment override.
+ *
+ * Returns: the bound to use
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_grl_window_resolve_max_frames_in_flight (guint requested);
+
+/**
  * lrg_grl_window_get_grl_window:
  * @self: an #LrgGrlWindow
  *

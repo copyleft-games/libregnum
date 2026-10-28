@@ -959,6 +959,27 @@ lrg_game_template_has_focus (LrgGameTemplate *self);
 LRG_AVAILABLE_IN_ALL
 LrgTimerManager *lrg_game_template_get_timer_manager (LrgGameTemplate *self);
 
+/**
+ * lrg_game_template_pace_fps:
+ * @target_fps: the requested frame cap (0: none)
+ * @refresh_rate: the display's refresh rate in Hz (0 or less: unknown)
+ *
+ * The frame cap to use with vsync on a display refreshing at
+ * @refresh_rate Hz. A cap that does not divide the refresh rate (60 fps
+ * on a 144 Hz display) makes vsync alternate two- and three-vblank
+ * frames, which judders; this returns the fraction of the refresh rate
+ * (@refresh_rate / n, rounded up) nearest to @target_fps, the higher one
+ * on a tie (72 for 60 on 144 Hz, 55 for 60 on 165 Hz, 29 for 30 on
+ * 144 Hz, 60 on 60/120/240 Hz).
+ * @target_fps of 0 and unknown refresh rates are returned unchanged.
+ *
+ * Returns: the evenly pacing frame cap
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_game_template_pace_fps (gint target_fps,
+                            gint refresh_rate);
+
 G_END_DECLS
 
 #endif /* LRG_GAME_TEMPLATE_H */

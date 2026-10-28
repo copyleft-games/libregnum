@@ -61,6 +61,7 @@ enum
 {
 	PROP_0,
 	PROP_VSYNC,
+	PROP_MAX_FRAMES_IN_FLIGHT,
 	N_PROPS
 };
 
@@ -257,6 +258,9 @@ lrg_grl_window_get_property (GObject    *object,
 	case PROP_VSYNC:
 		g_value_set_boolean (value, self->vsync);
 		break;
+	case PROP_MAX_FRAMES_IN_FLIGHT:
+		g_value_set_uint (value, lrg_grl_window_get_max_frames_in_flight (self));
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -274,6 +278,9 @@ lrg_grl_window_set_property (GObject      *object,
 	{
 	case PROP_VSYNC:
 		lrg_grl_window_set_vsync (self, g_value_get_boolean (value));
+		break;
+	case PROP_MAX_FRAMES_IN_FLIGHT:
+		lrg_grl_window_set_max_frames_in_flight (self, g_value_get_uint (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -312,6 +319,22 @@ lrg_grl_window_class_init (LrgGrlWindowClass *klass)
 		                      "Whether vertical sync is enabled",
 		                      FALSE,
 		                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+	/**
+	 * LrgGrlWindow:max-frames-in-flight:
+	 *
+	 * How many frames may be in flight (the one being built plus those
+	 * the GPU has not finished), bounded with GL fences before each swap;
+	 * 0 leaves it to the driver.  Forwards to #GrlWindow:max-frames-in-flight
+	 * (process-wide, like the GL context).
+	 */
+	grl_window_properties[PROP_MAX_FRAMES_IN_FLIGHT] =
+		g_param_spec_uint ("max-frames-in-flight",
+		                   "Max frames in flight",
+		                   "Frames in flight, bounded with GL fences (0 = driver default)",
+		                   0, GRL_FRAME_SYNC_MAX_FRAMES, 0,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+		                   G_PARAM_EXPLICIT_NOTIFY);
 
 	g_object_class_install_properties (object_class, N_PROPS, grl_window_properties);
 }
@@ -409,6 +432,86 @@ lrg_grl_window_get_vsync (LrgGrlWindow *self)
 	g_return_val_if_fail (LRG_IS_GRL_WINDOW (self), FALSE);
 
 	return self->vsync;
+}
+
+/*
+ * lrg_grl_window_set_max_frames_in_flight:
+ * @self: an #LrgGrlWindow
+ * @frames: frames in flight, 0 (driver default) to %GRL_FRAME_SYNC_MAX_FRAMES
+ *
+ * Bound the frames in flight on this window's present path with GL fences
+ * (graylib's frame sync, see grl_frame_sync_set_max_frames_in_flight()).
+ */
+void
+lrg_grl_window_set_max_frames_in_flight (LrgGrlWindow *self,
+                                         guint         frames)
+{
+	g_return_if_fail (LRG_IS_GRL_WINDOW (self));
+
+	frames = MIN (frames, (guint) GRL_FRAME_SYNC_MAX_FRAMES);
+	if (lrg_grl_window_get_max_frames_in_flight (self) == frames)
+		return;
+
+	/* the bound lives in graylib (one GL context per process) */
+	if (self->grl_window != NULL)
+		grl_window_set_max_frames_in_flight (self->grl_window, frames);
+	else
+		grl_frame_sync_set_max_frames_in_flight (frames);
+
+	g_object_notify_by_pspec (G_OBJECT (self),
+	                          grl_window_properties[PROP_MAX_FRAMES_IN_FLIGHT]);
+}
+
+/*
+ * lrg_grl_window_get_max_frames_in_flight:
+ * @self: an #LrgGrlWindow
+ *
+ * Returns: the frames-in-flight bound (0: driver default)
+ */
+guint
+lrg_grl_window_get_max_frames_in_flight (LrgGrlWindow *self)
+{
+	g_return_val_if_fail (LRG_IS_GRL_WINDOW (self), 0);
+
+	return grl_frame_sync_get_max_frames_in_flight ();
+}
+
+/*
+ * lrg_grl_window_resolve_max_frames_in_flight:
+ * @requested: the bound the game asked for
+ *
+ * The environment variable `LRG_MAX_FRAMES_IN_FLIGHT` overrides a game's
+ * frames-in-flight bound without code changes, like `LRG_CPU_AFFINITY`
+ * does core pinning: `off` / `none` / `false` / `0` turn frame sync off,
+ * a number 1-4 sets the bound (larger values are clamped).  Anything else
+ * is ignored with a warning.
+ *
+ * Returns: the bound to use: the override if set, else @requested
+ */
+guint
+lrg_grl_window_resolve_max_frames_in_flight (guint requested)
+{
+	const gchar *value;
+	guint64      parsed;
+	gchar       *end;
+
+	value = g_getenv ("LRG_MAX_FRAMES_IN_FLIGHT");
+	if (value == NULL || *value == '\0')
+		return MIN (requested, (guint) GRL_FRAME_SYNC_MAX_FRAMES);
+
+	if (g_ascii_strcasecmp (value, "off") == 0 ||
+	    g_ascii_strcasecmp (value, "none") == 0 ||
+	    g_ascii_strcasecmp (value, "false") == 0)
+		return 0;
+
+	end = NULL;
+	parsed = g_ascii_strtoull (value, &end, 10);
+	if (end == value || *end != '\0')
+	{
+		g_warning ("LRG_MAX_FRAMES_IN_FLIGHT=%s is not a number or 'off'; ignored", value);
+		return MIN (requested, (guint) GRL_FRAME_SYNC_MAX_FRAMES);
+	}
+	return (guint) MIN (parsed, (guint64) GRL_FRAME_SYNC_MAX_FRAMES);
 }
 
 /*

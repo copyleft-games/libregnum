@@ -14,6 +14,7 @@
 #include "lrg-label.h"
 #include "lrg-theme.h"
 #include "../lrg-log.h"
+#include "../graphics/lrg-draw-cull-private.h"
 
 /* ==========================================================================
  * Private Data
@@ -98,6 +99,63 @@ label_text_size (LrgLabel *self,
     *height = self->measured_height;
 }
 
+/*
+ * label_offscreen:
+ * @x: (in): text origin x, as passed to the text draw
+ * @y: (in): text origin y
+ *
+ * Whether the label's text, drawn at (@x, @y), cannot touch the current
+ * render target. Labels are commonly laid out far past the screen (long
+ * lists, scrolled-away panels), and every glyph is a textured quad handed
+ * to the batcher whether or not it is seen. Uses the measured text box
+ * (cached in label_text_size()) widened by two ems on every side, which
+ * covers glyph offsets and padding past the advance box; the visible rect
+ * comes from rlgl's live matrices, so cameras, render textures and pushed
+ * transforms are all respected. Anything rejected would have been clipped
+ * entirely by the GPU, so culling never changes a pixel.
+ *
+ * Returns: %TRUE if the draw can be skipped
+ */
+static gboolean
+label_offscreen (LrgLabel *self,
+                 GrlFont  *font,
+                 gfloat    x,
+                 gfloat    y)
+{
+    GrlRectangle view;
+    gfloat       width;
+    gfloat       height;
+    gfloat       margin;
+
+    if (!lrg_draw_cull_visible_rect_2d (&view))
+        return FALSE;
+
+    if (font != NULL)
+    {
+        label_text_size (self, font, &width, &height);
+    }
+    else
+    {
+        const gchar *p;
+        guint        lines;
+
+        /* The default-font size is only an estimate; bound it instead:
+         * no default-font glyph advances more than two ems. */
+        lines = 1;
+        for (p = self->text; *p != '\0'; p++)
+            if (*p == '\n')
+                lines++;
+        width = (gfloat) strlen (self->text) * self->font_size * 2.0f;
+        height = (gfloat) lines * self->font_size * 2.0f;
+    }
+
+    margin = MAX (self->font_size, 1.0f) * 2.0f;
+    return x + width + margin < view.x ||
+           y + height + margin < view.y ||
+           x - margin > view.x + view.width ||
+           y - margin > view.y + view.height;
+}
+
 static void
 lrg_label_draw (LrgWidget *widget)
 {
@@ -139,6 +197,12 @@ lrg_label_draw (LrgWidget *widget)
         {
             pos.x += lrg_widget_get_width (widget) - text_width;
         }
+    }
+
+    /* Nothing to emit when the text lies wholly off the render target */
+    if (label_offscreen (self, font_to_use, pos.x, pos.y))
+    {
+        return;
     }
 
     /* Draw with font or fallback to raylib default */

@@ -433,7 +433,18 @@ for (guint i = 0; i < visible->len; i++) {
 | Add sector           | O(1)       | Constant time                          |
 | Add portal           | O(1)       | Constant time                          |
 | Update visibility    | O(S * P)   | S = sectors, P = max portal depth      |
-| Find sector at point | O(S)       | Linear search (consider spatial index) |
+| Find sector at point | O(S)       | Linear scan of cached bounds           |
+
+Sectors and portals are owned copies, so the topology only changes through
+this API. The system keeps a cache of it, rebuilt on the first query after any
+sector or portal is added or removed: the sectors in the sector table's
+iteration order (the order the scan has always used, so overlapping sectors
+resolve to the same one) with their bounds, and each sector's portal links
+resolved to the portal and the index of the sector across it. A traversal is
+then index walks with a per-sector visit stamp instead of three string-hashed
+table operations per step, and the point scan is plain float compares (~9x less
+CPU for the =portals= bench scenario). Results, their order and the signals are
+unchanged.
 
 ** Common Patterns
 :PROPERTIES:

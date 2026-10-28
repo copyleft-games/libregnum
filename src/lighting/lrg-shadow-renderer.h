@@ -62,6 +62,17 @@ G_BEGIN_DECLS
 #define LRG_SHADOW_SUN_UNIT (12)
 
 /**
+ * LRG_SHADOW_REFRESH_NEVER:
+ *
+ * The refresh (lrg_shadow_renderer_set_refresh()) that keeps a cached
+ * tile until its light camera changes or it is invalidated
+ * (lrg_shadow_renderer_invalidate(), lrg_shadow_renderer_invalidate_box()),
+ * however old: static lights over static casters cost nothing after their
+ * first frame.
+ */
+#define LRG_SHADOW_REFRESH_NEVER (G_MAXUINT)
+
+/**
  * LRG_SHADOW_POINT_UNIT:
  *
  * Texture unit of the point lights' shadow atlas.
@@ -581,12 +592,18 @@ lrg_shadow_renderer_release_gpu (LrgShadowRenderer *self);
  * @self: an #LrgShadowRenderer
  * @frames: 0 (the default) to render every pass every frame; else a
  *   pass whose camera and light have not changed since its tile was
- *   rendered is reused for up to @frames updates
+ *   rendered is reused for up to @frames updates;
+ *   %LRG_SHADOW_REFRESH_NEVER reuses it until it changes or is
+ *   invalidated
  *
  * The pass cache: a still torch, a key light or a still camera's
  * cascades cost nothing until they move or @frames updates passed (so
- * moving casters, such as doors, show up within @frames frames).
- * Skip the passes lrg_shadow_renderer_pass_is_current() names.
+ * moving casters, such as doors, show up within @frames frames; sooner
+ * when the game names the space they moved through with
+ * lrg_shadow_renderer_invalidate_box()). Casters that move on their own
+ * in the vertex shader (swaying billboards and grass) keep the pose of
+ * the frame their tile was rendered in. Skip the passes
+ * lrg_shadow_renderer_pass_is_current() names.
  */
 LRG_AVAILABLE_IN_ALL
 void
@@ -627,5 +644,28 @@ lrg_shadow_renderer_pass_is_current (LrgShadowRenderer *self,
 LRG_AVAILABLE_IN_ALL
 void
 lrg_shadow_renderer_invalidate (LrgShadowRenderer *self);
+
+/**
+ * lrg_shadow_renderer_invalidate_box:
+ * @self: an #LrgShadowRenderer
+ * @min: (array fixed-size=3): the box's low corner, in draw space (the
+ *   space the casters are drawn in: world minus the light set's origin)
+ * @max: (array fixed-size=3): the box's high corner
+ *
+ * Forgets the cached tiles whose light camera, as the tile was rendered,
+ * sees any part of the box: a door that swung, a crate that fell, a
+ * character walking past a torch. Name the space the caster left and the
+ * space it moved into (one box around both does); the tiles of lights
+ * and cascades that cannot see it stay cached. The next update renders
+ * the forgotten passes. An unordered box (or one with a NaN) forgets
+ * every tile.
+ *
+ * Returns: the tiles forgotten
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_shadow_renderer_invalidate_box (LrgShadowRenderer *self,
+                                    const gfloat      *min,
+                                    const gfloat      *max);
 
 G_END_DECLS

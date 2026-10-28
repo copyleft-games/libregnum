@@ -71,6 +71,7 @@ platform ──> LrgGuiInput ──> LrgGuiContext widgets ──> LrgGuiDrawLis
 
 - *Input* is a plain struct (=LrgGuiInput=) that a backend fills (=lrg_gui_raylib_poll_input()=) or a test constructs by hand.
 - *Output* is a list of plain command structs (=LrgGuiCommand=) that a backend replays (=lrg_gui_raylib_render()=) or a test inspects (=lrg_gui_draw_list_find_text()=).
+- The raylib backend draws and measures text with graylib's O(1)-glyph-lookup layout (=grl-text-layout-private.h=, header-only on raylib's public API): the same quads and widths as =DrawTextEx()= / =MeasureTextEx()=, without their linear scan of the glyph table per character.
 - *Text measurement* and the *clipboard* are callbacks. Without them the context uses a fixed 0.55 em per character and an internal clipboard buffer, so layout is deterministic headless.
 
 *** Why it exists

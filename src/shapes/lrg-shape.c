@@ -8,6 +8,7 @@
  */
 
 #include "lrg-shape.h"
+#include "lrg-shape3d-mesh-private.h"
 
 /**
  * LrgShapePrivate:
@@ -57,6 +58,11 @@ lrg_shape_drawable_draw (LrgDrawable *drawable,
 	/* Don't draw if not visible */
 	if (!priv->visible)
 		return;
+
+	/* a translucent shape must land over the opaque shapes a shape batch
+	 * holds back (lrg_shape3d_begin_batch()), so they are drawn first */
+	if (priv->color != NULL && priv->color->a < 255)
+		lrg_shape3d_mesh_batch_flush ();
 
 	klass = LRG_SHAPE_GET_CLASS (self);
 	if (klass->draw != NULL)

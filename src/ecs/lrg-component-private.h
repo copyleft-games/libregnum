@@ -31,4 +31,17 @@ G_BEGIN_DECLS
 void _lrg_component_set_owner (LrgComponent  *self,
                                LrgGameObject *owner);
 
+/*
+ * Unchecked forms of lrg_component_get_owner(), lrg_component_get_enabled()
+ * and lrg_component_update(), for the per-frame loops LrgGameObject drives
+ * over its own component list: every entry was validated as an
+ * #LrgComponent when it was added, so the public type check (a full
+ * subclass check per call per component per frame) is redundant there.
+ * Behaviour is otherwise identical to the public functions.
+ */
+LrgGameObject *_lrg_component_get_owner_unchecked   (LrgComponent *self);
+gboolean       _lrg_component_get_enabled_unchecked (LrgComponent *self);
+void           _lrg_component_update_unchecked      (LrgComponent *self,
+                                                     gfloat        delta);
+
 G_END_DECLS

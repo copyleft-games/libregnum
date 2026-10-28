@@ -177,14 +177,28 @@ Object state is still mutable: a reference snapshot is not a copy of each
 object's properties. Storage order can change after releases and is not a
 stable acquisition order. Iteration takes an O(N) snapshot into a buffer the
 pool keeps for reuse (a nested iteration allocates its own), and checks each
-captured acquisition's validity in O(1). Each acquisition allocates a small
-bookkeeping record; prewarming avoids constructing gameplay objects, but does
-not make acquisition allocation-free.
+captured acquisition's validity in O(1).
+
+Steady-state acquisition and release allocate nothing and touch no hash table.
+Every pooled object has a permanent member record (created with the object,
+dropped by =shrink_to_fit()= or =clear()=) and the available list holds those
+records, so =acquire()= is a pop; =release()= is one pointer lookup. Each
+acquisition still has its own lease (so a snapshot can tell a released
+acquisition from a later one of the same object), but leases are recycled
+through a free list, and the pool's object reference moves between member and
+lease without a ref/unref round trip. The pooled type's =LrgPoolable= vtable is
+looked up once per pool: =set_active()= and =reset()= are called straight
+through it. (Until v0.3.1 each acquisition allocated a lease and inserted it
+into a hash table that release removed again, so the table grew and shrank
+every frame; ~0.2 ms instead of ~1.0 ms for 4000 acquisitions, 4 walks and
+4000 releases.)
 
 =lrg_object_pool_release()= is O(1): each acquisition remembers its storage
 slot, and the swap-remove that fills the hole updates the moved acquisition's
 slot. (It used to search the active list, O(N) per release and O(N^2) for a
-wave of releases.)
+wave of releases.) An argument that is not a member of the pool is checked for
+=LrgPoolable= only on that miss, so the usual warnings and criticals are
+unchanged.
 
 Changing =LrgPoolable='s active flag alone does not return an object to the
 pool; call =lrg_object_pool_release()= to update pool membership.

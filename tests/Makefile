@@ -107,6 +107,7 @@ TEST_SOURCES := \
 	test-rope.c \
 	test-model-animator.c \
 	test-static-batch.c \
+	test-shape-batch.c \
 	test-skinned-mesh.c \
 	test-billboard-batch.c \
 	test-terrain.c \

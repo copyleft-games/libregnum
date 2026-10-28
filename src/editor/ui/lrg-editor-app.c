@@ -14,6 +14,7 @@
 #include "lrg-editor-app-private.h"
 #include "../../core/lrg-engine.h"
 #include "../../core/lrg-cpu-affinity.h"
+#include "../../graphics/lrg-grl-window.h"
 #include "../../gui/lrg-gui-raylib-private.h"
 #include <glib/gstdio.h>
 #include <glib-unix.h>
@@ -1935,6 +1936,9 @@ editor_frame_cap (gint refresh)
 	return MAX (refresh / divisor, 30);
 }
 
+/* Frames in flight for the editor window (see LrgGameTemplate:max-frames-in-flight) */
+#define EDITOR_MAX_FRAMES_IN_FLIGHT (2)
+
 /* LRG_CPU_AFFINITY=none (or off, false, 0) keeps the default affinity */
 static gboolean
 editor_cpu_affinity_disabled (void)
@@ -1979,6 +1983,10 @@ lrg_editor_app_run (LrgEditorApp *self)
 	SetWindowMinSize (960, 600);
 	SetExitKey (KEY_NULL);
 	SetTargetFPS (editor_frame_cap (GetMonitorRefreshRate (GetCurrentMonitor ())));
+	/* Bound the frames queued ahead of the GPU, as games do (one frame
+	 * of CPU/GPU overlap); LRG_MAX_FRAMES_IN_FLIGHT overrides it */
+	grl_frame_sync_set_max_frames_in_flight (
+		lrg_grl_window_resolve_max_frames_in_flight (EDITOR_MAX_FRAMES_IN_FLIGHT));
 	self->window_open = TRUE;
 	self->headless = FALSE;
 
@@ -2019,7 +2027,8 @@ lrg_editor_app_run (LrgEditorApp *self)
 			UnloadImage (shot);
 			g_clear_pointer (&self->window_shot, g_free);
 		}
-		EndDrawing ();
+		/* EndDrawing() with the frame-sync wait before its swap */
+		grl_frame_sync_end_drawing ();
 	}
 
 	{
@@ -2033,6 +2042,7 @@ lrg_editor_app_run (LrgEditorApp *self)
 	g_clear_object (&self->backend);
 	lrg_gui_context_set_measure_func (self->gui, NULL, NULL, NULL);
 	lrg_gui_context_set_clipboard_funcs (self->gui, NULL, NULL, NULL, NULL);
+	grl_frame_sync_reset ();	/* its fences belong to the context closing */
 	CloseWindow ();
 	self->window_open = FALSE;
 	self->headless = TRUE;

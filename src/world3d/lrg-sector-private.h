@@ -25,4 +25,15 @@ G_BEGIN_DECLS
 G_GNUC_INTERNAL
 const GPtrArray *lrg_sector_peek_portal_ids (const LrgSector *self);
 
+/*
+ * lrg_sector_peek_bounds:
+ * @self: a #LrgSector
+ *
+ * The sector's own bounds (lrg_sector_get_bounds() returns a copy).
+ *
+ * Returns: (transfer none): the bounds
+ */
+G_GNUC_INTERNAL
+const LrgBoundingBox3D *lrg_sector_peek_bounds (const LrgSector *self);
+
 G_END_DECLS

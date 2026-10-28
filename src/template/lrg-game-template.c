@@ -50,6 +50,7 @@ enum
     PROP_TARGET_FPS,
     PROP_ALLOW_RESIZE,
     PROP_ALLOW_ALT_ENTER,
+    PROP_MAX_FRAMES_IN_FLIGHT,
 
     /* Frame timing */
     PROP_USE_FIXED_TIMESTEP,
@@ -385,6 +386,43 @@ lrg_game_template_snap_delta (gdouble delta,
         return steps * step;
 
     return delta;
+}
+
+/*
+ * lrg_game_template_pace_fps:
+ *
+ * Walks the fractions of the refresh rate (refresh / 1, / 2, ...) down
+ * to the first one at or below the target, and returns that one or
+ * the fraction just above it, whichever is nearer (the higher on a tie).
+ */
+gint
+lrg_game_template_pace_fps (gint target_fps,
+                            gint refresh_rate)
+{
+    gint divisor;
+    gint above;
+    gint below;
+
+    if (target_fps <= 0 || refresh_rate <= 0)
+        return target_fps;
+
+    /* the refresh rate itself (or more) is already even pacing */
+    if (target_fps >= refresh_rate)
+        return refresh_rate;
+
+    /* first fraction at or below the target; the one before is above it.
+     * Fractions are rounded up (144 / 5 = 28.8 -> 29): a cap a little
+     * faster than n vblanks still waits for the n-th, a slower one would
+     * miss it now and then */
+    for (divisor = 2; refresh_rate > target_fps * divisor; divisor++)
+        ;
+    below = (refresh_rate + divisor - 1) / divisor;
+    above = (refresh_rate + divisor - 2) / (divisor - 1);
+
+    if (below == target_fps)
+        return below;
+
+    return (above - target_fps <= target_fps - below) ? above : below;
 }
 
 void
@@ -910,6 +948,9 @@ lrg_game_template_get_property (GObject    *object,
     case PROP_ALLOW_ALT_ENTER:
         g_value_set_boolean (value, priv->allow_alt_enter);
         break;
+    case PROP_MAX_FRAMES_IN_FLIGHT:
+        g_value_set_uint (value, priv->max_frames_in_flight);
+        break;
     case PROP_USE_FIXED_TIMESTEP:
         g_value_set_boolean (value, priv->use_fixed_timestep);
         break;
@@ -1040,6 +1081,9 @@ lrg_game_template_set_property (GObject      *object,
         break;
     case PROP_ALLOW_ALT_ENTER:
         priv->allow_alt_enter = g_value_get_boolean (value);
+        break;
+    case PROP_MAX_FRAMES_IN_FLIGHT:
+        priv->max_frames_in_flight = g_value_get_uint (value);
         break;
     case PROP_USE_FIXED_TIMESTEP:
         priv->use_fixed_timestep = g_value_get_boolean (value);
@@ -1251,6 +1295,29 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
                               G_PARAM_READWRITE |
                               G_PARAM_STATIC_STRINGS |
                               G_PARAM_CONSTRUCT);
+
+    /**
+     * LrgGameTemplate:max-frames-in-flight:
+     *
+     * How many frames may be in flight (the one being built plus those
+     * the GPU has not finished), bounded with GL fences before each
+     * buffer swap (graylib's frame sync); the standalone host applies it
+     * to the window. 2 (the default) keeps one frame of CPU/GPU overlap
+     * and caps drivers that would queue up to three frames of input
+     * latency; 1 is the lowest latency (the GPU is idle when input is
+     * polled) at the cost of frame rate when GPU-bound; 0 leaves it to
+     * the driver. The environment variable `LRG_MAX_FRAMES_IN_FLIGHT`
+     * (0-4, or `off`) overrides it without code changes.
+     */
+    properties[PROP_MAX_FRAMES_IN_FLIGHT] =
+        g_param_spec_uint ("max-frames-in-flight",
+                           "Max frames in flight",
+                           "Frames in flight, bounded with GL fences (0 = driver default)",
+                           0, GRL_FRAME_SYNC_MAX_FRAMES,
+                           LRG_DEFAULT_MAX_FRAMES_IN_FLIGHT,
+                           G_PARAM_READWRITE |
+                           G_PARAM_STATIC_STRINGS |
+                           G_PARAM_CONSTRUCT);
 
     properties[PROP_ALLOW_ALT_ENTER] =
         g_param_spec_boolean ("allow-alt-enter",
@@ -1604,6 +1671,7 @@ lrg_game_template_init (LrgGameTemplate *self)
     priv->target_fps = 60;
     priv->allow_resize = TRUE;
     priv->allow_alt_enter = TRUE;
+    priv->max_frames_in_flight = LRG_DEFAULT_MAX_FRAMES_IN_FLIGHT;
 
     priv->use_fixed_timestep = TRUE;
     priv->snap_frame_delta = TRUE;

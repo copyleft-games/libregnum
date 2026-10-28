@@ -24,6 +24,7 @@
 #include <glib/gstdio.h>
 #include <gio/gio.h>
 #include <raylib.h>
+#include <rlgl.h>
 #include <graylib.h>
 #include <libregnum.h>
 
@@ -55,6 +56,10 @@ struct _BenchScenario
 static gint    opt_frames = 300;
 static gint    opt_fps = 0;
 static gboolean opt_no_pin = FALSE;
+static gint    opt_frames_in_flight = 0;
+static gboolean opt_vsync = FALSE;
+static gboolean opt_latency = FALSE;
+static gint    opt_gpu_load = 600;
 static gchar **opt_scenarios = NULL;
 static gchar  *opt_output = NULL;
 static gboolean opt_list = FALSE;
@@ -479,6 +484,24 @@ shapes_frame (gpointer state,
 	grl_camera3d_end (st->camera);
 }
 
+/* shapes_batched_frame: the same draws inside a shape batch (one
+ * instanced call per shared mesh at the end) */
+static void
+shapes_batched_frame (gpointer state,
+                      guint    frame_index)
+{
+	ShapesState *st = state;
+	guint        i;
+
+	grl_camera3d_begin (st->camera);
+	lrg_shape3d_begin_batch ();
+	for (i = 0; i < st->shapes->len; i++)
+		lrg_drawable_draw (LRG_DRAWABLE (g_ptr_array_index (st->shapes, i)),
+		                   1.0f / 60.0f);
+	lrg_shape3d_end_batch ();
+	grl_camera3d_end (st->camera);
+}
+
 static void
 shapes_teardown (gpointer state)
 {
@@ -642,6 +665,8 @@ typedef struct
 	LrgGrassField     *grass;
 	LrgLightSet       *lights;
 	LrgShadowRenderer *shadows;
+	LrgStaticBatch    *mover;       /* world-shadows-cached: a moving caster */
+	gfloat             mover_at[3]; /* where it was drawn last frame */
 } WorldState;
 
 static WorldState *
@@ -670,6 +695,7 @@ world_teardown (gpointer state)
 	g_clear_object (&st->billboards);
 	g_clear_object (&st->terrain);
 	g_clear_object (&st->batch);
+	g_clear_object (&st->mover);
 	g_clear_object (&st->shadows);
 	g_clear_object (&st->lights);
 	g_clear_object (&st->texture);
@@ -855,6 +881,27 @@ world_shadows_frame (gpointer state,
 	forward[1] = -0.196f;
 	forward[2] = cosf (a);
 
+	if (st->mover != NULL)
+	{
+		gfloat t = (gfloat) frame_index * 0.03f;
+		gfloat at[3];
+		gfloat lo[3];
+		gfloat hi[3];
+		guint  k;
+
+		/* the box circles torch 27; the tiles that saw where it was or
+		 * where it is now are rendered again, the rest stay cached */
+		at[0] = -15.0f + 5.0f * cosf (t);
+		at[1] = 1.5f;
+		at[2] = -15.0f + 5.0f * sinf (t);
+		for (k = 0; k < 3; k++)
+		{
+			lo[k] = MIN (at[k], st->mover_at[k]) - 1.0f;
+			hi[k] = MAX (at[k], st->mover_at[k]) + 1.0f;
+			st->mover_at[k] = at[k];
+		}
+		lrg_shadow_renderer_invalidate_box (st->shadows, lo, hi);
+	}
 	/* the shadow passes first (they leave the screen's 2D state behind) */
 	lrg_light_set_set_shadow_renderer (st->lights, NULL);
 	n_passes = lrg_shadow_renderer_update (st->shadows, st->lights, eye, forward, up,
@@ -862,13 +909,22 @@ world_shadows_frame (gpointer state,
 	caster = lrg_shadow_renderer_get_caster_shader (st->shadows);
 	for (p = 0; p < n_passes; p++)
 	{
-		if (!lrg_shadow_renderer_begin_pass (st->shadows, p))
+		if (lrg_shadow_renderer_pass_is_current (st->shadows, p)
+		    || !lrg_shadow_renderer_begin_pass (st->shadows, p))
 			continue;
 		lrg_static_batch_set_shader (st->batch, caster);
 		lrg_static_batch_draw (st->batch, LRG_STATIC_BATCH_ALL_LAYERS);
 		lrg_terrain_set_shader (st->terrain, caster);
 		lrg_terrain_draw (st->terrain);
 		lrg_billboard_batch_draw_shadow (st->billboards, st->shadows, camera);
+		if (st->mover != NULL)
+		{
+			lrg_static_batch_set_shader (st->mover, caster);
+			rlPushMatrix ();
+			rlTranslatef (st->mover_at[0], st->mover_at[1], st->mover_at[2]);
+			lrg_static_batch_draw (st->mover, LRG_STATIC_BATCH_ALL_LAYERS);
+			rlPopMatrix ();
+		}
 		lrg_shadow_renderer_end_pass (st->shadows);
 	}
 	lrg_light_set_set_shadow_renderer (st->lights, st->shadows);
@@ -880,10 +936,49 @@ world_shadows_frame (gpointer state,
 	lrg_terrain_set_shader (st->terrain, lrg_light_set_get_shader (st->lights));
 	lrg_static_batch_draw (st->batch, LRG_STATIC_BATCH_ALL_LAYERS);
 	lrg_terrain_draw (st->terrain);
+	if (st->mover != NULL)
+	{
+		lrg_static_batch_set_shader (st->mover, lrg_light_set_get_shader (st->lights));
+		rlPushMatrix ();
+		rlTranslatef (st->mover_at[0], st->mover_at[1], st->mover_at[2]);
+		lrg_static_batch_draw (st->mover, LRG_STATIC_BATCH_ALL_LAYERS);
+		rlPopMatrix ();
+	}
 	lrg_billboard_batch_set_wind_time (st->billboards, (gdouble) frame_index / 60.0);
 	lrg_billboard_batch_draw (st->billboards, camera);
 	grl_camera3d_end (st->camera);
 	lrg_light_set_unbind ();
+}
+
+/* --- world-shadows-cached: world-shadows with the pass cache kept until
+ * something changes (LRG_SHADOW_REFRESH_NEVER), plus a box circling torch
+ * 27 whose old and new space is invalidated every frame: the torches'
+ * faces that cannot see it are reused, the cascades (they follow the
+ * walking camera) render every frame */
+
+static gpointer
+world_shadows_cached_setup (void)
+{
+	WorldState *st = world_shadows_setup ();
+	gfloat      pos[24];
+	gfloat      nrm[24];
+	guint32     idx[36];
+	GrlMatrix   m;
+
+	bench_box (pos, nrm, idx, 1.0f);
+	memset (&m, 0, sizeof m);
+	m.m0 = 1.0f;
+	m.m5 = 1.0f;
+	m.m10 = 1.0f;
+	m.m15 = 1.0f;
+	st->mover = lrg_static_batch_new ();
+	lrg_static_batch_add_mesh (st->mover, pos, nrm, NULL, NULL, 8, idx, 36, &m, 0, 0, NULL);
+	lrg_static_batch_upload (st->mover, NULL);
+	st->mover_at[0] = -10.0f;
+	st->mover_at[1] = 1.5f;
+	st->mover_at[2] = -15.0f;
+	lrg_shadow_renderer_set_refresh (st->shadows, LRG_SHADOW_REFRESH_NEVER);
+	return st;
 }
 
 /* --- light-grid: lrg_light_set_apply() of a still camera, 256 lights in a
@@ -1889,6 +1984,142 @@ pacing_teardown (gpointer state)
 }
 
 /* ==========================================================================
+ * gpu-bound: little CPU work, a lot of blended fill (--gpu-load layers of
+ * full-window quads), so the GPU is the bottleneck and frames queue up
+ * ========================================================================== */
+
+static gpointer
+gpu_bound_setup (void)
+{
+	return NULL;
+}
+
+static void
+gpu_bound_frame (gpointer state,
+                 guint    frame_index)
+{
+	gint i;
+
+	for (i = 0; i < opt_gpu_load; i++)
+	{
+		GrlColor color = { (guint8) ((i * 7 + frame_index) & 0xff), 90, 160, 6 };
+
+		grl_draw_rectangle (0, 0, BENCH_WIDTH, BENCH_HEIGHT, &color);
+	}
+}
+
+static void
+gpu_bound_teardown (gpointer state)
+{
+}
+
+/* ==========================================================================
+ * Latency probe: input-to-GPU-done time per frame.
+ *
+ * Input for frame k is polled at the end of frame k-1 (inside
+ * end-drawing). A GL timestamp query issued after frame k's draws, before
+ * its swap, records when the GPU finished drawing that frame; converted to the CPU clock
+ * (offset re-measured every frame with glGetInteger64v(GL_TIMESTAMP)) the
+ * difference is how old frame k's input was when its rendering finished.
+ * It leaves out scanout (vblank wait, compositor), so it measures the
+ * queueing that frames in flight add, not full photon latency.
+ * Queries are read LATENCY_RING frames later, when they are long done.
+ * ========================================================================== */
+
+#define LATENCY_RING          (8)
+#define BENCH_GL_TIMESTAMP    (0x8E28)
+#define BENCH_GL_QUERY_RESULT (0x8866)
+
+typedef void (*BenchGlGenQueriesFn) (gint n, guint *ids);
+typedef void (*BenchGlDeleteQueriesFn) (gint n, const guint *ids);
+typedef void (*BenchGlQueryCounterFn) (guint id, guint target);
+typedef void (*BenchGlGetQueryObjectui64vFn) (guint id, guint pname, guint64 *params);
+typedef void (*BenchGlGetInteger64vFn) (guint pname, gint64 *data);
+typedef void (*BenchGlFlushFn) (void);
+
+typedef struct
+{
+	gboolean                     ok;
+	BenchGlGenQueriesFn          gen_queries;
+	BenchGlDeleteQueriesFn       delete_queries;
+	BenchGlQueryCounterFn        query_counter;
+	BenchGlGetQueryObjectui64vFn get_query_ui64;
+	BenchGlGetInteger64vFn       get_integer64;
+	BenchGlFlushFn               flush;
+	guint                        queries[LATENCY_RING];
+	gint64                       poll_us[LATENCY_RING];    /* input poll that fed the frame */
+	gint64                       offset_ns[LATENCY_RING];  /* cpu - gpu clock, at issue */
+	guint                        issued;                   /* frames issued so far */
+} BenchLatency;
+
+static void
+latency_init (BenchLatency *lat)
+{
+	memset (lat, 0, sizeof (*lat));
+	/* raylib's desktop GL 3.3 core has timer queries (core since 3.3) */
+	if (rlGetVersion () != RL_OPENGL_33 && rlGetVersion () != RL_OPENGL_43)
+		return;
+	lat->gen_queries = (BenchGlGenQueriesFn) rlGetProcAddress ("glGenQueries");
+	lat->delete_queries = (BenchGlDeleteQueriesFn) rlGetProcAddress ("glDeleteQueries");
+	lat->query_counter = (BenchGlQueryCounterFn) rlGetProcAddress ("glQueryCounter");
+	lat->get_query_ui64 = (BenchGlGetQueryObjectui64vFn) rlGetProcAddress ("glGetQueryObjectui64v");
+	lat->get_integer64 = (BenchGlGetInteger64vFn) rlGetProcAddress ("glGetInteger64v");
+	lat->flush = (BenchGlFlushFn) rlGetProcAddress ("glFlush");
+	if (lat->flush == NULL || lat->gen_queries == NULL || lat->delete_queries == NULL || lat->query_counter == NULL ||
+	    lat->get_query_ui64 == NULL || lat->get_integer64 == NULL)
+		return;
+	lat->gen_queries (LATENCY_RING, lat->queries);
+	lat->ok = TRUE;
+}
+
+/* Issues frame @frame's timestamp (call right after its end-drawing) with
+ * the poll time that fed it; returns the latency in ms of the frame
+ * LATENCY_RING frames back, or -1 while the ring fills */
+static gdouble
+latency_frame (BenchLatency *lat,
+               gint64        poll_us)
+{
+	guint   slot;
+	gdouble result;
+	gint64  gpu_now;
+	gint64  cpu_now;
+
+	if (!lat->ok)
+		return -1.0;
+
+	slot = lat->issued % LATENCY_RING;
+	result = -1.0;
+	if (lat->issued >= LATENCY_RING)
+	{
+		guint64 gpu_ts;
+
+		/* GL_QUERY_RESULT blocks until ready; 8 frames on it always is */
+		lat->get_query_ui64 (lat->queries[slot], BENCH_GL_QUERY_RESULT, &gpu_ts);
+		result = ((gdouble) ((gint64) gpu_ts + lat->offset_ns[slot]) / 1.0e6) -
+		         ((gdouble) lat->poll_us[slot] / 1.0e3);
+	}
+
+	lat->get_integer64 (BENCH_GL_TIMESTAMP, &gpu_now);
+	cpu_now = g_get_monotonic_time ();
+	lat->offset_ns[slot] = cpu_now * 1000 - gpu_now;
+	lat->poll_us[slot] = poll_us;
+	lat->query_counter (lat->queries[slot], BENCH_GL_TIMESTAMP);
+	/* submit the query now: left in the command buffer it would only
+	 * reach the GPU with the next frame's flush, a frame late */
+	lat->flush ();
+	lat->issued++;
+	return result;
+}
+
+static void
+latency_clear (BenchLatency *lat)
+{
+	if (lat->ok)
+		lat->delete_queries (LATENCY_RING, lat->queries);
+	lat->ok = FALSE;
+}
+
+/* ==========================================================================
  * autosave: light frames with a save-manager save every 60 frames
  * ========================================================================== */
 
@@ -2871,8 +3102,12 @@ static const BenchScenario scenarios[] = {
 	  tilemap_setup, tilemap_frame, tilemap_teardown },
 	{ "shapes3d", "3000 LrgCube3D shapes in a 3D camera",
 	  shapes_setup, shapes_frame, shapes_teardown },
+	{ "shapes3d-batched", "shapes3d inside a shape batch (instanced)",
+	  shapes_setup, shapes_batched_frame, shapes_teardown },
 	{ "shapes-round", "600 spheres, 300 cylinders, 300 cones in a 3D camera",
 	  shapes_round_setup, shapes_frame, shapes_teardown },
+	{ "shapes-round-batched", "shapes-round inside a shape batch (instanced)",
+	  shapes_round_setup, shapes_batched_frame, shapes_teardown },
 	{ "static-batch", "3600 boxes in 90 static batch chunks (tiles), walking camera",
 	  static_batch_setup, static_batch_frame, world_teardown },
 	{ "terrain", "256 terrain chunks and 256 water patches, walking camera",
@@ -2883,6 +3118,8 @@ static const BenchScenario scenarios[] = {
 	  grass_setup, grass_frame, world_teardown },
 	{ "world-shadows", "lit batch + terrain + billboards, 14 shadow passes, light grid",
 	  world_shadows_setup, world_shadows_frame, world_teardown },
+	{ "world-shadows-cached", "world-shadows, static tiles cached, a moving caster invalidating its box",
+	  world_shadows_cached_setup, world_shadows_frame, world_teardown },
 	{ "light-grid", "light set apply, 256 lights in a 32x32x4 grid, still camera",
 	  light_grid_setup, light_grid_frame, world_teardown },
 	{ "graylib-draw", "20000 graylib rectangle/texture draws + 200 texts",
@@ -2891,6 +3128,8 @@ static const BenchScenario scenarios[] = {
 	  gui_setup, gui_frame, gui_teardown },
 	{ "pacing", "1 ms of steady work per frame; run with --fps N to measure pacing",
 	  pacing_setup, pacing_frame, pacing_teardown },
+	{ "gpu-bound", "light CPU, --gpu-load blended full-window quads (GPU-bound frames)",
+	  gpu_bound_setup, gpu_bound_frame, gpu_bound_teardown },
 	{ "animator", "16 animators on 60-bone skeletons, crossfading every second",
 	  anim_setup, anim_frame, anim_teardown },
 	{ "skinned-models", "50 actors on one 3880-vertex 32-bone glTF model, GPU skinning",
@@ -2977,6 +3216,13 @@ typedef struct
 	gdouble work_median_ms;
 	gdouble work_p99_ms;
 	gdouble work_max_ms;
+	gdouble sync_median_ms;
+	gdouble sync_p99_ms;
+	gdouble sync_max_ms;
+	gdouble lat_median_ms;
+	gdouble lat_p99_ms;
+	gdouble lat_max_ms;
+	guint   lat_count;
 } BenchStats;
 
 /* Mean of the slowest @fraction of @sorted (ascending), as a frame rate. */
@@ -3001,11 +3247,16 @@ low_fps (const gdouble *sorted,
 static void
 bench_stats (const gdouble *frames,
              const gdouble *work,
+             const gdouble *sync,
+             const gdouble *lat,
              guint          n,
              BenchStats    *out)
 {
+	g_autofree gdouble *lsorted = NULL;
+	guint               ln;
 	g_autofree gdouble *sorted = NULL;
 	g_autofree gdouble *wsorted = NULL;
+	g_autofree gdouble *ssorted = NULL;
 	gdouble             total;
 	gdouble             dsum;
 	gdouble             dsq;
@@ -3015,6 +3266,8 @@ bench_stats (const gdouble *frames,
 	wsorted = g_memdup2 (work, sizeof (gdouble) * n);
 	qsort (sorted, n, sizeof (gdouble), compare_double);
 	qsort (wsorted, n, sizeof (gdouble), compare_double);
+	ssorted = g_memdup2 (sync, sizeof (gdouble) * n);
+	qsort (ssorted, n, sizeof (gdouble), compare_double);
 
 	total = 0.0;
 	for (i = 0; i < n; i++)
@@ -3045,6 +3298,26 @@ bench_stats (const gdouble *frames,
 	out->work_median_ms = wsorted[n / 2];
 	out->work_p99_ms = wsorted[MIN (n - 1, (n * 99) / 100)];
 	out->work_max_ms = wsorted[n - 1];
+	out->sync_median_ms = ssorted[n / 2];
+	out->sync_p99_ms = ssorted[MIN (n - 1, (n * 99) / 100)];
+	out->sync_max_ms = ssorted[n - 1];
+
+	/* latency samples are -1 where the probe had none (ring filling, no
+	 * timer queries): keep the real ones */
+	lsorted = g_new0 (gdouble, n);
+	ln = 0;
+	for (i = 0; i < n; i++)
+		if (lat[i] >= 0.0)
+			lsorted[ln++] = lat[i];
+	out->lat_count = ln;
+	out->lat_median_ms = out->lat_p99_ms = out->lat_max_ms = 0.0;
+	if (ln > 0)
+	{
+		qsort (lsorted, ln, sizeof (gdouble), compare_double);
+		out->lat_median_ms = lsorted[ln / 2];
+		out->lat_p99_ms = lsorted[MIN (ln - 1, (ln * 99) / 100)];
+		out->lat_max_ms = lsorted[ln - 1];
+	}
 }
 
 /* Runs one scenario: warm up, then time opt_frames frames. A frame's time
@@ -3058,6 +3331,10 @@ run_scenario (GrlWindow           *window,
 {
 	g_autofree gdouble *samples = NULL;
 	g_autofree gdouble *work = NULL;
+	g_autofree gdouble *sync = NULL;
+	g_autofree gdouble *lat = NULL;
+	BenchLatency        probe;
+	gint64              last_poll;
 	gpointer            state;
 	BenchStats          st;
 	gint64              last_end;
@@ -3068,10 +3345,18 @@ run_scenario (GrlWindow           *window,
 	n = (guint) opt_frames;
 	samples = g_new0 (gdouble, n);
 	work = g_new0 (gdouble, n);
+	sync = g_new0 (gdouble, n);
+	lat = g_new0 (gdouble, n + LATENCY_RING);
 	bg = grl_color_new (20, 20, 30, 255);
 	state = sc->setup ();
+	/* the probe costs a synchronous GPU clock read and a batch flush per
+	 * frame (~0.1 ms on hardware), so it only runs when asked for */
+	memset (&probe, 0, sizeof (probe));
+	if (opt_latency)
+		latency_init (&probe);
 
 	last_end = 0;
+	last_poll = g_get_monotonic_time ();
 	for (i = 0; i < n + BENCH_WARMUP_FRAMES; i++)
 	{
 		gint64 w0;
@@ -3086,34 +3371,70 @@ run_scenario (GrlWindow           *window,
 		w0 = g_get_monotonic_time ();
 		sc->frame (state, i);
 		w1 = g_get_monotonic_time ();
+
+		/* Latency probe: this frame was built from the input polled at
+		 * the end of the previous one.  Its timestamp goes in after the
+		 * frame's draws (flushed out of raylib's batch, as end-drawing
+		 * would) and before the swap, so it records when the GPU finished
+		 * drawing it.  The latency returned is LATENCY_RING frames old. */
+		if (probe.ok)
+		{
+			gdouble l;
+
+			rlDrawRenderBatchActive ();
+			l = latency_frame (&probe, last_poll);
+			if (i >= BENCH_WARMUP_FRAMES + LATENCY_RING)
+				lat[i - BENCH_WARMUP_FRAMES - LATENCY_RING] = l;
+		}
+
 		grl_window_end_drawing (window);
 		t1 = g_get_monotonic_time ();
+		last_poll = t1;
 
 		if (i >= BENCH_WARMUP_FRAMES)
 		{
 			samples[i - BENCH_WARMUP_FRAMES] = (gdouble) (t1 - last_end) / 1000.0;
 			work[i - BENCH_WARMUP_FRAMES] = (gdouble) (w1 - w0) / 1000.0;
+			/* time end-drawing spent waiting on the GPU (--frames-in-flight) */
+			sync[i - BENCH_WARMUP_FRAMES] = grl_frame_sync_get_last_wait () * 1000.0;
 		}
 		last_end = t1;
 	}
 
 	sc->teardown (state);
+	latency_clear (&probe);
+	/* the last LATENCY_RING frames' queries were never read */
+	for (i = n - MIN (n, (guint) LATENCY_RING); i < n; i++)
+		lat[i] = -1.0;
 
-	bench_stats (samples, work, n, &st);
+	bench_stats (samples, work, sync, lat, n, &st);
 	if (yaml)
 		g_print ("- scenario: %s\n  frames: %u\n  target_fps: %d\n"
 		         "  fps: %.1f\n  low1_fps: %.1f\n  low5_fps: %.1f\n"
 		         "  mean_ms: %.3f\n  median_ms: %.3f\n  p95_ms: %.3f\n"
 		         "  p99_ms: %.3f\n  max_ms: %.3f\n  jitter_ms: %.3f\n"
-		         "  work_median_ms: %.3f\n  work_p99_ms: %.3f\n  work_max_ms: %.3f\n",
+		         "  work_median_ms: %.3f\n  work_p99_ms: %.3f\n  work_max_ms: %.3f\n"
+		         "  frames_in_flight: %d\n  sync_wait_median_ms: %.3f\n"
+		         "  sync_wait_p99_ms: %.3f\n  sync_wait_max_ms: %.3f\n"
+		         "  latency_samples: %u\n  latency_median_ms: %.3f\n"
+		         "  latency_p99_ms: %.3f\n  latency_max_ms: %.3f\n",
 		         sc->name, n, opt_fps, st.fps, st.low1_fps, st.low5_fps,
 		         st.mean_ms, st.median_ms, st.p95_ms, st.p99_ms, st.max_ms,
-		         st.jitter_ms, st.work_median_ms, st.work_p99_ms, st.work_max_ms);
+		         st.jitter_ms, st.work_median_ms, st.work_p99_ms, st.work_max_ms,
+		         opt_frames_in_flight, st.sync_median_ms, st.sync_p99_ms,
+		         st.sync_max_ms, st.lat_count, st.lat_median_ms, st.lat_p99_ms,
+		         st.lat_max_ms);
 	else
 		g_print ("%-14s %8.1f fps  1%% low %8.1f  5%% low %8.1f  p99 %7.3f ms"
 		         "  max %7.3f ms  jitter %6.3f ms | work median %7.3f p99 %7.3f max %7.3f ms\n",
 		         sc->name, st.fps, st.low1_fps, st.low5_fps, st.p99_ms,
 		         st.max_ms, st.jitter_ms, st.work_median_ms, st.work_p99_ms, st.work_max_ms);
+	if (!yaml && opt_frames_in_flight > 0)
+		g_print ("%-14s frames in flight %d: GPU wait median %7.3f p99 %7.3f max %7.3f ms\n",
+		         "", opt_frames_in_flight, st.sync_median_ms, st.sync_p99_ms, st.sync_max_ms);
+	if (!yaml && st.lat_count > 0)
+		g_print ("%-14s input-to-GPU-done latency median %7.3f p99 %7.3f max %7.3f ms\n",
+		         "", st.lat_median_ms, st.lat_p99_ms, st.lat_max_ms);
 }
 
 static const gchar *license_text =
@@ -3146,6 +3467,14 @@ main (int    argc,
 		  "Cap the frame rate (default 0: uncapped); measures pacing", "N" },
 		{ "no-pin", 0, 0, G_OPTION_ARG_NONE, &opt_no_pin,
 		  "Do not keep the main thread on performance cores (as LRG_CPU_AFFINITY=none)", NULL },
+		{ "vsync", 0, 0, G_OPTION_ARG_NONE, &opt_vsync,
+		  "Open the window with vsync on", NULL },
+		{ "gpu-load", 0, 0, G_OPTION_ARG_INT, &opt_gpu_load,
+		  "Full-window blended quads per gpu-bound frame (default 600)", "N" },
+		{ "latency", 0, 0, G_OPTION_ARG_NONE, &opt_latency,
+		  "Report input-to-GPU-done latency (GL timestamp queries; adds ~0.1 ms a frame)", NULL },
+		{ "frames-in-flight", 0, 0, G_OPTION_ARG_INT, &opt_frames_in_flight,
+		  "Bound frames in flight with GL fences (default 0: driver default); reports the GPU wait", "N" },
 		{ "output", 'o', 0, G_OPTION_ARG_STRING, &opt_output,
 		  "Output format: text (default) or yaml", "FORMAT" },
 		{ "list", 'l', 0, G_OPTION_ARG_NONE, &opt_list,
@@ -3163,6 +3492,8 @@ main (int    argc,
 		"  lrg-bench -s ecs-sprites -s gui run two scenarios\n"
 		"  lrg-bench -f 1000 -o yaml       longer run, YAML results\n"
 		"  lrg-bench -s pacing --fps 60    frame pacing at a 60 fps cap\n"
+		"  lrg-bench -s pacing --fps 60 --frames-in-flight 1 --latency\n"
+		"                                  the same with 1 frame in flight (low latency)\n"
 		"\nRuns uncapped in a small window; needs a display (make run-bench\n"
 		"starts Xvfb when DISPLAY is unset).\n");
 	if (!g_option_context_parse (octx, &argc, &argv, &error))
@@ -3191,8 +3522,13 @@ main (int    argc,
 		lrg_cpu_affinity_pin_to_performance_cores (NULL);
 
 	SetTraceLogLevel (LOG_WARNING);
+	if (opt_vsync)
+		SetConfigFlags (FLAG_VSYNC_HINT);
 	window = grl_window_new (BENCH_WIDTH, BENCH_HEIGHT, "lrg-bench");
 	grl_window_set_target_fps (window, opt_fps > 0 ? opt_fps : 0);
+	grl_window_set_max_frames_in_flight (window, (guint) MAX (opt_frames_in_flight, 0));
+	if (opt_frames_in_flight > 0 && !grl_frame_sync_is_supported ())
+		g_printerr ("lrg-bench: this GL context has no sync objects; --frames-in-flight does nothing\n");
 
 	for (i = 0; i < G_N_ELEMENTS (scenarios); i++)
 		if (scenario_selected (scenarios[i].name))

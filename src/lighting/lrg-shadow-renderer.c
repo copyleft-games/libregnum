@@ -795,15 +795,18 @@ lrg_shadow_renderer_update (LrgShadowRenderer *self,
 
             pass_light (self, pass, light);
             lrg_shadow_renderer_get_pass (self, pass, NULL, NULL, vp);
-            if (self->cache_valid[pass])
+            if (self->cache_valid[pass] && self->cache_age[pass] < G_MAXUINT)
                 self->cache_age[pass]++;
             if (self->refresh > 0 && self->cache_valid[pass]
                 && memcmp (vp, self->cache_vp[pass], sizeof vp) == 0
                 && memcmp (light, self->cache_light[pass], sizeof light) == 0)
             {
-                if (self->cache_age[pass] < self->refresh)
+                /* (64-bit: twice the refresh of LRG_SHADOW_REFRESH_NEVER
+                 * would wrap) */
+                if (self->refresh == LRG_SHADOW_REFRESH_NEVER
+                    || self->cache_age[pass] < self->refresh)
                     self->current |= G_GUINT64_CONSTANT (1) << pass;
-                else if (self->cache_age[pass] < 2 * self->refresh)
+                else if ((guint64)self->cache_age[pass] < 2 * (guint64)self->refresh)
                     due[n_due++] = pass;
             }
         }
@@ -820,7 +823,9 @@ lrg_shadow_renderer_update (LrgShadowRenderer *self,
             }
             due[j] = v;
         }
-        budget = self->refresh > 0 ? MAX (1u, (n + self->refresh - 1) / self->refresh) : 0;
+        budget = self->refresh > 0
+                 ? (guint)MAX ((guint64)1, ((guint64)n + self->refresh - 1) / self->refresh)
+                 : 0;
         for (k = budget; k < n_due; k++)
             self->current |= G_GUINT64_CONSTANT (1) << due[k];
     }
@@ -1301,6 +1306,84 @@ lrg_shadow_renderer_invalidate (LrgShadowRenderer *self)
     g_return_if_fail (LRG_IS_SHADOW_RENDERER (self));
 
     drop_cache (self);
+}
+
+/* box_outside: whether the box @lo .. @hi lies wholly outside the clip
+ * volume of the column-major @view_proj: all eight corners beyond one
+ * of its six planes (each plane is linear in the world point, whatever
+ * the sign of w, so this holds for the cube faces' perspective too) */
+static gboolean
+box_outside (const gfloat *view_proj,
+             const gfloat *lo,
+             const gfloat *hi)
+{
+    guint outside[6] = { 0, 0, 0, 0, 0, 0 };
+    guint c;
+    guint plane;
+
+    for (c = 0; c < 8; c++)
+    {
+        gfloat p[3];
+        gfloat clip[4];
+        guint  row;
+
+        p[0] = (c & 1) ? hi[0] : lo[0];
+        p[1] = (c & 2) ? hi[1] : lo[1];
+        p[2] = (c & 4) ? hi[2] : lo[2];
+        for (row = 0; row < 4; row++)
+            clip[row] = view_proj[row] * p[0] + view_proj[4 + row] * p[1]
+                        + view_proj[8 + row] * p[2] + view_proj[12 + row];
+        if (clip[0] > clip[3])
+            outside[0]++;
+        if (clip[0] < -clip[3])
+            outside[1]++;
+        if (clip[1] > clip[3])
+            outside[2]++;
+        if (clip[1] < -clip[3])
+            outside[3]++;
+        if (clip[2] > clip[3])
+            outside[4]++;
+        if (clip[2] < -clip[3])
+            outside[5]++;
+    }
+    for (plane = 0; plane < 6; plane++)
+        if (outside[plane] == 8)
+            return TRUE;
+    return FALSE;
+}
+
+guint
+lrg_shadow_renderer_invalidate_box (LrgShadowRenderer *self,
+                                    const gfloat      *min,
+                                    const gfloat      *max)
+{
+    guint dropped = 0;
+    guint pass;
+
+    g_return_val_if_fail (LRG_IS_SHADOW_RENDERER (self), 0);
+    g_return_val_if_fail (min != NULL && max != NULL, 0);
+
+    /* a box with a NaN (or an inverted one) cannot be placed: every
+     * tile may hold it */
+    if (!(min[0] <= max[0] && min[1] <= max[1] && min[2] <= max[2]))
+    {
+        for (pass = 0; pass < MAX_PASSES; pass++)
+            if (self->cache_valid[pass])
+                dropped++;
+        drop_cache (self);
+        return dropped;
+    }
+
+    /* the tiles whose light camera (as rendered) sees part of the box */
+    for (pass = 0; pass < MAX_PASSES; pass++)
+    {
+        if (!self->cache_valid[pass] || box_outside (self->cache_vp[pass], min, max))
+            continue;
+        self->cache_valid[pass] = FALSE;
+        self->current &= ~(G_GUINT64_CONSTANT (1) << pass);
+        dropped++;
+    }
+    return dropped;
 }
 
 /* ------------------------------------------------------------------------ */
