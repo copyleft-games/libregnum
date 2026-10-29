@@ -1989,7 +1989,9 @@ LRGEDITORCTL_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -Isrc/editorctl
 LRGEDITORCTL_CFLAGS += $(GLIB_CFLAGS) $(JSON_CFLAGS) $(shell $(PKG_CONFIG) --cflags gio-unix-2.0)
 LRGEDITORCTL_CFLAGS += -isystem $(YAMLGLIB_DIR)/src $(YAML_CFLAGS)
 LRGEDITORCTL_CFLAGS += -DLRG_EDITORCTL_VERSION=\"$(VERSION)\"
-LRGEDITORCTL_LIBS := $(YAMLGLIB_STATIC) $(YAML_LIBS) $(JSON_LIBS) $(GLIB_LIBS)
+# -lm last: the static mcp-glib calls isfinite(), which glibc expands inline
+# but FreeBSD resolves to __isfinite in libm.
+LRGEDITORCTL_LIBS := $(YAMLGLIB_STATIC) $(YAML_LIBS) $(JSON_LIBS) $(GLIB_LIBS) -lm
 
 ifeq ($(EDITOR_MCP),1)
 LRGEDITORCTL_SOURCES += src/editorctl/lrgeditorctl-mcp.c
