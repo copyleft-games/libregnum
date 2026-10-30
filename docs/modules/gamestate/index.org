@@ -297,6 +297,10 @@ This ensures states have a clean "first frame" without inheriting input from the
 | =draw()=                    | Each frame (if visible)         | Yes                        |
 | =handle_input(event)=       | Input event received            | No (default: no-op)        |
 
+=enter()=, =exit()=, =update()= and =draw()= have no base implementation (they are =NULL= in =LrgGameStateClass=), so a subclass must not chain up to them.
+
+=lrg_game_state_manager_handle_input()= asks states from the top down and holds a reference to each while it is asked, so an input handler may pop, replace or clear states (a confirmation dialog closing itself, for example) without freeing the state that is still handling the event.
+
 *** LrgGameState Properties
 :PROPERTIES:
 :CUSTOM_ID: lrggamestate-properties
