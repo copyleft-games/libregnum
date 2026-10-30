@@ -251,7 +251,7 @@ lrg_mcp_ecs_tools_init (LrgMcpEcsTools *self)
 {
 }
 
-/**
+/*
  * lrg_mcp_ecs_tools_new:
  *
  * Returns: (transfer full): a new ECS tools provider

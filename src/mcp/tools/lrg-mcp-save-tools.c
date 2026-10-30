@@ -176,7 +176,7 @@ lrg_mcp_save_tools_init (LrgMcpSaveTools *self)
 {
 }
 
-/**
+/*
  * lrg_mcp_save_tools_new:
  *
  * Returns: (transfer full): a new save tools provider

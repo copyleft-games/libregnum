@@ -541,7 +541,7 @@ lrg_mcp_reel_tools_init (LrgMcpReelTools *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_reel_tools_new:
  *
  * Creates a new reel tools provider.

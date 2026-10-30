@@ -458,40 +458,96 @@ test_registry_alias_lifetime (void)
     g_assert_null (lrg_registry_lookup_name (registry, G_TYPE_OBJECT));
 }
 
+/*
+ * Every built-in entry must resolve to a concrete GObject type that the
+ * data loader can build from a bare "type: <name>" document, with no
+ * application registration at all.
+ */
 static void
 test_registry_builtins (void)
 {
     g_autoptr(LrgRegistry) registry = lrg_registry_new ();
     g_autoptr(LrgDataLoader) loader = lrg_data_loader_new ();
-    const gchar *names[] = { "game-object", "world", "transform", "sprite",
-                            "collider", "animator", "item-def", "quest-def" };
-    GType types[] = { LRG_TYPE_GAME_OBJECT, LRG_TYPE_WORLD,
-                     LRG_TYPE_TRANSFORM_COMPONENT, LRG_TYPE_SPRITE_COMPONENT,
-                     LRG_TYPE_COLLIDER_COMPONENT, LRG_TYPE_ANIMATOR_COMPONENT,
-                     LRG_TYPE_ITEM_DEF, LRG_TYPE_QUEST_DEF };
+    g_autoptr(GList) names = NULL;
+    const gchar *expected[] = { "game-object", "world", "transform", "sprite",
+                                "collider", "animator", "item-def",
+                                "quest-def", "rigid-body", "trigger-rect",
+                                "point-light2d", "particle-emitter",
+                                "particle-system", "cube3d", "behavior-tree" };
+    GType expected_types[] = { LRG_TYPE_GAME_OBJECT, LRG_TYPE_WORLD,
+                               LRG_TYPE_TRANSFORM_COMPONENT, LRG_TYPE_SPRITE_COMPONENT,
+                               LRG_TYPE_COLLIDER_COMPONENT, LRG_TYPE_ANIMATOR_COMPONENT,
+                               LRG_TYPE_ITEM_DEF,
+                               LRG_TYPE_QUEST_DEF, LRG_TYPE_RIGID_BODY,
+                               LRG_TYPE_TRIGGER_RECT, LRG_TYPE_POINT_LIGHT2D,
+                               LRG_TYPE_PARTICLE_EMITTER, LRG_TYPE_PARTICLE_SYSTEM,
+                               LRG_TYPE_CUBE3D, LRG_TYPE_BEHAVIOR_TREE };
+    GList *iter;
+    guint count;
     guint i;
 
     lrg_registry_register_builtin (registry);
     lrg_data_loader_set_registry (loader, registry);
-    for (i = 0; i < G_N_ELEMENTS (names); i++)
+    count = lrg_registry_get_count (registry);
+    g_assert_cmpuint (count, >=, 60);
+    g_assert_false (lrg_registry_is_registered (registry, "script"));
+
+    /* Spot-check the documented names. */
+    for (i = 0; i < G_N_ELEMENTS (expected); i++)
+        g_assert_cmpuint (lrg_registry_lookup (registry, expected[i]), ==, expected_types[i]);
+
+    /* Every entry is concrete and loads from YAML without app help. */
+    names = lrg_registry_get_names (registry);
+    for (iter = names; iter != NULL; iter = iter->next)
     {
+        const gchar *name = iter->data;
+        GType type = lrg_registry_lookup (registry, name);
         g_autoptr(GObject) object = NULL;
         g_autoptr(GError) error = NULL;
-        g_autofree gchar *yaml = g_strdup_printf ("type: %s\n", names[i]);
+        g_autofree gchar *yaml = g_strdup_printf ("type: %s\n", name);
 
-        g_assert_cmpuint (lrg_registry_lookup (registry, names[i]), ==, types[i]);
+        g_test_message ("built-in %s -> %s", name, g_type_name (type));
+        g_assert_true (G_TYPE_IS_OBJECT (type));
+        g_assert_false (G_TYPE_IS_ABSTRACT (type));
         object = lrg_data_loader_load_data (loader, yaml, -1, &error);
         g_assert_no_error (error);
         g_assert_nonnull (object);
-        g_assert_cmpuint (G_OBJECT_TYPE (object), ==, types[i]);
+        g_assert_cmpuint (G_OBJECT_TYPE (object), ==, type);
+        g_assert_cmpstr (lrg_registry_lookup_name (registry, type), !=, NULL);
     }
+
+    /* Application overrides survive a second install; nothing duplicates. */
     lrg_registry_register (registry, "game-object", TEST_TYPE_OBJECT);
     lrg_registry_register_builtin (registry);
-    g_assert_cmpuint (lrg_registry_get_count (registry), ==, G_N_ELEMENTS (names));
+    g_assert_cmpuint (lrg_registry_get_count (registry), ==, count);
     g_assert_cmpuint (lrg_registry_lookup (registry, "game-object"), ==, TEST_TYPE_OBJECT);
+
+    /* Clearing drops both; a fresh install restores the engine type. */
     lrg_registry_clear (registry);
     lrg_registry_register_builtin (registry);
+    g_assert_cmpuint (lrg_registry_get_count (registry), ==, count);
     g_assert_cmpuint (lrg_registry_lookup (registry, "game-object"), ==, LRG_TYPE_GAME_OBJECT);
+}
+
+/*
+ * The engine installs the catalog at startup, so its data loader resolves
+ * built-in names straight away.
+ */
+static void
+test_registry_builtins_engine (void)
+{
+    LrgEngine *engine = lrg_engine_get_default ();
+    g_autoptr(GObject) object = NULL;
+    g_autoptr(GError) error = NULL;
+
+    g_assert_true (lrg_engine_startup (engine, &error));
+    g_assert_no_error (error);
+    object = lrg_data_loader_load_data (lrg_engine_get_data_loader (engine),
+                                        "type: rigid-body\nmass: 2.5\n", -1, &error);
+    g_assert_no_error (error);
+    g_assert_true (LRG_IS_RIGID_BODY (object));
+    g_assert_cmpfloat (lrg_rigid_body_get_mass (LRG_RIGID_BODY (object)), ==, 2.5f);
+    lrg_engine_shutdown (engine);
 }
 
 /* ==========================================================================
@@ -506,6 +562,7 @@ main (int   argc,
 
     g_test_add_func ("/registry/alias-lifetime", test_registry_alias_lifetime);
     g_test_add_func ("/registry/builtins", test_registry_builtins);
+    g_test_add_func ("/registry/builtins/engine", test_registry_builtins_engine);
 
     /* Construction */
     g_test_add_func ("/registry/new", test_registry_new);

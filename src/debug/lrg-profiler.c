@@ -368,6 +368,34 @@ lrg_profiler_end_frame (LrgProfiler *self)
     }
 }
 
+/*
+ * lrg_profiler_is_section_active:
+ *
+ * A section is open while it has a start time in the active table.
+ */
+gboolean
+lrg_profiler_is_section_active (LrgProfiler *self,
+                                const gchar *name)
+{
+    g_return_val_if_fail (LRG_IS_PROFILER (self), FALSE);
+    g_return_val_if_fail (name != NULL, FALSE);
+
+    return g_hash_table_contains (self->active, name);
+}
+
+/*
+ * lrg_profiler_get_active_section_names:
+ *
+ * The active table's keys are the open section names.
+ */
+GList *
+lrg_profiler_get_active_section_names (LrgProfiler *self)
+{
+    g_return_val_if_fail (LRG_IS_PROFILER (self), NULL);
+
+    return g_hash_table_get_keys (self->active);
+}
+
 /* ==========================================================================
  * Statistics
  * ========================================================================== */

@@ -702,8 +702,9 @@ test_mcp_tool_schema_lifecycle (void)
     g_autoptr(LrgMcpReelTools) reel = lrg_mcp_reel_tools_new ();
     g_autoptr(LrgMcpEcsTools) ecs = lrg_mcp_ecs_tools_new ();
     g_autoptr(LrgMcpSaveTools) save = lrg_mcp_save_tools_new ();
-    LrgMcpToolProvider *providers[] = { LRG_MCP_TOOL_PROVIDER (ecs), LRG_MCP_TOOL_PROVIDER (save) };
-    guint expected[] = { 9, 7 };
+    LrgMcpToolProvider *providers[] = { LRG_MCP_TOOL_PROVIDER (ecs), LRG_MCP_TOOL_PROVIDER (save),
+                                        LRG_MCP_TOOL_PROVIDER (debug) };
+    guint expected[] = { 9, 7, 11 };
     guint i;
 
     /* Every advertised ECS/save operation has a strict object schema.
@@ -728,6 +729,306 @@ test_mcp_tool_schema_lifecycle (void)
     }
 }
 
+/* Calls a tool whose result is plain text and asserts it succeeded. */
+static void
+call_ok (LrgMcpToolProvider *provider,
+         const gchar *tool,
+         const gchar *arguments)
+{
+    g_autoptr(JsonParser) parser = json_parser_new ();
+    g_autoptr(McpToolResult) result = NULL;
+    g_autoptr(GError) error = NULL;
+
+    g_assert_true (json_parser_load_from_data (parser, arguments, -1, &error));
+    result = lrg_mcp_tool_provider_call_tool (provider, tool,
+                                             json_node_get_object (json_parser_get_root (parser)), &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (result);
+    g_assert_false (mcp_tool_result_get_is_error (result));
+}
+
+/* TRUE when @array holds the string @value. */
+static gboolean
+json_array_has_string (JsonArray   *array,
+                       const gchar *value)
+{
+    guint i;
+
+    for (i = 0; i < json_array_get_length (array); i++)
+    {
+        if (g_strcmp0 (json_array_get_string_element (array, i), value) == 0)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/* Built-in registry names spawn without any application registration. */
+static void
+test_mcp_ecs_spawn_builtin (void)
+{
+    LrgEngine *engine = lrg_engine_get_default ();
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    g_autoptr(LrgMcpEcsTools) tools = lrg_mcp_ecs_tools_new ();
+    LrgMcpToolProvider *provider = LRG_MCP_TOOL_PROVIDER (tools);
+    g_autoptr(JsonObject) json = NULL;
+
+    g_assert_true (lrg_engine_startup (engine, NULL));
+    g_assert_true (lrg_engine_register_world (engine, "builtin", world));
+    json = call_json (provider, "lrg_ecs_spawn_object", "{\"type\":\"game-object\",\"x\":3,\"y\":4}");
+    g_assert_true (json_object_get_boolean_member (json, "success"));
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 1);
+    /* A built-in that is not a game object is still rejected. */
+    call_error (provider, "lrg_ecs_spawn_object", "{\"type\":\"rigid-body\"}", G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_true (lrg_engine_unregister_world (engine, "builtin"));
+    lrg_engine_shutdown (engine);
+}
+
+/* Logging, FPS and the profiler section lifecycle through the default profiler. */
+static void
+test_mcp_debug_profiler (void)
+{
+    g_autoptr(LrgMcpDebugTools) tools = lrg_mcp_debug_tools_new ();
+    LrgMcpToolProvider *provider = LRG_MCP_TOOL_PROVIDER (tools);
+    LrgProfiler *profiler = lrg_profiler_get_default ();
+    g_autoptr(JsonObject) json = NULL;
+    JsonArray *sections;
+    JsonObject *section = NULL;
+    guint i;
+
+    json = call_json (provider, "lrg_debug_log", "{\"message\":\"hello from mcp\",\"level\":\"debug\"}");
+    g_assert_true (json_object_get_boolean_member (json, "logged"));
+    call_error (provider, "lrg_debug_log", "{\"message\":\"x\",\"level\":\"loud\"}", G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    call_error (provider, "lrg_debug_log", "{\"message\":5}", G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    call_error (provider, "lrg_debug_log", "{}", G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_get_fps", "{}");
+    g_assert_true (json_object_has_member (json, "fps"));
+    g_assert_true (json_object_has_member (json, "frame_time_ms"));
+    g_assert_false (json_object_has_member (json, "note"));
+
+    /* Stopping a section that never started is NOT_FOUND, not a warning. */
+    call_error (provider, "lrg_debug_profiler_stop", "{\"name\":\"mcp-never\"}", G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_profiler_start", "{\"name\":\"mcp-section\"}");
+    g_assert_true (lrg_profiler_is_enabled (profiler));
+    g_assert_true (lrg_profiler_is_section_active (profiler, "mcp-section"));
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_profiler_report", "{}");
+    g_assert_cmpuint (json_array_get_length (json_object_get_array_member (json, "active")), ==, 1);
+    g_assert_cmpstr (json_array_get_string_element (json_object_get_array_member (json, "active"), 0), ==, "mcp-section");
+    g_usleep (2000);
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_profiler_stop", "{\"name\":\"mcp-section\"}");
+    g_assert_cmpstr (json_object_get_string_member (json, "name"), ==, "mcp-section");
+    g_assert_false (json_object_get_boolean_member (json, "active"));
+    g_assert_cmpint (json_object_get_int_member (json, "sample_count"), ==, 1);
+    g_assert_cmpfloat (json_object_get_double_member (json, "last_ms"), >=, 1.0);
+    g_assert_false (lrg_profiler_is_section_active (profiler, "mcp-section"));
+
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_profiler_report", "{}");
+    g_assert_true (json_object_get_boolean_member (json, "enabled"));
+    sections = json_object_get_array_member (json, "sections");
+    for (i = 0; i < json_array_get_length (sections); i++)
+    {
+        JsonObject *entry = json_array_get_object_element (sections, i);
+        if (g_str_equal (json_object_get_string_member (entry, "name"), "mcp-section"))
+            section = entry;
+    }
+    g_assert_nonnull (section);
+    g_assert_cmpfloat (json_object_get_double_member (section, "max_ms"), >=, 1.0);
+
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_profiler_clear", "{}");
+    g_assert_cmpuint (lrg_profiler_get_sample_count (profiler, "mcp-section"), ==, 0);
+    lrg_profiler_set_enabled (profiler, FALSE);
+}
+
+/* Overlay flags/custom lines and console execution use the real singletons. */
+static void
+test_mcp_debug_overlay_console (void)
+{
+    g_autoptr(LrgMcpDebugTools) tools = lrg_mcp_debug_tools_new ();
+    LrgMcpToolProvider *provider = LRG_MCP_TOOL_PROVIDER (tools);
+    LrgDebugOverlay *overlay = lrg_debug_overlay_get_default ();
+    LrgDebugOverlayFlags previous = lrg_debug_overlay_get_flags (overlay);
+    gboolean was_visible = lrg_debug_overlay_is_visible (overlay);
+    g_autoptr(JsonObject) json = NULL;
+    JsonArray *entries;
+    JsonObject *last;
+    JsonArray *flags;
+
+    json = call_json (provider, "lrg_debug_overlay_set",
+                      "{\"visible\":true,\"flags\":\"profiler,custom\",\"custom_key\":\"mcp\",\"custom_text\":\"agent was here\"}");
+    g_assert_true (lrg_debug_overlay_is_visible (overlay));
+    g_assert_cmpuint (lrg_debug_overlay_get_flags (overlay), ==, LRG_DEBUG_OVERLAY_PROFILER | LRG_DEBUG_OVERLAY_CUSTOM);
+    flags = json_object_get_array_member (json, "flags");
+    g_assert_cmpuint (json_array_get_length (flags), ==, 2);
+    g_assert_nonnull (strstr (json_object_get_string_member (json, "text"), "agent was here"));
+    call_error (provider, "lrg_debug_overlay_set", "{\"flags\":\"bogus\"}", G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    call_error (provider, "lrg_debug_overlay_set", "{\"custom_text\":\"orphan\"}", G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    call_error (provider, "lrg_debug_overlay_set", "{\"visible\":\"yes\"}", G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_cmpuint (lrg_debug_overlay_get_flags (overlay), ==, LRG_DEBUG_OVERLAY_PROFILER | LRG_DEBUG_OVERLAY_CUSTOM);
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_overlay_set", "{\"custom_key\":\"mcp\"}");
+    g_assert_null (strstr (json_object_get_string_member (json, "text"), "agent was here"));
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_overlay_get", "{}");
+    g_assert_true (json_object_get_boolean_member (json, "visible"));
+    lrg_debug_overlay_set_flags (overlay, previous);
+    lrg_debug_overlay_set_visible (overlay, was_visible);
+
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_console_execute", "{\"command\":\"echo mcp ping\"}");
+    g_assert_cmpstr (json_object_get_string_member (json, "output"), ==, "mcp ping");
+    call_error (provider, "lrg_debug_console_execute", "{\"command\":\"no-such-command\"}",
+                LRG_DEBUG_ERROR, LRG_DEBUG_ERROR_COMMAND_NOT_FOUND);
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_console_get_output", "{\"limit\":1}");
+    entries = json_object_get_array_member (json, "entries");
+    g_assert_cmpuint (json_array_get_length (entries), ==, 1);
+    last = json_array_get_object_element (entries, 0);
+    g_assert_true (json_object_get_boolean_member (last, "error"));
+    g_assert_nonnull (strstr (json_object_get_string_member (last, "text"), "no-such-command"));
+    g_assert_cmpuint (json_array_get_length (json_object_get_array_member (json, "commands")), >=, 4);
+}
+
+/* The inspector selects a live object by its MCP id and reports components. */
+static void
+test_mcp_debug_inspect (void)
+{
+    LrgEngine *engine = lrg_engine_get_default ();
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    g_autoptr(LrgGameObject) object = lrg_game_object_new_at (8, 9);
+    g_autoptr(LrgTransformComponent) transform = lrg_transform_component_new_at (8, 9);
+    g_autoptr(LrgMcpDebugTools) tools = lrg_mcp_debug_tools_new ();
+    LrgMcpToolProvider *provider = LRG_MCP_TOOL_PROVIDER (tools);
+    LrgInspector *inspector = lrg_inspector_get_default ();
+    g_autoptr(JsonObject) json = NULL;
+    g_autofree gchar *args = NULL;
+    g_autofree gchar *id = NULL;
+    JsonObject *selected;
+
+    call_error (provider, "lrg_debug_inspect", "{\"world\":\"missing\"}", G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+    lrg_game_object_add_component (object, LRG_COMPONENT (transform));
+    lrg_world_add_object (world, object);
+    g_assert_true (lrg_engine_register_world (engine, "inspect", world));
+    json = call_json (provider, "lrg_debug_inspect", "{\"world\":\"inspect\"}");
+    g_assert_cmpint (json_object_get_int_member (json, "object_count"), ==, 1);
+    g_assert_true (json_object_get_null_member (json, "selected"));
+    {
+        g_autoptr(LrgMcpEcsTools) ecs = lrg_mcp_ecs_tools_new ();
+        g_autoptr(JsonObject) listing = call_json (LRG_MCP_TOOL_PROVIDER (ecs), "lrg_ecs_list_game_objects",
+                                                   "{\"world\":\"inspect\"}");
+        JsonObject *entry = json_array_get_object_element (json_object_get_array_member (listing, "objects"), 0);
+        id = g_strdup (json_object_get_string_member (entry, "id"));
+    }
+    args = g_strdup_printf ("{\"object_id\":\"%s\"}", id);
+    g_clear_pointer (&json, json_object_unref);
+    json = call_json (provider, "lrg_debug_inspect", args);
+    g_assert_true (lrg_inspector_get_selected_object (inspector) == object);
+    selected = json_object_get_object_member (json, "selected");
+    g_assert_cmpstr (json_object_get_string_member (selected, "id"), ==, id);
+    g_assert_cmpuint (json_array_get_length (json_object_get_array_member (selected, "component_properties")), ==, 1);
+    g_assert_cmpstr (json_object_get_string_member (selected, "info"), !=, "");
+    lrg_inspector_set_world (inspector, NULL);
+    g_assert_true (lrg_engine_unregister_world (engine, "inspect"));
+}
+
+/* get_state reports keys, mouse, gamepads and input-map actions. */
+static void
+test_mcp_input_get_state (void)
+{
+    g_autoptr(LrgMcpInputTools) tools = lrg_mcp_input_tools_new ();
+    LrgMcpToolProvider *provider = LRG_MCP_TOOL_PROVIDER (tools);
+    LrgMcpServer *server = lrg_mcp_server_get_default ();
+    g_autoptr(LrgInputMap) map = lrg_input_map_new ();
+    g_autoptr(LrgInputAction) jump = lrg_input_action_new ("jump");
+    g_autoptr(LrgInputAction) fire = lrg_input_action_new ("fire");
+    LrgInputBinding *binding;
+    g_autoptr(JsonObject) json = NULL;
+    g_autoptr(JsonObject) empty = NULL;
+    JsonObject *mouse;
+    JsonArray *pads;
+    JsonArray *actions;
+    JsonObject *pad;
+    JsonObject *action;
+    guint i;
+    gboolean saw_software = FALSE;
+
+    binding = lrg_input_binding_new_keyboard (GRL_KEY_SPACE, LRG_INPUT_MODIFIER_NONE);
+    lrg_input_action_add_binding (jump, binding);
+    lrg_input_binding_free (binding);
+    binding = lrg_input_binding_new_mouse_button (GRL_MOUSE_BUTTON_RIGHT, LRG_INPUT_MODIFIER_NONE);
+    lrg_input_action_add_binding (fire, binding);
+    lrg_input_binding_free (binding);
+    lrg_input_map_add_action (map, jump);
+    lrg_input_map_add_action (map, fire);
+
+    /* Without a map attached, actions are null and nothing is held. */
+    empty = call_json (provider, "lrg_input_get_state", "{}");
+    g_assert_true (json_object_get_null_member (empty, "actions"));
+    g_assert_cmpuint (json_array_get_length (json_object_get_array_member (
+        json_object_get_object_member (empty, "injected"), "keys_down")), ==, 0);
+
+    lrg_mcp_server_set_input_map (server, map);
+    g_assert_true (lrg_mcp_server_get_input_map (server) == map);
+    call_ok (provider, "lrg_input_press_key", "{\"key\":\"space\"}");
+    lrg_input_software_press_mouse_button (lrg_mcp_input_tools_get_input_source (tools), GRL_MOUSE_BUTTON_RIGHT);
+    lrg_input_software_move_mouse_to (lrg_mcp_input_tools_get_input_source (tools), 120.0f, 45.0f);
+    lrg_input_software_press_gamepad_button (lrg_mcp_input_tools_get_input_source (tools), 1, GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+    lrg_input_software_set_gamepad_axis (lrg_mcp_input_tools_get_input_source (tools), 1, GRL_GAMEPAD_AXIS_LEFT_X, 0.5f);
+
+    json = call_json (provider, "lrg_input_get_state", "{}");
+    g_assert_true (json_array_has_string (json_object_get_array_member (
+        json_object_get_object_member (json, "keyboard"), "keys_down"), "space"));
+    mouse = json_object_get_object_member (json, "mouse");
+    g_assert_cmpfloat (json_object_get_double_member (mouse, "x"), ==, 120.0);
+    g_assert_cmpfloat (json_object_get_double_member (mouse, "y"), ==, 45.0);
+    g_assert_true (json_object_has_member (json_object_get_object_member (mouse, "wheel"), "y"));
+    g_assert_true (json_array_has_string (json_object_get_array_member (mouse, "buttons_down"), "right"));
+
+    pads = json_object_get_array_member (json, "gamepads");
+    g_assert_cmpuint (json_array_get_length (pads), ==, 1);
+    pad = json_array_get_object_element (pads, 0);
+    g_assert_cmpint (json_object_get_int_member (pad, "index"), ==, 1);
+    g_assert_false (json_object_get_boolean_member (pad, "connected"));
+    g_assert_true (json_array_has_string (json_object_get_array_member (pad, "buttons_down"), "a"));
+    g_assert_cmpfloat_with_epsilon (json_object_get_double_member (
+        json_object_get_object_member (pad, "axes"), "left_x"), 0.5, 1e-6);
+
+    actions = json_object_get_array_member (json, "actions");
+    g_assert_cmpuint (json_array_get_length (actions), ==, 2);
+    for (i = 0; i < 2; i++)
+    {
+        action = json_array_get_object_element (actions, i);
+        g_assert_true (json_object_get_boolean_member (action, "down"));
+        g_assert_cmpint (json_object_get_int_member (action, "binding_count"), ==, 1);
+    }
+
+    for (i = 0; i < json_array_get_length (json_object_get_array_member (json, "sources")); i++)
+    {
+        JsonObject *source = json_array_get_object_element (json_object_get_array_member (json, "sources"), i);
+        if (g_str_equal (json_object_get_string_member (source, "type"), "LrgInputSoftware"))
+            saw_software = TRUE;
+    }
+    g_assert_true (saw_software);
+    g_assert_true (json_array_has_string (json_object_get_array_member (
+        json_object_get_object_member (json, "injected"), "keys_down"), "space"));
+
+    /* Clearing releases everything; actions follow. */
+    g_clear_pointer (&json, json_object_unref);
+    call_ok (provider, "lrg_input_clear_all", "{}");
+    json = call_json (provider, "lrg_input_get_state", "{}");
+    g_assert_false (json_array_has_string (json_object_get_array_member (
+        json_object_get_object_member (json, "keyboard"), "keys_down"), "space"));
+    g_assert_cmpuint (json_array_get_length (json_object_get_array_member (json, "gamepads")), ==, 0);
+    lrg_mcp_server_set_input_map (server, NULL);
+}
+
+
 
 int
 main (int   argc,
@@ -741,6 +1042,11 @@ main (int   argc,
     g_test_add_func ("/mcp/tools/ecs/spawn-with-transform", test_mcp_ecs_spawn_with_transform);
     g_test_add_func ("/mcp/tools/save/roundtrip", test_mcp_save_roundtrip);
     g_test_add_func ("/mcp/tools/save/errors", test_mcp_save_errors);
+    g_test_add_func ("/mcp/tools/ecs/spawn-builtin", test_mcp_ecs_spawn_builtin);
+    g_test_add_func ("/mcp/tools/debug/profiler", test_mcp_debug_profiler);
+    g_test_add_func ("/mcp/tools/debug/overlay-console", test_mcp_debug_overlay_console);
+    g_test_add_func ("/mcp/tools/debug/inspect", test_mcp_debug_inspect);
+    g_test_add_func ("/mcp/tools/input/get-state", test_mcp_input_get_state);
 
 
 	/* Tool Group Creation */

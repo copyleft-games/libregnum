@@ -280,6 +280,29 @@ void lrg_mcp_server_remove_resource_provider (LrgMcpServer           *self,
  * ========================================================================== */
 
 /**
+ * lrg_mcp_server_set_input_map:
+ * @self: an #LrgMcpServer
+ * @map: (nullable): the game's #LrgInputMap, or %NULL to detach
+ *
+ * Attaches the game's input map so the `lrg_input_get_state` tool can
+ * report each action's state alongside the raw device state.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_mcp_server_set_input_map (LrgMcpServer *self,
+                                   LrgInputMap  *map);
+
+/**
+ * lrg_mcp_server_get_input_map:
+ * @self: an #LrgMcpServer
+ *
+ * Gets the input map attached with lrg_mcp_server_set_input_map().
+ *
+ * Returns: (transfer none) (nullable): the attached #LrgInputMap
+ */
+LRG_AVAILABLE_IN_ALL
+LrgInputMap * lrg_mcp_server_get_input_map (LrgMcpServer *self);
+
+/**
  * lrg_mcp_server_register_default_providers:
  * @self: an #LrgMcpServer
  *
@@ -289,7 +312,7 @@ void lrg_mcp_server_remove_resource_provider (LrgMcpServer           *self,
  * - Engine tools (info, pause, resume)
  * - ECS tools (worlds, objects, transforms)
  * - Save tools (slots, save, load)
- * - Debug tools (log, profiler)
+ * - Debug tools (log, profiler, overlay, console, inspector)
  * - Engine resources
  * - ECS resources
  * - Screenshot resources

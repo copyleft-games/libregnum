@@ -171,7 +171,7 @@ lrg_mcp_resource_group_init (LrgMcpResourceGroup *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_resource_group_add_resource:
  * @self: an #LrgMcpResourceGroup
  * @resource: (transfer full): the resource to add
@@ -191,7 +191,7 @@ lrg_mcp_resource_group_add_resource (LrgMcpResourceGroup *self,
 	g_ptr_array_add (priv->resources, resource);  /* Takes ownership */
 }
 
-/**
+/*
  * lrg_mcp_resource_group_get_group_name:
  * @self: an #LrgMcpResourceGroup
  *
@@ -215,7 +215,7 @@ lrg_mcp_resource_group_get_group_name (LrgMcpResourceGroup *self)
 	return "unknown";
 }
 
-/**
+/*
  * lrg_mcp_resource_group_get_uri_prefix:
  * @self: an #LrgMcpResourceGroup
  *
@@ -234,7 +234,7 @@ lrg_mcp_resource_group_get_uri_prefix (LrgMcpResourceGroup *self)
 	return priv->uri_prefix;
 }
 
-/**
+/*
  * lrg_mcp_resource_group_set_uri_prefix:
  * @self: an #LrgMcpResourceGroup
  * @prefix: the URI prefix
