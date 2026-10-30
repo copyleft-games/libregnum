@@ -287,6 +287,11 @@ PUBLIC_HEADERS := \
 	src/net/lrg-net-peer.h \
 	src/net/lrg-net-server.h \
 	src/net/lrg-net-client.h \
+	src/replay/lrg-state-buffer.h \
+	src/replay/lrg-sim-stateful.h \
+	src/replay/lrg-input-snapshot.h \
+	src/replay/lrg-simulation.h \
+	src/replay/lrg-replay.h \
 	src/world3d/lrg-bounding-box3d.h \
 	src/world3d/lrg-spawn-point3d.h \
 	src/world3d/lrg-trigger3d.h \
@@ -917,6 +922,11 @@ SOURCES := \
 	src/net/lrg-net-peer.c \
 	src/net/lrg-net-server.c \
 	src/net/lrg-net-client.c \
+	src/replay/lrg-state-buffer.c \
+	src/replay/lrg-sim-stateful.c \
+	src/replay/lrg-input-snapshot.c \
+	src/replay/lrg-simulation.c \
+	src/replay/lrg-replay.c \
 	src/world3d/lrg-bounding-box3d.c \
 	src/world3d/lrg-spawn-point3d.c \
 	src/world3d/lrg-trigger3d.c \

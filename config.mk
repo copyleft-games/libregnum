@@ -717,6 +717,14 @@ else
     OPT_CFLAGS += -fno-semantic-interposition -DG_DISABLE_CAST_CHECKS
 endif
 
+# Determinism contract (docs/modules/replay/determinism.org): never fuse
+# a*b+c into an FMA. GCC contracts by default in GNU modes wherever the
+# target has FMA (every aarch64, x86-64 with -mfma), which rounds once
+# instead of twice and gives different float results than other machines
+# and other optimization levels; replays, golden checksums and rollback
+# peers must agree bit for bit. No change on baseline x86-64 (no FMA).
+OPT_CFLAGS += -ffp-contract=off
+
 # Trace flag
 ifeq ($(ENABLE_TRACE),1)
     OPT_CFLAGS += -DLRG_ENABLE_TRACE=1

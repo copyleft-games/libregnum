@@ -321,6 +321,13 @@
 #include "net/lrg-net-server.h"
 #include "net/lrg-net-client.h"
 
+/* Replay module: determinism, input replays, rollback */
+#include "replay/lrg-state-buffer.h"
+#include "replay/lrg-sim-stateful.h"
+#include "replay/lrg-input-snapshot.h"
+#include "replay/lrg-simulation.h"
+#include "replay/lrg-replay.h"
+
 /* World3D module */
 #include "world3d/lrg-bounding-box3d.h"
 #include "world3d/lrg-spawn-point3d.h"

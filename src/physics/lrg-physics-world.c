@@ -11,6 +11,8 @@
 #include "lrg-physics-world.h"
 #include "lrg-rigid-body-private.h"
 #include "lrg-collision-info-private.h"
+#include "../replay/lrg-sim-stateful.h"
+#include <gio/gio.h>
 #include "lrg-log.h"
 #include <math.h>
 
@@ -61,8 +63,13 @@ typedef struct
     gboolean      finite;   /* FALSE: NaN/inf position or extent */
 } SweepEntry;
 
+static void lrg_physics_world_sim_stateful_init (LrgSimStatefulInterface *iface);
+
 #pragma GCC visibility push(default)
-G_DEFINE_TYPE_WITH_PRIVATE (LrgPhysicsWorld, lrg_physics_world, G_TYPE_OBJECT)
+G_DEFINE_TYPE_WITH_CODE (LrgPhysicsWorld, lrg_physics_world, G_TYPE_OBJECT,
+                         G_ADD_PRIVATE (LrgPhysicsWorld)
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_SIM_STATEFUL,
+                                                lrg_physics_world_sim_stateful_init))
 #pragma GCC visibility pop
 
 enum
@@ -1137,4 +1144,103 @@ lrg_physics_world_query_point (LrgPhysicsWorld *self,
     }
 
     return result;
+}
+
+/* ==========================================================================
+ * LrgSimStateful: the dynamic state of the world and its bodies, in body
+ * order. Body membership and shapes are structure, not state: a rollback
+ * restores into the same set of bodies (add/remove bodies outside the
+ * rolled-back window, or rebuild the world before loading).
+ * ========================================================================== */
+
+static void
+lrg_physics_world_save_state (LrgSimStateful *stateful,
+                              LrgStateBuffer *buffer)
+{
+    LrgPhysicsWorld *self = LRG_PHYSICS_WORLD (stateful);
+    LrgPhysicsWorldPrivate *priv = lrg_physics_world_get_instance_private (self);
+    guint i;
+
+    lrg_state_buffer_write_float (buffer, priv->gravity_x);
+    lrg_state_buffer_write_float (buffer, priv->gravity_y);
+    lrg_state_buffer_write_float (buffer, priv->accumulator);
+    lrg_state_buffer_write_boolean (buffer, priv->paused);
+    lrg_state_buffer_write_uint32 (buffer, priv->bodies->len);
+    for (i = 0; i < priv->bodies->len; i++)
+    {
+        LrgRigidBodyPrivate *body;
+
+        body = lrg_rigid_body_peek_private (g_ptr_array_index (priv->bodies, i));
+        lrg_state_buffer_write_float (buffer, body->pos_x);
+        lrg_state_buffer_write_float (buffer, body->pos_y);
+        lrg_state_buffer_write_float (buffer, body->rotation);
+        lrg_state_buffer_write_float (buffer, body->vel_x);
+        lrg_state_buffer_write_float (buffer, body->vel_y);
+        lrg_state_buffer_write_float (buffer, body->angular_velocity);
+        lrg_state_buffer_write_float (buffer, body->force_x);
+        lrg_state_buffer_write_float (buffer, body->force_y);
+        lrg_state_buffer_write_float (buffer, body->torque);
+        lrg_state_buffer_write_boolean (buffer, body->sleeping);
+        lrg_state_buffer_write_float (buffer, body->sleep_time);
+    }
+}
+
+static gboolean
+lrg_physics_world_load_state (LrgSimStateful  *stateful,
+                              LrgStateBuffer  *buffer,
+                              GError         **error)
+{
+    LrgPhysicsWorld *self = LRG_PHYSICS_WORLD (stateful);
+    LrgPhysicsWorldPrivate *priv = lrg_physics_world_get_instance_private (self);
+    gfloat gravity_x;
+    gfloat gravity_y;
+    gfloat accumulator;
+    gboolean paused;
+    guint n_bodies;
+    guint i;
+
+    gravity_x = lrg_state_buffer_read_float (buffer);
+    gravity_y = lrg_state_buffer_read_float (buffer);
+    accumulator = lrg_state_buffer_read_float (buffer);
+    paused = lrg_state_buffer_read_boolean (buffer);
+    n_bodies = lrg_state_buffer_read_uint32 (buffer);
+    if (!lrg_state_buffer_check (buffer, error))
+        return FALSE;
+    if (n_bodies != priv->bodies->len)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Physics state has %u bodies, the world has %u",
+                     n_bodies, priv->bodies->len);
+        return FALSE;
+    }
+
+    priv->gravity_x = gravity_x;
+    priv->gravity_y = gravity_y;
+    priv->accumulator = accumulator;
+    priv->paused = paused;
+    for (i = 0; i < n_bodies; i++)
+    {
+        LrgRigidBody *rigid_body = g_ptr_array_index (priv->bodies, i);
+        LrgRigidBodyPrivate *body = lrg_rigid_body_peek_private (rigid_body);
+
+        body->pos_x = lrg_state_buffer_read_float (buffer);
+        body->pos_y = lrg_state_buffer_read_float (buffer);
+        body->rotation = lrg_state_buffer_read_float (buffer);
+        body->vel_x = lrg_state_buffer_read_float (buffer);
+        body->vel_y = lrg_state_buffer_read_float (buffer);
+        body->angular_velocity = lrg_state_buffer_read_float (buffer);
+        body->force_x = lrg_state_buffer_read_float (buffer);
+        body->force_y = lrg_state_buffer_read_float (buffer);
+        body->torque = lrg_state_buffer_read_float (buffer);
+        body->sleeping = lrg_state_buffer_read_boolean (buffer);
+        body->sleep_time = lrg_state_buffer_read_float (buffer);
+    }
+    return lrg_state_buffer_check (buffer, error);
+}
+
+static void
+lrg_physics_world_sim_stateful_init (LrgSimStatefulInterface *iface)
+{
+    iface->save_state = lrg_physics_world_save_state;
+    iface->load_state = lrg_physics_world_load_state;
 }

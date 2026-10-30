@@ -1,0 +1,72 @@
+#+title: Replay Module (determinism, input replays, rollback netcode)
+#+description: Deterministic fixed-step simulation, the desync detector, per-tick input recording and playback, golden-file regression tests and GGPO-style rollback sessions
+
+* Replay Module
+:PROPERTIES:
+:CUSTOM_ID: replay-module
+:END:
+=src/replay/= makes a game's simulation reproducible and builds three things on that: input replays, golden-file regression tests and peer-to-peer rollback netcode for non-MMO games (fighting games, sports, co-op action). They share one idea: if the simulation is a pure function of /(initial state, seed, per-tick input)/, then recording the input is recording the game, two machines fed the same input compute the same game, and a state checksum tells at once when that stops being true.
+
+| Type | Header | What |
+|------+--------+------|
+| =LrgSimulation= | =src/replay/lrg-simulation.h= | The deterministic container: tick counter, fixed step, seeded random stream, action table, per-player input slots, the ordered list of stateful objects, save/load, checksums, the desync detector, recording |
+| =LrgSimStateful= | =src/replay/lrg-sim-stateful.h= | Interface for objects whose state is part of the simulation (save/load into a binary buffer). Implemented by =LrgRandomStream=, =LrgTimerManager= and =LrgPhysicsWorld= |
+| =LrgStateBuffer= | =src/replay/lrg-state-buffer.h= | Little-endian binary state buffer with exact float round trips, a sticky overrun flag and 64-bit FNV-1a checksums |
+| =LrgInputSnapshot= | =src/replay/lrg-input-snapshot.h= | One player's action input for one tick (held bits plus analog values), captured from and injected into an =LrgInputMap= |
+| =LrgReplay= | =src/replay/lrg-replay.h= | A recording: YAML header + delta-encoded binary body; playback, headless playback and the golden check |
+| =LrgRollbackSession= | =src/replay/lrg-rollback-session.h= | GGPO-style session: input delay, prediction, rollback and re-simulation, confirmed frames, checksum exchange |
+| =LrgRollbackTransport= | =src/replay/lrg-rollback-transport.h= | Unreliable datagram interface the session talks through |
+| =LrgLoopbackNetwork=, =LrgLoopbackTransport= | =src/replay/lrg-loopback-transport.h= | In-process network with simulated latency, jitter, loss and duplication (tests, local play, bots) |
+| =LrgUdpTransport= | =src/replay/lrg-udp-transport.h= | Non-blocking UDP transport on GIO sockets |
+| =LrgHeadlessHost= | =src/gamemodule/lrg-headless-host.h= | A game host with no window, for headless playback and simulation servers |
+
+The template integration (=LrgGameTemplate:deterministic=, =--record=, =--replay=, =--replay-headless=, =--seed=) is described in [[file:determinism.org::#template][Determinism, "The game template"]].
+
+** Documents
+- [[file:determinism.org][Determinism contract]] - the rules simulation code follows, what the engine guarantees, the desync detector
+- [[file:replay-format.org][Replay format]] - recording, playback and the version 1 file format
+- [[file:golden-tests.org][Golden-file testing]] - regression tests from replays
+- [[file:rollback.org][Rollback sessions]] - the netcode API, its protocol and transports
+
+** Quick start
+#+begin_src c
+/* A deterministic template game: input is sampled per tick, randomness and
+ * timers are part of the simulation */
+g_object_set (game, "deterministic", TRUE, "simulation-seed", seed, NULL);
+
+static void
+my_game_post_startup (LrgGameTemplate *template)
+{
+    LrgSimulation *sim = lrg_game_template_get_simulation (template);
+
+    /* Everything the game state consists of, in a fixed order */
+    lrg_simulation_add_object (sim, G_OBJECT (self->physics));
+    lrg_simulation_add_object (sim, G_OBJECT (self->level_state));
+}
+
+static void
+my_game_fixed_update (LrgGameTemplate *template, gdouble dt)
+{
+    LrgInputMap *input = lrg_game_template_get_input_map (template);
+    LrgRandomStream *rng = lrg_simulation_get_random (lrg_game_template_get_simulation (template));
+
+    if (lrg_input_map_is_pressed (input, "jump"))
+        jump (self, lrg_random_stream_bounded (rng, 3));
+    lrg_physics_world_step (self->physics, (gfloat) dt);
+}
+#+end_src
+
+#+begin_src sh
+./my-game --record run.lrgreplay          # play, recording
+./my-game --replay run.lrgreplay          # watch it back
+./my-game --replay-headless run.lrgreplay # verify it without a window (exit 0/1)
+#+end_src
+
+The example =examples/replay-demo.c= shows the bare simulation API end to end: record a session, write and reload the file, play it back headless, then run the same game as two rollback peers over a lossy loopback network.
+
+** Status and limits
+- Two to eight players in a full mesh. Spectators and late joining are not implemented yet (a spectator would be a peer that only receives; a late joiner needs a state transfer).
+- No time synchronisation is applied automatically: =lrg_rollback_session_get_frames_ahead()= reports the drift and the game decides when to skip a frame.
+- Replays keep decoded inputs in memory (about 280 bytes per player per tick).
+- =LrgUdpTransport= is unauthenticated plain UDP; the MMO module's DTLS channel (=LrgMmoDatagram=) is the authenticated building block for internet play.
+- Determinism across machines holds for code built with =-ffp-contract=off= (the engine's build flags) on IEEE-754 targets; see [[file:determinism.org::#floating-point][Floating point]].
