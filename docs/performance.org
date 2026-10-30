@@ -63,6 +63,7 @@ bench/build/release/bench/lrg-bench -l           # list scenarios
 | =procedural=    | 3 ms frames, a streamed =LrgProceduralAudio= subclass (48 sine partials)   |
 | =music-ogg=     | 3 ms frames, a streamed Vorbis track through =LrgMusicTrack=               |
 | =music-mp3=     | 3 ms frames, a streamed MP3 track through =LrgMusicTrack=                  |
+| =sfx-calls=     | 3 ms frames, 8 sounds' volume / pitch / pan / is-playing / retrigger calls timed one by one while a Vorbis track decodes and a MIDI synth renders; prints per-call median, p99, p99.9 and max |
 | =gpu-bound=     | almost no CPU work, =--gpu-load= (600) blended full-window quads: GPU-bound frames, for =--frames-in-flight= ([[#input-latency][input latency]]) |
 
 Adding a scenario: write =setup= / =frame= / =teardown= functions and add a row to the =scenarios[]= table at the bottom of =lrg-bench.c=. Keep scenarios deterministic (fixed seeds, scripted cameras) so runs compare.
