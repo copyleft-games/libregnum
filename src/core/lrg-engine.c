@@ -96,6 +96,26 @@ lrg_engine_real_startup (LrgEngine *self)
 
     lrg_debug (LRG_LOG_DOMAIN_CORE, "Engine startup");
 
+    /*
+     * LRG_AUDIO_BACKEND (auto, alsa, pipewire, pulseaudio, none) picks the
+     * backend the audio device opens through, before anything opens it;
+     * graylib's GRL_AUDIO_BACKEND still wins.  LrgAudioSettings applies
+     * its audio-backend setting the same way when the env is unset.
+     */
+    {
+        const gchar     *backend_env = g_getenv ("LRG_AUDIO_BACKEND");
+        GrlAudioBackend  backend;
+
+        if (backend_env != NULL && *backend_env != '\0')
+        {
+            if (grl_audio_backend_parse (backend_env, &backend))
+                grl_audio_device_set_preferred_backend (backend);
+            else
+                g_message ("libregnum: unknown LRG_AUDIO_BACKEND=%s (auto, alsa, pipewire, "
+                           "pulseaudio, none); ignored", backend_env);
+        }
+    }
+
     /* Create subsystems */
     priv->registry = lrg_registry_new ();
     lrg_registry_register_builtin (priv->registry);

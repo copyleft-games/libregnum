@@ -238,6 +238,37 @@ void
 lrg_audio_settings_set_audio_device (LrgAudioSettings *self,
                                      const gchar      *device);
 
+/* Audio Backend */
+
+/**
+ * lrg_audio_settings_get_audio_backend:
+ * @self: an #LrgAudioSettings
+ *
+ * Gets the audio backend the device opens through ("auto", "alsa",
+ * "pipewire", "pulseaudio" or "none").
+ *
+ * Returns: (transfer none): The backend name
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *
+lrg_audio_settings_get_audio_backend (LrgAudioSettings *self);
+
+/**
+ * lrg_audio_settings_set_audio_backend:
+ * @self: an #LrgAudioSettings
+ * @backend: (nullable): "auto", "alsa", "pipewire", "pulseaudio" or
+ *   "none"; %NULL or an unknown name means "auto"
+ *
+ * Sets the audio backend.  It is handed to graylib when the settings are
+ * applied and takes effect the next time the audio device opens (the
+ * first sound, music or synth stream).  `LRG_AUDIO_BACKEND` and
+ * `GRL_AUDIO_BACKEND` in the environment override it.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_audio_settings_set_audio_backend (LrgAudioSettings *self,
+                                      const gchar      *backend);
+
 G_END_DECLS
 
 #endif /* LRG_AUDIO_SETTINGS_H */

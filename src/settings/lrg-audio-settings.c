@@ -8,6 +8,7 @@
 
 #include "lrg-audio-settings.h"
 #include <gio/gio.h>
+#include <graylib.h>
 #include "../audio/lrg-audio-manager.h"
 
 /**
@@ -17,7 +18,8 @@
  *
  * #LrgAudioSettings manages all audio-related settings including
  * volume levels for different audio categories, mute state,
- * mono audio for accessibility, and subtitle preferences.
+ * mono audio for accessibility, subtitle preferences and the audio
+ * backend the device opens through (#LrgAudioSettings:audio-backend).
  */
 
 /* Default values */
@@ -28,6 +30,7 @@
 #define DEFAULT_MUTED           FALSE
 #define DEFAULT_MONO_AUDIO      FALSE
 #define DEFAULT_SUBTITLES       FALSE
+#define DEFAULT_AUDIO_BACKEND   "auto"
 
 struct _LrgAudioSettings
 {
@@ -46,6 +49,7 @@ struct _LrgAudioSettings
 
     /* Device */
     gchar *audio_device;
+    gchar *audio_backend;   /* a GRL_AUDIO_BACKEND name, never NULL */
 };
 
 G_DEFINE_TYPE (LrgAudioSettings, lrg_audio_settings, LRG_TYPE_SETTINGS_GROUP)
@@ -61,6 +65,7 @@ enum
     PROP_MONO_AUDIO,
     PROP_SUBTITLES_ENABLED,
     PROP_AUDIO_DEVICE,
+    PROP_AUDIO_BACKEND,
     N_PROPS
 };
 
@@ -77,6 +82,28 @@ emit_changed (LrgAudioSettings *self,
     g_signal_emit_by_name (self, "changed", property_name);
 }
 
+/*
+ * The backend graylib opens the device through: LRG_AUDIO_BACKEND when it
+ * names one, else the setting (GRL_AUDIO_BACKEND, read by graylib, wins
+ * over both).  It takes effect the next time the device opens.
+ */
+static void
+apply_backend (LrgAudioSettings *self)
+{
+    GrlAudioBackend backend;
+    const gchar    *env;
+
+    env = g_getenv ("LRG_AUDIO_BACKEND");
+    if (env != NULL && grl_audio_backend_parse (env, &backend))
+    {
+        grl_audio_device_set_preferred_backend (backend);
+        return;
+    }
+    if (!grl_audio_backend_parse (self->audio_backend, &backend))
+        backend = GRL_AUDIO_BACKEND_AUTO;
+    grl_audio_device_set_preferred_backend (backend);
+}
+
 /* Virtual method implementations */
 
 static void
@@ -84,6 +111,9 @@ lrg_audio_settings_apply (LrgSettingsGroup *group)
 {
     LrgAudioSettings *self = LRG_AUDIO_SETTINGS (group);
     LrgAudioManager  *audio;
+
+    /* before anything below can open the device */
+    apply_backend (self);
 
     audio = lrg_audio_manager_get_default ();
     if (audio == NULL)
@@ -124,6 +154,8 @@ lrg_audio_settings_reset (LrgSettingsGroup *group)
     self->mono_audio = DEFAULT_MONO_AUDIO;
     self->subtitles_enabled = DEFAULT_SUBTITLES;
     g_clear_pointer (&self->audio_device, g_free);
+    g_free (self->audio_backend);
+    self->audio_backend = g_strdup (DEFAULT_AUDIO_BACKEND);
 
     emit_changed (self, NULL);
 }
@@ -163,6 +195,8 @@ lrg_audio_settings_serialize (LrgSettingsGroup  *group,
         g_variant_builder_add (&builder, "{sv}", "audio_device",
                                g_variant_new_string (self->audio_device));
     }
+    g_variant_builder_add (&builder, "{sv}", "audio_backend",
+                           g_variant_new_string (self->audio_backend));
 
     return g_variant_builder_end (&builder);
 }
@@ -239,6 +273,14 @@ lrg_audio_settings_deserialize (LrgSettingsGroup  *group,
         g_variant_unref (value);
     }
 
+    /* an unknown name (a newer or hand-edited file) reads as auto */
+    value = g_variant_lookup_value (data, "audio_backend", G_VARIANT_TYPE_STRING);
+    if (value)
+    {
+        lrg_audio_settings_set_audio_backend (self, g_variant_get_string (value, NULL));
+        g_variant_unref (value);
+    }
+
     return TRUE;
 }
 
@@ -250,6 +292,7 @@ lrg_audio_settings_finalize (GObject *object)
     LrgAudioSettings *self = LRG_AUDIO_SETTINGS (object);
 
     g_clear_pointer (&self->audio_device, g_free);
+    g_clear_pointer (&self->audio_backend, g_free);
 
     G_OBJECT_CLASS (lrg_audio_settings_parent_class)->finalize (object);
 }
@@ -287,6 +330,9 @@ lrg_audio_settings_get_property (GObject    *object,
         break;
     case PROP_AUDIO_DEVICE:
         g_value_set_string (value, self->audio_device);
+        break;
+    case PROP_AUDIO_BACKEND:
+        g_value_set_string (value, self->audio_backend);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -326,6 +372,9 @@ lrg_audio_settings_set_property (GObject      *object,
         break;
     case PROP_AUDIO_DEVICE:
         lrg_audio_settings_set_audio_device (self, g_value_get_string (value));
+        break;
+    case PROP_AUDIO_BACKEND:
+        lrg_audio_settings_set_audio_backend (self, g_value_get_string (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -397,6 +446,21 @@ lrg_audio_settings_class_init (LrgAudioSettingsClass *klass)
                              NULL,
                              G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
+    /**
+     * LrgAudioSettings:audio-backend:
+     *
+     * The backend the audio device opens through: "auto" (ALSA, which
+     * reaches PipeWire through pipewire-alsa, then PulseAudio), "alsa"
+     * (or "pipewire"), "pulseaudio", or "none" (no sound).  Applied the
+     * next time the device opens.  The environment variables
+     * `LRG_AUDIO_BACKEND` and graylib's `GRL_AUDIO_BACKEND` override it.
+     */
+    properties[PROP_AUDIO_BACKEND] =
+        g_param_spec_string ("audio-backend", "Audio Backend",
+                             "Audio backend: auto, alsa, pipewire, pulseaudio or none",
+                             DEFAULT_AUDIO_BACKEND,
+                             G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -411,6 +475,7 @@ lrg_audio_settings_init (LrgAudioSettings *self)
     self->mono_audio = DEFAULT_MONO_AUDIO;
     self->subtitles_enabled = DEFAULT_SUBTITLES;
     self->audio_device = NULL;
+    self->audio_backend = g_strdup (DEFAULT_AUDIO_BACKEND);
 }
 
 /* Public API */
@@ -601,5 +666,40 @@ lrg_audio_settings_set_audio_device (LrgAudioSettings *self,
         self->audio_device = g_strdup (device);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_AUDIO_DEVICE]);
         emit_changed (self, "audio-device");
+    }
+}
+
+const gchar *
+lrg_audio_settings_get_audio_backend (LrgAudioSettings *self)
+{
+    g_return_val_if_fail (LRG_IS_AUDIO_SETTINGS (self), DEFAULT_AUDIO_BACKEND);
+    return self->audio_backend;
+}
+
+void
+lrg_audio_settings_set_audio_backend (LrgAudioSettings *self,
+                                      const gchar      *backend)
+{
+    GrlAudioBackend parsed;
+    const gchar    *name;
+
+    g_return_if_fail (LRG_IS_AUDIO_SETTINGS (self));
+
+    /* NULL or an unknown name: auto (logged, not fatal) */
+    name = backend;
+    if (name == NULL || !grl_audio_backend_parse (name, &parsed))
+    {
+        if (name != NULL)
+            g_message ("LrgAudioSettings: unknown audio backend '%s' (auto, alsa, pipewire, "
+                       "pulseaudio, none); using auto", name);
+        name = DEFAULT_AUDIO_BACKEND;
+    }
+
+    if (g_strcmp0 (self->audio_backend, name) != 0)
+    {
+        g_free (self->audio_backend);
+        self->audio_backend = g_ascii_strdown (name, -1);
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_AUDIO_BACKEND]);
+        emit_changed (self, "audio-backend");
     }
 }
