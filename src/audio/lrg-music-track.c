@@ -130,7 +130,7 @@ lrg_music_track_set_property (GObject      *object,
     case PROP_MUSIC:
         g_clear_object (&self->music);
         self->music = g_value_dup_object (value);
-        /* decoded on graylib's streaming thread, never on the frame */
+        /* decoded on graylib's audio thread, never on the frame */
         if (self->music != NULL)
             grl_music_set_background_streaming (self->music, TRUE);
         break;
@@ -605,7 +605,7 @@ lrg_music_track_resume (LrgMusicTrack *self)
  * @self: a #LrgMusicTrack
  *
  * Handles fades and loop point checking.  The decoding itself happens
- * on graylib's streaming thread (grl_music_update() is a no-op for a
+ * on graylib's audio thread (grl_music_update() is a no-op for a
  * background-streamed music and stays here for a music switched back).
  *
  * This must be called every frame while music is playing.
