@@ -1460,7 +1460,10 @@ SOURCES += \
 	src/editor/ui/lrg-editor-panel-console.c \
 	src/editor/ui/lrg-editor-render.c \
 	src/editor/ui/lrg-editor-dialogs.c \
-	src/editor/ui/lrg-editor-play.c
+	src/editor/ui/lrg-editor-play.c \
+	src/editor/ui/lrg-editor-panel-tiles.c \
+	src/editor/ui/lrg-editor-panel-timeline.c \
+	src/editor/ui/lrg-editor-thumbnails.c
 endif
 endif
 

@@ -18,6 +18,7 @@
 #include "../../core/lrg-registry.h"
 #include "../lrg-asset-database.h"
 #include "../lrg-scene-import.h"
+#include <math.h>
 #include <string.h>
 
 #define APP(p) LRG_EDITOR_APP (p)
@@ -821,6 +822,240 @@ a_docs (gpointer data)
 }
 
 /* ==========================================================================
+ * Tilemap painting, timeline and thumbnail actions
+ * ========================================================================== */
+
+static gboolean
+has_tile_target (gpointer data)
+{
+	return editor_tiles_target (APP (data)) != NULL;
+}
+
+static gboolean
+tile_mode_on (gpointer data)
+{
+	return APP (data)->tile_mode && editor_tiles_target (APP (data)) != NULL;
+}
+
+static gboolean tile_tool_brush (gpointer d)  { return APP (d)->tile_tool == EDITOR_TILE_BRUSH; }
+static gboolean tile_tool_eraser (gpointer d) { return APP (d)->tile_tool == EDITOR_TILE_ERASER; }
+static gboolean tile_tool_rect (gpointer d)   { return APP (d)->tile_tool == EDITOR_TILE_RECT; }
+static gboolean tile_tool_fill (gpointer d)   { return APP (d)->tile_tool == EDITOR_TILE_FILL; }
+static gboolean tile_tool_pick (gpointer d)   { return APP (d)->tile_tool == EDITOR_TILE_PICK; }
+
+static void
+a_tile_mode (gpointer data)
+{
+	LrgEditorApp *self = APP (data);
+
+	if (editor_tiles_target (self) == NULL)
+	{
+		self->tile_mode = FALSE;
+		editor_app_set_status (self, "Select a tilemap node to paint");
+		return;
+	}
+	self->tile_mode = !self->tile_mode;
+	if (self->tile_mode)
+		lrg_gui_dock_open_panel (self->dock, "tiles");
+	editor_app_set_status (self, self->tile_mode ? "Tile painting on" : "Tile painting off");
+}
+
+static void
+set_tile_tool (LrgEditorApp   *self,
+               EditorTileTool  tool)
+{
+	self->tile_tool = tool;
+	self->tile_mode = (editor_tiles_target (self) != NULL);
+}
+
+static void a_tile_brush (gpointer d)  { set_tile_tool (APP (d), EDITOR_TILE_BRUSH); }
+static void a_tile_eraser (gpointer d) { set_tile_tool (APP (d), EDITOR_TILE_ERASER); }
+static void a_tile_rect (gpointer d)   { set_tile_tool (APP (d), EDITOR_TILE_RECT); }
+static void a_tile_fill (gpointer d)   { set_tile_tool (APP (d), EDITOR_TILE_FILL); }
+static void a_tile_pick (gpointer d)   { set_tile_tool (APP (d), EDITOR_TILE_PICK); }
+
+static void
+a_tile_brush_grow (gpointer data)
+{
+	LrgEditorTilePainter *p = APP (data)->tile_painter;
+
+	lrg_editor_tile_painter_set_brush_size (p, lrg_editor_tile_painter_get_brush_size (p) + 1);
+}
+
+static void
+a_tile_brush_shrink (gpointer data)
+{
+	LrgEditorTilePainter *p = APP (data)->tile_painter;
+	guint                 b = lrg_editor_tile_painter_get_brush_size (p);
+
+	lrg_editor_tile_painter_set_brush_size (p, b > 1 ? b - 1 : 1);
+}
+
+/* Adds or removes a layer of the target's grid as one undo step. */
+static void
+edit_tile_layers (LrgEditorApp *self,
+                  gboolean      add)
+{
+	LrgNode            *node = editor_tiles_target (self);
+	LrgNodeTilemap     *grid;
+	g_autoptr(LrgNode)  before = NULL;
+	guint               layer;
+
+	if (node == NULL)
+		return;
+	lrg_editor_begin_group (self->editor, add ? "Add Tile Layer" : "Remove Tile Layer");
+	grid = lrg_editor_tile_painter_ensure_tilemap (self->tile_painter, node);
+	before = lrg_editor_snapshot_node (node);
+	layer = lrg_editor_tile_painter_get_layer (self->tile_painter);
+	if (add)
+		layer = lrg_node_tilemap_add_layer (grid, NULL);
+	else if (lrg_node_tilemap_remove_layer (grid, MIN (layer, lrg_node_tilemap_get_n_layers (grid) - 1)))
+		layer = (layer > 0) ? layer - 1 : 0;
+	lrg_editor_commit_node_state (self->editor, node, before, add ? "Add Tile Layer" : "Remove Tile Layer", FALSE);
+	lrg_editor_end_group (self->editor);
+	lrg_editor_tile_painter_set_layer (self->tile_painter, layer);
+}
+
+static void a_tile_add_layer (gpointer d)    { edit_tile_layers (APP (d), TRUE); }
+static void a_tile_remove_layer (gpointer d) { edit_tile_layers (APP (d), FALSE); }
+
+static void
+a_tile_panel (gpointer data)
+{
+	lrg_gui_dock_open_panel (APP (data)->dock, "tiles");
+}
+
+static gboolean
+has_timeline (gpointer data)
+{
+	return editor_timeline_current (APP (data)) != NULL;
+}
+
+static gboolean
+timeline_playing (gpointer data)
+{
+	return APP (data)->timeline_playing;
+}
+
+static gboolean
+timeline_key_selected (gpointer data)
+{
+	return APP (data)->timeline_key_valid && editor_timeline_current (APP (data)) != NULL;
+}
+
+static void
+a_timeline_panel (gpointer data)
+{
+	lrg_gui_dock_open_panel (APP (data)->dock, "timeline");
+}
+
+static void
+a_timeline_key (gpointer data)
+{
+	LrgEditorApp *self = APP (data);
+
+	if (editor_timeline_key_selection (self) > 0)
+		lrg_gui_dock_open_panel (self->dock, "timeline");
+}
+
+static void
+a_timeline_play (gpointer data)
+{
+	LrgEditorApp *self = APP (data);
+
+	editor_timeline_set_playing (self, !self->timeline_playing);
+}
+
+static void
+a_timeline_stop (gpointer data)
+{
+	LrgEditorApp *self = APP (data);
+
+	editor_timeline_end_preview (self);
+	self->timeline_time = 0.0f;
+}
+
+static void
+a_timeline_new (gpointer data)
+{
+	LrgEditorApp     *self = APP (data);
+	LrgLevel         *level = lrg_editor_get_level (self->editor);
+	g_autofree gchar *name = g_strdup ("Timeline");
+	guint             n = 2;
+
+	while (lrg_level_find_timeline (level, name) >= 0)
+	{
+		g_free (name);
+		name = g_strdup_printf ("Timeline %u", n++);
+	}
+	if (lrg_editor_timeline_add (self->editor, name, 2.0f, FALSE))
+	{
+		editor_timeline_end_preview (self);
+		g_free (self->timeline_name);
+		self->timeline_name = g_steal_pointer (&name);
+		self->timeline_time = 0.0f;
+		lrg_gui_dock_open_panel (self->dock, "timeline");
+	}
+}
+
+static void
+a_timeline_delete_key (gpointer data)
+{
+	LrgEditorApp *self = APP (data);
+	LrgTimeline  *tl = editor_timeline_current (self);
+	LrgNode      *node = self->timeline_key_valid ? lrg_editor_find_node (self->editor, self->timeline_key_guid) : NULL;
+
+	if (tl == NULL || node == NULL)
+		return;
+	lrg_editor_timeline_remove_key (self->editor, lrg_timeline_get_name (tl), node, self->timeline_key_channel,
+	                                self->timeline_key_time);
+	self->timeline_key_valid = FALSE;
+}
+
+/* Moves the playhead to the next (@dir > 0) or previous key of any track. */
+static void
+jump_key (LrgEditorApp *self,
+          gint          dir)
+{
+	LrgTimeline *tl = editor_timeline_current (self);
+	gfloat       best = dir > 0 ? G_MAXFLOAT : -G_MAXFLOAT;
+	guint        i, k;
+
+	if (tl == NULL)
+		return;
+	for (i = 0; i < lrg_timeline_get_n_tracks (tl); i++)
+	{
+		LrgTimelineTrack *t = lrg_timeline_get_track (tl, i);
+
+		for (k = 0; k < lrg_timeline_track_get_n_keys (t); k++)
+		{
+			gfloat kt = 0.0f;
+
+			lrg_timeline_track_get_key (t, k, &kt, NULL, NULL);
+			if (dir > 0 && kt > self->timeline_time + 0.0005f && kt < best)
+				best = kt;
+			if (dir < 0 && kt < self->timeline_time - 0.0005f && kt > best)
+				best = kt;
+		}
+	}
+	if (best != G_MAXFLOAT && best != -G_MAXFLOAT)
+		editor_timeline_seek (self, best);
+}
+
+static void a_timeline_next_key (gpointer d) { jump_key (APP (d), 1); }
+static void a_timeline_prev_key (gpointer d) { jump_key (APP (d), -1); }
+
+static gboolean asset_grid_on (gpointer d) { return APP (d)->asset_grid; }
+static void     a_asset_grid (gpointer d)   { APP (d)->asset_grid = !APP (d)->asset_grid; }
+
+static void
+a_rebuild_thumbnails (gpointer data)
+{
+	editor_thumbnails_clear (APP (data));
+	editor_app_set_status (APP (data), "Rebuilding thumbnails");
+}
+
+/* ==========================================================================
  * Registration
  * ========================================================================== */
 
@@ -915,6 +1150,30 @@ editor_app_register_actions (LrgEditorApp *self)
 		  a_open_level_yaml, has_path, NULL },
 		{ "tools.reveal-socket", "Copy IPC Socket Path", "Tools", NULL, a_reveal_socket, NULL, NULL },
 		{ "tools.refresh-assets", "Refresh Assets", "Tools", NULL, a_refresh_assets, NULL, NULL },
+		{ "tools.rebuild-thumbnails", "Rebuild Thumbnails", "Tools", NULL, a_rebuild_thumbnails, NULL, NULL },
+		{ "view.asset-grid", "Asset Thumbnails (Grid View)", "View", NULL, a_asset_grid, NULL, asset_grid_on },
+
+		{ "tilemap.paint-mode", "Paint Tiles", "Tilemap", "B", a_tile_mode, has_tile_target, tile_mode_on },
+		{ "tilemap.tool-brush", "Tile Brush", "Tilemap", NULL, a_tile_brush, has_tile_target, tile_tool_brush },
+		{ "tilemap.tool-eraser", "Tile Eraser", "Tilemap", NULL, a_tile_eraser, has_tile_target, tile_tool_eraser },
+		{ "tilemap.tool-rect", "Tile Rectangle", "Tilemap", NULL, a_tile_rect, has_tile_target, tile_tool_rect },
+		{ "tilemap.tool-fill", "Tile Fill", "Tilemap", NULL, a_tile_fill, has_tile_target, tile_tool_fill },
+		{ "tilemap.tool-pick", "Tile Eyedropper", "Tilemap", NULL, a_tile_pick, has_tile_target, tile_tool_pick },
+		{ "tilemap.brush-grow", "Bigger Tile Brush", "Tilemap", "]", a_tile_brush_grow, has_tile_target, NULL },
+		{ "tilemap.brush-shrink", "Smaller Tile Brush", "Tilemap", "[", a_tile_brush_shrink, has_tile_target, NULL },
+		{ "tilemap.add-layer", "Add Tile Layer", "Tilemap", NULL, a_tile_add_layer, has_tile_target, NULL },
+		{ "tilemap.remove-layer", "Remove Tile Layer", "Tilemap", NULL, a_tile_remove_layer, has_tile_target, NULL },
+		{ "tilemap.show-panel", "Tiles Panel", "Tilemap", NULL, a_tile_panel, NULL, NULL },
+
+		{ "timeline.show-panel", "Timeline Panel", "Animation", NULL, a_timeline_panel, NULL, NULL },
+		{ "timeline.new", "New Timeline", "Animation", NULL, a_timeline_new, NULL, NULL },
+		{ "timeline.key", "Insert Keyframe", "Animation", "I", a_timeline_key, has_selection, NULL },
+		{ "timeline.play", "Play Timeline", "Animation", "K", a_timeline_play, has_timeline, timeline_playing },
+		{ "timeline.stop", "Stop Timeline", "Animation", NULL, a_timeline_stop, has_timeline, NULL },
+		{ "timeline.next-key", "Next Keyframe", "Animation", "Alt+Right", a_timeline_next_key, has_timeline, NULL },
+		{ "timeline.prev-key", "Previous Keyframe", "Animation", "Alt+Left", a_timeline_prev_key, has_timeline, NULL },
+		{ "timeline.delete-key", "Delete Keyframe", "Animation", NULL, a_timeline_delete_key, timeline_key_selected,
+		  NULL },
 
 		{ "help.shortcuts", "Keyboard Shortcuts", "Help", "Ctrl+/", a_shortcuts, NULL, NULL },
 		{ "help.docs", "Editor Documentation", "Help", NULL, a_docs, NULL, NULL },
@@ -1593,6 +1852,263 @@ m_level_import (LrgEditorServer  *server,
 	return bool_node (TRUE);
 }
 
+/* ---- editor tools: tile tool state, timeline playback, thumbnails ---- */
+
+static gboolean
+p_number (JsonObject  *params,
+          const gchar *key,
+          gdouble     *out)
+{
+	JsonNode *n;
+
+	if (params == NULL || !json_object_has_member (params, key))
+		return FALSE;
+	n = json_object_get_member (params, key);
+	if (!JSON_NODE_HOLDS_VALUE (n) ||
+	    (json_node_get_value_type (n) != G_TYPE_INT64 && json_node_get_value_type (n) != G_TYPE_DOUBLE))
+		return FALSE;
+	*out = json_node_get_double (n);
+	return isfinite (*out);
+}
+
+static JsonNode *
+tile_tool_json (LrgEditorApp *self)
+{
+	JsonObject *o = json_object_new ();
+	LrgNode    *target = editor_tiles_target (self);
+
+	json_object_set_string_member (o, "tool", editor_tile_tool_name (self->tile_tool));
+	json_object_set_boolean_member (o, "mode", self->tile_mode);
+	json_object_set_int_member (o, "tile", lrg_editor_tile_painter_get_tile (self->tile_painter));
+	json_object_set_int_member (o, "layer", lrg_editor_tile_painter_get_layer (self->tile_painter));
+	json_object_set_int_member (o, "brush", lrg_editor_tile_painter_get_brush_size (self->tile_painter));
+	json_object_set_member (o, "target", str_node (target != NULL ? lrg_node_get_guid (target) : NULL));
+	if (self->tile_hover_valid)
+	{
+		JsonArray *hover = json_array_new ();
+
+		json_array_add_int_element (hover, self->tile_hover_x);
+		json_array_add_int_element (hover, self->tile_hover_y);
+		json_object_set_array_member (o, "hover", hover);
+	}
+	else
+		json_object_set_null_member (o, "hover");
+	return obj_node (o);
+}
+
+static JsonNode *
+m_tilemap_tool (LrgEditorServer  *server,
+                JsonObject       *params,
+                gpointer          user_data,
+                GError          **error)
+{
+	LrgEditorApp  *self = APP (user_data);
+	const gchar   *tool = p_string (params, "tool");
+	gdouble        v;
+	EditorTileTool t;
+
+	if (tool != NULL)
+	{
+		if (!editor_tile_tool_from_name (tool, &t))
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Unknown tile tool '%s' (brush eraser rect fill pick)", tool);
+			return NULL;
+		}
+		self->tile_tool = t;
+	}
+	if (p_number (params, "tile", &v))
+		lrg_editor_tile_painter_set_tile (self->tile_painter, (guint) MAX (v, 0.0));
+	if (p_number (params, "layer", &v))
+		lrg_editor_tile_painter_set_layer (self->tile_painter, (guint) MAX (v, 0.0));
+	if (p_number (params, "brush", &v))
+		lrg_editor_tile_painter_set_brush_size (self->tile_painter, (guint) MAX (v, 1.0));
+	if (params != NULL && json_object_has_member (params, "mode"))
+		self->tile_mode = p_bool (params, "mode", FALSE);
+	return tile_tool_json (self);
+}
+
+static JsonNode *
+timeline_state_json (LrgEditorApp *self)
+{
+	JsonObject  *o = json_object_new ();
+	LrgTimeline *tl = editor_timeline_current (self);
+
+	json_object_set_member (o, "name", str_node (tl != NULL ? lrg_timeline_get_name (tl) : NULL));
+	json_object_set_double_member (o, "time", self->timeline_time);
+	json_object_set_boolean_member (o, "playing", self->timeline_playing);
+	json_object_set_boolean_member (o, "previewing", self->timeline_previewing);
+	return obj_node (o);
+}
+
+/* Makes "name" (if given) the panel's timeline. */
+static gboolean
+choose_timeline (LrgEditorApp  *self,
+                 JsonObject    *params,
+                 GError       **error)
+{
+	const gchar *name = p_string (params, "name");
+
+	if (name == NULL)
+	{
+		if (editor_timeline_current (self) != NULL)
+			return TRUE;
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+		                     "The level has no timeline");
+		return FALSE;
+	}
+	if (lrg_level_find_timeline (lrg_editor_get_level (self->editor), name) < 0)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No timeline '%s'", name);
+		return FALSE;
+	}
+	if (g_strcmp0 (name, self->timeline_name) != 0)
+	{
+		editor_timeline_end_preview (self);
+		g_free (self->timeline_name);
+		self->timeline_name = g_strdup (name);
+		self->timeline_time = 0.0f;
+	}
+	return TRUE;
+}
+
+static JsonNode *
+m_timeline_play (LrgEditorServer  *server,
+                 JsonObject       *params,
+                 gpointer          user_data,
+                 GError          **error)
+{
+	LrgEditorApp *self = APP (user_data);
+	gdouble       from;
+
+	if (!choose_timeline (self, params, error))
+		return NULL;
+	if (p_number (params, "from", &from))
+		self->timeline_time = (gfloat) MAX (from, 0.0);
+	editor_timeline_set_playing (self, p_bool (params, "playing", TRUE));
+	return timeline_state_json (self);
+}
+
+static JsonNode *
+m_timeline_stop (LrgEditorServer  *server,
+                 JsonObject       *params,
+                 gpointer          user_data,
+                 GError          **error)
+{
+	LrgEditorApp *self = APP (user_data);
+
+	editor_timeline_end_preview (self);
+	self->timeline_time = 0.0f;
+	return timeline_state_json (self);
+}
+
+static JsonNode *
+m_timeline_seek (LrgEditorServer  *server,
+                 JsonObject       *params,
+                 gpointer          user_data,
+                 GError          **error)
+{
+	LrgEditorApp *self = APP (user_data);
+	gdouble       time;
+
+	if (!p_number (params, "time", &time))
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "Missing number parameter 'time'");
+		return NULL;
+	}
+	if (!choose_timeline (self, params, error))
+		return NULL;
+	self->timeline_playing = FALSE;
+	editor_timeline_seek (self, (gfloat) time);
+	return timeline_state_json (self);
+}
+
+static JsonNode *
+m_timeline_state (LrgEditorServer  *server,
+                  JsonObject       *params,
+                  gpointer          user_data,
+                  GError          **error)
+{
+	return timeline_state_json (APP (user_data));
+}
+
+static JsonNode *
+m_asset_thumbnail (LrgEditorServer  *server,
+                   JsonObject       *params,
+                   gpointer          user_data,
+                   GError          **error)
+{
+	LrgEditorApp      *self = APP (user_data);
+	const gchar       *path = p_string (params, "path");
+	LrgThumbnailCache *cache;
+	g_autofree gchar  *abs = NULL;
+	g_autofree gchar  *thumb = NULL;
+	JsonObject        *o;
+
+	if (path == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "Missing string parameter 'path'");
+		return NULL;
+	}
+	abs = editor_app_project_path (self, path);
+	cache = editor_thumbnails_cache (self);
+	if (!g_file_test (abs, G_FILE_TEST_IS_REGULAR))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No file '%s'", abs);
+		return NULL;
+	}
+	if (!lrg_thumbnail_cache_is_supported (cache, abs))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		             "No thumbnail for '%s' (textures, levels, prefabs; models need a window)", abs);
+		return NULL;
+	}
+
+	/* wait: generate now (GPU kinds render on this, the GL, thread);
+	 * otherwise report the cache state and queue a request. */
+	if (p_bool (params, "wait", FALSE))
+	{
+		thumb = lrg_thumbnail_cache_generate (cache, abs, error);
+		if (thumb == NULL)
+			return NULL;
+	}
+	else if ((thumb = lrg_thumbnail_cache_lookup (cache, abs)) == NULL)
+		lrg_thumbnail_cache_request (cache, abs);
+
+	o = json_object_new ();
+	json_object_set_string_member (o, "path", abs);
+	json_object_set_member (o, "thumbnail", str_node (thumb));
+	json_object_set_boolean_member (o, "pending", thumb == NULL);
+	json_object_set_string_member (o, "cache", lrg_thumbnail_cache_get_dir (cache));
+	return obj_node (o);
+}
+
+/* level.save, overriding the document method so a timeline preview is
+ * put back before writing (the pose is not part of the document). */
+static JsonNode *
+m_level_save_app (LrgEditorServer  *server,
+                  JsonObject       *params,
+                  gpointer          user_data,
+                  GError          **error)
+{
+	LrgEditorApp *self = APP (user_data);
+	const gchar  *path = p_string (params, "path");
+	gboolean      ok;
+
+	editor_timeline_end_preview (self);
+	if (path != NULL)
+	{
+		g_autofree gchar *full = editor_app_project_path (self, path);
+
+		ok = lrg_editor_save_level (self->editor, full, error);
+	}
+	else
+		ok = lrg_editor_save (self->editor, error);
+	return ok ? str_node (lrg_editor_get_path (self->editor)) : NULL;
+}
+
 void
 editor_app_register_methods (LrgEditorApp *self)
 {
@@ -1622,6 +2138,13 @@ editor_app_register_methods (LrgEditorApp *self)
 		{ "ui.notify", m_ui_notify },
 		{ "ui.state", m_ui_state },
 		{ "editor.quit", m_editor_quit },
+		{ "tilemap.tool", m_tilemap_tool },
+		{ "timeline.play", m_timeline_play },
+		{ "timeline.stop", m_timeline_stop },
+		{ "timeline.seek", m_timeline_seek },
+		{ "timeline.state", m_timeline_state },
+		{ "asset.thumbnail", m_asset_thumbnail },
+		{ "level.save", m_level_save_app },
 	};
 	gsize i;
 

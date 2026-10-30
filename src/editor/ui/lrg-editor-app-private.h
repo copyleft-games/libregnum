@@ -16,6 +16,9 @@
  *   lrg-editor-panel-console.c  console, history and problems panels
  *   lrg-editor-dialogs.c        modal dialogs, palette, quick open
  *   lrg-editor-play.c           play-in-editor and external runs
+ *   lrg-editor-panel-tiles.c    tile palette panel + viewport tile tools
+ *   lrg-editor-panel-timeline.c timeline panel, preview and playback
+ *   lrg-editor-thumbnails.c     asset thumbnails (cache, uploads, GPU renders)
  */
 
 #pragma once
@@ -43,6 +46,11 @@
 #include "../lrg-prefab.h"
 #include "../lrg-level-serializer.h"
 #include "../lrg-level-instantiate.h"
+#include "../lrg-node-tilemap.h"
+#include "../lrg-editor-tile-painter.h"
+#include "../lrg-timeline.h"
+#include "../lrg-editor-timeline.h"
+#include "../lrg-thumbnail-cache.h"
 #include "../../gui/lrg-gui-context.h"
 #include "../../gui/lrg-gui-dock.h"
 #include "../../gui/lrg-gui-raylib.h"
@@ -115,6 +123,17 @@ typedef struct
 	goffset   size;
 	gint64    mtime;
 } EditorFileEntry;
+
+/* Tile painting tool of the tile palette / viewport. */
+typedef enum
+{
+	EDITOR_TILE_BRUSH,
+	EDITOR_TILE_ERASER,
+	EDITOR_TILE_RECT,
+	EDITOR_TILE_FILL,
+	EDITOR_TILE_PICK,
+	EDITOR_TILE_N_TOOLS
+} EditorTileTool;
 
 typedef struct
 {
@@ -298,6 +317,44 @@ struct _LrgEditorApp
 	const LrgGuiInput *cur_input;          /* input of the frame being built */
 	LrgGuiInput        last_input;         /* copy of the last frame's input (ui.state) */
 	LrgGuiRect         menu_rects[8];      /* menubar headers, for ui.state */
+
+	/* Tilemap painting (lrg-editor-panel-tiles.c) */
+	LrgEditorTilePainter *tile_painter;
+	EditorTileTool     tile_tool;
+	gboolean           tile_mode;          /* viewport left button paints */
+	gboolean           tile_hover_valid;
+	gint               tile_hover_x;
+	gint               tile_hover_y;
+	gboolean           tile_rect_active;   /* rectangle drag in progress */
+	gint               tile_rect_x0;
+	gint               tile_rect_y0;
+	gboolean           tile_drag;          /* left button owned by the tile tool */
+	GObject           *tile_palette_tex;   /* GrlTexture of the palette tileset */
+	gchar             *tile_palette_path;  /* absolute path it was loaded from */
+
+	/* Timeline (lrg-editor-panel-timeline.c) */
+	gchar             *timeline_name;      /* timeline shown in the panel */
+	gfloat             timeline_time;      /* playhead, seconds */
+	gboolean           timeline_playing;
+	gboolean           timeline_previewing; /* nodes show sampled values */
+	GHashTable        *timeline_rest;      /* "guid\nchannel" -> gfloat* rest value */
+	gchar             *timeline_key_guid;  /* selected key: node GUID */
+	gchar             *timeline_key_channel; /* selected key: channel, NULL = all */
+	gfloat             timeline_key_time;
+	gboolean           timeline_key_valid;
+	gboolean           timeline_key_drag;
+	gfloat             timeline_key_drag_from;
+	gint               timeline_easing;    /* LrgEasingType for new keys */
+	gboolean           timeline_scrubbing;
+	GString           *timeline_new_name;
+	GHashTable        *timeline_play;      /* play-in-editor: autoplay timeline names (set) */
+
+	/* Thumbnails (lrg-editor-thumbnails.c) */
+	LrgThumbnailCache *thumbs;
+	gchar             *thumbs_dir;         /* directory the cache was made for */
+	GHashTable        *thumb_entries;      /* abs path -> EditorThumb* */
+	guint64            thumb_upload_frame; /* frame the upload budget is for */
+	guint              thumb_uploads;      /* textures uploaded this frame */
 };
 
 /* --- lrg-editor-app.c --- */
@@ -356,6 +413,8 @@ G_GNUC_INTERNAL void     editor_render_shutdown     (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_render_viewport     (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_render_blit         (const LrgGuiRect *rect, gpointer user_data);
 G_GNUC_INTERNAL gboolean editor_render_screenshot   (LrgEditorApp *self, const gchar *path, GError **error);
+G_GNUC_INTERNAL void     editor_render_forget_asset (LrgEditorApp *self, const gchar *abs_path);
+G_GNUC_INTERNAL GrlImage * editor_render_model_thumbnail (LrgEditorApp *self, const gchar *abs_path, guint size);
 
 /* --- lrg-editor-dialogs.c --- */
 G_GNUC_INTERNAL void     editor_dialogs_draw        (LrgEditorApp *self);
@@ -363,6 +422,41 @@ G_GNUC_INTERNAL void     editor_dialog_open         (LrgEditorApp *self, EditorD
 G_GNUC_INTERNAL void     editor_file_dialog_open    (LrgEditorApp *self, EditorFileMode mode, const gchar *dir,
                                                      const gchar *ext);
 G_GNUC_INTERNAL void     editor_palette_open        (LrgEditorApp *self, gboolean quick_open);
+
+/* --- lrg-editor-panel-tiles.c --- */
+G_GNUC_INTERNAL void     editor_tiles_init          (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_tiles_dispose       (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_panel_tiles         (LrgEditorApp *self);
+G_GNUC_INTERNAL LrgNode * editor_tiles_target       (LrgEditorApp *self);
+G_GNUC_INTERNAL gboolean editor_tiles_viewport      (LrgEditorApp *self, const LrgGuiRect *rect, gfloat lx, gfloat ly,
+                                                     gboolean hovered);
+G_GNUC_INTERNAL void     editor_tiles_overlay       (LrgEditorApp *self, const LrgGuiRect *rect);
+G_GNUC_INTERNAL const gchar * editor_tile_tool_name (EditorTileTool tool);
+G_GNUC_INTERNAL gboolean editor_tile_tool_from_name (const gchar *name, EditorTileTool *out);
+
+/* --- lrg-editor-panel-timeline.c --- */
+G_GNUC_INTERNAL void     editor_timeline_init       (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_timeline_dispose    (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_panel_timeline      (LrgEditorApp *self);
+G_GNUC_INTERNAL LrgTimeline * editor_timeline_current (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_timeline_seek       (LrgEditorApp *self, gfloat time);
+G_GNUC_INTERNAL void     editor_timeline_set_playing (LrgEditorApp *self, gboolean playing);
+G_GNUC_INTERNAL void     editor_timeline_end_preview (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_timeline_tick       (LrgEditorApp *self, gfloat delta);
+G_GNUC_INTERNAL guint    editor_timeline_key_selection (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_timeline_play_begin (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_timeline_play_apply (LrgEditorApp *self, gdouble play_time);
+
+/* --- lrg-editor-thumbnails.c --- */
+G_GNUC_INTERNAL void     editor_thumbnails_init     (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_thumbnails_dispose  (LrgEditorApp *self);
+G_GNUC_INTERNAL LrgThumbnailCache * editor_thumbnails_cache (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_thumbnails_pump     (LrgEditorApp *self);
+G_GNUC_INTERNAL GObject * editor_thumbnail_texture  (LrgEditorApp *self, const gchar *path, gboolean *pending);
+G_GNUC_INTERNAL void     editor_thumbnails_file_changed (LrgEditorApp *self, const gchar *path);
+G_GNUC_INTERNAL void     editor_thumbnails_window_opened (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_thumbnails_window_closing (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_thumbnails_clear    (LrgEditorApp *self);
 
 /* --- lrg-editor-play.c --- */
 G_GNUC_INTERNAL void     editor_play_start          (LrgEditorApp *self);

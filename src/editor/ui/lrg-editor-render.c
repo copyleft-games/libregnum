@@ -579,6 +579,132 @@ draw_icon (LrgNodeVisualKind kind,
 }
 
 /* ==========================================================================
+ * Tilemaps
+ * ========================================================================== */
+
+/* Colour of an untextured tile id (matches the palette swatches). */
+static Color
+tile_swatch (guint id)
+{
+	static const guint32 palette[] = {
+		0xf38ba8ff, 0xfab387ff, 0xf9e2afff, 0xa6e3a1ff, 0x94e2d5ff, 0x89dcebff,
+		0x74c7ecff, 0x89b4faff, 0xb4befeff, 0xcba6f7ff, 0xf5c2e7ff, 0xeba0acff
+	};
+
+	return gui_color (palette[(id - 1) % G_N_ELEMENTS (palette)]);
+}
+
+/*
+ * Draws a tilemap node's grid in its local XY plane: one textured quad
+ * per non-empty cell (tileset slices), or flat swatches without a
+ * tileset. Layers stack bottom first with a tiny z offset. The grid
+ * outline shows while the node is the paint target.
+ */
+static void
+draw_tilemap (LrgEditorApp  *self,
+              LrgNode       *node,
+              LrgNodeVisual *visual,
+              const gfloat  *world)
+{
+	EditorRender   *r = self->render;
+	LrgNodeTilemap *grid = lrg_node_visual_get_tilemap (visual);
+	const gchar    *asset = lrg_node_visual_get_asset (visual);
+	Texture2D      *tex = (asset != NULL) ? get_texture (self, asset) : NULL;
+	gfloat          ts = (gfloat) lrg_node_visual_get_param_double (visual, "tile_size", 1.0);
+	guint           w = lrg_node_tilemap_get_width (grid);
+	guint           h = lrg_node_tilemap_get_height (grid);
+	guint           tw = lrg_node_tilemap_get_tile_width (grid);
+	guint           th = lrg_node_tilemap_get_tile_height (grid);
+	guint           cols = 0, count = 0;
+	guint           layer, x, y;
+
+	if (!(ts > 0.0f))
+		ts = 1.0f;
+	if (tex != NULL && tex->width >= (gint) tw && tex->height >= (gint) th)
+	{
+		cols = (guint) tex->width / tw;
+		count = cols * ((guint) tex->height / th);
+	}
+	else
+		tex = NULL;
+
+	push_local (world);
+	rlDisableBackfaceCulling ();
+	for (layer = 0; layer < lrg_node_tilemap_get_n_layers (grid); layer++)
+	{
+		gfloat z = 0.002f * layer;
+		gsize  n = 0;
+		const guint *cells = lrg_node_tilemap_get_layer_tiles (grid, layer, &n);
+
+		if (!lrg_node_tilemap_get_layer_visible (grid, layer) || cells == NULL)
+			continue;
+		rlSetTexture (tex != NULL ? tex->id : r->white.id);
+		for (y = 0; y < h; y++)
+		{
+			rlCheckRenderBatchLimit ((gint) (4 * w));
+			rlBegin (RL_QUADS);
+			for (x = 0; x < w; x++)
+			{
+				guint  id = cells[(gsize) y * w + x];
+				gfloat x0 = x * ts, x1 = (x + 1) * ts, y0 = -(gfloat) y * ts, y1 = -(gfloat) (y + 1) * ts;
+				gfloat u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
+				Color  c = WHITE;
+
+				if (id == 0)
+					continue;
+				if (tex != NULL)
+				{
+					guint idx = (id - 1) % MAX (count, 1u);
+
+					u0 = (gfloat) ((idx % cols) * tw) / tex->width;
+					v0 = (gfloat) ((idx / cols) * th) / tex->height;
+					u1 = u0 + (gfloat) tw / tex->width;
+					v1 = v0 + (gfloat) th / tex->height;
+				}
+				else
+					c = tile_swatch (id);
+				rlColor4ub (c.r, c.g, c.b, c.a);
+				rlNormal3f (0.0f, 0.0f, 1.0f);
+				rlTexCoord2f (u0, v0);
+				rlVertex3f (x0, y0, z);
+				rlTexCoord2f (u0, v1);
+				rlVertex3f (x0, y1, z);
+				rlTexCoord2f (u1, v1);
+				rlVertex3f (x1, y1, z);
+				rlTexCoord2f (u1, v0);
+				rlVertex3f (x1, y0, z);
+			}
+			rlEnd ();
+		}
+		rlSetTexture (0);
+		r->drawn++;
+	}
+	rlEnableBackfaceCulling ();
+
+	/* Bounds always; cell lines while painting this node. */
+	{
+		Color edge = { 120, 200, 140, 200 };
+		gfloat gw = w * ts, gh = -(gfloat) h * ts;
+
+		DrawLine3D ((Vector3) { 0.0f, 0.0f, 0.0f }, (Vector3) { gw, 0.0f, 0.0f }, edge);
+		DrawLine3D ((Vector3) { gw, 0.0f, 0.0f }, (Vector3) { gw, gh, 0.0f }, edge);
+		DrawLine3D ((Vector3) { gw, gh, 0.0f }, (Vector3) { 0.0f, gh, 0.0f }, edge);
+		DrawLine3D ((Vector3) { 0.0f, gh, 0.0f }, (Vector3) { 0.0f, 0.0f, 0.0f }, edge);
+		if (self->tile_mode && editor_tiles_target (self) == node && w * h <= 256u * 256u)
+		{
+			Color line = { 120, 200, 140, 70 };
+
+			for (x = 1; x < w; x++)
+				DrawLine3D ((Vector3) { x * ts, 0.0f, 0.001f }, (Vector3) { x * ts, gh, 0.001f }, line);
+			for (y = 1; y < h; y++)
+				DrawLine3D ((Vector3) { 0.0f, -(gfloat) y * ts, 0.001f }, (Vector3) { gw, -(gfloat) y * ts, 0.001f },
+				            line);
+		}
+	}
+	rlPopMatrix ();
+}
+
+/* ==========================================================================
  * Scene
  * ========================================================================== */
 
@@ -695,6 +821,11 @@ draw_node_geometry (LrgEditorApp *self,
 		break;
 
 	case LRG_NODE_VISUAL_TILEMAP:
+		if (lrg_node_visual_get_tilemap (visual) != NULL)
+		{
+			draw_tilemap (self, node, visual, world);
+			break;
+		}
 		push_local (world);
 		draw_unit_wire_box (0.5f, 0.5f, 0.0f, (Color) { 120, 200, 140, 255 });
 		DrawLine3D ((Vector3) { -0.5f, 0.0f, 0.0f }, (Vector3) { 0.5f, 0.0f, 0.0f }, (Color) { 120, 200, 140, 120 });
@@ -1173,4 +1304,119 @@ editor_render_screenshot (LrgEditorApp  *self,
 		return FALSE;
 	}
 	return TRUE;
+}
+
+/* ==========================================================================
+ * Live reload and thumbnails
+ * ========================================================================== */
+
+/* Drops cached GPU copies of an asset that changed on disk, so the next
+ * frame reloads it. The by-asset maps borrow from the path maps, so they
+ * are cleared wholesale (they refill on the next lookup). */
+void
+editor_render_forget_asset (LrgEditorApp *self,
+                            const gchar  *abs_path)
+{
+	EditorRender *r = self->render;
+
+	if (r == NULL || abs_path == NULL)
+		return;
+	if (!g_hash_table_contains (r->models, abs_path) && !g_hash_table_contains (r->textures, abs_path))
+		return;
+	g_hash_table_remove_all (r->model_by_asset);
+	g_hash_table_remove_all (r->texture_by_asset);
+	g_hash_table_remove (r->models, abs_path);
+	g_hash_table_remove (r->textures, abs_path);
+}
+
+/*
+ * Renders a model file into a size x size image for the thumbnail cache
+ * (main thread, GL context required). The camera looks at the bounding
+ * box from a 3/4 angle with the viewport's lighting.
+ */
+GrlImage *
+editor_render_model_thumbnail (LrgEditorApp *self,
+                               const gchar  *abs_path,
+                               guint         size)
+{
+	EditorRender   *r = self->render;
+	Model           model;
+	BoundingBox     bb;
+	RenderTexture2D rt;
+	Camera3D        cam = { 0 };
+	Image           img;
+	GrlImage       *out;
+	Shader         *saved;
+	Vector3         center;
+	gfloat          radius, dist;
+	gint            i;
+
+	if (r == NULL || !g_file_test (abs_path, G_FILE_TEST_IS_REGULAR))
+		return NULL;
+
+	model = LoadModel (abs_path);
+	if (model.meshCount == 0)
+	{
+		UnloadModel (model);
+		return NULL;
+	}
+	bb = GetModelBoundingBox (model);
+	center = (Vector3) { (bb.min.x + bb.max.x) * 0.5f, (bb.min.y + bb.max.y) * 0.5f, (bb.min.z + bb.max.z) * 0.5f };
+	radius = 0.5f * sqrtf ((bb.max.x - bb.min.x) * (bb.max.x - bb.min.x) + (bb.max.y - bb.min.y) * (bb.max.y - bb.min.y) +
+	                       (bb.max.z - bb.min.z) * (bb.max.z - bb.min.z));
+	radius = MAX (radius, 0.01f);
+	dist = radius / tanf (35.0f * 0.5f * (gfloat) G_PI / 180.0f) * 1.05f;
+
+	cam.target = center;
+	cam.position = (Vector3) { center.x + dist * 0.62f, center.y + dist * 0.48f, center.z + dist * 0.62f };
+	cam.up = (Vector3) { 0.0f, 1.0f, 0.0f };
+	cam.fovy = 35.0f;
+	cam.projection = CAMERA_PERSPECTIVE;
+
+	/* Light the model with the viewport shader, restoring the model's own
+	 * shaders before unloading (UnloadModel frees non-default shaders). */
+	saved = g_new (Shader, MAX (model.materialCount, 1));
+	for (i = 0; i < model.materialCount; i++)
+	{
+		saved[i] = model.materials[i].shader;
+		if (r->has_lit)
+			model.materials[i].shader = r->lit;
+	}
+	if (r->has_lit)
+	{
+		const gfloat dir[3] = { -0.40f, -0.80f, -0.45f };
+		gfloat       ambient = 0.4f;
+
+		SetShaderValue (r->lit, r->loc_light, dir, SHADER_UNIFORM_VEC3);
+		SetShaderValue (r->lit, r->loc_ambient, &ambient, SHADER_UNIFORM_FLOAT);
+	}
+
+	rt = LoadRenderTexture ((gint) size, (gint) size);
+	if (!IsRenderTextureValid (rt))
+	{
+		for (i = 0; i < model.materialCount; i++)
+			model.materials[i].shader = saved[i];
+		g_free (saved);
+		UnloadModel (model);
+		return NULL;
+	}
+	BeginTextureMode (rt);
+	ClearBackground ((Color) { 30, 30, 46, 255 });
+	BeginMode3D (cam);
+	DrawModel (model, (Vector3) { 0.0f, 0.0f, 0.0f }, 1.0f, WHITE);
+	EndMode3D ();
+	EndTextureMode ();
+
+	img = LoadImageFromTexture (rt.texture);
+	ImageFlipVertical (&img);
+	ImageFormat (&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+	out = grl_image_new_from_pixels (img.width, img.height, GRL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, img.data);
+
+	UnloadImage (img);
+	UnloadRenderTexture (rt);
+	for (i = 0; i < model.materialCount; i++)
+		model.materials[i].shader = saved[i];
+	g_free (saved);
+	UnloadModel (model);
+	return out;
 }

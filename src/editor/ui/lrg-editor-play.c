@@ -107,6 +107,9 @@ editor_play_start (LrgEditorApp *self)
 	if (self->playing)
 		return;
 
+	/* A timeline preview must not leak into the play snapshot. */
+	editor_timeline_end_preview (self);
+
 	/* Snapshot everything the simulation may touch. */
 	g_clear_pointer (&self->play_entries, g_hash_table_unref);
 	self->play_entries = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, play_entry_free);
@@ -126,6 +129,7 @@ editor_play_start (LrgEditorApp *self)
 		return;
 	}
 	record_entity_baselines (self);
+	editor_timeline_play_begin (self);
 
 	self->playing = TRUE;
 	self->paused = FALSE;
@@ -273,6 +277,8 @@ editor_play_tick (LrgEditorApp *self,
 	lrg_world_update (self->play_world, delta);
 	self->play_time += delta;
 	sync_back (self);
+	/* Autoplay timelines pose the nodes (restored when play stops). */
+	editor_timeline_play_apply (self, self->play_time);
 }
 
 /* ==========================================================================

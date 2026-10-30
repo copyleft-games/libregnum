@@ -216,6 +216,40 @@ sleep 0.4
 check 'Alt+F opens the File menu' "$(ipc ui.state | yq -p json '.menu')" 'File'
 xdotool key Escape
 
+# 10. Tile painting: B enables paint mode, a real left drag paints one
+#     stroke (one undo step) on the selected tilemap node.
+ipc node.create '{"name":"TileMap","kind":"tilemap"}' >/dev/null
+ipc tilemap.configure '{"node":"TileMap","width":8,"height":8}' >/dev/null
+ipc selection.set '{"nodes":["TileMap"]}' >/dev/null
+ipc view.set '{"mode_2d":true}' >/dev/null
+ipc view.set '{"position":[4.5,-4.5,50],"target":[4.5,-4.5,0],"ortho_height":20}' >/dev/null
+sleep 0.3
+vh="$(yq -p json '.viewport[3]' <<<"${state}" | awk '{ printf "%d", $1 }')"
+step=$((vh / 40))
+xdotool mousemove --window "${window}" "${vx}" "${vy}"
+sleep 0.2
+xdotool key b
+sleep 0.3
+check 'B turns tile painting on' "$(ipc tilemap.tool | yq -p json '.mode')" 'true'
+undo_before="$(ipc editor.info | yq -p json '.undo')"
+xdotool mousedown 1
+sleep 0.1
+for _ in $(seq 1 6)
+do
+	xdotool mousemove_relative -- "${step}" 0
+	sleep 0.03
+done
+xdotool mouseup 1
+sleep 0.3
+check 'drag paints the start cell' "$(ipc tilemap.pick '{"node":"TileMap","x":4,"y":4}' | yq -p json '.tile')" '1'
+check 'drag paints along the stroke' "$(ipc tilemap.pick '{"node":"TileMap","x":7,"y":4}' | yq -p json '.tile')" '1'
+check 'a stroke is one undo step' "$(ipc editor.info | yq -p json '.undo')" "$((undo_before + 1))"
+if [[ -n "${LRG_SMOKE_SHOTS:-}" ]]
+then
+	ipc view.screenshot "{\"path\":\"${LRG_SMOKE_SHOTS}/tile-paint.png\",\"window\":true}" >/dev/null
+	sleep 0.5
+fi
+
 ipc editor.quit '{"force":true}' >/dev/null || true
 wait "${editor_pid}" 2>/dev/null || true
 editor_pid=''

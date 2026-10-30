@@ -195,6 +195,14 @@ Available when the server belongs to =lrgeditor= / =LrgEditorApp=:
 | =ui.notify=       | =message=, =level= (0 info, 1 success, 2 warning, 3 error) | =true=; shows a toast                        |
 | =ui.state=        |                                                     | =menu= (open top-level menu or null), =dialog=, =palette=, =nav= (=none fly orbit pan box zoom gizmo=), =viewport_hovered=, =window=, =fps=, =frame_height=, =menubar= (header rects by label), =viewport= (rect), =input= (=x y buttons [left right middle] mods=) as last seen |
 | =editor.quit=     | =force= (discard unsaved changes)                   | =true=                                              |
+| =tilemap.tool=    | any of =tool= (=brush eraser rect fill pick=), =tile=, =layer=, =brush=, =mode= (paint mode on/off) | =tool mode tile layer brush target hover= (=[x, y]= cell under the pointer or null) |
+| =timeline.play=   | =name= (else the panel's timeline), =from=, =playing= (default true) | =name time playing previewing=        |
+| =timeline.seek=   | =time=, =name=                                      | timeline state; the nodes show the pose (preview)   |
+| =timeline.stop=   |                                                     | timeline state; previewed nodes are restored        |
+| =timeline.state=  |                                                     | =name time playing previewing=                      |
+| =asset.thumbnail= | =path= (project relative or absolute), =wait= (generate now) | =path thumbnail pending cache=; textures, levels, prefabs; models need a window |
+
+The app also overrides =level.save= so a timeline preview is put back before writing (the pose is never saved).
 
 ** Examples
 :PROPERTIES:
