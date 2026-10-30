@@ -135,8 +135,13 @@ on_confirm_clicked (LrgButton                    *button,
                     LrgTemplateConfirmationState *self)
 {
     LrgTemplateConfirmationStateClass *klass;
+    g_autoptr(LrgTemplateConfirmationState) keep_alive = NULL;
 
     klass = LRG_TEMPLATE_CONFIRMATION_STATE_GET_CLASS (self);
+
+    /* Answering usually pops this dialog, which may drop the last
+     * reference to it: stay alive until the handlers have returned. */
+    keep_alive = g_object_ref (self);
 
     if (klass->on_confirm != NULL)
         klass->on_confirm (self);
@@ -147,8 +152,13 @@ on_cancel_clicked (LrgButton                    *button,
                    LrgTemplateConfirmationState *self)
 {
     LrgTemplateConfirmationStateClass *klass;
+    g_autoptr(LrgTemplateConfirmationState) keep_alive = NULL;
 
     klass = LRG_TEMPLATE_CONFIRMATION_STATE_GET_CLASS (self);
+
+    /* Answering usually pops this dialog, which may drop the last
+     * reference to it: stay alive until the handlers have returned. */
+    keep_alive = g_object_ref (self);
 
     if (klass->on_cancel != NULL)
         klass->on_cancel (self);
@@ -345,8 +355,7 @@ lrg_template_confirmation_state_enter (LrgGameState *state)
 
     create_ui (self);
 
-    /* Chain up */
-    LRG_GAME_STATE_CLASS (lrg_template_confirmation_state_parent_class)->enter (state);
+    /* No chain-up: LrgGameState leaves enter() abstract (NULL). */
 }
 
 static void
@@ -367,8 +376,7 @@ lrg_template_confirmation_state_exit (LrgGameState *state)
     priv->confirm_button = NULL;
     priv->cancel_button = NULL;
 
-    /* Chain up */
-    LRG_GAME_STATE_CLASS (lrg_template_confirmation_state_parent_class)->exit (state);
+    /* No chain-up: LrgGameState leaves exit() abstract (NULL). */
 }
 
 static void
@@ -376,7 +384,7 @@ lrg_template_confirmation_state_update (LrgGameState *state,
                                         gdouble       delta)
 {
     /* Confirmation dialog doesn't need regular updates */
-    LRG_GAME_STATE_CLASS (lrg_template_confirmation_state_parent_class)->update (state, delta);
+    /* No chain-up: LrgGameState leaves update() abstract (NULL). */
 }
 
 static void
@@ -427,8 +435,7 @@ lrg_template_confirmation_state_draw (LrgGameState *state)
         lrg_widget_draw (LRG_WIDGET (priv->canvas));
     }
 
-    /* Chain up */
-    LRG_GAME_STATE_CLASS (lrg_template_confirmation_state_parent_class)->draw (state);
+    /* No chain-up: LrgGameState leaves draw() abstract (NULL). */
 }
 
 static gboolean
@@ -497,7 +504,15 @@ lrg_template_confirmation_state_handle_input (LrgGameState *state,
     /* Pass to UI for mouse handling */
     if (priv->canvas != NULL)
     {
-        return lrg_widget_handle_event (LRG_WIDGET (priv->canvas), event);
+        g_autoptr(LrgCanvas) canvas = NULL;
+
+        /*
+         * A click usually ends with whoever listens to ::confirmed popping
+         * this state, and exit() drops the canvas.  Hold our own reference
+         * so the widget tree outlives the event it is still dispatching.
+         */
+        canvas = g_object_ref (priv->canvas);
+        return lrg_widget_handle_event (LRG_WIDGET (canvas), event);
     }
 
     return FALSE;
@@ -1077,4 +1092,32 @@ lrg_template_confirmation_state_set_default_selection (LrgTemplateConfirmationSt
     g_return_if_fail (selection >= 0 && selection <= 1);
 
     g_object_set (self, "default-selection", selection, NULL);
+}
+
+/*
+ * lrg_template_confirmation_state_confirm:
+ * @self: an #LrgTemplateConfirmationState
+ *
+ * Activates the confirm button programmatically.
+ */
+void
+lrg_template_confirmation_state_confirm (LrgTemplateConfirmationState *self)
+{
+    g_return_if_fail (LRG_IS_TEMPLATE_CONFIRMATION_STATE (self));
+
+    on_confirm_clicked (NULL, self);
+}
+
+/*
+ * lrg_template_confirmation_state_cancel:
+ * @self: an #LrgTemplateConfirmationState
+ *
+ * Activates the cancel button programmatically.
+ */
+void
+lrg_template_confirmation_state_cancel (LrgTemplateConfirmationState *self)
+{
+    g_return_if_fail (LRG_IS_TEMPLATE_CONFIRMATION_STATE (self));
+
+    on_cancel_clicked (NULL, self);
 }

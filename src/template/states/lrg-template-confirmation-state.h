@@ -304,6 +304,32 @@ void
 lrg_template_confirmation_state_set_default_selection (LrgTemplateConfirmationState *self,
                                                         gint                          selection);
 
+/**
+ * lrg_template_confirmation_state_confirm:
+ * @self: an #LrgTemplateConfirmationState
+ *
+ * Activates the confirm button programmatically, exactly as if the
+ * player had chosen it: runs the #LrgTemplateConfirmationStateClass.on_confirm
+ * virtual method, which by default emits
+ * #LrgTemplateConfirmationState::confirmed.  Useful for scripted flows,
+ * automation and headless tests.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_template_confirmation_state_confirm (LrgTemplateConfirmationState *self);
+
+/**
+ * lrg_template_confirmation_state_cancel:
+ * @self: an #LrgTemplateConfirmationState
+ *
+ * Activates the cancel button programmatically: runs the
+ * #LrgTemplateConfirmationStateClass.on_cancel virtual method, which by
+ * default emits #LrgTemplateConfirmationState::cancelled.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_template_confirmation_state_cancel (LrgTemplateConfirmationState *self);
+
 G_END_DECLS
 
 #endif /* LRG_TEMPLATE_CONFIRMATION_STATE_H */
