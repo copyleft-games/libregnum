@@ -96,7 +96,7 @@ lrg_mcp_resource_provider_default_init (LrgMcpResourceProviderInterface *iface)
 	iface->handles_uri = lrg_mcp_resource_provider_default_handles_uri;
 }
 
-/**
+/*
  * lrg_mcp_resource_provider_list_resources:
  * @self: a #LrgMcpResourceProvider
  *
@@ -117,7 +117,7 @@ lrg_mcp_resource_provider_list_resources (LrgMcpResourceProvider *self)
 	return iface->list_resources (self);
 }
 
-/**
+/*
  * lrg_mcp_resource_provider_read_resource:
  * @self: a #LrgMcpResourceProvider
  * @uri: the resource URI
@@ -144,7 +144,7 @@ lrg_mcp_resource_provider_read_resource (LrgMcpResourceProvider  *self,
 	return iface->read_resource (self, uri, error);
 }
 
-/**
+/*
  * lrg_mcp_resource_provider_handles_uri:
  * @self: a #LrgMcpResourceProvider
  * @uri: the resource URI to check
