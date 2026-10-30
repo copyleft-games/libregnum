@@ -1606,6 +1606,164 @@ test_draw_light_set_overlay (void)
     lrg_static_batch_set_shader (batch, NULL);
 }
 
+/* Splash particles: every splash bursts droplets into the particle
+ * system set with lrg_rain_set_splash_particles(), at the impact. */
+
+typedef struct
+{
+    gfloat ground;
+    guint  count;
+    guint  rising;
+    guint  on_ground;
+} SplashCheck;
+
+static void
+check_splash_particle (const LrgParticle *particle,
+                       gpointer           user_data)
+{
+    SplashCheck *check = user_data;
+
+    check->count++;
+    if (particle->velocity_y > 0.0f)
+        check->rising++;
+    if (fabsf (particle->position_y - check->ground) < 1e-4f)
+        check->on_ground++;
+}
+
+static void
+test_rain_world_splash_particles (void)
+{
+    GrlVector3 cam = vec (0, 10, 0);
+    g_autoptr(LrgRain) rain = lrg_rain_new ();
+    g_autoptr(LrgParticleSystem) spray = NULL;
+    LrgWeatherEffect *effect = LRG_WEATHER_EFFECT (rain);
+    SplashCheck check = { 8.0f, 0, 0, 0 };
+    guint frame;
+
+    lrg_rain_set_seed (rain, 42);
+    lrg_weather_effect_set_space (effect, LRG_WEATHER_SPACE_WORLD);
+    lrg_rain_set_drop_count (rain, 400);
+    lrg_weather_effect_set_camera_position (effect, &cam);
+    lrg_weather_effect_activate (effect);
+    lrg_weather_effect_set_intensity (effect, 1.0f);
+    lrg_rain_set_splash_enabled (rain, TRUE);
+    lrg_rain_set_splash_height (rain, 8.0f);
+
+    /* tuned for world space: Y up, metres */
+    spray = lrg_rain_new_splash_particle_system (rain, 4096);
+    g_assert_true (LRG_IS_PARTICLE_SYSTEM (spray));
+    lrg_rain_set_splash_particles (rain, spray);
+    lrg_rain_set_splash_particle_count (rain, 3);
+    g_assert_true (lrg_rain_get_splash_particles (rain) == spray);
+    g_assert_cmpuint (lrg_rain_get_splash_particle_count (rain), ==, 3);
+
+    for (frame = 0; frame < 10; frame++)
+        lrg_weather_effect_update (effect, 1.0f / 60.0f);
+
+    /* three droplets per splash, emitted at the ground, thrown upwards;
+     * the system is never updated here so none has died yet */
+    g_assert_cmpuint (lrg_rain_get_splash_total (rain), >, 0);
+    g_assert_cmpuint (lrg_particle_system_get_active_count (spray), ==,
+                      lrg_rain_get_splash_total (rain) * 3);
+    lrg_particle_system_foreach_active (spray, check_splash_particle, &check);
+    g_assert_cmpuint (check.count, ==, lrg_rain_get_splash_total (rain) * 3);
+    g_assert_cmpuint (check.on_ground, ==, check.count);
+    g_assert_cmpuint (check.rising, ==, check.count);
+
+    /* detaching stops the spray, the rings carry on */
+    lrg_rain_set_splash_particles (rain, NULL);
+    lrg_particle_system_clear (spray);
+    for (frame = 0; frame < 10; frame++)
+        lrg_weather_effect_update (effect, 1.0f / 60.0f);
+    g_assert_cmpuint (lrg_particle_system_get_active_count (spray), ==, 0);
+    g_assert_cmpuint (lrg_rain_get_splash_count (rain), >, 0);
+}
+
+static void
+test_rain_screen_splash_particles (void)
+{
+    g_autoptr(LrgRain) rain = lrg_rain_new ();
+    g_autoptr(LrgParticleSystem) spray = NULL;
+    LrgWeatherEffect *effect = LRG_WEATHER_EFFECT (rain);
+    SplashCheck check = { 100.0f, 0, 0, 0 };
+    guint frame;
+
+    lrg_rain_set_seed (rain, 7);
+    lrg_rain_set_area (rain, 0, 0, 200, 200);
+    lrg_rain_set_splash_height (rain, 100.0f);
+    lrg_rain_set_drop_count (rain, 200);
+    lrg_weather_effect_activate (effect);
+    lrg_weather_effect_set_intensity (effect, 1.0f);
+
+    spray = lrg_rain_new_splash_particle_system (rain, 8192);
+    lrg_rain_set_splash_particles (rain, spray);
+
+    for (frame = 0; frame < 10; frame++)
+        lrg_weather_effect_update (effect, 1.0f / 30.0f);
+
+    /* default six droplets per splash, at the splash line; screen space
+     * is Y-down, so "up" is negative Y */
+    g_assert_cmpuint (lrg_rain_get_splash_total (rain), >, 0);
+    g_assert_cmpuint (lrg_particle_system_get_active_count (spray), ==,
+                      lrg_rain_get_splash_total (rain) * 6);
+    lrg_particle_system_foreach_active (spray, check_splash_particle, &check);
+    g_assert_cmpuint (check.on_ground, ==, check.count);
+    g_assert_cmpuint (check.rising, ==, 0);
+}
+
+static void
+test_rain_seed_deterministic (void)
+{
+    g_autoptr(LrgRain) a = lrg_rain_new ();
+    g_autoptr(LrgRain) b = lrg_rain_new ();
+    g_autoptr(LrgRain) c = lrg_rain_new ();
+    LrgRain *rains[3];
+    GrlVector3 pa;
+    GrlVector3 pb;
+    guint frame;
+    guint i;
+    guint differ;
+
+    rains[0] = a;
+    rains[1] = b;
+    rains[2] = c;
+    for (i = 0; i < 3; i++)
+    {
+        lrg_rain_set_seed (rains[i], i < 2 ? 1234u : 99u);
+        lrg_rain_set_area (rains[i], 0, 0, 200, 200);
+        lrg_rain_set_splash_height (rains[i], 100.0f);
+        lrg_rain_set_drop_count (rains[i], 100);
+        lrg_weather_effect_activate (LRG_WEATHER_EFFECT (rains[i]));
+        lrg_weather_effect_set_intensity (LRG_WEATHER_EFFECT (rains[i]), 0.7f);
+    }
+
+    for (frame = 0; frame < 30; frame++)
+        for (i = 0; i < 3; i++)
+            lrg_weather_effect_update (LRG_WEATHER_EFFECT (rains[i]), 1.0f / 30.0f);
+
+    /* same seed: identical runs */
+    g_assert_cmpuint (lrg_rain_get_splash_total (a), ==, lrg_rain_get_splash_total (b));
+    g_assert_cmpuint (lrg_rain_get_splash_count (a), ==, lrg_rain_get_splash_count (b));
+    differ = 0;
+    for (i = 0; i < 100; i++)
+    {
+        gboolean live_a = lrg_rain_get_drop (a, i, &pa);
+        gboolean live_b = lrg_rain_get_drop (b, i, &pb);
+
+        g_assert_cmpint (live_a, ==, live_b);
+        if (live_a)
+        {
+            g_assert_cmpfloat (pa.x, ==, pb.x);
+            g_assert_cmpfloat (pa.y, ==, pb.y);
+        }
+
+        /* another seed: different drops */
+        if (lrg_rain_get_drop (c, i, &pb) != live_a || (live_a && pa.x != pb.x))
+            differ++;
+    }
+    g_assert_cmpuint (differ, >, 0);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1622,6 +1780,9 @@ main (int   argc,
     g_test_add_func ("/weather-render/rain/world-fall-wind", test_rain_world_fall_and_wind);
     g_test_add_func ("/weather-render/rain/world-splash", test_rain_world_splash);
     g_test_add_func ("/weather-render/rain/screen-splash", test_rain_screen_splash);
+    g_test_add_func ("/weather-render/rain/world-splash-particles", test_rain_world_splash_particles);
+    g_test_add_func ("/weather-render/rain/screen-splash-particles", test_rain_screen_splash_particles);
+    g_test_add_func ("/weather-render/rain/seed-deterministic", test_rain_seed_deterministic);
     g_test_add_func ("/weather-render/snow/world", test_snow_world);
     g_test_add_func ("/weather-render/fog/amount", test_fog_amount);
     g_test_add_func ("/weather-render/fog/veil-scroll", test_fog_veil_and_scroll);

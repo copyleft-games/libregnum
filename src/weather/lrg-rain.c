@@ -29,11 +29,17 @@
 #endif
 #include "lrg-rain.h"
 #include "lrg-weather-effect-private.h"
+#include "../particles/lrg-particle-system.h"
+#include "../particles/lrg-particle-emitter.h"
+#include "../particles/lrg-particle-force.h"
 #include "../lrg-log.h"
 
 /* Live splashes at once and how long each lasts, seconds. */
 #define RAIN_MAX_SPLASHES   (128)
 #define RAIN_SPLASH_LIFE    (0.3f)
+
+/* Droplets emitted into the splash particle system per splash. */
+#define RAIN_SPLASH_PARTICLES  (6)
 
 /* Screen-space defaults (pixels), the original 2D values. */
 #define RAIN_SCREEN_SPEED      (500.0f)
@@ -101,6 +107,11 @@ struct _LrgRain
     RainSplash  splashes[RAIN_MAX_SPLASHES];
     guint       n_splashes;
     GRand      *rng;
+
+    /* Optional droplet spray at each splash (see set_splash_particles) */
+    LrgParticleSystem *splash_particles;
+    guint              splash_particle_count;
+    guint64            splash_total;
 };
 
 G_DEFINE_FINAL_TYPE (LrgRain, lrg_rain, LRG_TYPE_WEATHER_EFFECT)
@@ -209,6 +220,18 @@ spawn_splash (LrgRain *self,
               gfloat   z)
 {
     RainSplash *splash;
+
+    self->splash_total++;
+
+    /*
+     * The droplet spray goes through the particles module, independent
+     * of the ring pool below: the particle system has its own budget.
+     * Its emitter supplies the droplets' speed, spread and lifetime;
+     * this only places the burst where the drop hit.
+     */
+    if (self->splash_particles != NULL && self->splash_particle_count > 0)
+        lrg_particle_system_emit_at (self->splash_particles, x, y, z,
+                                     self->splash_particle_count);
 
     /* A full pool drops the newest: splashes are decoration. */
     if (self->n_splashes >= RAIN_MAX_SPLASHES)
@@ -597,6 +620,7 @@ lrg_rain_finalize (GObject *object)
 
     g_clear_pointer (&self->drops, g_free);
     g_clear_pointer (&self->rng, g_rand_free);
+    g_clear_object (&self->splash_particles);
 
     G_OBJECT_CLASS (lrg_rain_parent_class)->finalize (object);
 }
@@ -766,6 +790,10 @@ lrg_rain_init (LrgRain *self)
     self->drops = NULL;
     self->allocated_drops = 0;
     self->n_splashes = 0;
+
+    self->splash_particles = NULL;
+    self->splash_particle_count = RAIN_SPLASH_PARTICLES;
+    self->splash_total = 0;
 }
 
 /* Public API */
@@ -1016,4 +1044,172 @@ lrg_rain_get_splash_count (LrgRain *self)
 {
     g_return_val_if_fail (LRG_IS_RAIN (self), 0);
     return self->n_splashes;
+}
+
+/**
+ * lrg_rain_set_seed:
+ * @self: A #LrgRain
+ * @seed: the new seed
+ *
+ * Reseeds the rain's private random generator, which places, respawns
+ * and spreads every drop.  The same seed, settings and update steps
+ * give the same drops and splashes, which keeps tests and replays
+ * deterministic.  Takes effect for the next drops placed; call it
+ * before lrg_weather_effect_activate() to make the whole run
+ * reproducible.
+ */
+void
+lrg_rain_set_seed (LrgRain *self,
+                   guint32  seed)
+{
+    g_return_if_fail (LRG_IS_RAIN (self));
+    g_rand_set_seed (self->rng, seed);
+}
+
+/**
+ * lrg_rain_get_splash_particles:
+ * @self: A #LrgRain
+ *
+ * Gets the particle system splash droplets are emitted into.
+ *
+ * Returns: (transfer none) (nullable): the particle system, or %NULL
+ */
+LrgParticleSystem *
+lrg_rain_get_splash_particles (LrgRain *self)
+{
+    g_return_val_if_fail (LRG_IS_RAIN (self), NULL);
+    return self->splash_particles;
+}
+
+/**
+ * lrg_rain_set_splash_particles:
+ * @self: A #LrgRain
+ * @system: (nullable) (transfer none): a particle system, or %NULL to
+ *   stop emitting droplets
+ *
+ * Makes every splash also emit lrg_rain_get_splash_particle_count()
+ * particles into @system at the impact point (screen pixels in screen
+ * space, world units in world space), through
+ * lrg_particle_system_emit_at() and so @system's first emitter.  The
+ * rain only emits: update and draw @system yourself, alongside the
+ * rain.  lrg_rain_new_splash_particle_system() builds a ready-tuned one.
+ */
+void
+lrg_rain_set_splash_particles (LrgRain           *self,
+                               LrgParticleSystem *system)
+{
+    g_return_if_fail (LRG_IS_RAIN (self));
+    g_return_if_fail (system == NULL || LRG_IS_PARTICLE_SYSTEM (system));
+
+    g_set_object (&self->splash_particles, system);
+}
+
+/**
+ * lrg_rain_get_splash_particle_count:
+ * @self: A #LrgRain
+ *
+ * Returns: droplets emitted per splash (default 6)
+ */
+guint
+lrg_rain_get_splash_particle_count (LrgRain *self)
+{
+    g_return_val_if_fail (LRG_IS_RAIN (self), 0);
+    return self->splash_particle_count;
+}
+
+/**
+ * lrg_rain_set_splash_particle_count:
+ * @self: A #LrgRain
+ * @count: droplets per splash; 0 disables the spray
+ *
+ * Sets how many particles each splash emits into the splash particle
+ * system.
+ */
+void
+lrg_rain_set_splash_particle_count (LrgRain *self,
+                                    guint    count)
+{
+    g_return_if_fail (LRG_IS_RAIN (self));
+    self->splash_particle_count = count;
+}
+
+/**
+ * lrg_rain_get_splash_total:
+ * @self: A #LrgRain
+ *
+ * Counts every splash since the rain was created, including ones the
+ * ring pool was too full to show.  Each one emitted droplets when a
+ * splash particle system was set.
+ *
+ * Returns: the number of splashes so far
+ */
+guint64
+lrg_rain_get_splash_total (LrgRain *self)
+{
+    g_return_val_if_fail (LRG_IS_RAIN (self), 0);
+    return self->splash_total;
+}
+
+/**
+ * lrg_rain_new_splash_particle_system:
+ * @self: A #LrgRain
+ * @max_particles: capacity of the new system
+ *
+ * Builds a particle system tuned as splash spray for this rain's
+ * current space: a burst-only emitter (no continuous emission) throwing
+ * short-lived droplets up and outwards in a wide cone, tinted with the
+ * rain colour, plus gravity pulling them back down.  Screen space uses
+ * pixels and a Y-down axis; world space uses metres and Y up.  Pass the
+ * result to lrg_rain_set_splash_particles().
+ *
+ * Returns: (transfer full): a new #LrgParticleSystem
+ */
+LrgParticleSystem *
+lrg_rain_new_splash_particle_system (LrgRain *self,
+                                     guint    max_particles)
+{
+    g_autoptr(LrgParticleEmitter) emitter = NULL;
+    g_autoptr(LrgParticleForce) gravity = NULL;
+    LrgParticleSystem *system;
+
+    g_return_val_if_fail (LRG_IS_RAIN (self), NULL);
+    g_return_val_if_fail (max_particles > 0, NULL);
+
+    system = lrg_particle_system_new (max_particles);
+
+    emitter = lrg_particle_emitter_new ();
+    lrg_particle_emitter_set_emission_rate (emitter, 0.0f);
+    lrg_particle_emitter_set_emission_shape (emitter, LRG_EMISSION_SHAPE_CONE);
+    lrg_particle_emitter_set_spread_angle (emitter, (gfloat) G_PI / 3.0f);
+    lrg_particle_emitter_set_initial_lifetime (emitter, 0.2f, 0.4f);
+    lrg_particle_emitter_set_start_color (emitter,
+                                          self->color_r / 255.0f,
+                                          self->color_g / 255.0f,
+                                          self->color_b / 255.0f,
+                                          self->color_a / 255.0f);
+    lrg_particle_emitter_set_end_color (emitter,
+                                        self->color_r / 255.0f,
+                                        self->color_g / 255.0f,
+                                        self->color_b / 255.0f,
+                                        0.0f);
+
+    if (is_world (self))
+    {
+        lrg_particle_emitter_set_direction (emitter, 0.0f, 1.0f, 0.0f);
+        lrg_particle_emitter_set_initial_speed (emitter, 0.8f, 1.8f);
+        lrg_particle_emitter_set_initial_size (emitter, 0.01f, 0.025f);
+        gravity = lrg_particle_force_gravity_new (0.0f, -9.8f, 0.0f);
+    }
+    else
+    {
+        lrg_particle_emitter_set_direction (emitter, 0.0f, -1.0f, 0.0f);
+        lrg_particle_emitter_set_initial_speed (emitter, 60.0f, 140.0f);
+        lrg_particle_emitter_set_initial_size (emitter, 1.0f, 2.0f);
+        gravity = lrg_particle_force_gravity_new (0.0f, 600.0f, 0.0f);
+    }
+
+    lrg_particle_system_add_emitter (system, emitter);
+    lrg_particle_system_add_force (system, gravity);
+
+    return system;
 }
