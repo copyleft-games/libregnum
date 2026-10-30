@@ -39,7 +39,7 @@ G_DECLARE_FINAL_TYPE (LrgMusicTrack, lrg_music_track, LRG, MUSIC_TRACK, GObject)
  *
  * Creates a new music track wrapping the given GrlMusic.  The track
  * switches @music to background streaming
- * (grl_music_set_background_streaming()): graylib's streaming thread
+ * (grl_music_set_background_streaming()): graylib's audio thread
  * decodes it, so the frame never pays for a refill.
  *
  * Returns: (transfer full): A new #LrgMusicTrack
@@ -204,7 +204,7 @@ void lrg_music_track_resume (LrgMusicTrack *self);
  * @self: a #LrgMusicTrack
  *
  * Handles fades and loop point checking (the decoding happens on
- * graylib's streaming thread, see lrg_music_track_new()).
+ * graylib's audio thread, see lrg_music_track_new()).
  *
  * This must be called every frame while music is playing.
  */

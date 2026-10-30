@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #include <glib.h>
 #include <glib/gstdio.h>
@@ -3136,6 +3137,177 @@ music_teardown (gpointer state)
 	g_object_unref (state);
 }
 
+/* -- sfx-calls: per-frame sound calls while music decodes and a synth mixes -
+ *
+ * The audio calls a game makes on its own thread every frame (play, volume,
+ * pitch, pan, is-playing on 8 sounds) while the audio lock is busy: a
+ * looping Vorbis track decodes on graylib's streaming thread and a MIDI
+ * synth renders in the device callback, both under raylib's audio lock.
+ * Each call is timed on its own; teardown prints the per-call latency
+ * (median, p99, p99.9, max), the number to watch for lock stalls. */
+
+#define SFX_SOUNDS        (8)
+#define SFX_TONE_SECONDS  (0.25)
+
+typedef struct
+{
+	GrlSound      *sounds[SFX_SOUNDS];
+	LrgMusicTrack *music;
+	LrgMidiSynth  *synth;
+	GArray        *call_ns;     /* gdouble, one per timed call */
+} SfxState;
+
+/* qsort order for the per-call latencies */
+static int
+compare_double_ns (const void *a,
+                   const void *b)
+{
+	gdouble da = *(const gdouble *) a;
+	gdouble db = *(const gdouble *) b;
+
+	return (da > db) - (da < db);
+}
+
+static inline gint64
+sfx_now_ns (void)
+{
+	struct timespec ts;
+
+	clock_gettime (CLOCK_MONOTONIC, &ts);
+	return (gint64) ts.tv_sec * G_GINT64_CONSTANT (1000000000) + ts.tv_nsec;
+}
+
+/* one short 16-bit mono tone per sound, a different pitch each */
+static GrlSound *
+sfx_make_sound (guint index)
+{
+	g_autoptr(GrlWave) wave = NULL;
+	g_autofree gint16 *pcm = NULL;
+	guint              frames;
+	guint              i;
+
+	frames = (guint) (AUDIO_RATE * SFX_TONE_SECONDS);
+	pcm = g_new (gint16, frames);
+	for (i = 0; i < frames; i++)
+		pcm[i] = (gint16) (4000.0 * sin (2.0 * G_PI * (300.0 + 60.0 * index) * i / AUDIO_RATE));
+	wave = grl_wave_new_from_samples (AUDIO_RATE, 16, 1, (const guint8 *) pcm, frames * sizeof (gint16));
+	if (wave == NULL)
+		return NULL;
+	return grl_sound_new_from_grl_wave (wave);
+}
+
+static gpointer
+sfx_setup (void)
+{
+	SfxState          *st;
+	g_autofree gchar  *path = NULL;
+	g_autoptr(GBytes)  sf2 = NULL;
+	g_autoptr(GBytes)  song = NULL;
+	guint              i;
+
+	st = g_new0 (SfxState, 1);
+	st->call_ns = g_array_sized_new (FALSE, FALSE, sizeof (gdouble), 1 << 16);
+	if (!bench_audio_device ())
+		return st;
+	for (i = 0; i < SFX_SOUNDS; i++)
+		st->sounds[i] = sfx_make_sound (i);
+
+	path = bench_music_fixture ("ogg", "libvorbis");
+	if (path != NULL)
+		st->music = lrg_music_track_new_from_file (path, NULL);
+	if (st->music != NULL)
+	{
+		lrg_music_track_set_looping (st->music, TRUE);
+		lrg_music_track_play (st->music);
+	}
+
+	st->synth = lrg_midi_synth_new (TEST_MIDI_RATE);
+	sf2 = test_midi_build_sf2 ();
+	song = test_midi_build_busy_song (15, 64);
+	if (lrg_midi_synth_load_soundfont_bytes (st->synth, sf2, NULL) &&
+	    lrg_midi_synth_play (st->synth, song, TRUE, 0.0, NULL))
+		(void) lrg_midi_synth_start_stream (st->synth, NULL);
+	return st;
+}
+
+/* times one call into st->call_ns */
+#define SFX_TIMED(st, call) \
+	G_STMT_START { \
+		gint64  sfx_t0_ = sfx_now_ns (); \
+		gdouble sfx_dt_; \
+		call; \
+		sfx_dt_ = (gdouble) (sfx_now_ns () - sfx_t0_); \
+		g_array_append_val ((st)->call_ns, sfx_dt_); \
+	} G_STMT_END
+
+static void
+sfx_frame (gpointer state,
+           guint    frame_index)
+{
+	SfxState *st = state;
+	guint     i;
+
+	bench_light_frame (frame_index);
+	bench_audio_spin ();
+	if (st->music != NULL)
+		lrg_music_track_update (st->music);
+	if (st->synth != NULL)
+		lrg_midi_synth_update (st->synth);
+
+	for (i = 0; i < SFX_SOUNDS; i++)
+	{
+		GrlSound *sound = st->sounds[i];
+		gfloat    phase = (gfloat) ((frame_index + i * 7) % 64) / 64.0f;
+		gboolean  playing = FALSE;
+
+		if (sound == NULL)
+			continue;
+		SFX_TIMED (st, grl_sound_set_volume (sound, 0.5f + 0.5f * phase));
+		SFX_TIMED (st, grl_sound_set_pitch (sound, 0.9f + 0.2f * phase));
+		SFX_TIMED (st, grl_sound_set_pan (sound, phase * 2.0f - 1.0f));
+		SFX_TIMED (st, playing = grl_sound_is_playing (sound));
+		/* retrigger: a footstep / gunfire pattern */
+		if (!playing || (frame_index + i) % 24 == 0)
+			SFX_TIMED (st, grl_sound_play (sound));
+	}
+	if (st->music != NULL)
+		SFX_TIMED (st, lrg_music_track_set_volume (st->music, 0.5f + 0.25f * (gfloat) (frame_index % 2)));
+}
+
+static void
+sfx_teardown (gpointer state)
+{
+	SfxState *st = state;
+	guint     n;
+	guint     i;
+
+	n = st->call_ns->len;
+	if (n > 0)
+	{
+		gdouble *v = (gdouble *) st->call_ns->data;
+
+		qsort (v, n, sizeof (gdouble), compare_double_ns);
+		g_print ("  sfx-calls: %u game-thread audio calls: median %.2f us, p99 %.2f us, "
+		         "p99.9 %.2f us, max %.2f us\n",
+		         n, v[n / 2] / 1000.0, v[MIN (n - 1, (n * 99) / 100)] / 1000.0,
+		         v[MIN (n - 1, (n * 999) / 1000)] / 1000.0, v[n - 1] / 1000.0);
+	}
+	for (i = 0; i < SFX_SOUNDS; i++)
+	{
+		if (st->sounds[i] != NULL)
+			grl_sound_stop (st->sounds[i]);
+		g_clear_object (&st->sounds[i]);
+	}
+	if (st->music != NULL)
+		lrg_music_track_stop (st->music);
+	g_clear_object (&st->music);
+	if (st->synth != NULL)
+		lrg_midi_synth_stop_stream (st->synth);
+	g_clear_object (&st->synth);
+	g_array_unref (st->call_ns);
+	g_free (st);
+}
+
 /* ==========================================================================
  * Driver
  * ========================================================================== */
@@ -3227,6 +3399,8 @@ static const BenchScenario scenarios[] = {
 	  music_ogg_setup, music_frame, music_teardown },
 	{ "music-mp3", "3 ms frames, a streamed MP3 track (LrgMusicTrack)",
 	  music_mp3_setup, music_frame, music_teardown },
+	{ "sfx-calls", "3 ms frames, 8 sounds' per-frame calls timed while music decodes and a synth mixes",
+	  sfx_setup, sfx_frame, sfx_teardown },
 };
 
 static gint

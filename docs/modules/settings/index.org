@@ -74,6 +74,7 @@ audio:
   music-volume: 0.6
   sfx-volume: 1.0
   mute: false
+  audio_backend: auto
 
 accessibility:
   colorblind-mode: none
@@ -215,3 +216,6 @@ lrg_settings_add_group (settings, LRG_SETTINGS_GROUP (gameplay));
 | =sfx-volume=    | float | 1.0     | Sound effects volume    |
 | =voice-volume=  | float | 1.0     | Voice/dialog volume     |
 | =mute=          | bool  | FALSE   | Mute all audio          |
+| =audio-backend= | string | ="auto"= | Backend the audio device opens through: =auto=, =alsa= (or =pipewire=), =pulseaudio=, =none= |
+
+=audio-backend= is handed to graylib (=grl_audio_device_set_preferred_backend()=) when the group is applied and takes effect the next time the audio device opens, so apply the settings before the first sound, music or synth stream (or close and reopen the device).  An unknown or missing name means =auto=.  The environment variables =LRG_AUDIO_BACKEND= (read by the engine at startup and by =apply()=) and graylib's =GRL_AUDIO_BACKEND= override it, in that order of strength: =GRL_AUDIO_BACKEND= wins.  =auto= opens through ALSA (PipeWire through pipewire-alsa) and falls back to PulseAudio; why: [[file:../audio/index.org::#audio-backend][the audio backend]].
