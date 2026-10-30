@@ -228,6 +228,28 @@ gboolean lrg_node_visual_remove_param (LrgNodeVisual *self,
                                        const gchar   *name);
 
 /**
+ * lrg_node_visual_get_tilemap:
+ * @self: an #LrgNodeVisual
+ *
+ * Gets the tile grid of a tilemap visual (see #LrgNodeTilemap).
+ *
+ * Returns: (transfer none) (nullable): the tile grid, or %NULL if none
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNodeTilemap * lrg_node_visual_get_tilemap (LrgNodeVisual *self);
+
+/**
+ * lrg_node_visual_set_tilemap:
+ * @self: an #LrgNodeVisual
+ * @tilemap: (nullable): the tile grid
+ *
+ * Sets (refs) the tile grid. Copies and equality of the visual include it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_visual_set_tilemap (LrgNodeVisual  *self,
+                                  LrgNodeTilemap *tilemap);
+
+/**
  * lrg_node_visual_copy:
  * @self: an #LrgNodeVisual
  *

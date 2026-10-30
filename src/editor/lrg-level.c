@@ -9,6 +9,7 @@
 
 #include "lrg-level.h"
 #include "lrg-node.h"
+#include "lrg-timeline.h"
 
 /**
  * LrgLevel:
@@ -23,6 +24,7 @@ struct _LrgLevel
 	gchar    *name;
 	LrgNode  *root;
 	gboolean  default_2d;
+	GPtrArray *timelines;  /* LrgTimeline* (owned) */
 };
 
 G_DEFINE_FINAL_TYPE (LrgLevel, lrg_level, G_TYPE_OBJECT)
@@ -57,6 +59,7 @@ lrg_level_finalize (GObject *object)
 
 	g_clear_pointer (&self->name, g_free);
 	g_clear_object (&self->root);
+	g_clear_pointer (&self->timelines, g_ptr_array_unref);
 
 	G_OBJECT_CLASS (lrg_level_parent_class)->finalize (object);
 }
@@ -194,6 +197,7 @@ lrg_level_init (LrgLevel *self)
 	self->name       = NULL;
 	self->root       = lrg_node_new ("Root");
 	self->default_2d = FALSE;
+	self->timelines  = g_ptr_array_new_with_free_func (g_object_unref);
 }
 
 /* ==========================================================================
@@ -359,4 +363,62 @@ lrg_level_notify_node_changed (LrgLevel *self,
 	g_return_if_fail (LRG_IS_NODE (node));
 
 	g_signal_emit (self, signals[SIGNAL_NODE_CHANGED], 0, node);
+}
+
+/* ==========================================================================
+ * Timelines
+ * ========================================================================== */
+
+guint
+lrg_level_get_n_timelines (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), 0);
+	return self->timelines->len;
+}
+
+LrgTimeline *
+lrg_level_get_timeline (LrgLevel *self,
+                        guint     index)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), NULL);
+	return (index < self->timelines->len) ? g_ptr_array_index (self->timelines, index) : NULL;
+}
+
+gint
+lrg_level_find_timeline (LrgLevel    *self,
+                         const gchar *name)
+{
+	guint i;
+
+	g_return_val_if_fail (LRG_IS_LEVEL (self), -1);
+
+	for (i = 0; name != NULL && i < self->timelines->len; i++)
+		if (g_strcmp0 (lrg_timeline_get_name (g_ptr_array_index (self->timelines, i)), name) == 0)
+			return (gint) i;
+	return -1;
+}
+
+void
+lrg_level_insert_timeline (LrgLevel    *self,
+                           LrgTimeline *timeline,
+                           gint         index)
+{
+	g_return_if_fail (LRG_IS_LEVEL (self));
+	g_return_if_fail (LRG_IS_TIMELINE (timeline));
+
+	if (index < 0 || (guint) index > self->timelines->len)
+		index = (gint) self->timelines->len;
+	g_ptr_array_insert (self->timelines, index, g_object_ref (timeline));
+}
+
+gboolean
+lrg_level_remove_timeline (LrgLevel *self,
+                           guint     index)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), FALSE);
+
+	if (index >= self->timelines->len)
+		return FALSE;
+	g_ptr_array_remove_index (self->timelines, index);
+	return TRUE;
 }

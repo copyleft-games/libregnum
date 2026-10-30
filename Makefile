@@ -1392,6 +1392,8 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-component-desc.h \
 	src/editor/lrg-script-binding.h \
 	src/editor/lrg-node-visual.h \
+	src/editor/lrg-node-tilemap.h \
+	src/editor/lrg-timeline.h \
 	src/editor/lrg-node.h \
 	src/editor/lrg-level.h \
 	src/editor/lrg-level-serializer.h \
@@ -1400,6 +1402,9 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-command.h \
 	src/editor/lrg-editor-selection.h \
 	src/editor/lrg-editor.h \
+	src/editor/lrg-editor-tile-painter.h \
+	src/editor/lrg-editor-timeline.h \
+	src/editor/lrg-thumbnail-cache.h \
 	src/editor/lrg-editor-host.h \
 	src/editor/lrg-editor-math.h \
 	src/editor/lrg-editor-gizmo.h \
@@ -1416,6 +1421,8 @@ SOURCES += \
 	src/editor/lrg-component-desc.c \
 	src/editor/lrg-script-binding.c \
 	src/editor/lrg-node-visual.c \
+	src/editor/lrg-node-tilemap.c \
+	src/editor/lrg-timeline.c \
 	src/editor/lrg-node.c \
 	src/editor/lrg-level.c \
 	src/editor/lrg-level-serializer.c \
@@ -1424,6 +1431,9 @@ SOURCES += \
 	src/editor/lrg-editor-command.c \
 	src/editor/lrg-editor-selection.c \
 	src/editor/lrg-editor.c \
+	src/editor/lrg-editor-tile-painter.c \
+	src/editor/lrg-editor-timeline.c \
+	src/editor/lrg-thumbnail-cache.c \
 	src/editor/lrg-editor-host.c \
 	src/editor/lrg-editor-math.c \
 	src/editor/lrg-editor-gizmo.c \

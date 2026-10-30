@@ -212,6 +212,9 @@ TEST_SOURCES := \
 	test-editor-tools.c \
 	test-editor-server.c \
 	test-editor-app.c \
+	test-editor-tilemap.c \
+	test-editor-timeline.c \
+	test-thumbnail-cache.c \
 	test-gui.c \
 	test-gif-recorder.c \
 	test-text-baker.c \

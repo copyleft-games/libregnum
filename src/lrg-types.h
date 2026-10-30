@@ -1399,6 +1399,13 @@ typedef struct _LrgEditorSelection  LrgEditorSelection;
 /* LrgEditor is a final type - no Class forward declaration needed */
 typedef struct _LrgEditor  LrgEditor;
 
+/* Editor tools: tilemap data, painter, timelines, thumbnails (final types) */
+typedef struct _LrgNodeTilemap        LrgNodeTilemap;
+typedef struct _LrgEditorTilePainter  LrgEditorTilePainter;
+typedef struct _LrgTimeline           LrgTimeline;
+typedef struct _LrgTimelineTrack      LrgTimelineTrack;
+typedef struct _LrgThumbnailCache     LrgThumbnailCache;
+
 /* LrgEditorHost is an interface */
 typedef struct _LrgEditorHost           LrgEditorHost;
 typedef struct _LrgEditorHostInterface  LrgEditorHostInterface;

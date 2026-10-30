@@ -11,6 +11,8 @@
 #include "lrg-level.h"
 #include "lrg-node.h"
 #include "lrg-node-visual.h"
+#include "lrg-node-tilemap.h"
+#include "lrg-timeline.h"
 #include "lrg-component-desc.h"
 #include "lrg-script-binding.h"
 #include "../scene/lrg-material3d.h"
@@ -226,6 +228,49 @@ build_material_mapping (LrgMaterial3D *material)
 	return map;
 }
 
+/*
+ * Tile grid of a tilemap visual. Each layer's cells are written as one
+ * string per row of space-separated tile ids, which keeps .rlevel diffs
+ * readable and line-oriented.
+ */
+static YamlMapping *
+build_tilemap_mapping (LrgNodeTilemap *tilemap)
+{
+	YamlMapping             *map = yaml_mapping_new ();
+	g_autoptr(YamlSequence)  layers = yaml_sequence_new ();
+	guint                    w = lrg_node_tilemap_get_width (tilemap);
+	guint                    h = lrg_node_tilemap_get_height (tilemap);
+	guint                    i, x, y;
+
+	yaml_mapping_set_int_member (map, "width", w);
+	yaml_mapping_set_int_member (map, "height", h);
+	yaml_mapping_set_int_member (map, "tile_width", lrg_node_tilemap_get_tile_width (tilemap));
+	yaml_mapping_set_int_member (map, "tile_height", lrg_node_tilemap_get_tile_height (tilemap));
+
+	for (i = 0; i < lrg_node_tilemap_get_n_layers (tilemap); i++)
+	{
+		g_autoptr(YamlMapping)  lmap = yaml_mapping_new ();
+		g_autoptr(YamlSequence) rows = yaml_sequence_new ();
+		gsize                   n = 0;
+		const guint            *tiles = lrg_node_tilemap_get_layer_tiles (tilemap, i, &n);
+
+		yaml_mapping_set_string_member (lmap, "name", lrg_node_tilemap_get_layer_name (tilemap, i));
+		yaml_mapping_set_boolean_member (lmap, "visible", lrg_node_tilemap_get_layer_visible (tilemap, i));
+		for (y = 0; tiles != NULL && y < h; y++)
+		{
+			g_autoptr(GString) row = g_string_sized_new (w * 2);
+
+			for (x = 0; x < w; x++)
+				g_string_append_printf (row, x == 0 ? "%u" : " %u", tiles[(gsize) y * w + x]);
+			yaml_sequence_add_string_element (rows, row->str);
+		}
+		yaml_mapping_set_sequence_member (lmap, "rows", rows);
+		yaml_sequence_add_mapping_element (layers, lmap);
+	}
+	yaml_mapping_set_sequence_member (map, "layers", layers);
+	return map;
+}
+
 static YamlMapping *
 build_visual_mapping (LrgNodeVisual *visual)
 {
@@ -276,6 +321,13 @@ build_visual_mapping (LrgNodeVisual *visual)
 		yaml_mapping_set_mapping_member (map, "params", params_map);
 	}
 	g_list_free (param_names);
+
+	if (lrg_node_visual_get_tilemap (visual) != NULL)
+	{
+		g_autoptr(YamlMapping) tmap = build_tilemap_mapping (lrg_node_visual_get_tilemap (visual));
+
+		yaml_mapping_set_mapping_member (map, "tilemap", tmap);
+	}
 
 	return map;
 }
@@ -420,6 +472,59 @@ build_node_mapping (LrgNode *node)
 	return map;
 }
 
+/*
+ * Level timelines. Keys are written as small mappings
+ * ({time, value, easing}); easing uses the #LrgEasingType nick.
+ */
+static YamlSequence *
+build_timelines_sequence (LrgLevel *level)
+{
+	YamlSequence *seq = yaml_sequence_new ();
+	guint         i, j, k;
+
+	for (i = 0; i < lrg_level_get_n_timelines (level); i++)
+	{
+		LrgTimeline             *tl = lrg_level_get_timeline (level, i);
+		g_autoptr(YamlMapping)   map = yaml_mapping_new ();
+		g_autoptr(YamlSequence)  tracks = yaml_sequence_new ();
+
+		yaml_mapping_set_string_member (map, "name", lrg_timeline_get_name (tl));
+		yaml_mapping_set_double_member (map, "length", lrg_timeline_get_length (tl));
+		yaml_mapping_set_boolean_member (map, "loop", lrg_timeline_get_loop (tl));
+		yaml_mapping_set_boolean_member (map, "autoplay", lrg_timeline_get_autoplay (tl));
+
+		for (j = 0; j < lrg_timeline_get_n_tracks (tl); j++)
+		{
+			LrgTimelineTrack        *track = lrg_timeline_get_track (tl, j);
+			g_autoptr(YamlMapping)   tmap = yaml_mapping_new ();
+			g_autoptr(YamlSequence)  keys = yaml_sequence_new ();
+
+			yaml_mapping_set_string_member (tmap, "node", lrg_timeline_track_get_node_guid (track));
+			yaml_mapping_set_string_member (tmap, "channel", lrg_timeline_track_get_channel (track));
+			for (k = 0; k < lrg_timeline_track_get_n_keys (track); k++)
+			{
+				g_autoptr(YamlMapping) kmap = yaml_mapping_new ();
+				gfloat                 t = 0.0f, v = 0.0f;
+				LrgEasingType          e = LRG_EASING_LINEAR;
+				const gchar           *nick;
+
+				lrg_timeline_track_get_key (track, k, &t, &v, &e);
+				yaml_mapping_set_double_member (kmap, "time", t);
+				yaml_mapping_set_double_member (kmap, "value", v);
+				nick = enum_to_nick (LRG_TYPE_EASING_TYPE, e);
+				if (nick != NULL && e != LRG_EASING_LINEAR)
+					yaml_mapping_set_string_member (kmap, "easing", nick);
+				yaml_sequence_add_mapping_element (keys, kmap);
+			}
+			yaml_mapping_set_sequence_member (tmap, "keys", keys);
+			yaml_sequence_add_mapping_element (tracks, tmap);
+		}
+		yaml_mapping_set_sequence_member (map, "tracks", tracks);
+		yaml_sequence_add_mapping_element (seq, map);
+	}
+	return seq;
+}
+
 static YamlNode *
 build_level_yaml (LrgLevel *level)
 {
@@ -446,6 +551,14 @@ build_level_yaml (LrgLevel *level)
 	}
 
 	yaml_mapping_set_sequence_member (root_map, "nodes", nodes_seq);
+
+	/* Additive: files without timelines keep their old shape. */
+	if (lrg_level_get_n_timelines (level) > 0)
+	{
+		g_autoptr(YamlSequence) timelines = build_timelines_sequence (level);
+
+		yaml_mapping_set_sequence_member (root_map, "timelines", timelines);
+	}
 
 	/* yaml_node_new_mapping refs the mapping (transfer none); let the autoptr
 	 * drop our reference so the node is its sole owner. g_steal_pointer here
@@ -522,6 +635,90 @@ component_prop_setter (gpointer ctx, const gchar *name, const GValue *value)
 	lrg_component_desc_set_value (LRG_COMPONENT_DESC (ctx), name, value);
 }
 
+/* Reads a "tilemap" block; malformed rows are padded/truncated, never
+ * fatal, so a hand-edited file still loads. */
+static LrgNodeTilemap *
+parse_tilemap (YamlMapping *map)
+{
+	LrgNodeTilemap *tilemap;
+	gint64          w, h, tw, th;
+	YamlNode       *layers_node;
+
+	w = yaml_mapping_has_member (map, "width") ? yaml_mapping_get_int_member (map, "width") : 0;
+	h = yaml_mapping_has_member (map, "height") ? yaml_mapping_get_int_member (map, "height") : 0;
+	if (w <= 0 || h <= 0 || w > LRG_NODE_TILEMAP_MAX_SIZE || h > LRG_NODE_TILEMAP_MAX_SIZE)
+		return NULL;
+
+	tilemap = lrg_node_tilemap_new ((guint) w, (guint) h);
+	tw = yaml_mapping_has_member (map, "tile_width") ? yaml_mapping_get_int_member (map, "tile_width") : 16;
+	th = yaml_mapping_has_member (map, "tile_height") ? yaml_mapping_get_int_member (map, "tile_height") : 16;
+	if (tw > 0 && th > 0)
+		lrg_node_tilemap_set_tile_size (tilemap, (guint) tw, (guint) th);
+
+	layers_node = yaml_mapping_get_member (map, "layers");
+	if (layers_node != NULL && yaml_node_get_node_type (layers_node) == YAML_NODE_SEQUENCE)
+	{
+		YamlSequence *seq = yaml_node_get_sequence (layers_node);
+		guint         i, n = yaml_sequence_get_length (seq);
+
+		for (i = 0; i < n; i++)
+		{
+			YamlNode    *ln = yaml_sequence_get_element (seq, i);
+			YamlMapping *lmap;
+			YamlNode    *rows_node;
+			guint        layer;
+
+			if (ln == NULL || yaml_node_get_node_type (ln) != YAML_NODE_MAPPING)
+				continue;
+			lmap = yaml_node_get_mapping (ln);
+
+			/* The constructor made layer 0; reuse it for the first entry. */
+			if (i == 0)
+			{
+				layer = 0;
+				if (yaml_mapping_get_string_member (lmap, "name") != NULL)
+					lrg_node_tilemap_set_layer_name (tilemap, 0, yaml_mapping_get_string_member (lmap, "name"));
+			}
+			else
+				layer = lrg_node_tilemap_add_layer (tilemap, yaml_mapping_get_string_member (lmap, "name"));
+			if (yaml_mapping_has_member (lmap, "visible"))
+				lrg_node_tilemap_set_layer_visible (tilemap, layer,
+				                                    yaml_mapping_get_boolean_member (lmap, "visible"));
+
+			rows_node = yaml_mapping_get_member (lmap, "rows");
+			if (rows_node != NULL && yaml_node_get_node_type (rows_node) == YAML_NODE_SEQUENCE)
+			{
+				YamlSequence *rows = yaml_node_get_sequence (rows_node);
+				guint         y, nrows = MIN (yaml_sequence_get_length (rows), (guint) h);
+
+				for (y = 0; y < nrows; y++)
+				{
+					const gchar *row = yaml_sequence_get_string_element (rows, y);
+					const gchar *p = row;
+					gint         x = 0;
+
+					while (p != NULL && *p != '\0' && x < (gint) w)
+					{
+						gchar   *end = NULL;
+						guint64  id;
+
+						while (*p == ' ' || *p == '\t' || *p == ',')
+							p++;
+						if (*p == '\0')
+							break;
+						id = g_ascii_strtoull (p, &end, 10);
+						if (end == p)
+							break;
+						lrg_node_tilemap_set_tile (tilemap, layer, x++, (gint) y, (guint) MIN (id, G_MAXUINT));
+						p = end;
+					}
+				}
+			}
+		}
+	}
+	return tilemap;
+}
+
 static LrgNodeVisual *
 parse_visual (YamlMapping *map)
 {
@@ -530,6 +727,7 @@ parse_visual (YamlMapping *map)
 	const gchar       *asset;
 	YamlNode          *material_node;
 	YamlNode          *params_node;
+	YamlNode          *tilemap_node;
 
 	kind = nick_to_enum (LRG_TYPE_NODE_VISUAL_KIND,
 	                     yaml_mapping_get_string_member (map, "kind"),
@@ -556,6 +754,15 @@ parse_visual (YamlMapping *map)
 	params_node = yaml_mapping_get_member (map, "params");
 	if (params_node != NULL && yaml_node_get_node_type (params_node) == YAML_NODE_MAPPING)
 		parse_param_bag (yaml_node_get_mapping (params_node), visual_param_setter, visual);
+
+	tilemap_node = yaml_mapping_get_member (map, "tilemap");
+	if (tilemap_node != NULL && yaml_node_get_node_type (tilemap_node) == YAML_NODE_MAPPING)
+	{
+		g_autoptr(LrgNodeTilemap) tilemap = parse_tilemap (yaml_node_get_mapping (tilemap_node));
+
+		if (tilemap != NULL)
+			lrg_node_visual_set_tilemap (visual, tilemap);
+	}
 
 	return visual;
 }
@@ -716,6 +923,91 @@ parse_node (YamlMapping *map)
 	return node;
 }
 
+static gdouble
+mapping_double (YamlMapping *map,
+                const gchar *key,
+                gdouble      def)
+{
+	return yaml_mapping_has_member (map, key) ? yaml_mapping_get_double_member (map, key) : def;
+}
+
+static void
+parse_timelines (LrgLevel     *level,
+                 YamlSequence *seq)
+{
+	guint i, j, k;
+
+	for (i = 0; i < yaml_sequence_get_length (seq); i++)
+	{
+		YamlNode              *tn = yaml_sequence_get_element (seq, i);
+		YamlMapping           *map;
+		YamlNode              *tracks_node;
+		const gchar           *name;
+		gdouble                length;
+		g_autoptr(LrgTimeline) tl = NULL;
+
+		if (tn == NULL || yaml_node_get_node_type (tn) != YAML_NODE_MAPPING)
+			continue;
+		map = yaml_node_get_mapping (tn);
+		name = yaml_mapping_get_string_member (map, "name");
+		if (name == NULL || lrg_level_find_timeline (level, name) >= 0)
+			continue;
+
+		tl = lrg_timeline_new (name);
+		length = mapping_double (map, "length", 2.0);
+		if (length > 0.0)
+			lrg_timeline_set_length (tl, (gfloat) length);
+		if (yaml_mapping_has_member (map, "loop"))
+			lrg_timeline_set_loop (tl, yaml_mapping_get_boolean_member (map, "loop"));
+		if (yaml_mapping_has_member (map, "autoplay"))
+			lrg_timeline_set_autoplay (tl, yaml_mapping_get_boolean_member (map, "autoplay"));
+
+		tracks_node = yaml_mapping_get_member (map, "tracks");
+		if (tracks_node != NULL && yaml_node_get_node_type (tracks_node) == YAML_NODE_SEQUENCE)
+		{
+			YamlSequence *tracks = yaml_node_get_sequence (tracks_node);
+
+			for (j = 0; j < yaml_sequence_get_length (tracks); j++)
+			{
+				YamlNode         *trn = yaml_sequence_get_element (tracks, j);
+				YamlMapping      *tmap;
+				YamlNode         *keys_node;
+				const gchar      *guid, *channel;
+				LrgTimelineTrack *track;
+
+				if (trn == NULL || yaml_node_get_node_type (trn) != YAML_NODE_MAPPING)
+					continue;
+				tmap = yaml_node_get_mapping (trn);
+				guid = yaml_mapping_get_string_member (tmap, "node");
+				channel = yaml_mapping_get_string_member (tmap, "channel");
+				if (guid == NULL || !lrg_timeline_channel_is_valid (channel))
+					continue;
+				track = lrg_timeline_ensure_track (tl, guid, channel);
+
+				keys_node = yaml_mapping_get_member (tmap, "keys");
+				if (keys_node == NULL || yaml_node_get_node_type (keys_node) != YAML_NODE_SEQUENCE)
+					continue;
+				for (k = 0; k < yaml_sequence_get_length (yaml_node_get_sequence (keys_node)); k++)
+				{
+					YamlNode    *kn = yaml_sequence_get_element (yaml_node_get_sequence (keys_node), k);
+					YamlMapping *kmap;
+
+					if (kn == NULL || yaml_node_get_node_type (kn) != YAML_NODE_MAPPING)
+						continue;
+					kmap = yaml_node_get_mapping (kn);
+					lrg_timeline_track_set_key (track,
+					                            (gfloat) mapping_double (kmap, "time", 0.0),
+					                            (gfloat) mapping_double (kmap, "value", 0.0),
+					                            nick_to_enum (LRG_TYPE_EASING_TYPE,
+					                                          yaml_mapping_get_string_member (kmap, "easing"),
+					                                          LRG_EASING_LINEAR));
+				}
+			}
+		}
+		lrg_level_insert_timeline (level, tl, -1);
+	}
+}
+
 static LrgLevel *
 parse_level_from_root (YamlNode  *root,
                        GError   **error)
@@ -725,6 +1017,7 @@ parse_level_from_root (YamlNode  *root,
 	const gchar *name;
 	const gchar *view;
 	YamlNode    *nodes_node;
+	YamlNode    *timelines_node;
 
 	if (yaml_node_get_node_type (root) != YAML_NODE_MAPPING)
 	{
@@ -758,6 +1051,10 @@ parse_level_from_root (YamlNode  *root,
 			}
 		}
 	}
+
+	timelines_node = yaml_mapping_get_member (root_map, "timelines");
+	if (timelines_node != NULL && yaml_node_get_node_type (timelines_node) == YAML_NODE_SEQUENCE)
+		parse_timelines (level, yaml_node_get_sequence (timelines_node));
 
 	return level;
 }

@@ -8,6 +8,7 @@
  */
 
 #include "lrg-node-visual.h"
+#include "lrg-node-tilemap.h"
 #include "lrg-editor-value-private.h"
 
 /**
@@ -25,6 +26,7 @@ struct _LrgNodeVisual
 	gchar             *asset;
 	LrgMaterial3D     *material;
 	GHashTable        *params;   /* gchar* -> GValue* */
+	LrgNodeTilemap    *tilemap;  /* tile grid (tilemap kind), nullable */
 };
 
 G_DEFINE_FINAL_TYPE (LrgNodeVisual, lrg_node_visual, G_TYPE_OBJECT)
@@ -66,6 +68,7 @@ lrg_node_visual_finalize (GObject *object)
 	g_clear_pointer (&self->asset, g_free);
 	g_clear_object (&self->material);
 	g_clear_pointer (&self->params, g_hash_table_unref);
+	g_clear_object (&self->tilemap);
 
 	G_OBJECT_CLASS (lrg_node_visual_parent_class)->finalize (object);
 }
@@ -526,7 +529,28 @@ lrg_node_visual_copy (LrgNodeVisual *self)
 	while (g_hash_table_iter_next (&iter, &key, &value))
 		lrg_node_visual_set_param (copy, key, value);
 
+	/* Tile grid: deep copy so undo snapshots never alias live cells. */
+	if (self->tilemap != NULL)
+		copy->tilemap = lrg_node_tilemap_copy (self->tilemap);
+
 	return copy;
+}
+
+LrgNodeTilemap *
+lrg_node_visual_get_tilemap (LrgNodeVisual *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE_VISUAL (self), NULL);
+	return self->tilemap;
+}
+
+void
+lrg_node_visual_set_tilemap (LrgNodeVisual  *self,
+                             LrgNodeTilemap *tilemap)
+{
+	g_return_if_fail (LRG_IS_NODE_VISUAL (self));
+	g_return_if_fail (tilemap == NULL || LRG_IS_NODE_TILEMAP (tilemap));
+
+	g_set_object (&self->tilemap, tilemap);
 }
 
 gboolean
@@ -542,5 +566,6 @@ lrg_node_visual_equal (LrgNodeVisual *a,
 	       a->primitive == b->primitive &&
 	       g_strcmp0 (a->asset, b->asset) == 0 &&
 	       lrg_material3d_equal (a->material, b->material) &&
-	       lrg_editor_param_tables_equal (a->params, b->params);
+	       lrg_editor_param_tables_equal (a->params, b->params) &&
+	       lrg_node_tilemap_equal (a->tilemap, b->tilemap);
 }
