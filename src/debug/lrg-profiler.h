@@ -186,6 +186,33 @@ void                lrg_profiler_end_section          (LrgProfiler *self,
                                                        const gchar *name);
 
 /**
+ * lrg_profiler_is_section_active:
+ * @self: a #LrgProfiler
+ * @name: the section name
+ *
+ * Checks whether @name has been begun with lrg_profiler_begin_section()
+ * and not yet ended. Use it before lrg_profiler_end_section() when the
+ * caller cannot be sure the section is open.
+ *
+ * Returns: %TRUE if the section is currently being timed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_profiler_is_section_active    (LrgProfiler *self,
+                                                       const gchar *name);
+
+/**
+ * lrg_profiler_get_active_section_names:
+ * @self: a #LrgProfiler
+ *
+ * Gets the names of all sections currently being timed.
+ *
+ * Returns: (transfer container) (element-type utf8): list of open section
+ *   names, owned by the profiler
+ */
+LRG_AVAILABLE_IN_ALL
+GList *             lrg_profiler_get_active_section_names (LrgProfiler *self);
+
+/**
  * lrg_profiler_begin_frame:
  * @self: a #LrgProfiler
  *

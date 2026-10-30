@@ -74,6 +74,22 @@ lrg_profiler_begin_section (profiler, "update");
 lrg_profiler_end_section (profiler, "update");
 #+end_src
 
+*** Open Sections
+:PROPERTIES:
+:CUSTOM_ID: open-sections
+:END:
+Ending a section that was never begun logs a warning. When the caller cannot be sure a section is open (a tool, a script, an error path), check first:
+
+#+begin_src c
+if (lrg_profiler_is_section_active (profiler, "load"))
+    lrg_profiler_end_section (profiler, "load");
+
+/* Names of every section currently being timed */
+g_autoptr(GList) open = lrg_profiler_get_active_section_names (profiler);
+#+end_src
+
+The MCP debug tools (=lrg_debug_profiler_start=, =lrg_debug_profiler_stop=, =lrg_debug_profiler_report=; see [[file:../mcp/tools.org::#debug-tools-lrgmcpdebugtools][MCP Tools]]) drive this default profiler and use these checks.
+
 ** Frame Management
 :PROPERTIES:
 :CUSTOM_ID: frame-management
