@@ -6,13 +6,14 @@ Authoritative guide: `AGENTS.md` at the root of the checkout (read it before cha
 
 | Path | What |
 |------|------|
-| `src/core/` | `LrgEngine` singleton, `LrgRegistry` (type names -> GTypes), data loader (YAML), asset manager/packs |
+| `src/core/` | `LrgEngine` singleton, `LrgRegistry` (type names -> GTypes; engine types pre-registered at startup), data loader (YAML), asset manager/packs |
 | `src/ecs/` | `LrgWorld`, `LrgGameObject`, `LrgComponent` and built-in components |
 | `src/graphics/`, `src/scene/`, `src/shapes/`, `src/lighting/`, `src/postprocess/` | Rendering on graylib/raylib |
 | `src/ui/` | Retained widgets (games); `src/gui/` immediate-mode GUI (tools; the editor is drawn with it) |
 | `src/editor/` | `LrgLevel`/`LrgNode` authoring model, `LrgEditor` (commands, undo, selection), math, gizmo, settings, external editor, IPC server, actions, validation, projects, prefabs |
 | `src/editor/ui/` | `LrgEditorApp`: the editor application (panels, viewport render, dialogs, play mode) |
 | `src/editorctl/` | `lrgeditorctl` and the MCP tool table shared with `lrgeditor --mcp` |
+| `src/mcp/` | In-game MCP server (`MCP=1`): input injection and `lrg_input_get_state`, ECS, save, debug (profiler, overlay, console, inspector) tools; `libregnum://engine/{info,config,registry}` resources |
 | `src/launcher/` | `lrgldr` (game module runner), `lrgeditor` |
 | `src/scripting/` | Lua, Python, GJS, crispy (C) backends |
 | `src/template/` | Genre game templates (FPS, third person, racing, tycoon...) |
@@ -53,6 +54,10 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 - **Unix socket paths** over 107 bytes are rejected; keep test sockets in `$XDG_RUNTIME_DIR`.
 - **Input bugs** do not show in headless GUI tests (they inject input below raylib/GLFW): use `make test-editor-x11`. Under Xvfb by hand, point `XDG_RUNTIME_DIR` at an empty short directory or GLFW opens the window on your Wayland session.
 - **MCP over stdio owns stdout.** `lrgeditor --mcp` duplicates fd 1 for the protocol and points fd 1 at stderr; never `printf` to stdout in code paths that run under it.
+
+## Registry built-ins
+
+`lrg_registry_register_builtin()` (run by engine startup) maps the engine's concrete, headlessly constructible types to kebab-case names: the C prefix without `lrg_` (`rigid-body`, `point-light2d`, `particle-emitter`, `item-def`), components without `-component` (`transform`, `sprite`, `collider`, `animator`). YAML `type:` fields and `lrg_ecs_spawn_object` resolve them without app registration; app registrations of the same name win. To add a type, append a row to `builtin_catalog` in `src/core/lrg-registry.c` and to the table in `docs/modules/core/registry.org`; `tests/test-registry.c` builds every entry from YAML.
 
 ## Extending the editor
 
