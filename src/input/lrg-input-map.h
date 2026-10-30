@@ -138,6 +138,18 @@ guint lrg_input_map_get_action_count (LrgInputMap *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_input_map_clear (LrgInputMap *self);
 
+/**
+ * lrg_input_map_clear_overrides:
+ * @self: an #LrgInputMap
+ *
+ * Clears the injected state (lrg_input_action_set_override()) of every
+ * action, so they read their bindings again.
+ *
+ * Since: 0.4
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_input_map_clear_overrides (LrgInputMap *self);
+
 /* ==========================================================================
  * Convenience State Query
  * ========================================================================== */
