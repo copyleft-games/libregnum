@@ -1,0 +1,103 @@
+* LrgProcgenGrid
+:PROPERTIES:
+:CUSTOM_ID: lrgprocgengrid
+:END:
+The output of every generator: a =width= x =height= grid of cell tags (=guint8=, row-major) plus the metadata generators and post-processing attach. Header: =procgen/lrg-procgen-grid.h=. Final GObject.
+
+** Cells and tags
+:PROPERTIES:
+:CUSTOM_ID: cells-and-tags
+:END:
+A cell holds one tag from 0 to 255. The built-in tags are the =LrgProcgenCell= values; =LRG_PROCGEN_CELL_CUSTOM= (16) and up are free for a game (lava, grass, a specific prop):
+
+| Tag        | Value | Text | Walkable by default |
+|------------+-------+------+---------------------|
+| =wall=     |     0 | =#=  | no                  |
+| =floor=    |     1 | =.=  | yes                 |
+| =corridor= |     2 | =,=  | yes                 |
+| =door=     |     3 | =+=  | yes                 |
+| =water=    |     4 | =~=  | no                  |
+| =void=     |     5 | space | no                 |
+| custom     | 16-41 | =a=-=z= | no              |
+
+- =lrg_procgen_grid_new (w, h)= makes an all-wall grid; =get_cell()= returns =wall= outside the grid, =set_cell()= ignores out-of-bounds writes.
+- =fill()=, =fill_rect()= (clipped), =count_cells (tag)=, =get_cells (&len)= (the raw row-major array).
+- =lrg_procgen_grid_new_from_string()= / =to_string()= use the text column above, one line per row; this is also how wave function collapse samples are written. Text round-trips for every tag that has a character.
+- =lrg_procgen_grid_hash()=: FNV-1a 64 over the size (little-endian) and the cells, metadata excluded. Stable across platforms; use it for golden tests and save validation.
+- =copy()= deep-copies cells and all metadata.
+
+*** Walkability
+=set_tag_walkable (tag, bool)= changes which tags count as walkable for *this* grid. Walkability drives regions, connectivity, distances, start/exit, spawn placement and =to_nav_grid()=. A game with walkable water calls =lrg_procgen_grid_set_tag_walkable (grid, LRG_PROCGEN_CELL_WATER, TRUE)= before post-processing.
+
+** Regions and connectivity
+:PROPERTIES:
+:CUSTOM_ID: regions-and-connectivity
+:END:
+| Function | What it does |
+|----------+--------------|
+| =label_regions()= | Breadth-first flood fill of walkable cells into 4-connected regions, numbered from 0 in row-major order of their first cell. Returns the count. |
+| =get_region (x, y)= / =get_region_size (r)= / =get_region_count()= | Results of the last labelling (=-1= for non-walkable cells). |
+| =is_connected()= | Relabels; =TRUE= with 0 or 1 region. |
+| =cull_regions (min, fill_tag)= | Overwrites regions smaller than =min= cells. |
+| =keep_largest_region (fill_tag)= | Overwrites all but the largest region (first on a tie). |
+| =connect_regions (corridor_tag)= | Joins regions until connected (below). |
+
+=connect_regions()= repeats: a multi-source BFS from every cell of region 0 expands through any interior cell (walkable or not; it never steps onto a non-walkable border cell) until it reaches a cell of another region; the parent chain is the shortest possible corridor, and only its non-walkable cells are overwritten with =corridor_tag=. With R regions it carves at most R - 1 corridors, each of minimal length from the growing connected set, and is fully deterministic (no random draws). Cost: one BFS over the grid per corridor.
+
+Cells changed with =set_cell()= / =fill_rect()= leave labels stale until the next =label_regions()=; every post-processing function relabels itself.
+
+** Distances, start and exit
+:PROPERTIES:
+:CUSTOM_ID: distances-start-and-exit
+:END:
+- =distance_map (x, y, &len)=: BFS steps from a cell to every cell (=-1= unreachable), a new array.
+- =path_distance (x0, y0, x1, y1)=: steps between two cells or =-1=.
+- =set_start= / =get_start= / =set_exit= / =get_exit=: the getters return whether the point is set.
+- =place_start_exit()=: on the largest region, a double sweep: BFS from the region's first cell, the farthest cell is the start; BFS from the start, the farthest cell is the exit (ties: lowest row-major index). On tree-shaped maps (BSP corridors without loops, the sample in the tests) this is the exact diameter; elsewhere it is a close lower bound at the cost of two BFS instead of one per cell.
+
+** Rooms and heights
+:PROPERTIES:
+:CUSTOM_ID: rooms-and-heights
+:END:
+- =LrgProcgenRoom= (boxed: =x=, =y=, =width=, =height=; the floor rectangle, walls excluded) with =contains()= and =get_center()=.
+- =add_room()= (copies), =get_room_count()=, =get_room (i)=, =room_at (x, y)= (first room containing the cell, or =-1=). BSP records its rooms; other generators record none.
+- Heights: an optional =gfloat= per cell (=has_heights()=, =get_height_at()=, =set_height_at()=, created zeroed on first write). The noise generator fills them in [0, 1].
+
+** Spawn points and entities
+:PROPERTIES:
+:CUSTOM_ID: spawn-points-and-entities
+:END:
+=LrgProcgenSpawn= (boxed: =kind=, =x=, =y=, =room=) is a point where something appears: a monster kind, a registry name, a loot table id.
+
+=lrg_procgen_grid_place_spawns (grid, rng, kind, count, min_distance, rooms_only)=:
+- candidates are walkable cells that are not the start, the exit or an earlier spawn point; with a start set, only cells at least =min_distance= walking steps from it (and reachable); with =rooms_only=, only cells inside recorded rooms;
+- picks up to =count= distinct candidates uniformly with a partial Fisher-Yates shuffle on =rng=, and returns how many it placed (fewer when candidates run out).
+
+=lrg_procgen_grid_spawn_entities (grid, world, registry, cell_size, func, user_data)= turns every spawn point into an =LrgGameObject= at the centre of its cell (=((x + 0.5) * cell_size, (y + 0.5) * cell_size)=):
+
+1. with =func= (an =LrgProcgenSpawnFunc=), =func= creates the object or returns =NULL= to skip the point;
+2. otherwise, if =registry= has =kind= registered as an =LrgGameObject= type, =lrg_registry_create()= makes it and it is moved to the cell;
+3. otherwise a plain =lrg_game_object_new_at()=.
+
+An object without a tag is tagged with the kind (so =lrg_world_find_by_tag (world, "chest")= works). Objects go into =world= (which holds its own reference); without a world they are released after creation. Returns the number of objects created.
+
+#+begin_src c
+static LrgGameObject *
+spawn_monster (LrgProcgenGrid *grid, const LrgProcgenSpawn *spawn,
+               gfloat wx, gfloat wy, gpointer user_data)
+{
+	MyGame *game = user_data;
+
+	if (g_strcmp0 (spawn->kind, "chest") == 0)
+		return my_game_make_chest (game, wx, wy, spawn->room);
+	return LRG_GAME_OBJECT (my_monster_new (game, spawn->kind, wx, wy));
+}
+
+lrg_procgen_grid_spawn_entities (grid, world, NULL, 32.0f, spawn_monster, game);
+#+end_src
+
+** Navigation grid
+:PROPERTIES:
+:CUSTOM_ID: navigation-grid
+:END:
+=lrg_procgen_grid_to_nav_grid()= returns a new =LrgNavGrid= of the same size where every non-walkable cell is blocked (cost 1 elsewhere). Hand it to =lrg_pathfinder_new()=; with diagonals off, A* path lengths equal =path_distance()=. Tilemap conversion lives in [[file:tile-rules.org][tile-rules.org]].

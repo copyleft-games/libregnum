@@ -34,6 +34,7 @@ cd examples
 | `game-tuktuk-derby` | Vehicle physics demo | - |
 | `game-micro-tycoon` | Economy/tycoon systems | - |
 | `game-dungeon-torch` | 2D lighting and shadows | - |
+| `game-procgen-dungeon` | Procedural dungeons (BSP, caves, WFC, drunkard, noise) from a YAML recipe, autotiled, with A* monsters | [docs](../docs/modules/procgen/index.org) |
 | `game-meta-arcade` | Meta-game/arcade collection | - |
 | `game-effects-gallery` | Visual effects showcase | - |
 | `game-settings-demo` | Settings/options menu demo | - |

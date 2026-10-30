@@ -1,0 +1,132 @@
+* Procedural Generation Module
+:PROPERTIES:
+:CUSTOM_ID: procedural-generation-module
+:END:
+The procgen module (=src/procgen/=) generates dungeons, caves and maps as cell grids, cleans them up (connectivity, start/exit, spawn points) and turns them into the engine's runtime types: an =LrgTilemapLayer= / =LrgTilemap= through rule-based tile mapping with autotiling, an =LrgNavGrid= for =LrgPathfinder=, and =LrgGameObject= entities in an =LrgWorld=. A complete map recipe is a YAML document (=dungeon.yaml=) so a game declares its maps as data.
+
+#+begin_quote
+*[[../index.org][Modules]]* > Procedural Generation
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+| Type                    | Kind                  | Purpose                                                                                     | Doc                          |
+|-------------------------+-----------------------+---------------------------------------------------------------------------------------------+------------------------------|
+| =LrgProcgenGrid=        | Final GObject         | The result: one tag per cell plus rooms, regions, start/exit, heights and spawn points       | [[file:grid.org][grid.org]]                     |
+| =LrgProcgenRoom=        | Boxed                 | A room rectangle (floor only)                                                                | [[file:grid.org][grid.org]]                     |
+| =LrgProcgenSpawn=       | Boxed                 | A spawn point: kind, cell, room                                                              | [[file:grid.org][grid.org]]                     |
+| =LrgProcgenGenerator=   | Abstract GObject      | Common interface: =generate (seed)=; every parameter is a property                           | [[file:generators.org][generators.org]]               |
+| =LrgProcgenBsp=         | Final, generator      | Binary space partition rooms joined by corridors, with doors                                 | [[file:bsp.org][bsp.org]]                      |
+| =LrgProcgenCaves=       | Final, generator      | Cellular-automaton caves, culled and connected                                               | [[file:caves.org][caves.org]]                    |
+| =LrgProcgenWfc=         | Final, generator      | Wave function collapse (simple tiled model) from rules or a sample, with backtracking        | [[file:wfc.org][wfc.org]]                      |
+| =LrgProcgenDrunkard=    | Final, generator      | Drunkard's walk caves                                                                        | [[file:drunkard-noise.org][drunkard-noise.org]]           |
+| =LrgProcgenNoise=       | Final, generator      | Fixed-point value-noise heightmaps thresholded into water, floor and wall                    | [[file:drunkard-noise.org][drunkard-noise.org]]           |
+| =LrgProcgenTileRules=   | Final GObject         | Tag -> tile mapping, cardinal (16) and blob (47) autotiling, tilemap/layer building           | [[file:tile-rules.org][tile-rules.org]]               |
+| =LrgProcgenDungeon=     | Final GObject         | A YAML recipe: generator + post-processing + spawn rules + tile rules                       | [[file:yaml.org][yaml.org]]                     |
+
+Enums (=lrg-enums.h=): =LrgProcgenCell= (=wall=, =floor=, =corridor=, =door=, =water=, =void=, and =custom= = 16, the first value free for games), =LrgProcgenAutotile=, =LrgProcgenDirection= and the =LRG_PROCGEN_ERROR= domain (=FAILED=, =INVALID_CONFIG=, =TOO_SMALL=, =CONTRADICTION=). Log domain: =Libregnum-Procgen= (=LRG_LOG_DOMAIN_PROCGEN=).
+
+** Determinism
+:PROPERTIES:
+:CUSTOM_ID: determinism
+:END:
+Every generator draws only from an =LrgRandomStream= (the engine's saveable PCG32 stream, see [[file:../core/random-stream.org][random-stream.org]]). =lrg_procgen_generator_generate (gen, seed, &error)= seeds a fresh stream with =lrg_random_stream_new (seed, LRG_PROCGEN_STREAM)=; =lrg_procgen_generator_generate_with_rng()= draws from a stream the game owns (for example one restored from a save).
+
+All map arithmetic is integer: random choices use =lrg_random_stream_bounded()=, the noise generator is fixed point (Q16), and wave function collapse computes Shannon entropy with a fixed-point =log2=. No =libm= call and no floating-point comparison decides a cell, so a seed produces bit-identical maps on x86_64 and aarch64, with any compiler flags. =lrg_procgen_grid_hash()= (64-bit FNV-1a of the size and cells) is the value to pin in golden tests; =tests/test-procgen.c= pins one per generator.
+
+Same seed + same parameters + same library version = same map. A change to a generator's algorithm changes its golden hashes; treat it as a data-format change.
+
+** Quick start (C)
+:PROPERTIES:
+:CUSTOM_ID: quick-start-c
+:END:
+#+begin_src c
+#include <libregnum.h>
+
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgProcgenBsp) bsp = lrg_procgen_bsp_new (64, 44);
+g_autoptr(LrgProcgenGrid) grid = NULL;
+g_autoptr(LrgNavGrid) nav = NULL;
+g_autoptr(LrgProcgenTileRules) rules = lrg_procgen_tile_rules_new ();
+g_autoptr(LrgTilemapLayer) layer = NULL;
+g_autoptr(LrgRandomStream) loot_rng = lrg_random_stream_new (1234, 7);
+gint sx, sy;
+
+/* 1. generate: rooms, corridors, doors */
+lrg_procgen_bsp_set_max_room_size (bsp, 10);
+grid = lrg_procgen_generator_generate (LRG_PROCGEN_GENERATOR (bsp), 1234, &error);
+
+/* 2. post-process: start/exit on a farthest pair, then spawn points */
+lrg_procgen_grid_place_start_exit (grid);
+lrg_procgen_grid_place_spawns (grid, loot_rng, "goblin", 6, 10, FALSE);
+lrg_procgen_grid_place_spawns (grid, loot_rng, "chest", 3, 0, TRUE);
+lrg_procgen_grid_get_start (grid, &sx, &sy);
+
+/* 3. convert: tilemap layer, navigation grid, entities */
+lrg_procgen_tile_rules_set_rule (rules, LRG_PROCGEN_CELL_FLOOR, 1, LRG_PROCGEN_AUTOTILE_NONE);
+lrg_procgen_tile_rules_set_rule (rules, LRG_PROCGEN_CELL_WALL, 17, LRG_PROCGEN_AUTOTILE_BLOB);
+layer = lrg_procgen_tile_rules_build_layer (rules, grid);
+nav = lrg_procgen_grid_to_nav_grid (grid);
+lrg_procgen_grid_spawn_entities (grid, world, registry, 16.0f, NULL, NULL);
+#+end_src
+
+** Quick start (YAML)
+:PROPERTIES:
+:CUSTOM_ID: quick-start-yaml
+:END:
+#+begin_src yaml
+# data/dungeon.yaml
+generator: bsp
+width: 64
+height: 44
+params: { min-room-size: 4, max-room-size: 10 }
+post: { connect: true, start-exit: true }
+spawns:
+  - { kind: goblin, count: 6, min-distance: 10 }
+  - { kind: chest, count: 3, rooms-only: true }
+tiles:
+  rules:
+    - { tag: floor, tile: 1 }
+    - { tag: wall, tile: 17, autotile: blob, connects: [door] }
+#+end_src
+
+#+begin_src c
+g_autoptr(LrgProcgenDungeon) recipe = lrg_procgen_dungeon_new_from_file ("data/dungeon.yaml", &error);
+g_autoptr(LrgProcgenGrid) grid = lrg_procgen_dungeon_generate (recipe, seed, &error);
+g_autoptr(LrgTilemapLayer) layer = lrg_procgen_dungeon_build_layer (recipe, grid);
+#+end_src
+
+The full format is in [[file:yaml.org][yaml.org]]; =examples/data/dungeon.yaml= is a complete recipe.
+
+** Pipeline
+:PROPERTIES:
+:CUSTOM_ID: pipeline
+:END:
+=lrg_procgen_dungeon_generate()= runs, on one random stream:
+
+1. The generator: the grid starts filled with =wall= and the generator carves it.
+2. =cull-min-size=: regions smaller than this become wall (=lrg_procgen_grid_cull_regions()=).
+3. =keep-largest= (=lrg_procgen_grid_keep_largest_region()=), or else =connect= (=lrg_procgen_grid_connect_regions()=): the map is guaranteed connected either way.
+4. =start-exit=: =lrg_procgen_grid_place_start_exit()=.
+5. Spawn rules in order: =lrg_procgen_grid_place_spawns()=.
+6. A final region labelling, so =get_region()= is fresh.
+
+Each step is a public function on =LrgProcgenGrid=, so a game can build its own pipeline (see [[file:grid.org][grid.org]]).
+
+** Example and benchmark
+:PROPERTIES:
+:CUSTOM_ID: example-and-benchmark
+:END:
+- =examples/game-procgen-dungeon.c=: a playable crawl over all five generators (keys 1-5), rendered from the tile-rules layer with cardinal autotiling, monsters chasing along =LrgPathfinder= paths on the converted nav grid, chests and monsters spawned through =lrg_procgen_grid_spawn_entities()=. =--print= writes a map as text without a window, =--dump-recipe= prints the YAML, =--recipe FILE= loads one.
+- =lrg-bench -s procgen=: a 96x64 BSP recipe and a 96x64 cave map per frame (about 4 ms of work on a desktop core): this is load-time work, not per-frame work.
+
+** Limits
+:PROPERTIES:
+:CUSTOM_ID: limits
+:END:
+- Grids are at most 4096 x 4096 through a generator (any size =lrg_procgen_grid_new()= accepts up to 2^31 cells).
+- Wave function collapse holds at most 64 tiles (=LRG_PROCGEN_WFC_MAX_TILES=) and implements the simple tiled model (N = 1 adjacency); overlapping N x N patterns are not implemented.
+- Regions, distances and connection are 4-connected.
+- The noise generator thresholds one heightmap; it does not erode or place rivers.

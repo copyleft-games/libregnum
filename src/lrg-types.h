@@ -343,6 +343,24 @@ typedef struct _LrgPathfinder       LrgPathfinder;
 typedef struct _LrgNavMesh          LrgNavMesh;
 typedef struct _LrgNavPolyMesh      LrgNavPolyMesh;
 typedef struct _LrgNavPolyMeshCache LrgNavPolyMeshCache;
+
+/* ==========================================================================
+ * Procedural Generation Module
+ * ========================================================================== */
+
+typedef struct _LrgProcgenRoom   LrgProcgenRoom;   /* Boxed type */
+typedef struct _LrgProcgenSpawn  LrgProcgenSpawn;  /* Boxed type */
+
+typedef struct _LrgProcgenGrid             LrgProcgenGrid;
+typedef struct _LrgProcgenTileRules        LrgProcgenTileRules;
+typedef struct _LrgProcgenGenerator        LrgProcgenGenerator;
+typedef struct _LrgProcgenGeneratorClass   LrgProcgenGeneratorClass;
+typedef struct _LrgProcgenBsp              LrgProcgenBsp;
+typedef struct _LrgProcgenCaves            LrgProcgenCaves;
+typedef struct _LrgProcgenWfc              LrgProcgenWfc;
+typedef struct _LrgProcgenDrunkard         LrgProcgenDrunkard;
+typedef struct _LrgProcgenNoise            LrgProcgenNoise;
+typedef struct _LrgProcgenDungeon          LrgProcgenDungeon;
 typedef struct _LrgNavLevel         LrgNavLevel;
 /* LrgPathfinderClass is not forward-declared (FINAL type) */
 

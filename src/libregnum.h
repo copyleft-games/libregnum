@@ -288,6 +288,17 @@
 #include "pathfinding/lrg-nav-poly-mesh-cache.h"
 #include "pathfinding/lrg-nav-level.h"
 
+/* Procedural generation module */
+#include "procgen/lrg-procgen-grid.h"
+#include "procgen/lrg-procgen-tile-rules.h"
+#include "procgen/lrg-procgen-generator.h"
+#include "procgen/lrg-procgen-bsp.h"
+#include "procgen/lrg-procgen-caves.h"
+#include "procgen/lrg-procgen-wfc.h"
+#include "procgen/lrg-procgen-drunkard.h"
+#include "procgen/lrg-procgen-noise.h"
+#include "procgen/lrg-procgen-dungeon.h"
+
 /* AI module */
 #include "ai/lrg-blackboard.h"
 #include "ai/lrg-bt-node.h"

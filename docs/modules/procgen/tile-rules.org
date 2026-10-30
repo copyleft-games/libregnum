@@ -1,0 +1,72 @@
+* LrgProcgenTileRules
+:PROPERTIES:
+:CUSTOM_ID: lrgprocgentilerules
+:END:
+Maps cell tags to tilemap tile ids, with autotiling, and builds =LrgTilemapLayer= / =LrgTilemap= objects from a grid. Header: =procgen/lrg-procgen-tile-rules.h=. Final GObject.
+
+** Rules
+:PROPERTIES:
+:CUSTOM_ID: rules
+:END:
+Tile ids are tilemap layer ids: 1-based (=tileset index + 1=), =0= (=LRG_TILEMAP_EMPTY_TILE=) draws nothing.
+
+| Function | Meaning |
+|----------+---------|
+| =set_default_tile (id)= | tile of tags without a rule (default 0, empty) |
+| =set_rule (tag, id, autotile)= | the tag's tile, or the first of its variants |
+| =remove_rule (tag)= / =get_rule (tag, &id, &autotile)= | |
+| =set_variant (tag, mask, id)= / =get_variant()= | an explicit tile for one neighbour mask (wins over the computed variant) |
+| =set_connects (tag, other, bool)= / =get_connects()= | =other= counts as a matching neighbour of =tag= (a tag always matches itself) |
+| =set_edge_connects (bool)= | whether outside the grid matches every tag (default =TRUE=: border walls tile as if the wall went on) |
+| =resolve (grid, x, y)= | the tile id of a cell |
+
+** Autotiling
+:PROPERTIES:
+:CUSTOM_ID: autotiling
+:END:
+| Mode | Variants | Tile |
+|------+----------+------|
+| =LRG_PROCGEN_AUTOTILE_NONE= | 1 | =id= |
+| =LRG_PROCGEN_AUTOTILE_CARDINAL= | 16 | =id + mask=, mask bits N = 1, E = 2, S = 4, W = 8 |
+| =LRG_PROCGEN_AUTOTILE_BLOB= | 47 | =id + blob_index (mask)= |
+
+A neighbour sets its bit when it matches (same tag, a connected tag, or outside the grid with =edge-connects=).
+
+*Blob* uses all 8 neighbours (N = 1, NE = 2, E = 4, SE = 8, S = 16, SW = 32, W = 64, NW = 128), but a corner only counts when both edges next to it match (a corner piece cannot be seen otherwise). That reduction leaves exactly 47 masks; =lrg_procgen_tile_rules_blob_index (mask)= numbers them 0-46 in ascending mask order (0 = isolated, 46 = 255 = surrounded). Lay out a 47-tile blob tileset in that order, or keep any layout and map masks with =set_variant()=. =neighbour_mask()= returns the reduced mask, which is also what =set_variant()= takes for blob rules.
+
+** Building layers and tilemaps
+:PROPERTIES:
+:CUSTOM_ID: building-layers-and-tilemaps
+:END:
+- =lrg_procgen_tile_rules_build_layer (rules, grid)=: a new layer of the grid's size named ="procgen"=, collision enabled, every cell resolved. Headless.
+- =lrg_procgen_tile_rules_build_tilemap (rules, grid, tileset)=: an =LrgTilemap= with that layer, and =LRG_TILE_PROPERTY_SOLID= set on every tileset tile a non-walkable cell resolved to, so =lrg_tilemap_is_solid()= / =is_solid_at()= agree with the grid. Needs an =LrgTileset= (and therefore a texture). A tile used by both walkable and non-walkable cells becomes solid; give them different tiles.
+
+#+begin_src c
+g_autoptr(LrgProcgenTileRules) rules = lrg_procgen_tile_rules_new ();
+g_autoptr(LrgTilemap) map = NULL;
+
+lrg_procgen_tile_rules_set_rule (rules, LRG_PROCGEN_CELL_FLOOR, 1, LRG_PROCGEN_AUTOTILE_NONE);
+lrg_procgen_tile_rules_set_rule (rules, LRG_PROCGEN_CELL_CORRIDOR, 2, LRG_PROCGEN_AUTOTILE_NONE);
+lrg_procgen_tile_rules_set_rule (rules, LRG_PROCGEN_CELL_DOOR, 3, LRG_PROCGEN_AUTOTILE_NONE);
+/* walls: a 47-tile blob set starting at tile 17; doors join walls */
+lrg_procgen_tile_rules_set_rule (rules, LRG_PROCGEN_CELL_WALL, 17, LRG_PROCGEN_AUTOTILE_BLOB);
+lrg_procgen_tile_rules_set_connects (rules, LRG_PROCGEN_CELL_WALL, LRG_PROCGEN_CELL_DOOR, TRUE);
+
+map = lrg_procgen_tile_rules_build_tilemap (rules, grid, tileset);
+lrg_tilemap_draw_with_camera (map, camera);
+#+end_src
+
+YAML (inside a recipe):
+
+#+begin_src yaml
+tiles:
+  default: 0
+  edge-connects: true
+  rules:
+    - { tag: floor, tile: 1 }
+    - { tag: wall, tile: 17, autotile: blob, connects: [door] }
+    - tag: water
+      tile: 70
+      autotile: cardinal
+      variants: [ { mask: 15, tile: 90 } ]   # open water
+#+end_src

@@ -1,0 +1,58 @@
+* LrgProcgenBsp
+:PROPERTIES:
+:CUSTOM_ID: lrgprocgenbsp
+:END:
+Rooms and corridors by binary space partitioning. Header: =procgen/lrg-procgen-bsp.h=. YAML name: =bsp=.
+
+** Algorithm
+:PROPERTIES:
+:CUSTOM_ID: algorithm
+:END:
+1. *Partition.* Starting from the whole grid, a rectangle is split while it can be (a side at least =2 * min-leaf-size=) and is still larger than =max-leaf-size= on some side. It is split across its long side when one side exceeds the other by more than 25%, otherwise in a random direction; the cut falls uniformly where both halves keep at least =min-leaf-size=.
+2. *Rooms.* Every leaf gets one room, inset by one cell so a wall ring always separates rooms: width and height uniform in =[min-room-size, min(max-room-size, leaf - 2)]=, position uniform inside the leaf. Rooms are carved as =floor= and recorded with =lrg_procgen_grid_add_room()= in leaf order.
+3. *Corridors.* Bottom-up over the partition tree, each internal node joins one room of its left subtree to one room of its right subtree (each subtree's representative is picked at random from its two children's) with an L-shaped corridor between the room centres, elbow first horizontal or vertical at random. Only =wall= cells become =corridor=, so corridors run through rooms they cross without changing them. Joining the two halves of every node makes the map connected by construction.
+4. *Doors.* With =doors=, a =corridor= cell on a room's wall ring (corners excluded) whose two neighbours along the ring are =wall= becomes =door=: corridors that enter a room get a doorway, corridors running along a wall do not.
+
+** Parameters
+:PROPERTIES:
+:CUSTOM_ID: parameters
+:END:
+| Property | Range | Default | Meaning |
+|----------+-------+---------+---------|
+| =min-room-size= | 1-256 | 3 | smallest room side |
+| =max-room-size= | 1-256 | 12 | largest room side |
+| =min-leaf-size= | 3-1024 | 8 | smallest partition side; must be at least =min-room-size + 2= |
+| =max-leaf-size= | 3-4096 | 20 | partitions larger than this are split again; must be at least =min-leaf-size= |
+| =doors= | bool | true | place doors |
+
+Errors: =INVALID_CONFIG= when =min-room-size > max-room-size=, =min-leaf-size < min-room-size + 2= or =max-leaf-size < min-leaf-size=; =TOO_SMALL= when the grid is smaller than =min-leaf-size=.
+
+** Guarantees
+:PROPERTIES:
+:CUSTOM_ID: guarantees
+:END:
+Tested over many seeds in =tests/test-procgen.c=: connected; outer border all wall; every room inside the interior, entirely floor, within the size parameters, and separated from every other room by at least one wall cell; every door touches a room. The room count is the leaf count, so smaller leaves mean more, smaller rooms.
+
+** Usage
+:PROPERTIES:
+:CUSTOM_ID: usage
+:END:
+#+begin_src c
+g_autoptr(LrgProcgenBsp) bsp = lrg_procgen_bsp_new (80, 50);
+g_autoptr(LrgProcgenGrid) grid = NULL;
+
+lrg_procgen_bsp_set_min_room_size (bsp, 4);
+lrg_procgen_bsp_set_max_room_size (bsp, 9);
+lrg_procgen_bsp_set_max_leaf_size (bsp, 16);   /* more, smaller rooms */
+grid = lrg_procgen_generator_generate (LRG_PROCGEN_GENERATOR (bsp), seed, &error);
+
+for (guint i = 0; i < lrg_procgen_grid_get_room_count (grid); i++)
+	decorate_room (lrg_procgen_grid_get_room (grid, i));
+#+end_src
+
+#+begin_src yaml
+generator: bsp
+width: 80
+height: 50
+params: { min-room-size: 4, max-room-size: 9, max-leaf-size: 16, doors: true }
+#+end_src

@@ -49,6 +49,7 @@ libregnum/
 │   ├── save/                 # Saveable interface, SaveContext, SaveGame, SaveManager
 │   ├── ai/                   # BehaviorTree, Blackboard, BTNode hierarchy
 │   ├── pathfinding/          # NavGrid, NavCell, Path, Pathfinder (A*)
+│   ├── procgen/              # ProcgenGrid, generators (BSP, caves, WFC, drunkard, noise), TileRules, Dungeon (YAML recipes)
 │   ├── physics/              # PhysicsWorld, RigidBody, CollisionInfo, WallSet, CollisionMesh, CharacterController
 │   │
 │   │ # Genre-Specific

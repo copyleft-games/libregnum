@@ -125,6 +125,7 @@ TEST_SOURCES := \
 	test-inventory.c \
 	test-i18n.c \
 	test-pathfinding.c \
+	test-procgen.c \
 	test-ai.c \
 	test-physics.c \
 	test-debug.c \
