@@ -20,6 +20,7 @@
 #include "lrg-light2d.h"
 #include "lrg-shadow-caster.h"
 #include "lrg-lightmap.h"
+#include "../graphics/lrg-camera2d.h"
 
 G_BEGIN_DECLS
 
@@ -103,6 +104,28 @@ void lrg_lighting_manager_set_blend_mode (LrgLightingManager *self, LrgLightBlen
 LRG_AVAILABLE_IN_ALL
 void lrg_lighting_manager_set_viewport (LrgLightingManager *self, gfloat x, gfloat y, gfloat width, gfloat height);
 
+LRG_AVAILABLE_IN_ALL
+void lrg_lighting_manager_get_viewport (LrgLightingManager *self, gfloat *x, gfloat *y, gfloat *width, gfloat *height);
+
+LRG_AVAILABLE_IN_ALL
+void lrg_lighting_manager_set_viewport_from_camera (LrgLightingManager *self, LrgCamera2D *camera, gfloat screen_width, gfloat screen_height);
+
+/* Culling */
+
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_lighting_manager_get_visible_lights (LrgLightingManager *self);
+
+LRG_AVAILABLE_IN_ALL
+guint lrg_lighting_manager_get_visible_light_count (LrgLightingManager *self);
+
+/* Lightmap placement */
+
+LRG_AVAILABLE_IN_ALL
+void lrg_lighting_manager_set_lightmap_bounds (LrgLightingManager *self, gfloat x, gfloat y, gfloat width, gfloat height);
+
+LRG_AVAILABLE_IN_ALL
+void lrg_lighting_manager_get_lightmap_bounds (LrgLightingManager *self, gfloat *x, gfloat *y, gfloat *width, gfloat *height);
+
 /* Update and render */
 
 LRG_AVAILABLE_IN_ALL
@@ -113,5 +136,14 @@ void lrg_lighting_manager_render (LrgLightingManager *self);
 
 LRG_AVAILABLE_IN_ALL
 guint lrg_lighting_manager_get_light_texture_id (LrgLightingManager *self);
+
+LRG_AVAILABLE_IN_ALL
+GrlRenderTexture * lrg_lighting_manager_get_light_target (LrgLightingManager *self);
+
+LRG_AVAILABLE_IN_ALL
+guint lrg_lighting_manager_get_rendered_light_count (LrgLightingManager *self);
+
+LRG_AVAILABLE_IN_ALL
+void lrg_lighting_manager_composite (LrgLightingManager *self);
 
 G_END_DECLS

@@ -19,7 +19,10 @@
 #include "../src/lighting/lrg-lighting-manager.h"
 
 #include <glib.h>
+#include <glib/gstdio.h>
+#include <gio/gio.h>
 #include <math.h>
+#include <raylib.h>
 
 /* ========================================================================== */
 /*                          Shadow Edge Tests                                  */
@@ -593,6 +596,249 @@ test_shadow_method (void)
 /*                          Main Entry Point                                   */
 /* ========================================================================== */
 
+/* ==========================================================================
+ * Lightmap file I/O (headless: image decode/encode needs no window)
+ * ========================================================================== */
+
+static void
+test_lightmap_save_load_roundtrip (void)
+{
+    g_autoptr(LrgLightmap) lightmap = NULL;
+    g_autoptr(LrgLightmap) loaded = NULL;
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *dir = NULL;
+    g_autofree gchar *path = NULL;
+    guint8 r, g, b;
+    guint x, y;
+
+    dir = g_dir_make_tmp ("lrg-lightmap-XXXXXX", &error);
+    g_assert_no_error (error);
+    path = g_build_filename (dir, "baked.png", NULL);
+
+    /* A gradient plus one marked texel, so orientation is checked too */
+    lightmap = lrg_lightmap_new (16, 8);
+    for (y = 0; y < 8; y++)
+        for (x = 0; x < 16; x++)
+            lrg_lightmap_set_pixel (lightmap, x, y, (guint8) (x * 16), (guint8) (y * 32), 7);
+    lrg_lightmap_set_pixel (lightmap, 15, 0, 1, 2, 3);
+
+    g_assert_true (lrg_lightmap_save (lightmap, path, &error));
+    g_assert_no_error (error);
+    g_assert_true (g_file_test (path, G_FILE_TEST_IS_REGULAR));
+
+    loaded = lrg_lightmap_load (path, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (loaded);
+    g_assert_cmpuint (lrg_lightmap_get_width (loaded), ==, 16);
+    g_assert_cmpuint (lrg_lightmap_get_height (loaded), ==, 8);
+
+    lrg_lightmap_get_pixel (loaded, 3, 5, &r, &g, &b);
+    g_assert_cmpuint (r, ==, 48);
+    g_assert_cmpuint (g, ==, 160);
+    g_assert_cmpuint (b, ==, 7);
+
+    lrg_lightmap_get_pixel (loaded, 15, 0, &r, &g, &b);
+    g_assert_cmpuint (r, ==, 1);
+    g_assert_cmpuint (g, ==, 2);
+    g_assert_cmpuint (b, ==, 3);
+
+    g_unlink (path);
+    g_rmdir (dir);
+}
+
+static void
+test_lightmap_load_errors (void)
+{
+    g_autoptr(LrgLightmap) loaded = NULL;
+    g_autoptr(LrgLightmap) lightmap = NULL;
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *dir = NULL;
+    g_autofree gchar *missing = NULL;
+    g_autofree gchar *garbage = NULL;
+    g_autofree gchar *unwritable = NULL;
+
+    dir = g_dir_make_tmp ("lrg-lightmap-XXXXXX", NULL);
+    missing = g_build_filename (dir, "missing.png", NULL);
+    garbage = g_build_filename (dir, "garbage.png", NULL);
+    unwritable = g_build_filename (dir, "no-such-dir", "out.png", NULL);
+
+    loaded = lrg_lightmap_load (missing, &error);
+    g_assert_null (loaded);
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+    g_clear_error (&error);
+
+    g_assert_true (g_file_set_contents (garbage, "not an image", -1, NULL));
+    loaded = lrg_lightmap_load (garbage, &error);
+    g_assert_null (loaded);
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+    g_clear_error (&error);
+
+    lightmap = lrg_lightmap_new (4, 4);
+    g_assert_false (lrg_lightmap_save (lightmap, unwritable, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_FAILED);
+    g_clear_error (&error);
+
+    g_unlink (garbage);
+    g_rmdir (dir);
+}
+
+static void
+test_lightmap_upload_headless (void)
+{
+    g_autoptr(LrgLightmap) lightmap = NULL;
+
+    if (IsWindowReady ())
+    {
+        g_test_skip ("A window is open; this checks the headless path");
+        return;
+    }
+
+    lightmap = lrg_lightmap_new (4, 4);
+    g_assert_true (lrg_lightmap_is_dirty (lightmap));
+
+    /* No GL context: nothing is uploaded and the pixels stay pending */
+    lrg_lightmap_upload (lightmap);
+    g_assert_true (lrg_lightmap_is_dirty (lightmap));
+    g_assert_null (lrg_lightmap_get_texture (lightmap));
+    g_assert_cmpuint (lrg_lightmap_get_texture_id (lightmap), ==, 0);
+}
+
+/* ==========================================================================
+ * Lighting manager culling (headless maths)
+ * ========================================================================== */
+
+static LrgLight2D *
+add_point_light (LrgLightingManager *manager,
+                 gfloat              x,
+                 gfloat              y,
+                 gfloat              radius)
+{
+    g_autoptr(LrgPointLight2D) light = NULL;
+
+    light = lrg_point_light2d_new ();
+    lrg_light2d_set_position (LRG_LIGHT2D (light), x, y);
+    lrg_point_light2d_set_radius (light, radius);
+    lrg_lighting_manager_add_light (manager, LRG_LIGHT2D (light));
+    return LRG_LIGHT2D (light);  /* the manager holds a reference */
+}
+
+static void
+test_lighting_manager_culling (void)
+{
+    g_autoptr(LrgLightingManager) manager = NULL;
+    g_autoptr(LrgDirectionalLight2D) sun = NULL;
+    g_autoptr(GPtrArray) visible = NULL;
+    LrgLight2D *inside;
+    LrgLight2D *outside;
+    LrgLight2D *edge;
+    LrgLight2D *disabled;
+
+    manager = lrg_lighting_manager_new ();
+    lrg_lighting_manager_set_viewport (manager, 0.0f, 0.0f, 800.0f, 600.0f);
+
+    inside = add_point_light (manager, 400.0f, 300.0f, 50.0f);
+    outside = add_point_light (manager, 2000.0f, 300.0f, 100.0f);
+    /* centre off-screen, but the radius reaches 10 units into view */
+    edge = add_point_light (manager, -90.0f, 300.0f, 100.0f);
+    disabled = add_point_light (manager, 100.0f, 100.0f, 50.0f);
+    lrg_light2d_set_enabled (disabled, FALSE);
+
+    sun = lrg_directional_light2d_new ();
+    lrg_lighting_manager_add_light (manager, LRG_LIGHT2D (sun));
+
+    visible = lrg_lighting_manager_get_visible_lights (manager);
+    g_assert_cmpuint (visible->len, ==, 3);
+    g_assert_true (g_ptr_array_find (visible, inside, NULL));
+    g_assert_true (g_ptr_array_find (visible, edge, NULL));
+    g_assert_true (g_ptr_array_find (visible, sun, NULL));
+    g_assert_false (g_ptr_array_find (visible, outside, NULL));
+    g_assert_false (g_ptr_array_find (visible, disabled, NULL));
+    g_assert_cmpuint (lrg_lighting_manager_get_visible_light_count (manager), ==, 3);
+
+    /* Scrolling the viewport changes the set */
+    lrg_lighting_manager_set_viewport (manager, 1500.0f, 0.0f, 800.0f, 600.0f);
+    g_assert_cmpuint (lrg_lighting_manager_get_visible_light_count (manager), ==, 2);
+
+    /* render() culls even without a window, and reports what it drew */
+    lrg_lighting_manager_render (manager);
+    g_assert_cmpuint (lrg_lighting_manager_get_rendered_light_count (manager), ==, 2);
+}
+
+static void
+test_lighting_manager_viewport_from_camera (void)
+{
+    g_autoptr(LrgLightingManager) manager = NULL;
+    g_autoptr(LrgCamera2D) camera = NULL;
+    gfloat x, y, w, h;
+
+    manager = lrg_lighting_manager_new ();
+    camera = lrg_camera2d_new ();
+
+    /* Centred camera at 2x zoom: shows half the screen size in world units */
+    lrg_camera2d_set_target_xy (camera, 100.0f, 50.0f);
+    lrg_camera2d_set_offset_xy (camera, 400.0f, 300.0f);
+    lrg_camera2d_set_zoom (camera, 2.0f);
+    lrg_camera2d_set_rotation (camera, 0.0f);
+
+    lrg_lighting_manager_set_viewport_from_camera (manager, camera, 800.0f, 600.0f);
+    lrg_lighting_manager_get_viewport (manager, &x, &y, &w, &h);
+    g_assert_cmpfloat_with_epsilon (x, -100.0f, 1e-3);
+    g_assert_cmpfloat_with_epsilon (y, -100.0f, 1e-3);
+    g_assert_cmpfloat_with_epsilon (w, 400.0f, 1e-3);
+    g_assert_cmpfloat_with_epsilon (h, 300.0f, 1e-3);
+
+    /* A quarter turn swaps the box's sides around the same centre */
+    lrg_camera2d_set_rotation (camera, 90.0f);
+    lrg_lighting_manager_set_viewport_from_camera (manager, camera, 800.0f, 600.0f);
+    lrg_lighting_manager_get_viewport (manager, &x, &y, &w, &h);
+    g_assert_cmpfloat_with_epsilon (w, 300.0f, 1e-2);
+    g_assert_cmpfloat_with_epsilon (h, 400.0f, 1e-2);
+    g_assert_cmpfloat_with_epsilon (x + w * 0.5f, 100.0f, 1e-2);
+    g_assert_cmpfloat_with_epsilon (y + h * 0.5f, 50.0f, 1e-2);
+
+    /* A light just outside the camera's view is culled, one inside kept */
+    lrg_camera2d_set_rotation (camera, 0.0f);
+    lrg_lighting_manager_set_viewport_from_camera (manager, camera, 800.0f, 600.0f);
+    add_point_light (manager, 350.0f, 50.0f, 20.0f);   /* x - r > 300 */
+    add_point_light (manager, 290.0f, 50.0f, 20.0f);
+    g_assert_cmpuint (lrg_lighting_manager_get_visible_light_count (manager), ==, 1);
+}
+
+static void
+test_lighting_manager_lightmap_bounds (void)
+{
+    g_autoptr(LrgLightingManager) manager = NULL;
+    g_autoptr(LrgLightmap) lightmap = NULL;
+    gfloat x, y, w, h;
+
+    manager = lrg_lighting_manager_new ();
+
+    /* Without a lightmap the resolved size is 0 */
+    lrg_lighting_manager_get_lightmap_bounds (manager, &x, &y, &w, &h);
+    g_assert_cmpfloat (w, ==, 0.0f);
+    g_assert_cmpfloat (h, ==, 0.0f);
+
+    /* Default: origin, one world unit per texel */
+    lightmap = lrg_lightmap_new (32, 16);
+    lrg_lighting_manager_set_lightmap (manager, lightmap);
+    lrg_lighting_manager_get_lightmap_bounds (manager, &x, &y, &w, &h);
+    g_assert_cmpfloat (x, ==, 0.0f);
+    g_assert_cmpfloat (y, ==, 0.0f);
+    g_assert_cmpfloat (w, ==, 32.0f);
+    g_assert_cmpfloat (h, ==, 16.0f);
+
+    lrg_lighting_manager_set_lightmap_bounds (manager, -10.0f, 5.0f, 640.0f, 320.0f);
+    lrg_lighting_manager_get_lightmap_bounds (manager, &x, &y, &w, &h);
+    g_assert_cmpfloat (x, ==, -10.0f);
+    g_assert_cmpfloat (y, ==, 5.0f);
+    g_assert_cmpfloat (w, ==, 640.0f);
+    g_assert_cmpfloat (h, ==, 320.0f);
+
+    /* No window: compositing is a safe no-op */
+    lrg_lighting_manager_composite (manager);
+    g_assert_null (lrg_lighting_manager_get_light_target (manager));
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -629,6 +875,9 @@ main (int argc, char *argv[])
     g_test_add_func ("/lighting/lightmap/new", test_lightmap_new);
     g_test_add_func ("/lighting/lightmap/pixel", test_lightmap_pixel);
     g_test_add_func ("/lighting/lightmap/clear", test_lightmap_clear);
+    g_test_add_func ("/lighting/lightmap/save-load-roundtrip", test_lightmap_save_load_roundtrip);
+    g_test_add_func ("/lighting/lightmap/load-errors", test_lightmap_load_errors);
+    g_test_add_func ("/lighting/lightmap/upload-headless", test_lightmap_upload_headless);
 
     /* Light Probe Tests */
     g_test_add_func ("/lighting/light-probe/new", test_light_probe_new);
@@ -645,6 +894,9 @@ main (int argc, char *argv[])
     g_test_add_func ("/lighting/manager/lightmap", test_lighting_manager_lightmap);
     g_test_add_func ("/lighting/manager/viewport", test_lighting_manager_viewport);
     g_test_add_func ("/lighting/manager/update", test_lighting_manager_update);
+    g_test_add_func ("/lighting/manager/culling", test_lighting_manager_culling);
+    g_test_add_func ("/lighting/manager/viewport-from-camera", test_lighting_manager_viewport_from_camera);
+    g_test_add_func ("/lighting/manager/lightmap-bounds", test_lighting_manager_lightmap_bounds);
 
     /* Light Falloff Tests */
     g_test_add_func ("/lighting/light/falloff", test_light_falloff);
