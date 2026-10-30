@@ -1648,6 +1648,59 @@ bus_teardown (gpointer state)
 }
 
 /* --------------------------------------------------------------------------
+ * procgen: one 96x64 dungeon recipe (BSP + connect + start/exit + spawns)
+ * and one 96x64 cave map generated a frame, each from a new seed
+ * -------------------------------------------------------------------------- */
+
+typedef struct
+{
+	LrgProcgenDungeon *dungeon;
+	LrgProcgenCaves   *caves;
+	guint64            sink;
+} ProcgenState;
+
+static gpointer
+procgen_setup (void)
+{
+	g_autoptr(LrgProcgenBsp) bsp = lrg_procgen_bsp_new (96, 64);
+	ProcgenState *st;
+
+	st = g_new0 (ProcgenState, 1);
+	st->dungeon = lrg_procgen_dungeon_new (LRG_PROCGEN_GENERATOR (bsp));
+	lrg_procgen_dungeon_add_spawn_rule (st->dungeon, "monster", 24, 8, FALSE);
+	lrg_procgen_dungeon_add_spawn_rule (st->dungeon, "chest", 8, 0, TRUE);
+	st->caves = lrg_procgen_caves_new (96, 64);
+	return st;
+}
+
+static void
+procgen_frame (gpointer state,
+               guint    frame_index)
+{
+	ProcgenState *st = state;
+	g_autoptr(LrgProcgenGrid) dungeon = NULL;
+	g_autoptr(LrgProcgenGrid) caves = NULL;
+
+	dungeon = lrg_procgen_dungeon_generate (st->dungeon, frame_index, NULL);
+	caves = lrg_procgen_generator_generate (LRG_PROCGEN_GENERATOR (st->caves), frame_index, NULL);
+	/* keep the work observable */
+	if (dungeon != NULL)
+		st->sink ^= lrg_procgen_grid_hash (dungeon);
+	if (caves != NULL)
+		st->sink ^= lrg_procgen_grid_hash (caves);
+}
+
+static void
+procgen_teardown (gpointer state)
+{
+	ProcgenState *st = state;
+
+	g_clear_object (&st->dungeon);
+	g_clear_object (&st->caves);
+	g_free (st);
+}
+
+/* --------------------------------------------------------------------------
  * transforms: world transforms of 128 transform chains 16 deep
  * -------------------------------------------------------------------------- */
 
@@ -3142,6 +3195,8 @@ static const BenchScenario scenarios[] = {
 	  tween_setup, tween_frame, tween_teardown },
 	{ "event-bus", "256 events a frame to 256 listeners over 32 event types",
 	  bus_setup, bus_frame, bus_teardown },
+	{ "procgen", "a 96x64 BSP dungeon recipe and a 96x64 cave map generated a frame",
+	  procgen_setup, procgen_frame, procgen_teardown },
 	{ "transforms", "world position/rotation/scale of 128 transform chains 16 deep",
 	  xform_setup, xform_frame, xform_teardown },
 	{ "object-pool", "4000 pool acquisitions, 4 active walks, 4000 releases a frame",

@@ -54,6 +54,7 @@ bench/build/release/bench/lrg-bench -l           # list scenarios
 | =autosave=      | light frames, a 4000-key background save every 60 frames                  |
 | =autosave-sync= | the same save made with =lrg_save_manager_save()= (on the frame)          |
 | =analytics=     | an analytics event a frame, HTTP backend, 20 ms localhost collector       |
+| =procgen=       | a 96x64 BSP =LrgProcgenDungeon= recipe (connect, start/exit, 32 spawns) and a 96x64 =LrgProcgenCaves= map generated a frame, new seed each frame (~4 ms work: level-load cost, not per-frame) |
 | =despawn=       | 4000 sprite objects, 1000 removed and 1000 spawned every 60 frames        |
 | =first-use=     | water, billboards, grass, clouds, lit batch, skinned actors, colour grade, heat haze, sharpen: built in setup, first drawn at measured frame 100 |
 | =first-use-queue= | =first-use= with the prewarm queue run to the end in setup             |
