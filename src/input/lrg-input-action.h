@@ -198,4 +198,54 @@ gfloat lrg_input_action_get_value (LrgInputAction *self);
 LRG_AVAILABLE_IN_ALL
 gfloat lrg_input_action_get_axis (LrgInputAction *self);
 
+/* ==========================================================================
+ * Injected State
+ * ========================================================================== */
+
+/**
+ * lrg_input_action_set_override:
+ * @self: an #LrgInputAction
+ * @down: whether the action is held
+ * @pressed: whether it went down this tick
+ * @released: whether it went up this tick
+ * @axis: the signed analog value (lrg_input_action_get_value() reports its
+ *   magnitude)
+ *
+ * Makes every state query on @self report the given values instead of
+ * reading its bindings, until lrg_input_action_clear_override(). Replay
+ * playback and rollback sessions use this to feed recorded or remote input
+ * through the normal input layer, so game code reads it with the usual
+ * lrg_input_map_is_down() calls.
+ *
+ * Since: 0.4
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_input_action_set_override (LrgInputAction *self,
+                                    gboolean        down,
+                                    gboolean        pressed,
+                                    gboolean        released,
+                                    gfloat          axis);
+
+/**
+ * lrg_input_action_clear_override:
+ * @self: an #LrgInputAction
+ *
+ * Returns @self to reading its bindings.
+ *
+ * Since: 0.4
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_input_action_clear_override (LrgInputAction *self);
+
+/**
+ * lrg_input_action_has_override:
+ * @self: an #LrgInputAction
+ *
+ * Returns: %TRUE while an injected state replaces the bindings
+ *
+ * Since: 0.4
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_input_action_has_override (LrgInputAction *self);
+
 G_END_DECLS

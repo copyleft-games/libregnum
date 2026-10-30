@@ -312,6 +312,12 @@ void list_action_bindings(LrgInputAction *action)
 - =lrg_input_action_is_released(LrgInputAction *self)= - Just deactivated
 - =lrg_input_action_get_value(LrgInputAction *self)= - Get analog value (0.0-1.0)
 
+** Injected State (replays, rollback)
+:PROPERTIES:
+:CUSTOM_ID: injected-state
+:END:
+=lrg_input_action_set_override (action, down, pressed, released, axis)= makes every query on the action return the given values instead of reading its bindings, until =lrg_input_action_clear_override()= (or =lrg_input_map_clear_overrides()= for a whole map); =lrg_input_action_has_override()= reports it. =get_value()= returns the magnitude of =axis=, =get_axis()= the signed value. This is how the [[file:../replay/index.org][replay module]] feeds recorded or remote input through the normal input layer: =lrg_input_snapshot_apply()= sets one override per action from a tick's =LrgInputSnapshot=, deriving pressed/released from the previous tick, so game code keeps calling =lrg_input_map_is_pressed()= and never knows whether the input is live, recorded or predicted.
+
 ** Notes
 :PROPERTIES:
 :CUSTOM_ID: notes

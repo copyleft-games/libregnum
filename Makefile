@@ -258,6 +258,7 @@ PUBLIC_HEADERS := \
 	src/gamemodule/lrg-configurable.h \
 	src/gamemodule/lrg-game-host.h \
 	src/gamemodule/lrg-standalone-host.h \
+	src/gamemodule/lrg-headless-host.h \
 	src/gamemodule/lrg-loaded-game.h \
 	src/gamemodule/lrg-game-module-macros.h \
 	src/dlc/lrg-dlc-ownership.h \
@@ -296,6 +297,15 @@ PUBLIC_HEADERS := \
 	src/net/lrg-net-peer.h \
 	src/net/lrg-net-server.h \
 	src/net/lrg-net-client.h \
+	src/replay/lrg-state-buffer.h \
+	src/replay/lrg-sim-stateful.h \
+	src/replay/lrg-input-snapshot.h \
+	src/replay/lrg-simulation.h \
+	src/replay/lrg-replay.h \
+	src/replay/lrg-rollback-transport.h \
+	src/replay/lrg-loopback-transport.h \
+	src/replay/lrg-udp-transport.h \
+	src/replay/lrg-rollback-session.h \
 	src/world3d/lrg-bounding-box3d.h \
 	src/world3d/lrg-spawn-point3d.h \
 	src/world3d/lrg-trigger3d.h \
@@ -895,6 +905,7 @@ SOURCES := \
 	src/gamemodule/lrg-configurable.c \
 	src/gamemodule/lrg-game-host.c \
 	src/gamemodule/lrg-standalone-host.c \
+	src/gamemodule/lrg-headless-host.c \
 	src/gamemodule/lrg-loaded-game.c \
 	src/dlc/lrg-dlc-ownership.c \
 	src/dlc/lrg-dlc-ownership-steam.c \
@@ -935,6 +946,15 @@ SOURCES := \
 	src/net/lrg-net-peer.c \
 	src/net/lrg-net-server.c \
 	src/net/lrg-net-client.c \
+	src/replay/lrg-state-buffer.c \
+	src/replay/lrg-sim-stateful.c \
+	src/replay/lrg-input-snapshot.c \
+	src/replay/lrg-simulation.c \
+	src/replay/lrg-replay.c \
+	src/replay/lrg-rollback-transport.c \
+	src/replay/lrg-loopback-transport.c \
+	src/replay/lrg-udp-transport.c \
+	src/replay/lrg-rollback-session.c \
 	src/world3d/lrg-bounding-box3d.c \
 	src/world3d/lrg-spawn-point3d.c \
 	src/world3d/lrg-trigger3d.c \

@@ -79,6 +79,7 @@ libregnum/
 │   │ # Infrastructure
 │   ├── i18n/                 # Locale, Localization
 │   ├── net/                  # NetMessage, NetPeer, NetServer, NetClient
+│   ├── replay/               # Simulation, SimStateful, StateBuffer, InputSnapshot, Replay, RollbackSession, loopback/UDP transports
 │   ├── world3d/              # Level3D, Octree, Sector, Portal, Trigger3D, SpawnPoint3D
 │   ├── scene/                # Scene, SceneObject, SceneSerializer interface
 │   ├── mod/                  # ModManifest, Mod, ModLoader, Modable interface, Providers
@@ -670,6 +671,25 @@ bounds", "Cost of a page").
 - One thread owns a replicator. Pages are byte-for-byte what the original
   implementation produced (`tests/test-mmo-replicator.c` keeps it as a
   reference model and fuzzes both; its benchmark prints ms a cycle).
+
+### Deterministic Simulation, Replays and Rollback (`replay/`)
+
+- `LrgSimulation` is the deterministic container: tick counter, fixed step, seeded `LrgRandomStream`
+  (`lrg_simulation_get_random()`), action table, per-player `LrgInputSnapshot`s and the ordered
+  list of state objects (`LrgSimStateful`, or `LrgSaveable` as a slow fallback). Game logic runs in
+  its `tick` signal (in a template: `fixed_update` with `LrgGameTemplate:deterministic`).
+- Simulation code never reads the wall clock, `g_random_*()`, raw devices or hash-table order, and
+  every object a tick changes is registered (`docs/modules/replay/determinism.org`). The build uses
+  `-ffp-contract=off` so float results match across x86-64 and aarch64; do not remove it.
+- `LrgRandomStream`, `LrgTimerManager` and `LrgPhysicsWorld` implement `LrgSimStateful`. Changing
+  their `save_state` layout changes every checksum: regenerate `tests/golden/` with
+  `LRG_UPDATE_GOLDEN=1` and say so in the commit.
+- Replays: `--record FILE`, `--replay FILE`, `--replay-headless FILE`, `--seed N` are consumed by
+  `lrg_game_run_standalone()`; the file is a YAML header + delta-encoded binary body
+  (`docs/modules/replay/replay-format.org`). `lrg_replay_check_golden()` is the golden-test helper.
+- `LrgRollbackSession` is GGPO-style netcode over `LrgRollbackTransport` (`LrgLoopbackNetwork`
+  for tests with latency/jitter/loss, `LrgUdpTransport` for real sockets). Instance structs over
+  64 KiB fail GType registration: keep large rings on the heap.
 
 ### Editor Application (`editor/ui/`, `gui/`, `launcher/lrgeditor.c`)
 

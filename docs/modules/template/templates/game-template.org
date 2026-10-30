@@ -137,6 +137,9 @@ my_game_class_init (MyGameClass *klass)
 | =snap-frame-delta=   | =gboolean=   | TRUE             | Snap deltas within 0.2 ms of whole fixed steps |
 | =interpolate=        | =gboolean=   | TRUE             | Render interpolation between fixed steps ([[#render-interpolation][details]]) |
 | =auto-save-interval= | =gint=       | 300              | Seconds between auto-saves (0 = disabled) |
+| =deterministic=      | =gboolean=   | FALSE            | Run fixed steps through an =LrgSimulation=: per-tick input snapshots, timers inside ticks, checksums ([[#deterministic-mode][details]]) |
+| =simulation-seed=    | =guint64=    | 0                | Seed of the simulation random stream in deterministic mode |
+| =checksum-interval=  | =guint=      | 30               | Ticks between desync-detector checksums in deterministic mode (0 = off) |
 
 ** Virtual Methods
 :PROPERTIES:
@@ -408,6 +411,28 @@ With =vsync= on, the standalone host paces =target-fps= with =lrg_game_template_
 On Mesa (measured on an Iris Xe, [[file:../../../performance.org::#input-latency][numbers]]) the driver already holds frames to about one in the queue, so 2 changes nothing but a fence per frame; 1 cut input-to-GPU-done latency by about 30% on an uncapped GPU-bound scene and cost about 19% of its frame rate, and changed nothing with vsync on.
 
 *Render interpolation adds latency too*: drawn poses trail the simulation by up to one fixed step ([[#render-interpolation][above]]); turn =interpolate= off or raise the step rate where that matters more.
+
+** Deterministic Mode and Replays
+:PROPERTIES:
+:CUSTOM_ID: deterministic-mode
+:END:
+With =deterministic= set (or =--record FILE=, =--replay FILE=, =--replay-headless FILE=, =--seed N= on the command line of =lrg_game_run_standalone()=), the template creates an =LrgSimulation= at startup and runs each fixed step as one of its ticks: input is sampled once per tick from the input map and injected back as that tick's state, gameplay timers advance by the fixed step inside ticks, randomness comes from =lrg_simulation_get_random()=, and the state the game registers with =lrg_simulation_add_object()= is checksummed. That makes sessions recordable, replayable (in the window or headless), testable against golden files and usable for rollback netcode. The rules game code follows and the full list of what changes are in the [[file:../../replay/determinism.org::#template][determinism contract]].
+
+#+begin_src c
+static void
+my_game_post_startup (LrgGameTemplate *template)
+{
+    LrgSimulation *sim = lrg_game_template_get_simulation (template);
+
+    if (sim != NULL)
+        lrg_simulation_add_object (sim, G_OBJECT (MY_GAME (template)->physics));
+}
+#+end_src
+
+#+begin_src sh
+./my-game --record run.lrgreplay
+./my-game --replay-headless run.lrgreplay && echo "still deterministic"
+#+end_src
 
 ** Window Properties
 :PROPERTIES:

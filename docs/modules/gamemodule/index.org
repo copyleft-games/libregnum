@@ -72,6 +72,17 @@ games get a CLI for free. A host that drives the loop itself instead calls
 =lrg_configurable_apply_args()= (or =lrg_game_template_apply_args()=) directly
 after =lrg_loaded_game_get_game()=.
 
+*Replay options.* Before =apply_args=, =lrg_game_run_standalone()= takes the
+engine's own options out of =argv=: =--record FILE=, =--replay FILE=,
+=--replay-headless FILE= (no window, exits 0 when the replay still plays back
+identically, 1 otherwise) and =--seed N=. The game's =apply_args= never sees them.
+See [[file:../replay/determinism.org::#template][Determinism, "The game template"]].
+
+*Headless hosts.* =LrgHeadlessHost= (=lrg-headless-host.h=) is an =LrgGameHost=
+with no window and a fixed frame delta: =lrg_headless_host_new (engine, 1.0 / 60.0)=,
+then =lrg_game_template_startup()= and =lrg_game_template_update()= in a loop. Headless
+replay playback uses it, and so can simulation servers and tests.
+
 * lrgldr — the generic loader binary
 
 =lrgldr= loads any module and runs it. It takes its *own* options; everything

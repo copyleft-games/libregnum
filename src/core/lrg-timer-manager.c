@@ -2,6 +2,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 #include "lrg-timer-manager.h"
+#include "../replay/lrg-sim-stateful.h"
+#include <gio/gio.h>
 #include <math.h>
 
 typedef struct
@@ -29,7 +31,11 @@ struct _LrgTimerManager
     gboolean updating;
 };
 
-G_DEFINE_TYPE (LrgTimerManager, lrg_timer_manager, G_TYPE_OBJECT)
+static void lrg_timer_manager_sim_stateful_init (LrgSimStatefulInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgTimerManager, lrg_timer_manager, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_SIM_STATEFUL,
+                                                lrg_timer_manager_sim_stateful_init))
 
 static guint timeout_signal;
 
@@ -246,4 +252,104 @@ lrg_timer_manager_update (LrgTimerManager *self,
     self->updating = FALSE;
     g_object_unref (self);
     return TRUE;
+}
+
+/* ==========================================================================
+ * LrgSimStateful: timers are plain data (handlers key on the ID through the
+ * timeout signal), so a rollback can restore them exactly.
+ * ========================================================================== */
+
+static gint
+compare_timer_ids (gconstpointer a,
+                   gconstpointer b)
+{
+    const Timer *left = *(const Timer * const *) a;
+    const Timer *right = *(const Timer * const *) b;
+
+    return (left->id > right->id) - (left->id < right->id);
+}
+
+static void
+lrg_timer_manager_save_state (LrgSimStateful *stateful,
+                              LrgStateBuffer *buffer)
+{
+    LrgTimerManager *self = LRG_TIMER_MANAGER (stateful);
+    g_autoptr(GPtrArray) timers = NULL;
+    GHashTableIter iter;
+    gpointer value;
+    guint i;
+
+    /* Hash order is not stable: serialize in ID (registration) order */
+    timers = g_ptr_array_sized_new (g_hash_table_size (self->timers));
+    g_hash_table_iter_init (&iter, self->timers);
+    while (g_hash_table_iter_next (&iter, NULL, &value))
+        g_ptr_array_add (timers, value);
+    g_ptr_array_sort (timers, compare_timer_ids);
+
+    lrg_state_buffer_write_uint64 (buffer, self->last_id);
+    lrg_state_buffer_write_uint32 (buffer, timers->len);
+    for (i = 0; i < timers->len; i++)
+    {
+        const Timer *timer = g_ptr_array_index (timers, i);
+
+        lrg_state_buffer_write_uint64 (buffer, timer->id);
+        lrg_state_buffer_write_double (buffer, timer->interval);
+        lrg_state_buffer_write_double (buffer, timer->remaining);
+        lrg_state_buffer_write_uint8 (buffer, (timer->repeat ? 1 : 0) |
+                                              (timer->unscaled ? 2 : 0) |
+                                              (timer->paused ? 4 : 0));
+    }
+}
+
+static gboolean
+lrg_timer_manager_load_state (LrgSimStateful  *stateful,
+                              LrgStateBuffer  *buffer,
+                              GError         **error)
+{
+    LrgTimerManager *self = LRG_TIMER_MANAGER (stateful);
+    guint64 last_id;
+    guint n_timers;
+    guint i;
+
+    if (self->updating)
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_BUSY,
+                             "Cannot load timer state from a timeout handler");
+        return FALSE;
+    }
+
+    last_id = lrg_state_buffer_read_uint64 (buffer);
+    n_timers = lrg_state_buffer_read_uint32 (buffer);
+    if (!lrg_state_buffer_check (buffer, error))
+        return FALSE;
+
+    g_hash_table_remove_all (self->timers);
+    self->last_id = last_id;
+    for (i = 0; i < n_timers; i++)
+    {
+        Timer *timer = g_new0 (Timer, 1);
+        guint8 flags;
+
+        timer->id = lrg_state_buffer_read_uint64 (buffer);
+        timer->interval = lrg_state_buffer_read_double (buffer);
+        timer->remaining = lrg_state_buffer_read_double (buffer);
+        flags = lrg_state_buffer_read_uint8 (buffer);
+        timer->repeat = (flags & 1) != 0;
+        timer->unscaled = (flags & 2) != 0;
+        timer->paused = (flags & 4) != 0;
+        if (!lrg_state_buffer_check (buffer, error))
+        {
+            g_free (timer);
+            return FALSE;
+        }
+        g_hash_table_insert (self->timers, &timer->id, timer);
+    }
+    return TRUE;
+}
+
+static void
+lrg_timer_manager_sim_stateful_init (LrgSimStatefulInterface *iface)
+{
+    iface->save_state = lrg_timer_manager_save_state;
+    iface->load_state = lrg_timer_manager_load_state;
 }

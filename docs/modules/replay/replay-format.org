@@ -1,0 +1,124 @@
+#+title: Replays and the Replay File Format
+#+description: Recording per-tick action input, playing it back through the input layer or headless, and the versioned YAML-header + delta-encoded binary replay format
+
+* Replays
+:PROPERTIES:
+:CUSTOM_ID: replays
+:END:
+*[[file:index.org][Replay]]* > Replays
+
+A replay is the seed, a reference to the initial state, and the input of every player for every tick, plus state checksums every few ticks. Because the simulation is deterministic ([[file:determinism.org][Determinism]]), that is enough to reproduce a whole session: inputs are action states, not OS events, so a replay does not depend on key bindings, devices, frame rate or window size.
+
+** Recording
+:PROPERTIES:
+:CUSTOM_ID: recording
+:END:
+#+begin_src c
+LrgReplay *recording;
+g_autoptr(LrgReplay) replay = NULL;
+
+lrg_simulation_set_checksum_interval (sim, 30);
+recording = lrg_simulation_start_recording (sim, "levels/arena.rlevel");
+lrg_replay_set_metadata (recording, "player", "zach");
+
+/* ... lrg_simulation_step() for every tick: each one is appended ... */
+
+replay = lrg_simulation_stop_recording (sim);
+lrg_replay_save_to_file (replay, "session.lrgreplay", &error);
+#+end_src
+
+=lrg_simulation_start_recording()= captures the header from the simulation as it is at that moment: seed, fixed step, players, action table, current tick (=start-tick=) and the checksum of the current state (=initial-checksum=). Every following step appends the inputs it actually simulated and, on checksum ticks, the state checksum. In a template, =lrg_game_template_record_replay()= or =--record FILE= does all of this and writes the file at shutdown.
+
+** Playback
+:PROPERTIES:
+:CUSTOM_ID: playback
+:END:
+Playback feeds the recorded snapshots through =lrg_simulation_step()=, which injects them into the player input maps with =lrg_input_snapshot_apply()= (the same path as live input), so game code needs no replay-specific branch.
+
+| Function | Use |
+|----------+-----|
+| =lrg_replay_check_compatible()= | Same seed, fixed step, players and action table; simulation at =start-tick= with the =initial-checksum=. |
+| =lrg_replay_step()= | Plays the tick at the simulation's position and verifies its checksum. Drive it from your own loop (the template does). |
+| =lrg_replay_play()= | Headless, as fast as possible: compatibility check, every tick, every checksum. |
+| =lrg_game_template_play_replay()= / =--replay FILE= | Plays back in the running game, in its window, then quits. |
+| =lrg_game_template_run_replay_headless()= / =--replay-headless FILE= | Starts the game on an =LrgHeadlessHost=, plays the whole replay with one tick per update, verifies, shuts down. Exit status 0 when it matched. |
+
+Errors are in =LRG_REPLAY_ERROR=: =PARSE= and =VERSION= for files, =INCOMPATIBLE= and =INITIAL_STATE= for a simulation that is not set up like the recording, =DESYNC= (with the tick) when a checksum differs. The game is responsible for reaching the initial state; =initial-state= is a free-form reference (a level path, a save file, a scenario name) for it to do so.
+
+** File format, version 1
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+A replay file is a YAML 1.2 document (the header), the document end marker =...= on its own line, then the binary body. YAML tools read the header and stop at the marker; =head -n 30 session.lrgreplay= shows what a replay is.
+
+#+begin_example
+%YAML 1.2
+---
+format: lrg-replay
+version: 1
+body-encoding: delta-v1
+engine-version: "0.4.0"
+seed: 2026
+fixed-step: 0.016666666666666666
+players: 2
+start-tick: 0
+ticks: 600
+initial-state: "levels/arena.rlevel"
+initial-checksum: 0x5b0c1f7e2d9a4c11
+actions:
+  - "jump"
+  - "move"
+metadata:
+  player: "zach"
+body-size: 13874
+body-checksum: 0x9e3779b97f4a7c15
+...
+<body-size bytes of binary>
+#+end_example
+
+*** Header keys
+| Key | Type | Meaning |
+|-----+------+---------|
+| =format= | string | Always =lrg-replay=. |
+| =version= | integer | File format version; this build reads and writes 1 (=LRG_REPLAY_FORMAT_VERSION=). |
+| =body-encoding= | string | =delta-v1= (below). |
+| =engine-version= | string | =LRG_VERSION_STRING= of the recording build; informative. |
+| =seed= | unsigned 64-bit | Simulation seed. |
+| =fixed-step= | float | Seconds per tick, written with the shortest representation that reads back exactly. |
+| =players= | integer | 1 to 8. |
+| =start-tick= | unsigned 64-bit | Simulation tick the recording starts at (0 for a session recorded from the start). |
+| =ticks= | integer | Number of recorded ticks. |
+| =initial-state= | string, optional | Game-defined reference to the initial state. |
+| =initial-checksum= | hex, optional | Checksum of the simulation at =start-tick=. |
+| =actions= | sequence of strings | The action table: bit N of every snapshot is =actions[N]= (at most 64). |
+| =metadata= | mapping, optional | Free-form strings (keys: letters, digits, =-=, =_=), written in sorted key order. |
+| =body-size= | integer | Bytes after the header. |
+| =body-checksum= | hex | 64-bit FNV-1a of the body; a mismatch rejects the file as corrupt. |
+
+Unsigned values are parsed exactly as 64-bit integers (decimal or =0x= hex), never through a signed or floating-point YAML accessor. Strings are double-quoted with =\"=, =\\= and =\xNN= escapes for control characters.
+
+*** Body: delta-v1
+All integers little-endian. For every tick, in order:
+
+#+begin_example
+u8  tick flags         bit 0: a checksum follows the player records
+per player:
+  u8  input flags      0: same input as this player's previous tick
+                       1: only the held mask changed;  u64 held mask follows
+                       2: full snapshot follows:
+                          u64 held mask, u64 explicit-axis mask,
+                          one f32 per bit set in the axis mask (ascending)
+[u64 state checksum after this tick, if flagged]
+#+end_example
+
+The "previous tick" of the first tick is the empty snapshot (nothing held). An analog value equal to what the held bit implies (1.0 held, 0.0 not) is not stored, so digital actions only ever cost their bit. A tick in which nobody changes their input costs one byte plus one byte per player; the common "a button changed" tick costs nine bytes for that player. Floats are raw IEEE-754 bit patterns, so playback sees bit-identical axis values.
+
+*** Compatibility rules
+- Readers reject a different =version= or =body-encoding= (=LRG_REPLAY_ERROR_VERSION=). A future version 2 will be a new encoding behind a new number; version 1 files stay readable.
+- New optional header keys may be added within version 1; readers ignore unknown keys.
+- Changing the action table of a game (adding, removing or renaming actions) makes older replays incompatible, since snapshot bits are positional: =lrg_replay_check_compatible()= reports it.
+- Replays are tied to the simulation code, not only to the format: a change to game logic or to engine systems the game uses changes what a replay plays back to. That is what [[file:golden-tests.org][golden tests]] catch.
+
+** See also
+- [[file:determinism.org][Determinism contract]]
+- [[file:golden-tests.org][Golden-file testing]]

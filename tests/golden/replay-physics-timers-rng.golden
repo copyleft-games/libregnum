@@ -1,0 +1,26 @@
+%YAML 1.2
+---
+format: lrg-golden
+version: 1
+interval: 60
+checksums:
+  - tick: 60
+    checksum: 0x96ecc695dabfca6d
+  - tick: 120
+    checksum: 0x7dcf22263577e3cb
+  - tick: 180
+    checksum: 0xe1417bfa88cad4fb
+  - tick: 240
+    checksum: 0x95298edff6c2737f
+  - tick: 300
+    checksum: 0x44d79e36c4af215e
+  - tick: 360
+    checksum: 0x3b7df4cfb72529d7
+  - tick: 420
+    checksum: 0xf5f520b14f5dba4d
+  - tick: 480
+    checksum: 0xe10364c44844d53e
+  - tick: 540
+    checksum: 0x158712bee9dd7557
+  - tick: 600
+    checksum: 0xba38c77e085584c0

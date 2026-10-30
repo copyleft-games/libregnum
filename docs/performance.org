@@ -90,6 +90,8 @@ The audio scenarios spin 3 ms on the clock each frame (a ~300 fps game, so a str
 :END:
 Release builds (=DEBUG=0=) of libregnum and graylib use =-O2 -fno-semantic-interposition -DG_DISABLE_CAST_CHECKS=: calls between a library's own functions can be inlined although it is built =-fPIC=, and GObject cast macros compile to plain casts (=g_return_if_fail()= argument checks stay on). =DEBUG=1= builds keep full cast checks. The bundled raylib is built at =-O2= (its Makefile defaults to =-O1= for desktop release builds; graylib passes =CUSTOM_CFLAGS=-O2=, raylib's sources are unchanged). At =-O2= raylib's own =rcore.c= emits three =-Wstringop-truncation= warnings; they are raylib's, like the =m3d.h= warning that was already there.
 
+Both build modes add =-ffp-contract=off=: GCC would otherwise fuse =a * b + c= into FMA instructions on targets that have them (every aarch64), which changes float results between machines and breaks replays, golden checksums and rollback between x86-64 and aarch64 ([[file:modules/replay/determinism.org::#floating-point][determinism contract]]). Baseline x86-64 has no FMA, so nothing changes there; on aarch64 the cost is a separate multiply and add where the compiler would have fused them.
+
 The extra inlining lets GCC see through more calls, which surfaced latent paths where an output argument stayed unset after a failed =g_return_if_fail()= or a constructor's =NULL= return was dereferenced; those were fixed at the source, not silenced.
 
 ** The October 2026 framerate pass

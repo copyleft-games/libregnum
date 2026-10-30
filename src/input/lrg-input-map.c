@@ -731,6 +731,21 @@ lrg_input_map_clear (LrgInputMap *self)
     lrg_debug (LRG_LOG_DOMAIN_INPUT, "Cleared all actions from map");
 }
 
+void
+lrg_input_map_clear_overrides (LrgInputMap *self)
+{
+    LrgInputMapPrivate *priv;
+    GHashTableIter iter;
+    gpointer value;
+
+    g_return_if_fail (LRG_IS_INPUT_MAP (self));
+
+    priv = lrg_input_map_get_instance_private (self);
+    g_hash_table_iter_init (&iter, priv->actions);
+    while (g_hash_table_iter_next (&iter, NULL, &value))
+        lrg_input_action_clear_override (LRG_INPUT_ACTION (value));
+}
+
 /* ==========================================================================
  * Convenience State Query
  * ========================================================================== */
