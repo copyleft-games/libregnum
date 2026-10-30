@@ -613,7 +613,9 @@ lrg_template_pause_menu_state_enter (LrgGameState *state)
 
     /* Spacer */
     {
-        LrgWidget *spacer = g_object_new (LRG_TYPE_WIDGET, NULL);
+        g_autoptr(LrgWidget) spacer = g_object_new (LRG_TYPE_WIDGET, NULL);
+
+        /* The container takes its own reference. */
         lrg_widget_set_height (spacer, 30.0f);
         lrg_container_add_child (LRG_CONTAINER (priv->menu_container), spacer);
     }
