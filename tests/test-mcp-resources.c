@@ -415,12 +415,102 @@ test_mcp_ecs_resources_live (void)
     g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
 }
 
+/* Finds the registry row for @name, or NULL. */
+static JsonObject *
+find_registry_row (JsonObject  *json,
+                   const gchar *name)
+{
+    JsonArray *types = json_object_get_array_member (json, "types");
+    guint i;
+
+    for (i = 0; i < json_array_get_length (types); i++)
+    {
+        JsonObject *row = json_array_get_object_element (types, i);
+        if (g_str_equal (json_object_get_string_member (row, "name"), name))
+            return row;
+    }
+    return NULL;
+}
+
+/* config and registry return live engine data, not placeholders. */
+static void
+test_mcp_engine_resources_live (void)
+{
+    LrgEngine *engine = lrg_engine_get_default ();
+    g_autoptr(LrgMcpEngineResources) resources = lrg_mcp_engine_resources_new ();
+    LrgMcpResourceProvider *provider = LRG_MCP_RESOURCE_PROVIDER (resources);
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    g_autoptr(JsonObject) json = NULL;
+    g_autoptr(GError) error = NULL;
+    JsonObject *row;
+    JsonObject *data;
+    JsonArray *types;
+    JsonArray *properties;
+    GList *contents;
+    gboolean has_x = FALSE;
+    guint i;
+
+    /* Before startup the registry does not exist yet. */
+    contents = lrg_mcp_resource_provider_read_resource (provider, "libregnum://engine/registry", &error);
+    g_assert_null (contents);
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED);
+    g_clear_error (&error);
+
+    g_assert_true (lrg_engine_startup (engine, NULL));
+    g_assert_true (lrg_engine_register_world (engine, "config world", world));
+    lrg_registry_register (lrg_engine_get_registry (engine), "app-object", LRG_TYPE_GAME_OBJECT);
+
+    json = read_ecs_json (provider, "libregnum://engine/config");
+    g_assert_false (json_object_has_member (json, "note"));
+    g_assert_cmpstr (json_object_get_string_member (json, "version"), ==, LRG_VERSION_STRING);
+    g_assert_cmpstr (json_object_get_string_member (json, "state"), ==, "running");
+    g_assert_cmpint (json_object_get_int_member (json, "registry_count"), ==,
+                     lrg_registry_get_count (lrg_engine_get_registry (engine)));
+    g_assert_cmpstr (json_array_get_string_element (json_object_get_array_member (json, "worlds"), 0), ==, "config world");
+    data = json_object_get_object_member (json, "data_loader");
+    g_assert_cmpstr (json_object_get_string_member (data, "type_field_name"), ==, "type");
+    g_assert_nonnull (json_object_get_object_member (json, "asset_manager"));
+    g_assert_true (json_object_has_member (json_object_get_object_member (json, "settings"), "graphics"));
+    g_assert_true (json_object_has_member (json_object_get_object_member (json, "settings"), "audio"));
+
+    g_clear_pointer (&json, json_object_unref);
+    json = read_ecs_json (provider, "libregnum://engine/registry");
+    g_assert_false (json_object_has_member (json, "note"));
+    types = json_object_get_array_member (json, "types");
+    g_assert_cmpint (json_object_get_int_member (json, "count"), ==, json_array_get_length (types));
+    g_assert_cmpuint (json_array_get_length (types), ==, lrg_registry_get_count (lrg_engine_get_registry (engine)));
+    /* Sorted by name */
+    for (i = 1; i < json_array_get_length (types); i++)
+        g_assert_cmpint (g_strcmp0 (json_object_get_string_member (json_array_get_object_element (types, i - 1), "name"),
+                                    json_object_get_string_member (json_array_get_object_element (types, i), "name")), <, 0);
+    row = find_registry_row (json, "app-object");
+    g_assert_nonnull (row);
+    g_assert_cmpstr (json_object_get_string_member (row, "gtype"), ==, "LrgGameObject");
+    g_assert_cmpstr (json_object_get_string_member (row, "kind"), ==, "game-object");
+    row = find_registry_row (json, "transform");
+    g_assert_nonnull (row);
+    g_assert_cmpstr (json_object_get_string_member (row, "kind"), ==, "component");
+    g_assert_false (json_object_get_boolean_member (row, "abstract"));
+    properties = json_object_get_array_member (row, "properties");
+    for (i = 0; i < json_array_get_length (properties); i++)
+    {
+        if (g_str_equal (json_object_get_string_member (json_array_get_object_element (properties, i), "name"), "local-x"))
+            has_x = TRUE;
+    }
+    g_assert_true (has_x);
+    g_assert_nonnull (find_registry_row (json, "rigid-body"));
+
+    g_assert_true (lrg_engine_unregister_world (engine, "config world"));
+    lrg_engine_shutdown (engine);
+}
+
 int
 main (int   argc,
       char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
     g_test_add_func ("/mcp/resources/ecs/live", test_mcp_ecs_resources_live);
+    g_test_add_func ("/mcp/resources/engine/live", test_mcp_engine_resources_live);
 
 	/* Resource Group Creation */
 	g_test_add_func ("/mcp/resources/engine/new", test_mcp_engine_resources_new);
