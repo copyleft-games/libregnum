@@ -127,7 +127,7 @@ lrg_mcp_ecs_resources_init (LrgMcpEcsResources *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_ecs_resources_new:
  *
  * Creates a new ECS resources provider.

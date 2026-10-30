@@ -284,23 +284,56 @@ my_menu_on_button_activated (LrgTemplateMainMenuState *self,
 :PROPERTIES:
 :CUSTOM_ID: properties-1
 :END:
-| Property        | Type    | Default | Description                 |
-|-----------------+---------+---------+-----------------------------|
-| =audio-ducking= | boolean | TRUE    | Reduce audio when paused    |
-| =duck-factor=   | float   | 0.3     | Volume multiplier (0.0-1.0) |
-| =show-resume=   | boolean | TRUE    | Show Resume button          |
-| =show-settings= | boolean | TRUE    | Show Settings button        |
-| =show-quit=     | boolean | TRUE    | Show Quit to Menu button    |
+| Property            | Type                  | Default | Description                                       |
+|---------------------+-----------------------+---------+---------------------------------------------------|
+| =duck-audio=        | boolean               | TRUE    | Reduce audio when paused                          |
+| =duck-factor=       | float                 | 0.2     | Volume multiplier (0.0-1.0)                       |
+| =overlay-color=     | GrlColor              | dim     | Overlay drawn over the game                       |
+| =show-settings=     | boolean               | TRUE    | Show Settings button                              |
+| =show-main-menu=    | boolean               | TRUE    | Show Main Menu button                             |
+| =show-exit=         | boolean               | TRUE    | Show Exit button                                  |
+| =confirm-main-menu= | boolean               | FALSE   | Ask before returning to the main menu             |
+| =confirm-exit=      | boolean               | FALSE   | Ask before quitting                               |
+| =state-manager=     | LrgGameStateManager   | NULL    | Manager confirmation dialogs are pushed onto (weak) |
+| =selected-index=    | int                   | 0       | Highlighted button                                |
 
 *** Signals
 :PROPERTIES:
 :CUSTOM_ID: signals-1
 :END:
-| Signal     | Description               |
-|------------+---------------------------|
-| =resume=   | Resume button activated   |
-| =settings= | Settings button activated |
-| =quit=     | Quit button activated     |
+| Signal      | Description                                          |
+|-------------+------------------------------------------------------|
+| =resume=    | Resume button activated                              |
+| =settings=  | Settings button activated                            |
+| =main-menu= | Main Menu chosen (and confirmed, when confirmation is on) |
+| =exit-game= | Exit chosen (and confirmed, when confirmation is on) |
+
+*** Confirmation dialogs
+:PROPERTIES:
+:CUSTOM_ID: pause-menu-confirmation
+:END:
+With =confirm-main-menu= or =confirm-exit= on, choosing that button does not emit its signal straight away. The menu pushes an [[#confirmation-state][LrgTemplateConfirmationState]] onto its =state-manager= ("Return to Main Menu?" / "Quit Game?", message "Unsaved progress will be lost.", Cancel selected by default):
+
+- *Confirm*: the dialog is popped first, so the stack is back to the pause menu, then =main-menu= / =exit-game= is emitted. The handler can replace or clear the whole stack; the pause menu keeps itself alive across the emission.
+- *Cancel*: the dialog is popped and the player is back on the pause menu; nothing is emitted.
+
+The dialog only pops itself while it is still the top state, so a handler that already rearranged the stack is left alone. The manager is held weakly (it owns the menu, not the reverse). Without a manager there is nowhere to show a dialog, and the signal is emitted immediately as if confirmation were off.
+
+#+begin_src C
+LrgTemplatePauseMenuState *pause = lrg_template_pause_menu_state_new ();
+
+lrg_template_pause_menu_state_set_confirm_main_menu (pause, TRUE);
+lrg_template_pause_menu_state_set_confirm_exit (pause, TRUE);
+lrg_template_pause_menu_state_set_state_manager (pause, manager);
+
+/* Only runs after the player said yes */
+g_signal_connect (pause, "main-menu", G_CALLBACK (go_to_main_menu), manager);
+g_signal_connect (pause, "exit-game", G_CALLBACK (quit_game), NULL);
+
+lrg_game_state_manager_push (manager, LRG_GAME_STATE (pause));
+#+end_src
+
+To customise the dialog (wording, a styled subclass), override the =on_main_menu= / =on_exit= vfuncs and push your own confirmation state.
 
 *** Example: Custom Pause Behavior
 :PROPERTIES:
@@ -316,19 +349,14 @@ on_pause_resume (LrgTemplatePauseMenuState *pause,
 }
 
 static void
-on_pause_quit (LrgTemplatePauseMenuState *pause,
-               gpointer                   user_data)
+on_pause_main_menu (LrgTemplatePauseMenuState *pause,
+                    gpointer                   user_data)
 {
-    /* Show confirmation before quitting */
-    LrgTemplateConfirmationState *confirm =
-        lrg_template_confirmation_state_new_with_message (
-            "Quit to Menu",
-            "Unsaved progress will be lost!");
+    LrgGameStateManager *mgr = user_data;
 
-    g_signal_connect (confirm, "confirmed",
-                      G_CALLBACK (quit_to_menu), NULL);
-
-    lrg_game_state_manager_push (mgr, LRG_GAME_STATE (confirm));
+    /* Already confirmed when confirm-main-menu is on */
+    lrg_game_state_manager_clear (mgr);
+    lrg_game_state_manager_push (mgr, LRG_GAME_STATE (my_main_menu_new ()));
 }
 #+end_src
 
@@ -580,6 +608,21 @@ g_signal_connect (confirm, "cancelled",
                   G_CALLBACK (on_dialog_close), NULL);
 
 lrg_game_state_manager_push (manager, LRG_GAME_STATE (confirm));
+#+end_src
+
+The dialog does not pop itself: the =confirmed= / =cancelled= handlers decide what happens to the stack (usually =lrg_game_state_manager_pop()=, as the pause menu does). Popping from a handler is safe: answering keeps the dialog alive until its handlers return, a mouse click keeps the dialog's widget tree alive while it is dispatching, and =lrg_game_state_manager_handle_input()= holds each state while asking it.
+
+*** Answering programmatically
+:PROPERTIES:
+:CUSTOM_ID: confirmation-programmatic
+:END:
+=lrg_template_confirmation_state_confirm()= and =lrg_template_confirmation_state_cancel()= activate the buttons exactly as the player would (through the =on_confirm= / =on_cancel= vfuncs, which emit the signals by default). They need no input device or window, which makes scripted flows and headless tests possible:
+
+#+begin_src C
+LrgGameState *top = lrg_game_state_manager_get_current (manager);
+
+if (LRG_IS_TEMPLATE_CONFIRMATION_STATE (top))
+    lrg_template_confirmation_state_confirm (LRG_TEMPLATE_CONFIRMATION_STATE (top));
 #+end_src
 
 ** Customization

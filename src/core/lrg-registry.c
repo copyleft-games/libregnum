@@ -20,8 +20,57 @@
 #include "../ecs/components/lrg-sprite-component.h"
 #include "../ecs/components/lrg-collider-component.h"
 #include "../ecs/components/lrg-animator-component.h"
+#include "../scene/lrg-scene.h"
+#include "../scene/lrg-scene-entity.h"
+#include "../scene/lrg-scene-object.h"
+#include "../world3d/lrg-level3d.h"
+#include "../physics/lrg-physics-world.h"
+#include "../physics/lrg-rigid-body.h"
+#include "../physics/lrg-character-controller.h"
+#include "../physics/lrg-wall-set.h"
+#include "../physics/lrg-collision-mesh.h"
+#include "../physics/lrg-rope.h"
+#include "../trigger2d/lrg-trigger-rect.h"
+#include "../trigger2d/lrg-trigger-circle.h"
+#include "../trigger2d/lrg-trigger-polygon.h"
+#include "../trigger2d/lrg-trigger-manager.h"
+#include "../lighting/lrg-point-light2d.h"
+#include "../lighting/lrg-spot-light2d.h"
+#include "../lighting/lrg-directional-light2d.h"
+#include "../graphics/lrg-light-set.h"
+#include "../particles/lrg-particle-system.h"
+#include "../particles/lrg-particle-emitter.h"
+#include "../particles/lrg-particle-force.h"
+#include "../weather/lrg-weather.h"
+#include "../weather/lrg-rain.h"
+#include "../weather/lrg-snow.h"
+#include "../weather/lrg-fog.h"
+#include "../weather/lrg-lightning.h"
+#include "../weather/lrg-day-night-cycle.h"
+#include "../shapes/lrg-rectangle2d.h"
+#include "../shapes/lrg-circle2d.h"
+#include "../shapes/lrg-text2d.h"
+#include "../shapes/lrg-cube3d.h"
+#include "../shapes/lrg-sphere3d.h"
+#include "../shapes/lrg-plane3d.h"
+#include "../shapes/lrg-cylinder3d.h"
+#include "../shapes/lrg-cone3d.h"
+#include "../shapes/lrg-torus3d.h"
+#include "../shapes/lrg-icosphere3d.h"
+#include "../shapes/lrg-circle3d.h"
+#include "../shapes/lrg-line3d.h"
+#include "../shapes/lrg-grid3d.h"
 #include "../inventory/lrg-item-def.h"
+#include "../inventory/lrg-inventory.h"
+#include "../inventory/lrg-equipment.h"
 #include "../quest/lrg-quest-def.h"
+#include "../dialog/lrg-dialog-tree.h"
+#include "../dialog/lrg-dialog-node.h"
+#include "../ai/lrg-behavior-tree.h"
+#include "../ai/lrg-blackboard.h"
+#include "../ai/lrg-bt-composite.h"
+#include "../ai/lrg-bt-decorator.h"
+#include "../ai/lrg-bt-leaf.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -379,13 +428,126 @@ lrg_registry_foreach (LrgRegistry            *self,
  * ========================================================================== */
 
 /*
+ * LrgRegistryBuiltin:
+ *
+ * One row of the built-in catalog: the data-file name and a function
+ * returning its #GType. Storing the get_type function (rather than the
+ * GType itself) keeps the table a static constant and defers type
+ * registration until the catalog is actually installed.
+ */
+typedef struct
+{
+    const gchar *name;
+    GType      (*get_type) (void);
+} LrgRegistryBuiltin;
+
+/*
+ * builtin_catalog:
+ *
+ * The engine's concrete, headlessly constructible public types, keyed by
+ * the kebab-case names YAML definitions and MCP spawning use. Names follow
+ * the type's C prefix without "lrg_"; ECS components drop the "-component"
+ * suffix ("transform", not "transform-component"). Abstract bases, device
+ * resources (windows, textures, audio devices) and singletons are left out,
+ * as is LrgScriptComponent: scripts attach through script bindings, and a
+ * bare script component would only clutter the editor's component list.
+ * Keep docs/modules/core/registry.org in sync when adding rows.
+ */
+static const LrgRegistryBuiltin builtin_catalog[] = {
+    /* ECS: objects, worlds and components */
+    { "game-object",               lrg_game_object_get_type },
+    { "world",                     lrg_world_get_type },
+    { "transform",                 lrg_transform_component_get_type },
+    { "sprite",                    lrg_sprite_component_get_type },
+    { "collider",                  lrg_collider_component_get_type },
+    { "animator",                  lrg_animator_component_get_type },
+
+    /* Scenes and 3D levels */
+    { "scene",                     lrg_scene_get_type },
+    { "scene-entity",              lrg_scene_entity_get_type },
+    { "scene-object",              lrg_scene_object_get_type },
+    { "level3d",                   lrg_level3d_get_type },
+
+    /* Physics */
+    { "physics-world",             lrg_physics_world_get_type },
+    { "rigid-body",                lrg_rigid_body_get_type },
+    { "character-controller",      lrg_character_controller_get_type },
+    { "wall-set",                  lrg_wall_set_get_type },
+    { "collision-mesh",            lrg_collision_mesh_get_type },
+    { "rope",                      lrg_rope_get_type },
+
+    /* 2D triggers */
+    { "trigger-rect",              lrg_trigger_rect_get_type },
+    { "trigger-circle",            lrg_trigger_circle_get_type },
+    { "trigger-polygon",           lrg_trigger_polygon_get_type },
+    { "trigger-manager",           lrg_trigger_manager_get_type },
+
+    /* Lights */
+    { "point-light2d",             lrg_point_light2d_get_type },
+    { "spot-light2d",              lrg_spot_light2d_get_type },
+    { "directional-light2d",       lrg_directional_light2d_get_type },
+    { "light-set",                 lrg_light_set_get_type },
+
+    /* Particles */
+    { "particle-system",           lrg_particle_system_get_type },
+    { "particle-emitter",          lrg_particle_emitter_get_type },
+    { "particle-force-gravity",    lrg_particle_force_gravity_get_type },
+    { "particle-force-wind",       lrg_particle_force_wind_get_type },
+    { "particle-force-attractor",  lrg_particle_force_attractor_get_type },
+    { "particle-force-turbulence", lrg_particle_force_turbulence_get_type },
+
+    /* Weather */
+    { "weather",                   lrg_weather_get_type },
+    { "rain",                      lrg_rain_get_type },
+    { "snow",                      lrg_snow_get_type },
+    { "fog",                       lrg_fog_get_type },
+    { "lightning",                 lrg_lightning_get_type },
+    { "day-night-cycle",           lrg_day_night_cycle_get_type },
+
+    /* Shapes */
+    { "rectangle2d",               lrg_rectangle2d_get_type },
+    { "circle2d",                  lrg_circle2d_get_type },
+    { "text2d",                    lrg_text2d_get_type },
+    { "cube3d",                    lrg_cube3d_get_type },
+    { "sphere3d",                  lrg_sphere3d_get_type },
+    { "plane3d",                   lrg_plane3d_get_type },
+    { "cylinder3d",                lrg_cylinder3d_get_type },
+    { "cone3d",                    lrg_cone3d_get_type },
+    { "torus3d",                   lrg_torus3d_get_type },
+    { "icosphere3d",               lrg_icosphere3d_get_type },
+    { "circle3d",                  lrg_circle3d_get_type },
+    { "line3d",                    lrg_line3d_get_type },
+    { "grid3d",                    lrg_grid3d_get_type },
+
+    /* Gameplay definitions and containers */
+    { "item-def",                  lrg_item_def_get_type },
+    { "inventory",                 lrg_inventory_get_type },
+    { "equipment",                 lrg_equipment_get_type },
+    { "quest-def",                 lrg_quest_def_get_type },
+    { "dialog-tree",               lrg_dialog_tree_get_type },
+    { "dialog-node",               lrg_dialog_node_get_type },
+
+    /* AI: behavior trees */
+    { "behavior-tree",             lrg_behavior_tree_get_type },
+    { "blackboard",                lrg_blackboard_get_type },
+    { "bt-sequence",               lrg_bt_sequence_get_type },
+    { "bt-selector",               lrg_bt_selector_get_type },
+    { "bt-parallel",               lrg_bt_parallel_get_type },
+    { "bt-inverter",               lrg_bt_inverter_get_type },
+    { "bt-repeater",               lrg_bt_repeater_get_type },
+    { "bt-succeeder",              lrg_bt_succeeder_get_type },
+    { "bt-failer",                 lrg_bt_failer_get_type },
+    { "bt-wait",                   lrg_bt_wait_get_type },
+};
+
+/*
  * lrg_registry_register_builtin:
  * @self: an #LrgRegistry
  *
- * Registers the core scene and gameplay definition catalog.
- * Existing names, including application overrides, are preserved.
- * The catalog is game-object, world, transform, sprite, collider, animator,
- * item-def, and quest-def. It excludes abstract types and device resources.
+ * Installs the built-in catalog (see builtin_catalog above). A name that
+ * is already registered, by the application, a mod or an earlier call,
+ * is left untouched, so the call is idempotent and never overrides an
+ * application mapping.
  *
  * This is called automatically during engine startup but can
  * also be called manually for testing purposes.
@@ -393,33 +555,25 @@ lrg_registry_foreach (LrgRegistry            *self,
 void
 lrg_registry_register_builtin (LrgRegistry *self)
 {
-    const struct
-    {
-        const gchar *name;
-        GType type;
-    } builtins[] = {
-        { "game-object", LRG_TYPE_GAME_OBJECT },
-        { "world", LRG_TYPE_WORLD },
-        { "transform", LRG_TYPE_TRANSFORM_COMPONENT },
-        { "sprite", LRG_TYPE_SPRITE_COMPONENT },
-        { "collider", LRG_TYPE_COLLIDER_COMPONENT },
-        { "animator", LRG_TYPE_ANIMATOR_COMPONENT },
-        { "item-def", LRG_TYPE_ITEM_DEF },
-        { "quest-def", LRG_TYPE_QUEST_DEF },
-    };
+    guint added;
     guint i;
 
     g_return_if_fail (LRG_IS_REGISTRY (self));
 
-    for (i = 0; i < G_N_ELEMENTS (builtins); i++)
+    /* Fill only the gaps; existing names win. */
+    added = 0;
+    for (i = 0; i < G_N_ELEMENTS (builtin_catalog); i++)
     {
-        if (!lrg_registry_is_registered (self, builtins[i].name))
-            lrg_registry_register (self, builtins[i].name, builtins[i].type);
+        if (lrg_registry_is_registered (self, builtin_catalog[i].name))
+            continue;
+        lrg_registry_register (self, builtin_catalog[i].name,
+                               builtin_catalog[i].get_type ());
+        added++;
     }
 
     lrg_debug (LRG_LOG_DOMAIN_CORE,
-               "Built-in types registered (count: %u)",
-               lrg_registry_get_count (self));
+               "Built-in types registered (added: %u, total: %u)",
+               added, lrg_registry_get_count (self));
 }
 
 /*

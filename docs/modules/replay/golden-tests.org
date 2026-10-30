@@ -1,0 +1,78 @@
+#+title: Golden-File Regression Testing
+#+description: Running a replay headless and comparing state checksums with a stored golden file to catch any change in simulation results
+
+* Golden-File Testing
+:PROPERTIES:
+:CUSTOM_ID: golden-tests
+:END:
+*[[file:index.org][Replay]]* > Golden tests
+
+A golden test plays a replay headless and compares the simulation's state checksums with a file checked into the repository. Any change that alters simulation results (a physics tweak, a timer ordering fix, a different random draw, a compiler flag) fails it, at the first tick where the state differs. When the change is intended, the golden file is regenerated and the diff reviewed like any other change.
+
+** The helper
+:PROPERTIES:
+:CUSTOM_ID: helper
+:END:
+#+begin_src c
+gboolean lrg_replay_check_golden (LrgReplay      *replay,
+                                  LrgSimulation  *simulation,
+                                  const gchar    *golden_path,
+                                  guint           interval,
+                                  GError        **error);
+#+end_src
+
+It plays =replay= on =simulation= (which must be in the replay's initial state, see [[file:replay-format.org::#playback][Playback]]), collects the state checksum every =interval= ticks and after the last tick, and compares them with =golden_path=. The replay's own recorded checksums are verified on the way, so a desync can also fail with =LRG_REPLAY_ERROR_DESYNC= before the comparison.
+
+| Outcome | Result |
+|---------+--------|
+| All checksums equal | =TRUE= |
+| A checksum differs | =LRG_REPLAY_ERROR_GOLDEN_MISMATCH=, naming the first differing tick and both values |
+| Different number of checksums or a different interval | =LRG_REPLAY_ERROR_GOLDEN_MISMATCH= |
+| No golden file | =LRG_REPLAY_ERROR_NOT_FOUND=, telling you to create it |
+| =LRG_UPDATE_GOLDEN= set (not =0=) | The file is (re)written from this run; =TRUE= |
+
+An =interval= of 0 compares only the final state. A small interval localizes a regression; 60 (one second at 60 Hz) is a good default.
+
+** Golden file format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+YAML, one entry per compared tick:
+
+#+begin_example
+%YAML 1.2
+---
+format: lrg-golden
+version: 1
+interval: 60
+checksums:
+  - tick: 60
+    checksum: 0x96ecc695dabfca6d
+  - tick: 120
+    checksum: 0x7dcf22263577e3cb
+#+end_example
+
+Text, so a regeneration shows up as a readable diff of which ticks changed.
+
+** Workflow
+:PROPERTIES:
+:CUSTOM_ID: workflow
+:END:
+1. Write a scenario: a small, fully deterministic setup (a level, a few bodies, timers, randomness) and a source of input. Either record a real play session once (=--record=) and commit the replay file, or generate the input from a script in the test (as =tests/test-replay.c= does), which needs no binary file in the repository.
+2. Create the golden file: =LRG_UPDATE_GOLDEN=1 make test= (or run the one test binary with the variable set). Review it and commit it.
+3. From then on =make test= compares. A failure names the first tick that differs.
+4. If the change was intended, regenerate with =LRG_UPDATE_GOLDEN=1= and commit the new golden file with the change, saying why simulation results moved.
+
+The engine's own golden test is =/replay/golden/physics-timers-rng= in =tests/test-replay.c=: two players, 600 ticks of scripted input driving an =LrgPhysicsWorld= (falling and kicked boxes on a floor), an =LrgTimerManager= (a repeating kick timer and a one-shot) and the simulation random stream (kick targets, impulses, scores), compared every 60 ticks with =tests/golden/replay-physics-timers-rng.golden=.
+
+** Determinism of the test itself
+:PROPERTIES:
+:CUSTOM_ID: test-determinism
+:END:
+- Golden checksums are portable across machines because the engine is built with =-ffp-contract=off= and the scenario uses only exactly rounded float operations ([[file:determinism.org::#floating-point][Floating point]]); keep test scenarios free of =sin()=/=exp()= in simulated state if they must pass on every architecture.
+- Debug (=-O0=) and release (=-O2=) builds produce the same checksums: GCC does not reassociate float arithmetic without =-ffast-math=.
+- A golden failure after a change to the =LrgSimStateful= serialization of an engine type (even without a behaviour change) is expected: the checksum covers the serialized bytes. Regenerate.
+
+** See also
+- [[file:replay-format.org][Replays and the file format]]
+- [[file:determinism.org::#desync-detector][The desync detector]]

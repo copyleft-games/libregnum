@@ -169,7 +169,7 @@ lrg_mcp_engine_tools_init (LrgMcpEngineTools *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_engine_tools_new:
  *
  * Creates a new engine tools provider.

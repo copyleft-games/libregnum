@@ -219,6 +219,15 @@ PUBLIC_HEADERS := \
 	src/pathfinding/lrg-nav-poly-mesh.h \
 	src/pathfinding/lrg-nav-poly-mesh-cache.h \
 	src/pathfinding/lrg-nav-level.h \
+	src/procgen/lrg-procgen-grid.h \
+	src/procgen/lrg-procgen-tile-rules.h \
+	src/procgen/lrg-procgen-generator.h \
+	src/procgen/lrg-procgen-bsp.h \
+	src/procgen/lrg-procgen-caves.h \
+	src/procgen/lrg-procgen-wfc.h \
+	src/procgen/lrg-procgen-drunkard.h \
+	src/procgen/lrg-procgen-noise.h \
+	src/procgen/lrg-procgen-dungeon.h \
 	src/ai/lrg-blackboard.h \
 	src/ai/lrg-bt-node.h \
 	src/ai/lrg-bt-composite.h \
@@ -249,6 +258,7 @@ PUBLIC_HEADERS := \
 	src/gamemodule/lrg-configurable.h \
 	src/gamemodule/lrg-game-host.h \
 	src/gamemodule/lrg-standalone-host.h \
+	src/gamemodule/lrg-headless-host.h \
 	src/gamemodule/lrg-loaded-game.h \
 	src/gamemodule/lrg-game-module-macros.h \
 	src/dlc/lrg-dlc-ownership.h \
@@ -287,6 +297,15 @@ PUBLIC_HEADERS := \
 	src/net/lrg-net-peer.h \
 	src/net/lrg-net-server.h \
 	src/net/lrg-net-client.h \
+	src/replay/lrg-state-buffer.h \
+	src/replay/lrg-sim-stateful.h \
+	src/replay/lrg-input-snapshot.h \
+	src/replay/lrg-simulation.h \
+	src/replay/lrg-replay.h \
+	src/replay/lrg-rollback-transport.h \
+	src/replay/lrg-loopback-transport.h \
+	src/replay/lrg-udp-transport.h \
+	src/replay/lrg-rollback-session.h \
 	src/world3d/lrg-bounding-box3d.h \
 	src/world3d/lrg-spawn-point3d.h \
 	src/world3d/lrg-trigger3d.h \
@@ -847,6 +866,15 @@ SOURCES := \
 	src/pathfinding/lrg-nav-poly-mesh.c \
 	src/pathfinding/lrg-nav-poly-mesh-cache.c \
 	src/pathfinding/lrg-nav-level.c \
+	src/procgen/lrg-procgen-grid.c \
+	src/procgen/lrg-procgen-tile-rules.c \
+	src/procgen/lrg-procgen-generator.c \
+	src/procgen/lrg-procgen-bsp.c \
+	src/procgen/lrg-procgen-caves.c \
+	src/procgen/lrg-procgen-wfc.c \
+	src/procgen/lrg-procgen-drunkard.c \
+	src/procgen/lrg-procgen-noise.c \
+	src/procgen/lrg-procgen-dungeon.c \
 	src/ai/lrg-blackboard.c \
 	src/ai/lrg-bt-node.c \
 	src/ai/lrg-bt-composite.c \
@@ -877,6 +905,7 @@ SOURCES := \
 	src/gamemodule/lrg-configurable.c \
 	src/gamemodule/lrg-game-host.c \
 	src/gamemodule/lrg-standalone-host.c \
+	src/gamemodule/lrg-headless-host.c \
 	src/gamemodule/lrg-loaded-game.c \
 	src/dlc/lrg-dlc-ownership.c \
 	src/dlc/lrg-dlc-ownership-steam.c \
@@ -917,6 +946,15 @@ SOURCES := \
 	src/net/lrg-net-peer.c \
 	src/net/lrg-net-server.c \
 	src/net/lrg-net-client.c \
+	src/replay/lrg-state-buffer.c \
+	src/replay/lrg-sim-stateful.c \
+	src/replay/lrg-input-snapshot.c \
+	src/replay/lrg-simulation.c \
+	src/replay/lrg-replay.c \
+	src/replay/lrg-rollback-transport.c \
+	src/replay/lrg-loopback-transport.c \
+	src/replay/lrg-udp-transport.c \
+	src/replay/lrg-rollback-session.c \
 	src/world3d/lrg-bounding-box3d.c \
 	src/world3d/lrg-spawn-point3d.c \
 	src/world3d/lrg-trigger3d.c \
@@ -1392,6 +1430,8 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-component-desc.h \
 	src/editor/lrg-script-binding.h \
 	src/editor/lrg-node-visual.h \
+	src/editor/lrg-node-tilemap.h \
+	src/editor/lrg-timeline.h \
 	src/editor/lrg-node.h \
 	src/editor/lrg-level.h \
 	src/editor/lrg-level-serializer.h \
@@ -1400,6 +1440,9 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-command.h \
 	src/editor/lrg-editor-selection.h \
 	src/editor/lrg-editor.h \
+	src/editor/lrg-editor-tile-painter.h \
+	src/editor/lrg-editor-timeline.h \
+	src/editor/lrg-thumbnail-cache.h \
 	src/editor/lrg-editor-host.h \
 	src/editor/lrg-editor-math.h \
 	src/editor/lrg-editor-gizmo.h \
@@ -1416,6 +1459,8 @@ SOURCES += \
 	src/editor/lrg-component-desc.c \
 	src/editor/lrg-script-binding.c \
 	src/editor/lrg-node-visual.c \
+	src/editor/lrg-node-tilemap.c \
+	src/editor/lrg-timeline.c \
 	src/editor/lrg-node.c \
 	src/editor/lrg-level.c \
 	src/editor/lrg-level-serializer.c \
@@ -1424,6 +1469,9 @@ SOURCES += \
 	src/editor/lrg-editor-command.c \
 	src/editor/lrg-editor-selection.c \
 	src/editor/lrg-editor.c \
+	src/editor/lrg-editor-tile-painter.c \
+	src/editor/lrg-editor-timeline.c \
+	src/editor/lrg-thumbnail-cache.c \
 	src/editor/lrg-editor-host.c \
 	src/editor/lrg-editor-math.c \
 	src/editor/lrg-editor-gizmo.c \
@@ -1431,6 +1479,7 @@ SOURCES += \
 	src/editor/lrg-external-editor.c \
 	src/editor/lrg-editor-log.c \
 	src/editor/lrg-editor-server.c \
+	src/editor/lrg-editor-server-tools.c \
 	src/editor/lrg-editor-actions.c \
 	src/editor/lrg-editor-validate.c \
 	src/editor/lrg-asset-database.c \
@@ -1449,7 +1498,10 @@ SOURCES += \
 	src/editor/ui/lrg-editor-panel-console.c \
 	src/editor/ui/lrg-editor-render.c \
 	src/editor/ui/lrg-editor-dialogs.c \
-	src/editor/ui/lrg-editor-play.c
+	src/editor/ui/lrg-editor-play.c \
+	src/editor/ui/lrg-editor-panel-tiles.c \
+	src/editor/ui/lrg-editor-panel-timeline.c \
+	src/editor/ui/lrg-editor-thumbnails.c
 endif
 endif
 

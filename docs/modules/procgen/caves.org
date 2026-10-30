@@ -1,0 +1,57 @@
+* LrgProcgenCaves
+:PROPERTIES:
+:CUSTOM_ID: lrgprocgencaves
+:END:
+Organic caves from a cellular automaton. Header: =procgen/lrg-procgen-caves.h=. YAML name: =caves=.
+
+** Algorithm
+:PROPERTIES:
+:CUSTOM_ID: algorithm
+:END:
+1. *Noise.* Every interior cell starts as wall with probability =fill-percent= (an integer draw below 100); the border is wall.
+2. *Automaton.* =iterations= synchronous steps over the Moore neighbourhood (8 cells): a wall stays wall with at least =survival-limit= wall neighbours, a floor becomes wall with at least =birth-limit=. The defaults (5 / 4, 45%) are the classic "4-5 rule" that smooths noise into rounded caves. The border stays wall.
+3. *Flood fill and culling.* Regions (4-connected floor) smaller than =min-region-size= are filled in.
+4. *Joining.* With =keep-largest= only the largest cave survives; otherwise, with =connect=, =lrg_procgen_grid_connect_regions()= tunnels (as =floor=) from the growing connected set to the nearest other cave until one region remains (see [[file:grid.org][grid.org]]).
+
+An empty result (for example =fill-percent: 100=) fails with =FAILED=.
+
+** Parameters
+:PROPERTIES:
+:CUSTOM_ID: parameters
+:END:
+| Property | Range | Default | Meaning |
+|----------+-------+---------+---------|
+| =fill-percent= | 0-100 | 45 | initial wall chance |
+| =iterations= | 0-100 | 5 | automaton steps |
+| =birth-limit= | 0-9 | 5 | floor -> wall at this many wall neighbours |
+| =survival-limit= | 0-9 | 4 | wall stays wall at this many wall neighbours |
+| =min-region-size= | 0-2^31 | 16 | caves below this size are removed (0 keeps all) |
+| =connect= | bool | true | tunnel between caves |
+| =keep-largest= | bool | false | keep only the largest cave (overrides =connect=) |
+
+Tuning: lower =fill-percent= (40) gives open caverns, higher (50+) narrow passages and many small pockets; more iterations smooth further but converge after about 5.
+
+** Guarantees
+:PROPERTIES:
+:CUSTOM_ID: guarantees
+:END:
+With =connect= or =keep-largest=: exactly one region, of at least =min-region-size= cells; border all wall.
+
+** Usage
+:PROPERTIES:
+:CUSTOM_ID: usage
+:END:
+#+begin_src c
+g_autoptr(LrgProcgenCaves) caves = lrg_procgen_caves_new (96, 64);
+
+lrg_procgen_caves_set_fill_percent (caves, 48);
+lrg_procgen_caves_set_min_region_size (caves, 30);
+grid = lrg_procgen_generator_generate (LRG_PROCGEN_GENERATOR (caves), seed, &error);
+#+end_src
+
+#+begin_src yaml
+generator: caves
+width: 96
+height: 64
+params: { fill-percent: 48, iterations: 5, min-region-size: 30, connect: true }
+#+end_src

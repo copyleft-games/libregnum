@@ -176,7 +176,7 @@ lrg_mcp_tool_group_init (LrgMcpToolGroup *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_tool_group_add_tool:
  * @self: an #LrgMcpToolGroup
  * @tool: (transfer full): the tool to add
@@ -196,7 +196,7 @@ lrg_mcp_tool_group_add_tool (LrgMcpToolGroup *self,
 	g_ptr_array_add (priv->tools, tool);  /* Takes ownership */
 }
 
-/**
+/*
  * lrg_mcp_tool_group_get_group_name:
  * @self: an #LrgMcpToolGroup
  *
@@ -224,7 +224,7 @@ lrg_mcp_tool_group_get_group_name (LrgMcpToolGroup *self)
  * JSON Argument Helpers
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_tool_group_get_string_arg:
  * @arguments: (nullable): JSON arguments object
  * @name: argument name
@@ -247,7 +247,7 @@ lrg_mcp_tool_group_get_string_arg (JsonObject  *arguments,
 	return json_object_get_string_member (arguments, name);
 }
 
-/**
+/*
  * lrg_mcp_tool_group_get_int_arg:
  * @arguments: (nullable): JSON arguments object
  * @name: argument name
@@ -270,7 +270,7 @@ lrg_mcp_tool_group_get_int_arg (JsonObject  *arguments,
 	return json_object_get_int_member (arguments, name);
 }
 
-/**
+/*
  * lrg_mcp_tool_group_get_double_arg:
  * @arguments: (nullable): JSON arguments object
  * @name: argument name
@@ -293,7 +293,7 @@ lrg_mcp_tool_group_get_double_arg (JsonObject  *arguments,
 	return json_object_get_double_member (arguments, name);
 }
 
-/**
+/*
  * lrg_mcp_tool_group_get_bool_arg:
  * @arguments: (nullable): JSON arguments object
  * @name: argument name

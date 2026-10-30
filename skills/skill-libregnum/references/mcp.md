@@ -56,6 +56,12 @@ Use absolute paths for project directories in configs. With several editors runn
 | `project_info` | project.info | |
 | `ui_state` | ui.state | |
 | `notify` | ui.notify | toast for the human |
+| `get_tilemap` / `configure_tilemap` | tilemap.get / tilemap.configure | grid of a `tilemap` node; width/height, tile px, tile_size, tileset, layers |
+| `paint_tiles` / `paint_tile_rect` / `fill_tiles` | tilemap.paint / rect / fill | `cells` or brush `points`; tile ids 1-based, 0 erases; one undo step each |
+| `list_timelines` / `get_timeline` | timeline.list / get | keyframe clips stored in the level |
+| `set_keyframe` / `remove_keyframe` / `configure_timeline` | timeline.key / unkey / set | channel + value, or the node's transform; easing nicks |
+| `preview_timeline` | timeline.seek | pose the level at a time (not saved) |
+| `get_thumbnail` | asset.thumbnail | cached PNG path of a texture/model/level/prefab |
 | `call_method` | any | `{method, params}` escape hatch |
 
 Results are JSON text (YAML text for `get_level_yaml`); failures come back as tool errors with the editor's message, e.g. `node.get: No node 'Hall/Tabel' (not-found)`.

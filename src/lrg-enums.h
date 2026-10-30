@@ -6149,4 +6149,116 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_nav_door_state_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_NAV_DOOR_STATE (lrg_nav_door_state_get_type ())
 
+/* ==========================================================================
+ * Procedural Generation
+ * ========================================================================== */
+
+/**
+ * LRG_PROCGEN_ERROR:
+ *
+ * Error domain for procedural generation errors.
+ */
+#define LRG_PROCGEN_ERROR (lrg_procgen_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_procgen_error_quark (void);
+
+/**
+ * LrgProcgenError:
+ * @LRG_PROCGEN_ERROR_FAILED: generic failure
+ * @LRG_PROCGEN_ERROR_INVALID_CONFIG: a generator parameter or a
+ *   configuration document is invalid
+ * @LRG_PROCGEN_ERROR_TOO_SMALL: the grid is too small for the generator
+ * @LRG_PROCGEN_ERROR_CONTRADICTION: wave function collapse hit a
+ *   contradiction on every attempt
+ *
+ * Error codes of the procedural generation module.
+ */
+typedef enum
+{
+    LRG_PROCGEN_ERROR_FAILED,
+    LRG_PROCGEN_ERROR_INVALID_CONFIG,
+    LRG_PROCGEN_ERROR_TOO_SMALL,
+    LRG_PROCGEN_ERROR_CONTRADICTION
+} LrgProcgenError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_procgen_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PROCGEN_ERROR (lrg_procgen_error_get_type ())
+
+/**
+ * LrgProcgenCell:
+ * @LRG_PROCGEN_CELL_WALL: solid rock or wall
+ * @LRG_PROCGEN_CELL_FLOOR: room or cave floor
+ * @LRG_PROCGEN_CELL_CORRIDOR: corridor floor
+ * @LRG_PROCGEN_CELL_DOOR: a doorway between a room and a corridor
+ * @LRG_PROCGEN_CELL_WATER: water (not walkable by default)
+ * @LRG_PROCGEN_CELL_VOID: nothing (outside the map, a chasm)
+ * @LRG_PROCGEN_CELL_CUSTOM: the first tag value free for games; any
+ *   value from here up to 255 may be stored in a grid
+ *
+ * The built-in cell tags of an #LrgProcgenGrid. A grid stores one tag
+ * (0..255) per cell; these are the ones the generators produce.
+ */
+typedef enum
+{
+    LRG_PROCGEN_CELL_WALL     = 0,
+    LRG_PROCGEN_CELL_FLOOR    = 1,
+    LRG_PROCGEN_CELL_CORRIDOR = 2,
+    LRG_PROCGEN_CELL_DOOR     = 3,
+    LRG_PROCGEN_CELL_WATER    = 4,
+    LRG_PROCGEN_CELL_VOID     = 5,
+    LRG_PROCGEN_CELL_CUSTOM   = 16
+} LrgProcgenCell;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_procgen_cell_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PROCGEN_CELL (lrg_procgen_cell_get_type ())
+
+/**
+ * LrgProcgenAutotile:
+ * @LRG_PROCGEN_AUTOTILE_NONE: one tile for every cell of the tag
+ * @LRG_PROCGEN_AUTOTILE_CARDINAL: 16 variants: base tile + a 4-bit mask
+ *   of the matching orthogonal neighbours (N = 1, E = 2, S = 4, W = 8)
+ * @LRG_PROCGEN_AUTOTILE_BLOB: 47 variants ("blob" tileset): base tile +
+ *   the index of the 8-bit neighbour mask (N = 1, NE = 2, E = 4, SE = 8,
+ *   S = 16, SW = 32, W = 64, NW = 128, a corner kept only when both of
+ *   its edges match) among the 47 such masks in ascending order
+ *
+ * How an #LrgProcgenTileRules rule picks a tile variant from a cell's
+ * neighbours.
+ */
+typedef enum
+{
+    LRG_PROCGEN_AUTOTILE_NONE,
+    LRG_PROCGEN_AUTOTILE_CARDINAL,
+    LRG_PROCGEN_AUTOTILE_BLOB
+} LrgProcgenAutotile;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_procgen_autotile_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PROCGEN_AUTOTILE (lrg_procgen_autotile_get_type ())
+
+/**
+ * LrgProcgenDirection:
+ * @LRG_PROCGEN_DIRECTION_UP: towards y - 1
+ * @LRG_PROCGEN_DIRECTION_RIGHT: towards x + 1
+ * @LRG_PROCGEN_DIRECTION_DOWN: towards y + 1
+ * @LRG_PROCGEN_DIRECTION_LEFT: towards x - 1
+ *
+ * A grid direction, used by wave function collapse adjacency rules.
+ */
+typedef enum
+{
+    LRG_PROCGEN_DIRECTION_UP,
+    LRG_PROCGEN_DIRECTION_RIGHT,
+    LRG_PROCGEN_DIRECTION_DOWN,
+    LRG_PROCGEN_DIRECTION_LEFT
+} LrgProcgenDirection;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_procgen_direction_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PROCGEN_DIRECTION (lrg_procgen_direction_get_type ())
+
 G_END_DECLS
+

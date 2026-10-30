@@ -18,6 +18,7 @@
  */
 
 #include "lrg-editor-server.h"
+#include "lrg-editor-server-private.h"
 #include "lrg-editor.h"
 #include "lrg-editor-command.h"
 #include "lrg-editor-selection.h"
@@ -2290,6 +2291,9 @@ register_builtin (LrgEditorServer *self)
 
 	for (i = 0; i < G_N_ELEMENTS (table); i++)
 		lrg_editor_server_register_method (self, table[i].name, table[i].func, NULL, NULL);
+
+	/* tilemap.* and timeline.* (lrg-editor-server-tools.c) */
+	editor_server_register_tools (self);
 }
 
 /* ==========================================================================

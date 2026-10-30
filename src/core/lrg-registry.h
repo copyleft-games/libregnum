@@ -231,10 +231,14 @@ void lrg_registry_foreach (LrgRegistry            *self,
  * lrg_registry_register_builtin:
  * @self: an #LrgRegistry
  *
- * Registers the core scene and gameplay definition catalog: game-object,
- * world, transform, sprite, collider, animator, item-def, and quest-def.
- * Existing registrations are preserved, so this operation is idempotent.
- * Abstract types and device resources are not included.
+ * Registers the engine's built-in type catalog: the concrete, headlessly
+ * constructible public types (ECS objects and components, scenes, physics
+ * bodies, 2D triggers, lights, particles, weather effects, shapes, gameplay
+ * definitions and behavior-tree nodes) under kebab-case names such as
+ * "game-object", "transform", "rigid-body", "point-light2d" and
+ * "particle-emitter". Existing registrations are preserved, so this
+ * operation is idempotent and never replaces an application mapping.
+ * Abstract types, device resources and singletons are not included.
  *
  * This is called automatically during engine startup but can
  * also be called manually for testing purposes.

@@ -71,7 +71,7 @@ lrg_mcp_tool_provider_default_init (LrgMcpToolProviderInterface *iface)
 	/* Default implementation does nothing */
 }
 
-/**
+/*
  * lrg_mcp_tool_provider_list_tools:
  * @self: a #LrgMcpToolProvider
  *
@@ -92,7 +92,7 @@ lrg_mcp_tool_provider_list_tools (LrgMcpToolProvider *self)
 	return iface->list_tools (self);
 }
 
-/**
+/*
  * lrg_mcp_tool_provider_call_tool:
  * @self: a #LrgMcpToolProvider
  * @name: the tool name
@@ -120,7 +120,7 @@ lrg_mcp_tool_provider_call_tool (LrgMcpToolProvider  *self,
 	return iface->call_tool (self, name, arguments, error);
 }
 
-/**
+/*
  * lrg_mcp_tool_provider_has_tool:
  * @self: a #LrgMcpToolProvider
  * @name: the tool name to check

@@ -15,6 +15,8 @@ The Debug module consists of four main systems:
 - *LrgInspector*: Runtime inspection of game objects and components
 - *LrgProfiler*: Performance profiling of code sections
 
+With =MCP=1=, all four singletons are also reachable by an AI agent through the MCP debug tools (=lrg_debug_profiler_*=, =lrg_debug_overlay_get= / =_set=, =lrg_debug_console_execute= / =_get_output=, =lrg_debug_inspect=); see [[file:../mcp/tools.org::#debug-tools-lrgmcpdebugtools][MCP Tools]].
+
 ** Features
 :PROPERTIES:
 :CUSTOM_ID: features

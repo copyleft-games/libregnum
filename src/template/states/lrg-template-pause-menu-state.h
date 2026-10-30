@@ -13,6 +13,7 @@
 #include <graylib.h>
 #include "../../lrg-version.h"
 #include "../../gamestate/lrg-game-state.h"
+#include "../../gamestate/lrg-game-state-manager.h"
 
 G_BEGIN_DECLS
 
@@ -246,6 +247,41 @@ LRG_AVAILABLE_IN_ALL
 void
 lrg_template_pause_menu_state_set_confirm_exit (LrgTemplatePauseMenuState *self,
                                                 gboolean                   confirm);
+
+/**
+ * lrg_template_pause_menu_state_get_state_manager:
+ * @self: an #LrgTemplatePauseMenuState
+ *
+ * Gets the state manager confirmation dialogs are pushed onto.
+ *
+ * Returns: (transfer none) (nullable): the #LrgGameStateManager, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgGameStateManager *
+lrg_template_pause_menu_state_get_state_manager (LrgTemplatePauseMenuState *self);
+
+/**
+ * lrg_template_pause_menu_state_set_state_manager:
+ * @self: an #LrgTemplatePauseMenuState
+ * @manager: (nullable): the #LrgGameStateManager the menu lives on
+ *
+ * Sets the state manager the pause menu pushes its confirmation dialogs
+ * onto (normally the manager the menu itself was pushed onto).  The
+ * reference is weak: the manager owns the menu, not the other way round.
+ *
+ * When #LrgTemplatePauseMenuState:confirm-main-menu or
+ * #LrgTemplatePauseMenuState:confirm-exit is set, choosing that button
+ * pushes an #LrgTemplateConfirmationState (cancel selected by default).
+ * Confirming pops the dialog and then emits
+ * #LrgTemplatePauseMenuState::main-menu or
+ * #LrgTemplatePauseMenuState::exit-game; cancelling only pops the dialog.
+ * Without a manager there is nowhere to push the dialog, so the signal
+ * is emitted straight away.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_template_pause_menu_state_set_state_manager (LrgTemplatePauseMenuState *self,
+                                                 LrgGameStateManager       *manager);
 
 /* ==========================================================================
  * Button Visibility

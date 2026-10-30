@@ -1,0 +1,173 @@
+#+title: Determinism Contract
+#+description: The rules a libregnum simulation follows to be reproducible, what the engine guarantees, the desync detector, and deterministic mode in LrgGameTemplate
+
+* Determinism Contract
+:PROPERTIES:
+:CUSTOM_ID: determinism
+:END:
+*[[file:index.org][Replay]]* > Determinism
+
+A simulation is deterministic when its state after tick N depends only on its initial state, its seed and the input of ticks 0 to N-1. Replays, golden tests and rollback netcode all rely on it, and the desync detector tells you when it breaks. The engine provides the pieces (=LrgSimulation=, fixed ticks, a seeded random stream, per-tick input, ordered state); the game keeps to the rules below.
+
+** The model
+:PROPERTIES:
+:CUSTOM_ID: model
+:END:
+#+begin_example
+            seed ──▶ LrgRandomStream ─┐
+  initial state ──▶ registered        │
+                    LrgSimStateful ───┼──▶ LrgSimulation::tick (tick N, fixed step)
+ input of tick N ──▶ LrgInputSnapshot ┘            │
+  (one per player)                                 ▼
+                                         state after N+1 ticks ──▶ checksum
+#+end_example
+
+- *Tick*: one call of =lrg_simulation_step()=. Simulated time per tick is =LrgSimulation:fixed-step= (default 1/60 s) whatever the render rate; the render side interpolates between ticks ([[file:../../performance.org::#render-interpolation][Render interpolation]]).
+- *State*: the objects registered with =lrg_simulation_add_object()=, in registration order, plus the tick counter, the random stream and the last input of each player. =lrg_simulation_save_state()= serializes all of it; =lrg_simulation_checksum()= is the 64-bit FNV-1a of that serialization.
+- *Input*: one =LrgInputSnapshot= per player per tick, over a fixed /action table/ (=lrg_simulation_set_actions()=, or the input map's actions sorted by name). It holds whether each action is down and its analog value; "pressed" and "released" are derived from the previous tick.
+
+** Rules for simulation code
+:PROPERTIES:
+:CUSTOM_ID: rules
+:END:
+Simulation code is everything that runs inside =LrgSimulation::tick= (in a template: =fixed_update= and the state stack's fixed update).
+
+1. *All randomness from the simulation stream.* Use =lrg_simulation_get_random()= (PCG32, part of the saved state). Never =g_random_*()=, =rand()=, =g_rand_new()= without a seed from the stream, or anything seeded from time or addresses. Cosmetic randomness on the render side (particles, screen shake) may use anything, as long as it never feeds back into the simulation.
+2. *No wall-clock reads.* No =g_get_monotonic_time()=, =g_get_real_time()=, =GDateTime= "now", =GetTime()= or frame deltas inside a tick. Elapsed time is =tick * fixed_step=; use the step the tick hands you.
+3. *Input only through the tick's snapshot.* Read actions through the input map the simulation injects into (=lrg_simulation_set_player_input_map()=; the template does this) or with =lrg_simulation_is_down()= / =is_pressed()= / =get_axis()=. Never poll the keyboard, mouse or gamepad directly (=grl_input_*=, =lrg_input_manager_*=), never read raw OS events, and never read the input map from variable-rate code and feed the result into the simulation.
+4. *Ordered iteration only.* Iterate =GHashTable=s only to build a sorted list first (hash order depends on insertion history and pointer values). Do not sort by pointer, and do not let object addresses (=GPOINTER_TO_UINT (obj)=) reach the state.
+5. *Everything that changes in a tick is registered.* Every object whose state a tick changes is an =LrgSimStateful= (or =LrgSaveable=) registered with the simulation, or is fully derived from registered state. Unregistered state is invisible to checksums, replays verify less, and a rollback will not restore it.
+6. *Same objects, same order, everywhere.* Register the same objects in the same order on every peer and in every replay run, before the first tick (the template: from =post_startup= at the latest). Structural changes (spawning objects) are fine when they happen inside ticks and are reflected in registered state; registering or removing objects mid-session is not rollback-safe.
+7. *No threads in the simulation.* Worker threads may prepare data, but anything they compute enters the simulation at a tick boundary in a fixed order, or not at all.
+8. *No I/O or asset loading results in ticks* that could differ between machines (file listings, locale, current time, network replies other than the session's inputs).
+
+** What the engine guarantees
+:PROPERTIES:
+:CUSTOM_ID: guarantees
+:END:
+| Area | Guarantee |
+|------+-----------|
+| =LrgRandomStream= | PCG32 with a portable 64-bit LCG; identical sequences on every platform; =LrgSimStateful= (state and increment). |
+| =LrgTimerManager= | Timers fire in timer-ID (registration) order regardless of hash layout; =LrgSimStateful= (IDs, remaining time, interval, flags), so a rollback restores pending timers exactly. Handlers connect by ID through =::timeout= and keep working across a load. |
+| =LrgPhysicsWorld= | Fixed internal step, bodies stepped and paired in body-list order (sweep-and-prune with a stable tie-break); =LrgSimStateful= (gravity, accumulator, and every body's pose, velocities, accumulated forces, sleep state). Body membership and shapes are structure: load into the same set of bodies. |
+| =LrgEventBus= | Listeners run by priority, then registration order (a total order: a sort tie-break, not =qsort()='s luck). |
+| =LrgWorld= (ECS) | Objects update in insertion order (a linked list, not a hash table); draw order is (z-index, insertion) and does not affect simulation. |
+| =LrgGameStateManager= | The stack updates top-down in a fixed order; deferred push/pop is applied after the step that requested it. |
+| =LrgInputSnapshot= | Bit-exact: analog values are stored as IEEE-754 bit patterns and compared bitwise. |
+| =LrgStateBuffer= | Little-endian, floats as raw bits; the same state always serializes to the same bytes. |
+
+*** Floating point
+:PROPERTIES:
+:CUSTOM_ID: floating-point
+:END:
+IEEE-754 single and double arithmetic is deterministic for the same sequence of operations. What breaks it across machines is the compiler choosing a different sequence: GCC fuses =a * b + c= into one FMA instruction (one rounding instead of two) by default in GNU modes whenever the target has FMA, which every aarch64 CPU and x86-64 with =-mfma= do. libregnum is therefore built with =-ffp-contract=off= (=config.mk=), and games that need cross-machine determinism (rollback between an x86-64 PC and an aarch64 machine, golden files checked on both) must compile their simulation code with it too. Also avoid =-ffast-math= and its parts (=-funsafe-math-optimizations=, =-ffinite-math-only=, =-fassociative-math=) in simulation code, x87 math (32-bit x86 without SSE), and transcendental functions in simulation code where exact cross-platform results matter: =sqrt()= is exactly rounded everywhere, =sin()=/=exp()= come from the C library and may differ in the last bit between libc versions. Integer or fixed-point math sidesteps all of this.
+
+** The desync detector
+:PROPERTIES:
+:CUSTOM_ID: desync-detector
+:END:
+=lrg_simulation_set_checksum_interval (sim, N)= checksums the state after every N-th tick and keeps the last 1024 checksums (=lrg_simulation_lookup_checksum()=). A reference compares against them:
+
+- *Replays* store those checksums; playback verifies each one (=LRG_REPLAY_ERROR_DESYNC= with the tick).
+- *Rollback sessions* exchange checksums of confirmed frames between peers (=LrgRollbackSession::desync=).
+- *Anything else* (a server, a debug overlay, a bisect script) calls =lrg_simulation_verify_checksum (sim, tick, expected)=, which emits =LrgSimulation::desync= and records =lrg_simulation_get_first_desync_tick()=.
+
+A checksum mismatch says /when/ the simulations diverged, to the precision of the interval. To find /what/ diverged, save the state on both sides at that tick (=lrg_simulation_save_bytes()=) and compare: each object's data is a separate length-prefixed block tagged with its state ID, so the first differing block names the object. An interval of 1 pinpoints the tick at the cost of one full serialization per tick; 30 (the template default) is cheap enough to leave on in development.
+
+** Implementing LrgSimStateful
+:PROPERTIES:
+:CUSTOM_ID: sim-stateful
+:END:
+#+begin_src c
+static void
+my_level_save_state (LrgSimStateful *stateful, LrgStateBuffer *buffer)
+{
+    MyLevel *self = MY_LEVEL (stateful);
+    guint i;
+
+    lrg_state_buffer_write_uint32 (buffer, self->enemies->len);
+    for (i = 0; i < self->enemies->len; i++)
+    {
+        Enemy *enemy = g_ptr_array_index (self->enemies, i);
+
+        lrg_state_buffer_write_uint32 (buffer, enemy->kind);
+        lrg_state_buffer_write_float (buffer, enemy->x);
+        lrg_state_buffer_write_float (buffer, enemy->y);
+        lrg_state_buffer_write_int32 (buffer, enemy->hp);
+    }
+}
+
+static gboolean
+my_level_load_state (LrgSimStateful *stateful, LrgStateBuffer *buffer, GError **error)
+{
+    MyLevel *self = MY_LEVEL (stateful);
+    guint n, i;
+
+    n = lrg_state_buffer_read_uint32 (buffer);
+    g_ptr_array_set_size (self->enemies, 0);   /* rebuild: spawns are state too */
+    for (i = 0; i < n; i++)
+    {
+        Enemy *enemy = enemy_new (lrg_state_buffer_read_uint32 (buffer));
+
+        enemy->x = lrg_state_buffer_read_float (buffer);
+        enemy->y = lrg_state_buffer_read_float (buffer);
+        enemy->hp = lrg_state_buffer_read_int32 (buffer);
+        g_ptr_array_add (self->enemies, enemy);
+    }
+    return lrg_state_buffer_check (buffer, error);   /* FALSE if truncated */
+}
+#+end_src
+
+- Write everything a tick can change, nothing that it cannot (constant data such as level geometry is structure; leaving it out keeps rollbacks cheap).
+- Reads past the end return zero and latch an error; check once at the end with =lrg_state_buffer_check()=. The simulation gives each object its own buffer, so one object can never read into another's data.
+- =get_state_id= (optional; the type name otherwise) names the object in error messages and in the saved state, so a state loaded into a differently built simulation is refused.
+- Existing =LrgSaveable= objects can be registered as they are: they are serialized through an =LrgSaveContext= (YAML text). That is far slower than a binary =save_state= and fine for a replay checksum every 30 ticks, but not for per-frame rollback.
+
+The format is binary and versionless on purpose: it only ever has to round-trip within one build of one game. Persistent saves stay =LrgSaveable= with its versioned, migratable YAML.
+
+** The game template
+:PROPERTIES:
+:CUSTOM_ID: template
+:END:
+=LrgGameTemplate= runs the deterministic model when =LrgGameTemplate:deterministic= is set (or a replay is recorded or played):
+
+| Property / function | Meaning |
+|---------------------+---------|
+| =deterministic= | Create an =LrgSimulation= at startup and run every fixed step through it. Forces =use-fixed-timestep=. |
+| =simulation-seed= | Seed of the simulation random stream (=--seed N=). |
+| =checksum-interval= | Desync-detector cadence in ticks (default 30, 0 off); recorded into replays. |
+| =lrg_game_template_get_simulation()= | The simulation, available from =setup_default_input= onwards; register game state here (=post_startup= at the latest). |
+| =lrg_game_template_record_replay()= | Record to a file, written at shutdown (=--record FILE=). |
+| =lrg_game_template_play_replay()= | Feed a replay's inputs instead of live input (=--replay FILE=; the game quits at its end). |
+| =lrg_game_template_run_replay_headless()= | No window, one tick per update as fast as possible, checksums verified (=--replay-headless FILE=, exit status 0 or 1). |
+
+What changes in deterministic mode:
+
+- *Input is sampled once per tick.* Before each tick the template captures an =LrgInputSnapshot= from its input map (held = down or pressed since the last poll; a tap shorter than a tick is latched so it is not lost) and injects it back with =lrg_input_snapshot_apply()=. =fixed_update= and the state stack therefore see exactly one consistent input per tick, with pressed/released edges per tick, not per render frame. During playback the injected snapshot is the recorded one, so game code is the same in both cases. Variable-rate hooks (=pre_update=, =post_update=, drawing) read live input.
+- *The action table is the input map's actions, sorted by name*, frozen at startup (at most 64 actions).
+- *Gameplay timers advance inside ticks.* The template's =LrgTimerManager= is updated by exactly the fixed step in each tick (both clock domains) instead of by the frame delta, and is part of the simulation state.
+- *Pausing does not tick.* While the template is paused the state stack still updates (pause menus work) but no simulation tick runs, so pausing never changes the outcome. Pause and focus handling are not simulation: keep =pause_on_focus_loss= on if you like.
+- *Time scale and hit stop* change how many ticks run per render frame, never what a tick computes (every tick is exactly one fixed step).
+
+The engine's replay options are taken out of the argument vector by =lrg_game_run_standalone()= before the game's own =apply_args= sees it: =--record FILE=, =--replay FILE=, =--replay-headless FILE= and =--seed N= (also as =--opt=VALUE=).
+
+#+begin_src c
+static void
+my_game_post_startup (LrgGameTemplate *template)
+{
+    MyGame *self = MY_GAME (template);
+    LrgSimulation *sim = lrg_game_template_get_simulation (template);
+
+    if (sim == NULL)
+        return;   /* not deterministic */
+    lrg_simulation_add_object (sim, G_OBJECT (self->physics));
+    lrg_simulation_add_object (sim, G_OBJECT (self->level));
+    lrg_simulation_add_object (sim, G_OBJECT (self->score));
+}
+#+end_src
+
+** See also
+- [[file:replay-format.org][Replay format]]
+- [[file:golden-tests.org][Golden-file testing]]
+- [[file:rollback.org][Rollback sessions]]
+- [[file:../template/templates/game-template.org][Game template]]

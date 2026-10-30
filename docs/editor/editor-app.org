@@ -106,6 +106,9 @@ What the established editors offer and where it lives here.
 | External code editor                                 | =$VISUAL= / =$EDITOR= or a preset; Emacs first-party (=libregnum.el=)      |
 | Live reload of files changed elsewhere               | Levels reload when clean, otherwise a "changed on disk" prompt             |
 | Editor scripting / automation                        | JSON-lines IPC: every action, node edit, play control, screenshots         |
+| Tilemap painting (brush, rect, fill, eyedropper)     | Tiles panel + B in the viewport; strokes undo as one step ([[file:editor-tools.org::#tilemap-painting][Editor Tools]]) |
+| Animation timeline, keyframes, easing                | Timeline panel: I keys the selection, K plays, drag keys; autoplay in play mode |
+| Asset thumbnails                                     | Grid view: textures, models, levels, prefabs; cached in =.cache/thumbnails= |
 
 ** Window layout
 :PROPERTIES:
@@ -164,7 +167,8 @@ Rendering: primitives are unit-sized meshes matching the picking bounds (cube, s
 :END:
 - *Hierarchy*: tree with kind glyphs, visibility/lock toggles, inline rename (F2 or double click), drag to reparent (drop on a row) or reorder (drop between rows), Shift-click range and Ctrl-click toggle selection, filter by name or GUID (Ctrl+F), context menu (create submenu, copy GUID/path...), and the selection is revealed and scrolled to when it changes elsewhere.
 - *Inspector*: name, flags, path, GUID; transform with world readout (edits apply to every selected node); visual kind, primitive, asset path (with picker and drop target), material colour/roughness/metallic/emission, custom parameters (number, text, bool, colour); components (add with a searchable list of registered types, edit properties with type-aware widgets, remove); scripts (new script from a template, attach existing, open in the external editor, enable, remove); prefab instances can open their prefab or be reverted to it. Drags merge into a single undo step.
-- *Assets*: breadcrumb navigation, list or grid view, name filter and type filter, double click to open (levels and prefabs open in the editor, media in the desktop application, everything else in the external editor), drag into the viewport or the inspector, rename, move to the trash (never deleted), copy path, new folder, new script; refreshes itself through a file monitor.
+- *Tiles* and *Timeline*: see [[file:editor-tools.org][Editor Tools]] (View > Panels; Tiles docks next to the inspector, Timeline next to Assets).
+- *Assets*: breadcrumb navigation, list or grid view (with generated thumbnails, see [[file:editor-tools.org::#asset-thumbnails][Asset thumbnails]]), name filter and type filter, double click to open (levels and prefabs open in the editor, media in the desktop application, everything else in the external editor), drag into the viewport or the inspector, rename, move to the trash (never deleted), copy path, new folder, new script; refreshes itself through a file monitor.
 
 ** Console, history, problems
 :PROPERTIES:
@@ -277,6 +281,9 @@ Help > Keyboard Shortcuts (Ctrl+/) shows the live table; every one can be reboun
 | Play  | F6 / Shift+F6                  | Run game / stop game           |
 | Tools | Ctrl+Shift+P, F1 / Ctrl+P      | Command palette / quick open   |
 | Tools | Ctrl+Alt+E                     | Edit the level YAML externally |
+| Tilemap | B / [ / ]                    | Paint mode / smaller / bigger brush (Ctrl + click picks, Shift erases) |
+| Animation | I / K                      | Insert keyframe for the selection / play-pause the timeline |
+| Animation | Alt+Left / Alt+Right       | Previous / next keyframe       |
 | Help  | Ctrl+/                         | Keyboard shortcuts             |
 
 ** Projects

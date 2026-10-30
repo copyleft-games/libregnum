@@ -57,6 +57,8 @@ nodes:
     children: []
 ```
 
+- `tilemap` nodes: `asset` is the tileset image, `params.tile_size` the world size of a cell, and an optional `visual.tilemap` holds the painted grid: `{width, height, tile_width, tile_height, layers: [{name, visible, rows: ["1 1 2 0", ...]}]}` (ids 1-based into the tileset, 0 empty, row 0 on top, growing right/down from the node origin).
+- An optional top-level `timelines:` list holds keyframe animation: `{name, length, loop, autoplay, tracks: [{node: GUID, channel: location.y, keys: [{time, value, easing}]}]}`; autoplay timelines run during play-in-editor.
 - Transforms are local to the parent; the implicit root is not serialized.
 - Primitives are unit-sized (1 m); `scale` sizes them.
 - Hand edits are fine: the editor reloads a level changed on disk when it has no unsaved changes, and offers Reload / Keep mine otherwise. `libregnum.el` gives these files `libregnum-rlevel-mode` in Emacs.

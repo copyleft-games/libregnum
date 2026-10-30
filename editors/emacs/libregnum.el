@@ -853,6 +853,133 @@ files that change on disk when it has no unsaved changes of its own.
 (add-to-list 'auto-mode-alist '("\\.\\(rlevel\\|rprefab\\|ryaml\\)\\'" . libregnum-rlevel-mode))
 
 ;;; ==========================================================================
+;;; Editor tools: tilemaps, timelines, thumbnails
+;;; ==========================================================================
+
+(defconst libregnum--tile-tools '("brush" "eraser" "rect" "fill" "pick")
+  "Tile tools of the editor's viewport (tilemap.tool).")
+
+(defconst libregnum--channels
+  '("location.x" "location.y" "location.z" "rotation.x" "rotation.y" "rotation.z"
+    "scale.x" "scale.y" "scale.z" "color.r" "color.g" "color.b" "color.a" "roughness" "metallic")
+  "Animatable channels (param.NAME is accepted too).")
+
+(defconst libregnum--easings
+  '("linear" "ease-in-quad" "ease-out-quad" "ease-in-out-quad" "ease-in-cubic" "ease-out-cubic"
+    "ease-in-out-cubic" "ease-in-sine" "ease-out-sine" "ease-in-out-sine" "ease-in-back"
+    "ease-out-back" "ease-out-elastic" "ease-out-bounce")
+  "Common easing nicks for keyframes.")
+
+(defun libregnum--format-tilemap (grid)
+  "Render GRID (a tilemap.get result) as text."
+  (let ((layers (alist-get 'layers grid)))
+    (if (zerop (length layers))
+        "(no grid yet)\n"
+      (mapconcat
+       (lambda (layer)
+         (concat (format "%s (%d tiles)%s\n" (alist-get 'name layer) (alist-get 'count layer)
+                         (if (eq (alist-get 'visible layer) :json-false) " hidden" ""))
+                 (mapconcat (lambda (row)
+                              (concat " " (mapconcat (lambda (id) (format "%3d" id)) row " ")))
+                            (alist-get 'rows layer) "\n")
+                 "\n"))
+       layers "\n"))))
+
+(defun libregnum-tilemap-show (guid)
+  "Show the tile grid of the tilemap node GUID in a buffer."
+  (interactive (list (libregnum--node-at-point-or-read "Tilemap: ")))
+  (let ((grid (libregnum-request "tilemap.get" `((node . ,guid))))
+        (buffer (get-buffer-create "*libregnum-tilemap*")))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "%sx%s cells, tileset %s\n\n" (or (alist-get 'width grid) "-")
+                        (or (alist-get 'height grid) "-") (or (alist-get 'tileset grid) "none")))
+        (insert (libregnum--format-tilemap grid)))
+      (special-mode))
+    (display-buffer buffer)
+    grid))
+
+(defun libregnum-tilemap-paint (guid x y tile)
+  "Set cell X, Y of the tilemap node GUID to TILE (0 erases)."
+  (interactive
+   (list (libregnum--node-at-point-or-read "Tilemap: ")
+         (read-number "Column: " 0) (read-number "Row: " 0) (read-number "Tile: " 1)))
+  (libregnum-request "tilemap.paint" `((node . ,guid) (tile . ,tile) (cells . [[,x ,y]]))))
+
+(defun libregnum-tilemap-fill (guid x y tile)
+  "Flood-fill from cell X, Y of the tilemap node GUID with TILE."
+  (interactive
+   (list (libregnum--node-at-point-or-read "Tilemap: ")
+         (read-number "Column: " 0) (read-number "Row: " 0) (read-number "Tile: " 1)))
+  (libregnum-request "tilemap.fill" `((node . ,guid) (x . ,x) (y . ,y) (tile . ,tile))))
+
+(defun libregnum-tilemap-tool (tool &optional tile)
+  "Turn on tile painting in the editor viewport with TOOL (and TILE)."
+  (interactive
+   (list (completing-read "Tile tool: " libregnum--tile-tools nil t nil nil "brush")
+         (read-number "Tile: " 1)))
+  (libregnum-request "tilemap.tool" `((tool . ,tool) (mode . t) ,@(when tile `((tile . ,tile))))))
+
+(defun libregnum--timeline-names ()
+  "Names of the level's timelines."
+  (mapcar (lambda (tl) (alist-get 'name tl)) (libregnum-request "timeline.list")))
+
+(defun libregnum--read-timeline (&optional prompt)
+  "Read a timeline name with PROMPT (new names are allowed)."
+  (let ((names (libregnum--timeline-names)))
+    (completing-read (or prompt "Timeline: ") names nil nil nil nil (or (car names) "Timeline"))))
+
+(defun libregnum-timeline-key (name guid time &optional channel value)
+  "Key node GUID in timeline NAME at TIME.
+Without CHANNEL the node's transform is keyed; with a prefix argument,
+read one CHANNEL and its VALUE."
+  (interactive
+   (let* ((name (libregnum--read-timeline))
+          (guid (libregnum--node-at-point-or-read "Key node: "))
+          (time (read-number "Time (s): " 0))
+          (channel (when current-prefix-arg
+                     (completing-read "Channel: " libregnum--channels nil nil)))
+          (value (when channel (read-number "Value: "))))
+     (list name guid time channel value)))
+  (libregnum-request "timeline.key"
+                     `((name . ,name) (node . ,guid) (time . ,time)
+                       ,@(when channel `((channel . ,channel)))
+                       ,@(when value `((value . ,value))))))
+
+(defun libregnum-timeline-ease (name guid time easing)
+  "Set the EASING of node GUID's keys at TIME in timeline NAME."
+  (interactive
+   (list (libregnum--read-timeline) (libregnum--node-at-point-or-read "Node: ")
+         (read-number "Time (s): " 0)
+         (completing-read "Easing: " libregnum--easings nil nil nil nil "linear")))
+  (libregnum-request "timeline.ease" `((name . ,name) (node . ,guid) (time . ,time) (easing . ,easing))))
+
+(defun libregnum-timeline-play (name)
+  "Preview-play the timeline NAME in the editor."
+  (interactive (list (libregnum--read-timeline "Play timeline: ")))
+  (libregnum-request "timeline.play" `((name . ,name))))
+
+(defun libregnum-timeline-seek (time)
+  "Show the current timeline at TIME seconds (preview)."
+  (interactive (list (read-number "Time (s): " 0)))
+  (libregnum-request "timeline.seek" `((time . ,time))))
+
+(defun libregnum-timeline-stop ()
+  "Stop the timeline preview and restore the posed nodes."
+  (interactive)
+  (libregnum-request "timeline.stop"))
+
+(defun libregnum-thumbnail (file)
+  "Show the editor's thumbnail of the asset FILE."
+  (interactive (list (read-file-name "Thumbnail of: ")))
+  (let* ((result (libregnum-request "asset.thumbnail" `((path . ,(expand-file-name file)) (wait . t))))
+         (thumb (alist-get 'thumbnail result)))
+    (when (called-interactively-p 'interactive)
+      (find-file-other-window thumb))
+    thumb))
+
+;;; ==========================================================================
 ;;; Global mode and keys
 ;;; ==========================================================================
 
@@ -878,6 +1005,12 @@ files that change on disk when it has no unsaved changes of its own.
     (define-key map "f" #'libregnum-visit-level)
     (define-key map "t" #'libregnum-set-tool)
     (define-key map "e" #'libregnum-set-property)
+    (define-key map "g" #'libregnum-tilemap-show)
+    (define-key map "b" #'libregnum-tilemap-tool)
+    (define-key map "k" #'libregnum-timeline-key)
+    (define-key map "a" #'libregnum-timeline-play)
+    (define-key map "A" #'libregnum-timeline-stop)
+    (define-key map "h" #'libregnum-thumbnail)
     map)
   "Libregnum commands, under `libregnum-keymap-prefix'.")
 (fset 'libregnum-command-map libregnum-command-map)

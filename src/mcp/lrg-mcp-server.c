@@ -11,6 +11,7 @@
 #include "lrg-mcp-server-private.h"
 #include "../lrg-log.h"
 #include "../lrg-version.h"
+#include "../input/lrg-input-map.h"
 
 /* Tool groups */
 #include "tools/lrg-mcp-input-tools.h"
@@ -93,6 +94,9 @@ struct _LrgMcpServer
 	/* Registered providers */
 	GPtrArray *tool_providers;     /* LrgMcpToolProvider* */
 	GPtrArray *resource_providers; /* LrgMcpResourceProvider* */
+
+	/* Game input map reported by lrg_input_get_state (nullable, owned) */
+	LrgInputMap *input_map;
 };
 
 G_DEFINE_FINAL_TYPE (LrgMcpServer, lrg_mcp_server, G_TYPE_OBJECT)
@@ -370,6 +374,7 @@ lrg_mcp_server_finalize (GObject *object)
 	g_clear_pointer (&self->http_auth_token, g_free);
 	g_clear_pointer (&self->tool_providers, g_ptr_array_unref);
 	g_clear_pointer (&self->resource_providers, g_ptr_array_unref);
+	g_clear_object (&self->input_map);
 
 	G_OBJECT_CLASS (lrg_mcp_server_parent_class)->finalize (object);
 }
@@ -496,7 +501,7 @@ lrg_mcp_server_init (LrgMcpServer *self)
  * Public API - Singleton
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_server_get_default:
  *
  * Gets the default MCP server instance.
@@ -522,7 +527,7 @@ lrg_mcp_server_get_default (void)
  * Public API - Configuration
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_server_get_server_name:
  * @self: an #LrgMcpServer
  *
@@ -538,7 +543,7 @@ lrg_mcp_server_get_server_name (LrgMcpServer *self)
 	return self->server_name;
 }
 
-/**
+/*
  * lrg_mcp_server_set_server_name:
  * @self: an #LrgMcpServer
  * @name: the server name
@@ -560,7 +565,7 @@ lrg_mcp_server_set_server_name (LrgMcpServer *self,
  * Public API - Transport Configuration
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_server_get_transport_type:
  * @self: an #LrgMcpServer
  *
@@ -576,7 +581,7 @@ lrg_mcp_server_get_transport_type (LrgMcpServer *self)
 	return self->transport_type;
 }
 
-/**
+/*
  * lrg_mcp_server_set_transport_type:
  * @self: an #LrgMcpServer
  * @type: the transport type to use
@@ -593,7 +598,7 @@ lrg_mcp_server_set_transport_type (LrgMcpServer        *self,
 	self->transport_type = type;
 }
 
-/**
+/*
  * lrg_mcp_server_get_http_port:
  * @self: an #LrgMcpServer
  *
@@ -609,7 +614,7 @@ lrg_mcp_server_get_http_port (LrgMcpServer *self)
 	return self->http_port;
 }
 
-/**
+/*
  * lrg_mcp_server_set_http_port:
  * @self: an #LrgMcpServer
  * @port: the port to listen on (0 = auto-assign)
@@ -626,7 +631,7 @@ lrg_mcp_server_set_http_port (LrgMcpServer *self,
 	self->http_port = port;
 }
 
-/**
+/*
  * lrg_mcp_server_get_http_host:
  * @self: an #LrgMcpServer
  *
@@ -642,7 +647,7 @@ lrg_mcp_server_get_http_host (LrgMcpServer *self)
 	return self->http_host;
 }
 
-/**
+/*
  * lrg_mcp_server_set_http_host:
  * @self: an #LrgMcpServer
  * @host: (nullable): the host/address to bind to (%NULL = all interfaces)
@@ -660,7 +665,7 @@ lrg_mcp_server_set_http_host (LrgMcpServer *self,
 	self->http_host = g_strdup (host);
 }
 
-/**
+/*
  * lrg_mcp_server_set_http_auth:
  * @self: an #LrgMcpServer
  * @require_auth: whether to require authentication
@@ -684,7 +689,7 @@ lrg_mcp_server_set_http_auth (LrgMcpServer *self,
 	self->http_auth_token = g_strdup (token);
 }
 
-/**
+/*
  * lrg_mcp_server_get_actual_http_port:
  * @self: an #LrgMcpServer
  *
@@ -710,7 +715,7 @@ lrg_mcp_server_get_actual_http_port (LrgMcpServer *self)
  * Public API - Lifecycle
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_server_start:
  * @self: an #LrgMcpServer
  * @error: (nullable): return location for a #GError
@@ -799,7 +804,7 @@ lrg_mcp_server_start (LrgMcpServer  *self,
 	return TRUE;
 }
 
-/**
+/*
  * lrg_mcp_server_stop:
  * @self: an #LrgMcpServer
  *
@@ -842,7 +847,7 @@ lrg_mcp_server_stop (LrgMcpServer *self)
 	lrg_info (LRG_LOG_DOMAIN_MCP, "MCP server stopped");
 }
 
-/**
+/*
  * lrg_mcp_server_is_running:
  * @self: an #LrgMcpServer
  *
@@ -862,7 +867,7 @@ lrg_mcp_server_is_running (LrgMcpServer *self)
  * Public API - Provider Management
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_server_add_tool_provider:
  * @self: an #LrgMcpServer
  * @provider: a #LrgMcpToolProvider
@@ -885,7 +890,7 @@ lrg_mcp_server_add_tool_provider (LrgMcpServer       *self,
 	           self->tool_providers->len);
 }
 
-/**
+/*
  * lrg_mcp_server_remove_tool_provider:
  * @self: an #LrgMcpServer
  * @provider: a #LrgMcpToolProvider
@@ -905,7 +910,7 @@ lrg_mcp_server_remove_tool_provider (LrgMcpServer       *self,
 	           self->tool_providers->len);
 }
 
-/**
+/*
  * lrg_mcp_server_add_resource_provider:
  * @self: an #LrgMcpServer
  * @provider: a #LrgMcpResourceProvider
@@ -928,7 +933,7 @@ lrg_mcp_server_add_resource_provider (LrgMcpServer           *self,
 	           self->resource_providers->len);
 }
 
-/**
+/*
  * lrg_mcp_server_remove_resource_provider:
  * @self: an #LrgMcpServer
  * @provider: a #LrgMcpResourceProvider
@@ -952,7 +957,43 @@ lrg_mcp_server_remove_resource_provider (LrgMcpServer           *self,
  * Public API - Default Providers
  * ========================================================================== */
 
-/**
+/*
+ * lrg_mcp_server_set_input_map:
+ * @self: an #LrgMcpServer
+ * @map: (nullable): the game's #LrgInputMap, or %NULL to detach
+ *
+ * Attaches the game's input map so the `lrg_input_get_state` tool can
+ * report each action's state alongside the raw device state. The server
+ * keeps a reference. Games built on #LrgGameTemplate pass
+ * lrg_game_template_get_input_map().
+ */
+void
+lrg_mcp_server_set_input_map (LrgMcpServer *self,
+                              LrgInputMap  *map)
+{
+	g_return_if_fail (LRG_IS_MCP_SERVER (self));
+	g_return_if_fail (map == NULL || LRG_IS_INPUT_MAP (map));
+
+	g_set_object (&self->input_map, map);
+}
+
+/*
+ * lrg_mcp_server_get_input_map:
+ * @self: an #LrgMcpServer
+ *
+ * Gets the input map attached with lrg_mcp_server_set_input_map().
+ *
+ * Returns: (transfer none) (nullable): the attached #LrgInputMap
+ */
+LrgInputMap *
+lrg_mcp_server_get_input_map (LrgMcpServer *self)
+{
+	g_return_val_if_fail (LRG_IS_MCP_SERVER (self), NULL);
+
+	return self->input_map;
+}
+
+/*
  * lrg_mcp_server_register_default_providers:
  * @self: an #LrgMcpServer
  *

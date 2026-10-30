@@ -238,6 +238,7 @@ engine.shutdown()
 | Audio       | Sound banks and music management                             |
 | AI          | Behavior trees with composites, decorators, and leafs       |
 | Pathfinding | A* pathfinding on navigation grids                          |
+| Procgen     | Seeded dungeon, cave, WFC and noise map generation (YAML)    |
 | Physics     | Rigid body physics                                           |
 | I18N        | Localization support                                         |
 | Net         | Client/server networking                                     |

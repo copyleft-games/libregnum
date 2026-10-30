@@ -393,7 +393,7 @@ lrg_mcp_screenshot_tools_init (LrgMcpScreenshotTools *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_screenshot_tools_new:
  *
  * Creates a new screenshot tools provider.

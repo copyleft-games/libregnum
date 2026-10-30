@@ -23,8 +23,8 @@ PROJECT_ROOT := $(realpath $(CONFIG_MK_PATH))
 # .pc file and the shared library name. Bump rules and tagging: AGENTS.md,
 # "Versioning". API_VERSION and SO_VERSION below are separate.
 VERSION_MAJOR := 0
-VERSION_MINOR := 3
-VERSION_MICRO := 1
+VERSION_MINOR := 4
+VERSION_MICRO := 0
 VERSION := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)
 
 # API version for parallel installability (bump on ABI breaks)
@@ -716,6 +716,14 @@ else
     # to plain casts; g_return_if_fail() argument checks stay on.
     OPT_CFLAGS += -fno-semantic-interposition -DG_DISABLE_CAST_CHECKS
 endif
+
+# Determinism contract (docs/modules/replay/determinism.org): never fuse
+# a*b+c into an FMA. GCC contracts by default in GNU modes wherever the
+# target has FMA (every aarch64, x86-64 with -mfma), which rounds once
+# instead of twice and gives different float results than other machines
+# and other optimization levels; replays, golden checksums and rollback
+# peers must agree bit for bit. No change on baseline x86-64 (no FMA).
+OPT_CFLAGS += -ffp-contract=off
 
 # Trace flag
 ifeq ($(ENABLE_TRACE),1)

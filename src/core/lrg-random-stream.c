@@ -3,6 +3,7 @@
  */
 #include "config.h"
 #include "lrg-random-stream.h"
+#include "../replay/lrg-sim-stateful.h"
 #include <gio/gio.h>
 #include <string.h>
 
@@ -12,7 +13,11 @@ struct _LrgRandomStream
     guint64 state;
     guint64 increment;
 };
-G_DEFINE_TYPE (LrgRandomStream, lrg_random_stream, G_TYPE_OBJECT)
+static void lrg_random_stream_sim_stateful_init (LrgSimStatefulInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgRandomStream, lrg_random_stream, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_SIM_STATEFUL,
+                                                lrg_random_stream_sim_stateful_init))
 static void
 lrg_random_stream_class_init (LrgRandomStreamClass *klass)
 {
@@ -155,4 +160,46 @@ lrg_random_stream_copy (LrgRandomStream *self)
     copy->state = self->state;
     copy->increment = self->increment;
     return copy;
+}
+
+/* LrgSimStateful: the whole generator is two words */
+static void
+lrg_random_stream_save_state (LrgSimStateful *stateful,
+                              LrgStateBuffer *buffer)
+{
+    LrgRandomStream *self = LRG_RANDOM_STREAM (stateful);
+
+    lrg_state_buffer_write_uint64 (buffer, self->state);
+    lrg_state_buffer_write_uint64 (buffer, self->increment);
+}
+
+static gboolean
+lrg_random_stream_load_state (LrgSimStateful  *stateful,
+                              LrgStateBuffer  *buffer,
+                              GError         **error)
+{
+    LrgRandomStream *self = LRG_RANDOM_STREAM (stateful);
+    guint64 state;
+    guint64 increment;
+
+    state = lrg_state_buffer_read_uint64 (buffer);
+    increment = lrg_state_buffer_read_uint64 (buffer);
+    if (!lrg_state_buffer_check (buffer, error))
+        return FALSE;
+    if ((increment & 1) == 0)
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                             "Invalid PCG32 state (even increment)");
+        return FALSE;
+    }
+    self->state = state;
+    self->increment = increment;
+    return TRUE;
+}
+
+static void
+lrg_random_stream_sim_stateful_init (LrgSimStatefulInterface *iface)
+{
+    iface->save_state = lrg_random_stream_save_state;
+    iface->load_state = lrg_random_stream_load_state;
 }

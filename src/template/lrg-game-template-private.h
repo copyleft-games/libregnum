@@ -22,6 +22,8 @@ typedef struct _LrgScreenShake LrgScreenShake;
 typedef struct _LrgSoundBank LrgSoundBank;
 typedef struct _LrgCamera2D LrgCamera2D;
 typedef struct _LrgWindow LrgWindow;
+typedef struct _LrgSimulation LrgSimulation;
+typedef struct _LrgReplay LrgReplay;
 
 /**
  * LrgGameTemplatePrivate:
@@ -156,6 +158,22 @@ typedef struct _LrgGameTemplatePrivate
     /* Last argument vector applied via lrg_game_template_apply_args() (owned) */
     GStrv                applied_args;
 
+    /* Deterministic simulation (see docs/modules/replay/determinism.org) */
+    gboolean             deterministic;          /* Default: FALSE */
+    guint64              simulation_seed;
+    guint                checksum_interval;      /* Default: 30 ticks */
+    LrgSimulation       *simulation;             /* owned, created at startup */
+    gulong               simulation_tick_id;
+    guint64              input_latch;            /* actions pressed since the last tick */
+
+    /* Replay recording / playback */
+    gchar               *record_path;            /* written at shutdown */
+    gchar               *record_initial_state;
+    LrgReplay           *playback;               /* owned */
+    gboolean             playback_finished;
+    gboolean             quit_at_replay_end;
+    GError              *replay_error;           /* first playback error */
+
 } LrgGameTemplatePrivate;
 
 /**
@@ -220,6 +238,9 @@ lrg_game_template_snap_delta (gdouble delta,
 
 /* Maximum fixed updates per frame (prevents spiral of death) */
 #define LRG_DEFAULT_MAX_UPDATES_PER_FRAME (5)
+
+/* Default ticks between desync-detector checksums in deterministic mode */
+#define LRG_DEFAULT_CHECKSUM_INTERVAL (30)
 
 /* Default auto-save interval in seconds */
 #define LRG_DEFAULT_AUTO_SAVE_INTERVAL (60.0)

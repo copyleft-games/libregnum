@@ -1,0 +1,100 @@
+* LrgProcgenWfc
+:PROPERTIES:
+:CUSTOM_ID: lrgprocgenwfc
+:END:
+Wave function collapse, simple tiled model. Header: =procgen/lrg-procgen-wfc.h=. YAML name: =wfc=.
+
+** Model
+:PROPERTIES:
+:CUSTOM_ID: model
+:END:
+A model is a set of up to 64 tiles and adjacency rules:
+
+- a *tile* has a unique name, the cell tag written for it, and a positive weight (relative frequency);
+- a *rule* "=b= may lie in direction =d= of =a=" (=lrg_procgen_wfc_allow (wfc, a, b, d)=) implies the mirror rule "=a= may lie in the opposite direction of =b=". Nothing is allowed until a rule says so.
+
+Two ways to build one:
+
+| Source | API | YAML |
+|--------+-----+------|
+| Explicit tiles and rules | =add_tile()=, =allow()= | =wfc.tiles=, =wfc.rules= |
+| Learned from a sample grid | =lrg_procgen_wfc_learn (wfc, sample)= | =wfc.sample= (text grid) |
+
+Learning makes one tile per distinct tag of the sample (ascending tag order, named by the =LrgProcgenCell= nick or =tag-N=), weighted by how often the tag occurs, and allows exactly the orthogonal adjacencies the sample contains. That is the N = 1 overlapping model, which for single-cell patterns coincides with the simple tiled model.
+
+Several tiles may share a tag (for example two floor variants with different neighbours); the grid only records the tag.
+
+** Algorithm
+:PROPERTIES:
+:CUSTOM_ID: algorithm
+:END:
+Each cell keeps the set of tiles still possible (a 64-bit mask), plus the sum of their weights =W= and of =w * log2 (w)=, updated incrementally.
+
+1. *Initialise.* Every cell may be every tile; with =border-tile=, border cells are restricted to it. Propagate from every cell (a tile with no allowed neighbour on some side is removed wherever that side exists).
+2. *Observe.* Pick the undecided cell of lowest Shannon entropy =H = log2 (W) - sum (w log2 w) / W=. Weights are integers (1/256 steps of the given weight, at most 4096) and =log2= is computed in Q16 fixed point by repeated squaring, so entropies are exact integers; ties are broken uniformly with the random stream (reservoir sampling). Collapse the cell to one tile drawn by weight.
+3. *Propagate.* A work stack of changed cells: for each neighbour, keep only the tiles some remaining tile of the cell allows on that side; a neighbour that changes is pushed. A neighbour left with no tile is a *contradiction*.
+4. *Backtrack.* Before every observation the wave is saved into a ring of the last =backtrack-depth= states. On a contradiction the newest state is restored and the tile that was chosen there is banned at that cell, then propagation resumes; if the ban empties the cell, the next older state is restored, and so on. After =max-backtracks= undone choices, or when the ring is empty, the attempt is abandoned.
+5. *Restart.* A new attempt starts from a blank wave, continuing the same random stream, up to =max-attempts=. If every attempt fails, =generate= fails with =LRG_PROCGEN_ERROR_CONTRADICTION=.
+
+=get_last_attempts()= and =get_last_backtracks()= report what the last generation needed. Memory: 8 bytes per cell for the wave, plus =backtrack-depth= copies of it.
+
+** Parameters
+:PROPERTIES:
+:CUSTOM_ID: parameters
+:END:
+| Property | Range | Default | Meaning |
+|----------+-------+---------+---------|
+| =max-attempts= | 1-1000 | 10 | attempts before failing |
+| =backtrack-depth= | 0-4096 | 32 | saved states (0 = restart on the first contradiction) |
+| =max-backtracks= | 0-2^32 | 10000 | undone choices per attempt before restarting |
+| =border-tile= | string | none | name of the tile every border cell must be |
+
+** Validation
+:PROPERTIES:
+:CUSTOM_ID: validation
+:END:
+=lrg_procgen_wfc_check (wfc, grid)= verifies that every cell's tag belongs to a tile and that every pair of orthogonal neighbours is allowed by some pair of tiles with those tags. The tests check every generated map with it, check that a learned model accepts its own sample, that a two-tile "never next to yourself" model can only produce a checkerboard, that a three-colouring model (which dead-ends often) always finishes through backtracking, and that an unsatisfiable model fails after exactly =max-attempts= attempts.
+
+** Usage
+:PROPERTIES:
+:CUSTOM_ID: usage
+:END:
+#+begin_src c
+g_autoptr(LrgProcgenGrid) sample = lrg_procgen_grid_new_from_string (
+	"##########\n"
+	"#....#...#\n"
+	"#....+...#\n"
+	"##+###.###\n"
+	"#,,,,#...#\n"
+	"##########\n", &error);
+g_autoptr(LrgProcgenWfc) wfc = lrg_procgen_wfc_new (48, 32);
+
+lrg_procgen_wfc_learn (wfc, sample);
+lrg_procgen_wfc_set_border_tile (wfc, "wall");
+grid = lrg_procgen_generator_generate (LRG_PROCGEN_GENERATOR (wfc), seed, &error);
+g_assert (lrg_procgen_wfc_check (wfc, grid));
+#+end_src
+
+Explicit rules (banks and water only ever run left-right, banks always between grass and water; any map obeying that is a valid output, including all grass):
+
+#+begin_src yaml
+generator: wfc
+width: 40
+height: 24
+params: { max-attempts: 20 }
+wfc:
+  tiles:
+    - { name: grass, tag: floor, weight: 6 }
+    - { name: bank,  tag: 16, weight: 1 }
+    - { name: river, tag: water, weight: 1 }
+  rules:
+    - { a: grass, b: grass }                  # no dir: every direction
+    - { a: grass, b: bank, dir: vertical }    # up and down
+    - { a: bank,  b: bank, dir: horizontal }  # left and right
+    - { a: bank,  b: river, dir: vertical }
+    - { a: river, b: river, dir: horizontal }
+#+end_src
+
+=dir= is =up=, =right=, =down=, =left=, =horizontal= (both left and right), =vertical= (up and down) or =all= (the default). When a recipe is saved, the model is written as explicit =tiles= and =rules= (=right= and =down= only, which describe every adjacency), so a learned model round-trips exactly.
+
+Generated maps from a small sample are locally plausible but not globally structured (no guaranteed rooms); combine with the recipe's =connect= post-processing, or use larger, more constraining samples or explicit rules for structure.

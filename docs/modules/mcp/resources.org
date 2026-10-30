@@ -56,29 +56,60 @@ Current engine state information.
 :PROPERTIES:
 :CUSTOM_ID: libregnumengineconfig
 :END:
-This endpoint remains a placeholder; it does not read live engine settings.
+The engine's live configuration: version, lifecycle state, owned subsystems, registered worlds, data loader and asset manager setup, and every group of the default =LrgSettings= (serialized through each group's own GVariant serializer). =window=, =data_loader= and =asset_manager= are =null= when the engine does not own them (no window set, or before =lrg_engine_startup()= / after shutdown). Games built on =LrgGameTemplate= keep their own =LrgSettings= instance; this resource reports =lrg_settings_get_default()=.
 
 *MIME Type:* =application/json=
 
-*Current response:*
-
 #+begin_src json
-{"note": "Detailed config API not yet implemented"}
+{
+  "version": "0.3.2",
+  "api_version": 1,
+  "state": "running",
+  "pin_performance_cores": false,
+  "window": {"type": "LrgGrlWindow", "title": "My Game", "width": 1280,
+             "height": 720, "target_fps": 60},
+  "renderer": true,
+  "scripting": null,
+  "worlds": ["main"],
+  "registry_count": 66,
+  "data_loader": {"type_field_name": "type", "file_extensions": [".yaml", ".yml"]},
+  "asset_manager": {
+    "search_paths": ["data"],
+    "cache_sizes": {"textures": 3, "fonts": 1, "sounds": 0, "music": 0,
+                    "models": 0, "animations": 0}
+  },
+  "settings": {
+    "graphics": {"width": 1280, "height": 720, "vsync": true},
+    "audio": {"master_volume": 1.0}
+  }
+}
 #+end_src
 
 *** libregnum://engine/registry
 :PROPERTIES:
 :CUSTOM_ID: libregnumengineregistry
 :END:
-This endpoint remains a placeholder; its empty =types= array does not describe
-the actual engine registry. ECS spawning separately uses the live registry.
+Every name in the engine's =LrgRegistry= (the built-in catalog plus application and mod registrations), sorted by name. Each row gives the GType name, its parent, its kind (=game-object= for =LrgGameObject= subclasses, which =lrg_ecs_spawn_object= accepts; =component= for =LrgComponent= subclasses; =object= otherwise), whether it is abstract, and its properties with value type, owning type and access flags. Reading it before =lrg_engine_startup()= fails with =G_IO_ERROR_NOT_INITIALIZED=.
 
 *MIME Type:* =application/json=
 
-*Current response:*
-
 #+begin_src json
-{"types": [], "note": "Registry listing API not yet implemented"}
+{
+  "count": 66,
+  "types": [
+    {
+      "name": "transform",
+      "gtype": "LrgTransformComponent",
+      "parent": "LrgComponent",
+      "kind": "component",
+      "abstract": false,
+      "properties": [
+        {"name": "local-x", "type": "gfloat", "owner": "LrgTransformComponent",
+         "readable": true, "writable": true, "construct_only": false}
+      ]
+    }
+  ]
+}
 #+end_src
 
 ** ECS Resources (=LrgMcpEcsResources=)

@@ -22,6 +22,13 @@ typedef struct
 {
     gchar *name;       /* Action name (e.g., "jump", "attack") */
     GPtrArray *bindings; /* Array of LrgInputBinding* (owned) */
+
+    /* Injected state (replay playback, rollback): replaces the bindings */
+    gboolean override_active;
+    gboolean override_down;
+    gboolean override_pressed;
+    gboolean override_released;
+    gfloat   override_axis;
 } LrgInputActionPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgInputAction, lrg_input_action, G_TYPE_OBJECT)
@@ -326,6 +333,9 @@ lrg_input_action_is_pressed (LrgInputAction *self)
 
     priv = lrg_input_action_get_instance_private (self);
 
+    if (priv->override_active)
+        return priv->override_pressed;
+
     for (i = 0; i < priv->bindings->len; i++)
     {
         LrgInputBinding *binding = g_ptr_array_index (priv->bindings, i);
@@ -356,6 +366,9 @@ lrg_input_action_is_down (LrgInputAction *self)
 
     priv = lrg_input_action_get_instance_private (self);
 
+    if (priv->override_active)
+        return priv->override_down;
+
     for (i = 0; i < priv->bindings->len; i++)
     {
         LrgInputBinding *binding = g_ptr_array_index (priv->bindings, i);
@@ -385,6 +398,9 @@ lrg_input_action_is_released (LrgInputAction *self)
     g_return_val_if_fail (LRG_IS_INPUT_ACTION (self), FALSE);
 
     priv = lrg_input_action_get_instance_private (self);
+
+    if (priv->override_active)
+        return priv->override_released;
 
     for (i = 0; i < priv->bindings->len; i++)
     {
@@ -419,6 +435,10 @@ lrg_input_action_get_value (LrgInputAction *self)
     g_return_val_if_fail (LRG_IS_INPUT_ACTION (self), 0.0f);
 
     priv = lrg_input_action_get_instance_private (self);
+
+    if (priv->override_active)
+        return priv->override_axis < 0.0f ? -priv->override_axis : priv->override_axis;
+
     max_value = 0.0f;
 
     for (i = 0; i < priv->bindings->len; i++)
@@ -447,6 +467,9 @@ lrg_input_action_get_axis (LrgInputAction *self)
 
     priv = lrg_input_action_get_instance_private (self);
 
+    if (priv->override_active)
+        return priv->override_axis;
+
     /* Signed counterpart of get_value(): keep the largest-magnitude binding
        value WITH its sign, so one action reads a full bidirectional axis. */
     for (i = 0; i < priv->bindings->len; i++)
@@ -463,4 +486,49 @@ lrg_input_action_get_axis (LrgInputAction *self)
     }
 
     return best;
+}
+
+/* ==========================================================================
+ * Injected State (replay playback, rollback)
+ * ========================================================================== */
+
+void
+lrg_input_action_set_override (LrgInputAction *self,
+                               gboolean        down,
+                               gboolean        pressed,
+                               gboolean        released,
+                               gfloat          axis)
+{
+    LrgInputActionPrivate *priv;
+
+    g_return_if_fail (LRG_IS_INPUT_ACTION (self));
+
+    priv = lrg_input_action_get_instance_private (self);
+    priv->override_active = TRUE;
+    priv->override_down = down;
+    priv->override_pressed = pressed;
+    priv->override_released = released;
+    priv->override_axis = axis;
+}
+
+void
+lrg_input_action_clear_override (LrgInputAction *self)
+{
+    LrgInputActionPrivate *priv;
+
+    g_return_if_fail (LRG_IS_INPUT_ACTION (self));
+
+    priv = lrg_input_action_get_instance_private (self);
+    priv->override_active = FALSE;
+}
+
+gboolean
+lrg_input_action_has_override (LrgInputAction *self)
+{
+    LrgInputActionPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_INPUT_ACTION (self), FALSE);
+
+    priv = lrg_input_action_get_instance_private (self);
+    return priv->override_active;
 }

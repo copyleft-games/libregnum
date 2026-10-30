@@ -34,6 +34,7 @@ cd examples
 | `game-tuktuk-derby` | Vehicle physics demo | - |
 | `game-micro-tycoon` | Economy/tycoon systems | - |
 | `game-dungeon-torch` | 2D lighting and shadows | - |
+| `game-procgen-dungeon` | Procedural dungeons (BSP, caves, WFC, drunkard, noise) from a YAML recipe, autotiled, with A* monsters | [docs](../docs/modules/procgen/index.org) |
 | `game-meta-arcade` | Meta-game/arcade collection | - |
 | `game-effects-gallery` | Visual effects showcase | - |
 | `game-settings-demo` | Settings/options menu demo | - |
@@ -53,6 +54,12 @@ cd examples
 | `scripted-python-game` | Python scripting backend | [docs](../docs/examples/scripting-basics.org) |
 | `scripted-python-gobject-game` | PyGObject scripting | [docs](../docs/examples/scripting-basics.org) |
 | `scripted-gjs-game` | GJS (JavaScript) scripting | [docs](../docs/examples/scripting-basics.org) |
+
+### Simulation and Netcode
+
+| Example | Description | Documentation |
+|---------|-------------|---------------|
+| `replay-demo` | Headless: records a deterministic physics game to a replay file, plays it back, then runs it as two rollback peers over a lossy simulated network | [docs](../docs/modules/replay/index.org) |
 
 ### Asset Rendering
 

@@ -49,6 +49,7 @@ libregnum/
 │   ├── save/                 # Saveable interface, SaveContext, SaveGame, SaveManager
 │   ├── ai/                   # BehaviorTree, Blackboard, BTNode hierarchy
 │   ├── pathfinding/          # NavGrid, NavCell, Path, Pathfinder (A*)
+│   ├── procgen/              # ProcgenGrid, generators (BSP, caves, WFC, drunkard, noise), TileRules, Dungeon (YAML recipes)
 │   ├── physics/              # PhysicsWorld, RigidBody, CollisionInfo, WallSet, CollisionMesh, CharacterController
 │   │
 │   │ # Genre-Specific
@@ -78,6 +79,7 @@ libregnum/
 │   │ # Infrastructure
 │   ├── i18n/                 # Locale, Localization
 │   ├── net/                  # NetMessage, NetPeer, NetServer, NetClient
+│   ├── replay/               # Simulation, SimStateful, StateBuffer, InputSnapshot, Replay, RollbackSession, loopback/UDP transports
 │   ├── world3d/              # Level3D, Octree, Sector, Portal, Trigger3D, SpawnPoint3D
 │   ├── scene/                # Scene, SceneObject, SceneSerializer interface
 │   ├── mod/                  # ModManifest, Mod, ModLoader, Modable interface, Providers
@@ -670,6 +672,25 @@ bounds", "Cost of a page").
   implementation produced (`tests/test-mmo-replicator.c` keeps it as a
   reference model and fuzzes both; its benchmark prints ms a cycle).
 
+### Deterministic Simulation, Replays and Rollback (`replay/`)
+
+- `LrgSimulation` is the deterministic container: tick counter, fixed step, seeded `LrgRandomStream`
+  (`lrg_simulation_get_random()`), action table, per-player `LrgInputSnapshot`s and the ordered
+  list of state objects (`LrgSimStateful`, or `LrgSaveable` as a slow fallback). Game logic runs in
+  its `tick` signal (in a template: `fixed_update` with `LrgGameTemplate:deterministic`).
+- Simulation code never reads the wall clock, `g_random_*()`, raw devices or hash-table order, and
+  every object a tick changes is registered (`docs/modules/replay/determinism.org`). The build uses
+  `-ffp-contract=off` so float results match across x86-64 and aarch64; do not remove it.
+- `LrgRandomStream`, `LrgTimerManager` and `LrgPhysicsWorld` implement `LrgSimStateful`. Changing
+  their `save_state` layout changes every checksum: regenerate `tests/golden/` with
+  `LRG_UPDATE_GOLDEN=1` and say so in the commit.
+- Replays: `--record FILE`, `--replay FILE`, `--replay-headless FILE`, `--seed N` are consumed by
+  `lrg_game_run_standalone()`; the file is a YAML header + delta-encoded binary body
+  (`docs/modules/replay/replay-format.org`). `lrg_replay_check_golden()` is the golden-test helper.
+- `LrgRollbackSession` is GGPO-style netcode over `LrgRollbackTransport` (`LrgLoopbackNetwork`
+  for tests with latency/jitter/loss, `LrgUdpTransport` for real sockets). Instance structs over
+  64 KiB fail GType registration: keep large rings on the heap.
+
 ### Editor Application (`editor/ui/`, `gui/`, `launcher/lrgeditor.c`)
 
 - `lrgeditor` is built by default (`BUILD_EDITOR_UI=1`); the app is `LrgEditorApp`, split across `src/editor/ui/lrg-editor-*.c` with shared state in `lrg-editor-app-private.h` (internal functions are `G_GNUC_INTERNAL`, prefixed `editor_`).
@@ -683,6 +704,7 @@ bounds", "Cost of a page").
 - Unix socket paths must fit `sun_path` (107 bytes); the server rejects longer ones. Keep test sockets under `$XDG_RUNTIME_DIR`.
 - `lrgeditorctl` (`src/editorctl/`) is the kubectl-like CLI over the IPC socket and the MCP bridge (`lrgeditorctl mcp`); `lrgeditor --mcp` serves the same tool table in-process (it reserves stdout: never print to fd 1 on paths that run under it). Add MCP tools as rows in `src/editorctl/lrgeditorctl-mcp.c`. `make test-editorctl` exercises every verb and both MCP servers. The agent skill lives in `skills/skill-libregnum/` (`make install-skills`); keep it in sync with the CLI and tools.
 - The Emacs package is `editors/emacs/libregnum.el` (+ `libregnum-tests.el`); `make test-emacs` byte-compiles with warnings as errors and runs ERT, including a headless editor end to end.
+- Editor tools (`docs/editor/editor-tools.org`): tile painting (`LrgNodeTilemap` on the tilemap visual + `LrgEditorTilePainter`; strokes are one undo group), timelines (`LrgTimeline` in the level, edited only through `lrg_editor_timeline_*()`), thumbnails (`LrgThumbnailCache`: CPU kinds on a worker, models through a main-thread renderer, `process()` once per frame). Headless IPC methods for tools live in `lrg-editor-server-tools.c` (registered via `lrg-editor-server-private.h`). A timeline preview poses nodes outside the history; anything that writes the level must call `editor_timeline_end_preview()` first (the app overrides `level.save` for that). Alt+letter opens menus, so do not give actions Alt+letter shortcuts.
 - Docs: `docs/editor/editor-app.org`, `external-editor.org`, `emacs.org`, `ipc-protocol.org`, `docs/modules/gui/index.org`.
 
 ### GPU-Resource Prewarm (`core/lrg-prewarm.h`, `core/lrg-prewarmable.h`)

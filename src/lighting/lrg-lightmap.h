@@ -16,6 +16,7 @@
 #endif
 
 #include <glib-object.h>
+#include <graylib.h>
 #include "../lrg-version.h"
 
 G_BEGIN_DECLS
@@ -54,5 +55,11 @@ void lrg_lightmap_clear (LrgLightmap *self, guint8 r, guint8 g, guint8 b);
 
 LRG_AVAILABLE_IN_ALL
 void lrg_lightmap_upload (LrgLightmap *self);
+
+LRG_AVAILABLE_IN_ALL
+GrlTexture * lrg_lightmap_get_texture (LrgLightmap *self);
+
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_lightmap_is_dirty (LrgLightmap *self);
 
 G_END_DECLS

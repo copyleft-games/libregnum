@@ -106,6 +106,9 @@ static const gchar *description =
 	"  open LEVEL [--force] | new [NAME] [--force]\n"
 	"  view [top|front|right|bottom|back|left|persp|all] | view focus NAME | view set key=value...\n"
 	"  screenshot FILE.png [--window]\n"
+	"  tiles NODE [ACTION key=value...] tilemap grid; ACTION: paint rect fill pick configure\n"
+	"  timeline [list|get|add|rm|key|play|stop|seek|state] ...  keyframe timelines\n"
+	"  thumbnail PATH                   generate/print an asset's cached thumbnail\n"
 	"  logs [--tail N] [-w]             editor log; -w follows\n"
 	"  events [TYPE...]                 stream events (changed, selection, level, saved, log, ...)\n"
 	"  call METHOD [key=value...|JSON]  any IPC method\n"
@@ -125,6 +128,9 @@ static const gchar *description =
 	"  lrgeditorctl run view.frame-all\n"
 	"  lrgeditorctl -s mygame screenshot /tmp/view.png --window\n"
 	"  lrgeditorctl logs -w\n"
+	"  lrgeditorctl tiles Ground paint tile=3 points=[[0,0],[7,0]] brush=2\n"
+	"  lrgeditorctl timeline key Intro Props/Crate time=1 channel=location.y value=2 easing=ease-out-bounce\n"
+	"  lrgeditorctl thumbnail assets/crate.png\n"
 	"  claude mcp add libregnum -- lrgeditorctl mcp\n";
 
 static const gchar *license_text =
@@ -1260,6 +1266,159 @@ simple_method (const gchar  *method,
 	return TRUE;
 }
 
+/*
+ * tiles NODE [paint|rect|fill|pick|configure key=value...]
+ * Without an action, prints the grid (layer name and rows of tile ids).
+ */
+static gboolean
+cmd_tiles (gchar  **args,
+           GError **error)
+{
+	static const gchar *actions[][2] = {
+		{ "paint", "tilemap.paint" }, { "rect", "tilemap.rect" }, { "fill", "tilemap.fill" },
+		{ "pick", "tilemap.pick" }, { "configure", "tilemap.configure" }
+	};
+	g_autoptr(JsonObject) p = NULL;
+	g_autoptr(JsonNode)   r = NULL;
+	const gchar          *method = "tilemap.get";
+	gsize                 i;
+
+	if (args[0] == NULL)
+		return usage_error (error, "tiles NODE [paint|rect|fill|pick|configure key=value...]");
+	p = node_param (args[0]);
+	if (args[1] != NULL)
+	{
+		for (i = 0; i < G_N_ELEMENTS (actions); i++)
+			if (g_strcmp0 (args[1], actions[i][0]) == 0)
+				method = actions[i][1];
+		if (g_strcmp0 (method, "tilemap.get") == 0)
+			return usage_error (error, "tiles NODE [paint|rect|fill|pick|configure key=value...]");
+		if (!lrg_ctl_parse_assignments (args + 2, p, error))
+			return FALSE;
+	}
+	r = call (method, p, error);
+	if (r == NULL)
+		return FALSE;
+	if (output != LRG_CTL_FORMAT_DEFAULT || !JSON_NODE_HOLDS_OBJECT (r))
+	{
+		lrg_ctl_print (r, output);
+		return TRUE;
+	}
+
+	/* Default: a readable grid, or the one-line result of an action. */
+	if (g_strcmp0 (method, "tilemap.get") == 0 && json_object_has_member (json_node_get_object (r), "layers"))
+	{
+		JsonArray *layers = json_object_get_array_member (json_node_get_object (r), "layers");
+		guint      l, y, x;
+
+		if (json_array_get_length (layers) == 0)
+			printf ("(no grid yet)\n");
+		for (l = 0; l < json_array_get_length (layers); l++)
+		{
+			JsonObject *lo = json_array_get_object_element (layers, l);
+			JsonArray  *rows = json_object_has_member (lo, "rows") ? json_object_get_array_member (lo, "rows") : NULL;
+
+			printf ("%s (%" G_GINT64_FORMAT " tiles)%s\n", str_member (lo, "name"), json_object_get_int_member (lo, "count"),
+			        json_object_get_boolean_member (lo, "visible") ? "" : " hidden");
+			for (y = 0; rows != NULL && y < json_array_get_length (rows); y++)
+			{
+				JsonArray *row = json_array_get_array_element (rows, y);
+
+				printf (" ");
+				for (x = 0; x < json_array_get_length (row); x++)
+					printf (" %3" G_GINT64_FORMAT, json_array_get_int_element (row, x));
+				printf ("\n");
+			}
+		}
+		return TRUE;
+	}
+	lrg_ctl_print (r, LRG_CTL_FORMAT_YAML);
+	return TRUE;
+}
+
+/*
+ * timeline [list] | get NAME | add NAME [key=value...] | rm NAME |
+ * key NAME NODE key=value... | play [NAME] | stop | seek TIME [NAME] | state
+ */
+static gboolean
+cmd_timeline (gchar  **args,
+              GError **error)
+{
+	const gchar          *what = (args[0] != NULL) ? args[0] : "list";
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	const gchar          *method = NULL;
+
+	if (g_strcmp0 (what, "list") == 0)
+		method = "timeline.list";
+	else if (g_strcmp0 (what, "state") == 0)
+		method = "timeline.state";
+	else if (g_strcmp0 (what, "stop") == 0)
+		method = "timeline.stop";
+	else if ((g_strcmp0 (what, "get") == 0 || g_strcmp0 (what, "rm") == 0 || g_strcmp0 (what, "add") == 0) &&
+	         args[1] != NULL)
+	{
+		method = (what[0] == 'g') ? "timeline.get" : (what[0] == 'r') ? "timeline.remove" : "timeline.add";
+		json_object_set_string_member (p, "name", args[1]);
+		if (!lrg_ctl_parse_assignments (args + 2, p, error))
+			return FALSE;
+	}
+	else if (g_strcmp0 (what, "key") == 0 && args[1] != NULL && args[2] != NULL)
+	{
+		method = "timeline.key";
+		json_object_set_string_member (p, "name", args[1]);
+		json_object_set_string_member (p, "node", args[2]);
+		if (!lrg_ctl_parse_assignments (args + 3, p, error))
+			return FALSE;
+	}
+	else if (g_strcmp0 (what, "play") == 0)
+	{
+		method = "timeline.play";
+		if (args[1] != NULL)
+			json_object_set_string_member (p, "name", args[1]);
+	}
+	else if (g_strcmp0 (what, "seek") == 0 && args[1] != NULL)
+	{
+		method = "timeline.seek";
+		json_object_set_double_member (p, "time", g_ascii_strtod (args[1], NULL));
+		if (args[2] != NULL)
+			json_object_set_string_member (p, "name", args[2]);
+	}
+	if (method == NULL)
+		return usage_error (error, "timeline [list|get NAME|add NAME|rm NAME|key NAME NODE key=value...|"
+		                           "play [NAME]|stop|seek TIME [NAME]|state]");
+
+	r = call (method, p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/* thumbnail PATH: generates (if needed) and prints the cached PNG path. */
+static gboolean
+cmd_thumbnail (gchar  **args,
+               GError **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	g_autofree gchar     *abs = NULL;
+
+	if (args[0] == NULL)
+		return usage_error (error, "thumbnail PATH");
+	abs = g_canonicalize_filename (args[0], NULL);
+	json_object_set_string_member (p, "path", g_file_test (abs, G_FILE_TEST_EXISTS) ? abs : args[0]);
+	json_object_set_boolean_member (p, "wait", TRUE);
+	r = call ("asset.thumbnail", p, error);
+	if (r == NULL)
+		return FALSE;
+	if (output == LRG_CTL_FORMAT_DEFAULT)
+		printf ("%s\n", str_member (json_node_get_object (r), "thumbnail"));
+	else
+		lrg_ctl_print (r, output);
+	return TRUE;
+}
+
 #ifdef LRG_EDITORCTL_HAVE_MCP
 static gboolean
 cmd_mcp (GError **error)
@@ -1299,7 +1458,7 @@ static const gchar *completion_script =
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -1341,6 +1500,12 @@ dispatch (gchar  **argv,
 
 	if (g_strcmp0 (verb, "sessions") == 0)
 		return cmd_sessions (error);
+	if (g_strcmp0 (verb, "tiles") == 0)
+		return cmd_tiles (rest, error);
+	if (g_strcmp0 (verb, "timeline") == 0)
+		return cmd_timeline (rest, error);
+	if (g_strcmp0 (verb, "thumbnail") == 0)
+		return cmd_thumbnail (rest, error);
 	if (g_strcmp0 (verb, "get") == 0)
 		return cmd_get (rest, error);
 	if (g_strcmp0 (verb, "describe") == 0)

@@ -102,27 +102,107 @@ int main ()
 - [[file:engine.org][LrgEngine]]
 - [[file:data-loader.org][LrgDataLoader]]
 
-** Built-in scene and definition catalog
+** Built-in type catalog
+:PROPERTIES:
+:CUSTOM_ID: built-in-type-catalog
+:END:
+Engine startup calls =lrg_registry_register_builtin()= before connecting its data loader, so YAML definitions (=type: rigid-body=), the asset manager, the scripting registries and MCP spawning (=lrg_ecs_spawn_object=) resolve the engine's own types without any application registration. The catalog is a static, data-driven table (=builtin_catalog= in =src/core/lrg-registry.c=) of name and =get_type= function pairs; installing it only creates mappings, it instantiates nothing.
 
-Engine startup registers this catalog before connecting its data loader:
+*** Naming
+:PROPERTIES:
+:CUSTOM_ID: built-in-naming
+:END:
+Names are kebab-case: the type's C prefix without =lrg_= (=lrg_point_light2d= becomes =point-light2d=, =lrg_item_def= becomes =item-def=). ECS components drop the =-component= suffix (=transform=, not =transform-component=). These are the same names applications already used when they registered engine types by hand.
 
-| YAML type | GObject type |
-|-----------+--------------|
-| game-object | LrgGameObject |
-| world | LrgWorld |
-| transform | LrgTransformComponent |
-| sprite | LrgSpriteComponent |
-| collider | LrgColliderComponent |
-| animator | LrgAnimatorComponent |
-| item-def | LrgItemDef |
-| quest-def | LrgQuestDef |
+*** Catalog
+:PROPERTIES:
+:CUSTOM_ID: built-in-catalog
+:END:
+| Group                  | YAML type                   | GObject type                  |
+|------------------------+-----------------------------+-------------------------------|
+| ECS                    | game-object                 | LrgGameObject                 |
+|                        | world                       | LrgWorld                      |
+|                        | transform                   | LrgTransformComponent         |
+|                        | sprite                      | LrgSpriteComponent            |
+|                        | collider                    | LrgColliderComponent          |
+|                        | animator                    | LrgAnimatorComponent          |
+| Scenes and levels      | scene                       | LrgScene                      |
+|                        | scene-entity                | LrgSceneEntity                |
+|                        | scene-object                | LrgSceneObject                |
+|                        | level3d                     | LrgLevel3D                    |
+| Physics                | physics-world               | LrgPhysicsWorld               |
+|                        | rigid-body                  | LrgRigidBody                  |
+|                        | character-controller        | LrgCharacterController        |
+|                        | wall-set                    | LrgWallSet                    |
+|                        | collision-mesh              | LrgCollisionMesh              |
+|                        | rope                        | LrgRope                       |
+| 2D triggers            | trigger-rect                | LrgTriggerRect                |
+|                        | trigger-circle              | LrgTriggerCircle              |
+|                        | trigger-polygon             | LrgTriggerPolygon             |
+|                        | trigger-manager             | LrgTriggerManager             |
+| Lights                 | point-light2d               | LrgPointLight2D               |
+|                        | spot-light2d                | LrgSpotLight2D                |
+|                        | directional-light2d         | LrgDirectionalLight2D         |
+|                        | light-set                   | LrgLightSet                   |
+| Particles              | particle-system             | LrgParticleSystem             |
+|                        | particle-emitter            | LrgParticleEmitter            |
+|                        | particle-force-gravity      | LrgParticleForceGravity       |
+|                        | particle-force-wind         | LrgParticleForceWind          |
+|                        | particle-force-attractor    | LrgParticleForceAttractor     |
+|                        | particle-force-turbulence   | LrgParticleForceTurbulence    |
+| Weather                | weather                     | LrgWeather                    |
+|                        | rain                        | LrgRain                       |
+|                        | snow                        | LrgSnow                       |
+|                        | fog                         | LrgFog                        |
+|                        | lightning                   | LrgLightning                  |
+|                        | day-night-cycle             | LrgDayNightCycle              |
+| Shapes                 | rectangle2d                 | LrgRectangle2D                |
+|                        | circle2d                    | LrgCircle2D                   |
+|                        | text2d                      | LrgText2D                     |
+|                        | cube3d                      | LrgCube3D                     |
+|                        | sphere3d                    | LrgSphere3D                   |
+|                        | plane3d                     | LrgPlane3D                    |
+|                        | cylinder3d                  | LrgCylinder3D                 |
+|                        | cone3d                      | LrgCone3D                     |
+|                        | torus3d                     | LrgTorus3D                    |
+|                        | icosphere3d                 | LrgIcoSphere3D                |
+|                        | circle3d                    | LrgCircle3D                   |
+|                        | line3d                      | LrgLine3D                     |
+|                        | grid3d                      | LrgGrid3D                     |
+| Gameplay definitions   | item-def                    | LrgItemDef                    |
+|                        | inventory                   | LrgInventory                  |
+|                        | equipment                   | LrgEquipment                  |
+|                        | quest-def                   | LrgQuestDef                   |
+|                        | dialog-tree                 | LrgDialogTree                 |
+|                        | dialog-node                 | LrgDialogNode                 |
+| AI (behavior trees)    | behavior-tree               | LrgBehaviorTree               |
+|                        | blackboard                  | LrgBlackboard                 |
+|                        | bt-sequence                 | LrgBTSequence                 |
+|                        | bt-selector                 | LrgBTSelector                 |
+|                        | bt-parallel                 | LrgBTParallel                 |
+|                        | bt-inverter                 | LrgBTInverter                 |
+|                        | bt-repeater                 | LrgBTRepeater                 |
+|                        | bt-succeeder                | LrgBTSucceeder                |
+|                        | bt-failer                   | LrgBTFailer                   |
+|                        | bt-wait                     | LrgBTWait                     |
 
-These types can be constructed headlessly. Register application types explicitly;
-abstract base classes, device resources, and the remaining engine types are not
-part of this catalog. Registration creates type mappings, not object instances.
-A standalone registry starts empty; call =lrg_registry_register_builtin()= to
-populate it. Repeated calls fill missing entries without replacing application
-or mod overrides. =clear()= removes both built-in and custom registrations.
+Every entry is a concrete GObject type that can be constructed headlessly from a bare =type: NAME= document; =tests/test-registry.c= checks this for the whole catalog. Only =game-object= (and application subclasses) can be spawned with =lrg_ecs_spawn_object=; the other names serve YAML definitions, scripting and the editor's component list (components only).
+
+*** What is left out
+:PROPERTIES:
+:CUSTOM_ID: built-in-exclusions
+:END:
+- Abstract bases (=LrgComponent=, =LrgShape=, =LrgTrigger2D=, =LrgLight2D=, =LrgBTNode=...).
+- Device and GPU resources (windows, textures, render targets, audio devices, shadow maps, light probes) and singletons (engine, managers with =get_default()=).
+- =LrgScriptComponent=: scripts attach through script bindings; a bare script component would only clutter the editor's component list.
+- Boxed value types (=LrgSpawnPoint3D=, =LrgTrigger3D=, =LrgPortal=...), which the registry cannot instantiate.
+- Module-specific catalogs registered by their own loaders, such as the reel clip types (=solid-clip=, =text-clip=...) that =LrgReelLoader= installs.
+
+*** Overrides and idempotence
+:PROPERTIES:
+:CUSTOM_ID: built-in-overrides
+:END:
+A standalone registry starts empty; call =lrg_registry_register_builtin()= to populate it. The call only fills names that are not registered yet, so it never replaces an application or mod mapping (an application registering its own =game-object= subclass under =game-object= keeps it), and calling it again adds nothing. =clear()= removes both built-in and custom registrations; a later =register_builtin()= restores the engine mappings. Adding a type to the catalog: append a row to =builtin_catalog= (it must pass the headless construction test) and to the table above.
 
 For example, after engine startup its data loader can load:
 

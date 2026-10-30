@@ -10,6 +10,7 @@
 #include "lrg-point-light2d.h"
 #include "../lrg-log.h"
 #include <math.h>
+#include <graylib.h>
 #include <stdlib.h>
 
 struct _LrgPointLight2D
@@ -91,38 +92,67 @@ lrg_point_light2d_render (LrgLight2D *light,
                           guint       height)
 {
     LrgPointLight2D *self = LRG_POINT_LIGHT2D (light);
+    g_autoptr(GrlVector2) center = NULL;
+    g_autoptr(GrlColor) color = NULL;
+    LrgLightFalloff falloff;
     gfloat x, y;
     gfloat intensity;
+    gfloat inner;
+    gfloat span;
     guint8 r, g, b;
+    guint layers;
+    guint8 alpha;
+    guint i;
 
     (void)target_id;
     (void)width;
     (void)height;
 
-    if (!lrg_light2d_get_enabled (light))
+    if (!lrg_light2d_get_enabled (light) || self->radius <= 0.0f)
         return;
 
     lrg_light2d_get_position (light, &x, &y);
     intensity = lrg_light2d_get_intensity (light) * self->current_flicker;
     lrg_light2d_get_color (light, &r, &g, &b);
+    falloff = lrg_light2d_get_falloff (light);
+    if (intensity <= 0.0f)
+        return;
 
     /*
-     * Rendering would use shader with uniforms:
-     * - light_pos: (x, y)
-     * - light_color: (r, g, b)
-     * - light_intensity: intensity
-     * - light_radius: self->radius
-     * - inner_radius: self->inner_radius
-     * - falloff: lrg_light2d_get_falloff (light)
+     * Drawn in world units inside the manager's light pass, which has
+     * additive blending (src * alpha + dst) on.  The falloff is built
+     * from stacked discs: every disc adds 1/layers of the light, so a
+     * point at distance d receives the share of discs reaching past d.
+     * Disc radii are spaced so that share follows the falloff curve:
+     *   linear     r_j = inner + span * s_j
+     *   quadratic  r_j = inner + span * (1 - sqrt (1 - s_j))
+     * with s_j = (j + 1) / layers.  Everything inside inner_radius gets
+     * every disc, i.e. full brightness.
      */
+    inner = CLAMP (self->inner_radius, 0.0f, self->radius);
+    span = self->radius - inner;
+    layers = (falloff == LRG_LIGHT_FALLOFF_NONE || span <= 0.0f) ? 1u : 16u;
+    alpha = (guint8) MIN (255.0f, 255.0f * intensity / (gfloat) layers);
 
-    (void) self;
-    (void) x;
-    (void) y;
-    (void) intensity;
-    (void) r;
-    (void) g;
-    (void) b;
+    center = grl_vector2_new (x, y);
+    color = grl_color_new (r, g, b, alpha);
+
+    for (i = 0; i < layers; i++)
+    {
+        gfloat s;
+        gfloat disc;
+
+        s = (gfloat) (i + 1) / (gfloat) layers;
+        if (layers == 1)
+            disc = self->radius;
+        else if (falloff == LRG_LIGHT_FALLOFF_QUADRATIC)
+            disc = inner + span * (1.0f - sqrtf (1.0f - s));
+        else
+            disc = inner + span * s;
+
+        if (disc > 0.0f)
+            grl_draw_circle_v (center, disc, color);
+    }
 }
 
 static void

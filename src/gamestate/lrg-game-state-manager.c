@@ -405,12 +405,22 @@ lrg_game_state_manager_handle_input (LrgGameStateManager *self,
 
     g_return_val_if_fail (LRG_IS_GAME_STATE_MANAGER (self), FALSE);
 
-    /* Try states from top to bottom */
+    /*
+     * Try states from top to bottom.  A state's input handler may pop or
+     * replace states (a confirmation dialog popping itself, say), so the
+     * state being asked is kept alive for the duration of the call and
+     * the index is clamped to the possibly shorter stack afterwards.
+     */
     for (i = (gint)self->states->len - 1; i >= 0; i--)
     {
-        LrgGameState *state = g_ptr_array_index (self->states, i);
+        g_autoptr(LrgGameState) state = NULL;
+
+        state = g_object_ref (g_ptr_array_index (self->states, i));
         if (lrg_game_state_handle_input (state, event))
             return TRUE;
+
+        if (i > (gint)self->states->len)
+            i = (gint)self->states->len;
     }
 
     return FALSE;

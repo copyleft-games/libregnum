@@ -119,6 +119,9 @@ location: [2, 2, -3]
 | =game start\vert{}stop=                    | Run the game process                                        |
 | =view top\vert{}front\vert{}right\vert{}bottom\vert{}back\vert{}left\vert{}persp\vert{}all=, =view focus PATH=, =view set k=v...= | Camera |
 | =screenshot FILE.png [--window]=           | Viewport or window PNG (windowed editors)                   |
+| =tiles NODE=, =tiles NODE paint\vert{}rect\vert{}fill\vert{}pick\vert{}configure k=v...= | Print a tilemap grid, or paint it (=tilemap.*=; e.g. =paint tile=3 'points=[[0,0],[7,0]]' brush=2=) |
+| =timeline [list\vert{}get NAME\vert{}add NAME\vert{}rm NAME\vert{}key NAME NODE k=v...\vert{}play [NAME]\vert{}stop\vert{}seek TIME [NAME]\vert{}state]= | Keyframe timelines (=timeline.*=) |
+| =thumbnail PATH=                           | Generate (if needed) and print an asset's cached thumbnail PNG |
 | =notify MESSAGE [--level 0-3]=             | Toast in the editor                                         |
 | =call METHOD [k=v...\vert{}JSON]=          | Any IPC method                                              |
 | =quit [--force]=                           |                                                             |
@@ -139,7 +142,7 @@ claude mcp add libregnum -- lrgeditorctl mcp
 claude mcp add libregnum-keep -- lrgeditor --mcp /home/me/games/keep
 #+end_src
 
-Tools: =editor_info=, =list_sessions=, =get_tree=, =get_node=, =find_nodes=, =create_node= (with transform), =update_node=, =delete_node=, =duplicate_node=, =move_node=, =add_component=, =set_component=, =remove_component=, =add_script=, =remove_script=, =get_selection=, =set_selection=, =undo=, =redo=, =get_history=, =save_level=, =open_level=, =new_level=, =get_level_yaml=, =validate_level=, =list_actions=, =run_action=, =play=, =run_game=, =get_view=, =set_view=, =focus_view=, =screenshot= (returns a PNG image), =get_log=, =list_assets=, =project_info=, =ui_state=, =notify=, =call_method=. Tools carry read-only/destructive hints; the server's instructions tell the model how nodes are addressed and the units used. =screenshot= is a deferred tool: inside the editor its reply is sent after the next frame is drawn, so it cannot stall the render loop.
+Tools: =editor_info=, =list_sessions=, =get_tree=, =get_node=, =find_nodes=, =create_node= (with transform), =update_node=, =delete_node=, =duplicate_node=, =move_node=, =add_component=, =set_component=, =remove_component=, =add_script=, =remove_script=, =get_selection=, =set_selection=, =undo=, =redo=, =get_history=, =save_level=, =open_level=, =new_level=, =get_level_yaml=, =validate_level=, =list_actions=, =run_action=, =play=, =run_game=, =get_view=, =set_view=, =focus_view=, =screenshot= (returns a PNG image), =get_log=, =list_assets=, =project_info=, =ui_state=, =notify=, =get_tilemap=, =configure_tilemap=, =paint_tiles=, =paint_tile_rect=, =fill_tiles=, =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=, =get_thumbnail=, =call_method= (see [[file:editor-tools.org][Editor Tools]]). Tools carry read-only/destructive hints; the server's instructions tell the model how nodes are addressed and the units used. =screenshot= is a deferred tool: inside the editor its reply is sent after the next frame is drawn, so it cannot stall the render loop.
 
 Adding a tool: append a row to the table in =src/editorctl/lrgeditorctl-mcp.c= (name, IPC method, kind, hints, description, JSON-schema properties); both servers pick it up.
 

@@ -61,6 +61,8 @@ TEST_SOURCES := \
 	test-random-stream.c \
 	test-cpu-affinity.c \
 	test-timer-manager.c \
+	test-replay.c \
+	test-rollback.c \
 	test-audio-mixer.c \
 	test-nav-mesh.c \
 	test-nav-poly-mesh.c \
@@ -121,10 +123,12 @@ TEST_SOURCES := \
 	test-midi-synth.c \
 	test-audio-effects.c \
 	test-audio-bus.c \
+	test-audio-robustness.c \
 	test-midi-output.c \
 	test-inventory.c \
 	test-i18n.c \
 	test-pathfinding.c \
+	test-procgen.c \
 	test-ai.c \
 	test-physics.c \
 	test-debug.c \
@@ -176,6 +180,7 @@ TEST_SOURCES := \
 	test-weather-render.c \
 	test-sky-weather.c \
 	test-lighting.c \
+	test-lighting-render.c \
 	test-wave-data.c \
 	test-procedural-audio.c \
 	test-asset-pack.c \
@@ -212,6 +217,9 @@ TEST_SOURCES := \
 	test-editor-tools.c \
 	test-editor-server.c \
 	test-editor-app.c \
+	test-editor-tilemap.c \
+	test-editor-timeline.c \
+	test-thumbnail-cache.c \
 	test-gui.c \
 	test-gif-recorder.c \
 	test-text-baker.c \
@@ -411,6 +419,9 @@ $(GENERATED_HEADERS):
 $(TEST_BUILDDIR)/test-%: test-%.c $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
+
+# The replay tests share the deterministic scenario
+$(TEST_BUILDDIR)/test-replay $(TEST_BUILDDIR)/test-rollback: replay-scenario.h
 
 # Build lrgldr by recursing into the root (it links the shared library).
 .PHONY: $(LRGLDR_BIN)

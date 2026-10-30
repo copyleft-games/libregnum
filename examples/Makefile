@@ -132,12 +132,12 @@ endif
 
 # Base examples (always built)
 EXAMPLES := game-omnomagon game-taco-racing game-chocolate-chip-clicker game-tuktuk-derby render-yaml-santa render-yaml-taco-truck
-EXAMPLES += game-settings-demo game-micro-tycoon game-effects-gallery game-dungeon-torch game-meta-arcade game-dlc-store
+EXAMPLES += game-settings-demo game-micro-tycoon game-effects-gallery game-dungeon-torch game-procgen-dungeon game-meta-arcade game-dlc-store
 EXAMPLES += game-creature-collector game-vr-demo
 EXAMPLES += game-deckbuilder-combat game-deckbuilder-poker
 EXAMPLES += game-platformer-demo game-fps-demo
 EXAMPLES += game-third-person-demo game-top-down-demo game-twin-stick-demo game-shmup-demo game-racing-3d-demo
-EXAMPLES += mmo-simulation
+EXAMPLES += mmo-simulation replay-demo
 ifneq ($(TARGET_PLATFORM),windows)
 EXAMPLES += mmo-server mmo-zone-worker
 endif
@@ -260,6 +260,10 @@ $(EXAMPLES_BUILDDIR)/game-effects-gallery$(EXE_EXT): game-effects-gallery.c | $(
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/game-dungeon-torch$(EXE_EXT): game-dungeon-torch.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/game-procgen-dungeon$(EXE_EXT): game-procgen-dungeon.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
@@ -445,6 +449,11 @@ clean:
 
 # Headless MMO integration example; rebuild when its public API or archive changes.
 $(EXAMPLES_BUILDDIR)/mmo-simulation$(EXE_EXT): mmo-simulation.c $(LIBREGNUM_STATIC) ../src/mmo/lrg-mmo-realm.h ../src/mmo/lrg-mmo-replicator.h ../src/mmo/lrg-mmo-store.h ../src/mmo/lrg-mmo-group.h | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+# Headless determinism / replay / rollback walkthrough (src/replay/).
+$(EXAMPLES_BUILDDIR)/replay-demo$(EXE_EXT): replay-demo.c $(LIBREGNUM_STATIC) ../src/replay/lrg-simulation.h ../src/replay/lrg-replay.h ../src/replay/lrg-rollback-session.h | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

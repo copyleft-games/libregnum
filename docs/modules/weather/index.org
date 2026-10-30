@@ -125,7 +125,31 @@ lrg_rain_set_splash_height (rain, 600.0f);         /* screen Y or world ground h
 
 - *Screen*: drops fall through the area; a dead drop respawns at the top with the intensity as its per-update chance (the original 2D behaviour); =render()= draws each as a line slanted by the wind ending at the drop, splashes as two spreading ticks.
 - *World*: every drop keeps a world position and is folded back into the half-open camera box whenever it leaves, so moving or teleporting the camera never empties the volume and nearby drops show parallax. Velocity = (wind_x, -speed, wind_y). The first =drop_count × intensity= drops are drawn as camera-facing ribbons from tail to head along the velocity, head at the rain colour and tail transparent. With splashes on and the box reaching above the ground plane, a drop crossing it leaves a fading ring (6 segments, 0.3 s, at most 128 live) and restarts just under the top of the box; drops below the plane are never drawn. A drop leaving through the bottom restarts at a fresh X/Z so columns do not repeat.
-- Inspection (headless): =get_visible_count()=, =get_drop (i, &pos)= (exactly where it is drawn), =get_splash_count()=.
+- Inspection (headless): =get_visible_count()=, =get_drop (i, &pos)= (exactly where it is drawn), =get_splash_count()=, =get_splash_total()= (every splash so far, including ones the 128-ring pool had no room to show).
+- Determinism: all drop placement and respawning draws from the rain's own =GRand=. =lrg_rain_set_seed()= reseeds it; set it before =activate()= and the same settings and update steps give the same drops and splashes (tests, replays).
+
+**** Splash particles
+:PROPERTIES:
+:CUSTOM_ID: rain-splash-particles
+:END:
+On top of the built-in rings/ticks, each splash can burst droplets into an =LrgParticleSystem= from the particles module. The rain only emits: it calls =lrg_particle_system_emit_at()= at the impact point (screen pixels, or world units on the ground plane) with =splash-particle-count= particles (default 6, 0 disables), so the system's first emitter decides speed, spread, lifetime and colour. Update and draw the system yourself next to the rain; one system can collect splashes from several sources. It is independent of the ring pool, so a full pool does not suppress the spray.
+
+#+begin_src C
+/* A system tuned for the rain's current space: burst-only cone emitter
+ * throwing short-lived droplets up (Y-down in screen space, Y-up in
+ * world space), in the rain colour fading out, with gravity. */
+g_autoptr(LrgParticleSystem) spray = lrg_rain_new_splash_particle_system (rain, 2048);
+
+lrg_rain_set_splash_particles (rain, spray);
+lrg_rain_set_splash_particle_count (rain, 4);
+
+/* per frame */
+lrg_weather_effect_update (LRG_WEATHER_EFFECT (rain), dt);
+lrg_particle_system_update (spray, dt);
+/* ... draw: rain, then lrg_particle_system_draw (spray) ... */
+#+end_src
+
+Set the space before calling =lrg_rain_new_splash_particle_system()=: the tuning (pixels vs metres, which way is up) is read from it. Any other particle system works too; =lrg_rain_set_splash_particles (rain, NULL)= stops the spray.
 
 *** Snow
 :PROPERTIES:

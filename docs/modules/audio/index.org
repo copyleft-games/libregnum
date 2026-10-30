@@ -161,9 +161,28 @@ lrg_audio_manager_play_music(audio, track);
 The expensive audio work does not run on the game thread:
 
 - *Synthesis.*  =LrgMidiSynth=, =LrgSoundBed= and =LrgProceduralAudio= render on the audio device's thread, pulled in small blocks through graylib's stream callback.  Game-thread calls become commands applied in order at the start of the next block; getters read back at once (see [[file:midi-synth.org::#the-audio-thread][LrgMidiSynth's audio thread]], [[file:sound-bed.org::#threads][the sound bed's]], and [[file:procedural-audio.org::#audio-thread][LrgProceduralAudio's]], which asks subclasses to hand parameter changes over with =lrg_procedural_audio_queue_command()=).  Their =update()= functions only free what the audio thread let go of.
-- *Music decoding.*  =LrgMusicTrack= switches its =GrlMusic= to graylib's background streaming: one graylib thread (=grl-music=) refills every playing background music about every 5 ms with raylib's =UpdateMusicStream()=, so Vorbis / MP3 / FLAC decoding never costs a frame.  =lrg_music_track_update()= keeps fades and loop points; control calls take the streaming thread's lock (they may wait for one decode of that music), the position and playing state are what that thread last saw (at most ~5 ms old).  The thread sleeps while no background music plays and stops when the audio device closes.
+- *Music decoding.*  =LrgMusicTrack= switches its =GrlMusic= to graylib's background streaming: graylib's audio thread (=grl-audio=) refills every playing background music about every 5 ms with raylib's =UpdateMusicStream()=, so Vorbis / MP3 / FLAC decoding never costs a frame.  =lrg_music_track_update()= keeps fades and loop points; control calls are queued for that thread (they never wait on a decode), the position and playing state are what it last published (at most ~5 ms old), or what a queued seek or stop will leave.
+- *raylib's audio lock.*  raylib has one audio lock, held by its mixer for every device period (with the synthesizers' stream callbacks inside it) and by every music decode.  graylib queues every game-thread call on a =GrlSound=, a background =GrlMusic= and a callback =GrlAudioStream= (play, stop, pause, resume, volume, pitch, pan, unload) for its audio thread, which takes the lock instead, and answers =is_playing()= from a mirror; so the sound bank, positional voices, foley, music tracks and the synthesizers' controls never wait on it (worst game-thread call in =lrg-bench -s sfx-calls=: 0.7-4.9 ms before, tens of µs after).  What still takes the lock on the caller's thread: setup calls (loading a sound or music, making an alias, adding processors, setting a stream callback) and the pushed-stream fallback (no free callback slot).  Details: graylib's [[file:../../../deps/graylib/docs/api/audio.org::#audio-thread][audio thread]].
+- The thread sleeps while nothing plays or is queued, starts when the device opens and is joined (after applying everything queued) before it closes.
 
-Frame cost before and after: [[file:../../performance.org::#audio-thread-pass][the performance page]].
+Frame cost before and after: [[file:../../performance.org::#audio-thread-pass][the performance page]], [[file:../../performance.org::#audio-lock-pass][the audio lock pass]].
+
+** The audio backend
+:PROPERTIES:
+:CUSTOM_ID: audio-backend
+:END:
+The audio device opens through ALSA first (PipeWire through pipewire-alsa, or PulseAudio through its ALSA plugin) and through PulseAudio only if ALSA opens nothing.  raylib's bundled miniaudio (0.11.24) tried PulseAudio first, and its PulseAudio backend crashes intermittently inside =InitAudioDevice()=: libpulse may answer the default-sink lookup with an error (the PipeWire pulse server does under load, when many clients open streams), and miniaudio's sink-info callback dereferences the =NULL= info it gets then.  This miniaudio has no native PipeWire backend.  graylib chooses the order without touching raylib (graylib's [[file:../../../deps/graylib/docs/api/audio.org::#backends][backends]]).
+
+| Knob | Values | Strength |
+|------+--------+----------|
+| =GRL_AUDIO_BACKEND= (environment) | =auto=, =alsa=, =pipewire= (= ALSA), =pulse= / =pulseaudio=, =none= | wins over everything |
+| =LRG_AUDIO_BACKEND= (environment) | the same | read by =lrg_engine_startup()= and by =LrgAudioSettings= when applied |
+| =LrgAudioSettings:audio-backend= | the same, default =auto= | applied with the settings, effective the next time the device opens |
+| =grl_audio_device_set_preferred_backend()= | =GrlAudioBackend= | what the two above call |
+
+*No device is not fatal.*  If no backend opens a device (or the backend is =none=), graylib logs one message naming the backend and the variable to try, =grl_audio_device_is_ready()= stays =FALSE=, and the game runs silently: sounds and music fail to load or stay inert, =lrg_midi_synth_start_stream()= and =lrg_sound_bed_start_stream()= return =FALSE= with =LRG_MIDI_SYNTH_ERROR_NO_DEVICE= (the synthesizers still render offline), the audio manager's volumes and mute still work.
+
+Tests: =tests/test-audio-robustness.c= (the setting, its round trip and the environment override, a game without a device; with an audio server, the device opened and closed 8 times with a synth streaming in between, and sound calls timed beside a streaming synth), graylib's =test-audio-backend= (16 parallel open/close loops were the reproducer: all crashed through PulseAudio, none through ALSA).
 
 ** API Reference
 :PROPERTIES:

@@ -245,7 +245,7 @@ lrg_mcp_screenshot_resources_init (LrgMcpScreenshotResources *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_screenshot_resources_new:
  *
  * Creates a new screenshot resources provider.

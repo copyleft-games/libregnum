@@ -148,6 +148,18 @@ on_dir_changed (GFileMonitor      *monitor,
 
 	self->assets_dirty = TRUE;
 	g_ptr_array_set_size (self->quick_files, 0);
+
+	/* Live reload: stale thumbnails and GPU copies of the file go. */
+	if (event == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || event == G_FILE_MONITOR_EVENT_CHANGED ||
+	    event == G_FILE_MONITOR_EVENT_DELETED || event == G_FILE_MONITOR_EVENT_CREATED ||
+	    event == G_FILE_MONITOR_EVENT_RENAMED || event == G_FILE_MONITOR_EVENT_MOVED_OUT ||
+	    event == G_FILE_MONITOR_EVENT_MOVED_IN)
+	{
+		g_autofree gchar *path = (file != NULL) ? g_file_get_path (file) : NULL;
+
+		if (path != NULL)
+			editor_thumbnails_file_changed (self, path);
+	}
 }
 
 void
@@ -558,9 +570,25 @@ editor_panel_assets (LrgEditorApp *self)
 				const gchar    *glyph = editor_asset_glyph (e->type, e->is_dir);
 				LrgGuiRect      label = { r.x + 4.0f, r.y + r.h - style->font_size - 6.0f, r.w - 8.0f,
 				                          style->font_size + 2.0f };
+				gboolean        pending = FALSE;
+				GObject        *thumb = e->is_dir ? NULL : editor_thumbnail_texture (self, e->path, &pending);
 
-				lrg_gui_draw_list_text (dl, r.x + r.w * 0.5f - style->font_size, r.y + r.h * 0.25f, glyph, -1,
-				                        style->font_size * 2.0f, style->colors[type_color (e->type, e->is_dir)], FALSE);
+				if (thumb != NULL)
+				{
+					/* Fit the thumbnail above the label, aspect kept. */
+					gfloat     box = MIN (r.w - 8.0f, r.h - style->font_size - 12.0f);
+					gfloat     tw = (gfloat) grl_texture_get_width (GRL_TEXTURE (thumb));
+					gfloat     th = (gfloat) grl_texture_get_height (GRL_TEXTURE (thumb));
+					gfloat     k = box / MAX (MAX (tw, th), 1.0f);
+					LrgGuiRect img = { r.x + (r.w - tw * k) * 0.5f, r.y + 4.0f + (box - th * k) * 0.5f, tw * k, th * k };
+
+					lrg_gui_draw_list_image (dl, &img, thumb, 0xffffffffu);
+				}
+				else
+					lrg_gui_draw_list_text (dl, r.x + r.w * 0.5f - style->font_size, r.y + r.h * 0.25f, glyph, -1,
+					                        style->font_size * 2.0f,
+					                        style->colors[pending ? LRG_GUI_COL_TEXT_DISABLED : type_color (e->type, e->is_dir)],
+					                        FALSE);
 				lrg_gui_draw_list_push_clip (dl, &label);
 				lrg_gui_draw_list_text (dl, label.x, label.y, e->name, -1, style->font_size * 0.9f,
 				                        style->colors[LRG_GUI_COL_TEXT], FALSE);

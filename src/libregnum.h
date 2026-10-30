@@ -288,6 +288,17 @@
 #include "pathfinding/lrg-nav-poly-mesh-cache.h"
 #include "pathfinding/lrg-nav-level.h"
 
+/* Procedural generation module */
+#include "procgen/lrg-procgen-grid.h"
+#include "procgen/lrg-procgen-tile-rules.h"
+#include "procgen/lrg-procgen-generator.h"
+#include "procgen/lrg-procgen-bsp.h"
+#include "procgen/lrg-procgen-caves.h"
+#include "procgen/lrg-procgen-wfc.h"
+#include "procgen/lrg-procgen-drunkard.h"
+#include "procgen/lrg-procgen-noise.h"
+#include "procgen/lrg-procgen-dungeon.h"
+
 /* AI module */
 #include "ai/lrg-blackboard.h"
 #include "ai/lrg-bt-node.h"
@@ -321,6 +332,17 @@
 #include "net/lrg-net-server.h"
 #include "net/lrg-net-client.h"
 
+/* Replay module: determinism, input replays, rollback */
+#include "replay/lrg-state-buffer.h"
+#include "replay/lrg-sim-stateful.h"
+#include "replay/lrg-input-snapshot.h"
+#include "replay/lrg-simulation.h"
+#include "replay/lrg-replay.h"
+#include "replay/lrg-rollback-transport.h"
+#include "replay/lrg-loopback-transport.h"
+#include "replay/lrg-udp-transport.h"
+#include "replay/lrg-rollback-session.h"
+
 /* World3D module */
 #include "world3d/lrg-bounding-box3d.h"
 #include "world3d/lrg-spawn-point3d.h"
@@ -353,6 +375,8 @@
 #include "editor/lrg-component-desc.h"
 #include "editor/lrg-script-binding.h"
 #include "editor/lrg-node-visual.h"
+#include "editor/lrg-node-tilemap.h"
+#include "editor/lrg-timeline.h"
 #include "editor/lrg-node.h"
 #include "editor/lrg-level.h"
 #include "editor/lrg-level-serializer.h"
@@ -361,6 +385,9 @@
 #include "editor/lrg-editor-command.h"
 #include "editor/lrg-editor-selection.h"
 #include "editor/lrg-editor.h"
+#include "editor/lrg-editor-tile-painter.h"
+#include "editor/lrg-editor-timeline.h"
+#include "editor/lrg-thumbnail-cache.h"
 #include "editor/lrg-editor-host.h"
 #include "editor/lrg-editor-math.h"
 #include "editor/lrg-editor-gizmo.h"
@@ -390,6 +417,7 @@
 #include "gamemodule/lrg-configurable.h"
 #include "gamemodule/lrg-game-host.h"
 #include "gamemodule/lrg-standalone-host.h"
+#include "gamemodule/lrg-headless-host.h"
 #include "gamemodule/lrg-loaded-game.h"
 #include "gamemodule/lrg-game-module-macros.h"
 

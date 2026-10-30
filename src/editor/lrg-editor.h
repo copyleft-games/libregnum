@@ -742,6 +742,19 @@ void lrg_editor_begin_group (LrgEditor   *self,
 LRG_AVAILABLE_IN_ALL
 void lrg_editor_end_group (LrgEditor *self);
 
+/**
+ * lrg_editor_execute_merged:
+ * @self: an #LrgEditor
+ * @command: (transfer full): a command
+ *
+ * Like lrg_editor_execute(), but first tries to fold @command into the
+ * most recent compatible command (see lrg_editor_command_merge()), so a
+ * continuous drag records one undo step.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_execute_merged (LrgEditor        *self,
+                                LrgEditorCommand *command);
+
 /* ==========================================================================
  * Undo / redo
  * ========================================================================== */

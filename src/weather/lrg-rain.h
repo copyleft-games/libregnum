@@ -25,6 +25,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "lrg-weather-effect.h"
+#include "../particles/lrg-particle-system.h"
 
 G_BEGIN_DECLS
 
@@ -355,5 +356,32 @@ gboolean            lrg_rain_get_drop                   (LrgRain    *self,
  */
 LRG_AVAILABLE_IN_ALL
 guint               lrg_rain_get_splash_count           (LrgRain *self);
+
+/* Determinism and splash particles (documented in lrg-rain.c) */
+
+LRG_AVAILABLE_IN_ALL
+void                lrg_rain_set_seed                   (LrgRain *self,
+                                                         guint32  seed);
+
+LRG_AVAILABLE_IN_ALL
+LrgParticleSystem * lrg_rain_get_splash_particles       (LrgRain *self);
+
+LRG_AVAILABLE_IN_ALL
+void                lrg_rain_set_splash_particles       (LrgRain           *self,
+                                                         LrgParticleSystem *system);
+
+LRG_AVAILABLE_IN_ALL
+guint               lrg_rain_get_splash_particle_count  (LrgRain *self);
+
+LRG_AVAILABLE_IN_ALL
+void                lrg_rain_set_splash_particle_count  (LrgRain *self,
+                                                         guint    count);
+
+LRG_AVAILABLE_IN_ALL
+guint64             lrg_rain_get_splash_total           (LrgRain *self);
+
+LRG_AVAILABLE_IN_ALL
+LrgParticleSystem * lrg_rain_new_splash_particle_system (LrgRain *self,
+                                                         guint    max_particles);
 
 G_END_DECLS
