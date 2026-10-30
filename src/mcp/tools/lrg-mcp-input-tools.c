@@ -10,6 +10,10 @@
 #include "lrg-mcp-input-tools.h"
 #include "../../input/lrg-input-software.h"
 #include "../../input/lrg-input-manager.h"
+#include "../../input/lrg-input-map.h"
+#include "../../input/lrg-input-action.h"
+#include "../lrg-mcp-server.h"
+#include "../lrg-mcp-inspect-private.h"
 #include "../../lrg-log.h"
 #include <gio/gio.h>
 #include <json-glib/json-glib.h>
@@ -593,20 +597,357 @@ handle_clear_all (LrgMcpInputTools *self,
 	return result;
 }
 
+/* ==========================================================================
+ * State Reporting
+ * ========================================================================== */
+
+#define MAX_REPORTED_GAMEPADS (4)
+
+/*
+ * Gamepad buttons by the names the press/release tools accept, so a
+ * reported name can be fed straight back into lrg_input_press_gamepad_button.
+ */
+static const struct
+{
+	const gchar      *name;
+	GrlGamepadButton  button;
+} gamepad_button_names[] = {
+	{ "dpad_up",    GRL_GAMEPAD_BUTTON_LEFT_FACE_UP },
+	{ "dpad_right", GRL_GAMEPAD_BUTTON_LEFT_FACE_RIGHT },
+	{ "dpad_down",  GRL_GAMEPAD_BUTTON_LEFT_FACE_DOWN },
+	{ "dpad_left",  GRL_GAMEPAD_BUTTON_LEFT_FACE_LEFT },
+	{ "y",          GRL_GAMEPAD_BUTTON_RIGHT_FACE_UP },
+	{ "b",          GRL_GAMEPAD_BUTTON_RIGHT_FACE_RIGHT },
+	{ "a",          GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN },
+	{ "x",          GRL_GAMEPAD_BUTTON_RIGHT_FACE_LEFT },
+	{ "lb",         GRL_GAMEPAD_BUTTON_LEFT_TRIGGER_1 },
+	{ "lt",         GRL_GAMEPAD_BUTTON_LEFT_TRIGGER_2 },
+	{ "rb",         GRL_GAMEPAD_BUTTON_RIGHT_TRIGGER_1 },
+	{ "rt",         GRL_GAMEPAD_BUTTON_RIGHT_TRIGGER_2 },
+	{ "back",       GRL_GAMEPAD_BUTTON_MIDDLE_LEFT },
+	{ "guide",      GRL_GAMEPAD_BUTTON_MIDDLE },
+	{ "start",      GRL_GAMEPAD_BUTTON_MIDDLE_RIGHT },
+	{ "ls",         GRL_GAMEPAD_BUTTON_LEFT_THUMB },
+	{ "rs",         GRL_GAMEPAD_BUTTON_RIGHT_THUMB },
+};
+
+/*
+ * Gamepad axes by the names lrg_input_set_gamepad_axis accepts, with each
+ * axis's resting value: sticks rest at 0, analog triggers at -1 (raylib).
+ */
+static const struct
+{
+	const gchar    *name;
+	GrlGamepadAxis  axis;
+	gfloat          rest;
+} gamepad_axis_names[] = {
+	{ "left_x",        GRL_GAMEPAD_AXIS_LEFT_X,         0.0f },
+	{ "left_y",        GRL_GAMEPAD_AXIS_LEFT_Y,         0.0f },
+	{ "right_x",       GRL_GAMEPAD_AXIS_RIGHT_X,        0.0f },
+	{ "right_y",       GRL_GAMEPAD_AXIS_RIGHT_Y,        0.0f },
+	{ "left_trigger",  GRL_GAMEPAD_AXIS_LEFT_TRIGGER,  -1.0f },
+	{ "right_trigger", GRL_GAMEPAD_AXIS_RIGHT_TRIGGER, -1.0f },
+};
+
+/*
+ * StateQuery:
+ *
+ * Reads device state either through the #LrgInputManager (the merged
+ * view the game sees: hardware plus injected input) or through a single
+ * #LrgInput source (here, only what MCP injected).
+ */
+typedef struct
+{
+	LrgInputManager *manager;
+	LrgInput        *source;
+} StateQuery;
+
+static gboolean
+query_key_down (const StateQuery *q,
+                GrlKey            key)
+{
+	return q->manager != NULL ? lrg_input_manager_is_key_down (q->manager, key)
+	                          : lrg_input_is_key_down (q->source, key);
+}
+
+static gboolean
+query_mouse_down (const StateQuery *q,
+                  GrlMouseButton    button)
+{
+	return q->manager != NULL ? lrg_input_manager_is_mouse_button_down (q->manager, button)
+	                          : lrg_input_is_mouse_button_down (q->source, button);
+}
+
+static gboolean
+query_pad_down (const StateQuery *q,
+                gint              gamepad,
+                GrlGamepadButton  button)
+{
+	return q->manager != NULL ? lrg_input_manager_is_gamepad_button_down (q->manager, gamepad, button)
+	                          : lrg_input_is_gamepad_button_down (q->source, gamepad, button);
+}
+
+static gfloat
+query_pad_axis (const StateQuery *q,
+                gint              gamepad,
+                GrlGamepadAxis    axis)
+{
+	return q->manager != NULL ? lrg_input_manager_get_gamepad_axis (q->manager, gamepad, axis)
+	                          : lrg_input_get_gamepad_axis (q->source, gamepad, axis);
+}
+
+/*
+ * physical_gamepad_source:
+ *
+ * The first enabled non-software source reporting @gamepad as connected,
+ * or %NULL. Software sources always claim all pads, so they cannot tell
+ * whether a controller is really plugged in.
+ */
+static LrgInput *
+physical_gamepad_source (LrgInputManager *manager,
+                         gint             gamepad)
+{
+	GPtrArray *sources = lrg_input_manager_get_sources (manager);
+	guint i;
+
+	for (i = 0; sources != NULL && i < sources->len; i++)
+	{
+		LrgInput *source = g_ptr_array_index (sources, i);
+
+		if (LRG_IS_INPUT_SOFTWARE (source) || !lrg_input_get_enabled (source))
+			continue;
+		if (lrg_input_is_gamepad_available (source, gamepad))
+			return source;
+	}
+	return NULL;
+}
+
+/*
+ * keys_json:
+ *
+ * Every held key, named by its #GrlKey nick (the names press_key takes).
+ */
+static JsonArray *
+keys_json (const StateQuery *q)
+{
+	JsonArray *keys = json_array_new ();
+	GEnumClass *klass = g_type_class_ref (GRL_TYPE_KEY);
+	guint i;
+
+	for (i = 0; i < klass->n_values; i++)
+	{
+		const GEnumValue *value = &klass->values[i];
+
+		if (value->value == GRL_KEY_NULL)
+			continue;
+		if (query_key_down (q, (GrlKey)value->value))
+			json_array_add_string_element (keys, value->value_nick);
+	}
+	g_type_class_unref (klass);
+	return keys;
+}
+
+/*
+ * mouse_buttons_json:
+ *
+ * Every held mouse button, named by its #GrlMouseButton nick.
+ */
+static JsonArray *
+mouse_buttons_json (const StateQuery *q)
+{
+	JsonArray *buttons = json_array_new ();
+	GEnumClass *klass = g_type_class_ref (GRL_TYPE_MOUSE_BUTTON);
+	guint i;
+
+	for (i = 0; i < klass->n_values; i++)
+	{
+		if (query_mouse_down (q, (GrlMouseButton)klass->values[i].value))
+			json_array_add_string_element (buttons, klass->values[i].value_nick);
+	}
+	g_type_class_unref (klass);
+	return buttons;
+}
+
+/*
+ * gamepads_json:
+ *
+ * One entry per pad that is physically connected or has non-neutral
+ * state (held buttons or an axis away from rest; a trigger reads 0 when
+ * no source reports it and -1 when released): index, connection, the
+ * controller name when known, held buttons and every axis value.
+ */
+static JsonArray *
+gamepads_json (const StateQuery *q,
+               LrgInputManager  *manager)
+{
+	JsonArray *pads = json_array_new ();
+	gint pad;
+
+	for (pad = 0; pad < MAX_REPORTED_GAMEPADS; pad++)
+	{
+		LrgInput *physical = physical_gamepad_source (manager, pad);
+		JsonArray *buttons = json_array_new ();
+		JsonObject *axes = json_object_new ();
+		JsonObject *entry;
+		gboolean active = FALSE;
+		guint i;
+
+		for (i = 0; i < G_N_ELEMENTS (gamepad_button_names); i++)
+		{
+			if (query_pad_down (q, pad, gamepad_button_names[i].button))
+			{
+				json_array_add_string_element (buttons, gamepad_button_names[i].name);
+				active = TRUE;
+			}
+		}
+		for (i = 0; i < G_N_ELEMENTS (gamepad_axis_names); i++)
+		{
+			gfloat value = query_pad_axis (q, pad, gamepad_axis_names[i].axis);
+
+			json_object_set_double_member (axes, gamepad_axis_names[i].name, value);
+			if (value != 0.0f && value != gamepad_axis_names[i].rest)
+				active = TRUE;
+		}
+
+		if (physical == NULL && !active)
+		{
+			json_array_unref (buttons);
+			json_object_unref (axes);
+			continue;
+		}
+
+		entry = json_object_new ();
+		json_object_set_int_member (entry, "index", pad);
+		json_object_set_boolean_member (entry, "connected", physical != NULL);
+		if (physical != NULL && lrg_input_get_gamepad_name (physical, pad) != NULL)
+			json_object_set_string_member (entry, "name", lrg_input_get_gamepad_name (physical, pad));
+		else
+			json_object_set_null_member (entry, "name");
+		json_object_set_array_member (entry, "buttons_down", buttons);
+		json_object_set_object_member (entry, "axes", axes);
+		json_array_add_object_element (pads, entry);
+	}
+	return pads;
+}
+
+/*
+ * actions_json:
+ *
+ * Every action of @map (sorted by name) with its pressed/down/released
+ * edges, analog value, axis and binding count.
+ */
+static JsonArray *
+actions_json (LrgInputMap *map)
+{
+	JsonArray *actions = json_array_new ();
+	GList *list;
+	GList *iter;
+
+	list = lrg_input_map_get_actions (map);
+	for (iter = list; iter != NULL; iter = iter->next)
+	{
+		LrgInputAction *action = iter->data;
+		JsonObject *entry = json_object_new ();
+
+		json_object_set_string_member (entry, "name", lrg_input_action_get_name (action));
+		json_object_set_boolean_member (entry, "down", lrg_input_action_is_down (action));
+		json_object_set_boolean_member (entry, "pressed", lrg_input_action_is_pressed (action));
+		json_object_set_boolean_member (entry, "released", lrg_input_action_is_released (action));
+		json_object_set_double_member (entry, "value", lrg_input_action_get_value (action));
+		json_object_set_double_member (entry, "axis", lrg_input_action_get_axis (action));
+		json_object_set_int_member (entry, "binding_count", lrg_input_action_get_binding_count (action));
+		json_array_add_object_element (actions, entry);
+	}
+	g_list_free (list);
+	return actions;
+}
+
+/*
+ * handle_get_state:
+ *
+ * Reports the merged input state the game sees (keyboard, mouse with
+ * wheel, gamepads, input-map actions), the registered input sources, and
+ * separately what this tool group has injected.
+ */
 static McpToolResult *
 handle_get_state (LrgMcpInputTools *self,
                   JsonObject       *arguments,
                   GError          **error)
 {
-	McpToolResult *result;
+	LrgInputManager *manager = lrg_input_manager_get_default ();
+	LrgInputMap *map;
+	StateQuery merged = { NULL, NULL };
+	StateQuery injected = { NULL, NULL };
+	JsonObject *json = json_object_new ();
+	JsonObject *keyboard = json_object_new ();
+	JsonObject *mouse = json_object_new ();
+	JsonObject *wheel = json_object_new ();
+	JsonObject *software = json_object_new ();
+	JsonArray *sources = json_array_new ();
+	GPtrArray *list;
+	g_autoptr(GrlVector2) wheel_move = NULL;
+	gfloat x = 0.0f;
+	gfloat y = 0.0f;
+	guint i;
 
-	/*
-	 * TODO: Implement full state reporting
-	 * For now, just return a success message
-	 */
-	result = mcp_tool_result_new (FALSE);
-	mcp_tool_result_add_text (result, "Input state: active");
-	return result;
+	merged.manager = manager;
+	injected.source = LRG_INPUT (self->input);
+
+	/* Keyboard */
+	json_object_set_array_member (keyboard, "keys_down", keys_json (&merged));
+	json_object_set_object_member (json, "keyboard", keyboard);
+
+	/* Mouse; the wheel only exists on the hardware path */
+	lrg_input_manager_get_mouse_position (manager, &x, &y);
+	json_object_set_double_member (mouse, "x", x);
+	json_object_set_double_member (mouse, "y", y);
+	lrg_input_manager_get_mouse_delta (manager, &x, &y);
+	json_object_set_double_member (mouse, "dx", x);
+	json_object_set_double_member (mouse, "dy", y);
+	wheel_move = grl_input_get_mouse_wheel_move_v ();
+	json_object_set_double_member (wheel, "x", grl_vector2_get_x (wheel_move));
+	json_object_set_double_member (wheel, "y", grl_vector2_get_y (wheel_move));
+	json_object_set_object_member (mouse, "wheel", wheel);
+	json_object_set_array_member (mouse, "buttons_down", mouse_buttons_json (&merged));
+	json_object_set_object_member (json, "mouse", mouse);
+
+	/* Gamepads */
+	json_object_set_array_member (json, "gamepads", gamepads_json (&merged, manager));
+
+	/* Input-map actions, when the game attached its map to the server */
+	map = lrg_mcp_server_get_input_map (lrg_mcp_server_get_default ());
+	if (map != NULL)
+		json_object_set_array_member (json, "actions", actions_json (map));
+	else
+		json_object_set_null_member (json, "actions");
+
+	/* Sources, in priority order */
+	list = lrg_input_manager_get_sources (manager);
+	for (i = 0; list != NULL && i < list->len; i++)
+	{
+		LrgInput *source = g_ptr_array_index (list, i);
+		JsonObject *entry = json_object_new ();
+		const gchar *name = lrg_input_get_name (source);
+
+		json_object_set_string_member (entry, "name", name != NULL ? name : "");
+		json_object_set_string_member (entry, "type", G_OBJECT_TYPE_NAME (source));
+		json_object_set_boolean_member (entry, "enabled", lrg_input_get_enabled (source));
+		json_object_set_int_member (entry, "priority", lrg_input_get_priority (source));
+		json_array_add_object_element (sources, entry);
+	}
+	json_object_set_boolean_member (json, "enabled", lrg_input_manager_get_enabled (manager));
+	json_object_set_array_member (json, "sources", sources);
+
+	/* What MCP injected, independent of hardware */
+	lrg_input_get_mouse_position (injected.source, &x, &y);
+	json_object_set_array_member (software, "keys_down", keys_json (&injected));
+	json_object_set_array_member (software, "mouse_buttons_down", mouse_buttons_json (&injected));
+	json_object_set_double_member (software, "mouse_x", x);
+	json_object_set_double_member (software, "mouse_y", y);
+	json_object_set_boolean_member (software, "registered", self->registered_with_manager);
+	json_object_set_object_member (json, "injected", software);
+
+	return _lrg_mcp_result (json);
 }
 
 /* ==========================================================================
@@ -880,7 +1221,8 @@ lrg_mcp_input_tools_register_tools (LrgMcpToolGroup *group)
 	lrg_mcp_tool_group_add_tool (group, tool);
 
 	tool = mcp_tool_new ("lrg_input_get_state",
-	                     "Get current input state summary");
+	                     "Get the full input state: held keys, mouse position/buttons/wheel, "
+	                     "gamepad buttons and axes, input-map actions and input sources");
 	lrg_mcp_tool_group_add_tool (group, tool);
 }
 
@@ -1002,7 +1344,7 @@ lrg_mcp_input_tools_init (LrgMcpInputTools *self)
  * Public API
  * ========================================================================== */
 
-/**
+/*
  * lrg_mcp_input_tools_new:
  *
  * Creates a new input tools provider.
@@ -1015,7 +1357,7 @@ lrg_mcp_input_tools_new (void)
 	return g_object_new (LRG_TYPE_MCP_INPUT_TOOLS, NULL);
 }
 
-/**
+/*
  * lrg_mcp_input_tools_get_input_source:
  * @self: an #LrgMcpInputTools
  *

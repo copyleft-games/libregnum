@@ -139,24 +139,57 @@ No parameters.
 :PROPERTIES:
 :CUSTOM_ID: lrg_input_get_state
 :END:
-Get current input state summary.
+Report the full input state the game sees this frame. Keyboard, mouse and gamepad state come from =LrgInputManager= (hardware sources merged with MCP-injected input); the mouse wheel is read from the hardware path (=grl_input_get_mouse_wheel_move_v()=); the =injected= block shows only what this tool group has injected.
 
 No parameters.
+
+Key, mouse-button, gamepad-button and axis names are the same names the press/release/set tools accept, so any reported name can be passed straight back.
+
+- =keyboard.keys_down=: every held key (=GrlKey= nicks).
+- =mouse=: position, per-frame delta, =wheel= (=x=, =y=) and held buttons.
+- =gamepads=: one entry per pad that is physically connected (a non-software source reports it, =connected= true, with the controller =name=) or has non-neutral state (a held button, a stick off 0, a trigger off its -1 rest). Each entry lists held buttons and all six axes.
+- =actions=: the input map attached with =lrg_mcp_server_set_input_map()= (=null= when none is attached). Each action reports =down=, =pressed=, =released=, =value=, =axis= and =binding_count=.
+- =sources=: the manager's input sources in priority order, and =enabled= for the manager itself.
+
+Attach the game's input map once, after creating the server:
+
+#+begin_src c
+lrg_mcp_server_set_input_map (lrg_mcp_server_get_default (),
+                              lrg_game_template_get_input_map (template));
+#+end_src
 
 *Returns:*
 
 #+begin_src json
 {
-  "pressed_keys": ["w", "shift"],
-  "mouse_position": {"x": 640, "y": 480},
-  "mouse_buttons": ["left"],
+  "keyboard": {"keys_down": ["w", "left_shift"]},
+  "mouse": {
+    "x": 640.0, "y": 480.0, "dx": 0.0, "dy": 0.0,
+    "wheel": {"x": 0.0, "y": -1.0},
+    "buttons_down": ["left"]
+  },
   "gamepads": [
     {
       "index": 0,
-      "buttons": ["a"],
-      "axes": {"left_x": 0.5, "left_y": -0.3}
+      "connected": true,
+      "name": "Xbox Controller",
+      "buttons_down": ["a"],
+      "axes": {"left_x": 0.5, "left_y": -0.3, "right_x": 0.0,
+               "right_y": 0.0, "left_trigger": -1.0, "right_trigger": -1.0}
     }
-  ]
+  ],
+  "actions": [
+    {"name": "jump", "down": true, "pressed": true, "released": false,
+     "value": 1.0, "axis": 1.0, "binding_count": 2}
+  ],
+  "enabled": true,
+  "sources": [
+    {"name": "software", "type": "LrgInputSoftware", "enabled": true, "priority": 0}
+  ],
+  "injected": {
+    "keys_down": ["w"], "mouse_buttons_down": [],
+    "mouse_x": 0.0, "mouse_y": 0.0, "registered": true
+  }
 }
 #+end_src
 
@@ -617,24 +650,26 @@ No parameters.
 :PROPERTIES:
 :CUSTOM_ID: debug-tools-lrgmcpdebugtools
 :END:
-Debug tools for logging and profiling.
+Debug tools drive the engine's =src/debug/= singletons: =lrg_profiler_get_default()=, =lrg_debug_overlay_get_default()=, =lrg_debug_console_get_default()= and =lrg_inspector_get_default()=. Every tool returns a JSON object. Arguments are checked strictly: missing required arguments, unknown arguments and wrongly typed values fail with =G_IO_ERROR_INVALID_ARGUMENT= before anything changes.
 
 *** lrg_debug_log
 :PROPERTIES:
 :CUSTOM_ID: lrg_debug_log
 :END:
-Log a message.
+Log a message through GLib (domain =Libregnum-MCP=) and mirror it into the debug console (warnings and errors as console errors). =error= is logged at critical level, because =G_LOG_LEVEL_ERROR= would abort the game. Unknown levels are rejected.
 
-| Parameter | Type   | Required | Description                                                  |
-|-----------+--------+----------+--------------------------------------------------------------|
-| message   | string | Yes      | Log message                                                  |
-| level     | string | No       | Level: "debug", "info", "warning", "error" (default: "info") |
+| Parameter | Type   | Required | Description                                                              |
+|-----------+--------+----------+--------------------------------------------------------------------------|
+| message   | string | Yes      | Log message                                                              |
+| level     | string | No       | Level: "debug", "info", "warning", "error", "critical" (default: "info") |
+
+*Returns:* ={"logged": true, "level": "info", "message": "..."}=
 
 *** lrg_debug_get_fps
 :PROPERTIES:
 :CUSTOM_ID: lrg_debug_get_fps
 :END:
-Get detailed FPS statistics.
+Frame statistics from the default profiler (filled when the game brackets frames with =lrg_profiler_begin_frame()= / =lrg_profiler_end_frame()=) and, when the engine owns a window, the window's own counters (=null= otherwise).
 
 No parameters.
 
@@ -642,12 +677,11 @@ No parameters.
 
 #+begin_src json
 {
-  "current_fps": 60.0,
-  "average_fps": 59.8,
-  "min_fps": 55.0,
-  "max_fps": 62.0,
-  "frame_time_ms": 16.6,
-  "frame_count": 10000
+  "state": "running",
+  "profiler_enabled": true,
+  "fps": 59.8,
+  "frame_time_ms": 16.7,
+  "window": {"fps": 60, "frame_time_ms": 16.6, "target_fps": 60}
 }
 #+end_src
 
@@ -655,27 +689,31 @@ No parameters.
 :PROPERTIES:
 :CUSTOM_ID: lrg_debug_profiler_start
 :END:
-Start a profiler section.
+Start timing a section on the default profiler, enabling the profiler if it is off.
 
 | Parameter | Type   | Required | Description  |
 |-----------+--------+----------+--------------|
 | name      | string | Yes      | Section name |
+
+*Returns:* ={"name": "update", "active": true, "profiler_enabled": true}=
 
 *** lrg_debug_profiler_stop
 :PROPERTIES:
 :CUSTOM_ID: lrg_debug_profiler_stop
 :END:
-Stop a profiler section.
+Stop a running section and return its statistics. Stopping a section that is not running fails with =G_IO_ERROR_NOT_FOUND= (the tool checks =lrg_profiler_is_section_active()= first, so the profiler never warns).
 
 | Parameter | Type   | Required | Description  |
 |-----------+--------+----------+--------------|
 | name      | string | Yes      | Section name |
 
+*Returns:* one section object (see the report below).
+
 *** lrg_debug_profiler_report
 :PROPERTIES:
 :CUSTOM_ID: lrg_debug_profiler_report
 :END:
-Get profiler report.
+Every recorded section, sorted by name, the sections currently running and the frame statistics. Durations are milliseconds over the profiler's sample window (=max_samples= per section).
 
 No parameters.
 
@@ -683,9 +721,127 @@ No parameters.
 
 #+begin_src json
 {
+  "enabled": true,
+  "max_samples": 60,
+  "fps": 59.8,
+  "frame_time_ms": 16.7,
+  "active": ["render"],
   "sections": [
-    {"name": "update", "total_ms": 5.2, "calls": 1000, "avg_ms": 0.0052},
-    {"name": "render", "total_ms": 12.8, "calls": 1000, "avg_ms": 0.0128}
+    {"name": "update", "active": false, "sample_count": 60, "last_ms": 1.9,
+     "average_ms": 2.1, "min_ms": 1.7, "max_ms": 3.4}
   ]
 }
 #+end_src
+
+*** lrg_debug_profiler_clear
+:PROPERTIES:
+:CUSTOM_ID: lrg_debug_profiler_clear
+:END:
+Drop recorded samples for one section, or for every section when =name= is omitted.
+
+| Parameter | Type   | Required | Description                         |
+|-----------+--------+----------+-------------------------------------|
+| name      | string | No       | Section to clear (default: all)     |
+
+*** lrg_debug_overlay_get
+:PROPERTIES:
+:CUSTOM_ID: lrg_debug_overlay_get
+:END:
+The debug overlay's state and the exact text it would draw this frame.
+
+No parameters.
+
+*Returns:*
+
+#+begin_src json
+{
+  "visible": true,
+  "flags": ["fps", "profiler"],
+  "flags_value": 65,
+  "position": {"x": 10, "y": 10},
+  "font_size": 16,
+  "padding": 4,
+  "line_count": 3,
+  "text": "FPS: 60\n..."
+}
+#+end_src
+
+*** lrg_debug_overlay_set
+:PROPERTIES:
+:CUSTOM_ID: lrg_debug_overlay_set
+:END:
+Change the overlay. All arguments are optional and validated before anything is applied; the result is the same object as =lrg_debug_overlay_get=.
+
+| Parameter   | Type    | Required | Description                                                                                                  |
+|-------------+---------+----------+--------------------------------------------------------------------------------------------------------------|
+| visible     | boolean | No       | Show or hide the overlay                                                                                     |
+| flags       | string  | No       | Comma-separated set replacing the current one: fps, frame-time, memory, entities, physics, colliders, profiler, custom, all, none |
+| custom_key  | string  | No       | Custom line key                                                                                              |
+| custom_text | string  | No       | Text for =custom_key=; empty or omitted removes the line. Requires =custom_key=                              |
+
+*** lrg_debug_console_execute
+:PROPERTIES:
+:CUSTOM_ID: lrg_debug_console_execute
+:END:
+Run a command line through the default debug console (registered commands, or the scripting evaluator when one is installed). Console failures are returned as tool errors in the =LRG_DEBUG_ERROR= domain (for example =LRG_DEBUG_ERROR_COMMAND_NOT_FOUND=).
+
+| Parameter | Type   | Required | Description          |
+|-----------+--------+----------+----------------------|
+| command   | string | Yes      | Console command line |
+
+*Returns:* ={"command": "echo hi", "output": "hi"}=
+
+*** lrg_debug_console_get_output
+:PROPERTIES:
+:CUSTOM_ID: lrg_debug_console_get_output
+:END:
+The newest console lines (oldest first) and the registered command names.
+
+| Parameter | Type    | Required | Description                               |
+|-----------+---------+----------+-------------------------------------------|
+| limit     | integer | No       | Maximum number of newest lines (default 50) |
+
+*Returns:*
+
+#+begin_src json
+{
+  "visible": false,
+  "total": 12,
+  "entries": [
+    {"text": "> echo hi", "command": true, "error": false, "timestamp": 1730246400000000}
+  ],
+  "commands": ["clear", "echo", "help", "history"]
+}
+#+end_src
+
+*** lrg_debug_inspect
+:PROPERTIES:
+:CUSTOM_ID: lrg_debug_inspect
+:END:
+Point the default inspector at a world and optionally select a game object, then return the inspector's views. An =object_id= (from the ECS tools) picks its own world; otherwise =world= names one, defaulting to the first active registered world. The selection is left in place, so the in-game inspector shows the same object.
+
+| Parameter | Type   | Required | Description                                    |
+|-----------+--------+----------+------------------------------------------------|
+| world     | string | No       | World name (default: first active world)       |
+| object_id | string | No       | Game object id to select                       |
+
+*Returns:*
+
+#+begin_src json
+{
+  "visible": false,
+  "object_count": 12,
+  "world_info": "World: 12 objects ...",
+  "selected": {
+    "id": "6f1c...",
+    "info": "LrgGameObject at (8, 9) ...",
+    "components": ["LrgTransformComponent"],
+    "component_properties": [
+      {"type": "LrgTransformComponent", "properties": {"local-x": 8.0}}
+    ]
+  }
+}
+#+end_src
+
+=selected= is =null= when no object is selected.
+

@@ -137,7 +137,7 @@ Configure Claude Code to connect to your game:
 | =lrg_input_release_gamepad_button= | Release a gamepad button        |
 | =lrg_input_set_gamepad_axis=       | Set gamepad axis value          |
 | =lrg_input_clear_all=              | Release all held inputs         |
-| =lrg_input_get_state=              | Get current input state         |
+| =lrg_input_get_state=              | Full input state: keys, mouse, gamepads, actions |
 
 *** Screenshot Tools
 :PROPERTIES:
@@ -193,13 +193,19 @@ Configure Claude Code to connect to your game:
 :PROPERTIES:
 :CUSTOM_ID: debug-tools
 :END:
-| Tool                        | Description                 |
-|-----------------------------+-----------------------------|
-| =lrg_debug_log=             | Log a message               |
-| =lrg_debug_get_fps=         | Get detailed FPS statistics |
-| =lrg_debug_profiler_start=  | Start a profiler section    |
-| =lrg_debug_profiler_stop=   | Stop a profiler section     |
-| =lrg_debug_profiler_report= | Get profiler report         |
+| Tool                           | Description                                   |
+|--------------------------------+-----------------------------------------------|
+| =lrg_debug_log=                | Log to the engine log and the debug console   |
+| =lrg_debug_get_fps=            | Profiler and window FPS / frame time          |
+| =lrg_debug_profiler_start=     | Start a profiler section                      |
+| =lrg_debug_profiler_stop=      | Stop a profiler section, return its stats     |
+| =lrg_debug_profiler_report=    | Every section's timings and frame statistics  |
+| =lrg_debug_profiler_clear=     | Clear profiler samples                        |
+| =lrg_debug_overlay_get=        | Overlay visibility, flags and rendered text   |
+| =lrg_debug_overlay_set=        | Change overlay visibility, flags, custom lines |
+| =lrg_debug_console_execute=    | Run a debug console command                   |
+| =lrg_debug_console_get_output= | Recent console output and command names       |
+| =lrg_debug_inspect=            | Inspect a world or game object                |
 
 ** Available Resources
 :PROPERTIES:
@@ -214,8 +220,8 @@ Resources provide read-only access via the =libregnum://= URI scheme.
 | URI                           | MIME Type        | Description              |
 |-------------------------------+------------------+--------------------------|
 | =libregnum://engine/info=     | application/json | Engine state, FPS, delta |
-| =libregnum://engine/config=   | application/json | Engine configuration     |
-| =libregnum://engine/registry= | application/json | Registered type names    |
+| =libregnum://engine/config=   | application/json | Version, subsystems, worlds, loader, assets, settings |
+| =libregnum://engine/registry= | application/json | Registered names, GTypes, kinds and properties        |
 
 *** ECS Resources
 :PROPERTIES:
