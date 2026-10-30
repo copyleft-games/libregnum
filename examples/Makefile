@@ -132,7 +132,7 @@ endif
 
 # Base examples (always built)
 EXAMPLES := game-omnomagon game-taco-racing game-chocolate-chip-clicker game-tuktuk-derby render-yaml-santa render-yaml-taco-truck
-EXAMPLES += game-settings-demo game-micro-tycoon game-effects-gallery game-dungeon-torch game-meta-arcade game-dlc-store
+EXAMPLES += game-settings-demo game-micro-tycoon game-effects-gallery game-dungeon-torch game-procgen-dungeon game-meta-arcade game-dlc-store
 EXAMPLES += game-creature-collector game-vr-demo
 EXAMPLES += game-deckbuilder-combat game-deckbuilder-poker
 EXAMPLES += game-platformer-demo game-fps-demo
@@ -260,6 +260,10 @@ $(EXAMPLES_BUILDDIR)/game-effects-gallery$(EXE_EXT): game-effects-gallery.c | $(
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/game-dungeon-torch$(EXE_EXT): game-dungeon-torch.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/game-procgen-dungeon$(EXE_EXT): game-procgen-dungeon.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
