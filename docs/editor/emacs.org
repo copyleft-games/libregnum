@@ -87,8 +87,14 @@ All commands are under =libregnum-keymap-prefix= (default =C-c L=) in =libregnum
 | =C-c L v=   | =libregnum-validate=        | Problems in a =compilation-mode= buffer             |
 | =C-c L f=   | =libregnum-visit-level=     | Visit the level's YAML                              |
 | =C-c L t=   | =libregnum-set-tool=        | Select / translate / rotate / scale gizmo           |
+| =C-c L g=   | =libregnum-tilemap-show=    | A tilemap node's grid in =*libregnum-tilemap*=      |
+| =C-c L b=   | =libregnum-tilemap-tool=    | Turn on viewport tile painting with a tool and tile |
+| =C-c L k=   | =libregnum-timeline-key=    | Key a node's transform (=C-u=: one channel + value) |
+| =C-c L a=   | =libregnum-timeline-play=   | Preview-play a timeline                             |
+| =C-c L A=   | =libregnum-timeline-stop=   | Stop the preview (nodes restored)                   |
+| =C-c L h=   | =libregnum-thumbnail=       | Open an asset's thumbnail                           |
 
-Also available: =libregnum-select-node=, =libregnum-rename-node=, =libregnum-create-node=, =libregnum-duplicate-node=, =libregnum-delete-node=, =libregnum-open-scripts=, =libregnum-screenshot=. Commands that take a node complete over slash-separated node paths, defaulting to the editor's selection; in the outline they act on the node at point.
+Also available: =libregnum-select-node=, =libregnum-rename-node=, =libregnum-create-node=, =libregnum-duplicate-node=, =libregnum-delete-node=, =libregnum-open-scripts=, =libregnum-screenshot=, =libregnum-tilemap-paint=, =libregnum-tilemap-fill=, =libregnum-timeline-ease=, =libregnum-timeline-seek= (see [[file:editor-tools.org][Editor Tools]]). Commands that take a node complete over slash-separated node paths, defaulting to the editor's selection; in the outline they act on the node at point.
 
 ** The outline
 :PROPERTIES:
