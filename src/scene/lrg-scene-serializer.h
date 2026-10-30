@@ -34,12 +34,21 @@ G_DECLARE_INTERFACE (LrgSceneSerializer, lrg_scene_serializer, LRG, SCENE_SERIAL
 /**
  * LrgSceneSerializerInterface:
  * @g_iface: Parent interface
- * @load_from_file: Load a scene from a file path
- * @load_from_data: Load a scene from string data
- * @save_to_file: Save a scene to a file path
- * @save_to_data: Save a scene to a string
+ * @load_from_file: Load a scene from a file path.  The default reads the
+ *   whole file and delegates to @load_from_data.
+ * @load_from_data: Load a scene from string data.  The default fails with
+ *   %LRG_SCENE_ERROR_FAILED; every loadable format must override it (or
+ *   @load_from_file).
+ * @save_to_file: Save a scene to a file path.  The default serializes with
+ *   @save_to_data and writes the result atomically.
+ * @save_to_data: Save a scene to a string.  No default (%NULL).
  *
  * Interface for scene serialization/deserialization.
+ *
+ * A minimal implementation only overrides @load_from_data and
+ * @save_to_data; the file variants then work through the defaults.
+ * Read and write failures from the defaults are reported as
+ * %LRG_SCENE_ERROR_IO.
  */
 struct _LrgSceneSerializerInterface
 {

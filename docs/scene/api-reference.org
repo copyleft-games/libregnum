@@ -871,6 +871,43 @@ Serializes a scene to a string.
 
 *Returns:* (transfer full): Serialized data string
 
+*** Default Implementations
+:PROPERTIES:
+:CUSTOM_ID: lrgsceneserializer-defaults
+:END:
+The interface installs defaults for the file vfuncs, so a new format only has to know how to turn bytes into a scene and back. Override =load_from_data= and =save_to_data= and all four methods work.
+
+| vfunc            | Default behaviour                                                                                                           |
+|------------------+-----------------------------------------------------------------------------------------------------------------------------|
+| =load_from_file= | Reads the whole file with =g_file_get_contents()= and hands the bytes to =load_from_data=                                   |
+| =load_from_data= | Fails with =LRG_SCENE_ERROR_FAILED= ("does not implement load_from_data"): there is no format-independent parser             |
+| =save_to_file=   | Calls =save_to_data= and writes the result atomically with =g_file_set_contents()=                                          |
+| =save_to_data=   | None (=NULL=); =lrg_scene_serializer_save_to_data()= returns =NULL=, =lrg_scene_serializer_save_to_file()= reports the gap   |
+
+Errors from the defaults:
+
+- =LRG_SCENE_ERROR_IO= when the file cannot be read or written (missing file, missing directory, permissions). The message carries the path and the underlying =GFileError= text.
+- =LRG_SCENE_ERROR_FAILED= when the implementation has neither the file vfunc nor the data vfunc it would delegate to, or =save_to_data= returned =NULL=.
+- Anything =load_from_data= sets (for example =LRG_SCENE_ERROR_PARSE=) passes through =load_from_file= unchanged.
+
+Override the file vfuncs directly when the format streams, or needs the path itself (for example to resolve relative asset references); =LrgSceneSerializerYaml= does that.
+
+#+begin_src C
+static LrgScene *
+my_load_from_data (LrgSceneSerializer *self, const gchar *data,
+                   gssize length, GError **error);
+static gchar *
+my_save_to_data (LrgSceneSerializer *self, LrgScene *scene, gsize *length);
+
+static void
+my_serializer_iface_init (LrgSceneSerializerInterface *iface)
+{
+    iface->load_from_data = my_load_from_data;
+    iface->save_to_data   = my_save_to_data;
+    /* load_from_file / save_to_file: interface defaults */
+}
+#+end_src
+
 --------------
 
 ** LrgSceneSerializerYaml
