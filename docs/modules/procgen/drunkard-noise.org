@@ -1,0 +1,57 @@
+* LrgProcgenDrunkard and LrgProcgenNoise
+:PROPERTIES:
+:CUSTOM_ID: lrgprocgendrunkard-and-lrgprocgennoise
+:END:
+Two cheap generators. Headers: =procgen/lrg-procgen-drunkard.h=, =procgen/lrg-procgen-noise.h=. YAML names: =drunkard=, =noise=.
+
+** Drunkard's walk
+:PROPERTIES:
+:CUSTOM_ID: drunkards-walk
+:END:
+A walker starts in the centre and takes uniformly random orthogonal steps, never onto the border, turning every wall it enters into =floor=, until =coverage-percent= of the interior is open or =max-steps= steps were taken. With =walk-length=, every =walk-length= steps a new walker starts from a random already-open cell, which spreads the caves out instead of digging one blob. Every walker starts on open floor, so the result is connected by construction.
+
+| Property | Range | Default | Meaning |
+|----------+-------+---------+---------|
+| =coverage-percent= | 1-100 | 40 | share of the interior to open |
+| =max-steps= | 0-2^32 | 0 | step budget (0 = 50 per cell) |
+| =walk-length= | 0-2^32 | 0 | steps before a new walker (0 = a single walker) |
+
+Exactly =floor ((w - 2) * (h - 2) * coverage / 100)= cells are open unless the step budget runs out first.
+
+#+begin_src yaml
+generator: drunkard
+width: 64
+height: 44
+params: { coverage-percent: 38, walk-length: 200 }
+#+end_src
+
+** Noise heightmap
+:PROPERTIES:
+:CUSTOM_ID: noise-heightmap
+:END:
+Fractal value noise: =octaves= layers, the first with a lattice every =scale= cells, each next one with half the period and half the amplitude. Lattice values are an integer hash of (octave seed, x, y); octave seeds are drawn from the random stream. Interpolation is a smoothstep in Q16 fixed point, so heights are bit-identical everywhere (the module's [[file:index.org::#determinism][determinism]] rule; there is no shared noise helper in the engine that is portable in that sense, so the generator carries its own).
+
+Every cell gets a height in [0, 1] (=lrg_procgen_grid_get_height_at()=) and a tag:
+
+| Height | Tag |
+|--------+-----|
+| below =water-percent= % | =water= |
+| at or above =wall-percent= % | =wall= |
+| between | =floor= |
+
+The border is always =wall=. Water is not walkable by default, so the recipe's =connect= step tunnels around lakes; make water walkable on the grid (=set_tag_walkable=) to treat it as shallows instead. The heights are useful beyond the tags: feed them to an =LrgTerrain= or use them for decoration density.
+
+| Property | Range | Default | Meaning |
+|----------+-------+---------+---------|
+| =octaves= | 1-16 | 4 | noise layers |
+| =scale= | 1-4096 | 16 | lattice period of the first octave, in cells |
+| =water-percent= | 0-100 | 35 | water threshold |
+| =wall-percent= | 0-100 | 70 | wall threshold; must be >= =water-percent= (else =INVALID_CONFIG=) |
+
+#+begin_src c
+g_autoptr(LrgProcgenNoise) noise = lrg_procgen_noise_new (128, 128);
+
+lrg_procgen_noise_set_scale (noise, 32);
+grid = lrg_procgen_generator_generate (LRG_PROCGEN_GENERATOR (noise), seed, &error);
+gfloat h = lrg_procgen_grid_get_height_at (grid, 10, 20);
+#+end_src

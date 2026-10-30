@@ -73,6 +73,7 @@ G_BEGIN_DECLS
 #define LRG_LOG_DOMAIN_MCP        "Libregnum-MCP"
 #define LRG_LOG_DOMAIN_GAMEMODULE "Libregnum-GameModule"
 #define LRG_LOG_DOMAIN_SANDBOX    "Libregnum-Sandbox"
+#define LRG_LOG_DOMAIN_PROCGEN    "Libregnum-Procgen"
 
 /* ==========================================================================
  * Logging Macros

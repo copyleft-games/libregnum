@@ -5736,3 +5736,110 @@ lrg_nav_door_state_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+/* ==========================================================================
+ * Procedural Generation Quarks and GTypes
+ * ========================================================================== */
+
+/**
+ * lrg_procgen_error_quark:
+ *
+ * Gets the error quark for procedural generation errors.
+ *
+ * Returns: the error quark
+ */
+GQuark
+lrg_procgen_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-procgen-error-quark");
+}
+
+GType
+lrg_procgen_error_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PROCGEN_ERROR_FAILED, "LRG_PROCGEN_ERROR_FAILED", "failed" },
+            { LRG_PROCGEN_ERROR_INVALID_CONFIG, "LRG_PROCGEN_ERROR_INVALID_CONFIG", "invalid-config" },
+            { LRG_PROCGEN_ERROR_TOO_SMALL, "LRG_PROCGEN_ERROR_TOO_SMALL", "too-small" },
+            { LRG_PROCGEN_ERROR_CONTRADICTION, "LRG_PROCGEN_ERROR_CONTRADICTION", "contradiction" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgProcgenError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_procgen_cell_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PROCGEN_CELL_WALL, "LRG_PROCGEN_CELL_WALL", "wall" },
+            { LRG_PROCGEN_CELL_FLOOR, "LRG_PROCGEN_CELL_FLOOR", "floor" },
+            { LRG_PROCGEN_CELL_CORRIDOR, "LRG_PROCGEN_CELL_CORRIDOR", "corridor" },
+            { LRG_PROCGEN_CELL_DOOR, "LRG_PROCGEN_CELL_DOOR", "door" },
+            { LRG_PROCGEN_CELL_WATER, "LRG_PROCGEN_CELL_WATER", "water" },
+            { LRG_PROCGEN_CELL_VOID, "LRG_PROCGEN_CELL_VOID", "void" },
+            { LRG_PROCGEN_CELL_CUSTOM, "LRG_PROCGEN_CELL_CUSTOM", "custom" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgProcgenCell"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_procgen_autotile_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PROCGEN_AUTOTILE_NONE, "LRG_PROCGEN_AUTOTILE_NONE", "none" },
+            { LRG_PROCGEN_AUTOTILE_CARDINAL, "LRG_PROCGEN_AUTOTILE_CARDINAL", "cardinal" },
+            { LRG_PROCGEN_AUTOTILE_BLOB, "LRG_PROCGEN_AUTOTILE_BLOB", "blob" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgProcgenAutotile"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_procgen_direction_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PROCGEN_DIRECTION_UP, "LRG_PROCGEN_DIRECTION_UP", "up" },
+            { LRG_PROCGEN_DIRECTION_RIGHT, "LRG_PROCGEN_DIRECTION_RIGHT", "right" },
+            { LRG_PROCGEN_DIRECTION_DOWN, "LRG_PROCGEN_DIRECTION_DOWN", "down" },
+            { LRG_PROCGEN_DIRECTION_LEFT, "LRG_PROCGEN_DIRECTION_LEFT", "left" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgProcgenDirection"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

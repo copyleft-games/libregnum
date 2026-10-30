@@ -1,0 +1,32 @@
+# dungeon.yaml - a procgen recipe (see docs/modules/procgen/yaml.org)
+#
+# Load with lrg_procgen_dungeon_new_from_file ("data/dungeon.yaml", &error)
+# and generate with lrg_procgen_dungeon_generate (recipe, seed, &error).
+version: 1
+generator: bsp
+width: 64
+height: 44
+seed: 1
+params:
+  min-room-size: 4
+  max-room-size: 10
+  min-leaf-size: 9
+  max-leaf-size: 20
+  doors: true
+post:
+  cull-min-size: 0
+  keep-largest: false
+  connect: true
+  start-exit: true
+spawns:
+  - { kind: monster, count: 8, min-distance: 12 }
+  - { kind: chest, count: 6, rooms-only: true }
+tiles:
+  default: 0
+  edge-connects: true
+  rules:
+    - { tag: floor, tile: 1 }
+    - { tag: corridor, tile: 2 }
+    - { tag: door, tile: 3 }
+    - { tag: water, tile: 4 }
+    - { tag: wall, tile: 16, autotile: cardinal, connects: [door] }

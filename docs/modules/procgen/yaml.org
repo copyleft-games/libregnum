@@ -1,0 +1,137 @@
+* LrgProcgenDungeon and the recipe format
+:PROPERTIES:
+:CUSTOM_ID: lrgprocgendungeon-and-the-recipe-format
+:END:
+=LrgProcgenDungeon= is a complete map recipe: a generator with its parameters, the post-processing switches, spawn rules and tile rules. It loads from and saves to YAML, so a game ships its maps as data (=data/dungeon.yaml=) and modders can add new ones. Header: =procgen/lrg-procgen-dungeon.h=.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Meaning |
+|----------+---------|
+| =lrg_procgen_dungeon_new (generator)= | a recipe with default post-processing (connect, start/exit) |
+| =new_from_file (path, &error)= / =new_from_data (text, len, &error)= | parse a recipe |
+| =to_data (&error)= / =save_to_file (path, &error)= | write it back |
+| =generate (seed, &error)= | run the whole pipeline on one random stream (see [[file:index.org::#pipeline][Pipeline]]) |
+| =build_layer (grid)= | the tilemap layer of a generated grid, with the recipe's tile rules |
+| =get_generator= / =set_generator=, =get_tile_rules= | the parts |
+| =seed=, =cull-min-size=, =keep-largest=, =connect=, =place-start-exit= | properties |
+| =add_spawn_rule (kind, count, min_distance, rooms_only)=, =get_spawn_rule()=, =get_spawn_rule_count()=, =clear_spawn_rules()= | spawn rules |
+
+The =seed= property is the recipe's default; =generate()= always takes the seed as an argument, so the same recipe produces a new map per run, per floor or per player.
+
+** Format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+#+begin_src yaml
+version: 1                  # optional; newer versions are rejected
+generator: bsp              # bsp | caves | wfc | drunkard | noise | a GType name
+width: 64                   # 1-4096, default 64
+height: 44                  # 1-4096, default 48
+seed: 1                     # 0 .. 2^64-1, default 0
+
+params:                     # generator properties, by name (see each generator)
+  min-room-size: 4
+  max-room-size: 10
+
+# wfc:                      # only with generator: wfc (see wfc.org)
+#   sample: |               # learn tiles and rules from a text grid ...
+#     #####
+#     #...#
+#     #####
+#   tiles:                  # ... and/or declare them
+#     - { name: grass, tag: floor, weight: 6 }
+#   rules:
+#     - { a: grass, b: grass, dir: all }
+
+post:
+  cull-min-size: 0          # fill regions smaller than this (0 = off)
+  keep-largest: false       # keep only the largest region ...
+  connect: true             # ... or join regions with corridors
+  start-exit: true          # start and exit on a farthest pair
+
+spawns:                     # applied in order
+  - { kind: goblin, count: 6, min-distance: 10, rooms-only: false }
+  - { kind: chest, count: 3, rooms-only: true }
+
+tiles:                      # tile rules (see tile-rules.org)
+  default: 0
+  edge-connects: true
+  rules:
+    - { tag: floor, tile: 1 }
+    - { tag: wall, tile: 17, autotile: blob, connects: [door],
+        variants: [ { mask: 0, tile: 99 } ] }
+#+end_src
+
+Rules of the format:
+
+- *Strict.* Unknown keys at any level, unknown generator parameters, values of the wrong type and values outside a property's range are errors (=LRG_PROCGEN_ERROR_INVALID_CONFIG=, with the path of the offending key in the message, e.g. =params.fill-percent: value out of range=). A typo never silently falls back to a default.
+- *Tags* are an =LrgProcgenCell= nick (=wall=, =floor=, =corridor=, =door=, =water=, =void=, =custom=) or an integer 0-255.
+- *Booleans* accept =true/false=, =yes/no=, =on/off=, =1/0=. *Enums* (=autotile=, =dir=, enum properties) accept the nick or the full C name.
+- *Params* cover every writable property of the generator class (not =width= / =height=, which are top level): integers, booleans, doubles, strings and enums.
+- *Custom generators*: =generator: MyMazeGen= resolves any non-abstract =LrgProcgenGenerator= subclass by GType name (the type must be registered, e.g. by =g_type_ensure()=), and =params:= sets its properties.
+
+** Round trip
+:PROPERTIES:
+:CUSTOM_ID: round-trip
+:END:
+=to_data()= writes every section explicitly: all generator parameters (defaults included), post-processing, spawn rules and every tile rule with its connections and variants. A wave function collapse model, learned or declared, is written as =tiles= and =rules= (directions =right= and =down=, which imply the others). Loading the output gives the same recipe: saving it again produces the identical document, and both generate identical maps for every seed (=tests/test-procgen.c=, =/procgen/dungeon/yaml-round-trip= and =yaml-wfc=).
+
+** Bare generator defs through LrgDataLoader
+:PROPERTIES:
+:CUSTOM_ID: bare-generator-defs-through-lrgdataloader
+:END:
+A generator alone (no post-processing, spawns or tiles) is an ordinary property-based def, so the engine's generic loader handles it once the types are registered:
+
+#+begin_src c
+lrg_procgen_register_types (registry);
+lrg_data_loader_set_registry (loader, registry);
+gen = lrg_data_loader_load_file (loader, "data/caves.yaml", &error);   /* type: procgen-caves */
+#+end_src
+
+#+begin_src yaml
+type: procgen-caves
+width: 96
+height: 64
+fill-percent: 46
+keep-largest: true
+#+end_src
+
+Use the recipe format above whenever the map needs spawn or tile rules; the data loader path does not validate unknown keys the way the recipe loader does.
+
+** From C
+:PROPERTIES:
+:CUSTOM_ID: from-c
+:END:
+#+begin_src c
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgProcgenDungeon) recipe = NULL;
+g_autoptr(LrgProcgenGrid) grid = NULL;
+g_autoptr(LrgTilemapLayer) layer = NULL;
+
+recipe = lrg_procgen_dungeon_new_from_file ("data/dungeon.yaml", &error);
+if (recipe == NULL)
+{
+	g_printerr ("dungeon.yaml: %s\n", error->message);
+	return FALSE;
+}
+
+/* floor N of a run: derive the seed from the run seed */
+grid = lrg_procgen_dungeon_generate (recipe, run_seed * 1000 + floor, &error);
+layer = lrg_procgen_dungeon_build_layer (recipe, grid);
+lrg_procgen_grid_spawn_entities (grid, world, registry, TILE_SIZE, spawn_cb, game);
+#+end_src
+
+Building a recipe in code and saving it is the same in reverse:
+
+#+begin_src c
+g_autoptr(LrgProcgenCaves) caves = lrg_procgen_caves_new (96, 64);
+g_autoptr(LrgProcgenDungeon) recipe = lrg_procgen_dungeon_new (LRG_PROCGEN_GENERATOR (caves));
+
+lrg_procgen_dungeon_add_spawn_rule (recipe, "bat", 12, 8, FALSE);
+lrg_procgen_tile_rules_set_rule (lrg_procgen_dungeon_get_tile_rules (recipe),
+                                 LRG_PROCGEN_CELL_WALL, 17, LRG_PROCGEN_AUTOTILE_BLOB);
+lrg_procgen_dungeon_save_to_file (recipe, "data/caves.yaml", &error);
+#+end_src

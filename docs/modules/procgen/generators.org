@@ -1,0 +1,70 @@
+* LrgProcgenGenerator
+:PROPERTIES:
+:CUSTOM_ID: lrgprocgengenerator
+:END:
+The abstract base class of every map generator. Header: =procgen/lrg-procgen-generator.h=.
+
+** Interface
+:PROPERTIES:
+:CUSTOM_ID: interface
+:END:
+| Member | Description |
+|--------+-------------|
+| =width=, =height= (properties, 1-4096, default 64 x 48) | Size of the grids it makes. |
+| =lrg_procgen_generator_generate (self, seed, &error)= | A fresh =LrgRandomStream= (=seed=, =LRG_PROCGEN_STREAM=) and a new grid. |
+| =lrg_procgen_generator_generate_with_rng (self, rng, &error)= | Draws from a stream the caller owns (advanced). |
+| =lrg_procgen_generator_type_from_name (name)= | =bsp=, =caves=, =wfc=, =drunkard=, =noise=, or any non-abstract subclass's GType name. |
+| =lrg_procgen_generator_type_to_name (type)= | The short name of a built-in, the GType name otherwise. |
+| =LrgProcgenGeneratorClass.generate= | The vfunc: fill a wall-filled grid, drawing only from =rng=. |
+| =lrg_procgen_register_types (registry)= | Registers =procgen-bsp=, =procgen-caves=, =procgen-wfc=, =procgen-drunkard=, =procgen-noise= and =procgen-dungeon= for =LrgDataLoader=. |
+
+The base class creates the grid (all =wall=), calls =generate=, and labels regions on success. Errors use =LRG_PROCGEN_ERROR=: =INVALID_CONFIG= for parameters that contradict each other, =TOO_SMALL= when the grid cannot hold the layout, =FAILED= when nothing usable was made, =CONTRADICTION= for wave function collapse.
+
+Every tunable parameter is a GObject property with a range. That is the contract the YAML loader relies on: =params:= keys are property names, values are validated against the property's range, and saving writes every read-write property back (see [[file:yaml.org][yaml.org]]).
+
+** Built-in generators
+:PROPERTIES:
+:CUSTOM_ID: built-in-generators
+:END:
+| Name | Type | Output | Doc |
+|------+------+--------+-----|
+| =bsp= | =LrgProcgenBsp= | rooms (recorded), corridors, doors; connected by construction | [[file:bsp.org][bsp.org]] |
+| =caves= | =LrgProcgenCaves= | organic caves, small ones culled, the rest joined | [[file:caves.org][caves.org]] |
+| =wfc= | =LrgProcgenWfc= | any tile set obeying adjacency rules | [[file:wfc.org][wfc.org]] |
+| =drunkard= | =LrgProcgenDrunkard= | winding caves, connected by construction | [[file:drunkard-noise.org][drunkard-noise.org]] |
+| =noise= | =LrgProcgenNoise= | terrain: water, floor, wall, plus heights | [[file:drunkard-noise.org][drunkard-noise.org]] |
+
+All built-ins except =wfc= keep the outer border solid wall; =wfc= does so when =border-tile= names a wall tile.
+
+** Writing a generator
+:PROPERTIES:
+:CUSTOM_ID: writing-a-generator
+:END:
+Subclass, override =generate=, expose parameters as properties, and the generator works with the whole module, including YAML recipes (=generator: MyMazeGen= by GType name, its properties under =params:=).
+
+#+begin_src c
+G_DECLARE_FINAL_TYPE (MyMaze, my_maze, MY, MAZE, LrgProcgenGenerator)
+
+struct _MyMaze { LrgProcgenGenerator parent_instance; guint loops; };
+G_DEFINE_FINAL_TYPE (MyMaze, my_maze, LRG_TYPE_PROCGEN_GENERATOR)
+
+static gboolean
+my_maze_generate (LrgProcgenGenerator  *gen,
+                  LrgProcgenGrid       *grid,
+                  LrgRandomStream      *rng,
+                  GError              **error)
+{
+	/* carve with lrg_procgen_grid_set_cell (); draw only from rng,
+	 * with integer helpers (lrg_random_stream_bounded) to stay portable */
+	return TRUE;
+}
+
+static void
+my_maze_class_init (MyMazeClass *klass)
+{
+	LRG_PROCGEN_GENERATOR_CLASS (klass)->generate = my_maze_generate;
+	/* install "loops" as a uint property with a range */
+}
+#+end_src
+
+Rules for a deterministic generator: draw randomness only from the given stream; avoid floating point in anything that decides a cell (libm results differ across platforms, and gcc contracts =a*b+c= into FMA on aarch64); iterate in a fixed order (no hash-table iteration).
