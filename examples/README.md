@@ -54,6 +54,12 @@ cd examples
 | `scripted-python-gobject-game` | PyGObject scripting | [docs](../docs/examples/scripting-basics.org) |
 | `scripted-gjs-game` | GJS (JavaScript) scripting | [docs](../docs/examples/scripting-basics.org) |
 
+### Simulation and Netcode
+
+| Example | Description | Documentation |
+|---------|-------------|---------------|
+| `replay-demo` | Headless: records a deterministic physics game to a replay file, plays it back, then runs it as two rollback peers over a lossy simulated network | [docs](../docs/modules/replay/index.org) |
+
 ### Asset Rendering
 
 | Example | Description |
