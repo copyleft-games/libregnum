@@ -1,8 +1,52 @@
 # Libregnum Roadmap
 
-Last updated: 2026-09-18
+Last updated: 2026-10-29
 
 ## Recently Shipped
+
+### v0.4.0
+
+- Stub gaps closed: scene serializer default file I/O; lightmap image
+  load/save/upload; 2D lighting viewport culling, camera-derived viewport, a
+  real light pass and compositing; rain splash particles and seedable rain;
+  pause-menu confirmation dialogs. Fixed template states crashing on push
+  (NULL chain-ups), safe state popping during input and a pause-menu widget
+  leak.
+- Registry built-ins: `lrg_registry_register_builtin()` registers 65 engine
+  types (ECS, physics, triggers, lights, particles, weather, shapes,
+  definitions, behavior-tree nodes) under kebab-case names; app registrations
+  win. MCP debug tools drive the real profiler, overlay, console and
+  inspector; `libregnum://engine/config` and `libregnum://engine/registry`
+  return live data; `lrg_input_get_state` reports full keyboard, mouse,
+  gamepad and input-map state (`lrg_mcp_server_set_input_map()`).
+- Editor tools: tilemap painting (Tiles panel; brush, rect, flood fill,
+  eyedropper, layers; one undo step per stroke), animation timeline
+  (keyframed transform/colour/param channels with easing, scrub/play preview,
+  autoplay in play-in-editor, saved as `timelines:` in `.rlevel`) and asset
+  thumbnails (textures, models, levels/prefabs; cached per project,
+  invalidated on file changes). Reachable via IPC (`tilemap.*`, `timeline.*`,
+  `asset.thumbnail`), `lrgeditorctl tiles|timeline|thumbnail`, MCP and Emacs.
+  Docs: `docs/editor/editor-tools.org`.
+- Procgen module (`src/procgen/`): seeded, integer-only map generation (BSP
+  rooms/corridors/doors, cellular-automaton caves, wave function collapse with
+  learned or YAML rules and backtracking, drunkard's walk, fixed-point noise
+  heightmaps); connectivity, farthest-pair start/exit, spawn placement and ECS
+  spawning; tile rules with cardinal/blob autotiling, `LrgNavGrid`
+  conversion, YAML `dungeon.yaml` recipes. Example `game-procgen-dungeon`,
+  bench `procgen`, docs in `docs/modules/procgen/`.
+- Deterministic simulation and replays (`src/replay/`): `LrgSimulation`
+  (seeded random stream, per-tick input, desync detector), `LrgSimStateful`
+  on random stream/timers/physics, the versioned `LrgReplay` format, template
+  `--record/--replay/--replay-headless/--seed`, golden-file tests and a
+  GGPO-style `LrgRollbackSession` over loopback and UDP transports. The build
+  now uses `-ffp-contract=off` for cross-architecture float agreement.
+- Audio robustness (graylib v0.4.0): game-thread audio calls are queued
+  lock-free for graylib's `grl-audio` thread with mirrored getters
+  (`sfx-calls` per-call max 0.8-1.4 ms -> under 0.1 ms). The intermittent
+  `InitAudioDevice` SIGSEGV (miniaudio 0.11.24 PulseAudio NULL sink info) is
+  avoided by opening through ALSA first with Pulse as fallback;
+  `GRL_AUDIO_BACKEND` / `LRG_AUDIO_BACKEND` / `LrgAudioSettings:audio-backend`
+  select it, and games run silently when no device opens.
 
 ### lrgeditorctl, editor MCP and the libregnum agent skill
 
@@ -173,40 +217,30 @@ been validated. Headless tests skip cases requiring a display or hardware.
 
 ## Remaining Concrete Gaps
 
-### MCP debugging and engine resources
+### Follow-ups from v0.4.0
 
-Profiler/debug operations still have placeholder paths in
-`src/mcp/tools/lrg-mcp-debug-tools.c`. Detailed configuration and registry
-resources remain placeholders in `src/mcp/resources/lrg-mcp-engine-resources.c`.
-Full physical input-state reporting also needs work in
-`src/mcp/tools/lrg-mcp-input-tools.c`. These are separate from the implemented
-ECS and save operations.
-
-### Built-in type registration
-
-`lrg_registry_register_builtin()` in `src/core/lrg-registry.c` still needs its
-built-in type mappings populated. Applications currently register the types
-needed by their YAML definitions and MCP spawning.
-
-### Template confirmations
-
-The pause menu still needs confirmation states for returning to the main menu
-and quitting (`src/template/states/lrg-template-pause-menu-state.c`). Loading
-state asset integration is implemented.
-
-### Lighting and weather
-
-- Viewport light culling remains unfinished in
-  `src/lighting/lrg-lighting-manager.c`; its lighting pass also needs further
-  rendering integration.
-- Rain splash particle spawning remains unfinished in `src/weather/lrg-rain.c`.
+- 2D shadow geometry is not yet drawn in the lighting pass; casters only feed
+  `calculate_shadows`.
+- `LrgParticleEmitter` uses the global `g_random`, so rain splash counts are
+  seedable but droplet velocities are not deterministic.
+- Rollback sessions lack spectators, late join, time synchronization and
+  disconnect detection; the UDP transport is unauthenticated.
+  `LrgStateBuffer` overlaps the io module's byte reader/writer.
+- Procgen WFC is the simple tiled model only (no NxN overlapping patterns,
+  at most 64 tiles).
+- Editor: no thumbnails for audio, fonts, scripts, tilesets or CAD; no tile
+  autotiling, flips or collision editing; timelines pose editor nodes, not
+  runtime entities, during play-in-editor.
+- Audio: setup calls, pushed streams and non-background music still take
+  raylib's audio lock on the calling thread. The ALSA-first device open forces
+  the backend by briefly pointing `PULSE_SERVER` at a missing socket because
+  raylib owns the miniaudio context config; a graylib-owned context would be
+  cleaner.
+- The MCP config resource reports the default settings object, not a running
+  `LrgGameTemplate`'s own settings instance.
 
 ## Future Directions
 
-- Dedicated dungeon/map generation built on the tilemap and ECS modules:
-  BSP, cellular automata, or Wave Function Collapse.
-- Network prediction or rollback, after defining simulation determinism and
-  synchronization requirements.
 - Named reel registry and nested composition opacity.
 - Extend definition reload workflows to application-specific dependency graphs
   and live instance migration. Current hot reload replaces cached definitions;
