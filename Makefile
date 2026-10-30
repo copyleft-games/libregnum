@@ -1441,6 +1441,7 @@ SOURCES += \
 	src/editor/lrg-external-editor.c \
 	src/editor/lrg-editor-log.c \
 	src/editor/lrg-editor-server.c \
+	src/editor/lrg-editor-server-tools.c \
 	src/editor/lrg-editor-actions.c \
 	src/editor/lrg-editor-validate.c \
 	src/editor/lrg-asset-database.c \
