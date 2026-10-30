@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum editor ipc
 #+created: 2026-10-24T22:30:00-04:00
-#+updated: 2026-10-24T22:30:00-04:00
+#+updated: 2026-10-29T23:30:00-04:00
 #+version: 1.0
 
 * Editor IPC Protocol
@@ -137,6 +137,40 @@ Every editing method goes through the editor's undo stack.
 | =prefab.save=        | =node=, =path=                                             | the path                                     |
 | =log.tail=           | =count=                                                    | recent log records                           |
 
+** Tilemap methods
+:PROPERTIES:
+:CUSTOM_ID: tilemap-methods
+:END:
+Tile painting on nodes whose visual kind is =tilemap= (see [[file:editor-tools.org::#tilemap-painting][Tilemap painting]]). Every call is one undo step; a node without a grid gets an empty 16x16 one in the same step. =layer= is a layer index or name (default 0); =tile= is a tile id, 1-based into the tileset (0 or =erase: true= erases).
+
+| Method              | Params                                                                 | Result |
+|---------------------+------------------------------------------------------------------------+--------|
+| =tilemap.get=       | =node=, =layer= (only that layer), =cells= (=false= omits the rows)       | =node width height tile_width tile_height tile_size tileset layers [{index name visible count rows}]=; =layers= is empty while the node has no grid |
+| =tilemap.configure= | =node=, any of =width height= (cells, 1..4096; resizing keeps the top-left block), =tile_width tile_height= (tileset pixels), =tile_size= (world units per cell), =tileset= (asset path), =add_layer= (name), =remove_layer=, =layer= + =rename= / =visible= | the grid without rows |
+| =tilemap.paint=     | =node=, =tile=, =erase=, =layer=; =cells= =[[x, y], ...]= sets exactly those cells, or =points= =[[x, y], ...]= draws a brush stroke through them with =brush= (square size) | =changed= |
+| =tilemap.rect=      | =node=, =x0 y0 x1 y1= (inclusive, any corner order, clipped), =tile=, =erase=, =layer= | =changed= |
+| =tilemap.fill=      | =node=, =x y= (seed), =tile=, =erase=, =layer=; floods the 4-connected region of the seed's id | =changed= |
+| =tilemap.pick=      | =node=, =x y=, =layer=                                                  | =tile= |
+
+** Timeline methods
+:PROPERTIES:
+:CUSTOM_ID: timeline-methods
+:END:
+Keyframed animation stored in the level (see [[file:editor-tools.org::#animation-timeline][Animation timeline]]). =channel= is one of =location.x|y|z=, =rotation.x|y|z= (radians), =scale.x|y|z=, =color.r|g|b|a=, =roughness=, =metallic=, =param.NAME=. =easing= is an =LrgEasingType= nick (=linear=, =ease-in-quad=, =ease-out-cubic=, =ease-in-out-sine=, =ease-out-bounce=, ...) and shapes the segment after the key. Times are seconds; key matches use a 1 ms tolerance. All mutations are undoable.
+
+| Method              | Params                                                                 | Result |
+|---------------------+------------------------------------------------------------------------+--------|
+| =timeline.list=     |                                                                        | =[{name length loop autoplay tracks}]= |
+| =timeline.get=      | =name=                                                                 | summary plus =tracks [{node node_name channel keys [{time value easing}]}]= |
+| =timeline.add=      | =name=, =length= (default 2), =loop=                                   | summary; =failed= if the name exists |
+| =timeline.remove=   | =name=                                                                 | =true= |
+| =timeline.set=      | =name=, any of =rename length loop autoplay=                           | summary |
+| =timeline.key=      | =name= (created if missing), =node=, =time=, =easing=; with =channel= (+ optional =value=, default the node's current value) keys one channel, otherwise =channels= (default the nine transform channels) | =keys= written |
+| =timeline.unkey=    | =name=, =node=, =time=, =channel= (default every track of the node); empty tracks are dropped | =removed= |
+| =timeline.move-key= | =name=, =node=, =from=, =to=, =channel=                                | =moved= |
+| =timeline.ease=     | =name=, =node=, =time=, =easing=, =channel=                            | =changed= |
+| =timeline.sample=   | =name=, =time= (wrapped or clamped to the clip)                        | =time=, =values [{node channel value}]= (nothing is written) |
+
 ** Application methods
 :PROPERTIES:
 :CUSTOM_ID: app-methods
@@ -161,6 +195,14 @@ Available when the server belongs to =lrgeditor= / =LrgEditorApp=:
 | =ui.notify=       | =message=, =level= (0 info, 1 success, 2 warning, 3 error) | =true=; shows a toast                        |
 | =ui.state=        |                                                     | =menu= (open top-level menu or null), =dialog=, =palette=, =nav= (=none fly orbit pan box zoom gizmo=), =viewport_hovered=, =window=, =fps=, =frame_height=, =menubar= (header rects by label), =viewport= (rect), =input= (=x y buttons [left right middle] mods=) as last seen |
 | =editor.quit=     | =force= (discard unsaved changes)                   | =true=                                              |
+| =tilemap.tool=    | any of =tool= (=brush eraser rect fill pick=), =tile=, =layer=, =brush=, =mode= (paint mode on/off) | =tool mode tile layer brush target hover= (=[x, y]= cell under the pointer or null) |
+| =timeline.play=   | =name= (else the panel's timeline), =from=, =playing= (default true) | =name time playing previewing=        |
+| =timeline.seek=   | =time=, =name=                                      | timeline state; the nodes show the pose (preview)   |
+| =timeline.stop=   |                                                     | timeline state; previewed nodes are restored        |
+| =timeline.state=  |                                                     | =name time playing previewing=                      |
+| =asset.thumbnail= | =path= (project relative or absolute), =wait= (generate now) | =path thumbnail pending cache=; textures, levels, prefabs; models need a window |
+
+The app also overrides =level.save= so a timeline preview is put back before writing (the pose is never saved).
 
 ** Examples
 :PROPERTIES:

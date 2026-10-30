@@ -89,6 +89,9 @@ Round trip: `lrgeditorctl get node Props/Crate -o yaml > crate.yaml`, edit, `lrg
 | `game start\|stop` | Run the game as a process with the project's run command (output in `logs`) |
 | `view top\|front\|right\|bottom\|back\|left\|persp\|all` | Camera presets; `view focus PATH`; `view set position=x,y,z target=x,y,z orthographic=true ortho_height=10` |
 | `screenshot FILE.png [--window]` | Viewport (or whole window) as PNG; needs a windowed editor |
+| `tiles NODE [paint\|rect\|fill\|pick\|configure key=value...]` | Print a tilemap grid or paint it: `tiles Ground configure width=16 height=8`, `tiles Ground paint tile=3 'points=[[0,0],[7,0]]' brush=2`, `tiles Ground fill x=0 y=0 tile=1` |
+| `timeline [list\|get NAME\|add NAME\|rm NAME\|key NAME NODE key=value...\|play [NAME]\|stop\|seek TIME [NAME]\|state]` | Keyframes: `timeline key Door Props/Door time=1 channel=rotation.y value=1.57 easing=ease-in-out-sine` |
+| `thumbnail PATH` | Generate (if needed) and print an asset's cached thumbnail PNG |
 | `notify MESSAGE [--level 0-3]` | Toast in the editor |
 | `call METHOD [key=value...]` or `call METHOD '{json}'` | Any IPC method (see `get methods`) |
 | `quit [--force]` | Close the editor |

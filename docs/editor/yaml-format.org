@@ -57,6 +57,7 @@ nodes:
 | =name= | string | No | Level display name |
 | =default_view= | string | Yes | ="3d"= or ="2d"= (controls IDE viewport hint) |
 | =nodes= | sequence | Yes | Root-level node sequence (children of the implicit root) |
+| =timelines= | sequence | No | Keyframed animation clips (see [[#timelines][Timelines]]); omitted when the level has none |
 
 ** Node Fields
 :PROPERTIES:
@@ -109,7 +110,19 @@ visual:
     intensity: 2.5
     fov: 60.0
     segments: 32
+  tilemap:                 # kind=tilemap only, optional: the painted grid
+    width: 16              # cells (1..4096)
+    height: 8
+    tile_width: 16         # tileset slicing in pixels
+    tile_height: 16
+    layers:                # bottom first
+      - name: base
+        visible: true
+        rows:              # one string per row, space-separated tile ids
+          - "1 1 2 0 ..."  # 0 = empty, N = tileset tile N-1
 #+end_src
+
+For =tilemap= nodes, =asset= is the tileset image and =params.tile_size= the world size of one cell. Rows are padded/truncated to =width= on load. See [[file:editor-tools.org::#tilemap-painting][Tilemap painting]].
 
 **** =kind= values (=LrgNodeVisualKind= enum nicks)
 :PROPERTIES:
@@ -252,6 +265,29 @@ nodes:
           - language: lua
             script: "scripts/flicker.lua"
             enabled: true
+#+end_src
+
+** Timelines
+:PROPERTIES:
+:CUSTOM_ID: timelines
+:END:
+Optional, additive (older readers ignore it). Each entry is an =LrgTimeline=; tracks address nodes by GUID and a channel name (=location.x|y|z=, =rotation.x|y|z= in radians, =scale.x|y|z=, =color.r|g|b|a=, =roughness=, =metallic=, =param.NAME=). =easing= is an =LrgEasingType= nick applied from that key to the next; it is omitted for =linear=. See [[file:editor-tools.org::#animation-timeline][Animation timeline]].
+
+#+begin_src yaml
+timelines:
+  - name: Door
+    length: 1.5           # seconds
+    loop: false
+    autoplay: true        # plays during play-in-editor
+    tracks:
+      - node: 9b6e2d0c-0f3c-4a7e-8e0a-5f1d2c3b4a59
+        channel: rotation.y
+        keys:
+          - time: 0.0
+            value: 0.0
+            easing: ease-in-out-sine
+          - time: 1.5
+            value: 1.5708
 #+end_src
 
 ** Notes

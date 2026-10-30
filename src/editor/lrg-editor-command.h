@@ -39,6 +39,10 @@ G_BEGIN_DECLS
  * @LRG_EDITOR_CMD_NODE_STATE: restore a node's own state (name, flags,
  *   transform, visual, components, scripts) from before/after snapshots;
  *   the generic command behind inspector edits
+ * @LRG_EDITOR_CMD_TILES: change cells of one layer of a tilemap node's
+ *   tile grid (a paint dab, rectangle or flood fill)
+ * @LRG_EDITOR_CMD_TIMELINE: add, remove or replace one of the level's
+ *   timelines from before/after copies (keyframe edits)
  *
  * The kind of mutation an #LrgEditorCommand represents.
  *
@@ -53,7 +57,9 @@ typedef enum
     LRG_EDITOR_CMD_REPARENT,
     LRG_EDITOR_CMD_SET_VISUAL_PARAM,
     LRG_EDITOR_CMD_GROUP,
-    LRG_EDITOR_CMD_NODE_STATE
+    LRG_EDITOR_CMD_NODE_STATE,
+    LRG_EDITOR_CMD_TILES,
+    LRG_EDITOR_CMD_TIMELINE
 } LrgEditorCommandKind;
 
 #define LRG_TYPE_EDITOR_COMMAND (lrg_editor_command_get_type ())
@@ -248,6 +254,69 @@ LrgEditorCommand * lrg_editor_command_new_node_state (LrgNode     *node,
                                                      LrgNode     *before,
                                                      LrgNode     *after,
                                                      const gchar *label);
+
+/**
+ * lrg_editor_command_new_tiles:
+ * @node: a tilemap node (its visual carries an #LrgNodeTilemap)
+ * @layer: the tile layer the changes apply to
+ * @label: (nullable): history label, e.g. "Paint Tiles"
+ *
+ * Creates an empty tile-change command; add cells with
+ * lrg_editor_command_tiles_add(). The grid is looked up on the node at
+ * apply time, so the command survives the visual being replaced by a
+ * node-state undo.
+ *
+ * Returns: (transfer full): a new command
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_tiles (LrgNode     *node,
+                                                 guint        layer,
+                                                 const gchar *label);
+
+/**
+ * lrg_editor_command_tiles_add:
+ * @self: a %LRG_EDITOR_CMD_TILES command
+ * @x: cell column
+ * @y: cell row
+ * @before: the tile id before the change
+ * @after: the tile id after the change
+ *
+ * Records one cell change. Add each cell once per command.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_command_tiles_add (LrgEditorCommand *self,
+                                   gint              x,
+                                   gint              y,
+                                   guint             before,
+                                   guint             after);
+
+/**
+ * lrg_editor_command_tiles_get_n_changes:
+ * @self: a %LRG_EDITOR_CMD_TILES command
+ *
+ * Returns: the number of recorded cell changes
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_command_tiles_get_n_changes (LrgEditorCommand *self);
+
+/**
+ * lrg_editor_command_new_timeline:
+ * @level: the level owning the timeline
+ * @before: (nullable): the timeline before the change, %NULL when adding
+ * @after: (nullable): the timeline after the change, %NULL when removing
+ * @label: (nullable): history label
+ *
+ * Creates a command that swaps one of @level's timelines between two
+ * states. Both are copied; the live timeline is found by @before's name
+ * (renames work) and replaced in place, keeping its index.
+ *
+ * Returns: (transfer full): a new command
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_timeline (LrgLevel    *level,
+                                                    LrgTimeline *before,
+                                                    LrgTimeline *after,
+                                                    const gchar *label);
 
 /* ==========================================================================
  * Operations

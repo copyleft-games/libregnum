@@ -111,6 +111,7 @@ make BUILD_EDITOR=0
 :CUSTOM_ID: related-documentation
 :END:
 - [[file:editor-app.org][The Editor Application]] — =lrgeditor=: panels, viewport, play mode, preferences, shortcuts
+- [[file:editor-tools.org][Editor Tools]] — tilemap painting, the animation timeline, asset thumbnails
 - [[file:external-editor.org][External Code Editor]] — =$EDITOR=, presets and command templates
 - [[file:emacs.org][Emacs Integration]] — =libregnum.el=
 - [[file:ipc-protocol.org][IPC Protocol]] — drive the editor from scripts and tools

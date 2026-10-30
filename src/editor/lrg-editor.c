@@ -982,6 +982,17 @@ lrg_editor_execute (LrgEditor        *self,
 }
 
 void
+lrg_editor_execute_merged (LrgEditor        *self,
+                           LrgEditorCommand *command)
+{
+	g_return_if_fail (LRG_IS_EDITOR (self));
+	g_return_if_fail (LRG_IS_EDITOR_COMMAND (command));
+
+	if (!try_merge (self, command))
+		execute_command (self, command);
+}
+
+void
 lrg_editor_add_node (LrgEditor *self,
                      LrgNode   *node,
                      LrgNode   *parent)

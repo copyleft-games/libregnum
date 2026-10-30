@@ -1,0 +1,270 @@
+#+title: Editor Tools: Tiles, Timelines, Thumbnails
+#+description: Tilemap painting, the animation timeline and asset thumbnails in lrgeditor: data model, UI, IPC, CLI, MCP and Emacs
+#+authors: Zach Podbielniak
+#+categories: libregnum editor tilemap animation thumbnails
+#+created: 2026-10-29T23:30:00-04:00
+#+updated: 2026-10-29T23:30:00-04:00
+#+version: 1.0
+
+* Editor Tools: Tiles, Timelines, Thumbnails
+:PROPERTIES:
+:CUSTOM_ID: editor-tools
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Editor Tools
+#+end_quote
+
+Three authoring tools of =lrgeditor= that follow the editor's usual split: the logic is headless and testable in =src/editor/=, the drawing lives in =src/editor/ui/=, every change is an undoable command, and every feature is reachable from the menus, the command palette, the IPC socket, =lrgeditorctl=, MCP and Emacs.
+
+| Tool | Headless core | UI | IPC |
+|------+---------------+----+-----|
+| [[#tilemap-painting][Tilemap painting]] | =LrgNodeTilemap=, =LrgEditorTilePainter= | Tiles panel, viewport tool, tile rendering | =tilemap.*= |
+| [[#animation-timeline][Animation timeline]] | =LrgTimeline=, =LrgTimelineTrack=, =lrg_editor_timeline_*()= | Timeline panel, preview, play-in-editor | =timeline.*= |
+| [[#asset-thumbnails][Asset thumbnails]] | =LrgThumbnailCache= | Assets panel grid view, model renders | =asset.thumbnail= |
+
+* Tilemap painting
+:PROPERTIES:
+:CUSTOM_ID: tilemap-painting
+:END:
+A node whose visual kind is =tilemap= (Create > Tilemap) carries a tile grid. Select it, press =B= (Tilemap > Paint Tiles) and the viewport's left button paints instead of selecting.
+
+** Data model
+:PROPERTIES:
+:CUSTOM_ID: tilemap-model
+:END:
+=LrgNodeTilemap= (=src/editor/lrg-node-tilemap.h=) is plain data held by the node's =LrgNodeVisual= (=lrg_node_visual_get_tilemap()=). It is deep-copied and compared with the visual, so node snapshots, copy/paste, duplicate, prefabs and play-mode restore all carry it without special cases.
+
+- A fixed grid of =width= x =height= cells (1..4096 each) with one or more named layers (bottom first), each with a visibility flag and a row-major array of tile ids.
+- Tile ids follow the runtime =LrgTilemapLayer= convention: =0= is empty and id =N= draws tile =N - 1= of the tileset (left to right, top to bottom).
+- =tile_width= / =tile_height= slice the tileset image (pixels, default 16x16). The tileset image is the visual's =asset=.
+- The world size of a cell is the visual param =tile_size= (default 1.0).
+- Geometry in node-local space: cell =(x, y)= covers =[x * size, (x + 1) * size]= horizontally and =[-(y + 1) * size, -y * size]= vertically. Row 0 is the top row and the grid grows right and down from the node origin, so it reads like the image it was painted from. =lrg_node_tilemap_local_to_cell()= and =lrg_editor_tile_painter_cell_at()= (world point, honours the node's full world transform) do the mapping.
+- =lrg_node_tilemap_flood_region()= returns the 4-connected region of the seed's id (breadth first, O(cells)).
+- =lrg_node_tilemap_to_runtime()= builds an =LrgTilemap= with the same layers for a game that loads tilemaps from a level.
+
+** Tools and undo
+:PROPERTIES:
+:CUSTOM_ID: tilemap-tools
+:END:
+=LrgEditorTilePainter= (=src/editor/lrg-editor-tile-painter.h=) is the one implementation behind the viewport, the IPC methods and the tests. It holds the current tile, layer and brush size and turns gestures into =LRG_EDITOR_CMD_TILES= commands (a list of =(x, y, before, after)= cell changes on one layer; the grid is looked up on the node when the command runs, so it survives node-state undos replacing the visual).
+
+| Tool | Gesture | Undo |
+|------+---------+------|
+| Brush | =begin_stroke()=, =stroke_to()= per pointer sample, =end_stroke()=; samples are joined with a Bresenham line so a fast drag leaves no gaps; square brush of 1..64 cells | the whole stroke is one undo group ("Paint Tiles") |
+| Eraser | a brush stroke painting 0 (Shift + drag erases with the brush too) | one group ("Erase Tiles") |
+| Rect | press, drag, release; corners in any order, clipped to the grid (Shift erases) | one step |
+| Fill | flood fill of the seed's 4-connected region (Shift erases) | one step |
+| Pick | eyedropper: the clicked cell's id becomes the current tile (Ctrl + click with any tool) | none |
+
+Cells that already hold the painted id are skipped, so re-painting records nothing. A node that has never been painted gets an empty 16x16 grid in the same undo step as its first edit. Escape cancels a rectangle; otherwise it leaves paint mode.
+
+** The Tiles panel
+:PROPERTIES:
+:CUSTOM_ID: tiles-panel
+:END:
+View > Panels > Tiles (docked as a tab next to the inspector; Tilemap > Tiles Panel). For the selected tilemap node it shows:
+
+- the paint-mode toggle and the five tools;
+- brush size (also =[= / =]=) and the current tile id;
+- grid settings: width, height, tileset slicing (drags merge into one undo step);
+- the tileset path; drop an image from the Assets panel on it to set it;
+- layers, top first: visibility checkbox, click to make a layer current, + Layer / - Layer (undoable);
+- the palette: the tileset image sliced into its tiles, click one to paint with it. Without an image (or headless) it shows numbered colour swatches with the same colours the viewport uses for untextured tiles.
+
+The viewport shows the grid outline always, cell lines while painting the node, the brush footprint under the pointer, a rectangle preview, and a "Tiles: tool tile layer brush" readout. Tiles render as textured quads from the tileset in the node's XY plane (layers stack bottom first); 2D mode (=Ctrl+Shift+2=) is the natural way to paint.
+
+** Saved format
+:PROPERTIES:
+:CUSTOM_ID: tilemap-yaml
+:END:
+Additive in =.rlevel= / =.rprefab= (older files load unchanged; files without a grid keep their old shape). Each layer's cells are one string per row, which keeps diffs line-oriented:
+
+#+begin_src yaml
+- name: Ground
+  visual:
+    kind: tilemap
+    asset: assets/tiles/terrain.png
+    params:
+      tile_size: 1.0
+    tilemap:
+      width: 4
+      height: 2
+      tile_width: 16
+      tile_height: 16
+      layers:
+        - name: base
+          visible: true
+          rows:
+            - "1 1 2 2"
+            - "0 0 9 9"
+#+end_src
+
+Loading is tolerant: short rows are padded with 0, long rows and extra rows are ignored, separators may be spaces, tabs or commas.
+
+** IPC, CLI, MCP, Emacs
+:PROPERTIES:
+:CUSTOM_ID: tilemap-automation
+:END:
+- IPC (headless, always available): =tilemap.get=, =tilemap.configure=, =tilemap.paint= (=cells= or a brush stroke through =points=), =tilemap.rect=, =tilemap.fill=, =tilemap.pick=; app only: =tilemap.tool= (viewport tool state, =hover= cell). See [[file:ipc-protocol.org::#tilemap-methods][IPC Protocol]].
+- =lrgeditorctl tiles NODE= prints the grid; =lrgeditorctl tiles NODE paint|rect|fill|pick|configure key=value...= edits it (=lrgeditorctl tiles Ground paint tile=3 'points=[[0,0],[7,0]]' brush=2=).
+- MCP: =get_tilemap=, =configure_tilemap=, =paint_tiles=, =paint_tile_rect=, =fill_tiles=.
+- Emacs: =libregnum-tilemap-show= (=C-c L g=), =libregnum-tilemap-paint=, =libregnum-tilemap-fill=, =libregnum-tilemap-tool= (=C-c L b=).
+
+* Animation timeline
+:PROPERTIES:
+:CUSTOM_ID: animation-timeline
+:END:
+Levels hold named timelines that keyframe node properties. The Timeline panel (View > Panels > Timeline, docked next to Assets) edits them; autoplay timelines run during play-in-editor.
+
+** Data model
+:PROPERTIES:
+:CUSTOM_ID: timeline-model
+:END:
+- =LrgTimeline= (=src/editor/lrg-timeline.h=): =name= (unique in the level), =length= in seconds (default 2), =loop=, =autoplay=, and tracks. =lrg_timeline_wrap_time()= wraps (loop) or clamps a running time; =lrg_timeline_apply()= samples every track and writes the values onto the nodes.
+- =LrgTimelineTrack=: one channel of one node (by GUID) on an =LrgKeyframeCurve= (=src/tween=) with key times in seconds. Each key has an =LrgEasingType= that shapes the segment to the next key (=lrg_easing_interpolate()=); sampling clamps before the first and after the last key. Keys within half a millisecond replace each other.
+- Channels (=lrg_timeline_channel_read/write()=):
+
+| Channel | Writes |
+|---------+--------|
+| =location.x= =location.y= =location.z= | node location |
+| =rotation.x= =rotation.y= =rotation.z= | node rotation (radians) |
+| =scale.x= =scale.y= =scale.z= | node scale |
+| =color.r= =color.g= =color.b= =color.a= | the visual's material colour (0..1; the material is created on first write) |
+| =roughness=, =metallic= | the visual's material |
+| =param.NAME= | a numeric entry of the visual's param bag (light intensity, camera fov, CAD parameters, ...) |
+
+- =LrgLevel= owns the timelines (=lrg_level_get_n_timelines()=, =lrg_level_find_timeline()=, =lrg_level_insert_timeline()=, =lrg_level_remove_timeline()=).
+
+** Undoable editing
+:PROPERTIES:
+:CUSTOM_ID: timeline-undo
+:END:
+=src/editor/lrg-editor-timeline.h= is the editing API shared by the panel, IPC and tests. Each call copies the live timeline, edits the copy and executes one =LRG_EDITOR_CMD_TIMELINE= command (before/after copies; apply/undo swap the level's timeline in place by name, so renames work and the index is kept):
+
+| Function | Undo label |
+|----------+------------|
+| =lrg_editor_timeline_add()= / =_remove()= | Add / Remove Timeline |
+| =lrg_editor_timeline_configure()= (rename, length, loop, autoplay) | Timeline Settings |
+| =lrg_editor_timeline_set_key()= (creates the timeline when missing) | Set Keyframe |
+| =lrg_editor_timeline_key_node()= (current values; default the nine transform channels) | Insert Keyframe |
+| =lrg_editor_timeline_remove_key()= (empty tracks are dropped) | Delete Keyframe |
+| =lrg_editor_timeline_move_key()= (=merge= while dragging) | Move Keyframe |
+| =lrg_editor_timeline_set_easing()= | Set Easing |
+| =lrg_editor_timeline_remove_track()= | Delete Track |
+
+=lrg_editor_execute_merged()= (new on =LrgEditor=) folds a command into the previous compatible one, so a key drag is one undo step.
+
+** The Timeline panel
+:PROPERTIES:
+:CUSTOM_ID: timeline-panel
+:END:
+- Toolbar: timeline chooser, name field + New, Delete, Play/Pause (=K=), Stop, Key (=I=: insert transform keys for every selected node at the playhead, as one undo step), Delete Key, the easing used for new keys (changing it also re-eases the selected key), Loop, Autoplay, length, and the playhead time.
+- Lanes: one row per track ("Node channel"; missing nodes in red) with a ruler; diamonds are keys. Click a diamond to select it, drag it to retime it (snaps to 10 ms, one undo step per drag). Click or drag anywhere else on the lanes to scrub.
+- =Alt+Left= / =Alt+Right= jump the playhead to the previous / next key of any track.
+
+** Preview semantics
+:PROPERTIES:
+:CUSTOM_ID: timeline-preview
+:END:
+Scrubbing and playing write sampled values straight onto the nodes, outside the undo history (like other editors' animation mode), so the viewport, the inspector and the gizmo show the pose. The value each animated channel had when the preview started is remembered and written back when the preview ends: Stop, saving (=File > Save=, =level.save= over IPC), starting play-in-editor, or switching timelines. A previewed pose is therefore never saved and never marks the document dirty. Keying while previewing records the node's current (posed or moved) values at the playhead.
+
+** Play-in-editor
+:PROPERTIES:
+:CUSTOM_ID: timeline-play
+:END:
+When play starts, every timeline with =autoplay= is sampled at the play clock after each simulation tick (wrapped when looping) and applied to the authoring nodes, which the viewport shows. Stopping play restores the nodes from the play snapshot as for any other play-time change. Timelines animate the authoring nodes, not the runtime entities: scripts reading =LrgGameObject= positions do not see the animation (see [[#tools-limits][Limits]]).
+
+** Saved format
+:PROPERTIES:
+:CUSTOM_ID: timeline-yaml
+:END:
+An optional top-level =timelines:= sequence; files without timelines keep their old shape and old readers ignore it. =easing= is the =LrgEasingType= nick and is omitted for =linear=.
+
+#+begin_src yaml
+timelines:
+  - name: Bounce
+    length: 2.0
+    loop: true
+    autoplay: true
+    tracks:
+      - node: 3f0c9a52-6d0e-4c1b-9a51-0b0f5f3c2e11
+        channel: location.y
+        keys:
+          - time: 0.0
+            value: 0.0
+            easing: ease-out-bounce
+          - time: 1.0
+            value: 3.0
+#+end_src
+
+** IPC, CLI, MCP, Emacs
+:PROPERTIES:
+:CUSTOM_ID: timeline-automation
+:END:
+- IPC (headless): =timeline.list=, =timeline.get=, =timeline.add=, =timeline.remove=, =timeline.set=, =timeline.key=, =timeline.unkey=, =timeline.move-key=, =timeline.ease=, =timeline.sample= (pure). App only: =timeline.play=, =timeline.stop=, =timeline.seek=, =timeline.state=. See [[file:ipc-protocol.org::#timeline-methods][IPC Protocol]].
+- =lrgeditorctl timeline [list|get NAME|add NAME|rm NAME|key NAME NODE key=value...|play [NAME]|stop|seek TIME [NAME]|state]=.
+- MCP: =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=.
+- Emacs: =libregnum-timeline-key= (=C-c L k=; with =C-u= one channel and value), =libregnum-timeline-ease=, =libregnum-timeline-play= (=C-c L a=), =libregnum-timeline-seek=, =libregnum-timeline-stop= (=C-c L A=).
+- Actions: =timeline.key=, =timeline.play=, =timeline.stop=, =timeline.new=, =timeline.next-key=, =timeline.prev-key=, =timeline.delete-key=, =timeline.show-panel=.
+
+* Asset thumbnails
+:PROPERTIES:
+:CUSTOM_ID: asset-thumbnails
+:END:
+The Assets panel's grid view (the Grid/List button, or View > Asset Thumbnails) shows thumbnails instead of type glyphs for textures and sprites, models, levels and prefabs. Folders and other files keep their glyphs; a dimmed glyph means the thumbnail is on its way.
+
+** Cache
+:PROPERTIES:
+:CUSTOM_ID: thumbnail-cache
+:END:
+=LrgThumbnailCache= (=src/editor/lrg-thumbnail-cache.h=) stores PNGs named =<sha1 of the absolute path>-<mtime in microseconds>-<size in bytes>.png= (=lrg_thumbnail_cache_make_key()=):
+
+- in =<project>/.cache/thumbnails/= when a project is open, else =$XDG_CACHE_HOME/libregnum/thumbnails/=;
+- an edited file has a new mtime/size and simply misses; storing its new thumbnail sweeps the older versions of the same path;
+- =lrg_thumbnail_cache_invalidate()= deletes every version of a path;
+- thumbnails are scaled down to the cache size (96 px longest edge in the editor), tiny pixel art is scaled up by whole multiples with nearest-neighbour so it stays crisp; files are written to a temporary name and renamed into place.
+
+** Generation off the frame path
+:PROPERTIES:
+:CUSTOM_ID: thumbnail-generation
+:END:
+- =lrg_thumbnail_cache_request()= answers hits immediately and queues misses. CPU kinds run on a one-thread =GThreadPool= worker: textures are decoded and scaled (=GrlImage=), levels and prefabs become a top-down schematic of their nodes (positions and sizes from the YAML, coloured by visual kind; XZ plane for 3D levels, XY for 2D ones). The worker never touches the cache object: jobs carry their own paths and a reference to the result queue, and dispose drops queued jobs and waits for the running one.
+- GPU kinds (models) need the GL context, so they queue on the main thread and run through a renderer callback (=lrg_thumbnail_cache_set_renderer()=). In the editor that is =editor_render_model_thumbnail()=: load the model, frame its bounding box from a 3/4 angle with the viewport's lighting into a render texture, read it back, unload.
+- =lrg_thumbnail_cache_process (cache, max_gpu_jobs)= runs on the main thread every frame (and every 100 ms headless) with one GPU job per frame, then emits =ready (path, thumbnail)= for finished requests. The panel uploads at most four thumbnail textures per frame.
+- Live reload: the Assets panel's directory monitor invalidates the thumbnail (file and texture) of a file that changes, is created, deleted or moved, and drops the renderer's cached GPU copy of that file so the viewport reloads changed textures and models too. Tools > Rebuild Thumbnails regenerates everything shown.
+
+** IPC, CLI, MCP, Emacs
+:PROPERTIES:
+:CUSTOM_ID: thumbnail-automation
+:END:
+- IPC (app): =asset.thumbnail {path, wait}= returns =path=, =thumbnail= (or null), =pending= and =cache=; with =wait= it generates synchronously (models need a windowed editor).
+- =lrgeditorctl thumbnail PATH= prints the PNG path; MCP =get_thumbnail=; Emacs =libregnum-thumbnail= (=C-c L h=) opens it.
+
+* Limits
+:PROPERTIES:
+:CUSTOM_ID: tools-limits
+:END:
+- Tilemaps: one tileset per node; no auto-tiling/terrain rules, no per-tile flips or rotation, no collision editing in the panel (the runtime =LrgTileset= properties are not authored here). =lrg_level_instantiate()= does not create runtime tilemaps; games convert with =lrg_node_tilemap_to_runtime()=.
+- Timelines: scalar channels only (colour is four tracks); no Bézier tangents (easing per segment instead); the timeline panel shows one row per track without per-node folding; play-in-editor animates the authoring nodes, not the runtime entities.
+- Thumbnails: no thumbnails for audio, fonts, scripts, tilesets (=.tileset=/=.tsx=) or CAD parts; a request still in flight when its file is invalidated may deliver the old image once (the next change or Rebuild Thumbnails fixes it).
+
+* Source map
+:PROPERTIES:
+:CUSTOM_ID: tools-source-map
+:END:
+| File | Contents |
+|------+----------|
+| =src/editor/lrg-node-tilemap.[ch]= | tile grid model |
+| =src/editor/lrg-editor-tile-painter.[ch]= | brush/rect/fill/pick, strokes as undo groups |
+| =src/editor/lrg-timeline.[ch]= | =LrgTimeline=, =LrgTimelineTrack=, channels |
+| =src/editor/lrg-editor-timeline.[ch]= | undoable timeline editing |
+| =src/editor/lrg-thumbnail-cache.[ch]= | thumbnail cache, worker, GPU queue |
+| =src/editor/lrg-editor-command.[ch]= | =LRG_EDITOR_CMD_TILES=, =LRG_EDITOR_CMD_TIMELINE= |
+| =src/editor/lrg-level-serializer.c= | =visual.tilemap= and =timelines:= YAML |
+| =src/editor/lrg-editor-server-tools.c= | =tilemap.*= and =timeline.*= IPC methods |
+| =src/editor/ui/lrg-editor-panel-tiles.c= | Tiles panel, viewport tile tool and overlay |
+| =src/editor/ui/lrg-editor-panel-timeline.c= | Timeline panel, preview, play-in-editor hooks |
+| =src/editor/ui/lrg-editor-thumbnails.c= | per-project cache, uploads, invalidation |
+| =src/editor/ui/lrg-editor-render.c= | tilemap rendering, model thumbnail renders, asset forgetting |
+| =tests/test-editor-tilemap.c=, =test-editor-timeline.c=, =test-thumbnail-cache.c= | headless unit tests |
+| =tests/test-editor-server.c=, =test-editor-app.c=, =editor-x11-smoke.sh=, =editorctl-smoke.sh= | IPC, app, real-input and CLI tests |

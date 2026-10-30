@@ -22,6 +22,8 @@ Requires =-DLRG_BUILD_EDITOR= (=BUILD_EDITOR ?= 1=).
 | =LrgComponentDesc= | Final | Serializable component description (type name + props) |
 | =LrgScriptBinding= | Final | Serializable script reference (language + path) |
 | =LrgLevelSerializer= | Final | =.rlevel= / =.rprefab= YAML serializer |
+| =LrgNodeTilemap= | Final | Layered tile grid of a tilemap node's visual |
+| =LrgTimeline= / =LrgTimelineTrack= | Final | Keyframed node-channel animation stored in a level |
 
 ** Bridge Functions
 :PROPERTIES:
@@ -51,6 +53,10 @@ Requires =-DLRG_BUILD_EDITOR= (=BUILD_EDITOR ?= 1=).
 | =LrgEditorGizmo= | Final | Headless translate/rotate/scale gizmo controller (hover, drag, one undo per drag) |
 | =LrgEditorActions= | Final | Named action registry: rebindable shortcuts with alternative chords, palette fuzzy search |
 | =LrgEditorProblem= | Boxed struct | One level-validation finding (severity, code, node, message, file) |
+| =LrgEditorTilePainter= | Final | Brush/rect/fill/eyedropper tile tools; strokes are one undo group |
+| =LrgThumbnailCache= | Final | Asset thumbnail PNG cache (path+mtime+size keys), worker + GPU queue |
+
+Timeline editing is the =lrg_editor_timeline_*()= family on =LrgEditor=; see [[file:../../editor/editor-tools.org][Editor Tools]].
 
 See [[file:../../editor/editor-runtime.org][Editor Runtime]] for usage of all of the above.
 

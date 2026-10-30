@@ -183,4 +183,63 @@ LRG_AVAILABLE_IN_ALL
 void lrg_level_notify_node_changed (LrgLevel *self,
                                     LrgNode  *node);
 
+/* ==========================================================================
+ * Timelines (keyframed animation clips, see #LrgTimeline)
+ * ========================================================================== */
+
+/**
+ * lrg_level_get_n_timelines:
+ * @self: an #LrgLevel
+ *
+ * Returns: the number of timelines in the level
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_level_get_n_timelines (LrgLevel *self);
+
+/**
+ * lrg_level_get_timeline:
+ * @self: an #LrgLevel
+ * @index: a timeline index
+ *
+ * Returns: (transfer none) (nullable): the timeline, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgTimeline * lrg_level_get_timeline (LrgLevel *self,
+                                      guint     index);
+
+/**
+ * lrg_level_find_timeline:
+ * @self: an #LrgLevel
+ * @name: a timeline name
+ *
+ * Returns: the index of the timeline called @name, or -1
+ */
+LRG_AVAILABLE_IN_ALL
+gint lrg_level_find_timeline (LrgLevel    *self,
+                              const gchar *name);
+
+/**
+ * lrg_level_insert_timeline:
+ * @self: an #LrgLevel
+ * @timeline: (transfer none): the timeline (a reference is taken)
+ * @index: position, or -1 to append
+ *
+ * Adds a timeline. Names should be unique; lookups return the first match.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_insert_timeline (LrgLevel    *self,
+                                LrgTimeline *timeline,
+                                gint         index);
+
+/**
+ * lrg_level_remove_timeline:
+ * @self: an #LrgLevel
+ * @index: a timeline index
+ *
+ * Returns: whether a timeline was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_level_remove_timeline (LrgLevel *self,
+                                    guint     index);
+
 G_END_DECLS

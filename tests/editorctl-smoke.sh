@@ -136,6 +136,20 @@ check 'call raw method' "$(ctl call node.find query=Barr -o name)" 'Barrel'
 check 'notify' "$(ctl notify hello from the smoke test -o json)" 'true'
 check 'view set/get' "$(ctl view set target=1,2,3 && ctl get view)" '- 1'
 
+# Editor tools: tiles, timelines, thumbnails.
+ctl create node Floor --kind tilemap >/dev/null
+check 'tiles configure' "$(ctl tiles Floor configure width=4 height=2 -o json)" '"width" : 4'
+check 'tiles paint stroke' "$(ctl tiles Floor paint tile=2 'points=[[0,0],[3,0]]')" 'changed: 4'
+check 'tiles fill' "$(ctl tiles Floor fill x=0 y=1 tile=5)" 'changed: 4'
+check 'tiles grid' "$(ctl tiles Floor)" '    2   2   2   2'
+check 'timeline key' "$(ctl timeline key Spin Box time=1 channel=rotation.y value=3.14 easing=ease-in-out-sine)" 'keys: 1'
+check 'timeline list' "$(ctl timeline)" 'name: Spin'
+check 'timeline get' "$(ctl timeline get Spin)" 'ease-in-out-sine'
+printf '\x89PNG\r\n' >"${work}/game/broken.png"
+check 'thumbnail of a level' "$(ctl thumbnail "${work}/game/levels/main.rlevel")" '.cache/thumbnails/'
+"${ctl}" thumbnail "${work}/game/broken.png" >/dev/null 2>&1 && status=0 || status=$?
+check 'thumbnail failure exits 1' "status=${status}" 'status=1'
+
 # Persistence and validation.
 check 'save' "$(ctl save)" 'saved'
 check 'saved file has the nodes' "$(cat "${work}/game/levels/main.rlevel")" 'Barrel'
@@ -171,6 +185,7 @@ else
 	out="$({ printf '%s\n' "${mcp_in}"; sleep 2; } | timeout 20 "${ctl}" mcp 2>&1)"
 	check 'mcp initialize' "${out}" '"name":"libregnum-editor"'
 	check 'mcp tools/list' "${out}" '"name":"create_node"'
+	check 'mcp tilemap tools' "${out}" '"name":"paint_tiles"'
 	check 'mcp create_node' "$(ctl get nodes -o name)" 'node/AIBox'
 	check 'mcp tool error' "${out}" '"isError":true'
 fi

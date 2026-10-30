@@ -511,6 +511,7 @@ editor_panel_viewport (LrgEditorApp *self)
 	gdouble           orbit_speed = 0.35;
 	gboolean          invert_y = FALSE;
 	const gchar      *dropped;
+	gboolean          tiles_owned;
 	g_autofree gchar *navigation = NULL;
 
 	lrg_gui_get_region_rect (self->gui, &rect);
@@ -697,8 +698,11 @@ editor_panel_viewport (LrgEditorApp *self)
 			lrg_editor_view_dolly (&self->view, powf (0.87f, wy));
 	}
 
+	/* --- Tile painting (owns the left button while paint mode is on) ---- */
+	tiles_owned = (self->nav == EDITOR_NAV_NONE) && editor_tiles_viewport (self, &rect, lx, ly, hovered);
+
 	/* --- Gizmo and selection -------------------------------------------- */
-	if (self->nav == EDITOR_NAV_NONE || self->nav == EDITOR_NAV_BOX)
+	if (!tiles_owned && (self->nav == EDITOR_NAV_NONE || self->nav == EDITOR_NAV_BOX))
 	{
 		if (!lrg_editor_gizmo_is_dragging (self->gizmo) && hovered)
 			lrg_editor_gizmo_update_hover (self->gizmo, &self->view, lx, ly);
@@ -813,4 +817,5 @@ editor_panel_viewport (LrgEditorApp *self)
 	}
 
 	overlays (self, &rect);
+	editor_tiles_overlay (self, &rect);
 }

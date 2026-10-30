@@ -15,6 +15,7 @@
 #include <gio/gio.h>
 #include <stdio.h>
 #include <string.h>
+#include <json-glib/json-glib.h>
 #include <libregnum.h>
 
 #ifdef LRG_BUILD_EDITOR_UI
@@ -670,6 +671,299 @@ test_app_nav_schemes (Fixture       *f,
 
 #endif /* LRG_BUILD_EDITOR_UI */
 
+/* ==========================================================================
+ * Editor tools: tile painting, timeline preview/playback, thumbnails
+ * ========================================================================== */
+
+/* Dispatches a request written with single quotes (turned into JSON's
+ * double quotes) and returns the raw reply line. */
+static gchar *
+ipc_reply (Fixture     *f,
+           const gchar *request)
+{
+	g_autofree gchar *json = g_strdelimit (g_strdup (request), "'", '"');
+
+	return lrg_editor_server_dispatch (lrg_editor_app_get_server (f->app), json);
+}
+
+/* Dispatches a request and returns its "result" member (asserting no
+ * error); the caller unrefs. */
+static JsonNode *
+ipc_result (Fixture     *f,
+            const gchar *request)
+{
+	g_autofree gchar     *reply = ipc_reply (f, request);
+	g_autoptr(JsonParser) parser = json_parser_new ();
+	JsonObject           *o;
+
+	g_assert_true (json_parser_load_from_data (parser, reply, -1, NULL));
+	o = json_node_get_object (json_parser_get_root (parser));
+	if (json_object_has_member (o, "error"))
+		g_error ("%s -> %s", request, reply);
+	return json_node_copy (json_object_get_member (o, "result"));
+}
+
+static gint64
+ipc_int (Fixture     *f,
+         const gchar *request,
+         const gchar *member)
+{
+	g_autoptr(JsonNode) r = ipc_result (f, request);
+
+	return json_object_get_int_member (json_node_get_object (r), member);
+}
+
+/* Location component @axis of node @name. */
+static gdouble
+node_loc (Fixture     *f,
+          const gchar *name,
+          guint        axis)
+{
+	LrgNode *node = lrg_editor_find_node (f->editor, name);
+
+	g_assert_nonnull (node);
+	return axis == 0 ? lrg_node_get_location (node)->x
+	       : axis == 1 ? lrg_node_get_location (node)->y : lrg_node_get_location (node)->z;
+}
+
+static void
+test_app_tile_paint (Fixture       *f,
+                     gconstpointer  data)
+{
+	g_autoptr(JsonNode) r = NULL;
+	gfloat              vx, vy, vw, vh, cx, cy, px;
+	guint               undo0;
+	gint                i;
+
+	new_project (f);
+	frames (f, 2);
+
+	/* A 8x8 tilemap at the origin, the 2D view centred on cell (4, 4). */
+	r = ipc_result (f, "{'id':1,'method':'node.create','params':{'name':'TileMap','kind':'tilemap'}}");
+	g_clear_pointer (&r, json_node_unref);
+	r = ipc_result (f, "{'id':2,'method':'tilemap.configure','params':{'node':'TileMap','width':8,"
+	                   "'height':8}}");
+	g_clear_pointer (&r, json_node_unref);
+	r = ipc_result (f, "{'id':3,'method':'selection.set','params':{'nodes':['TileMap']}}");
+	g_clear_pointer (&r, json_node_unref);
+	r = ipc_result (f, "{'id':4,'method':'view.set','params':{'mode_2d':true}}");
+	g_clear_pointer (&r, json_node_unref);
+	r = ipc_result (f, "{'id':5,'method':'view.set','params':{'position':[4.5,-4.5,50],"
+	                   "'target':[4.5,-4.5,0],'ortho_height':20}}");
+	g_clear_pointer (&r, json_node_unref);
+	frames (f, 2);
+
+	/* B turns paint mode on (and shows the Tiles panel). */
+	press (f, LRG_GUI_KEY_B, 0);
+	frames (f, 1);
+	r = ipc_result (f, "{'id':6,'method':'tilemap.tool','params':{'tile':3}}");
+	g_assert_true (json_object_get_boolean_member (json_node_get_object (r), "mode"));
+	g_clear_pointer (&r, json_node_unref);
+
+	viewport_rect (f, &vx, &vy, &vw, &vh);
+	cx = vx + vw * 0.5f;
+	cy = vy + vh * 0.5f;
+	px = vh / 20.0f;   /* pixels per world unit (ortho height 20) */
+
+	/* Hovering reports the cell under the pointer. */
+	mouse (f, cx, cy, FALSE, FALSE);
+	r = ipc_result (f, "{'id':7,'method':'tilemap.tool'}");
+	g_assert_cmpint (json_array_get_int_element (json_object_get_array_member (json_node_get_object (r), "hover"), 0),
+	                 ==, 4);
+	g_clear_pointer (&r, json_node_unref);
+
+	/* A drag three cells right is one stroke and one undo step. */
+	undo0 = lrg_editor_get_undo_count (f->editor);
+	mouse (f, cx, cy, TRUE, FALSE);
+	for (i = 1; i <= 6; i++)
+		mouse (f, cx + px * 0.5f * i, cy, TRUE, FALSE);
+	mouse (f, cx + px * 3.0f, cy, FALSE, FALSE);
+	g_assert_cmpuint (lrg_editor_get_undo_count (f->editor), ==, undo0 + 1);
+	g_assert_cmpint (ipc_int (f, "{'id':8,'method':'tilemap.pick','params':{'node':'TileMap','x':4,"
+	                             "'y':4}}", "tile"), ==, 3);
+	g_assert_cmpint (ipc_int (f, "{'id':9,'method':'tilemap.pick','params':{'node':'TileMap','x':7,"
+	                             "'y':4}}", "tile"), ==, 3);
+	g_assert_cmpint (ipc_int (f, "{'id':9,'method':'tilemap.pick','params':{'node':'TileMap','x':4,"
+	                             "'y':5}}", "tile"), ==, 0);
+	/* Painting did not change the selection or move the node. */
+	g_assert_cmpuint (n_selected (f), ==, 1);
+	g_assert_cmpfloat (node_loc (f, "TileMap", 0), ==, 0.0);
+
+	/* Fill tool: one click floods the empty area. */
+	r = ipc_result (f, "{'id':10,'method':'tilemap.tool','params':{'tool':'fill','tile':5}}");
+	g_clear_pointer (&r, json_node_unref);
+	mouse (f, cx, cy + px * 2.0f, FALSE, FALSE);
+	mouse (f, cx, cy + px * 2.0f, TRUE, FALSE);
+	mouse (f, cx, cy + px * 2.0f, FALSE, FALSE);
+	g_assert_cmpint (ipc_int (f, "{'id':11,'method':'tilemap.pick','params':{'node':'TileMap','x':0,"
+	                             "'y':0}}", "tile"), ==, 5);
+
+	/* Ctrl + click picks; undo the fill, then the stroke. */
+	mouse (f, cx, cy, FALSE, FALSE);
+	f->input.mods = LRG_GUI_MOD_CTRL;
+	mouse (f, cx, cy, TRUE, FALSE);
+	mouse (f, cx, cy, FALSE, FALSE);
+	f->input.mods = 0;
+	r = ipc_result (f, "{'id':12,'method':'tilemap.tool'}");
+	g_assert_cmpint (json_object_get_int_member (json_node_get_object (r), "tile"), ==, 3);
+	g_clear_pointer (&r, json_node_unref);
+
+	press (f, LRG_GUI_KEY_Z, LRG_GUI_MOD_CTRL);
+	g_assert_cmpint (ipc_int (f, "{'id':13,'method':'tilemap.pick','params':{'node':'TileMap','x':0,"
+	                             "'y':0}}", "tile"), ==, 0);
+	press (f, LRG_GUI_KEY_Z, LRG_GUI_MOD_CTRL);
+	g_assert_cmpint (ipc_int (f, "{'id':14,'method':'tilemap.pick','params':{'node':'TileMap','x':5,"
+	                             "'y':4}}", "tile"), ==, 0);
+
+	/* Escape leaves paint mode; clicks select again. */
+	press (f, LRG_GUI_KEY_ESCAPE, 0);
+	frames (f, 1);
+	r = ipc_result (f, "{'id':15,'method':'tilemap.tool'}");
+	g_assert_false (json_object_get_boolean_member (json_node_get_object (r), "mode"));
+}
+
+static void
+test_app_timeline (Fixture       *f,
+                   gconstpointer  data)
+{
+	g_autoptr(JsonNode) r = NULL;
+	g_autofree gchar   *saved = NULL;
+	g_autoptr(GError)   error = NULL;
+	gint                i;
+
+	new_project (f);
+	frames (f, 2);
+	r = ipc_result (f, "{'id':1,'method':'node.create','params':{'name':'Mover','kind':'primitive'}}");
+	g_clear_pointer (&r, json_node_unref);
+	r = ipc_result (f, "{'id':2,'method':'selection.set','params':{'nodes':['Mover']}}");
+	g_clear_pointer (&r, json_node_unref);
+
+	/* I keys the selection's transform into a fresh timeline. */
+	press (f, LRG_GUI_KEY_I, 0);
+	r = ipc_result (f, "{'id':3,'method':'timeline.list'}");
+	g_assert_cmpuint (json_array_get_length (json_node_get_array (r)), ==, 1);
+	g_clear_pointer (&r, json_node_unref);
+	r = ipc_result (f, "{'id':4,'method':'timeline.key','params':{'name':'Timeline','node':'Mover',"
+	                   "'time':2,'channel':'location.x','value':10}}");
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Scrubbing previews without touching history... */
+	r = ipc_result (f, "{'id':5,'method':'timeline.seek','params':{'time':1}}");
+	g_assert_true (json_object_get_boolean_member (json_node_get_object (r), "previewing"));
+	g_clear_pointer (&r, json_node_unref);
+	g_assert_cmpfloat_with_epsilon (node_loc (f, "Mover", 0), 5.0, 1e-4);
+
+	/* ...and saving writes the rest pose, not the preview. */
+	r = ipc_result (f, "{'id':6,'method':'level.save','params':{'path':'levels/anim.rlevel'}}");
+	g_assert_true (g_file_get_contents (json_node_get_string (r), &saved, NULL, &error));
+	g_clear_pointer (&r, json_node_unref);
+	g_assert_no_error (error);
+	g_assert_nonnull (strstr (saved, "timelines:"));
+	g_assert_cmpfloat_with_epsilon (node_loc (f, "Mover", 0), 0.0, 1e-4);
+
+	/* Playback advances with frames and loops when asked. */
+	r = ipc_result (f, "{'id':7,'method':'timeline.set','params':{'name':'Timeline','loop':true}}");
+	g_clear_pointer (&r, json_node_unref);
+	r = ipc_result (f, "{'id':7,'method':'level.save'}");
+	g_clear_pointer (&r, json_node_unref);
+	g_assert_false (lrg_editor_is_dirty (f->editor));
+	r = ipc_result (f, "{'id':8,'method':'timeline.play'}");
+	g_clear_pointer (&r, json_node_unref);
+	frames (f, 30);
+	r = ipc_result (f, "{'id':9,'method':'timeline.state'}");
+	g_assert_true (json_object_get_boolean_member (json_node_get_object (r), "playing"));
+	g_assert_cmpfloat (json_object_get_double_member (json_node_get_object (r), "time"), >, 0.3);
+	g_clear_pointer (&r, json_node_unref);
+	g_assert_cmpfloat (node_loc (f, "Mover", 0), >, 1.0);
+	r = ipc_result (f, "{'id':10,'method':'timeline.stop'}");
+	g_clear_pointer (&r, json_node_unref);
+	g_assert_cmpfloat_with_epsilon (node_loc (f, "Mover", 0), 0.0, 1e-4);
+	g_assert_false (lrg_editor_is_dirty (f->editor));
+
+	/* Autoplay timelines run during play-in-editor and are undone by Stop. */
+	r = ipc_result (f, "{'id':11,'method':'timeline.set','params':{'name':'Timeline','autoplay':true}}");
+	g_clear_pointer (&r, json_node_unref);
+	press (f, LRG_GUI_KEY_F5, 0);
+	for (i = 0; i < 40; i++)
+		frame (f);
+	g_assert_cmpfloat (node_loc (f, "Mover", 0), >, 1.0);
+	press (f, LRG_GUI_KEY_F8, 0);
+	g_assert_cmpfloat_with_epsilon (node_loc (f, "Mover", 0), 0.0, 1e-4);
+
+	/* Panel open with the timeline: frames render it without trouble. */
+	r = ipc_result (f, "{'id':12,'method':'action.run','params':{'id':'timeline.show-panel'}}");
+	g_clear_pointer (&r, json_node_unref);
+	frames (f, 3);
+}
+
+static void
+test_app_thumbnails (Fixture       *f,
+                     gconstpointer  data)
+{
+	g_autoptr(JsonNode) r = NULL;
+	g_autofree gchar   *png = NULL;
+	g_autofree gchar   *png2 = NULL;
+	g_autofree gchar   *first = NULL;
+	GrlColor            c = { 200, 40, 40, 255 };
+	g_autoptr(GrlImage) img = NULL;
+	gint                i;
+
+	new_project (f);
+	frames (f, 2);
+	png = g_build_filename (f->project, "crate.png", NULL);
+	png2 = g_build_filename (f->project, "barrel.png", NULL);
+	img = grl_image_new_color (64, 32, &c);
+	g_assert_true (grl_image_export (img, png));
+	g_assert_true (grl_image_export (img, png2));
+
+	/* Synchronous generation lands in the project's .cache. */
+	r = ipc_result (f, "{'id':1,'method':'asset.thumbnail','params':{'path':'crate.png','wait':true}}");
+	first = g_strdup (json_object_get_string_member (json_node_get_object (r), "thumbnail"));
+	g_clear_pointer (&r, json_node_unref);
+	g_assert_nonnull (strstr (first, ".cache/thumbnails/"));
+	g_assert_true (g_file_test (first, G_FILE_TEST_IS_REGULAR));
+
+	/* Asynchronous: pending first, ready after a few frames. */
+	r = ipc_result (f, "{'id':2,'method':'asset.thumbnail','params':{'path':'barrel.png'}}");
+	g_assert_true (json_object_get_boolean_member (json_node_get_object (r), "pending"));
+	g_clear_pointer (&r, json_node_unref);
+	for (i = 0; i < 200; i++)
+	{
+		gboolean pending;
+
+		frame (f);
+		r = ipc_result (f, "{'id':3,'method':'asset.thumbnail','params':{'path':'barrel.png'}}");
+		pending = json_object_get_boolean_member (json_node_get_object (r), "pending");
+		g_clear_pointer (&r, json_node_unref);
+		if (!pending)
+			break;
+		g_usleep (5000);
+	}
+	g_assert_cmpint (i, <, 200);
+
+	/* Live reload: rewriting the file drops its old thumbnail. */
+	g_usleep (20000);
+	g_clear_object (&img);
+	img = grl_image_new_color (16, 16, &c);
+	g_assert_true (grl_image_export (img, png));
+	for (i = 0; i < 300 && g_file_test (first, G_FILE_TEST_EXISTS); i++)
+	{
+		frame (f);
+		g_usleep (5000);
+	}
+	g_assert_false (g_file_test (first, G_FILE_TEST_EXISTS));
+
+	/* Unsupported kinds are an error; models need a window. */
+	{
+		g_autofree gchar *txt = g_build_filename (f->project, "notes.txt", NULL);
+		g_autofree gchar *reply = NULL;
+
+		g_assert_true (g_file_set_contents (txt, "hi", -1, NULL));
+		reply = ipc_reply (f, "{'id':4,'method':'asset.thumbnail','params':{'path':'notes.txt'}}");
+		g_assert_nonnull (strstr (reply, "\"error\""));
+	}
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -696,6 +990,9 @@ main (int   argc,
 	ADD ("nav-gizmo", test_app_nav_gizmo);
 	ADD ("nav-keys", test_app_nav_keys_and_auto_perspective);
 	ADD ("nav-schemes", test_app_nav_schemes);
+	ADD ("tile-paint", test_app_tile_paint);
+	ADD ("timeline", test_app_timeline);
+	ADD ("thumbnails", test_app_thumbnails);
 #undef ADD
 #endif
 

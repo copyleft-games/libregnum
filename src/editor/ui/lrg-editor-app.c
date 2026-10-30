@@ -73,6 +73,9 @@ lrg_editor_app_dispose (GObject *object)
 	}
 
 	editor_render_shutdown (self);
+	editor_tiles_dispose (self);
+	editor_timeline_dispose (self);
+	editor_thumbnails_dispose (self);
 
 	g_clear_object (&self->server);
 	g_clear_object (&self->gizmo);
@@ -172,6 +175,8 @@ editor_app_reset_layout (LrgEditorApp *self)
 	lrg_gui_dock_dock_panel (self->dock, "console", "assets", LRG_GUI_DOCK_CENTER, 0.0f);
 	lrg_gui_dock_dock_panel (self->dock, "problems", "assets", LRG_GUI_DOCK_CENTER, 0.0f);
 	lrg_gui_dock_dock_panel (self->dock, "history", "inspector", LRG_GUI_DOCK_CENTER, 0.0f);
+	lrg_gui_dock_dock_panel (self->dock, "tiles", "inspector", LRG_GUI_DOCK_CENTER, 0.0f);
+	lrg_gui_dock_dock_panel (self->dock, "timeline", "assets", LRG_GUI_DOCK_CENTER, 0.0f);
 	lrg_gui_dock_open_panel (self->dock, "assets");
 	lrg_gui_dock_open_panel (self->dock, "inspector");
 
@@ -225,6 +230,9 @@ lrg_editor_app_init (LrgEditorApp *self)
 	self->headless = TRUE;   /* until a window exists */
 	self->assets_dirty = TRUE;
 
+	editor_timeline_init (self);
+	editor_thumbnails_init (self);
+
 	lrg_gui_input_init (&self->input);
 	lrg_editor_view_init_default (&self->view, 800.0f, 600.0f);
 	editor_app_reset_layout (self);
@@ -248,6 +256,7 @@ lrg_editor_app_new (LrgEditor *editor)
 	self->gui = lrg_gui_context_new ();
 	self->gizmo = lrg_editor_gizmo_new (self->editor);
 	self->server = lrg_editor_server_new (self->editor);
+	editor_tiles_init (self);
 	lrg_editor_server_set_external_editor (self->server, self->external);
 	lrg_editor_server_set_log (self->server, self->log);
 
@@ -787,6 +796,9 @@ editor_app_save (LrgEditorApp *self)
 {
 	g_autoptr(GError) error = NULL;
 	g_autofree gchar *autosave = NULL;
+
+	/* A timeline preview poses nodes outside the history: never save it. */
+	editor_timeline_end_preview (self);
 
 	if (lrg_editor_get_path (self->editor) == NULL)
 	{
@@ -1425,7 +1437,7 @@ draw_menu_bar (LrgEditorApp *self)
 	static const gchar *panels[][2] = {
 		{ "hierarchy", "Hierarchy" }, { "inspector", "Inspector" }, { "viewport", "Viewport" },
 		{ "assets", "Assets" }, { "console", "Console" }, { "history", "History" },
-		{ "problems", "Problems" }
+		{ "problems", "Problems" }, { "tiles", "Tiles" }, { "timeline", "Timeline" }
 	};
 	static const gchar *play_items[] = {
 		"play.start", "play.pause", "play.step", "play.stop", "-", "run.start", "run.stop", NULL
@@ -1433,7 +1445,8 @@ draw_menu_bar (LrgEditorApp *self)
 	static const gchar *tool_items[] = {
 		"tool.select", "tool.move", "tool.rotate", "tool.scale", "-", "tool.toggle-space",
 		"tool.toggle-snap", "-", "tools.validate", "tools.palette", "tools.quick-open",
-		"tools.open-level-yaml", "tools.reveal-socket", NULL
+		"tools.open-level-yaml", "tools.reveal-socket", "-", "tilemap.paint-mode", "tilemap.show-panel",
+		"timeline.key", "timeline.play", "timeline.show-panel", "tools.rebuild-thumbnails", NULL
 	};
 	static const gchar *help_items[] = { "help.shortcuts", "help.docs", "help.about", NULL };
 	const LrgGuiRect    bar = { 0.0f, 0.0f, self->width, EDITOR_MENUBAR_H };
@@ -1823,6 +1836,16 @@ lrg_editor_app_frame (LrgEditorApp      *self,
 		editor_panel_history (self);
 		lrg_gui_dock_end_panel (self->dock, self->gui);
 	}
+	if (lrg_gui_dock_begin_panel (self->dock, self->gui, "tiles", "Tiles"))
+	{
+		editor_panel_tiles (self);
+		lrg_gui_dock_end_panel (self->dock, self->gui);
+	}
+	if (lrg_gui_dock_begin_panel (self->dock, self->gui, "timeline", "Timeline"))
+	{
+		editor_panel_timeline (self);
+		lrg_gui_dock_end_panel (self->dock, self->gui);
+	}
 	{
 		g_autofree gchar *title = (self->problems->len > 0)
 		                          ? g_strdup_printf ("Problems (%u)###problems", self->problems->len)
@@ -1846,6 +1869,8 @@ lrg_editor_app_frame (LrgEditorApp      *self,
 	/* Timers that do not depend on the UI. */
 	if (self->playing)
 		editor_play_tick (self, input->delta);
+	editor_timeline_tick (self, input->delta);
+	editor_thumbnails_pump (self);
 	autosave_tick (self);
 	if (self->problems_dirty && self->time - self->problems_time > PROBLEMS_DEBOUNCE)
 	{
@@ -1995,6 +2020,7 @@ lrg_editor_app_run (LrgEditorApp *self)
 	self->applied_scale = -1.0f;
 	editor_app_apply_settings (self);
 	editor_render_init (self);
+	editor_thumbnails_window_opened (self);
 
 	while (!self->quit_now)
 	{
@@ -2038,6 +2064,10 @@ lrg_editor_app_run (LrgEditorApp *self)
 			g_printerr ("lrgeditor: could not save settings: %s\n", error->message);
 	}
 
+	/* GL objects owned outside the renderer go first. */
+	editor_thumbnails_window_closing (self);
+	g_clear_object (&self->tile_palette_tex);
+	g_clear_pointer (&self->tile_palette_path, g_free);
 	editor_render_shutdown (self);
 	g_clear_object (&self->backend);
 	lrg_gui_context_set_measure_func (self->gui, NULL, NULL, NULL);
@@ -2071,6 +2101,8 @@ headless_tick (gpointer user_data)
 	autosave_tick (data->self);
 	if (data->self->playing)
 		editor_play_tick (data->self, 0.1f);
+	editor_timeline_tick (data->self, 0.1f);
+	editor_thumbnails_pump (data->self);
 	if (data->self->quit_now)
 		g_main_loop_quit (data->loop);
 	return G_SOURCE_CONTINUE;

@@ -21,7 +21,9 @@ event     {"event": "selection", "data": {"nodes": ["8c1e..."], "primary": "8c1e
 
 Document: `hello`, `ping`, `methods`, `editor.info`, `level.new|open|save|reload|serialize`, `node.tree|list|get|find|set|create|delete|duplicate|move|rename`, `component.add|remove|set`, `script.add|remove|open`, `file.open`, `selection.get|set|clear`, `edit.undo|redo|history|jump|copy|cut|paste`, `tool.set`, `prefab.instantiate|save`, `log.tail`.
 
-Application: `action.list|run`, `view.get|set|focus|screenshot`, `play.start|stop|pause|step|state`, `run.start|stop`, `project.info|open`, `asset.list`, `level.validate|import`, `ui.notify|state`, `editor.quit`.
+Tools (headless): `tilemap.get|configure|paint|rect|fill|pick` (tilemap nodes: `cells [[x,y]...]` or a brush stroke through `points`, `tile` 1-based into the tileset, 0/`erase` erases, `layer` index or name), `timeline.list|get|add|remove|set|key|unkey|move-key|ease|sample` (channels `location.x|y|z`, `rotation.x|y|z` radians, `scale.x|y|z`, `color.r|g|b|a`, `roughness`, `metallic`, `param.NAME`; `easing` = LrgEasingType nick). Every edit is one undo step.
+
+Application: `action.list|run`, `view.get|set|focus|screenshot`, `play.start|stop|pause|step|state`, `run.start|stop`, `project.info|open`, `asset.list`, `asset.thumbnail {path, wait}`, `level.validate|import`, `ui.notify|state`, `tilemap.tool`, `timeline.play|stop|seek|state` (preview; never saved), `editor.quit`.
 
 ## Events
 

@@ -725,6 +725,214 @@ test_custom_methods (Fixture       *f,
 	g_assert_cmpuint (calls, ==, 2);
 }
 
+/* ==========================================================================
+ * Editor tools: tilemap.* and timeline.*
+ * ========================================================================== */
+
+static gint64
+int_member (JsonNode    *node,
+            const gchar *key)
+{
+	return json_object_get_int_member (json_node_get_object (node), key);
+}
+
+static void
+test_tilemap_methods (Fixture       *f,
+                      gconstpointer  data)
+{
+	g_autoptr(JsonNode) r = NULL;
+	JsonObject         *o;
+	JsonArray          *layers;
+	JsonArray          *row;
+	guint               undo0;
+
+	r = call (f, "{\"id\":1,\"method\":\"node.create\",\"params\":{\"name\":\"Map\",\"kind\":\"tilemap\"}}");
+	result_of (r);
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Not a tilemap / no grid yet. */
+	r = call (f, "{\"id\":1,\"method\":\"node.create\",\"params\":{\"name\":\"Plain\"}}");
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":2,\"method\":\"tilemap.get\",\"params\":{\"node\":\"Plain\"}}");
+	g_assert_cmpstr (error_code_of (r), ==, "invalid-params");
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":2,\"method\":\"tilemap.get\",\"params\":{\"node\":\"Map\"}}");
+	g_assert_cmpuint (json_array_get_length (json_object_get_array_member (json_node_get_object (result_of (r)),
+	                                                                     "layers")), ==, 0);
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Configure: size, slicing, a second layer; one undo step. */
+	undo0 = lrg_editor_get_undo_count (f->editor);
+	r = call (f, "{\"id\":3,\"method\":\"tilemap.configure\",\"params\":{\"node\":\"Map\",\"width\":6,"
+	             "\"height\":4,\"tile_width\":8,\"tile_height\":8,\"tile_size\":0.5,\"add_layer\":\"deco\"}}");
+	o = json_node_get_object (result_of (r));
+	g_assert_cmpint (json_object_get_int_member (o, "width"), ==, 6);
+	g_assert_cmpint (json_object_get_int_member (o, "tile_width"), ==, 8);
+	g_assert_cmpfloat_with_epsilon (json_object_get_double_member (o, "tile_size"), 0.5, 1e-6);
+	g_assert_cmpuint (json_array_get_length (json_object_get_array_member (o, "layers")), ==, 2);
+	g_assert_cmpuint (lrg_editor_get_undo_count (f->editor), ==, undo0 + 1);
+	g_clear_pointer (&r, json_node_unref);
+
+	r = call (f, "{\"id\":3,\"method\":\"tilemap.configure\",\"params\":{\"node\":\"Map\",\"width\":0}}");
+	g_assert_cmpstr (error_code_of (r), ==, "invalid-params");
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Paint explicit cells on the named layer, then a stroke. */
+	r = call (f, "{\"id\":4,\"method\":\"tilemap.paint\",\"params\":{\"node\":\"Map\",\"layer\":\"deco\","
+	             "\"tile\":7,\"cells\":[[0,0],[5,3],[9,9]]}}");
+	g_assert_cmpint (int_member (result_of (r), "changed"), ==, 2);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":5,\"method\":\"tilemap.paint\",\"params\":{\"node\":\"Map\",\"tile\":2,"
+	             "\"points\":[[0,1],[5,1]]}}");
+	g_assert_cmpint (int_member (result_of (r), "changed"), ==, 6);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":5,\"method\":\"tilemap.paint\",\"params\":{\"node\":\"Map\",\"cells\":[1]}}");
+	g_assert_cmpstr (error_code_of (r), ==, "invalid-params");
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Rectangle, fill (erase) and pick. */
+	r = call (f, "{\"id\":6,\"method\":\"tilemap.rect\",\"params\":{\"node\":\"Map\",\"tile\":3,"
+	             "\"x0\":0,\"y0\":2,\"x1\":2,\"y1\":3}}");
+	g_assert_cmpint (int_member (result_of (r), "changed"), ==, 6);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":7,\"method\":\"tilemap.fill\",\"params\":{\"node\":\"Map\",\"erase\":true,"
+	             "\"x\":0,\"y\":1}}");
+	g_assert_cmpint (int_member (result_of (r), "changed"), ==, 6);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":8,\"method\":\"tilemap.pick\",\"params\":{\"node\":\"Map\",\"x\":1,\"y\":3}}");
+	g_assert_cmpint (int_member (result_of (r), "tile"), ==, 3);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":8,\"method\":\"tilemap.pick\",\"params\":{\"node\":\"Map\",\"layer\":\"nope\","
+	             "\"x\":1,\"y\":3}}");
+	g_assert_cmpstr (error_code_of (r), ==, "not-found");
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Read back one layer with its cells. */
+	r = call (f, "{\"id\":9,\"method\":\"tilemap.get\",\"params\":{\"node\":\"Map\",\"layer\":1}}");
+	layers = json_object_get_array_member (json_node_get_object (result_of (r)), "layers");
+	g_assert_cmpuint (json_array_get_length (layers), ==, 1);
+	o = json_array_get_object_element (layers, 0);
+	g_assert_cmpstr (json_object_get_string_member (o, "name"), ==, "deco");
+	g_assert_cmpint (json_object_get_int_member (o, "count"), ==, 2);
+	row = json_array_get_array_element (json_object_get_array_member (o, "rows"), 3);
+	g_assert_cmpint (json_array_get_int_element (row, 5), ==, 7);
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Each call above was one undo step: undo the fill. */
+	r = call (f, "{\"id\":10,\"method\":\"edit.undo\"}");
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":11,\"method\":\"tilemap.pick\",\"params\":{\"node\":\"Map\",\"x\":4,\"y\":1}}");
+	g_assert_cmpint (int_member (result_of (r), "tile"), ==, 2);
+}
+
+static void
+test_timeline_methods (Fixture       *f,
+                       gconstpointer  data)
+{
+	g_autoptr(JsonNode) r = NULL;
+	JsonObject         *o;
+	JsonArray          *arr;
+
+	r = call (f, "{\"id\":1,\"method\":\"node.create\",\"params\":{\"name\":\"Cube\",\"kind\":\"primitive\","
+	             "\"location\":[1,2,3]}}");
+	g_clear_pointer (&r, json_node_unref);
+
+	r = call (f, "{\"id\":2,\"method\":\"timeline.add\",\"params\":{\"name\":\"bob\",\"length\":2,\"loop\":true}}");
+	o = json_node_get_object (result_of (r));
+	g_assert_true (json_object_get_boolean_member (o, "loop"));
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":2,\"method\":\"timeline.add\",\"params\":{\"name\":\"bob\"}}");
+	g_assert_cmpstr (error_code_of (r), ==, "failed");
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Key the current transform (9 channels), then one explicit value. */
+	r = call (f, "{\"id\":3,\"method\":\"timeline.key\",\"params\":{\"name\":\"bob\",\"node\":\"Cube\",\"time\":0}}");
+	g_assert_cmpint (int_member (result_of (r), "keys"), ==, 9);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":4,\"method\":\"timeline.key\",\"params\":{\"name\":\"bob\",\"node\":\"Cube\",\"time\":1,"
+	             "\"channel\":\"location.y\",\"value\":6,\"easing\":\"ease-in-quad\"}}");
+	g_assert_cmpint (int_member (result_of (r), "keys"), ==, 1);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":4,\"method\":\"timeline.key\",\"params\":{\"name\":\"bob\",\"node\":\"Cube\",\"time\":1,"
+	             "\"channel\":\"location.y\",\"easing\":\"wobbly\"}}");
+	g_assert_cmpstr (error_code_of (r), ==, "invalid-params");
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":4,\"method\":\"timeline.key\",\"params\":{\"name\":\"bob\",\"node\":\"Cube\",\"time\":1,"
+	             "\"channels\":[\"color.r\",\"bogus\"]}}");
+	g_assert_cmpstr (error_code_of (r), ==, "invalid-params");
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Sampling is pure: halfway between y = 2 and y = 6. */
+	r = call (f, "{\"id\":5,\"method\":\"timeline.sample\",\"params\":{\"name\":\"bob\",\"time\":0.5}}");
+	arr = json_object_get_array_member (json_node_get_object (result_of (r)), "values");
+	g_assert_cmpuint (json_array_get_length (arr), ==, 9);
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Ease, move, read back. */
+	r = call (f, "{\"id\":6,\"method\":\"timeline.ease\",\"params\":{\"name\":\"bob\",\"node\":\"Cube\",\"time\":0,"
+	             "\"channel\":\"location.y\",\"easing\":\"ease-out-cubic\"}}");
+	g_assert_cmpint (int_member (result_of (r), "changed"), ==, 1);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":7,\"method\":\"timeline.move-key\",\"params\":{\"name\":\"bob\",\"node\":\"Cube\","
+	             "\"from\":1,\"to\":1.5}}");
+	g_assert_cmpint (int_member (result_of (r), "moved"), ==, 1);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":8,\"method\":\"timeline.get\",\"params\":{\"name\":\"bob\"}}");
+	o = json_node_get_object (result_of (r));
+	arr = json_object_get_array_member (o, "tracks");
+	g_assert_cmpuint (json_array_get_length (arr), ==, 9);
+	{
+		guint i;
+		gboolean found = FALSE;
+
+		for (i = 0; i < json_array_get_length (arr); i++)
+		{
+			JsonObject *t = json_array_get_object_element (arr, i);
+			JsonArray  *keys = json_object_get_array_member (t, "keys");
+
+			if (g_strcmp0 (json_object_get_string_member (t, "channel"), "location.y") != 0)
+				continue;
+			found = TRUE;
+			g_assert_cmpstr (json_object_get_string_member (t, "node_name"), ==, "Cube");
+			g_assert_cmpuint (json_array_get_length (keys), ==, 2);
+			g_assert_cmpstr (json_object_get_string_member (json_array_get_object_element (keys, 0), "easing"), ==,
+			                 "ease-out-cubic");
+			g_assert_cmpfloat_with_epsilon (json_object_get_double_member (json_array_get_object_element (keys, 1),
+			                                                               "time"), 1.5, 1e-5);
+		}
+		g_assert_true (found);
+	}
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Settings + rename, remove a key, list, remove the timeline. */
+	r = call (f, "{\"id\":9,\"method\":\"timeline.set\",\"params\":{\"name\":\"bob\",\"rename\":\"hop\","
+	             "\"autoplay\":true,\"length\":3}}");
+	o = json_node_get_object (result_of (r));
+	g_assert_cmpstr (json_object_get_string_member (o, "name"), ==, "hop");
+	g_assert_true (json_object_get_boolean_member (o, "autoplay"));
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":10,\"method\":\"timeline.unkey\",\"params\":{\"name\":\"hop\",\"node\":\"Cube\","
+	             "\"time\":1.5}}");
+	g_assert_cmpint (int_member (result_of (r), "removed"), ==, 1);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":11,\"method\":\"timeline.list\"}");
+	arr = json_node_get_array (result_of (r));
+	g_assert_cmpuint (json_array_get_length (arr), ==, 1);
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":12,\"method\":\"timeline.remove\",\"params\":{\"name\":\"hop\"}}");
+	g_assert_true (json_node_get_boolean (result_of (r)));
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":13,\"method\":\"timeline.get\",\"params\":{\"name\":\"hop\"}}");
+	g_assert_cmpstr (error_code_of (r), ==, "not-found");
+	g_clear_pointer (&r, json_node_unref);
+
+	/* Undo brings it back. */
+	r = call (f, "{\"id\":14,\"method\":\"edit.undo\"}");
+	g_clear_pointer (&r, json_node_unref);
+	r = call (f, "{\"id\":15,\"method\":\"timeline.list\"}");
+	g_assert_cmpuint (json_array_get_length (json_node_get_array (result_of (r))), ==, 1);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -738,6 +946,8 @@ main (int   argc,
 	ADD ("/editor-server/protocol/edit-level", test_edit_and_level_methods);
 	ADD ("/editor-server/protocol/log", test_log_methods);
 	ADD ("/editor-server/protocol/custom", test_custom_methods);
+	ADD ("/editor-server/protocol/tilemap", test_tilemap_methods);
+	ADD ("/editor-server/protocol/timeline", test_timeline_methods);
 	ADD ("/editor-server/socket/roundtrip-events", test_socket_roundtrip_and_events);
 	ADD ("/editor-server/socket/open-file", test_socket_open_file_routing);
 	ADD ("/editor-server/socket/lifecycle", test_socket_lifecycle);

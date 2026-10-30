@@ -227,7 +227,7 @@ Its kind (=LrgNodeVisualKind=) determines which fields are meaningful.
 | =LRG_NODE_VISUAL_PRIMITIVE= | Built-in geometry | =primitive=, =material=, =params= |
 | =LRG_NODE_VISUAL_MESH_ASSET= | External mesh (gltf/obj) | =asset=, =material= |
 | =LRG_NODE_VISUAL_SPRITE= | 2D texture sprite | =asset=, params |
-| =LRG_NODE_VISUAL_TILEMAP= | 2D tilemap | =asset=, params |
+| =LRG_NODE_VISUAL_TILEMAP= | 2D tilemap | =asset= (tileset image), =tile_size= param, =LrgNodeTilemap= grid (=lrg_node_visual_get_tilemap()=; see [[file:editor-tools.org::#tilemap-model][Tilemap painting]]) |
 | =LRG_NODE_VISUAL_LIGHT= | Light source | params (intensity, color, range) |
 | =LRG_NODE_VISUAL_CAMERA= | Camera | params (fov, near, far) |
 | =LRG_NODE_VISUAL_AUDIO_EMITTER= | Positional audio | =asset=, params (volume, radius) |

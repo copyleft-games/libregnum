@@ -211,6 +211,24 @@
 
 ;;; End to end -----------------------------------------------------------------
 
+(ert-deftest libregnum-test-format-tilemap ()
+  (should (equal (libregnum--format-tilemap '((layers . []))) "(no grid yet)\n"))
+  (should (equal (libregnum--format-tilemap
+                  '((layers . [((name . "base") (count . 2) (visible . t) (rows . [[1 0] [0 12]]))])))
+                 "base (2 tiles)\n   1   0\n   0  12\n")))
+
+(ert-deftest libregnum-test-tool-requests ()
+  (libregnum-tests--with-fake-editor
+    (libregnum-tilemap-paint "g2" 3 4 7)
+    (libregnum-timeline-key "Walk" "g2" 1.5 "location.x" 2.0)
+    (libregnum-timeline-stop)
+    (let ((methods (mapcar (lambda (r) (alist-get 'method r)) libregnum-tests--requests)))
+      (should (member "tilemap.paint" methods))
+      (should (member "timeline.key" methods))
+      (should (member "timeline.stop" methods)))
+    (let ((key (seq-find (lambda (r) (equal (alist-get 'method r) "timeline.key")) libregnum-tests--requests)))
+      (should (equal (alist-get 'channel (alist-get 'params key)) "location.x")))))
+
 (ert-deftest libregnum-test-real-editor ()
   (let ((program (and (getenv "LRG_EDITOR") (expand-file-name (getenv "LRG_EDITOR")))))
     (skip-unless (and program (file-executable-p program)))
@@ -235,6 +253,14 @@
             (libregnum-undo)
             (should-not (assoc "FromEmacs" (libregnum--node-candidates)))
             (libregnum-redo)
+            ;; Editor tools end to end: a tilemap, a stroke, a timeline key.
+            (libregnum-create-node "Tiles" "tilemap")
+            (libregnum-request "tilemap.configure" '((node . "Tiles") (width . 3) (height . 2)))
+            (libregnum-tilemap-paint "Tiles" 1 1 4)
+            (should (string-match-p "  0   4   0" (libregnum--format-tilemap
+                                                    (libregnum-request "tilemap.get" '((node . "Tiles"))))))
+            (libregnum-timeline-key "Walk" "FromEmacs" 0.5)
+            (should (member "Walk" (libregnum--timeline-names)))
             (libregnum-save)
             (with-temp-buffer
               (insert-file-contents (expand-file-name "levels/main.rlevel" project))
