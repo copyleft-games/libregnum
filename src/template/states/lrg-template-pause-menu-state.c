@@ -17,6 +17,7 @@
 #include "../../audio/lrg-audio-manager.h"
 #include "../../core/lrg-engine.h"
 #include "../../graphics/lrg-window.h"
+#include "lrg-template-confirmation-state.h"
 #include "../../lrg-log.h"
 
 /**
@@ -68,6 +69,9 @@ typedef struct _LrgTemplatePauseMenuStatePrivate
     gboolean       confirm_main_menu;
     gboolean       confirm_exit;
 
+    /* Weak: the manager owns this state, not the other way round. */
+    LrgGameStateManager *state_manager;
+
     /* UI Components */
     LrgCanvas     *canvas;
     LrgVBox       *menu_container;
@@ -99,6 +103,7 @@ enum
     PROP_CONFIRM_MAIN_MENU,
     PROP_CONFIRM_EXIT,
     PROP_SELECTED_INDEX,
+    PROP_STATE_MANAGER,
     N_PROPS
 };
 
@@ -405,6 +410,130 @@ lrg_template_pause_menu_state_real_on_settings (LrgTemplatePauseMenuState *self)
     g_signal_emit (self, signals[SIGNAL_SETTINGS], 0);
 }
 
+/* ========================================================================== */
+/* Confirmation Dialogs                                                       */
+/* ========================================================================== */
+
+/*
+ * pop_confirmation:
+ * @self: the pause menu
+ * @confirm: the confirmation dialog that just answered
+ *
+ * Pops @confirm off the state manager, but only while it is still the
+ * top state: a handler elsewhere may already have replaced or cleared
+ * the stack, and popping then would remove an unrelated state.
+ */
+static void
+pop_confirmation (LrgTemplatePauseMenuState    *self,
+                  LrgTemplateConfirmationState *confirm)
+{
+    LrgTemplatePauseMenuStatePrivate *priv;
+
+    priv = lrg_template_pause_menu_state_get_instance_private (self);
+
+    if (priv->state_manager == NULL)
+        return;
+
+    if (lrg_game_state_manager_get_current (priv->state_manager) == LRG_GAME_STATE (confirm))
+        lrg_game_state_manager_pop (priv->state_manager);
+}
+
+/*
+ * on_confirmation_cancelled:
+ *
+ * "No": close the dialog and land back on the pause menu.
+ */
+static void
+on_confirmation_cancelled (LrgTemplateConfirmationState *confirm,
+                           LrgTemplatePauseMenuState    *self)
+{
+    lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Pause menu: confirmation cancelled");
+    pop_confirmation (self, confirm);
+}
+
+/*
+ * on_confirmation_confirmed:
+ *
+ * "Yes": close the dialog first, so the stack is back to the pause menu
+ * when the action signal runs (its handler typically replaces or clears
+ * the whole stack), then emit the signal stored on the dialog.  The
+ * menu is kept alive across the emission because a handler that clears
+ * the stack drops the manager's reference to it.
+ */
+static void
+on_confirmation_confirmed (LrgTemplateConfirmationState *confirm,
+                           LrgTemplatePauseMenuState    *self)
+{
+    g_autoptr(LrgTemplatePauseMenuState) keep_alive = NULL;
+    guint signal_id;
+
+    keep_alive = g_object_ref (self);
+    signal_id = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (confirm),
+                                                     "lrg-pause-menu-signal"));
+
+    lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Pause menu: confirmation accepted");
+    pop_confirmation (self, confirm);
+    g_signal_emit (self, signal_id, 0);
+}
+
+/*
+ * request_action:
+ * @self: the pause menu
+ * @needs_confirmation: whether the action is guarded by a dialog
+ * @signal_id: the signal to emit once the action goes ahead
+ * @title: dialog title
+ * @message: dialog message
+ * @confirm_label: label of the confirm button
+ *
+ * Either emits @signal_id now, or pushes a confirmation dialog whose
+ * "Yes" emits it later.  Cancel is the default selection: these are
+ * the destructive menu entries (losing unsaved progress, quitting).
+ */
+static void
+request_action (LrgTemplatePauseMenuState *self,
+                gboolean                   needs_confirmation,
+                guint                      signal_id,
+                const gchar               *title,
+                const gchar               *message,
+                const gchar               *confirm_label)
+{
+    LrgTemplatePauseMenuStatePrivate *priv;
+    LrgTemplateConfirmationState *confirm;
+
+    priv = lrg_template_pause_menu_state_get_instance_private (self);
+
+    if (!needs_confirmation)
+    {
+        g_signal_emit (self, signal_id, 0);
+        return;
+    }
+
+    if (priv->state_manager == NULL)
+    {
+        /* Nowhere to show a dialog: behave as if confirmation were off. */
+        lrg_debug (LRG_LOG_DOMAIN_TEMPLATE,
+                   "Pause menu: no state manager set, skipping confirmation");
+        g_signal_emit (self, signal_id, 0);
+        return;
+    }
+
+    confirm = lrg_template_confirmation_state_new_with_message (title, message);
+    lrg_template_confirmation_state_set_confirm_label (confirm, confirm_label);
+    lrg_template_confirmation_state_set_cancel_label (confirm, "Cancel");
+    lrg_template_confirmation_state_set_default_selection (confirm, 1);
+    g_object_set_data (G_OBJECT (confirm), "lrg-pause-menu-signal",
+                       GUINT_TO_POINTER (signal_id));
+
+    /* Object-tracked: the handlers disconnect if the menu goes away first. */
+    g_signal_connect_object (confirm, "confirmed",
+                             G_CALLBACK (on_confirmation_confirmed), self, 0);
+    g_signal_connect_object (confirm, "cancelled",
+                             G_CALLBACK (on_confirmation_cancelled), self, 0);
+
+    /* The manager takes ownership of the dialog. */
+    lrg_game_state_manager_push (priv->state_manager, LRG_GAME_STATE (confirm));
+}
+
 static void
 lrg_template_pause_menu_state_real_on_main_menu (LrgTemplatePauseMenuState *self)
 {
@@ -412,14 +541,11 @@ lrg_template_pause_menu_state_real_on_main_menu (LrgTemplatePauseMenuState *self
 
     priv = lrg_template_pause_menu_state_get_instance_private (self);
 
-    if (priv->confirm_main_menu)
-    {
-        /* TODO: Push confirmation state */
-        lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Pause menu: Main Menu selected (needs confirmation)");
-    }
-
     lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Pause menu: Main Menu selected");
-    g_signal_emit (self, signals[SIGNAL_MAIN_MENU], 0);
+    request_action (self, priv->confirm_main_menu, signals[SIGNAL_MAIN_MENU],
+                    "Return to Main Menu?",
+                    "Unsaved progress will be lost.",
+                    "Main Menu");
 }
 
 static void
@@ -429,14 +555,11 @@ lrg_template_pause_menu_state_real_on_exit (LrgTemplatePauseMenuState *self)
 
     priv = lrg_template_pause_menu_state_get_instance_private (self);
 
-    if (priv->confirm_exit)
-    {
-        /* TODO: Push confirmation state */
-        lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Pause menu: Exit selected (needs confirmation)");
-    }
-
     lrg_debug (LRG_LOG_DOMAIN_TEMPLATE, "Pause menu: Exit selected");
-    g_signal_emit (self, signals[SIGNAL_EXIT_GAME], 0);
+    request_action (self, priv->confirm_exit, signals[SIGNAL_EXIT_GAME],
+                    "Quit Game?",
+                    "Unsaved progress will be lost.",
+                    "Quit");
 }
 
 /* ========================================================================== */
@@ -490,7 +613,9 @@ lrg_template_pause_menu_state_enter (LrgGameState *state)
 
     /* Spacer */
     {
-        LrgWidget *spacer = g_object_new (LRG_TYPE_WIDGET, NULL);
+        g_autoptr(LrgWidget) spacer = g_object_new (LRG_TYPE_WIDGET, NULL);
+
+        /* The container takes its own reference. */
         lrg_widget_set_height (spacer, 30.0f);
         lrg_container_add_child (LRG_CONTAINER (priv->menu_container), spacer);
     }
@@ -705,6 +830,9 @@ lrg_template_pause_menu_state_set_property (GObject      *object,
     case PROP_SELECTED_INDEX:
         lrg_template_pause_menu_state_set_selected_index (self, g_value_get_int (value));
         break;
+    case PROP_STATE_MANAGER:
+        lrg_template_pause_menu_state_set_state_manager (self, g_value_get_object (value));
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
         break;
@@ -751,6 +879,9 @@ lrg_template_pause_menu_state_get_property (GObject    *object,
     case PROP_SELECTED_INDEX:
         g_value_set_int (value, priv->selected_index);
         break;
+    case PROP_STATE_MANAGER:
+        g_value_set_object (value, priv->state_manager);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
         break;
@@ -768,6 +899,7 @@ lrg_template_pause_menu_state_finalize (GObject *object)
     g_clear_pointer (&priv->overlay_color, grl_color_free);
     g_clear_pointer (&priv->visible_buttons, g_ptr_array_unref);
     g_clear_object (&priv->canvas);
+    g_clear_weak_pointer (&priv->state_manager);
 
     G_OBJECT_CLASS (lrg_template_pause_menu_state_parent_class)->finalize (object);
 }
@@ -917,6 +1049,19 @@ lrg_template_pause_menu_state_class_init (LrgTemplatePauseMenuStateClass *klass)
                           "Currently selected menu item",
                           0, G_MAXINT, 0,
                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgTemplatePauseMenuState:state-manager:
+     *
+     * The #LrgGameStateManager confirmation dialogs are pushed onto
+     * (held weakly).  See lrg_template_pause_menu_state_set_state_manager().
+     */
+    properties[PROP_STATE_MANAGER] =
+        g_param_spec_object ("state-manager",
+                             "State Manager",
+                             "Manager confirmation dialogs are pushed onto",
+                             LRG_TYPE_GAME_STATE_MANAGER,
+                             G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
@@ -1315,4 +1460,31 @@ lrg_template_pause_menu_state_set_selected_index (LrgTemplatePauseMenuState *sel
         update_button_selection (self);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SELECTED_INDEX]);
     }
+}
+
+LrgGameStateManager *
+lrg_template_pause_menu_state_get_state_manager (LrgTemplatePauseMenuState *self)
+{
+    LrgTemplatePauseMenuStatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_TEMPLATE_PAUSE_MENU_STATE (self), NULL);
+
+    priv = lrg_template_pause_menu_state_get_instance_private (self);
+    return priv->state_manager;
+}
+
+void
+lrg_template_pause_menu_state_set_state_manager (LrgTemplatePauseMenuState *self,
+                                                 LrgGameStateManager       *manager)
+{
+    LrgTemplatePauseMenuStatePrivate *priv;
+
+    g_return_if_fail (LRG_IS_TEMPLATE_PAUSE_MENU_STATE (self));
+    g_return_if_fail (manager == NULL || LRG_IS_GAME_STATE_MANAGER (manager));
+
+    priv = lrg_template_pause_menu_state_get_instance_private (self);
+
+    /* Weak reference: cleared automatically if the manager dies first. */
+    if (g_set_weak_pointer (&priv->state_manager, manager))
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STATE_MANAGER]);
 }

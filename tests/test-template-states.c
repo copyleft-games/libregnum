@@ -823,6 +823,251 @@ test_states_are_derivable (void)
  * Main
  * ========================================================================== */
 
+/* ==========================================================================
+ * Test Cases - Pause menu confirmation flow (headless)
+ *
+ * Choosing Main Menu / Exit with confirmation on pushes an
+ * LrgTemplateConfirmationState; "Yes" pops it and emits the action
+ * signal, "No" only pops it.  Buttons are driven through the class
+ * vfuncs and lrg_template_confirmation_state_confirm()/cancel(), so no
+ * input device or window is needed.
+ * ========================================================================== */
+
+typedef struct
+{
+    guint                main_menu;
+    guint                exit_game;
+    LrgGameStateManager *clear_on_signal;
+} PauseSignals;
+
+static void
+on_pause_main_menu (LrgTemplatePauseMenuState *pause,
+                    PauseSignals              *seen)
+{
+    seen->main_menu++;
+
+    /* What a game typically does: tear the whole stack down */
+    if (seen->clear_on_signal != NULL)
+        lrg_game_state_manager_clear (seen->clear_on_signal);
+}
+
+static void
+on_pause_exit_game (LrgTemplatePauseMenuState *pause,
+                    PauseSignals              *seen)
+{
+    seen->exit_game++;
+}
+
+/* A plain gameplay state for the bottom of the stack (LrgGameState is
+ * abstract, so a no-op subclass) */
+#define TEST_TYPE_GAMEPLAY_STATE (test_gameplay_state_get_type ())
+G_DECLARE_FINAL_TYPE (TestGameplayState, test_gameplay_state, TEST, GAMEPLAY_STATE, LrgGameState)
+
+struct _TestGameplayState
+{
+    LrgGameState parent_instance;
+};
+
+G_DEFINE_TYPE (TestGameplayState, test_gameplay_state, LRG_TYPE_GAME_STATE)
+
+static void
+gameplay_noop (LrgGameState *state)
+{
+}
+
+static void
+gameplay_update_noop (LrgGameState *state,
+                      gdouble       delta)
+{
+}
+
+static void
+test_gameplay_state_class_init (TestGameplayStateClass *klass)
+{
+    LrgGameStateClass *state_class = LRG_GAME_STATE_CLASS (klass);
+
+    state_class->enter = gameplay_noop;
+    state_class->exit = gameplay_noop;
+    state_class->update = gameplay_update_noop;
+    state_class->draw = gameplay_noop;
+}
+
+static void
+test_gameplay_state_init (TestGameplayState *self)
+{
+}
+
+static LrgGameState *
+new_gameplay_state (void)
+{
+    return g_object_new (TEST_TYPE_GAMEPLAY_STATE, "name", "gameplay", NULL);
+}
+
+static LrgTemplatePauseMenuState *
+push_pause_menu (LrgGameStateManager *manager,
+                 PauseSignals        *seen)
+{
+    LrgTemplatePauseMenuState *pause;
+
+    pause = lrg_template_pause_menu_state_new ();
+    lrg_template_pause_menu_state_set_duck_audio (pause, FALSE);
+    lrg_template_pause_menu_state_set_confirm_main_menu (pause, TRUE);
+    lrg_template_pause_menu_state_set_confirm_exit (pause, TRUE);
+    lrg_template_pause_menu_state_set_state_manager (pause, manager);
+    g_signal_connect (pause, "main-menu", G_CALLBACK (on_pause_main_menu), seen);
+    g_signal_connect (pause, "exit-game", G_CALLBACK (on_pause_exit_game), seen);
+
+    /* The manager takes ownership */
+    lrg_game_state_manager_push (manager, LRG_GAME_STATE (pause));
+    return pause;
+}
+
+static void
+test_pause_menu_confirm_main_menu_flow (void)
+{
+    g_autoptr(LrgGameStateManager) manager = NULL;
+    LrgTemplatePauseMenuState *pause;
+    LrgTemplatePauseMenuStateClass *klass;
+    LrgGameState *top;
+    PauseSignals seen = { 0, 0, NULL };
+
+    manager = lrg_game_state_manager_new ();
+    lrg_game_state_manager_push (manager, new_gameplay_state ());
+    pause = push_pause_menu (manager, &seen);
+    klass = LRG_TEMPLATE_PAUSE_MENU_STATE_GET_CLASS (pause);
+    g_assert_true (lrg_template_pause_menu_state_get_state_manager (pause) == manager);
+
+    /* Main Menu: a confirmation dialog appears, nothing is emitted yet */
+    klass->on_main_menu (pause);
+    g_assert_cmpuint (lrg_game_state_manager_get_state_count (manager), ==, 3);
+    top = lrg_game_state_manager_get_current (manager);
+    g_assert_true (LRG_IS_TEMPLATE_CONFIRMATION_STATE (top));
+    g_assert_cmpint (lrg_template_confirmation_state_get_default_selection (
+                         LRG_TEMPLATE_CONFIRMATION_STATE (top)), ==, 1);
+    g_assert_cmpuint (seen.main_menu, ==, 0);
+
+    /* "No": back on the pause menu, still nothing emitted */
+    lrg_template_confirmation_state_cancel (LRG_TEMPLATE_CONFIRMATION_STATE (top));
+    g_assert_cmpuint (lrg_game_state_manager_get_state_count (manager), ==, 2);
+    g_assert_true (lrg_game_state_manager_get_current (manager) == LRG_GAME_STATE (pause));
+    g_assert_cmpuint (seen.main_menu, ==, 0);
+
+    /* "Yes": dialog popped first, then ::main-menu */
+    klass->on_main_menu (pause);
+    top = lrg_game_state_manager_get_current (manager);
+    lrg_template_confirmation_state_confirm (LRG_TEMPLATE_CONFIRMATION_STATE (top));
+    g_assert_cmpuint (seen.main_menu, ==, 1);
+    g_assert_cmpuint (seen.exit_game, ==, 0);
+    g_assert_true (lrg_game_state_manager_get_current (manager) == LRG_GAME_STATE (pause));
+}
+
+static void
+test_pause_menu_confirm_exit_flow (void)
+{
+    g_autoptr(LrgGameStateManager) manager = NULL;
+    LrgTemplatePauseMenuState *pause;
+    LrgGameState *top;
+    PauseSignals seen = { 0, 0, NULL };
+
+    manager = lrg_game_state_manager_new ();
+    pause = push_pause_menu (manager, &seen);
+
+    LRG_TEMPLATE_PAUSE_MENU_STATE_GET_CLASS (pause)->on_exit (pause);
+    top = lrg_game_state_manager_get_current (manager);
+    g_assert_true (LRG_IS_TEMPLATE_CONFIRMATION_STATE (top));
+    g_assert_cmpuint (seen.exit_game, ==, 0);
+
+    lrg_template_confirmation_state_confirm (LRG_TEMPLATE_CONFIRMATION_STATE (top));
+    g_assert_cmpuint (seen.exit_game, ==, 1);
+    g_assert_cmpuint (seen.main_menu, ==, 0);
+    g_assert_cmpuint (lrg_game_state_manager_get_state_count (manager), ==, 1);
+}
+
+static void
+test_pause_menu_confirm_handler_clears_stack (void)
+{
+    g_autoptr(LrgGameStateManager) manager = NULL;
+    LrgTemplatePauseMenuState *pause;
+    LrgGameState *top;
+    PauseSignals seen = { 0, 0, NULL };
+
+    /* The ::main-menu handler clears the stack, dropping the manager's
+     * reference to the pause menu while its handler is running. */
+    manager = lrg_game_state_manager_new ();
+    lrg_game_state_manager_push (manager, new_gameplay_state ());
+    pause = push_pause_menu (manager, &seen);
+    seen.clear_on_signal = manager;
+
+    LRG_TEMPLATE_PAUSE_MENU_STATE_GET_CLASS (pause)->on_main_menu (pause);
+    top = lrg_game_state_manager_get_current (manager);
+    lrg_template_confirmation_state_confirm (LRG_TEMPLATE_CONFIRMATION_STATE (top));
+
+    g_assert_cmpuint (seen.main_menu, ==, 1);
+    g_assert_true (lrg_game_state_manager_is_empty (manager));
+}
+
+static void
+test_pause_menu_confirm_without_manager (void)
+{
+    g_autoptr(LrgTemplatePauseMenuState) pause = NULL;
+    PauseSignals seen = { 0, 0, NULL };
+
+    /* No manager to push a dialog onto: the action goes straight through */
+    pause = lrg_template_pause_menu_state_new ();
+    lrg_template_pause_menu_state_set_confirm_main_menu (pause, TRUE);
+    lrg_template_pause_menu_state_set_confirm_exit (pause, TRUE);
+    g_signal_connect (pause, "main-menu", G_CALLBACK (on_pause_main_menu), &seen);
+    g_signal_connect (pause, "exit-game", G_CALLBACK (on_pause_exit_game), &seen);
+
+    LRG_TEMPLATE_PAUSE_MENU_STATE_GET_CLASS (pause)->on_main_menu (pause);
+    LRG_TEMPLATE_PAUSE_MENU_STATE_GET_CLASS (pause)->on_exit (pause);
+    g_assert_cmpuint (seen.main_menu, ==, 1);
+    g_assert_cmpuint (seen.exit_game, ==, 1);
+}
+
+static void
+test_pause_menu_state_manager_weak (void)
+{
+    g_autoptr(LrgTemplatePauseMenuState) pause = NULL;
+    LrgGameStateManager *manager;
+
+    pause = lrg_template_pause_menu_state_new ();
+    manager = lrg_game_state_manager_new ();
+    g_object_set (pause, "state-manager", manager, NULL);
+    g_assert_true (lrg_template_pause_menu_state_get_state_manager (pause) == manager);
+
+    /* Held weakly: dropping the manager clears the pointer */
+    g_object_unref (manager);
+    g_assert_null (lrg_template_pause_menu_state_get_state_manager (pause));
+}
+
+static void
+count_signal (gpointer  instance,
+              guint    *count)
+{
+    (*count)++;
+}
+
+static void
+test_confirmation_state_confirm_cancel (void)
+{
+    g_autoptr(LrgTemplateConfirmationState) state = NULL;
+    guint confirmed = 0;
+    guint cancelled = 0;
+
+    state = lrg_template_confirmation_state_new ();
+    g_signal_connect (state, "confirmed", G_CALLBACK (count_signal), &confirmed);
+    g_signal_connect (state, "cancelled", G_CALLBACK (count_signal), &cancelled);
+
+    lrg_template_confirmation_state_confirm (state);
+    g_assert_cmpuint (confirmed, ==, 1);
+    g_assert_cmpuint (cancelled, ==, 0);
+
+    lrg_template_confirmation_state_cancel (state);
+    g_assert_cmpuint (confirmed, ==, 1);
+    g_assert_cmpuint (cancelled, ==, 1);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -914,6 +1159,18 @@ main (int   argc,
                      test_confirmation_state_button_labels);
     g_test_add_func ("/template/states/confirmation/default-selection",
                      test_confirmation_state_default_selection);
+    g_test_add_func ("/template/states/confirmation/confirm-cancel",
+                     test_confirmation_state_confirm_cancel);
+    g_test_add_func ("/template/states/pause-menu/confirm-main-menu-flow",
+                     test_pause_menu_confirm_main_menu_flow);
+    g_test_add_func ("/template/states/pause-menu/confirm-exit-flow",
+                     test_pause_menu_confirm_exit_flow);
+    g_test_add_func ("/template/states/pause-menu/confirm-handler-clears-stack",
+                     test_pause_menu_confirm_handler_clears_stack);
+    g_test_add_func ("/template/states/pause-menu/confirm-without-manager",
+                     test_pause_menu_confirm_without_manager);
+    g_test_add_func ("/template/states/pause-menu/state-manager-weak",
+                     test_pause_menu_state_manager_weak);
 
     /* Type hierarchy tests */
     g_test_add_func ("/template/states/inheritance",

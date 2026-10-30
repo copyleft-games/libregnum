@@ -48,6 +48,12 @@ struct _LrgLight2DClass
      * @height: target height
      *
      * Renders the light to a render target.
+     *
+     * Called by lrg_lighting_manager_render() while the light target is
+     * bound, with a 2D camera that maps world units onto it and additive
+     * blending (source x alpha + destination) active: draw the light's
+     * contribution in world coordinates with graylib, using the colour
+     * alpha as its weight.
      */
     void (*render) (LrgLight2D *self,
                     guint       target_id,

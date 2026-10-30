@@ -176,6 +176,7 @@ TEST_SOURCES := \
 	test-weather-render.c \
 	test-sky-weather.c \
 	test-lighting.c \
+	test-lighting-render.c \
 	test-wave-data.c \
 	test-procedural-audio.c \
 	test-asset-pack.c \

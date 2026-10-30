@@ -10,6 +10,9 @@
 #include "lrg-directional-light2d.h"
 #include "../lrg-log.h"
 #include <math.h>
+#include <raylib.h>
+#include <rlgl.h>
+#include <graylib.h>
 
 struct _LrgDirectionalLight2D
 {
@@ -53,22 +56,63 @@ lrg_directional_light2d_render (LrgLight2D *light,
                                 guint       width,
                                 guint       height)
 {
-    LrgDirectionalLight2D *self = LRG_DIRECTIONAL_LIGHT2D (light);
+    g_autoptr(GrlRectangle) rect = NULL;
+    g_autoptr(GrlColor) color = NULL;
+    Matrix view;
+    gfloat det;
+    gfloat intensity;
+    gfloat min_x, min_y, max_x, max_y;
+    guint8 r, g, b;
+    guint i;
 
     (void)target_id;
-    (void)width;
-    (void)height;
 
-    if (!lrg_light2d_get_enabled (light))
+    if (!lrg_light2d_get_enabled (light) || width == 0 || height == 0)
+        return;
+
+    intensity = lrg_light2d_get_intensity (light);
+    if (intensity <= 0.0f)
         return;
 
     /*
-     * Rendering would apply uniform directional lighting:
-     * - direction: self->direction (in radians)
-     * - shadow_length: self->shadow_length
-     * - intensity: lrg_light2d_get_intensity (light)
+     * A directional light (sun, moon) lights everything in view evenly,
+     * so it fills the whole target.  The light pass draws in world
+     * units through a camera, so map the target's corners back to the
+     * world with the inverse of the active modelview (the camera) and
+     * fill their bounding box.  Direction and shadow length only
+     * matter for shadow casting, not for the light's own contribution.
+     *
+     * A 2D camera's modelview is affine in X/Y:
+     *   x' = m0 x + m4 y + m12,   y' = m1 x + m5 y + m13
+     * so it is inverted by hand rather than through raymath (which
+     * needs C99).
      */
-    (void)self;
+    view = rlGetMatrixModelview ();
+    det = view.m0 * view.m5 - view.m4 * view.m1;
+    if (fabsf (det) < 1e-12f)
+        return;
+    min_x = min_y = G_MAXFLOAT;
+    max_x = max_y = -G_MAXFLOAT;
+    for (i = 0; i < 4; i++)
+    {
+        gfloat px, py;
+        gfloat wx, wy;
+
+        px = ((i & 1u) != 0 ? (gfloat) width : 0.0f) - view.m12;
+        py = ((i & 2u) != 0 ? (gfloat) height : 0.0f) - view.m13;
+        wx = ( view.m5 * px - view.m4 * py) / det;
+        wy = (-view.m1 * px + view.m0 * py) / det;
+
+        min_x = MIN (min_x, wx);
+        min_y = MIN (min_y, wy);
+        max_x = MAX (max_x, wx);
+        max_y = MAX (max_y, wy);
+    }
+
+    lrg_light2d_get_color (light, &r, &g, &b);
+    color = grl_color_new (r, g, b, (guint8) MIN (255.0f, 255.0f * intensity));
+    rect = grl_rectangle_new (min_x, min_y, max_x - min_x, max_y - min_y);
+    grl_draw_rectangle_rec (rect, color);
 }
 
 static void

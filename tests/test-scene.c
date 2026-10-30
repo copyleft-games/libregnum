@@ -9,6 +9,8 @@
  */
 
 #include <glib.h>
+#include <glib/gstdio.h>
+#include <string.h>
 #include <libregnum.h>
 
 /* ==========================================================================
@@ -405,6 +407,206 @@ test_scene_foreach_entity (SceneFixture *fixture,
     lrg_scene_foreach_entity (fixture->scene, count_entity_foreach, NULL);
 
     g_assert_cmpuint (foreach_entity_count, ==, 2);
+}
+
+/* ==========================================================================
+ * Test Cases - LrgSceneSerializer default vfuncs
+ *
+ * Two minimal implementations: "Line" only overrides the data vfuncs
+ * (the scene is stored as one line, its name) and relies on the
+ * interface defaults for file I/O; "Bare" overrides nothing.
+ * ========================================================================== */
+
+#define TEST_TYPE_LINE_SERIALIZER (test_line_serializer_get_type ())
+G_DECLARE_FINAL_TYPE (TestLineSerializer, test_line_serializer, TEST, LINE_SERIALIZER, GObject)
+
+struct _TestLineSerializer
+{
+    GObject parent_instance;
+};
+
+static void test_line_serializer_iface_init (LrgSceneSerializerInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (TestLineSerializer, test_line_serializer, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_SCENE_SERIALIZER,
+                                                test_line_serializer_iface_init))
+
+static LrgScene *
+test_line_load_from_data (LrgSceneSerializer  *self,
+                          const gchar         *data,
+                          gssize               length,
+                          GError             **error)
+{
+    g_autofree gchar *name = NULL;
+
+    name = length < 0 ? g_strdup (data) : g_strndup (data, (gsize) length);
+    g_strchomp (name);
+    if (name[0] == '\0')
+    {
+        g_set_error (error, LRG_SCENE_ERROR, LRG_SCENE_ERROR_PARSE, "empty scene");
+        return NULL;
+    }
+    return lrg_scene_new (name);
+}
+
+static gchar *
+test_line_save_to_data (LrgSceneSerializer *self,
+                        LrgScene           *scene,
+                        gsize              *length)
+{
+    gchar *data;
+
+    data = g_strdup_printf ("%s\n", lrg_scene_get_name (scene));
+    if (length != NULL)
+        *length = strlen (data);
+    return data;
+}
+
+static void
+test_line_serializer_iface_init (LrgSceneSerializerInterface *iface)
+{
+    iface->load_from_data = test_line_load_from_data;
+    iface->save_to_data = test_line_save_to_data;
+}
+
+static void
+test_line_serializer_class_init (TestLineSerializerClass *klass)
+{
+}
+
+static void
+test_line_serializer_init (TestLineSerializer *self)
+{
+}
+
+#define TEST_TYPE_BARE_SERIALIZER (test_bare_serializer_get_type ())
+G_DECLARE_FINAL_TYPE (TestBareSerializer, test_bare_serializer, TEST, BARE_SERIALIZER, GObject)
+
+struct _TestBareSerializer
+{
+    GObject parent_instance;
+};
+
+static void
+test_bare_serializer_iface_init (LrgSceneSerializerInterface *iface)
+{
+}
+
+G_DEFINE_TYPE_WITH_CODE (TestBareSerializer, test_bare_serializer, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_SCENE_SERIALIZER,
+                                                test_bare_serializer_iface_init))
+
+static void
+test_bare_serializer_class_init (TestBareSerializerClass *klass)
+{
+}
+
+static void
+test_bare_serializer_init (TestBareSerializer *self)
+{
+}
+
+static void
+test_serializer_default_file_roundtrip (void)
+{
+    g_autoptr(TestLineSerializer) serializer = NULL;
+    g_autoptr(LrgScene) scene = NULL;
+    g_autoptr(LrgScene) loaded = NULL;
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *dir = NULL;
+    g_autofree gchar *path = NULL;
+    g_autofree gchar *contents = NULL;
+
+    serializer = g_object_new (TEST_TYPE_LINE_SERIALIZER, NULL);
+    scene = lrg_scene_new ("courtyard");
+
+    dir = g_dir_make_tmp ("lrg-scene-XXXXXX", &error);
+    g_assert_no_error (error);
+    path = g_build_filename (dir, "scene.txt", NULL);
+
+    /* save_to_file falls back to save_to_data + an atomic write */
+    g_assert_true (lrg_scene_serializer_save_to_file (LRG_SCENE_SERIALIZER (serializer),
+                                                      scene, path, &error));
+    g_assert_no_error (error);
+    g_assert_true (g_file_get_contents (path, &contents, NULL, NULL));
+    g_assert_cmpstr (contents, ==, "courtyard\n");
+
+    /* load_from_file falls back to reading the file + load_from_data */
+    loaded = lrg_scene_serializer_load_from_file (LRG_SCENE_SERIALIZER (serializer),
+                                                  path, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (loaded);
+    g_assert_cmpstr (lrg_scene_get_name (loaded), ==, "courtyard");
+
+    g_unlink (path);
+    g_rmdir (dir);
+}
+
+static void
+test_serializer_default_errors (void)
+{
+    g_autoptr(TestLineSerializer) line = NULL;
+    g_autoptr(TestBareSerializer) bare = NULL;
+    g_autoptr(LrgScene) scene = NULL;
+    g_autoptr(LrgScene) loaded = NULL;
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *dir = NULL;
+    g_autofree gchar *missing = NULL;
+    g_autofree gchar *unwritable = NULL;
+    g_autofree gchar *data = NULL;
+
+    line = g_object_new (TEST_TYPE_LINE_SERIALIZER, NULL);
+    bare = g_object_new (TEST_TYPE_BARE_SERIALIZER, NULL);
+    scene = lrg_scene_new ("s");
+
+    dir = g_dir_make_tmp ("lrg-scene-XXXXXX", NULL);
+    missing = g_build_filename (dir, "missing.txt", NULL);
+    unwritable = g_build_filename (dir, "no-such-dir", "scene.txt", NULL);
+
+    /* A missing file is an I/O error, not a parse error */
+    loaded = lrg_scene_serializer_load_from_file (LRG_SCENE_SERIALIZER (line),
+                                                  missing, &error);
+    g_assert_null (loaded);
+    g_assert_error (error, LRG_SCENE_ERROR, LRG_SCENE_ERROR_IO);
+    g_clear_error (&error);
+
+    /* So is a path that cannot be written */
+    g_assert_false (lrg_scene_serializer_save_to_file (LRG_SCENE_SERIALIZER (line),
+                                                       scene, unwritable, &error));
+    g_assert_error (error, LRG_SCENE_ERROR, LRG_SCENE_ERROR_IO);
+    g_clear_error (&error);
+
+    /* Parse errors from load_from_data pass through the file default */
+    g_assert_true (g_file_set_contents (missing, "\n", -1, NULL));
+    loaded = lrg_scene_serializer_load_from_file (LRG_SCENE_SERIALIZER (line),
+                                                  missing, &error);
+    g_assert_null (loaded);
+    g_assert_error (error, LRG_SCENE_ERROR, LRG_SCENE_ERROR_PARSE);
+    g_clear_error (&error);
+
+    /* An implementation with no vfuncs fails cleanly everywhere */
+    loaded = lrg_scene_serializer_load_from_data (LRG_SCENE_SERIALIZER (bare),
+                                                  "x", -1, &error);
+    g_assert_null (loaded);
+    g_assert_error (error, LRG_SCENE_ERROR, LRG_SCENE_ERROR_FAILED);
+    g_clear_error (&error);
+
+    loaded = lrg_scene_serializer_load_from_file (LRG_SCENE_SERIALIZER (bare),
+                                                  missing, &error);
+    g_assert_null (loaded);
+    g_assert_error (error, LRG_SCENE_ERROR, LRG_SCENE_ERROR_FAILED);
+    g_clear_error (&error);
+
+    g_assert_false (lrg_scene_serializer_save_to_file (LRG_SCENE_SERIALIZER (bare),
+                                                       scene, missing, &error));
+    g_assert_error (error, LRG_SCENE_ERROR, LRG_SCENE_ERROR_FAILED);
+    g_clear_error (&error);
+
+    data = lrg_scene_serializer_save_to_data (LRG_SCENE_SERIALIZER (bare), scene, NULL);
+    g_assert_null (data);
+
+    g_unlink (missing);
+    g_rmdir (dir);
 }
 
 /* ==========================================================================
@@ -838,6 +1040,8 @@ main (int   argc,
     g_test_add_func ("/scene/serializer-yaml/new", test_serializer_yaml_new);
     g_test_add_func ("/scene/serializer-yaml/roundtrip", test_serializer_yaml_roundtrip);
     g_test_add_func ("/scene/serializer-yaml/load-invalid", test_serializer_yaml_load_invalid);
+    g_test_add_func ("/scene/serializer/default-file-roundtrip", test_serializer_default_file_roundtrip);
+    g_test_add_func ("/scene/serializer/default-errors", test_serializer_default_errors);
 
     /* LrgMeshData */
     g_test_add_func ("/scene/mesh-data/new", test_mesh_data_new);

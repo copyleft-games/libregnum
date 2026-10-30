@@ -27,8 +27,8 @@ For 3D, [[file:shadow-renderer.org][LrgShadowRenderer]] renders cascaded sun sha
 :CUSTOM_ID: quick-start
 :END:
 #+begin_src C
-/* Get the lighting manager from engine */
-LrgLightingManager *lighting = lrg_engine_get_lighting_manager (engine);
+/* One manager per 2D scene */
+LrgLightingManager *lighting = lrg_lighting_manager_new ();
 
 /* Create a point light */
 LrgPointLight2D *torch = lrg_point_light2d_new ();
@@ -42,9 +42,16 @@ lrg_point_light2d_set_flicker_enabled (torch, TRUE);
 lrg_lighting_manager_add_light (lighting, LRG_LIGHT2D (torch));
 
 /* In game loop */
+lrg_lighting_manager_set_viewport_from_camera (lighting, camera, screen_w, screen_h);
 lrg_lighting_manager_update (lighting, delta_time);
-lrg_lighting_manager_render (lighting);
+lrg_lighting_manager_render (lighting);      /* light pass, off-screen */
+
+/* ... begin the scene camera, draw the scene ... */
+lrg_lighting_manager_composite (lighting);   /* still inside the camera */
+/* ... end the scene camera, draw the HUD ... */
 #+end_src
+
+See [[#light-pass][Light Pass and Compositing]] for what each call does.
 
 ** Light Types
 :PROPERTIES:
@@ -79,11 +86,13 @@ Directional cone of light:
 #+begin_src C
 LrgSpotLight2D *spot = lrg_spot_light2d_new ();
 lrg_light2d_set_position (LRG_LIGHT2D (spot), x, y);
-lrg_spot_light2d_set_direction (spot, 0.5f);        /* Angle in radians */
-lrg_spot_light2d_set_outer_angle (spot, 45.0f);     /* Cone angle */
-lrg_spot_light2d_set_inner_angle (spot, 30.0f);     /* Full brightness cone */
+lrg_spot_light2d_set_direction (spot, 90.0f);       /* Degrees; 0 = +X, 90 = down */
+lrg_spot_light2d_set_angle (spot, 45.0f);           /* Full cone width, degrees */
+lrg_spot_light2d_set_inner_angle (spot, 30.0f);     /* Full brightness core */
 lrg_spot_light2d_set_radius (spot, 300.0f);
 #+end_src
+
+Angles are degrees in raylib's convention (0 points along +X, positive turns clockwise on a Y-down screen). The cone spans =direction ± angle / 2=; the fringe between the inner and the outer cone gets half the light.
 
 *** Directional Light
 :PROPERTIES:
@@ -180,11 +189,47 @@ LrgLightmap *lightmap = lrg_lightmap_new (256, 256);
 /* Set ambient base */
 lrg_lightmap_clear (lightmap, 30, 30, 40);
 
-/* Bake lights */
-lrg_lightmap_bake_light (lightmap, static_light, shadow_casters);
+/* Paint the static light (an offline baker, or by hand) */
+lrg_lightmap_set_pixel (lightmap, x, y, 255, 200, 150);
 
 /* Apply to rendering */
 lrg_lighting_manager_set_lightmap (lighting, lightmap);
+#+end_src
+
+*** Lightmap Files
+:PROPERTIES:
+:CUSTOM_ID: lightmap-files
+:END:
+Lightmaps load from and save to image files through graylib's =GrlImage=, so any format raylib decodes (PNG, BMP, TGA, JPG, QOI, ...) can be a lightmap. The RGB channels are the light colour; alpha is ignored on load and written opaque on save. Neither call needs a window, so a baking tool can run headless.
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgLightmap) baked = lrg_lightmap_load ("levels/cave.lightmap.png", &error);
+
+if (baked == NULL)
+    g_printerr ("lightmap: %s\n", error->message);
+
+/* The extension picks the encoder; PNG/BMP/TGA/QOI round-trip exactly */
+lrg_lightmap_save (baked, "build/cave.lightmap.png", &error);
+#+end_src
+
+| Failure                                   | Error                     |
+|-------------------------------------------+---------------------------|
+| File does not exist                       | =G_IO_ERROR_NOT_FOUND=    |
+| Not a decodable image, or a side > 8192   | =G_IO_ERROR_INVALID_DATA= |
+| Save path unwritable or extension unknown | =G_IO_ERROR_FAILED=       |
+
+*** Lightmap Upload and Placement
+:PROPERTIES:
+:CUSTOM_ID: lightmap-upload
+:END:
+=lrg_lightmap_upload()= copies changed pixels to a =GrlTexture= (bilinear, clamped to the edges), creating it on first use and updating it in place afterwards; the light pass calls it for you. Without a GL context it does nothing and the lightmap stays dirty (=lrg_lightmap_is_dirty()=), so a later call still uploads. =lrg_lightmap_get_texture()= and =lrg_lightmap_get_texture_id()= expose the GPU copy.
+
+The manager draws the lightmap stretched over a world rectangle, by default at the origin with one world unit per texel:
+
+#+begin_src C
+/* A 128 x 72 lightmap covering a 2560 x 1440 level */
+lrg_lighting_manager_set_lightmap_bounds (lighting, 0.0f, 0.0f, 2560.0f, 1440.0f);
 #+end_src
 
 *** Lightmap Pixel Access
@@ -236,10 +281,51 @@ lrg_lighting_manager_set_ambient_intensity (lighting, 0.2f);
 :PROPERTIES:
 :CUSTOM_ID: viewport-culling
 :END:
+The viewport is the world-space rectangle the light pass covers; lights whose area of effect misses it are culled. Point and spot lights test their radius bounding box against it, directional lights are visible whenever enabled, and disabled lights never are. Custom =LrgLight2D= subclasses decide through the =is_visible= vfunc (the base class keeps every enabled light).
+
 #+begin_src C
-/* Set visible area for culling off-screen lights */
+/* Explicit world rectangle */
 lrg_lighting_manager_set_viewport (lighting, camera_x, camera_y, width, height);
+
+/* Or derive it from the scene camera and the screen it draws into */
+lrg_lighting_manager_set_viewport_from_camera (lighting, camera, 1280.0f, 720.0f);
+
+/* What survives culling (transfer container) */
+g_autoptr(GPtrArray) visible = lrg_lighting_manager_get_visible_lights (lighting);
+guint n = lrg_lighting_manager_get_visible_light_count (lighting);
 #+end_src
+
+=set_viewport_from_camera()= maps the four screen corners back through the camera's offset, zoom and rotation (the inverse of raylib's 2D camera transform) and takes their bounding box. A rotated camera therefore culls against a slightly larger box than it shows: it can keep an extra light, never drop a visible one. The culling is plain arithmetic, so it runs (and is tested) without a window.
+
+** Light Pass and Compositing
+:PROPERTIES:
+:CUSTOM_ID: light-pass
+:END:
+=lrg_lighting_manager_render()= renders the light map into an off-screen target covering the viewport:
+
+1. Cull the lights against the viewport.
+2. Clear the target to the ambient colour times the ambient intensity.
+3. With additive blending and a camera mapping world units onto the target, draw the lightmap (uploading it if dirty) and then every visible light. When shadows are enabled and casters are registered, a light that casts shadows first gets =lrg_light2d_calculate_shadows()=.
+
+The target is one pixel per world unit, scaled down uniformly when a side of the viewport exceeds 4096 units (a zoomed-out camera). Call =render()= once per frame after =update()=, outside any other render texture or camera mode.
+
+=lrg_lighting_manager_composite()= then applies the light map over what has been drawn, as a world-space quad over the viewport, so call it inside the camera mode the scene used:
+
+| Blend mode | Composite                                                   |
+|------------+-------------------------------------------------------------|
+| =MULTIPLY= | scene x light: unlit areas fall to the ambient level        |
+| =ADDITIVE= | scene + light: glow                                         |
+| =SOFT=     | light layered at half opacity (a cheap soft-light stand-in) |
+
+For a custom composite (a lighting shader, a post-process stage) use =lrg_lighting_manager_get_light_target()= or =lrg_lighting_manager_get_light_texture_id()=; =lrg_lighting_manager_get_rendered_light_count()= reports how many lights the last pass drew. Without a window, =render()= still culls and updates the count but draws nothing, and =composite()= is a no-op.
+
+*** How the built-in lights draw
+:PROPERTIES:
+:CUSTOM_ID: light-drawing
+:END:
+Inside the pass each light's =render= vfunc draws its contribution in world coordinates with graylib, using the colour's alpha as its weight (the blend is source x alpha + destination). Point and spot lights build their falloff from 16 stacked discs or sectors whose radii are spaced so the summed light follows the curve: linear =1 - t=, quadratic =(1 - t)^2=, with =t= running from the inner radius (full brightness) to the radius. =LRG_LIGHT_FALLOFF_NONE= draws one flat disc. Intensity above 1 saturates. A directional light fills the whole target evenly; its direction and shadow length only matter for shadows. Custom subclasses override =render= under the same contract.
+
+The 2D shadow casters are passed to each light's =calculate_shadows= vfunc, but the built-in lights do not yet draw shadow geometry into the pass: shadows in the 2D light pass remain a follow-up.
 
 ** YAML Configuration
 :PROPERTIES:
@@ -266,9 +352,9 @@ flicker:
 # Spot light
 type: SpotLight2D
 position: { x: 400, y: 100 }
-direction: 1.571  # Angle in radians (90 degrees, pointing down)
+direction: 90  # Degrees, pointing down
 color: { r: 255, g: 255, b: 255 }
-outer-angle: 45
+angle: 45
 inner-angle: 30
 radius: 300
 casts-shadows: true
