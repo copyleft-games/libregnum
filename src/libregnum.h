@@ -401,6 +401,7 @@
 #include "gamemodule/lrg-configurable.h"
 #include "gamemodule/lrg-game-host.h"
 #include "gamemodule/lrg-standalone-host.h"
+#include "gamemodule/lrg-headless-host.h"
 #include "gamemodule/lrg-loaded-game.h"
 #include "gamemodule/lrg-game-module-macros.h"
 

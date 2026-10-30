@@ -27,6 +27,8 @@ typedef struct _LrgRegistry LrgRegistry;
 typedef struct _LrgGameHost LrgGameHost;
 typedef struct _LrgWindow LrgWindow;
 typedef struct _GrlColor GrlColor;
+typedef struct _LrgSimulation LrgSimulation;
+typedef struct _LrgReplay LrgReplay;
 
 #define LRG_TYPE_GAME_TEMPLATE (lrg_game_template_get_type ())
 
@@ -188,6 +190,13 @@ lrg_game_template_run (LrgGameTemplate *self,
  *
  * Runs @self with a standalone host that owns a real window and the blocking
  * main loop. This is what lrg_game_template_run() and the shim launcher call.
+ *
+ * The engine's replay options are removed from @argv before the rest is
+ * applied with lrg_game_template_apply_args(): `--record FILE`,
+ * `--replay FILE`, `--replay-headless FILE` (no window; returns 0 if the
+ * replay plays back without a desync, 1 otherwise) and `--seed N`; see
+ * lrg_game_template_record_replay() and
+ * lrg_game_template_run_replay_headless().
  *
  * Returns: exit code (0 for success)
  *
@@ -952,7 +961,9 @@ lrg_game_template_has_focus (LrgGameTemplate *self);
  * Updated once per frame before fixed/variable gameplay updates. Scaled timers
  * respect time scale, hit stop, and template pause; unscaled timers use the
  * raw host delta. Shutdown and destruction cancel all timers. Do not update
- * it manually.
+ * it manually. In deterministic mode (#LrgGameTemplate:deterministic) the
+ * timers advance by the fixed step inside each simulated tick instead, and
+ * their state is part of the simulation.
  *
  * Returns: (transfer none): the template's timer manager
  */
@@ -979,6 +990,102 @@ LRG_AVAILABLE_IN_ALL
 gint
 lrg_game_template_pace_fps (gint target_fps,
                             gint refresh_rate);
+
+/* ==========================================================================
+ * Deterministic Simulation and Replays
+ * ========================================================================== */
+
+/**
+ * lrg_game_template_get_simulation:
+ * @self: a game template
+ *
+ * The simulation of a template running in deterministic mode, created at
+ * startup. Register the objects that make up the game state with
+ * lrg_simulation_add_object() (from post_startup at the latest, so
+ * replays record their initial state) and draw randomness from
+ * lrg_simulation_get_random().
+ *
+ * Returns: (transfer none) (nullable): the simulation, or %NULL when not
+ *   deterministic or not started
+ *
+ * Since: 0.4
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSimulation *lrg_game_template_get_simulation (LrgGameTemplate *self);
+
+/**
+ * lrg_game_template_record_replay:
+ * @self: a game template
+ * @path: file the replay is written to at shutdown
+ * @initial_state: (nullable): reference to the initial state stored in the
+ *   replay header (a level, a save, a scenario)
+ *
+ * Records every simulated tick into a replay (the `--record FILE` option).
+ * Turns deterministic mode on; called before startup, recording starts
+ * from the state built by post_startup, otherwise from the next tick.
+ *
+ * Since: 0.4
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_game_template_record_replay (LrgGameTemplate *self,
+                                      const gchar     *path,
+                                      const gchar     *initial_state);
+
+/**
+ * lrg_game_template_play_replay:
+ * @self: a game template
+ * @replay: the replay to play back
+ * @error: (nullable): return location for an error
+ *
+ * Feeds @replay's inputs to the simulation instead of live input, through
+ * the input map (the `--replay FILE` option). Before startup it configures
+ * deterministic mode with the replay's seed and fixed step, and startup
+ * verifies the initial state; while running, the simulation must already
+ * be in the replay's start state.
+ *
+ * Returns: %TRUE if playback was set up
+ *
+ * Since: 0.4
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_game_template_play_replay (LrgGameTemplate  *self,
+                                        LrgReplay        *replay,
+                                        GError          **error);
+
+/**
+ * lrg_game_template_is_replay_finished:
+ * @self: a game template
+ * @error: (nullable): return location for the error that stopped playback
+ *
+ * Returns: %TRUE when no replay is playing or the replay has ended
+ *
+ * Since: 0.4
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_game_template_is_replay_finished (LrgGameTemplate  *self,
+                                               GError          **error);
+
+/**
+ * lrg_game_template_run_replay_headless:
+ * @self: a game template that has not been started
+ * @path: a replay file
+ * @final_checksum: (out) (optional): the state checksum after the last tick
+ * @error: (nullable): return location for an error
+ *
+ * Plays a replay without a window, as fast as possible (the
+ * `--replay-headless FILE` option): starts the engine if needed, starts
+ * the game on an #LrgHeadlessHost, runs one tick per update until the
+ * replay ends, verifying the recorded checksums, then shuts the game down.
+ *
+ * Returns: %TRUE if the whole replay played without a desync
+ *
+ * Since: 0.4
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_game_template_run_replay_headless (LrgGameTemplate  *self,
+                                                const gchar      *path,
+                                                guint64          *final_checksum,
+                                                GError          **error);
 
 G_END_DECLS
 

@@ -30,6 +30,11 @@
 #include "../gamemodule/lrg-configurable.h"
 #include "../gamemodule/lrg-game-host.h"
 #include "../gamemodule/lrg-standalone-host.h"
+#include "../gamemodule/lrg-headless-host.h"
+#include "../input/lrg-input-action.h"
+#include "../replay/lrg-simulation.h"
+#include "../replay/lrg-replay.h"
+#include <string.h>
 
 #include <graylib.h>
 #include <math.h>
@@ -92,6 +97,11 @@ enum
     /* Input buffering */
     PROP_ENABLE_INPUT_BUFFERING,
     PROP_INPUT_BUFFER_FRAMES,
+
+    /* Deterministic simulation */
+    PROP_DETERMINISTIC,
+    PROP_SIMULATION_SEED,
+    PROP_CHECKSUM_INTERVAL,
 
     N_PROPS
 };
@@ -425,6 +435,112 @@ lrg_game_template_pace_fps (gint target_fps,
     return (above - target_fps <= target_fps - below) ? above : below;
 }
 
+/*
+ * template_run_fixed_step:
+ *
+ * The body of one fixed step: the fixed_update vfunc, then the state stack
+ * at the fixed delta.
+ */
+static void
+template_run_fixed_step (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv = lrg_game_template_get_instance_private (self);
+    LrgGameTemplateClass *klass = LRG_GAME_TEMPLATE_GET_CLASS (self);
+
+    if (klass->fixed_update != NULL)
+        klass->fixed_update (self, priv->fixed_timestep);
+
+    lrg_game_state_manager_update (priv->state_manager, priv->fixed_timestep);
+}
+
+/*
+ * template_on_simulation_tick:
+ *
+ * LrgSimulation::tick handler in deterministic mode: the game's fixed step
+ * plus the gameplay timers, advanced by exactly one step inside the tick
+ * (never by the variable frame delta).
+ */
+static void
+template_on_simulation_tick (LrgSimulation   *simulation,
+                             guint64          tick,
+                             gdouble          step,
+                             LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv = lrg_game_template_get_instance_private (self);
+
+    template_run_fixed_step (self);
+    lrg_timer_manager_update (priv->timer_manager, step, step);
+}
+
+/*
+ * template_latch_presses:
+ *
+ * Remembers actions pressed this host frame, so a tap that starts and ends
+ * between two ticks (a frame that ran no tick) still reaches the next one.
+ */
+static void
+template_latch_presses (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv = lrg_game_template_get_instance_private (self);
+    const gchar * const *actions;
+    guint i;
+
+    actions = lrg_simulation_get_actions (priv->simulation);
+    for (i = 0; actions[i] != NULL; i++)
+    {
+        LrgInputAction *action = lrg_input_map_get_action (priv->input_map, actions[i]);
+
+        if (action != NULL && lrg_input_action_is_pressed (action))
+            priv->input_latch |= G_GUINT64_CONSTANT (1) << i;
+    }
+}
+
+/*
+ * template_simulate_tick:
+ *
+ * One deterministic tick: the next recorded input during playback, the
+ * live input map sampled once otherwise.
+ */
+static void
+template_simulate_tick (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv = lrg_game_template_get_instance_private (self);
+    g_autoptr(LrgInputSnapshot) snapshot = NULL;
+
+    if (priv->playback != NULL)
+    {
+        GError *error = NULL;
+
+        if (priv->playback_finished)
+            return;
+        if (!lrg_replay_step (priv->playback, priv->simulation, &error))
+        {
+            priv->playback_finished = TRUE;
+            if (error != NULL)
+            {
+                lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Replay playback stopped: %s",
+                             error->message);
+                if (priv->replay_error == NULL)
+                    priv->replay_error = error;
+                else
+                    g_error_free (error);
+            }
+            if (priv->quit_at_replay_end)
+                priv->should_quit = TRUE;
+        }
+        return;
+    }
+
+    lrg_input_map_clear_overrides (priv->input_map);
+    snapshot = lrg_input_snapshot_capture (priv->input_map,
+                                           lrg_simulation_get_actions (priv->simulation));
+    lrg_input_snapshot_set_down_mask (snapshot,
+                                      lrg_input_snapshot_get_down_mask (snapshot) |
+                                      priv->input_latch);
+    priv->input_latch = 0;
+    lrg_simulation_step (priv->simulation, &snapshot, 1);
+}
+
 void
 lrg_game_template_update (LrgGameTemplate *self,
                           gdouble          delta)
@@ -488,9 +604,18 @@ lrg_game_template_update (LrgGameTemplate *self,
     if (klass->handle_global_input != NULL)
         klass->handle_global_input (self);
 
-    lrg_timer_manager_update (priv->timer_manager,
-                              priv->is_paused ? 0.0 : delta,
-                              MAX (0.0, raw_delta));
+    /* Live input between ticks: remember presses for the next tick */
+    if (priv->simulation != NULL && priv->playback == NULL)
+    {
+        lrg_input_map_clear_overrides (priv->input_map);
+        template_latch_presses (self);
+    }
+
+    /* In deterministic mode timers advance inside ticks instead */
+    if (priv->simulation == NULL)
+        lrg_timer_manager_update (priv->timer_manager,
+                                  priv->is_paused ? 0.0 : delta,
+                                  MAX (0.0, raw_delta));
 
     /* Fixed timestep loop */
     if (priv->use_fixed_timestep)
@@ -509,12 +634,15 @@ lrg_game_template_update (LrgGameTemplate *self,
              * first write inside the step */
             grl_interpolation_begin_step ();
 
-            if (klass->fixed_update != NULL)
-                klass->fixed_update (self, priv->fixed_timestep);
-
-            /* Update state manager with fixed timestep */
-            lrg_game_state_manager_update (priv->state_manager,
-                                           priv->fixed_timestep);
+            if (priv->simulation == NULL)
+                template_run_fixed_step (self);
+            else if (priv->is_paused)
+                /* Paused: no tick is simulated (pausing never changes the
+                 * simulation); only the state stack runs, for the menu */
+                lrg_game_state_manager_update (priv->state_manager,
+                                               priv->fixed_timestep);
+            else
+                template_simulate_tick (self);
 
             priv->in_state_transition = FALSE;
             template_process_deferred_ops (self);
@@ -538,6 +666,10 @@ lrg_game_template_update (LrgGameTemplate *self,
          * draw code (and the camera updates in pre_update below) */
         priv->interpolation_alpha = priv->accumulator / priv->fixed_timestep;
         grl_interpolation_set_alpha ((gfloat) priv->interpolation_alpha);
+
+        /* Variable-rate code reads live input, not the last tick's */
+        if (priv->simulation != NULL && priv->playback == NULL)
+            lrg_input_map_clear_overrides (priv->input_map);
     }
     else
     {
@@ -673,6 +805,16 @@ lrg_game_template_configurable_apply_args (LrgConfigurable    *configurable,
 
     /* Remember what was applied and notify observers. */
     g_clear_pointer (&priv->applied_args, g_strfreev);
+    g_clear_pointer (&priv->record_path, g_free);
+    g_clear_pointer (&priv->record_initial_state, g_free);
+    g_clear_object (&priv->playback);
+    g_clear_error (&priv->replay_error);
+    if (priv->simulation != NULL)
+    {
+        g_clear_signal_handler (&priv->simulation_tick_id, priv->simulation);
+        lrg_simulation_release_inputs (priv->simulation);
+        g_clear_object (&priv->simulation);
+    }
     priv->applied_args = g_strdupv ((gchar **) argv);
     g_signal_emit (self, signals[SIGNAL_ARGS_APPLIED], 0, priv->applied_args);
 
@@ -1032,6 +1174,15 @@ lrg_game_template_get_property (GObject    *object,
     case PROP_INPUT_BUFFER_FRAMES:
         g_value_set_int (value, priv->input_buffer_frames);
         break;
+    case PROP_DETERMINISTIC:
+        g_value_set_boolean (value, priv->deterministic);
+        break;
+    case PROP_SIMULATION_SEED:
+        g_value_set_uint64 (value, priv->simulation_seed);
+        break;
+    case PROP_CHECKSUM_INTERVAL:
+        g_value_set_uint (value, priv->checksum_interval);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -1168,6 +1319,18 @@ lrg_game_template_set_property (GObject      *object,
         break;
     case PROP_INPUT_BUFFER_FRAMES:
         priv->input_buffer_frames = g_value_get_int (value);
+        break;
+    case PROP_DETERMINISTIC:
+        /* Takes effect at startup, where the simulation is created */
+        priv->deterministic = g_value_get_boolean (value);
+        break;
+    case PROP_SIMULATION_SEED:
+        priv->simulation_seed = g_value_get_uint64 (value);
+        break;
+    case PROP_CHECKSUM_INTERVAL:
+        priv->checksum_interval = g_value_get_uint (value);
+        if (priv->simulation != NULL)
+            lrg_simulation_set_checksum_interval (priv->simulation, priv->checksum_interval);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1602,6 +1765,49 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
                           G_PARAM_STATIC_STRINGS |
                           G_PARAM_CONSTRUCT);
 
+    /**
+     * LrgGameTemplate:deterministic:
+     *
+     * Runs the fixed-step simulation through an #LrgSimulation (created at
+     * startup, see lrg_game_template_get_simulation()): input is sampled
+     * once per tick into an #LrgInputSnapshot and injected into the input
+     * map, gameplay timers advance by the fixed step inside ticks, and
+     * the state checksum feeds the desync detector. Required for replay
+     * recording and playback. Set before startup.
+     *
+     * Since: 0.4
+     */
+    properties[PROP_DETERMINISTIC] =
+        g_param_spec_boolean ("deterministic", NULL, NULL,
+                              FALSE,
+                              G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgGameTemplate:simulation-seed:
+     *
+     * Seed of the simulation random stream in deterministic mode. Set
+     * before startup; playing a replay sets it from the replay.
+     *
+     * Since: 0.4
+     */
+    properties[PROP_SIMULATION_SEED] =
+        g_param_spec_uint64 ("simulation-seed", NULL, NULL,
+                             0, G_MAXUINT64, 0,
+                             G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgGameTemplate:checksum-interval:
+     *
+     * Ticks between desync-detector checksums in deterministic mode
+     * (recorded into replays and verified on playback); 0 turns it off.
+     *
+     * Since: 0.4
+     */
+    properties[PROP_CHECKSUM_INTERVAL] =
+        g_param_spec_uint ("checksum-interval", NULL, NULL,
+                           0, G_MAXUINT, LRG_DEFAULT_CHECKSUM_INTERVAL,
+                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
     /**
@@ -1757,6 +1963,11 @@ lrg_game_template_init (LrgGameTemplate *self)
     priv->camera_zoom_pulse_duration = 0.0f;
     priv->camera_zoom_pulse_timer = 0.0f;
     priv->camera_zoom_pulse_original = 1.0f;
+
+    /* Deterministic simulation: off unless asked for */
+    priv->deterministic = FALSE;
+    priv->simulation_seed = 0;
+    priv->checksum_interval = LRG_DEFAULT_CHECKSUM_INTERVAL;
 }
 
 /* ========================================================================== */
@@ -1843,6 +2054,22 @@ lrg_game_template_startup (LrgGameTemplate  *self,
     if (klass->setup_default_input != NULL)
         klass->setup_default_input (self, priv->input_map);
 
+    /* 6b. Deterministic mode: the simulation, its action table (the input
+     *     map's actions, sorted) and the template's own simulated state */
+    if (priv->deterministic)
+    {
+        priv->use_fixed_timestep = TRUE;
+        priv->simulation = lrg_simulation_new (priv->simulation_seed);
+        lrg_simulation_set_fixed_step (priv->simulation, priv->fixed_timestep);
+        lrg_simulation_set_actions_from_map (priv->simulation, priv->input_map);
+        lrg_simulation_set_player_input_map (priv->simulation, 0, priv->input_map);
+        lrg_simulation_set_checksum_interval (priv->simulation, priv->checksum_interval);
+        lrg_simulation_add_object (priv->simulation, G_OBJECT (priv->timer_manager));
+        priv->simulation_tick_id =
+            g_signal_connect (priv->simulation, "tick",
+                              G_CALLBACK (template_on_simulation_tick), self);
+    }
+
     /* 7. Register custom types */
     if (klass->register_types != NULL)
     {
@@ -1874,6 +2101,17 @@ lrg_game_template_startup (LrgGameTemplate  *self,
     /* 10. Post-startup hook (vfunc) */
     if (klass->post_startup != NULL)
         klass->post_startup (self);
+
+    /* 11. Replays start from the state the game has now built (its
+     *     simulated objects are registered by post_startup) */
+    if (priv->simulation != NULL)
+    {
+        if (priv->playback != NULL &&
+            !lrg_replay_check_compatible (priv->playback, priv->simulation, error))
+            return FALSE;
+        if (priv->record_path != NULL)
+            lrg_simulation_start_recording (priv->simulation, priv->record_initial_state);
+    }
 
     /* Mark as running */
     priv->is_running = TRUE;
@@ -1933,10 +2171,171 @@ lrg_game_template_shutdown_game (LrgGameTemplate *self)
         lrg_settings_save (priv->settings, settings_path, NULL);
     }
 
+    /* Write the recording before anything is torn down */
+    if (priv->simulation != NULL && priv->record_path != NULL)
+    {
+        g_autoptr(LrgReplay) recording = NULL;
+        g_autoptr(GError) error = NULL;
+
+        recording = lrg_simulation_stop_recording (priv->simulation);
+        if (recording != NULL &&
+            !lrg_replay_save_to_file (recording, priv->record_path, &error))
+            lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Could not write replay %s: %s",
+                         priv->record_path, error->message);
+    }
+    if (priv->simulation != NULL)
+        lrg_simulation_release_inputs (priv->simulation);
+
     /* Clear states before timers: exit hooks may schedule delayed work. */
     if (priv->state_manager != NULL)
         lrg_game_state_manager_clear (priv->state_manager);
     lrg_timer_manager_clear (priv->timer_manager);
+}
+
+LrgSimulation *
+lrg_game_template_get_simulation (LrgGameTemplate *self)
+{
+    LrgGameTemplatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), NULL);
+
+    priv = lrg_game_template_get_instance_private (self);
+    return priv->simulation;
+}
+
+void
+lrg_game_template_record_replay (LrgGameTemplate *self,
+                                 const gchar     *path,
+                                 const gchar     *initial_state)
+{
+    LrgGameTemplatePrivate *priv;
+
+    g_return_if_fail (LRG_IS_GAME_TEMPLATE (self));
+    g_return_if_fail (path != NULL);
+
+    priv = lrg_game_template_get_instance_private (self);
+    g_free (priv->record_path);
+    priv->record_path = g_strdup (path);
+    g_free (priv->record_initial_state);
+    priv->record_initial_state = g_strdup (initial_state);
+    priv->deterministic = TRUE;
+
+    /* Already running: record from the next tick on */
+    if (priv->simulation != NULL)
+        lrg_simulation_start_recording (priv->simulation, initial_state);
+}
+
+gboolean
+lrg_game_template_play_replay (LrgGameTemplate  *self,
+                               LrgReplay        *replay,
+                               GError          **error)
+{
+    LrgGameTemplatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), FALSE);
+    g_return_val_if_fail (LRG_IS_REPLAY (replay), FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    priv = lrg_game_template_get_instance_private (self);
+
+    /* Running: the simulation must already be in the replay's start state */
+    if (priv->simulation != NULL &&
+        !lrg_replay_check_compatible (replay, priv->simulation, error))
+        return FALSE;
+
+    /* Started without a simulation: there is nothing to feed */
+    if (priv->simulation == NULL && priv->is_running)
+    {
+        g_set_error_literal (error, LRG_REPLAY_ERROR, LRG_REPLAY_ERROR_INCOMPATIBLE,
+                             "The game was started without deterministic mode");
+        return FALSE;
+    }
+
+    /* Before startup: configure the simulation the replay was recorded with */
+    if (priv->simulation == NULL)
+    {
+        priv->deterministic = TRUE;
+        priv->use_fixed_timestep = TRUE;
+        priv->simulation_seed = lrg_replay_get_seed (replay);
+        priv->fixed_timestep = lrg_replay_get_fixed_step (replay);
+    }
+
+    g_set_object (&priv->playback, replay);
+    priv->playback_finished = FALSE;
+    g_clear_error (&priv->replay_error);
+    return TRUE;
+}
+
+gboolean
+lrg_game_template_is_replay_finished (LrgGameTemplate  *self,
+                                      GError          **error)
+{
+    LrgGameTemplatePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), TRUE);
+
+    priv = lrg_game_template_get_instance_private (self);
+    if (priv->replay_error != NULL && error != NULL)
+        *error = g_error_copy (priv->replay_error);
+    return priv->playback == NULL || priv->playback_finished;
+}
+
+gboolean
+lrg_game_template_run_replay_headless (LrgGameTemplate  *self,
+                                       const gchar      *path,
+                                       guint64          *final_checksum,
+                                       GError          **error)
+{
+    LrgGameTemplatePrivate *priv;
+    g_autoptr(LrgReplay) replay = NULL;
+    g_autoptr(LrgHeadlessHost) host = NULL;
+    LrgEngine *engine;
+    gboolean started_engine = FALSE;
+    gboolean ok;
+
+    g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), FALSE);
+    g_return_val_if_fail (path != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    priv = lrg_game_template_get_instance_private (self);
+    g_return_val_if_fail (!priv->is_running, FALSE);
+
+    /* 1. Load the replay and configure the template from it */
+    replay = lrg_replay_load_from_file (path, error);
+    if (replay == NULL || !lrg_game_template_play_replay (self, replay, error))
+        return FALSE;
+    priv->quit_at_replay_end = TRUE;
+
+    /* 2. An engine without a window, and a host that has none either */
+    engine = lrg_engine_get_default ();
+    if (!lrg_engine_is_running (engine))
+    {
+        if (!lrg_engine_startup (engine, error))
+            return FALSE;
+        started_engine = TRUE;
+    }
+    host = lrg_headless_host_new (engine, priv->fixed_timestep);
+
+    /* 3. Start the game; startup verifies the replay's initial state */
+    ok = lrg_game_template_startup (self, LRG_GAME_HOST (host), error);
+
+    /* 4. Exactly one tick per update, as fast as the CPU allows */
+    while (ok && !lrg_game_template_should_quit (self))
+        lrg_game_template_update (self, priv->fixed_timestep);
+
+    if (ok && priv->replay_error != NULL)
+    {
+        g_propagate_error (error, g_steal_pointer (&priv->replay_error));
+        ok = FALSE;
+    }
+    if (ok && final_checksum != NULL)
+        *final_checksum = lrg_simulation_checksum (priv->simulation);
+
+    if (priv->is_running)
+        lrg_game_template_shutdown_game (self);
+    if (started_engine)
+        lrg_engine_shutdown (engine);
+    return ok;
 }
 
 gboolean
@@ -1981,6 +2380,107 @@ lrg_game_template_get_window (LrgGameTemplate *self)
     return priv->window;
 }
 
+/*
+ * template_take_replay_args:
+ *
+ * Removes the engine's replay options from a main()-style argv and applies
+ * them, leaving the rest for the game's own apply_args:
+ *
+ *   --record FILE           record a replay of this session to FILE
+ *   --replay FILE           play FILE back in the window, quit at its end
+ *   --replay-headless FILE  play FILE back without a window, as fast as
+ *                           possible, verifying checksums; exit 0 or 1
+ *   --seed N                simulation seed (deterministic mode)
+ *
+ * Both "--opt FILE" and "--opt=FILE" spellings are accepted. On success
+ * @headless_path is set (owned by the caller) when --replay-headless was
+ * given.
+ */
+static GStrv
+template_take_replay_args (LrgGameTemplate  *self,
+                           char            **argv,
+                           gchar           **headless_path,
+                           GError          **error)
+{
+    static const gchar *const options[] = {
+        "--record", "--replay", "--replay-headless", "--seed", NULL
+    };
+    g_autoptr(GPtrArray) rest = NULL;
+    guint i;
+
+    rest = g_ptr_array_new_with_free_func (g_free);
+    for (i = 0; argv[i] != NULL; i++)
+    {
+        const gchar *arg = argv[i];
+        const gchar *value = NULL;
+        guint o;
+        gsize len = 0;
+
+        /* Find which replay option (if any) this argument is */
+        for (o = 0; options[o] != NULL; o++)
+        {
+            len = strlen (options[o]);
+            if (i > 0 && strncmp (arg, options[o], len) == 0 &&
+                (arg[len] == '\0' || arg[len] == '='))
+                break;
+        }
+        if (options[o] == NULL)
+        {
+            g_ptr_array_add (rest, g_strdup (arg));
+            continue;
+        }
+
+        if (arg[len] == '=')
+            value = arg + len + 1;
+        else if (argv[i + 1] != NULL)
+            value = argv[++i];
+        if (value == NULL || *value == '\0')
+        {
+            g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE,
+                         "%s needs a value", options[o]);
+            return NULL;
+        }
+
+        switch (o)
+        {
+        case 0:
+            lrg_game_template_record_replay (self, value, NULL);
+            break;
+        case 1:
+        {
+            g_autoptr(LrgReplay) replay = lrg_replay_load_from_file (value, error);
+            LrgGameTemplatePrivate *priv = lrg_game_template_get_instance_private (self);
+
+            if (replay == NULL || !lrg_game_template_play_replay (self, replay, error))
+                return NULL;
+            priv->quit_at_replay_end = TRUE;
+            break;
+        }
+        case 2:
+            g_free (*headless_path);
+            *headless_path = g_strdup (value);
+            break;
+        default:
+        {
+            gchar *end = NULL;
+            guint64 seed = g_ascii_strtoull (value, &end, 0);
+
+            if (end == value || *end != '\0')
+            {
+                g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE,
+                             "--seed: '%s' is not a number", value);
+                return NULL;
+            }
+            g_object_set (self, "deterministic", TRUE, "simulation-seed", seed, NULL);
+            break;
+        }
+        }
+    }
+
+    g_ptr_array_add (rest, NULL);
+    return (GStrv) g_ptr_array_free (g_steal_pointer (&rest), FALSE);
+}
+
 gint
 lrg_game_run_standalone (LrgGameTemplate *self,
                          int              argc,
@@ -1988,21 +2488,50 @@ lrg_game_run_standalone (LrgGameTemplate *self,
 {
     g_autoptr(GError) error = NULL;
     g_autoptr(LrgStandaloneHost) host = NULL;
+    g_auto(GStrv) game_argv = NULL;
+    g_autofree gchar *headless_path = NULL;
 
     (void) argc;
 
     g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), 1);
 
+    /* Replay options belong to the engine: take them out first */
+    if (argv != NULL)
+    {
+        game_argv = template_take_replay_args (self, argv, &headless_path, &error);
+        if (game_argv == NULL)
+        {
+            lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Invalid arguments: %s", error->message);
+            return 1;
+        }
+    }
+
     /* Configure the game from argv before any window/engine work, so a parse
      * error fails fast and module options are applied before startup. argv is a
      * main()-style vector (element 0 = program name), so options begin at [1]. */
-    if (argv != NULL &&
+    if (game_argv != NULL &&
         !lrg_configurable_apply_args (LRG_CONFIGURABLE (self),
-                                      (const gchar *const *) argv, &error))
+                                      (const gchar *const *) game_argv, &error))
     {
         lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Invalid arguments: %s",
                      error != NULL ? error->message : "unknown error");
         return 1;
+    }
+
+    /* Headless playback: no window at all, exit status is the verdict */
+    if (headless_path != NULL)
+    {
+        guint64 checksum = 0;
+
+        if (!lrg_game_template_run_replay_headless (self, headless_path, &checksum, &error))
+        {
+            lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Replay %s failed: %s",
+                         headless_path, error->message);
+            return 1;
+        }
+        lrg_message (LRG_LOG_DOMAIN_TEMPLATE, "Replay %s OK, final checksum %016"
+                     G_GINT64_MODIFIER "x", headless_path, checksum);
+        return 0;
     }
 
     /* The standalone host starts the engine and creates + configures the

@@ -249,6 +249,7 @@ PUBLIC_HEADERS := \
 	src/gamemodule/lrg-configurable.h \
 	src/gamemodule/lrg-game-host.h \
 	src/gamemodule/lrg-standalone-host.h \
+	src/gamemodule/lrg-headless-host.h \
 	src/gamemodule/lrg-loaded-game.h \
 	src/gamemodule/lrg-game-module-macros.h \
 	src/dlc/lrg-dlc-ownership.h \
@@ -886,6 +887,7 @@ SOURCES := \
 	src/gamemodule/lrg-configurable.c \
 	src/gamemodule/lrg-game-host.c \
 	src/gamemodule/lrg-standalone-host.c \
+	src/gamemodule/lrg-headless-host.c \
 	src/gamemodule/lrg-loaded-game.c \
 	src/dlc/lrg-dlc-ownership.c \
 	src/dlc/lrg-dlc-ownership-steam.c \
