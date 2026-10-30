@@ -327,6 +327,10 @@
 #include "replay/lrg-input-snapshot.h"
 #include "replay/lrg-simulation.h"
 #include "replay/lrg-replay.h"
+#include "replay/lrg-rollback-transport.h"
+#include "replay/lrg-loopback-transport.h"
+#include "replay/lrg-udp-transport.h"
+#include "replay/lrg-rollback-session.h"
 
 /* World3D module */
 #include "world3d/lrg-bounding-box3d.h"

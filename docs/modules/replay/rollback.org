@@ -1,0 +1,107 @@
+#+title: Rollback Sessions (GGPO-style netcode)
+#+description: Peer-to-peer rollback netcode for non-MMO games: input delay, prediction, rollback and re-simulation, confirmed frames, checksum exchange, and the loopback and UDP transports
+
+* Rollback Sessions
+:PROPERTIES:
+:CUSTOM_ID: rollback
+:END:
+*[[file:index.org][Replay]]* > Rollback
+
+=LrgRollbackSession= runs one deterministic =LrgSimulation= per peer and keeps them identical by exchanging only inputs. It never waits for the network to simulate a frame: missing remote inputs are predicted, and when the real input arrives and differs, the session rewinds to the state before that frame and simulates forward again with the corrected inputs. This is the scheme GGPO popularized for fighting games; it suits any game with a handful of players, small state and fast-paced input. MMO-scale games use the server-authoritative =mmo/= module instead.
+
+** Model
+:PROPERTIES:
+:CUSTOM_ID: model
+:END:
+- *Frames.* Session frame N is the Nth tick the session simulates. Every peer starts at the same simulation tick and state.
+- *Input delay.* A local input sampled on frame N takes effect on frame N + /delay/ (=input-delay=, default 2). The first /delay/ frames have no input on any peer. Delay trades input lag for fewer rollbacks: with a one-way latency under /delay/ frames, predictions are never needed.
+- *Prediction.* A remote input not yet received is predicted by repeating that player's last confirmed input (held buttons stay held; nothing is pressed twice, because pressed/released are derived from consecutive snapshots).
+- *Saved states.* Before simulating frame F the session saves the simulation (=lrg_simulation_save_bytes()=) and remembers the inputs F used.
+- *Rollback.* When a remote input for an already simulated frame F arrives and differs from what F used, the session loads the state saved before F and re-simulates F up to the present with the best inputs known now. Several corrections arriving together cost one rollback to the earliest of them.
+- *Rollback window.* A peer may run at most =max-rollback= frames (default 8, up to 32) past a player's last confirmed input; past that, =lrg_rollback_session_advance_frame()= returns =FALSE= (stalled) and the game shows the frame again. This bounds both the re-simulation cost and how wrong a prediction can get.
+- *Confirmed frame.* The last frame for which every player's input is known (=lrg_rollback_session_get_confirmed_frame()=). States up to it are final and identical on every peer.
+- *Desync detection.* Every =checksum-interval= frames (default 10) of /final/ state, each peer hashes the state and sends the checksum with its inputs; peers compare. A mismatch emits =LrgRollbackSession::desync= (frame, peer, both checksums) and is kept in =get_desync_frame()=; =get_last_verified_frame()= is the newest frame proven equal.
+
+** Using it
+:PROPERTIES:
+:CUSTOM_ID: usage
+:END:
+#+begin_src c
+/* Same seed, players, action table, objects and initial state on every peer */
+sim = lrg_simulation_new (match_seed);
+lrg_simulation_set_n_players (sim, 2);
+lrg_simulation_set_actions (sim, actions);
+lrg_simulation_add_object (sim, G_OBJECT (fighters));
+g_signal_connect (sim, "tick", G_CALLBACK (simulate_tick), game);
+
+transport = lrg_udp_transport_new (NULL, 7777, &error);
+lrg_udp_transport_add_peer (transport, remote_player, "203.0.113.5", 7777, &error);
+
+session = lrg_rollback_session_new (sim, LRG_ROLLBACK_TRANSPORT (transport), local_player);
+lrg_rollback_session_set_input_delay (session, 2);
+lrg_rollback_session_set_max_rollback (session, 8);
+g_signal_connect (session, "desync", G_CALLBACK (on_desync), game);
+
+/* Every render frame */
+input = lrg_input_snapshot_capture (input_map, actions);
+if (!lrg_rollback_session_advance_frame (session, input, &error) && error != NULL)
+    abort_match (error);
+draw (game);   /* the simulation is at the newest (possibly predicted) frame */
+#+end_src
+
+- The game simulates in the simulation's =tick= signal and reads each player's input with =lrg_simulation_is_down()= / =is_pressed()= / =get_axis()= or through per-player input maps (=lrg_simulation_set_player_input_map()=). Ticks re-run during rollbacks, so a tick must not have side effects outside the registered state (play sounds and spawn particles from the render side, keyed by confirmed frames or de-duplicated, not from the tick).
+- On a stall (=FALSE= without error) keep rendering and call =advance_frame()= again next frame with the same input. While paused, or after the last frame of a match, call =lrg_rollback_session_poll()= so peers keep exchanging inputs and checksums.
+- =lrg_rollback_session_get_frames_ahead()= says how far ahead of the slowest peer this one runs. A peer that stays more than a frame or two ahead should idle a frame now and then (skip =advance_frame()= but =poll()=) so that both sides predict, and roll back, equally.
+- Every peer must use the same =input-delay= and =checksum-interval=.
+
+** Protocol
+:PROPERTIES:
+:CUSTOM_ID: protocol
+:END:
+One datagram per remote peer per frame, little-endian:
+
+#+begin_example
+u32 magic "LRBK"   u8 version (1)   u8 sender player   u16 reserved
+i64 sender frame            frame the sender is simulating (frames-ahead estimate)
+i64 ack                     last contiguous frame of the receiver's inputs the sender has
+i64 checksum frame          newest final checksummed frame, -1 if none
+u64 checksum
+i64 first input frame
+u8  count
+u32 length, then count input snapshots (lrg_input_snapshot_write())
+#+end_example
+
+Each datagram carries every local input from the peer's =ack= + 1 onwards (up to 64, under 1 KiB), so a lost datagram is repaired by the next one, duplicates and reordered datagrams are ignored by frame number, and nothing is ever retransmitted on a timer. Inputs are sent to every other peer (a full mesh), which is what makes N players cost no more design than two.
+
+** Transports
+:PROPERTIES:
+:CUSTOM_ID: transports
+:END:
+=LrgRollbackTransport= is two non-blocking calls, =send (peer, bytes)= and =receive (&peer)=, with no delivery guarantee.
+
+| Transport | Use |
+|-----------+-----|
+| =LrgLoopbackNetwork= + =LrgLoopbackTransport= | In-process. A network object with its own clock (=lrg_loopback_network_advance()=), one endpoint per player; =set_latency (latency, jitter)= and =set_loss (loss, duplicate)= simulate a bad connection reproducibly from a seed. For tests, local multiplayer through the same code path, and bots. |
+| =LrgUdpTransport= | GIO =GSocket=, non-blocking, numeric addresses, datagrams up to 1200 bytes; datagrams from unregistered addresses are dropped. No encryption or authentication: for LANs and trusted setups. For internet play put it behind the MMO module's DTLS channel (=LrgMmoDatagram=) or a relay. |
+
+The =net/= module's =LrgNetServer= / =LrgNetClient= are TCP and unsuitable for rollback (head-of-line blocking turns one lost packet into a stall).
+
+** Testing
+:PROPERTIES:
+:CUSTOM_ID: testing
+:END:
+=tests/test-rollback.c= runs the shared physics + timers + random scenario as two and three peers over a loopback network with 60-80 ms latency, up to 50 ms jitter, 10-15 % loss and 5 % duplication, and checks that every confirmed checksum on every peer equals an offline run with the true inputs, that rollbacks happened, and that no desync was reported. It also checks stalling at the window, desync detection between peers (one peer's simulation is made to diverge at frame 95: both report frame 100, the last verified is 90) and a session over real UDP sockets on 127.0.0.1.
+
+** Limits
+:PROPERTIES:
+:CUSTOM_ID: limits
+:END:
+- Spectators and late joining are not implemented. Both fit the design: a spectator receives everyone's inputs (a relay by one peer) and simulates confirmed frames only; a late joiner needs a state transfer (=lrg_simulation_save_bytes()=) and the input history from its tick on.
+- No automatic time synchronisation (see =get_frames_ahead()= above).
+- No disconnect detection: a silent peer simply stalls the others at the rollback window. Use the frames-ahead value and a timeout in the game.
+- The simulation is saved every frame; keep =LrgSimStateful= state compact (the scenario in the tests saves a few hundred bytes a frame).
+
+** See also
+- [[file:determinism.org][Determinism contract]]
+- [[file:../net/index.org][Networking module]] (TCP)
+- [[file:../mmo/index.org][MMO foundations]] (server-authoritative)

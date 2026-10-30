@@ -292,6 +292,10 @@ PUBLIC_HEADERS := \
 	src/replay/lrg-input-snapshot.h \
 	src/replay/lrg-simulation.h \
 	src/replay/lrg-replay.h \
+	src/replay/lrg-rollback-transport.h \
+	src/replay/lrg-loopback-transport.h \
+	src/replay/lrg-udp-transport.h \
+	src/replay/lrg-rollback-session.h \
 	src/world3d/lrg-bounding-box3d.h \
 	src/world3d/lrg-spawn-point3d.h \
 	src/world3d/lrg-trigger3d.h \
@@ -927,6 +931,10 @@ SOURCES := \
 	src/replay/lrg-input-snapshot.c \
 	src/replay/lrg-simulation.c \
 	src/replay/lrg-replay.c \
+	src/replay/lrg-rollback-transport.c \
+	src/replay/lrg-loopback-transport.c \
+	src/replay/lrg-udp-transport.c \
+	src/replay/lrg-rollback-session.c \
 	src/world3d/lrg-bounding-box3d.c \
 	src/world3d/lrg-spawn-point3d.c \
 	src/world3d/lrg-trigger3d.c \
