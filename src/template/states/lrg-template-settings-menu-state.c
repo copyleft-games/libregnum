@@ -816,8 +816,7 @@ lrg_template_settings_menu_state_enter (LrgGameState *state)
     /* Create UI */
     create_ui (self);
 
-    /* Chain up */
-    LRG_GAME_STATE_CLASS (lrg_template_settings_menu_state_parent_class)->enter (state);
+    /* No chain-up: LrgGameState leaves enter() abstract (NULL). */
 }
 
 static void
@@ -841,8 +840,7 @@ lrg_template_settings_menu_state_exit (LrgGameState *state)
     priv->music_volume_slider = NULL;
     priv->sfx_volume_slider = NULL;
 
-    /* Chain up */
-    LRG_GAME_STATE_CLASS (lrg_template_settings_menu_state_parent_class)->exit (state);
+    /* No chain-up: LrgGameState leaves exit() abstract (NULL). */
 }
 
 static void
@@ -850,7 +848,7 @@ lrg_template_settings_menu_state_update (LrgGameState *state,
                                          gdouble       delta)
 {
     /* Settings menu doesn't need regular updates */
-    LRG_GAME_STATE_CLASS (lrg_template_settings_menu_state_parent_class)->update (state, delta);
+    /* No chain-up: LrgGameState leaves update() abstract (NULL). */
 }
 
 static void
@@ -891,8 +889,7 @@ lrg_template_settings_menu_state_draw (LrgGameState *state)
         lrg_widget_draw (LRG_WIDGET (priv->canvas));
     }
 
-    /* Chain up */
-    LRG_GAME_STATE_CLASS (lrg_template_settings_menu_state_parent_class)->draw (state);
+    /* No chain-up: LrgGameState leaves draw() abstract (NULL). */
 }
 
 static gboolean
