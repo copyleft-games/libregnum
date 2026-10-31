@@ -1670,11 +1670,6 @@ lib-static: $(LIBOUTDIR)/$(LIB_STATIC)
 lib-shared: $(LIBOUTDIR)/$(LIB_SHARED)
 
 # Static library (merges graylib, yaml-glib -- and vendored crispy -- on Unix)
-ifeq ($(HAS_CRISPY),1)
-_CRISPY_ADDLIB := ADDLIB $(CRISPY_STATIC)\n
-else
-_CRISPY_ADDLIB :=
-endif
 # The archives merged below are real prerequisites: a rebuilt graylib/
 # yaml-glib/crispy must trigger a re-archive, or the merged copy goes stale.
 # $(wildcard) so a not-yet-built archive (created by the `deps' phase, then
@@ -1687,11 +1682,20 @@ endif
 else
 _STATIC_EMBED_DEPS :=
 endif
+#
+# The merge is an ar -M (MRI) script in the subset both GNU ar and FreeBSD's
+# ar (elftoolchain) accept: CREATE, one ADDMOD per object, ADDLIB per
+# archive, SAVE. (OPEN, and several files on one ADDMOD line, are GNU-only.)
 $(LIBOUTDIR)/$(LIB_STATIC): $(OBJECTS) $(wildcard $(_STATIC_EMBED_DEPS)) | $(LIBOUTDIR)
 	$(call print_archive,$(LIB_STATIC))
-	@$(AR) rcs $@ $(OBJECTS)
 ifneq ($(TARGET_PLATFORM),windows)
-	@printf "OPEN $@\nADDLIB $(GRAYLIB_STATIC)\nADDLIB $(RAYLIB_STATIC)\nADDLIB $(YAMLGLIB_STATIC)\n$(_CRISPY_ADDLIB)SAVE\nEND\n" | $(AR) -M
+	@rm -f $@
+	@{ printf 'CREATE %s\n' '$@'; \
+	   for o in $(OBJECTS); do printf 'ADDMOD %s\n' "$$o"; done; \
+	   for a in $(_STATIC_EMBED_DEPS); do printf 'ADDLIB %s\n' "$$a"; done; \
+	   printf 'SAVE\nEND\n'; } | $(AR) -M
+else
+	@$(AR) rcs $@ $(OBJECTS)
 endif
 	@$(RANLIB) $@
 
@@ -1984,7 +1988,9 @@ LRGEDITORCTL_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -Isrc/editorctl
 LRGEDITORCTL_CFLAGS += $(GLIB_CFLAGS) $(JSON_CFLAGS) $(shell $(PKG_CONFIG) --cflags gio-unix-2.0)
 LRGEDITORCTL_CFLAGS += -isystem $(YAMLGLIB_DIR)/src $(YAML_CFLAGS)
 LRGEDITORCTL_CFLAGS += -DLRG_EDITORCTL_VERSION=\"$(VERSION)\"
-LRGEDITORCTL_LIBS := $(YAMLGLIB_STATIC) $(YAML_LIBS) $(JSON_LIBS) $(GLIB_LIBS)
+# -lm last: the static mcp-glib calls isfinite(), which glibc expands inline
+# but FreeBSD resolves to __isfinite in libm.
+LRGEDITORCTL_LIBS := $(YAMLGLIB_STATIC) $(YAML_LIBS) $(JSON_LIBS) $(GLIB_LIBS) -lm
 
 ifeq ($(EDITOR_MCP),1)
 LRGEDITORCTL_SOURCES += src/editorctl/lrgeditorctl-mcp.c
