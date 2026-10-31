@@ -238,6 +238,7 @@ PUBLIC_HEADERS := \
 	src/physics/lrg-solid-geometry.h \
 	src/physics/lrg-collision-model.h \
 	src/physics/lrg-character-controller.h \
+	src/physics/lrg-dynamics.h \
 	src/debug/lrg-profiler.h \
 	src/debug/lrg-debug-console.h \
 	src/debug/lrg-debug-overlay.h \
@@ -868,6 +869,7 @@ SOURCES := \
 	src/physics/lrg-solid-geometry.c \
 	src/physics/lrg-collision-model.c \
 	src/physics/lrg-character-controller.c \
+	src/physics/lrg-dynamics.c \
 	src/debug/lrg-profiler.c \
 	src/debug/lrg-debug-console.c \
 	src/debug/lrg-debug-overlay.c \

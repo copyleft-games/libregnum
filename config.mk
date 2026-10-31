@@ -23,8 +23,8 @@ PROJECT_ROOT := $(realpath $(CONFIG_MK_PATH))
 # .pc file and the shared library name. Bump rules and tagging: AGENTS.md,
 # "Versioning". API_VERSION and SO_VERSION below are separate.
 VERSION_MAJOR := 0
-VERSION_MINOR := 4
-VERSION_MICRO := 1
+VERSION_MINOR := 5
+VERSION_MICRO := 0
 VERSION := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)
 
 # API version for parallel installability (bump on ABI breaks)

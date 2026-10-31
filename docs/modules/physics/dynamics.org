@@ -1,0 +1,30 @@
+* LrgDynamicsWorld - Bounded 3D Motion
+:PROPERTIES:
+:CUSTOM_ID: dynamics
+:END:
+
+=LrgDynamicsWorld= (=src/physics/lrg-dynamics.h=) integrates spheres in a Y-up world. It is a separate type from the 2D =LrgRigidBody= / =LrgPhysicsWorld= pair. A box half-extent changes only the body-frame inertia diagonal. Contacts are sphere-sphere and sphere-plane. This world does not admit a ragdoll, an Onslaught goal, or an Assault goal, and it does not read Karma physics bytes.
+
+** What a substep does
+:PROPERTIES:
+:CUSTOM_ID: substep
+:END:
+=step(dt)= accumulates time and runs at most =set_step_limits()= fixed substeps (default 1/60 s, four substeps). Time that would need another substep past that cap is dropped and reported by =get_dropped_time()=. It is not saved for a later call.
+
+Each substep is semi-implicit Euler. Dynamic bodies take force, gravity (default zero) and torque. The torque is turned by the diagonal inertia: a solid sphere starts at (2/5)mr², and =set_box_inertia()= replaces that with m/12 times the sum of the squares of the other two half extents. Kinematic bodies integrate velocity only. Static bodies and planes stay put. Frozen bodies skip integration and ignore contact impulses. Sleeping dynamic bodies also skip integration until a force, a torque, a velocity write, or a contact impulse wakes them.
+
+The contact pass then solves sphere pairs and sphere-plane pairs. The plane normal must already have length 1; the sphere is kept on the positive side. Friction, when =set_material()= sets it above zero, opposes tangential slip and uses the same inertia, so a spinning or sliding sphere can slow down. Joints run in the same passes. A joint stores a local anchor and axis on each body (=LRG_DYNAMICS_WORLD_BODY= means the anchor and axis are already in world space). Linear limits bound the distance between the world anchors. Angular limits bound the angle between the world axes, in [0, pi].
+
+After the velocity passes, one position correction pulls violated contacts and limits part of the way closed. A dynamic sphere whose center then lies outside =set_bounds()= is evicted. Its id is not reused. =get_evicted()= lists the bodies the last step removed.
+
+** Skeleton pose
+:PROPERTIES:
+:CUSTOM_ID: skeleton-pose
+:END:
+=write_bone_pose()= expresses one active sphere in a parent world pose (or an identity parent for a root) and composes the result with =lrg_bone_pose_compose()=. Scale on the local pose is kept. A failure leaves both pose outputs unchanged. The caller walks a chain by feeding each composed world pose in as the next parent. Translation-only =lrg_bone_pose_multiply()= is not used.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-dynamics.c= checks the box inertia numbers and the spin they produce, a distance limit under a pulling force, an angular limit under torque, sphere-sphere separation, a sphere that stays on a plane and rolls once friction removes the slip, that large box extents do not create a contact, a one-second step that integrates only two tenths of a second, sleep then a waking force, freeze against gravity, eviction of one body while its neighbour stays, and a three-bone pose whose composed world position matches the bodies and not the translation-only product.

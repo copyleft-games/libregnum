@@ -335,7 +335,7 @@ Engagement systems for player retention:
 :END:
 - *AI Module* - Behavior trees and decision making
 - *Pathfinding Module* - A* navigation and path smoothing
-- *[[file:physics/index.org][Physics Module]]* - 2D/3D rigid body simulation and static XZ wall collision ([[file:physics/wall-set.org][LrgWallSet]]), triangle mesh collision ([[file:physics/collision-mesh.org][LrgCollisionMesh]]), closed solids ([[file:physics/solid-geometry.org][LrgSolidGeometry]]) and a capsule character controller ([[file:physics/character-controller.org][LrgCharacterController]])
+- *[[file:physics/index.org][Physics Module]]* - 2D/3D rigid body simulation and static XZ wall collision ([[file:physics/wall-set.org][LrgWallSet]]), triangle mesh collision ([[file:physics/collision-mesh.org][LrgCollisionMesh]]), closed solids ([[file:physics/solid-geometry.org][LrgSolidGeometry]]), a capsule character controller ([[file:physics/character-controller.org][LrgCharacterController]]) and bounded 3D sphere dynamics ([[file:physics/dynamics.org][LrgDynamicsWorld]])
 - *I18N Module* - Localization and translations
 - *Networking Module* - Client/server multiplayer
 

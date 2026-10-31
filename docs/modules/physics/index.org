@@ -18,6 +18,7 @@ The Physics module consists of three main components:
 - *[[file:solid-geometry.org][LrgSolidGeometry]]*: closed sphere, box, sphyl, convex and aggregate volumes with inside/outside classification, containment, overlap and sphere sweeps (=LrgCollisionModel=, =LrgSolidWorld=)
 - *[[file:rope.org][LrgRope]]*: a verlet rope or chain between two anchored ends (gravity, fixed length, a floor), headless
 - *[[file:character-controller.org][LrgCharacterController]]*: capsule move-and-slide on an =LrgCollisionMesh= and terrain (wall sliding, steps, slope limit, ground snapping, moving platforms)
+- *[[file:dynamics.org][LrgDynamicsWorld]]*: bounded 3D spheres and planes (mass, box inertia, joint frames and limits, contacts, sleep, freeze, eviction, bone-pose sync). This does not change the 2D =LrgRigidBody= and it is not a ragdoll
 
 ** Core Concepts
 :PROPERTIES:
