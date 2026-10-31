@@ -8,12 +8,14 @@
  * a triangle shell. Y is up. Transforms are column-major, translation in
  * elements 12..14, and must be a rotation plus a positive uniform scale.
  *
- * Supported overlap pairs are analytic for spheres and sphyls, and
- * separating-axis for boxes and convex hulls. SAT tests every face
- * normal and every unique edge-direction cross; it does not drop axes.
- * A sphyl against a box or a convex hull is an explicit error, including
- * when an aggregate hides that pair. Sphere sweeps use a quadratic, a
- * rounded box, a capsule, or conservative advancement against a hull.
+ * Supported overlap pairs are analytic for spheres, sphyls and a sphere
+ * against a flat cylinder, and separating-axis for boxes and convex
+ * hulls. SAT tests every face normal and every unique edge-direction
+ * cross; it does not drop axes. A sphyl against a box or a convex hull,
+ * and any cylinder pair other than sphere-cylinder, is an explicit
+ * error, including when an aggregate hides that pair. Sphere sweeps use
+ * a quadratic, a rounded box, a capsule, or conservative advancement
+ * against a hull. A sweep against a cylinder is an explicit error.
  */
 
 #include "config.h"
@@ -56,6 +58,7 @@ lrg_solid_shape_get_type (void)
         { LRG_SOLID_SHAPE_SPHYL, "LRG_SOLID_SHAPE_SPHYL", "sphyl" },
         { LRG_SOLID_SHAPE_CONVEX, "LRG_SOLID_SHAPE_CONVEX", "convex" },
         { LRG_SOLID_SHAPE_AGGREGATE, "LRG_SOLID_SHAPE_AGGREGATE", "aggregate" },
+        { LRG_SOLID_SHAPE_CYLINDER, "LRG_SOLID_SHAPE_CYLINDER", "cylinder" },
         { 0, NULL, NULL }
     };
 
@@ -185,6 +188,7 @@ prim_name (LrgSolidPrimKind kind)
     case LRG_SOLID_PRIM_BOX: return "box";
     case LRG_SOLID_PRIM_SPHYL: return "sphyl";
     case LRG_SOLID_PRIM_CONVEX: return "convex";
+    case LRG_SOLID_PRIM_CYLINDER: return "cylinder";
     default: return "unknown";
     }
 }
@@ -972,6 +976,61 @@ plane_signed (const gdouble *plane, const gdouble *point)
     return plane[0] * point[0] + plane[1] * point[1] + plane[2] * point[2] - plane[3];
 }
 
+/* Local +Z is the flat cylinder axis. The radial plane is local X/Y. */
+static void
+cylinder_local (const LrgSolidPrim *prim, const gdouble *point,
+                gdouble *axial, gdouble *radial, gdouble radial_dir[3])
+{
+    gdouble local[3];
+
+    box_local (prim, point, local);
+    *axial = local[2];
+    *radial = hypot (local[0], local[1]);
+    if (*radial > 1e-15)
+    {
+        radial_dir[0] = local[0] / *radial;
+        radial_dir[1] = local[1] / *radial;
+        radial_dir[2] = 0.0;
+    }
+    else
+    {
+        radial_dir[0] = 1.0;
+        radial_dir[1] = 0.0;
+        radial_dir[2] = 0.0;
+    }
+}
+
+static void
+cylinder_world_dir (const LrgSolidPrim *prim, const gdouble *local_dir, gdouble *world)
+{
+    guint c;
+
+    memset (world, 0, sizeof (gdouble) * 3);
+    for (c = 0; c < 3; c++)
+        v_mad (world, prim->axis[c], local_dir[c], world);
+}
+
+static LrgSolidClass
+classify_cylinder (const LrgSolidPrim *prim, const gdouble *point)
+{
+    gdouble axial, radial, radial_dir[3];
+    gdouble d_rad, d_ax, sdf;
+
+    cylinder_local (prim, point, &axial, &radial, radial_dir);
+    (void) radial_dir[0];
+    d_rad = radial - prim->radius;
+    d_ax = fabs (axial) - prim->half[2];
+    if (d_rad > 0.0 && d_ax > 0.0)
+        sdf = hypot (d_rad, d_ax);
+    else
+        sdf = d_rad > d_ax ? d_rad : d_ax;
+    if (sdf < -SOLID_EPS)
+        return LRG_SOLID_CLASS_INSIDE;
+    if (sdf <= SOLID_EPS)
+        return LRG_SOLID_CLASS_TOUCHING;
+    return LRG_SOLID_CLASS_OUTSIDE;
+}
+
 static LrgSolidClass
 classify_convex (const LrgSolidPrim *prim, const gdouble *point)
 {
@@ -997,6 +1056,7 @@ classify_one (const LrgSolidPrim *prim, const gdouble *point)
     case LRG_SOLID_PRIM_BOX: return classify_box (prim, point);
     case LRG_SOLID_PRIM_SPHYL: return classify_sphyl (prim, point);
     case LRG_SOLID_PRIM_CONVEX: return classify_convex (prim, point);
+    case LRG_SOLID_PRIM_CYLINDER: return classify_cylinder (prim, point);
     default: return LRG_SOLID_CLASS_OUTSIDE;
     }
 }
@@ -1553,6 +1613,63 @@ sat_pair (const LrgSolidPrim *a, const LrgSolidPrim *b, RawContact *raw, GError 
     return TRUE;
 }
 
+/* Normal moves the sphere out of the cylinder. The witness is on the
+ * cylinder. Signed distance is negative when the sphere center is inside. */
+static gboolean
+overlap_cylinder_sphere (const LrgSolidPrim *cylinder, const LrgSolidPrim *sphere, RawContact *raw)
+{
+    gdouble axial, radial, radial_dir[3], local_n[3], world_n[3];
+    gdouble d_rad, d_ax, sdf, depth, sign;
+
+    cylinder_local (cylinder, sphere->center, &axial, &radial, radial_dir);
+    d_rad = radial - cylinder->radius;
+    d_ax = fabs (axial) - cylinder->half[2];
+    if (d_rad > 0.0 && d_ax > 0.0)
+        sdf = hypot (d_rad, d_ax);
+    else
+        sdf = d_rad > d_ax ? d_rad : d_ax;
+    depth = sphere->radius - sdf;
+    raw->overlapping = depth >= -SOLID_EPS;
+    raw->depth = depth > 0.0 ? depth : 0.0;
+    if (!raw->overlapping)
+        return TRUE;
+    sign = axial < 0.0 ? -1.0 : 1.0;
+    if (d_rad > 0.0 && d_ax > 0.0)
+    {
+        local_n[0] = radial_dir[0] * d_rad;
+        local_n[1] = radial_dir[1] * d_rad;
+        local_n[2] = sign * d_ax;
+        if (!v_normalize (local_n))
+        {
+            local_n[0] = radial_dir[0];
+            local_n[1] = radial_dir[1];
+            local_n[2] = 0.0;
+        }
+    }
+    else if (d_rad > d_ax)
+    {
+        local_n[0] = radial_dir[0];
+        local_n[1] = radial_dir[1];
+        local_n[2] = 0.0;
+    }
+    else
+    {
+        local_n[0] = 0.0;
+        local_n[1] = 0.0;
+        local_n[2] = sign;
+    }
+    cylinder_world_dir (cylinder, local_n, world_n);
+    if (!v_normalize (world_n))
+    {
+        world_n[0] = cylinder->axis[2][0];
+        world_n[1] = cylinder->axis[2][1];
+        world_n[2] = cylinder->axis[2][2];
+    }
+    memcpy (raw->normal, world_n, sizeof world_n);
+    v_mad (sphere->center, world_n, -sdf, raw->point);
+    return TRUE;
+}
+
 static gboolean
 overlap_one (const LrgSolidPrim *a, const LrgSolidPrim *b, RawContact *raw, GError **error)
 {
@@ -1617,6 +1734,15 @@ overlap_one (const LrgSolidPrim *a, const LrgSolidPrim *b, RawContact *raw, GErr
     }
     if (ka == LRG_SOLID_PRIM_CONVEX && kb == LRG_SOLID_PRIM_SPHERE)
         return overlap_sphere_convex (b, a, raw);
+    if (ka == LRG_SOLID_PRIM_CYLINDER && kb == LRG_SOLID_PRIM_SPHERE)
+        return overlap_cylinder_sphere (a, b, raw);
+    if (ka == LRG_SOLID_PRIM_SPHERE && kb == LRG_SOLID_PRIM_CYLINDER)
+    {
+        overlap_cylinder_sphere (b, a, raw);
+        flip_raw (raw);
+        point_on_sphere (a->center, a->radius, raw);
+        return TRUE;
+    }
     if ((ka == LRG_SOLID_PRIM_BOX || ka == LRG_SOLID_PRIM_CONVEX) &&
         (kb == LRG_SOLID_PRIM_BOX || kb == LRG_SOLID_PRIM_CONVEX))
         return sat_pair (a, b, raw, error);
@@ -1738,6 +1864,18 @@ sphere_in_prim (const LrgSolidPrim *sphere, const LrgSolidPrim *outer)
                 return FALSE;
         return TRUE;
     }
+    if (outer->kind == LRG_SOLID_PRIM_CYLINDER)
+    {
+        gdouble axial, radial, radial_dir[3];
+
+        cylinder_local (outer, sphere->center, &axial, &radial, radial_dir);
+        (void) radial_dir[0];
+        if (fabs (axial) + sphere->radius > outer->half[2] + SOLID_EPS)
+            return FALSE;
+        if (radial + sphere->radius > outer->radius + SOLID_EPS)
+            return FALSE;
+        return TRUE;
+    }
     return FALSE;
 }
 
@@ -1750,6 +1888,95 @@ poly_in_prim (const gdouble *points, guint n_points, const LrgSolidPrim *outer)
         if (!point_contained (outer, points + (gsize) i * 3))
             return FALSE;
     return TRUE;
+}
+
+static gdouble
+cylinder_support (const LrgSolidPrim *cylinder, const gdouble *dir)
+{
+    gdouble along, radial[3];
+
+    along = v_dot (cylinder->axis[2], dir);
+    radial[0] = dir[0] - cylinder->axis[2][0] * along;
+    radial[1] = dir[1] - cylinder->axis[2][1] * along;
+    radial[2] = dir[2] - cylinder->axis[2][2] * along;
+    return v_dot (cylinder->center, dir) + cylinder->half[2] * fabs (along) + cylinder->radius * v_len (radial);
+}
+
+static gboolean
+circle_in_sphere (const gdouble *circle_center, const gdouble *axis, gdouble radius,
+                  const gdouble *sphere_center, gdouble sphere_radius)
+{
+    gdouble delta[3], radial[3];
+    gdouble axial, farthest;
+
+    v_sub (circle_center, sphere_center, delta);
+    axial = v_dot (delta, axis);
+    radial[0] = delta[0] - axis[0] * axial;
+    radial[1] = delta[1] - axis[1] * axial;
+    radial[2] = delta[2] - axis[2] * axial;
+    farthest = hypot (axial, v_len (radial) + radius);
+    return farthest <= sphere_radius + SOLID_EPS;
+}
+
+static gboolean
+cylinder_in_halfspaces (const LrgSolidPrim *cylinder, const gdouble *planes, guint n_planes)
+{
+    guint i;
+
+    for (i = 0; i < n_planes; i++)
+    {
+        const gdouble *plane;
+
+        plane = planes + (gsize) i * 4;
+        if (cylinder_support (cylinder, plane) > plane[3] + SOLID_EPS)
+            return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean
+cylinder_in_prim (const LrgSolidPrim *cylinder, const LrgSolidPrim *outer, GError **error)
+{
+    if (outer->kind == LRG_SOLID_PRIM_SPHERE)
+    {
+        gdouble positive[3], negative[3];
+
+        v_mad (cylinder->center, cylinder->axis[2], cylinder->half[2], positive);
+        v_mad (cylinder->center, cylinder->axis[2], -cylinder->half[2], negative);
+        if (!circle_in_sphere (positive, cylinder->axis[2], cylinder->radius, outer->center, outer->radius))
+            return FALSE;
+        return circle_in_sphere (negative, cylinder->axis[2], cylinder->radius, outer->center, outer->radius);
+    }
+    if (outer->kind == LRG_SOLID_PRIM_BOX)
+    {
+        gdouble planes[6 * 4];
+        guint c, side, n;
+
+        n = 0;
+        for (c = 0; c < 3; c++)
+        {
+            for (side = 0; side < 2; side++)
+            {
+                gdouble sign;
+
+                sign = side == 0 ? 1.0 : -1.0;
+                planes[n * 4 + 0] = outer->axis[c][0] * sign;
+                planes[n * 4 + 1] = outer->axis[c][1] * sign;
+                planes[n * 4 + 2] = outer->axis[c][2] * sign;
+                planes[n * 4 + 3] = outer->center[0] * planes[n * 4 + 0]
+                    + outer->center[1] * planes[n * 4 + 1]
+                    + outer->center[2] * planes[n * 4 + 2]
+                    + outer->half[c];
+                n++;
+            }
+        }
+        return cylinder_in_halfspaces (cylinder, planes, n);
+    }
+    if (outer->kind == LRG_SOLID_PRIM_CONVEX)
+        return cylinder_in_halfspaces (cylinder, outer->planes, outer->n_planes);
+    g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                         "Solid containment pair is not supported");
+    return FALSE;
 }
 
 static gboolean
@@ -1781,6 +2008,8 @@ prim_contained (const LrgSolidPrim *inner, const LrgSolidPrim *outer, GError **e
         memcpy (cap.center, b, sizeof b);
         return sphere_in_prim (&cap, outer);
     }
+    if (inner->kind == LRG_SOLID_PRIM_CYLINDER)
+        return cylinder_in_prim (inner, outer, error);
     g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                          "Solid containment pair is not supported");
     return FALSE;
@@ -2347,6 +2576,25 @@ lrg_solid_geometry_new_sphyl (gfloat radius, gfloat half_length, const gfloat *t
     prim->half[1] = (gdouble) half_length;
     axis_identity (prim->axis);
     return finish_one (prim, LRG_SOLID_SHAPE_SPHYL, transform, error);
+}
+
+LrgSolidGeometry *
+lrg_solid_geometry_new_cylinder (gfloat radius, gfloat half_height, const gfloat *transform, GError **error)
+{
+    LrgSolidPrim *prim;
+
+    if (!isfinite (radius) || !(radius > 0.0f) || !isfinite (half_height) || !(half_height > 0.0f))
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                             "Cylinder radius and half-height must be finite and positive");
+        return NULL;
+    }
+    prim = g_new0 (LrgSolidPrim, 1);
+    prim->kind = LRG_SOLID_PRIM_CYLINDER;
+    prim->radius = (gdouble) radius;
+    prim->half[2] = (gdouble) half_height;
+    axis_identity (prim->axis);
+    return finish_one (prim, LRG_SOLID_SHAPE_CYLINDER, transform, error);
 }
 
 LrgSolidGeometry *

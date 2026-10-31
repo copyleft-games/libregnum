@@ -4,7 +4,7 @@
 :END:
 Retained closed solids. A point is outside, touching or inside the volume. =LrgCollisionMesh= answers triangle-surface distance and does not provide this result. =LrgRigidBody= remains a 2D simulation. This module is collision only: no mass, inertia, joints, sleep or timestep.
 
-Y is up. A sphyl is a capsule whose cylinder axis is local +Y. Transforms are column-major, translation in elements 12..14, and must be a rotation plus a positive uniform scale. Nonuniform scale, reflection, shear and non-finite values are rejected and no object is published.
+Y is up. A sphyl is a capsule whose cylinder axis is local +Y. A flat cylinder is a separate shape whose axis is local +Z and whose ends are disks; it is not a sphyl and it is not rotated onto +Y. Transforms are column-major, translation in elements 12..14, and must be a rotation plus a positive uniform scale. Nonuniform scale, reflection, shear and non-finite values are rejected and no object is published.
 
 ** Types
 :PROPERTIES:
@@ -26,7 +26,8 @@ Y is up. A sphyl is a capsule whose cylinder axis is local +Y. Transforms are co
 |-------+-------------+--------|
 | =LRG_SOLID_SHAPE_SPHERE= | =lrg_solid_geometry_new_sphere()= | ball |
 | =LRG_SOLID_SHAPE_BOX= | =lrg_solid_geometry_new_box()= | oriented box, half extents along local axes |
-| =LRG_SOLID_SHAPE_SPHYL= | =lrg_solid_geometry_new_sphyl()= | capsule, local +Y, half-length of the cylinder |
+| =LRG_SOLID_SHAPE_SPHYL= | =lrg_solid_geometry_new_sphyl()= | capsule, local +Y, half-length of the cylindrical middle |
+| =LRG_SOLID_SHAPE_CYLINDER= | =lrg_solid_geometry_new_cylinder()= | flat-ended cylinder, local +Z, positive half-height |
 | =LRG_SOLID_SHAPE_CONVEX= | =lrg_solid_geometry_new_convex()= | convex hull of at least four non-coplanar points |
 | =LRG_SOLID_SHAPE_AGGREGATE= | =lrg_solid_geometry_new_aggregate()= | union of retained children |
 
@@ -59,9 +60,9 @@ Exceeding a budget returns =G_IO_ERROR_INVALID_ARGUMENT= or =G_IO_ERROR_NO_SPACE
 | =lrg_solid_world_add()= / =remove()= / =get_model()= | generation-tagged slots |
 | =lrg_solid_world_classify_point()= / =overlap()= / =contains()= / =sweep_sphere()= | the same queries after the model transform |
 
-Supported overlap pairs are sphere-sphere, sphere-box, sphere-sphyl, sphere-convex, box-box, box-convex, sphyl-sphyl and convex-convex. Sphyl-sphyl uses the exact closest points of the two cylinder segments. Box and convex pairs test every face normal and every unique edge-direction cross product. A hull that would need more than 128 unique edges fails the query instead of guessing an overlap. A box against a sphyl, or a sphyl against a convex hull, returns =G_IO_ERROR_NOT_SUPPORTED=. An aggregate that hides one of those pairs fails the whole query and does not write the outputs.
+Supported overlap pairs are sphere-sphere, sphere-box, sphere-sphyl, sphere-convex, sphere-cylinder, box-box, box-convex, sphyl-sphyl and convex-convex. Sphyl-sphyl uses the exact closest points of the two capsule segments. Sphere-cylinder uses the signed distance to the flat cylinder. Box and convex pairs test every face normal and every unique edge-direction cross product. A hull that would need more than 128 unique edges fails the query instead of guessing an overlap. A box against a sphyl, a sphyl against a convex hull, and any cylinder pair other than sphere-cylinder return =G_IO_ERROR_NOT_SUPPORTED=. An aggregate that hides one of those pairs fails the whole query and does not write the outputs.
 
-Containment of a single outer primitive is exact. An aggregate used as the outer solid (a union) returns =G_IO_ERROR_NOT_SUPPORTED=. An aggregate inner is contained only when every primitive is contained.
+Containment of a single outer primitive is exact for the implemented pairs. A sphere, box, convex hull or sphyl inside a cylinder uses the cylinder as a convex volume. A cylinder inside a sphere, box or convex hull uses the cylinder support function. A cylinder inside a sphyl or another cylinder returns =G_IO_ERROR_NOT_SUPPORTED=. An aggregate used as the outer solid (a union) returns =G_IO_ERROR_NOT_SUPPORTED=. An aggregate inner is contained only when every primitive is contained. A sphere sweep against a cylinder returns =G_IO_ERROR_NOT_SUPPORTED=.
 
 A world sphere sweep requires the moving model to bake to exactly one sphere. The caller supplies the motion vector. It is not scaled again by the model transform. A filter miss is a successful separation, not an error. Hull sweeps advance at most 64 steps. If those steps stay inside the segment without reaching the surface, the sweep reports a hit at the current time so the sphere does not tunnel.
 
@@ -77,4 +78,4 @@ The world holds a reference to each live model. The model holds a reference to i
 :PROPERTIES:
 :CUSTOM_ID: what-this-is-not
 :END:
-This is not articulated Karma, not =PHYS_KarmaRagDoll=, and not a decoded =.ka= asset. Triangle meshes, character capsules and asset identifiers are different types and must not be passed off as these solids. A game that needs a Karma block transition still has to stage a real descriptor before it may report success.
+This is not articulated Karma, not =PHYS_KarmaRagDoll=, and not a decoded =.ka= asset. Triangle meshes, character capsules and asset identifiers are different types and must not be passed off as these solids. A flat cylinder is not a stand-in for a capsule, and a capsule is not a stand-in for a flat cylinder. A game that needs a Karma block transition still has to stage a real descriptor before it may report success.

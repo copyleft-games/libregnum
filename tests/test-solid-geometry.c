@@ -509,6 +509,138 @@ test_convex_sat_budget (void)
     g_assert_cmpfloat (contact.depth, >, 0.0f);
 }
 
+static void
+test_flat_cylinder (void)
+{
+    g_autoptr(LrgSolidGeometry) cylinder = NULL;
+    g_autoptr(LrgSolidGeometry) turned = NULL;
+    g_autoptr(LrgSolidGeometry) sphere = NULL;
+    g_autoptr(LrgSolidGeometry) inside = NULL;
+    g_autoptr(LrgSolidGeometry) outside = NULL;
+    g_autoptr(LrgSolidGeometry) box = NULL;
+    g_autoptr(LrgSolidGeometry) tall = NULL;
+    g_autoptr(LrgSolidGeometry) other = NULL;
+    g_autoptr(LrgSolidGeometry) hull = NULL;
+    g_autoptr(GError) error = NULL;
+    LrgSolidClass klass;
+    LrgSolidContact contact;
+    LrgSolidHit hit;
+    gboolean overlapping, contained, did_hit, sentinel;
+    gfloat point[3], placed[16], turned_m[16], delta[3], half[3], tetra[12];
+
+    g_assert_null (lrg_solid_geometry_new_cylinder (1.0f, 0.0f, NULL, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_clear_error (&error);
+    cylinder = lrg_solid_geometry_new_cylinder (1.0f, 1.0f, NULL, &error);
+    g_assert_no_error (error);
+    g_assert_cmpint (lrg_solid_geometry_get_shape (cylinder), ==, LRG_SOLID_SHAPE_CYLINDER);
+    point[0] = point[1] = point[2] = 0.0f;
+    g_assert_true (lrg_solid_geometry_classify_point (cylinder, point, &klass, &error));
+    g_assert_cmpint (klass, ==, LRG_SOLID_CLASS_INSIDE);
+    point[0] = 1.0f;
+    g_assert_true (lrg_solid_geometry_classify_point (cylinder, point, &klass, &error));
+    g_assert_cmpint (klass, ==, LRG_SOLID_CLASS_TOUCHING);
+    point[0] = 0.0f;
+    point[2] = 1.0f;
+    g_assert_true (lrg_solid_geometry_classify_point (cylinder, point, &klass, &error));
+    g_assert_cmpint (klass, ==, LRG_SOLID_CLASS_TOUCHING);
+    point[0] = 1.2f;
+    point[2] = 0.0f;
+    g_assert_true (lrg_solid_geometry_classify_point (cylinder, point, &klass, &error));
+    g_assert_cmpint (klass, ==, LRG_SOLID_CLASS_OUTSIDE);
+    /* (1, 0, 1) is the circular rim, so it touches. (1, 1, 1) is the
+     * bounding-box corner and must stay outside a round cylinder. */
+    point[0] = 1.0f;
+    point[1] = 0.0f;
+    point[2] = 1.0f;
+    g_assert_true (lrg_solid_geometry_classify_point (cylinder, point, &klass, &error));
+    g_assert_cmpint (klass, ==, LRG_SOLID_CLASS_TOUCHING);
+    point[1] = 1.0f;
+    g_assert_true (lrg_solid_geometry_classify_point (cylinder, point, &klass, &error));
+    g_assert_cmpint (klass, ==, LRG_SOLID_CLASS_OUTSIDE);
+
+    identity (turned_m);
+    turned_m[0] = 0.0f;
+    turned_m[2] = -1.0f;
+    turned_m[5] = 1.0f;
+    turned_m[8] = 1.0f;
+    turned_m[10] = 0.0f;
+    turned = lrg_solid_geometry_new_cylinder (1.0f, 1.0f, turned_m, &error);
+    point[0] = 1.0f;
+    point[1] = 0.0f;
+    point[2] = 0.0f;
+    g_assert_true (lrg_solid_geometry_classify_point (turned, point, &klass, &error));
+    g_assert_cmpint (klass, ==, LRG_SOLID_CLASS_TOUCHING);
+
+    identity (placed);
+    placed[12] = 1.2f;
+    sphere = lrg_solid_geometry_new_sphere (0.5f, placed, &error);
+    g_assert_true (lrg_solid_geometry_overlap (cylinder, sphere, &contact, &overlapping, &error));
+    g_assert_true (overlapping);
+    g_assert_cmpfloat_with_epsilon (contact.depth, 0.3f, 1e-3f);
+    g_assert_cmpfloat_with_epsilon (contact.normal[0], 1.0f, 1e-3f);
+    g_assert_cmpfloat_with_epsilon (contact.point[0], 1.0f, 1e-3f);
+    g_assert_true (lrg_solid_geometry_overlap (sphere, cylinder, &contact, &overlapping, &error));
+    g_assert_true (overlapping);
+    g_assert_cmpfloat_with_epsilon (contact.depth, 0.3f, 1e-3f);
+    g_assert_cmpfloat_with_epsilon (contact.normal[0], -1.0f, 1e-3f);
+
+    identity (placed);
+    placed[12] = 3.0f;
+    outside = lrg_solid_geometry_new_sphere (0.5f, placed, &error);
+    g_assert_true (lrg_solid_geometry_overlap (cylinder, outside, &contact, &overlapping, &error));
+    g_assert_false (overlapping);
+
+    inside = lrg_solid_geometry_new_sphere (0.2f, NULL, &error);
+    g_assert_true (lrg_solid_geometry_contains (cylinder, inside, &contained, &error));
+    g_assert_true (contained);
+    g_assert_true (lrg_solid_geometry_contains (outside, cylinder, &contained, &error));
+    g_assert_false (contained);
+    g_assert_no_error (error);
+
+    half[0] = half[1] = half[2] = 1.0f;
+    box = lrg_solid_geometry_new_box (half, NULL, &error);
+    tall = lrg_solid_geometry_new_cylinder (0.2f, 2.0f, NULL, &error);
+    g_assert_true (lrg_solid_geometry_contains (box, tall, &contained, &error));
+    g_assert_false (contained);
+    g_clear_object (&cylinder);
+    cylinder = lrg_solid_geometry_new_cylinder (0.2f, 0.2f, NULL, &error);
+    g_assert_true (lrg_solid_geometry_contains (box, cylinder, &contained, &error));
+    g_assert_true (contained);
+    tetra[0] = 1.0f;
+    tetra[1] = 1.0f;
+    tetra[2] = 1.0f;
+    tetra[3] = 1.0f;
+    tetra[4] = -1.0f;
+    tetra[5] = -1.0f;
+    tetra[6] = -1.0f;
+    tetra[7] = 1.0f;
+    tetra[8] = -1.0f;
+    tetra[9] = -1.0f;
+    tetra[10] = -1.0f;
+    tetra[11] = 1.0f;
+    hull = lrg_solid_geometry_new_convex (tetra, 12, NULL, &error);
+    g_assert_true (lrg_solid_geometry_contains (hull, cylinder, &contained, &error));
+    g_assert_true (contained);
+
+    other = lrg_solid_geometry_new_cylinder (0.4f, 0.4f, NULL, &error);
+    sentinel = TRUE;
+    g_assert_false (lrg_solid_geometry_overlap (cylinder, other, NULL, &sentinel, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+    g_assert_true (sentinel);
+    g_clear_error (&error);
+    point[0] = -3.0f;
+    point[1] = 0.0f;
+    point[2] = 0.0f;
+    delta[0] = 4.0f;
+    delta[1] = 0.0f;
+    delta[2] = 0.0f;
+    did_hit = TRUE;
+    g_assert_false (lrg_solid_geometry_sweep_sphere (cylinder, point, 0.5f, delta, &hit, &did_hit, &error));
+    g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+    g_assert_true (did_hit);
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -528,5 +660,6 @@ main (int argc, char *argv[])
     g_test_add_func ("/solid/filter-and-sweep", test_filter_miss_and_sweep);
     g_test_add_func ("/solid/sphyl-skew", test_sphyl_skew_distance);
     g_test_add_func ("/solid/convex-sat-budget", test_convex_sat_budget);
+    g_test_add_func ("/solid/flat-cylinder", test_flat_cylinder);
     return g_test_run ();
 }
