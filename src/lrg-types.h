@@ -366,6 +366,9 @@ typedef struct _LrgWall               LrgWall;     /* Boxed type */
 typedef struct _LrgWallSet            LrgWallSet;
 
 typedef struct _LrgCollisionMesh       LrgCollisionMesh;
+typedef struct _LrgSolidGeometry       LrgSolidGeometry;
+typedef struct _LrgCollisionModel      LrgCollisionModel;
+typedef struct _LrgSolidWorld          LrgSolidWorld;
 typedef struct _LrgCharacterController LrgCharacterController;
 
 /* ==========================================================================
