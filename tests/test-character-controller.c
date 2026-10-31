@@ -535,6 +535,8 @@ slope_height (gfloat    x,
 {
     gint *calls;
 
+    /* The synthetic terrain slopes along X only. */
+    (void) z;
     calls = (gint *) user_data;
     (*calls)++;
     *height = 0.1f * x;

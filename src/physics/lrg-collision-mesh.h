@@ -172,10 +172,16 @@ lrg_collision_mesh_translate (LrgCollisionMesh *self,
  * @instance_id: caller identifier reported in #LrgCollisionHit
  *
  * Places @shape in @self. Instances are tested after the own triangles
- * in ascending instance order. @shape must not be @self.
+ * in ascending instance order. Direct or indirect reference cycles are
+ * rejected before taking a reference or changing the instance collection.
+ * The graph check is bounded to 65536 distinct meshes and 1048576 instance
+ * slots (including removed entries); shared acyclic descendants remain
+ * supported. Mutations and queries on
+ * shared instance graphs must be externally serialized.
  *
  * Returns: an instance handle (stable until removed), or
- *   %LRG_COLLISION_MESH_INVALID_INSTANCE
+ *   %LRG_COLLISION_MESH_INVALID_INSTANCE on invalid input, a reference cycle
+ *   or graph-validation budget exhaustion
  */
 LRG_AVAILABLE_IN_ALL
 guint

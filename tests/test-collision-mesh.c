@@ -1017,6 +1017,106 @@ test_sweep_box_invalid(void)
 	}
 }
 
+/* Nested instance ownership must be a DAG. Reject a back-edge before it can
+ * recurse through physical queries or keep an entire model/world alive. Shared
+ * geometry across distinct worlds is valid and must retain its normal lifetime. */
+static void
+test_instance_reference_cycles(void)
+{
+	g_autoptr(LrgCollisionMesh) world=lrg_collision_mesh_new(),other=lrg_collision_mesh_new();
+	g_autoptr(LrgCollisionMesh) middle=lrg_collision_mesh_new(),shape=unit_box_mesh();
+	LrgCollisionMesh *weak_middle=middle,*weak_shape=shape;
+	gfloat transform[16];
+	guint inner,first,second,rejected;
+	LrgCollisionHit hit;
+	g_object_add_weak_pointer(G_OBJECT(shape),(gpointer *)&weak_shape);
+	g_object_add_weak_pointer(G_OBJECT(middle),(gpointer *)&weak_middle);
+	identity(transform);
+	inner=lrg_collision_mesh_add_instance(middle,shape,transform,7);
+	g_assert_cmpuint(inner,!=,LRG_COLLISION_MESH_INVALID_INSTANCE);
+	transform[12]=3;
+	first=lrg_collision_mesh_add_instance(world,middle,transform,42);
+	g_assert_cmpuint(first,!=,LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_assert_true(lrg_collision_mesh_raycast(world,(gfloat[3]){0,0,0},(gfloat[3]){1,0,0},10,&hit));
+	g_assert_cmpfloat_with_epsilon(hit.distance,2.5f,EPS); g_assert_cmpuint(hit.instance_id,==,42);
+	identity(transform);
+	rejected=lrg_collision_mesh_add_instance(shape,world,transform,99);
+	/* Break an incorrectly admitted baseline cycle before asserting, so this
+	 * regression never deliberately queries a recursive ownership graph. */
+	if (rejected!=LRG_COLLISION_MESH_INVALID_INSTANCE)
+		g_assert_true(lrg_collision_mesh_remove_instance(shape,rejected));
+	g_assert_cmpuint(rejected,==,LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_assert_cmpuint(lrg_collision_mesh_get_instance_count(shape),==,0);
+	g_assert_cmpuint(lrg_collision_mesh_get_instance_count(middle),==,1);
+	g_assert_cmpuint(lrg_collision_mesh_get_instance_count(world),==,1);
+	g_assert_true(lrg_collision_mesh_raycast(world,(gfloat[3]){0,0,0},(gfloat[3]){1,0,0},10,&hit));
+	g_assert_cmpfloat_with_epsilon(hit.distance,2.5f,EPS);
+	transform[12]=6;
+	second=lrg_collision_mesh_add_instance(other,middle,transform,43);
+	g_assert_cmpuint(second,!=,LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_clear_object(&shape); g_clear_object(&middle);
+	g_assert_nonnull(weak_shape); g_assert_nonnull(weak_middle);
+	g_assert_true(lrg_collision_mesh_remove_instance(world,first));
+	g_assert_false(lrg_collision_mesh_remove_instance(world,first));
+	g_assert_false(lrg_collision_mesh_raycast(world,(gfloat[3]){0,0,0},(gfloat[3]){1,0,0},10,NULL));
+	g_assert_nonnull(weak_shape); g_assert_nonnull(weak_middle);
+	g_assert_true(lrg_collision_mesh_raycast(other,(gfloat[3]){0,0,0},(gfloat[3]){1,0,0},10,&hit));
+	g_assert_cmpfloat_with_epsilon(hit.distance,5.5f,EPS);
+	transform[12]=8;
+	g_assert_true(lrg_collision_mesh_set_instance_transform(other,second,transform));
+	g_assert_true(lrg_collision_mesh_raycast(other,(gfloat[3]){0,0,0},(gfloat[3]){1,0,0},10,&hit));
+	g_assert_cmpfloat_with_epsilon(hit.distance,7.5f,EPS);
+	g_assert_true(lrg_collision_mesh_remove_instance(other,second));
+	g_assert_null(weak_shape); g_assert_null(weak_middle);
+}
+
+/* Repeated descendants have exponentially many paths but only linear unique
+ * storage. Admission must visit each node once without mistaking sharing for
+ * a cycle. Queries on this deliberately high-path-count graph are not needed. */
+static void
+test_instance_shared_dag (void)
+{
+	g_autoptr(LrgCollisionMesh) leaf = lrg_collision_mesh_new ();
+	g_autoptr(LrgCollisionMesh) root = NULL;
+	LrgCollisionMesh *weak_leaf = leaf;
+	gfloat transform[16];
+	guint level;
+	guint rejected;
+
+	identity (transform);
+	g_object_add_weak_pointer (G_OBJECT (leaf), (gpointer *) &weak_leaf);
+	root = (LrgCollisionMesh *) g_object_ref (leaf);
+	for (level = 0; level < 32; level++) {
+		g_autoptr(LrgCollisionMesh) parent = lrg_collision_mesh_new ();
+
+		g_assert_cmpuint (lrg_collision_mesh_add_instance (parent, root, transform, 1),
+		                  !=, LRG_COLLISION_MESH_INVALID_INSTANCE);
+		g_assert_cmpuint (lrg_collision_mesh_add_instance (parent, root, transform, 2),
+		                  !=, LRG_COLLISION_MESH_INVALID_INSTANCE);
+		g_clear_object (&root);
+		root = (LrgCollisionMesh *) g_steal_pointer (&parent);
+	}
+	rejected = lrg_collision_mesh_add_instance (leaf, root, transform, 3);
+	if (rejected != LRG_COLLISION_MESH_INVALID_INSTANCE)
+		g_assert_true (lrg_collision_mesh_remove_instance (leaf, rejected));
+	g_assert_cmpuint (rejected, ==, LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_assert_cmpuint (lrg_collision_mesh_get_instance_count (leaf), ==, 0);
+	g_clear_object (&leaf);
+	g_assert_nonnull (weak_leaf);
+	g_clear_object (&root);
+	g_assert_null (weak_leaf);
+}
+
+/* A triangle shell is not a solid volume. This distinction blocks treating a
+ * tessellated primitive as an exact native convex/analytic collision backend. */
+static void
+test_triangle_surface_containment(void)
+{
+	g_autoptr(LrgCollisionMesh) shape=unit_box_mesh();
+	g_assert_false(lrg_collision_mesh_overlap_capsule(shape,(gfloat[3]){0,-.1f,0},.05f,.2f));
+	g_assert_true(lrg_collision_mesh_overlap_capsule(shape,(gfloat[3]){.48f,-.1f,0},.05f,.2f));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1045,6 +1145,9 @@ main (int   argc,
     g_test_add_func ("/collision-mesh/instances/tree-matches-linear", test_instance_tree_matches_linear);
     g_test_add_func ("/collision-mesh/translate", test_translate);
     g_test_add_func ("/collision-mesh/query-speed", test_query_speed);
+	g_test_add_func("/collision-mesh/instances/reject-reference-cycles",test_instance_reference_cycles);
+	g_test_add_func ("/collision-mesh/instances/shared-dag", test_instance_shared_dag);
+	g_test_add_func("/collision-mesh/overlap/surfaces-not-solids",test_triangle_surface_containment);
 
     return g_test_run ();
 }

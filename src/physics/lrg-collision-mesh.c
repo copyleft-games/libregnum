@@ -1446,42 +1446,94 @@ load_transform (const gfloat *transform,
     return m4_affine_inverse (m, inv);
 }
 
+/* Geometry references must form a DAG. A direct self check misses A->B->A,
+ * which both leaks strong references and recurses indefinitely during queries.
+ * Validate before taking a reference or changing any generation/instance data.
+ * Iterative traversal also handles shared descendants without repeated walks. */
+#define INSTANCE_GRAPH_MAX_MESHES (65536U)
+#define INSTANCE_GRAPH_MAX_SLOTS (1048576U)
+
+static gboolean
+instance_graph_valid (LrgCollisionMesh *self,
+                      LrgCollisionMesh *shape)
+{
+	g_autoptr(GHashTable) seen = NULL;
+	g_autoptr(GPtrArray) pending = NULL;
+	guint head = 0;
+	guint slots = 0;
+
+	if (shape == self)
+		return FALSE;
+	if (shape->n_live == 0)
+		return TRUE;
+
+	seen = g_hash_table_new (g_direct_hash, g_direct_equal);
+	pending = g_ptr_array_new ();
+	g_hash_table_add (seen, shape);
+	g_ptr_array_add (pending, shape);
+	while (head < pending->len) {
+		LrgCollisionMesh *node;
+		guint index;
+
+		node = (LrgCollisionMesh *) g_ptr_array_index (pending, head++);
+		for (index = 0; index < node->instances->len; index++) {
+			LrgCollisionMesh *child;
+
+			/* Count empty slots too: removals must not defeat the work bound. */
+			if (++slots > INSTANCE_GRAPH_MAX_SLOTS)
+				return FALSE;
+			child = g_array_index (node->instances, Instance, index).shape;
+			if (child == NULL)
+				continue;
+			if (child == self)
+				return FALSE;
+			if (g_hash_table_contains (seen, child))
+				continue;
+			if (g_hash_table_size (seen) >= INSTANCE_GRAPH_MAX_MESHES)
+				return FALSE;
+			g_hash_table_add (seen, child);
+			g_ptr_array_add (pending, child);
+		}
+	}
+	return TRUE;
+}
+
 guint
 lrg_collision_mesh_add_instance (LrgCollisionMesh *self,
                                  LrgCollisionMesh *shape,
                                  const gfloat     *transform,
                                  guint64           instance_id)
 {
-    Instance inst;
-    guint i;
+	Instance inst;
+	guint i;
 
-    g_return_val_if_fail (LRG_IS_COLLISION_MESH (self), LRG_COLLISION_MESH_INVALID_INSTANCE);
-    g_return_val_if_fail (LRG_IS_COLLISION_MESH (shape), LRG_COLLISION_MESH_INVALID_INSTANCE);
-    g_return_val_if_fail (transform != NULL, LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_return_val_if_fail (LRG_IS_COLLISION_MESH (self), LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_return_val_if_fail (LRG_IS_COLLISION_MESH (shape), LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_return_val_if_fail (transform != NULL, LRG_COLLISION_MESH_INVALID_INSTANCE);
 
-    if (shape == self)
-        return LRG_COLLISION_MESH_INVALID_INSTANCE;
+	if (shape == self)
+		return LRG_COLLISION_MESH_INVALID_INSTANCE;
 
-    memset (&inst, 0, sizeof (inst));
-    if (!load_transform (transform, inst.m, inst.inv))
-        return LRG_COLLISION_MESH_INVALID_INSTANCE;
-    inst.id = instance_id;
-    inst.shape = (LrgCollisionMesh *) g_object_ref (shape);
-    self->generation++;
+	memset (&inst, 0, sizeof (inst));
+	if (!load_transform (transform, inst.m, inst.inv))
+		return LRG_COLLISION_MESH_INVALID_INSTANCE;
+	if (!instance_graph_valid (self, shape))
+		return LRG_COLLISION_MESH_INVALID_INSTANCE;
+	inst.id = instance_id;
+	inst.shape = (LrgCollisionMesh *) g_object_ref (shape);
+	self->generation++;
 
-    /* reuse the lowest free slot so handles stay small and deterministic */
-    for (i = 0; i < self->instances->len; i++)
-    {
-        if (g_array_index (self->instances, Instance, i).shape == NULL)
-        {
-            g_array_index (self->instances, Instance, i) = inst;
-            self->n_live++;
-            return i;
-        }
-    }
-    g_array_append_val (self->instances, inst);
-    self->n_live++;
-    return self->instances->len - 1;
+	/* Reuse the lowest free slot so handles stay small and deterministic. */
+	for (i = 0; i < self->instances->len; i++) {
+		if (g_array_index (self->instances, Instance, i).shape == NULL) {
+			g_array_index (self->instances, Instance, i) = inst;
+			self->n_live++;
+			return i;
+		}
+	}
+	g_array_append_val (self->instances, inst);
+	self->n_live++;
+	return self->instances->len - 1;
 }
 
 gboolean
