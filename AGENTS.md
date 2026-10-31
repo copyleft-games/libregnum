@@ -49,7 +49,7 @@ libregnum/
 │   ├── save/                 # Saveable interface, SaveContext, SaveGame, SaveManager
 │   ├── ai/                   # BehaviorTree, Blackboard, BTNode hierarchy
 │   ├── pathfinding/          # NavGrid, NavCell, Path, Pathfinder (A*)
-│   ├── physics/              # PhysicsWorld, RigidBody, CollisionInfo, WallSet, CollisionMesh, CharacterController
+│   ├── physics/              # PhysicsWorld, RigidBody, CollisionInfo, WallSet, CollisionMesh, CharacterController, DynamicsWorld
 │   │
 │   │ # Genre-Specific
 │   ├── economy/              # Resource, ResourcePool, Producer, Consumer, Market, EconomyManager
@@ -837,6 +837,14 @@ and client-side helpers for skinned and static models.
   terrain `LrgHeightFunc`: depenetration, wall sliding, step climbing
   (retry raised, keep when landing on a walkable face within a step),
   slope limit, ground snapping. Gravity and speeds stay with the caller.
+- **`LrgDynamicsWorld`** (`physics/lrg-dynamics.h`): bounded 3D spheres and
+  infinite planes. Mass, a diagonal inertia (solid sphere, or a box tensor
+  that does not change the sphere contact), joint anchor/axis frames with
+  linear and angular limits, sphere-sphere and sphere-plane contacts, a
+  fixed substep cap, sleep, freeze, bounds eviction, and
+  `lrg_bone_pose_compose()` for skeleton poses. This is not a ragdoll and
+  it does not change the 2D `LrgRigidBody` collision callback. See
+  `docs/modules/physics/dynamics.org`.
 
 - **World look** (`graphics/lrg-terrain-detail.h`, `lrg-water-surface.h`,
   `lrg-grass-field.h`, `lrg-tree-mesh.h`, `lrg-horizon-ring.h`,
@@ -853,6 +861,7 @@ and client-side helpers for skinned and static models.
 See `docs/modules/physics/wall-set.org`,
 `docs/modules/physics/collision-mesh.org`,
 `docs/modules/physics/character-controller.org`,
+`docs/modules/physics/dynamics.org`,
 `docs/modules/core/asset-manager.org` (Models and animations),
 `docs/modules/graphics/gltf-info.org`,
 `docs/modules/graphics/model-animator.org` and
