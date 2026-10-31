@@ -778,6 +778,227 @@ test_physics_world_static_body_no_move (PhysicsWorldFixture *fixture,
 }
 
 /* ==========================================================================
+ * Broadphase / step regression tests
+ * ========================================================================== */
+
+typedef struct
+{
+    GPtrArray *bodies;   /* world body order, borrowed */
+    GString   *log;      /* "w a b;" / "b a b;" entries */
+} ContactLog;
+
+static gint
+body_position (GPtrArray *bodies,
+               gpointer   body)
+{
+    guint i;
+
+    for (i = 0; i < bodies->len; i++)
+        if (g_ptr_array_index (bodies, i) == body)
+            return (gint) i;
+    return -1;
+}
+
+static void
+log_world_contact (LrgPhysicsWorld  *world,
+                   LrgCollisionInfo *info,
+                   gpointer          data)
+{
+    ContactLog *log = data;
+
+    g_string_append_printf (log->log, "w %d %d;",
+                            body_position (log->bodies, lrg_collision_info_get_body_a (info)),
+                            body_position (log->bodies, lrg_collision_info_get_body_b (info)));
+}
+
+static void
+log_body_contact (LrgRigidBody *self,
+                  LrgRigidBody *other,
+                  gfloat        nx,
+                  gfloat        ny,
+                  gpointer      data)
+{
+    ContactLog *log = data;
+
+    g_string_append_printf (log->log, "b %d %d;",
+                            body_position (log->bodies, self),
+                            body_position (log->bodies, other));
+}
+
+/* The all-pairs reference the broadphase must reproduce, in order. */
+static gboolean
+reference_overlap (LrgRigidBody *a,
+                   LrgRigidBody *b)
+{
+    gfloat ax, ay, aw, ah, bx, by, bw, bh;
+
+    lrg_rigid_body_get_position (a, &ax, &ay);
+    lrg_rigid_body_get_shape_bounds (a, &aw, &ah);
+    lrg_rigid_body_get_position (b, &bx, &by);
+    lrg_rigid_body_get_shape_bounds (b, &bw, &bh);
+    aw *= 0.5f;
+    ah *= 0.5f;
+    bw *= 0.5f;
+    bh *= 0.5f;
+    if (fabsf (ax - bx) > (aw + bw))
+        return FALSE;
+    if (fabsf (ay - by) > (ah + bh))
+        return FALSE;
+    return TRUE;
+}
+
+static void
+test_broadphase_matches_all_pairs (void)
+{
+    g_autoptr(LrgPhysicsWorld) world = lrg_physics_world_new ();
+    g_autoptr(GString) expected = g_string_new (NULL);
+    g_autoptr(GRand) rng = g_rand_new_with_seed (77);
+    ContactLog log;
+    GPtrArray *bodies;
+    guint i, j;
+
+    lrg_physics_world_set_gravity (world, 0.0f, 0.0f);
+    log.log = g_string_new (NULL);
+    log.bodies = lrg_physics_world_get_bodies (world);
+
+    /* A crowd of boxes of mixed type, size, trigger flag and layers, some
+     * exactly touching, one at NaN (overlaps everything) and one far. */
+    for (i = 0; i < 300; i++)
+    {
+        LrgRigidBodyType type = (i % 5 == 0) ? LRG_RIGID_BODY_STATIC
+                              : (i % 7 == 0) ? LRG_RIGID_BODY_KINEMATIC
+                              : LRG_RIGID_BODY_DYNAMIC;
+        g_autoptr(LrgRigidBody) body = lrg_rigid_body_new (type);
+        gfloat x = (gfloat) g_rand_int_range (rng, 0, 200);
+        gfloat y = (gfloat) g_rand_int_range (rng, 0, 200);
+
+        if (i == 13)
+            x = NAN;
+        if (i == 14)
+            x = 1.0e6f;
+        lrg_rigid_body_set_position (body, x, y);
+        lrg_rigid_body_set_box_shape (body, (gfloat) (2 + i % 6), (gfloat) (2 + i % 4));
+        lrg_rigid_body_set_is_trigger (body, i % 11 == 0);
+        if (i % 13 == 0)
+            lrg_rigid_body_set_collision_layer (body, 2);
+        if (i % 17 == 0)
+            lrg_rigid_body_set_collision_mask (body, 1);
+        lrg_physics_world_add_body (world, body);
+        g_signal_connect (body, "collision", G_CALLBACK (log_body_contact), &log);
+    }
+    g_signal_connect (world, "collision", G_CALLBACK (log_world_contact), &log);
+
+    bodies = lrg_physics_world_get_bodies (world);
+    for (i = 0; i < bodies->len; i++)
+        for (j = i + 1; j < bodies->len; j++)
+        {
+            LrgRigidBody *a = g_ptr_array_index (bodies, i);
+            LrgRigidBody *b = g_ptr_array_index (bodies, j);
+
+            if (lrg_rigid_body_get_body_type (a) != LRG_RIGID_BODY_DYNAMIC &&
+                lrg_rigid_body_get_body_type (b) != LRG_RIGID_BODY_DYNAMIC)
+                continue;
+            if (!lrg_rigid_body_can_collide (a, b) || !reference_overlap (a, b))
+                continue;
+            if (!lrg_rigid_body_get_is_trigger (a) && !lrg_rigid_body_get_is_trigger (b))
+                g_string_append_printf (expected, "w %u %u;", i, j);
+            g_string_append_printf (expected, "b %u %u;b %u %u;", i, j, j, i);
+        }
+    g_assert_cmpuint (expected->len, >, 0);
+
+    lrg_physics_world_step (world, 1.0f / 60.0f);
+    g_assert_cmpstr (log.log->str, ==, expected->str);
+    g_string_free (log.log, TRUE);
+}
+
+typedef struct
+{
+    LrgPhysicsWorld *world;
+    LrgRigidBody    *victim;
+    guint            contacts;
+} RemoveOnContact;
+
+static void
+remove_on_contact (LrgPhysicsWorld  *world,
+                   LrgCollisionInfo *info,
+                   gpointer          data)
+{
+    RemoveOnContact *ctx = data;
+
+    ctx->contacts++;
+    if (ctx->victim != NULL)
+    {
+        LrgRigidBody *victim = ctx->victim;
+
+        ctx->victim = NULL;
+        lrg_physics_world_remove_body (ctx->world, victim);
+    }
+}
+
+static void
+test_broadphase_handler_removes_body (void)
+{
+    g_autoptr(LrgPhysicsWorld) world = lrg_physics_world_new ();
+    RemoveOnContact ctx = { 0 };
+    guint i;
+
+    /* Three overlapping boxes: (0,1) (0,2) (1,2). The first contact
+     * removes body 1, the world's only reference to it. Its own body
+     * signals and the rest of the step must not touch freed memory (the
+     * old loop did), (0,2) is still reported and (1,2) is skipped. */
+    lrg_physics_world_set_gravity (world, 0.0f, 0.0f);
+    for (i = 0; i < 3; i++)
+    {
+        LrgRigidBody *body = lrg_rigid_body_new (LRG_RIGID_BODY_DYNAMIC);
+
+        lrg_rigid_body_set_box_shape (body, 4.0f, 4.0f);
+        lrg_rigid_body_set_position (body, (gfloat) i, 0.0f);
+        lrg_physics_world_add_body (world, body);
+        if (i == 1)
+            ctx.victim = body;
+        g_object_unref (body);
+    }
+    ctx.world = world;
+    g_signal_connect (world, "collision", G_CALLBACK (remove_on_contact), &ctx);
+    lrg_physics_world_step (world, 1.0f / 60.0f);
+
+    /* (0,1) reported, (0,2) reported, (1,2) skipped. */
+    g_assert_cmpuint (ctx.contacts, ==, 2);
+    g_assert_cmpuint (lrg_physics_world_get_body_count (world), ==, 2);
+}
+
+static void
+test_step_catch_up_is_bounded (void)
+{
+    g_autoptr(LrgPhysicsWorld) world = lrg_physics_world_new ();
+    g_autoptr(LrgRigidBody) body = lrg_rigid_body_new (LRG_RIGID_BODY_DYNAMIC);
+    gfloat x, y;
+
+    lrg_physics_world_set_gravity (world, 0.0f, 0.0f);
+    lrg_rigid_body_set_linear_damping (body, 0.0f);
+    lrg_rigid_body_set_velocity (body, 60.0f, 0.0f);
+    lrg_physics_world_add_body (world, body);
+
+    /* A 10 s hitch at 60 Hz simulates 5 steps (1/12 s), not 600. */
+    lrg_physics_world_step (world, 10.0f);
+    lrg_rigid_body_get_position (body, &x, &y);
+    g_assert_cmpfloat_with_epsilon (x, 5.0f, 0.001f);
+
+    /* The dropped time does not come back on the next frame. */
+    lrg_physics_world_step (world, 1.0f / 60.0f);
+    lrg_rigid_body_get_position (body, &x, &y);
+    g_assert_cmpfloat (x, <=, 7.0f + 0.001f);
+
+    /* A fine time step still catches up a normal frame in full. */
+    lrg_physics_world_set_time_step (world, 1.0f / 600.0f);
+    lrg_rigid_body_set_position (body, 0.0f, 0.0f);
+    lrg_rigid_body_set_velocity (body, 60.0f, 0.0f);
+    lrg_physics_world_step (world, 1.0f / 30.0f);
+    lrg_rigid_body_get_position (body, &x, &y);
+    g_assert_cmpfloat_with_epsilon (x, 2.0f, 0.15f);
+}
+
+/* ==========================================================================
  * Main
  * ========================================================================== */
 
@@ -1114,5 +1335,8 @@ main (int   argc,
     g_test_add_func ("/physics/raycast/boundaries", test_raycast_boundaries);
     g_test_add_func ("/physics/raycast/filters", test_raycast_filters);
     g_test_add_func ("/physics/raycast/invalid", test_raycast_invalid);
+    g_test_add_func ("/physics/broadphase/all-pairs", test_broadphase_matches_all_pairs);
+    g_test_add_func ("/physics/broadphase/handler-removes-body", test_broadphase_handler_removes_body);
+    g_test_add_func ("/physics/step/catch-up-bounded", test_step_catch_up_is_bounded);
     return g_test_run ();
 }

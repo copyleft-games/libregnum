@@ -59,6 +59,7 @@ Abstract base class for 2D shapes (screen-space coordinates).
 
 - =x= (gfloat) - Screen X position
 - =y= (gfloat) - Screen Y position
+- =interpolate= (gboolean, default TRUE) - Draw at the interpolated position between fixed steps
 
 *Methods:*
 
@@ -69,7 +70,15 @@ gfloat lrg_shape2d_get_y        (LrgShape2D *self);
 void   lrg_shape2d_set_y        (LrgShape2D *self, gfloat y);
 void   lrg_shape2d_set_position (LrgShape2D *self, gfloat x, gfloat y);
 void   lrg_shape2d_get_position (LrgShape2D *self, gfloat *x, gfloat *y);
+
+/* Render interpolation (see the game template's Render Interpolation) */
+void     lrg_shape2d_get_render_position  (LrgShape2D *self, gfloat *x, gfloat *y);
+void     lrg_shape2d_reset_interpolation  (LrgShape2D *self);   /* teleport */
+gboolean lrg_shape2d_get_interpolate      (LrgShape2D *self);
+void     lrg_shape2d_set_interpolate      (LrgShape2D *self, gboolean interpolate);
 #+end_src
+
+The built-in 2D shapes draw at =lrg_shape2d_get_render_position()=: while a fixed-timestep =LrgGameTemplate= drives render interpolation, a shape moved in =fixed_update= is drawn between its position at the start of the latest step and its current one; otherwise at its position.
 
 *** LrgShape3D
 :PROPERTIES:
@@ -81,6 +90,7 @@ Abstract base class for 3D shapes (world-space coordinates).
 
 - =position= (GrlVector3*) - World position
 - =wireframe= (gboolean) - Whether to render in wireframe mode
+- =interpolate= (gboolean, default TRUE) - Draw at the interpolated transform between fixed steps
 
 *Methods:*
 
@@ -93,7 +103,49 @@ gfloat      lrg_shape3d_get_y            (LrgShape3D *self);
 gfloat      lrg_shape3d_get_z            (LrgShape3D *self);
 gboolean    lrg_shape3d_get_wireframe    (LrgShape3D *self);
 void        lrg_shape3d_set_wireframe    (LrgShape3D *self, gboolean wireframe);
+
+/* Render interpolation (see the game template's Render Interpolation) */
+void        lrg_shape3d_get_render_transform (LrgShape3D *self, GrlVector3 *position,
+                                              GrlVector3 *rotation, GrlVector3 *scale);
+void        lrg_shape3d_reset_interpolation  (LrgShape3D *self);   /* teleport */
+gboolean    lrg_shape3d_get_interpolate      (LrgShape3D *self);
+void        lrg_shape3d_set_interpolate      (LrgShape3D *self, gboolean interpolate);
 #+end_src
+
+The built-in 3D shapes draw with =lrg_shape3d_get_render_transform()= (caller-allocated outputs, any may be =NULL=): position and scale blend linearly, each Euler angle along its shorter arc. The setters now write the shape's vectors in place, so the pointer returned by =lrg_shape3d_get_position()= (and the rotation/scale getters) stays valid across sets.
+
+*** Shape batches
+:PROPERTIES:
+:CUSTOM_ID: shape-batches
+:END:
+Drawn one by one, every solid sphere, cylinder and cone is one =DrawMesh()= (a shared cached mesh, see [[file:../performance.org::#render3d-pass][the 3D render pass]]) and every cube goes through rlgl's immediate batch, which transforms its 36 corners on the CPU. A *shape batch* draws them in a few instanced calls instead:
+
+#+begin_src C
+void     lrg_shape3d_begin_batch (void);  /* nests */
+void     lrg_shape3d_end_batch   (void);  /* the outermost end draws the queue */
+void     lrg_shape3d_flush_batch (void);  /* draw the queue now, stay open */
+gboolean lrg_shape3d_is_batching (void);  /* inside a batch that queues */
+#+end_src
+
+#+begin_src C
+BeginMode3D (camera);
+lrg_shape3d_begin_batch ();
+for (i = 0; i < crates->len; i++)
+    lrg_drawable_draw (g_ptr_array_index (crates, i), delta);
+lrg_shape3d_end_batch ();       /* one instanced draw per shared mesh */
+EndMode3D ();
+#+end_src
+
+Between the two calls an opaque (alpha 255) solid =LrgCube3D=, =LrgSphere3D=, =LrgCylinder3D= or =LrgCone3D= is not drawn on the spot: its model-view-projection (the very product =DrawMesh()= would send, taken from the rlgl matrices of that draw, so the camera may change inside a batch) and its colour join its mesh's instance list. The end draws each list with one =glDrawElementsInstanced()= through a small program that computes what raylib's default shader computes for these untextured meshes (position times the matrix; the colour as is, not interpolated). All unit cubes share one mesh (a cube's size is part of its matrix); spheres share one per rings and slices, cylinders and cones one per radii, height and sides.
+
+Rules:
+- *Order.* The queue is drawn after everything else drawn inside the batch and grouped by mesh. That is invisible while the depth test decides what is in front, so batch opaque shapes in a 3D mode with the depth test on, and keep the render target, viewport and depth/blend state the batch began with (call =lrg_shape3d_flush_batch()= before changing them). Coplanar overlapping shapes (exactly equal depth) may resolve the other way round.
+- *Translucency.* Translucent shapes (any =LrgShape= whose colour has alpha below 255) are not queued and first flush the queue, so they blend over everything drawn before them, as without a batch. Something translucent that is not a shape (a billboard, a particle system) needs a =lrg_shape3d_flush_batch()= before it.
+- *Wireframes* and the other shapes draw immediately, as without a batch.
+- *Fallback.* Without a graphics context with GLSL 330, or in stereo rendering, nothing queues and the shapes draw one by one. The batch's program is built by the first =lrg_shape3d_begin_batch()= in a context.
+- *Lifetime.* A shape freed while the batch holds its draw is fine: the queue keeps its mesh until it has drawn it.
+
+=tests/test-shape-batch.c= renders a grid of rotated, scaled shapes of every kind one by one and batched into render textures and compares them: the spheres, cylinders and cones must match pixel for pixel (the instanced draw uses =DrawMesh()='s own matrix product), the cubes within a few edge pixels (one by one their corners are transformed on the CPU, batched on the GPU; under llvmpipe they match exactly too), and the scene with a translucent sphere over the batch exactly; and it frees a shape while its draw is queued. =lrg-bench= =shapes3d-batched= and =shapes-round-batched= measure it.
 
 ** 3D Shapes
 :PROPERTIES:

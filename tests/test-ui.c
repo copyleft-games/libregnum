@@ -8,6 +8,8 @@
  */
 
 #include <glib.h>
+#include <string.h>
+#include <raylib.h>
 #include <libregnum.h>
 
 /* ==========================================================================
@@ -1144,6 +1146,115 @@ test_theme_spacing (void)
  * Main
  * ========================================================================== */
 
+/* ==========================================================================
+ * Label offscreen culling (needs a graphics context)
+ * ========================================================================== */
+
+#define CULL_RT_SIZE (64)
+
+static GrlWindow *cull_window = NULL;
+
+static gboolean
+cull_graphics_available (void)
+{
+    const gchar *display = g_getenv ("DISPLAY");
+    const gchar *wayland = g_getenv ("WAYLAND_DISPLAY");
+
+    if (cull_window != NULL)
+        return TRUE;
+    if ((display == NULL || display[0] == '\0') &&
+        (wayland == NULL || wayland[0] == '\0'))
+        return FALSE;
+
+    SetConfigFlags (FLAG_WINDOW_HIDDEN);
+    cull_window = grl_window_new (8, 8, "lrg-ui-label-cull-test");
+    if (cull_window == NULL || !grl_window_is_ready (cull_window))
+    {
+        g_clear_object (&cull_window);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/*
+ * render_label:
+ * @label: (nullable): label to draw, or %NULL for an empty frame
+ * @y: the label's y position
+ * @camera_y: 2D camera target y (0 = no camera)
+ *
+ * Draws @label into a fresh render texture and returns its RGBA pixels.
+ */
+static guint8 *
+render_label (LrgLabel *label,
+              gfloat    y,
+              gfloat    camera_y)
+{
+    RenderTexture2D rt;
+    Image           image;
+    Camera2D        camera;
+    guint8         *pixels;
+
+    rt = LoadRenderTexture (CULL_RT_SIZE, CULL_RT_SIZE);
+    BeginTextureMode (rt);
+    ClearBackground (BLACK);
+    if (camera_y != 0.0f)
+    {
+        memset (&camera, 0, sizeof camera);
+        camera.target.y = camera_y;
+        camera.zoom = 1.0f;
+        BeginMode2D (camera);
+    }
+    if (label != NULL)
+    {
+        lrg_widget_set_position (LRG_WIDGET (label), 2.0f, y);
+        lrg_widget_draw (LRG_WIDGET (label));
+    }
+    if (camera_y != 0.0f)
+        EndMode2D ();
+    EndTextureMode ();
+
+    image = LoadImageFromTexture (rt.texture);
+    ImageFormat (&image, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    pixels = g_memdup2 (image.data, CULL_RT_SIZE * CULL_RT_SIZE * 4);
+    UnloadImage (image);
+    UnloadRenderTexture (rt);
+    return pixels;
+}
+
+/* Labels wholly off the render target are skipped; partly visible ones,
+ * and ones a camera brings into view, still draw, pixel for pixel. */
+static void
+test_label_offscreen_cull (void)
+{
+    g_autoptr(LrgLabel) label = NULL;
+    g_autofree guint8 *empty = NULL;
+    g_autofree guint8 *inside = NULL;
+    g_autofree guint8 *partial = NULL;
+    g_autofree guint8 *far = NULL;
+    g_autofree guint8 *via_camera = NULL;
+    gsize n = CULL_RT_SIZE * CULL_RT_SIZE * 4;
+
+    if (!cull_graphics_available ())
+    {
+        g_test_skip ("Graphics context not available");
+        return;
+    }
+
+    label = lrg_label_new ("Hg");
+    lrg_label_set_font_size (label, 10.0f);
+
+    empty = render_label (NULL, 0.0f, 0.0f);
+    inside = render_label (label, 20.0f, 0.0f);
+    partial = render_label (label, -6.0f, 0.0f);
+    far = render_label (label, 500.0f, 0.0f);
+    via_camera = render_label (label, 500.0f, 480.0f);
+
+    g_assert_true (memcmp (inside, empty, n) != 0);
+    g_assert_true (memcmp (partial, empty, n) != 0);
+    g_assert_true (memcmp (far, empty, n) == 0);
+    g_assert_true (memcmp (via_camera, inside, n) == 0);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1228,6 +1339,7 @@ main (int   argc,
     g_test_add_func ("/ui/label/text", test_label_text);
     g_test_add_func ("/ui/label/font-size", test_label_font_size);
     g_test_add_func ("/ui/label/alignment", test_label_alignment);
+    g_test_add_func ("/ui/label/offscreen-cull", test_label_offscreen_cull);
 
     /* Button Tests */
     g_test_add_func ("/ui/button/new", test_button_new);

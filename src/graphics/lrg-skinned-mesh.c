@@ -32,6 +32,7 @@
 #include "animation/lrg-skeleton.h"
 #include "animation/lrg-bone.h"
 #include "animation/lrg-bone-pose.h"
+#include "core/lrg-prewarm.h"
 
 /* raylib binds up to MAX_MATERIAL_MAPS (12) maps; keep headroom. */
 #define SKIN_MATERIAL_MAPS (16)
@@ -44,6 +45,7 @@ struct _LrgSkinnedMesh
     guint       n_bones;
     gfloat     *inverse_bind;   /* 16 per bone */
     gfloat     *palette;        /* 16 per bone */
+    gfloat     *normal_palette; /* inverse-transpose linear transforms */
     gboolean    palette_dirty;  /* CPU mode: buffers need re-skinning */
 
     guint       n_vertices;
@@ -69,9 +71,20 @@ struct _LrgSkinnedMesh
     guint       bone_weight_vbo;
     gfloat     *scratch_positions;
     gfloat     *scratch_normals;
+
+    /* uniform locations of the program drawn last, looked up once per
+     * program (loc_shader_id 0: not looked up yet) */
+    guint       loc_shader_id;
+    gint        loc_use_skinning;
+    gint        loc_alpha_cutoff;
+    gint        loc_bone_matrices;
 };
 
-G_DEFINE_FINAL_TYPE (LrgSkinnedMesh, lrg_skinned_mesh, G_TYPE_OBJECT)
+static void lrg_skinned_mesh_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgSkinnedMesh, lrg_skinned_mesh, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_skinned_mesh_prewarmable_init))
 
 /* ------------------------------------------------------------------------ */
 /* The built-in shader                                                      */
@@ -92,6 +105,13 @@ static const gchar skin_vertex_source[] =
     "out vec2 fragTexCoord;\n"
     "out vec4 fragColor;\n"
     "out vec3 fragNormal;\n"
+    "vec3 affineNormal(mat4 transform, vec3 normal)\n"
+    "{\n"
+    "    mat3 linear = mat3(transform);\n"
+    "    mat3 cofactors = mat3(cross(linear[1], linear[2]), cross(linear[2], linear[0]), cross(linear[0], linear[1]));\n"
+    "    float determinant = dot(linear[0], cofactors[0]);\n"
+    "    return abs(determinant) > 1e-20 ? (cofactors * normal) / determinant : vec3(0.0);\n"
+    "}\n"
     "void main()\n"
     "{\n"
     "    mat4 skin = mat4(1.0);\n"
@@ -103,7 +123,13 @@ static const gchar skin_vertex_source[] =
     "    vec4 position = skin * vec4(vertexPosition, 1.0);\n"
     "    fragTexCoord = vertexTexCoord;\n"
     "    fragColor = vertexColor;\n"
-    "    fragNormal = mat3(matModel) * (mat3(skin) * vertexNormal);\n"
+    "    vec3 normal = vertexNormal;\n"
+    "    if (useSkinning != 0)\n"
+    "        normal = vertexBoneWeights.x * affineNormal(boneMatrices[int(vertexBoneIndices.x)], vertexNormal)\n"
+    "               + vertexBoneWeights.y * affineNormal(boneMatrices[int(vertexBoneIndices.y)], vertexNormal)\n"
+    "               + vertexBoneWeights.z * affineNormal(boneMatrices[int(vertexBoneIndices.z)], vertexNormal)\n"
+    "               + vertexBoneWeights.w * affineNormal(boneMatrices[int(vertexBoneIndices.w)], vertexNormal);\n"
+    "    fragNormal = affineNormal(matModel, normal);\n"
     "    gl_Position = mvp * position;\n"
     "}\n";
 
@@ -240,6 +266,7 @@ lrg_skinned_mesh_finalize (GObject *object)
     free_geometry (self);
     g_free (self->inverse_bind);
     g_free (self->palette);
+    g_free (self->normal_palette);
     g_clear_object (&self->texture);
     g_clear_object (&self->shader);
 
@@ -261,6 +288,10 @@ lrg_skinned_mesh_init (LrgSkinnedMesh *self)
     self->tint.a = 255;
     self->alpha_cutoff = 0.0f;
     memset (&self->mesh, 0, sizeof self->mesh);
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgSkinnedMesh *
@@ -276,10 +307,12 @@ lrg_skinned_mesh_new (guint n_bones)
     self->n_bones = n_bones;
     self->inverse_bind = g_new (gfloat, 16 * n_bones);
     self->palette = g_new (gfloat, 16 * n_bones);
+    self->normal_palette = g_new (gfloat, 16 * n_bones);
     for (i = 0; i < n_bones; i++)
     {
         mat4_identity (self->inverse_bind + 16 * i);
         mat4_identity (self->palette + 16 * i);
+        mat4_identity (self->normal_palette + 16 * i);
     }
     self->palette_dirty = TRUE;
     return self;
@@ -495,14 +528,47 @@ lrg_skinned_mesh_compute_palette_from_skeleton (LrgSkinnedMesh *self,
     return TRUE;
 }
 
+/* Positions use the affine palette; normals use its inverse transpose. Cache
+ * the latter per bone so CPU skinning does not invert once per vertex. A
+ * collapsed transform has no defined normal and contributes zero, matching
+ * the guarded GPU calculation rather than generating NaNs. */
+static void
+normal_matrix (const gfloat *matrix, gfloat *normal)
+{
+    gdouble determinant;
+    guint column, row;
+
+    memset (normal, 0, 16 * sizeof (gfloat));
+    normal[0] = matrix[5] * matrix[10] - matrix[6] * matrix[9];
+    normal[1] = matrix[6] * matrix[8] - matrix[4] * matrix[10];
+    normal[2] = matrix[4] * matrix[9] - matrix[5] * matrix[8];
+    normal[4] = matrix[9] * matrix[2] - matrix[10] * matrix[1];
+    normal[5] = matrix[10] * matrix[0] - matrix[8] * matrix[2];
+    normal[6] = matrix[8] * matrix[1] - matrix[9] * matrix[0];
+    normal[8] = matrix[1] * matrix[6] - matrix[2] * matrix[5];
+    normal[9] = matrix[2] * matrix[4] - matrix[0] * matrix[6];
+    normal[10] = matrix[0] * matrix[5] - matrix[1] * matrix[4];
+    determinant = (gdouble)matrix[0] * normal[0] + (gdouble)matrix[1] * normal[1] + (gdouble)matrix[2] * normal[2];
+    if (fabs (determinant) > 1e-20)
+        for (column = 0; column < 3; column++)
+            for (row = 0; row < 3; row++)
+                normal[column * 4 + row] = (gfloat)(normal[column * 4 + row] / determinant);
+    else
+        memset (normal, 0, 16 * sizeof (gfloat));
+    normal[15] = 1;
+}
+
 void
 lrg_skinned_mesh_set_palette (LrgSkinnedMesh *self,
                               const gfloat   *palette)
 {
+    guint bone;
     g_return_if_fail (LRG_IS_SKINNED_MESH (self));
     g_return_if_fail (palette != NULL);
 
     memcpy (self->palette, palette, 16 * self->n_bones * sizeof (gfloat));
+    for (bone = 0; bone < self->n_bones; bone++)
+        normal_matrix (palette + 16 * bone, self->normal_palette + 16 * bone);
     self->palette_dirty = TRUE;
 }
 
@@ -548,10 +614,11 @@ lrg_skinned_mesh_skin (LrgSkinnedMesh *self,
             if (self->normals != NULL)
             {
                 const gfloat *n = self->normals + 3 * v;
+                const gfloat *normal = self->normal_palette + 16 * self->bone_indices[v * 4 + k];
 
-                nacc[0] += w * (m[0] * n[0] + m[4] * n[1] + m[8] * n[2]);
-                nacc[1] += w * (m[1] * n[0] + m[5] * n[1] + m[9] * n[2]);
-                nacc[2] += w * (m[2] * n[0] + m[6] * n[1] + m[10] * n[2]);
+                nacc[0] += w * (normal[0] * n[0] + normal[4] * n[1] + normal[8] * n[2]);
+                nacc[1] += w * (normal[1] * n[0] + normal[5] * n[1] + normal[9] * n[2]);
+                nacc[2] += w * (normal[2] * n[0] + normal[6] * n[1] + normal[10] * n[2]);
             }
         }
         memcpy (out_positions + 3 * v, acc, sizeof acc);
@@ -651,6 +718,8 @@ lrg_skinned_mesh_set_shader (LrgSkinnedMesh *self,
     g_return_if_fail (LRG_IS_SKINNED_MESH (self));
     g_return_if_fail (shader == NULL || GRL_IS_SHADER (shader));
     g_set_object (&self->shader, shader);
+    /* a released program's id may come back for another one */
+    self->loc_shader_id = 0;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -793,6 +862,7 @@ lrg_skinned_mesh_unload (LrgSkinnedMesh *self)
         builtin_shader_release ();
         self->holds_shader = FALSE;
     }
+    self->loc_shader_id = 0;
 }
 
 void
@@ -843,11 +913,19 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
     /* the uniforms DrawMesh() does not set: the palette, the skinning
      * switch and the alpha cutoff (set on the active program) */
     rlEnableShader (material.shader.id);
+    if (self->loc_shader_id != material.shader.id)
+    {
+        /* looked up by name once per program, not every draw */
+        self->loc_shader_id = material.shader.id;
+        self->loc_use_skinning = rlGetLocationUniform (material.shader.id, "useSkinning");
+        self->loc_alpha_cutoff = rlGetLocationUniform (material.shader.id, "alphaCutoff");
+        self->loc_bone_matrices = rlGetLocationUniform (material.shader.id, "boneMatrices");
+    }
     use_skinning = self->gpu ? 1 : 0;
-    loc = rlGetLocationUniform (material.shader.id, "useSkinning");
+    loc = self->loc_use_skinning;
     if (loc >= 0)
         rlSetUniform (loc, &use_skinning, RL_SHADER_UNIFORM_INT, 1);
-    loc = rlGetLocationUniform (material.shader.id, "alphaCutoff");
+    loc = self->loc_alpha_cutoff;
     if (loc >= 0)
         rlSetUniform (loc, &self->alpha_cutoff, RL_SHADER_UNIFORM_FLOAT, 1);
     if (self->gpu)
@@ -857,7 +935,7 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
 
         for (b = 0; b < self->n_bones; b++)
             palette[b] = to_raylib_matrix (self->palette + 16 * b);
-        loc = rlGetLocationUniform (material.shader.id, "boneMatrices");
+        loc = self->loc_bone_matrices;
         if (loc >= 0)
             rlSetUniformMatrices (loc, palette, (gint)self->n_bones);
     }
@@ -876,4 +954,26 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
         model = to_raylib_matrix (identity);
     }
     DrawMesh (mesh, material, model);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Prewarm                                                                  */
+/* ------------------------------------------------------------------------ */
+
+/* lrg_skinned_mesh_prewarm: uploads the mesh (and loads the built-in
+ * skinning shader with the first one) now instead of at its first draw */
+static gboolean
+lrg_skinned_mesh_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgSkinnedMesh *self = LRG_SKINNED_MESH (prewarmable);
+
+    if (!self->uploaded && self->n_vertices > 0)
+        lrg_skinned_mesh_upload (self, NULL);
+    return TRUE;
+}
+
+static void
+lrg_skinned_mesh_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_skinned_mesh_prewarm;
 }

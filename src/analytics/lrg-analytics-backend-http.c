@@ -30,9 +30,35 @@ struct _LrgAnalyticsBackendHttp
     guint               retry_delay_ms;
 
     GPtrArray          *pending_events;
-    SoupSession        *session;
     guint               flush_source_id;
+
+    /* Sender thread (started on the first batch); see "Sender" below */
+    GThread            *sender;
+    GMutex              lock;
+    GCond               cond;
+    GQueue             *outbox;       /* HttpRequest *, oldest first */
+    gboolean            stalled;      /* head failed; wait for the next kick */
+    gboolean            quit;
+    GCancellable       *cancellable;
+    GError             *send_error;   /* why the head last failed */
 };
+
+/*
+ * One batch on its way out: everything the sender thread needs, copied at
+ * the time the batch was made, so the thread never touches the backend's
+ * properties or events.
+ */
+typedef struct
+{
+    gchar       *payload;
+    const gchar *content_type;
+    gchar       *url;
+    gchar       *authorization;   /* "Bearer ..." or NULL */
+    gchar      **headers;         /* name, value, name, value, ..., NULL */
+    guint        n_events;
+    guint        retry_count;
+    guint        retry_delay_ms;
+} HttpRequest;
 
 enum
 {
@@ -131,125 +157,289 @@ build_batch_yaml (LrgAnalyticsBackendHttp *self)
     return g_string_free (yaml, FALSE);
 }
 
-static gboolean
-send_batch (LrgAnalyticsBackendHttp  *self,
-            GError                  **error)
+static void
+http_request_free (HttpRequest *request)
 {
-    g_autoptr(SoupMessage) msg = NULL;
-    g_autofree gchar *payload = NULL;
-    const gchar *content_type;
-    GHashTableIter iter;
-    gpointer key, value;
-    guint status;
-    guint retry;
+    g_free (request->payload);
+    g_free (request->url);
+    g_free (request->authorization);
+    g_strfreev (request->headers);
+    g_free (request);
+}
 
-    if (self->pending_events->len == 0)
-        return TRUE;
+/* ==========================================================================
+ * Sender
+ *
+ * Sending a batch is a blocking HTTP POST with up to retry-count retries
+ * retry-delay-ms apart: tens of milliseconds against a healthy server and
+ * seconds against an unreachable one. Doing that on the thread that
+ * tracked the event (the game loop) froze the game every batch-size
+ * events, so batches are posted to a sender thread that sends them in
+ * order with its own #SoupSession. One batch is out at a time; events
+ * tracked meanwhile collect and form the next one. A batch whose attempts
+ * all fail stays queued and is tried again when the next batch fills or
+ * on a flush, as unsent events used to be.
+ * ========================================================================== */
 
-    /* Build payload */
+/* Takes the pending events into a request (on the caller's thread). */
+static HttpRequest *
+take_request (LrgAnalyticsBackendHttp *self)
+{
+    HttpRequest    *request;
+    GHashTableIter  iter;
+    gpointer        key;
+    gpointer        value;
+    guint           i;
+
+    request = g_new0 (HttpRequest, 1);
     if (self->format == LRG_ANALYTICS_FORMAT_YAML)
     {
-        payload = build_batch_yaml (self);
-        content_type = "application/yaml";
+        request->payload = build_batch_yaml (self);
+        request->content_type = "application/yaml";
     }
     else
     {
-        payload = build_batch_json (self);
-        content_type = "application/json";
+        request->payload = build_batch_json (self);
+        request->content_type = "application/json";
     }
+    request->url = g_strdup (self->endpoint_url);
+    if (self->api_key != NULL)
+        request->authorization = g_strdup_printf ("Bearer %s", self->api_key);
+    request->headers = g_new0 (gchar *, 2 * g_hash_table_size (self->custom_headers) + 1);
+    i = 0;
+    g_hash_table_iter_init (&iter, self->custom_headers);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+        request->headers[i++] = g_strdup (key);
+        request->headers[i++] = g_strdup (value);
+    }
+    request->n_events = self->pending_events->len;
+    request->retry_count = self->retry_count;
+    request->retry_delay_ms = self->retry_delay_ms;
+
+    g_ptr_array_set_size (self->pending_events, 0);
+    return request;
+}
+
+/* Sleeps @ms on the sender thread, waking early on quit. Called with the
+ * lock held. Returns FALSE when quitting. */
+static gboolean
+sender_sleep (LrgAnalyticsBackendHttp *self,
+              guint                    ms)
+{
+    gint64 deadline;
+
+    deadline = g_get_monotonic_time () + (gint64) ms * G_TIME_SPAN_MILLISECOND;
+    while (!self->quit)
+        if (!g_cond_wait_until (&self->cond, &self->lock, deadline))
+            break;
+    return !self->quit;
+}
+
+/* POSTs one request with its retries, on the sender thread. */
+static gboolean
+send_request (LrgAnalyticsBackendHttp  *self,
+              SoupSession              *session,
+              HttpRequest              *request,
+              GError                  **error)
+{
+    guint status;
+    guint retry;
+    guint i;
 
     lrg_debug (LRG_LOG_DOMAIN_ANALYTICS,
-                   "Sending batch of %u events to %s",
-                   self->pending_events->len,
-                   self->endpoint_url);
+               "Sending batch of %u events to %s",
+               request->n_events, request->url);
 
-    for (retry = 0; retry <= self->retry_count; retry++)
+    for (retry = 0; retry <= request->retry_count; retry++)
     {
+        g_autoptr(SoupMessage) msg = NULL;
         g_autoptr(GBytes) body = NULL;
         g_autoptr(GInputStream) stream = NULL;
         g_autoptr(GError) local_error = NULL;
 
         if (retry > 0)
         {
-            lrg_debug (LRG_LOG_DOMAIN_ANALYTICS, "Retry %u/%u", retry, self->retry_count);
-            g_usleep (self->retry_delay_ms * 1000);
+            gboolean awake;
+
+            lrg_debug (LRG_LOG_DOMAIN_ANALYTICS, "Retry %u/%u", retry, request->retry_count);
+            g_mutex_lock (&self->lock);
+            awake = sender_sleep (self, request->retry_delay_ms);
+            g_mutex_unlock (&self->lock);
+            if (!awake)
+                break;
         }
 
-        msg = soup_message_new ("POST", self->endpoint_url);
+        msg = soup_message_new ("POST", request->url);
         if (msg == NULL)
         {
             g_set_error (error,
                          LRG_ANALYTICS_ERROR,
                          LRG_ANALYTICS_ERROR_NETWORK,
-                         "Invalid endpoint URL: %s", self->endpoint_url);
+                         "Invalid endpoint URL: %s", request->url);
             return FALSE;
         }
 
         /* Set body */
-        body = g_bytes_new (payload, strlen (payload));
-        soup_message_set_request_body_from_bytes (msg, content_type, body);
+        body = g_bytes_new_static (request->payload, strlen (request->payload));
+        soup_message_set_request_body_from_bytes (msg, request->content_type, body);
 
         /* Set headers */
-        if (self->api_key != NULL)
-        {
-            g_autofree gchar *auth = g_strdup_printf ("Bearer %s", self->api_key);
+        if (request->authorization != NULL)
             soup_message_headers_append (soup_message_get_request_headers (msg),
-                                         "Authorization", auth);
-        }
-
-        g_hash_table_iter_init (&iter, self->custom_headers);
-        while (g_hash_table_iter_next (&iter, &key, &value))
-        {
+                                         "Authorization", request->authorization);
+        for (i = 0; request->headers[i] != NULL; i += 2)
             soup_message_headers_append (soup_message_get_request_headers (msg),
-                                         (const gchar *)key,
-                                         (const gchar *)value);
-        }
+                                         request->headers[i], request->headers[i + 1]);
 
-        /* Send request synchronously */
-        stream = soup_session_send (self->session, msg, NULL, &local_error);
+        /* Blocking is fine here: this is the sender thread. */
+        stream = soup_session_send (session, msg, self->cancellable, &local_error);
+        if (stream != NULL)
+            g_input_stream_close (stream, NULL, NULL);
 
         status = soup_message_get_status (msg);
 
         if (stream != NULL && status >= 200 && status < 300)
         {
             lrg_debug (LRG_LOG_DOMAIN_ANALYTICS,
-                           "Successfully sent %u events (status %u)",
-                           self->pending_events->len, status);
-
-            /* Clear pending events on success */
-            g_ptr_array_set_size (self->pending_events, 0);
+                       "Successfully sent %u events (status %u)",
+                       request->n_events, status);
             return TRUE;
         }
 
-        lrg_warning (LRG_LOG_DOMAIN_ANALYTICS,
-                        "Failed to send analytics (status %u): %s",
-                        status,
-                        local_error != NULL ? local_error->message : "unknown error");
+        if (g_cancellable_is_cancelled (self->cancellable))
+            break;
 
-        g_clear_object (&msg);
+        lrg_warning (LRG_LOG_DOMAIN_ANALYTICS,
+                     "Failed to send analytics (status %u): %s",
+                     status,
+                     local_error != NULL ? local_error->message : "unknown error");
     }
 
     g_set_error (error,
                  LRG_ANALYTICS_ERROR,
                  LRG_ANALYTICS_ERROR_NETWORK,
-                 "Failed to send analytics after %u retries", self->retry_count + 1);
+                 "Failed to send analytics after %u retries", request->retry_count + 1);
 
     return FALSE;
+}
+
+static gpointer
+sender_thread (gpointer data)
+{
+    LrgAnalyticsBackendHttp *self = data;
+    g_autoptr(SoupSession)   session = NULL;
+
+    session = soup_session_new ();
+
+    g_mutex_lock (&self->lock);
+    for (;;)
+    {
+        HttpRequest       *request;
+        g_autoptr(GError)  error = NULL;
+        gboolean           sent;
+
+        while (!self->quit && (self->stalled || g_queue_is_empty (self->outbox)))
+            g_cond_wait (&self->cond, &self->lock);
+        if (self->quit)
+            break;
+
+        /* The head stays queued while it is sent: a failure leaves it there. */
+        request = g_queue_peek_head (self->outbox);
+        g_mutex_unlock (&self->lock);
+
+        sent = send_request (self, session, request, &error);
+
+        g_mutex_lock (&self->lock);
+        if (sent)
+        {
+            http_request_free (g_queue_pop_head (self->outbox));
+            g_clear_error (&self->send_error);
+        }
+        else
+        {
+            self->stalled = TRUE;
+            g_clear_error (&self->send_error);
+            self->send_error = g_steal_pointer (&error);
+        }
+        g_cond_broadcast (&self->cond);
+    }
+    g_mutex_unlock (&self->lock);
+
+    return NULL;
+}
+
+/* Hands the pending events to the sender as one batch, and wakes it (it
+ * also retries a stalled head). One batch is out at a time: while one is
+ * being sent, or failed and awaits a retry, new events keep collecting
+ * and go out together afterwards, as unsent events always did. Returns
+ * TRUE if a batch was handed over. Caller's thread. */
+static gboolean
+queue_pending (LrgAnalyticsBackendHttp *self)
+{
+    HttpRequest *request = NULL;
+    gboolean     idle;
+
+    g_mutex_lock (&self->lock);
+    idle = g_queue_is_empty (self->outbox);
+    self->stalled = FALSE;
+    g_cond_broadcast (&self->cond);
+    g_mutex_unlock (&self->lock);
+
+    if (!idle || self->pending_events->len == 0)
+        return FALSE;
+
+    /* Only this thread adds to the outbox, so it is still empty. */
+    request = take_request (self);
+    g_mutex_lock (&self->lock);
+    g_queue_push_tail (self->outbox, request);
+    g_cond_broadcast (&self->cond);
+    g_mutex_unlock (&self->lock);
+
+    if (self->sender == NULL)
+        self->sender = g_thread_new ("lrg-analytics-http", sender_thread, self);
+    return TRUE;
+}
+
+/* Sends everything, waiting for the sender: the synchronous flush. */
+static gboolean
+send_all (LrgAnalyticsBackendHttp  *self,
+          GError                  **error)
+{
+    gboolean ok;
+
+    for (;;)
+    {
+        queue_pending (self);
+
+        g_mutex_lock (&self->lock);
+        while (!self->quit && !self->stalled && !g_queue_is_empty (self->outbox))
+            g_cond_wait (&self->cond, &self->lock);
+        ok = g_queue_is_empty (self->outbox);
+        if (!ok)
+        {
+            if (self->send_error != NULL)
+                g_propagate_error (error, g_error_copy (self->send_error));
+            else
+                g_set_error (error, LRG_ANALYTICS_ERROR, LRG_ANALYTICS_ERROR_NETWORK,
+                             "Failed to send analytics");
+        }
+        g_mutex_unlock (&self->lock);
+
+        /* Events that collected while a batch was out go next. */
+        if (!ok || self->pending_events->len == 0)
+            return ok;
+    }
 }
 
 static gboolean
 flush_timer_callback (gpointer user_data)
 {
     LrgAnalyticsBackendHttp *self = LRG_ANALYTICS_BACKEND_HTTP (user_data);
-    g_autoptr(GError) error = NULL;
 
+    /* Queued, not sent here: the sender thread reports failures. */
     if (self->pending_events->len > 0)
-    {
-        if (!send_batch (self, &error))
-        {
-            lrg_warning (LRG_LOG_DOMAIN_ANALYTICS, "Auto-flush failed: %s", error->message);
-        }
-    }
+        queue_pending (self);
 
     return G_SOURCE_CONTINUE;
 }
@@ -296,11 +486,10 @@ lrg_analytics_backend_http_send_event (LrgAnalyticsBackend  *backend,
                    lrg_analytics_event_get_name (event),
                    self->pending_events->len);
 
-    /* Flush if batch is full */
+    /* A full batch goes to the sender thread; the caller does not wait.
+     * (While the previous batch is still out this only wakes the sender.) */
     if (self->pending_events->len >= self->batch_size)
-    {
-        return send_batch (self, error);
-    }
+        queue_pending (self);
 
     return TRUE;
 }
@@ -311,7 +500,7 @@ lrg_analytics_backend_http_flush (LrgAnalyticsBackend  *backend,
 {
     LrgAnalyticsBackendHttp *self = LRG_ANALYTICS_BACKEND_HTTP (backend);
 
-    return send_batch (self, error);
+    return send_all (self, error);
 }
 
 /* ==========================================================================
@@ -333,7 +522,27 @@ lrg_analytics_backend_http_finalize (GObject *object)
     g_clear_pointer (&self->api_key, g_free);
     g_clear_pointer (&self->custom_headers, g_hash_table_unref);
     g_clear_pointer (&self->pending_events, g_ptr_array_unref);
-    g_clear_object (&self->session);
+
+    /* Stop the sender; batches it has not sent are dropped, as pending
+     * events always were (lrg_analytics_end_session() flushes first). */
+    if (self->sender != NULL)
+    {
+        g_mutex_lock (&self->lock);
+        self->quit = TRUE;
+        g_cond_broadcast (&self->cond);
+        g_mutex_unlock (&self->lock);
+        g_cancellable_cancel (self->cancellable);
+        g_thread_join (self->sender);
+        self->sender = NULL;
+    }
+    if (!g_queue_is_empty (self->outbox))
+        lrg_debug (LRG_LOG_DOMAIN_ANALYTICS, "Dropping %u unsent batches",
+                   g_queue_get_length (self->outbox));
+    g_queue_free_full (self->outbox, (GDestroyNotify) http_request_free);
+    g_clear_object (&self->cancellable);
+    g_clear_error (&self->send_error);
+    g_cond_clear (&self->cond);
+    g_mutex_clear (&self->lock);
 
     G_OBJECT_CLASS (lrg_analytics_backend_http_parent_class)->finalize (object);
 }
@@ -499,7 +708,10 @@ lrg_analytics_backend_http_init (LrgAnalyticsBackendHttp *self)
 
     self->custom_headers = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
     self->pending_events = g_ptr_array_new_with_free_func (g_object_unref);
-    self->session = soup_session_new ();
+    g_mutex_init (&self->lock);
+    g_cond_init (&self->cond);
+    self->outbox = g_queue_new ();
+    self->cancellable = g_cancellable_new ();
 }
 
 /* ==========================================================================
@@ -652,7 +864,16 @@ lrg_analytics_backend_http_set_retry_count (LrgAnalyticsBackendHttp *self,
 guint
 lrg_analytics_backend_http_get_pending_count (LrgAnalyticsBackendHttp *self)
 {
+    GList *l;
+    guint  count;
+
     g_return_val_if_fail (LRG_IS_ANALYTICS_BACKEND_HTTP (self), 0);
 
-    return self->pending_events->len;
+    /* Events not yet delivered: still collecting, or in the batch out. */
+    count = self->pending_events->len;
+    g_mutex_lock (&self->lock);
+    for (l = self->outbox->head; l != NULL; l = l->next)
+        count += ((HttpRequest *) l->data)->n_events;
+    g_mutex_unlock (&self->lock);
+    return count;
 }

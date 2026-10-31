@@ -131,8 +131,11 @@ my_game_class_init (MyGameClass *klass)
 | =window-height=      | =gint=       | 720              | Initial window height                     |
 | =fullscreen=         | =gboolean=   | FALSE            | Start in fullscreen                       |
 | =vsync=              | =gboolean=   | TRUE             | Enable vertical sync                      |
-| =target-fps=         | =gint=       | 60               | Target frame rate                         |
+| =target-fps=         | =gint=       | 60               | Target frame rate, 0 to 1000 (0: no limit); with =vsync= the standalone host rounds it to the nearest even divisor of the refresh rate (72 for 60 on 144 Hz, see =lrg_game_template_pace_fps()=) |
+| =max-frames-in-flight= | =guint=    | 2                | Frames in flight bounded with GL fences, 0-4 (0: driver default; [[#input-latency][details]]) |
 | =fixed-timestep=     | =gdouble=    | 1.0/60.0         | Physics update interval                   |
+| =snap-frame-delta=   | =gboolean=   | TRUE             | Snap deltas within 0.2 ms of whole fixed steps |
+| =interpolate=        | =gboolean=   | TRUE             | Render interpolation between fixed steps ([[#render-interpolation][details]]) |
 | =auto-save-interval= | =gint=       | 300              | Seconds between auto-saves (0 = disabled) |
 
 ** Virtual Methods
@@ -348,10 +351,63 @@ my_game_fixed_update (LrgGameTemplate *template, gdouble fixed_delta)
     update_physics_world (self->physics, fixed_delta);
 }
 
-/* For render interpolation */
+/* Interpolated types (game objects, transforms, shapes, cameras) are
+ * drawn smoothly on their own; for state of your own: */
 gdouble alpha = lrg_game_template_get_interpolation_alpha (template);
 gfloat render_x = prev_x + (curr_x - prev_x) * alpha;
 #+end_src
+
+*GLib main context.* Each frame the standalone loop dispatches what the default =GMainContext= has ready (up to 8 iterations, never blocking) before updating, so =g_timeout_add()=, idles, GIO/GTask async completions, =GFileMonitor= callbacks and background-save notifications run on the game thread. Earlier versions never iterated it, so none of those fired in standalone games.
+
+*Delta snapping.* A display (or frame cap) at the step rate delivers frames 16.6--16.8 ms apart, not exactly 1/60 s. Fed raw to the accumulator that noise makes some frames run no =fixed_update= and the next run two: visible stutter at a steady frame rate. With =snap-frame-delta= (the default) a delta within 0.2 ms of a whole number of steps (1 to =max-updates-per-frame=) is snapped to it, so a 60 Hz display gets exactly one update per frame and a missed vblank exactly two. Deltas further from a multiple (a 144 Hz display, a slow frame) are used unchanged, and timers advance by the same snapped delta as the simulation. Turn it off for frame-exact real-time measurement.
+
+*Higher refresh rates.* With the default 60 Hz step on a 120/144 Hz display the template runs 0, 1 or 2 fixed steps per frame, so a position updated in =fixed_update= changes on a 2,3,2,3 frame cadence. Render interpolation (next section, on by default) draws it smoothly.
+
+*** Render Interpolation
+:PROPERTIES:
+:CUSTOM_ID: render-interpolation
+:END:
+With a fixed timestep and =interpolate= TRUE (the default) the template drives graylib's interpolation clock (=grl-interpolation.h=): it enables it each frame, brackets every fixed step (=fixed_update= and the state manager's update) with =grl_interpolation_begin_step()= / =grl_interpolation_end_step()=, and publishes =accumulator / fixed-timestep= with =grl_interpolation_set_alpha()= after the steps, before =pre_update= (where the 2D/3D templates update their cameras) and before drawing. Draw code without a template pointer reads the alpha with =grl_interpolation_get_alpha()= (1 while interpolation is off).
+
+Each interpolated object keeps its pose from the start of the latest fixed step it changed in and is drawn at a blend of that pose and its true pose; position and scale blend linearly, angles along the shorter arc. The previous pose is captured lazily, on the object's first write inside a step, so objects that do not move cost nothing and there is no per-step pass over all objects.
+
+| Interpolated                              | Drawn by / render getter                                                                |
+|-------------------------------------------+-----------------------------------------------------------------------------------------|
+| =GrlEntity= / =LrgGameObject= x, y, rotation, scale | =grl_entity_get_render_pose()=; sprite components and =GrlSprite= draw with it |
+| =LrgTransformComponent= local transform (whole parent chain) | =lrg_transform_component_get_render_position()= / =_get_render_transform()= |
+| =LrgShape2D= position                      | =lrg_shape2d_get_render_position()=; the built-in 2D shapes draw with it               |
+| =LrgShape3D= position, Euler rotation, scale | =lrg_shape3d_get_render_transform()=; the built-in 3D shapes draw with it            |
+| =LrgCamera2D= target, offset, rotation, zoom | used by =lrg_camera_begin()= and the world/screen conversions                          |
+| =LrgCamera3D= eye and target                 | used by =lrg_camera_begin()=; =lrg_camera3d_get_render_pose()=                         |
+| Template camera targets                    | =lrg_game_2d_template_set_camera_target()= and =lrg_game_template_update_camera_follow_target()= called from =fixed_update= |
+
+Not interpolated, on purpose: particles, UI, tweens and skeletal/model animation run on the variable per-frame delta and are already smooth; entity width/height/origin; anything you draw from your own fields (blend those with the alpha yourself).
+
+*Getters keep the truth.* =grl_entity_get_x()=, =lrg_transform_component_get_world_position()=, the shape and camera getters, collision bounds and physics all return the true simulation state. Only draw paths use the render getters.
+
+*Cameras.* A camera moved in =fixed_update= (or a camera target set there) is interpolated with the same alpha as the objects, so the followed object does not judder against the view. The follow cameras push their pose to the parent camera as soon as they are moved (=lrg_camera_thirdperson_follow()=, =lrg_camera_firstperson_set_body_position()=, =lrg_camera_isometric_focus_on()=), so calling them from =fixed_update= interpolates; calling them per frame from =pre_update= with a render position (=grl_entity_get_render_pose()=) works too. Writes made outside a step (mouse look, per-frame smoothing) take effect at once without disturbing the blend.
+
+*Teleports and spawns.* A move that should not be drawn as motion uses =grl_entity_teleport()=, =lrg_transform_component_teleport()=, or any setters followed by =*_reset_interpolation()= (also on shapes and cameras, e.g. a camera cut). For the rest of that step further writes move both poses, so "teleport, then apply velocity" does not streak. New objects start with previous == current, writes in the step they are created in act like a teleport, and =lrg_world_add_object()= resets the object it adds (pooled objects re-added elsewhere are not blended from their old place). A transform teleported in a step teleports its entity in =lrg_transform_component_sync_to_entity()=.
+
+*Opting out.* Per object with the =interpolate= property (=GrlEntity=, =LrgTransformComponent=, =LrgShape2D=, =LrgShape3D=, =LrgCamera2D=, =LrgCamera3D=), e.g. for a cursor positioned per frame; globally with the template's =interpolate= property. With a variable timestep (=use-fixed-timestep= FALSE) or interpolation off the clock is disabled: every render pose is the true pose and setters do nothing beyond a branch. Shutting the game down disables the clock.
+
+*Latency.* Interpolation draws between the last two simulated states, so what is drawn trails the simulation by up to one fixed step (16.7 ms at 60 Hz). On a 60 Hz display with delta snapping the accumulator is empty after every frame, the alpha is 0 and objects are drawn exactly one step behind: motion is as even as before (each frame moves one step) but one step later. Turn =interpolate= off when that matters more than smoothness on faster displays, or raise =fixed-timestep= to the display rate.
+
+*Measured* (=tests/test-interpolation.c=, 60 Hz steps, an object at constant speed, judder = standard deviation of the drawn per-frame displacement over its mean): 144 Hz display 1.18 without interpolation, 0.00001 with it; 60 Hz display 0 either way. The CPU cost is in [[file:../../../performance.org::#render-interpolation][Performance]].
+
+*** Input Latency
+:PROPERTIES:
+:CUSTOM_ID: input-latency
+:END:
+The standalone loop is: dispatch the main context, =update= (fixed steps reading the input), draw, then end the frame, which flushes the draws, waits on the GPU if needed, swaps, runs raylib's frame limiter and only then polls input. So the input a frame reads is sampled after every wait of the previous frame: the limiter's sleep never makes it stale.
+
+With =vsync= on, the standalone host paces =target-fps= with =lrg_game_template_pace_fps()=: a cap that does not divide the display's refresh rate (60 on a 144 Hz panel) makes vsync alternate two- and three-vblank frames, so the cap becomes the fraction of the refresh rate (refresh / n, rounded up) nearest the request — 72 on 144 Hz, 55 on 165 Hz, unchanged on 60/120/240 Hz. The fixed step and interpolation do not change; only the presented rate does.
+
+=max-frames-in-flight= bounds how far the CPU may run ahead of the GPU, through graylib's frame sync (a GL fence per frame, waited on before the swap; graylib's =docs/api/core.org=, "Frames in Flight"). With the default 2 one earlier frame may still be on the GPU while the next is built: CPU and GPU work overlap, and a driver that would queue three frames (three frames of input lag) is held to one. 1 makes the GPU finish each frame before its swap, so input is polled with the GPU idle: the lowest latency, at a frame-rate cost when the game is GPU-bound. 0 leaves it to the driver. The environment variable =LRG_MAX_FRAMES_IN_FLIGHT= (=0=-=4=, or =off=) overrides the property without code changes, like =LRG_CPU_AFFINITY= does core pinning.
+
+On Mesa (measured on an Iris Xe, [[file:../../../performance.org::#input-latency][numbers]]) the driver already holds frames to about one in the queue, so 2 changes nothing but a fence per frame; 1 cut input-to-GPU-done latency by about 30% on an uncapped GPU-bound scene and cost about 19% of its frame rate, and changed nothing with vsync on.
+
+*Render interpolation adds latency too*: drawn poses trail the simulation by up to one fixed step ([[#render-interpolation][above]]); turn =interpolate= off or raise the step rate where that matters more.
 
 ** Window Properties
 :PROPERTIES:

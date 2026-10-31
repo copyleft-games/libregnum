@@ -118,22 +118,36 @@ calculate_grid_size (LrgHeatmapChart2D *self)
 }
 
 /*
- * Get the value at a specific grid cell.
- * Returns NAN if cell has no data.
+ * build_cell_values:
+ *
+ * The value of every grid cell, row-major, G_MAXDOUBLE where a cell has
+ * no data. One pass over the points (the first point that lands in a
+ * cell wins, series in order, as a per-cell search would find) instead
+ * of searching every point for every cell, which was O(cells x points)
+ * per frame. Free with g_free().
  */
-static gdouble
-get_cell_value (LrgHeatmapChart2D *self,
-                guint              col,
-                guint              row)
+static gdouble *
+build_cell_values (LrgHeatmapChart2D *self)
 {
-    LrgChart *chart = LRG_CHART (self);
+    LrgChart  *chart = LRG_CHART (self);
     GPtrArray *series_list;
-    guint i, j;
+    gboolean  *filled;
+    gdouble   *values;
+    gsize      n_cells;
+    gsize      k;
+    guint      i;
+    guint      j;
+
+    n_cells = (gsize) self->num_cols * self->num_rows;
+    values = g_new (gdouble, n_cells);
+    for (k = 0; k < n_cells; k++)
+        values[k] = G_MAXDOUBLE;
 
     series_list = lrg_chart_get_series_list (chart);
     if (series_list == NULL)
-        return G_MAXDOUBLE;
+        return values;
 
+    filled = g_new0 (gboolean, n_cells);
     for (i = 0; i < series_list->len; i++)
     {
         LrgChartDataSeries *series;
@@ -146,17 +160,25 @@ get_cell_value (LrgHeatmapChart2D *self,
         {
             const LrgChartDataPoint *pt;
             guint pt_col, pt_row;
+            gsize cell;
 
             pt = lrg_chart_data_series_get_point (series, j);
             pt_col = (guint)(lrg_chart_data_point_get_x (pt) + 0.5);
             pt_row = (guint)(lrg_chart_data_point_get_y (pt) + 0.5);
+            if (pt_col >= self->num_cols || pt_row >= self->num_rows)
+                continue;
 
-            if (pt_col == col && pt_row == row)
-                return lrg_chart_data_point_get_z (pt);  /* Z is the value */
+            cell = (gsize) pt_row * self->num_cols + pt_col;
+            if (!filled[cell])
+            {
+                values[cell] = lrg_chart_data_point_get_z (pt);  /* Z is the value */
+                filled[cell] = TRUE;
+            }
         }
     }
+    g_free (filled);
 
-    return G_MAXDOUBLE;  /* No data for this cell */
+    return values;
 }
 
 /*
@@ -251,6 +273,7 @@ lrg_heatmap_chart2d_draw_data (LrgChart2D *chart2d)
     guint row, col;
     gfloat label_space;
     gfloat scale_space;
+    g_autofree gdouble *cell_values = NULL;
 
     lrg_chart_get_content_bounds (chart, &bounds);
     plot_x = bounds.x;
@@ -278,6 +301,7 @@ lrg_heatmap_chart2d_draw_data (LrgChart2D *chart2d)
     cell_h = (plot_h - (self->num_rows - 1) * self->cell_spacing) / (gfloat)self->num_rows;
 
     /* Draw cells */
+    cell_values = build_cell_values (self);
     for (row = 0; row < self->num_rows; row++)
     {
         for (col = 0; col < self->num_cols; col++)
@@ -285,7 +309,7 @@ lrg_heatmap_chart2d_draw_data (LrgChart2D *chart2d)
             gdouble value;
             gfloat cx, cy;
 
-            value = get_cell_value (self, col, row);
+            value = cell_values[(gsize) row * self->num_cols + col];
 
             cx = plot_x + label_space +
                  col * (cell_w + self->cell_spacing);
@@ -319,7 +343,9 @@ lrg_heatmap_chart2d_draw_data (LrgChart2D *chart2d)
                     gchar value_str[32];
                     gint text_w;
                     gfloat text_x, text_y;
-                    g_autoptr(GrlColor) text_color = NULL;
+                    static const GrlColor black = { 0, 0, 0, 255 };
+                    static const GrlColor white = { 255, 255, 255, 255 };
+                    const GrlColor *text_color;
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-nonliteral"
@@ -334,9 +360,9 @@ lrg_heatmap_chart2d_draw_data (LrgChart2D *chart2d)
 
                     /* Use contrasting text color */
                     if (get_color_brightness (color) > 0.5)
-                        text_color = grl_color_new (0, 0, 0, 255);
+                        text_color = &black;
                     else
-                        text_color = grl_color_new (255, 255, 255, 255);
+                        text_color = &white;
 
                     grl_draw_text (value_str, (gint)text_x, (gint)text_y,
                                    (gint)self->value_font_size, text_color);

@@ -909,6 +909,161 @@ test_transform_component_world_position (void)
 }
 
 static void
+test_transform_component_world_chain (void)
+{
+    g_autoptr(LrgTransformComponent) grandparent = lrg_transform_component_new_at (5.0f, 0.0f);
+    g_autoptr(LrgTransformComponent) parent = lrg_transform_component_new_at (1.0f, 0.0f);
+    g_autoptr(LrgTransformComponent) child = lrg_transform_component_new_at (1.0f, 1.0f);
+    g_autoptr(GrlVector2) pos = NULL;
+    g_autoptr(GrlVector2) scale = NULL;
+
+    /* Scale, rotation and position fold down a three-level chain:
+     * parent at (5,0) + R90 (1*2, 0) = (5,2), child at (5,2) + R180 (1*2, 1*6). */
+    lrg_transform_component_set_local_rotation (grandparent, 90.0f);
+    lrg_transform_component_set_local_scale_uniform (grandparent, 2.0f);
+    lrg_transform_component_set_local_rotation (parent, 90.0f);
+    lrg_transform_component_set_local_scale_xy (parent, 1.0f, 3.0f);
+    lrg_transform_component_set_local_rotation (child, 10.0f);
+    lrg_transform_component_set_local_scale_xy (child, 0.5f, 1.0f);
+    lrg_transform_component_set_parent (parent, grandparent);
+    lrg_transform_component_set_parent (child, parent);
+
+    pos = lrg_transform_component_get_world_position (parent);
+    g_assert_cmpfloat_with_epsilon (pos->x, 5.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (pos->y, 2.0f, 0.0001f);
+    g_clear_pointer (&pos, grl_vector2_free);
+
+    pos = lrg_transform_component_get_world_position (child);
+    scale = lrg_transform_component_get_world_scale (child);
+    g_assert_cmpfloat_with_epsilon (pos->x, 3.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (pos->y, -4.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (scale->x, 1.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (scale->y, 6.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (lrg_transform_component_get_world_rotation (child),
+                                    190.0f, 0.0001f);
+
+    /* Changing an ancestor is seen immediately (the cached world
+     * transforms below it are invalidated). */
+    lrg_transform_component_set_local_position_xy (grandparent, 0.0f, 0.0f);
+    g_clear_pointer (&pos, grl_vector2_free);
+    pos = lrg_transform_component_get_world_position (child);
+    g_assert_cmpfloat_with_epsilon (pos->x, -2.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (pos->y, -4.0f, 0.0001f);
+}
+
+/* Reference fold for test_transform_component_world_cache(), computed
+ * from the public local getters with no caching at all. */
+static void
+reference_world (LrgTransformComponent *t,
+                 gfloat                *x,
+                 gfloat                *y,
+                 gfloat                *rot,
+                 gfloat                *sx,
+                 gfloat                *sy)
+{
+    LrgTransformComponent *parent = lrg_transform_component_get_parent (t);
+    g_autoptr(GrlVector2) local_scale = lrg_transform_component_get_local_scale (t);
+    gfloat lx = lrg_transform_component_get_local_x (t);
+    gfloat ly = lrg_transform_component_get_local_y (t);
+    gfloat px, py, prot, psx, psy;
+    gfloat rad, c, s;
+
+    if (parent == NULL)
+    {
+        *x = lx;
+        *y = ly;
+        *rot = lrg_transform_component_get_local_rotation (t);
+        *sx = local_scale->x;
+        *sy = local_scale->y;
+        return;
+    }
+    reference_world (parent, &px, &py, &prot, &psx, &psy);
+    rad = prot * (G_PI / 180.0f);
+    c = cosf (rad);
+    s = sinf (rad);
+    *x = px + (lx * psx * c - ly * psy * s);
+    *y = py + (lx * psx * s + ly * psy * c);
+    *rot = prot + lrg_transform_component_get_local_rotation (t);
+    *sx = local_scale->x * psx;
+    *sy = local_scale->y * psy;
+}
+
+#define CACHE_NODES (12)
+
+/* World transforms are cached per node and invalidated by version: random
+ * edits, reparenting and detaching anywhere in a forest must always be
+ * reflected by every descendant's getters, interleaved with the reads. */
+static void
+test_transform_component_world_cache (void)
+{
+    LrgTransformComponent *nodes[CACHE_NODES];
+    g_autoptr(GRand) rng = g_rand_new_with_seed (42);
+    guint round;
+    guint i;
+
+    for (i = 0; i < CACHE_NODES; i++)
+    {
+        nodes[i] = lrg_transform_component_new_at ((gfloat) i, (gfloat) (i * 2));
+        if (i > 0)
+            lrg_transform_component_set_parent (nodes[i], nodes[(i - 1) / 2]);
+    }
+
+    for (round = 0; round < 2000; round++)
+    {
+        guint n = (guint) g_rand_int_range (rng, 0, CACHE_NODES);
+        gfloat v = (gfloat) g_rand_double_range (rng, -4.0, 4.0);
+
+        /* One random edit (parents are always lower-numbered: no cycles) */
+        switch (g_rand_int_range (rng, 0, 7))
+        {
+        case 0:
+            lrg_transform_component_set_local_x (nodes[n], v);
+            break;
+        case 1:
+            lrg_transform_component_set_local_position_xy (nodes[n], v, -v);
+            break;
+        case 2:
+            lrg_transform_component_set_local_rotation (nodes[n], v * 45.0f);
+            break;
+        case 3:
+            lrg_transform_component_set_local_scale_xy (nodes[n], v, 1.0f + v * v);
+            break;
+        case 4:
+            g_object_set (nodes[n], "scale-y", v, NULL);
+            break;
+        case 5:
+            lrg_transform_component_set_parent (nodes[n], n > 0 ?
+                nodes[g_rand_int_range (rng, 0, (gint32) n)] : NULL);
+            break;
+        default:
+            if (g_rand_int_range (rng, 0, 4) == 0)
+                lrg_transform_component_detach_children (nodes[n]);
+            break;
+        }
+
+        /* Read a few nodes back (filling caches between edits) */
+        for (i = 0; i < 3; i++)
+        {
+            LrgTransformComponent *t = nodes[g_rand_int_range (rng, 0, CACHE_NODES)];
+            g_autoptr(GrlVector2) pos = lrg_transform_component_get_world_position (t);
+            g_autoptr(GrlVector2) scale = lrg_transform_component_get_world_scale (t);
+            gfloat x, y, rot, sx, sy;
+
+            reference_world (t, &x, &y, &rot, &sx, &sy);
+            g_assert_cmpfloat_with_epsilon (pos->x, x, 1e-3f * (1.0f + fabsf (x)));
+            g_assert_cmpfloat_with_epsilon (pos->y, y, 1e-3f * (1.0f + fabsf (y)));
+            g_assert_cmpfloat_with_epsilon (lrg_transform_component_get_world_rotation (t),
+                                            rot, 1e-3f * (1.0f + fabsf (rot)));
+            g_assert_cmpfloat_with_epsilon (scale->x, sx, 1e-3f * (1.0f + fabsf (sx)));
+            g_assert_cmpfloat_with_epsilon (scale->y, sy, 1e-3f * (1.0f + fabsf (sy)));
+        }
+    }
+
+    for (i = CACHE_NODES; i > 0; i--)
+        g_object_unref (nodes[i - 1]);
+}
+
+static void
 test_transform_component_translate (void)
 {
     g_autoptr(LrgTransformComponent) transform = NULL;
@@ -1100,6 +1255,181 @@ test_animator_component_default_animation (void)
  * Main
  * ========================================================================== */
 
+/* ==========================================================================
+ * World draw order
+ * ========================================================================== */
+
+/* A game object that records the order it is drawn in, then chains up to
+ * LrgGameObject's draw (whose own parent, GrlEntity, has no draw vfunc). */
+#define TEST_TYPE_DRAW_RECORDER (test_draw_recorder_get_type ())
+G_DECLARE_FINAL_TYPE (TestDrawRecorder, test_draw_recorder, TEST, DRAW_RECORDER, LrgGameObject)
+
+struct _TestDrawRecorder
+{
+    LrgGameObject parent_instance;
+};
+
+G_DEFINE_TYPE (TestDrawRecorder, test_draw_recorder, LRG_TYPE_GAME_OBJECT)
+
+static GPtrArray *draw_log = NULL;
+
+static void
+test_draw_recorder_draw (GrlEntity *entity)
+{
+    g_ptr_array_add (draw_log, entity);
+    GRL_ENTITY_CLASS (test_draw_recorder_parent_class)->draw (entity);
+}
+
+static void
+test_draw_recorder_class_init (TestDrawRecorderClass *klass)
+{
+    GRL_ENTITY_CLASS (klass)->draw = test_draw_recorder_draw;
+}
+
+static void
+test_draw_recorder_init (TestDrawRecorder *self)
+{
+}
+
+static LrgGameObject *
+add_recorder (LrgWorld *world,
+              gint      z)
+{
+    g_autoptr(LrgGameObject) obj = g_object_new (TEST_TYPE_DRAW_RECORDER, NULL);
+    g_autoptr(LrgSpriteComponent) sprite = lrg_sprite_component_new ();
+
+    /* A sprite without a texture: drawn through the component path, but
+     * draws nothing, so no GL context is needed */
+    lrg_game_object_add_component (obj, LRG_COMPONENT (sprite));
+    grl_entity_set_z_index (GRL_ENTITY (obj), z);
+    lrg_world_add_object (world, obj);
+    return obj;
+}
+
+/* A wave of removals and spawns in one frame (removal through the stored
+ * list link, draw order rebuilt by sorting): membership, insertion order
+ * and the draw order (z, then insertion) all stay right. */
+static void
+test_world_mass_remove (void)
+{
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    LrgGameObject      *objs[64];
+    GList              *l;
+    guint               i;
+    guint               n;
+
+    draw_log = g_ptr_array_new ();
+    for (i = 0; i < 64; i++)
+        objs[i] = add_recorder (world, (gint) ((i * 7) % 5));
+
+    /* Remove every other object, oldest first, then spawn 8 more */
+    for (i = 0; i < 64; i += 2)
+        lrg_world_remove_object (world, objs[i]);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 32);
+    for (i = 0; i < 8; i++)
+        add_recorder (world, (gint) (i % 3) - 1);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 40);
+
+    /* Insertion order: the 32 survivors in order, then the 8 new ones */
+    l = lrg_world_get_objects (world);
+    for (i = 1; i < 64; i += 2, l = l->next)
+        g_assert_true (l->data == objs[i]);
+    g_assert_cmpuint (g_list_length (l), ==, 8);
+
+    /* Draw order: non-decreasing z; equal z keeps insertion order */
+    lrg_world_draw (world);
+    g_assert_cmpuint (draw_log->len, ==, 40);
+    for (n = 1; n < draw_log->len; n++)
+    {
+        gint za = grl_entity_get_z_index (GRL_ENTITY (draw_log->pdata[n - 1]));
+        gint zb = grl_entity_get_z_index (GRL_ENTITY (draw_log->pdata[n]));
+
+        g_assert_cmpint (za, <=, zb);
+        if (za == zb)
+            g_assert_cmpint (g_list_index (lrg_world_get_objects (world), draw_log->pdata[n - 1]), <,
+                             g_list_index (lrg_world_get_objects (world), draw_log->pdata[n]));
+    }
+
+    /* Removing the rest through the stored links empties the world */
+    while (lrg_world_get_objects (world) != NULL)
+        lrg_world_remove_object (world, lrg_world_get_objects (world)->data);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 0);
+
+    g_clear_pointer (&draw_log, g_ptr_array_unref);
+}
+
+/* lrg_world_draw() used to crash on any world with objects (it chained
+ * up to a NULL GrlEntity draw vfunc). Draw order is z-index, stable for
+ * equal z-indices, and follows z changes and membership changes. */
+static void
+test_world_draw_order (void)
+{
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    LrgGameObject      *a;
+    LrgGameObject      *b;
+    LrgGameObject      *c;
+
+    draw_log = g_ptr_array_new ();
+
+    a = add_recorder (world, 0);
+    b = add_recorder (world, 0);
+    c = add_recorder (world, -1);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 3);
+
+    lrg_world_draw (world);
+    g_assert_cmpuint (draw_log->len, ==, 3);
+    g_assert_true (draw_log->pdata[0] == c);
+    g_assert_true (draw_log->pdata[1] == a);
+    g_assert_true (draw_log->pdata[2] == b);
+
+    /* z-index change after adding */
+    g_ptr_array_set_size (draw_log, 0);
+    grl_entity_set_z_index (GRL_ENTITY (a), 3);
+    lrg_world_draw (world);
+    g_assert_true (draw_log->pdata[0] == c);
+    g_assert_true (draw_log->pdata[1] == b);
+    g_assert_true (draw_log->pdata[2] == a);
+
+    /* back to equal z: insertion order again (a before b) */
+    g_ptr_array_set_size (draw_log, 0);
+    grl_entity_set_z_index (GRL_ENTITY (a), 0);
+    lrg_world_draw (world);
+    g_assert_true (draw_log->pdata[1] == a);
+    g_assert_true (draw_log->pdata[2] == b);
+
+    /* removal, re-adding (goes to the end of insertion order) */
+    g_ptr_array_set_size (draw_log, 0);
+    g_object_ref (a);
+    lrg_world_remove_object (world, a);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 2);
+    lrg_world_add_object (world, a);
+    g_object_unref (a);
+    g_test_expect_message ("Libregnum-ECS", G_LOG_LEVEL_WARNING,
+                           "*already in this world*");
+    lrg_world_add_object (world, a);   /* duplicate: ignored */
+    g_test_assert_expected_messages ();
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 3);
+    lrg_world_draw (world);
+    g_assert_cmpuint (draw_log->len, ==, 3);
+    g_assert_true (draw_log->pdata[0] == c);
+    g_assert_true (draw_log->pdata[1] == b);
+    g_assert_true (draw_log->pdata[2] == a);
+
+    /* invisible objects are skipped */
+    g_ptr_array_set_size (draw_log, 0);
+    grl_entity_set_visible (GRL_ENTITY (b), FALSE);
+    lrg_world_draw (world);
+    g_assert_cmpuint (draw_log->len, ==, 2);
+
+    lrg_world_clear (world);
+    g_ptr_array_set_size (draw_log, 0);
+    lrg_world_draw (world);
+    g_assert_cmpuint (draw_log->len, ==, 0);
+    g_assert_cmpuint (lrg_world_get_object_count (world), ==, 0);
+
+    g_clear_pointer (&draw_log, g_ptr_array_unref);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1245,6 +1575,8 @@ main (int   argc,
     g_test_add_func ("/ecs/transform-component/local-scale", test_transform_component_local_scale);
     g_test_add_func ("/ecs/transform-component/hierarchy", test_transform_component_hierarchy);
     g_test_add_func ("/ecs/transform-component/world-position", test_transform_component_world_position);
+    g_test_add_func ("/ecs/transform-component/world-chain", test_transform_component_world_chain);
+    g_test_add_func ("/ecs/transform-component/world-cache", test_transform_component_world_cache);
     g_test_add_func ("/ecs/transform-component/translate", test_transform_component_translate);
     g_test_add_func ("/ecs/transform-component/rotate", test_transform_component_rotate);
 
@@ -1257,6 +1589,9 @@ main (int   argc,
     g_test_add_func ("/ecs/animator-component/speed", test_animator_component_speed);
     g_test_add_func ("/ecs/animator-component/animation-names", test_animator_component_animation_names);
     g_test_add_func ("/ecs/animator-component/default-animation", test_animator_component_default_animation);
+
+    g_test_add_func ("/ecs/world/draw-order", test_world_draw_order);
+    g_test_add_func ("/ecs/world/mass-remove", test_world_mass_remove);
 
     return g_test_run ();
 }

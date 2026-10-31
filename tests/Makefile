@@ -59,6 +59,7 @@ TEST_SOURCES := \
 	test-gameplay-utilities.c \
 	test-engine.c \
 	test-random-stream.c \
+	test-cpu-affinity.c \
 	test-timer-manager.c \
 	test-audio-mixer.c \
 	test-nav-mesh.c \
@@ -106,17 +107,20 @@ TEST_SOURCES := \
 	test-rope.c \
 	test-model-animator.c \
 	test-static-batch.c \
+	test-shape-batch.c \
 	test-skinned-mesh.c \
 	test-billboard-batch.c \
 	test-terrain.c \
 	test-sky-dome.c \
 	test-world-look.c \
 	test-light-set.c \
+	test-prewarm.c \
 	test-shadow-renderer.c \
 	test-audio.c \
 	test-audio-positional.c \
 	test-midi-synth.c \
 	test-audio-effects.c \
+	test-audio-bus.c \
 	test-midi-output.c \
 	test-inventory.c \
 	test-i18n.c \
@@ -184,11 +188,14 @@ TEST_SOURCES := \
 	test-dlc.c \
 	test-vr.c \
 	test-vr-hand.c \
+	test-vr-gesture.c \
+	test-decision.c \
 	test-deckbuilder.c \
 	test-object-pool.c \
 	test-template-2d.c \
 	test-template-3d.c \
 	test-template.c \
+	test-interpolation.c \
 	test-wave-director.c \
 	test-input-buffer.c \
 	test-template-states.c \
@@ -201,6 +208,11 @@ TEST_SOURCES := \
 	test-lrgldr.c \
 	test-standalone-host.c \
 	test-editor.c \
+	test-editor-core.c \
+	test-editor-tools.c \
+	test-editor-server.c \
+	test-editor-app.c \
+	test-gui.c \
 	test-gif-recorder.c \
 	test-text-baker.c \
 	test-font-atlas.c \
@@ -294,12 +306,16 @@ SANITIZE_BINARIES ?= $(filter-out $(TEST_BUILDDIR)/test-scripting%,$(TEST_BINARI
 # Targets
 # =============================================================================
 
-.PHONY: all run run-sanitize run-valgrind check-build-config check-sanitize-exit clean
+.PHONY: all run run-sanitize run-valgrind check-build-config check-version-lockstep check-sanitize-exit clean
 
 all: $(TEST_BINARIES)
 
 check-build-config:
 	@sh $(CURDIR)/test-build-config.sh
+
+# libregnum and the bundled graylib share MAJOR.MINOR (AGENTS.md, Versioning)
+check-version-lockstep:
+	@bash $(CURDIR)/test-version-lockstep.sh $(CURDIR)/..
 
 check-sanitize-exit:
 	@if [ "$(SANITIZER_EXIT_CHECK)" != "0" ]; then \
@@ -313,7 +329,7 @@ else
 MCP_LD_PATH :=
 endif
 
-run: check-build-config all
+run: check-build-config check-version-lockstep all
 	$(call print_status,"Running tests...")
 	@failed=0; \
 	for test in $(TEST_BINARIES); do \

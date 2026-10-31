@@ -156,6 +156,86 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_controller_is_steam_deck_host_at (const gchar *sysfs_root);
 
 /**
+ * lrg_controller_is_steam_frame_host:
+ *
+ * Whether this machine is a Steam Frame: SteamOS's "vr" variant
+ * (ID=steamos and VARIANT_ID=vr in os-release).  The Frame has no DMI, so
+ * the Deck's check cannot tell it.  The host's os-release is read too
+ * (/run/host/etc/os-release), so a game in a distrobox or toolbox on the
+ * Frame still knows it.
+ *
+ * Returns: %TRUE on a Steam Frame
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_controller_is_steam_frame_host (void);
+
+/**
+ * lrg_controller_is_steam_frame_host_at:
+ * @root: (nullable): the file system root the os-release files are read
+ *   under (default "/")
+ *
+ * lrg_controller_is_steam_frame_host() against another tree (tests).
+ *
+ * Returns: %TRUE on a Steam Frame
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_controller_is_steam_frame_host_at (const gchar *root);
+
+/**
+ * lrg_controller_host_family:
+ *
+ * The family of the machine's own controls: %LRG_CONTROLLER_FAMILY_STEAM_DECK
+ * on a Steam Deck, %LRG_CONTROLLER_FAMILY_STEAM_FRAME on a Steam Frame,
+ * else %LRG_CONTROLLER_FAMILY_UNKNOWN.  On those hosts Steam Input hands a
+ * game one virtual Xbox 360 shaped pad for the built-in (or bundled)
+ * controls; lrg_controller_family_detect_on_host() names it after the host.
+ *
+ * Returns: the host's family
+ */
+LRG_AVAILABLE_IN_ALL
+LrgControllerFamily lrg_controller_host_family (void);
+
+/**
+ * lrg_controller_family_detect_on_host:
+ * @name: (nullable): the controller name the system reports
+ * @vendor: the USB vendor id, 0 when unknown
+ * @product: the USB product id, 0 when unknown
+ * @host: the host's family (lrg_controller_host_family()), or
+ *   %LRG_CONTROLLER_FAMILY_UNKNOWN for an ordinary machine
+ *
+ * lrg_controller_family_detect() for any host: on a Steam Deck or a Steam
+ * Frame host the generic or Xbox 360 shaped virtual pad of Steam Input
+ * (and an unnamed pad) is reported as the host's family; a pad that names
+ * itself as something else keeps its own.
+ *
+ * Returns: the family
+ */
+LRG_AVAILABLE_IN_ALL
+LrgControllerFamily lrg_controller_family_detect_on_host (const gchar         *name,
+                                                          guint16              vendor,
+                                                          guint16              product,
+                                                          LrgControllerFamily  host);
+
+/**
+ * lrg_controller_probe_is_gamepad:
+ * @name: the device name the system reports
+ * @sysfs_root: (nullable): the sysfs mount (default "/sys")
+ *
+ * Whether the Linux input device called @name has joystick or gamepad
+ * buttons (BTN_JOYSTICK 0x120 .. BTN_THUMBR 0x13e in its
+ * capabilities/key).  GLFW, and so raylib, takes any device with keys and
+ * axes for a joystick: an ambient light sensor or a Bluetooth keyboard
+ * with an absolute axis takes a pad slot ahead of the real pad on a Steam
+ * Frame.  A name sysfs does not know (another system, a test's mock) is
+ * taken as a pad.
+ *
+ * Returns: %FALSE only for a device found without such buttons
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_controller_probe_is_gamepad (const gchar *name,
+                                          const gchar *sysfs_root);
+
+/**
  * lrg_controller_probe_usb_ids:
  * @name: the controller name the system reports
  * @sysfs_root: (nullable): the sysfs mount (default "/sys")
@@ -399,6 +479,30 @@ gboolean lrg_controller_monitor_get_steam_deck_host (LrgControllerMonitor *self)
 LRG_AVAILABLE_IN_ALL
 void lrg_controller_monitor_set_steam_deck_host (LrgControllerMonitor *self,
                                                  gboolean              steam_deck_host);
+
+/**
+ * lrg_controller_monitor_get_host_family:
+ * @self: an #LrgControllerMonitor
+ *
+ * Returns: the host family the monitor names virtual pads after
+ *   (%LRG_CONTROLLER_FAMILY_STEAM_DECK, %LRG_CONTROLLER_FAMILY_STEAM_FRAME
+ *   or %LRG_CONTROLLER_FAMILY_UNKNOWN); lrg_controller_host_family() at
+ *   construction
+ */
+LRG_AVAILABLE_IN_ALL
+LrgControllerFamily lrg_controller_monitor_get_host_family (LrgControllerMonitor *self);
+
+/**
+ * lrg_controller_monitor_set_host_family:
+ * @self: an #LrgControllerMonitor
+ * @host: the host's family, or %LRG_CONTROLLER_FAMILY_UNKNOWN
+ *
+ * Overrides host detection (tests, or a user who knows better).  The
+ * family is detected again on the next poll.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_controller_monitor_set_host_family (LrgControllerMonitor *self,
+                                             LrgControllerFamily   host);
 
 /**
  * lrg_controller_monitor_set_family_override:

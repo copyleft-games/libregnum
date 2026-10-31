@@ -36,6 +36,9 @@ libregnum/
 │   │
 │   │ # Game Systems
 │   ├── ui/                   # 8 widgets, 3 layouts, Theme, Canvas
+│   ├── gui/                  # Immediate-mode GUI (GuiContext, DrawList, Dock, raylib backend); the editor is drawn with it
+│   ├── editor/               # Level/Node authoring, LrgEditor (undo, selection), math, gizmo, settings, external editor, IPC server, actions, validation
+│   │   └── ui/               # LrgEditorApp: the lrgeditor application (panels, viewport render, dialogs, play mode)
 │   ├── tilemap/              # Tileset, TilemapLayer, Tilemap
 │   ├── dialog/               # DialogNode, DialogTree, DialogRunner
 │   ├── quest/                # QuestDef, QuestObjective, QuestInstance, QuestLog, QuestChain
@@ -117,6 +120,65 @@ make install      # Install to PREFIX (default: /usr/local)
 make clean        # Remove build artifacts
 make help         # Show all targets
 ```
+
+## Versioning
+
+The version lives in `config.mk` (`VERSION_MAJOR`, `VERSION_MINOR`, `VERSION_MICRO`; it feeds
+`lrg-version.h`, `LRG_VERSION_STRING`, the `.pc` file and the library file name) and every
+release on master carries an annotated tag `v<MAJOR>.<MINOR>.<MICRO>` (e.g. `v0.1.0`) on the
+commit that sets it. `v0.1.0` is the first tagged release.
+
+- **Micro** (+1): every change landing on master that changes what is built: bug fixes, patches,
+  performance work, small features, options, polish (`fix`, `perf`, small `feat`, `refactor`,
+  `build`). Changes that touch only docs, tests or tooling (`docs`, `test`, `ci`, `chore`) do not
+  bump; they ride with the next release.
+- **Minor** (+1, micro back to 0): a major feature (a new module or subsystem, a new tool such
+  as the editor) or anything that breaks compatibility with earlier versions: public C API or
+  ABI, GIR API, YAML/data formats (`.rlevel`, `.rprefab`, `project.ryaml`, save files), IPC/MCP
+  protocol, signals, property names.
+- **Major**: never bumped without asking the user first.
+- `API_VERSION` (GIR namespace, `.pc` name, parallel installability) and `SO_VERSION` are
+  separate and not changed by these bumps; they move only on an ABI break, and only when asked.
+
+**graylib moves in lockstep on MAJOR.MINOR.** libregnum `vX.Y.*` always bundles a graylib
+`vX.Y.*`; only the micro versions move independently (graylib's rules are in its `CLAUDE.md`).
+When libregnum bumps its minor, graylib is bumped to the same `X.Y.0` in the same landing (a
+version-only graylib commit is fine), tagged and pushed first; when a graylib change is worth a
+minor, libregnum takes the same minor bump when it adopts it. `make test` runs
+`tests/test-version-lockstep.sh`, which fails when `config.mk` and `deps/graylib/config.mk`
+disagree on MAJOR.MINOR.
+
+One bump per landing, the highest kind it contains: a merge that brings in several commits or
+branches bumps once (minor if any part is a major feature, else micro).
+
+- **Every landing is released at once.** Each landing on master that changes the build bumps,
+  is tagged and is pushed immediately; nothing that changes the build waits on master untagged
+  for a later release. Pushing is otherwise only done when asked, but a version bump is always
+  pushed with its tag.
+- **Submodules first.** When a landing moves a submodule we own (`deps/graylib`, `deps/yaml-glib`,
+  `deps/mcp-glib`, `deps/ai-glib`, `deps/crispy`, `deps/cad-glib`), that repository's commits are
+  pushed (and tagged under its own rules) before the libregnum commit that points at them.
+- **Merging a branch** (the usual case): bump in the merge commit itself, so the tag marks the
+  merge and the branch never carries a version:
+
+  ```bash
+  git merge --no-ff --no-commit feat/x     # resolve conflicts if any
+  $EDITOR config.mk                        # bump VERSION_MINOR or VERSION_MICRO
+  make clean && make -j"$(nproc)" && make test   # plus the targets the change needs
+  git commit                               # merge message names the new version
+  git tag -a v0.2.0 -m 'v0.2.0'
+  git push origin master v0.2.0
+  ```
+
+  Fast-forward merges have no commit to hold the bump; use `--no-ff`. A merge that lands only
+  docs/tests may fast-forward and is not tagged.
+- **Working directly on master**: bump `config.mk` in the change's own commit (or, for a run of
+  commits, in the last one), then tag that commit and push it with the tag.
+- Tag only a commit whose `config.mk` matches the tag, after its build and tests pass with zero
+  warnings; never move or delete a pushed tag; a broken release is fixed by the next micro.
+- Code that reports the version uses `LRG_VERSION_STRING` (or the `LRG_VERSION_*` macros), never a
+  literal; code built outside the library (`lrgeditorctl`, the MCP tool table) gets it as
+  `-DLRG_EDITORCTL_VERSION="$(VERSION)"` from the Makefile.
 
 ## C Standard and Compiler Flags
 
@@ -372,10 +434,21 @@ glib2-devel gobject-introspection-devel libdex-devel
 libyaml-devel json-glib-devel
 ```
 
+Optional, for the editor's tests: `emacs` (`make test-emacs`), `xorg-x11-server-Xvfb` (windowed smoke runs).
+
 ### Submodules
 
 - `deps/graylib/` - Raylib GObject wrapper
 - `deps/yaml-glib/` - YAML parsing library
+
+`deps/ai-glib` (opt-in, `make AI=1`: the decision models behind `src/ai/lrg-decider.c`) is
+cloned from its GitLab mirror, `git@gitlab.com:zachpodbielniak/ai-glib.git`. Never commit in
+the submodule: a fix ai-glib needs is made in its canonical checkout (`../ai-glib` beside the
+consuming project; origin `git@git-ssh.podbielniak.com:zachpodbielniak/ai-glib`, which mirrors
+every push to GitLab), committed and pushed there; once GitLab has it, the submodule is moved to
+that commit (`git -C deps/ai-glib fetch && git -C deps/ai-glib checkout <commit>`) and the
+pointer committed here. It needs its own submodules: `git submodule update --init --recursive
+deps/ai-glib`.
 
 ## Key Type Patterns
 
@@ -452,7 +525,10 @@ LrgProceduralAudio *synth = g_object_new (MY_TYPE_SYNTH,
                                            "channels", 2,
                                            NULL);
 lrg_procedural_audio_play (synth);
-/* Call lrg_procedural_audio_update() each frame */
+/* generate() runs on the audio device's thread (the "audio-thread"
+ * property, default TRUE): change the state it reads with
+ * lrg_procedural_audio_queue_command () (or atomics), never directly;
+ * lrg_procedural_audio_update () each frame stays harmless */
 ```
 
 ### Wave Data (Audio Samples)
@@ -593,6 +669,41 @@ bounds", "Cost of a page").
 - One thread owns a replicator. Pages are byte-for-byte what the original
   implementation produced (`tests/test-mmo-replicator.c` keeps it as a
   reference model and fuzzes both; its benchmark prints ms a cycle).
+
+### Editor Application (`editor/ui/`, `gui/`, `launcher/lrgeditor.c`)
+
+- `lrgeditor` is built by default (`BUILD_EDITOR_UI=1`); the app is `LrgEditorApp`, split across `src/editor/ui/lrg-editor-*.c` with shared state in `lrg-editor-app-private.h` (internal functions are `G_GNUC_INTERNAL`, prefixed `editor_`).
+- Everything the UI does is an action (`lrg-editor-app-actions.c`, `LrgEditorActions`): add new features as actions so they get a menu entry, palette entry, rebindable shortcut and `action.run` over IPC for free.
+- The app runs headless frame by frame (`lrg_editor_app_frame()` with a synthetic `LrgGuiInput`); add app tests to `tests/test-editor-app.c`. In tests, release keys after a press (`input.key_down[key] = FALSE`) or the next press counts as a repeat.
+- **raylib `bool` under gnu89**: `<raylib.h>` without `<stdbool.h>` typedefs `bool` as an int-sized enum while raylib returns/stores a one-byte `_Bool`, so callers read garbage (this made `IsMouseButtonDown()` always "held": the editor's menus never opened and the camera never rotated; `RayCollision.hit` and `Music.looping` read padding). `BASE_CFLAGS` now has `-include stdbool.h` and `libregnum.h` includes it first; new code needs nothing special. `src/gui/lrg-gui-raylib-private.h` asserts `sizeof (bool) == 1`.
+- The raylib GUI backend chains GLFW mouse-button and key callbacks (`lrg-gui-raylib.c`) so clicks and chords shorter than a frame are latched with their own modifiers; raylib alone samples state once per frame and loses them.
+- `make test-editor-x11` (`tests/editor-x11-smoke.sh`) drives a real window with xdotool under Xvfb and checks results over IPC (`ui.state` reports open menu, nav mode, rects and input). Run it for anything touching input; the headless app tests inject input straight into the GUI and cannot see backend bugs. When running the editor under Xvfb by hand, point `XDG_RUNTIME_DIR` at an empty short dir or GLFW opens the window on your Wayland session.
+- Viewport rendering (`lrg-editor-render.c`) uses raw raylib/rlgl with matrices from `LrgEditorView`; raylib `Matrix` fields are named by storage index but declared in row order, so convert by name (`to_matrix`/`from_matrix`), never `memcpy`. `raymath.h` is not gnu89-clean; do not include it.
+- `g_ptr_array_copy (src, NULL, NULL)` inherits `src`'s free function: copying a node's children that way and freeing the copy unrefs the live nodes. Pass a ref-copy function or use the original array.
+- Unix socket paths must fit `sun_path` (107 bytes); the server rejects longer ones. Keep test sockets under `$XDG_RUNTIME_DIR`.
+- `lrgeditorctl` (`src/editorctl/`) is the kubectl-like CLI over the IPC socket and the MCP bridge (`lrgeditorctl mcp`); `lrgeditor --mcp` serves the same tool table in-process (it reserves stdout: never print to fd 1 on paths that run under it). Add MCP tools as rows in `src/editorctl/lrgeditorctl-mcp.c`. `make test-editorctl` exercises every verb and both MCP servers. The agent skill lives in `skills/skill-libregnum/` (`make install-skills`); keep it in sync with the CLI and tools.
+- The Emacs package is `editors/emacs/libregnum.el` (+ `libregnum-tests.el`); `make test-emacs` byte-compiles with warnings as errors and runs ERT, including a headless editor end to end.
+- Docs: `docs/editor/editor-app.org`, `external-editor.org`, `emacs.org`, `ipc-protocol.org`, `docs/modules/gui/index.org`.
+
+### GPU-Resource Prewarm (`core/lrg-prewarm.h`, `core/lrg-prewarmable.h`)
+
+Renderers that build GPU resources lazily (compile a shader, upload buffers on
+their first draw) implement **`LrgPrewarmable`** and call
+`lrg_prewarm_track (LRG_PREWARMABLE (self))` in their instance init, which
+queues them (weakly) on the default **`LrgPrewarm`** (`lrg_engine_get_prewarm()`).
+`LrgTemplateLoadingState` runs that queue with a per-frame budget after its
+tasks, then emits `prewarm-draw` inside `lrg_prewarm_begin/end_hidden_draw()`
+(empty scissor) for the driver's draw-time variants.
+
+- A new renderer with a lazy `ensure_shader()`/upload path must implement
+  `prewarm()` by calling that same path (idempotent, no visible change, no
+  extra work on the next draw) and track itself; list it in
+  `docs/modules/core/prewarm.org`.
+- `prewarm()` only runs with a window (`lrg_prewarmable_prewarm()` checks);
+  never set a "tried" flag before `IsWindowReady()`.
+- Only objects created on the default queue's thread are tracked; running the
+  queue makes GL calls and belongs to the GL thread.
+- Docs: `docs/modules/core/prewarm.org`, `docs/performance.org` § prewarm.
 
 ### Static World Collision and Model Rendering
 
@@ -1411,6 +1522,20 @@ struct _LrgGame2DTemplateClass
     gpointer _reserved[8];
 };
 ```
+
+### Render Interpolation
+
+With a fixed timestep (default 1/60 s) `LrgGameTemplate` drives graylib's interpolation clock
+(`grl-interpolation.h`; template property `interpolate`, default TRUE): `GrlEntity`/`LrgGameObject`,
+`LrgTransformComponent`, `LrgShape2D`/`LrgShape3D` and `LrgCamera2D`/`LrgCamera3D` moved in
+`fixed_update` are drawn between their last two simulated poses. Getters return the true state;
+draw code uses the render getters (`grl_entity_get_render_pose()`,
+`lrg_transform_component_get_render_transform()`, `lrg_shape3d_get_render_transform()`, ...).
+Use `*_teleport()` / `*_reset_interpolation()` for warps and camera cuts, the per-object
+`interpolate` property to opt out. A new interpolated type embeds a `GrlInterpolationTrack`,
+captures its previous pose when `grl_interpolation_track_begin_write()` returns TRUE and stores
+fields with `grl_interpolation_track_write_float()`. See
+`docs/modules/template/templates/game-template.org` (Render Interpolation).
 
 ### Related Documentation
 

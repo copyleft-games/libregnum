@@ -1,0 +1,150 @@
+#+title: lrgeditorctl and the Editor MCP Server
+#+description: kubectl-style control of running libregnum editors, and MCP tools so AI agents can drive the editor
+#+authors: Zach Podbielniak
+#+categories: libregnum editor cli mcp
+#+created: 2026-10-25T03:10:00-04:00
+#+updated: 2026-10-25T03:10:00-04:00
+#+version: 1.0
+
+* lrgeditorctl and the Editor MCP Server
+:PROPERTIES:
+:CUSTOM_ID: lrgeditorctl
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > lrgeditorctl and MCP
+#+end_quote
+
+=lrgeditorctl= is to =lrgeditor= what kubectl is to a cluster: verbs (=get=, =describe=, =create=, =delete=, =set=, =edit=, =apply=, ...) acting on resources (=nodes=, =selection=, =actions=, =problems=, =assets=, ...) of a running editor session, with =-o yaml|json|table|wide|name= output. It speaks the editor's JSON-lines IPC socket ([[file:ipc-protocol.org][IPC protocol]]), opens one connection per call (so editor restarts are harmless), starts instantly and needs no display or GL. It also serves the editor's tools over MCP so AI agents can drive the editor, and the same tools are available from inside the editor with =lrgeditor --mcp=.
+
+Sources: =src/editorctl/= (=lrgeditorctl.c= commands, =lrgeditorctl-client.c= sessions and calls, =lrgeditorctl-format.c= YAML/JSON/tables, =lrgeditorctl-mcp.c= the MCP tool table shared with =src/launcher/lrgeditor.c=). An agent skill covering all of this lives in =skills/skill-libregnum/= (=make install-skills=).
+
+** Building
+:PROPERTIES:
+:CUSTOM_ID: building
+:END:
+Built by default with the editor (=BUILD_EDITOR=1=). It links GLib, GIO, json-glib and the bundled yaml-glib; MCP support (the bundled mcp-glib) is enabled when =libsoup-3.0= and =libdex-1= are installed, or forced off with =EDITOR_MCP=0=.
+
+| Fedora package     | Why                                      |
+|--------------------+------------------------------------------|
+| =json-glib-devel=  | IPC messages                              |
+| =libyaml-devel=    | yaml-glib (YAML output, =edit=, =apply=) |
+| =libsoup3-devel=, =libdex-devel= | mcp-glib (MCP support)     |
+| =bash-completion=  | (runtime) =lrgeditorctl completion bash= |
+
+#+begin_src sh
+make lrgeditorctl            # build/release/lrgeditorctl
+make test-editorctl          # every verb and both MCP servers against a headless editor
+make install                 # bin/lrgeditorctl + share/bash-completion/completions/lrgeditorctl
+#+end_src
+
+** Sessions and global flags
+:PROPERTIES:
+:CUSTOM_ID: sessions
+:END:
+Editors listen on =$XDG_RUNTIME_DIR/libregnum/editor-PID.sock= (or =--socket=, =$LRG_EDITOR_SOCKET=). =lrgeditorctl sessions= lists the live ones (stale sockets are skipped, the current one is starred); without =-s= the newest is used.
+
+| Flag                     | Meaning                                                                 |
+|--------------------------+-------------------------------------------------------------------------|
+| =-s=, =--session SESSION= | Socket path, PID, or any substring of the project or level path        |
+| =-o=, =--output FORMAT=  | =yaml=, =json=, =table=, =wide= (extra columns such as GUIDs), =name= (=node/PATH=) |
+| =--timeout SEC=          | Reply timeout (default 10)                                               |
+| =-h=, =--help=, =--license=, =-v=, =--version= |                                                  |
+
+Exit status: 0 success, 1 the editor reported an error (unknown node, failed save, validation errors), 2 usage error.
+
+** Reading
+:PROPERTIES:
+:CUSTOM_ID: reading
+:END:
+| Command                       | Shows                                                                  |
+|-------------------------------+------------------------------------------------------------------------|
+| =get nodes=                   | PATH KIND VISIBLE LOCKED CHILDREN (+GUID wide); =-o yaml/json= nested tree |
+| =get node PATH...=            | Full node YAML (transform, visual, components, scripts, flags)         |
+| =describe node PATH=          | Same, with children                                                     |
+| =get selection=               | Selected nodes, primary starred                                         |
+| =get info=                    | Level, dirty flag, counts, tool, snapping, selection, clients          |
+| =get project=                 | Manifest                                                                 |
+| =get actions=                 | ID LABEL SHORTCUT ENABLED (+CATEGORY CHECKED wide)                       |
+| =get problems=                | SEVERITY CODE PATH MESSAGE                                              |
+| =get assets [--type TYPE]=    | Project files and asset types                                           |
+| =get history=                 | Undo (done) and redo steps                                              |
+| =get view=, =get state=, =get play=, =get methods= | Camera, UI state, play state, IPC methods        |
+| =logs [--tail N] [-w]=        | Editor log; =-w= follows                                                |
+| =events [TYPE...]=            | Event stream as JSON lines (=-o yaml= for YAML documents)               |
+
+** Changing nodes
+:PROPERTIES:
+:CUSTOM_ID: changing
+:END:
+Nodes are slash paths from the top of the level (=Props/Crate=) or GUIDs. Assignment values: =1,2,3= vectors, =true=/=false=, numbers, =null=, JSON, otherwise strings. Every change is one undo step in the editor.
+
+| Command                                                   | Effect                                              |
+|-----------------------------------------------------------+-----------------------------------------------------|
+| =create node NAME [--parent P] [--kind K] [--primitive S] [--index N] [k=v...]= | New node, transform in the same step |
+| =set node PATH k=v...=                                     | =name location rotation_degrees rotation scale visible locked visual= |
+| =rename node PATH NEW=, =move node PATH [--parent P] [--index N] [--keep-world]= |                        |
+| =duplicate node PATH=, =delete node PATH...=              |                                                      |
+| =edit node PATH=                                          | YAML in =$VISUAL=/=$EDITOR=/=vi=, applied on save; unchanged or empty cancels |
+| =apply -f FILE= (=-= for stdin)                           | YAML documents or JSON; each needs =node:=; existing nodes are updated, missing ones created (missing parents too) from =kind:=/=primitive:= |
+| =select PATH... [--add]=, =select --clear=                |                                                      |
+
+The =visual= value takes =kind=, =primitive=, =asset=, =color= =[r,g,b,a]=, =roughness=, =metallic= and =params=; color, roughness and metallic may also be nested under =material= (as in =.rlevel= files).
+
+#+begin_src yaml
+# lrgeditorctl apply -f props.yaml
+node: Props/Crate
+primitive: cube
+location: [2, 0.5, -3]
+rotation_degrees: [0, 45, 0]
+visual:
+  material:
+    color: [0.6, 0.4, 0.2, 1]
+---
+node: Props/Lantern
+kind: light
+location: [2, 2, -3]
+#+end_src
+
+** Editor operations
+:PROPERTIES:
+:CUSTOM_ID: operations
+:END:
+| Command                                   | Effect                                                      |
+|-------------------------------------------+-------------------------------------------------------------|
+| =run ACTION=                               | Any editor action (=run= alone lists them)                  |
+| =undo=, =redo=, =save [PATH]=, =reload=    |                                                             |
+| =open LEVEL [--force]=, =new [NAME] [--force]= | =--force= discards unsaved changes                       |
+| =validate=                                 | Problems; exit 1 on errors                                  |
+| =play [start\vert{}pause\vert{}step\vert{}stop\vert{}state]=, =stop= | Play-in-editor (stop restores the level) |
+| =game start\vert{}stop=                    | Run the game process                                        |
+| =view top\vert{}front\vert{}right\vert{}bottom\vert{}back\vert{}left\vert{}persp\vert{}all=, =view focus PATH=, =view set k=v...= | Camera |
+| =screenshot FILE.png [--window]=           | Viewport or window PNG (windowed editors)                   |
+| =notify MESSAGE [--level 0-3]=             | Toast in the editor                                         |
+| =call METHOD [k=v...\vert{}JSON]=          | Any IPC method                                              |
+| =quit [--force]=                           |                                                             |
+| =mcp=                                      | MCP server on stdio                                         |
+| =completion bash=                          | Completion script (nodes, actions and methods complete from the live session) |
+
+** MCP
+:PROPERTIES:
+:CUSTOM_ID: mcp
+:END:
+The editor's operations are MCP tools (mcp-glib), served two ways:
+
+- =lrgeditorctl mcp [-s SESSION]= bridges to an editor that is already running. Each tool call finds the session again, so the bridge survives editor restarts and can be registered before any editor runs.
+- =lrgeditor --mcp [PROJECT]= serves MCP from inside the editor. The editor keeps a private copy of stdout for the protocol and points fd 1 at stderr, so logs and libraries can never corrupt the stream; it runs headless without a display. A headless editor exits when the client disconnects unless the level has unsaved changes. The normal IPC socket stays up, so =lrgeditorctl= works alongside.
+
+#+begin_src sh
+claude mcp add libregnum -- lrgeditorctl mcp
+claude mcp add libregnum-keep -- lrgeditor --mcp /home/me/games/keep
+#+end_src
+
+Tools: =editor_info=, =list_sessions=, =get_tree=, =get_node=, =find_nodes=, =create_node= (with transform), =update_node=, =delete_node=, =duplicate_node=, =move_node=, =add_component=, =set_component=, =remove_component=, =add_script=, =remove_script=, =get_selection=, =set_selection=, =undo=, =redo=, =get_history=, =save_level=, =open_level=, =new_level=, =get_level_yaml=, =validate_level=, =list_actions=, =run_action=, =play=, =run_game=, =get_view=, =set_view=, =focus_view=, =screenshot= (returns a PNG image), =get_log=, =list_assets=, =project_info=, =ui_state=, =notify=, =call_method=. Tools carry read-only/destructive hints; the server's instructions tell the model how nodes are addressed and the units used. =screenshot= is a deferred tool: inside the editor its reply is sent after the next frame is drawn, so it cannot stall the render loop.
+
+Adding a tool: append a row to the table in =src/editorctl/lrgeditorctl-mcp.c= (name, IPC method, kind, hints, description, JSON-schema properties); both servers pick it up.
+
+** Agent skill
+:PROPERTIES:
+:CUSTOM_ID: skill
+:END:
+=skills/skill-libregnum/= is an agent skill (=SKILL.md= plus =references/= on =lrgeditorctl=, MCP, the IPC protocol, the level format and engine development). =make install-skills= copies it to =~/.claude/skills/= (=SKILLS_DIR= to change, =SKILLS_LINK=1= to symlink so edits show up at once); =make uninstall-skills= removes it.

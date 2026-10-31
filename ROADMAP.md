@@ -4,6 +4,27 @@ Last updated: 2026-09-18
 
 ## Recently Shipped
 
+### lrgeditorctl, editor MCP and the libregnum agent skill
+
+- `lrgeditorctl`: kubectl-style CLI for running editors (`get`/`describe`/`create`/`set`/`edit`/`apply -f`/`delete`, `run`, `play`, `logs -w`, `events`, `call`, `-o yaml|json|table|wide|name`, sessions by PID/path/project, bash completion).
+- MCP (mcp-glib): `lrgeditorctl mcp` bridges to a running editor, `lrgeditor --mcp` serves in-process; 39 tools including image screenshots.
+- `skills/skill-libregnum` with references; `make install-skills`. The editor binary is now `lrgeditor`.
+- Tests: `make test-editorctl`.
+
+### Editor application (`lrgeditor`, `src/editor/ui/`, `src/gui/`, `editors/emacs/`)
+
+A Unity/Godot/Unreal-style level, scene and world editor built from libregnum itself:
+
+- **Immediate-mode GUI** (`src/gui/`): `LrgGuiContext` widgets, popups/modals, tabs, drag and drop, `LrgGuiDock` docking with a saved layout string, Catppuccin themes, a raylib backend; fully testable headless.
+- **Editor runtime additions**: undo groups and node-state snapshots, dirty tracking, clipboard, history jump/limit, viewport math (`LrgEditorView`, picking, box select), a headless translate/rotate/scale gizmo, YAML preferences, the action registry with rebindable shortcuts and fuzzy search, level validation.
+- **`LrgEditorApp` / `lrgeditor`**: docked hierarchy, inspector, 3D/2D viewport (lit primitives, mesh/sprite assets, icons, adaptive grid, gizmos), assets, console, history and problems panels; command palette and quick open; preferences and keybinding editor; project settings; play-in-editor with exact restore; running the game via the project's run command; autosave and crash recovery; live reload of files edited elsewhere; `--headless`, `--validate` for CI, `--new-project`.
+- **External editor**: `$VISUAL`/`$EDITOR` (wrappers like `emacsclient_tty` kept), 17 presets, Godot-compatible `{file}{line}{col}{project}{dir}` templates, terminal wrapping, Neovim remote.
+- **IPC**: JSON-lines Unix socket server covering documents, nodes, components, scripts, selection, history, actions, view, play/run, projects, assets, validation and events.
+- **Emacs**: `libregnum.el` (open-file routing, outline, inspect, node editing, actions, play controls, log, problems, `libregnum-rlevel-mode`, evil bindings) with an ERT suite.
+- Tests: `test-editor-core`, `test-editor-tools`, `test-editor-server`, `test-gui`, `test-editor-app`, `make test-emacs`.
+
+Possible follow-ups: in-viewport multi-view layouts, a material/shader graph editor, a tilemap painting tool, an animation timeline, asset thumbnails, and per-project editor settings overrides.
+
 ### Non-networking audit follow-ups
 
 - Added `LrgAudioMixer`: configurable parent buses and cycle-checked sends,

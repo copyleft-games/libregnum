@@ -94,6 +94,8 @@ void lrg_animator_update (LrgAnimator *self, gfloat delta_time);
 
 This updates playback time, samples the current clip, and applies poses to the skeleton.
 
+Track-to-bone resolution is cached: each track of the current clip is resolved to a bone index (by bone name, as before) and, during a crossfade, to the first track of the target clip animating the same bone. The cache is rebuilt when the current or blend clip changes, a clip gains tracks, the clip table or skeleton changes, or bones are added to or removed from the skeleton, so an update costs one sample (two while blending) and one indexed pose write per track.
+
 ** Signals
 :PROPERTIES:
 :CUSTOM_ID: signals

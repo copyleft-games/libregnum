@@ -312,6 +312,11 @@ void lrg_game_2d_template_set_camera (LrgGame2DTemplate *self,
  * If smoothing is enabled (default), the camera will smoothly
  * move toward this position. If deadzone is configured, the
  * camera won't move until the target exits the deadzone.
+ *
+ * A target set from fixed_update (e.g. the player's true position) is
+ * render-interpolated like the player itself, so the view does not
+ * judder against the drawn objects on a display faster than the step
+ * rate.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_game_2d_template_set_camera_target (LrgGame2DTemplate *self,

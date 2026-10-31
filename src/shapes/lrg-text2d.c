@@ -51,8 +51,11 @@ lrg_text2d_draw (LrgShape *shape,
 {
 	LrgText2D *self  = LRG_TEXT2D (shape);
 	GrlColor  *color = lrg_shape_get_color (shape);
-	gfloat     x     = lrg_shape2d_get_x (LRG_SHAPE2D (self));
-	gfloat     y     = lrg_shape2d_get_y (LRG_SHAPE2D (self));
+	gfloat     x;
+	gfloat     y;
+
+	/* Draw at the render (interpolated) position */
+	lrg_shape2d_get_render_position (LRG_SHAPE2D (self), &x, &y);
 
 	if (self->text == NULL || self->text[0] == '\0')
 		return;

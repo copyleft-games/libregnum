@@ -100,6 +100,12 @@ prefabs. See [[file:../editor/overview.org][Editor Overview]] for the full guide
 - *[[file:../editor/projects-and-assets.org][LrgProject / LrgAssetDatabase]]* - project manifest and asset scanning
 - *[[file:../editor/tutorial.org][Tutorial]]* - build a level in C step by step
 
+*** [[file:gui/index.org][GUI Module]] - Immediate-mode GUI toolkit, docking and raylib backend
+:PROPERTIES:
+:CUSTOM_ID: gui-module---immediate-mode-gui-toolkit
+:END:
+=LrgGuiContext= widgets, =LrgGuiDrawList= commands, =LrgGuiDock= dockable panels and the =LrgGuiRaylib= backend; the toolkit the editor is drawn with, testable headless.
+
 *** [[file:core/index.org][Core Module]] - Foundation
 :PROPERTIES:
 :CUSTOM_ID: core-module---foundation

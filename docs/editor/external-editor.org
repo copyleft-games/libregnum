@@ -1,0 +1,129 @@
+#+title: External Code Editor
+#+description: How the libregnum editor opens scripts and data files in $EDITOR, presets, templates and terminals
+#+authors: Zach Podbielniak
+#+categories: libregnum editor
+#+created: 2026-10-24T22:20:00-04:00
+#+updated: 2026-10-24T22:20:00-04:00
+#+version: 1.0
+
+* External Code Editor
+:PROPERTIES:
+:CUSTOM_ID: external-editor
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > External Code Editor
+#+end_quote
+
+The libregnum editor does not try to be a code editor. Scripts, level YAML, project manifests, shaders and every other text file open in the editor you already use, at the right line and column: double click a script in the inspector or the assets panel, "Open Scripts in Editor" (Ctrl+E), "Edit Level YAML in External Editor" (Ctrl+Alt+E), or the =file.open= / =script.open= IPC methods (also from the console: =file.open path=scripts/door.lua line=12=).
+
+The launcher is =LrgExternalEditor= (=src/editor/lrg-external-editor.h=); its configuration lives in =editor.yaml= and in Preferences > External Editor, which also shows what "auto" resolves to and the exact command a file would open with.
+
+** Choosing the editor
+:PROPERTIES:
+:CUSTOM_ID: choosing
+:END:
+=external-editor= selects the editor:
+
+- =auto= (default) -- =$VISUAL=, then =$EDITOR=. The command's basename is matched against the presets so the right line/column arguments are used, while your own command stays the program: =EDITOR=emacsclient_tty= is launched as =emacsclient_tty +12:4 file=, keeping whatever your wrapper does (reuse the parent Emacs inside vterm, =-nw= over SSH, a GUI frame on a local session). With neither variable set, the desktop default handler (=xdg-open=) is used.
+- a preset id -- one of the table below.
+- =custom= -- the template in =external-editor-command=.
+
+=lrgeditor --editor ID-OR-TEMPLATE= overrides the choice for one session.
+
+** Presets
+:PROPERTIES:
+:CUSTOM_ID: presets
+:END:
+| Id                    | Editor                   | Template                                                   | Terminal |
+|-----------------------+--------------------------+------------------------------------------------------------+----------|
+| =emacsclient=         | Emacs (emacsclient)      | =emacsclient -n -r +{line}:{col} {file}=                   | no       |
+| =emacs=               | Emacs (new instance)     | =emacs +{line}:{col} {file}=                               | no       |
+| =nvim=                | Neovim                   | =nvim "+call cursor({line},{col})" {file}=                 | yes      |
+| =vim=                 | Vim                      | =vim "+call cursor({line},{col})" {file}=                  | yes      |
+| =gvim=                | gVim                     | =gvim --remote-silent "+call cursor({line},{col})" {file}= | no       |
+| =helix=               | Helix                    | =hx {file}:{line}:{col}=                                   | yes      |
+| =kakoune=             | Kakoune                  | =kak +{line}:{col} {file}=                                 | yes      |
+| =micro=               | micro                    | =micro {file}:{line}:{col}=                                | yes      |
+| =nano=                | GNU nano                 | =nano +{line},{col} {file}=                                | yes      |
+| =codium=              | VSCodium                 | =codium {project} --goto {file}:{line}:{col}=              | no       |
+| =code-oss=            | Code - OSS               | =code-oss {project} --goto {file}:{line}:{col}=            | no       |
+| =kate=                | Kate                     | =kate {file} --line {line} --column {col}=                 | no       |
+| =geany=               | Geany                    | =geany {file} --line {line} --column {col}=                | no       |
+| =gedit=               | gedit                    | =gedit +{line}:{col} {file}=                               | no       |
+| =gnome-text-editor=   | GNOME Text Editor        | =gnome-text-editor {file}=                                 | no       |
+| =zed=                 | Zed                      | =zed {file}:{line}:{col}=                                  | no       |
+| =xdg-open=            | Desktop default          | =xdg-open {file}=                                          | no       |
+
+** Command templates
+:PROPERTIES:
+:CUSTOM_ID: templates
+:END:
+Templates use the same placeholders as Godot's external editor settings, so an existing Godot configuration carries over:
+
+| Placeholder  | Value                                              |
+|--------------+----------------------------------------------------|
+| ={file}=     | absolute path of the file                          |
+| ={line}=     | line number (1-based)                              |
+| ={col}=      | column number (1-based)                            |
+| ={project}=  | project root (empty without a project)             |
+| ={dir}=      | directory containing the file                      |
+
+The template is split into arguments like a shell would (quotes respected) *before* the placeholders are substituted inside each argument, so a path with spaces is always exactly one argument and never re-split. A template without ={file}= gets the file appended as the last argument.
+
+#+begin_src yaml
+external-editor: custom
+external-editor-command: codium --reuse-window --goto {file}:{line}:{col}
+#+end_src
+
+#+begin_src yaml
+external-editor: custom
+external-editor-command: emacsclient -s work -n +{line}:{col} {file}
+#+end_src
+
+** Terminal editors
+:PROPERTIES:
+:CUSTOM_ID: terminals
+:END:
+Editors that need a terminal (vim, nvim, nano, helix, kakoune, micro) are wrapped, decided by =editor-in-terminal= (=auto= follows the preset, =always=, =never=). The terminal is, in order: =terminal-command= (e.g. ="gst -e"=), =$TERMINAL=, or the first of =gst=, =foot=, =kitty=, =alacritty=, =wezterm=, =ghostty=, =gnome-terminal=, =ptyxis=, =konsole=, =xfce4-terminal=, =st=, =xterm= found on =PATH=, with that terminal's "run a command" flag.
+
+When the editor itself runs inside Neovim (=$NVIM= is set, e.g. from =:terminal=), files are sent to that Neovim with =nvim --server $NVIM --remote-send= instead of opening a new one.
+
+** Emacs
+:PROPERTIES:
+:CUSTOM_ID: emacs
+:END:
+Emacs gets first-party treatment. When =emacs-integration= is on (default) and the resolved editor is Emacs (=emacsclient=, =emacs=, or an =$EDITOR= wrapper whose name starts with =emacsclient=):
+
+1. If an Emacs is connected to the editor's IPC socket with =libregnum.el= (it declares the =open-file= capability), the editor sends it an =open-file= event and that Emacs visits the file at the line and column in-process -- no new process and no new frame, and it works the same in a GUI or a terminal Emacs.
+2. Otherwise =emacsclient= is launched (with =-s emacs-server-name= when set).
+3. If no Emacs server is running, a new =emacs= is started instead.
+
+See [[file:emacs.org][Emacs integration]] for =libregnum.el=.
+
+** Failures
+:PROPERTIES:
+:CUSTOM_ID: failures
+:END:
+Launch problems never block the editor: they appear as an error toast and in the console (with the command that failed), and the =launched= / =failed= signals of =LrgExternalEditor= let embedders react. Common causes: the program is not on =PATH= (the editor inherits the environment it was started from -- start it from your shell, or set an absolute path in a custom template), a terminal editor with no terminal found (set =terminal-command=), or an =xdg-open= with no handler for the file type.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src c
+g_autoptr(LrgEditorSettings) settings = lrg_editor_settings_new ();
+g_autoptr(LrgExternalEditor) external = lrg_external_editor_new (settings);
+g_autoptr(GError)            error = NULL;
+g_auto(GStrv)                argv = NULL;
+
+lrg_external_editor_set_project_dir (external, "/home/me/games/mygame");
+
+/* What would run (no side effects). */
+argv = lrg_external_editor_build_argv (external, "/home/me/games/mygame/scripts/door.lua", 12, 4, &error);
+
+/* Open it (Emacs integration, terminals and fallbacks included). */
+if (!lrg_external_editor_open (external, "/home/me/games/mygame/scripts/door.lua", 12, 4, &error))
+	g_warning ("%s", error->message);
+#+end_src
+
+Other entry points: =lrg_external_editor_list_presets()=, =lrg_external_editor_preset_get_label()= / =_get_template()= / =_is_terminal()= / =_is_emacs()=, =lrg_external_editor_preset_for_command()= (basename matching), =lrg_external_editor_resolve_preset()= (what "auto" means right now and why), =lrg_external_editor_expand_template()= and =lrg_external_editor_find_terminal()=. The =open-file= signal is how the IPC server routes files to a connected Emacs; connect to it to route files somewhere else.

@@ -34,6 +34,11 @@ G_BEGIN_DECLS
  * @LRG_EDITOR_CMD_REPARENT: move a node to a new parent
  * @LRG_EDITOR_CMD_SET_VISUAL_PARAM: set a numeric param in a node's
  *   visual param bag (CAD parameters; slider drags coalesce)
+ * @LRG_EDITOR_CMD_GROUP: an ordered compound of child commands applied
+ *   front-to-back and undone back-to-front as one undo step
+ * @LRG_EDITOR_CMD_NODE_STATE: restore a node's own state (name, flags,
+ *   transform, visual, components, scripts) from before/after snapshots;
+ *   the generic command behind inspector edits
  *
  * The kind of mutation an #LrgEditorCommand represents.
  *
@@ -46,7 +51,9 @@ typedef enum
     LRG_EDITOR_CMD_ADD_NODE,
     LRG_EDITOR_CMD_DELETE_NODE,
     LRG_EDITOR_CMD_REPARENT,
-    LRG_EDITOR_CMD_SET_VISUAL_PARAM
+    LRG_EDITOR_CMD_SET_VISUAL_PARAM,
+    LRG_EDITOR_CMD_GROUP,
+    LRG_EDITOR_CMD_NODE_STATE
 } LrgEditorCommandKind;
 
 #define LRG_TYPE_EDITOR_COMMAND (lrg_editor_command_get_type ())
@@ -92,7 +99,7 @@ LrgEditorCommand * lrg_editor_command_new_set_property (GObject      *target,
  * @node: the node being added
  * @parent: (nullable): the parent, or %NULL for the root
  *
- * Returns: (transfer full): a new add-node command
+ * Returns: (transfer full): a new add-node command (appends)
  */
 LRG_AVAILABLE_IN_ALL
 LrgEditorCommand * lrg_editor_command_new_add_node (LrgLevel *level,
@@ -100,10 +107,27 @@ LrgEditorCommand * lrg_editor_command_new_add_node (LrgLevel *level,
                                                     LrgNode  *parent);
 
 /**
+ * lrg_editor_command_new_insert_node:
+ * @level: the level
+ * @node: the node being added
+ * @parent: (nullable): the parent, or %NULL for the root
+ * @index: child index to insert at, or -1 to append
+ *
+ * Returns: (transfer full): a new add-node command inserting at @index
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_insert_node (LrgLevel *level,
+                                                       LrgNode  *node,
+                                                       LrgNode  *parent,
+                                                       gint      index);
+
+/**
  * lrg_editor_command_new_delete_node:
  * @level: the level
  * @node: the node being deleted
  * @parent: the node's current parent
+ *
+ * The node's current child index is recorded so undo restores it in place.
  *
  * Returns: (transfer full): a new delete-node command
  */
@@ -126,6 +150,26 @@ LrgEditorCommand * lrg_editor_command_new_reparent (LrgNode *node,
                                                     LrgNode *new_parent);
 
 /**
+ * lrg_editor_command_new_move:
+ * @node: the node being moved
+ * @new_parent: the destination parent (may equal the current parent to
+ *   reorder)
+ * @new_index: destination child index, or -1 to append
+ *
+ * Creates a reparent/reorder command. The node's current parent and index
+ * are captured so undo restores the exact position. @new_index is the index
+ * in the destination's children *after* the node has been removed from its
+ * old position.
+ *
+ * Returns: (transfer full) (nullable): a new reparent command, or %NULL if
+ *   @node has no parent or the move would create a cycle
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_move (LrgNode *node,
+                                                LrgNode *new_parent,
+                                                gint     new_index);
+
+/**
  * lrg_editor_command_new_set_visual_param:
  * @node: the node whose visual param changes
  * @param: the param-bag key (e.g. "cad:thickness")
@@ -140,9 +184,115 @@ LrgEditorCommand * lrg_editor_command_new_set_visual_param (LrgNode     *node,
                                                             gdouble      before,
                                                             gdouble      after);
 
+/**
+ * lrg_editor_command_new_group:
+ * @label: (nullable): description shown in the history (e.g. "Duplicate")
+ *
+ * Creates an empty compound command. Children are added with
+ * lrg_editor_command_group_append().
+ *
+ * Returns: (transfer full): a new group command
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_group (const gchar *label);
+
+/**
+ * lrg_editor_command_group_append:
+ * @self: a group command
+ * @child: (transfer full): the child command
+ *
+ * Appends @child to the group. The child is not applied; callers that build
+ * a group from already-applied children (as #LrgEditor does while a group is
+ * open) keep the document consistent themselves.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_command_group_append (LrgEditorCommand *self,
+                                      LrgEditorCommand *child);
+
+/**
+ * lrg_editor_command_group_get_n_children:
+ * @self: a group command
+ *
+ * Returns: the number of child commands
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_command_group_get_n_children (LrgEditorCommand *self);
+
+/**
+ * lrg_editor_command_group_get_child:
+ * @self: a group command
+ * @index: child index
+ *
+ * Returns: (transfer none) (nullable): the child command at @index
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_group_get_child (LrgEditorCommand *self,
+                                                       guint             index);
+
+/**
+ * lrg_editor_command_new_node_state:
+ * @node: the live node
+ * @before: a snapshot of @node's state before the edit (see
+ *   lrg_editor_snapshot_node())
+ * @after: a snapshot of @node's state after the edit
+ * @label: (nullable): description shown in the history
+ *
+ * Creates a snapshot-restore command. Applying copies @after's own state
+ * into @node with lrg_node_copy_state(); undoing copies @before. The
+ * snapshots are copied, so callers keep ownership of theirs.
+ *
+ * Returns: (transfer full): a new node-state command
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_node_state (LrgNode     *node,
+                                                     LrgNode     *before,
+                                                     LrgNode     *after,
+                                                     const gchar *label);
+
 /* ==========================================================================
  * Operations
  * ========================================================================== */
+
+/**
+ * lrg_editor_command_get_node:
+ * @self: an #LrgEditorCommand
+ *
+ * Returns: (transfer none) (nullable): the node the command acts on, if any
+ *   (for groups, the subject of the first child that has one)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_editor_command_get_node (LrgEditorCommand *self);
+
+/**
+ * lrg_editor_command_get_label:
+ * @self: an #LrgEditorCommand
+ *
+ * Returns: (transfer none) (nullable): the explicit label, if one was set
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_command_get_label (LrgEditorCommand *self);
+
+/**
+ * lrg_editor_command_set_label:
+ * @self: an #LrgEditorCommand
+ * @label: (nullable): a description overriding the generated one
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_command_set_label (LrgEditorCommand *self,
+                                   const gchar      *label);
+
+/**
+ * lrg_editor_command_get_serial:
+ * @self: an #LrgEditorCommand
+ *
+ * Every command gets a process-unique serial when created and a fresh one
+ * whenever another command is merged into it. #LrgEditor compares serials
+ * to decide whether the document differs from what was last saved.
+ *
+ * Returns: the modification serial
+ */
+LRG_AVAILABLE_IN_ALL
+guint64 lrg_editor_command_get_serial (LrgEditorCommand *self);
 
 /**
  * lrg_editor_command_get_kind:
@@ -176,9 +326,11 @@ void lrg_editor_command_undo (LrgEditorCommand *self);
  * @self: an #LrgEditorCommand
  * @other: a newer command to fold into @self
  *
- * If @other is compatible with @self (same kind and target, for transform and
- * set-property commands), folds @other's "after" state into @self so the pair
- * collapses into a single undo step.
+ * If @other is compatible with @self (same kind and target, for transform,
+ * set-property and visual-param commands; same node and label for
+ * node-state commands), folds @other's "after" state into @self so the pair
+ * collapses into a single undo step. A successful merge refreshes the
+ * serial of @self.
  *
  * Returns: %TRUE if @other was merged into @self
  */

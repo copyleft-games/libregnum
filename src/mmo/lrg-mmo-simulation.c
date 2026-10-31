@@ -301,6 +301,8 @@ lrg_mmo_simulation_restore (LrgMmoSimulation *self, GVariant *snapshot, GError *
     if (g_variant_n_children (rows) > self->capacity)
         return _lrg_mmo_fail (error, G_IO_ERROR_NO_SPACE, "Snapshot exceeds character capacity");
     staged = lrg_mmo_simulation_new (self->capacity);
+    if (staged == NULL)
+        return _lrg_mmo_fail (error, G_IO_ERROR_INVALID_DATA, "Simulation has no capacity");
     staged->tick = tick;
     g_ptr_array_unref (staged->obstacles);
     staged->obstacles = g_ptr_array_ref (self->obstacles);

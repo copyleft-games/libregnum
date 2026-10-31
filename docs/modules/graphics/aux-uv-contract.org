@@ -1,5 +1,7 @@
 #+title: Auxiliary UV integration and verification contract
 
+The original integration results below are historical; [[file:upstream-merge-verification.org][the upstream-merge receipt]] records the current merged source, tests, selected outputs and remaining native cleanup failure.
+
 * Boundary and acceptance
 LrgStaticBatch owns copied auxiliary UV streams, per-chunk lifetime, GPU buffers and the shader attribute contract. Game-specific lightmaps/material semantics remain consumer policy. Channels 1..7 contain two finite scalar float components per merged vertex and use attributes 5,8..13; channel zero is the existing primary UV stream. Replacing a valid stream invalidates its GPU upload; invalid replacements preserve CPU views and GPU state. Growing geometry leaves an explicitly stale stream until replaced. Repeated GPU unload preserves CPU streams; clear/finalization release them. GPU resources must be released before their context closes.
 

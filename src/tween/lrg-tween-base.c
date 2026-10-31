@@ -12,6 +12,15 @@
 #include "lrg-tween-base.h"
 #include "lrg-easing.h"
 #include "../lrg-log.h"
+#include "../lrg-type-check-private.h"
+
+/* Every tween is a subclass, which misses the exact-type fast path of the
+ * instance check; the tween manager checks each tween several times a
+ * frame. Same check, cached (see lrg-type-check-private.h). */
+static gsize tween_base_check_cache;
+#undef LRG_IS_TWEEN_BASE
+#define LRG_IS_TWEEN_BASE(obj) \
+    (lrg_type_check_instance_cached ((obj), LRG_TYPE_TWEEN_BASE, &tween_base_check_cache))
 
 typedef struct
 {

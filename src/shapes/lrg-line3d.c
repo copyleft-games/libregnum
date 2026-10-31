@@ -45,10 +45,12 @@ lrg_line3d_draw (LrgShape *shape,
                  gfloat    delta)
 {
 	LrgLine3D   *self  = LRG_LINE3D (shape);
-	GrlVector3  *start = lrg_shape3d_get_position (LRG_SHAPE3D (self));
+	GrlVector3   start;
 	GrlColor    *color = lrg_shape_get_color (shape);
 
-	grl_draw_line_3d (start, self->end, color);
+	/* The start point is drawn at the render (interpolated) position */
+	lrg_shape3d_get_render_transform (LRG_SHAPE3D (self), &start, NULL, NULL);
+	grl_draw_line_3d (&start, self->end, color);
 }
 
 /* ==========================================================================

@@ -78,13 +78,11 @@ surface and implements =LrgEditorHost= against that surface. It uses
 =LrgEditorSoftwareHost= as a concrete holder and calls
 =lrg_editor_host_request_redraw()= when Emacs schedules a repaint.
 
-*** Standalone engine-drawn editor
+*** Standalone editor application (lrgeditor)
 :PROPERTIES:
 :CUSTOM_ID: standalone-engine-drawn-editor
 :END:
-The standalone editor opens its own =GrlWindow=, implements =LrgEditorHost= against
-the window's framebuffer, and runs its own event loop calling
-=lrg_editor_host_begin_frame()= / =lrg_editor_host_end_frame()= each tick.
+=lrgeditor= (=LrgEditorApp=, =src/editor/ui/=) is the full editor built from libregnum: a docked UI drawn with libregnum's immediate-mode GUI (=LrgGuiContext=), a raylib-rendered 2D/3D viewport with gizmos, hierarchy, inspector, assets, console, history and problems panels, a command palette, play-in-editor, autosave and crash recovery, live reload, =$EDITOR= / Emacs integration and a JSON-lines IPC server. See [[file:editor-app.org][The Editor Application]].
 
 Both frontends target the same =LrgEditor= C API; all undo/redo, selection, and
 document operations are shared.
@@ -98,8 +96,11 @@ The editor subsystem is compiled when =-DLRG_BUILD_EDITOR= is defined (set via
 additional =-DLRG_HAS_CRISPY= (=CRISPY=1=).
 
 #+begin_src sh
-# Build with editor and Crispy
+# Build with editor and Crispy (the lrgeditor application is built by default)
 make BUILD_EDITOR=1 CRISPY=1
+
+# Editor runtime only, without the application (embedded hosts)
+make BUILD_EDITOR_UI=0
 
 # Build without editor (runtime-only)
 make BUILD_EDITOR=0
@@ -109,6 +110,11 @@ make BUILD_EDITOR=0
 :PROPERTIES:
 :CUSTOM_ID: related-documentation
 :END:
+- [[file:editor-app.org][The Editor Application]] — =lrgeditor=: panels, viewport, play mode, preferences, shortcuts
+- [[file:external-editor.org][External Code Editor]] — =$EDITOR=, presets and command templates
+- [[file:emacs.org][Emacs Integration]] — =libregnum.el=
+- [[file:ipc-protocol.org][IPC Protocol]] — drive the editor from scripts and tools
+- [[file:lrgeditorctl.org][lrgeditorctl and MCP]] — kubectl-style CLI for running editors; MCP tools for AI agents
 - [[file:level-model.org][Level Model]] — LrgLevel / LrgNode / LrgNodeVisual in depth
 - [[file:yaml-format.org][.rlevel YAML Format]] — serialization schema
 - [[file:editor-runtime.org][Editor Runtime]] — LrgEditor, commands, undo/redo, host

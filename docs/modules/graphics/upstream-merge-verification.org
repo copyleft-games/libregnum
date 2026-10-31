@@ -1,0 +1,133 @@
+#+title: Auxiliary UV upstream-merge verification
+
+The subsequent owned audio cleanup/independent-voice changes and their newer artifacts are recorded in the sibling Graylib [[file:../../../../graylib-visual-gir/docs/audio-ownership-contract.org][audio ownership contract]]. The original two-leak stress result below is historical: the guarded WAV leak is now repaired, the independent policy passes its sanitizer gate, and the genuine native-alias residual remains an explicit open gate.
+
+* Disposition
+The merges are resolved and remain uncommitted for the parent reviewer. This receipt supersedes the pre-merge build/test results in [[file:aux-uv-contract.org][the original integration contract]]. Standard release builds and complete selected GIR namespaces pass. The additional instrumented null-audio stress test exposes two native raylib allocation leaks, documented below; its successful lifetime assertions do not turn the failed LSan run into a pass.
+
+* Merge identities and resolution
+Engine HEAD =edea893b9483d154edad4ba7f252e529b43ccd52= is merging =087492bbb2419e0ddd1474bbfa478b8305bdf5e9= from =git@gitlab.com:copyleft-games/libregnum.git=. Graylib HEAD =6137ad441eba957fa367c5842993929919141d6a= is merging =b1266a3512145159b28ffd89db4ca72f7b5219e8= from =git@gitlab.com:copyleft-games/graylib.git=. Both merged configurations are upstream version 0.3.1, with unchanged version/SO fields; a later release bump is the reviewer's responsibility.
+
+Only the five formerly conflicted files were newly staged: engine =Makefile=; Graylib =src/audio/grl-audio-stream.h=, =src/rlgl/grl-rlgl-buffer.c=, =src/rlgl/grl-rlgl-texture.c= and =tests/Makefile=. The shared-library archive prerequisites are common to both sides and retained. Stream buffer ownership text is combined with the upstream callback/no-buffer-pumping contract. Redundant rlgl definition comments are replaced by the existing reference to their authoritative public header blocks. The test list retains both upstream text-layout and the existing rectangular-mipmap regression. All upstream declarations, implementation statements, perf paths, callbacks, threaded streaming, frame fences and the engine's stdbool ABI correction are retained.
+
+Both =git ls-files -u= results are empty; staged and unstaged =git diff --check= pass. No merge commit, tag, push, version/SO edit or gitlink/dependency-directory change was made. Existing upstream index changes are left intact. The six temporary engine dependency symlinks remain unstaged as supplied; borrowed YAML and Graylib source were not modified. The independently cloned Graylib vendor checkouts remain clean with their verified raysan5 upstream remotes.
+
+* Additional unstaged source/test repairs
+- The reviewer's existing =src/graphics/grl-texture.c= mip-chain implementation and untracked =tests/test-texture-mipmaps.c= are preserved unstaged. Their SHA-256 values are =3ac4716c90a1c495ee808bc0e9e36d6431c906d556f957c02a1222870ddff87a= and =bf55611a75fa2f63e2dbd3b1dd7bb46981a7573ed7cf2d28fa26c52db6150f18= respectively.
+- Graylib =tests/test-introspection.c= additionally verifies the native stream callback's notified scope, closure/destroy indices, nullability and continued availability of threaded-music configuration. All seven metadata checks load the actual full typelib.
+- Graylib =tests/test-entity.c=, =tests/test-scene.c= and =tests/test-music.c= have declaration placement and unused callback-argument fixes so the complete test build passes GCC gnu89 with warning-fatal flags. No test behavior is removed or warning disabled.
+- Engine =tests/test-version-lockstep.sh= honors the existing explicit =GRAYLIB_DIR= selection instead of always checking the supplied borrowed directory. Actual selected 0.3.1/0.3.1 passes; the old borrowed 0.2 selection fails with status 1 and a missing selected directory fails with status 2. Bash syntax and ShellCheck pass.
+
+These new edits, this documentation and the pre-existing mip fix remain unstaged for the reviewer; they are not silently included in a merge commit.
+
+* Fresh build boundary
+Graylib was forced to recompile from the merged working source, producing both libraries and a full namespace from 82 public headers and 90 C files. The engine was likewise forced to rebuild its merged sources: 682 public headers and 696 C files for the selected normal configuration; its normal GIR uses 679 headers and 692 sources, preserving upstream's deliberate internal bridge/vendor exclusions. No reduced scan or edited generated GIR was used. All standard scans retain =--warn-all --warn-error= and typelib compilation.
+
+The engine selects the owned Graylib and borrowed release YAML archive explicitly. Upstream now has an independent =EDITOR_MCP= switch: =MCP=0= alone still tries to build the editor bridge's missing borrowed mcp-glib archive. The initial all attempt stopped there; the successful normal build uses =EDITOR_MCP=0=, retaining the editor and editor UI while excluding only that optional bridge. No mcp-glib source was built or changed.
+
+Fedora packages: =gcc make pkgconf-pkg-config glib2-devel gobject-introspection-devel libdex-devel libyaml-devel json-glib-devel libsoup3-devel openssl-devel sqlite-devel libpq-devel zlib-devel mesa-libGL-devel libX11-devel wayland-devel libxkbcommon-devel libasan libubsan binutils libtool ShellCheck mutter dbus-daemon=. Installed optional scripting/OpenXR/ALSA headers are consumed where auto-detected. No packages or host configuration were changed.
+
+* Results
+| Check | Outcome |
+|-------+---------|
+| Graylib fresh libraries, complete GIR and typelib | PASS, no compiler/scanner warnings |
+| Engine fresh libraries, complete selected GIR, typelib and editor binaries | PASS with EDITOR_MCP=0, no compiler/scanner warnings |
+| Graylib complete built device-free suite plus metadata | 772 passed, 11 explicitly skipped; 783 TAP results |
+| Graylib private GPU cases, one process per window case | 11 passed: frame-sync, model-skinning, text-layout, mip layout/upload |
+| Engine affected rendering/interpolation/input CPU suites | 436 passed, 23 display cases skipped |
+| Engine aux-UV CPU and full-typelib metadata | 13 passed, 4 GPU cases excluded |
+| Engine aux-UV private GPU readback/lifecycle | 4 passed |
+| Fresh instrumented engine aux-UV CPU/metadata | 13 passed, 4 GPU cases excluded; ASan/UBSan/LSan clean |
+| Instrumented Graylib mip-layout validation | 1 passed; no graphics/audio device |
+| Parent canonical release all/tests/GIR | 384 GTests + 60 hermetic shell checks; display-runner checks also pass |
+| Parent root-sanitized fresh-profile all/tests/GIR | 384 GTests + 60 hermetic shell checks; display-runner checks also pass |
+| Parent root-sanitized material/source-UV GPU checker | 6 passed, no ASan/UBSan/LSan report |
+| Parent fresh-profile menu -> match -> menu | PASS, no ASan/UBSan/LSan report; screenshots reviewed |
+| Existing dedicated kernel-restricted null-audio lifecycle | PASS |
+| Additional instrumented background-music/callback/alias stress | Lifetime assertions passed; overall FAIL due native LSan leaks |
+
+The Graylib device-free skips are two explicitly opt-in audio-device cases, two frame-sync window cases, four model-skinning cases, two text-layout cases and mip upload. The separate private GPU run executes the nine display cases plus headless frame-sync and mip layout; it does not count the two hardware-flagged audio cases as passed. Engine skips remain explicit; only the four aux-UV GL cases are claimed separately here. Parent totals include the canonical portable's 90 checks, not another independently rebuilt portable suite.
+
+The first same-process default-backend Graylib GPU run aborted when GTK/libdecor was initialized a second time (=gtk_disable_setlocale() must be called before gtk_init()=). The per-case process run preserves that failure and avoids reinitializing that backend within one process. The separate production Wayland-only profile actually executes the multi-window menu/match/menu flow with unsuppressed LSan. It is not a claim that the default dual-backend GTK/libdecor lifecycle is fixed. Frame-sync's live-fence bound, drain, swap path and reset-on-window-close assertions pass.
+
+The final profile menu, six pixel checks, engine aux CPU sanitizer checks and Graylib mip-layout sanitizer check were repeated with an explicitly empty =LSAN_OPTIONS= and =ASAN_OPTIONS=detect_leaks=1:halt_on_error=1=; no inherited suppression policy is relied on for those results. The dedicated null runner also strips inherited variables through its fixed empty-environment allowlist.
+
+* Null-only thread lifetime evidence and remaining native leaks
+The temporary stress fixture is retained locally as =build/merge-verification/test-audio-null-threads.c=. It is linked with an independently ASan/UBSan-instrumented build of the merged Graylib and the unchanged =completion/tests/audio-null-helper.c= adapter. The helper asserts Landlock/seccomp filesystem/socket barriers before device startup, forces exactly miniaudio's null backend, and verifies it. This is the only audio-device exception, never a global default; no hardware backend is exercised.
+
+Across 30 simultaneous music/alias/callback-stream lifetimes and three device open/close cycles, real background decoder progress, pull callbacks and per-music processors run. Replacing callbacks and removing processors must deliver destroy notifications only after callbacks stop. Music is dropped while playing; weak references confirm finalization, then further pump time is allowed before the next cycle. Sound aliases are destroyed before their source. No UAF, invalid access, callback-after-destroy or UBSan failure was observed. This finite stress run is not a proof of all interleavings or a TSAN result.
+
+LSan nevertheless fails with 14,160 bytes in 60 allocations: 30 allocations/12,240 bytes resolve to =LoadMusicStreamFromMemory=, and 30 allocations/1,920 bytes to =LoadAudioBuffer=. In the unchanged pinned raylib =src/raudio.c=, WAV unload calls =drwav_uninit()= but does not free the separately allocated decoder struct (line 1773); =LoadAudioBuffer()= allocates =converterResidual= (line 606), while =UnloadSoundAlias()= omits that residual buffer's free (lines 1043..1050). These correspond to the 408-byte WAV contexts and 64-byte alias residuals in each stress iteration. No suppression, direct opaque-layout workaround, vendor source patch or passing relabel was applied. This native cleanup failure remains for the reviewer/upstream; it does not invalidate the separately clean rendering-profile LSan run.
+
+* Reproduction
+From =trees/libregnum-visual= (all paths are explicit source/output selections, never an inherited-environment dump):
+#+begin_src bash
+workspace=/var/home/zach/source/projects/libre-tournament-2004/trees
+make -C "$workspace/graylib-visual-gir" -B -j8 CC=gcc _lib gir
+make -j8 CC=gcc STEAM=0 CAD=0 MCP=0 EDITOR_MCP=0 CRISPY=0 \
+    GRAYLIB_DIR="$workspace/graylib-visual-gir" \
+    YAMLGLIB_DIR="$workspace/libregnum-playable/deps/yaml-glib" \
+    -o deps-graylib -o deps-yamlglib -o deps-crispy all
+make -C "$workspace/completion" -j8 BUILD_DEPS=0 BUILD_GIR=1 \
+    USCRIPT_GLIB_DIR="$workspace/uscript-visual" \
+    LIBREGNUM_DIR="$workspace/libregnum-visual" \
+    GRAYLIB_DIR="$workspace/graylib-visual-gir" \
+    YAMLGLIB_DIR="$workspace/libregnum-playable/deps/yaml-glib" \
+    OUT=build/deps-upstream-main all tests gir
+#+end_src
+
+The fresh profile was created by the existing =completion/scripts/build-wayland-profile= with the same Graylib/YAML overrides, output =completion/build/deps-upstream-profile-main=. It snapshots the merged engine and committed unmodified raylib into new output directories and rebuilds a Wayland-only raylib/engine. Parent =build/deps-upstream-profile-consumer-main= uses =SANITIZE=1 WAYLAND_LIFECYCLE=1 ENGINE_OUT=<profile>/engine/build/release/lib= with the same canonical dependency headers. The parent source, shared build prefixes and other workers' outputs are not edited. All rendering uses =scripts/test-display= directly or through =scripts/test-frontend=, with =--no-sound= and isolated writable state. The null-only wrapper uses its explicit empty-environment allowlist; no credential-file inspection or inherited-environment dump occurred in this follow-up.
+
+From =trees/completion=, the actual profile, sanitizer and pixel-check commands were:
+#+begin_src bash
+workspace=/var/home/zach/source/projects/libre-tournament-2004/trees
+GRAYLIB_DIR="$workspace/graylib-visual-gir" \
+YAMLGLIB_DIR="$workspace/libregnum-playable/deps/yaml-glib" \
+    bash scripts/build-wayland-profile "$workspace/libregnum-visual" \
+    build/deps-upstream-profile-main 8
+make -j8 BUILD_DEPS=0 BUILD_GIR=1 SANITIZE=1 WAYLAND_LIFECYCLE=1 \
+    USCRIPT_GLIB_DIR="$workspace/uscript-visual" \
+    LIBREGNUM_DIR="$workspace/libregnum-visual" \
+    GRAYLIB_DIR="$workspace/graylib-visual-gir" \
+    YAMLGLIB_DIR="$workspace/libregnum-playable/deps/yaml-glib" \
+    ENGINE_OUT="$PWD/build/deps-upstream-profile-main/engine/build/release/lib" \
+    OUT=build/deps-upstream-profile-consumer-main all tests gir menu-window-test
+make -f Makefile -f newtests/visual.mk -j8 \
+    BUILD_DEPS=0 BUILD_GIR=1 SANITIZE=1 WAYLAND_LIFECYCLE=1 \
+    USCRIPT_GLIB_DIR="$workspace/uscript-visual" \
+    LIBREGNUM_DIR="$workspace/libregnum-visual" \
+    GRAYLIB_DIR="$workspace/graylib-visual-gir" \
+    YAMLGLIB_DIR="$workspace/libregnum-playable/deps/yaml-glib" \
+    ENGINE_OUT="$PWD/build/deps-upstream-profile-main/engine/build/release/lib" \
+    OUT=build/deps-upstream-profile-consumer-main \
+    build/deps-upstream-profile-consumer-main/gpu-checker
+LSAN_OPTIONS= ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+    bash scripts/test-frontend build/deps-upstream-profile-consumer-main/gpu-checker \
+    /var/home/zach/.local/share/OldUnreal/UT2004 --run-window --verbose
+LSAN_OPTIONS= ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+    bash scripts/test-frontend build/deps-upstream-profile-consumer-main/libre-tournament-2004 \
+    /var/home/zach/.local/share/OldUnreal/UT2004 --no-config --menu-demo --frames 180 \
+    --screenshot "$workspace/libregnum-visual/build/merge-verification/merged-menu.png"
+#+end_src
+
+The profile output directory must be absent for a new run; choose a new private prefix rather than overwriting this verified snapshot. The ordinary null acceptance used =tests/run-audio-null build/deps-upstream-main/test-audio-null <install> --null-audio-test=. The failed instrumented stress used the same runner with =../libregnum-visual/build/merge-null-threads/test-audio-null-threads <install> --null-audio-test --sanitize=; its adapter is compiled unchanged from =tests/audio-null-helper.c=, linked only to the instrumented Graylib rather than loading a second embedded engine copy. Graylib instrumentation was built with =DEBUG=1 ASAN=1 UBSAN=1 BUILDDIR=<owned-graylib>/build/merge-sanitize _lib=. Engine instrumentation used =SANITIZE=1 lib-shared= with the same source selectors and explicit =YAMLGLIB_STATIC=<borrowed-yaml>/build/release/libyaml-glib-1.0.a=; only the engine/test binary is instrumented in that matrix, with release dependency archives.
+
+* Retained outputs and hashes
+Complete local logs, source-only stress fixture, screenshots and final identities are under this engine's ignored =build/merge-verification/= and Graylib's ignored =build/merge-verification/=. Parent products use only =completion/build/deps-upstream-main=, =deps-upstream-profile-main= and =deps-upstream-profile-consumer-main=. The engine's copied Graylib typelib compares byte-for-byte equal to the selected owned typelib. Dynamic linking resolves the normal consumer to the owned engine and the profile consumer to the newly rebuilt profile, both using canonical =uscript-visual=.
+
+| Artifact | SHA-256 |
+|----------+---------|
+| Graylib release shared library | f58ede97cff10f7fb973ff9ee12c3e34a17f4714d6802a67fd936bbf22dd2822 |
+| Graylib full GIR | ed71b7e9ea9872c283d9e68f8d800a8d60c235f75e597e0ce71fe5c4e069febc |
+| Graylib typelib, also engine copied typelib | 2a9c259f263df42501f42026a9ecb35bdfb9467ce69221b42d1af1dab3d0bb6b |
+| Engine release shared library | 4a36813a891dc0ad92d0f8f57e25b52dd9cec174b3c201db64cb1d78ea3c51f2 |
+| Engine full selected GIR | 76a7462ed9dc6c41e6fabcb7030eba35d7e97378b062113cd3f55d7d3cb291d1 |
+| Engine typelib | 8d0274a0179e43b55a5cfa7f9655495173d6b46fe1857dcaaa08ea85d5ec5242 |
+| Parent release shared library | 0dddfdbaf7dc685745eed3c10008f8275b90afd8a4b81544d983f62cfdae78c4 |
+| Parent GIR | 167d338a54f6d00eaccc710a06a2229c275fd409503fcf2a58f6d1297f960e49 |
+| Parent typelib | fee8cd9c5cdb7f6fb51a41d936cf40214cf15d89851b1698c3c8e12d8e7049ac |
+| Fresh profile engine-source snapshot | 9019bd7b39b402ec2290af338bca5fc06ef4bc34173d48054312ace27f1e0e58 |
+| Fresh profile committed raylib-source snapshot | cfb59d641043b1d129c50073ad1b5355524149305e18c2d404e6d4130ebf2112 |
+| Fresh profile engine shared library | 8dfea3d11d614184e865db94a9b080434ae8e12f663881685289b7cc2e4963d2 |
+| Parent sanitized profile shared library | eca451ebd07bb302786611f8828e85c7759cc8258cab57d1025c5f73c823d7b0 |
+| Instrumented Graylib used for thread stress | 1ef89f224a8630a42b725514c4c49def3134d72d2149a3a954c4417862488d2e |

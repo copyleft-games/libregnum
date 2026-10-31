@@ -1161,6 +1161,7 @@ lrg_camera_thirdperson_follow (LrgCameraThirdPerson *self,
 		priv->current_pitch = priv->target_pitch;
 		priv->current_yaw = priv->target_yaw;
 		priv->initialized = TRUE;
+		update_camera_position (self);
 		return;
 	}
 
@@ -1206,6 +1207,11 @@ lrg_camera_thirdperson_follow (LrgCameraThirdPerson *self,
 		priv->current_pitch = priv->target_pitch;
 		priv->current_yaw = priv->target_yaw;
 	}
+
+	/* Move the parent camera now: followed from fixed_update, the eye and
+	 * target then change inside the step and are interpolated for drawing
+	 * (begin() recomputes the same pose) */
+	update_camera_position (self);
 }
 
 void
@@ -1231,8 +1237,9 @@ lrg_camera_thirdperson_snap_to_target (LrgCameraThirdPerson *self,
 	priv->current_yaw = priv->target_yaw;
 	priv->initialized = TRUE;
 
-	/* Immediately update camera position */
+	/* Immediately update camera position; a snap is a cut, not a move */
 	update_camera_position (self);
+	lrg_camera3d_reset_interpolation (LRG_CAMERA3D (self));
 }
 
 /* Collision avoidance API */

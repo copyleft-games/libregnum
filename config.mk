@@ -19,9 +19,12 @@ PROJECT_ROOT := $(realpath $(CONFIG_MK_PATH))
 # Version Information
 # =============================================================================
 
+# Single source of truth for the release version: feeds lrg-version.h, the
+# .pc file and the shared library name. Bump rules and tagging: AGENTS.md,
+# "Versioning". API_VERSION and SO_VERSION below are separate.
 VERSION_MAJOR := 0
-VERSION_MINOR := 2
-VERSION_MICRO := 0
+VERSION_MINOR := 3
+VERSION_MICRO := 1
 VERSION := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)
 
 # API version for parallel installability (bump on ABI breaks)
@@ -73,9 +76,10 @@ BUILD_DOCS ?= 0
 # or minimal builds; the rest of the engine builds without it.
 BUILD_EDITOR ?= 1
 
-# Build the standalone engine-drawn editor UI (src/editor/ui/, needs BUILD_EDITOR).
-# Off by default: embedded hosts (e.g. cmacs) provide their own panels.
-BUILD_EDITOR_UI ?= 0
+# Build the standalone editor application (src/editor/ui/ and the lrgeditor
+# binary, needs BUILD_EDITOR). Embedded hosts (e.g. cmacs) that provide their
+# own panels can turn it off with BUILD_EDITOR_UI=0.
+BUILD_EDITOR_UI ?= 1
 
 # =============================================================================
 # Dependency Paths
@@ -323,6 +327,36 @@ ifeq ($(CAD),1)
 else
     CAD_CFLAGS :=
     CAD_LIBS :=
+endif
+
+# =============================================================================
+# AI decisions (Opt-In): typed questions to decision models
+# =============================================================================
+# Opt-in (AI=1).  ai-glib (deps/ai-glib submodule, git@gitlab.com:
+# zachpodbielniak/ai-glib.git) answers LrgDecider's typed questions
+# through its AiDecider backends: TypeSafe's Jev, a local Ollama decision
+# model, a Laya server (src/ai/lrg-decider.c).  Its static archive is
+# linked into libregnum (only the objects the decision path uses), with
+# the system libraries ai-glib builds against.  AI_GLIB_DIR points at
+# another checkout.  Without it LrgDecider has only its scripted backend.
+
+AI ?= 0
+
+AI_GLIB_BUNDLED := $(PROJECT_ROOT)/deps/ai-glib
+AI_PKG_DEPS := libsoup-3.0 json-glib-1.0 libxml-2.0 gio-unix-2.0 libdex-1 gstreamer-1.0 gstreamer-app-1.0
+
+ifeq ($(AI),1)
+    ifeq ($(AI_GLIB_DIR),)
+        AI_GLIB_DIR := $(AI_GLIB_BUNDLED)
+    endif
+    AI_GLIB_STATIC := $(AI_GLIB_DIR)/build/$(DEP_BUILD_TYPE)/libai-glib-1.0.a
+    AI_CFLAGS := -isystem $(AI_GLIB_DIR)/src -isystem $(AI_GLIB_DIR)/build/$(DEP_BUILD_TYPE) \
+                 $(shell $(PKG_CONFIG) --cflags $(AI_PKG_DEPS)) -DLRG_ENABLE_AI=1
+    # only the libraries the decision path's objects use stay needed
+    AI_LIBS := $(AI_GLIB_STATIC) -Wl,--as-needed $(shell $(PKG_CONFIG) --libs $(AI_PKG_DEPS)) -lm -Wl,--no-as-needed
+else
+    AI_CFLAGS :=
+    AI_LIBS :=
 endif
 
 MCP ?= 0
@@ -663,13 +697,24 @@ CRISPY_STATIC   := $(CRISPY_DIR)/build/$(DEP_BUILD_TYPE)/libcrispy.a
 # =============================================================================
 
 # Base CFLAGS
-BASE_CFLAGS := -std=$(CSTD) $(WARN_CFLAGS) $(FEATURE_CFLAGS)
+#
+# -include stdbool.h: under gnu89 <raylib.h> declares `bool` as an int-sized
+# enum, but raylib (C99) returns and stores a one-byte _Bool. Callers then
+# read garbage from the upper bytes (IsMouseButtonDown() "held" forever,
+# RayCollision.hit and Music.looping read through padding). GCC accepts
+# _Bool in gnu89, so defining `bool` first makes the prototypes and struct
+# layouts match raylib's ABI.
+BASE_CFLAGS := -std=$(CSTD) -include stdbool.h $(WARN_CFLAGS) $(FEATURE_CFLAGS)
 
 # Debug/Release flags
 ifeq ($(DEBUG),1)
     OPT_CFLAGS := -g3 -O0 -DLRG_DEBUG=1
 else
     OPT_CFLAGS := -O2 -DNDEBUG
+    # Bind calls between our own functions locally even though the
+    # library is -fPIC, and compile GObject cast macros (LRG_WIDGET (x)...)
+    # to plain casts; g_return_if_fail() argument checks stay on.
+    OPT_CFLAGS += -fno-semantic-interposition -DG_DISABLE_CAST_CHECKS
 endif
 
 # Trace flag
@@ -736,6 +781,7 @@ LIB_CFLAGS += -I$(CURDIR)/src
 LIB_CFLAGS += $(STEAM_CFLAGS)
 LIB_CFLAGS += $(MCP_CFLAGS)
 LIB_CFLAGS += $(CAD_CFLAGS)
+LIB_CFLAGS += $(AI_CFLAGS)
 LIB_CFLAGS += $(FFMPEG_CFLAGS)
 LIB_CFLAGS += $(OPENXR_CFLAGS)
 LIB_CFLAGS += $(ALSA_CFLAGS)
@@ -781,6 +827,7 @@ ALL_LIBS += $(DEP_LIBS) $(PLATFORM_LIBS)
 ALL_LIBS += $(STEAM_LIBS)
 ALL_LIBS += $(MCP_LIBS)
 ALL_LIBS += $(CAD_LIBS)
+ALL_LIBS += $(AI_LIBS)
 ALL_LIBS += $(FFMPEG_LIBS)
 ALL_LIBS += $(OPENXR_LIBS)
 ALL_LIBS += $(ALSA_LIBS)

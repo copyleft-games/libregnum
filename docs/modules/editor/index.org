@@ -32,6 +32,9 @@ Requires =-DLRG_BUILD_EDITOR= (=BUILD_EDITOR ?= 1=).
 | =lrg_level_to_scene= | =LrgLevel *→ LrgScene *= | Bake primitive-visual nodes to =LrgScene= |
 | =lrg_level_instantiate= | =LrgLevel, LrgWorld, LrgEngine, GError **→ gboolean= | Populate =LrgWorld= from level |
 | =lrg_level_from_scene= | =LrgScene *→ LrgLevel *= | Import Blender scene as editable level |
+| =lrg_level_import_scene_file= | =const gchar *path, GError **→ LrgLevel *= | Load a Blender scene YAML file and import it |
+
+=lrg_level_instantiate()= tags each runtime =LrgGameObject= with its node's GUID, so =lrg_world_find_by_tag()= maps play-mode objects back to authoring nodes.
 
 ** Editor Runtime Types
 :PROPERTIES:
@@ -44,6 +47,63 @@ Requires =-DLRG_BUILD_EDITOR= (=BUILD_EDITOR ?= 1=).
 | =LrgEditorSelection= | Final | Multi-select set with primary node |
 | =LrgEditorHost= | Interface | Embedding contract (render target, camera, input) |
 | =LrgEditorSoftwareHost= | Final | Concrete data-holding host implementation |
+| =LrgEditorView= | Boxed struct | Viewport camera: project / ray / orbit / pan / dolly / fly / frame / align |
+| =LrgEditorGizmo= | Final | Headless translate/rotate/scale gizmo controller (hover, drag, one undo per drag) |
+| =LrgEditorActions= | Final | Named action registry: rebindable shortcuts with alternative chords, palette fuzzy search |
+| =LrgEditorProblem= | Boxed struct | One level-validation finding (severity, code, node, message, file) |
+
+See [[file:../../editor/editor-runtime.org][Editor Runtime]] for usage of all of the above.
+
+** Editor Service Types
+:PROPERTIES:
+:CUSTOM_ID: editor-service-types
+:END:
+| Type | Kind | Description |
+|------+------+-------------|
+| =LrgEditorSettings= | Final | Per-user preferences in =editor.yaml= (external editor, keybindings, layout, recent files) |
+| =LrgExternalEditor= | Final | Opens files at line/column in =$VISUAL= / =$EDITOR=, a preset or a template; Emacs-first |
+| =LrgEditorLog= | Final | Ring buffer of captured GLib log records for the console and IPC |
+| =LrgEditorLogRecord= | Boxed struct | One captured log message |
+| =LrgEditorServer= | Final | JSON-lines IPC server on a Unix socket exposing an =LrgEditor= |
+| =LrgEditorApp= | Final | The full editor application (=lrgeditor=), drawn with =LrgGuiContext= |
+
+** Editor Runtime Functions
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-functions
+:END:
+| Area | Functions |
+|------+-----------|
+| Document | =lrg_editor_new_level=, =lrg_editor_save=, =lrg_editor_reload=, =lrg_editor_get_path=, =lrg_editor_set_path=, =lrg_editor_serialize= |
+| Dirty tracking | =lrg_editor_is_dirty=, =lrg_editor_mark_clean=, =lrg_editor_mark_modified= |
+| Selection | =lrg_editor_toggle_selected=, =lrg_editor_select_nodes=, =lrg_editor_select_all=, =lrg_editor_get_selected_roots=, =lrg_editor_find_nodes=, =lrg_editor_find_node= |
+| Structure | =lrg_editor_insert_node=, =lrg_editor_move_node= (=keep_world=), =lrg_editor_rename_node=, =lrg_editor_delete_selection=, =lrg_editor_instantiate_prefab= |
+| Clipboard | =lrg_editor_copy_selection=, =lrg_editor_cut_selection=, =lrg_editor_paste=, =lrg_editor_duplicate_selection=, =lrg_editor_get_clipboard=, =lrg_editor_set_clipboard= |
+| Edits | =lrg_editor_transform_node= (=merge=), =lrg_editor_set_object_property=, =lrg_editor_set_visual_param=, =lrg_editor_set_visual=, =lrg_editor_add_component=, =lrg_editor_remove_component=, =lrg_editor_set_component_value=, =lrg_editor_add_script=, =lrg_editor_remove_script= |
+| Undo plumbing | =lrg_editor_execute=, =lrg_editor_begin_group=, =lrg_editor_end_group=, =lrg_editor_snapshot_node=, =lrg_editor_commit_node_state= |
+| History | =lrg_editor_get_undo_count=, =lrg_editor_get_redo_count=, =lrg_editor_get_undo_command=, =lrg_editor_get_redo_command=, =lrg_editor_jump_to_history=, =lrg_editor_clear_history=, =lrg_editor_set_history_limit=, =lrg_editor_get_history_limit= |
+| Tool / snap / space | =lrg_editor_get_snap_enabled=, =lrg_editor_set_snap_enabled=, =lrg_editor_get_space=, =lrg_editor_set_space= |
+| Commands | =lrg_editor_command_new_insert_node=, =lrg_editor_command_new_move=, =lrg_editor_command_new_set_visual_param=, =lrg_editor_command_new_group=, =lrg_editor_command_group_append=, =lrg_editor_command_group_get_n_children=, =lrg_editor_command_group_get_child=, =lrg_editor_command_new_node_state=, =lrg_editor_command_get_node=, =lrg_editor_command_get_label=, =lrg_editor_command_set_label=, =lrg_editor_command_get_serial= |
+| Math | =lrg_editor_math_identity=, =lrg_editor_math_compose=, =lrg_editor_math_decompose=, =lrg_editor_math_multiply=, =lrg_editor_math_invert=, =lrg_editor_math_transform_point=, =lrg_editor_math_transform_direction= (column-major 4x4) |
+| Node transforms | =lrg_editor_node_get_local_matrix=, =lrg_editor_node_get_world_matrix=, =lrg_editor_node_get_world_position=, =lrg_editor_world_to_local=, =lrg_editor_node_get_local_bounds= |
+| View | =lrg_editor_view_init_default=, =lrg_editor_view_copy=, =lrg_editor_view_free=, =lrg_editor_view_get_view_matrix=, =lrg_editor_view_get_projection_matrix=, =lrg_editor_view_project=, =lrg_editor_view_get_ray=, =lrg_editor_view_pixel_world_size=, =lrg_editor_view_orbit=, =lrg_editor_view_pan=, =lrg_editor_view_dolly=, =lrg_editor_view_fly=, =lrg_editor_view_frame=, =lrg_editor_view_align= |
+| Picking | =lrg_editor_ray_aabb=, =lrg_editor_ray_plane=, =lrg_editor_ray_node=, =lrg_editor_pick=, =lrg_editor_pick_all=, =lrg_editor_box_select=, =lrg_editor_compute_bounds=, =lrg_editor_snap_value= |
+| Gizmo | =lrg_editor_gizmo_new=, =lrg_editor_gizmo_is_visible=, =lrg_editor_gizmo_get_origin=, =lrg_editor_gizmo_get_axis=, =lrg_editor_gizmo_get_size=, =lrg_editor_gizmo_hit_test=, =lrg_editor_gizmo_update_hover=, =lrg_editor_gizmo_get_hovered=, =lrg_editor_gizmo_get_active=, =lrg_editor_gizmo_is_dragging=, =lrg_editor_gizmo_begin_drag=, =lrg_editor_gizmo_begin_drag_handle=, =lrg_editor_gizmo_drag=, =lrg_editor_gizmo_end_drag=, =lrg_editor_gizmo_cancel_drag=, =lrg_editor_gizmo_get_drag_delta= |
+| Actions | =lrg_editor_shortcut_parse=, =lrg_editor_shortcut_format=, =lrg_editor_fuzzy_score=, =lrg_editor_actions_new=, =lrg_editor_actions_add=, =lrg_editor_actions_has=, =lrg_editor_actions_get_label=, =lrg_editor_actions_get_category=, =lrg_editor_actions_get_shortcut=, =lrg_editor_actions_get_default_shortcut=, =lrg_editor_actions_is_enabled=, =lrg_editor_actions_is_checked=, =lrg_editor_actions_activate=, =lrg_editor_actions_list=, =lrg_editor_actions_search=, =lrg_editor_actions_find_by_shortcut=, =lrg_editor_actions_find_conflicts= |
+| Validation | =lrg_editor_validate_level=, =lrg_editor_problem_copy=, =lrg_editor_problem_free=, =lrg_editor_problem_severity_to_string= |
+
+=LrgEditor= properties: =level=, =path=, =dirty=, =tool=, =space=, =snap-enabled=, =history-limit=. Signals: =changed=, =level-replaced= (=LrgLevel *=), =saved= (=const gchar *path=).
+
+** Editor Service Functions
+:PROPERTIES:
+:CUSTOM_ID: editor-service-functions
+:END:
+| Type | Functions |
+|------+-----------|
+| =LrgEditorSettings= | =lrg_editor_settings_new=, =lrg_editor_settings_get_default_path=, =lrg_editor_settings_load=, =lrg_editor_settings_save=, =lrg_editor_settings_to_data=, =lrg_editor_settings_load_from_data=, =lrg_editor_settings_reset=, =lrg_editor_settings_get_external_editor=, =lrg_editor_settings_get_external_editor_command=, =lrg_editor_settings_get_terminal_command=, =lrg_editor_settings_get_emacs_integration=, =lrg_editor_settings_add_recent_project=, =lrg_editor_settings_add_recent_level=, =lrg_editor_settings_get_recent_projects=, =lrg_editor_settings_get_recent_levels=, =lrg_editor_settings_get_keybinding=, =lrg_editor_settings_set_keybinding=, =lrg_editor_settings_list_keybindings= |
+| =LrgExternalEditor= | =lrg_external_editor_list_presets=, =lrg_external_editor_preset_get_label=, =lrg_external_editor_preset_get_template=, =lrg_external_editor_preset_is_terminal=, =lrg_external_editor_preset_for_command=, =lrg_external_editor_preset_is_emacs=, =lrg_external_editor_new=, =lrg_external_editor_get_settings=, =lrg_external_editor_set_project_dir=, =lrg_external_editor_resolve_preset=, =lrg_external_editor_build_argv=, =lrg_external_editor_open=, =lrg_external_editor_find_terminal=, =lrg_external_editor_expand_template=; signals =open-file=, =launched=, =failed= |
+| =LrgEditorLog= | =lrg_editor_log_new=, =lrg_editor_log_install=, =lrg_editor_log_append=, =lrg_editor_log_get_n_records=, =lrg_editor_log_get_record=, =lrg_editor_log_count_level=, =lrg_editor_log_clear=, =lrg_editor_log_level_to_string=, =lrg_editor_log_record_copy=, =lrg_editor_log_record_free=; signals =message=, =cleared= |
+| =LrgEditorServer= | =lrg_editor_server_new=, =lrg_editor_server_get_editor=, =lrg_editor_server_set_external_editor=, =lrg_editor_server_set_log=, =lrg_editor_server_set_project_dir=, =lrg_editor_server_get_project_dir=, =lrg_editor_server_get_default_socket_path=, =lrg_editor_server_start=, =lrg_editor_server_stop=, =lrg_editor_server_get_socket_path=, =lrg_editor_server_get_n_clients=, =lrg_editor_server_has_capability=, =lrg_editor_server_register_method=, =lrg_editor_server_list_methods=, =lrg_editor_server_emit_event=, =lrg_editor_server_dispatch=, =lrg_editor_server_node_to_json=; signals =client-connected=, =client-disconnected= |
+| =LrgEditorApp= | =lrg_editor_app_new=, =lrg_editor_app_get_editor=, =lrg_editor_app_get_settings=, =lrg_editor_app_get_actions=, =lrg_editor_app_get_server=, =lrg_editor_app_get_external_editor=, =lrg_editor_app_get_gui=, =lrg_editor_app_get_project_dir=, =lrg_editor_app_load_settings=, =lrg_editor_app_save_settings=, =lrg_editor_app_open_project=, =lrg_editor_app_new_project=, =lrg_editor_app_open_level=, =lrg_editor_app_start_server=, =lrg_editor_app_frame=, =lrg_editor_app_activate_action=, =lrg_editor_app_get_status=, =lrg_editor_app_is_playing=, =lrg_editor_app_request_quit=, =lrg_editor_app_should_quit=, =lrg_editor_app_set_window_size=, =lrg_editor_app_run=, =lrg_editor_app_run_headless= |
 
 ** Project and Asset Types
 :PROPERTIES:
@@ -54,6 +114,8 @@ Requires =-DLRG_BUILD_EDITOR= (=BUILD_EDITOR ?= 1=).
 | =LrgProject= | Final | =project.ryaml= manifest; asset dirs; game output |
 | =LrgAssetDatabase= | Final | Recursive asset scanner + classifier |
 | =LrgAssetEntry= | Final | Single classified asset record (path, name, type, guid) |
+
+New =LrgProject= functions: =lrg_project_get_run_command= / =lrg_project_set_run_command= (=Run Game= template with ={project}=, ={level}=, ={module}=), =lrg_project_get_scripts_dir= / =lrg_project_set_scripts_dir=, =lrg_project_clear_asset_dirs=, =lrg_project_resolve=, =lrg_project_relativize=.
 
 ** Prefab Functions
 :PROPERTIES:
@@ -74,7 +136,11 @@ Requires =-DLRG_BUILD_EDITOR= (=BUILD_EDITOR ?= 1=).
 |------+--------+-------------|
 | =LrgNodeVisualKind= | NONE, PRIMITIVE, MESH_ASSET, SPRITE, TILEMAP, LIGHT, CAMERA, AUDIO_EMITTER, PREFAB_INSTANCE | Visual payload discriminator |
 | =LrgEditorTool= | SELECT, TRANSLATE, ROTATE, SCALE | Active manipulation gizmo |
-| =LrgEditorCommandKind= | TRANSFORM, SET_PROPERTY, ADD_NODE, DELETE_NODE, REPARENT | Undo record kind |
+| =LrgEditorCommandKind= | TRANSFORM, SET_PROPERTY, ADD_NODE, DELETE_NODE, REPARENT, SET_VISUAL_PARAM, GROUP, NODE_STATE | Undo record kind |
+| =LrgEditorSpace= | LOCAL, WORLD | Gizmo coordinate space |
+| =LrgEditorGizmoHandle= | NONE, X, Y, Z, XY, YZ, XZ, CENTER | Grabbable gizmo part |
+| =LrgEditorProblemSeverity= | INFO, WARNING, ERROR | Validation finding severity |
+| =LrgEditorServerError= | PARSE, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, NOT_FOUND, FAILED | IPC error domain (wire nick, e.g. "not-found") |
 | =LrgAssetType= | UNKNOWN, TEXTURE, MODEL, AUDIO, FONT, SCRIPT, LEVEL, PREFAB, TILESET, SCENE | Classified asset kind |
 | =LrgLevelError= | FAILED, IO, PARSE, TYPE | Error domain for level I/O |
 
@@ -131,6 +197,21 @@ GPtrArray *  lrg_node_get_components    (LrgNode *);
 void         lrg_node_add_script        (LrgNode *, LrgScriptBinding *);
 GPtrArray *  lrg_node_get_scripts       (LrgNode *);
 void         lrg_node_instantiate       (LrgNode *, LrgGameObject *);
+/* Tree editing helpers */
+void         lrg_node_insert_child      (LrgNode *, LrgNode *child, gint index);
+gint         lrg_node_get_child_index   (LrgNode *, LrgNode *child);
+gboolean     lrg_node_is_ancestor_of    (LrgNode *, LrgNode *node);
+guint        lrg_node_get_depth         (LrgNode *);
+gchar *      lrg_node_get_path          (LrgNode *);
+LrgNode *    lrg_node_find_by_path      (LrgNode *, const gchar *path);
+void         lrg_node_insert_component  (LrgNode *, LrgComponentDesc *, gint index);
+gboolean     lrg_node_remove_component_at (LrgNode *, guint index);
+LrgComponentDesc *lrg_node_find_component (LrgNode *, const gchar *type_name);
+void         lrg_node_insert_script     (LrgNode *, LrgScriptBinding *, gint index);
+gboolean     lrg_node_remove_script_at  (LrgNode *, guint index);
+void         lrg_node_copy_state        (LrgNode *, LrgNode *source);
+gboolean     lrg_node_state_equal       (LrgNode *, LrgNode *other);
+gboolean     lrg_node_foreach           (LrgNode *, LrgNodeForeachFunc func, gpointer user_data);
 #+end_src
 
 ** See Also
@@ -141,6 +222,10 @@ void         lrg_node_instantiate       (LrgNode *, LrgGameObject *);
 - [[file:../../editor/level-model.org][Level Model]] — types in depth
 - [[file:../../editor/yaml-format.org][.rlevel Format]] — YAML schema
 - [[file:../../editor/editor-runtime.org][Editor Runtime]] — LrgEditor / commands / host
+- [[file:../../editor/editor-app.org][Editor Application]] — =lrgeditor= / =LrgEditorApp=
+- [[file:../../editor/external-editor.org][External Editor]] — =LrgEditorSettings= / =LrgExternalEditor=
+- [[file:../../editor/emacs.org][Emacs Integration]] — =libregnum.el=
+- [[file:../../editor/ipc-protocol.org][IPC Protocol]] — =LrgEditorServer= methods and events
 - [[file:../../editor/prefabs.org][Prefabs]]
 - [[file:../../editor/projects-and-assets.org][Projects and Assets]]
 - [[file:../../editor/tutorial.org][Tutorial]]

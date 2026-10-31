@@ -1,6 +1,7 @@
 /* Configurable PCM audio graph. SPDX-License-Identifier: AGPL-3.0-or-later */
 #include "lrg-audio-mixer.h"
 #include <gio/gio.h>
+#include <string.h>
 #include <math.h>
 
 typedef struct
@@ -40,6 +41,15 @@ struct _LrgAudioMixer
     guint64 last_id;
     GPtrArray *buses;
     GPtrArray *voices;
+
+    /* Render scratch kept between refills: the per-bus mix (8 bytes a
+     * sample a bus: 64 KiB a bus for 4096 stereo frames) and pump()'s
+     * output. Fresh ones past glibc's 128 KiB mmap threshold cost an mmap,
+     * page faults and an munmap on every refill. */
+    gdouble *mix;
+    gsize    mix_len;
+    gfloat  *out;
+    gsize    out_len;
 };
 G_DEFINE_TYPE (LrgAudioMixer, lrg_audio_mixer, G_TYPE_OBJECT)
 
@@ -70,6 +80,8 @@ lrg_audio_mixer_finalize (GObject *object)
 
     g_ptr_array_unref (self->buses);
     g_ptr_array_unref (self->voices);
+    g_free (self->mix);
+    g_free (self->out);
     G_OBJECT_CLASS (lrg_audio_mixer_parent_class)->finalize (object);
 }
 
@@ -350,27 +362,41 @@ lrg_audio_mixer_get_voice_count (LrgAudioMixer *self)
     return self->voices->len;
 }
 
-gfloat *
-lrg_audio_mixer_render (LrgAudioMixer *self,
-                        guint frames,
-                        gsize *n_samples)
+/* Grows (never shrinks) a scratch buffer to at least @len elements. */
+static gpointer
+scratch_reserve (gpointer  buffer,
+                 gsize    *capacity,
+                 gsize     len,
+                 gsize     element)
 {
-    g_autofree gdouble *buffers = NULL;
-    gfloat *output;
+    if (*capacity >= len)
+        return buffer;
+    *capacity = len;
+    return g_realloc_n (buffer, len, element);
+}
+
+/*
+ * mixer_render_into:
+ * Mixes @frames frames into @output (frames * channels samples). The
+ * per-bus mix uses the mixer's scratch buffer.
+ */
+static void
+mixer_render_into (LrgAudioMixer *self,
+                   guint frames,
+                   gfloat *output)
+{
+    gdouble *buffers;
     guint indegree[256] = { 0 };
     gboolean done[256] = { FALSE };
     gsize count;
     gsize k;
     guint i, j, step;
 
-    g_return_val_if_fail (LRG_IS_AUDIO_MIXER (self), NULL);
-    g_return_val_if_fail (n_samples != NULL, NULL);
-    *n_samples = 0;
-    if (frames == 0 || frames > 65536)
-        return NULL;
     count = (gsize)frames * self->channels;
-    buffers = g_new0 (gdouble, count * self->buses->len);
-    output = g_new (gfloat, count);
+    self->mix = scratch_reserve (self->mix, &self->mix_len,
+                                 count * self->buses->len, sizeof (gdouble));
+    buffers = self->mix;
+    memset (buffers, 0, count * self->buses->len * sizeof (gdouble));
     for (i = 0; i < self->voices->len;)
     {
         Voice *voice = g_ptr_array_index (self->voices, i);
@@ -452,6 +478,24 @@ lrg_audio_mixer_render (LrgAudioMixer *self,
     }
     for (k = 0; k < count; k++)
         output[k] = (gfloat)CLAMP (buffers[k], -1.0, 1.0);
+}
+
+gfloat *
+lrg_audio_mixer_render (LrgAudioMixer *self,
+                        guint frames,
+                        gsize *n_samples)
+{
+    gfloat *output;
+    gsize count;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MIXER (self), NULL);
+    g_return_val_if_fail (n_samples != NULL, NULL);
+    *n_samples = 0;
+    if (frames == 0 || frames > 65536)
+        return NULL;
+    count = (gsize)frames * self->channels;
+    output = g_new (gfloat, count);
+    mixer_render_into (self, frames, output);
     *n_samples = count;
     return output;
 }
@@ -462,7 +506,6 @@ lrg_audio_mixer_pump (LrgAudioMixer *self,
                       guint frames,
                       GError **error)
 {
-    g_autofree gfloat *samples = NULL;
     gsize count;
 
     g_return_val_if_fail (LRG_IS_AUDIO_MIXER (self), FALSE);
@@ -478,7 +521,9 @@ lrg_audio_mixer_pump (LrgAudioMixer *self,
     }
     if (!grl_audio_stream_is_playing (stream) || !grl_audio_stream_is_processed (stream))
         return TRUE;
-    samples = lrg_audio_mixer_render (self, frames, &count);
-    grl_audio_stream_update (stream, samples, (gint)frames);
+    count = (gsize)frames * self->channels;
+    self->out = scratch_reserve (self->out, &self->out_len, count, sizeof (gfloat));
+    mixer_render_into (self, frames, self->out);
+    grl_audio_stream_update (stream, self->out, (gint)frames);
     return TRUE;
 }

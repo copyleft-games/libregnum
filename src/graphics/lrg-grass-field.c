@@ -6,12 +6,21 @@
  *
  * Instanced grass. Placement hashes (seed, cell, slot) so it needs no
  * state and no random stream: any cell can be placed again, in any
- * order, on any thread, with the same result. The draw is one
- * DrawMeshInstanced() of a 12-vertex card mesh; the vertex shader
- * bends the card in the wind, shades it from base to tip, lights it
- * with the bound light set (LRG_LIGHT_SAMPLE_GLSL, as the billboard
- * batch does) and computes the distance fade, which the fragment
- * shader turns into a dithered discard (no sorting needed).
+ * order, on any thread, with the same result. The draw is an
+ * instanced draw of a 12-vertex card mesh; the vertex shader bends the
+ * card in the wind, shades it from base to tip, lights it with the bound
+ * light set (LRG_LIGHT_SAMPLE_GLSL, as the billboard batch does) and
+ * computes the distance fade, which the fragment shader turns into a
+ * dithered discard (no sorting needed).
+ *
+ * The instance matrices live in a vertex buffer of their own, sent only
+ * when the blades change (raylib's DrawMeshInstanced() makes, fills and
+ * deletes one on every call). The blades are cut into groups of
+ * GRASS_GROUP consecutive instances with the box their cards can reach
+ * (wind included); a draw skips the groups wholly outside the frustum or
+ * wholly beyond the fade's end and draws the rest in their original
+ * order, consecutive groups as one call, so what is drawn is drawn
+ * exactly as one DrawMeshInstanced() of every blade drew it.
  */
 
 #include "config.h"
@@ -27,6 +36,25 @@
 #include "graphics/lrg-grass-field.h"
 #include "graphics/lrg-light-set-private.h"
 #include "graphics/lrg-hash-noise-private.h"
+#include "graphics/lrg-draw-cull-private.h"
+#include "core/lrg-prewarm.h"
+
+/* the material maps LoadMaterialDefault() allocates and the draw walks:
+ * raylib's MAX_MATERIAL_MAPS (rmodels.c, not exported) */
+#define GRASS_MATERIAL_MAPS (12u)
+
+/* instances per culling group (consecutive in the caller's order) */
+#define GRASS_GROUP (256u)
+
+/* one culling group: instances first .. first + count - 1 and the box
+ * their cards cover at rest (before the wind) */
+typedef struct
+{
+    guint  first;
+    guint  count;
+    gfloat min[3];
+    gfloat max[3];
+} GrassGroup;
 
 G_DEFINE_BOXED_TYPE (LrgGrassBlade, lrg_grass_blade, lrg_grass_blade_copy, lrg_grass_blade_free)
 
@@ -97,6 +125,10 @@ struct _LrgGrassField
     gfloat       tip[3];
 
     GArray      *instances;     /* Matrix */
+    GArray      *groups;        /* GrassGroup */
+    gboolean     instances_dirty; /* the instance buffer is behind */
+    guint        instance_vbo;  /* 0: none yet */
+    guint        instance_capacity; /* instances the buffer holds room for */
 
     /* GPU, made on the first draw */
     gboolean     gpu_tried;
@@ -115,7 +147,11 @@ struct _LrgGrassField
     LrgLightSetFogLocations    fog_locs;
 };
 
-G_DEFINE_FINAL_TYPE (LrgGrassField, lrg_grass_field, G_TYPE_OBJECT)
+static void lrg_grass_field_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgGrassField, lrg_grass_field, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_grass_field_prewarmable_init))
 
 LrgGrassBlade *
 lrg_grass_blade_copy (const LrgGrassBlade *blade)
@@ -139,6 +175,7 @@ lrg_grass_field_finalize (GObject *object)
     if (IsWindowReady ())
         lrg_grass_field_release_gpu (self);
     g_clear_pointer (&self->instances, g_array_unref);
+    g_clear_pointer (&self->groups, g_array_unref);
 
     G_OBJECT_CLASS (lrg_grass_field_parent_class)->finalize (object);
 }
@@ -165,6 +202,11 @@ lrg_grass_field_init (LrgGrassField *self)
     self->base[0] = 0.18f; self->base[1] = 0.32f; self->base[2] = 0.12f;
     self->tip[0] = 0.45f; self->tip[1] = 0.62f; self->tip[2] = 0.25f;
     self->instances = g_array_new (FALSE, FALSE, sizeof (Matrix));
+    self->groups = g_array_new (FALSE, FALSE, sizeof (GrassGroup));
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgGrassField *
@@ -324,6 +366,53 @@ lrg_grass_field_place_cell (LrgGrassField      *self,
     return placed;
 }
 
+/* build_groups:
+ * Cuts the instances into GRASS_GROUP runs and boxes each: the card
+ * spans x, z in [-0.5, 0.5] and y in [0, 1] before its matrix, so a
+ * blade covers its matrix applied to the box's centre plus |M| times
+ * the half extents. */
+static void
+build_groups (LrgGrassField *self)
+{
+    guint first;
+
+    g_array_set_size (self->groups, 0);
+    for (first = 0; first < self->instances->len; first += GRASS_GROUP)
+    {
+        GrassGroup group;
+        guint      i;
+        guint      k;
+
+        group.first = first;
+        group.count = MIN (self->instances->len - first, GRASS_GROUP);
+        for (k = 0; k < 3; k++)
+        {
+            group.min[k] = G_MAXFLOAT;
+            group.max[k] = -G_MAXFLOAT;
+        }
+        for (i = 0; i < group.count; i++)
+        {
+            const Matrix *m = &g_array_index (self->instances, Matrix, first + i);
+            gfloat        c[3];
+            gfloat        e[3];
+
+            /* centre (0, 0.5, 0) and half extents (0.5, 0.5, 0.5) */
+            c[0] = m->m4 * 0.5f + m->m12;
+            c[1] = m->m5 * 0.5f + m->m13;
+            c[2] = m->m6 * 0.5f + m->m14;
+            e[0] = 0.5f * (fabsf (m->m0) + fabsf (m->m4) + fabsf (m->m8));
+            e[1] = 0.5f * (fabsf (m->m1) + fabsf (m->m5) + fabsf (m->m9));
+            e[2] = 0.5f * (fabsf (m->m2) + fabsf (m->m6) + fabsf (m->m10));
+            for (k = 0; k < 3; k++)
+            {
+                group.min[k] = MIN (group.min[k], c[k] - e[k]);
+                group.max[k] = MAX (group.max[k], c[k] + e[k]);
+            }
+        }
+        g_array_append_val (self->groups, group);
+    }
+}
+
 void
 lrg_grass_field_set_blades (LrgGrassField       *self,
                             const LrgGrassBlade *blades,
@@ -356,6 +445,8 @@ lrg_grass_field_set_blades (LrgGrassField       *self,
         m->m14 = b->position[2];
         m->m15 = 1.0f;
     }
+    build_groups (self);
+    self->instances_dirty = TRUE;
 }
 
 guint
@@ -481,6 +572,246 @@ ensure_gpu (LrgGrassField *self)
     return TRUE;
 }
 
+/* upload_instances:
+ * Sends the instance matrices (column-major, as raylib's
+ * MatrixToFloatV() lays them out; a Matrix declares its fields in
+ * another order, so they are copied one by one) into the instance
+ * buffer, growing it when the blades outgrew it. */
+static void
+upload_instances (LrgGrassField *self)
+{
+    g_autofree gfloat *data = NULL;
+    guint              n = self->instances->len;
+    guint              i;
+
+    data = g_new (gfloat, (gsize)n * 16);
+    for (i = 0; i < n; i++)
+    {
+        const Matrix *m = &g_array_index (self->instances, Matrix, i);
+        gfloat       *v = data + (gsize)i * 16;
+
+        v[0] = m->m0;   v[1] = m->m1;   v[2] = m->m2;   v[3] = m->m3;
+        v[4] = m->m4;   v[5] = m->m5;   v[6] = m->m6;   v[7] = m->m7;
+        v[8] = m->m8;   v[9] = m->m9;   v[10] = m->m10; v[11] = m->m11;
+        v[12] = m->m12; v[13] = m->m13; v[14] = m->m14; v[15] = m->m15;
+    }
+    if (self->instance_vbo != 0 && self->instance_capacity < n)
+    {
+        rlUnloadVertexBuffer (self->instance_vbo);
+        self->instance_vbo = 0;
+    }
+    if (self->instance_vbo == 0)
+    {
+        self->instance_vbo = rlLoadVertexBuffer (data, (gint)((gsize)n * 16 * sizeof (gfloat)),
+                                                 FALSE);
+        self->instance_capacity = n;
+    }
+    else
+    {
+        rlUpdateVertexBuffer (self->instance_vbo, data,
+                              (gint)((gsize)n * 16 * sizeof (gfloat)), 0);
+    }
+    self->instances_dirty = FALSE;
+}
+
+/* group_visible:
+ * Whether any blade of @group can show: inside @frustum (when not
+ * %NULL) and, when @eye is not %NULL, nearer it than the fade's end
+ * (from there on 1 - smoothstep (start, end, d) is 0 and every fragment
+ * is discarded). @pad_x and @pad_z are the most the wind moves a vertex
+ * along x and z. */
+static gboolean
+group_visible (LrgGrassField        *self,
+               const GrassGroup     *group,
+               const LrgDrawFrustum *frustum,
+               const gfloat         *eye,
+               gfloat                pad_x,
+               gfloat                pad_z)
+{
+    gfloat lo[3];
+    gfloat hi[3];
+    gfloat d2;
+    gfloat reach;
+    guint  k;
+
+    lo[0] = group->min[0] - pad_x;
+    lo[1] = group->min[1];
+    lo[2] = group->min[2] - pad_z;
+    hi[0] = group->max[0] + pad_x;
+    hi[1] = group->max[1];
+    hi[2] = group->max[2] + pad_z;
+    if (frustum != NULL && !lrg_draw_cull_frustum_box_visible (frustum, lo, hi))
+        return FALSE;
+    if (eye == NULL)
+        return TRUE;
+
+    d2 = 0.0f;
+    for (k = 0; k < 3; k++)
+    {
+        gfloat e = eye[k] < lo[k] ? lo[k] - eye[k] : eye[k] > hi[k] ? eye[k] - hi[k] : 0.0f;
+
+        d2 += e * e;
+    }
+    reach = self->fade_end * 1.001f + 0.01f;
+    return d2 <= reach * reach;
+}
+
+/* draw_run:
+ * One instanced draw of instances @first .. @first + @count - 1: the
+ * instance attribute is pointed at the run's first matrix. */
+static void
+draw_run (LrgGrassField *self,
+          guint          first,
+          guint          count)
+{
+    gint  loc = self->material.shader.locs[SHADER_LOC_VERTEX_INSTANCETRANSFORM];
+    guint k;
+
+    for (k = 0; k < 4; k++)
+    {
+        rlEnableVertexAttribute ((guint)loc + k);
+        rlSetVertexAttribute ((guint)loc + k, 4, RL_FLOAT, FALSE, (gint)(16 * sizeof (gfloat)),
+                              (gint)(((gsize)first * 16 + k * 4) * sizeof (gfloat)));
+        rlSetVertexAttributeDivisor ((guint)loc + k, 1);
+    }
+    rlDrawVertexArrayElementsInstanced (0, self->mesh.triangleCount * 3, NULL, (gint)count);
+}
+
+/* draw_instanced:
+ * DrawMeshInstanced() with the persistent instance buffer: the same
+ * uniforms, textures and matrices (mvp = P x MV x T), one instanced
+ * draw per run of visible groups. Needs the mesh's vertex array. */
+static void
+draw_instanced (LrgGrassField *self,
+                const gfloat  *eye)
+{
+    LrgDrawFrustum frustum;
+    const LrgDrawFrustum *use_frustum;
+    const gfloat  *use_eye;
+    Shader         shader = self->material.shader;
+    Matrix         view;
+    Matrix         projection;
+    Matrix         mvp;
+    gfloat         pad_x;
+    gfloat         pad_z;
+    guint          run_first = 0;
+    guint          run_count = 0;
+    guint          i;
+
+    if (self->instances_dirty || self->instance_vbo == 0)
+        upload_instances (self);
+
+    /* the uniforms DrawMeshInstanced() sends */
+    rlEnableShader (shader.id);
+    if (shader.locs[SHADER_LOC_COLOR_DIFFUSE] != -1)
+    {
+        Color  c = self->material.maps[MATERIAL_MAP_DIFFUSE].color;
+        gfloat values[4];
+
+        values[0] = (gfloat)c.r / 255.0f;
+        values[1] = (gfloat)c.g / 255.0f;
+        values[2] = (gfloat)c.b / 255.0f;
+        values[3] = (gfloat)c.a / 255.0f;
+        rlSetUniform (shader.locs[SHADER_LOC_COLOR_DIFFUSE], values, SHADER_UNIFORM_VEC4, 1);
+    }
+    if (shader.locs[SHADER_LOC_COLOR_SPECULAR] != -1)
+    {
+        Color  c = self->material.maps[MATERIAL_MAP_SPECULAR].color;
+        gfloat values[4];
+
+        values[0] = (gfloat)c.r / 255.0f;
+        values[1] = (gfloat)c.g / 255.0f;
+        values[2] = (gfloat)c.b / 255.0f;
+        values[3] = (gfloat)c.a / 255.0f;
+        rlSetUniform (shader.locs[SHADER_LOC_COLOR_SPECULAR], values, SHADER_UNIFORM_VEC4, 1);
+    }
+    view = rlGetMatrixModelview ();
+    projection = rlGetMatrixProjection ();
+    if (shader.locs[SHADER_LOC_MATRIX_VIEW] != -1)
+        rlSetUniformMatrix (shader.locs[SHADER_LOC_MATRIX_VIEW], view);
+    if (shader.locs[SHADER_LOC_MATRIX_PROJECTION] != -1)
+        rlSetUniformMatrix (shader.locs[SHADER_LOC_MATRIX_PROJECTION], projection);
+    if (shader.locs[SHADER_LOC_MATRIX_NORMAL] != -1)
+    {
+        /* the model matrix is the identity: so is its normal matrix */
+        Matrix identity;
+
+        memset (&identity, 0, sizeof identity);
+        identity.m0 = 1.0f;
+        identity.m5 = 1.0f;
+        identity.m10 = 1.0f;
+        identity.m15 = 1.0f;
+        rlSetUniformMatrix (shader.locs[SHADER_LOC_MATRIX_NORMAL], identity);
+    }
+    for (i = 0; i < GRASS_MATERIAL_MAPS; i++)
+    {
+        gint unit = (gint)i;
+
+        if (self->material.maps[i].texture.id == 0)
+            continue;
+        rlActiveTextureSlot (unit);
+        if (i == MATERIAL_MAP_IRRADIANCE || i == MATERIAL_MAP_PREFILTER
+            || i == MATERIAL_MAP_CUBEMAP)
+            rlEnableTextureCubemap (self->material.maps[i].texture.id);
+        else
+            rlEnableTexture (self->material.maps[i].texture.id);
+        rlSetUniform (shader.locs[SHADER_LOC_MAP_DIFFUSE + i], &unit, SHADER_UNIFORM_INT, 1);
+    }
+    /* raylib's MatrixMultiply (MatrixMultiply (T, V), P) */
+    mvp = lrg_draw_cull_mul (projection, lrg_draw_cull_mul (view, rlGetMatrixTransform ()));
+    rlSetUniformMatrix (shader.locs[SHADER_LOC_MATRIX_MVP], mvp);
+
+    /* what may be skipped: groups outside that same mvp's frustum, and
+     * groups past the fade (only with a finite eye and wind) */
+    use_frustum = lrg_draw_cull_frustum_from_matrix (&frustum, mvp) ? &frustum : NULL;
+    use_eye = isfinite (eye[0]) && isfinite (eye[1]) && isfinite (eye[2]) ? eye : NULL;
+    pad_x = self->wind_strength * 1.001f;
+    pad_z = self->wind_strength * 0.6f * 1.001f;
+    if (!isfinite (pad_x))
+    {
+        use_frustum = NULL;
+        use_eye = NULL;
+    }
+
+    rlEnableVertexArray (self->mesh.vaoId);
+    rlEnableVertexBuffer (self->instance_vbo);
+    for (i = 0; i < self->groups->len; i++)
+    {
+        const GrassGroup *group = &g_array_index (self->groups, GrassGroup, i);
+
+        if ((use_frustum != NULL || use_eye != NULL)
+            && !group_visible (self, group, use_frustum, use_eye, pad_x, pad_z))
+            continue;
+        if (run_count > 0 && run_first + run_count == group->first)
+        {
+            run_count += group->count;
+            continue;
+        }
+        if (run_count > 0)
+            draw_run (self, run_first, run_count);
+        run_first = group->first;
+        run_count = group->count;
+    }
+    if (run_count > 0)
+        draw_run (self, run_first, run_count);
+
+    for (i = 0; i < GRASS_MATERIAL_MAPS; i++)
+    {
+        if (self->material.maps[i].texture.id == 0)
+            continue;
+        rlActiveTextureSlot ((gint)i);
+        if (i == MATERIAL_MAP_IRRADIANCE || i == MATERIAL_MAP_PREFILTER
+            || i == MATERIAL_MAP_CUBEMAP)
+            rlDisableTextureCubemap ();
+        else
+            rlDisableTexture ();
+    }
+    rlDisableVertexArray ();
+    rlDisableVertexBuffer ();
+    rlDisableVertexBufferElement ();
+    rlDisableShader ();
+}
+
 void
 lrg_grass_field_draw (LrgGrassField *self,
                       const gfloat  *eye,
@@ -515,8 +846,17 @@ lrg_grass_field_draw (LrgGrassField *self,
     lrg_light_set_upload_fog (lights, self->shader, &self->fog_locs);
 
     rlDisableBackfaceCulling ();
-    DrawMeshInstanced (self->mesh, self->material, (const Matrix *)self->instances->data,
-                       (gint)self->instances->len);
+    if (self->mesh.vaoId == 0 || rlIsStereoRenderEnabled ()
+        || self->material.shader.locs[SHADER_LOC_VERTEX_INSTANCETRANSFORM] < 0)
+    {
+        /* no vertex array (or two eyes): raylib's own path, every blade */
+        DrawMeshInstanced (self->mesh, self->material, (const Matrix *)self->instances->data,
+                           (gint)self->instances->len);
+    }
+    else
+    {
+        draw_instanced (self, eye);
+    }
     rlEnableBackfaceCulling ();
 }
 
@@ -525,6 +865,10 @@ lrg_grass_field_release_gpu (LrgGrassField *self)
 {
     g_return_if_fail (LRG_IS_GRASS_FIELD (self));
 
+    if (self->instance_vbo != 0)
+        rlUnloadVertexBuffer (self->instance_vbo);
+    self->instance_vbo = 0;
+    self->instance_capacity = 0;
     if (self->gpu_loaded)
     {
         UnloadMesh (self->mesh);
@@ -540,4 +884,25 @@ lrg_grass_field_release_gpu (LrgGrassField *self)
     memset (&self->shader, 0, sizeof (self->shader));
     self->gpu_loaded = FALSE;
     self->gpu_tried = FALSE;
+}
+
+/* lrg_grass_field_prewarm: what the first draw builds (the shader, the
+ * card mesh and the instance buffer), built now */
+static gboolean
+lrg_grass_field_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgGrassField *self = LRG_GRASS_FIELD (prewarmable);
+
+    /* the shader and card even without blades: they may come later */
+    if (!ensure_gpu (self))
+        return TRUE;
+    if (self->instances->len > 0 && (self->instances_dirty || self->instance_vbo == 0))
+        upload_instances (self);
+    return TRUE;
+}
+
+static void
+lrg_grass_field_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_grass_field_prewarm;
 }

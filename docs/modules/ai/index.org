@@ -17,6 +17,12 @@ The module is built around six core components:
 - *LrgBTDecorator*: Wrapper nodes that modify child behavior (Inverter, Repeater, etc.)
 - *LrgBTLeaf*: Terminal nodes that perform actions (Action, Condition, Wait)
 
+Beside the trees, the decision layer ([[file:decision.org][decision.org]]) asks a decision model (TypeSafe's Jev, a local Ollama model, built in with =AI=1=) typed questions about a game's state and writes the judgments to a blackboard, where =lrg_bt_condition_new_judgment()= and =lrg_bt_condition_new_choice()= branch on them:
+
+- *LrgDecisionRequest*, *LrgJudgments*: the questions and their typed answers
+- *LrgDecider*: a decision model by name, or a script
+- *LrgDecisionBrain*: questions paced for a game loop: by topic, cached, journaled
+
 ** Key Concepts
 :PROPERTIES:
 :CUSTOM_ID: key-concepts

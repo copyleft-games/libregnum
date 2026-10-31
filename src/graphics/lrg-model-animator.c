@@ -8,6 +8,16 @@
  * LrgModelAnimState values; the animator turns a state into a pose key,
  * poses the shared raylib model only when the key changes, and draws a
  * subset of the model's meshes.
+ *
+ * Skinning: raylib's UpdateModelAnimation() skins every vertex on the CPU
+ * and re-uploads the position and normal buffers, per pose. When the
+ * model's skinned meshes can be skinned by a shader, apply() poses the
+ * bones only and the draw skins in the vertex shader instead: meshes on
+ * raylib's default shader are drawn with a skinning variant of it (same
+ * fragment stage), shaders that read raylib's skinning inputs get the
+ * bone matrices. graylib's grl_model_prepare_gpu_skinning() puts the bone
+ * indices and weights in the meshes' vertex arrays (raylib's own GPU
+ * skinning is compiled out) and keeps the bind pose in the buffers.
  */
 
 #include "config.h"
@@ -21,6 +31,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "graphics/lrg-model-animator.h"
+#include "core/lrg-prewarm.h"
 
 /* ------------------------------------------------------------------------ */
 /* LrgModelAnimState                                                        */
@@ -121,9 +132,135 @@ struct _LrgModelAnimator
 
     gboolean    has_key;
     PoseKey     last_key;
+
+    gboolean    gpu_allowed;    /* lrg_model_animator_set_gpu_skinning() */
+    gboolean    gpu_pose;       /* the last pose is skinned on the GPU */
+    gboolean    holds_shader;   /* holds a reference on default_skin */
+    GArray     *probes;         /* ShaderProbe: custom shader verdicts */
 };
 
-G_DEFINE_TYPE (LrgModelAnimator, lrg_model_animator, G_TYPE_OBJECT)
+/*
+ * ShaderProbe:
+ *
+ * Whether the custom shader program @id reads raylib's skinning inputs
+ * with room for @bones bone matrices.
+ */
+typedef struct
+{
+    guint    id;
+    gint     bones;
+    gboolean ok;
+} ShaderProbe;
+
+static void lrg_model_animator_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgModelAnimator, lrg_model_animator, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_model_animator_prewarmable_init))
+
+/* ------------------------------------------------------------------------ */
+/* GPU skinning variant of raylib's default shader                          */
+/* ------------------------------------------------------------------------ */
+
+/* raylib's default OpenGL 3.3 vertex stage (rlgl.h rlLoadShaderDefault)
+ * with linear blend skinning in front of the MVP transform; the fragment
+ * stage is raylib's, so a skinned mesh looks exactly as it would after
+ * CPU skinning. The skinning mirrors raylib's CPU loop
+ * (UpdateModelAnimationVertexBuffers): zero weights are skipped (most
+ * vertices have one or two influences, and the skipped matrix fetches
+ * are most of the cost on software rasterizers) and the weighted
+ * positions are summed with w = 1, so weights that do not add up to one
+ * scale the position the same way on both paths. raylib binds vertexBoneIndices / vertexBoneWeights to its
+ * bone attribute locations at link time. */
+static const gchar default_skin_vertex_source[] =
+    "#version 330\n"
+    "in vec3 vertexPosition;\n"
+    "in vec2 vertexTexCoord;\n"
+    "in vec4 vertexColor;\n"
+    "in vec4 vertexBoneIndices;\n"
+    "in vec4 vertexBoneWeights;\n"
+    "out vec2 fragTexCoord;\n"
+    "out vec4 fragColor;\n"
+    "uniform mat4 mvp;\n"
+    "uniform mat4 boneMatrices[128];\n"
+    "void main()\n"
+    "{\n"
+    "    vec4 rest = vec4(vertexPosition, 1.0);\n"
+    "    vec3 skinned = vec3(0.0);\n"
+    "    if (vertexBoneWeights.x != 0.0)\n"
+    "        skinned += vertexBoneWeights.x*(boneMatrices[int(vertexBoneIndices.x)]*rest).xyz;\n"
+    "    if (vertexBoneWeights.y != 0.0)\n"
+    "        skinned += vertexBoneWeights.y*(boneMatrices[int(vertexBoneIndices.y)]*rest).xyz;\n"
+    "    if (vertexBoneWeights.z != 0.0)\n"
+    "        skinned += vertexBoneWeights.z*(boneMatrices[int(vertexBoneIndices.z)]*rest).xyz;\n"
+    "    if (vertexBoneWeights.w != 0.0)\n"
+    "        skinned += vertexBoneWeights.w*(boneMatrices[int(vertexBoneIndices.w)]*rest).xyz;\n"
+    "    fragTexCoord = vertexTexCoord;\n"
+    "    fragColor = vertexColor;\n"
+    "    gl_Position = mvp*vec4(skinned, 1.0);\n"
+    "}\n";
+
+static const gchar default_skin_fragment_source[] =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "out vec4 finalColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec4 colDiffuse;\n"
+    "void main()\n"
+    "{\n"
+    "    vec4 texelColor = texture(texture0, fragTexCoord);\n"
+    "    finalColor = texelColor*colDiffuse*fragColor;\n"
+    "}\n";
+
+/* The array above is LRG_MODEL_ANIMATOR_MAX_GPU_BONES long. */
+G_STATIC_ASSERT (LRG_MODEL_ANIMATOR_MAX_GPU_BONES == 128);
+
+/* One program per process, loaded by the first animator that needs it and
+ * released with the last. A failed compile is not retried until every
+ * holder let go. */
+static Shader   default_skin;
+static guint    default_skin_users = 0;
+static gboolean default_skin_failed = FALSE;
+
+static gboolean
+default_skin_acquire (void)
+{
+    if (default_skin_users == 0)
+    {
+        if (default_skin_failed || !IsWindowReady ())
+            return FALSE;
+        default_skin = LoadShaderFromMemory (default_skin_vertex_source,
+                                             default_skin_fragment_source);
+        if (default_skin.id == 0 || default_skin.id == rlGetShaderIdDefault () ||
+            default_skin.locs == NULL ||
+            default_skin.locs[SHADER_LOC_MATRIX_BONETRANSFORMS] < 0)
+        {
+            if (default_skin.id != 0 && default_skin.id != rlGetShaderIdDefault ())
+                UnloadShader (default_skin);
+            memset (&default_skin, 0, sizeof default_skin);
+            default_skin_failed = TRUE;
+            return FALSE;
+        }
+    }
+    default_skin_users++;
+    return TRUE;
+}
+
+static void
+default_skin_release (void)
+{
+    if (default_skin_users == 0)
+        return;
+    default_skin_users--;
+    if (default_skin_users == 0 && default_skin.id != 0)
+    {
+        if (IsWindowReady ())
+            UnloadShader (default_skin);
+        memset (&default_skin, 0, sizeof default_skin);
+    }
+}
+
 
 static void
 clip_clear (gpointer data)
@@ -141,6 +278,12 @@ lrg_model_animator_finalize (GObject *object)
 
     g_clear_pointer (&self->clips, g_array_unref);
     g_clear_pointer (&self->aliases, g_hash_table_unref);
+    g_clear_pointer (&self->probes, g_array_unref);
+    if (self->holds_shader)
+    {
+        default_skin_release ();
+        self->holds_shader = FALSE;
+    }
     g_clear_object (&self->model);
 
     G_OBJECT_CLASS (lrg_model_animator_parent_class)->finalize (object);
@@ -160,6 +303,12 @@ lrg_model_animator_init (LrgModelAnimator *self)
     self->clips = g_array_new (FALSE, TRUE, sizeof (Clip));
     g_array_set_clear_func (self->clips, clip_clear);
     self->aliases = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+    self->probes = g_array_new (FALSE, FALSE, sizeof (ShaderProbe));
+    self->gpu_allowed = TRUE;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 static Clip *
@@ -615,6 +764,98 @@ lrg_model_animator_is_finished (LrgModelAnimator        *self,
     return !(state->time < (frames - 1) / LRG_MODEL_ANIMATOR_FPS);
 }
 
+/* mesh_is_skinned:
+ * Whether raylib loaded bone data for @mesh (the meshes it skins). */
+static gboolean
+mesh_is_skinned (const Mesh *mesh)
+{
+    return mesh->boneIndices != NULL && mesh->boneWeights != NULL;
+}
+
+/* custom_shader_skins:
+ * Whether the non-default @shader reads raylib's skinning inputs: the
+ * bone attributes at the locations the mesh vertex arrays carry them and
+ * a "boneMatrices" array with room for @bones matrices (the last element
+ * has a location only if the array is that long). Verdicts are cached per
+ * program id until lrg_model_animator_invalidate(). */
+static gboolean
+custom_shader_skins (LrgModelAnimator *self,
+                     const Shader     *shader,
+                     gint              bones)
+{
+    ShaderProbe probe;
+    gchar       name[48];
+    guint       i;
+
+    for (i = 0; i < self->probes->len; i++)
+    {
+        const ShaderProbe *known = &g_array_index (self->probes, ShaderProbe, i);
+
+        if (known->id == shader->id && known->bones == bones)
+            return known->ok;
+    }
+
+    probe.id = shader->id;
+    probe.bones = bones;
+    probe.ok = shader->locs != NULL &&
+               shader->locs[SHADER_LOC_MATRIX_BONETRANSFORMS] >= 0 &&
+               shader->locs[SHADER_LOC_VERTEX_BONEIDS] == RL_DEFAULT_SHADER_ATTRIB_LOCATION_BONEINDICES &&
+               shader->locs[SHADER_LOC_VERTEX_BONEWEIGHTS] == RL_DEFAULT_SHADER_ATTRIB_LOCATION_BONEWEIGHTS;
+    if (probe.ok)
+    {
+        g_snprintf (name, sizeof name, "boneMatrices[%d]", bones - 1);
+        probe.ok = rlGetLocationUniform (shader->id, name) >= 0;
+    }
+    g_array_append_val (self->probes, probe);
+    return probe.ok;
+}
+
+/* gpu_skinning_possible:
+ * Whether every skinned mesh of the model can be skinned by its
+ * material's shader (see lrg_model_animator_set_gpu_skinning()). A model
+ * is skinned one way as a whole: apply() poses all its meshes at once. */
+static gboolean
+gpu_skinning_possible (LrgModelAnimator *self)
+{
+    Model   *model;
+    gboolean any = FALSE;
+    gint     i;
+
+    if (!self->gpu_allowed || !grl_model_is_valid (self->model))
+        return FALSE;
+    model = grl_model_get_handle (self->model);
+    if (model->boneMatrices == NULL || model->skeleton.boneCount <= 0)
+        return FALSE;
+
+    for (i = 0; i < model->meshCount; i++)
+    {
+        const Shader *shader;
+
+        if (!mesh_is_skinned (&model->meshes[i]))
+            continue;
+        any = TRUE;
+        shader = &model->materials[model->meshMaterial[i]].shader;
+        if (shader->id == 0)
+            return FALSE;
+        if (shader->id == rlGetShaderIdDefault ())
+        {
+            if (model->skeleton.boneCount > LRG_MODEL_ANIMATOR_MAX_GPU_BONES)
+                return FALSE;
+            if (!self->holds_shader)
+            {
+                if (!default_skin_acquire ())
+                    return FALSE;
+                self->holds_shader = TRUE;
+            }
+        }
+        else if (!custom_shader_skins (self, shader, model->skeleton.boneCount))
+        {
+            return FALSE;
+        }
+    }
+    return any;
+}
+
 /* compute_key:
  * Builds the pose key for @state. Returns FALSE when there is nothing
  * valid to pose. A crossfade whose weight quantizes to the full level, or
@@ -681,25 +922,41 @@ lrg_model_animator_apply (LrgModelAnimator        *self,
 
     if (self->model != NULL)
     {
-        Clip *current = clip_at (self, key.clip);
-        Clip *previous = clip_at (self, key.previous_clip);
+        Clip    *current = clip_at (self, key.clip);
+        Clip    *previous = clip_at (self, key.previous_clip);
+        gboolean gpu;
 
         /* compute_key() only yields valid clips; keep the compiler sure. */
         if (current == NULL)
             return FALSE;
+
+        /* Bones only when the shaders skin; the CPU path skins every
+         * vertex and re-uploads the buffers. */
+        gpu = gpu_skinning_possible (self) && grl_model_prepare_gpu_skinning (self->model);
         if (previous != NULL)
         {
+            gfloat blend = (gfloat)key.blend / (gfloat)LRG_MODEL_ANIMATOR_BLEND_LEVELS;
 
             /* blend 0 = previous clip, 1 = current clip. */
-            grl_model_animation_blend (self->model,
-                                       previous->animation, (gfloat)key.previous_frame,
-                                       current->animation, (gfloat)key.frame,
-                                       (gfloat)key.blend / (gfloat)LRG_MODEL_ANIMATOR_BLEND_LEVELS);
+            if (gpu)
+                grl_model_animation_blend_bones (self->model,
+                                                 previous->animation, (gfloat)key.previous_frame,
+                                                 current->animation, (gfloat)key.frame, blend);
+            else
+                grl_model_animation_blend (self->model,
+                                           previous->animation, (gfloat)key.previous_frame,
+                                           current->animation, (gfloat)key.frame, blend);
+        }
+        else if (gpu)
+        {
+            grl_model_animation_update_bones (current->animation, self->model,
+                                              (gfloat)key.frame);
         }
         else
         {
             grl_model_animation_update (current->animation, self->model, key.frame);
         }
+        self->gpu_pose = gpu;
     }
 
     self->last_key = key;
@@ -713,6 +970,37 @@ lrg_model_animator_invalidate (LrgModelAnimator *self)
     g_return_if_fail (LRG_IS_MODEL_ANIMATOR (self));
 
     self->has_key = FALSE;
+    g_array_set_size (self->probes, 0);
+}
+
+void
+lrg_model_animator_set_gpu_skinning (LrgModelAnimator *self,
+                                     gboolean          enabled)
+{
+    g_return_if_fail (LRG_IS_MODEL_ANIMATOR (self));
+
+    enabled = enabled != FALSE;
+    if (self->gpu_allowed == enabled)
+        return;
+    self->gpu_allowed = enabled;
+    /* the next apply() poses again, the other way */
+    self->has_key = FALSE;
+}
+
+gboolean
+lrg_model_animator_get_gpu_skinning (LrgModelAnimator *self)
+{
+    g_return_val_if_fail (LRG_IS_MODEL_ANIMATOR (self), FALSE);
+
+    return self->gpu_allowed;
+}
+
+gboolean
+lrg_model_animator_uses_gpu_skinning (LrgModelAnimator *self)
+{
+    g_return_val_if_fail (LRG_IS_MODEL_ANIMATOR (self), FALSE);
+
+    return self->has_key && self->gpu_pose;
 }
 
 GBytes *
@@ -821,6 +1109,7 @@ draw_meshes (LrgModelAnimator *self,
     const guint8 *bytes = NULL;
     gsize         n_bytes = 0;
     Matrix        world;
+    guint         bones_sent_to = 0;
     gint          i;
 
     if (self->model == NULL || !grl_model_is_valid (self->model))
@@ -834,6 +1123,7 @@ draw_meshes (LrgModelAnimator *self,
     {
         Material material;
         Color    diffuse;
+        gboolean gpu_skin;
 
         if (bytes != NULL && (gsize)i < n_bytes && bytes[i] == 0)
             continue;
@@ -847,14 +1137,23 @@ draw_meshes (LrgModelAnimator *self,
             (unsigned char)(((gint)diffuse.a * (gint)tint.a) / 255)
         };
 
-        /* GPU skinning: bone matrices go to the shader before the draw. */
+        /* A GPU-skinned pose left the bind pose in the buffers: raylib's
+         * default shader becomes its skinning variant. */
+        gpu_skin = self->gpu_pose && mesh_is_skinned (&model->meshes[i]);
+        if (gpu_skin && material.shader.id == rlGetShaderIdDefault () && self->holds_shader)
+            material.shader = default_skin;
+
+        /* Bone matrices go to the shader before the draw (on the CPU path
+         * too, like raylib's DrawModelEx()); once per program and draw. */
         if (material.shader.locs != NULL &&
             material.shader.locs[SHADER_LOC_MATRIX_BONETRANSFORMS] != -1 &&
-            model->boneMatrices != NULL)
+            model->boneMatrices != NULL &&
+            material.shader.id != bones_sent_to)
         {
             rlEnableShader (material.shader.id);
             rlSetUniformMatrices (material.shader.locs[SHADER_LOC_MATRIX_BONETRANSFORMS],
                                   model->boneMatrices, model->skeleton.boneCount);
+            bones_sent_to = material.shader.id;
         }
 
         DrawMesh (model->meshes[i], material, world);
@@ -906,4 +1205,31 @@ lrg_model_animator_draw_masked_ex (LrgModelAnimator *self,
 
     transform = matrix_scale_yaw_translate (x, y, z, yaw, scale);
     draw_meshes (self, mask, transform, tint_or_white (tint));
+}
+
+/* ------------------------------------------------------------------------ */
+/* Prewarm                                                                  */
+/* ------------------------------------------------------------------------ */
+
+/* lrg_model_animator_prewarm:
+ * What the first GPU-skinned apply() builds: the default skinning shader
+ * (or the probe of the material's own) and the bone attribute buffers.
+ * A model the CPU posed last is left alone: preparing it would put its
+ * buffers back in bind pose under the pose it shows. */
+static gboolean
+lrg_model_animator_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgModelAnimator *self = LRG_MODEL_ANIMATOR (prewarmable);
+
+    if (self->model == NULL || (self->has_key && !self->gpu_pose))
+        return TRUE;
+    if (gpu_skinning_possible (self))
+        grl_model_prepare_gpu_skinning (self->model);
+    return TRUE;
+}
+
+static void
+lrg_model_animator_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_model_animator_prewarm;
 }

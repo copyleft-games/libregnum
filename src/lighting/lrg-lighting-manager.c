@@ -727,9 +727,6 @@ lrg_lighting_manager_update (LrgLightingManager *self,
 void
 lrg_lighting_manager_render (LrgLightingManager *self)
 {
-    GList *l;
-    guint visible_count;
-
     g_return_if_fail (LRG_IS_LIGHTING_MANAGER (self));
 
     /*
@@ -743,23 +740,11 @@ lrg_lighting_manager_render (LrgLightingManager *self)
      * 5. Blend lightmap if present
      *
      * The actual GPU rendering would use graylib render targets.
-     * This is a placeholder showing the structure.
+     * This is a placeholder showing the structure. It used to count
+     * the enabled lights and log the count at debug level every frame,
+     * which cost a list walk and a formatted message per frame for
+     * nothing: no per-frame work remains until the passes exist.
      */
-
-    /* Count visible lights for debugging */
-    visible_count = 0;
-    for (l = self->lights; l != NULL; l = l->next)
-    {
-        LrgLight2D *light = LRG_LIGHT2D (l->data);
-
-        if (!lrg_light2d_get_enabled (light))
-            continue;
-
-        /* TODO: viewport culling check */
-        visible_count++;
-    }
-
-    lrg_debug (LRG_LOG_DOMAIN_LIGHTING, "Rendering %u visible lights", visible_count);
 }
 
 /**

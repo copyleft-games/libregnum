@@ -68,6 +68,11 @@ typedef struct _LrgEventBus  LrgEventBus;
 typedef struct _LrgRandomStream LrgRandomStream;
 typedef struct _LrgTimerManager LrgTimerManager;
 
+/* GPU-resource prewarm: LrgPrewarm is a final type, LrgPrewarmable an interface */
+typedef struct _LrgPrewarm                LrgPrewarm;
+typedef struct _LrgPrewarmable            LrgPrewarmable;
+typedef struct _LrgPrewarmableInterface   LrgPrewarmableInterface;
+
 /* ==========================================================================
  * ECS Module
  * ========================================================================== */
@@ -1383,6 +1388,12 @@ typedef struct _LrgLevelSerializer  LrgLevelSerializer;
 typedef struct _LrgEditorCommand  LrgEditorCommand;
 
 /* LrgEditorSelection is a final type - no Class forward declaration needed */
+typedef struct _LrgEditorSettings  LrgEditorSettings;
+typedef struct _LrgExternalEditor  LrgExternalEditor;
+typedef struct _LrgEditorGizmo  LrgEditorGizmo;
+typedef struct _LrgEditorLog  LrgEditorLog;
+typedef struct _LrgEditorServer  LrgEditorServer;
+typedef struct _LrgEditorActions  LrgEditorActions;
 typedef struct _LrgEditorSelection  LrgEditorSelection;
 
 /* LrgEditor is a final type - no Class forward declaration needed */

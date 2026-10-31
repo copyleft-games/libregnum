@@ -111,6 +111,34 @@ test_detect_deck_host (void)
 }
 
 static void
+test_detect_frame_host (void)
+{
+	/* SteamVR's controllers by id, wherever they show up */
+	g_assert_cmpint (lrg_controller_family_detect_on_host ("Steam Frame Controllers", 0x28de, 0x11e0,
+	                                                       LRG_CONTROLLER_FAMILY_UNKNOWN), ==,
+	                 LRG_CONTROLLER_FAMILY_STEAM_FRAME);
+
+	/* on a Frame, Steam Input's virtual pad is the Frame's controllers */
+	g_assert_cmpint (lrg_controller_family_detect_on_host ("Microsoft X-Box 360 pad 0", 0x28de, 0x11ff,
+	                                                       LRG_CONTROLLER_FAMILY_STEAM_FRAME), ==,
+	                 LRG_CONTROLLER_FAMILY_STEAM_FRAME);
+	g_assert_cmpint (lrg_controller_family_detect_on_host (NULL, 0, 0, LRG_CONTROLLER_FAMILY_STEAM_FRAME), ==,
+	                 LRG_CONTROLLER_FAMILY_STEAM_FRAME);
+	/* a pad that names itself keeps its family */
+	g_assert_cmpint (lrg_controller_family_detect_on_host ("DualSense Wireless Controller", 0x054c, 0x0ce6,
+	                                                       LRG_CONTROLLER_FAMILY_STEAM_FRAME), ==,
+	                 LRG_CONTROLLER_FAMILY_DUALSENSE);
+	/* elsewhere the virtual pad stays Xbox 360 shaped */
+	g_assert_cmpint (lrg_controller_family_detect_on_host ("Microsoft X-Box 360 pad 0", 0x28de, 0x11ff,
+	                                                       LRG_CONTROLLER_FAMILY_UNKNOWN), ==,
+	                 LRG_CONTROLLER_FAMILY_XBOX_360);
+	/* the Deck wrapper is the same rule */
+	g_assert_cmpint (lrg_controller_family_detect_on_host ("Microsoft X-Box 360 pad 0", 0x28de, 0x11ff,
+	                                                       LRG_CONTROLLER_FAMILY_STEAM_DECK), ==,
+	                 LRG_CONTROLLER_FAMILY_STEAM_DECK);
+}
+
+static void
 test_family_names (void)
 {
 	LrgControllerFamily family;
@@ -189,6 +217,106 @@ test_probe_usb_ids (void)
 	g_assert_false (lrg_controller_probe_usb_ids (NULL, root, &vendor, &product));
 	g_assert_false (lrg_controller_probe_usb_ids ("", root, &vendor, &product));
 	g_assert_false (lrg_controller_probe_usb_ids ("Steam Deck", "/nonexistent-sysfs", &vendor, &product));
+}
+
+/* writes a fake capabilities/key line for class/input/@entry */
+static void
+write_keys (const gchar *root,
+            const gchar *entry,
+            const gchar *keys)
+{
+	g_autofree gchar *dir = g_build_filename (root, "class", "input", entry, "capabilities", NULL);
+	g_autofree gchar *path = g_build_filename (dir, "key", NULL);
+
+	g_assert_cmpint (g_mkdir_with_parents (dir, 0755), ==, 0);
+	g_assert_true (g_file_set_contents (path, keys, -1, NULL));
+}
+
+static void
+test_probe_is_gamepad (void)
+{
+	g_autofree gchar *root = NULL;
+
+	root = g_dir_make_tmp ("lrg-controller-keys-XXXXXX", NULL);
+	g_assert_nonnull (root);
+
+	/* what a Steam Frame shows GLFW: Steam's virtual pad (BTN_SOUTH ..
+	 * BTN_THUMBR, bits 0x130.. in the fifth word from the end) */
+	write_input (root, "input12", "Microsoft X-Box 360 pad 0\n", "28de\n", "11ff\n");
+	write_keys (root, "input12", "7cdb000000000000 0 0 0 0\n");
+	/* an ambient light sensor with no keys at all */
+	write_input (root, "input2", "als31300\n", "0000\n", "0000\n");
+	write_keys (root, "input2", "0\n");
+	/* a keyboard (KEY_ESC .. and media keys, nothing in 0x120..0x13e) */
+	write_input (root, "input20", "MX Keys Mini\n", "046d\n", "b369\n");
+	write_keys (root, "input20", "1f 0 0 0 0 0 0 1000000000007 ff9f207ac14057ff febeffdfffefffff fffffffffffffffe\n");
+	/* the Frame's own virtual keyboard: every key up to 255, a map too
+	 * short to reach 0x120 */
+	write_input (root, "input5", "frametop virtual keyboard\n", "4d44\n", "0002\n");
+	write_keys (root, "input5", "ffffffffffffffff ffffffffffffffff ffffffffffffffff fffffffffffffffe\n");
+	/* an old joystick: BTN_TRIGGER (0x120, bit 32 of the fifth word from the end) only */
+	write_input (root, "input30", "Old Stick\n", "1234\n", "5678\n");
+	write_keys (root, "input30", "100000000 0 0 0 0\n");
+	/* a pad whose motion sensors share its name: one of them has buttons */
+	write_input (root, "input40", "Twin Pad\n", "1234\n", "0001\n");
+	write_keys (root, "input40", "0\n");
+	write_input (root, "input41", "Twin Pad\n", "1234\n", "0001\n");
+	write_keys (root, "input41", "ffff000000000000 0 0 0 0\n");
+
+	g_assert_true (lrg_controller_probe_is_gamepad ("Microsoft X-Box 360 pad 0", root));
+	g_assert_false (lrg_controller_probe_is_gamepad ("als31300", root));
+	g_assert_false (lrg_controller_probe_is_gamepad ("MX Keys Mini", root));
+	g_assert_false (lrg_controller_probe_is_gamepad ("frametop virtual keyboard", root));
+	g_assert_true (lrg_controller_probe_is_gamepad ("Old Stick", root));
+	g_assert_true (lrg_controller_probe_is_gamepad ("Twin Pad", root));
+
+	/* unknown names, no name and no sysfs are taken as pads */
+	g_assert_true (lrg_controller_probe_is_gamepad ("Mock Pad", root));
+	g_assert_true (lrg_controller_probe_is_gamepad (NULL, root));
+	g_assert_true (lrg_controller_probe_is_gamepad ("als31300", "/nonexistent-sysfs"));
+}
+
+/* writes @contents to @root/@file */
+static void
+write_os_release (const gchar *root,
+                  const gchar *file,
+                  const gchar *contents)
+{
+	g_autofree gchar *path = g_build_filename (root, file, NULL);
+	g_autofree gchar *dir = g_path_get_dirname (path);
+
+	g_assert_cmpint (g_mkdir_with_parents (dir, 0755), ==, 0);
+	g_assert_true (g_file_set_contents (path, contents, -1, NULL));
+}
+
+static void
+test_frame_host_detection (void)
+{
+	g_autofree gchar *root = NULL;
+
+	root = g_dir_make_tmp ("lrg-controller-os-XXXXXX", NULL);
+	g_assert_nonnull (root);
+
+	/* nothing there */
+	g_assert_false (lrg_controller_is_steam_frame_host_at (root));
+
+	/* a Deck's SteamOS is not a Frame */
+	write_os_release (root, "etc/os-release", "NAME=\"SteamOS\"\nID=steamos\nVARIANT_ID=steamdeck\n");
+	g_assert_false (lrg_controller_is_steam_frame_host_at (root));
+
+	/* the Frame's (quoted or not) */
+	write_os_release (root, "etc/os-release", "NAME=\"SteamOS\"\nID=\"steamos\"\nVARIANT_ID=vr\n");
+	g_assert_true (lrg_controller_is_steam_frame_host_at (root));
+	write_os_release (root, "etc/os-release", "ID=steamos\nID_LIKE=arch\nVARIANT_ID='vr'\n");
+	g_assert_true (lrg_controller_is_steam_frame_host_at (root));
+
+	/* another distro with a vr variant */
+	write_os_release (root, "etc/os-release", "ID=fedora\nVARIANT_ID=vr\n");
+	g_assert_false (lrg_controller_is_steam_frame_host_at (root));
+
+	/* a distrobox on the Frame: the host's file under /run/host */
+	write_os_release (root, "run/host/etc/os-release", "ID=steamos\nVARIANT_ID=vr\n");
+	g_assert_true (lrg_controller_is_steam_frame_host_at (root));
 }
 
 static void
@@ -504,6 +632,13 @@ test_monitor_deck_and_override (void)
 	g_assert_true (lrg_controller_monitor_poll (monitor));
 	g_assert_cmpint (lrg_controller_monitor_get_family (monitor), ==, LRG_CONTROLLER_FAMILY_STEAM_DECK);
 
+	/* on a Frame it is the Frame's controllers */
+	lrg_controller_monitor_set_host_family (monitor, LRG_CONTROLLER_FAMILY_STEAM_FRAME);
+	g_assert_cmpint (lrg_controller_monitor_get_host_family (monitor), ==, LRG_CONTROLLER_FAMILY_STEAM_FRAME);
+	g_assert_false (lrg_controller_monitor_get_steam_deck_host (monitor));
+	g_assert_true (lrg_controller_monitor_poll (monitor));
+	g_assert_cmpint (lrg_controller_monitor_get_family (monitor), ==, LRG_CONTROLLER_FAMILY_STEAM_FRAME);
+
 	/* an override does not make a missing pad appear */
 	lrg_controller_monitor_set_family_override (monitor, LRG_CONTROLLER_FAMILY_XBOX_ONE);
 	lrg_input_mock_set_gamepad_available (mock, 0, FALSE);
@@ -619,9 +754,12 @@ main (int   argc,
 	g_test_add_func ("/controller/detect/names", test_detect_names);
 	g_test_add_func ("/controller/detect/ids", test_detect_ids);
 	g_test_add_func ("/controller/detect/deck-host", test_detect_deck_host);
+	g_test_add_func ("/controller/detect/frame-host", test_detect_frame_host);
 	g_test_add_func ("/controller/family/names", test_family_names);
 	g_test_add_func ("/controller/sysfs/probe", test_probe_usb_ids);
 	g_test_add_func ("/controller/sysfs/deck-host", test_deck_host_detection);
+	g_test_add_func ("/controller/sysfs/frame-host", test_frame_host_detection);
+	g_test_add_func ("/controller/sysfs/is-gamepad", test_probe_is_gamepad);
 	g_test_add_func ("/controller/glyphs", test_glyphs);
 	g_test_add_func ("/controller/preset/lookup", test_preset_lookup);
 	g_test_add_func ("/controller/preset/map", test_preset_map);

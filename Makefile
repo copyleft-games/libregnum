@@ -39,6 +39,9 @@ PUBLIC_HEADERS := \
 	src/core/lrg-event-listener.h \
 	src/core/lrg-event-bus.h \
 	src/core/lrg-random-stream.h \
+	src/core/lrg-cpu-affinity.h \
+	src/core/lrg-prewarmable.h \
+	src/core/lrg-prewarm.h \
 	src/core/lrg-timer-manager.h \
 	src/graphics/lrg-drawable.h \
 	src/graphics/lrg-window.h \
@@ -191,6 +194,11 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-audio-effect.h \
 	src/audio/lrg-reverb.h \
 	src/audio/lrg-low-pass.h \
+	src/audio/lrg-high-pass.h \
+	src/audio/lrg-echo.h \
+	src/audio/lrg-chorus.h \
+	src/audio/lrg-pitch-shift.h \
+	src/audio/lrg-audio-bus.h \
 	src/audio/lrg-sound-bed.h \
 	src/audio/lrg-midi-output.h \
 	src/audio/lrg-midi-output-alsa.h \
@@ -217,6 +225,10 @@ PUBLIC_HEADERS := \
 	src/ai/lrg-bt-decorator.h \
 	src/ai/lrg-bt-leaf.h \
 	src/ai/lrg-behavior-tree.h \
+	src/ai/lrg-decision.h \
+	src/ai/lrg-decider.h \
+	src/ai/lrg-decision-brain.h \
+	src/ai/lrg-bt-judgment.h \
 	src/physics/lrg-collision-info.h \
 	src/physics/lrg-rigid-body.h \
 	src/physics/lrg-rope.h \
@@ -533,6 +545,7 @@ PUBLIC_HEADERS := \
 	src/vr/lrg-vr-comfort.h \
 	src/vr/lrg-openxr-service.h \
 	src/vr/lrg-vr-draw.h \
+	src/vr/lrg-vr-gesture.h \
 	src/template/lrg-game-template.h \
 	src/template/lrg-input-buffer.h \
 	src/template/states/lrg-template-main-menu-state.h \
@@ -651,6 +664,9 @@ SOURCES := \
 	src/core/lrg-event-listener.c \
 	src/core/lrg-event-bus.c \
 	src/core/lrg-random-stream.c \
+	src/core/lrg-cpu-affinity.c \
+	src/core/lrg-prewarmable.c \
+	src/core/lrg-prewarm.c \
 	src/core/lrg-timer-manager.c \
 	src/graphics/lrg-drawable.c \
 	src/graphics/lrg-window.c \
@@ -731,6 +747,7 @@ SOURCES := \
 	src/shapes/lrg-circle3d.c \
 	src/shapes/lrg-torus3d.c \
 	src/shapes/lrg-icosphere3d.c \
+	src/shapes/lrg-shape3d-mesh.c \
 	src/ui/lrg-ui-event.c \
 	src/ui/lrg-widget.c \
 	src/ui/lrg-container.c \
@@ -804,7 +821,13 @@ SOURCES := \
 	src/audio/lrg-audio-effect.c \
 	src/audio/lrg-reverb.c \
 	src/audio/lrg-low-pass.c \
+	src/audio/lrg-high-pass.c \
+	src/audio/lrg-echo.c \
+	src/audio/lrg-chorus.c \
+	src/audio/lrg-pitch-shift.c \
+	src/audio/lrg-audio-bus.c \
 	src/audio/lrg-sound-bed.c \
+	src/audio/lrg-audio-thread-private.c \
 	src/audio/lrg-midi-output.c \
 	src/audio/lrg-midi-output-alsa.c \
 	src/audio/lrg-midi-sequencer.c \
@@ -830,6 +853,10 @@ SOURCES := \
 	src/ai/lrg-bt-decorator.c \
 	src/ai/lrg-bt-leaf.c \
 	src/ai/lrg-behavior-tree.c \
+	src/ai/lrg-decision.c \
+	src/ai/lrg-decider.c \
+	src/ai/lrg-decision-brain.c \
+	src/ai/lrg-bt-judgment.c \
 	src/physics/lrg-collision-info.c \
 	src/physics/lrg-rigid-body.c \
 	src/physics/lrg-rope.c \
@@ -1149,6 +1176,7 @@ SOURCES := \
 	src/vr/lrg-vr-comfort.c \
 	src/vr/lrg-openxr-service.c \
 	src/vr/lrg-vr-draw.c \
+	src/vr/lrg-vr-gesture.c \
 	src/template/lrg-game-template.c \
 	src/template/lrg-input-buffer.c \
 	src/template/states/lrg-template-main-menu-state.c \
@@ -1344,6 +1372,20 @@ SOURCES += \
 	src/scripting/lrg-scripting-crispy.c
 endif
 
+# Immediate-mode GUI toolkit (used by the editor; always built)
+PUBLIC_HEADERS += \
+	src/gui/lrg-gui-types.h \
+	src/gui/lrg-gui-draw-list.h \
+	src/gui/lrg-gui-context.h \
+	src/gui/lrg-gui-dock.h \
+	src/gui/lrg-gui-raylib.h
+SOURCES += \
+	src/gui/lrg-gui-draw-list.c \
+	src/gui/lrg-gui-context.c \
+	src/gui/lrg-gui-widgets.c \
+	src/gui/lrg-gui-dock.c \
+	src/gui/lrg-gui-raylib.c
+
 # Editor / level authoring module (conditional on BUILD_EDITOR=1)
 ifeq ($(BUILD_EDITOR),1)
 PUBLIC_HEADERS += \
@@ -1359,6 +1401,14 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-selection.h \
 	src/editor/lrg-editor.h \
 	src/editor/lrg-editor-host.h \
+	src/editor/lrg-editor-math.h \
+	src/editor/lrg-editor-gizmo.h \
+	src/editor/lrg-editor-settings.h \
+	src/editor/lrg-external-editor.h \
+	src/editor/lrg-editor-log.h \
+	src/editor/lrg-editor-server.h \
+	src/editor/lrg-editor-actions.h \
+	src/editor/lrg-editor-validate.h \
 	src/editor/lrg-asset-database.h \
 	src/editor/lrg-project.h \
 	src/editor/lrg-prefab.h
@@ -1375,6 +1425,14 @@ SOURCES += \
 	src/editor/lrg-editor-selection.c \
 	src/editor/lrg-editor.c \
 	src/editor/lrg-editor-host.c \
+	src/editor/lrg-editor-math.c \
+	src/editor/lrg-editor-gizmo.c \
+	src/editor/lrg-editor-settings.c \
+	src/editor/lrg-external-editor.c \
+	src/editor/lrg-editor-log.c \
+	src/editor/lrg-editor-server.c \
+	src/editor/lrg-editor-actions.c \
+	src/editor/lrg-editor-validate.c \
 	src/editor/lrg-asset-database.c \
 	src/editor/lrg-project.c \
 	src/editor/lrg-prefab.c
@@ -1382,7 +1440,16 @@ ifeq ($(BUILD_EDITOR_UI),1)
 PUBLIC_HEADERS += \
 	src/editor/ui/lrg-editor-app.h
 SOURCES += \
-	src/editor/ui/lrg-editor-app.c
+	src/editor/ui/lrg-editor-app.c \
+	src/editor/ui/lrg-editor-app-actions.c \
+	src/editor/ui/lrg-editor-panel-hierarchy.c \
+	src/editor/ui/lrg-editor-panel-inspector.c \
+	src/editor/ui/lrg-editor-panel-viewport.c \
+	src/editor/ui/lrg-editor-panel-assets.c \
+	src/editor/ui/lrg-editor-panel-console.c \
+	src/editor/ui/lrg-editor-render.c \
+	src/editor/ui/lrg-editor-dialogs.c \
+	src/editor/ui/lrg-editor-play.c
 endif
 endif
 
@@ -1477,6 +1544,12 @@ ifeq ($(BUILD_GIR),1)
 endif
 ifeq ($(BUILD_SHARED),1)
 	@$(MAKE) --no-print-directory lrgldr
+ifeq ($(BUILD_EDITOR_UI),1)
+	@$(MAKE) --no-print-directory lrgeditor
+endif
+endif
+ifeq ($(BUILD_EDITOR),1)
+	@$(MAKE) --no-print-directory lrgeditorctl
 endif
 
 # Internal target for actual library build (called after generate)
@@ -1487,7 +1560,7 @@ _lib: lib-static lib-shared
 # Dependencies (Submodules)
 # =============================================================================
 
-.PHONY: deps deps-graylib deps-yamlglib deps-mcp deps-crispy deps-cad-glib
+.PHONY: deps deps-graylib deps-yamlglib deps-mcp deps-crispy deps-cad-glib deps-ai-glib
 
 deps: deps-graylib deps-yamlglib
 ifeq ($(MCP),1)
@@ -1501,6 +1574,13 @@ endif
 ifeq ($(CAD),1)
 ifeq ($(CAD_GLIB_DIR),$(CAD_GLIB_BUNDLED))
 deps: deps-cad-glib
+endif
+endif
+
+# The bundled ai-glib only for an AI=1 build of the bundled copy.
+ifeq ($(AI),1)
+ifeq ($(AI_GLIB_DIR),$(AI_GLIB_BUNDLED))
+deps: deps-ai-glib
 endif
 endif
 
@@ -1550,6 +1630,11 @@ deps-cad-glib:
 		$(call print_status,"Building cad-glib..."); \
 		$(MAKE) -C $(CAD_GLIB_DIR) deps && $(MAKE) -C $(CAD_GLIB_DIR) $(DEP_DEBUG_FLAG); \
 	fi
+
+# ai-glib: the decision models' library (deps/ai-glib submodule, AI=1).
+# Only its static archive: its own sub-make decides what is stale.
+deps-ai-glib:
+	@$(MAKE) -C $(AI_GLIB_DIR) $(DEP_DEBUG_FLAG) static
 
 ifeq ($(MCP),1)
 ifeq ($(TARGET_PLATFORM),windows)
@@ -1830,6 +1915,159 @@ $(LRGLDR_BIN): src/launcher/lrgldr.c $(LIBOUTDIR)/$(LIB_SHARED)
 	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
 
 # =============================================================================
+# lrgeditor (the level / scene / world editor application)
+# =============================================================================
+
+LRG_EDITOR_BIN := $(BUILDDIR)/lrgeditor$(EXE_EXT)
+
+# Same linkage as lrgldr: the shared library, so game modules and the
+# editor share one engine, type registry and raylib state.
+.PHONY: lrgeditor
+lrgeditor: lib-shared $(LRG_EDITOR_BIN)
+
+# MCP (Model Context Protocol) for the editor: `lrgeditorctl mcp` and
+# `lrgeditor --mcp`, on the bundled mcp-glib. On by default when its
+# Linux dependencies (libsoup-3.0, libdex-1) are installed; EDITOR_MCP=0
+# builds both programs without it.
+EDITOR_MCP ?= $(shell $(PKG_CONFIG) --exists libsoup-3.0 libdex-1 2>/dev/null && echo 1 || echo 0)
+EDITOR_MCP_DIR := $(PROJECT_ROOT)/deps/mcp-glib
+EDITOR_MCP_STATIC := $(EDITOR_MCP_DIR)/build/libmcp-glib-1.0.a
+EDITOR_MCP_SOURCES := src/editorctl/lrgeditorctl-mcp.c src/editorctl/lrgeditorctl-client.c
+
+ifeq ($(EDITOR_MCP),1)
+EDITOR_MCP_CFLAGS := -I$(EDITOR_MCP_DIR)/src -Isrc/editorctl \
+	$(shell $(PKG_CONFIG) --cflags libsoup-3.0 libdex-1)
+EDITOR_MCP_LIBS := $(EDITOR_MCP_STATIC) $(shell $(PKG_CONFIG) --libs libsoup-3.0 libdex-1 gio-unix-2.0 json-glib-1.0)
+EDITOR_MCP_DEP := $(EDITOR_MCP_STATIC)
+else
+EDITOR_MCP_CFLAGS :=
+EDITOR_MCP_LIBS :=
+EDITOR_MCP_DEP :=
+endif
+
+$(EDITOR_MCP_STATIC):
+	$(call print_status,"Building mcp-glib for the editor...")
+	@$(MAKE) -C $(EDITOR_MCP_DIR) $(DEP_BUILD_FLAGS)
+
+ifeq ($(EDITOR_MCP),1)
+$(LRG_EDITOR_BIN): src/launcher/lrgeditor.c $(EDITOR_MCP_SOURCES) $(LIBOUTDIR)/$(LIB_SHARED) $(EDITOR_MCP_DEP)
+	$(call print_link,lrgeditor)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(LRGLDR_CFLAGS) $(EDITOR_MCP_CFLAGS) -DLRG_EDITOR_HAVE_MCP=1 \
+		-DLRG_EDITORCTL_VERSION=\"$(VERSION)\" -o $@ \
+		src/launcher/lrgeditor.c $(EDITOR_MCP_SOURCES) $(EDITOR_MCP_LIBS) $(LRGLDR_LIBS)
+else
+$(LRG_EDITOR_BIN): src/launcher/lrgeditor.c $(LIBOUTDIR)/$(LIB_SHARED)
+	$(call print_link,lrgeditor)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
+endif
+
+# =============================================================================
+# lrgeditorctl (kubectl-like control of running editors; MCP bridge)
+# =============================================================================
+#
+# Standalone: GLib, GIO, json-glib and the bundled yaml-glib, no engine or
+# GL, so it starts instantly and runs anywhere a session socket is reachable.
+
+LRGEDITORCTL_BIN := $(BUILDDIR)/lrgeditorctl$(EXE_EXT)
+LRGEDITORCTL_SOURCES := \
+	src/editorctl/lrgeditorctl.c \
+	src/editorctl/lrgeditorctl-client.c \
+	src/editorctl/lrgeditorctl-format.c
+LRGEDITORCTL_HEADERS := \
+	src/editorctl/lrgeditorctl-client.h \
+	src/editorctl/lrgeditorctl-format.h \
+	src/editorctl/lrgeditorctl-mcp.h
+
+LRGEDITORCTL_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -Isrc/editorctl
+LRGEDITORCTL_CFLAGS += $(GLIB_CFLAGS) $(JSON_CFLAGS) $(shell $(PKG_CONFIG) --cflags gio-unix-2.0)
+LRGEDITORCTL_CFLAGS += -isystem $(YAMLGLIB_DIR)/src $(YAML_CFLAGS)
+LRGEDITORCTL_CFLAGS += -DLRG_EDITORCTL_VERSION=\"$(VERSION)\"
+LRGEDITORCTL_LIBS := $(YAMLGLIB_STATIC) $(YAML_LIBS) $(JSON_LIBS) $(GLIB_LIBS)
+
+ifeq ($(EDITOR_MCP),1)
+LRGEDITORCTL_SOURCES += src/editorctl/lrgeditorctl-mcp.c
+LRGEDITORCTL_CFLAGS += $(EDITOR_MCP_CFLAGS) -DLRG_EDITORCTL_HAVE_MCP=1
+LRGEDITORCTL_LIBS := $(EDITOR_MCP_LIBS) $(LRGEDITORCTL_LIBS)
+endif
+
+.PHONY: lrgeditorctl
+lrgeditorctl: $(LRGEDITORCTL_BIN)
+
+$(LRGEDITORCTL_BIN): $(LRGEDITORCTL_SOURCES) $(LRGEDITORCTL_HEADERS) $(YAMLGLIB_STATIC) $(EDITOR_MCP_DEP)
+	$(call print_link,lrgeditorctl)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(LRGEDITORCTL_CFLAGS) -o $@ $(LRGEDITORCTL_SOURCES) $(LRGEDITORCTL_LIBS)
+
+# Agent skills (skills/<name>/SKILL.md + references) for Claude Code and
+# compatible tools. SKILLS_LINK=1 symlinks instead of copying, so edits
+# in the checkout show up immediately.
+SKILLS_SRC_DIR := skills
+SKILLS_DIR ?= $(HOME)/.claude/skills
+SKILLS := $(notdir $(patsubst %/SKILL.md,%,$(wildcard $(SKILLS_SRC_DIR)/*/SKILL.md)))
+
+.PHONY: install-skills uninstall-skills
+install-skills:
+	@test -n "$(SKILLS)" || { echo "no skills under $(SKILLS_SRC_DIR)/"; exit 1; }
+	@$(MKDIR_P) $(DESTDIR)$(SKILLS_DIR)
+	@for s in $(SKILLS); do \
+		dst="$(DESTDIR)$(SKILLS_DIR)/$$s"; \
+		if [ -L "$$dst" ]; then \
+			rm -f "$$dst" || exit 1; \
+		elif [ -e "$$dst" ]; then \
+			if ! grep -qx "name: $$s" "$$dst/SKILL.md" 2>/dev/null; then \
+				echo "$$dst exists and is not this skill; leaving it"; \
+				exit 1; \
+			fi; \
+			rm -rf "$$dst" || exit 1; \
+		fi; \
+		if [ "$(SKILLS_LINK)" = "1" ]; then \
+			ln -s "$(abspath $(SKILLS_SRC_DIR))/$$s" "$$dst" || exit 1; \
+			echo "  linked    $$dst -> $(abspath $(SKILLS_SRC_DIR))/$$s"; \
+		else \
+			cp -R "$(SKILLS_SRC_DIR)/$$s" "$$dst" || exit 1; \
+			chmod -R u+rwX,go+rX "$$dst" || exit 1; \
+			echo "  installed $$dst"; \
+		fi; \
+	done
+
+uninstall-skills:
+	@for s in $(SKILLS); do \
+		dst="$(DESTDIR)$(SKILLS_DIR)/$$s"; \
+		if [ -L "$$dst" ] || grep -qx "name: $$s" "$$dst/SKILL.md" 2>/dev/null; then \
+			rm -rf "$$dst" && echo "  removed   $$dst" || exit 1; \
+		fi; \
+	done
+
+# Byte-compiles the Emacs package (warnings are errors) and runs its ERT
+# suite, including an end-to-end session with a headless lrgeditor.
+.PHONY: test-emacs
+test-emacs: lrgeditor
+	@if command -v emacs >/dev/null 2>&1; then \
+		emacs -Q --batch -L editors/emacs --eval '(setq byte-compile-error-on-warn t)' \
+			-f batch-byte-compile editors/emacs/libregnum.el editors/emacs/libregnum-tests.el && \
+		LRG_EDITOR=$(LRG_EDITOR_BIN) emacs -Q --batch -L editors/emacs -l libregnum-tests.el \
+			-f ert-run-tests-batch-and-exit < /dev/null; \
+		status=$$?; rm -f editors/emacs/*.elc; exit $$status; \
+	else \
+		echo "emacs not found; skipping the Emacs package tests"; \
+	fi
+
+# lrgeditorctl against a headless lrgeditor: every verb, apply/edit,
+# events, and both MCP servers (bridge and in-process).
+.PHONY: test-editorctl
+test-editorctl: lrgeditor lrgeditorctl
+	@tests/editorctl-smoke.sh $(BUILDDIR)
+
+# Drives a real lrgeditor window with real X events (Xvfb + xdotool) and
+# checks it over IPC: menus, shortcuts, viewport navigation. Skips when
+# Xvfb, xdotool, socat or yq is missing.
+.PHONY: test-editor-x11
+test-editor-x11: lrgeditor
+	@tests/editor-x11-smoke.sh $(LRG_EDITOR_BIN)
+
+# =============================================================================
 # Reel CLI (renders YAML-defined reels to video/stills)
 # =============================================================================
 
@@ -1912,6 +2150,19 @@ ifeq ($(BUILD_SHARED),1)
 	@$(MAKE) --no-print-directory lrgldr
 	@$(MKDIR_P) $(DESTDIR)$(BINDIR)
 	$(INSTALL_PROGRAM) $(LRGLDR_BIN) $(DESTDIR)$(BINDIR)/
+ifeq ($(BUILD_EDITOR_UI),1)
+	@$(MAKE) --no-print-directory lrgeditor
+	$(INSTALL_PROGRAM) $(LRG_EDITOR_BIN) $(DESTDIR)$(BINDIR)/
+	@$(MKDIR_P) $(DESTDIR)$(DATADIR)/emacs/site-lisp
+	$(INSTALL_DATA) editors/emacs/libregnum.el $(DESTDIR)$(DATADIR)/emacs/site-lisp/
+endif
+endif
+ifeq ($(BUILD_EDITOR),1)
+	@$(MAKE) --no-print-directory lrgeditorctl
+	@$(MKDIR_P) $(DESTDIR)$(BINDIR)
+	$(INSTALL_PROGRAM) $(LRGEDITORCTL_BIN) $(DESTDIR)$(BINDIR)/
+	@$(MKDIR_P) $(DESTDIR)$(DATADIR)/bash-completion/completions
+	$(LRGEDITORCTL_BIN) completion bash > $(DESTDIR)$(DATADIR)/bash-completion/completions/lrgeditorctl
 endif
 	# Install pkg-config
 	$(INSTALL_DATA) $(BUILDDIR)/$(PC_FILE) $(DESTDIR)$(PKGCONFIGDIR)/
@@ -1943,6 +2194,11 @@ uninstall:
 	$(RM) $(DESTDIR)$(LIBDIR)/$(LIB_SHARED_VERSION)
 	$(RMDIR) $(DESTDIR)$(INCLUDEDIR)/libregnum
 	$(RM) $(DESTDIR)$(PKGCONFIGDIR)/$(PC_FILE)
+	$(RM) $(DESTDIR)$(BINDIR)/lrgldr$(EXE_EXT)
+	$(RM) $(DESTDIR)$(BINDIR)/lrgeditor$(EXE_EXT)
+	$(RM) $(DESTDIR)$(DATADIR)/emacs/site-lisp/libregnum.el
+	$(RM) $(DESTDIR)$(BINDIR)/lrgeditorctl$(EXE_EXT)
+	$(RM) $(DESTDIR)$(DATADIR)/bash-completion/completions/lrgeditorctl
 ifeq ($(BUILD_GIR),1)
 	$(RM) $(DESTDIR)$(GIRDIR)/$(GIR_NAME)
 	$(RM) $(DESTDIR)$(TYPELIBDIR)/$(TYPELIB_NAME)

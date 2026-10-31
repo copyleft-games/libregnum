@@ -11,6 +11,9 @@
 
 #include <rlgl.h>
 
+#include "lrg-shape3d-mesh-private.h"
+#include "core/lrg-prewarm.h"
+
 #ifndef RAD2DEG
 #define RAD2DEG (180.0f / 3.14159265358979323846f)
 #endif
@@ -29,9 +32,19 @@ struct _LrgSphere3D
 	gfloat radius;
 	gint   rings;
 	gint   slices;
+
+	/* the shared unit-sphere mesh of (mesh_rings, mesh_slices), drawn
+	 * scaled by the radius instead of re-tessellating every frame */
+	LrgShape3DMesh *gpu_mesh;
+	gint            mesh_rings;
+	gint            mesh_slices;
 };
 
-G_DEFINE_FINAL_TYPE (LrgSphere3D, lrg_sphere3d, LRG_TYPE_SHAPE3D)
+static void lrg_sphere3d_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgSphere3D, lrg_sphere3d, LRG_TYPE_SHAPE3D,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_sphere3d_prewarmable_init))
 
 enum
 {
@@ -48,26 +61,57 @@ static GParamSpec *properties[N_PROPS];
  * Virtual Method Implementation
  * ========================================================================== */
 
+/*
+ * lrg_sphere3d_ensure_mesh / lrg_sphere3d_draw_mesh:
+ * The solid sphere is drawn from the shared mesh of its rings and slices
+ * (the triangles DrawSphereEx() would emit), made on first use and again
+ * when they change. NULL (FALSE) when it could not be made: the
+ * immediate path draws then.
+ */
+static LrgShape3DMesh *
+lrg_sphere3d_ensure_mesh (LrgSphere3D *self)
+{
+	if (self->gpu_mesh == NULL || self->mesh_rings != self->rings
+	    || self->mesh_slices != self->slices)
+	{
+		g_clear_pointer (&self->gpu_mesh, lrg_shape3d_mesh_release);
+		self->gpu_mesh = lrg_shape3d_mesh_acquire_sphere (self->rings, self->slices);
+		self->mesh_rings = self->rings;
+		self->mesh_slices = self->slices;
+	}
+	return self->gpu_mesh;
+}
+
+static gboolean
+lrg_sphere3d_draw_mesh (LrgSphere3D *self,
+                        GrlColor    *color)
+{
+	LrgShape3DMesh *mesh = lrg_sphere3d_ensure_mesh (self);
+
+	return mesh != NULL && lrg_shape3d_mesh_draw (mesh, color, self->radius, self->radius, self->radius);
+}
+
 static void
 lrg_sphere3d_draw (LrgShape *shape,
                    gfloat    delta)
 {
 	LrgSphere3D           *self = LRG_SPHERE3D (shape);
-	GrlVector3            *pos  = lrg_shape3d_get_position (LRG_SHAPE3D (self));
-	GrlVector3            *rot  = lrg_shape3d_get_rotation (LRG_SHAPE3D (self));
-	GrlVector3            *scl  = lrg_shape3d_get_scale (LRG_SHAPE3D (self));
+	GrlVector3             render_pos;
+	GrlVector3             render_rot;
+	GrlVector3             render_scl;
+	GrlVector3            *pos  = &render_pos;
+	GrlVector3            *rot  = &render_rot;
+	GrlVector3            *scl  = &render_scl;
 	GrlColor              *color = lrg_shape_get_color (shape);
 	gboolean               wireframe = lrg_shape3d_get_wireframe (LRG_SHAPE3D (self));
-	g_autoptr(GrlVector3)  origin = grl_vector3_new (0.0f, 0.0f, 0.0f);
+	GrlVector3             origin_at = { 0.0f, 0.0f, 0.0f };
+	GrlVector3            *origin = &origin_at;
 
-	rlPushMatrix ();
+	/* Draw at the render (interpolated) transform */
+	lrg_shape3d_get_render_transform (LRG_SHAPE3D (self), pos, rot, scl);
 
 	/* Apply transforms: translate, rotate (XYZ order), scale */
-	rlTranslatef (pos->x, pos->y, pos->z);
-	rlRotatef (rot->x * RAD2DEG, 1.0f, 0.0f, 0.0f);
-	rlRotatef (rot->y * RAD2DEG, 0.0f, 1.0f, 0.0f);
-	rlRotatef (rot->z * RAD2DEG, 0.0f, 0.0f, 1.0f);
-	rlScalef (scl->x, scl->y, scl->z);
+	lrg_shape3d_mesh_push_transform (pos, rot, scl);
 
 	/* Draw at origin (position handled by matrix) */
 	if (wireframe)
@@ -78,7 +122,7 @@ lrg_sphere3d_draw (LrgShape *shape,
 		                       self->slices,
 		                       color);
 	}
-	else
+	else if (!lrg_sphere3d_draw_mesh (self, color))
 	{
 		grl_draw_sphere_ex (origin,
 		                    self->radius,
@@ -145,11 +189,22 @@ lrg_sphere3d_set_property (GObject      *object,
 }
 
 static void
+lrg_sphere3d_finalize (GObject *object)
+{
+	LrgSphere3D *self = LRG_SPHERE3D (object);
+
+	g_clear_pointer (&self->gpu_mesh, lrg_shape3d_mesh_release);
+
+	G_OBJECT_CLASS (lrg_sphere3d_parent_class)->finalize (object);
+}
+
+static void
 lrg_sphere3d_class_init (LrgSphere3DClass *klass)
 {
 	GObjectClass  *object_class = G_OBJECT_CLASS (klass);
 	LrgShapeClass *shape_class  = LRG_SHAPE_CLASS (klass);
 
+	object_class->finalize     = lrg_sphere3d_finalize;
 	object_class->get_property = lrg_sphere3d_get_property;
 	object_class->set_property = lrg_sphere3d_set_property;
 
@@ -206,6 +261,10 @@ lrg_sphere3d_init (LrgSphere3D *self)
 	self->radius = 1.0f;
 	self->rings  = 16;
 	self->slices = 16;
+
+	/* build the GPU resources behind a loading screen, not on the
+	 * first draw (see lrg_prewarm_track()) */
+	lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 /* ==========================================================================
@@ -393,4 +452,26 @@ lrg_sphere3d_set_slices (LrgSphere3D *self,
 		self->slices = slices;
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SLICES]);
 	}
+}
+
+/* ==========================================================================
+ * Prewarm
+ * ========================================================================== */
+
+/* lrg_sphere3d_prewarm: makes the shared mesh (in this context) now, not at the
+ * first solid draw */
+static gboolean
+lrg_sphere3d_prewarm (LrgPrewarmable *prewarmable)
+{
+	LrgShape3DMesh *mesh = lrg_sphere3d_ensure_mesh (LRG_SPHERE3D (prewarmable));
+
+	if (mesh != NULL)
+		lrg_shape3d_mesh_prepare (mesh);
+	return TRUE;
+}
+
+static void
+lrg_sphere3d_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+	iface->prewarm = lrg_sphere3d_prewarm;
 }

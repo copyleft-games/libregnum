@@ -907,6 +907,116 @@ test_instance_tree_matches_linear (void)
     }
 }
 
+/* Analytical contacts use unequal box dimensions so a capsule/sphere or a
+ * single inflated radius cannot accidentally satisfy the same oracle. */
+static void
+test_sweep_box_faces(void)
+{
+	g_autoptr(GArray) vertices=g_array_new(FALSE,FALSE,sizeof(gfloat));
+	g_autoptr(LrgCollisionMesh) mesh=NULL;
+	g_autoptr(GError) error=NULL;
+	gfloat center[3]={0,3,0},extent[3]={.2f,.5f,.8f},motion[3]={0,-4,0};
+	LrgCollisionHit hit;
+	gdouble time;
+	push_floor(vertices,-20,-20,20,20,0); mesh=mesh_from(vertices,NULL);
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_no_error(error);
+	g_assert_cmpfloat_with_epsilon(time,.625,1e-12); g_assert_cmpfloat_with_epsilon(hit.normal[1],1,EPS);
+	g_assert_cmpfloat_with_epsilon(hit.position[1],0,EPS); g_assert_cmpfloat_with_epsilon(hit.distance,2.5,EPS);
+	center[1]=.5f; motion[0]=2; motion[1]=0;
+	g_assert_false(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_no_error(error);
+	motion[1]=1; g_assert_false(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error));
+	motion[1]=-1; g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat(time,==,0);
+	center[1]=.25f; motion[1]=0;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat(time,==,0);
+	/* Exact end-time contact is retained. */
+	center[1]=1.5f; motion[0]=0; motion[1]=-1;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat(time,==,1);
+}
+
+static void
+test_sweep_box_corners(void)
+{
+	g_autoptr(GArray) vertices=g_array_new(FALSE,FALSE,sizeof(gfloat));
+	g_autoptr(LrgCollisionMesh) mesh=NULL;
+	g_autoptr(GError) error=NULL;
+	gfloat center[3]={1.8f,1.8f,1},extent[3]={.2f,.2f,.25f},motion[3]={0,0,-2};
+	LrgCollisionHit hit;
+	gdouble time;
+	guint32 tag=77;
+	/* Overlapping triangle and box AABBs do not imply triangle intersection:
+	 * the slanted edge's cross axis must separate this entire sweep. */
+	push_tri(vertices,0,0,0,2,0,0,0,2,0); mesh=mesh_from(vertices,&tag);
+	g_assert_false(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_no_error(error);
+	center[0]=.5f; center[1]=.5f;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error));
+	g_assert_cmpfloat_with_epsilon(time,.375,1e-12); g_assert_cmpuint(hit.tag,==,77); g_assert_cmpuint(hit.triangle,==,0);
+	g_assert_cmpfloat_with_epsilon(hit.normal[2],1,EPS);
+	g_assert_cmpfloat_with_epsilon(hit.position[2],0,EPS);
+	/* Flat rectangles and lines retain the same plane crossing time. */
+	extent[2]=0;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat_with_epsilon(time,.5,1e-12);
+	extent[1]=0;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat_with_epsilon(time,.5,1e-12);
+	extent[0]=0;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat_with_epsilon(time,.5,1e-6);
+}
+
+static void
+test_sweep_box_instances(void)
+{
+	g_autoptr(LrgCollisionMesh) shape=unit_box_mesh(),world=lrg_collision_mesh_new();
+	g_autoptr(GError) error=NULL;
+	gfloat matrix[16],center[3]={0,0,0},extent[3]={.25f,.4f,.75f},motion[3]={10,0,0};
+	LrgCollisionHit hit;
+	gdouble time;
+	/* Rotate ninety degrees, mirror and scale nonuniformly. Local Z now
+	 * spans world X, so the near plane is x=3 and box entry x=2.75. */
+	identity(matrix); matrix[0]=0; matrix[2]=2; matrix[5]=3; matrix[8]=4; matrix[10]=0; matrix[12]=5;
+	g_assert_cmpuint(lrg_collision_mesh_add_instance(world,shape,matrix,123),!=,LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_assert_true(lrg_collision_mesh_sweep_box(world,center,extent,motion,&hit,&time,&error)); g_assert_no_error(error);
+	g_assert_cmpfloat_with_epsilon(time,.275,1e-12); g_assert_cmpuint(hit.instance_id,==,123);
+	g_assert_cmpfloat_with_epsilon(hit.normal[0],-1,EPS); g_assert_cmpfloat_with_epsilon(hit.position[0],3,EPS);
+	/* A box less wide in Z passes the wall where a max-radius proxy would hit. */
+	center[2]=1.5f; extent[2]=.1f;
+	g_assert_false(lrg_collision_mesh_sweep_box(world,center,extent,motion,&hit,&time,&error));
+	/* An oblique, mirrored instance exposes a real edge contact. A local
+	 * axis-aligned proxy would report the face too early (.25858 vs .26287). */
+	{
+		gfloat c=(gfloat)sqrt(.5);
+		gdouble expected;
+		identity(matrix); matrix[0]=2*c; matrix[2]=2*c; matrix[5]=3; matrix[8]=4*c; matrix[10]=-4*c; matrix[12]=5; matrix[14]=3;
+		g_assert_true(lrg_collision_mesh_set_instance_transform(world,0,matrix));
+		center[2]=3; extent[2]=.75f;
+		expected=(5-(gdouble)matrix[0]*.5-(gdouble)matrix[8]*.5-.25)/10;
+		g_assert_true(lrg_collision_mesh_sweep_box(world,center,extent,motion,&hit,&time,&error)); g_assert_no_error(error);
+		g_assert_cmpfloat_with_epsilon(time,expected,1e-12); g_assert_cmpfloat_with_epsilon(hit.normal[0],-1,EPS);
+		g_assert_cmpfloat_with_epsilon(hit.position[0],5-3*c,EPS);
+	}
+}
+
+static void
+test_sweep_box_invalid(void)
+{
+	g_autoptr(LrgCollisionMesh) mesh=unit_box_mesh();
+	guint attempt;
+	for (attempt=0;attempt<6;attempt++) {
+		g_autoptr(GError) error=NULL;
+		gfloat center[3]={-3,0,0},extent[3]={.2f,.4f,.8f},motion[3]={6,0,0};
+		LrgCollisionHit hit,before;
+		gdouble time=-99;
+		memset(&hit,0x5a,sizeof(hit)); before=hit;
+		if (attempt==0) extent[0]=-1;
+		else if (attempt==1) extent[2]=NAN;
+		else if (attempt==2) center[1]=INFINITY;
+		else if (attempt==3) motion[2]=NAN;
+		else if (attempt==4) center[0]=1e20f;
+		else { center[1]=10; }
+		g_assert_false(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error));
+		if (attempt<5) g_assert_error(error,G_IO_ERROR,G_IO_ERROR_INVALID_ARGUMENT); else g_assert_no_error(error);
+		g_assert_cmpmem(&hit,sizeof(hit),&before,sizeof(before)); g_assert_cmpfloat(time,==,-99);
+	}
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -923,6 +1033,10 @@ main (int   argc,
     g_test_add_func ("/collision-mesh/sweep/sphere-floor", test_sweep_sphere_floor);
     g_test_add_func ("/collision-mesh/sweep/tunnelling", test_sweep_tunnelling);
     g_test_add_func ("/collision-mesh/sweep/capsule-edge", test_sweep_capsule_edge);
+	g_test_add_func("/collision-mesh/sweep/box-faces",test_sweep_box_faces);
+	g_test_add_func("/collision-mesh/sweep/box-corners",test_sweep_box_corners);
+	g_test_add_func("/collision-mesh/sweep/box-instances",test_sweep_box_instances);
+	g_test_add_func("/collision-mesh/sweep/box-invalid",test_sweep_box_invalid);
     g_test_add_func ("/collision-mesh/overlap", test_overlap_capsule);
     g_test_add_func ("/collision-mesh/instances", test_instances);
     g_test_add_func ("/collision-mesh/instances/invalid", test_instance_invalid);

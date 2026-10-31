@@ -116,6 +116,8 @@ lrg_widget_set_position (LRG_WIDGET (lbl), 100.0f, 50.0f);
 lrg_widget_draw (LRG_WIDGET (lbl));
 #+end_src
 
+A label whose text cannot touch the current render target is skipped: its measured text box (cached until the text, font or size changes), widened by two ems on every side for glyph offsets and padding, is tested against the visible area from rlgl's live matrices (=lrg_draw_cull_visible_rect_2d()=), so 2D cameras, render textures, letterbox viewports and pushed transforms are all respected. Anything skipped would have been clipped entirely by the GPU, so the output is unchanged; a long list of labels laid out past the screen costs a test per label instead of a textured quad per glyph. With raylib's default font (no theme font) the box is a conservative bound of two ems per byte.
+
 ** Example: Dynamic Text Updates
 :PROPERTIES:
 :CUSTOM_ID: example-dynamic-text-updates

@@ -12,6 +12,9 @@
 
 #define LIBREGNUM_INSIDE
 
+/* Before anything pulls in <raylib.h>: see the note on BASE_CFLAGS in
+ * config.mk. Games built with -std=gnu89 need raylib's real _Bool. */
+#include <stdbool.h>
 #include <glib.h>
 #include <glib-object.h>
 #include <gio/gio.h>
@@ -64,6 +67,9 @@
 #include "core/lrg-event-listener.h"
 #include "core/lrg-event-bus.h"
 #include "core/lrg-random-stream.h"
+#include "core/lrg-cpu-affinity.h"
+#include "core/lrg-prewarmable.h"
+#include "core/lrg-prewarm.h"
 #include "core/lrg-timer-manager.h"
 
 /* Graphics module */
@@ -250,6 +256,11 @@
 #include "audio/lrg-audio-effect.h"
 #include "audio/lrg-reverb.h"
 #include "audio/lrg-low-pass.h"
+#include "audio/lrg-high-pass.h"
+#include "audio/lrg-echo.h"
+#include "audio/lrg-chorus.h"
+#include "audio/lrg-pitch-shift.h"
+#include "audio/lrg-audio-bus.h"
 #include "audio/lrg-sound-bed.h"
 #include "audio/lrg-midi-output.h"
 #include "audio/lrg-midi-output-alsa.h"
@@ -284,6 +295,10 @@
 #include "ai/lrg-bt-decorator.h"
 #include "ai/lrg-bt-leaf.h"
 #include "ai/lrg-behavior-tree.h"
+#include "ai/lrg-decision.h"
+#include "ai/lrg-decider.h"
+#include "ai/lrg-decision-brain.h"
+#include "ai/lrg-bt-judgment.h"
 
 /* Physics module */
 #include "physics/lrg-collision-info.h"
@@ -327,6 +342,13 @@
 #include "scene/lrg-scene-serializer-blender.h"
 
 /* Editor / level authoring module */
+/* Immediate-mode GUI toolkit */
+#include "gui/lrg-gui-types.h"
+#include "gui/lrg-gui-draw-list.h"
+#include "gui/lrg-gui-context.h"
+#include "gui/lrg-gui-dock.h"
+#include "gui/lrg-gui-raylib.h"
+
 #ifdef LRG_BUILD_EDITOR
 #include "editor/lrg-component-desc.h"
 #include "editor/lrg-script-binding.h"
@@ -340,6 +362,14 @@
 #include "editor/lrg-editor-selection.h"
 #include "editor/lrg-editor.h"
 #include "editor/lrg-editor-host.h"
+#include "editor/lrg-editor-math.h"
+#include "editor/lrg-editor-gizmo.h"
+#include "editor/lrg-editor-settings.h"
+#include "editor/lrg-external-editor.h"
+#include "editor/lrg-editor-log.h"
+#include "editor/lrg-editor-server.h"
+#include "editor/lrg-editor-actions.h"
+#include "editor/lrg-editor-validate.h"
 #include "editor/lrg-asset-database.h"
 #include "editor/lrg-project.h"
 #include "editor/lrg-prefab.h"
@@ -699,6 +729,7 @@
 #include "vr/lrg-vr-comfort.h"
 #include "vr/lrg-openxr-service.h"
 #include "vr/lrg-vr-draw.h"
+#include "vr/lrg-vr-gesture.h"
 
 /* Template module - Base game templates for rapid development */
 #include "template/lrg-game-template.h"

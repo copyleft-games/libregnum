@@ -7,6 +7,9 @@
 # Makefile for building libregnum example programs.
 
 include ../config.mk
+
+# The included makefiles define directory rules; make sure "make" builds the examples.
+.DEFAULT_GOAL := all
 include ../rules.mk
 
 # Static linking mode (for shipping games)
@@ -28,6 +31,8 @@ EXAMPLE_CFLAGS += -I$(GRAYLIB_DIR)/src
 EXAMPLE_CFLAGS += -I$(GRAYLIB_DIR)/deps/raylib/src
 EXAMPLE_CFLAGS += -I$(YAMLGLIB_DIR)/src
 EXAMPLE_CFLAGS += $(GLIB_CFLAGS)
+# json-glib: <libregnum.h> exposes it through the editor server and control APIs
+EXAMPLE_CFLAGS += $(JSON_CFLAGS)
 
 # Platform-specific optional dependencies
 ifeq ($(TARGET_PLATFORM),windows)

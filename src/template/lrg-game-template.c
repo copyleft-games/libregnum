@@ -50,12 +50,15 @@ enum
     PROP_TARGET_FPS,
     PROP_ALLOW_RESIZE,
     PROP_ALLOW_ALT_ENTER,
+    PROP_MAX_FRAMES_IN_FLIGHT,
 
     /* Frame timing */
     PROP_USE_FIXED_TIMESTEP,
     PROP_FIXED_TIMESTEP,
     PROP_MAX_FRAME_TIME,
     PROP_MAX_UPDATES_PER_FRAME,
+    PROP_SNAP_FRAME_DELTA,
+    PROP_INTERPOLATE,
 
     /* Application */
     PROP_APP_ID,
@@ -360,6 +363,68 @@ template_handle_global_input_default (LrgGameTemplate *self)
     return FALSE;
 }
 
+/*
+ * lrg_game_template_snap_delta:
+ *
+ * @delta snapped to the nearest whole number (1..@max_steps) of @step
+ * when it is within LRG_FRAME_DELTA_SNAP_TOLERANCE of it; otherwise
+ * @delta unchanged.
+ */
+gdouble
+lrg_game_template_snap_delta (gdouble delta,
+                              gdouble step,
+                              gint    max_steps)
+{
+    gdouble steps;
+
+    if (step <= 0.0 || delta <= 0.0)
+        return delta;
+
+    steps = floor (delta / step + 0.5);
+    if (steps >= 1.0 && steps <= (gdouble) MAX (max_steps, 1) &&
+        fabs (delta - steps * step) < LRG_FRAME_DELTA_SNAP_TOLERANCE)
+        return steps * step;
+
+    return delta;
+}
+
+/*
+ * lrg_game_template_pace_fps:
+ *
+ * Walks the fractions of the refresh rate (refresh / 1, / 2, ...) down
+ * to the first one at or below the target, and returns that one or
+ * the fraction just above it, whichever is nearer (the higher on a tie).
+ */
+gint
+lrg_game_template_pace_fps (gint target_fps,
+                            gint refresh_rate)
+{
+    gint divisor;
+    gint above;
+    gint below;
+
+    if (target_fps <= 0 || refresh_rate <= 0)
+        return target_fps;
+
+    /* the refresh rate itself (or more) is already even pacing */
+    if (target_fps >= refresh_rate)
+        return refresh_rate;
+
+    /* first fraction at or below the target; the one before is above it.
+     * Fractions are rounded up (144 / 5 = 28.8 -> 29): a cap a little
+     * faster than n vblanks still waits for the n-th, a slower one would
+     * miss it now and then */
+    for (divisor = 2; refresh_rate > target_fps * divisor; divisor++)
+        ;
+    below = (refresh_rate + divisor - 1) / divisor;
+    above = (refresh_rate + divisor - 2) / (divisor - 1);
+
+    if (below == target_fps)
+        return below;
+
+    return (above - target_fps <= target_fps - below) ? above : below;
+}
+
 void
 lrg_game_template_update (LrgGameTemplate *self,
                           gdouble          delta)
@@ -385,6 +450,12 @@ lrg_game_template_update (LrgGameTemplate *self,
                    raw_delta, delta);
     }
 
+    /* Snap timing noise away so a display at the step rate gets exactly
+     * one fixed update per frame (see LrgGameTemplate:snap-frame-delta) */
+    if (priv->use_fixed_timestep && priv->snap_frame_delta)
+        delta = lrg_game_template_snap_delta (delta, priv->fixed_timestep,
+                                              priv->max_updates_per_frame);
+
     /* Apply time scale (for hit stop) */
     if (priv->hit_stop_remaining > 0)
     {
@@ -403,6 +474,10 @@ lrg_game_template_update (LrgGameTemplate *self,
     {
         delta *= priv->time_scale;
     }
+
+    /* Render interpolation runs only on top of fixed steps; the clock is
+     * process-wide, so the running template (re)asserts it every frame */
+    grl_interpolation_set_enabled (priv->use_fixed_timestep && priv->interpolate);
 
     /* Sample once per host frame, before consumers and outside fixed steps. */
     lrg_input_manager_poll (lrg_input_manager_get_default ());
@@ -430,6 +505,10 @@ lrg_game_template_update (LrgGameTemplate *self,
         {
             priv->in_state_transition = TRUE;
 
+            /* Interpolated objects capture their pre-step pose on their
+             * first write inside the step */
+            grl_interpolation_begin_step ();
+
             if (klass->fixed_update != NULL)
                 klass->fixed_update (self, priv->fixed_timestep);
 
@@ -439,6 +518,8 @@ lrg_game_template_update (LrgGameTemplate *self,
 
             priv->in_state_transition = FALSE;
             template_process_deferred_ops (self);
+
+            grl_interpolation_end_step ();
 
             priv->accumulator -= priv->fixed_timestep;
             updates++;
@@ -453,8 +534,10 @@ lrg_game_template_update (LrgGameTemplate *self,
             priv->accumulator = 0;
         }
 
-        /* Calculate interpolation alpha for rendering */
+        /* Calculate interpolation alpha for rendering and publish it for
+         * draw code (and the camera updates in pre_update below) */
         priv->interpolation_alpha = priv->accumulator / priv->fixed_timestep;
+        grl_interpolation_set_alpha ((gfloat) priv->interpolation_alpha);
     }
     else
     {
@@ -865,8 +948,17 @@ lrg_game_template_get_property (GObject    *object,
     case PROP_ALLOW_ALT_ENTER:
         g_value_set_boolean (value, priv->allow_alt_enter);
         break;
+    case PROP_MAX_FRAMES_IN_FLIGHT:
+        g_value_set_uint (value, priv->max_frames_in_flight);
+        break;
     case PROP_USE_FIXED_TIMESTEP:
         g_value_set_boolean (value, priv->use_fixed_timestep);
+        break;
+    case PROP_SNAP_FRAME_DELTA:
+        g_value_set_boolean (value, priv->snap_frame_delta);
+        break;
+    case PROP_INTERPOLATE:
+        g_value_set_boolean (value, priv->interpolate);
         break;
     case PROP_FIXED_TIMESTEP:
         g_value_set_double (value, priv->fixed_timestep);
@@ -990,8 +1082,17 @@ lrg_game_template_set_property (GObject      *object,
     case PROP_ALLOW_ALT_ENTER:
         priv->allow_alt_enter = g_value_get_boolean (value);
         break;
+    case PROP_MAX_FRAMES_IN_FLIGHT:
+        priv->max_frames_in_flight = g_value_get_uint (value);
+        break;
     case PROP_USE_FIXED_TIMESTEP:
         priv->use_fixed_timestep = g_value_get_boolean (value);
+        break;
+    case PROP_SNAP_FRAME_DELTA:
+        priv->snap_frame_delta = g_value_get_boolean (value);
+        break;
+    case PROP_INTERPOLATE:
+        priv->interpolate = g_value_get_boolean (value);
         break;
     case PROP_FIXED_TIMESTEP:
         priv->fixed_timestep = g_value_get_double (value);
@@ -1180,8 +1281,8 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
     properties[PROP_TARGET_FPS] =
         g_param_spec_int ("target-fps",
                           "Target FPS",
-                          "Target frame rate",
-                          1, 240, 60,
+                          "Target frame rate (0: no limit; with vsync the display's rate)",
+                          0, 1000, 60,
                           G_PARAM_READWRITE |
                           G_PARAM_STATIC_STRINGS |
                           G_PARAM_CONSTRUCT);
@@ -1195,6 +1296,29 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
                               G_PARAM_STATIC_STRINGS |
                               G_PARAM_CONSTRUCT);
 
+    /**
+     * LrgGameTemplate:max-frames-in-flight:
+     *
+     * How many frames may be in flight (the one being built plus those
+     * the GPU has not finished), bounded with GL fences before each
+     * buffer swap (graylib's frame sync); the standalone host applies it
+     * to the window. 2 (the default) keeps one frame of CPU/GPU overlap
+     * and caps drivers that would queue up to three frames of input
+     * latency; 1 is the lowest latency (the GPU is idle when input is
+     * polled) at the cost of frame rate when GPU-bound; 0 leaves it to
+     * the driver. The environment variable `LRG_MAX_FRAMES_IN_FLIGHT`
+     * (0-4, or `off`) overrides it without code changes.
+     */
+    properties[PROP_MAX_FRAMES_IN_FLIGHT] =
+        g_param_spec_uint ("max-frames-in-flight",
+                           "Max frames in flight",
+                           "Frames in flight, bounded with GL fences (0 = driver default)",
+                           0, GRL_FRAME_SYNC_MAX_FRAMES,
+                           LRG_DEFAULT_MAX_FRAMES_IN_FLIGHT,
+                           G_PARAM_READWRITE |
+                           G_PARAM_STATIC_STRINGS |
+                           G_PARAM_CONSTRUCT);
+
     properties[PROP_ALLOW_ALT_ENTER] =
         g_param_spec_boolean ("allow-alt-enter",
                               "Allow Alt+Enter",
@@ -1205,6 +1329,50 @@ lrg_game_template_class_init (LrgGameTemplateClass *klass)
                               G_PARAM_CONSTRUCT);
 
     /* Frame timing properties */
+
+    /**
+     * LrgGameTemplate:snap-frame-delta:
+     *
+     * With a fixed timestep, snap a frame's delta to a whole number of
+     * steps when it is within 0.2 ms of one. A display (or frame cap) at the
+     * step rate delivers frames 16.6-16.8 ms apart rather than exactly
+     * 1/60 s; fed raw to the accumulator, that noise makes some frames run
+     * no update and the next run two, which reads as stutter at a steady
+     * frame rate. Snapping keeps one update per frame. Deltas further from a
+     * multiple (other refresh rates, slow frames) are used unchanged.
+     */
+    properties[PROP_SNAP_FRAME_DELTA] =
+        g_param_spec_boolean ("snap-frame-delta",
+                              "Snap Frame Delta",
+                              "Snap frame deltas close to whole fixed steps",
+                              TRUE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_CONSTRUCT);
+
+    /**
+     * LrgGameTemplate:interpolate:
+     *
+     * With a fixed timestep, draw interpolated objects at a blend of
+     * their pose at the start of the latest step and their true pose, by
+     * the fraction of a step left in the accumulator (render
+     * interpolation). Without it, a display whose rate differs from the
+     * step rate (e.g. 144 Hz with 60 steps a second) shows motion on an
+     * uneven 2,3,2,3 frame cadence. #GrlEntity (so #LrgGameObject),
+     * #LrgTransformComponent, #LrgShape2D, #LrgShape3D, #LrgCamera2D and
+     * #LrgCamera3D are interpolated; the cost is a lazy per-object copy of
+     * the pose on its first write in a step, and drawing one fixed step
+     * (at most) behind the simulation. Ignored with a variable timestep.
+     */
+    properties[PROP_INTERPOLATE] =
+        g_param_spec_boolean ("interpolate",
+                              "Interpolate",
+                              "Interpolate drawn poses between fixed steps",
+                              TRUE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_CONSTRUCT);
+
     properties[PROP_USE_FIXED_TIMESTEP] =
         g_param_spec_boolean ("use-fixed-timestep",
                               "Use Fixed Timestep",
@@ -1503,13 +1671,16 @@ lrg_game_template_init (LrgGameTemplate *self)
     priv->target_fps = 60;
     priv->allow_resize = TRUE;
     priv->allow_alt_enter = TRUE;
+    priv->max_frames_in_flight = LRG_DEFAULT_MAX_FRAMES_IN_FLIGHT;
 
     priv->use_fixed_timestep = TRUE;
+    priv->snap_frame_delta = TRUE;
     priv->fixed_timestep = LRG_DEFAULT_FIXED_TIMESTEP;
     priv->max_frame_time = LRG_DEFAULT_MAX_FRAME_TIME;
     priv->max_updates_per_frame = LRG_DEFAULT_MAX_UPDATES_PER_FRAME;
     priv->accumulator = 0.0;
     priv->interpolation_alpha = 0.0;
+    priv->interpolate = TRUE;
 
     priv->hit_stop_remaining = 0.0;
     priv->saved_time_scale = 1.0;
@@ -1574,6 +1745,9 @@ lrg_game_template_init (LrgGameTemplate *self)
     priv->camera_follow_enabled = FALSE;
     priv->camera_follow_target_x = 0.0f;
     priv->camera_follow_target_y = 0.0f;
+    priv->camera_follow_prev_x = 0.0f;
+    priv->camera_follow_prev_y = 0.0f;
+    grl_interpolation_track_init (&priv->camera_follow_interp);
     priv->camera_follow_smoothing = LRG_DEFAULT_CAMERA_SMOOTHING;
     priv->camera_deadzone_x = LRG_DEFAULT_CAMERA_DEADZONE;
     priv->camera_deadzone_y = LRG_DEFAULT_CAMERA_DEADZONE;
@@ -1733,6 +1907,9 @@ lrg_game_template_shutdown_game (LrgGameTemplate *self)
 
     priv->is_running = FALSE;
 
+    /* Leave nothing blended for code that draws after the game stopped */
+    grl_interpolation_set_enabled (FALSE);
+
     /* Shutdown hook (vfunc) */
     if (klass->shutdown != NULL)
         klass->shutdown (self);
@@ -1850,6 +2027,19 @@ lrg_game_run_standalone (LrgGameTemplate *self,
     while (!lrg_game_template_should_quit (self))
     {
         gdouble delta;
+        guint   dispatched;
+
+        /* Dispatch what the default GLib main context has ready -- timeouts,
+         * idles, async (GTask/GIO) completions, file monitors, background
+         * save notifications -- without blocking. The loop used to never
+         * iterate it, so none of those ever ran in a standalone game. The
+         * cap keeps a source that re-arms itself every time from eating the
+         * frame. */
+        for (dispatched = 0;
+             dispatched < LRG_MAIN_CONTEXT_DISPATCH_LIMIT &&
+             g_main_context_iteration (NULL, FALSE);
+             dispatched++)
+            ;
 
         delta = lrg_game_host_get_frame_delta (LRG_GAME_HOST (host));
 
@@ -2936,8 +3126,20 @@ lrg_game_template_update_camera_follow_target (LrgGameTemplate *self,
 
     priv = lrg_game_template_get_instance_private (self);
 
-    priv->camera_follow_target_x = target_x;
-    priv->camera_follow_target_y = target_y;
+    /* Set in fixed_update, the target is interpolated like an object */
+    if (grl_interpolation_track_begin_write (&priv->camera_follow_interp))
+    {
+        priv->camera_follow_prev_x = priv->camera_follow_target_x;
+        priv->camera_follow_prev_y = priv->camera_follow_target_y;
+    }
+    grl_interpolation_track_write_float (&priv->camera_follow_interp,
+                                         &priv->camera_follow_target_x,
+                                         &priv->camera_follow_prev_x,
+                                         target_x);
+    grl_interpolation_track_write_float (&priv->camera_follow_interp,
+                                         &priv->camera_follow_target_y,
+                                         &priv->camera_follow_prev_y,
+                                         target_y);
 }
 
 /*
@@ -2968,8 +3170,16 @@ lrg_game_template_get_camera_position (LrgGameTemplate *self,
     /* Start with follow target if enabled, otherwise 0 */
     if (priv->camera_follow_enabled)
     {
+        gfloat alpha;
+
+        /* The view follows the drawn (interpolated) target */
         cam_x = priv->camera_follow_target_x;
         cam_y = priv->camera_follow_target_y;
+        if (grl_interpolation_track_get_blend (&priv->camera_follow_interp, &alpha))
+        {
+            cam_x = grl_interpolation_lerp (priv->camera_follow_prev_x, cam_x, alpha);
+            cam_y = grl_interpolation_lerp (priv->camera_follow_prev_y, cam_y, alpha);
+        }
     }
     else
     {

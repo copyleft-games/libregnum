@@ -338,6 +338,115 @@ test_low_pass_glide_and_open (void)
 }
 
 /* ==========================================================================
+ * High-pass
+ * ========================================================================== */
+
+/* no DC passes: the impulse response sums to 0 and a constant decays */
+static void
+test_high_pass_impulse_response (void)
+{
+    g_autoptr(LrgHighPass) filter = NULL;
+    g_autofree gfloat     *frames = NULL;
+    gdouble                sum;
+    guint                  n;
+    guint                  f;
+
+    n = RATE / 4;
+    filter = lrg_high_pass_new (1000.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_cutoff (filter), ==, 1000.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_current_cutoff (filter), ==, 1000.0f);
+    frames = impulse (n, 1);
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, n, 1, RATE);
+    sum = 0.0;
+    for (f = 0; f < n; f++)
+        sum += frames[f];
+    g_assert_cmpfloat_with_epsilon (sum, 0.0, 1e-3);
+    /* the edge goes through: the first sample is most of the impulse */
+    g_assert_cmpfloat (frames[0], >, 0.8f);
+    g_assert_cmpfloat_with_epsilon (frames[n - 1], 0.0f, 1e-6);
+
+    /* a constant input (DC, stereo) dies away in both channels */
+    g_free (frames);
+    frames = g_new (gfloat, (gsize)n * 2);
+    for (f = 0; f < 2 * n; f++)
+        frames[f] = 0.5f;
+    lrg_audio_effect_reset (LRG_AUDIO_EFFECT (filter));
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, n, 2, RATE);
+    g_assert_cmpfloat_with_epsilon (frames[2 * n - 2], 0.0f, 1e-5);
+    g_assert_cmpfloat_with_epsilon (frames[2 * n - 1], 0.0f, 1e-5);
+}
+
+/* a decade above the cut-off passes, a decade below loses ~40 dB */
+static void
+test_high_pass_frequency_response (void)
+{
+    g_autoptr(LrgHighPass) filter = NULL;
+    gdouble                low;
+    gdouble                high;
+    gdouble                at_cutoff;
+
+    filter = lrg_high_pass_new (800.0f);
+    low = sine_gain (LRG_AUDIO_EFFECT (filter), 80.0);
+    at_cutoff = sine_gain (LRG_AUDIO_EFFECT (filter), 800.0);
+    /* 7900 Hz: not a divisor of the rate, so the samples reach the peak */
+    high = sine_gain (LRG_AUDIO_EFFECT (filter), 7900.0);
+    g_assert_cmpfloat_with_epsilon (high, 1.0, 0.03);
+    g_assert_cmpfloat_with_epsilon (at_cutoff, 0.7071, 0.03);  /* -3 dB, Butterworth */
+    g_assert_cmpfloat (low, <, 0.015);                         /* below -36 dB */
+
+    /* resonance peaks just above the cut-off */
+    lrg_high_pass_set_resonance (filter, 4.0f);
+    g_assert_cmpfloat (sine_gain (LRG_AUDIO_EFFECT (filter), 820.0), >, 2.0);
+}
+
+/* the cut-off glides geometrically, and an open filter is transparent */
+static void
+test_high_pass_glide_and_open (void)
+{
+    g_autoptr(LrgHighPass) filter = NULL;
+    g_autofree gfloat     *frames = NULL;
+    g_autofree gfloat     *copy = NULL;
+    gfloat                 mid;
+    guint                  f;
+
+    filter = lrg_high_pass_new (LRG_HIGH_PASS_OPEN);
+    frames = g_new0 (gfloat, RATE);
+    for (f = 0; f < RATE; f++)
+        frames[f] = (gfloat)(0.5 * sin (2.0 * G_PI * 30.0 * (gdouble)f / RATE));
+    copy = g_memdup2 (frames, sizeof (gfloat) * RATE);
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, RATE, 1, RATE);
+    for (f = 0; f < RATE; f++)
+        g_assert_cmpfloat (frames[f], ==, copy[f]);
+
+    /* 20 Hz -> 500 Hz over the glide (0.08 s time constant) */
+    lrg_high_pass_set_cutoff (filter, 500.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_current_cutoff (filter), ==, LRG_HIGH_PASS_OPEN);
+    memset (frames, 0, sizeof (gfloat) * RATE);
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, (guint)(0.08 * RATE), 1, RATE);
+    mid = lrg_high_pass_get_current_cutoff (filter);
+    g_assert_cmpfloat (mid, >, LRG_HIGH_PASS_OPEN);
+    g_assert_cmpfloat (mid, <, 500.0f);
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, RATE, 1, RATE);
+    g_assert_cmpfloat (lrg_high_pass_get_current_cutoff (filter), ==, 500.0f);
+
+    /* clamping */
+    lrg_high_pass_set_cutoff (filter, 1.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_cutoff (filter), ==, LRG_HIGH_PASS_OPEN);
+    lrg_high_pass_set_cutoff (filter, 96000.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_cutoff (filter), ==, LRG_HIGH_PASS_MAX_CUTOFF);
+    lrg_high_pass_set_resonance (filter, 100.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_resonance (filter), ==, 10.0f);
+    lrg_high_pass_set_resonance (filter, 0.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_high_pass_get_resonance (filter), 0.1f, 1e-6);
+    lrg_high_pass_set_glide (filter, 9.0f);
+    g_assert_cmpfloat (lrg_high_pass_get_glide (filter), ==, 5.0f);
+    lrg_high_pass_set_glide (filter, 0.0f);
+    lrg_high_pass_set_cutoff (filter, 2000.0f);
+    lrg_audio_effect_process (LRG_AUDIO_EFFECT (filter), frames, 32, 1, RATE);
+    g_assert_cmpfloat (lrg_high_pass_get_current_cutoff (filter), ==, 2000.0f);
+}
+
+/* ==========================================================================
  * Chain
  * ========================================================================== */
 
@@ -674,6 +783,89 @@ test_mix_rate_unattached (void)
     g_assert_false (measured);
 }
 
+/*
+ * The bed on the audio thread (LRG_TEST_AUDIO_DEVICE=1): calls read back
+ * at once, the audio thread renders (the play counts move without any
+ * render() or update() call rendering), commands apply in order, and
+ * after stop_stream () the renderer is back on this thread with the
+ * state the calls asked for.
+ */
+static void
+test_bed_stream (void)
+{
+    g_autoptr(LrgSoundBed) bed = NULL;
+    g_autoptr(GError) error = NULL;
+    g_auto(GStrv) names = NULL;
+    GrlAudioDevice *device;
+    gfloat buffer[2 * 64];
+    gint64 deadline;
+
+    if (g_strcmp0 (g_getenv ("LRG_TEST_AUDIO_DEVICE"), "1") != 0)
+    {
+        g_test_skip ("set LRG_TEST_AUDIO_DEVICE=1 to open the audio device");
+        return;
+    }
+    device = grl_audio_device_get_default ();
+    if (device != NULL && !grl_audio_device_is_ready (device))
+        grl_audio_device_init_audio (device);
+    if (device == NULL || !grl_audio_device_is_ready (device))
+    {
+        g_test_skip ("no audio device");
+        return;
+    }
+    grl_audio_device_set_master_volume (device, 0.0f);
+
+    bed = lrg_sound_bed_new (RATE);
+    g_assert_true (lrg_sound_bed_start_stream (bed, &error));
+    g_assert_no_error (error);
+
+    /* offline rendering is silent while the audio thread renders */
+    buffer[0] = 1.0f;
+    g_assert_cmpuint (lrg_sound_bed_render (bed, buffer, 64), ==, 0);
+    g_assert_cmpfloat (buffer[0], ==, 0.0f);
+
+    /* calls read back at once */
+    g_assert_true (add_constant (bed, "wind", 0.25f, RATE / 100, RATE));
+    g_assert_true (add_constant (bed, "rain", 0.5f, RATE / 100, RATE));
+    g_assert_true (lrg_sound_bed_has_layer (bed, "wind"));
+    g_assert_true (lrg_sound_bed_set_level (bed, "wind", 0.75f, 0.0));
+    g_assert_cmpfloat (lrg_sound_bed_get_level (bed, "wind"), ==, 0.75f);
+    g_assert_cmpfloat (lrg_sound_bed_get_gain (bed, "wind"), ==, 0.75f);
+    lrg_sound_bed_crossfade (bed, NULL, "rain", 0.2);
+    g_assert_cmpfloat (lrg_sound_bed_get_level (bed, "rain"), ==, 1.0f);
+    lrg_sound_bed_set_volume (bed, 0.5f);
+    g_assert_cmpfloat (lrg_sound_bed_get_volume (bed), ==, 0.5f);
+
+    /* the audio thread plays them: 10 ms clips loop, the counts climb */
+    deadline = g_get_monotonic_time () + 3 * G_USEC_PER_SEC;
+    while ((lrg_sound_bed_get_play_count (bed, "wind") < 10 ||
+            lrg_sound_bed_get_gain (bed, "rain") < 1.0f) &&
+           g_get_monotonic_time () < deadline)
+    {
+        lrg_sound_bed_update (bed);
+        g_usleep (10000);
+    }
+    g_assert_cmpuint (lrg_sound_bed_get_play_count (bed, "wind"), >=, 10);
+    g_assert_cmpfloat (lrg_sound_bed_get_gain (bed, "rain"), ==, 1.0f);
+
+    /* a removal is seen at once; the layer is freed by a later call */
+    g_assert_true (lrg_sound_bed_remove_layer (bed, "rain"));
+    g_assert_false (lrg_sound_bed_has_layer (bed, "rain"));
+    names = lrg_sound_bed_get_layer_names (bed);
+    g_assert_cmpuint (g_strv_length (names), ==, 1);
+    g_assert_true (add_constant (bed, "rain", 1.0f, RATE / 100, RATE));
+    g_assert_true (lrg_sound_bed_set_level (bed, "rain", 0.5f, 0.0));
+
+    /* back on this thread: wind 0.25 x 0.75 + rain 1.0 x 0.5, x volume 0.5 */
+    lrg_sound_bed_stop_stream (bed);
+    g_assert_false (lrg_sound_bed_has_stream (bed));
+    g_assert_cmpuint (lrg_sound_bed_render (bed, buffer, 64), ==, 64);
+    g_assert_cmpfloat_with_epsilon (buffer[0], 0.5f * (0.25f * 0.75f + 1.0f * 0.5f), 1e-5);
+    g_assert_cmpfloat_with_epsilon (buffer[1], buffer[0], 1e-6);
+
+    grl_audio_device_close (device);
+}
+
 gint
 main (gint   argc,
       gchar *argv[])
@@ -688,6 +880,9 @@ main (gint   argc,
     g_test_add_func ("/audio-effects/low-pass/impulse-response", test_low_pass_impulse_response);
     g_test_add_func ("/audio-effects/low-pass/frequency-response", test_low_pass_frequency_response);
     g_test_add_func ("/audio-effects/low-pass/glide-and-open", test_low_pass_glide_and_open);
+    g_test_add_func ("/audio-effects/high-pass/impulse-response", test_high_pass_impulse_response);
+    g_test_add_func ("/audio-effects/high-pass/frequency-response", test_high_pass_frequency_response);
+    g_test_add_func ("/audio-effects/high-pass/glide-and-open", test_high_pass_glide_and_open);
     g_test_add_func ("/audio-effects/chain", test_chain);
     g_test_add_func ("/audio-effects/sound-bed/layering", test_bed_layering);
     g_test_add_func ("/audio-effects/sound-bed/loop-seam", test_bed_loop_seam);
@@ -695,6 +890,7 @@ main (gint   argc,
     g_test_add_func ("/audio-effects/sound-bed/scatter", test_bed_scatter);
     g_test_add_func ("/audio-effects/sound-bed/effects-and-errors", test_bed_effects_and_errors);
     g_test_add_func ("/audio-effects/sound-bed/wave-data", test_bed_wave_data);
+    g_test_add_func ("/audio-effects/sound-bed/stream", test_bed_stream);
     g_test_add_func ("/audio-effects/mix-rate/snap", test_snap_sample_rate);
     g_test_add_func ("/audio-effects/mix-rate/unattached", test_mix_rate_unattached);
 

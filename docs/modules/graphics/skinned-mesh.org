@@ -71,7 +71,7 @@ void     lrg_skinned_mesh_draw (LrgSkinnedMesh *self, const GrlMatrix *transform
 :END:
 Every bone starts with an identity inverse bind and the palette starts as identities, the bind pose. =compute_palette()= multiplies the caller's bone world matrices by the inverse binds without posing the mesh; =set_palette()= poses it. =compute_palette_from_skeleton()= takes an =LrgSkeleton= whose world poses are current (=lrg_skeleton_calculate_world_poses()=) and maps mesh bone /i/ to skeleton bone /i/; it fails when the skeleton has fewer bones.
 
-=lrg_skinned_mesh_skin()= is the reference: positions are the weighted sum of =palette * p=, normals of the palette's upper 3x3 times =n=, renormalised. The GPU shader computes the same sum, which the tests check by readback.
+=lrg_skinned_mesh_skin()= is the reference: positions are the weighted sum of =palette * p=; normals are the weighted sum of each palette entry's inverse-transpose linear transform applied to =n=, then renormalised. This preserves nonuniform import scale instead of bending normals toward a stretched axis. CPU normal matrices are cached per bone when the palette changes. The GPU uses the same guarded cofactor calculation and also inverse-transposes the model transform. A collapsed transform has no defined normal and contributes zero rather than NaNs. The affine-normal synthetic check covers nonuniform scale, reflection and collapse; existing rigid/two-bone and GPU readback checks remain applicable.
 
 ** Drawing
 :PROPERTIES:

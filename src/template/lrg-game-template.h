@@ -617,7 +617,10 @@ lrg_game_template_set_time_scale (LrgGameTemplate *self,
  *
  * Gets the interpolation alpha for render interpolation.
  * This is the fraction of a fixed timestep that has elapsed
- * since the last fixed update.
+ * since the last fixed update. The same value is published for draw
+ * code without a template pointer through grl_interpolation_get_alpha()
+ * (which reads 1 while #LrgGameTemplate:interpolate is off or the
+ * timestep is variable).
  *
  * Returns: interpolation alpha (0.0 to 1.0)
  *
@@ -805,7 +808,9 @@ lrg_game_template_set_camera_deadzone (LrgGameTemplate *self,
  * @target_y: target Y position
  *
  * Updates the camera follow target position. Call this each frame
- * when camera follow is enabled.
+ * when camera follow is enabled. A target set from fixed_update (the
+ * object's true position) is interpolated for the view, like the object
+ * itself.
  *
  * Since: 1.0
  */
@@ -822,6 +827,8 @@ lrg_game_template_update_camera_follow_target (LrgGameTemplate *self,
  * @y: (out) (optional): return location for camera Y
  *
  * Gets the current smoothed camera position (after follow and shake).
+ * With render interpolation active this follows the interpolated
+ * target, so the view moves with the drawn objects.
  *
  * Since: 1.0
  */
@@ -951,6 +958,27 @@ lrg_game_template_has_focus (LrgGameTemplate *self);
  */
 LRG_AVAILABLE_IN_ALL
 LrgTimerManager *lrg_game_template_get_timer_manager (LrgGameTemplate *self);
+
+/**
+ * lrg_game_template_pace_fps:
+ * @target_fps: the requested frame cap (0: none)
+ * @refresh_rate: the display's refresh rate in Hz (0 or less: unknown)
+ *
+ * The frame cap to use with vsync on a display refreshing at
+ * @refresh_rate Hz. A cap that does not divide the refresh rate (60 fps
+ * on a 144 Hz display) makes vsync alternate two- and three-vblank
+ * frames, which judders; this returns the fraction of the refresh rate
+ * (@refresh_rate / n, rounded up) nearest to @target_fps, the higher one
+ * on a tie (72 for 60 on 144 Hz, 55 for 60 on 165 Hz, 29 for 30 on
+ * 144 Hz, 60 on 60/120/240 Hz).
+ * @target_fps of 0 and unknown refresh rates are returned unchanged.
+ *
+ * Returns: the evenly pacing frame cap
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_game_template_pace_fps (gint target_fps,
+                            gint refresh_rate);
 
 G_END_DECLS
 

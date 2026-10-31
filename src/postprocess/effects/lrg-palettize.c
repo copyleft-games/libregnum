@@ -12,6 +12,7 @@
 #include <string.h>
 #include <raylib.h>
 #include <rlgl.h>
+#include "core/lrg-prewarm.h"
 
 /**
  * SECTION:lrg-palettize
@@ -112,7 +113,11 @@ struct _LrgPalettize
     gint           loc_intensity;
 };
 
-G_DEFINE_TYPE (LrgPalettize, lrg_palettize, LRG_TYPE_POST_EFFECT)
+static void lrg_palettize_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgPalettize, lrg_palettize, LRG_TYPE_POST_EFFECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_palettize_prewarmable_init))
 
 enum
 {
@@ -191,7 +196,8 @@ release_gpu (LrgPalettize *self)
     self->shader_tried = FALSE;
 }
 
-/* the shader and the table texture, current; NULL when unavailable */
+/* the shader and the table texture, current (the table once there is a
+ * palette); NULL when unavailable */
 static GrlShader *
 ensure_gpu (LrgPalettize *self)
 {
@@ -228,6 +234,9 @@ ensure_gpu (LrgPalettize *self)
     if (self->shader == NULL)
         return NULL;
 
+    /* no palette yet (a prewarm before one is set): the shader only */
+    if (self->size == 0)
+        return self->shader;
     if (self->lut_dirty || self->lut_texture.id == 0)
     {
         /* the table as colours: column r + 32 b, row g */
@@ -471,6 +480,10 @@ lrg_palettize_init (LrgPalettize *self)
     self->loc_dither_strength = -1;
     self->loc_dither_scale = -1;
     self->loc_intensity = -1;
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 /* --- public API --- */
@@ -729,4 +742,23 @@ lrg_palettize_draw_texture (LrgPalettize       *self,
     if (shader != NULL)
         grl_shader_end (shader);
     return identity || shader != NULL;
+}
+
+/* ========================================================================== */
+/* Prewarm                                                                    */
+/* ========================================================================== */
+
+/* lrg_palettize_prewarm: compiles the shader and uploads the lookup table
+ * now, not on the first frame the effect shows */
+static gboolean
+lrg_palettize_prewarm (LrgPrewarmable *prewarmable)
+{
+    ensure_gpu (LRG_PALETTIZE (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_palettize_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_palettize_prewarm;
 }

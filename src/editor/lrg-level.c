@@ -278,11 +278,43 @@ lrg_level_add_node (LrgLevel *self,
 	g_return_if_fail (LRG_IS_NODE (node));
 	g_return_if_fail (parent == NULL || LRG_IS_NODE (parent));
 
+	lrg_level_insert_node (self, node, parent, -1);
+}
+
+void
+lrg_level_insert_node (LrgLevel *self,
+                       LrgNode  *node,
+                       LrgNode  *parent,
+                       gint      index)
+{
+	g_return_if_fail (LRG_IS_LEVEL (self));
+	g_return_if_fail (LRG_IS_NODE (node));
+	g_return_if_fail (parent == NULL || LRG_IS_NODE (parent));
+
 	if (parent == NULL)
 		parent = self->root;
 
-	lrg_node_add_child (parent, node);
+	lrg_node_insert_child (parent, node, index);
 	g_signal_emit (self, signals[SIGNAL_NODE_ADDED], 0, node);
+}
+
+static gboolean
+count_node (LrgNode  *node,
+            gpointer  user_data)
+{
+	(*(guint *) user_data)++;
+	return TRUE;
+}
+
+guint
+lrg_level_count_nodes (LrgLevel *self)
+{
+	guint count = 0;
+
+	g_return_val_if_fail (LRG_IS_LEVEL (self), 0);
+
+	lrg_node_foreach (self->root, count_node, &count);
+	return count - 1;  /* the walk includes the implicit root */
 }
 
 gboolean

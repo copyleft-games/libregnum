@@ -1,0 +1,115 @@
+#+title: Decisions: typed questions to a decision model
+#+description: LrgDecisionRequest, LrgJudgments, LrgDecider, LrgDecisionBrain and the judgment conditions: a game's questions to TypeSafe's Jev, a local Ollama model or a script, answered as typed judgments its code decides with
+#+authors: Zach Podbielniak
+#+categories: libregnum ai decisions
+#+created: 2026-10-26T00:00:00-04:00
+#+updated: 2026-10-26T00:00:00-04:00
+#+version: 1.0
+
+* Decisions
+:PROPERTIES:
+:CUSTOM_ID: decisions
+:END:
+A decision model answers typed questions about state a game supplies: the probability that a statement is true (a Noul), one of named options (a Choice), a place on described levels (a Score). The answers are *judgments*, the things only a reader of the game's text or pictures can tell ("does this quest's objective name that creature?", "what is this spell for?"). What the game does with them is decided in code: a behavior tree reading them from its blackboard, or a table of rules. The model never picks the action.
+
+| Type | What |
+|------+------|
+| =LrgDecisionRequest= | the state (text, or a JSON object or array of named fields) and the questions, as the System One wire format |
+| =LrgJudgments= | the answers: a Noul's probability and its band, a Choice's option and probabilities, a Score's position, the model, the tokens |
+| =LrgDecider= | a decision model by name (=typesafe= or =jev=, =ollama=, =laya=, =auto=), or a script |
+| =LrgDecisionBrain= | a game loop's questions by topic: one out per topic, the latest answers, a cache, a journal, totals |
+| =lrg_bt_condition_new_judgment()=, =lrg_bt_condition_new_choice()= | behavior tree conditions on the answers in a blackboard |
+
+** The backends
+:PROPERTIES:
+:CUSTOM_ID: backends
+:END:
+The models come from ai-glib (=deps/ai-glib=, =git@gitlab.com:zachpodbielniak/ai-glib.git=), its =AiDecider= backends, built in with =make AI=1=. ai-glib's types stay out of libregnum's headers: a request goes to the backend as its wire JSON (=ai_decision_request_new_from_json()= checks it as the backend will), the answer comes back as the response JSON. A backend added to ai-glib is one more name in =lrg_decider_new()=.
+
+| Name | Model | Settings (the environment, as ai-glib reads it) |
+|------+-------+------|
+| =typesafe=, =jev= | TypeSafe's Jev (=jev-latest=, =jev-1.14.0=...) | =TYPESAFE_API_KEY= (required), =TYPESAFE_BASE_URL=, =TYPESAFE_DEFAULT_MODEL= |
+| =ollama= | a decision model pulled into a local Ollama (=tev1=...) | =OLLAMA_HOST=, =OLLAMA_API_KEY= |
+| =laya= | a Laya server | its base URL is the client's default |
+| =auto= (or =NULL=) | Jev when =TYPESAFE_API_KEY= is set, else Ollama | |
+
+=lrg_decider_set_model()= names the model (=NULL=: the backend's default), =lrg_decider_set_timeout_ms()= the deadline (30 s by default). Without =AI=1=, =lrg_decider_new()= fails with =LRG_DECIDER_ERROR_UNSUPPORTED= and =lrg_decider_is_built_in()= is false; the scripted decider still works.
+
+=lrg_decider_new_scripted(func, data, destroy)= answers from a function given the request's JSON and returning a response's: tests, a replay of a journal, a game played without a model. Its answer comes on the next main loop iteration, as a model's would.
+
+A failed call is an error (=lrg_decider_decide_finish()= returns =NULL=), never an answer of "no".
+
+** Requests
+:PROPERTIES:
+:CUSTOM_ID: requests
+:END:
+#+begin_src C
+g_autoptr(LrgDecisionRequest) request = lrg_decision_request_new ();
+static const gchar * const roles[] = { "damage", "heal", "buff", NULL };
+
+lrg_decision_request_set_state_json (request,
+    "{\"quests\": [{\"title\": \"Kobold Camp Cleanup\", \"objectives\": [\"Kobold Vermin slain: 0/10\"]}],"
+    " \"creatures\": {\"c1\": {\"name\": \"Kobold Vermin\", \"level\": 3}}}", &error);
+lrg_decision_request_add_noul (request, "kill_c1",
+    "Does an objective in `quests` ask the player to kill creatures like `creatures.c1`?",
+    "an objective names this kind of creature to slay", "no objective asks for this creature's death", &error);
+lrg_decision_request_add_choice (request, "role", "What is the spell for?", roles, NULL, &error);
+#+end_src
+
+- The state is text (=set_state_text()=) or named fields (=set_state_json()=, an object or an array). A question names the field it is about by its path in backticks (=`creatures.c1`=).
+- =add_noul()= takes the question and, optionally, what counts as yes and what as no, each a situation.
+- =add_choice()= takes the options' names (which the model reads: =caster=, not =option_1=) and optionally a description each. A Choice always picks one: pair it with a Noul asking whether any fits.
+- =add_score()= takes two or more levels, lowest first.
+- A name used twice, an empty name or question, a Choice without options or with one twice, a Score with fewer than two levels: =LRG_DECIDER_ERROR_INVALID=.
+- =dup_json(model)= is the wire format: ={"model", "state", "questions": {id: {"type", "instructions", "criteria"}}}=.
+
+** Judgments
+:PROPERTIES:
+:CUSTOM_ID: judgments
+:END:
+- =get_noul(id)=: the probability, 0 to 1; -1 when not answered.
+- =get_band(id, yes, no)=: =LRG_JUDGMENT_BAND_YES= at or above =yes=, =NO= at or below =no=, =UNSETTLED= between (the state did not settle it: a row of its own in the code's decisions), =MISSING= without the answer. =LRG_JUDGMENT_YES= (0.7) and =LRG_JUDGMENT_NO= (0.3) are reasonable starting thresholds; fit them on more cases than the ones being tuned.
+- =get_choice(id)= and =get_probability(id, option)=; a Score's levels are its options by index (="0"=, ="1"=).
+- =get_score(id)=: the position on the levels, fractional.
+- =get_model()= (the version that answered), =get_tokens()=, =dup_ids()=, =dup_json()=.
+- =to_blackboard(blackboard, prefix)=: a Noul and a Score as floats, a Choice as its option's name, each at =PREFIXid=.
+
+** The brain: questions paced for a game loop
+:PROPERTIES:
+:CUSTOM_ID: brain
+:END:
+=LrgDecisionBrain= is what a frame loop asks through. Questions are asked by topic (="spells"=, ="world"=): =lrg_decision_brain_ask(brain, topic, request, &cached, &error)= sends it unless that topic's question is still out (=LRG_DECIDER_ERROR_BUSY=), so the loop can ask every frame and the model is asked again only once it answered. The game reads =get_latest(topic, &age)= whenever it decides and never waits.
+
+- *The blackboard*: with =set_blackboard()=, every answer goes to it under ="TOPIC."=.
+- *The cache*: =set_cache_seconds()=; the same request (its JSON) answered within that many seconds is answered again at once, from the cache (=cached= set). A spell's role, a quest's text do not change; a game that asks often with an unchanged state pays once.
+- *Failures*: the topic keeps its latest answers; =get_last_error(topic)= says why, =::failed= tells.
+- *The journal*: =set_journal(path)= adds a JSON line per decision: =time=, =topic=, =provider=, =model=, =elapsed_ms=, =cached=, the =request= and the =response= (or the =error=), as JSON. It is the material to tune the questions with: which states the model answered how, where a threshold sits.
+- *Signals*: =::answered (topic, judgments)= for an answer from the model, =::failed (topic, message)=.
+- =cancel()= drops every question out; =dup_status()= is YAML: the provider and model, the totals (asked, answered, cached, failed, tokens, mean seconds), each topic (busy, the age of its answers, the model, the last error).
+
+** Behavior trees
+:PROPERTIES:
+:CUSTOM_ID: behavior-trees
+:END:
+=lrg_bt_condition_new_judgment(key, band, yes, no)= succeeds when the Noul at =key= on the blackboard reads as =band= (a key not there is =MISSING=); =lrg_bt_condition_new_choice(key, option)= when the Choice there picked =option=. With the brain writing its answers to the tree's blackboard, a selector can branch on them:
+
+#+begin_src C
+/* the quest's mob, when the model judged it one, else anything of the level */
+lrg_bt_composite_add_child (pull, LRG_BT_NODE (lrg_bt_condition_new_judgment (
+    "world.kill_c1", LRG_JUDGMENT_BAND_YES, LRG_JUDGMENT_YES, LRG_JUDGMENT_NO)));
+#+end_src
+
+** Building
+:PROPERTIES:
+:CUSTOM_ID: building
+:END:
+- =make AI=1=: the =deps-ai-glib= target builds ai-glib's static archive (=deps/ai-glib/build/<release|debug>/libai-glib-1.0.a=, its =static= target); it is linked into libregnum with only the objects the decision path uses, and the system libraries it needs linked as needed (libsoup, json-glib, libdex; =AI_PKG_DEPS= also names libxml2 and GStreamer, which ai-glib's other parts build against). =AI_GLIB_DIR= points at another checkout.
+- Fedora packages to build ai-glib: =libsoup3-devel=, =json-glib-devel=, =libxml2-devel=, =libdex-devel=, =gstreamer1-devel=, =gstreamer1-plugins-base-devel=.
+- The submodule needs its own submodules: =git submodule update --init --recursive deps/ai-glib=.
+- A fix ai-glib needs goes to its own repository (see =AGENTS.md=), then the submodule is moved to it.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-decision.c=, with no model: the request's wire JSON and its refusals; judgments read from a response (bands, choices, scores, tokens, the blackboard); named deciders (an unknown one refused; in an =AI=1= build Jev's and Ollama's made without a request, otherwise refused); the brain over a scripted model (one question per topic, the busy refusal, a second topic beside it, the blackboard, the cache, a failure keeping the last answers, the journal's lines, the status, a cancel); the judgment conditions.

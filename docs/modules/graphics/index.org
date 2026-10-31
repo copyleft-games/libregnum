@@ -575,7 +575,9 @@ Abstract base class for windows.
 :END:
 Graylib window implementation.
 
-- *Methods*: toggle_fullscreen, set_vsync, get_grl_window
+- *Methods*: toggle_fullscreen, set_vsync, set_max_frames_in_flight, get_grl_window
+- *Properties*: =vsync=, =max-frames-in-flight= (frames in flight bounded with GL fences, forwarded to graylib's process-wide frame sync)
+- =lrg_grl_window_resolve_max_frames_in_flight()= applies the =LRG_MAX_FRAMES_IN_FLIGHT= environment override (=0=-=4= or =off=) to a requested bound; the standalone host and the editor use it
 - *Type*: Final
 
 *** LrgCamera

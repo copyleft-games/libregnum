@@ -26,7 +26,37 @@
  *   3. Mixing: the current song and (while crossfading or fading out)
  *      the outgoing one, each with its own linear gain ramp, then the
  *      master volume ramp.
- *   4. The optional graylib audio stream fed by lrg_midi_synth_update().
+ *   4. The renderer and its thread.  The songs, the master volume ramp
+ *      and the scratch block are the renderer's.  With a stream
+ *      (lrg_midi_synth_start_stream()) the renderer is the audio device's
+ *      thread: graylib's stream callback pulls small blocks there, and the
+ *      game thread talks to it only through the lock-free command and
+ *      garbage lists of lrg-audio-thread-private.h.  play() parses the
+ *      file and builds the song (its synthesizer copy) on the game thread
+ *      and hands it over in a PLAY command; stop(), a new SoundFont and
+ *      set_volume() are commands too.  The renderer applies them at the
+ *      start of the next block, in order, and hands back what it dropped
+ *      (applied commands, finished or replaced songs), which the game
+ *      thread frees on its next call: the audio thread never allocates,
+ *      frees or blocks.  TinySoundFont's shared-sample reference count
+ *      is only ever touched on the game thread (copies are made in
+ *      play(), closed in the garbage).
+ *
+ *      Read-back: is_playing / is_finished / position come from a
+ *      snapshot the renderer publishes after every block under
+ *      snapshot_lock, which it only try-locks.  Each song-changing
+ *      command carries a serial; until the snapshot shows the latest
+ *      serial (the command was applied) the getters report the song the
+ *      game asked for as just started (playing, position 0), so a call
+ *      reads back what the previous call did.  The loop points and the
+ *      volume target are the game thread's own copies.
+ *
+ *      Without a stream (or if graylib had no callback slot left, when
+ *      lrg_midi_synth_update() pumps the stream from the game thread as
+ *      before) the game thread is the renderer: commands apply at once.
+ *      Ownership moves only while the callback is attached or detached,
+ *      which graylib does under raylib's audio lock (the happens-before
+ *      edge for everything the other side wrote).
  */
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_AUDIO
@@ -40,6 +70,7 @@
 
 #include "lrg-midi-synth.h"
 #include "lrg-midi-synth-private.h"
+#include "lrg-audio-thread-private.h"
 #include "../lrg-log.h"
 
 /* frames rendered between two event checks (TinySoundFont's own block) */
@@ -125,6 +156,7 @@ typedef struct
 /* one song being played */
 typedef struct
 {
+    LrgAudioNode        node;        /* first: the garbage list links it */
     LrgMidiSynthVoices *voices;
     GArray             *events;      /* LrgMidiSynthEvent, by time */
     guint               cursor;      /* next event to apply */
@@ -140,24 +172,60 @@ typedef struct
     gfloat              gain_step;   /* per frame, >= 0 */
 } Song;
 
+/* what a command does on the renderer (see the file comment) */
+typedef enum
+{
+    COMMAND_PLAY,       /* song becomes the current one, crossfading over fade */
+    COMMAND_STOP,       /* the current song fades out over fade */
+    COMMAND_CLEAR,      /* every song goes (a new SoundFont) */
+    COMMAND_VOLUME      /* the master volume ramps to volume */
+} CommandType;
+
+typedef struct
+{
+    LrgAudioNode node;     /* first: the command and garbage lists link it */
+    CommandType  type;
+    guint        serial;   /* PLAY / STOP / CLEAR: the song serial it sets */
+    Song        *song;     /* PLAY: handed to the renderer (NULL once applied) */
+    gdouble      fade;
+    gfloat       volume;
+} Command;
+
 struct _LrgMidiSynth
 {
     GObject           parent_instance;
 
     guint             sample_rate;
+
+    /* the game thread's */
     LrgMidiSynthFont *font;          /* nullable */
     guint             preset_count;
+    gfloat            volume;        /* the target last set (the getter) */
+    guint             song_serial;   /* moved by every song-changing call */
+    gboolean          has_song;      /* a song is current, as last asked */
+    gboolean          song_loop;     /* ... and its loop */
+    gdouble           song_loop_start_ms;
+    gdouble           song_loop_end_ms;
+    GrlAudioStream   *stream;        /* nullable */
+    gboolean          threaded;      /* the stream's callback renders */
+    gfloat           *stream_buffer; /* fallback pump: 2 x LRG_MIDI_SYNTH_STREAM_FRAMES */
 
+    /* the renderer's: the audio thread's while threaded, else the game's */
     Song             *current;       /* nullable */
     Song             *outgoing;      /* nullable: fading out */
-
-    gfloat            volume;        /* target */
+    gfloat            mix_volume;    /* the ramp's target */
     gfloat            volume_now;    /* ramped */
     gfloat            volume_step;   /* per frame */
-
     gfloat           *scratch;       /* 2 x BLOCK_FRAMES */
-    gfloat           *stream_buffer; /* 2 x LRG_MIDI_SYNTH_STREAM_FRAMES */
-    GrlAudioStream   *stream;        /* nullable */
+    guint             applied_serial;
+
+    /* between them */
+    LrgAudioNode     *commands;      /* atomic: pending commands */
+    LrgAudioNode     *garbage;       /* atomic: for the game thread to free */
+    GMutex            snapshot_lock; /* the renderer only try-locks it */
+    guint             snap_serial;
+    gboolean          snap_finished;
+    gdouble           snap_position_ms;
 };
 
 G_DEFINE_FINAL_TYPE (LrgMidiSynth, lrg_midi_synth, G_TYPE_OBJECT)
@@ -906,6 +974,245 @@ song_mix (Song   *song,
 }
 
 /* ==========================================================================
+ * The renderer (the audio thread's while a stream callback renders)
+ * ========================================================================== */
+
+static void
+command_free (Command *command)
+{
+    /* a PLAY never applied still owns its song */
+    song_free (command->song);
+    g_free (command);
+}
+
+static Command *
+command_new (CommandType type)
+{
+    Command *command;
+
+    command = g_new0 (Command, 1);
+    command->node.free_func = (GDestroyNotify)command_free;
+    command->type = type;
+    return command;
+}
+
+/* a song the renderer is done with goes back to the game thread */
+static void
+renderer_drop (LrgMidiSynth *self,
+               Song         *song)
+{
+    if (song != NULL)
+        lrg_audio_list_push (&self->garbage, &song->node);
+}
+
+/* one command, as play() / stop() / a new bank / set_volume() did inline */
+static void
+renderer_apply (LrgMidiSynth *self,
+                Command      *command)
+{
+    switch (command->type)
+    {
+    case COMMAND_PLAY:
+        /* with a fade the current song becomes the outgoing one (an older
+         * outgoing song is dropped), without one everything else stops */
+        renderer_drop (self, self->outgoing);
+        self->outgoing = NULL;
+        if (command->fade > 0.0 && self->current != NULL)
+        {
+            self->outgoing = self->current;
+            song_fade (self->outgoing, 0.0f, command->fade, self->sample_rate);
+            command->song->gain = 0.0f;
+            song_fade (command->song, 1.0f, command->fade, self->sample_rate);
+        }
+        else
+        {
+            renderer_drop (self, self->current);
+        }
+        self->current = command->song;
+        command->song = NULL;
+        self->applied_serial = command->serial;
+        break;
+
+    case COMMAND_STOP:
+        /* the song fades as the outgoing one; an older outgoing song goes */
+        renderer_drop (self, self->outgoing);
+        self->outgoing = NULL;
+        if (self->current != NULL && command->fade > 0.0)
+        {
+            self->outgoing = self->current;
+            song_fade (self->outgoing, 0.0f, command->fade, self->sample_rate);
+        }
+        else
+        {
+            renderer_drop (self, self->current);
+        }
+        self->current = NULL;
+        self->applied_serial = command->serial;
+        break;
+
+    case COMMAND_CLEAR:
+        renderer_drop (self, self->outgoing);
+        renderer_drop (self, self->current);
+        self->outgoing = NULL;
+        self->current = NULL;
+        self->applied_serial = command->serial;
+        break;
+
+    case COMMAND_VOLUME:
+    default:
+        self->mix_volume = command->volume;
+        break;
+    }
+}
+
+/* applies every pending command, oldest first; they go back as garbage */
+static void
+renderer_drain (LrgMidiSynth *self)
+{
+    LrgAudioNode *first;
+    LrgAudioNode *last;
+    LrgAudioNode *node;
+
+    first = lrg_audio_list_take_fifo (&self->commands);
+    last = NULL;
+    for (node = first; node != NULL; node = node->next)
+    {
+        renderer_apply (self, (Command *)node);
+        last = node;
+    }
+    if (first != NULL)
+        lrg_audio_list_push_chain (&self->garbage, first, last);
+}
+
+/*
+ * renderer_mix:
+ * Block by block: clear, mix the current and the outgoing song, apply
+ * the master volume ramp.  A fully faded outgoing song is dropped.
+ */
+static void
+renderer_mix (LrgMidiSynth *self,
+              gfloat       *frames,
+              guint         n_frames)
+{
+    guint done;
+
+    done = 0;
+    while (done < n_frames)
+    {
+        gfloat *out;
+        guint   block;
+        guint   i;
+
+        block = MIN (n_frames - done, (guint)BLOCK_FRAMES);
+        out = frames + 2 * (gsize)done;
+        memset (out, 0, sizeof (gfloat) * 2 * block);
+
+        /* the current song only ever fades in: it is never dropped here */
+        if (self->current != NULL)
+            (void)song_mix (self->current, self->scratch, out, block, self->sample_rate);
+        if (self->outgoing != NULL &&
+            !song_mix (self->outgoing, self->scratch, out, block, self->sample_rate))
+        {
+            renderer_drop (self, self->outgoing);
+            self->outgoing = NULL;
+        }
+
+        for (i = 0; i < block; i++)
+        {
+            if (self->volume_now < self->mix_volume)
+                self->volume_now = MIN (self->volume_now + self->volume_step, self->mix_volume);
+            else if (self->volume_now > self->mix_volume)
+                self->volume_now = MAX (self->volume_now - self->volume_step, self->mix_volume);
+            out[2 * i] *= self->volume_now;
+            out[2 * i + 1] *= self->volume_now;
+        }
+        done += block;
+    }
+}
+
+/* publishes what the getters read; the audio thread skips it when busy */
+static void
+renderer_publish (LrgMidiSynth *self,
+                  gboolean      wait)
+{
+    if (wait)
+        g_mutex_lock (&self->snapshot_lock);
+    else if (!g_mutex_trylock (&self->snapshot_lock))
+        return;
+    self->snap_serial = self->applied_serial;
+    self->snap_finished = self->current != NULL && self->current->finished;
+    self->snap_position_ms = self->current != NULL ? self->current->time_ms : 0.0;
+    g_mutex_unlock (&self->snapshot_lock);
+}
+
+/* graylib's stream callback, on the audio device's thread */
+static void
+renderer_stream_fill (gpointer buffer,
+                      guint    n_frames,
+                      gpointer user_data)
+{
+    LrgMidiSynth *self = user_data;
+
+    renderer_drain (self);
+    renderer_mix (self, (gfloat *)buffer, n_frames);
+    renderer_publish (self, FALSE);
+}
+
+/* ==========================================================================
+ * The game thread's side
+ * ========================================================================== */
+
+/* frees what the renderer let go of */
+static void
+synth_collect (LrgMidiSynth *self)
+{
+    lrg_audio_list_free_all (&self->garbage);
+}
+
+/* the renderer catches up on the game thread (it owns the state now) */
+static void
+synth_sync (LrgMidiSynth *self)
+{
+    renderer_drain (self);
+    renderer_publish (self, TRUE);
+    synth_collect (self);
+}
+
+/* hands a command to the renderer: the audio thread's next block, or now */
+static void
+synth_submit (LrgMidiSynth *self,
+              Command      *command)
+{
+    lrg_audio_list_push (&self->commands, &command->node);
+    if (!self->threaded)
+        renderer_drain (self);
+    if (!self->threaded)
+        renderer_publish (self, TRUE);
+    synth_collect (self);
+}
+
+/* the current song's end and position, if the renderer applied the last
+ * song change; else the song just asked for (not finished, at 0) */
+static void
+synth_read (LrgMidiSynth *self,
+            gboolean     *finished,
+            gdouble      *position_ms)
+{
+    g_mutex_lock (&self->snapshot_lock);
+    if (self->snap_serial == self->song_serial)
+    {
+        *finished = self->snap_finished;
+        *position_ms = self->snap_position_ms;
+    }
+    else
+    {
+        *finished = FALSE;
+        *position_ms = 0.0;
+    }
+    g_mutex_unlock (&self->snapshot_lock);
+}
+
+/* ==========================================================================
  * GObject
  * ========================================================================== */
 
@@ -914,12 +1221,15 @@ lrg_midi_synth_finalize (GObject *object)
 {
     LrgMidiSynth *self = LRG_MIDI_SYNTH (object);
 
+    /* the renderer is back on this thread once the stream is gone */
     lrg_midi_synth_stop_stream (self);
+    synth_sync (self);
     g_clear_pointer (&self->current, song_free);
     g_clear_pointer (&self->outgoing, song_free);
     g_clear_pointer (&self->font, lrg_midi_synth_font_free);
     g_clear_pointer (&self->scratch, g_free);
     g_clear_pointer (&self->stream_buffer, g_free);
+    g_mutex_clear (&self->snapshot_lock);
 
     G_OBJECT_CLASS (lrg_midi_synth_parent_class)->finalize (object);
 }
@@ -1017,8 +1327,10 @@ lrg_midi_synth_init (LrgMidiSynth *self)
 {
     self->sample_rate = LRG_MIDI_SYNTH_DEFAULT_SAMPLE_RATE;
     self->volume = 1.0f;
+    self->mix_volume = 1.0f;
     self->volume_now = 1.0f;
     self->scratch = g_new0 (gfloat, 2 * BLOCK_FRAMES);
+    g_mutex_init (&self->snapshot_lock);
 }
 
 /* ==========================================================================
@@ -1091,8 +1403,18 @@ lrg_midi_synth_load_soundfont_bytes (LrgMidiSynth  *self,
     if (font == NULL)
         return sf2_invalid (error, "TinySoundFont rejected the bank");
 
-    g_clear_pointer (&self->current, song_free);
-    g_clear_pointer (&self->outgoing, song_free);
+    /* the songs of the old bank go (they keep its samples alive until the
+     * garbage frees them, on this thread) */
+    {
+        Command *command;
+
+        if (self->has_song)
+            self->song_serial++;
+        self->has_song = FALSE;
+        command = command_new (COMMAND_CLEAR);
+        command->serial = self->song_serial;
+        synth_submit (self, command);
+    }
     g_clear_pointer (&self->font, lrg_midi_synth_font_free);
     self->font = font;
     self->preset_count = (guint)MAX (lrg_midi_synth_font_get_preset_count (font), 0);
@@ -1206,8 +1528,8 @@ lrg_midi_synth_parse_song (GBytes         *smf,
  * lrg_midi_synth_play:
  * 1. parse the file (errors leave everything as it was);
  * 2. make a synthesizer instance for it;
- * 3. swap: with a fade the current song becomes the outgoing one (an
- *    older outgoing song is dropped), without one everything else stops.
+ * 3. hand it to the renderer, which swaps it in (renderer_apply()); the
+ *    game thread's copy of the song state follows at once.
  */
 gboolean
 lrg_midi_synth_play (LrgMidiSynth  *self,
@@ -1216,11 +1538,12 @@ lrg_midi_synth_play (LrgMidiSynth  *self,
                      gdouble        fade_in,
                      GError       **error)
 {
-    Song   *song;
-    GArray *events;
-    gdouble length_ms;
-    gdouble loop_start_ms;
-    gdouble loop_end_ms;
+    Song    *song;
+    Command *command;
+    GArray  *events;
+    gdouble  length_ms;
+    gdouble  loop_start_ms;
+    gdouble  loop_end_ms;
 
     g_return_val_if_fail (LRG_IS_MIDI_SYNTH (self), FALSE);
     g_return_val_if_fail (smf != NULL, FALSE);
@@ -1239,6 +1562,7 @@ lrg_midi_synth_play (LrgMidiSynth  *self,
 
     /* 2. the song and its voices */
     song = g_new0 (Song, 1);
+    song->node.free_func = (GDestroyNotify)song_free;
     song->events = events;
     song->voices = lrg_midi_synth_voices_new (self->font);
     song->loop = loop;
@@ -1254,77 +1578,90 @@ lrg_midi_synth_play (LrgMidiSynth  *self,
         return smf_invalid (error, "no synthesizer voices");
     }
 
-    /* 3. swap */
-    g_clear_pointer (&self->outgoing, song_free);
-    if (fade_in > 0.0 && self->current != NULL)
-    {
-        self->outgoing = self->current;
-        song_fade (self->outgoing, 0.0f, fade_in, self->sample_rate);
-        song->gain = 0.0f;
-        song_fade (song, 1.0f, fade_in, self->sample_rate);
-    }
-    else
-    {
-        g_clear_pointer (&self->current, song_free);
-    }
-    self->current = song;
-
     lrg_debug (LRG_LOG_DOMAIN_AUDIO,
                "MIDI synth: song of %u events, %.1f s, loop %s (%.1f .. %.1f s)",
                events->len, song->length_ms / 1000.0, loop ? "on" : "off",
                song->loop_start_ms / 1000.0, song->loop_end_ms / 1000.0);
+
+    /* 3. hand over */
+    self->song_serial++;
+    self->has_song = TRUE;
+    self->song_loop = loop;
+    self->song_loop_start_ms = loop_start_ms;
+    self->song_loop_end_ms = loop_end_ms;
+    command = command_new (COMMAND_PLAY);
+    command->serial = self->song_serial;
+    command->song = song;
+    command->fade = fade_in;
+    synth_submit (self, command);
     return TRUE;
 }
 
 /*
  * lrg_midi_synth_stop:
- * The song fades as the outgoing one; an older outgoing song goes now.
+ * The song fades as the outgoing one; an older outgoing song goes now
+ * (renderer_apply()).
  */
 void
 lrg_midi_synth_stop (LrgMidiSynth *self,
                      gdouble       fade_out)
 {
+    Command *command;
+
     g_return_if_fail (LRG_IS_MIDI_SYNTH (self));
 
-    g_clear_pointer (&self->outgoing, song_free);
-    if (self->current == NULL)
-        return;
-    if (fade_out > 0.0)
-    {
-        self->outgoing = self->current;
-        self->current = NULL;
-        song_fade (self->outgoing, 0.0f, fade_out, self->sample_rate);
-        return;
-    }
-    g_clear_pointer (&self->current, song_free);
+    if (self->has_song)
+        self->song_serial++;
+    self->has_song = FALSE;
+    command = command_new (COMMAND_STOP);
+    command->serial = self->song_serial;
+    command->fade = fade_out;
+    synth_submit (self, command);
 }
 
 gboolean
 lrg_midi_synth_is_playing (LrgMidiSynth *self)
 {
+    gboolean finished;
+    gdouble  position_ms;
+
     g_return_val_if_fail (LRG_IS_MIDI_SYNTH (self), FALSE);
 
-    return self->current != NULL && !self->current->finished;
+    if (!self->has_song)
+        return FALSE;
+    synth_read (self, &finished, &position_ms);
+    return !finished;
 }
 
 gboolean
 lrg_midi_synth_is_finished (LrgMidiSynth *self)
 {
+    gboolean finished;
+    gdouble  position_ms;
+
     g_return_val_if_fail (LRG_IS_MIDI_SYNTH (self), FALSE);
 
-    return self->current != NULL && self->current->finished;
+    if (!self->has_song)
+        return FALSE;
+    synth_read (self, &finished, &position_ms);
+    return finished;
 }
 
 void
 lrg_midi_synth_set_volume (LrgMidiSynth *self,
                            gfloat        volume)
 {
+    Command *command;
+
     g_return_if_fail (LRG_IS_MIDI_SYNTH (self));
 
     volume = CLAMP (volume, 0.0f, 1.0f);
     if (volume == self->volume)
         return;
     self->volume = volume;
+    command = command_new (COMMAND_VOLUME);
+    command->volume = volume;
+    synth_submit (self, command);
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VOLUME]);
 }
 
@@ -1339,9 +1676,15 @@ lrg_midi_synth_get_volume (LrgMidiSynth *self)
 gdouble
 lrg_midi_synth_get_position (LrgMidiSynth *self)
 {
+    gboolean finished;
+    gdouble  position_ms;
+
     g_return_val_if_fail (LRG_IS_MIDI_SYNTH (self), 0.0);
 
-    return self->current != NULL ? self->current->time_ms / 1000.0 : 0.0;
+    if (!self->has_song)
+        return 0.0;
+    synth_read (self, &finished, &position_ms);
+    return position_ms / 1000.0;
 }
 
 gboolean
@@ -1354,7 +1697,10 @@ lrg_midi_synth_get_loop_points (LrgMidiSynth *self,
 
     g_return_val_if_fail (LRG_IS_MIDI_SYNTH (self), FALSE);
 
-    if (self->current == NULL || !song_loop_range (self->current, &start, &end))
+    /* the game thread's copy of the current song's loop (song_loop_range ()) */
+    start = self->song_loop_start_ms;
+    end = self->song_loop_end_ms;
+    if (!self->has_song || !self->song_loop || end <= start)
     {
         if (loop_start != NULL)
             *loop_start = 0.0;
@@ -1371,48 +1717,27 @@ lrg_midi_synth_get_loop_points (LrgMidiSynth *self,
 
 /*
  * lrg_midi_synth_render:
- * Block by block: clear, mix the current and the outgoing song, apply
- * the master volume ramp.  A fully faded outgoing song is freed.
+ * Offline rendering on the caller's thread; while a stream callback
+ * renders, the songs are the audio thread's and this writes silence.
  */
 guint
 lrg_midi_synth_render (LrgMidiSynth *self,
                        gfloat       *frames,
                        guint         n_frames)
 {
-    guint done;
-
     g_return_val_if_fail (LRG_IS_MIDI_SYNTH (self), 0);
     g_return_val_if_fail (frames != NULL || n_frames == 0, 0);
 
-    done = 0;
-    while (done < n_frames)
+    if (self->threaded)
     {
-        gfloat *out;
-        guint   block;
-        guint   i;
-
-        block = MIN (n_frames - done, (guint)BLOCK_FRAMES);
-        out = frames + 2 * (gsize)done;
-        memset (out, 0, sizeof (gfloat) * 2 * block);
-
-        /* the current song only ever fades in: it is never dropped here */
-        if (self->current != NULL)
-            (void)song_mix (self->current, self->scratch, out, block, self->sample_rate);
-        if (self->outgoing != NULL &&
-            !song_mix (self->outgoing, self->scratch, out, block, self->sample_rate))
-            g_clear_pointer (&self->outgoing, song_free);
-
-        for (i = 0; i < block; i++)
-        {
-            if (self->volume_now < self->volume)
-                self->volume_now = MIN (self->volume_now + self->volume_step, self->volume);
-            else if (self->volume_now > self->volume)
-                self->volume_now = MAX (self->volume_now - self->volume_step, self->volume);
-            out[2 * i] *= self->volume_now;
-            out[2 * i + 1] *= self->volume_now;
-        }
-        done += block;
+        if (n_frames > 0)
+            memset (frames, 0, sizeof (gfloat) * 2 * (gsize)n_frames);
+        return 0;
     }
+    renderer_drain (self);
+    renderer_mix (self, frames, n_frames);
+    renderer_publish (self, TRUE);
+    synth_collect (self);
     return n_frames;
 }
 
@@ -1422,12 +1747,15 @@ lrg_midi_synth_render (LrgMidiSynth *self,
 
 /*
  * lrg_midi_synth_start_stream:
- * raylib sizes a stream's two buffers from a process-wide default, which
- * is set to LRG_MIDI_SYNTH_STREAM_FRAMES so every buffer we write fills
- * one exactly (a shorter write would be padded with silence: audible
- * gaps).  raylib cannot report the previous default, so it stays at that
- * size for streams created later; it equals LrgProceduralAudio's write
- * size (4096 frames), which suits those streams as well.
+ * The stream renders in graylib's stream callback on the audio device's
+ * thread (renderer_stream_fill()); everything pending is applied first,
+ * then the renderer moves there when the callback is attached.  If
+ * graylib has no callback slot left the stream is pumped from
+ * lrg_midi_synth_update() as before, which needs raylib's buffers sized
+ * to the pushed blocks: the process-wide default is set to
+ * LRG_MIDI_SYNTH_STREAM_FRAMES (raylib cannot report the previous value,
+ * so it stays for streams created later; it equals LrgProceduralAudio's
+ * write size, which suits those streams as well).
  */
 gboolean
 lrg_midi_synth_start_stream (LrgMidiSynth  *self,
@@ -1458,7 +1786,10 @@ lrg_midi_synth_start_stream (LrgMidiSynth  *self,
         return FALSE;
     }
 
-    if (self->stream_buffer == NULL)
+    synth_sync (self);
+    grl_audio_stream_set_callback (self->stream, renderer_stream_fill, self, NULL);
+    self->threaded = grl_audio_stream_has_callback (self->stream);
+    if (!self->threaded && self->stream_buffer == NULL)
         self->stream_buffer = g_new0 (gfloat, 2 * LRG_MIDI_SYNTH_STREAM_FRAMES);
     grl_audio_stream_play (self->stream);
     return TRUE;
@@ -1466,7 +1797,9 @@ lrg_midi_synth_start_stream (LrgMidiSynth  *self,
 
 /*
  * lrg_midi_synth_update:
- * At most both buffers per call (after a long frame both may be free).
+ * Frees what the audio thread let go of.  Only the fallback pump renders
+ * here: at most both buffers per call (after a long frame both may be
+ * free).
  */
 void
 lrg_midi_synth_update (LrgMidiSynth *self)
@@ -1475,16 +1808,25 @@ lrg_midi_synth_update (LrgMidiSynth *self)
 
     g_return_if_fail (LRG_IS_MIDI_SYNTH (self));
 
-    if (self->stream == NULL)
+    synth_collect (self);
+    if (self->stream == NULL || self->threaded)
         return;
     for (i = 0; i < 2 && grl_audio_stream_is_processed (self->stream); i++)
     {
-        lrg_midi_synth_render (self, self->stream_buffer, LRG_MIDI_SYNTH_STREAM_FRAMES);
+        renderer_mix (self, self->stream_buffer, LRG_MIDI_SYNTH_STREAM_FRAMES);
+        renderer_publish (self, TRUE);
         grl_audio_stream_update (self->stream, self->stream_buffer,
                                  LRG_MIDI_SYNTH_STREAM_FRAMES);
     }
+    synth_collect (self);
 }
 
+/*
+ * lrg_midi_synth_stop_stream:
+ * Once the callback is removed it is not running (graylib detaches it
+ * under raylib's lock): the renderer is this thread's again and catches
+ * up on whatever was still pending.
+ */
 void
 lrg_midi_synth_stop_stream (LrgMidiSynth *self)
 {
@@ -1492,6 +1834,9 @@ lrg_midi_synth_stop_stream (LrgMidiSynth *self)
 
     if (self->stream == NULL)
         return;
+    grl_audio_stream_set_callback (self->stream, NULL, NULL, NULL);
+    self->threaded = FALSE;
+    synth_sync (self);
     if (grl_audio_stream_is_playing (self->stream))
         grl_audio_stream_stop (self->stream);
     g_clear_object (&self->stream);

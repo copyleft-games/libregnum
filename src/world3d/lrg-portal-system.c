@@ -9,8 +9,37 @@
 
 #include "config.h"
 #include "lrg-portal-system.h"
+#include "lrg-sector-private.h"
+
+#include <string.h>
 
 #define DEFAULT_MAX_PORTAL_DEPTH 4
+
+/*
+ * Topology cache, rebuilt lazily after any sector or portal is added or
+ * removed. Sectors are listed in the sector table's iteration order (the
+ * order find_sector_at() has always scanned, so the first containing
+ * sector is the same one), each with its portal links resolved: the
+ * portal and the index of the sector across it (-1 when that sector is
+ * not in the system). A traversal is then index walks and a per-sector
+ * visit stamp, instead of three string-hashed table operations per step.
+ * Sectors and portals are owned copies only changed through this API.
+ */
+typedef struct
+{
+    const gchar            *key;          /* the sector table's key */
+    const LrgBoundingBox3D *bounds;       /* the owned sector's bounds */
+    const LrgSector        *sector;
+    guint                   first_link;   /* into topo_links */
+    guint                   n_links;
+    guint                   visit_stamp;  /* == self->visit_stamp: visited */
+} TopoSector;
+
+typedef struct
+{
+    const LrgPortal *portal;
+    gint             target;              /* TopoSector index, or -1 */
+} TopoLink;
 
 struct _LrgPortalSystem
 {
@@ -23,6 +52,18 @@ struct _LrgPortalSystem
     GPtrArray       *visible_sectors;  /* gchar* sector IDs currently visible */
 
     guint            max_portal_depth; /* Recursion limit for portal traversal */
+
+    /* update() scratch, reused every call: the traversal's visited set
+     * and the visible IDs it found, both borrowing the sector table's
+     * keys for the duration of the call. */
+    GPtrArray       *visit_order;
+
+    /* Topology cache (see TopoSector) */
+    GArray          *topo_sectors;     /* TopoSector */
+    GArray          *topo_links;       /* TopoLink */
+    GHashTable      *topo_index;       /* sector key -> TopoSector index + 1 */
+    gboolean         topo_dirty;
+    guint            visit_stamp;
 };
 
 G_DEFINE_FINAL_TYPE (LrgPortalSystem, lrg_portal_system, G_TYPE_OBJECT)
@@ -56,6 +97,10 @@ lrg_portal_system_finalize (GObject *object)
     g_clear_pointer (&self->portals, g_hash_table_unref);
     g_clear_pointer (&self->current_sector, g_free);
     g_clear_pointer (&self->visible_sectors, g_ptr_array_unref);
+    g_clear_pointer (&self->visit_order, g_ptr_array_unref);
+    g_clear_pointer (&self->topo_sectors, g_array_unref);
+    g_clear_pointer (&self->topo_links, g_array_unref);
+    g_clear_pointer (&self->topo_index, g_hash_table_unref);
 
     G_OBJECT_CLASS (lrg_portal_system_parent_class)->finalize (object);
 }
@@ -216,6 +261,11 @@ lrg_portal_system_init (LrgPortalSystem *self)
     self->current_sector = NULL;
     self->visible_sectors = g_ptr_array_new_with_free_func (g_free);
     self->max_portal_depth = DEFAULT_MAX_PORTAL_DEPTH;
+    self->visit_order = g_ptr_array_new ();
+    self->topo_sectors = g_array_new (FALSE, FALSE, sizeof (TopoSector));
+    self->topo_links = g_array_new (FALSE, FALSE, sizeof (TopoLink));
+    self->topo_index = g_hash_table_new (g_str_hash, g_str_equal);
+    self->topo_dirty = TRUE;
 }
 
 /*
@@ -253,6 +303,7 @@ lrg_portal_system_add_sector (LrgPortalSystem *self,
     g_hash_table_insert (self->sectors,
                          g_strdup (id),
                          lrg_sector_copy (sector));
+    self->topo_dirty = TRUE;
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SECTOR_COUNT]);
 }
@@ -276,6 +327,7 @@ lrg_portal_system_remove_sector (LrgPortalSystem *self,
     g_return_val_if_fail (id != NULL, FALSE);
 
     removed = g_hash_table_remove (self->sectors, id);
+    self->topo_dirty = TRUE;
 
     if (removed)
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SECTOR_COUNT]);
@@ -345,6 +397,90 @@ lrg_portal_system_get_sector_count (LrgPortalSystem *self)
 }
 
 /*
+ * topo_index_of:
+ *
+ * The topology cache index of the sector called @id, or -1 when there is
+ * none (the cache must be current).
+ */
+static gint
+topo_index_of (LrgPortalSystem *self,
+               const gchar     *id)
+{
+    return (gint) GPOINTER_TO_UINT (g_hash_table_lookup (self->topo_index, id)) - 1;
+}
+
+/*
+ * topo_ensure:
+ *
+ * Rebuilds the topology cache if sectors or portals changed since it was
+ * built (see TopoSector).
+ */
+static void
+topo_ensure (LrgPortalSystem *self)
+{
+    GHashTableIter iter;
+    gpointer key;
+    gpointer value;
+    guint i;
+
+    if (!self->topo_dirty)
+        return;
+
+    g_array_set_size (self->topo_sectors, 0);
+    g_array_set_size (self->topo_links, 0);
+
+    /* Sectors, in table iteration order, and their table indices */
+    g_hash_table_remove_all (self->topo_index);
+    g_hash_table_iter_init (&iter, self->sectors);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+        TopoSector entry;
+
+        entry.key = key;
+        entry.sector = value;
+        entry.bounds = lrg_sector_peek_bounds (value);
+        entry.first_link = 0;
+        entry.n_links = 0;
+        entry.visit_stamp = 0;
+        g_hash_table_insert (self->topo_index, key,
+                             GUINT_TO_POINTER (self->topo_sectors->len + 1));
+        g_array_append_val (self->topo_sectors, entry);
+    }
+
+    /* Each sector's portals, in its own order; missing portals are
+     * skipped, as the traversal always skipped them */
+    for (i = 0; i < self->topo_sectors->len; i++)
+    {
+        TopoSector *entry = &g_array_index (self->topo_sectors, TopoSector, i);
+        const GPtrArray *portal_ids = lrg_sector_peek_portal_ids (entry->sector);
+        guint j;
+
+        entry->first_link = self->topo_links->len;
+        for (j = 0; j < portal_ids->len; j++)
+        {
+            const LrgPortal *portal;
+            const gchar *other;
+            TopoLink link;
+
+            portal = g_hash_table_lookup (self->portals,
+                                          g_ptr_array_index (portal_ids, j));
+            if (portal == NULL)
+                continue;
+
+            other = lrg_portal_get_other_sector (portal, entry->key);
+            link.portal = portal;
+            link.target = other != NULL ?
+                topo_index_of (self, other) : -1;
+            g_array_append_val (self->topo_links, link);
+        }
+        entry->n_links = self->topo_links->len - entry->first_link;
+    }
+
+    self->visit_stamp = 0;
+    self->topo_dirty = FALSE;
+}
+
+/*
  * lrg_portal_system_find_sector_at:
  * @self: An #LrgPortalSystem
  * @point: (transfer none): Point to test
@@ -357,18 +493,23 @@ const LrgSector *
 lrg_portal_system_find_sector_at (LrgPortalSystem  *self,
                                   const GrlVector3 *point)
 {
-    GHashTableIter iter;
-    gpointer value;
+    const TopoSector *entries;
+    guint i;
 
     g_return_val_if_fail (LRG_IS_PORTAL_SYSTEM (self), NULL);
     g_return_val_if_fail (point != NULL, NULL);
 
-    g_hash_table_iter_init (&iter, self->sectors);
-    while (g_hash_table_iter_next (&iter, NULL, &value))
+    /* The cached list is the table's iteration order: same first match */
+    topo_ensure (self);
+    entries = (const TopoSector *) (gconstpointer) self->topo_sectors->data;
+    for (i = 0; i < self->topo_sectors->len; i++)
     {
-        LrgSector *sector = value;
-        if (lrg_sector_contains_point (sector, point))
-            return sector;
+        const LrgBoundingBox3D *b = entries[i].bounds;
+
+        if (point->x >= b->min.x && point->x <= b->max.x &&
+            point->y >= b->min.y && point->y <= b->max.y &&
+            point->z >= b->min.z && point->z <= b->max.z)
+            return entries[i].sector;
     }
 
     return NULL;
@@ -396,6 +537,7 @@ lrg_portal_system_add_portal (LrgPortalSystem *self,
     g_hash_table_insert (self->portals,
                          g_strdup (id),
                          lrg_portal_copy (portal));
+    self->topo_dirty = TRUE;
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PORTAL_COUNT]);
 }
@@ -419,6 +561,7 @@ lrg_portal_system_remove_portal (LrgPortalSystem *self,
     g_return_val_if_fail (id != NULL, FALSE);
 
     removed = g_hash_table_remove (self->portals, id);
+    self->topo_dirty = TRUE;
 
     if (removed)
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PORTAL_COUNT]);
@@ -490,54 +633,63 @@ lrg_portal_system_get_portal_count (LrgPortalSystem *self)
 /*
  * traverse_portals_recursive:
  *
- * Recursively traverse portals from a sector to find all visible sectors.
+ * Recursively traverse portals from a sector (a topology cache index) to
+ * find all visible sectors, appending each newly reached sector's ID (the
+ * sector table's key) to self->visit_order in discovery order.
  */
 static void
-traverse_portals_recursive (LrgPortalSystem *self,
-                            const gchar     *sector_id,
+traverse_portals_recursive (LrgPortalSystem  *self,
+                            gint              sector_index,
                             const GrlVector3 *camera_pos,
-                            GHashTable      *visited,
-                            guint            depth)
+                            guint             depth)
 {
-    const LrgSector *sector;
-    GPtrArray *portal_ids;
+    TopoSector *sector;
+    const TopoLink *links;
     guint i;
 
     if (depth >= self->max_portal_depth)
         return;
 
-    if (g_hash_table_contains (visited, sector_id))
+    /* Not in the system: nothing to visit */
+    if (sector_index < 0)
         return;
 
-    sector = lrg_portal_system_get_sector (self, sector_id);
-    if (sector == NULL)
+    sector = &g_array_index (self->topo_sectors, TopoSector, sector_index);
+    if (sector->visit_stamp == self->visit_stamp)
         return;
 
     /* Mark as visited */
-    g_hash_table_add (visited, (gpointer)sector_id);
-    g_ptr_array_add (self->visible_sectors, g_strdup (sector_id));
+    sector->visit_stamp = self->visit_stamp;
+    g_ptr_array_add (self->visit_order, (gpointer) sector->key);
 
     /* Traverse connected portals */
-    portal_ids = lrg_sector_get_portal_ids (sector);
-
-    for (i = 0; i < portal_ids->len; i++)
+    links = &g_array_index (self->topo_links, TopoLink, sector->first_link);
+    for (i = 0; i < sector->n_links; i++)
     {
-        const gchar *portal_id = g_ptr_array_index (portal_ids, i);
-        const LrgPortal *portal = lrg_portal_system_get_portal (self, portal_id);
-
-        if (portal == NULL)
-            continue;
-
         /* Check if portal is visible from camera */
-        if (lrg_portal_is_visible_from (portal, camera_pos))
-        {
-            const gchar *other_sector = lrg_portal_get_other_sector (portal, sector_id);
-            if (other_sector != NULL)
-                traverse_portals_recursive (self, other_sector, camera_pos, visited, depth + 1);
-        }
+        if (lrg_portal_is_visible_from (links[i].portal, camera_pos))
+            traverse_portals_recursive (self, links[i].target, camera_pos, depth + 1);
     }
+}
 
-    g_ptr_array_unref (portal_ids);
+/*
+ * visible_set_matches:
+ *
+ * Whether the traversal just done found exactly the visible list we hold
+ * (same IDs, same order).
+ */
+static gboolean
+visible_set_matches (LrgPortalSystem *self)
+{
+    guint i;
+
+    if (self->visit_order->len != self->visible_sectors->len)
+        return FALSE;
+    for (i = 0; i < self->visit_order->len; i++)
+        if (strcmp (g_ptr_array_index (self->visit_order, i),
+                    g_ptr_array_index (self->visible_sectors, i)) != 0)
+            return FALSE;
+    return TRUE;
 }
 
 /*
@@ -547,6 +699,8 @@ traverse_portals_recursive (LrgPortalSystem *self,
  *
  * Updates sector visibility based on camera position.
  * This traverses portals to determine which sectors are visible.
+ * #LrgPortalSystem::visibility-changed is emitted only when the visible
+ * set (or its order) differs from the previous update's.
  */
 void
 lrg_portal_system_update (LrgPortalSystem  *self,
@@ -555,7 +709,7 @@ lrg_portal_system_update (LrgPortalSystem  *self,
     const LrgSector *current;
     const gchar *new_sector_id;
     g_autofree gchar *old_sector = NULL;
-    g_autoptr(GHashTable) visited = NULL;
+    guint i;
 
     g_return_if_fail (LRG_IS_PORTAL_SYSTEM (self));
     g_return_if_fail (camera_pos != NULL);
@@ -598,14 +752,41 @@ lrg_portal_system_update (LrgPortalSystem  *self,
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CURRENT_SECTOR]);
     }
 
-    /* Clear and rebuild visibility */
-    g_ptr_array_set_size (self->visible_sectors, 0);
+    /*
+     * Traverse portals into the reusable scratch (no allocation once it
+     * has grown), then replace the visible list only if it changed: the
+     * camera usually sits still or moves within a sector, and the set
+     * then stays the same frame after frame. Visibility depends on the
+     * camera position, not just its sector, so the traversal itself
+     * runs every update.
+     */
+    g_ptr_array_set_size (self->visit_order, 0);
+    topo_ensure (self);
+    if (++self->visit_stamp == 0)
+    {
+        /* Stamp wrapped: forget every old visit */
+        for (i = 0; i < self->topo_sectors->len; i++)
+            g_array_index (self->topo_sectors, TopoSector, i).visit_stamp = 0;
+        self->visit_stamp = 1;
+    }
+    traverse_portals_recursive (self,
+                                topo_index_of (self, self->current_sector),
+                                camera_pos, 0);
 
-    /* Traverse portals to find visible sectors */
-    visited = g_hash_table_new (g_str_hash, g_str_equal);
-    traverse_portals_recursive (self, new_sector_id, camera_pos, visited, 0);
-
-    g_signal_emit (self, signals[SIGNAL_VISIBILITY_CHANGED], 0);
+    if (!visible_set_matches (self))
+    {
+        g_ptr_array_set_size (self->visible_sectors, 0);
+        for (i = 0; i < self->visit_order->len; i++)
+            g_ptr_array_add (self->visible_sectors,
+                             g_strdup (g_ptr_array_index (self->visit_order, i)));
+        g_ptr_array_set_size (self->visit_order, 0);
+        g_signal_emit (self, signals[SIGNAL_VISIBILITY_CHANGED], 0);
+    }
+    else
+    {
+        /* Drop the borrowed keys before handlers can touch the tables. */
+        g_ptr_array_set_size (self->visit_order, 0);
+    }
 }
 
 /*
@@ -751,6 +932,7 @@ lrg_portal_system_clear (LrgPortalSystem *self)
 
     g_hash_table_remove_all (self->sectors);
     g_hash_table_remove_all (self->portals);
+    self->topo_dirty = TRUE;
     g_clear_pointer (&self->current_sector, g_free);
     g_ptr_array_set_size (self->visible_sectors, 0);
 

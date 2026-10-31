@@ -429,6 +429,49 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_bt_status_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_BT_STATUS (lrg_bt_status_get_type ())
 
+/**
+ * LrgJudgmentBand:
+ * @LRG_JUDGMENT_BAND_MISSING: the question was not answered
+ * @LRG_JUDGMENT_BAND_NO: the probability is at or below the "no" threshold
+ * @LRG_JUDGMENT_BAND_UNSETTLED: between the thresholds: the state did not
+ *   settle the question
+ * @LRG_JUDGMENT_BAND_YES: at or above the "yes" threshold
+ *
+ * A decision model's Noul read against two thresholds (lrg-decision.h).
+ */
+typedef enum
+{
+    LRG_JUDGMENT_BAND_MISSING,
+    LRG_JUDGMENT_BAND_NO,
+    LRG_JUDGMENT_BAND_UNSETTLED,
+    LRG_JUDGMENT_BAND_YES
+} LrgJudgmentBand;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_judgment_band_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_JUDGMENT_BAND (lrg_judgment_band_get_type ())
+
+/**
+ * LrgDeciderError:
+ * @LRG_DECIDER_ERROR_FAILED: the decision failed (the model, the network)
+ * @LRG_DECIDER_ERROR_UNSUPPORTED: no such decision model in this build
+ * @LRG_DECIDER_ERROR_INVALID: a request or a response that is not one
+ * @LRG_DECIDER_ERROR_BUSY: a decision on that topic is already asked
+ *
+ * Errors of LrgDecider and LrgDecisionBrain.
+ */
+typedef enum
+{
+    LRG_DECIDER_ERROR_FAILED,
+    LRG_DECIDER_ERROR_UNSUPPORTED,
+    LRG_DECIDER_ERROR_INVALID,
+    LRG_DECIDER_ERROR_BUSY
+} LrgDeciderError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_decider_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DECIDER_ERROR (lrg_decider_error_get_type ())
+
 /* ==========================================================================
  * Quest System
  * ========================================================================== */
@@ -5185,6 +5228,57 @@ typedef enum
 LRG_AVAILABLE_IN_ALL
 GType lrg_editor_tool_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_EDITOR_TOOL (lrg_editor_tool_get_type ())
+
+/**
+ * LrgEditorSpace:
+ * @LRG_EDITOR_SPACE_LOCAL: gizmo axes follow the node's own rotation
+ * @LRG_EDITOR_SPACE_WORLD: gizmo axes are the world axes
+ *
+ * The coordinate space transform gizmos operate in.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_EDITOR_SPACE_LOCAL,
+    LRG_EDITOR_SPACE_WORLD
+} LrgEditorSpace;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_editor_space_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_EDITOR_SPACE (lrg_editor_space_get_type ())
+
+/**
+ * LrgEditorGizmoHandle:
+ * @LRG_EDITOR_GIZMO_HANDLE_NONE: no handle
+ * @LRG_EDITOR_GIZMO_HANDLE_X: the X axis arrow, ring or scale handle
+ * @LRG_EDITOR_GIZMO_HANDLE_Y: the Y axis arrow, ring or scale handle
+ * @LRG_EDITOR_GIZMO_HANDLE_Z: the Z axis arrow, ring or scale handle
+ * @LRG_EDITOR_GIZMO_HANDLE_XY: the XY plane square (translate)
+ * @LRG_EDITOR_GIZMO_HANDLE_YZ: the YZ plane square (translate)
+ * @LRG_EDITOR_GIZMO_HANDLE_XZ: the XZ plane square (translate)
+ * @LRG_EDITOR_GIZMO_HANDLE_CENTER: the centre: screen-plane move, uniform
+ *   scale, or the view-axis ring when rotating
+ *
+ * A grabbable part of the transform gizmo.
+ *
+ * Since: 1.0
+ */
+typedef enum
+{
+    LRG_EDITOR_GIZMO_HANDLE_NONE,
+    LRG_EDITOR_GIZMO_HANDLE_X,
+    LRG_EDITOR_GIZMO_HANDLE_Y,
+    LRG_EDITOR_GIZMO_HANDLE_Z,
+    LRG_EDITOR_GIZMO_HANDLE_XY,
+    LRG_EDITOR_GIZMO_HANDLE_YZ,
+    LRG_EDITOR_GIZMO_HANDLE_XZ,
+    LRG_EDITOR_GIZMO_HANDLE_CENTER
+} LrgEditorGizmoHandle;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_editor_gizmo_handle_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_EDITOR_GIZMO_HANDLE (lrg_editor_gizmo_handle_get_type ())
 
 /**
  * LrgAssetType:

@@ -301,4 +301,129 @@ gfloat lrg_shape3d_get_scale_y (LrgShape3D *self);
 LRG_AVAILABLE_IN_ALL
 gfloat lrg_shape3d_get_scale_z (LrgShape3D *self);
 
+/* ==========================================================================
+ * Render Interpolation
+ * ========================================================================== */
+
+/**
+ * lrg_shape3d_get_render_transform:
+ * @self: an #LrgShape3D
+ * @position: (out caller-allocates) (optional): return location for the
+ *   position to draw at
+ * @rotation: (out caller-allocates) (optional): return location for the
+ *   Euler rotation (radians) to draw with
+ * @scale: (out caller-allocates) (optional): return location for the
+ *   scale to draw with
+ *
+ * Gets the transform to draw with: while a fixed-timestep
+ * #LrgGameTemplate drives render interpolation and the shape changed in
+ * the latest fixed step, a blend of its transform at the start of that
+ * step and its current one (position and scale linearly, each Euler angle
+ * along its shorter arc); otherwise the current transform. The built-in
+ * 3D shapes draw with it. The getters keep returning the true transform.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_get_render_transform (LrgShape3D *self,
+                                       GrlVector3 *position,
+                                       GrlVector3 *rotation,
+                                       GrlVector3 *scale);
+
+/**
+ * lrg_shape3d_reset_interpolation:
+ * @self: an #LrgShape3D
+ *
+ * Drops the in-flight blend, so the shape is drawn at its current
+ * transform (teleports, respawns); further changes in the current fixed
+ * step are not blended either.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_reset_interpolation (LrgShape3D *self);
+
+/**
+ * lrg_shape3d_get_interpolate:
+ * @self: an #LrgShape3D
+ *
+ * Gets whether the shape is interpolated for drawing.
+ *
+ * Returns: the value of #LrgShape3D:interpolate
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_shape3d_get_interpolate (LrgShape3D *self);
+
+/**
+ * lrg_shape3d_set_interpolate:
+ * @self: an #LrgShape3D
+ * @interpolate: whether to interpolate the shape for drawing
+ *
+ * Opts the shape in or out of render interpolation; either way its blend
+ * is reset.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_set_interpolate (LrgShape3D *self,
+                                  gboolean    interpolate);
+
+/* ==========================================================================
+ * Shape batches
+ * ========================================================================== */
+
+/**
+ * lrg_shape3d_begin_batch:
+ *
+ * Opens a shape batch: until the matching lrg_shape3d_end_batch(), every
+ * opaque (alpha 255), solid #LrgCube3D, #LrgSphere3D, #LrgCylinder3D and
+ * #LrgCone3D drawn is not drawn on the spot but queued with the transform
+ * and camera of its draw, and the end draws the queue with one instanced
+ * call per shared mesh (all the unit cubes, all the spheres of the same
+ * rings and slices, all the cylinders of the same size...): thousands of
+ * shapes cost a few draw calls instead of one each.
+ *
+ * What the queue draws is what each shape would have drawn (the same
+ * triangles under the same model-view-projection, the same colour), but
+ * later and grouped by mesh, which is invisible while the depth test
+ * decides what is in front: draw the batch in a 3D mode with the depth
+ * test on, with the render target, viewport and blend state it began
+ * with. Wireframes and translucent shapes are not queued: a translucent
+ * shape (and any #LrgShape with a translucent colour) first draws the
+ * queue, so it blends over everything drawn before it. Before drawing
+ * anything translucent that is not a shape, or before changing the
+ * render target or depth state inside a batch, call
+ * lrg_shape3d_flush_batch(). Coplanar overlapping opaque shapes (equal
+ * depth) may resolve the other way round than without the batch.
+ *
+ * Batches nest (only the outermost end draws). Without a graphics
+ * context with GLSL 330, or in stereo rendering, shapes draw one by one
+ * as without a batch. The batch's program is built here on first use.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_begin_batch (void);
+
+/**
+ * lrg_shape3d_end_batch:
+ *
+ * Closes the shape batch opened by lrg_shape3d_begin_batch(); closing
+ * the outermost one draws what it queued.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_end_batch (void);
+
+/**
+ * lrg_shape3d_flush_batch:
+ *
+ * Draws what the open shape batch has queued so far (the batch stays
+ * open). Call it before drawing something translucent that is not a
+ * shape, or before changing the render target or depth state inside a
+ * batch. Does nothing outside a batch.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape3d_flush_batch (void);
+
+/**
+ * lrg_shape3d_is_batching:
+ *
+ * Returns: %TRUE inside a shape batch that queues (a graphics context
+ *   with GLSL 330, not in stereo rendering)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_shape3d_is_batching (void);
+
 G_END_DECLS

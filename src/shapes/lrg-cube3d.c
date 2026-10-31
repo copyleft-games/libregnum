@@ -8,6 +8,7 @@
  */
 
 #include "lrg-cube3d.h"
+#include "lrg-shape3d-mesh-private.h"
 
 #include <rlgl.h>
 
@@ -22,6 +23,8 @@
  *
  * Renders a cube using graylib's cube drawing functions.
  * Supports variable width, height, and depth for rectangular boxes.
+ * Inside a shape batch (lrg_shape3d_begin_batch()) an opaque solid cube
+ * joins the batch's instanced draw of the shared unit cube instead.
  */
 struct _LrgCube3D
 {
@@ -30,6 +33,9 @@ struct _LrgCube3D
 	gfloat width;
 	gfloat height;
 	gfloat depth;
+
+	/* the shared unit cube, taken on the first batched draw */
+	LrgShape3DMesh *gpu_mesh;
 };
 
 G_DEFINE_FINAL_TYPE (LrgCube3D, lrg_cube3d, LRG_TYPE_SHAPE3D)
@@ -54,23 +60,38 @@ lrg_cube3d_draw (LrgShape *shape,
                  gfloat    delta)
 {
 	LrgCube3D             *self = LRG_CUBE3D (shape);
-	GrlVector3            *pos  = lrg_shape3d_get_position (LRG_SHAPE3D (self));
-	GrlVector3            *rot  = lrg_shape3d_get_rotation (LRG_SHAPE3D (self));
-	GrlVector3            *scl  = lrg_shape3d_get_scale (LRG_SHAPE3D (self));
+	GrlVector3             render_pos;
+	GrlVector3             render_rot;
+	GrlVector3             render_scl;
+	GrlVector3            *pos  = &render_pos;
+	GrlVector3            *rot  = &render_rot;
+	GrlVector3            *scl  = &render_scl;
 	GrlColor              *color = lrg_shape_get_color (shape);
 	gboolean               wireframe = lrg_shape3d_get_wireframe (LRG_SHAPE3D (self));
-	g_autoptr(GrlVector3)  origin = grl_vector3_new (0.0f, 0.0f, 0.0f);
+	GrlVector3             origin_at = { 0.0f, 0.0f, 0.0f };
+	GrlVector3            *origin = &origin_at;
 
-	rlPushMatrix ();
+	/* Draw at the render (interpolated) transform */
+	lrg_shape3d_get_render_transform (LRG_SHAPE3D (self), pos, rot, scl);
 
 	/* Apply transforms: translate, rotate (XYZ order), scale */
-	rlTranslatef (pos->x, pos->y, pos->z);
-	rlRotatef (rot->x * RAD2DEG, 1.0f, 0.0f, 0.0f);
-	rlRotatef (rot->y * RAD2DEG, 0.0f, 1.0f, 0.0f);
-	rlRotatef (rot->z * RAD2DEG, 0.0f, 0.0f, 1.0f);
-	rlScalef (scl->x, scl->y, scl->z);
+	lrg_shape3d_mesh_push_transform (pos, rot, scl);
 
-	/* Draw at origin (position handled by matrix) */
+	/* Draw at origin (position handled by matrix); an opaque solid cube
+	 * in a shape batch is queued, scaled from the unit cube */
+	if (!wireframe && color != NULL && color->a == 255 && lrg_shape3d_mesh_batching ())
+	{
+		if (self->gpu_mesh == NULL)
+			self->gpu_mesh = lrg_shape3d_mesh_acquire_cube ();
+		if (self->gpu_mesh != NULL
+		    && lrg_shape3d_mesh_draw (self->gpu_mesh, color, self->width,
+		                              self->height, self->depth))
+		{
+			rlPopMatrix ();
+			return;
+		}
+	}
+
 	if (wireframe)
 	{
 		grl_draw_cube_wires (origin,
@@ -146,11 +167,22 @@ lrg_cube3d_set_property (GObject      *object,
 }
 
 static void
+lrg_cube3d_finalize (GObject *object)
+{
+	LrgCube3D *self = LRG_CUBE3D (object);
+
+	g_clear_pointer (&self->gpu_mesh, lrg_shape3d_mesh_release);
+
+	G_OBJECT_CLASS (lrg_cube3d_parent_class)->finalize (object);
+}
+
+static void
 lrg_cube3d_class_init (LrgCube3DClass *klass)
 {
 	GObjectClass  *object_class = G_OBJECT_CLASS (klass);
 	LrgShapeClass *shape_class  = LRG_SHAPE_CLASS (klass);
 
+	object_class->finalize = lrg_cube3d_finalize;
 	object_class->get_property = lrg_cube3d_get_property;
 	object_class->set_property = lrg_cube3d_set_property;
 

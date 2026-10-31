@@ -1,0 +1,78 @@
+#+title: Audio buses: LrgAudioBus
+#+description: Submix buses over graylib's per-voice processors: effect sends (a reverb only some voices reach) and inserts (a filter a group of voices plays through), mixed into the device output
+
+* Overview
+
+An =LrgAudioBus= is a submix: graylib voices routed into it (a =GrlSound= or sound alias, a =GrlMusic=, a =GrlAudioStream=) are summed, run through the bus's own =LrgAudioEffectChain= and mixed into the device output at the bus's return level.  Two ways in (=LrgAudioRoute=, nicks =send= and =insert=):
+
+| Route | The voice in the device mix | What the bus gets |
+|-------+-----------------------------+-------------------|
+| =LRG_AUDIO_ROUTE_SEND= | unchanged | a copy (an effect send: one shared reverb that only the world's sounds reach, its tail ringing on after they stop) |
+| =LRG_AUDIO_ROUTE_INSERT= | silenced | the voice itself (a filter on a voice or a group of voices: a voice changer, a radio) |
+
+Either way the copy carries the voice's own volume and pan, by raylib's pan law, times the route's level.  Several buses can be attached at once, and the effect chain on the final mix ([[file:effects.org][effects.org]]) still runs after them, over everything.
+
+Everything works headless as well: an unattached bus is mixed by hand with =lrg_audio_bus_mix()= and an unloaded graylib voice runs its processors with =grl_sound_process()=, which is how the tests drive it.
+
+* API
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_audio_bus_new ()= | an empty bus, return level 1, not on the device mix |
+| =get_chain ()= | the bus's effect chain (transfer none): add effects at any time |
+| =add_effect (effect)= | =lrg_audio_effect_chain_add()= on it |
+| =set_level= / =get_level= | the return level, 0 .. =LRG_AUDIO_BUS_MAX_LEVEL= (4) |
+| =route (voice, route, level)= | route a voice; again for a routed voice: a new route and level |
+| =unroute (voice)= / =is_routed (voice)= | end a route (an inserted voice is heard directly again) / ask |
+| =get_route_level (voice, &route)= | the level (-1 when not routed) and kind |
+| =get_n_routes ()= | how many voices are routed |
+| =attach_mix (sample_rate)= | mix into the device output from now on (=FALSE= without a device); 0 assumes 48000 Hz and measures, as the chain does |
+| =detach_mix ()= / =is_attached ()= / =get_mix_rate (&measured)= | stop, ask, the rate it runs at |
+| =mix (out, n_frames, sample_rate)= | one block by hand: add the bus's output to =out= (not introspected; for offline rendering and tests) |
+| =reset ()= | drop what was sent and reset the chain's effects |
+
+* How it works
+
+1. =route()= adds a graylib processor to the voice (=grl_sound_add_processor()= and its siblings).  raylib runs it on miniaudio's thread each time it reads the voice for a device block, in chunks of up to 512 frames, before it applies the voice's volume and pan.
+2. The processor reads the voice's volume and pan, adds the chunk times the gains (=volume x 0.5 x s x (3 - s^2)= for each side's share =s= of the pan, raylib's own law) and the route's level into the bus's input at the route's cursor, and moves the cursor on.  An insert then zeroes the chunk, so raylib mixes silence for the voice.
+3. After every voice was read, raylib's mixed-audio processor (libregnum's device-mix hub in =lrg-audio-effect.c=) calls each attached bus: its input runs through the chain (also when nothing was sent, so tails ring out), is added to the device block times the return level and is cleared; a generation counter moves on, which sends every route's cursor back to the start of the next block.
+4. Then the hub's effect chain, if one is attached, runs over the whole mix.
+
+The input holds =LRG_AUDIO_BUS_MAX_FRAMES= (8192) frames, far more than a device block; sends past it in one block are dropped.
+
+** Order on one voice
+A voice's processors run in the order its routes were made, and an insert silences the voice for every processor after it.  Route a voice to its sends first, then to its insert: the send then sees the voice before the filter (as a channel's reverb send does in engines with channel groups).
+
+** Lifetimes
+The bus holds no reference on a voice and the voice none on the bus.  A route ends when it is unrouted, when the voice is disposed (graylib drops its processors before raylib unloads it) or when the bus is disposed (it removes its processors from its voices).  Disposing an attached bus detaches it first.
+
+** Threads and locks
+The processors and the hub run on miniaudio's thread with raudio's lock held.  Each bus has one lock over its input, cursors and route list; the order on the device thread is raudio's lock, the hub's lock, a bus's lock, a chain's lock, and libregnum never calls raudio (or graylib's processor functions) holding any of its own locks.  Route levels and kinds changed on the main thread are read by the next block.
+
+* Example
+
+#+begin_src C
+g_autoptr(LrgAudioBus) world = lrg_audio_bus_new ();
+g_autoptr(LrgReverb) room = lrg_reverb_new ();
+g_autoptr(LrgAudioBus) ghost = lrg_audio_bus_new ();
+
+/* a send: the room's reverb on the world's sounds only */
+lrg_reverb_set_preset (room, LRG_REVERB_PRESET_CAVE);
+lrg_reverb_set_dry (room, 0.0f);          /* the voices stay dry in the mix */
+lrg_audio_bus_add_effect (world, LRG_AUDIO_EFFECT (room));
+lrg_audio_bus_attach_mix (world, 0);
+lrg_audio_bus_route (world, G_OBJECT (footstep), LRG_AUDIO_ROUTE_SEND, 1.0f);
+
+/* an insert: one voice through a pitch shift and an echo */
+lrg_audio_bus_add_effect (ghost, LRG_AUDIO_EFFECT (lrg_pitch_shift_new (0.85f)));
+lrg_audio_bus_add_effect (ghost, LRG_AUDIO_EFFECT (lrg_echo_new (0.07f, 0.04f)));
+lrg_audio_bus_attach_mix (ghost, 0);
+lrg_audio_bus_route (world, G_OBJECT (line), LRG_AUDIO_ROUTE_SEND, 1.0f);
+lrg_audio_bus_route (ghost, G_OBJECT (line), LRG_AUDIO_ROUTE_INSERT, 1.0f);
+#+end_src
+
+(The effects added with =lrg_*_new()= in the second block are owned by the chain once added; a real program keeps or unrefs its own references.)
+
+* Tests
+
+=tests/test-audio-bus.c= (headless, unloaded graylib voices, hand-mixed buses): a send leaves the voice and copies it at the centre pan gain times the level, the next block empty; an insert silences the voice and carries its volume and full-left pan; chunks follow each other in a block and two voices sum, the cursors start over after a mix; routing again changes kind and level, return and route levels clamp; only graylib voices route, unrouting and disposing the voice or the bus give the processor slots back; a send before an insert on one voice sees the voice; an echo on the bus rings into the next block and a reset forgets it; an overlong block is capped; attaching refuses without a device; the route nicks.  The same file tests =LrgEcho=, =LrgChorus= and =LrgPitchShift= ([[file:effects.org][effects.org]]).

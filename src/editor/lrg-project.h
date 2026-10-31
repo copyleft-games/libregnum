@@ -118,4 +118,77 @@ GPtrArray * lrg_project_get_asset_dirs (LrgProject *self);
 LRG_AVAILABLE_IN_ALL
 LrgAssetDatabase * lrg_project_create_asset_database (LrgProject *self);
 
+/**
+ * lrg_project_get_run_command:
+ * @self: an #LrgProject
+ *
+ * Returns: (transfer none) (nullable): the command the editor's "Run Game"
+ *   launches, split shell-style with `{project}`, `{level}` and `{module}`
+ *   substituted (default when unset: `lrgldr {module} -- --level {level}`)
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_project_get_run_command (LrgProject *self);
+
+/**
+ * lrg_project_set_run_command:
+ * @self: an #LrgProject
+ * @command: (nullable): the run command template
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_project_set_run_command (LrgProject  *self,
+                                  const gchar *command);
+
+/**
+ * lrg_project_get_scripts_dir:
+ * @self: an #LrgProject
+ *
+ * Returns: (transfer none): where new scripts are created, relative to the
+ *   root (default "scripts")
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_project_get_scripts_dir (LrgProject *self);
+
+/**
+ * lrg_project_set_scripts_dir:
+ * @self: an #LrgProject
+ * @dir: (nullable): the scripts directory, relative to the root
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_project_set_scripts_dir (LrgProject  *self,
+                                  const gchar *dir);
+
+/**
+ * lrg_project_clear_asset_dirs:
+ * @self: an #LrgProject
+ *
+ * Removes every asset directory (the project settings dialog rebuilds the
+ * list).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_project_clear_asset_dirs (LrgProject *self);
+
+/**
+ * lrg_project_resolve:
+ * @self: an #LrgProject
+ * @path: a path relative to the project root, or absolute
+ *
+ * Returns: (transfer full): the absolute path
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_project_resolve (LrgProject  *self,
+                             const gchar *path);
+
+/**
+ * lrg_project_relativize:
+ * @self: an #LrgProject
+ * @path: an absolute path
+ *
+ * Returns: (transfer full): @path relative to the project root when it is
+ *   inside it, otherwise a copy of @path (asset references are stored
+ *   relative so projects can move)
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_project_relativize (LrgProject  *self,
+                                const gchar *path);
+
 G_END_DECLS

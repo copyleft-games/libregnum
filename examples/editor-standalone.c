@@ -4,28 +4,23 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Standalone level editor example for libregnum.
+ * Embedding the libregnum editor application.
  *
  * Usage:
  *   editor-standalone [file.rlevel]
  *
- * If a .rlevel path is given, the level is loaded from disk; otherwise an
- * empty level is created with a handful of sample nodes so there is something
- * visible on first launch.
+ * The full editor ships as the `lrgeditor` program; this example shows
+ * how a tool of your own can host the same LrgEditorApp: create an
+ * LrgEditor document, wrap it in the app, load the user's preferences,
+ * add a custom action (it appears in menus, the command palette and the
+ * keybinding editor), start the IPC server so Emacs can connect, and run.
  *
- * Controls (window must have focus):
- *   Right-mouse drag  -- orbit camera
- *   Scroll wheel      -- zoom in / out
- *   Left-click (viewport) -- cycle node selection
- *   N                 -- add a new cube node
- *   Delete            -- delete selected node
- *   Ctrl+Z            -- undo
- *   Ctrl+Y            -- redo
- *   Ctrl+S            -- save (only if a file path was provided)
- *   Escape            -- quit
+ * Without a .rlevel path a few sample cubes are created. Press
+ * Ctrl+Shift+P for the command palette and run "Scatter cubes", or see
+ * Help > Keyboard Shortcuts.
  *
  * Build:
- *   make BUILD_EDITOR_UI=1 examples
+ *   make examples
  */
 
 #include <libregnum.h>
@@ -69,6 +64,32 @@ seed_empty_level (LrgEditor *editor)
         lrg_editor_add_node (editor, node, NULL);
         g_object_unref (node);
     }
+}
+
+/* "example.scatter": moves every top-level node to a random spot, as one
+ * undoable step. */
+static void
+scatter_cubes (gpointer user_data)
+{
+    LrgEditor *editor = LRG_EDITOR (user_data);
+    GPtrArray *top;
+    guint      i;
+
+    top = lrg_node_get_children (lrg_level_get_root (lrg_editor_get_level (editor)));
+    lrg_editor_begin_group (editor, "Scatter cubes");
+    for (i = 0; i < top->len; i++)
+    {
+        LrgNode *node = g_ptr_array_index (top, i);
+        gfloat   loc[3];
+        gfloat   rot[3] = { 0.0f, 0.0f, 0.0f };
+        gfloat   scl[3] = { 1.0f, 1.0f, 1.0f };
+
+        loc[0] = (gfloat) g_random_double_range (-5.0, 5.0);
+        loc[1] = 0.5f;
+        loc[2] = (gfloat) g_random_double_range (-5.0, 5.0);
+        lrg_editor_set_node_transform (editor, node, loc, rot, scl);
+    }
+    lrg_editor_end_group (editor);
 }
 
 /* =============================================================================
@@ -129,8 +150,26 @@ main (int   argc,
 
     app = lrg_editor_app_new (editor);
 
-    /* Run blocks until the window is closed (or exits immediately if headless) */
-    lrg_editor_app_run (app);
+    /* The user's preferences (theme, $EDITOR choice, keybindings...). */
+    {
+        g_autoptr(GError) err = NULL;
 
-    return 0;
+        if (!lrg_editor_app_load_settings (app, NULL, &err))
+            fprintf (stderr, "editor-standalone: preferences: %s\n", err->message);
+    }
+
+    /* A custom action: menus, palette and keybindings pick it up. */
+    lrg_editor_actions_add (lrg_editor_app_get_actions (app), "example.scatter", "Scatter cubes",
+                            "Example", "Ctrl+Alt+R", scatter_cubes, NULL, NULL, editor);
+
+    /* Emacs (M-x libregnum-connect) and scripts talk to this socket. */
+    {
+        g_autoptr(GError) err = NULL;
+
+        if (!lrg_editor_app_start_server (app, NULL, &err))
+            fprintf (stderr, "editor-standalone: no IPC server: %s\n", err->message);
+    }
+
+    /* Blocks until the window is closed. */
+    return lrg_editor_app_run (app);
 }

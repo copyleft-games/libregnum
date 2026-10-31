@@ -9,7 +9,8 @@
  *
  * #LrgAudioEffect is the abstract base of a sample processor: it gets a
  * block of interleaved 32-bit float frames and rewrites it in place.
- * #LrgReverb and #LrgLowPass are the effects libregnum ships;
+ * #LrgReverb, #LrgLowPass, #LrgHighPass, #LrgEcho, #LrgChorus and
+ * #LrgPitchShift are the effects libregnum ships;
  * applications subclass #LrgAudioEffect for their own.  Processing is
  * headless (the tests feed synthetic buffers); #LrgAudioEffectChain runs
  * several effects in order and, with lrg_audio_effect_chain_attach_mix(),
@@ -36,7 +37,7 @@ G_BEGIN_DECLS
  * LRG_AUDIO_HAS_EFFECTS:
  *
  * Defined when this libregnum provides #LrgAudioEffect, #LrgReverb,
- * #LrgLowPass, #LrgAudioEffectChain, #LrgSoundBed and the MIDI output
+ * #LrgLowPass, #LrgHighPass, #LrgAudioEffectChain, #LrgSoundBed and the MIDI output
  * types (#LrgMidiOutput, #LrgMidiSequencer).
  */
 #define LRG_AUDIO_HAS_EFFECTS (1)

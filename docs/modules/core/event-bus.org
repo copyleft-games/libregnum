@@ -243,10 +243,12 @@ if (lrg_event_is_cancelled (LRG_EVENT (event)))
 :PROPERTIES:
 :CUSTOM_ID: dispatch-lifetime
 :END:
-Each emission captures the current registrations and their priorities before
-notifying listeners. Higher priorities run first; ties follow registration
-order. A priority changed by a callback affects later emissions, including a
-nested emission, while the outer emission retains its captured order.
+Each emission captures the current registrations whose event mask matches the
+event, and their priorities, before notifying listeners. Higher priorities run
+first; ties follow registration order. A priority or mask changed by a callback
+affects later emissions, including a nested emission, while the outer emission
+retains its captured set and order. A captured listener whose mask stops
+matching before its turn is still skipped.
 
 Each call to =register()= creates a separate registration. Registering an object
 twice delivers twice. =unregister()= removes its oldest remaining registration;
@@ -267,8 +269,15 @@ The optional context pointer remains caller-owned and must stay valid through
 dispatch. This is synchronous dispatch, not a thread-safe queue: use one thread
 or external serialization, and keep listener accessors free of bus mutations.
 
-Capturing and sorting priorities costs O(N log N) per emission. Checking whether
-a registration was removed is O(1), including after callback mutations.
+An emission reads every registration's mask once (through the listener's
+vtable, cached at registration) and captures only the M matching ones: O(N + M
+log M), with no allocation for up to 32 matches. Matching listeners are already
+in registration order, so equal or non-increasing priorities sort in O(M).
+Checking whether a registration was removed is O(1), including after callback
+mutations. Priorities, the per-turn mask check and =on_event= go through the
+same cached listener vtable, and the event's vtable is looked up once per
+emission for the cancellation checks; the public wrappers (and their
+criticals) are only used for an implementation that leaves a vfunc =NULL=.
 
 To preserve an original event, copy it using the concrete event type's copy
 function and emit that copy. There is no generic =lrg_event_bus_emit_copy()= API.

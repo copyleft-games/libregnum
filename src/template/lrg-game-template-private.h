@@ -9,6 +9,7 @@
 #ifndef LRG_GAME_TEMPLATE_PRIVATE_H
 #define LRG_GAME_TEMPLATE_PRIVATE_H
 
+#include <graylib.h>
 #include "lrg-game-template.h"
 #include "../lrg-enums.h"
 
@@ -54,14 +55,17 @@ typedef struct _LrgGameTemplatePrivate
     gint                 target_fps;
     gboolean             allow_resize;
     gboolean             allow_alt_enter;
+    guint                max_frames_in_flight;  /* Default: 2 */
 
     /* Frame timing */
     gboolean             use_fixed_timestep;
     gdouble              fixed_timestep;        /* Default: 1.0/60.0 */
     gdouble              max_frame_time;        /* Default: 0.25 (4 FPS min) */
     gint                 max_updates_per_frame; /* Default: 5 */
+    gboolean             snap_frame_delta;      /* Default: TRUE */
     gdouble              accumulator;
     gdouble              interpolation_alpha;   /* For render interpolation */
+    gboolean             interpolate;           /* Default: TRUE */
 
     /* Hit stop / time scale */
     gdouble              hit_stop_remaining;
@@ -137,6 +141,9 @@ typedef struct _LrgGameTemplatePrivate
     gfloat               camera_follow_target_x;
     gfloat               camera_follow_target_y;
     gfloat               camera_follow_smoothing;
+    gfloat               camera_follow_prev_x;  /* Render interpolation */
+    gfloat               camera_follow_prev_y;
+    GrlInterpolationTrack camera_follow_interp;
     gfloat               camera_deadzone_x;
     gfloat               camera_deadzone_y;
 
@@ -179,8 +186,34 @@ lrg_deferred_state_op_new (LrgStateOpType  op_type,
 void
 lrg_deferred_state_op_free (LrgDeferredStateOp *op);
 
+/* Snaps a frame delta to whole fixed steps when within tolerance (see
+ * LrgGameTemplate:snap-frame-delta). Exposed for tests. */
+G_GNUC_INTERNAL
+gdouble
+lrg_game_template_snap_delta (gdouble delta,
+                              gdouble step,
+                              gint    max_steps);
+
 /* Default fixed timestep value: 1/60 second */
 #define LRG_DEFAULT_FIXED_TIMESTEP (1.0 / 60.0)
+
+/*
+ * How close (seconds) a frame delta must be to a whole number of fixed
+ * steps to be snapped to it: covers vsync/limiter timing noise (tenths of a
+ * millisecond) without bending genuinely irregular frames.
+ */
+#define LRG_FRAME_DELTA_SNAP_TOLERANCE (0.0002)
+
+/* Most main-context iterations the standalone loop runs per frame */
+#define LRG_MAIN_CONTEXT_DISPATCH_LIMIT (8)
+
+/*
+ * Default bound on frames in flight (graylib frame sync): 2 keeps one
+ * frame of CPU/GPU overlap and caps drivers that queue up to three frames;
+ * on Mesa it costs a fence per frame and changes nothing (see
+ * docs/performance.org, "Input latency").
+ */
+#define LRG_DEFAULT_MAX_FRAMES_IN_FLIGHT (2)
 
 /* Maximum delta time before clamping (prevents physics explosion) */
 #define LRG_DEFAULT_MAX_FRAME_TIME (0.25)

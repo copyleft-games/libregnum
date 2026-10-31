@@ -469,6 +469,112 @@ test_stagger (void)
     }
 }
 
+/*
+ * The pass cache with LRG_SHADOW_REFRESH_NEVER and box invalidation: two
+ * torches far apart under a sun keep every tile for any number of still
+ * updates; a box moved next to the first torch forgets only the tiles
+ * whose light camera sees it (some of that torch's faces, the cascades
+ * covering it), never the far torch's; a box with a NaN forgets all.
+ */
+static void
+test_invalidate_box (void)
+{
+    g_autoptr(LrgLightSet) lights = lrg_light_set_new ();
+    g_autoptr(LrgShadowRenderer) shadows = lrg_shadow_renderer_new ();
+    GrlVector3 sun = { 0.3f, -1.0f, 0.2f };
+    GrlColor   white = { 255, 255, 255, 255 };
+    gfloat camera[3] = { 0.0f, 2.0f, 0.0f };
+    gfloat forward[3] = { 0.0f, 0.0f, -1.0f };
+    gfloat up[3] = { 0, 1, 0 };
+    gfloat near_lo[3] = { -10.5f, 0.0f, -10.5f };
+    gfloat near_hi[3] = { -9.5f, 1.0f, -9.5f };
+    gfloat bad[3] = { 0.0f, NAN, 0.0f };
+    guint  torch_a;
+    guint  torch_b;
+    gint   slot_a;
+    gint   slot_b;
+    guint  passes;
+    guint  cascades;
+    guint  dropped;
+    guint  frame;
+    guint  face;
+    guint  i;
+    guint  a_dropped = 0;
+
+    lrg_shadow_renderer_set_sun (shadows, 512, 2, 40.0f, 0.5f);
+    lrg_shadow_renderer_set_points (shadows, 128, 2, 0.0f);
+    lrg_shadow_renderer_set_refresh (shadows, LRG_SHADOW_REFRESH_NEVER);
+    g_assert_cmpuint (lrg_shadow_renderer_get_refresh (shadows), ==, LRG_SHADOW_REFRESH_NEVER);
+    lrg_light_set_set_directional (lights, &sun, &white);
+    torch_a = lrg_light_set_add_point_light (lights, -10.0, 2.0, -10.0, &white, 6.0f);
+    torch_b = lrg_light_set_add_point_light (lights, 30.0, 2.0, -30.0, &white, 6.0f);
+    lrg_light_set_set_point_light_shadow (lights, torch_a, 1);
+    lrg_light_set_set_point_light_shadow (lights, torch_b, 1);
+
+    lrg_light_set_select (lights, camera[0], camera[1], camera[2]);
+    passes = lrg_shadow_renderer_update (shadows, lights, camera, forward, up, 60.0f, 1.0f, 0.1f);
+    cascades = lrg_shadow_renderer_get_cascade_count (shadows);
+    g_assert_cmpuint (cascades, ==, 2);
+    g_assert_cmpuint (passes, ==, cascades + 12);
+    slot_a = lrg_shadow_renderer_get_light_slot (shadows, torch_a);
+    slot_b = lrg_shadow_renderer_get_light_slot (shadows, torch_b);
+    g_assert_cmpint (slot_a, >=, 0);
+    g_assert_cmpint (slot_b, >=, 0);
+    for (i = 0; i < passes; i++)
+        lrg_shadow_renderer_mark_rendered (shadows, i);
+
+    /* a still view: nothing renders again, however long */
+    for (frame = 0; frame < 500; frame++)
+    {
+        lrg_shadow_renderer_update (shadows, lights, camera, forward, up, 60.0f, 1.0f, 0.1f);
+        for (i = 0; i < passes; i++)
+            g_assert_true (lrg_shadow_renderer_pass_is_current (shadows, i));
+    }
+    g_assert_true (lrg_shadow_renderer_is_ready (shadows));
+
+    /* a crate moved next to torch A */
+    dropped = lrg_shadow_renderer_invalidate_box (shadows, near_lo, near_hi);
+    g_assert_cmpuint (dropped, >, 0);
+    for (face = 0; face < 6; face++)
+    {
+        guint pass_a = cascades + (guint)slot_a * 6 + face;
+        guint pass_b = cascades + (guint)slot_b * 6 + face;
+
+        if (!lrg_shadow_renderer_pass_is_current (shadows, pass_a))
+            a_dropped++;
+        g_assert_true (lrg_shadow_renderer_pass_is_current (shadows, pass_b));
+    }
+    /* the crate lies beside and below the torch: some faces, not all */
+    g_assert_cmpuint (a_dropped, >=, 1);
+    g_assert_cmpuint (a_dropped, <, 6);
+    /* the next update renders exactly the forgotten passes */
+    lrg_shadow_renderer_update (shadows, lights, camera, forward, up, 60.0f, 1.0f, 0.1f);
+    {
+        guint stale = 0;
+
+        for (i = 0; i < passes; i++)
+            if (!lrg_shadow_renderer_pass_is_current (shadows, i))
+                stale++;
+        g_assert_cmpuint (stale, ==, dropped);
+    }
+    for (i = 0; i < passes; i++)
+        lrg_shadow_renderer_mark_rendered (shadows, i);
+
+    /* a box nobody sees (far below the world, beyond every light) */
+    {
+        gfloat lo[3] = { 500.0f, -400.0f, 500.0f };
+        gfloat hi[3] = { 501.0f, -399.0f, 501.0f };
+
+        g_assert_cmpuint (lrg_shadow_renderer_invalidate_box (shadows, lo, hi), ==, 0);
+    }
+
+    /* an unplaceable box: every tile */
+    g_assert_cmpuint (lrg_shadow_renderer_invalidate_box (shadows, bad, near_hi), ==, passes);
+    lrg_shadow_renderer_update (shadows, lights, camera, forward, up, 60.0f, 1.0f, 0.1f);
+    for (i = 0; i < passes; i++)
+        g_assert_false (lrg_shadow_renderer_pass_is_current (shadows, i));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -478,6 +584,7 @@ main (int   argc,
     g_test_add_func ("/shadow/matrices", test_shadow_matrices);
     g_test_add_func ("/shadow/splits", test_shadow_splits);
     g_test_add_func ("/shadow/cascades", test_shadow_cascades);
+    g_test_add_func ("/shadow/invalidate-box", test_invalidate_box);
     g_test_add_func ("/shadow/stagger", test_stagger);
     g_test_add_func ("/shadow/cube-faces", test_shadow_cube_faces);
     g_test_add_func ("/shadow/point-plan", test_shadow_point_plan);

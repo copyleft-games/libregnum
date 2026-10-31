@@ -35,25 +35,43 @@
  * Since: 1.0
  */
 
-/* Each acquisition has a distinct identity, even when its object is reused. */
+/*
+ * Each acquisition has a distinct identity, even when its object is reused.
+ * active_index is the lease's slot in the pool's active arrays while it is
+ * live (kept up to date by swap-remove fix-ups), and released turns TRUE
+ * once the acquisition ends, so iteration snapshots holding the lease can
+ * tell without a lookup.
+ *
+ * A lease owns one reference on its object for as long as the lease lives.
+ * ref_count counts the pool's own reference (while active) plus one per
+ * iteration snapshot holding it. The pool is single-threaded, so this is a
+ * plain counter, and dead leases go on the pool's free list (linked through
+ * next_free) instead of back to the allocator: steady-state acquire/release
+ * allocates nothing.
+ */
+typedef struct _PoolLease PoolLease;
+
+struct _PoolLease
+{
+    GObject   *object;
+    guint      active_index;
+    guint      ref_count;
+    gboolean   released;
+    PoolLease *next_free;
+};
+
+/*
+ * One per pooled object, for the object's whole time in the pool. While the
+ * object is available the member owns the pool's reference on it and lease
+ * is NULL; while it is acquired that reference belongs to lease. The
+ * available array holds members, so acquisition needs no lookup at all and
+ * release needs a single one.
+ */
 typedef struct
 {
-    GObject *object;
-} PoolLease;
-
-static void
-pool_lease_free (gpointer data)
-{
-    PoolLease *lease = data;
-
-    g_object_unref (lease->object);
-}
-
-static void
-pool_lease_unref (gpointer data)
-{
-    g_rc_box_release_full (data, pool_lease_free);
-}
+    GObject   *object;
+    PoolLease *lease;
+} PoolMember;
 
 struct _LrgObjectPool
 {
@@ -65,9 +83,20 @@ struct _LrgObjectPool
     LrgPoolGrowthPolicy growth_policy;
 
     /* Object storage */
-    GPtrArray *available;   /* Inactive objects ready for reuse */
-    GPtrArray *active;      /* Borrowed objects owned by their active leases */
-    GHashTable *leases;     /* Object -> owned PoolLease */
+    GPtrArray *available;   /* Owned PoolMember of inactive objects */
+    GPtrArray *active_leases; /* Borrowed PoolLease of active objects */
+    GHashTable *members;    /* Every pooled object -> its owned PoolMember.
+                             * Keys only change when objects are created or
+                             * dropped, never per acquisition, so the table
+                             * is not touched (or resized) every frame. */
+    GPtrArray *scratch;     /* Reusable foreach snapshot (NULL while in use) */
+    PoolLease *free_leases; /* Recycled leases (singly linked) */
+
+    /* The pooled type's class and LrgPoolable vtable, peeked once: every
+     * pooled object is exactly object_type, so per-call interface lookups
+     * are redundant. iface is NULL when object_type is not poolable. */
+    gpointer              object_class;
+    LrgPoolableInterface *iface;
 };
 
 enum
@@ -92,6 +121,76 @@ G_DEFINE_FINAL_TYPE (LrgObjectPool, lrg_object_pool, G_TYPE_OBJECT)
  * ========================================================================== */
 
 /*
+ * Calls the pooled type's set_active through the cached vtable. Falls back
+ * to the checked public wrapper when the type is not poolable, so misuse
+ * still warns as before.
+ */
+static inline void
+pool_set_active (LrgObjectPool *self,
+                 GObject       *object,
+                 gboolean       active)
+{
+    if (G_UNLIKELY (self->iface == NULL))
+        lrg_poolable_set_active (LRG_POOLABLE (object), active);
+    else if (self->iface->set_active != NULL)
+        self->iface->set_active (LRG_POOLABLE (object), active);
+}
+
+/*
+ * Calls the pooled type's reset through the cached vtable (see
+ * pool_set_active()).
+ */
+static inline void
+pool_reset (LrgObjectPool *self,
+            GObject       *object)
+{
+    if (G_UNLIKELY (self->iface == NULL))
+        lrg_poolable_reset (LRG_POOLABLE (object));
+    else if (self->iface->reset != NULL)
+        self->iface->reset (LRG_POOLABLE (object));
+}
+
+/*
+ * Takes a lease from the free list (or allocates one) holding the pool's
+ * reference and @object, whose reference the caller transfers to it.
+ */
+static PoolLease *
+pool_lease_new (LrgObjectPool *self,
+                GObject       *object)
+{
+    PoolLease *lease;
+
+    lease = self->free_leases;
+    if (lease != NULL)
+        self->free_leases = lease->next_free;
+    else
+        lease = g_new (PoolLease, 1);
+
+    lease->object = object;
+    lease->active_index = 0;
+    lease->ref_count = 1;
+    lease->released = FALSE;
+    lease->next_free = NULL;
+    return lease;
+}
+
+/*
+ * Drops one reference on @lease. The last one drops the lease's object
+ * reference (if it still has one) and recycles the lease.
+ */
+static void
+pool_lease_unref (LrgObjectPool *self,
+                  PoolLease     *lease)
+{
+    if (--lease->ref_count > 0)
+        return;
+
+    g_clear_object (&lease->object);
+    lease->next_free = self->free_leases;
+    self->free_leases = lease;
+}
+
+/*
  * Creates a new object for the pool.
  */
 static GObject *
@@ -103,7 +202,7 @@ pool_create_object (LrgObjectPool *self)
 
     /* Set the pool back-reference if the object supports it */
     /* Note: This is done via the set_active callback pattern */
-    lrg_poolable_set_active (LRG_POOLABLE (object), FALSE);
+    pool_set_active (self, object, FALSE);
 
     return object;
 }
@@ -117,7 +216,7 @@ pool_calculate_growth (LrgObjectPool *self)
     guint current_size;
     guint growth;
 
-    current_size = self->available->len + self->active->len;
+    current_size = self->available->len + self->active_leases->len;
 
     switch (self->growth_policy)
     {
@@ -166,7 +265,7 @@ pool_grow (LrgObjectPool *self,
     guint i;
     guint current_size;
 
-    current_size = self->available->len + self->active->len;
+    current_size = self->available->len + self->active_leases->len;
 
     /* Respect max size */
     if (self->max_size > 0 && current_size + count > self->max_size)
@@ -180,8 +279,12 @@ pool_grow (LrgObjectPool *self,
 
     for (i = 0; i < count; i++)
     {
-        GObject *object = pool_create_object (self);
-        g_ptr_array_add (self->available, object);
+        PoolMember *member = g_new (PoolMember, 1);
+
+        member->object = pool_create_object (self);
+        member->lease = NULL;
+        g_ptr_array_add (self->available, member);
+        g_hash_table_insert (self->members, member->object, member);
     }
 }
 
@@ -204,6 +307,11 @@ lrg_object_pool_constructed (GObject *object)
         return;
     }
 
+    /* Peek the vtable once; the class reference keeps it valid for the
+     * pool's lifetime even while no pooled object exists. */
+    self->object_class = g_type_class_ref (self->object_type);
+    self->iface = g_type_interface_peek (self->object_class, LRG_TYPE_POOLABLE);
+
     /* Pre-allocate initial objects */
     if (self->initial_size > 0)
         pool_grow (self, self->initial_size);
@@ -225,8 +333,18 @@ lrg_object_pool_finalize (GObject *object)
     LrgObjectPool *self = LRG_OBJECT_POOL (object);
 
     g_clear_pointer (&self->available, g_ptr_array_unref);
-    g_clear_pointer (&self->active, g_ptr_array_unref);
-    g_clear_pointer (&self->leases, g_hash_table_unref);
+    g_clear_pointer (&self->active_leases, g_ptr_array_unref);
+    g_clear_pointer (&self->members, g_hash_table_unref);
+    g_clear_pointer (&self->scratch, g_ptr_array_unref);
+    while (self->free_leases != NULL)
+    {
+        PoolLease *lease = self->free_leases;
+
+        self->free_leases = lease->next_free;
+        g_free (lease);
+    }
+    self->iface = NULL;
+    g_clear_pointer (&self->object_class, g_type_class_unref);
 
     G_OBJECT_CLASS (lrg_object_pool_parent_class)->finalize (object);
 }
@@ -290,7 +408,7 @@ lrg_object_pool_get_property (GObject    *object,
         break;
 
     case PROP_ACTIVE_COUNT:
-        g_value_set_uint (value, self->active->len);
+        g_value_set_uint (value, self->active_leases->len);
         break;
 
     case PROP_AVAILABLE_COUNT:
@@ -298,7 +416,7 @@ lrg_object_pool_get_property (GObject    *object,
         break;
 
     case PROP_TOTAL_SIZE:
-        g_value_set_uint (value, self->available->len + self->active->len);
+        g_value_set_uint (value, self->available->len + self->active_leases->len);
         break;
 
     default:
@@ -436,10 +554,10 @@ lrg_object_pool_class_init (LrgObjectPoolClass *klass)
 static void
 lrg_object_pool_init (LrgObjectPool *self)
 {
-    self->available = g_ptr_array_new_with_free_func (g_object_unref);
-    self->active = g_ptr_array_new ();
-    self->leases = g_hash_table_new_full (g_direct_hash, g_direct_equal,
-                                          NULL, pool_lease_unref);
+    self->available = g_ptr_array_new ();
+    self->active_leases = g_ptr_array_new ();
+    self->members = g_hash_table_new (g_direct_hash, g_direct_equal);
+    self->scratch = g_ptr_array_new ();
     self->growth_policy = LRG_POOL_GROWTH_DOUBLE;
 }
 
@@ -515,7 +633,7 @@ lrg_object_pool_new_with_max (GType               object_type,
 GObject *
 lrg_object_pool_acquire (LrgObjectPool *self)
 {
-    GObject *object;
+    PoolMember *member;
     PoolLease *lease;
 
     g_return_val_if_fail (LRG_IS_OBJECT_POOL (self), NULL);
@@ -538,17 +656,19 @@ lrg_object_pool_acquire (LrgObjectPool *self)
     }
 
     /* Get from available and move to active */
-    object = g_ptr_array_steal_index_fast (self->available,
+    /* Get from available and move to active; the member's reference moves
+     * into the lease (no ref/unref round trip, no table update). */
+    member = g_ptr_array_steal_index_fast (self->available,
                                             self->available->len - 1);
-    lease = g_rc_box_new0 (PoolLease);
-    lease->object = object;
-    g_hash_table_insert (self->leases, object, lease);
-    g_ptr_array_add (self->active, object);
+    lease = pool_lease_new (self, member->object);
+    lease->active_index = self->active_leases->len;
+    member->lease = lease;
+    g_ptr_array_add (self->active_leases, lease);
 
     /* Mark as active */
-    lrg_poolable_set_active (LRG_POOLABLE (object), TRUE);
+    pool_set_active (self, member->object, TRUE);
 
-    return object;
+    return member->object;
 }
 
 /*
@@ -600,41 +720,55 @@ void
 lrg_object_pool_release (LrgObjectPool *self,
                          LrgPoolable   *object)
 {
+    PoolMember *member;
+    PoolLease *lease;
     guint i;
-    gboolean found;
 
     g_return_if_fail (LRG_IS_OBJECT_POOL (self));
-    g_return_if_fail (LRG_IS_POOLABLE (object));
 
-    /* Find and remove from active array */
-    found = FALSE;
-    for (i = 0; i < self->active->len; i++)
+    /* Find the acquisition: an object is active exactly while it has a
+     * lease, and the lease knows its slot (no scan of the active array).
+     * The lookup only hashes the pointer, so it is safe before the type
+     * check; a hit is an object this pool created, which is poolable, so
+     * the (interface, hence slow) instance check only runs on a miss. */
+    member = g_hash_table_lookup (self->members, object);
+    if (member == NULL || member->lease == NULL)
     {
-        if (g_ptr_array_index (self->active, i) == object)
-        {
-            g_ptr_array_remove_index_fast (self->active, i);
-            found = TRUE;
-            break;
-        }
-    }
-
-    if (!found)
-    {
+        g_return_if_fail (LRG_IS_POOLABLE (object));
         g_warning ("LrgObjectPool: releasing object not from this pool");
         return;
     }
 
+    /* Swap-remove from the active arrays, as before, and fix up the slot
+     * of the lease that moved into the hole. */
+    lease = member->lease;
+    i = lease->active_index;
+    g_ptr_array_remove_index_fast (self->active_leases, i);
+    if (i < self->active_leases->len)
+    {
+        PoolLease *moved = g_ptr_array_index (self->active_leases, i);
+
+        moved->active_index = i;
+    }
+    lease->released = TRUE;
+    member->lease = NULL;
+
     /* Transfer pool ownership back to available storage. Snapshots retain the
-     * old lease until iteration finishes, independently of future acquisitions. */
-    g_object_ref (object);
-    g_hash_table_remove (self->leases, object);
+     * old lease (and its object reference) until iteration finishes,
+     * independently of future acquisitions; with no snapshot the lease's
+     * reference simply moves back to the member. */
+    if (lease->ref_count == 1)
+        lease->object = NULL;
+    else
+        g_object_ref (object);
+    pool_lease_unref (self, lease);
 
     /* Reset and deactivate */
-    lrg_poolable_reset (object);
-    lrg_poolable_set_active (object, FALSE);
+    pool_reset (self, G_OBJECT (object));
+    pool_set_active (self, G_OBJECT (object), FALSE);
 
     /* Add to available */
-    g_ptr_array_add (self->available, object);
+    g_ptr_array_add (self->available, member);
 }
 
 /*
@@ -655,7 +789,7 @@ lrg_object_pool_prewarm (LrgObjectPool *self,
 
     g_return_if_fail (LRG_IS_OBJECT_POOL (self));
 
-    current_size = self->available->len + self->active->len;
+    current_size = self->available->len + self->active_leases->len;
     needed = count > current_size ? count - current_size : 0;
 
     if (needed > 0)
@@ -678,15 +812,21 @@ lrg_object_pool_shrink_to_fit (LrgObjectPool *self)
     g_return_if_fail (LRG_IS_OBJECT_POOL (self));
 
     /* Keep at least initial_size - active_count available */
-    if (self->active->len >= self->initial_size)
+    if (self->active_leases->len >= self->initial_size)
         target_available = 0;
     else
-        target_available = self->initial_size - self->active->len;
+        target_available = self->initial_size - self->active_leases->len;
 
     /* Remove excess from available array */
     while (self->available->len > target_available)
     {
-        g_ptr_array_remove_index (self->available, self->available->len - 1);
+        PoolMember *member;
+
+        member = g_ptr_array_steal_index_fast (self->available,
+                                                self->available->len - 1);
+        g_hash_table_remove (self->members, member->object);
+        g_object_unref (member->object);
+        g_free (member);
     }
 }
 
@@ -701,14 +841,48 @@ lrg_object_pool_shrink_to_fit (LrgObjectPool *self)
 void
 lrg_object_pool_clear (LrgObjectPool *self)
 {
+    GHashTableIter iter;
+    gpointer member;
+    g_autoptr(GPtrArray) active = NULL;
+    g_autoptr(GPtrArray) available = NULL;
+    guint i;
+
     g_return_if_fail (LRG_IS_OBJECT_POOL (self));
 
-    /* Invalidate all acquisitions before dropping their owned references. */
-    g_ptr_array_set_size (self->active, 0);
-    g_hash_table_remove_all (self->leases);
+    /* Invalidate all acquisitions and forget every member first, so the pool
+     * is already empty if dropping a reference below re-enters it. */
+    for (i = 0; i < self->active_leases->len; i++)
+    {
+        PoolLease *lease = g_ptr_array_index (self->active_leases, i);
 
-    /* Available array handles its own unrefs via free func */
-    g_ptr_array_set_size (self->available, 0);
+        lease->released = TRUE;
+    }
+    active = g_steal_pointer (&self->active_leases);
+    available = g_steal_pointer (&self->available);
+    self->active_leases = g_ptr_array_new ();
+    self->available = g_ptr_array_new ();
+    g_hash_table_iter_init (&iter, self->members);
+    while (g_hash_table_iter_next (&iter, NULL, &member))
+    {
+        /* Active members' references belong to their leases. */
+        if (((PoolMember *) member)->lease != NULL)
+        {
+            g_hash_table_iter_remove (&iter);
+            g_free (member);
+        }
+    }
+    g_hash_table_remove_all (self->members);
+
+    /* Drop the active leases' references, then the available objects'. */
+    for (i = 0; i < active->len; i++)
+        pool_lease_unref (self, g_ptr_array_index (active, i));
+    for (i = 0; i < available->len; i++)
+    {
+        PoolMember *avail = g_ptr_array_index (available, i);
+
+        g_object_unref (avail->object);
+        g_free (avail);
+    }
 }
 
 /* ==========================================================================
@@ -748,7 +922,7 @@ lrg_object_pool_get_active_count (LrgObjectPool *self)
 {
     g_return_val_if_fail (LRG_IS_OBJECT_POOL (self), 0);
 
-    return self->active->len;
+    return self->active_leases->len;
 }
 
 /*
@@ -784,7 +958,7 @@ lrg_object_pool_get_total_size (LrgObjectPool *self)
 {
     g_return_val_if_fail (LRG_IS_OBJECT_POOL (self), 0);
 
-    return self->available->len + self->active->len;
+    return self->available->len + self->active_leases->len;
 }
 
 /*
@@ -851,31 +1025,47 @@ lrg_object_pool_foreach_active (LrgObjectPool            *self,
                                 gpointer                  user_data)
 {
     g_autoptr(LrgObjectPool) pool_ref = NULL;
-    g_autoptr(GPtrArray) snapshot = NULL;
+    GPtrArray *snapshot;
     guint i;
 
     g_return_if_fail (LRG_IS_OBJECT_POOL (self));
     g_return_if_fail (callback != NULL);
 
     pool_ref = g_object_ref (self);
-    snapshot = g_ptr_array_new_with_free_func (pool_lease_unref);
-    for (i = self->active->len; i > 0; i--)
-    {
-        GObject *object = g_ptr_array_index (self->active, i - 1);
-        PoolLease *lease = g_hash_table_lookup (self->leases, object);
 
-        g_ptr_array_add (snapshot, g_rc_box_acquire (lease));
+    /* Reuse the pool's snapshot array; a nested iteration finds it taken
+     * and makes its own. */
+    snapshot = self->scratch != NULL ? g_steal_pointer (&self->scratch)
+                                     : g_ptr_array_new ();
+    /* Size the snapshot once, then fill it directly. */
+    g_ptr_array_set_size (snapshot, self->active_leases->len);
+    for (i = 0; i < self->active_leases->len; i++)
+    {
+        PoolLease *lease = g_ptr_array_index (self->active_leases,
+                                              self->active_leases->len - 1 - i);
+
+        lease->ref_count++;
+        snapshot->pdata[i] = lease;
     }
 
     for (i = 0; i < snapshot->len; i++)
     {
         PoolLease *lease = g_ptr_array_index (snapshot, i);
 
-        if (g_hash_table_lookup (self->leases, lease->object) != lease)
+        /* Released (or cleared) since the snapshot: skip. */
+        if (lease->released)
             continue;
         if (!callback (LRG_POOLABLE (lease->object), user_data))
             break;
     }
+
+    for (i = 0; i < snapshot->len; i++)
+        pool_lease_unref (self, g_ptr_array_index (snapshot, i));
+    g_ptr_array_set_size (snapshot, 0);
+    if (self->scratch == NULL)
+        self->scratch = snapshot;
+    else
+        g_ptr_array_unref (snapshot);
 }
 
 /*
@@ -891,9 +1081,10 @@ lrg_object_pool_release_all_active (LrgObjectPool *self)
 {
     g_return_if_fail (LRG_IS_OBJECT_POOL (self));
 
-    while (self->active->len > 0)
+    while (self->active_leases->len > 0)
     {
-        LrgPoolable *obj = g_ptr_array_index (self->active, self->active->len - 1);
-        lrg_object_pool_release (self, obj);
+        PoolLease *lease = g_ptr_array_index (self->active_leases,
+                                              self->active_leases->len - 1);
+        lrg_object_pool_release (self, LRG_POOLABLE (lease->object));
     }
 }

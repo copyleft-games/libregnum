@@ -28,6 +28,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "graphics/lrg-terrain.h"
+#include "graphics/lrg-draw-cull-private.h"
 
 /* raylib binds up to MAX_MATERIAL_MAPS (12) maps; keep headroom. */
 #define TERRAIN_MATERIAL_MAPS (16)
@@ -786,6 +787,10 @@ lrg_terrain_height_at (LrgTerrain *self,
     if (!isfinite (x) || !isfinite (z))
         return FALSE;
 
+    /* world_to_chunk() leaves its outputs untouched when its argument
+     * checks fail, so give them a defined value first. */
+    cx = 0;
+    cz = 0;
     lrg_terrain_world_to_chunk (self, x, z, &cx, &cz);
     chunk = lookup_chunk (self, cx, cz);
     if (chunk == NULL)
@@ -1258,17 +1263,53 @@ draw_chunk (LrgTerrain   *self,
     }
 }
 
+/* chunk_visible:
+ * Whether any of @chunk can land inside @frustum: its chunk-local box
+ * (the heights' range over the chunk's square) moved by the translation
+ * draw_chunk() uses as the model matrix. */
+static gboolean
+chunk_visible (LrgTerrain           *self,
+               TerrainChunk         *chunk,
+               const LrgDrawFrustum *frustum)
+{
+    gfloat lo[3];
+    gfloat hi[3];
+    gfloat offset[3];
+
+    if (chunk->min_y > chunk->max_y)
+        return TRUE;
+    lo[0] = 0.0f;
+    lo[1] = chunk->min_y;
+    lo[2] = 0.0f;
+    hi[0] = self->chunk_size;
+    hi[1] = chunk->max_y;
+    hi[2] = self->chunk_size;
+    offset[0] = (gfloat)((gdouble)chunk->cx * (gdouble)self->chunk_size - self->origin[0]);
+    offset[1] = (gfloat)(-self->origin[1]);
+    offset[2] = (gfloat)((gdouble)chunk->cz * (gdouble)self->chunk_size - self->origin[2]);
+    return lrg_draw_cull_frustum_box_visible_offset (frustum, lo, hi, offset);
+}
+
 void
 lrg_terrain_draw (LrgTerrain *self)
 {
     GHashTableIter iter;
     gpointer       value;
+    LrgDrawFrustum frustum;
+    gboolean       cull;
 
     g_return_if_fail (LRG_IS_TERRAIN (self));
 
+    /* chunks wholly outside the live rlgl frustum (the camera's, or a
+     * shadow pass's light) draw no pixel: skip them */
+    cull = lrg_draw_cull_frustum_current (&frustum);
     g_hash_table_iter_init (&iter, self->chunks);
     while (g_hash_table_iter_next (&iter, NULL, &value))
+    {
+        if (cull && !chunk_visible (self, value, &frustum))
+            continue;
         draw_chunk (self, value);
+    }
 }
 
 void

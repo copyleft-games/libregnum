@@ -844,6 +844,186 @@ test_game_template_derivable (void)
  * Main
  * ========================================================================== */
 
+/* A template that only counts its fixed-timestep updates */
+typedef struct
+{
+    LrgGameTemplate parent_instance;
+    guint           fixed_calls;
+} StepTemplate;
+
+typedef LrgGameTemplateClass StepTemplateClass;
+
+GType step_template_get_type (void);
+G_DEFINE_TYPE (StepTemplate, step_template, LRG_TYPE_GAME_TEMPLATE)
+
+static void
+step_template_fixed_update (LrgGameTemplate *template,
+                            gdouble          delta)
+{
+    ((StepTemplate *) template)->fixed_calls++;
+}
+
+static void
+step_template_class_init (StepTemplateClass *klass)
+{
+    klass->fixed_update = step_template_fixed_update;
+    klass->create_initial_state = NULL;
+}
+
+static void
+step_template_init (StepTemplate *self)
+{
+}
+
+/* A 60 Hz display delivers frames 16.5-16.8 ms apart, not exactly 1/60 s.
+ * With snapping (the default) every frame runs exactly one fixed update;
+ * without it the accumulator drifts across the step boundary and some
+ * frames run none and others two -- stutter at a steady frame rate.
+ * Deltas far from a whole step are left alone. */
+static void
+test_game_template_snap_frame_delta (void)
+{
+    static const gdouble jitter[] = { 0.00015, -0.00012, 0.00008, -0.00019,
+                                      0.00011, -0.00004, 0.00017, -0.00016 };
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GObject) host = NULL;
+    StepTemplate    *snapped;
+    StepTemplate    *raw;
+    guint            frame;
+    guint            zero_or_two;
+
+    snapped = g_object_new (step_template_get_type (),
+                            "fixed-timestep", 1.0 / 60.0, NULL);
+    raw = g_object_new (step_template_get_type (),
+                        "fixed-timestep", 1.0 / 60.0,
+                        "snap-frame-delta", FALSE, NULL);
+
+    host = g_object_new (input_host_get_type (), NULL);
+    g_assert_true (lrg_engine_startup (lrg_engine_get_default (), &error));
+    g_assert_no_error (error);
+    g_test_expect_message (LRG_LOG_DOMAIN_TEMPLATE, G_LOG_LEVEL_WARNING,
+                           "*No initial state created*");
+    g_assert_true (lrg_game_template_startup (LRG_GAME_TEMPLATE (snapped),
+                                              LRG_GAME_HOST (host), &error));
+    g_test_assert_expected_messages ();
+    g_test_expect_message (LRG_LOG_DOMAIN_TEMPLATE, G_LOG_LEVEL_WARNING,
+                           "*No initial state created*");
+    g_assert_true (lrg_game_template_startup (LRG_GAME_TEMPLATE (raw),
+                                              LRG_GAME_HOST (host), &error));
+    g_test_assert_expected_messages ();
+
+    zero_or_two = 0;
+    for (frame = 0; frame < 240; frame++)
+    {
+        gdouble delta = 1.0 / 60.0 + jitter[frame % G_N_ELEMENTS (jitter)];
+        guint   before_snapped = snapped->fixed_calls;
+        guint   before_raw = raw->fixed_calls;
+
+        lrg_game_template_update (LRG_GAME_TEMPLATE (snapped), delta);
+        lrg_game_template_update (LRG_GAME_TEMPLATE (raw), delta);
+
+        g_assert_cmpuint (snapped->fixed_calls - before_snapped, ==, 1);
+        if (raw->fixed_calls - before_raw != 1)
+            zero_or_two++;
+    }
+    /* the unsnapped template really does stutter on this input */
+    g_assert_cmpuint (zero_or_two, >, 0);
+
+    /* two frames' worth (a missed vblank) snaps to exactly two steps */
+    snapped->fixed_calls = 0;
+    lrg_game_template_update (LRG_GAME_TEMPLATE (snapped), 2.0 / 60.0 - 0.00015);
+    g_assert_cmpuint (snapped->fixed_calls, ==, 2);
+
+    /* a 144 Hz frame is nowhere near a whole step: used as is */
+    snapped->fixed_calls = 0;
+    for (frame = 0; frame < 144; frame++)
+        lrg_game_template_update (LRG_GAME_TEMPLATE (snapped), 1.0 / 144.0);
+    g_assert_cmpuint (snapped->fixed_calls, >=, 59);
+    g_assert_cmpuint (snapped->fixed_calls, <=, 60);
+
+    lrg_game_template_shutdown_game (LRG_GAME_TEMPLATE (snapped));
+    lrg_game_template_shutdown_game (LRG_GAME_TEMPLATE (raw));
+    g_object_unref (snapped);
+    g_object_unref (raw);
+    lrg_engine_shutdown (lrg_engine_get_default ());
+}
+
+/* lrg_game_template_pace_fps() picks the whole fraction of the refresh
+ * rate nearest the requested cap, so vsync paces evenly. */
+static void
+test_game_template_pace_fps (void)
+{
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 60), ==, 60);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 120), ==, 60);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 240), ==, 60);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 144), ==, 72);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 165), ==, 55);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 75), ==, 75);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 100), ==, 50);
+    g_assert_cmpint (lrg_game_template_pace_fps (30, 144), ==, 29);
+    g_assert_cmpint (lrg_game_template_pace_fps (144, 60), ==, 60);
+    /* no cap and unknown refresh rates pass through */
+    g_assert_cmpint (lrg_game_template_pace_fps (0, 144), ==, 0);
+    g_assert_cmpint (lrg_game_template_pace_fps (60, 0), ==, 60);
+}
+
+/* LrgGameTemplate:max-frames-in-flight defaults to 2 (one frame of
+ * CPU/GPU overlap) and round-trips. */
+static void
+test_game_template_max_frames_in_flight (void)
+{
+    g_autoptr(LrgGameTemplate) game = NULL;
+    guint                      frames;
+
+    game = lrg_game_template_new ();
+    g_object_get (game, "max-frames-in-flight", &frames, NULL);
+    g_assert_cmpuint (frames, ==, 2);
+
+    g_object_set (game, "max-frames-in-flight", 1, NULL);
+    g_object_get (game, "max-frames-in-flight", &frames, NULL);
+    g_assert_cmpuint (frames, ==, 1);
+
+    g_object_set (game, "max-frames-in-flight", 0, NULL);
+    g_object_get (game, "max-frames-in-flight", &frames, NULL);
+    g_assert_cmpuint (frames, ==, 0);
+}
+
+/* LRG_MAX_FRAMES_IN_FLIGHT overrides the game's bound: off/none/false/0
+ * turn it off, numbers set it (clamped to 4), junk is ignored with a
+ * warning. Runs in a subprocess so the environment stays contained. */
+static void
+test_max_frames_in_flight_env (void)
+{
+    if (g_test_subprocess ())
+    {
+        g_unsetenv ("LRG_MAX_FRAMES_IN_FLIGHT");
+        g_assert_cmpuint (lrg_grl_window_resolve_max_frames_in_flight (2), ==, 2);
+        g_assert_cmpuint (lrg_grl_window_resolve_max_frames_in_flight (9), ==,
+                          GRL_FRAME_SYNC_MAX_FRAMES);
+
+        g_setenv ("LRG_MAX_FRAMES_IN_FLIGHT", "off", TRUE);
+        g_assert_cmpuint (lrg_grl_window_resolve_max_frames_in_flight (2), ==, 0);
+        g_setenv ("LRG_MAX_FRAMES_IN_FLIGHT", "NONE", TRUE);
+        g_assert_cmpuint (lrg_grl_window_resolve_max_frames_in_flight (2), ==, 0);
+        g_setenv ("LRG_MAX_FRAMES_IN_FLIGHT", "0", TRUE);
+        g_assert_cmpuint (lrg_grl_window_resolve_max_frames_in_flight (2), ==, 0);
+        g_setenv ("LRG_MAX_FRAMES_IN_FLIGHT", "1", TRUE);
+        g_assert_cmpuint (lrg_grl_window_resolve_max_frames_in_flight (2), ==, 1);
+        g_setenv ("LRG_MAX_FRAMES_IN_FLIGHT", "17", TRUE);
+        g_assert_cmpuint (lrg_grl_window_resolve_max_frames_in_flight (2), ==,
+                          GRL_FRAME_SYNC_MAX_FRAMES);
+
+        g_setenv ("LRG_MAX_FRAMES_IN_FLIGHT", "fast", TRUE);
+        g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "*LRG_MAX_FRAMES_IN_FLIGHT=fast*");
+        g_assert_cmpuint (lrg_grl_window_resolve_max_frames_in_flight (2), ==, 2);
+        g_test_assert_expected_messages ();
+        return;
+    }
+
+    g_test_trap_subprocess (NULL, 0, G_TEST_SUBPROCESS_DEFAULT);
+    g_test_trap_assert_passed ();
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -923,6 +1103,14 @@ main (int   argc,
                      test_game_template_paused_default);
 
     /* Focus tests */
+    g_test_add_func ("/template/base/snap-frame-delta",
+                     test_game_template_snap_frame_delta);
+    g_test_add_func ("/template/base/max-frames-in-flight",
+                     test_game_template_max_frames_in_flight);
+    g_test_add_func ("/template/base/pace-fps",
+                     test_game_template_pace_fps);
+    g_test_add_func ("/template/base/max-frames-in-flight-env",
+                     test_max_frames_in_flight_env);
     g_test_add_func ("/template/base/has-focus",
                      test_game_template_has_focus);
 

@@ -14,6 +14,7 @@
 #include "lrg-label.h"
 #include "lrg-theme.h"
 #include "../lrg-log.h"
+#include "../graphics/lrg-draw-cull-private.h"
 
 /* ==========================================================================
  * Private Data
@@ -28,6 +29,14 @@ struct _LrgLabel
     gfloat            font_size;
     GrlColor          color;
     LrgTextAlignment  alignment;
+
+    /* Measured text size, reused while text, font and size are unchanged
+     * (labels are drawn every frame; their text rarely changes) */
+    GrlFont          *measured_font;   /* font measured with (owned ref) */
+    gfloat            measured_size;
+    gfloat            measured_width;
+    gfloat            measured_height;
+    gboolean          measured_valid;
 };
 
 G_DEFINE_TYPE (LrgLabel, lrg_label, LRG_TYPE_WIDGET)
@@ -52,21 +61,117 @@ static const GrlColor DEFAULT_COLOR = { 255, 255, 255, 255 };
  * Virtual Method Implementations
  * ========================================================================== */
 
+/*
+ * label_text_size:
+ *
+ * Size of the label's text in @font (NULL: the raylib default font,
+ * estimated), measured once and cached until the text, font or size
+ * changes.
+ */
+static void
+label_text_size (LrgLabel *self,
+                 GrlFont  *font,
+                 gfloat   *width,
+                 gfloat   *height)
+{
+    if (!self->measured_valid || self->measured_font != font ||
+        self->measured_size != self->font_size)
+    {
+        if (font != NULL)
+        {
+            grl_font_measure_text_xy (font, self->text, self->font_size, 1.0f,
+                                      &self->measured_width,
+                                      &self->measured_height);
+        }
+        else
+        {
+            /* Estimate for raylib default font */
+            self->measured_width = (gfloat)g_utf8_strlen (self->text, -1) *
+                                   (self->font_size * 0.6f);
+            self->measured_height = self->font_size;
+        }
+        g_set_object (&self->measured_font, font);
+        self->measured_size = self->font_size;
+        self->measured_valid = TRUE;
+    }
+
+    *width = self->measured_width;
+    *height = self->measured_height;
+}
+
+/*
+ * label_offscreen:
+ * @x: (in): text origin x, as passed to the text draw
+ * @y: (in): text origin y
+ *
+ * Whether the label's text, drawn at (@x, @y), cannot touch the current
+ * render target. Labels are commonly laid out far past the screen (long
+ * lists, scrolled-away panels), and every glyph is a textured quad handed
+ * to the batcher whether or not it is seen. Uses the measured text box
+ * (cached in label_text_size()) widened by two ems on every side, which
+ * covers glyph offsets and padding past the advance box; the visible rect
+ * comes from rlgl's live matrices, so cameras, render textures and pushed
+ * transforms are all respected. Anything rejected would have been clipped
+ * entirely by the GPU, so culling never changes a pixel.
+ *
+ * Returns: %TRUE if the draw can be skipped
+ */
+static gboolean
+label_offscreen (LrgLabel *self,
+                 GrlFont  *font,
+                 gfloat    x,
+                 gfloat    y)
+{
+    GrlRectangle view;
+    gfloat       width;
+    gfloat       height;
+    gfloat       margin;
+
+    if (!lrg_draw_cull_visible_rect_2d (&view))
+        return FALSE;
+
+    if (font != NULL)
+    {
+        label_text_size (self, font, &width, &height);
+    }
+    else
+    {
+        const gchar *p;
+        guint        lines;
+
+        /* The default-font size is only an estimate; bound it instead:
+         * no default-font glyph advances more than two ems. */
+        lines = 1;
+        for (p = self->text; *p != '\0'; p++)
+            if (*p == '\n')
+                lines++;
+        width = (gfloat) strlen (self->text) * self->font_size * 2.0f;
+        height = (gfloat) lines * self->font_size * 2.0f;
+    }
+
+    margin = MAX (self->font_size, 1.0f) * 2.0f;
+    return x + width + margin < view.x ||
+           y + height + margin < view.y ||
+           x - margin > view.x + view.width ||
+           y - margin > view.y + view.height;
+}
+
 static void
 lrg_label_draw (LrgWidget *widget)
 {
     LrgLabel              *self = LRG_LABEL (widget);
-    g_autoptr(GrlVector2)  pos = NULL;
+    GrlVector2             pos;
     GrlFont               *font_to_use;
     gfloat                 text_width;
+    gfloat                 text_height;
 
     if (self->text == NULL || self->text[0] == '\0')
     {
         return;
     }
 
-    pos = grl_vector2_new (lrg_widget_get_world_x (widget),
-                           lrg_widget_get_world_y (widget));
+    pos.x = lrg_widget_get_world_x (widget);
+    pos.y = lrg_widget_get_world_y (widget);
 
     /* Determine which font to use: widget font -> theme font -> raylib default */
     if (self->font != NULL)
@@ -82,39 +187,34 @@ lrg_label_draw (LrgWidget *widget)
     /* Handle text alignment */
     if (self->alignment != LRG_TEXT_ALIGN_LEFT)
     {
-        if (font_to_use != NULL)
-        {
-            g_autoptr(GrlVector2) measured = NULL;
-            measured = grl_font_measure_text (font_to_use, self->text,
-                                              self->font_size, 1.0f);
-            text_width = measured->x;
-        }
-        else
-        {
-            /* Estimate for raylib default font */
-            text_width = (gfloat)g_utf8_strlen (self->text, -1) * (self->font_size * 0.6f);
-        }
+        label_text_size (self, font_to_use, &text_width, &text_height);
 
         if (self->alignment == LRG_TEXT_ALIGN_CENTER)
         {
-            pos->x += (lrg_widget_get_width (widget) - text_width) / 2.0f;
+            pos.x += (lrg_widget_get_width (widget) - text_width) / 2.0f;
         }
         else if (self->alignment == LRG_TEXT_ALIGN_RIGHT)
         {
-            pos->x += lrg_widget_get_width (widget) - text_width;
+            pos.x += lrg_widget_get_width (widget) - text_width;
         }
+    }
+
+    /* Nothing to emit when the text lies wholly off the render target */
+    if (label_offscreen (self, font_to_use, pos.x, pos.y))
+    {
+        return;
     }
 
     /* Draw with font or fallback to raylib default */
     if (font_to_use != NULL)
     {
-        grl_draw_text_ex (font_to_use, self->text, pos,
+        grl_draw_text_ex (font_to_use, self->text, &pos,
                           self->font_size, 1.0f, &self->color);
     }
     else
     {
         /* Last resort: raylib default bitmap font */
-        grl_draw_text (self->text, (gint)pos->x, (gint)pos->y,
+        grl_draw_text (self->text, (gint)pos.x, (gint)pos.y,
                        (gint)self->font_size, &self->color);
     }
 }
@@ -125,8 +225,9 @@ lrg_label_measure (LrgWidget *widget,
                    gfloat    *preferred_height)
 {
     LrgLabel              *self = LRG_LABEL (widget);
-    g_autoptr(GrlVector2)  size = NULL;
     GrlFont               *font_to_use;
+    gfloat                 width;
+    gfloat                 height;
 
     if (self->text == NULL || self->text[0] == '\0')
     {
@@ -152,25 +253,15 @@ lrg_label_measure (LrgWidget *widget,
         font_to_use = lrg_theme_get_default_font (theme);
     }
 
-    if (font_to_use != NULL)
-    {
-        size = grl_font_measure_text (font_to_use, self->text,
-                                      self->font_size, 1.0f);
-    }
-    else
-    {
-        /* Estimate for raylib default font */
-        size = grl_vector2_new ((gfloat)g_utf8_strlen (self->text, -1) * (self->font_size * 0.6f),
-                                self->font_size);
-    }
+    label_text_size (self, font_to_use, &width, &height);
 
     if (preferred_width != NULL)
     {
-        *preferred_width = size->x;
+        *preferred_width = width;
     }
     if (preferred_height != NULL)
     {
-        *preferred_height = size->y;
+        *preferred_height = height;
     }
 }
 
@@ -183,6 +274,7 @@ lrg_label_finalize (GObject *object)
 {
     LrgLabel *self = LRG_LABEL (object);
 
+    g_clear_object (&self->measured_font);
     g_free (self->text);
     g_clear_object (&self->font);
 
@@ -404,6 +496,7 @@ lrg_label_set_text (LrgLabel    *self,
     {
         g_free (self->text);
         self->text = g_strdup (text);
+        self->measured_valid = FALSE;
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TEXT]);
     }
 }

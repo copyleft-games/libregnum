@@ -25,8 +25,11 @@ The Core module provides:
 - *[[file:timer-manager.org][LrgTimerManager]]* - Frame-driven gameplay and unscaled timers
 
 - *[[file:random-stream.org][LrgRandomStream]]* - Independent deterministic random streams with portable snapshots
+- *[[file:engine.org::#performance-cores][CPU affinity]]* - =lrg_cpu_affinity_*=: keep the game loop on a hybrid CPU's fast cores
 
 - *[[file:reset-schedule.org][LrgResetSchedule]]* - Deterministic daily and weekly reset periods for repeatable content
+
+- *[[file:prewarm.org][LrgPrewarm / LrgPrewarmable]]* - Build shaders and GPU buffers behind a loading screen instead of on a feature's first draw
 
 ** Essential Concepts
 :PROPERTIES:

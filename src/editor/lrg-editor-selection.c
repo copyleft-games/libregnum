@@ -14,7 +14,8 @@ struct _LrgEditorSelection
 {
 	GObject parent_instance;
 
-	GPtrArray *nodes;    /* owned refs; last element is primary */
+	GPtrArray  *nodes;    /* owned refs; last element is primary */
+	GHashTable *members;  /* the same nodes (borrowed), for O(1) contains() */
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorSelection, lrg_editor_selection, G_TYPE_OBJECT)
@@ -32,6 +33,7 @@ lrg_editor_selection_finalize (GObject *object)
 {
 	LrgEditorSelection *self = LRG_EDITOR_SELECTION (object);
 
+	g_clear_pointer (&self->members, g_hash_table_unref);
 	g_clear_pointer (&self->nodes, g_ptr_array_unref);
 
 	G_OBJECT_CLASS (lrg_editor_selection_parent_class)->finalize (object);
@@ -60,6 +62,7 @@ static void
 lrg_editor_selection_init (LrgEditorSelection *self)
 {
 	self->nodes = g_ptr_array_new_with_free_func (g_object_unref);
+	self->members = g_hash_table_new (g_direct_hash, g_direct_equal);
 }
 
 LrgEditorSelection *
@@ -78,6 +81,7 @@ lrg_editor_selection_add (LrgEditorSelection *self,
 	/* Remove any existing occurrence so it moves to the primary slot. */
 	g_ptr_array_remove (self->nodes, node);
 	g_ptr_array_add (self->nodes, g_object_ref (node));
+	g_hash_table_add (self->members, node);
 
 	g_signal_emit (self, signals[SIGNAL_CHANGED], 0);
 }
@@ -90,10 +94,16 @@ lrg_editor_selection_set (LrgEditorSelection *self,
 	g_return_if_fail (node == NULL || LRG_IS_NODE (node));
 
 	if (self->nodes->len > 0)
+	{
+		g_hash_table_remove_all (self->members);
 		g_ptr_array_set_size (self->nodes, 0);
+	}
 
 	if (node != NULL)
+	{
 		g_ptr_array_add (self->nodes, g_object_ref (node));
+		g_hash_table_add (self->members, node);
+	}
 
 	g_signal_emit (self, signals[SIGNAL_CHANGED], 0);
 }
@@ -109,7 +119,10 @@ lrg_editor_selection_remove (LrgEditorSelection *self,
 
 	removed = g_ptr_array_remove (self->nodes, node);
 	if (removed)
+	{
+		g_hash_table_remove (self->members, node);
 		g_signal_emit (self, signals[SIGNAL_CHANGED], 0);
+	}
 
 	return removed;
 }
@@ -122,6 +135,7 @@ lrg_editor_selection_clear (LrgEditorSelection *self)
 	if (self->nodes->len == 0)
 		return;
 
+	g_hash_table_remove_all (self->members);
 	g_ptr_array_set_size (self->nodes, 0);
 	g_signal_emit (self, signals[SIGNAL_CHANGED], 0);
 }
@@ -130,15 +144,11 @@ gboolean
 lrg_editor_selection_contains (LrgEditorSelection *self,
                                LrgNode            *node)
 {
-	guint i;
-
 	g_return_val_if_fail (LRG_IS_EDITOR_SELECTION (self), FALSE);
 
-	for (i = 0; i < self->nodes->len; i++)
-		if (g_ptr_array_index (self->nodes, i) == node)
-			return TRUE;
-
-	return FALSE;
+	/* members mirrors nodes, so this is a hash lookup instead of a scan
+	 * (the outliner asks once per row per frame). */
+	return node != NULL && g_hash_table_contains (self->members, node);
 }
 
 LrgNode *

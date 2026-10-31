@@ -14,6 +14,7 @@
 #include "lrg-game-object.h"
 #include "lrg-component.h"
 #include "lrg-component-private.h"
+#include "components/lrg-sprite-component.h"
 #include "../lrg-log.h"
 
 /* ==========================================================================
@@ -54,20 +55,38 @@ lrg_game_object_update (GrlEntity *entity,
     for (l = priv->components; l != NULL; l = l->next)
     {
         LrgComponent *component = LRG_COMPONENT (l->data);
-        lrg_component_update (component, delta);
+
+        /* Validated when added (see lrg-component-private.h) */
+        _lrg_component_update_unchecked (component, delta);
     }
 }
 
 static void
 lrg_game_object_draw (GrlEntity *entity)
 {
-    /*
-     * Chain up to parent. Sprite rendering will be handled by
-     * LrgSpriteComponent which hooks into this via its own mechanism.
-     * We could also iterate sprite components here, but for now we
-     * let the parent handle basic drawing.
-     */
-    GRL_ENTITY_CLASS (lrg_game_object_parent_class)->draw (entity);
+    LrgGameObject        *self = LRG_GAME_OBJECT (entity);
+    LrgGameObjectPrivate *priv = lrg_game_object_get_instance_private (self);
+    GrlEntityClass       *parent_class;
+    GList                *l;
+
+    /* Chain up when the parent has a draw vfunc. GrlEntity leaves it
+     * NULL, and an unconditional call crashed every lrg_world_draw() of a
+     * world with objects in it. */
+    parent_class = GRL_ENTITY_CLASS (lrg_game_object_parent_class);
+    if (parent_class->draw != NULL)
+        parent_class->draw (entity);
+
+    /* Draw the object's enabled sprite components, in component order */
+    for (l = priv->components; l != NULL; l = l->next)
+    {
+        LrgComponent *component = l->data;
+
+        if (LRG_IS_SPRITE_COMPONENT (component) &&
+            _lrg_component_get_enabled_unchecked (component))
+        {
+            lrg_sprite_component_draw (LRG_SPRITE_COMPONENT (component));
+        }
+    }
 }
 
 /* ==========================================================================

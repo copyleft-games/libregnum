@@ -33,6 +33,32 @@ typedef struct
     /* Hierarchy */
     LrgTransformComponent *parent;          /* Weak reference */
     GList                 *children;        /* List of LrgTransformComponent* (weak refs) */
+
+    /* Render interpolation: the local transform at the start of the
+     * latest fixed step it changed in (see grl-interpolation.h) */
+    gfloat                 prev_local_x;
+    gfloat                 prev_local_y;
+    gfloat                 prev_local_rotation;
+    gfloat                 prev_scale_x;
+    gfloat                 prev_scale_y;
+    GrlInterpolationTrack  interp;
+
+    /* World transform cache (see transform_world_ensure()). local_version
+     * moves on every change to the local fields or the parent; the cache
+     * is valid while both it and the parent's world_version match what it
+     * was computed from. world_version moves on every recompute, so a
+     * change anywhere up the chain reaches every descendant without
+     * walking (or even knowing) the children. */
+    guint64                local_version;
+    guint64                world_version;
+    guint64                world_local_version;
+    guint64                world_parent_version;
+    gboolean               world_valid;
+    gfloat                 world_x;
+    gfloat                 world_y;
+    gfloat                 world_rotation;
+    gfloat                 world_scale_x;
+    gfloat                 world_scale_y;
 } LrgTransformComponentPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgTransformComponent, lrg_transform_component, LRG_TYPE_COMPONENT)
@@ -46,6 +72,7 @@ enum
     PROP_SCALE_X,
     PROP_SCALE_Y,
     PROP_PARENT,
+    PROP_INTERPOLATE,
     N_PROPS
 };
 
@@ -56,6 +83,36 @@ static void add_child    (LrgTransformComponent *parent,
                           LrgTransformComponent *child);
 static void remove_child (LrgTransformComponent *parent,
                           LrgTransformComponent *child);
+
+/* ==========================================================================
+ * Render Interpolation Helpers
+ * ========================================================================== */
+
+/* The first write in a fixed step keeps the transform the step began with */
+static void
+transform_capture_previous (LrgTransformComponentPrivate *priv)
+{
+    priv->prev_local_x = priv->local_x;
+    priv->prev_local_y = priv->local_y;
+    priv->prev_local_rotation = priv->local_rotation;
+    priv->prev_scale_x = priv->scale_x;
+    priv->prev_scale_y = priv->scale_y;
+}
+
+/* Stores one interpolated local field */
+static void
+transform_write (LrgTransformComponentPrivate *priv,
+                 gfloat                       *current,
+                 gfloat                       *previous,
+                 gfloat                        value)
+{
+    if (grl_interpolation_track_begin_write (&priv->interp))
+        transform_capture_previous (priv);
+
+    grl_interpolation_track_write_float (&priv->interp, current, previous,
+                                         value);
+    priv->local_version++;
+}
 
 /* ==========================================================================
  * GObject Implementation
@@ -72,6 +129,7 @@ lrg_transform_component_dispose (GObject *object)
     {
         remove_child (priv->parent, self);
         priv->parent = NULL;
+        priv->local_version++;
     }
 
     /* Detach all children */
@@ -120,6 +178,9 @@ lrg_transform_component_get_property (GObject    *object,
     case PROP_PARENT:
         g_value_set_object (value, priv->parent);
         break;
+    case PROP_INTERPOLATE:
+        g_value_set_boolean (value, priv->interp.enabled);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -150,7 +211,7 @@ lrg_transform_component_set_property (GObject      *object,
             gfloat new_value = g_value_get_float (value);
             if (priv->scale_x != new_value)
             {
-                priv->scale_x = new_value;
+                transform_write (priv, &priv->scale_x, &priv->prev_scale_x, new_value);
                 g_object_notify_by_pspec (object, properties[PROP_SCALE_X]);
             }
         }
@@ -161,13 +222,16 @@ lrg_transform_component_set_property (GObject      *object,
             gfloat new_value = g_value_get_float (value);
             if (priv->scale_y != new_value)
             {
-                priv->scale_y = new_value;
+                transform_write (priv, &priv->scale_y, &priv->prev_scale_y, new_value);
                 g_object_notify_by_pspec (object, properties[PROP_SCALE_Y]);
             }
         }
         break;
     case PROP_PARENT:
         lrg_transform_component_set_parent (self, g_value_get_object (value));
+        break;
+    case PROP_INTERPOLATE:
+        lrg_transform_component_set_interpolate (self, g_value_get_boolean (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -268,6 +332,22 @@ lrg_transform_component_class_init (LrgTransformComponentClass *klass)
                              G_PARAM_STATIC_STRINGS |
                              G_PARAM_EXPLICIT_NOTIFY);
 
+    /**
+     * LrgTransformComponent:interpolate:
+     *
+     * Whether the transform is interpolated for drawing while a
+     * fixed-timestep #LrgGameTemplate drives render interpolation (see
+     * lrg_transform_component_get_render_position()).
+     */
+    properties[PROP_INTERPOLATE] =
+        g_param_spec_boolean ("interpolate",
+                              "Interpolate",
+                              "Whether the transform is interpolated for drawing",
+                              TRUE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -283,6 +363,10 @@ lrg_transform_component_init (LrgTransformComponent *self)
     priv->scale_y = 1.0f;
     priv->parent = NULL;
     priv->children = NULL;
+
+    /* New transforms start with previous == current */
+    transform_capture_previous (priv);
+    grl_interpolation_track_init (&priv->interp);
 }
 
 /* ==========================================================================
@@ -419,12 +503,12 @@ lrg_transform_component_set_local_position_xy (LrgTransformComponent *self,
 
     if (x_changed)
     {
-        priv->local_x = x;
+        transform_write (priv, &priv->local_x, &priv->prev_local_x, x);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOCAL_X]);
     }
     if (y_changed)
     {
-        priv->local_y = y;
+        transform_write (priv, &priv->local_y, &priv->prev_local_y, y);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOCAL_Y]);
     }
 }
@@ -467,7 +551,7 @@ lrg_transform_component_set_local_x (LrgTransformComponent *self,
 
     if (priv->local_x != x)
     {
-        priv->local_x = x;
+        transform_write (priv, &priv->local_x, &priv->prev_local_x, x);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOCAL_X]);
     }
 }
@@ -510,7 +594,7 @@ lrg_transform_component_set_local_y (LrgTransformComponent *self,
 
     if (priv->local_y != y)
     {
-        priv->local_y = y;
+        transform_write (priv, &priv->local_y, &priv->prev_local_y, y);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOCAL_Y]);
     }
 }
@@ -553,7 +637,8 @@ lrg_transform_component_set_local_rotation (LrgTransformComponent *self,
 
     if (priv->local_rotation != rotation)
     {
-        priv->local_rotation = rotation;
+        transform_write (priv, &priv->local_rotation,
+                         &priv->prev_local_rotation, rotation);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOCAL_ROTATION]);
     }
 }
@@ -620,12 +705,12 @@ lrg_transform_component_set_local_scale_xy (LrgTransformComponent *self,
 
     if (x_changed)
     {
-        priv->scale_x = scale_x;
+        transform_write (priv, &priv->scale_x, &priv->prev_scale_x, scale_x);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCALE_X]);
     }
     if (y_changed)
     {
-        priv->scale_y = scale_y;
+        transform_write (priv, &priv->scale_y, &priv->prev_scale_y, scale_y);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCALE_Y]);
     }
 }
@@ -649,6 +734,235 @@ lrg_transform_component_set_local_scale_uniform (LrgTransformComponent *self,
  * ========================================================================== */
 
 /*
+ * transform_world_ensure:
+ * @priv: the transform's private data
+ *
+ * Brings @priv's cached world transform up to date, folding the parent
+ * chain from the root down with the same float operations, in the same
+ * order, as the public getters always used:
+ *   rotation = parent rotation + local rotation
+ *   scale    = local scale * parent scale
+ *   position = parent position + rotate (local position * parent scale,
+ *                                        parent rotation)
+ * Each level only recomputes (one sincos) when its own local transform or
+ * an ancestor's world transform changed since it was cached, so querying
+ * every node of a deep hierarchy is O(nodes), not O(nodes x depth) trig
+ * evaluations; an unchanged chain costs a walk of version compares. The
+ * cached values are exactly the ones the uncached fold produced.
+ */
+static void
+transform_world_ensure (LrgTransformComponentPrivate *priv)
+{
+    LrgTransformComponentPrivate *parent_priv;
+    guint64                       parent_version;
+
+    parent_priv = NULL;
+    parent_version = 0;
+    if (priv->parent != NULL)
+    {
+        parent_priv = lrg_transform_component_get_instance_private (priv->parent);
+        transform_world_ensure (parent_priv);
+        parent_version = parent_priv->world_version;
+    }
+
+    if (priv->world_valid &&
+        priv->world_local_version == priv->local_version &&
+        priv->world_parent_version == parent_version)
+        return;
+
+    if (parent_priv == NULL)
+    {
+        /* No parent - local is world */
+        priv->world_x = priv->local_x;
+        priv->world_y = priv->local_y;
+        priv->world_rotation = priv->local_rotation;
+        priv->world_scale_x = priv->scale_x;
+        priv->world_scale_y = priv->scale_y;
+    }
+    else
+    {
+        gfloat parent_rot = parent_priv->world_rotation;
+        gfloat parent_scale_x = parent_priv->world_scale_x;
+        gfloat parent_scale_y = parent_priv->world_scale_y;
+        gfloat rad = deg_to_rad (parent_rot);
+        gfloat cos_r = cosf (rad);
+        gfloat sin_r = sinf (rad);
+
+        /* Scale first, then rotate */
+        gfloat scaled_x = priv->local_x * parent_scale_x;
+        gfloat scaled_y = priv->local_y * parent_scale_y;
+
+        gfloat rotated_x = scaled_x * cos_r - scaled_y * sin_r;
+        gfloat rotated_y = scaled_x * sin_r + scaled_y * cos_r;
+
+        priv->world_rotation = parent_rot + priv->local_rotation;
+        priv->world_scale_x = priv->scale_x * parent_scale_x;
+        priv->world_scale_y = priv->scale_y * parent_scale_y;
+
+        /* Translate by parent position */
+        priv->world_x = parent_priv->world_x + rotated_x;
+        priv->world_y = parent_priv->world_y + rotated_y;
+    }
+
+    priv->world_valid = TRUE;
+    priv->world_local_version = priv->local_version;
+    priv->world_parent_version = parent_version;
+    priv->world_version++;
+}
+
+/*
+ * transform_world:
+ * @priv: the transform's private data
+ * @want_position: also return the world position
+ * @out_x: (out): world X (only written when @want_position)
+ * @out_y: (out): world Y (only written when @want_position)
+ * @out_rotation: (out): world rotation in degrees
+ * @out_scale_x: (out): world X scale
+ * @out_scale_y: (out): world Y scale
+ *
+ * Reads the world transform through the cache (transform_world_ensure()).
+ */
+static void
+transform_world (LrgTransformComponentPrivate *priv,
+                 gboolean                      want_position,
+                 gfloat                       *out_x,
+                 gfloat                       *out_y,
+                 gfloat                       *out_rotation,
+                 gfloat                       *out_scale_x,
+                 gfloat                       *out_scale_y)
+{
+    transform_world_ensure (priv);
+
+    if (want_position)
+    {
+        *out_x = priv->world_x;
+        *out_y = priv->world_y;
+    }
+    *out_rotation = priv->world_rotation;
+    *out_scale_x = priv->world_scale_x;
+    *out_scale_y = priv->world_scale_y;
+}
+
+/*
+ * transform_render_local:
+ *
+ * The local transform to draw with: the blend of the transform at the
+ * start of the latest fixed step and the current one, or the current one
+ * when the transform did not change in that step (or interpolation is
+ * off). Rotation takes the shorter arc.
+ */
+static void
+transform_render_local (LrgTransformComponentPrivate *priv,
+                        gfloat                       *x,
+                        gfloat                       *y,
+                        gfloat                       *rotation,
+                        gfloat                       *scale_x,
+                        gfloat                       *scale_y)
+{
+    gfloat alpha;
+
+    if (!grl_interpolation_track_get_blend (&priv->interp, &alpha))
+    {
+        *x = priv->local_x;
+        *y = priv->local_y;
+        *rotation = priv->local_rotation;
+        *scale_x = priv->scale_x;
+        *scale_y = priv->scale_y;
+        return;
+    }
+
+    *x = grl_interpolation_lerp (priv->prev_local_x, priv->local_x, alpha);
+    *y = grl_interpolation_lerp (priv->prev_local_y, priv->local_y, alpha);
+    *rotation = grl_interpolation_lerp_angle (priv->prev_local_rotation,
+                                              priv->local_rotation, alpha,
+                                              360.0f);
+    *scale_x = grl_interpolation_lerp (priv->prev_scale_x, priv->scale_x, alpha);
+    *scale_y = grl_interpolation_lerp (priv->prev_scale_y, priv->scale_y, alpha);
+}
+
+/*
+ * transform_render_world:
+ *
+ * transform_world() over the render (interpolated) local transform of
+ * every level, so a child drawn under a moving parent follows the
+ * parent's drawn pose.
+ */
+static void
+transform_render_world (LrgTransformComponentPrivate *priv,
+                        gfloat                       *out_x,
+                        gfloat                       *out_y,
+                        gfloat                       *out_rotation,
+                        gfloat                       *out_scale_x,
+                        gfloat                       *out_scale_y)
+{
+    LrgTransformComponentPrivate *parent_priv;
+    gfloat local_x;
+    gfloat local_y;
+    gfloat local_rot;
+    gfloat local_scale_x;
+    gfloat local_scale_y;
+    gfloat parent_x;
+    gfloat parent_y;
+    gfloat parent_rot;
+    gfloat parent_scale_x;
+    gfloat parent_scale_y;
+    gfloat rad;
+    gfloat cos_r;
+    gfloat sin_r;
+    gfloat scaled_x;
+    gfloat scaled_y;
+
+    transform_render_local (priv, &local_x, &local_y, &local_rot,
+                            &local_scale_x, &local_scale_y);
+
+    if (priv->parent == NULL)
+    {
+        *out_x = local_x;
+        *out_y = local_y;
+        *out_rotation = local_rot;
+        *out_scale_x = local_scale_x;
+        *out_scale_y = local_scale_y;
+        return;
+    }
+
+    parent_priv = lrg_transform_component_get_instance_private (priv->parent);
+    transform_render_world (parent_priv, &parent_x, &parent_y, &parent_rot,
+                            &parent_scale_x, &parent_scale_y);
+
+    *out_rotation = parent_rot + local_rot;
+    *out_scale_x = local_scale_x * parent_scale_x;
+    *out_scale_y = local_scale_y * parent_scale_y;
+
+    /* Scale by the parent, rotate by it, translate to it */
+    rad = deg_to_rad (parent_rot);
+    cos_r = cosf (rad);
+    sin_r = sinf (rad);
+    scaled_x = local_x * parent_scale_x;
+    scaled_y = local_y * parent_scale_y;
+    *out_x = parent_x + (scaled_x * cos_r - scaled_y * sin_r);
+    *out_y = parent_y + (scaled_x * sin_r + scaled_y * cos_r);
+}
+
+/*
+ * transform_chain_is_cut:
+ *
+ * Whether this transform or one of its parents was teleported (or
+ * created) in the current fixed step: its world pose jumped.
+ */
+static gboolean
+transform_chain_is_cut (LrgTransformComponentPrivate *priv)
+{
+    while (priv != NULL)
+    {
+        if (grl_interpolation_track_is_cut (&priv->interp))
+            return TRUE;
+        priv = priv->parent != NULL ?
+            lrg_transform_component_get_instance_private (priv->parent) : NULL;
+    }
+    return FALSE;
+}
+
+/*
  * lrg_transform_component_get_world_position:
  * @self: an #LrgTransformComponent
  *
@@ -662,41 +976,17 @@ lrg_transform_component_get_world_position (LrgTransformComponent *self)
     LrgTransformComponentPrivate *priv;
     gfloat                        world_x;
     gfloat                        world_y;
+    gfloat                        world_rot;
+    gfloat                        world_scale_x;
+    gfloat                        world_scale_y;
 
     g_return_val_if_fail (LRG_IS_TRANSFORM_COMPONENT (self), NULL);
 
     priv = lrg_transform_component_get_instance_private (self);
+    transform_world (priv, TRUE, &world_x, &world_y, &world_rot,
+                     &world_scale_x, &world_scale_y);
 
-    if (priv->parent == NULL)
-    {
-        /* No parent - local is world */
-        return grl_vector2_new (priv->local_x, priv->local_y);
-    }
-    else
-    {
-        /* Get parent world transform */
-        g_autoptr(GrlVector2) parent_pos = lrg_transform_component_get_world_position (priv->parent);
-        g_autoptr(GrlVector2) parent_scale = lrg_transform_component_get_world_scale (priv->parent);
-        gfloat parent_rot = lrg_transform_component_get_world_rotation (priv->parent);
-
-        /* Transform local position by parent scale and rotation */
-        gfloat rad = deg_to_rad (parent_rot);
-        gfloat cos_r = cosf (rad);
-        gfloat sin_r = sinf (rad);
-
-        /* Scale first, then rotate */
-        gfloat scaled_x = priv->local_x * parent_scale->x;
-        gfloat scaled_y = priv->local_y * parent_scale->y;
-
-        gfloat rotated_x = scaled_x * cos_r - scaled_y * sin_r;
-        gfloat rotated_y = scaled_x * sin_r + scaled_y * cos_r;
-
-        /* Translate by parent position */
-        world_x = parent_pos->x + rotated_x;
-        world_y = parent_pos->y + rotated_y;
-
-        return grl_vector2_new (world_x, world_y);
-    }
+    return grl_vector2_new (world_x, world_y);
 }
 
 /*
@@ -711,19 +1001,17 @@ gfloat
 lrg_transform_component_get_world_rotation (LrgTransformComponent *self)
 {
     LrgTransformComponentPrivate *priv;
+    gfloat                        world_rot;
+    gfloat                        world_scale_x;
+    gfloat                        world_scale_y;
 
     g_return_val_if_fail (LRG_IS_TRANSFORM_COMPONENT (self), 0.0f);
 
     priv = lrg_transform_component_get_instance_private (self);
+    transform_world (priv, FALSE, NULL, NULL, &world_rot,
+                     &world_scale_x, &world_scale_y);
 
-    if (priv->parent == NULL)
-    {
-        return priv->local_rotation;
-    }
-    else
-    {
-        return lrg_transform_component_get_world_rotation (priv->parent) + priv->local_rotation;
-    }
+    return world_rot;
 }
 
 /*
@@ -738,21 +1026,17 @@ GrlVector2 *
 lrg_transform_component_get_world_scale (LrgTransformComponent *self)
 {
     LrgTransformComponentPrivate *priv;
+    gfloat                        world_rot;
+    gfloat                        world_scale_x;
+    gfloat                        world_scale_y;
 
     g_return_val_if_fail (LRG_IS_TRANSFORM_COMPONENT (self), NULL);
 
     priv = lrg_transform_component_get_instance_private (self);
+    transform_world (priv, FALSE, NULL, NULL, &world_rot,
+                     &world_scale_x, &world_scale_y);
 
-    if (priv->parent == NULL)
-    {
-        return grl_vector2_new (priv->scale_x, priv->scale_y);
-    }
-    else
-    {
-        g_autoptr(GrlVector2) parent_scale = lrg_transform_component_get_world_scale (priv->parent);
-        return grl_vector2_new (priv->scale_x * parent_scale->x,
-                                priv->scale_y * parent_scale->y);
-    }
+    return grl_vector2_new (world_scale_x, world_scale_y);
 }
 
 /* ==========================================================================
@@ -810,6 +1094,7 @@ lrg_transform_component_set_parent (LrgTransformComponent *self,
 
     /* Set new parent */
     priv->parent = parent;
+    priv->local_version++;
 
     /* Add to new parent's children list */
     if (parent != NULL)
@@ -884,6 +1169,7 @@ lrg_transform_component_detach_children (LrgTransformComponent *self)
         LrgTransformComponentPrivate *child_priv = lrg_transform_component_get_instance_private (child);
 
         child_priv->parent = NULL;
+        child_priv->local_version++;
         g_object_notify_by_pspec (G_OBJECT (child), properties[PROP_PARENT]);
     }
 
@@ -987,9 +1273,11 @@ void
 lrg_transform_component_sync_to_entity (LrgTransformComponent *self)
 {
     LrgGameObject         *owner;
-    g_autoptr(GrlVector2)  world_pos = NULL;
-    g_autoptr(GrlVector2)  world_scale = NULL;
+    gfloat                 world_x;
+    gfloat                 world_y;
     gfloat                 world_rot;
+    gfloat                 world_scale_x;
+    gfloat                 world_scale_y;
 
     g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
 
@@ -999,16 +1287,22 @@ lrg_transform_component_sync_to_entity (LrgTransformComponent *self)
         return;
     }
 
-    world_pos = lrg_transform_component_get_world_position (self);
-    world_rot = lrg_transform_component_get_world_rotation (self);
-    world_scale = lrg_transform_component_get_world_scale (self);
+    /* One walk up the hierarchy for all three quantities */
+    transform_world (lrg_transform_component_get_instance_private (self), TRUE,
+                     &world_x, &world_y, &world_rot,
+                     &world_scale_x, &world_scale_y);
 
     /* Sync to entity */
-    grl_entity_set_position (GRL_ENTITY (owner), world_pos);
+    grl_entity_set_position_xy (GRL_ENTITY (owner), world_x, world_y);
     grl_entity_set_rotation (GRL_ENTITY (owner), world_rot);
 
     /* GrlEntity has uniform scale, use average */
-    grl_entity_set_scale (GRL_ENTITY (owner), (world_scale->x + world_scale->y) / 2.0f);
+    grl_entity_set_scale (GRL_ENTITY (owner), (world_scale_x + world_scale_y) / 2.0f);
+
+    /* A teleported transform (or parent) teleports the entity as well, so
+     * the jump is not drawn as a streak */
+    if (transform_chain_is_cut (lrg_transform_component_get_instance_private (self)))
+        grl_entity_reset_interpolation (GRL_ENTITY (owner));
 }
 
 /* ==========================================================================
@@ -1134,4 +1428,163 @@ lrg_transform_component_slerp_rotation (LrgTransformComponent *self,
     /* Extract roll angle and set */
     grl_quaternion_to_euler (result, &pitch, &yaw, &roll);
     lrg_transform_component_set_local_rotation (self, roll * (180.0f / G_PI));
+}
+
+/* ==========================================================================
+ * Public API - Render Interpolation
+ * ========================================================================== */
+
+/*
+ * lrg_transform_component_get_render_position:
+ * @self: an #LrgTransformComponent
+ * @x: (out) (optional): world X to draw at
+ * @y: (out) (optional): world Y to draw at
+ *
+ * Gets the interpolated world position to draw at.
+ */
+void
+lrg_transform_component_get_render_position (LrgTransformComponent *self,
+                                             gfloat                *x,
+                                             gfloat                *y)
+{
+    lrg_transform_component_get_render_transform (self, x, y, NULL, NULL, NULL);
+}
+
+/*
+ * lrg_transform_component_get_render_rotation:
+ * @self: an #LrgTransformComponent
+ *
+ * Gets the interpolated world rotation to draw with.
+ *
+ * Returns: the world rotation in degrees
+ */
+gfloat
+lrg_transform_component_get_render_rotation (LrgTransformComponent *self)
+{
+    gfloat rotation;
+
+    g_return_val_if_fail (LRG_IS_TRANSFORM_COMPONENT (self), 0.0f);
+
+    rotation = 0.0f;
+    lrg_transform_component_get_render_transform (self, NULL, NULL, &rotation,
+                                                  NULL, NULL);
+    return rotation;
+}
+
+/*
+ * lrg_transform_component_get_render_transform:
+ * @self: an #LrgTransformComponent
+ *
+ * Gets the whole interpolated world transform to draw with.
+ */
+void
+lrg_transform_component_get_render_transform (LrgTransformComponent *self,
+                                              gfloat                *x,
+                                              gfloat                *y,
+                                              gfloat                *rotation,
+                                              gfloat                *scale_x,
+                                              gfloat                *scale_y)
+{
+    gfloat world_x;
+    gfloat world_y;
+    gfloat world_rot;
+    gfloat world_scale_x;
+    gfloat world_scale_y;
+
+    g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
+
+    transform_render_world (lrg_transform_component_get_instance_private (self),
+                            &world_x, &world_y, &world_rot,
+                            &world_scale_x, &world_scale_y);
+
+    if (x != NULL)
+        *x = world_x;
+    if (y != NULL)
+        *y = world_y;
+    if (rotation != NULL)
+        *rotation = world_rot;
+    if (scale_x != NULL)
+        *scale_x = world_scale_x;
+    if (scale_y != NULL)
+        *scale_y = world_scale_y;
+}
+
+/*
+ * lrg_transform_component_teleport:
+ * @self: an #LrgTransformComponent
+ * @x: new local X
+ * @y: new local Y
+ *
+ * Moves without interpolating the move.
+ */
+void
+lrg_transform_component_teleport (LrgTransformComponent *self,
+                                  gfloat                 x,
+                                  gfloat                 y)
+{
+    g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
+
+    lrg_transform_component_set_local_position_xy (self, x, y);
+    lrg_transform_component_reset_interpolation (self);
+}
+
+/*
+ * lrg_transform_component_reset_interpolation:
+ * @self: an #LrgTransformComponent
+ *
+ * Drops the in-flight blend: previous == current for the rest of the step.
+ */
+void
+lrg_transform_component_reset_interpolation (LrgTransformComponent *self)
+{
+    LrgTransformComponentPrivate *priv;
+
+    g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
+
+    priv = lrg_transform_component_get_instance_private (self);
+    transform_capture_previous (priv);
+    grl_interpolation_track_reset (&priv->interp);
+}
+
+/*
+ * lrg_transform_component_get_interpolate:
+ * @self: an #LrgTransformComponent
+ *
+ * Returns: whether the transform is interpolated for drawing
+ */
+gboolean
+lrg_transform_component_get_interpolate (LrgTransformComponent *self)
+{
+    LrgTransformComponentPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_TRANSFORM_COMPONENT (self), FALSE);
+
+    priv = lrg_transform_component_get_instance_private (self);
+    return priv->interp.enabled;
+}
+
+/*
+ * lrg_transform_component_set_interpolate:
+ * @self: an #LrgTransformComponent
+ * @interpolate: whether to interpolate the transform for drawing
+ *
+ * Opts the transform in or out of render interpolation.
+ */
+void
+lrg_transform_component_set_interpolate (LrgTransformComponent *self,
+                                         gboolean               interpolate)
+{
+    LrgTransformComponentPrivate *priv;
+
+    g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
+
+    priv = lrg_transform_component_get_instance_private (self);
+
+    interpolate = (interpolate != FALSE);
+    if (priv->interp.enabled == interpolate)
+        return;
+
+    priv->interp.enabled = interpolate;
+    lrg_transform_component_reset_interpolation (self);
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_INTERPOLATE]);
 }

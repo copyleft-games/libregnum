@@ -678,6 +678,9 @@ lrg_build_grid_snap_to_grid (LrgBuildGrid *self,
 
     g_return_if_fail (LRG_IS_BUILD_GRID (self));
 
+    /* world_to_cell() leaves its outputs unset when its checks fail */
+    cell_x = 0;
+    cell_y = 0;
     lrg_build_grid_world_to_cell (self, world_x, world_y, &cell_x, &cell_y);
     lrg_build_grid_cell_to_world (self, cell_x, cell_y, snapped_x, snapped_y);
 }
@@ -720,7 +723,8 @@ lrg_build_grid_place_building (LrgBuildGrid        *self,
         for (cx = x; cx < x + eff_width; cx++)
         {
             cell = lrg_build_grid_get_cell (self, cx, cy);
-            cell->building = building;
+            if (cell != NULL)
+                cell->building = building;
         }
     }
 

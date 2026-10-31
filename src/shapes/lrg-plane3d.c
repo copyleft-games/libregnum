@@ -52,12 +52,19 @@ lrg_plane3d_draw (LrgShape *shape,
                   gfloat    delta)
 {
 	LrgPlane3D            *self   = LRG_PLANE3D (shape);
-	GrlVector3            *pos    = lrg_shape3d_get_position (LRG_SHAPE3D (self));
-	GrlVector3            *rot    = lrg_shape3d_get_rotation (LRG_SHAPE3D (self));
-	GrlVector3            *scl    = lrg_shape3d_get_scale (LRG_SHAPE3D (self));
+	GrlVector3             render_pos;
+	GrlVector3             render_rot;
+	GrlVector3             render_scl;
+	GrlVector3            *pos    = &render_pos;
+	GrlVector3            *rot    = &render_rot;
+	GrlVector3            *scl    = &render_scl;
 	GrlColor              *color  = lrg_shape_get_color (shape);
-	g_autoptr(GrlVector3)  origin = grl_vector3_new (0.0f, 0.0f, 0.0f);
+	GrlVector3             origin_at = { 0.0f, 0.0f, 0.0f };
+	GrlVector3            *origin = &origin_at;
 	g_autoptr(GrlVector2)  size   = grl_vector2_new (self->width, self->length);
+
+	/* Draw at the render (interpolated) transform */
+	lrg_shape3d_get_render_transform (LRG_SHAPE3D (self), pos, rot, scl);
 
 	rlPushMatrix ();
 

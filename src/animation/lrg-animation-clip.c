@@ -28,6 +28,7 @@ typedef struct
 {
     gchar      *bone_name;
     GArray     *keyframes;  /* Array of LrgAnimationKeyframe */
+    gboolean    sorted;     /* keyframe times never decrease (binary search ok) */
 } LrgAnimationTrack;
 
 typedef struct
@@ -332,6 +333,7 @@ lrg_animation_clip_add_track (LrgAnimationClip *self,
     track = g_slice_new0 (LrgAnimationTrack);
     track->bone_name = g_strdup (bone_name);
     track->keyframes = g_array_new (FALSE, TRUE, sizeof (LrgAnimationKeyframe));
+    track->sorted = TRUE;
 
     g_ptr_array_add (priv->tracks, track);
 
@@ -389,6 +391,18 @@ lrg_animation_clip_add_keyframe (LrgAnimationClip           *self,
     track = g_ptr_array_index (priv->tracks, track_index);
 
     kf_copy = *keyframe;
+
+    /* Keyframes are kept in insertion order; remember whether that is
+     * also time order (NaN times count as out of order). */
+    if (track->keyframes->len > 0)
+    {
+        const LrgAnimationKeyframe *last;
+
+        last = &g_array_index (track->keyframes, LrgAnimationKeyframe,
+                               track->keyframes->len - 1);
+        if (!(kf_copy.time >= last->time))
+            track->sorted = FALSE;
+    }
     g_array_append_val (track->keyframes, kf_copy);
 
     /* Update duration if needed */
@@ -602,24 +616,51 @@ lrg_animation_clip_sample_track (LrgAnimationClip *self,
         return;
     }
 
-    /* Find surrounding keyframes */
+    /*
+     * Find surrounding keyframes: next is the first keyframe later than
+     * local_time, prev the last one before it that is not. On a time
+     * sorted track that is the upper bound, found by bisection; an
+     * unsorted track keeps the linear scan, whose answer differs there.
+     */
     prev_kf = NULL;
     next_kf = NULL;
 
-    for (i = 0; i < track->keyframes->len; i++)
+    if (track->sorted)
     {
-        LrgAnimationKeyframe *kf;
+        guint lo = 0;
+        guint hi = track->keyframes->len;
 
-        kf = &g_array_index (track->keyframes, LrgAnimationKeyframe, i);
-
-        if (kf->time <= local_time)
+        while (lo < hi)
         {
-            prev_kf = kf;
+            guint mid = lo + (hi - lo) / 2;
+
+            if (g_array_index (track->keyframes, LrgAnimationKeyframe, mid).time <= local_time)
+                lo = mid + 1;
+            else
+                hi = mid;
         }
-        else
+        if (lo > 0)
+            prev_kf = &g_array_index (track->keyframes, LrgAnimationKeyframe, lo - 1);
+        if (lo < track->keyframes->len)
+            next_kf = &g_array_index (track->keyframes, LrgAnimationKeyframe, lo);
+    }
+    else
+    {
+        for (i = 0; i < track->keyframes->len; i++)
         {
-            next_kf = kf;
-            break;
+            LrgAnimationKeyframe *kf;
+
+            kf = &g_array_index (track->keyframes, LrgAnimationKeyframe, i);
+
+            if (kf->time <= local_time)
+            {
+                prev_kf = kf;
+            }
+            else
+            {
+                next_kf = kf;
+                break;
+            }
         }
     }
 

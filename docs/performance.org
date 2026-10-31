@@ -1,0 +1,402 @@
+#+title: Performance
+#+description: Frame-time benchmarks, the engine's per-frame cost rules, and what changed in the framerate pass
+#+authors: Zach Podbielniak
+#+categories: libregnum performance benchmarks graylib
+#+created: 2026-10-25T16:00:00-04:00
+#+updated: 2026-10-27T23:30:00-04:00
+#+version: 1.3
+
+* Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+#+begin_quote
+*[[file:index.org][Home]]* > Performance
+#+end_quote
+
+This page covers measuring frame cost (=lrg-bench=), the rules the engine's per-frame code follows, the framerate pass of October 2026 (what changed, with numbers) and the hitch pass that followed it (frames that occasionally cost far more than the median). Editor-specific frame cost is in [[file:editor/editor-app.org][the editor app page]]; graylib's own rules are in graylib's =docs/best_practices.org=.
+
+** Measuring: lrg-bench
+:PROPERTIES:
+:CUSTOM_ID: lrg-bench
+:END:
+=bench/lrg-bench.c= runs CPU-bound scenarios with the frame cap off in a 320x240 window, small on purpose so fill rate stays out of the numbers and the engine's own per-frame work dominates. For each scenario it prints the whole-frame mean, median, p95 and FPS, and the *work* median: the scenario's update and draw submission alone, without the driver's flush and buffer swap. Under a software rasterizer (Xvfb + llvmpipe) the work column is the one that tracks engine changes; whole-frame times are dominated by the rasterizer.
+
+#+begin_src sh
+make -C bench                                    # bench/build/release/bench/lrg-bench
+make -C bench run                                # all scenarios (Xvfb when DISPLAY is unset)
+make -C bench run BENCH_ARGS='-s tilemap -f 600' # one scenario, longer
+LRG_BENCH_XVFB=1 bench/run-bench.sh bench/build/release/bench/lrg-bench -o yaml   # private Xvfb even with a display, YAML out
+bench/build/release/bench/lrg-bench -l           # list scenarios
+#+end_src
+
+| Scenario        | What it exercises                                                         |
+|-----------------+---------------------------------------------------------------------------|
+| =ecs-sprites=   | 4000 game objects with sprite components: =lrg_world_update/draw=         |
+| =ecs-moving=    | =ecs-sprites= moving in 60 Hz fixed steps, drawn at 144 Hz, interpolated  |
+| =ecs-moving-raw= | the same with render interpolation off                                   |
+| =ui-labels=     | retained UI canvas with 600 labels, one changing per frame                |
+| =particles=     | 20000-particle system update                                              |
+| =tilemap=       | 512x512 two-layer tilemap through a panning 2D camera                     |
+| =shapes3d=      | 3000 =LrgCube3D=                                                          |
+| =shapes3d-batched= | =shapes3d= inside a shape batch (=lrg_shape3d_begin_batch()=)          |
+| =shapes-round=  | 600 spheres, 300 cylinders, 300 cones                                     |
+| =shapes-round-batched= | =shapes-round= inside a shape batch                                 |
+| =static-batch=  | 3600 boxes in 90 chunks, walking camera                                   |
+| =terrain=       | 256 terrain chunks and 256 water patches                                  |
+| =billboards=    | 60000 swaying billboards                                                  |
+| =grass=         | ~150000 grass blades                                                      |
+| =world-shadows= | lit batch + terrain + billboards, 14 shadow passes, light grid            |
+| =world-shadows-cached= | =world-shadows= with tiles kept until they change (=LRG_SHADOW_REFRESH_NEVER=) and a box circling torch 27, invalidating its box every frame |
+| =light-grid=    | light set apply, 256 lights                                               |
+| =graylib-draw=  | 20000 graylib rectangle/texture draws + 200 texts                         |
+| =gui=           | the editor's immediate-mode GUI, 64 rows of widgets                       |
+| =autosave=      | light frames, a 4000-key background save every 60 frames                  |
+| =autosave-sync= | the same save made with =lrg_save_manager_save()= (on the frame)          |
+| =analytics=     | an analytics event a frame, HTTP backend, 20 ms localhost collector       |
+| =despawn=       | 4000 sprite objects, 1000 removed and 1000 spawned every 60 frames        |
+| =first-use=     | water, billboards, grass, clouds, lit batch, skinned actors, colour grade, heat haze, sharpen: built in setup, first drawn at measured frame 100 |
+| =first-use-queue= | =first-use= with the prewarm queue run to the end in setup             |
+| =first-use-prewarm= | =first-use-queue= plus one hidden draw of the scene in setup (the full loading-screen path) |
+| =midi-synth=    | 3 ms frames, a streamed busy MIDI song (~60 voices) through =LrgMidiSynth= |
+| =sound-bed=     | 3 ms frames, a streamed 6-layer =LrgSoundBed=, always crossfading, reverb  |
+| =procedural=    | 3 ms frames, a streamed =LrgProceduralAudio= subclass (48 sine partials)   |
+| =music-ogg=     | 3 ms frames, a streamed Vorbis track through =LrgMusicTrack=               |
+| =music-mp3=     | 3 ms frames, a streamed MP3 track through =LrgMusicTrack=                  |
+| =gpu-bound=     | almost no CPU work, =--gpu-load= (600) blended full-window quads: GPU-bound frames, for =--frames-in-flight= ([[#input-latency][input latency]]) |
+
+Adding a scenario: write =setup= / =frame= / =teardown= functions and add a row to the =scenarios[]= table at the bottom of =lrg-bench.c=. Keep scenarios deterministic (fixed seeds, scripted cameras) so runs compare.
+
+The audio scenarios spin 3 ms on the clock each frame (a ~300 fps game, so a stream buffer lasts as many frames as in a game) and open the audio device at master volume 0; anything above 3 ms in the work column is audio on the game thread.  The music fixtures are written to the user cache dir (=lrg-bench-audio/=): a generated 30 s WAV, encoded with =ffmpeg= (=libvorbis=, =libmp3lame=) when it is on =PATH=, else the WAV is streamed and the bench says so.  Under =run-bench.sh='s private Xvfb (private =XDG_RUNTIME_DIR=) miniaudio's ALSA backend reaches PipeWire through its ALSA plugin, which waits a long time for a socket it cannot find; pass the session's =PIPEWIRE_RUNTIME_DIR= (=PIPEWIRE_RUNTIME_DIR=/run/user/$(id -u)=) to open the device at once.
+
+** Rules for per-frame code
+:PROPERTIES:
+:CUSTOM_ID: rules
+:END:
+- *No heap values in draw loops.* =GrlColor=, =GrlVector2/3=, =GrlRectangle= are plain structs: declare them on the stack (or =static const= for constant colours) and pass addresses. Use the non-allocating getters: =grl_entity_get_origin_xy()=, =grl_font_measure_text_xy()=, =lrg_tileset_get_tile_rect_to()=.
+- *Cull before submitting.* =src/graphics/lrg-draw-cull-private.h= gives the visible area of the z = 0 plane (=lrg_draw_cull_visible_rect_2d()=) and frustum tests for 3D boxes, both read from rlgl's live projection x modelview x transform, so they are right inside any camera, render target, letterbox viewport or shadow pass without the caller passing anything in.
+- *Cache what does not change between frames.* Sort orders (=LrgWorld=), measured text (=LrgLabel=), uniform locations, light grids, instance buffers and GPU meshes are kept and invalidated on change, not rebuilt per frame.
+- *Batch-friendly order.* raylib flushes its batch whenever the texture, shader, blend mode or scissor changes; group draws by texture.
+- *No per-frame logging or string formatting* on paths that run every frame.
+- *No blocking I/O on the frame thread.* File writes that fsync, network requests and retries with sleeps go to a worker thread (the save manager's writer, the HTTP analytics sender); the frame thread only collects state. Results come back without a main loop (the standalone game loop does not iterate a =GMainContext=): through an explicit flush or the next call, or a main-context source where one is iterated.
+- *Keep scratch buffers across frames.* A per-frame =g_new= / =g_array_sized_new= of 128 KiB or more is an =mmap=, page faults and an =munmap= every frame (glibc's mmap threshold); keep the array on the object and reset its length.
+- *Draw at render poses, simulate on true state.* Draw code reads =grl_entity_get_render_pose()=, =lrg_transform_component_get_render_transform()=, =lrg_shape3d_get_render_transform()= and friends (smooth on displays faster than the fixed step, see [[#render-interpolation][Render interpolation]]); gameplay, physics and collision read the plain getters. Never do per-step work over all objects to keep previous poses: capture lazily on write (=GrlInterpolationTrack=).
+- *Membership changes are O(1) or O(log n) per object.* Many objects come and go in the same frame (explosions, wave spawns, level streaming); a linear search per removal turns that frame into O(n·k).
+
+** Build flags
+:PROPERTIES:
+:CUSTOM_ID: build-flags
+:END:
+Release builds (=DEBUG=0=) of libregnum and graylib use =-O2 -fno-semantic-interposition -DG_DISABLE_CAST_CHECKS=: calls between a library's own functions can be inlined although it is built =-fPIC=, and GObject cast macros compile to plain casts (=g_return_if_fail()= argument checks stay on). =DEBUG=1= builds keep full cast checks. The bundled raylib is built at =-O2= (its Makefile defaults to =-O1= for desktop release builds; graylib passes =CUSTOM_CFLAGS=-O2=, raylib's sources are unchanged). At =-O2= raylib's own =rcore.c= emits three =-Wstringop-truncation= warnings; they are raylib's, like the =m3d.h= warning that was already there.
+
+The extra inlining lets GCC see through more calls, which surfaced latent paths where an output argument stayed unset after a failed =g_return_if_fail()= or a constructor's =NULL= return was dereferenced; those were fixed at the source, not silenced.
+
+** The October 2026 framerate pass
+:PROPERTIES:
+:CUSTOM_ID: framerate-pass
+:END:
+Measured with =lrg-bench= under Xvfb + llvmpipe on a 20-thread Alder Lake laptop, 300 frames per scenario, before (master =46a6583=) and after. Work = scenario CPU time per frame (median); frame = whole-frame mean.
+
+| Scenario        | Before                     | After                     | Change                               |
+|-----------------+----------------------------+---------------------------+--------------------------------------|
+| =tilemap=       | work 52.3 ms, frame 53.6 ms | work 1.2 ms, frame 1.9 ms | ~28x (viewport culling)             |
+| =ui-labels=     | work 3.07 ms, frame 4.19 ms | work 1.50 ms, frame 2.65 ms | 2x (graylib text layout)          |
+| =ecs-sprites=   | crashed                    | work 0.95 ms              | fixed (=lrg_world_draw= NULL vfunc)  |
+| =particles=     | crashed                    | work 0.12 ms              | fixed (pool realloc under live list) |
+| =grass=         | frame 69.2 ms              | frame 14.1 ms             | ~5x (persistent instances, culling)  |
+| =world-shadows= | frame 135.7 ms             | frame 74.8 ms             | ~1.8x (frustum culling per pass)     |
+| =billboards=    | frame 12.4 ms              | frame 7.9 ms              | cluster culling                      |
+| =terrain=       | frame 11.0 ms              | frame 8.7 ms              | chunk/patch culling                  |
+| =shapes-round=  | frame 37.1 ms              | frame 27.6 ms             | cached GPU meshes                    |
+| =light-grid=    | 0.615 ms                   | 0.213 ms                  | skip unchanged rebuild/upload        |
+| =graylib-draw=  | work 7.5 ms (raylib -O1)   | work 5.4 ms               | raylib at -O2                        |
+| =animator=      | 6.86 ms                    | 0.31 ms                   | single-pass skeleton, cached track maps |
+| =physics=       | 4.17 ms                    | 0.24 ms                   | sort-and-sweep broadphase            |
+| =event-bus=     | 5.42 ms                    | 0.87 ms                   | mask filter before snapshot          |
+| =transforms=    | 2.63 ms                    | ~0.85 ms                  | one parent walk, no allocation       |
+| =object-pool=   | 3.04 ms                    | 1.6 ms                    | O(1) release, reused snapshot        |
+| editor frame (5050 nodes, 4000 log lines) | 11.8 ms | 0.35 ms         | console/hierarchy culling and caches |
+
+What changed, by area:
+- *2D*: tilemap draws only tiles that can land in the viewport; =LrgWorld= keeps its draw order between frames (stable by z-index then insertion) and insertion-sorts it in place; sprite components and =GrlSprite= draw without allocating; =LrgGame2DTemplate= paints letterbox bars instead of a second full-window clear; labels cache their measured size; text everywhere goes through graylib's O(1)-lookup layout.
+- *3D*: frustum culling in static batches, terrain, water, billboard clusters and grass, for the camera and every shadow pass; uniform locations cached per shader; the light grid rebuilds and uploads only on change; grass keeps a persistent instance buffer; spheres, cylinders and cones draw cached GPU meshes.
+- *Simulation*: skeletons compute world poses in one parent-before-child pass without allocating; animators cache track-to-bone maps and binary-search keyframes; physics uses a sort-and-sweep broadphase with the same pairs in the same order; the event bus filters by mask before snapshotting listeners; transform components walk the parent chain once; object pools release in O(1); portals reuse their scratch tables. Details in each module's page.
+- *Editor*: see [[file:editor/editor-app.org][Frame cost]].
+
+Bugs fixed on the way (each has a regression test):
+- =lrg_world_draw()= crashed on any world with objects: =LrgGameObject::draw= chained up to =GrlEntity='s =NULL= draw vfunc. It now draws the object's enabled sprite components (=/ecs/world/draw-order=).
+- =LrgParticleSystem= let its pool grow past =max-particles=, reallocating the particles under its active list (a crash once emission outran the capacity). The pool is now fixed at =max-particles= (=/particles/system/respects-max-particles=).
+- =GrlSprite= =flip-h=/=flip-v= were negated twice and never flipped.
+- =GrlScene= ignored z-index changes made after an entity was added (graylib =/scene/draw-order-follows-z-index=).
+- Skeleton chains deeper than 100 bones listed child-first never converged.
+- A collision handler that removed a body mid-step could make the physics step use the freed body.
+- The portal system emitted =visibility-changed= on every update, not only when the visible set changed.
+
+Behaviour changes to know about:
+- =lrg_physics_world_step()= simulates at most 5/60 s per call (at least 5 fixed steps) and drops the excess, so one slow frame cannot snowball into ever longer steps.
+- The event bus captures listener masks at the start of an emission, as it already did priorities.
+- =max-particles= is now a hard cap on a particle system's live particles (it was documented as one but not enforced).
+- Solid =LrgSphere3D=, =LrgCylinder3D= and =LrgCone3D= draw cached meshes with raylib's default shader, like =LrgIcosphere3D= and =LrgTorus3D= already did, so a =BeginShaderMode()= around them no longer applies; their output can differ from the old immediate-mode path by a pixel at a triangle edge (GPU vs CPU vertex transform).
+
+** Lows and jitter: the core-affinity and timing pass
+:PROPERTIES:
+:CUSTOM_ID: lows-pass
+:END:
+=lrg-bench= reports, per scenario, the frame rate, the *1% and 5% lows* (frame rate of the mean of the slowest 1% / 5% of frames), p99 and max frame time, *jitter* (standard deviation of the change in frame time from one frame to the next) and the scenario's own work time; frame times are intervals between consecutive returns from end-drawing. =--fps N= caps the frame rate and the =pacing= scenario measures the limiter (raylib's limiter holds 60.0 fps with 0.045 ms jitter here, so it was left alone).
+
+On a hybrid CPU the largest source of lows was the scheduler moving the main thread between performance and efficiency cores. =LrgEngine= now keeps it (and the driver threads started after it) on the performance cores ([[file:modules/core/engine.org::#performance-cores][details]]). Same binary, =--no-pin= vs default, Alder Lake laptop, Xvfb + llvmpipe:
+
+| Scenario        | fps (no pin -> pinned) | 1% low          | jitter          |
+|-----------------+------------------------+-----------------+-----------------|
+| =ecs-sprites=   | 366 -> 430             | 205 -> 356      | 0.47 -> 0.10 ms |
+| =tilemap=       | 574 -> 558             | 342 -> 422      | 0.29 -> 0.23 ms |
+| =physics=       | 2943 -> 4675           | 1661 -> 2857    | 0.08 -> 0.04 ms |
+| =gui=           | 847 -> 1399            | 445 -> 717      | 0.31 -> 0.16 ms |
+| =world-shadows= | 28.2 -> 31.2           | 20.8 -> 26.5    | 4.78 -> 1.13 ms |
+
+Timing fixes in the same pass:
+- *Delta snapping* (=LrgGameTemplate:snap-frame-delta=): with the default 1/60 s fixed step, frame deltas within 0.2 ms of a whole number of steps are snapped, so a 60 Hz display gets exactly one fixed update every frame instead of an occasional 0 or 2 (stutter at a steady frame rate).
+- *Editor pacing*: vsync plus a cap at an even divisor of the refresh rate (72 on 144 Hz) instead of a fixed 60, which alternated two- and three-vblank frames.
+- *GLib main context*: standalone games now dispatch it every frame (it was never iterated), so timeouts, async completions and the background save/analytics notifications run.
+
+Tried and dropped: link-time optimisation across raylib, graylib and libregnum (=-flto=, fat objects) changed no scenario by more than noise (one +15% on =physics= work, everything else within 2%) and made the build about 2.5x slower.
+
+** GPU skinning for animated glTF models
+:PROPERTIES:
+:CUSTOM_ID: gpu-skinning
+:END:
+=LrgModelAnimator= used to pose through raylib's =UpdateModelAnimation()=, which skins every vertex and normal on the CPU (a matrix inverse per influence for the normals) and re-uploads the position and normal buffers, once per actor per frame when actors are on different frames. It now poses the bones only and skins in the vertex shader whenever the materials allow it, with the CPU path as the fallback; see [[file:modules/graphics/model-animator.org::#skinning][GPU and CPU Skinning]] for the rules and the image comparison tests.
+
+=lrg-bench= scenarios =skinned-models= (GPU, the default) and =skinned-models-cpu= (=set_gpu_skinning (FALSE)=, the code path every model took before): 50 actors on one 3880-vertex, 32-bone glTF tube, each on its own clip and frame, crossfading every two seconds. Xvfb + llvmpipe, =taskset -c 0-11=, 600 frames, three runs each (range):
+
+| Scenario             | fps       | 1% low    | p99 frame      | work median    |
+|----------------------+-----------+-----------+----------------+----------------|
+| =skinned-models-cpu= | 46.5-47.8 | 36.2-38.7 | 25.2-25.8 ms   | 20.1-20.6 ms   |
+| =skinned-models=     | 63.0-66.1 | 50.2-54.7 | 17.7-19.0 ms   | 14.0-14.8 ms   |
+
+That is about +38 % fps and +40 % on the 1 % low on a software rasterizer, where the vertex shader itself runs on the CPU (llvmpipe's vertex stage is single threaded); on a hardware GPU the skinning is close to free. The shader skips zero weights: the first version summed four weighted matrices per vertex and was /slower/ than CPU skinning on llvmpipe (34.6 fps), because the dynamically indexed matrix fetches are gathers there.
+
+** GPU-resource prewarm
+:PROPERTIES:
+:CUSTOM_ID: prewarm
+:END:
+The engine's renderers compiled their shaders and uploaded their buffers on their first draw, so a feature appearing mid-game (water coming into view, a post effect switching on, the first skinned actor) froze the frame it appeared on. The prewarm system (=LrgPrewarm=, =LrgPrewarmable=, the hidden draw; see [[file:modules/core/prewarm.org][Prewarm]]) moves that behind the loading screen: the renderers join a queue when created, =LrgTemplateLoadingState= runs it with a per-frame budget after its tasks, then emits =prewarm-draw= inside a hidden draw (empty scissor) for the game to draw its scene once, which makes the driver compile the shader variants it only compiles at a first draw.
+
+=lrg-bench= scenarios =first-use= (nothing warmed), =first-use-queue= (the queue run in setup) and =first-use-prewarm= (the queue plus one hidden draw): water, 20000 billboards, ~40000 grass blades, a cloud layer, a lit static batch, 50 GPU-skinned actors, colour grade, heat haze and sharpen, all built in setup and first drawn at measured frame 100. Xvfb + llvmpipe, 600 frames, three runs each (range). "Cold" disables Mesa's on-disk shader cache (=MESA_SHADER_CACHE_DISABLE=true=, a first run or a driver update); "warm" leaves it on (the cache already holds these shaders):
+
+| Scenario            | Cache | max frame       | 1% low    | p99 frame    |
+|---------------------+-------+-----------------+-----------+--------------|
+| =first-use=         | cold  | 867-960 ms      | 5.4-6.0   | 25.2-29.4 ms |
+| =first-use-queue=   | cold  | 759-823 ms      | 6.2-6.6   | 29.1-30.5 ms |
+| =first-use-prewarm= | cold  | 40-43 ms        | 24.7-31.5 | 28.4-39.8 ms |
+| =first-use=         | warm  | 74-99 ms        | 21.9-26.4 | 27.7-38.9 ms |
+| =first-use-queue=   | warm  | 51-70 ms        | 23.4-32.6 | 25.4-37.3 ms |
+| =first-use-prewarm= | warm  | 34-48 ms        | 22.3-33.6 | 27.2-42.0 ms |
+
+(The p99 is the steady frame of this heavy scene, ~20-25 ms on llvmpipe, and moved with machine load between runs; the max frame and the 1% low carry the hitch. With the full path the worst frame is under two steady frames.) In setup the queue cost 100-125 ms cold and 23-30 ms warm (9 entries), the hidden draw 746-883 ms cold and 30-39 ms warm: on llvmpipe =glLinkProgram()= does the front end only and the fragment code is generated at the first draw for its state, so most of the cold cost is only reachable by drawing. Parallel shader compilation (=GL_KHR_parallel_shader_compile=) was evaluated and left out for that reason; see [[file:modules/core/prewarm.org::#parallel-compile][the prewarm page]].
+
+** The October 2026 hitch pass
+:PROPERTIES:
+:CUSTOM_ID: hitch-pass
+:END:
+Hitches are frames that cost far more than the median: they barely move the average but set the 1% / 5% lows and the jitter. Measured with =lrg-bench= under Xvfb + llvmpipe, =taskset -c 0-11=, 1000 frames, before (master =c49b031=) and after; each scenario reproduces one hitch.
+
+| Scenario      | Before: fps, 1% low, p99            | After: fps, 1% low, p99            | What changed                                   |
+|---------------+-------------------------------------+------------------------------------+------------------------------------------------|
+| =autosave=    | 3545 fps, 1% low 104, p99 8.9 ms    | 6378 fps, 1% low 529, p99 1.6 ms   | file write (fsync) off the frame thread        |
+| =analytics=   | 437 fps, 1% low 47, p99 21.2 ms     | 7302 fps, 1% low 694, p99 0.55 ms  | HTTP POST on a sender thread                   |
+| =despawn=     | 417 fps, 1% low 174, p99 5.6 ms     | 436 fps, 1% low 232, p99 4.1 ms    | O(1) removal, sorted draw-order rebuild        |
+
+(=autosave= before is the synchronous save; =autosave-sync= keeps measuring that path: 1% low ~100, p99 ~9 ms. The remaining =autosave= spike is collection, about 1.4 ms for 4000 keys through the YAML builder. The remaining =despawn= spike is creating 1000 objects with components.)
+
+Fixed:
+- *Save writes* (=src/save/lrg-save-manager.c=). A save replacing an existing file costs ~1.2 ms collecting, ~0.9 ms generating YAML and 6-9 ms in =g_file_set_contents()= (fsync), all on the frame. New =lrg_save_manager_save_in_background()= collects on the caller's thread and generates + writes on a per-manager writer thread, in order; =lrg_save_manager_flush()= waits and reports; synchronous save/load/delete wait for queued writes first. =lrg_save_manager_save()= is unchanged. See [[file:modules/save/index.org::#background-saves][Saving During Play]].
+- *HTTP analytics* (=src/analytics/lrg-analytics-backend-http.c=). Every =batch-size= (10) events the backend POSTed synchronously from =lrg_analytics_track_event()=, with up to 3 retries 1 s apart when the collector was down: a 20 ms freeze per batch against a healthy collector, 3+ s against a dead one. Batches now go to a sender thread, one at a time; flush still blocks and reports. See [[file:modules/analytics/index.org::#http-sender-thread][the analytics page]].
+- *Mass removal from a world* (=lrg_world_remove_object()=, graylib =grl_scene_remove_entity()=). Each removal walked the object list twice (=g_list_find= in the world and again in the scene), so removing k of n objects was O(k·n); both now keep the list link in their membership table. The draw order after any spawn or despawn was rebuilt with every z-index at 0 and insertion-sorted, O(n²) for mixed z-indices; it is now rebuilt with the real z-indices and sorted.
+- *Per-frame large allocations*: the particle billboard renderer's sort list (52 B a particle, past 128 KiB at ~2500 particles), the billboard batch's draw and shadow-pass sort lists (8 B a candidate, once per shadow pass too) and the audio mixer's per-bus mix (64 KiB a bus per 4096-frame refill) and pump output are kept between frames instead of allocated per frame or refill.
+
+Bugs fixed on the way (each has a regression test):
+- =grl_scene_sort_entities_by_z()= left the scene's tail link stale, so the next =grl_scene_add_entity()= appended after a node that might not be last, or freed (graylib =/scene/remove-after-sort=).
+
+Behaviour changes to know about:
+- The standalone game loop now dispatches the default GLib main context every frame (bounded, non-blocking). Timeouts, idles, async completions and file monitors used to never run in standalone games; they now do, on the game thread, before the frame's update.
+- =lrg_analytics_backend_send_event()= on the HTTP backend no longer sends a full batch itself and so no longer returns its network error; failures are logged from the sender thread and reported by =lrg_analytics_flush()=. Disposing of the backend drops batches not yet sent (it always dropped pending events); =lrg_analytics_end_session()= flushes first.
+
+Looked at and fine: achievements (signals only, no I/O), settings (written at shutdown), template statistics and daily rewards (saveables only), the timer manager (no catch-up bursts, due timers sorted only), the event bus (no queued flush), net receive (non-blocking, bounded per poll), hot reload (=GFileMonitor=, no polling), logging (plain =g_log=; a dropped debug message costs ~0.1 µs), Lua (default incremental GC, no forced collections; the update hook does not allocate).
+
+*** Known hitch sources not fixed
+:PROPERTIES:
+:CUSTOM_ID: known-hitches
+:END:
+- *raylib's audio lock.* Streamed synthesis and music decoding left the game thread ([[#audio-thread-pass][the audio thread pass]]), but both still run inside raylib's one audio lock: graylib's stream callback is called from raylib's mixer with the lock held, and raylib's =UpdateMusicStream()= holds it for a whole sub-buffer decode (up to ~2 ms of Vorbis or MP3) on graylib's streaming thread.  A game-thread raylib audio call (=PlaySound=, =SetSoundVolume=, =IsSoundPlaying=, positional voice updates) that lands in such a window waits for it.  The decode window is about 1% of the time with raylib's default music buffers; the synth blocks are a fraction of a millisecond.  raylib's, not changed.
+- *First-use GPU work, when nothing prewarms.* The renderers still build lazily on their first draw (shaders of the light set, shadow casters, billboards, grass, water, clouds, ground overlay, GPU skinning, the post effects on their first non-identity frame; uploads of water patches, the horizon ring's batch, round shapes, skinned meshes, billboard GPU pages), so a game that neither runs the [[#prewarm][prewarm queue]] nor uses =LrgTemplateLoadingState= still hitches when a feature first appears, and anything *created* mid-game compiles when it is created and drawn (shaders are per instance; a renderer made during play is only warm if the game queues and runs it, e.g. behind a transition). Billboards added after the upload, and large later additions, rebuild the GPU pages on the second draw after they stop, as before. The driver's draw-time shader variants are only warmed by a real draw (the hidden draw).
+- *Bursty game logic by design.* =LrgObjectPool= with =LRG_POOL_GROWTH_DOUBLE= constructs the whole growth step in one =acquire()= (prewarm the pool); =LrgWaveDirector= spawns every zero-interval entry in one frame and catches up after a long frame; =LrgAutomation= fires an interval rule once per missed interval after a stall; particle emitters keep their accumulated time while the pool is full and emit the backlog later.
+- *Script hosts.* The GJS update hook evaluates generated JS twice per hook per frame, steady garbage that SpiderMonkey collects on its own schedule. LuaJIT count hooks do not fire inside compiled traces, so the scheduler's per-frame instruction budget is not enforced for hot compiled loops.
+- *Networking.* =_lrg_net_buffer_flush()= shifts the whole remaining output queue (up to 4 MiB) after each partial write; the MMO SQLite store commits with =synchronous=FULL= and the Postgres store blocks on queries, which matters if a server shares a thread with its simulation tick.
+
+** Render interpolation
+:PROPERTIES:
+:CUSTOM_ID: render-interpolation
+:END:
+With the default 1/60 s fixed step, a 144 Hz display runs 0 or 1 steps per frame, so anything moved in =fixed_update= advanced on a 2,3,2,3 frame cadence. =LrgGameTemplate= now drives graylib's render interpolation clock and game objects, transforms, shapes and cameras are drawn between their last two simulated poses ([[file:modules/template/templates/game-template.org::#render-interpolation][how it works]]).
+
+Smoothness, =tests/test-interpolation.c= (an object at 60 units/s moved in =fixed_update=, drawn position recorded every frame; judder = standard deviation of the per-frame displacement over its mean):
+
+| Display        | Without interpolation | With interpolation |
+|----------------+-----------------------+--------------------|
+| 144 Hz (1/144) | 1.18                  | 0.00001            |
+| 60 Hz (1/60)   | 0                     | 0 (drawn one step behind) |
+
+CPU cost, work median in ms, Xvfb + llvmpipe, 5 alternating runs of 600 frames (=before= is the v0.2.0 build):
+
+| Scenario                     | before | after | note                                                     |
+|------------------------------+--------+-------+----------------------------------------------------------|
+| =ecs-sprites= (static)       | 0.81   | 0.78  | one render-pose call per sprite instead of three getters |
+| =ecs-moving= vs =-raw=       | --     | 0.62 vs 0.62 | 4000 objects moved every step: no measurable cost |
+| =shapes3d=                   | 5.5-6.3 | 5.5-6.3 | noise; the render transform is filled on the stack     |
+| =transforms=                 | 0.409  | 0.421 | +3%: the private struct grew by the previous pose        |
+
+A direct microbenchmark (4000 =GrlEntity= moved in 60 Hz steps, render pose read for each every 144 Hz frame, no drawing) costs 41 µs per frame with interpolation and 37 µs without: about 1 ns per object per frame. Two things made that so: the previous pose is captured lazily on the first write in a step (no per-step pass over all objects, nothing for objects at rest), and graylib's own hot paths (entity setters, =grl_entity_get_render_pose()=) use inline forms of the clock checks instead of exported calls. A first version spent 0.1 ms per frame on =ecs-moving= in the shortest-arc angle blend, which always called =fmodf()= (an x87 =fprem= loop); it now folds only differences past half a turn.
+
+Found on the way: =liblibregnum.so= did not depend on the embedded graylib/raylib/yaml-glib archives (the static library did), so a graylib-only change left the shared library linked against the old graylib until something in libregnum changed. Both libraries now depend on them.
+** The v0.3.1 CPU hot-path pass
+:PROPERTIES:
+:CUSTOM_ID: cpu-hot-path-pass
+:END:
+CPU time the engine itself spends per frame in 2D, ECS, UI and simulation paths. Measured with =lrg-bench= under Xvfb + llvmpipe, 600 frames, base (v0.3.0, =34f3f30=) and new alternating on the same machine, each run started once the machine was >= 85% idle; median of 3 runs (5 for the ECS rows). The machine was shared with other builds, so frame rates and lows are noisy; the work median (scenario CPU time per frame) is the stable column, and the ECS rows also give the best run.
+
+| Scenario       | Base: work, fps, 1% low         | New: work, fps, 1% low          | What changed                                            |
+|----------------+---------------------------------+---------------------------------+---------------------------------------------------------|
+| =object-pool=  | 1.02 ms, 757 fps, 1% low 373    | 0.20 ms, 2691 fps, 1% low 704   | no per-acquire allocation or hash insert/remove         |
+| =ui-labels=    | 2.11 ms, 308 fps, 1% low 198    | 0.09 ms, 1832 fps, 1% low 637   | off-target labels skipped                               |
+| =ecs-sprites=  | 1.23 ms (best 0.84), 271 fps    | 0.65 ms (best 0.53), 375 fps    | cached type checks, one vtable lookup, unchecked loops  |
+| =ecs-moving=   | 0.77 ms (best 0.76), 349 fps    | 0.54 ms (best 0.50), 383 fps    | same                                                    |
+| =transforms=   | 0.42 ms, 1563 fps               | 0.17 ms, 3237 fps               | version-validated world transform cache                 |
+| =portals=      | 0.39 ms, 1595 fps               | 0.043 ms, 6230 fps              | index-resolved topology cache                           |
+| =event-bus=    | 0.46 ms, 1486 fps               | 0.24 ms, 2213 fps               | dispatch through cached vtables                         |
+| =gui=          | 0.47 ms                         | 0.38 ms                         | O(1) glyph lookup for GUI text                          |
+| =tweens=       | 0.39 ms                         | 0.35 ms                         | cached =LrgTweenBase= check                             |
+| =despawn=      | 1.12 ms, work p99 3.60 ms       | 0.68 ms, work p99 3.29 ms       | the per-object savings above; spike see below           |
+| =tilemap=      | 1.25 ms                         | 1.28 ms                         | unchanged (noise)                                       |
+
+What changed:
+- *Object pool* (=src/template/lrg-object-pool.c=). Every acquisition allocated a refcounted lease and inserted it into an object -> lease hash table that release removed again, so with thousands of acquisitions a frame the table resized every frame (=g_hash_table_resize= was the top symbol). Now each pooled object has a permanent member record (the table's key set only changes when objects are created or dropped), the available list holds members (acquire is a pop, release one lookup), leases are recycled through a free list with a plain counter, the object reference moves between member and lease without ref/unref, and the =LrgPoolable= vtable is peeked once per pool. Release type-checks its argument only when the lookup misses. See [[file:modules/template/systems/object-pool.org::#iteration][Iteration]].
+- *Labels* (=src/ui/lrg-label.c=). A label whose measured text box, widened by two ems, misses the visible area from rlgl's live matrices (=lrg_draw_cull_visible_rect_2d()=) is not drawn: the GPU would have clipped all of it. In the bench 600 labels lie in a 20000-pixel-tall box; ~20 are on screen. No cache of glyph quads or render textures was needed: once off-target labels cost nothing, the visible ones are a small fraction of the frame, and a render-texture cache would cost GPU memory per label and risk filtering differences. Pixel equality is tested in =/ui/label/offscreen-cull= (partly visible, off target, and brought into view by a 2D camera).
+- *Type checks in per-object loops*. GLib's instance check only has an inline fast path for an exact type match; game objects are subclasses and interfaces always miss it. graylib's entity accessors and =GrlUpdatable= / =GrlDrawable= entry points (=src/grl-type-check-private.h=) and =LrgTweenBase= (=src/lrg-type-check-private.h=) cache the last instance type that passed, which is exact because conformance never stops being true; criticals and their text are unchanged. =grl_updatable_update()= and =grl_drawable_draw()= look their vtable up once instead of again through a checked public call. =LrgGameObject='s update/draw loops call unchecked component internals (=lrg-component-private.h=) for components validated when they were added.
+- *Transforms* (=src/ecs/components/lrg-transform-component.c=). World transforms are cached per node and validated by a local version (bumped by every local or parent change) and the parent's world version (bumped by every recompute): a query walks up comparing versions and recomputes only changed levels, with the same float operations. See [[file:modules/ecs/components/transform-component.org::#world-transform-absolute-computed-from-hierarchy][World Transform]].
+- *Portals* (=src/world3d/lrg-portal-system.c=). The traversal used three string-hashed table operations per step and the point lookup iterated the sector table; both now run over a cache of the topology (sectors in table iteration order, so the same first match; portal links resolved to sector indices; visit stamps), rebuilt after any add or remove.
+- *Event bus*. Priorities, the per-turn mask and =on_event= go through the registration's cached listener vtable, the event's vtable is looked up once per emission.
+- *GUI text*. The raylib GUI backend draws and measures with graylib's O(1)-lookup text layout instead of =DrawTextEx()= / =MeasureTextEx()= (a linear glyph table scan per character).
+
+Looked at and left:
+- *rlgl immediate mode* (=rlVertex3f= is the top engine symbol in every 2D scenario, and =graylib-draw= is bound by llvmpipe). rlgl already continues one draw call while the texture and mode do not change (=rlSetTexture()= / =rlBegin()= only start a new draw on a change; =rlSetTexture (0)= after each quad only checks the batch limit), so graylib cannot drop calls without writing raylib's batch itself, which would need raylib's private state. raylib is not modified.
+- *=despawn= spike*. The wave frame (1000 removals + 1000 new objects with a sprite component each) is ~1.8 ms of GObject construction and destruction (property notifies, qdata bit locks, signals) and 2000 =lrg_debug()= calls that GLib formats before dropping. The debug messages stay: custom log writers (the editor log, the debug console) may want them. Games spawning in waves should pool their objects.
+- *Tweens* are dominated by =g_object_set()= by property name and its notify; that is the documented behaviour of property tweens.
+
+Found on the way: none of the changed paths had a correctness bug; the =LrgPortalSystem= update used a sector ID pointer into a sector that a =sector-entered= handler could have removed, it now traverses from its own copy of the ID.
+
+** The v0.3.1 3D render pass
+:PROPERTIES:
+:CUSTOM_ID: render3d-pass
+:END:
+Goal: less CPU submission and fewer draws and passes for 3D. Measured with =lrg-bench= under Xvfb + llvmpipe on the 20-thread Alder Lake laptop, 600 frames, while other builds shared the machine: each scenario ran five times alternating the master library (=34f3f30=, the same bench binary through =LD_LIBRARY_PATH=) and this branch, and the table gives the medians. Load moved single runs by 20 % and more, so only the paired medians are quoted.
+
+| Scenario                                    | Before (master)                  | After                            | Change                       |
+|---------------------------------------------+----------------------------------+----------------------------------+------------------------------|
+| =shapes-round=                              | 39.2 fps, 1% low 27.0, work 24.9 ms | 50.3 fps, 1% low 36.5, work 17.1 ms | +28 % fps (indexed meshes)  |
+| =shapes-round-batched= (vs =shapes-round=)  | 39.2 fps, work 24.9 ms           | 75.6 fps, 1% low 58.7, work 10.7 ms | 1.9x fps (shape batch)    |
+| =shapes3d=                                  | 131.5 fps, 1% low 96.7, work 6.5 ms | 132.0 fps, 1% low 99.4, work 6.3 ms | unchanged (immediate path) |
+| =shapes3d-batched= (vs =shapes3d=)          | 131.5 fps, work 6.5 ms           | 297.1 fps, 1% low 224.1, work 2.6 ms | 2.3x fps (shape batch)    |
+| =world-shadows-cached= (vs =world-shadows=, same loop) | 18.9 fps, 1% low 14.2  | 22.0 fps, 1% low 15.2            | +6-16 % (12 of 14 passes cached) |
+| =grass=, =terrain=, =billboards=, =static-batch=, =skinned-models=, =world-shadows= | | | within noise (code not touched or not on their path) |
+
+What changed:
+- *Indexed shape meshes.* The cached meshes of =LrgSphere3D=, =LrgCylinder3D= and =LrgCone3D= stored every triangle corner (a 16 x 16 sphere: 1632 positions); each distinct position is now stored once (bit for bit equal ones merged; the sphere: a few hundred) and the same triangles, in the same order, index them. The GPU transforms a shared corner once instead of up to six times; on llvmpipe the vertex shader (which runs on the main thread) dropped out of the profile. Pixel output is unchanged: same positions, same triangles.
+- *Shape batches* (=lrg_shape3d_begin_batch()= / =lrg_shape3d_end_batch()=, see [[file:api/shapes.org::#shape-batches][Shape batches]]). Opaque solid cubes, spheres, cylinders and cones drawn inside a batch are queued with the model-view-projection =DrawMesh()= would have computed and drawn at the end with one instanced call per shared mesh through a two-line program equivalent to raylib's default shader for these meshes. 3000 cubes become one draw call instead of ~108000 CPU-transformed immediate vertices; 1200 round shapes three calls instead of 1200 =DrawMesh()= (each of which costs uniform uploads and driver state validation: the =memmove= / mutex / =malloc= in the old profile). It is opt-in because it reorders draws (fine under the depth test, not for arbitrary interleaved translucent drawing); translucent shapes flush the queue first. =tests/test-shape-batch.c= compares batched and one-by-one renders pixel for pixel.
+- *Per-draw shape costs.* The 3D shapes no longer allocate a boxed origin vector per draw, and skip =rlRotatef()= for zero angles and =rlScalef()= for a unit scale (each multiplies by the identity, which changes no bit).
+- *Shadow tiles kept until they change.* =lrg_shadow_renderer_set_refresh (LRG_SHADOW_REFRESH_NEVER)= keeps a cached tile until its light camera changes, and =lrg_shadow_renderer_invalidate_box()= forgets only the tiles whose light camera sees a box (a moved caster's old and new space), see [[file:modules/lighting/shadow-renderer.org::#semantics][the shadow renderer]]. In =world-shadows-cached= the two shadowed torches' 12 cube faces are reused except the few that see the box circling torch 27.
+
+Findings, not changed:
+- *=grass= =malloc= / =free=.* The ~3.5 % of the process in =malloc=, =free= and =memset= is llvmpipe's: =llvm_pipeline_generic()= allocates its vertex output for every instance of an instanced draw (=draw_instances()= loops over instances; checked with a breakpoint on =malloc= after warm-up). The engine allocates nothing per frame there; a hardware driver does not have this cost.
+- *=world-shadows= cascades.* With every point light cached, the cost left is the two sun cascades (the far one, 1024 x 1024 over 80 m with the 60000 alpha-tested billboards, is most of it), which follow the walking camera and re-render every frame by design; on llvmpipe that is rasterizer time on the worker threads, not submission. Reusing cascade tiles across camera moves (scrolling the texel-snapped tile and rendering only the exposed strips) would be the next step.
+- *=shapes3d= one by one.* =draw_reset_vertex_ids= in llvmpipe and =rlVertex3f()= dominate the immediate cube path; a =DrawMesh()= per cube would be slower, so unbatched cubes keep the immediate path and the batch is the fast one.
+- The =__memcmp_avx2_movbe= in the 3D profiles is Mesa's own state comparison (under 0.3 %).
+
+To validate on a real GPU: the batches' instance buffer is rewritten with =glBufferSubData()= at offset 0 on every flush (drivers ghost a buffer still in flight; several flushes of one mesh per frame could stall on some drivers), and the gain there is in draw-call count and driver CPU rather than triangle setup.
+
+** The audio thread pass
+:PROPERTIES:
+:CUSTOM_ID: audio-thread-pass
+:END:
+Two hitch sources of the [[#known-hitches][hitch pass]] list moved off the game thread: streamed synthesis, which rendered a whole 4096-frame stream buffer (~93 ms of audio) on the frame the device consumed one, and music decoding, which raylib's =UpdateMusicStream()= did a sub-buffer at a time inside the game's per-frame update.  Measured with the audio scenarios of =lrg-bench= (3 ms spin per frame, see [[#lrg-bench][Measuring]]) under Xvfb + llvmpipe, =taskset -c 0-11=, 1000 frames, the device through PipeWire at master volume 0; before = the scenarios on the code before this change.  "Work" is the scenario's own time per frame, so 3.0 ms is no audio cost at all.
+
+| Scenario     | Before: work p99 / max, 1% low | After: work p99 / max, 1% low | What changed                                  |
+|--------------+--------------------------------+-------------------------------+-----------------------------------------------|
+| =midi-synth= | 4.35 / 4.46 ms, 202 fps        | 3.01 / 3.12 ms, 267 fps       | renders in the stream callback (audio thread) |
+| =sound-bed=  | 3.24 / 3.26 ms, 217 fps        | 3.02 / 3.13 ms, 268 fps       | the same                                      |
+| =procedural= | 4.30 / 5.02 ms, 152 fps        | 3.01 / 3.10 ms, 265 fps       | =generate()= in the stream callback           |
+| =music-ogg=  | 3.48 / 4.95 ms, 152 fps        | 3.01 / 3.03 ms, 272 fps       | decoded on graylib's streaming thread         |
+| =music-mp3=  | 3.28 / 5.51 ms, 152 fps        | 3.01 / 3.03 ms, 271 fps       | the same                                      |
+
+(Medians were 3.005 ms throughout: the costs were all in the spikes.  An earlier run without the PipeWire variable, through raw ALSA, gave the same before numbers within 0.1 ms.  The odd 4-5 ms work frame after the change is scheduler noise: it does not reproduce run to run.)
+
+What changed:
+- *graylib: stream callbacks* (=grl_audio_stream_set_callback()=, graylib's [[file:../deps/graylib/docs/api/audio.org::#callback-based-streaming][audio docs]]).  raylib's =SetAudioStreamCallback()= without user data, wrapped through 64 trampolines as the processors are; removal detaches under raylib's lock, so a removed callback is not running.  With a callback, =grl_audio_stream_update()= and =is_processed()= do nothing, so an old pump loop costs nothing.
+- *graylib: background music streaming* (=grl_music_set_background_streaming()=, [[file:../deps/graylib/docs/api/audio.org::#background-streaming][graylib's docs]]).  One process-wide thread (=grl-music=), started by the first background play, refills every active background music about every 5 ms; it sleeps when none plays and is joined before the device closes.  Control calls take its lock (they never run during that music's decode); =is_playing()= / =get_time_played()= read what it last published.  =LrgMusicTrack= switches its music on, so =lrg_music_track_update()= no longer decodes.
+- *libregnum: synthesizers on the audio thread.*  =LrgMidiSynth=, =LrgSoundBed= and =LrgProceduralAudio= render in the stream callback.  The game thread's calls become commands on a lock-free list (=src/audio/lrg-audio-thread-private.h=: Treiber stacks of intrusive nodes, a compare-and-swap push, a take that swaps the head) applied in order at the start of each block; what the audio thread drops comes back on a second list and is freed by the game thread, so the audio thread never allocates, frees or blocks.  Getters read back at once: the MIDI synth publishes its song state under a mutex the audio thread only try-locks, with a serial per song change so a getter called before the audio thread caught up reports the song just asked for; the sound bed publishes each layer's gain and play count in atomics; loop points, levels and volumes are the game thread's copies.  Details: [[file:modules/audio/midi-synth.org::#the-audio-thread][LrgMidiSynth]], [[file:modules/audio/sound-bed.org::#threads][LrgSoundBed]], [[file:modules/audio/procedural-audio.org::#audio-thread][LrgProceduralAudio]].
+
+Behaviour changes to know about:
+- *Latency is lower.*  A pushed stream ran up to two 4096-frame buffers (~186 ms) ahead of what was heard; a call is now heard within about one device period after the audio thread's next block.
+- =LrgProceduralAudio= subclasses: =generate()= runs on the audio device's thread by default (the construct-only =audio-thread= property).  State it reads must be changed through the new =lrg_procedural_audio_queue_command()= (or atomics), and freed in =finalize=, not =dispose=.  =audio-thread= =FALSE= keeps the old =update()= pump.
+- =lrg_midi_synth_render()= and =lrg_sound_bed_render()= write silence and return 0 while their stream renders (the audio thread owns the songs / layers); after =stop_stream()= they render offline again.
+- Background music: =grl_music_get_time_played()= is up to ~5 ms old, and the end of a non-looping track is reported within that period.
+- A =GrlMusic= now follows its =looping= property from load (raylib loads music looping, and =GrlMusic:looping= starts =FALSE=, so a music never set looping used to repeat).  =LrgMusicTrack= now hands graylib its own =looping= (it used to pass =FALSE= when it had loop points, which raylib ignored): looping tracks behave as before (custom loop points seek back before the end, raylib's loop is the fallback at the end), and a track set not to loop now stops at its end instead of repeating.
+- The synth streams keep setting raylib's process-wide default stream buffer size to 4096 frames (now only used by the fallback path, when graylib has no free callback slot, which pumps from =update()= as before).
+
+Thread safety was checked with ThreadSanitizer: a focused harness compiles the audio sources of libregnum and graylib with =-fsanitize=thread= (raylib uninstrumented, its locks seen through TSan's pthread interceptors; GLib's futex-based =GMutex= / =GCond= replaced by pthread ones in the harness so TSan sees them) and runs =test-midi-synth=, =test-procedural-audio=, =test-audio-effects= (sound bed), and graylib's =test-audio-stream= and =test-music= with the device tests on.  No race in libregnum or graylib.  The one report is raylib's =CloseAudioDevice()=, which destroys its mixing mutex before it stops the device thread; raylib's, not changed.
+
+** Input latency: frames in flight and the frame-end path
+:PROPERTIES:
+:CUSTOM_ID: input-latency
+:END:
+The v0.3.1 latency pass looked at what happens between a frame's last draw and the next frame's input poll, for input-to-photon latency and frame-time jitter.
+
+*What the frame end already did right.* raylib's =EndDrawing()= is flush, swap, frame limiter (=WaitTime()=: sleep 95% of the remaining time, spin the rest, =SUPPORT_PARTIALBUSY_WAIT_LOOP=), then =PollInputEvents()=. The standalone loop (=lrg_game_run_standalone()=: main context, =update=, draw, end frame) and the editor both end with it, so the input a frame reads is polled after every wait of the previous frame; nothing in libregnum sleeps before the swap or after the poll. The limiter is precise here (60.0 fps, 0.02-0.05 ms jitter on the =pacing= scenario at a 60 or 144 cap, Xvfb), so it was left alone.
+
+*New: bounded frames in flight.* A driver lets the CPU queue frames ahead of the GPU; each queued frame is a frame of input lag. graylib's new frame sync (=grl_frame_sync_*=, =GrlWindow:max-frames-in-flight=; graylib's =docs/api/core.org=, "Frames in Flight") fences each frame before its swap and waits until at most N - 1 earlier frames are unfinished on the GPU. The wait is before =EndDrawing()='s swap and poll, so input stays fresh; a fence the GPU already passed is checked without a flush. libregnum turns it on with =LrgGameTemplate:max-frames-in-flight= (default 2, applied by the standalone host to =LrgGrlWindow:max-frames-in-flight=) and in the editor (2); =LRG_MAX_FRAMES_IN_FLIGHT= (=0=-=4= or =off=) overrides both, as =LRG_CPU_AFFINITY= does pinning.
+
+*New bench options.* =lrg-bench --frames-in-flight N= sets the bound and reports the GPU wait per frame; =--vsync= opens the window with vsync; the =gpu-bound= scenario draws =--gpu-load= (default 600) blended full-window quads with almost no CPU work. =--latency= adds *input-to-GPU-done latency* to every scenario (off by default: its per-frame GPU clock read and batch flush cost ~0.1 ms a frame on hardware, which skews frame times at high frame rates): a GL timestamp query after the frame's draws (before its swap), converted to the CPU clock, minus the time of the input poll the frame was built from. It leaves out scanout (vblank wait, compositor), so it shows the GPU queue that frames in flight add, not full photon latency.
+
+Measured on the Intel Iris Xe (Mesa iris, GNOME Wayland session, 60 Hz panel), 320x240 window, medians of 5-7 interleaved runs of 300 frames (other benchmarks were running on the machine, so absolute frame rates moved ±30% between sets; compare within a row group):
+
+| Case                                   | Bound | fps   | latency median | GPU wait median |
+|----------------------------------------+-------+-------+----------------+-----------------|
+| =gpu-bound=, uncapped, Wayland         | off   | 539   | 3.51 ms        | --              |
+|                                        | 1     | 439   | 2.47 ms        | 2.06 ms         |
+|                                        | 2     | 483   | 4.14 ms        | 1.85 ms         |
+| =gpu-bound=, uncapped, XWayland        | off   | 529   | 3.61 ms        | --              |
+|                                        | 1     | 417   | 2.79 ms        | 2.02 ms         |
+|                                        | 2     | 502   | 3.95 ms        | 1.63 ms         |
+| =pacing=, vsync                        | off   | 60.0  | 1.65 ms        | --              |
+|                                        | 1     | 60.0  | 1.58 ms        | 0.50 ms         |
+|                                        | 2     | 60.0  | 1.62 ms        | 0.001 ms        |
+| =gpu-bound --gpu-load 3000=, vsync     | off   | 59.9  | 11.75 ms       | --              |
+|                                        | 1     | 59.9  | 11.01 ms       | 10.6 ms         |
+|                                        | 2     | 59.9  | 11.75 ms       | 0.003 ms        |
+| =ecs-sprites=, uncapped                | off   | 956   | 1.48 ms        | --              |
+|                                        | 1     | 564   | 1.47 ms        | 0.75 ms         |
+|                                        | 2     | 996   | 1.45 ms        | 0.000 ms        |
+
+What it shows:
+- *Mesa already queues about one frame.* GPU-bound and uncapped, the driver's own latency is about two GPU frames (one queued, one drawing): the same as a bound of 2. With vsync, Mesa's swap throttles before the next frame starts, so no bound changes the latency at all. On this hardware 2 is a no-op; it is the default as a guard for drivers that queue up to three frames, at the cost of one fence a frame (=ecs-sprites= at ~1000 fps: no measurable change, after the already-signaled fast path; before that path the extra flush cost ~3%).
+- *1 is a real trade, not a default.* The GPU finishes each frame before its swap, so CPU and GPU work stop overlapping: on the uncapped GPU-bound scene latency dropped about 30% (3.5 -> 2.5 ms) and frame rate about 19%; a CPU-heavy uncapped scene (=ecs-sprites=) lost 40% of its frame rate for nothing. Worth it for a competitive game that is GPU-bound below the display rate; set =max-frames-in-flight= to 1 or run with =LRG_MAX_FRAMES_IN_FLIGHT=1=.
+- *No cost on llvmpipe* (Xvfb): the GPU wait median is 2 µs at a 60 fps cap with a bound of 2; fps, lows and jitter are within run-to-run noise.
+
+*Timer slack, evaluated and not adopted.* The main thread's default timer slack (50 µs) delays every =nanosleep()= wake-up; =prctl(PR_SET_TIMERSLACK, 1)= removes that. Measured with an =LD_PRELOAD= shim on the =pacing= scenario (Xvfb, 3 runs each): at a 60 fps cap jitter 0.023-0.046 ms with the default and 0.014-0.033 ms with 1 ns; at 144 fps 0.019-0.036 vs 0.019-0.022 ms; frame rate and 1% lows unchanged. raylib's limiter spins the last 5% of each wait, which already absorbs the slack, so the gain is within noise; the only visible effect was the scenario's own 1 ms =g_usleep()= ending ~50 µs sooner. Not worth a process-wide side effect.
+
+*Other frame-end latency, documented, not changed:*
+- *Input to the fixed step.* Input is polled once per frame, at its end; the next frame's fixed steps all read that one sample. Polling between steps would only help when a frame runs two or more steps (a frame-rate drop); not worth the extra poll (which would also break press/release edge detection, which raylib keys to one poll per frame).
+- *Render interpolation* draws up to one fixed step (16.7 ms at 60 steps a second) behind the simulation ([[#render-interpolation][above]]). It is the largest latency in the loop; the options stay as documented: =interpolate= off, or a step rate at the display rate.
+- *vsync plus a frame cap that is not a divisor of the refresh rate* (the template's default 60 on a 144 Hz display) alternated two- and three-vblank frames, as the editor did before it capped at a divisor. Fixed: with vsync on, the standalone host now passes the template's =target-fps= through =lrg_game_template_pace_fps()=, which picks the fraction of the refresh rate (refresh / n, rounded up) nearest the request: 72 for 60 on 144 Hz, 55 on 165 Hz, unchanged on 60/120/240 Hz. Rounded up because a cap slightly faster than n vblanks still waits for the n-th, while a slower one misses it now and then. The game's fixed step (60 Hz) and render interpolation are unaffected; only the presented rate moves. Not yet seen on a high-refresh panel.
+
+Validate on other hardware: a discrete GPU or a driver with a deeper queue (where 2 should cut latency against the driver default), a 120/144 Hz panel with vsync (cap/refresh interaction), and full photon latency with a camera or an input-to-photon tool, which this probe does not see.

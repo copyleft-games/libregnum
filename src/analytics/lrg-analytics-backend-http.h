@@ -8,6 +8,11 @@
  *
  * Sends analytics events to an HTTP endpoint as JSON or YAML payloads.
  * Supports batching, retry on failure, and custom headers.
+ *
+ * Batches are sent on a sender thread: a full batch (or the flush timer)
+ * queues the events and returns at once, so tracking an event never waits
+ * on the network. lrg_analytics_backend_flush() still blocks until every
+ * queued batch is sent and reports the outcome.
  */
 
 #pragma once
@@ -160,7 +165,8 @@ lrg_analytics_backend_http_get_batch_size (LrgAnalyticsBackendHttp *self);
  * @self: an #LrgAnalyticsBackendHttp
  * @batch_size: number of events to batch (1-1000)
  *
- * Sets the batch size.
+ * Sets the batch size. When this many events are pending they are
+ * queued for the sender thread; sending them never blocks the caller.
  *
  * Since: 1.0
  */
@@ -233,7 +239,9 @@ lrg_analytics_backend_http_set_retry_count (LrgAnalyticsBackendHttp *self,
  * lrg_analytics_backend_http_get_pending_count:
  * @self: an #LrgAnalyticsBackendHttp
  *
- * Gets the number of pending events in the queue.
+ * Gets the number of events not yet delivered: those still collecting
+ * into a batch plus those in batches queued for (or failed and awaiting
+ * a retry by) the sender thread.
  *
  * Returns: the pending event count
  *

@@ -1,0 +1,199 @@
+#+title: GPU-resource prewarm (LrgPrewarm, LrgPrewarmable)
+
+#+begin_quote
+*[[../../index.org][Home]]* > *[[../index.org][Modules]]* > *[[file:index.org][Core]]* > Prewarm
+#+end_quote
+
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+Most of the engine's renderers build their GPU resources lazily: the water surface compiles its shader and uploads its patches on its first draw, a post effect compiles its shader on the first frame it is not identity, a skinned mesh uploads on its first draw. On a real driver each of those is a 5-100 ms freeze at the moment the feature first appears in the game; under llvmpipe it is hundreds of milliseconds. The prewarm system moves that work behind a loading screen.
+
+It has three parts:
+
+- *=LrgPrewarmable=* (=src/core/lrg-prewarmable.h=): an interface with one method, =prewarm()=, that builds everything the object's first draw would build. Idempotent: a second call, or a draw after it, builds nothing again.
+- *=LrgPrewarm=* (=src/core/lrg-prewarm.h=): a first-in, first-out queue of prewarm work (=LrgPrewarmable= objects held by weak reference, and plain functions) that runs within a per-frame time budget, so a loading screen keeps animating while it drains.
+- *The hidden draw* (=lrg_prewarm_begin_hidden_draw()= / =lrg_prewarm_end_hidden_draw()=): many drivers, llvmpipe among them, compile part of a shader only at its first *draw*, for the state it is drawn with. Drawing the scene once with an empty scissor rectangle does that work without touching a pixel.
+
+=LrgTemplateLoadingState= drives all three: see [[#loading-state][The loading state]].
+
+* The queue
+:PROPERTIES:
+:CUSTOM_ID: queue
+:END:
+** The default queue and auto-tracking
+:PROPERTIES:
+:CUSTOM_ID: default-queue
+:END:
+=lrg_prewarm_get_default()= is the process-wide queue; =lrg_engine_get_prewarm()= returns the same object (the engine holds a reference and creates it in its constructor). Every engine renderer that implements =LrgPrewarmable= calls =lrg_prewarm_track()= from its instance init, which adds it to the default queue when:
+
+- the default queue's =auto-track= property is on (the default), and
+- the object is created on the thread that created the default queue (the thread that made the engine, normally the main thread). Objects built on worker threads are not touched by the GL thread behind their back; queue them explicitly once they are handed over.
+
+So a level built in loading tasks is in the queue by the time the tasks finish, with no game code. The queue holds weak references: an object freed before its turn is skipped, and when the queue grows past 256 entries (and from then on each time it doubles) entries of freed objects are swept out, so a game that never runs the queue keeps one small entry per *live* renderer, not per renderer ever made.
+
+** Adding work
+:PROPERTIES:
+:CUSTOM_ID: adding-work
+:END:
+#+begin_src c
+LrgPrewarm *prewarm = lrg_engine_get_prewarm (lrg_engine_get_default ());
+
+/* an object of the game's own that implements LrgPrewarmable */
+lrg_prewarm_add_object (prewarm, LRG_PREWARMABLE (my_renderer));
+
+/* a function: load the game's own shaders; return FALSE to be called
+ * again later (work split into steps) */
+lrg_prewarm_add_func (prewarm, "game shaders", load_game_shaders, game, NULL);
+#+end_src
+
+Both may be called from any thread (the queue is locked). Running it may not: entries make GL calls.
+
+** Running it
+:PROPERTIES:
+:CUSTOM_ID: running
+:END:
+| Function | Does |
+|----------+------|
+| =lrg_prewarm_run (prewarm, budget_us)= | Runs entries in order until =budget_us= microseconds have passed or the queue is empty. At least one entry runs per call; an entry is never cut short (one long compile can overrun the budget). Returns =TRUE= while work remains. An entry whose function returns =FALSE= goes to the back of the queue. |
+| =lrg_prewarm_run_all (prewarm)= | Runs the queue to the end, including work queued while it runs. |
+| =lrg_engine_prewarm (engine, budget_us)= / =lrg_engine_prewarm_all (engine)= | The same on the engine's queue. |
+| =lrg_prewarm_get_pending()=, =get_completed()=, =get_elapsed_us()= | Queue length, finished entries, time spent. |
+| =lrg_prewarm_clear()= | Drops everything queued. |
+
+Everything must run on the thread that owns the GL context. Without an open window (=IsWindowReady()= false) =run()= does nothing, keeps the queue for later and returns =FALSE= ("done"), so headless servers and tests pass straight through.
+
+#+begin_src c
+/* a loading screen of the game's own: one budget a frame */
+static void
+loading_update (MyGame *game)
+{
+    if (!lrg_engine_prewarm (lrg_engine_get_default (), 8000))
+        my_game_start_level (game);
+}
+#+end_src
+
+* What each renderer warms
+:PROPERTIES:
+:CUSTOM_ID: covered
+:END:
+| Type | =prewarm()= builds |
+|------+--------------------|
+| =LrgLightSet= | the lit shader (=lrg_light_set_get_shader()=) |
+| =LrgShadowRenderer= | the caster shader; the atlases are left to the first pass (their size follows the lights casting then) |
+| =LrgBillboardBatch= | the cutout, GPU-path and caster shaders, and the GPU pages of a batch big enough for them, uploaded as if the batch had settled (the first draws otherwise upload on the second draw after additions stop) |
+| =LrgGrassField= | the shader, the card mesh and the instance buffer |
+| =LrgWaterSurface= | the shader (even before patches are added) and every patch's mesh |
+| =LrgCloudLayer= | the slice and the volume shaders (both: the volume can be switched on later) |
+| =LrgGroundOverlay= | the overlay shader |
+| =LrgSkinnedMesh= | the mesh upload (and the built-in skinning shader with the first one) |
+| =LrgModelAnimator= | GPU skinning: the default skinning shader (or the probe of the material's own) and the bone attribute buffers (=grl_model_prepare_gpu_skinning()=); a model the CPU posed last is left alone |
+| =LrgHorizonRing= | the upload of its built static batch |
+| =LrgSphere3D=, =LrgCylinder3D=, =LrgCone3D= | the shared mesh of their parameters, in the current context |
+| =LrgTorus3D=, =LrgIcoSphere3D= | their generated mesh |
+| =LrgColorGrade=, =LrgColorblindFilter=, =LrgHeatHaze=, =LrgSharpen= | the effect's shader, compiled before the first non-identity frame |
+| =LrgPalettize= | the shader, and the lookup table once a palette is set |
+| =LrgPhotoDof=, =LrgPhotoLook= | the photo-mode shaders |
+
+Not covered, and why:
+
+- =LrgStaticBatch= and =LrgTerrain= have no lazy path: their draws skip what is not uploaded, and the game uploads them (=lrg_static_batch_upload()=, =lrg_terrain_upload()=) when it builds them, normally in a loading task. The horizon ring, which does upload its batch lazily, is covered.
+- The post effects that compile in =initialize()= (bloom, FXAA, film grain, vignette, screen shake) already do so when the post processor initializes.
+- Small first-use textures (the particle billboard renderer's dot, a light grid's data textures, the colour grade's LUT strip) cost well under a millisecond; the light grid's size also depends on the lights at the time.
+- Driver-side shader variants: see [[#hidden-draw][The hidden draw]].
+
+* The hidden draw
+:PROPERTIES:
+:CUSTOM_ID: hidden-draw
+:END:
+Compiling and linking a program is not all of a shader's cost. Many drivers compile (part of) a shader only when it is first *drawn*, for the state it is drawn with: llvmpipe JIT-compiles every fragment shader variant at draw time (=glLinkProgram()= only does the front end), and hardware drivers compile state-dependent variants or epilogues (blend, render target format, depth state) at the first draw with them. Prewarming through the renderers' =prewarm()= cannot reach those, because only a real draw with the real state triggers them.
+
+=lrg_prewarm_begin_hidden_draw()= flushes rlgl, turns on the scissor test with an empty rectangle and returns; everything drawn until =lrg_prewarm_end_hidden_draw()= goes through the GL pipeline (state validation, variant compiles, uploads, the renderers' CPU first-draw work) but no fragment passes the scissor test, so colour, depth and even =glClear()= are untouched. =end= flushes the batched draws while the scissor is still on, then turns it off.
+
+#+begin_src c
+/* inside a loading-screen frame (between begin/end drawing) */
+lrg_prewarm_begin_hidden_draw ();
+my_game_draw_scene (game);        /* the level, as it will be drawn */
+lrg_prewarm_end_hidden_draw ();
+#+end_src
+
+Draw what the game will show, the way it will show it: the same render targets, cameras, light sets and post effects, since the variant key includes that state. It must not be nested inside scissor mode, and the drawn code must not turn the scissor test on itself (a UI clip rectangle would let its draws through). Measured under llvmpipe this removes nearly all of the remaining first-use cost (see [[file:../../performance.org::#prewarm][Performance: prewarm]]); the scissor rectangle is not part of llvmpipe's variant key, which is what makes the trick work there. Hardware drivers behave the same way as far as is known, but that is not measured here.
+
+* The loading state
+:PROPERTIES:
+:CUSTOM_ID: loading-state
+:END:
+=LrgTemplateLoadingState= runs the prewarm phase after its tasks:
+
+1. The tasks run, one per frame, as before (they build the level; its renderers join the default queue).
+2. Each following frame runs the default queue for =prewarm-budget= microseconds (default 8000) while the screen keeps drawing; the task label reads "Preparing graphics".
+3. When the queue is empty, the state's next draw emits =prewarm-draw= once, inside a hidden draw. Connect to it and draw the scene the game is about to show.
+4. The state completes (=complete=, =on_complete=) after that, once the minimum display time has passed.
+
+Without a window, or with nothing queued, step 2 ends at once in the frame the last task finished, and step 3 is skipped when nobody is connected to =prewarm-draw=, so the state completes exactly when it did before the prewarm phase existed.
+
+| Property | Type | Default | Description |
+|----------+------+---------+-------------|
+| =prewarm= | boolean | TRUE | Run the queue (and =prewarm-draw=) before completing |
+| =prewarm-budget= | int64 | 8000 | Microseconds of prewarm work per frame; 0 runs one entry a frame |
+
+#+begin_src c
+static void
+on_prewarm_draw (LrgTemplateLoadingState *loading,
+                 MyGame                  *game)
+{
+    my_game_draw_scene (game);
+}
+
+loading = lrg_template_loading_state_new ();
+lrg_template_loading_state_add_task (loading, "Level", load_level, game, NULL);
+lrg_template_loading_state_set_prewarm_budget (loading, 6000);
+g_signal_connect (loading, "prewarm-draw", G_CALLBACK (on_prewarm_draw), game);
+#+end_src
+
+* Implementing LrgPrewarmable
+:PROPERTIES:
+:CUSTOM_ID: implementing
+:END:
+Reuse the first draw's own lazy path, so the two can never disagree, and track the object from its instance init:
+
+#+begin_src c
+static void my_renderer_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (MyRenderer, my_renderer, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                my_renderer_prewarmable_init))
+
+static void
+my_renderer_init (MyRenderer *self)
+{
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
+}
+
+static gboolean
+my_renderer_prewarm (LrgPrewarmable *prewarmable)
+{
+    MyRenderer *self = MY_RENDERER (prewarmable);
+
+    my_renderer_ensure_shader (self);     /* what draw() calls first */
+    return TRUE;                          /* FALSE: call me again later */
+}
+
+static void
+my_renderer_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = my_renderer_prewarm;
+}
+#+end_src
+
+=lrg_prewarmable_prewarm()= checks for a window before calling the method, so an implementation only runs with a GL context. It must be idempotent, must not change what is drawn, and must leave GL state as a draw would (raylib's loaders unbind what they bind).
+
+* Parallel shader compilation (not done)
+:PROPERTIES:
+:CUSTOM_ID: parallel-compile
+:END:
+=GL_KHR_parallel_shader_compile= lets a driver compile several programs at once on its own threads (=glMaxShaderCompilerThreadsKHR()=, then poll =GL_COMPLETION_STATUS_KHR=). It was evaluated and left out:
+
+- raylib's =LoadShaderFromMemory()= compiles and links synchronously, and every renderer reads its uniform locations right after loading. Starting all compiles first would mean a two-step load in each of the ~20 call sites (start, then finish and fill locations), plus a copy of raylib's attribute binding before link and its default location table after it, to be kept in step with raylib by hand.
+- On the only driver available to measure (llvmpipe), compile and link are the small part: running the whole queue costs ~100-120 ms with a cold shader cache, while the draw-time variant JIT costs ~750-900 ms, which parallel linking does not touch and the hidden draw removes. A gain could not have been shown here, so the complexity is not justified yet; revisit with a hardware driver that compiles at link time.

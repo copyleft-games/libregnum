@@ -472,14 +472,8 @@ lrg_font_manager_measure_text (LrgFontManager *self,
 
     if (font != NULL)
     {
-        g_autoptr(GrlVector2) size = NULL;
-
-        size = grl_font_measure_text (font, text, font_size, 1.0f);
-
-        if (width != NULL)
-            *width = size->x;
-        if (height != NULL)
-            *height = size->y;
+        /* No allocation: rich text measures every glyph every frame */
+        grl_font_measure_text_xy (font, text, font_size, 1.0f, width, height);
     }
     else
     {
@@ -508,28 +502,30 @@ lrg_font_manager_draw_text (LrgFontManager *self,
                             guint8          a)
 {
     GrlFont *font;
+    GrlColor color;
 
     g_return_if_fail (LRG_IS_FONT_MANAGER (self));
     g_return_if_fail (text != NULL);
 
     font = lrg_font_manager_get_font (self, font_name);
 
+    /* Stack values: rich text draws one glyph per call, every frame */
+    color.r = r;
+    color.g = g;
+    color.b = b;
+    color.a = a;
+
     if (font != NULL)
     {
-        g_autoptr(GrlVector2) pos = NULL;
-        g_autoptr(GrlColor)   color = NULL;
+        GrlVector2 pos;
 
-        pos = grl_vector2_new (x, y);
-        color = grl_color_new (r, g, b, a);
-
-        grl_draw_text_ex (font, text, pos, font_size, 1.0f, color);
+        pos.x = x;
+        pos.y = y;
+        grl_draw_text_ex (font, text, &pos, font_size, 1.0f, &color);
     }
     else
     {
         /* Fallback to raylib default font */
-        g_autoptr(GrlColor) color = NULL;
-
-        color = grl_color_new (r, g, b, a);
-        grl_draw_text (text, (gint)x, (gint)y, (gint)font_size, color);
+        grl_draw_text (text, (gint)x, (gint)y, (gint)font_size, &color);
     }
 }

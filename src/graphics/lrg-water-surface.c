@@ -25,7 +25,9 @@
 #endif
 #include "graphics/lrg-water-surface.h"
 #include "graphics/lrg-light-set-private.h"
+#include "graphics/lrg-draw-cull-private.h"
 #include "lrg-log.h"
+#include "core/lrg-prewarm.h"
 
 /* the material map the scene copy is bound to (raylib binds every map
  * with a texture to its own unit); the albedo map stays the default */
@@ -161,6 +163,8 @@ typedef struct
     gfloat  *positions;   /* (columns + 1) * (rows + 1) * 3 */
     gfloat  *foam;        /* one per vertex */
     guint8  *cells;       /* columns * rows wet flags (heightfields), NULL: all */
+    gfloat   min[3];      /* box of the rest positions (patch_bounds()) */
+    gfloat   max[3];
     Mesh     mesh;
     gboolean uploaded;
 } Patch;
@@ -214,7 +218,11 @@ struct _LrgWaterSurface
     gboolean        scene_valid;   /* captured for the next draw */
 };
 
-G_DEFINE_FINAL_TYPE (LrgWaterSurface, lrg_water_surface, G_TYPE_OBJECT)
+static void lrg_water_surface_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (LrgWaterSurface, lrg_water_surface, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                      lrg_water_surface_prewarmable_init))
 
 static void
 patch_free (gpointer data)
@@ -296,6 +304,10 @@ lrg_water_surface_init (LrgWaterSurface *self)
     wave.direction[0] = -0.7f; wave.direction[1] = 0.6f;
     wave.amplitude = 0.04f; wave.wavelength = 2.6f; wave.speed = 0.9f; wave.steepness = 0.4f;
     lrg_water_surface_set_wave (self, 2, &wave);
+
+    /* build the GPU resources behind a loading screen, not on the
+     * first draw (see lrg_prewarm_track()) */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgWaterSurface *
@@ -563,6 +575,30 @@ lrg_water_surface_clear (LrgWaterSurface *self)
     g_ptr_array_set_size (self->patches, 0);
 }
 
+/* patch_bounds: the box of @patch's rest positions */
+static void
+patch_bounds (Patch *patch)
+{
+    gsize n;
+    gsize i;
+    guint k;
+
+    n = (gsize)(patch->columns + 1) * (patch->rows + 1);
+    for (k = 0; k < 3; k++)
+    {
+        patch->min[k] = G_MAXFLOAT;
+        patch->max[k] = -G_MAXFLOAT;
+    }
+    for (i = 0; i < n; i++)
+    {
+        for (k = 0; k < 3; k++)
+        {
+            patch->min[k] = MIN (patch->min[k], patch->positions[i * 3 + k]);
+            patch->max[k] = MAX (patch->max[k], patch->positions[i * 3 + k]);
+        }
+    }
+}
+
 gboolean
 lrg_water_surface_add_grid (LrgWaterSurface   *self,
                             gfloat             x0,
@@ -622,6 +658,7 @@ lrg_water_surface_add_grid (LrgWaterSurface   *self,
             patch->foam[i] = foam_func != NULL ? CLAMP (foam_func (x, z, user_data), 0.0f, 1.0f) : 0.0f;
         }
     }
+    patch_bounds (patch);
     g_ptr_array_add (self->patches, patch);
     return TRUE;
 }
@@ -703,6 +740,7 @@ lrg_water_surface_add_heightfield (LrgWaterSurface   *self,
         patch->positions[k * 3 + 1] = heights[k];
     if (cells != NULL)
         patch->cells = g_memdup2 (cells, (gsize)columns * rows);
+    patch_bounds (patch);
     return TRUE;
 }
 
@@ -966,6 +1004,10 @@ lrg_water_surface_draw (LrgWaterSurface *self,
                         gfloat           time)
 {
     LrgLightSet *lights;
+    LrgDrawFrustum frustum;
+    gboolean cull;
+    gfloat pad_y;
+    gfloat pad_xz;
     Matrix view_proj;
     gfloat wa[LRG_WATER_SURFACE_MAX_WAVES * 4];
     gfloat wb[LRG_WATER_SURFACE_MAX_WAVES * 4];
@@ -1031,10 +1073,37 @@ lrg_water_surface_draw (LrgWaterSurface *self,
     rlEnableColorBlend ();
     rlDisableBackfaceCulling ();
     rlDisableDepthMask ();
+    /* patches wholly outside the frustum draw nothing; the waves move a
+     * vertex at most the sum of the amplitudes up or down and the sum of
+     * Q x amplitude sideways, so the boxes grow by that much */
+    cull = lrg_draw_cull_frustum_current (&frustum);
+    pad_y = 0.0f;
+    pad_xz = 0.0f;
+    for (i = 0; i < self->n_waves; i++)
+    {
+        pad_y += fabsf (wa[i * 4 + 2]);
+        pad_xz += fabsf (wb[i * 4 + 1] * wa[i * 4 + 2]);
+    }
+    if (!isfinite (pad_y) || !isfinite (pad_xz))
+        cull = FALSE;
     for (i = 0; i < self->patches->len; i++)
     {
         Patch *p = g_ptr_array_index (self->patches, i);
 
+        if (cull)
+        {
+            gfloat lo[3];
+            gfloat hi[3];
+
+            lo[0] = p->min[0] - pad_xz;
+            lo[1] = p->min[1] - pad_y;
+            lo[2] = p->min[2] - pad_xz;
+            hi[0] = p->max[0] + pad_xz;
+            hi[1] = p->max[1] + pad_y;
+            hi[2] = p->max[2] + pad_xz;
+            if (!lrg_draw_cull_frustum_box_visible (&frustum, lo, hi))
+                continue;
+        }
         DrawMesh (p->mesh, self->material, mat_identity ());
     }
     rlEnableDepthMask ();
@@ -1077,4 +1146,33 @@ lrg_water_surface_release_gpu (LrgWaterSurface *self)
         UnloadRenderTexture (self->scene);
     memset (&self->scene, 0, sizeof (self->scene));
     self->scene_valid = FALSE;
+}
+
+/* --- prewarm --- */
+
+/* lrg_water_surface_prewarm: what the first draw builds (the shader and
+ * every patch's mesh), built now */
+static gboolean
+lrg_water_surface_prewarm (LrgPrewarmable *prewarmable)
+{
+    LrgWaterSurface *self = LRG_WATER_SURFACE (prewarmable);
+    guint            i;
+
+    /* the shader even without patches: they may come later */
+    if (!ensure_shader (self))
+        return TRUE;
+    for (i = 0; i < self->patches->len; i++)
+    {
+        Patch *p = g_ptr_array_index (self->patches, i);
+
+        if (!p->uploaded)
+            upload_patch (p);
+    }
+    return TRUE;
+}
+
+static void
+lrg_water_surface_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_water_surface_prewarm;
 }

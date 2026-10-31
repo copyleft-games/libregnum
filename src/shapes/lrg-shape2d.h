@@ -120,4 +120,59 @@ void lrg_shape2d_get_position (LrgShape2D *self,
                                gfloat     *x,
                                gfloat     *y);
 
+/* ==========================================================================
+ * Render Interpolation
+ * ========================================================================== */
+
+/**
+ * lrg_shape2d_get_render_position:
+ * @self: an #LrgShape2D
+ * @x: (out) (optional): return location for the X to draw at
+ * @y: (out) (optional): return location for the Y to draw at
+ *
+ * Gets the position to draw at: while a fixed-timestep #LrgGameTemplate
+ * drives render interpolation and the shape moved in the latest fixed
+ * step, a blend of its position at the start of that step and its
+ * current one (see grl_interpolation_get_alpha()); otherwise the current
+ * position. The built-in 2D shapes draw here.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape2d_get_render_position (LrgShape2D *self,
+                                      gfloat     *x,
+                                      gfloat     *y);
+
+/**
+ * lrg_shape2d_reset_interpolation:
+ * @self: an #LrgShape2D
+ *
+ * Drops the in-flight blend, so the shape is drawn at its current
+ * position (teleports, respawns); further moves in the current fixed step
+ * are not blended either.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape2d_reset_interpolation (LrgShape2D *self);
+
+/**
+ * lrg_shape2d_get_interpolate:
+ * @self: an #LrgShape2D
+ *
+ * Gets whether the shape is interpolated for drawing.
+ *
+ * Returns: the value of #LrgShape2D:interpolate
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_shape2d_get_interpolate (LrgShape2D *self);
+
+/**
+ * lrg_shape2d_set_interpolate:
+ * @self: an #LrgShape2D
+ * @interpolate: whether to interpolate the shape for drawing
+ *
+ * Opts the shape in or out of render interpolation; either way its blend
+ * is reset.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_shape2d_set_interpolate (LrgShape2D *self,
+                                  gboolean    interpolate);
+
 G_END_DECLS

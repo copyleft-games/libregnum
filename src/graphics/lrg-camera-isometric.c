@@ -407,8 +407,11 @@ lrg_camera_isometric_focus_on (LrgCameraIsometric *self,
 {
 	g_return_if_fail (LRG_IS_CAMERA_ISOMETRIC (self));
 
-	/* Set target - the camera position will be updated in begin() */
+	/* Set target and place the eye at once, so a focus moved from
+	 * fixed_update changes both inside the step (interpolated together);
+	 * begin() keeps them in sync again */
 	lrg_camera3d_set_target_xyz (LRG_CAMERA3D (self), world_x, world_y, world_z);
+	sync_isometric_position (self);
 }
 
 void
