@@ -246,7 +246,41 @@ lrg_collision_mesh_raycast (LrgCollisionMesh *self,
                             const gfloat     *origin,
                             const gfloat     *direction,
                             gfloat            max_distance,
-                            LrgCollisionHit  *out_hit);
+                             LrgCollisionHit  *out_hit);
+
+/**
+ * lrg_collision_mesh_sweep_box:
+ * @self: an #LrgCollisionMesh
+ * @center: (array fixed-size=3): starting world-space box center
+ * @half_extents: (array fixed-size=3): nonnegative world-axis half sizes
+ * @motion: (array fixed-size=3): complete world-space displacement
+ * @out_hit: (out caller-allocates) (optional): nearest surface contact
+ * @out_fraction: (out) (optional): normalized contact time in [0, 1]
+ * @error: (nullable): return location for malformed query errors
+ *
+ * Continuously sweeps an axis-aligned box against BVH-selected world-space
+ * triangles using thirteen-axis separating intervals. Instance transforms,
+ * including mirrors and nonuniform scale, apply to triangles, not the box.
+ * Initially touching geometry blocks only inward motion; initial strict
+ * intersection reports time zero. End-time contact counts. Point, line and
+ * rectangular boxes are permitted; an all-zero box delegates to raycast
+ * semantics, while a stationary point misses. A stationary non-point box
+ * reports only strict intersection. Bounds are finite and at most 1e12 in
+ * magnitude. Outputs remain untouched on error or miss. Ties retain the first
+ * triangle in deterministic BVH traversal order. No query allocation scales
+ * with the complete triangle count.
+ *
+ * Returns: %TRUE on contact; %FALSE on miss or error (inspect @error)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_collision_mesh_sweep_box (LrgCollisionMesh *self,
+                              const gfloat     *center,
+                              const gfloat     *half_extents,
+                              const gfloat     *motion,
+                              LrgCollisionHit  *out_hit,
+                              gdouble          *out_fraction,
+                              GError          **error);
 
 /**
  * lrg_collision_mesh_sweep_sphere:

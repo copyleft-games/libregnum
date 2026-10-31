@@ -24,7 +24,7 @@ PROJECT_ROOT := $(realpath $(CONFIG_MK_PATH))
 # "Versioning". API_VERSION and SO_VERSION below are separate.
 VERSION_MAJOR := 0
 VERSION_MINOR := 3
-VERSION_MICRO := 1
+VERSION_MICRO := 2
 VERSION := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)
 
 # API version for parallel installability (bump on ABI breaks)
@@ -838,6 +838,7 @@ ALL_LIBS += $(ALSA_LIBS)
 
 GIR_SCANNER_FLAGS := \
     --warn-all \
+    --warn-error \
     --namespace=Libregnum \
     --nsversion=$(API_VERSION) \
     --identifier-prefix=Lrg \

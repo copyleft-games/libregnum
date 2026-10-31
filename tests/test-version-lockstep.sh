@@ -8,6 +8,7 @@
 # Usage: test-version-lockstep.sh [-h|--help] [--license] [PROJECT_ROOT]
 #   test-version-lockstep.sh            check the checkout this script is in
 #   test-version-lockstep.sh ../other   check another checkout
+# GRAYLIB_DIR selects the dependency used by the build instead of deps/graylib.
 set -euo pipefail
 
 # read_version <config.mk> <MAJOR|MINOR|MICRO>: prints that field
@@ -35,7 +36,8 @@ read_version () {
 check_lockstep () {
     local root="${1}"
     local lrg_mk="${root}/config.mk"
-    local grl_mk="${root}/deps/graylib/config.mk"
+	# Match config.mk's explicit dependency selection without moving gitlinks.
+	local grl_mk="${GRAYLIB_DIR:-${root}/deps/graylib}/config.mk"
     local lrg_major lrg_minor lrg_micro grl_major grl_minor grl_micro
 
     if [[ ! -f "${lrg_mk}" || ! -f "${grl_mk}" ]]
@@ -68,7 +70,7 @@ main () {
 
     case "${1:-}" in
         -h|--help)
-            sed -n '4,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '4,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         --license)

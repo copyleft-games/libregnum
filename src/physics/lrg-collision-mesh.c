@@ -32,6 +32,7 @@
 #include "config.h"
 
 #include <math.h>
+#include <float.h>
 #include <stdlib.h>
 #include <string.h>
 #include <gio/gio.h>
@@ -2473,6 +2474,8 @@ lrg_collision_mesh_query_box (LrgCollisionMesh    *self,
 /* ------------------------------------------------------------------------ */
 /* Sweeps and overlaps                                                      */
 /* ------------------------------------------------------------------------ */
+
+#include "lrg-collision-box-private.inc"
 
 typedef struct
 {

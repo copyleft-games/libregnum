@@ -406,6 +406,42 @@ test_cpu_fallback_limit (void)
 }
 
 static void
+test_affine_normals (void)
+{
+    g_autoptr(LrgSkinnedMesh) mesh = lrg_skinned_mesh_new (1);
+    const gfloat positions[] = { 1, 1, 1, 0, 0, 0, 1, 0, 0 };
+    const gfloat normals[] = { 1, 1, 0, 1, 1, 0, 1, 1, 0 };
+    const guint8 bones[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    const gfloat weights[] = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
+    const guint32 indices[] = { 0, 1, 2 };
+    g_autoptr(GError) error = NULL;
+    gfloat palette[16], output[9], normal_output[9];
+
+    /* Nonuniform import scale must not bend the normal toward its stretched
+     * axis. Positions still use the original affine transform. */
+    g_assert_true (lrg_skinned_mesh_set_geometry (mesh, 3, positions, normals, NULL, NULL,
+                                                 bones, weights, 3, indices, &error));
+    g_assert_no_error (error);
+    identity (palette); palette[5] = 1.5f;
+    lrg_skinned_mesh_set_palette (mesh, palette);
+    lrg_skinned_mesh_skin (mesh, output, normal_output);
+    ASSERT_NEAR (output[1], 1.5f);
+    ASSERT_NEAR (normal_output[0], 3.0f / sqrtf (13.0f));
+    ASSERT_NEAR (normal_output[1], 2.0f / sqrtf (13.0f));
+    palette[0] = -1;
+    lrg_skinned_mesh_set_palette (mesh, palette);
+    lrg_skinned_mesh_skin (mesh, output, normal_output);
+    ASSERT_NEAR (normal_output[0], -3.0f / sqrtf (13.0f));
+    ASSERT_NEAR (normal_output[1], 2.0f / sqrtf (13.0f));
+    palette[5] = 0;
+    lrg_skinned_mesh_set_palette (mesh, palette);
+    lrg_skinned_mesh_skin (mesh, output, normal_output);
+    ASSERT_NEAR (normal_output[0], 0);
+    ASSERT_NEAR (normal_output[1], 0);
+    ASSERT_NEAR (normal_output[2], 0);
+}
+
+static void
 test_upload_headless (void)
 {
     g_autoptr(LrgSkinnedMesh) mesh = make_arm ();
@@ -575,6 +611,7 @@ main (int    argc,
     g_test_add_func ("/skinned-mesh/bone-pose-matrix", test_bone_pose_matrix);
     g_test_add_func ("/skinned-mesh/palette-from-skeleton", test_palette_from_skeleton);
     g_test_add_func ("/skinned-mesh/cpu-fallback-limit", test_cpu_fallback_limit);
+    g_test_add_func ("/skinned-mesh/affine-normals", test_affine_normals);
     g_test_add_func ("/skinned-mesh/upload-headless", test_upload_headless);
     g_test_add_func ("/skinned-mesh/gpu-skinning", test_gpu_skinning);
     g_test_add_func ("/skinned-mesh/gpu-cpu-fallback", test_gpu_cpu_fallback);
