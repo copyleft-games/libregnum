@@ -914,6 +914,7 @@ on_failed (LrgModManager *manager, LrgMod *mod, gpointer user_data)
     g_string_append_printf (log, "%sfailed:%s", log->len > 0 ? " " : "", lrg_mod_get_id (mod));
 }
 
+#ifdef LRG_HAS_LUAJIT
 static void
 on_unloaded (LrgModManager *manager, LrgMod *mod, gpointer user_data)
 {
@@ -922,6 +923,7 @@ on_unloaded (LrgModManager *manager, LrgMod *mod, gpointer user_data)
     (void)manager;
     g_string_append_printf (log, "%sunloaded:%s", log->len > 0 ? " " : "", lrg_mod_get_id (mod));
 }
+#endif
 
 static void
 test_manager_order_dependencies_beat_priority (ManagerFixture *fixture,
