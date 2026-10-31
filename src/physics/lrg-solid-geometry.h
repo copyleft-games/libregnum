@@ -5,8 +5,9 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * LrgSolidGeometry - retained immutable 3D solids. Sphere, box, sphyl
- * (capsule along local +Y), convex hull and aggregate. Queries report
- * outside, touching and inside, not triangle-surface hits.
+ * (capsule along local +Y), convex hull, flat cylinder along local +Z
+ * and aggregate. Queries report outside, touching and inside, not
+ * triangle-surface hits. A cylinder is not a sphyl.
  */
 
 #pragma once
@@ -57,16 +58,18 @@ G_BEGIN_DECLS
  * @LRG_SOLID_SHAPE_SPHYL: one capsule, cylinder axis local +Y
  * @LRG_SOLID_SHAPE_CONVEX: one convex hull
  * @LRG_SOLID_SHAPE_AGGREGATE: union of retained children
+ * @LRG_SOLID_SHAPE_CYLINDER: one flat-ended cylinder, axis local +Z
  *
  * The kind the constructor admitted. An aggregate of one sphere stays
- * an aggregate.
+ * an aggregate. A cylinder is not a sphyl: the ends are flat disks.
  */
 typedef enum {
     LRG_SOLID_SHAPE_SPHERE = 1,
     LRG_SOLID_SHAPE_BOX = 2,
     LRG_SOLID_SHAPE_SPHYL = 3,
     LRG_SOLID_SHAPE_CONVEX = 4,
-    LRG_SOLID_SHAPE_AGGREGATE = 5
+    LRG_SOLID_SHAPE_AGGREGATE = 5,
+    LRG_SOLID_SHAPE_CYLINDER = 6
 } LrgSolidShape;
 
 /**
@@ -193,6 +196,28 @@ lrg_solid_geometry_new_sphyl (gfloat        radius,
                               gfloat        half_length,
                               const gfloat *transform,
                               GError      **error);
+
+/**
+ * lrg_solid_geometry_new_cylinder:
+ * @radius: positive finite radius of the flat disk
+ * @half_height: positive finite half-height along local +Z
+ * @transform: (array fixed-size=16) (nullable): column-major model
+ *   transform, or %NULL for identity
+ * @error: (nullable): return location for a #GError
+ *
+ * Retains one flat-ended cylinder. The local axis is +Z. This is not a
+ * sphyl and it is not moved onto the engine's +Y up axis. A zero
+ * half-height is rejected. The same scale rules as
+ * lrg_solid_geometry_new_sphere() apply.
+ *
+ * Returns: (transfer full): a new #LrgSolidGeometry
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSolidGeometry *
+lrg_solid_geometry_new_cylinder (gfloat        radius,
+                                 gfloat        half_height,
+                                 const gfloat *transform,
+                                 GError      **error);
 
 /**
  * lrg_solid_geometry_new_convex:

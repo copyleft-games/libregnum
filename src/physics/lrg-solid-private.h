@@ -24,13 +24,16 @@ typedef enum {
     LRG_SOLID_PRIM_SPHERE = 1,
     LRG_SOLID_PRIM_BOX = 2,
     LRG_SOLID_PRIM_SPHYL = 3,
-    LRG_SOLID_PRIM_CONVEX = 4
+    LRG_SOLID_PRIM_CONVEX = 4,
+    LRG_SOLID_PRIM_CYLINDER = 5
 } LrgSolidPrimKind;
 
 /*
  * axis[column][component]. A sphyl uses column 1 as its +Y segment.
- * planes are nx, ny, nz, d with outward normals and inside n·x <= d.
- * faces index the convex vertices, three per triangle.
+ * A flat cylinder uses column 2 as its +Z axis and half[2] as the
+ * axial half-height. planes are nx, ny, nz, d with outward normals
+ * and inside n·x <= d. faces index the convex vertices, three per
+ * triangle.
  */
 typedef struct
 {
