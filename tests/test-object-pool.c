@@ -210,6 +210,96 @@ test_poolable_object_init (TestPoolableObject *self)
 }
 
 /* ==========================================================================
+ * Poolable Object with a Pool Slot
+ *
+ * Implements the optional get_pool_slot() / set_pool_slot() accessors, so
+ * its pool finds members by index instead of a table lookup. reset_hook
+ * lets a test re-enter the pool from reset().
+ * ========================================================================== */
+
+#define TEST_TYPE_SLOT_OBJECT (test_slot_object_get_type ())
+G_DECLARE_FINAL_TYPE (TestSlotObject, test_slot_object, TEST, SLOT_OBJECT, GObject)
+
+struct _TestSlotObject
+{
+    GObject  parent_instance;
+    gboolean is_active;
+    guint    pool_slot;
+    gint     reset_count;
+};
+
+static void (*slot_reset_hook) (TestSlotObject *self);
+
+static void test_slot_object_poolable_init (LrgPoolableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (TestSlotObject, test_slot_object, G_TYPE_OBJECT,
+    G_IMPLEMENT_INTERFACE (LRG_TYPE_POOLABLE, test_slot_object_poolable_init))
+
+static void
+test_slot_object_reset (LrgPoolable *poolable)
+{
+    TestSlotObject *self = TEST_SLOT_OBJECT (poolable);
+
+    self->reset_count++;
+    if (slot_reset_hook != NULL)
+        slot_reset_hook (self);
+}
+
+static gboolean
+test_slot_object_is_active (LrgPoolable *poolable)
+{
+    return TEST_SLOT_OBJECT (poolable)->is_active;
+}
+
+static void
+test_slot_object_set_active (LrgPoolable *poolable,
+                             gboolean     active)
+{
+    TEST_SLOT_OBJECT (poolable)->is_active = active;
+}
+
+static guint
+test_slot_object_get_pool_slot (LrgPoolable *poolable)
+{
+    return TEST_SLOT_OBJECT (poolable)->pool_slot;
+}
+
+static void
+test_slot_object_set_pool_slot (LrgPoolable *poolable,
+                                guint        slot)
+{
+    TEST_SLOT_OBJECT (poolable)->pool_slot = slot;
+}
+
+static void
+test_slot_object_poolable_init (LrgPoolableInterface *iface)
+{
+    iface->reset = test_slot_object_reset;
+    iface->is_active = test_slot_object_is_active;
+    iface->set_active = test_slot_object_set_active;
+    iface->get_pool_slot = test_slot_object_get_pool_slot;
+    iface->set_pool_slot = test_slot_object_set_pool_slot;
+}
+
+static void
+test_slot_object_class_init (TestSlotObjectClass *klass)
+{
+}
+
+static void
+test_slot_object_init (TestSlotObject *self)
+{
+}
+
+/* Test data for tests run over both pooled types: the low byte is the
+ * test's own mode, POOL_DATA_SLOTS selects TestSlotObject. */
+#define POOL_DATA_SLOTS (0x100)
+#define POOL_DATA_TYPE(data) \
+    ((GPOINTER_TO_INT (data) & POOL_DATA_SLOTS) ? TEST_TYPE_SLOT_OBJECT \
+                                                : TEST_TYPE_POOLABLE_OBJECT)
+#define POOL_DATA_MODE(data) (GPOINTER_TO_INT (data) & 0xff)
+
+/* ==========================================================================
  * Test Fixtures
  * ========================================================================== */
 
@@ -776,6 +866,17 @@ mutate_pool_iteration (LrgPoolable *object,
     case 5:
         g_clear_object (&mutation->pool);
         break;
+    case 6:
+        /* Drop captured, now released, objects from the pool entirely:
+         * grow to 6, release two captured objects (they are the last two
+         * available), then shrink back to initial size 3 - 1 active = 2
+         * available, which drops both of them and one fresh object. */
+        lrg_object_pool_prewarm (mutation->pool, 6);
+        lrg_object_pool_release (mutation->pool, mutation->other);
+        lrg_object_pool_release (mutation->pool, object);
+        lrg_object_pool_shrink_to_fit (mutation->pool);
+        g_assert_cmpuint (lrg_object_pool_get_total_size (mutation->pool), ==, 3);
+        break;
     default:
         g_assert_not_reached ();
     }
@@ -794,9 +895,9 @@ test_pool_iteration_mutation (gconstpointer data)
     guint expected;
     guint i;
 
-    mutation.mode = GPOINTER_TO_INT (data);
+    mutation.mode = POOL_DATA_MODE (data);
     mutation.visited = visited;
-    mutation.pool = lrg_object_pool_new (TEST_TYPE_POOLABLE_OBJECT, 3, LRG_POOL_GROWTH_FIXED);
+    mutation.pool = lrg_object_pool_new (POOL_DATA_TYPE (data), 3, LRG_POOL_GROWTH_FIXED);
     weak_pool = mutation.pool;
     g_object_add_weak_pointer (G_OBJECT (mutation.pool), &weak_pool);
     for (i = 0; i < 3; i++)
@@ -810,6 +911,13 @@ test_pool_iteration_mutation (gconstpointer data)
     }
     lrg_object_pool_foreach_active (mutation.pool, mutate_pool_iteration, &mutation);
     expected = mutation.mode == 1 || mutation.mode == 4 ? 1 : mutation.mode == 5 ? 3 : 2;
+    if (mutation.mode == 6)
+    {
+        /* The dropped captured objects died once the iteration ended */
+        g_assert_null (weak_objects[0]);
+        g_assert_null (weak_objects[2]);
+        g_assert_cmpuint (lrg_object_pool_get_available_count (mutation.pool), ==, 2);
+    }
     g_assert_cmpuint (visited->len, ==, expected);
     if (mutation.mode == 3)
         g_assert_cmpuint (mutation.nested_count, ==, 3);
@@ -837,14 +945,14 @@ collect_object (LrgPoolable *object,
  * releasing out of order, many times, must keep both exactly as the
  * linear-search implementation left them. */
 static void
-test_pool_release_storage_order (void)
+test_pool_release_storage_order (gconstpointer data)
 {
-    g_autoptr(LrgObjectPool) pool = lrg_object_pool_new (TEST_TYPE_POOLABLE_OBJECT, 64,
+    g_autoptr(LrgObjectPool) pool = lrg_object_pool_new (POOL_DATA_TYPE (data), 64,
                                                           LRG_POOL_GROWTH_FIXED);
     g_autoptr(GPtrArray) model = g_ptr_array_new ();
     g_autoptr(GPtrArray) seen = g_ptr_array_new ();
     g_autoptr(GRand) rng = g_rand_new_with_seed (5);
-    g_autoptr(TestPoolableObject) stranger = g_object_new (TEST_TYPE_POOLABLE_OBJECT, NULL);
+    g_autoptr(GObject) stranger = g_object_new (POOL_DATA_TYPE (data), NULL);
     guint round;
     guint i;
 
@@ -988,6 +1096,141 @@ test_pool_lease_recycling (void)
     g_object_unref (pool);
 }
 
+/* Slots are hints: a stranger forging a live member's slot, a double
+ * release, an object dropped by shrink_to_fit (whose stale slot now names
+ * another member) and objects of another type are all refused, and the
+ * slots shrink_to_fit renumbers still find their members. */
+static void
+test_pool_slots_forged_and_stale (void)
+{
+    g_autoptr(LrgObjectPool) pool = lrg_object_pool_new (TEST_TYPE_SLOT_OBJECT, 8,
+                                                          LRG_POOL_GROWTH_FIXED);
+    g_autoptr(TestSlotObject) stranger = g_object_new (TEST_TYPE_SLOT_OBJECT, NULL);
+    g_autoptr(TestPoolableObject) other_type = g_object_new (TEST_TYPE_POOLABLE_OBJECT, NULL);
+    GObject *objects[8];
+    GObject *dropped;
+    guint i;
+
+    for (i = 0; i < 8; i++)
+        objects[i] = lrg_object_pool_acquire (pool);
+
+    /* A forged slot naming a live member */
+    stranger->pool_slot = TEST_SLOT_OBJECT (objects[3])->pool_slot;
+    g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "*not from this pool*");
+    lrg_object_pool_release (pool, LRG_POOLABLE (stranger));
+    g_test_assert_expected_messages ();
+    stranger->pool_slot = G_MAXUINT;
+    g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "*not from this pool*");
+    lrg_object_pool_release (pool, LRG_POOLABLE (stranger));
+    g_test_assert_expected_messages ();
+    g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "*not from this pool*");
+    lrg_object_pool_release (pool, LRG_POOLABLE (other_type));
+    g_test_assert_expected_messages ();
+    g_assert_cmpuint (lrg_object_pool_get_active_count (pool), ==, 8);
+
+    /* Double release */
+    lrg_object_pool_release (pool, LRG_POOLABLE (objects[3]));
+    g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "*not from this pool*");
+    lrg_object_pool_release (pool, LRG_POOLABLE (objects[3]));
+    g_test_assert_expected_messages ();
+
+    /* Releasing the rest out of order still finds every member */
+    for (i = 0; i < 8; i++)
+        if ((i * 5) % 8 != 3)
+            lrg_object_pool_release (pool, LRG_POOLABLE (objects[(i * 5) % 8]));
+    g_assert_cmpuint (lrg_object_pool_get_active_count (pool), ==, 0);
+    g_assert_cmpuint (lrg_object_pool_get_available_count (pool), ==, 8);
+
+    /* A pool with initial size 2 that grew to 8 drops 6 on shrink,
+     * renumbering survivors; every survivor must still be found. */
+    {
+        g_autoptr(LrgObjectPool) grown = lrg_object_pool_new (TEST_TYPE_SLOT_OBJECT, 2,
+                                                               LRG_POOL_GROWTH_LINEAR);
+        GObject *held[8];
+        gpointer weak;
+
+        for (i = 0; i < 8; i++)
+            held[i] = lrg_object_pool_acquire (grown);
+        g_assert_cmpuint (lrg_object_pool_get_total_size (grown), ==, 8);
+
+        /* Release the first six; keep 6 and 7 active; shrink drops all
+         * six available ones (target available = 0). */
+        for (i = 0; i < 6; i++)
+            lrg_object_pool_release (grown, LRG_POOLABLE (held[i]));
+        dropped = g_object_ref (held[2]);
+        weak = dropped;
+        g_object_add_weak_pointer (dropped, &weak);
+        lrg_object_pool_shrink_to_fit (grown);
+        g_assert_cmpuint (lrg_object_pool_get_total_size (grown), ==, 2);
+
+        /* The dropped object's stale slot names a survivor's index range */
+        TEST_SLOT_OBJECT (dropped)->pool_slot = 0;
+        g_test_expect_message (NULL, G_LOG_LEVEL_WARNING, "*not from this pool*");
+        lrg_object_pool_release (grown, LRG_POOLABLE (dropped));
+        g_test_assert_expected_messages ();
+        g_object_unref (dropped);
+        g_assert_null (weak);
+
+        /* Survivors were renumbered and are still released correctly */
+        lrg_object_pool_release (grown, LRG_POOLABLE (held[7]));
+        lrg_object_pool_release (grown, LRG_POOLABLE (held[6]));
+        g_assert_cmpuint (lrg_object_pool_get_active_count (grown), ==, 0);
+        g_assert_true (lrg_object_pool_acquire (grown) == held[6]);
+        g_assert_true (lrg_object_pool_acquire (grown) == held[7]);
+        g_assert_cmpuint (TEST_SLOT_OBJECT (held[6])->pool_slot, <, 2);
+        g_assert_cmpuint (TEST_SLOT_OBJECT (held[7])->pool_slot, <, 2);
+        g_assert_cmpuint (TEST_SLOT_OBJECT (held[6])->pool_slot, !=,
+                          TEST_SLOT_OBJECT (held[7])->pool_slot);
+    }
+}
+
+static LrgObjectPool *reset_hook_pool;
+
+/* reset() re-entering the pool: clears it while one of its objects is
+ * being released */
+static void
+clear_pool_from_reset (TestSlotObject *self)
+{
+    if (reset_hook_pool != NULL)
+        lrg_object_pool_clear (reset_hook_pool);
+}
+
+/* A release whose reset() clears the pool must not touch freed memory or
+ * put the released object back into the emptied pool; the object stays
+ * alive until the release returns. */
+static void
+test_pool_slots_clear_from_reset (void)
+{
+    g_autoptr(LrgObjectPool) pool = lrg_object_pool_new (TEST_TYPE_SLOT_OBJECT, 4,
+                                                          LRG_POOL_GROWTH_FIXED);
+    GObject *object;
+    gpointer weak;
+
+    object = lrg_object_pool_acquire (pool);
+    lrg_object_pool_acquire (pool);
+    weak = object;
+    g_object_add_weak_pointer (object, &weak);
+
+    reset_hook_pool = pool;
+    slot_reset_hook = clear_pool_from_reset;
+    lrg_object_pool_release (pool, LRG_POOLABLE (object));
+    slot_reset_hook = NULL;
+    reset_hook_pool = NULL;
+
+    /* Cleared: nothing active or available, and the object is gone */
+    g_assert_null (weak);
+    g_assert_cmpuint (lrg_object_pool_get_total_size (pool), ==, 0);
+    g_assert_cmpuint (lrg_object_pool_get_available_count (pool), ==, 0);
+
+    /* The pool works again afterwards (fixed policy: no growth) */
+    g_assert_null (lrg_object_pool_acquire (pool));
+    lrg_object_pool_prewarm (pool, 2);
+    object = lrg_object_pool_acquire (pool);
+    g_assert_nonnull (object);
+    lrg_object_pool_release (pool, LRG_POOLABLE (object));
+    g_assert_cmpuint (lrg_object_pool_get_available_count (pool), ==, 2);
+}
+
 int
 main (int    argc,
       char **argv)
@@ -1061,13 +1304,26 @@ main (int    argc,
                 pool_fixture_tear_down);
 
     g_test_add_data_func ("/object-pool/iteration/release-other", GINT_TO_POINTER (0), test_pool_iteration_mutation);
-    g_test_add_func ("/object-pool/pool/release-storage-order", test_pool_release_storage_order);
+    g_test_add_data_func ("/object-pool/pool/release-storage-order", GINT_TO_POINTER (0), test_pool_release_storage_order);
     g_test_add_func ("/object-pool/pool/lease-recycling", test_pool_lease_recycling);
     g_test_add_data_func ("/object-pool/iteration/clear", GINT_TO_POINTER (1), test_pool_iteration_mutation);
     g_test_add_data_func ("/object-pool/iteration/reacquire", GINT_TO_POINTER (2), test_pool_iteration_mutation);
     g_test_add_data_func ("/object-pool/iteration/nested", GINT_TO_POINTER (3), test_pool_iteration_mutation);
     g_test_add_data_func ("/object-pool/iteration/release-all", GINT_TO_POINTER (4), test_pool_iteration_mutation);
     g_test_add_data_func ("/object-pool/iteration/release-owner", GINT_TO_POINTER (5), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/iteration/shrink", GINT_TO_POINTER (6), test_pool_iteration_mutation);
+
+    /* The same over a type with pool slots (index lookup on release) */
+    g_test_add_data_func ("/object-pool/slots/release-storage-order", GINT_TO_POINTER (POOL_DATA_SLOTS), test_pool_release_storage_order);
+    g_test_add_data_func ("/object-pool/slots/iteration/release-other", GINT_TO_POINTER (POOL_DATA_SLOTS | 0), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/slots/iteration/clear", GINT_TO_POINTER (POOL_DATA_SLOTS | 1), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/slots/iteration/reacquire", GINT_TO_POINTER (POOL_DATA_SLOTS | 2), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/slots/iteration/nested", GINT_TO_POINTER (POOL_DATA_SLOTS | 3), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/slots/iteration/release-all", GINT_TO_POINTER (POOL_DATA_SLOTS | 4), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/slots/iteration/release-owner", GINT_TO_POINTER (POOL_DATA_SLOTS | 5), test_pool_iteration_mutation);
+    g_test_add_data_func ("/object-pool/slots/iteration/shrink", GINT_TO_POINTER (POOL_DATA_SLOTS | 6), test_pool_iteration_mutation);
+    g_test_add_func ("/object-pool/slots/forged-and-stale", test_pool_slots_forged_and_stale);
+    g_test_add_func ("/object-pool/slots/clear-from-reset", test_pool_slots_clear_from_reset);
 
     /* Iteration tests */
     g_test_add ("/object-pool/pool/foreach-active",
