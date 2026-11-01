@@ -97,7 +97,42 @@ struct _LrgPoolableInterface
     gboolean (*is_active)  (LrgPoolable *self);
     void     (*set_active) (LrgPoolable *self,
                             gboolean     active);
+    LrgObjectPool * (*get_pool) (LrgPoolable *self);       /* optional */
+    guint    (*get_pool_slot) (LrgPoolable *self);         /* optional */
+    void     (*set_pool_slot) (LrgPoolable *self,
+                               guint        slot);         /* optional */
 };
+#+end_src
+
+*** Fast Release: Pool Slots
+:PROPERTIES:
+:CUSTOM_ID: pool-slots
+:END:
+=get_pool_slot()= / =set_pool_slot()= are optional and go together (implement both or neither). A type that keeps one =guint= for its pool lets =lrg_object_pool_release()= find the object's record by index instead of a hash table lookup; at thousands of releases a frame that lookup was a tenth of the =object-pool= benchmark. The pool stores the slot when it creates the object and when =shrink_to_fit()= renumbers it; =reset()= must leave the field alone. The slot is only a hint: release checks it against its own records (in range, and the record there holds this very object), so a stale, forged or never-set slot is refused with the usual "not from this pool" warning, never trusted. Types without the accessors keep working exactly as before through a pointer-keyed table.
+
+#+begin_src C
+struct _MyBullet
+{
+    GObject parent_instance;
+    /* ... */
+    guint pool_slot;
+};
+
+static guint
+my_bullet_get_pool_slot (LrgPoolable *poolable)
+{
+    return MY_BULLET (poolable)->pool_slot;
+}
+
+static void
+my_bullet_set_pool_slot (LrgPoolable *poolable, guint slot)
+{
+    MY_BULLET (poolable)->pool_slot = slot;
+}
+
+/* in my_bullet_poolable_init() */
+iface->get_pool_slot = my_bullet_get_pool_slot;
+iface->set_pool_slot = my_bullet_set_pool_slot;
 #+end_src
 
 ** LrgObjectPool
@@ -172,33 +207,38 @@ iteration, even when it reuses a captured object's address. Nested iterations
 capture their own current set. Returning =FALSE= stops iteration early.
 
 The pool and captured objects stay alive until iteration ends. This prevents
-callbacks from receiving freed objects after =clear()= or owner destruction.
-Object state is still mutable: a reference snapshot is not a copy of each
-object's properties. Storage order can change after releases and is not a
-stable acquisition order. Iteration takes an O(N) snapshot into a buffer the
-pool keeps for reuse (a nested iteration allocates its own), and checks each
-captured acquisition's validity in O(1).
+callbacks from receiving freed objects after =clear()=, =shrink_to_fit()= or
+owner destruction. Object state is still mutable: a reference snapshot is not a
+copy of each object's properties. Storage order can change after releases and
+is not a stable acquisition order. Iteration copies the active list into a
+buffer the pool keeps for reuse (a nested iteration allocates its own) and
+checks each captured acquisition's validity in O(1); nothing is reference
+counted per object.
 
-Steady-state acquisition and release allocate nothing and touch no hash table.
 Every pooled object has a permanent member record (created with the object,
-dropped by =shrink_to_fit()= or =clear()=) and the available list holds those
-records, so =acquire()= is a pop; =release()= is one pointer lookup. Each
-acquisition still has its own lease (so a snapshot can tell a released
-acquisition from a later one of the same object), but leases are recycled
-through a free list, and the pool's object reference moves between member and
-lease without a ref/unref round trip. The pooled type's =LrgPoolable= vtable is
-looked up once per pool: =set_active()= and =reset()= are called straight
-through it. (Until v0.3.1 each acquisition allocated a lease and inserted it
-into a hash table that release removed again, so the table grew and shrank
-every frame; ~0.2 ms instead of ~1.0 ms for 4000 acquisitions, 4 walks and
-4000 releases.)
+dropped by =shrink_to_fit()= or =clear()=) that owns the pool's reference on
+it. =acquire()= pops a member from the available list and pushes it on the
+active list; =release()= finds the member (by its pool slot, or one pointer
+lookup for types without slots), swap-removes it from the active list (the
+member that fills the hole learns its new position, so release is O(1)) and
+pushes it back. Nothing is allocated and no reference changes hands; the
+lists are plain arrays sized for the whole pool. Each acquisition still has
+its own identity: a member records the pool's acquisition count when it was
+acquired, and a snapshot the count at entry, so a captured member is the
+captured acquisition exactly while it is active and was acquired before the
+snapshot. Members that =clear()= or =shrink_to_fit()= drop while an iteration
+runs are parked, objects and all, until the outermost iteration ends; a
+=reset()= or =set_active()= callback that clears the pool during a release is
+handled the same way. The pooled type's =LrgPoolable= vtable is looked up once
+per pool. (Until v0.3.1 each acquisition allocated a lease and inserted it into
+a hash table that release removed again, ~1.0 ms for 4000 acquisitions, 4 walks
+and 4000 releases; v0.3.1 recycled leases, ~0.2 ms; the member-only layout
+and pool slots roughly halve that again, see [[file:../../../performance.org::#hot-getters-pass][the hot getters pass]].)
 
-=lrg_object_pool_release()= is O(1): each acquisition remembers its storage
-slot, and the swap-remove that fills the hole updates the moved acquisition's
-slot. (It used to search the active list, O(N) per release and O(N^2) for a
-wave of releases.) An argument that is not a member of the pool is checked for
-=LrgPoolable= only on that miss, so the usual warnings and criticals are
-unchanged.
+An argument that is not a member of the pool is checked for =LrgPoolable= only
+on that miss, so the usual warnings and criticals are unchanged: releasing
+twice, releasing an object from another pool or one dropped by
+=shrink_to_fit()= warns "not from this pool".
 
 Changing =LrgPoolable='s active flag alone does not return an object to the
 pool; call =lrg_object_pool_release()= to update pool membership.

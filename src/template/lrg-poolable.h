@@ -52,6 +52,32 @@
  *     G_IMPLEMENT_INTERFACE (LRG_TYPE_POOLABLE, bullet_poolable_init))
  * ```
  *
+ * ## Fast Release (optional)
+ *
+ * A type released thousands of times a frame can keep one #guint for its
+ * pool and implement get_pool_slot() / set_pool_slot(); release then finds
+ * the object's record by index instead of a hash lookup:
+ *
+ * ```c
+ * static guint
+ * bullet_get_pool_slot (LrgPoolable *poolable)
+ * {
+ *     return MY_BULLET (poolable)->pool_slot;
+ * }
+ *
+ * static void
+ * bullet_set_pool_slot (LrgPoolable *poolable,
+ *                       guint        slot)
+ * {
+ *     MY_BULLET (poolable)->pool_slot = slot;
+ * }
+ *
+ *     iface->get_pool_slot = bullet_get_pool_slot;
+ *     iface->set_pool_slot = bullet_set_pool_slot;
+ * ```
+ *
+ * reset() must not touch the slot field.
+ *
  * Since: 1.0
  */
 
@@ -78,6 +104,9 @@ G_DECLARE_INTERFACE (LrgPoolable, lrg_poolable, LRG, POOLABLE, GObject)
  * @is_active: Returns whether the object is currently active (in use)
  * @set_active: Sets the active state of the object
  * @get_pool: Returns the pool that owns this object (optional)
+ * @get_pool_slot: Returns the slot the owning pool stored with
+ *   @set_pool_slot (optional, implement both or neither)
+ * @set_pool_slot: Stores the owning pool's slot for this object (optional)
  *
  * Interface for objects that can be managed by an object pool.
  *
@@ -142,8 +171,34 @@ struct _LrgPoolableInterface
      */
     LrgObjectPool * (*get_pool) (LrgPoolable *self);
 
+    /**
+     * LrgPoolableInterface::get_pool_slot:
+     * @self: an #LrgPoolable
+     *
+     * Returns the value the owning #LrgObjectPool last stored with
+     * set_pool_slot(). Optional, together with set_pool_slot(): a type
+     * that keeps one #guint field for its pool lets
+     * lrg_object_pool_release() find the object's record by index instead
+     * of a hash table lookup. The pool verifies the slot (it is only a
+     * hint), so a wrong or stale value is never trusted.
+     *
+     * Returns: the stored slot
+     */
+    guint (*get_pool_slot) (LrgPoolable *self);
+
+    /**
+     * LrgPoolableInterface::set_pool_slot:
+     * @self: an #LrgPoolable
+     * @slot: the slot to store
+     *
+     * Stores @slot for get_pool_slot() to return. Called by the owning
+     * #LrgObjectPool only; implementations just keep the value.
+     */
+    void (*set_pool_slot) (LrgPoolable *self,
+                           guint        slot);
+
     /*< private >*/
-    gpointer _reserved[8];
+    gpointer _reserved[6];
 };
 
 /* ==========================================================================

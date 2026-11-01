@@ -14,6 +14,7 @@
 #include "lrg-transform-component.h"
 #include "../lrg-game-object.h"
 #include "../../lrg-log.h"
+#include "../../lrg-type-check-private.h"
 
 #include <math.h>
 
@@ -23,6 +24,34 @@
 
 typedef struct
 {
+    /* Fields transform_world_ensure() reads come first, so a query of an
+     * up-to-date node touches one cache line: the epoch check, and on a
+     * miss the parent link, versions, local and world transform. */
+
+    /* World transform cache (see transform_world_ensure()). local_version
+     * moves on every change to the local fields or the parent; the cache
+     * is valid while both it and the parent's world_version match what it
+     * was computed from. world_version moves on every recompute, so a
+     * change anywhere up the chain reaches every descendant without
+     * walking (or even knowing) the children. world_epoch is the value of
+     * the global transform epoch (transform_epoch) when the cache was last
+     * known valid: while no transform anywhere has changed since, the
+     * cache is valid without walking the parent chain at all. */
+    gsize                  world_epoch;
+    gboolean               world_valid;
+    gfloat                 world_x;
+    gfloat                 world_y;
+    gfloat                 world_rotation;
+    gfloat                 world_scale_x;
+    gfloat                 world_scale_y;
+    guint64                local_version;
+    guint64                world_version;
+    guint64                world_local_version;
+    guint64                world_parent_version;
+
+    /* Hierarchy */
+    LrgTransformComponent *parent;          /* Weak reference */
+
     /* Local transform (relative to parent) */
     gfloat                 local_x;
     gfloat                 local_y;
@@ -30,8 +59,14 @@ typedef struct
     gfloat                 scale_x;
     gfloat                 scale_y;
 
-    /* Hierarchy */
-    LrgTransformComponent *parent;          /* Weak reference */
+    /* cosf/sinf of the world rotation whose bits are in trig_rotation,
+     * for the children's recomputes (transform_world_trig()): computed
+     * once per rotation, not once per child per change. */
+    gboolean               trig_valid;
+    guint32                trig_rotation;
+    gfloat                 trig_cos;
+    gfloat                 trig_sin;
+
     GList                 *children;        /* List of LrgTransformComponent* (weak refs) */
 
     /* Render interpolation: the local transform at the start of the
@@ -42,26 +77,35 @@ typedef struct
     gfloat                 prev_scale_x;
     gfloat                 prev_scale_y;
     GrlInterpolationTrack  interp;
-
-    /* World transform cache (see transform_world_ensure()). local_version
-     * moves on every change to the local fields or the parent; the cache
-     * is valid while both it and the parent's world_version match what it
-     * was computed from. world_version moves on every recompute, so a
-     * change anywhere up the chain reaches every descendant without
-     * walking (or even knowing) the children. */
-    guint64                local_version;
-    guint64                world_version;
-    guint64                world_local_version;
-    guint64                world_parent_version;
-    gboolean               world_valid;
-    gfloat                 world_x;
-    gfloat                 world_y;
-    gfloat                 world_rotation;
-    gfloat                 world_scale_x;
-    gfloat                 world_scale_y;
 } LrgTransformComponentPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgTransformComponent, lrg_transform_component, LRG_TYPE_COMPONENT)
+
+/*
+ * The global transform epoch: moves (atomically, so transforms on other
+ * threads cannot lose or reorder a step) on every change to any
+ * transform's local fields or parent. A node whose world cache was valid
+ * at epoch E is still valid while the epoch is E, whatever its depth, so a
+ * frame that queries every node after the frame's moves walks each parent
+ * chain once instead of once per descendant. Other threads moving their
+ * own transforms only cost a walk here, never a stale result.
+ */
+static gsize transform_epoch;
+
+/*
+ * The public instance check calls lrg_transform_component_get_type() (an
+ * out-of-line once-check) and, for subclass instances, the type system, on
+ * every getter call. The type is recorded by class_init (no instance can
+ * exist before it, and a zero type matches nothing) and subclass passes
+ * are cached (see lrg-type-check-private.h); the macro keeps its name, so
+ * g_return_*_if_fail() messages are unchanged.
+ */
+static GType transform_type;
+static gsize transform_check_cache;
+#undef LRG_IS_TRANSFORM_COMPONENT
+#define LRG_IS_TRANSFORM_COMPONENT(obj) \
+    (transform_type != 0 && \
+     lrg_type_check_instance_cached ((obj), transform_type, &transform_check_cache))
 
 enum
 {
@@ -99,6 +143,20 @@ transform_capture_previous (LrgTransformComponentPrivate *priv)
     priv->prev_scale_y = priv->scale_y;
 }
 
+/*
+ * transform_touch:
+ * @priv: the transform's private data
+ *
+ * Records a change to @priv's local transform or parent: invalidates its
+ * world cache (and so every descendant's) and moves the global epoch.
+ */
+static inline void
+transform_touch (LrgTransformComponentPrivate *priv)
+{
+    priv->local_version++;
+    g_atomic_pointer_add (&transform_epoch, 1);
+}
+
 /* Stores one interpolated local field */
 static void
 transform_write (LrgTransformComponentPrivate *priv,
@@ -111,7 +169,7 @@ transform_write (LrgTransformComponentPrivate *priv,
 
     grl_interpolation_track_write_float (&priv->interp, current, previous,
                                          value);
-    priv->local_version++;
+    transform_touch (priv);
 }
 
 /* ==========================================================================
@@ -129,7 +187,7 @@ lrg_transform_component_dispose (GObject *object)
     {
         remove_child (priv->parent, self);
         priv->parent = NULL;
-        priv->local_version++;
+        transform_touch (priv);
     }
 
     /* Detach all children */
@@ -242,6 +300,8 @@ static void
 lrg_transform_component_class_init (LrgTransformComponentClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+    transform_type = G_TYPE_FROM_CLASS (klass);
 
     object_class->dispose = lrg_transform_component_dispose;
     object_class->finalize = lrg_transform_component_finalize;
@@ -734,6 +794,38 @@ lrg_transform_component_set_local_scale_uniform (LrgTransformComponent *self,
  * ========================================================================== */
 
 /*
+ * transform_world_trig:
+ * @priv: a transform whose world cache is up to date
+ * @cos_r: (out): cosf of its world rotation in radians
+ * @sin_r: (out): sinf of its world rotation in radians
+ *
+ * The rotation its children are rotated by, computed once per distinct
+ * world rotation (compared bit for bit, so -0 and NaN payloads give the
+ * same results as computing afresh) and shared by every child, and by
+ * every recompute that only moved or scaled something.
+ */
+static inline void
+transform_world_trig (LrgTransformComponentPrivate *priv,
+                      gfloat                       *cos_r,
+                      gfloat                       *sin_r)
+{
+    union { gfloat f; guint32 u; } bits;
+
+    bits.f = priv->world_rotation;
+    if (G_UNLIKELY (!priv->trig_valid || priv->trig_rotation != bits.u))
+    {
+        gfloat rad = deg_to_rad (priv->world_rotation);
+
+        priv->trig_cos = cosf (rad);
+        priv->trig_sin = sinf (rad);
+        priv->trig_rotation = bits.u;
+        priv->trig_valid = TRUE;
+    }
+    *cos_r = priv->trig_cos;
+    *sin_r = priv->trig_sin;
+}
+
+/*
  * transform_world_ensure:
  * @priv: the transform's private data
  *
@@ -744,17 +836,27 @@ lrg_transform_component_set_local_scale_uniform (LrgTransformComponent *self,
  *   scale    = local scale * parent scale
  *   position = parent position + rotate (local position * parent scale,
  *                                        parent rotation)
- * Each level only recomputes (one sincos) when its own local transform or
- * an ancestor's world transform changed since it was cached, so querying
- * every node of a deep hierarchy is O(nodes), not O(nodes x depth) trig
- * evaluations; an unchanged chain costs a walk of version compares. The
- * cached values are exactly the ones the uncached fold produced.
+ * Each level only recomputes when its own local transform or an
+ * ancestor's world transform changed since it was cached, and the sincos
+ * of a parent's rotation is shared by its children
+ * (transform_world_trig()), so querying every node of a deep hierarchy is
+ * O(nodes), not O(nodes x depth) trig evaluations. When no transform
+ * anywhere changed since this node was last validated (the global epoch
+ * still matches), the cache is returned without walking at all; otherwise
+ * the walk stops at the first ancestor validated in the current epoch.
+ * The cached values are exactly the ones the uncached fold produced.
  */
 static void
 transform_world_ensure (LrgTransformComponentPrivate *priv)
 {
     LrgTransformComponentPrivate *parent_priv;
     guint64                       parent_version;
+    gsize                         epoch;
+
+    /* Nothing changed anywhere since this node was validated */
+    epoch = (gsize) g_atomic_pointer_get (&transform_epoch);
+    if (G_LIKELY (priv->world_valid && priv->world_epoch == epoch))
+        return;
 
     parent_priv = NULL;
     parent_version = 0;
@@ -768,7 +870,10 @@ transform_world_ensure (LrgTransformComponentPrivate *priv)
     if (priv->world_valid &&
         priv->world_local_version == priv->local_version &&
         priv->world_parent_version == parent_version)
+    {
+        priv->world_epoch = epoch;
         return;
+    }
 
     if (parent_priv == NULL)
     {
@@ -784,16 +889,21 @@ transform_world_ensure (LrgTransformComponentPrivate *priv)
         gfloat parent_rot = parent_priv->world_rotation;
         gfloat parent_scale_x = parent_priv->world_scale_x;
         gfloat parent_scale_y = parent_priv->world_scale_y;
-        gfloat rad = deg_to_rad (parent_rot);
-        gfloat cos_r = cosf (rad);
-        gfloat sin_r = sinf (rad);
+        gfloat cos_r;
+        gfloat sin_r;
+        gfloat scaled_x;
+        gfloat scaled_y;
+        gfloat rotated_x;
+        gfloat rotated_y;
+
+        transform_world_trig (parent_priv, &cos_r, &sin_r);
 
         /* Scale first, then rotate */
-        gfloat scaled_x = priv->local_x * parent_scale_x;
-        gfloat scaled_y = priv->local_y * parent_scale_y;
+        scaled_x = priv->local_x * parent_scale_x;
+        scaled_y = priv->local_y * parent_scale_y;
 
-        gfloat rotated_x = scaled_x * cos_r - scaled_y * sin_r;
-        gfloat rotated_y = scaled_x * sin_r + scaled_y * cos_r;
+        rotated_x = scaled_x * cos_r - scaled_y * sin_r;
+        rotated_y = scaled_x * sin_r + scaled_y * cos_r;
 
         priv->world_rotation = parent_rot + priv->local_rotation;
         priv->world_scale_x = priv->scale_x * parent_scale_x;
@@ -808,6 +918,7 @@ transform_world_ensure (LrgTransformComponentPrivate *priv)
     priv->world_local_version = priv->local_version;
     priv->world_parent_version = parent_version;
     priv->world_version++;
+    priv->world_epoch = epoch;
 }
 
 /*
@@ -1039,6 +1150,79 @@ lrg_transform_component_get_world_scale (LrgTransformComponent *self)
     return grl_vector2_new (world_scale_x, world_scale_y);
 }
 
+/*
+ * lrg_transform_component_get_world_xy:
+ * @self: an #LrgTransformComponent
+ * @x: (out) (optional): world X
+ * @y: (out) (optional): world Y
+ *
+ * Gets the world position without allocating.
+ */
+void
+lrg_transform_component_get_world_xy (LrgTransformComponent *self,
+                                      gfloat                *x,
+                                      gfloat                *y)
+{
+    lrg_transform_component_get_world (self, x, y, NULL, NULL, NULL);
+}
+
+/*
+ * lrg_transform_component_get_world_scale_xy:
+ * @self: an #LrgTransformComponent
+ * @scale_x: (out) (optional): world X scale
+ * @scale_y: (out) (optional): world Y scale
+ *
+ * Gets the world scale without allocating.
+ */
+void
+lrg_transform_component_get_world_scale_xy (LrgTransformComponent *self,
+                                            gfloat                *scale_x,
+                                            gfloat                *scale_y)
+{
+    lrg_transform_component_get_world (self, NULL, NULL, NULL,
+                                       scale_x, scale_y);
+}
+
+/*
+ * lrg_transform_component_get_world:
+ * @self: an #LrgTransformComponent
+ * @x: (out) (optional): world X
+ * @y: (out) (optional): world Y
+ * @rotation: (out) (optional): world rotation in degrees
+ * @scale_x: (out) (optional): world X scale
+ * @scale_y: (out) (optional): world Y scale
+ *
+ * Gets the whole world transform in one walk, without allocating. Every
+ * output is left untouched when @self is not a transform (after the
+ * critical), like the render getters.
+ */
+void
+lrg_transform_component_get_world (LrgTransformComponent *self,
+                                   gfloat                *x,
+                                   gfloat                *y,
+                                   gfloat                *rotation,
+                                   gfloat                *scale_x,
+                                   gfloat                *scale_y)
+{
+    LrgTransformComponentPrivate *priv;
+
+    g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
+
+    priv = lrg_transform_component_get_instance_private (self);
+    transform_world_ensure (priv);
+
+    if (x != NULL)
+        *x = priv->world_x;
+    if (y != NULL)
+        *y = priv->world_y;
+    if (rotation != NULL)
+        *rotation = priv->world_rotation;
+    if (scale_x != NULL)
+        *scale_x = priv->world_scale_x;
+    if (scale_y != NULL)
+        *scale_y = priv->world_scale_y;
+}
+
 /* ==========================================================================
  * Public API - Hierarchy
  * ========================================================================== */
@@ -1094,7 +1278,7 @@ lrg_transform_component_set_parent (LrgTransformComponent *self,
 
     /* Set new parent */
     priv->parent = parent;
-    priv->local_version++;
+    transform_touch (priv);
 
     /* Add to new parent's children list */
     if (parent != NULL)
@@ -1169,7 +1353,7 @@ lrg_transform_component_detach_children (LrgTransformComponent *self)
         LrgTransformComponentPrivate *child_priv = lrg_transform_component_get_instance_private (child);
 
         child_priv->parent = NULL;
-        child_priv->local_version++;
+        transform_touch (child_priv);
         g_object_notify_by_pspec (G_OBJECT (child), properties[PROP_PARENT]);
     }
 
@@ -1236,28 +1420,31 @@ void
 lrg_transform_component_look_at (LrgTransformComponent *self,
                                  GrlVector2            *target)
 {
-    g_autoptr(GrlVector2) world_pos = NULL;
-    gfloat                dx;
-    gfloat                dy;
-    gfloat                angle;
+    LrgTransformComponentPrivate *priv;
+    gfloat                        dx;
+    gfloat                        dy;
+    gfloat                        angle;
 
     g_return_if_fail (LRG_IS_TRANSFORM_COMPONENT (self));
     g_return_if_fail (target != NULL);
 
-    world_pos = lrg_transform_component_get_world_position (self);
+    priv = lrg_transform_component_get_instance_private (self);
+    transform_world_ensure (priv);
 
-    dx = target->x - world_pos->x;
-    dy = target->y - world_pos->y;
+    dx = target->x - priv->world_x;
+    dy = target->y - priv->world_y;
 
     /* Calculate angle in degrees */
     angle = atan2f (dy, dx) * (180.0f / G_PI);
 
     /* Convert world rotation to local rotation */
-    if (lrg_transform_component_get_parent (self) != NULL)
+    if (priv->parent != NULL)
     {
-        gfloat parent_rot = lrg_transform_component_get_world_rotation (
-            lrg_transform_component_get_parent (self));
-        angle -= parent_rot;
+        LrgTransformComponentPrivate *parent_priv;
+
+        /* Up to date: ensuring self ensured its whole chain */
+        parent_priv = lrg_transform_component_get_instance_private (priv->parent);
+        angle -= parent_priv->world_rotation;
     }
 
     lrg_transform_component_set_local_rotation (self, angle);

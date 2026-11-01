@@ -8,6 +8,7 @@
  */
 
 #include <glib.h>
+#include <string.h>
 #include <libregnum.h>
 
 /* ==========================================================================
@@ -1063,6 +1064,214 @@ test_transform_component_world_cache (void)
         g_object_unref (nodes[i - 1]);
 }
 
+/* Bitwise float equality (the cached fold uses the same operations as the
+ * reference, so the results must be identical, signs of zero included). */
+static gboolean
+float_bits_equal (gfloat a,
+                  gfloat b)
+{
+    return memcmp (&a, &b, sizeof (gfloat)) == 0;
+}
+
+/* Checks every non-allocating world getter of @t against the reference
+ * fold and the allocating getters, bit for bit. */
+static void
+assert_world_matches_reference (LrgTransformComponent *t)
+{
+    g_autoptr(GrlVector2) pos = lrg_transform_component_get_world_position (t);
+    g_autoptr(GrlVector2) scale = lrg_transform_component_get_world_scale (t);
+    gfloat x, y, rot, sx, sy;
+    gfloat gx, gy, grot, gsx, gsy;
+    gfloat xy_x, xy_y, s_x, s_y;
+
+    reference_world (t, &x, &y, &rot, &sx, &sy);
+    gx = gy = grot = gsx = gsy = -1.0f;
+    lrg_transform_component_get_world (t, &gx, &gy, &grot, &gsx, &gsy);
+    g_assert_true (float_bits_equal (gx, x));
+    g_assert_true (float_bits_equal (gy, y));
+    g_assert_true (float_bits_equal (grot, rot));
+    g_assert_true (float_bits_equal (gsx, sx));
+    g_assert_true (float_bits_equal (gsy, sy));
+
+    lrg_transform_component_get_world_xy (t, &xy_x, &xy_y);
+    lrg_transform_component_get_world_scale_xy (t, &s_x, &s_y);
+    g_assert_true (float_bits_equal (xy_x, x) && float_bits_equal (xy_y, y));
+    g_assert_true (float_bits_equal (s_x, sx) && float_bits_equal (s_y, sy));
+    g_assert_true (float_bits_equal (pos->x, x) && float_bits_equal (pos->y, y));
+    g_assert_true (float_bits_equal (scale->x, sx) && float_bits_equal (scale->y, sy));
+    g_assert_true (float_bits_equal (lrg_transform_component_get_world_rotation (t), rot));
+}
+
+#define OUT_NODES (24)
+
+/* The non-allocating getters (lrg_transform_component_get_world() and
+ * friends) and the epoch / shared-sincos caches behind them: a wide forest
+ * (siblings share their parent's sincos) under random edits, including
+ * edits that rewrite a rotation with the same value, -0.0 and NaN-free
+ * sign flips, with every node read after every edit (so whole subtrees are
+ * validated in one epoch and must still see the next change). */
+static void
+test_transform_component_world_out_params (void)
+{
+    LrgTransformComponent *nodes[OUT_NODES];
+    g_autoptr(GRand) rng = g_rand_new_with_seed (7);
+    gfloat optional_x;
+    guint round;
+    guint i;
+
+    for (i = 0; i < OUT_NODES; i++)
+    {
+        nodes[i] = lrg_transform_component_new_at ((gfloat) i * 0.5f, 1.0f);
+        if (i > 0)
+            lrg_transform_component_set_parent (nodes[i], nodes[(i - 1) / 3]);
+    }
+
+    /* Every output is optional */
+    lrg_transform_component_get_world (nodes[5], NULL, NULL, NULL, NULL, NULL);
+    optional_x = 0.0f;
+    lrg_transform_component_get_world (nodes[5], &optional_x, NULL, NULL, NULL, NULL);
+    lrg_transform_component_get_world_xy (nodes[5], NULL, NULL);
+    lrg_transform_component_get_world_scale_xy (nodes[5], NULL, NULL);
+
+    for (round = 0; round < 1500; round++)
+    {
+        guint n = (guint) g_rand_int_range (rng, 0, OUT_NODES);
+        gfloat v = (gfloat) g_rand_double_range (rng, -3.0, 3.0);
+
+        switch (g_rand_int_range (rng, 0, 8))
+        {
+        case 0:
+            lrg_transform_component_set_local_position_xy (nodes[n], v, v * 0.25f);
+            break;
+        case 1:
+            lrg_transform_component_set_local_rotation (nodes[n], v * 60.0f);
+            break;
+        case 2:
+            /* Same rotation again: no change, caches must stay right */
+            lrg_transform_component_set_local_rotation (nodes[n],
+                lrg_transform_component_get_local_rotation (nodes[n]));
+            break;
+        case 3:
+            lrg_transform_component_set_local_rotation (nodes[n],
+                (round & 1) ? -0.0f : 0.0f);
+            break;
+        case 4:
+            lrg_transform_component_set_local_scale_xy (nodes[n], v, -v);
+            break;
+        case 5:
+            lrg_transform_component_set_parent (nodes[n], n > 0 ?
+                nodes[g_rand_int_range (rng, 0, (gint32) n)] : NULL);
+            break;
+        case 6:
+            lrg_transform_component_rotate (nodes[n], 360.0f);
+            break;
+        default:
+            if (g_rand_int_range (rng, 0, 6) == 0)
+                lrg_transform_component_detach_children (nodes[n]);
+            break;
+        }
+
+        /* Leaves first on odd rounds, roots first on even ones, so both
+         * orders of filling the caches are covered. */
+        for (i = 0; i < OUT_NODES; i++)
+            assert_world_matches_reference (nodes[(round & 1) ? OUT_NODES - 1 - i : i]);
+    }
+
+    for (i = OUT_NODES; i > 0; i--)
+        g_object_unref (nodes[i - 1]);
+}
+
+/* A chain whose root is read, then a deep descendant edited and read:
+ * the epoch fast path must not hide a change below an already validated
+ * ancestor, nor one above an already validated descendant. */
+static void
+test_transform_component_world_epoch (void)
+{
+    LrgTransformComponent *chain[16];
+    gfloat x;
+    gfloat y;
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (chain); i++)
+    {
+        chain[i] = lrg_transform_component_new_at (1.0f, 0.0f);
+        if (i > 0)
+            lrg_transform_component_set_parent (chain[i], chain[i - 1]);
+    }
+
+    /* Validate the whole chain in one epoch */
+    lrg_transform_component_get_world_xy (chain[15], &x, &y);
+    g_assert_cmpfloat (x, ==, 16.0f);
+
+    /* Change the middle; the leaf and the root must both stay right */
+    lrg_transform_component_set_local_x (chain[8], 3.0f);
+    lrg_transform_component_get_world_xy (chain[0], &x, &y);
+    g_assert_cmpfloat (x, ==, 1.0f);
+    lrg_transform_component_get_world_xy (chain[15], &x, &y);
+    g_assert_cmpfloat (x, ==, 18.0f);
+
+    /* Rotate the root by 90 degrees: every level follows */
+    lrg_transform_component_set_local_rotation (chain[0], 90.0f);
+    for (i = 0; i < G_N_ELEMENTS (chain); i++)
+        assert_world_matches_reference (chain[i]);
+
+    /* Reparent the leaf to the root and detach a middle node's children */
+    lrg_transform_component_set_parent (chain[15], chain[0]);
+    assert_world_matches_reference (chain[15]);
+    lrg_transform_component_detach_children (chain[4]);
+    for (i = 0; i < G_N_ELEMENTS (chain); i++)
+        assert_world_matches_reference (chain[i]);
+
+    for (i = G_N_ELEMENTS (chain); i > 0; i--)
+        g_object_unref (chain[i - 1]);
+}
+
+/* Each thread edits and reads its own chain while the others move the
+ * shared epoch underneath it: results stay exact. */
+static gpointer
+world_thread_worker (gpointer data)
+{
+    LrgTransformComponent *chain[8];
+    guint seed = GPOINTER_TO_UINT (data);
+    g_autoptr(GRand) rng = g_rand_new_with_seed (seed);
+    guint round;
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (chain); i++)
+    {
+        chain[i] = lrg_transform_component_new_at ((gfloat) seed, 1.0f);
+        if (i > 0)
+            lrg_transform_component_set_parent (chain[i], chain[i - 1]);
+    }
+    for (round = 0; round < 3000; round++)
+    {
+        guint n = (guint) g_rand_int_range (rng, 0, G_N_ELEMENTS (chain));
+
+        lrg_transform_component_set_local_rotation (chain[n],
+            (gfloat) g_rand_double_range (rng, -180.0, 180.0));
+        assert_world_matches_reference (chain[G_N_ELEMENTS (chain) - 1]);
+        assert_world_matches_reference (chain[n]);
+    }
+    for (i = G_N_ELEMENTS (chain); i > 0; i--)
+        g_object_unref (chain[i - 1]);
+    return NULL;
+}
+
+static void
+test_transform_component_world_threads (void)
+{
+    GThread *threads[4];
+    guint i;
+
+    /* Make sure the type is registered before the threads race to it */
+    g_type_ensure (LRG_TYPE_TRANSFORM_COMPONENT);
+    for (i = 0; i < G_N_ELEMENTS (threads); i++)
+        threads[i] = g_thread_new ("transform", world_thread_worker,
+                                   GUINT_TO_POINTER (i + 1));
+    for (i = 0; i < G_N_ELEMENTS (threads); i++)
+        g_thread_join (threads[i]);
+}
+
 static void
 test_transform_component_translate (void)
 {
@@ -1358,6 +1567,197 @@ test_world_mass_remove (void)
     g_clear_pointer (&draw_log, g_ptr_array_unref);
 }
 
+/* ==========================================================================
+ * World dispatch through cached vtables
+ *
+ * CountingObject keeps GrlEntity's interface implementations and counts
+ * its class update/draw vfuncs; IfaceObject re-implements GrlUpdatable and
+ * GrlDrawable with its own active/visible answers and counters. The world
+ * must give both exactly the public sequence: entity flag first, then the
+ * vtable's check, then the vtable's update/draw.
+ * ========================================================================== */
+
+#define COUNTING_TYPE_OBJECT (counting_object_get_type ())
+G_DECLARE_FINAL_TYPE (CountingObject, counting_object, COUNTING, OBJECT, LrgGameObject)
+
+struct _CountingObject
+{
+    LrgGameObject parent_instance;
+    guint         updates;
+    guint         draws;
+};
+
+G_DEFINE_TYPE (CountingObject, counting_object, LRG_TYPE_GAME_OBJECT)
+
+static void
+counting_object_update (GrlEntity *entity,
+                        gfloat     delta)
+{
+    COUNTING_OBJECT (entity)->updates++;
+    GRL_ENTITY_CLASS (counting_object_parent_class)->update (entity, delta);
+}
+
+static void
+counting_object_draw (GrlEntity *entity)
+{
+    COUNTING_OBJECT (entity)->draws++;
+    GRL_ENTITY_CLASS (counting_object_parent_class)->draw (entity);
+}
+
+static void
+counting_object_class_init (CountingObjectClass *klass)
+{
+    GRL_ENTITY_CLASS (klass)->update = counting_object_update;
+    GRL_ENTITY_CLASS (klass)->draw = counting_object_draw;
+}
+
+static void
+counting_object_init (CountingObject *self)
+{
+}
+
+#define IFACE_TYPE_OBJECT (iface_object_get_type ())
+G_DECLARE_FINAL_TYPE (IfaceObject, iface_object, IFACE, OBJECT, LrgGameObject)
+
+struct _IfaceObject
+{
+    LrgGameObject parent_instance;
+    gboolean      own_active;
+    gboolean      own_visible;
+    guint         active_queries;
+    guint         visible_queries;
+    guint         updates;
+    guint         draws;
+};
+
+static void iface_object_updatable_init (GrlUpdatableInterface *iface);
+static void iface_object_drawable_init  (GrlDrawableInterface  *iface);
+
+G_DEFINE_TYPE_WITH_CODE (IfaceObject, iface_object, LRG_TYPE_GAME_OBJECT,
+    G_IMPLEMENT_INTERFACE (GRL_TYPE_UPDATABLE, iface_object_updatable_init)
+    G_IMPLEMENT_INTERFACE (GRL_TYPE_DRAWABLE, iface_object_drawable_init))
+
+static gboolean
+iface_object_get_active (GrlUpdatable *updatable)
+{
+    IFACE_OBJECT (updatable)->active_queries++;
+    return IFACE_OBJECT (updatable)->own_active;
+}
+
+static void
+iface_object_update (GrlUpdatable *updatable,
+                     gfloat        delta)
+{
+    IFACE_OBJECT (updatable)->updates++;
+}
+
+static gboolean
+iface_object_get_visible (GrlDrawable *drawable)
+{
+    IFACE_OBJECT (drawable)->visible_queries++;
+    return IFACE_OBJECT (drawable)->own_visible;
+}
+
+static void
+iface_object_draw (GrlDrawable *drawable)
+{
+    IFACE_OBJECT (drawable)->draws++;
+}
+
+static void
+iface_object_updatable_init (GrlUpdatableInterface *iface)
+{
+    iface->get_active = iface_object_get_active;
+    iface->update = iface_object_update;
+}
+
+static void
+iface_object_drawable_init (GrlDrawableInterface *iface)
+{
+    iface->get_visible = iface_object_get_visible;
+    iface->draw = iface_object_draw;
+}
+
+static void
+iface_object_class_init (IfaceObjectClass *klass)
+{
+}
+
+static void
+iface_object_init (IfaceObject *self)
+{
+    self->own_active = TRUE;
+    self->own_visible = TRUE;
+}
+
+static void
+test_world_dispatch (void)
+{
+    g_autoptr(LrgWorld) world = lrg_world_new ();
+    CountingObject     *counting;
+    IfaceObject        *custom;
+    g_autoptr(MockComponent) component = g_object_new (MOCK_TYPE_COMPONENT, NULL);
+
+    counting = g_object_new (COUNTING_TYPE_OBJECT, NULL);
+    custom = g_object_new (IFACE_TYPE_OBJECT, NULL);
+    lrg_game_object_add_component (LRG_GAME_OBJECT (counting), LRG_COMPONENT (component));
+    lrg_world_add_object (world, LRG_GAME_OBJECT (counting));
+    lrg_world_add_object (world, LRG_GAME_OBJECT (custom));
+    g_object_unref (counting);
+    g_object_unref (custom);
+
+    /* Everything on: both are updated and drawn, components updated */
+    lrg_world_update (world, 0.5f);
+    lrg_world_draw (world);
+    g_assert_cmpuint (counting->updates, ==, 1);
+    g_assert_cmpuint (counting->draws, ==, 1);
+    g_assert_cmpuint (component->update_count, ==, 1);
+    g_assert_cmpfloat (component->last_delta, ==, 0.5f);
+    g_assert_cmpuint (custom->updates, ==, 1);
+    g_assert_cmpuint (custom->draws, ==, 1);
+    g_assert_cmpuint (custom->active_queries, ==, 1);
+    g_assert_cmpuint (custom->visible_queries, ==, 1);
+
+    /* Entity flags off: nothing runs, and the custom vtable is not even
+     * asked (the entity flag is checked first, as before) */
+    grl_entity_set_active (GRL_ENTITY (counting), FALSE);
+    grl_entity_set_visible (GRL_ENTITY (counting), FALSE);
+    grl_entity_set_active (GRL_ENTITY (custom), FALSE);
+    grl_entity_set_visible (GRL_ENTITY (custom), FALSE);
+    lrg_world_update (world, 0.5f);
+    lrg_world_draw (world);
+    g_assert_cmpuint (counting->updates, ==, 1);
+    g_assert_cmpuint (counting->draws, ==, 1);
+    g_assert_cmpuint (component->update_count, ==, 1);
+    g_assert_cmpuint (custom->active_queries, ==, 1);
+    g_assert_cmpuint (custom->visible_queries, ==, 1);
+
+    /* Entity flags on, custom vtable answers no: asked, nothing runs */
+    grl_entity_set_active (GRL_ENTITY (counting), TRUE);
+    grl_entity_set_visible (GRL_ENTITY (counting), TRUE);
+    grl_entity_set_active (GRL_ENTITY (custom), TRUE);
+    grl_entity_set_visible (GRL_ENTITY (custom), TRUE);
+    custom->own_active = FALSE;
+    custom->own_visible = FALSE;
+    lrg_world_update (world, 0.25f);
+    lrg_world_draw (world);
+    g_assert_cmpuint (counting->updates, ==, 2);
+    g_assert_cmpuint (counting->draws, ==, 2);
+    g_assert_cmpfloat (component->last_delta, ==, 0.25f);
+    g_assert_cmpuint (custom->active_queries, ==, 2);
+    g_assert_cmpuint (custom->visible_queries, ==, 2);
+    g_assert_cmpuint (custom->updates, ==, 1);
+    g_assert_cmpuint (custom->draws, ==, 1);
+
+    /* Flags set through the drawable / updatable API reach the world too */
+    grl_drawable_set_visible (GRL_DRAWABLE (counting), FALSE);
+    grl_updatable_set_active (GRL_UPDATABLE (counting), FALSE);
+    lrg_world_update (world, 0.25f);
+    lrg_world_draw (world);
+    g_assert_cmpuint (counting->updates, ==, 2);
+    g_assert_cmpuint (counting->draws, ==, 2);
+}
+
 /* lrg_world_draw() used to crash on any world with objects (it chained
  * up to a NULL GrlEntity draw vfunc). Draw order is z-index, stable for
  * equal z-indices, and follows z changes and membership changes. */
@@ -1577,6 +1977,9 @@ main (int   argc,
     g_test_add_func ("/ecs/transform-component/world-position", test_transform_component_world_position);
     g_test_add_func ("/ecs/transform-component/world-chain", test_transform_component_world_chain);
     g_test_add_func ("/ecs/transform-component/world-cache", test_transform_component_world_cache);
+    g_test_add_func ("/ecs/transform-component/world-out-params", test_transform_component_world_out_params);
+    g_test_add_func ("/ecs/transform-component/world-epoch", test_transform_component_world_epoch);
+    g_test_add_func ("/ecs/transform-component/world-threads", test_transform_component_world_threads);
     g_test_add_func ("/ecs/transform-component/translate", test_transform_component_translate);
     g_test_add_func ("/ecs/transform-component/rotate", test_transform_component_rotate);
 
@@ -1591,6 +1994,7 @@ main (int   argc,
     g_test_add_func ("/ecs/animator-component/default-animation", test_animator_component_default_animation);
 
     g_test_add_func ("/ecs/world/draw-order", test_world_draw_order);
+    g_test_add_func ("/ecs/world/dispatch", test_world_dispatch);
     g_test_add_func ("/ecs/world/mass-remove", test_world_mass_remove);
 
     return g_test_run ();
