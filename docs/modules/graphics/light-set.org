@@ -98,7 +98,7 @@ final = mix(lit, fog_color, fog_amount(fragment))   (alpha unchanged)
 :PROPERTIES:
 :CUSTOM_ID: shader-contract
 :END:
-- GLSL 330 using raylib's default names: attributes =vertexPosition=, =vertexTexCoord=, =vertexNormal=, =vertexColor=; uniforms =mvp=, =matModel=, =matNormal=, =colDiffuse=, =texture0=. =DrawMesh()= fills all of them, so the shader drops into =lrg_static_batch_set_shader()= and =lrg_terrain_set_shader()= unchanged. Meshes need normals (both of those have them); missing vertex colours default to white.
+- GLSL 330 using raylib's default names: attributes =vertexPosition=, =vertexTexCoord=, =vertexNormal=, =vertexColor=; uniforms =mvp=, =matModel=, =matNormal=, =colDiffuse=, =texture0=. =DrawMesh()= fills all of them, so the shader drops into =lrg_static_batch_set_shader()= and =lrg_terrain_set_shader()= unchanged (on OpenGL 3.3 the terrain issues its own base-vertex draws but sends exactly the uniforms =DrawMesh()= would, see [[file:terrain.org::#gpu-layout][its GPU layout]]). Meshes need normals (both of those have them); missing vertex colours default to white.
 - Lighting happens in the space the model matrix maps to. LrgTerrain draws origin-relative, so give the light set the same origin (=set_origin()=): light positions are uploaded as =(world - origin)=. Selection always uses world coordinates.
 - Uniforms persist in the program: =apply()= once per frame (and after changing lights) is enough for every batch using the shader.
 - =set_alpha_cutoff (c)= with =c > 0= discards fragments whose final alpha is below =c= (foliage, fences) so they never write depth; 0 (default) keeps all.

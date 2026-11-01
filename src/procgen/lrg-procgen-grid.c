@@ -128,6 +128,18 @@ struct _LrgProcgenGrid
 	guint8    *cells;         /* row-major tags */
 	gint      *regions;       /* row-major region index, -1 = none */
 	GArray    *region_sizes;  /* guint per region */
+	gboolean   labels_fresh;  /* regions match the cells and walkable flags */
+	guint32   *scratch_queue; /* cell_count entries: BFS queue (cell index) */
+	guint32   *scratch_qx;    /* cell_count entries: BFS queue (column) */
+	gint32    *scratch_mark;  /* cell_count entries: BFS parents */
+	guint32   *run_start;     /* labelling runs: first column */
+	guint32   *run_end;       /* labelling runs: column past the last */
+	guint32   *run_parent;    /* labelling runs: union-find parent */
+	guint32   *row_first;     /* height + 1 entries: first run of each row */
+	gint      *dist_cache;    /* cell_count entries: the last distance map */
+	gint       dist_x;        /* the cell dist_cache was measured from */
+	gint       dist_y;
+	gboolean   dist_fresh;    /* dist_cache matches the cells and flags */
 	gboolean   walkable[256]; /* walkable flag per tag */
 	gfloat    *heights;       /* optional heightmap, NULL until set */
 	GPtrArray *rooms;         /* LrgProcgenRoom */
@@ -142,10 +154,6 @@ struct _LrgProcgenGrid
 
 G_DEFINE_FINAL_TYPE (LrgProcgenGrid, lrg_procgen_grid, G_TYPE_OBJECT)
 
-/* the 4-connected neighbour offsets, in the order up, right, down, left */
-static const gint dir_dx[4] = { 0, 1, 0, -1 };
-static const gint dir_dy[4] = { -1, 0, 1, 0 };
-
 static void
 lrg_procgen_grid_finalize (GObject *object)
 {
@@ -154,6 +162,14 @@ lrg_procgen_grid_finalize (GObject *object)
 	g_clear_pointer (&self->cells, g_free);
 	g_clear_pointer (&self->regions, g_free);
 	g_clear_pointer (&self->heights, g_free);
+	g_clear_pointer (&self->scratch_queue, g_free);
+	g_clear_pointer (&self->scratch_qx, g_free);
+	g_clear_pointer (&self->scratch_mark, g_free);
+	g_clear_pointer (&self->run_start, g_free);
+	g_clear_pointer (&self->run_end, g_free);
+	g_clear_pointer (&self->run_parent, g_free);
+	g_clear_pointer (&self->row_first, g_free);
+	g_clear_pointer (&self->dist_cache, g_free);
 	g_clear_pointer (&self->region_sizes, g_array_unref);
 	g_clear_pointer (&self->rooms, g_ptr_array_unref);
 	g_clear_pointer (&self->spawns, g_ptr_array_unref);
@@ -200,12 +216,43 @@ cell_count (LrgProcgenGrid *self)
 	return (gsize) self->width * self->height;
 }
 
-/* cells changed: the region labels are stale */
+/* clear the region labels (no region anywhere, no sizes) */
 static void
 invalidate_regions (LrgProcgenGrid *self)
 {
 	g_array_set_size (self->region_sizes, 0);
 	memset (self->regions, 0xff, cell_count (self) * sizeof (gint));
+	self->labels_fresh = FALSE;
+	self->dist_fresh = FALSE;
+}
+
+/*
+ * cells_changed:
+ * A cell or a walkable flag changed: the next label_regions() must
+ * relabel. The labels themselves stay as they are until then (callers
+ * of get_region() after an edit read the old labels, as before).
+ */
+static inline void
+cells_changed (LrgProcgenGrid *self)
+{
+	self->labels_fresh = FALSE;
+	self->dist_fresh = FALSE;
+}
+
+/*
+ * ensure_scratch:
+ * The breadth-first search buffers (queue, queue columns, per-cell
+ * marks), allocated on first use and kept with the grid, so the
+ * flood fills of one generation allocate nothing per call or per cell.
+ */
+static void
+ensure_scratch (LrgProcgenGrid *self)
+{
+	if (self->scratch_queue != NULL)
+		return;
+	self->scratch_queue = g_new (guint32, cell_count (self));
+	self->scratch_qx = g_new (guint32, cell_count (self));
+	self->scratch_mark = g_new (gint32, cell_count (self));
 }
 
 LrgProcgenGrid *
@@ -330,6 +377,7 @@ lrg_procgen_grid_copy (LrgProcgenGrid *self)
 	memcpy (copy->regions, self->regions, cell_count (self) * sizeof (gint));
 	g_array_append_vals (copy->region_sizes, self->region_sizes->data, self->region_sizes->len);
 	memcpy (copy->walkable, self->walkable, sizeof self->walkable);
+	copy->labels_fresh = self->labels_fresh;
 	if (self->heights != NULL)
 		copy->heights = g_memdup2 (self->heights, cell_count (self) * sizeof (gfloat));
 	for (i = 0; i < self->rooms->len; i++)
@@ -391,7 +439,10 @@ lrg_procgen_grid_set_cell (LrgProcgenGrid *self,
 {
 	g_return_if_fail (LRG_IS_PROCGEN_GRID (self));
 	if (in_bounds (self, x, y))
+	{
 		self->cells[cell_index (self, x, y)] = tag;
+		cells_changed (self);
+	}
 }
 
 void
@@ -427,6 +478,7 @@ lrg_procgen_grid_fill_rect (LrgProcgenGrid *self,
 	for (cy = y0; cy < y1; cy++)
 		if (x1 > x0)
 			memset (self->cells + cell_index (self, x0, cy), tag, (gsize) (x1 - x0));
+	cells_changed (self);
 }
 
 guint
@@ -464,6 +516,7 @@ lrg_procgen_grid_set_tag_walkable (LrgProcgenGrid *self,
 {
 	g_return_if_fail (LRG_IS_PROCGEN_GRID (self));
 	self->walkable[tag] = walkable ? TRUE : FALSE;
+	cells_changed (self);
 }
 
 gboolean
@@ -509,61 +562,146 @@ lrg_procgen_grid_count_walkable (LrgProcgenGrid *self)
  * Regions
  * ========================================================================== */
 
+/* the union-find root of run @r, halving the path on the way */
+static inline guint32
+run_find (guint32 *parent,
+          guint32  r)
+{
+	while (parent[r] != r)
+	{
+		parent[r] = parent[parent[r]];
+		r = parent[r];
+	}
+	return r;
+}
+
+/* joins the sets of runs @a and @b; the smaller run index stays the root */
+static inline void
+run_union (guint32 *parent,
+           guint32  a,
+           guint32  b)
+{
+	a = run_find (parent, a);
+	b = run_find (parent, b);
+	if (a < b)
+		parent[b] = a;
+	else if (b < a)
+		parent[a] = b;
+}
+
 guint
 lrg_procgen_grid_label_regions (LrgProcgenGrid *self)
 {
-	g_autofree guint32 *queue = NULL;
-	gsize n;
-	gsize start;
+	const gboolean *walk;
+	const guint8 *cells;
+	guint w;
+	guint h;
+	guint y;
+	guint32 nr = 0;
+	guint32 r;
+	guint next = 0;
+	guint *sizes;
 
 	g_return_val_if_fail (LRG_IS_PROCGEN_GRID (self), 0);
 
+	/* nothing changed since the last labelling: the labels stand */
+	if (self->labels_fresh)
+		return self->region_sizes->len;
+
 	invalidate_regions (self);
-	n = cell_count (self);
-	queue = g_new (guint32, n);
+	w = self->width;
+	h = self->height;
+	walk = self->walkable;
+	cells = self->cells;
+	if (self->run_start == NULL)
+	{
+		gsize max_runs = (gsize) h * ((w + 1) / 2);
+
+		self->run_start = g_new (guint32, max_runs);
+		self->run_end = g_new (guint32, max_runs);
+		self->run_parent = g_new (guint32, max_runs);
+		self->row_first = g_new (guint32, h + 1);
+	}
 
 	/*
-	 * Scan in row-major order; each unlabelled walkable cell seeds a
-	 * breadth-first flood fill that labels its whole 4-connected region.
+	 * Pass 1: split every row into runs of walkable cells, in row-major
+	 * order, and join each run with the runs of the row above whose
+	 * columns overlap it (4-connectivity). Unions keep the smaller run
+	 * index as the root, so a region's root is its first run in scan
+	 * order, the run holding the cell the old breadth-first scan seeded
+	 * that region from.
 	 */
-	for (start = 0; start < n; start++)
+	for (y = 0; y < h; y++)
 	{
-		gsize head = 0;
-		gsize tail = 0;
-		gint region;
-		guint size = 0;
+		const guint8 *row = cells + (gsize) y * w;
+		guint32 p = y > 0 ? self->row_first[y - 1] : 0;
+		guint32 prev_end = nr; /* the row above holds runs [p, nr) */
+		guint x = 0;
 
-		if (self->regions[start] >= 0 || !self->walkable[self->cells[start]])
-			continue;
-
-		region = (gint) self->region_sizes->len;
-		self->regions[start] = region;
-		queue[tail++] = (guint32) start;
-		while (head < tail)
+		self->row_first[y] = nr;
+		while (x < w)
 		{
-			guint32 c = queue[head++];
-			gint cx = (gint) (c % self->width);
-			gint cy = (gint) (c / self->width);
-			guint d;
+			guint s;
+			guint32 q;
 
-			size++;
-			for (d = 0; d < 4; d++)
+			while (x < w && !walk[row[x]])
+				x++;
+			if (x == w)
+				break;
+			s = x;
+			while (x < w && walk[row[x]])
+				x++;
+			self->run_start[nr] = s;
+			self->run_end[nr] = x;
+			self->run_parent[nr] = nr;
+
+			/* runs above that end at or before this one starts never
+			 * touch this or any later run of the row */
+			while (p < prev_end && self->run_end[p] <= s)
+				p++;
+			for (q = p; q < prev_end && self->run_start[q] < x; q++)
+				run_union (self->run_parent, nr, q);
+			nr++;
+		}
+	}
+	self->row_first[h] = nr;
+
+	/*
+	 * Pass 2: number the roots in run order (scan order of their first
+	 * cell, the old numbering), then write each run's label and add its
+	 * length to the region size. A run's root always precedes it, so the
+	 * root is numbered before any run that needs its label.
+	 */
+	for (r = 0; r < nr; r++)
+		if (self->run_parent[r] == r)
+			next++;
+	g_array_set_size (self->region_sizes, next);
+	sizes = (guint *) (gpointer) self->region_sizes->data;
+	{
+		g_autofree guint32 *label = g_new (guint32, MAX (nr, 1));
+		guint id = 0;
+
+		for (y = 0; y < h; y++)
+		{
+			gint *out = self->regions + (gsize) y * w;
+			guint32 end = self->row_first[y + 1];
+
+			for (r = self->row_first[y]; r < end; r++)
 			{
-				gint nx = cx + dir_dx[d];
-				gint ny = cy + dir_dy[d];
-				gsize ni;
+				guint32 root = run_find (self->run_parent, r);
+				guint x;
+				guint32 l;
 
-				if (!walkable_at (self, nx, ny))
-					continue;
-				ni = cell_index (self, nx, ny);
-				if (self->regions[ni] >= 0)
-					continue;
-				self->regions[ni] = region;
-				queue[tail++] = (guint32) ni;
+				if (root == r)
+					label[r] = id++;
+				l = label[root];
+				sizes[l] += self->run_end[r] - self->run_start[r];
+				for (x = self->run_start[r]; x < self->run_end[r]; x++)
+					out[x] = (gint) l;
 			}
 		}
-		g_array_append_val (self->region_sizes, size);
 	}
+	self->labels_fresh = TRUE;
 	return self->region_sizes->len;
 }
 
@@ -613,6 +751,7 @@ drop_regions (LrgProcgenGrid *self,
 	for (i = 0; i < cell_count (self); i++)
 		if (self->regions[i] >= 0 && drop[self->regions[i]])
 			self->cells[i] = fill_tag;
+	cells_changed (self);
 	lrg_procgen_grid_label_regions (self);
 }
 
@@ -668,20 +807,50 @@ lrg_procgen_grid_keep_largest_region (LrgProcgenGrid *self,
 	return n - 1;
 }
 
+/*
+ * connect_visit:
+ * One neighbour step of the connect_regions() search: @ni (column @nx)
+ * reached from @c. Returns TRUE when @ni belongs to another region (the
+ * search stops there). Unvisited cells are marked -2, sources -1.
+ */
+static inline gboolean
+connect_visit (LrgProcgenGrid *self,
+               guint32         c,
+               guint32         ni,
+               guint32         nx,
+               gsize           n,
+               gsize          *tail)
+{
+	gint32 *parent = self->scratch_mark;
+
+	if (parent[ni] != -2)
+		return FALSE;
+	/* keep the outer border solid: only walk onto it into a region */
+	if ((ni < self->width || ni >= n - self->width || nx == 0 || nx == self->width - 1) &&
+	    self->regions[ni] < 0)
+		return FALSE;
+	parent[ni] = (gint32) c;
+	if (self->regions[ni] > 0)
+		return TRUE;
+	self->scratch_queue[*tail] = ni;
+	self->scratch_qx[*tail] = nx;
+	(*tail)++;
+	return FALSE;
+}
+
 guint
 lrg_procgen_grid_connect_regions (LrgProcgenGrid *self,
                                   guint8          corridor_tag)
 {
-	g_autofree guint32 *queue = NULL;
-	g_autofree gint32 *parent = NULL;
 	gsize n;
+	guint w;
 	guint carved = 0;
 
 	g_return_val_if_fail (LRG_IS_PROCGEN_GRID (self), 0);
 
 	n = cell_count (self);
-	queue = g_new (guint32, n);
-	parent = g_new (gint32, n);
+	w = self->width;
+	ensure_scratch (self);
 
 	/*
 	 * Each round: a multi-source BFS from every cell of region 0 walks
@@ -689,53 +858,62 @@ lrg_procgen_grid_connect_regions (LrgProcgenGrid *self,
 	 * the parent chain back to region 0 is the shortest corridor, which is
 	 * carved. Repeating until one region remains connects everything with
 	 * at most (regions - 1) corridors.
+	 *
+	 * The queue carries each cell's column next to its index, so no step
+	 * divides, and the bounds tests are index comparisons. Neighbours are
+	 * tried in the fixed order up, right, down, left, which decides the
+	 * corridor taken among equally short ones.
 	 */
 	while (lrg_procgen_grid_label_regions (self) > 1)
 	{
+		gint32 *parent = self->scratch_mark;
+		guint32 *queue = self->scratch_queue;
+		guint32 *qx = self->scratch_qx;
 		gsize head = 0;
 		gsize tail = 0;
 		gsize i;
 		gint32 hit = -1;
+		guint x;
 
-		for (i = 0; i < n; i++)
+		for (i = 0, x = 0; i < n; i++)
 		{
 			parent[i] = -2; /* unvisited */
 			if (self->regions[i] == 0)
 			{
 				parent[i] = -1; /* a source */
-				queue[tail++] = (guint32) i;
+				queue[tail] = (guint32) i;
+				qx[tail] = x;
+				tail++;
 			}
+			if (++x == w)
+				x = 0;
 		}
 
-		while (head < tail && hit < 0)
+		while (head < tail)
 		{
-			guint32 c = queue[head++];
-			gint cx = (gint) (c % self->width);
-			gint cy = (gint) (c / self->width);
-			guint d;
+			guint32 c = queue[head];
+			guint32 cx = qx[head];
 
-			for (d = 0; d < 4; d++)
+			head++;
+			if (c >= w && connect_visit (self, c, c - w, cx, n, &tail))
 			{
-				gint nx = cx + dir_dx[d];
-				gint ny = cy + dir_dy[d];
-				gsize ni;
-
-				if (!in_bounds (self, nx, ny))
-					continue;
-				ni = cell_index (self, nx, ny);
-				if (parent[ni] != -2)
-					continue;
-				/* keep the outer border solid: only walk onto it into a region */
-				if ((nx == 0 || ny == 0 || nx == (gint) self->width - 1 ||
-				     ny == (gint) self->height - 1) && self->regions[ni] < 0)
-					continue;
-				parent[ni] = (gint32) c;
-				if (self->regions[ni] > 0)
-				{
-					hit = (gint32) ni;
-					break;
-				}
-				queue[tail++] = (guint32) ni;
+				hit = (gint32) (c - w);
+				break;
+			}
+			if (cx + 1 < w && connect_visit (self, c, c + 1, cx + 1, n, &tail))
+			{
+				hit = (gint32) (c + 1);
+				break;
+			}
+			if (c + w < n && connect_visit (self, c, c + w, cx, n, &tail))
+			{
+				hit = (gint32) (c + w);
+				break;
+			}
+			if (cx > 0 && connect_visit (self, c, c - 1, cx - 1, n, &tail))
+			{
+				hit = (gint32) (c - 1);
+				break;
 			}
 		}
 
@@ -750,6 +928,7 @@ lrg_procgen_grid_connect_regions (LrgProcgenGrid *self,
 		for (i = (gsize) parent[hit]; parent[i] >= 0; i = (gsize) parent[i])
 			if (!self->walkable[self->cells[i]])
 				self->cells[i] = corridor_tag;
+		cells_changed (self);
 		carved++;
 
 		/* a corridor tag that is not walkable could never connect */
@@ -763,48 +942,88 @@ lrg_procgen_grid_connect_regions (LrgProcgenGrid *self,
  * Distances
  * ========================================================================== */
 
-/* fills @dist (cell_count entries) with BFS steps from a cell, -1 elsewhere */
+/* one fill_distances() step onto @ni (column @nx) at distance @d */
+static inline void
+distance_visit (LrgProcgenGrid *self,
+                gint           *dist,
+                guint32         ni,
+                guint32         nx,
+                gint            d,
+                gsize          *tail)
+{
+	if (dist[ni] >= 0 || !self->walkable[self->cells[ni]])
+		return;
+	dist[ni] = d;
+	self->scratch_queue[*tail] = ni;
+	self->scratch_qx[*tail] = nx;
+	(*tail)++;
+}
+
+/*
+ * fills @dist (cell_count entries) with BFS steps from a cell, -1 elsewhere.
+ * The queue is the grid's scratch buffer and carries each cell's column,
+ * so the search neither allocates nor divides.
+ */
 static void
 fill_distances (LrgProcgenGrid *self,
                 gint            from_x,
                 gint            from_y,
-                gint           *dist,
-                guint32        *queue)
+                gint           *dist)
 {
 	gsize n = cell_count (self);
+	guint w = self->width;
 	gsize head = 0;
 	gsize tail = 0;
 	gsize i;
 
-	for (i = 0; i < n; i++)
-		dist[i] = -1;
+	memset (dist, 0xff, n * sizeof (gint));
 	if (!walkable_at (self, from_x, from_y))
 		return;
+	ensure_scratch (self);
 	i = cell_index (self, from_x, from_y);
 	dist[i] = 0;
-	queue[tail++] = (guint32) i;
+	self->scratch_queue[tail] = (guint32) i;
+	self->scratch_qx[tail] = (guint32) from_x;
+	tail++;
 	while (head < tail)
 	{
-		guint32 c = queue[head++];
-		gint cx = (gint) (c % self->width);
-		gint cy = (gint) (c / self->width);
-		guint d;
+		guint32 c = self->scratch_queue[head];
+		guint32 cx = self->scratch_qx[head];
+		gint d = dist[c] + 1;
 
-		for (d = 0; d < 4; d++)
-		{
-			gint nx = cx + dir_dx[d];
-			gint ny = cy + dir_dy[d];
-			gsize ni;
-
-			if (!walkable_at (self, nx, ny))
-				continue;
-			ni = cell_index (self, nx, ny);
-			if (dist[ni] >= 0)
-				continue;
-			dist[ni] = dist[c] + 1;
-			queue[tail++] = (guint32) ni;
-		}
+		head++;
+		if (c >= w)
+			distance_visit (self, dist, c - w, cx, d, &tail);
+		if (cx + 1 < w)
+			distance_visit (self, dist, c + 1, cx + 1, d, &tail);
+		if (c + w < n)
+			distance_visit (self, dist, c + w, cx, d, &tail);
+		if (cx > 0)
+			distance_visit (self, dist, c - 1, cx - 1, d, &tail);
 	}
+}
+
+/*
+ * cached_distances:
+ * The distance map from (@from_x, @from_y), kept until the cells or the
+ * walkable flags change or another cell is asked for. A dungeon recipe
+ * measures from the exit candidate in place_start_exit() and then once
+ * per spawn rule from the start, which is that same cell.
+ */
+static const gint *
+cached_distances (LrgProcgenGrid *self,
+                  gint            from_x,
+                  gint            from_y)
+{
+	if (self->dist_cache == NULL)
+		self->dist_cache = g_new (gint, cell_count (self));
+	else if (self->dist_fresh && self->dist_x == from_x && self->dist_y == from_y)
+		return self->dist_cache;
+	fill_distances (self, from_x, from_y, self->dist_cache);
+	self->dist_x = from_x;
+	self->dist_y = from_y;
+	self->dist_fresh = TRUE;
+	return self->dist_cache;
 }
 
 gint *
@@ -813,14 +1032,11 @@ lrg_procgen_grid_distance_map (LrgProcgenGrid *self,
                                gint            from_y,
                                gsize          *out_len)
 {
-	g_autofree guint32 *queue = NULL;
 	gint *dist;
 
 	g_return_val_if_fail (LRG_IS_PROCGEN_GRID (self), NULL);
 
-	dist = g_new (gint, cell_count (self));
-	queue = g_new (guint32, cell_count (self));
-	fill_distances (self, from_x, from_y, dist, queue);
+	dist = g_memdup2 (cached_distances (self, from_x, from_y), cell_count (self) * sizeof (gint));
 	if (out_len != NULL)
 		*out_len = cell_count (self);
 	return dist;
@@ -960,8 +1176,7 @@ farthest_cell (const gint *dist,
 gboolean
 lrg_procgen_grid_place_start_exit (LrgProcgenGrid *self)
 {
-	g_autofree gint *dist = NULL;
-	g_autofree guint32 *queue = NULL;
+	const gint *dist;
 	guint n_regions;
 	guint r;
 	guint best = 0;
@@ -991,11 +1206,9 @@ lrg_procgen_grid_place_start_exit (LrgProcgenGrid *self)
 		}
 
 	/* double sweep: farthest from the seed, then farthest from that */
-	dist = g_new (gint, n);
-	queue = g_new (guint32, n);
-	fill_distances (self, (gint) (seed % self->width), (gint) (seed / self->width), dist, queue);
+	dist = cached_distances (self, (gint) (seed % self->width), (gint) (seed / self->width));
 	a = farthest_cell (dist, n);
-	fill_distances (self, (gint) (a % self->width), (gint) (a / self->width), dist, queue);
+	dist = cached_distances (self, (gint) (a % self->width), (gint) (a / self->width));
 	b = farthest_cell (dist, n);
 
 	lrg_procgen_grid_set_start (self, (gint) (a % self->width), (gint) (a / self->width));
@@ -1076,6 +1289,36 @@ lrg_procgen_grid_clear_spawns (LrgProcgenGrid *self)
 	g_ptr_array_set_size (self->spawns, 0);
 }
 
+/*
+ * room_map:
+ * lrg_procgen_grid_room_at() for every cell at once: the index of the
+ * first room containing it, or -1. Rooms are painted last to first, so
+ * where rooms overlap the earliest one wins, as in room_at().
+ */
+static gint *
+room_map (LrgProcgenGrid *self)
+{
+	gint *map = g_new (gint, cell_count (self));
+	guint i;
+
+	memset (map, 0xff, cell_count (self) * sizeof (gint));
+	for (i = self->rooms->len; i-- > 0;)
+	{
+		const LrgProcgenRoom *room = g_ptr_array_index (self->rooms, i);
+		gint x0 = MAX (room->x, 0);
+		gint y0 = MAX (room->y, 0);
+		gint x1 = (gint) MIN ((gint64) room->x + room->width, (gint64) self->width);
+		gint y1 = (gint) MIN ((gint64) room->y + room->height, (gint64) self->height);
+		gint x;
+		gint y;
+
+		for (y = y0; y < y1; y++)
+			for (x = x0; x < x1; x++)
+				map[cell_index (self, x, y)] = (gint) i;
+	}
+	return map;
+}
+
 guint
 lrg_procgen_grid_place_spawns (LrgProcgenGrid  *self,
                                LrgRandomStream *rng,
@@ -1084,8 +1327,9 @@ lrg_procgen_grid_place_spawns (LrgProcgenGrid  *self,
                                guint            min_distance,
                                gboolean         rooms_only)
 {
-	g_autofree gint *dist = NULL;
+	const gint *dist = NULL;
 	g_autofree gboolean *taken = NULL;
+	g_autofree gint *room_of = NULL;
 	g_autoptr(GArray) candidates = NULL;
 	gsize n;
 	gsize i;
@@ -1097,7 +1341,8 @@ lrg_procgen_grid_place_spawns (LrgProcgenGrid  *self,
 
 	n = cell_count (self);
 	if (self->has_start)
-		dist = lrg_procgen_grid_distance_map (self, self->start_x, self->start_y, NULL);
+		dist = cached_distances (self, self->start_x, self->start_y);
+	room_of = room_map (self);
 
 	/* cells already used by the start, the exit and earlier spawn points */
 	taken = g_new0 (gboolean, n);
@@ -1114,18 +1359,16 @@ lrg_procgen_grid_place_spawns (LrgProcgenGrid  *self,
 	}
 
 	/* collect the candidates in row-major order */
-	candidates = g_array_new (FALSE, FALSE, sizeof (guint32));
+	candidates = g_array_sized_new (FALSE, FALSE, sizeof (guint32), (guint) n);
 	for (i = 0; i < n; i++)
 	{
-		gint x = (gint) (i % self->width);
-		gint y = (gint) (i / self->width);
 		guint32 v = (guint32) i;
 
 		if (taken[i] || !self->walkable[self->cells[i]])
 			continue;
 		if (dist != NULL && (dist[i] < 0 || (guint) dist[i] < min_distance))
 			continue;
-		if (rooms_only && lrg_procgen_grid_room_at (self, x, y) < 0)
+		if (rooms_only && room_of[i] < 0)
 			continue;
 		g_array_append_val (candidates, v);
 	}
@@ -1141,7 +1384,7 @@ lrg_procgen_grid_place_spawns (LrgProcgenGrid  *self,
 		g_array_index (candidates, guint32, j) = g_array_index (candidates, guint32, placed);
 		g_array_index (candidates, guint32, placed) = c;
 		g_ptr_array_add (self->spawns,
-		                 lrg_procgen_spawn_new (kind, x, y, lrg_procgen_grid_room_at (self, x, y)));
+		                 lrg_procgen_spawn_new (kind, x, y, room_of[c]));
 		placed++;
 	}
 	return placed;

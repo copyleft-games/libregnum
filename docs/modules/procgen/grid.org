@@ -35,22 +35,31 @@ A cell holds one tag from 0 to 255. The built-in tags are the =LrgProcgenCell= v
 :END:
 | Function | What it does |
 |----------+--------------|
-| =label_regions()= | Breadth-first flood fill of walkable cells into 4-connected regions, numbered from 0 in row-major order of their first cell. Returns the count. |
+| =label_regions()= | Labels walkable cells into 4-connected regions, numbered from 0 in row-major order of their first cell. Returns the count. Returns at once when no cell or walkable flag changed since the last labelling. |
 | =get_region (x, y)= / =get_region_size (r)= / =get_region_count()= | Results of the last labelling (=-1= for non-walkable cells). |
 | =is_connected()= | Relabels; =TRUE= with 0 or 1 region. |
 | =cull_regions (min, fill_tag)= | Overwrites regions smaller than =min= cells. |
 | =keep_largest_region (fill_tag)= | Overwrites all but the largest region (first on a tie). |
 | =connect_regions (corridor_tag)= | Joins regions until connected (below). |
 
-=connect_regions()= repeats: a multi-source BFS from every cell of region 0 expands through any interior cell (walkable or not; it never steps onto a non-walkable border cell) until it reaches a cell of another region; the parent chain is the shortest possible corridor, and only its non-walkable cells are overwritten with =corridor_tag=. With R regions it carves at most R - 1 corridors, each of minimal length from the growing connected set, and is fully deterministic (no random draws). Cost: one BFS over the grid per corridor.
+=connect_regions()= repeats: a multi-source BFS from every cell of region 0 expands through any interior cell (walkable or not; it never steps onto a non-walkable border cell) until it reaches a cell of another region; the parent chain is the shortest possible corridor, and only its non-walkable cells are overwritten with =corridor_tag=. With R regions it carves at most R - 1 corridors, each of minimal length from the growing connected set, and is fully deterministic (no random draws; among equally short corridors the neighbour order up, right, down, left decides). Cost: one BFS and one relabelling over the grid per corridor.
 
 Cells changed with =set_cell()= / =fill_rect()= leave labels stale until the next =label_regions()=; every post-processing function relabels itself.
+
+*** Implementation and cost
+:PROPERTIES:
+:CUSTOM_ID: regions-implementation
+:END:
+- *Labelling* is a two-pass, run-based connected-component labelling: each row is split into runs of walkable cells, every run is joined (union-find with path halving) with the runs of the row above whose columns overlap it, and the smaller run index always stays the root. A region's root is therefore its first run in scan order, so numbering roots in run order gives exactly the numbers (and sizes) the original breadth-first scan gave. Cost: a few operations per run plus one write per labelled cell, no queue.
+- *Freshness*: every write through the grid's API (=set_cell()=, =fill()=, =fill_rect()=, =set_tag_walkable()=, culling, carving) marks the labels stale; =label_regions()= on fresh labels returns the count without work. A dungeon recipe labels after generation, after culling and after each corridor; the start/exit placement and the final labelling reuse the last result.
+- *Searches* (=connect_regions()=, distance maps) run over buffers kept with the grid (queue, queue columns, per-cell marks), so a generation allocates them once. The queue carries each cell's column next to its index: bounds become index comparisons and no step divides.
+- The original breadth-first implementations live on as a reference model in =tests/test-procgen.c= (=/procgen/grid/reference-fuzz=), which checks labels, sizes, corridors and distance maps on random grids of many shapes, including after edits.
 
 ** Distances, start and exit
 :PROPERTIES:
 :CUSTOM_ID: distances-start-and-exit
 :END:
-- =distance_map (x, y, &len)=: BFS steps from a cell to every cell (=-1= unreachable), a new array.
+- =distance_map (x, y, &len)=: BFS steps from a cell to every cell (=-1= unreachable), a new array. The grid keeps the last map it computed (until the cells, the walkable flags or the source cell change): =place_start_exit()='s second sweep runs from the start, which is where =place_spawns()= measures =min_distance= from, so a recipe's spawn rules reuse it.
 - =path_distance (x0, y0, x1, y1)=: steps between two cells or =-1=.
 - =set_start= / =get_start= / =set_exit= / =get_exit=: the getters return whether the point is set.
 - =place_start_exit()=: on the largest region, a double sweep: BFS from the region's first cell, the farthest cell is the start; BFS from the start, the farthest cell is the exit (ties: lowest row-major index). On tree-shaped maps (BSP corridors without loops, the sample in the tests) this is the exact diameter; elsewhere it is a close lower bound at the cost of two BFS instead of one per cell.

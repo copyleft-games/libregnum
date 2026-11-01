@@ -813,6 +813,10 @@ and client-side helpers for skinned and static models.
   normals difference across loaded neighbours. `set_origin()` (double)
   is applied as the model matrix at draw time, so moving it re-uploads
   nothing. `set_texture_repeat (N)` spans a texture over N×N cells.
+  On GL 3.3 chunks live in fixed-size slots of shared buffer pages and
+  draw with one `glDrawElementsBaseVertex()` per mesh, sending the exact
+  uniforms `DrawMesh()` would (pixel-identical, `tests/test-terrain-render.c`);
+  `LRG_TERRAIN_DRAW=meshes` forces the old one-`Mesh`-each path.
 
 - **`LrgSkyDome`** (`graphics/lrg-sky-dome.h`): camera-centred sky drawn
   first in 3D mode (depth test/write and culling off, then restored).

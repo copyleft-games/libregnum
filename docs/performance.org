@@ -3,8 +3,8 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum performance benchmarks graylib
 #+created: 2026-10-25T16:00:00-04:00
-#+updated: 2026-10-27T23:30:00-04:00
-#+version: 1.3
+#+updated: 2026-11-01T06:30:00-05:00
+#+version: 1.4
 
 * Performance
 :PROPERTIES:
@@ -54,7 +54,7 @@ bench/build/release/bench/lrg-bench -l           # list scenarios
 | =autosave=      | light frames, a 4000-key background save every 60 frames                  |
 | =autosave-sync= | the same save made with =lrg_save_manager_save()= (on the frame)          |
 | =analytics=     | an analytics event a frame, HTTP backend, 20 ms localhost collector       |
-| =procgen=       | a 96x64 BSP =LrgProcgenDungeon= recipe (connect, start/exit, 32 spawns) and a 96x64 =LrgProcgenCaves= map generated a frame, new seed each frame (~4 ms work: level-load cost, not per-frame) |
+| =procgen=       | a 96x64 BSP =LrgProcgenDungeon= recipe (connect, start/exit, 32 spawns) and a 96x64 =LrgProcgenCaves= map generated a frame, new seed each frame (level-load cost, not per-frame; see [[#procgen-terrain-pass][the procgen and terrain pass]]) |
 | =despawn=       | 4000 sprite objects, 1000 removed and 1000 spawned every 60 frames        |
 | =first-use=     | water, billboards, grass, clouds, lit batch, skinned actors, colour grade, heat haze, sharpen: built in setup, first drawn at measured frame 100 |
 | =first-use-queue= | =first-use= with the prewarm queue run to the end in setup             |
@@ -436,3 +436,40 @@ What it shows:
 - *vsync plus a frame cap that is not a divisor of the refresh rate* (the template's default 60 on a 144 Hz display) alternated two- and three-vblank frames, as the editor did before it capped at a divisor. Fixed: with vsync on, the standalone host now passes the template's =target-fps= through =lrg_game_template_pace_fps()=, which picks the fraction of the refresh rate (refresh / n, rounded up) nearest the request: 72 for 60 on 144 Hz, 55 on 165 Hz, unchanged on 60/120/240 Hz. Rounded up because a cap slightly faster than n vblanks still waits for the n-th, while a slower one misses it now and then. The game's fixed step (60 Hz) and render interpolation are unaffected; only the presented rate moves. Not yet seen on a high-refresh panel.
 
 Validate on other hardware: a discrete GPU or a driver with a deeper queue (where 2 should cut latency against the driver default), a 120/144 Hz panel with vsync (cap/refresh interaction), and full photon latency with a camera or an input-to-photon tool, which this probe does not see.
+
+** The procgen and terrain pass
+:PROPERTIES:
+:CUSTOM_ID: procgen-terrain-pass
+:END:
+Two hot spots from the profiles: the procedural generator's flood fills (=procgen=: region labelling 31.6 %, the cave automaton 19.8 %, distance maps 10.8 %, corridor carving 6.1 % of the scenario) and the terrain's per-mesh =DrawMesh()= in shadowed worlds (=world-shadows=: =lrg_terrain_draw= 7.2 %, =draw_chunk= 3.5 %, Mesa's =iris_set_vertex_buffers= 3.7 % and =st_update_array= 3.0 %, i.e. a VAO switch and vertex-buffer revalidation for each of 256 chunks in each of 15 passes). Measured with =lrg-bench= on the real GPU (Intel iris, Mesa 26.2, 320x240 window), 1200 frames per run, the base library (=c6371bc=) and this branch run alternately through the same bench binary (=LD_LIBRARY_PATH=) for 5 rounds while three other agents' builds and benches shared the 20-thread machine. Single runs moved by 2x under that load, so the table gives the range of the 5 work medians and the range of the per-round ratio (new / base, same round).
+
+| Scenario               | Base work median (5 runs) | New work median (5 runs) | Paired ratio |
+|------------------------+---------------------------+--------------------------+--------------|
+| =procgen=              | 1.53 - 3.55 ms            | 0.67 - 1.34 ms           | 0.38 - 0.47  |
+| =terrain=              | 0.27 - 0.59 ms            | 0.18 - 0.35 ms           | 0.32 - 0.67  |
+| =world-shadows=        | 2.35 - 4.36 ms            | 1.37 - 2.56 ms           | 0.38 - 0.61  |
+| =world-shadows-cached= | 1.59 - 2.96 ms            | 1.00 - 1.71 ms           | 0.53 - 0.66  |
+
+Output is unchanged: the procgen golden hashes are the same, a scratch dump of 2000 seeds each of the dungeon recipe, two cave configurations and the drunkard walk (cells, region labels and sizes, start, exit, spawn points) hashed identically with both libraries, and the terrain's pixels and shadow atlases are compared against the old path in =tests/test-terrain-render.c=.
+
+What changed in procgen (=src/procgen/lrg-procgen-grid.c=, =lrg-procgen-caves.c=; [[file:modules/procgen/grid.org::#regions-implementation][details]]):
+- *Region labelling* is run-based two-pass union-find instead of a breadth-first flood per region: runs of walkable cells per row, joined with the overlapping runs above, the smaller run index kept as root. Roots are numbered in run order, which is the scan order of each region's first cell, so the numbering the old scan produced is kept exactly.
+- *No relabelling without a change.* The grid tracks whether its labels match its cells and walkable flags (every API write clears it); a dungeon recipe used to label six or more times, now the labelling after generation, after culling and after each corridor are the only ones that run.
+- *Division-free searches over kept buffers.* =connect_regions()= and the distance maps use a queue, queue-column array and mark array kept with the grid (no allocation per call), carry each cell's column in the queue (index comparisons replace bounds checks and =% width=), and keep the neighbour order (up, right, down, left) that decides which of equally short corridors is carved.
+- *The last distance map is cached* per source cell: =place_start_exit()='s second sweep starts at the start, which is where every spawn rule measures =min_distance= from, so a two-rule recipe runs two breadth-first searches instead of four.
+- *Spawn placement* looks rooms up in a painted per-cell map (first room wins, as =room_at()=) instead of a linear search over the rooms for every candidate cell (12.7 % of the scenario once the flood fills were fast).
+- *Cave automaton*: neighbour counts from per-column sums of the 3 x 3 window, no bounds checks (the border is wall in both buffers), a two-entry threshold table instead of a branch on random cells, and buffer swaps instead of a copy per step; open cells reach the grid as one =fill_rect()= per run.
+- A reference model of the original breadth-first labelling, carving and distances runs against the grid on 100 random maps of 10 shapes in =/procgen/grid/reference-fuzz=.
+
+What changed in terrain (=src/graphics/lrg-terrain.c=; [[file:modules/graphics/terrain.org::#gpu-layout][details]]):
+- *Shared buffer pages.* On OpenGL 3.3 each chunk owns a fixed-size slot (4 vertices and 6 indices per cell) in pages of shared vertex and index buffers with one VAO per page, and each mesh draws with =glDrawElementsBaseVertex()= (core since 3.2, looked up through =rlGetProcAddress()= like graylib's frame sync; rlgl has no base-vertex call and raylib is not modified). The 256 chunks of the bench share one page, so a pass binds one VAO instead of 256.
+- *One program and one set of per-pass uniforms per draw.* =DrawMesh()= bound and unbound the program, VAO and texture and re-sent =colDiffuse=, =matView= and =matProjection= for every mesh; now they go once per =draw()=, the texture only when it changes, and per chunk only =matModel=, =matNormal= and =mvp=. Those are computed with raymath's float operations in raymath's order (a copy, as =raymath.h= is not gnu89-clean), so the uniforms are bit-identical; =tests/test-terrain-render.c= catches a 1e-6 change in one MVP element through the shadow atlas.
+- *Cheaper culling.* With the draw calls gone, culling was the largest terrain cost left (=lrg_terrain_draw= waiting on a cache miss per chunk struct): the chunks' draw-space boxes now sit in a compact list in draw order, and blocks of 4 x 4 chunks are tested first so a cube face or a cascade rejects most of the world in 16 tests. The per-mesh path keeps the per-chunk test as the reference.
+- *Draw order is kept* (the chunk table's order, meshes in material order inside a chunk): reordering by material could change which of two coincident chunk-edge triangles wins a depth tie, and with one material per chunk in practice there was nothing to merge.
+
+Looked at and left:
+- *A depth-only vertex format for shadow passes.* The caster shader reads only the position and Mesa binds only the attributes a program reads (=st_update_array= walks the program's inputs), so a position-only VAO would add a second copy of every position for no measurable gain; it would also need a second slot layout per page.
+- *Static batches* still draw one =DrawMesh()= per chunk; the same page layout would apply to =LrgStaticBatch= (its chunks vary in size, so it needs a sub-allocator rather than fixed slots).
+- *=procgen= now*: the cave noise (one =lrg_random_stream_bounded()= per cell, which fixes the output), the automaton and the per-corridor relabelling and search in =connect_regions()= are what is left; an incremental relabel after carving (merge the regions the corridor touches, renumber the rest) would remove the latter.
+
+To validate elsewhere: drivers where =glBufferSubData()= into a page still in flight stalls (chunks streamed in mid-frame on a discrete GPU), and OpenGL ES builds, which take the per-mesh path.
