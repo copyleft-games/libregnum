@@ -35,6 +35,7 @@ G_DECLARE_INTERFACE (LrgEventListener, lrg_event_listener, LRG, EVENT_LISTENER, 
  * @get_priority: returns the priority (higher = earlier execution)
  * @get_event_mask: returns which event types this listener responds to
  * @on_event: called when a matching event occurs
+ * @has_static_mask: whether the bus may cache this listener's mask (optional)
  *
  * Interface structure for #LrgEventListener.
  *
@@ -83,6 +84,10 @@ struct _LrgEventListenerInterface
      * Each bit corresponds to an event type from #LrgEvent::get_type_mask.
      * Use bitwise OR to subscribe to multiple event types.
      *
+     * #LrgEventBus asks for the mask on every emission, unless the
+     * listener opts into mask caching with
+     * #LrgEventListenerInterface.has_static_mask.
+     *
      * Returns: the event type bitmask
      *
      * Since: 1.0
@@ -107,8 +112,27 @@ struct _LrgEventListenerInterface
                           LrgEvent         *event,
                           gpointer          context);
 
+    /**
+     * LrgEventListenerInterface::has_static_mask:
+     * @self: an #LrgEventListener
+     *
+     * Opts the listener into mask caching. Return %TRUE to promise
+     * that get_event_mask() only gains bits when the listener (or its
+     * owner) calls lrg_event_bus_refresh_listener() afterwards; a bus
+     * may then read the mask once and reuse it instead of calling
+     * get_event_mask() on every emission. Asked once, when the
+     * listener is registered. %NULL (the default) or %FALSE keeps the
+     * mask live: a changed mask applies at the next emission with no
+     * refresh.
+     *
+     * Returns: %TRUE if the bus may cache the mask
+     *
+     * Since: 0.6.1
+     */
+    gboolean (*has_static_mask) (LrgEventListener *self);
+
     /*< private >*/
-    gpointer _reserved[8];
+    gpointer _reserved[7];
 };
 
 /* ==========================================================================
@@ -172,6 +196,21 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_event_listener_on_event (LrgEventListener *self,
                                        LrgEvent         *event,
                                        gpointer          context);
+
+/**
+ * lrg_event_listener_has_static_mask:
+ * @self: an #LrgEventListener
+ *
+ * Gets whether the listener opted into mask caching through
+ * #LrgEventListenerInterface.has_static_mask.
+ *
+ * Returns: %TRUE if a bus may cache the listener's mask until
+ *   lrg_event_bus_refresh_listener() is called
+ *
+ * Since: 0.6.1
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_event_listener_has_static_mask (LrgEventListener *self);
 
 /* ==========================================================================
  * Convenience Functions

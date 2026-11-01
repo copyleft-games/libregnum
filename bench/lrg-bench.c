@@ -1577,6 +1577,14 @@ bench_listener_on_event (LrgEventListener *listener,
 	return TRUE;
 }
 
+/* Masks are set before registering and never change: let the bus
+ * cache them instead of asking every listener on every emission. */
+static gboolean
+bench_listener_has_static_mask (LrgEventListener *listener)
+{
+	return TRUE;
+}
+
 static void
 bench_listener_iface_init (LrgEventListenerInterface *iface)
 {
@@ -1584,6 +1592,7 @@ bench_listener_iface_init (LrgEventListenerInterface *iface)
 	iface->get_priority = bench_listener_get_priority;
 	iface->get_event_mask = bench_listener_get_mask;
 	iface->on_event = bench_listener_on_event;
+	iface->has_static_mask = bench_listener_has_static_mask;
 }
 
 static void

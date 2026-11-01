@@ -92,6 +92,26 @@ lrg_event_listener_get_event_mask (LrgEventListener *self)
 }
 
 /*
+ * lrg_event_listener_has_static_mask:
+ * @self: an #LrgEventListener
+ *
+ * Returns: %TRUE if the listener opted into mask caching
+ */
+gboolean
+lrg_event_listener_has_static_mask (LrgEventListener *self)
+{
+    LrgEventListenerInterface *iface;
+
+    g_return_val_if_fail (LRG_IS_EVENT_LISTENER (self), FALSE);
+
+    iface = LRG_EVENT_LISTENER_GET_IFACE (self);
+    if (iface->has_static_mask == NULL)
+        return FALSE;
+
+    return iface->has_static_mask (self);
+}
+
+/*
  * lrg_event_listener_on_event:
  * @self: an #LrgEventListener
  * @event: (transfer none): the event that occurred
