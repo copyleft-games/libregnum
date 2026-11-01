@@ -55,6 +55,8 @@ lrg_procgen_caves_generate (LrgProcgenGenerator  *generator,
 	LrgProcgenCaves *self = LRG_PROCGEN_CAVES (generator);
 	g_autofree guint8 *cur = NULL;
 	g_autofree guint8 *next = NULL;
+	g_autofree guint *colsum = NULL;
+	guint limit[2];
 	gint w = (gint) lrg_procgen_grid_get_width (grid);
 	gint h = (gint) lrg_procgen_grid_get_height (grid);
 	gint x;
@@ -80,35 +82,66 @@ lrg_procgen_caves_generate (LrgProcgenGenerator  *generator,
 		}
 
 	/* --- automaton steps: a wall survives with >= survival-limit wall
-	 * neighbours, a floor turns to wall with >= birth-limit (Moore) --- */
+	 * neighbours, a floor turns to wall with >= birth-limit (Moore) ---
+	 *
+	 * The border is wall in both buffers and never recomputed, so the
+	 * interior loop needs no bounds checks. Each row keeps the column
+	 * sums of its 3 x 3 window (the cell above, itself and below), and a
+	 * cell's wall count is three column sums minus itself. The two
+	 * buffers swap after each step instead of copying. */
+	memset (next, 1, (gsize) w);
+	memset (next + (gsize) (h - 1) * w, 1, (gsize) w);
+	for (y = 1; y < h - 1; y++)
+	{
+		next[y * w] = 1;
+		next[y * w + w - 1] = 1;
+	}
+	/* the wall-count threshold of a floor (0) and a wall (1) cell, read
+	 * from a table so the step does not branch on random cell values */
+	limit[0] = self->birth_limit;
+	limit[1] = self->survival_limit;
+	colsum = g_new (guint, w);
 	for (it = 0; it < self->iterations; it++)
 	{
-		for (y = 0; y < h; y++)
-			for (x = 0; x < w; x++)
-			{
-				guint walls = 0;
-				gint dx;
-				gint dy;
+		guint8 *swap;
 
-				if (x == 0 || y == 0 || x == w - 1 || y == h - 1)
-				{
-					next[y * w + x] = 1;
-					continue;
-				}
-				for (dy = -1; dy <= 1; dy++)
-					for (dx = -1; dx <= 1; dx++)
-						if ((dx != 0 || dy != 0) && cur[(y + dy) * w + x + dx])
-							walls++;
-				next[y * w + x] = cur[y * w + x] ? walls >= self->survival_limit
-				                                 : walls >= self->birth_limit;
+		for (y = 1; y < h - 1; y++)
+		{
+			const guint8 *above = cur + (gsize) (y - 1) * w;
+			const guint8 *row = cur + (gsize) y * w;
+			const guint8 *below = cur + (gsize) (y + 1) * w;
+			guint8 *out = next + (gsize) y * w;
+
+			for (x = 0; x < w; x++)
+				colsum[x] = (guint) above[x] + row[x] + below[x];
+			for (x = 1; x < w - 1; x++)
+			{
+				guint walls = colsum[x - 1] + colsum[x] + colsum[x + 1] - row[x];
+
+				out[x] = walls >= limit[row[x]];
 			}
-		memcpy (cur, next, (gsize) w * h);
+		}
+		swap = cur;
+		cur = next;
+		next = swap;
 	}
 
+	/* open cells become floor, one fill per horizontal run */
 	for (y = 0; y < h; y++)
-		for (x = 0; x < w; x++)
-			if (!cur[y * w + x])
-				lrg_procgen_grid_set_cell (grid, x, y, LRG_PROCGEN_CELL_FLOOR);
+		for (x = 0; x < w;)
+		{
+			gint start;
+
+			if (cur[y * w + x])
+			{
+				x++;
+				continue;
+			}
+			start = x;
+			while (x < w && !cur[y * w + x])
+				x++;
+			lrg_procgen_grid_fill_rect (grid, start, y, x - start, 1, LRG_PROCGEN_CELL_FLOOR);
+		}
 
 	/* --- clean up: cull small caves, then join or reduce the rest --- */
 	if (self->min_region_size > 0)

@@ -1577,6 +1577,14 @@ bench_listener_on_event (LrgEventListener *listener,
 	return TRUE;
 }
 
+/* Masks are set before registering and never change: let the bus
+ * cache them instead of asking every listener on every emission. */
+static gboolean
+bench_listener_has_static_mask (LrgEventListener *listener)
+{
+	return TRUE;
+}
+
 static void
 bench_listener_iface_init (LrgEventListenerInterface *iface)
 {
@@ -1584,6 +1592,7 @@ bench_listener_iface_init (LrgEventListenerInterface *iface)
 	iface->get_priority = bench_listener_get_priority;
 	iface->get_event_mask = bench_listener_get_mask;
 	iface->on_event = bench_listener_on_event;
+	iface->has_static_mask = bench_listener_has_static_mask;
 }
 
 static void
@@ -1747,16 +1756,18 @@ xform_frame (gpointer state,
 
 	for (i = 0; i < XFORM_CHAINS * XFORM_DEPTH; i++)
 	{
-		g_autoptr(GrlVector2) pos = NULL;
-		g_autoptr(GrlVector2) scale = NULL;
+		gfloat x;
+		gfloat rotation;
+		gfloat scale_y;
 
 		if (i % XFORM_DEPTH == 0)
 			lrg_transform_component_set_local_rotation (st->nodes[i],
 			                                            (gfloat) (frame_index % 360));
-		pos = lrg_transform_component_get_world_position (st->nodes[i]);
-		scale = lrg_transform_component_get_world_scale (st->nodes[i]);
-		st->sink += pos->x + scale->y +
-		            lrg_transform_component_get_world_rotation (st->nodes[i]);
+		/* The same three quantities, through the non-allocating getter */
+		x = rotation = scale_y = 0.0f;
+		lrg_transform_component_get_world (st->nodes[i], &x, NULL, &rotation,
+		                                   NULL, &scale_y);
+		st->sink += x + scale_y + rotation;
 	}
 }
 
@@ -1787,6 +1798,7 @@ struct _BenchPooled
 	GObject  parent_instance;
 	gboolean active;
 	guint    value;
+	guint    pool_slot;
 };
 
 static void bench_pooled_iface_init (LrgPoolableInterface *iface);
@@ -1814,12 +1826,28 @@ bench_pooled_set_active (LrgPoolable *poolable,
 	BENCH_POOLED (poolable)->active = active;
 }
 
+/* The optional slot accessors: release finds the object by index */
+static guint
+bench_pooled_get_pool_slot (LrgPoolable *poolable)
+{
+	return BENCH_POOLED (poolable)->pool_slot;
+}
+
+static void
+bench_pooled_set_pool_slot (LrgPoolable *poolable,
+                            guint        slot)
+{
+	BENCH_POOLED (poolable)->pool_slot = slot;
+}
+
 static void
 bench_pooled_iface_init (LrgPoolableInterface *iface)
 {
 	iface->reset = bench_pooled_reset;
 	iface->is_active = bench_pooled_is_active;
 	iface->set_active = bench_pooled_set_active;
+	iface->get_pool_slot = bench_pooled_get_pool_slot;
+	iface->set_pool_slot = bench_pooled_set_pool_slot;
 }
 
 static void

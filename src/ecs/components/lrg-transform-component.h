@@ -264,6 +264,60 @@ gfloat       lrg_transform_component_get_world_rotation     (LrgTransformCompone
 LRG_AVAILABLE_IN_ALL
 GrlVector2 * lrg_transform_component_get_world_scale        (LrgTransformComponent *self);
 
+/**
+ * lrg_transform_component_get_world_xy:
+ * @self: an #LrgTransformComponent
+ * @x: (out) (optional): return location for the world X
+ * @y: (out) (optional): return location for the world Y
+ *
+ * Gets the world-space position without allocating: the same values as
+ * lrg_transform_component_get_world_position(), written to @x and @y.
+ * Use this (or lrg_transform_component_get_world()) in code that runs
+ * every frame.
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_get_world_xy           (LrgTransformComponent *self,
+                                                             gfloat                *x,
+                                                             gfloat                *y);
+
+/**
+ * lrg_transform_component_get_world_scale_xy:
+ * @self: an #LrgTransformComponent
+ * @scale_x: (out) (optional): return location for the world X scale
+ * @scale_y: (out) (optional): return location for the world Y scale
+ *
+ * Gets the world-space scale without allocating: the same values as
+ * lrg_transform_component_get_world_scale().
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_get_world_scale_xy     (LrgTransformComponent *self,
+                                                             gfloat                *scale_x,
+                                                             gfloat                *scale_y);
+
+/**
+ * lrg_transform_component_get_world:
+ * @self: an #LrgTransformComponent
+ * @x: (out) (optional): return location for the world X
+ * @y: (out) (optional): return location for the world Y
+ * @rotation: (out) (optional): return location for the world rotation in
+ *   degrees
+ * @scale_x: (out) (optional): return location for the world X scale
+ * @scale_y: (out) (optional): return location for the world Y scale
+ *
+ * Gets the whole world transform in one call and one walk of the parent
+ * chain, without allocating. The values are exactly those of
+ * lrg_transform_component_get_world_position(),
+ * lrg_transform_component_get_world_rotation() and
+ * lrg_transform_component_get_world_scale().
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_transform_component_get_world              (LrgTransformComponent *self,
+                                                             gfloat                *x,
+                                                             gfloat                *y,
+                                                             gfloat                *rotation,
+                                                             gfloat                *scale_x,
+                                                             gfloat                *scale_y);
+
 /*
  * Parent/Child Hierarchy
  */

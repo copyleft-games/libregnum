@@ -172,6 +172,331 @@ test_grid_regions (void)
 	g_assert_cmpuint (lrg_procgen_grid_count_walkable (grid), ==, 17);
 }
 
+/* ==========================================================================
+ * Reference model: the original flood fills
+ *
+ * Region labelling, corridor carving and distance maps were rewritten for
+ * speed (run-based union-find labelling, division-free searches). The
+ * functions below are the original breadth-first implementations over a
+ * plain cell array; the fuzz test checks that the grid produces the same
+ * labels, sizes, corridors and distances on random maps.
+ * ========================================================================== */
+
+typedef struct
+{
+	gint     w;
+	gint     h;
+	guint8  *cells;
+	gboolean walkable[256];
+	gint    *regions;
+	GArray  *sizes;
+} RefGrid;
+
+static const gint ref_dx[4] = { 0, 1, 0, -1 };
+static const gint ref_dy[4] = { -1, 0, 1, 0 };
+
+static gboolean
+ref_walkable_at (RefGrid *g,
+                 gint     x,
+                 gint     y)
+{
+	return x >= 0 && y >= 0 && x < g->w && y < g->h && g->walkable[g->cells[y * g->w + x]];
+}
+
+static guint
+ref_label (RefGrid *g)
+{
+	gsize n = (gsize) g->w * g->h;
+	g_autofree guint32 *queue = g_new (guint32, n);
+	gsize start;
+
+	g_array_set_size (g->sizes, 0);
+	memset (g->regions, 0xff, n * sizeof (gint));
+	for (start = 0; start < n; start++)
+	{
+		gsize head = 0;
+		gsize tail = 0;
+		gint region;
+		guint size = 0;
+
+		if (g->regions[start] >= 0 || !g->walkable[g->cells[start]])
+			continue;
+		region = (gint) g->sizes->len;
+		g->regions[start] = region;
+		queue[tail++] = (guint32) start;
+		while (head < tail)
+		{
+			guint32 c = queue[head++];
+			gint cx = (gint) (c % g->w);
+			gint cy = (gint) (c / g->w);
+			guint d;
+
+			size++;
+			for (d = 0; d < 4; d++)
+			{
+				gint nx = cx + ref_dx[d];
+				gint ny = cy + ref_dy[d];
+				gsize ni;
+
+				if (!ref_walkable_at (g, nx, ny))
+					continue;
+				ni = (gsize) ny * g->w + nx;
+				if (g->regions[ni] >= 0)
+					continue;
+				g->regions[ni] = region;
+				queue[tail++] = (guint32) ni;
+			}
+		}
+		g_array_append_val (g->sizes, size);
+	}
+	return g->sizes->len;
+}
+
+static guint
+ref_connect (RefGrid *g,
+             guint8   corridor_tag)
+{
+	gsize n = (gsize) g->w * g->h;
+	g_autofree guint32 *queue = g_new (guint32, n);
+	g_autofree gint32 *parent = g_new (gint32, n);
+	guint carved = 0;
+
+	while (ref_label (g) > 1)
+	{
+		gsize head = 0;
+		gsize tail = 0;
+		gsize i;
+		gint32 hit = -1;
+
+		for (i = 0; i < n; i++)
+		{
+			parent[i] = -2;
+			if (g->regions[i] == 0)
+			{
+				parent[i] = -1;
+				queue[tail++] = (guint32) i;
+			}
+		}
+		while (head < tail && hit < 0)
+		{
+			guint32 c = queue[head++];
+			gint cx = (gint) (c % g->w);
+			gint cy = (gint) (c / g->w);
+			guint d;
+
+			for (d = 0; d < 4; d++)
+			{
+				gint nx = cx + ref_dx[d];
+				gint ny = cy + ref_dy[d];
+				gsize ni;
+
+				if (nx < 0 || ny < 0 || nx >= g->w || ny >= g->h)
+					continue;
+				ni = (gsize) ny * g->w + nx;
+				if (parent[ni] != -2)
+					continue;
+				if ((nx == 0 || ny == 0 || nx == g->w - 1 || ny == g->h - 1) && g->regions[ni] < 0)
+					continue;
+				parent[ni] = (gint32) c;
+				if (g->regions[ni] > 0)
+				{
+					hit = (gint32) ni;
+					break;
+				}
+				queue[tail++] = (guint32) ni;
+			}
+		}
+		if (hit < 0)
+			break;
+		for (i = (gsize) parent[hit]; parent[i] >= 0; i = (gsize) parent[i])
+			if (!g->walkable[g->cells[i]])
+				g->cells[i] = corridor_tag;
+		carved++;
+		if (!g->walkable[corridor_tag])
+			break;
+	}
+	return carved;
+}
+
+static void
+ref_distances (RefGrid *g,
+               gint     from_x,
+               gint     from_y,
+               gint    *dist)
+{
+	gsize n = (gsize) g->w * g->h;
+	g_autofree guint32 *queue = g_new (guint32, n);
+	gsize head = 0;
+	gsize tail = 0;
+	gsize i;
+
+	for (i = 0; i < n; i++)
+		dist[i] = -1;
+	if (!ref_walkable_at (g, from_x, from_y))
+		return;
+	i = (gsize) from_y * g->w + from_x;
+	dist[i] = 0;
+	queue[tail++] = (guint32) i;
+	while (head < tail)
+	{
+		guint32 c = queue[head++];
+		gint cx = (gint) (c % g->w);
+		gint cy = (gint) (c / g->w);
+		guint d;
+
+		for (d = 0; d < 4; d++)
+		{
+			gint nx = cx + ref_dx[d];
+			gint ny = cy + ref_dy[d];
+			gsize ni;
+
+			if (!ref_walkable_at (g, nx, ny))
+				continue;
+			ni = (gsize) ny * g->w + nx;
+			if (dist[ni] >= 0)
+				continue;
+			dist[ni] = dist[c] + 1;
+			queue[tail++] = (guint32) ni;
+		}
+	}
+}
+
+/* a reference copy of @grid's cells and walkable flags */
+static RefGrid *
+ref_grid_new (LrgProcgenGrid *grid)
+{
+	RefGrid *g = g_new0 (RefGrid, 1);
+	const guint8 *cells;
+	gsize n;
+	guint t;
+
+	g->w = (gint) lrg_procgen_grid_get_width (grid);
+	g->h = (gint) lrg_procgen_grid_get_height (grid);
+	cells = lrg_procgen_grid_get_cells (grid, &n);
+	g->cells = g_memdup2 (cells, n);
+	for (t = 0; t < 256; t++)
+		g->walkable[t] = lrg_procgen_grid_is_tag_walkable (grid, (guint8) t);
+	g->regions = g_new (gint, n);
+	g->sizes = g_array_new (FALSE, TRUE, sizeof (guint));
+	return g;
+}
+
+static void
+ref_grid_free (RefGrid *g)
+{
+	g_free (g->cells);
+	g_free (g->regions);
+	g_array_unref (g->sizes);
+	g_free (g);
+}
+
+/* the grid's cells, labels and sizes equal the reference's */
+static void
+assert_matches_ref (LrgProcgenGrid *grid,
+                    RefGrid        *g)
+{
+	gsize n;
+	const guint8 *cells = lrg_procgen_grid_get_cells (grid, &n);
+	gint x;
+	gint y;
+	guint r;
+
+	g_assert_cmpmem (cells, n, g->cells, (gsize) g->w * g->h);
+	g_assert_cmpuint (lrg_procgen_grid_get_region_count (grid), ==, g->sizes->len);
+	for (r = 0; r < g->sizes->len; r++)
+		g_assert_cmpuint (lrg_procgen_grid_get_region_size (grid, r), ==,
+		                  g_array_index (g->sizes, guint, r));
+	for (y = 0; y < g->h; y++)
+		for (x = 0; x < g->w; x++)
+			g_assert_cmpint (lrg_procgen_grid_get_region (grid, x, y), ==, g->regions[y * g->w + x]);
+}
+
+static void
+test_grid_reference_fuzz (void)
+{
+	static const guint sizes[][2] = {
+		{ 1, 1 }, { 1, 17 }, { 23, 1 }, { 2, 2 }, { 3, 7 }, { 16, 16 },
+		{ 37, 21 }, { 96, 64 }, { 64, 3 }, { 5, 80 }
+	};
+	guint seed;
+
+	for (seed = 0; seed < 100; seed++)
+	{
+		g_autoptr(LrgRandomStream) rng = lrg_random_stream_new (seed, 77);
+		guint w = sizes[seed % G_N_ELEMENTS (sizes)][0];
+		guint h = sizes[seed % G_N_ELEMENTS (sizes)][1];
+		guint density = 20 + lrg_random_stream_bounded (rng, 70);
+		g_autoptr(LrgProcgenGrid) grid = lrg_procgen_grid_new (w, h);
+		g_autofree gint *dist = NULL;
+		g_autofree gint *ref_dist = NULL;
+		RefGrid *g;
+		guint x;
+		guint y;
+		guint k;
+		guint8 corridor = seed % 7 == 3 ? LRG_PROCGEN_CELL_WATER : LRG_PROCGEN_CELL_CORRIDOR;
+
+		/* noise of floor, door, water (not walkable) and wall; a few
+		 * grids make water walkable */
+		for (y = 0; y < h; y++)
+			for (x = 0; x < w; x++)
+			{
+				guint roll = lrg_random_stream_bounded (rng, 100);
+				guint8 tag = LRG_PROCGEN_CELL_WALL;
+
+				if (roll < density)
+					tag = roll % 9 == 0 ? LRG_PROCGEN_CELL_DOOR : LRG_PROCGEN_CELL_FLOOR;
+				else if (roll % 5 == 0)
+					tag = LRG_PROCGEN_CELL_WATER;
+				lrg_procgen_grid_set_cell (grid, (gint) x, (gint) y, tag);
+			}
+		if (seed % 11 == 5)
+			lrg_procgen_grid_set_tag_walkable (grid, LRG_PROCGEN_CELL_WATER, TRUE);
+
+		g = ref_grid_new (grid);
+		g_assert_cmpuint (lrg_procgen_grid_label_regions (grid), ==, ref_label (g));
+		assert_matches_ref (grid, g);
+
+		/* distance maps from a few cells */
+		ref_dist = g_new (gint, (gsize) w * h);
+		for (k = 0; k < 4; k++)
+		{
+			gint fx = (gint) lrg_random_stream_bounded (rng, w);
+			gint fy = (gint) lrg_random_stream_bounded (rng, h);
+
+			dist = lrg_procgen_grid_distance_map (grid, fx, fy, NULL);
+			ref_distances (g, fx, fy, ref_dist);
+			g_assert_cmpmem (dist, (gsize) w * h * sizeof (gint), ref_dist, (gsize) w * h * sizeof (gint));
+			g_clear_pointer (&dist, g_free);
+		}
+
+		/* corridors, then the labels they leave */
+		g_assert_cmpuint (lrg_procgen_grid_connect_regions (grid, corridor), ==,
+		                  ref_connect (g, corridor));
+		ref_label (g);
+		assert_matches_ref (grid, g);
+
+		/* an edit after labelling is seen by the next labelling */
+		lrg_procgen_grid_set_cell (grid, (gint) (w / 2), (gint) (h / 2), LRG_PROCGEN_CELL_WALL);
+		g->cells[(h / 2) * w + w / 2] = LRG_PROCGEN_CELL_WALL;
+		g_assert_cmpuint (lrg_procgen_grid_label_regions (grid), ==, ref_label (g));
+		assert_matches_ref (grid, g);
+		lrg_procgen_grid_set_tag_walkable (grid, LRG_PROCGEN_CELL_DOOR, FALSE);
+		g->walkable[LRG_PROCGEN_CELL_DOOR] = FALSE;
+		g_assert_cmpuint (lrg_procgen_grid_label_regions (grid), ==, ref_label (g));
+		assert_matches_ref (grid, g);
+
+		/* distance maps follow the edits too (they are cached per cell) */
+		for (k = 0; k < 2; k++)
+		{
+			dist = lrg_procgen_grid_distance_map (grid, (gint) (w / 2), (gint) (h / 2) - (gint) k, NULL);
+			ref_distances (g, (gint) (w / 2), (gint) (h / 2) - (gint) k, ref_dist);
+			g_assert_cmpmem (dist, (gsize) w * h * sizeof (gint), ref_dist, (gsize) w * h * sizeof (gint));
+			g_clear_pointer (&dist, g_free);
+		}
+		ref_grid_free (g);
+	}
+}
+
 static void
 test_grid_start_exit (void)
 {
@@ -1035,6 +1360,7 @@ main (int   argc,
 	g_test_add_func ("/procgen/grid/basics", test_grid_basics);
 	g_test_add_func ("/procgen/grid/regions", test_grid_regions);
 	g_test_add_func ("/procgen/grid/start-exit", test_grid_start_exit);
+	g_test_add_func ("/procgen/grid/reference-fuzz", test_grid_reference_fuzz);
 	g_test_add_func ("/procgen/bsp/determinism", test_bsp_determinism);
 	g_test_add_func ("/procgen/bsp/invariants", test_bsp_invariants);
 	g_test_add_func ("/procgen/bsp/bad-params", test_bsp_bad_params);

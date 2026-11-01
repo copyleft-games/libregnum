@@ -12,6 +12,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_ECS
 
 #include "lrg-game-object.h"
+#include "lrg-game-object-private.h"
 #include "lrg-component.h"
 #include "lrg-component-private.h"
 #include "components/lrg-sprite-component.h"
@@ -24,9 +25,34 @@
 typedef struct
 {
     GList *components;   /* List of LrgComponent (owned references) */
+
+    /* The instance's GrlUpdatable / GrlDrawable vtables, looked up on the
+     * first world update / draw (a subclass may implement either interface
+     * itself, so they belong to the instance's final class, which is only
+     * known once construction finished). NULL until then; valid for the
+     * object's lifetime, since its class outlives it. */
+    GrlUpdatableInterface *updatable_iface;
+    GrlDrawableInterface  *drawable_iface;
 } LrgGameObjectPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgGameObject, lrg_game_object, GRL_TYPE_ENTITY)
+
+/*
+ * GrlEntity's own GrlDrawable / GrlUpdatable implementations, read from its
+ * vtables at class init. An object whose vtable still holds them (every
+ * game object that does not implement those interfaces itself) gets them
+ * dispatched without the double work the public path does:
+ * grl_entity_get_visible() and GrlEntity's get_visible both return the
+ * entity's visible flag (grl_entity_set_visible() is
+ * grl_drawable_set_visible()), so one read answers both checks, and
+ * GrlEntity's draw only forwards to the class's draw vfunc; likewise
+ * active and update. Any other implementation takes the full sequence.
+ */
+static gboolean (*entity_get_visible) (GrlDrawable  *drawable);
+static void     (*entity_draw)        (GrlDrawable  *drawable);
+static gboolean (*entity_get_active)  (GrlUpdatable *updatable);
+static void     (*entity_update)      (GrlUpdatable *updatable,
+                                       gfloat        delta);
 
 /* ==========================================================================
  * GrlEntity Virtual Method Overrides
@@ -67,6 +93,7 @@ lrg_game_object_draw (GrlEntity *entity)
     LrgGameObject        *self = LRG_GAME_OBJECT (entity);
     LrgGameObjectPrivate *priv = lrg_game_object_get_instance_private (self);
     GrlEntityClass       *parent_class;
+    GType                 sprite_type;
     GList                *l;
 
     /* Chain up when the parent has a draw vfunc. GrlEntity leaves it
@@ -76,16 +103,126 @@ lrg_game_object_draw (GrlEntity *entity)
     if (parent_class->draw != NULL)
         parent_class->draw (entity);
 
-    /* Draw the object's enabled sprite components, in component order */
+    /* Draw the object's enabled sprite components, in component order.
+     * LrgSpriteComponent is final, so an exact type compare is the same
+     * test as LRG_IS_SPRITE_COMPONENT() without the type-system call it
+     * makes for every other component type. */
+    sprite_type = LRG_TYPE_SPRITE_COMPONENT;
     for (l = priv->components; l != NULL; l = l->next)
     {
         LrgComponent *component = l->data;
 
-        if (LRG_IS_SPRITE_COMPONENT (component) &&
+        if (G_TYPE_FROM_INSTANCE (component) == sprite_type &&
             _lrg_component_get_enabled_unchecked (component))
         {
             lrg_sprite_component_draw (LRG_SPRITE_COMPONENT (component));
         }
+    }
+}
+
+/* ==========================================================================
+ * World Dispatch (see lrg-game-object-private.h)
+ * ========================================================================== */
+
+/* See lrg-game-object-private.h. */
+void
+_lrg_game_object_world_update (LrgGameObject *self,
+                               gfloat         delta)
+{
+    LrgGameObjectPrivate  *priv = lrg_game_object_get_instance_private (self);
+    GrlUpdatableInterface *iface;
+    GrlUpdatable          *updatable = GRL_UPDATABLE (self);
+
+    iface = priv->updatable_iface;
+    if (G_UNLIKELY (iface == NULL))
+    {
+        iface = G_TYPE_INSTANCE_GET_INTERFACE (self, GRL_TYPE_UPDATABLE,
+                                               GrlUpdatableInterface);
+        priv->updatable_iface = iface;
+    }
+
+    /* The entity's active flag, then grl_updatable_update()'s own active
+     * check through the vtable: one read when both are the entity's flag */
+    if (G_LIKELY (iface->get_active != NULL && iface->get_active == entity_get_active))
+    {
+        if (!iface->get_active (updatable))
+            return;
+    }
+    else
+    {
+        if (!grl_entity_get_active (GRL_ENTITY (self)))
+            return;
+        if (iface->get_active == NULL)
+        {
+            /* qdata default: leave it to graylib */
+            grl_updatable_update (updatable, delta);
+            return;
+        }
+        if (!iface->get_active (updatable))
+            return;
+    }
+
+    if (G_LIKELY (iface->update != NULL && iface->update == entity_update))
+    {
+        /* GrlEntity's update: the class vfunc */
+        GrlEntityClass *klass = GRL_ENTITY_GET_CLASS (self);
+
+        if (klass->update != NULL)
+            klass->update (GRL_ENTITY (self), delta);
+    }
+    else if (iface->update != NULL)
+    {
+        iface->update (updatable, delta);
+    }
+}
+
+/* See lrg-game-object-private.h. */
+void
+_lrg_game_object_world_draw (LrgGameObject *self)
+{
+    LrgGameObjectPrivate *priv = lrg_game_object_get_instance_private (self);
+    GrlDrawableInterface *iface;
+    GrlDrawable          *drawable = GRL_DRAWABLE (self);
+
+    iface = priv->drawable_iface;
+    if (G_UNLIKELY (iface == NULL))
+    {
+        iface = G_TYPE_INSTANCE_GET_INTERFACE (self, GRL_TYPE_DRAWABLE,
+                                               GrlDrawableInterface);
+        priv->drawable_iface = iface;
+    }
+
+    /* The entity's visible flag, then grl_drawable_draw()'s own visible
+     * check through the vtable (see update above) */
+    if (G_LIKELY (iface->get_visible != NULL && iface->get_visible == entity_get_visible))
+    {
+        if (!iface->get_visible (drawable))
+            return;
+    }
+    else
+    {
+        if (!grl_entity_get_visible (GRL_ENTITY (self)))
+            return;
+        if (iface->get_visible == NULL)
+        {
+            grl_drawable_draw (drawable);
+            return;
+        }
+        if (!iface->get_visible (drawable))
+            return;
+    }
+
+    if (G_LIKELY (iface->draw != NULL && iface->draw == entity_draw))
+    {
+        /* GrlEntity's draw: the class vfunc */
+        GrlEntityClass *klass = GRL_ENTITY_GET_CLASS (self);
+
+        if (klass->draw != NULL)
+            klass->draw (GRL_ENTITY (self));
+    }
+    else if (iface->draw != NULL)
+    {
+        iface->draw (drawable);
     }
 }
 
@@ -118,6 +255,27 @@ lrg_game_object_class_init (LrgGameObjectClass *klass)
     /* Override GrlEntity virtual methods */
     entity_class->update = lrg_game_object_update;
     entity_class->draw = lrg_game_object_draw;
+
+    /* GrlEntity's own interface implementations (see entity_get_visible);
+     * its class, vtables included, is complete before ours is set up. */
+    {
+        gpointer               entity_klass = g_type_class_peek (GRL_TYPE_ENTITY);
+        GrlDrawableInterface  *drawable_iface;
+        GrlUpdatableInterface *updatable_iface;
+
+        drawable_iface = g_type_interface_peek (entity_klass, GRL_TYPE_DRAWABLE);
+        updatable_iface = g_type_interface_peek (entity_klass, GRL_TYPE_UPDATABLE);
+        if (drawable_iface != NULL)
+        {
+            entity_get_visible = drawable_iface->get_visible;
+            entity_draw = drawable_iface->draw;
+        }
+        if (updatable_iface != NULL)
+        {
+            entity_get_active = updatable_iface->get_active;
+            entity_update = updatable_iface->update;
+        }
+    }
 }
 
 static void
