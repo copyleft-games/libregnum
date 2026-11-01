@@ -16,6 +16,7 @@
 #include "../../core/lrg-cpu-affinity.h"
 #include "../../graphics/lrg-grl-window.h"
 #include "../../gui/lrg-gui-raylib-private.h"
+#include "drawing/grl-fast2d-private.h"
 #include <glib/gstdio.h>
 #include <glib-unix.h>
 #include <math.h>
@@ -2073,6 +2074,7 @@ lrg_editor_app_run (LrgEditorApp *self)
 	lrg_gui_context_set_measure_func (self->gui, NULL, NULL, NULL);
 	lrg_gui_context_set_clipboard_funcs (self->gui, NULL, NULL, NULL, NULL);
 	grl_frame_sync_reset ();	/* its fences belong to the context closing */
+	grl_fast2d_shutdown ();	/* graylib's 2D batch, ditto */
 	CloseWindow ();
 	self->window_open = FALSE;
 	self->headless = TRUE;

@@ -16,8 +16,15 @@
 #include "lrg-gui-raylib-private.h"
 /* graylib's O(1)-glyph-lookup forms of DrawTextEx()/MeasureTextEx():
  * header-only, on raylib's public API, same quads and measurements.
- * raylib's own functions scan the glyph table linearly per character. */
+ * raylib's own functions scan the glyph table linearly per character.
+ * Glyph quads go through graylib's fast 2D vertex path. */
 #include "text/grl-text-layout-private.h"
+/* graylib's fast 2D vertex path: drop-in forms of DrawTexturePro(),
+ * DrawRectangleRec(), DrawRectangleLinesEx(), DrawRectangleRounded() and
+ * DrawCircleV() that write quads straight into rlgl's batch when they
+ * continue its current draw call (same pixels; graylib is linked into
+ * libregnum statically, so its internal symbols are reachable) */
+#include "drawing/grl-fast2d-private.h"
 #include <math.h>
 #include <string.h>
 
@@ -740,9 +747,9 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 		{
 		case LRG_GUI_CMD_RECT_FILLED:
 			if (cmd->rounding > 0.5f && rec.width > 2.0f && rec.height > 2.0f)
-				DrawRectangleRounded (rec, roundness_for (&cmd->rect, cmd->rounding), 6, col);
+				grl_fast2d_draw_rectangle_rounded (rec, roundness_for (&cmd->rect, cmd->rounding), 6, col);
 			else
-				DrawRectangleRec (rec, col);
+				grl_fast2d_draw_rectangle_rec (rec, col);
 			break;
 
 		case LRG_GUI_CMD_RECT_OUTLINE:
@@ -750,7 +757,7 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 				DrawRectangleRoundedLinesEx (rec, roundness_for (&cmd->rect, cmd->rounding), 6,
 				                             cmd->thickness, col);
 			else
-				DrawRectangleLinesEx (rec, cmd->thickness, col);
+				grl_fast2d_draw_rectangle_lines_ex (rec, cmd->thickness, col);
 			break;
 
 		case LRG_GUI_CMD_LINE:
@@ -781,7 +788,7 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 			{
 				Vector2 c = { cmd->rect.x, cmd->rect.y };
 
-				DrawCircleV (c, cmd->thickness, col);
+				grl_fast2d_draw_circle_v (c, cmd->thickness, col);
 			}
 			break;
 
@@ -823,7 +830,7 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 					Rectangle src = { 0.0f, 0.0f, (gfloat) tex->width, (gfloat) tex->height };
 					Vector2   origin = { 0.0f, 0.0f };
 
-					DrawTexturePro (*tex, src, rec, origin, 0.0f, col);
+					grl_fast2d_draw_texture_pro (*tex, src, rec, origin, 0.0f, col);
 				}
 			}
 			break;
