@@ -3,8 +3,8 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum performance benchmarks graylib
 #+created: 2026-10-25T16:00:00-04:00
-#+updated: 2026-10-27T23:30:00-04:00
-#+version: 1.3
+#+updated: 2026-11-01T06:10:00-04:00
+#+version: 1.4
 
 * Performance
 :PROPERTIES:
@@ -436,3 +436,29 @@ What it shows:
 - *vsync plus a frame cap that is not a divisor of the refresh rate* (the template's default 60 on a 144 Hz display) alternated two- and three-vblank frames, as the editor did before it capped at a divisor. Fixed: with vsync on, the standalone host now passes the template's =target-fps= through =lrg_game_template_pace_fps()=, which picks the fraction of the refresh rate (refresh / n, rounded up) nearest the request: 72 for 60 on 144 Hz, 55 on 165 Hz, unchanged on 60/120/240 Hz. Rounded up because a cap slightly faster than n vblanks still waits for the n-th, while a slower one misses it now and then. The game's fixed step (60 Hz) and render interpolation are unaffected; only the presented rate moves. Not yet seen on a high-refresh panel.
 
 Validate on other hardware: a discrete GPU or a driver with a deeper queue (where 2 should cut latency against the driver default), a 120/144 Hz panel with vsync (cap/refresh interaction), and full photon latency with a camera or an input-to-photon tool, which this probe does not see.
+
+** The hot getters pass
+:PROPERTIES:
+:CUSTOM_ID: hot-getters-pass
+:END:
+Allocating world-transform getters, the object pool's per-release lookup and per-object interface lookups in ECS drawing. Measured with =lrg-bench= on the real GPU (Xwayland, 1200 frames), base (v0.6.0, =c6371bc=) and new binaries interleaved, 5 rounds each (the =ecs-sprites= ranges include 3 earlier rounds), while three other benchmark and build jobs shared the machine (load average 12-15); the ranges are the honest result. The ECS scenarios are GPU-submission bound and swamped by that contention, so their work medians overlap; user-space instructions per frame (=perf stat -e instructions:u=, 3000- minus 500-frame runs, 2 rounds) are the stable column there.
+
+| Scenario      | Base: work median          | New: work median          | Instructions / frame       | What changed                                          |
+|---------------+----------------------------+---------------------------+----------------------------+-------------------------------------------------------|
+| =transforms=  | 0.37-1.08 ms               | 0.09-0.23 ms              |                            | out-parameter getter, epoch-validated world cache     |
+| =object-pool= | 0.37-0.54 ms               | 0.17-0.26 ms              | 2.34 M -> 1.36 M           | pool slots, member-only layout, inline arrays         |
+| =ecs-sprites= | 0.76-2.84 ms               | 0.84-3.11 ms              | 6.63-6.70 M -> 5.74-5.89 M | interface vtables cached per object, entity fast path |
+| =despawn=     | 1.11-2.80 ms               | 0.96-2.85 ms              | 6.75-7.22 M -> 5.89-6.06 M | same                                                  |
+| =ecs-moving=  | 1.59-2.34 ms               | 0.84-1.96 ms              | 6.61-6.72 M -> 5.84-6.28 M | same                                                  |
+
+In the =ecs-sprites= profile =g_type_interface_peek= went from 7.1% to nothing, and =grl_drawable_draw= / =grl_updatable_update= (3%) left the frame.
+
+What changed:
+- *Transforms* (=src/ecs/components/lrg-transform-component.c=). New non-allocating getters: =lrg_transform_component_get_world()= (position, rotation and scale in one call, every output optional), =get_world_xy()= and =get_world_scale_xy()=; the allocating ones stay. The world cache gained a global transform epoch, moved atomically by every change to any transform's local fields or parent: a node validated in the current epoch returns its cache without walking, and a walk stops at the first ancestor validated in it. The bench reads all 2048 nodes of 128 16-deep chains after rotating the roots; each read used to walk its whole chain (136 levels per chain), now it checks one parent. Each node also caches =cosf= / =sinf= of its own world rotation (bit-compared, so =-0= and every NaN give the old results) for all its children: siblings and move-only recomputes cost no trig (the bench rotates every root every frame, so its 2048 =sincosf= stay). The private struct is ordered so the epoch check and the world values share a cache line, and the getters' instance check compares against a type recorded at class init instead of calling =get_type()=. =lrg_transform_component_look_at()= no longer allocates. Results are bit-identical to the uncached fold (=/ecs/transform-component/world-out-params= checks every getter bit for bit under random edits, =world-epoch= and =world-threads= cover the epoch, including other threads moving the epoch under a reader).
+- *Object pool* (=src/template/lrg-object-pool.c=). =LrgPoolableInterface= gained optional =get_pool_slot()= / =set_pool_slot()= (two of its reserved pointers, so the struct size and ABI are unchanged): a type that keeps one =guint= is found on release by index, verified by bounds and identity, instead of a hash lookup. Types without them use a pointer table as before. Leases are gone: a member records its acquisition count and an iteration snapshot the count at entry, so "released or re-acquired since the snapshot" is one compare and nothing is reference counted per object; the snapshot is a =memcpy= of the active array walked backwards. Members dropped by =clear()= or =shrink_to_fit()= while an iteration runs are parked, objects and all, until the outermost iteration ends. The arrays are plain inline-pushed arrays reserved for the whole pool, replacing =GPtrArray= add/remove calls. Release also runs =reset()= / =set_active()= as if inside an iteration, which fixes a latent use-after-free when a =reset()= cleared the pool (=/object-pool/slots/clear-from-reset=). Double release, foreign objects, forged and stale slots, release/clear/shrink during iteration are tested for both kinds of type.
+- *ECS dispatch* (=src/ecs/lrg-world.c=, =src/ecs/lrg-game-object.c=). =lrg_world_update()= / =lrg_world_draw()= called =grl_updatable_update()= / =grl_drawable_draw()= per object, each a =g_type_interface_peek()=. The object now caches both vtables on first use (its final class is fixed once constructed), and when they still hold =GrlEntity='s own implementations, the entity-flag check and the vtable's check (the same flag) are one read and the draw/update goes straight to the class vfunc; any other implementation gets the full public sequence, entity flag first (=/ecs/world/dispatch=). =lrg_game_object_draw()= tests components for the final =LrgSpriteComponent= by exact type, skipping the type-system call for every other component.
+
+Remaining limits:
+- =lrg_sprite_component_draw()= makes four checked graylib calls per sprite (size, render pose, origin) and the world samples each z-index through a checked getter; about 6% of =ecs-sprites=. A combined graylib getter would remove most of it; left out to keep graylib untouched while its 2D vertex path is being rewritten.
+- The render getters (=get_render_transform()=) still fold the chain without the cache; nothing in the engine calls them per frame.
+- A single query of a deep node after a change elsewhere still walks its chain comparing versions; the epoch only helps when queries follow changes in bulk, as frames do.
