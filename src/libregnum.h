@@ -318,7 +318,10 @@
 #include "physics/lrg-physics-world.h"
 #include "physics/lrg-wall-set.h"
 #include "physics/lrg-collision-mesh.h"
+#include "physics/lrg-solid-geometry.h"
+#include "physics/lrg-collision-model.h"
 #include "physics/lrg-character-controller.h"
+#include "physics/lrg-dynamics.h"
 
 /* Debug module */
 #include "debug/lrg-profiler.h"

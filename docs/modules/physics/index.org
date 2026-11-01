@@ -15,8 +15,10 @@ The Physics module consists of three main components:
 - *LrgCollisionInfo*: Detailed information about collisions between bodies
 - *[[file:wall-set.org][LrgWallSet]]*: Static XZ box collision world for authoritative servers (swept square agents, wall sliding, line of sight, camera raycasts, interior volumes, grid broadphase)
 - *[[file:collision-mesh.org][LrgCollisionMesh]]*: 3D triangle collision in a binned-SAH BVH with transformed instances (ray casts, sphere and capsule sweeps without tunnelling, capsule overlap, floating origin)
+- *[[file:solid-geometry.org][LrgSolidGeometry]]*: closed sphere, box, sphyl, convex and aggregate volumes with inside/outside classification, containment, overlap and sphere sweeps (=LrgCollisionModel=, =LrgSolidWorld=)
 - *[[file:rope.org][LrgRope]]*: a verlet rope or chain between two anchored ends (gravity, fixed length, a floor), headless
 - *[[file:character-controller.org][LrgCharacterController]]*: capsule move-and-slide on an =LrgCollisionMesh= and terrain (wall sliding, steps, slope limit, ground snapping, moving platforms)
+- *[[file:dynamics.org][LrgDynamicsWorld]]*: bounded 3D spheres and planes (mass, box inertia, joint frames and limits, contacts, sleep, freeze, eviction, bone-pose sync). This does not change the 2D =LrgRigidBody= and it is not a ragdoll
 
 ** Core Concepts
 :PROPERTIES:
@@ -215,6 +217,8 @@ while (delta_accumulator >= fixed_time_step)
 - =/var/home/zach/Source/Projects/libregnum/src/physics/lrg-collision-info.h= - Collision data
 - =src/physics/lrg-wall-set.h= - Static XZ box collision (=LrgWallSet=, =LrgWall=)
 - =src/physics/lrg-collision-mesh.h= - Triangle BVH collision (=LrgCollisionMesh=, =LrgCollisionHit=)
+- =src/physics/lrg-solid-geometry.h= - Closed solids (=LrgSolidGeometry=)
+- =src/physics/lrg-collision-model.h= - Placed solids and generation-tagged slots (=LrgCollisionModel=, =LrgSolidWorld=)
 - =src/physics/lrg-character-controller.h= - Capsule move-and-slide (=LrgCharacterController=, =LrgCharacterMove=)
 
 ** See Also
@@ -226,4 +230,5 @@ while (delta_accumulator >= fixed_time_step)
 - [[./collision-info.md][LrgCollisionInfo Documentation]]
 - [[file:wall-set.org][LrgWallSet Documentation]]
 - [[file:collision-mesh.org][LrgCollisionMesh Documentation]]
+- [[file:solid-geometry.org][LrgSolidGeometry Documentation]]
 - [[file:character-controller.org][LrgCharacterController Documentation]]

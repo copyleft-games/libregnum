@@ -907,6 +907,216 @@ test_instance_tree_matches_linear (void)
     }
 }
 
+/* Analytical contacts use unequal box dimensions so a capsule/sphere or a
+ * single inflated radius cannot accidentally satisfy the same oracle. */
+static void
+test_sweep_box_faces(void)
+{
+	g_autoptr(GArray) vertices=g_array_new(FALSE,FALSE,sizeof(gfloat));
+	g_autoptr(LrgCollisionMesh) mesh=NULL;
+	g_autoptr(GError) error=NULL;
+	gfloat center[3]={0,3,0},extent[3]={.2f,.5f,.8f},motion[3]={0,-4,0};
+	LrgCollisionHit hit;
+	gdouble time;
+	push_floor(vertices,-20,-20,20,20,0); mesh=mesh_from(vertices,NULL);
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_no_error(error);
+	g_assert_cmpfloat_with_epsilon(time,.625,1e-12); g_assert_cmpfloat_with_epsilon(hit.normal[1],1,EPS);
+	g_assert_cmpfloat_with_epsilon(hit.position[1],0,EPS); g_assert_cmpfloat_with_epsilon(hit.distance,2.5,EPS);
+	center[1]=.5f; motion[0]=2; motion[1]=0;
+	g_assert_false(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_no_error(error);
+	motion[1]=1; g_assert_false(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error));
+	motion[1]=-1; g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat(time,==,0);
+	center[1]=.25f; motion[1]=0;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat(time,==,0);
+	/* Exact end-time contact is retained. */
+	center[1]=1.5f; motion[0]=0; motion[1]=-1;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat(time,==,1);
+}
+
+static void
+test_sweep_box_corners(void)
+{
+	g_autoptr(GArray) vertices=g_array_new(FALSE,FALSE,sizeof(gfloat));
+	g_autoptr(LrgCollisionMesh) mesh=NULL;
+	g_autoptr(GError) error=NULL;
+	gfloat center[3]={1.8f,1.8f,1},extent[3]={.2f,.2f,.25f},motion[3]={0,0,-2};
+	LrgCollisionHit hit;
+	gdouble time;
+	guint32 tag=77;
+	/* Overlapping triangle and box AABBs do not imply triangle intersection:
+	 * the slanted edge's cross axis must separate this entire sweep. */
+	push_tri(vertices,0,0,0,2,0,0,0,2,0); mesh=mesh_from(vertices,&tag);
+	g_assert_false(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_no_error(error);
+	center[0]=.5f; center[1]=.5f;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error));
+	g_assert_cmpfloat_with_epsilon(time,.375,1e-12); g_assert_cmpuint(hit.tag,==,77); g_assert_cmpuint(hit.triangle,==,0);
+	g_assert_cmpfloat_with_epsilon(hit.normal[2],1,EPS);
+	g_assert_cmpfloat_with_epsilon(hit.position[2],0,EPS);
+	/* Flat rectangles and lines retain the same plane crossing time. */
+	extent[2]=0;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat_with_epsilon(time,.5,1e-12);
+	extent[1]=0;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat_with_epsilon(time,.5,1e-12);
+	extent[0]=0;
+	g_assert_true(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error)); g_assert_cmpfloat_with_epsilon(time,.5,1e-6);
+}
+
+static void
+test_sweep_box_instances(void)
+{
+	g_autoptr(LrgCollisionMesh) shape=unit_box_mesh(),world=lrg_collision_mesh_new();
+	g_autoptr(GError) error=NULL;
+	gfloat matrix[16],center[3]={0,0,0},extent[3]={.25f,.4f,.75f},motion[3]={10,0,0};
+	LrgCollisionHit hit;
+	gdouble time;
+	/* Rotate ninety degrees, mirror and scale nonuniformly. Local Z now
+	 * spans world X, so the near plane is x=3 and box entry x=2.75. */
+	identity(matrix); matrix[0]=0; matrix[2]=2; matrix[5]=3; matrix[8]=4; matrix[10]=0; matrix[12]=5;
+	g_assert_cmpuint(lrg_collision_mesh_add_instance(world,shape,matrix,123),!=,LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_assert_true(lrg_collision_mesh_sweep_box(world,center,extent,motion,&hit,&time,&error)); g_assert_no_error(error);
+	g_assert_cmpfloat_with_epsilon(time,.275,1e-12); g_assert_cmpuint(hit.instance_id,==,123);
+	g_assert_cmpfloat_with_epsilon(hit.normal[0],-1,EPS); g_assert_cmpfloat_with_epsilon(hit.position[0],3,EPS);
+	/* A box less wide in Z passes the wall where a max-radius proxy would hit. */
+	center[2]=1.5f; extent[2]=.1f;
+	g_assert_false(lrg_collision_mesh_sweep_box(world,center,extent,motion,&hit,&time,&error));
+	/* An oblique, mirrored instance exposes a real edge contact. A local
+	 * axis-aligned proxy would report the face too early (.25858 vs .26287). */
+	{
+		gfloat c=(gfloat)sqrt(.5);
+		gdouble expected;
+		identity(matrix); matrix[0]=2*c; matrix[2]=2*c; matrix[5]=3; matrix[8]=4*c; matrix[10]=-4*c; matrix[12]=5; matrix[14]=3;
+		g_assert_true(lrg_collision_mesh_set_instance_transform(world,0,matrix));
+		center[2]=3; extent[2]=.75f;
+		expected=(5-(gdouble)matrix[0]*.5-(gdouble)matrix[8]*.5-.25)/10;
+		g_assert_true(lrg_collision_mesh_sweep_box(world,center,extent,motion,&hit,&time,&error)); g_assert_no_error(error);
+		g_assert_cmpfloat_with_epsilon(time,expected,1e-12); g_assert_cmpfloat_with_epsilon(hit.normal[0],-1,EPS);
+		g_assert_cmpfloat_with_epsilon(hit.position[0],5-3*c,EPS);
+	}
+}
+
+static void
+test_sweep_box_invalid(void)
+{
+	g_autoptr(LrgCollisionMesh) mesh=unit_box_mesh();
+	guint attempt;
+	for (attempt=0;attempt<6;attempt++) {
+		g_autoptr(GError) error=NULL;
+		gfloat center[3]={-3,0,0},extent[3]={.2f,.4f,.8f},motion[3]={6,0,0};
+		LrgCollisionHit hit,before;
+		gdouble time=-99;
+		memset(&hit,0x5a,sizeof(hit)); before=hit;
+		if (attempt==0) extent[0]=-1;
+		else if (attempt==1) extent[2]=NAN;
+		else if (attempt==2) center[1]=INFINITY;
+		else if (attempt==3) motion[2]=NAN;
+		else if (attempt==4) center[0]=1e20f;
+		else { center[1]=10; }
+		g_assert_false(lrg_collision_mesh_sweep_box(mesh,center,extent,motion,&hit,&time,&error));
+		if (attempt<5) g_assert_error(error,G_IO_ERROR,G_IO_ERROR_INVALID_ARGUMENT); else g_assert_no_error(error);
+		g_assert_cmpmem(&hit,sizeof(hit),&before,sizeof(before)); g_assert_cmpfloat(time,==,-99);
+	}
+}
+
+/* Nested instance ownership must be a DAG. Reject a back-edge before it can
+ * recurse through physical queries or keep an entire model/world alive. Shared
+ * geometry across distinct worlds is valid and must retain its normal lifetime. */
+static void
+test_instance_reference_cycles(void)
+{
+	g_autoptr(LrgCollisionMesh) world=lrg_collision_mesh_new(),other=lrg_collision_mesh_new();
+	g_autoptr(LrgCollisionMesh) middle=lrg_collision_mesh_new(),shape=unit_box_mesh();
+	LrgCollisionMesh *weak_middle=middle,*weak_shape=shape;
+	gfloat transform[16];
+	guint inner,first,second,rejected;
+	LrgCollisionHit hit;
+	g_object_add_weak_pointer(G_OBJECT(shape),(gpointer *)&weak_shape);
+	g_object_add_weak_pointer(G_OBJECT(middle),(gpointer *)&weak_middle);
+	identity(transform);
+	inner=lrg_collision_mesh_add_instance(middle,shape,transform,7);
+	g_assert_cmpuint(inner,!=,LRG_COLLISION_MESH_INVALID_INSTANCE);
+	transform[12]=3;
+	first=lrg_collision_mesh_add_instance(world,middle,transform,42);
+	g_assert_cmpuint(first,!=,LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_assert_true(lrg_collision_mesh_raycast(world,(gfloat[3]){0,0,0},(gfloat[3]){1,0,0},10,&hit));
+	g_assert_cmpfloat_with_epsilon(hit.distance,2.5f,EPS); g_assert_cmpuint(hit.instance_id,==,42);
+	identity(transform);
+	rejected=lrg_collision_mesh_add_instance(shape,world,transform,99);
+	/* Break an incorrectly admitted baseline cycle before asserting, so this
+	 * regression never deliberately queries a recursive ownership graph. */
+	if (rejected!=LRG_COLLISION_MESH_INVALID_INSTANCE)
+		g_assert_true(lrg_collision_mesh_remove_instance(shape,rejected));
+	g_assert_cmpuint(rejected,==,LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_assert_cmpuint(lrg_collision_mesh_get_instance_count(shape),==,0);
+	g_assert_cmpuint(lrg_collision_mesh_get_instance_count(middle),==,1);
+	g_assert_cmpuint(lrg_collision_mesh_get_instance_count(world),==,1);
+	g_assert_true(lrg_collision_mesh_raycast(world,(gfloat[3]){0,0,0},(gfloat[3]){1,0,0},10,&hit));
+	g_assert_cmpfloat_with_epsilon(hit.distance,2.5f,EPS);
+	transform[12]=6;
+	second=lrg_collision_mesh_add_instance(other,middle,transform,43);
+	g_assert_cmpuint(second,!=,LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_clear_object(&shape); g_clear_object(&middle);
+	g_assert_nonnull(weak_shape); g_assert_nonnull(weak_middle);
+	g_assert_true(lrg_collision_mesh_remove_instance(world,first));
+	g_assert_false(lrg_collision_mesh_remove_instance(world,first));
+	g_assert_false(lrg_collision_mesh_raycast(world,(gfloat[3]){0,0,0},(gfloat[3]){1,0,0},10,NULL));
+	g_assert_nonnull(weak_shape); g_assert_nonnull(weak_middle);
+	g_assert_true(lrg_collision_mesh_raycast(other,(gfloat[3]){0,0,0},(gfloat[3]){1,0,0},10,&hit));
+	g_assert_cmpfloat_with_epsilon(hit.distance,5.5f,EPS);
+	transform[12]=8;
+	g_assert_true(lrg_collision_mesh_set_instance_transform(other,second,transform));
+	g_assert_true(lrg_collision_mesh_raycast(other,(gfloat[3]){0,0,0},(gfloat[3]){1,0,0},10,&hit));
+	g_assert_cmpfloat_with_epsilon(hit.distance,7.5f,EPS);
+	g_assert_true(lrg_collision_mesh_remove_instance(other,second));
+	g_assert_null(weak_shape); g_assert_null(weak_middle);
+}
+
+/* Repeated descendants have exponentially many paths but only linear unique
+ * storage. Admission must visit each node once without mistaking sharing for
+ * a cycle. Queries on this deliberately high-path-count graph are not needed. */
+static void
+test_instance_shared_dag (void)
+{
+	g_autoptr(LrgCollisionMesh) leaf = lrg_collision_mesh_new ();
+	g_autoptr(LrgCollisionMesh) root = NULL;
+	LrgCollisionMesh *weak_leaf = leaf;
+	gfloat transform[16];
+	guint level;
+	guint rejected;
+
+	identity (transform);
+	g_object_add_weak_pointer (G_OBJECT (leaf), (gpointer *) &weak_leaf);
+	root = (LrgCollisionMesh *) g_object_ref (leaf);
+	for (level = 0; level < 32; level++) {
+		g_autoptr(LrgCollisionMesh) parent = lrg_collision_mesh_new ();
+
+		g_assert_cmpuint (lrg_collision_mesh_add_instance (parent, root, transform, 1),
+		                  !=, LRG_COLLISION_MESH_INVALID_INSTANCE);
+		g_assert_cmpuint (lrg_collision_mesh_add_instance (parent, root, transform, 2),
+		                  !=, LRG_COLLISION_MESH_INVALID_INSTANCE);
+		g_clear_object (&root);
+		root = (LrgCollisionMesh *) g_steal_pointer (&parent);
+	}
+	rejected = lrg_collision_mesh_add_instance (leaf, root, transform, 3);
+	if (rejected != LRG_COLLISION_MESH_INVALID_INSTANCE)
+		g_assert_true (lrg_collision_mesh_remove_instance (leaf, rejected));
+	g_assert_cmpuint (rejected, ==, LRG_COLLISION_MESH_INVALID_INSTANCE);
+	g_assert_cmpuint (lrg_collision_mesh_get_instance_count (leaf), ==, 0);
+	g_clear_object (&leaf);
+	g_assert_nonnull (weak_leaf);
+	g_clear_object (&root);
+	g_assert_null (weak_leaf);
+}
+
+/* A triangle shell is not a solid volume. This distinction blocks treating a
+ * tessellated primitive as an exact native convex/analytic collision backend. */
+static void
+test_triangle_surface_containment(void)
+{
+	g_autoptr(LrgCollisionMesh) shape=unit_box_mesh();
+	g_assert_false(lrg_collision_mesh_overlap_capsule(shape,(gfloat[3]){0,-.1f,0},.05f,.2f));
+	g_assert_true(lrg_collision_mesh_overlap_capsule(shape,(gfloat[3]){.48f,-.1f,0},.05f,.2f));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -923,6 +1133,10 @@ main (int   argc,
     g_test_add_func ("/collision-mesh/sweep/sphere-floor", test_sweep_sphere_floor);
     g_test_add_func ("/collision-mesh/sweep/tunnelling", test_sweep_tunnelling);
     g_test_add_func ("/collision-mesh/sweep/capsule-edge", test_sweep_capsule_edge);
+	g_test_add_func("/collision-mesh/sweep/box-faces",test_sweep_box_faces);
+	g_test_add_func("/collision-mesh/sweep/box-corners",test_sweep_box_corners);
+	g_test_add_func("/collision-mesh/sweep/box-instances",test_sweep_box_instances);
+	g_test_add_func("/collision-mesh/sweep/box-invalid",test_sweep_box_invalid);
     g_test_add_func ("/collision-mesh/overlap", test_overlap_capsule);
     g_test_add_func ("/collision-mesh/instances", test_instances);
     g_test_add_func ("/collision-mesh/instances/invalid", test_instance_invalid);
@@ -931,6 +1145,9 @@ main (int   argc,
     g_test_add_func ("/collision-mesh/instances/tree-matches-linear", test_instance_tree_matches_linear);
     g_test_add_func ("/collision-mesh/translate", test_translate);
     g_test_add_func ("/collision-mesh/query-speed", test_query_speed);
+	g_test_add_func("/collision-mesh/instances/reject-reference-cycles",test_instance_reference_cycles);
+	g_test_add_func ("/collision-mesh/instances/shared-dag", test_instance_shared_dag);
+	g_test_add_func("/collision-mesh/overlap/surfaces-not-solids",test_triangle_surface_containment);
 
     return g_test_run ();
 }

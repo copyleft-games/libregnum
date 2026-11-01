@@ -4,7 +4,7 @@ Last updated: 2026-10-29
 
 ## Recently Shipped
 
-### v0.4.0
+### v0.6.0
 
 - Stub gaps closed: scene serializer default file I/O; lightmap image
   load/save/upload; 2D lighting viewport culling, camera-derived viewport, a
@@ -40,7 +40,7 @@ Last updated: 2026-10-29
   `--record/--replay/--replay-headless/--seed`, golden-file tests and a
   GGPO-style `LrgRollbackSession` over loopback and UDP transports. The build
   now uses `-ffp-contract=off` for cross-architecture float agreement.
-- Audio robustness (graylib v0.4.0): game-thread audio calls are queued
+- Audio robustness (graylib v0.6.0): game-thread audio calls are queued
   lock-free for graylib's `grl-audio` thread with mirrored getters
   (`sfx-calls` per-call max 0.8-1.4 ms -> under 0.1 ms). The intermittent
   `InitAudioDevice` SIGSEGV (miniaudio 0.11.24 PulseAudio NULL sink info) is
@@ -217,7 +217,7 @@ been validated. Headless tests skip cases requiring a display or hardware.
 
 ## Remaining Concrete Gaps
 
-### Follow-ups from v0.4.0
+### Follow-ups from v0.6.0
 
 - 2D shadow geometry is not yet drawn in the lighting pass; casters only feed
   `calculate_shadows`.

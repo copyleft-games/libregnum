@@ -244,7 +244,10 @@ PUBLIC_HEADERS := \
 	src/physics/lrg-physics-world.h \
 	src/physics/lrg-wall-set.h \
 	src/physics/lrg-collision-mesh.h \
+	src/physics/lrg-solid-geometry.h \
+	src/physics/lrg-collision-model.h \
 	src/physics/lrg-character-controller.h \
+	src/physics/lrg-dynamics.h \
 	src/debug/lrg-profiler.h \
 	src/debug/lrg-debug-console.h \
 	src/debug/lrg-debug-overlay.h \
@@ -891,7 +894,10 @@ SOURCES := \
 	src/physics/lrg-physics-world.c \
 	src/physics/lrg-wall-set.c \
 	src/physics/lrg-collision-mesh.c \
+	src/physics/lrg-solid-geometry.c \
+	src/physics/lrg-collision-model.c \
 	src/physics/lrg-character-controller.c \
+	src/physics/lrg-dynamics.c \
 	src/debug/lrg-profiler.c \
 	src/debug/lrg-debug-console.c \
 	src/debug/lrg-debug-overlay.c \
@@ -1758,9 +1764,8 @@ $(LIBOUTDIR)/$(LIB_SHARED): $(OBJECTS) | $(LIBOUTDIR)
 	@$(CC) $(LIB_LDFLAGS) -o $(LIBOUTDIR)/$(LIB_SHARED) $(OBJECTS) $(ALL_LIBS)
 	@echo "Built: $(LIB_SHARED) and $(LIB_IMPORT)"
 else
-# The embedded archives are prerequisites here too (see the static library
-# above): without them a graylib-only change left the .so linked against
-# the old graylib.
+# The shared library embeds the same archives as the static library. Rebuilt
+# dependencies must trigger a relink even when their public C ABI is unchanged.
 $(LIBOUTDIR)/$(LIB_SHARED): $(OBJECTS) $(wildcard $(_STATIC_EMBED_DEPS)) | $(LIBOUTDIR)
 	$(call print_link,$(LIB_SHARED))
 	@$(CC) $(LIB_LDFLAGS) -o $(LIBOUTDIR)/$(LIB_SHARED_VERSION) $(OBJECTS) $(ALL_LIBS)

@@ -86,14 +86,15 @@ guint
 lrg_static_batch_get_max_chunk_vertices (LrgStaticBatch *self);
 
 /**
- * lrg_static_batch_add_mesh: (skip)
+ * lrg_static_batch_add_mesh:
  * @self: an #LrgStaticBatch
- * @positions: 3 floats per vertex
- * @normals: (nullable): 3 floats per vertex; %NULL gives +Y normals
- * @texcoords: (nullable): 2 floats per vertex; %NULL gives (0, 0)
- * @colors: (nullable): 4 bytes (RGBA) per vertex; %NULL gives white
+ * @positions: (array zero-terminated=0) (nullable): 3 floats per vertex;
+ *   %NULL only when @n_vertices is zero
+ * @normals: (array zero-terminated=0) (nullable): 3 floats per vertex; %NULL gives +Y normals
+ * @texcoords: (array zero-terminated=0) (nullable): 2 floats per vertex; %NULL gives (0, 0)
+ * @colors: (array zero-terminated=0) (nullable): 4 bytes (RGBA) per vertex; %NULL gives white
  * @n_vertices: vertex count
- * @indices: (nullable): triangle list indices; %NULL means the vertices
+ * @indices: (array length=n_indices) (nullable): triangle list indices; %NULL means the vertices
  *   already form a triangle list
  * @n_indices: index count (a multiple of 3), ignored when @indices is
  *   %NULL
@@ -109,6 +110,13 @@ lrg_static_batch_get_max_chunk_vertices (LrgStaticBatch *self);
  * shared vertices duplicated across chunks. Mirroring transforms
  * (negative determinant) flip the triangle winding so front faces stay
  * front faces.
+ *
+ * All input arrays are borrowed for this call and copied into the batch.
+ * @n_vertices is a vertex count, not a scalar component count: callers must
+ * provide 3 * @n_vertices positions/normals, 2 * @n_vertices texture
+ * coordinates and 4 * @n_vertices color bytes when those arrays are present.
+ * Introspection cannot encode these multiplicative lengths; bindings must
+ * enforce these cardinalities before calling this method.
  *
  * Errors: %G_IO_ERROR_INVALID_ARGUMENT for a layer out of range, index
  * counts that are not multiples of 3, out-of-range indices, non-finite
@@ -356,6 +364,59 @@ const guint16 *
 lrg_static_batch_get_chunk_indices (LrgStaticBatch *self,
                                     guint           chunk,
                                     guint          *n_indices);
+
+/**
+ * lrg_static_batch_set_chunk_texcoords:
+ * @self: a static batch
+ * @chunk_index: existing chunk index
+ * @channel: auxiliary coordinate channel 1..7 (primary channel zero is unchanged)
+ * @coordinates: (array length=n_coordinates): interleaved finite UV pairs
+ * @n_coordinates: number of float components, exactly twice the chunk vertex count
+ * @error: (nullable): return location for a recoverable validation error
+ *
+ * Copies an independent auxiliary UV stream. Set it after mesh merging and
+ * before upload. GPU attribute locations are 5 for channel 1 and 8..13 for
+ * channels 2..7; shaders must use that declared interface. Changing a stream
+ * invalidates the upload while preserving all CPU geometry and other streams.
+ * Growing the chunk requires replacing its streams before the next upload.
+ * Auxiliary uploads require a vertex-array-capable graphics context.
+ * The caller retains @coordinates and may release it after this call.
+ *
+ * Returns: whether the complete stream was accepted; unchanged on failure
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_static_batch_set_chunk_texcoords(
+	LrgStaticBatch *self,
+	guint chunk_index,
+	guint channel,
+	const gfloat *coordinates,
+	guint n_coordinates,
+	GError **error
+);
+
+/**
+ * lrg_static_batch_get_chunk_texcoords:
+ * @self: a static batch
+ * @chunk_index: chunk index
+ * @channel: coordinate channel 0..7
+ * @n_coordinates: (out): float component count
+ *
+ * The returned view remains valid until this channel is replaced, the batch
+ * is cleared, or the batch is finalized. Primary-channel views may also be
+ * invalidated by merging more geometry. GPU unload does not invalidate views.
+ * Missing chunks/channels return %NULL and set @n_coordinates to zero.
+ *
+ * Returns: (transfer none) (array length=n_coordinates) (nullable): retained CPU stream
+ */
+LRG_AVAILABLE_IN_ALL
+const gfloat *
+lrg_static_batch_get_chunk_texcoords(
+	LrgStaticBatch *self,
+	guint chunk_index,
+	guint channel,
+	guint *n_coordinates
+);
 
 /**
  * lrg_static_batch_set_material_texture:

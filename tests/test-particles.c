@@ -386,6 +386,51 @@ test_system_respects_max_particles (void)
     g_assert_cmpuint (lrg_particle_system_emit (system, 50), ==, 50);
 }
 
+/* Lifetime expiry clears the particle flag before its owner releases the
+ * pool lease. Direct release, bulk reclamation and pool-driven updates must
+ * all return that slot exactly once, including already-killed particles. */
+static void
+test_pool_expired_leases(void)
+{
+	g_autoptr(LrgParticlePool) pool=lrg_particle_pool_new_with_policy(4,LRG_POOL_GROW_NONE,4);
+	LrgParticle *first,*second;
+	first=lrg_particle_pool_acquire(pool);
+	lrg_particle_spawn(first,0,0,0,.1f);
+	g_assert_false(lrg_particle_update(first,.2f));
+	lrg_particle_pool_release(pool,first); lrg_particle_pool_release(pool,first);
+	g_assert_cmpuint(lrg_particle_pool_get_free_count(pool),==,4);
+	first=lrg_particle_pool_acquire(pool); second=lrg_particle_pool_acquire(pool);
+	g_assert_true(first!=second);
+	lrg_particle_spawn(first,0,0,0,.1f); lrg_particle_spawn(second,0,0,0,.1f);
+	g_assert_false(lrg_particle_update(second,.2f));
+	g_assert_cmpuint(lrg_particle_pool_release_dead(pool),==,1);
+	g_assert_cmpuint(lrg_particle_pool_release_dead(pool),==,0);
+	lrg_particle_pool_release(pool,second);
+	g_assert_cmpuint(lrg_particle_pool_update_all(pool,.2f),==,0);
+	g_assert_cmpuint(lrg_particle_pool_get_free_count(pool),==,4);
+	g_assert_cmpuint(lrg_particle_pool_get_alive_count(pool),==,0);
+	first=lrg_particle_pool_acquire(pool); lrg_particle_kill(first);
+	g_assert_cmpuint(lrg_particle_pool_update_all(pool,0),==,0);
+	g_assert_cmpuint(lrg_particle_pool_get_free_count(pool),==,4);
+}
+
+static void
+test_system_reuses_expired_cohorts(void)
+{
+	g_autoptr(LrgParticleSystem) system=lrg_particle_system_new(7);
+	g_autoptr(LrgParticleEmitter) emitter=lrg_particle_emitter_new();
+	guint i;
+	lrg_particle_emitter_set_emission_rate(emitter,0);
+	lrg_particle_emitter_set_initial_lifetime(emitter,.1f,.1f);
+	lrg_particle_system_add_emitter(system,emitter);
+	lrg_particle_system_set_loop(system,TRUE); lrg_particle_system_play(system);
+	for (i=0;i<8;i++) {
+		g_assert_cmpuint(lrg_particle_system_emit(system,8),==,7);
+		lrg_particle_system_update(system,.2f);
+		g_assert_cmpuint(lrg_particle_system_get_active_count(system),==,0);
+	}
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -426,6 +471,8 @@ main (int   argc,
 
     g_test_add_func ("/particles/system/respects-max-particles",
                      test_system_respects_max_particles);
+	g_test_add_func("/particles/pool/expired-leases",test_pool_expired_leases);
+	g_test_add_func("/particles/system/expired-cohorts",test_system_reuses_expired_cohorts);
 
     return g_test_run ();
 }

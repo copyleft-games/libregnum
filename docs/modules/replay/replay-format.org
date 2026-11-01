@@ -57,7 +57,7 @@ A replay file is a YAML 1.2 document (the header), the document end marker =...=
 format: lrg-replay
 version: 1
 body-encoding: delta-v1
-engine-version: "0.4.0"
+engine-version: "0.6.0"
 seed: 2026
 fixed-step: 0.016666666666666666
 players: 2

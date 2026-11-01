@@ -97,6 +97,8 @@ TEST_SOURCES := \
 	test-collection.c \
 	test-wall-set.c \
 	test-collision-mesh.c \
+	test-solid-geometry.c \
+	test-dynamics.c \
 	test-character-controller.c \
 	test-asset-model-cache.c \
 	test-gltf-info.c \
