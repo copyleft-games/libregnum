@@ -9,7 +9,7 @@ Organic caves from a cellular automaton. Header: =procgen/lrg-procgen-caves.h=. 
 :CUSTOM_ID: algorithm
 :END:
 1. *Noise.* Every interior cell starts as wall with probability =fill-percent= (an integer draw below 100); the border is wall.
-2. *Automaton.* =iterations= synchronous steps over the Moore neighbourhood (8 cells): a wall stays wall with at least =survival-limit= wall neighbours, a floor becomes wall with at least =birth-limit=. The defaults (5 / 4, 45%) are the classic "4-5 rule" that smooths noise into rounded caves. The border stays wall.
+2. *Automaton.* =iterations= synchronous steps over the Moore neighbourhood (8 cells): a wall stays wall with at least =survival-limit= wall neighbours, a floor becomes wall with at least =birth-limit=. The defaults (5 / 4, 45%) are the classic "4-5 rule" that smooths noise into rounded caves. The border stays wall. Each step counts walls from per-column sums of the 3 x 3 window (above, the cell, below), reads the threshold from a two-entry table instead of branching on the cell, writes the interior only (the border is wall in both buffers) and swaps the two buffers instead of copying.
 3. *Flood fill and culling.* Regions (4-connected floor) smaller than =min-region-size= are filled in.
 4. *Joining.* With =keep-largest= only the largest cave survives; otherwise, with =connect=, =lrg_procgen_grid_connect_regions()= tunnels (as =floor=) from the growing connected set to the nearest other cave until one region remains (see [[file:grid.org][grid.org]]).
 

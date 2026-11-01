@@ -75,6 +75,8 @@ Each tile is cleared on its own (a scissored clear), so a tile keeps what it hol
 
 *Casters with their own program.*  =get_pass_state()= gives the open pass's mode (0 cascade, 1 cube face), the cube's light position and radius and the way a cascade's light travels, so a caster whose geometry is built on the GPU (=lrg_billboard_batch_draw_shadow()=: upright quads facing the light, alpha cut out) writes the caster shader's depth or distance itself.
 
+*Terrain casters.*  =lrg_terrain_draw()= with the caster shader costs, per pass, a culling test per 4 x 4 block of chunks (and per chunk only in blocks that can be seen), one program bind and per visible chunk three matrix uniforms and one base-vertex draw per mesh; no VAO switches inside a page.  The caster shader only reads the position, and the driver fetches only the attributes a program reads, so the terrain's shared layout needs no separate depth-only vertex format.  Pixel identity of the atlas with the per-mesh =DrawMesh()= path is tested in =tests/test-terrain-render.c= ([[file:../graphics/terrain.org::#gpu-layout][terrain GPU layout]]).
+
 *** Lookups
 :PROPERTIES:
 :CUSTOM_ID: lookups
