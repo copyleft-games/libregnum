@@ -12,6 +12,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_ECS
 
 #include "lrg-world.h"
+#include "lrg-game-object-private.h"
 #include "../lrg-log.h"
 
 /* ==========================================================================
@@ -545,11 +546,9 @@ lrg_world_update (LrgWorld *self,
     /* Update all active objects */
     for (l = self->objects; l != NULL; l = l->next)
     {
-        LrgGameObject *object = LRG_GAME_OBJECT (l->data);
-        if (grl_entity_get_active (GRL_ENTITY (object)))
-        {
-            grl_updatable_update (GRL_UPDATABLE (object), delta);
-        }
+        /* grl_entity_get_active() + grl_updatable_update() through the
+         * object's cached vtable (see lrg-game-object-private.h) */
+        _lrg_game_object_world_update (LRG_GAME_OBJECT (l->data), delta);
     }
 }
 
@@ -581,12 +580,9 @@ lrg_world_draw (LrgWorld *self)
     entries = (const DrawEntry *)(gconstpointer)self->draw_order->data;
     for (i = 0; i < self->draw_order->len; i++)
     {
-        GrlEntity *entity = GRL_ENTITY (entries[i].object);
-
-        if (grl_entity_get_visible (entity))
-        {
-            grl_drawable_draw (GRL_DRAWABLE (entity));
-        }
+        /* grl_entity_get_visible() + grl_drawable_draw() through the
+         * object's cached vtable (see lrg-game-object-private.h) */
+        _lrg_game_object_world_draw (entries[i].object);
     }
 }
 

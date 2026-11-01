@@ -223,7 +223,26 @@ Gets the world-space scale (combining all parent scales).
 
 Returns: (transfer full) A new =GrlVector2= with the world scale
 
-World values are cached per transform and validated by version, so ancestor changes are always reflected: every change to a transform's local fields or parent bumps its local version, every recompute of its world transform bumps its world version, and a cached world transform is used only while its own local version and its parent's world version are the ones it was computed from. A query walks up the chain comparing versions and recomputes (one =sincosf= per level) only the levels that changed, so reading every node of a deep hierarchy costs O(nodes) trig instead of O(nodes x depth); the results are exactly those of the uncached fold. Children are never walked on a change, and nothing is invalidated eagerly. Before v0.3.1 each getter re-folded the chain (O(depth)), and earlier versions recursed separately for position, rotation and scale at every level (O(depth^2)) and allocated a vector per level. =lrg_transform_component_sync_to_entity()= reads all three at once. Getters write the cache, so one transform hierarchy must not be read from several threads at the same time (as with any GObject that is not documented thread-safe).
+#+begin_src C
+void lrg_transform_component_get_world (LrgTransformComponent *self,
+                                        gfloat *x, gfloat *y,
+                                        gfloat *rotation,
+                                        gfloat *scale_x, gfloat *scale_y);
+void lrg_transform_component_get_world_xy (LrgTransformComponent *self,
+                                           gfloat *x, gfloat *y);
+void lrg_transform_component_get_world_scale_xy (LrgTransformComponent *self,
+                                                 gfloat *scale_x, gfloat *scale_y);
+#+end_src
+
+The same values without allocating (every output is optional; =NULL= skips it). =get_world()= returns the whole world transform in one call. Use these in anything that runs every frame: the allocating getters cost a =malloc= and a =free= per vector on top of the query.
+
+#+begin_src C
+gfloat x, y, rotation;
+
+lrg_transform_component_get_world (transform, &x, &y, &rotation, NULL, NULL);
+#+end_src
+
+World values are cached per transform and validated by version, so ancestor changes are always reflected: every change to a transform's local fields or parent bumps its local version, every recompute of its world transform bumps its world version, and a cached world transform is used only while its own local version and its parent's world version are the ones it was computed from. A query walks up the chain comparing versions and recomputes only the levels that changed, so reading every node of a deep hierarchy costs O(nodes) trig instead of O(nodes x depth); the results are exactly those of the uncached fold. Each node also keeps the =cosf= / =sinf= of its own world rotation, computed once per distinct rotation (compared bit for bit) and shared by all its children, so siblings, and recomputes that only moved or scaled something, cost no trig. On top of the versions, a global transform epoch moves (atomically) on every change to any transform; a node validated in the current epoch is returned without walking at all, and a walk stops at the first ancestor validated in it. So a frame that moves things and then reads every node touches each parent link once, instead of walking every chain once per descendant (a 16-deep chain read node by node used to walk 136 levels). Other threads moving their own hierarchies only cost a walk, never a stale value. Children are never walked on a change, and nothing is invalidated eagerly. Before v0.3.1 each getter re-folded the chain (O(depth)), and earlier versions recursed separately for position, rotation and scale at every level (O(depth^2)) and allocated a vector per level. =lrg_transform_component_sync_to_entity()= reads all three at once. Getters write the cache, so one transform hierarchy must not be read from several threads at the same time (as with any GObject that is not documented thread-safe).
 
 *** Parent/Child Hierarchy
 :PROPERTIES:
@@ -414,7 +433,7 @@ lrg_transform_component_set_local_position_xy (body, 200.0f, 150.0f);
 :PROPERTIES:
 :CUSTOM_ID: deep-hierarchies
 :END:
-Hierarchies can be arbitrarily deep. World calculations walk up the parent chain, so performance scales with depth. Keep hierarchies reasonably shallow (< 10 levels) for best performance.
+Hierarchies can be arbitrarily deep. A world query after a change walks up the parent chain to the first level validated since the change (see the world transform cache above), so reading a whole hierarchy after a frame's moves is O(nodes); a single query of a deep node after a change elsewhere still walks its whole chain comparing versions. Read world transforms with the non-allocating getters in per-frame code.
 
 *** Circular References
 :PROPERTIES:
