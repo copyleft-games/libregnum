@@ -2775,12 +2775,231 @@ test_event_bus_mask_changes_during_emit (void)
     g_assert_cmpuint (priorities->len, ==, 1);
     g_assert_cmpint (g_array_index (priorities, gint, 0), ==, 10);
 
-    /* The next emission sees the new masks. */
+    /* Masks are cached per registration: the narrowed mask is honoured
+     * at once (the live mask is checked at each turn), the widened one
+     * only after a refresh. */
     first->action = NULL;
+    g_array_set_size (priorities, 0);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 1);
+    g_assert_cmpint (g_array_index (priorities, gint, 0), ==, 10);
+
+    /* The next emission after a refresh sees the new masks. */
+    lrg_event_bus_refresh_listener (bus, LRG_EVENT_LISTENER (late));
     g_array_set_size (priorities, 0);
     g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
     g_assert_cmpuint (priorities->len, ==, 2);
     g_assert_cmpint (g_array_index (priorities, gint, 1), ==, 1);
+}
+
+/* A listener configured after registering: its mask is read when the
+ * next emission starts, not at registration. */
+static void
+test_event_bus_mask_set_after_register (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    g_autoptr(TestEventListener) listener = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    TestEventDispatch dispatch = { bus, priorities };
+
+    listener->mask = 0;
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listener));
+    listener->mask = lrg_card_event_get_event_type_mask (LRG_CARD_EVENT_TURN_START);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+    g_assert_cmpuint (priorities->len, ==, 1);
+}
+
+/* Builds listeners A..E with the given masks, all at priority 0,
+ * recording into @order. */
+static void
+make_mask_listeners (LrgEventBus       *bus,
+                     TestEventListener **listeners,
+                     const guint64      *masks,
+                     guint               n,
+                     GPtrArray          *order)
+{
+    guint i;
+
+    for (i = 0; i < n; i++)
+    {
+        listeners[i] = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+        listeners[i]->mask = masks[i];
+        listeners[i]->action = record_listener;
+        listeners[i]->action_data = order;
+        lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listeners[i]));
+    }
+}
+
+static void
+assert_order (GPtrArray          *order,
+              TestEventListener **expected,
+              guint               n)
+{
+    guint i;
+
+    g_assert_cmpuint (order->len, ==, n);
+    for (i = 0; i < n; i++)
+        g_assert_true (order->pdata[i] == expected[i]);
+    g_ptr_array_set_size (order, 0);
+}
+
+/* Refreshing keeps a registration's place: listeners of different
+ * masks still run in registration order at equal priority, and each
+ * event type reaches exactly its listeners. Duplicate registrations are
+ * refreshed together; refreshing an unregistered listener does nothing. */
+static void
+test_event_bus_refresh_order (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) start = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(LrgCardEvent) end = lrg_card_event_new (LRG_CARD_EVENT_TURN_END);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    g_autoptr(GPtrArray) order = g_ptr_array_new ();
+    g_autoptr(TestEventListener) stranger = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    TestEventDispatch dispatch = { bus, priorities };
+    guint64 s = lrg_card_event_get_event_type_mask (LRG_CARD_EVENT_TURN_START);
+    guint64 e = lrg_card_event_get_event_type_mask (LRG_CARD_EVENT_TURN_END);
+    const guint64 masks[5] = { s, e, s | e, 0, e };
+    TestEventListener *l[5];
+    guint i;
+
+    make_mask_listeners (bus, l, masks, 5, order);
+
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (start), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[0], l[2] }, 2);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (end), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[1], l[2], l[4] }, 3);
+
+    /* B and D widen to both types; only refreshed listeners see it */
+    l[1]->mask = s | e;
+    l[3]->mask = s;
+    lrg_event_bus_refresh_listener (bus, LRG_EVENT_LISTENER (l[3]));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (start), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[0], l[2], l[3] }, 3);
+
+    lrg_event_bus_refresh_listeners (bus);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (start), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[0], l[1], l[2], l[3] }, 4);
+
+    /* A second registration of A, at the end, widened with the first */
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (l[0]));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (end), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[1], l[2], l[4] }, 3);
+    l[0]->mask = s | e;
+    lrg_event_bus_refresh_listener (bus, LRG_EVENT_LISTENER (l[0]));
+    lrg_event_bus_refresh_listener (bus, LRG_EVENT_LISTENER (stranger));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (end), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[0], l[1], l[2], l[4], l[0] }, 5);
+
+    /* Narrowing needs no refresh: the live mask is checked at the turn */
+    l[2]->mask = 0;
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (end), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[0], l[1], l[4], l[0] }, 4);
+
+    lrg_event_bus_clear (bus);
+    for (i = 0; i < 5; i++)
+        g_object_unref (l[i]);
+}
+
+typedef struct
+{
+    TestEventDispatch  *dispatch;
+    TestEventListener **listeners;
+    LrgCardEvent       *nested;
+    GPtrArray          *outer_order;
+    GPtrArray          *nested_order;
+} MutateDuringEmit;
+
+/* Run by the first listener: unregisters C, widens E and refreshes it,
+ * registers F, then emits a nested event that must see all of it. */
+static void
+mutate_during_emit (TestEventListener *self,
+                    LrgEvent         *event,
+                    gpointer          data)
+{
+    MutateDuringEmit *mutate = data;
+    TestEventListener **l = mutate->listeners;
+    GPtrArray *outer_order = mutate->outer_order;
+    guint i;
+
+    self->action = record_listener;
+    self->action_data = outer_order;
+    g_ptr_array_add (outer_order, self);
+
+    lrg_event_bus_unregister (mutate->dispatch->bus, LRG_EVENT_LISTENER (l[2]));
+    l[4]->mask = G_MAXUINT64;
+    lrg_event_bus_refresh_listener (mutate->dispatch->bus, LRG_EVENT_LISTENER (l[4]));
+    lrg_event_bus_register (mutate->dispatch->bus, LRG_EVENT_LISTENER (l[5]));
+
+    /* The nested emission records into its own list */
+    for (i = 0; i < 6; i++)
+        l[i]->action_data = mutate->nested_order;
+    g_assert_true (lrg_event_bus_emit (mutate->dispatch->bus, LRG_EVENT (mutate->nested),
+                                       mutate->dispatch));
+    for (i = 0; i < 6; i++)
+        l[i]->action_data = outer_order;
+}
+
+/* Unregistering, registering and refreshing during an emission: the
+ * running emission keeps its snapshot (minus removed listeners), nested
+ * and later emissions see the new registrations and masks, and the mask
+ * cache stays aligned with the registrations. */
+static void
+test_event_bus_mutation_during_emit (void)
+{
+    g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
+    g_autoptr(LrgCardEvent) start = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
+    g_autoptr(LrgCardEvent) end = lrg_card_event_new (LRG_CARD_EVENT_TURN_END);
+    g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
+    g_autoptr(GPtrArray) order = g_ptr_array_new ();
+    g_autoptr(GPtrArray) nested_order = g_ptr_array_new ();
+    TestEventDispatch dispatch = { bus, priorities };
+    guint64 s = lrg_card_event_get_event_type_mask (LRG_CARD_EVENT_TURN_START);
+    guint64 e = lrg_card_event_get_event_type_mask (LRG_CARD_EVENT_TURN_END);
+    const guint64 masks[5] = { s, s, s | e, e, e };
+    TestEventListener *l[6];
+    MutateDuringEmit mutate = { &dispatch, l, end, order, nested_order };
+    guint i;
+
+    make_mask_listeners (bus, l, masks, 5, order);
+    l[5] = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
+    l[5]->mask = s;
+    l[5]->action = record_listener;
+    l[0]->action = mutate_during_emit;
+    l[0]->action_data = &mutate;
+
+    /* Outer: A then B; C was removed before its turn; E was not in the
+     * snapshot; F registered during the emission */
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (start), &dispatch));
+    l[5]->action_data = order;
+    assert_order (order, (TestEventListener *[]) { l[0], l[1] }, 2);
+
+    /* Nested TURN_END: D, then the refreshed E, not the removed C */
+    assert_order (nested_order, (TestEventListener *[]) { l[3], l[4] }, 2);
+
+    g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 5);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (start), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[0], l[1], l[4], l[5] }, 4);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (end), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[3], l[4] }, 2);
+
+    /* Removing by ID keeps the cache aligned for what is left */
+    lrg_event_bus_unregister (bus, LRG_EVENT_LISTENER (l[1]));
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (l[3]));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (end), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[3], l[4], l[3] }, 3);
+    lrg_event_bus_unregister_by_id (bus, "test-listener");
+    g_assert_cmpuint (lrg_event_bus_get_listener_count (bus), ==, 0);
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (end), &dispatch));
+    g_assert_cmpuint (order->len, ==, 0);
+    lrg_event_bus_register (bus, LRG_EVENT_LISTENER (l[1]));
+    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (start), &dispatch));
+    assert_order (order, (TestEventListener *[]) { l[1] }, 1);
+
+    lrg_event_bus_clear (bus);
+    for (i = 0; i < 6; i++)
+        g_object_unref (l[i]);
 }
 
 static void
@@ -7020,6 +7239,9 @@ main (int   argc,
     g_test_add_func ("/deckbuilder/event-bus/live-priorities", test_event_bus_live_priorities);
     g_test_add_func ("/deckbuilder/event-bus/mask-filter-order", test_event_bus_mask_filter_order);
     g_test_add_func ("/deckbuilder/event-bus/mask-changes-during-emit", test_event_bus_mask_changes_during_emit);
+    g_test_add_func ("/deckbuilder/event-bus/mask-set-after-register", test_event_bus_mask_set_after_register);
+    g_test_add_func ("/deckbuilder/event-bus/refresh-order", test_event_bus_refresh_order);
+    g_test_add_func ("/deckbuilder/event-bus/mutation-during-emit", test_event_bus_mutation_during_emit);
     g_test_add_func ("/deckbuilder/event-bus/nested-priorities", test_event_bus_nested_priorities);
     g_test_add_data_func ("/deckbuilder/event-bus/reregister", GINT_TO_POINTER (FALSE), test_event_bus_reregister);
     g_test_add_data_func ("/deckbuilder/event-bus/nested-reregister", GINT_TO_POINTER (TRUE), test_event_bus_reregister);

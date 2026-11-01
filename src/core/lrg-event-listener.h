@@ -83,6 +83,11 @@ struct _LrgEventListenerInterface
      * Each bit corresponds to an event type from #LrgEvent::get_type_mask.
      * Use bitwise OR to subscribe to multiple event types.
      *
+     * #LrgEventBus caches the mask per registration. When the mask
+     * gains bits after the listener's first emission, call
+     * lrg_event_bus_refresh_listener() on each bus it is registered
+     * with; see lrg_event_bus_emit().
+     *
      * Returns: the event type bitmask
      *
      * Since: 1.0

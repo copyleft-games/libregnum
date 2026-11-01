@@ -243,12 +243,7 @@ if (lrg_event_is_cancelled (LRG_EVENT (event)))
 :PROPERTIES:
 :CUSTOM_ID: dispatch-lifetime
 :END:
-Each emission captures the current registrations whose event mask matches the
-event, and their priorities, before notifying listeners. Higher priorities run
-first; ties follow registration order. A priority or mask changed by a callback
-affects later emissions, including a nested emission, while the outer emission
-retains its captured set and order. A captured listener whose mask stops
-matching before its turn is still skipped.
+Each emission captures the current registrations whose cached event mask (see [[#mask-cache][Mask cache and refresh]]) matches the event, and their priorities, before notifying listeners. Higher priorities run first; ties follow registration order. A priority changed by a callback, or a mask change the callback reports with =lrg_event_bus_refresh_listener()=, affects later emissions, including a nested emission, while the outer emission retains its captured set and order. A captured listener whose mask stops matching before its turn is still skipped: its live mask is checked at its turn.
 
 Each call to =register()= creates a separate registration. Registering an object
 twice delivers twice. =unregister()= removes its oldest remaining registration;
@@ -269,15 +264,32 @@ The optional context pointer remains caller-owned and must stay valid through
 dispatch. This is synchronous dispatch, not a thread-safe queue: use one thread
 or external serialization, and keep listener accessors free of bus mutations.
 
-An emission reads every registration's mask once (through the listener's
-vtable, cached at registration) and captures only the M matching ones: O(N + M
-log M), with no allocation for up to 32 matches. Matching listeners are already
+An emission scans the bus's array of cached masks (no listener code runs for a registration that does not match) and captures only the M matching ones: O(N + M log M), with no allocation for up to 32 matches. Matching listeners are already
 in registration order, so equal or non-increasing priorities sort in O(M).
 Checking whether a registration was removed is O(1), including after callback
 mutations. Priorities, the per-turn mask check and =on_event= go through the
 same cached listener vtable, and the event's vtable is looked up once per
 emission for the cancellation checks; the public wrappers (and their
 criticals) are only used for an implementation that leaves a vfunc =NULL=.
+
+*** Mask cache and refresh
+:PROPERTIES:
+:CUSTOM_ID: mask-cache
+:END:
+The bus caches each registration's event mask instead of asking every listener on every emission. =lrg_event_listener_get_event_mask()= stays the source of truth; the cache decides only which registrations an emission visits:
+
+- A registration's mask is read at the start of the first emission after =register()=, so a listener configured after registering (but before that emission) is seen as configured.
+- After that the bus does not read the mask again until it is told the mask changed: =lrg_event_bus_refresh_listener (bus, listener)= (every registration of that listener) or =lrg_event_bus_refresh_listeners (bus)= (all). The masks are read again at the start of the next emission.
+- At its turn each captured listener's live mask is checked, so a mask that loses bits takes effect without a refresh (the bus still visits the listener until refreshed). A mask that gains bits needs a refresh: until then the listener does not receive the new event types.
+- A refresh from a callback applies from the next emission, nested ones included; the running emission keeps its captured set. Refreshing an unregistered listener does nothing.
+
+#+begin_src C
+/* The listener now also wants heal events */
+listener->mask |= EVENT_HEAL;
+lrg_event_bus_refresh_listener (bus, LRG_EVENT_LISTENER (listener));
+#+end_src
+
+Before v0.7 every emission called every registration's =get_event_mask()=, so a widened mask applied without a refresh; code that widens masks at runtime must add the call (see [[file:../../performance.org::#tween-event-pass][the tween and event bus pass]]).
 
 To preserve an original event, copy it using the concrete event type's copy
 function and emit that copy. There is no generic =lrg_event_bus_emit_copy()= API.
@@ -439,14 +451,16 @@ lrg_event_bus_register (bus, LRG_EVENT_LISTENER (trigger));
 :PROPERTIES:
 :CUSTOM_ID: lrgeventbus
 :END:
-| Function                                       | Description          |
-|------------------------------------------------+----------------------|
-| =lrg_event_bus_new()=                          | Create new event bus |
-| =lrg_event_bus_register(bus, listener)=        | Add listener         |
-| =lrg_event_bus_unregister(bus, listener)=      | Remove listener      |
-| =lrg_event_bus_emit(bus, event, context)=      | Dispatch event       |
-| =lrg_event_bus_get_listener_count(bus)=        | Number of listeners  |
-| =lrg_event_bus_clear(bus)=                     | Remove all listeners |
+| Function                                        | Description                                    |
+|-------------------------------------------------+------------------------------------------------|
+| =lrg_event_bus_new()=                           | Create new event bus                           |
+| =lrg_event_bus_register(bus, listener)=         | Add listener                                   |
+| =lrg_event_bus_unregister(bus, listener)=       | Remove listener                                |
+| =lrg_event_bus_emit(bus, event, context)=       | Dispatch event                                 |
+| =lrg_event_bus_get_listener_count(bus)=         | Number of listeners                            |
+| =lrg_event_bus_clear(bus)=                      | Remove all listeners                           |
+| =lrg_event_bus_refresh_listener(bus, listener)= | Re-read a listener's mask at the next emission |
+| =lrg_event_bus_refresh_listeners(bus)=          | Re-read all masks at the next emission         |
 
 ** Complete Example
 :PROPERTIES:

@@ -123,6 +123,44 @@ LRG_AVAILABLE_IN_ALL
 void lrg_event_bus_clear (LrgEventBus *self);
 
 /**
+ * lrg_event_bus_refresh_listener:
+ * @self: an #LrgEventBus
+ * @listener: the listener whose event mask changed
+ *
+ * Tells the bus that @listener's event mask changed. The bus caches
+ * each registration's mask (see lrg_event_bus_emit()) and reads it
+ * again, for every registration of @listener, at the start of the next
+ * emission.
+ *
+ * Call this after a listener's lrg_event_listener_get_event_mask()
+ * starts returning bits it did not return before; until then the
+ * listener does not receive events of the new types. A mask that only
+ * loses bits needs no refresh (each listener's live mask is checked at
+ * its turn), but refreshing then keeps the bus from visiting it for
+ * nothing. A listener that is not registered is ignored. Safe to call
+ * from a listener callback during an emission: the change applies from
+ * the next emission, nested ones included.
+ *
+ * Since: 0.7
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_event_bus_refresh_listener (LrgEventBus      *self,
+                                     LrgEventListener *listener);
+
+/**
+ * lrg_event_bus_refresh_listeners:
+ * @self: an #LrgEventBus
+ *
+ * Like lrg_event_bus_refresh_listener() for every registered listener:
+ * all masks are read again at the start of the next emission. Useful
+ * after changing many listeners at once.
+ *
+ * Since: 0.7
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_event_bus_refresh_listeners (LrgEventBus *self);
+
+/**
  * lrg_event_bus_get_listener_count:
  * @self: an #LrgEventBus
  *
@@ -154,6 +192,16 @@ guint lrg_event_bus_get_listener_count (LrgEventBus *self);
  * listeners participate in subsequent emissions, including nested emissions.
  * Removing and re-registering the same listener does not revive the removed
  * registration in a dispatch already in progress.
+ *
+ * Event masks are cached per registration: read at the start of the first
+ * emission after the listener was registered, and again after
+ * lrg_event_bus_refresh_listener() or lrg_event_bus_refresh_listeners().
+ * Only registrations whose cached mask matches the event take part, so an
+ * emission costs one array scan plus the matching listeners. At its turn a
+ * listener's live lrg_event_listener_get_event_mask() is checked again: a
+ * listener whose mask stops matching is skipped without a refresh, one
+ * whose mask starts matching needs a refresh and takes part from the next
+ * emission.
  *
  * Priorities are captured at the start of each emission. Equal priorities use
  * registration order. Priority changes during callbacks take effect on the
