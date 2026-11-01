@@ -109,6 +109,40 @@ g_signal_connect (tween, "completed", G_CALLBACK (on_tween_completed), NULL);
 g_signal_connect (tween, "loop-completed", G_CALLBACK (on_loop), NULL);
 #+end_src
 
+** How property tweens write
+:PROPERTIES:
+:CUSTOM_ID: property-writes
+:END:
+An =LrgTween= resolves its property once, when the target or the property name is set, not on every update. For a numeric property (int, uint, float, double) whose start and end values have the property's type, each update validates the value against the =GParamSpec= and calls the installing class's =set_property()= with the cached pspec, then emits "notify" unless the property is =G_PARAM_EXPLICIT_NOTIFY= (whose setter notifies itself). That is what =g_object_set_property()= does for such a property, without the by-name lookup, the target ref and the notify-queue freeze around each write.
+
+The behaviour is the same as a by-name write:
+- a "notify::prop" handler runs once per update (for explicit-notify properties, once per update that changes the value);
+- an out-of-range value is refused with GObject's critical, or clamped on a =G_PARAM_LAX_VALIDATION= pspec;
+- values of another type (a double tween on a float property) are transformed by GObject.
+
+These keep the =g_object_set_property()= path: overridden properties (=g_object_class_override_property()=, interface properties, and conservatively any target whose class or an ancestor below the installing class has its own =set_property()=), construct-only and deprecated properties, non-numeric types, and start/end values of another type. A notify handler may drop the last reference to the target: the tween's weak pointer is cleared and later updates do nothing.
+
+*** Float setter
+:PROPERTIES:
+:CUSTOM_ID: float-setter
+:END:
+For hot engine targets with a plain C setter, =lrg_tween_set_float_setter()= bypasses GObject entirely: the tween calls the function with each interpolated float (updates and =lrg_tween_base_reset()=) when its start and end values are floats. The tween still needs its target and property (the target's lifetime ends the tween; =use-current-as-from= reads the property on start), and emits no "notify" of its own: a setter that should notify does it itself, as the transform setters do.
+
+#+begin_src C
+static void
+set_local_x (GObject *target, gfloat value, gpointer user_data)
+{
+    lrg_transform_component_set_local_x (LRG_TRANSFORM_COMPONENT (target), value);
+}
+
+tween = lrg_tween_new (G_OBJECT (transform), "local-x", 1.0f);
+lrg_tween_set_from_float (tween, 0.0f);
+lrg_tween_set_to_float (tween, 100.0f);
+lrg_tween_set_float_setter (tween, set_local_x, NULL, NULL);
+#+end_src
+
+=lrg_tween_set_float_setter (tween, NULL, NULL, NULL)= goes back to the property write. Numbers: [[file:../../performance.org::#tween-event-pass][the tween and event bus pass]].
+
 ** YAML Configuration
 :PROPERTIES:
 :CUSTOM_ID: yaml-configuration

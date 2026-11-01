@@ -52,6 +52,24 @@ struct _LrgTween
     /* Options */
     gboolean      relative;
     gboolean      use_current_as_from;
+
+    /*
+     * Direct write path, resolved once per (target, property) pair by
+     * tween_bind_property(). write_class is the class that installed
+     * the property, or NULL when writes must go through
+     * g_object_set_property() (unknown, overridden, construct-only,
+     * deprecated or non-numeric properties). write_value is a scratch
+     * value of the property's type, kept so updates neither look the
+     * property up by name nor initialise a GValue.
+     */
+    GObjectClass *write_class;
+    gboolean      write_notify;
+    GValue        write_value;
+
+    /* Optional float setter that bypasses GObject (see lrg_tween_set_float_setter()) */
+    LrgTweenFloatSetter float_setter;
+    gpointer            float_setter_data;
+    GDestroyNotify      float_setter_destroy;
 };
 
 enum
@@ -69,8 +87,69 @@ static GParamSpec *properties[N_PROPS];
 G_DEFINE_FINAL_TYPE (LrgTween, lrg_tween, LRG_TYPE_TWEEN_BASE)
 
 /*
+ * interpolate_into:
+ *
+ * Writes the value between @from and @to at @t into @result, which is
+ * already initialised to the type of @from. Only int, uint, float and
+ * double are handled; returns %FALSE (and leaves @result alone) for
+ * any other type. The arithmetic is the same for every caller, so the
+ * direct write path and the g_object_set_property() path produce
+ * identical values.
+ */
+static gboolean
+interpolate_into (const GValue *from,
+                  const GValue *to,
+                  gfloat        t,
+                  GValue       *result)
+{
+    switch (G_VALUE_TYPE (from))
+    {
+    case G_TYPE_INT:
+        {
+            gint from_val = g_value_get_int (from);
+            gint to_val = g_value_get_int (to);
+            gint interpolated = (gint)(from_val + (to_val - from_val) * t);
+            g_value_set_int (result, interpolated);
+        }
+        return TRUE;
+
+    case G_TYPE_UINT:
+        {
+            guint from_val = g_value_get_uint (from);
+            guint to_val = g_value_get_uint (to);
+            guint interpolated = (guint)(from_val + (gfloat)(to_val - from_val) * t);
+            g_value_set_uint (result, interpolated);
+        }
+        return TRUE;
+
+    case G_TYPE_FLOAT:
+        {
+            gfloat from_val = g_value_get_float (from);
+            gfloat to_val = g_value_get_float (to);
+            gfloat interpolated = from_val + (to_val - from_val) * t;
+            g_value_set_float (result, interpolated);
+        }
+        return TRUE;
+
+    case G_TYPE_DOUBLE:
+        {
+            gdouble from_val = g_value_get_double (from);
+            gdouble to_val = g_value_get_double (to);
+            gdouble interpolated = from_val + (to_val - from_val) * (gdouble)t;
+            g_value_set_double (result, interpolated);
+        }
+        return TRUE;
+
+    default:
+        return FALSE;
+    }
+}
+
+/*
  * Helper to interpolate between two GValues.
- * Supports int, uint, float, double.
+ * Supports int, uint, float, double. @result is initialised to the
+ * type of @from even for unsupported types (it then holds that type's
+ * default value), as it always has been.
  */
 static void
 interpolate_value (const GValue *from,
@@ -83,48 +162,10 @@ interpolate_value (const GValue *from,
     type = G_VALUE_TYPE (from);
     g_value_init (result, type);
 
-    switch (type)
+    if (!interpolate_into (from, to, t, result))
     {
-    case G_TYPE_INT:
-        {
-            gint from_val = g_value_get_int (from);
-            gint to_val = g_value_get_int (to);
-            gint interpolated = (gint)(from_val + (to_val - from_val) * t);
-            g_value_set_int (result, interpolated);
-        }
-        break;
-
-    case G_TYPE_UINT:
-        {
-            guint from_val = g_value_get_uint (from);
-            guint to_val = g_value_get_uint (to);
-            guint interpolated = (guint)(from_val + (gfloat)(to_val - from_val) * t);
-            g_value_set_uint (result, interpolated);
-        }
-        break;
-
-    case G_TYPE_FLOAT:
-        {
-            gfloat from_val = g_value_get_float (from);
-            gfloat to_val = g_value_get_float (to);
-            gfloat interpolated = from_val + (to_val - from_val) * t;
-            g_value_set_float (result, interpolated);
-        }
-        break;
-
-    case G_TYPE_DOUBLE:
-        {
-            gdouble from_val = g_value_get_double (from);
-            gdouble to_val = g_value_get_double (to);
-            gdouble interpolated = from_val + (to_val - from_val) * (gdouble)t;
-            g_value_set_double (result, interpolated);
-        }
-        break;
-
-    default:
         lrg_warning (LRG_LOG_DOMAIN, "Cannot interpolate GValue of type %s",
                      g_type_name (type));
-        break;
     }
 }
 
@@ -164,6 +205,205 @@ add_values (const GValue *base,
                      g_type_name (type));
         break;
     }
+}
+
+/*
+ * tween_property_may_be_overridden:
+ *
+ * Whether a subclass between @target's class and @owner_class (the
+ * class that installed the property) could override the property.
+ * g_object_class_find_property() (and the class listing) return the
+ * redirect target of an override, not the override itself, so the
+ * pspec cannot tell; g_object_set_property() by name would call the
+ * overriding class's set_property() with that class's property ID.
+ * An override needs its own set_property() to handle that ID, so the
+ * direct write is only used when every class from @target's down to
+ * @owner_class shares @owner_class's set_property(). Conservative: a
+ * subclass that adds a set_property() for properties of its own also
+ * keeps the by-name path for inherited ones. Runs once per binding.
+ */
+static gboolean
+tween_property_may_be_overridden (GObject      *target,
+                                  GObjectClass *owner_class)
+{
+    GType type;
+    GType owner_type;
+
+    owner_type = G_OBJECT_CLASS_TYPE (owner_class);
+    for (type = G_OBJECT_TYPE (target);
+         type != owner_type && type != G_TYPE_INVALID;
+         type = g_type_parent (type))
+    {
+        GObjectClass *klass = g_type_class_peek (type);
+
+        if (klass == NULL || klass->set_property != owner_class->set_property)
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+/*
+ * tween_bind_property:
+ *
+ * Resolves the direct write path for the current target and pspec.
+ * Called whenever either changes, so the per-frame update neither
+ * looks the property up by name nor goes through g_object_setv().
+ *
+ * A direct write does what g_object_set_property() does for a plain
+ * numeric property: validate the value against the pspec, call the
+ * installing class's set_property() with the pspec's ID, and emit
+ * "notify" afterwards unless the property is G_PARAM_EXPLICIT_NOTIFY
+ * (then the setter notifies itself). It leaves out the target ref and
+ * the notify-queue freeze around the call, which cost two bit locks
+ * and two atomic operations per write. Properties that need anything
+ * else keep the g_object_set_property() path: overrides (redirected
+ * pspecs, and subclasses that may override the property, see
+ * tween_property_may_be_overridden()), construct-only and deprecated
+ * properties (GObject warns about those), and non-numeric types.
+ */
+static void
+tween_bind_property (LrgTween *self)
+{
+    GParamSpec *pspec;
+    GType value_type;
+
+    self->write_class = NULL;
+    self->write_notify = FALSE;
+    if (G_IS_VALUE (&self->write_value))
+        g_value_unset (&self->write_value);
+
+    pspec = self->pspec;
+    if (self->target == NULL || pspec == NULL)
+        return;
+
+    if ((pspec->flags & G_PARAM_WRITABLE) == 0 ||
+        (pspec->flags & (G_PARAM_CONSTRUCT_ONLY | G_PARAM_DEPRECATED)) != 0)
+        return;
+    if (g_param_spec_get_redirect_target (pspec) != NULL)
+        return;
+    if (!G_TYPE_IS_OBJECT (pspec->owner_type))
+        return;
+
+    value_type = G_PARAM_SPEC_VALUE_TYPE (pspec);
+    if (value_type != G_TYPE_INT && value_type != G_TYPE_UINT &&
+        value_type != G_TYPE_FLOAT && value_type != G_TYPE_DOUBLE)
+        return;
+
+    self->write_class = g_type_class_peek (pspec->owner_type);
+    if (self->write_class == NULL || self->write_class->set_property == NULL ||
+        tween_property_may_be_overridden (self->target, self->write_class))
+    {
+        self->write_class = NULL;
+        return;
+    }
+
+    self->write_notify = (pspec->flags & G_PARAM_EXPLICIT_NOTIFY) == 0;
+    g_value_init (&self->write_value, value_type);
+}
+
+/*
+ * tween_lookup_property:
+ *
+ * Looks the named property up on the current target (warning when it
+ * does not exist) and rebinds the write path.
+ */
+static void
+tween_lookup_property (LrgTween *self)
+{
+    self->pspec = NULL;
+
+    if (self->target != NULL && self->property_name != NULL)
+    {
+        self->pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (self->target),
+                                                    self->property_name);
+
+        if (self->pspec == NULL)
+        {
+            lrg_warning (LRG_LOG_DOMAIN,
+                         "Property '%s' not found on target object",
+                         self->property_name);
+        }
+    }
+
+    tween_bind_property (self);
+}
+
+/*
+ * tween_can_write_direct:
+ *
+ * Whether @value can take the direct write path: one was resolved and
+ * @value already has the property's type (anything else needs
+ * g_object_set_property()'s value transformation).
+ */
+static inline gboolean
+tween_can_write_direct (LrgTween     *self,
+                        const GValue *value)
+{
+    return self->write_class != NULL &&
+           G_VALUE_TYPE (value) == G_VALUE_TYPE (&self->write_value);
+}
+
+/*
+ * tween_write_direct:
+ *
+ * Writes self->write_value (already holding the new value) to the
+ * target through the resolved class's set_property(). Returns %FALSE
+ * without writing when the value fails the pspec's validation; the
+ * caller then goes through g_object_set_property(), which reports it
+ * exactly as before.
+ */
+static gboolean
+tween_write_direct (LrgTween *self)
+{
+    GParamSpec *pspec;
+    GObject *target;
+
+    pspec = self->pspec;
+    target = self->target;
+
+    if (g_param_value_validate (pspec, &self->write_value) &&
+        (pspec->flags & G_PARAM_LAX_VALIDATION) == 0)
+        return FALSE;
+
+    self->write_class->set_property (target, pspec->param_id,
+                                     &self->write_value, pspec);
+
+    /* self->target is a weak pointer: if a handler inside the setter
+     * disposed the target, it is NULL now and there is nobody left to
+     * notify. */
+    if (self->write_notify && self->target != NULL)
+        g_object_notify_by_pspec (target, pspec);
+
+    return TRUE;
+}
+
+/*
+ * tween_write_value:
+ *
+ * Writes @value to the target: through the float setter when one is
+ * set and @value is a float, through the direct path when possible,
+ * otherwise through g_object_set_property().
+ */
+static void
+tween_write_value (LrgTween     *self,
+                   const GValue *value)
+{
+    if (self->float_setter != NULL && G_VALUE_TYPE (value) == G_TYPE_FLOAT)
+    {
+        self->float_setter (self->target, g_value_get_float (value),
+                            self->float_setter_data);
+        return;
+    }
+
+    if (tween_can_write_direct (self, value))
+    {
+        g_value_copy (value, &self->write_value);
+        if (tween_write_direct (self))
+            return;
+    }
+
+    g_object_set_property (self->target, self->property_name, value);
 }
 
 /*
@@ -251,7 +491,30 @@ lrg_tween_update (LrgTweenBase *base,
     easing = lrg_tween_base_get_easing (base);
     eased = lrg_easing_apply (easing, progress);
 
-    /* Interpolate and set property */
+    /* Float setter: no GValue and no GObject at all */
+    if (self->float_setter != NULL &&
+        G_VALUE_TYPE (&self->from_value) == G_TYPE_FLOAT &&
+        G_VALUE_TYPE (&self->to_value) == G_TYPE_FLOAT)
+    {
+        gfloat from_val = g_value_get_float (&self->from_value);
+        gfloat to_val = g_value_get_float (&self->to_value);
+
+        self->float_setter (self->target, from_val + (to_val - from_val) * eased,
+                            self->float_setter_data);
+        return;
+    }
+
+    /* Direct write: interpolate into the bound scratch value and call
+     * the class's set_property() through the cached pspec */
+    if (tween_can_write_direct (self, &self->from_value) &&
+        G_VALUE_TYPE (&self->to_value) == G_VALUE_TYPE (&self->from_value))
+    {
+        interpolate_into (&self->from_value, &self->to_value, eased, &self->write_value);
+        if (tween_write_direct (self))
+            return;
+    }
+
+    /* General path: by name through GObject, with value transformation */
     interpolate_value (&self->from_value, &self->to_value, eased, &current_value);
 
     if (G_IS_VALUE (&current_value))
@@ -272,7 +535,7 @@ lrg_tween_reset (LrgTweenBase *base)
     /* Reset to from_value if we have a target */
     if (self->target != NULL && self->pspec != NULL && self->from_value_set)
     {
-        g_object_set_property (self->target, self->property_name, &self->from_value);
+        tween_write_value (self, &self->from_value);
     }
 
     /* Chain up to parent */
@@ -300,6 +563,13 @@ lrg_tween_dispose (GObject *object)
         g_object_remove_weak_pointer (self->target, (gpointer *)&self->target);
         self->target = NULL;
     }
+    tween_bind_property (self);
+
+    if (self->float_setter_destroy != NULL)
+        self->float_setter_destroy (self->float_setter_data);
+    self->float_setter = NULL;
+    self->float_setter_data = NULL;
+    self->float_setter_destroy = NULL;
 
     G_OBJECT_CLASS (lrg_tween_parent_class)->dispose (object);
 }
@@ -321,6 +591,11 @@ lrg_tween_finalize (GObject *object)
     if (G_IS_VALUE (&self->to_value))
     {
         g_value_unset (&self->to_value);
+    }
+
+    if (G_IS_VALUE (&self->write_value))
+    {
+        g_value_unset (&self->write_value);
     }
 
     G_OBJECT_CLASS (lrg_tween_parent_class)->finalize (object);
@@ -392,22 +667,21 @@ lrg_tween_set_property (GObject      *object,
                 /* Look up property spec if we have both target and property name */
                 if (self->property_name != NULL)
                 {
-                    self->pspec = g_object_class_find_property (
-                        G_OBJECT_GET_CLASS (self->target),
-                        self->property_name);
-
-                    if (self->pspec == NULL)
-                    {
-                        lrg_warning (LRG_LOG_DOMAIN,
-                                     "Property '%s' not found on target object",
-                                     self->property_name);
-                    }
+                    tween_lookup_property (self);
+                }
+                else
+                {
+                    /* No name to resolve: keep the pspec as it was (as
+                     * before) but never write directly through a pspec
+                     * of another target's class */
+                    self->write_class = NULL;
                 }
             }
             else
             {
                 self->target = NULL;
                 self->pspec = NULL;
+                tween_bind_property (self);
             }
         }
         break;
@@ -419,16 +693,12 @@ lrg_tween_set_property (GObject      *object,
         /* Look up property spec if we have both target and property name */
         if (self->target != NULL && self->property_name != NULL)
         {
-            self->pspec = g_object_class_find_property (
-                G_OBJECT_GET_CLASS (self->target),
-                self->property_name);
-
-            if (self->pspec == NULL)
-            {
-                lrg_warning (LRG_LOG_DOMAIN,
-                             "Property '%s' not found on target object",
-                             self->property_name);
-            }
+            tween_lookup_property (self);
+        }
+        else
+        {
+            /* The pspec is left as it was; writes go by name */
+            self->write_class = NULL;
         }
         break;
 
@@ -1035,4 +1305,56 @@ lrg_tween_set_use_current_as_from (LrgTween *self,
         self->use_current_as_from = use_current;
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_USE_CURRENT_AS_FROM]);
     }
+}
+
+/*
+ * lrg_tween_set_float_setter:
+ * @self: A #LrgTween
+ * @setter: (nullable): Function that writes the value, or %NULL
+ * @user_data: Data passed to @setter
+ * @destroy: (nullable): Frees @user_data
+ *
+ * Installs a setter that receives float values instead of the GObject
+ * property write. See the header for the contract.
+ */
+void
+lrg_tween_set_float_setter (LrgTween            *self,
+                            LrgTweenFloatSetter  setter,
+                            gpointer             user_data,
+                            GDestroyNotify       destroy)
+{
+    GDestroyNotify old_destroy;
+    gpointer old_data;
+
+    g_return_if_fail (LRG_IS_TWEEN (self));
+
+    /* Swap first, then free the old data, so a destroy notify that
+     * looks at the tween sees the new setter */
+    old_destroy = self->float_setter_destroy;
+    old_data = self->float_setter_data;
+
+    self->float_setter = setter;
+    self->float_setter_data = setter != NULL ? user_data : NULL;
+    self->float_setter_destroy = setter != NULL ? destroy : NULL;
+
+    if (old_destroy != NULL)
+        old_destroy (old_data);
+
+    /* Without a setter there is nothing to own: free @user_data now */
+    if (setter == NULL && destroy != NULL)
+        destroy (user_data);
+}
+
+/*
+ * lrg_tween_has_float_setter:
+ * @self: A #LrgTween
+ *
+ * Returns: %TRUE if a float setter is installed
+ */
+gboolean
+lrg_tween_has_float_setter (LrgTween *self)
+{
+    g_return_val_if_fail (LRG_IS_TWEEN (self), FALSE);
+
+    return self->float_setter != NULL;
 }

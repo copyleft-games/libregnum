@@ -25,6 +25,22 @@ LRG_AVAILABLE_IN_ALL
 G_DECLARE_FINAL_TYPE (LrgTween, lrg_tween, LRG, TWEEN, LrgTweenBase)
 
 /**
+ * LrgTweenFloatSetter:
+ * @target: (transfer none): The tween's target object
+ * @value: The interpolated value for this update
+ * @user_data: (closure): Data given to lrg_tween_set_float_setter()
+ *
+ * Writes an interpolated float to the target without going through
+ * the GObject property system. Installed with
+ * lrg_tween_set_float_setter().
+ *
+ * Since: 0.7
+ */
+typedef void (*LrgTweenFloatSetter) (GObject  *target,
+                                     gfloat    value,
+                                     gpointer  user_data);
+
+/**
  * lrg_tween_new:
  * @target: (transfer none): The target #GObject to animate
  * @property_name: The name of the property to animate
@@ -319,5 +335,56 @@ gboolean        lrg_tween_get_use_current_as_from (LrgTween  *self);
 LRG_AVAILABLE_IN_ALL
 void            lrg_tween_set_use_current_as_from (LrgTween  *self,
                                                    gboolean   use_current);
+
+/* Direct setter */
+
+/**
+ * lrg_tween_set_float_setter:
+ * @self: A #LrgTween
+ * @setter: (nullable) (scope notified) (closure user_data) (destroy destroy): Function
+ *   that writes each value, or %NULL to write the property again
+ * @user_data: Data passed to @setter
+ * @destroy: (nullable): Frees @user_data when the setter is replaced,
+ *   removed, or the tween is disposed
+ *
+ * Makes the tween hand its values to @setter instead of writing the
+ * property through GObject. Use it for hot engine targets that have a
+ * plain C setter (for example lrg_transform_component_set_local_x()):
+ * the write then costs one indirect call.
+ *
+ * The setter is used whenever both the start and the end value are
+ * floats; updates and lrg_tween_base_reset() pass it the same value
+ * the property write would have received. Everything else about the
+ * tween is unchanged: it still needs a live target and a valid
+ * property name (the target's lifetime ends the tween, and
+ * #LrgTween:use-current-as-from still reads the property on start).
+ * GObject is bypassed entirely, so the tween emits no "notify" for the
+ * property; a setter that should notify must do so itself (a C setter
+ * such as lrg_transform_component_set_local_x() does).
+ *
+ * Passing %NULL for @setter removes the current setter (calling its
+ * destroy notify) and frees @user_data with @destroy at once.
+ *
+ * Since: 0.7
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_tween_set_float_setter  (LrgTween            *self,
+                                             LrgTweenFloatSetter  setter,
+                                             gpointer             user_data,
+                                             GDestroyNotify       destroy);
+
+/**
+ * lrg_tween_has_float_setter:
+ * @self: A #LrgTween
+ *
+ * Gets whether a float setter is installed with
+ * lrg_tween_set_float_setter().
+ *
+ * Returns: %TRUE if a float setter is installed
+ *
+ * Since: 0.7
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean        lrg_tween_has_float_setter  (LrgTween            *self);
 
 G_END_DECLS
