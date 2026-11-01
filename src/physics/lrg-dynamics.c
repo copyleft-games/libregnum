@@ -4,11 +4,13 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Bounded 3D rigid motion. Y is up. A dynamic sphere integrates force,
+ * Bounded 3D rigid motion. Y is up. A dynamic body integrates force,
  * gravity and torque with a diagonal body-frame inertia, then a sequential
- * impulse solve handles sphere-sphere contacts, sphere-plane contacts and
- * joint limits. Box half extents never become a contact shape. Nothing in
- * this file reports a ragdoll or reads Karma bytes.
+ * impulse solve handles sphere contacts, caller-axis sphyl contacts and
+ * joint limits. A sphyl axis is the caller's unit vector, not the collision
+ * library's local +Y capsule. Box half extents and an explicit diagonal
+ * never become a contact shape. A contactless body generates no contacts.
+ * Nothing in this file reports a ragdoll or reads Karma bytes.
  */
 
 #include "config.h"
@@ -29,6 +31,13 @@
 #define DYN_POSITION (0.6f)
 #define DYN_PI (3.14159265358979323846f)
 
+typedef enum {
+    DYN_SHAPE_SPHERE = 0,
+    DYN_SHAPE_PLANE = 1,
+    DYN_SHAPE_SPHYL = 2,
+    DYN_SHAPE_INERTIAL = 3
+} DynShape;
+
 typedef struct
 {
     gboolean alive;
@@ -37,6 +46,9 @@ typedef struct
     guint quiet;
     LrgDynamicsBodyKind kind;
     gboolean plane;
+    DynShape shape;
+    gfloat axis[3];
+    gfloat half_length;
     gfloat mass;
     gfloat inv_mass;
     gfloat inertia[3];
@@ -142,6 +154,9 @@ lrg_dynamics_contact_kind_get_type (void)
     static const GEnumValue values[] = {
         { LRG_DYNAMICS_CONTACT_SPHERE_SPHERE, "LRG_DYNAMICS_CONTACT_SPHERE_SPHERE", "sphere-sphere" },
         { LRG_DYNAMICS_CONTACT_SPHERE_PLANE, "LRG_DYNAMICS_CONTACT_SPHERE_PLANE", "sphere-plane" },
+        { LRG_DYNAMICS_CONTACT_SPHYL_SPHERE, "LRG_DYNAMICS_CONTACT_SPHYL_SPHERE", "sphyl-sphere" },
+        { LRG_DYNAMICS_CONTACT_SPHYL_PLANE, "LRG_DYNAMICS_CONTACT_SPHYL_PLANE", "sphyl-plane" },
+        { LRG_DYNAMICS_CONTACT_SPHYL_SPHYL, "LRG_DYNAMICS_CONTACT_SPHYL_SPHYL", "sphyl-sphyl" },
         { 0, NULL, NULL }
     };
 
@@ -474,7 +489,8 @@ generate_sphere_pair (LrgDynamicsWorld *self, guint ia, guint ib)
 
     a = &self->bodies[ia];
     b = &self->bodies[ib];
-    if (!a->alive || !b->alive || a->plane || b->plane)
+    if (!a->alive || !b->alive ||
+        a->shape != DYN_SHAPE_SPHERE || b->shape != DYN_SHAPE_SPHERE)
         return;
     delta[0] = a->position[0] - b->position[0];
     delta[1] = a->position[1] - b->position[1];
@@ -516,7 +532,8 @@ generate_plane (LrgDynamicsWorld *self, guint sphere, guint plane)
 
     body = &self->bodies[sphere];
     wall = &self->bodies[plane];
-    if (!body->alive || !wall->alive || body->plane || !wall->plane)
+    if (!body->alive || !wall->alive ||
+        body->shape != DYN_SHAPE_SPHERE || wall->shape != DYN_SHAPE_PLANE)
         return;
     signed_distance = dot3 (wall->plane_normal, body->position) - wall->plane_offset;
     if (signed_distance >= body->radius)
@@ -535,26 +552,350 @@ generate_plane (LrgDynamicsWorld *self, guint sphere, guint plane)
     add_contact (self, &contact);
 }
 
+static gfloat
+clampf (gfloat value, gfloat low, gfloat high)
+{
+    if (value < low)
+        return low;
+    if (value > high)
+        return high;
+    return value;
+}
+
+static void
+push_contact (LrgDynamicsWorld       *self,
+              guint                   body_a,
+              guint                   body_b,
+              LrgDynamicsContactKind  kind,
+              const gfloat           *point,
+              const gfloat           *normal,
+              gfloat                  depth)
+{
+    DynContact contact;
+
+    if (!(depth > 0.0f))
+        return;
+    memset (&contact, 0, sizeof (contact));
+    contact.body_a = body_a;
+    contact.body_b = body_b;
+    contact.kind = kind;
+    contact.depth = depth;
+    contact.point[0] = point[0];
+    contact.point[1] = point[1];
+    contact.point[2] = point[2];
+    contact.normal[0] = normal[0];
+    contact.normal[1] = normal[1];
+    contact.normal[2] = normal[2];
+    add_contact (self, &contact);
+}
+
+static void
+unit_or_fallback (const gfloat *delta, gfloat *normal)
+{
+    gfloat dist;
+
+    dist = len3 (delta);
+    if (dist > 1.0e-6f)
+    {
+        normal[0] = delta[0] / dist;
+        normal[1] = delta[1] / dist;
+        normal[2] = delta[2] / dist;
+        return;
+    }
+    normal[0] = 1.0f;
+    normal[1] = 0.0f;
+    normal[2] = 0.0f;
+}
+
+/* World segment of a sphyl. The stored axis is body-local and already unit. */
+static void
+sphyl_segment (const DynBody *body, gfloat *end0, gfloat *end1)
+{
+    gfloat axis[3];
+
+    quat_rotate (body->orientation, body->axis, axis);
+    end0[0] = body->position[0] - axis[0] * body->half_length;
+    end0[1] = body->position[1] - axis[1] * body->half_length;
+    end0[2] = body->position[2] - axis[2] * body->half_length;
+    end1[0] = body->position[0] + axis[0] * body->half_length;
+    end1[1] = body->position[1] + axis[1] * body->half_length;
+    end1[2] = body->position[2] + axis[2] * body->half_length;
+}
+
+static void
+closest_on_segment (const gfloat *end0, const gfloat *end1,
+                    const gfloat *point, gfloat *closest)
+{
+    gfloat edge[3];
+    gfloat offset[3];
+    gfloat length2;
+    gfloat t;
+
+    edge[0] = end1[0] - end0[0];
+    edge[1] = end1[1] - end0[1];
+    edge[2] = end1[2] - end0[2];
+    offset[0] = point[0] - end0[0];
+    offset[1] = point[1] - end0[1];
+    offset[2] = point[2] - end0[2];
+    length2 = dot3 (edge, edge);
+    if (length2 <= 1.0e-12f)
+    {
+        closest[0] = end0[0];
+        closest[1] = end0[1];
+        closest[2] = end0[2];
+        return;
+    }
+    t = clampf (dot3 (offset, edge) / length2, 0.0f, 1.0f);
+    closest[0] = end0[0] + edge[0] * t;
+    closest[1] = end0[1] + edge[1] * t;
+    closest[2] = end0[2] + edge[2] * t;
+}
+
+/*
+ * Closest points on two segments. Parallel segments use an endpoint
+ * projection, which still yields the perpendicular distance.
+ */
+static void
+closest_segments (const gfloat *p0, const gfloat *p1,
+                  const gfloat *q0, const gfloat *q1,
+                  gfloat *c0, gfloat *c1)
+{
+    gfloat d0[3];
+    gfloat d1[3];
+    gfloat r[3];
+    gfloat a;
+    gfloat e;
+    gfloat f;
+    gfloat c;
+    gfloat b;
+    gfloat denom;
+    gfloat s;
+    gfloat t;
+
+    d0[0] = p1[0] - p0[0];
+    d0[1] = p1[1] - p0[1];
+    d0[2] = p1[2] - p0[2];
+    d1[0] = q1[0] - q0[0];
+    d1[1] = q1[1] - q0[1];
+    d1[2] = q1[2] - q0[2];
+    r[0] = p0[0] - q0[0];
+    r[1] = p0[1] - q0[1];
+    r[2] = p0[2] - q0[2];
+    a = dot3 (d0, d0);
+    e = dot3 (d1, d1);
+    f = dot3 (d1, r);
+    b = dot3 (d0, d1);
+    c = dot3 (d0, r);
+    s = 0.0f;
+    t = 0.0f;
+    if (a <= 1.0e-12f && e <= 1.0e-12f)
+    {
+        c0[0] = p0[0];
+        c0[1] = p0[1];
+        c0[2] = p0[2];
+        c1[0] = q0[0];
+        c1[1] = q0[1];
+        c1[2] = q0[2];
+        return;
+    }
+    if (a <= 1.0e-12f)
+    {
+        s = 0.0f;
+        t = (e > 1.0e-12f) ? clampf (f / e, 0.0f, 1.0f) : 0.0f;
+    }
+    else if (e <= 1.0e-12f)
+    {
+        t = 0.0f;
+        s = clampf (-c / a, 0.0f, 1.0f);
+    }
+    else
+    {
+        denom = a * e - b * b;
+        if (denom > 1.0e-12f)
+            s = clampf ((b * f - c * e) / denom, 0.0f, 1.0f);
+        else
+            s = 0.0f;
+        t = (b * s + f) / e;
+        if (t < 0.0f)
+        {
+            t = 0.0f;
+            s = clampf (-c / a, 0.0f, 1.0f);
+        }
+        else if (t > 1.0f)
+        {
+            t = 1.0f;
+            s = clampf ((b - c) / a, 0.0f, 1.0f);
+        }
+    }
+    c0[0] = p0[0] + d0[0] * s;
+    c0[1] = p0[1] + d0[1] * s;
+    c0[2] = p0[2] + d0[2] * s;
+    c1[0] = q0[0] + d1[0] * t;
+    c1[1] = q0[1] + d1[1] * t;
+    c1[2] = q0[2] + d1[2] * t;
+}
+
+/* Body A is the sphere. The normal pushes that sphere off the capsule. */
+static void
+generate_sphyl_sphere (LrgDynamicsWorld *self, guint sphere, guint sphyl)
+{
+    DynBody *ball;
+    DynBody *cap;
+    gfloat end0[3];
+    gfloat end1[3];
+    gfloat closest[3];
+    gfloat delta[3];
+    gfloat normal[3];
+    gfloat point[3];
+    gfloat dist;
+    gfloat reach;
+
+    ball = &self->bodies[sphere];
+    cap = &self->bodies[sphyl];
+    if (!ball->alive || !cap->alive ||
+        ball->shape != DYN_SHAPE_SPHERE || cap->shape != DYN_SHAPE_SPHYL)
+        return;
+    sphyl_segment (cap, end0, end1);
+    closest_on_segment (end0, end1, ball->position, closest);
+    delta[0] = ball->position[0] - closest[0];
+    delta[1] = ball->position[1] - closest[1];
+    delta[2] = ball->position[2] - closest[2];
+    dist = len3 (delta);
+    reach = ball->radius + cap->radius;
+    if (dist >= reach)
+        return;
+    unit_or_fallback (delta, normal);
+    point[0] = ball->position[0] - normal[0] * ball->radius;
+    point[1] = ball->position[1] - normal[1] * ball->radius;
+    point[2] = ball->position[2] - normal[2] * ball->radius;
+    push_contact (self, sphere, sphyl, LRG_DYNAMICS_CONTACT_SPHYL_SPHERE,
+                  point, normal, reach - dist);
+}
+
+/* The deepest capsule end against an infinite plane. The normal pushes the sphyl. */
+static void
+generate_sphyl_plane (LrgDynamicsWorld *self, guint sphyl, guint plane)
+{
+    DynBody *cap;
+    DynBody *wall;
+    gfloat end0[3];
+    gfloat end1[3];
+    gfloat *end;
+    gfloat signed0;
+    gfloat signed1;
+    gfloat signed_distance;
+    gfloat point[3];
+    gfloat normal[3];
+
+    cap = &self->bodies[sphyl];
+    wall = &self->bodies[plane];
+    if (!cap->alive || !wall->alive ||
+        cap->shape != DYN_SHAPE_SPHYL || wall->shape != DYN_SHAPE_PLANE)
+        return;
+    sphyl_segment (cap, end0, end1);
+    signed0 = dot3 (wall->plane_normal, end0) - wall->plane_offset;
+    signed1 = dot3 (wall->plane_normal, end1) - wall->plane_offset;
+    if (signed0 <= signed1)
+    {
+        end = end0;
+        signed_distance = signed0;
+    }
+    else
+    {
+        end = end1;
+        signed_distance = signed1;
+    }
+    if (signed_distance >= cap->radius)
+        return;
+    normal[0] = wall->plane_normal[0];
+    normal[1] = wall->plane_normal[1];
+    normal[2] = wall->plane_normal[2];
+    point[0] = end[0] - normal[0] * signed_distance;
+    point[1] = end[1] - normal[1] * signed_distance;
+    point[2] = end[2] - normal[2] * signed_distance;
+    push_contact (self, sphyl, plane, LRG_DYNAMICS_CONTACT_SPHYL_PLANE,
+                  point, normal, cap->radius - signed_distance);
+}
+
+/* Body A's normal points from B's closest point toward A's. */
+static void
+generate_sphyl_pair (LrgDynamicsWorld *self, guint ia, guint ib)
+{
+    DynBody *a;
+    DynBody *b;
+    gfloat a0[3];
+    gfloat a1[3];
+    gfloat b0[3];
+    gfloat b1[3];
+    gfloat ca[3];
+    gfloat cb[3];
+    gfloat delta[3];
+    gfloat normal[3];
+    gfloat point[3];
+    gfloat dist;
+    gfloat reach;
+
+    a = &self->bodies[ia];
+    b = &self->bodies[ib];
+    if (!a->alive || !b->alive ||
+        a->shape != DYN_SHAPE_SPHYL || b->shape != DYN_SHAPE_SPHYL)
+        return;
+    sphyl_segment (a, a0, a1);
+    sphyl_segment (b, b0, b1);
+    closest_segments (a0, a1, b0, b1, ca, cb);
+    delta[0] = ca[0] - cb[0];
+    delta[1] = ca[1] - cb[1];
+    delta[2] = ca[2] - cb[2];
+    dist = len3 (delta);
+    reach = a->radius + b->radius;
+    if (dist >= reach)
+        return;
+    unit_or_fallback (delta, normal);
+    point[0] = ca[0] - normal[0] * a->radius;
+    point[1] = ca[1] - normal[1] * a->radius;
+    point[2] = ca[2] - normal[2] * a->radius;
+    push_contact (self, ia, ib, LRG_DYNAMICS_CONTACT_SPHYL_SPHYL,
+                  point, normal, reach - dist);
+}
+
 static void
 generate_contacts (LrgDynamicsWorld *self)
 {
     guint i;
     guint j;
+    DynShape left;
+    DynShape right;
 
     self->n_contacts = 0;
     for (i = 0; i < self->n_bodies; i++)
     {
         for (j = i + 1; j < self->n_bodies; j++)
-            generate_sphere_pair (self, i, j);
+        {
+            left = self->bodies[i].shape;
+            right = self->bodies[j].shape;
+            if (left == DYN_SHAPE_SPHERE && right == DYN_SHAPE_SPHERE)
+                generate_sphere_pair (self, i, j);
+            else if (left == DYN_SHAPE_SPHERE && right == DYN_SHAPE_SPHYL)
+                generate_sphyl_sphere (self, i, j);
+            else if (left == DYN_SHAPE_SPHYL && right == DYN_SHAPE_SPHERE)
+                generate_sphyl_sphere (self, j, i);
+            else if (left == DYN_SHAPE_SPHYL && right == DYN_SHAPE_SPHYL)
+                generate_sphyl_pair (self, i, j);
+        }
     }
     for (i = 0; i < self->n_bodies; i++)
     {
-        if (self->bodies[i].plane)
+        if (self->bodies[i].shape == DYN_SHAPE_PLANE ||
+            self->bodies[i].shape == DYN_SHAPE_INERTIAL)
             continue;
         for (j = 0; j < self->n_bodies; j++)
         {
-            if (self->bodies[j].plane)
+            if (self->bodies[j].shape != DYN_SHAPE_PLANE)
+                continue;
+            if (self->bodies[i].shape == DYN_SHAPE_SPHERE)
                 generate_plane (self, i, j);
+            else if (self->bodies[i].shape == DYN_SHAPE_SPHYL)
+                generate_sphyl_plane (self, i, j);
         }
     }
 }
@@ -1250,6 +1591,76 @@ lrg_dynamics_world_set_bounds (LrgDynamicsWorld *self,
     return TRUE;
 }
 
+static gboolean
+store_orientation (DynBody *body, const gfloat *orientation, GError **error)
+{
+    gfloat length;
+
+    body->orientation[0] = 0.0f;
+    body->orientation[1] = 0.0f;
+    body->orientation[2] = 0.0f;
+    body->orientation[3] = 1.0f;
+    if (orientation == NULL)
+        return TRUE;
+    if (!finite1 (orientation[0]) || !finite1 (orientation[1]) ||
+        !finite1 (orientation[2]) || !finite1 (orientation[3]))
+        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
+                          "dynamics orientation is not finite");
+    length = sqrtf (orientation[0] * orientation[0] + orientation[1] * orientation[1] +
+                    orientation[2] * orientation[2] + orientation[3] * orientation[3]);
+    if (length <= 1.0e-8f)
+        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
+                          "dynamics orientation has zero length");
+    body->orientation[0] = orientation[0] / length;
+    body->orientation[1] = orientation[1] / length;
+    body->orientation[2] = orientation[2] / length;
+    body->orientation[3] = orientation[3] / length;
+    return TRUE;
+}
+
+static void
+store_isotropic (DynBody *body, gfloat mass, gfloat radius)
+{
+    gfloat inertia;
+
+    if (body->kind != LRG_DYNAMICS_BODY_DYNAMIC)
+        return;
+    body->inv_mass = 1.0f / mass;
+    inertia = 0.4f * mass * radius * radius;
+    body->inertia[0] = inertia;
+    body->inertia[1] = inertia;
+    body->inertia[2] = inertia;
+    body->inv_inertia[0] = 1.0f / inertia;
+    body->inv_inertia[1] = 1.0f / inertia;
+    body->inv_inertia[2] = 1.0f / inertia;
+}
+
+static void
+store_diagonal (DynBody *body, gfloat ixx, gfloat iyy, gfloat izz)
+{
+    body->inertia[0] = ixx;
+    body->inertia[1] = iyy;
+    body->inertia[2] = izz;
+    body->inv_inertia[0] = 1.0f / ixx;
+    body->inv_inertia[1] = 1.0f / iyy;
+    body->inv_inertia[2] = 1.0f / izz;
+}
+
+static gboolean
+mass_accepted (LrgDynamicsBodyKind kind, gfloat mass, GError **error)
+{
+    if (kind != LRG_DYNAMICS_BODY_DYNAMIC &&
+        kind != LRG_DYNAMICS_BODY_KINEMATIC &&
+        kind != LRG_DYNAMICS_BODY_STATIC)
+        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
+                          "dynamics body kind is not dynamic, kinematic or static");
+    if (!finite1 (mass) || mass < 0.0f ||
+        (kind == LRG_DYNAMICS_BODY_DYNAMIC && !(mass > 0.0f)))
+        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
+                          "dynamics body mass must be finite and positive when dynamic");
+    return TRUE;
+}
+
 gboolean
 lrg_dynamics_world_add_sphere (LrgDynamicsWorld    *self,
                                LrgDynamicsBodyKind  kind,
@@ -1261,63 +1672,31 @@ lrg_dynamics_world_add_sphere (LrgDynamicsWorld    *self,
                                GError             **error)
 {
     DynBody body;
-    gfloat inertia;
-    gfloat length;
 
     g_return_val_if_fail (LRG_IS_DYNAMICS_WORLD (self), FALSE);
     g_return_val_if_fail (position != NULL, FALSE);
     g_return_val_if_fail (body_id != NULL, FALSE);
-    if (kind != LRG_DYNAMICS_BODY_DYNAMIC &&
-        kind != LRG_DYNAMICS_BODY_KINEMATIC &&
-        kind != LRG_DYNAMICS_BODY_STATIC)
-        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
-                          "dynamics sphere kind is not dynamic, kinematic or static");
-    if (!finite1 (mass) || mass < 0.0f || (kind == LRG_DYNAMICS_BODY_DYNAMIC && !(mass > 0.0f)))
-        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
-                          "dynamics sphere mass must be finite and positive when dynamic");
+    if (!mass_accepted (kind, mass, error))
+        return FALSE;
     if (!finite1 (radius) || !(radius > 0.0f) || !finite3 (position))
         return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
                           "dynamics sphere radius and position must be finite and the radius positive");
     memset (&body, 0, sizeof (body));
-    body.orientation[3] = 1.0f;
-    if (orientation != NULL)
-    {
-        if (!finite1 (orientation[0]) || !finite1 (orientation[1]) ||
-            !finite1 (orientation[2]) || !finite1 (orientation[3]))
-            return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
-                              "dynamics orientation is not finite");
-        length = sqrtf (orientation[0] * orientation[0] + orientation[1] * orientation[1] +
-                        orientation[2] * orientation[2] + orientation[3] * orientation[3]);
-        if (length <= 1.0e-8f)
-            return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
-                              "dynamics orientation has zero length");
-        body.orientation[0] = orientation[0] / length;
-        body.orientation[1] = orientation[1] / length;
-        body.orientation[2] = orientation[2] / length;
-        body.orientation[3] = orientation[3] / length;
-    }
+    if (!store_orientation (&body, orientation, error))
+        return FALSE;
     if (self->n_bodies >= LRG_DYNAMICS_MAX_BODIES)
         return dyn_error (error, LRG_DYNAMICS_ERROR_CAPACITY,
                           "dynamics world already has %u bodies",
                           LRG_DYNAMICS_MAX_BODIES);
     body.alive = TRUE;
+    body.shape = DYN_SHAPE_SPHERE;
     body.kind = kind;
     body.mass = mass;
     body.radius = radius;
     body.position[0] = position[0];
     body.position[1] = position[1];
     body.position[2] = position[2];
-    if (kind == LRG_DYNAMICS_BODY_DYNAMIC)
-    {
-        body.inv_mass = 1.0f / mass;
-        inertia = 0.4f * mass * radius * radius;
-        body.inertia[0] = inertia;
-        body.inertia[1] = inertia;
-        body.inertia[2] = inertia;
-        body.inv_inertia[0] = 1.0f / inertia;
-        body.inv_inertia[1] = 1.0f / inertia;
-        body.inv_inertia[2] = 1.0f / inertia;
-    }
+    store_isotropic (&body, mass, radius);
     self->bodies[self->n_bodies] = body;
     *body_id = self->n_bodies;
     self->n_bodies++;
@@ -1351,12 +1730,115 @@ lrg_dynamics_world_add_plane (LrgDynamicsWorld *self,
     memset (&body, 0, sizeof (body));
     body.alive = TRUE;
     body.plane = TRUE;
+    body.shape = DYN_SHAPE_PLANE;
     body.kind = LRG_DYNAMICS_BODY_STATIC;
     body.orientation[3] = 1.0f;
     body.plane_normal[0] = normal[0];
     body.plane_normal[1] = normal[1];
     body.plane_normal[2] = normal[2];
     body.plane_offset = offset;
+    self->bodies[self->n_bodies] = body;
+    *body_id = self->n_bodies;
+    self->n_bodies++;
+    return TRUE;
+}
+
+gboolean
+lrg_dynamics_world_add_sphyl (LrgDynamicsWorld    *self,
+                              LrgDynamicsBodyKind  kind,
+                              gfloat               mass,
+                              gfloat               radius,
+                              gfloat               half_length,
+                              const gfloat        *axis,
+                              const gfloat        *position,
+                              const gfloat        *orientation,
+                              guint               *body_id,
+                              GError             **error)
+{
+    DynBody body;
+    gfloat length;
+
+    g_return_val_if_fail (LRG_IS_DYNAMICS_WORLD (self), FALSE);
+    g_return_val_if_fail (axis != NULL, FALSE);
+    g_return_val_if_fail (position != NULL, FALSE);
+    g_return_val_if_fail (body_id != NULL, FALSE);
+    if (!mass_accepted (kind, mass, error))
+        return FALSE;
+    if (!finite1 (radius) || !(radius > 0.0f) ||
+        !finite1 (half_length) || half_length < 0.0f ||
+        !finite3 (position) || !finite3 (axis))
+        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
+                          "dynamics sphyl radius, half-length, axis and position must be finite");
+    length = len3 (axis);
+    if (fabsf (length - 1.0f) > 1.0e-4f)
+        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
+                          "dynamics sphyl axis must already have length 1");
+    memset (&body, 0, sizeof (body));
+    if (!store_orientation (&body, orientation, error))
+        return FALSE;
+    if (self->n_bodies >= LRG_DYNAMICS_MAX_BODIES)
+        return dyn_error (error, LRG_DYNAMICS_ERROR_CAPACITY,
+                          "dynamics world already has %u bodies",
+                          LRG_DYNAMICS_MAX_BODIES);
+    body.alive = TRUE;
+    body.shape = DYN_SHAPE_SPHYL;
+    body.kind = kind;
+    body.mass = mass;
+    body.radius = radius;
+    body.half_length = half_length;
+    body.axis[0] = axis[0];
+    body.axis[1] = axis[1];
+    body.axis[2] = axis[2];
+    body.position[0] = position[0];
+    body.position[1] = position[1];
+    body.position[2] = position[2];
+    store_isotropic (&body, mass, radius);
+    self->bodies[self->n_bodies] = body;
+    *body_id = self->n_bodies;
+    self->n_bodies++;
+    return TRUE;
+}
+
+gboolean
+lrg_dynamics_world_add_inertial (LrgDynamicsWorld *self,
+                                 gfloat            mass,
+                                 const gfloat     *inertia_diagonal,
+                                 const gfloat     *position,
+                                 const gfloat     *orientation,
+                                 guint            *body_id,
+                                 GError          **error)
+{
+    DynBody body;
+
+    g_return_val_if_fail (LRG_IS_DYNAMICS_WORLD (self), FALSE);
+    g_return_val_if_fail (inertia_diagonal != NULL, FALSE);
+    g_return_val_if_fail (position != NULL, FALSE);
+    g_return_val_if_fail (body_id != NULL, FALSE);
+    if (!finite1 (mass) || !(mass > 0.0f) || !finite3 (position))
+        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
+                          "dynamics contactless mass and position must be finite and the mass positive");
+    if (!finite1 (inertia_diagonal[0]) || !finite1 (inertia_diagonal[1]) ||
+        !finite1 (inertia_diagonal[2]) ||
+        !(inertia_diagonal[0] > 0.0f) || !(inertia_diagonal[1] > 0.0f) ||
+        !(inertia_diagonal[2] > 0.0f))
+        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
+                          "dynamics contactless inertia diagonal must be finite and positive");
+    memset (&body, 0, sizeof (body));
+    if (!store_orientation (&body, orientation, error))
+        return FALSE;
+    if (self->n_bodies >= LRG_DYNAMICS_MAX_BODIES)
+        return dyn_error (error, LRG_DYNAMICS_ERROR_CAPACITY,
+                          "dynamics world already has %u bodies",
+                          LRG_DYNAMICS_MAX_BODIES);
+    body.alive = TRUE;
+    body.shape = DYN_SHAPE_INERTIAL;
+    body.kind = LRG_DYNAMICS_BODY_DYNAMIC;
+    body.mass = mass;
+    body.inv_mass = 1.0f / mass;
+    body.position[0] = position[0];
+    body.position[1] = position[1];
+    body.position[2] = position[2];
+    store_diagonal (&body, inertia_diagonal[0], inertia_diagonal[1], inertia_diagonal[2]);
     self->bodies[self->n_bodies] = body;
     *body_id = self->n_bodies;
     self->n_bodies++;
@@ -1383,7 +1865,8 @@ lrg_dynamics_world_set_box_inertia (LrgDynamicsWorld *self,
     if (!body->alive)
         return dyn_error (error, LRG_DYNAMICS_ERROR_MISSING,
                           "dynamics body %u was evicted", body_id);
-    if (body->kind != LRG_DYNAMICS_BODY_DYNAMIC || !(body->mass > 0.0f))
+    if (body->shape != DYN_SHAPE_SPHERE ||
+        body->kind != LRG_DYNAMICS_BODY_DYNAMIC || !(body->mass > 0.0f))
         return dyn_error (error, LRG_DYNAMICS_ERROR_STATE,
                           "dynamics box inertia requires a dynamic sphere");
     if (!finite1 (half_x) || !finite1 (half_y) || !finite1 (half_z) ||
@@ -1393,12 +1876,35 @@ lrg_dynamics_world_set_box_inertia (LrgDynamicsWorld *self,
     ixx = body->mass / 12.0f * (half_y * half_y + half_z * half_z);
     iyy = body->mass / 12.0f * (half_x * half_x + half_z * half_z);
     izz = body->mass / 12.0f * (half_x * half_x + half_y * half_y);
-    body->inertia[0] = ixx;
-    body->inertia[1] = iyy;
-    body->inertia[2] = izz;
-    body->inv_inertia[0] = 1.0f / ixx;
-    body->inv_inertia[1] = 1.0f / iyy;
-    body->inv_inertia[2] = 1.0f / izz;
+    store_diagonal (body, ixx, iyy, izz);
+    return TRUE;
+}
+
+gboolean
+lrg_dynamics_world_set_inertia_diagonal (LrgDynamicsWorld *self,
+                                         guint             body_id,
+                                         gfloat            ixx,
+                                         gfloat            iyy,
+                                         gfloat            izz,
+                                         GError          **error)
+{
+    DynBody *body;
+
+    g_return_val_if_fail (LRG_IS_DYNAMICS_WORLD (self), FALSE);
+    body = sphere_known (self, body_id, error);
+    if (body == NULL)
+        return FALSE;
+    if (!body->alive)
+        return dyn_error (error, LRG_DYNAMICS_ERROR_MISSING,
+                          "dynamics body %u was evicted", body_id);
+    if (body->kind != LRG_DYNAMICS_BODY_DYNAMIC || !(body->mass > 0.0f))
+        return dyn_error (error, LRG_DYNAMICS_ERROR_STATE,
+                          "dynamics inertia diagonal requires a dynamic body");
+    if (!finite1 (ixx) || !finite1 (iyy) || !finite1 (izz) ||
+        !(ixx > 0.0f) || !(iyy > 0.0f) || !(izz > 0.0f))
+        return dyn_error (error, LRG_DYNAMICS_ERROR_INVALID,
+                          "dynamics inertia diagonal must be finite and positive");
+    store_diagonal (body, ixx, iyy, izz);
     return TRUE;
 }
 

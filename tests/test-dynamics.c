@@ -5,8 +5,9 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * Headless tests for LrgDynamicsWorld: box inertia, joint limits, sphere
- * contacts, the substep cap, sleep, freeze, eviction and bone-pose
- * composition. A collision-only solid is not a stand-in for any of these.
+ * contacts, caller-axis sphyl contacts, contactless bodies, the substep
+ * cap, sleep, freeze, eviction and bone-pose composition. A collision-only
+ * solid is not a stand-in for any of these.
  */
 
 #include <glib.h>
@@ -310,6 +311,210 @@ test_sphere_contacts (void)
     g_assert_cmpfloat (fabsf (angular[2] * 0.5f + velocity[0]), <, 0.15f);
 }
 
+static guint
+add_sphyl (LrgDynamicsWorld    *world,
+           LrgDynamicsBodyKind  kind,
+           gfloat               radius,
+           gfloat               half_length,
+           const gfloat        *axis,
+           gfloat               x,
+           gfloat               y,
+           gfloat               z,
+           const gfloat        *orientation)
+{
+    g_autoptr(GError) error = NULL;
+    gfloat position[3];
+    guint id;
+
+    id = G_MAXUINT;
+    position[0] = x;
+    position[1] = y;
+    position[2] = z;
+    require (lrg_dynamics_world_add_sphyl (world, kind, 1.0f, radius, half_length,
+                                           axis, position, orientation, &id, &error),
+             &error);
+    return id;
+}
+
+static void
+test_sphyl_contacts (void)
+{
+    g_autoptr(LrgDynamicsWorld) world = NULL;
+    g_autoptr(GError) error = NULL;
+    gfloat axis[3];
+    gfloat position[3];
+    gfloat orientation[4];
+    gfloat inertia[3];
+    gfloat diagonal[3];
+    gfloat point[3];
+    gfloat normal[3];
+    gfloat depth;
+    gfloat half;
+    guint cap;
+    guint sphere;
+    guint other;
+    guint plane;
+    guint inertial;
+    guint steps;
+    gboolean missing;
+    LrgDynamicsContactKind kind;
+    guint body_a;
+    guint body_b;
+
+    axis[0] = 1.0f;
+    axis[1] = 0.0f;
+    axis[2] = 0.0f;
+    world = lrg_dynamics_world_new ();
+    require (lrg_dynamics_world_set_step_limits (world, 1.0f / 60.0f, 1, &error), &error);
+    cap = add_sphyl (world, LRG_DYNAMICS_BODY_STATIC, 0.2f, 1.0f, axis,
+                     0.0f, 0.0f, 0.0f, NULL);
+    sphere = add_sphere (world, LRG_DYNAMICS_BODY_DYNAMIC, 1.0f, 0.2f, 0.0f, 0.3f, 0.0f);
+    require (lrg_dynamics_world_step (world, 1.0f / 60.0f, NULL, &error), &error);
+    g_assert_cmpuint (lrg_dynamics_world_get_contact_count (world), ==, 1);
+    require (lrg_dynamics_world_get_contact (world, 0, &kind, &body_a, &body_b,
+                                            point, normal, &depth, &error),
+             &error);
+    g_assert_cmpint (kind, ==, LRG_DYNAMICS_CONTACT_SPHYL_SPHERE);
+    g_assert_cmpuint (body_a, ==, sphere);
+    g_assert_cmpuint (body_b, ==, cap);
+    g_assert_cmpfloat_with_epsilon (depth, 0.1f, 1.0e-4f);
+    g_assert_cmpfloat_with_epsilon (normal[1], 1.0f, 1.0e-4f);
+    for (steps = 0; steps < 30; steps++)
+        require (lrg_dynamics_world_step (world, 1.0f / 60.0f, NULL, &error), &error);
+    require (lrg_dynamics_world_get_position (world, sphere, position, &error), &error);
+    g_assert_cmpfloat (position[1], >, 0.35f);
+
+    g_clear_object (&world);
+    world = lrg_dynamics_world_new ();
+    require (lrg_dynamics_world_set_step_limits (world, 1.0f / 60.0f, 1, &error), &error);
+    add_sphyl (world, LRG_DYNAMICS_BODY_STATIC, 0.1f, 2.0f, axis,
+               0.0f, 0.0f, 0.0f, NULL);
+    add_sphere (world, LRG_DYNAMICS_BODY_DYNAMIC, 1.0f, 0.1f, 1.5f, 0.0f, 0.0f);
+    require (lrg_dynamics_world_step (world, 1.0f / 60.0f, NULL, &error), &error);
+    g_assert_cmpuint (lrg_dynamics_world_get_contact_count (world), ==, 1);
+
+    g_clear_object (&world);
+    world = lrg_dynamics_world_new ();
+    require (lrg_dynamics_world_set_step_limits (world, 1.0f / 60.0f, 1, &error), &error);
+    add_sphyl (world, LRG_DYNAMICS_BODY_STATIC, 0.1f, 2.0f, axis,
+               0.0f, 0.0f, 0.0f, NULL);
+    add_sphere (world, LRG_DYNAMICS_BODY_DYNAMIC, 1.0f, 0.1f, 0.0f, 1.0f, 0.0f);
+    require (lrg_dynamics_world_step (world, 1.0f / 60.0f, NULL, &error), &error);
+    g_assert_cmpuint (lrg_dynamics_world_get_contact_count (world), ==, 0);
+
+    half = sqrtf (0.5f);
+    orientation[0] = 0.0f;
+    orientation[1] = 0.0f;
+    orientation[2] = half;
+    orientation[3] = half;
+    g_clear_object (&world);
+    world = lrg_dynamics_world_new ();
+    require (lrg_dynamics_world_set_step_limits (world, 1.0f / 60.0f, 1, &error), &error);
+    add_sphyl (world, LRG_DYNAMICS_BODY_STATIC, 0.1f, 1.0f, axis,
+               0.0f, 0.0f, 0.0f, orientation);
+    add_sphere (world, LRG_DYNAMICS_BODY_DYNAMIC, 1.0f, 0.1f, 0.0f, 0.5f, 0.0f);
+    add_sphere (world, LRG_DYNAMICS_BODY_DYNAMIC, 1.0f, 0.1f, 0.5f, 0.0f, 0.0f);
+    require (lrg_dynamics_world_step (world, 1.0f / 60.0f, NULL, &error), &error);
+    g_assert_cmpuint (lrg_dynamics_world_get_contact_count (world), ==, 1);
+    require (lrg_dynamics_world_get_contact (world, 0, &kind, &body_a, &body_b,
+                                            point, normal, &depth, &error),
+             &error);
+    g_assert_cmpint (kind, ==, LRG_DYNAMICS_CONTACT_SPHYL_SPHERE);
+    require (lrg_dynamics_world_get_position (world, body_a, position, &error), &error);
+    g_assert_cmpfloat_with_epsilon (position[1], 0.5f, 1.0e-4f);
+
+    g_clear_object (&world);
+    world = lrg_dynamics_world_new ();
+    require (lrg_dynamics_world_set_step_limits (world, 1.0f / 60.0f, 1, &error), &error);
+    normal[0] = 0.0f;
+    normal[1] = 1.0f;
+    normal[2] = 0.0f;
+    plane = G_MAXUINT;
+    require (lrg_dynamics_world_add_plane (world, normal, 0.0f, &plane, &error), &error);
+    cap = add_sphyl (world, LRG_DYNAMICS_BODY_DYNAMIC, 0.25f, 1.0f, axis,
+                     0.0f, 0.1f, 0.0f, NULL);
+    require (lrg_dynamics_world_step (world, 1.0f / 60.0f, NULL, &error), &error);
+    g_assert_cmpuint (lrg_dynamics_world_get_contact_count (world), ==, 1);
+    require (lrg_dynamics_world_get_contact (world, 0, &kind, &body_a, &body_b,
+                                            point, normal, &depth, &error),
+             &error);
+    g_assert_cmpint (kind, ==, LRG_DYNAMICS_CONTACT_SPHYL_PLANE);
+    g_assert_cmpuint (body_a, ==, cap);
+    g_assert_cmpuint (body_b, ==, plane);
+    g_assert_cmpfloat_with_epsilon (depth, 0.15f, 1.0e-4f);
+
+    g_clear_object (&world);
+    world = lrg_dynamics_world_new ();
+    require (lrg_dynamics_world_set_step_limits (world, 1.0f / 60.0f, 1, &error), &error);
+    cap = add_sphyl (world, LRG_DYNAMICS_BODY_DYNAMIC, 0.2f, 0.5f, axis,
+                     0.0f, 0.0f, 0.0f, NULL);
+    other = add_sphyl (world, LRG_DYNAMICS_BODY_DYNAMIC, 0.2f, 0.5f, axis,
+                       0.0f, 0.3f, 0.0f, NULL);
+    require (lrg_dynamics_world_step (world, 1.0f / 60.0f, NULL, &error), &error);
+    g_assert_cmpuint (lrg_dynamics_world_get_contact_count (world), ==, 1);
+    require (lrg_dynamics_world_get_contact (world, 0, &kind, &body_a, &body_b,
+                                            point, normal, &depth, &error),
+             &error);
+    g_assert_cmpint (kind, ==, LRG_DYNAMICS_CONTACT_SPHYL_SPHYL);
+    g_assert_cmpuint (body_a, ==, cap);
+    g_assert_cmpuint (body_b, ==, other);
+    g_assert_cmpfloat_with_epsilon (depth, 0.1f, 1.0e-4f);
+
+    g_clear_object (&world);
+    world = lrg_dynamics_world_new ();
+    require (lrg_dynamics_world_set_step_limits (world, 1.0f / 60.0f, 1, &error), &error);
+    add_sphere (world, LRG_DYNAMICS_BODY_DYNAMIC, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f);
+    diagonal[0] = 0.2f;
+    diagonal[1] = 0.3f;
+    diagonal[2] = 0.4f;
+    position[0] = 0.0f;
+    position[1] = 0.0f;
+    position[2] = 0.0f;
+    inertial = G_MAXUINT;
+    require (lrg_dynamics_world_add_inertial (world, 2.0f, diagonal, position,
+                                              NULL, &inertial, &error),
+             &error);
+    require (lrg_dynamics_world_step (world, 1.0f / 60.0f, NULL, &error), &error);
+    g_assert_cmpuint (lrg_dynamics_world_get_contact_count (world), ==, 0);
+    require (lrg_dynamics_world_get_inertia (world, inertial, inertia, &error), &error);
+    g_assert_cmpfloat_with_epsilon (inertia[0], 0.2f, 1.0e-5f);
+    g_assert_cmpfloat_with_epsilon (inertia[1], 0.3f, 1.0e-5f);
+    g_assert_cmpfloat_with_epsilon (inertia[2], 0.4f, 1.0e-5f);
+
+    axis[0] = 2.0f;
+    g_assert_false (lrg_dynamics_world_add_sphyl (world, LRG_DYNAMICS_BODY_DYNAMIC,
+                                                  1.0f, 0.2f, 1.0f, axis, position,
+                                                  NULL, &other, &error));
+    g_assert_error (error, LRG_DYNAMICS_ERROR, LRG_DYNAMICS_ERROR_INVALID);
+    g_clear_error (&error);
+    missing = TRUE;
+    g_assert_false (lrg_dynamics_world_body_is_active (world, 2, &missing, &error));
+    g_assert_error (error, LRG_DYNAMICS_ERROR, LRG_DYNAMICS_ERROR_MISSING);
+    g_clear_error (&error);
+
+    axis[0] = 1.0f;
+    g_clear_object (&world);
+    world = lrg_dynamics_world_new ();
+    cap = add_sphyl (world, LRG_DYNAMICS_BODY_DYNAMIC, 0.5f, 1.0f, axis,
+                     0.0f, 0.0f, 0.0f, NULL);
+    require (lrg_dynamics_world_get_inertia (world, cap, inertia, &error), &error);
+    g_assert_cmpfloat_with_epsilon (inertia[0], 0.1f, 1.0e-5f);
+    require (lrg_dynamics_world_set_inertia_diagonal (world, cap, 1.5f, 2.5f, 3.5f, &error),
+             &error);
+    require (lrg_dynamics_world_get_inertia (world, cap, inertia, &error), &error);
+    g_assert_cmpfloat_with_epsilon (inertia[0], 1.5f, 1.0e-5f);
+    g_assert_cmpfloat_with_epsilon (inertia[1], 2.5f, 1.0e-5f);
+    g_assert_cmpfloat_with_epsilon (inertia[2], 3.5f, 1.0e-5f);
+    g_assert_false (lrg_dynamics_world_set_inertia_diagonal (world, cap, 0.0f, 2.5f, 3.5f,
+                                                            &error));
+    g_assert_error (error, LRG_DYNAMICS_ERROR, LRG_DYNAMICS_ERROR_INVALID);
+    g_clear_error (&error);
+    require (lrg_dynamics_world_get_inertia (world, cap, inertia, &error), &error);
+    g_assert_cmpfloat_with_epsilon (inertia[0], 1.5f, 1.0e-5f);
+    g_assert_false (lrg_dynamics_world_set_box_inertia (world, cap, 1.0f, 1.0f, 1.0f, &error));
+    g_assert_error (error, LRG_DYNAMICS_ERROR, LRG_DYNAMICS_ERROR_STATE);
+}
+
 static void
 test_box_extents_are_not_contacts (void)
 {
@@ -602,6 +807,7 @@ main (int argc, char *argv[])
     g_test_add_func ("/dynamics/joint-linear-limit", test_joint_linear_limit);
     g_test_add_func ("/dynamics/joint-angular-limit", test_joint_angular_limit);
     g_test_add_func ("/dynamics/sphere-contacts", test_sphere_contacts);
+    g_test_add_func ("/dynamics/sphyl-contacts", test_sphyl_contacts);
     g_test_add_func ("/dynamics/box-extents-are-not-contacts", test_box_extents_are_not_contacts);
     g_test_add_func ("/dynamics/bounded-step", test_bounded_step);
     g_test_add_func ("/dynamics/sleep-and-freeze", test_sleep_and_freeze);

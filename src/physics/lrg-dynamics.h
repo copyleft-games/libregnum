@@ -5,10 +5,14 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * LrgDynamicsWorld - bounded 3D rigid motion. Y is up. Contacts are
- * sphere-sphere and sphere-plane only. A box half-extent sets the
- * body-frame inertia diagonal and is not a contact shape. This world
- * does not admit a ragdoll, an Onslaught goal, or an Assault goal, and
- * it does not interpret Karma physics bytes. LrgRigidBody stays 2D.
+ * sphere-sphere, sphere-plane, sphyl-sphere, sphyl-plane and
+ * sphyl-sphyl. A sphyl is a capsule whose segment axis is the caller's
+ * unit vector, not the collision library's local +Y sphyl. A box
+ * half-extent or an explicit diagonal sets body-frame inertia and is
+ * not a contact shape. A contactless body has mass and a diagonal
+ * inertia and generates no contacts. This world does not admit a
+ * ragdoll, an Onslaught goal, or an Assault goal, and it does not
+ * interpret Karma physics bytes. LrgRigidBody stays 2D.
  */
 
 #pragma once
@@ -94,12 +98,19 @@ typedef enum {
  * LrgDynamicsContactKind:
  * @LRG_DYNAMICS_CONTACT_SPHERE_SPHERE: two sphere surfaces
  * @LRG_DYNAMICS_CONTACT_SPHERE_PLANE: a sphere against an infinite plane
+ * @LRG_DYNAMICS_CONTACT_SPHYL_SPHERE: a caller-axis capsule against a sphere
+ * @LRG_DYNAMICS_CONTACT_SPHYL_PLANE: a caller-axis capsule against an infinite plane
+ * @LRG_DYNAMICS_CONTACT_SPHYL_SPHYL: two caller-axis capsules
  *
- * The contact that was generated. Neither kind is a box SAT test.
+ * The contact that was generated. None of these is a box SAT test, and
+ * a sphyl contact is not the collision library's local +Y solid.
  */
 typedef enum {
     LRG_DYNAMICS_CONTACT_SPHERE_SPHERE = 1,
-    LRG_DYNAMICS_CONTACT_SPHERE_PLANE = 2
+    LRG_DYNAMICS_CONTACT_SPHERE_PLANE = 2,
+    LRG_DYNAMICS_CONTACT_SPHYL_SPHERE = 3,
+    LRG_DYNAMICS_CONTACT_SPHYL_PLANE = 4,
+    LRG_DYNAMICS_CONTACT_SPHYL_SPHYL = 5
 } LrgDynamicsContactKind;
 
 LRG_AVAILABLE_IN_ALL
@@ -173,7 +184,8 @@ gboolean lrg_dynamics_world_set_step_limits (LrgDynamicsWorld *self,
  * @friction: Coulomb friction, zero or positive
  * @error: (nullable): return location for a #GError
  *
- * Both values apply to every contact. Friction uses the sphere inertia.
+ * Both values apply to every contact. Friction uses the body-frame
+ * inertia diagonal.
  *
  * Returns: %TRUE on success
  */
@@ -219,10 +231,10 @@ gboolean lrg_dynamics_world_set_sleep (LrgDynamicsWorld *self,
  * @maximum: (array fixed-size=3): inclusive upper corner
  * @error: (nullable): return location for a #GError
  *
- * After each substep a dynamic sphere whose center is outside this box
- * is evicted. Static, kinematic, and plane bodies stay. Passing the
- * same corner on every axis is rejected; the box must have positive
- * extent on each axis.
+ * After each substep a dynamic sphere, sphyl, or contactless body whose
+ * center is outside this box is evicted. Static, kinematic, and plane
+ * bodies stay. Passing the same corner on every axis is rejected; the
+ * box must have positive extent on each axis.
  *
  * Returns: %TRUE on success
  */
@@ -283,6 +295,73 @@ gboolean lrg_dynamics_world_add_plane (LrgDynamicsWorld *self,
                                        GError          **error);
 
 /**
+ * lrg_dynamics_world_add_sphyl:
+ * @self: a world
+ * @kind: dynamic, kinematic, or static
+ * @mass: positive finite mass for a dynamic body; zero is allowed for
+ *   the other kinds
+ * @radius: positive finite capsule radius
+ * @half_length: finite half-length of the segment, zero or positive.
+ *   The segment runs from -axis*half_length to +axis*half_length
+ * @axis: (array fixed-size=3): body-local unit segment direction. The
+ *   length must already be 1 within 1e-4. This is not the collision
+ *   library's local +Y axis and it is not read from a Karma asset
+ * @position: (array fixed-size=3): world center of the segment
+ * @orientation: (array fixed-size=4) (nullable): xyzw quaternion, or
+ *   %NULL for identity. A non-zero quaternion is normalised. The world
+ *   segment direction is this orientation applied to @axis
+ * @body_id: (out): id of the new body
+ * @error: (nullable): return location for a #GError
+ *
+ * The contact shape is the capsule. The initial dynamic inertia is the
+ * isotropic solid-sphere tensor (2/5)mr².
+ * lrg_dynamics_world_set_inertia_diagonal() replaces that tensor and
+ * does not change the capsule. A failure leaves the world unchanged.
+ * This call does not admit a ragdoll.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_dynamics_world_add_sphyl (LrgDynamicsWorld    *self,
+                                       LrgDynamicsBodyKind  kind,
+                                       gfloat               mass,
+                                       gfloat               radius,
+                                       gfloat               half_length,
+                                       const gfloat        *axis,
+                                       const gfloat        *position,
+                                       const gfloat        *orientation,
+                                       guint               *body_id,
+                                       GError             **error);
+
+/**
+ * lrg_dynamics_world_add_inertial:
+ * @self: a world
+ * @mass: positive finite mass
+ * @inertia_diagonal: (array fixed-size=3): positive finite body-frame
+ *   diagonal. A non-positive component is rejected. No off-diagonal
+ *   coupling is stored
+ * @position: (array fixed-size=3): world center
+ * @orientation: (array fixed-size=4) (nullable): xyzw quaternion, or
+ *   %NULL for identity
+ * @body_id: (out): id of the new body
+ * @error: (nullable): return location for a #GError
+ *
+ * Adds a dynamic body with no contact shape. No radius is invented.
+ * Overlap with a sphere, a sphyl, or a plane does not generate a
+ * contact. This is not a ragdoll.
+ *
+ * Returns: %TRUE on success. A failure leaves the world unchanged.
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_dynamics_world_add_inertial (LrgDynamicsWorld *self,
+                                          gfloat            mass,
+                                          const gfloat     *inertia_diagonal,
+                                          const gfloat     *position,
+                                          const gfloat     *orientation,
+                                          guint            *body_id,
+                                          GError          **error);
+
+/**
  * lrg_dynamics_world_set_box_inertia:
  * @self: a world
  * @body_id: a dynamic sphere
@@ -304,6 +383,29 @@ gboolean lrg_dynamics_world_set_box_inertia (LrgDynamicsWorld *self,
                                              gfloat            half_y,
                                              gfloat            half_z,
                                              GError          **error);
+
+/**
+ * lrg_dynamics_world_set_inertia_diagonal:
+ * @self: a world
+ * @body_id: a dynamic sphere, sphyl, or contactless body
+ * @ixx: positive finite body-frame Ixx
+ * @iyy: positive finite body-frame Iyy
+ * @izz: positive finite body-frame Izz
+ * @error: (nullable): return location for a #GError
+ *
+ * Replaces the body-frame diagonal. Off-diagonal products are not
+ * stored; a non-positive component is an error and leaves the previous
+ * diagonal unchanged. The contact shape is unchanged.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_dynamics_world_set_inertia_diagonal (LrgDynamicsWorld *self,
+                                                  guint             body_id,
+                                                  gfloat            ixx,
+                                                  gfloat            iyy,
+                                                  gfloat            izz,
+                                                  GError          **error);
 
 /**
  * lrg_dynamics_world_get_inertia:
@@ -589,7 +691,7 @@ guint lrg_dynamics_world_get_contact_count (LrgDynamicsWorld *self);
  * lrg_dynamics_world_get_contact:
  * @self: a world
  * @index: index below the contact count
- * @kind: (out): sphere-sphere or sphere-plane
+ * @kind: (out): which pair produced the contact
  * @body_a: (out): sphere id
  * @body_b: (out): the other sphere, or the plane
  * @point: (out caller-allocates) (array fixed-size=3): a point on the
@@ -632,7 +734,7 @@ guint lrg_dynamics_world_get_evicted (LrgDynamicsWorld *self,
 /**
  * lrg_dynamics_world_write_bone_pose:
  * @self: a world
- * @body_id: an active sphere
+ * @body_id: an active body that is not a plane
  * @parent_world: (nullable): the parent's composed world pose, or %NULL
  *   for a root
  * @local: (inout): local pose. Scale is kept. Position and rotation are
