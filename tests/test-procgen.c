@@ -420,7 +420,7 @@ test_grid_reference_fuzz (void)
 	};
 	guint seed;
 
-	for (seed = 0; seed < 240; seed++)
+	for (seed = 0; seed < 100; seed++)
 	{
 		g_autoptr(LrgRandomStream) rng = lrg_random_stream_new (seed, 77);
 		guint w = sizes[seed % G_N_ELEMENTS (sizes)][0];

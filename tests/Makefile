@@ -115,6 +115,7 @@ TEST_SOURCES := \
 	test-skinned-mesh.c \
 	test-billboard-batch.c \
 	test-terrain.c \
+	test-terrain-render.c \
 	test-sky-dome.c \
 	test-world-look.c \
 	test-light-set.c \
