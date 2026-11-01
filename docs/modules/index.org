@@ -343,7 +343,7 @@ Engagement systems for player retention:
 - *AI Module* - Behavior trees and decision making
 - *Pathfinding Module* - A* navigation and path smoothing
 - *[[file:procgen/index.org][Procedural Generation Module]]* - Seeded, platform-identical BSP dungeons, cellular-automaton caves, wave function collapse, drunkard's walk and noise maps; connectivity, start/exit and spawn placement; tilemap (autotile), nav grid and ECS conversion; YAML recipes
-- *[[file:physics/index.org][Physics Module]]* - 2D/3D rigid body simulation and static XZ wall collision ([[file:physics/wall-set.org][LrgWallSet]]), triangle mesh collision ([[file:physics/collision-mesh.org][LrgCollisionMesh]]), closed solids ([[file:physics/solid-geometry.org][LrgSolidGeometry]]), a capsule character controller ([[file:physics/character-controller.org][LrgCharacterController]]) and bounded 3D sphere dynamics ([[file:physics/dynamics.org][LrgDynamicsWorld]])
+- *[[file:physics/index.org][Physics Module]]* - 2D/3D rigid body simulation and static XZ wall collision ([[file:physics/wall-set.org][LrgWallSet]]), triangle mesh collision ([[file:physics/collision-mesh.org][LrgCollisionMesh]]), closed solids ([[file:physics/solid-geometry.org][LrgSolidGeometry]]), a capsule character controller ([[file:physics/character-controller.org][LrgCharacterController]]) and bounded 3D sphere and caller-axis sphyl dynamics ([[file:physics/dynamics.org][LrgDynamicsWorld]])
 - *I18N Module* - Localization and translations
 - *Networking Module* - Client/server multiplayer
 
