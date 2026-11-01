@@ -2464,6 +2464,7 @@ struct _TestEventListener
     void (*action) (TestEventListener *self, LrgEvent *event, gpointer data);
     gpointer action_data;
     guint64 mask;
+    gboolean static_mask;   /* opts into mask caching when registered */
 };
 
 static void test_event_listener_iface_init (LrgEventListenerInterface *iface);
@@ -2488,6 +2489,12 @@ static guint64
 test_event_listener_get_mask (LrgEventListener *listener)
 {
     return TEST_EVENT_LISTENER (listener)->mask;
+}
+
+static gboolean
+test_event_listener_has_static_mask (LrgEventListener *listener)
+{
+    return TEST_EVENT_LISTENER (listener)->static_mask;
 }
 
 typedef struct
@@ -2536,6 +2543,7 @@ test_event_listener_iface_init (LrgEventListenerInterface *iface)
     iface->get_priority = test_event_listener_get_priority;
     iface->get_event_mask = test_event_listener_get_mask;
     iface->on_event = test_event_listener_on_event;
+    iface->has_static_mask = test_event_listener_has_static_mask;
 }
 
 static void
@@ -2747,8 +2755,9 @@ change_masks (TestEventListener *self,
 }
 
 static void
-test_event_bus_mask_changes_during_emit (void)
+test_event_bus_mask_changes_during_emit (gconstpointer data)
 {
+    gboolean cached = GPOINTER_TO_INT (data);
     g_autoptr(LrgEventBus) bus = lrg_event_bus_new ();
     g_autoptr(LrgCardEvent) event = lrg_card_event_new (LRG_CARD_EVENT_TURN_START);
     g_autoptr(GArray) priorities = g_array_new (FALSE, FALSE, sizeof (gint));
@@ -2762,6 +2771,7 @@ test_event_bus_mask_changes_during_emit (void)
     muted->priority = 5;
     late->priority = 1;
     late->mask = 0;
+    first->static_mask = muted->static_mask = late->static_mask = cached;
     others[0] = muted;
     others[1] = late;
     first->action = change_masks;
@@ -2775,25 +2785,28 @@ test_event_bus_mask_changes_during_emit (void)
     g_assert_cmpuint (priorities->len, ==, 1);
     g_assert_cmpint (g_array_index (priorities, gint, 0), ==, 10);
 
-    /* Masks are cached per registration: the narrowed mask is honoured
-     * at once (the live mask is checked at each turn), the widened one
-     * only after a refresh. */
     first->action = NULL;
-    g_array_set_size (priorities, 0);
-    g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
-    g_assert_cmpuint (priorities->len, ==, 1);
-    g_assert_cmpint (g_array_index (priorities, gint, 0), ==, 10);
+    if (cached)
+    {
+        /* Opted-in listeners: the narrowed mask is honoured at once
+         * (the live mask is checked at each turn), the widened one
+         * only after a refresh. */
+        g_array_set_size (priorities, 0);
+        g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
+        g_assert_cmpuint (priorities->len, ==, 1);
+        g_assert_cmpint (g_array_index (priorities, gint, 0), ==, 10);
+        lrg_event_bus_refresh_listener (bus, LRG_EVENT_LISTENER (late));
+    }
 
-    /* The next emission after a refresh sees the new masks. */
-    lrg_event_bus_refresh_listener (bus, LRG_EVENT_LISTENER (late));
+    /* The next emission sees the new masks. */
     g_array_set_size (priorities, 0);
     g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
     g_assert_cmpuint (priorities->len, ==, 2);
     g_assert_cmpint (g_array_index (priorities, gint, 1), ==, 1);
 }
 
-/* A listener configured after registering: its mask is read when the
- * next emission starts, not at registration. */
+/* An opted-in listener configured after registering: its mask is read
+ * when the next emission starts, not at registration. */
 static void
 test_event_bus_mask_set_after_register (void)
 {
@@ -2804,14 +2817,15 @@ test_event_bus_mask_set_after_register (void)
     TestEventDispatch dispatch = { bus, priorities };
 
     listener->mask = 0;
+    listener->static_mask = TRUE;
     lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listener));
     listener->mask = lrg_card_event_get_event_type_mask (LRG_CARD_EVENT_TURN_START);
     g_assert_true (lrg_event_bus_emit (bus, LRG_EVENT (event), &dispatch));
     g_assert_cmpuint (priorities->len, ==, 1);
 }
 
-/* Builds listeners A..E with the given masks, all at priority 0,
- * recording into @order. */
+/* Builds listeners with the given masks, all at priority 0, opted into
+ * mask caching, recording into @order. */
 static void
 make_mask_listeners (LrgEventBus       *bus,
                      TestEventListener **listeners,
@@ -2825,6 +2839,7 @@ make_mask_listeners (LrgEventBus       *bus,
     {
         listeners[i] = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
         listeners[i]->mask = masks[i];
+        listeners[i]->static_mask = TRUE;
         listeners[i]->action = record_listener;
         listeners[i]->action_data = order;
         lrg_event_bus_register (bus, LRG_EVENT_LISTENER (listeners[i]));
@@ -2844,7 +2859,7 @@ assert_order (GPtrArray          *order,
     g_ptr_array_set_size (order, 0);
 }
 
-/* Refreshing keeps a registration's place: listeners of different
+/* With mask caching opted in, refreshing keeps a registration's place: listeners of different
  * masks still run in registration order at equal priority, and each
  * event type reaches exactly its listeners. Duplicate registrations are
  * refreshed together; refreshing an unregistered listener does nothing. */
@@ -2965,6 +2980,7 @@ test_event_bus_mutation_during_emit (void)
     make_mask_listeners (bus, l, masks, 5, order);
     l[5] = g_object_new (TEST_TYPE_EVENT_LISTENER, NULL);
     l[5]->mask = s;
+    l[5]->static_mask = TRUE;
     l[5]->action = record_listener;
     l[0]->action = mutate_during_emit;
     l[0]->action_data = &mutate;
@@ -7238,7 +7254,8 @@ main (int   argc,
     g_test_add_func ("/deckbuilder/event-bus/new", test_event_bus_new);
     g_test_add_func ("/deckbuilder/event-bus/live-priorities", test_event_bus_live_priorities);
     g_test_add_func ("/deckbuilder/event-bus/mask-filter-order", test_event_bus_mask_filter_order);
-    g_test_add_func ("/deckbuilder/event-bus/mask-changes-during-emit", test_event_bus_mask_changes_during_emit);
+    g_test_add_data_func ("/deckbuilder/event-bus/mask-changes-during-emit", GINT_TO_POINTER (FALSE), test_event_bus_mask_changes_during_emit);
+    g_test_add_data_func ("/deckbuilder/event-bus/cached-mask-changes-during-emit", GINT_TO_POINTER (TRUE), test_event_bus_mask_changes_during_emit);
     g_test_add_func ("/deckbuilder/event-bus/mask-set-after-register", test_event_bus_mask_set_after_register);
     g_test_add_func ("/deckbuilder/event-bus/refresh-order", test_event_bus_refresh_order);
     g_test_add_func ("/deckbuilder/event-bus/mutation-during-emit", test_event_bus_mutation_during_emit);

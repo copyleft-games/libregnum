@@ -116,12 +116,13 @@ Objects that respond to events implement =LrgEventListener=:
 :PROPERTIES:
 :CUSTOM_ID: interface-methods-1
 :END:
-| Method             | Description                                  |
-|--------------------+----------------------------------------------|
-| =get_id()=         | Unique string identifier for this listener   |
-| =get_priority()=   | Higher priority = called first (default: 0)  |
-| =get_event_mask()= | Bitmask of event types this listener handles |
-| =on_event()=       | Called when matching event is dispatched     |
+| Method              | Description                                                  |
+|---------------------+--------------------------------------------------------------|
+| =get_id()=          | Unique string identifier for this listener                   |
+| =get_priority()=    | Higher priority = called first (default: 0)                  |
+| =get_event_mask()=  | Bitmask of event types this listener handles                 |
+| =on_event()=        | Called when matching event is dispatched                     |
+| =has_static_mask()= | Optional: =TRUE= lets a bus cache the mask ([[#mask-cache][opt-in]]) |
 
 *** Implementing LrgEventListener
 :PROPERTIES:
@@ -243,7 +244,7 @@ if (lrg_event_is_cancelled (LRG_EVENT (event)))
 :PROPERTIES:
 :CUSTOM_ID: dispatch-lifetime
 :END:
-Each emission captures the current registrations whose cached event mask (see [[#mask-cache][Mask cache and refresh]]) matches the event, and their priorities, before notifying listeners. Higher priorities run first; ties follow registration order. A priority changed by a callback, or a mask change the callback reports with =lrg_event_bus_refresh_listener()=, affects later emissions, including a nested emission, while the outer emission retains its captured set and order. A captured listener whose mask stops matching before its turn is still skipped: its live mask is checked at its turn.
+Each emission captures the current registrations whose event mask matches the event, and their priorities, before notifying listeners. Higher priorities run first; ties follow registration order. A priority or mask changed by a callback affects later emissions, including a nested emission, while the outer emission retains its captured set and order. A captured listener whose mask stops matching before its turn is still skipped. Listeners that opt into mask caching follow the same rules, except that a mask gaining bits needs a refresh (see [[#mask-cache][Mask caching (opt-in)]]).
 
 Each call to =register()= creates a separate registration. Registering an object
 twice delivers twice. =unregister()= removes its oldest remaining registration;
@@ -264,7 +265,7 @@ The optional context pointer remains caller-owned and must stay valid through
 dispatch. This is synchronous dispatch, not a thread-safe queue: use one thread
 or external serialization, and keep listener accessors free of bus mutations.
 
-An emission scans the bus's array of cached masks (no listener code runs for a registration that does not match) and captures only the M matching ones: O(N + M log M), with no allocation for up to 32 matches. Matching listeners are already
+An emission reads every registration's mask once (through the listener's vtable, cached at registration, or from the bus's mask cache for opted-in listeners) and captures only the M matching ones: O(N + M log M), with no allocation for up to 32 matches. Matching listeners are already
 in registration order, so equal or non-increasing priorities sort in O(M).
 Checking whether a registration was removed is O(1), including after callback
 mutations. Priorities, the per-turn mask check and =on_event= go through the
@@ -272,24 +273,36 @@ same cached listener vtable, and the event's vtable is looked up once per
 emission for the cancellation checks; the public wrappers (and their
 criticals) are only used for an implementation that leaves a vfunc =NULL=.
 
-*** Mask cache and refresh
+*** Mask caching (opt-in)
 :PROPERTIES:
 :CUSTOM_ID: mask-cache
 :END:
-The bus caches each registration's event mask instead of asking every listener on every emission. =lrg_event_listener_get_event_mask()= stays the source of truth; the cache decides only which registrations an emission visits:
+By default the bus asks every registered listener for its mask on every emission, so a changed mask always applies at the next emission. With many listeners and frequent events that is most of the bus's cost. A listener whose mask rarely changes can opt out of being asked by implementing =has_static_mask()= in its =LrgEventListenerInterface= and returning =TRUE=:
 
-- A registration's mask is read at the start of the first emission after =register()=, so a listener configured after registering (but before that emission) is seen as configured.
-- After that the bus does not read the mask again until it is told the mask changed: =lrg_event_bus_refresh_listener (bus, listener)= (every registration of that listener) or =lrg_event_bus_refresh_listeners (bus)= (all). The masks are read again at the start of the next emission.
-- At its turn each captured listener's live mask is checked, so a mask that loses bits takes effect without a refresh (the bus still visits the listener until refreshed). A mask that gains bits needs a refresh: until then the listener does not receive the new event types.
-- A refresh from a callback applies from the next emission, nested ones included; the running emission keeps its captured set. Refreshing an unregistered listener does nothing.
+- The bus asks =has_static_mask()= once, when the listener is registered, and from then on keeps that registration's mask in an array it scans instead of calling =get_event_mask()=.
+- The mask is read at the start of the first emission after =register()= (so configuring the listener after registering still works), then only again after =lrg_event_bus_refresh_listener (bus, listener)= (every registration of that listener) or =lrg_event_bus_refresh_listeners (bus)=, at the start of the next emission.
+- The live mask is still checked at the listener's turn, so a mask that loses bits applies without a refresh. A mask that gains bits needs a refresh; until then the listener does not receive the new event types.
+- A refresh from a callback applies from the next emission, nested ones included. For listeners that did not opt in, and for listeners that are not registered, the refresh calls do nothing.
+
+The opt-in is per listener rather than per bus because the promise ("my mask only grows when I say so") is about how the listener is written: a bus may hold listeners from several modules or mods, and a bus-wide switch would silently stop events reaching a listener that changes its mask without knowing about the cache. Listeners that do not implement the vfunc keep the old behaviour on every bus.
 
 #+begin_src C
-/* The listener now also wants heal events */
-listener->mask |= EVENT_HEAL;
-lrg_event_bus_refresh_listener (bus, LRG_EVENT_LISTENER (listener));
-#+end_src
+static gboolean
+combat_log_has_static_mask (LrgEventListener *listener)
+{
+    return TRUE;    /* the mask only changes through combat_log_set_mask() */
+}
 
-Before v0.7 every emission called every registration's =get_event_mask()=, so a widened mask applied without a refresh; code that widens masks at runtime must add the call (see [[file:../../performance.org::#tween-event-pass][the tween and event bus pass]]).
+static void
+combat_log_set_mask (CombatLog *self, guint64 mask)
+{
+    self->mask = mask;
+    lrg_event_bus_refresh_listener (self->bus, LRG_EVENT_LISTENER (self));
+}
+
+/* in the interface init */
+iface->has_static_mask = combat_log_has_static_mask;
+#+end_src
 
 To preserve an original event, copy it using the concrete event type's copy
 function and emit that copy. There is no generic =lrg_event_bus_emit_copy()= API.
@@ -440,12 +453,13 @@ lrg_event_bus_register (bus, LRG_EVENT_LISTENER (trigger));
 :PROPERTIES:
 :CUSTOM_ID: lrgeventlistener-interface
 :END:
-| Function                                                | Description                   |
-|---------------------------------------------------------+-------------------------------|
-| =lrg_event_listener_get_id(listener)=                   | Get unique ID                 |
-| =lrg_event_listener_get_priority(listener)=             | Get priority (higher = first) |
-| =lrg_event_listener_get_event_mask(listener)=           | Get event type filter         |
-| =lrg_event_listener_on_event(listener, event, context)= | Handle event                  |
+| Function                                                | Description                      |
+|---------------------------------------------------------+----------------------------------|
+| =lrg_event_listener_get_id(listener)=                   | Get unique ID                    |
+| =lrg_event_listener_get_priority(listener)=             | Get priority (higher = first)    |
+| =lrg_event_listener_get_event_mask(listener)=           | Get event type filter            |
+| =lrg_event_listener_on_event(listener, event, context)= | Handle event                     |
+| =lrg_event_listener_has_static_mask(listener)=          | Whether the mask may be cached   |
 
 *** LrgEventBus
 :PROPERTIES:
@@ -459,8 +473,8 @@ lrg_event_bus_register (bus, LRG_EVENT_LISTENER (trigger));
 | =lrg_event_bus_emit(bus, event, context)=       | Dispatch event                                 |
 | =lrg_event_bus_get_listener_count(bus)=         | Number of listeners                            |
 | =lrg_event_bus_clear(bus)=                      | Remove all listeners                           |
-| =lrg_event_bus_refresh_listener(bus, listener)= | Re-read a listener's mask at the next emission |
-| =lrg_event_bus_refresh_listeners(bus)=          | Re-read all masks at the next emission         |
+| =lrg_event_bus_refresh_listener(bus, listener)= | Re-read an opted-in listener's cached mask     |
+| =lrg_event_bus_refresh_listeners(bus)=          | Re-read all cached masks                       |
 
 ** Complete Example
 :PROPERTIES:

@@ -34,7 +34,7 @@ G_DECLARE_FINAL_TYPE (LrgTween, lrg_tween, LRG, TWEEN, LrgTweenBase)
  * the GObject property system. Installed with
  * lrg_tween_set_float_setter().
  *
- * Since: 0.7
+ * Since: 0.6.1
  */
 typedef void (*LrgTweenFloatSetter) (GObject  *target,
                                      gfloat    value,
@@ -365,7 +365,7 @@ void            lrg_tween_set_use_current_as_from (LrgTween  *self,
  * Passing %NULL for @setter removes the current setter (calling its
  * destroy notify) and frees @user_data with @destroy at once.
  *
- * Since: 0.7
+ * Since: 0.6.1
  */
 LRG_AVAILABLE_IN_ALL
 void            lrg_tween_set_float_setter  (LrgTween            *self,
@@ -382,7 +382,7 @@ void            lrg_tween_set_float_setter  (LrgTween            *self,
  *
  * Returns: %TRUE if a float setter is installed
  *
- * Since: 0.7
+ * Since: 0.6.1
  */
 LRG_AVAILABLE_IN_ALL
 gboolean        lrg_tween_has_float_setter  (LrgTween            *self);

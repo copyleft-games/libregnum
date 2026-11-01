@@ -21,6 +21,19 @@ typedef struct
     gboolean mask_stale;                /* re-read the mask before the next emission */
 } Registration;
 
+/*
+ * MaskSlot:
+ *
+ * One registration's entry in the bus's mask array. @cached is set for
+ * listeners that opted into caching (has_static_mask()); for the others
+ * @mask is unused and the listener is asked on every emission.
+ */
+typedef struct
+{
+    guint64  mask;
+    gboolean cached;
+} MaskSlot;
+
 typedef struct
 {
     Registration *registration;
@@ -34,16 +47,17 @@ struct _LrgEventBus
     GPtrArray *listeners;       /* Owned Registration records, in registration order */
 
     /*
-     * Cached event mask of each registration, parallel to listeners
-     * (same index). An emission selects its listeners by scanning this
-     * array instead of calling every listener's get_event_mask(). A
-     * registration's entry is (re)read from the listener at the start
-     * of the first emission after it was registered or refreshed
-     * (Registration.mask_stale); masks_stale says whether any entry
-     * needs that.
+     * MaskSlot of each registration, parallel to listeners (same
+     * index). For listeners that opted into caching, an emission tests
+     * the cached mask instead of calling get_event_mask(); the entry is
+     * (re)read at the start of the first emission after the listener
+     * was registered or refreshed (Registration.mask_stale), and
+     * masks_stale says whether any entry needs that. Other listeners
+     * are asked on every emission, as before caching existed.
      */
     GArray *masks;
     gboolean masks_stale;
+    guint n_cached;             /* registrations with MaskSlot.cached set */
 };
 
 static void
@@ -173,7 +187,7 @@ static void
 lrg_event_bus_init (LrgEventBus *self)
 {
     self->listeners = g_ptr_array_new_with_free_func (registration_unref);
-    self->masks = g_array_new (FALSE, FALSE, sizeof (guint64));
+    self->masks = g_array_new (FALSE, FALSE, sizeof (MaskSlot));
     self->masks_stale = FALSE;
 }
 
@@ -243,6 +257,8 @@ remove_registration_at (LrgEventBus *self,
     Registration *registration = g_ptr_array_index (self->listeners, index);
 
     registration->active = FALSE;
+    if (g_array_index (self->masks, MaskSlot, index).cached)
+        self->n_cached--;
     g_array_remove_index (self->masks, index);
     g_ptr_array_remove_index (self->listeners, index);
 }
@@ -280,7 +296,7 @@ refresh_stale_masks (LrgEventBus *self)
             if (i < self->listeners->len &&
                 g_ptr_array_index (self->listeners, i) == registration)
             {
-                g_array_index (self->masks, guint64, i) = mask;
+                g_array_index (self->masks, MaskSlot, i).mask = mask;
             }
             else
             {
@@ -311,7 +327,7 @@ lrg_event_bus_register (LrgEventBus      *self,
                         LrgEventListener *listener)
 {
     Registration *registration;
-    guint64 no_mask = 0;
+    MaskSlot slot;
 
     g_return_if_fail (LRG_IS_EVENT_BUS (self));
     g_return_if_fail (LRG_IS_EVENT_LISTENER (listener));
@@ -321,12 +337,20 @@ lrg_event_bus_register (LrgEventBus      *self,
     registration->iface = LRG_EVENT_LISTENER_GET_IFACE (listener);
     registration->active = TRUE;
 
-    /* The mask is read when the next emission starts, as it always was:
-     * a listener may still be configured after registering. */
-    registration->mask_stale = TRUE;
-    self->masks_stale = TRUE;
+    /* A listener that opted into caching has its mask read when the
+     * next emission starts (it may still be configured after
+     * registering); the others are asked on every emission. */
+    slot.mask = 0;
+    slot.cached = registration->iface->has_static_mask != NULL &&
+                  registration->iface->has_static_mask (listener);
+    registration->mask_stale = slot.cached;
+    if (slot.cached)
+    {
+        self->masks_stale = TRUE;
+        self->n_cached++;
+    }
     g_ptr_array_add (self->listeners, registration);
-    g_array_append_val (self->masks, no_mask);
+    g_array_append_val (self->masks, slot);
 }
 
 /*
@@ -416,6 +440,7 @@ lrg_event_bus_clear (LrgEventBus *self)
     g_ptr_array_set_size (self->listeners, 0);
     g_array_set_size (self->masks, 0);
     self->masks_stale = FALSE;
+    self->n_cached = 0;
 }
 
 /*
@@ -439,7 +464,9 @@ lrg_event_bus_refresh_listener (LrgEventBus      *self,
     {
         Registration *registration = g_ptr_array_index (self->listeners, i);
 
-        if (registration->listener == listener)
+        /* Only cached masks need re-reading; the rest are live */
+        if (registration->listener == listener &&
+            g_array_index (self->masks, MaskSlot, i).cached)
         {
             registration->mask_stale = TRUE;
             self->masks_stale = TRUE;
@@ -465,9 +492,12 @@ lrg_event_bus_refresh_listeners (LrgEventBus *self)
     {
         Registration *registration = g_ptr_array_index (self->listeners, i);
 
-        registration->mask_stale = TRUE;
+        if (g_array_index (self->masks, MaskSlot, i).cached)
+        {
+            registration->mask_stale = TRUE;
+            self->masks_stale = TRUE;
+        }
     }
-    self->masks_stale = self->listeners->len > 0;
 }
 
 /*
@@ -547,6 +577,40 @@ event_is_cancelled (LrgEvent          *event,
 }
 
 /*
+ * snapshot_append:
+ *
+ * Appends @registration (at registration index @order) to an emission's
+ * snapshot, growing it from the on-stack array to the heap as needed.
+ * The snapshot holds a reference on the registration record.
+ */
+static inline void
+snapshot_append (DispatchEntry **entries,
+                 guint          *n_entries,
+                 guint          *capacity,
+                 DispatchEntry  *stack_entries,
+                 Registration   *registration,
+                 guint           order)
+{
+    if (*n_entries == *capacity)
+    {
+        *capacity *= 2;
+        if (*entries == stack_entries)
+        {
+            *entries = g_new (DispatchEntry, *capacity);
+            memcpy (*entries, stack_entries, sizeof (DispatchEntry) * DISPATCH_STACK_ENTRIES);
+        }
+        else
+        {
+            *entries = g_renew (DispatchEntry, *entries, *capacity);
+        }
+    }
+    (*entries)[*n_entries].registration = g_rc_box_acquire (registration);
+    (*entries)[*n_entries].priority = 0;
+    (*entries)[*n_entries].order = order;
+    (*n_entries)++;
+}
+
+/*
  * lrg_event_bus_emit:
  * @self: an #LrgEventBus
  * @event: (transfer none): the event to emit
@@ -562,14 +626,14 @@ event_is_cancelled (LrgEvent          *event,
  * Removing and re-registering the same listener does not revive the removed
  * registration in a dispatch already in progress.
  *
- * Event masks are cached per registration: read at the start of the first
- * emission after the listener was registered, and again after
- * lrg_event_bus_refresh_listener() or lrg_event_bus_refresh_listeners().
- * Only registrations whose cached mask matches the event take part. At
- * its turn a listener's live mask is checked again, so one whose mask
- * stops matching is skipped without a refresh; one whose mask starts
- * matching needs a refresh and takes part from the next emission.
- * Priorities are captured at the start of each emission. Equal
+ * Event masks are captured at the start of each emission: only listeners
+ * whose mask matches the event then take part. A listener whose mask
+ * stops matching before its turn is skipped; one whose mask starts
+ * matching during the emission waits for the next one. A listener that
+ * opts into caching (has_static_mask()) has its mask read at the first
+ * emission after registering and after lrg_event_bus_refresh_listener()
+ * or lrg_event_bus_refresh_listeners() only; its live mask is still
+ * checked at its turn. Priorities are captured at the start of each emission. Equal
  * priorities use registration order. Priority changes during callbacks
  * take effect on the next emission; nested emissions have independent
  * snapshots.
@@ -613,45 +677,51 @@ lrg_event_bus_emit (LrgEventBus *self,
     event_mask = lrg_event_get_type_mask (event);
     result = !event_is_cancelled (event, event_iface);
 
-    /* Masks of new and refreshed registrations, read before the
-     * snapshot as they were before masks were cached */
+    /* Cached masks of new and refreshed opted-in registrations, read
+     * before the snapshot like the live ones */
     if (result && self->masks_stale)
         refresh_stale_masks (self);
 
     /* Snapshot the registrations whose listener wants this event type.
      * Registration identities, not just listener identities: removing and
      * re-registering a listener must not revive its old dispatch entry.
-     * Non-matching listeners cost one load from the mask cache and
-     * nothing else; no listener code runs in this loop. */
+     * A non-matching listener costs one mask read: a load from the
+     * cache for opted-in listeners, a get_event_mask() call otherwise. */
     entries = stack_entries;
     n_entries = 0;
     capacity = DISPATCH_STACK_ENTRIES;
-    for (i = 0; result && i < self->listeners->len; i++)
+    if (result && self->n_cached == 0)
     {
-        Registration *registration;
-
-        if ((g_array_index (self->masks, guint64, i) & event_mask) == 0)
-            continue;
-
-        registration = g_ptr_array_index (self->listeners, i);
-
-        if (n_entries == capacity)
+        /* No opted-in listener: every mask is live, the cache is not
+         * consulted at all (a separate loop, so this one stays as
+         * tight as before caching existed) */
+        for (i = 0; i < self->listeners->len; i++)
         {
-            capacity *= 2;
-            if (entries == stack_entries)
-            {
-                entries = g_new (DispatchEntry, capacity);
-                memcpy (entries, stack_entries, sizeof (stack_entries));
-            }
-            else
-            {
-                entries = g_renew (DispatchEntry, entries, capacity);
-            }
+            Registration *registration = g_ptr_array_index (self->listeners, i);
+
+            if ((registration_read_mask (registration) & event_mask) == 0)
+                continue;
+            snapshot_append (&entries, &n_entries, &capacity, stack_entries,
+                             registration, i);
         }
-        entries[n_entries].registration = g_rc_box_acquire (registration);
-        entries[n_entries].priority = 0;
-        entries[n_entries].order = i;
-        n_entries++;
+    }
+    else if (result)
+    {
+        for (i = 0; i < self->listeners->len; i++)
+        {
+            Registration *registration = g_ptr_array_index (self->listeners, i);
+            const MaskSlot *slot = &g_array_index (self->masks, MaskSlot, i);
+            guint64 listener_mask;
+
+            if (slot->cached)
+                listener_mask = slot->mask;
+            else
+                listener_mask = registration_read_mask (registration);
+            if ((listener_mask & event_mask) == 0)
+                continue;
+            snapshot_append (&entries, &n_entries, &capacity, stack_entries,
+                             registration, i);
+        }
     }
     for (i = 0; i < n_entries; i++)
     {
