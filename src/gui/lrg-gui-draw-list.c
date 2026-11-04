@@ -284,6 +284,27 @@ lrg_gui_draw_list_circle (LrgGuiDrawList *self,
 }
 
 void
+lrg_gui_draw_list_circle_outline (LrgGuiDrawList *self,
+                                  gfloat          cx,
+                                  gfloat          cy,
+                                  gfloat          radius,
+                                  gfloat          thickness,
+                                  LrgGuiColor     color)
+{
+	LrgGuiCommand *cmd;
+
+	g_return_if_fail (LRG_IS_GUI_DRAW_LIST (self));
+
+	cmd = push (self, LRG_GUI_CMD_CIRCLE_OUTLINE);
+	cmd->rect.x = cx;
+	cmd->rect.y = cy;
+	cmd->thickness = radius;
+	/* circles have no corners: the rounding slot carries the stroke */
+	cmd->rounding = thickness;
+	cmd->color = color;
+}
+
+void
 lrg_gui_draw_list_text (LrgGuiDrawList *self,
                         gfloat          x,
                         gfloat          y,

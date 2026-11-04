@@ -23,6 +23,7 @@ struct _LrgCircle2D
 
 	gfloat   radius;
 	gboolean filled;
+	gfloat   line_thickness;
 };
 
 G_DEFINE_FINAL_TYPE (LrgCircle2D, lrg_circle2d, LRG_TYPE_SHAPE2D)
@@ -32,6 +33,7 @@ enum
 	PROP_0,
 	PROP_RADIUS,
 	PROP_FILLED,
+	PROP_LINE_THICKNESS,
 	N_PROPS
 };
 
@@ -57,9 +59,18 @@ lrg_circle2d_draw (LrgShape *shape,
 	{
 		grl_draw_circle ((gint) x, (gint) y, self->radius, color);
 	}
+	else if (self->line_thickness <= 1.0f)
+	{
+		/* the classic one-pixel outline, unchanged */
+		grl_draw_circle_lines ((gint) x, (gint) y, self->radius, color);
+	}
 	else
 	{
-		grl_draw_circle_lines ((gint) x, (gint) y, self->radius, color);
+		g_autoptr(GrlVector2) center = grl_vector2_new (x, y);
+
+		/* raylib 6.2 thick outline: grows inward from the radius, so
+		 * the circle keeps its size at any thickness */
+		grl_draw_circle_lines_ex (center, self->radius, self->line_thickness, color);
 	}
 }
 
@@ -83,6 +94,9 @@ lrg_circle2d_get_property (GObject    *object,
 	case PROP_FILLED:
 		g_value_set_boolean (value, self->filled);
 		break;
+	case PROP_LINE_THICKNESS:
+		g_value_set_float (value, self->line_thickness);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -104,6 +118,9 @@ lrg_circle2d_set_property (GObject      *object,
 		break;
 	case PROP_FILLED:
 		self->filled = g_value_get_boolean (value);
+		break;
+	case PROP_LINE_THICKNESS:
+		self->line_thickness = g_value_get_float (value);
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -150,6 +167,23 @@ lrg_circle2d_class_init (LrgCircle2DClass *klass)
 		                      G_PARAM_CONSTRUCT |
 		                      G_PARAM_STATIC_STRINGS);
 
+	/**
+	 * LrgCircle2D:line-thickness:
+	 *
+	 * The outline thickness in pixels when #LrgCircle2D:filled is
+	 * %FALSE. Up to 1 draws the classic one-pixel outline; thicker
+	 * outlines grow inward from the radius (raylib 6.2
+	 * DrawCircleLinesEx()), so the circle keeps its outer size.
+	 */
+	properties[PROP_LINE_THICKNESS] =
+		g_param_spec_float ("line-thickness",
+		                    "Line Thickness",
+		                    "The line thickness for outline mode",
+		                    0.0f, G_MAXFLOAT, 1.0f,
+		                    G_PARAM_READWRITE |
+		                    G_PARAM_CONSTRUCT |
+		                    G_PARAM_STATIC_STRINGS);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -158,6 +192,7 @@ lrg_circle2d_init (LrgCircle2D *self)
 {
 	self->radius = 1.0f;
 	self->filled = TRUE;
+	self->line_thickness = 1.0f;
 }
 
 /* ==========================================================================
@@ -296,5 +331,42 @@ lrg_circle2d_set_filled (LrgCircle2D *self,
 	{
 		self->filled = filled;
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FILLED]);
+	}
+}
+
+/*
+ * lrg_circle2d_get_line_thickness:
+ * @self: an #LrgCircle2D
+ *
+ * Gets the outline thickness.
+ *
+ * Returns: The line thickness
+ */
+gfloat
+lrg_circle2d_get_line_thickness (LrgCircle2D *self)
+{
+	g_return_val_if_fail (LRG_IS_CIRCLE2D (self), 1.0f);
+
+	return self->line_thickness;
+}
+
+/*
+ * lrg_circle2d_set_line_thickness:
+ * @self: an #LrgCircle2D
+ * @thickness: the line thickness
+ *
+ * Sets the outline thickness.
+ */
+void
+lrg_circle2d_set_line_thickness (LrgCircle2D *self,
+                                 gfloat       thickness)
+{
+	g_return_if_fail (LRG_IS_CIRCLE2D (self));
+	g_return_if_fail (thickness >= 0.0f);
+
+	if (self->line_thickness != thickness)
+	{
+		self->line_thickness = thickness;
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LINE_THICKNESS]);
 	}
 }

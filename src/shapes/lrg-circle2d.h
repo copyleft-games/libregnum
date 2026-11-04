@@ -120,4 +120,28 @@ LRG_AVAILABLE_IN_ALL
 void lrg_circle2d_set_filled (LrgCircle2D *self,
                                gboolean     filled);
 
+/**
+ * lrg_circle2d_get_line_thickness:
+ * @self: an #LrgCircle2D
+ *
+ * Gets the outline thickness used when the circle is not filled.
+ *
+ * Returns: The line thickness in pixels
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_circle2d_get_line_thickness (LrgCircle2D *self);
+
+/**
+ * lrg_circle2d_set_line_thickness:
+ * @self: an #LrgCircle2D
+ * @thickness: the line thickness in pixels (>= 0)
+ *
+ * Sets the outline thickness used when the circle is not filled. Up to 1
+ * draws the classic one-pixel outline; thicker outlines grow inward from
+ * the radius.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_circle2d_set_line_thickness (LrgCircle2D *self,
+                                      gfloat       thickness);
+
 G_END_DECLS

@@ -384,8 +384,10 @@ lrg_gltf_info_get_joint_name (LrgGltfInfo *self,
  * @joint: joint (raylib bone) index
  *
  * The raylib parent bone of @joint: the first joint whose node is the
- * parent node of @joint's node. A joint whose parent node is not a joint
- * (or that has no parent node) is a *root* joint.
+ * nearest joint ancestor of @joint's node. Built against raylib 6.2 or
+ * newer the search walks up past non-joint nodes, like its
+ * LoadBoneInfoGLTF(); against raylib 6.0 it looks at the parent node only.
+ * A joint without a joint ancestor is a *root* joint.
  *
  * Returns: the parent joint index, or -1 for a root joint or when out of
  *   range
@@ -443,6 +445,10 @@ lrg_gltf_info_get_joint_root_transform (LrgGltfInfo *self,
  * uniform W scale (the common case) this equals giving each root its own
  * parent-node transform inside raylib. Bones raylib left unposed because
  * the joints are not topologically sorted are not touched.
+ *
+ * raylib 6.2 fixed this upstream: it poses every joint with the transform
+ * of the non-joint nodes above it. Built against raylib 6.2 or newer this
+ * function corrects nothing; it marks the clips and returns 0.
  *
  * Each clip is marked once processed and skipped by later calls, so the
  * function is idempotent per clip object. Clips whose bone count differs

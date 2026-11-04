@@ -712,6 +712,7 @@ A 2D circle shape with support for filled/outline modes.
 |----------+----------+---------+-------+-------------------------|
 | =radius= | gfloat   | 1.0     | >= 0  | Circle radius in pixels |
 | =filled= | gboolean | TRUE    | -     | Filled or outline mode  |
+| =line-thickness= | gfloat | 1.0 | >= 0 | Outline thickness; > 1 grows inward from the radius (raylib 6.2 =DrawCircleLinesEx()=) |
 
 *** Constructors
 :PROPERTIES:

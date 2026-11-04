@@ -149,7 +149,7 @@ Symbolic links are not resolved; two links to one file are two entries.
 :END:
 Both functions return *borrowed* objects: never unref them. The manager unloads a model when it is unloaded explicitly, by =unload_all()= or when the manager is finalized. At load time the manager records every GPU texture the model loader created for the model's material maps and unloads exactly those textures with the model (raylib's =UnloadModel()= leaves textures to the caller). A texture you later assign to a material remains yours, and shaders are never unloaded, so assigning a shared lighting shader to =materials[i].shader= is safe without restoring it first.
 
-Skinned models: raylib 6.0's =UnloadModel()= does not free =Model.currentPose= and =Model.boneMatrices=. graylib's =GrlModel= finalizer frees them, so cached skinned models do not leak; code that already frees them manually through =grl_model_get_handle()= and sets them to =NULL= stays safe.
+Skinned models: raylib 6.0's =UnloadModel()= did not free =Model.currentPose= and =Model.boneMatrices= (raylib 6.2's does). graylib's =GrlModel= finalizer frees them and clears the pointers before calling =UnloadModel()=, so cached skinned models neither leak nor get freed twice with either raylib; code that already frees them manually through =grl_model_get_handle()= and sets them to =NULL= stays safe.
 
 Release the manager (or unload the models) before closing the window: unloading meshes and textures needs the GL context.
 
@@ -165,7 +165,7 @@ Release the manager (or unload the models) before closing the window: unloading 
 
 Animation loading is CPU-only and works headlessly. A file without a skin or animations yields an *empty* cached array rather than an error (raylib cannot tell "no clips" from "cannot parse"). Clips keep the file's order, are sampled at 60 frames per second, and raylib truncates their names to 31 bytes.
 
-For =.glb= and =.gltf= files the clips are corrected with =lrg_gltf_info_fix_animation_roots()= before they are cached: raylib 6.0 poses every root joint except the first without its armature transform, which stretches and twists rigs with several root joints (Quaternius animals and their IK leg roots, for example). Single-root rigs are unchanged. See [[file:../graphics/gltf-info.org::#multi-root-animation-fix][Multi-root animation fix]].
+For =.glb= and =.gltf= files the clips are passed through =lrg_gltf_info_fix_animation_roots()= before they are cached. raylib 6.0 posed every root joint except the first without its armature transform, which stretched and twisted rigs with several root joints (Quaternius animals and their IK leg roots, for example); the call corrected that. raylib 6.2, which libregnum now builds with, poses every joint with the transforms of the non-joint nodes above it, so the call only marks the clips. See [[file:../graphics/gltf-info.org::#multi-root-animation-fix][Multi-root animation fix]].
 
 *** Example
 :PROPERTIES:

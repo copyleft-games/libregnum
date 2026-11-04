@@ -308,8 +308,18 @@ test_roots_matrix_nodes (void)
     g_assert_error (error, LRG_GLTF_ERROR, LRG_GLTF_ERROR_INVALID_JSON);
 }
 
-/* Two roots: raylib poses Root1's subtree in armature space; the fix
- * moves it into model space and leaves Root0's subtree alone. */
+/* raylib 6.2 (#5876) poses every root joint with its parent nodes'
+ * transform itself; raylib 6.0 gave it to bone 0 only. */
+#if (RAYLIB_VERSION_MAJOR > 6) || (RAYLIB_VERSION_MAJOR == 6 && RAYLIB_VERSION_MINOR >= 2)
+#define TEST_RAYLIB_POSES_ALL_ROOTS (1)
+#else
+#define TEST_RAYLIB_POSES_ALL_ROOTS (0)
+#endif
+
+/* Two roots. raylib 6.0 posed Root1's subtree in armature space and the
+ * fix moved it into model space, leaving Root0's subtree alone; raylib 6.2
+ * already poses both subtrees in model space and the fix changes nothing.
+ * Either way the clips end at the same hand-computed poses. */
 static void
 test_roots_two_root_fix (void)
 {
@@ -333,15 +343,24 @@ test_roots_two_root_fix (void)
     g_assert_cmpint (grl_model_animation_get_frame_count (g_ptr_array_index (clips, 0)), ==, 31);
     last = grl_model_animation_get_frame_count (g_ptr_array_index (clips, 0)) - 1;
 
-    /* raylib's own result: bone 0 carries W, bone 2 does not. */
+    /* raylib's own result for Root0's subtree: it carries W either way. */
     assert_vec3 (pose_of (clips, 0, 0, 0)->translation, 1, 2, 2);
     assert_vec3 (pose_of (clips, 0, 0, 1)->translation, 1, 2, 1);
-    assert_vec3 (pose_of (clips, 0, 0, 2)->translation, 0.02, 0, 0.01);
-    assert_vec3 (pose_of (clips, 0, 0, 2)->scale, 1, 1, 1);
-    assert_vec3 (pose_of (clips, 0, 0, 3)->translation, 0.02, 0, 0.02);
 
     before = copy_poses (clips);
-    g_assert_cmpuint (lrg_gltf_info_fix_animation_roots (info, clips), ==, 2);
+    if (TEST_RAYLIB_POSES_ALL_ROOTS)
+    {
+        /* raylib 6.2 already gave Root1 its armature transform */
+        g_assert_cmpuint (lrg_gltf_info_fix_animation_roots (info, clips), ==, 0);
+    }
+    else
+    {
+        /* raylib 6.0: Root1's subtree is in armature space */
+        assert_vec3 (pose_of (clips, 0, 0, 2)->translation, 0.02, 0, 0.01);
+        assert_vec3 (pose_of (clips, 0, 0, 2)->scale, 1, 1, 1);
+        assert_vec3 (pose_of (clips, 0, 0, 3)->translation, 0.02, 0, 0.02);
+        g_assert_cmpuint (lrg_gltf_info_fix_animation_roots (info, clips), ==, 2);
+    }
 
     /* Hand-computed model-space positions: scale 100, then -90 degrees
      * about X ((x, y, z) -> (x, z, -y)), then + (1, 2, 3). */
@@ -353,18 +372,18 @@ test_roots_two_root_fix (void)
     assert_same_rotation (pose_of (clips, 0, 0, 2)->rotation, w_rot);
     assert_same_rotation (pose_of (clips, 0, 0, 3)->rotation, w_rot);
 
-    /* Every frame of every clip: Root0's subtree unchanged, Root1's
-     * subtree equals W * original. */
+    /* Every frame of every clip: Root0's subtree unchanged by the call;
+     * Root1's subtree unchanged (6.2) or W * original (6.0). */
     for (c = 0; c < clips->len; c++)
     {
         ModelAnimation *anim = grl_model_animation_get_handle (g_ptr_array_index (clips, c));
 
         for (f = 0; f < anim->keyframeCount; f++)
-            for (b = 0; b < anim->boneCount; b++)
+            for (b = 0; (guint) b < anim->boneCount; b++)
             {
                 const Transform *orig = original_pose (before, clips, c, f, b);
 
-                if (b < 2)
+                if (b < 2 || TEST_RAYLIB_POSES_ALL_ROOTS)
                     assert_same_pose (pose_of (clips, c, f, b), orig);
                 else
                 {
@@ -411,7 +430,7 @@ test_roots_single_root_unchanged (void)
         ModelAnimation *anim = grl_model_animation_get_handle (g_ptr_array_index (clips, c));
 
         for (f = 0; f < anim->keyframeCount; f++)
-            for (b = 0; b < anim->boneCount; b++)
+            for (b = 0; (guint) b < anim->boneCount; b++)
                 g_assert_true (memcmp (pose_of (clips, c, f, b),
                                        original_pose (before, clips, c, f, b),
                                        sizeof (Transform)) == 0);
@@ -530,7 +549,11 @@ test_roots_wolf (void)
                      (gint)lrg_gltf_info_get_joint_count (info));
     before = copy_poses (clips);
 
-    g_assert_cmpuint (lrg_gltf_info_fix_animation_roots (info, clips), >, 0);
+    /* raylib 6.2 already poses the IK roots in model space */
+    if (TEST_RAYLIB_POSES_ALL_ROOTS)
+        g_assert_cmpuint (lrg_gltf_info_fix_animation_roots (info, clips), ==, 0);
+    else
+        g_assert_cmpuint (lrg_gltf_info_fix_animation_roots (info, clips), >, 0);
 
     for (b = 1; b < lrg_gltf_info_get_joint_count (info); b++)
     {
@@ -553,11 +576,20 @@ test_roots_wolf (void)
                           fixed->translation.y * fixed->translation.y +
                           fixed->translation.z * fixed->translation.z);
 
-        /* Before: armature units (~1 cm). After: ~100x, inside the bind
-         * pose bounds, with scale 100 like bone 0. */
-        g_assert_cmpfloat (orig_len, <, 0.05);
+        /* raylib 6.0 before the fix: armature units (~1 cm); after it
+         * ~100x. raylib 6.2 loads the model-space pose directly. Either
+         * way the pose ends inside the bind pose bounds, with scale 100
+         * like bone 0. */
+        if (TEST_RAYLIB_POSES_ALL_ROOTS)
+        {
+            g_assert_cmpfloat (orig_len, ==, fixed_len);
+        }
+        else
+        {
+            g_assert_cmpfloat (orig_len, <, 0.05);
+            g_assert_cmpfloat_with_epsilon (fixed_len / orig_len, 100.0, 1.0);
+        }
         g_assert_cmpfloat (fixed_len, >, 0.1);
-        g_assert_cmpfloat_with_epsilon (fixed_len / orig_len, 100.0, 1.0);
         g_assert_cmpfloat (fabs (fixed->translation.x), <, 1.0);
         g_assert_cmpfloat (fixed->translation.y, >=, 0.0);
         g_assert_cmpfloat (fixed->translation.y, <, 3.0);

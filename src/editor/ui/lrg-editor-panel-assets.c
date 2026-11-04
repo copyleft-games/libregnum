@@ -63,11 +63,12 @@ editor_list_dir (const gchar *dir,
 		GStatBuf         st;
 		g_autofree gchar *path = NULL;
 
-		/* Hidden files and the editor's own state stay out of sight. */
-		if (name[0] == '.')
+		/* Hidden files and the editor's own state stay out of sight:
+		 * dot names, and on Windows the hidden attribute too. */
+		path = g_build_filename (dir, name, NULL);
+		if (grl_fs_is_file_hidden (path))
 			continue;
 
-		path = g_build_filename (dir, name, NULL);
 		if (g_stat (path, &st) != 0)
 			continue;
 

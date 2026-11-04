@@ -358,6 +358,7 @@ A 2D circle shape with support for filled/outline modes.
 
 - =radius= (gfloat) - Circle radius in pixels (default 1.0)
 - =filled= (gboolean) - Whether the circle is filled (default TRUE)
+- =line-thickness= (gfloat) - Outline thickness when not filled (default 1.0). Up to 1 draws the classic one-pixel outline; thicker outlines use raylib 6.2's =DrawCircleLinesEx()= and grow *inward* from the radius, so the ring keeps its outer size, and they are drawn at the sub-pixel render position
 
 *Construction:*
 
@@ -374,6 +375,8 @@ gfloat   lrg_circle2d_get_radius (LrgCircle2D *self);
 void     lrg_circle2d_set_radius (LrgCircle2D *self, gfloat radius);
 gboolean lrg_circle2d_get_filled (LrgCircle2D *self);
 void     lrg_circle2d_set_filled (LrgCircle2D *self, gboolean filled);
+gfloat   lrg_circle2d_get_line_thickness (LrgCircle2D *self);
+void     lrg_circle2d_set_line_thickness (LrgCircle2D *self, gfloat thickness);
 #+end_src
 
 *Example:*
@@ -388,6 +391,7 @@ lrg_drawable_draw (LRG_DRAWABLE (ball), delta);
 /* Draw a ring (outline only) */
 g_autoptr(LrgCircle2D) ring = lrg_circle2d_new_at (center_x, center_y, 50.0f);
 lrg_circle2d_set_filled (ring, FALSE);
+lrg_circle2d_set_line_thickness (ring, 4.0f);   /* 4 px band, radii 46..50 */
 lrg_shape_set_color (LRG_SHAPE (ring), ring_color);
 lrg_drawable_draw (LRG_DRAWABLE (ring), delta);
 #+end_src

@@ -796,7 +796,15 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 			{
 				Vector2 c = { cmd->rect.x, cmd->rect.y };
 
-				DrawCircleLinesV (c, cmd->thickness, col);
+				/* rounding carries the stroke width; raylib 6.2's
+				 * DrawCircleLinesEx() grows inward from its radius, so
+				 * push the outer edge out by half the stroke to centre
+				 * it on the requested radius */
+				if (cmd->rounding > 1.0f)
+					DrawCircleLinesEx (c, cmd->thickness + cmd->rounding * 0.5f,
+					                   cmd->rounding, col);
+				else
+					DrawCircleLinesV (c, cmd->thickness, col);
 			}
 			break;
 
