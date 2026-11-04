@@ -1001,6 +1001,30 @@ test_text_wrapped (Gui           *g,
 	g_assert_cmpuint (n_text, ==, G_N_ELEMENTS (expected));
 }
 
+/* The thick circle outline records the stroke in the rounding slot; the
+ * plain outline keeps 0 there (the 1px outline). */
+static void
+test_draw_list_circle_outline (void)
+{
+	g_autoptr(LrgGuiDrawList) dl = lrg_gui_draw_list_new ();
+	const LrgGuiCommand      *cmd;
+
+	lrg_gui_draw_list_circle (dl, 10.0f, 20.0f, 5.0f, LRG_GUI_RGBA (255, 0, 0, 255), FALSE);
+	lrg_gui_draw_list_circle_outline (dl, 30.0f, 40.0f, 12.0f, 3.0f, LRG_GUI_RGBA (0, 255, 0, 255));
+	g_assert_cmpuint (lrg_gui_draw_list_get_length (dl), ==, 2);
+
+	cmd = lrg_gui_draw_list_get_command (dl, 0);
+	g_assert_cmpint (cmd->kind, ==, LRG_GUI_CMD_CIRCLE_OUTLINE);
+	g_assert_cmpfloat (cmd->rounding, ==, 0.0f);
+
+	cmd = lrg_gui_draw_list_get_command (dl, 1);
+	g_assert_cmpint (cmd->kind, ==, LRG_GUI_CMD_CIRCLE_OUTLINE);
+	g_assert_cmpfloat (cmd->rect.x, ==, 30.0f);
+	g_assert_cmpfloat (cmd->rect.y, ==, 40.0f);
+	g_assert_cmpfloat (cmd->thickness, ==, 12.0f);
+	g_assert_cmpfloat (cmd->rounding, ==, 3.0f);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1008,6 +1032,7 @@ main (int   argc,
 	g_test_init (&argc, &argv, NULL);
 
 #define ADD(path, fn) g_test_add (path, Gui, NULL, gui_setup, fn, gui_teardown)
+	g_test_add_func ("/gui/draw-list/circle-outline", test_draw_list_circle_outline);
 	ADD ("/gui/button/click", test_button_click);
 	ADD ("/gui/layout/same-line-ids", test_layout_same_line_and_ids);
 	ADD ("/gui/checkbox", test_checkbox_and_toggle);

@@ -530,6 +530,13 @@ test_circle2d_properties (void)
     g_assert_true (lrg_circle2d_get_filled (circle)); /* Default TRUE */
     lrg_circle2d_set_filled (circle, FALSE);
     g_assert_false (lrg_circle2d_get_filled (circle));
+
+    /* Outline thickness (raylib 6.2 DrawCircleLinesEx), default 1px */
+    g_assert_cmpfloat_with_epsilon (lrg_circle2d_get_line_thickness (circle), 1.0f, 0.001f);
+    lrg_circle2d_set_line_thickness (circle, 4.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_circle2d_get_line_thickness (circle), 4.0f, 0.001f);
+    g_object_set (circle, "line-thickness", 2.5f, NULL);
+    g_assert_cmpfloat_with_epsilon (lrg_circle2d_get_line_thickness (circle), 2.5f, 0.001f);
 }
 
 /* ==========================================================================

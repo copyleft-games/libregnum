@@ -1463,8 +1463,9 @@ collect_files (GPtrArray   *out,
 		g_autofree gchar *child_rel = (rel != NULL) ? g_build_filename (rel, name, NULL) : g_strdup (name);
 		g_autofree gchar *child = g_build_filename (root, child_rel, NULL);
 
-		/* Skip hidden folders, VCS data and build trees. */
-		if (name[0] == '.' || g_strcmp0 (name, "build") == 0 || g_strcmp0 (name, "node_modules") == 0 ||
+		/* Skip hidden entries (dot names, the Windows hidden attribute),
+		 * VCS data and build trees. */
+		if (grl_fs_is_file_hidden (child) || g_strcmp0 (name, "build") == 0 || g_strcmp0 (name, "node_modules") == 0 ||
 		    g_strcmp0 (name, "trees") == 0)
 			continue;
 		if (g_file_test (child, G_FILE_TEST_IS_DIR))

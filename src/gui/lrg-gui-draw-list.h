@@ -31,7 +31,8 @@ G_BEGIN_DECLS
  * @LRG_GUI_CMD_TRIANGLE: a filled triangle (points in @points)
  * @LRG_GUI_CMD_CIRCLE_FILLED: a filled circle (centre in @rect.x/y, radius
  *   in @thickness)
- * @LRG_GUI_CMD_CIRCLE_OUTLINE: a circle outline
+ * @LRG_GUI_CMD_CIRCLE_OUTLINE: a circle outline (centre in @rect.x/y, radius
+ *   in @thickness, stroke width in @rounding: 1 pixel when below 1)
  * @LRG_GUI_CMD_TEXT: text at @rect.x/y with @font_size, optionally monospace
  * @LRG_GUI_CMD_CLIP_PUSH: intersect the clip rectangle with @rect
  * @LRG_GUI_CMD_CLIP_POP: restore the previous clip rectangle
@@ -73,7 +74,7 @@ typedef void (*LrgGuiDrawCallback) (const LrgGuiRect *rect,
  * @points: triangle vertices / line endpoints (x0, y0, x1, y1, x2, y2)
  * @color: fill / stroke / text colour
  * @thickness: stroke width, or circle radius
- * @rounding: corner radius for rectangles
+ * @rounding: corner radius for rectangles, stroke width for circle outlines
  * @font_size: text size in pixels
  * @monospace: use the monospace font for text
  * @text: (nullable): text for %LRG_GUI_CMD_TEXT (owned by the list)
@@ -231,6 +232,27 @@ void lrg_gui_draw_list_circle (LrgGuiDrawList *self,
                                gfloat          radius,
                                LrgGuiColor     color,
                                gboolean        filled);
+
+/**
+ * lrg_gui_draw_list_circle_outline:
+ * @self: an #LrgGuiDrawList
+ * @cx: centre x
+ * @cy: centre y
+ * @radius: radius of the middle of the stroke
+ * @thickness: stroke width in pixels (1 or less: the 1px outline)
+ * @color: colour
+ *
+ * Records a circle outline of the given stroke width, centred on
+ * @radius like the other strokes of the list. The raylib backend draws it
+ * with raylib 6.2's DrawCircleLinesEx().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_gui_draw_list_circle_outline (LrgGuiDrawList *self,
+                                       gfloat          cx,
+                                       gfloat          cy,
+                                       gfloat          radius,
+                                       gfloat          thickness,
+                                       LrgGuiColor     color);
 
 /**
  * lrg_gui_draw_list_text:
