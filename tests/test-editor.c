@@ -997,6 +997,7 @@ test_asset_classify (void)
 {
 	g_assert_cmpint (lrg_asset_database_classify ("a.png"), ==, LRG_ASSET_TYPE_TEXTURE);
 	g_assert_cmpint (lrg_asset_database_classify ("dir/B.PNG"), ==, LRG_ASSET_TYPE_TEXTURE);
+	g_assert_cmpint (lrg_asset_database_classify ("sprite.pep"), ==, LRG_ASSET_TYPE_TEXTURE);
 	g_assert_cmpint (lrg_asset_database_classify ("m.gltf"), ==, LRG_ASSET_TYPE_MODEL);
 	g_assert_cmpint (lrg_asset_database_classify ("m.obj"), ==, LRG_ASSET_TYPE_MODEL);
 	g_assert_cmpint (lrg_asset_database_classify ("s.wav"), ==, LRG_ASSET_TYPE_AUDIO);

@@ -461,7 +461,16 @@ load_texture (LrgEditorApp *self,
 	if (g_file_test (abs, G_FILE_TEST_IS_REGULAR))
 	{
 		tex = g_new0 (Texture2D, 1);
-		*tex = LoadTexture (abs);
+		if (g_str_has_suffix (abs, ".pep") || g_str_has_suffix (abs, ".PEP"))
+		{
+			/* raylib's .pep loader is off; graylib decodes it */
+			g_autoptr(GrlImage) image = grl_image_new_from_file (abs);
+
+			if (grl_image_is_valid (image))
+				*tex = LoadTextureFromImage (*(Image *) grl_image_get_handle (image));
+		}
+		else
+			*tex = LoadTexture (abs);
 		if (tex->id == 0)
 			g_clear_pointer (&tex, g_free);
 	}
