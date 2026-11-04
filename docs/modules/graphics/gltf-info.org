@@ -112,7 +112,7 @@ g_autoptr(GBytes) mask = lrg_gltf_info_build_node_mask (info, no_shields);
 The joint getters describe the first skin, the only one raylib loads. Joint k is raylib bone k (=ModelAnimation.keyframePoses[frame][k]=), so =get_joint_count()= equals the bone count of the file's clips.
 
 - =get_joint_name()= - the full node name (raylib keeps 31 bytes).
-- =get_joint_parent()= - raylib's parent bone: the first joint whose node is this joint's parent node, or -1. A joint with parent -1 is a *root joint*.
+- =get_joint_parent()= - raylib's parent bone: the first joint whose node is the nearest *joint* ancestor of this joint's node, or -1. raylib 6.2 (#5876) walks up past non-joint nodes (DCC exporters put joints under helper transform nodes); raylib 6.0, and libregnum built against it, look at the direct parent node only. A joint with parent -1 is a *root joint*.
 - =get_joint_root_transform()= - the world transform of the joint's *parent node*: local node transforms (=matrix=, or translation/rotation/scale with glTF defaults) composed up the parent chain like =cgltf_node_transform_world()=, then decomposed like raymath's =MatrixDecompose()=. For a Blender root bone this is the armature transform, typically rotation -90 degrees about X and scale 100. A joint without a parent node gets the identity.
 
 Node =matrix=, =translation=, =rotation= and =scale= arrays must have 16, 3, 4 and 3 numbers; anything else fails with =LRG_GLTF_ERROR_INVALID_JSON=, as cgltf rejects it too.
@@ -121,6 +121,8 @@ Node =matrix=, =translation=, =rotation= and =scale= arrays must have 16, 3, 4 a
 :PROPERTIES:
 :CUSTOM_ID: multi-root-animation-fix
 :END:
+*Fixed in raylib 6.2.* raylib 6.2 (#5876) precomputes, per joint, the transform of the non-joint nodes between it and its nearest joint ancestor (all the way to the scene root for a root joint) and applies it to every keyframe before =BuildPoseFromParentJoints()=. That gives every root joint its armature transform, so libregnum, which builds with raylib 6.2, needs no correction: =lrg_gltf_info_fix_animation_roots()= only marks the clips and returns 0 (decided at compile time from =RAYLIB_VERSION_MAJOR= / =RAYLIB_VERSION_MINOR=). The rest of this section describes the raylib 6.0 behaviour the function still corrects when built against it.
+
 *The raylib 6.0 bug.* =LoadModelAnimationsGLTF()= computes the world transform W of the parent node of =skin.joints[0]= and applies it to bone 0 only, before =BuildPoseFromParentJoints()= turns the local poses into model space. Many rigs have several root joints (joints whose parent node is not a joint):
 
 | Rig                   | Root joints                                       |
@@ -160,7 +162,7 @@ g_free (loaded);
 lrg_gltf_info_fix_animation_roots (info, clips);
 #+end_src
 
-Tests: =tests/test-gltf-animation-roots.c= checks exact posed positions on a generated two-root rig (armature translation (1, 2, 3), -90 degrees about X, scale 100), that a single-root rig is bit-identical, idempotency, the asset-manager path and, read-only when present, the Quaternius wolf's IK roots.
+Tests: =tests/test-gltf-animation-roots.c= checks exact posed positions on a generated two-root rig (armature translation (1, 2, 3), -90 degrees about X, scale 100): with raylib 6.2 that raylib's own clips already have them and the call changes nothing, with 6.0 that the call produces them. It also checks that a single-root rig is bit-identical, idempotency, the asset-manager path and, read-only when present, the Quaternius wolf's IK roots.
 
 ** Errors and raylib Compatibility
 :PROPERTIES:

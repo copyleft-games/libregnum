@@ -752,14 +752,17 @@ and client-side helpers for skinned and static models.
   inspection. Per *raylib mesh index* it reports the node name (the useful
   one, e.g. `Knight_Helmet`), the glTF mesh name (`Cube.124`, or `Horse#3`
   for multi-primitive meshes), vertex count and material. Order matches
-  raylib 6.0 LoadGLTF exactly (nodes in array order, triangle primitives).
+  raylib's LoadGLTF exactly (nodes in array order, triangle primitives).
   `lrg_gltf_info_build_node_mask()` turns hidden node names into a mesh
   mask. Files cgltf rejects structurally (e.g. a scene root with a parent)
   fail with `LRG_GLTF_ERROR_INVALID_REFERENCE` — raylib would load 0 meshes.
   Skin-joint getters (`get_joint_name/parent/root_transform`) and
   `lrg_gltf_info_fix_animation_roots()` repair raylib 6.0 clips of rigs with
-  several root joints (raylib applies the armature transform to bone 0
+  several root joints (raylib applied the armature transform to bone 0
   only); the asset manager applies it to .glb/.gltf clips automatically.
+  raylib 6.2 fixed this upstream (#5876): built against it the call only
+  marks clips, and `get_joint_parent()` walks past non-joint nodes like
+  6.2's LoadBoneInfoGLTF().
 
 - **`LrgDdsImage`** (`graphics/lrg-dds-image.h`): headless DDS reader.
   Decodes any mip level of DXT1/3/5 (legacy FourCC or DX10 header) and

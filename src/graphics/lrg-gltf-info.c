@@ -35,6 +35,17 @@
 #define DRACO_EXTENSION  "KHR_draco_mesh_compression"
 #define ROOTS_FIXED_KEY  "lrg-gltf-info-roots-fixed"
 
+/* raylib 6.2 (#5876) parents a joint to its nearest *joint* ancestor,
+ * walking past non-joint nodes, and poses every joint with the static
+ * transform of the non-joint nodes above it. raylib 6.0 used only the
+ * direct parent node and applied the armature transform to bone 0 alone,
+ * which lrg_gltf_info_fix_animation_roots() corrects. */
+#if (RAYLIB_VERSION_MAJOR > 6) || (RAYLIB_VERSION_MAJOR == 6 && RAYLIB_VERSION_MINOR >= 2)
+#define LRG_GLTF_RAYLIB_POSES_ALL_ROOTS (1)
+#else
+#define LRG_GLTF_RAYLIB_POSES_ALL_ROOTS (0)
+#endif
+
 /*
  * GltfMesh:
  *
@@ -1405,20 +1416,28 @@ lrg_gltf_info_get_joint_parent (LrgGltfInfo *self,
     gint  node;
     gint  parent;
     guint j;
+    guint steps;
 
     g_return_val_if_fail (LRG_IS_GLTF_INFO (self), -1);
 
     /* Same search as raylib's LoadBoneInfoGLTF(): the first joint whose
-     * node is this joint's parent node. */
+     * node is this joint's parent node; since raylib 6.2 the search goes on
+     * up the node tree past non-joint nodes (bounded by the node count so a
+     * parent cycle cannot hang). */
     node = joint_node (self, joint);
     if (node < 0)
         return -1;
     parent = self->nodes[node].parent;
-    if (parent < 0)
-        return -1;
-    for (j = 0; j < self->joints->len; j++)
-        if (g_array_index (self->joints, gint, j) == parent)
-            return (gint)j;
+    steps = 0;
+    while (parent >= 0 && steps++ <= self->node_count)
+    {
+        for (j = 0; j < self->joints->len; j++)
+            if (g_array_index (self->joints, gint, j) == parent)
+                return (gint)j;
+        if (!LRG_GLTF_RAYLIB_POSES_ALL_ROOTS)
+            break;
+        parent = self->nodes[parent].parent;
+    }
     return -1;
 }
 
@@ -1583,7 +1602,9 @@ lrg_gltf_info_fix_animation_roots (LrgGltfInfo *self,
     for (b = 0; b < n_bones; b++)
     {
         roots[b] = effective_root (parents, (gint)b);
-        if (b != 0 && parents[b] < 0)
+        /* raylib 6.2 already poses every root with its parent nodes'
+         * transform: nothing to correct, the clips are only marked */
+        if (!LRG_GLTF_RAYLIB_POSES_ALL_ROOTS && b != 0 && parents[b] < 0)
             needs_fix[b] = joint_root_transform (self, b, &root_world[b]);
         any = any || needs_fix[b];
     }
@@ -1599,7 +1620,7 @@ lrg_gltf_info_fix_animation_roots (LrgGltfInfo *self,
             g_object_get_qdata (G_OBJECT (clip), fixed_quark) != NULL)
             continue;
         anim = grl_model_animation_get_handle (clip);
-        if (anim == NULL || anim->boneCount != (gint)n_bones || anim->keyframePoses == NULL)
+        if (anim == NULL || anim->boneCount != (unsigned int)n_bones || anim->keyframePoses == NULL)
             continue;
 
         /* raylib has already turned the keyframes into model-space poses
