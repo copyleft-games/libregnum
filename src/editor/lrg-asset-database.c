@@ -153,7 +153,7 @@ lrg_asset_database_classify (const gchar *path)
 {
 	g_autofree gchar *lower = NULL;
 
-	static const gchar * const tex[]   = { ".png", ".jpg", ".jpeg", ".tga", ".bmp", NULL };
+	static const gchar * const tex[]   = { ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".pep", NULL };
 	static const gchar * const model[] = { ".gltf", ".glb", ".obj", ".fbx", ".ply",
 	                                       ".stl", ".step", ".stp", ".iges", ".igs",
 	                                       ".3mf", NULL };

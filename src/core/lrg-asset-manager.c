@@ -1202,7 +1202,8 @@ lrg_asset_manager_load_asset (LrgAssetManager  *self,
         g_str_equal (lower, ".tga") || g_str_equal (lower, ".gif") ||
         g_str_equal (lower, ".qoi") || g_str_equal (lower, ".dds") ||
         g_str_equal (lower, ".ktx") || g_str_equal (lower, ".pkm") ||
-        g_str_equal (lower, ".pvr") || g_str_equal (lower, ".astc"))
+        g_str_equal (lower, ".pvr") || g_str_equal (lower, ".astc") ||
+        g_str_equal (lower, ".pep"))
         return (GObject *)lrg_asset_manager_load_texture (self, name, error);
     if (g_str_equal (lower, ".glb") || g_str_equal (lower, ".gltf") ||
         g_str_equal (lower, ".obj") || g_str_equal (lower, ".iqm") ||

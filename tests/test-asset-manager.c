@@ -546,10 +546,53 @@ test_definition_reload_unload (DefinitionFixture *fixture,
     g_assert_cmpuint (fixture->failed, ==, 0);
 }
 
+/* .pep sprites (raylib 6.2's pixel-art format, decoded by graylib) load as
+ * textures through the extension dispatch. Needs a GL context. */
+static void
+test_asset_load_pep_texture (void)
+{
+    g_autoptr(LrgAssetManager) manager = lrg_asset_manager_new ();
+    g_autoptr(GrlWindow)       window = NULL;
+    g_autoptr(GrlColor)        red = grl_color_new (255, 0, 0, 255);
+    g_autoptr(GrlImage)        image = grl_image_new_color (4, 2, red);
+    g_autoptr(GError)          error = NULL;
+    g_autofree gchar          *dir = NULL;
+    g_autofree gchar          *path = NULL;
+    GObject                   *object;
+
+    if (g_getenv ("DISPLAY") == NULL && g_getenv ("WAYLAND_DISPLAY") == NULL)
+    {
+        g_test_skip ("No display available (headless environment)");
+        return;
+    }
+    window = grl_window_new (64, 48, "test-asset-pep");
+    if (window == NULL || !grl_window_is_ready (window))
+    {
+        g_test_skip ("Window/GL context not ready in this environment");
+        return;
+    }
+
+    dir = g_dir_make_tmp ("libregnum-pep-XXXXXX", &error);
+    g_assert_no_error (error);
+    path = g_build_filename (dir, "sprite.pep", NULL);
+    g_assert_true (grl_image_export (image, path));
+    lrg_asset_manager_add_search_path (manager, dir);
+
+    object = lrg_asset_manager_load_asset (manager, "sprite.pep", &error);
+    g_assert_no_error (error);
+    g_assert_true (GRL_IS_TEXTURE (object));
+    g_assert_cmpint (grl_texture_get_width (GRL_TEXTURE (object)), ==, 4);
+    g_assert_cmpint (grl_texture_get_height (GRL_TEXTURE (object)), ==, 2);
+
+    lrg_asset_manager_unload_all (manager);
+    g_remove (path);
+    g_rmdir (dir);
+}
+
 static void
 test_asset_dispatch_errors (void)
 {
-    const gchar *names[] = { "missing.PNG", "missing.TTF", "missing.wav", "missing.ogg" };
+    const gchar *names[] = { "missing.PNG", "missing.TTF", "missing.wav", "missing.ogg", "missing.pep" };
     g_autoptr(LrgAssetManager) manager = lrg_asset_manager_new ();
     g_autoptr(GError) error = NULL;
     guint i;
@@ -662,6 +705,7 @@ main (int   argc,
                 definition_set_up, test_definition_watch, definition_tear_down);
     g_test_add ("/asset-manager/definitions/watch-teardown", DefinitionFixture, NULL,
                 definition_set_up, test_definition_watch_teardown, definition_tear_down);
+    g_test_add_func ("/asset-manager/load/pep-texture", test_asset_load_pep_texture);
     g_test_add_func ("/asset-manager/load/dispatch-errors", test_asset_dispatch_errors);
 
     g_test_add ("/asset-manager/definitions/reload-unload", DefinitionFixture, NULL,

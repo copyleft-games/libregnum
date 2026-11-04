@@ -182,8 +182,8 @@ if (bear != NULL && clips != NULL)
 * Definition assets and live reload
 
 =lrg_asset_manager_load_asset()= dispatches by extension and caches the result.
-It supports textures, fonts (size 32), WAV sounds, streaming OGG/MP3/FLAC/XM/MOD
-music, and typed YAML definitions. Unknown extensions return
+It supports textures (=.png=, =.jpg=, =.bmp=, =.tga=, =.gif=, =.qoi=, =.dds=, =.ktx=, =.pkm=, =.pvr=, =.astc= and =.pep=), fonts (size 32), WAV sounds, streaming OGG/MP3/FLAC/XM/MOD
+music, and typed YAML definitions. =.pep= is raylib 6.2's pixel-art palette format; graylib (0.7.1+) decodes it losslessly, since raylib 6.2's own loader is unsafe and stays disabled. Unknown extensions return
 =G_IO_ERROR_NOT_SUPPORTED=. Use a specific loader to choose another font size
 or to load an OGG file as a sound effect. Graphics loads require a window;
 YAML definitions run without a window or audio device.
