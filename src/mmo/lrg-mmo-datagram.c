@@ -4,6 +4,7 @@
 #include <string.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/x509_vfy.h>
 #include <sys/socket.h>
 
 struct _LrgMmoDatagram
@@ -51,6 +52,7 @@ lrg_mmo_datagram_new (GSocket *socket, gboolean server, const gchar *identity,
     g_autoptr(LrgMmoDatagram) self = NULL;
     struct sockaddr_storage peer;
     socklen_t peer_size = sizeof peer;
+    X509_VERIFY_PARAM *param;
     BIO *bio;
     if (!G_IS_SOCKET (socket) || g_socket_get_socket_type (socket) != G_SOCKET_TYPE_DATAGRAM ||
         !g_socket_is_connected (socket) || certificate == NULL || private_key == NULL ||
@@ -86,8 +88,29 @@ lrg_mmo_datagram_new (GSocket *socket, gboolean server, const gchar *identity,
         SSL_set_accept_state (self->ssl);
     else
     {
-        if (SSL_set1_host (self->ssl, identity) != 1 || SSL_set_tlsext_host_name (self->ssl, identity) != 1)
-            goto failed;
+        /*
+         * Pin the peer identity on the connection's verify parameters.
+         * SSL_set1_host() is deprecated in OpenSSL 4.0 (and the build is
+         * -Werror), so do what it did directly: an IP literal is matched
+         * against iPAddress SANs, anything else against DNS names. The
+         * X509_VERIFY_PARAM calls exist since OpenSSL 1.1.0 and are not
+         * deprecated in 4.0.
+         */
+        param = SSL_get0_param (self->ssl);
+        if (X509_VERIFY_PARAM_set1_ip_asc (param, identity) != 1)
+        {
+            /*
+             * Not an IP literal, so it is a DNS name: verify it against DNS
+             * SANs and send it as SNI (RFC 6066 forbids IP literals there).
+             * Clear the queue first: a stale error from the failed IP parse
+             * would make SSL_get_error() report every pending handshake
+             * step as a hard failure instead of WANT_READ/WANT_WRITE.
+             */
+            ERR_clear_error ();
+            if (X509_VERIFY_PARAM_set1_host (param, identity, 0) != 1 ||
+                SSL_set_tlsext_host_name (self->ssl, identity) != 1)
+                goto failed;
+        }
         SSL_set_connect_state (self->ssl);
     }
     return g_steal_pointer (&self);

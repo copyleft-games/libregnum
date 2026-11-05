@@ -13,7 +13,7 @@ G_DECLARE_FINAL_TYPE (LrgMmoDatagram, lrg_mmo_datagram, LRG, MMO_DATAGRAM, GObje
  * lrg_mmo_datagram_new:
  * @socket: connected UDP socket dedicated to this peer
  * @server: whether to accept as server
- * @identity: (nullable): expected DNS server identity for clients
+ * @identity: (nullable): expected server identity for clients: a DNS name or an IP literal
  * @certificate: PEM certificate file
  * @private_key: PEM private key file
  * @authorities: PEM trust anchors file

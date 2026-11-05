@@ -84,7 +84,7 @@ existing LRGM protocol remains unchanged.
 
 =LrgMmoDatagram= wraps a connected GSocket with OpenSSL DTLS 1.2 or later and
 mutual certificate verification. It requires a local PEM certificate/key and
-trusted CA file; clients additionally require the expected DNS identity. Socket
+trusted CA file; clients additionally require the expected server identity: a DNS name (checked against DNS SANs and sent as SNI) or an IP literal (checked against IP SANs, no SNI). Identity pinning uses =X509_VERIFY_PARAM= directly, so the module builds unchanged against OpenSSL 1.1 through 4.0, where =SSL_set1_host()= is deprecated. Socket
 connection and peer address selection belong to authenticated ingress. A CA
 signature establishes certificate trust, not account ownership: bind certificates
 to accounts/session authorization before accepting commands. Reserve connected

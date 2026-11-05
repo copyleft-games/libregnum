@@ -31,10 +31,24 @@ receive (LrgMmoDatagram *channel, guint64 *sequence, GError **error)
     return NULL;
 }
 
+/* Expected server identity and whether the fixture certificate matches it
+ * (its SANs are DNS:localhost and IP:127.0.0.1). */
+typedef struct
+{
+    const gchar *identity;
+    gboolean     trusted;
+} IdentityCase;
+
+static const IdentityCase dns_match = { "localhost", TRUE };
+static const IdentityCase dns_mismatch = { "wrong.example", FALSE };
+static const IdentityCase ip_match = { "127.0.0.1", TRUE };
+static const IdentityCase ip_mismatch = { "127.0.0.2", FALSE };
+
 static void
 exercise (gconstpointer data)
 {
-    gboolean trusted = GPOINTER_TO_INT (data);
+    const IdentityCase *identity_case = data;
+    gboolean trusted = identity_case->trusted;
     g_autoptr(GError) error = NULL;
     g_autoptr(GSocket) a = udp_socket ();
     g_autoptr(GSocket) b = udp_socket ();
@@ -53,7 +67,7 @@ exercise (gconstpointer data)
     g_assert_no_error (error);
     g_assert_true (g_socket_connect (a, ba, NULL, &error));
     g_assert_true (g_socket_connect (b, aa, NULL, &error));
-    client = lrg_mmo_datagram_new (a, FALSE, trusted ? "localhost" : "wrong.example",
+    client = lrg_mmo_datagram_new (a, FALSE, identity_case->identity,
                                   cert_path, key_path, cert_path, &error);
     server = lrg_mmo_datagram_new (b, TRUE, NULL, cert_path, key_path, cert_path, &error);
     g_assert_no_error (error);
@@ -143,8 +157,11 @@ int
 main (int argc, char **argv)
 {
     g_test_init (&argc, &argv, NULL);
-    g_test_add_data_func ("/mmo/datagram/mutual-tls-loss-reorder-replay", GINT_TO_POINTER (TRUE), exercise);
-    g_test_add_data_func ("/mmo/datagram/wrong-identity", GINT_TO_POINTER (FALSE), exercise);
+    g_test_add_data_func ("/mmo/datagram/mutual-tls-loss-reorder-replay", &dns_match, exercise);
+    g_test_add_data_func ("/mmo/datagram/wrong-identity", &dns_mismatch, exercise);
+    /* An IP literal must be checked against iPAddress SANs, not DNS names. */
+    g_test_add_data_func ("/mmo/datagram/ip-identity", &ip_match, exercise);
+    g_test_add_data_func ("/mmo/datagram/wrong-ip-identity", &ip_mismatch, exercise);
     g_test_add_func ("/mmo/datagram/cancel-pending-handshake", cancel_handshake);
     return g_test_run ();
 }
