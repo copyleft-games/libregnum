@@ -1304,9 +1304,12 @@ quat_from_matrix (Matrix m)
     return r;
 }
 
-/* MatrixDecompose(): translation, then Gram-Schmidt on the (stabilized)
- * basis to get scale (shear discarded), a sign flip for mirrored bases,
- * and the rotation of the orthonormal basis. */
+/* MatrixDecompose() as of raylib 6.2: translation, then Gram-Schmidt on
+ * the (stabilized) basis columns to get scale (shear discarded), a sign
+ * flip for mirrored bases, and the rotation of the orthonormal basis.
+ * raylib 6.0 read the basis rows instead (fixed upstream in #6225); that
+ * only agreed with the columns for rotation plus uniform scale, so a
+ * parent node with non-uniform scale decomposed wrongly. */
 static void
 matrix_decompose (Matrix     mat,
                   Transform *out)
@@ -1321,9 +1324,10 @@ matrix_decompose (Matrix     mat,
 
     out->translation = (Vector3){ mat.m12, mat.m13, mat.m14 };
 
-    col[0] = (Vector3){ mat.m0, mat.m4, mat.m8 };
-    col[1] = (Vector3){ mat.m1, mat.m5, mat.m9 };
-    col[2] = (Vector3){ mat.m2, mat.m6, mat.m10 };
+    /* Basis vectors are the matrix columns (m0..m2, m4..m6, m8..m10). */
+    col[0] = (Vector3){ mat.m0, mat.m1, mat.m2 };
+    col[1] = (Vector3){ mat.m4, mat.m5, mat.m6 };
+    col[2] = (Vector3){ mat.m8, mat.m9, mat.m10 };
 
     /* Max-normalizing helps numerical stability. */
     for (i = 0; i < 3; i++)
@@ -1362,10 +1366,12 @@ matrix_decompose (Matrix     mat,
     }
     out->scale = v3_scale (scl, stabilizer);
 
+    /* Matrix initializers are in field order m0, m4, m8, m12, m1, ...:
+     * one row per line, so the orthonormal columns go down each column. */
     rotation = (Matrix){
-        col[0].x, col[0].y, col[0].z, 0.0f,
-        col[1].x, col[1].y, col[1].z, 0.0f,
-        col[2].x, col[2].y, col[2].z, 0.0f,
+        col[0].x, col[1].x, col[2].x, 0.0f,
+        col[0].y, col[1].y, col[2].y, 0.0f,
+        col[0].z, col[1].z, col[2].z, 0.0f,
         0.0f,     0.0f,     0.0f,     1.0f
     };
     out->rotation = quat_from_matrix (rotation);

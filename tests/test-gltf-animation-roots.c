@@ -275,7 +275,7 @@ test_roots_matrix_nodes (void)
     g_autoptr(GError)      error = NULL;
     g_autoptr(GBytes)      bytes = NULL;
     g_autoptr(LrgGltfInfo) info = NULL;
-    gfloat                 t[3], s[3];
+    gfloat                 t[3], q[4], s[3];
 
     /* Armature as a column-major matrix: scale 2, translation (5, 6, 7). */
     bytes = test_glb_build (
@@ -289,6 +289,25 @@ test_roots_matrix_nodes (void)
     g_assert_true (lrg_gltf_info_get_joint_root_transform (info, 0, t, NULL, s));
     assert_vec3 ((Vector3){ t[0], t[1], t[2] }, 5, 6, 7);
     assert_vec3 ((Vector3){ s[0], s[1], s[2] }, 2, 2, 2);
+    g_clear_object (&info);
+    g_clear_pointer (&bytes, g_bytes_unref);
+
+    /* Rotation 90 degrees about Z with non-uniform scale (2, 3, 4): the
+     * columns are (0,2,0), (-3,0,0), (0,0,4). Decomposing the rows instead
+     * (raylib 6.0's MatrixDecompose(), fixed in 6.2) gives scale (3, 2, 4). */
+    bytes = test_glb_build (
+        "{\"asset\":{\"version\":\"2.0\"},"
+        "\"nodes\":[{\"name\":\"Armature\",\"children\":[1],"
+        "\"matrix\":[0,2,0,0, -3,0,0,0, 0,0,4,0, 1,2,3,1]},"
+        "{\"name\":\"Root\"}],"
+        "\"skins\":[{\"joints\":[1]}]}", NULL, 0);
+    info = lrg_gltf_info_new_from_bytes (bytes, &error);
+    g_assert_no_error (error);
+    g_assert_true (lrg_gltf_info_get_joint_root_transform (info, 0, t, q, s));
+    assert_vec3 ((Vector3){ t[0], t[1], t[2] }, 1, 2, 3);
+    assert_vec3 ((Vector3){ s[0], s[1], s[2] }, 2, 3, 4);
+    assert_same_rotation ((Quaternion){ q[0], q[1], q[2], q[3] },
+                          (Quaternion){ 0.0f, 0.0f, (gfloat) G_SQRT2 / 2.0f, (gfloat) G_SQRT2 / 2.0f });
     g_clear_object (&info);
     g_clear_pointer (&bytes, g_bytes_unref);
 
