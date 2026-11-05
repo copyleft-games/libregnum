@@ -410,9 +410,10 @@ lrg_gltf_info_get_joint_parent (LrgGltfInfo *self,
  *
  * The world transform of @joint's *parent node* (the glTF parent chain
  * composed like cgltf_node_transform_world(), then decomposed like
- * raymath's MatrixDecompose()). For a root joint under an armature node
- * this is the armature transform, e.g. rotation -90 degrees about X and
- * scale 100 for a Blender export. A joint without a parent node gets the
+ * raymath's MatrixDecompose() as of raylib 6.2, which reads the basis
+ * columns). For a root joint under an armature node this is the armature
+ * transform, e.g. rotation -90 degrees about X and scale 100 for a Blender
+ * export. A joint without a parent node gets the
  * identity.
  *
  * Returns: %TRUE on success, %FALSE when @joint is out of range
