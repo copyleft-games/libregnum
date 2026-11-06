@@ -27,9 +27,40 @@ G_DECLARE_FINAL_TYPE (LrgSeparator, lrg_separator, LRG, SEPARATOR, LrgWidget)
 /**
  * lrg_separator_new:
  *
+ * Creates a horizontal separator. In a vertical box it stretches across
+ * the box's width.
+ *
  * Returns: (transfer full): a new #LrgSeparator
  */
 LRG_AVAILABLE_IN_ALL
 LrgSeparator * lrg_separator_new (void);
+
+/**
+ * lrg_separator_new_with_orientation:
+ * @orientation: direction of the line
+ *
+ * Returns: (transfer full): a new #LrgSeparator
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSeparator * lrg_separator_new_with_orientation (LrgOrientation orientation);
+
+/**
+ * lrg_separator_get_orientation:
+ * @self: an #LrgSeparator
+ *
+ * Returns: the direction of the line
+ */
+LRG_AVAILABLE_IN_ALL
+LrgOrientation lrg_separator_get_orientation (LrgSeparator *self);
+
+/**
+ * lrg_separator_set_orientation:
+ * @self: an #LrgSeparator
+ * @orientation: %LRG_ORIENTATION_HORIZONTAL (a line across, the
+ *   default) or %LRG_ORIENTATION_VERTICAL (a line down)
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_separator_set_orientation (LrgSeparator   *self,
+                                    LrgOrientation  orientation);
 
 G_END_DECLS

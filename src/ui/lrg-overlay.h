@@ -27,6 +27,10 @@ G_DECLARE_FINAL_TYPE (LrgOverlay, lrg_overlay, LRG, OVERLAY, LrgContainer)
 /**
  * lrg_overlay_new:
  *
+ * Creates an empty overlay. Add layers with lrg_container_add_child();
+ * later children are drawn and hit-tested on top. Each child is placed
+ * in the whole content area by its own halign, valign and margin.
+ *
  * Returns: (transfer full): a new #LrgOverlay
  */
 LRG_AVAILABLE_IN_ALL

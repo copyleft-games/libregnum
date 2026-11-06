@@ -1,0 +1,97 @@
+* Separator
+:PROPERTIES:
+:CUSTOM_ID: separator
+:END:
+=LrgSeparator= is a hairline that divides groups of widgets: a horizontal line between rows of a vertical box, or a vertical line between items of a horizontal box (toolbars, status bars). It is drawn in the theme's =BORDER= colour, =BORDER_WIDTH= thick, centred in its allocation and snapped to whole units so it stays crisp.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: separator-creation
+:END:
+#+begin_src C
+LrgSeparator *hline = lrg_separator_new ();                                     /* horizontal */
+LrgSeparator *vline = lrg_separator_new_with_orientation (LRG_ORIENTATION_VERTICAL);
+#+end_src
+
+** Layout
+:PROPERTIES:
+:CUSTOM_ID: separator-layout
+:END:
+The preferred size is the line thickness on the cross axis and 0 along the line, so a box with the default =FILL= alignment stretches it across: a horizontal separator in an =LrgVBox= spans the box's width. Give it a vertical margin for breathing room (=lrg_widget_set_margin()=), or a fixed length with =lrg_widget_set_min_size()= and a non-fill alignment.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: separator-properties
+:END:
+| Property      | Type             | Default      | Meaning                                    |
+|---------------+------------------+--------------+--------------------------------------------|
+| =orientation= | =LrgOrientation= | =horizontal= | =horizontal= draws a line across, =vertical= a line down |
+
+No signals. The separator is not focusable.
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: separator-parts
+:END:
+| Part  | State      | Built-in look                                       |
+|-------+------------+-----------------------------------------------------|
+| =box= | any        | =background= = =BORDER= (line colour), =size= = =BORDER_WIDTH= (thickness) |
+| =box= | =disabled= | =opacity= 0.45                                      |
+
+The =size= of the box look is the thickness; changing it changes the preferred size too.
+
+** Keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: separator-keyboard
+:END:
+None: separators are skipped by focus navigation.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: separator-theming
+:END:
+#+begin_src yaml
+styles:
+  # All separators a little stronger
+  - widget: LrgSeparator
+    part: box
+    background: "#45475a"
+  # An accent rule under section titles
+  - widget: LrgSeparator
+    class: accent
+    part: box
+    background: "#cba6f7"
+    size: 2
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: separator-example
+:END:
+#+begin_src C
+LrgVBox      *menu = lrg_vbox_new ();
+LrgSeparator *sep = lrg_separator_new ();
+LrgInsets     gap = { 0.0f, 6.0f, 0.0f, 6.0f };
+
+lrg_container_add_child (LRG_CONTAINER (menu), LRG_WIDGET (open_button));
+lrg_widget_set_margin (LRG_WIDGET (sep), &gap);
+lrg_container_add_child (LRG_CONTAINER (menu), LRG_WIDGET (sep));
+lrg_container_add_child (LRG_CONTAINER (menu), LRG_WIDGET (quit_button));
+g_object_unref (sep);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: separator-api
+:END:
+- =lrg_separator_new (void)=
+- =lrg_separator_new_with_orientation (LrgOrientation orientation)=
+- =lrg_separator_get_orientation (LrgSeparator *self)=
+- =lrg_separator_set_orientation (LrgSeparator *self, LrgOrientation orientation)=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: separator-related
+:END:
+- [[file:vbox.org][VBox]]
+- [[file:hbox.org][HBox]]
