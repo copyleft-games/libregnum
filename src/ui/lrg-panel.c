@@ -9,7 +9,8 @@
  * A panel paints a BOX surface (the theme's PANEL colour, a BORDER
  * hairline and rounded corners, with a drop shadow for elevations
  * 1-3) and then its children on top. Explicitly set legacy colours,
- * border width and radius win over the theme.
+ * border width and radius are applied in style_overrides(), after the
+ * theme's style rules, so they win over the theme.
  */
 
 #include "config.h"
@@ -32,7 +33,7 @@ struct _LrgPanel
     LrgContainer  parent_instance;
 
     /* Legacy look; each *_set flag records an explicit value, which
-     * then wins over the theme default */
+     * then wins over the theme default and its style rules */
     GrlColor      background_color;
     GrlColor      border_color;
     gboolean      has_border;
@@ -79,7 +80,7 @@ static const gfloat ELEVATION_SCALE[PANEL_MAX_ELEVATION + 1] = { 0.0f, 0.5f, 1.0
  *
  * BOX: the theme's PANEL fill with a BORDER hairline and the control
  * corner radius; the shadow grows with the elevation. Explicit legacy
- * values win (a %NULL border colour removes the border).
+ * values are applied later, in style_overrides().
  */
 static void
 lrg_panel_style_defaults (LrgWidget      *widget,
@@ -97,24 +98,11 @@ lrg_panel_style_defaults (LrgWidget      *widget,
         return;
     }
 
-    /* Fill */
-    lrg_part_look_set_background (look, self->background_set
-                                        ? &self->background_color
-                                        : lrg_theme_get_color (theme, LRG_THEME_COLOR_PANEL));
-
-    /* Border: explicit colour, explicitly none, or the theme's */
-    if (!self->border_set)
-        lrg_part_look_set_border (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER),
-                                  self->border_width_set
-                                  ? self->border_width
-                                  : lrg_theme_get_metric (theme, LRG_THEME_METRIC_BORDER_WIDTH));
-    else if (self->has_border)
-        lrg_part_look_set_border (look, &self->border_color, self->border_width);
-
-    /* Shape */
-    lrg_part_look_set_radius (look, self->radius_set
-                                    ? self->corner_radius
-                                    : lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
+    /* Fill, hairline border and shape from the theme */
+    lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_PANEL));
+    lrg_part_look_set_border (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER),
+                              lrg_theme_get_metric (theme, LRG_THEME_METRIC_BORDER_WIDTH));
+    lrg_part_look_set_radius (look, lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
 
     /* Elevation */
     scale = ELEVATION_SCALE[MIN (self->elevation, PANEL_MAX_ELEVATION)];
@@ -125,6 +113,53 @@ lrg_panel_style_defaults (LrgWidget      *widget,
 
     if (state & LRG_WIDGET_STATE_DISABLED)
         lrg_part_look_set_opacity (look, 0.6f);
+}
+
+/*
+ * lrg_panel_style_overrides:
+ *
+ * BOX: explicit legacy values, applied after the theme's style rules
+ * so they always win. The border is an explicit colour (with the
+ * panel's border width), explicitly none (a %NULL border colour), or
+ * the resolved colour at an explicit width.
+ */
+static void
+lrg_panel_style_overrides (LrgWidget      *widget,
+                           LrgUIPart       part,
+                           LrgWidgetState  state,
+                           LrgPartLook    *look)
+{
+    LrgPanel       *self = LRG_PANEL (widget);
+    LrgWidgetClass *parent = LRG_WIDGET_CLASS (lrg_panel_parent_class);
+
+    if (parent->style_overrides != NULL)
+        parent->style_overrides (widget, part, state, look);
+
+    if (part != LRG_UI_PART_BOX)
+        return;
+
+    if (self->background_set)
+        lrg_part_look_set_background (look, &self->background_color);
+
+    if (self->border_set && self->has_border)
+    {
+        lrg_part_look_set_border (look, &self->border_color, self->border_width);
+    }
+    else if (self->border_set)
+    {
+        GrlColor none = { 0, 0, 0, 0 };
+
+        lrg_part_look_set_border (look, &none, 0.0f);
+    }
+    else if (self->border_width_set)
+    {
+        GrlColor border = look->border;
+
+        lrg_part_look_set_border (look, &border, self->border_width);
+    }
+
+    if (self->radius_set)
+        lrg_part_look_set_radius (look, self->corner_radius);
 }
 
 /* ==========================================================================
@@ -310,6 +345,7 @@ lrg_panel_class_init (LrgPanelClass *klass)
     widget_class->measure = lrg_panel_measure;
     LRG_CONTAINER_CLASS (klass)->layout_children = lrg_panel_layout_children;
     widget_class->style_defaults = lrg_panel_style_defaults;
+    widget_class->style_overrides = lrg_panel_style_overrides;
 
     /* lrg_widget_draw() renders paint() (background and children);
      * the container default would draw the children only */

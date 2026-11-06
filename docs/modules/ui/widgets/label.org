@@ -9,7 +9,7 @@
 :END:
 =LrgLabel= displays text. It records the text through the paint pipeline with the theme's UI font, so it batches with shapes and picks its colour and size from the theme.
 
-- Colour: the theme's =TEXT= (=TEXT_MUTED= with the =muted= class, =DISABLED= while insensitive). An explicitly set colour wins.
+- Colour: the theme's =TEXT= (=TEXT_MUTED= with the =muted= class, =DISABLED= while insensitive). An explicitly set colour wins over the theme default and over theme style rules, in every state but the disabled one.
 - Size: the theme's =FONT_SIZE=, or =FONT_SIZE_TITLE= / =FONT_SIZE_LARGE= / =FONT_SIZE_SMALL= with the =title= / =heading= / =caption= classes. An explicitly set size wins.
 - Multi-line text (=\n=): each line is aligned on its own (left, centre or right within the label's width); lines are 1.2 font sizes apart.
 - When the label is allocated taller than its text (for example stretched in a row next to a button) the text block is centred vertically; otherwise it starts at the top edge.
@@ -40,7 +40,7 @@ lrg_widget_add_class (LRG_WIDGET (hint), "muted");
 | =color=     | =GrlColor=         | legacy white    | Theme =TEXT= / =TEXT_MUTED= until set                    |
 | =alignment= | =LrgTextAlignment= | =LEFT=          | Horizontal alignment of each line                        |
 
-=font-size= and =color= keep their old default values in their getters, but the label draws with the theme until a value is set explicitly.
+=font-size= and =color= keep their old default values in their getters, but the label draws with the theme until a value is set explicitly. Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
 
 ** Signals
 :PROPERTIES:

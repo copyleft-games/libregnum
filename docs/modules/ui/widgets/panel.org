@@ -35,7 +35,7 @@ lrg_container_add_child (LRG_CONTAINER (card), LRG_WIDGET (content));
 | =corner-radius=    | float      | 0 (reported)   | Theme =CORNER_RADIUS= until set                                           |
 | =elevation=        | uint       | 1              | 0 (flat) to 3; drives the shadow                                          |
 
-The legacy properties keep their old default values in their getters, but the panel draws with the theme until a value is set explicitly; an explicit value then wins.
+The legacy properties keep their old default values in their getters, but the panel draws with the theme until a value is set explicitly; an explicit value then wins over the theme default and over theme style rules that target =LrgPanel=. An explicit border colour uses the panel's =border-width=; a =NULL= border colour removes the border even when a rule sets one; an explicit =border-width= alone keeps the resolved (theme or rule) border colour. Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
 
 Elevation → shadow: blur = =SHADOW_BLUR= × {0, 0.5, 1.0, 1.6} and vertical offset = =SHADOW_OFFSET_Y= × the same factor, in the theme's =SHADOW= colour.
 

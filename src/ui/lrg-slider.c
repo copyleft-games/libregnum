@@ -255,12 +255,12 @@ get_widget_bounds (LrgWidget *widget)
 /*
  * lrg_slider_style_defaults:
  *
- * TRACK: the theme's TRACK colour (explicit track-color wins), a pill.
- * FILL: ACCENT, lighter on hover, ACCENT_PRESSED while dragging
- * (explicit fill-color wins), a pill.
- * THUMB: HANDLE colour (explicit handle-color wins) with a soft drop
- * shadow; its @size is the resting diameter, grown on hover and more
- * while pressed so the thumb swells under the finger.
+ * TRACK: the theme's TRACK colour, a pill.
+ * FILL: ACCENT, lighter on hover, ACCENT_PRESSED while dragging, a pill.
+ * THUMB: HANDLE colour with a soft drop shadow; its @size is the
+ * resting diameter, grown on hover and more while pressed so the thumb
+ * swells under the finger.
+ * Explicit colours and sizes are (re)applied in style_overrides().
  */
 static void
 lrg_slider_style_defaults (LrgWidget      *widget,
@@ -279,37 +279,21 @@ lrg_slider_style_defaults (LrgWidget      *widget,
     switch (part)
     {
     case LRG_UI_PART_TRACK:
-        c = self->track_set ? self->track_color
-                            : *lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK);
-        lrg_part_look_set_background (look, &c);
+        lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK));
         lrg_part_look_set_radius (look, G_MAXFLOAT);
         lrg_part_look_set_size (look, base_track_thickness (self));
         break;
 
     case LRG_UI_PART_FILL:
-        if (self->fill_set)
-        {
-            if (pressed)
-                lrg_paint_color_shade (&self->fill_color, -0.12f, &c);
-            else if (hovered)
-                lrg_paint_color_shade (&self->fill_color, 0.10f, &c);
-            else
-                c = self->fill_color;
-        }
-        else
-        {
-            c = *lrg_theme_get_color (theme, pressed ? LRG_THEME_COLOR_ACCENT_PRESSED
-                                             : hovered ? LRG_THEME_COLOR_ACCENT_HOVER
-                                             : LRG_THEME_COLOR_ACCENT);
-        }
+        c = *lrg_theme_get_color (theme, pressed ? LRG_THEME_COLOR_ACCENT_PRESSED
+                                         : hovered ? LRG_THEME_COLOR_ACCENT_HOVER
+                                         : LRG_THEME_COLOR_ACCENT);
         lrg_part_look_set_background (look, &c);
         lrg_part_look_set_radius (look, G_MAXFLOAT);
         break;
 
     case LRG_UI_PART_THUMB:
-        c = self->handle_set ? self->handle_color
-                             : *lrg_theme_get_color (theme, LRG_THEME_COLOR_HANDLE);
-        lrg_part_look_set_background (look, &c);
+        lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_HANDLE));
         lrg_part_look_set_radius (look, G_MAXFLOAT);
 
         size = base_handle_size (self);
@@ -342,6 +326,71 @@ lrg_slider_style_defaults (LrgWidget      *widget,
 
     if (state & LRG_WIDGET_STATE_DISABLED)
         lrg_part_look_set_opacity (look, SLIDER_DISABLED_OPACITY);
+}
+
+/*
+ * lrg_slider_style_overrides:
+ *
+ * Explicit values, applied after the theme's style rules so they
+ * always win. TRACK: track-color and track-thickness. FILL: fill-color,
+ * lighter on hover and darker while dragging. THUMB: handle-color and
+ * handle-size (grown on hover / press like the default).
+ */
+static void
+lrg_slider_style_overrides (LrgWidget      *widget,
+                            LrgUIPart       part,
+                            LrgWidgetState  state,
+                            LrgPartLook    *look)
+{
+    LrgSlider      *self = LRG_SLIDER (widget);
+    LrgWidgetClass *parent = LRG_WIDGET_CLASS (lrg_slider_parent_class);
+    gboolean        hovered = (state & LRG_WIDGET_STATE_HOVERED) != 0;
+    gboolean        pressed = (state & LRG_WIDGET_STATE_PRESSED) != 0;
+    GrlColor        c;
+    gfloat          size;
+
+    if (parent->style_overrides != NULL)
+        parent->style_overrides (widget, part, state, look);
+
+    switch (part)
+    {
+    case LRG_UI_PART_TRACK:
+        if (self->track_set)
+            lrg_part_look_set_background (look, &self->track_color);
+        if (self->thickness_set)
+            lrg_part_look_set_size (look, self->track_thickness);
+        break;
+
+    case LRG_UI_PART_FILL:
+        if (self->fill_set)
+        {
+            if (pressed)
+                lrg_paint_color_shade (&self->fill_color, -0.12f, &c);
+            else if (hovered)
+                lrg_paint_color_shade (&self->fill_color, 0.10f, &c);
+            else
+                c = self->fill_color;
+            lrg_part_look_set_background (look, &c);
+        }
+        break;
+
+    case LRG_UI_PART_THUMB:
+        if (self->handle_set)
+            lrg_part_look_set_background (look, &self->handle_color);
+        if (self->handle_size_set)
+        {
+            size = self->handle_size;
+            if (pressed)
+                size *= THUMB_PRESS_GROW;
+            else if (hovered)
+                size *= THUMB_HOVER_GROW;
+            lrg_part_look_set_size (look, size);
+        }
+        break;
+
+    default:
+        break;
+    }
 }
 
 /* ==========================================================================
@@ -666,6 +715,7 @@ lrg_slider_class_init (LrgSliderClass *klass)
 
     widget_class->paint = lrg_slider_paint;
     widget_class->style_defaults = lrg_slider_style_defaults;
+    widget_class->style_overrides = lrg_slider_style_overrides;
     widget_class->measure = lrg_slider_measure;
     widget_class->handle_event = lrg_slider_handle_event;
 

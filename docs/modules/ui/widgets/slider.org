@@ -106,7 +106,7 @@ styles:
     size: 30
 #+end_src
 
-Explicitly set colour properties replace the theme defaults; theme rules are merged on top of those defaults.
+Explicitly set colour and size properties beat both the theme defaults and theme style rules: a rule can restyle every slider, and =lrg_slider_set_fill_color()= on one slider still wins over it (with hover / press shades derived from it). An explicit =handle-size= sets the thumb's look size (grown on hover / press as usual) and =track-thickness= the track's. Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
 
 ** Keyboard and gamepad
 :PROPERTIES:

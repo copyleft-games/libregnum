@@ -46,7 +46,7 @@ A button inside a box container is sized from its preferred size; set an explici
 | =is-hovered=    | boolean    | =FALSE=       | Read-only mirror of =LRG_WIDGET_STATE_HOVERED=                              |
 | =is-pressed=    | boolean    | =FALSE=       | Read-only mirror of =LRG_WIDGET_STATE_PRESSED=                              |
 
-The legacy appearance properties keep their old default values in their getters, but the button draws with the theme until a value is set explicitly. An explicitly set colour or radius replaces the theme default for its state; theme style rules that target =LrgButton= still apply on top.
+The legacy appearance properties keep their old default values in their getters, but the button draws with the theme until a value is set explicitly. An explicitly set colour or radius beats both the theme default and any theme style rule that targets =LrgButton= ("the theme applies unless you say otherwise"); it only replaces the fields it concerns, so a rule's shadow or border still applies. With only =normal-color= set, the hover and pressed backgrounds are derived from it (lighter / darker), and the neutral hairline border is dropped. An explicit radius also shapes the focus ring. Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
 
 ** Signals
 :PROPERTIES:

@@ -53,7 +53,7 @@ lrg_container_add_child (LRG_CONTAINER (form), LRG_WIDGET (input));
 | =corner-radius=     | float      | 4 (reported)   | Theme =CORNER_RADIUS= until set                                                |
 | =padding=           | float      | 8 (reported)   | Theme =PADDING_X= / =PADDING_Y= until set                                      |
 
-The legacy appearance properties keep their old default values in their getters, but the entry draws with the theme until a value is set explicitly. Once set, an explicit value replaces the theme default (theme style rules that target =LrgTextInput= still apply on top).
+The legacy appearance properties keep their old default values in their getters, but the entry draws with the theme until a value is set explicitly. Once set, an explicit value beats both the theme default and theme style rules that target =LrgTextInput=. The explicit border colour applies only while unfocused (focus always shows the accent border); the placeholder colour applies while the entry is empty and the text colour once it has text; an explicit radius also shapes the focus ring. Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
 
 ** Signals
 :PROPERTIES:

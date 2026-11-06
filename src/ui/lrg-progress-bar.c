@@ -12,8 +12,9 @@
  * spring, so jumps in progress glide instead of snapping. An
  * indeterminate bar shows a shimmering segment sliding across the
  * track. The optional percentage text is the LABEL part. Legacy colour
- * properties still work: once set explicitly they replace the theme
- * default.
+ * and radius properties still work: once set explicitly they are
+ * applied in style_overrides(), after the theme's style rules, so they
+ * beat both the default and any matching rule.
  */
 
 #include "config.h"
@@ -92,13 +93,6 @@ static const GrlColor DEFAULT_TEXT       = { 255, 255, 255, 255 };
  * Helpers
  * ========================================================================== */
 
-/* bar_radius: explicit corner radius, else a pill */
-static gfloat
-bar_radius (LrgProgressBar *self)
-{
-    return self->radius_set ? self->corner_radius : G_MAXFLOAT;
-}
-
 /*
  * lrg_progress_bar_step:
  *
@@ -148,11 +142,9 @@ lrg_progress_bar_step (LrgWidget *widget,
 /*
  * lrg_progress_bar_style_defaults:
  *
- * TRACK: TRACK colour (explicit background-color wins), pill radius
- * (explicit corner-radius wins). FILL: linear gradient ACCENT ->
- * ACCENT_HOVER along the bar (an explicit fill-color gives a gradient
- * from it to a lighter shade), with a faint accent glow. LABEL: TEXT
- * (explicit text-color wins).
+ * TRACK: TRACK colour, pill radius. FILL: linear gradient ACCENT ->
+ * ACCENT_HOVER along the bar, with a faint accent glow. LABEL: TEXT.
+ * Explicit values are applied later, in style_overrides().
  */
 static void
 lrg_progress_bar_style_defaults (LrgWidget      *widget,
@@ -170,30 +162,20 @@ lrg_progress_bar_style_defaults (LrgWidget      *widget,
     switch (part)
     {
     case LRG_UI_PART_TRACK:
-        a = self->background_set ? self->background_color
-                                 : *lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK);
-        lrg_part_look_set_background (look, &a);
-        lrg_part_look_set_radius (look, bar_radius (self));
+        lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK));
+        lrg_part_look_set_radius (look, G_MAXFLOAT);
         break;
 
     case LRG_UI_PART_FILL:
-        if (self->fill_set)
-        {
-            a = self->fill_color;
-            lrg_paint_color_shade (&self->fill_color, 0.18f, &b);
-        }
-        else
-        {
-            a = *lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
-            b = *lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT_HOVER);
-        }
+        a = *lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
+        b = *lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT_HOVER);
 
         /* Horizontal bars brighten to the right, vertical ones upwards */
         angle = self->orientation == LRG_ORIENTATION_HORIZONTAL ? 0.0f : 270.0f;
         lrg_paint_gradient_init_linear (&gradient, &a, &b, angle);
         lrg_part_look_set_background (look, &a);
         lrg_part_look_set_gradient (look, &gradient);
-        lrg_part_look_set_radius (look, bar_radius (self));
+        lrg_part_look_set_radius (look, G_MAXFLOAT);
 
         lrg_paint_color_with_alpha (&b, 0.30f, &b);
         lrg_part_look_set_glow (look, &b,
@@ -201,9 +183,7 @@ lrg_progress_bar_style_defaults (LrgWidget      *widget,
         break;
 
     case LRG_UI_PART_LABEL:
-        a = self->text_set ? self->text_color
-                           : *lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT);
-        lrg_part_look_set_foreground (look, &a);
+        lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
         break;
 
     default:
@@ -213,6 +193,63 @@ lrg_progress_bar_style_defaults (LrgWidget      *widget,
 
     if (state & LRG_WIDGET_STATE_DISABLED)
         lrg_part_look_set_opacity (look, 0.45f);
+}
+
+/*
+ * lrg_progress_bar_style_overrides:
+ *
+ * Explicit values, applied after the theme's style rules so they
+ * always win. TRACK: background-color and corner-radius. FILL:
+ * fill-color gives a gradient from it to a lighter shade (and the glow
+ * follows that shade); corner-radius. LABEL: text-color.
+ */
+static void
+lrg_progress_bar_style_overrides (LrgWidget      *widget,
+                                  LrgUIPart       part,
+                                  LrgWidgetState  state,
+                                  LrgPartLook    *look)
+{
+    LrgProgressBar   *self = LRG_PROGRESS_BAR (widget);
+    LrgWidgetClass   *parent = LRG_WIDGET_CLASS (lrg_progress_bar_parent_class);
+    LrgPaintGradient  gradient;
+    GrlColor          b;
+    gfloat            angle;
+
+    if (parent->style_overrides != NULL)
+        parent->style_overrides (widget, part, state, look);
+
+    switch (part)
+    {
+    case LRG_UI_PART_TRACK:
+        if (self->background_set)
+            lrg_part_look_set_background (look, &self->background_color);
+        if (self->radius_set)
+            lrg_part_look_set_radius (look, self->corner_radius);
+        break;
+
+    case LRG_UI_PART_FILL:
+        if (self->fill_set)
+        {
+            lrg_paint_color_shade (&self->fill_color, 0.18f, &b);
+            angle = self->orientation == LRG_ORIENTATION_HORIZONTAL ? 0.0f : 270.0f;
+            lrg_paint_gradient_init_linear (&gradient, &self->fill_color, &b, angle);
+            lrg_part_look_set_background (look, &self->fill_color);
+            lrg_part_look_set_gradient (look, &gradient);
+            lrg_paint_color_with_alpha (&b, 0.30f, &b);
+            lrg_part_look_set_glow (look, &b, look->glow_size);
+        }
+        if (self->radius_set)
+            lrg_part_look_set_radius (look, self->corner_radius);
+        break;
+
+    case LRG_UI_PART_LABEL:
+        if (self->text_set)
+            lrg_part_look_set_foreground (look, &self->text_color);
+        break;
+
+    default:
+        break;
+    }
 }
 
 /* ==========================================================================
@@ -467,6 +504,7 @@ lrg_progress_bar_class_init (LrgProgressBarClass *klass)
     widget_class->paint = lrg_progress_bar_paint;
     widget_class->step = lrg_progress_bar_step;
     widget_class->style_defaults = lrg_progress_bar_style_defaults;
+    widget_class->style_overrides = lrg_progress_bar_style_overrides;
     widget_class->measure = lrg_progress_bar_measure;
     widget_class->handle_event = lrg_progress_bar_handle_event;
 

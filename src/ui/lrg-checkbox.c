@@ -161,8 +161,8 @@ checkbox_font (LrgCheckbox *self)
  *
  * BOX (check / radio) and TRACK (switch) share one recipe: CONTROL
  * with a BORDER outline when off, ACCENT when on, each with hover and
- * pressed shades. Explicit box / check colours replace the off / on
- * fills.
+ * pressed shades. Explicit box / check colours are applied later, in
+ * indicator_overrides().
  */
 static void
 indicator_defaults (LrgCheckbox    *self,
@@ -180,19 +180,14 @@ indicator_defaults (LrgCheckbox    *self,
 
     if (on)
     {
-        if (self->check_color_set)
-            lrg_paint_color_shade (&self->check_color, pressed ? -0.12f : hovered ? 0.1f : 0.0f, &bg);
-        else
-            bg = *lrg_theme_get_color (theme, pressed ? LRG_THEME_COLOR_ACCENT_PRESSED
-                                              : hovered ? LRG_THEME_COLOR_ACCENT_HOVER
-                                              : LRG_THEME_COLOR_ACCENT);
+        bg = *lrg_theme_get_color (theme, pressed ? LRG_THEME_COLOR_ACCENT_PRESSED
+                                          : hovered ? LRG_THEME_COLOR_ACCENT_HOVER
+                                          : LRG_THEME_COLOR_ACCENT);
         border = bg;
     }
     else
     {
-        if (self->box_color_set)
-            lrg_paint_color_shade (&self->box_color, pressed ? -0.12f : hovered ? 0.1f : 0.0f, &bg);
-        else if (part == LRG_UI_PART_TRACK)
+        if (part == LRG_UI_PART_TRACK)
             lrg_paint_color_shade (lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK),
                                    pressed ? -0.06f : hovered ? 0.08f : 0.0f, &bg);
         else
@@ -273,14 +268,77 @@ lrg_checkbox_style_defaults (LrgWidget      *widget,
     case LRG_UI_PART_LABEL:
         if (state & LRG_WIDGET_STATE_DISABLED)
             lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_DISABLED));
-        else if (self->text_color_set)
-            lrg_part_look_set_foreground (look, &self->text_color);
         else
             lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
         break;
 
     default:
         LRG_WIDGET_CLASS (lrg_checkbox_parent_class)->style_defaults (widget, part, state, look);
+        break;
+    }
+}
+
+/*
+ * indicator_overrides:
+ *
+ * Explicit indicator colours, applied after the theme's style rules so
+ * they always win: the check colour fills (and outlines and tints the
+ * glow of) the indicator when on, the box colour fills it when off.
+ * Both still get the usual hover and pressed shades.
+ */
+static void
+indicator_overrides (LrgCheckbox    *self,
+                     LrgUIPart       part,
+                     LrgWidgetState  state,
+                     LrgPartLook    *look)
+{
+    gboolean on = (state & LRG_WIDGET_STATE_CHECKED) != 0;
+    gboolean hovered = (state & LRG_WIDGET_STATE_HOVERED) != 0;
+    gboolean pressed = (state & LRG_WIDGET_STATE_PRESSED) != 0;
+    gfloat   shade = pressed ? -0.12f : hovered ? 0.1f : 0.0f;
+    GrlColor bg;
+
+    if (on && self->check_color_set)
+    {
+        GrlColor glow;
+
+        lrg_paint_color_shade (&self->check_color, shade, &bg);
+        lrg_part_look_set_background (look, &bg);
+        if (part == LRG_UI_PART_BOX)
+            lrg_part_look_set_border (look, &bg, look->border_width);
+        lrg_paint_color_with_alpha (&bg, hovered ? 0.35f : 0.0f, &glow);
+        lrg_part_look_set_glow (look, &glow, look->glow_size);
+    }
+    else if (!on && self->box_color_set)
+    {
+        lrg_paint_color_shade (&self->box_color, shade, &bg);
+        lrg_part_look_set_background (look, &bg);
+    }
+}
+
+static void
+lrg_checkbox_style_overrides (LrgWidget      *widget,
+                              LrgUIPart       part,
+                              LrgWidgetState  state,
+                              LrgPartLook    *look)
+{
+    LrgCheckbox    *self = LRG_CHECKBOX (widget);
+    LrgWidgetClass *parent = LRG_WIDGET_CLASS (lrg_checkbox_parent_class);
+
+    if (parent->style_overrides != NULL)
+        parent->style_overrides (widget, part, state, look);
+
+    switch (part)
+    {
+    case LRG_UI_PART_BOX:
+    case LRG_UI_PART_TRACK:
+        indicator_overrides (self, part, state, look);
+        break;
+    case LRG_UI_PART_LABEL:
+        if (self->text_color_set && !(state & LRG_WIDGET_STATE_DISABLED))
+            lrg_part_look_set_foreground (look, &self->text_color);
+        break;
+    default:
         break;
     }
 }
@@ -697,6 +755,7 @@ lrg_checkbox_class_init (LrgCheckboxClass *klass)
     widget_class->paint = lrg_checkbox_paint;
     widget_class->step = lrg_checkbox_step;
     widget_class->style_defaults = lrg_checkbox_style_defaults;
+    widget_class->style_overrides = lrg_checkbox_style_overrides;
     widget_class->measure = lrg_checkbox_measure;
     widget_class->handle_event = lrg_checkbox_handle_event;
 

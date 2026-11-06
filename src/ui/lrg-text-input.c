@@ -18,7 +18,9 @@
  * words), Backspace/Delete, Ctrl+A/C/X/V and mouse click / drag /
  * double-click selection are handled here. The legacy colour, padding,
  * radius and font-size properties keep working: once set explicitly
- * they replace the theme defaults.
+ * they replace the theme defaults, and the colours and radius are
+ * applied in style_overrides(), after the theme's style rules, so they
+ * beat any matching rule too.
  */
 
 #include "config.h"
@@ -488,8 +490,8 @@ clipboard_get (void)
  *
  * INPUT background, BORDER border (a touch brighter on hover) that
  * becomes ACCENT with a faint accent glow while focused. Explicit
- * background / border colours replace the theme defaults (the border
- * colour applies while unfocused; focus always shows the accent).
+ * background / border colours and radius are applied later, in
+ * box_overrides().
  */
 static void
 box_defaults (LrgTextInput   *self,
@@ -504,14 +506,10 @@ box_defaults (LrgTextInput   *self,
     GrlColor        border;
     GrlColor        glow;
 
-    lrg_part_look_set_background (look, self->background_set
-                                        ? &self->background_color
-                                        : lrg_theme_get_color (theme, LRG_THEME_COLOR_INPUT));
+    lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_INPUT));
 
     if (focused)
         border = *accent;
-    else if (self->border_set)
-        border = self->border_color;
     else if (hovered)
         lrg_paint_color_mix (lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER),
                              lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED), 0.35f, &border);
@@ -519,9 +517,7 @@ box_defaults (LrgTextInput   *self,
         border = *lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER);
     lrg_part_look_set_border (look, &border, focused ? MAX (bw, 1.5f) : bw);
 
-    lrg_part_look_set_radius (look, self->radius_set
-                                    ? self->corner_radius
-                                    : lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
+    lrg_part_look_set_radius (look, lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
 
     /* Soft accent halo while focused (transparent otherwise so it fades) */
     lrg_paint_color_with_alpha (accent, focused ? 0.22f : 0.0f, &glow);
@@ -550,13 +546,9 @@ lrg_text_input_style_defaults (LrgWidget      *widget,
     case LRG_UI_PART_LABEL:
         /* Text colour, or the placeholder colour while empty */
         if (empty)
-            lrg_part_look_set_foreground (look, self->placeholder_color_set
-                                                ? &self->placeholder_color
-                                                : lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED));
+            lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED));
         else
-            lrg_part_look_set_foreground (look, self->text_color_set
-                                                ? &self->text_color
-                                                : lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+            lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
         if (state & LRG_WIDGET_STATE_DISABLED)
             lrg_part_look_set_opacity (look, INPUT_DISABLED_OPACITY);
         break;
@@ -573,14 +565,66 @@ lrg_text_input_style_defaults (LrgWidget      *widget,
         lrg_part_look_set_size (look, CARET_WIDTH);
         break;
 
-    case LRG_UI_PART_FOCUS:
+    default:
         LRG_WIDGET_CLASS (lrg_text_input_parent_class)->style_defaults (widget, part, state, look);
+        break;
+    }
+}
+
+/*
+ * box_overrides:
+ *
+ * Explicit BOX values, applied after the theme's style rules so they
+ * always win: the background colour, the radius, and the border colour
+ * while unfocused (focus always shows the accent border).
+ */
+static void
+box_overrides (LrgTextInput   *self,
+               LrgWidgetState  state,
+               LrgPartLook    *look)
+{
+    if (self->background_set)
+        lrg_part_look_set_background (look, &self->background_color);
+    if (self->border_set && !(state & LRG_WIDGET_STATE_FOCUSED))
+        lrg_part_look_set_border (look, &self->border_color, look->border_width);
+    if (self->radius_set)
+        lrg_part_look_set_radius (look, self->corner_radius);
+}
+
+static void
+lrg_text_input_style_overrides (LrgWidget      *widget,
+                                LrgUIPart       part,
+                                LrgWidgetState  state,
+                                LrgPartLook    *look)
+{
+    LrgTextInput   *self = LRG_TEXT_INPUT (widget);
+    LrgWidgetClass *parent = LRG_WIDGET_CLASS (lrg_text_input_parent_class);
+    gboolean        empty = self->text == NULL || self->text[0] == '\0';
+
+    if (parent->style_overrides != NULL)
+        parent->style_overrides (widget, part, state, look);
+
+    switch (part)
+    {
+    case LRG_UI_PART_BOX:
+        box_overrides (self, state, look);
+        break;
+
+    case LRG_UI_PART_LABEL:
+        /* Text colour, or the placeholder colour while empty */
+        if (empty && self->placeholder_color_set)
+            lrg_part_look_set_foreground (look, &self->placeholder_color);
+        else if (!empty && self->text_color_set)
+            lrg_part_look_set_foreground (look, &self->text_color);
+        break;
+
+    case LRG_UI_PART_FOCUS:
+        /* The ring follows the input's own corner radius */
         if (self->radius_set)
             lrg_part_look_set_radius (look, self->corner_radius + look->border_width + 2.0f);
         break;
 
     default:
-        LRG_WIDGET_CLASS (lrg_text_input_parent_class)->style_defaults (widget, part, state, look);
         break;
     }
 }
@@ -1186,6 +1230,7 @@ lrg_text_input_class_init (LrgTextInputClass *klass)
     widget_class->paint = lrg_text_input_paint;
     widget_class->step = lrg_text_input_step;
     widget_class->style_defaults = lrg_text_input_style_defaults;
+    widget_class->style_overrides = lrg_text_input_style_overrides;
     widget_class->measure = lrg_text_input_measure;
     widget_class->handle_event = lrg_text_input_handle_event;
 

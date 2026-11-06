@@ -43,7 +43,7 @@ g_signal_connect (vsync, "toggled", G_CALLBACK (on_vsync_toggled), NULL);
 | =check-color= | =GrlColor=         | legacy green   | Checked fill; theme =ACCENT= until set                      |
 | =text-color=  | =GrlColor=         | legacy white   | Label colour; theme =TEXT= until set                        |
 
-The legacy properties keep their old default values in their getters, but the checkbox draws with the theme until a value is set explicitly. An explicitly set value then wins (hover and pressed shades are derived from it).
+The legacy properties keep their old default values in their getters, but the checkbox draws with the theme until a value is set explicitly. An explicitly set value then wins over the theme default and over theme style rules (hover and pressed shades are derived from it; an explicit check colour also outlines and tints the glow of the checked indicator, and an explicit text colour applies in every state but the disabled one). Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
 
 =lrg_checkbox_get_check_progress()= reports the check spring (0 unchecked, 1 checked) for custom drawing or tests.
 

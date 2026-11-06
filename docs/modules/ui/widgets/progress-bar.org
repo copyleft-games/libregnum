@@ -64,6 +64,8 @@ The progress bar has no signals of its own; watch =notify::value= if needed.
 
 The bar is display-only, so hover and press do not change its looks.
 
+Explicitly set =background-color=, =fill-color= (a gradient from it to a lighter shade, glow included), =text-color= and =corner-radius= (track and fill) beat both the theme defaults above and theme style rules that target =LrgProgressBar=. Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
+
 ** Style classes
 :PROPERTIES:
 :CUSTOM_ID: progress-bar-style-classes

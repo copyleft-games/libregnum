@@ -1833,6 +1833,372 @@ test_gpu_image (Fixture       *fixture,
 
 
 /* ==========================================================================
+ * Precedence: widget defaults < theme style rules < explicit setters
+ * ========================================================================== */
+
+/* Distinct colours that no preset uses for any role */
+static const GrlColor RULE_COLOR     = { 11, 222, 33, 255 };
+static const GrlColor EXPLICIT_COLOR = { 201, 17, 123, 255 };
+
+/* same_color: exact channel equality */
+static gboolean
+same_color (const GrlColor *a,
+            const GrlColor *b)
+{
+	return a->r == b->r && a->g == b->g && a->b == b->b && a->a == b->a;
+}
+
+/*
+ * add_rule:
+ *
+ * Adds a theme style rule for @type / @part / @state that sets the
+ * background and foreground to RULE_COLOR, the radius to @radius (when
+ * >= 0) and the size to @size (when >= 0).
+ */
+static void
+add_rule (LrgTheme       *theme,
+          const gchar    *type,
+          LrgUIPart       part,
+          LrgWidgetState  state,
+          gfloat          radius,
+          gfloat          size)
+{
+	g_autoptr(LrgStyleRule) rule = lrg_style_rule_new (type, NULL, part, state);
+	LrgPartLook            *look = lrg_style_rule_get_look (rule);
+
+	lrg_part_look_set_background (look, &RULE_COLOR);
+	lrg_part_look_set_foreground (look, &RULE_COLOR);
+	if (radius >= 0.0f)
+		lrg_part_look_set_radius (look, radius);
+	if (size >= 0.0f)
+		lrg_part_look_set_size (look, size);
+	lrg_theme_add_style_rule (theme, rule);
+}
+
+/* resolve: the look of @part in exactly @state */
+static LrgPartLook
+resolve (gpointer        widget,
+         LrgUIPart       part,
+         LrgWidgetState  state)
+{
+	LrgPartLook look;
+
+	lrg_widget_resolve_look_for_state (LRG_WIDGET (widget), part, state, &look);
+	return look;
+}
+
+/* Button: rule beats the default; explicit colours / radius beat the
+ * rule, at rest and hovered (hover derived from the normal colour) */
+static void
+test_precedence_button (Fixture       *fixture,
+                        gconstpointer  user_data)
+{
+	LrgButton    *button;
+	LrgPaintList *list;
+	LrgPartLook   look;
+	GrlColor      shade;
+	gint          idx;
+
+	button = add_at (fixture, lrg_button_new ("Go"), 10.0f, 10.0f, 100.0f, 36.0f);
+	add_rule (fixture->theme, "LrgButton", LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE, 9.0f, -1.0f);
+	add_rule (fixture->theme, "LrgButton", LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE, -1.0f, -1.0f);
+
+	/* (a) the rule beats the theme default, at rest and hovered */
+	look = resolve (button, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.radii.top_left, 9.0f, 0.01);
+	look = resolve (button, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	look = resolve (button, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.foreground, &RULE_COLOR));
+
+	list = lrg_canvas_record (fixture->canvas);
+	idx = find_rect (list, LRG_PAINT_PRIM_RECT, 10.0f, 10.0f, 100.0f, 36.0f);
+	g_assert_true (color_is (instance (list, idx)->color, &RULE_COLOR, 1));
+
+	/* (b) explicit values beat the rule */
+	lrg_button_set_normal_color (button, &EXPLICIT_COLOR);
+	lrg_button_set_text_color (button, &EXPLICIT_COLOR);
+	lrg_button_set_corner_radius (button, 2.0f);
+
+	look = resolve (button, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &EXPLICIT_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.radii.top_left, 2.0f, 0.01);
+	g_assert_cmpfloat_with_epsilon (look.border_width, 0.0f, 0.01);
+
+	/* Hover / press still derive from the explicit normal colour */
+	look = resolve (button, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED);
+	lrg_paint_color_shade (&EXPLICIT_COLOR, 0.12f, &shade);
+	g_assert_true (same_color (&look.background, &shade));
+	look = resolve (button, LRG_UI_PART_BOX, LRG_WIDGET_STATE_PRESSED);
+	lrg_paint_color_shade (&EXPLICIT_COLOR, -0.15f, &shade);
+	g_assert_true (same_color (&look.background, &shade));
+
+	look = resolve (button, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_HOVERED);
+	g_assert_true (same_color (&look.foreground, &EXPLICIT_COLOR));
+
+	/* An explicit hover colour beats the derived one */
+	lrg_button_set_hover_color (button, &RULE_COLOR);
+	look = resolve (button, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+
+	list = lrg_canvas_record (fixture->canvas);
+	idx = find_rect (list, LRG_PAINT_PRIM_RECT, 10.0f, 10.0f, 100.0f, 36.0f);
+	g_assert_true (color_is (instance (list, idx)->color, &EXPLICIT_COLOR, 1));
+	g_assert_cmpfloat_with_epsilon (instance (list, idx)->radii[0], 2.0f, 0.01);
+
+	/* (c) per-instance part looks still beat the explicit values */
+	{
+		LrgPartLook over;
+
+		lrg_part_look_init (&over);
+		lrg_part_look_set_background (&over, &shade);
+		lrg_widget_set_part_look (LRG_WIDGET (button), LRG_UI_PART_BOX,
+		                          LRG_WIDGET_STATE_NONE, &over);
+		look = resolve (button, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+		g_assert_true (same_color (&look.background, &shade));
+	}
+}
+
+/* Label: rule beats TEXT; explicit colour beats the rule (not disabled) */
+static void
+test_precedence_label (Fixture       *fixture,
+                       gconstpointer  user_data)
+{
+	LrgLabel    *label;
+	LrgPartLook  look;
+
+	label = add_at (fixture, lrg_label_new ("Hi"), 10.0f, 10.0f, 100.0f, 20.0f);
+	add_rule (fixture->theme, "LrgLabel", LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE, -1.0f, -1.0f);
+
+	look = resolve (label, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.foreground, &RULE_COLOR));
+
+	lrg_label_set_color (label, &EXPLICIT_COLOR);
+	look = resolve (label, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.foreground, &EXPLICIT_COLOR));
+	look = resolve (label, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_DISABLED);
+	g_assert_false (same_color (&look.foreground, &EXPLICIT_COLOR));
+}
+
+/* Checkbox: rules beat the BOX / LABEL defaults; explicit box, check
+ * and text colours beat them, at rest and hovered */
+static void
+test_precedence_checkbox (Fixture       *fixture,
+                          gconstpointer  user_data)
+{
+	LrgCheckbox *box;
+	LrgPartLook  look;
+	GrlColor     shade;
+
+	box = add_at (fixture, lrg_checkbox_new ("Sound"), 10.0f, 10.0f, 160.0f, 24.0f);
+	add_rule (fixture->theme, "LrgCheckbox", LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE, -1.0f, -1.0f);
+	add_rule (fixture->theme, "LrgCheckbox", LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE, -1.0f, -1.0f);
+
+	look = resolve (box, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	look = resolve (box, LRG_UI_PART_BOX, LRG_WIDGET_STATE_CHECKED | LRG_WIDGET_STATE_HOVERED);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	look = resolve (box, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.foreground, &RULE_COLOR));
+
+	lrg_checkbox_set_box_color (box, &EXPLICIT_COLOR);
+	lrg_checkbox_set_check_color (box, &EXPLICIT_COLOR);
+	lrg_checkbox_set_text_color (box, &EXPLICIT_COLOR);
+
+	look = resolve (box, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &EXPLICIT_COLOR));
+	look = resolve (box, LRG_UI_PART_BOX, LRG_WIDGET_STATE_CHECKED);
+	g_assert_true (same_color (&look.background, &EXPLICIT_COLOR));
+	g_assert_true (same_color (&look.border, &EXPLICIT_COLOR));
+	look = resolve (box, LRG_UI_PART_BOX, LRG_WIDGET_STATE_CHECKED | LRG_WIDGET_STATE_HOVERED);
+	lrg_paint_color_shade (&EXPLICIT_COLOR, 0.1f, &shade);
+	g_assert_true (same_color (&look.background, &shade));
+	look = resolve (box, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_HOVERED);
+	g_assert_true (same_color (&look.foreground, &EXPLICIT_COLOR));
+}
+
+/* Slider: rules beat the TRACK / FILL / THUMB defaults; explicit
+ * colours and sizes beat them */
+static void
+test_precedence_slider (Fixture       *fixture,
+                        gconstpointer  user_data)
+{
+	LrgSlider   *slider;
+	LrgPartLook  look;
+	GrlColor     shade;
+
+	slider = add_at (fixture, lrg_slider_new (), 10.0f, 10.0f, 200.0f, 24.0f);
+	add_rule (fixture->theme, "LrgSlider", LRG_UI_PART_TRACK, LRG_WIDGET_STATE_NONE, -1.0f, 13.0f);
+	add_rule (fixture->theme, "LrgSlider", LRG_UI_PART_FILL, LRG_WIDGET_STATE_NONE, -1.0f, -1.0f);
+	add_rule (fixture->theme, "LrgSlider", LRG_UI_PART_THUMB, LRG_WIDGET_STATE_NONE, -1.0f, 31.0f);
+
+	look = resolve (slider, LRG_UI_PART_TRACK, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.size, 13.0f, 0.01);
+	look = resolve (slider, LRG_UI_PART_FILL, LRG_WIDGET_STATE_HOVERED);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	look = resolve (slider, LRG_UI_PART_THUMB, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.size, 31.0f, 0.01);
+
+	lrg_slider_set_track_color (slider, &EXPLICIT_COLOR);
+	lrg_slider_set_fill_color (slider, &EXPLICIT_COLOR);
+	lrg_slider_set_handle_color (slider, &EXPLICIT_COLOR);
+	lrg_slider_set_handle_size (slider, 20.0f);
+	lrg_slider_set_track_thickness (slider, 5.0f);
+
+	look = resolve (slider, LRG_UI_PART_TRACK, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &EXPLICIT_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.size, 5.0f, 0.01);
+	look = resolve (slider, LRG_UI_PART_FILL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &EXPLICIT_COLOR));
+	look = resolve (slider, LRG_UI_PART_FILL, LRG_WIDGET_STATE_HOVERED);
+	lrg_paint_color_shade (&EXPLICIT_COLOR, 0.10f, &shade);
+	g_assert_true (same_color (&look.background, &shade));
+	look = resolve (slider, LRG_UI_PART_THUMB, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &EXPLICIT_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.size, 20.0f, 0.01);
+	look = resolve (slider, LRG_UI_PART_THUMB, LRG_WIDGET_STATE_HOVERED);
+	g_assert_cmpfloat (look.size, >, 20.0f);
+}
+
+/* Progress bar: rules beat the TRACK / FILL / LABEL defaults; explicit
+ * colours and radius beat them */
+static void
+test_precedence_progress_bar (Fixture       *fixture,
+                              gconstpointer  user_data)
+{
+	LrgProgressBar *bar;
+	LrgPartLook     look;
+
+	bar = add_at (fixture, lrg_progress_bar_new (), 10.0f, 10.0f, 200.0f, 16.0f);
+	add_rule (fixture->theme, "LrgProgressBar", LRG_UI_PART_TRACK, LRG_WIDGET_STATE_NONE, 1.0f, -1.0f);
+	add_rule (fixture->theme, "LrgProgressBar", LRG_UI_PART_FILL, LRG_WIDGET_STATE_NONE, 1.0f, -1.0f);
+	add_rule (fixture->theme, "LrgProgressBar", LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE, -1.0f, -1.0f);
+
+	look = resolve (bar, LRG_UI_PART_TRACK, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.radii.top_left, 1.0f, 0.01);
+	look = resolve (bar, LRG_UI_PART_FILL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	look = resolve (bar, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.foreground, &RULE_COLOR));
+
+	lrg_progress_bar_set_background_color (bar, &EXPLICIT_COLOR);
+	lrg_progress_bar_set_fill_color (bar, &EXPLICIT_COLOR);
+	lrg_progress_bar_set_text_color (bar, &EXPLICIT_COLOR);
+	lrg_progress_bar_set_corner_radius (bar, 3.0f);
+
+	look = resolve (bar, LRG_UI_PART_TRACK, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &EXPLICIT_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.radii.top_left, 3.0f, 0.01);
+	look = resolve (bar, LRG_UI_PART_FILL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &EXPLICIT_COLOR));
+	g_assert_true (same_color (&look.gradient.start, &EXPLICIT_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.radii.top_left, 3.0f, 0.01);
+	look = resolve (bar, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.foreground, &EXPLICIT_COLOR));
+}
+
+/* Panel: a rule beats the BOX default; explicit background, border and
+ * radius beat it (and an explicit "no border" removes the rule's) */
+static void
+test_precedence_panel (Fixture       *fixture,
+                       gconstpointer  user_data)
+{
+	LrgPanel                *panel;
+	LrgPartLook              look;
+	static const GrlColor    blue = { 10, 20, 230, 255 };
+	g_autoptr(LrgStyleRule)  rule = NULL;
+
+	panel = add_at (fixture, lrg_panel_new (), 10.0f, 10.0f, 200.0f, 100.0f);
+	rule = lrg_style_rule_new ("LrgPanel", NULL, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	lrg_part_look_set_background (lrg_style_rule_get_look (rule), &RULE_COLOR);
+	lrg_part_look_set_border (lrg_style_rule_get_look (rule), &RULE_COLOR, 4.0f);
+	lrg_part_look_set_radius (lrg_style_rule_get_look (rule), 12.0f);
+	lrg_theme_add_style_rule (fixture->theme, rule);
+
+	look = resolve (panel, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	g_assert_true (same_color (&look.border, &RULE_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.border_width, 4.0f, 0.01);
+	g_assert_cmpfloat_with_epsilon (look.radii.top_left, 12.0f, 0.01);
+
+	/* An explicit width keeps the rule's colour */
+	lrg_panel_set_border_width (panel, 2.0f);
+	look = resolve (panel, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.border, &RULE_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.border_width, 2.0f, 0.01);
+
+	lrg_panel_set_background_color (panel, &EXPLICIT_COLOR);
+	lrg_panel_set_border_color (panel, &blue);
+	lrg_panel_set_corner_radius (panel, 5.0f);
+	look = resolve (panel, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.background, &EXPLICIT_COLOR));
+	g_assert_true (same_color (&look.border, &blue));
+	g_assert_cmpfloat_with_epsilon (look.border_width, 2.0f, 0.01);
+	g_assert_cmpfloat_with_epsilon (look.radii.top_left, 5.0f, 0.01);
+
+	/* Explicitly no border beats the rule's border */
+	lrg_panel_set_border_color (panel, NULL);
+	look = resolve (panel, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	g_assert_cmpfloat_with_epsilon (look.border_width, 0.0f, 0.01);
+}
+
+/* Text input: rules beat the defaults; explicit colours and radius beat
+ * them, but focus still shows the accent border */
+static void
+test_precedence_text_input (Fixture       *fixture,
+                            gconstpointer  user_data)
+{
+	LrgTextInput            *input;
+	LrgPartLook              look;
+	g_autoptr(LrgStyleRule)  rule = NULL;
+
+	input = add_at (fixture, lrg_text_input_new_with_placeholder ("Name"),
+	                10.0f, 10.0f, 200.0f, 32.0f);
+	rule = lrg_style_rule_new ("LrgTextInput", NULL, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	lrg_part_look_set_background (lrg_style_rule_get_look (rule), &RULE_COLOR);
+	lrg_part_look_set_border (lrg_style_rule_get_look (rule), &RULE_COLOR, 1.0f);
+	lrg_part_look_set_radius (lrg_style_rule_get_look (rule), 11.0f);
+	lrg_theme_add_style_rule (fixture->theme, rule);
+	add_rule (fixture->theme, "LrgTextInput", LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE, -1.0f, -1.0f);
+
+	look = resolve (input, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED);
+	g_assert_true (same_color (&look.background, &RULE_COLOR));
+	g_assert_true (same_color (&look.border, &RULE_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.radii.top_left, 11.0f, 0.01);
+	look = resolve (input, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.foreground, &RULE_COLOR));
+
+	lrg_text_input_set_background_color (input, &EXPLICIT_COLOR);
+	lrg_text_input_set_border_color (input, &EXPLICIT_COLOR);
+	lrg_text_input_set_placeholder_color (input, &EXPLICIT_COLOR);
+	lrg_text_input_set_corner_radius (input, 4.0f);
+
+	look = resolve (input, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED);
+	g_assert_true (same_color (&look.background, &EXPLICIT_COLOR));
+	g_assert_true (same_color (&look.border, &EXPLICIT_COLOR));
+	g_assert_cmpfloat_with_epsilon (look.radii.top_left, 4.0f, 0.01);
+
+	/* Placeholder colour while empty, text colour once typed into */
+	look = resolve (input, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.foreground, &EXPLICIT_COLOR));
+	lrg_text_input_set_text (input, "x");
+	look = resolve (input, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.foreground, &RULE_COLOR));
+	lrg_text_input_set_text_color (input, &EXPLICIT_COLOR);
+	look = resolve (input, LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+	g_assert_true (same_color (&look.foreground, &EXPLICIT_COLOR));
+
+	/* Focused: the explicit border colour gives way to the rule /
+	 * accent, it only applies while unfocused */
+	look = resolve (input, LRG_UI_PART_BOX, LRG_WIDGET_STATE_FOCUSED);
+	g_assert_false (same_color (&look.border, &EXPLICIT_COLOR));
+}
+
+/* ==========================================================================
  * Main
  * ========================================================================== */
 
@@ -1888,6 +2254,13 @@ main (int   argc,
 	ADD ("/ui/widgets/text-input/frame-clock", test_text_input_frame_clock);
 	ADD ("/ui/widgets/text-input/explicit-and-password", test_text_input_explicit_and_password);
 	ADD ("/ui/widgets/image/empty", test_image_empty);
+	ADD ("/ui/widgets/precedence/button", test_precedence_button);
+	ADD ("/ui/widgets/precedence/label", test_precedence_label);
+	ADD ("/ui/widgets/precedence/checkbox", test_precedence_checkbox);
+	ADD ("/ui/widgets/precedence/slider", test_precedence_slider);
+	ADD ("/ui/widgets/precedence/progress-bar", test_precedence_progress_bar);
+	ADD ("/ui/widgets/precedence/panel", test_precedence_panel);
+	ADD ("/ui/widgets/precedence/text-input", test_precedence_text_input);
 
 	if (!g_test_subprocess ())
 		graphics_available = init_graphics_context ();

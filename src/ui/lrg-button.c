@@ -11,8 +11,9 @@
  * (the centred text). Its built-in looks come from the theme in
  * style_defaults(); the "primary", "flat" and "danger" style classes
  * pick other colour families. The legacy colour properties still work:
- * once a colour has been set explicitly it replaces the theme default
- * for its state.
+ * a colour or radius set explicitly is applied in style_overrides(),
+ * after the theme's style rules, so it beats both the default and any
+ * matching rule.
  */
 
 #include "config.h"
@@ -207,30 +208,14 @@ box_defaults (LrgButton      *self,
                                           : LRG_THEME_COLOR_CONTROL);
     }
 
-    /* 2. Explicit legacy colours replace the theme default for their
-     * state; a missing hover / pressed colour is derived from the
-     * normal one so a single set_normal_color() still animates */
-    if (pressed && self->pressed_set)
-        bg = self->pressed_color;
-    else if (pressed && self->normal_set)
-        lrg_paint_color_shade (&self->normal_color, -0.15f, &bg);
-    else if (!pressed && hovered && self->hover_set)
-        bg = self->hover_color;
-    else if (!pressed && hovered && self->normal_set)
-        lrg_paint_color_shade (&self->normal_color, 0.12f, &bg);
-    else if (!pressed && !hovered && self->normal_set)
-        bg = self->normal_color;
-
     lrg_part_look_set_background (look, &bg);
 
-    /* 3. Shape */
-    lrg_part_look_set_radius (look, self->radius_set
-                                    ? self->corner_radius
-                                    : lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
+    /* 2. Shape */
+    lrg_part_look_set_radius (look, lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
 
-    /* 4. Hairline border on neutral buttons so they read on any panel
+    /* 3. Hairline border on neutral buttons so they read on any panel
      * (fades out with the flat surface) */
-    if (!primary && !danger && !self->normal_set)
+    if (!primary && !danger)
     {
         GrlColor border;
 
@@ -243,7 +228,7 @@ box_defaults (LrgButton      *self,
                                   lrg_theme_get_metric (theme, LRG_THEME_METRIC_BORDER_WIDTH));
     }
 
-    /* 5. Shadow: resting, lifted on hover, pressed into the surface */
+    /* 4. Shadow: resting, lifted on hover, pressed into the surface */
     lift = pressed ? 0.15f : hovered ? 0.65f : 0.35f;
     shadow_alpha = pressed ? 0.35f : hovered ? 0.75f : 0.5f;
     if (flat && !hovered && !pressed)
@@ -251,7 +236,7 @@ box_defaults (LrgButton      *self,
     lrg_paint_color_with_alpha (shadow, ((gfloat) shadow->a / 255.0f) * shadow_alpha, &sh);
     lrg_part_look_set_shadow (look, &sh, MAX (blur * lift, 1.0f), offset * lift);
 
-    /* 6. Soft accent glow while a primary button is hovered */
+    /* 5. Soft accent glow while a primary button is hovered */
     if (primary || danger)
     {
         lrg_paint_color_with_alpha (&bg, (hovered && !pressed) ? 0.45f : 0.0f, &glow);
@@ -267,7 +252,8 @@ box_defaults (LrgButton      *self,
  *
  * The built-in LABEL look: TEXT on neutral buttons, TEXT_ON_ACCENT on
  * primary ones and the readable one of white / near-black on danger
- * buttons. An explicit text colour wins.
+ * buttons. An explicit text colour is applied later, in
+ * style_overrides().
  */
 static void
 label_defaults (LrgButton      *self,
@@ -278,9 +264,7 @@ label_defaults (LrgButton      *self,
     LrgTheme  *theme = lrg_widget_get_theme (widget);
     GrlColor   fg;
 
-    if (self->text_set)
-        fg = self->text_color;
-    else if (lrg_widget_has_class (widget, "primary"))
+    if (lrg_widget_has_class (widget, "primary"))
         fg = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_ON_ACCENT);
     else if (lrg_widget_has_class (widget, "danger"))
         readable_on (lrg_theme_get_color (theme, LRG_THEME_COLOR_DANGER), &fg);
@@ -309,14 +293,101 @@ lrg_button_style_defaults (LrgWidget      *widget,
     case LRG_UI_PART_LABEL:
         label_defaults (self, state, look);
         break;
+    default:
+        LRG_WIDGET_CLASS (lrg_button_parent_class)->style_defaults (widget, part, state, look);
+        break;
+    }
+}
+
+/*
+ * box_overrides:
+ *
+ * Applies the explicit legacy BOX values on top of the defaults and
+ * the theme's style rules, so a colour or radius the application set
+ * on this button always wins. A missing hover / pressed colour is
+ * derived from the normal one so a single set_normal_color() still
+ * animates; an explicit normal colour also drops the neutral hairline
+ * border and retints the primary / danger glow.
+ */
+static void
+box_overrides (LrgButton      *self,
+               LrgWidgetState  state,
+               LrgPartLook    *look)
+{
+    LrgWidget *widget = LRG_WIDGET (self);
+    gboolean   hovered = (state & LRG_WIDGET_STATE_HOVERED) != 0;
+    gboolean   pressed = (state & LRG_WIDGET_STATE_PRESSED) != 0;
+    gboolean   have_bg = TRUE;
+    GrlColor   bg;
+
+    /* 1. Background for the state, explicit or derived from normal */
+    if (pressed && self->pressed_set)
+        bg = self->pressed_color;
+    else if (pressed && self->normal_set)
+        lrg_paint_color_shade (&self->normal_color, -0.15f, &bg);
+    else if (!pressed && hovered && self->hover_set)
+        bg = self->hover_color;
+    else if (!pressed && hovered && self->normal_set)
+        lrg_paint_color_shade (&self->normal_color, 0.12f, &bg);
+    else if (!pressed && !hovered && self->normal_set)
+        bg = self->normal_color;
+    else
+        have_bg = FALSE;
+
+    if (have_bg)
+    {
+        lrg_part_look_set_background (look, &bg);
+
+        /* The primary / danger glow follows the surface colour */
+        if (lrg_widget_has_class (widget, "primary") || lrg_widget_has_class (widget, "danger"))
+        {
+            GrlColor glow;
+
+            lrg_paint_color_with_alpha (&bg, (hovered && !pressed) ? 0.45f : 0.0f, &glow);
+            lrg_part_look_set_glow (look, &glow, look->glow_size);
+        }
+    }
+
+    /* 2. A custom-coloured button has no neutral hairline border */
+    if (self->normal_set)
+    {
+        GrlColor none = { 0, 0, 0, 0 };
+
+        lrg_part_look_set_border (look, &none, 0.0f);
+    }
+
+    /* 3. Shape */
+    if (self->radius_set)
+        lrg_part_look_set_radius (look, self->corner_radius);
+}
+
+static void
+lrg_button_style_overrides (LrgWidget      *widget,
+                            LrgUIPart       part,
+                            LrgWidgetState  state,
+                            LrgPartLook    *look)
+{
+    LrgButton      *self = LRG_BUTTON (widget);
+    LrgWidgetClass *parent = LRG_WIDGET_CLASS (lrg_button_parent_class);
+
+    if (parent->style_overrides != NULL)
+        parent->style_overrides (widget, part, state, look);
+
+    switch (part)
+    {
+    case LRG_UI_PART_BOX:
+        box_overrides (self, state, look);
+        break;
+    case LRG_UI_PART_LABEL:
+        if (self->text_set)
+            lrg_part_look_set_foreground (look, &self->text_color);
+        break;
     case LRG_UI_PART_FOCUS:
         /* The ring follows the button's own corner radius */
-        LRG_WIDGET_CLASS (lrg_button_parent_class)->style_defaults (widget, part, state, look);
         if (self->radius_set)
             lrg_part_look_set_radius (look, self->corner_radius + look->border_width + 2.0f);
         break;
     default:
-        LRG_WIDGET_CLASS (lrg_button_parent_class)->style_defaults (widget, part, state, look);
         break;
     }
 }
@@ -607,6 +678,7 @@ lrg_button_class_init (LrgButtonClass *klass)
 
     widget_class->paint = lrg_button_paint;
     widget_class->style_defaults = lrg_button_style_defaults;
+    widget_class->style_overrides = lrg_button_style_overrides;
     widget_class->measure = lrg_button_measure;
     widget_class->handle_event = lrg_button_handle_event;
 

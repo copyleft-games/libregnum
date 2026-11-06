@@ -10,8 +10,9 @@
  * Its LABEL part takes the theme's TEXT colour (TEXT_MUTED for the
  * "muted" class) and the size comes from the theme too: FONT_SIZE, or
  * FONT_SIZE_TITLE / _LARGE / _SMALL for the "title", "heading" and
- * "caption" classes. An explicitly set colour or font size wins over
- * the theme. Text may span several lines; each line is aligned on its
+ * "caption" classes. An explicitly set colour (applied in
+ * style_overrides(), after the theme's style rules) or font size wins
+ * over the theme. Text may span several lines; each line is aligned on its
  * own.
  */
 
@@ -181,8 +182,8 @@ label_offscreen (LrgLabel *self)
 /*
  * lrg_label_style_defaults:
  *
- * LABEL: TEXT (TEXT_MUTED for "muted", DISABLED when insensitive); an
- * explicit colour wins in every state but the disabled one.
+ * LABEL: TEXT (TEXT_MUTED for "muted", DISABLED when insensitive).
+ * An explicit colour is applied later, in style_overrides().
  */
 static void
 lrg_label_style_defaults (LrgWidget      *widget,
@@ -190,7 +191,6 @@ lrg_label_style_defaults (LrgWidget      *widget,
                           LrgWidgetState  state,
                           LrgPartLook    *look)
 {
-    LrgLabel *self = LRG_LABEL (widget);
     LrgTheme *theme = lrg_widget_get_theme (widget);
 
     if (part != LRG_UI_PART_LABEL)
@@ -201,12 +201,32 @@ lrg_label_style_defaults (LrgWidget      *widget,
 
     if (state & LRG_WIDGET_STATE_DISABLED)
         lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_DISABLED));
-    else if (self->color_set)
-        lrg_part_look_set_foreground (look, &self->color);
     else if (lrg_widget_has_class (widget, "muted"))
         lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED));
     else
         lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+}
+
+/*
+ * lrg_label_style_overrides:
+ *
+ * LABEL: an explicit colour beats the defaults and the theme's style
+ * rules in every state but the disabled one.
+ */
+static void
+lrg_label_style_overrides (LrgWidget      *widget,
+                           LrgUIPart       part,
+                           LrgWidgetState  state,
+                           LrgPartLook    *look)
+{
+    LrgLabel       *self = LRG_LABEL (widget);
+    LrgWidgetClass *parent = LRG_WIDGET_CLASS (lrg_label_parent_class);
+
+    if (parent->style_overrides != NULL)
+        parent->style_overrides (widget, part, state, look);
+
+    if (part == LRG_UI_PART_LABEL && self->color_set && !(state & LRG_WIDGET_STATE_DISABLED))
+        lrg_part_look_set_foreground (look, &self->color);
 }
 
 /* ==========================================================================
@@ -425,6 +445,7 @@ lrg_label_class_init (LrgLabelClass *klass)
     widget_class->paint = lrg_label_paint;
     widget_class->draw = lrg_label_draw;
     widget_class->style_defaults = lrg_label_style_defaults;
+    widget_class->style_overrides = lrg_label_style_overrides;
     widget_class->measure = lrg_label_measure;
 
     /**
